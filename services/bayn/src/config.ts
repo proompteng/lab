@@ -1,8 +1,8 @@
-import { Config, Effect, Option, Redacted, Schema, SchemaTransformation } from 'effect'
+import { Config, Effect, Option, Redacted, Result, Schema, SchemaTransformation } from 'effect'
 
 import { EmbeddedBuildMetadataSchema, embeddedBuildMetadata, type EmbeddedBuildMetadata } from './build'
 import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema, type EvaluationBounds } from './contracts'
-import { operationalError, type OperationalError } from './errors'
+import { OperationalError, operationalError } from './errors'
 import { Authority } from './paper'
 import {
   GitSourceRevisionSchema as SourceRevision,
@@ -70,6 +70,122 @@ export interface AutonomousCycleRuntimeConfig {
 }
 
 export type LoadedRuntimeConfig = RuntimeConfig & AutonomousCycleRuntimeConfig
+
+export interface ParsedRuntimeConfig {
+  readonly host: string
+  readonly port: number
+  readonly qualificationRunId: string | undefined
+  readonly configuredPaperProofCommand: 'PREPARE' | undefined
+  readonly configuredPaperProofPhase: 'DISCOVER' | undefined
+  readonly maximumAuthority: Authority
+  readonly configuredBuild: EmbeddedBuildMetadata & {
+    readonly imageDigest: string
+  }
+  readonly provenanceMode: 'production' | 'development'
+  readonly healthIntervalMs: number
+  readonly operationTimeoutMs: number
+  readonly cycleStallThresholdMs: number
+  readonly reconciliationStaleThresholdMs: number
+  readonly unknownMutationThresholdMs: number
+  readonly cyclePollIntervalMs: number
+  readonly authorityGenerationHash: string | undefined
+  readonly configuredAlpaca: {
+    readonly accountId: string | undefined
+    readonly key: Redacted.Redacted<string> | undefined
+    readonly secret: Redacted.Redacted<string> | undefined
+    readonly proxyUrl: string
+    readonly retryAttempts: number
+    readonly reconciliationIntervalMs: number
+  }
+  readonly clickhouse: RuntimeConfig['clickhouse']
+  readonly postgres: RuntimeConfig['postgres']
+  readonly tigerBeetle: RuntimeConfig['tigerBeetle']
+}
+
+export interface RuntimeConfigResolutionInput {
+  readonly parsed: ParsedRuntimeConfig
+  readonly embeddedBuildMetadata: EmbeddedBuildMetadata | undefined
+}
+
+interface AlpacaCredentialPresence {
+  readonly accountId: boolean
+  readonly keyId: boolean
+  readonly secretKey: boolean
+}
+
+export type RuntimeConfigResolutionFailure =
+  | {
+      readonly _tag: 'InvalidEvaluationBounds'
+      readonly cause: Schema.SchemaError
+    }
+  | {
+      readonly _tag: 'CyclePollIntervalNotShorterThanStallThreshold'
+      readonly cyclePollIntervalMs: number
+      readonly cycleStallThresholdMs: number
+    }
+  | {
+      readonly _tag: 'IncompleteAlpacaCredentials'
+      readonly configured: AlpacaCredentialPresence
+    }
+  | {
+      readonly _tag: 'MissingAlpacaAuthorityGeneration'
+      readonly accountId: string
+    }
+  | {
+      readonly _tag: 'PaperAuthorityRequiresAlpacaBinding'
+      readonly maximumAuthority: Authority.Paper
+    }
+  | {
+      readonly _tag: 'IncompletePaperProofCommand'
+      readonly commandConfigured: boolean
+      readonly phaseConfigured: boolean
+    }
+  | {
+      readonly _tag: 'PaperProofCommandRequiresObserveAuthority'
+      readonly maximumAuthority: Authority.Paper
+    }
+  | {
+      readonly _tag: 'PaperProofCommandRequiresQualificationRun'
+    }
+  | {
+      readonly _tag: 'PaperProofCommandRequiresAlpacaBinding'
+    }
+  | {
+      readonly _tag: 'ProductionProvenanceRequiresEmbeddedMetadata'
+      readonly provenanceMode: 'production'
+    }
+  | {
+      readonly _tag: 'EmbeddedMetadataRequiresProductionProvenance'
+      readonly provenanceMode: 'development'
+    }
+  | {
+      readonly _tag: 'ProductionPostgresRequiresTls'
+      readonly postgresTls: false
+    }
+  | {
+      readonly _tag: 'InvalidEmbeddedBuildMetadata'
+      readonly cause: Schema.SchemaError
+    }
+  | {
+      readonly _tag: 'SourceRevisionMismatch'
+      readonly configuredSourceRevision: string
+      readonly embeddedSourceRevision: string
+    }
+  | {
+      readonly _tag: 'ImageRepositoryMismatch'
+      readonly configuredImageRepository: string
+      readonly embeddedImageRepository: string
+    }
+  | {
+      readonly _tag: 'StrategyBehaviorHashMismatch'
+      readonly configuredStrategyBehaviorHash: string
+      readonly embeddedStrategyBehaviorHash: string
+    }
+  | {
+      readonly _tag: 'StrategyParameterHashMismatch'
+      readonly configuredStrategyParameterHash: string
+      readonly embeddedStrategyParameterHash: string
+    }
 
 const ProvenanceMode = Schema.Literals(['production', 'development'])
 const RetryAttempts = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 }))
@@ -148,237 +264,369 @@ const runtimeConfig = Config.all({
   tigerBeetleReplicaAddresses: Config.schema(ReplicaAddresses, 'BAYN_TIGERBEETLE_ADDRESSES'),
   tigerBeetleLedger: positiveInteger('BAYN_TIGERBEETLE_LEDGER', 7001),
 }).pipe(
-  Config.map((config) => ({
-    host: config.host,
-    port: config.port,
-    qualificationRunId: Option.getOrUndefined(config.qualificationRunId),
-    configuredPaperProofCommand: config.paperProofCommand,
-    configuredPaperProofPhase: config.paperProofPhase,
-    maximumAuthority: config.maximumAuthority,
-    configuredBuild: {
-      sourceRevision: config.sourceRevision,
-      imageRepository: config.imageRepository,
-      imageDigest: config.imageDigest,
-      strategyBehaviorHash: config.strategyBehaviorHash,
-      strategyParameterHash: config.strategyParameterHash,
-    },
-    provenanceMode: config.provenanceMode,
-    healthIntervalMs: config.healthIntervalMs,
-    operationTimeoutMs: config.operationTimeoutMs,
-    cycleStallThresholdMs: config.cycleStallThresholdMs,
-    reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
-    unknownMutationThresholdMs: config.unknownMutationThresholdMs,
-    cyclePollIntervalMs: config.cyclePollIntervalMs,
-    authorityGenerationHash: config.authorityGenerationHash,
-    configuredAlpaca: {
-      accountId: config.alpacaAccountId,
-      key: config.alpacaKey,
-      secret: config.alpacaSecret,
-      proxyUrl: config.alpacaProxyUrl,
-      retryAttempts: config.alpacaRetryAttempts,
-      reconciliationIntervalMs: config.reconciliationIntervalMs,
-    },
-    clickhouse: {
-      url: config.clickhouseUrl,
-      username: config.clickhouseUsername,
-      password: config.clickhousePassword,
-      snapshotId: config.snapshotId,
-      publicationAsOf: config.publicationAsOf,
-      calendarVersion: config.calendarVersion,
-      bounds: {
-        schemaVersion: 'bayn.evaluation-bounds.v1',
-        dataStart: config.dataStart,
-        dataEnd: config.dataEnd,
-        lookbackStart: config.lookbackStart,
-        evaluationStart: config.evaluationStart,
-        evaluationEnd: config.evaluationEnd,
+  Config.map(
+    (config): ParsedRuntimeConfig => ({
+      host: config.host,
+      port: config.port,
+      qualificationRunId: Option.getOrUndefined(config.qualificationRunId),
+      configuredPaperProofCommand: Option.getOrUndefined(config.paperProofCommand),
+      configuredPaperProofPhase: Option.getOrUndefined(config.paperProofPhase),
+      maximumAuthority: config.maximumAuthority,
+      configuredBuild: {
+        sourceRevision: config.sourceRevision,
+        imageRepository: config.imageRepository,
+        imageDigest: config.imageDigest,
+        strategyBehaviorHash: config.strategyBehaviorHash,
+        strategyParameterHash: config.strategyParameterHash,
       },
-    },
-    postgres: {
-      url: config.postgresUrl,
-      tls: config.postgresTls,
-      caPath: config.postgresCaPath,
-    },
-    tigerBeetle: {
-      clusterId: config.tigerBeetleClusterId,
-      replicaAddresses: config.tigerBeetleReplicaAddresses,
-      ledger: config.tigerBeetleLedger,
-    },
-  })),
+      provenanceMode: config.provenanceMode,
+      healthIntervalMs: config.healthIntervalMs,
+      operationTimeoutMs: config.operationTimeoutMs,
+      cycleStallThresholdMs: config.cycleStallThresholdMs,
+      reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
+      unknownMutationThresholdMs: config.unknownMutationThresholdMs,
+      cyclePollIntervalMs: config.cyclePollIntervalMs,
+      authorityGenerationHash: Option.getOrUndefined(config.authorityGenerationHash),
+      configuredAlpaca: {
+        accountId: Option.getOrUndefined(config.alpacaAccountId),
+        key: Option.getOrUndefined(config.alpacaKey),
+        secret: Option.getOrUndefined(config.alpacaSecret),
+        proxyUrl: config.alpacaProxyUrl,
+        retryAttempts: config.alpacaRetryAttempts,
+        reconciliationIntervalMs: config.reconciliationIntervalMs,
+      },
+      clickhouse: {
+        url: config.clickhouseUrl,
+        username: config.clickhouseUsername,
+        password: config.clickhousePassword,
+        snapshotId: config.snapshotId,
+        publicationAsOf: config.publicationAsOf,
+        calendarVersion: config.calendarVersion,
+        bounds: {
+          schemaVersion: 'bayn.evaluation-bounds.v1',
+          dataStart: config.dataStart,
+          dataEnd: config.dataEnd,
+          lookbackStart: config.lookbackStart,
+          evaluationStart: config.evaluationStart,
+          evaluationEnd: config.evaluationEnd,
+        },
+      },
+      postgres: {
+        url: config.postgresUrl,
+        tls: config.postgresTls,
+        caPath: config.postgresCaPath,
+      },
+      tigerBeetle: {
+        clusterId: config.tigerBeetleClusterId,
+        replicaAddresses: config.tigerBeetleReplicaAddresses,
+        ledger: config.tigerBeetleLedger,
+      },
+    }),
+  ),
 )
 
-const decodeEmbeddedBuildMetadata = Schema.decodeUnknownSync(EmbeddedBuildMetadataSchema, StrictParseOptions)
+const decodeEvaluationBounds = Schema.decodeUnknownResult(EvaluationBoundsSchema)
+const decodeEmbeddedBuildMetadata = Schema.decodeUnknownResult(EmbeddedBuildMetadataSchema, StrictParseOptions)
+
+export const resolveRuntimeConfig = ({
+  parsed: config,
+  embeddedBuildMetadata: embedded,
+}: RuntimeConfigResolutionInput): Result.Result<LoadedRuntimeConfig, RuntimeConfigResolutionFailure> => {
+  const boundsResult = decodeEvaluationBounds(config.clickhouse.bounds)
+  if (Result.isFailure(boundsResult)) {
+    return Result.fail({ _tag: 'InvalidEvaluationBounds', cause: boundsResult.failure })
+  }
+  if (config.cyclePollIntervalMs >= config.cycleStallThresholdMs) {
+    return Result.fail({
+      _tag: 'CyclePollIntervalNotShorterThanStallThreshold',
+      cyclePollIntervalMs: config.cyclePollIntervalMs,
+      cycleStallThresholdMs: config.cycleStallThresholdMs,
+    })
+  }
+
+  const credentialPresence = {
+    accountId: config.configuredAlpaca.accountId !== undefined,
+    keyId: config.configuredAlpaca.key !== undefined,
+    secretKey: config.configuredAlpaca.secret !== undefined,
+  } satisfies AlpacaCredentialPresence
+  const anyCredential = credentialPresence.accountId || credentialPresence.keyId || credentialPresence.secretKey
+  const credentials =
+    config.configuredAlpaca.accountId !== undefined &&
+    config.configuredAlpaca.key !== undefined &&
+    config.configuredAlpaca.secret !== undefined
+      ? {
+          accountId: config.configuredAlpaca.accountId,
+          key: config.configuredAlpaca.key,
+          secret: config.configuredAlpaca.secret,
+        }
+      : undefined
+  if (anyCredential && credentials === undefined) {
+    return Result.fail({ _tag: 'IncompleteAlpacaCredentials', configured: credentialPresence })
+  }
+
+  let alpaca: RuntimeConfig['alpaca']
+  if (credentials === undefined) {
+    alpaca = undefined
+  } else {
+    if (config.authorityGenerationHash === undefined) {
+      return Result.fail({
+        _tag: 'MissingAlpacaAuthorityGeneration',
+        accountId: credentials.accountId,
+      })
+    }
+    alpaca = {
+      ...credentials,
+      authorityGenerationHash: config.authorityGenerationHash,
+      proxyUrl: config.configuredAlpaca.proxyUrl,
+      retryAttempts: config.configuredAlpaca.retryAttempts,
+      reconciliationIntervalMs: config.configuredAlpaca.reconciliationIntervalMs,
+    }
+  }
+  if (config.maximumAuthority === Authority.Paper && alpaca === undefined) {
+    return Result.fail({
+      _tag: 'PaperAuthorityRequiresAlpacaBinding',
+      maximumAuthority: Authority.Paper,
+    })
+  }
+
+  const commandConfigured = config.configuredPaperProofCommand !== undefined
+  const phaseConfigured = config.configuredPaperProofPhase !== undefined
+  if (commandConfigured !== phaseConfigured) {
+    return Result.fail({
+      _tag: 'IncompletePaperProofCommand',
+      commandConfigured,
+      phaseConfigured,
+    })
+  }
+
+  let paperProofCommand: PaperProofRuntimeCommand | undefined
+  if (config.configuredPaperProofCommand !== undefined && config.configuredPaperProofPhase !== undefined) {
+    if (config.maximumAuthority !== Authority.Observe) {
+      return Result.fail({
+        _tag: 'PaperProofCommandRequiresObserveAuthority',
+        maximumAuthority: config.maximumAuthority,
+      })
+    }
+    if (config.qualificationRunId === undefined) {
+      return Result.fail({ _tag: 'PaperProofCommandRequiresQualificationRun' })
+    }
+    if (alpaca === undefined) {
+      return Result.fail({ _tag: 'PaperProofCommandRequiresAlpacaBinding' })
+    }
+    paperProofCommand = {
+      command: config.configuredPaperProofCommand,
+      phase: config.configuredPaperProofPhase,
+    }
+  }
+
+  if (embedded === undefined && config.provenanceMode !== 'development') {
+    return Result.fail({
+      _tag: 'ProductionProvenanceRequiresEmbeddedMetadata',
+      provenanceMode: 'production',
+    })
+  }
+  if (embedded !== undefined && config.provenanceMode !== 'production') {
+    return Result.fail({
+      _tag: 'EmbeddedMetadataRequiresProductionProvenance',
+      provenanceMode: 'development',
+    })
+  }
+  if (embedded !== undefined && !config.postgres.tls) {
+    return Result.fail({
+      _tag: 'ProductionPostgresRequiresTls',
+      postgresTls: false,
+    })
+  }
+
+  let decodedBuild: EmbeddedBuildMetadata
+  if (embedded === undefined) {
+    decodedBuild = {
+      sourceRevision: config.configuredBuild.sourceRevision,
+      imageRepository: config.configuredBuild.imageRepository,
+      strategyBehaviorHash: config.configuredBuild.strategyBehaviorHash,
+      strategyParameterHash: config.configuredBuild.strategyParameterHash,
+    }
+  } else {
+    const decodedBuildResult = decodeEmbeddedBuildMetadata(embedded)
+    if (Result.isFailure(decodedBuildResult)) {
+      return Result.fail({
+        _tag: 'InvalidEmbeddedBuildMetadata',
+        cause: decodedBuildResult.failure,
+      })
+    }
+    decodedBuild = decodedBuildResult.success
+    if (config.configuredBuild.sourceRevision !== decodedBuild.sourceRevision) {
+      return Result.fail({
+        _tag: 'SourceRevisionMismatch',
+        configuredSourceRevision: config.configuredBuild.sourceRevision,
+        embeddedSourceRevision: decodedBuild.sourceRevision,
+      })
+    }
+    if (config.configuredBuild.imageRepository !== decodedBuild.imageRepository) {
+      return Result.fail({
+        _tag: 'ImageRepositoryMismatch',
+        configuredImageRepository: config.configuredBuild.imageRepository,
+        embeddedImageRepository: decodedBuild.imageRepository,
+      })
+    }
+    if (config.configuredBuild.strategyBehaviorHash !== decodedBuild.strategyBehaviorHash) {
+      return Result.fail({
+        _tag: 'StrategyBehaviorHashMismatch',
+        configuredStrategyBehaviorHash: config.configuredBuild.strategyBehaviorHash,
+        embeddedStrategyBehaviorHash: decodedBuild.strategyBehaviorHash,
+      })
+    }
+    if (config.configuredBuild.strategyParameterHash !== decodedBuild.strategyParameterHash) {
+      return Result.fail({
+        _tag: 'StrategyParameterHashMismatch',
+        configuredStrategyParameterHash: config.configuredBuild.strategyParameterHash,
+        embeddedStrategyParameterHash: decodedBuild.strategyParameterHash,
+      })
+    }
+  }
+
+  const {
+    configuredAlpaca: _configuredAlpaca,
+    authorityGenerationHash: _authorityGenerationHash,
+    configuredPaperProofCommand: _configuredPaperProofCommand,
+    configuredPaperProofPhase: _configuredPaperProofPhase,
+    configuredBuild,
+    provenanceMode,
+    ...runtime
+  } = config
+  const resolved: LoadedRuntimeConfig = {
+    ...runtime,
+    clickhouse: {
+      ...runtime.clickhouse,
+      bounds: boundsResult.success,
+    },
+    build: {
+      ...decodedBuild,
+      imageDigest: configuredBuild.imageDigest,
+      verification: provenanceMode === 'production' ? 'embedded' : 'development-configured',
+    },
+    ...(paperProofCommand === undefined ? {} : { paperProofCommand }),
+    ...(alpaca === undefined ? {} : { alpaca }),
+  }
+  return Result.succeed(resolved)
+}
+
+interface RuntimeConfigFailurePresentation {
+  readonly operation: string
+  readonly message: string
+}
+
+const presentRuntimeConfigFailure = (failure: RuntimeConfigResolutionFailure): RuntimeConfigFailurePresentation => {
+  switch (failure._tag) {
+    case 'InvalidEvaluationBounds':
+      return {
+        operation: 'load',
+        message: `invalid Signal evaluation bounds: ${failure.cause.message}`,
+      }
+    case 'CyclePollIntervalNotShorterThanStallThreshold':
+      return {
+        operation: 'cycle-loop',
+        message: 'cycle poll interval must be shorter than the cycle stall threshold',
+      }
+    case 'IncompleteAlpacaCredentials':
+      return {
+        operation: 'alpaca',
+        message: 'Alpaca account ID, key ID, and secret key must be configured together',
+      }
+    case 'MissingAlpacaAuthorityGeneration':
+      return {
+        operation: 'authority-generation',
+        message: 'Alpaca account binding requires an authority generation hash',
+      }
+    case 'PaperAuthorityRequiresAlpacaBinding':
+      return {
+        operation: 'alpaca',
+        message: 'PAPER maximum authority requires a complete Alpaca account binding',
+      }
+    case 'IncompletePaperProofCommand':
+      return {
+        operation: 'paper-command',
+        message: 'BAYN_PAPER_COMMAND and BAYN_PAPER_PREPARE_PHASE must be configured together',
+      }
+    case 'PaperProofCommandRequiresObserveAuthority':
+      return {
+        operation: 'paper-command',
+        message: 'PREPARE DISCOVER requires OBSERVE maximum authority',
+      }
+    case 'PaperProofCommandRequiresQualificationRun':
+      return {
+        operation: 'paper-command',
+        message: 'PREPARE DISCOVER requires a pinned terminal qualification run',
+      }
+    case 'PaperProofCommandRequiresAlpacaBinding':
+      return {
+        operation: 'paper-command',
+        message: 'PREPARE DISCOVER requires a complete Alpaca read binding',
+      }
+    case 'ProductionProvenanceRequiresEmbeddedMetadata':
+      return {
+        operation: 'provenance',
+        message: 'invalid build provenance: production provenance requires compile-time build metadata',
+      }
+    case 'EmbeddedMetadataRequiresProductionProvenance':
+      return {
+        operation: 'provenance',
+        message: 'invalid build provenance: development provenance cannot override embedded production metadata',
+      }
+    case 'ProductionPostgresRequiresTls':
+      return {
+        operation: 'provenance',
+        message: 'invalid build provenance: production PostgreSQL connections require verified TLS',
+      }
+    case 'InvalidEmbeddedBuildMetadata':
+      return {
+        operation: 'provenance',
+        message: `invalid build provenance: ${failure.cause.message}`,
+      }
+    case 'SourceRevisionMismatch':
+      return {
+        operation: 'provenance',
+        message: `invalid build provenance: configured source revision ${failure.configuredSourceRevision} does not match embedded revision ${failure.embeddedSourceRevision}`,
+      }
+    case 'ImageRepositoryMismatch':
+      return {
+        operation: 'provenance',
+        message: `invalid build provenance: configured image repository ${failure.configuredImageRepository} does not match embedded repository ${failure.embeddedImageRepository}`,
+      }
+    case 'StrategyBehaviorHashMismatch':
+      return {
+        operation: 'provenance',
+        message: 'invalid build provenance: configured strategy behavior hash does not match embedded build metadata',
+      }
+    case 'StrategyParameterHashMismatch':
+      return {
+        operation: 'provenance',
+        message: 'invalid build provenance: configured strategy parameter hash does not match embedded build metadata',
+      }
+  }
+  const exhaustive: never = failure
+  return exhaustive
+}
+
+const resolutionFailureToOperationalError = (failure: RuntimeConfigResolutionFailure): OperationalError => {
+  const presentation = presentRuntimeConfigFailure(failure)
+  return new OperationalError({
+    component: 'config',
+    operation: presentation.operation,
+    message: presentation.message,
+    retryable: false,
+    cause: failure,
+  })
+}
 
 export const loadConfig = (
   embedded: EmbeddedBuildMetadata | undefined = embeddedBuildMetadata,
 ): Effect.Effect<LoadedRuntimeConfig, OperationalError> =>
   runtimeConfig.pipe(
     Effect.mapError((cause) => operationalError('config', 'load', 'invalid runtime configuration', cause)),
-    Effect.flatMap((config) =>
-      Effect.try({
-        try: () => ({
-          ...config,
-          clickhouse: {
-            ...config.clickhouse,
-            bounds: Schema.decodeUnknownSync(EvaluationBoundsSchema)(config.clickhouse.bounds),
-          },
-        }),
-        catch: (cause) => operationalError('config', 'load', 'invalid Signal evaluation bounds', cause),
-      }),
-    ),
-    Effect.flatMap((config) =>
-      config.cyclePollIntervalMs < config.cycleStallThresholdMs
-        ? Effect.succeed(config)
-        : Effect.fail(
-            operationalError(
-              'config',
-              'cycle-loop',
-              'cycle poll interval must be shorter than the cycle stall threshold',
-            ),
-          ),
-    ),
-    Effect.flatMap((config) => {
-      const credentials = Option.all({
-        accountId: config.configuredAlpaca.accountId,
-        key: config.configuredAlpaca.key,
-        secret: config.configuredAlpaca.secret,
-      })
-      const anyCredential =
-        Option.isSome(config.configuredAlpaca.accountId) ||
-        Option.isSome(config.configuredAlpaca.key) ||
-        Option.isSome(config.configuredAlpaca.secret)
-      if (anyCredential && Option.isNone(credentials)) {
-        return Effect.fail(
-          operationalError('config', 'alpaca', 'Alpaca account ID, key ID, and secret key must be configured together'),
-        )
-      }
-      if (Option.isSome(credentials) && Option.isNone(config.authorityGenerationHash)) {
-        return Effect.fail(
-          operationalError(
-            'config',
-            'authority-generation',
-            'Alpaca account binding requires an authority generation hash',
-          ),
-        )
-      }
-      const alpaca = Option.map(
-        Option.all({ credentials, authorityGenerationHash: config.authorityGenerationHash }),
-        ({ credentials: value, authorityGenerationHash }) => ({
-          ...value,
-          authorityGenerationHash,
-          proxyUrl: config.configuredAlpaca.proxyUrl,
-          retryAttempts: config.configuredAlpaca.retryAttempts,
-          reconciliationIntervalMs: config.configuredAlpaca.reconciliationIntervalMs,
-        }),
-      )
-      if (config.maximumAuthority === Authority.Paper && Option.isNone(alpaca)) {
-        return Effect.fail(
-          operationalError('config', 'alpaca', 'PAPER maximum authority requires a complete Alpaca account binding'),
-        )
-      }
-      const commandConfigured = Option.isSome(config.configuredPaperProofCommand)
-      const phaseConfigured = Option.isSome(config.configuredPaperProofPhase)
-      if (commandConfigured !== phaseConfigured) {
-        return Effect.fail(
-          operationalError(
-            'config',
-            'paper-command',
-            'BAYN_PAPER_COMMAND and BAYN_PAPER_PREPARE_PHASE must be configured together',
-          ),
-        )
-      }
-      if (commandConfigured) {
-        if (config.maximumAuthority !== Authority.Observe) {
-          return Effect.fail(
-            operationalError('config', 'paper-command', 'PREPARE DISCOVER requires OBSERVE maximum authority'),
-          )
-        }
-        if (config.qualificationRunId === undefined) {
-          return Effect.fail(
-            operationalError(
-              'config',
-              'paper-command',
-              'PREPARE DISCOVER requires a pinned terminal qualification run',
-            ),
-          )
-        }
-        if (Option.isNone(alpaca)) {
-          return Effect.fail(
-            operationalError('config', 'paper-command', 'PREPARE DISCOVER requires a complete Alpaca read binding'),
-          )
-        }
-      }
-      const paperProofCommand =
-        Option.isSome(config.configuredPaperProofCommand) && Option.isSome(config.configuredPaperProofPhase)
-          ? {
-              command: config.configuredPaperProofCommand.value,
-              phase: config.configuredPaperProofPhase.value,
-            }
-          : undefined
-      const {
-        configuredAlpaca: _configuredAlpaca,
-        authorityGenerationHash: _authorityGenerationHash,
-        configuredPaperProofCommand: _configuredPaperProofCommand,
-        configuredPaperProofPhase: _configuredPaperProofPhase,
-        ...runtime
-      } = config
-      return Effect.succeed({
-        ...runtime,
-        ...(paperProofCommand === undefined ? {} : { paperProofCommand }),
-        ...(Option.isSome(alpaca) ? { alpaca: alpaca.value } : {}),
-      })
-    }),
-    Effect.flatMap((config) =>
-      Effect.try({
-        try: (): LoadedRuntimeConfig => {
-          if (embedded === undefined && config.provenanceMode !== 'development') {
-            throw new Error('production provenance requires compile-time build metadata')
-          }
-          if (embedded !== undefined && config.provenanceMode !== 'production') {
-            throw new Error('development provenance cannot override embedded production metadata')
-          }
-          if (embedded !== undefined && !config.postgres.tls) {
-            throw new Error('production PostgreSQL connections require verified TLS')
-          }
-          const decodedBuild =
-            embedded === undefined
-              ? {
-                  sourceRevision: config.configuredBuild.sourceRevision,
-                  imageRepository: config.configuredBuild.imageRepository,
-                  strategyBehaviorHash: config.configuredBuild.strategyBehaviorHash,
-                  strategyParameterHash: config.configuredBuild.strategyParameterHash,
-                }
-              : decodeEmbeddedBuildMetadata(embedded)
-          if (embedded !== undefined) {
-            if (config.configuredBuild.sourceRevision !== decodedBuild.sourceRevision) {
-              throw new Error(
-                `configured source revision ${config.configuredBuild.sourceRevision} does not match embedded revision ${decodedBuild.sourceRevision}`,
-              )
-            }
-            if (config.configuredBuild.imageRepository !== decodedBuild.imageRepository) {
-              throw new Error(
-                `configured image repository ${config.configuredBuild.imageRepository} does not match embedded repository ${decodedBuild.imageRepository}`,
-              )
-            }
-            if (config.configuredBuild.strategyBehaviorHash !== decodedBuild.strategyBehaviorHash) {
-              throw new Error('configured strategy behavior hash does not match embedded build metadata')
-            }
-            if (config.configuredBuild.strategyParameterHash !== decodedBuild.strategyParameterHash) {
-              throw new Error('configured strategy parameter hash does not match embedded build metadata')
-            }
-          }
-          const { configuredBuild, provenanceMode, ...runtime } = config
-          return {
-            ...runtime,
-            clickhouse: runtime.clickhouse,
-            build: {
-              ...decodedBuild,
-              imageDigest: configuredBuild.imageDigest,
-              verification: provenanceMode === 'production' ? 'embedded' : 'development-configured',
-            },
-          }
-        },
-        catch: (cause) => operationalError('config', 'provenance', 'invalid build provenance', cause),
-      }),
+    Effect.flatMap((parsed) =>
+      Effect.fromResult(resolveRuntimeConfig({ parsed, embeddedBuildMetadata: embedded })).pipe(
+        Effect.mapError(resolutionFailureToOperationalError),
+      ),
     ),
   )

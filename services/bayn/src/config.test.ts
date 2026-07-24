@@ -1,9 +1,15 @@
 import { describe, expect, test } from 'bun:test'
 
-import { ConfigProvider, Effect, Redacted } from 'effect'
+import { ConfigProvider, Effect, Redacted, Result } from 'effect'
 
 import type { EmbeddedBuildMetadata } from './build'
-import { loadConfig } from './config'
+import {
+  loadConfig,
+  resolveRuntimeConfig,
+  type ParsedRuntimeConfig,
+  type RuntimeConfigResolutionFailure,
+  type RuntimeConfigResolutionInput,
+} from './config'
 import { Authority } from './paper'
 
 const sourceRevision = 'a'.repeat(40)
@@ -16,6 +22,85 @@ const buildMetadata: EmbeddedBuildMetadata = {
   strategyBehaviorHash: 'c'.repeat(64),
   strategyParameterHash: 'f'.repeat(64),
 }
+const qualificationRunId = 'e'.repeat(64)
+const alpacaAccountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
+const alpacaKey = 'paper-key-must-remain-redacted'
+const alpacaSecret = 'paper-secret-must-remain-redacted'
+const clickhousePassword = 'clickhouse-password-must-remain-redacted'
+const postgresUrl = 'postgresql://bayn:postgres-secret-must-remain-redacted@postgres.test:5432/bayn'
+
+const baseParsedConfig: ParsedRuntimeConfig = {
+  host: '0.0.0.0',
+  port: 8080,
+  qualificationRunId: undefined,
+  configuredPaperProofCommand: undefined,
+  configuredPaperProofPhase: undefined,
+  maximumAuthority: Authority.Observe,
+  configuredBuild: {
+    ...buildMetadata,
+    imageDigest,
+  },
+  provenanceMode: 'production',
+  healthIntervalMs: 30_000,
+  operationTimeoutMs: 30_000,
+  cycleStallThresholdMs: 300_000,
+  reconciliationStaleThresholdMs: 120_000,
+  unknownMutationThresholdMs: 300_000,
+  cyclePollIntervalMs: 30_000,
+  authorityGenerationHash,
+  configuredAlpaca: {
+    accountId: undefined,
+    key: undefined,
+    secret: undefined,
+    proxyUrl: 'http://bayn-egress-proxy:3128',
+    retryAttempts: 2,
+    reconciliationIntervalMs: 30_000,
+  },
+  clickhouse: {
+    url: 'http://clickhouse.test:8123',
+    username: 'bayn',
+    password: Redacted.make(clickhousePassword),
+    snapshotId: 'd'.repeat(64),
+    publicationAsOf: '2026-07-17',
+    calendarVersion: 'alpaca-us-equity-calendar-v1',
+    bounds: {
+      schemaVersion: 'bayn.evaluation-bounds.v1',
+      dataStart: '2017-01-03',
+      dataEnd: '2026-07-17',
+      lookbackStart: '2017-01-03',
+      evaluationStart: '2018-01-03',
+      evaluationEnd: '2026-07-17',
+    },
+  },
+  postgres: {
+    url: Redacted.make(postgresUrl),
+    tls: true,
+    caPath: '/var/run/secrets/bayn/postgres/ca.crt',
+  },
+  tigerBeetle: {
+    clusterId: 2001n,
+    replicaAddresses: ['tigerbeetle.test:3000'],
+    ledger: 7001,
+  },
+}
+
+const completeAlpacaConfig: ParsedRuntimeConfig['configuredAlpaca'] = {
+  ...baseParsedConfig.configuredAlpaca,
+  accountId: alpacaAccountId,
+  key: Redacted.make(alpacaKey),
+  secret: Redacted.make(alpacaSecret),
+}
+
+const resolutionInput = (
+  overrides: Partial<ParsedRuntimeConfig> = {},
+  embedded: EmbeddedBuildMetadata | null = buildMetadata,
+): RuntimeConfigResolutionInput => ({
+  parsed: {
+    ...baseParsedConfig,
+    ...overrides,
+  },
+  embeddedBuildMetadata: embedded === null ? undefined : embedded,
+})
 
 const runtimeEnvironment = new Map([
   ['BAYN_CODE_REVISION', sourceRevision],
@@ -43,6 +128,664 @@ const provideEnvironment = <A, E>(effect: Effect.Effect<A, E>, environment: Map<
   effect.pipe(
     Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(Object.fromEntries(environment))),
   )
+
+const expectResolutionFailure = (
+  input: RuntimeConfigResolutionInput,
+  expected: RuntimeConfigResolutionFailure,
+): void => {
+  const result = resolveRuntimeConfig(input)
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result)) {
+    expect(result.failure).toEqual(expected)
+  }
+}
+
+describe('pure runtime configuration resolution', () => {
+  const validModes = [
+    {
+      name: 'production OBSERVE without an Alpaca binding',
+      input: resolutionInput({ authorityGenerationHash: undefined }),
+      expected: {
+        maximumAuthority: Authority.Observe,
+        verification: 'embedded',
+        hasAlpaca: false,
+        hasPaperProofCommand: false,
+      },
+    },
+    {
+      name: 'production OBSERVE with an Alpaca read binding',
+      input: resolutionInput({ configuredAlpaca: completeAlpacaConfig }),
+      expected: {
+        maximumAuthority: Authority.Observe,
+        verification: 'embedded',
+        hasAlpaca: true,
+        hasPaperProofCommand: false,
+      },
+    },
+    {
+      name: 'production OBSERVE PREPARE DISCOVER',
+      input: resolutionInput({
+        qualificationRunId,
+        configuredPaperProofCommand: 'PREPARE',
+        configuredPaperProofPhase: 'DISCOVER',
+        configuredAlpaca: completeAlpacaConfig,
+      }),
+      expected: {
+        maximumAuthority: Authority.Observe,
+        verification: 'embedded',
+        hasAlpaca: true,
+        hasPaperProofCommand: true,
+      },
+    },
+    {
+      name: 'production PAPER with a complete Alpaca binding',
+      input: resolutionInput({
+        maximumAuthority: Authority.Paper,
+        configuredAlpaca: completeAlpacaConfig,
+      }),
+      expected: {
+        maximumAuthority: Authority.Paper,
+        verification: 'embedded',
+        hasAlpaca: true,
+        hasPaperProofCommand: false,
+      },
+    },
+    {
+      name: 'development OBSERVE without an Alpaca binding',
+      input: resolutionInput(
+        {
+          provenanceMode: 'development',
+          authorityGenerationHash: undefined,
+          postgres: { ...baseParsedConfig.postgres, tls: false },
+        },
+        null,
+      ),
+      expected: {
+        maximumAuthority: Authority.Observe,
+        verification: 'development-configured',
+        hasAlpaca: false,
+        hasPaperProofCommand: false,
+      },
+    },
+    {
+      name: 'development OBSERVE with an Alpaca read binding',
+      input: resolutionInput(
+        {
+          provenanceMode: 'development',
+          configuredAlpaca: completeAlpacaConfig,
+        },
+        null,
+      ),
+      expected: {
+        maximumAuthority: Authority.Observe,
+        verification: 'development-configured',
+        hasAlpaca: true,
+        hasPaperProofCommand: false,
+      },
+    },
+    {
+      name: 'development OBSERVE PREPARE DISCOVER',
+      input: resolutionInput(
+        {
+          provenanceMode: 'development',
+          qualificationRunId,
+          configuredPaperProofCommand: 'PREPARE',
+          configuredPaperProofPhase: 'DISCOVER',
+          configuredAlpaca: completeAlpacaConfig,
+        },
+        null,
+      ),
+      expected: {
+        maximumAuthority: Authority.Observe,
+        verification: 'development-configured',
+        hasAlpaca: true,
+        hasPaperProofCommand: true,
+      },
+    },
+    {
+      name: 'development PAPER with a complete Alpaca binding',
+      input: resolutionInput(
+        {
+          provenanceMode: 'development',
+          maximumAuthority: Authority.Paper,
+          configuredAlpaca: completeAlpacaConfig,
+        },
+        null,
+      ),
+      expected: {
+        maximumAuthority: Authority.Paper,
+        verification: 'development-configured',
+        hasAlpaca: true,
+        hasPaperProofCommand: false,
+      },
+    },
+  ] as const
+
+  for (const mode of validModes) {
+    test(mode.name, () => {
+      const result = resolveRuntimeConfig(mode.input)
+
+      expect(Result.isSuccess(result)).toBe(true)
+      if (Result.isSuccess(result)) {
+        expect({
+          maximumAuthority: result.success.maximumAuthority,
+          verification: result.success.build.verification,
+          hasAlpaca: result.success.alpaca !== undefined,
+          hasPaperProofCommand: result.success.paperProofCommand !== undefined,
+        }).toEqual(mode.expected)
+        expect(result.success.build.imageDigest).toBe(imageDigest)
+        expect(Redacted.isRedacted(result.success.clickhouse.password)).toBe(true)
+        expect(Redacted.isRedacted(result.success.postgres.url)).toBe(true)
+        if (result.success.alpaca !== undefined) {
+          expect(Redacted.isRedacted(result.success.alpaca.key)).toBe(true)
+          expect(Redacted.isRedacted(result.success.alpaca.secret)).toBe(true)
+        }
+      }
+    })
+  }
+
+  const partialCredentialCases = [
+    ['account ID only', true, false, false],
+    ['key ID only', false, true, false],
+    ['secret key only', false, false, true],
+    ['account ID and key ID', true, true, false],
+    ['account ID and secret key', true, false, true],
+    ['key ID and secret key', false, true, true],
+  ] as const
+
+  for (const [name, hasAccountId, hasKeyId, hasSecretKey] of partialCredentialCases) {
+    test(`rejects partial Alpaca credentials with ${name}`, () => {
+      const input = resolutionInput({
+        configuredAlpaca: {
+          ...baseParsedConfig.configuredAlpaca,
+          accountId: hasAccountId ? alpacaAccountId : undefined,
+          key: hasKeyId ? Redacted.make(alpacaKey) : undefined,
+          secret: hasSecretKey ? Redacted.make(alpacaSecret) : undefined,
+        },
+      })
+
+      expectResolutionFailure(input, {
+        _tag: 'IncompleteAlpacaCredentials',
+        configured: {
+          accountId: hasAccountId,
+          keyId: hasKeyId,
+          secretKey: hasSecretKey,
+        },
+      })
+    })
+  }
+
+  const relationalFailures = [
+    {
+      name: 'cycle poll interval equal to stall threshold',
+      input: resolutionInput({ cyclePollIntervalMs: 300_000 }),
+      expected: {
+        _tag: 'CyclePollIntervalNotShorterThanStallThreshold',
+        cyclePollIntervalMs: 300_000,
+        cycleStallThresholdMs: 300_000,
+      },
+    },
+    {
+      name: 'cycle poll interval greater than stall threshold',
+      input: resolutionInput({ cyclePollIntervalMs: 300_001 }),
+      expected: {
+        _tag: 'CyclePollIntervalNotShorterThanStallThreshold',
+        cyclePollIntervalMs: 300_001,
+        cycleStallThresholdMs: 300_000,
+      },
+    },
+    {
+      name: 'complete Alpaca credentials without an authority generation',
+      input: resolutionInput({
+        authorityGenerationHash: undefined,
+        configuredAlpaca: completeAlpacaConfig,
+      }),
+      expected: {
+        _tag: 'MissingAlpacaAuthorityGeneration',
+        accountId: alpacaAccountId,
+      },
+    },
+    {
+      name: 'PAPER without an Alpaca binding',
+      input: resolutionInput({ maximumAuthority: Authority.Paper }),
+      expected: {
+        _tag: 'PaperAuthorityRequiresAlpacaBinding',
+        maximumAuthority: Authority.Paper,
+      },
+    },
+    {
+      name: 'paper command without its phase',
+      input: resolutionInput({ configuredPaperProofCommand: 'PREPARE' }),
+      expected: {
+        _tag: 'IncompletePaperProofCommand',
+        commandConfigured: true,
+        phaseConfigured: false,
+      },
+    },
+    {
+      name: 'paper phase without its command',
+      input: resolutionInput({ configuredPaperProofPhase: 'DISCOVER' }),
+      expected: {
+        _tag: 'IncompletePaperProofCommand',
+        commandConfigured: false,
+        phaseConfigured: true,
+      },
+    },
+    {
+      name: 'PREPARE DISCOVER with PAPER authority',
+      input: resolutionInput({
+        maximumAuthority: Authority.Paper,
+        configuredAlpaca: completeAlpacaConfig,
+        configuredPaperProofCommand: 'PREPARE',
+        configuredPaperProofPhase: 'DISCOVER',
+      }),
+      expected: {
+        _tag: 'PaperProofCommandRequiresObserveAuthority',
+        maximumAuthority: Authority.Paper,
+      },
+    },
+    {
+      name: 'PREPARE DISCOVER without a qualification run',
+      input: resolutionInput({
+        configuredAlpaca: completeAlpacaConfig,
+        configuredPaperProofCommand: 'PREPARE',
+        configuredPaperProofPhase: 'DISCOVER',
+      }),
+      expected: {
+        _tag: 'PaperProofCommandRequiresQualificationRun',
+      },
+    },
+    {
+      name: 'PREPARE DISCOVER without an Alpaca read binding',
+      input: resolutionInput({
+        qualificationRunId,
+        configuredPaperProofCommand: 'PREPARE',
+        configuredPaperProofPhase: 'DISCOVER',
+      }),
+      expected: {
+        _tag: 'PaperProofCommandRequiresAlpacaBinding',
+      },
+    },
+    {
+      name: 'production provenance without embedded metadata',
+      input: resolutionInput({}, null),
+      expected: {
+        _tag: 'ProductionProvenanceRequiresEmbeddedMetadata',
+        provenanceMode: 'production',
+      },
+    },
+    {
+      name: 'development provenance with embedded metadata',
+      input: resolutionInput({ provenanceMode: 'development' }),
+      expected: {
+        _tag: 'EmbeddedMetadataRequiresProductionProvenance',
+        provenanceMode: 'development',
+      },
+    },
+    {
+      name: 'production PostgreSQL without TLS',
+      input: resolutionInput({
+        postgres: { ...baseParsedConfig.postgres, tls: false },
+      }),
+      expected: {
+        _tag: 'ProductionPostgresRequiresTls',
+        postgresTls: false,
+      },
+    },
+    {
+      name: 'configured source revision mismatch',
+      input: resolutionInput({
+        configuredBuild: {
+          ...baseParsedConfig.configuredBuild,
+          sourceRevision: 'd'.repeat(40),
+        },
+      }),
+      expected: {
+        _tag: 'SourceRevisionMismatch',
+        configuredSourceRevision: 'd'.repeat(40),
+        embeddedSourceRevision: sourceRevision,
+      },
+    },
+    {
+      name: 'configured image repository mismatch',
+      input: resolutionInput({
+        configuredBuild: {
+          ...baseParsedConfig.configuredBuild,
+          imageRepository: 'registry.example.invalid/bayn',
+        },
+      }),
+      expected: {
+        _tag: 'ImageRepositoryMismatch',
+        configuredImageRepository: 'registry.example.invalid/bayn',
+        embeddedImageRepository: imageRepository,
+      },
+    },
+    {
+      name: 'configured strategy behavior hash mismatch',
+      input: resolutionInput({
+        configuredBuild: {
+          ...baseParsedConfig.configuredBuild,
+          strategyBehaviorHash: 'd'.repeat(64),
+        },
+      }),
+      expected: {
+        _tag: 'StrategyBehaviorHashMismatch',
+        configuredStrategyBehaviorHash: 'd'.repeat(64),
+        embeddedStrategyBehaviorHash: buildMetadata.strategyBehaviorHash,
+      },
+    },
+    {
+      name: 'configured strategy parameter hash mismatch',
+      input: resolutionInput({
+        configuredBuild: {
+          ...baseParsedConfig.configuredBuild,
+          strategyParameterHash: 'e'.repeat(64),
+        },
+      }),
+      expected: {
+        _tag: 'StrategyParameterHashMismatch',
+        configuredStrategyParameterHash: 'e'.repeat(64),
+        embeddedStrategyParameterHash: buildMetadata.strategyParameterHash,
+      },
+    },
+  ] as const satisfies ReadonlyArray<{
+    readonly name: string
+    readonly input: RuntimeConfigResolutionInput
+    readonly expected: RuntimeConfigResolutionFailure
+  }>
+
+  for (const invalid of relationalFailures) {
+    test(`rejects ${invalid.name}`, () => {
+      expectResolutionFailure(invalid.input, invalid.expected)
+    })
+  }
+
+  const invalidBounds = [
+    {
+      name: 'data start after data end',
+      bounds: {
+        ...baseParsedConfig.clickhouse.bounds,
+        dataStart: '2026-07-18',
+        lookbackStart: '2026-07-18',
+        evaluationStart: '2026-07-18',
+        evaluationEnd: '2026-07-18',
+      },
+      message: 'must not be after dataEnd\n  at ["dataStart"]\nmust not follow dataEnd\n  at ["evaluationEnd"]',
+    },
+    {
+      name: 'lookback start before data start',
+      bounds: {
+        ...baseParsedConfig.clickhouse.bounds,
+        dataStart: '2018-01-03',
+      },
+      message: 'must not precede dataStart\n  at ["lookbackStart"]',
+    },
+    {
+      name: 'evaluation start before lookback start',
+      bounds: {
+        ...baseParsedConfig.clickhouse.bounds,
+        lookbackStart: '2019-01-03',
+      },
+      message: 'must not precede lookbackStart\n  at ["evaluationStart"]',
+    },
+    {
+      name: 'evaluation end before evaluation start',
+      bounds: {
+        ...baseParsedConfig.clickhouse.bounds,
+        evaluationStart: '2025-01-03',
+        evaluationEnd: '2024-01-03',
+      },
+      message: 'must not precede evaluationStart\n  at ["evaluationEnd"]',
+    },
+    {
+      name: 'evaluation end after data end',
+      bounds: {
+        ...baseParsedConfig.clickhouse.bounds,
+        dataEnd: '2025-01-03',
+      },
+      message: 'must not follow dataEnd\n  at ["evaluationEnd"]',
+    },
+  ] as const
+
+  for (const invalid of invalidBounds) {
+    test(`preserves the structured Schema cause for ${invalid.name}`, () => {
+      const result = resolveRuntimeConfig(
+        resolutionInput({
+          clickhouse: {
+            ...baseParsedConfig.clickhouse,
+            bounds: invalid.bounds,
+          },
+        }),
+      )
+
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure._tag).toBe('InvalidEvaluationBounds')
+        if (result.failure._tag === 'InvalidEvaluationBounds') {
+          expect(result.failure.cause._tag).toBe('SchemaError')
+          expect(result.failure.cause.issue._tag).toBe('Composite')
+          expect(result.failure.cause.message).toBe(invalid.message)
+        }
+      }
+    })
+  }
+
+  test('preserves the structured Schema cause for malformed embedded metadata', () => {
+    const result = resolveRuntimeConfig(resolutionInput({}, { ...buildMetadata, sourceRevision: 'incomplete' }))
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure._tag).toBe('InvalidEmbeddedBuildMetadata')
+      if (result.failure._tag === 'InvalidEmbeddedBuildMetadata') {
+        expect(result.failure.cause._tag).toBe('SchemaError')
+        expect(result.failure.cause.issue._tag).toBe('Composite')
+        expect(result.failure.cause.message).toBe(
+          'Expected a string matching the RegExp ^[a-f0-9]{40}$, got "incomplete"\n  at ["sourceRevision"]',
+        )
+      }
+    }
+  })
+
+  const precedenceCases = [
+    {
+      name: 'evaluation bounds before cycle timing',
+      input: resolutionInput({
+        cyclePollIntervalMs: 300_000,
+        clickhouse: {
+          ...baseParsedConfig.clickhouse,
+          bounds: {
+            ...baseParsedConfig.clickhouse.bounds,
+            evaluationStart: '2026-07-18',
+          },
+        },
+      }),
+      expectedTag: 'InvalidEvaluationBounds',
+    },
+    {
+      name: 'cycle timing before Alpaca credential completeness',
+      input: resolutionInput({
+        cyclePollIntervalMs: 300_000,
+        configuredAlpaca: {
+          ...baseParsedConfig.configuredAlpaca,
+          key: Redacted.make(alpacaKey),
+        },
+      }),
+      expectedTag: 'CyclePollIntervalNotShorterThanStallThreshold',
+    },
+    {
+      name: 'credential completeness before authority generation',
+      input: resolutionInput({
+        maximumAuthority: Authority.Paper,
+        authorityGenerationHash: undefined,
+        configuredAlpaca: {
+          ...baseParsedConfig.configuredAlpaca,
+          key: Redacted.make(alpacaKey),
+        },
+      }),
+      expectedTag: 'IncompleteAlpacaCredentials',
+    },
+    {
+      name: 'authority generation before PAPER binding',
+      input: resolutionInput({
+        maximumAuthority: Authority.Paper,
+        authorityGenerationHash: undefined,
+        configuredAlpaca: completeAlpacaConfig,
+      }),
+      expectedTag: 'MissingAlpacaAuthorityGeneration',
+    },
+    {
+      name: 'PAPER binding before paper command completeness',
+      input: resolutionInput({
+        maximumAuthority: Authority.Paper,
+        configuredPaperProofCommand: 'PREPARE',
+      }),
+      expectedTag: 'PaperAuthorityRequiresAlpacaBinding',
+    },
+    {
+      name: 'paper command completeness before provenance',
+      input: resolutionInput({
+        configuredPaperProofCommand: 'PREPARE',
+        provenanceMode: 'development',
+      }),
+      expectedTag: 'IncompletePaperProofCommand',
+    },
+    {
+      name: 'paper command authority before qualification pin',
+      input: resolutionInput({
+        maximumAuthority: Authority.Paper,
+        configuredAlpaca: completeAlpacaConfig,
+        configuredPaperProofCommand: 'PREPARE',
+        configuredPaperProofPhase: 'DISCOVER',
+      }),
+      expectedTag: 'PaperProofCommandRequiresObserveAuthority',
+    },
+    {
+      name: 'qualification pin before Alpaca read binding',
+      input: resolutionInput({
+        configuredPaperProofCommand: 'PREPARE',
+        configuredPaperProofPhase: 'DISCOVER',
+      }),
+      expectedTag: 'PaperProofCommandRequiresQualificationRun',
+    },
+    {
+      name: 'Alpaca read binding before provenance',
+      input: resolutionInput({
+        qualificationRunId,
+        configuredPaperProofCommand: 'PREPARE',
+        configuredPaperProofPhase: 'DISCOVER',
+        provenanceMode: 'development',
+      }),
+      expectedTag: 'PaperProofCommandRequiresAlpacaBinding',
+    },
+    {
+      name: 'missing embedded metadata before PostgreSQL TLS',
+      input: resolutionInput(
+        {
+          postgres: { ...baseParsedConfig.postgres, tls: false },
+        },
+        null,
+      ),
+      expectedTag: 'ProductionProvenanceRequiresEmbeddedMetadata',
+    },
+    {
+      name: 'provenance mode before PostgreSQL TLS',
+      input: resolutionInput({
+        provenanceMode: 'development',
+        postgres: { ...baseParsedConfig.postgres, tls: false },
+      }),
+      expectedTag: 'EmbeddedMetadataRequiresProductionProvenance',
+    },
+    {
+      name: 'PostgreSQL TLS before embedded metadata decoding',
+      input: resolutionInput(
+        {
+          postgres: { ...baseParsedConfig.postgres, tls: false },
+        },
+        { ...buildMetadata, sourceRevision: 'incomplete' },
+      ),
+      expectedTag: 'ProductionPostgresRequiresTls',
+    },
+    {
+      name: 'embedded metadata decoding before provenance mismatches',
+      input: resolutionInput(
+        {
+          configuredBuild: {
+            ...baseParsedConfig.configuredBuild,
+            sourceRevision: 'd'.repeat(40),
+          },
+        },
+        { ...buildMetadata, sourceRevision: 'incomplete' },
+      ),
+      expectedTag: 'InvalidEmbeddedBuildMetadata',
+    },
+    {
+      name: 'source revision before image repository',
+      input: resolutionInput({
+        configuredBuild: {
+          ...baseParsedConfig.configuredBuild,
+          sourceRevision: 'd'.repeat(40),
+          imageRepository: 'registry.example.invalid/bayn',
+        },
+      }),
+      expectedTag: 'SourceRevisionMismatch',
+    },
+    {
+      name: 'image repository before strategy behavior hash',
+      input: resolutionInput({
+        configuredBuild: {
+          ...baseParsedConfig.configuredBuild,
+          imageRepository: 'registry.example.invalid/bayn',
+          strategyBehaviorHash: 'd'.repeat(64),
+        },
+      }),
+      expectedTag: 'ImageRepositoryMismatch',
+    },
+    {
+      name: 'strategy behavior hash before strategy parameter hash',
+      input: resolutionInput({
+        configuredBuild: {
+          ...baseParsedConfig.configuredBuild,
+          strategyBehaviorHash: 'd'.repeat(64),
+          strategyParameterHash: 'e'.repeat(64),
+        },
+      }),
+      expectedTag: 'StrategyBehaviorHashMismatch',
+    },
+  ] as const satisfies ReadonlyArray<{
+    readonly name: string
+    readonly input: RuntimeConfigResolutionInput
+    readonly expectedTag: RuntimeConfigResolutionFailure['_tag']
+  }>
+
+  for (const precedence of precedenceCases) {
+    test(`preserves precedence: ${precedence.name}`, () => {
+      const result = resolveRuntimeConfig(precedence.input)
+
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure._tag).toBe(precedence.expectedTag)
+      }
+    })
+  }
+
+  test('does not render any configured secret in a failure', () => {
+    const result = resolveRuntimeConfig(
+      resolutionInput({
+        configuredAlpaca: {
+          ...baseParsedConfig.configuredAlpaca,
+          key: Redacted.make(alpacaKey),
+          secret: Redacted.make(alpacaSecret),
+        },
+      }),
+    )
+    const rendered = JSON.stringify(result)
+
+    expect(Result.isFailure(result)).toBe(true)
+    for (const secret of [alpacaKey, alpacaSecret, clickhousePassword, postgresUrl]) {
+      expect(rendered).not.toContain(secret)
+    }
+  })
+})
 
 describe('Effect configuration', () => {
   test('loads runtime configuration with validated defaults', async () => {
@@ -218,14 +961,16 @@ describe('Effect configuration', () => {
       retryAttempts: 2,
       reconciliationIntervalMs: 30_000,
     })
-    if (config.alpaca === undefined) throw new Error('expected an Alpaca configuration')
-    expect(Redacted.isRedacted(config.alpaca.key)).toBe(true)
-    expect(Redacted.isRedacted(config.alpaca.secret)).toBe(true)
+    expect(config.alpaca).toBeDefined()
+    if (config.alpaca !== undefined) {
+      expect(Redacted.isRedacted(config.alpaca.key)).toBe(true)
+      expect(Redacted.isRedacted(config.alpaca.secret)).toBe(true)
+    }
   })
 
   test('rejects a partial Alpaca credential binding instead of silently staying dormant', async () => {
     const partial = new Map(runtimeEnvironment)
-    partial.set('BAYN_ALPACA_KEY_ID', 'paper-key')
+    partial.set('BAYN_ALPACA_KEY_ID', alpacaKey)
 
     const error = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), partial)))
 
@@ -233,7 +978,18 @@ describe('Effect configuration', () => {
       _tag: 'OperationalError',
       component: 'config',
       operation: 'alpaca',
+      message: 'Alpaca account ID, key ID, and secret key must be configured together',
+      cause: {
+        _tag: 'IncompleteAlpacaCredentials',
+        configured: {
+          accountId: false,
+          keyId: true,
+          secretKey: false,
+        },
+      },
     })
+    expect(JSON.stringify(error)).not.toContain(alpacaKey)
+    expect(String(error)).not.toContain(alpacaKey)
   })
 
   test('requires a complete Alpaca binding for PAPER while allowing credential-free OBSERVE', async () => {
@@ -376,6 +1132,17 @@ describe('Effect configuration', () => {
       _tag: 'OperationalError',
       component: 'config',
       operation: 'load',
+      message: 'invalid Signal evaluation bounds: must not precede evaluationStart\n  at ["evaluationEnd"]',
+      cause: {
+        _tag: 'InvalidEvaluationBounds',
+        cause: {
+          _tag: 'SchemaError',
+          message: 'must not precede evaluationStart\n  at ["evaluationEnd"]',
+          issue: {
+            _tag: 'Composite',
+          },
+        },
+      },
     })
   })
 
