@@ -9,7 +9,7 @@ import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, 
 import authorityBoundIntents from '../../migrations/0016_authority_bound_intents'
 import stablePaperAuthorityGeneration from '../../migrations/0017_stable_paper_authority_generation'
 import type { RuntimeConfig } from '../config'
-import { makeStrategyProtocolHash } from '../contracts'
+import { makeStrategyProtocolHash, type RuntimeProvenance } from '../contracts'
 import { IntentStore, IntentStoreLive, planPaperIntent, type IntentPlan } from '../execution/intents'
 import { MutationEventType, MutationStore, MutationStoreLive, mutationId } from '../execution/mutations'
 import {
@@ -4235,6 +4235,313 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       })
     }
     expect(Option.isNone(result.missing)).toBe(true)
+  })
+
+  test('returns missing recovery None before inspecting runtime provenance', async () => {
+    const hostileProvenance = new Proxy({} as RuntimeProvenance, {
+      get: () => {
+        throw new Error('missing recovery must not inspect provenance')
+      },
+    })
+    const recovered = await runtime.runPromise(
+      Effect.flatMap(EvidenceStore, (store) => store.recover('f'.repeat(64), hostileProvenance)),
+    )
+
+    expect(Option.isNone(recovered)).toBe(true)
+  })
+
+  test('rejects an invalid stored graph before looking up its corrupt snapshot', async () => {
+    const input = makeInput()
+    const failure = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const sql = yield* PgClient.PgClient
+        yield* store.persist(input)
+        yield* sql`ALTER TABLE evaluation_runs DISABLE TRIGGER evaluation_runs_completion_only`
+        yield* sql`
+          UPDATE evaluation_runs
+          SET expected_artifact_count = expected_artifact_count + 1
+          WHERE run_id = ${input.evaluation.runId}
+        `
+        yield* sql`ALTER TABLE evaluation_runs ENABLE TRIGGER evaluation_runs_completion_only`
+        yield* sql`ALTER TABLE snapshot_references DISABLE TRIGGER snapshot_references_append_only`
+        yield* sql`
+          UPDATE snapshot_references
+          SET manifest = ${sql.json({})}
+          WHERE snapshot_id = ${input.evaluation.inputManifest.finalizedSnapshot.snapshotId}
+        `
+        yield* sql`ALTER TABLE snapshot_references ENABLE TRIGGER snapshot_references_append_only`
+        return yield* store.recover(input.evaluation.runId, input.provenance).pipe(Effect.flip)
+      }),
+    )
+
+    expect(failure).toBeInstanceOf(DatabaseError)
+    expect(failure).toMatchObject({
+      failure: 'invariant',
+      operation: 'recover-evidence',
+      cause: {
+        _tag: 'RecoveryMismatch',
+        stage: 'stored-graph',
+        path: ['artifacts', 'count'],
+        observed: { loadedCount: 17, receiptCount: 17 },
+        expected: { loadedCount: 18, receiptCount: 18 },
+      },
+    })
+  })
+
+  test('maps one concrete pure recovery issue to the public DatabaseError boundary', async () => {
+    const input = makeInput()
+    const failure = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const sql = yield* PgClient.PgClient
+        yield* store.persist(input)
+        yield* sql`ALTER TABLE evaluation_artifacts DISABLE TRIGGER evaluation_artifacts_append_only`
+        yield* sql`
+          UPDATE evaluation_artifacts
+          SET schema_version = 'bayn.performance-metrics.v1'
+          WHERE run_id = ${input.evaluation.runId} AND artifact_name = 'strategy'
+        `
+        yield* sql`ALTER TABLE evaluation_artifacts ENABLE TRIGGER evaluation_artifacts_append_only`
+        return yield* store.recover(input.evaluation.runId, input.provenance).pipe(Effect.flip)
+      }),
+    )
+
+    expect(failure).toBeInstanceOf(DatabaseError)
+    expect(failure).toMatchObject({
+      failure: 'invariant',
+      operation: 'recover-evidence',
+      cause: {
+        _tag: 'ArtifactSetFailure',
+        problem: {
+          _tag: 'WrongArtifactSchema',
+          name: 'strategy',
+          observedSchemaVersion: 'bayn.performance-metrics.v1',
+          expectedSchemaVersion: 'bayn.performance-metrics.v2',
+        },
+      },
+    })
+  })
+
+  test('rejects coherently rehashed reconciliation counts at the public recovery boundary', async () => {
+    const input = makeInput()
+    const changedReconciliation = {
+      ...input.reconciliation,
+      accountCount: input.reconciliation.accountCount + 1,
+    }
+    const failure = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const sql = yield* PgClient.PgClient
+        yield* store.persist(input)
+        const stored = yield* store.read(input.evaluation.runId)
+        if (Option.isNone(stored)) return yield* Effect.die(new Error('persisted recovery fixture is missing'))
+        const manifestArtifact = stored.value.artifacts.find(
+          (artifact) => artifact.name === 'qualification-artifact-manifest',
+        )
+        if (manifestArtifact === undefined) {
+          return yield* Effect.die(new Error('persisted qualification artifact manifest is missing'))
+        }
+        const reconciliationHash = canonicalHashV1(changedReconciliation)
+        const manifest = structuredClone(manifestArtifact.payload) as {
+          readonly artifacts: readonly {
+            readonly name: string
+            readonly schemaVersion: string
+            readonly itemCount: number
+            readonly contentHash: string
+          }[]
+        }
+        const changedManifest = {
+          ...manifest,
+          artifacts: manifest.artifacts.map((artifact) =>
+            artifact.name === 'reconciliation' ? { ...artifact, contentHash: reconciliationHash } : artifact,
+          ),
+        }
+        const manifestHash = canonicalHashV1(changedManifest)
+
+        yield* sql`ALTER TABLE evaluation_artifacts DISABLE TRIGGER evaluation_artifacts_append_only`
+        yield* sql`
+          UPDATE evaluation_artifacts
+          SET payload = ${sql.json(changedReconciliation)}, content_hash = ${reconciliationHash}
+          WHERE run_id = ${input.evaluation.runId} AND artifact_name = 'reconciliation'
+        `
+        yield* sql`
+          UPDATE evaluation_artifacts
+          SET payload = ${sql.json(changedManifest)}, content_hash = ${manifestHash}
+          WHERE run_id = ${input.evaluation.runId} AND artifact_name = 'qualification-artifact-manifest'
+        `
+        yield* sql`ALTER TABLE evaluation_artifacts ENABLE TRIGGER evaluation_artifacts_append_only`
+        return yield* store.recover(input.evaluation.runId, input.provenance).pipe(Effect.flip)
+      }),
+    )
+
+    expect(failure).toBeInstanceOf(DatabaseError)
+    expect(failure).toMatchObject({
+      failure: 'invariant',
+      operation: 'recover-evidence',
+      cause: {
+        _tag: 'RecoveryMismatch',
+        stage: 'reconciliation',
+        path: ['accountCount'],
+        observed: changedReconciliation.accountCount,
+        expected: input.reconciliation.accountCount,
+      },
+    })
+  })
+
+  test('retains structured reconciliation issues at the recovery failure boundary', async () => {
+    const input = makeInput()
+    const firstCashChange = input.evaluation.simulation.cashChanges[0]
+    assert(firstCashChange !== undefined)
+    const failure = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const sql = yield* PgClient.PgClient
+        yield* store.persist(input)
+        const stored = yield* store.read(input.evaluation.runId)
+        if (Option.isNone(stored)) return yield* Effect.die(new Error('persisted recovery fixture is missing'))
+        const manifestArtifact = stored.value.artifacts.find(
+          (artifact) => artifact.name === 'qualification-artifact-manifest',
+        )
+        if (manifestArtifact === undefined) {
+          return yield* Effect.die(new Error('persisted qualification artifact manifest is missing'))
+        }
+        const cashPayload = {
+          schemaVersion: 'bayn.cash-changes.v2' as const,
+          items: input.evaluation.simulation.cashChanges.map((change, index) =>
+            index === 0 ? { ...change, amountMicros: (BigInt(change.amountMicros) + 1n).toString() } : change,
+          ),
+        }
+        const cashHash = canonicalHashV1(cashPayload)
+        const manifest = structuredClone(manifestArtifact.payload) as {
+          readonly artifacts: readonly {
+            readonly name: string
+            readonly schemaVersion: string
+            readonly itemCount: number
+            readonly contentHash: string
+          }[]
+        }
+        const manifestPayload = {
+          ...manifest,
+          artifacts: manifest.artifacts.map((artifact) =>
+            artifact.name === 'cash-changes' ? { ...artifact, contentHash: cashHash } : artifact,
+          ),
+        }
+        const manifestHash = canonicalHashV1(manifestPayload)
+
+        yield* sql`ALTER TABLE evaluation_artifacts DISABLE TRIGGER evaluation_artifacts_append_only`
+        yield* sql`
+          UPDATE evaluation_artifacts
+          SET payload = ${sql.json(cashPayload)}, content_hash = ${cashHash}
+          WHERE run_id = ${input.evaluation.runId} AND artifact_name = 'cash-changes'
+        `
+        yield* sql`
+          UPDATE evaluation_artifacts
+          SET payload = ${sql.json(manifestPayload)}, content_hash = ${manifestHash}
+          WHERE run_id = ${input.evaluation.runId} AND artifact_name = 'qualification-artifact-manifest'
+        `
+        yield* sql`ALTER TABLE evaluation_artifacts ENABLE TRIGGER evaluation_artifacts_append_only`
+        return yield* store.recover(input.evaluation.runId, input.provenance).pipe(Effect.flip)
+      }),
+    )
+
+    expect(failure).toBeInstanceOf(DatabaseError)
+    expect(failure).toMatchObject({
+      failure: 'invariant',
+      operation: 'recover-evidence',
+      cause: [
+        {
+          _tag: 'EvidenceMismatch',
+          problem: {
+            _tag: 'CashChange',
+            cashChangeId: firstCashChange.id,
+            sourceId: firstCashChange.sourceId,
+            field: 'amountMicros',
+            actual: (BigInt(firstCashChange.amountMicros) + 1n).toString(),
+            expected: firstCashChange.amountMicros,
+          },
+        },
+      ],
+    })
+  })
+
+  test('recovers through SELECT-only PostgreSQL access without changing the evidence graph', async () => {
+    const input = makeInput()
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const sql = yield* PgClient.PgClient
+        yield* store.persist(input)
+        const graph = () => sql<{
+          artifacts: unknown
+          events: unknown
+          gates: unknown
+          protocol: unknown
+          runs: unknown
+          snapshot: unknown
+          statuses: unknown
+        }>`
+          SELECT
+            (
+              SELECT jsonb_agg(
+                to_jsonb(run) || jsonb_build_object('_xmin', run.xmin::text)
+                ORDER BY run.run_id
+              )
+              FROM evaluation_runs AS run
+              WHERE run.run_id = ${input.evaluation.runId}
+            ) AS runs,
+            (
+              SELECT jsonb_agg(
+                to_jsonb(artifact) || jsonb_build_object('_xmin', artifact.xmin::text)
+                ORDER BY artifact.artifact_name
+              )
+              FROM evaluation_artifacts AS artifact
+              WHERE artifact.run_id = ${input.evaluation.runId}
+            ) AS artifacts,
+            (
+              SELECT jsonb_agg(
+                to_jsonb(event) || jsonb_build_object('_xmin', event.xmin::text)
+                ORDER BY event.ordinal
+              )
+              FROM evaluation_events AS event
+              WHERE event.run_id = ${input.evaluation.runId}
+            ) AS events,
+            (
+              SELECT jsonb_agg(
+                to_jsonb(gate) || jsonb_build_object('_xmin', gate.xmin::text)
+                ORDER BY gate.ordinal
+              )
+              FROM gate_outcomes AS gate
+              WHERE gate.run_id = ${input.evaluation.runId}
+            ) AS gates,
+            (
+              SELECT jsonb_agg(
+                to_jsonb(status) || jsonb_build_object('_xmin', status.xmin::text)
+                ORDER BY status.sequence
+              )
+              FROM status_history AS status
+              WHERE status.run_id = ${input.evaluation.runId}
+            ) AS statuses,
+            (
+              SELECT jsonb_agg(to_jsonb(protocol) || jsonb_build_object('_xmin', protocol.xmin::text))
+              FROM protocol_locks AS protocol
+              WHERE protocol.protocol_hash = ${input.evaluation.protocolHash}
+            ) AS protocol,
+            (
+              SELECT jsonb_agg(to_jsonb(snapshot) || jsonb_build_object('_xmin', snapshot.xmin::text))
+              FROM snapshot_references AS snapshot
+              WHERE snapshot.snapshot_id = ${input.evaluation.inputManifest.finalizedSnapshot.snapshotId}
+            ) AS snapshot
+        `
+        const before = yield* graph()
+        const recovered = yield* store.recover(input.evaluation.runId, input.provenance)
+        const after = yield* graph()
+        return { after: after[0], before: before[0], recovered }
+      }),
+    )
+
+    expect(Option.isSome(result.recovered)).toBe(true)
+    expect(result.after).toEqual(result.before)
   })
 
   test('persists and recovers the complete risk-balanced trend v6 evidence contract', async () => {
