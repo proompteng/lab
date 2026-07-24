@@ -1,21 +1,65 @@
 import { createServer } from 'node:http'
 
-import { NodeHttpServer } from '@effect/platform-node'
-import { Effect, Layer, Option, Ref } from 'effect'
+import { NodeHttpServer, NodeHttpServerRequest } from '@effect/platform-node'
+import { Deferred, Effect, Layer, Option, Ref } from 'effect'
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
 
 import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
 import type { RuntimeProvenance } from './contracts'
 import { CycleOperationsCondition, CycleOperationsReason } from './cycle-observability'
 import { CycleState, CycleTerminalReason } from './cycle'
+import type { OperationalError } from './errors'
+import { databaseOperation, withinDeadline } from './operations'
 import { Authority } from './paper'
 import { isReady, type DependencyHealth, type RuntimeState } from './runtime-state'
 
 type ReadEvidence = (runId: string) => Effect.Effect<Option.Option<unknown>, { readonly message: string }>
 
+export type HttpResponseDecision =
+  | {
+      readonly _tag: 'Json'
+      readonly body: unknown
+      readonly status: number
+      readonly headers?: Readonly<Record<string, string>>
+    }
+  | {
+      readonly _tag: 'Text'
+      readonly body: string
+      readonly status: number
+      readonly contentType: string
+      readonly headers?: Readonly<Record<string, string>>
+    }
+
+export type HistoricalRunRequestDecision =
+  | { readonly _tag: 'ReadEvidence'; readonly runId: string }
+  | { readonly _tag: 'Respond'; readonly response: HttpResponseDecision }
+
+const jsonDecision = (
+  body: unknown,
+  status = 200,
+  headers?: Readonly<Record<string, string>>,
+): HttpResponseDecision => ({ _tag: 'Json', body, status, ...(headers === undefined ? {} : { headers }) })
+
+const textDecision = (
+  body: string,
+  contentType: string,
+  headers?: Readonly<Record<string, string>>,
+): HttpResponseDecision => ({
+  _tag: 'Text',
+  body,
+  status: 200,
+  contentType,
+  ...(headers === undefined ? {} : { headers }),
+})
+
 const verifiedState = (state: RuntimeState, dependency: DependencyHealth) => {
   if (state.evidence === null || dependency.status === 'UNKNOWN') return 'UNKNOWN'
   return dependency.status === 'AVAILABLE' ? 'CURRENT' : 'INVALID'
+}
+
+const accountingState = (state: RuntimeState) => {
+  if (state.evidence === null || state.health.dependencies.tigerBeetle.status === 'UNKNOWN') return 'UNKNOWN'
+  return state.health.dependencies.tigerBeetle.status === 'AVAILABLE' ? 'EXACT' : 'UNAVAILABLE'
 }
 
 const publicBrokerState = (state: RuntimeState) =>
@@ -49,18 +93,12 @@ const publicCycleState = (state: RuntimeState) =>
         observationAvailable: true,
       }
 
-const publicState = (
+export const statusFacts = (
   state: RuntimeState,
   maximumAuthority: Authority,
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
 ) => {
-  let accounting = 'UNKNOWN'
-  if (state.evidence !== null) {
-    if (state.health.dependencies.tigerBeetle.status === 'AVAILABLE') accounting = 'EXACT'
-    if (state.health.dependencies.tigerBeetle.status === 'UNAVAILABLE') accounting = 'UNAVAILABLE'
-  }
-
   return {
     service: 'bayn',
     operational: {
@@ -93,7 +131,7 @@ const publicState = (
       executionProvenance: state.evidence?.provenance ?? null,
     },
     accounting: {
-      status: accounting,
+      status: accountingState(state),
       reconciliation: state.evidence?.reconciliation ?? null,
     },
     cycle: publicCycleState(state),
@@ -134,8 +172,91 @@ const publicState = (
       verification: provenanceVerification,
     },
     error: state.error,
-  }
+  } as const
 }
+
+export const statusResponseDecision = (
+  state: RuntimeState,
+  maximumAuthority: Authority,
+  provenance: RuntimeProvenance,
+  provenanceVerification: RuntimeBuildMetadata['verification'],
+): HttpResponseDecision => jsonDecision(statusFacts(state, maximumAuthority, provenance, provenanceVerification))
+
+const appendFailure = (failures: readonly string[], name: string, failed: boolean): readonly string[] =>
+  failed && !failures.includes(name) ? [...failures, name] : failures
+
+export const readinessResponseDecision = (state: RuntimeState): HttpResponseDecision => {
+  const ready = isReady(state)
+  const dependencyFailures = Object.entries(state.health.dependencies)
+    .filter(([, dependency]) => dependency.status !== 'AVAILABLE')
+    .map(([name]) => name)
+  const brokerFailures = appendFailure(
+    dependencyFailures,
+    'broker',
+    state.broker !== null && (state.broker.accountBound !== true || state.broker.readAvailable !== true),
+  )
+  const cycleFailures = appendFailure(
+    brokerFailures,
+    'cycle',
+    state.cycle.condition === CycleOperationsCondition.Unknown ||
+      state.cycle.condition === CycleOperationsCondition.Stalled ||
+      state.cycle.condition === CycleOperationsCondition.Failed,
+  )
+  const failedDependencies = appendFailure(
+    cycleFailures,
+    'cycleRunner',
+    state.autonomousCycleLoop.lastPass?.result === 'FAILURE',
+  )
+  return jsonDecision(
+    {
+      ready,
+      status: state.status,
+      checkedAt: state.health.checkedAt,
+      probeSequence: state.health.sequence,
+      failedDependencies,
+    },
+    ready ? 200 : 503,
+  )
+}
+
+export const validateHistoricalRunRequest = (runId: string | undefined): HistoricalRunRequestDecision =>
+  runId !== undefined && /^[0-9a-f]{64}$/.test(runId)
+    ? { _tag: 'ReadEvidence', runId }
+    : { _tag: 'Respond', response: jsonDecision({ error: 'invalid_run_id' }, 400) }
+
+export const historicalEvidenceResponseDecision = (stored: Option.Option<unknown>): HttpResponseDecision =>
+  Option.match(stored, {
+    onNone: () => jsonDecision({ error: 'evaluation_not_found' }, 404),
+    onSome: (evidence) => jsonDecision(evidence),
+  })
+
+export const historicalReadFailureDecision = (runId: string, error: OperationalError) =>
+  ({
+    response: jsonDecision({ error: 'evidence_unavailable' }, 503),
+    log: {
+      message: 'Bayn historical evidence read failed',
+      cause: error,
+      annotations: {
+        service: 'bayn',
+        runId,
+        component: error.component,
+        operation: error.operation,
+        retryable: error.retryable,
+        error: error.message,
+      },
+    },
+  }) as const
+
+export const readHistoricalEvidence = <A, R>(
+  read: Effect.Effect<Option.Option<A>, { readonly message: string }, R>,
+  timeoutMs: number,
+): Effect.Effect<Option.Option<A>, OperationalError, R> =>
+  withinDeadline(databaseOperation(read, 'read-evidence'), timeoutMs, 'database', 'read-evidence')
+
+export const fallbackResponseDecision = (method: string): HttpResponseDecision =>
+  method === 'GET'
+    ? jsonDecision({ error: 'not_found' }, 404)
+    : jsonDecision({ error: 'method_not_allowed' }, 405, { allow: 'GET' })
 
 const prometheusLabel = (value: string): string =>
   value.replaceAll('\\', '\\\\').replaceAll('\n', '\\n').replaceAll('"', '\\"')
@@ -338,8 +459,63 @@ export const renderPrometheusMetrics = (
   return `${lines.join('\n')}\n`
 }
 
-const jsonResponse = (body: unknown, status = 200, headers?: Readonly<Record<string, string>>) =>
-  HttpServerResponse.json(body, { status, headers }).pipe(Effect.orDie)
+const interpretResponseDecision = (
+  decision: HttpResponseDecision,
+): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
+  decision._tag === 'Json'
+    ? HttpServerResponse.json(decision.body, {
+        status: decision.status,
+        headers: decision.headers,
+      }).pipe(Effect.orDie)
+    : Effect.succeed(
+        HttpServerResponse.text(decision.body, {
+          status: decision.status,
+          contentType: decision.contentType,
+          headers: decision.headers,
+        }),
+      )
+
+const interpretHistoricalReadFailure = (
+  runId: string,
+  error: OperationalError,
+): Effect.Effect<HttpServerResponse.HttpServerResponse> => {
+  const decision = historicalReadFailureDecision(runId, error)
+  return Effect.logError(decision.log.message, decision.log.cause).pipe(
+    Effect.annotateLogs(decision.log.annotations),
+    Effect.andThen(interpretResponseDecision(decision.response)),
+  )
+}
+
+const clientDisconnect = (request: HttpServerRequest.HttpServerRequest): Effect.Effect<never> => {
+  const incoming = NodeHttpServerRequest.toIncomingMessage(request)
+  const socket = incoming.socket
+  return Effect.scoped(
+    Deferred.make<void>().pipe(
+      Effect.flatMap((disconnected) => {
+        const onDisconnect = () => {
+          Deferred.doneUnsafe(disconnected, Effect.void)
+        }
+        return Effect.acquireRelease(
+          Effect.sync(() => {
+            incoming.once('aborted', onDisconnect)
+            socket.once('close', onDisconnect)
+            if (incoming.aborted || socket.destroyed) onDisconnect()
+          }),
+          () =>
+            Effect.sync(() => {
+              incoming.off('aborted', onDisconnect)
+              socket.off('close', onDisconnect)
+            }),
+        ).pipe(Effect.andThen(Deferred.await(disconnected)), Effect.andThen(Effect.interrupt))
+      }),
+    ),
+  )
+}
+
+const interruptOnClientDisconnect = <A, E, R>(
+  request: HttpServerRequest.HttpServerRequest,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> => Effect.raceFirst(effect, clientDisconnect(request)).pipe(Effect.interruptible)
 
 export const makeHttpLayer = (
   config: Pick<
@@ -357,83 +533,45 @@ export const makeHttpLayer = (
   provenanceVerification: RuntimeBuildMetadata['verification'],
   readEvidence: ReadEvidence,
 ): ReturnType<typeof NodeHttpServer.layer> => {
-  const ready = Ref.get(state).pipe(
-    Effect.flatMap((current) => {
-      const ready = isReady(current)
-      const failedDependencies = Object.entries(current.health.dependencies)
-        .filter(([, dependency]) => dependency.status !== 'AVAILABLE')
-        .map(([name]) => name)
-      if (current.broker !== null && (current.broker.accountBound !== true || current.broker.readAvailable !== true)) {
-        failedDependencies.push('broker')
-      }
-      if (
-        current.cycle.condition === CycleOperationsCondition.Unknown ||
-        current.cycle.condition === CycleOperationsCondition.Stalled ||
-        current.cycle.condition === CycleOperationsCondition.Failed
-      ) {
-        if (!failedDependencies.includes('cycle')) failedDependencies.push('cycle')
-      }
-      if (current.autonomousCycleLoop.lastPass?.result === 'FAILURE' && !failedDependencies.includes('cycleRunner')) {
-        failedDependencies.push('cycleRunner')
-      }
-      return jsonResponse(
-        {
-          ready,
-          status: current.status,
-          checkedAt: current.health.checkedAt,
-          probeSequence: current.health.sequence,
-          failedDependencies,
-        },
-        ready ? 200 : 503,
-      )
-    }),
-  )
+  const ready = Ref.get(state).pipe(Effect.map(readinessResponseDecision), Effect.flatMap(interpretResponseDecision))
   const status = Ref.get(state).pipe(
-    Effect.flatMap((current) =>
-      jsonResponse(publicState(current, config.maximumAuthority, provenance, provenanceVerification)),
+    Effect.map((current) =>
+      statusResponseDecision(current, config.maximumAuthority, provenance, provenanceVerification),
     ),
+    Effect.flatMap(interpretResponseDecision),
   )
   const metrics = Ref.get(state).pipe(
     Effect.map((current) =>
-      HttpServerResponse.text(renderPrometheusMetrics(current, config, provenance, provenanceVerification), {
-        contentType: 'text/plain; version=0.0.4; charset=utf-8',
-        headers: { 'cache-control': 'no-store' },
+      textDecision(
+        renderPrometheusMetrics(current, config, provenance, provenanceVerification),
+        'text/plain; version=0.0.4; charset=utf-8',
+        { 'cache-control': 'no-store' },
+      ),
+    ),
+    Effect.flatMap(interpretResponseDecision),
+  )
+  const historicalEvaluation = Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+    HttpRouter.params.pipe(
+      Effect.map(({ runId }) => validateHistoricalRunRequest(runId)),
+      Effect.flatMap((decision) => {
+        if (decision._tag === 'Respond') return interpretResponseDecision(decision.response)
+        return interruptOnClientDisconnect(
+          request,
+          readHistoricalEvidence(readEvidence(decision.runId), config.operationTimeoutMs),
+        ).pipe(
+          Effect.map(historicalEvidenceResponseDecision),
+          Effect.flatMap(interpretResponseDecision),
+          Effect.catch((error) => interpretHistoricalReadFailure(decision.runId, error)),
+        )
       }),
     ),
-  )
-  const historicalEvaluation = HttpRouter.params.pipe(
-    Effect.flatMap(({ runId }) => {
-      if (runId === undefined || !/^[0-9a-f]{64}$/.test(runId)) {
-        return jsonResponse({ error: 'invalid_run_id' }, 400)
-      }
-      return readEvidence(runId).pipe(
-        Effect.timeoutOrElse({
-          duration: config.operationTimeoutMs,
-          orElse: () => Effect.fail(new Error(`evidence read timed out after ${config.operationTimeoutMs}ms`)),
-        }),
-        Effect.flatMap((stored) =>
-          Option.match(stored, {
-            onNone: () => jsonResponse({ error: 'evaluation_not_found' }, 404),
-            onSome: (evidence) => jsonResponse(evidence),
-          }),
-        ),
-        Effect.catch((error) =>
-          Effect.logError('Bayn historical evidence read failed').pipe(
-            Effect.annotateLogs({ service: 'bayn', runId, error: error.message }),
-            Effect.andThen(jsonResponse({ error: 'evidence_unavailable' }, 503)),
-          ),
-        ),
-      )
-    }),
   )
   const fallback = (
     request: HttpServerRequest.HttpServerRequest,
   ): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
-    request.method === 'GET'
-      ? jsonResponse({ error: 'not_found' }, 404)
-      : jsonResponse({ error: 'method_not_allowed' }, 405, { allow: 'GET' })
+    interpretResponseDecision(fallbackResponseDecision(request.method))
   const routes = HttpRouter.addAll([
-    HttpRouter.route('GET', '/livez', jsonResponse({ service: 'bayn', live: true })),
+    HttpRouter.route('GET', '/livez', interpretResponseDecision(jsonDecision({ service: 'bayn', live: true }))),
     HttpRouter.route('GET', '/readyz', ready),
     HttpRouter.route('GET', '/metrics', metrics),
     HttpRouter.route('GET', '/v1/status', status),
