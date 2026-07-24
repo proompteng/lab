@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { Effect } from 'effect'
+import { ConfigProvider, Effect } from 'effect'
 
 import {
+  loadQualificationCandidateConfig,
+  makeCandidatePostgresSslOptions,
   QualificationCandidateError,
   verifyQualificationCandidate,
   type CandidateReplicaObservation,
@@ -17,6 +19,28 @@ const endpoints = [
 ] as const
 const snapshot = makeSnapshot(270)
 const publicationDate = snapshot.manifest.finalizedSnapshot.asOfSession
+
+const candidateEnvironment = (): Record<string, string> => ({
+  BAYN_CANDIDATE_SIGNAL_PUBLICATION_DATE: publicationDate,
+  BAYN_CANDIDATE_CLICKHOUSE_URLS: endpoints.map((endpoint) => endpoint.href).join(','),
+  BAYN_CANDIDATE_SIGNAL_PUBLISHER_USERNAME: publisherPrincipal,
+  BAYN_CANDIDATE_SIGNAL_PUBLISHER_PASSWORD: 'publisher-password',
+  BAYN_CANDIDATE_POSTGRES_URL: 'postgresql://bayn:password@127.0.0.1:5432/bayn',
+  BAYN_CANDIDATE_POSTGRES_TLS: 'true',
+  BAYN_CANDIDATE_POSTGRES_CA_PATH: '/tmp/bayn-ca.crt',
+  BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME: 'bayn-db-rw.bayn',
+  BAYN_CANDIDATE_TIGERBEETLE_CLUSTER_ID: '122731676035874920802382025803517750735',
+  BAYN_CANDIDATE_TIGERBEETLE_ADDRESSES:
+    'ledger-0.ledger-headless.bayn.svc.cluster.local:3000,ledger-1.ledger-headless.bayn.svc.cluster.local:3000',
+  BAYN_CANDIDATE_TIGERBEETLE_LEDGER: '7001',
+})
+
+const loadCandidateConfig = (environment: Record<string, string>) =>
+  Effect.runPromise(
+    loadQualificationCandidateConfig.pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(environment)),
+    ),
+  )
 
 const input = (overrides: Partial<QualificationCandidateInput> = {}): QualificationCandidateInput => ({
   publicationDate,
@@ -78,6 +102,178 @@ const failure = async (
   Effect.runPromise(Effect.flip(verifyQualificationCandidate(candidateInput, candidateReaders)))
 
 describe('qualification candidate command', () => {
+  test('requires a decoded PostgreSQL TLS server identity before candidate I/O', async () => {
+    const environment = candidateEnvironment()
+    delete environment.BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME
+
+    const error = await Effect.runPromise(
+      Effect.flip(
+        loadQualificationCandidateConfig.pipe(
+          Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(environment)),
+        ),
+      ),
+    )
+
+    expect(error).toBeInstanceOf(QualificationCandidateError)
+    expect(error).toMatchObject({
+      operation: 'config',
+      message: 'BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME is required when PostgreSQL TLS is enabled',
+    })
+  })
+
+  test.each([' ', '127.0.0.1', 'bayn-db-rw.bayn:5432', 'bayn_db_rw.bayn', '-bayn-db-rw.bayn'])(
+    'rejects invalid PostgreSQL TLS server identity %j',
+    async (serverName) => {
+      const environment = candidateEnvironment()
+      environment.BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME = serverName
+
+      const error = await Effect.runPromise(
+        Effect.flip(
+          loadQualificationCandidateConfig.pipe(
+            Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(environment)),
+          ),
+        ),
+      )
+
+      expect(String(error)).toContain('BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME')
+      expect(String(error)).toContain('non-empty DNS name')
+    },
+  )
+
+  test('allows missing PostgreSQL TLS identity only when TLS is disabled', async () => {
+    const environment = candidateEnvironment()
+    environment.BAYN_CANDIDATE_POSTGRES_TLS = 'false'
+    delete environment.BAYN_CANDIDATE_POSTGRES_CA_PATH
+    delete environment.BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME
+
+    const loaded = await loadCandidateConfig(environment)
+
+    expect(loaded.postgresTls).toBeUndefined()
+  })
+
+  test.each([
+    ['CA path only', { BAYN_CANDIDATE_POSTGRES_CA_PATH: '/tmp/bayn-ca.crt' }],
+    ['server identity only', { BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME: 'bayn-db-rw.bayn' }],
+    [
+      'CA path and server identity',
+      {
+        BAYN_CANDIDATE_POSTGRES_CA_PATH: '/tmp/bayn-ca.crt',
+        BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME: 'bayn-db-rw.bayn',
+      },
+    ],
+  ])('rejects TLS-disabled config with %s before I/O', async (_description, tlsEnvironment) => {
+    const environment = candidateEnvironment()
+    environment.BAYN_CANDIDATE_POSTGRES_TLS = 'false'
+    delete environment.BAYN_CANDIDATE_POSTGRES_CA_PATH
+    delete environment.BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME
+    Object.assign(environment, tlsEnvironment)
+
+    const error = await Effect.runPromise(
+      Effect.flip(
+        loadQualificationCandidateConfig.pipe(
+          Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(environment)),
+        ),
+      ),
+    )
+
+    expect(error).toBeInstanceOf(QualificationCandidateError)
+    expect(error).toMatchObject({
+      operation: 'config',
+      message:
+        'BAYN_CANDIDATE_POSTGRES_CA_PATH and BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME must be absent when PostgreSQL TLS is disabled',
+    })
+  })
+
+  test('rejects a connection-string TLS override even when configured TLS is disabled', async () => {
+    const environment = candidateEnvironment()
+    environment.BAYN_CANDIDATE_POSTGRES_TLS = 'false'
+    environment.BAYN_CANDIDATE_POSTGRES_URL = 'postgresql://bayn:password@127.0.0.1:5432/bayn?sslmode=no-verify'
+    delete environment.BAYN_CANDIDATE_POSTGRES_CA_PATH
+    delete environment.BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME
+
+    const error = await Effect.runPromise(
+      Effect.flip(
+        loadQualificationCandidateConfig.pipe(
+          Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(environment)),
+        ),
+      ),
+    )
+
+    expect(error).toBeInstanceOf(QualificationCandidateError)
+    expect(error).toMatchObject({
+      operation: 'config',
+      message: 'invalid BAYN_CANDIDATE_POSTGRES_URL',
+    })
+    expect(String(error.cause)).toContain('must not contain TLS or routing override parameter sslmode')
+  })
+
+  test('rejects a non-IP tunnel host that differs from the certificate identity before I/O', async () => {
+    const environment = candidateEnvironment()
+    environment.BAYN_CANDIDATE_POSTGRES_URL = 'postgresql://bayn:password@localhost:5432/bayn'
+
+    const error = await Effect.runPromise(
+      Effect.flip(
+        loadQualificationCandidateConfig.pipe(
+          Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(environment)),
+        ),
+      ),
+    )
+
+    expect(error).toBeInstanceOf(QualificationCandidateError)
+    expect(error).toMatchObject({
+      operation: 'config',
+      message: 'invalid BAYN_CANDIDATE_POSTGRES_URL',
+    })
+    expect(String(error.cause)).toContain('host must be an IP literal or exactly match')
+  })
+
+  test('accepts an IP-literal tunnel URL and resolves exact verified PostgreSQL TLS options', async () => {
+    const loaded = await loadCandidateConfig(candidateEnvironment())
+    if (loaded.postgresTls === undefined) throw new Error('TLS fixture must resolve PostgreSQL TLS options')
+
+    expect(loaded.postgresTls).toEqual({
+      caPath: '/tmp/bayn-ca.crt',
+      serverName: 'bayn-db-rw.bayn',
+    })
+    expect(makeCandidatePostgresSslOptions(loaded.postgresTls.serverName, 'test-ca')).toEqual({
+      ca: 'test-ca',
+      rejectUnauthorized: true,
+      servername: 'bayn-db-rw.bayn',
+    })
+  })
+
+  test('accepts a PostgreSQL DNS host exactly matching the certificate identity', async () => {
+    const environment = candidateEnvironment()
+    environment.BAYN_CANDIDATE_POSTGRES_URL = 'postgresql://bayn:password@bayn-db-rw.bayn:5432/bayn'
+
+    const loaded = await loadCandidateConfig(environment)
+
+    expect(loaded.postgresTls?.serverName).toBe('bayn-db-rw.bayn')
+  })
+
+  test.each(['sslmode=require', 'ssl=true', 'host=127.0.0.1'])(
+    'rejects PostgreSQL URL override query %s before I/O',
+    async (query) => {
+      const environment = candidateEnvironment()
+      environment.BAYN_CANDIDATE_POSTGRES_URL = `postgresql://bayn:password@127.0.0.1:5432/bayn?${query}`
+
+      const error = await Effect.runPromise(
+        Effect.flip(
+          loadQualificationCandidateConfig.pipe(
+            Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(environment)),
+          ),
+        ),
+      )
+
+      expect(error).toBeInstanceOf(QualificationCandidateError)
+      expect(error).toMatchObject({
+        operation: 'config',
+        message: 'invalid BAYN_CANDIDATE_POSTGRES_URL',
+      })
+      expect(String(error.cause)).toContain('must not contain TLS or routing override parameter')
+    },
+  )
+
   test('emits one deterministic complete runtime from direct physical hosts without topology metadata', async () => {
     let checkedSnapshotId: string | undefined
     const candidateReaders = readers()

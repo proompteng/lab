@@ -1,7 +1,10 @@
+import { isIP } from 'node:net'
+import type { ConnectionOptions } from 'node:tls'
+
 import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
-import { Config, Data, Effect, FileSystem, Layer, Redacted, Schema, Stdio, Stream } from 'effect'
+import { Config, Data, Effect, FileSystem, Layer, Option, Redacted, Schema, Stdio, Stream } from 'effect'
 
 import type { BaynCandidateRuntime } from '../../../packages/scripts/src/bayn/update-manifests'
 
@@ -22,6 +25,8 @@ const maximumTigerBeetleClusterId = (1n << 128n) - 1n
 const maximumTigerBeetleLedger = 2 ** 32 - 1
 const canonicalDecimalPattern = /^(?:0|[1-9][0-9]*)$/
 const transportAddressesPattern = /^[A-Za-z0-9.[\]:_-]+(?:,[A-Za-z0-9.[\]:_-]+)*$/
+const dnsLabelPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/
+const postgresUrlRoutingParameters = new Set(['host', 'port'])
 const signalReplicaIdentities = [
   'chi-torghut-clickhouse-default-0-0-0',
   'chi-torghut-clickhouse-default-0-1-0',
@@ -31,6 +36,19 @@ const ExactReplicaUrls = Config.Array(Schema.URLFromString).check(
   Schema.makeFilter((urls: readonly URL[]) => urls.length === 2, {
     expected: 'exactly two direct ClickHouse replica URLs',
   }),
+)
+const PostgresTlsServerNameSchema = Schema.String.check(
+  Schema.makeFilter(
+    (value: string) =>
+      value.length > 0 &&
+      value.length <= 253 &&
+      value === value.trim() &&
+      isIP(value) === 0 &&
+      value.split('.').every((label) => label.length <= 63 && dnsLabelPattern.test(label)),
+    {
+      expected: 'a non-empty DNS name without surrounding whitespace',
+    },
+  ),
 )
 const CandidateRow = Schema.Struct({
   snapshot_id: Sha256Schema,
@@ -50,14 +68,17 @@ const decodeReplicaIdentity = Schema.decodeUnknownEffect(Schema.Tuple([ReplicaId
 const decodeReadOnlyRow = Schema.decodeUnknownEffect(Schema.Tuple([ReadOnlyRow]), strictParseOptions)
 const decodeLockCountRow = Schema.decodeUnknownEffect(Schema.Tuple([LockCountRow]), strictParseOptions)
 
-const config = Config.all({
+const rawConfig = Config.all({
   publicationDate: Config.schema(IsoDateSchema, 'BAYN_CANDIDATE_SIGNAL_PUBLICATION_DATE'),
   clickhouseUrls: Config.schema(ExactReplicaUrls, 'BAYN_CANDIDATE_CLICKHOUSE_URLS'),
   publisherUsername: Config.schema(TrimmedNonEmptyStringSchema, 'BAYN_CANDIDATE_SIGNAL_PUBLISHER_USERNAME'),
   publisherPassword: Config.redacted('BAYN_CANDIDATE_SIGNAL_PUBLISHER_PASSWORD'),
   postgresUrl: Config.redacted('BAYN_CANDIDATE_POSTGRES_URL'),
   postgresTls: Config.boolean('BAYN_CANDIDATE_POSTGRES_TLS').pipe(Config.withDefault(false)),
-  postgresCaPath: Config.string('BAYN_CANDIDATE_POSTGRES_CA_PATH').pipe(Config.withDefault('')),
+  postgresCaPath: Config.option(Config.schema(TrimmedNonEmptyStringSchema, 'BAYN_CANDIDATE_POSTGRES_CA_PATH')),
+  postgresTlsServerName: Config.option(
+    Config.schema(PostgresTlsServerNameSchema, 'BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME'),
+  ),
   tigerBeetleClusterId: Config.schema(TrimmedNonEmptyStringSchema, 'BAYN_CANDIDATE_TIGERBEETLE_CLUSTER_ID'),
   tigerBeetleAddresses: Config.schema(TrimmedNonEmptyStringSchema, 'BAYN_CANDIDATE_TIGERBEETLE_ADDRESSES'),
   tigerBeetleLedger: Config.schema(TrimmedNonEmptyStringSchema, 'BAYN_CANDIDATE_TIGERBEETLE_LEDGER'),
@@ -66,7 +87,18 @@ const config = Config.all({
   ),
 })
 
-type CandidateConfig = Config.Success<typeof config>
+type RawCandidateConfig = Config.Success<typeof rawConfig>
+
+interface CandidatePostgresTlsConfig {
+  readonly caPath: string
+  readonly serverName: string
+}
+
+export const makeCandidatePostgresSslOptions = (serverName: string, ca: string): ConnectionOptions => ({
+  ca,
+  rejectUnauthorized: true,
+  servername: serverName,
+})
 
 export class QualificationCandidateError extends Data.TaggedError('QualificationCandidateError')<{
   readonly operation: 'config' | 'postgres' | 'replica' | 'runtime'
@@ -86,6 +118,95 @@ const preserveCandidateError = (
   cause: unknown,
 ): QualificationCandidateError =>
   cause instanceof QualificationCandidateError ? cause : candidateError(operation, message, cause)
+
+const validateCandidatePostgresUrl = (
+  redactedUrl: Redacted.Redacted<string>,
+  tls: CandidatePostgresTlsConfig | undefined,
+): Effect.Effect<void, QualificationCandidateError> =>
+  Effect.try({
+    try: () => {
+      let url: URL
+      try {
+        url = new URL(Redacted.value(redactedUrl))
+      } catch {
+        throw new TypeError('BAYN_CANDIDATE_POSTGRES_URL must be a valid PostgreSQL URL')
+      }
+      if ((url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') || url.hostname.length === 0) {
+        throw new TypeError('BAYN_CANDIDATE_POSTGRES_URL must be a PostgreSQL URL with a host')
+      }
+      const overrideParameter = [...url.searchParams.keys()].find((key) => {
+        const normalized = key.toLowerCase()
+        return (
+          postgresUrlRoutingParameters.has(normalized) ||
+          normalized === 'uselibpqcompat' ||
+          normalized.startsWith('ssl') ||
+          normalized.startsWith('tls')
+        )
+      })
+      if (overrideParameter !== undefined) {
+        throw new TypeError(
+          `BAYN_CANDIDATE_POSTGRES_URL must not contain TLS or routing override parameter ${overrideParameter}`,
+        )
+      }
+      if (tls === undefined) return
+      const host = url.hostname.startsWith('[') && url.hostname.endsWith(']') ? url.hostname.slice(1, -1) : url.hostname
+      if (isIP(host) === 0 && host !== tls.serverName) {
+        throw new TypeError(
+          'BAYN_CANDIDATE_POSTGRES_URL host must be an IP literal or exactly match BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME',
+        )
+      }
+    },
+    catch: (cause) => candidateError('config', 'invalid BAYN_CANDIDATE_POSTGRES_URL', cause),
+  })
+
+const validateQualificationCandidateConfig = (
+  input: RawCandidateConfig,
+): Effect.Effect<
+  Omit<RawCandidateConfig, 'postgresCaPath' | 'postgresTls' | 'postgresTlsServerName'> & {
+    readonly postgresTls: CandidatePostgresTlsConfig | undefined
+  },
+  QualificationCandidateError
+> =>
+  Effect.gen(function* () {
+    const { postgresCaPath, postgresTls, postgresTlsServerName, ...rest } = input
+    if (!postgresTls) {
+      yield* validateCandidatePostgresUrl(input.postgresUrl, undefined)
+      if (Option.isSome(postgresCaPath) || Option.isSome(postgresTlsServerName)) {
+        return yield* Effect.fail(
+          candidateError(
+            'config',
+            'BAYN_CANDIDATE_POSTGRES_CA_PATH and BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME must be absent when PostgreSQL TLS is disabled',
+          ),
+        )
+      }
+      return { ...rest, postgresTls: undefined }
+    }
+    if (Option.isNone(postgresCaPath)) {
+      return yield* Effect.fail(
+        candidateError('config', 'BAYN_CANDIDATE_POSTGRES_CA_PATH is required when PostgreSQL TLS is enabled'),
+      )
+    }
+    if (Option.isNone(postgresTlsServerName)) {
+      return yield* Effect.fail(
+        candidateError('config', 'BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME is required when PostgreSQL TLS is enabled'),
+      )
+    }
+    const resolvedPostgresTls = {
+      caPath: postgresCaPath.value,
+      serverName: postgresTlsServerName.value,
+    }
+    yield* validateCandidatePostgresUrl(input.postgresUrl, resolvedPostgresTls)
+    return {
+      ...rest,
+      postgresTls: resolvedPostgresTls,
+    }
+  })
+
+export const loadQualificationCandidateConfig = Effect.gen(function* () {
+  return yield* validateQualificationCandidateConfig(yield* rawConfig)
+})
+
+type CandidateConfig = Effect.Success<typeof loadQualificationCandidateConfig>
 
 export interface CandidateReplicaObservation {
   readonly endpointHost: string
@@ -384,20 +505,16 @@ const readReplica = (
 const postgresLayer = (input: CandidateConfig) =>
   Layer.unwrap(
     Effect.gen(function* () {
-      let ca: string | undefined
-      if (input.postgresTls) {
-        if (input.postgresCaPath.length === 0) {
-          return yield* Effect.fail(
-            candidateError('config', 'BAYN_CANDIDATE_POSTGRES_CA_PATH is required when PostgreSQL TLS is enabled'),
-          )
-        }
+      let ssl: ConnectionOptions | undefined
+      if (input.postgresTls !== undefined) {
         const fileSystem = yield* FileSystem.FileSystem
-        ca = yield* fileSystem.readFileString(input.postgresCaPath)
+        const ca = yield* fileSystem.readFileString(input.postgresTls.caPath)
+        ssl = makeCandidatePostgresSslOptions(input.postgresTls.serverName, ca)
       }
       return PgClient.layerFrom(
         PgClient.make({
           url: input.postgresUrl,
-          ssl: ca === undefined ? undefined : { ca, rejectUnauthorized: true },
+          ssl,
           applicationName: 'bayn-qualification-candidate',
           connectTimeout: input.operationTimeoutMs,
           idleTimeout: '30 seconds',
@@ -442,7 +559,7 @@ const readQualificationLocks = (
   )
 
 const main = Effect.gen(function* () {
-  const input = yield* config
+  const input = yield* loadQualificationCandidateConfig
   const protocol = yield* loadDefaultProtocol.pipe(
     Effect.mapError((cause) => candidateError('runtime', 'compiled Bayn protocol is invalid', cause)),
   )
