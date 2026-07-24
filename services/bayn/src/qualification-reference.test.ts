@@ -1,15 +1,25 @@
+import assert from 'node:assert/strict'
+
 import { describe, expect, test } from 'bun:test'
+import { Result } from 'effect'
 
 import { canonicalHashV1 } from './hash'
 import { evaluateReference } from './audit/reference'
 import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
+const assertSuccess = <A, E>(result: Result.Result<A, E>): A => {
+  assert(Result.isSuccess(result), 'strategy evaluation fixture must succeed')
+  return result.success
+}
+
 describe('independent qualification reference', () => {
   test('reproduces every persisted strategy and benchmark artifact', () => {
     const snapshot = makeSnapshot(900)
     const provenance = makeTestProvenance()
-    const actual = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+    const actual = assertSuccess(
+      evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance),
+    )
     const reference = evaluateReference(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
 
     expect(reference.runId).toBe(actual.runId)
@@ -40,7 +50,9 @@ describe('independent qualification reference', () => {
   test('independently keeps planned quantities invariant to future execution OHLC', () => {
     const snapshot = makeSnapshot(900)
     const provenance = makeTestProvenance()
-    const actual = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+    const actual = assertSuccess(
+      evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance),
+    )
     const executionDate = actual.signalDecisions[0].executionDate
     const changedBars = snapshot.bars.map((bar) => {
       if (bar.sessionDate !== executionDate) return bar
@@ -54,7 +66,9 @@ describe('independent qualification reference', () => {
         close,
       }
     })
-    const changedActual = evaluateRiskBalancedTrend(changedBars, snapshot.manifest, fixtureProtocol, provenance)
+    const changedActual = assertSuccess(
+      evaluateRiskBalancedTrend(changedBars, snapshot.manifest, fixtureProtocol, provenance),
+    )
     const changedReference = evaluateReference(changedBars, snapshot.manifest, fixtureProtocol, provenance)
     const requests = (orders: typeof actual.simulation.orders) =>
       orders

@@ -1,6 +1,8 @@
+import assert from 'node:assert/strict'
+
 import { expect } from 'bun:test'
 
-import { Effect, Option, Redacted } from 'effect'
+import { Effect, Option, Redacted, Result } from 'effect'
 
 import type { RuntimeConfig } from './config'
 import { deriveCycleOperationsStatus } from './cycle-observability'
@@ -145,7 +147,9 @@ export const successfulEvidenceStore: EvidenceStoreService = {
 
 export const fixtureSnapshot = makeSnapshot()
 export const fixtureStrategy = makeStrategy(fixtureProtocol, provenance)
-export const fixtureEvaluation = fixtureStrategy.evaluate(fixtureSnapshot.bars, fixtureSnapshot.manifest)
+const fixtureEvaluationResult = fixtureStrategy.evaluate(fixtureSnapshot.bars, fixtureSnapshot.manifest)
+assert(Result.isSuccess(fixtureEvaluationResult), 'fixture strategy evaluation must succeed')
+export const fixtureEvaluation = fixtureEvaluationResult.success
 export const fixtureLock = fixtureStrategy.prepareLock(
   fixtureSnapshot.manifest,
   [...new Set(fixtureSnapshot.bars.map((bar) => bar.sessionDate))].sort(),
@@ -162,7 +166,9 @@ export const pinnedExecutionProvenance = {
   image: { repository: provenance.image.repository, digest: `sha256:${'f'.repeat(64)}` },
 }
 export const pinnedStrategy = makeStrategy(fixtureProtocol, pinnedExecutionProvenance)
-export const pinnedEvaluation = pinnedStrategy.evaluate(fixtureSnapshot.bars, fixtureSnapshot.manifest)
+const pinnedEvaluationResult = pinnedStrategy.evaluate(fixtureSnapshot.bars, fixtureSnapshot.manifest)
+assert(Result.isSuccess(pinnedEvaluationResult), 'pinned strategy evaluation must succeed')
+export const pinnedEvaluation = pinnedEvaluationResult.success
 export const pinnedLock = pinnedStrategy.prepareLock(
   fixtureSnapshot.manifest,
   [...new Set(fixtureSnapshot.bars.map((bar) => bar.sessionDate))].sort(),

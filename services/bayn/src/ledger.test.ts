@@ -1,5 +1,7 @@
+import assert from 'node:assert/strict'
+
 import { describe, expect, test } from 'bun:test'
-import { Effect, Redacted } from 'effect'
+import { Effect, Redacted, Result } from 'effect'
 import { CreateAccountStatus, CreateTransferStatus, type Account, type Transfer } from 'tigerbeetle-node'
 
 import { prepareAccounting, rebuildAccountingLedger } from './accounting'
@@ -17,6 +19,11 @@ import {
 } from './ledger'
 import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
+
+const assertSuccess = <A, E>(result: Result.Result<A, E>): A => {
+  assert(Result.isSuccess(result), 'strategy evaluation fixture must succeed')
+  return result.success
+}
 
 const materializeAccounts = (plan: ReturnType<typeof buildLedgerPlan>): Account[] => {
   const balances = new Map(plan.accounts.map((account) => [account.id, { debits: 0n, credits: 0n }]))
@@ -126,7 +133,9 @@ const withJournal = <A, E>(client: TigerBeetleClient, use: (journal: JournalServ
 describe('TigerBeetle simulation journal', () => {
   test('plans deterministic double-entry transfers and reconciles exact sets and balances', () => {
     const snapshot = makeSnapshot()
-    const result = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())
+    const result = assertSuccess(
+      evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance()),
+    )
     const first = buildLedgerPlan(result, 7001)
     const second = buildLedgerPlan(result, 7001)
     expect(first).toEqual(second)
@@ -140,7 +149,9 @@ describe('TigerBeetle simulation journal', () => {
 
   test('fails closed on extra transfers or mismatched balances', () => {
     const snapshot = makeSnapshot()
-    const result = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())
+    const result = assertSuccess(
+      evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance()),
+    )
     const plan = buildLedgerPlan(result, 7001)
     const accounts = materializeAccounts(plan)
     const transfers = materializeTransfers(plan)
@@ -158,7 +169,9 @@ describe('TigerBeetle simulation journal', () => {
 
   test('creates an empty target exactly once and verifies an idempotent replay', async () => {
     const snapshot = makeSnapshot()
-    const result = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())
+    const result = assertSuccess(
+      evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance()),
+    )
     const plan = buildLedgerPlan(result, journalConfig.tigerBeetle.ledger)
     const target = makeLedgerClient()
 
@@ -286,7 +299,9 @@ describe('TigerBeetle simulation journal', () => {
 
   test('rejects a mismatched existing account before creating transfers', async () => {
     const snapshot = makeSnapshot()
-    const result = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())
+    const result = assertSuccess(
+      evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance()),
+    )
     const plan = buildLedgerPlan(result, journalConfig.tigerBeetle.ledger)
     const target = makeLedgerClient()
     target.accounts.set(plan.accounts[0].id, { ...plan.accounts[0], code: plan.accounts[0].code + 1, timestamp: 1n })
@@ -302,7 +317,9 @@ describe('TigerBeetle simulation journal', () => {
   test('checks the persisted run read-only and rejects changed TigerBeetle balances', async () => {
     const snapshot = makeSnapshot()
     const provenance = makeTestProvenance()
-    const result = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+    const result = assertSuccess(
+      evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance),
+    )
     const plan = buildLedgerPlan(result, 7001)
     let accounts = materializeAccounts(plan)
     const transfers = materializeTransfers(plan)

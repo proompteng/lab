@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 
 import { NodeServices } from '@effect/platform-node'
@@ -42,7 +43,11 @@ import { Journal, type JournalService } from './ledger'
 import { MarketData } from './market-data'
 import { defaultProtocolDocument, loadProtocol } from './protocol'
 import { makeQualificationLock, makeQualificationResult } from './qualification'
-import { evaluateRiskBalancedTrend, summarizeEvaluation } from './risk-balanced-trend'
+import {
+  evaluateRiskBalancedTrend,
+  riskBalancedTrendCompatibilityFailure,
+  summarizeEvaluation,
+} from './risk-balanced-trend'
 import { initialState } from './runtime-state'
 import {
   decidePinnedQualification,
@@ -541,7 +546,7 @@ describe('Bayn startup pure decisions', () => {
     const evaluationRunId = '0'.repeat(64)
     const strategy: Strategy = {
       ...fixtureStrategy,
-      evaluate: () => ({ ...fixtureEvaluation, runId: evaluationRunId }),
+      evaluate: () => Result.succeed({ ...fixtureEvaluation, runId: evaluationRunId }),
     }
     const mismatch = decisionFailure(
       evaluateLockedSnapshot(strategy, candidateQualification.inspection, fixtureLock, fixtureSnapshot),
@@ -577,9 +582,7 @@ describe('Bayn startup pure decisions', () => {
           evaluateLockedSnapshot(
             {
               ...fixtureStrategy,
-              evaluate: () => {
-                throw evaluationCause
-              },
+              evaluate: () => Result.fail(riskBalancedTrendCompatibilityFailure('prepare', evaluationCause)),
             },
             candidateQualification.inspection,
             fixtureLock,
@@ -652,7 +655,7 @@ describe('Bayn startup pure decisions', () => {
     for (const cause of [hostileString, hostileMessage]) {
       const failure: StartupDecisionFailure = {
         _tag: 'StrategyOperationFailed',
-        operation: 'evaluate',
+        operation: 'analyze',
         strategyName: fixtureStrategy.name,
         cause,
       }
@@ -661,8 +664,8 @@ describe('Bayn startup pure decisions', () => {
       }).not.toThrow()
       expectRenderedFailure(failure, {
         component: 'strategy',
-        operation: 'evaluate',
-        message: `${fixtureStrategy.name} evaluation failed: unrenderable cause`,
+        operation: 'analyze',
+        message: `${fixtureStrategy.name} analysis failed: unrenderable cause`,
       })
     }
   })
@@ -926,7 +929,9 @@ describe('Bayn startup lifecycle', () => {
 
   test('recovers a complete run without evaluating, journaling, or persisting again', async () => {
     const snapshot = makeSnapshot()
-    const evaluation = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+    const evaluationResult = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+    assert(Result.isSuccess(evaluationResult), 'recovery fixture evaluation must succeed')
+    const evaluation = evaluationResult.success
     let evaluations = 0
     let journalWrites = 0
     let persistenceWrites = 0
@@ -934,7 +939,7 @@ describe('Bayn startup lifecycle', () => {
       ...fixtureStrategy,
       evaluate: () => {
         evaluations += 1
-        return evaluation
+        return Result.succeed(evaluation)
       },
     }
     const journal: JournalService = {
@@ -1047,7 +1052,9 @@ describe('Bayn startup lifecycle', () => {
       ...fixtureStrategy,
       evaluate: () => {
         evaluations += 1
-        throw new Error('incomplete qualification must not evaluate')
+        return Result.fail(
+          riskBalancedTrendCompatibilityFailure('prepare', new Error('incomplete qualification must not evaluate')),
+        )
       },
     }
     const journal: JournalService = {
@@ -1101,7 +1108,12 @@ describe('Bayn startup lifecycle', () => {
       ...fixtureStrategy,
       evaluate: () => {
         evaluations += 1
-        throw new Error('corrupt recovery must not fall back to evaluation')
+        return Result.fail(
+          riskBalancedTrendCompatibilityFailure(
+            'prepare',
+            new Error('corrupt recovery must not fall back to evaluation'),
+          ),
+        )
       },
     }
     const store: EvidenceStoreService = {

@@ -1,6 +1,8 @@
+import assert from 'node:assert/strict'
+
 import { describe, expect, test } from 'bun:test'
 
-import { Schema } from 'effect'
+import { Result, Schema } from 'effect'
 
 import {
   QualificationAnalysisSchema,
@@ -295,12 +297,14 @@ describe('walk-forward and terminal qualification semantics', () => {
 describe('evaluation adapter', () => {
   test('prepares exact aligned strategy, cash, benchmark, and rebalance dates from decoded evidence', () => {
     const snapshot = makeSnapshot()
-    const evaluation = evaluateRiskBalancedTrend(
+    const evaluationResult = evaluateRiskBalancedTrend(
       snapshot.bars,
       snapshot.manifest,
       fixtureProtocol,
       makeTestProvenance(),
     )
+    assert(Result.isSuccess(evaluationResult), 'strategy evaluation fixture must succeed')
+    const evaluation = evaluationResult.success
     const series = prepareQualificationSeries(evaluation)
 
     expect(series.runId).toBe(evaluation.runId)

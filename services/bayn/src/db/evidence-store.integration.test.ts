@@ -1,8 +1,10 @@
+import assert from 'node:assert/strict'
+
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted } from 'effect'
+import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted, Result } from 'effect'
 
 import authorityBoundIntents from '../../migrations/0016_authority_bound_intents'
 import stablePaperAuthorityGeneration from '../../migrations/0017_stable_paper_authority_generation'
@@ -41,7 +43,7 @@ import {
   defaultQualificationStatisticsPolicy,
   type QualificationSeries,
 } from '../qualification-statistics'
-import { evaluateRiskBalancedTrend } from '../risk-balanced-trend'
+import { evaluateRiskBalancedTrend, summarizeEvaluation } from '../risk-balanced-trend'
 import { makeStrategy } from '../strategy'
 import { makeSnapshot, makeTestProvenance, fixtureProtocol } from '../test-fixtures'
 import type { CausalProtocol, Protocol } from '../types'
@@ -349,12 +351,14 @@ const makeInput = (
   protocol: Protocol = fixtureProtocol,
 ): PersistEvaluationInput => {
   const provenance = makeTestProvenance(protocol, { sourceRevision, behaviorHash })
-  const evaluation = evaluateRiskBalancedTrend(
+  const evaluationResult = evaluateRiskBalancedTrend(
     riskBalancedTrendSnapshot.bars,
     riskBalancedTrendSnapshot.manifest,
     protocol,
     provenance,
   )
+  assert(Result.isSuccess(evaluationResult), 'strategy evaluation fixture must succeed')
+  const evaluation = evaluationResult.success
   const ledger = buildLedgerPlan(evaluation, 7_001)
   return {
     provenance,
@@ -3965,6 +3969,70 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(result.recovered.value.evaluation.markedEquityReconciliation.exact).toBe(true)
   })
 
+  test('preserves structured reconciliation issues at the persistence failure boundary', async () => {
+    const input = makeInput()
+    const firstChange = input.evaluation.simulation.cashChanges[0]
+    const evaluation = {
+      ...input.evaluation,
+      simulation: {
+        ...input.evaluation.simulation,
+        cashChanges: input.evaluation.simulation.cashChanges.map((change, index) =>
+          index === 0 ? { ...change, amountMicros: (BigInt(change.amountMicros) + 1n).toString() } : change,
+        ),
+      },
+    }
+    const failure = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        return yield* store.persist({ ...input, evaluation }).pipe(Effect.flip)
+      }),
+    )
+
+    expect(failure).toBeInstanceOf(DatabaseError)
+    expect(failure).toMatchObject({
+      failure: 'invariant',
+      operation: 'plan',
+      cause: [
+        {
+          _tag: 'EvidenceMismatch',
+          problem: {
+            _tag: 'CashChange',
+            cashChangeId: firstChange.id,
+            sourceId: firstChange.sourceId,
+            field: 'amountMicros',
+            actual: (BigInt(firstChange.amountMicros) + 1n).toString(),
+            expected: firstChange.amountMicros,
+          },
+        },
+      ],
+    })
+  })
+
+  test('returns persistence-plan canonicalization failures through the typed channel without writes', async () => {
+    const input = makeInput()
+    const failure = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const error = yield* store
+          .persist({
+            ...input,
+            parameters: { ...input.parameters, initialCapitalMicros: '\ud800' },
+          })
+          .pipe(Effect.flip)
+        return { error, stored: yield* store.read(input.evaluation.runId) }
+      }),
+    )
+
+    expect(failure.error).toBeInstanceOf(DatabaseError)
+    expect(failure.error).toMatchObject({
+      failure: 'invariant',
+      operation: 'plan',
+    })
+    expect(failure.error.message).toContain('persistence plan computation failed during construct-persistence-evidence')
+    expect(failure.error.cause).toBeInstanceOf(TypeError)
+    expect(Option.isNone(failure.stored)).toBe(true)
+  })
+
   test('burns observed runs and preserves qualification state as append-only', async () => {
     const input = makeInput()
     const result = await runtime.runPromise(
@@ -4123,6 +4191,19 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         'simulated-orders',
         'strategy',
       ])
+      expect(
+        result.stored.value.artifacts.every((artifact) => canonicalHashV1(artifact.payload) === artifact.contentHash),
+      ).toBe(true)
+      expect(result.stored.value.events.map((event) => event.payload)).toEqual([...input.evaluation.events])
+      expect(
+        result.stored.value.gates.map(({ ordinal, name, passed, actual, required }) => ({
+          ordinal,
+          name,
+          passed,
+          actual,
+          required,
+        })),
+      ).toEqual(input.evaluation.verdict.gates.map((gate, ordinal) => ({ ordinal, ...gate })))
       const manifest = result.stored.value.artifacts.find(
         (artifact) => artifact.name === 'qualification-artifact-manifest',
       )
@@ -4143,6 +4224,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     }
     expect(Option.isSome(result.recovered)).toBe(true)
     if (Option.isSome(result.recovered)) {
+      expect(result.recovered.value.evaluation).toEqual(summarizeEvaluation(input.evaluation))
       expect(result.recovered.value).toMatchObject({
         evaluation: {
           runId: input.evaluation.runId,
@@ -4254,8 +4336,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     })
   })
 
-  test('rejects a simulation whose declared costs diverge from its locked protocol', async () => {
+  test('rejects a locked execution-model mismatch before reconciling other tampered simulation evidence', async () => {
     const input = makeInput()
+    const firstCashChange = input.evaluation.simulation.cashChanges[0]
+    assert(firstCashChange !== undefined, 'evaluation fixture must contain a cash change')
     const error = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* EvidenceStore
@@ -4266,6 +4350,14 @@ describePostgres('PostgreSQL evaluation evidence', () => {
               ...input.evaluation,
               simulation: {
                 ...input.evaluation.simulation,
+                cashChanges: input.evaluation.simulation.cashChanges.map((change, index) =>
+                  index === 0
+                    ? {
+                        ...change,
+                        amountMicros: (BigInt(firstCashChange.amountMicros) + 1n).toString(),
+                      }
+                    : change,
+                ),
                 executionModel: {
                   ...input.evaluation.simulation.executionModel,
                   priceImpact: {

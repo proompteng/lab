@@ -1,11 +1,15 @@
-import { Schema } from 'effect'
+import { Result, Schema } from 'effect'
 
 import type { RuntimeProvenance } from './contracts'
 import { MICROS, referencePriceMicros } from './execution-model'
 import { ExecutionSessionBindingSchema, type ExecutionSessionBinding } from './execution-session'
 import { canonicalHashV1 } from './hash'
 import { strictParseOptions } from './schemas'
-import { reconcileMarkedEquity } from './simulation-reconciliation'
+import {
+  reconcileMarkedEquity,
+  renderSimulationReconciliationIssue,
+  type SimulationReconciliationIssue,
+} from './simulation-reconciliation'
 import {
   alignBars,
   buildVerdict,
@@ -29,6 +33,7 @@ import {
   type IsoDate,
   type DecisionPlan,
   type Protocol,
+  type SignalDecision,
 } from './types'
 
 const WEIGHT_SCALE = 1_000_000_000_000
@@ -371,48 +376,74 @@ export const prepareRiskBalancedTrendQualification = (
   }
 }
 
-export const evaluateRiskBalancedTrend = (
+export interface RiskBalancedTrendCompatibilityFailure {
+  readonly _tag: 'RiskBalancedTrendCompatibilityFailure'
+  readonly phase: 'finalize' | 'prepare'
+  readonly cause: unknown
+}
+
+export type RiskBalancedTrendEvaluationIssue = SimulationReconciliationIssue | RiskBalancedTrendCompatibilityFailure
+
+interface PreparedEvaluation {
+  readonly runId: string
+  readonly protocolHash: string
+  readonly strategy: ReturnType<typeof simulate>
+  readonly buyAndHold: ReturnType<typeof simulate>
+  readonly directVolTiming: ReturnType<typeof simulate>
+  readonly doubleCost: ReturnType<typeof simulate>
+  readonly simulation: NonNullable<ReturnType<typeof simulate>['simulation']>
+  readonly signalDecisions: readonly SignalDecision[]
+}
+
+// PROOMPT-419 owns replacing this compatibility boundary with total strategy and simulation functions.
+const prepareEvaluation = (
   bars: readonly DailyBar[],
   inputManifest: InputManifest,
   protocol: Protocol,
   provenance: RuntimeProvenance,
-): EvaluationResult => {
+): PreparedEvaluation => {
   const { runId, protocolHash } = makeEvaluationIdentity(inputManifest, protocol, provenance)
   const sessions = alignBars(bars, protocol.universe, inputManifest)
   const sessionDates = sessions.map((session) => session.date)
-  const historySessions = requiredHistory(protocol)
   const window = selectEvaluationWindow(
     sessionDates,
     inputManifest,
-    historySessions,
+    requiredHistory(protocol),
     protocol.thresholds.minimumObservations,
   )
-  const { signalIndices, startIndex } = window
   const evaluationSessions = sessions.slice(0, window.evaluationEndExclusive)
-  const strategyTargets: SimulationTarget[] = signalIndices.map((signalIndex) => {
+  const strategyTargets: SimulationTarget[] = window.signalIndices.map((signalIndex) => {
     const decision = decisionFromAlignedSessions(sessions, signalIndex, protocol)
     return { signalIndex, executionIndex: signalIndex + 1, weights: decision.targetWeights, decision }
   })
   const equalWeight = roundWeight(1 / protocol.universe.length)
   const buyAndHoldTargets: SimulationTarget[] = [
     {
-      signalIndex: startIndex - 1,
-      executionIndex: startIndex,
+      signalIndex: window.startIndex - 1,
+      executionIndex: window.startIndex,
       weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, equalWeight])),
     },
   ]
-  const directVolTargets: SimulationTarget[] = signalIndices.map((signalIndex) => ({
+  const directVolTargets: SimulationTarget[] = window.signalIndices.map((signalIndex) => ({
     signalIndex,
     executionIndex: signalIndex + 1,
     weights: directVolatilityWeights(sessions, signalIndex, protocol),
   }))
-  const strategy = simulate(evaluationSessions, strategyTargets, startIndex, protocol, MICROS, runId, true)
-  const buyAndHold = simulate(evaluationSessions, buyAndHoldTargets, startIndex, protocol, MICROS, runId, false)
-  const directVolTiming = simulate(evaluationSessions, directVolTargets, startIndex, protocol, MICROS, runId, false)
+  const strategy = simulate(evaluationSessions, strategyTargets, window.startIndex, protocol, MICROS, runId, true)
+  const buyAndHold = simulate(evaluationSessions, buyAndHoldTargets, window.startIndex, protocol, MICROS, runId, false)
+  const directVolTiming = simulate(
+    evaluationSessions,
+    directVolTargets,
+    window.startIndex,
+    protocol,
+    MICROS,
+    runId,
+    false,
+  )
   const doubleCost = simulate(
     evaluationSessions,
     strategyTargets,
-    startIndex,
+    window.startIndex,
     protocol,
     BigInt(protocol.executionModel.doubleCostMultiplier) * MICROS,
     runId,
@@ -425,38 +456,93 @@ export const evaluateRiskBalancedTrend = (
     }
     return decision
   })
-  const markedEquity = reconcileMarkedEquity({
-    runId,
-    initialCapitalMicros: protocol.initialCapitalMicros,
-    evaluatorTotalFeesMicros: strategy.metrics.totalFeesMicros,
-    evaluatorEndingEquityMicros: strategy.metrics.endingEquityMicros,
-    events: strategy.events,
-    simulation: strategy.simulation,
-  })
-
   return {
-    schemaVersion: ContractVersion.Evaluation,
     runId,
-    codeRevision: provenance.sourceRevision,
     protocolHash,
-    initialCapitalMicros: protocol.initialCapitalMicros,
-    inputManifest,
-    strategy: strategy.metrics,
-    buyAndHold: buyAndHold.metrics,
-    directVolTiming: directVolTiming.metrics,
-    doubleCostStrategy: doubleCost.metrics,
-    verdict: buildVerdict(strategy.metrics, buyAndHold.metrics, directVolTiming.metrics, doubleCost.metrics, protocol),
-    events: strategy.events,
-    signalDecisions,
+    strategy,
+    buyAndHold,
+    directVolTiming,
+    doubleCost,
     simulation: strategy.simulation,
-    benchmarkSeries: {
-      buyAndHold: buyAndHold.dailyPerformance,
-      directVolTiming: directVolTiming.dailyPerformance,
-      doubleCostStrategy: doubleCost.dailyPerformance,
-    },
-    equitySeries: markedEquity.equitySeries,
-    markedEquityReconciliation: markedEquity.reconciliation,
+    signalDecisions,
   }
+}
+
+export const riskBalancedTrendCompatibilityFailure = (
+  phase: RiskBalancedTrendCompatibilityFailure['phase'],
+  cause: unknown,
+): readonly RiskBalancedTrendEvaluationIssue[] =>
+  Object.freeze([Object.freeze({ _tag: 'RiskBalancedTrendCompatibilityFailure' as const, phase, cause })])
+
+const renderCompatibilityCause = (cause: unknown): string => {
+  const rendered = Result.try({
+    try: () => String(cause instanceof Error ? cause.message : cause),
+    catch: () => undefined,
+  })
+  return Result.isSuccess(rendered) ? rendered.success : 'unrenderable cause'
+}
+
+export const renderRiskBalancedTrendEvaluationIssues = (issues: readonly RiskBalancedTrendEvaluationIssue[]): string =>
+  issues
+    .map((issue) => {
+      if (issue._tag === 'RiskBalancedTrendCompatibilityFailure') return renderCompatibilityCause(issue.cause)
+      return renderSimulationReconciliationIssue(issue)
+    })
+    .join('; ')
+
+export const evaluateRiskBalancedTrend = (
+  bars: readonly DailyBar[],
+  inputManifest: InputManifest,
+  protocol: Protocol,
+  provenance: RuntimeProvenance,
+): Result.Result<EvaluationResult, readonly RiskBalancedTrendEvaluationIssue[]> => {
+  const prepared = Result.try({
+    try: () => prepareEvaluation(bars, inputManifest, protocol, provenance),
+    catch: (cause) => riskBalancedTrendCompatibilityFailure('prepare', cause),
+  })
+  if (Result.isFailure(prepared)) return Result.fail(prepared.failure)
+  const markedEquity = reconcileMarkedEquity({
+    runId: prepared.success.runId,
+    initialCapitalMicros: protocol.initialCapitalMicros,
+    evaluatorTotalFeesMicros: prepared.success.strategy.metrics.totalFeesMicros,
+    evaluatorEndingEquityMicros: prepared.success.strategy.metrics.endingEquityMicros,
+    events: prepared.success.strategy.events,
+    simulation: prepared.success.simulation,
+  })
+  if (Result.isFailure(markedEquity)) return Result.fail(markedEquity.failure)
+
+  return Result.try({
+    try: (): EvaluationResult => ({
+      schemaVersion: ContractVersion.Evaluation,
+      runId: prepared.success.runId,
+      codeRevision: provenance.sourceRevision,
+      protocolHash: prepared.success.protocolHash,
+      initialCapitalMicros: protocol.initialCapitalMicros,
+      inputManifest,
+      strategy: prepared.success.strategy.metrics,
+      buyAndHold: prepared.success.buyAndHold.metrics,
+      directVolTiming: prepared.success.directVolTiming.metrics,
+      doubleCostStrategy: prepared.success.doubleCost.metrics,
+      verdict: buildVerdict(
+        prepared.success.strategy.metrics,
+        prepared.success.buyAndHold.metrics,
+        prepared.success.directVolTiming.metrics,
+        prepared.success.doubleCost.metrics,
+        protocol,
+      ),
+      events: prepared.success.strategy.events,
+      signalDecisions: prepared.success.signalDecisions,
+      simulation: prepared.success.simulation,
+      benchmarkSeries: {
+        buyAndHold: prepared.success.buyAndHold.dailyPerformance,
+        directVolTiming: prepared.success.directVolTiming.dailyPerformance,
+        doubleCostStrategy: prepared.success.doubleCost.dailyPerformance,
+      },
+      equitySeries: markedEquity.success.equitySeries,
+      markedEquityReconciliation: markedEquity.success.reconciliation,
+    }),
+    catch: (cause) => riskBalancedTrendCompatibilityFailure('finalize', cause),
+  })
 }
 
 export const summarizeEvaluation = (evaluation: EvaluationResult): EvaluationSummary => ({

@@ -1,6 +1,10 @@
+import assert from 'node:assert/strict'
+
 import { describe, expect, test } from 'bun:test'
+import { Result } from 'effect'
 
 import { makeEquitySeriesArtifact } from './evidence-contracts'
+import { makeStrategyProtocolHash } from './contracts'
 import { canonicalHashV1 } from './hash'
 import { makeQualificationResult } from './qualification'
 import {
@@ -19,7 +23,9 @@ const fixture = (priorTrialRunIds: readonly string[] = []): QualificationAuditIn
   const protocol = fixtureProtocol
   const provenance = makeTestProvenance()
   const strategy = makeStrategy(protocol, provenance)
-  const evaluation = strategy.evaluate(snapshot.bars, snapshot.manifest)
+  const evaluationResult = strategy.evaluate(snapshot.bars, snapshot.manifest)
+  assert(Result.isSuccess(evaluationResult), 'strategy evaluation fixture must succeed')
+  const evaluation = evaluationResult.success
   const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
   const lock = strategy.prepareLock(snapshot.manifest, sessionDates, priorTrialRunIds)
   const analysis = strategy.analyze(evaluation, priorTrialRunIds)
@@ -322,6 +328,7 @@ describe('qualification audit', () => {
     ])
     expect(first.policies.policySetHash).toBe(canonicalHashV1(first.policies.documents))
     expect(second.auditHash).toBe(first.auditHash)
+    expect(first.auditHash).toBe('b3a9ee416e1a97794acebb9ad071da4a01b1513f1ba6c87cc5f206c76b168043')
   })
 
   test('passes for a later candidate when prior terminal result lineage is complete', () => {
@@ -350,6 +357,40 @@ describe('qualification audit', () => {
     expect(report.status).toBe('FAIL')
     expect(report.checks.find((check) => check.name === 'artifact-hashes')?.passed).toBe(false)
     expect(report.checks.find((check) => check.name === 'reference-strategy')?.passed).toBe(false)
+  })
+
+  test('continues independent checks when public input cannot be reconciled', () => {
+    const input = fixture()
+    const protocol = { ...input.protocol, initialCapitalMicros: '+1000000000000' }
+    const provenance = makeTestProvenance(protocol)
+    const audited = () =>
+      auditQualification({
+        ...input,
+        protocol,
+        database: {
+          ...input.database,
+          protocol: {
+            ...input.database.protocol,
+            protocolHash: makeStrategyProtocolHash(provenance.strategy),
+            behaviorHash: provenance.strategy.behaviorHash,
+            parameterHash: provenance.strategy.parameterHash,
+            parameters: protocol,
+          },
+        },
+        repository: { ...input.repository, sourceCommitAncestorOfMain: false },
+      })
+
+    expect(audited).not.toThrow()
+    const report = audited()
+    expect(report.status).toBe('FAIL')
+    expect(report.checks.find((check) => check.name === 'reference-equity-series')?.passed).toBe(false)
+    expect(report.checks.find((check) => check.name === 'reference-marked-equity-reconciliation')?.passed).toBe(false)
+    expect(report.checks.find((check) => check.name === 'qualification-artifact-manifest')?.passed).toBe(false)
+    expect(report.checks.find((check) => check.name === 'source-revision-in-repository')?.passed).toBe(false)
+    expect(report.checks.find((check) => check.name === 'reference-equity-series')?.evidence).toContain(
+      'initialCapitalMicros',
+    )
+    expect(report.checks.at(-1)?.name).toBe('no-pre-lock-result-reference')
   })
 
   test('requires the source-pinned auditor for immutable protocol v2 evidence', () => {
