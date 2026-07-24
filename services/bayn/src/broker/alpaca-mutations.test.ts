@@ -218,6 +218,30 @@ describe('Alpaca paper mutations', () => {
     })
   })
 
+  test('rejects a wrong-account intent before making a mutation request', async () => {
+    let mutationRequests = 0
+    const client = HttpClient.make(() => {
+      mutationRequests += 1
+      return Effect.die(new Error('wrong-account intent must not make a mutation request'))
+    })
+    const wrongAccountIntent = {
+      ...intent,
+      accountId: '40b22fc4-23bc-446c-bf07-bea43b5d6c35',
+    }
+
+    const failure = await Effect.runPromise(
+      Effect.flip(withMutation(client, (mutation) => mutation.submit(wrongAccountIntent))),
+    )
+
+    expect(failure).toMatchObject({
+      operation: MutationOperation.Submit,
+      failure: MutationFailure.InvalidRequest,
+      outcome: MutationOutcome.Known,
+      message: 'order intent account does not match the configured Alpaca account',
+    })
+    expect(mutationRequests).toBe(0)
+  })
+
   test('samples submit evidence after the complete response body', async () => {
     let releaseBody: () => void = () => {
       throw new Error('submit response body reader did not start')

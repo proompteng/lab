@@ -7,8 +7,14 @@ import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, 
 import type { RuntimeConfig } from '../config'
 import { makeStrategyProtocolHash } from '../contracts'
 import { IntentStore, IntentStoreLive, plan, type IntentPlan } from '../execution/intents'
-import { MutationEventType, MutationStore, MutationStoreLive } from '../execution/mutations'
-import { MutationOperation, cancelRequestHash } from '../broker/alpaca-mutations'
+import { MutationEventType, MutationStore, MutationStoreLive, mutationId } from '../execution/mutations'
+import {
+  BrokerMutation,
+  MutationOperation,
+  cancelRequestHash,
+  type BrokerMutationShape,
+} from '../broker/alpaca-mutations'
+import { cancel, submit } from '../execution/coordinator'
 import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
 import { buildLedgerPlan, Journal, type JournalService } from '../ledger'
@@ -103,6 +109,15 @@ const makeExecutionRuntime = (config = makeConfig()) =>
 const makeMutationRuntime = (config = makeConfig()) =>
   ManagedRuntime.make(
     MutationStoreLive.pipe(
+      Layer.provideMerge(WriterFenceLive),
+      Layer.provideMerge(PostgresClientLive(config)),
+      Layer.provide(NodeServices.layer),
+    ),
+  )
+
+const makeCoordinatorRuntime = (broker: BrokerMutationShape, config = makeConfig()) =>
+  ManagedRuntime.make(
+    Layer.mergeAll(IntentStoreLive, MutationStoreLive, Layer.succeed(BrokerMutation, broker)).pipe(
       Layer.provideMerge(WriterFenceLive),
       Layer.provideMerge(PostgresClientLive(config)),
       Layer.provide(NodeServices.layer),
@@ -1791,6 +1806,158 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     })
     expect(observed.state).toEqual({ state: 'TERMINAL', state_version: 5 })
   }, 20_000)
+
+  test('rejects mismatched-account submit and identified cancel without durable or broker writes', async () => {
+    const mismatchedAccountId = 'paper-account-2'
+    const submitIntent = await Effect.runPromise(
+      plan(intentPlan({ accountId: mismatchedAccountId, cycleId: 'c'.repeat(64) })),
+    )
+    const cancelIntent = await Effect.runPromise(
+      plan(intentPlan({ accountId: mismatchedAccountId, cycleId: 'd'.repeat(64) })),
+    )
+    const submitDecision = await Effect.runPromise(riskDecision(submitIntent, RiskOutcome.Approved))
+    const cancelDecision = await Effect.runPromise(riskDecision(cancelIntent, RiskOutcome.Approved))
+    const execution = makeExecutionRuntime()
+    await execution.runPromise(
+      Effect.gen(function* () {
+        const store = yield* IntentStore
+        yield* store.commit(submitIntent, submitDecision)
+        yield* store.commit(cancelIntent, cancelDecision)
+      }),
+    )
+    await execution.dispose()
+    await activateAuditedPaperAuthority()
+
+    const brokerCalls = { cancel: 0, submit: 0 }
+    const broker: BrokerMutationShape = {
+      submit: () => {
+        brokerCalls.submit += 1
+        return Effect.die(new Error('mismatched-account submit must not reach the broker'))
+      },
+      cancel: () => {
+        brokerCalls.cancel += 1
+        return Effect.die(new Error('mismatched-account cancel must not reach the broker'))
+      },
+    }
+    const coordinator = makeCoordinatorRuntime(broker)
+    const acceptedAt = Date.now() + 100
+
+    try {
+      const observed = await coordinator.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const readEvidence = (intentId: string) =>
+            sql<{ authority: unknown; events: unknown; history: unknown; intent: unknown }>`
+              SELECT
+                (
+                  SELECT jsonb_build_object('row', to_jsonb(intent), 'tupleId', intent.xmin::text)
+                  FROM intents AS intent
+                  WHERE intent.intent_id = ${intentId}
+                ) AS intent,
+                (
+                  SELECT coalesce(
+                    jsonb_agg(
+                      jsonb_build_object('row', to_jsonb(event), 'tupleId', event.xmin::text)
+                      ORDER BY event.operation, event.sequence
+                    ),
+                    '[]'::jsonb
+                  )
+                  FROM mutation_events AS event
+                  WHERE event.intent_id = ${intentId}
+                ) AS events,
+                (
+                  SELECT jsonb_build_object('row', to_jsonb(authority), 'tupleId', authority.xmin::text)
+                  FROM authority_state AS authority
+                  WHERE authority.singleton
+                ) AS authority,
+                (
+                  SELECT jsonb_agg(
+                    jsonb_build_object('row', to_jsonb(history), 'tupleId', history.xmin::text)
+                    ORDER BY history.authority_version
+                  )
+                  FROM authority_generations AS history
+                ) AS history
+            `
+
+          const [submitBefore] = yield* readEvidence(submitIntent.intentId)
+          const submitExit = yield* Effect.exit(submit(submitIntent.intentId, 1_000))
+          const [submitAfter] = yield* readEvidence(submitIntent.intentId)
+
+          const cancelMutationId = mutationId(cancelIntent.intentId, MutationOperation.Submit)
+          const cancelSubmitHash = fixtureHash('mismatched-account-identified-submit')
+          const startedAt = new Date(acceptedAt).toISOString()
+          const completedAt = new Date(acceptedAt + 1).toISOString()
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+                UPDATE intents
+                SET state = 'IO_STARTED', state_version = state_version + 1, updated_at = ${startedAt}
+                WHERE intent_id = ${cancelIntent.intentId} AND state = 'APPROVED'
+              `
+              yield* sql`
+                UPDATE intents
+                SET state = 'ACKNOWLEDGED', state_version = state_version + 1, updated_at = ${completedAt}
+                WHERE intent_id = ${cancelIntent.intentId} AND state = 'IO_STARTED'
+              `
+              yield* sql`
+                INSERT INTO mutation_events (
+                  event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
+                  request_hash, consistency_delay_ms, broker_order_id, request_id, response_status,
+                  response_content_hash, occurred_at
+                ) VALUES
+                  (
+                    ${fixtureHash('mismatched-account-submit-started')},
+                    'bayn.paper-mutation-event.v1', ${cancelMutationId}, ${cancelIntent.intentId}, 1,
+                    'SUBMIT', 'SUBMIT_STARTED', ${cancelSubmitHash}, 1000, NULL, NULL, NULL, NULL,
+                    ${startedAt}
+                  ),
+                  (
+                    ${fixtureHash('mismatched-account-submit-accepted')},
+                    'bayn.paper-mutation-event.v1', ${cancelMutationId}, ${cancelIntent.intentId}, 2,
+                    'SUBMIT', 'SUBMIT_ACCEPTED', ${cancelSubmitHash}, 1000, ${orderId},
+                    'mismatched-account-submit', 200,
+                    ${fixtureHash('mismatched-account-submit-response')}, ${completedAt}
+                  )
+              `
+              yield* sql`
+                UPDATE authority_state
+                SET
+                  effective = 'OBSERVE',
+                  kill_state = 'ACTIVE',
+                  reason = 'account-binding cancellation regression',
+                  version = version + 1,
+                  updated_at = greatest(clock_timestamp(), updated_at + interval '1 millisecond')
+                WHERE singleton
+              `
+            }),
+          )
+
+          const [cancelBefore] = yield* readEvidence(cancelIntent.intentId)
+          const cancelExit = yield* Effect.exit(cancel(cancelIntent.intentId, 1_000))
+          const [cancelAfter] = yield* readEvidence(cancelIntent.intentId)
+          return { cancelAfter, cancelBefore, cancelExit, submitAfter, submitBefore, submitExit }
+        }),
+      )
+
+      expect(Exit.isFailure(observed.submitExit)).toBe(true)
+      expect(Exit.isFailure(observed.cancelExit)).toBe(true)
+      if (Exit.isFailure(observed.submitExit)) {
+        expect(Cause.pretty(observed.submitExit.cause)).toContain(
+          'intent account does not match the active PAPER authority generation',
+        )
+      }
+      if (Exit.isFailure(observed.cancelExit)) {
+        expect(Cause.pretty(observed.cancelExit.cause)).toContain(
+          'intent account does not match the active PAPER authority generation',
+        )
+      }
+      expect(observed.submitAfter).toEqual(observed.submitBefore)
+      expect(observed.cancelAfter).toEqual(observed.cancelBefore)
+      expect(brokerCalls).toEqual({ cancel: 0, submit: 0 })
+    } finally {
+      await coordinator.dispose()
+    }
+  })
 
   test('rejects non-submitted and mismatched broker order identities before cancellation starts', async () => {
     const execution = makeExecutionRuntime()

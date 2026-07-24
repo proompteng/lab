@@ -321,6 +321,14 @@ export const makeMutation = (
         const intent = yield* decodeIntent(input).pipe(
           Effect.mapError((cause) => invalidRequest(MutationOperation.Submit, 'invalid order intent', cause)),
         )
+        if (intent.accountId !== runtime.expectedAccountId) {
+          return yield* Effect.fail(
+            invalidRequest(
+              MutationOperation.Submit,
+              'order intent account does not match the configured Alpaca account',
+            ),
+          )
+        }
         const body = yield* Effect.try({
           try: () => submitBody(intent),
           catch: (cause) => invalidRequest(MutationOperation.Submit, 'order intent cannot be submitted', cause),
