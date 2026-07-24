@@ -15,10 +15,18 @@ import {
 import type { BrokerReadShape } from './broker/alpaca'
 import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
 import { DatabaseError, type EvidenceStoreService } from './db/evidence-store'
+import { CycleOperationsCondition, CycleOperationsReason } from './cycle-observability'
+import { CycleState, CycleTerminalReason } from './cycle'
 import type { BrokerProbe } from './health'
 import { makeHttpLayer, renderPrometheusMetrics } from './http'
 import { Authority } from './paper'
 import { initialState, type RuntimeState } from './runtime-state'
+
+const metricValue = (metrics: string, name: string): number => {
+  const line = metrics.split('\n').find((candidate) => candidate.startsWith(`${name} `))
+  if (line === undefined) throw new Error(`metric ${name} is missing`)
+  return Number(line.slice(name.length + 1))
+}
 
 describe('Bayn HTTP probes', () => {
   test('serves every route from the current runtime state and closes its socket', async () => {
@@ -108,6 +116,7 @@ describe('Bayn HTTP probes', () => {
           const metrics = yield* Effect.promise(() => metricsResponse.text())
           expect(metricsResponse.status).toBe(200)
           expect(metricsResponse.headers.get('content-type')).toContain('text/plain')
+          expect(metrics).toContain('bayn_runtime_ready 1')
           expect(metrics).toContain('bayn_cycle_condition{condition="waiting"} 1')
           expect(metrics).toContain('bayn_autonomous_cycle_loop_configured 0')
           expect(metrics).toContain('bayn_autonomous_cycle_loop_health_available 0')
@@ -258,6 +267,7 @@ describe('Bayn HTTP probes', () => {
           )
           expect(metrics).toContain('bayn_autonomous_cycle_loop_configured 1')
           expect(metrics).toContain('bayn_autonomous_cycle_loop_health_available 0')
+          expect(metrics).toContain('bayn_runtime_ready 0')
           expect(metrics).toContain('bayn_autonomous_cycle_loop_last_pass{result="failure"} 1')
           expect(metrics).toContain(
             `bayn_autonomous_cycle_loop_last_pass_timestamp_seconds ${Date.parse(failedAt) / 1_000}`,
@@ -265,6 +275,139 @@ describe('Bayn HTTP probes', () => {
         }),
       ),
     )
+  })
+
+  test('injects and clears bounded runtime readiness for loop and broker failures', () => {
+    const observedAt = '2026-07-20T00:00:00.000Z'
+    const broker = {
+      configured: true as const,
+      expectedAccountId: 'paper-account-1',
+      accountId: 'paper-account-1',
+      accountBound: true,
+      readAvailable: true,
+      checkedAt: observedAt,
+      error: null,
+      executionEligible: false,
+      executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
+    }
+    const healthy: RuntimeState = {
+      ...readyState(),
+      autonomousCycleLoop: {
+        configured: true,
+        startedAt: observedAt,
+        lastPass: { result: 'SUCCESS', observedAt, outcome: 'NO_PUBLICATION' },
+      },
+      broker,
+    }
+    const loopFailure: RuntimeState = {
+      ...healthy,
+      status: 'DEGRADED',
+      health: {
+        ...healthy.health,
+        dependencies: {
+          ...healthy.health.dependencies,
+          cycleRunner: {
+            status: 'UNAVAILABLE',
+            checkedAt: observedAt,
+            error: 'market-calendar/calendar-read: authoritative calendar unavailable',
+          },
+        },
+      },
+      autonomousCycleLoop: {
+        ...healthy.autonomousCycleLoop,
+        lastPass: {
+          result: 'FAILURE',
+          observedAt,
+          operation: 'market-calendar',
+          failure: 'calendar-read',
+          message: 'authoritative calendar unavailable',
+        },
+      },
+    }
+    const brokerReadFailure: RuntimeState = {
+      ...healthy,
+      status: 'DEGRADED',
+      broker: {
+        ...broker,
+        accountId: null,
+        accountBound: false,
+        readAvailable: false,
+        error: 'Alpaca account unavailable',
+      },
+    }
+    const brokerBindingFailure: RuntimeState = {
+      ...healthy,
+      status: 'DEGRADED',
+      broker: {
+        ...broker,
+        accountId: 'other-paper-account',
+        accountBound: false,
+        error: 'Alpaca account binding mismatch',
+      },
+    }
+    const render = (state: RuntimeState) => renderPrometheusMetrics(state, config, provenance, 'embedded')
+
+    const healthyBefore = render(healthy)
+    const loopInjected = render(loopFailure)
+    const loopCleared = render(healthy)
+    const brokerReadInjected = render(brokerReadFailure)
+    const brokerReadCleared = render(healthy)
+    const brokerBindingInjected = render(brokerBindingFailure)
+    const brokerBindingCleared = render(healthy)
+
+    expect(metricValue(healthyBefore, 'bayn_runtime_ready')).toBe(1)
+    expect(metricValue(loopInjected, 'bayn_runtime_ready')).toBe(0)
+    expect(metricValue(loopInjected, 'bayn_autonomous_cycle_loop_health_available')).toBe(0)
+    expect(metricValue(loopCleared, 'bayn_runtime_ready')).toBe(1)
+    expect(metricValue(loopCleared, 'bayn_autonomous_cycle_loop_health_available')).toBe(1)
+
+    expect(metricValue(brokerReadInjected, 'bayn_runtime_ready')).toBe(0)
+    expect(metricValue(brokerReadInjected, 'bayn_broker_read_available')).toBe(0)
+    expect(metricValue(brokerReadCleared, 'bayn_runtime_ready')).toBe(1)
+    expect(metricValue(brokerReadCleared, 'bayn_broker_read_available')).toBe(1)
+
+    expect(metricValue(brokerBindingInjected, 'bayn_runtime_ready')).toBe(0)
+    expect(metricValue(brokerBindingInjected, 'bayn_broker_account_bound')).toBe(0)
+    expect(metricValue(brokerBindingCleared, 'bayn_runtime_ready')).toBe(1)
+    expect(metricValue(brokerBindingCleared, 'bayn_broker_account_bound')).toBe(1)
+  })
+
+  test('renders the exact bounded terminal reason behind the canonical blocked condition', () => {
+    const base = readyState()
+    const blocked: RuntimeState = {
+      ...base,
+      status: 'DEGRADED',
+      cycle: {
+        ...base.cycle,
+        last: {
+          cycleId: '1'.repeat(64),
+          accountId: 'paper-account-1',
+          signalSessionDate: '2026-07-17',
+          executionSessionDate: '2026-07-20',
+          phase: CycleState.Blocked,
+          snapshotId: '2'.repeat(64),
+          decisionHash: null,
+          terminalReason: CycleTerminalReason.ProvenanceMismatch,
+          submissionOpenAt: '2026-07-20T11:30:00.000Z',
+          submissionCutoffAt: '2026-07-20T12:30:00.000Z',
+          executionOpenAt: '2026-07-20T12:32:00.000Z',
+          executionCloseAt: '2026-07-20T20:00:00.000Z',
+          createdAt: '2026-07-20T11:29:00.000Z',
+          updatedAt: '2026-07-20T12:00:00.000Z',
+          terminalAt: '2026-07-20T12:00:00.000Z',
+        },
+        condition: CycleOperationsCondition.Failed,
+        reason: CycleOperationsReason.LastCycleBlocked,
+        alerts: { ...base.cycle.alerts, cycleFailed: true },
+      },
+    }
+
+    const metrics = renderPrometheusMetrics(blocked, config, provenance, 'embedded')
+
+    expect(metrics).toContain('bayn_cycle_condition{condition="failed"} 1')
+    expect(metrics).toContain('bayn_cycle_reason{reason="last_cycle_blocked"} 1')
+    expect(metrics).toContain('bayn_cycle_terminal_reason{reason="blocked_provenance_mismatch"} 1')
+    expect(metrics).toContain('bayn_cycle_terminal_reason{reason="blocked_data_stale"} 0')
   })
 
   test('returns service unavailable when durable evidence cannot be read', async () => {
@@ -417,6 +560,7 @@ describe('Bayn HTTP probes', () => {
     expect(metrics).toContain('bayn_cycle_condition{condition="unknown"} 1')
     expect(metrics).toContain('bayn_cycle_reason{reason="observation_unavailable"} 1')
     expect(metrics).toContain('bayn_cycle_phase{phase="unknown"} 1')
+    expect(metrics).toContain('bayn_cycle_terminal_reason{reason="unknown"} 1')
     expect(metrics).toContain('bayn_zero_mutation_confirmed 0')
     expect(metrics).not.toContain('bayn_cycle_unfinished_count ')
     expect(metrics).not.toContain('bayn_mutation_events_total ')

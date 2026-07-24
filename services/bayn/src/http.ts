@@ -7,7 +7,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstab
 import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
 import type { RuntimeProvenance } from './contracts'
 import { CycleOperationsCondition, CycleOperationsReason } from './cycle-observability'
-import { CycleState } from './cycle'
+import { CycleState, CycleTerminalReason } from './cycle'
 import { Authority } from './paper'
 import { isReady, type DependencyHealth, type RuntimeState } from './runtime-state'
 
@@ -157,6 +157,7 @@ export const renderPrometheusMetrics = (
   provenanceVerification: RuntimeBuildMetadata['verification'],
 ): string => {
   const publicBroker = publicBrokerState(state)
+  const runtimeReady = isReady(state)
   const cycleObservationAvailable = state.cycle.condition !== CycleOperationsCondition.Unknown
   const cyclePhase =
     cycleObservationAvailable === false
@@ -165,6 +166,13 @@ export const renderPrometheusMetrics = (
   const conditions = Object.values(CycleOperationsCondition)
   const reasons = Object.values(CycleOperationsReason)
   const phases = ['unknown', 'none', ...Object.values(CycleState).map((phase) => phase.toLowerCase())]
+  const terminalReasons = [
+    'unknown',
+    'none',
+    ...Object.values(CycleTerminalReason).map((reason) => reason.toLowerCase()),
+  ]
+  const cycleTerminalReason =
+    cycleObservationAvailable === false ? 'unknown' : (state.cycle.last?.terminalReason?.toLowerCase() ?? 'none')
   const loopResults = ['unknown', 'success', 'failure'] as const
   const loopResult = state.autonomousCycleLoop.lastPass?.result.toLowerCase() ?? 'unknown'
   const loopHealthy =
@@ -182,6 +190,9 @@ export const renderPrometheusMetrics = (
         ? 'paper'
         : 'observe'
   const lines = [
+    '# HELP bayn_runtime_ready Whether the bounded runtime state and required dependencies are operationally ready.',
+    '# TYPE bayn_runtime_ready gauge',
+    `bayn_runtime_ready ${runtimeReady ? 1 : 0}`,
     '# HELP bayn_cycle_observation_available Whether the bounded PostgreSQL cycle projection is current.',
     '# TYPE bayn_cycle_observation_available gauge',
     `bayn_cycle_observation_available ${cycleObservationAvailable ? 1 : 0}`,
@@ -199,6 +210,11 @@ export const renderPrometheusMetrics = (
     '# HELP bayn_cycle_phase Current unfinished cycle phase, or the latest terminal phase when idle.',
     '# TYPE bayn_cycle_phase gauge',
     ...phases.map((phase) => `bayn_cycle_phase{phase="${phase}"} ${cyclePhase === phase ? 1 : 0}`),
+    '# HELP bayn_cycle_terminal_reason Exact bounded terminal reason of the latest cycle.',
+    '# TYPE bayn_cycle_terminal_reason gauge',
+    ...terminalReasons.map(
+      (reason) => `bayn_cycle_terminal_reason{reason="${reason}"} ${cycleTerminalReason === reason ? 1 : 0}`,
+    ),
     ...(cycleObservationAvailable
       ? [
           '# HELP bayn_cycle_unfinished_count Number of unfinished cycles for the bound qualification run.',
