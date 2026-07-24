@@ -40,6 +40,13 @@ spec:
             matchLabels:
               tailscale.com/parent-resource-ns: buzz
               tailscale.com/parent-resource: buzz
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tailscale
+          podSelector:
+            matchLabels:
+              tailscale.com/parent-resource-ns: buzz
+              tailscale.com/parent-resource: buzz-admin
       ports:
         - port: 3000
           protocol: TCP

@@ -121,6 +121,24 @@ describe('Buzz production GitOps contract', () => {
     expect(networkPolicy).toContain('port: 8000')
   })
 
+  test('exposes the read-only admin UI only through its dedicated Tailscale host', () => {
+    const values = buzzFile('values.yaml')
+    const kustomization = buzzFile('kustomization.yaml')
+    const ingress = buzzFile('admin-ingress.yaml')
+    const networkPolicy = buzzFile('networkpolicy.yaml')
+
+    expect(values).toContain('name: BUZZ_ADMIN_HOST\n      value: buzz-admin.ide-newton.ts.net')
+    expect(values).toContain('name: BUZZ_ADMIN_WEB_DIR\n      value: /srv/buzz/admin-web')
+    expect(kustomization).toContain('- admin-ingress.yaml')
+    expect(ingress).toContain('name: buzz-admin')
+    expect(ingress).toContain('ingressClassName: tailscale')
+    expect(ingress).toContain('tailscale.com/tags: tag:k8s')
+    expect(ingress.match(/buzz-admin\.ide-newton\.ts\.net/g)).toHaveLength(2)
+    expect(ingress).toContain('name: buzz')
+    expect(ingress).toContain('number: 3000')
+    expect(networkPolicy).toContain('tailscale.com/parent-resource: buzz-admin')
+  })
+
   test('keeps credentials out of Git and combines generated credentials through External Secrets', () => {
     const runtime = buzzFile('redis-auth-externalsecret.yaml')
     const aggregate = buzzFile('buzz-externalsecret.yaml')
