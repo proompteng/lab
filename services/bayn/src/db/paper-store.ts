@@ -1537,21 +1537,23 @@ const makeStore = (config: PaperStoreRuntimeConfig) =>
           )
           SELECT
             count(*) FILTER (
-              WHERE latest.event_type IN (
-                'SUBMIT_STARTED',
-                'SUBMIT_UNKNOWN',
-                'RECOVERY_NOT_FOUND',
-                'RECOVERY_UNKNOWN',
-                'CANCEL_STARTED',
-                'CANCEL_ACCEPTED',
-                'CANCEL_UNKNOWN'
-              )
-              OR (
-                latest.operation = 'CANCEL'
-                AND latest.event_type = 'RECOVERY_FOUND'
-                AND latest.state <> 'TERMINAL'
-              )
-            )::integer AS unresolved_count,
+              WHERE latest.state <> 'TERMINAL'
+                AND (
+                  latest.event_type IN (
+                    'SUBMIT_STARTED',
+                    'SUBMIT_UNKNOWN',
+                    'RECOVERY_NOT_FOUND',
+                    'RECOVERY_UNKNOWN',
+                    'CANCEL_STARTED',
+                    'CANCEL_ACCEPTED',
+                    'CANCEL_UNKNOWN'
+                  )
+                  OR (
+                    latest.operation = 'CANCEL'
+                    AND latest.event_type = 'RECOVERY_FOUND'
+                  )
+                )
+              )::integer AS unresolved_count,
             max(latest.occurred_at) AS latest_mutation_at
           FROM latest
         `.pipe(Effect.flatMap(decodeMutationBaseline))

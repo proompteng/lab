@@ -299,20 +299,21 @@ const makeCycleObservability = Effect.gen(function* () {
           unresolved_mutations AS (
             SELECT occurred_at
             FROM latest_mutations
-            WHERE
-              event_type IN (
-                'SUBMIT_STARTED',
-                'SUBMIT_UNKNOWN',
-                'RECOVERY_NOT_FOUND',
-                'RECOVERY_UNKNOWN',
-                'CANCEL_STARTED',
-                'CANCEL_ACCEPTED',
-                'CANCEL_UNKNOWN'
-              )
-              OR (
-                operation = 'CANCEL'
-                AND event_type = 'RECOVERY_FOUND'
-                AND state <> 'TERMINAL'
+            WHERE state <> 'TERMINAL'
+              AND (
+                event_type IN (
+                  'SUBMIT_STARTED',
+                  'SUBMIT_UNKNOWN',
+                  'RECOVERY_NOT_FOUND',
+                  'RECOVERY_UNKNOWN',
+                  'CANCEL_STARTED',
+                  'CANCEL_ACCEPTED',
+                  'CANCEL_UNKNOWN'
+                )
+                OR (
+                  operation = 'CANCEL'
+                  AND event_type = 'RECOVERY_FOUND'
+                )
               )
           )
           SELECT

@@ -435,6 +435,7 @@ const makeStore = Effect.gen(function* () {
             ORDER BY events.mutation_id, events.sequence DESC
           ) AS latest
           WHERE latest.intent_id <> ${intentId}
+            AND latest.state <> 'TERMINAL'
             AND (
               latest.event_type IN (
                 'SUBMIT_STARTED',
@@ -448,7 +449,6 @@ const makeStore = Effect.gen(function* () {
               OR (
                 latest.operation = 'CANCEL'
                 AND latest.event_type = 'RECOVERY_FOUND'
-                AND latest.state <> 'TERMINAL'
               )
             )
         ) AS unresolved
