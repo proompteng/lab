@@ -351,8 +351,7 @@ export const BrokerEventSchema = BrokerEventBase.check(
 )
 export type BrokerEvent = typeof BrokerEventSchema.Type
 
-const IntentBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-intent.v2'),
+const intentFields = {
   intentId: Sha256,
   riskDecisionId: Schema.optionalKey(Sha256),
   strategyName: NonEmptyString,
@@ -370,28 +369,44 @@ const IntentBase = Schema.Struct({
   state: Schema.Enum(IntentState),
   terminalOutcome: Schema.optionalKey(Schema.Enum(TerminalOutcome)),
   createdAt: UtcInstant,
+} as const
+
+const ReferenceIntentBase = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.paper-intent.v2'),
+  ...intentFields,
 })
 
-export const IntentSchema = IntentBase.check(
-  Schema.makeFilter((intent: typeof IntentBase.Type): readonly Schema.FilterIssue[] => {
-    const issues: Schema.FilterIssue[] = []
-    const terminal = intent.state === IntentState.Terminal
-    if (terminal !== (intent.terminalOutcome !== undefined)) {
-      issues.push({
-        path: ['terminalOutcome'],
-        issue: terminal ? 'is required for a terminal intent' : 'must be absent before terminal state',
-      })
-    }
-    const planned = intent.state === IntentState.Planned
-    if (planned === (intent.riskDecisionId !== undefined)) {
-      issues.push({
-        path: ['riskDecisionId'],
-        issue: planned ? 'must be absent before risk evaluation' : 'is required after risk evaluation',
-      })
-    }
-    return issues
-  }),
-)
+const IntentBase = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.paper-intent.v3'),
+  authorityGenerationHash: Sha256,
+  ...intentFields,
+})
+
+type IntentContract = typeof ReferenceIntentBase.Type | typeof IntentBase.Type
+
+const intentContractIssues = (intent: IntentContract): readonly Schema.FilterIssue[] => {
+  const issues: Schema.FilterIssue[] = []
+  const terminal = intent.state === IntentState.Terminal
+  if (terminal !== (intent.terminalOutcome !== undefined)) {
+    issues.push({
+      path: ['terminalOutcome'],
+      issue: terminal ? 'is required for a terminal intent' : 'must be absent before terminal state',
+    })
+  }
+  const planned = intent.state === IntentState.Planned
+  if (planned === (intent.riskDecisionId !== undefined)) {
+    issues.push({
+      path: ['riskDecisionId'],
+      issue: planned ? 'must be absent before risk evaluation' : 'is required after risk evaluation',
+    })
+  }
+  return issues
+}
+
+export const ReferenceIntentSchema = ReferenceIntentBase.check(Schema.makeFilter(intentContractIssues))
+export type ReferenceIntent = typeof ReferenceIntentSchema.Type
+
+export const IntentSchema = IntentBase.check(Schema.makeFilter(intentContractIssues))
 export type Intent = typeof IntentSchema.Type
 
 const allowedTransitions: Readonly<Record<IntentState, readonly IntentState[]>> = {
@@ -680,6 +695,7 @@ export const decodeOrder = Schema.decodeUnknownEffect(OrderSchema, StrictParseOp
 export const decodeFill = Schema.decodeUnknownEffect(FillSchema, StrictParseOptions)
 export const decodeBrokerError = Schema.decodeUnknownEffect(BrokerErrorSchema, StrictParseOptions)
 export const decodeRateLimit = Schema.decodeUnknownEffect(RateLimitSchema, StrictParseOptions)
+export const decodeReferenceIntent = Schema.decodeUnknownEffect(ReferenceIntentSchema, StrictParseOptions)
 export const decodeIntent = Schema.decodeUnknownEffect(IntentSchema, StrictParseOptions)
 export const decodeRiskInput = Schema.decodeUnknownEffect(RiskInputSchema, StrictParseOptions)
 export const decodeRiskDecision = Schema.decodeUnknownEffect(RiskDecisionSchema, StrictParseOptions)

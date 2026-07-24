@@ -372,6 +372,7 @@ const makeStore = Effect.gen(function* () {
       const storeOperation = operation === MutationOperation.Submit ? 'begin-submit' : 'begin-cancel'
       const rows = yield* sql<{
         effective: string
+        generation_hash: string
         generation_account_id: string | null
         generation_maximum: string | null
         kill_state: string
@@ -381,6 +382,7 @@ const makeStore = Effect.gen(function* () {
           authority.maximum,
           authority.effective,
           authority.kill_state,
+          authority.generation_hash,
           generation.maximum AS generation_maximum,
           generation.account_id AS generation_account_id
         FROM authority_state AS authority
@@ -416,7 +418,10 @@ const makeStore = Effect.gen(function* () {
           storeError(storeOperation, 'authority', 'active PAPER authority lacks its immutable account binding'),
         )
       }
-      return authority.generation_account_id
+      return {
+        accountId: authority.generation_account_id,
+        generationHash: authority.generation_hash,
+      } as const
     })
 
   const assertNoOtherUnresolved = (intentId: string) =>
@@ -496,27 +501,74 @@ const makeStore = Effect.gen(function* () {
               return { event: existing, started: false } satisfies StartReceipt
             }
 
-            const authorityAccountId = yield* assertAuthority(operation)
+            const authority = yield* assertAuthority(operation)
             if (operation === MutationOperation.Submit) yield* assertNoOtherUnresolved(input.intentId)
-            const intents = yield* sql<{ account_id: string; state: string; updated_at: string }>`
+            const intents = yield* sql<{
+              account_id: string
+              authority_generation_hash: string
+              generation_account_id: string | null
+              generation_maximum: string | null
+              generation_risk_policy_hash: string | null
+              generation_strategy_name: string | null
+              policy_hash: string
+              state: string
+              strategy_name: string
+              updated_at: string
+            }>`
               SELECT
-                account_id,
-                state,
-                to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
-              FROM intents
-              WHERE intent_id = ${input.intentId}
-              FOR UPDATE
+                intent.account_id,
+                intent.authority_generation_hash,
+                intent.policy_hash,
+                intent.state,
+                intent.strategy_name,
+                generation.account_id AS generation_account_id,
+                generation.maximum AS generation_maximum,
+                generation.risk_policy_hash AS generation_risk_policy_hash,
+                generation.strategy_name AS generation_strategy_name,
+                to_char(intent.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
+              FROM intents AS intent
+              LEFT JOIN authority_generations AS generation
+                ON generation.generation_hash = intent.authority_generation_hash
+              WHERE intent.intent_id = ${input.intentId}
+              FOR UPDATE OF intent
             `
             const intent = intents[0]
             if (intent === undefined) {
               return yield* Effect.fail(storeError(storeOperation, 'invariant', 'intent does not exist'))
             }
-            if (intent.account_id !== authorityAccountId) {
+            if (
+              intent.generation_maximum !== Authority.Paper ||
+              intent.generation_account_id === null ||
+              intent.generation_account_id !== intent.account_id ||
+              intent.generation_risk_policy_hash !== intent.policy_hash ||
+              intent.generation_strategy_name !== intent.strategy_name
+            ) {
+              return yield* Effect.fail(
+                storeError(
+                  storeOperation,
+                  'authority',
+                  'intent does not match its immutable PAPER authority-generation bindings',
+                ),
+              )
+            }
+            if (intent.account_id !== authority.accountId) {
               return yield* Effect.fail(
                 storeError(
                   storeOperation,
                   'authority',
                   'intent account does not match the active PAPER authority generation',
+                ),
+              )
+            }
+            if (
+              operation === MutationOperation.Submit &&
+              intent.authority_generation_hash !== authority.generationHash
+            ) {
+              return yield* Effect.fail(
+                storeError(
+                  'begin-submit',
+                  'authority',
+                  'intent authority generation is not the active PAPER generation',
                 ),
               )
             }

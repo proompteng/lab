@@ -294,7 +294,7 @@ const makeRiskState = (cycle: AutonomousCycle, symbol: string): State => {
     authority: {
       schemaVersion: 'bayn.paper-authority.v1',
       generationHash: hash('6'),
-      maximum: Authority.Paper,
+      maximum: Authority.Observe,
       effective: Authority.Observe,
       kill: KillState.Clear,
       version: 1,

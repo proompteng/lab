@@ -14,10 +14,12 @@ import {
   OrderStatus,
   OrderType,
   ReconciliationStatus,
+  ReferenceIntentSchema,
   RiskOutcome,
   TerminalOutcome,
   TimeInForce,
   type Intent,
+  type ReferenceIntent,
 } from './paper'
 import { reconciledStateHash } from './reconciliation'
 import { BrokerMode, PolicySchema, Reason, StateSchema, evaluate, type Policy, type State } from './risk'
@@ -30,6 +32,7 @@ const hash = (character: string): string => character.repeat(64)
 const decodePolicy = Schema.decodeUnknownSync(PolicySchema, strictParseOptions)
 const decodeState = Schema.decodeUnknownSync(StateSchema, strictParseOptions)
 const decodeIntent = Schema.decodeUnknownSync(IntentSchema, strictParseOptions)
+const decodeReferenceIntent = Schema.decodeUnknownSync(ReferenceIntentSchema, strictParseOptions)
 
 const rehashExecutionSession = (
   binding: Omit<State['executionSession'], 'bindingHash'>,
@@ -257,8 +260,9 @@ const makeState = (overrides: Partial<State> = {}): State => {
 
 const makeIntent = (overrides: Partial<Intent> = {}): Intent =>
   decodeIntent({
-    schemaVersion: 'bayn.paper-intent.v2',
+    schemaVersion: 'bayn.paper-intent.v3',
     intentId: hash('6'),
+    authorityGenerationHash: hash('4'),
     strategyName: 'risk-balanced-trend',
     cycleId: hash('7'),
     decisionHash: hash('8'),
@@ -276,7 +280,17 @@ const makeIntent = (overrides: Partial<Intent> = {}): Intent =>
     ...overrides,
   })
 
-const expectBlocked = (reason: Reason, intent = makeIntent(), state = makeState(), policy = makePolicy()): void => {
+const makeReferenceIntent = (): ReferenceIntent => {
+  const { authorityGenerationHash: _, ...intent } = makeIntent()
+  return decodeReferenceIntent({ ...intent, schemaVersion: 'bayn.paper-intent.v2' })
+}
+
+const expectBlocked = (
+  reason: Reason,
+  intent: Intent | ReferenceIntent = makeIntent(),
+  state = makeState(),
+  policy = makePolicy(),
+): void => {
   const result = evaluate(intent, state, policy)
   expect(result.decision.outcome).toBe(RiskOutcome.Blocked)
   expect(result.decision.reasonCodes).toContain(reason)
@@ -623,7 +637,7 @@ describe('bounded paper risk', () => {
     )
     expectBlocked(
       Reason.AuthorityNotPaper,
-      makeIntent(),
+      makeReferenceIntent(),
       makeState({
         authority: {
           ...baseState().authority,
@@ -731,5 +745,49 @@ describe('bounded paper risk', () => {
     expect(freshnessCapped.input.freshUntil).toBe('2026-07-21T21:00:00.001Z')
     expect(cutoffCapped.input.freshUntil).toBe('2026-07-21T21:00:00.001Z')
     expect(intentCapped.input.freshUntil).toBe('2026-07-21T21:00:00.001Z')
+  })
+
+  test('requires the exact authority generation for PAPER evaluation and hashes that binding', () => {
+    const baselineState = makeState()
+    const baseline = evaluate(makeIntent(), baselineState, makePolicy())
+    const rotatedAuthority = { ...baselineState.authority, generationHash: hash('9') }
+    const rotatedState = makeState({ authority: rotatedAuthority })
+    const rotated = evaluate(makeIntent({ authorityGenerationHash: hash('9') }), rotatedState, makePolicy())
+
+    expect(rotated.input.inputHash).not.toBe(baseline.input.inputHash)
+    expect(rotated.gates.find((gate) => gate.name === 'reconciliation')?.passed).toBe(true)
+    expect(() => evaluate(makeIntent(), rotatedState, makePolicy())).toThrow(
+      'PAPER risk intent must bind the exact PAPER authority generation from risk state',
+    )
+    expect(() => evaluate(makeReferenceIntent(), baselineState, makePolicy())).toThrow(
+      'PAPER risk evaluation requires an authority-generation-bound intent',
+    )
+    expect(() =>
+      evaluate(
+        makeReferenceIntent(),
+        makeState({
+          authority: {
+            ...baselineState.authority,
+            effective: Authority.Observe,
+            kill: KillState.Active,
+            reason: 'operator kill',
+          },
+        }),
+        makePolicy(),
+      ),
+    ).toThrow('PAPER risk evaluation requires an authority-generation-bound intent')
+    expect(() =>
+      evaluate(
+        makeIntent(),
+        makeState({
+          authority: {
+            ...baselineState.authority,
+            maximum: Authority.Observe,
+            effective: Authority.Observe,
+          },
+        }),
+        makePolicy(),
+      ),
+    ).toThrow('authority-generation-bound risk intent requires PAPER maximum authority')
   })
 })

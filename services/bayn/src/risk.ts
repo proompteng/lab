@@ -24,6 +24,7 @@ import {
   TimeInForce,
   UnsignedMicrosSchema,
   type Intent,
+  type ReferenceIntent,
 } from './paper'
 import { reconciledStateHash } from './reconciliation'
 import {
@@ -351,6 +352,7 @@ export const EvaluationSchema = EvaluationBase.check(
   }),
 )
 export type Evaluation = typeof EvaluationSchema.Type
+export type RiskIntent = Intent | ReferenceIntent
 
 const decodeInput = Schema.decodeUnknownSync(RiskInputSchema, StrictParseOptions)
 const decodeDecision = Schema.decodeUnknownSync(RiskDecisionSchema, StrictParseOptions)
@@ -376,11 +378,21 @@ const isUnresolved = (status: OrderStatus): boolean =>
   status === OrderStatus.New || status === OrderStatus.PartiallyFilled || status === OrderStatus.Pending
 
 export const evaluate = (
-  intent: Intent,
+  intent: RiskIntent,
   state: State,
   policy: Policy,
   proposedPositions: State['positions'] = state.positions,
 ): Evaluation => {
+  if (intent.schemaVersion === 'bayn.paper-intent.v3') {
+    if (state.authority.maximum !== Authority.Paper) {
+      throw new Error('authority-generation-bound risk intent requires PAPER maximum authority')
+    }
+    if (intent.authorityGenerationHash !== state.authority.generationHash) {
+      throw new Error('PAPER risk intent must bind the exact PAPER authority generation from risk state')
+    }
+  } else if (state.authority.maximum === Authority.Paper) {
+    throw new Error('PAPER risk evaluation requires an authority-generation-bound intent')
+  }
   const evaluatedAt = instant(state.evaluatedAt)
   const policyHash = canonicalHashV1(policy)
   const referencePrice = BigInt(state.referencePriceMicros)
@@ -671,7 +683,10 @@ export const evaluate = (
     executionSession: state.executionSession,
   })
   const inputMaterial = {
-    schemaVersion: 'bayn.paper-risk-evaluation-input.v2',
+    schemaVersion:
+      intent.schemaVersion === 'bayn.paper-intent.v3'
+        ? 'bayn.paper-risk-evaluation-input.v3'
+        : 'bayn.paper-risk-evaluation-input.v2',
     intent,
     policy,
     state,

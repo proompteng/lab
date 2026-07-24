@@ -50,8 +50,9 @@ const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const initialTime = '1969-12-31T23:59:59.000Z'
 
 const intent: Intent = {
-  schemaVersion: 'bayn.paper-intent.v2',
+  schemaVersion: 'bayn.paper-intent.v3',
   intentId,
+  authorityGenerationHash: 'f'.repeat(64),
   riskDecisionId: 'b'.repeat(64),
   strategyName: 'risk-balanced-trend',
   cycleId: 'c'.repeat(64),

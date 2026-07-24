@@ -6,7 +6,9 @@ import type { Fragment } from 'effect/unstable/sql/Statement'
 
 import { canonicalHashV1 } from '../hash'
 import {
+  Authority,
   decodeIntent,
+  decodeReferenceIntent,
   decodeRiskDecision,
   IntentSchema,
   IntentState,
@@ -18,8 +20,10 @@ import {
   TerminalOutcome,
   TimeInForce,
   type Intent,
+  type ReferenceIntent,
   type RiskDecision,
 } from '../paper'
+import type { State } from '../risk'
 import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
@@ -50,7 +54,7 @@ const decodePlan = Schema.decodeUnknownEffect(IntentPlanSchema, strictParseOptio
 const intentEquivalent = Schema.toEquivalence(IntentSchema)
 const decisionEquivalent = Schema.toEquivalence(RiskDecisionSchema)
 
-const identityMaterial = (input: IntentPlan) => ({
+const referenceIdentityMaterial = (input: IntentPlan) => ({
   schemaVersion: 'bayn.paper-intent-identity.v1',
   strategyName: input.strategyName,
   cycleId: input.cycleId,
@@ -64,34 +68,91 @@ const identityMaterial = (input: IntentPlan) => ({
   notionalLimitMicros: input.notionalLimitMicros,
 })
 
-export const intentIdForPlan = (input: IntentPlan): string => canonicalHashV1(identityMaterial(input))
+const paperIdentityMaterial = (input: IntentPlan, authorityGenerationHash: string) => ({
+  schemaVersion: 'bayn.paper-intent-identity.v2',
+  authorityGenerationHash,
+  strategyName: input.strategyName,
+  cycleId: input.cycleId,
+  decisionHash: input.decisionHash,
+  accountId: input.accountId,
+  symbol: input.symbol,
+  side: input.side,
+  orderType: input.orderType,
+  timeInForce: input.timeInForce,
+  quantityMicros: input.quantityMicros,
+  notionalLimitMicros: input.notionalLimitMicros,
+})
+
+export const intentIdForPlan = (input: IntentPlan): string => canonicalHashV1(referenceIdentityMaterial(input))
 
 const clientOrderId = (intentId: string): string => `b1_${Buffer.from(intentId, 'hex').toString('base64url')}`
 
-export const plan = (input: unknown) =>
-  decodePlan(input).pipe(
-    Effect.flatMap((decoded) => {
-      const intentId = intentIdForPlan(decoded)
-      return decodeIntent({
-        schemaVersion: 'bayn.paper-intent.v2',
-        intentId,
-        strategyName: decoded.strategyName,
-        cycleId: decoded.cycleId,
-        decisionHash: decoded.decisionHash,
-        policyHash: decoded.policyHash,
-        accountId: decoded.accountId,
-        clientOrderId: clientOrderId(intentId),
-        symbol: decoded.symbol,
-        side: decoded.side,
-        orderType: decoded.orderType,
-        timeInForce: decoded.timeInForce,
-        quantityMicros: decoded.quantityMicros,
-        notionalLimitMicros: decoded.notionalLimitMicros,
-        state: IntentState.Planned,
-        createdAt: decoded.createdAt,
-      })
-    }),
-  )
+const makeReferenceIntent = (decoded: IntentPlan): Effect.Effect<ReferenceIntent, Schema.SchemaError> => {
+  const intentId = intentIdForPlan(decoded)
+  return decodeReferenceIntent({
+    schemaVersion: 'bayn.paper-intent.v2',
+    intentId,
+    strategyName: decoded.strategyName,
+    cycleId: decoded.cycleId,
+    decisionHash: decoded.decisionHash,
+    policyHash: decoded.policyHash,
+    accountId: decoded.accountId,
+    clientOrderId: clientOrderId(intentId),
+    symbol: decoded.symbol,
+    side: decoded.side,
+    orderType: decoded.orderType,
+    timeInForce: decoded.timeInForce,
+    quantityMicros: decoded.quantityMicros,
+    notionalLimitMicros: decoded.notionalLimitMicros,
+    state: IntentState.Planned,
+    createdAt: decoded.createdAt,
+  })
+}
+
+const makePaperIntent = (
+  decoded: IntentPlan,
+  authorityGenerationHash: string,
+): Effect.Effect<Intent, Schema.SchemaError> => {
+  const intentId = canonicalHashV1(paperIdentityMaterial(decoded, authorityGenerationHash))
+  return decodeIntent({
+    schemaVersion: 'bayn.paper-intent.v3',
+    authorityGenerationHash,
+    intentId,
+    strategyName: decoded.strategyName,
+    cycleId: decoded.cycleId,
+    decisionHash: decoded.decisionHash,
+    policyHash: decoded.policyHash,
+    accountId: decoded.accountId,
+    clientOrderId: clientOrderId(intentId),
+    symbol: decoded.symbol,
+    side: decoded.side,
+    orderType: decoded.orderType,
+    timeInForce: decoded.timeInForce,
+    quantityMicros: decoded.quantityMicros,
+    notionalLimitMicros: decoded.notionalLimitMicros,
+    state: IntentState.Planned,
+    createdAt: decoded.createdAt,
+  })
+}
+
+export const plan = (input: unknown) => decodePlan(input).pipe(Effect.flatMap(makeReferenceIntent))
+
+export class PaperIntentBindingError extends Data.TaggedError('PaperIntentBindingError')<{
+  readonly message: string
+}> {}
+
+export const planPaperIntent = (input: unknown, state: Pick<State, 'authority'>) =>
+  Effect.gen(function* () {
+    const decoded = yield* decodePlan(input)
+    if (state.authority.maximum !== Authority.Paper) {
+      return yield* Effect.fail(
+        new PaperIntentBindingError({
+          message: 'a durable PAPER intent requires a PAPER authority generation from risk state',
+        }),
+      )
+    }
+    return yield* makePaperIntent(decoded, state.authority.generationHash)
+  })
 
 export class IntentStoreError extends Data.TaggedError('IntentStoreError')<{
   readonly failure: 'conflict' | 'decode' | 'invariant' | 'query'
@@ -127,9 +188,10 @@ export interface IntentStoreService {
 export class IntentStore extends Context.Service<IntentStore, IntentStoreService>()('bayn/IntentStore') {}
 
 const intentRowFields = {
-  schema_version: Schema.Literal('bayn.paper-intent.v2'),
+  schema_version: Schema.Literal('bayn.paper-intent.v3'),
   intent_id: Sha256,
   risk_decision_id: Schema.NullOr(Sha256),
+  authority_generation_hash: Sha256,
   strategy_name: NonEmptyString,
   cycle_id: Sha256,
   decision_hash: Sha256,
@@ -180,6 +242,7 @@ const selectRows = (sql: PgClient.PgClient, predicate: Fragment) => sql`
     intent.schema_version,
     intent.intent_id,
     intent.risk_decision_id,
+    intent.authority_generation_hash,
     intent.strategy_name,
     intent.cycle_id,
     intent.decision_hash,
@@ -215,6 +278,7 @@ const toRecord = (row: StoredRow) =>
       schemaVersion: row.schema_version,
       intentId: row.intent_id,
       ...(row.risk_decision_id === null ? {} : { riskDecisionId: row.risk_decision_id }),
+      authorityGenerationHash: row.authority_generation_hash,
       strategyName: row.strategy_name,
       cycleId: row.cycle_id,
       decisionHash: row.decision_hash,
@@ -252,6 +316,7 @@ const immutableIntentHash = (intent: Intent): string =>
   canonicalHashV1({
     schemaVersion: intent.schemaVersion,
     intentId: intent.intentId,
+    authorityGenerationHash: intent.authorityGenerationHash,
     strategyName: intent.strategyName,
     cycleId: intent.cycleId,
     decisionHash: intent.decisionHash,
@@ -323,21 +388,24 @@ const makeStore = Effect.gen(function* () {
     run(
       'commit',
       Effect.gen(function* () {
-        const expectedIntent = yield* plan({
-          schemaVersion: 'bayn.paper-intent-plan.v1',
-          strategyName: inputIntent.strategyName,
-          cycleId: inputIntent.cycleId,
-          decisionHash: inputIntent.decisionHash,
-          policyHash: inputIntent.policyHash,
-          accountId: inputIntent.accountId,
-          symbol: inputIntent.symbol,
-          side: inputIntent.side,
-          orderType: inputIntent.orderType,
-          timeInForce: inputIntent.timeInForce,
-          quantityMicros: inputIntent.quantityMicros,
-          notionalLimitMicros: inputIntent.notionalLimitMicros,
-          createdAt: inputIntent.createdAt,
-        }).pipe(Effect.mapError((cause) => storeError('decode', 'commit', 'invalid planned intent', cause)))
+        const expectedIntent = yield* makePaperIntent(
+          {
+            schemaVersion: 'bayn.paper-intent-plan.v1',
+            strategyName: inputIntent.strategyName,
+            cycleId: inputIntent.cycleId,
+            decisionHash: inputIntent.decisionHash,
+            policyHash: inputIntent.policyHash,
+            accountId: inputIntent.accountId,
+            symbol: inputIntent.symbol,
+            side: inputIntent.side,
+            orderType: inputIntent.orderType,
+            timeInForce: inputIntent.timeInForce,
+            quantityMicros: inputIntent.quantityMicros,
+            notionalLimitMicros: inputIntent.notionalLimitMicros,
+            createdAt: inputIntent.createdAt,
+          },
+          inputIntent.authorityGenerationHash,
+        ).pipe(Effect.mapError((cause) => storeError('decode', 'commit', 'invalid planned intent', cause)))
         if (!intentEquivalent(inputIntent, expectedIntent)) {
           return yield* Effect.fail(
             storeError('invariant', 'commit', 'planned intent does not match its deterministic identity'),
@@ -360,50 +428,10 @@ const makeStore = Effect.gen(function* () {
 
         return yield* withFence(
           Effect.gen(function* () {
-            yield* sql`
-              INSERT INTO intents (
-                intent_id,
-                schema_version,
-                strategy_name,
-                cycle_id,
-                decision_hash,
-                policy_hash,
-                account_id,
-                client_order_id,
-                symbol,
-                side,
-                order_type,
-                time_in_force,
-                quantity_micros,
-                notional_limit_micros,
-                state,
-                created_at,
-                updated_at
-              ) VALUES (
-                ${inputIntent.intentId},
-                ${inputIntent.schemaVersion},
-                ${inputIntent.strategyName},
-                ${inputIntent.cycleId},
-                ${inputIntent.decisionHash},
-                ${inputIntent.policyHash},
-                ${inputIntent.accountId},
-                ${inputIntent.clientOrderId},
-                ${inputIntent.symbol},
-                ${inputIntent.side},
-                ${inputIntent.orderType},
-                ${inputIntent.timeInForce},
-                ${inputIntent.quantityMicros},
-                ${inputIntent.notionalLimitMicros},
-                ${inputIntent.state},
-                ${inputIntent.createdAt},
-                ${inputIntent.createdAt}
-              )
-              ON CONFLICT DO NOTHING
-            `
-
-            const conflictRows = yield* selectRows(
-              sql,
-              sql`
+            const readConflicts = () =>
+              selectRows(
+                sql,
+                sql`
                 intent.intent_id = ${inputIntent.intentId}
                 OR (intent.account_id = ${inputIntent.accountId} AND intent.client_order_id = ${inputIntent.clientOrderId})
                 OR (
@@ -414,7 +442,128 @@ const makeStore = Effect.gen(function* () {
                   AND intent.symbol = ${inputIntent.symbol}
                 )
               `,
-            ).pipe(Effect.flatMap((rows) => decodeStored('commit', rows)))
+              ).pipe(Effect.flatMap((rows) => decodeStored('commit', rows)))
+
+            let conflictRows = yield* readConflicts()
+            if (conflictRows.length > 1) {
+              return yield* Effect.fail(
+                storeError('conflict', 'commit', 'intent uniqueness boundary resolved to multiple records'),
+              )
+            }
+            const preexisting = conflictRows[0]
+            if (preexisting !== undefined) {
+              if (immutableIntentHash(preexisting.intent) !== immutableIntentHash(inputIntent)) {
+                return yield* Effect.fail(
+                  storeError('conflict', 'commit', 'deterministic intent identity was reused with different content'),
+                )
+              }
+              if (preexisting.decision !== undefined) {
+                const stateMatchesDecision =
+                  decision.outcome === RiskOutcome.Approved
+                    ? preexisting.intent.state !== IntentState.Planned
+                    : preexisting.intent.state === IntentState.Terminal &&
+                      preexisting.intent.terminalOutcome === TerminalOutcome.Blocked
+                if (
+                  !decisionEquivalent(preexisting.decision, decision) ||
+                  preexisting.intent.riskDecisionId !== decision.decisionId ||
+                  !stateMatchesDecision
+                ) {
+                  return yield* Effect.fail(
+                    storeError('conflict', 'commit', 'stored intent decision diverges from the requested decision'),
+                  )
+                }
+                return { record: preexisting, deduplicated: true } satisfies IntentReceipt
+              }
+              if (preexisting.intent.state !== IntentState.Planned || preexisting.intent.riskDecisionId !== undefined) {
+                return yield* Effect.fail(storeError('invariant', 'commit', 'intent without a decision is not PLANNED'))
+              }
+            }
+
+            const authorityRows = yield* sql<{
+              generation_account_id: string | null
+              generation_hash: string
+              generation_maximum: string | null
+              generation_risk_policy_hash: string | null
+              generation_strategy_name: string | null
+              maximum: string
+            }>`
+              SELECT
+                authority.maximum,
+                authority.generation_hash,
+                generation.maximum AS generation_maximum,
+                generation.account_id AS generation_account_id,
+                generation.risk_policy_hash AS generation_risk_policy_hash,
+                generation.strategy_name AS generation_strategy_name
+              FROM authority_state AS authority
+              LEFT JOIN authority_generations AS generation
+                ON generation.generation_hash = authority.generation_hash
+              WHERE authority.singleton
+              FOR UPDATE OF authority
+            `
+            const authority = authorityRows[0]
+            if (
+              authority === undefined ||
+              authority.maximum !== Authority.Paper ||
+              authority.generation_hash !== inputIntent.authorityGenerationHash ||
+              authority.generation_maximum !== Authority.Paper ||
+              authority.generation_account_id !== inputIntent.accountId ||
+              authority.generation_risk_policy_hash !== inputIntent.policyHash ||
+              authority.generation_strategy_name !== inputIntent.strategyName
+            ) {
+              return yield* Effect.fail(
+                storeError(
+                  'invariant',
+                  'commit',
+                  'PAPER intent does not match the current immutable authority-generation bindings',
+                ),
+              )
+            }
+
+            if (preexisting === undefined) {
+              yield* sql`
+                INSERT INTO intents (
+                  intent_id,
+                  schema_version,
+                  authority_generation_hash,
+                  strategy_name,
+                  cycle_id,
+                  decision_hash,
+                  policy_hash,
+                  account_id,
+                  client_order_id,
+                  symbol,
+                  side,
+                  order_type,
+                  time_in_force,
+                  quantity_micros,
+                  notional_limit_micros,
+                  state,
+                  created_at,
+                  updated_at
+                ) VALUES (
+                  ${inputIntent.intentId},
+                  ${inputIntent.schemaVersion},
+                  ${inputIntent.authorityGenerationHash},
+                  ${inputIntent.strategyName},
+                  ${inputIntent.cycleId},
+                  ${inputIntent.decisionHash},
+                  ${inputIntent.policyHash},
+                  ${inputIntent.accountId},
+                  ${inputIntent.clientOrderId},
+                  ${inputIntent.symbol},
+                  ${inputIntent.side},
+                  ${inputIntent.orderType},
+                  ${inputIntent.timeInForce},
+                  ${inputIntent.quantityMicros},
+                  ${inputIntent.notionalLimitMicros},
+                  ${inputIntent.state},
+                  ${inputIntent.createdAt},
+                  ${inputIntent.createdAt}
+                )
+                ON CONFLICT DO NOTHING
+              `
+              conflictRows = yield* readConflicts()
+            }
             if (conflictRows.length !== 1) {
               return yield* Effect.fail(
                 storeError('conflict', 'commit', 'intent uniqueness boundary did not resolve to one record'),
