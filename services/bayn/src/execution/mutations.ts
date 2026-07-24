@@ -370,11 +370,24 @@ const makeStore = Effect.gen(function* () {
   const assertAuthority = (operation: MutationOperation) =>
     Effect.gen(function* () {
       const storeOperation = operation === MutationOperation.Submit ? 'begin-submit' : 'begin-cancel'
-      const rows = yield* sql<{ effective: string; kill_state: string; maximum: string }>`
-        SELECT maximum, effective, kill_state
-        FROM authority_state
-        WHERE singleton
-        FOR UPDATE
+      const rows = yield* sql<{
+        effective: string
+        generation_account_id: string | null
+        generation_maximum: string | null
+        kill_state: string
+        maximum: string
+      }>`
+        SELECT
+          authority.maximum,
+          authority.effective,
+          authority.kill_state,
+          generation.maximum AS generation_maximum,
+          generation.account_id AS generation_account_id
+        FROM authority_state AS authority
+        LEFT JOIN authority_generations AS generation
+          ON generation.generation_hash = authority.generation_hash
+        WHERE authority.singleton
+        FOR UPDATE OF authority
       `
       const authority = rows[0]
       if (authority === undefined) {
@@ -398,6 +411,12 @@ const makeStore = Effect.gen(function* () {
           storeError('begin-cancel', 'authority', 'cancellation requires PAPER authority or an active kill'),
         )
       }
+      if (authority.generation_maximum !== Authority.Paper || authority.generation_account_id === null) {
+        return yield* Effect.fail(
+          storeError(storeOperation, 'authority', 'active PAPER authority lacks its immutable account binding'),
+        )
+      }
+      return authority.generation_account_id
     })
 
   const assertNoOtherUnresolved = (intentId: string) =>
@@ -477,10 +496,13 @@ const makeStore = Effect.gen(function* () {
               return { event: existing, started: false } satisfies StartReceipt
             }
 
-            yield* assertAuthority(operation)
+            const authorityAccountId = yield* assertAuthority(operation)
             if (operation === MutationOperation.Submit) yield* assertNoOtherUnresolved(input.intentId)
-            const intents = yield* sql<{ state: string; updated_at: string }>`
-              SELECT state, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
+            const intents = yield* sql<{ account_id: string; state: string; updated_at: string }>`
+              SELECT
+                account_id,
+                state,
+                to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
               FROM intents
               WHERE intent_id = ${input.intentId}
               FOR UPDATE
@@ -488,6 +510,15 @@ const makeStore = Effect.gen(function* () {
             const intent = intents[0]
             if (intent === undefined) {
               return yield* Effect.fail(storeError(storeOperation, 'invariant', 'intent does not exist'))
+            }
+            if (intent.account_id !== authorityAccountId) {
+              return yield* Effect.fail(
+                storeError(
+                  storeOperation,
+                  'authority',
+                  'intent account does not match the active PAPER authority generation',
+                ),
+              )
             }
             const requiredState =
               operation === MutationOperation.Submit
