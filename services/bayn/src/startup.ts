@@ -17,7 +17,11 @@ import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataInspection, type MarketDataService, type MarketDataSnapshot } from './market-data'
 import { databaseOperation, withinDeadline } from './operations'
 import { makeQualificationResult, type QualificationLock, type QualificationResult } from './qualification'
-import { summarizeEvaluation } from './risk-balanced-trend'
+import {
+  renderRiskBalancedTrendEvaluationIssues,
+  summarizeEvaluation,
+  type RiskBalancedTrendEvaluationIssue,
+} from './risk-balanced-trend'
 import type { RuntimeEvidence, RuntimeState } from './runtime-state'
 import type { Strategy } from './strategy'
 import type { EvaluationResult, ReconciliationResult } from './types'
@@ -210,7 +214,13 @@ export type StartupDecisionFailure =
     }
   | {
       readonly _tag: 'StrategyOperationFailed'
-      readonly operation: 'prepare-lock' | 'evaluate' | 'analyze' | 'qualify'
+      readonly operation: 'evaluate'
+      readonly strategyName: string
+      readonly cause: readonly RiskBalancedTrendEvaluationIssue[]
+    }
+  | {
+      readonly _tag: 'StrategyOperationFailed'
+      readonly operation: 'prepare-lock' | 'analyze' | 'qualify'
       readonly strategyName: string
       readonly cause: unknown
     }
@@ -396,11 +406,11 @@ const startupFailurePresentation = (failure: StartupDecisionFailure): StartupFai
         analyze: 'analysis',
         qualify: 'qualification',
       }[failure.operation]
-      return presentFailure(
-        'strategy',
-        failure.operation,
-        `${failure.strategyName} ${label} failed: ${causeMessage(failure.cause)}`,
-      )
+      const detail =
+        failure.operation === 'evaluate'
+          ? renderRiskBalancedTrendEvaluationIssues(failure.cause)
+          : causeMessage(failure.cause)
+      return presentFailure('strategy', failure.operation, `${failure.strategyName} ${label} failed: ${detail}`)
     }
   }
 }
@@ -813,16 +823,15 @@ export const evaluateLockedSnapshot = (
       },
     })
   }
-  const evaluationResult = Result.try({
-    try: () => strategy.evaluate(snapshot.bars, snapshot.manifest),
-    catch: (cause): StartupDecisionFailure => ({
+  const evaluationResult = strategy.evaluate(snapshot.bars, snapshot.manifest)
+  if (Result.isFailure(evaluationResult)) {
+    return Result.fail({
       _tag: 'StrategyOperationFailed',
       operation: 'evaluate',
       strategyName: strategy.name,
-      cause,
-    }),
-  })
-  if (Result.isFailure(evaluationResult)) return evaluationResult
+      cause: evaluationResult.failure,
+    })
+  }
   if (evaluationResult.success.runId !== lock.candidateRunId) {
     return Result.fail({
       _tag: 'BindingMismatch',
@@ -833,7 +842,7 @@ export const evaluateLockedSnapshot = (
       },
     })
   }
-  return evaluationResult
+  return Result.succeed(evaluationResult.success)
 }
 
 export const qualifyEvaluation = (

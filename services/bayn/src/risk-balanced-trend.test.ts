@@ -1,4 +1,7 @@
+import assert from 'node:assert/strict'
+
 import { describe, expect, test } from 'bun:test'
+import { Result } from 'effect'
 
 import type { MarketCalendarObservation } from './broker/alpaca'
 import { referencePriceMicros } from './execution-model'
@@ -13,6 +16,11 @@ import {
 import { makeStrategy } from './strategy'
 import { makeSnapshot, makeTestProvenance, fixtureProtocol } from './test-fixtures'
 import type { CausalProtocol, IsoDate } from './types'
+
+const assertSuccess = <A, E>(result: Result.Result<A, E>): A => {
+  assert(Result.isSuccess(result), 'strategy evaluation fixture must succeed')
+  return result.success
+}
 
 const shortProtocol = (overrides: Partial<CausalProtocol> = {}): CausalProtocol => ({
   ...fixtureProtocol,
@@ -60,6 +68,26 @@ const currentDecisionBinding = (
 }
 
 describe('risk-balanced trend candidate', () => {
+  test('preserves pre-reconciliation strategy failures behind the transitional Result boundary', () => {
+    const snapshot = makeSnapshot()
+    const evaluate = () =>
+      evaluateRiskBalancedTrend(snapshot.bars.slice(1), snapshot.manifest, fixtureProtocol, makeTestProvenance())
+
+    expect(evaluate).not.toThrow()
+    const result = evaluate()
+    assert(Result.isFailure(result), 'malformed strategy evidence must fail explicitly')
+    expect(result.failure).toHaveLength(1)
+    const [issue] = result.failure
+    expect(issue).toEqual(
+      expect.objectContaining({
+        _tag: 'RiskBalancedTrendCompatibilityFailure',
+        phase: 'prepare',
+      }),
+    )
+    assert(issue._tag === 'RiskBalancedTrendCompatibilityFailure', 'compatibility failure must retain its cause')
+    expect(issue.cause).toBeInstanceOf(Error)
+  })
+
   test('matches a hand-calculated multi-symbol continuous normalized trend', () => {
     const protocol = shortProtocol({
       horizons: [1],
@@ -218,7 +246,9 @@ describe('risk-balanced trend candidate', () => {
 
     const snapshot = makeSnapshot()
     const provenance = makeTestProvenance()
-    const baseline = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+    const baseline = assertSuccess(
+      evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance),
+    )
     const finalSession = snapshot.manifest.lastSession
     const changedFuture = snapshot.bars.map((bar) =>
       bar.sessionDate === finalSession && bar.symbol === 'DBC'
@@ -231,7 +261,9 @@ describe('risk-balanced trend candidate', () => {
           }
         : bar,
     )
-    const changed = evaluateRiskBalancedTrend(changedFuture, snapshot.manifest, fixtureProtocol, provenance)
+    const changed = assertSuccess(
+      evaluateRiskBalancedTrend(changedFuture, snapshot.manifest, fixtureProtocol, provenance),
+    )
 
     expect(baseline.signalDecisions[0].signalDate < finalSession).toBe(true)
     expect(changed.signalDecisions[0]).toEqual(baseline.signalDecisions[0])
@@ -375,6 +407,15 @@ describe('risk-balanced trend candidate', () => {
     }
     const strategy = makeStrategy(fixtureProtocol, makeTestProvenance())
 
+    const evaluation = strategy.evaluate(snapshot.bars, mismatchedManifest)
+    assert(Result.isFailure(evaluation), 'strategy evaluation must preserve manifest failure as Result data')
+    expect(evaluation.failure).toEqual([
+      expect.objectContaining({
+        _tag: 'RiskBalancedTrendCompatibilityFailure',
+        phase: 'prepare',
+        cause: expect.any(TypeError),
+      }),
+    ])
     expect(() => strategy.prepareLock(mismatchedManifest, [], [])).toThrow(
       'Signal snapshot universe does not match the compiled strategy universe',
     )
@@ -383,8 +424,12 @@ describe('risk-balanced trend candidate', () => {
   test('evaluates deterministically with complete evidence and a calendar-only precommit', () => {
     const snapshot = makeSnapshot()
     const provenance = makeTestProvenance()
-    const first = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
-    const second = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+    const first = assertSuccess(
+      evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance),
+    )
+    const second = assertSuccess(
+      evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance),
+    )
     const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
     const precommit = prepareRiskBalancedTrendQualification(
       sessionDates,

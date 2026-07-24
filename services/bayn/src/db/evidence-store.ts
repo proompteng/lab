@@ -1,5 +1,5 @@
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Context, Data, Effect, FileSystem, Layer, Match, Option, Schema } from 'effect'
+import { Context, Data, Effect, FileSystem, Layer, Match, Option, Result, Schema } from 'effect'
 import { SqlSchema } from 'effect/unstable/sql'
 import { isSqlError, type SqlErrorReason } from 'effect/unstable/sql/SqlError'
 
@@ -35,7 +35,11 @@ import {
 } from '../qualification'
 import { ProtocolSchema } from '../protocol'
 import { summarizeEvaluation } from '../risk-balanced-trend'
-import { reconcileMarkedEquity } from '../simulation-reconciliation'
+import {
+  reconcileMarkedEquity,
+  renderSimulationReconciliationIssues,
+  type SimulationReconciliationIssue,
+} from '../simulation-reconciliation'
 import type {
   EconomicVerdict,
   EvaluationEvent,
@@ -383,6 +387,71 @@ const makeArtifact = (name: string, schemaVersion: string, payload: unknown, ite
   itemCount,
 })
 
+type PersistencePlan = Omit<PersistEvaluationInput, 'qualification'> & {
+  readonly qualification: PersistEvaluationInput['qualification']
+  readonly strategyName: string
+  readonly protocolHash: string
+  readonly snapshotId: string
+  readonly artifacts: readonly ReturnType<typeof makeArtifact>[]
+  readonly events: readonly ({
+    readonly ordinal: number
+    readonly contentHash: string
+    readonly payload: EvaluationEvent
+  } & Pick<EvaluationEvent, 'id' | 'kind'>)[]
+  readonly gates: readonly ({
+    readonly ordinal: number
+    readonly contentHash: string
+  } & EvaluationResult['verdict']['gates'][number])[]
+}
+
+const persistencePlanInvariantMessages = {
+  'evaluation-schema-version': 'evaluation schema version does not match runtime provenance',
+  'input-manifest-schema-version': 'input manifest schema version does not match the evidence contract',
+  'parameter-hash': 'strategy parameters and provenance disagree on parameter hash',
+  'execution-model': 'simulation execution model does not match strategy parameters',
+  'cost-multiplier': 'candidate simulation must use the base execution-cost multiplier',
+  'protocol-hash': 'evaluation and provenance disagree on protocol hash',
+  'source-revision': 'evaluation code revision does not match runtime provenance',
+  'accounting-reconciliation': 'reconciliation does not exactly match the evaluation run',
+  'input-manifest-hash': 'input manifest hash does not match its content',
+  'run-identity': 'run ID does not match runtime and input provenance',
+  'marked-equity-proof': 'independent marked-equity proof diverges from the evaluation evidence',
+  'signal-decisions': 'strategy signal decisions diverge from durable decision events',
+  'daily-series': 'candidate and benchmark daily series are not exactly aligned',
+  'events-empty': 'evaluation produced no durable events',
+  'gates-empty': 'evaluation produced no economic gate outcomes',
+  'qualification-evidence': 'qualification evidence is malformed or diverges from its candidate runtime',
+  'qualification-result': 'qualification result diverges from the locked evaluation',
+} as const
+
+type PersistencePlanInvariant = keyof typeof persistencePlanInvariantMessages
+
+type PersistencePlanFailure =
+  | {
+      readonly _tag: 'InvalidPersistencePlan'
+      readonly invariant: PersistencePlanInvariant
+      readonly cause?: unknown
+    }
+  | {
+      readonly _tag: 'SimulationReconciliationFailed'
+      readonly issues: readonly SimulationReconciliationIssue[]
+    }
+  | {
+      readonly _tag: 'PersistencePlanComputationFailed'
+      readonly operation: 'construct-persistence-evidence'
+      readonly cause: unknown
+    }
+
+const invalidPersistencePlan = (
+  invariant: PersistencePlanInvariant,
+  cause?: unknown,
+): Result.Result<never, PersistencePlanFailure> =>
+  Result.fail({
+    _tag: 'InvalidPersistencePlan',
+    invariant,
+    ...(cause === undefined ? {} : { cause }),
+  })
+
 const validateQualificationOpenInput = (input: OpenQualificationInput) => {
   const lock = decodeQualificationLock(input.lock)
   const { inputManifest, parameters, provenance } = input
@@ -442,39 +511,51 @@ const validateQualificationOpenInput = (input: OpenQualificationInput) => {
   return { ...input, lock }
 }
 
-const makePersistencePlan = (input: PersistEvaluationInput) => {
+interface ValidatedPersistenceEvaluation {
+  readonly protocolHash: string
+  readonly snapshotId: string
+}
+
+interface PersistenceEvidenceMaterial {
+  readonly baseArtifacts: readonly ReturnType<typeof makeArtifact>[]
+  readonly events: PersistencePlan['events']
+  readonly gates: PersistencePlan['gates']
+}
+
+const validatePersistenceEvaluation = (
+  input: PersistEvaluationInput,
+): Result.Result<ValidatedPersistenceEvaluation, PersistencePlanFailure> => {
   const { evaluation, parameters, provenance, reconciliation } = input
   if (evaluation.schemaVersion !== provenance.contractVersions.evaluation) {
-    throw new TypeError('evaluation schema version does not match runtime provenance')
+    return invalidPersistencePlan('evaluation-schema-version')
   }
   if (
     evaluation.inputManifest.schemaVersion !== evidenceContract.inputManifestSchemaVersion ||
     provenance.contractVersions.inputManifest !== evidenceContract.inputManifestSchemaVersion
   ) {
-    throw new TypeError('input manifest schema version does not match the evidence contract')
+    return invalidPersistencePlan('input-manifest-schema-version')
   }
   const parameterHash = canonicalHashV1(parameters)
   if (parameterHash !== provenance.strategy.parameterHash) {
-    throw new TypeError('strategy parameters and provenance disagree on parameter hash')
+    return invalidPersistencePlan('parameter-hash')
   }
   if (canonicalHashV1(evaluation.simulation.executionModel) !== canonicalHashV1(parameters.executionModel)) {
-    throw new TypeError('simulation execution model does not match strategy parameters')
+    return invalidPersistencePlan('execution-model')
   }
   if (evaluation.simulation.costMultiplierMicros !== '1000000') {
-    throw new TypeError('candidate simulation must use the base execution-cost multiplier')
+    return invalidPersistencePlan('cost-multiplier')
   }
   const protocolHash = makeStrategyProtocolHash(provenance.strategy)
-  if (protocolHash !== evaluation.protocolHash)
-    throw new TypeError('evaluation and provenance disagree on protocol hash')
+  if (protocolHash !== evaluation.protocolHash) return invalidPersistencePlan('protocol-hash')
   if (evaluation.codeRevision !== provenance.sourceRevision) {
-    throw new TypeError('evaluation code revision does not match runtime provenance')
+    return invalidPersistencePlan('source-revision')
   }
   if (reconciliation.runId !== evaluation.runId || reconciliation.exact !== true) {
-    throw new TypeError('reconciliation does not exactly match the evaluation run')
+    return invalidPersistencePlan('accounting-reconciliation')
   }
   const { hash: inputManifestHash, ...manifestMaterial } = evaluation.inputManifest
   if (canonicalHashV1(manifestMaterial) !== inputManifestHash) {
-    throw new TypeError('input manifest hash does not match its content')
+    return invalidPersistencePlan('input-manifest-hash')
   }
   const snapshotId = evaluation.inputManifest.finalizedSnapshot.snapshotId
   const expectedRunId = makeRunIdentity({
@@ -490,9 +571,9 @@ const makePersistencePlan = (input: PersistEvaluationInput) => {
     calendarVersion: evaluation.inputManifest.finalizedSnapshot.calendarVersion,
     bounds: evaluation.inputManifest.bounds,
   }).runId
-  if (evaluation.runId !== expectedRunId) throw new TypeError('run ID does not match runtime and input provenance')
+  if (evaluation.runId !== expectedRunId) return invalidPersistencePlan('run-identity')
 
-  const equityProof = reconcileMarkedEquity({
+  const equityProofResult = reconcileMarkedEquity({
     runId: evaluation.runId,
     initialCapitalMicros: evaluation.initialCapitalMicros,
     evaluatorTotalFeesMicros: evaluation.strategy.totalFeesMicros,
@@ -500,11 +581,15 @@ const makePersistencePlan = (input: PersistEvaluationInput) => {
     events: evaluation.events,
     simulation: evaluation.simulation,
   })
+  if (Result.isFailure(equityProofResult)) {
+    return Result.fail({ _tag: 'SimulationReconciliationFailed', issues: equityProofResult.failure })
+  }
+  const equityProof = equityProofResult.success
   if (
     canonicalHashV1(equityProof.reconciliation) !== canonicalHashV1(evaluation.markedEquityReconciliation) ||
     canonicalHashV1(equityProof.equitySeries) !== canonicalHashV1(evaluation.equitySeries)
   ) {
-    throw new TypeError('independent marked-equity proof diverges from the evaluation evidence')
+    return invalidPersistencePlan('marked-equity-proof')
   }
 
   const decisionEvents = evaluation.events.filter((event) => event.kind === 'decision')
@@ -518,7 +603,7 @@ const makePersistencePlan = (input: PersistEvaluationInput) => {
         canonicalHashV1(decision.targetWeights) !== canonicalHashV1(decisionEvents[index]?.targetWeights),
     )
   ) {
-    throw new TypeError('strategy signal decisions diverge from durable decision events')
+    return invalidPersistencePlan('signal-decisions')
   }
   const candidateDates = evaluation.simulation.dailyMarks.map((point) => point.sessionDate)
   const benchmarkSeries = Object.values(evaluation.benchmarkSeries)
@@ -530,9 +615,16 @@ const makePersistencePlan = (input: PersistEvaluationInput) => {
         series.some((point, index) => point.sessionDate !== candidateDates[index]),
     )
   ) {
-    throw new TypeError('candidate and benchmark daily series are not exactly aligned')
+    return invalidPersistencePlan('daily-series')
   }
 
+  return Result.succeed({ protocolHash, snapshotId })
+}
+
+const makePersistenceEvidence = (
+  input: PersistEvaluationInput,
+): Result.Result<PersistenceEvidenceMaterial, PersistencePlanFailure> => {
+  const { evaluation, reconciliation } = input
   const baseArtifacts = [
     makeArtifact('evaluation-summary', evidenceContract.summarySchemaVersion, summarizeEvaluation(evaluation)),
     makeArtifact('input-manifest', evaluation.inputManifest.schemaVersion, evaluation.inputManifest),
@@ -627,42 +719,65 @@ const makePersistencePlan = (input: PersistEvaluationInput) => {
     required: gate.required,
     contentHash: canonicalHashV1(gate),
   }))
-  if (events.length === 0) throw new TypeError('evaluation produced no durable events')
-  if (gates.length === 0) throw new TypeError('evaluation produced no economic gate outcomes')
+  if (events.length === 0) return invalidPersistencePlan('events-empty')
+  if (gates.length === 0) return invalidPersistencePlan('gates-empty')
+  return Result.succeed({ baseArtifacts, events, gates })
+}
 
-  let qualification = input.qualification
-  if (qualification !== undefined) {
-    const lock = validateQualificationOpenInput({
-      lock: qualification.lock,
-      inputManifest: evaluation.inputManifest,
-      parameters,
-      provenance,
-    }).lock
-    const result = decodeQualificationResult(qualification.result)
-    if (
-      lock.candidateRunId !== evaluation.runId ||
-      lock.data.selectedSessionCount !== evaluation.strategy.observations ||
-      lock.data.selectedSessionCount !== evaluation.simulation.dailyMarks.length ||
-      lock.data.selectedRebalanceCount !== evaluation.signalDecisions.length ||
-      result.lockId !== lock.lockId ||
-      result.runId !== evaluation.runId ||
-      canonicalHashV1(result.evaluationVerdict) !== canonicalHashV1(evaluation.verdict) ||
-      canonicalHashV1(result.analysis.priorTrialRunIds) !== canonicalHashV1(lock.priorTrialRunIds)
-    ) {
-      throw new TypeError('qualification result diverges from the locked evaluation')
-    }
-    qualification = { lock, result }
+const validatePersistenceQualification = (
+  input: PersistEvaluationInput,
+): Result.Result<PersistEvaluationInput['qualification'], PersistencePlanFailure> => {
+  const suppliedQualification = input.qualification
+  if (suppliedQualification === undefined) return Result.succeed(undefined)
+  const { evaluation, parameters, provenance } = input
+  const decodedQualification = Result.try({
+    try: () => ({
+      lock: validateQualificationOpenInput({
+        lock: suppliedQualification.lock,
+        inputManifest: evaluation.inputManifest,
+        parameters,
+        provenance,
+      }).lock,
+      result: decodeQualificationResult(suppliedQualification.result),
+    }),
+    catch: (cause): PersistencePlanFailure => ({
+      _tag: 'InvalidPersistencePlan',
+      invariant: 'qualification-evidence',
+      cause,
+    }),
+  })
+  if (Result.isFailure(decodedQualification)) return Result.fail(decodedQualification.failure)
+  const { lock, result } = decodedQualification.success
+  if (
+    lock.candidateRunId !== evaluation.runId ||
+    lock.data.selectedSessionCount !== evaluation.strategy.observations ||
+    lock.data.selectedSessionCount !== evaluation.simulation.dailyMarks.length ||
+    lock.data.selectedRebalanceCount !== evaluation.signalDecisions.length ||
+    result.lockId !== lock.lockId ||
+    result.runId !== evaluation.runId ||
+    canonicalHashV1(result.evaluationVerdict) !== canonicalHashV1(evaluation.verdict) ||
+    canonicalHashV1(result.analysis.priorTrialRunIds) !== canonicalHashV1(lock.priorTrialRunIds)
+  ) {
+    return invalidPersistencePlan('qualification-result')
   }
+  return Result.succeed({ lock, result })
+}
 
-  const artifactManifest = {
+const makePersistenceArtifactManifest = (
+  input: PersistEvaluationInput,
+  validated: ValidatedPersistenceEvaluation,
+  evidence: PersistenceEvidenceMaterial,
+) => {
+  const { evaluation, provenance } = input
+  return {
     schemaVersion: 'bayn.qualification-artifact-manifest.v1',
     identity: {
       runId: evaluation.runId,
       evaluationSchemaVersion: evaluation.schemaVersion,
-      protocolHash,
+      protocolHash: validated.protocolHash,
       sourceRevision: provenance.sourceRevision,
       image: provenance.image,
-      snapshotId,
+      snapshotId: validated.snapshotId,
       publicationId: evaluation.inputManifest.finalizedSnapshot.publicationId,
       inputManifestHash: evaluation.inputManifest.hash,
       bounds: evaluation.inputManifest.bounds,
@@ -675,7 +790,7 @@ const makePersistencePlan = (input: PersistEvaluationInput) => {
       executionModel: evaluation.simulation.executionModel,
       costMultiplierMicros: evaluation.simulation.costMultiplierMicros,
     },
-    artifacts: [...baseArtifacts]
+    artifacts: [...evidence.baseArtifacts]
       .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
       .map((artifact) => ({
         name: artifact.name,
@@ -684,36 +799,90 @@ const makePersistencePlan = (input: PersistEvaluationInput) => {
         contentHash: artifact.contentHash,
       })),
     events: {
-      count: events.length,
+      count: evidence.events.length,
       contentHash: canonicalHashV1(
-        events.map(({ ordinal, id, kind, contentHash }) => ({ ordinal, id, kind, contentHash })),
+        evidence.events.map(({ ordinal, id, kind, contentHash }) => ({ ordinal, id, kind, contentHash })),
       ),
     },
     gates: {
-      count: gates.length,
+      count: evidence.gates.length,
       contentHash: canonicalHashV1(
-        gates.map(({ ordinal, name, passed, contentHash }) => ({ ordinal, name, passed, contentHash })),
+        evidence.gates.map(({ ordinal, name, passed, contentHash }) => ({ ordinal, name, passed, contentHash })),
       ),
     },
   }
+}
+
+const buildPersistencePlan = (
+  input: PersistEvaluationInput,
+): Result.Result<PersistencePlan, PersistencePlanFailure> => {
+  const validated = validatePersistenceEvaluation(input)
+  if (Result.isFailure(validated)) return Result.fail(validated.failure)
+  const evidence = makePersistenceEvidence(input)
+  if (Result.isFailure(evidence)) return Result.fail(evidence.failure)
+  const qualification = validatePersistenceQualification(input)
+  if (Result.isFailure(qualification)) return Result.fail(qualification.failure)
+  const artifactManifest = makePersistenceArtifactManifest(input, validated.success, evidence.success)
   const artifacts = [
-    ...baseArtifacts,
+    ...evidence.success.baseArtifacts,
     makeArtifact('qualification-artifact-manifest', artifactManifest.schemaVersion, artifactManifest),
   ]
 
-  return {
+  return Result.succeed({
     ...input,
-    qualification,
-    strategyName: provenance.strategy.name,
-    protocolHash,
-    snapshotId,
+    qualification: qualification.success,
+    strategyName: input.provenance.strategy.name,
+    protocolHash: validated.success.protocolHash,
+    snapshotId: validated.success.snapshotId,
     artifacts,
-    events,
-    gates,
-  }
+    events: evidence.success.events,
+    gates: evidence.success.gates,
+  })
 }
 
-type PersistencePlan = ReturnType<typeof makePersistencePlan>
+const makePersistencePlan = (input: PersistEvaluationInput): Result.Result<PersistencePlan, PersistencePlanFailure> => {
+  const attempted = Result.try({
+    try: () => buildPersistencePlan(input),
+    catch: (cause): PersistencePlanFailure => ({
+      _tag: 'PersistencePlanComputationFailed',
+      operation: 'construct-persistence-evidence',
+      cause,
+    }),
+  })
+  return Result.isFailure(attempted) ? Result.fail(attempted.failure) : attempted.success
+}
+
+const reconciliationDatabaseError = (
+  operation: string,
+  issues: readonly SimulationReconciliationIssue[],
+): DatabaseError =>
+  databaseError(
+    'invariant',
+    operation,
+    `marked-equity reconciliation failed: ${renderSimulationReconciliationIssues(issues)}`,
+    issues,
+  )
+
+const persistencePlanDatabaseError = (operation: string, failure: PersistencePlanFailure): DatabaseError => {
+  switch (failure._tag) {
+    case 'InvalidPersistencePlan':
+      return databaseError(
+        'invariant',
+        operation,
+        persistencePlanInvariantMessages[failure.invariant],
+        failure.cause ?? failure,
+      )
+    case 'SimulationReconciliationFailed':
+      return reconciliationDatabaseError(operation, failure.issues)
+    case 'PersistencePlanComputationFailed':
+      return databaseError(
+        'invariant',
+        operation,
+        `persistence plan computation failed during ${failure.operation}`,
+        failure.cause,
+      )
+  }
+}
 
 const makeEvidenceStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
@@ -1703,26 +1872,23 @@ const makeEvidenceStore = Effect.gen(function* () {
           'recover-evidence',
           'stored snapshot reference diverged from the recovered input manifest',
         )
-        const equityProof = yield* Effect.try({
-          try: () =>
-            reconcileMarkedEquity({
-              runId,
-              initialCapitalMicros: evaluation.initialCapitalMicros,
-              evaluatorTotalFeesMicros: evaluation.strategy.totalFeesMicros,
-              evaluatorEndingEquityMicros: evaluation.strategy.endingEquityMicros,
-              events,
-              simulation: {
-                schemaVersion: 'bayn.simulation-trace.v3',
-                executionModel: orders.executionModel,
-                costMultiplierMicros: orders.costMultiplierMicros,
-                orders: orders.items,
-                cashChanges: cashChanges.items,
-                dailyMarks: dailyMarks.items,
-              },
-            }),
-          catch: (cause) =>
-            databaseError('invariant', 'recover-evidence', 'stored marked-equity reconstruction failed', cause),
-        })
+        const equityProof = yield* Effect.fromResult(
+          reconcileMarkedEquity({
+            runId,
+            initialCapitalMicros: evaluation.initialCapitalMicros,
+            evaluatorTotalFeesMicros: evaluation.strategy.totalFeesMicros,
+            evaluatorEndingEquityMicros: evaluation.strategy.endingEquityMicros,
+            events,
+            simulation: {
+              schemaVersion: 'bayn.simulation-trace.v3',
+              executionModel: orders.executionModel,
+              costMultiplierMicros: orders.costMultiplierMicros,
+              orders: orders.items,
+              cashChanges: cashChanges.items,
+              dailyMarks: dailyMarks.items,
+            },
+          }),
+        ).pipe(Effect.mapError((issue) => reconciliationDatabaseError('recover-evidence', issue)))
         const finalPoint = yield* requiredValue(equitySeries.items.at(-1), 'final equity-series point')
         const decisionEvents = events.filter((event) => event.kind === 'decision')
         const candidateDates = dailyMarks.items.map((point) => point.sessionDate)
@@ -1813,10 +1979,9 @@ const makeEvidenceStore = Effect.gen(function* () {
     runDatabase(
       'persist',
       Effect.gen(function* () {
-        const plan = yield* Effect.try({
-          try: () => makePersistencePlan(input),
-          catch: (cause) => databaseError('invariant', 'plan', 'invalid evaluation persistence input', cause),
-        })
+        const plan = yield* Effect.fromResult(makePersistencePlan(input)).pipe(
+          Effect.mapError((failure) => persistencePlanDatabaseError('plan', failure)),
+        )
 
         return yield* sql.withTransaction(
           Effect.gen(function* () {

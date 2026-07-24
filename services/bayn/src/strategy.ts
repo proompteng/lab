@@ -1,4 +1,4 @@
-import { Schema } from 'effect'
+import { Result, Schema } from 'effect'
 
 import type { RuntimeProvenance } from './contracts'
 import { InputManifestArtifactSchema } from './evidence-contracts'
@@ -18,8 +18,10 @@ import {
   compileCurrentRiskBalancedTrendDecision,
   evaluateRiskBalancedTrend,
   prepareRiskBalancedTrendQualification,
+  riskBalancedTrendCompatibilityFailure,
   type CurrentDecisionCycleBinding,
   type CurrentRiskBalancedTrendDecision,
+  type RiskBalancedTrendEvaluationIssue,
 } from './risk-balanced-trend'
 import { strictParseOptions } from './schemas'
 import type { DailyBar, EvaluationResult, InputManifest, IsoDate, Protocol } from './types'
@@ -31,7 +33,10 @@ export interface Strategy {
   readonly name: string
   readonly parameters: Protocol
   readonly provenance: RuntimeProvenance
-  readonly evaluate: (bars: readonly DailyBar[], manifest: InputManifest) => EvaluationResult
+  readonly evaluate: (
+    bars: readonly DailyBar[],
+    manifest: InputManifest,
+  ) => Result.Result<EvaluationResult, readonly RiskBalancedTrendEvaluationIssue[]>
   readonly currentDecision: (
     bars: readonly DailyBar[],
     manifest: InputManifest,
@@ -92,8 +97,16 @@ export const makeStrategy = (protocol: Protocol, provenance: RuntimeProvenance):
     name: 'risk-balanced-trend',
     parameters: protocol,
     provenance,
-    evaluate: (bars, manifest) =>
-      evaluateRiskBalancedTrend(bars, requireMatchingUniverse(manifest, protocol), protocol, provenance),
+    evaluate: (bars, manifest) => {
+      // PROOMPT-419 owns totalizing manifest and pre-reconciliation strategy validation.
+      const inputManifest = Result.try({
+        try: () => requireMatchingUniverse(manifest, protocol),
+        catch: (cause) => riskBalancedTrendCompatibilityFailure('prepare', cause),
+      })
+      return Result.isFailure(inputManifest)
+        ? Result.fail(inputManifest.failure)
+        : evaluateRiskBalancedTrend(bars, inputManifest.success, protocol, provenance)
+    },
     currentDecision: (bars, manifest, cycleBinding) =>
       compileCurrentRiskBalancedTrendDecision(
         bars,
