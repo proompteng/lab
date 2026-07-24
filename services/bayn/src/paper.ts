@@ -600,8 +600,8 @@ export const PaperAuthorityProofBindingSchema = Schema.Struct({
 })
 export type PaperAuthorityProofBinding = typeof PaperAuthorityProofBindingSchema.Type
 
-export const PaperAuthorityGenerationMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-authority-generation.v1'),
+const PaperAuthorityGenerationIdentityMaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.paper-authority-generation.v2'),
   maximum: Schema.Literal(Authority.Paper),
   previousGenerationHash: Sha256,
   qualificationRunId: Sha256,
@@ -622,10 +622,23 @@ export const PaperAuthorityGenerationMaterialSchema = Schema.Struct({
   accountId: NonEmptyString,
   riskPolicyHash: Sha256,
   proofPlanHash: Sha256,
+})
+
+export const PaperAuthorityGenerationMaterialSchema = Schema.Struct({
+  ...PaperAuthorityGenerationIdentityMaterialSchema.fields,
   reconciliationId: Sha256,
   reconciliationContentHash: Sha256,
 })
 export type PaperAuthorityGenerationMaterial = typeof PaperAuthorityGenerationMaterialSchema.Type
+
+const paperAuthorityGenerationIdentity = (material: PaperAuthorityGenerationMaterial) => {
+  const {
+    reconciliationContentHash: _reconciliationContentHash,
+    reconciliationId: _reconciliationId,
+    ...identity
+  } = material
+  return identity
+}
 
 const PaperAuthorityGenerationBase = Schema.Struct({
   ...PaperAuthorityGenerationMaterialSchema.fields,
@@ -636,9 +649,9 @@ export const PaperAuthorityGenerationSchema = PaperAuthorityGenerationBase.check
   Schema.makeFilter(
     (generation: typeof PaperAuthorityGenerationBase.Type) => {
       const { generationHash, ...material } = generation
-      return generationHash === canonicalHashV1(material)
+      return generationHash === canonicalHashV1(paperAuthorityGenerationIdentity(material))
     },
-    { expected: 'a generation hash matching the complete PAPER authority material' },
+    { expected: 'a generation hash matching the stable PAPER authority identity' },
   ),
 )
 export type PaperAuthorityGeneration = typeof PaperAuthorityGenerationSchema.Type
@@ -653,7 +666,7 @@ export const makePaperAuthorityGeneration = (input: PaperAuthorityGenerationMate
   const material = decodePaperAuthorityGenerationMaterialSync(input)
   return decodePaperAuthorityGenerationSync({
     ...material,
-    generationHash: canonicalHashV1(material),
+    generationHash: canonicalHashV1(paperAuthorityGenerationIdentity(material)),
   })
 }
 

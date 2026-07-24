@@ -51,6 +51,7 @@ export const IntentPlanSchema = Schema.Struct({
 export type IntentPlan = typeof IntentPlanSchema.Type
 
 const decodePlan = Schema.decodeUnknownEffect(IntentPlanSchema, strictParseOptions)
+const decodeAuthorityGenerationHash = Schema.decodeUnknownEffect(Sha256, strictParseOptions)
 const intentEquivalent = Schema.toEquivalence(IntentSchema)
 const decisionEquivalent = Schema.toEquivalence(RiskDecisionSchema)
 
@@ -83,7 +84,15 @@ const paperIdentityMaterial = (input: IntentPlan, authorityGenerationHash: strin
   notionalLimitMicros: input.notionalLimitMicros,
 })
 
+const paperIntentId = (input: IntentPlan, authorityGenerationHash: string): string =>
+  canonicalHashV1(paperIdentityMaterial(input, authorityGenerationHash))
+
 export const intentIdForPlan = (input: IntentPlan): string => canonicalHashV1(referenceIdentityMaterial(input))
+
+export const paperIntentIdForPlan = (input: unknown, authorityGenerationHash: string) =>
+  Effect.all([decodePlan(input), decodeAuthorityGenerationHash(authorityGenerationHash)]).pipe(
+    Effect.map(([decoded, generationHash]) => paperIntentId(decoded, generationHash)),
+  )
 
 const clientOrderId = (intentId: string): string => `b1_${Buffer.from(intentId, 'hex').toString('base64url')}`
 
@@ -113,7 +122,7 @@ const makePaperIntent = (
   decoded: IntentPlan,
   authorityGenerationHash: string,
 ): Effect.Effect<Intent, Schema.SchemaError> => {
-  const intentId = canonicalHashV1(paperIdentityMaterial(decoded, authorityGenerationHash))
+  const intentId = paperIntentId(decoded, authorityGenerationHash)
   return decodeIntent({
     schemaVersion: 'bayn.paper-intent.v3',
     authorityGenerationHash,

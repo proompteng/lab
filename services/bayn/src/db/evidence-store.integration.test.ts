@@ -5,6 +5,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted } from 'effect'
 
 import authorityBoundIntents from '../../migrations/0016_authority_bound_intents'
+import stablePaperAuthorityGeneration from '../../migrations/0017_stable_paper_authority_generation'
 import type { RuntimeConfig } from '../config'
 import { makeStrategyProtocolHash } from '../contracts'
 import { IntentStore, IntentStoreLive, planPaperIntent, type IntentPlan } from '../execution/intents'
@@ -502,7 +503,7 @@ const makeMutationPaperAuthorityGeneration = (
 
   const config = makeConfig()
   return makePaperAuthorityGeneration({
-    schemaVersion: 'bayn.paper-authority-generation.v1',
+    schemaVersion: 'bayn.paper-authority-generation.v2',
     maximum: Authority.Paper,
     previousGenerationHash,
     qualificationRunId: mutationQualificationResult.runId,
@@ -877,10 +878,11 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 14, name: 'authority_generation_history' },
       { migration_id: 15, name: 'acknowledged_submit_recovery' },
       { migration_id: 16, name: 'authority_bound_intents' },
+      { migration_id: 17, name: 'stable_paper_authority_generation' },
     ])
   })
 
-  test('hard-fails the authority-bound intent migration before touching nonempty intent history', async () => {
+  test('hard-fails both intent hard cuts before touching nonempty intent history or generation DDL', async () => {
     const observed = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -934,7 +936,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           }),
         )
         const readEvidence = () =>
-          sql<{ intents: unknown; risk_decisions: unknown }>`
+          sql<{ constraint_definition: string; intents: unknown; risk_decisions: unknown }>`
             SELECT
               (
                 SELECT jsonb_agg(
@@ -949,11 +951,73 @@ describePostgres('PostgreSQL evaluation evidence', () => {
                   ORDER BY decision.decision_id
                 )
                 FROM risk_decisions AS decision
-              ) AS risk_decisions
+              ) AS risk_decisions,
+              pg_get_constraintdef(constraint_record.oid) AS constraint_definition
+            FROM pg_constraint AS constraint_record
+            WHERE constraint_record.conrelid = 'authority_generations'::regclass
+              AND constraint_record.conname = 'authority_generations_activation_schema_version_check'
           `
-        const before = yield* readEvidence()
-        const migration = yield* Effect.exit(authorityBoundIntents)
-        const after = yield* readEvidence()
+        const [before] = yield* readEvidence()
+        const authorityBoundMigration = yield* Effect.exit(authorityBoundIntents)
+        const [afterAuthorityBound] = yield* readEvidence()
+        const stableGenerationMigration = yield* Effect.exit(stablePaperAuthorityGeneration)
+        const [afterStableGeneration] = yield* readEvidence()
+        return {
+          afterAuthorityBound,
+          afterStableGeneration,
+          authorityBoundMigration,
+          before,
+          stableGenerationMigration,
+        }
+      }),
+    )
+
+    expect(Exit.isFailure(observed.authorityBoundMigration)).toBe(true)
+    if (Exit.isFailure(observed.authorityBoundMigration)) {
+      expect(Cause.pretty(observed.authorityBoundMigration.cause)).toContain(
+        'authority-bound intent hard cut requires empty intents and risk_decisions',
+      )
+    }
+    expect(Exit.isFailure(observed.stableGenerationMigration)).toBe(true)
+    if (Exit.isFailure(observed.stableGenerationMigration)) {
+      expect(Cause.pretty(observed.stableGenerationMigration.cause)).toContain(
+        'stable PAPER authority generation hard cut requires empty intents and risk_decisions',
+      )
+    }
+    expect(observed.afterAuthorityBound).toEqual(observed.before)
+    expect(observed.afterStableGeneration).toEqual(observed.before)
+    expect(observed.afterStableGeneration.constraint_definition).toContain('bayn.paper-authority-generation.v2')
+  })
+
+  test('hard-fails the stable authority-generation migration before reinterpreting PAPER history', async () => {
+    await activateAuditedPaperAuthority()
+    const observed = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const readEvidence = () =>
+          sql<{ authority: unknown; constraint_definition: string; history: unknown }>`
+            SELECT
+              (
+                SELECT jsonb_agg(
+                  jsonb_build_object('row', to_jsonb(authority), 'tupleId', authority.xmin::text)
+                )
+                FROM authority_state AS authority
+              ) AS authority,
+              (
+                SELECT jsonb_agg(
+                  jsonb_build_object('row', to_jsonb(history), 'tupleId', history.xmin::text)
+                  ORDER BY history.authority_version
+                )
+                FROM authority_generations AS history
+              ) AS history,
+              pg_get_constraintdef(oid) AS constraint_definition
+            FROM pg_constraint
+            WHERE conrelid = 'authority_generations'::regclass
+              AND conname = 'authority_generations_activation_schema_version_check'
+          `
+        const [before] = yield* readEvidence()
+        const migration = yield* Effect.exit(stablePaperAuthorityGeneration)
+        const [after] = yield* readEvidence()
         return { after, before, migration }
       }),
     )
@@ -961,10 +1025,11 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(Exit.isFailure(observed.migration)).toBe(true)
     if (Exit.isFailure(observed.migration)) {
       expect(Cause.pretty(observed.migration.cause)).toContain(
-        'authority-bound intent hard cut requires empty intents and risk_decisions',
+        'stable PAPER authority generation hard cut requires no existing PAPER authority',
       )
     }
     expect(observed.after).toEqual(observed.before)
+    expect(observed.after.constraint_definition).toContain('bayn.paper-authority-generation.v2')
   })
 
   test('atomically commits one deterministic approved intent under one writer fence', async () => {
