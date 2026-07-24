@@ -342,7 +342,6 @@ describe('pure runtime configuration resolution', () => {
       }),
       expected: {
         _tag: 'MissingAlpacaAuthorityGeneration',
-        accountId: alpacaAccountId,
       },
     },
     {
@@ -927,7 +926,7 @@ describe('Effect configuration', () => {
   test('requires an explicit valid authority generation to resolve an Alpaca binding', async () => {
     for (const value of [undefined, 'not-a-generation-hash']) {
       const environment = new Map(runtimeEnvironment)
-      environment.set('BAYN_ALPACA_ACCOUNT_ID', '61e69015-8549-4bfd-b9c3-01e75843f47d')
+      environment.set('BAYN_ALPACA_ACCOUNT_ID', alpacaAccountId)
       environment.set('BAYN_ALPACA_KEY_ID', 'paper-key')
       environment.set('BAYN_ALPACA_SECRET_KEY', 'paper-secret')
       if (value === undefined) {
@@ -943,6 +942,15 @@ describe('Effect configuration', () => {
         component: 'config',
         operation: value === undefined ? 'authority-generation' : 'load',
       })
+      if (value === undefined) {
+        expect(error).toMatchObject({
+          cause: {
+            _tag: 'MissingAlpacaAuthorityGeneration',
+          },
+        })
+        expect(JSON.stringify(error)).not.toContain(alpacaAccountId)
+        expect(String(error)).not.toContain(alpacaAccountId)
+      }
     }
   })
 

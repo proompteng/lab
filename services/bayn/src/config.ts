@@ -129,7 +129,6 @@ export type RuntimeConfigResolutionFailure =
     }
   | {
       readonly _tag: 'MissingAlpacaAuthorityGeneration'
-      readonly accountId: string
     }
   | {
       readonly _tag: 'PaperAuthorityRequiresAlpacaBinding'
@@ -369,10 +368,7 @@ export const resolveRuntimeConfig = ({
     alpaca = undefined
   } else {
     if (config.authorityGenerationHash === undefined) {
-      return Result.fail({
-        _tag: 'MissingAlpacaAuthorityGeneration',
-        accountId: credentials.accountId,
-      })
+      return Result.fail({ _tag: 'MissingAlpacaAuthorityGeneration' })
     }
     alpaca = {
       ...credentials,
