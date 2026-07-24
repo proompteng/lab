@@ -30,6 +30,10 @@ relay:
   extraEnv:
     - name: BUZZ_GIT_S3_COMPATIBILITY
       value: ceph-rgw
+    - name: BUZZ_ADMIN_HOST
+      value: buzz-admin.ide-newton.ts.net
+    - name: BUZZ_ADMIN_WEB_DIR
+      value: /srv/buzz/admin-web
   topologySpreadConstraints:
     - maxSkew: 1
       topologyKey: kubernetes.io/hostname

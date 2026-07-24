@@ -1,7 +1,8 @@
 # Buzz production operations
 
 Buzz is deployed to the `buzz` namespace by the `buzz` Argo CD application. It is private to the
-`ide-newton.ts.net` tailnet at `wss://buzz.ide-newton.ts.net`.
+`ide-newton.ts.net` tailnet at `wss://buzz.ide-newton.ts.net`. Its read-only moderation and product-feedback UI is
+available only inside the tailnet at `https://buzz-admin.ide-newton.ts.net`.
 
 ## Ownership and immutable inputs
 
@@ -58,7 +59,7 @@ kubectl -n buzz get objectbucketclaim
 kubectl -n buzz get cluster.postgresql.cnpg.io,scheduledbackup.postgresql.cnpg.io,backup.postgresql.cnpg.io
 kubectl -n buzz get redis.redis.redis.opstreelabs.in
 kubectl -n buzz get deployment,pod -o wide
-kubectl -n buzz get ingress buzz
+kubectl -n buzz get ingress buzz buzz-admin
 ```
 
 Required state:
@@ -70,7 +71,7 @@ Required state:
 - `buzz-redis` is ready, accepts only authenticated commands, has AOF enabled, and reports
   `maxmemory=402653184` (384 MiB).
 - Two Buzz relay pods are Ready on different nodes.
-- The Tailscale Ingress has an assigned device and a valid tailnet TLS certificate.
+- Both Tailscale Ingresses have assigned devices and valid tailnet TLS certificates.
 
 Validate the relay from a tailnet-connected workstation:
 
@@ -78,12 +79,20 @@ Validate the relay from a tailnet-connected workstation:
 curl --fail --silent --show-error \
   --header 'Accept: application/nostr+json' \
   https://buzz.ide-newton.ts.net/
+curl --fail --silent --show-error \
+  --header 'Accept: text/html' \
+  https://buzz-admin.ide-newton.ts.net/
 ```
 
 Use a Nostr client that supports NIP-42 to confirm an unauthenticated request is challenged and the dedicated owner
 identity authenticates successfully. Verify `up{job="buzz-relay",namespace="buzz"}` and
 `redis_up{job="buzz-redis",namespace="buzz"}` in Mimir. The general `CloudNativePgWalArchiveBacklog` alert covers Buzz
 WAL archival; `BuzzPostgresBackupStale` covers the daily backup.
+
+The admin API is read-only and the relay serves it only when the request has the exact configured admin host and a
+same-origin browser request. The separate `buzz-admin` Tailscale Ingress and default-deny NetworkPolicy are the
+authentication boundary: do not expose this hostname through a public ingress or relax the Tailscale proxy selector.
+The normal relay hostname must continue returning NIP-11 metadata instead of the admin SPA.
 
 ## Backup and restore proof
 

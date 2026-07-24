@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: buzz
 
 resources:
+  - admin-ingress.yaml
   - objectbucketclaims.yaml
   - secret-store.yaml
   - redis-auth-externalsecret.yaml
