@@ -405,8 +405,13 @@ export const recover = (intentId: string, operation: MutationOperation) =>
           if (error.kind === BrokerReadErrorKind.NotFound && evidence !== undefined) {
             return mutations.recoveryNotFound(intentId, operation, interrupted.requestHash, evidence)
           }
-          const occurredAt = evidence?.observedAt ?? new Date(currentMillis).toISOString()
-          return mutations.recoveryUnknown(intentId, operation, interrupted.requestHash, occurredAt, evidence)
+          return evidence === undefined
+            ? now.pipe(
+                Effect.flatMap((occurredAt) =>
+                  mutations.recoveryUnknown(intentId, operation, interrupted.requestHash, occurredAt),
+                ),
+              )
+            : mutations.recoveryUnknown(intentId, operation, interrupted.requestHash, evidence.observedAt, evidence)
         },
         onSuccess: (result) => {
           const evidence = mutationEvidence(result.evidence)
