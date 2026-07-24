@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Deferred, Effect, Fiber, Logger, Option, References } from 'effect'
+import { Cause, Deferred, Effect, Fiber, Logger, Option, References, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -20,16 +20,22 @@ import {
   type CycleDraft,
 } from './cycle'
 import {
+  boundedCyclePublications,
+  CycleRunnerError,
+  cyclePassLogFacts,
   isMonthEndCycleDue,
   makeDueCycleDraft,
   marketCalendarQueryForPublications,
   marketCalendarQueryForSignal,
   runAutonomousCyclePass,
+  selectCycleAuthoritySlots,
+  selectCycleCalendarCandidate,
   selectNextExecutionSession,
   startAutonomousCycleLoop,
   type CycleCandidate,
   type CyclePassObservation,
   type CycleRunContext,
+  type CycleRunResult,
 } from './cycle-runner'
 import { selectCycleRecovery, type CycleRecoveryState } from './cycle-recovery'
 import { CycleStore, type CycleAuthoritySlot, type CycleStoreShape } from './db/cycle-store'
@@ -671,11 +677,412 @@ describe('autonomous cycle runner', () => {
     })
   })
 
+  test('bounds decoded publications and reports reachable calendar-range overflow without mutating inputs', () => {
+    const newest = finalizedPublicationInspection('2026-01-30')
+    const prior = finalizedPublicationInspection('2026-01-29')
+    const stale = finalizedPublicationInspection('2026-01-09')
+    const frozen = Object.freeze([stale, newest, prior] as const)
+    const inputOrder = frozen.map((publication) => publication.signalSession.session_date)
+
+    expect(boundedCyclePublications(frozen)).toEqual(Result.succeed([newest, prior]))
+    expect(frozen.map((publication) => publication.signalSession.session_date)).toEqual(inputOrder)
+    expect(boundedCyclePublications([prior, newest, finalizedPublicationInspection('2026-01-30')])).toEqual(
+      Result.fail({
+        _tag: 'CyclePublicationDuplicate',
+        signalSessionDate: '2026-01-30',
+      }),
+    )
+    expect(boundedCyclePublications([newest, stale, finalizedPublicationInspection('2026-01-09')])).toEqual(
+      Result.fail({
+        _tag: 'CyclePublicationDuplicate',
+        signalSessionDate: '2026-01-09',
+      }),
+    )
+    expect(boundedCyclePublications([finalizedPublicationInspection('0000-01-01')])).toEqual(
+      Result.fail({
+        _tag: 'CyclePublicationRangeOutOfRange',
+        signalSessionDate: '0000-01-01',
+        offsetDays: -20,
+        cause: {
+          _tag: 'IsoDateShiftResultOutOfRange',
+          date: '0000-01-01',
+          days: -20,
+          shifted: '-000001-12-12T00:00:00.000Z',
+        },
+      }),
+    )
+    expect(marketCalendarQueryForSignal('9999-12-31')).toEqual(
+      Result.fail({
+        _tag: 'CycleCalendarQueryRangeOutOfRange',
+        signalSessionDate: '9999-12-31',
+        offsetDays: 30,
+        cause: {
+          _tag: 'IsoDateShiftResultOutOfRange',
+          date: '9999-12-31',
+          days: 30,
+          shifted: '+010000-01-30T00:00:00.000Z',
+        },
+      }),
+    )
+    expect(marketCalendarQueryForPublications([finalizedPublicationInspection('9999-12-31')])).toEqual(
+      Result.fail({
+        _tag: 'CycleCalendarQueryRangeOutOfRange',
+        signalSessionDate: '9999-12-31',
+        offsetDays: 30,
+        cause: {
+          _tag: 'IsoDateShiftResultOutOfRange',
+          date: '9999-12-31',
+          days: 30,
+          shifted: '+010000-01-30T00:00:00.000Z',
+        },
+      }),
+    )
+    expect(marketCalendarQueryForPublications([newest, prior])).toEqual(
+      Result.succeed({ start: '2026-01-29', end: '2026-02-28' }),
+    )
+
+    const malformedNonLatest = boundedCyclePublications([
+      { signalSession: { session_date: '2026-01-30' } },
+      { signalSession: { session_date: '0000-00-00' } },
+    ])
+    expect(malformedNonLatest).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'CyclePublicationDateInvalid',
+        signalSessionDate: '0000-00-00',
+      },
+    })
+    if (Result.isSuccess(malformedNonLatest)) throw new Error('malformed publication fixture must fail')
+    if (malformedNonLatest.failure._tag !== 'CyclePublicationDateInvalid') {
+      throw new Error('malformed publication fixture must retain its date failure')
+    }
+    expect(malformedNonLatest.failure.cause).toBeInstanceOf(RangeError)
+    if (!(malformedNonLatest.failure.cause instanceof RangeError)) {
+      throw new Error('malformed publication cause must remain a RangeError')
+    }
+    expect(malformedNonLatest.failure.cause.message).toBe('Invalid Date')
+
+    const malformedQuery = marketCalendarQueryForSignal('0000-00-00')
+    if (Result.isSuccess(malformedQuery)) throw new Error('malformed query fixture must fail')
+    expect(malformedQuery.failure.cause).toBeInstanceOf(RangeError)
+    if (!(malformedQuery.failure.cause instanceof RangeError)) {
+      throw new Error('malformed query cause must remain a RangeError')
+    }
+    expect(malformedQuery.failure.cause.message).toBe('Invalid Date')
+  })
+
+  test('selects authority slots with exhaustive precedence without mutating its inputs', () => {
+    const publication = finalizedPublicationInspection()
+    const olderPublication = finalizedPublicationInspection('2026-01-29')
+    const executionSession = selectNextExecutionSession('2026-01-30', monthEndCalendar)
+    if (executionSession === undefined) throw new Error('authority fixture requires an execution session')
+    const draft = makeDueCycleDraft(candidate(), monthEndCalendar, executionSession)
+    if (draft === undefined) throw new Error('authority fixture requires a due cycle')
+    const pending = cycleFrom(draft, '2026-01-30T21:20:00.000Z')
+    const bound: AutonomousCycle = {
+      ...pending,
+      bindings: { snapshotId },
+      stateVersion: pending.stateVersion + 1,
+      updatedAt: '2026-01-30T21:21:00.000Z',
+    }
+    const terminal = cycleFrom(draft, draft.window.publicationDeadlineAt)
+    const olderTerminal = { ...terminal, identity: { ...terminal.identity, cycleId: 'f'.repeat(64) } }
+    expect(selectCycleAuthoritySlots([{ publication, existing: undefined }])).toEqual({
+      _tag: 'READ_CALENDAR',
+      publications: [publication],
+    })
+    expect(
+      selectCycleAuthoritySlots([
+        { publication, existing: undefined },
+        { publication: olderPublication, existing: undefined },
+      ]),
+    ).toEqual({
+      _tag: 'READ_CALENDAR',
+      publications: [publication, olderPublication],
+    })
+    for (const state of [CycleState.Completed, CycleState.NoTrade, CycleState.Blocked] as const) {
+      const cycle = { ...terminal, state }
+      expect(selectCycleAuthoritySlots([{ publication, existing: cycle }])).toEqual({
+        _tag: 'ALREADY_TERMINAL',
+        cycle,
+      })
+    }
+    expect(
+      selectCycleAuthoritySlots([
+        { publication, existing: terminal },
+        { publication: olderPublication, existing: olderTerminal },
+      ]),
+    ).toEqual({ _tag: 'ALREADY_TERMINAL', cycle: terminal })
+    expect(
+      selectCycleAuthoritySlots([
+        { publication, existing: terminal },
+        { publication: olderPublication, existing: undefined },
+      ]),
+    ).toEqual({
+      _tag: 'READ_CALENDAR',
+      publications: [olderPublication],
+    })
+    expect(
+      selectCycleAuthoritySlots([
+        { publication, existing: undefined },
+        { publication: olderPublication, existing: terminal },
+      ]),
+    ).toEqual({ _tag: 'READ_CALENDAR', publications: [publication] })
+    expect(selectCycleAuthoritySlots([{ publication, existing: pending }])).toEqual({
+      _tag: 'RESUME',
+      publication,
+      cycle: pending,
+    })
+    expect(
+      selectCycleAuthoritySlots([
+        { publication: finalizedPublicationInspection('2026-02-02'), existing: terminal },
+        { publication, existing: bound },
+        { publication: olderPublication, existing: undefined },
+      ]),
+    ).toEqual({
+      _tag: 'ALREADY_ACQUIRED',
+      publication,
+      cycle: bound,
+    })
+
+    const publicationBefore = JSON.stringify(publication)
+    const boundBefore = JSON.stringify(bound)
+    const frozenSlots = Object.freeze([{ publication, existing: bound }] as const)
+    selectCycleAuthoritySlots(frozenSlots)
+    expect(JSON.stringify(publication)).toBe(publicationBefore)
+    expect(JSON.stringify(bound)).toBe(boundBefore)
+  })
+
+  test('decides calendar candidates purely across not-due, failure, and exact acquisition material', () => {
+    const duePublication = finalizedPublicationInspection('2026-01-30')
+    const dailyPublication = finalizedPublicationInspection('2026-02-02', '2026-02-02T21:15:00.000Z')
+    const catchUpCalendar = calendar([
+      {
+        date: '2026-01-30',
+        openAt: '2026-01-30T14:30:00.000Z',
+        closeAt: '2026-01-30T21:00:00.000Z',
+      },
+      {
+        date: '2026-02-02',
+        openAt: '2026-02-02T14:30:00.000Z',
+        closeAt: '2026-02-02T20:00:00.000Z',
+      },
+      {
+        date: '2026-02-03',
+        openAt: '2026-02-03T14:30:00.000Z',
+        closeAt: '2026-02-03T21:00:00.000Z',
+      },
+    ])
+    const publications = Object.freeze([dailyPublication, duePublication] as const)
+    const publicationOrder = publications.map((publication) => publication.signalSession.session_date)
+    const calendarBefore = JSON.stringify(catchUpCalendar)
+    const observedAt = '2026-02-02T21:20:00.000Z'
+
+    const decision = selectCycleCalendarCandidate(
+      context(),
+      publications,
+      catchUpCalendar,
+      evidence.contentHash,
+      observedAt,
+    )
+    expect(Result.isSuccess(decision)).toBe(true)
+    if (Result.isFailure(decision) || decision.success._tag !== 'ACQUIRE') {
+      throw new Error('catch-up fixture must produce acquisition material')
+    }
+    expect(decision.success.material).toMatchObject({
+      publication: duePublication,
+      signalSessionDate: '2026-01-30',
+      executionSessionDate: '2026-02-02',
+      calendarResponseHash: catchUpCalendar.normalizedResponseHash,
+      calendarReadContentHash: evidence.contentHash,
+      draft: {
+        identity: {
+          cycleId: '1528d70b630e50d40a879904091225e879ca99b3db73de1adddf2f41e6401db0',
+        },
+        window: {
+          publicationDeadlineAt: '2026-02-02T13:58:00.000Z',
+          submissionCutoffAt: '2026-02-02T14:28:00.000Z',
+        },
+      },
+    })
+    expect(publications.map((publication) => publication.signalSession.session_date)).toEqual(publicationOrder)
+    expect(JSON.stringify(catchUpCalendar)).toBe(calendarBefore)
+
+    const notDue = selectCycleCalendarCandidate(
+      context(),
+      [finalizedPublicationInspection('2026-01-29')],
+      calendar([
+        {
+          date: '2026-01-30',
+          openAt: '2026-01-30T14:30:00.000Z',
+          closeAt: '2026-01-30T21:00:00.000Z',
+        },
+      ]),
+      evidence.contentHash,
+      observedAt,
+    )
+    expect(notDue).toMatchObject({
+      _tag: 'Success',
+      success: {
+        _tag: 'NOT_DUE',
+        result: {
+          outcome: 'NOT_DUE',
+          signalSessionDate: '2026-01-29',
+          executionSessionDate: '2026-01-30',
+          observedAt,
+        },
+      },
+    })
+    expect(
+      selectCycleCalendarCandidate(context(), publications, monthEndCalendar, evidence.contentHash, observedAt),
+    ).toEqual(
+      Result.fail({
+        _tag: 'CycleExecutionSessionUnavailable',
+        signalSessionDate: '2026-02-02',
+      }),
+    )
+
+    const januaryEndPublication = finalizedPublicationInspection('2026-01-31')
+    const lateClosePublication: MarketDataInspection = {
+      ...januaryEndPublication,
+      signalSession: { ...januaryEndPublication.signalSession, close_time: '23:59' },
+    }
+    const domainFailure = selectCycleCalendarCandidate(
+      context(),
+      [lateClosePublication],
+      calendar([
+        {
+          date: '2026-02-01',
+          openAt: '2026-02-01T00:30:00.000Z',
+          closeAt: '2026-02-01T01:30:00.000Z',
+        },
+      ]),
+      evidence.contentHash,
+      observedAt,
+    )
+    expect(domainFailure).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'CycleDraftConstructionFailed',
+        signalSessionDate: '2026-01-31',
+        cause: expect.anything(),
+      },
+    })
+  })
+
+  test('derives complete success and failure log facts without effects', () => {
+    const executionSession = selectNextExecutionSession('2026-01-30', monthEndCalendar)
+    if (executionSession === undefined) throw new Error('log fixture requires an execution session')
+    const draft = makeDueCycleDraft(candidate(), monthEndCalendar, executionSession)
+    if (draft === undefined) throw new Error('log fixture requires a due cycle')
+    const pending = cycleFrom(draft, '2026-01-30T21:20:00.000Z')
+    const bound: AutonomousCycle = {
+      ...pending,
+      bindings: { snapshotId },
+      stateVersion: pending.stateVersion + 1,
+      updatedAt: '2026-01-30T21:21:00.000Z',
+    }
+    const terminal = cycleFrom(draft, draft.window.publicationDeadlineAt)
+    const readiness = {
+      outcome: 'BOUND' as const,
+      observedAt: bound.updatedAt,
+      cycle: bound,
+      snapshotId,
+    }
+    const common = {
+      signalSessionDate: '2026-01-30',
+      executionSessionDate: '2026-02-02',
+      observedAt: bound.updatedAt,
+      calendarResponseHash: monthEndCalendar.normalizedResponseHash,
+      calendarReadContentHash: evidence.contentHash,
+    }
+    const results: readonly CycleRunResult[] = [
+      { outcome: 'NO_PUBLICATION', observedAt: bound.updatedAt },
+      {
+        outcome: 'ALREADY_ACQUIRED',
+        signalSessionDate: '2026-01-30',
+        observedAt: bound.updatedAt,
+        cycle: bound,
+      },
+      {
+        outcome: 'ALREADY_TERMINAL',
+        signalSessionDate: '2026-01-30',
+        observedAt: terminal.updatedAt,
+        cycle: terminal,
+      },
+      {
+        outcome: 'RESUMED',
+        signalSessionDate: '2026-01-30',
+        observedAt: bound.updatedAt,
+        readiness,
+      },
+      {
+        outcome: 'RECOVERED',
+        action: 'BOUND_SNAPSHOT',
+        observedAt: bound.updatedAt,
+        cycle: bound,
+      },
+      { outcome: 'NOT_DUE', ...common },
+      {
+        outcome: 'ACQUIRED',
+        ...common,
+        receipt: { cycle: pending, created: true },
+        readiness,
+      },
+      {
+        outcome: 'REACQUIRED',
+        ...common,
+        receipt: { cycle: pending, created: false },
+        readiness,
+      },
+    ]
+    const facts = results.map((result) =>
+      cyclePassLogFacts({ outcome: 'SUCCEEDED', observedAt: '2026-01-30T21:22:00.000Z', result }),
+    )
+    expect(facts.map((fact) => fact.level)).toEqual(Array.from({ length: results.length }, () => 'INFO'))
+    expect(facts.map((fact) => fact.message)).toEqual(
+      Array.from({ length: results.length }, () => 'Bayn autonomous cycle pass completed'),
+    )
+    expect(facts.map((fact) => [fact.annotations.outcome, fact.annotations.persistenceDeduplicated])).toEqual([
+      ['NO_PUBLICATION', undefined],
+      ['ALREADY_ACQUIRED', undefined],
+      ['ALREADY_TERMINAL', undefined],
+      ['RESUMED', undefined],
+      ['RECOVERED', undefined],
+      ['NOT_DUE', undefined],
+      ['ACQUIRED', false],
+      ['REACQUIRED', true],
+    ])
+
+    const error = new CycleRunnerError({
+      operation: 'market-calendar',
+      failure: 'calendar-read',
+      message: 'calendar failed',
+    })
+    expect(
+      cyclePassLogFacts({
+        outcome: 'FAILED',
+        observedAt: '2026-01-30T21:22:00.000Z',
+        error,
+      }),
+    ).toEqual({
+      level: 'ERROR',
+      message: 'Bayn autonomous cycle pass failed',
+      annotations: {
+        operation: 'market-calendar',
+        failure: 'calendar-read',
+        message: 'calendar failed',
+      },
+    })
+  })
+
   test('builds one bounded calendar query and selects the first session strictly after Signal', () => {
-    const query = marketCalendarQueryForSignal('2026-01-30')
+    const queryResult = marketCalendarQueryForSignal('2026-01-30')
+    expect(queryResult).toEqual(Result.succeed({ start: '2026-01-30', end: '2026-03-01' }))
+    if (Result.isFailure(queryResult)) throw new Error('calendar query fixture must be in range')
+    const query = queryResult.success
     const inclusiveDays =
       (Date.parse(`${query.end}T00:00:00.000Z`) - Date.parse(`${query.start}T00:00:00.000Z`)) / 86_400_000 + 1
-    expect(query).toEqual({ start: '2026-01-30', end: '2026-03-01' })
     expect(inclusiveDays).toBe(31)
 
     const selected = selectNextExecutionSession(
@@ -733,6 +1140,67 @@ describe('autonomous cycle runner', () => {
     )
 
     expect(result).toEqual({ outcome: 'NO_PUBLICATION', observedAt: '2026-01-30T21:01:00.000Z' })
+    expect(control).toEqual({ acquisitions: [], binds: 0 })
+  })
+
+  test('reads recovery first and authority slots in descending order until the first resumable slot', async () => {
+    const executionSession = selectNextExecutionSession('2026-01-30', monthEndCalendar)
+    if (executionSession === undefined) throw new Error('read-order fixture requires an execution session')
+    const draft = makeDueCycleDraft(candidate(), monthEndCalendar, executionSession)
+    if (draft === undefined) throw new Error('read-order fixture requires a due cycle')
+    const pending = cycleFrom(draft, '2026-01-30T21:20:00.000Z')
+    const bound: AutonomousCycle = {
+      ...pending,
+      bindings: { snapshotId },
+      stateVersion: pending.stateVersion + 1,
+      updatedAt: '2026-01-30T21:21:00.000Z',
+    }
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const baseStore = cycleStore(control)
+    const events: string[] = []
+    const store: CycleStoreShape = {
+      ...baseStore,
+      readOldestUnfinished: () =>
+        Effect.sync(() => {
+          events.push('read-oldest-unfinished')
+          return Option.none()
+        }),
+      readAuthoritySlot: (slot) =>
+        Effect.sync(() => {
+          events.push(`read-authority-slot:${slot.signalSessionDate}`)
+          return slot.signalSessionDate === '2026-01-30' ? Option.some(bound) : Option.none()
+        }),
+    }
+    const publications = [
+      finalizedPublicationInspection('2026-01-29'),
+      finalizedPublicationInspection('2026-01-30'),
+      finalizedPublicationInspection('2026-02-02', '2026-02-02T21:15:00.000Z'),
+    ]
+    const result = await Effect.runPromise(
+      provide(
+        runAutonomousCyclePass(context()),
+        brokerRead(() => Effect.die(new Error('early authority exit must not read the broker'))),
+        store,
+        marketDataService(
+          Effect.sync(() => {
+            events.push('inspect-cycle-publications')
+            return finalizedPublications(publications)
+          }),
+        ),
+      ),
+    )
+
+    expect(result).toMatchObject({
+      outcome: 'ALREADY_ACQUIRED',
+      signalSessionDate: '2026-01-30',
+      cycle: { identity: { cycleId: bound.identity.cycleId } },
+    })
+    expect(events).toEqual([
+      'read-oldest-unfinished',
+      'inspect-cycle-publications',
+      'read-authority-slot:2026-02-02',
+      'read-authority-slot:2026-01-30',
+    ])
     expect(control).toEqual({ acquisitions: [], binds: 0 })
   })
 
@@ -803,7 +1271,7 @@ describe('autonomous cycle runner', () => {
       signalSessionDate: '2026-01-29',
       executionSessionDate: '2026-01-30',
     })
-    expect(queries).toEqual([marketCalendarQueryForSignal('2026-01-29')])
+    expect(queries).toEqual([{ start: '2026-01-29', end: '2026-02-28' }])
     expect(control).toEqual({ acquisitions: [], binds: 0 })
   })
 
@@ -874,8 +1342,8 @@ describe('autonomous cycle runner', () => {
       executionSessionDate: '2026-02-03',
     })
     expect(queries).toEqual([
-      marketCalendarQueryForPublications(publications),
-      marketCalendarQueryForSignal('2026-02-02'),
+      { start: '2026-01-30', end: '2026-03-01' },
+      { start: '2026-02-02', end: '2026-03-04' },
     ])
     expect(calendarReads).toBe(2)
     expect(control.acquisitions).toHaveLength(1)
@@ -917,8 +1385,50 @@ describe('autonomous cycle runner', () => {
         },
       },
     })
-    expect(queries).toEqual([marketCalendarQueryForSignal('2026-01-30')])
+    expect(queries).toEqual([{ start: '2026-01-30', end: '2026-03-01' }])
     expect(control.acquisitions).toHaveLength(1)
+    expect(control.binds).toBe(1)
+  })
+
+  test('samples acquisition before the write and publication binding after it completes', async () => {
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const store = cycleStore(control)
+    const delayedStore: CycleStoreShape = {
+      ...store,
+      acquire: (draft, observedAt) => TestClock.adjust(1_000).pipe(Effect.andThen(store.acquire(draft, observedAt))),
+    }
+    let calendarReads = 0
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
+        return yield* provide(
+          runAutonomousCyclePass(context()),
+          brokerRead(() => {
+            calendarReads += 1
+            return Effect.succeed({ value: monthEndCalendar, evidence })
+          }),
+          delayedStore,
+          marketDataService(Effect.succeed(finalizedPublication()), finalizedPublicationInspection()),
+        )
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(control.acquisitions).toEqual([
+      {
+        draft: expect.anything(),
+        observedAt: '2026-01-30T21:20:00.000Z',
+      },
+    ])
+    expect(result).toMatchObject({
+      outcome: 'ACQUIRED',
+      observedAt: '2026-01-30T21:20:01.000Z',
+      readiness: {
+        outcome: 'BOUND',
+        observedAt: '2026-01-30T21:20:01.000Z',
+        cycle: { updatedAt: '2026-01-30T21:20:01.000Z' },
+      },
+    })
+    expect(calendarReads).toBe(1)
     expect(control.binds).toBe(1)
   })
 
@@ -1283,6 +1793,135 @@ describe('autonomous cycle runner', () => {
       ),
     )
     expect(interrupted).toBe(true)
+    expect(control).toEqual({ acquisitions: [], binds: 0 })
+  })
+
+  test('observes an empty FINALIZED discovery as a typed failure and continues the scheduled loop', async () => {
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const observations: CyclePassObservation[] = []
+    let inspections = 0
+    const discovery = Effect.sync(() => {
+      inspections += 1
+      return inspections === 1
+        ? finalizedPublications([], '2026-01-30T21:20:00.000Z')
+        : { outcome: 'MISSING' as const, observedAt: '2026-01-30T21:20:00.100Z' }
+    })
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
+        const fiber = yield* provide(
+          startAutonomousCycleLoop({
+            context: Effect.succeed(context()),
+            observePass: (observation) => Effect.sync(() => observations.push(observation)),
+            pollIntervalMs: 100,
+          }),
+          brokerRead(() => Effect.die(new Error('empty FINALIZED discovery must not read the broker'))),
+          cycleStore(control),
+          marketDataService(discovery),
+        )
+        yield* Effect.yieldNow
+        expect(inspections).toBe(1)
+        yield* TestClock.adjust(100)
+        expect(inspections).toBe(2)
+        yield* Fiber.interrupt(fiber)
+      }),
+    ).pipe(Effect.provide(TestClock.layer()))
+
+    await Effect.runPromise(program)
+    expect(observations).toEqual([
+      {
+        outcome: 'FAILED',
+        observedAt: '2026-01-30T21:20:00.000Z',
+        error: new CycleRunnerError({
+          operation: 'inspect-publication',
+          failure: 'contract',
+          message: 'FINALIZED cycle publication discovery must contain a publication',
+        }),
+      },
+      {
+        outcome: 'SUCCEEDED',
+        observedAt: '2026-01-30T21:20:00.100Z',
+        result: { outcome: 'NO_PUBLICATION', observedAt: '2026-01-30T21:20:00.100Z' },
+      },
+    ])
+    expect(control).toEqual({ acquisitions: [], binds: 0 })
+  })
+
+  test('observes duplicate publications as a typed failure and retries without authority or broker work', async () => {
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const observations: CyclePassObservation[] = []
+    let inspections = 0
+    let authoritySlotReads = 0
+    let brokerReads = 0
+    const duplicateDate = '2026-01-30'
+    const discovery = Effect.sync(() => {
+      inspections += 1
+      return inspections === 1
+        ? finalizedPublications([
+            finalizedPublicationInspection(duplicateDate),
+            finalizedPublicationInspection(duplicateDate),
+          ])
+        : { outcome: 'MISSING' as const, observedAt: '2026-01-30T21:20:00.100Z' }
+    })
+    const baseStore = cycleStore(control)
+    const store: CycleStoreShape = {
+      ...baseStore,
+      readAuthoritySlot: () =>
+        Effect.sync(() => {
+          authoritySlotReads += 1
+          return Option.none()
+        }),
+    }
+    const read = brokerRead(() =>
+      Effect.sync(() => {
+        brokerReads += 1
+        return { value: monthEndCalendar, evidence }
+      }),
+    )
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
+        const fiber = yield* provide(
+          startAutonomousCycleLoop({
+            context: Effect.succeed(context()),
+            observePass: (observation) => Effect.sync(() => observations.push(observation)),
+            pollIntervalMs: 100,
+          }),
+          read,
+          store,
+          marketDataService(discovery),
+        )
+        yield* Effect.yieldNow
+        expect(inspections).toBe(1)
+        yield* TestClock.adjust(100)
+        expect(inspections).toBe(2)
+        yield* Fiber.interrupt(fiber)
+      }),
+    ).pipe(Effect.provide(TestClock.layer()))
+
+    await Effect.runPromise(program)
+    expect(observations).toEqual([
+      {
+        outcome: 'FAILED',
+        observedAt: '2026-01-30T21:20:00.000Z',
+        error: new CycleRunnerError({
+          operation: 'inspect-publication',
+          failure: 'contract',
+          message: 'bounded cycle publication discovery is invalid',
+          cause: {
+            _tag: 'CyclePublicationDuplicate',
+            signalSessionDate: duplicateDate,
+          },
+        }),
+      },
+      {
+        outcome: 'SUCCEEDED',
+        observedAt: '2026-01-30T21:20:00.100Z',
+        result: { outcome: 'NO_PUBLICATION', observedAt: '2026-01-30T21:20:00.100Z' },
+      },
+    ])
+    expect(authoritySlotReads).toBe(0)
+    expect(brokerReads).toBe(0)
     expect(control).toEqual({ acquisitions: [], binds: 0 })
   })
 

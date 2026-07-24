@@ -103,6 +103,9 @@ export const buildObserveCycleDecision = (
       return yield* Effect.fail(new Error('active autonomous cycle has no immutable snapshot binding'))
     }
 
+    const marketCalendarQuery = yield* Effect.fromResult(
+      marketCalendarQueryForSignal(input.cycle.identity.signalSessionDate),
+    )
     const [snapshot, calendar, reconciliation] = yield* Effect.all(
       [
         input.marketData.loadSnapshotPublication({
@@ -110,7 +113,7 @@ export const buildObserveCycleDecision = (
           signalSessionDate: input.cycle.identity.signalSessionDate,
           signalCalendarVersion: input.cycle.identity.signalCalendarVersion,
         }),
-        input.marketCalendar(marketCalendarQueryForSignal(input.cycle.identity.signalSessionDate)),
+        input.marketCalendar(marketCalendarQuery),
         input.reconcile,
       ],
       { concurrency: 3 },
