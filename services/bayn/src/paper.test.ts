@@ -423,7 +423,7 @@ describe('paper contracts', () => {
       proofPlanHash: hash('d'),
     }
     const material = {
-      schemaVersion: 'bayn.paper-authority-generation.v1' as const,
+      schemaVersion: 'bayn.paper-authority-generation.v2' as const,
       maximum: Authority.Paper as const,
       previousGenerationHash: hash('0'),
       qualificationRunId: hash('1'),
@@ -477,10 +477,23 @@ describe('paper contracts', () => {
         activationSourceRevision: '2'.repeat(40),
       }).generationHash,
     ).not.toBe(generation.generationHash)
+    expect(
+      makePaperAuthorityGeneration({
+        ...material,
+        reconciliationId: hash('0'),
+        reconciliationContentHash: hash('1'),
+      }).generationHash,
+    ).toBe(generation.generationHash)
     await expectFailure(
       decodePaperAuthorityGeneration({
         ...generation,
         generationHash: hash('1'),
+      }),
+    )
+    await expectFailure(
+      decodePaperAuthorityGeneration({
+        ...generation,
+        schemaVersion: 'bayn.paper-authority-generation.v1',
       }),
     )
     expect(() =>

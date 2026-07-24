@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Exit } from 'effect'
 
 import { Authority, IntentState, KillState, OrderSide, OrderType, TimeInForce } from '../paper'
-import { plan, planPaperIntent, type IntentPlan } from './intents'
+import { paperIntentIdForPlan, plan, planPaperIntent, type IntentPlan } from './intents'
 
 const hash = (digit: string): string => digit.repeat(64)
 
@@ -93,15 +93,17 @@ describe('deterministic paper intents', () => {
   })
 
   test('binds a durable PAPER identity to the exact risk-state authority generation', async () => {
-    const [first, replay, rotated] = await Effect.runPromise(
+    const [first, replay, rotated, derivedId] = await Effect.runPromise(
       Effect.all([
         planPaperIntent(input, riskState()),
         planPaperIntent({ ...input }, riskState()),
         planPaperIntent(input, riskState(hash('b'))),
+        paperIntentIdForPlan(input, hash('a')),
       ]),
     )
 
     expect(first).toEqual(replay)
+    expect(derivedId).toBe(first.intentId)
     expect(first).toMatchObject({
       schemaVersion: 'bayn.paper-intent.v3',
       authorityGenerationHash: hash('a'),
@@ -110,6 +112,23 @@ describe('deterministic paper intents', () => {
     expect(rotated.authorityGenerationHash).toBe(hash('b'))
     expect(rotated.intentId).not.toBe(first.intentId)
     expect(rotated.clientOrderId).not.toBe(first.clientOrderId)
+  })
+
+  test('derives the v3 identity without authority state and rejects malformed material', async () => {
+    const [baseline, changedTime, changedGeneration] = await Effect.runPromise(
+      Effect.all([
+        paperIntentIdForPlan(input, hash('a')),
+        paperIntentIdForPlan({ ...input, createdAt: '2026-07-22T10:00:01.000Z' }, hash('a')),
+        paperIntentIdForPlan(input, hash('b')),
+      ]),
+    )
+
+    expect(changedTime).toBe(baseline)
+    expect(changedGeneration).not.toBe(baseline)
+    expect(
+      Exit.isFailure(await Effect.runPromiseExit(paperIntentIdForPlan({ ...input, extra: true }, hash('a')))),
+    ).toBe(true)
+    expect(Exit.isFailure(await Effect.runPromiseExit(paperIntentIdForPlan(input, 'not-a-hash')))).toBe(true)
   })
 
   test('refuses to create a durable intent from OBSERVE authority', async () => {

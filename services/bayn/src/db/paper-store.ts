@@ -109,18 +109,19 @@ export interface PaperStoreShape {
     input: EnsureAuthorityGenerationInput,
   ) => Effect.Effect<AuthorityState, PaperStoreError>
   /**
-   * PREPARE operation: under configured OBSERVE, transactionally derives the complete canonical PAPER generation
-   * receipt from durable qualification, reconciliation, authority, and current-build evidence without writing
-   * authority state or history. Commit only its generationHash to the later PAPER configuration.
+   * PREPARE operation: under configured OBSERVE, transactionally derives the stable canonical PAPER generation
+   * identity plus the current reconciliation evidence without writing authority state or history. Commit only its
+   * generationHash to the later PAPER configuration.
    */
   readonly preparePaperGeneration: (
     proof: PaperAuthorityProofBinding,
   ) => Effect.Effect<PaperAuthorityGeneration, PaperStoreError, WriterFence>
   /**
-   * SUBMIT activation operation: under configured PAPER, transactionally re-derives the complete generation from the
-   * same proof binding and activates it only when its hash equals the configured generationHash. This is the sole
-   * supported cross-generation PAPER writer; application code and operators must not issue direct DML against
-   * authority_state or authority_generations.
+   * SUBMIT activation operation: under configured PAPER, transactionally re-derives the stable generation identity
+   * from the same proof binding, requires its hash to equal the configured generationHash, and records the latest
+   * fresh exact reconciliation as immutable activation evidence. This is the sole supported cross-generation PAPER
+   * writer; application code and operators must not issue direct DML against authority_state or
+   * authority_generations.
    */
   readonly activatePaperGeneration: (
     proof: PaperAuthorityProofBinding,
@@ -201,7 +202,7 @@ const AuthorityStateRows = Schema.Array(AuthorityStateRow).check(Schema.isMaxLen
 const AuthorityStateObservationRows = Schema.Array(AuthorityStateObservationRow).check(Schema.isMaxLength(1))
 const AuthorityGenerationRow = Schema.Struct({
   generation_hash: Sha256,
-  activation_schema_version: Schema.NullOr(Schema.Literal('bayn.paper-authority-generation.v1')),
+  activation_schema_version: Schema.NullOr(Schema.Literal('bayn.paper-authority-generation.v2')),
   previous_generation_hash: Schema.NullOr(Sha256),
   maximum: Schema.Enum(Authority),
   authority_version: Schema.String,
@@ -1572,7 +1573,7 @@ const makeStore = (config: PaperStoreRuntimeConfig) =>
         const generation = yield* Effect.try({
           try: () =>
             makePaperAuthorityGeneration({
-              schemaVersion: 'bayn.paper-authority-generation.v1',
+              schemaVersion: 'bayn.paper-authority-generation.v2',
               maximum: Authority.Paper,
               previousGenerationHash: current.generationHash,
               qualificationRunId: result.runId,

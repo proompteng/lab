@@ -525,7 +525,7 @@ const makeActivation = (
   overrides: Partial<Parameters<typeof makePaperAuthorityGeneration>[0]> = {},
 ) =>
   makePaperAuthorityGeneration({
-    schemaVersion: 'bayn.paper-authority-generation.v1',
+    schemaVersion: 'bayn.paper-authority-generation.v2',
     maximum: Authority.Paper,
     previousGenerationHash,
     qualificationRunId: qualification.result.runId,
@@ -1225,12 +1225,13 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
-  test('rejects reconciliation drift between PREPARE and activation without authority writes', async () => {
+  test('keeps generation identity stable while activation records the latest exact reconciliation', async () => {
     const initialGenerationHash = hash('prepare-reconciliation-drift-observe')
     const reconciliation = exactReconciliation('prepare-reconciliation-drift')
+    const activationReconciliation = exactReconciliation('post-prepare-reconciliation')
     const expected = makeActivation(initialGenerationHash, qualifiedEvidence, reconciliation)
     const prepareRuntime = makeStoreRuntime({ fail: false, planHashes: [] }, prepareRuntimeConfig(expected))
-    const prepared = await (async () => {
+    const preparation = await (async () => {
       try {
         return await prepareRuntime.runPromise(
           Effect.gen(function* () {
@@ -1241,9 +1242,12 @@ describePostgres('paper accounting persistence', () => {
               generationHash: initialGenerationHash,
               maximum: Authority.Observe,
             })
-            const receipt = yield* store.preparePaperGeneration(proofBinding(expected))
-            yield* seedExactReconciliation(exactReconciliation('post-prepare-reconciliation'))
-            return receipt
+            const before = yield* readAuthorityTupleEvidence
+            const prepared = yield* store.preparePaperGeneration(proofBinding(expected))
+            yield* seedExactReconciliation(activationReconciliation)
+            const refreshed = yield* store.preparePaperGeneration(proofBinding(expected))
+            const after = yield* readAuthorityTupleEvidence
+            return { after, before, prepared, refreshed }
           }),
         )
       } finally {
@@ -1251,23 +1255,41 @@ describePostgres('paper accounting persistence', () => {
       }
     })()
 
-    const activationRuntime = makeActivationRuntime({ fail: false, planHashes: [] }, prepared)
+    expect(preparation.after).toEqual(preparation.before)
+    expect(preparation.refreshed.generationHash).toBe(preparation.prepared.generationHash)
+    expect(preparation.refreshed).toMatchObject({
+      reconciliationContentHash: activationReconciliation.contentHash,
+      reconciliationId: activationReconciliation.reconciliationId,
+    })
+
+    const activationRuntime = makeActivationRuntime({ fail: false, planHashes: [] }, preparation.prepared)
     try {
       const result = await activationRuntime.runPromise(
         Effect.gen(function* () {
           const store = yield* PaperStore
           const before = yield* readAuthorityTupleEvidence
-          const failure = yield* Effect.flip(store.activatePaperGeneration(proofBinding(prepared)))
+          const activated = yield* store.activatePaperGeneration(proofBinding(preparation.prepared))
           const after = yield* readAuthorityTupleEvidence
-          return { after, before, failure }
+          const sql = yield* PgClient.PgClient
+          const [history] = yield* sql<{ reconciliation_content_hash: string; reconciliation_id: string }>`
+            SELECT reconciliation_id, reconciliation_content_hash
+            FROM authority_generations
+            WHERE generation_hash = ${preparation.prepared.generationHash}
+          `
+          return { activated, after, before, history }
         }),
       )
-      expect(result.failure).toMatchObject({
-        operation: 'authority',
-        failure: 'invariant',
-        message: 'derived PAPER generation differs from the configured generation',
+      expect(result.activated).toMatchObject({
+        generationHash: preparation.prepared.generationHash,
+        maximum: Authority.Paper,
+        effective: Authority.Paper,
       })
-      expect(result.after).toEqual(result.before)
+      expect(result.after).not.toEqual(result.before)
+      expect(result.history).toEqual({
+        reconciliation_id: activationReconciliation.reconciliationId,
+        reconciliation_content_hash: activationReconciliation.contentHash,
+      })
+      expect(result.history.reconciliation_id).not.toBe(preparation.prepared.reconciliationId)
     } finally {
       await activationRuntime.dispose()
     }
@@ -1500,10 +1522,14 @@ describePostgres('paper accounting persistence', () => {
             authority_tuple: string
             history_count: number
             paper_tuple: string
+            reconciliation_content_hash: string
+            reconciliation_id: string
           }>`
             SELECT
               authority.xmin::text AS authority_tuple,
               paper.xmin::text AS paper_tuple,
+              paper.reconciliation_id,
+              paper.reconciliation_content_hash,
               (SELECT count(*)::integer FROM authority_generations) AS history_count
             FROM authority_state AS authority
             JOIN authority_generations AS paper
@@ -1521,10 +1547,14 @@ describePostgres('paper accounting persistence', () => {
             authority_tuple: string
             history_count: number
             paper_tuple: string
+            reconciliation_content_hash: string
+            reconciliation_id: string
           }>`
             SELECT
               authority.xmin::text AS authority_tuple,
               paper.xmin::text AS paper_tuple,
+              paper.reconciliation_id,
+              paper.reconciliation_content_hash,
               (SELECT count(*)::integer FROM authority_generations) AS history_count
             FROM authority_state AS authority
             JOIN authority_generations AS paper
@@ -1592,6 +1622,10 @@ describePostgres('paper accounting persistence', () => {
       expect(result.replay).toEqual(result.activated)
       expect(result.changedProof).toMatchObject({ operation: 'authority', failure: 'conflict' })
       expect(result.afterReplay).toEqual(result.beforeReplay)
+      expect(result.afterReplay).toMatchObject({
+        reconciliation_content_hash: reconciliation.contentHash,
+        reconciliation_id: reconciliation.reconciliationId,
+      })
       expect(Exit.isFailure(result.mutateHistory)).toBe(true)
       expect(Exit.isFailure(result.deleteHistory)).toBe(true)
       expect(Exit.isFailure(result.truncateHistory)).toBe(true)
