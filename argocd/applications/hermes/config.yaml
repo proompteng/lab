@@ -160,7 +160,7 @@ delegation:
 
 code_execution:
   timeout: 120
-  max_tool_calls: 10
+  max_tool_calls: 100
 
 stt:
   enabled: false
