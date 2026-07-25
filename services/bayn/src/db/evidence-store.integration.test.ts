@@ -256,6 +256,39 @@ const paperIntentEvidence = Effect.gen(function* () {
   return evidence
 })
 
+const seedPlannedIntent = (intent: Intent) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    yield* sql`
+      INSERT INTO intents (
+        intent_id, schema_version, authority_generation_hash, strategy_name, cycle_id,
+        decision_hash, policy_hash, account_id, client_order_id, symbol, side, order_type,
+        time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
+      ) VALUES (
+        ${intent.intentId}, ${intent.schemaVersion}, ${intent.authorityGenerationHash},
+        ${intent.strategyName}, ${intent.cycleId}, ${intent.decisionHash}, ${intent.policyHash},
+        ${intent.accountId}, ${intent.clientOrderId}, ${intent.symbol}, ${intent.side},
+        ${intent.orderType}, ${intent.timeInForce}, ${intent.quantityMicros},
+        ${intent.notionalLimitMicros}, ${intent.state}, ${intent.createdAt}, ${intent.createdAt}
+      )
+    `
+  })
+
+const restrictIntentCommitAuthority = (killState: KillState) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    yield* sql`
+      UPDATE authority_state
+      SET
+        effective = 'OBSERVE',
+        kill_state = ${killState},
+        reason = ${killState === KillState.Active ? 'IntentStore commit rejection fixture' : null},
+        version = version + 1,
+        updated_at = greatest(clock_timestamp(), updated_at + interval '1 millisecond')
+      WHERE singleton
+    `
+  })
+
 const seedApprovedIntent = (intent: Intent, decision: RiskDecision) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
@@ -1058,21 +1091,6 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const secondOwnerExit = yield* Effect.promise(() =>
           secondOwner.runPromiseExit(Effect.flatMap(WriterFence, (fence) => fence.check)),
         )
-        const transitionTime = new Date(Date.now() + 1_000).toISOString()
-        const transitions = yield* Effect.promise(() =>
-          execution.runPromise(
-            Effect.gen(function* () {
-              const store = yield* IntentStore
-              return yield* Effect.all(
-                [
-                  store.markIoStarted(intent.intentId, transitionTime),
-                  store.markIoStarted(intent.intentId, transitionTime),
-                ],
-                { concurrency: 'unbounded' },
-              )
-            }),
-          ),
-        )
         const retryAfterTransition = yield* Effect.promise(() =>
           execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))),
         )
@@ -1100,7 +1118,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             }),
           ),
         )
-        return { commits, retryAfterTransition, secondOwnerExit, stored, transitions }
+        return { commits, retryAfterTransition, secondOwnerExit, stored }
       }).pipe(
         Effect.ensuring(
           Effect.all([Effect.promise(() => secondOwner.dispose()), Effect.promise(() => execution.dispose())], {
@@ -1116,17 +1134,14 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(observed.commits[0].record.intent.intentId).toBe(intent.intentId)
     expect(observed.commits[1].record.intent.clientOrderId).toBe(intent.clientOrderId)
     expect(Exit.isFailure(observed.secondOwnerExit)).toBe(true)
-    expect(
-      observed.transitions.map((receipt) => receipt.deduplicated).sort((left, right) => Number(left) - Number(right)),
-    ).toEqual([false, true])
     expect(observed.retryAfterTransition).toMatchObject({
       deduplicated: true,
-      record: { intent: { state: 'IO_STARTED' }, stateVersion: 3 },
+      record: { intent: { state: 'APPROVED' }, stateVersion: 2 },
     })
     expect(observed.stored).toEqual({
       client_order_id: intent.clientOrderId,
-      state: 'IO_STARTED',
-      state_version: 3,
+      state: 'APPROVED',
+      state_version: 2,
       intents: 1,
       decisions: 1,
     })
@@ -1144,15 +1159,19 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const observed = await Effect.runPromise(
       Effect.gen(function* () {
         const forgedDecision = yield* Effect.promise(() =>
-          execution.runPromiseExit(
-            Effect.flatMap(IntentStore, (store) => store.commit(intent, { ...decision, decisionId: '0'.repeat(64) })),
+          execution.runPromise(
+            Effect.flatMap(IntentStore, (store) =>
+              store.commit(intent, { ...decision, decisionId: '0'.repeat(64) }),
+            ).pipe(Effect.flip),
           ),
         )
         const receipt = yield* Effect.promise(() =>
           execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))),
         )
         const conflict = yield* Effect.promise(() =>
-          execution.runPromiseExit(Effect.flatMap(IntentStore, (store) => store.commit(divergent, divergentDecision))),
+          execution.runPromise(
+            Effect.flatMap(IntentStore, (store) => store.commit(divergent, divergentDecision)).pipe(Effect.flip),
+          ),
         )
         const counts = yield* Effect.promise(() =>
           runtime.runPromise(
@@ -1176,18 +1195,24 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       intent: { state: 'TERMINAL', terminalOutcome: 'BLOCKED' },
       stateVersion: 2,
     })
-    expect(Exit.isFailure(observed.conflict)).toBe(true)
-    expect(Exit.isFailure(observed.forgedDecision)).toBe(true)
-    if (Exit.isFailure(observed.forgedDecision)) {
-      expect(Cause.pretty(observed.forgedDecision.cause)).toContain(
-        'risk decision does not match its deterministic identity',
-      )
-    }
-    if (Exit.isFailure(observed.conflict)) {
-      expect(Cause.pretty(observed.conflict.cause)).toContain(
-        'deterministic intent identity was reused with different content',
-      )
-    }
+    expect(observed.forgedDecision).toMatchObject({
+      _tag: 'IntentStoreError',
+      failure: 'invariant',
+      operation: 'commit',
+      message: `risk decision ${'0'.repeat(64)} does not match deterministic identity ${decision.decisionId}`,
+      cause: {
+        _tag: 'RiskDecisionIdentityMismatch',
+        decisionId: '0'.repeat(64),
+        expectedDecisionId: decision.decisionId,
+      },
+    })
+    expect(observed.conflict).toMatchObject({
+      _tag: 'IntentStoreError',
+      failure: 'conflict',
+      operation: 'commit',
+      message: `deterministic intent identity ${intent.intentId} was reused with different content`,
+      cause: { _tag: 'ImmutableIntentMismatch', intentId: intent.intentId },
+    })
     expect(observed.counts).toEqual({ decisions: 1, intents: 1 })
   })
 
@@ -1205,7 +1230,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       const observed = await execution.runPromise(
         Effect.gen(function* () {
           const before = yield* paperIntentEvidence
-          const staleCommit = yield* Effect.exit(
+          const staleCommit = yield* Effect.flip(
             Effect.flatMap(IntentStore, (store) => store.commit(staleIntent, staleDecision)),
           )
           const afterFailure = yield* paperIntentEvidence
@@ -1226,12 +1251,17 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         decisionHash: staleIntent.decisionHash,
         symbol: staleIntent.symbol,
       })
-      expect(Exit.isFailure(observed.staleCommit)).toBe(true)
-      if (Exit.isFailure(observed.staleCommit)) {
-        expect(Cause.pretty(observed.staleCommit.cause)).toContain(
-          'PAPER intent does not match the current immutable authority-generation bindings',
-        )
-      }
+      expect(observed.staleCommit).toMatchObject({
+        _tag: 'IntentStoreError',
+        failure: 'invariant',
+        operation: 'commit',
+        message: 'intent does not bind the active PAPER generation',
+        cause: {
+          _tag: 'AuthorityGenerationMismatch',
+          observed: rotated.generationHash,
+          expected: originalGeneration.generationHash,
+        },
+      })
       expect(observed.afterFailure).toEqual(observed.before)
       expect(observed.currentCommit).toMatchObject({
         deduplicated: false,
@@ -1291,6 +1321,80 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     }
   })
 
+  test('rejects first and incomplete commits under effective OBSERVE or an ACTIVE kill without content or xmin writes', async () => {
+    const generation = await activateAuditedPaperAuthority()
+    const commits = await Effect.runPromise(
+      Effect.forEach(
+        [
+          { cycleId: fixtureHash('effective-observe-first-commit'), state: 'first' },
+          { cycleId: fixtureHash('effective-observe-incomplete-commit'), state: 'incomplete' },
+          { cycleId: fixtureHash('active-kill-first-commit'), state: 'first' },
+          { cycleId: fixtureHash('active-kill-incomplete-commit'), state: 'incomplete' },
+        ] as const,
+        (fixture) =>
+          planForGeneration(intentPlan({ cycleId: fixture.cycleId }), generation.generationHash).pipe(
+            Effect.flatMap((intent) =>
+              riskDecision(intent, RiskOutcome.Approved).pipe(
+                Effect.map((decision) => ({ ...fixture, decision, intent })),
+              ),
+            ),
+          ),
+      ),
+    )
+    const authorityCases = [
+      {
+        killState: KillState.Clear,
+        expected: {
+          message: 'effective authority is not PAPER',
+          cause: { _tag: 'EffectiveAuthorityNotPaper', observed: Authority.Observe },
+        },
+        commits: commits.slice(0, 2),
+      },
+      {
+        killState: KillState.Active,
+        expected: {
+          message: 'PAPER authority kill is not CLEAR',
+          cause: { _tag: 'AuthorityKillNotClear', observed: KillState.Active },
+        },
+        commits: commits.slice(2),
+      },
+    ] as const
+    const execution = makeExecutionRuntime()
+    try {
+      const observed = await execution.runPromise(
+        Effect.forEach(authorityCases, (authorityCase) =>
+          Effect.gen(function* () {
+            yield* restrictIntentCommitAuthority(authorityCase.killState)
+            return yield* Effect.forEach(authorityCase.commits, (commitCase) =>
+              Effect.gen(function* () {
+                if (commitCase.state === 'incomplete') yield* seedPlannedIntent(commitCase.intent)
+                const before = yield* paperIntentEvidence
+                const error = yield* Effect.flip(
+                  Effect.flatMap(IntentStore, (store) => store.commit(commitCase.intent, commitCase.decision)),
+                )
+                const after = yield* paperIntentEvidence
+                return { after, before, error, expected: authorityCase.expected, state: commitCase.state }
+              }),
+            )
+          }),
+        ).pipe(Effect.map((results) => results.flat())),
+      )
+
+      expect(observed.map(({ state }) => state)).toEqual(['first', 'incomplete', 'first', 'incomplete'])
+      for (const result of observed) {
+        expect(result.error).toMatchObject({
+          _tag: 'IntentStoreError',
+          failure: 'invariant',
+          operation: 'commit',
+          ...result.expected,
+        })
+        expect(result.after).toEqual(result.before)
+      }
+    } finally {
+      await execution.dispose()
+    }
+  })
+
   test('rejects first-commit policy or strategy drift from the current authority generation without writes', async () => {
     const generation = await activateAuditedPaperAuthority()
     const variants = await Effect.runPromise(
@@ -1319,7 +1423,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const observed = await execution.runPromise(
           Effect.gen(function* () {
             const before = yield* paperIntentEvidence
-            const commit = yield* Effect.exit(
+            const commit = yield* Effect.flip(
               Effect.flatMap(IntentStore, (store) => store.commit(variant.intent, variant.decision)),
             )
             const after = yield* paperIntentEvidence
@@ -1327,12 +1431,29 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           }),
         )
 
-        expect(Exit.isFailure(observed.commit)).toBe(true)
-        if (Exit.isFailure(observed.commit)) {
-          expect(Cause.pretty(observed.commit.cause)).toContain(
-            'PAPER intent does not match the current immutable authority-generation bindings',
-          )
-        }
+        const mismatch =
+          variant.intent.policyHash !== generation.riskPolicyHash
+            ? {
+                field: 'riskPolicyHash',
+                observed: generation.riskPolicyHash,
+                expected: variant.intent.policyHash,
+              }
+            : {
+                field: 'strategyName',
+                observed: generation.strategyName,
+                expected: variant.intent.strategyName,
+              }
+        expect(observed.commit).toMatchObject({
+          _tag: 'IntentStoreError',
+          failure: 'invariant',
+          operation: 'commit',
+          message: `active PAPER generation ${generation.generationHash} has mismatched ${mismatch.field}`,
+          cause: {
+            _tag: 'AuthorityGenerationHistoryMismatch',
+            generationHash: generation.generationHash,
+            ...mismatch,
+          },
+        })
         expect(observed.after).toEqual(observed.before)
       }
     } finally {
@@ -1341,7 +1462,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('rejects an intent whose generation history binds a different account without writing', async () => {
-    await activateAuditedPaperAuthority()
+    const generation = await activateAuditedPaperAuthority()
     const intent = await Effect.runPromise(
       plan(intentPlan({ accountId: 'paper-account-2', cycleId: fixtureHash('wrong-generation-account-cycle') })),
     )
@@ -1356,7 +1477,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
               (SELECT count(*)::integer FROM intents) AS intents,
               (SELECT count(*)::integer FROM risk_decisions) AS decisions
           `
-          const commit = yield* Effect.exit(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
+          const commit = yield* Effect.flip(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
           const after = yield* sql<{ decisions: number; intents: number }>`
             SELECT
               (SELECT count(*)::integer FROM intents) AS intents,
@@ -1366,12 +1487,19 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         }),
       )
 
-      expect(Exit.isFailure(observed.commit)).toBe(true)
-      if (Exit.isFailure(observed.commit)) {
-        expect(Cause.pretty(observed.commit.cause)).toContain(
-          'PAPER intent does not match the current immutable authority-generation bindings',
-        )
-      }
+      expect(observed.commit).toMatchObject({
+        _tag: 'IntentStoreError',
+        failure: 'invariant',
+        operation: 'commit',
+        message: `active PAPER generation ${generation.generationHash} has mismatched accountId`,
+        cause: {
+          _tag: 'AuthorityGenerationHistoryMismatch',
+          generationHash: generation.generationHash,
+          field: 'accountId',
+          observed: generation.accountId,
+          expected: intent.accountId,
+        },
+      })
       expect(observed.after).toEqual(observed.before)
       expect(observed.after).toEqual({ decisions: 0, intents: 0 })
     } finally {

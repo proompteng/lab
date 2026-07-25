@@ -1,9 +1,39 @@
+import assert from 'node:assert/strict'
+
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Exit } from 'effect'
+import { Effect, Exit, Result } from 'effect'
 
-import { Authority, IntentState, KillState, OrderSide, OrderType, TimeInForce } from '../paper'
-import { paperIntentIdForPlan, plan, planPaperIntent, type IntentPlan } from './intents'
+import {
+  Authority,
+  IntentState,
+  KillState,
+  OrderSide,
+  OrderType,
+  RiskOutcome,
+  TerminalOutcome,
+  TimeInForce,
+  type Intent,
+  type RiskDecision,
+} from '../paper'
+import {
+  classifyExistingCommit,
+  decodeAuthorityBindingRows,
+  decodeStoredIntentRows,
+  decideIntentInsert,
+  decideIntentTransition,
+  decideRiskCommit,
+  intentIdForPlan,
+  paperIntentIdForPlan,
+  plan,
+  planPaperIntent,
+  validateCommitIdentity,
+  validateCurrentAuthority,
+  type AuthorityBindingRow,
+  type IntentPlan,
+  type PreparedCommit,
+  type StoredIntent,
+} from './intents'
 
 const hash = (digit: string): string => digit.repeat(64)
 
@@ -34,6 +64,103 @@ const riskState = (generationHash = hash('a'), maximum = Authority.Paper) => ({
     updatedAt: '2026-07-22T09:59:00.000Z',
   },
 })
+
+const paperIntent: Intent = {
+  schemaVersion: 'bayn.paper-intent.v3',
+  authorityGenerationHash: hash('a'),
+  intentId: '6f3b7a528607ed8804f55c5fe23a0c47a4d6f72abf2bb9a41a69d93368d9c8ac',
+  strategyName: input.strategyName,
+  cycleId: input.cycleId,
+  decisionHash: input.decisionHash,
+  policyHash: input.policyHash,
+  accountId: input.accountId,
+  clientOrderId: 'b1_bzt6UoYH7YgE9Vxf4joMR6TW9yq_K7mkGmnZM2jZyKw',
+  symbol: input.symbol,
+  side: input.side,
+  orderType: input.orderType,
+  timeInForce: input.timeInForce,
+  quantityMicros: input.quantityMicros,
+  notionalLimitMicros: input.notionalLimitMicros,
+  state: IntentState.Planned,
+  createdAt: input.createdAt,
+}
+
+const approvedDecision: RiskDecision = {
+  schemaVersion: 'bayn.paper-risk-decision.v1',
+  decisionId: 'dfb3ec0a5fda18eb05a9869870039f694c18d3639907963ef26e5a9cafcd50cd',
+  inputHash: hash('d'),
+  intentId: paperIntent.intentId,
+  policyHash: paperIntent.policyHash,
+  outcome: RiskOutcome.Approved,
+  reasonCodes: [],
+  decidedAt: '2026-07-22T10:00:01.000Z',
+  expiresAt: '2026-07-22T10:05:01.000Z',
+}
+
+const preparedCommit = (): PreparedCommit => {
+  const prepared = validateCommitIdentity(paperIntent, approvedDecision)
+  assert(Result.isSuccess(prepared))
+  return prepared.success
+}
+
+const storedIntent = (
+  state: IntentState,
+  decision: RiskDecision | undefined,
+  terminalOutcome?: TerminalOutcome,
+): StoredIntent => ({
+  intent: {
+    ...paperIntent,
+    ...(decision === undefined ? {} : { riskDecisionId: decision.decisionId }),
+    state,
+    ...(terminalOutcome === undefined ? {} : { terminalOutcome }),
+  },
+  ...(decision === undefined ? {} : { decision }),
+  stateVersion: decision === undefined ? 1 : 2,
+  updatedAt: decision?.decidedAt ?? paperIntent.createdAt,
+})
+
+const authorityRow = (overrides: Partial<AuthorityBindingRow> = {}): AuthorityBindingRow => ({
+  maximum: Authority.Paper,
+  effective: Authority.Paper,
+  kill_state: KillState.Clear,
+  generation_hash: paperIntent.authorityGenerationHash,
+  generation_maximum: Authority.Paper,
+  generation_account_id: paperIntent.accountId,
+  generation_risk_policy_hash: paperIntent.policyHash,
+  generation_strategy_name: paperIntent.strategyName,
+  ...overrides,
+})
+
+const storedRow = {
+  schema_version: paperIntent.schemaVersion,
+  intent_id: paperIntent.intentId,
+  risk_decision_id: approvedDecision.decisionId,
+  authority_generation_hash: paperIntent.authorityGenerationHash,
+  strategy_name: paperIntent.strategyName,
+  cycle_id: paperIntent.cycleId,
+  decision_hash: paperIntent.decisionHash,
+  policy_hash: paperIntent.policyHash,
+  account_id: paperIntent.accountId,
+  client_order_id: paperIntent.clientOrderId,
+  symbol: paperIntent.symbol,
+  side: paperIntent.side,
+  order_type: paperIntent.orderType,
+  time_in_force: paperIntent.timeInForce,
+  quantity_micros: paperIntent.quantityMicros,
+  notional_limit_micros: paperIntent.notionalLimitMicros,
+  state: IntentState.Approved,
+  terminal_outcome: null,
+  state_version: 2,
+  created_at: paperIntent.createdAt,
+  updated_at: approvedDecision.decidedAt,
+  decision_id: approvedDecision.decisionId,
+  input_hash: approvedDecision.inputHash,
+  decision_policy_hash: approvedDecision.policyHash,
+  outcome: approvedDecision.outcome,
+  reason_codes: approvedDecision.reasonCodes,
+  decided_at: approvedDecision.decidedAt,
+  expires_at: approvedDecision.expiresAt,
+}
 
 describe('deterministic paper intents', () => {
   test('derives one stable full intent identity and Alpaca-bounded client order ID', async () => {
@@ -135,5 +262,147 @@ describe('deterministic paper intents', () => {
     const result = await Effect.runPromiseExit(planPaperIntent(input, riskState(hash('c'), Authority.Observe)))
 
     expect(Exit.isFailure(result)).toBe(true)
+  })
+})
+
+describe('pure intent commit decisions', () => {
+  test('validates exact golden intent and risk identities synchronously', () => {
+    const result = validateCommitIdentity(paperIntent, approvedDecision)
+
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result)) {
+      expect(result.success).toEqual({ _tag: 'PreparedCommit', intent: paperIntent, decision: approvedDecision })
+      expect(result.success.intent.intentId).toBe('6f3b7a528607ed8804f55c5fe23a0c47a4d6f72abf2bb9a41a69d93368d9c8ac')
+      expect(result.success.intent.clientOrderId).toBe('b1_bzt6UoYH7YgE9Vxf4joMR6TW9yq_K7mkGmnZM2jZyKw')
+      expect(result.success.decision.decisionId).toBe(
+        'dfb3ec0a5fda18eb05a9869870039f694c18d3639907963ef26e5a9cafcd50cd',
+      )
+    }
+  })
+
+  test('rejects malformed intent input through the exact decode failure without defecting', () => {
+    const result = validateCommitIdentity({ ...paperIntent, strategyName: 'invalid\ud800strategy' }, approvedDecision)
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure._tag).toBe('IntentDecodeFailed')
+      if (result.failure._tag === 'IntentDecodeFailed') {
+        expect(String(result.failure.cause)).toContain('["strategyName"]')
+        expect(String(result.failure.cause)).toContain('well-formed Unicode')
+      }
+    }
+  })
+
+  test('totalizes the exported reference identity helper without changing its golden ID', () => {
+    const golden = intentIdForPlan(input)
+    const invalid = intentIdForPlan({ ...input, strategyName: 'invalid\ud800strategy' })
+
+    expect(golden).toMatchObject({
+      _tag: 'Success',
+      success: 'bbfe217b000266231ce1c29b8e3d447ad0e60903d287ee3e40a33aa964394fac',
+    })
+    expect(Result.isFailure(invalid)).toBe(true)
+    if (Result.isFailure(invalid)) {
+      expect(invalid.failure).toMatchObject({
+        _tag: 'CanonicalizationFailed',
+        material: { _tag: 'ReferenceIntentIdentity', strategyName: 'invalid\ud800strategy' },
+      })
+      expect(invalid.failure.cause).toBeInstanceOf(TypeError)
+    }
+  })
+
+  test('classifies insert, incomplete completion, and exact replay without mutation', () => {
+    const prepared = preparedCommit()
+    const insert = classifyExistingCommit([], prepared)
+    const incomplete = classifyExistingCommit([storedIntent(IntentState.Planned, undefined)], prepared)
+    const replay = classifyExistingCommit([storedIntent(IntentState.Approved, approvedDecision)], prepared)
+
+    expect(Result.isSuccess(insert) && insert.success._tag).toBe('InsertIntent')
+    expect(Result.isSuccess(incomplete) && incomplete.success._tag).toBe('CompleteIntent')
+    expect(Result.isSuccess(replay) && replay.success._tag).toBe('ExactReplay')
+    if (Result.isSuccess(replay) && replay.success._tag === 'ExactReplay') {
+      expect(replay.success.receipt.deduplicated).toBe(true)
+      expect(replay.success.receipt.record.intent.state).toBe(IntentState.Approved)
+    }
+  })
+
+  test('gives immutable conflict precedence over incomplete-state validation', () => {
+    const prepared = preparedCommit()
+    const result = classifyExistingCommit(
+      [
+        {
+          ...storedIntent(IntentState.Acknowledged, undefined),
+          intent: { ...paperIntent, accountId: 'paper-account-2', state: IntentState.Acknowledged },
+        },
+      ],
+      prepared,
+    )
+
+    expect(Result.isFailure(result) && result.failure._tag).toBe('ImmutableIntentMismatch')
+  })
+
+  test('requires PAPER maximum, PAPER effective authority, a clear kill, and exact generation history', () => {
+    const variants = [
+      authorityRow({ maximum: Authority.Observe }),
+      authorityRow({ effective: Authority.Observe }),
+      authorityRow({ kill_state: KillState.Active }),
+      authorityRow({ generation_hash: hash('b') }),
+      authorityRow({ generation_account_id: 'paper-account-2' }),
+      authorityRow({ generation_risk_policy_hash: hash('4') }),
+      authorityRow({ generation_strategy_name: 'another-strategy' }),
+    ]
+    const tags = variants.map((authority) => {
+      const result = validateCurrentAuthority([authority], paperIntent)
+      return Result.isFailure(result) ? result.failure._tag : 'Success'
+    })
+
+    expect(Result.isSuccess(validateCurrentAuthority([authorityRow()], paperIntent))).toBe(true)
+    expect(tags).toEqual([
+      'MaximumAuthorityNotPaper',
+      'EffectiveAuthorityNotPaper',
+      'AuthorityKillNotClear',
+      'AuthorityGenerationMismatch',
+      'AuthorityGenerationHistoryMismatch',
+      'AuthorityGenerationHistoryMismatch',
+      'AuthorityGenerationHistoryMismatch',
+    ])
+  })
+
+  test('strictly decodes database rows and rejects excess or malformed fields', () => {
+    const stored = decodeStoredIntentRows([storedRow])
+    const extraStored = decodeStoredIntentRows([{ ...storedRow, unexpected: true }])
+    const malformedStored = decodeStoredIntentRows([{ ...storedRow, state_version: 0 }])
+    const authority = decodeAuthorityBindingRows([authorityRow()])
+    const extraAuthority = decodeAuthorityBindingRows([{ ...authorityRow(), unexpected: true }])
+
+    expect(Result.isSuccess(stored)).toBe(true)
+    expect(Result.isFailure(extraStored)).toBe(true)
+    expect(Result.isFailure(malformedStored)).toBe(true)
+    expect(Result.isSuccess(authority)).toBe(true)
+    expect(Result.isFailure(extraAuthority)).toBe(true)
+  })
+
+  test('totalizes insert, decision, and transition RETURNING dispositions', () => {
+    expect(decideIntentInsert([], paperIntent.intentId)).toMatchObject({
+      _tag: 'Success',
+      success: { _tag: 'IntentInsertConflict', intentId: paperIntent.intentId },
+    })
+    expect(decideIntentInsert([{ intent_id: paperIntent.intentId }], paperIntent.intentId)).toMatchObject({
+      _tag: 'Success',
+      success: { _tag: 'IntentInserted', intentId: paperIntent.intentId },
+    })
+    expect(decideRiskCommit([{ decision_id: approvedDecision.decisionId }], approvedDecision.decisionId)).toMatchObject(
+      {
+        _tag: 'Success',
+        success: { _tag: 'RiskDecisionInserted', decisionId: approvedDecision.decisionId },
+      },
+    )
+    expect(decideIntentTransition([{ intent_id: paperIntent.intentId }], paperIntent.intentId)).toMatchObject({
+      _tag: 'Success',
+      success: { _tag: 'IntentTransitioned', intentId: paperIntent.intentId },
+    })
+    expect(Result.isFailure(decideRiskCommit([], approvedDecision.decisionId))).toBe(true)
+    expect(Result.isFailure(decideIntentTransition([{ intent_id: hash('f') }], paperIntent.intentId))).toBe(true)
+    expect(Result.isFailure(decideIntentInsert([{ intent_id: 'invalid' }], paperIntent.intentId))).toBe(true)
   })
 })
