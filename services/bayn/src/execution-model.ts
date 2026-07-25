@@ -1,5 +1,8 @@
+import { Result } from 'effect'
+
 import { canonicalHashV1 } from './hash'
 import type { ExecutionModel, IsoDate, OrderRejectionReason, OrderStatus } from './types'
+import { roundUnsignedHalfUp } from './unsigned-round-half-up'
 
 export const MICROS = 1_000_000n
 const PPM = 1_000_000n
@@ -78,8 +81,9 @@ const ceilDiv = (numerator: bigint, denominator: bigint): bigint => {
 }
 
 const roundDiv = (numerator: bigint, denominator: bigint): bigint => {
-  if (numerator < 0n || denominator <= 0n) throw new Error('roundDiv requires non-negative numerator and denominator')
-  return (numerator + denominator / 2n) / denominator
+  const rounded = roundUnsignedHalfUp(numerator, denominator)
+  if (Result.isFailure(rounded)) throw new Error('roundDiv requires non-negative numerator and denominator')
+  return rounded.success
 }
 
 const quantizeDown = (value: bigint, increment: bigint): bigint => {

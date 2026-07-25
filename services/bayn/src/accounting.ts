@@ -1,5 +1,5 @@
 import { AccountFlags, type Account, type Transfer } from 'tigerbeetle-node'
-import { Schema } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { canonicalHashV1, stableU128, stableU64 } from './hash'
 import { AccountCode, hashLedgerPlan, LEDGER_SCHEMA_VERSION, TransferCode, type LedgerPlan } from './ledger-plan'
@@ -17,6 +17,7 @@ import {
   UtcInstantSchema as UtcInstant,
   strictParseOptions,
 } from './schemas'
+import { roundUnsignedHalfUp } from './unsigned-round-half-up'
 
 const MICROS = 1_000_000n
 type AccountCodeValue = (typeof AccountCode)[keyof typeof AccountCode]
@@ -58,10 +59,11 @@ export interface PreparedAccounting {
 const decodeTransaction = Schema.decodeUnknownSync(AccountingTransactionSchema, strictParseOptions)
 
 const roundDiv = (numerator: bigint, denominator: bigint): bigint => {
-  if (numerator < 0n || denominator <= 0n) {
+  const rounded = roundUnsignedHalfUp(numerator, denominator)
+  if (Result.isFailure(rounded)) {
     throw new Error('fixed-point division requires a non-negative numerator and positive denominator')
   }
-  return (numerator + denominator / 2n) / denominator
+  return rounded.success
 }
 
 const makeAccount = (brokerAccountId: string, ledger: number, name: string, code: AccountCodeValue): Account => {

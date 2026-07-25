@@ -8,7 +8,9 @@ import {
   desiredQuantityMicros,
   makeFillTerms,
   makeOrderOutcome,
+  notionalMicros,
   referencePriceMicros,
+  saleCostBasisMicros,
 } from './execution-model'
 
 describe('explicit paper execution model', () => {
@@ -30,6 +32,16 @@ describe('explicit paper execution model', () => {
       slippageCostMicros: 25_000n,
     })
     expect(referencePriceMicros(100.123456, defaultExecutionModel)).toBe(100_123_500n)
+  })
+
+  test('preserves half-up arithmetic and its public error contract', () => {
+    const u128Maximum = (1n << 128n) - 1n
+
+    expect(referencePriceMicros(100.12345, defaultExecutionModel)).toBe(100_123_500n)
+    expect(notionalMicros(500_000n, 100_000_001n)).toBe(50_000_001n)
+    expect(saleCostBasisMicros(1n, 1n, 2n)).toBe(1n)
+    expect(notionalMicros(u128Maximum, 1_000_001n)).toBe(340_282_707_203_305_384_401_838_070_806_375_643_223n)
+    expect(() => notionalMicros(-1n, 1n)).toThrow('roundDiv requires non-negative numerator and denominator')
   })
 
   test('makes full, partial, and rejected outcomes deterministic', () => {

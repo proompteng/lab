@@ -248,6 +248,55 @@ describe('paper reconciliation', () => {
     })
   })
 
+  test('preserves exact-half position cost discrepancy identities and hashes', () => {
+    const result = compareReconciliation(
+      snapshot({
+        positions: [{ ...position, quantityMicros: '500000', averageEntryPriceMicros: '1' }],
+        projectedPositions: [{ symbol: position.symbol, quantityMicros: '500000', costBasisMicros: '0' }],
+      }),
+    )
+
+    expect(result.observedHash).toBe('eddcbffe34a93edb13621d0f3b4a29b4530550fe0947da942bb11cf46d649c91')
+    expect(result.discrepancies).toEqual([
+      {
+        discrepancyId: '82d8cf06a2c0300ed87632447e51b5fc7b03ac37eeb87df44e46edea3a0af96b',
+        kind: DiscrepancyKind.Position,
+        identity: `${position.symbol}:cost`,
+        expected: '0',
+        observed: '1',
+        evidenceHash: 'bc9bfb97cb8744667e423365862a52d76046a352ee1398ee82274f0c2a07783d',
+      },
+    ])
+  })
+
+  test('preserves reconciliation output above U128 and its exact evidence hashes', () => {
+    const quantityMicros = '170141183460469231731687303715884105727'
+    const result = compareReconciliation(
+      snapshot({
+        positions: [
+          {
+            ...position,
+            quantityMicros,
+            averageEntryPriceMicros: '340282366920938463463374607431768211455',
+          },
+        ],
+        projectedPositions: [{ symbol: position.symbol, quantityMicros, costBasisMicros: '0' }],
+      }),
+    )
+
+    expect(result.observedHash).toBe('7d475d168ec5d130dbc08418eb200deef0775f8ab8339c453e3016a2d3caa7f1')
+    expect(result.discrepancies).toEqual([
+      {
+        discrepancyId: '82d8cf06a2c0300ed87632447e51b5fc7b03ac37eeb87df44e46edea3a0af96b',
+        kind: DiscrepancyKind.Position,
+        identity: `${position.symbol}:cost`,
+        expected: '0',
+        observed: '57896044618658097711785492504343953926124568782438874324533730092808913',
+        evidenceHash: '937546e66a02272e1b3bbc238fdf84721746ebd04d30f6de5deae0627ad0bafd',
+      },
+    ])
+  })
+
   test('keeps a ledger discrepancy identity stable while its evidence changes', () => {
     const first = compareReconciliation(snapshot({ ledgerExact: false, accountingHash: hash('a') }))
     const second = compareReconciliation(snapshot({ ledgerExact: false, accountingHash: hash('b') }))

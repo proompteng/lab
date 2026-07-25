@@ -1,3 +1,5 @@
+import { Result } from 'effect'
+
 import { canonicalHashV1 } from './hash'
 import {
   AccountStatus,
@@ -14,6 +16,7 @@ import {
   type Valuation,
 } from './paper'
 import type { IsoDate } from './schemas'
+import { roundUnsignedHalfUp } from './unsigned-round-half-up'
 
 export interface IntentExpectation {
   readonly intentId: string
@@ -124,7 +127,11 @@ const expectedResolution = '<resolved>'
 const openOrder = '<open>'
 
 const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
-const roundMicrosProduct = (left: bigint, right: bigint): bigint => (left * right + 500_000n) / 1_000_000n
+const roundMicrosProduct = (left: bigint, right: bigint): bigint => {
+  const rounded = roundUnsignedHalfUp(left * right, 1_000_000n)
+  if (Result.isFailure(rounded)) throw new Error('position cost material is outside the unsigned fixed-point range')
+  return rounded.success
+}
 
 export const reconciledStateHash = (state: ReconciledStateMaterial): string => {
   const brokerStateHash = canonicalHashV1({
