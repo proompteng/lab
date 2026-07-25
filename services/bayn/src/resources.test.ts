@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Effect, Exit, Option, Redacted, Ref } from 'effect'
+import { Cause, Effect, Exit, Option, Redacted, Ref, Result } from 'effect'
 import { AuthorizationError, SqlError } from 'effect/unstable/sql/SqlError'
 
 import { initialize } from './app'
@@ -13,6 +13,13 @@ import { Authority } from './paper'
 import { initialState } from './runtime-state'
 import { makeStrategy } from './strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
+import {
+  parseReplicaEndpoints,
+  resolveReplicaAddresses,
+  validateResolvedReplicaAddresses,
+  validateResolvedReplicaEndpoint,
+  type ReplicaAddressValidationError,
+} from './tigerbeetle-client'
 
 const provenance = makeTestProvenance()
 const fixtureStrategy = makeStrategy(fixtureProtocol, provenance)
@@ -119,6 +126,88 @@ const makeTigerBeetleClient = (overrides: Partial<TigerBeetleClient> = {}): Tige
   ...overrides,
 })
 
+const resultSuccess = <A>(decision: Result.Result<A, ReplicaAddressValidationError>): A => {
+  expect(Result.isSuccess(decision)).toBeTrue()
+  if (Result.isFailure(decision)) throw decision.failure
+  return decision.success
+}
+
+const resultFailure = <A>(decision: Result.Result<A, ReplicaAddressValidationError>): ReplicaAddressValidationError => {
+  expect(Result.isFailure(decision)).toBeTrue()
+  if (Result.isSuccess(decision)) throw new Error('replica address decision unexpectedly succeeded')
+  return decision.failure
+}
+
+describe('TigerBeetle replica address decisions', () => {
+  test('parses configured endpoints synchronously while preserving request order', () => {
+    expect(
+      resultSuccess(parseReplicaEndpoints([' 3000 ', '127.0.0.1', '127.0.0.2:3001', 'replica-0.test:3002'])),
+    ).toEqual([
+      { _tag: 'DirectReplicaAddress', configuredAddress: ' 3000 ', address: '3000' },
+      { _tag: 'DirectReplicaAddress', configuredAddress: '127.0.0.1', address: '127.0.0.1' },
+      { _tag: 'DirectReplicaAddress', configuredAddress: '127.0.0.2:3001', address: '127.0.0.2:3001' },
+      {
+        _tag: 'ReplicaHostname',
+        configuredAddress: 'replica-0.test:3002',
+        hostname: 'replica-0.test',
+        port: 3002,
+      },
+    ])
+
+    for (const [configuredAddresses, reason] of [
+      [[], 'empty-addresses'],
+      [['missing-port'], 'invalid-address'],
+      [['replica.test:not-a-port'], 'invalid-address'],
+      [['replica.test:70000'], 'invalid-port'],
+      [['::1'], 'ipv6-unsupported'],
+    ] as const) {
+      expect(resultFailure(parseReplicaEndpoints(configuredAddresses))).toMatchObject({ reason })
+    }
+  })
+
+  test('validates DNS answers and the final exact address set synchronously', () => {
+    const [endpoint] = resultSuccess(parseReplicaEndpoints(['replica-0.test:3000']))
+    expect(resultSuccess(validateResolvedReplicaEndpoint(endpoint, ['::1', '10.0.0.1', 'not-an-address']))).toBe(
+      '10.0.0.1:3000',
+    )
+    expect(resultFailure(validateResolvedReplicaEndpoint(endpoint, ['::1']))).toMatchObject({
+      reason: 'no-ipv4-address',
+    })
+    expect(resultFailure(validateResolvedReplicaEndpoint(endpoint, ['10.0.0.1', '10.0.0.2']))).toMatchObject({
+      reason: 'multiple-ipv4-addresses',
+    })
+    expect(resultSuccess(validateResolvedReplicaAddresses(['10.0.0.1:3000', '10.0.0.2:3000']))).toEqual([
+      '10.0.0.1:3000',
+      '10.0.0.2:3000',
+    ])
+    expect(resultFailure(validateResolvedReplicaAddresses(['10.0.0.1:3000', '10.0.0.1:3000']))).toMatchObject({
+      reason: 'duplicate-address',
+      material: { duplicateAddress: '10.0.0.1:3000' },
+    })
+  })
+
+  test('preflights every endpoint before DNS and interrupts an in-flight lookup', async () => {
+    let lookups = 0
+    const invalidExit = await Effect.runPromiseExit(
+      resolveReplicaAddresses(['replica-0.test:3000', 'missing-port'], () => {
+        lookups += 1
+        return Effect.succeed(['10.0.0.1'])
+      }),
+    )
+    expect(Exit.isFailure(invalidExit)).toBeTrue()
+    expect(lookups).toBe(0)
+
+    let interrupted = false
+    const interruptedExit = await Effect.runPromiseExit(
+      resolveReplicaAddresses(['replica-0.test:3000'], () =>
+        Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true)))),
+      ).pipe(Effect.timeout(5)),
+    )
+    expect(Exit.isFailure(interruptedExit)).toBeTrue()
+    expect(interrupted).toBeTrue()
+  })
+})
+
 describe('Bayn resource lifecycle', () => {
   test('closes the TigerBeetle client exactly once when its scope exits', async () => {
     let tigerBeetleCloseCount = 0
@@ -146,15 +235,20 @@ describe('Bayn resource lifecycle', () => {
 
   test('replaces a failed TigerBeetle client so the next probe recovers', async () => {
     const closeCounts = [0, 0]
+    const lookupCounts = [0, 0]
     const clients = [
       makeTigerBeetleClient({
         lookupAccounts: async () => {
+          lookupCounts[0] += 1
           throw new Error('Client was closed.')
         },
         destroy: () => void (closeCounts[0] += 1),
       }),
       makeTigerBeetleClient({
-        lookupAccounts: async () => [],
+        lookupAccounts: async () => {
+          lookupCounts[1] += 1
+          return []
+        },
         destroy: () => void (closeCounts[1] += 1),
       }),
     ]
@@ -186,6 +280,7 @@ describe('Bayn resource lifecycle', () => {
 
     expect(firstError.message).toContain('Client was closed')
     expect(clientIndex).toBe(2)
+    expect(lookupCounts).toEqual([1, 1])
     expect(closeCounts).toEqual([1, 1])
   })
 
@@ -257,6 +352,7 @@ describe('Bayn resource lifecycle', () => {
       throw new Error('unexpected TigerBeetle client acquisition')
     }
     let acquisitionsAfterInterrupt = 0
+    let acquisitionsAfterReplacementFailure = 0
 
     const replacementError = await Effect.runPromise(
       Effect.scoped(
@@ -265,6 +361,7 @@ describe('Bayn resource lifecycle', () => {
           yield* journal.check.pipe(Effect.timeout(5), Effect.ignore)
           acquisitionsAfterInterrupt = clientAcquisitions
           const error = yield* Effect.flip(journal.check)
+          acquisitionsAfterReplacementFailure = clientAcquisitions
           yield* journal.check
           return error
         }).pipe(
@@ -279,6 +376,7 @@ describe('Bayn resource lifecycle', () => {
     )
 
     expect(acquisitionsAfterInterrupt).toBe(1)
+    expect(acquisitionsAfterReplacementFailure).toBe(2)
     expect(clientAcquisitions).toBe(3)
     expect(closeCounts).toEqual([1, 1])
     expect(replacementError.message).toContain('replacement unavailable')
