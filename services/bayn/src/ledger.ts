@@ -1,22 +1,30 @@
 import {
   type Account,
+  type CreateAccountResult,
   CreateAccountStatus,
+  type CreateTransferResult,
   CreateTransferStatus,
   type QueryFilter,
   type Transfer,
 } from 'tigerbeetle-node'
-import { Context, Effect, Layer } from 'effect'
+import { Context, Effect, Layer, Result } from 'effect'
 
 import type { RuntimeConfig } from './config'
-import { operationalError, type OperationalError } from './errors'
+import { OperationalError } from './errors'
 import { stableU128, stableU64 } from './hash'
 import {
-  assertAccountsMatch,
-  assertReconciled,
-  assertTransfersMatch,
+  accountMetadataMatches,
   buildLedgerPlan,
+  failLedgerValidation as failedValidation,
   LEDGER_BATCH_MAX as BATCH_MAX,
-  LEDGER_SCHEMA_VERSION as SCHEMA_VERSION,
+  ledgerValidationError as validationError,
+  LedgerValidationError,
+  preflightTransfers,
+  reconcileLedgerPlan,
+  validatePersistedRunEvidence,
+  verifyExactAccounts,
+  verifyExactTransfers,
+  verifyLedgerPlanRecords,
   type LedgerInput,
   type LedgerPlan,
 } from './ledger-plan'
@@ -37,11 +45,89 @@ export interface JournalService {
 
 export class Journal extends Context.Service<Journal, JournalService>()('bayn/Journal') {}
 
-const validate = <A>(operation: string, evaluate: () => A): Effect.Effect<A, OperationalError> =>
-  Effect.try({
-    try: evaluate,
-    catch: (cause) => operationalError('journal', operation, `TigerBeetle ${operation} failed`, cause),
-  })
+const causeMessage = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
+
+const validationBoundary = <A>(decision: Result.Result<A, LedgerValidationError>): Effect.Effect<A, OperationalError> =>
+  Effect.fromResult(decision).pipe(
+    Effect.mapError(
+      (error) =>
+        new OperationalError({
+          component: 'journal',
+          operation: error.operation,
+          message: error.message,
+          retryable: false,
+          cause: error,
+        }),
+    ),
+  )
+
+type CreateResult = CreateAccountResult | CreateTransferResult
+
+const classifyCreateBatch = <Record extends { readonly id: bigint }>(
+  kind: 'account' | 'transfer',
+  operation: 'verify-account-results' | 'verify-transfer-results',
+  records: readonly Record[],
+  results: readonly CreateResult[],
+  created: number,
+  exists: number,
+): Result.Result<readonly Record[], LedgerValidationError> => {
+  if (results.length !== records.length) {
+    return failedValidation(
+      operation,
+      'batch-result-count',
+      `TigerBeetle returned an incomplete ${kind} result batch`,
+      { kind, expectedCount: records.length, actualCount: results.length },
+    )
+  }
+
+  const existing: Record[] = []
+  for (let index = 0; index < results.length; index += 1) {
+    const result = results[index]
+    const record = records[index]
+    if (result.status === created) continue
+    if (result.status === exists) {
+      existing.push(record)
+      continue
+    }
+    return failedValidation(
+      operation,
+      'create-rejected',
+      `TigerBeetle rejected ${kind} ${record.id} with status ${result.status}`,
+      {
+        kind,
+        id: record.id,
+        status: result.status,
+      },
+    )
+  }
+  return Result.succeed(existing)
+}
+
+export const classifyAccountCreateBatch = (
+  accounts: readonly Account[],
+  results: readonly CreateAccountResult[],
+): Result.Result<readonly Account[], LedgerValidationError> =>
+  classifyCreateBatch(
+    'account',
+    'verify-account-results',
+    accounts,
+    results,
+    CreateAccountStatus.created,
+    CreateAccountStatus.exists,
+  )
+
+export const classifyTransferCreateBatch = (
+  transfers: readonly Transfer[],
+  results: readonly CreateTransferResult[],
+): Result.Result<readonly Transfer[], LedgerValidationError> =>
+  classifyCreateBatch(
+    'transfer',
+    'verify-transfer-results',
+    transfers,
+    results,
+    CreateTransferStatus.created,
+    CreateTransferStatus.exists,
+  )
 
 const createAndVerifyAccounts = (
   client: TigerBeetleRequestClient,
@@ -49,27 +135,15 @@ const createAndVerifyAccounts = (
 ): Effect.Effect<void, OperationalError> =>
   Effect.gen(function* () {
     const results = yield* client.request('create-accounts', (active) => active.createAccounts([...accounts]))
-    const existingIds = yield* validate('verify-account-results', () => {
-      if (results.length !== accounts.length) {
-        throw new Error('TigerBeetle returned an incomplete account result batch')
-      }
-      const ids: bigint[] = []
-      for (let index = 0; index < results.length; index += 1) {
-        const status = results[index].status
-        if (status === CreateAccountStatus.created) continue
-        if (status === CreateAccountStatus.exists) {
-          ids.push(accounts[index].id)
-          continue
-        }
-        throw new Error(`TigerBeetle rejected account ${accounts[index].id} with status ${status}`)
-      }
-      return ids
-    })
-    if (existingIds.length === 0) return
+    const existingExpected = yield* validationBoundary(classifyAccountCreateBatch(accounts, results))
+    if (existingExpected.length === 0) return
 
-    const existing = yield* client.request('lookup-existing-accounts', (active) => active.lookupAccounts(existingIds))
-    const expected = accounts.filter((value) => existingIds.includes(value.id))
-    yield* validate('verify-existing-accounts', () => assertAccountsMatch('existing account', existing, expected))
+    const existing = yield* client.request('lookup-existing-accounts', (active) =>
+      active.lookupAccounts(existingExpected.map((account) => account.id)),
+    )
+    yield* validationBoundary(
+      verifyExactAccounts('verify-existing-accounts', 'existing account', existing, existingExpected),
+    )
   })
 
 const createAndVerifyTransfers = (
@@ -77,28 +151,22 @@ const createAndVerifyTransfers = (
   transfers: readonly Transfer[],
 ): Effect.Effect<void, OperationalError> =>
   Effect.gen(function* () {
-    const results = yield* client.request('create-transfers', (active) => active.createTransfers([...transfers]))
-    const existingIds = yield* validate('verify-transfer-results', () => {
-      if (results.length !== transfers.length) {
-        throw new Error('TigerBeetle returned an incomplete transfer result batch')
-      }
-      const ids: bigint[] = []
-      for (let index = 0; index < results.length; index += 1) {
-        const status = results[index].status
-        if (status === CreateTransferStatus.created) continue
-        if (status === CreateTransferStatus.exists) {
-          ids.push(transfers[index].id)
-          continue
-        }
-        throw new Error(`TigerBeetle rejected transfer ${transfers[index].id} with status ${status}`)
-      }
-      return ids
-    })
-    if (existingIds.length === 0) return
+    const existing = yield* client.request('lookup-preflight-transfers', (active) =>
+      active.lookupTransfers(transfers.map((transfer) => transfer.id)),
+    )
+    const missing = yield* validationBoundary(preflightTransfers(transfers, existing))
+    if (missing.length === 0) return
 
-    const existing = yield* client.request('lookup-existing-transfers', (active) => active.lookupTransfers(existingIds))
-    const expected = transfers.filter((value) => existingIds.includes(value.id))
-    yield* validate('verify-existing-transfers', () => assertTransfersMatch('existing transfer', existing, expected))
+    const results = yield* client.request('create-transfers', (active) => active.createTransfers([...missing]))
+    const existingExpected = yield* validationBoundary(classifyTransferCreateBatch(missing, results))
+    if (existingExpected.length === 0) return
+
+    const racedExisting = yield* client.request('lookup-existing-transfers', (active) =>
+      active.lookupTransfers(existingExpected.map((transfer) => transfer.id)),
+    )
+    yield* validationBoundary(
+      verifyExactTransfers('verify-existing-transfers', 'existing transfer', racedExisting, existingExpected),
+    )
   })
 
 const queryFilter = (ledger: number): QueryFilter => ({
@@ -113,88 +181,110 @@ const queryFilter = (ledger: number): QueryFilter => ({
   flags: 0,
 })
 
-const transactionTransferQuery = (plan: LedgerPlan): QueryFilter => {
+export const transactionTransferQuery = (plan: LedgerPlan): Result.Result<QueryFilter, LedgerValidationError> => {
+  if (plan.accounts.length === 0 || plan.transfers.length === 0) {
+    return Result.fail(
+      validationError('post', 'empty-plan', 'TigerBeetle posting plan must contain accounts and transfers', {
+        accountCount: plan.accounts.length,
+        transferCount: plan.transfers.length,
+      }),
+    )
+  }
+  if (plan.accounts.length >= BATCH_MAX || plan.transfers.length >= BATCH_MAX) {
+    return Result.fail(
+      validationError('post', 'batch-limit', 'TigerBeetle posting plan exceeds batch limits', {
+        accountCount: plan.accounts.length,
+        transferCount: plan.transfers.length,
+        limit: BATCH_MAX,
+      }),
+    )
+  }
+
   const first = plan.transfers[0]
-  if (first === undefined) throw new Error('accounting plan contains no transfers')
   if (
+    first === undefined ||
     first.user_data_128 === 0n ||
     plan.transfers.some(
       (transfer) => transfer.ledger !== first.ledger || transfer.user_data_128 !== first.user_data_128,
     )
   ) {
-    throw new Error('accounting transfers do not share one nonzero transaction tag and ledger')
+    return failedValidation(
+      'build-transaction-transfer-query',
+      'invalid-transaction',
+      first === undefined
+        ? 'accounting plan contains no transfers'
+        : 'accounting transfers do not share one nonzero transaction tag and ledger',
+      {
+        transferCount: plan.transfers.length,
+        transactionTag: first?.user_data_128,
+        ledger: first?.ledger,
+      },
+    )
   }
-  return {
+  return Result.succeed({
     ...queryFilter(first.ledger),
     user_data_128: first.user_data_128,
     limit: plan.transfers.length + 1,
-  }
+  })
 }
 
-const assertPersistedRun = (
+interface LedgerQueries {
+  readonly accounts: QueryFilter
+  readonly transfers: QueryFilter
+}
+
+const persistedRunQueries = (
   result: ReconciliationResult,
   ledger: number,
-  accounts: readonly Account[],
-  transfers: readonly Transfer[],
-): void => {
-  if (accounts.length !== result.accountCount) {
-    throw new Error(`run ${result.runId} has ${accounts.length} accounts; expected ${result.accountCount}`)
+): Result.Result<LedgerQueries, LedgerValidationError> => {
+  if (result.accountCount >= BATCH_MAX || result.transferCount >= BATCH_MAX) {
+    return Result.fail(
+      validationError('check-run', 'batch-limit', 'persisted TigerBeetle counts exceed the exact query limit', {
+        accountCount: result.accountCount,
+        transferCount: result.transferCount,
+        limit: BATCH_MAX,
+      }),
+    )
   }
-  if (transfers.length !== result.transferCount) {
-    throw new Error(`run ${result.runId} has ${transfers.length} transfers; expected ${result.transferCount}`)
-  }
+  return Result.succeed({
+    accounts: {
+      ...queryFilter(ledger),
+      user_data_128: stableU128('bayn-run-v1', result.runId),
+      limit: result.accountCount + 1,
+    },
+    transfers: {
+      ...queryFilter(ledger),
+      user_data_64: stableU64('bayn-run-v1', result.runId),
+      limit: result.transferCount + 1,
+    },
+  })
+}
 
-  const runKey = stableU128('bayn-run-v1', result.runId)
-  const runTag = stableU64('bayn-run-v1', result.runId)
-  const accountIds = new Set<bigint>()
-  const balances = new Map<bigint, { debits: bigint; credits: bigint }>()
-  for (const value of accounts) {
-    if (accountIds.has(value.id)) throw new Error(`run ${result.runId} contains duplicate account ${value.id}`)
-    if (
-      value.user_data_128 !== runKey ||
-      value.user_data_64 !== runTag ||
-      value.user_data_32 !== SCHEMA_VERSION ||
-      value.ledger !== ledger
-    ) {
-      throw new Error(`run ${result.runId} account ${value.id} has invalid metadata`)
-    }
-    accountIds.add(value.id)
-    balances.set(value.id, { debits: 0n, credits: 0n })
+const accountReconciliationQueries = (
+  plan: LedgerPlan,
+  ledger: number,
+): Result.Result<LedgerQueries, LedgerValidationError> => {
+  if (plan.accounts.length >= BATCH_MAX || plan.transfers.length >= BATCH_MAX) {
+    return Result.fail(
+      validationError('verify-account', 'batch-limit', 'paper account exceeds the exact reconciliation limit', {
+        accountCount: plan.accounts.length,
+        transferCount: plan.transfers.length,
+        limit: BATCH_MAX,
+      }),
+    )
   }
-
-  const transferIds = new Set<bigint>()
-  for (const value of transfers) {
-    if (transferIds.has(value.id)) throw new Error(`run ${result.runId} contains duplicate transfer ${value.id}`)
-    if (
-      value.user_data_64 !== runTag ||
-      value.user_data_32 !== SCHEMA_VERSION ||
-      value.ledger !== ledger ||
-      value.amount <= 0n
-    ) {
-      throw new Error(`run ${result.runId} transfer ${value.id} has invalid metadata`)
-    }
-    const debit = balances.get(value.debit_account_id)
-    const credit = balances.get(value.credit_account_id)
-    if (debit === undefined || credit === undefined) {
-      throw new Error(`run ${result.runId} transfer ${value.id} references an account outside the run`)
-    }
-    transferIds.add(value.id)
-    debit.debits += value.amount
-    credit.credits += value.amount
-  }
-
-  for (const value of accounts) {
-    const balance = balances.get(value.id)
-    if (balance === undefined) throw new Error(`run ${result.runId} has no balance for account ${value.id}`)
-    if (
-      value.debits_pending !== 0n ||
-      value.credits_pending !== 0n ||
-      value.debits_posted !== balance.debits ||
-      value.credits_posted !== balance.credits
-    ) {
-      throw new Error(`run ${result.runId} account ${value.id} balance does not reconcile exactly`)
-    }
-  }
+  return Result.succeed({
+    accounts: {
+      ...queryFilter(ledger),
+      user_data_128: plan.runKey,
+      limit: plan.accounts.length + 1,
+    },
+    transfers: {
+      ...queryFilter(ledger),
+      user_data_64: plan.runTag,
+      limit: plan.transfers.length + 1,
+    },
+  })
 }
 
 const checkRun = (
@@ -203,25 +293,28 @@ const checkRun = (
   result: ReconciliationResult,
 ): Effect.Effect<void, OperationalError> =>
   Effect.gen(function* () {
-    if (result.accountCount >= BATCH_MAX || result.transferCount >= BATCH_MAX) {
-      return yield* Effect.fail(
-        operationalError('journal', 'check-run', 'persisted TigerBeetle counts exceed the exact query limit'),
-      )
-    }
-    const runKey = stableU128('bayn-run-v1', result.runId)
-    const runTag = stableU64('bayn-run-v1', result.runId)
+    const queries = yield* validationBoundary(persistedRunQueries(result, ledger))
     const [accounts, transfers] = yield* Effect.all(
       [
-        client.request('check-run-accounts', (active) =>
-          active.queryAccounts({ ...queryFilter(ledger), user_data_128: runKey, limit: result.accountCount + 1 }),
-        ),
-        client.request('check-run-transfers', (active) =>
-          active.queryTransfers({ ...queryFilter(ledger), user_data_64: runTag, limit: result.transferCount + 1 }),
-        ),
+        client.request('check-run-accounts', (active) => active.queryAccounts(queries.accounts)),
+        client.request('check-run-transfers', (active) => active.queryTransfers(queries.transfers)),
       ],
       { concurrency: 'unbounded' },
     )
-    yield* validate('check-run', () => assertPersistedRun(result, ledger, accounts, transfers))
+    yield* validationBoundary(validatePersistedRunEvidence(result, ledger, accounts, transfers))
+  })
+
+const buildJournalPlan = (result: LedgerInput, ledger: number): Result.Result<LedgerPlan, LedgerValidationError> =>
+  Result.try({
+    try: () => buildLedgerPlan(result, ledger),
+    catch: (cause) =>
+      validationError(
+        'build-plan',
+        'ledger-plan-failure',
+        `TigerBeetle build-plan failed: ${causeMessage(cause)}`,
+        { ledger },
+        cause,
+      ),
   })
 
 const journalAndReconcile = (
@@ -230,7 +323,7 @@ const journalAndReconcile = (
   result: LedgerInput,
 ): Effect.Effect<ReconciliationResult, OperationalError> =>
   Effect.gen(function* () {
-    const plan = yield* validate('build-plan', () => buildLedgerPlan(result, ledger))
+    const plan = yield* validationBoundary(buildJournalPlan(result, ledger))
     yield* createAndVerifyAccounts(client, plan.accounts)
     yield* createAndVerifyTransfers(client, plan.transfers)
     const accountQuery = { ...queryFilter(ledger), user_data_128: plan.runKey, limit: plan.accounts.length + 1 }
@@ -242,21 +335,13 @@ const journalAndReconcile = (
       ],
       { concurrency: 'unbounded' },
     )
-    yield* validate('reconcile', () => assertReconciled(plan, accounts, transfers))
+    yield* validationBoundary(reconcileLedgerPlan(plan, accounts, transfers))
     return { runId: result.runId, accountCount: accounts.length, transferCount: transfers.length, exact: true }
   })
 
 const post = (client: TigerBeetleRequestClient, plan: LedgerPlan): Effect.Effect<void, OperationalError> =>
   Effect.gen(function* () {
-    if (plan.accounts.length === 0 || plan.transfers.length === 0) {
-      return yield* Effect.fail(
-        operationalError('journal', 'post', 'TigerBeetle posting plan must contain accounts and transfers'),
-      )
-    }
-    if (plan.accounts.length >= BATCH_MAX || plan.transfers.length >= BATCH_MAX) {
-      return yield* Effect.fail(operationalError('journal', 'post', 'TigerBeetle posting plan exceeds batch limits'))
-    }
-    const transferQuery = yield* validate('build-transaction-transfer-query', () => transactionTransferQuery(plan))
+    const transferQuery = yield* validationBoundary(transactionTransferQuery(plan))
     yield* createAndVerifyAccounts(client, plan.accounts)
     yield* createAndVerifyTransfers(client, plan.transfers)
     const [accounts, transfers] = yield* Effect.all(
@@ -268,37 +353,58 @@ const post = (client: TigerBeetleRequestClient, plan: LedgerPlan): Effect.Effect
       ],
       { concurrency: 'unbounded' },
     )
-    yield* validate('verify-posted-plan', () => {
-      assertAccountsMatch('posted account', accounts, plan.accounts)
-      assertTransfersMatch('posted transfer', transfers, plan.transfers)
-    })
+    yield* validationBoundary(
+      verifyLedgerPlanRecords('verify-posted-plan', 'posted account', 'posted transfer', plan, accounts, transfers),
+    )
   })
 
-const accountPlan = (accountId: string, plans: readonly LedgerPlan[]): LedgerPlan => {
+export const assembleAccountPlan = (
+  accountId: string,
+  plans: readonly LedgerPlan[],
+): Result.Result<LedgerPlan, LedgerValidationError> => {
   const runKey = stableU128('bayn-paper-account-v1', accountId)
   const runTag = stableU64('bayn-paper-account-v1', accountId)
   const accounts = new Map<bigint, Account>()
   const transfers = new Map<bigint, Transfer>()
   for (const plan of plans) {
     if (plan.runKey !== runKey || plan.runTag !== runTag) {
-      throw new Error(`accounting plan does not belong to paper account ${accountId}`)
+      return failedValidation(
+        'build-account-reconciliation',
+        'wrong-account',
+        `accounting plan does not belong to paper account ${accountId}`,
+        { accountId, planRunKey: plan.runKey, planRunTag: plan.runTag, expectedRunKey: runKey, expectedRunTag: runTag },
+      )
     }
     for (const account of plan.accounts) {
       const existing = accounts.get(account.id)
-      if (existing !== undefined) assertAccountsMatch('accounting account', [account], [existing])
-      else accounts.set(account.id, account)
+      if (existing !== undefined && !accountMetadataMatches(account, existing)) {
+        return failedValidation(
+          'build-account-reconciliation',
+          'record-mismatch',
+          `accounting account ${account.id} does not match its plan`,
+          { kind: 'accounting account', id: account.id, actual: account, expected: existing },
+        )
+      }
+      if (existing === undefined) accounts.set(account.id, account)
     }
     for (const transfer of plan.transfers) {
-      if (transfers.has(transfer.id)) throw new Error(`duplicate accounting transfer ${transfer.id}`)
+      if (transfers.has(transfer.id)) {
+        return failedValidation(
+          'build-account-reconciliation',
+          'duplicate-transfer',
+          `duplicate accounting transfer ${transfer.id}`,
+          { accountId, transferId: transfer.id },
+        )
+      }
       transfers.set(transfer.id, transfer)
     }
   }
-  return {
+  return Result.succeed({
     runKey,
     runTag,
     accounts: [...accounts.values()].sort((left, right) => (left.id < right.id ? -1 : 1)),
     transfers: [...transfers.values()].sort((left, right) => (left.id < right.id ? -1 : 1)),
-  }
+  })
 }
 
 const verifyAccount = (
@@ -308,39 +414,16 @@ const verifyAccount = (
   plans: readonly LedgerPlan[],
 ): Effect.Effect<boolean, OperationalError> =>
   Effect.gen(function* () {
-    const expected = yield* validate('build-account-reconciliation', () => accountPlan(accountId, plans))
-    if (expected.accounts.length >= BATCH_MAX || expected.transfers.length >= BATCH_MAX) {
-      return yield* Effect.fail(
-        operationalError('journal', 'verify-account', 'paper account exceeds the exact reconciliation limit'),
-      )
-    }
+    const expected = yield* validationBoundary(assembleAccountPlan(accountId, plans))
+    const queries = yield* validationBoundary(accountReconciliationQueries(expected, ledger))
     const [accounts, transfers] = yield* Effect.all(
       [
-        client.request('verify-account-accounts', (active) =>
-          active.queryAccounts({
-            ...queryFilter(ledger),
-            user_data_128: expected.runKey,
-            limit: expected.accounts.length + 1,
-          }),
-        ),
-        client.request('verify-account-transfers', (active) =>
-          active.queryTransfers({
-            ...queryFilter(ledger),
-            user_data_64: expected.runTag,
-            limit: expected.transfers.length + 1,
-          }),
-        ),
+        client.request('verify-account-accounts', (active) => active.queryAccounts(queries.accounts)),
+        client.request('verify-account-transfers', (active) => active.queryTransfers(queries.transfers)),
       ],
       { concurrency: 'unbounded' },
     )
-    return yield* Effect.sync(() => {
-      try {
-        assertReconciled(expected, accounts, transfers)
-        return true
-      } catch {
-        return false
-      }
-    })
+    return Result.isSuccess(reconcileLedgerPlan(expected, accounts, transfers, 'verify-account'))
   })
 
 export const JournalLive = (
@@ -349,18 +432,29 @@ export const JournalLive = (
 ): Layer.Layer<Journal, OperationalError> =>
   Layer.effect(
     Journal,
-    Effect.gen(function* () {
-      const client = yield* makeTigerBeetleRequestClient(config, dependencies)
-      return {
-        post: (plan) => post(client, plan),
-        verifyAccount: (accountId, plans) => verifyAccount(client, config.tigerBeetle.ledger, accountId, plans),
-        check: client
-          .request('connectivity-check', (active) => active.lookupAccounts([stableU128('bayn-connectivity-probe')]))
-          .pipe(Effect.asVoid),
-        checkRun: (result) => checkRun(client, config.tigerBeetle.ledger, result),
-        journalAndReconcile: (result) => journalAndReconcile(client, config.tigerBeetle.ledger, result),
-      }
-    }),
+    makeTigerBeetleRequestClient(config, dependencies).pipe(
+      Effect.map(
+        (client): JournalService => ({
+          post: (plan) => post(client, plan),
+          verifyAccount: (accountId, plans) => verifyAccount(client, config.tigerBeetle.ledger, accountId, plans),
+          check: client
+            .request('connectivity-check', (active) => active.lookupAccounts([stableU128('bayn-connectivity-probe')]))
+            .pipe(Effect.asVoid),
+          checkRun: (result) => checkRun(client, config.tigerBeetle.ledger, result),
+          journalAndReconcile: (result) => journalAndReconcile(client, config.tigerBeetle.ledger, result),
+        }),
+      ),
+    ),
   )
-export { assertReconciled, buildLedgerPlan, hashLedgerPlan, type LedgerInput, type LedgerPlan } from './ledger-plan'
+export {
+  buildLedgerPlan,
+  hashLedgerPlan,
+  LedgerValidationError,
+  reconcileLedgerPlan,
+  validatePersistedRunEvidence,
+  type LedgerInput,
+  type LedgerPlan,
+  type LedgerValidationOperation,
+  type LedgerValidationReason,
+} from './ledger-plan'
 export { resolveReplicaAddresses, type JournalDependencies, type TigerBeetleClient } from './tigerbeetle-client'
