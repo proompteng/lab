@@ -53,6 +53,33 @@ describe('paper accounting', () => {
     expect(prepared.transaction.notionalMicros).toBe('50000001')
   })
 
+  test('preserves the exact half-up transaction and ledger identity golden', () => {
+    const prepared = prepareAccounting(
+      eventId,
+      fill({ quantityMicros: '500000', priceMicros: '100000001', feeMicros: '2500' }),
+      emptyPosition,
+      7001,
+    )
+
+    expect(prepared.transaction).toMatchObject({
+      transactionId: '5c30c458a20098f8a787b1a9e098c0756bf710f06683a740aba539b20c1a39f8',
+      notionalMicros: '50000001',
+      costBasisMicros: '50000001',
+      cashDeltaMicros: '-50002501',
+      ledgerPlanHash: 'ed64d5c2d5e9dbb34eaf42b9f86d6afb7323478e2550e2921dbd22a3edef3657',
+      contentHash: '7d91dd98ee38ce4a6bb1c0a8e6ad032f6c3da9106847ddcf80c3f2fbf0042222',
+    })
+    expect(prepared.ledger.accounts.map((account) => account.id)).toEqual([
+      11_018_531_402_962_299_880_943_285_336_145_171_022n,
+      162_492_250_068_507_024_268_897_767_784_019_191_926n,
+      256_393_807_197_113_497_662_451_249_474_476_167_056n,
+    ])
+    expect(prepared.ledger.transfers.map((transfer) => [transfer.id, transfer.amount])).toEqual([
+      [67_063_131_099_678_162_361_447_000_629_170_124_156n, 2_500n],
+      [230_986_136_044_309_168_085_596_967_250_981_161_443n, 50_000_001n],
+    ])
+  })
+
   test('uses average cost for a partial sale and records a gain', () => {
     const prepared = prepareAccounting(
       eventId,
