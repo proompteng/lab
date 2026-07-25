@@ -191,7 +191,6 @@ const makeHarness = (options: HarnessOptions = {}) => {
 
   const intentStore: IntentStoreService = {
     commit: () => Effect.die(new Error('unexpected commit')),
-    markIoStarted: () => Effect.die(new Error('unexpected markIoStarted')),
     read: (id) => Effect.succeed(id === intentId ? Option.some(stored) : Option.none()),
   }
 

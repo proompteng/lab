@@ -299,16 +299,13 @@ const makeReferenceIntent = (input: IntentPlan): Result.Result<ReferenceIntent, 
     error('contract', 'shadow target delta could not form a valid risk intent', cause),
   )
   if (Result.isFailure(decodedPlan)) return Result.fail(decodedPlan.failure)
-  const identity = Result.try({
-    try: () => {
-      const intentId = intentIdForPlan(decodedPlan.success)
-      return {
-        intentId,
-        clientOrderId: `b1_${Buffer.from(intentId, 'hex').toString('base64url')}`,
-      }
-    },
-    catch: (cause) => error('contract', 'shadow target delta identity is not canonicalizable', cause),
-  })
+  const identity = Result.mapError(
+    Result.map(intentIdForPlan(decodedPlan.success), (intentId) => ({
+      intentId,
+      clientOrderId: `b1_${Buffer.from(intentId, 'hex').toString('base64url')}`,
+    })),
+    (cause) => error('contract', 'shadow target delta identity is not canonicalizable', cause),
+  )
   if (Result.isFailure(identity)) return Result.fail(identity.failure)
   const decoded = decodedPlan.success
   return Result.mapError(

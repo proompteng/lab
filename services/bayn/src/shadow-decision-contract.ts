@@ -71,19 +71,23 @@ const materialIssues = (document: ObserveShadowDecisionMaterial): readonly Schem
   for (const [index, risk] of document.deltaRisk.entries()) {
     const evaluation = risk.evaluation
     const target = targets[index]
-    if (
-      target !== undefined &&
-      evaluation.input.intentId !==
-        intentIdForPlan({
-          schemaVersion: 'bayn.paper-intent-plan.v1',
-          ...target,
-          notionalLimitMicros: risk.notionalLimitMicros,
-        })
-    ) {
-      issues.push({
-        path: ['deltaRisk', index, 'evaluation', 'input', 'intentId'],
-        issue: 'must bind the corresponding ordered target delta',
+    if (target !== undefined) {
+      const identity = intentIdForPlan({
+        schemaVersion: 'bayn.paper-intent-plan.v1',
+        ...target,
+        notionalLimitMicros: risk.notionalLimitMicros,
       })
+      if (Result.isFailure(identity)) {
+        issues.push({
+          path: ['deltaRisk', index, 'evaluation', 'input', 'intentId'],
+          issue: 'corresponding ordered target delta must have a canonical identity',
+        })
+      } else if (evaluation.input.intentId !== identity.success) {
+        issues.push({
+          path: ['deltaRisk', index, 'evaluation', 'input', 'intentId'],
+          issue: 'must bind the corresponding ordered target delta',
+        })
+      }
     }
     if (evaluation.policyHash !== document.bindings.policyHash) {
       issues.push({ path: ['deltaRisk', index, 'evaluation', 'policyHash'], issue: 'must match the bound policy' })
