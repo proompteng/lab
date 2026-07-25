@@ -2,12 +2,63 @@ import { Resolver } from 'node:dns/promises'
 import { isIP } from 'node:net'
 
 import { type Client, type ClientInitArgs, createClient } from 'tigerbeetle-node'
-import { Effect, Option, ScopedRef, Semaphore } from 'effect'
+import { Data, Effect, Option, Result, Scope, ScopedRef, Semaphore } from 'effect'
 
 import type { RuntimeConfig } from './config'
-import { operationalError, retryableOperationalError, type OperationalError } from './errors'
+import { OperationalError, operationalError, retryableOperationalError } from './errors'
 
 type ResolveHostname = (hostname: string) => Effect.Effect<readonly string[], OperationalError>
+
+export type ReplicaAddressValidationReason =
+  | 'duplicate-address'
+  | 'empty-addresses'
+  | 'invalid-address'
+  | 'invalid-port'
+  | 'ipv6-unsupported'
+  | 'multiple-ipv4-addresses'
+  | 'no-ipv4-address'
+
+export class ReplicaAddressValidationError extends Data.TaggedError('ReplicaAddressValidationError')<{
+  readonly reason: ReplicaAddressValidationReason
+  readonly message: string
+  readonly material: Readonly<Record<string, unknown>>
+}> {}
+
+export type ReplicaEndpoint =
+  | {
+      readonly _tag: 'DirectReplicaAddress'
+      readonly configuredAddress: string
+      readonly address: string
+    }
+  | {
+      readonly _tag: 'ReplicaHostname'
+      readonly configuredAddress: string
+      readonly hostname: string
+      readonly port: number
+    }
+
+const failReplicaAddressValidation = (
+  reason: ReplicaAddressValidationReason,
+  message: string,
+  material: Readonly<Record<string, unknown>>,
+): Result.Result<never, ReplicaAddressValidationError> =>
+  Result.fail(new ReplicaAddressValidationError({ reason, message, material }))
+
+const replicaAddressBoundary = <A>(
+  decision: Result.Result<A, ReplicaAddressValidationError>,
+): Effect.Effect<A, OperationalError> =>
+  Effect.fromResult(decision).pipe(
+    Effect.mapError(
+      (cause) =>
+        new OperationalError({
+          component: 'journal',
+          operation: 'resolve-replica-addresses',
+          message: cause.message,
+          retryable: false,
+          cause,
+        }),
+    ),
+  )
 
 const lookupIpv4: ResolveHostname = (hostname) =>
   Effect.suspend(() => {
@@ -24,118 +75,149 @@ const lookupIpv4: ResolveHostname = (hostname) =>
     }).pipe(Effect.onInterrupt(() => Effect.sync(() => resolver.cancel())))
   })
 
-const parsePort = (value: string, address: string): Effect.Effect<number, OperationalError> => {
+const parsePort = (value: string, address: string): Result.Result<number, ReplicaAddressValidationError> => {
   if (!/^\d+$/.test(value)) {
-    return Effect.fail(
-      operationalError('journal', 'resolve-replica-addresses', `invalid TigerBeetle replica address: ${address}`),
-    )
+    return failReplicaAddressValidation('invalid-address', `invalid TigerBeetle replica address: ${address}`, {
+      address,
+      port: value,
+    })
   }
   const port = Number(value)
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    return Effect.fail(
-      operationalError('journal', 'resolve-replica-addresses', `invalid TigerBeetle replica port: ${address}`),
-    )
+    return failReplicaAddressValidation('invalid-port', `invalid TigerBeetle replica port: ${address}`, {
+      address,
+      port: value,
+    })
   }
-  return Effect.succeed(port)
+  return Result.succeed(port)
 }
 
-const resolveReplicaAddress = (
+const parseReplicaEndpoint = (
   configuredAddress: string,
-  resolveHostname: ResolveHostname,
-): Effect.Effect<readonly string[], OperationalError> =>
-  Effect.gen(function* () {
-    const address = configuredAddress.trim()
-    const addressFamily = isIP(address)
-    if (addressFamily === 4) return [address]
-    if (addressFamily === 6) {
-      return yield* Effect.fail(
-        operationalError(
-          'journal',
-          'resolve-replica-addresses',
-          `IPv6 TigerBeetle replica addresses are not supported: ${address}`,
-        ),
-      )
-    }
-    if (/^\d+$/.test(address)) {
-      yield* parsePort(address, address)
-      return [address]
-    }
+): Result.Result<ReplicaEndpoint, ReplicaAddressValidationError> => {
+  const address = configuredAddress.trim()
+  const addressFamily = isIP(address)
+  if (addressFamily === 4) {
+    return Result.succeed({ _tag: 'DirectReplicaAddress', configuredAddress, address })
+  }
+  if (addressFamily === 6) {
+    return failReplicaAddressValidation(
+      'ipv6-unsupported',
+      `IPv6 TigerBeetle replica addresses are not supported: ${address}`,
+      { configuredAddress, address },
+    )
+  }
+  if (/^\d+$/.test(address)) {
+    return Result.map(parsePort(address, address), () => ({
+      _tag: 'DirectReplicaAddress' as const,
+      configuredAddress,
+      address,
+    }))
+  }
 
-    const separator = address.lastIndexOf(':')
-    if (separator <= 0 || separator !== address.indexOf(':')) {
-      return yield* Effect.fail(
-        operationalError(
-          'journal',
-          'resolve-replica-addresses',
-          `invalid TigerBeetle replica address: ${configuredAddress}`,
-        ),
-      )
+  const separator = address.lastIndexOf(':')
+  if (separator <= 0 || separator !== address.indexOf(':')) {
+    return failReplicaAddressValidation(
+      'invalid-address',
+      `invalid TigerBeetle replica address: ${configuredAddress}`,
+      { configuredAddress, address },
+    )
+  }
+  const hostname = address.slice(0, separator)
+  const hostnameFamily = isIP(hostname)
+  if (hostnameFamily === 6) {
+    return failReplicaAddressValidation(
+      'ipv6-unsupported',
+      `IPv6 TigerBeetle replica addresses are not supported: ${address}`,
+      { configuredAddress, address, hostname },
+    )
+  }
+  return Result.map(parsePort(address.slice(separator + 1), address), (port): ReplicaEndpoint => {
+    if (hostnameFamily === 4) {
+      return {
+        _tag: 'DirectReplicaAddress',
+        configuredAddress,
+        address: `${hostname}:${port}`,
+      }
     }
-    const hostname = address.slice(0, separator)
-    const port = yield* parsePort(address.slice(separator + 1), address)
-    const hostnameFamily = isIP(hostname)
-    if (hostnameFamily === 4) return [`${hostname}:${port}`]
-    if (hostnameFamily === 6) {
-      return yield* Effect.fail(
-        operationalError(
-          'journal',
-          'resolve-replica-addresses',
-          `IPv6 TigerBeetle replica addresses are not supported: ${address}`,
-        ),
-      )
-    }
-
-    const ipv4Addresses = (yield* resolveHostname(hostname)).filter((value) => isIP(value) === 4)
-    if (ipv4Addresses.length === 0) {
-      return yield* Effect.fail(
-        operationalError(
-          'journal',
-          'resolve-replica-addresses',
-          `TigerBeetle replica hostname has no IPv4 address: ${hostname}`,
-        ),
-      )
-    }
-    if (ipv4Addresses.length !== 1) {
-      return yield* Effect.fail(
-        operationalError(
-          'journal',
-          'resolve-replica-addresses',
-          `TigerBeetle replica hostname must resolve to exactly one IPv4 address: ${hostname}`,
-        ),
-      )
-    }
-    return [`${ipv4Addresses[0]}:${port}`]
+    return { _tag: 'ReplicaHostname', configuredAddress, hostname, port }
   })
+}
+
+export const parseReplicaEndpoints = (
+  configuredAddresses: readonly string[],
+): Result.Result<readonly ReplicaEndpoint[], ReplicaAddressValidationError> =>
+  configuredAddresses.length === 0
+    ? failReplicaAddressValidation('empty-addresses', 'at least one TigerBeetle replica address is required', {
+        configuredAddresses,
+      })
+    : Result.all(configuredAddresses.map(parseReplicaEndpoint))
+
+export const validateResolvedReplicaEndpoint = (
+  endpoint: ReplicaEndpoint,
+  resolvedAddresses: readonly string[],
+): Result.Result<string, ReplicaAddressValidationError> => {
+  if (endpoint._tag === 'DirectReplicaAddress') return Result.succeed(endpoint.address)
+
+  const ipv4Addresses = resolvedAddresses.filter((value) => isIP(value) === 4)
+  if (ipv4Addresses.length === 0) {
+    return failReplicaAddressValidation(
+      'no-ipv4-address',
+      `TigerBeetle replica hostname has no IPv4 address: ${endpoint.hostname}`,
+      { endpoint, resolvedAddresses },
+    )
+  }
+  if (ipv4Addresses.length !== 1) {
+    return failReplicaAddressValidation(
+      'multiple-ipv4-addresses',
+      `TigerBeetle replica hostname must resolve to exactly one IPv4 address: ${endpoint.hostname}`,
+      { endpoint, resolvedAddresses, ipv4Addresses },
+    )
+  }
+  return Result.succeed(`${ipv4Addresses[0]}:${endpoint.port}`)
+}
+
+export const validateResolvedReplicaAddresses = (
+  addresses: readonly string[],
+): Result.Result<string[], ReplicaAddressValidationError> => {
+  if (addresses.length === 0) {
+    return failReplicaAddressValidation('empty-addresses', 'at least one TigerBeetle replica address is required', {
+      addresses,
+    })
+  }
+  const duplicateAddress = addresses.find((address, index) => addresses.indexOf(address) !== index)
+  if (duplicateAddress !== undefined) {
+    return failReplicaAddressValidation(
+      'duplicate-address',
+      'TigerBeetle replica hostnames resolved to duplicate IPv4 addresses',
+      { addresses, duplicateAddress },
+    )
+  }
+  return Result.succeed([...addresses])
+}
+
+const resolveReplicaEndpoint = (
+  endpoint: ReplicaEndpoint,
+  resolveHostname: ResolveHostname,
+): Effect.Effect<string, OperationalError> =>
+  endpoint._tag === 'DirectReplicaAddress'
+    ? replicaAddressBoundary(validateResolvedReplicaEndpoint(endpoint, []))
+    : resolveHostname(endpoint.hostname).pipe(
+        Effect.flatMap((addresses) => replicaAddressBoundary(validateResolvedReplicaEndpoint(endpoint, addresses))),
+      )
 
 export const resolveReplicaAddresses = (
   configuredAddresses: readonly string[],
   resolveHostname: ResolveHostname = lookupIpv4,
 ): Effect.Effect<string[], OperationalError> =>
-  configuredAddresses.length === 0
-    ? Effect.fail(
-        operationalError(
-          'journal',
-          'resolve-replica-addresses',
-          'at least one TigerBeetle replica address is required',
-        ),
-      )
-    : Effect.forEach(configuredAddresses, (address) => resolveReplicaAddress(address, resolveHostname), {
+  replicaAddressBoundary(parseReplicaEndpoints(configuredAddresses)).pipe(
+    Effect.flatMap((endpoints) =>
+      Effect.forEach(endpoints, (endpoint) => resolveReplicaEndpoint(endpoint, resolveHostname), {
         concurrency: 'unbounded',
-      }).pipe(
-        Effect.flatMap((resolved) => {
-          const addresses = resolved.flat()
-          if (new Set(addresses).size !== addresses.length) {
-            return Effect.fail(
-              operationalError(
-                'journal',
-                'resolve-replica-addresses',
-                'TigerBeetle replica hostnames resolved to duplicate IPv4 addresses',
-              ),
-            )
-          }
-          return Effect.succeed(addresses)
-        }),
-      )
+      }),
+    ),
+    Effect.flatMap((addresses) => replicaAddressBoundary(validateResolvedReplicaAddresses(addresses))),
+  )
 
 export interface JournalDependencies {
   readonly createClient: (options: ClientInitArgs) => TigerBeetleClient
@@ -164,110 +246,151 @@ export interface TigerBeetleRequestClient {
   ) => Effect.Effect<A, OperationalError>
 }
 
+type AcquireTigerBeetleClient = Effect.Effect<TigerBeetleClient, OperationalError, Scope.Scope>
+type TigerBeetleClientRef = ScopedRef.ScopedRef<Option.Option<TigerBeetleClient>>
+
+const closeTigerBeetleClient = (client: TigerBeetleClient): Effect.Effect<void> =>
+  Effect.try({
+    try: () => client.destroy(),
+    catch: (cause) => operationalError('journal', 'close', 'failed to close TigerBeetle client', cause),
+  }).pipe(
+    Effect.catch((error) =>
+      Effect.logWarning('TigerBeetle client close failed').pipe(
+        Effect.annotateLogs({ component: error.component, operation: error.operation, error: error.message }),
+      ),
+    ),
+  )
+
+const connectTigerBeetleClient = (
+  config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
+  dependencies: JournalDependencies,
+): Effect.Effect<TigerBeetleClient, OperationalError> =>
+  dependencies.resolveReplicaAddresses(config.tigerBeetle.replicaAddresses).pipe(
+    Effect.flatMap((replicaAddresses) =>
+      Effect.try({
+        try: () =>
+          dependencies.createClient({
+            cluster_id: config.tigerBeetle.clusterId,
+            replica_addresses: replicaAddresses,
+          }),
+        catch: (cause) => retryableOperationalError('journal', 'connect', 'failed to create TigerBeetle client', cause),
+      }),
+    ),
+    Effect.timeoutOrElse({
+      duration: config.operationTimeoutMs,
+      orElse: () =>
+        Effect.fail(
+          retryableOperationalError(
+            'journal',
+            'connect',
+            `TigerBeetle client creation timed out after ${config.operationTimeoutMs}ms`,
+          ),
+        ),
+    }),
+  )
+
+const acquireTigerBeetleClient = (
+  config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
+  dependencies: JournalDependencies,
+): AcquireTigerBeetleClient =>
+  Effect.acquireRelease(connectTigerBeetleClient(config, dependencies), closeTigerBeetleClient)
+
+const requireInstalledTigerBeetleClient = (
+  clients: TigerBeetleClientRef,
+): Effect.Effect<TigerBeetleClient, OperationalError> =>
+  ScopedRef.get(clients).pipe(
+    Effect.flatMap(
+      Option.match({
+        onSome: (client) => Effect.succeed(client),
+        onNone: () => Effect.fail(retryableOperationalError('journal', 'connect', 'TigerBeetle client is unavailable')),
+      }),
+    ),
+  )
+
+const installMissingTigerBeetleClient = (
+  clients: TigerBeetleClientRef,
+  acquireClient: AcquireTigerBeetleClient,
+): Effect.Effect<TigerBeetleClient, OperationalError> =>
+  ScopedRef.get(clients).pipe(
+    Effect.flatMap(
+      Option.match({
+        onSome: (client) => Effect.succeed(client),
+        onNone: () =>
+          ScopedRef.set(clients, acquireClient.pipe(Effect.map(Option.some))).pipe(
+            Effect.andThen(requireInstalledTigerBeetleClient(clients)),
+          ),
+      }),
+    ),
+  )
+
+const getTigerBeetleClient = (
+  clients: TigerBeetleClientRef,
+  clientState: Semaphore.Semaphore,
+  acquireClient: AcquireTigerBeetleClient,
+): Effect.Effect<TigerBeetleClient, OperationalError> =>
+  ScopedRef.get(clients).pipe(
+    Effect.flatMap(
+      Option.match({
+        onSome: (client) => Effect.succeed(client),
+        onNone: () => clientState.withPermit(installMissingTigerBeetleClient(clients, acquireClient)),
+      }),
+    ),
+  )
+
+const invalidateTigerBeetleClient = (
+  clients: TigerBeetleClientRef,
+  clientState: Semaphore.Semaphore,
+  active: TigerBeetleClient,
+  trigger: string,
+): Effect.Effect<void> =>
+  clientState
+    .withPermitsIfAvailable(1)(
+      ScopedRef.get(clients).pipe(
+        Effect.flatMap((current) =>
+          Option.isSome(current) && current.value === active
+            ? ScopedRef.set(clients, Effect.succeed(Option.none<TigerBeetleClient>())).pipe(
+                Effect.andThen(
+                  Effect.logWarning('TigerBeetle client invalidated').pipe(Effect.annotateLogs({ trigger })),
+                ),
+              )
+            : Effect.void,
+        ),
+      ),
+    )
+    .pipe(Effect.asVoid)
+
+const tigerBeetleRequest = <A>(
+  getClient: Effect.Effect<TigerBeetleClient, OperationalError>,
+  invalidateClient: (active: TigerBeetleClient, trigger: string) => Effect.Effect<void>,
+  operation: string,
+  execute: (active: TigerBeetleClient) => Promise<A>,
+): Effect.Effect<A, OperationalError> =>
+  getClient.pipe(
+    Effect.flatMap((active) =>
+      Effect.tryPromise({
+        try: () => execute(active),
+        catch: (cause) => retryableOperationalError('journal', operation, `TigerBeetle ${operation} failed`, cause),
+      }).pipe(
+        Effect.onInterrupt(() => invalidateClient(active, `interrupted:${operation}`)),
+        Effect.tapError(() => invalidateClient(active, `failed:${operation}`)),
+      ),
+    ),
+  )
+
 export const makeTigerBeetleRequestClient = (
   config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
   dependencies: JournalDependencies = defaultDependencies,
 ) =>
   Effect.gen(function* () {
-    const acquireClient = Effect.acquireRelease(
-      dependencies.resolveReplicaAddresses(config.tigerBeetle.replicaAddresses).pipe(
-        Effect.flatMap((replicaAddresses) =>
-          Effect.try({
-            try: () =>
-              dependencies.createClient({
-                cluster_id: config.tigerBeetle.clusterId,
-                replica_addresses: replicaAddresses,
-              }),
-            catch: (cause) =>
-              retryableOperationalError('journal', 'connect', 'failed to create TigerBeetle client', cause),
-          }),
-        ),
-        Effect.timeoutOrElse({
-          duration: config.operationTimeoutMs,
-          orElse: () =>
-            Effect.fail(
-              retryableOperationalError(
-                'journal',
-                'connect',
-                `TigerBeetle client creation timed out after ${config.operationTimeoutMs}ms`,
-              ),
-            ),
-        }),
-      ),
-      (client) =>
-        Effect.try({
-          try: () => client.destroy(),
-          catch: (cause) => operationalError('journal', 'close', 'failed to close TigerBeetle client', cause),
-        }).pipe(
-          Effect.catch((error) =>
-            Effect.logWarning('TigerBeetle client close failed').pipe(
-              Effect.annotateLogs({ component: error.component, operation: error.operation, error: error.message }),
-            ),
-          ),
-        ),
-    )
+    const acquireClient = acquireTigerBeetleClient(config, dependencies)
     const clients = yield* ScopedRef.fromAcquire(acquireClient.pipe(Effect.map(Option.some)))
     const clientState = yield* Semaphore.make(1)
-    const installClient = ScopedRef.set(clients, acquireClient.pipe(Effect.map(Option.some)))
-    const getInstalledClient = ScopedRef.get(clients).pipe(
-      Effect.flatMap(
-        Option.match({
-          onSome: Effect.succeed,
-          onNone: () =>
-            Effect.fail(retryableOperationalError('journal', 'connect', 'TigerBeetle client is unavailable')),
-        }),
-      ),
-    )
-    const getClient = ScopedRef.get(clients).pipe(
-      Effect.flatMap(
-        Option.match({
-          onSome: Effect.succeed,
-          onNone: () =>
-            clientState.withPermit(
-              ScopedRef.get(clients).pipe(
-                Effect.flatMap(
-                  Option.match({
-                    onSome: Effect.succeed,
-                    onNone: () => installClient.pipe(Effect.andThen(getInstalledClient)),
-                  }),
-                ),
-              ),
-            ),
-        }),
-      ),
-    )
-    const invalidateClient = (active: TigerBeetleClient, trigger: string): Effect.Effect<void> =>
-      clientState
-        .withPermitsIfAvailable(1)(
-          ScopedRef.get(clients).pipe(
-            Effect.flatMap((current) =>
-              Option.isSome(current) && current.value === active
-                ? ScopedRef.set(clients, Effect.succeed(Option.none<TigerBeetleClient>())).pipe(
-                    Effect.andThen(
-                      Effect.logWarning('TigerBeetle client invalidated').pipe(Effect.annotateLogs({ trigger })),
-                    ),
-                  )
-                : Effect.void,
-            ),
-          ),
-        )
-        .pipe(Effect.asVoid)
+    const getClient = getTigerBeetleClient(clients, clientState, acquireClient)
+    const invalidateClient = (active: TigerBeetleClient, trigger: string) =>
+      invalidateTigerBeetleClient(clients, clientState, active, trigger)
     const client: TigerBeetleRequestClient = {
       request: <A>(operation: string, execute: (active: TigerBeetleClient) => Promise<A>) =>
-        getClient.pipe(
-          Effect.flatMap((active) =>
-            Effect.tryPromise({
-              try: () => execute(active),
-              catch: (cause) =>
-                retryableOperationalError('journal', operation, `TigerBeetle ${operation} failed`, cause),
-            }).pipe(
-              Effect.onInterrupt(() => invalidateClient(active, `interrupted:${operation}`)),
-              Effect.catch((error) =>
-                invalidateClient(active, `failed:${operation}`).pipe(Effect.andThen(Effect.fail(error))),
-              ),
-            ),
-          ),
-        ),
+        tigerBeetleRequest(getClient, invalidateClient, operation, execute),
     }
     return client
   })
