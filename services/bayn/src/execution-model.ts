@@ -1,4 +1,5 @@
 import { canonicalHashV1 } from './hash'
+import { elapsedDays } from './date'
 import type { ExecutionModel, IsoDate, OrderRejectionReason, OrderStatus } from './types'
 
 export const MICROS = 1_000_000n
@@ -303,14 +304,7 @@ export const accrueCashYield = (cashMicros: bigint, elapsedDays: number, model: 
   return (cashMicros * annualYieldBps * BigInt(elapsedDays)) / (BPS * MICROS * 365n)
 }
 
-export const elapsedCalendarDays = (from: IsoDate, to: IsoDate): number => {
-  const fromTime = Date.parse(`${from}T00:00:00Z`)
-  const toTime = Date.parse(`${to}T00:00:00Z`)
-  if (!Number.isFinite(fromTime) || !Number.isFinite(toTime) || toTime < fromTime) {
-    throw new Error('cash accrual dates are invalid or unordered')
-  }
-  return (toTime - fromTime) / 86_400_000
-}
+export const elapsedCalendarDays = (from: IsoDate, to: IsoDate): number => elapsedDays(from, to)
 
 export const saleCostBasisMicros = (
   positionCostBasisMicros: bigint,

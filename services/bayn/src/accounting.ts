@@ -1,5 +1,5 @@
 import { AccountFlags, type Account, type Transfer } from 'tigerbeetle-node'
-import { Schema } from 'effect'
+import { Effect, Result, Schema } from 'effect'
 
 import { canonicalHashV1, stableU128, stableU64 } from './hash'
 import { AccountCode, hashLedgerPlan, LEDGER_SCHEMA_VERSION, TransferCode, type LedgerPlan } from './ledger-plan'
@@ -57,12 +57,10 @@ export interface PreparedAccounting {
 
 const decodeTransaction = Schema.decodeUnknownSync(AccountingTransactionSchema, strictParseOptions)
 
-const roundDiv = (numerator: bigint, denominator: bigint): bigint => {
-  if (numerator < 0n || denominator <= 0n) {
-    throw new Error('fixed-point division requires a non-negative numerator and positive denominator')
-  }
-  return (numerator + denominator / 2n) / denominator
-}
+const roundDiv = (numerator: bigint, denominator: bigint): Result.Result<bigint, 'invalid-roundDiv'> =>
+  numerator >= 0n && denominator > 0n
+    ? Result.succeed((numerator + denominator / 2n) / denominator)
+    : Result.fail('invalid-roundDiv')
 
 const makeAccount = (brokerAccountId: string, ledger: number, name: string, code: AccountCodeValue): Account => {
   const owner = stableU128('bayn-paper-account-v1', brokerAccountId)
@@ -120,38 +118,43 @@ interface Amounts {
 
 type LedgerFill = Pick<Fill, 'accountId' | 'symbol' | 'side' | 'feeMicros'>
 
-const calculateAmounts = (fill: Fill, prior: PositionCost): Amounts => {
+const calculateAmounts = (fill: Fill, prior: PositionCost): Result.Result<Amounts, 'invalid-calculateAmounts'> => {
   const quantity = BigInt(fill.quantityMicros)
   const price = BigInt(fill.priceMicros)
   const fee = BigInt(fill.feeMicros)
   const priorQuantity = BigInt(prior.quantityMicros)
   const priorCost = BigInt(prior.costMicros)
-  if (priorQuantity < 0n || priorCost < 0n) throw new Error('position cost state must not be negative')
-  if (priorQuantity === 0n && priorCost !== 0n) throw new Error('an empty position cannot retain cost basis')
+  if (priorQuantity < 0n || priorCost < 0n) return Result.fail('invalid-calculateAmounts')
+  if (priorQuantity === 0n && priorCost !== 0n) return Result.fail('invalid-calculateAmounts')
 
-  const notional = roundDiv(quantity * price, MICROS)
-  if (notional <= 0n) throw new Error('fill notional rounds to zero micros')
+  const notionalResult = roundDiv(quantity * price, MICROS)
+  if (Result.isFailure(notionalResult)) return Result.fail('invalid-calculateAmounts')
+  const notional = notionalResult.success
+  if (notional <= 0n) return Result.fail('invalid-calculateAmounts')
   if (fill.side === OrderSide.Buy) {
-    return {
+    return Result.succeed({
       notional,
       costBasis: notional,
       realizedPnl: 0n,
       quantityDelta: quantity,
       costBasisDelta: notional,
       cashDelta: -(notional + fee),
-    }
+    })
   }
 
-  if (quantity > priorQuantity) throw new Error('sell fill exceeds the recorded long position')
-  const costBasis = quantity === priorQuantity ? priorCost : roundDiv(priorCost * quantity, priorQuantity)
-  return {
+  if (quantity > priorQuantity) return Result.fail('invalid-calculateAmounts')
+  const costBasisResult =
+    quantity === priorQuantity ? Result.succeed(priorCost) : roundDiv(priorCost * quantity, priorQuantity)
+  if (Result.isFailure(costBasisResult)) return Result.fail('invalid-calculateAmounts')
+  const costBasis = costBasisResult.success
+  return Result.succeed({
     notional,
     costBasis,
     realizedPnl: notional - costBasis,
     quantityDelta: -quantity,
     costBasisDelta: -costBasis,
     cashDelta: notional - fee,
-  }
+  })
 }
 
 const makeLedgerPlan = (
@@ -285,7 +288,9 @@ export const prepareAccounting = (
   prior: PositionCost,
   ledger: number,
 ): PreparedAccounting => {
-  const amounts = calculateAmounts(fill, prior)
+  const amountsResult = calculateAmounts(fill, prior)
+  if (Result.isFailure(amountsResult)) throw new Error('accounting plan is invalid')
+  const amounts = amountsResult.success
   const transactionId = canonicalHashV1({
     schemaVersion: 'bayn.paper-accounting-transaction-id.v1',
     brokerEventId,

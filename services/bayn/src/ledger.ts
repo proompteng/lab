@@ -8,7 +8,7 @@ import {
 import { Context, Effect, Layer } from 'effect'
 
 import type { RuntimeConfig } from './config'
-import { operationalError, type OperationalError } from './errors'
+import { operationalError, OperationalError } from './errors'
 import { stableU128, stableU64 } from './hash'
 import {
   assertAccountsMatch,
@@ -40,7 +40,10 @@ export class Journal extends Context.Service<Journal, JournalService>()('bayn/Jo
 const validate = <A>(operation: string, evaluate: () => A): Effect.Effect<A, OperationalError> =>
   Effect.try({
     try: evaluate,
-    catch: (cause) => operationalError('journal', operation, `TigerBeetle ${operation} failed`, cause),
+    catch: (cause) =>
+      cause instanceof OperationalError
+        ? cause
+        : operationalError('journal', operation, `TigerBeetle ${operation} failed`, cause),
   })
 
 const createAndVerifyAccounts = (

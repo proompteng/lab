@@ -42,7 +42,14 @@ import { ensureSnapshotReference as ensureSnapshotReferenceRow } from './snapsho
 
 export type { PersistenceReceipt, RecoveredEvaluationEvidence, StoredEvaluationEvidence } from './evidence-recovery'
 
-export type DatabaseFailure = 'constraint' | 'decode' | 'invariant' | 'migration' | 'query' | 'unavailable'
+export type DatabaseFailure =
+  | 'constraint'
+  | 'decode'
+  | 'invariant'
+  | 'migration'
+  | 'query'
+  | 'qualification'
+  | 'unavailable'
 
 export class DatabaseError extends Data.TaggedError('DatabaseError')<{
   readonly failure: DatabaseFailure
@@ -343,16 +350,30 @@ const invalidPersistencePlan = (
     ...(cause === undefined ? {} : { cause }),
   })
 
-const validateQualificationOpenInput = (input: OpenQualificationInput) => {
+const validateQualificationOpenInput = (
+  input: OpenQualificationInput,
+): Result.Result<OpenQualificationInput & { readonly lock: QualificationLock }, DatabaseError> => {
   const lock = decodeQualificationLock(input.lock)
   const { inputManifest, parameters, provenance } = input
   if (canonicalHashV1(parameters) !== provenance.strategy.parameterHash) {
-    throw new TypeError('qualification parameters and provenance disagree')
+    return Result.fail(
+      databaseError(
+        'qualification',
+        'validate-qualification-input',
+        'qualification parameters and provenance disagree',
+      ),
+    )
   }
   const protocolHash = makeStrategyProtocolHash(provenance.strategy)
   const { hash: manifestHash, ...manifestMaterial } = inputManifest
   if (manifestHash !== canonicalHashV1(manifestMaterial)) {
-    throw new TypeError('qualification input manifest hash does not match its content')
+    return Result.fail(
+      databaseError(
+        'qualification',
+        'validate-qualification-input',
+        'qualification input manifest hash does not match its content',
+      ),
+    )
   }
   const expectedRunId = makeRunIdentity({
     schemaVersion: 'bayn.run-identity.v1',
@@ -397,9 +418,15 @@ const validateQualificationOpenInput = (input: OpenQualificationInput) => {
     !dataMatches ||
     canonicalHashV1(lock.policies.execution.content) !== canonicalHashV1(parameters.executionModel)
   ) {
-    throw new TypeError('qualification lock diverges from the candidate runtime or finalized snapshot')
+    return Result.fail(
+      databaseError(
+        'qualification',
+        'validate-qualification-input',
+        'qualification lock diverges from the candidate runtime or finalized snapshot',
+      ),
+    )
   }
-  return { ...input, lock }
+  return Result.succeed({ ...input, lock })
 }
 
 interface ValidatedPersistenceEvaluation {
@@ -622,15 +649,21 @@ const validatePersistenceQualification = (
   if (suppliedQualification === undefined) return Result.succeed(undefined)
   const { evaluation, parameters, provenance } = input
   const decodedQualification = Result.try({
-    try: () => ({
-      lock: validateQualificationOpenInput({
+    try: () => {
+      const lockResult = validateQualificationOpenInput({
         lock: suppliedQualification.lock,
         inputManifest: evaluation.inputManifest,
         parameters,
         provenance,
-      }).lock,
-      result: decodeQualificationResult(suppliedQualification.result),
-    }),
+      })
+      if (Result.isFailure(lockResult)) {
+        throw lockResult.failure
+      }
+      return {
+        lock: lockResult.success.lock,
+        result: decodeQualificationResult(suppliedQualification.result),
+      }
+    },
     catch: (cause): PersistencePlanFailure => ({
       _tag: 'InvalidPersistencePlan',
       invariant: 'qualification-evidence',
@@ -1141,7 +1174,11 @@ const makeEvidenceStore = Effect.gen(function* () {
     if (row.result_payload === null) return { state: 'OPENED_INCOMPLETE', lock }
     const result = row.result_payload
     if (result.lockId !== lock.lockId || result.runId !== lock.candidateRunId) {
-      throw new TypeError('stored qualification result diverges from its lock')
+      throw new DatabaseError({
+        failure: 'invariant',
+        operation: 'decode-qualification-record',
+        message: 'stored qualification result diverges from its lock',
+      })
     }
     return { state: 'TERMINAL', lock, result }
   }
@@ -1367,17 +1404,22 @@ const makeEvidenceStore = Effect.gen(function* () {
       Effect.gen(function* () {
         const plan = yield* Effect.try({
           try: () => validateQualificationOpenInput(input),
-          catch: (cause) => databaseError('invariant', 'open-qualification', 'invalid qualification lock input', cause),
+          catch: (cause) =>
+            databaseError('invariant', 'open-qualification', 'invalid qualification lock input', cause),
         })
-        const lock = plan.lock
+        if (Result.isFailure(plan)) return yield* Effect.fail(plan.failure)
+        const lock = plan.success.lock
+        const provenance = plan.success.provenance
+        const parameters = plan.success.parameters
+        const inputManifest = plan.success.inputManifest
         return yield* sql.withTransaction(
           Effect.gen(function* () {
             yield* ensureProtocolReference({
               protocolHash: lock.protocolHash,
-              provenance: plan.provenance,
-              parameters: plan.parameters,
+              provenance,
+              parameters,
             })
-            yield* ensureSnapshotReference(plan.inputManifest)
+            yield* ensureSnapshotReference(inputManifest)
             yield* sql`LOCK TABLE qualification_trials IN SHARE MODE`
             yield* sql`LOCK TABLE qualification_locks IN SHARE ROW EXCLUSIVE MODE`
 
