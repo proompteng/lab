@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Deferred, Effect, Fiber } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -24,10 +24,10 @@ import {
 import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
 import { canonicalHashV1 } from './hash'
 import { ReconciliationStatus, type AccountingReceipt, type Valuation } from './paper'
-import { PaperStore, type PaperStoreShape } from './db/paper-store'
+import { PaperStore, PaperStoreError, type PaperStoreShape } from './db/paper-store'
 import type { BrokerSnapshot, ReconciliationWriteResult } from './db/reconciliation'
 import { WriterFence, type WriterFenceService } from './execution/writer-fence'
-import { ReconciliationError, runContinuously, runOnce } from './reconciler'
+import { ReconciliationError, runOnce } from './reconciler'
 import { reconciledStateHash } from './reconciliation'
 
 const accountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
@@ -223,11 +223,11 @@ const fence: WriterFenceService = {
   transaction: (effect) => effect,
 }
 
-const provide = (read: BrokerReadShape, store: PaperStoreShape) =>
+const provide = (read: BrokerReadShape, store: PaperStoreShape, writerFence = fence) =>
   runOnce.pipe(
     Effect.provideService(BrokerRead, read),
     Effect.provideService(PaperStore, store),
-    Effect.provideService(WriterFence, fence),
+    Effect.provideService(WriterFence, writerFence),
   )
 
 describe('paper reconciliation loop', () => {
@@ -284,6 +284,66 @@ describe('paper reconciliation loop', () => {
     expect(control.restrictions).toEqual([])
   })
 
+  test('preserves causal broker read order and clock cutoffs', async () => {
+    let accountReads = 0
+    let positionReads = 0
+    let orderReads = 0
+    let fillReads = 0
+    const orderCutoffs: Array<string | undefined> = []
+    const fillCutoffs: Array<string | undefined> = []
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      account: Effect.gen(function* () {
+        expect(orderReads).toBe(1)
+        expect(fillReads).toBe(1)
+        accountReads += 1
+        yield* TestClock.adjust(100)
+        return { value: account, evidence: evidence('account') }
+      }),
+      positions: Effect.sync(() => {
+        expect(orderReads).toBe(1)
+        expect(fillReads).toBe(1)
+        positionReads += 1
+        return { value: [], evidence: evidence('positions') }
+      }),
+      orders: (query = {}) =>
+        Effect.sync(() => {
+          orderReads += 1
+          orderCutoffs.push(query.until)
+          if (orderReads === 1) {
+            expect(accountReads).toBe(0)
+            expect(positionReads).toBe(0)
+          } else {
+            expect(accountReads).toBe(1)
+            expect(positionReads).toBe(1)
+          }
+          return { value: [], evidence: evidence(`orders-${orderReads}`) }
+        }),
+      fillActivities: (query = {}) =>
+        Effect.sync(() => {
+          fillReads += 1
+          fillCutoffs.push(query.until)
+          if (fillReads === 1) {
+            expect(accountReads).toBe(0)
+            expect(positionReads).toBe(0)
+          } else {
+            expect(accountReads).toBe(1)
+            expect(positionReads).toBe(1)
+          }
+          return { value: { items: [] }, evidence: evidence(`fills-${fillReads}`) }
+        }),
+    }
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+
+    const result = await Effect.runPromise(provide(read, makeStore(control)).pipe(Effect.provide(TestClock.layer())))
+
+    expect(orderCutoffs).toEqual(['1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.100Z'])
+    expect(fillCutoffs).toEqual(orderCutoffs)
+    expect(control.reconciliations).toHaveLength(1)
+    expect(control.reconciliations[0].reconciledAt).toBe('1970-01-01T00:00:00.100Z')
+    expect(result.report.reconciliation.reconciledAt).toBe('1970-01-01T00:00:00.100Z')
+  })
+
   test('rejects historical fills on an uninitialized account before ingesting broker state', async () => {
     const existingOrder = order(0)
     const existingFill = fill(0, existingOrder)
@@ -296,10 +356,15 @@ describe('paper reconciliation loop', () => {
 
     const failure = await Effect.runPromise(provide(read, makeStore(control, false)).pipe(Effect.flip))
 
+    expect(failure).toBeInstanceOf(ReconciliationError)
     expect(failure).toMatchObject({
       _tag: 'ReconciliationError',
       operation: 'snapshot',
       message: 'paper account has fill history before Bayn established an opening cash baseline',
+      failure: {
+        _tag: 'Snapshot',
+        reason: 'AccountBaselineMissing',
+      },
     })
     expect(control.writes).toBe(0)
     expect(control.reconciliations).toEqual([])
@@ -320,6 +385,113 @@ describe('paper reconciliation loop', () => {
       _tag: 'ReconciliationError',
       operation: 'pagination',
       message: `Alpaca order ${pendingOrder.brokerOrderId} is missing submitted_at`,
+      failure: {
+        _tag: 'Pagination',
+        reason: 'OrderSubmittedAtMissing',
+      },
+    })
+    expect(control.writes).toBe(0)
+    expect(control.reconciliations).toEqual([])
+    expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+  })
+
+  test('retains the exact Error cause of a normalization failure', async () => {
+    const normalizationCause = new Error('injected normalization failure')
+    let extendedHoursReads = 0
+    const malformedOrder = new Proxy(order(0), {
+      get: (target, property, receiver) => {
+        if (property === 'extendedHours') {
+          extendedHoursReads += 1
+          if (extendedHoursReads === 3) throw normalizationCause
+        }
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      orders: () => Effect.succeed({ value: [malformedOrder], evidence: evidence('orders') }),
+    }
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+
+    const failure = await Effect.runPromise(provide(read, makeStore(control)).pipe(Effect.flip))
+
+    expect(failure).toBeInstanceOf(ReconciliationError)
+    if (!(failure instanceof ReconciliationError) || failure.failure?._tag !== 'Normalization') {
+      throw new Error('expected a reconciliation normalization failure')
+    }
+    expect(failure).toMatchObject({
+      _tag: 'ReconciliationError',
+      operation: 'normalization',
+      message: 'broker snapshot normalization failed',
+      failure: {
+        _tag: 'Normalization',
+        stage: 'order',
+        identity: malformedOrder.brokerOrderId,
+      },
+    })
+    expect(failure.cause).toBe(normalizationCause)
+    expect(failure.failure.cause).toBe(normalizationCause)
+    expect(extendedHoursReads).toBe(3)
+    expect(control.writes).toBe(0)
+    expect(control.reconciliations).toEqual([])
+    expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+  })
+
+  test('propagates a non-Error normalization throw as a defect after restricting authority', async () => {
+    const defect = { _tag: 'InjectedNormalizationDefect' }
+    let extendedHoursReads = 0
+    const throwingOrder = new Proxy(order(0), {
+      get: (target, property, receiver) => {
+        if (property === 'extendedHours') {
+          extendedHoursReads += 1
+          if (extendedHoursReads === 3) throw defect
+        }
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      orders: () => Effect.succeed({ value: [throwingOrder], evidence: evidence('orders') }),
+    }
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+
+    const exit = await Effect.runPromiseExit(provide(read, makeStore(control)))
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) {
+      const defects = exit.cause.reasons.flatMap((reason) => (Cause.isDieReason(reason) ? [reason.defect] : []))
+      expect(defects).toContain(defect)
+    }
+    expect(extendedHoursReads).toBe(3)
+    expect(control.writes).toBe(0)
+    expect(control.reconciliations).toEqual([])
+    expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+  })
+
+  test('returns a closed duplicate-client validation reason', async () => {
+    const first = order(0)
+    const duplicateClient = { ...order(1), clientOrderId: first.clientOrderId }
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      orders: () => Effect.succeed({ value: [first, duplicateClient], evidence: evidence('orders') }),
+    }
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+
+    const failure = await Effect.runPromise(provide(read, makeStore(control)).pipe(Effect.flip))
+
+    expect(failure).toBeInstanceOf(ReconciliationError)
+    if (!(failure instanceof ReconciliationError) || failure.failure?._tag !== 'Validation') {
+      throw new Error('expected a reconciliation validation failure')
+    }
+    expect(failure).toMatchObject({
+      _tag: 'ReconciliationError',
+      operation: 'normalization',
+      message: 'broker snapshot normalization failed',
+      failure: {
+        _tag: 'Validation',
+        reason: 'DuplicateBrokerClientOrderId',
+        detail: `duplicate broker client order ID ${first.clientOrderId}`,
+      },
     })
     expect(control.writes).toBe(0)
     expect(control.reconciliations).toEqual([])
@@ -369,6 +541,12 @@ describe('paper reconciliation loop', () => {
 
     const failure = await Effect.runPromise(provide(read, makeStore(control)).pipe(Effect.flip))
     expect(failure).toBeInstanceOf(ReconciliationError)
+    expect(failure).toMatchObject({
+      failure: {
+        _tag: 'Pagination',
+        reason: 'DuplicateFill',
+      },
+    })
     expect(control.writes).toBe(0)
     expect(control.reconciliations).toEqual([])
     expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
@@ -404,6 +582,10 @@ describe('paper reconciliation loop', () => {
       _tag: 'ReconciliationError',
       operation: 'snapshot',
       message: 'broker history changed during reconciliation',
+      failure: {
+        _tag: 'Snapshot',
+        reason: 'HistoryChanged',
+      },
     })
     expect(orderReads).toBe(2)
     expect(fillReads).toBe(2)
@@ -433,72 +615,151 @@ describe('paper reconciliation loop', () => {
       _tag: 'ReconciliationError',
       operation: 'pagination',
       message: 'Alpaca fill history exceeds 10000 rows',
+      failure: {
+        _tag: 'Pagination',
+        reason: 'FillHistoryTooLarge',
+      },
     })
     expect(offset).toBe(10_001)
     expect(control.writes).toBe(0)
     expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
   })
 
-  test('runs immediately and repeats on the Effect schedule', async () => {
+  test('keeps persistence and containment in distinct writer-fence transactions', async () => {
     const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
-    const program = Effect.scoped(
-      Effect.gen(function* () {
-        const fiber = yield* runContinuously(100).pipe(
-          Effect.provideService(BrokerRead, emptyRead()),
-          Effect.provideService(PaperStore, makeStore(control)),
-          Effect.provideService(WriterFence, fence),
-          Effect.forkScoped({ startImmediately: true }),
-        )
-        yield* Effect.yieldNow
-        expect(control.reconciliations).toHaveLength(1)
-        yield* TestClock.adjust(99)
-        expect(control.reconciliations).toHaveLength(1)
-        yield* TestClock.adjust(1)
-        expect(control.reconciliations).toHaveLength(2)
-        yield* Fiber.interrupt(fiber)
-      }),
-    ).pipe(Effect.provide(TestClock.layer()))
+    const transactionEvents: string[] = []
+    let transactionDepth = 0
+    const writerFence: WriterFenceService = {
+      backendPid: 2,
+      check: Effect.void,
+      transaction: (effect) =>
+        Effect.sync(() => {
+          transactionDepth += 1
+          transactionEvents.push('begin')
+        }).pipe(
+          Effect.andThen(effect),
+          Effect.ensuring(
+            Effect.sync(() => {
+              transactionEvents.push('end')
+              transactionDepth -= 1
+            }),
+          ),
+        ),
+    }
+    const insideTransaction = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      Effect.sync(() => {
+        expect(transactionDepth).toBe(1)
+      }).pipe(Effect.andThen(effect))
+    const baseStore = makeStore(control)
+    const persistenceFailure = new PaperStoreError({
+      operation: 'reconciliation',
+      failure: 'query',
+      message: 'injected reconciliation write failure',
+    })
+    const store: PaperStoreShape = {
+      ...baseStore,
+      ingest: (input) => insideTransaction(baseStore.ingest(input)),
+      ingestPositions: (input) => insideTransaction(baseStore.ingestPositions(input)),
+      account: (input) => insideTransaction(baseStore.account(input)),
+      value: (input) => insideTransaction(baseStore.value(input)),
+      hasAccountBaseline: (id) => insideTransaction(baseStore.hasAccountBaseline(id)),
+      bindings: (id) => insideTransaction(baseStore.bindings(id)),
+      reconcile: () => insideTransaction(Effect.fail(persistenceFailure)),
+      restrictAuthority: (reason, updatedAt) => insideTransaction(baseStore.restrictAuthority(reason, updatedAt)),
+    }
 
-    await Effect.runPromise(program)
+    const exit = await Effect.runPromiseExit(provide(emptyRead(), store, writerFence))
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) {
+      const failures = exit.cause.reasons.flatMap((reason) => (Cause.isFailReason(reason) ? [reason.error] : []))
+      expect(failures).toEqual([persistenceFailure])
+    }
+    expect(transactionEvents).toEqual(['begin', 'end', 'begin', 'end'])
+    expect(transactionDepth).toBe(0)
+    expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
   })
 
-  test('restricts authority after a failed pass and retries on the same scoped loop', async () => {
-    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
-    let attempts = 0
+  test('retains both causes when authority restriction fails', async () => {
+    const primaryFailure = new BrokerReadError({
+      operation: 'account',
+      kind: BrokerReadErrorKind.Transport,
+      message: 'injected primary read failure',
+      retryable: true,
+    })
+    const containmentFailure = new PaperStoreError({
+      operation: 'authority',
+      failure: 'query',
+      message: 'injected authority restriction failure',
+    })
     const read: BrokerReadShape = {
       ...emptyRead(),
-      account: Effect.suspend(() => {
-        attempts += 1
-        return attempts === 1
-          ? Effect.fail(
-              new BrokerReadError({
-                operation: 'account',
-                kind: BrokerReadErrorKind.Transport,
-                message: 'injected read failure',
-                retryable: true,
-              }),
-            )
-          : Effect.succeed({ value: account, evidence: evidence('account') })
-      }),
+      account: Effect.fail(primaryFailure),
     }
-    const program = Effect.scoped(
-      Effect.gen(function* () {
-        const fiber = yield* runContinuously(100).pipe(
-          Effect.provideService(BrokerRead, read),
-          Effect.provideService(PaperStore, makeStore(control)),
-          Effect.provideService(WriterFence, fence),
-          Effect.forkScoped({ startImmediately: true }),
-        )
-        yield* Effect.yieldNow
-        expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
-        expect(control.reconciliations).toEqual([])
-        yield* TestClock.adjust(100)
-        expect(control.reconciliations).toHaveLength(1)
-        yield* Fiber.interrupt(fiber)
-      }),
-    ).pipe(Effect.provide(TestClock.layer()))
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+    let restrictionAttempts = 0
+    const store: PaperStoreShape = {
+      ...makeStore(control),
+      restrictAuthority: () =>
+        Effect.sync(() => {
+          restrictionAttempts += 1
+        }).pipe(Effect.andThen(Effect.fail(containmentFailure))),
+    }
+    let transactions = 0
+    const writerFence: WriterFenceService = {
+      backendPid: 4,
+      check: Effect.void,
+      transaction: (effect) =>
+        Effect.sync(() => {
+          transactions += 1
+        }).pipe(Effect.andThen(effect)),
+    }
 
-    await Effect.runPromise(program)
+    const exit = await Effect.runPromiseExit(provide(read, store, writerFence))
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) {
+      const failures = exit.cause.reasons.flatMap((reason) => (Cause.isFailReason(reason) ? [reason.error] : []))
+      const containmentErrors = failures.filter(
+        (failure): failure is ReconciliationError =>
+          failure instanceof ReconciliationError && failure.failure?._tag === 'AuthorityRestrictionFailed',
+      )
+      expect(containmentErrors).toHaveLength(1)
+      const containmentError = containmentErrors[0]
+      if (containmentError?.failure?._tag !== 'AuthorityRestrictionFailed') {
+        throw new Error('expected an authority restriction failure')
+      }
+      const reconciliationFailures = containmentError.failure.reconciliationCause.reasons.flatMap((reason) =>
+        Cause.isFailReason(reason) ? [reason.error] : [],
+      )
+      const restrictionFailures = containmentError.failure.restrictionCause.reasons.flatMap((reason) =>
+        Cause.isFailReason(reason) ? [reason.error] : [],
+      )
+      expect(reconciliationFailures).toContain(primaryFailure)
+      expect(restrictionFailures).toContain(containmentFailure)
+    }
+    expect(restrictionAttempts).toBe(1)
+    expect(transactions).toBe(1)
+    expect(control.reconciliations).toEqual([])
+  })
+
+  test('propagates a defect after successful authority restriction', async () => {
+    const defect = new Error('unexpected reconciliation defect')
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      account: Effect.die(defect),
+    }
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+
+    const exit = await Effect.runPromiseExit(provide(read, makeStore(control)))
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) {
+      const defects = exit.cause.reasons.flatMap((reason) => (Cause.isDieReason(reason) ? [reason.defect] : []))
+      expect(defects).toContain(defect)
+    }
+    expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+    expect(control.reconciliations).toEqual([])
   })
 
   test('interrupts an in-flight read on shutdown without treating shutdown as a failed pass', async () => {
