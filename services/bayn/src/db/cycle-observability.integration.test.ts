@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Redacted } from 'effect'
+import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 
 import {
   CycleState,
@@ -53,20 +53,28 @@ const signalSession = (
 })
 
 const makeDraft = (dedicatedAccountId = accountId) => {
-  const executionPolicy = makeCycleExecutionPolicy({
+  const executionPolicyResult = makeCycleExecutionPolicy({
     schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
     strategyExecutionModelHash: 'b'.repeat(64),
     submissionWindowMs: 30 * 60 * 1_000,
     submissionCutoffBeforeOpenMs: 2 * 60 * 1_000,
   })
-  const executionCalendar = makeExecutionCalendarObservation({
+  expect(Result.isSuccess(executionPolicyResult)).toBe(true)
+  if (Result.isFailure(executionPolicyResult)) return expect.unreachable(executionPolicyResult.failure.message)
+  const executionPolicy = executionPolicyResult.success
+
+  const executionCalendarResult = makeExecutionCalendarObservation({
     schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
     source: 'alpaca-v2-calendar',
     date: '2026-03-09',
     openAt: '2026-03-09T13:30:00.000Z',
     closeAt: '2026-03-09T20:00:00.000Z',
   })
-  const identity = makeCycleIdentity({
+  expect(Result.isSuccess(executionCalendarResult)).toBe(true)
+  if (Result.isFailure(executionCalendarResult)) return expect.unreachable(executionCalendarResult.failure.message)
+  const executionCalendar = executionCalendarResult.success
+
+  const identityResult = makeCycleIdentity({
     schemaVersion: 'bayn.autonomous-cycle-identity.v1',
     strategyName: 'risk-balanced-trend',
     qualificationRunId,
@@ -80,7 +88,15 @@ const makeDraft = (dedicatedAccountId = accountId) => {
     executionCalendarHash: executionCalendar.executionCalendarHash,
     executionPolicy,
   })
-  return makeCycleDraft(identity, makeCycleWindow(signalSession('2026-03-06'), executionCalendar, executionPolicy))
+  expect(Result.isSuccess(identityResult)).toBe(true)
+  if (Result.isFailure(identityResult)) return expect.unreachable(identityResult.failure.message)
+  const windowResult = makeCycleWindow(signalSession('2026-03-06'), executionCalendar, executionPolicy)
+  expect(Result.isSuccess(windowResult)).toBe(true)
+  if (Result.isFailure(windowResult)) return expect.unreachable(windowResult.failure.message)
+  const draftResult = makeCycleDraft(identityResult.success, windowResult.success)
+  expect(Result.isSuccess(draftResult)).toBe(true)
+  if (Result.isFailure(draftResult)) return expect.unreachable(draftResult.failure.message)
+  return draftResult.success
 }
 
 const seedSafetyState = (reconciledAt = '2026-03-06T21:00:00.000Z') =>

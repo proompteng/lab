@@ -1,50 +1,91 @@
-import { Schema } from 'effect'
+import { Data, Result, Schema } from 'effect'
 
 import { IntentPlanSchema, type IntentPlan } from './execution/intents'
 import { desiredQuantityMicros, MICROS } from './execution-model'
 import { canonicalHashV1 } from './hash'
-import { AccountStatus, OrderSide, OrderStatus, OrderType, ReconciliationStatus, TimeInForce } from './paper'
-import type { ExecutionModel } from './protocol'
-import { reconciledStateHash, type ReconciledBrokerState } from './reconciliation'
 import {
+  AccountSnapshotSchema,
+  AccountStatus,
+  DiscrepancySchema,
+  OrderSchema,
+  OrderSide,
+  OrderStatus,
+  OrderType,
+  PositionSchema,
+  ReconciliationStatus,
+  TimeInForce,
+} from './paper'
+import { reconciledStateHash } from './reconciliation'
+import {
+  NonNegativeIntegerSchema,
+  IsoDateSchema,
   PositiveMicrosSchema,
+  PositiveIntegerSchema,
   Sha256Schema,
   SignedMicrosSchema,
+  StrictNonEmptyStringSchema,
   SymbolSchema,
   UnitIntervalSchema,
   UnsignedMicrosSchema,
-  type IsoDate,
+  UtcInstantSchema,
+  strictParseOptions,
 } from './schemas'
-import type { SignalDecision } from './types'
 
 const WEIGHT_SUM_TOLERANCE = 1e-12
 
-export interface SignalSessionReferencePrices {
-  readonly schemaVersion: 'bayn.signal-session-reference-prices.v1'
-  readonly signalDate: IsoDate
-  readonly observedAt: string
-  readonly contentHash: string
-  readonly priceMicros: Readonly<Record<string, string>>
-}
+const SignalSessionReferencePricesSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.signal-session-reference-prices.v1'),
+  signalDate: IsoDateSchema,
+  observedAt: UtcInstantSchema,
+  contentHash: Sha256Schema,
+  priceMicros: Schema.Record(SymbolSchema, PositiveMicrosSchema),
+})
 
-export type TargetPlannerBrokerState = ReconciledBrokerState
+const TargetPlannerBrokerStateSchema = Schema.Struct({
+  account: AccountSnapshotSchema,
+  positions: Schema.Array(PositionSchema),
+  positionsObservedAt: UtcInstantSchema,
+  orders: Schema.Array(OrderSchema),
+  ordersObservedAt: UtcInstantSchema,
+  accountingHash: Sha256Schema,
+  reconciliation: Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.paper-reconciliation.v1'),
+    reconciliationId: Sha256Schema,
+    accountId: StrictNonEmptyStringSchema,
+    expectedHash: Sha256Schema,
+    observedHash: Sha256Schema,
+    contentHash: Sha256Schema,
+    status: Schema.Enum(ReconciliationStatus),
+    discrepancies: Schema.Array(DiscrepancySchema),
+    reconciledAt: UtcInstantSchema,
+  }),
+  unknownOrderCount: NonNegativeIntegerSchema,
+})
 
-export interface TargetPlannerInput {
-  readonly schemaVersion: 'bayn.paper-target-planner-input.v1'
-  readonly strategyName: IntentPlan['strategyName']
-  readonly cycleId: IntentPlan['cycleId']
-  readonly decisionHash: IntentPlan['decisionHash']
-  readonly policyHash: IntentPlan['policyHash']
-  readonly accountId: IntentPlan['accountId']
-  readonly signalDate: IsoDate
-  readonly targetWeights: SignalDecision['targetWeights']
-  readonly referencePrices: SignalSessionReferencePrices
-  readonly brokerState: TargetPlannerBrokerState
-  readonly precision: ExecutionModel['precision']
-  readonly maximumInputAgeMs: number
-  readonly submissionCutoffAt: string
-  readonly observedAt: string
-}
+export const TargetPlannerInputSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.paper-target-planner-input.v1'),
+  strategyName: StrictNonEmptyStringSchema,
+  cycleId: Sha256Schema,
+  decisionHash: Sha256Schema,
+  policyHash: Sha256Schema,
+  accountId: StrictNonEmptyStringSchema,
+  signalDate: SignalSessionReferencePricesSchema.fields.signalDate,
+  targetWeights: Schema.Record(SymbolSchema, UnitIntervalSchema),
+  referencePrices: SignalSessionReferencePricesSchema,
+  brokerState: TargetPlannerBrokerStateSchema,
+  precision: Schema.Struct({
+    quantityIncrementMicros: PositiveMicrosSchema,
+    priceIncrementMicros: PositiveMicrosSchema,
+    minimumBuyNotionalMicros: PositiveMicrosSchema,
+  }),
+  maximumInputAgeMs: PositiveIntegerSchema,
+  submissionCutoffAt: UtcInstantSchema,
+  observedAt: UtcInstantSchema,
+})
+
+export type SignalSessionReferencePrices = typeof SignalSessionReferencePricesSchema.Type
+export type TargetPlannerBrokerState = typeof TargetPlannerBrokerStateSchema.Type
+export type TargetPlannerInput = typeof TargetPlannerInputSchema.Type
 
 export interface PlannedTargetQuantity {
   readonly symbol: string
@@ -78,27 +119,69 @@ export enum TargetPlanReason {
   UnresolvedOrder = 'UNRESOLVED_ORDER',
 }
 
-export interface TargetPlanResult {
-  readonly schemaVersion: 'bayn.paper-reference-target-plan.v1'
-  readonly inputHash: string
-  readonly outputHash: string
-  readonly status: TargetPlanStatus
-  readonly reason: TargetPlanReason | null
-  readonly targets: readonly PlannedTargetQuantity[]
-  readonly intentTargets: readonly ReferenceTargetIntent[]
-  readonly requiredReferenceBuyNotionalMicros: string
-  readonly availableBuyingPowerMicros: string
-  readonly residualBuyingPowerMicros: string
+export const blockedTargetPlanReasons = [
+  TargetPlanReason.AccountNotActive,
+  TargetPlanReason.BelowMinimumBuyNotional,
+  TargetPlanReason.IdentityMismatch,
+  TargetPlanReason.InputMismatch,
+  TargetPlanReason.InputStale,
+  TargetPlanReason.InsufficientBuyingPower,
+  TargetPlanReason.NonPositiveEquity,
+  TargetPlanReason.ReconciliationNotExact,
+  TargetPlanReason.ShortPositionNotAllowed,
+  TargetPlanReason.SubmissionCutoffReached,
+  TargetPlanReason.UnknownOrder,
+  TargetPlanReason.UnresolvedOrder,
+] as const
+export type BlockedTargetPlanReason = (typeof blockedTargetPlanReasons)[number]
+
+interface CanonicalizeTargetPlannerInputIssue {
+  readonly operation: 'canonicalize-input'
+  readonly reason: 'hash'
 }
 
-type OutputMaterial = Omit<TargetPlanResult, 'outputHash'>
+interface CanonicalizeTargetPlannerOutputIssue {
+  readonly operation: 'canonicalize-output'
+  readonly reason: 'hash'
+}
+
+interface DecodeTargetPlannerInputIssue {
+  readonly operation: 'decode-input'
+  readonly reason: 'contract'
+}
+
+interface DecodeTargetPlannerOutputIssue {
+  readonly operation: 'decode-output'
+  readonly reason: 'contract' | 'hash'
+}
+
+interface DeriveTargetPlannerTargetsIssue {
+  readonly operation: 'derive-targets'
+  readonly reason: 'precision'
+}
+
+type TargetPlannerIssue =
+  | CanonicalizeTargetPlannerInputIssue
+  | CanonicalizeTargetPlannerOutputIssue
+  | DecodeTargetPlannerInputIssue
+  | DecodeTargetPlannerOutputIssue
+  | DeriveTargetPlannerTargetsIssue
+
+interface TargetPlannerFailureDetails {
+  readonly message: string
+  readonly facts: Readonly<Record<string, unknown>>
+  readonly cause?: unknown
+}
+
+const TargetPlannerFailure = Data.TaggedError('TargetPlannerFailure')<TargetPlannerIssue & TargetPlannerFailureDetails>
+export type TargetPlannerFailure = InstanceType<typeof TargetPlannerFailure>
 
 const PlannedTargetQuantitySchema = Schema.Struct({
   symbol: SymbolSchema,
   targetWeight: UnitIntervalSchema,
   referencePriceMicros: PositiveMicrosSchema,
-  currentQuantityMicros: SignedMicrosSchema,
-  targetQuantityMicros: SignedMicrosSchema,
+  currentQuantityMicros: UnsignedMicrosSchema,
+  targetQuantityMicros: UnsignedMicrosSchema,
 })
 
 const ReferenceTargetIntentSchema = Schema.Struct({
@@ -115,78 +198,307 @@ const ReferenceTargetIntentSchema = Schema.Struct({
   createdAt: IntentPlanSchema.fields.createdAt,
 })
 
-const TargetPlanResultBase = Schema.Struct({
+const TargetPlanResultFields = {
   schemaVersion: Schema.Literal('bayn.paper-reference-target-plan.v1'),
   inputHash: Sha256Schema,
   outputHash: Sha256Schema,
-  status: Schema.Enum(TargetPlanStatus),
-  reason: Schema.NullOr(Schema.Enum(TargetPlanReason)),
   targets: Schema.Array(PlannedTargetQuantitySchema),
-  intentTargets: Schema.Array(ReferenceTargetIntentSchema),
   requiredReferenceBuyNotionalMicros: UnsignedMicrosSchema,
   availableBuyingPowerMicros: SignedMicrosSchema,
   residualBuyingPowerMicros: SignedMicrosSchema,
+} as const
+
+const PlannedTargetPlanResultSchema = Schema.Struct({
+  ...TargetPlanResultFields,
+  status: Schema.Literal(TargetPlanStatus.Planned),
+  reason: Schema.Null,
+  intentTargets: Schema.Array(ReferenceTargetIntentSchema).check(Schema.isMinLength(1)),
 })
 
-export const TargetPlanResultSchema = TargetPlanResultBase.check(
-  Schema.makeFilter((result: typeof TargetPlanResultBase.Type): readonly Schema.FilterIssue[] => {
-    const issues: Schema.FilterIssue[] = []
-    const { outputHash, ...material } = result
-    if (outputHash !== canonicalHashV1(material)) {
-      issues.push({ path: ['outputHash'], issue: 'must match the canonical target-plan output material' })
-    }
-    if (result.status === TargetPlanStatus.Planned && (result.reason !== null || result.intentTargets.length === 0)) {
-      issues.push({ path: ['status'], issue: 'PLANNED requires target deltas and no reason' })
-    }
-    if (
-      result.status === TargetPlanStatus.NoTrade &&
-      (result.reason !== TargetPlanReason.TargetsSatisfied || result.intentTargets.length !== 0)
-    ) {
-      issues.push({ path: ['status'], issue: 'NO_TRADE requires TARGETS_SATISFIED and no target deltas' })
-    }
-    if (result.status === TargetPlanStatus.Blocked && (result.reason === null || result.intentTargets.length !== 0)) {
-      issues.push({ path: ['status'], issue: 'BLOCKED requires one reason and no target deltas' })
-    }
-    const targetSymbols = result.targets.map((target) => target.symbol)
-    if (new Set(targetSymbols).size !== targetSymbols.length) {
-      issues.push({ path: ['targets'], issue: 'must contain one target per symbol' })
-    }
-    const intentSymbols = result.intentTargets.map((intent) => intent.symbol)
-    if (
-      new Set(intentSymbols).size !== intentSymbols.length ||
-      intentSymbols.some((symbol) => !targetSymbols.includes(symbol))
-    ) {
-      issues.push({ path: ['intentTargets'], issue: 'must contain at most one delta for each persisted target' })
-    }
-    return issues
-  }),
-)
+const NoTradeTargetPlanResultSchema = Schema.Struct({
+  ...TargetPlanResultFields,
+  status: Schema.Literal(TargetPlanStatus.NoTrade),
+  reason: Schema.Literal(TargetPlanReason.TargetsSatisfied),
+  targets: Schema.Array(PlannedTargetQuantitySchema).check(Schema.isMinLength(1)),
+  intentTargets: Schema.Tuple([]),
+})
+
+const BlockedTargetPlanResultSchema = Schema.Struct({
+  ...TargetPlanResultFields,
+  status: Schema.Literal(TargetPlanStatus.Blocked),
+  reason: Schema.Literals(blockedTargetPlanReasons),
+  intentTargets: Schema.Tuple([]),
+})
+
+const TargetPlanResultBase = Schema.Union([
+  PlannedTargetPlanResultSchema,
+  NoTradeTargetPlanResultSchema,
+  BlockedTargetPlanResultSchema,
+])
 
 const compareText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
+const isStrictlySorted = (values: readonly string[]): boolean =>
+  values.every((value, index) => index === 0 || values[index - 1] < value)
 
-const finish = (material: OutputMaterial): TargetPlanResult => ({
-  ...material,
-  outputHash: canonicalHashV1(material),
-})
+interface TargetPlanDeltaFact {
+  readonly index: number
+  readonly target: PlannedTargetQuantity
+  readonly currentQuantity: bigint
+  readonly targetQuantity: bigint
+  readonly delta: bigint
+  readonly intent: ReferenceTargetIntent | undefined
+}
+
+interface TargetPlanSemanticFacts {
+  readonly targetSymbols: readonly string[]
+  readonly intentsBySymbol: ReadonlyMap<string, ReferenceTargetIntent>
+  readonly deltas: readonly TargetPlanDeltaFact[]
+  readonly requiredReferenceBuyNotional: bigint
+  readonly nonzeroDeltaCount: number
+  readonly positiveDeltaCount: number
+}
+
+const deriveTargetPlanSemanticFacts = (result: typeof TargetPlanResultBase.Type): TargetPlanSemanticFacts => {
+  const targetSymbols = result.targets.map((target) => target.symbol)
+  const intentsBySymbol = new Map(result.intentTargets.map((intent) => [intent.symbol, intent]))
+  let requiredReferenceBuyNotional = 0n
+  let nonzeroDeltaCount = 0
+  let positiveDeltaCount = 0
+  const deltas = result.targets.map((target, index): TargetPlanDeltaFact => {
+    const currentQuantity = BigInt(target.currentQuantityMicros)
+    const targetQuantity = BigInt(target.targetQuantityMicros)
+    const delta = targetQuantity - currentQuantity
+    if (delta !== 0n) nonzeroDeltaCount += 1
+    if (delta > 0n) {
+      positiveDeltaCount += 1
+      requiredReferenceBuyNotional += (delta * BigInt(target.referencePriceMicros) + MICROS - 1n) / MICROS
+    }
+    return {
+      index,
+      target,
+      currentQuantity,
+      targetQuantity,
+      delta,
+      intent: intentsBySymbol.get(target.symbol),
+    }
+  })
+  return {
+    targetSymbols,
+    intentsBySymbol,
+    deltas,
+    requiredReferenceBuyNotional,
+    nonzeroDeltaCount,
+    positiveDeltaCount,
+  }
+}
+
+const targetPlanOrderingIssues = (
+  result: typeof TargetPlanResultBase.Type,
+  facts: TargetPlanSemanticFacts,
+): readonly Schema.FilterIssue[] => {
+  const issues: Schema.FilterIssue[] = []
+  if (new Set(facts.targetSymbols).size !== facts.targetSymbols.length || !isStrictlySorted(facts.targetSymbols)) {
+    issues.push({ path: ['targets'], issue: 'must contain one target per symbol in canonical order' })
+  }
+  const intentSymbols = result.intentTargets.map((intent) => intent.symbol)
+  if (
+    facts.intentsBySymbol.size !== result.intentTargets.length ||
+    intentSymbols.some((symbol) => !facts.targetSymbols.includes(symbol))
+  ) {
+    issues.push({ path: ['intentTargets'], issue: 'must contain at most one delta for each persisted target' })
+  }
+  for (let index = 1; index < result.intentTargets.length; index += 1) {
+    const previous = result.intentTargets[index - 1]
+    const current = result.intentTargets[index]
+    if (
+      (previous.side === OrderSide.Buy && current.side === OrderSide.Sell) ||
+      (previous.side === current.side && previous.symbol >= current.symbol)
+    ) {
+      issues.push({ path: ['intentTargets'], issue: 'must be ordered sells first and then by symbol' })
+      break
+    }
+  }
+  return issues
+}
+
+const targetQuantityIssues = (facts: TargetPlanSemanticFacts): readonly Schema.FilterIssue[] => {
+  const issues: Schema.FilterIssue[] = []
+  for (const { index, target, targetQuantity } of facts.deltas) {
+    if (target.targetWeight === 0 && targetQuantity !== 0n) {
+      issues.push({
+        path: ['targets', index, 'targetQuantityMicros'],
+        issue: 'must be zero when the target weight is zero',
+      })
+    }
+  }
+  return issues
+}
+
+const plannedIntentIssues = (
+  result: typeof TargetPlanResultBase.Type,
+  facts: TargetPlanSemanticFacts,
+): readonly Schema.FilterIssue[] => {
+  if (result.status !== TargetPlanStatus.Planned) return []
+  const issues: Schema.FilterIssue[] = []
+  const firstIntent = result.intentTargets[0]
+  for (const { delta, index, intent, target } of facts.deltas) {
+    if (delta === 0n && intent !== undefined) {
+      issues.push({ path: ['intentTargets'], issue: `must not retain a zero delta for ${target.symbol}` })
+      continue
+    }
+    if (delta !== 0n && intent === undefined) {
+      issues.push({ path: ['intentTargets'], issue: `must retain the nonzero delta for ${target.symbol}` })
+      continue
+    }
+    if (
+      intent !== undefined &&
+      (intent.side !== (delta > 0n ? OrderSide.Buy : OrderSide.Sell) ||
+        BigInt(intent.quantityMicros) !== (delta < 0n ? -delta : delta) ||
+        intent.orderType !== OrderType.Market ||
+        intent.timeInForce !== TimeInForce.Day)
+    ) {
+      issues.push({ path: ['intentTargets', index], issue: 'must exactly encode the target quantity delta' })
+    }
+    if (
+      firstIntent !== undefined &&
+      intent !== undefined &&
+      (intent.strategyName !== firstIntent.strategyName ||
+        intent.cycleId !== firstIntent.cycleId ||
+        intent.decisionHash !== firstIntent.decisionHash ||
+        intent.policyHash !== firstIntent.policyHash ||
+        intent.accountId !== firstIntent.accountId ||
+        intent.createdAt !== firstIntent.createdAt)
+    ) {
+      issues.push({ path: ['intentTargets', index], issue: 'must share one target-plan identity and creation time' })
+    }
+  }
+  if (facts.nonzeroDeltaCount !== result.intentTargets.length) {
+    issues.push({ path: ['intentTargets'], issue: 'must contain every and only nonzero target delta' })
+  }
+  return issues
+}
+
+const targetPlanStatusIssues = (
+  result: typeof TargetPlanResultBase.Type,
+  facts: TargetPlanSemanticFacts,
+): readonly Schema.FilterIssue[] => {
+  const issues: Schema.FilterIssue[] = []
+  if (result.status === TargetPlanStatus.NoTrade && facts.nonzeroDeltaCount !== 0) {
+    issues.push({ path: ['status'], issue: 'NO_TRADE requires every target quantity to be satisfied' })
+  }
+  if (
+    result.status === TargetPlanStatus.Blocked &&
+    result.targets.length > 0 &&
+    result.reason !== TargetPlanReason.BelowMinimumBuyNotional &&
+    result.reason !== TargetPlanReason.InsufficientBuyingPower
+  ) {
+    issues.push({ path: ['targets'], issue: 'blocked target evidence is valid only for notional failures' })
+  }
+  return issues
+}
+
+const targetPlanBuyingPowerIssues = (
+  result: typeof TargetPlanResultBase.Type,
+  facts: TargetPlanSemanticFacts,
+): readonly Schema.FilterIssue[] => {
+  const issues: Schema.FilterIssue[] = []
+  const required = BigInt(result.requiredReferenceBuyNotionalMicros)
+  const available = BigInt(result.availableBuyingPowerMicros)
+  const residual = BigInt(result.residualBuyingPowerMicros)
+  if (required !== facts.requiredReferenceBuyNotional) {
+    issues.push({
+      path: ['requiredReferenceBuyNotionalMicros'],
+      issue: 'must equal the exact aggregate reference notional of positive target deltas',
+    })
+  }
+  const expectedResidual = result.status === TargetPlanStatus.Blocked ? available : available - required
+  if (residual !== expectedResidual) {
+    issues.push({ path: ['residualBuyingPowerMicros'], issue: 'must agree with target-plan buying-power arithmetic' })
+  }
+  if (result.status === TargetPlanStatus.Planned && required > 0n && required > available) {
+    issues.push({ path: ['status'], issue: 'PLANNED requires sufficient current buying power' })
+  }
+  if (
+    result.status === TargetPlanStatus.Blocked &&
+    result.reason === TargetPlanReason.InsufficientBuyingPower &&
+    (facts.positiveDeltaCount === 0 || required === 0n || required <= available)
+  ) {
+    issues.push({
+      path: ['reason'],
+      issue: 'INSUFFICIENT_BUYING_POWER requires a positive target buy and a reference shortfall',
+    })
+  }
+  if (
+    result.status === TargetPlanStatus.Blocked &&
+    result.reason === TargetPlanReason.BelowMinimumBuyNotional &&
+    (facts.positiveDeltaCount === 0 || required === 0n)
+  ) {
+    issues.push({
+      path: ['requiredReferenceBuyNotionalMicros'],
+      issue: 'BELOW_MINIMUM_BUY_NOTIONAL requires a positive target buy and its nonzero reference notional',
+    })
+  }
+  return issues
+}
+
+// The base union decodes every micros string and plain-data field before these pure semantic phases run.
+const targetPlanSemanticIssues = (result: typeof TargetPlanResultBase.Type): readonly Schema.FilterIssue[] => {
+  const facts = deriveTargetPlanSemanticFacts(result)
+  return [
+    ...targetPlanOrderingIssues(result, facts),
+    ...targetQuantityIssues(facts),
+    ...plannedIntentIssues(result, facts),
+    ...targetPlanStatusIssues(result, facts),
+    ...targetPlanBuyingPowerIssues(result, facts),
+  ]
+}
+
+const TargetPlanResultSemanticSchema = TargetPlanResultBase.check(Schema.makeFilter(targetPlanSemanticIssues))
+
+const targetPlanHashIssues = (result: typeof TargetPlanResultSemanticSchema.Type): readonly Schema.FilterIssue[] => {
+  const { outputHash, ...material } = result
+  const expectedHash = Result.try({
+    try: () => canonicalHashV1(material),
+    catch: (cause) => cause,
+  })
+  if (Result.isFailure(expectedHash)) {
+    return [{ path: ['outputHash'], issue: 'target-plan output material must be canonicalizable' }]
+  }
+  return outputHash === expectedHash.success
+    ? []
+    : [{ path: ['outputHash'], issue: 'must match the canonical target-plan output material' }]
+}
+
+export const TargetPlanResultSchema = TargetPlanResultSemanticSchema.check(Schema.makeFilter(targetPlanHashIssues))
+export type TargetPlanResult = typeof TargetPlanResultSchema.Type
+export type PlannedTargetPlanResult = Extract<TargetPlanResult, { readonly status: TargetPlanStatus.Planned }>
+export type NoTradeTargetPlanResult = Extract<TargetPlanResult, { readonly status: TargetPlanStatus.NoTrade }>
+export type BlockedTargetPlanResult = Extract<TargetPlanResult, { readonly status: TargetPlanStatus.Blocked }>
+
+type OutputMaterial = TargetPlanResult extends infer Plan
+  ? Plan extends TargetPlanResult
+    ? Omit<Plan, 'outputHash'>
+    : never
+  : never
+type BlockedOutputMaterial = Extract<OutputMaterial, { readonly status: TargetPlanStatus.Blocked }>
 
 const blocked = (
   inputHash: string,
-  reason: Exclude<TargetPlanReason, TargetPlanReason.TargetsSatisfied>,
+  reason: BlockedTargetPlanReason,
   availableBuyingPowerMicros: string,
   targets: readonly PlannedTargetQuantity[] = [],
   requiredReferenceBuyNotionalMicros = '0',
-): TargetPlanResult =>
-  finish({
-    schemaVersion: 'bayn.paper-reference-target-plan.v1',
-    inputHash,
-    status: TargetPlanStatus.Blocked,
-    reason,
-    targets,
-    intentTargets: [],
-    requiredReferenceBuyNotionalMicros,
-    availableBuyingPowerMicros,
-    residualBuyingPowerMicros: availableBuyingPowerMicros,
-  })
+): BlockedOutputMaterial => ({
+  schemaVersion: 'bayn.paper-reference-target-plan.v1',
+  inputHash,
+  status: TargetPlanStatus.Blocked,
+  reason,
+  targets,
+  intentTargets: [],
+  requiredReferenceBuyNotionalMicros,
+  availableBuyingPowerMicros,
+  residualBuyingPowerMicros: availableBuyingPowerMicros,
+})
 
 const sameStrings = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length && left.every((value, index) => value === right[index])
@@ -194,17 +506,148 @@ const sameStrings = (left: readonly string[], right: readonly string[]): boolean
 const isUnresolved = (status: OrderStatus): boolean =>
   status === OrderStatus.New || status === OrderStatus.PartiallyFilled || status === OrderStatus.Pending
 
-const referencePriceHash = (referencePrices: SignalSessionReferencePrices): string =>
-  canonicalHashV1({
-    schemaVersion: referencePrices.schemaVersion,
-    signalDate: referencePrices.signalDate,
-    observedAt: referencePrices.observedAt,
-    priceMicros: referencePrices.priceMicros,
+const referencePriceMaterial = (referencePrices: SignalSessionReferencePrices) => ({
+  schemaVersion: referencePrices.schemaVersion,
+  signalDate: referencePrices.signalDate,
+  observedAt: referencePrices.observedAt,
+  priceMicros: referencePrices.priceMicros,
+})
+
+interface TargetPlannerHashes {
+  readonly inputHash: string
+  readonly referencePriceHash: string
+  readonly reconciledBrokerStateHash: string
+}
+
+interface TargetPlannerFacts {
+  readonly input: TargetPlannerInput
+  readonly inputHash: string
+  readonly referencePriceHash: string
+  readonly reconciledBrokerStateHash: string
+  readonly targetSymbols: readonly string[]
+  readonly priceSymbols: readonly string[]
+  readonly prices: ReadonlyMap<string, bigint>
+  readonly positions: ReadonlyMap<string, bigint>
+  readonly positionQuantities: readonly bigint[]
+  readonly positionMarketValues: readonly bigint[]
+  readonly observedAt: number
+  readonly submissionCutoffAt: number
+  readonly sourceTimes: readonly number[]
+  readonly priceIncrement: bigint
+  readonly quantityIncrement: bigint
+  readonly minimumBuyNotional: bigint
+  readonly equity: bigint
+  readonly availableBuyingPower: bigint
+}
+
+interface PlannedTargetFact {
+  readonly target: PlannedTargetQuantity
+  readonly referencePrice: bigint
+  readonly delta: bigint
+}
+
+type TargetPlannerReason<Operation extends TargetPlannerIssue['operation']> = Extract<
+  TargetPlannerIssue,
+  { readonly operation: Operation }
+>['reason']
+
+const canonicalizePlannerInputFailure = (
+  reason: TargetPlannerReason<'canonicalize-input'>,
+  message: string,
+  facts: Readonly<Record<string, unknown>> = {},
+  cause?: unknown,
+): TargetPlannerFailure => new TargetPlannerFailure({ operation: 'canonicalize-input', reason, message, facts, cause })
+
+const canonicalizePlannerOutputFailure = (
+  reason: TargetPlannerReason<'canonicalize-output'>,
+  message: string,
+  facts: Readonly<Record<string, unknown>> = {},
+  cause?: unknown,
+): TargetPlannerFailure => new TargetPlannerFailure({ operation: 'canonicalize-output', reason, message, facts, cause })
+
+const decodePlannerInputFailure = (
+  reason: TargetPlannerReason<'decode-input'>,
+  message: string,
+  facts: Readonly<Record<string, unknown>> = {},
+  cause?: unknown,
+): TargetPlannerFailure => new TargetPlannerFailure({ operation: 'decode-input', reason, message, facts, cause })
+
+const decodePlannerOutputFailure = (
+  reason: TargetPlannerReason<'decode-output'>,
+  message: string,
+  facts: Readonly<Record<string, unknown>> = {},
+  cause?: unknown,
+): TargetPlannerFailure => new TargetPlannerFailure({ operation: 'decode-output', reason, message, facts, cause })
+
+const deriveTargetsFailure = (
+  reason: TargetPlannerReason<'derive-targets'>,
+  message: string,
+  facts: Readonly<Record<string, unknown>> = {},
+  cause?: unknown,
+): TargetPlannerFailure => new TargetPlannerFailure({ operation: 'derive-targets', reason, message, facts, cause })
+
+const decodeTargetPlannerInputResult = Schema.decodeUnknownResult(TargetPlannerInputSchema, strictParseOptions)
+const decodeTargetPlanSemanticResult = Schema.decodeUnknownResult(TargetPlanResultSemanticSchema, strictParseOptions)
+
+const deriveTargetPlannerHashes = (
+  input: TargetPlannerInput,
+): Result.Result<TargetPlannerHashes, TargetPlannerFailure> =>
+  Result.try({
+    try: () => ({
+      inputHash: canonicalHashV1(input),
+      referencePriceHash: canonicalHashV1(referencePriceMaterial(input.referencePrices)),
+      reconciledBrokerStateHash: reconciledStateHash(input.brokerState),
+    }),
+    catch: (cause) =>
+      canonicalizePlannerInputFailure(
+        'hash',
+        'validated target-planner evidence is not canonicalizable',
+        { cycleId: input.cycleId },
+        cause,
+      ),
   })
 
-const identityAndSessionMatch = (input: TargetPlannerInput): boolean => {
+const parseTargetPlannerFacts = (input: TargetPlannerInput, hashes: TargetPlannerHashes): TargetPlannerFacts => {
   const targetSymbols = Object.keys(input.targetWeights).sort(compareText)
   const priceSymbols = Object.keys(input.referencePrices.priceMicros).sort(compareText)
+  const prices = new Map(
+    Object.entries(input.referencePrices.priceMicros).map(([symbol, price]) => [symbol, BigInt(price)]),
+  )
+  const positionQuantities = input.brokerState.positions.map((position) => BigInt(position.quantityMicros))
+  const positionMarketValues = input.brokerState.positions.map((position) => BigInt(position.marketValueMicros))
+  const positions = new Map(
+    input.brokerState.positions.map((position, index) => [position.symbol, positionQuantities[index]]),
+  )
+  return {
+    input,
+    ...hashes,
+    targetSymbols,
+    priceSymbols,
+    prices,
+    positions,
+    positionQuantities,
+    positionMarketValues,
+    observedAt: Date.parse(input.observedAt),
+    submissionCutoffAt: Date.parse(input.submissionCutoffAt),
+    sourceTimes: [
+      input.referencePrices.observedAt,
+      input.brokerState.account.observedAt,
+      input.brokerState.positionsObservedAt,
+      input.brokerState.ordersObservedAt,
+      input.brokerState.reconciliation.reconciledAt,
+      ...input.brokerState.positions.map((position) => position.observedAt),
+      ...input.brokerState.orders.map((order) => order.observedAt),
+    ].map(Date.parse),
+    priceIncrement: BigInt(input.precision.priceIncrementMicros),
+    quantityIncrement: BigInt(input.precision.quantityIncrementMicros),
+    minimumBuyNotional: BigInt(input.precision.minimumBuyNotionalMicros),
+    equity: BigInt(input.brokerState.account.equityMicros),
+    availableBuyingPower: BigInt(input.brokerState.account.buyingPowerMicros),
+  }
+}
+
+const identityAndSessionMatch = (facts: TargetPlannerFacts): boolean => {
+  const { input, priceSymbols, targetSymbols } = facts
   const accountId = input.accountId
   return (
     targetSymbols.length > 0 &&
@@ -220,10 +663,48 @@ const identityAndSessionMatch = (input: TargetPlannerInput): boolean => {
   )
 }
 
-const brokerStateIsCurrent = (input: TargetPlannerInput): boolean => {
+const brokerStateIsCoherent = (facts: TargetPlannerFacts): boolean => {
+  const { input, positionMarketValues, positionQuantities, priceIncrement, prices, quantityIncrement } = facts
+  const state = input.brokerState
+  const positionSymbols = state.positions.map((position) => position.symbol)
+  const brokerOrderIds = state.orders.map((order) => order.brokerOrderId)
+  const clientOrderIds = state.orders.map((order) => order.clientOrderId)
+  const latestOrderObservation = state.orders.reduce(
+    (latest, order) => (order.observedAt > latest ? order.observedAt : latest),
+    '',
+  )
+  const unknownOrderCount = state.orders.filter((order) => order.intentId === undefined).length
+  return (
+    new Set(positionSymbols).size === positionSymbols.length &&
+    isStrictlySorted(positionSymbols) &&
+    state.positions.every((position) => position.observedAt === state.positionsObservedAt) &&
+    positionQuantities.every((quantity, index) => {
+      const marketValue = positionMarketValues[index]
+      return (
+        marketValue !== undefined &&
+        (quantity === 0n) === (marketValue === 0n) &&
+        (quantity <= 0n || marketValue > 0n) &&
+        (quantity >= 0n || marketValue < 0n)
+      )
+    }) &&
+    new Set(brokerOrderIds).size === brokerOrderIds.length &&
+    isStrictlySorted(brokerOrderIds) &&
+    new Set(clientOrderIds).size === clientOrderIds.length &&
+    state.orders.every((order) => order.observedAt <= state.ordersObservedAt) &&
+    (state.orders.length === 0 || latestOrderObservation === state.ordersObservedAt) &&
+    state.unknownOrderCount === unknownOrderCount &&
+    input.referencePrices.contentHash === facts.referencePriceHash &&
+    Object.values(input.targetWeights).reduce((total, weight) => total + weight, 0) <= 1 + WEIGHT_SUM_TOLERANCE &&
+    [...prices.values()].every((price) => price % priceIncrement === 0n) &&
+    positionQuantities.every((quantity) => quantity % quantityIncrement === 0n)
+  )
+}
+
+const brokerStateIsCurrent = (facts: TargetPlannerFacts): boolean => {
+  const { input } = facts
   const state = input.brokerState
   const reconciliation = state.reconciliation
-  const stateHash = reconciledStateHash(state)
+  const stateHash = facts.reconciledBrokerStateHash
   return (
     reconciliation.status === ReconciliationStatus.Exact &&
     reconciliation.discrepancies.length === 0 &&
@@ -235,55 +716,74 @@ const brokerStateIsCurrent = (input: TargetPlannerInput): boolean => {
   )
 }
 
-const sourceTimes = (input: TargetPlannerInput): readonly number[] =>
-  [
-    input.referencePrices.observedAt,
-    input.brokerState.account.observedAt,
-    input.brokerState.positionsObservedAt,
-    input.brokerState.ordersObservedAt,
-    input.brokerState.reconciliation.reconciledAt,
-    ...input.brokerState.orders.map((order) => order.observedAt),
-  ].map((value) => Date.parse(value))
-
-const referenceInputsMatch = (input: TargetPlannerInput): boolean => {
-  const priceIncrement = BigInt(input.precision.priceIncrementMicros)
-  const quantityIncrement = BigInt(input.precision.quantityIncrementMicros)
-  const totalWeight = Object.values(input.targetWeights).reduce((total, weight) => total + weight, 0)
-  return (
-    input.referencePrices.contentHash === referencePriceHash(input.referencePrices) &&
-    totalWeight <= 1 + WEIGHT_SUM_TOLERANCE &&
-    Object.values(input.referencePrices.priceMicros).every(
-      (price) => BigInt(price) > 0n && BigInt(price) % priceIncrement === 0n,
-    ) &&
-    input.brokerState.positions.every((position) => BigInt(position.quantityMicros) % quantityIncrement === 0n)
-  )
-}
-
 const referenceNotional = (quantityMicros: bigint, priceMicros: bigint): bigint =>
   (quantityMicros * priceMicros + MICROS - 1n) / MICROS
 
-export const planTargets = (input: TargetPlannerInput): TargetPlanResult => {
-  const inputHash = canonicalHashV1(input)
+const derivePlannedTargetFacts = (
+  facts: TargetPlannerFacts,
+): Result.Result<ReadonlyArray<PlannedTargetFact>, TargetPlannerFailure> =>
+  [...facts.prices.entries()]
+    .sort(([left], [right]) => compareText(left, right))
+    .reduce<Result.Result<ReadonlyArray<PlannedTargetFact>, TargetPlannerFailure>>(
+      (result, [symbol, referencePrice]) =>
+        Result.flatMap(result, (targetFacts) => {
+          const currentQuantity = facts.positions.get(symbol) ?? 0n
+          return Result.map(
+            Result.try({
+              try: () =>
+                desiredQuantityMicros(facts.equity, facts.input.targetWeights[symbol], referencePrice, {
+                  precision: facts.input.precision,
+                }),
+              catch: (cause) =>
+                deriveTargetsFailure(
+                  'precision',
+                  'target quantity could not be represented at the declared precision',
+                  {
+                    cycleId: facts.input.cycleId,
+                    symbol,
+                    targetWeight: facts.input.targetWeights[symbol],
+                  },
+                  cause,
+                ),
+            }),
+            (targetQuantity) => [
+              ...targetFacts,
+              {
+                referencePrice,
+                delta: targetQuantity - currentQuantity,
+                target: {
+                  symbol,
+                  targetWeight: facts.input.targetWeights[symbol],
+                  referencePriceMicros: referencePrice.toString(),
+                  currentQuantityMicros: currentQuantity.toString(),
+                  targetQuantityMicros: targetQuantity.toString(),
+                },
+              },
+            ],
+          )
+        }),
+      Result.succeed([]),
+    )
+
+const selectTargetPlannerPreflightBlock = (facts: TargetPlannerFacts): BlockedOutputMaterial | undefined => {
+  const { input, inputHash } = facts
   const availableBuyingPowerMicros = input.brokerState.account.buyingPowerMicros
-  const observedAt = Date.parse(input.observedAt)
-  if (observedAt >= Date.parse(input.submissionCutoffAt)) {
+  if (facts.observedAt >= facts.submissionCutoffAt) {
     return blocked(inputHash, TargetPlanReason.SubmissionCutoffReached, availableBuyingPowerMicros)
   }
-  if (!identityAndSessionMatch(input)) {
+  if (!identityAndSessionMatch(facts)) {
     return blocked(inputHash, TargetPlanReason.IdentityMismatch, availableBuyingPowerMicros)
   }
-  if (!referenceInputsMatch(input)) {
+  if (!brokerStateIsCoherent(facts)) {
     return blocked(inputHash, TargetPlanReason.InputMismatch, availableBuyingPowerMicros)
   }
-
-  const observations = sourceTimes(input)
-  if (observations.some((source) => source > observedAt)) {
+  if (facts.sourceTimes.some((source) => source > facts.observedAt)) {
     return blocked(inputHash, TargetPlanReason.InputMismatch, availableBuyingPowerMicros)
   }
-  if (observations.some((source) => observedAt - source >= input.maximumInputAgeMs)) {
+  if (facts.sourceTimes.some((source) => facts.observedAt - source >= input.maximumInputAgeMs)) {
     return blocked(inputHash, TargetPlanReason.InputStale, availableBuyingPowerMicros)
   }
-  if (!brokerStateIsCurrent(input)) {
+  if (!brokerStateIsCurrent(facts)) {
     return blocked(inputHash, TargetPlanReason.ReconciliationNotExact, availableBuyingPowerMicros)
   }
   if (input.brokerState.account.status !== AccountStatus.Active) {
@@ -295,89 +795,169 @@ export const planTargets = (input: TargetPlannerInput): TargetPlanResult => {
   if (input.brokerState.orders.some((order) => isUnresolved(order.status))) {
     return blocked(inputHash, TargetPlanReason.UnresolvedOrder, availableBuyingPowerMicros)
   }
-  if (input.brokerState.positions.some((position) => BigInt(position.quantityMicros) < 0n)) {
+  if (facts.positionQuantities.some((quantity) => quantity < 0n)) {
     return blocked(inputHash, TargetPlanReason.ShortPositionNotAllowed, availableBuyingPowerMicros)
   }
-
-  const equityMicros = BigInt(input.brokerState.account.equityMicros)
-  if (equityMicros <= 0n) {
+  if (facts.equity <= 0n) {
     return blocked(inputHash, TargetPlanReason.NonPositiveEquity, availableBuyingPowerMicros)
   }
+  return undefined
+}
 
-  const minimumBuyNotionalMicros = BigInt(input.precision.minimumBuyNotionalMicros)
-  const positions = new Map(
-    input.brokerState.positions.map((position) => [position.symbol, BigInt(position.quantityMicros)]),
-  )
-  const targets = Object.keys(input.targetWeights)
-    .sort(compareText)
-    .map((symbol): PlannedTargetQuantity => {
-      const referencePriceMicros = BigInt(input.referencePrices.priceMicros[symbol])
-      return {
-        symbol,
-        targetWeight: input.targetWeights[symbol],
-        referencePriceMicros: referencePriceMicros.toString(),
-        currentQuantityMicros: (positions.get(symbol) ?? 0n).toString(),
-        targetQuantityMicros: desiredQuantityMicros(equityMicros, input.targetWeights[symbol], referencePriceMicros, {
-          precision: input.precision,
-        }).toString(),
-      }
-    })
-
-  const intents = targets
-    .flatMap((target): readonly ReferenceTargetIntent[] => {
-      const delta = BigInt(target.targetQuantityMicros) - BigInt(target.currentQuantityMicros)
-      if (delta === 0n) return []
-      return [
-        {
-          strategyName: input.strategyName,
-          cycleId: input.cycleId,
-          decisionHash: input.decisionHash,
-          policyHash: input.policyHash,
-          accountId: input.accountId,
-          symbol: target.symbol,
-          side: delta > 0n ? OrderSide.Buy : OrderSide.Sell,
-          orderType: OrderType.Market,
-          timeInForce: TimeInForce.Day,
-          quantityMicros: (delta < 0n ? -delta : delta).toString(),
-          createdAt: input.observedAt,
-        },
-      ]
-    })
+const makeReferenceTargetIntents = (
+  input: TargetPlannerInput,
+  targetFacts: readonly PlannedTargetFact[],
+): readonly ReferenceTargetIntent[] =>
+  targetFacts
+    .flatMap(({ target, delta }): readonly ReferenceTargetIntent[] =>
+      delta === 0n
+        ? []
+        : [
+            {
+              strategyName: input.strategyName,
+              cycleId: input.cycleId,
+              decisionHash: input.decisionHash,
+              policyHash: input.policyHash,
+              accountId: input.accountId,
+              symbol: target.symbol,
+              side: delta > 0n ? OrderSide.Buy : OrderSide.Sell,
+              orderType: OrderType.Market,
+              timeInForce: TimeInForce.Day,
+              quantityMicros: (delta < 0n ? -delta : delta).toString(),
+              createdAt: input.observedAt,
+            },
+          ],
+    )
     .sort((left, right) => {
       if (left.side !== right.side) return left.side === OrderSide.Sell ? -1 : 1
       return compareText(left.symbol, right.symbol)
     })
 
-  const requiredReferenceBuyNotional = intents
-    .filter((intent) => intent.side === OrderSide.Buy)
-    .map((intent) =>
-      referenceNotional(BigInt(intent.quantityMicros), BigInt(input.referencePrices.priceMicros[intent.symbol])),
-    )
-  if (requiredReferenceBuyNotional.some((notional) => notional < minimumBuyNotionalMicros)) {
-    return blocked(inputHash, TargetPlanReason.BelowMinimumBuyNotional, availableBuyingPowerMicros, targets)
-  }
-
-  const requiredBuyingPower = requiredReferenceBuyNotional.reduce((total, value) => total + value, 0n)
-  const availableBuyingPower = BigInt(availableBuyingPowerMicros)
-  if (requiredBuyingPower > 0n && requiredBuyingPower > availableBuyingPower) {
+const selectTargetNotionalBlock = (
+  facts: TargetPlannerFacts,
+  targets: readonly PlannedTargetQuantity[],
+  requiredReferenceBuyNotionals: readonly bigint[],
+): BlockedOutputMaterial | undefined => {
+  const requiredBuyingPower = requiredReferenceBuyNotionals.reduce((total, value) => total + value, 0n)
+  const availableBuyingPowerMicros = facts.input.brokerState.account.buyingPowerMicros
+  if (requiredReferenceBuyNotionals.some((notional) => notional < facts.minimumBuyNotional)) {
     return blocked(
-      inputHash,
-      TargetPlanReason.InsufficientBuyingPower,
+      facts.inputHash,
+      TargetPlanReason.BelowMinimumBuyNotional,
       availableBuyingPowerMicros,
       targets,
       requiredBuyingPower.toString(),
     )
   }
+  return requiredBuyingPower > 0n && requiredBuyingPower > facts.availableBuyingPower
+    ? blocked(
+        facts.inputHash,
+        TargetPlanReason.InsufficientBuyingPower,
+        availableBuyingPowerMicros,
+        targets,
+        requiredBuyingPower.toString(),
+      )
+    : undefined
+}
 
-  return finish({
+const assembleExecutableTargetPlan = (
+  facts: TargetPlannerFacts,
+  targetFacts: readonly PlannedTargetFact[],
+): OutputMaterial => {
+  const targets = targetFacts.map((fact) => fact.target)
+  const intents = makeReferenceTargetIntents(facts.input, targetFacts)
+  const requiredReferenceBuyNotionals = targetFacts
+    .filter((fact) => fact.delta > 0n)
+    .map((fact) => referenceNotional(fact.delta, fact.referencePrice))
+  const requiredBuyingPower = requiredReferenceBuyNotionals.reduce((total, value) => total + value, 0n)
+  const notionalBlock = selectTargetNotionalBlock(facts, targets, requiredReferenceBuyNotionals)
+  if (notionalBlock !== undefined) return notionalBlock
+  const common = {
     schemaVersion: 'bayn.paper-reference-target-plan.v1',
-    inputHash,
-    status: intents.length === 0 ? TargetPlanStatus.NoTrade : TargetPlanStatus.Planned,
-    reason: intents.length === 0 ? TargetPlanReason.TargetsSatisfied : null,
+    inputHash: facts.inputHash,
     targets,
-    intentTargets: intents,
     requiredReferenceBuyNotionalMicros: requiredBuyingPower.toString(),
-    availableBuyingPowerMicros,
-    residualBuyingPowerMicros: (availableBuyingPower - requiredBuyingPower).toString(),
-  })
+    availableBuyingPowerMicros: facts.input.brokerState.account.buyingPowerMicros,
+    residualBuyingPowerMicros: (facts.availableBuyingPower - requiredBuyingPower).toString(),
+  } as const
+  return intents.length === 0
+    ? {
+        ...common,
+        status: TargetPlanStatus.NoTrade,
+        reason: TargetPlanReason.TargetsSatisfied,
+        intentTargets: [],
+      }
+    : {
+        ...common,
+        status: TargetPlanStatus.Planned,
+        reason: null,
+        intentTargets: intents,
+      }
+}
+
+const computeTargetPlan = (facts: TargetPlannerFacts): Result.Result<OutputMaterial, TargetPlannerFailure> => {
+  const preflightBlock = selectTargetPlannerPreflightBlock(facts)
+  return preflightBlock === undefined
+    ? Result.map(derivePlannedTargetFacts(facts), (targetFacts) => assembleExecutableTargetPlan(facts, targetFacts))
+    : Result.succeed(preflightBlock)
+}
+
+const finalizeTargetPlan = (material: OutputMaterial): Result.Result<TargetPlanResult, TargetPlannerFailure> =>
+  Result.flatMap(
+    Result.try({
+      try: () => ({ ...material, outputHash: canonicalHashV1(material) }),
+      catch: (cause) =>
+        canonicalizePlannerOutputFailure(
+          'hash',
+          'target-plan output material is not canonicalizable',
+          { inputHash: material.inputHash, status: material.status },
+          cause,
+        ),
+    }),
+    decodeTargetPlanResult,
+  )
+
+export const decodeTargetPlanResult = (input: unknown): Result.Result<TargetPlanResult, TargetPlannerFailure> =>
+  Result.flatMap(
+    Result.mapError(decodeTargetPlanSemanticResult(input), (cause) =>
+      decodePlannerOutputFailure('contract', 'target-plan output failed its durable contract', {}, cause),
+    ),
+    (decoded) => {
+      const { outputHash, ...material } = decoded
+      return Result.flatMap(
+        Result.try({
+          try: () => canonicalHashV1(material),
+          catch: (cause) =>
+            canonicalizePlannerOutputFailure(
+              'hash',
+              'target-plan output material is not canonicalizable',
+              { inputHash: decoded.inputHash, path: ['outputHash'], status: decoded.status },
+              cause,
+            ),
+        }),
+        (expectedHash) =>
+          expectedHash === outputHash
+            ? Result.succeed(decoded)
+            : Result.fail(
+                decodePlannerOutputFailure('hash', 'target-plan output hash does not match its canonical material', {
+                  expectedHash,
+                  inputHash: decoded.inputHash,
+                  observedHash: outputHash,
+                  path: ['outputHash'],
+                  status: decoded.status,
+                }),
+              ),
+      )
+    },
+  )
+
+export const planTargets = (input: unknown): Result.Result<TargetPlanResult, TargetPlannerFailure> => {
+  const decoded = Result.mapError(decodeTargetPlannerInputResult(input), (cause) =>
+    decodePlannerInputFailure('contract', 'target-planner input failed its durable contract', {}, cause),
+  )
+  return Result.flatMap(decoded, (value) =>
+    Result.flatMap(deriveTargetPlannerHashes(value), (hashes) =>
+      Result.flatMap(computeTargetPlan(parseTargetPlannerFacts(value, hashes)), finalizeTargetPlan),
+    ),
+  )
 }

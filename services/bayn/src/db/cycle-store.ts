@@ -6,7 +6,6 @@ import {
   CycleDraftSchema,
   CycleState,
   CycleTerminalReason,
-  cycleTerminalReasonForTargetPlanBlock,
   cycleDraftMatches,
   cycleDraftOf,
   decodeAutonomousCycle,
@@ -15,6 +14,7 @@ import {
   type CycleCompletionState,
   type CycleDraft,
 } from '../cycle'
+import { cycleTerminalReasonForBlockedTargetPlan } from '../cycle-recovery'
 import { decodeInputManifestArtifact } from '../evidence-contracts'
 import {
   IsoDateSchema,
@@ -456,14 +456,11 @@ const makeCycleStore = Effect.gen(function* () {
     Effect.gen(function* () {
       const storedRows = yield* selectDecisionDocument(sql, cycle.identity.cycleId)
       const storedDocument = storedRows[0]?.document
-      const targetReason = storedDocument?.targetPlan.reason
       if (
         storedRows.length !== 1 ||
         storedDocument === undefined ||
         storedDocument.contentHash !== cycle.bindings.decisionHash ||
-        storedDocument.targetPlan.status !== TargetPlanStatus.Blocked ||
-        targetReason === null ||
-        targetReason === undefined
+        storedDocument.targetPlan.status !== TargetPlanStatus.Blocked
       ) {
         return yield* fail(
           'block',
@@ -471,11 +468,7 @@ const makeCycleStore = Effect.gen(function* () {
           'decision-bound cycle may block only from its exact blocked shadow decision',
         )
       }
-      const expectedReason = yield* Effect.try({
-        try: () => cycleTerminalReasonForTargetPlanBlock(targetReason),
-        catch: () =>
-          storeError('block', 'invariant', 'decision-bound cycle shadow decision has an invalid blocked reason'),
-      })
+      const expectedReason = cycleTerminalReasonForBlockedTargetPlan(storedDocument.targetPlan.reason)
       if (reason !== expectedReason) {
         return yield* fail('block', 'invariant', 'cycle blocked reason must match its exact durable shadow decision')
       }

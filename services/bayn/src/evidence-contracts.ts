@@ -297,45 +297,57 @@ export const DailyPositionMarksArtifactSchema = Schema.Struct({
   ).check(Schema.isMinLength(1)),
 })
 
+const DecisionCovarianceWindowSchema = Schema.Struct({
+  returnCount: PositiveInteger,
+  firstSession: IsoDateSchema,
+  lastSession: IsoDateSchema,
+  sessionsHash: Sha256Schema,
+})
+
+const DecisionHorizonSignalSchema = Schema.Struct({
+  horizonSessions: PositiveInteger,
+  return: Schema.Finite,
+  normalizedTrend: Schema.Finite,
+})
+
+const DecisionSymbolSignalSchema = Schema.Struct({
+  symbol: Symbol,
+  horizons: Schema.Array(DecisionHorizonSignalSchema).check(Schema.isMinLength(1)),
+  dailyVolatility: NonNegativeFinite,
+  annualizedVolatility: NonNegativeFinite,
+  compositeScore: Schema.Finite,
+  positiveScore: NonNegativeFinite,
+  eligible: Schema.Boolean,
+  uncappedWeight: UnitIntervalFinite,
+  cappedWeight: UnitIntervalFinite,
+  targetWeight: UnitIntervalFinite,
+})
+
+export const DecisionPlanSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.risk-balanced-trend-decision-plan.v1'),
+  signalDate: IsoDateSchema,
+  covarianceWindow: DecisionCovarianceWindowSchema,
+  estimatedAnnualizedPortfolioVolatility: NonNegativeFinite,
+  exposureScale: UnitIntervalFinite,
+  targetWeights: Schema.Record(Symbol, UnitIntervalFinite),
+  signals: Schema.Array(DecisionSymbolSignalSchema).check(Schema.isMinLength(1)),
+})
+
+const SignalDecisionSchema = Schema.Struct({
+  schemaVersion: DecisionPlanSchema.fields.schemaVersion,
+  decisionId: Sha256Schema,
+  signalDate: DecisionPlanSchema.fields.signalDate,
+  executionDate: IsoDateSchema,
+  covarianceWindow: DecisionPlanSchema.fields.covarianceWindow,
+  estimatedAnnualizedPortfolioVolatility: DecisionPlanSchema.fields.estimatedAnnualizedPortfolioVolatility,
+  exposureScale: DecisionPlanSchema.fields.exposureScale,
+  targetWeights: DecisionPlanSchema.fields.targetWeights,
+  signals: DecisionPlanSchema.fields.signals,
+})
+
 export const RiskBalancedTrendSignalDecisionsArtifactSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.risk-balanced-trend-decisions.v1'),
-  items: Schema.Array(
-    Schema.Struct({
-      schemaVersion: Schema.Literal('bayn.risk-balanced-trend-decision-plan.v1'),
-      decisionId: Sha256Schema,
-      signalDate: IsoDateSchema,
-      executionDate: IsoDateSchema,
-      covarianceWindow: Schema.Struct({
-        returnCount: PositiveInteger,
-        firstSession: IsoDateSchema,
-        lastSession: IsoDateSchema,
-        sessionsHash: Sha256Schema,
-      }),
-      estimatedAnnualizedPortfolioVolatility: NonNegativeFinite,
-      exposureScale: UnitIntervalFinite,
-      targetWeights: Schema.Record(Symbol, UnitIntervalFinite),
-      signals: Schema.Array(
-        Schema.Struct({
-          symbol: Symbol,
-          horizons: Schema.Array(
-            Schema.Struct({
-              horizonSessions: PositiveInteger,
-              return: Schema.Finite,
-              normalizedTrend: Schema.Finite,
-            }),
-          ).check(Schema.isMinLength(1)),
-          dailyVolatility: NonNegativeFinite,
-          annualizedVolatility: NonNegativeFinite,
-          compositeScore: Schema.Finite,
-          positiveScore: NonNegativeFinite,
-          eligible: Schema.Boolean,
-          uncappedWeight: UnitIntervalFinite,
-          cappedWeight: UnitIntervalFinite,
-          targetWeight: UnitIntervalFinite,
-        }),
-      ).check(Schema.isMinLength(1)),
-    }),
-  ).check(Schema.isMinLength(1)),
+  items: Schema.Array(SignalDecisionSchema).check(Schema.isMinLength(1)),
 })
 
 export const DailyPerformanceSeriesArtifactSchema = Schema.Struct({
@@ -445,7 +457,7 @@ export type CashChange = (typeof CashChangesArtifactSchema.Type)['items'][number
 export type DailyPositionMark = (typeof DailyPositionMarksArtifactSchema.Type)['items'][number]
 export type PositionMark = DailyPositionMark['positions'][number]
 export type SignalDecision = (typeof RiskBalancedTrendSignalDecisionsArtifactSchema.Type)['items'][number]
-export type DecisionPlan = Omit<SignalDecision, 'decisionId' | 'executionDate'>
+export type DecisionPlan = typeof DecisionPlanSchema.Type
 export type SymbolSignal = SignalDecision['signals'][number]
 export type HorizonSignal = SymbolSignal['horizons'][number]
 export type DailyPerformancePoint = (typeof DailyPerformanceSeriesArtifactSchema.Type)['items'][number]

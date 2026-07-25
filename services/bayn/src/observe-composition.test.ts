@@ -1,9 +1,15 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect } from 'effect'
+import { Effect, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import type { BrokerReadShape, MarketCalendarObservation, ReadResult } from './broker/alpaca'
+import {
+  BrokerReadError,
+  BrokerReadErrorKind,
+  type BrokerReadShape,
+  type MarketCalendarObservation,
+  type ReadResult,
+} from './broker/alpaca'
 import { unusedAssetBySymbol } from './broker/alpaca-test-support'
 import {
   CycleState,
@@ -15,7 +21,9 @@ import {
   makeExecutionCalendarObservation,
 } from './cycle'
 import type { CycleStoreShape } from './db/cycle-store'
-import type { PaperStoreShape } from './db/paper-store'
+import { PaperStoreError, type PaperStoreShape } from './db/paper-store'
+import { operationalError } from './errors'
+import { WriterFenceError } from './execution/writer-fence'
 import { canonicalHashV1 } from './hash'
 import type { MarketDataService, MarketDataSnapshot } from './market-data'
 import {
@@ -32,7 +40,7 @@ import {
   type AccountSnapshot,
   type Reconciliation,
 } from './paper'
-import type { ReconciliationPassResult } from './reconciler'
+import { ReconciliationError, type ReconciliationPassResult } from './reconciler'
 import { reconciledStateHash } from './reconciliation'
 import { Reason } from './risk'
 import { fixtureProtocol, makeSnapshot } from './test-fixtures'
@@ -71,13 +79,25 @@ const calendar: MarketCalendarObservation = {
   normalizedResponseHash: canonicalHashV1(calendarMaterial),
 }
 
-const executionPolicy = makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel)
-const executionCalendar = makeExecutionCalendarObservation({
+const executionPolicyResult = makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel)
+expect(Result.isSuccess(executionPolicyResult)).toBe(true)
+if (Result.isFailure(executionPolicyResult)) {
+  expect.unreachable(executionPolicyResult.failure.message)
+}
+const executionPolicy = executionPolicyResult.success
+
+const executionCalendarResult = makeExecutionCalendarObservation({
   schemaVersion: calendar.schemaVersion,
   source: calendar.source,
   ...calendar.sessions[1],
 })
-const identity = makeCycleIdentity({
+expect(Result.isSuccess(executionCalendarResult)).toBe(true)
+if (Result.isFailure(executionCalendarResult)) {
+  expect.unreachable(executionCalendarResult.failure.message)
+}
+const executionCalendar = executionCalendarResult.success
+
+const identityResult = makeCycleIdentity({
   schemaVersion: 'bayn.autonomous-cycle-identity.v1',
   strategyName: 'risk-balanced-trend',
   qualificationRunId: 'c'.repeat(64),
@@ -91,7 +111,13 @@ const identity = makeCycleIdentity({
   executionCalendarHash: executionCalendar.executionCalendarHash,
   executionPolicy,
 })
-const window = makeCycleWindow(
+expect(Result.isSuccess(identityResult)).toBe(true)
+if (Result.isFailure(identityResult)) {
+  expect.unreachable(identityResult.failure.message)
+}
+const identity = identityResult.success
+
+const windowResult = makeCycleWindow(
   {
     calendar_version: 'fixture-calendar-v2',
     session_date: signalDate,
@@ -101,7 +127,18 @@ const window = makeCycleWindow(
   executionCalendar,
   executionPolicy,
 )
-const draft = makeCycleDraft(identity, window)
+expect(Result.isSuccess(windowResult)).toBe(true)
+if (Result.isFailure(windowResult)) {
+  expect.unreachable(windowResult.failure.message)
+}
+const window = windowResult.success
+
+const draftResult = makeCycleDraft(identity, window)
+expect(Result.isSuccess(draftResult)).toBe(true)
+if (Result.isFailure(draftResult)) {
+  expect.unreachable(draftResult.failure.message)
+}
+const draft = draftResult.success
 const cycle = Effect.runSync(
   decodeAutonomousCycle({
     ...draft,
@@ -357,29 +394,145 @@ describe('OBSERVE runtime composition', () => {
   test('fails closed when same-pass reconciliation observes another authority generation', async () => {
     const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, fixtureProtocol.universe))
     let strategyCalls = 0
-    const exit = await Effect.runPromiseExit(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(evaluatedAt))
-        return yield* buildObserveCycleDecision({
-          authorityGenerationHash: generationHash,
-          cycle,
-          executionModel: fixtureProtocol.executionModel,
-          marketCalendar: calendarRead([]),
-          marketData: marketData([]),
-          policy,
-          reconcile: Effect.succeed(reconciliationResult('9'.repeat(64))),
-          strategy: {
-            currentDecision: () => {
-              strategyCalls += 1
-              return { decision, priceMicros }
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(evaluatedAt))
+          return yield* buildObserveCycleDecision({
+            authorityGenerationHash: generationHash,
+            cycle,
+            executionModel: fixtureProtocol.executionModel,
+            marketCalendar: calendarRead([]),
+            marketData: marketData([]),
+            policy,
+            reconcile: Effect.succeed(reconciliationResult('9'.repeat(64))),
+            strategy: {
+              currentDecision: () => {
+                strategyCalls += 1
+                return { decision, priceMicros }
+              },
             },
-          },
-        })
-      }).pipe(Effect.provide(TestClock.layer())),
+          })
+        }).pipe(Effect.provide(TestClock.layer())),
+      ),
     )
 
-    expect(exit.toString()).toContain('same-pass reconciliation did not return the configured OBSERVE authority')
+    expect(failure).toEqual({
+      _tag: 'ObserveDecisionCompositionFailure',
+      operation: 'observe-authority',
+      message: 'same-pass reconciliation did not return the configured OBSERVE authority',
+      cause: undefined,
+    })
     expect(strategyCalls).toBe(0)
+  })
+
+  test('closes read and reconciliation failures with their operational classifications and exact causes', async () => {
+    const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, fixtureProtocol.universe))
+    const snapshotCause = operationalError('market-data', 'load', 'snapshot fixture failed')
+    const calendarRootCause = { _tag: 'CalendarTransportFixtureFailure' }
+    const calendarCause = new BrokerReadError({
+      operation: 'market-calendar',
+      kind: BrokerReadErrorKind.Transport,
+      message: 'calendar fixture failed',
+      retryable: true,
+      cause: calendarRootCause,
+    })
+    const reconciliationReadCause = new BrokerReadError({
+      operation: 'orders',
+      kind: BrokerReadErrorKind.Transport,
+      message: 'reconciliation broker read fixture failed',
+      retryable: true,
+    })
+    const reconciliationStoreCause = new PaperStoreError({
+      operation: 'reconciliation',
+      failure: 'query',
+      message: 'reconciliation store fixture failed',
+    })
+    const reconciliationFenceCause = new WriterFenceError({
+      operation: 'transaction',
+      failure: 'unavailable',
+      message: 'reconciliation fence fixture failed',
+    })
+    const reconciliationDomainCause = new ReconciliationError({
+      operation: 'snapshot',
+      message: 'reconciliation snapshot fixture failed',
+    })
+    const cases = [
+      {
+        expectedComponent: 'market-data',
+        expectedOperation: 'load-snapshot-publication',
+        cause: snapshotCause,
+        marketData: {
+          ...marketData([]),
+          loadSnapshotPublication: () => Effect.fail(snapshotCause),
+        },
+        marketCalendar: calendarRead([]),
+        reconcile: Effect.succeed(reconciliationResult()),
+      },
+      {
+        expectedComponent: 'market-data',
+        expectedOperation: 'market-calendar',
+        cause: calendarCause,
+        marketData: marketData([]),
+        marketCalendar: () => Effect.fail(calendarCause),
+        reconcile: Effect.succeed(reconciliationResult()),
+      },
+      {
+        expectedComponent: 'market-data',
+        expectedOperation: 'reconciliation',
+        cause: reconciliationReadCause,
+        marketData: marketData([]),
+        marketCalendar: calendarRead([]),
+        reconcile: Effect.fail(reconciliationReadCause),
+      },
+      {
+        expectedComponent: 'database',
+        expectedOperation: 'reconciliation',
+        cause: reconciliationStoreCause,
+        marketData: marketData([]),
+        marketCalendar: calendarRead([]),
+        reconcile: Effect.fail(reconciliationStoreCause),
+      },
+      {
+        expectedComponent: 'database',
+        expectedOperation: 'reconciliation',
+        cause: reconciliationFenceCause,
+        marketData: marketData([]),
+        marketCalendar: calendarRead([]),
+        reconcile: Effect.fail(reconciliationFenceCause),
+      },
+      {
+        expectedComponent: 'strategy',
+        expectedOperation: 'reconciliation',
+        cause: reconciliationDomainCause,
+        marketData: marketData([]),
+        marketCalendar: calendarRead([]),
+        reconcile: Effect.fail(reconciliationDomainCause),
+      },
+    ] as const
+
+    for (const testCase of cases) {
+      const failure = await Effect.runPromise(
+        Effect.flip(
+          buildObserveCycleDecision({
+            authorityGenerationHash: generationHash,
+            cycle,
+            executionModel: fixtureProtocol.executionModel,
+            marketCalendar: testCase.marketCalendar,
+            marketData: testCase.marketData,
+            policy,
+            reconcile: testCase.reconcile,
+            strategy: { currentDecision: () => ({ decision, priceMicros }) },
+          }),
+        ),
+      )
+
+      expect(failure._tag).toBe('OperationalError')
+      if (failure._tag !== 'OperationalError') return expect.unreachable(failure._tag)
+      expect(failure.component).toBe(testCase.expectedComponent)
+      expect(failure.operation).toBe(testCase.expectedOperation)
+      expect(failure.cause).toBe(testCase.cause)
+    }
   })
 
   test('fails PAPER startup before authority initialization or autonomous work can begin', async () => {
