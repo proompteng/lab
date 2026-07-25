@@ -310,6 +310,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'mcp_servers: {}',
     'hooks_auto_accept: false',
     'memory_char_limit: 4400',
+    'code_execution:\n  timeout: 120\n  max_tool_calls: 100',
     'Treat /opt/data/workspace/tuslagch/lab as the project root and default working directory',
     'Use the authenticated tuslagch GitHub identity, codex/ branches, and pull requests',
     'platform_toolsets:\n  cli: [file, memory, terminal, todo]\n  api_server: [file, memory, terminal, todo]\n  discord: [file, memory, terminal, todo]',

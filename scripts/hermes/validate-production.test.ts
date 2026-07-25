@@ -114,6 +114,18 @@ test('rejects a gateway working directory above the lab checkout', async () => {
   )
 })
 
+test('rejects a reduced code-execution tool-call budget', async () => {
+  const files = await loadProductionFiles()
+  files.config = files.config.replace(
+    'code_execution:\n  timeout: 120\n  max_tool_calls: 100',
+    'code_execution:\n  timeout: 120\n  max_tool_calls: 10',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.config}: missing production invariant \"code_execution:\\n  timeout: 120\\n  max_tool_calls: 100\"`,
+  )
+})
+
 test('rejects a gateway container started outside the lab checkout', async () => {
   const files = await loadProductionFiles()
   files.statefulSet = files.statefulSet.replace(
