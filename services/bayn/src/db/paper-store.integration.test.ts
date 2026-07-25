@@ -2877,10 +2877,29 @@ describePostgres('paper accounting persistence', () => {
             reconciledAt: resolvedObservedAt,
           })
 
-          const rows = yield* sql<{ discrepancy_count: number; status: string }>`
-            SELECT status, jsonb_array_length(discrepancies)::integer AS discrepancy_count
+          const rows = yield* sql<{
+            reconciliation_id: string
+            content_hash: string
+            discrepancy_count: number
+            status: string
+          }>`
+            SELECT
+              reconciliation_id,
+              content_hash,
+              status,
+              jsonb_array_length(discrepancies)::integer AS discrepancy_count
             FROM reconciliations
-            ORDER BY reconciled_at
+            ORDER BY reconciled_at, reconciliation_id COLLATE "C"
+          `
+          const [latest] = yield* sql<{
+            reconciliation_id: string
+            content_hash: string
+            status: string
+          }>`
+            SELECT reconciliation_id, content_hash, status
+            FROM reconciliations
+            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+            LIMIT 1
           `
           const [authority] = yield* sql<{
             effective: string
@@ -2903,6 +2922,7 @@ describePostgres('paper accounting persistence', () => {
             ongoing,
             resolved,
             rows,
+            latest,
             authority,
             mutateReconciliation,
             mismatchObservedAt,
@@ -2936,12 +2956,33 @@ describePostgres('paper accounting persistence', () => {
       })
       expect(result.resolved.reconciliation.status).toBe(ReconciliationStatus.Exact)
       expect(result.resolved.reconciliation.discrepancies).toEqual([])
-      expect(result.rows).toEqual([
+      expect(
+        result.rows.map(({ status, discrepancy_count: discrepancyCount }) => ({
+          status,
+          discrepancy_count: discrepancyCount,
+        })),
+      ).toEqual([
         { status: ReconciliationStatus.Exact, discrepancy_count: 0 },
         { status: ReconciliationStatus.Discrepancy, discrepancy_count: 1 },
         { status: ReconciliationStatus.Discrepancy, discrepancy_count: 1 },
         { status: ReconciliationStatus.Exact, discrepancy_count: 0 },
       ])
+      expect(
+        result.rows.map(({ reconciliation_id: reconciliationId, content_hash: contentHash }) => ({
+          reconciliationId,
+          contentHash,
+        })),
+      ).toEqual(
+        [result.exact, result.mismatch, result.ongoing, result.resolved].map(({ reconciliation }) => ({
+          reconciliationId: reconciliation.reconciliationId,
+          contentHash: reconciliation.contentHash,
+        })),
+      )
+      expect(result.latest).toEqual({
+        reconciliation_id: result.resolved.reconciliation.reconciliationId,
+        content_hash: result.resolved.reconciliation.contentHash,
+        status: ReconciliationStatus.Exact,
+      })
       expect(result.authority).toEqual({
         effective: 'OBSERVE',
         kill_state: 'ACTIVE',
