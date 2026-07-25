@@ -758,12 +758,25 @@ export const validatePersistedRunEvidence = (
     if (accounts.length > 0) {
       for (const [code, name] of fixedAccountNames) {
         const expectedId = stableU128('bayn-account-v1', result.runId, name)
-        if (!reconciled.accountsById.has(expectedId)) {
+        const persistedAccount = reconciled.accountsById.get(expectedId)
+        if (persistedAccount === undefined) {
           return yield* failLedgerValidation(
             'check-run',
             'record-set-mismatch',
             `run ${result.runId} is missing required ${name} account`,
             { runId: result.runId, kind: 'account', code, expectedId },
+          )
+        }
+        if (persistedAccount.code !== code) {
+          return yield* failLedgerValidation(
+            'check-run',
+            'invalid-account-metadata',
+            `run ${result.runId} required ${name} account has code ${persistedAccount.code}; expected ${code}`,
+            {
+              runId: result.runId,
+              account: persistedAccount,
+              expected: { deterministicId: expectedId, code },
+            },
           )
         }
       }

@@ -196,6 +196,39 @@ describe('ledger plan Result algebra', () => {
     }
   })
 
+  test('rejects a transferless fixed account with the generic inventory code', () => {
+    const { result, plan } = evaluationPlan()
+    const persisted = materialize(plan)
+    const fixedAccountIndex = persisted.accounts.findIndex((account) => account.code === AccountCode.cashYieldIncome)
+    assert.notEqual(fixedAccountIndex, -1, 'ledger plan must contain the deterministic cash-yield-income account')
+    const fixedAccount = persisted.accounts[fixedAccountIndex]
+    expect(
+      persisted.transfers.some(
+        (transfer) => transfer.debit_account_id === fixedAccount.id || transfer.credit_account_id === fixedAccount.id,
+      ),
+    ).toBeFalse()
+    const invalidAccounts = persisted.accounts.map((account, index) =>
+      index === fixedAccountIndex ? { ...account, code: AccountCode.inventory } : account,
+    )
+    const receipt = {
+      runId: result.runId,
+      accountCount: persisted.accounts.length,
+      transferCount: persisted.transfers.length,
+      exact: true,
+    } as const
+
+    expect(
+      assertFailure(validatePersistedRunEvidence(receipt, ledger, invalidAccounts, persisted.transfers)),
+    ).toMatchObject({
+      operation: 'check-run',
+      reason: 'invalid-account-metadata',
+      material: {
+        account: { id: fixedAccount.id, code: AccountCode.inventory },
+        expected: { deterministicId: fixedAccount.id, code: AccountCode.cashYieldIncome },
+      },
+    })
+  })
+
   test('does not claim event-derived identity without the expected plan', () => {
     const { result, plan } = evaluationPlan()
     const persisted = materialize(plan)
