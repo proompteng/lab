@@ -61,12 +61,7 @@ describe('Bayn application composition', () => {
           observedAt: new Date(yield* Clock.currentTimeMillis).toISOString(),
           outcome: 'NO_PUBLICATION',
         })
-        const fiber = yield* Effect.never.pipe(
-          Effect.onInterrupt(() => Effect.sync(() => void (backgroundInterrupted = true))),
-          Effect.forkScoped({ startImmediately: true }),
-        )
-        yield* Effect.yieldNow
-        return fiber
+        return Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => void (backgroundInterrupted = true))))
       })
     const reconciliation = Effect.sync(() => {
       calls.push('reconciliation')
@@ -105,10 +100,10 @@ describe('Bayn application composition', () => {
     let startupQualificationRunId: string | undefined
     let startupStrategyProtocolHash: string | undefined
     const autonomousCycleStartup = ({ qualificationRunId, strategyProtocolHash }: AutonomousCycleStartupInput) =>
-      Effect.gen(function* () {
+      Effect.sync(() => {
         startupQualificationRunId = qualificationRunId
         startupStrategyProtocolHash = strategyProtocolHash
-        return yield* Effect.never.pipe(Effect.forkScoped({ startImmediately: true }))
+        return Effect.never
       })
     const reconciliation = Effect.sync(() => {
       throw new Error('stop after pinned composition proof')

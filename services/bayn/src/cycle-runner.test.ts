@@ -1272,16 +1272,17 @@ describe('autonomous cycle runner', () => {
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
+        const loop = yield* startAutonomousCycleLoop({
+          context: Effect.succeed(context()),
+          observePass: (observation) => Effect.sync(() => observations.push(observation)),
+          pollIntervalMs: 100,
+        })
         const fiber = yield* provide(
-          startAutonomousCycleLoop({
-            context: Effect.succeed(context()),
-            observePass: (observation) => Effect.sync(() => observations.push(observation)),
-            pollIntervalMs: 100,
-          }),
+          loop.pipe(Effect.forkScoped({ startImmediately: true })),
           brokerRead(() => Effect.die(new Error('missing publication must not read the broker'))),
           cycleStore(control),
           marketDataService(Effect.succeed({ outcome: 'MISSING', observedAt: '2026-01-30T21:20:00.000Z' })),
-        )
+        ).pipe(Effect.forkScoped({ startImmediately: true }))
         yield* Effect.yieldNow
         yield* Fiber.interrupt(fiber)
       }),
@@ -1781,16 +1782,17 @@ describe('autonomous cycle runner', () => {
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
+        const loop = yield* startAutonomousCycleLoop({
+          context: Effect.succeed(context()),
+          observePass: (observation) => Effect.sync(() => observations.push(observation)),
+          pollIntervalMs: 100,
+        })
         const fiber = yield* provide(
-          startAutonomousCycleLoop({
-            context: Effect.succeed(context()),
-            observePass: (observation) => Effect.sync(() => observations.push(observation)),
-            pollIntervalMs: 100,
-          }),
+          loop.pipe(Effect.forkScoped({ startImmediately: true })),
           read,
           store,
           marketDataService(Effect.succeed(finalizedPublication()), finalizedPublicationInspection()),
-        )
+        ).pipe(Effect.forkScoped({ startImmediately: true }))
         yield* Effect.yieldNow
         expect(control.acquisitions).toHaveLength(1)
         yield* TestClock.adjust(99)
@@ -1840,16 +1842,17 @@ describe('autonomous cycle runner', () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
+          const loop = yield* startAutonomousCycleLoop({
+            context: Effect.succeed(context()),
+            observePass: ignorePass,
+            pollIntervalMs: 100,
+          })
           yield* provide(
-            startAutonomousCycleLoop({
-              context: Effect.succeed(context()),
-              observePass: ignorePass,
-              pollIntervalMs: 100,
-            }),
+            loop,
             brokerRead(() => Effect.die(new Error('in-flight publication read must not reach the broker'))),
             cycleStore(control),
             marketDataService(latest),
-          )
+          ).pipe(Effect.forkScoped({ startImmediately: true }))
           yield* Deferred.await(started)
         }),
       ),
@@ -1871,12 +1874,13 @@ describe('autonomous cycle runner', () => {
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
+        const loop = yield* startAutonomousCycleLoop({
+          context: Effect.succeed(context()),
+          observePass: (observation) => Effect.sync(() => observations.push(observation)),
+          pollIntervalMs: 100,
+        })
         const fiber = yield* provide(
-          startAutonomousCycleLoop({
-            context: Effect.succeed(context()),
-            observePass: (observation) => Effect.sync(() => observations.push(observation)),
-            pollIntervalMs: 100,
-          }),
+          loop.pipe(Effect.forkScoped({ startImmediately: true })),
           brokerRead(() => Effect.die(new Error('empty FINALIZED discovery must not read the broker'))),
           cycleStore(control),
           marketDataService(discovery),
@@ -1943,12 +1947,13 @@ describe('autonomous cycle runner', () => {
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
+        const loop = yield* startAutonomousCycleLoop({
+          context: Effect.succeed(context()),
+          observePass: (observation) => Effect.sync(() => observations.push(observation)),
+          pollIntervalMs: 100,
+        })
         const fiber = yield* provide(
-          startAutonomousCycleLoop({
-            context: Effect.succeed(context()),
-            observePass: (observation) => Effect.sync(() => observations.push(observation)),
-            pollIntervalMs: 100,
-          }),
+          loop.pipe(Effect.forkScoped({ startImmediately: true })),
           read,
           store,
           marketDataService(discovery),
@@ -2023,12 +2028,13 @@ describe('autonomous cycle runner', () => {
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(active.window.submissionOpenAt))
+        const loop = yield* startAutonomousCycleLoop({
+          context: Effect.succeed(context(undefined, buildDecision)),
+          observePass: (observation) => Effect.sync(() => observations.push(observation)),
+          pollIntervalMs: 100,
+        })
         const fiber = yield* provide(
-          startAutonomousCycleLoop({
-            context: Effect.succeed(context(undefined, buildDecision)),
-            observePass: (observation) => Effect.sync(() => observations.push(observation)),
-            pollIntervalMs: 100,
-          }),
+          loop.pipe(Effect.forkScoped({ startImmediately: true })),
           brokerRead(() => Effect.die({ _tag: 'UnexpectedDecisionBuildBrokerRead' })),
           store,
           marketDataService(Effect.die({ _tag: 'UnexpectedDecisionBuildMarketDataRead' })),
@@ -2074,19 +2080,20 @@ describe('autonomous cycle runner', () => {
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
-        const fiber = yield* provide(
-          startAutonomousCycleLoop({
-            context: Effect.suspend(() => {
-              contextLoads += 1
-              return contextLoads === 1 ? Effect.fail(contextFailure) : Effect.succeed(context())
-            }),
-            observePass: (observation) => Effect.sync(() => observations.push(observation)),
-            pollIntervalMs: 100,
+        const loop = yield* startAutonomousCycleLoop({
+          context: Effect.suspend(() => {
+            contextLoads += 1
+            return contextLoads === 1 ? Effect.fail(contextFailure) : Effect.succeed(context())
           }),
+          observePass: (observation) => Effect.sync(() => observations.push(observation)),
+          pollIntervalMs: 100,
+        })
+        const fiber = yield* provide(
+          loop,
           brokerRead(() => Effect.succeed({ value: monthEndCalendar, evidence })),
           cycleStore(control),
           marketDataService(Effect.succeed(finalizedPublication())),
-        )
+        ).pipe(Effect.forkScoped({ startImmediately: true }))
         yield* Effect.yieldNow
         expect(contextLoads).toBe(1)
         expect(control.acquisitions).toEqual([])
@@ -2133,16 +2140,17 @@ describe('autonomous cycle runner', () => {
     const exit = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
+          const loop = yield* startAutonomousCycleLoop({
+            context: Effect.die(defect),
+            observePass: (observation) => Effect.sync(() => observations.push(observation)),
+            pollIntervalMs: 100,
+          })
           const fiber = yield* provide(
-            startAutonomousCycleLoop({
-              context: Effect.die(defect),
-              observePass: (observation) => Effect.sync(() => observations.push(observation)),
-              pollIntervalMs: 100,
-            }),
+            loop,
             brokerRead(() => Effect.die(new Error('defective context must not read the broker'))),
             cycleStore(control),
             marketDataService(Effect.die(new Error('defective context must not inspect publications'))),
-          )
+          ).pipe(Effect.forkScoped({ startImmediately: true }))
           return yield* Fiber.await(fiber)
         }),
       ),
@@ -2160,16 +2168,17 @@ describe('autonomous cycle runner', () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
+          const loop = yield* startAutonomousCycleLoop({
+            context: Effect.fail(contextFailure),
+            observePass: ignorePass,
+            pollIntervalMs: 100,
+          })
           const fiber = yield* provide(
-            startAutonomousCycleLoop({
-              context: Effect.fail(contextFailure),
-              observePass: ignorePass,
-              pollIntervalMs: 100,
-            }),
+            loop,
             brokerRead(() => Effect.die(new Error('failed context must not read the broker'))),
             cycleStore(control),
             marketDataService(Effect.die(new Error('failed context must not inspect finalized publications'))),
-          )
+          ).pipe(Effect.forkScoped({ startImmediately: true }))
           yield* Effect.yieldNow
           return yield* Fiber.interrupt(fiber)
         }),
@@ -2184,16 +2193,11 @@ describe('autonomous cycle runner', () => {
       const failure = await Effect.runPromise(
         Effect.flip(
           Effect.scoped(
-            provide(
-              startAutonomousCycleLoop({
-                context: Effect.succeed(context()),
-                observePass: ignorePass,
-                pollIntervalMs,
-              }),
-              brokerRead(() => Effect.die(new Error('invalid config must not read the broker'))),
-              cycleStore(control),
-              marketDataService(Effect.die(new Error('invalid config must not inspect publications'))),
-            ),
+            startAutonomousCycleLoop({
+              context: Effect.succeed(context()),
+              observePass: ignorePass,
+              pollIntervalMs,
+            }),
           ),
         ),
       )

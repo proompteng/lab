@@ -50,6 +50,8 @@ export interface ReconciliationPassResult {
   readonly riskContext: ReconciliationRiskContext
 }
 
+export type ReconciliationPassError = BrokerReadError | PaperStoreError | ReconciliationError | WriterFenceError
+
 export class ReconciliationError extends Data.TaggedError('ReconciliationError')<{
   readonly operation: 'pagination' | 'normalization' | 'snapshot'
   readonly message: string
@@ -333,7 +335,7 @@ const run = (
 
 export const runOnce: Effect.Effect<
   ReconciliationPassResult,
-  BrokerReadError | PaperStoreError | ReconciliationError | WriterFenceError,
+  ReconciliationPassError,
   BrokerRead | PaperStore | WriterFence
 > = Effect.gen(function* () {
   const read = yield* BrokerRead

@@ -1801,5 +1801,8 @@ export const makeEvidenceStoreLayer = <RMigration, RStore>(
     }),
   )
 
+export const EvidenceStoreFromPostgres = (config: Pick<RuntimeConfig, 'operationTimeoutMs'>) =>
+  makeEvidenceStoreLayer(config, migrations, makeEvidenceStore)
+
 export const EvidenceStoreLive = (config: RuntimeConfig) =>
-  makeEvidenceStoreLayer(config, migrations, makeEvidenceStore).pipe(Layer.provideMerge(PostgresClientLive(config)))
+  EvidenceStoreFromPostgres(config).pipe(Layer.provideMerge(PostgresClientLive(config)))

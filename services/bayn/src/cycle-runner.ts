@@ -1,4 +1,4 @@
-import { Clock, Data, Duration, Effect, Fiber, Option, Result, Schedule, Scope } from 'effect'
+import { Clock, Data, Duration, Effect, Option, Result, Schedule } from 'effect'
 
 import {
   BrokerRead,
@@ -1157,35 +1157,32 @@ const observationTime = Clock.currentTimeMillis.pipe(Effect.map((millis) => new 
 
 export const startAutonomousCycleLoop = <E, R>(
   options: AutonomousCycleLoopOptions<E, R>,
-): Effect.Effect<
-  Fiber.Fiber<void, never>,
-  CycleRunnerError,
-  BrokerRead | CycleStore | MarketData | R | Scope.Scope
-> => {
+): Effect.Effect<Effect.Effect<void, never, BrokerRead | CycleStore | MarketData | R>, CycleRunnerError> => {
   if (!Number.isSafeInteger(options.pollIntervalMs) || options.pollIntervalMs <= 0) {
     return Effect.fail(
       runnerError('configure', 'invalid-config', 'cycle loop interval must be a positive safe integer'),
     )
   }
-  return runLoopPass(options.context).pipe(
-    Effect.flatMap((result) =>
-      observationTime.pipe(
-        Effect.flatMap((observedAt) => {
-          const observation: CyclePassObservation = { outcome: 'SUCCEEDED', observedAt, result }
-          return options.observePass(observation).pipe(Effect.andThen(logCyclePass(observation)))
-        }),
+  return Effect.succeed(
+    runLoopPass(options.context).pipe(
+      Effect.flatMap((result) =>
+        observationTime.pipe(
+          Effect.flatMap((observedAt) => {
+            const observation: CyclePassObservation = { outcome: 'SUCCEEDED', observedAt, result }
+            return options.observePass(observation).pipe(Effect.andThen(logCyclePass(observation)))
+          }),
+        ),
       ),
-    ),
-    Effect.catch((error) =>
-      observationTime.pipe(
-        Effect.flatMap((observedAt) => {
-          const observation: CyclePassObservation = { outcome: 'FAILED', observedAt, error }
-          return options.observePass(observation).pipe(Effect.andThen(logCyclePass(observation)))
-        }),
+      Effect.catch((error) =>
+        observationTime.pipe(
+          Effect.flatMap((observedAt) => {
+            const observation: CyclePassObservation = { outcome: 'FAILED', observedAt, error }
+            return options.observePass(observation).pipe(Effect.andThen(logCyclePass(observation)))
+          }),
+        ),
       ),
+      Effect.repeat(Schedule.spaced(Duration.millis(options.pollIntervalMs))),
+      Effect.asVoid,
     ),
-    Effect.repeat(Schedule.spaced(Duration.millis(options.pollIntervalMs))),
-    Effect.asVoid,
-    Effect.forkScoped({ startImmediately: true }),
   )
 }

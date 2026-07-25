@@ -981,8 +981,9 @@ const makeMarketData = (
       inspect: Effect.gen(function* () {
         const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
         const [manifests, sessions] = yield* Effect.all([loadManifests, loadSessions], { concurrency: 2 })
-        const rows = decodeSnapshotRows([], sessions, manifests)
-        return yield* verify('inspect', () => verifyFinalizedCalendar(rows, request(observedAt)))
+        return yield* verify('inspect', () =>
+          verifyFinalizedCalendar(decodeSnapshotRows([], sessions, manifests), request(observedAt)),
+        )
       }).pipe(
         Effect.mapError((cause) =>
           marketDataOperationError('inspect', 'failed to inspect finalized Signal calendar', cause),

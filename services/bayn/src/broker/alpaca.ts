@@ -635,7 +635,7 @@ const RuntimeOptionsSchema = Schema.Struct({
   retryAttempts: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 })),
 })
 
-type Decoder<A> = (input: unknown) => Effect.Effect<A, unknown>
+type Decoder<A> = (input: unknown) => Effect.Effect<A, Schema.SchemaError>
 
 const decodeAccount = Schema.decodeUnknownEffect(AccountResponseSchema, responseParseOptions)
 const decodeAccountConfiguration = Schema.decodeUnknownEffect(AccountConfigurationResponseSchema, responseParseOptions)

@@ -56,6 +56,7 @@ import {
 } from './accounting-rows'
 import {
   makeReconciliation,
+  ReconciliationStoreError,
   restrictAuthority,
   type BrokerSnapshot,
   type IntentBinding,
@@ -332,11 +333,29 @@ const run = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, PaperStoreError, R> =>
   effect.pipe(
-    Effect.mapError((cause) =>
-      cause instanceof PaperStoreError
-        ? cause
-        : error(operation, Schema.isSchemaError(cause) ? 'decode' : 'query', 'paper evidence operation failed', cause),
-    ),
+    Effect.mapError((cause) => {
+      if (cause instanceof PaperStoreError) return cause
+      if (cause instanceof ReconciliationStoreError) {
+        return error(
+          operation,
+          cause.failure === 'ledger'
+            ? 'ledger'
+            : cause.failure === 'decode'
+              ? 'decode'
+              : cause.failure === 'invariant'
+                ? 'invariant'
+                : 'query',
+          'paper reconciliation operation failed',
+          cause,
+        )
+      }
+      return error(
+        operation,
+        Schema.isSchemaError(cause) ? 'decode' : 'query',
+        'paper evidence operation failed',
+        cause,
+      )
+    }),
   )
 
 const fail = (

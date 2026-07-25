@@ -19,13 +19,18 @@ const isRetryableSqlAcquisition = (error: unknown): boolean => {
   )
 }
 
-export const acquireSqlLayer = <A, E, R>(layer: Layer.Layer<A, E, R>) =>
-  Layer.build(layer).pipe(
-    Effect.retry({
-      times: 2,
-      schedule: Schedule.spaced(Duration.seconds(1)),
-      while: isRetryableSqlAcquisition,
-    }),
+export const acquireSqlLayer = <A, E, R>(layer: Layer.Layer<A, E, R>) => Layer.build(retrySqlLayer(layer))
+
+export const retrySqlLayer = <A, E, R>(layer: Layer.Layer<A, E, R>): Layer.Layer<A, E, R> =>
+  Layer.unwrap(
+    Layer.build(layer).pipe(
+      Effect.retry({
+        times: 2,
+        schedule: Schedule.spaced(Duration.seconds(1)),
+        while: isRetryableSqlAcquisition,
+      }),
+      Effect.map(Layer.succeedContext),
+    ),
   )
 
 export const withinDeadline = <A, R>(

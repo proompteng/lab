@@ -257,11 +257,11 @@ const responseEvidence = (
   observedAt: string,
 ): MutationEvidence => ({ requestId, status, contentHash, observedAt })
 
-const withDeadline = <A>(
+const withDeadline = <A, E>(
   operation: MutationOperation,
   requestHash: string,
   timeoutMs: number,
-  effect: Effect.Effect<A, unknown>,
+  effect: Effect.Effect<A, E>,
 ): Effect.Effect<A, BrokerMutationError> =>
   effect.pipe(
     Effect.timeout(`${timeoutMs} millis`),
@@ -316,8 +316,10 @@ export const makeMutation = (
       Effect.mapError((cause) => configurationError('Alpaca mutation account verification failed', cause)),
     )
 
-    const submit = (input: Intent) =>
-      Effect.gen(function* () {
+    const submit = Effect.fn('BrokerMutation.submit', {
+      attributes: { 'broker.system': 'alpaca', 'broker.operation': MutationOperation.Submit },
+    })(
+      function* (input: Intent) {
         const intent = yield* decodeIntent(input).pipe(
           Effect.mapError((cause) => invalidRequest(MutationOperation.Submit, 'invalid order intent', cause)),
         )
@@ -448,15 +450,14 @@ export const makeMutation = (
             return { requestHash, order, evidence } satisfies SubmitReceipt
           }),
         )
-      }).pipe(
-        Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders),
-        Effect.withSpan('broker.mutation', {
-          attributes: { 'broker.system': 'alpaca', 'broker.operation': MutationOperation.Submit },
-        }),
-      )
+      },
+      (effect) => effect.pipe(Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders)),
+    )
 
-    const cancel = (brokerOrderId: string) =>
-      Effect.gen(function* () {
+    const cancel = Effect.fn('BrokerMutation.cancel', {
+      attributes: { 'broker.system': 'alpaca', 'broker.operation': MutationOperation.Cancel },
+    })(
+      function* (brokerOrderId: string) {
         const orderId = yield* Schema.decodeUnknownEffect(Uuid)(brokerOrderId).pipe(
           Effect.mapError((cause) => invalidRequest(MutationOperation.Cancel, 'invalid Alpaca order ID', cause)),
         )
@@ -517,12 +518,9 @@ export const makeMutation = (
             return { requestHash, brokerOrderId: orderId, evidence } satisfies CancelReceipt
           }),
         )
-      }).pipe(
-        Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders),
-        Effect.withSpan('broker.mutation', {
-          attributes: { 'broker.system': 'alpaca', 'broker.operation': MutationOperation.Cancel },
-        }),
-      )
+      },
+      (effect) => effect.pipe(Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders)),
+    )
 
     return { submit, cancel }
   })

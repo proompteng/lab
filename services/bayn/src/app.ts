@@ -1,4 +1,4 @@
-import { Clock, Effect, Fiber, Layer, Ref, Scope } from 'effect'
+import { Clock, Effect, Fiber, Layer, Ref } from 'effect'
 
 import type { RuntimeConfig } from './config'
 import { makeStrategyProtocolHash } from './contracts'
@@ -21,9 +21,11 @@ export interface AutonomousCycleStartupInput {
   readonly recordPass: RecordAutonomousCyclePass
 }
 
-export type AutonomousCycleStartup = (
+export type AutonomousCycleLoop = Effect.Effect<void>
+
+export type AutonomousCycleStartup<R = never> = (
   input: AutonomousCycleStartupInput,
-) => Effect.Effect<Fiber.Fiber<void, never>, OperationalError, Scope.Scope>
+) => Effect.Effect<AutonomousCycleLoop, OperationalError, R>
 
 const cyclePassError = (observation: Extract<AutonomousCyclePassObservation, { readonly result: 'FAILURE' }>): string =>
   `cycleRunner: ${observation.operation}/${observation.failure}: ${observation.message}`
@@ -64,13 +66,13 @@ const recordAutonomousCyclePass = (
     }
   })
 
-export const run = (
+export const run = <R = never>(
   config: RuntimeConfig,
   strategy: Strategy,
   reconciliation: Effect.Effect<void> = Effect.void,
   broker?: BrokerProbe,
-  autonomousCycleStartup?: AutonomousCycleStartup,
-): Effect.Effect<never, OperationalError, MarketData | Journal | EvidenceStore | CycleObservability> =>
+  autonomousCycleStartup?: AutonomousCycleStartup<R>,
+): Effect.Effect<never, OperationalError, MarketData | Journal | EvidenceStore | CycleObservability | R> =>
   Effect.scoped(
     Effect.gen(function* () {
       const evidenceStore = yield* EvidenceStore
@@ -88,11 +90,12 @@ export const run = (
             ...current,
             autonomousCycleLoop: { ...current.autonomousCycleLoop, startedAt },
           }))
-          autonomousCycleFiber = yield* autonomousCycleStartup({
+          const autonomousCycleLoop = yield* autonomousCycleStartup({
             qualificationRunId: initialized.evidence.evaluation.runId,
             strategyProtocolHash: makeStrategyProtocolHash(strategy.provenance.strategy),
             recordPass: (observation) => recordAutonomousCyclePass(state, observation),
           })
+          autonomousCycleFiber = yield* autonomousCycleLoop.pipe(Effect.forkScoped({ startImmediately: true }))
         }
       }
       yield* monitor(config, state, broker, autonomousCycleFiber).pipe(Effect.forkScoped({ startImmediately: true }))
