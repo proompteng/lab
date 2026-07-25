@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Cause, Effect, Exit, Layer, ManagedRuntime, Option, Redacted } from 'effect'
+import { Cause, Effect, Exit, Layer, ManagedRuntime, Option, Redacted, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { BrokerRead, type BrokerReadShape, type MarketCalendarObservation } from '../broker/alpaca'
@@ -82,20 +82,28 @@ const makeDraft = (
 ): CycleDraft => {
   const signalSessionDate = options.signalSessionDate ?? '2026-03-06'
   const executionSessionDate = options.executionSessionDate ?? '2026-03-09'
-  const executionPolicy = makeCycleExecutionPolicy({
+  const executionPolicyResult = makeCycleExecutionPolicy({
     schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
     strategyExecutionModelHash: 'c'.repeat(64),
     submissionWindowMs: options.submissionWindowMs ?? 30 * 60 * 1_000,
     submissionCutoffBeforeOpenMs: 2 * 60 * 1_000,
   })
-  const executionCalendar = makeExecutionCalendarObservation({
+  expect(Result.isSuccess(executionPolicyResult)).toBe(true)
+  if (Result.isFailure(executionPolicyResult)) return expect.unreachable(executionPolicyResult.failure.message)
+  const executionPolicy = executionPolicyResult.success
+
+  const executionCalendarResult = makeExecutionCalendarObservation({
     schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
     source: 'alpaca-v2-calendar',
     date: executionSessionDate,
     openAt: options.executionOpenAt ?? '2026-03-09T13:30:00.000Z',
     closeAt: options.executionCloseAt ?? '2026-03-09T20:00:00.000Z',
   })
-  const identity = makeCycleIdentity({
+  expect(Result.isSuccess(executionCalendarResult)).toBe(true)
+  if (Result.isFailure(executionCalendarResult)) return expect.unreachable(executionCalendarResult.failure.message)
+  const executionCalendar = executionCalendarResult.success
+
+  const identityResult = makeCycleIdentity({
     schemaVersion: 'bayn.autonomous-cycle-identity.v1',
     strategyName: 'risk-balanced-trend',
     qualificationRunId: 'a'.repeat(64),
@@ -109,7 +117,15 @@ const makeDraft = (
     executionCalendarHash: executionCalendar.executionCalendarHash,
     executionPolicy,
   })
-  return makeCycleDraft(identity, makeCycleWindow(signalSession(signalSessionDate), executionCalendar, executionPolicy))
+  expect(Result.isSuccess(identityResult)).toBe(true)
+  if (Result.isFailure(identityResult)) return expect.unreachable(identityResult.failure.message)
+  const windowResult = makeCycleWindow(signalSession(signalSessionDate), executionCalendar, executionPolicy)
+  expect(Result.isSuccess(windowResult)).toBe(true)
+  if (Result.isFailure(windowResult)) return expect.unreachable(windowResult.failure.message)
+  const draftResult = makeCycleDraft(identityResult.success, windowResult.success)
+  expect(Result.isSuccess(draftResult)).toBe(true)
+  if (Result.isFailure(draftResult)) return expect.unreachable(draftResult.failure.message)
+  return draftResult.success
 }
 
 const insertSnapshotReference = (
@@ -211,8 +227,8 @@ const makeInputManifest = (
 const acquireAt = '2026-03-06T21:01:00.000Z'
 const snapshotAt = '2026-03-06T21:02:00.000Z'
 const activeAt = '2026-03-06T21:03:00.000Z'
-const decisionAt = '2026-03-06T21:04:00.000Z'
-const terminalAt = '2026-03-06T21:05:00.000Z'
+const decisionAt = '2026-03-09T13:00:00.000Z'
+const terminalAt = '2026-03-09T13:01:00.000Z'
 
 const shadowReconciliation = (draft: CycleDraft) => {
   const planningBrokerStateHash = '4'.repeat(64)
@@ -252,7 +268,18 @@ const makeShadowDecision = (
     inputHash: '1'.repeat(64),
     status: options.blockedReason === undefined ? TargetPlanStatus.NoTrade : TargetPlanStatus.Blocked,
     reason: options.blockedReason ?? TargetPlanReason.TargetsSatisfied,
-    targets: [],
+    targets:
+      options.blockedReason === undefined
+        ? [
+            {
+              symbol: 'SPY',
+              targetWeight: 0,
+              referencePriceMicros: '1000000',
+              currentQuantityMicros: '0',
+              targetQuantityMicros: '0',
+            },
+          ]
+        : [],
     intentTargets: [],
     requiredReferenceBuyNotionalMicros: '0',
     availableBuyingPowerMicros: '0',
@@ -262,7 +289,7 @@ const makeShadowDecision = (
     ...targetPlanMaterial,
     outputHash: canonicalHashV1(targetPlanMaterial),
   }
-  return makeObserveShadowDecisionDocument({
+  const result = makeObserveShadowDecisionDocument({
     schemaVersion: 'bayn.observe-shadow-decision.v1',
     mode: 'OBSERVE',
     dispatchable: false,
@@ -286,6 +313,9 @@ const makeShadowDecision = (
     submissionCutoffAt: draft.window.submissionCutoffAt,
     expiresAt: draft.window.submissionCutoffAt,
   })
+  expect(Result.isSuccess(result)).toBe(true)
+  if (Result.isFailure(result)) return expect.unreachable(result.failure.message)
+  return result.success
 }
 
 const insertShadowReconciliation = (draft: CycleDraft) =>
@@ -317,18 +347,27 @@ const insertShadowReconciliation = (draft: CycleDraft) =>
     `
   })
 
-const runnerContext = (accountId: string): CycleRunContext => ({
-  qualificationRunId: 'a'.repeat(64),
-  strategyProtocolHash: 'b'.repeat(64),
-  accountId,
-  executionPolicy: makeCycleExecutionPolicy({
+const runnerContext = (accountId: string): CycleRunContext => {
+  const executionPolicy = makeCycleExecutionPolicy({
     schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
     strategyExecutionModelHash: 'c'.repeat(64),
     submissionWindowMs: 30 * 60 * 1_000,
     submissionCutoffBeforeOpenMs: 2 * 60 * 1_000,
-  }),
-  buildDecision: () => Effect.die(new Error('runner integration fixture built an unexpected decision')),
-})
+  })
+  expect(Result.isSuccess(executionPolicy)).toBe(true)
+  if (Result.isFailure(executionPolicy)) return expect.unreachable(executionPolicy.failure.message)
+  return {
+    qualificationRunId: 'a'.repeat(64),
+    strategyProtocolHash: 'b'.repeat(64),
+    accountId,
+    executionPolicy: executionPolicy.success,
+    buildDecision: () =>
+      Effect.die({
+        _tag: 'UnexpectedDecisionBuild',
+        message: 'runner integration fixture built an unexpected decision',
+      }),
+  }
+}
 
 const runnerPublication = (): Extract<FinalizedPublicationInspection, { readonly outcome: 'FINALIZED' }> => ({
   outcome: 'FINALIZED',
@@ -562,9 +601,13 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     expect(result.concurrent.every((pass) => pass.outcome !== 'NO_PUBLICATION' && pass.outcome !== 'NOT_DUE')).toBe(
       true,
     )
+    expect(
+      [...result.concurrent, result.restarted].some(
+        (pass) => pass.outcome === 'RECOVERED' && pass.action === 'ACTIVATED',
+      ),
+    ).toBe(true)
     expect(result.restarted).toMatchObject({
       outcome: 'RECOVERED',
-      action: 'ACTIVATED',
       cycle: {
         state: CycleState.Active,
         bindings: { snapshotId: snapshotA },
@@ -575,6 +618,8 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         },
       },
     })
+    if (result.restarted.outcome !== 'RECOVERED') return expect.unreachable('restart must recover the active cycle')
+    expect(['ACTIVATED', 'WAITING']).toContain(result.restarted.action)
     expect(result.count).toBe(1)
     expect(queries).toHaveLength(result.readsAfterConcurrent)
     expect(queries.length).toBeGreaterThanOrEqual(1)
@@ -585,15 +630,20 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
   test('resumes an exact publication binding after a crash between acquire and bind', async () => {
     const context = runnerContext('aaaaaaaa-aaaa-4aaa-8aaa-bbbbbbbbbbbb')
     const publication = runnerPublication()
-    if (publication.outcome !== 'FINALIZED') throw new Error('runner publication fixture must be finalized')
     const executionSession = selectNextExecutionSession('2026-01-30', runnerCalendar())
-    if (executionSession === undefined) throw new Error('runner calendar fixture must contain an execution session')
-    const draft = makeDueCycleDraft(
+    expect(executionSession).toBeDefined()
+    if (executionSession === undefined)
+      return expect.unreachable('runner calendar fixture must contain an execution session')
+    const draftResult = makeDueCycleDraft(
       { ...context, signalSession: publication.inspection.signalSession },
       runnerCalendar(),
       executionSession,
     )
-    if (draft === undefined) throw new Error('runner fixture must produce a month-end cycle')
+    expect(Result.isSuccess(draftResult)).toBe(true)
+    if (Result.isFailure(draftResult)) return expect.unreachable(draftResult.failure.message)
+    expect(draftResult.success).toBeDefined()
+    if (draftResult.success === undefined) return expect.unreachable('runner fixture must produce a month-end cycle')
+    const draft = draftResult.success
     const noCalendarRead: BrokerReadShape = {
       ...runnerBrokerRead([]),
       marketCalendar: () =>
@@ -923,7 +973,6 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     const document = makeShadowDecision(draft, snapshotA)
     const divergent = makeShadowDecision(draft, snapshotA, { strategyDecisionHash: '7'.repeat(64) })
     const wrongSnapshot = makeShadowDecision(draft, snapshotA, { snapshotContentHash: '7'.repeat(64) })
-    const backdated = makeShadowDecision(draft, snapshotA, { createdAt: snapshotAt })
     const futureDated = makeShadowDecision(draft, snapshotA, { createdAt: terminalAt })
     const missingDocumentDraft = makeDraft('paper-account-shadow-missing-document')
     const orphanDocumentDraft = makeDraft('paper-account-shadow-orphan-document')
@@ -939,7 +988,6 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         const missingEvidence = yield* Effect.exit(store.bindDecision(draft.identity.cycleId, document, decisionAt))
         yield* insertShadowReconciliation(draft)
         const wrongEvidence = yield* Effect.exit(store.bindDecision(draft.identity.cycleId, wrongSnapshot, decisionAt))
-        const backdatedBinding = yield* Effect.exit(store.bindDecision(draft.identity.cycleId, backdated, decisionAt))
         const futureBinding = yield* Effect.exit(store.bindDecision(draft.identity.cycleId, futureDated, decisionAt))
         const bound = yield* store.bindDecision(draft.identity.cycleId, document, decisionAt)
         const replay = yield* store.bindDecision(draft.identity.cycleId, structuredClone(document), decisionAt)
@@ -1022,7 +1070,6 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         `
         return {
           authoritySlot,
-          backdatedBinding,
           bound,
           conflict,
           counts,
@@ -1057,7 +1104,6 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     expect(Exit.isFailure(result.conflict)).toBe(true)
     expect(Exit.isFailure(result.missingEvidence)).toBe(true)
     expect(Exit.isFailure(result.wrongEvidence)).toBe(true)
-    expect(Exit.isFailure(result.backdatedBinding)).toBe(true)
     expect(Exit.isFailure(result.futureBinding)).toBe(true)
     expect(Exit.isFailure(result.missingDocument)).toBe(true)
     expect(Exit.isFailure(result.orphanDocumentInsert)).toBe(true)

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Option } from 'effect'
+import { Effect, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -12,6 +12,7 @@ import {
   makeCycleWindow,
   makeExecutionCalendarObservation,
   type AutonomousCycle,
+  type CycleExecutionPolicy,
 } from './cycle'
 import { measurePublicationFreshness, runCyclePublicationReadiness } from './cycle-readiness'
 import { CycleStore, type CycleStoreShape } from './db/cycle-store'
@@ -23,12 +24,19 @@ import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputMan
 const signalCalendarVersion = 'signal-XNYS-2026-v1'
 const snapshotId = 'd'.repeat(64)
 
-const executionPolicy = makeCycleExecutionPolicy({
-  schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
-  strategyExecutionModelHash: '3'.repeat(64),
-  submissionWindowMs: 30 * 60 * 1_000,
-  submissionCutoffBeforeOpenMs: 2 * 60 * 1_000,
-})
+const executionPolicyFixture = (): CycleExecutionPolicy => {
+  const result = makeCycleExecutionPolicy({
+    schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
+    strategyExecutionModelHash: '3'.repeat(64),
+    submissionWindowMs: 30 * 60 * 1_000,
+    submissionCutoffBeforeOpenMs: 2 * 60 * 1_000,
+  })
+  expect(Result.isSuccess(result)).toBe(true)
+  if (Result.isFailure(result)) return expect.unreachable(result.failure.message)
+  return result.success
+}
+
+const executionPolicy = executionPolicyFixture()
 
 const makeCycle = (): AutonomousCycle => {
   const signalSession = {
@@ -44,6 +52,8 @@ const makeCycle = (): AutonomousCycle => {
     openAt: '2026-02-02T14:30:00.000Z',
     closeAt: '2026-02-02T21:00:00.000Z',
   })
+  expect(Result.isSuccess(executionCalendar)).toBe(true)
+  if (Result.isFailure(executionCalendar)) return expect.unreachable(executionCalendar.failure.message)
   const identity = makeCycleIdentity({
     schemaVersion: 'bayn.autonomous-cycle-identity.v1',
     strategyName: 'risk-balanced-trend',
@@ -52,15 +62,22 @@ const makeCycle = (): AutonomousCycle => {
     accountId: 'paper-account',
     signalSessionDate: signalSession.session_date,
     signalCalendarVersion,
-    executionSessionDate: executionCalendar.executionSessionDate,
-    executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
-    executionCalendarSource: executionCalendar.executionCalendarSource,
-    executionCalendarHash: executionCalendar.executionCalendarHash,
+    executionSessionDate: executionCalendar.success.executionSessionDate,
+    executionCalendarSchemaVersion: executionCalendar.success.executionCalendarSchemaVersion,
+    executionCalendarSource: executionCalendar.success.executionCalendarSource,
+    executionCalendarHash: executionCalendar.success.executionCalendarHash,
     executionPolicy,
   })
-  const draft = makeCycleDraft(identity, makeCycleWindow(signalSession, executionCalendar, executionPolicy))
+  expect(Result.isSuccess(identity)).toBe(true)
+  if (Result.isFailure(identity)) return expect.unreachable(identity.failure.message)
+  const window = makeCycleWindow(signalSession, executionCalendar.success, executionPolicy)
+  expect(Result.isSuccess(window)).toBe(true)
+  if (Result.isFailure(window)) return expect.unreachable(window.failure.message)
+  const draft = makeCycleDraft(identity.success, window.success)
+  expect(Result.isSuccess(draft)).toBe(true)
+  if (Result.isFailure(draft)) return expect.unreachable(draft.failure.message)
   return {
-    ...draft,
+    ...draft.success,
     state: CycleState.Pending,
     bindings: {},
     stateVersion: 1,
@@ -131,7 +148,9 @@ const makeInputManifest = (finalizedAt = '2026-01-30T21:15:00.000Z'): InputManif
   return { ...material, hash: canonicalHashV1(material) }
 }
 
-const finalizedPublication = (manifest = makeInputManifest()): FinalizedPublicationInspection => ({
+const finalizedPublication = (
+  manifest = makeInputManifest(),
+): Extract<FinalizedPublicationInspection, { readonly outcome: 'FINALIZED' }> => ({
   outcome: 'FINALIZED',
   observedAt: '2026-01-30T21:20:00.000Z',
   inspection: {
@@ -361,8 +380,7 @@ describe('autonomous cycle finalized-publication readiness', () => {
     })
     expect(control).toMatchObject({ binds: 0, blocks: 0 })
     const publication = finalizedPublication()
-    if (publication.outcome !== 'FINALIZED') throw new Error('finalized fixture must contain an inspection')
-    expect(() =>
+    expect(
       measurePublicationFreshness(
         cycle,
         {
@@ -371,7 +389,13 @@ describe('autonomous cycle finalized-publication readiness', () => {
         },
         '2026-01-30T21:20:00.000Z',
       ),
-    ).toThrow('verified Signal session material does not match the cycle window')
+    ).toEqual(
+      Result.fail({
+        _tag: 'PublicationSignalCloseMismatch',
+        expectedSignalCloseAt: cycle.window.signalCloseAt,
+        observedSignalCloseAt: '2026-01-30T18:00:00.000Z',
+      }),
+    )
 
     const boundCycle: AutonomousCycle = {
       ...cycle,

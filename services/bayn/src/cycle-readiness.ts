@@ -1,6 +1,12 @@
-import { Clock, Data, Effect } from 'effect'
+import { Clock, Data, Effect, Result } from 'effect'
 
-import { CycleState, CycleTerminalReason, signalSessionCloseAt, type AutonomousCycle } from './cycle'
+import {
+  CycleState,
+  CycleTerminalReason,
+  signalSessionCloseAt,
+  type AutonomousCycle,
+  type CycleConstructionFailure,
+} from './cycle'
 import { CycleStore, type CycleMutationReceipt, type CycleStoreError, type CycleStoreShape } from './db/cycle-store'
 import type { OperationalError } from './errors'
 import { MarketData, type MarketDataInspection, type MarketDataService } from './market-data'
@@ -46,40 +52,113 @@ const readinessError = (
 
 const currentTime = Clock.currentTimeMillis.pipe(Effect.map((millis) => new Date(millis).toISOString()))
 
-const elapsed = (later: string, earlier: string, name: string): number => {
+export type PublicationFreshnessFailure =
+  | {
+      readonly _tag: 'PublicationSessionMismatch'
+      readonly expectedSessionDate: string
+      readonly observedAsOfSession: string
+      readonly observedLastSession: string
+    }
+  | {
+      readonly _tag: 'PublicationCalendarMismatch'
+      readonly expectedCalendarVersion: string
+      readonly observedCalendarVersion: string
+    }
+  | {
+      readonly _tag: 'PublicationSignalSessionMismatch'
+      readonly expectedSessionDate: string
+      readonly expectedCalendarVersion: string
+      readonly observedSessionDate: string
+      readonly observedCalendarVersion: string
+    }
+  | {
+      readonly _tag: 'PublicationSignalCloseInvalid'
+      readonly cause: CycleConstructionFailure
+    }
+  | {
+      readonly _tag: 'PublicationSignalCloseMismatch'
+      readonly expectedSignalCloseAt: string
+      readonly observedSignalCloseAt: string
+    }
+  | {
+      readonly _tag: 'PublicationElapsedInvalid'
+      readonly measurement: 'data-age' | 'publication-delay'
+      readonly later: string
+      readonly earlier: string
+      readonly milliseconds: number
+    }
+
+type BoundPublicationFailure = {
+  readonly _tag: 'BoundPublicationSnapshotMissing'
+  readonly cycleId: string
+}
+
+const elapsed = (
+  later: string,
+  earlier: string,
+  measurement: Extract<PublicationFreshnessFailure, { readonly _tag: 'PublicationElapsedInvalid' }>['measurement'],
+): Result.Result<number, PublicationFreshnessFailure> => {
   const milliseconds = Date.parse(later) - Date.parse(earlier)
-  if (!Number.isSafeInteger(milliseconds) || milliseconds < 0) {
-    throw new TypeError(`${name} must be a non-negative safe millisecond duration`)
-  }
-  return milliseconds
+  return !Number.isSafeInteger(milliseconds) || milliseconds < 0
+    ? Result.fail({ _tag: 'PublicationElapsedInvalid', measurement, later, earlier, milliseconds })
+    : Result.succeed(milliseconds)
 }
 
 export const measurePublicationFreshness = (
   cycle: AutonomousCycle,
   inspection: MarketDataInspection,
   observedAt: string,
-): PublicationFreshness => {
+): Result.Result<PublicationFreshness, PublicationFreshnessFailure> => {
   const snapshot = inspection.manifest.finalizedSnapshot
   if (
     snapshot.asOfSession !== cycle.identity.signalSessionDate ||
     snapshot.lastSession !== cycle.identity.signalSessionDate
   ) {
-    throw new TypeError('finalized Signal publication does not end at the cycle signal session')
+    return Result.fail({
+      _tag: 'PublicationSessionMismatch',
+      expectedSessionDate: cycle.identity.signalSessionDate,
+      observedAsOfSession: snapshot.asOfSession,
+      observedLastSession: snapshot.lastSession,
+    })
   }
   if (snapshot.calendarVersion !== cycle.identity.signalCalendarVersion) {
-    throw new TypeError('finalized Signal publication does not match the cycle Signal calendar')
+    return Result.fail({
+      _tag: 'PublicationCalendarMismatch',
+      expectedCalendarVersion: cycle.identity.signalCalendarVersion,
+      observedCalendarVersion: snapshot.calendarVersion,
+    })
   }
   if (
     inspection.signalSession.session_date !== cycle.identity.signalSessionDate ||
-    inspection.signalSession.calendar_version !== cycle.identity.signalCalendarVersion ||
-    signalSessionCloseAt(inspection.signalSession) !== cycle.window.signalCloseAt
+    inspection.signalSession.calendar_version !== cycle.identity.signalCalendarVersion
   ) {
-    throw new TypeError('verified Signal session material does not match the cycle window')
+    return Result.fail({
+      _tag: 'PublicationSignalSessionMismatch',
+      expectedSessionDate: cycle.identity.signalSessionDate,
+      expectedCalendarVersion: cycle.identity.signalCalendarVersion,
+      observedSessionDate: inspection.signalSession.session_date,
+      observedCalendarVersion: inspection.signalSession.calendar_version,
+    })
   }
-  return {
-    dataAgeMs: elapsed(observedAt, snapshot.finalizedAt, 'Signal data age'),
-    publicationDelayMs: elapsed(snapshot.finalizedAt, cycle.window.signalCloseAt, 'Signal publication delay'),
-  }
+  return Result.flatMap(
+    Result.mapError(
+      signalSessionCloseAt(inspection.signalSession),
+      (cause): PublicationFreshnessFailure => ({ _tag: 'PublicationSignalCloseInvalid', cause }),
+    ),
+    (observedSignalCloseAt) =>
+      observedSignalCloseAt !== cycle.window.signalCloseAt
+        ? Result.fail({
+            _tag: 'PublicationSignalCloseMismatch',
+            expectedSignalCloseAt: cycle.window.signalCloseAt,
+            observedSignalCloseAt,
+          })
+        : Result.flatMap(elapsed(observedAt, snapshot.finalizedAt, 'data-age'), (dataAgeMs) =>
+            Result.map(
+              elapsed(snapshot.finalizedAt, cycle.window.signalCloseAt, 'publication-delay'),
+              (publicationDelayMs) => ({ dataAgeMs, publicationDelayMs }),
+            ),
+          ),
+  )
 }
 
 const boundResult = (
@@ -87,19 +166,29 @@ const boundResult = (
   receipt: CycleMutationReceipt,
   observedAt: string,
   freshness?: PublicationFreshness,
-): CyclePublicationReadiness => {
+): Result.Result<CyclePublicationReadiness, BoundPublicationFailure> => {
   const snapshotId = receipt.cycle.bindings.snapshotId
   if (snapshotId === undefined) {
-    throw new TypeError('successful finalized-publication binding did not retain a snapshot ID')
+    return Result.fail({ _tag: 'BoundPublicationSnapshotMissing', cycleId: receipt.cycle.identity.cycleId })
   }
-  return {
+  return Result.succeed({
     outcome,
     observedAt,
     cycle: receipt.cycle,
     snapshotId,
     ...(freshness === undefined ? {} : { freshness }),
-  }
+  })
 }
+
+const measureFreshness = (
+  cycle: AutonomousCycle,
+  inspection: MarketDataInspection,
+  observedAt: string,
+  message: string,
+): Effect.Effect<PublicationFreshness, CycleReadinessError> =>
+  Effect.fromResult(measurePublicationFreshness(cycle, inspection, observedAt)).pipe(
+    Effect.mapError((cause) => readinessError('measure-freshness', 'contract', message, cause)),
+  )
 
 const blockMissedPublication = (
   store: CycleStoreShape,
@@ -134,11 +223,12 @@ export const bindFinalizedCyclePublication = (
           ),
         )
       }
-      const freshness = yield* Effect.try({
-        try: () => measurePublicationFreshness(cycle, inspection, observedAt),
-        catch: (cause) =>
-          readinessError('measure-freshness', 'contract', 'finalized Signal publication freshness is invalid', cause),
-      })
+      const freshness = yield* measureFreshness(
+        cycle,
+        inspection,
+        observedAt,
+        'finalized Signal publication freshness is invalid',
+      )
       return { outcome: 'ALREADY_BOUND', observedAt, cycle, snapshotId, freshness }
     }
     if (cycle.state !== CycleState.Pending) {
@@ -158,11 +248,12 @@ export const bindFinalizedCyclePublication = (
         ),
       )
     }
-    const freshness = yield* Effect.try({
-      try: () => measurePublicationFreshness(cycle, inspection, observedAt),
-      catch: (cause) =>
-        readinessError('measure-freshness', 'contract', 'finalized Signal publication freshness is invalid', cause),
-    })
+    const freshness = yield* measureFreshness(
+      cycle,
+      inspection,
+      observedAt,
+      'finalized Signal publication freshness is invalid',
+    )
     const receipt = yield* store
       .bindSnapshot(cycle.identity.cycleId, inspection.manifest, observedAt)
       .pipe(
@@ -175,16 +266,18 @@ export const bindFinalizedCyclePublication = (
           ),
         ),
       )
-    return yield* Effect.try({
-      try: () => boundResult(receipt.changed ? 'BOUND' : 'ALREADY_BOUND', receipt, observedAt, freshness),
-      catch: (cause) =>
+    return yield* Effect.fromResult(
+      boundResult(receipt.changed ? 'BOUND' : 'ALREADY_BOUND', receipt, observedAt, freshness),
+    ).pipe(
+      Effect.mapError((cause) =>
         readinessError(
           'bind-publication',
           'contract',
           'finalized Signal publication binding returned an invalid cycle',
           cause,
         ),
-    })
+      ),
+    )
   })
 
 const inspectBoundPublication = (
@@ -231,16 +324,12 @@ const inspectBoundPublication = (
             )
           }
           const observedAt = yield* currentTime
-          const freshness = yield* Effect.try({
-            try: () => measurePublicationFreshness(cycle, publication.inspection, observedAt),
-            catch: (cause) =>
-              readinessError(
-                'measure-freshness',
-                'contract',
-                'bound finalized Signal publication freshness is invalid',
-                cause,
-              ),
-          })
+          const freshness = yield* measureFreshness(
+            cycle,
+            publication.inspection,
+            observedAt,
+            'bound finalized Signal publication freshness is invalid',
+          )
           return {
             outcome: 'ALREADY_BOUND',
             observedAt,

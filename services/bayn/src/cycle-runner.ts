@@ -14,6 +14,7 @@ import {
   makeCycleWindow,
   makeExecutionCalendarObservation,
   type AutonomousCycle,
+  type CycleConstructionFailure,
   type CycleDraft,
   type CycleExecutionPolicy,
 } from './cycle'
@@ -36,12 +37,20 @@ const millisecondsPerDay = 86_400_000
 
 type SignalCycleSession = Pick<SignalSessionRow, 'calendar_version' | 'session_date' | 'close_time' | 'timezone'>
 
+export class CycleDecisionBuildError extends Data.TaggedError('CycleDecisionBuildError')<{
+  readonly failure: 'contract' | 'database' | 'market-data' | 'operational' | 'store'
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
 export interface CycleRunContext {
   readonly qualificationRunId: string
   readonly strategyProtocolHash: string
   readonly accountId: string
   readonly executionPolicy: CycleExecutionPolicy
-  readonly buildDecision: (cycle: AutonomousCycle) => Effect.Effect<ObserveShadowDecisionDocument, unknown>
+  readonly buildDecision: (
+    cycle: AutonomousCycle,
+  ) => Effect.Effect<ObserveShadowDecisionDocument, CycleDecisionBuildError>
 }
 
 export interface CycleCandidate {
@@ -128,8 +137,10 @@ export class CycleRunnerError extends Data.TaggedError('CycleRunnerError')<{
     | 'calendar-unavailable'
     | 'context'
     | 'contract'
+    | 'database'
     | 'invalid-config'
     | 'market-data'
+    | 'operational'
     | 'store'
   readonly message: string
   readonly cause?: unknown
@@ -353,30 +364,38 @@ export const makeDueCycleDraft = (
   candidate: CycleCandidate,
   observation: MarketCalendarObservation,
   executionSession: MarketCalendarSession,
-): CycleDraft | undefined => {
-  if (!isMonthEndCycleDue(candidate.signalSession.session_date, executionSession.date)) return undefined
-  const executionCalendar = makeExecutionCalendarObservation({
-    schemaVersion: observation.schemaVersion,
-    source: observation.source,
-    ...executionSession,
-  })
-  const identity = makeCycleIdentity({
-    schemaVersion: 'bayn.autonomous-cycle-identity.v1',
-    strategyName: 'risk-balanced-trend',
-    qualificationRunId: candidate.qualificationRunId,
-    strategyProtocolHash: candidate.strategyProtocolHash,
-    accountId: candidate.accountId,
-    signalSessionDate: candidate.signalSession.session_date,
-    signalCalendarVersion: candidate.signalSession.calendar_version,
-    executionSessionDate: executionCalendar.executionSessionDate,
-    executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
-    executionCalendarSource: executionCalendar.executionCalendarSource,
-    executionCalendarHash: executionCalendar.executionCalendarHash,
-    executionPolicy: candidate.executionPolicy,
-  })
-  const window = makeCycleWindow(candidate.signalSession, executionCalendar, candidate.executionPolicy)
-  return makeCycleDraft(identity, window)
-}
+): Result.Result<CycleDraft | undefined, CycleConstructionFailure> =>
+  !isMonthEndCycleDue(candidate.signalSession.session_date, executionSession.date)
+    ? Result.succeed(undefined)
+    : Result.flatMap(
+        makeExecutionCalendarObservation({
+          schemaVersion: observation.schemaVersion,
+          source: observation.source,
+          ...executionSession,
+        }),
+        (executionCalendar) =>
+          Result.flatMap(
+            makeCycleIdentity({
+              schemaVersion: 'bayn.autonomous-cycle-identity.v1',
+              strategyName: 'risk-balanced-trend',
+              qualificationRunId: candidate.qualificationRunId,
+              strategyProtocolHash: candidate.strategyProtocolHash,
+              accountId: candidate.accountId,
+              signalSessionDate: candidate.signalSession.session_date,
+              signalCalendarVersion: candidate.signalSession.calendar_version,
+              executionSessionDate: executionCalendar.executionSessionDate,
+              executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
+              executionCalendarSource: executionCalendar.executionCalendarSource,
+              executionCalendarHash: executionCalendar.executionCalendarHash,
+              executionPolicy: candidate.executionPolicy,
+            }),
+            (identity) =>
+              Result.flatMap(
+                makeCycleWindow(candidate.signalSession, executionCalendar, candidate.executionPolicy),
+                (window) => makeCycleDraft(identity, window),
+              ),
+          ),
+      )
 
 type CycleAuthoritySlotDecision =
   | {
@@ -540,7 +559,7 @@ type CycleCalendarCandidateFailure =
   | {
       readonly _tag: 'CycleDraftConstructionFailed'
       readonly signalSessionDate: string
-      readonly cause: unknown
+      readonly cause: CycleConstructionFailure
     }
 
 const selectCycleCalendarPublication = (
@@ -569,10 +588,14 @@ const selectCycleCalendarPublication = (
     calendarReadContentHash,
   } as const
   return Result.map(
-    Result.try({
-      try: () => makeDueCycleDraft(candidate, observation, executionSession),
-      catch: (cause) => ({ _tag: 'CycleDraftConstructionFailed', signalSessionDate, cause }) as const,
-    }),
+    Result.mapError(
+      makeDueCycleDraft(candidate, observation, executionSession),
+      (cause): CycleCalendarCandidateFailure => ({
+        _tag: 'CycleDraftConstructionFailed',
+        signalSessionDate,
+        cause,
+      }),
+    ),
     (draft): CycleCalendarCandidateDecision =>
       draft === undefined
         ? { _tag: 'NOT_DUE', result: { outcome: 'NOT_DUE', observedAt, ...common } }
@@ -812,10 +835,11 @@ export const discoverAutonomousCyclePass = (
   })
 
 const chooseRecovery = (state: CycleRecoveryState): Effect.Effect<CycleRecoverySelection, CycleRunnerError> =>
-  Effect.try({
-    try: () => selectCycleRecovery(state),
-    catch: (cause) => runnerError('recover-cycle', 'contract', 'autonomous cycle recovery state is invalid', cause),
-  })
+  Effect.fromResult(selectCycleRecovery(state)).pipe(
+    Effect.mapError((cause) =>
+      runnerError('recover-cycle', 'contract', 'autonomous cycle recovery state is invalid', cause),
+    ),
+  )
 
 const readinessFailure = (cause: CycleReadinessError): CycleRunnerError['failure'] => {
   switch (cause.failure) {
@@ -903,9 +927,7 @@ const recoverCycle = (
       })
     case 'BUILD_DECISION':
       return context.buildDecision(selection.cycle).pipe(
-        Effect.mapError((cause) =>
-          runnerError('build-decision', 'contract', 'OBSERVE shadow decision construction failed', cause),
-        ),
+        Effect.mapError((cause) => runnerError('build-decision', cause.failure, cause.message, cause)),
         Effect.flatMap((document) =>
           Effect.gen(function* () {
             const store = yield* CycleStore

@@ -52,7 +52,7 @@ const currentDecisionBinding = (
     timeZone: 'UTC',
     sessions,
   } as const
-  return bindExecutionSession({
+  const binding = bindExecutionSession({
     signal: {
       sessionDate: signalSessionDate,
       finalizedAt: `${signalSessionDate}T20:01:00.000Z`,
@@ -65,6 +65,9 @@ const currentDecisionBinding = (
     calendar: { ...material, normalizedResponseHash: canonicalHashV1(material) },
     executionModel: fixtureProtocol.executionModel,
   })
+  expect(Result.isSuccess(binding)).toBe(true)
+  if (Result.isFailure(binding)) return expect.unreachable(binding.failure.message)
+  return binding.success
 }
 
 describe('risk-balanced trend candidate', () => {

@@ -10,6 +10,7 @@ import {
   type BrokerReadShape,
   type MarketCalendarObservation,
   type MarketCalendarQuery,
+  type MarketCalendarSession,
 } from './broker/alpaca'
 import { unusedAssetBySymbol } from './broker/alpaca-test-support'
 import {
@@ -18,9 +19,11 @@ import {
   makeCycleExecutionPolicy,
   type AutonomousCycle,
   type CycleDraft,
+  type CycleExecutionPolicy,
 } from './cycle'
 import {
   boundedCyclePublications,
+  CycleDecisionBuildError,
   CycleRunnerError,
   cyclePassLogFacts,
   isMonthEndCycleDue,
@@ -59,12 +62,19 @@ const evidence = {
   observedAt: '2026-01-30T21:01:00.000Z',
 }
 
-const executionPolicy = makeCycleExecutionPolicy({
-  schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
-  strategyExecutionModelHash: '3'.repeat(64),
-  submissionWindowMs: 30 * 60 * 1_000,
-  submissionCutoffBeforeOpenMs: 2 * 60 * 1_000,
-})
+const executionPolicyFixture = (): CycleExecutionPolicy => {
+  const result = makeCycleExecutionPolicy({
+    schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
+    strategyExecutionModelHash: '3'.repeat(64),
+    submissionWindowMs: 30 * 60 * 1_000,
+    submissionCutoffBeforeOpenMs: 2 * 60 * 1_000,
+  })
+  expect(Result.isSuccess(result)).toBe(true)
+  if (Result.isFailure(result)) return expect.unreachable(result.failure.message)
+  return result.success
+}
+
+const executionPolicy = executionPolicyFixture()
 
 const context = (
   accountId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -124,6 +134,19 @@ const monthEndCalendar = calendar([
     closeAt: '2026-02-02T20:00:00.000Z',
   },
 ])
+
+const dueCycleDraftFixture = (
+  cycleCandidate: CycleCandidate,
+  observation: MarketCalendarObservation,
+  executionSession: MarketCalendarSession,
+): CycleDraft => {
+  const result = makeDueCycleDraft(cycleCandidate, observation, executionSession)
+  expect(Result.isSuccess(result)).toBe(true)
+  if (Result.isFailure(result)) return expect.unreachable(result.failure.message)
+  expect(result.success).toBeDefined()
+  if (result.success === undefined) return expect.unreachable('cycle fixture must be due')
+  return result.success
+}
 
 const brokerRead = (marketCalendar: BrokerReadShape['marketCalendar']): BrokerReadShape => {
   const unused = Effect.die(new Error('cycle runner must use only the broker calendar read'))
@@ -274,15 +297,27 @@ const makeDecision = (
     inputHash: '4'.repeat(64),
     status: blockedReason === undefined ? TargetPlanStatus.NoTrade : TargetPlanStatus.Blocked,
     reason: blockedReason ?? TargetPlanReason.TargetsSatisfied,
-    targets: [],
+    targets:
+      blockedReason === undefined
+        ? [
+            {
+              symbol: 'SPY',
+              targetWeight: 0,
+              referencePriceMicros: '1000000',
+              currentQuantityMicros: '0',
+              targetQuantityMicros: '0',
+            },
+          ]
+        : [],
     intentTargets: [],
     requiredReferenceBuyNotionalMicros: '0',
     availableBuyingPowerMicros: '0',
     residualBuyingPowerMicros: '0',
   }
   const snapshot = cycle.bindings.snapshotId
-  if (snapshot === undefined) throw new Error('shadow decision fixture requires a bound snapshot')
-  return makeObserveShadowDecisionDocument({
+  expect(snapshot).toBeDefined()
+  if (snapshot === undefined) return expect.unreachable('shadow decision fixture requires a bound snapshot')
+  const result = makeObserveShadowDecisionDocument({
     schemaVersion: 'bayn.observe-shadow-decision.v1',
     mode: 'OBSERVE',
     dispatchable: false,
@@ -309,6 +344,9 @@ const makeDecision = (
     submissionCutoffAt: cycle.window.submissionCutoffAt,
     expiresAt: cycle.window.submissionCutoffAt,
   })
+  if (Result.isFailure(result)) return expect.unreachable(JSON.stringify(result.failure))
+  expect(Result.isSuccess(result)).toBe(true)
+  return result.success
 }
 
 const slotKey = (slot: CycleAuthoritySlot): string =>
@@ -524,8 +562,7 @@ describe('autonomous cycle runner', () => {
   test('selects recovery from durable cycle state and publication readiness without effects', () => {
     const executionSession = selectNextExecutionSession('2026-01-30', monthEndCalendar)
     if (executionSession === undefined) throw new Error('recovery fixture requires an execution session')
-    const draft = makeDueCycleDraft(candidate(), monthEndCalendar, executionSession)
-    if (draft === undefined) throw new Error('recovery fixture requires a due cycle')
+    const draft = dueCycleDraftFixture(candidate(), monthEndCalendar, executionSession)
     const pending = cycleFrom(draft, '2026-01-30T21:20:00.000Z')
     const bound: AutonomousCycle = {
       ...pending,
@@ -540,11 +577,14 @@ describe('autonomous cycle runner', () => {
       updatedAt: '2026-01-30T21:22:00.000Z',
     }
 
-    expect(selectCycleRecovery(recoveryState(undefined))).toEqual({ action: 'DISCOVER' })
-    expect(selectCycleRecovery(recoveryState(pending))).toEqual({ action: 'READ_PUBLICATION', cycle: pending })
+    expect(selectCycleRecovery(recoveryState(undefined))).toEqual(Result.succeed({ action: 'DISCOVER' }))
+    expect(selectCycleRecovery(recoveryState(pending))).toEqual(
+      Result.succeed({ action: 'READ_PUBLICATION', cycle: pending }),
+    )
     expect(
       selectCycleRecovery(
         recoveryState(pending, {
+          observedAt: '2026-01-30T21:21:00.000Z',
           readiness: {
             outcome: 'WAITING',
             reason: 'PUBLICATION_MISSING',
@@ -553,10 +593,14 @@ describe('autonomous cycle runner', () => {
           },
         }),
       ),
-    ).toMatchObject({ action: 'RETURN_READINESS', recoveryAction: 'WAITING' })
+    ).toMatchObject({
+      _tag: 'Success',
+      success: { action: 'RETURN_READINESS', recoveryAction: 'WAITING' },
+    })
     expect(
       selectCycleRecovery(
         recoveryState(pending, {
+          observedAt: bound.updatedAt,
           readiness: {
             outcome: 'BOUND',
             observedAt: bound.updatedAt,
@@ -565,10 +609,14 @@ describe('autonomous cycle runner', () => {
           },
         }),
       ),
-    ).toMatchObject({ action: 'RETURN_READINESS', recoveryAction: 'BOUND_SNAPSHOT' })
+    ).toMatchObject({
+      _tag: 'Success',
+      success: { action: 'RETURN_READINESS', recoveryAction: 'BOUND_SNAPSHOT' },
+    })
     expect(
       selectCycleRecovery(
         recoveryState(bound, {
+          observedAt: bound.updatedAt,
           readiness: {
             outcome: 'ALREADY_BOUND',
             observedAt: bound.updatedAt,
@@ -577,60 +625,73 @@ describe('autonomous cycle runner', () => {
           },
         }),
       ),
-    ).toEqual({ action: 'ACTIVATE', cycleId: bound.identity.cycleId, observedAt: bound.updatedAt })
-    expect(selectCycleRecovery(recoveryState(active))).toEqual({
-      action: 'WAIT',
-      cycle: active,
-      observedAt: '2026-01-30T21:23:00.000Z',
-    })
+    ).toEqual(Result.succeed({ action: 'ACTIVATE', cycleId: bound.identity.cycleId, observedAt: bound.updatedAt }))
+    expect(selectCycleRecovery(recoveryState(active))).toEqual(
+      Result.succeed({
+        action: 'WAIT',
+        cycle: active,
+        observedAt: '2026-01-30T21:23:00.000Z',
+      }),
+    )
     expect(
       selectCycleRecovery(
         recoveryState(active, {
           observedAt: active.window.submissionOpenAt,
         }),
       ),
-    ).toEqual({ action: 'BUILD_DECISION', cycle: active })
+    ).toEqual(Result.succeed({ action: 'BUILD_DECISION', cycle: active }))
     expect(
       selectCycleRecovery(
         recoveryState(active, {
           observedAt: active.window.submissionCutoffAt,
         }),
       ),
-    ).toEqual({
-      action: 'BLOCK',
-      cycleId: active.identity.cycleId,
-      observedAt: active.window.submissionCutoffAt,
-      reason: CycleTerminalReason.MissedSubmission,
-    })
+    ).toEqual(
+      Result.succeed({
+        action: 'BLOCK',
+        cycleId: active.identity.cycleId,
+        observedAt: active.window.submissionCutoffAt,
+        reason: CycleTerminalReason.MissedSubmission,
+      }),
+    )
     expect(
       selectCycleRecovery(
         recoveryState(active, {
           strategyProtocolHash: 'f'.repeat(64),
         }),
       ),
-    ).toEqual({
-      action: 'BLOCK',
-      cycleId: active.identity.cycleId,
-      observedAt: '2026-01-30T21:23:00.000Z',
-      reason: CycleTerminalReason.ProvenanceMismatch,
-    })
-    expect(() =>
-      selectCycleRecovery(
-        recoveryState({
-          ...pending,
-          state: CycleState.Blocked,
-          terminalReason: CycleTerminalReason.MissedPublication,
-          terminalAt: pending.updatedAt,
-        }),
-      ),
-    ).toThrow('terminal cycles must not enter autonomous recovery')
+    ).toEqual(
+      Result.succeed({
+        action: 'BLOCK',
+        cycleId: active.identity.cycleId,
+        observedAt: '2026-01-30T21:23:00.000Z',
+        reason: CycleTerminalReason.ProvenanceMismatch,
+      }),
+    )
+    const terminalRecovery = selectCycleRecovery(
+      recoveryState({
+        ...pending,
+        state: CycleState.Blocked,
+        terminalReason: CycleTerminalReason.MissedPublication,
+        terminalAt: pending.updatedAt,
+      }),
+    )
+    expect(Result.isFailure(terminalRecovery)).toBe(true)
+    if (Result.isFailure(terminalRecovery)) {
+      expect(terminalRecovery.failure).toMatchObject({
+        operation: 'select',
+        reason: 'terminal-cycle',
+        message: 'terminal cycles must not enter autonomous recovery',
+      })
+    }
 
-    const decision = makeDecision(active, '2026-01-30T21:23:30.000Z')
+    const decision = makeDecision(active, active.window.submissionOpenAt)
+    const decisionBoundAt = new Date(Date.parse(decision.createdAt) + 1).toISOString()
     const decisionBound: AutonomousCycle = {
       ...active,
       bindings: { ...active.bindings, decisionHash: decision.contentHash },
       stateVersion: active.stateVersion + 1,
-      updatedAt: '2026-01-30T21:24:00.000Z',
+      updatedAt: decisionBoundAt,
     }
     const afterCutoff = new Date(Date.parse(active.window.submissionCutoffAt) + 1).toISOString()
     expect(
@@ -640,7 +701,7 @@ describe('autonomous cycle runner', () => {
           observedAt: afterCutoff,
         }),
       ),
-    ).toEqual({ action: 'READ_DECISION', cycle: decisionBound })
+    ).toEqual(Result.succeed({ action: 'READ_DECISION', cycle: decisionBound }))
     expect(
       selectCycleRecovery(
         recoveryState(decisionBound, {
@@ -649,12 +710,14 @@ describe('autonomous cycle runner', () => {
           decisionDocument: decision,
         }),
       ),
-    ).toEqual({
-      action: 'FINISH',
-      cycleId: decisionBound.identity.cycleId,
-      observedAt: afterCutoff,
-      state: CycleState.NoTrade,
-    })
+    ).toEqual(
+      Result.succeed({
+        action: 'FINISH',
+        cycleId: decisionBound.identity.cycleId,
+        observedAt: afterCutoff,
+        state: CycleState.NoTrade,
+      }),
+    )
 
     const blockedDecision = makeDecision(active, decision.createdAt, TargetPlanReason.InputStale)
     const blockedDecisionBound: AutonomousCycle = {
@@ -669,12 +732,14 @@ describe('autonomous cycle runner', () => {
           decisionDocument: blockedDecision,
         }),
       ),
-    ).toEqual({
-      action: 'BLOCK',
-      cycleId: blockedDecisionBound.identity.cycleId,
-      observedAt: afterCutoff,
-      reason: CycleTerminalReason.DataStale,
-    })
+    ).toEqual(
+      Result.succeed({
+        action: 'BLOCK',
+        cycleId: blockedDecisionBound.identity.cycleId,
+        observedAt: afterCutoff,
+        reason: CycleTerminalReason.DataStale,
+      }),
+    )
   })
 
   test('bounds decoded publications and reports reachable calendar-range overflow without mutating inputs', () => {
@@ -776,8 +841,7 @@ describe('autonomous cycle runner', () => {
     const olderPublication = finalizedPublicationInspection('2026-01-29')
     const executionSession = selectNextExecutionSession('2026-01-30', monthEndCalendar)
     if (executionSession === undefined) throw new Error('authority fixture requires an execution session')
-    const draft = makeDueCycleDraft(candidate(), monthEndCalendar, executionSession)
-    if (draft === undefined) throw new Error('authority fixture requires a due cycle')
+    const draft = dueCycleDraftFixture(candidate(), monthEndCalendar, executionSession)
     const pending = cycleFrom(draft, '2026-01-30T21:20:00.000Z')
     const bound: AutonomousCycle = {
       ...pending,
@@ -973,8 +1037,7 @@ describe('autonomous cycle runner', () => {
   test('derives complete success and failure log facts without effects', () => {
     const executionSession = selectNextExecutionSession('2026-01-30', monthEndCalendar)
     if (executionSession === undefined) throw new Error('log fixture requires an execution session')
-    const draft = makeDueCycleDraft(candidate(), monthEndCalendar, executionSession)
-    if (draft === undefined) throw new Error('log fixture requires a due cycle')
+    const draft = dueCycleDraftFixture(candidate(), monthEndCalendar, executionSession)
     const pending = cycleFrom(draft, '2026-01-30T21:20:00.000Z')
     const bound: AutonomousCycle = {
       ...pending,
@@ -1114,11 +1177,11 @@ describe('autonomous cycle runner', () => {
 
     const selected = selectNextExecutionSession('2026-01-30', monthEndCalendar)
     if (selected === undefined) throw new Error('month-end fixture must have an execution session')
-    const first = makeDueCycleDraft(candidate(), monthEndCalendar, selected)
+    const first = dueCycleDraftFixture(candidate(), monthEndCalendar, selected)
     const changedEvidence = calendar([selected], { start: '2026-01-31', end: '2026-02-10' })
-    const second = makeDueCycleDraft(candidate(), changedEvidence, selected)
-    expect(first?.identity.cycleId).toBe(second?.identity.cycleId)
-    expect(first?.window).toMatchObject({
+    const second = dueCycleDraftFixture(candidate(), changedEvidence, selected)
+    expect(first.identity.cycleId).toBe(second.identity.cycleId)
+    expect(first.window).toMatchObject({
       signalCloseAt: '2026-01-30T21:00:00.000Z',
       publicationDeadlineAt: '2026-02-02T13:58:00.000Z',
       submissionOpenAt: '2026-02-02T13:58:00.000Z',
@@ -1146,8 +1209,7 @@ describe('autonomous cycle runner', () => {
   test('reads recovery first and authority slots in descending order until the first resumable slot', async () => {
     const executionSession = selectNextExecutionSession('2026-01-30', monthEndCalendar)
     if (executionSession === undefined) throw new Error('read-order fixture requires an execution session')
-    const draft = makeDueCycleDraft(candidate(), monthEndCalendar, executionSession)
-    if (draft === undefined) throw new Error('read-order fixture requires a due cycle')
+    const draft = dueCycleDraftFixture(candidate(), monthEndCalendar, executionSession)
     const pending = cycleFrom(draft, '2026-01-30T21:20:00.000Z')
     const bound: AutonomousCycle = {
       ...pending,
@@ -1922,6 +1984,78 @@ describe('autonomous cycle runner', () => {
     ])
     expect(authoritySlotReads).toBe(0)
     expect(brokerReads).toBe(0)
+    expect(control).toEqual({ acquisitions: [], binds: 0 })
+  })
+
+  test('preserves every declared decision-build failure classification across scheduled passes', async () => {
+    const executionSession = selectNextExecutionSession('2026-01-30', monthEndCalendar)
+    if (executionSession === undefined) return expect.unreachable('decision failure fixture requires a session')
+    const draft = dueCycleDraftFixture(candidate(), monthEndCalendar, executionSession)
+    const pending = cycleFrom(draft, '2026-01-30T21:20:00.000Z')
+    const active: AutonomousCycle = {
+      ...pending,
+      state: CycleState.Active,
+      bindings: { snapshotId },
+      stateVersion: pending.stateVersion + 2,
+      updatedAt: pending.window.submissionOpenAt,
+    }
+    const failures = (['market-data', 'database', 'store', 'operational'] as const).map(
+      (failure) =>
+        new CycleDecisionBuildError({
+          failure,
+          message: `${failure} decision build failed`,
+          cause: { _tag: `${failure}-fixture` },
+        }),
+    )
+    const observations: CyclePassObservation[] = []
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const store: CycleStoreShape = {
+      ...cycleStore(control),
+      readOldestUnfinished: () => Effect.succeed(Option.some(active)),
+    }
+    let buildAttempts = 0
+    const buildDecision: CycleRunContext['buildDecision'] = () => {
+      const failure = failures[buildAttempts]
+      if (failure === undefined) return Effect.die({ _tag: 'UnexpectedDecisionBuildAttempt' })
+      buildAttempts += 1
+      return Effect.fail(failure)
+    }
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(active.window.submissionOpenAt))
+        const fiber = yield* provide(
+          startAutonomousCycleLoop({
+            context: Effect.succeed(context(undefined, buildDecision)),
+            observePass: (observation) => Effect.sync(() => observations.push(observation)),
+            pollIntervalMs: 100,
+          }),
+          brokerRead(() => Effect.die({ _tag: 'UnexpectedDecisionBuildBrokerRead' })),
+          store,
+          marketDataService(Effect.die({ _tag: 'UnexpectedDecisionBuildMarketDataRead' })),
+        )
+        yield* Effect.yieldNow
+        for (let index = 1; index < failures.length; index += 1) {
+          yield* TestClock.adjust(100)
+        }
+        yield* Fiber.interrupt(fiber)
+      }),
+    ).pipe(Effect.provide(TestClock.layer()))
+
+    await Effect.runPromise(program)
+    expect(buildAttempts).toBe(failures.length)
+    expect(observations).toHaveLength(failures.length)
+    for (let index = 0; index < failures.length; index += 1) {
+      expect(observations[index]).toMatchObject({
+        outcome: 'FAILED',
+        error: {
+          _tag: 'CycleRunnerError',
+          operation: 'build-decision',
+          failure: failures[index]?.failure,
+          message: failures[index]?.message,
+          cause: failures[index],
+        },
+      })
+    }
     expect(control).toEqual({ acquisitions: [], binds: 0 })
   })
 
