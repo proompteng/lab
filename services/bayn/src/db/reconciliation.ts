@@ -1,10 +1,9 @@
 import { PgClient } from '@effect/sql-pg'
-import { Data, Effect, Schema } from 'effect'
+import { Data, Effect, Result, Schema } from 'effect'
 
-import { rebuildAccountingLedger, type AccountingTransaction } from '../accounting'
+import type { AccountingTransaction } from '../accounting'
 import { MutationOperation } from '../broker/alpaca-mutations'
 import type { RuntimeConfig } from '../config'
-import { canonicalHashV1 } from '../hash'
 import type { JournalService } from '../ledger'
 import {
   Authority,
@@ -13,17 +12,13 @@ import {
   KillState,
   OrderSide,
   OrderType,
-  ReconciliationStatus,
   SignedMicrosSchema,
   TerminalOutcome,
   TimeInForce,
   UnsignedMicrosSchema,
   decodeAccountingReceipt,
-  decodeAuthorityState,
-  decodeReconciliation,
   type AccountSnapshot,
   type AccountingReceipt,
-  type Discrepancy,
   type Fill,
   type Order,
   type Position,
@@ -31,9 +26,8 @@ import {
   type Valuation,
 } from '../paper'
 import {
-  compareReconciliation,
-  reconciledStateHash,
   type IntentExpectation,
+  type ReconciliationComparison,
   type ReconciliationMetrics,
   type ReconciliationRiskContext,
 } from '../reconciliation'
@@ -51,6 +45,16 @@ import {
   accountingReceiptFromRow,
   accountingTransactionFromRow,
 } from './accounting-rows'
+import {
+  compareOpeningCash,
+  decideReconciliation,
+  projectIntentExpectations,
+  reconciliationAlgebraFailureDetails,
+  riskContextFromRow,
+  validateReconciliationReadback,
+  verifyAccountingReceipts,
+  type ReconciliationAlgebraFailure,
+} from './reconciliation-algebra'
 
 export interface IntentBinding {
   readonly intentId: string
@@ -76,6 +80,20 @@ export interface ReconciliationReport {
 export interface ReconciliationWriteResult extends ReconciliationReport {
   readonly accountingHash: string
   readonly riskContext: ReconciliationRiskContext
+}
+
+interface AccountingReadPhase {
+  readonly intents: readonly IntentExpectation[]
+  readonly unknownMutationCount: number
+  readonly transactions: readonly AccountingTransaction[]
+  readonly receipts: readonly AccountingReceipt[]
+  readonly exactReceipts: ReadonlyMap<string, boolean>
+  readonly ledgerExact: boolean
+}
+
+interface ComparisonReadPhase {
+  readonly accountingHash: string
+  readonly comparison: ReconciliationComparison
 }
 
 export class ReconciliationStoreError extends Data.TaggedError('ReconciliationStoreError')<{
@@ -180,127 +198,16 @@ const attempt = <A>(
     catch: (cause) => storeError(operation, 'invariant', `paper reconciliation ${operation} invariant failed`, cause),
   })
 
-const riskContextFromRow = (
-  row: (typeof ReconciliationRiskContextRow.Type)[0],
-  unknownMutationCount: number,
-): Effect.Effect<ReconciliationRiskContext, ReconciliationStoreError> =>
-  Effect.gen(function* () {
-    const requiredAuthority = [
-      row.authority_schema_version,
-      row.authority_generation_hash,
-      row.authority_maximum,
-      row.authority_effective,
-      row.authority_kill,
-      row.authority_version,
-      row.authority_updated_at,
-    ]
-    const authorityMissing = requiredAuthority.every((value) => value === null)
-    if (authorityMissing && (row.authority_reason !== null || row.authority_observed_at !== null)) {
-      return yield* Effect.fail(
-        storeError('risk-context', 'invariant', 'authority evidence exists without durable authority state'),
-      )
-    }
-    if (
-      !authorityMissing &&
-      (requiredAuthority.some((value) => value === null) || row.authority_observed_at === null)
-    ) {
-      return yield* Effect.fail(storeError('risk-context', 'invariant', 'durable authority state is incomplete'))
-    }
-
-    const authority = authorityMissing
-      ? null
-      : yield* Effect.gen(function* () {
-          const version = Number(row.authority_version)
-          if (!Number.isSafeInteger(version) || version <= 0) {
-            return yield* Effect.fail(
-              storeError('risk-context', 'invariant', 'durable authority version is not a safe positive integer'),
-            )
-          }
-          return yield* decodeAuthorityState({
-            schemaVersion: row.authority_schema_version,
-            generationHash: row.authority_generation_hash,
-            maximum: row.authority_maximum,
-            effective: row.authority_effective,
-            kill: row.authority_kill,
-            ...(row.authority_reason === null ? {} : { reason: row.authority_reason }),
-            version,
-            updatedAt: row.authority_updated_at?.toISOString(),
-          }).pipe(
-            Effect.mapError((cause) =>
-              storeError('risk-context', 'decode', 'durable authority state failed decoding', cause),
-            ),
-          )
-        })
-
-    const material = {
-      tradingDate: row.trading_date,
-      unknownMutationCount,
-      dailyTradedNotionalMicros: row.daily_traded_notional_micros,
-      dayStartEquityMicros: row.day_start_equity_micros,
-      peakEquityMicros: row.peak_equity_micros,
-    }
-    if (authority === null) return { ...material, authority: null, authorityObservedAt: null }
-    const authorityObservedAt = row.authority_observed_at
-    if (authorityObservedAt === null) {
-      return yield* Effect.fail(
-        storeError('risk-context', 'invariant', 'durable authority observation time is missing'),
-      )
-    }
-    const authorityObservedAtIso = authorityObservedAt.toISOString()
-    if (authority.updatedAt > authorityObservedAtIso) {
-      return yield* Effect.fail(
-        storeError('risk-context', 'invariant', 'durable authority update follows its observation time'),
-      )
-    }
-    return { ...material, authority, authorityObservedAt: authorityObservedAtIso }
-  })
-
-const unresolvedEvents = new Set<MutationEventType>([
-  MutationEventType.SubmitStarted,
-  MutationEventType.SubmitUnknown,
-  MutationEventType.RecoveryNotFound,
-  MutationEventType.RecoveryUnknown,
-  MutationEventType.CancelStarted,
-  MutationEventType.CancelAccepted,
-  MutationEventType.CancelUnknown,
-])
-
-const receiptMaterial = (receipt: AccountingReceipt) => ({
-  schemaVersion: receipt.schemaVersion,
-  ...(receipt.intentId === undefined ? {} : { intentId: receipt.intentId }),
-  brokerEventId: receipt.brokerEventId,
-  tigerBeetleClusterId: receipt.tigerBeetleClusterId,
-  tigerBeetleLedger: receipt.tigerBeetleLedger,
-  accountIds: receipt.accountIds,
-  transferIds: receipt.transferIds,
-  debitMicros: receipt.debitMicros,
-  creditMicros: receipt.creditMicros,
-})
-
-const receiptIsExact = (
-  transaction: AccountingTransaction,
-  receipt: AccountingReceipt | undefined,
-  plan: ReturnType<typeof rebuildAccountingLedger>,
-  config: Pick<RuntimeConfig, 'tigerBeetle'>,
-): boolean => {
-  if (receipt === undefined) return false
-  const accountIds = plan.accounts.map((account) => account.id.toString())
-  const transferIds = plan.transfers.map((transfer) => transfer.id.toString())
-  const posted = plan.transfers.reduce((sum, transfer) => sum + transfer.amount, 0n).toString()
-  return (
-    receipt.brokerEventId === transaction.brokerEventId &&
-    receipt.intentId === transaction.intentId &&
-    receipt.tigerBeetleClusterId === config.tigerBeetle.clusterId.toString() &&
-    receipt.tigerBeetleLedger === config.tigerBeetle.ledger &&
-    receipt.debitMicros === posted &&
-    receipt.creditMicros === posted &&
-    receipt.accountIds.length === accountIds.length &&
-    receipt.accountIds.every((value, index) => value === accountIds[index]) &&
-    receipt.transferIds.length === transferIds.length &&
-    receipt.transferIds.every((value, index) => value === transferIds[index]) &&
-    canonicalHashV1(receiptMaterial(receipt)) === receipt.contentHash
+const fromDecision = <A>(
+  operation: ReconciliationStoreError['operation'],
+  decision: Result.Result<A, ReconciliationAlgebraFailure>,
+): Effect.Effect<A, ReconciliationStoreError> =>
+  Effect.fromResult(decision).pipe(
+    Effect.mapError((failure) => {
+      const details = reconciliationAlgebraFailureDetails(failure)
+      return storeError(operation, details.failure, details.message, details.cause)
+    }),
   )
-}
 
 export const restrictAuthority = (
   sql: PgClient.PgClient,
@@ -334,22 +241,18 @@ export const makeReconciliation = (
         SELECT intent_id, client_order_id
         FROM intents
         WHERE account_id = ${accountId}
-        ORDER BY client_order_id
+        ORDER BY client_order_id COLLATE "C"
       `.pipe(
         Effect.flatMap(decodeBindings),
         Effect.map((rows) => rows.map((row) => ({ intentId: row.intent_id, clientOrderId: row.client_order_id }))),
       ),
     )
 
-  const reconcile = (snapshot: BrokerSnapshot): Effect.Effect<ReconciliationWriteResult, ReconciliationStoreError> =>
+  const readAccountingPhase = (accountId: string): Effect.Effect<AccountingReadPhase, ReconciliationStoreError> =>
     runStore(
       'reconcile',
-      sql.withTransaction(
-        Effect.gen(function* () {
-          const accountId = snapshot.account.accountId
-          yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`ALPACA:${accountId}`}, 0))`
-
-          const intentRows = yield* sql<Record<string, unknown>>`
+      Effect.gen(function* () {
+        const intentRows = yield* sql<Record<string, unknown>>`
           SELECT
             intent.intent_id,
             intent.client_order_id,
@@ -384,32 +287,14 @@ export const makeReconciliation = (
             LIMIT 1
           ) AS accepted ON true
           WHERE intent.account_id = ${accountId}
-          ORDER BY intent.client_order_id
+          ORDER BY intent.client_order_id COLLATE "C"
         `.pipe(Effect.flatMap(decodeIntents))
-          const intents: IntentExpectation[] = intentRows.map((row) => ({
-            intentId: row.intent_id,
-            clientOrderId: row.client_order_id,
-            symbol: row.symbol,
-            side: row.side,
-            orderType: row.order_type,
-            timeInForce: row.time_in_force,
-            quantityMicros: row.quantity_micros,
-            state: row.state,
-            ...(row.terminal_outcome === null ? {} : { terminalOutcome: row.terminal_outcome }),
-            expectsBrokerOrder: row.broker_order_id !== null,
-            ...(row.broker_order_id === null ? {} : { brokerOrderId: row.broker_order_id }),
-            ...(row.mutation_event_type !== null &&
-            (unresolvedEvents.has(row.mutation_event_type) ||
-              (row.mutation_operation === MutationOperation.Cancel &&
-                row.mutation_event_type === MutationEventType.RecoveryFound &&
-                row.state !== IntentState.Terminal)) &&
-            row.mutation_occurred_at !== null
-              ? { unknownSince: row.mutation_occurred_at }
-              : {}),
-          }))
-          const unknownMutationCount = intents.filter((intent) => intent.unknownSince !== undefined).length
+        const { intents, unknownMutationCount } = yield* fromDecision(
+          'reconcile',
+          projectIntentExpectations(intentRows),
+        )
 
-          const transactionRows = yield* sql<Record<string, unknown>>`
+        const transactionRows = yield* sql<Record<string, unknown>>`
           SELECT
             schema_version, transaction_id, broker_event_id, intent_id, account_id, symbol, side,
             quantity_micros::text AS quantity_micros, price_micros::text AS price_micros,
@@ -420,10 +305,10 @@ export const makeReconciliation = (
             cash_delta_micros::text AS cash_delta_micros, ledger_plan_hash, content_hash, occurred_at
           FROM accounting_transactions
           WHERE account_id = ${accountId}
-          ORDER BY occurred_at, transaction_id
+          ORDER BY occurred_at, transaction_id COLLATE "C"
         `.pipe(Effect.flatMap(decodeTransactions))
-          const transactions = yield* attempt('reconcile', () => transactionRows.map(accountingTransactionFromRow))
-          const receiptRows = yield* sql<Record<string, unknown>>`
+        const transactions = yield* attempt('reconcile', () => transactionRows.map(accountingTransactionFromRow))
+        const receiptRows = yield* sql<Record<string, unknown>>`
           SELECT
             schema_version, receipt_id, intent_id, broker_event_id,
             tigerbeetle_cluster_id::text AS tigerbeetle_cluster_id,
@@ -438,39 +323,36 @@ export const makeReconciliation = (
             content_hash, recorded_at
           FROM accounting_receipts
           WHERE broker_event_id IN (SELECT broker_event_id FROM accounting_transactions WHERE account_id = ${accountId})
-          ORDER BY broker_event_id
+          ORDER BY broker_event_id COLLATE "C"
         `.pipe(Effect.flatMap(decodeReceipts))
-          const receipts = yield* Effect.forEach(receiptRows, (row) =>
-            decodeAccountingReceipt(accountingReceiptFromRow(row)),
+        const receipts = yield* Effect.forEach(receiptRows, (row) =>
+          decodeAccountingReceipt(accountingReceiptFromRow(row)),
+        )
+        const { exactReceipts, plans } = yield* fromDecision(
+          'reconcile',
+          verifyAccountingReceipts(transactions, receipts, config),
+        )
+        const ledgerExact = yield* journal
+          .verifyAccount(accountId, plans)
+          .pipe(
+            Effect.mapError((cause) =>
+              storeError('reconcile', 'ledger', 'TigerBeetle account verification failed during reconciliation', cause),
+            ),
           )
-          const { exactReceipts, plans } = yield* attempt('reconcile', () => {
-            const receiptsByEvent = new Map(receipts.map((receipt) => [receipt.brokerEventId, receipt]))
-            if (receiptsByEvent.size !== receipts.length) throw new Error('duplicate accounting receipt broker event')
-            const plans = transactions.map((transaction) =>
-              rebuildAccountingLedger(transaction, config.tigerBeetle.ledger),
-            )
-            const exactReceipts = new Map(
-              transactions.map((transaction, index) => [
-                transaction.brokerEventId,
-                receiptIsExact(transaction, receiptsByEvent.get(transaction.brokerEventId), plans[index], config),
-              ]),
-            )
-            return { exactReceipts, plans }
-          })
-          const ledgerExact = yield* journal
-            .verifyAccount(accountId, plans)
-            .pipe(
-              Effect.mapError((cause) =>
-                storeError(
-                  'reconcile',
-                  'ledger',
-                  'TigerBeetle account verification failed during reconciliation',
-                  cause,
-                ),
-              ),
-            )
 
-          const durableFillRows = yield* sql<Record<string, unknown>>`
+        return { intents, unknownMutationCount, transactions, receipts, exactReceipts, ledgerExact }
+      }),
+    )
+
+  const readComparisonPhase = (
+    accountId: string,
+    snapshot: BrokerSnapshot,
+    accounting: AccountingReadPhase,
+  ): Effect.Effect<ComparisonReadPhase, ReconciliationStoreError> =>
+    runStore(
+      'reconcile',
+      Effect.gen(function* () {
+        const durableFillRows = yield* sql<Record<string, unknown>>`
           SELECT
             fill.fill_id,
             fill.broker_order_id,
@@ -481,16 +363,18 @@ export const makeReconciliation = (
           LEFT JOIN accounting_transactions AS transaction ON transaction.broker_event_id = fill.event_id
           LEFT JOIN accounting_receipts AS receipt ON receipt.broker_event_id = fill.event_id
           WHERE fill.account_id = ${accountId}
-          ORDER BY fill.fill_id
+          ORDER BY fill.fill_id COLLATE "C"
         `.pipe(Effect.flatMap(decodeDurableFills))
-          const durableFills = durableFillRows.map((row) => ({
-            fillId: row.fill_id,
-            brokerOrderId: row.broker_order_id,
-            accounted:
-              row.transaction_id !== null && row.receipt_id !== null && exactReceipts.get(row.broker_event_id) === true,
-          }))
+        const durableFills = durableFillRows.map((row) => ({
+          fillId: row.fill_id,
+          brokerOrderId: row.broker_order_id,
+          accounted:
+            row.transaction_id !== null &&
+            row.receipt_id !== null &&
+            accounting.exactReceipts.get(row.broker_event_id) === true,
+        }))
 
-          const projectedPositionRows = yield* sql<Record<string, unknown>>`
+        const projectedPositionRows = yield* sql<Record<string, unknown>>`
           SELECT
             symbol,
             sum(quantity_delta_micros)::text AS quantity_micros,
@@ -499,15 +383,15 @@ export const makeReconciliation = (
           WHERE account_id = ${accountId}
           GROUP BY symbol
           HAVING sum(quantity_delta_micros) <> 0
-          ORDER BY symbol
+          ORDER BY symbol COLLATE "C"
         `.pipe(Effect.flatMap(decodeProjectedPositions))
-          const projectedPositions = projectedPositionRows.map((row) => ({
-            symbol: row.symbol,
-            quantityMicros: row.quantity_micros,
-            costBasisMicros: row.cost_basis_micros,
-          }))
+        const projectedPositions = projectedPositionRows.map((row) => ({
+          symbol: row.symbol,
+          quantityMicros: row.quantity_micros,
+          costBasisMicros: row.cost_basis_micros,
+        }))
 
-          const [openingCash] = yield* sql<Record<string, unknown>>`
+        const [openingCash] = yield* sql<Record<string, unknown>>`
           SELECT
             snapshot.cash_micros::text AS cash_micros,
             to_char(event.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS observed_at
@@ -517,103 +401,51 @@ export const makeReconciliation = (
           ORDER BY event.source_sequence
           LIMIT 1
         `.pipe(Effect.flatMap(decodeOpeningCash))
-          const { accountingHash, comparison } = yield* attempt('reconcile', () => {
-            if (transactions.some((transaction) => transaction.occurredAt < openingCash.observed_at)) {
-              throw new Error('paper accounting predates the opening cash snapshot')
-            }
-            const expectedCashMicros = transactions
-              .reduce(
-                (cash, transaction) => cash + BigInt(transaction.cashDeltaMicros),
-                BigInt(openingCash.cash_micros),
-              )
-              .toString()
-            const accountingHash = canonicalHashV1({
-              schemaVersion: 'bayn.paper-accounting-state.v1',
-              accountId,
-              openingCash,
-              transactions,
-              receipts,
-              ledgerExact,
-            })
-            const stateHash = reconciledStateHash({
-              account: snapshot.account,
-              positions: snapshot.positions,
-              positionsObservedAt: snapshot.positionsObservedAt,
-              orders: snapshot.orders,
-              ordersObservedAt: snapshot.ordersObservedAt,
-              accountingHash,
-            })
-            return {
-              accountingHash,
-              comparison: compareReconciliation({
-                accountId,
-                stateHash,
-                account: snapshot.account,
-                positions: snapshot.positions,
-                orders: snapshot.orders,
-                fills: snapshot.fills,
-                intents,
-                durableFills,
-                projectedPositions,
-                expectedCashMicros,
-                valuation: snapshot.valuation,
-                accountingHash,
-                ledgerExact,
-                reconciledAt: snapshot.reconciledAt,
-              }),
-            }
-          })
+        return yield* fromDecision(
+          'reconcile',
+          compareOpeningCash({
+            accountId,
+            openingCash,
+            transactions: accounting.transactions,
+            receipts: accounting.receipts,
+            ledgerExact: accounting.ledgerExact,
+            snapshot,
+            intents: accounting.intents,
+            durableFills,
+            projectedPositions,
+          }),
+        )
+      }),
+    )
 
-          const [previous] = yield* sql<Record<string, unknown>>`
+  const writeReconciliationPhase = (
+    accountId: string,
+    comparison: ReconciliationComparison,
+    reconciledAt: string,
+  ): Effect.Effect<Reconciliation, ReconciliationStoreError> =>
+    runStore(
+      'reconcile',
+      Effect.gen(function* () {
+        const [previous] = yield* sql<Record<string, unknown>>`
           SELECT discrepancies
           FROM reconciliations
           WHERE account_id = ${accountId}
-          ORDER BY reconciled_at DESC, reconciliation_id DESC
+          ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
           LIMIT 1
         `.pipe(Effect.flatMap(decodePreviousReconciliation))
-          const { contentHash, discrepancies, reconciliationId, reconciliationMaterial, status } = yield* attempt(
-            'reconcile',
-            () => {
-              const prior = new Map((previous?.discrepancies ?? []).map((value) => [value.discrepancyId, value]))
-              const status =
-                comparison.discrepancies.length === 0 ? ReconciliationStatus.Exact : ReconciliationStatus.Discrepancy
-              const discrepancies: Discrepancy[] = comparison.discrepancies.map((value) => ({
-                ...value,
-                firstObservedAt: prior.get(value.discrepancyId)?.firstObservedAt ?? snapshot.reconciledAt,
-                lastObservedAt: snapshot.reconciledAt,
-              }))
-              const reconciliationMaterial = {
-                schemaVersion: 'bayn.paper-reconciliation.v1' as const,
-                accountId,
-                expectedHash: comparison.expectedHash,
-                observedHash: comparison.observedHash,
-                status,
-                discrepancies,
-                reconciledAt: snapshot.reconciledAt,
-              }
-              const reconciliationId = canonicalHashV1({
-                schemaVersion: 'bayn.paper-reconciliation-id.v1',
-                material: reconciliationMaterial,
-              })
-              const contentHash = canonicalHashV1({ ...reconciliationMaterial, reconciliationId })
-              return { contentHash, discrepancies, reconciliationId, reconciliationMaterial, status }
-            },
-          )
-          const reconciliation = yield* decodeReconciliation({
-            schemaVersion: reconciliationMaterial.schemaVersion,
-            reconciliationId,
+        const reconciliation = yield* fromDecision(
+          'reconcile',
+          decideReconciliation({
             accountId,
-            expectedHash: comparison.expectedHash,
-            observedHash: comparison.observedHash,
-            contentHash,
-            status,
-            discrepancies,
-            reconciledAt: snapshot.reconciledAt,
-          })
-          const encodedDiscrepancies = yield* attempt('reconcile', () =>
-            encodeDiscrepancies(reconciliation.discrepancies),
-          )
-          yield* sql`
+            comparison,
+            previous: previous?.discrepancies ?? [],
+            reconciledAt,
+          }),
+        )
+        const encodedDiscrepancies = yield* attempt('reconcile', () =>
+          encodeDiscrepancies(reconciliation.discrepancies),
+        )
+        yield* sql`
           INSERT INTO reconciliations (
             reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
             content_hash, status, discrepancies, reconciled_at
@@ -624,23 +456,30 @@ export const makeReconciliation = (
             ${reconciliation.reconciledAt}
           )
           ON CONFLICT (reconciliation_id) DO NOTHING
-        `
-          const [stored] = yield* sql<Record<string, unknown>>`
-          SELECT content_hash FROM reconciliations WHERE reconciliation_id = ${reconciliationId}
+          `
+        const [stored] = yield* sql<Record<string, unknown>>`
+          SELECT content_hash FROM reconciliations WHERE reconciliation_id = ${reconciliation.reconciliationId}
         `.pipe(Effect.flatMap(decodeContent))
-          if (stored.content_hash !== contentHash) {
-            return yield* Effect.fail(
-              storeError('reconcile', 'invariant', 'stored reconciliation differs from deterministic replay'),
-            )
-          }
+        yield* fromDecision('reconcile', validateReconciliationReadback(reconciliation, stored.content_hash))
 
-          if (comparison.discrepancies.length > 0) {
-            yield* restrictAuthority(sql, `reconciliation discrepancy ${reconciliationId}`, snapshot.reconciledAt)
-          }
+        if (reconciliation.discrepancies.length > 0) {
+          yield* restrictAuthority(sql, `reconciliation discrepancy ${reconciliation.reconciliationId}`, reconciledAt)
+        }
+        return reconciliation
+      }),
+    )
 
-          const [riskContextRow] = yield* sql<Record<string, unknown>>`
+  const readRiskContextPhase = (
+    accountId: string,
+    reconciledAt: string,
+    unknownMutationCount: number,
+  ): Effect.Effect<ReconciliationRiskContext, ReconciliationStoreError> =>
+    runStore(
+      'reconcile',
+      Effect.gen(function* () {
+        const [riskContextRow] = yield* sql<Record<string, unknown>>`
           WITH boundary AS (
-            SELECT (${snapshot.reconciledAt}::timestamptz AT TIME ZONE 'America/New_York')::date AS trading_date
+            SELECT (${reconciledAt}::timestamptz AT TIME ZONE 'America/New_York')::date AS trading_date
           )
           SELECT
             boundary.trading_date::text AS trading_date,
@@ -657,33 +496,53 @@ export const makeReconciliation = (
               SELECT sum(transaction.notional_micros)::text
               FROM accounting_transactions AS transaction
               WHERE transaction.account_id = ${accountId}
-                AND transaction.occurred_at <= ${snapshot.reconciledAt}
+                AND transaction.occurred_at <= ${reconciledAt}
                 AND (transaction.occurred_at AT TIME ZONE 'America/New_York')::date = boundary.trading_date
             ), '0') AS daily_traded_notional_micros,
             (
               SELECT valuation.equity_micros::text
               FROM valuations AS valuation
               WHERE valuation.account_id = ${accountId}
-                AND valuation.as_of <= ${snapshot.reconciledAt}
+                AND valuation.as_of <= ${reconciledAt}
                 AND (valuation.as_of AT TIME ZONE 'America/New_York')::date = boundary.trading_date
-              ORDER BY valuation.as_of, valuation.valuation_id
+              ORDER BY valuation.as_of, valuation.valuation_id COLLATE "C"
               LIMIT 1
             ) AS day_start_equity_micros,
             (
               SELECT max(valuation.equity_micros)::text
               FROM valuations AS valuation
               WHERE valuation.account_id = ${accountId}
-                AND valuation.as_of <= ${snapshot.reconciledAt}
+                AND valuation.as_of <= ${reconciledAt}
             ) AS peak_equity_micros
           FROM boundary
           LEFT JOIN authority_state AS authority ON authority.singleton
         `.pipe(Effect.flatMap(decodeRiskContext))
-          const riskContext = yield* riskContextFromRow(riskContextRow, unknownMutationCount)
-
-          return { reconciliation, metrics: comparison.metrics, accountingHash, riskContext }
-        }),
-      ),
+        return yield* fromDecision('risk-context', riskContextFromRow(riskContextRow, unknownMutationCount))
+      }),
     )
+
+  const reconcileTransaction = (
+    snapshot: BrokerSnapshot,
+  ): Effect.Effect<ReconciliationWriteResult, ReconciliationStoreError> =>
+    runStore(
+      'reconcile',
+      Effect.gen(function* () {
+        const accountId = snapshot.account.accountId
+        yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`ALPACA:${accountId}`}, 0))`
+        const accounting = yield* readAccountingPhase(accountId)
+        const { accountingHash, comparison } = yield* readComparisonPhase(accountId, snapshot, accounting)
+        const reconciliation = yield* writeReconciliationPhase(accountId, comparison, snapshot.reconciledAt)
+        const riskContext = yield* readRiskContextPhase(
+          accountId,
+          snapshot.reconciledAt,
+          accounting.unknownMutationCount,
+        )
+        return { reconciliation, metrics: comparison.metrics, accountingHash, riskContext }
+      }),
+    )
+
+  const reconcile = (snapshot: BrokerSnapshot): Effect.Effect<ReconciliationWriteResult, ReconciliationStoreError> =>
+    runStore('reconcile', sql.withTransaction(reconcileTransaction(snapshot)))
 
   return { bindings, reconcile }
 }
