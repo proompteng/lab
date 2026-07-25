@@ -4,7 +4,7 @@ import { describe, expect, test } from 'bun:test'
 import { Cause, Effect, Exit, Redacted, Result } from 'effect'
 import { CreateAccountStatus, CreateTransferStatus, type Account, type Transfer } from 'tigerbeetle-node'
 
-import { prepareAccounting, rebuildAccountingLedger } from './accounting'
+import { prepareAccounting, rebuildAccountingLedger, type LedgerPlan } from './accounting'
 import type { RuntimeConfig } from './config'
 import { Authority, OrderSide, type Fill } from './paper'
 import {
@@ -78,13 +78,16 @@ const paperFill = (fillId: string, accountId = 'paper-account'): Fill => ({
   occurredAt: '2026-07-22T15:30:00.000Z',
 })
 
-const paperPlan = (fillId: string, accountId = 'paper-account') =>
-  prepareAccounting(
+const paperPlan = (fillId: string, accountId = 'paper-account'): LedgerPlan => {
+  const result = prepareAccounting(
     fillId.padEnd(64, fillId[0] ?? 'a').slice(0, 64),
     paperFill(fillId, accountId),
     { quantityMicros: '0', costMicros: '0' },
     journalConfig.tigerBeetle.ledger,
-  ).ledger
+  )
+  if (Result.isFailure(result)) throw new Error(`paperPlan failed: ${JSON.stringify(result.failure)}`)
+  return result.success.ledger
+}
 
 const evaluationPlan = () => {
   const snapshot = makeSnapshot()
@@ -623,16 +626,21 @@ describe('TigerBeetle simulation journal', () => {
       feeMicros: '100',
       occurredAt: '2026-07-22T15:30:00.000Z',
     }
-    const plan = prepareAccounting(
+    const planResult = prepareAccounting(
       'a'.repeat(64),
       fill,
       { quantityMicros: '0', costMicros: '0' },
       journalConfig.tigerBeetle.ledger,
-    ).ledger
+    )
+    expect(Result.isSuccess(planResult)).toBe(true)
+    if (Result.isFailure(planResult)) throw new Error('plan should succeed')
+    const plan = planResult.success.ledger
     const invalidTarget = makeLedgerClient()
     const invalidPlan = {
       ...plan,
-      transfers: plan.transfers.map((transfer, index) => (index === 0 ? { ...transfer, user_data_128: 0n } : transfer)),
+      transfers: plan.transfers.map((transfer: Transfer, index: number) =>
+        index === 0 ? { ...transfer, user_data_128: 0n } : transfer,
+      ),
     }
     const invalid = await Effect.runPromise(
       Effect.flip(withJournal(invalidTarget.client, (journal) => journal.post(invalidPlan))),
@@ -698,14 +706,20 @@ describe('TigerBeetle simulation journal', () => {
       feeMicros: '0',
       occurredAt: '2026-07-22T15:31:00.000Z',
     }
-    const prepared = prepareAccounting(
+    const preparedResult = prepareAccounting(
       'b'.repeat(64),
       fill,
       { quantityMicros: '0', costMicros: '0' },
       journalConfig.tigerBeetle.ledger,
     )
+    expect(Result.isSuccess(preparedResult)).toBe(true)
+    if (Result.isFailure(preparedResult)) throw new Error('prepared should succeed')
+    const prepared = preparedResult.success
 
-    expect(rebuildAccountingLedger(prepared.transaction, journalConfig.tigerBeetle.ledger)).toEqual(prepared.ledger)
+    const planResult = rebuildAccountingLedger(prepared.transaction, journalConfig.tigerBeetle.ledger)
+    expect(Result.isSuccess(planResult)).toBe(true)
+    if (Result.isFailure(planResult)) throw new Error('should succeed')
+    expect(planResult.success).toEqual(prepared.ledger)
     expect(() =>
       rebuildAccountingLedger(
         { ...prepared.transaction, contentHash: 'c'.repeat(64) },

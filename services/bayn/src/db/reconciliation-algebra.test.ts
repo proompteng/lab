@@ -70,7 +70,9 @@ const fill: Fill = {
   occurredAt: observedAt,
 }
 
-const prepared = prepareAccounting(hash('broker-event-1'), fill, { quantityMicros: '0', costMicros: '0' }, 1)
+const preparedResult = prepareAccounting(hash('broker-event-1'), fill, { quantityMicros: '0', costMicros: '0' }, 1)
+if (Result.isFailure(preparedResult)) throw new Error('test setup: prepareAccounting failed')
+const prepared = preparedResult.success
 const postedMicros = prepared.ledger.transfers.reduce((sum, transfer) => sum + transfer.amount, 0n).toString()
 const receiptMaterial = {
   schemaVersion: 'bayn.paper-accounting-receipt.v1' as const,

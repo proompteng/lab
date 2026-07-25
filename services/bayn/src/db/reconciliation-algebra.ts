@@ -1,6 +1,6 @@
 import { Result, Schema } from 'effect'
 
-import { rebuildAccountingLedger, type AccountingTransaction } from '../accounting'
+import { rebuildAccountingLedger, type AccountingTransaction, type LedgerPlan } from '../accounting'
 import { MutationOperation } from '../broker/alpaca-mutations'
 import type { RuntimeConfig } from '../config'
 import { MutationEventType } from '../execution/mutations'
@@ -75,7 +75,7 @@ export interface ReconciliationSnapshotMaterial {
 
 export interface AccountingVerification {
   readonly exactReceipts: ReadonlyMap<string, boolean>
-  readonly plans: readonly ReturnType<typeof rebuildAccountingLedger>[]
+  readonly plans: readonly LedgerPlan[]
 }
 
 type AccountingLedgerIdentity = {
@@ -229,7 +229,7 @@ export const canonicalAccountingReceiptMaterial = (receipt: AccountingReceipt) =
 const receiptMatches = (
   transaction: AccountingTransaction,
   receipt: AccountingReceipt | undefined,
-  plan: ReturnType<typeof rebuildAccountingLedger>,
+  plan: LedgerPlan,
   config: AccountingLedgerIdentity,
 ): Result.Result<boolean, ReconciliationAlgebraFailure> => {
   if (receipt === undefined) return Result.succeed(false)
@@ -276,21 +276,20 @@ export const verifyAccountingReceipts = (
     const receiptsByEvent = new Map(receipts.map((receipt) => [receipt.brokerEventId, receipt]))
     const planned: {
       readonly transaction: AccountingTransaction
-      readonly plan: ReturnType<typeof rebuildAccountingLedger>
+      readonly plan: LedgerPlan
     }[] = []
     for (const transaction of transactions) {
-      planned.push({
-        transaction,
-        plan: yield* Result.try({
-          try: () => rebuildAccountingLedger(transaction, config.tigerBeetle.ledger),
-          catch: (cause): ReconciliationAlgebraFailure => ({
-            _tag: 'AccountingPlanFailed',
-            transactionId: transaction.transactionId,
-            brokerEventId: transaction.brokerEventId,
-            cause,
-          }),
-        }),
-      })
+      const ledgerResult = rebuildAccountingLedger(transaction, config.tigerBeetle.ledger)
+      if (Result.isFailure(ledgerResult)) {
+        const failure = ledgerResult.failure
+        return yield* fail({
+          _tag: 'AccountingPlanFailed',
+          transactionId: transaction.transactionId,
+          brokerEventId: transaction.brokerEventId,
+          cause: failure,
+        })
+      }
+      planned.push({ transaction, plan: ledgerResult.success })
     }
 
     const exactReceipts = new Map<string, boolean>()

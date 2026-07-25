@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Context, Data, Effect, Layer, Schema } from 'effect'
+import { Clock, Context, Data, Effect, Layer, Result, Schema } from 'effect'
 
 import {
   AccountingTransactionSchema,
@@ -758,9 +758,12 @@ const makeStore = (config: PaperStoreRuntimeConfig) =>
             yield* requirePostedPredecessors(input)
             if (stored === undefined) yield* requireNoPreparedSuccessors(input)
             const position = yield* priorPosition(input)
-            const expected = yield* Effect.try({
+            const expectedResult = yield* Effect.try({
               try: () => prepareAccounting(event.eventId, input.fill, position, config.tigerBeetle.ledger),
               catch: (cause) => error('account', 'invariant', 'fill accounting plan is invalid', cause),
+            })
+            const expected = Result.getOrElse(expectedResult, (cause) => {
+              throw error('account', 'invariant', `fill accounting plan is invalid: ${JSON.stringify(cause)}`)
             })
             if (stored === undefined) {
               yield* insertPrepared(expected)

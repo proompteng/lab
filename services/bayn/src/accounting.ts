@@ -1,7 +1,8 @@
 import { AccountFlags, type Account, type Transfer } from 'tigerbeetle-node'
-import { Schema } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { canonicalHashV1, stableU128, stableU64 } from './hash'
+import { failAccountingValidation, type AccountingValidationError } from './accounting-plan'
 import { AccountCode, hashLedgerPlan, LEDGER_SCHEMA_VERSION, TransferCode, type LedgerPlan } from './ledger-plan'
 import {
   OrderSide,
@@ -55,14 +56,22 @@ export interface PreparedAccounting {
   readonly ledger: LedgerPlan
 }
 
+export type { LedgerPlan }
+
 const decodeTransaction = Schema.decodeUnknownSync(AccountingTransactionSchema, strictParseOptions)
 
-const roundDiv = (numerator: bigint, denominator: bigint): bigint => {
-  if (numerator < 0n || denominator <= 0n) {
-    throw new Error('fixed-point division requires a non-negative numerator and positive denominator')
-  }
-  return (numerator + denominator / 2n) / denominator
-}
+const roundDiv = (numerator: bigint, denominator: bigint): Result.Result<bigint, AccountingValidationError> =>
+  numerator >= 0n && denominator > 0n
+    ? Result.succeed((numerator + denominator / 2n) / denominator)
+    : failAccountingValidation(
+        'build-plan',
+        'invalid-roundDiv',
+        'fixed-point division requires non-negative numerator and positive denominator',
+        {
+          numerator: numerator.toString(),
+          denominator: denominator.toString(),
+        },
+      )
 
 const makeAccount = (brokerAccountId: string, ledger: number, name: string, code: AccountCodeValue): Account => {
   const owner = stableU128('bayn-paper-account-v1', brokerAccountId)
@@ -120,38 +129,64 @@ interface Amounts {
 
 type LedgerFill = Pick<Fill, 'accountId' | 'symbol' | 'side' | 'feeMicros'>
 
-const calculateAmounts = (fill: Fill, prior: PositionCost): Amounts => {
+const calculateAmounts = (fill: Fill, prior: PositionCost): Result.Result<Amounts, AccountingValidationError> => {
   const quantity = BigInt(fill.quantityMicros)
   const price = BigInt(fill.priceMicros)
   const fee = BigInt(fill.feeMicros)
   const priorQuantity = BigInt(prior.quantityMicros)
   const priorCost = BigInt(prior.costMicros)
-  if (priorQuantity < 0n || priorCost < 0n) throw new Error('position cost state must not be negative')
-  if (priorQuantity === 0n && priorCost !== 0n) throw new Error('an empty position cannot retain cost basis')
+  if (priorQuantity < 0n || priorCost < 0n) {
+    return failAccountingValidation('build-plan', 'invalid-amounts', 'position cost state must not be negative', {
+      priorQuantity: priorQuantity.toString(),
+      priorCost: priorCost.toString(),
+    })
+  }
+  if (priorQuantity === 0n && priorCost !== 0n) {
+    return failAccountingValidation('build-plan', 'invalid-amounts', 'an empty position cannot retain cost basis', {
+      priorQuantity: priorQuantity.toString(),
+      priorCost: priorCost.toString(),
+    })
+  }
 
-  const notional = roundDiv(quantity * price, MICROS)
-  if (notional <= 0n) throw new Error('fill notional rounds to zero micros')
+  const notionalResult = roundDiv(quantity * price, MICROS)
+  if (Result.isFailure(notionalResult))
+    return Result.fail(notionalResult.failure) as Result.Result<Amounts, AccountingValidationError>
+  const notional = notionalResult.success
+  if (notional <= 0n) {
+    return failAccountingValidation('build-plan', 'invalid-amounts', 'fill notional rounds to zero micros', {
+      notional: notional.toString(),
+    })
+  }
   if (fill.side === OrderSide.Buy) {
-    return {
+    return Result.succeed({
       notional,
       costBasis: notional,
       realizedPnl: 0n,
       quantityDelta: quantity,
       costBasisDelta: notional,
       cashDelta: -(notional + fee),
-    }
+    })
   }
 
-  if (quantity > priorQuantity) throw new Error('sell fill exceeds the recorded long position')
-  const costBasis = quantity === priorQuantity ? priorCost : roundDiv(priorCost * quantity, priorQuantity)
-  return {
+  if (quantity > priorQuantity) {
+    return failAccountingValidation('build-plan', 'invalid-amounts', 'sell fill exceeds the recorded long position', {
+      quantity: quantity.toString(),
+      priorQuantity: priorQuantity.toString(),
+    })
+  }
+  const costBasisResult =
+    quantity === priorQuantity ? Result.succeed(priorCost) : roundDiv(priorCost * quantity, priorQuantity)
+  if (Result.isFailure(costBasisResult))
+    return Result.fail(costBasisResult.failure) as Result.Result<Amounts, AccountingValidationError>
+  const costBasis = costBasisResult.success
+  return Result.succeed({
     notional,
     costBasis,
     realizedPnl: notional - costBasis,
     quantityDelta: -quantity,
     costBasisDelta: -costBasis,
     cashDelta: notional - fee,
-  }
+  })
 }
 
 const makeLedgerPlan = (
@@ -160,7 +195,7 @@ const makeLedgerPlan = (
   fill: LedgerFill,
   amounts: Amounts,
   ledger: number,
-): LedgerPlan => {
+): Result.Result<LedgerPlan, AccountingValidationError> => {
   const accounts = new Map<string, Account>()
   const getAccount = (name: string, code: AccountCodeValue): Account => {
     const existing = accounts.get(name)
@@ -238,23 +273,41 @@ const makeLedgerPlan = (
     BigInt(fill.feeMicros),
     TransferCode.fee,
   )
-  if (transfers.length === 0) throw new Error('accounting transaction contains no positive transfer')
+  if (transfers.length === 0) {
+    return failAccountingValidation(
+      'build-plan',
+      'empty-plan',
+      'accounting transaction contains no positive transfer',
+      {
+        fillAccountId: fill.accountId,
+        fillSymbol: fill.symbol,
+      },
+    )
+  }
 
-  return {
+  return Result.succeed({
     runKey: stableU128('bayn-paper-account-v1', fill.accountId),
     runTag: stableU64('bayn-paper-account-v1', fill.accountId),
     accounts: [...accounts.values()].sort((left, right) => (left.id < right.id ? -1 : 1)),
     transfers: transfers.sort((left, right) => (left.id < right.id ? -1 : 1)),
-  }
+  })
 }
 
-export const rebuildAccountingLedger = (transaction: AccountingTransaction, ledger: number): LedgerPlan => {
+export const rebuildAccountingLedger = (
+  transaction: AccountingTransaction,
+  ledger: number,
+): Result.Result<LedgerPlan, AccountingValidationError> => {
   const decoded = decodeTransaction(transaction)
   const { contentHash, ...material } = decoded
   if (canonicalHashV1(material) !== contentHash) {
-    throw new Error('accounting transaction content hash does not match its immutable fields')
+    return failAccountingValidation(
+      'build-plan',
+      'invalid-rebuildAccountingLedger',
+      'accounting transaction content hash does not match its immutable fields',
+      { transactionId: decoded.transactionId },
+    )
   }
-  const plan = makeLedgerPlan(
+  const planResult = makeLedgerPlan(
     decoded.transactionId,
     decoded.brokerEventId,
     {
@@ -273,10 +326,17 @@ export const rebuildAccountingLedger = (transaction: AccountingTransaction, ledg
     },
     ledger,
   )
+  if (Result.isFailure(planResult)) return planResult
+  const plan = planResult.success
   if (hashLedgerPlan(plan) !== decoded.ledgerPlanHash) {
-    throw new Error('accounting transaction ledger plan hash does not match its immutable fields')
+    return failAccountingValidation(
+      'build-plan',
+      'invalid-rebuildAccountingLedger',
+      'accounting transaction ledger plan hash does not match its immutable fields',
+      { transactionId: decoded.transactionId },
+    )
   }
-  return plan
+  return Result.succeed(plan)
 }
 
 export const prepareAccounting = (
@@ -284,13 +344,19 @@ export const prepareAccounting = (
   fill: Fill,
   prior: PositionCost,
   ledger: number,
-): PreparedAccounting => {
-  const amounts = calculateAmounts(fill, prior)
+): Result.Result<PreparedAccounting, AccountingValidationError> => {
+  const amountsResult = calculateAmounts(fill, prior)
+  if (Result.isFailure(amountsResult))
+    return Result.fail(amountsResult.failure) as Result.Result<PreparedAccounting, AccountingValidationError>
+  const amounts = amountsResult.success
   const transactionId = canonicalHashV1({
     schemaVersion: 'bayn.paper-accounting-transaction-id.v1',
     brokerEventId,
   })
-  const ledgerPlan = makeLedgerPlan(transactionId, brokerEventId, fill, amounts, ledger)
+  const ledgerPlanResult = makeLedgerPlan(transactionId, brokerEventId, fill, amounts, ledger)
+  if (Result.isFailure(ledgerPlanResult))
+    return Result.fail(ledgerPlanResult.failure) as Result.Result<PreparedAccounting, AccountingValidationError>
+  const ledgerPlan = ledgerPlanResult.success
   const material = {
     schemaVersion: 'bayn.paper-accounting-transaction.v1' as const,
     transactionId,
@@ -311,8 +377,8 @@ export const prepareAccounting = (
     ledgerPlanHash: hashLedgerPlan(ledgerPlan),
     occurredAt: fill.occurredAt,
   }
-  return {
+  return Result.succeed({
     transaction: decodeTransaction({ ...material, contentHash: canonicalHashV1(material) }),
     ledger: ledgerPlan,
-  }
+  })
 }
