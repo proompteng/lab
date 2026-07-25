@@ -4,6 +4,7 @@ import { Effect, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
+  BrokerRead,
   BrokerReadError,
   BrokerReadErrorKind,
   type BrokerReadShape,
@@ -20,12 +21,12 @@ import {
   makeCycleWindow,
   makeExecutionCalendarObservation,
 } from './cycle'
-import type { CycleStoreShape } from './db/cycle-store'
-import { PaperStoreError, type PaperStoreShape } from './db/paper-store'
+import { CycleStore, type CycleStoreShape } from './db/cycle-store'
+import { PaperStore, PaperStoreError, type PaperStoreShape } from './db/paper-store'
 import { operationalError } from './errors'
-import { WriterFenceError } from './execution/writer-fence'
+import { WriterFence, WriterFenceError, type WriterFenceService } from './execution/writer-fence'
 import { canonicalHashV1 } from './hash'
-import type { MarketDataService, MarketDataSnapshot } from './market-data'
+import { MarketData, type MarketDataService, type MarketDataSnapshot } from './market-data'
 import {
   buildObserveCycleDecision,
   loadObserveRiskPolicy,
@@ -578,16 +579,16 @@ describe('OBSERVE runtime composition', () => {
       fillActivities: () => unused,
       marketCalendar: () => unused,
     }
+    const writerFence: WriterFenceService = {
+      backendPid: 1,
+      check: unused,
+      transaction: (effect) => effect,
+    }
     const startup = makeObserveAutonomousCycleStartup({
       accountId,
       authorityGenerationHash: generationHash,
-      brokerRead,
-      cycleStore,
-      marketData: marketData([]),
       maximumAuthority: Authority.Paper,
-      paperStore,
       pollIntervalMs: 30_000,
-      reconcile: unused,
       strategy: {
         currentDecision: () => {
           throw new Error('PAPER startup must not compile a shadow decision')
@@ -602,7 +603,13 @@ describe('OBSERVE runtime composition', () => {
           qualificationRunId: 'c'.repeat(64),
           strategyProtocolHash: 'd'.repeat(64),
           recordPass: () => unused,
-        }),
+        }).pipe(
+          Effect.provideService(BrokerRead, brokerRead),
+          Effect.provideService(CycleStore, cycleStore),
+          Effect.provideService(MarketData, marketData([])),
+          Effect.provideService(PaperStore, paperStore),
+          Effect.provideService(WriterFence, writerFence),
+        ),
       ),
     )
 

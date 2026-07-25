@@ -1,6 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Context, Data, Effect, Layer, Option, Schema } from 'effect'
-import { isSqlError } from 'effect/unstable/sql/SqlError'
+import { isSqlError, type SqlError } from 'effect/unstable/sql/SqlError'
 
 import {
   CycleDraftSchema,
@@ -28,6 +28,8 @@ import { ObserveShadowDecisionDocumentSchema, type ObserveShadowDecisionDocument
 import { TargetPlanStatus } from '../target-planner'
 import type { InputManifest, IsoDate } from '../types'
 import { ensureSnapshotReference } from './snapshot-reference'
+
+type CycleStoreInternalError = CycleStoreError | Schema.SchemaError | SqlError
 
 export interface CycleAcquireReceipt {
   readonly cycle: AutonomousCycle
@@ -289,7 +291,7 @@ const selectCycle = (
   sql: PgClient.PgClient,
   cycleId: string,
   locked: boolean,
-): Effect.Effect<readonly AutonomousCycle[], unknown> => {
+): Effect.Effect<readonly AutonomousCycle[], SqlError | Schema.SchemaError> => {
   const rows = locked
     ? sql<Record<string, unknown>>`
         SELECT
@@ -330,7 +332,7 @@ const selectCycle = (
 const selectCycleByAuthoritySlot = (
   sql: PgClient.PgClient,
   slot: CycleAuthoritySlot,
-): Effect.Effect<readonly AutonomousCycle[], unknown> =>
+): Effect.Effect<readonly AutonomousCycle[], SqlError | Schema.SchemaError> =>
   sql<Record<string, unknown>>`
     SELECT
       cycle_id, schema_version, identity_schema_version, strategy_name,
@@ -353,7 +355,7 @@ const selectCycleByAuthoritySlot = (
 const selectDecisionDocument = (
   sql: PgClient.PgClient,
   cycleId: string,
-): Effect.Effect<readonly { readonly document: ObserveShadowDecisionDocument }[], unknown> =>
+): Effect.Effect<readonly { readonly document: ObserveShadowDecisionDocument }[], SqlError | Schema.SchemaError> =>
   sql<Record<string, unknown>>`
     SELECT document
     FROM autonomous_cycle_shadow_decisions
@@ -363,7 +365,7 @@ const selectDecisionDocument = (
 const selectOldestUnfinishedCycle = (
   sql: PgClient.PgClient,
   scope: CycleRecoveryScope,
-): Effect.Effect<readonly AutonomousCycle[], unknown> =>
+): Effect.Effect<readonly AutonomousCycle[], SqlError | Schema.SchemaError> =>
   sql<Record<string, unknown>>`
     SELECT
       cycle_id, schema_version, identity_schema_version, strategy_name,
@@ -427,7 +429,9 @@ const makeCycleStore = Effect.gen(function* () {
       ),
     )
 
-  const decisionEvidenceMatches = (document: ObserveShadowDecisionDocument): Effect.Effect<boolean, unknown> =>
+  const decisionEvidenceMatches = (
+    document: ObserveShadowDecisionDocument,
+  ): Effect.Effect<boolean, SqlError | Schema.SchemaError> =>
     sql<Record<string, unknown>>`
       SELECT EXISTS (
         SELECT 1
@@ -452,7 +456,7 @@ const makeCycleStore = Effect.gen(function* () {
   const verifyDecisionBoundBlock = (
     cycle: AutonomousCycle,
     reason: CycleTerminalReason,
-  ): Effect.Effect<void, unknown> =>
+  ): Effect.Effect<void, CycleStoreInternalError> =>
     Effect.gen(function* () {
       const storedRows = yield* selectDecisionDocument(sql, cycle.identity.cycleId)
       const storedDocument = storedRows[0]?.document
@@ -479,7 +483,7 @@ const makeCycleStore = Effect.gen(function* () {
     cycle: AutonomousCycle,
     reason: CycleTerminalReason,
     observedAt: string,
-  ): Effect.Effect<CycleMutationReceipt, unknown> => {
+  ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> => {
     if (cycle.state === CycleState.Blocked && cycle.terminalReason === reason) {
       return Effect.succeed({ cycle, changed: false })
     }
@@ -660,7 +664,7 @@ const makeCycleStore = Effect.gen(function* () {
       ),
     )
 
-  const persistSnapshotReference = (inputManifest: InputManifest): Effect.Effect<void, unknown> =>
+  const persistSnapshotReference = (inputManifest: InputManifest): Effect.Effect<void, CycleStoreInternalError> =>
     ensureSnapshotReference(sql, inputManifest).pipe(
       Effect.flatMap((matches) =>
         matches

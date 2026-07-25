@@ -3,7 +3,37 @@
   "compilerOptions": {
     "noEmit": true,
     "strict": true,
-    "types": ["bun", "node"]
+    "types": ["bun", "node"],
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "diagnostics": true,
+        "includeSuggestionsInTsc": false,
+        "diagnosticSeverity": {
+          "anyUnknownInErrorContext": "error",
+          "globalErrorInEffectCatch": "error",
+          "globalErrorInEffectFailure": "error",
+          "multipleEffectProvide": "error",
+          "scopeInLayerEffect": "error",
+          "unknownInEffectCatch": "error"
+        },
+        "overrides": [
+          {
+            "include": ["src/**/*.test.ts", "src/**/*test-support.ts"],
+            "options": {
+              "diagnosticSeverity": {
+                "anyUnknownInErrorContext": "off",
+                "globalErrorInEffectCatch": "off",
+                "globalErrorInEffectFailure": "off",
+                "multipleEffectProvide": "off",
+                "scopeInLayerEffect": "off",
+                "unknownInEffectCatch": "off"
+              }
+            }
+          }
+        ]
+      }
+    ]
   },
   "include": ["src", "migrations"]
 }

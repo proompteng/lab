@@ -1,5 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Schema } from 'effect'
+import type { SqlError } from 'effect/unstable/sql/SqlError'
 
 import { strictParseOptions } from '../schemas'
 import type { InputManifest } from '../types'
@@ -15,7 +16,7 @@ const decodeSnapshotReferenceMatch = Schema.decodeUnknownEffect(SnapshotReferenc
 export const ensureSnapshotReference = (
   sql: PgClient.PgClient,
   inputManifest: InputManifest,
-): Effect.Effect<boolean, unknown> =>
+): Effect.Effect<boolean, SqlError | Schema.SchemaError> =>
   Effect.gen(function* () {
     const snapshot = inputManifest.finalizedSnapshot
     yield* sql`

@@ -388,6 +388,53 @@ describe('finalized Signal snapshot reader', () => {
     }
   })
 
+  test('returns malformed inspection rows through the typed operational channel', async () => {
+    const fixture = makeFixture()
+    const malformedSessions = [
+      { ...fixture.rows.sessions[0], close_time: 'not-a-market-time' },
+      ...fixture.rows.sessions.slice(1),
+    ] as unknown as readonly SignalSessionRow[]
+    const client = makeClickhouseFixture(fixture.rows.manifests, malformedSessions, [])
+    const layer = MarketDataLive(
+      {
+        operationTimeoutMs: 5_000,
+        clickhouse: {
+          url: 'http://clickhouse.test:8123',
+          username: 'bayn',
+          password: Redacted.make('secret'),
+          snapshotId,
+          publicationAsOf: fixture.request.publicationAsOf,
+          calendarVersion: fixture.request.calendarVersion,
+          bounds: fixture.request.bounds,
+        },
+      },
+      {
+        universeId: fixture.request.universeId,
+        universeSymbolHash: fixture.request.universeSymbolHash,
+        universe: fixture.request.universe,
+        historyStart: fixture.request.historyStart,
+        evaluationStart: fixture.request.evaluationStart,
+      },
+    ).pipe(Layer.provide(Layer.succeed(ClickhouseClient.ClickhouseClient, client)))
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        Effect.gen(function* () {
+          const marketData = yield* MarketData
+          return yield* marketData.inspect
+        }).pipe(Effect.provide(layer)),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      _tag: 'OperationalError',
+      component: 'market-data',
+      operation: 'inspect',
+      retryable: false,
+    })
+    expect(failure.message).toContain('Signal snapshot verification failed')
+  })
+
   test('reproduces the publisher contract before exposing bounded numeric bars', () => {
     const fixture = makeFixture()
     const snapshot = verifyFinalizedSnapshot(fixture.rows, fixture.request)

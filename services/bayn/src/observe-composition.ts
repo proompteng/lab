@@ -10,7 +10,8 @@ import {
   type CyclePassObservation,
 } from './cycle-runner'
 import { CycleStore, type CycleStoreShape } from './db/cycle-store'
-import type { PaperStoreShape } from './db/paper-store'
+import { PaperStore, type PaperStoreShape } from './db/paper-store'
+import { WriterFence, type WriterFenceService } from './execution/writer-fence'
 import {
   bindCycleExecutionSession,
   type ExecutionSessionBinding,
@@ -22,7 +23,7 @@ import { canonicalHashV1 } from './hash'
 import { MarketData, type MarketDataService } from './market-data'
 import { Authority, OrderSide, OrderType, TimeInForce, type AuthorityState } from './paper'
 import type { CausalProtocol } from './protocol'
-import type { ReconciliationPassResult, runOnce } from './reconciler'
+import { runOnce, type ReconciliationPassResult } from './reconciler'
 import { reconciledStateHash } from './reconciliation'
 import { BrokerMode, decodePolicy, type Policy, type State } from './risk'
 import { buildObserveShadowDecision, type ShadowDecisionError, type ShadowDeltaRiskInput } from './shadow-decision'
@@ -485,14 +486,19 @@ const observePass = (
 export interface ObserveAutonomousCycleInput {
   readonly accountId: string
   readonly authorityGenerationHash: string
+  readonly maximumAuthority: Authority
+  readonly pollIntervalMs: number
+  readonly strategy: Pick<Strategy, 'currentDecision' | 'parameters'>
+}
+
+type ObserveRuntime = BrokerRead | CycleStore | MarketData | PaperStore | WriterFence
+
+interface ObserveRuntimeServices {
   readonly brokerRead: BrokerReadShape
   readonly cycleStore: CycleStoreShape
   readonly marketData: MarketDataService
-  readonly maximumAuthority: Authority
   readonly paperStore: PaperStoreShape
-  readonly pollIntervalMs: number
-  readonly reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError>
-  readonly strategy: Pick<Strategy, 'currentDecision' | 'parameters'>
+  readonly writerFence: WriterFenceService
 }
 
 interface ObserveStartupPreparation {
@@ -540,8 +546,9 @@ const validateObserveAuthorityInitialization = (
 
 const initializeObserveAuthority = (
   input: ObserveAutonomousCycleInput,
+  paperStore: PaperStoreShape,
 ): Effect.Effect<AuthorityState, OperationalError> =>
-  input.paperStore
+  paperStore
     .ensureAuthorityGeneration({
       generationHash: input.authorityGenerationHash,
       maximum: Authority.Observe,
@@ -555,11 +562,17 @@ const initializeObserveAuthority = (
 
 const startObserveAutonomousLoop = (
   input: ObserveAutonomousCycleInput,
+  services: ObserveRuntimeServices,
   startup: Parameters<AutonomousCycleStartup>[0],
   preparation: ObserveStartupPreparation,
   policy: Policy,
-) =>
-  startAutonomousCycleLoop({
+) => {
+  const reconcile = runOnce.pipe(
+    Effect.provideService(BrokerRead, services.brokerRead),
+    Effect.provideService(PaperStore, services.paperStore),
+    Effect.provideService(WriterFence, services.writerFence),
+  )
+  return startAutonomousCycleLoop({
     context: Effect.succeed({
       qualificationRunId: startup.qualificationRunId,
       strategyProtocolHash: startup.strategyProtocolHash,
@@ -570,26 +583,31 @@ const startObserveAutonomousLoop = (
           authorityGenerationHash: input.authorityGenerationHash,
           cycle,
           executionModel: preparation.executionModel,
-          marketCalendar: input.brokerRead.marketCalendar,
-          marketData: input.marketData,
+          marketCalendar: services.brokerRead.marketCalendar,
+          marketData: services.marketData,
           policy,
-          reconcile: input.reconcile,
+          reconcile,
           strategy: input.strategy,
         }).pipe(Effect.mapError(decisionBuildError)),
     }),
     observePass: (observation) => observePass(startup.recordPass, observation),
     pollIntervalMs: input.pollIntervalMs,
   }).pipe(
-    Effect.provideService(BrokerRead, input.brokerRead),
-    Effect.provideService(CycleStore, input.cycleStore),
-    Effect.provideService(MarketData, input.marketData),
     Effect.mapError((cause) =>
       operationalError('strategy', 'cycle-loop', 'autonomous cycle loop failed to start', cause),
     ),
+    Effect.map((loop) =>
+      loop.pipe(
+        Effect.provideService(BrokerRead, services.brokerRead),
+        Effect.provideService(CycleStore, services.cycleStore),
+        Effect.provideService(MarketData, services.marketData),
+      ),
+    ),
   )
+}
 
 export const makeObserveAutonomousCycleStartup =
-  (input: ObserveAutonomousCycleInput): AutonomousCycleStartup =>
+  (input: ObserveAutonomousCycleInput): AutonomousCycleStartup<ObserveRuntime> =>
   (startup) =>
     Effect.gen(function* () {
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
@@ -598,6 +616,13 @@ export const makeObserveAutonomousCycleStartup =
           operationalError('strategy', 'risk-policy', 'source-controlled paper risk policy is invalid', cause),
         ),
       )
-      yield* initializeObserveAuthority(input)
-      return yield* startObserveAutonomousLoop(input, startup, preparation, policy)
+      const services: ObserveRuntimeServices = {
+        brokerRead: yield* BrokerRead,
+        cycleStore: yield* CycleStore,
+        marketData: yield* MarketData,
+        paperStore: yield* PaperStore,
+        writerFence: yield* WriterFence,
+      }
+      yield* initializeObserveAuthority(input, services.paperStore)
+      return yield* startObserveAutonomousLoop(input, services, startup, preparation, policy)
     })

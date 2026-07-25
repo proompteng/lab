@@ -10,6 +10,7 @@
     "dev": "BAYN_PROVENANCE_MODE=development bun --watch src/index.ts",
     "start": "BAYN_PROVENANCE_MODE=development node dist/index.js",
     "lint": "bunx oxfmt --check src",
+    "lint:effect": "find ../../node_modules/.bun -path '*/@effect/tsgo-*/lib/tsc*' -type f ! -name '*.json' -exec chmod +x {} + 2>/dev/null || true; bun node_modules/@effect/tsgo/dist/effect-tsgo.js diagnostics --project tsconfig.json --format text --severity error",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
     "test": "bun test",
@@ -24,6 +25,7 @@
     "tigerbeetle-node": "0.17.9"
   },
   "devDependencies": {
+    "@effect/tsgo": "0.24.3",
     "@types/bun": "1.3.14",
     "@types/node": "^25.6.0",
     "typescript": "^7.0.2"
