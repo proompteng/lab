@@ -11,15 +11,30 @@ import stablePaperAuthorityGeneration from '../../migrations/0017_stable_paper_a
 import type { RuntimeConfig } from '../config'
 import { makeStrategyProtocolHash, type RuntimeProvenance } from '../contracts'
 import { IntentStore, IntentStoreLive, planPaperIntent, type IntentPlan } from '../execution/intents'
-import { MutationEventType, MutationStore, MutationStoreLive, mutationId } from '../execution/mutations'
+import {
+  MutationEventType,
+  MutationStore,
+  MutationStoreError,
+  MutationStoreLive,
+  mutationIdResult,
+} from '../execution/mutations'
 import {
   BrokerMutation,
   MutationOperation,
   cancelRequestHash,
+  orderRequestBody,
   type BrokerMutationShape,
 } from '../broker/alpaca-mutations'
+import {
+  AssetClass,
+  OrderClass,
+  OrderSide as BrokerOrderSide,
+  OrderStatus,
+  OrderType as BrokerOrderType,
+  TimeInForce as BrokerTimeInForce,
+} from '../broker/alpaca'
 import { cancel, submit } from '../execution/coordinator'
-import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
+import { WriterFence, WriterFenceLive, type WriterFenceService } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
 import { buildLedgerPlan, Journal, type JournalService } from '../ledger'
 import {
@@ -126,6 +141,31 @@ const makeMutationRuntime = (config = makeConfig()) =>
       Layer.provide(NodeServices.layer),
     ),
   )
+
+const makeMutationRuntimeWithFenceFailure = (
+  failure: Effect.Effect<never>,
+  onTransaction: () => void,
+  config = makeConfig(),
+) => {
+  const postgres = PostgresClientLive(config).pipe(Layer.provide(NodeServices.layer))
+  const liveFence = WriterFenceLive.pipe(Layer.provide(postgres))
+  const failingFence = Layer.effect(
+    WriterFence,
+    Effect.map(
+      WriterFence,
+      (fence) =>
+        ({
+          backendPid: fence.backendPid,
+          check: fence.check,
+          transaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => {
+            onTransaction()
+            return fence.transaction(effect.pipe(Effect.andThen(failure)))
+          },
+        }) satisfies WriterFenceService,
+    ),
+  ).pipe(Layer.provide(liveFence))
+  return ManagedRuntime.make(MutationStoreLive.pipe(Layer.provideMerge(failingFence), Layer.provideMerge(postgres)))
+}
 
 const makeCoordinatorRuntime = (broker: BrokerMutationShape, config = makeConfig()) =>
   ManagedRuntime.make(
@@ -339,6 +379,7 @@ const seedAcceptedSubmit = (intent: Intent, decision: RiskDecision, fixture: str
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const requestHash = fixtureHash(`${fixture}-request`)
+    const submitMutationId = yield* Effect.fromResult(mutationIdResult(intent.intentId, MutationOperation.Submit))
     const startedAt = new Date(Date.parse(decision.decidedAt) + 1).toISOString()
     const acceptedAt = new Date(Date.parse(decision.decidedAt) + 2).toISOString()
     yield* sql.withTransaction(
@@ -350,7 +391,7 @@ const seedAcceptedSubmit = (intent: Intent, decision: RiskDecision, fixture: str
             request_id, response_status, response_content_hash, occurred_at
           ) VALUES (
             ${fixtureHash(`${fixture}-started`)}, 'bayn.paper-mutation-event.v1',
-            ${mutationId(intent.intentId, MutationOperation.Submit)}, ${intent.intentId},
+            ${submitMutationId}, ${intent.intentId},
             1, 'SUBMIT', 'SUBMIT_STARTED', ${requestHash}, 1000, NULL,
             NULL, NULL, NULL, ${startedAt}
           )
@@ -367,7 +408,7 @@ const seedAcceptedSubmit = (intent: Intent, decision: RiskDecision, fixture: str
             request_id, response_status, response_content_hash, occurred_at
           ) VALUES (
             ${fixtureHash(`${fixture}-accepted`)}, 'bayn.paper-mutation-event.v1',
-            ${mutationId(intent.intentId, MutationOperation.Submit)}, ${intent.intentId},
+            ${submitMutationId}, ${intent.intentId},
             2, 'SUBMIT', 'SUBMIT_ACCEPTED', ${requestHash}, 1000, ${orderId},
             ${`${fixture}-request-id`}, 200, ${fixtureHash(`${fixture}-response`)}, ${acceptedAt}
           )
@@ -1689,6 +1730,94 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(observed.count).toBe(1)
   })
 
+  test('retains typed causes and rolls back executed WriterFence transactions on defects and interruption', async () => {
+    const typedRuntime = makeMutationRuntime()
+    const typedExit = await typedRuntime.runPromise(
+      Effect.exit(
+        Effect.flatMap(MutationStore, (store) =>
+          store.beginSubmit('invalid-intent-id', '1'.repeat(64), 1_000, new Date().toISOString()),
+        ),
+      ),
+    )
+    await typedRuntime.dispose()
+    expect(Exit.isFailure(typedExit)).toBe(true)
+    if (Exit.isFailure(typedExit)) {
+      const failure = Cause.findFail(typedExit.cause)
+      expect(Result.isSuccess(failure)).toBe(true)
+      if (Result.isSuccess(failure)) {
+        const error = failure.success.error
+        expect(error).toBeInstanceOf(MutationStoreError)
+        if (!(error instanceof MutationStoreError)) throw new Error('expected MutationStoreError')
+        expect(error).toMatchObject({
+          operation: 'begin-submit',
+          failure: 'decode',
+          message: 'invalid mutation start',
+        })
+        expect(error.cause).toBeDefined()
+      }
+    }
+
+    await activateAuditedPaperAuthority()
+    const intent = await Effect.runPromise(
+      plan(intentPlan({ cycleId: fixtureHash('mutation-writer-fence-failure-cycle') })),
+    )
+    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+    const execution = makeExecutionRuntime()
+    await execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
+    await execution.dispose()
+    const before = await runtime.runPromise(paperIntentEvidence)
+    const startedAt = new Date(Date.now() + 100).toISOString()
+
+    const defect = new Error('injected WriterFence transaction defect')
+    let defectTransactions = 0
+    let defectAfterMutation = 0
+    const defectRuntime = makeMutationRuntimeWithFenceFailure(
+      Effect.sync(() => {
+        defectAfterMutation += 1
+      }).pipe(Effect.andThen(Effect.die(defect))),
+      () => {
+        defectTransactions += 1
+      },
+    )
+    const defectExit = await defectRuntime.runPromise(
+      Effect.exit(
+        Effect.flatMap(MutationStore, (store) => store.beginSubmit(intent.intentId, 'b'.repeat(64), 1_000, startedAt)),
+      ),
+    )
+    await defectRuntime.dispose()
+    expect(defectTransactions).toBe(1)
+    expect(defectAfterMutation).toBe(1)
+    expect(Exit.isFailure(defectExit)).toBe(true)
+    if (Exit.isFailure(defectExit)) {
+      const found = Cause.findDefect(defectExit.cause)
+      expect(Result.isSuccess(found)).toBe(true)
+      if (Result.isSuccess(found)) expect(found.success).toBe(defect)
+    }
+    expect(await runtime.runPromise(paperIntentEvidence)).toEqual(before)
+
+    let interruptedTransactions = 0
+    let interruptAfterMutation = 0
+    const interruptedRuntime = makeMutationRuntimeWithFenceFailure(
+      Effect.sync(() => {
+        interruptAfterMutation += 1
+      }).pipe(Effect.andThen(Effect.interrupt)),
+      () => {
+        interruptedTransactions += 1
+      },
+    )
+    const interruptedExit = await interruptedRuntime.runPromise(
+      Effect.exit(
+        Effect.flatMap(MutationStore, (store) => store.beginSubmit(intent.intentId, 'd'.repeat(64), 1_000, startedAt)),
+      ),
+    )
+    await interruptedRuntime.dispose()
+    expect(interruptedTransactions).toBe(1)
+    expect(interruptAfterMutation).toBe(1)
+    expect(Exit.isFailure(interruptedExit)).toBe(true)
+    if (Exit.isFailure(interruptedExit)) expect(Cause.hasInterrupts(interruptedExit.cause)).toBe(true)
+    expect(await runtime.runPromise(paperIntentEvidence)).toEqual(before)
+  })
+
   test('linearizes one submit and records its exact acknowledged outcome', async () => {
     await activateAuditedPaperAuthority()
     const execution = makeExecutionRuntime()
@@ -1722,6 +1851,9 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const changedDelay = yield* Effect.exit(store.beginSubmit(intent.intentId, requestHash, 2_000, startedAt))
         const accepted = yield* store.submitAccepted(intent.intentId, requestHash, orderId, evidence)
         const replay = yield* store.submitAccepted(intent.intentId, requestHash, orderId, evidence)
+        const terminalReplay = yield* Effect.exit(
+          store.submitAccepted(intent.intentId, requestHash, orderId, evidence, TerminalOutcome.Filled),
+        )
         const sql = yield* PgClient.PgClient
         const state = yield* sql<{ events: number; state: string; state_version: number }>`
           SELECT
@@ -1731,7 +1863,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           FROM intents
           WHERE intent_id = ${intent.intentId}
         `
-        return { accepted, changedDelay, replay, starts, state: state[0] }
+        return { accepted, changedDelay, replay, starts, state: state[0], terminalReplay }
       }),
     )
     await mutation.dispose()
@@ -1742,8 +1874,191 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(observed.accepted.eventType).toBe(MutationEventType.SubmitAccepted)
     expect(observed.accepted.consistencyDelayMs).toBe(1_000)
     expect(observed.replay.eventId).toBe(observed.accepted.eventId)
+    expect(Exit.isFailure(observed.terminalReplay)).toBe(true)
+    if (Exit.isFailure(observed.terminalReplay)) {
+      expect(Cause.pretty(observed.terminalReplay.cause)).toContain(
+        'mutation outcome replay conflicts with durable intent state',
+      )
+    }
     expect(observed.state).toEqual({ state: 'ACKNOWLEDGED', state_version: 4, events: 2 })
   })
+
+  test('omits explicitly undefined partial evidence before decoding a durable unknown outcome', async () => {
+    await activateAuditedPaperAuthority()
+    const execution = makeExecutionRuntime()
+    const intent = await Effect.runPromise(
+      plan(intentPlan({ cycleId: fixtureHash('mutation-explicit-undefined-evidence-cycle') })),
+    )
+    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+    await execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
+    await execution.dispose()
+
+    const mutation = makeMutationRuntime()
+    const requestHash = fixtureHash('mutation-explicit-undefined-evidence-request')
+    const base = Date.now() + 100
+    const observed = await mutation.runPromise(
+      Effect.gen(function* () {
+        const store = yield* MutationStore
+        yield* store.beginSubmit(intent.intentId, requestHash, 1_000, new Date(base).toISOString())
+        const event = yield* store.submitUnknown(intent.intentId, requestHash, new Date(base + 1).toISOString(), {
+          requestId: undefined,
+          status: undefined,
+          contentHash: undefined,
+          observedAt: undefined,
+        })
+        const sql = yield* PgClient.PgClient
+        const [stored] = yield* sql<{
+          request_id: string | null
+          response_content_hash: string | null
+          response_status: number | null
+        }>`
+          SELECT request_id, response_status::integer, response_content_hash
+          FROM mutation_events
+          WHERE event_id = ${event.eventId}
+        `
+        return { event, stored }
+      }),
+    )
+    await mutation.dispose()
+
+    expect(observed.event).toMatchObject({ eventType: MutationEventType.SubmitUnknown })
+    expect(observed.event.requestId).toBeUndefined()
+    expect(observed.event.responseStatus).toBeUndefined()
+    expect(observed.event.responseContentHash).toBeUndefined()
+    expect(observed.stored).toEqual({
+      request_id: null,
+      response_status: null,
+      response_content_hash: null,
+    })
+  })
+
+  test('causally serializes concurrent coordinator submit and cancel calls around one POST and DELETE', async () => {
+    await activateAuditedPaperAuthority()
+    const intent = await Effect.runPromise(
+      plan(intentPlan({ cycleId: fixtureHash('mutation-concurrent-submit-cancel-cycle') })),
+    )
+    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+    const execution = makeExecutionRuntime()
+    await execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
+    await execution.dispose()
+
+    const submitEntered = await Effect.runPromise(Deferred.make<void>())
+    const releaseSubmit = await Effect.runPromise(Deferred.make<void>())
+    const brokerCalls = { cancel: 0, submit: 0 }
+    const base = Date.now() + 1_000
+    const submitObservedAt = new Date(base).toISOString()
+    const cancelObservedAt = new Date(base + 1_000).toISOString()
+    const broker: BrokerMutationShape = {
+      submit: (submitted) =>
+        Effect.gen(function* () {
+          brokerCalls.submit += 1
+          yield* Deferred.succeed(submitEntered, undefined)
+          yield* Deferred.await(releaseSubmit)
+          return {
+            requestHash: canonicalHashV1(orderRequestBody(submitted)),
+            order: {
+              accountId: submitted.accountId,
+              brokerOrderId: orderId,
+              clientOrderId: submitted.clientOrderId,
+              createdAt: submitObservedAt,
+              updatedAt: submitObservedAt,
+              submittedAt: submitObservedAt,
+              assetId: fixtureHash('mutation-concurrent-broker-asset').slice(0, 36),
+              symbol: submitted.symbol,
+              assetClass: AssetClass.UsEquity,
+              quantityMicros: submitted.quantityMicros,
+              filledQuantityMicros: '0',
+              orderClass: OrderClass.Simple,
+              orderType: BrokerOrderType.Market,
+              side: BrokerOrderSide.Buy,
+              timeInForce: BrokerTimeInForce.Day,
+              status: OrderStatus.Accepted,
+              extendedHours: false,
+              observedAt: submitObservedAt,
+            },
+            evidence: {
+              requestId: 'concurrent-submit-request',
+              status: 200,
+              contentHash: fixtureHash('mutation-concurrent-submit-response'),
+              observedAt: submitObservedAt,
+            },
+          }
+        }),
+      cancel: (brokerOrderId) => {
+        brokerCalls.cancel += 1
+        return Effect.succeed({
+          requestHash: cancelRequestHash(brokerOrderId),
+          brokerOrderId,
+          evidence: {
+            requestId: 'concurrent-cancel-request',
+            status: 204,
+            contentHash: fixtureHash('mutation-concurrent-cancel-response'),
+            observedAt: cancelObservedAt,
+          },
+        })
+      },
+    }
+    const coordinator = makeCoordinatorRuntime(broker)
+    const observed = await coordinator
+      .runPromise(
+        Effect.gen(function* () {
+          const firstSubmit = yield* Effect.forkChild(submit(intent.intentId, 1_000))
+          const secondSubmit = yield* Effect.forkChild(submit(intent.intentId, 1_000))
+          yield* Deferred.await(submitEntered)
+          const earlyCancels = yield* Effect.all(
+            [Effect.exit(cancel(intent.intentId, 1_000)), Effect.exit(cancel(intent.intentId, 1_000))],
+            { concurrency: 'unbounded' },
+          )
+          yield* Deferred.succeed(releaseSubmit, undefined)
+          const submissions = yield* Effect.all([Fiber.join(firstSubmit), Fiber.join(secondSubmit)], {
+            concurrency: 'unbounded',
+          })
+          const cancellations = yield* Effect.all([cancel(intent.intentId, 1_000), cancel(intent.intentId, 1_000)], {
+            concurrency: 'unbounded',
+          })
+          const sql = yield* PgClient.PgClient
+          const events = yield* sql<{
+            event_type: string
+            occurred_at: string
+            operation: string
+            sequence: number
+          }>`
+          SELECT
+            operation,
+            event_type,
+            sequence::integer,
+            to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at
+          FROM mutation_events
+          WHERE intent_id = ${intent.intentId}
+          ORDER BY occurred_at, operation, sequence
+        `
+          return { cancellations, earlyCancels, events, submissions }
+        }).pipe(Effect.ensuring(Deferred.succeed(releaseSubmit, undefined).pipe(Effect.ignore))),
+      )
+      .finally(() => coordinator.dispose())
+
+    expect(observed.earlyCancels).toHaveLength(2)
+    for (const cancellation of observed.earlyCancels) {
+      expect(Exit.isFailure(cancellation)).toBe(true)
+      if (Exit.isFailure(cancellation)) {
+        expect(Cause.pretty(cancellation.cause)).toContain('positively identified broker order')
+      }
+    }
+    expect(observed.submissions).toHaveLength(2)
+    expect(observed.cancellations).toHaveLength(2)
+    expect(brokerCalls).toEqual({ submit: 1, cancel: 1 })
+    expect(observed.events.map(({ event_type, operation, sequence }) => ({ event_type, operation, sequence }))).toEqual(
+      [
+        { operation: MutationOperation.Submit, event_type: MutationEventType.SubmitStarted, sequence: 1 },
+        { operation: MutationOperation.Submit, event_type: MutationEventType.SubmitAccepted, sequence: 2 },
+        { operation: MutationOperation.Cancel, event_type: MutationEventType.CancelStarted, sequence: 1 },
+        { operation: MutationOperation.Cancel, event_type: MutationEventType.CancelAccepted, sequence: 2 },
+      ],
+    )
+    expect(observed.events.map((event) => event.occurred_at)).toEqual(
+      observed.events.map((event) => event.occurred_at).sort(),
+    )
+  }, 20_000)
 
   test('linearizes accepted submit terminal recovery and replays without another durable write', async () => {
     await activateAuditedPaperAuthority()
@@ -1797,6 +2112,27 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           ],
           { concurrency: 'unbounded' },
         )
+        const beforeConflictingReplay = yield* paperIntentEvidence
+        const conflictingReplay = yield* Effect.exit(
+          store.recoveryFound(
+            intent.intentId,
+            MutationOperation.Submit,
+            requestHash,
+            orderId,
+            terminalEvidence,
+            TerminalOutcome.Canceled,
+          ),
+        )
+        const afterConflictingReplay = yield* paperIntentEvidence
+        const exactReplay = yield* store.recoveryFound(
+          intent.intentId,
+          MutationOperation.Submit,
+          requestHash,
+          orderId,
+          terminalEvidence,
+          TerminalOutcome.Filled,
+        )
+        const afterExactReplay = yield* paperIntentEvidence
         const sql = yield* PgClient.PgClient
         const [state] = yield* sql<{
           events: number
@@ -1812,12 +2148,30 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           FROM intents
           WHERE intent_id = ${intent.intentId}
         `
-        return { recovered, state }
+        return {
+          afterConflictingReplay,
+          afterExactReplay,
+          beforeConflictingReplay,
+          conflictingReplay,
+          exactReplay,
+          recovered,
+          state,
+        }
       }),
     )
     await mutation.dispose()
 
     expect(observed.recovered[0].eventId).toBe(observed.recovered[1].eventId)
+    expect(observed.exactReplay.eventId).toBe(observed.recovered[0].eventId)
+    expect(Exit.isFailure(observed.conflictingReplay)).toBe(true)
+    if (Exit.isFailure(observed.conflictingReplay)) {
+      expect(Cause.pretty(observed.conflictingReplay.cause)).toContain(
+        'mutation outcome replay conflicts with durable intent state',
+      )
+    }
+    expect(observed.afterConflictingReplay).toEqual(observed.beforeConflictingReplay)
+    expect(JSON.stringify(observed.afterConflictingReplay)).toBe(JSON.stringify(observed.beforeConflictingReplay))
+    expect(observed.afterExactReplay).toEqual(observed.beforeConflictingReplay)
     expect(observed.recovered[0]).toMatchObject({
       sequence: 3,
       eventType: MutationEventType.RecoveryFound,
@@ -1930,6 +2284,12 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const submitHash = '7'.repeat(64)
     const cancelHash = cancelRequestHash(orderId)
     const base = Date.now() + 100
+    const cancelTerminalEvidence = {
+      requestId: 'terminal-cancel-recovery',
+      status: 200,
+      contentHash: '3'.repeat(64),
+      observedAt: new Date(base + 5).toISOString(),
+    }
     const observed = await mutation.runPromise(
       Effect.gen(function* () {
         const store = yield* MutationStore
@@ -1968,14 +2328,25 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           MutationOperation.Cancel,
           cancelHash,
           orderId,
-          {
-            requestId: 'terminal-cancel-recovery',
-            status: 200,
-            contentHash: '3'.repeat(64),
-            observedAt: new Date(base + 5).toISOString(),
-          },
+          cancelTerminalEvidence,
           TerminalOutcome.Canceled,
         )
+        const beforeReplayConflicts = yield* paperIntentEvidence
+        const differentTerminalReplay = yield* Effect.exit(
+          store.recoveryFound(
+            intent.intentId,
+            MutationOperation.Cancel,
+            cancelHash,
+            orderId,
+            cancelTerminalEvidence,
+            TerminalOutcome.Expired,
+          ),
+        )
+        const afterDifferentTerminalReplay = yield* paperIntentEvidence
+        const omittedTerminalReplay = yield* Effect.exit(
+          store.recoveryFound(intent.intentId, MutationOperation.Cancel, cancelHash, orderId, cancelTerminalEvidence),
+        )
+        const afterOmittedTerminalReplay = yield* paperIntentEvidence
         const sql = yield* PgClient.PgClient
         const [state] = yield* sql<{
           events: number
@@ -1991,7 +2362,17 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           FROM intents
           WHERE intent_id = ${intent.intentId}
         `
-        return { afterSubmitRecovery, canceled, state, submitRecovery }
+        return {
+          afterDifferentTerminalReplay,
+          afterOmittedTerminalReplay,
+          afterSubmitRecovery,
+          beforeReplayConflicts,
+          canceled,
+          differentTerminalReplay,
+          omittedTerminalReplay,
+          state,
+          submitRecovery,
+        }
       }),
     )
     await mutation.dispose()
@@ -2008,6 +2389,15 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       eventType: MutationEventType.RecoveryFound,
       brokerOrderId: orderId,
     })
+    for (const replay of [observed.differentTerminalReplay, observed.omittedTerminalReplay]) {
+      expect(Exit.isFailure(replay)).toBe(true)
+      if (Exit.isFailure(replay)) {
+        expect(Cause.pretty(replay.cause)).toContain('mutation outcome replay conflicts with durable intent state')
+      }
+    }
+    expect(observed.afterDifferentTerminalReplay).toEqual(observed.beforeReplayConflicts)
+    expect(JSON.stringify(observed.afterDifferentTerminalReplay)).toBe(JSON.stringify(observed.beforeReplayConflicts))
+    expect(observed.afterOmittedTerminalReplay).toEqual(observed.beforeReplayConflicts)
     expect(observed.state).toEqual({
       state: 'TERMINAL',
       state_version: 5,

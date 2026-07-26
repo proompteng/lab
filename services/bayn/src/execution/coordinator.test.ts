@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Clock, Duration, Effect, Exit, Fiber, Option } from 'effect'
+import { Cause, Clock, Duration, Effect, Exit, Fiber, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -29,7 +29,9 @@ import {
 import { unusedAssetBySymbol, unusedMarketCalendar } from '../broker/alpaca-test-support'
 import { canonicalHashV1 } from '../hash'
 import {
+  Authority,
   IntentState,
+  KillState,
   MutationOutcome,
   OrderSide,
   OrderType,
@@ -41,7 +43,25 @@ import {
 } from '../paper'
 import { cancel, dryRunSubmit, ExecutionError, ExecutionFailure, recover, submit } from './coordinator'
 import { IntentStore, type IntentStoreService, type StoredIntent } from './intents'
-import { MutationEventType, MutationStore, mutationId, type MutationEvent, type MutationStoreShape } from './mutations'
+import {
+  decideMutationAuthority,
+  decideMutationOutcome,
+  decideMutationStart,
+  decideMutationStartReplay,
+  MutationEventType,
+  MutationStore,
+  MutationStoreError,
+  mutationIdResult,
+  type MutationAuthoritySnapshot,
+  type MutationEvent,
+  type MutationIntentTransition,
+  type MutationIntentSnapshot,
+  type MutationOutcomeDefinition,
+  type MutationOutcomeInput,
+  type MutationReplayIntentSnapshot,
+  type MutationStartInput,
+  type MutationStoreShape,
+} from './mutations'
 import { WriterFence, WriterFenceError } from './writer-fence'
 
 const intentId = 'a'.repeat(64)
@@ -110,6 +130,1023 @@ const evidence = (status: number, observedAt: string): MutationEvidence => ({
   observedAt,
 })
 
+const resultSuccess = <A, E>(result: Result.Result<A, E>): A => {
+  expect(Result.isSuccess(result)).toBe(true)
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+
+const resultFailure = <A>(result: Result.Result<A, MutationStoreError>): MutationStoreError => {
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isSuccess(result)) throw new Error('expected a mutation decision failure')
+  return result.failure
+}
+
+const decisionRequestHash = '1'.repeat(64)
+const decisionStartedAt = '1970-01-01T00:00:01.000Z'
+const decisionOutcomeAt = '1970-01-01T00:00:02.000Z'
+
+const decisionStartInput = (operation: MutationOperation, brokerOrderId?: string): MutationStartInput => ({
+  intentId,
+  requestHash: decisionRequestHash,
+  consistencyDelayMs: 1_000,
+  occurredAt: decisionStartedAt,
+  ...(operation === MutationOperation.Cancel && brokerOrderId !== undefined ? { brokerOrderId } : {}),
+})
+
+const decisionAuthority: MutationAuthoritySnapshot = {
+  maximum: Authority.Paper,
+  effective: Authority.Paper,
+  killState: KillState.Clear,
+  generationHash: intent.authorityGenerationHash,
+  generationMaximum: Authority.Paper,
+  generationAccountId: accountId,
+}
+
+const decisionIntent = (state: IntentState = IntentState.Approved): MutationIntentSnapshot => ({
+  accountId,
+  authorityGenerationHash: intent.authorityGenerationHash,
+  policyHash: intent.policyHash,
+  state,
+  strategyName: intent.strategyName,
+  updatedAt: initialTime,
+  generationAccountId: accountId,
+  generationMaximum: Authority.Paper,
+  generationRiskPolicyHash: intent.policyHash,
+  generationStrategyName: intent.strategyName,
+})
+
+const decisionEvent = (
+  operation: MutationOperation,
+  eventType: MutationEventType,
+  overrides: Partial<MutationEvent> = {},
+): MutationEvent => ({
+  schemaVersion: 'bayn.paper-mutation-event.v1',
+  eventId: canonicalHashV1({ operation, eventType, overrides }),
+  mutationId: resultSuccess(mutationIdResult(intentId, operation)),
+  intentId,
+  sequence: 1,
+  operation,
+  eventType,
+  requestHash: decisionRequestHash,
+  consistencyDelayMs: 1_000,
+  occurredAt: decisionStartedAt,
+  ...overrides,
+})
+
+const decisionOutcomeInput = (overrides: Partial<MutationOutcomeInput> = {}): MutationOutcomeInput => ({
+  intentId,
+  requestHash: decisionRequestHash,
+  occurredAt: decisionOutcomeAt,
+  ...overrides,
+})
+
+const decisionReplayIntent = (
+  state: IntentState,
+  terminalOutcome: TerminalOutcome | null = null,
+): MutationReplayIntentSnapshot => ({ state, terminalOutcome })
+
+describe('MutationStore decision algebra', () => {
+  test('returns a closed canonicalization failure for a malformed mutation identity', () => {
+    const identity = mutationIdResult('\ud800', MutationOperation.Submit)
+
+    expect(Result.isFailure(identity)).toBe(true)
+    if (Result.isSuccess(identity)) throw new Error('expected malformed mutation identity to fail')
+    expect(identity.failure).toMatchObject({
+      _tag: 'MutationCanonicalizationFailure',
+      fact: {
+        _tag: 'MutationIdentity',
+        intentId: '\ud800',
+        operation: MutationOperation.Submit,
+      },
+    })
+    expect(identity.failure.cause).toBeInstanceOf(TypeError)
+  })
+
+  test('makes every authority outcome explicit', () => {
+    const submitBinding = resultSuccess(decideMutationAuthority(MutationOperation.Submit, decisionAuthority))
+    expect(submitBinding).toEqual({
+      accountId,
+      generationHash: intent.authorityGenerationHash,
+    })
+    expect(
+      resultSuccess(
+        decideMutationAuthority(MutationOperation.Cancel, {
+          ...decisionAuthority,
+          effective: Authority.Observe,
+          killState: KillState.Active,
+        }),
+      ),
+    ).toEqual(submitBinding)
+
+    const failures: readonly [MutationOperation, MutationAuthoritySnapshot | undefined, string][] = [
+      [MutationOperation.Submit, undefined, 'paper authority is not initialized'],
+      [
+        MutationOperation.Submit,
+        { ...decisionAuthority, maximum: Authority.Observe },
+        'GitOps maximum authority is not PAPER',
+      ],
+      [
+        MutationOperation.Submit,
+        { ...decisionAuthority, effective: Authority.Observe },
+        'effective authority is not PAPER and clear',
+      ],
+      [
+        MutationOperation.Submit,
+        { ...decisionAuthority, killState: KillState.Active },
+        'effective authority is not PAPER and clear',
+      ],
+      [
+        MutationOperation.Cancel,
+        { ...decisionAuthority, effective: Authority.Observe },
+        'cancellation requires PAPER authority or an active kill',
+      ],
+      [
+        MutationOperation.Submit,
+        { ...decisionAuthority, generationMaximum: Authority.Observe },
+        'active PAPER authority lacks its immutable account binding',
+      ],
+      [
+        MutationOperation.Submit,
+        { ...decisionAuthority, generationAccountId: null },
+        'active PAPER authority lacks its immutable account binding',
+      ],
+    ]
+    for (const [operation, authority, message] of failures) {
+      expect(resultFailure(decideMutationAuthority(operation, authority))).toMatchObject({
+        _tag: 'MutationStoreError',
+        failure: 'authority',
+        message,
+      })
+    }
+  })
+
+  test('decides start replay, immutable binding, stale time, and retained cancel identity', () => {
+    const submitInput = decisionStartInput(MutationOperation.Submit)
+    const submitStarted = decisionEvent(MutationOperation.Submit, MutationEventType.SubmitStarted)
+    expect(resultSuccess(decideMutationStartReplay(MutationOperation.Submit, submitInput, undefined))).toEqual({
+      _tag: 'BeginMutation',
+    })
+    const replay = resultSuccess(decideMutationStartReplay(MutationOperation.Submit, submitInput, submitStarted))
+    expect(replay).toEqual({
+      _tag: 'ReplayMutation',
+      receipt: { event: submitStarted, started: false },
+    })
+    if (replay._tag === 'ReplayMutation') expect(replay.receipt.event).toBe(submitStarted)
+
+    for (const changed of [
+      { ...submitStarted, requestHash: '2'.repeat(64) },
+      { ...submitStarted, consistencyDelayMs: 2_000 },
+      { ...submitStarted, mutationId: '3'.repeat(64) },
+    ]) {
+      expect(resultFailure(decideMutationStartReplay(MutationOperation.Submit, submitInput, changed))).toMatchObject({
+        operation: 'begin-submit',
+        failure: 'conflict',
+        message: 'mutation identity was reused with different request content',
+      })
+    }
+    const cancelInput = decisionStartInput(MutationOperation.Cancel, orderId)
+    expect(
+      resultFailure(
+        decideMutationStartReplay(
+          MutationOperation.Cancel,
+          cancelInput,
+          decisionEvent(MutationOperation.Cancel, MutationEventType.CancelStarted, {
+            brokerOrderId: 'another-order',
+          }),
+        ),
+      ),
+    ).toMatchObject({ operation: 'begin-cancel', failure: 'conflict' })
+    const malformedReplay = resultFailure(
+      decideMutationStartReplay(MutationOperation.Submit, { ...submitInput, intentId: '\ud800' }, submitStarted),
+    )
+    expect(malformedReplay).toMatchObject({
+      operation: 'begin-submit',
+      failure: 'invariant',
+      message: 'mutation identity canonicalization failed',
+    })
+    expect(malformedReplay.cause).toBeInstanceOf(TypeError)
+    expect(malformedReplay.canonicalizationFailure?.cause).toBe(malformedReplay.cause)
+
+    const authority = resultSuccess(decideMutationAuthority(MutationOperation.Submit, decisionAuthority))
+    const submit = resultSuccess(
+      decideMutationStart(MutationOperation.Submit, submitInput, authority, decisionIntent(), undefined),
+    )
+    expect(submit).toMatchObject({
+      event: {
+        operation: MutationOperation.Submit,
+        eventType: MutationEventType.SubmitStarted,
+        sequence: 1,
+      },
+      intentTransition: 'ApprovedToIoStarted',
+    })
+
+    const bindingFailures: readonly [MutationIntentSnapshot, string][] = [
+      [
+        { ...decisionIntent(), generationMaximum: Authority.Observe },
+        'intent does not match its immutable PAPER authority-generation bindings',
+      ],
+      [
+        { ...decisionIntent(), generationAccountId: null },
+        'intent does not match its immutable PAPER authority-generation bindings',
+      ],
+      [
+        { ...decisionIntent(), generationAccountId: 'another-account' },
+        'intent does not match its immutable PAPER authority-generation bindings',
+      ],
+      [
+        { ...decisionIntent(), generationRiskPolicyHash: '4'.repeat(64) },
+        'intent does not match its immutable PAPER authority-generation bindings',
+      ],
+      [
+        { ...decisionIntent(), generationStrategyName: 'another-strategy' },
+        'intent does not match its immutable PAPER authority-generation bindings',
+      ],
+    ]
+    for (const [snapshot, message] of bindingFailures) {
+      expect(
+        resultFailure(decideMutationStart(MutationOperation.Submit, submitInput, authority, snapshot, undefined)),
+      ).toMatchObject({ operation: 'begin-submit', failure: 'authority', message })
+    }
+    expect(
+      resultFailure(
+        decideMutationStart(
+          MutationOperation.Submit,
+          submitInput,
+          { ...authority, accountId: 'another-account' },
+          decisionIntent(),
+          undefined,
+        ),
+      ),
+    ).toMatchObject({
+      message: 'intent account does not match the active PAPER authority generation',
+    })
+    expect(
+      resultFailure(
+        decideMutationStart(
+          MutationOperation.Submit,
+          submitInput,
+          authority,
+          { ...decisionIntent(), authorityGenerationHash: '5'.repeat(64) },
+          undefined,
+        ),
+      ),
+    ).toMatchObject({
+      message: 'intent authority generation is not the active PAPER generation',
+    })
+    expect(
+      resultFailure(
+        decideMutationStart(
+          MutationOperation.Submit,
+          { ...submitInput, occurredAt: initialTime },
+          authority,
+          decisionIntent(),
+          undefined,
+        ),
+      ),
+    ).toMatchObject({ message: 'mutation time must follow the intent state' })
+
+    const retainedStates: readonly [MutationEventType, IntentState][] = [
+      [MutationEventType.SubmitAccepted, IntentState.Acknowledged],
+      [MutationEventType.RecoveryFound, IntentState.Acknowledged],
+      [MutationEventType.SubmitUnknown, IntentState.Unknown],
+      [MutationEventType.RecoveryNotFound, IntentState.Unknown],
+      [MutationEventType.RecoveryUnknown, IntentState.Unknown],
+    ]
+    for (const [eventType, state] of retainedStates) {
+      const cancel = resultSuccess(
+        decideMutationStart(
+          MutationOperation.Cancel,
+          cancelInput,
+          authority,
+          decisionIntent(state),
+          decisionEvent(MutationOperation.Submit, eventType, { brokerOrderId: orderId }),
+        ),
+      )
+      expect(cancel).toMatchObject({
+        event: { operation: MutationOperation.Cancel, eventType: MutationEventType.CancelStarted },
+        intentTransition: 'KeepIntentState',
+      })
+    }
+    for (const submitted of [
+      undefined,
+      decisionEvent(MutationOperation.Submit, MutationEventType.SubmitRejected, { brokerOrderId: orderId }),
+      decisionEvent(MutationOperation.Submit, MutationEventType.SubmitAccepted, {
+        brokerOrderId: 'another-order',
+      }),
+    ]) {
+      expect(
+        resultFailure(
+          decideMutationStart(
+            MutationOperation.Cancel,
+            cancelInput,
+            authority,
+            decisionIntent(IntentState.Acknowledged),
+            submitted,
+          ),
+        ),
+      ).toMatchObject({
+        operation: 'begin-cancel',
+        failure: 'invariant',
+        message: 'cancel requires the exact durable submitted order identity',
+      })
+    }
+
+    const malformedBrokerOrderId = '\ud800'
+    const malformedEvent = resultFailure(
+      decideMutationStart(
+        MutationOperation.Cancel,
+        decisionStartInput(MutationOperation.Cancel, malformedBrokerOrderId),
+        authority,
+        decisionIntent(IntentState.Acknowledged),
+        {
+          ...decisionEvent(MutationOperation.Submit, MutationEventType.SubmitAccepted, {
+            brokerOrderId: orderId,
+          }),
+          brokerOrderId: malformedBrokerOrderId,
+        },
+      ),
+    )
+    expect(malformedEvent).toMatchObject({
+      operation: 'begin-cancel',
+      failure: 'invariant',
+      message: 'mutation event canonicalization failed',
+    })
+    expect(malformedEvent.cause).toBeInstanceOf(TypeError)
+    expect(malformedEvent.canonicalizationFailure?.cause).toBe(malformedEvent.cause)
+  })
+
+  test('maps every public outcome to one closed transition decision', () => {
+    const cases: readonly [
+      MutationOutcomeDefinition,
+      MutationOperation,
+      MutationEventType,
+      MutationIntentTransition['_tag'],
+      IntentState | undefined,
+      TerminalOutcome | undefined,
+    ][] = [
+      [
+        { _tag: 'SubmitAccepted' },
+        MutationOperation.Submit,
+        MutationEventType.SubmitAccepted,
+        'TransitionFromIoStarted',
+        IntentState.Acknowledged,
+        undefined,
+      ],
+      [
+        { _tag: 'SubmitAccepted', terminalOutcome: TerminalOutcome.Filled },
+        MutationOperation.Submit,
+        MutationEventType.SubmitAccepted,
+        'TransitionFromIoStarted',
+        IntentState.Terminal,
+        TerminalOutcome.Filled,
+      ],
+      [
+        { _tag: 'SubmitRejected' },
+        MutationOperation.Submit,
+        MutationEventType.SubmitRejected,
+        'TransitionFromIoStarted',
+        IntentState.Terminal,
+        TerminalOutcome.Rejected,
+      ],
+      [
+        { _tag: 'SubmitUnknown' },
+        MutationOperation.Submit,
+        MutationEventType.SubmitUnknown,
+        'TransitionFromIoStarted',
+        IntentState.Unknown,
+        undefined,
+      ],
+      [
+        { _tag: 'CancelAccepted' },
+        MutationOperation.Cancel,
+        MutationEventType.CancelAccepted,
+        'KeepIntentState',
+        undefined,
+        undefined,
+      ],
+      [
+        { _tag: 'CancelUnknown' },
+        MutationOperation.Cancel,
+        MutationEventType.CancelUnknown,
+        'KeepIntentState',
+        undefined,
+        undefined,
+      ],
+      [
+        { _tag: 'RecoveryFound', operation: MutationOperation.Submit },
+        MutationOperation.Submit,
+        MutationEventType.RecoveryFound,
+        'RecoverSubmit',
+        IntentState.Acknowledged,
+        undefined,
+      ],
+      [
+        {
+          _tag: 'RecoveryFound',
+          operation: MutationOperation.Submit,
+          terminalOutcome: TerminalOutcome.Expired,
+        },
+        MutationOperation.Submit,
+        MutationEventType.RecoveryFound,
+        'RecoverSubmit',
+        IntentState.Terminal,
+        TerminalOutcome.Expired,
+      ],
+      [
+        { _tag: 'RecoveryFound', operation: MutationOperation.Cancel },
+        MutationOperation.Cancel,
+        MutationEventType.RecoveryFound,
+        'KeepIntentState',
+        undefined,
+        undefined,
+      ],
+      [
+        {
+          _tag: 'RecoveryFound',
+          operation: MutationOperation.Cancel,
+          terminalOutcome: TerminalOutcome.Canceled,
+        },
+        MutationOperation.Cancel,
+        MutationEventType.RecoveryFound,
+        'RecoverCancelTerminal',
+        IntentState.Terminal,
+        TerminalOutcome.Canceled,
+      ],
+      [
+        { _tag: 'RecoveryNotFound', operation: MutationOperation.Submit },
+        MutationOperation.Submit,
+        MutationEventType.RecoveryNotFound,
+        'KeepIntentState',
+        undefined,
+        undefined,
+      ],
+      [
+        { _tag: 'RecoveryUnknown', operation: MutationOperation.Cancel },
+        MutationOperation.Cancel,
+        MutationEventType.RecoveryUnknown,
+        'KeepIntentState',
+        undefined,
+        undefined,
+      ],
+    ]
+
+    for (const [definition, operation, eventType, tag, state, terminalOutcome] of cases) {
+      const previousType =
+        definition._tag === 'SubmitAccepted' ||
+        definition._tag === 'SubmitRejected' ||
+        definition._tag === 'SubmitUnknown'
+          ? MutationEventType.SubmitStarted
+          : definition._tag === 'CancelAccepted' || definition._tag === 'CancelUnknown'
+            ? MutationEventType.CancelStarted
+            : operation === MutationOperation.Submit
+              ? MutationEventType.SubmitUnknown
+              : MutationEventType.CancelUnknown
+      const brokerOrderId =
+        eventType === MutationEventType.SubmitRejected || eventType === MutationEventType.SubmitUnknown
+          ? undefined
+          : orderId
+      const status =
+        eventType === MutationEventType.CancelAccepted
+          ? 204
+          : eventType === MutationEventType.RecoveryNotFound
+            ? 404
+            : eventType === MutationEventType.SubmitRejected
+              ? 422
+              : 200
+      const previous = decisionEvent(
+        operation,
+        previousType,
+        operation === MutationOperation.Cancel ? { brokerOrderId: orderId } : {},
+      )
+      const decision = resultSuccess(
+        decideMutationOutcome(
+          decisionOutcomeInput({
+            ...(brokerOrderId === undefined ? {} : { brokerOrderId }),
+            evidence: evidence(status, decisionOutcomeAt),
+          }),
+          definition,
+          previous,
+          decisionReplayIntent(
+            previousType === MutationEventType.SubmitStarted || previousType === MutationEventType.CancelStarted
+              ? IntentState.IoStarted
+              : IntentState.Unknown,
+          ),
+        ),
+      )
+      expect(decision).toMatchObject({
+        _tag: 'AppendMutation',
+        event: { operation, eventType },
+        transition: { _tag: tag },
+      })
+      if (decision._tag !== 'AppendMutation') throw new Error('expected append decision')
+      if ('nextState' in decision.transition) {
+        if (state === undefined) throw new Error('expected a transition state')
+        expect(decision.transition.nextState).toBe(state)
+      } else {
+        expect(state).toBeUndefined()
+      }
+      if ('terminalOutcome' in decision.transition) {
+        expect(decision.transition.terminalOutcome).toBe(terminalOutcome)
+      } else {
+        expect(terminalOutcome).toBeUndefined()
+      }
+    }
+  })
+
+  test('decides every durable event transition, exact replay, retained ID, and cancel-first containment', () => {
+    const allowed: readonly [MutationOperation, MutationEventType, MutationEventType][] = [
+      [MutationOperation.Submit, MutationEventType.SubmitStarted, MutationEventType.SubmitAccepted],
+      [MutationOperation.Submit, MutationEventType.SubmitStarted, MutationEventType.SubmitRejected],
+      [MutationOperation.Submit, MutationEventType.SubmitStarted, MutationEventType.SubmitUnknown],
+      [MutationOperation.Cancel, MutationEventType.CancelStarted, MutationEventType.CancelAccepted],
+      [MutationOperation.Cancel, MutationEventType.CancelStarted, MutationEventType.CancelUnknown],
+      [MutationOperation.Submit, MutationEventType.SubmitAccepted, MutationEventType.RecoveryFound],
+      [MutationOperation.Submit, MutationEventType.SubmitUnknown, MutationEventType.RecoveryNotFound],
+      [MutationOperation.Cancel, MutationEventType.CancelAccepted, MutationEventType.RecoveryUnknown],
+      [MutationOperation.Cancel, MutationEventType.CancelUnknown, MutationEventType.RecoveryFound],
+      [MutationOperation.Submit, MutationEventType.RecoveryFound, MutationEventType.RecoveryNotFound],
+      [MutationOperation.Submit, MutationEventType.RecoveryNotFound, MutationEventType.RecoveryUnknown],
+      [MutationOperation.Cancel, MutationEventType.RecoveryUnknown, MutationEventType.RecoveryFound],
+    ]
+    for (const [operation, previousType, nextType] of allowed) {
+      const previous =
+        previousType === MutationEventType.SubmitStarted
+          ? decisionEvent(operation, previousType)
+          : decisionEvent(operation, previousType, { brokerOrderId: orderId })
+      const brokerOrderId =
+        nextType === MutationEventType.SubmitRejected || nextType === MutationEventType.SubmitUnknown
+          ? undefined
+          : orderId
+      const status =
+        nextType === MutationEventType.CancelAccepted
+          ? 204
+          : nextType === MutationEventType.RecoveryNotFound
+            ? 404
+            : nextType === MutationEventType.SubmitRejected
+              ? 422
+              : 200
+      const definition: MutationOutcomeDefinition = (() => {
+        switch (nextType) {
+          case MutationEventType.SubmitAccepted:
+            return { _tag: 'SubmitAccepted' }
+          case MutationEventType.SubmitRejected:
+            return { _tag: 'SubmitRejected' }
+          case MutationEventType.SubmitUnknown:
+            return { _tag: 'SubmitUnknown' }
+          case MutationEventType.CancelAccepted:
+            return { _tag: 'CancelAccepted' }
+          case MutationEventType.CancelUnknown:
+            return { _tag: 'CancelUnknown' }
+          case MutationEventType.RecoveryFound:
+            return { _tag: 'RecoveryFound', operation }
+          case MutationEventType.RecoveryNotFound:
+            return { _tag: 'RecoveryNotFound', operation }
+          case MutationEventType.RecoveryUnknown:
+            return { _tag: 'RecoveryUnknown', operation }
+          case MutationEventType.SubmitStarted:
+          case MutationEventType.CancelStarted:
+            throw new Error('STARTED is not an outcome definition')
+        }
+      })()
+      const result = resultSuccess(
+        decideMutationOutcome(
+          decisionOutcomeInput({
+            ...(brokerOrderId === undefined ? {} : { brokerOrderId }),
+            evidence: evidence(status, decisionOutcomeAt),
+          }),
+          definition,
+          previous,
+          decisionReplayIntent(
+            previousType === MutationEventType.SubmitStarted || previousType === MutationEventType.CancelStarted
+              ? IntentState.IoStarted
+              : IntentState.Unknown,
+          ),
+        ),
+      )
+      expect(result).toMatchObject({
+        _tag: 'AppendMutation',
+        event: {
+          eventType: nextType,
+          ...(brokerOrderId === undefined ? {} : { brokerOrderId: orderId }),
+        },
+      })
+    }
+
+    const replayEvidence = evidence(404, decisionOutcomeAt)
+    const replayed = decisionEvent(MutationOperation.Submit, MutationEventType.RecoveryNotFound, {
+      sequence: 2,
+      brokerOrderId: orderId,
+      requestId: replayEvidence.requestId,
+      responseStatus: replayEvidence.status,
+      responseContentHash: replayEvidence.contentHash,
+    })
+    const replay = resultSuccess(
+      decideMutationOutcome(
+        decisionOutcomeInput({
+          occurredAt: '1970-01-01T00:00:03.000Z',
+          evidence: replayEvidence,
+        }),
+        { _tag: 'RecoveryNotFound', operation: MutationOperation.Submit },
+        replayed,
+        decisionReplayIntent(IntentState.Unknown),
+      ),
+    )
+    expect(replay).toEqual({ _tag: 'ReplayMutation', event: replayed })
+    if (replay._tag === 'ReplayMutation') expect(replay.event).toBe(replayed)
+
+    const retained = resultSuccess(
+      decideMutationOutcome(
+        decisionOutcomeInput({ evidence: evidence(200, decisionOutcomeAt) }),
+        { _tag: 'RecoveryFound', operation: MutationOperation.Submit },
+        decisionEvent(MutationOperation.Submit, MutationEventType.SubmitAccepted, {
+          brokerOrderId: orderId,
+        }),
+        decisionReplayIntent(IntentState.Acknowledged),
+      ),
+    )
+    expect(retained).toMatchObject({ _tag: 'AppendMutation', event: { brokerOrderId: orderId } })
+
+    const canonicalizationFailure = resultFailure(
+      decideMutationOutcome(
+        decisionOutcomeInput({ brokerOrderId: '\ud800' }),
+        { _tag: 'SubmitUnknown' },
+        decisionEvent(MutationOperation.Submit, MutationEventType.SubmitStarted),
+        decisionReplayIntent(IntentState.IoStarted),
+      ),
+    )
+    expect(canonicalizationFailure).toMatchObject({
+      operation: 'record-submit',
+      failure: 'invariant',
+      message: 'mutation event canonicalization failed',
+    })
+    expect(canonicalizationFailure.cause).toBeInstanceOf(TypeError)
+    expect(canonicalizationFailure.canonicalizationFailure?.cause).toBe(canonicalizationFailure.cause)
+
+    const outcomeFailures: readonly [
+      MutationOutcomeInput,
+      MutationOutcomeDefinition,
+      MutationEvent | undefined,
+      string,
+    ][] = [
+      [decisionOutcomeInput(), { _tag: 'SubmitAccepted' }, undefined, 'mutation STARTED event does not exist'],
+      [
+        decisionOutcomeInput({ requestHash: '2'.repeat(64) }),
+        { _tag: 'SubmitAccepted' },
+        decisionEvent(MutationOperation.Submit, MutationEventType.SubmitStarted),
+        'mutation request hash changed',
+      ],
+      [
+        decisionOutcomeInput({ brokerOrderId: 'another-order' }),
+        { _tag: 'RecoveryFound', operation: MutationOperation.Submit },
+        decisionEvent(MutationOperation.Submit, MutationEventType.SubmitAccepted, {
+          brokerOrderId: orderId,
+        }),
+        'mutation broker order identity cannot change',
+      ],
+      [
+        decisionOutcomeInput({ occurredAt: '1969-12-31T23:59:58.000Z' }),
+        { _tag: 'SubmitAccepted' },
+        decisionEvent(MutationOperation.Submit, MutationEventType.SubmitStarted),
+        'mutation identity and sequence must remain exact',
+      ],
+      [
+        decisionOutcomeInput(),
+        { _tag: 'CancelAccepted' },
+        decisionEvent(MutationOperation.Submit, MutationEventType.SubmitStarted),
+        'mutation identity and sequence must remain exact',
+      ],
+      [
+        decisionOutcomeInput(),
+        { _tag: 'RecoveryFound', operation: MutationOperation.Submit },
+        decisionEvent(MutationOperation.Submit, MutationEventType.SubmitRejected),
+        'invalid mutation transition from SUBMIT_REJECTED to RECOVERY_FOUND',
+      ],
+      [
+        decisionOutcomeInput(),
+        { _tag: 'RecoveryFound', operation: MutationOperation.Submit },
+        decisionEvent(MutationOperation.Submit, MutationEventType.SubmitStarted),
+        'invalid mutation transition from SUBMIT_STARTED to RECOVERY_FOUND',
+      ],
+      [
+        decisionOutcomeInput({ brokerOrderId: orderId }),
+        { _tag: 'RecoveryUnknown', operation: MutationOperation.Cancel },
+        decisionEvent(MutationOperation.Cancel, MutationEventType.CancelStarted, { brokerOrderId: orderId }),
+        'invalid mutation transition from CANCEL_STARTED to RECOVERY_UNKNOWN',
+      ],
+    ]
+    for (const [input, definition, previous, message] of outcomeFailures) {
+      expect(
+        resultFailure(decideMutationOutcome(input, definition, previous, decisionReplayIntent(IntentState.IoStarted))),
+      ).toMatchObject({
+        failure: message.includes('does not exist') ? 'invariant' : 'conflict',
+        message,
+      })
+    }
+
+    const invalidContracts: readonly [MutationOutcomeInput, MutationOutcomeDefinition, MutationEvent, IntentState][] = [
+      [
+        decisionOutcomeInput({ evidence: evidence(200, decisionOutcomeAt) }),
+        { _tag: 'SubmitAccepted' },
+        decisionEvent(MutationOperation.Submit, MutationEventType.SubmitStarted),
+        IntentState.IoStarted,
+      ],
+      [
+        decisionOutcomeInput({ evidence: evidence(500, decisionOutcomeAt) }),
+        { _tag: 'SubmitRejected' },
+        decisionEvent(MutationOperation.Submit, MutationEventType.SubmitStarted),
+        IntentState.IoStarted,
+      ],
+      [
+        decisionOutcomeInput({ evidence: evidence(200, decisionOutcomeAt) }),
+        { _tag: 'RecoveryFound', operation: MutationOperation.Submit },
+        decisionEvent(MutationOperation.Submit, MutationEventType.SubmitUnknown),
+        IntentState.Unknown,
+      ],
+      [
+        decisionOutcomeInput({ evidence: evidence(200, decisionOutcomeAt) }),
+        { _tag: 'RecoveryNotFound', operation: MutationOperation.Submit },
+        decisionEvent(MutationOperation.Submit, MutationEventType.SubmitUnknown),
+        IntentState.Unknown,
+      ],
+      [
+        decisionOutcomeInput({ brokerOrderId: orderId, evidence: evidence(200, decisionOutcomeAt) }),
+        { _tag: 'CancelAccepted' },
+        decisionEvent(MutationOperation.Cancel, MutationEventType.CancelStarted, { brokerOrderId: orderId }),
+        IntentState.Acknowledged,
+      ],
+      [
+        decisionOutcomeInput(),
+        { _tag: 'CancelUnknown' },
+        decisionEvent(MutationOperation.Cancel, MutationEventType.CancelStarted),
+        IntentState.Acknowledged,
+      ],
+    ]
+    for (const [input, definition, previous, state] of invalidContracts) {
+      expect(
+        resultFailure(decideMutationOutcome(input, definition, previous, decisionReplayIntent(state))),
+      ).toMatchObject({
+        failure: 'invariant',
+        message: 'mutation event does not match its operation and evidence contract',
+      })
+    }
+
+    const recoveryInput = decisionOutcomeInput({
+      brokerOrderId: orderId,
+      evidence: evidence(200, decisionOutcomeAt),
+    })
+    const unknownSubmit = decisionEvent(MutationOperation.Submit, MutationEventType.SubmitUnknown)
+    const terminalSubmit = resultSuccess(
+      decideMutationOutcome(
+        recoveryInput,
+        {
+          _tag: 'RecoveryFound',
+          operation: MutationOperation.Submit,
+          terminalOutcome: TerminalOutcome.Filled,
+        },
+        unknownSubmit,
+        decisionReplayIntent(IntentState.Unknown),
+      ),
+    )
+    expect(terminalSubmit).toMatchObject({
+      _tag: 'AppendMutation',
+      cancelFirst: { _tag: 'RequireNoDurableCancellation' },
+    })
+    const openSubmit = resultSuccess(
+      decideMutationOutcome(
+        recoveryInput,
+        { _tag: 'RecoveryFound', operation: MutationOperation.Submit },
+        unknownSubmit,
+        decisionReplayIntent(IntentState.Unknown),
+      ),
+    )
+    expect(openSubmit).toMatchObject({
+      _tag: 'AppendMutation',
+      cancelFirst: { _tag: 'SkipCancelFirstRead' },
+    })
+
+    const acceptedEvidence = evidence(200, decisionOutcomeAt)
+    const accepted = decisionEvent(MutationOperation.Submit, MutationEventType.SubmitAccepted, {
+      sequence: 2,
+      brokerOrderId: orderId,
+      requestId: acceptedEvidence.requestId,
+      responseStatus: acceptedEvidence.status,
+      responseContentHash: acceptedEvidence.contentHash,
+    })
+    const acceptedInput = decisionOutcomeInput({
+      brokerOrderId: orderId,
+      evidence: acceptedEvidence,
+      occurredAt: '1970-01-01T00:00:03.000Z',
+    })
+    expect(
+      resultSuccess(
+        decideMutationOutcome(
+          acceptedInput,
+          { _tag: 'SubmitAccepted' },
+          accepted,
+          decisionReplayIntent(IntentState.Acknowledged),
+        ),
+      ),
+    ).toEqual({ _tag: 'ReplayMutation', event: accepted })
+    expect(
+      resultFailure(
+        decideMutationOutcome(
+          acceptedInput,
+          { _tag: 'SubmitAccepted', terminalOutcome: TerminalOutcome.Filled },
+          accepted,
+          decisionReplayIntent(IntentState.Acknowledged),
+        ),
+      ),
+    ).toMatchObject({
+      operation: 'record-submit',
+      failure: 'conflict',
+      message: 'mutation outcome replay conflicts with durable intent state',
+    })
+    expect(
+      resultSuccess(
+        decideMutationOutcome(
+          acceptedInput,
+          { _tag: 'SubmitAccepted', terminalOutcome: TerminalOutcome.Filled },
+          accepted,
+          decisionReplayIntent(IntentState.Terminal, TerminalOutcome.Filled),
+        ),
+      ),
+    ).toEqual({ _tag: 'ReplayMutation', event: accepted })
+
+    const identicalEvidenceWrongIntent = resultFailure(
+      decideMutationOutcome(
+        { ...acceptedInput, intentId: '2'.repeat(64) },
+        { _tag: 'SubmitAccepted' },
+        accepted,
+        decisionReplayIntent(IntentState.Acknowledged),
+      ),
+    )
+    expect(identicalEvidenceWrongIntent).toMatchObject({
+      operation: 'record-submit',
+      failure: 'conflict',
+      message: 'mutation identity and sequence must remain exact',
+    })
+    const identicalEvidenceWrongOperation = resultFailure(
+      decideMutationOutcome(
+        acceptedInput,
+        { _tag: 'CancelAccepted' },
+        accepted,
+        decisionReplayIntent(IntentState.Acknowledged),
+      ),
+    )
+    expect(identicalEvidenceWrongOperation).toMatchObject({
+      operation: 'record-cancel',
+      failure: 'conflict',
+      message: 'mutation identity and sequence must remain exact',
+    })
+  })
+
+  test('binds same-evidence replay to the exact terminal outcome while retaining open and unknown replay', () => {
+    const submitEvidence = evidence(200, decisionOutcomeAt)
+    const submitInput = decisionOutcomeInput({
+      brokerOrderId: orderId,
+      evidence: submitEvidence,
+      occurredAt: '1970-01-01T00:00:03.000Z',
+    })
+    const submitAccepted = decisionEvent(MutationOperation.Submit, MutationEventType.SubmitAccepted, {
+      sequence: 2,
+      brokerOrderId: orderId,
+      requestId: submitEvidence.requestId,
+      responseStatus: submitEvidence.status,
+      responseContentHash: submitEvidence.contentHash,
+    })
+    const submitRecovery = { ...submitAccepted, eventType: MutationEventType.RecoveryFound, sequence: 3 }
+    const cancelRecovery = decisionEvent(MutationOperation.Cancel, MutationEventType.RecoveryFound, {
+      sequence: 3,
+      brokerOrderId: orderId,
+      requestId: submitEvidence.requestId,
+      responseStatus: submitEvidence.status,
+      responseContentHash: submitEvidence.contentHash,
+    })
+
+    const terminalCases: readonly {
+      readonly durable: MutationReplayIntentSnapshot
+      readonly exact: MutationOutcomeDefinition
+      readonly conflicting: MutationOutcomeDefinition
+      readonly input: MutationOutcomeInput
+      readonly operation: MutationStoreError['operation']
+      readonly previous: MutationEvent
+    }[] = [
+      {
+        durable: decisionReplayIntent(IntentState.Terminal, TerminalOutcome.Filled),
+        exact: { _tag: 'SubmitAccepted', terminalOutcome: TerminalOutcome.Filled },
+        conflicting: { _tag: 'SubmitAccepted', terminalOutcome: TerminalOutcome.Canceled },
+        input: submitInput,
+        operation: 'record-submit',
+        previous: submitAccepted,
+      },
+      {
+        durable: decisionReplayIntent(IntentState.Terminal, TerminalOutcome.Filled),
+        exact: {
+          _tag: 'RecoveryFound',
+          operation: MutationOperation.Submit,
+          terminalOutcome: TerminalOutcome.Filled,
+        },
+        conflicting: {
+          _tag: 'RecoveryFound',
+          operation: MutationOperation.Submit,
+          terminalOutcome: TerminalOutcome.Expired,
+        },
+        input: submitInput,
+        operation: 'record-recovery',
+        previous: submitRecovery,
+      },
+      {
+        durable: decisionReplayIntent(IntentState.Terminal, TerminalOutcome.Canceled),
+        exact: {
+          _tag: 'RecoveryFound',
+          operation: MutationOperation.Cancel,
+          terminalOutcome: TerminalOutcome.Canceled,
+        },
+        conflicting: {
+          _tag: 'RecoveryFound',
+          operation: MutationOperation.Cancel,
+          terminalOutcome: TerminalOutcome.Expired,
+        },
+        input: submitInput,
+        operation: 'record-recovery',
+        previous: cancelRecovery,
+      },
+    ]
+
+    for (const replay of terminalCases) {
+      expect(resultSuccess(decideMutationOutcome(replay.input, replay.exact, replay.previous, replay.durable))).toEqual(
+        {
+          _tag: 'ReplayMutation',
+          event: replay.previous,
+        },
+      )
+      expect(
+        resultFailure(decideMutationOutcome(replay.input, replay.conflicting, replay.previous, replay.durable)),
+      ).toMatchObject({
+        operation: replay.operation,
+        failure: 'conflict',
+        message: 'mutation outcome replay conflicts with durable intent state',
+      })
+    }
+
+    const openCancelRecovery = {
+      _tag: 'RecoveryFound',
+      operation: MutationOperation.Cancel,
+    } as const
+    for (const state of [IntentState.Acknowledged, IntentState.Unknown, IntentState.Recovered]) {
+      expect(
+        resultSuccess(
+          decideMutationOutcome(submitInput, openCancelRecovery, cancelRecovery, decisionReplayIntent(state)),
+        ),
+      ).toEqual({ _tag: 'ReplayMutation', event: cancelRecovery })
+    }
+    expect(
+      resultFailure(
+        decideMutationOutcome(
+          submitInput,
+          openCancelRecovery,
+          cancelRecovery,
+          decisionReplayIntent(IntentState.Terminal, TerminalOutcome.Canceled),
+        ),
+      ),
+    ).toMatchObject({
+      operation: 'record-recovery',
+      failure: 'conflict',
+      message: 'mutation outcome replay conflicts with durable intent state',
+    })
+
+    expect(
+      resultSuccess(
+        decideMutationOutcome(
+          submitInput,
+          { _tag: 'RecoveryFound', operation: MutationOperation.Submit },
+          submitRecovery,
+          decisionReplayIntent(IntentState.Acknowledged),
+        ),
+      ),
+    ).toEqual({ _tag: 'ReplayMutation', event: submitRecovery })
+
+    const unknownEvidence = evidence(503, decisionOutcomeAt)
+    const unknown = decisionEvent(MutationOperation.Submit, MutationEventType.SubmitUnknown, {
+      sequence: 2,
+      requestId: unknownEvidence.requestId,
+      responseStatus: unknownEvidence.status,
+      responseContentHash: unknownEvidence.contentHash,
+    })
+    expect(
+      resultSuccess(
+        decideMutationOutcome(
+          decisionOutcomeInput({ evidence: unknownEvidence }),
+          { _tag: 'SubmitUnknown' },
+          unknown,
+          decisionReplayIntent(IntentState.Unknown),
+        ),
+      ),
+    ).toEqual({ _tag: 'ReplayMutation', event: unknown })
+  })
+})
+
 const completeEvidence = (response: Partial<MutationEvidence> | undefined): MutationEvidence | undefined =>
   response?.requestId !== undefined &&
   response.status !== undefined &&
@@ -157,7 +1194,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     const value: MutationEvent = {
       schemaVersion: 'bayn.paper-mutation-event.v1',
       eventId: canonicalHashV1({ operation, sequence, eventType, occurredAt }),
-      mutationId: mutationId(intentId, operation),
+      mutationId: resultSuccess(mutationIdResult(intentId, operation)),
       intentId,
       sequence,
       operation,
