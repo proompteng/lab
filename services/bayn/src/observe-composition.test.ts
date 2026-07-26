@@ -319,6 +319,31 @@ const calendarRead =
       }
     })
 
+const decisionBrokerRead = (marketCalendar: BrokerReadShape['marketCalendar']): BrokerReadShape => {
+  const unused = Effect.die(new Error('decision building must not use unrelated broker reads'))
+  return {
+    account: unused,
+    accountConfiguration: unused,
+    assetBySymbol: unusedAssetBySymbol,
+    positions: unused,
+    orders: () => unused,
+    orderById: () => unused,
+    orderByClientId: () => unused,
+    fillActivities: () => unused,
+    marketCalendar,
+  }
+}
+
+const provideDecisionServices = <A, E>(
+  program: Effect.Effect<A, E, BrokerRead | MarketData>,
+  marketDataService: MarketDataService,
+  marketCalendar: BrokerReadShape['marketCalendar'],
+): Effect.Effect<A, E> =>
+  program.pipe(
+    Effect.provideService(BrokerRead, decisionBrokerRead(marketCalendar)),
+    Effect.provideService(MarketData, marketDataService),
+  )
+
 describe('OBSERVE runtime composition', () => {
   test('derives the autonomous cycle protocol identity from the current strategy provenance', () => {
     const prepared = prepareObserveStartup({
@@ -358,8 +383,6 @@ describe('OBSERVE runtime composition', () => {
         authorityGenerationHash: generationHash,
         cycle,
         executionModel: fixtureProtocol.executionModel,
-        marketCalendar: calendarRead(calendarQueries),
-        marketData: marketData(snapshotRequests),
         policy,
         reconcile: Effect.succeed(reconciliationResult()),
         strategy: {
@@ -372,7 +395,10 @@ describe('OBSERVE runtime composition', () => {
           },
         },
       })
-    }).pipe(Effect.provide(TestClock.layer()))
+    }).pipe(
+      (program) => provideDecisionServices(program, marketData(snapshotRequests), calendarRead(calendarQueries)),
+      Effect.provide(TestClock.layer()),
+    )
 
     const document = await Effect.runPromise(program)
 
@@ -423,8 +449,6 @@ describe('OBSERVE runtime composition', () => {
             authorityGenerationHash: generationHash,
             cycle,
             executionModel: fixtureProtocol.executionModel,
-            marketCalendar: calendarRead([]),
-            marketData: marketData([]),
             policy,
             reconcile: Effect.succeed(reconciliationResult('9'.repeat(64))),
             strategy: {
@@ -434,7 +458,10 @@ describe('OBSERVE runtime composition', () => {
               },
             },
           })
-        }).pipe(Effect.provide(TestClock.layer())),
+        }).pipe(
+          (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
+          Effect.provide(TestClock.layer()),
+        ),
       ),
     )
 
@@ -539,12 +566,10 @@ describe('OBSERVE runtime composition', () => {
             authorityGenerationHash: generationHash,
             cycle,
             executionModel: fixtureProtocol.executionModel,
-            marketCalendar: testCase.marketCalendar,
-            marketData: testCase.marketData,
             policy,
             reconcile: testCase.reconcile,
             strategy: { currentDecision: () => Result.succeed({ decision, priceMicros }) },
-          }),
+          }).pipe((program) => provideDecisionServices(program, testCase.marketData, testCase.marketCalendar)),
         ),
       )
 

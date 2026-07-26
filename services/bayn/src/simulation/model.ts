@@ -74,6 +74,14 @@ export type SimulationDomainFailure =
       readonly context: string
     }
   | {
+      readonly _tag: 'RecordAccessFailed'
+      readonly operation: 'bar' | 'position' | 'price' | 'target-weight'
+      readonly key: string
+      readonly context: string
+      readonly reason: 'introspection-failed' | 'non-data-property'
+      readonly cause?: unknown
+    }
+  | {
       readonly _tag: 'InvalidStatisticInput'
       readonly statistic: 'mean' | 'sample-standard-deviation'
       readonly reason: 'empty' | 'not-finite'
@@ -214,6 +222,8 @@ export const renderSimulationFailure = (failure: SimulationFailure): string => {
       return `${failure.operation} requires session index ${failure.index} within ${failure.sessionCount} sessions`
     case 'MissingRecordValue':
       return `${failure.operation} ${failure.key} is missing from ${failure.context}`
+    case 'RecordAccessFailed':
+      return `${failure.operation} ${failure.key} cannot be read from ${failure.context}: ${failure.reason}`
     case 'InvalidStatisticInput':
       return `${failure.statistic} received ${failure.reason} input`
     case 'InvalidWeight':

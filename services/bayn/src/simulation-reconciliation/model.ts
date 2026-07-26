@@ -1,7 +1,7 @@
-import type { Result } from 'effect'
+import { pipe, Result } from 'effect'
 
 import type { ExecutionModelFailure } from '../execution-model'
-import { renderCanonicalJsonFailure, type CanonicalJsonFailure } from '../hash'
+import { canonicalJsonV1Result, renderCanonicalJsonFailure, type CanonicalJsonFailure } from '../hash'
 import type {
   CashYieldEvent,
   EquityPoint,
@@ -358,31 +358,49 @@ export type SimulationReconciliationIssue =
       readonly cause: ExecutionModelFailure
     }
 
-export const renderSimulationReconciliationIssue = (issue: SimulationReconciliationIssue): string => {
+const renderEvidence = (value: unknown): string =>
+  pipe(
+    canonicalJsonV1Result(value),
+    Result.match({
+      onSuccess: (json) => json,
+      onFailure: (failure) => `<unrenderable: ${renderCanonicalJsonFailure(failure)}>`,
+    }),
+  )
+
+const renderSimulationReconciliationIssueUnsafe = (issue: SimulationReconciliationIssue): string => {
   switch (issue._tag) {
     case 'InvalidInteger':
-      return `invalid integer (${issue.expected}): ${JSON.stringify(issue.evidence)}`
+      return `invalid integer (${issue.expected}): ${renderEvidence(issue.evidence)}`
     case 'InvalidIdentity': {
       if (issue.problem._tag !== 'CanonicalizationFailed') {
-        return `invalid identity: ${JSON.stringify({ evidence: issue.evidence, problem: issue.problem }, null, 0)}`
+        return `invalid identity: ${renderEvidence({ evidence: issue.evidence, problem: issue.problem })}`
       }
-      return `identity canonicalization failed for ${JSON.stringify(issue.evidence)}: ${renderCanonicalJsonFailure(issue.problem.cause)}`
+      return `identity canonicalization failed for ${renderEvidence(issue.evidence)}: ${renderCanonicalJsonFailure(issue.problem.cause)}`
     }
     case 'MissingReference':
-      return `missing reference: ${JSON.stringify(issue.problem)}`
+      return `missing reference: ${renderEvidence(issue.problem)}`
     case 'EvidenceMismatch':
-      return `evidence mismatch: ${JSON.stringify(issue.problem)}`
+      return `evidence mismatch: ${renderEvidence(issue.problem)}`
     case 'InvalidEvidenceState':
-      return `invalid evidence state: ${JSON.stringify(issue.problem)}`
+      return `invalid evidence state: ${renderEvidence(issue.problem)}`
     case 'IncompleteEvidence':
-      return `incomplete evidence: ${JSON.stringify(issue.problem)}`
+      return `incomplete evidence: ${renderEvidence(issue.problem)}`
     case 'ComputationFailed':
-      return `${issue.computation._tag} calculation failed for ${JSON.stringify(issue.computation)}: ${issue.cause._tag}`
+      return `${issue.computation._tag} calculation failed for ${renderEvidence(issue.computation)}: ${issue.cause._tag}`
   }
 }
 
+export const renderSimulationReconciliationIssue = (issue: SimulationReconciliationIssue): string =>
+  pipe(
+    Result.try(() => renderSimulationReconciliationIssueUnsafe(issue)),
+    Result.getOrElse(() => 'unrenderable simulation reconciliation issue'),
+  )
+
 export const renderSimulationReconciliationIssues = (issues: readonly SimulationReconciliationIssue[]): string =>
-  issues.map(renderSimulationReconciliationIssue).join('; ')
+  pipe(
+    Result.try(() => issues.map(renderSimulationReconciliationIssue).join('; ')),
+    Result.getOrElse(() => 'unrenderable simulation reconciliation issues'),
+  )
 
 export interface MarkedEquityReconciliationInput {
   readonly runId: string

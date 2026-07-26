@@ -1,4 +1,4 @@
-import { Chunk } from 'effect'
+import { Chunk, Option, pipe, Result } from 'effect'
 
 import type {
   CashChange,
@@ -10,6 +10,8 @@ import type {
   SignalDecision,
   SimulatedOrder,
 } from '../types'
+import type { SimulationFailure } from './model'
+import { optionalRecordValue } from './record'
 
 export interface Position {
   readonly quantityMicros: bigint
@@ -64,8 +66,14 @@ export interface TradeCandidate {
 
 const zeroPosition: Position = { quantityMicros: 0n, costBasisMicros: 0n }
 
-export const positionFor = (positions: Readonly<Record<string, Position>>, symbol: string): Position =>
-  (Reflect.get(positions, symbol) as Position | undefined) ?? zeroPosition
+export const positionFor = (
+  positions: Readonly<Record<string, Position>>,
+  symbol: string,
+): Result.Result<Position, SimulationFailure> =>
+  pipe(
+    optionalRecordValue(positions, symbol, 'position', 'simulation positions'),
+    Result.map(Option.getOrElse(() => zeroPosition)),
+  )
 
 export const updatePosition = (
   positions: Readonly<Record<string, Position>>,

@@ -493,6 +493,33 @@ describe('independent marked-equity reconciliation', () => {
     expect(renderSimulationReconciliationIssue(issue)).toEndWith('invalid-unicode-key at $.targetWeights (string)')
   })
 
+  test('renders hostile failure evidence without invoking accessors or defecting', () => {
+    let getterCalls = 0
+    const evidence = {
+      kind: 'input' as const,
+      field: 'initialCapitalMicros' as const,
+      value: 'not-an-integer',
+    }
+    Object.defineProperty(evidence, 'value', {
+      enumerable: true,
+      get: () => {
+        getterCalls += 1
+        throw new Error('failure rendering must not invoke evidence accessors')
+      },
+    })
+    const issue: SimulationReconciliationIssue = {
+      _tag: 'InvalidInteger',
+      expected: 'unsigned-integer',
+      evidence,
+    }
+
+    expect(() => renderSimulationReconciliationIssue(issue)).not.toThrow()
+    expect(renderSimulationReconciliationIssue(issue)).toBe(
+      'invalid integer (unsigned-integer): <unrenderable: non-data-property at $.value (object-property)>',
+    )
+    expect(getterCalls).toBe(0)
+  })
+
   test('captures canonical calculation failures without duplicating execution-model validation', () => {
     const zeroPriceIncrement: SimulationTrace = {
       ...evaluation.simulation,

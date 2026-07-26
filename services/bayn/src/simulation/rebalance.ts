@@ -155,14 +155,19 @@ const proposedTrades = (
         .map((symbol) =>
           pipe(
             requiredRecordValue(desiredQuantities, symbol, 'target-weight', 'desired quantities'),
-            Result.map((desired) => {
-              const current = positionFor(positions, symbol).quantityMicros
-              return {
-                symbol,
-                sellQuantityMicros: desired < current ? current - desired : 0n,
-                buyQuantityMicros: desired > current ? desired - current : 0n,
-              }
-            }),
+            Result.flatMap((desired) =>
+              pipe(
+                positionFor(positions, symbol),
+                Result.map((position) => {
+                  const current = position.quantityMicros
+                  return {
+                    symbol,
+                    sellQuantityMicros: desired < current ? current - desired : 0n,
+                    buyQuantityMicros: desired > current ? desired - current : 0n,
+                  }
+                }),
+              ),
+            ),
           ),
         ),
     ),
@@ -263,10 +268,12 @@ const applySellOrder = (
 ): Result.Result<RebalanceState, SimulationFailure> => {
   const state = appendOrder(rebalance.simulation, order, input.recordEvents)
   if (order.filledQuantityMicros === 0n) return Result.succeed({ ...rebalance, simulation: state })
-  const position = positionFor(state.positions, order.event.symbol)
   return pipe(
-    requiredRecordValue(executionPrices, order.event.symbol, 'price', 'execution prices'),
-    Result.flatMap((price) =>
+    Result.all({
+      position: positionFor(state.positions, order.event.symbol),
+      price: requiredRecordValue(executionPrices, order.event.symbol, 'price', 'execution prices'),
+    }),
+    Result.flatMap(({ position, price }) =>
       pipe(
         Result.all({
           costBasis: saleCostBasisMicros(position.costBasisMicros, order.filledQuantityMicros, position.quantityMicros),
@@ -332,24 +339,28 @@ const applyBuyOrder = (
           pipe(
             makeFill(input.runId, decision, order, terms, terms.notionalMicros),
             Result.flatMap((fill) => {
-              const position = positionFor(state.positions, order.event.symbol)
-              const updated = {
-                ...state,
-                cashMicros: state.cashMicros - terms.notionalMicros,
-                turnoverMicros: state.turnoverMicros + terms.notionalMicros,
-                totalSpreadCostMicros: state.totalSpreadCostMicros + terms.spreadCostMicros,
-                totalSlippageCostMicros: state.totalSlippageCostMicros + terms.slippageCostMicros,
-                positions: updatePosition(state.positions, order.event.symbol, {
-                  quantityMicros: position.quantityMicros + order.filledQuantityMicros,
-                  costBasisMicros: position.costBasisMicros + terms.notionalMicros,
-                }),
-              }
               return pipe(
-                appendFillEvidence(updated, fill, -terms.notionalMicros, input.runId, input.recordEvents),
-                Result.map((simulation) => ({
-                  simulation,
-                  fills: Chunk.append(rebalance.fills, fill),
-                })),
+                positionFor(state.positions, order.event.symbol),
+                Result.flatMap((position) => {
+                  const updated = {
+                    ...state,
+                    cashMicros: state.cashMicros - terms.notionalMicros,
+                    turnoverMicros: state.turnoverMicros + terms.notionalMicros,
+                    totalSpreadCostMicros: state.totalSpreadCostMicros + terms.spreadCostMicros,
+                    totalSlippageCostMicros: state.totalSlippageCostMicros + terms.slippageCostMicros,
+                    positions: updatePosition(state.positions, order.event.symbol, {
+                      quantityMicros: position.quantityMicros + order.filledQuantityMicros,
+                      costBasisMicros: position.costBasisMicros + terms.notionalMicros,
+                    }),
+                  }
+                  return pipe(
+                    appendFillEvidence(updated, fill, -terms.notionalMicros, input.runId, input.recordEvents),
+                    Result.map((simulation) => ({
+                      simulation,
+                      fills: Chunk.append(rebalance.fills, fill),
+                    })),
+                  )
+                }),
               )
             }),
           ),

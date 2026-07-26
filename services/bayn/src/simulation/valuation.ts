@@ -35,8 +35,13 @@ export const positionValueMicros = (
         total,
         Result.flatMap((value) =>
           pipe(
-            notionalMicros(positionFor(positions, symbol).quantityMicros, price),
-            Result.map((notional) => value + notional),
+            positionFor(positions, symbol),
+            Result.flatMap((position) =>
+              pipe(
+                notionalMicros(position.quantityMicros, price),
+                Result.map((notional) => value + notional),
+              ),
+            ),
           ),
         ),
       ),
@@ -52,10 +57,12 @@ const markedPositions = (
     Object.keys(session.bars)
       .sort()
       .map((symbol) => {
-        const position = positionFor(positions, symbol)
         return pipe(
-          requiredRecordValue(closingPrices, symbol, 'price', 'closing prices'),
-          Result.flatMap((priceMicros) =>
+          Result.all({
+            position: positionFor(positions, symbol),
+            priceMicros: requiredRecordValue(closingPrices, symbol, 'price', 'closing prices'),
+          }),
+          Result.flatMap(({ position, priceMicros }) =>
             pipe(
               notionalMicros(position.quantityMicros, priceMicros),
               Result.map((marketValueMicros) => ({
