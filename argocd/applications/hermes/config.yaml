@@ -74,9 +74,9 @@ agent:
     - Never claim an external action completed without a fresh readback.
 
 platform_toolsets:
-  cli: [file, memory, terminal, todo]
-  api_server: [file, memory, terminal, todo]
-  discord: [file, memory, terminal, todo]
+  cli: [file, memory, terminal, todo, web, exa]
+  api_server: [file, memory, terminal, todo, web, exa]
+  discord: [file, memory, terminal, todo, web, exa]
 
 platforms:
   discord:
@@ -148,7 +148,21 @@ plugins:
   enabled: []
   disabled: []
 
-mcp_servers: {}
+web:
+  search_backend: exa
+  extract_backend: exa
+
+mcp_servers:
+  exa:
+    url: "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa"
+    headers:
+      x-api-key: "${EXA_API_KEY}"
+    connect_timeout: 15
+    timeout: 120
+    tools:
+      include:
+        - web_search_exa
+        - web_fetch_exa
 
 delegation:
   max_iterations: 20

@@ -40,7 +40,8 @@ smoke test, manifest change, and normal CI/Codex review.
 - Hermes receives the curated Lab toolchain through a second read-only OCI image volume. Only its `/bin` facade and
   `/nix/store` closure are mounted; the image does not include Nix, a container engine, GitHub credentials, `kubectl`, or
   any additional Kubernetes authority. Bootstrap fails closed unless every tool reports the repository-pinned version.
-- The API key comes from `onepassword-infra` through External Secrets. No secret is committed to Git.
+- The API and Exa keys come from the `infra/hermes-runtime` 1Password item through narrowly mapped External Secrets. No
+  secret is committed to Git.
 - The `tuslagch` GitHub OAuth token is committed only as a namespace-scoped SealedSecret ciphertext. Only the bootstrap init
   container receives `GH_TOKEN`; it creates mode-`0600` GitHub CLI auth files in a per-Pod `emptyDir` shared read-only with
   the gateway. The pinned Hermes runtime intentionally strips `GH_TOKEN` and `GITHUB_TOKEN` from model-authored terminal
@@ -57,8 +58,10 @@ smoke test, manifest change, and normal CI/Codex review.
   resolve consistently from API and Discord terminals.
 - API key rotation requires a bounded Secret refresh, gateway Pod restart, and old-key rejection/new-key acceptance proof.
 - The API is cluster-local and requires bearer authentication for model requests and detailed health.
-- Plugins, MCP servers, delegation, cron, hooks, and speech-to-text remain disabled. Terminal access is explicit for CLI,
-  authenticated API, and Discord sessions; manual approvals and unconditional deny rules remain enabled.
+- Native Exa-backed `web_search` and `web_extract` are enabled for CLI, authenticated API, and Discord sessions. The
+  authenticated Exa MCP server is restricted to its read-only `web_search_exa` and `web_fetch_exa` tools. Plugins,
+  delegation, cron, hooks, and speech-to-text remain disabled; manual approvals and unconditional deny rules remain
+  enabled.
 - Only `/opt/data/workspace/tuslagch`, Hermes-managed memory, and Hermes-managed skills are writable agent surfaces.
 - Bootstrap maintains `proompteng/lab` at `/opt/data/workspace/tuslagch/lab`. Initial clone and clean-main refresh remain
   credential-free and use bounded retries for transient pod-network startup races; interactive runtime Git and GitHub CLI
