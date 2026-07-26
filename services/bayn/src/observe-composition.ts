@@ -323,16 +323,11 @@ const compileObserveStrategyDecision = <R>(
   facts: ObserveDecisionFacts,
   executionSession: ExecutionSessionBinding,
 ): Effect.Effect<CurrentStrategyDecision, OperationalError> =>
-  Effect.try({
-    try: () => input.strategy.currentDecision(facts.snapshot.bars, facts.snapshot.manifest, executionSession),
-    catch: (cause) =>
-      operationalError('strategy', 'current-decision', 'current strategy decision compilation failed', cause),
-  }).pipe(
-    Effect.flatMap(Effect.fromResult),
+  Effect.fromResult(
+    input.strategy.currentDecision(facts.snapshot.bars, facts.snapshot.manifest, executionSession),
+  ).pipe(
     Effect.mapError((cause) =>
-      cause._tag === 'OperationalError'
-        ? cause
-        : operationalError('strategy', 'current-decision', 'current strategy decision compilation failed', cause),
+      operationalError('strategy', 'current-decision', 'current strategy decision compilation failed', cause),
     ),
   )
 
