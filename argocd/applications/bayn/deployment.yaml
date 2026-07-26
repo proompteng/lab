@@ -23,7 +23,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-07-26T04:28:50Z"
+        kubectl.kubernetes.io/restartedAt: "2026-07-26T04:36:18Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -47,11 +47,11 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: 74d9fa6753c0e9349042dec67bcb657fd2f440a4
+              value: 3ef3e1f5d5d24a9f32fa1b4f5aae3a0e78e2b590
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:bb6035a5a143e56c6d25b59e4120e9fe95f89068d0fe0164d4d18c6e2142a8ef
+              value: sha256:acd59d2b854334ee74d277b9ddc152230e706e587871ec991007ce86ab2f219f
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "dc614c54bbf43842d83cd88497e835f7bb25c413eb6e8bd7cbab0a925ec9b2dd"
             - name: BAYN_STRATEGY_PARAMETER_HASH
