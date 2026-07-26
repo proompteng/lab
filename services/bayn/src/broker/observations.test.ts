@@ -233,5 +233,22 @@ describe('paper broker observations', () => {
     const unsupported = failure(orderObservation({ ...order, orderType: AlpacaOrderType.Stop }, evidence))
     expect(unsupported).toEqual({ _tag: 'UnsupportedOrderType', value: AlpacaOrderType.Stop })
     expect(renderBrokerObservationError(unsupported)).toBe('unsupported paper order type stop')
+
+    expect(failure(orderObservation({ ...order, filledQuantityMicros: '+1' }, evidence))).toEqual({
+      _tag: 'FilledQuantityInvalid',
+      filledQuantityMicros: '+1',
+      quantityMicros: '2000000',
+    })
+
+    expect(failure(accountObservation({ value: { ...account, id: '\ud800' }, evidence }))).toMatchObject({
+      _tag: 'CanonicalizationFailed',
+      target: 'account',
+      cause: {
+        _tag: 'CanonicalJsonFailure',
+        path: '$.account.accountId',
+        reason: 'invalid-unicode-surrogate',
+        actualType: 'string',
+      },
+    })
   })
 })
