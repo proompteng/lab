@@ -3,18 +3,15 @@ import { Result, Schema, pipe } from 'effect'
 import { type EvaluationBounds, type FinalizedSnapshotProvenance, FinalizedSnapshotProvenanceSchema } from './contracts'
 import { canonicalHashV1Result, sha256, type CanonicalHashFailure } from './hash'
 import { strictParseOptions } from './schemas'
-import {
-  type FinalizedPublicationRequest,
-  type MarketDataContract,
-  type MarketDataInspection,
-  type MarketDataSnapshot,
-  type SignalBarRow,
-  type SignalManifestRow,
-  type SignalSessionRow,
-  type SnapshotRequest,
-  type SnapshotRows,
-  type VerifiedSignalSession,
-} from './market-data'
+import type {
+  FinalizedPublicationRequest,
+  MarketDataContract,
+  MarketDataInspection,
+  MarketDataSnapshot,
+  SnapshotRequest,
+  VerifiedSignalSession,
+} from './market-data/model'
+import type { SignalBarRow, SignalManifestRow, SignalSessionRow, SnapshotRows } from './market-data/rows'
 import { type DailyBar, type InputManifest, type SymbolCoverage, PublicationSchema } from './types'
 
 const database = 'signal' as const
