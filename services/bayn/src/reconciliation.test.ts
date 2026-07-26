@@ -371,12 +371,17 @@ describe('paper reconciliation', () => {
       identity: account.accountId,
       value: 'not-an-instant',
     })
-    expect(failureOf(compareReconciliation(snapshot({ expectedCashMicros: 'not-an-integer' })))).toMatchObject({
+    expect(failureOf(compareReconciliation(snapshot({ expectedCashMicros: 'not-an-integer' })))).toEqual({
       _tag: 'InvalidInteger',
       source: 'expected-cash',
       identity: account.accountId,
       value: 'not-an-integer',
-      cause: expect.any(SyntaxError),
+    })
+    expect(failureOf(compareReconciliation(snapshot({ expectedCashMicros: '+1' })))).toEqual({
+      _tag: 'InvalidInteger',
+      source: 'expected-cash',
+      identity: account.accountId,
+      value: '+1',
     })
     const canonicalization = failureOf(
       reconciledStateHash({
@@ -391,7 +396,12 @@ describe('paper reconciliation', () => {
     expect(canonicalization).toMatchObject({
       _tag: 'CanonicalizationFailed',
       operation: 'broker-state-hash',
-      cause: expect.any(TypeError),
+      cause: {
+        _tag: 'CanonicalJsonFailure',
+        path: '$.account.accountId',
+        reason: 'invalid-unicode-surrogate',
+        actualType: 'string',
+      },
     })
     expect(renderReconciliationDecisionError(canonicalization)).toBe(
       'reconciliation broker-state-hash canonicalization failed',

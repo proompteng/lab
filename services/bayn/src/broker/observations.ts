@@ -1,6 +1,6 @@
 import { Result, Schema, pipe } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import {
   AccountSnapshotSchema,
   AccountStatus,
@@ -84,7 +84,11 @@ type ObservationTarget = 'account' | 'fill' | 'order' | 'position' | 'position-s
 
 export type BrokerObservationError =
   | { readonly _tag: 'DecodeFailed'; readonly target: ObservationTarget; readonly cause: unknown }
-  | { readonly _tag: 'CanonicalizationFailed'; readonly target: ObservationTarget; readonly cause: unknown }
+  | {
+      readonly _tag: 'CanonicalizationFailed'
+      readonly target: ObservationTarget
+      readonly cause: CanonicalHashFailure
+    }
   | { readonly _tag: 'TimestampInvalid'; readonly value: string }
   | {
       readonly _tag: 'ObservationTimeMismatch'
@@ -134,10 +138,12 @@ const decodePosition = decode('position', PositionEventInputSchema)
 const decodePositionSnapshot = decode('position-snapshot', PositionSnapshotInputSchema)
 
 const canonicalHash = (target: ObservationTarget, value: unknown): Result.Result<string, BrokerObservationError> =>
-  pipe(
-    Result.try(() => canonicalHashV1(value)),
-    Result.mapError((cause): BrokerObservationError => ({ _tag: 'CanonicalizationFailed', target, cause })),
+  Result.mapError(
+    canonicalHashV1Result(value),
+    (cause): BrokerObservationError => ({ _tag: 'CanonicalizationFailed', target, cause }),
   )
+
+const canonicalUnsignedIntegerPattern = /^(?:0|[1-9][0-9]*)$/
 
 export const sourceTimestamp = (value: string): Result.Result<string, BrokerObservationError> => {
   const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z$/.exec(value)
@@ -223,26 +229,21 @@ const timeInForce = (value: AlpacaTimeInForce): Result.Result<TimeInForce, Broke
 const nonterminalStatus = (
   filledQuantityMicros: string,
   quantityMicros: string,
-): Result.Result<OrderStatus, BrokerObservationError> =>
-  pipe(
-    Result.try(() => ({ filled: BigInt(filledQuantityMicros), quantity: BigInt(quantityMicros) })),
-    Result.mapError(
-      (): BrokerObservationError => ({
-        _tag: 'FilledQuantityInvalid',
-        filledQuantityMicros,
-        quantityMicros,
-      }),
-    ),
-    Result.flatMap(({ filled, quantity }) =>
-      filled === 0n
-        ? Result.succeed(OrderStatus.Pending)
-        : filled < quantity
-          ? Result.succeed(OrderStatus.PartiallyFilled)
-          : filled === quantity
-            ? Result.succeed(OrderStatus.Filled)
-            : fail({ _tag: 'FilledQuantityInvalid', filledQuantityMicros, quantityMicros }),
-    ),
-  )
+): Result.Result<OrderStatus, BrokerObservationError> => {
+  if (
+    !canonicalUnsignedIntegerPattern.test(filledQuantityMicros) ||
+    !canonicalUnsignedIntegerPattern.test(quantityMicros)
+  ) {
+    return fail({ _tag: 'FilledQuantityInvalid', filledQuantityMicros, quantityMicros })
+  }
+  const filled = BigInt(filledQuantityMicros)
+  const quantity = BigInt(quantityMicros)
+  if (filled === 0n) return Result.succeed(OrderStatus.Pending)
+  if (filled < quantity) return Result.succeed(OrderStatus.PartiallyFilled)
+  return filled === quantity
+    ? Result.succeed(OrderStatus.Filled)
+    : fail({ _tag: 'FilledQuantityInvalid', filledQuantityMicros, quantityMicros })
+}
 
 const orderStatus = (
   value: AlpacaOrderStatus,
