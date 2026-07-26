@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
@@ -53,12 +56,30 @@ describe('independent qualification reference', () => {
     expect(canonicalHashV1(changed.strategy.decisions)).not.toBe(canonicalHashV1(original.strategy.decisions))
   })
 
-  test('does not import the production strategy evaluator', async () => {
-    const source = await Bun.file(new URL('./audit/reference.ts', import.meta.url)).text()
+  test('keeps the reference dependency graph outside the production strategy evaluator', async () => {
+    const outputDirectory = await mkdtemp(join(tmpdir(), 'bayn-reference-dependency-'))
+    try {
+      const buildInputs = async (entrypoint: URL): Promise<readonly string[]> => {
+        const build = await Bun.build({
+          entrypoints: [entrypoint.pathname],
+          outdir: outputDirectory,
+          target: 'bun',
+          metafile: true,
+          packages: 'external',
+        })
+        assert(build.success, build.logs.map(String).join('\n'))
+        assert(build.metafile !== undefined, 'dependency-boundary build omitted its metafile')
+        return Object.keys(build.metafile.inputs).map((path) => path.replaceAll('\\', '/'))
+      }
+      const productionEvaluator = /(?:^|\/)services\/bayn\/src\/risk-balanced-trend(?:\.ts|\/)/
+      const productionInputs = await buildInputs(new URL('./risk-balanced-trend/index.ts', import.meta.url))
+      const referenceInputs = await buildInputs(new URL('./audit/reference.ts', import.meta.url))
 
-    expect(source).not.toContain("from '../risk-balanced-trend'")
-    expect(source).not.toContain("from '../risk-balanced-trend/index'")
-    expect(source).not.toContain('evaluateRiskBalancedTrend')
+      expect(productionInputs.some((path) => productionEvaluator.test(path))).toBe(true)
+      expect(referenceInputs.filter((path) => productionEvaluator.test(path))).toEqual([])
+    } finally {
+      await rm(outputDirectory, { recursive: true, force: true })
+    }
   })
 
   test('independently keeps planned quantities invariant to future execution OHLC', () => {
