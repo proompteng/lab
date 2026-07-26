@@ -1,12 +1,11 @@
-import { Result, Schema } from 'effect'
+import { pipe, Result } from 'effect'
 
 import type { RuntimeProvenance } from './contracts'
-import type { ExecutionModelFailure } from './execution-model'
-import { InputManifestArtifactSchema } from './evidence-contracts'
 import {
   defaultQualificationStatisticsPolicyDocument,
   makeQualificationLock,
   makeQualificationPolicyDocument,
+  type QualificationConstructionFailure,
   type QualificationLock,
 } from './qualification'
 import {
@@ -14,22 +13,24 @@ import {
   defaultQualificationStatisticsPolicy,
   prepareQualificationSeries,
   type QualificationAnalysis,
+  type QualificationStatisticsFailure,
 } from './qualification-statistics'
 import {
   compileCurrentRiskBalancedTrendDecision,
   evaluateRiskBalancedTrend,
+  parseMatchingManifest,
   prepareRiskBalancedTrendQualification,
-  riskBalancedTrendCompatibilityFailure,
   type CurrentDecisionCycleBinding,
   type CurrentRiskBalancedTrendDecision,
   type RiskBalancedTrendEvaluationIssue,
+  type RiskBalancedTrendFailure,
 } from './risk-balanced-trend'
-import { strictParseOptions } from './schemas'
 import type { DailyBar, EvaluationResult, InputManifest, IsoDate, Protocol } from './types'
 
 export type CurrentStrategyDecision = CurrentRiskBalancedTrendDecision
 export type CurrentStrategyDecisionCycleBinding = CurrentDecisionCycleBinding
-export type CurrentStrategyDecisionFailure = ExecutionModelFailure
+export type CurrentStrategyDecisionFailure = RiskBalancedTrendFailure
+export type StrategyPrepareLockFailure = RiskBalancedTrendFailure | QualificationConstructionFailure
 
 export interface Strategy {
   readonly name: string
@@ -48,118 +49,104 @@ export interface Strategy {
     manifest: InputManifest,
     sessionDates: readonly IsoDate[],
     priorTrialRunIds: readonly string[],
-  ) => QualificationLock
-  readonly analyze: (evaluation: EvaluationResult, priorTrialRunIds: readonly string[]) => QualificationAnalysis
-}
-
-const decodeManifest = Schema.decodeUnknownSync(InputManifestArtifactSchema, strictParseOptions)
-
-const requireMatchingUniverse = (manifest: InputManifest, protocol: Protocol): InputManifest => {
-  const snapshot = manifest.finalizedSnapshot
-  if (
-    snapshot.universeId !== protocol.universeId ||
-    snapshot.universeSymbolHash !== protocol.universeSymbolHash ||
-    snapshot.symbols.join(',') !== protocol.universe.join(',')
-  ) {
-    throw new TypeError('Signal snapshot universe does not match the compiled strategy universe')
-  }
-  const decoded = decodeManifest(manifest)
-  if (
-    decoded.firstSession !== snapshot.firstSession ||
-    decoded.lastSession !== snapshot.lastSession ||
-    decoded.rowCount !== snapshot.rowCount ||
-    decoded.sessionCount !== snapshot.sessionCount
-  ) {
-    throw new TypeError('Signal manifest does not match its finalized snapshot bounds')
-  }
-  return decoded
+  ) => Result.Result<QualificationLock, StrategyPrepareLockFailure>
+  readonly analyze: (
+    evaluation: EvaluationResult,
+    priorTrialRunIds: readonly string[],
+  ) => Result.Result<QualificationAnalysis, QualificationStatisticsFailure>
 }
 
 const universeRationale =
   'The precommitted five-sleeve cross-asset universe uses broad commodities (DBC), developed ex-US equities (EFA), intermediate US Treasuries (IEF), US equities (SPY), and US real estate (VNQ); symbols were fixed without inspecting candidate prices or returns.'
 
 export const makeStrategy = (protocol: Protocol, provenance: RuntimeProvenance): Strategy => {
-  const benchmarkPolicy = makeQualificationPolicyDocument('bayn.risk-balanced-trend-benchmark-policy.v1', {
-    schemaVersion: 'bayn.risk-balanced-trend-benchmark-policy.v1',
-    comparison: 'stronger-of-buy-and-hold-or-direct-volatility-timing',
-    excessReturnBasis: 'after-cost-over-cash',
-    sharpeBasis: 'daily-excess-over-cash',
-    alignment: 'candidate-sessions-and-exposure-rules',
-  })
-  const thresholdPolicy = makeQualificationPolicyDocument('bayn.risk-balanced-trend-threshold-policy.v1', {
-    schemaVersion: 'bayn.risk-balanced-trend-threshold-policy.v1',
-    thresholds: protocol.thresholds,
-  })
-  const executionPolicy = makeQualificationPolicyDocument(
-    protocol.executionModel.schemaVersion,
-    protocol.executionModel,
-  )
-
   return {
     name: 'risk-balanced-trend',
     parameters: protocol,
     provenance,
-    evaluate: (bars, manifest) => {
-      // PROOMPT-419 owns totalizing manifest and pre-reconciliation strategy validation.
-      const inputManifest = Result.try({
-        try: () => requireMatchingUniverse(manifest, protocol),
-        catch: (cause) => riskBalancedTrendCompatibilityFailure('prepare', cause),
-      })
-      return Result.isFailure(inputManifest)
-        ? Result.fail(inputManifest.failure)
-        : evaluateRiskBalancedTrend(bars, inputManifest.success, protocol, provenance)
-    },
-    currentDecision: (bars, manifest, cycleBinding) =>
-      compileCurrentRiskBalancedTrendDecision(
-        bars,
-        requireMatchingUniverse(manifest, protocol),
-        protocol,
-        cycleBinding,
+    evaluate: (bars, manifest) =>
+      pipe(
+        parseMatchingManifest(manifest, protocol),
+        Result.mapError((failure): readonly RiskBalancedTrendEvaluationIssue[] => [failure]),
+        Result.flatMap((inputManifest) => evaluateRiskBalancedTrend(bars, inputManifest, protocol, provenance)),
       ),
-    prepareLock: (manifest, sessionDates, priorTrialRunIds) => {
-      const inputManifest = requireMatchingUniverse(manifest, protocol)
-      const precommit = prepareRiskBalancedTrendQualification(sessionDates, inputManifest, protocol, provenance)
-      const snapshot = inputManifest.finalizedSnapshot
-      return makeQualificationLock({
-        schemaVersion: 'bayn.qualification-lock.v3',
-        candidateRunId: precommit.candidateRunId,
-        protocolHash: precommit.protocolHash,
-        sourceRevision: provenance.sourceRevision,
-        image: provenance.image,
-        universeId: protocol.universeId,
-        universeSymbolHash: protocol.universeSymbolHash,
-        universe: protocol.universe,
-        universeRationale,
-        data: {
-          snapshotId: snapshot.snapshotId,
-          publicationId: snapshot.publicationId,
-          inputManifestHash: inputManifest.hash,
-          contentHash: snapshot.contentHash,
-          sessionsContentHash: snapshot.sessionsContentHash,
-          provider: snapshot.source,
-          sourceFeed: snapshot.sourceFeed,
-          adjustment: snapshot.adjustment,
-          calendarVersion: snapshot.calendarVersion,
-          firstSession: snapshot.firstSession,
-          lastSession: snapshot.lastSession,
-          selectedSessionCount: precommit.selectedSessionCount,
-          selectedRebalanceCount: precommit.selectedRebalanceCount,
-          bounds: inputManifest.bounds,
-        },
-        policies: {
-          benchmark: benchmarkPolicy,
-          thresholds: thresholdPolicy,
-          uncertainty: defaultQualificationStatisticsPolicyDocument,
-          execution: executionPolicy,
-        },
-        priorTrialRunIds,
-      })
-    },
+    currentDecision: (bars, manifest, cycleBinding) =>
+      pipe(
+        parseMatchingManifest(manifest, protocol),
+        Result.flatMap((inputManifest) =>
+          compileCurrentRiskBalancedTrendDecision(bars, inputManifest, protocol, cycleBinding),
+        ),
+      ),
+    prepareLock: (manifest, sessionDates, priorTrialRunIds) =>
+      pipe(
+        parseMatchingManifest(manifest, protocol),
+        Result.flatMap((inputManifest) =>
+          pipe(
+            Result.all({
+              precommit: prepareRiskBalancedTrendQualification(sessionDates, inputManifest, protocol, provenance),
+              benchmarkPolicy: makeQualificationPolicyDocument('bayn.risk-balanced-trend-benchmark-policy.v1', {
+                schemaVersion: 'bayn.risk-balanced-trend-benchmark-policy.v1',
+                comparison: 'stronger-of-buy-and-hold-or-direct-volatility-timing',
+                excessReturnBasis: 'after-cost-over-cash',
+                sharpeBasis: 'daily-excess-over-cash',
+                alignment: 'candidate-sessions-and-exposure-rules',
+              }),
+              thresholdPolicy: makeQualificationPolicyDocument('bayn.risk-balanced-trend-threshold-policy.v1', {
+                schemaVersion: 'bayn.risk-balanced-trend-threshold-policy.v1',
+                thresholds: protocol.thresholds,
+              }),
+              uncertaintyPolicy: defaultQualificationStatisticsPolicyDocument,
+              executionPolicy: makeQualificationPolicyDocument(
+                protocol.executionModel.schemaVersion,
+                protocol.executionModel,
+              ),
+            }),
+            Result.flatMap(({ benchmarkPolicy, executionPolicy, precommit, thresholdPolicy, uncertaintyPolicy }) => {
+              const snapshot = inputManifest.finalizedSnapshot
+              return makeQualificationLock({
+                schemaVersion: 'bayn.qualification-lock.v3',
+                candidateRunId: precommit.candidateRunId,
+                protocolHash: precommit.protocolHash,
+                sourceRevision: provenance.sourceRevision,
+                image: provenance.image,
+                universeId: protocol.universeId,
+                universeSymbolHash: protocol.universeSymbolHash,
+                universe: protocol.universe,
+                universeRationale,
+                data: {
+                  snapshotId: snapshot.snapshotId,
+                  publicationId: snapshot.publicationId,
+                  inputManifestHash: inputManifest.hash,
+                  contentHash: snapshot.contentHash,
+                  sessionsContentHash: snapshot.sessionsContentHash,
+                  provider: snapshot.source,
+                  sourceFeed: snapshot.sourceFeed,
+                  adjustment: snapshot.adjustment,
+                  calendarVersion: snapshot.calendarVersion,
+                  firstSession: snapshot.firstSession,
+                  lastSession: snapshot.lastSession,
+                  selectedSessionCount: precommit.selectedSessionCount,
+                  selectedRebalanceCount: precommit.selectedRebalanceCount,
+                  bounds: inputManifest.bounds,
+                },
+                policies: {
+                  benchmark: benchmarkPolicy,
+                  thresholds: thresholdPolicy,
+                  uncertainty: uncertaintyPolicy,
+                  execution: executionPolicy,
+                },
+                priorTrialRunIds,
+              })
+            }),
+          ),
+        ),
+      ),
     analyze: (evaluation, priorTrialRunIds) =>
-      analyzeQualification(
+      pipe(
         prepareQualificationSeries(evaluation),
-        defaultQualificationStatisticsPolicy,
-        priorTrialRunIds,
+        Result.flatMap((series) =>
+          analyzeQualification(series, defaultQualificationStatisticsPolicy, priorTrialRunIds),
+        ),
       ),
   }
 }

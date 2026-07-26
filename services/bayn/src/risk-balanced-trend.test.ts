@@ -71,7 +71,7 @@ const currentDecisionBinding = (
 }
 
 describe('risk-balanced trend candidate', () => {
-  test('preserves pre-reconciliation strategy failures behind the transitional Result boundary', () => {
+  test('returns precise pre-reconciliation strategy failures', () => {
     const snapshot = makeSnapshot()
     const evaluate = () =>
       evaluateRiskBalancedTrend(snapshot.bars.slice(1), snapshot.manifest, fixtureProtocol, makeTestProvenance())
@@ -81,14 +81,11 @@ describe('risk-balanced trend candidate', () => {
     assert(Result.isFailure(result), 'malformed strategy evidence must fail explicitly')
     expect(result.failure).toHaveLength(1)
     const [issue] = result.failure
-    expect(issue).toEqual(
-      expect.objectContaining({
-        _tag: 'RiskBalancedTrendCompatibilityFailure',
-        phase: 'prepare',
-      }),
-    )
-    assert(issue._tag === 'RiskBalancedTrendCompatibilityFailure', 'compatibility failure must retain its cause')
-    expect(issue.cause).toBeInstanceOf(Error)
+    expect(issue).toEqual({
+      _tag: 'ManifestRowCountMismatch',
+      expected: snapshot.manifest.rowCount,
+      observed: snapshot.bars.length - 1,
+    })
   })
 
   test('matches a hand-calculated multi-symbol continuous normalized trend', () => {
@@ -99,15 +96,17 @@ describe('risk-balanced trend candidate', () => {
       maximumPortfolioVolatility: 1,
     })
     const dates = ['2026-07-15', '2026-07-16', '2026-07-17'] as const satisfies readonly IsoDate[]
-    const decision = makeRiskBalancedTrendDecision(
-      dates[2],
-      dates,
-      {
-        DBC: [100, 101, 103.02],
-        EEM: [100, 102, 103.02],
-        EFA: [100, 99, 97.02],
-      },
-      protocol,
+    const decision = assertSuccess(
+      makeRiskBalancedTrendDecision(
+        dates[2],
+        dates,
+        {
+          DBC: [100, 101, 103.02],
+          EEM: [100, 102, 103.02],
+          EFA: [100, 99, 97.02],
+        },
+        protocol,
+      ),
     )
     const [dbc, eem, efa] = decision.signals
 
@@ -126,15 +125,17 @@ describe('risk-balanced trend candidate', () => {
   test('normalizes continuous trend, retains cash under cap capacity, and scales portfolio volatility', () => {
     const protocol = shortProtocol({ maximumPortfolioVolatility: 0.05 })
     const dates = ['2026-07-15', '2026-07-16', '2026-07-17'] as const satisfies readonly IsoDate[]
-    const decision = makeRiskBalancedTrendDecision(
-      dates[2],
-      dates,
-      {
-        DBC: [100, 101, 105],
-        EEM: [100, 102, 103],
-        EFA: [100, 99, 98],
-      },
-      protocol,
+    const decision = assertSuccess(
+      makeRiskBalancedTrendDecision(
+        dates[2],
+        dates,
+        {
+          DBC: [100, 101, 105],
+          EEM: [100, 102, 103],
+          EFA: [100, 99, 98],
+        },
+        protocol,
+      ),
     )
 
     expect(decision.schemaVersion).toBe('bayn.risk-balanced-trend-decision-plan.v1')
@@ -158,15 +159,17 @@ describe('risk-balanced trend candidate', () => {
   test('makes zero-volatility symbols explicitly ineligible and fails on malformed closes', () => {
     const protocol = shortProtocol({ maximumPortfolioVolatility: 1 })
     const dates = ['2026-07-15', '2026-07-16', '2026-07-17'] as const satisfies readonly IsoDate[]
-    const decision = makeRiskBalancedTrendDecision(
-      dates[2],
-      dates,
-      {
-        DBC: [100, 100, 100],
-        EEM: [100, 101, 102],
-        EFA: [100, 99, 98],
-      },
-      protocol,
+    const decision = assertSuccess(
+      makeRiskBalancedTrendDecision(
+        dates[2],
+        dates,
+        {
+          DBC: [100, 100, 100],
+          EEM: [100, 101, 102],
+          EFA: [100, 99, 98],
+        },
+        protocol,
+      ),
     )
 
     expect(decision.signals[0]).toMatchObject({
@@ -177,22 +180,31 @@ describe('risk-balanced trend candidate', () => {
       positiveScore: 0,
       targetWeight: 0,
     })
-    expect(() =>
-      makeRiskBalancedTrendDecision(
-        dates[2],
-        dates,
-        { DBC: [100, Number.NaN, 100], EEM: [100, 101, 102], EFA: [100, 99, 98] },
-        protocol,
-      ),
-    ).toThrow('invalid close')
-    expect(() =>
-      makeRiskBalancedTrendDecision(
-        dates[2],
-        dates,
-        { DBC: [100, 100], EEM: [100, 101, 102], EFA: [100, 99, 98] },
-        protocol,
-      ),
-    ).toThrow('ordered closes')
+    const invalidClose = makeRiskBalancedTrendDecision(
+      dates[2],
+      dates,
+      { DBC: [100, Number.NaN, 100], EEM: [100, 101, 102], EFA: [100, 99, 98] },
+      protocol,
+    )
+    assert(Result.isFailure(invalidClose), 'invalid close must fail')
+    expect(invalidClose.failure).toMatchObject({
+      _tag: 'InvalidRiskBalancedTrendClose',
+      symbol: 'DBC',
+      index: 1,
+    })
+    const shortHistory = makeRiskBalancedTrendDecision(
+      dates[2],
+      dates,
+      { DBC: [100, 100], EEM: [100, 101, 102], EFA: [100, 99, 98] },
+      protocol,
+    )
+    assert(Result.isFailure(shortHistory), 'short history must fail')
+    expect(shortHistory.failure).toMatchObject({
+      _tag: 'RiskBalancedTrendCloseHistoryMismatch',
+      symbol: 'DBC',
+      expectedCount: 3,
+      observedCount: 2,
+    })
   })
 
   test('retains cash when scores cannot absorb exposure and reaches full exposure only when capacity permits', () => {
@@ -217,7 +229,7 @@ describe('risk-balanced trend candidate', () => {
     ] as const
 
     for (const testCase of cases) {
-      const decision = makeRiskBalancedTrendDecision(dates[2], dates, testCase.closes, protocol)
+      const decision = assertSuccess(makeRiskBalancedTrendDecision(dates[2], dates, testCase.closes, protocol))
       expect(decision.targetWeights, testCase.name).toEqual(testCase.expected)
       expect(
         Object.values(decision.targetWeights).reduce((total, weight) => total + weight, 0),
@@ -225,11 +237,13 @@ describe('risk-balanced trend candidate', () => {
       ).toBeLessThanOrEqual(1)
     }
 
-    const allCash = makeRiskBalancedTrendDecision(
-      dates[2],
-      dates,
-      { DBC: [100, 99, 97], EEM: [100, 98, 96], EFA: [100, 97, 95] },
-      protocol,
+    const allCash = assertSuccess(
+      makeRiskBalancedTrendDecision(
+        dates[2],
+        dates,
+        { DBC: [100, 99, 97], EEM: [100, 98, 96], EFA: [100, 97, 95] },
+        protocol,
+      ),
     )
     expect(allCash.targetWeights).toEqual({ DBC: 0, EEM: 0, EFA: 0 })
     expect(allCash.signals.every((signal) => signal.positiveScore === 0)).toBe(true)
@@ -238,14 +252,14 @@ describe('risk-balanced trend candidate', () => {
   test('requires ordered history and does not use observations after a decision date', () => {
     const protocol = shortProtocol({ maximumPortfolioVolatility: 1 })
     const dates = ['2026-07-15', '2026-07-16', '2026-07-17'] as const satisfies readonly IsoDate[]
-    expect(() =>
-      makeRiskBalancedTrendDecision(
-        dates[2],
-        [dates[0], dates[2], dates[1]],
-        { DBC: [100, 101, 103], EEM: [100, 102, 103], EFA: [100, 99, 98] },
-        protocol,
-      ),
-    ).toThrow('ordered sessions')
+    const unordered = makeRiskBalancedTrendDecision(
+      dates[2],
+      [dates[0], dates[2], dates[1]],
+      { DBC: [100, 101, 103], EEM: [100, 102, 103], EFA: [100, 99, 98] },
+      protocol,
+    )
+    assert(Result.isFailure(unordered), 'unordered session history must fail')
+    expect(unordered.failure).toMatchObject({ _tag: 'RiskBalancedTrendSessionHistoryMismatch' })
 
     const snapshot = makeSnapshot()
     const provenance = makeTestProvenance()
@@ -300,20 +314,22 @@ describe('risk-balanced trend candidate', () => {
         return [symbol, assertSuccess(referencePriceMicros(close, fixtureProtocol.executionModel)).toString()]
       }),
     )
-    const expectedDecision = makeRiskBalancedTrendDecision(
-      snapshot.manifest.finalizedSnapshot.lastSession,
-      historyDates,
-      Object.fromEntries(
-        fixtureProtocol.universe.map((symbol) => [
-          symbol,
-          historyDates.map((date) => {
-            const close = closesBySymbolAndDate.get(`${symbol}\u001f${date}`)
-            if (close === undefined) throw new Error(`fixture is missing ${symbol} ${date}`)
-            return close
-          }),
-        ]),
+    const expectedDecision = assertSuccess(
+      makeRiskBalancedTrendDecision(
+        snapshot.manifest.finalizedSnapshot.lastSession,
+        historyDates,
+        Object.fromEntries(
+          fixtureProtocol.universe.map((symbol) => [
+            symbol,
+            historyDates.map((date) => {
+              const close = closesBySymbolAndDate.get(`${symbol}\u001f${date}`)
+              if (close === undefined) throw new Error(`fixture is missing ${symbol} ${date}`)
+              return close
+            }),
+          ]),
+        ),
+        fixtureProtocol,
       ),
-      fixtureProtocol,
     )
 
     expect(current).toEqual({ decision: expectedDecision, priceMicros: expectedPrices })
@@ -353,27 +369,27 @@ describe('risk-balanced trend candidate', () => {
     const snapshot = makeSnapshot()
     const strategy = makeStrategy(fixtureProtocol, makeTestProvenance())
 
-    expect(() =>
-      strategy.currentDecision(
-        snapshot.bars,
-        snapshot.manifest,
-        currentDecisionBinding(snapshot.manifest.lastSession, ['2020-04-21', '2020-04-22', '2020-05-01']),
-      ),
-    ).toThrow('current strategy decision requires a month-end due cycle')
-    expect(() =>
-      strategy.currentDecision(snapshot.bars, snapshot.manifest, {
-        signalSessionDate: snapshot.manifest.lastSession,
-        executionSessionDate: '2020-05-01',
-        calendarSessionDates: [snapshot.manifest.lastSession, '2020-05-01'],
-      } as unknown as CurrentDecisionCycleBinding),
-    ).toThrow('Unexpected key')
-    expect(() =>
-      strategy.currentDecision(
-        snapshot.bars,
-        snapshot.manifest,
-        currentDecisionBinding('2020-04-20', ['2020-04-20', '2020-04-21', '2020-04-22']),
-      ),
-    ).toThrow('current strategy decision must end on the due cycle Signal terminal session')
+    const notMonthEnd = strategy.currentDecision(
+      snapshot.bars,
+      snapshot.manifest,
+      currentDecisionBinding(snapshot.manifest.lastSession, ['2020-04-21', '2020-04-22', '2020-05-01']),
+    )
+    assert(Result.isFailure(notMonthEnd), 'same-month execution must fail')
+    expect(notMonthEnd.failure).toMatchObject({ _tag: 'CurrentDecisionNotMonthEnd' })
+    const invalidBinding = strategy.currentDecision(snapshot.bars, snapshot.manifest, {
+      signalSessionDate: snapshot.manifest.lastSession,
+      executionSessionDate: '2020-05-01',
+      calendarSessionDates: [snapshot.manifest.lastSession, '2020-05-01'],
+    } as unknown as CurrentDecisionCycleBinding)
+    assert(Result.isFailure(invalidBinding), 'invalid binding must fail')
+    expect(invalidBinding.failure).toMatchObject({ _tag: 'CurrentDecisionBindingDecodeFailed' })
+    const wrongSession = strategy.currentDecision(
+      snapshot.bars,
+      snapshot.manifest,
+      currentDecisionBinding('2020-04-20', ['2020-04-20', '2020-04-21', '2020-04-22']),
+    )
+    assert(Result.isFailure(wrongSession), 'wrong bound signal session must fail')
+    expect(wrongSession.failure).toMatchObject({ _tag: 'CurrentDecisionSessionMismatch' })
   })
 
   test('rejects an invalid or snapshot-divergent manifest before compiling a current decision', () => {
@@ -384,16 +400,16 @@ describe('risk-balanced trend candidate', () => {
       '2020-05-01',
       '2020-05-04',
     ])
-    expect(() =>
-      strategy.currentDecision(
-        snapshot.bars,
-        {
-          ...snapshot.manifest,
-          hash: '0'.repeat(64),
-        },
-        cycleBinding,
-      ),
-    ).toThrow()
+    const invalidHash = strategy.currentDecision(
+      snapshot.bars,
+      {
+        ...snapshot.manifest,
+        hash: '0'.repeat(64),
+      },
+      cycleBinding,
+    )
+    assert(Result.isFailure(invalidHash), 'invalid manifest hash must fail')
+    expect(invalidHash.failure).toMatchObject({ _tag: 'ManifestDecodeFailed' })
 
     const priorSession = snapshot.bars
       .map((bar) => bar.sessionDate)
@@ -417,9 +433,9 @@ describe('risk-balanced trend candidate', () => {
       hash: canonicalHashV1(divergentMaterial),
     }
 
-    expect(() => strategy.currentDecision(snapshot.bars, divergent, cycleBinding)).toThrow(
-      'Signal manifest does not match its finalized snapshot bounds',
-    )
+    const divergentDecision = strategy.currentDecision(snapshot.bars, divergent, cycleBinding)
+    assert(Result.isFailure(divergentDecision), 'snapshot-divergent manifest must fail')
+    expect(divergentDecision.failure).toMatchObject({ _tag: 'ManifestSnapshotBoundsMismatch' })
   })
 
   test('rejects a Signal manifest for a different universe before qualification', () => {
@@ -442,14 +458,12 @@ describe('risk-balanced trend candidate', () => {
     assert(Result.isFailure(evaluation), 'strategy evaluation must preserve manifest failure as Result data')
     expect(evaluation.failure).toEqual([
       expect.objectContaining({
-        _tag: 'RiskBalancedTrendCompatibilityFailure',
-        phase: 'prepare',
-        cause: expect.any(TypeError),
+        _tag: 'ManifestDecodeFailed',
       }),
     ])
-    expect(() => strategy.prepareLock(mismatchedManifest, [], [])).toThrow(
-      'Signal snapshot universe does not match the compiled strategy universe',
-    )
+    const lock = strategy.prepareLock(mismatchedManifest, [], [])
+    assert(Result.isFailure(lock), 'qualification lock must reject an invalid manifest')
+    expect(lock.failure).toMatchObject({ _tag: 'ManifestDecodeFailed' })
   })
 
   test('evaluates deterministically with complete evidence and a calendar-only precommit', () => {
@@ -462,11 +476,8 @@ describe('risk-balanced trend candidate', () => {
       evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance),
     )
     const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
-    const precommit = prepareRiskBalancedTrendQualification(
-      sessionDates,
-      snapshot.manifest,
-      fixtureProtocol,
-      provenance,
+    const precommit = assertSuccess(
+      prepareRiskBalancedTrendQualification(sessionDates, snapshot.manifest, fixtureProtocol, provenance),
     )
 
     expect(first).toEqual(second)
@@ -506,18 +517,15 @@ describe('risk-balanced trend candidate', () => {
         }),
       ]),
     )
-    const expectedDecision = makeRiskBalancedTrendDecision(
-      retained.signalDate,
-      retainedDates,
-      retainedCloses,
-      fixtureProtocol,
+    const expectedDecision = assertSuccess(
+      makeRiskBalancedTrendDecision(retained.signalDate, retainedDates, retainedCloses, fixtureProtocol),
     )
     const { decisionId: _, executionDate: __, ...retainedPlan } = retained
     expect(retainedPlan).toEqual(expectedDecision)
     const priorTrialRunIds = Array.from({ length: 8 }, (_, index) => index.toString(16).repeat(64))
     const strategy = makeStrategy(fixtureProtocol, provenance)
-    const lock = strategy.prepareLock(snapshot.manifest, sessionDates, priorTrialRunIds)
-    const analysis = strategy.analyze(first, priorTrialRunIds)
+    const lock = assertSuccess(strategy.prepareLock(snapshot.manifest, sessionDates, priorTrialRunIds))
+    const analysis = assertSuccess(strategy.analyze(first, priorTrialRunIds))
     expect(lock.priorTrialRunIds).toEqual(priorTrialRunIds)
     expect(lock).toMatchObject({
       schemaVersion: 'bayn.qualification-lock.v3',

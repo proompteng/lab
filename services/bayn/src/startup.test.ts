@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 
 import { NodeServices } from '@effect/platform-node'
-import { Cause, Effect, Exit, Layer, Option, Ref, Result } from 'effect'
+import { Cause, Effect, Exit, Layer, Option, pipe, Ref, Result } from 'effect'
 import { AuthenticationError, SqlError } from 'effect/unstable/sql/SqlError'
 
 import {
@@ -44,11 +44,7 @@ import { MarketData } from './market-data'
 import { Authority } from './paper'
 import { defaultProtocolDocument, loadProtocol } from './protocol'
 import { makeQualificationLock, makeQualificationResult } from './qualification'
-import {
-  evaluateRiskBalancedTrend,
-  riskBalancedTrendCompatibilityFailure,
-  summarizeEvaluation,
-} from './risk-balanced-trend'
+import { evaluateRiskBalancedTrend, summarizeEvaluation } from './risk-balanced-trend'
 import { initialState } from './runtime-state'
 import {
   decidePinnedQualification,
@@ -312,10 +308,12 @@ describe('Bayn startup pure decisions', () => {
 
   test('makes every qualification-path branch explicit and renders incomplete-lock refusal exactly', () => {
     const { lockId: _fixtureLockId, ...fixtureLockMaterial } = fixtureLock
-    const driftedLock = makeQualificationLock({
+    const driftedLockResult = makeQualificationLock({
       ...fixtureLockMaterial,
       sourceRevision: '0'.repeat(40),
     })
+    assert(Result.isSuccess(driftedLockResult), 'drifted lock fixture must succeed')
+    const driftedLock = driftedLockResult.success
     expect(driftedLock.candidateRunId).toBe(fixtureLock.candidateRunId)
 
     expect(decideQualificationPath(fixtureLock, { state: 'ACQUIRED', lock: fixtureLock })).toEqual(
@@ -575,9 +573,17 @@ describe('Bayn startup pure decisions', () => {
     })
   })
 
-  test('renders evaluate, analyze, and qualify failures with baseline operation text', () => {
-    const evaluationCause = new Error('evaluation exploded')
-    const analysisCause = new Error('analysis exploded')
+  test('renders evaluate, analyze, and qualify failures from their typed causes', () => {
+    const evaluationCause = {
+      _tag: 'CanonicalJsonFailure',
+      path: '$.inputManifest',
+      reason: 'non-json-type',
+      actualType: 'undefined',
+    } as const
+    const analysisCause = {
+      _tag: 'QualificationLineageInvalid',
+      priorTrialRunIds: ['0'.repeat(64), '0'.repeat(64)],
+    } as const
     const reconciliation = recoveredFixture().reconciliation
     const cases: readonly {
       readonly operation: 'evaluate' | 'analyze' | 'qualify'
@@ -586,12 +592,19 @@ describe('Bayn startup pure decisions', () => {
     }[] = [
       {
         operation: 'evaluate',
-        message: `${fixtureStrategy.name} evaluation failed: ${evaluationCause.message}`,
+        message: `${fixtureStrategy.name} evaluation failed: input-manifest canonicalization failed at $.inputManifest: non-json-type`,
         decide: () =>
           evaluateLockedSnapshot(
             {
               ...fixtureStrategy,
-              evaluate: () => Result.fail(riskBalancedTrendCompatibilityFailure('prepare', evaluationCause)),
+              evaluate: () =>
+                Result.fail([
+                  {
+                    _tag: 'CanonicalizationFailed',
+                    operation: 'input-manifest',
+                    cause: evaluationCause,
+                  },
+                ]),
             },
             candidateQualification.inspection,
             fixtureLock,
@@ -600,14 +613,12 @@ describe('Bayn startup pure decisions', () => {
       },
       {
         operation: 'analyze',
-        message: `${fixtureStrategy.name} analysis failed: ${analysisCause.message}`,
+        message: `${fixtureStrategy.name} analysis failed: prior qualification run IDs are not canonical: ${analysisCause.priorTrialRunIds.join(',')}`,
         decide: () =>
           qualifyEvaluation(
             {
               ...fixtureStrategy,
-              analyze: () => {
-                throw analysisCause
-              },
+              analyze: () => Result.fail(analysisCause),
             },
             fixtureLock,
             fixtureEvaluation,
@@ -616,15 +627,19 @@ describe('Bayn startup pure decisions', () => {
       },
       {
         operation: 'qualify',
-        message: `${fixtureStrategy.name} qualification failed: qualification analysis must use the locked prior-trial lineage`,
+        message: `${fixtureStrategy.name} qualification failed: qualification analysis lineage ${'0'.repeat(64)} does not match locked lineage ${fixtureLock.priorTrialRunIds.join(',')}`,
         decide: () =>
           qualifyEvaluation(
             {
               ...fixtureStrategy,
-              analyze: (evaluation, priorTrialRunIds) => ({
-                ...fixtureStrategy.analyze(evaluation, priorTrialRunIds),
-                priorTrialRunIds: ['0'.repeat(64)],
-              }),
+              analyze: (evaluation, priorTrialRunIds) =>
+                pipe(
+                  fixtureStrategy.analyze(evaluation, priorTrialRunIds),
+                  Result.map((analysis) => ({
+                    ...analysis,
+                    priorTrialRunIds: ['0'.repeat(64)],
+                  })),
+                ),
             },
             fixtureLock,
             fixtureEvaluation,
@@ -648,37 +663,6 @@ describe('Bayn startup pure decisions', () => {
     }
   })
 
-  test('renders hostile causes with a deterministic fallback without losing the original cause', () => {
-    const hostileString = {
-      toString: () => {
-        throw new Error('hostile toString')
-      },
-    }
-    const hostileMessage = new Error('hidden')
-    Object.defineProperty(hostileMessage, 'message', {
-      get: () => {
-        throw new Error('hostile message getter')
-      },
-    })
-
-    for (const cause of [hostileString, hostileMessage]) {
-      const failure: StartupDecisionFailure = {
-        _tag: 'StrategyOperationFailed',
-        operation: 'analyze',
-        strategyName: fixtureStrategy.name,
-        cause,
-      }
-      expect(() => {
-        renderStartupDecisionFailure(failure)
-      }).not.toThrow()
-      expectRenderedFailure(failure, {
-        component: 'strategy',
-        operation: 'analyze',
-        message: `${fixtureStrategy.name} analysis failed: unrenderable cause`,
-      })
-    }
-  })
-
   test('captures malformed persisted canonical material as data instead of a defect', () => {
     const malformed = malformedPinnedStoredEvidence()
     const decide = () =>
@@ -696,11 +680,16 @@ describe('Bayn startup pure decisions', () => {
         side: 'stored',
       },
     })
-    expect(failure._tag === 'CanonicalizationFailed' && failure.details.cause instanceof TypeError).toBe(true)
+    expect(failure._tag === 'CanonicalizationFailed' && failure.details.cause).toEqual({
+      _tag: 'CanonicalJsonFailure',
+      path: '$.universeId',
+      reason: 'invalid-unicode-surrogate',
+      actualType: 'string',
+    })
     expectRenderedFailure(failure, {
       component: 'database',
       operation: 'recover-pinned-qualification',
-      message: expect.stringContaining('contains an invalid Unicode surrogate'),
+      message: expect.stringContaining('invalid-unicode-surrogate at $.universeId (string)'),
     })
   })
 })
@@ -799,17 +788,23 @@ describe('Bayn startup lifecycle', () => {
       },
     }
     const { lockId: _, ...pinnedLockMaterial } = pinnedLock
-    const historicalLock = makeQualificationLock({
+    const historicalLockResult = makeQualificationLock({
       ...pinnedLockMaterial,
       protocolHash: historicalProtocolHash,
       sourceRevision: historicalProvenance.sourceRevision,
       image: historicalProvenance.image,
     })
-    const historicalQualification = makeQualificationResult(
+    assert(Result.isSuccess(historicalLockResult), 'historical lock fixture must succeed')
+    const historicalLock = historicalLockResult.success
+    const historicalAnalysisResult = pinnedStrategy.analyze(pinnedEvaluation, [])
+    assert(Result.isSuccess(historicalAnalysisResult), 'historical analysis fixture must succeed')
+    const historicalQualificationResult = makeQualificationResult(
       historicalLock,
       pinnedEvaluation.verdict,
-      pinnedStrategy.analyze(pinnedEvaluation, []),
+      historicalAnalysisResult.success,
     )
+    assert(Result.isSuccess(historicalQualificationResult), 'historical qualification fixture must succeed')
+    const historicalQualification = historicalQualificationResult.success
     const store: EvidenceStoreService = {
       ...pinnedStore(),
       read: () => Effect.succeed(Option.some(historicalStoredEvidence)),
@@ -932,7 +927,7 @@ describe('Bayn startup lifecycle', () => {
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
       status: 'FAILED',
       evidence: null,
-      error: expect.stringContaining('contains an invalid Unicode surrogate'),
+      error: expect.stringContaining('invalid-unicode-surrogate at $.universeId (string)'),
     })
   })
 
@@ -1061,9 +1056,7 @@ describe('Bayn startup lifecycle', () => {
       ...fixtureStrategy,
       evaluate: () => {
         evaluations += 1
-        return Result.fail(
-          riskBalancedTrendCompatibilityFailure('prepare', new Error('incomplete qualification must not evaluate')),
-        )
+        return Result.fail([{ _tag: 'CandidateSimulationTraceMissing' }])
       },
     }
     const journal: JournalService = {
@@ -1117,12 +1110,7 @@ describe('Bayn startup lifecycle', () => {
       ...fixtureStrategy,
       evaluate: () => {
         evaluations += 1
-        return Result.fail(
-          riskBalancedTrendCompatibilityFailure(
-            'prepare',
-            new Error('corrupt recovery must not fall back to evaluation'),
-          ),
-        )
+        return Result.fail([{ _tag: 'CandidateSimulationTraceMissing' }])
       },
     }
     const store: EvidenceStoreService = {

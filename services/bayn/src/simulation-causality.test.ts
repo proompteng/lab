@@ -3,7 +3,7 @@ import { Result } from 'effect'
 
 import { defaultExecutionModel, MICROS } from './execution-model'
 import { canonicalHashV1 } from './hash'
-import { simulate, type AlignedSession, type SimulationTarget } from './simulation'
+import { simulate, type AlignedSession, type SimulationTarget } from './simulation/index'
 import { fixtureProtocol } from './test-fixtures'
 import {
   DataFeed,

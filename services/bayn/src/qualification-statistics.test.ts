@@ -18,6 +18,11 @@ import { canonicalHashV1 } from './hash'
 import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
+const successOf = <A, E>(result: Result.Result<A, E>): A => {
+  assert(Result.isSuccess(result), 'qualification statistics fixture must succeed')
+  return result.success
+}
+
 const isoDate = (index: number): `${number}-${number}-${number}` => {
   const date = new Date('2000-01-01T00:00:00.000Z')
   date.setUTCDate(date.getUTCDate() + index)
@@ -91,26 +96,30 @@ describe('qualification statistics policy and power', () => {
   })
 
   test('precommits 69 complete blocks and 1,449 sessions and is monotone in effect size', () => {
-    const baseline = calculateQualificationPower(defaultQualificationStatisticsPolicy, 0, 0)
-    const smallerEffect = calculateQualificationPower(
-      policy({
-        power: {
-          ...defaultQualificationStatisticsPolicy.power,
-          minimumDetectableAnnualizedExcessReturn: 0.02,
-        },
-      }),
-      0,
-      0,
+    const baseline = successOf(calculateQualificationPower(defaultQualificationStatisticsPolicy, 0, 0))
+    const smallerEffect = successOf(
+      calculateQualificationPower(
+        policy({
+          power: {
+            ...defaultQualificationStatisticsPolicy.power,
+            minimumDetectableAnnualizedExcessReturn: 0.02,
+          },
+        }),
+        0,
+        0,
+      ),
     )
-    const largerEffect = calculateQualificationPower(
-      policy({
-        power: {
-          ...defaultQualificationStatisticsPolicy.power,
-          minimumDetectableAnnualizedExcessReturn: 0.05,
-        },
-      }),
-      0,
-      0,
+    const largerEffect = successOf(
+      calculateQualificationPower(
+        policy({
+          power: {
+            ...defaultQualificationStatisticsPolicy.power,
+            minimumDetectableAnnualizedExcessReturn: 0.05,
+          },
+        }),
+        0,
+        0,
+      ),
     )
 
     expect(baseline).toMatchObject({
@@ -127,8 +136,8 @@ describe('qualification statistics policy and power', () => {
 describe('deterministic paired block bootstrap', () => {
   test('uses complete rebalance intervals, excludes the trailing interval, and reproduces a golden result', () => {
     const input = makeSeries()
-    const first = analyzeQualification(input, policy(), [])
-    const second = analyzeQualification(structuredClone(input), policy(), [])
+    const first = successOf(analyzeQualification(input, policy(), []))
+    const second = successOf(analyzeQualification(structuredClone(input), policy(), []))
 
     expect(first.completeBlocks).toHaveLength(90)
     expect(first.completeBlocks[0]).toMatchObject({
@@ -157,17 +166,19 @@ describe('deterministic paired block bootstrap', () => {
         directVolatilityReturn: observation.strategyReturn - 0.0001,
       })),
     }
-    const first = analyzeQualification(input, policy(), [])
-    const changedSeed = analyzeQualification(
-      input,
-      policy({
-        bootstrap: {
-          ...defaultQualificationStatisticsPolicy.bootstrap,
-          samples: 1_000,
-          seedNamespace: 'bayn-risk-balanced-trend-qualification-v1-alternate',
-        },
-      }),
-      [],
+    const first = successOf(analyzeQualification(input, policy(), []))
+    const changedSeed = successOf(
+      analyzeQualification(
+        input,
+        policy({
+          bootstrap: {
+            ...defaultQualificationStatisticsPolicy.bootstrap,
+            samples: 1_000,
+            seedNamespace: 'bayn-risk-balanced-trend-qualification-v1-alternate',
+          },
+        }),
+        [],
+      ),
     )
 
     expect(changedSeed.bootstrap.samplesHash).not.toBe(first.bootstrap.samplesHash)
@@ -177,9 +188,11 @@ describe('deterministic paired block bootstrap', () => {
 
   test('makes multiplicity stricter and rejects inadequate bootstrap tail resolution', () => {
     const input = makeSeries()
-    const baseline = analyzeQualification(input, policy(), [])
-    const onePrior = analyzeQualification(input, policy(), ['1'.repeat(64)])
-    const insufficientTail = analyzeQualification(input, policy(), ['1'.repeat(64), '2'.repeat(64), '3'.repeat(64)])
+    const baseline = successOf(analyzeQualification(input, policy(), []))
+    const onePrior = successOf(analyzeQualification(input, policy(), ['1'.repeat(64)]))
+    const insufficientTail = successOf(
+      analyzeQualification(input, policy(), ['1'.repeat(64), '2'.repeat(64), '3'.repeat(64)]),
+    )
 
     expect(onePrior.bootstrap.adjustedOneSidedAlpha).toBeLessThan(baseline.bootstrap.adjustedOneSidedAlpha)
     expect(onePrior.bootstrap.annualizedExcessReturnLowerBound).toBeLessThanOrEqual(
@@ -187,13 +200,18 @@ describe('deterministic paired block bootstrap', () => {
     )
     expect(insufficientTail.status).toBe('INSUFFICIENT')
     expect(insufficientTail.reasonCodes).toContain('INSUFFICIENT_BOOTSTRAP_TAIL')
-    expect(() => analyzeQualification(input, policy(), ['2'.repeat(64), '1'.repeat(64)])).toThrow()
+    expect(analyzeQualification(input, policy(), ['2'.repeat(64), '1'.repeat(64)])).toEqual(
+      Result.fail({
+        _tag: 'QualificationLineageInvalid',
+        priorTrialRunIds: ['2'.repeat(64), '1'.repeat(64)],
+      }),
+    )
   })
 })
 
 describe('walk-forward and terminal qualification semantics', () => {
   test('builds chronological non-overlapping folds and passes a stable strong fixture', () => {
-    const analysis = analyzeQualification(makeSeries(), policy(), [])
+    const analysis = successOf(analyzeQualification(makeSeries(), policy(), []))
 
     expect(analysis.walkForward.folds).toHaveLength(5)
     for (let index = 0; index < analysis.walkForward.folds.length; index += 1) {
@@ -207,10 +225,12 @@ describe('walk-forward and terminal qualification semantics', () => {
   })
 
   test('rejects a sufficiently powered weak candidate without relabeling it insufficient', () => {
-    const analysis = analyzeQualification(
-      makeSeries({ strategyMean: -0.0001, buyAndHoldMean: 0.0003, directVolatilityMean: 0.0002 }),
-      policy(),
-      [],
+    const analysis = successOf(
+      analyzeQualification(
+        makeSeries({ strategyMean: -0.0001, buyAndHoldMean: 0.0003, directVolatilityMean: 0.0002 }),
+        policy(),
+        [],
+      ),
     )
 
     expect(analysis.power.sufficient).toBe(true)
@@ -221,7 +241,7 @@ describe('walk-forward and terminal qualification semantics', () => {
   })
 
   test('returns insufficient when sessions, complete blocks, or folds cannot meet the precommit', () => {
-    const analysis = analyzeQualification(makeSeries({ blocks: 30 }), policy(), [])
+    const analysis = successOf(analyzeQualification(makeSeries({ blocks: 30 }), policy(), []))
 
     expect(analysis.status).toBe('INSUFFICIENT')
     expect(analysis.reasonCodes).toEqual(
@@ -235,41 +255,47 @@ describe('walk-forward and terminal qualification semantics', () => {
 
   test('rejects malformed, non-finite, or misaligned evidence before computation', () => {
     const input = makeSeries()
-    expect(() =>
-      analyzeQualification(
-        {
-          ...input,
-          observations: input.observations.map((observation, index) =>
-            index === 10 ? { ...observation, strategyReturn: Number.NaN } : observation,
-          ),
-        },
-        policy(),
-        [],
+    expect(
+      Result.isFailure(
+        analyzeQualification(
+          {
+            ...input,
+            observations: input.observations.map((observation, index) =>
+              index === 10 ? { ...observation, strategyReturn: Number.NaN } : observation,
+            ),
+          },
+          policy(),
+          [],
+        ),
       ),
-    ).toThrow()
-    expect(() =>
-      analyzeQualification(
-        { ...input, rebalanceExecutionDates: [isoDate(2_500), ...input.rebalanceExecutionDates] },
-        policy(),
-        [],
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        analyzeQualification(
+          { ...input, rebalanceExecutionDates: [isoDate(2_500), ...input.rebalanceExecutionDates] },
+          policy(),
+          [],
+        ),
       ),
-    ).toThrow()
-    expect(() =>
-      analyzeQualification(
-        {
-          ...input,
-          observations: input.observations.map((observation, index) =>
-            index === 10 ? { ...observation, strategyReturn: -1.01 } : observation,
-          ),
-        },
-        policy(),
-        [],
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        analyzeQualification(
+          {
+            ...input,
+            observations: input.observations.map((observation, index) =>
+              index === 10 ? { ...observation, strategyReturn: -1.01 } : observation,
+            ),
+          },
+          policy(),
+          [],
+        ),
       ),
-    ).toThrow()
+    ).toBe(true)
   })
 
   test('rejects internally inconsistent persisted analysis even with a recomputed root hash', () => {
-    const original = analyzeQualification(makeSeries(), policy(), [])
+    const original = successOf(analyzeQualification(makeSeries(), policy(), []))
     const changedBootstrap = { ...original.bootstrap, producedSamples: original.bootstrap.producedSamples - 1 }
     const { analysisHash: _analysisHash, ...originalMaterial } = original
     const changedMaterial = { ...originalMaterial, bootstrap: changedBootstrap }
@@ -286,7 +312,7 @@ describe('walk-forward and terminal qualification semantics', () => {
     const shocks = Object.fromEntries(
       Array.from({ length: 30 }, (_, offset) => [504 + offset, offset === 0 ? -0.5 : 0]),
     )
-    const analysis = analyzeQualification(makeSeries({ strategyShock: shocks }), policy(), [])
+    const analysis = successOf(analyzeQualification(makeSeries({ strategyShock: shocks }), policy(), []))
 
     expect(analysis.walkForward.allDrawdownsWithinLimit).toBe(false)
     expect(analysis.status).toBe('REJECTED')
@@ -305,7 +331,7 @@ describe('evaluation adapter', () => {
     )
     assert(Result.isSuccess(evaluationResult), 'strategy evaluation fixture must succeed')
     const evaluation = evaluationResult.success
-    const series = prepareQualificationSeries(evaluation)
+    const series = successOf(prepareQualificationSeries(evaluation))
 
     expect(series.runId).toBe(evaluation.runId)
     expect(series.observations).toHaveLength(evaluation.simulation.dailyMarks.length)

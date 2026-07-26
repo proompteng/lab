@@ -40,9 +40,15 @@ const fixture = (priorTrialRunIds: readonly string[] = []): QualificationAuditIn
   assert(Result.isSuccess(evaluationResult), 'strategy evaluation fixture must succeed')
   const evaluation = evaluationResult.success
   const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
-  const lock = strategy.prepareLock(snapshot.manifest, sessionDates, priorTrialRunIds)
-  const analysis = strategy.analyze(evaluation, priorTrialRunIds)
-  const result = makeQualificationResult(lock, evaluation.verdict, analysis)
+  const lockResult = strategy.prepareLock(snapshot.manifest, sessionDates, priorTrialRunIds)
+  assert(Result.isSuccess(lockResult), 'qualification lock fixture must succeed')
+  const lock = lockResult.success
+  const analysisResult = strategy.analyze(evaluation, priorTrialRunIds)
+  assert(Result.isSuccess(analysisResult), 'qualification analysis fixture must succeed')
+  const analysis = analysisResult.success
+  const resultDecision = makeQualificationResult(lock, evaluation.verdict, analysis)
+  assert(Result.isSuccess(resultDecision), 'qualification result fixture must succeed')
+  const result = resultDecision.success
   const reconciliation = { runId: evaluation.runId, accountCount: 14, transferCount: 900, exact: true as const }
   const evaluationSummary = summarizeEvaluation(evaluation)
   const base = [
