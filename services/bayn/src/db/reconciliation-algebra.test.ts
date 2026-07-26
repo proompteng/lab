@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { Result } from 'effect'
 
-import { prepareAccounting } from '../accounting'
+import { prepareAccounting } from '../accounting/domain'
 import { MutationOperation } from '../broker/alpaca-mutations'
 import { MutationEventType } from '../execution/mutations'
 import { canonicalHashV1 } from '../hash'
@@ -70,7 +70,11 @@ const fill: Fill = {
   occurredAt: observedAt,
 }
 
-const prepared = prepareAccounting(hash('broker-event-1'), fill, { quantityMicros: '0', costMicros: '0' }, 1)
+const preparedResult = prepareAccounting(hash('broker-event-1'), fill, { quantityMicros: '0', costMicros: '0' }, 1)
+if (Result.isFailure(preparedResult)) {
+  throw new Error(`accounting fixture failed: ${preparedResult.failure._tag}`)
+}
+const prepared = preparedResult.success
 const postedMicros = prepared.ledger.transfers.reduce((sum, transfer) => sum + transfer.amount, 0n).toString()
 const receiptMaterial = {
   schemaVersion: 'bayn.paper-accounting-receipt.v1' as const,
@@ -278,18 +282,22 @@ describe('PostgreSQL reconciliation algebra', () => {
   })
 
   test('returns closed ledger-plan failures with their causes', () => {
+    const invalidContentHash = hash('invalid-transaction-content')
     const failure = failureOf(
-      verifyAccountingReceipts(
-        [{ ...prepared.transaction, contentHash: hash('invalid-transaction-content') }],
-        [receipt],
-        { tigerBeetle },
-      ),
+      verifyAccountingReceipts([{ ...prepared.transaction, contentHash: invalidContentHash }], [receipt], {
+        tigerBeetle,
+      }),
     )
     expect(failure).toMatchObject({
       _tag: 'AccountingPlanFailed',
       transactionId: prepared.transaction.transactionId,
       brokerEventId: prepared.transaction.brokerEventId,
-      cause: expect.any(Error),
+      cause: {
+        _tag: 'AccountingTransactionContentHashMismatch',
+        transactionId: prepared.transaction.transactionId,
+        observedContentHash: invalidContentHash,
+        expectedContentHash: prepared.transaction.contentHash,
+      },
     })
     if (failure._tag !== 'AccountingPlanFailed') throw new Error('expected accounting plan failure')
     const details = reconciliationAlgebraFailureDetails(failure)

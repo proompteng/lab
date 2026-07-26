@@ -1,10 +1,13 @@
 import { Result, Schema } from 'effect'
 
-import { rebuildAccountingLedger, type AccountingTransaction } from '../accounting'
+import { rebuildAccountingLedger } from '../accounting/domain'
+import type { AccountingFailure } from '../accounting/failure'
+import type { AccountingTransaction } from '../accounting/schema'
 import { MutationOperation } from '../broker/alpaca-mutations'
 import type { RuntimeConfig } from '../config'
 import { MutationEventType } from '../execution/mutations'
 import { canonicalHashV1 } from '../hash'
+import type { LedgerPlan } from '../ledger-plan'
 import {
   Authority,
   AuthorityStateSchema,
@@ -77,7 +80,7 @@ export interface ReconciliationSnapshotMaterial {
 
 export interface AccountingVerification {
   readonly exactReceipts: ReadonlyMap<string, boolean>
-  readonly plans: readonly ReturnType<typeof rebuildAccountingLedger>[]
+  readonly plans: readonly LedgerPlan[]
 }
 
 type AccountingLedgerIdentity = {
@@ -119,7 +122,7 @@ export type ReconciliationAlgebraFailure =
       readonly _tag: 'AccountingPlanFailed'
       readonly transactionId: string
       readonly brokerEventId: string
-      readonly cause: unknown
+      readonly cause: AccountingFailure
     }
   | { readonly _tag: 'DuplicateReceiptBrokerEvent'; readonly brokerEventId: string }
   | { readonly _tag: 'ReceiptVerificationFailed'; readonly brokerEventId: string; readonly cause: unknown }
@@ -231,7 +234,7 @@ export const canonicalAccountingReceiptMaterial = (receipt: AccountingReceipt) =
 const receiptMatches = (
   transaction: AccountingTransaction,
   receipt: AccountingReceipt | undefined,
-  plan: ReturnType<typeof rebuildAccountingLedger>,
+  plan: LedgerPlan,
   config: AccountingLedgerIdentity,
 ): Result.Result<boolean, ReconciliationAlgebraFailure> => {
   if (receipt === undefined) return Result.succeed(false)
@@ -278,20 +281,20 @@ export const verifyAccountingReceipts = (
     const receiptsByEvent = new Map(receipts.map((receipt) => [receipt.brokerEventId, receipt]))
     const planned: {
       readonly transaction: AccountingTransaction
-      readonly plan: ReturnType<typeof rebuildAccountingLedger>
+      readonly plan: LedgerPlan
     }[] = []
     for (const transaction of transactions) {
       planned.push({
         transaction,
-        plan: yield* Result.try({
-          try: () => rebuildAccountingLedger(transaction, config.tigerBeetle.ledger),
-          catch: (cause): ReconciliationAlgebraFailure => ({
+        plan: yield* Result.mapError(
+          rebuildAccountingLedger(transaction, config.tigerBeetle.ledger),
+          (cause): ReconciliationAlgebraFailure => ({
             _tag: 'AccountingPlanFailed',
             transactionId: transaction.transactionId,
             brokerEventId: transaction.brokerEventId,
             cause,
           }),
-        }),
+        ),
       })
     }
 

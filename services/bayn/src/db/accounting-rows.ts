@@ -1,6 +1,6 @@
 import { Schema } from 'effect'
 
-import type { AccountingTransaction } from '../accounting'
+import type { AccountingTransaction } from '../accounting/schema'
 import { OrderSide, type AccountingReceipt } from '../paper'
 import { Sha256Schema as Sha256, StrictNonEmptyStringSchema as NonEmptyString } from '../schemas'
 
