@@ -8,12 +8,13 @@ import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
 import type { RuntimeProvenance } from './contracts'
 import { CycleOperationsCondition, CycleOperationsReason } from './cycle-observability'
 import { CycleState, CycleTerminalReason } from './cycle'
+import type { DatabaseError, EvidenceStoreService } from './db/evidence-store'
 import type { OperationalError } from './errors'
 import { databaseOperation, withinDeadline } from './operations'
 import { Authority } from './paper'
 import { isReady, type DependencyHealth, type RuntimeState } from './runtime-state'
 
-type ReadEvidence = (runId: string) => Effect.Effect<Option.Option<unknown>, { readonly message: string }>
+type ReadEvidence = EvidenceStoreService['read']
 
 export type HttpResponseDecision =
   | {
@@ -248,7 +249,7 @@ export const historicalReadFailureDecision = (runId: string, error: OperationalE
   }) as const
 
 export const readHistoricalEvidence = <A, R>(
-  read: Effect.Effect<Option.Option<A>, { readonly message: string }, R>,
+  read: Effect.Effect<Option.Option<A>, DatabaseError, R>,
   timeoutMs: number,
 ): Effect.Effect<Option.Option<A>, OperationalError, R> =>
   withinDeadline(databaseOperation(read, 'read-evidence'), timeoutMs, 'database', 'read-evidence')

@@ -1,8 +1,11 @@
 import { Duration, Effect, Layer, Schedule } from 'effect'
 import { isSqlError } from 'effect/unstable/sql/SqlError'
 
+import { CycleObservabilityError } from './db/cycle-observability'
 import { DatabaseError } from './db/evidence-store'
 import { operationalError, retryableOperationalError, type Component, type OperationalError } from './errors'
+
+type DatabaseOperationFailure = DatabaseError | CycleObservabilityError
 
 const isRetryableSqlAcquisition = (error: unknown): boolean => {
   if (isSqlError(error)) return error.isRetryable
@@ -48,15 +51,15 @@ export const withinDeadline = <A, R>(
   )
 
 export const databaseOperation = <A, R>(
-  effect: Effect.Effect<A, { readonly message: string }, R>,
+  effect: Effect.Effect<A, DatabaseOperationFailure, R>,
   operation: string,
 ): Effect.Effect<A, OperationalError, R> =>
   effect.pipe(
     Effect.mapError((cause) => {
       const retryable =
-        cause instanceof DatabaseError &&
-        cause.failure === 'unavailable' &&
-        (!isSqlError(cause.cause) || cause.cause.isRetryable)
+        cause instanceof DatabaseError
+          ? cause.failure === 'unavailable' && (!isSqlError(cause.cause) || cause.cause.isRetryable)
+          : cause.failure === 'query' && isSqlError(cause.cause) && cause.cause.isRetryable
       const makeError = retryable ? retryableOperationalError : operationalError
       return makeError('database', operation, `PostgreSQL ${operation} failed`, cause)
     }),
