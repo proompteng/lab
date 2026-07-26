@@ -234,18 +234,25 @@ describe('ledger plan Result algebra', () => {
     })
 
     const nonCanonicalFill = { ...fill, unsupported: undefined } as FillEvent
-    expect(assertLedgerPlanFailure(buildLedgerPlan({ ...result, events: [nonCanonicalFill] }, ledger))).toEqual({
+    const canonicalizationFailure = assertFailure(buildLedgerPlan({ ...result, events: [nonCanonicalFill] }, ledger))
+    expect(canonicalizationFailure).toMatchObject({
+      operation: 'build-plan',
+      reason: 'ledger-plan-failure',
       kind: 'canonicalization-failed',
-      operation: 'event-transfer',
-      eventId: fill.id,
-      leg: 'buy',
-      cause: {
-        _tag: 'CanonicalJsonFailure',
-        path: '$.unsupported',
-        reason: 'non-json-type',
-        actualType: 'undefined',
+      detail: {
+        kind: 'canonicalization-failed',
+        canonicalizationOperation: 'event-transfer',
+        eventId: fill.id,
+        leg: 'buy',
+        cause: {
+          _tag: 'CanonicalJsonFailure',
+          path: '$.unsupported',
+          reason: 'non-json-type',
+          actualType: 'undefined',
+        },
       },
     })
+    expect(canonicalizationFailure.operation).toBe('build-plan')
   })
 
   test('retains hostile manifest access as a closed failure with the original cause', () => {

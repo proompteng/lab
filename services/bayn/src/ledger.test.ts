@@ -541,6 +541,47 @@ describe('TigerBeetle simulation journal', () => {
     expect(writes).toBe(0)
   })
 
+  test('keeps event canonicalization failures under the build-plan journal operation', async () => {
+    const { result } = evaluationPlan()
+    const fill = result.events.find((event): event is FillEvent => event.kind === 'fill')
+    assert(fill, 'evaluation fixture must contain a fill event')
+    const nonCanonicalFill = { ...fill, unsupported: undefined } as FillEvent
+    let writes = 0
+    const client = makeTigerBeetleClient({
+      createAccounts: async () => {
+        writes += 1
+        return []
+      },
+      createTransfers: async () => {
+        writes += 1
+        return []
+      },
+    })
+
+    const error = await Effect.runPromise(
+      Effect.flip(
+        withJournal(client, (journal) => journal.journalAndReconcile({ ...result, events: [nonCanonicalFill] })),
+      ),
+    )
+
+    expect(error.retryable).toBeFalse()
+    expect(error.operation).toBe('build-plan')
+    expect(error.cause).toBeInstanceOf(LedgerValidationError)
+    if (error.cause instanceof LedgerValidationError) {
+      expect(error.cause.operation).toBe('build-plan')
+      expect(error.cause.material).toMatchObject({
+        ledger: journalConfig.tigerBeetle.ledger,
+        failure: {
+          kind: 'canonicalization-failed',
+          canonicalizationOperation: 'event-transfer',
+          eventId: fill.id,
+          leg: 'buy',
+        },
+      })
+    }
+    expect(writes).toBe(0)
+  })
+
   test('does not turn an unexpected account-reconciliation defect into a false verification result', async () => {
     const plan = paperPlan('e')
     const accounts = materializeAccounts(plan)

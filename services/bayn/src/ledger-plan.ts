@@ -161,7 +161,7 @@ export type LedgerPlanFailureDetail =
     }
   | {
       readonly kind: 'canonicalization-failed'
-      readonly operation: 'event-transfer'
+      readonly canonicalizationOperation: 'event-transfer'
       readonly eventId: string
       readonly leg: string
       readonly cause: CanonicalJsonFailure
@@ -181,10 +181,10 @@ export type LedgerPlanFailureDetail =
       readonly limit: number
     }
 
-export type LedgerPlanFailure = LedgerValidationError &
-  LedgerPlanFailureDetail & {
-    readonly detail: LedgerPlanFailureDetail
-  }
+export type LedgerPlanFailure = LedgerValidationError & {
+  readonly kind: LedgerPlanFailureDetail['kind']
+  readonly detail: LedgerPlanFailureDetail
+}
 
 export const renderLedgerPlanFailure = (failure: LedgerPlanFailureDetail): string => {
   switch (failure.kind) {
@@ -227,8 +227,7 @@ const makeLedgerPlanFailure = (ledger: number, detail: LedgerPlanFailureDetail):
       { ledger, failure: detail },
       ledgerPlanCause(detail),
     ),
-    detail,
-    { detail },
+    { kind: detail.kind, detail },
   ) as LedgerPlanFailure
 
 const failLedgerPlan = (failure: LedgerPlanFailureDetail): Result.Result<never, LedgerPlanFailureDetail> =>
@@ -273,7 +272,7 @@ const transfer = (
   if (Result.isFailure(eventHash)) {
     return failLedgerPlan({
       kind: 'canonicalization-failed',
-      operation: 'event-transfer',
+      canonicalizationOperation: 'event-transfer',
       eventId,
       leg,
       cause: eventHash.failure,
