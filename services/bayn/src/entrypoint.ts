@@ -7,14 +7,14 @@ import { riskBalancedTrendBehaviorHash } from './behavior'
 import { BrokerRead, live as AlpacaReadLive, scopedReadAdapterLayer, type BrokerReadShape } from './broker/alpaca'
 import { verifyBehaviorHash, verifyParameterHash } from './build'
 import { loadConfig, type LoadedRuntimeConfig } from './config'
-import { makeRuntimeProvenance, makeStrategyProtocolHash } from './contracts'
+import { makeRuntimeProvenance, makeStrategyProtocolHashResult, type ContractConstructionFailure } from './contracts'
 import { CycleObservabilityLive } from './db/cycle-observability'
 import { CycleStoreLive } from './db/cycle-store'
 import { EvidenceStoreFromPostgres, PostgresClientLive } from './db/evidence-store'
 import { PaperStoreLive } from './db/paper-store'
 import { WriterFenceLive } from './execution/writer-fence'
 import { operationalError } from './errors'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result, type CanonicalJsonFailure } from './hash'
 import { JournalLive } from './ledger'
 import { MarketDataLive } from './market-data'
 import { loadObserveRiskPolicy, makeObserveAutonomousCycleStartup } from './observe-composition'
@@ -24,7 +24,7 @@ import {
   renderPaperCandidateDiscoveryError,
   type PaperCandidateDiscoveryReceipt,
 } from './paper-candidate-discovery'
-import { hashParameters, loadDefaultProtocol, type CausalProtocol } from './protocol'
+import { loadDefaultProtocol, type CausalProtocol } from './protocol'
 import { makeStrategy, type Strategy } from './strategy'
 
 type AlpacaBinding = NonNullable<LoadedRuntimeConfig['alpaca']>
@@ -41,15 +41,15 @@ type RuntimeIdentity<C extends LoadedRuntimeConfig = LoadedRuntimeConfig> = {
 type RuntimeIdentityFailure =
   | {
       readonly _tag: 'RuntimeParameterHashFailed'
-      readonly cause: unknown
+      readonly cause: CanonicalJsonFailure
     }
   | {
       readonly _tag: 'RuntimeProvenanceFailed'
       readonly cause: unknown
     }
   | {
-      readonly _tag: 'RuntimeStrategyFailed'
-      readonly cause: unknown
+      readonly _tag: 'RuntimeStrategyProtocolHashFailed'
+      readonly cause: ContractConstructionFailure
     }
 
 type RuntimePlanFor<M extends RuntimeMode> = RuntimeIdentity<
@@ -72,13 +72,12 @@ type ParameterizedRuntime = RuntimeSeed & { readonly parameterHash: string }
 type ProvenanceRuntime = ParameterizedRuntime & {
   readonly provenance: ReturnType<typeof makeRuntimeProvenance>
 }
+type StrategyRuntime = ProvenanceRuntime & { readonly strategy: Strategy }
 
 const hashRuntimeParameters = (seed: RuntimeSeed): Result.Result<ParameterizedRuntime, RuntimeIdentityFailure> =>
   pipe(
-    Result.try({
-      try: () => hashParameters(seed.protocol),
-      catch: (cause): RuntimeIdentityFailure => ({ _tag: 'RuntimeParameterHashFailed', cause }),
-    }),
+    canonicalHashV1Result(seed.protocol),
+    Result.mapError((cause): RuntimeIdentityFailure => ({ _tag: 'RuntimeParameterHashFailed', cause })),
     Result.map((parameterHash) => ({ ...seed, parameterHash })),
   )
 
@@ -109,28 +108,34 @@ const addRuntimeProvenance = (
     Result.map((provenance) => ({ ...parameterized, provenance })),
   )
 
-const completeRuntimeIdentity = (runtime: ProvenanceRuntime): RuntimeIdentity =>
+const addStrategy = (runtime: ProvenanceRuntime): StrategyRuntime => ({
+  ...runtime,
+  strategy: makeStrategy(runtime.protocol, runtime.provenance),
+})
+
+const addStrategyProtocolHash = (runtime: StrategyRuntime): Result.Result<RuntimeIdentity, RuntimeIdentityFailure> =>
   pipe(
-    makeStrategy(runtime.protocol, runtime.provenance),
-    (strategy): RuntimeIdentity => ({
+    makeStrategyProtocolHashResult(runtime.strategy.provenance.strategy),
+    Result.mapError(
+      (cause): RuntimeIdentityFailure => ({
+        _tag: 'RuntimeStrategyProtocolHashFailed',
+        cause,
+      }),
+    ),
+    Result.map((strategyProtocolHash) => ({
       config: runtime.config,
       protocol: runtime.protocol,
       parameterHash: runtime.parameterHash,
-      strategy,
-      strategyProtocolHash: makeStrategyProtocolHash(strategy.provenance.strategy),
-    }),
+      strategy: runtime.strategy,
+      strategyProtocolHash,
+    })),
   )
-
-const addStrategy = (runtime: ProvenanceRuntime): Result.Result<RuntimeIdentity, RuntimeIdentityFailure> =>
-  Result.try({
-    try: () => completeRuntimeIdentity(runtime),
-    catch: (cause): RuntimeIdentityFailure => ({ _tag: 'RuntimeStrategyFailed', cause }),
-  })
 
 const makeRuntimeIdentity = flow(
   hashRuntimeParameters,
   Result.flatMap(addRuntimeProvenance),
-  Result.flatMap(addStrategy),
+  Result.map(addStrategy),
+  Result.flatMap(addStrategyProtocolHash),
 )
 
 const runtimeIdentityError = (failure: RuntimeIdentityFailure) =>
@@ -152,8 +157,13 @@ const runtimeIdentityError = (failure: RuntimeIdentityFailure) =>
         cause,
       ),
     ),
-    Match.tag('RuntimeStrategyFailed', ({ cause }) =>
-      operationalError('strategy', 'runtime-identity/strategy', 'runtime strategy construction failed', cause),
+    Match.tag('RuntimeStrategyProtocolHashFailed', ({ cause }) =>
+      operationalError(
+        'strategy',
+        'runtime-identity/strategy-protocol-hash',
+        'runtime strategy protocol-hash construction failed',
+        cause,
+      ),
     ),
     Match.exhaustive,
   )
@@ -315,16 +325,15 @@ const writeDiscoveryReceipt = (receipt: PaperCandidateDiscoveryReceipt) =>
 
 const policyHash = (policy: unknown): Effect.Effect<string, ReturnType<typeof operationalError>> =>
   pipe(
-    Result.try({
-      try: () => canonicalHashV1(policy),
-      catch: (cause) =>
-        operationalError(
-          'strategy',
-          'paper-candidate-policy',
-          'source-controlled OBSERVE risk policy canonicalization failed',
-          cause,
-        ),
-    }),
+    canonicalHashV1Result(policy),
+    Result.mapError((cause) =>
+      operationalError(
+        'strategy',
+        'paper-candidate-policy',
+        'source-controlled OBSERVE risk policy canonicalization failed',
+        cause,
+      ),
+    ),
     Effect.fromResult,
   )
 
