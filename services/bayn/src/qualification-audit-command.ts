@@ -11,13 +11,12 @@ import { QualificationLockSchema, QualificationResultSchema } from './qualificat
 import {
   auditQualification,
   classifySignalTableAccess,
+  validateSignalReplicaTopology,
   type AuditDatabaseSnapshot,
-  type QualificationAuditReport,
   type RepositoryAudit,
   type SignalAccessRecord,
 } from './audit/audit'
-import { makeQualificationDossier, type QualificationDossier } from './audit/dossier'
-import type { ReferenceEvaluationFailure } from './audit/reference'
+import { makeQualificationDossier } from './audit/dossier'
 import {
   NonNegativeIntegerSchema as NonNegativeInteger,
   PositiveIntegerSchema as PositiveInteger,
@@ -445,17 +444,27 @@ const readSignalReplicaAccess = (
         )
       ORDER BY query_start_time_microseconds, query_id
     `.pipe(sql.withQueryId(`bayn-audit-access-${database.run.runId.slice(-24)}`))
-    return {
-      replica,
-      topology,
-      access: (yield* decodeAccessRows(rows)).map((row) => ({
+    const access: SignalAccessRecord[] = []
+    for (const row of yield* decodeAccessRows(rows)) {
+      const classification = classifySignalTableAccess(row.tables, signalTables)
+      if (Result.isFailure(classification)) {
+        return yield* Effect.fail(
+          commandError(
+            'signal-access',
+            'ClickHouse query-log row has no Signal evidence table',
+            classification.failure,
+          ),
+        )
+      }
+      access.push({
         replica: row.replica,
         queryId: row.query_id,
         queryStartTime: row.query_start_time,
         user: row.user,
-        kind: classifySignalTableAccess(row.tables, signalTables),
-      })),
+        kind: classification.success,
+      })
     }
+    return { replica, topology, access }
   })
   const clickhouse = ClickhouseClient.layer({
     url: url.href,
@@ -485,29 +494,11 @@ const readSignalAccess = (
     { concurrency: 'unbounded' },
   ).pipe(
     Effect.flatMap((sources) =>
-      Effect.try({
-        try: () => {
-          const observed = sources.map((source) => source.replica).sort()
-          if (new Set(observed).size !== observed.length) {
-            throw new Error('ClickHouse audit endpoints resolved to duplicate replicas')
-          }
-          const topology = [...(sources[0]?.topology ?? [])].sort()
-          if (topology.length < 2 || new Set(topology).size !== topology.length) {
-            throw new Error('ClickHouse audit topology must contain at least two unique replicas')
-          }
-          if (sources.some((source) => [...source.topology].sort().join('\0') !== topology.join('\0'))) {
-            throw new Error('ClickHouse audit endpoints report divergent replica topology')
-          }
-          if (observed.join('\0') !== topology.join('\0')) {
-            throw new Error('ClickHouse audit endpoints do not cover every configured cluster replica')
-          }
-          if (sources.some((source) => source.access.some((record) => record.replica !== source.replica))) {
-            throw new Error('ClickHouse query-log rows do not match their audited replica')
-          }
-          return { replicas: observed, access: sources.flatMap((source) => source.access) }
-        },
-        catch: (cause) => commandError('signal-access', 'ClickHouse replica audit topology is invalid', cause),
-      }),
+      Effect.fromResult(validateSignalReplicaTopology(sources)).pipe(
+        Effect.mapError((cause) =>
+          commandError('signal-access', 'ClickHouse replica audit topology is invalid', cause),
+        ),
+      ),
     ),
   )
 
@@ -545,24 +536,105 @@ const repositoryAudit = (
     }
   }).pipe(Effect.mapError((cause) => commandError('repository', 'repository provenance audit failed', cause)))
 
+type LoadedSignal = Effect.Success<ReturnType<typeof loadSignal>>
+type SignalAccessAudit = Effect.Success<ReturnType<typeof readSignalAccess>>
+
+interface ReadDatabaseCommand {
+  readonly _tag: 'ReadDatabase'
+  readonly runId: string
+}
+
+interface LoadSignalCommand {
+  readonly _tag: 'LoadSignal'
+  readonly manifest: InputManifest
+  readonly protocol: Protocol
+}
+
+interface ReadSignalAccessCommand {
+  readonly _tag: 'ReadSignalAccess'
+  readonly database: AuditDatabaseSnapshot
+  readonly finalizedAt: string
+  readonly signalTables: InputManifest['tables']
+}
+
+interface AuditRepositoryCommand {
+  readonly _tag: 'AuditRepository'
+  readonly sourceRevision: string
+  readonly lockCreatedAt: string
+  readonly resultIdentity: readonly string[]
+}
+
+type ReadOnlyAuditCommand = ReadDatabaseCommand | LoadSignalCommand | ReadSignalAccessCommand | AuditRepositoryCommand
+
+function interpretReadOnlyAuditCommand(
+  input: AuditConfig,
+  command: ReadDatabaseCommand,
+): Effect.Effect<AuditDatabaseSnapshot, QualificationAuditCommandError, FileSystem.FileSystem>
+function interpretReadOnlyAuditCommand(
+  input: AuditConfig,
+  command: LoadSignalCommand,
+): Effect.Effect<LoadedSignal, QualificationAuditCommandError>
+function interpretReadOnlyAuditCommand(
+  input: AuditConfig,
+  command: ReadSignalAccessCommand,
+): Effect.Effect<SignalAccessAudit, QualificationAuditCommandError>
+function interpretReadOnlyAuditCommand(
+  input: AuditConfig,
+  command: AuditRepositoryCommand,
+): Effect.Effect<RepositoryAudit, QualificationAuditCommandError, ChildProcessSpawner.ChildProcessSpawner>
+function interpretReadOnlyAuditCommand(
+  input: AuditConfig,
+  command: ReadOnlyAuditCommand,
+): Effect.Effect<
+  AuditDatabaseSnapshot | LoadedSignal | SignalAccessAudit | RepositoryAudit,
+  QualificationAuditCommandError,
+  FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
+> {
+  switch (command._tag) {
+    case 'ReadDatabase':
+      return readDatabase(command.runId).pipe(
+        Effect.provide(postgresLayer(input)),
+        Effect.mapError((cause) => commandError('audit', 'PostgreSQL read-only qualification audit failed', cause)),
+      )
+    case 'LoadSignal':
+      return loadSignal(input, command.manifest, command.protocol).pipe(
+        Effect.mapError((cause) => commandError('signal-access', 'Signal snapshot audit read failed', cause)),
+      )
+    case 'ReadSignalAccess':
+      return readSignalAccess(input, command.database, command.finalizedAt, command.signalTables)
+    case 'AuditRepository':
+      return repositoryAudit(
+        input.repositoryPath,
+        command.sourceRevision,
+        command.lockCreatedAt,
+        command.resultIdentity,
+      )
+  }
+}
+
 const main = Effect.gen(function* () {
   const input = yield* config
-  const database = yield* readDatabase(input.runId).pipe(Effect.provide(postgresLayer(input)))
+  const database = yield* interpretReadOnlyAuditCommand(input, { _tag: 'ReadDatabase', runId: input.runId })
   const inputManifestArtifact = database.artifacts.find((artifact) => artifact.name === 'input-manifest')
   if (inputManifestArtifact === undefined) {
     return yield* Effect.fail(commandError('audit', 'input-manifest artifact is missing'))
   }
   const manifest = yield* decodeInputManifestArtifact(inputManifestArtifact.payload)
   const protocol = database.protocol.parameters
-  const signal = yield* loadSignal(input, manifest, protocol)
-  const signalAccess = yield* readSignalAccess(input, database, manifest.finalizedSnapshot.finalizedAt, manifest.tables)
+  const signal = yield* interpretReadOnlyAuditCommand(input, { _tag: 'LoadSignal', manifest, protocol })
+  const signalAccess = yield* interpretReadOnlyAuditCommand(input, {
+    _tag: 'ReadSignalAccess',
+    database,
+    finalizedAt: manifest.finalizedSnapshot.finalizedAt,
+    signalTables: manifest.tables,
+  })
   const result = database.qualification.result
-  const repository = yield* repositoryAudit(
-    input.repositoryPath,
-    database.run.sourceRevision,
-    database.qualification.lockCreatedAt,
-    [database.run.runId, result.resultHash, result.analysis.analysisHash],
-  )
+  const repository = yield* interpretReadOnlyAuditCommand(input, {
+    _tag: 'AuditRepository',
+    sourceRevision: database.run.sourceRevision,
+    lockCreatedAt: database.qualification.lockCreatedAt,
+    resultIdentity: [database.run.runId, result.resultHash, result.analysis.analysisHash],
+  })
   const auditInput = {
     bars: signal.bars,
     manifest: signal.manifest,
@@ -573,14 +645,14 @@ const main = Effect.gen(function* () {
     signalPrincipals: { candidate: input.signalUsername, publishers: [input.signalPublisherUsername] },
     repository,
   }
-  const reportDecision = yield* Effect.try({
-    try: (): Result.Result<QualificationAuditReport | QualificationDossier, ReferenceEvaluationFailure> =>
-      input.output === 'dossier' ? makeQualificationDossier(auditInput) : auditQualification(auditInput),
-    catch: (cause) => commandError('audit', 'qualification audit evaluation failed', cause),
-  })
-  const report = yield* Effect.fromResult(reportDecision).pipe(
-    Effect.mapError((cause) => commandError('audit', 'qualification audit execution model failed', cause)),
-  )
+  const report =
+    input.output === 'dossier'
+      ? yield* Effect.fromResult(makeQualificationDossier(auditInput)).pipe(
+          Effect.mapError((cause) => commandError('audit', 'qualification dossier construction failed', cause)),
+        )
+      : yield* Effect.fromResult(auditQualification(auditInput)).pipe(
+          Effect.mapError((cause) => commandError('audit', 'qualification audit evaluation failed', cause)),
+        )
   const output = yield* encodeJson(report)
   const stdio = yield* Stdio.Stdio
   yield* Stream.run(Stream.make(`${output}\n`), stdio.stdout())

@@ -10,6 +10,7 @@ import { makeQualificationResult } from './qualification'
 import {
   auditQualification as auditQualificationResult,
   classifySignalTableAccess,
+  validateSignalReplicaTopology,
   type AuditDatabaseSnapshot,
   type QualificationAuditInput,
   type QualificationAuditReport,
@@ -23,6 +24,11 @@ const auditQualification = (input: QualificationAuditInput): QualificationAuditR
   const result = auditQualificationResult(input)
   assert(Result.isSuccess(result), 'qualification audit fixture must produce a report')
   return result.success
+}
+
+const assertFailure = <A, E>(result: Result.Result<A, E>): E => {
+  assert(Result.isFailure(result), 'fixture decision must fail')
+  return result.failure
 }
 
 const makeQualificationDossier = (input: QualificationAuditInput): QualificationDossier => {
@@ -422,9 +428,12 @@ describe('qualification audit', () => {
       },
     }
 
-    expect(() => auditQualification({ ...input, database })).toThrow(
-      'current auditor requires causal protocol v3; audit immutable v2 evidence with its source-pinned image',
-    )
+    expect(assertFailure(auditQualificationResult({ ...input, database }))).toEqual({
+      _tag: 'UnsupportedAuditProtocolVersion',
+      storedSchemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
+      suppliedSchemaVersion: fixtureProtocol.schemaVersion,
+      requiredSchemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
+    })
   })
 
   test('fails closed when candidate bars were read before the lock', () => {
@@ -443,13 +452,111 @@ describe('qualification audit', () => {
   test('classifies Signal access from table metadata with bars taking fail-closed precedence', () => {
     const tables = fixture().manifest.tables
 
-    expect(classifySignalTableAccess([`signal.${tables.bars}`], tables)).toBe('bars')
-    expect(classifySignalTableAccess([`signal.${tables.manifests}`, `signal.${tables.bars}`], tables)).toBe('bars')
-    expect(classifySignalTableAccess([`signal.${tables.sessions}`], tables)).toBe('sessions')
-    expect(classifySignalTableAccess([`signal.${tables.manifests}`], tables)).toBe('manifest')
-    expect(() => classifySignalTableAccess(['system.query_log'], tables)).toThrow(
-      'query log record does not access a Signal evidence table',
+    expect(Result.getOrThrow(classifySignalTableAccess([`signal.${tables.bars}`], tables))).toBe('bars')
+    expect(
+      Result.getOrThrow(classifySignalTableAccess([`signal.${tables.manifests}`, `signal.${tables.bars}`], tables)),
+    ).toBe('bars')
+    expect(Result.getOrThrow(classifySignalTableAccess([`signal.${tables.sessions}`], tables))).toBe('sessions')
+    expect(Result.getOrThrow(classifySignalTableAccess([`signal.${tables.manifests}`], tables))).toBe('manifest')
+    expect(assertFailure(classifySignalTableAccess(['system.query_log'], tables))).toEqual({
+      _tag: 'SignalEvidenceTableNotAccessed',
+      observedTables: ['system.query_log'],
+      expectedTables: [`signal.${tables.bars}`, `signal.${tables.manifests}`, `signal.${tables.sessions}`].sort(),
+    })
+  })
+
+  test('validates complete and internally consistent Signal replica topology', () => {
+    const access = {
+      replica: 'replica-0',
+      queryId: 'query-0',
+      queryStartTime: '2026-07-20T12:00:00.000000Z',
+      user: 'bayn',
+      kind: 'bars' as const,
+    }
+    const success = validateSignalReplicaTopology([
+      { replica: 'replica-1', topology: ['replica-0', 'replica-1'], access: [] },
+      { replica: 'replica-0', topology: ['replica-1', 'replica-0'], access: [access] },
+    ])
+    assert(Result.isSuccess(success))
+    expect(success.success).toEqual({ replicas: ['replica-0', 'replica-1'], access: [access] })
+
+    expect(
+      assertFailure(
+        validateSignalReplicaTopology([
+          { replica: 'replica-0', topology: ['replica-0', 'replica-1'], access: [] },
+          { replica: 'replica-0', topology: ['replica-0', 'replica-1'], access: [] },
+        ]),
+      )._tag,
+    ).toBe('DuplicateSignalReplicaEndpoint')
+    expect(
+      assertFailure(validateSignalReplicaTopology([{ replica: 'replica-0', topology: ['replica-0'], access: [] }]))
+        ._tag,
+    ).toBe('InvalidSignalReplicaTopology')
+    expect(
+      assertFailure(
+        validateSignalReplicaTopology([
+          { replica: 'replica-0', topology: ['replica-0', 'replica-1'], access: [] },
+          { replica: 'replica-1', topology: ['replica-0', 'replica-2'], access: [] },
+        ]),
+      )._tag,
+    ).toBe('DivergentSignalReplicaTopology')
+    expect(
+      assertFailure(
+        validateSignalReplicaTopology([{ replica: 'replica-0', topology: ['replica-0', 'replica-1'], access: [] }]),
+      )._tag,
+    ).toBe('IncompleteSignalReplicaCoverage')
+    expect(
+      assertFailure(
+        validateSignalReplicaTopology([
+          { replica: 'replica-0', topology: ['replica-0', 'replica-1'], access: [{ ...access, replica: 'replica-1' }] },
+          { replica: 'replica-1', topology: ['replica-0', 'replica-1'], access: [] },
+        ]),
+      ),
+    ).toEqual({
+      _tag: 'SignalReplicaRecordMismatch',
+      endpointReplica: 'replica-0',
+      recordReplica: 'replica-1',
+      queryId: 'query-0',
+    })
+  })
+
+  test('returns closed failures for malformed reconciliation and unsupported artifacts', () => {
+    const malformed = fixture()
+    const malformedArtifacts = malformed.database.artifacts.map((artifact) =>
+      artifact.name === 'reconciliation' ? { ...artifact, payload: null } : artifact,
     )
+    expect(
+      assertFailure(
+        auditQualificationResult({
+          ...malformed,
+          database: { ...malformed.database, artifacts: malformedArtifacts },
+        }),
+      )._tag,
+    ).toBe('ReconciliationArtifactInvalid')
+
+    const unsupported = fixture()
+    const unsupportedArtifact = {
+      name: 'unsupported-artifact',
+      schemaVersion: 'bayn.unsupported.v1',
+      contentHash: canonicalHashV1({}),
+      payload: {},
+    }
+    expect(
+      assertFailure(
+        auditQualificationResult({
+          ...unsupported,
+          database: {
+            ...unsupported.database,
+            run: { ...unsupported.database.run, artifactCount: unsupported.database.run.artifactCount + 1 },
+            artifacts: [...unsupported.database.artifacts, unsupportedArtifact],
+          },
+        }),
+      ),
+    ).toEqual({
+      _tag: 'UnsupportedQualificationArtifact',
+      artifactName: 'unsupported-artifact',
+      supportedArtifactNames: expect.arrayContaining(['reconciliation', 'strategy']),
+    })
   })
 
   test.each([
@@ -597,22 +704,36 @@ describe('qualification dossier', () => {
 
   test('refuses to publish a failed or mismatched audit', () => {
     const failed = fixture()
-    expect(() =>
-      makeQualificationDossier({
-        ...failed,
-        repository: { ...failed.repository, sourceCommitAncestorOfMain: false },
-      }),
-    ).toThrow('qualification audit did not pass')
+    expect(
+      assertFailure(
+        makeQualificationDossierResult({
+          ...failed,
+          repository: { ...failed.repository, sourceCommitAncestorOfMain: false },
+        }),
+      ),
+    ).toEqual({
+      _tag: 'QualificationDossierSubjectMismatch',
+      check: 'audit-passed',
+      actual: false,
+      expected: true,
+    })
 
     const mismatched = fixture()
-    expect(() =>
-      makeQualificationDossier({
-        ...mismatched,
-        database: {
-          ...mismatched.database,
-          run: { ...mismatched.database.run, artifactCount: mismatched.database.run.artifactCount + 1 },
-        },
-      }),
-    ).toThrow('qualification audit did not pass')
+    expect(
+      assertFailure(
+        makeQualificationDossierResult({
+          ...mismatched,
+          database: {
+            ...mismatched.database,
+            run: { ...mismatched.database.run, artifactCount: mismatched.database.run.artifactCount + 1 },
+          },
+        }),
+      ),
+    ).toEqual({
+      _tag: 'QualificationDossierSubjectMismatch',
+      check: 'audit-passed',
+      actual: false,
+      expected: true,
+    })
   })
 })

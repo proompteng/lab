@@ -21,7 +21,7 @@ import {
 } from '../types'
 import { evaluateReference, type ReferenceEvaluation, type ReferenceEvaluationFailure } from './reference'
 
-const decodeReconciliation = Schema.decodeUnknownSync(ReconciliationResultSchema, StrictParseOptions)
+const decodeReconciliation = Schema.decodeUnknownResult(ReconciliationResultSchema, StrictParseOptions)
 type GateScalar = EconomicVerdict['gates'][number]['actual']
 
 export interface StoredArtifact {
@@ -112,15 +112,29 @@ export interface SignalPrincipals {
   readonly publishers: readonly string[]
 }
 
+export type SignalTableClassificationFailure = {
+  readonly _tag: 'SignalEvidenceTableNotAccessed'
+  readonly observedTables: readonly string[]
+  readonly expectedTables: readonly string[]
+}
+
 export const classifySignalTableAccess = (
   observedTables: readonly string[],
   signalTables: InputManifest['tables'],
-): SignalAccessRecord['kind'] => {
+): Result.Result<SignalAccessRecord['kind'], SignalTableClassificationFailure> => {
   const tables = new Set(observedTables)
-  if (tables.has(`signal.${signalTables.bars}`)) return 'bars'
-  if (tables.has(`signal.${signalTables.sessions}`)) return 'sessions'
-  if (tables.has(`signal.${signalTables.manifests}`)) return 'manifest'
-  throw new Error('query log record does not access a Signal evidence table')
+  if (tables.has(`signal.${signalTables.bars}`)) return Result.succeed('bars')
+  if (tables.has(`signal.${signalTables.sessions}`)) return Result.succeed('sessions')
+  if (tables.has(`signal.${signalTables.manifests}`)) return Result.succeed('manifest')
+  return Result.fail({
+    _tag: 'SignalEvidenceTableNotAccessed',
+    observedTables: [...observedTables].sort(),
+    expectedTables: [
+      `signal.${signalTables.bars}`,
+      `signal.${signalTables.sessions}`,
+      `signal.${signalTables.manifests}`,
+    ].sort(),
+  })
 }
 
 export interface RepositoryAudit {
@@ -139,6 +153,111 @@ export interface QualificationAuditInput {
   readonly signalPrincipals: SignalPrincipals
   readonly repository: RepositoryAudit
 }
+
+export interface SignalReplicaAuditSource {
+  readonly replica: string
+  readonly topology: readonly string[]
+  readonly access: readonly SignalAccessRecord[]
+}
+
+export type SignalReplicaTopologyFailure =
+  | {
+      readonly _tag: 'DuplicateSignalReplicaEndpoint'
+      readonly observedReplicas: readonly string[]
+    }
+  | {
+      readonly _tag: 'InvalidSignalReplicaTopology'
+      readonly topology: readonly string[]
+      readonly minimumReplicaCount: 2
+    }
+  | {
+      readonly _tag: 'DivergentSignalReplicaTopology'
+      readonly replica: string
+      readonly expectedTopology: readonly string[]
+      readonly actualTopology: readonly string[]
+    }
+  | {
+      readonly _tag: 'IncompleteSignalReplicaCoverage'
+      readonly observedReplicas: readonly string[]
+      readonly expectedTopology: readonly string[]
+    }
+  | {
+      readonly _tag: 'SignalReplicaRecordMismatch'
+      readonly endpointReplica: string
+      readonly recordReplica: string
+      readonly queryId: string
+    }
+
+export const validateSignalReplicaTopology = (
+  sources: readonly SignalReplicaAuditSource[],
+): Result.Result<
+  { readonly replicas: readonly string[]; readonly access: readonly SignalAccessRecord[] },
+  SignalReplicaTopologyFailure
+> => {
+  const observedReplicas = sources.map((source) => source.replica).sort()
+  if (new Set(observedReplicas).size !== observedReplicas.length) {
+    return Result.fail({ _tag: 'DuplicateSignalReplicaEndpoint', observedReplicas })
+  }
+  const expectedTopology = [...(sources[0]?.topology ?? [])].sort()
+  if (expectedTopology.length < 2 || new Set(expectedTopology).size !== expectedTopology.length) {
+    return Result.fail({ _tag: 'InvalidSignalReplicaTopology', topology: expectedTopology, minimumReplicaCount: 2 })
+  }
+  for (const source of sources) {
+    const actualTopology = [...source.topology].sort()
+    if (actualTopology.join('\0') !== expectedTopology.join('\0')) {
+      return Result.fail({
+        _tag: 'DivergentSignalReplicaTopology',
+        replica: source.replica,
+        expectedTopology,
+        actualTopology,
+      })
+    }
+  }
+  if (observedReplicas.join('\0') !== expectedTopology.join('\0')) {
+    return Result.fail({ _tag: 'IncompleteSignalReplicaCoverage', observedReplicas, expectedTopology })
+  }
+  for (const source of sources) {
+    const mismatched = source.access.find((record) => record.replica !== source.replica)
+    if (mismatched !== undefined) {
+      return Result.fail({
+        _tag: 'SignalReplicaRecordMismatch',
+        endpointReplica: source.replica,
+        recordReplica: mismatched.replica,
+        queryId: mismatched.queryId,
+      })
+    }
+  }
+  return Result.succeed({ replicas: observedReplicas, access: sources.flatMap((source) => source.access) })
+}
+
+export type QualificationAuditFailure =
+  | ReferenceEvaluationFailure
+  | {
+      readonly _tag: 'UnsupportedAuditStrategyContract'
+      readonly protocolStrategyName: string
+      readonly runStrategyName: string
+      readonly requiredStrategyName: typeof contract.name
+    }
+  | {
+      readonly _tag: 'UnsupportedAuditProtocolVersion'
+      readonly storedSchemaVersion: string
+      readonly suppliedSchemaVersion: string
+      readonly requiredSchemaVersion: 'bayn.risk-balanced-trend.protocol.v3'
+    }
+  | {
+      readonly _tag: 'ReferenceCandidateTraceMissing'
+      readonly runId: string
+    }
+  | {
+      readonly _tag: 'ReconciliationArtifactInvalid'
+      readonly artifactName: 'reconciliation'
+      readonly cause: Schema.SchemaError
+    }
+  | {
+      readonly _tag: 'UnsupportedQualificationArtifact'
+      readonly artifactName: string
+      readonly supportedArtifactNames: readonly string[]
+    }
 
 export interface AuditCheck {
   readonly name: string
@@ -300,18 +419,26 @@ const makeMarkedEquityAuditMaterial = (
 
 const makeAuditFacts = (
   input: QualificationAuditInput,
-): Result.Result<QualificationAuditFacts, ReferenceEvaluationFailure> => {
+): Result.Result<QualificationAuditFacts, QualificationAuditFailure> => {
   const database = input.database
   if (database.protocol.strategyName !== contract.name || database.run.strategyName !== contract.name) {
-    throw new Error('stored qualification uses an unsupported strategy contract')
+    return Result.fail({
+      _tag: 'UnsupportedAuditStrategyContract',
+      protocolStrategyName: database.protocol.strategyName,
+      runStrategyName: database.run.strategyName,
+      requiredStrategyName: contract.name,
+    })
   }
   if (
     database.protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v3' ||
     input.protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v3'
   ) {
-    throw new Error(
-      'current auditor requires causal protocol v3; audit immutable v2 evidence with its source-pinned image',
-    )
+    return Result.fail({
+      _tag: 'UnsupportedAuditProtocolVersion',
+      storedSchemaVersion: database.protocol.schemaVersion,
+      suppliedSchemaVersion: input.protocol.schemaVersion,
+      requiredSchemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
+    })
   }
   const provenance = makeRuntimeProvenance({
     sourceRevision: database.run.sourceRevision,
@@ -327,7 +454,7 @@ const makeAuditFacts = (
   if (Result.isFailure(referenceResult)) return Result.fail(referenceResult.failure)
   const reference = referenceResult.success
   const trace = reference.strategy.trace
-  if (trace === null) throw new Error('reference evaluation omitted its candidate trace')
+  if (trace === null) return Result.fail({ _tag: 'ReferenceCandidateTraceMissing', runId: reference.runId })
   const sortedReplicas = [...input.signalReplicas].sort()
   const sortedAccess = [...input.signalAccess].sort((left, right) => {
     if (left.queryStartTime !== right.queryStartTime) return left.queryStartTime < right.queryStartTime ? -1 : 1
@@ -551,9 +678,19 @@ const auditReferenceArtifacts = (facts: QualificationAuditFacts): readonly Audit
   return checks
 }
 
-const auditArtifactManifest = (facts: QualificationAuditFacts): readonly AuditCheck[] => {
+const auditArtifactManifest = (
+  facts: QualificationAuditFacts,
+): Result.Result<readonly AuditCheck[], QualificationAuditFailure> => {
   const { artifact, database, input, markedEquity, reference, trace } = facts
-  const reconciliation = decodeReconciliation(artifact.get('reconciliation')?.payload)
+  const reconciliationResult = decodeReconciliation(artifact.get('reconciliation')?.payload)
+  if (Result.isFailure(reconciliationResult)) {
+    return Result.fail({
+      _tag: 'ReconciliationArtifactInvalid',
+      artifactName: 'reconciliation',
+      cause: reconciliationResult.failure,
+    })
+  }
+  const reconciliation = reconciliationResult.success
   const checks = [
     makeAuditCheck(
       'accounting-reconciliation-identity',
@@ -563,7 +700,7 @@ const auditArtifactManifest = (facts: QualificationAuditFacts): readonly AuditCh
   ]
   if (markedEquity._tag === 'Unavailable') {
     checks.push(makeAuditCheck('qualification-artifact-manifest', false, markedEquity.evidence))
-    return checks
+    return Result.succeed(checks)
   }
   const artifactItemCounts = new Map<string, number>([
     ['evaluation-summary', 0],
@@ -583,12 +720,32 @@ const auditArtifactManifest = (facts: QualificationAuditFacts): readonly AuditCh
     ['marked-equity-reconciliation', 0],
     ['reconciliation', 0],
   ])
-  const artifactItemCount = (name: string): number => {
-    const count = artifactItemCounts.get(name)
-    if (count === undefined) throw new Error(`unsupported qualification artifact: ${name}`)
-    return count
-  }
   const baseArtifacts = database.artifacts.filter((value) => value.name !== 'qualification-artifact-manifest')
+  const supportedArtifactNames = [...artifactItemCounts.keys()].sort()
+  const manifestArtifacts: {
+    readonly name: string
+    readonly schemaVersion: string
+    readonly itemCount: number
+    readonly contentHash: string
+  }[] = []
+  for (const value of [...baseArtifacts].sort((left, right) =>
+    left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
+  )) {
+    const itemCount = artifactItemCounts.get(value.name)
+    if (itemCount === undefined) {
+      return Result.fail({
+        _tag: 'UnsupportedQualificationArtifact',
+        artifactName: value.name,
+        supportedArtifactNames,
+      })
+    }
+    manifestArtifacts.push({
+      name: value.name,
+      schemaVersion: value.schemaVersion,
+      itemCount,
+      contentHash: value.contentHash,
+    })
+  }
   const qualificationManifest = {
     schemaVersion: 'bayn.qualification-artifact-manifest.v1',
     identity: {
@@ -610,14 +767,7 @@ const auditArtifactManifest = (facts: QualificationAuditFacts): readonly AuditCh
       executionModel: input.protocol.executionModel,
       costMultiplierMicros: MICROS_STRING,
     },
-    artifacts: [...baseArtifacts]
-      .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
-      .map((value) => ({
-        name: value.name,
-        schemaVersion: value.schemaVersion,
-        itemCount: artifactItemCount(value.name),
-        contentHash: value.contentHash,
-      })),
+    artifacts: manifestArtifacts,
     events: {
       count: database.events.length,
       contentHash: canonicalHashV1(
@@ -638,7 +788,7 @@ const auditArtifactManifest = (facts: QualificationAuditFacts): readonly AuditCh
       `contentHash=${canonicalHashV1(qualificationManifest)}`,
     ),
   )
-  return checks
+  return Result.succeed(checks)
 }
 
 const auditQualificationBindings = (facts: QualificationAuditFacts): readonly AuditCheck[] => {
@@ -842,14 +992,16 @@ const makeAuditReport = (facts: QualificationAuditFacts, checks: readonly AuditC
 
 export const auditQualification = (
   input: QualificationAuditInput,
-): Result.Result<QualificationAuditReport, ReferenceEvaluationFailure> => {
+): Result.Result<QualificationAuditReport, QualificationAuditFailure> => {
   const factsResult = makeAuditFacts(input)
   if (Result.isFailure(factsResult)) return Result.fail(factsResult.failure)
   const facts = factsResult.success
+  const artifactManifestChecks = auditArtifactManifest(facts)
+  if (Result.isFailure(artifactManifestChecks)) return Result.fail(artifactManifestChecks.failure)
   const checks = [
     ...auditStoredEvidence(facts),
     ...auditReferenceArtifacts(facts),
-    ...auditArtifactManifest(facts),
+    ...artifactManifestChecks.success,
     ...auditQualificationBindings(facts),
     ...auditSignalAndRepository(facts),
   ]

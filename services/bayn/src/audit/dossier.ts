@@ -1,27 +1,28 @@
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1 } from '../hash'
-import { QualificationLockSchema, QualificationResultSchema } from '../qualification'
+import {
+  QualificationLockSchema,
+  QualificationResultSchema,
+  type QualificationLock,
+  type QualificationResult,
+} from '../qualification'
 import { strictParseOptions as StrictParseOptions } from '../schemas'
 import type { InputManifest } from '../types'
 import {
   auditQualification,
   type AuditDatabaseSnapshot,
+  type QualificationAuditFailure,
   type QualificationAuditInput,
   type QualificationAuditReport,
 } from './audit'
-import type { ReferenceEvaluationFailure } from './reference'
 
-const decodeLock = Schema.decodeUnknownSync(QualificationLockSchema, StrictParseOptions)
-const decodeResult = Schema.decodeUnknownSync(QualificationResultSchema, StrictParseOptions)
+const decodeLock = Schema.decodeUnknownResult(QualificationLockSchema, StrictParseOptions)
+const decodeResult = Schema.decodeUnknownResult(QualificationResultSchema, StrictParseOptions)
 
 const itemCount = (payload: unknown): number => {
   if (typeof payload !== 'object' || payload === null || !('items' in payload)) return 0
   return Array.isArray(payload.items) ? payload.items.length : 0
-}
-
-const assert = (condition: boolean, message: string): void => {
-  if (!condition) throw new Error(message)
 }
 
 const evidenceSummary = (database: AuditDatabaseSnapshot) => ({
@@ -51,25 +52,82 @@ const evidenceSummary = (database: AuditDatabaseSnapshot) => ({
   },
 })
 
+export type QualificationDossierFailure =
+  | QualificationAuditFailure
+  | {
+      readonly _tag: 'QualificationDossierSubjectMismatch'
+      readonly check: QualificationDossierSubjectCheck
+      readonly actual: unknown
+      readonly expected: unknown
+    }
+  | {
+      readonly _tag: 'QualificationDossierDocumentInvalid'
+      readonly document: 'lock' | 'result'
+      readonly cause: Schema.SchemaError
+    }
+
+type QualificationDossierSubjectCheck =
+  | 'audit-passed'
+  | 'audit-hash'
+  | 'database-read-only'
+  | 'evaluation-complete'
+  | 'audit-run-id'
+  | 'protocol-hash'
+  | 'snapshot-id'
+  | 'stored-artifact-count'
+  | 'stored-event-count'
+  | 'stored-gate-count'
+  | 'audit-artifact-count'
+  | 'audit-event-count'
+  | 'audit-gate-count'
+  | 'lock-run-id'
+  | 'result-run-id'
+  | 'stored-lock-id'
+  | 'result-lock-id'
+  | 'stored-analysis-hash'
+  | 'stored-result-hash'
+  | 'stored-verdict'
+  | 'trial-lineage'
+
+const mismatch = (
+  check: QualificationDossierSubjectCheck,
+  actual: unknown,
+  expected: unknown,
+): Result.Result<never, QualificationDossierFailure> =>
+  Result.fail({ _tag: 'QualificationDossierSubjectMismatch', check, actual, expected })
+
+const requireEqual = (
+  check: QualificationDossierSubjectCheck,
+  actual: unknown,
+  expected: unknown,
+): Result.Result<void, QualificationDossierFailure> =>
+  Object.is(actual, expected) ? Result.succeed(undefined) : mismatch(check, actual, expected)
+
 const validateSubject = (
   database: AuditDatabaseSnapshot,
   manifest: InputManifest,
   audit: QualificationAuditReport,
-): void => {
+): Result.Result<void, QualificationDossierFailure> => {
   const auditMaterial = Object.fromEntries(Object.entries(audit).filter(([name]) => name !== 'auditHash'))
-  assert(audit.status === 'PASS' && audit.checks.every((check) => check.passed), 'qualification audit did not pass')
-  assert(audit.auditHash === canonicalHashV1(auditMaterial), 'qualification audit hash is invalid')
-  assert(database.transactionReadOnly, 'qualification database snapshot was not read-only')
-  assert(database.run.status === 'COMPLETE', 'qualification evaluation is not complete')
-  assert(database.run.runId === audit.runId, 'qualification audit and evaluation run IDs differ')
-  assert(database.run.protocolHash === database.protocol.protocolHash, 'run and protocol hashes differ')
-  assert(database.run.snapshotId === manifest.finalizedSnapshot.snapshotId, 'run and Signal snapshot IDs differ')
-  assert(database.run.artifactCount === database.artifacts.length, 'artifact count differs from the stored run')
-  assert(database.run.eventCount === database.events.length, 'event count differs from the stored run')
-  assert(database.run.gateCount === database.gates.length, 'gate count differs from the stored run')
-  assert(audit.evidence.artifactCount === database.artifacts.length, 'audit artifact count differs')
-  assert(audit.evidence.eventCount === database.events.length, 'audit event count differs')
-  assert(audit.evidence.gateCount === database.gates.length, 'audit gate count differs')
+  const checks = [
+    requireEqual('audit-passed', audit.status === 'PASS' && audit.checks.every((check) => check.passed), true),
+    requireEqual('audit-hash', audit.auditHash, canonicalHashV1(auditMaterial)),
+    requireEqual('database-read-only', database.transactionReadOnly, true),
+    requireEqual('evaluation-complete', database.run.status, 'COMPLETE'),
+    requireEqual('audit-run-id', audit.runId, database.run.runId),
+    requireEqual('protocol-hash', database.run.protocolHash, database.protocol.protocolHash),
+    requireEqual('snapshot-id', database.run.snapshotId, manifest.finalizedSnapshot.snapshotId),
+    requireEqual('stored-artifact-count', database.run.artifactCount, database.artifacts.length),
+    requireEqual('stored-event-count', database.run.eventCount, database.events.length),
+    requireEqual('stored-gate-count', database.run.gateCount, database.gates.length),
+    requireEqual('audit-artifact-count', audit.evidence.artifactCount, database.artifacts.length),
+    requireEqual('audit-event-count', audit.evidence.eventCount, database.events.length),
+    requireEqual('audit-gate-count', audit.evidence.gateCount, database.gates.length),
+  ]
+  for (const check of checks) {
+    if (Result.isFailure(check)) return Result.fail(check.failure)
+  }
+  return Result.succeed(undefined)
 }
 
 export interface QualificationDossier {
@@ -85,8 +143,8 @@ export interface QualificationDossier {
     readonly resultCommittedAt: string
     readonly priorTrialRunIds: readonly string[]
     readonly priorTrialSetHash: string
-    readonly lock: ReturnType<typeof decodeLock>
-    readonly result: ReturnType<typeof decodeResult>
+    readonly lock: QualificationLock
+    readonly result: QualificationResult
   }
   readonly audit: QualificationAuditReport
   readonly authority: {
@@ -101,25 +159,36 @@ export interface QualificationDossier {
 
 export const makeQualificationDossier = (
   input: QualificationAuditInput,
-): Result.Result<QualificationDossier, ReferenceEvaluationFailure> => {
+): Result.Result<QualificationDossier, QualificationDossierFailure> => {
   const auditResult = auditQualification(input)
   if (Result.isFailure(auditResult)) return Result.fail(auditResult.failure)
   const audit = auditResult.success
   const database = input.database
-  validateSubject(database, input.manifest, audit)
-  const lock = decodeLock(database.qualification.lock)
-  const result = decodeResult(database.qualification.result)
-  assert(lock.candidateRunId === database.run.runId, 'qualification lock and evaluation run IDs differ')
-  assert(result.runId === database.run.runId, 'qualification result and evaluation run IDs differ')
-  assert(lock.lockId === database.qualification.storedLockId, 'qualification lock ID differs from its row')
-  assert(result.lockId === lock.lockId, 'qualification result and lock IDs differ')
-  assert(
-    result.analysis.analysisHash === database.qualification.storedAnalysisHash,
-    'analysis hash differs from its row',
-  )
-  assert(result.resultHash === database.qualification.storedResultHash, 'result hash differs from its row')
-  assert(result.verdict === database.qualification.storedVerdict, 'qualification verdict differs from its row')
-  assert(canonicalHashV1(lock.priorTrialRunIds) === canonicalHashV1(database.priorTrialRunIds), 'trial lineage differs')
+  const subjectResult = validateSubject(database, input.manifest, audit)
+  if (Result.isFailure(subjectResult)) return Result.fail(subjectResult.failure)
+  const lockResult = decodeLock(database.qualification.lock)
+  if (Result.isFailure(lockResult)) {
+    return Result.fail({ _tag: 'QualificationDossierDocumentInvalid', document: 'lock', cause: lockResult.failure })
+  }
+  const resultResult = decodeResult(database.qualification.result)
+  if (Result.isFailure(resultResult)) {
+    return Result.fail({ _tag: 'QualificationDossierDocumentInvalid', document: 'result', cause: resultResult.failure })
+  }
+  const lock = lockResult.success
+  const result = resultResult.success
+  const bindingChecks = [
+    requireEqual('lock-run-id', lock.candidateRunId, database.run.runId),
+    requireEqual('result-run-id', result.runId, database.run.runId),
+    requireEqual('stored-lock-id', lock.lockId, database.qualification.storedLockId),
+    requireEqual('result-lock-id', result.lockId, lock.lockId),
+    requireEqual('stored-analysis-hash', result.analysis.analysisHash, database.qualification.storedAnalysisHash),
+    requireEqual('stored-result-hash', result.resultHash, database.qualification.storedResultHash),
+    requireEqual('stored-verdict', result.verdict, database.qualification.storedVerdict),
+    requireEqual('trial-lineage', canonicalHashV1(lock.priorTrialRunIds), canonicalHashV1(database.priorTrialRunIds)),
+  ]
+  for (const check of bindingChecks) {
+    if (Result.isFailure(check)) return Result.fail(check.failure)
+  }
 
   const material = {
     schemaVersion: 'bayn.qualification-dossier.v2' as const,
