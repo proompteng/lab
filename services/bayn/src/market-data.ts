@@ -59,7 +59,7 @@ const cyclePublicationCandidateLimit = 16
 const SnapshotIdSchema = HashSchema
 const FixedDecimalSchema = Schema.String.check(Schema.isPattern(/^(?:0|[1-9]\d*)\.\d{8}$/))
 const MarketTimeSchema = Schema.String.check(Schema.isPattern(/^(?:0\d|1\d|2[0-3]):[0-5]\d$/))
-const CountSchema = Schema.Union([Schema.Number, DigitsSchema])
+const CountSchema = Schema.Union([Schema.Finite, DigitsSchema])
 const FinalizedAtSchema = Schema.String.check(
   Schema.isPattern(/^\d{4}-\d{2}-\d{2} (?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{3}$/),
 )
