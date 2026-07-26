@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Clock, Effect, Exit } from 'effect'
+import { Clock, Deferred, Effect, Fiber, pipe, Redacted } from 'effect'
 
 import {
   config,
@@ -13,13 +13,20 @@ import {
   successfulEvidenceStore,
   successfulJournal,
 } from './app-test-support'
-import { run, type AutonomousCycleStartupInput } from './app'
+import {
+  autonomousObserveApplication,
+  type AutonomousCycleStartupInput,
+  type AutonomousObserveApplicationConfig,
+} from './app'
+import { AccountStatus, type BrokerReadShape } from './broker/alpaca'
+import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
 import { makeStrategyProtocolHash } from './contracts'
 import { CycleObservability } from './db/cycle-observability'
 import { EvidenceStore } from './db/evidence-store'
-import { operationalError } from './errors'
+import type { BrokerProbe } from './health'
 import { Journal } from './ledger'
 import { MarketData } from './market-data'
+import { Authority } from './paper'
 import { makeStrategy } from './strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
@@ -35,8 +42,66 @@ const cycleObservability = {
     }),
 }
 
+const brokerAccountId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+const brokerRead = (): BrokerReadShape => {
+  const unused = Effect.die(new Error('application lifecycle test must only read the broker account'))
+  return {
+    account: Effect.succeed({
+      value: {
+        id: brokerAccountId,
+        status: AccountStatus.Active,
+        currency: 'USD',
+        cashMicros: '1000000',
+        equityMicros: '1000000',
+        buyingPowerMicros: '1000000',
+        accountBlocked: false,
+        tradingBlocked: false,
+        tradeSuspendedByUser: false,
+        observedAt: '2026-07-20T00:00:00.000Z',
+      },
+      evidence: {
+        requestId: 'application-lifecycle',
+        status: 200,
+        contentHash: 'a'.repeat(64),
+        observedAt: '2026-07-20T00:00:00.000Z',
+      },
+    }),
+    accountConfiguration: unused,
+    assetBySymbol: unusedAssetBySymbol,
+    positions: unused,
+    orders: () => unused,
+    orderById: () => unused,
+    orderByClientId: () => unused,
+    fillActivities: () => unused,
+    marketCalendar: unusedMarketCalendar,
+  }
+}
+
+const broker: BrokerProbe = {
+  read: brokerRead(),
+  expectedAccountId: brokerAccountId,
+  executionEligible: false,
+  executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
+}
+
+const autonomousConfig = (runtime: typeof config): AutonomousObserveApplicationConfig => ({
+  ...runtime,
+  runtimeMode: 'AutonomousObserveService',
+  cyclePollIntervalMs: 30_000,
+  maximumAuthority: Authority.Observe,
+  alpaca: {
+    accountId: brokerAccountId,
+    authorityGenerationHash: 'f'.repeat(64),
+    key: Redacted.make('test-key'),
+    secret: Redacted.make('test-secret'),
+    proxyUrl: 'http://proxy.test:3128',
+    retryAttempts: 0,
+    reconciliationIntervalMs: 30_000,
+  },
+})
+
 describe('Bayn application composition', () => {
-  test('starts one scoped autonomous cycle background after initialization and before reconciliation', async () => {
+  test('starts one scoped autonomous cycle after initialization and interrupts it with the application', async () => {
     const calls: string[] = []
     let backgroundInterrupted = false
     const marketData = marketDataService(
@@ -46,46 +111,43 @@ describe('Bayn application composition', () => {
       }),
     )
     let startupQualificationRunId: string | undefined
-    let startupStrategyProtocolHash: string | undefined
-    const autonomousCycleStartup = ({
-      qualificationRunId,
-      strategyProtocolHash,
-      recordPass,
-    }: AutonomousCycleStartupInput) =>
-      Effect.gen(function* () {
-        calls.push('autonomous-cycle')
-        startupQualificationRunId = qualificationRunId
-        startupStrategyProtocolHash = strategyProtocolHash
-        yield* recordPass({
-          result: 'SUCCESS',
-          observedAt: new Date(yield* Clock.currentTimeMillis).toISOString(),
-          outcome: 'NO_PUBLICATION',
-        })
-        return Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => void (backgroundInterrupted = true))))
-      })
-    const reconciliation = Effect.sync(() => {
-      calls.push('reconciliation')
-      throw new Error('stop after composition proof')
-    })
-
-    const exit = await Effect.runPromiseExit(
-      run(config, fixtureStrategy, reconciliation, undefined, autonomousCycleStartup).pipe(
-        Effect.provideService(MarketData, marketData),
-        Effect.provideService(Journal, successfulJournal),
-        Effect.provideService(EvidenceStore, successfulEvidenceStore),
-        Effect.provideService(CycleObservability, cycleObservability),
-        Effect.timeoutOrElse({
-          duration: 1_000,
-          orElse: () => Effect.fail(operationalError('http', 'test', 'composition proof remained alive')),
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>()
+          const startCycle = ({ qualificationRunId, recordPass }: AutonomousCycleStartupInput) =>
+            pipe(
+              Effect.sync(() => {
+                calls.push('autonomous-cycle')
+                startupQualificationRunId = qualificationRunId
+              }),
+              Effect.andThen(Clock.currentTimeMillis),
+              Effect.map((millis) => new Date(millis).toISOString()),
+              Effect.flatMap((observedAt) => recordPass({ result: 'SUCCESS', observedAt, outcome: 'NO_PUBLICATION' })),
+              Effect.as(
+                pipe(
+                  Deferred.succeed(started, undefined),
+                  Effect.andThen(Effect.never),
+                  Effect.onInterrupt(() => Effect.sync(() => void (backgroundInterrupted = true))),
+                ),
+              ),
+            )
+          const fiber = yield* pipe(
+            autonomousObserveApplication(autonomousConfig(config), fixtureStrategy, broker, startCycle),
+            Effect.provideService(MarketData, marketData),
+            Effect.provideService(Journal, successfulJournal),
+            Effect.provideService(EvidenceStore, successfulEvidenceStore),
+            Effect.provideService(CycleObservability, cycleObservability),
+            Effect.forkScoped,
+          )
+          yield* pipe(Deferred.await(started), Effect.timeout('1 second'))
+          yield* Fiber.interrupt(fiber)
         }),
       ),
     )
 
-    expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('stop after composition proof')
-    expect(calls).toEqual(['initialize', 'autonomous-cycle', 'reconciliation'])
+    expect(calls).toEqual(['initialize', 'autonomous-cycle'])
     expect(startupQualificationRunId).toBe(fixtureEvaluation.runId)
-    expect(startupStrategyProtocolHash).toBe(fixtureEvaluation.protocolHash)
     expect(backgroundInterrupted).toBe(true)
   })
 
@@ -98,37 +160,32 @@ describe('Bayn application composition', () => {
     expect(currentProtocolHash).not.toBe(pinnedEvaluation.protocolHash)
 
     let startupQualificationRunId: string | undefined
-    let startupStrategyProtocolHash: string | undefined
-    const autonomousCycleStartup = ({ qualificationRunId, strategyProtocolHash }: AutonomousCycleStartupInput) =>
-      Effect.sync(() => {
-        startupQualificationRunId = qualificationRunId
-        startupStrategyProtocolHash = strategyProtocolHash
-        return Effect.never
-      })
-    const reconciliation = Effect.sync(() => {
-      throw new Error('stop after pinned composition proof')
-    })
-
-    const exit = await Effect.runPromiseExit(
-      run(pinnedRuntimeConfig, currentStrategy, reconciliation, undefined, autonomousCycleStartup).pipe(
-        Effect.provideService(
-          MarketData,
-          marketDataService(Effect.die(new Error('pinned startup must not load Signal bars'))),
-        ),
-        Effect.provideService(Journal, successfulJournal),
-        Effect.provideService(EvidenceStore, pinnedStore()),
-        Effect.provideService(CycleObservability, cycleObservability),
-        Effect.timeoutOrElse({
-          duration: 1_000,
-          orElse: () => Effect.fail(operationalError('http', 'test', 'pinned composition proof remained alive')),
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>()
+          const startCycle = ({ qualificationRunId }: AutonomousCycleStartupInput) =>
+            pipe(
+              Effect.sync(() => void (startupQualificationRunId = qualificationRunId)),
+              Effect.as(pipe(Deferred.succeed(started, undefined), Effect.andThen(Effect.never))),
+            )
+          const fiber = yield* pipe(
+            autonomousObserveApplication(autonomousConfig(pinnedRuntimeConfig), currentStrategy, broker, startCycle),
+            Effect.provideService(
+              MarketData,
+              marketDataService(Effect.die(new Error('pinned startup must not load Signal bars'))),
+            ),
+            Effect.provideService(Journal, successfulJournal),
+            Effect.provideService(EvidenceStore, pinnedStore()),
+            Effect.provideService(CycleObservability, cycleObservability),
+            Effect.forkScoped,
+          )
+          yield* pipe(Deferred.await(started), Effect.timeout('1 second'))
+          yield* Fiber.interrupt(fiber)
         }),
       ),
     )
 
-    expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('stop after pinned composition proof')
     expect(startupQualificationRunId).toBe(pinnedEvaluation.runId)
-    expect(startupStrategyProtocolHash).toBe(currentProtocolHash)
-    expect(startupStrategyProtocolHash).not.toBe(pinnedEvaluation.protocolHash)
   })
 })

@@ -117,35 +117,26 @@ paper mutation capability, execution entry point, and capital-promotion path rem
   the PostgreSQL commit, and one successful continuous check. Strategy rejection is an auditable economic
   `FAIL_CLOSED`; it remains separate from operational health and never expands authority.
 
-## PAPER proof discovery
+## PAPER candidate discovery
 
-The production executable has one explicit non-mutating proof-discovery mode. With neither `BAYN_PAPER_COMMAND` nor
-`BAYN_PAPER_PREPARE_PHASE` set, Bayn follows its existing OBSERVE service and HTTP lifecycle unchanged. The only
-accepted command pair is `BAYN_PAPER_COMMAND=PREPARE` with `BAYN_PAPER_PREPARE_PHASE=DISCOVER`; it has no default,
-requires maximum authority `OBSERVE`, a terminal qualification pin, and a complete GET-only Alpaca account binding,
-and exits before the HTTP application or autonomous loop is constructed.
+`BAYN_OPERATION` has no default. When it is absent, Bayn selects the credential-free service or autonomous GET-only
+OBSERVE service from the resolved broker binding. The only current bounded operation is
+`BAYN_OPERATION=PAPER_CANDIDATE_DISCOVERY`. It requires maximum authority `OBSERVE`, a pinned terminal qualification,
+and a complete GET-only Alpaca binding, then exits before the HTTP service or autonomous cycle is constructed. A
+PAPER-valued service startup is rejected because no bounded PAPER operation exists yet.
 
-DISCOVER opens one PostgreSQL `REPEATABLE READ, READ ONLY` transaction through the shared client and uses only
-`CycleObservability` and `CycleStore` domain reads. It does not run migrations, create a reconciliation, re-run the
-strategy or target planner, or compose `PaperStore`, `WriterFence`, any intent/mutation store, or broker mutation. The
-latest cycle must be `COMPLETED` with zero unfinished cycles, and its strict persisted shadow document must remain
-`PLANNED`, unexpired, bound to the same cycle, operational snapshot, account, terminal qualification, strategy,
-source-controlled risk policy, and latest exact reconciliation. Durable maximum and effective authority must both be
-`OBSERVE`, the durable authority generation must match the configured decoded generation hash, and every delta must
-have only the mandatory `AuthorityNotPaper` risk failure.
+Candidate discovery opens one PostgreSQL `REPEATABLE READ, READ ONLY` transaction through the shared client and uses
+only `CycleObservability` and `CycleStore` domain reads. It does not run migrations, reconcile, re-run planning, or
+compose `PaperStore`, `WriterFence`, intent/mutation stores, or broker mutation. The latest cycle must be `COMPLETED`
+with zero unfinished cycles and a strict persisted shadow document bound to the same cycle, snapshot, account,
+qualification, strategy, risk policy, and latest exact reconciliation. Durable maximum/effective authority must both
+be `OBSERVE`, the durable generation must match configuration, and each delta may have only `AuthorityNotPaper`.
 
-After that immutable read snapshot, DISCOVER performs exactly one account GET and one asset GET for every ordered
-persisted target delta, with bounded concurrency and restored document order. It emits every candidate without
-selecting or filtering one. Persisted quantity, reference-price, notional, and risk values are labeled as historical
-OBSERVE plan facts; they are non-authorizing and are not a future quantity cap. Asset eligibility is an explicit
-review fact covering US equity class, active, tradable, fractionable, non-OTC, no `ipo`, and no `ptp_no_exception`;
-ineligible assets remain in the receipt with all reasons and raw normalized evidence.
-
-The ephemeral typed receipt contains an immutable cycle/document binding hash, a semantic `candidateFactsHash` that
-excludes volatile observation timestamps and request metadata, and a complete observation receipt hash that changes
-with fresh broker evidence. It exposes no Alpaca account number or credentials, writes no dossier, and reports
-`consistencyDelayMs.status=REQUIRED_UNBOUND`; final PREPARE/SUBMIT/CANCEL/RECOVER and fresh SUBMIT-time planning remain
-separate gated work.
+After the immutable read snapshot, discovery performs one account GET and one asset GET per ordered persisted target
+delta with bounded concurrency, restores document order, and emits every candidate without selecting one. Historical
+quantity, reference price, notional, and risk values remain non-authorizing observations. The ephemeral typed receipt
+contains immutable binding, semantic candidate-facts, and complete observation hashes; it exposes no account number or
+credentials and writes no dossier. Later PREPARE/SUBMIT/CANCEL/RECOVER work remains separately gated.
 
 ## Endpoints
 
