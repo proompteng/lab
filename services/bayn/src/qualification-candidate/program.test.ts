@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 import { ConfigProvider, Effect } from 'effect'
 
-import { renderQualificationCandidateFailure, type QualificationCandidateFailure } from './failure'
+import {
+  QualificationCandidateError,
+  renderQualificationCandidateFailure,
+  toQualificationCandidateError,
+  type QualificationCandidateFailure,
+} from './failure'
 import { makeCandidatePostgresSslOptions } from './live'
 import type { QualificationCandidateInput, QualificationCandidateReaders } from './model'
 import { loadQualificationCandidateConfig, verifyQualificationCandidate } from './program'
@@ -30,6 +35,21 @@ const failure = async (
   Effect.runPromise(Effect.flip(verifyQualificationCandidate(candidateInput, candidateReaders)))
 
 describe('qualification candidate command', () => {
+  test('converts pure failure data to one cause-preserving runtime error', () => {
+    const failure: QualificationCandidateFailure = { _tag: 'PostgresTlsServerNameMissing' }
+    const error = toQualificationCandidateError(failure)
+
+    expect(error).toBeInstanceOf(Error)
+    expect(error).toBeInstanceOf(QualificationCandidateError)
+    expect(error).toMatchObject({
+      _tag: 'QualificationCandidateError',
+      operation: 'config',
+      message: 'BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME is required when PostgreSQL TLS is enabled',
+      failure,
+      cause: failure,
+    })
+  })
+
   test('requires a decoded PostgreSQL TLS server identity before candidate I/O', async () => {
     const environment = candidateEnvironment()
     delete environment.BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME

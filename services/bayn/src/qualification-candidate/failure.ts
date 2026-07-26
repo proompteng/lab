@@ -1,3 +1,5 @@
+import { Data } from 'effect'
+
 export type QualificationCandidateFailure =
   | { readonly _tag: 'ConfigurationLoadFailed'; readonly cause: unknown }
   | { readonly _tag: 'PostgresUrlMalformed' }
@@ -205,21 +207,20 @@ const presentQualificationCandidateFailure = (failure: QualificationCandidateFai
 export const renderQualificationCandidateFailure = (failure: QualificationCandidateFailure): string =>
   presentQualificationCandidateFailure(failure).message
 
-export interface QualificationCandidateError {
-  readonly _tag: 'QualificationCandidateError'
+export const QualificationCandidateError = Data.TaggedError('QualificationCandidateError')<{
   readonly operation: 'config' | 'postgres' | 'replica' | 'runtime'
   readonly message: string
   readonly failure: QualificationCandidateFailure
   readonly cause: QualificationCandidateFailure
-}
+}>
+export type QualificationCandidateError = InstanceType<typeof QualificationCandidateError>
 
 export const toQualificationCandidateError = (failure: QualificationCandidateFailure): QualificationCandidateError => {
   const { operation, message } = presentQualificationCandidateFailure(failure)
-  return {
-    _tag: 'QualificationCandidateError',
+  return new QualificationCandidateError({
     operation,
     message,
     failure,
     cause: failure,
-  }
+  })
 }
