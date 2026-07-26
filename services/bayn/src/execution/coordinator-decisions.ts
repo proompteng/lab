@@ -21,6 +21,7 @@ import {
 import { canonicalHashV1Result } from '../hash'
 import { IntentState, RiskOutcome, TerminalOutcome, type Intent } from '../paper'
 import { UtcInstantSchema } from '../schemas'
+import { utcInstantFromEpochMillisResult } from '../time'
 import type { StoredIntent } from './intents/domain'
 import { MutationEventType, type MutationEvent } from './mutations'
 
@@ -166,6 +167,7 @@ interface CancelReceipt {
 }
 
 const completeMutationEvidence = Schema.is(MutationEvidenceSchema)
+const isUtcInstant = Schema.is(UtcInstantSchema)
 
 export const selectStoredIntent = (
   operation: MutationOperation,
@@ -188,18 +190,16 @@ const parseInstant = (
     : Result.fail({ _tag: 'InvalidInstant', operation, field, value })
 }
 
-const isUtcInstant = Schema.is(UtcInstantSchema)
-
 const formatInstant = (
   operation: MutationOperation,
   field: Extract<ExecutionDecisionFailure, { readonly _tag: 'InvalidInstant' }>['field'],
   epochMillis: number,
 ): Result.Result<string, ExecutionDecisionFailure> =>
   Result.flatMap(
-    Result.try({
-      try: () => new Date(epochMillis).toISOString(),
-      catch: (): ExecutionDecisionFailure => ({ _tag: 'InvalidInstant', operation, field, value: epochMillis }),
-    }),
+    Result.mapError(
+      utcInstantFromEpochMillisResult(epochMillis),
+      (): ExecutionDecisionFailure => ({ _tag: 'InvalidInstant', operation, field, value: epochMillis }),
+    ),
     (instant) =>
       isUtcInstant(instant)
         ? Result.succeed(instant)
