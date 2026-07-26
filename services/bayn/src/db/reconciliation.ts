@@ -1,7 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Data, Effect, Result, Schema } from 'effect'
 
-import type { AccountingTransaction } from '../accounting'
+import type { AccountingTransaction } from '../accounting/schema'
 import { MutationOperation } from '../broker/alpaca-mutations'
 import type { RuntimeConfig } from '../config'
 import type { JournalService } from '../ledger'

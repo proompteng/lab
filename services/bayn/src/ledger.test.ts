@@ -4,7 +4,7 @@ import { describe, expect, test } from 'bun:test'
 import { Cause, Effect, Exit, Redacted, Result } from 'effect'
 import { CreateAccountStatus, CreateTransferStatus, type Account, type Transfer } from 'tigerbeetle-node'
 
-import { prepareAccounting, rebuildAccountingLedger } from './accounting'
+import { prepareAccounting, rebuildAccountingLedger } from './accounting/domain'
 import type { RuntimeConfig } from './config'
 import { Authority, OrderSide, type Fill } from './paper'
 import {
@@ -79,11 +79,13 @@ const paperFill = (fillId: string, accountId = 'paper-account'): Fill => ({
 })
 
 const paperPlan = (fillId: string, accountId = 'paper-account') =>
-  prepareAccounting(
-    fillId.padEnd(64, fillId[0] ?? 'a').slice(0, 64),
-    paperFill(fillId, accountId),
-    { quantityMicros: '0', costMicros: '0' },
-    journalConfig.tigerBeetle.ledger,
+  assertSuccess(
+    prepareAccounting(
+      fillId.padEnd(64, fillId[0] ?? 'a').slice(0, 64),
+      paperFill(fillId, accountId),
+      { quantityMicros: '0', costMicros: '0' },
+      journalConfig.tigerBeetle.ledger,
+    ),
   ).ledger
 
 const evaluationPlan = () => {
@@ -623,11 +625,13 @@ describe('TigerBeetle simulation journal', () => {
       feeMicros: '100',
       occurredAt: '2026-07-22T15:30:00.000Z',
     }
-    const plan = prepareAccounting(
-      'a'.repeat(64),
-      fill,
-      { quantityMicros: '0', costMicros: '0' },
-      journalConfig.tigerBeetle.ledger,
+    const plan = assertSuccess(
+      prepareAccounting(
+        'a'.repeat(64),
+        fill,
+        { quantityMicros: '0', costMicros: '0' },
+        journalConfig.tigerBeetle.ledger,
+      ),
     ).ledger
     const invalidTarget = makeLedgerClient()
     const invalidPlan = {
@@ -698,20 +702,30 @@ describe('TigerBeetle simulation journal', () => {
       feeMicros: '0',
       occurredAt: '2026-07-22T15:31:00.000Z',
     }
-    const prepared = prepareAccounting(
-      'b'.repeat(64),
-      fill,
-      { quantityMicros: '0', costMicros: '0' },
-      journalConfig.tigerBeetle.ledger,
-    )
-
-    expect(rebuildAccountingLedger(prepared.transaction, journalConfig.tigerBeetle.ledger)).toEqual(prepared.ledger)
-    expect(() =>
-      rebuildAccountingLedger(
-        { ...prepared.transaction, contentHash: 'c'.repeat(64) },
+    const prepared = assertSuccess(
+      prepareAccounting(
+        'b'.repeat(64),
+        fill,
+        { quantityMicros: '0', costMicros: '0' },
         journalConfig.tigerBeetle.ledger,
       ),
-    ).toThrow('content hash')
+    )
+
+    expect(assertSuccess(rebuildAccountingLedger(prepared.transaction, journalConfig.tigerBeetle.ledger))).toEqual(
+      prepared.ledger,
+    )
+    expect(
+      assertFailure(
+        rebuildAccountingLedger(
+          { ...prepared.transaction, contentHash: 'c'.repeat(64) },
+          journalConfig.tigerBeetle.ledger,
+        ),
+      ),
+    ).toMatchObject({
+      _tag: 'AccountingTransactionContentHashMismatch',
+      transactionId: prepared.transaction.transactionId,
+      observedContentHash: 'c'.repeat(64),
+    })
   })
 
   test('rejects a mismatched existing account before creating transfers', async () => {
