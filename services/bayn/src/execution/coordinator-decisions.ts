@@ -20,6 +20,7 @@ import {
 } from '../broker/alpaca'
 import { canonicalHashV1Result } from '../hash'
 import { IntentState, RiskOutcome, TerminalOutcome, type Intent } from '../paper'
+import { UtcInstantSchema } from '../schemas'
 import type { StoredIntent } from './intents'
 import { MutationEventType, type MutationEvent } from './mutations'
 
@@ -187,23 +188,29 @@ const parseInstant = (
     : Result.fail({ _tag: 'InvalidInstant', operation, field, value })
 }
 
-const validateCurrentTime = (
-  operation: MutationOperation,
-  currentTimeMillis: number,
-): Result.Result<number, ExecutionDecisionFailure> =>
-  Number.isFinite(currentTimeMillis) && Number.isFinite(new Date(currentTimeMillis).getTime())
-    ? Result.succeed(currentTimeMillis)
-    : Result.fail({ _tag: 'InvalidInstant', operation, field: 'current-time', value: currentTimeMillis })
+const isUtcInstant = Schema.is(UtcInstantSchema)
 
 const formatInstant = (
   operation: MutationOperation,
   field: Extract<ExecutionDecisionFailure, { readonly _tag: 'InvalidInstant' }>['field'],
   epochMillis: number,
 ): Result.Result<string, ExecutionDecisionFailure> =>
-  Result.try({
-    try: () => new Date(epochMillis).toISOString(),
-    catch: (): ExecutionDecisionFailure => ({ _tag: 'InvalidInstant', operation, field, value: epochMillis }),
-  })
+  Result.flatMap(
+    Result.try({
+      try: () => new Date(epochMillis).toISOString(),
+      catch: (): ExecutionDecisionFailure => ({ _tag: 'InvalidInstant', operation, field, value: epochMillis }),
+    }),
+    (instant) =>
+      isUtcInstant(instant)
+        ? Result.succeed(instant)
+        : Result.fail({ _tag: 'InvalidInstant', operation, field, value: epochMillis }),
+  )
+
+const validateCurrentTime = (
+  operation: MutationOperation,
+  currentTimeMillis: number,
+): Result.Result<number, ExecutionDecisionFailure> =>
+  Result.map(formatInstant(operation, 'current-time', currentTimeMillis), () => currentTimeMillis)
 
 export const nextInstant = (
   operation: MutationOperation,

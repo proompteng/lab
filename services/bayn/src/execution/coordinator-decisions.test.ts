@@ -256,6 +256,11 @@ describe('execution coordinator decisions', () => {
       field: 'current-time',
       value: Number.MAX_VALUE,
     })
+    expectInvalidInstant(validateActiveSubmitRiskDecision(stored(), 253_402_300_800_000), {
+      operation: MutationOperation.Submit,
+      field: 'current-time',
+      value: 253_402_300_800_000,
+    })
     expectInvalidInstant(
       ensureRecoveryDelay(
         MutationOperation.Submit,
@@ -271,6 +276,14 @@ describe('execution coordinator decisions', () => {
         Number.MAX_VALUE,
       ),
       { operation: MutationOperation.Submit, field: 'current-time', value: Number.MAX_VALUE },
+    )
+    expectInvalidInstant(
+      ensureRecoveryDelay(
+        MutationOperation.Submit,
+        mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown),
+        253_402_300_800_000,
+      ),
+      { operation: MutationOperation.Submit, field: 'current-time', value: 253_402_300_800_000 },
     )
     expectInvalidInstant(
       ensureRecoveryDelay(
