@@ -1,6 +1,6 @@
 import { Data, Result, Schema, pipe } from 'effect'
 
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { ExecutionSessionBindingSchema } from './execution-session'
 import {
   AccountSnapshotSchema,
@@ -397,7 +397,7 @@ export const EvaluationSchema = EvaluationBase.check(
       issues.push({ path: ['decision'], issue: 'must retain the risk input evaluation and expiry times' })
     }
     const { decisionId, ...decisionMaterial } = evaluation.decision
-    const expectedDecisionId = Result.try(() => canonicalHashV1(decisionMaterial))
+    const expectedDecisionId = canonicalHashV1Result(decisionMaterial)
     if (Result.isFailure(expectedDecisionId)) {
       issues.push({ path: ['decision', 'decisionId'], issue: 'risk decision material must be canonicalizable' })
     } else if (decisionId !== expectedDecisionId.success) {
@@ -935,72 +935,73 @@ interface RiskBindingHashes {
   readonly inputHash: string
 }
 
-const deriveRiskBindingHashes = (facts: RiskFacts): Result.Result<RiskBindingHashes, RiskEvaluationFailure> =>
-  Result.try({
-    try: () => {
-      const { intent, policy, proposedPositions, state } = facts
-      const policyHash = canonicalHashV1(policy)
-      const accountSnapshotHash = canonicalHashV1({
-        account: state.account,
-        authority: state.authority,
-        authorityObservedAt: state.authorityObservedAt,
-        accountingHash: state.accountingHash,
-        brokerMode: state.brokerMode,
-        reconciliation: state.reconciliation,
-        dailyTradedNotionalMicros: state.dailyTradedNotionalMicros,
-        dayStartEquityMicros: state.dayStartEquityMicros,
-        peakEquityMicros: state.peakEquityMicros,
-      })
-      const positionsHash = canonicalHashV1({
-        items: proposedPositions,
-        observedAt: state.positionsObservedAt,
-      })
-      const ordersHash = canonicalHashV1({
-        items: state.orders,
-        observedAt: state.ordersObservedAt,
-        unknownMutationCount: state.unknownMutationCount,
-      })
-      const marketDataHash = canonicalHashV1({
-        symbol: state.marketDataSymbol,
-        sourceHash: state.marketDataHash,
-        observedAt: state.marketDataObservedAt,
-        referencePriceMicros: state.referencePriceMicros,
-        expectedExecutionPriceMicros: state.expectedExecutionPriceMicros,
-        executionSession: state.executionSession,
-      })
-      const inputHash = canonicalHashV1({
-        schemaVersion:
-          intent.schemaVersion === 'bayn.paper-intent.v3'
-            ? 'bayn.paper-risk-evaluation-input.v3'
-            : 'bayn.paper-risk-evaluation-input.v2',
-        intent,
-        policy,
-        state,
-        proposedPositions,
-        componentHashes: {
-          accountSnapshotHash,
-          positionsHash,
-          ordersHash,
-          marketDataHash,
-        },
-      })
-      return {
-        policyHash,
-        accountSnapshotHash,
-        positionsHash,
-        ordersHash,
-        marketDataHash,
-        inputHash,
-      }
-    },
-    catch: (cause) =>
+const riskEvidenceHash = (facts: RiskFacts, value: unknown): Result.Result<string, RiskEvaluationFailure> =>
+  pipe(
+    canonicalHashV1Result(value),
+    Result.mapError((cause) =>
       canonicalizeRiskInputFailure(
         'evidence',
         'validated risk input evidence is not canonicalizable',
         { intentId: facts.intent.intentId },
         cause,
       ),
+    ),
+  )
+
+const deriveRiskBindingHashes = (facts: RiskFacts): Result.Result<RiskBindingHashes, RiskEvaluationFailure> => {
+  const componentHashes = Result.all({
+    policyHash: riskEvidenceHash(facts, facts.policy),
+    accountSnapshotHash: riskEvidenceHash(facts, {
+      account: facts.state.account,
+      authority: facts.state.authority,
+      authorityObservedAt: facts.state.authorityObservedAt,
+      accountingHash: facts.state.accountingHash,
+      brokerMode: facts.state.brokerMode,
+      reconciliation: facts.state.reconciliation,
+      dailyTradedNotionalMicros: facts.state.dailyTradedNotionalMicros,
+      dayStartEquityMicros: facts.state.dayStartEquityMicros,
+      peakEquityMicros: facts.state.peakEquityMicros,
+    }),
+    positionsHash: riskEvidenceHash(facts, {
+      items: facts.proposedPositions,
+      observedAt: facts.state.positionsObservedAt,
+    }),
+    ordersHash: riskEvidenceHash(facts, {
+      items: facts.state.orders,
+      observedAt: facts.state.ordersObservedAt,
+      unknownMutationCount: facts.state.unknownMutationCount,
+    }),
+    marketDataHash: riskEvidenceHash(facts, {
+      symbol: facts.state.marketDataSymbol,
+      sourceHash: facts.state.marketDataHash,
+      observedAt: facts.state.marketDataObservedAt,
+      referencePriceMicros: facts.state.referencePriceMicros,
+      expectedExecutionPriceMicros: facts.state.expectedExecutionPriceMicros,
+      executionSession: facts.state.executionSession,
+    }),
   })
+  return Result.flatMap(componentHashes, (hashes) =>
+    Result.map(
+      riskEvidenceHash(facts, {
+        schemaVersion:
+          facts.intent.schemaVersion === 'bayn.paper-intent.v3'
+            ? 'bayn.paper-risk-evaluation-input.v3'
+            : 'bayn.paper-risk-evaluation-input.v2',
+        intent: facts.intent,
+        policy: facts.policy,
+        state: facts.state,
+        proposedPositions: facts.proposedPositions,
+        componentHashes: {
+          accountSnapshotHash: hashes.accountSnapshotHash,
+          positionsHash: hashes.positionsHash,
+          ordersHash: hashes.ordersHash,
+          marketDataHash: hashes.marketDataHash,
+        },
+      }),
+      (inputHash) => ({ ...hashes, inputHash }),
+    ),
+  )
+}
 
 type DecodedRiskInput = typeof RiskInputSchema.Type
 type DecodedRiskDecision = typeof RiskDecisionSchema.Type
@@ -1045,9 +1046,15 @@ const makeRiskDecision = (
     decidedAt: facts.state.evaluatedAt,
     expiresAt,
   } as const
-  const decision = { ...material, decisionId: canonicalHashV1(material) }
-  return Result.mapError(decodeRiskDecisionResult(decision), (cause) =>
-    decodeRiskOutputFailure('decision', 'derived risk decision is invalid', { intentId: facts.intent.intentId }, cause),
+  return Result.flatMap(riskEvidenceHash(facts, material), (decisionId) =>
+    Result.mapError(decodeRiskDecisionResult({ ...material, decisionId }), (cause) =>
+      decodeRiskOutputFailure(
+        'decision',
+        'derived risk decision is invalid',
+        { intentId: facts.intent.intentId },
+        cause,
+      ),
+    ),
   )
 }
 
