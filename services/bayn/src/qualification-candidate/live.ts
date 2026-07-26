@@ -3,10 +3,10 @@ import type { ConnectionOptions } from 'node:tls'
 import { NodeHttpClient } from '@effect/platform-node'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, FileSystem, Layer, Redacted, Schema } from 'effect'
+import { Effect, FileSystem, Layer, PlatformError, Redacted } from 'effect'
 
 import { MarketData, MarketDataLive } from '../market-data'
-import { Sha256Schema, TrimmedNonEmptyStringSchema, strictParseOptions, type IsoDate } from '../schemas'
+import type { IsoDate } from '../schemas'
 import type { CausalProtocol } from '../types'
 import {
   type CandidateConfig,
@@ -16,30 +16,13 @@ import {
   type QualificationCandidateInput,
   type QualificationLockObservation,
 } from './model'
+import { decodeCandidateRows, decodeLockCountRows, decodeReadOnlyRows, decodeReplicaIdentityRows } from './schema'
 
 export const makeCandidatePostgresSslOptions = (serverName: string, ca: string): ConnectionOptions => ({
   ca,
   rejectUnauthorized: true,
   servername: serverName,
 })
-
-const CandidateRow = Schema.Struct({
-  snapshot_id: Sha256Schema,
-  calendar_version: TrimmedNonEmptyStringSchema,
-})
-const ReplicaIdentityRow = Schema.Struct({
-  replica: TrimmedNonEmptyStringSchema,
-  principal: TrimmedNonEmptyStringSchema,
-})
-const ReadOnlyRow = Schema.Struct({ read_only: Schema.Boolean })
-const LockCountRow = Schema.Struct({
-  lock_count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-})
-
-const decodeCandidateRow = Schema.decodeUnknownEffect(Schema.Tuple([CandidateRow]), strictParseOptions)
-const decodeReplicaIdentity = Schema.decodeUnknownEffect(Schema.Tuple([ReplicaIdentityRow]), strictParseOptions)
-const decodeReadOnlyRow = Schema.decodeUnknownEffect(Schema.Tuple([ReadOnlyRow]), strictParseOptions)
-const decodeLockCountRow = Schema.decodeUnknownEffect(Schema.Tuple([LockCountRow]), strictParseOptions)
 
 const candidateBounds = (protocol: CausalProtocol, publicationDate: IsoDate) => ({
   schemaVersion: 'bayn.evaluation-bounds.v1' as const,
@@ -77,7 +60,7 @@ export const readCandidateReplica = (
       {
         identityRows: sql`
           SELECT hostName() AS replica, currentUser() AS principal
-        `.pipe(sql.withQueryId('bayn-candidate-replica-identity'), Effect.flatMap(decodeReplicaIdentity)),
+        `.pipe(sql.withQueryId('bayn-candidate-replica-identity'), Effect.flatMap(decodeReplicaIdentityRows)),
         candidateRows: sql`
           SELECT snapshot_id, calendar_version
           FROM signal.snapshot_manifests_v2
@@ -87,7 +70,7 @@ export const readCandidateReplica = (
             AND publication_asof = toDate(${sql.param('String', input.publicationDate)})
           ORDER BY finalized_at DESC, snapshot_id DESC
           LIMIT 1
-        `.pipe(sql.withQueryId(`bayn-candidate-select-${input.publicationDate}`), Effect.flatMap(decodeCandidateRow)),
+        `.pipe(sql.withQueryId(`bayn-candidate-select-${input.publicationDate}`), Effect.flatMap(decodeCandidateRows)),
       },
       { concurrency: 1 },
     ).pipe(
@@ -142,7 +125,7 @@ export const readCandidateReplica = (
 
 const postgresSsl = (
   input: CandidateConfig,
-): Effect.Effect<ConnectionOptions | undefined, unknown, FileSystem.FileSystem> => {
+): Effect.Effect<ConnectionOptions | undefined, PlatformError.PlatformError, FileSystem.FileSystem> => {
   const tls = input.postgresTls
   if (tls === undefined) return Effect.succeed(undefined)
   return Effect.flatMap(FileSystem.FileSystem, (fileSystem) =>
@@ -181,13 +164,13 @@ export const readQualificationLocks = (
           Effect.all(
             {
               readOnlyRows: sql`SELECT current_setting('transaction_read_only') = 'on' AS read_only`.pipe(
-                Effect.flatMap(decodeReadOnlyRow),
+                Effect.flatMap(decodeReadOnlyRows),
               ),
               countRows: sql`
                 SELECT count(*)::integer AS lock_count
                 FROM qualification_locks
                 WHERE snapshot_id = ${snapshotId}
-              `.pipe(Effect.flatMap(decodeLockCountRow)),
+              `.pipe(Effect.flatMap(decodeLockCountRows)),
             },
             { concurrency: 1 },
           ),

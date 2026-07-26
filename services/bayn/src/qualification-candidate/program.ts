@@ -1,6 +1,4 @@
-import { isIP } from 'node:net'
-
-import { Config, Effect, FileSystem, Result, Schema, Stdio, Stream } from 'effect'
+import { Config, Effect, FileSystem, Result, Stdio, Stream } from 'effect'
 
 import { canonicalJsonV1 } from '../hash'
 import { loadDefaultProtocol } from '../protocol'
@@ -23,38 +21,18 @@ import {
   validateCandidateEndpoints,
 } from './domain'
 import { readCandidateReplica, readQualificationLocks } from './live'
-
-const dnsLabelPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/
-
-const ExactReplicaUrls = Config.Array(Schema.URLFromString).check(
-  Schema.makeFilter((urls: readonly URL[]) => urls.length === 2, {
-    expected: 'exactly two direct ClickHouse replica URLs',
-  }),
-)
-const PostgresTlsServerNameSchema = Schema.String.check(
-  Schema.makeFilter(
-    (value: string) =>
-      value.length > 0 &&
-      value.length <= 253 &&
-      value === value.trim() &&
-      isIP(value) === 0 &&
-      value.split('.').every((label) => label.length <= 63 && dnsLabelPattern.test(label)),
-    {
-      expected: 'a non-empty DNS name without surrounding whitespace',
-    },
-  ),
-)
+import { CandidatePostgresTlsServerNameSchema, CandidateReplicaUrlsSchema } from './schema'
 
 const rawConfig = Config.all({
   publicationDate: Config.schema(IsoDateSchema, 'BAYN_CANDIDATE_SIGNAL_PUBLICATION_DATE'),
-  clickhouseUrls: Config.schema(ExactReplicaUrls, 'BAYN_CANDIDATE_CLICKHOUSE_URLS'),
+  clickhouseUrls: Config.schema(CandidateReplicaUrlsSchema, 'BAYN_CANDIDATE_CLICKHOUSE_URLS'),
   publisherUsername: Config.schema(TrimmedNonEmptyStringSchema, 'BAYN_CANDIDATE_SIGNAL_PUBLISHER_USERNAME'),
   publisherPassword: Config.redacted('BAYN_CANDIDATE_SIGNAL_PUBLISHER_PASSWORD'),
   postgresUrl: Config.redacted('BAYN_CANDIDATE_POSTGRES_URL'),
   postgresTls: Config.boolean('BAYN_CANDIDATE_POSTGRES_TLS').pipe(Config.withDefault(false)),
   postgresCaPath: Config.option(Config.schema(TrimmedNonEmptyStringSchema, 'BAYN_CANDIDATE_POSTGRES_CA_PATH')),
   postgresTlsServerName: Config.option(
-    Config.schema(PostgresTlsServerNameSchema, 'BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME'),
+    Config.schema(CandidatePostgresTlsServerNameSchema, 'BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME'),
   ),
   tigerBeetleClusterId: Config.schema(TrimmedNonEmptyStringSchema, 'BAYN_CANDIDATE_TIGERBEETLE_CLUSTER_ID'),
   tigerBeetleAddresses: Config.schema(TrimmedNonEmptyStringSchema, 'BAYN_CANDIDATE_TIGERBEETLE_ADDRESSES'),
