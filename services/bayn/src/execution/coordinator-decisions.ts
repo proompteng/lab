@@ -191,7 +191,7 @@ const validateCurrentTime = (
   operation: MutationOperation,
   currentTimeMillis: number,
 ): Result.Result<number, ExecutionDecisionFailure> =>
-  Number.isFinite(currentTimeMillis)
+  Number.isFinite(currentTimeMillis) && Number.isFinite(new Date(currentTimeMillis).getTime())
     ? Result.succeed(currentTimeMillis)
     : Result.fail({ _tag: 'InvalidInstant', operation, field: 'current-time', value: currentTimeMillis })
 

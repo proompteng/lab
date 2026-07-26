@@ -251,6 +251,11 @@ describe('execution coordinator decisions', () => {
       field: 'current-time',
       value: Number.NaN,
     })
+    expectInvalidInstant(validateActiveSubmitRiskDecision(stored(), Number.MAX_VALUE), {
+      operation: MutationOperation.Submit,
+      field: 'current-time',
+      value: Number.MAX_VALUE,
+    })
     expectInvalidInstant(
       ensureRecoveryDelay(
         MutationOperation.Submit,
@@ -258,6 +263,14 @@ describe('execution coordinator decisions', () => {
         Number.NaN,
       ),
       { operation: MutationOperation.Submit, field: 'current-time', value: Number.NaN },
+    )
+    expectInvalidInstant(
+      ensureRecoveryDelay(
+        MutationOperation.Submit,
+        mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown),
+        Number.MAX_VALUE,
+      ),
+      { operation: MutationOperation.Submit, field: 'current-time', value: Number.MAX_VALUE },
     )
     expectInvalidInstant(
       ensureRecoveryDelay(
