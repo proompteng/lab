@@ -815,6 +815,12 @@ describe('Alpaca paper reads', () => {
       operation: 'positions',
       kind: BrokerReadErrorKind.InvalidResponse,
       retryable: false,
+      cause: {
+        tag: 'BrokerReadContractFailure',
+        reason: 'DECIMAL_PRECISION',
+        field: 'position quantity',
+        actual: '0.079145874',
+      },
     })
     expect(failure.message).toContain('violates the Bayn read contract')
 
@@ -825,6 +831,12 @@ describe('Alpaca paper reads', () => {
       operation: 'positions',
       kind: BrokerReadErrorKind.InvalidResponse,
       retryable: false,
+      cause: {
+        tag: 'BrokerReadContractFailure',
+        reason: 'DECIMAL_RANGE',
+        field: 'position quantity',
+        actual: '-170141183460469231731687303715884.105728',
+      },
     })
   })
 

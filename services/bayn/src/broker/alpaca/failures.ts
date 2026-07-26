@@ -96,6 +96,16 @@ export const safeCause = (
   cause: unknown,
   sensitiveValues: readonly string[] = [],
 ): Readonly<Record<string, string>> => {
+  if (cause instanceof BrokerReadContractFailure) {
+    return {
+      tag: cause._tag,
+      reason: cause.reason,
+      message: redactDiagnostic(cause.message, sensitiveValues),
+      ...(cause.field === undefined ? {} : { field: redactDiagnostic(cause.field, sensitiveValues) }),
+      ...(cause.expected === undefined ? {} : { expected: redactDiagnostic(cause.expected, sensitiveValues) }),
+      ...(cause.actual === undefined ? {} : { actual: redactDiagnostic(cause.actual, sensitiveValues) }),
+    }
+  }
   if (Schema.isSchemaError(cause)) {
     return { tag: cause._tag, message: redactDiagnostic(cause.message, sensitiveValues) }
   }
