@@ -447,6 +447,58 @@ describe('finalized Signal snapshot reader', () => {
     expect(failure.message).toBe('failed to decode Signal sessions')
   })
 
+  test('rejects non-finite manifest counts at the row boundary', async () => {
+    for (const barCount of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const fixture = makeFixture()
+      const malformedManifests = [
+        { ...fixture.rows.manifests[0], bar_count: barCount },
+      ] as unknown as readonly SignalManifestRow[]
+      const client = makeClickhouseFixture(malformedManifests, fixture.rows.sessions, [])
+      const layer = MarketDataLive(
+        {
+          operationTimeoutMs: 5_000,
+          clickhouse: {
+            url: 'http://clickhouse.test:8123',
+            username: 'bayn',
+            password: Redacted.make('secret'),
+            snapshotId,
+            publicationAsOf: fixture.request.publicationAsOf,
+            calendarVersion: fixture.request.calendarVersion,
+            bounds: fixture.request.bounds,
+          },
+        },
+        {
+          universeId: fixture.request.universeId,
+          universeSymbolHash: fixture.request.universeSymbolHash,
+          universe: fixture.request.universe,
+          historyStart: fixture.request.historyStart,
+          evaluationStart: fixture.request.evaluationStart,
+        },
+      ).pipe(Layer.provide(Layer.succeed(ClickhouseClient.ClickhouseClient, client)))
+
+      const failure = await Effect.runPromise(
+        Effect.flip(
+          Effect.gen(function* () {
+            const marketData = yield* MarketData
+            return yield* marketData.inspect
+          }).pipe(Effect.provide(layer)),
+        ),
+      )
+
+      expect(failure).toMatchObject({
+        _tag: 'OperationalError',
+        component: 'market-data',
+        operation: 'inspect',
+        retryable: false,
+        cause: {
+          _tag: 'RowDecodeFailed',
+          rows: 'manifests',
+        },
+      })
+      expect(failure.message).toBe('failed to decode Signal manifests')
+    }
+  })
+
   test('reproduces the publisher contract before exposing bounded numeric bars', () => {
     const fixture = makeFixture()
     const snapshot = verificationSuccess(verifyFinalizedSnapshot(fixture.rows, fixture.request))

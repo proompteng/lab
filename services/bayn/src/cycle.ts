@@ -524,8 +524,8 @@ const SelectedExecutionCalendarSessionSchema = Schema.Struct({
 const CycleWindowPolicyInputSchema = Schema.Union([
   CycleExecutionPolicySchema,
   Schema.Struct({
-    submissionWindowMs: Schema.Number,
-    submissionCutoffBeforeOpenMs: Schema.Number,
+    submissionWindowMs: Schema.Finite,
+    submissionCutoffBeforeOpenMs: Schema.Finite,
   }),
 ])
 

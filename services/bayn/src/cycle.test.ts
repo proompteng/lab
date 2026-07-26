@@ -326,6 +326,28 @@ describe('autonomous cycle identity and calendar', () => {
     })
   })
 
+  test('rejects non-finite cycle durations before date arithmetic', () => {
+    for (const policy of [
+      {
+        submissionWindowMs: Number.POSITIVE_INFINITY,
+        submissionCutoffBeforeOpenMs: defaultSubmissionCutoffBeforeOpenMs,
+      },
+      {
+        submissionWindowMs: defaultSubmissionWindowMs,
+        submissionCutoffBeforeOpenMs: Number.NaN,
+      },
+    ]) {
+      const result = makeCycleWindow(signalSession('2026-03-06'), executionCalendar(), policy)
+      expect(Result.isFailure(result)).toBe(true)
+      expect(Result.isFailure(result) ? result.failure : null).toMatchObject({
+        _tag: 'CycleConstructionFailure',
+        operation: 'cycle-window',
+        reason: 'decode',
+        message: 'cycle window policy is invalid',
+      })
+    }
+  })
+
   test('rejects forged execution observations, UTC drift, and identity provenance mismatches', async () => {
     const observedExecutionCalendar = executionCalendar()
     const executionPolicy = makeExecutionPolicy()

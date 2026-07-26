@@ -14,6 +14,7 @@
           "globalErrorInEffectCatch": "error",
           "globalErrorInEffectFailure": "error",
           "multipleEffectProvide": "error",
+          "schemaNumber": "error",
           "scopeInLayerEffect": "error",
           "unknownInEffectCatch": "error"
         },
@@ -26,6 +27,7 @@
                 "globalErrorInEffectCatch": "off",
                 "globalErrorInEffectFailure": "off",
                 "multipleEffectProvide": "off",
+                "schemaNumber": "off",
                 "scopeInLayerEffect": "off",
                 "unknownInEffectCatch": "off"
               }
