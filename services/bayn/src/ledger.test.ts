@@ -27,6 +27,7 @@ import {
 import { LEDGER_BATCH_MAX } from './ledger-plan'
 import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
+import type { FillEvent } from './types'
 
 const assertSuccess = <A, E>(result: Result.Result<A, E>): A => {
   assert(Result.isSuccess(result), 'strategy evaluation fixture must succeed')
@@ -483,10 +484,236 @@ describe('TigerBeetle simulation journal', () => {
       expect(error.cause).toMatchObject({
         operation: 'build-plan',
         reason: 'ledger-plan-failure',
-        material: { ledger: journalConfig.tigerBeetle.ledger },
+        material: {
+          ledger: journalConfig.tigerBeetle.ledger,
+          failure: { kind: 'no-fill-events', runId: result.runId, eventCount: 0 },
+        },
       })
-      expect(error.cause.cause).toBeInstanceOf(Error)
-      expect(String(error.cause.cause)).toContain('no fill events')
+      expect(error.cause.cause).toEqual({
+        kind: 'no-fill-events',
+        runId: result.runId,
+        eventCount: 0,
+      })
+    }
+    expect(writes).toBe(0)
+  })
+
+  test('retains hostile event access inside the non-retryable journal boundary', async () => {
+    const { result } = evaluationPlan()
+    const fill = result.events.find((event): event is FillEvent => event.kind === 'fill')
+    assert(fill, 'evaluation fixture must contain a fill event')
+    const cause = new TypeError('ledger-plan event kind is unavailable')
+    const hostileFill = new Proxy(fill, {
+      get: (target, property, receiver) => {
+        if (property === 'kind') throw cause
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    let writes = 0
+    const client = makeTigerBeetleClient({
+      createAccounts: async () => {
+        writes += 1
+        return []
+      },
+      createTransfers: async () => {
+        writes += 1
+        return []
+      },
+    })
+
+    const error = await Effect.runPromise(
+      Effect.flip(withJournal(client, (journal) => journal.journalAndReconcile({ ...result, events: [hostileFill] }))),
+    )
+
+    expect(error.retryable).toBeFalse()
+    expect(error.cause).toBeInstanceOf(LedgerValidationError)
+    if (error.cause instanceof LedgerValidationError) {
+      expect(error.cause).toMatchObject({
+        operation: 'build-plan',
+        reason: 'ledger-plan-failure',
+        material: {
+          ledger: journalConfig.tigerBeetle.ledger,
+          failure: { kind: 'input-access-failed', field: 'event.kind', eventIndex: 0, cause },
+        },
+        cause,
+      })
+    }
+    expect(writes).toBe(0)
+  })
+
+  test('rejects hostile event identity before TigerBeetle writes or failure rendering', async () => {
+    const { result } = evaluationPlan()
+    const fill = result.events.find((event): event is FillEvent => event.kind === 'fill')
+    assert(fill, 'evaluation fixture must contain a fill event')
+    let writes = 0
+    const client = makeTigerBeetleClient({
+      createAccounts: async () => {
+        writes += 1
+        return []
+      },
+      createTransfers: async () => {
+        writes += 1
+        return []
+      },
+    })
+
+    const error = await Effect.runPromise(
+      Effect.flip(
+        withJournal(client, (journal) =>
+          journal.journalAndReconcile({
+            ...result,
+            events: [{ ...fill, id: Symbol('fill-id') as unknown as string }],
+          }),
+        ),
+      ),
+    )
+
+    expect(error.retryable).toBeFalse()
+    expect(error.operation).toBe('build-plan')
+    expect(error.cause).toBeInstanceOf(LedgerValidationError)
+    if (error.cause instanceof LedgerValidationError) {
+      expect(error.cause).toMatchObject({
+        operation: 'build-plan',
+        reason: 'ledger-plan-failure',
+        message: 'TigerBeetle build-plan failed: fill.id is not a valid string',
+        material: {
+          ledger: journalConfig.tigerBeetle.ledger,
+          failure: {
+            kind: 'input-value-invalid',
+            field: 'fill.id',
+            expected: 'string',
+            actualType: 'symbol',
+            index: 0,
+            eventKind: 'fill',
+          },
+        },
+      })
+    }
+    expect(writes).toBe(0)
+  })
+
+  test('reuses the validated run identity after writes without reading mutable input again', async () => {
+    const { result, plan } = evaluationPlan()
+    const target = makeLedgerClient()
+    let runIdReads = 0
+    const secondReadCause = new TypeError('ledger run identity was read after the plan committed')
+    const input = {
+      initialCapitalMicros: result.initialCapitalMicros,
+      inputManifest: result.inputManifest,
+      events: result.events,
+      get runId(): string {
+        runIdReads += 1
+        if (runIdReads > 1) throw secondReadCause
+        return result.runId
+      },
+    }
+
+    const reconciled = await Effect.runPromise(
+      withJournal(target.client, (journal) => journal.journalAndReconcile(input)),
+    )
+
+    expect(reconciled).toEqual({
+      runId: result.runId,
+      accountCount: plan.accounts.length,
+      transferCount: plan.transfers.length,
+      exact: true,
+    })
+    expect(runIdReads).toBe(1)
+  })
+
+  test('retains hostile amount coercion inside the non-retryable journal boundary', async () => {
+    const { result } = evaluationPlan()
+    const fill = result.events.find((event): event is FillEvent => event.kind === 'fill')
+    assert(fill, 'evaluation fixture must contain a fill event')
+    const cause = new TypeError('ledger-plan amount coercion is unavailable')
+    const hostileAmount = {
+      [Symbol.toPrimitive]: () => {
+        throw cause
+      },
+    }
+    let writes = 0
+    const client = makeTigerBeetleClient({
+      createAccounts: async () => {
+        writes += 1
+        return []
+      },
+      createTransfers: async () => {
+        writes += 1
+        return []
+      },
+    })
+
+    const error = await Effect.runPromise(
+      Effect.flip(
+        withJournal(client, (journal) =>
+          journal.journalAndReconcile({
+            ...result,
+            events: [{ ...fill, notionalMicros: hostileAmount as unknown as string }],
+          }),
+        ),
+      ),
+    )
+
+    expect(error.retryable).toBeFalse()
+    expect(error.operation).toBe('build-plan')
+    expect(error.cause).toBeInstanceOf(LedgerValidationError)
+    if (error.cause instanceof LedgerValidationError) {
+      expect(error.cause).toMatchObject({
+        operation: 'build-plan',
+        message: 'TigerBeetle build-plan failed: fill.notionalMicros is not an integer micros value (object)',
+        material: {
+          ledger: journalConfig.tigerBeetle.ledger,
+          failure: {
+            kind: 'amount-parse-failed',
+            field: 'fill.notionalMicros',
+            actualType: 'object',
+            eventId: fill.id,
+            cause,
+          },
+        },
+        cause,
+      })
+    }
+    expect(writes).toBe(0)
+  })
+
+  test('keeps event canonicalization failures under the build-plan journal operation', async () => {
+    const { result } = evaluationPlan()
+    const fill = result.events.find((event): event is FillEvent => event.kind === 'fill')
+    assert(fill, 'evaluation fixture must contain a fill event')
+    const nonCanonicalFill = { ...fill, unsupported: undefined } as FillEvent
+    let writes = 0
+    const client = makeTigerBeetleClient({
+      createAccounts: async () => {
+        writes += 1
+        return []
+      },
+      createTransfers: async () => {
+        writes += 1
+        return []
+      },
+    })
+
+    const error = await Effect.runPromise(
+      Effect.flip(
+        withJournal(client, (journal) => journal.journalAndReconcile({ ...result, events: [nonCanonicalFill] })),
+      ),
+    )
+
+    expect(error.retryable).toBeFalse()
+    expect(error.operation).toBe('build-plan')
+    expect(error.cause).toBeInstanceOf(LedgerValidationError)
+    if (error.cause instanceof LedgerValidationError) {
+      expect(error.cause.operation).toBe('build-plan')
+      expect(error.cause.material).toMatchObject({
+        ledger: journalConfig.tigerBeetle.ledger,
+        failure: {
+          kind: 'canonicalization-failed',
+          canonicalizationOperation: 'event-transfer',
+          eventId: fill.id,
+          leg: 'buy',
+        },
+      })
     }
     expect(writes).toBe(0)
   })

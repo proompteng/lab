@@ -2,20 +2,25 @@ import assert from 'node:assert/strict'
 
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
-import { type Account, type Transfer } from 'tigerbeetle-node'
+import { AccountFlags, type Account, type Transfer } from 'tigerbeetle-node'
 
 import {
   AccountCode,
   buildLedgerPlan,
+  hashLedgerPlan,
+  LEDGER_BATCH_MAX,
   preflightTransfers,
   reconcileLedgerPlan,
   TransferCode,
   validatePersistedRunEvidence,
+  type LedgerInput,
   type LedgerPlan,
-  type LedgerValidationError,
+  type LedgerPlanFailureDetail,
+  LedgerValidationError,
 } from './ledger-plan'
 import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
+import type { CashYieldEvent, FeeEvent, FillEvent } from './types'
 
 const ledger = 7_001
 
@@ -24,17 +29,36 @@ const assertSuccess = <A, E>(result: Result.Result<A, E>): A => {
   return result.success
 }
 
-const assertFailure = <A>(result: Result.Result<A, LedgerValidationError>): LedgerValidationError => {
+const assertFailure = <A, E>(result: Result.Result<A, E>): E => {
   assert(Result.isFailure(result), 'ledger plan decision must fail')
   return result.failure
 }
 
-const evaluationPlan = () => {
+const assertLedgerPlanFailure = <A>(result: Result.Result<A, LedgerValidationError>): LedgerPlanFailureDetail => {
+  const failure = assertFailure(result)
+  expect(failure).toBeInstanceOf(LedgerValidationError)
+  assert('detail' in failure, 'ledger plan failure must retain its closed detail')
+  return failure.detail as LedgerPlanFailureDetail
+}
+
+const evaluationResult = (): LedgerInput => {
   const snapshot = makeSnapshot()
-  const result = assertSuccess(
+  return assertSuccess(
     evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance()),
   )
+}
+
+const evaluationPlan = () => {
+  const result = evaluationResult()
   return { result, plan: assertSuccess(buildLedgerPlan(result, ledger)) }
+}
+
+const firstFill = (result: LedgerInput, side?: FillEvent['side']): FillEvent => {
+  const fill = result.events.find(
+    (event): event is FillEvent => event.kind === 'fill' && (side === undefined || event.side === side),
+  )
+  assert(fill, `evaluation fixture must contain a${side === undefined ? '' : ` ${side}`} fill`)
+  return fill
 }
 
 const materialize = (plan: LedgerPlan): { readonly accounts: Account[]; readonly transfers: Transfer[] } => {
@@ -63,42 +87,454 @@ const materialize = (plan: LedgerPlan): { readonly accounts: Account[]; readonly
 }
 
 describe('ledger plan Result algebra', () => {
-  test('returns a closed build failure without throwing', () => {
-    const { result } = evaluationPlan()
-    const failure = assertFailure(buildLedgerPlan({ ...result, events: [] }, ledger))
+  test('returns a fact-bearing no-fill failure', () => {
+    const result = evaluationResult()
+    const failure = assertLedgerPlanFailure(buildLedgerPlan({ ...result, events: [] }, ledger))
 
-    expect(failure).toMatchObject({
-      operation: 'build-plan',
-      reason: 'ledger-plan-failure',
-      material: { ledger },
+    expect(failure).toEqual({
+      kind: 'no-fill-events',
+      runId: result.runId,
+      eventCount: 0,
     })
-    expect(failure.cause).toBeInstanceOf(Error)
-    expect(String(failure.cause)).toContain('no fill events')
   })
 
-  test('contains hostile cause rendering inside the closed build failure', () => {
-    const { result } = evaluationPlan()
-    const hostileCause = new Proxy(new Error('hidden cause'), {
-      get: (target, property, receiver) => {
-        if (property === 'message') throw new Error('cause message is unavailable')
-        return Reflect.get(target, property, receiver)
+  test('returns exact parsing and sign failures for every planned amount', () => {
+    const result = evaluationResult()
+    const fill = firstFill(result, 'buy')
+    const fee = {
+      kind: 'fee',
+      id: 'e'.repeat(64),
+      sessionDate: fill.sessionDate,
+      commissionMicros: '0',
+      secMicros: '0',
+      tafMicros: '0',
+      catMicros: '0',
+      totalMicros: '1',
+    } satisfies FeeEvent
+    const cashYield = {
+      kind: 'cash-yield',
+      id: 'd'.repeat(64),
+      sessionDate: fill.sessionDate,
+      elapsedDays: 1,
+      annualYieldBps: 100,
+      amountMicros: '1',
+    } satisfies CashYieldEvent
+
+    const cases: readonly {
+      readonly input: LedgerInput
+      readonly expected: Partial<LedgerPlanFailureDetail>
+    }[] = [
+      {
+        input: { ...result, initialCapitalMicros: 'invalid', events: [fill] },
+        expected: {
+          kind: 'amount-parse-failed',
+          field: 'initialCapitalMicros',
+          actualType: 'string',
+          value: 'invalid',
+        },
+      },
+      {
+        input: { ...result, initialCapitalMicros: '0', events: [fill] },
+        expected: { kind: 'initial-capital-not-positive', value: 0n },
+      },
+      {
+        input: { ...result, initialCapitalMicros: '-1', events: [fill] },
+        expected: { kind: 'initial-capital-not-positive', value: -1n },
+      },
+      {
+        input: { ...result, events: [{ ...fill, notionalMicros: 'invalid' }] },
+        expected: {
+          kind: 'amount-parse-failed',
+          field: 'fill.notionalMicros',
+          actualType: 'string',
+          value: 'invalid',
+          eventId: fill.id,
+        },
+      },
+      {
+        input: { ...result, events: [{ ...fill, notionalMicros: '-1' }] },
+        expected: {
+          kind: 'negative-amount',
+          field: 'fill.notionalMicros',
+          value: -1n,
+          eventId: fill.id,
+        },
+      },
+      {
+        input: { ...result, events: [{ ...fill, costBasisMicros: 'invalid' }] },
+        expected: {
+          kind: 'amount-parse-failed',
+          field: 'fill.costBasisMicros',
+          actualType: 'string',
+          value: 'invalid',
+          eventId: fill.id,
+        },
+      },
+      {
+        input: { ...result, events: [{ ...fill, costBasisMicros: '-1' }] },
+        expected: {
+          kind: 'negative-amount',
+          field: 'fill.costBasisMicros',
+          value: -1n,
+          eventId: fill.id,
+        },
+      },
+      {
+        input: { ...result, events: [fill, { ...fee, totalMicros: 'invalid' }] },
+        expected: {
+          kind: 'amount-parse-failed',
+          field: 'fee.totalMicros',
+          actualType: 'string',
+          value: 'invalid',
+          eventId: fee.id,
+        },
+      },
+      {
+        input: { ...result, events: [fill, { ...fee, totalMicros: '-1' }] },
+        expected: {
+          kind: 'negative-amount',
+          field: 'fee.totalMicros',
+          value: -1n,
+          eventId: fee.id,
+        },
+      },
+      {
+        input: { ...result, events: [fill, { ...cashYield, amountMicros: 'invalid' }] },
+        expected: {
+          kind: 'amount-parse-failed',
+          field: 'cashYield.amountMicros',
+          actualType: 'string',
+          value: 'invalid',
+          eventId: cashYield.id,
+        },
+      },
+      {
+        input: { ...result, events: [fill, { ...cashYield, amountMicros: '-1' }] },
+        expected: {
+          kind: 'negative-amount',
+          field: 'cashYield.amountMicros',
+          value: -1n,
+          eventId: cashYield.id,
+        },
+      },
+    ]
+
+    for (const { input, expected } of cases) {
+      expect(assertLedgerPlanFailure(buildLedgerPlan(input, ledger))).toMatchObject(expected)
+    }
+  })
+
+  test('never re-coerces rejected amount values while constructing failures', () => {
+    const result = evaluationResult()
+    const fill = firstFill(result, 'buy')
+    const coercionCause = new TypeError('amount coercion is unavailable')
+    const hostileAmount = {
+      [Symbol.toPrimitive]: () => {
+        throw coercionCause
+      },
+    }
+
+    const symbolFailure = assertFailure(
+      buildLedgerPlan(
+        { ...result, initialCapitalMicros: Symbol('invalid') as unknown as string, events: [fill] },
+        ledger,
+      ),
+    )
+    expect(symbolFailure).toMatchObject({
+      operation: 'build-plan',
+      message: 'TigerBeetle build-plan failed: initialCapitalMicros is not an integer micros value (symbol)',
+      detail: {
+        kind: 'amount-parse-failed',
+        field: 'initialCapitalMicros',
+        actualType: 'symbol',
       },
     })
+    expect(symbolFailure.detail).not.toHaveProperty('value')
+
+    const hostileFailure = assertFailure(
+      buildLedgerPlan(
+        {
+          ...result,
+          events: [{ ...fill, notionalMicros: hostileAmount as unknown as string }],
+        },
+        ledger,
+      ),
+    )
+    expect(hostileFailure).toMatchObject({
+      operation: 'build-plan',
+      message: 'TigerBeetle build-plan failed: fill.notionalMicros is not an integer micros value (object)',
+      detail: {
+        kind: 'amount-parse-failed',
+        field: 'fill.notionalMicros',
+        actualType: 'object',
+        eventId: fill.id,
+        cause: coercionCause,
+      },
+      cause: coercionCause,
+    })
+    expect(hostileFailure.detail).not.toHaveProperty('value')
+  })
+
+  test('returns exact inventory and event canonicalization failures', () => {
+    const result = evaluationResult()
+    const fill = firstFill(result, 'buy')
+    const missingSymbol = 'MISSING-INVENTORY'
+
+    expect(
+      assertLedgerPlanFailure(buildLedgerPlan({ ...result, events: [{ ...fill, symbol: missingSymbol }] }, ledger)),
+    ).toEqual({
+      kind: 'inventory-account-missing',
+      runId: result.runId,
+      eventId: fill.id,
+      symbol: missingSymbol,
+    })
+
+    const nonCanonicalFill = { ...fill, unsupported: undefined } as FillEvent
+    const canonicalizationFailure = assertFailure(buildLedgerPlan({ ...result, events: [nonCanonicalFill] }, ledger))
+    expect(canonicalizationFailure).toMatchObject({
+      operation: 'build-plan',
+      reason: 'ledger-plan-failure',
+      kind: 'canonicalization-failed',
+      detail: {
+        kind: 'canonicalization-failed',
+        canonicalizationOperation: 'event-transfer',
+        eventId: fill.id,
+        leg: 'buy',
+        cause: {
+          _tag: 'CanonicalJsonFailure',
+          path: '$.unsupported',
+          reason: 'non-json-type',
+          actualType: 'undefined',
+        },
+      },
+    })
+    expect(canonicalizationFailure.operation).toBe('build-plan')
+  })
+
+  test('retains hostile manifest access as a closed failure with the original cause', () => {
+    const result = evaluationResult()
+    const cause = new TypeError('ledger-plan symbols are unavailable')
     const inputManifest = new Proxy(result.inputManifest, {
       get: (target, property, receiver) => {
-        if (property === 'symbols') throw hostileCause
+        if (property === 'symbols') throw cause
         return Reflect.get(target, property, receiver)
       },
     })
 
     const failure = assertFailure(buildLedgerPlan({ ...result, inputManifest }, ledger))
 
+    expect(failure).toBeInstanceOf(LedgerValidationError)
     expect(failure).toMatchObject({
-      operation: 'build-plan',
-      reason: 'ledger-plan-failure',
-      message: 'TigerBeetle build-plan failed: unrenderable cause',
+      kind: 'input-access-failed',
+      detail: { kind: 'input-access-failed', field: 'inputManifest.symbols', cause },
+      material: {
+        ledger,
+        failure: { kind: 'input-access-failed', field: 'inputManifest.symbols', cause },
+      },
+      cause,
     })
-    expect(failure.cause).toBe(hostileCause)
+  })
+
+  test('retains hostile event collection and discriminator access as closed failures', () => {
+    const result = evaluationResult()
+    const fill = firstFill(result, 'buy')
+    const eventsCause = new TypeError('ledger-plan events are unavailable')
+    const kindCause = new TypeError('ledger-plan event kind is unavailable')
+    const hostileInput = new Proxy(result, {
+      get: (target, property, receiver) => {
+        if (property === 'events') throw eventsCause
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const hostileFill = new Proxy(fill, {
+      get: (target, property, receiver) => {
+        if (property === 'kind') throw kindCause
+        return Reflect.get(target, property, receiver)
+      },
+    })
+
+    expect(assertLedgerPlanFailure(buildLedgerPlan(hostileInput, ledger))).toEqual({
+      kind: 'input-access-failed',
+      field: 'events',
+      cause: eventsCause,
+    })
+    expect(assertLedgerPlanFailure(buildLedgerPlan({ ...result, events: [hostileFill] }, ledger))).toEqual({
+      kind: 'input-access-failed',
+      field: 'event.kind',
+      eventIndex: 0,
+      cause: kindCause,
+    })
+  })
+
+  test('rejects hostile scalar identities before hashing or rendering can coerce them', () => {
+    const result = evaluationResult()
+    const fill = firstFill(result, 'buy')
+    let runIdCoercions = 0
+    const hostileRunId = {
+      [Symbol.toPrimitive]: () => {
+        runIdCoercions += 1
+        throw new TypeError('ledger-plan run identity coercion is unavailable')
+      },
+    }
+
+    expect(
+      assertLedgerPlanFailure(buildLedgerPlan({ ...result, runId: hostileRunId as unknown as string }, ledger)),
+    ).toEqual({
+      kind: 'input-value-invalid',
+      field: 'runId',
+      expected: 'string',
+      actualType: 'object',
+    })
+    expect(runIdCoercions).toBe(0)
+
+    expect(
+      assertLedgerPlanFailure(
+        buildLedgerPlan({ ...result, events: [{ ...fill, id: Symbol('fill-id') as unknown as string }] }, ledger),
+      ),
+    ).toEqual({
+      kind: 'input-value-invalid',
+      field: 'fill.id',
+      expected: 'string',
+      actualType: 'symbol',
+      index: 0,
+      eventKind: 'fill',
+    })
+
+    expect(
+      assertLedgerPlanFailure(
+        buildLedgerPlan(
+          {
+            ...result,
+            inputManifest: {
+              ...result.inputManifest,
+              symbols: [
+                {
+                  ...result.inputManifest.symbols[0],
+                  symbol: Symbol('inventory-symbol') as unknown as string,
+                },
+              ],
+            },
+          },
+          ledger,
+        ),
+      ),
+    ).toEqual({
+      kind: 'input-value-invalid',
+      field: 'inputManifest.symbol',
+      expected: 'string',
+      actualType: 'symbol',
+      index: 0,
+    })
+  })
+
+  test('preserves exact TigerBeetle identity, ordering, amounts, flags, and replay hash', () => {
+    const result = evaluationResult()
+    const first = assertSuccess(buildLedgerPlan(result, ledger))
+    const replay = assertSuccess(buildLedgerPlan(result, ledger))
+
+    expect(replay).toEqual(first)
+    expect(first.runKey).toBe(79_792_431_000_025_543_657_647_989_592_544_810_778n)
+    expect(first.runTag).toBe(18_307_385_734_514_644_762n)
+    expect(first.accounts).toHaveLength(11)
+    expect(first.transfers).toHaveLength(269)
+    expect(first.accounts[0].id).toBe(28_174_988_367_779_630_772_009_788_722_886_677_084n)
+    expect(first.accounts.at(-1)?.id).toBe(328_386_117_789_076_263_753_212_874_624_739_142_962n)
+    expect(first.transfers[0].id).toBe(532_337_791_250_265_855_850_739_987_090_731_240n)
+    expect(first.transfers.at(-1)?.id).toBe(340_248_724_424_856_676_616_453_965_797_055_502_080n)
+    expect(first.transfers.find((transfer) => transfer.code === TransferCode.funding)?.id).toBe(
+      109_353_885_019_586_710_761_486_091_928_106_698_321n,
+    )
+    expect(first.accounts.every((account) => account.flags === AccountFlags.history)).toBeTrue()
+    expect(first.transfers.every((transfer) => transfer.flags === 0 && transfer.amount > 0n)).toBeTrue()
+    expect(hashLedgerPlan(first)).toBe('9c6888ca700beb1c5fb698d28c6d42a5e0b913d4340b08554b475fe96da92074')
+  })
+
+  test('accepts the last exact single-query size and rejects both next records', () => {
+    const result = evaluationResult()
+    const fill = firstFill(result, 'buy')
+    const coverage = result.inputManifest.symbols.find((candidate) => candidate.symbol === fill.symbol)
+    assert(coverage, `evaluation manifest must cover ${fill.symbol}`)
+
+    const manifestWithSymbols = (count: number): LedgerInput['inputManifest'] => ({
+      ...result.inputManifest,
+      symbols: Array.from({ length: count }, (_, index) => ({
+        ...coverage,
+        symbol: index === 0 ? fill.symbol : `LIMIT${index.toString().padStart(5, '0')}`,
+      })),
+    })
+    const allowedAccounts = assertSuccess(
+      buildLedgerPlan(
+        {
+          ...result,
+          inputManifest: manifestWithSymbols(LEDGER_BATCH_MAX - 7),
+          events: [fill],
+        },
+        ledger,
+      ),
+    )
+    expect(allowedAccounts.accounts).toHaveLength(LEDGER_BATCH_MAX - 1)
+    expect(
+      assertLedgerPlanFailure(
+        buildLedgerPlan(
+          {
+            ...result,
+            inputManifest: manifestWithSymbols(LEDGER_BATCH_MAX - 6),
+            events: [fill],
+          },
+          ledger,
+        ),
+      ),
+    ).toEqual({
+      kind: 'single-query-limit-exceeded',
+      runId: result.runId,
+      accountCount: LEDGER_BATCH_MAX,
+      transferCount: 2,
+      limit: LEDGER_BATCH_MAX,
+    })
+
+    const feeEvents = Array.from(
+      { length: LEDGER_BATCH_MAX - 2 },
+      (_, index): FeeEvent => ({
+        kind: 'fee',
+        id: `f${(index + 1).toString(16).padStart(63, '0')}`,
+        sessionDate: fill.sessionDate,
+        commissionMicros: '1',
+        secMicros: '0',
+        tafMicros: '0',
+        catMicros: '0',
+        totalMicros: '1',
+      }),
+    )
+    const minimalManifest = manifestWithSymbols(1)
+    const allowedTransfers = assertSuccess(
+      buildLedgerPlan(
+        {
+          ...result,
+          inputManifest: minimalManifest,
+          events: [fill, ...feeEvents.slice(0, -1)],
+        },
+        ledger,
+      ),
+    )
+    expect(allowedTransfers.transfers).toHaveLength(LEDGER_BATCH_MAX - 1)
+    expect(
+      assertLedgerPlanFailure(
+        buildLedgerPlan(
+          {
+            ...result,
+            inputManifest: minimalManifest,
+            events: [fill, ...feeEvents],
+          },
+          ledger,
+        ),
+      ),
+    ).toEqual({
+      kind: 'single-query-limit-exceeded',
+      runId: result.runId,
+      accountCount: 7,
+      transferCount: LEDGER_BATCH_MAX,
+      limit: LEDGER_BATCH_MAX,
+    })
   })
 
   test('partitions exact existing transfers and preserves missing request order', () => {
