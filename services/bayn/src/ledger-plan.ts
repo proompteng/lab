@@ -127,8 +127,11 @@ export type LedgerPlanInputField =
   | 'fill.side'
   | 'fill.symbol'
   | 'initialCapitalMicros'
+  | 'inputManifest.symbol'
   | 'inputManifest.symbols'
   | 'runId'
+
+type LedgerPlanInputExpectation = 'evaluation-event-kind' | 'fill-side' | 'string'
 
 export type LedgerPlanFailureDetail =
   | {
@@ -175,6 +178,15 @@ export type LedgerPlanFailureDetail =
       readonly cause: unknown
     }
   | {
+      readonly kind: 'input-value-invalid'
+      readonly field: LedgerPlanInputField
+      readonly expected: LedgerPlanInputExpectation
+      readonly actualType: string
+      readonly value?: string
+      readonly index?: number
+      readonly eventKind?: EvaluationEvent['kind']
+    }
+  | {
       readonly kind: 'single-query-limit-exceeded'
       readonly runId: string
       readonly accountCount: number
@@ -205,6 +217,8 @@ export const renderLedgerPlanFailure = (failure: LedgerPlanFailureDetail): strin
       return `event ${failure.eventId} ${failure.leg} material is not canonicalizable: ${renderCanonicalJsonFailure(failure.cause)}`
     case 'input-access-failed':
       return `${failure.field} is unavailable`
+    case 'input-value-invalid':
+      return `${failure.field} is not a valid ${failure.expected}`
     case 'single-query-limit-exceeded':
       return 'Bayn ledger run exceeds the exact single-query reconciliation limit'
   }
@@ -365,6 +379,48 @@ const inputAccessFailure = (
   cause,
 })
 
+const invalidInputValue = (
+  field: LedgerPlanInputField,
+  expected: LedgerPlanInputExpectation,
+  value: unknown,
+  index?: number,
+  eventKind?: EvaluationEvent['kind'],
+): LedgerPlanFailureDetail => ({
+  kind: 'input-value-invalid',
+  field,
+  expected,
+  actualType: value === null ? 'null' : typeof value,
+  ...(typeof value === 'string' ? { value } : {}),
+  ...(index === undefined ? {} : { index }),
+  ...(eventKind === undefined ? {} : { eventKind }),
+})
+
+const requireStringInput = (
+  field: LedgerPlanInputField,
+  value: unknown,
+  index?: number,
+  eventKind?: EvaluationEvent['kind'],
+): Result.Result<string, LedgerPlanFailureDetail> =>
+  typeof value === 'string'
+    ? Result.succeed(value)
+    : failLedgerPlan(invalidInputValue(field, 'string', value, index, eventKind))
+
+const requireEventKind = (
+  value: unknown,
+  eventIndex: number,
+): Result.Result<EvaluationEvent['kind'], LedgerPlanFailureDetail> =>
+  value === 'decision' || value === 'fill' || value === 'fee' || value === 'cash-yield'
+    ? Result.succeed(value)
+    : failLedgerPlan(invalidInputValue('event.kind', 'evaluation-event-kind', value, eventIndex))
+
+const requireFillSide = (
+  value: unknown,
+  eventIndex: number,
+): Result.Result<FillEvent['side'], LedgerPlanFailureDetail> =>
+  value === 'buy' || value === 'sell'
+    ? Result.succeed(value)
+    : failLedgerPlan(invalidInputValue('fill.side', 'fill-side', value, eventIndex, 'fill'))
+
 const planEvents = (result: LedgerInput): Result.Result<PlannedEvents, LedgerPlanFailureDetail> =>
   Result.gen(function* () {
     const events = yield* Result.mapError(
@@ -376,24 +432,28 @@ const planEvents = (result: LedgerInput): Result.Result<PlannedEvents, LedgerPla
     const cashYields: PlannedCashYieldEvent[] = []
 
     for (const [eventIndex, event] of events.entries()) {
-      const kind = yield* Result.mapError(
+      const rawKind = yield* Result.mapError(
         Result.try(() => event.kind),
         (cause) => inputAccessFailure('event.kind', cause, eventIndex),
       )
+      const kind = yield* requireEventKind(rawKind, eventIndex)
       if (kind === 'fill') {
         const fill = event as FillEvent
-        const id = yield* Result.mapError(
+        const rawId = yield* Result.mapError(
           Result.try(() => fill.id),
           (cause) => inputAccessFailure('fill.id', cause, eventIndex, kind),
         )
-        const symbol = yield* Result.mapError(
+        const id = yield* requireStringInput('fill.id', rawId, eventIndex, kind)
+        const rawSymbol = yield* Result.mapError(
           Result.try(() => fill.symbol),
           (cause) => inputAccessFailure('fill.symbol', cause, eventIndex, kind),
         )
-        const side = yield* Result.mapError(
+        const symbol = yield* requireStringInput('fill.symbol', rawSymbol, eventIndex, kind)
+        const rawSide = yield* Result.mapError(
           Result.try(() => fill.side),
           (cause) => inputAccessFailure('fill.side', cause, eventIndex, kind),
         )
+        const side = yield* requireFillSide(rawSide, eventIndex)
         const notionalMicros = yield* Result.mapError(
           Result.try(() => fill.notionalMicros),
           (cause) => inputAccessFailure('fill.notionalMicros', cause, eventIndex, kind),
@@ -405,10 +465,11 @@ const planEvents = (result: LedgerInput): Result.Result<PlannedEvents, LedgerPla
         fills.push({ event: fill, id, symbol, side, notionalMicros, costBasisMicros })
       } else if (kind === 'fee') {
         const fee = event as FeeEvent
-        const id = yield* Result.mapError(
+        const rawId = yield* Result.mapError(
           Result.try(() => fee.id),
           (cause) => inputAccessFailure('fee.id', cause, eventIndex, kind),
         )
+        const id = yield* requireStringInput('fee.id', rawId, eventIndex, kind)
         const totalMicros = yield* Result.mapError(
           Result.try(() => fee.totalMicros),
           (cause) => inputAccessFailure('fee.totalMicros', cause, eventIndex, kind),
@@ -416,10 +477,11 @@ const planEvents = (result: LedgerInput): Result.Result<PlannedEvents, LedgerPla
         fees.push({ event: fee, id, totalMicros })
       } else if (kind === 'cash-yield') {
         const cashYield = event as CashYieldEvent
-        const id = yield* Result.mapError(
+        const rawId = yield* Result.mapError(
           Result.try(() => cashYield.id),
           (cause) => inputAccessFailure('cashYield.id', cause, eventIndex, kind),
         )
+        const id = yield* requireStringInput('cashYield.id', rawId, eventIndex, kind)
         const amountMicros = yield* Result.mapError(
           Result.try(() => cashYield.amountMicros),
           (cause) => inputAccessFailure('cashYield.amountMicros', cause, eventIndex, kind),
@@ -436,10 +498,11 @@ const buildLedgerPlanDecision = (
   ledger: number,
 ): Result.Result<LedgerPlan, LedgerPlanFailureDetail> =>
   Result.gen(function* () {
-    const runId = yield* Result.mapError(
+    const rawRunId = yield* Result.mapError(
       Result.try(() => result.runId),
       (cause) => inputAccessFailure('runId', cause),
     )
+    const runId = yield* requireStringInput('runId', rawRunId)
     const initialCapitalMicros = yield* Result.mapError(
       Result.try(() => result.initialCapitalMicros),
       (cause) => inputAccessFailure('initialCapitalMicros', cause),
@@ -458,15 +521,18 @@ const buildLedgerPlanDecision = (
     const cashYieldIncome = addAccount('cash-yield-income', AccountCode.cashYieldIncome)
     const realizedGain = addAccount('realized-gain', AccountCode.realizedGain)
     const realizedLoss = addAccount('realized-loss', AccountCode.realizedLoss)
-    const inventorySymbols = yield* Result.mapError(
-      Result.try(() => result.inputManifest.symbols.map((coverage) => coverage.symbol).sort()),
+    const rawInventorySymbols = yield* Result.mapError(
+      Result.try(() => result.inputManifest.symbols.map((coverage) => coverage.symbol as unknown)),
       (cause): LedgerPlanFailureDetail => ({
         kind: 'input-access-failed',
         field: 'inputManifest.symbols',
         cause,
       }),
     )
-    for (const symbol of inventorySymbols) {
+    const inventorySymbols = yield* Result.all(
+      rawInventorySymbols.map((symbol, index) => requireStringInput('inputManifest.symbol', symbol, index)),
+    )
+    for (const symbol of inventorySymbols.toSorted()) {
       addAccount(`inventory:${symbol}`, AccountCode.inventory)
     }
 

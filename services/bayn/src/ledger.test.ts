@@ -541,6 +541,57 @@ describe('TigerBeetle simulation journal', () => {
     expect(writes).toBe(0)
   })
 
+  test('rejects hostile event identity before TigerBeetle writes or failure rendering', async () => {
+    const { result } = evaluationPlan()
+    const fill = result.events.find((event): event is FillEvent => event.kind === 'fill')
+    assert(fill, 'evaluation fixture must contain a fill event')
+    let writes = 0
+    const client = makeTigerBeetleClient({
+      createAccounts: async () => {
+        writes += 1
+        return []
+      },
+      createTransfers: async () => {
+        writes += 1
+        return []
+      },
+    })
+
+    const error = await Effect.runPromise(
+      Effect.flip(
+        withJournal(client, (journal) =>
+          journal.journalAndReconcile({
+            ...result,
+            events: [{ ...fill, id: Symbol('fill-id') as unknown as string }],
+          }),
+        ),
+      ),
+    )
+
+    expect(error.retryable).toBeFalse()
+    expect(error.operation).toBe('build-plan')
+    expect(error.cause).toBeInstanceOf(LedgerValidationError)
+    if (error.cause instanceof LedgerValidationError) {
+      expect(error.cause).toMatchObject({
+        operation: 'build-plan',
+        reason: 'ledger-plan-failure',
+        message: 'TigerBeetle build-plan failed: fill.id is not a valid string',
+        material: {
+          ledger: journalConfig.tigerBeetle.ledger,
+          failure: {
+            kind: 'input-value-invalid',
+            field: 'fill.id',
+            expected: 'string',
+            actualType: 'symbol',
+            index: 0,
+            eventKind: 'fill',
+          },
+        },
+      })
+    }
+    expect(writes).toBe(0)
+  })
+
   test('retains hostile amount coercion inside the non-retryable journal boundary', async () => {
     const { result } = evaluationPlan()
     const fill = result.events.find((event): event is FillEvent => event.kind === 'fill')

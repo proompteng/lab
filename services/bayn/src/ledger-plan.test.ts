@@ -366,6 +366,67 @@ describe('ledger plan Result algebra', () => {
     })
   })
 
+  test('rejects hostile scalar identities before hashing or rendering can coerce them', () => {
+    const result = evaluationResult()
+    const fill = firstFill(result, 'buy')
+    let runIdCoercions = 0
+    const hostileRunId = {
+      [Symbol.toPrimitive]: () => {
+        runIdCoercions += 1
+        throw new TypeError('ledger-plan run identity coercion is unavailable')
+      },
+    }
+
+    expect(
+      assertLedgerPlanFailure(buildLedgerPlan({ ...result, runId: hostileRunId as unknown as string }, ledger)),
+    ).toEqual({
+      kind: 'input-value-invalid',
+      field: 'runId',
+      expected: 'string',
+      actualType: 'object',
+    })
+    expect(runIdCoercions).toBe(0)
+
+    expect(
+      assertLedgerPlanFailure(
+        buildLedgerPlan({ ...result, events: [{ ...fill, id: Symbol('fill-id') as unknown as string }] }, ledger),
+      ),
+    ).toEqual({
+      kind: 'input-value-invalid',
+      field: 'fill.id',
+      expected: 'string',
+      actualType: 'symbol',
+      index: 0,
+      eventKind: 'fill',
+    })
+
+    expect(
+      assertLedgerPlanFailure(
+        buildLedgerPlan(
+          {
+            ...result,
+            inputManifest: {
+              ...result.inputManifest,
+              symbols: [
+                {
+                  ...result.inputManifest.symbols[0],
+                  symbol: Symbol('inventory-symbol') as unknown as string,
+                },
+              ],
+            },
+          },
+          ledger,
+        ),
+      ),
+    ).toEqual({
+      kind: 'input-value-invalid',
+      field: 'inputManifest.symbol',
+      expected: 'string',
+      actualType: 'symbol',
+      index: 0,
+    })
+  })
+
   test('preserves exact TigerBeetle identity, ordering, amounts, flags, and replay hash', () => {
     const result = evaluationResult()
     const first = assertSuccess(buildLedgerPlan(result, ledger))
