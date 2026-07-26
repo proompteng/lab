@@ -193,17 +193,27 @@ export const assembleValidatedObservations = (
   accountConfiguration: ValidatedAccountConfiguration,
   assets: ValidatedAssets,
   capturedAtMs: number,
-): Result.Result<ValidatedPaperCandidateObservations, PaperCandidateDiscoveryError> =>
-  pipe(
-    Result.try({
-      try: () => new Date(capturedAtMs).toISOString(),
-      catch: (cause): PaperCandidateDiscoveryError => ({
-        _tag: 'ObservationCaptureTimeInvalid',
-        failure: 'broker',
-        observedAtMs: capturedAtMs,
-        cause,
-      }),
-    }),
+): Result.Result<ValidatedPaperCandidateObservations, PaperCandidateDiscoveryError> => {
+  if (!Number.isSafeInteger(capturedAtMs)) {
+    return Result.fail({
+      _tag: 'ObservationCaptureTimeInvalid',
+      failure: 'broker',
+      observedAtMs: capturedAtMs,
+      cause: { _tag: 'ObservationCaptureEpochNotSafeInteger', observedAtMs: capturedAtMs },
+    })
+  }
+  const capturedAtDate = new Date(capturedAtMs)
+  if (!Number.isFinite(capturedAtDate.getTime())) {
+    return Result.fail({
+      _tag: 'ObservationCaptureTimeInvalid',
+      failure: 'broker',
+      observedAtMs: capturedAtMs,
+      cause: { _tag: 'ObservationCaptureEpochOutOfRange', observedAtMs: capturedAtMs },
+    })
+  }
+  const capturedAt = capturedAtDate.toISOString()
+  return pipe(
+    Result.succeed(capturedAt),
     Result.flatMap((capturedAt) =>
       pipe(
         Result.all([
@@ -238,6 +248,7 @@ export const assembleValidatedObservations = (
       ),
     ),
   )
+}
 
 export const validatePaperCandidateDiscoveryObservations = (
   validatedSnapshot: ValidatedPaperCandidateSnapshot,

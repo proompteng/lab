@@ -269,7 +269,15 @@ export type PaperCandidateDiscoveryError =
       readonly _tag: 'ObservationCaptureTimeInvalid'
       readonly failure: 'broker'
       readonly observedAtMs: number
-      readonly cause: unknown
+      readonly cause:
+        | {
+            readonly _tag: 'ObservationCaptureEpochNotSafeInteger'
+            readonly observedAtMs: number
+          }
+        | {
+            readonly _tag: 'ObservationCaptureEpochOutOfRange'
+            readonly observedAtMs: number
+          }
     }
   | {
       readonly _tag: 'AssetMissing'

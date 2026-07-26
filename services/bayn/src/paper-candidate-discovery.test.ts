@@ -534,11 +534,31 @@ describe('paper candidate discovery', () => {
         _tag: 'ObservationCaptureTimeInvalid',
         failure: 'broker',
         observedAtMs: -8_640_000_000_000_001,
+        cause: {
+          _tag: 'ObservationCaptureEpochOutOfRange',
+          observedAtMs: -8_640_000_000_000_001,
+        },
       })
       expect(renderPaperCandidateDiscoveryError(invalidCapture.failure)).toBe(
         'paper candidate observation capture time is invalid: observedMs=-8640000000000001',
       )
     }
+
+    const fractionalCapture = validatePaperCandidateDiscoveryObservations(validatedSnapshot.success, {
+      ...observations,
+      capturedAtMs: Date.parse(observedAt) + 0.5,
+    })
+    expect(fractionalCapture).toEqual(
+      Result.fail({
+        _tag: 'ObservationCaptureTimeInvalid',
+        failure: 'broker',
+        observedAtMs: Date.parse(observedAt) + 0.5,
+        cause: {
+          _tag: 'ObservationCaptureEpochNotSafeInteger',
+          observedAtMs: Date.parse(observedAt) + 0.5,
+        },
+      }),
+    )
 
     const futureAssetObservedAt = '2099-07-24T12:00:01.000Z'
     const capturedAt = '2099-07-24T12:00:00.500Z'
