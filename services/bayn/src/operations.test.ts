@@ -10,6 +10,7 @@ import {
   UnknownError,
 } from 'effect/unstable/sql/SqlError'
 
+import { CycleObservabilityError } from './db/cycle-observability'
 import { DatabaseError } from './db/evidence-store'
 import { acquireSqlLayer, databaseOperation } from './operations'
 
@@ -256,5 +257,45 @@ describe('Bayn database operation failures', () => {
     expect(authentication.retryable).toBe(false)
     expect(authorization.retryable).toBe(false)
     expect(connection.retryable).toBe(true)
+  })
+
+  test('preserves transient cycle-observability query retryability without widening the error boundary', async () => {
+    const classify = (cause: SqlError) =>
+      Effect.runPromise(
+        Effect.flip(
+          databaseOperation(
+            Effect.fail(
+              new CycleObservabilityError({
+                operation: 'read',
+                failure: 'query',
+                message: cause.message,
+                cause,
+              }),
+            ),
+            'cycle-observability',
+          ),
+        ),
+      )
+
+    const [connection, authorization] = await Promise.all([
+      classify(
+        new SqlError({
+          reason: new ConnectionError({ cause: new Error('connection reset'), operation: 'query' }),
+        }),
+      ),
+      classify(
+        new SqlError({
+          reason: new AuthorizationError({ cause: new Error('permission denied'), operation: 'query' }),
+        }),
+      ),
+    ])
+
+    expect(connection).toMatchObject({
+      component: 'database',
+      operation: 'cycle-observability',
+      retryable: true,
+    })
+    expect(connection.cause).toBeInstanceOf(CycleObservabilityError)
+    expect(authorization.retryable).toBe(false)
   })
 })
