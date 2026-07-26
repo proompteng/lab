@@ -18,8 +18,9 @@ import {
   type StoredEvaluationEvidence,
 } from '../evidence-recovery'
 import {
-  ensureSnapshotReferenceResult as ensureSnapshotReferenceRow,
+  ensureSnapshotReference as ensureSnapshotReferenceRow,
   renderSnapshotReferenceIssue,
+  snapshotReferenceIssueTags,
 } from '../snapshot-reference'
 import { databaseError, ensure, runDatabase, type DatabaseError } from './errors'
 import type { ArtifactItemPage, EvidenceStoreService, PersistEvaluationInput, QualificationRecord } from './model'
@@ -560,14 +561,11 @@ export const makeEvidenceStore = Effect.gen(function* () {
     })
 
   const ensureSnapshotReference = (inputManifest: InputManifest) =>
-    Effect.gen(function* () {
-      const validated = yield* ensureSnapshotReferenceRow(sql, inputManifest)
-      yield* Effect.fromResult(validated).pipe(
-        Effect.mapError((cause) =>
-          databaseError('invariant', 'snapshot-reference', renderSnapshotReferenceIssue(cause), cause),
-        ),
-      )
-    })
+    ensureSnapshotReferenceRow(sql, inputManifest).pipe(
+      Effect.catchTag(snapshotReferenceIssueTags, (cause) =>
+        Effect.fail(databaseError('invariant', 'snapshot-reference', renderSnapshotReferenceIssue(cause), cause)),
+      ),
+    )
 
   const readReceipt = (plan: PersistencePlan, deduplicated: boolean) =>
     Effect.gen(function* () {
