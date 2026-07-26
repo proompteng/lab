@@ -301,6 +301,66 @@ const paperIntentEvidence = Effect.gen(function* () {
   return evidence
 })
 
+const evidenceGraphBytes = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  const rows = yield* sql<{ bytes: string }>`
+    SELECT jsonb_build_object(
+      'protocols', COALESCE((
+        SELECT jsonb_agg(to_jsonb(row) || jsonb_build_object('_xmin', row.xmin::text) ORDER BY row.protocol_hash)
+        FROM protocol_locks AS row
+      ), '[]'::jsonb),
+      'snapshots', COALESCE((
+        SELECT jsonb_agg(to_jsonb(row) || jsonb_build_object('_xmin', row.xmin::text) ORDER BY row.snapshot_id)
+        FROM snapshot_references AS row
+      ), '[]'::jsonb),
+      'runs', COALESCE((
+        SELECT jsonb_agg(to_jsonb(row) || jsonb_build_object('_xmin', row.xmin::text) ORDER BY row.run_id)
+        FROM evaluation_runs AS row
+      ), '[]'::jsonb),
+      'artifacts', COALESCE((
+        SELECT jsonb_agg(
+          to_jsonb(row) || jsonb_build_object('_xmin', row.xmin::text)
+          ORDER BY row.run_id, row.artifact_name
+        )
+        FROM evaluation_artifacts AS row
+      ), '[]'::jsonb),
+      'events', COALESCE((
+        SELECT jsonb_agg(
+          to_jsonb(row) || jsonb_build_object('_xmin', row.xmin::text)
+          ORDER BY row.run_id, row.ordinal
+        )
+        FROM evaluation_events AS row
+      ), '[]'::jsonb),
+      'gates', COALESCE((
+        SELECT jsonb_agg(
+          to_jsonb(row) || jsonb_build_object('_xmin', row.xmin::text)
+          ORDER BY row.run_id, row.ordinal
+        )
+        FROM gate_outcomes AS row
+      ), '[]'::jsonb),
+      'statuses', COALESCE((
+        SELECT jsonb_agg(to_jsonb(row) || jsonb_build_object('_xmin', row.xmin::text) ORDER BY row.sequence)
+        FROM status_history AS row
+      ), '[]'::jsonb),
+      'trials', COALESCE((
+        SELECT jsonb_agg(to_jsonb(row) || jsonb_build_object('_xmin', row.xmin::text) ORDER BY row.run_id)
+        FROM qualification_trials AS row
+      ), '[]'::jsonb),
+      'locks', COALESCE((
+        SELECT jsonb_agg(to_jsonb(row) || jsonb_build_object('_xmin', row.xmin::text) ORDER BY row.lock_id)
+        FROM qualification_locks AS row
+      ), '[]'::jsonb),
+      'results', COALESCE((
+        SELECT jsonb_agg(to_jsonb(row) || jsonb_build_object('_xmin', row.xmin::text) ORDER BY row.lock_id)
+        FROM qualification_results AS row
+      ), '[]'::jsonb)
+    )::text AS bytes
+  `
+  const row = rows[0]
+  if (row === undefined) return yield* Effect.die(new Error('evidence graph query returned no row'))
+  return row.bytes
+})
+
 const seedPlannedIntent = (intent: Intent) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
@@ -4341,6 +4401,45 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     )
   })
 
+  test('rejects every former qualification invariant with a byte-identical no-write graph', async () => {
+    const input = makeInput()
+    const qualification = makeLockedInput(input)
+    const otherQualification = makeLockedInput(makeInput('b'.repeat(40)))
+    const invalid = [
+      {
+        ...qualification.open,
+        parameters: { ...qualification.open.parameters, initialCapitalMicros: '1' },
+      },
+      {
+        ...qualification.open,
+        inputManifest: { ...qualification.open.inputManifest, hash: 'f'.repeat(64) },
+      },
+      { ...qualification.open, lock: otherQualification.lock },
+    ]
+    const observed = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const before = yield* evidenceGraphBytes
+        const failures: DatabaseError[] = []
+        const after: string[] = []
+        for (const candidate of invalid) {
+          failures.push(yield* store.openQualification(candidate).pipe(Effect.flip))
+          after.push(yield* evidenceGraphBytes)
+        }
+        return { after, before, failures }
+      }),
+    )
+
+    expect(observed.after).toEqual([observed.before, observed.before, observed.before])
+    expect(observed.failures).toHaveLength(3)
+    expect(observed.failures.every((failure) => failure instanceof DatabaseError)).toBe(true)
+    expect(observed.failures.map((failure) => failure.cause)).toMatchObject([
+      { _tag: 'QualificationMismatch', path: ['provenance', 'strategy', 'parameterHash'] },
+      { _tag: 'QualificationMismatch', path: ['inputManifest', 'hash'] },
+      { _tag: 'QualificationMismatch', path: ['lock', 'candidateRunId'] },
+    ])
+  })
+
   test('opens one concurrent lock and commits one terminal qualification result', async () => {
     const input = makeInput()
     const qualification = makeLockedInput(input)
@@ -4551,13 +4650,19 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const failure = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* EvidenceStore
+        const before = yield* evidenceGraphBytes
         const error = yield* store
           .persist({
             ...input,
             parameters: { ...input.parameters, initialCapitalMicros: '\ud800' },
           })
           .pipe(Effect.flip)
-        return { error, stored: yield* store.read(input.evaluation.runId) }
+        return {
+          after: yield* evidenceGraphBytes,
+          before,
+          error,
+          stored: yield* store.read(input.evaluation.runId),
+        }
       }),
     )
 
@@ -4566,9 +4671,19 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       failure: 'invariant',
       operation: 'plan',
     })
-    expect(failure.error.message).toContain('persistence plan computation failed during construct-persistence-evidence')
-    expect(failure.error.cause).toBeInstanceOf(TypeError)
+    expect(failure.error.message).toContain('persistence parameters failed')
+    expect(failure.error.cause).toMatchObject({
+      _tag: 'PersistenceCanonicalizationFailed',
+      operation: 'parameters',
+      cause: {
+        _tag: 'CanonicalJsonFailure',
+        path: '$.initialCapitalMicros',
+        reason: 'invalid-unicode-surrogate',
+        actualType: 'string',
+      },
+    })
     expect(Option.isNone(failure.stored)).toBe(true)
+    expect(failure.after).toBe(failure.before)
   })
 
   test('burns observed runs and preserves qualification state as append-only', async () => {

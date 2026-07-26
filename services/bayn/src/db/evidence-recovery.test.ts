@@ -813,6 +813,13 @@ describe('evidence recovery verifier', () => {
       operation: 'stored-event-payload',
       subject: firstEvent.event_id,
     })
-    if (failure._tag === 'CanonicalizationFailure') expect(failure.cause).toBeInstanceOf(TypeError)
+    if (failure._tag === 'CanonicalizationFailure') {
+      expect(failure.cause).toEqual({
+        _tag: 'CanonicalJsonFailure',
+        path: '$.targetWeights',
+        reason: 'invalid-unicode-key',
+        actualType: 'string',
+      })
+    }
   })
 })
