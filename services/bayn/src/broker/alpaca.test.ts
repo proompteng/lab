@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { Undici } from '@effect/platform-node'
-import { Effect, Fiber, Layer, Redacted } from 'effect'
+import { Effect, Fiber, Layer, Redacted, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http'
 
@@ -29,6 +29,9 @@ import {
   type BrokerReadShape,
   type ReadOptions,
 } from './alpaca'
+import { decodeOrder } from './alpaca/model'
+import { decimalToMicrosResult, normalizeOrderResult } from './alpaca/normalizers'
+import { responseEvidenceResult } from './alpaca/requests'
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const assetId = 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415'
@@ -1114,6 +1117,115 @@ describe('Alpaca paper reads', () => {
     expect(calls).toBe(callsBeforeInvalidQuery)
   })
 
+  test('returns closed fact-bearing failures at decimal and order boundaries without throwing', () => {
+    const signedMaximum = decimalToMicrosResult('170141183460469231731687303715884.105727', true, 'signed')
+    const unsignedMaximum = decimalToMicrosResult('340282366920938463463374607431768.211455', false, 'unsigned')
+    const signedOverflow = decimalToMicrosResult('170141183460469231731687303715884.105728', true, 'signed')
+    const unsignedOverflow = decimalToMicrosResult('340282366920938463463374607431768.211456', false, 'unsigned')
+    const precisionLoss = decimalToMicrosResult('0.0000001', false, 'precision')
+
+    expect(Result.getOrThrow(signedMaximum)).toBe('170141183460469231731687303715884105727')
+    expect(Result.getOrThrow(unsignedMaximum)).toBe('340282366920938463463374607431768211455')
+    expect(signedOverflow).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'BrokerReadContractFailure', reason: 'DECIMAL_RANGE', field: 'signed' },
+    })
+    expect(unsignedOverflow).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'BrokerReadContractFailure', reason: 'DECIMAL_RANGE', field: 'unsigned' },
+    })
+    expect(precisionLoss).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'BrokerReadContractFailure', reason: 'DECIMAL_PRECISION', field: 'precision' },
+    })
+
+    const decoded = decodeOrder({ ...orderResponse, qty: null, notional: null })
+    expect(Result.isSuccess(decoded)).toBe(true)
+    if (Result.isFailure(decoded)) return
+    expect(() => normalizeOrderResult(decoded.success, accountId, '2026-07-26T08:00:00.000Z')).not.toThrow()
+    expect(normalizeOrderResult(decoded.success, accountId, '2026-07-26T08:00:00.000Z')).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'BrokerReadContractFailure',
+        reason: 'ORDER_SHAPE',
+        message: 'order must contain exactly one of qty or notional',
+      },
+    })
+  })
+
+  test('rejects inconsistent rate-limit evidence as a total typed result', () => {
+    const evidence = responseEvidenceResult(
+      {
+        'x-request-id': 'req-rate-limit',
+        'x-ratelimit-limit': '10',
+        'x-ratelimit-remaining': '11',
+      },
+      200,
+      'a'.repeat(64),
+      '2026-07-26T08:00:00.000Z',
+    )
+
+    expect(evidence).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'BrokerReadContractFailure',
+        reason: 'RATE_LIMIT',
+        field: 'x-ratelimit-remaining',
+        expected: '<=10',
+        actual: '11',
+      },
+    })
+  })
+
+  test('fails typed when raw JSON cannot be canonically hashed', async () => {
+    const response = { ...accountResponse, account_number: '\ud800' }
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, response)))
+
+    const failure = await Effect.runPromise(
+      Effect.flip(withClient(client, (read) => read.account)).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(failure).toMatchObject({
+      operation: 'account',
+      kind: BrokerReadErrorKind.InvalidResponse,
+      retryable: false,
+      status: 200,
+      requestId: 'req-123',
+      cause: {
+        tag: 'BrokerReadContractFailure',
+        message: expect.stringContaining('invalid-unicode-surrogate'),
+      },
+    })
+    expect(failure.contentHash).toBeUndefined()
+    expect(failure.observedAt).toBeUndefined()
+  })
+
+  test('retains raw hash and causal time when rate-limit evidence is inconsistent', async () => {
+    const headers = {
+      ...responseHeaders,
+      'x-ratelimit-limit': '10',
+      'x-ratelimit-remaining': '11',
+    }
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, accountResponse, 200, headers)))
+
+    const failure = await Effect.runPromise(
+      Effect.flip(withClient(client, (read) => read.account)).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(failure).toMatchObject({
+      operation: 'account',
+      kind: BrokerReadErrorKind.InvalidResponse,
+      status: 200,
+      requestId: 'req-123',
+      contentHash: canonicalHashV1(accountResponse),
+      observedAt: '1970-01-01T00:00:00.000Z',
+      cause: {
+        tag: 'BrokerReadContractFailure',
+        message: 'rate-limit remaining exceeds limit',
+      },
+    })
+  })
+
   test('retries transient GET failures only within the configured bound', async () => {
     let calls = 0
     const client = HttpClient.make((request) => {
@@ -1192,6 +1304,39 @@ describe('Alpaca paper reads', () => {
       operation: 'account',
       retryable: true,
     })
+    expect(interrupted).toBe(true)
+  })
+
+  test('interrupts one active GET without starting retries after the deadline', async () => {
+    let calls = 0
+    let interrupted = false
+    const client = HttpClient.make((request) => {
+      calls += 1
+      expect(request.method).toBe('GET')
+      return Effect.never.pipe(
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            interrupted = true
+          }),
+        ),
+      )
+    })
+
+    const program = withClient(
+      client,
+      (read) =>
+        Effect.gen(function* () {
+          const fiber = yield* Effect.flip(read.account).pipe(Effect.forkChild)
+          yield* Effect.yieldNow
+          yield* TestClock.adjust(10)
+          return yield* Fiber.join(fiber)
+        }),
+      { ...options, operationTimeoutMs: 10, retryAttempts: 3 },
+    ).pipe(Effect.provide(TestClock.layer()))
+
+    const failure = await Effect.runPromise(program)
+    expect(failure).toMatchObject({ kind: BrokerReadErrorKind.Timeout, operation: 'account' })
+    expect(calls).toBe(1)
     expect(interrupted).toBe(true)
   })
 
