@@ -483,10 +483,16 @@ describe('TigerBeetle simulation journal', () => {
       expect(error.cause).toMatchObject({
         operation: 'build-plan',
         reason: 'ledger-plan-failure',
-        material: { ledger: journalConfig.tigerBeetle.ledger },
+        material: {
+          ledger: journalConfig.tigerBeetle.ledger,
+          failure: { kind: 'no-fill-events', runId: result.runId, eventCount: 0 },
+        },
       })
-      expect(error.cause.cause).toBeInstanceOf(Error)
-      expect(String(error.cause.cause)).toContain('no fill events')
+      expect(error.cause.cause).toEqual({
+        kind: 'no-fill-events',
+        runId: result.runId,
+        eventCount: 0,
+      })
     }
     expect(writes).toBe(0)
   })

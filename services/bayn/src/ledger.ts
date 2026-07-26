@@ -439,6 +439,7 @@ export {
   validatePersistedRunEvidence,
   type LedgerInput,
   type LedgerPlan,
+  type LedgerPlanFailure,
   type LedgerValidationOperation,
   type LedgerValidationReason,
 } from './ledger-plan'

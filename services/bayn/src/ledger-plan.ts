@@ -1,7 +1,14 @@
 import { Data, Result } from 'effect'
 import { AccountFlags, type Account, type Transfer } from 'tigerbeetle-node'
 
-import { canonicalHashV1, stableU128, stableU64 } from './hash'
+import {
+  canonicalHashV1,
+  canonicalHashV1Result,
+  renderCanonicalJsonFailure,
+  stableU128,
+  stableU64,
+  type CanonicalJsonFailure,
+} from './hash'
 import type { CashYieldEvent, EvaluationEvent, FeeEvent, FillEvent, InputManifest, ReconciliationResult } from './types'
 
 export const LEDGER_SCHEMA_VERSION = 2
@@ -100,6 +107,115 @@ export interface LedgerInput {
   readonly events: readonly EvaluationEvent[]
 }
 
+export type LedgerPlanAmountField =
+  | 'cashYield.amountMicros'
+  | 'fee.totalMicros'
+  | 'fill.costBasisMicros'
+  | 'fill.notionalMicros'
+  | 'initialCapitalMicros'
+
+export type LedgerPlanFailureDetail =
+  | {
+      readonly kind: 'no-fill-events'
+      readonly runId: string
+      readonly eventCount: number
+    }
+  | {
+      readonly kind: 'amount-parse-failed'
+      readonly field: LedgerPlanAmountField
+      readonly value: string
+      readonly eventId?: string
+      readonly cause: unknown
+    }
+  | {
+      readonly kind: 'negative-amount'
+      readonly field: Exclude<LedgerPlanAmountField, 'initialCapitalMicros'>
+      readonly value: bigint
+      readonly eventId: string
+    }
+  | {
+      readonly kind: 'initial-capital-not-positive'
+      readonly value: bigint
+    }
+  | {
+      readonly kind: 'inventory-account-missing'
+      readonly runId: string
+      readonly eventId: string
+      readonly symbol: string
+    }
+  | {
+      readonly kind: 'canonicalization-failed'
+      readonly operation: 'event-transfer'
+      readonly eventId: string
+      readonly leg: string
+      readonly cause: CanonicalJsonFailure
+    }
+  | {
+      readonly kind: 'input-access-failed'
+      readonly field: 'inputManifest.symbols'
+      readonly cause: unknown
+    }
+  | {
+      readonly kind: 'single-query-limit-exceeded'
+      readonly runId: string
+      readonly accountCount: number
+      readonly transferCount: number
+      readonly limit: number
+    }
+
+export type LedgerPlanFailure = LedgerValidationError &
+  LedgerPlanFailureDetail & {
+    readonly detail: LedgerPlanFailureDetail
+  }
+
+export const renderLedgerPlanFailure = (failure: LedgerPlanFailureDetail): string => {
+  switch (failure.kind) {
+    case 'no-fill-events':
+      return 'evaluation produced no fill events to journal'
+    case 'amount-parse-failed':
+      return `${failure.field} is not an integer micros value: ${failure.value}`
+    case 'negative-amount':
+      return `${failure.field} must not be negative`
+    case 'initial-capital-not-positive':
+      return 'initial capital must be positive'
+    case 'inventory-account-missing':
+      return `missing inventory account for ${failure.symbol}`
+    case 'canonicalization-failed':
+      return `event ${failure.eventId} ${failure.leg} material is not canonicalizable: ${renderCanonicalJsonFailure(failure.cause)}`
+    case 'input-access-failed':
+      return `${failure.field} is unavailable`
+    case 'single-query-limit-exceeded':
+      return 'Bayn ledger run exceeds the exact single-query reconciliation limit'
+  }
+}
+
+const ledgerPlanCause = (failure: LedgerPlanFailureDetail): unknown => {
+  switch (failure.kind) {
+    case 'amount-parse-failed':
+    case 'canonicalization-failed':
+    case 'input-access-failed':
+      return failure.cause
+    default:
+      return failure
+  }
+}
+
+const makeLedgerPlanFailure = (ledger: number, detail: LedgerPlanFailureDetail): LedgerPlanFailure =>
+  Object.assign(
+    ledgerValidationError(
+      'build-plan',
+      'ledger-plan-failure',
+      `TigerBeetle build-plan failed: ${renderLedgerPlanFailure(detail)}`,
+      { ledger, failure: detail },
+      ledgerPlanCause(detail),
+    ),
+    detail,
+    { detail },
+  ) as LedgerPlanFailure
+
+const failLedgerPlan = (failure: LedgerPlanFailureDetail): Result.Result<never, LedgerPlanFailureDetail> =>
+  Result.fail(failure)
+
 const account = (
   runId: string,
   runKey: bigint,
@@ -134,206 +250,260 @@ const transfer = (
   amount: bigint,
   code: number,
   event: unknown,
-): Transfer => ({
-  id: stableU128('bayn-transfer-v1', runId, eventId, leg),
-  debit_account_id: debitAccountId,
-  credit_account_id: creditAccountId,
-  amount,
-  pending_id: 0n,
-  user_data_128: stableU128('bayn-event-v1', canonicalHashV1(event)),
-  user_data_64: runTag,
-  user_data_32: LEDGER_SCHEMA_VERSION,
-  timeout: 0,
-  ledger,
-  code,
-  flags: 0,
-  timestamp: 0n,
-})
-
-const positiveAmount = (value: string, name: string): bigint => {
-  const parsed = BigInt(value)
-  if (parsed < 0n) throw new Error(`${name} must not be negative`)
-  return parsed
+): Result.Result<Transfer, LedgerPlanFailureDetail> => {
+  const eventHash = canonicalHashV1Result(event)
+  if (Result.isFailure(eventHash)) {
+    return failLedgerPlan({
+      kind: 'canonicalization-failed',
+      operation: 'event-transfer',
+      eventId,
+      leg,
+      cause: eventHash.failure,
+    })
+  }
+  return Result.succeed({
+    id: stableU128('bayn-transfer-v1', runId, eventId, leg),
+    debit_account_id: debitAccountId,
+    credit_account_id: creditAccountId,
+    amount,
+    pending_id: 0n,
+    user_data_128: stableU128('bayn-event-v1', eventHash.success),
+    user_data_64: runTag,
+    user_data_32: LEDGER_SCHEMA_VERSION,
+    timeout: 0,
+    ledger,
+    code,
+    flags: 0,
+    timestamp: 0n,
+  })
 }
 
-const buildLedgerPlanUnsafe = (result: LedgerInput, ledger: number): LedgerPlan => {
-  const runKey = stableU128('bayn-run-v1', result.runId)
-  const runTag = stableU64('bayn-run-v1', result.runId)
-  const accountsByName = new Map<string, Account>()
-  const addAccount = (name: string, code: number): Account => {
-    const created = account(result.runId, runKey, runTag, ledger, name, code)
-    accountsByName.set(name, created)
-    return created
-  }
-  const cash = addAccount('cash', AccountCode.cash)
-  const equity = addAccount('equity', AccountCode.equity)
-  const fees = addAccount('fee-expense', AccountCode.feeExpense)
-  const cashYieldIncome = addAccount('cash-yield-income', AccountCode.cashYieldIncome)
-  const realizedGain = addAccount('realized-gain', AccountCode.realizedGain)
-  const realizedLoss = addAccount('realized-loss', AccountCode.realizedLoss)
-  for (const symbol of result.inputManifest.symbols.map((coverage) => coverage.symbol).sort()) {
-    addAccount(`inventory:${symbol}`, AccountCode.inventory)
-  }
-
-  const transfers: Transfer[] = []
-  const fillEvents = result.events.filter((event): event is FillEvent => event.kind === 'fill')
-  if (fillEvents.length === 0) throw new Error('evaluation produced no fill events to journal')
-  const startingCapital = BigInt(result.initialCapitalMicros)
-  if (startingCapital <= 0n) throw new Error('initial capital must be positive')
-  transfers.push(
-    transfer(
-      result.runId,
-      runTag,
-      ledger,
-      'funding',
-      'principal',
-      cash.id,
-      equity.id,
-      startingCapital,
-      TransferCode.funding,
-      { kind: 'funding', runId: result.runId, amountMicros: startingCapital.toString() },
-    ),
+const parseAmount = (
+  field: LedgerPlanAmountField,
+  value: string,
+  eventId?: string,
+): Result.Result<bigint, LedgerPlanFailureDetail> =>
+  Result.mapError(
+    Result.try(() => BigInt(value)),
+    (cause): LedgerPlanFailureDetail => ({
+      kind: 'amount-parse-failed',
+      field,
+      value,
+      ...(eventId === undefined ? {} : { eventId }),
+      cause,
+    }),
   )
 
-  for (const fill of fillEvents) {
-    const inventory = accountsByName.get(`inventory:${fill.symbol}`)
-    if (!inventory) throw new Error(`missing inventory account for ${fill.symbol}`)
-    const notional = positiveAmount(fill.notionalMicros, 'fill notional')
-    const costBasis = positiveAmount(fill.costBasisMicros, 'fill cost basis')
-    if (notional === 0n) continue
+const nonNegativeAmount = (
+  field: Exclude<LedgerPlanAmountField, 'initialCapitalMicros'>,
+  value: string,
+  eventId: string,
+): Result.Result<bigint, LedgerPlanFailureDetail> =>
+  Result.flatMap(parseAmount(field, value, eventId), (parsed) =>
+    parsed < 0n ? failLedgerPlan({ kind: 'negative-amount', field, value: parsed, eventId }) : Result.succeed(parsed),
+  )
 
-    if (fill.side === 'buy') {
-      transfers.push(
-        transfer(result.runId, runTag, ledger, fill.id, 'buy', inventory.id, cash.id, notional, TransferCode.buy, fill),
-      )
-    } else if (notional >= costBasis) {
-      if (costBasis > 0n) {
+const buildLedgerPlanDecision = (
+  result: LedgerInput,
+  ledger: number,
+): Result.Result<LedgerPlan, LedgerPlanFailureDetail> =>
+  Result.gen(function* () {
+    const runKey = stableU128('bayn-run-v1', result.runId)
+    const runTag = stableU64('bayn-run-v1', result.runId)
+    const accountsByName = new Map<string, Account>()
+    const addAccount = (name: string, code: number): Account => {
+      const created = account(result.runId, runKey, runTag, ledger, name, code)
+      accountsByName.set(name, created)
+      return created
+    }
+    const cash = addAccount('cash', AccountCode.cash)
+    const equity = addAccount('equity', AccountCode.equity)
+    const fees = addAccount('fee-expense', AccountCode.feeExpense)
+    const cashYieldIncome = addAccount('cash-yield-income', AccountCode.cashYieldIncome)
+    const realizedGain = addAccount('realized-gain', AccountCode.realizedGain)
+    const realizedLoss = addAccount('realized-loss', AccountCode.realizedLoss)
+    const inventorySymbols = yield* Result.mapError(
+      Result.try(() => result.inputManifest.symbols.map((coverage) => coverage.symbol).sort()),
+      (cause): LedgerPlanFailureDetail => ({
+        kind: 'input-access-failed',
+        field: 'inputManifest.symbols',
+        cause,
+      }),
+    )
+    for (const symbol of inventorySymbols) {
+      addAccount(`inventory:${symbol}`, AccountCode.inventory)
+    }
+
+    const transfers: Transfer[] = []
+    const fillEvents = result.events.filter((event): event is FillEvent => event.kind === 'fill')
+    if (fillEvents.length === 0) {
+      return yield* failLedgerPlan({
+        kind: 'no-fill-events',
+        runId: result.runId,
+        eventCount: result.events.length,
+      })
+    }
+    const startingCapital = yield* parseAmount('initialCapitalMicros', result.initialCapitalMicros)
+    if (startingCapital <= 0n) {
+      return yield* failLedgerPlan({ kind: 'initial-capital-not-positive', value: startingCapital })
+    }
+    transfers.push(
+      yield* transfer(
+        result.runId,
+        runTag,
+        ledger,
+        'funding',
+        'principal',
+        cash.id,
+        equity.id,
+        startingCapital,
+        TransferCode.funding,
+        { kind: 'funding', runId: result.runId, amountMicros: startingCapital.toString() },
+      ),
+    )
+
+    for (const fill of fillEvents) {
+      const inventory = accountsByName.get(`inventory:${fill.symbol}`)
+      if (inventory === undefined) {
+        return yield* failLedgerPlan({
+          kind: 'inventory-account-missing',
+          runId: result.runId,
+          eventId: fill.id,
+          symbol: fill.symbol,
+        })
+      }
+      const notional = yield* nonNegativeAmount('fill.notionalMicros', fill.notionalMicros, fill.id)
+      const costBasis = yield* nonNegativeAmount('fill.costBasisMicros', fill.costBasisMicros, fill.id)
+      if (notional === 0n) continue
+
+      if (fill.side === 'buy') {
         transfers.push(
-          transfer(
+          yield* transfer(
             result.runId,
             runTag,
             ledger,
             fill.id,
-            'sell-basis',
+            'buy',
+            inventory.id,
+            cash.id,
+            notional,
+            TransferCode.buy,
+            fill,
+          ),
+        )
+      } else if (notional >= costBasis) {
+        if (costBasis > 0n) {
+          transfers.push(
+            yield* transfer(
+              result.runId,
+              runTag,
+              ledger,
+              fill.id,
+              'sell-basis',
+              cash.id,
+              inventory.id,
+              costBasis,
+              TransferCode.sellBasis,
+              fill,
+            ),
+          )
+        }
+        if (notional > costBasis) {
+          transfers.push(
+            yield* transfer(
+              result.runId,
+              runTag,
+              ledger,
+              fill.id,
+              'realized-gain',
+              cash.id,
+              realizedGain.id,
+              notional - costBasis,
+              TransferCode.realizedGain,
+              fill,
+            ),
+          )
+        }
+      } else {
+        transfers.push(
+          yield* transfer(
+            result.runId,
+            runTag,
+            ledger,
+            fill.id,
+            'sell-proceeds',
             cash.id,
             inventory.id,
-            costBasis,
+            notional,
             TransferCode.sellBasis,
             fill,
           ),
         )
-      }
-      if (notional > costBasis) {
         transfers.push(
-          transfer(
+          yield* transfer(
             result.runId,
             runTag,
             ledger,
             fill.id,
-            'realized-gain',
-            cash.id,
-            realizedGain.id,
-            notional - costBasis,
-            TransferCode.realizedGain,
+            'realized-loss',
+            realizedLoss.id,
+            inventory.id,
+            costBasis - notional,
+            TransferCode.realizedLoss,
             fill,
           ),
         )
       }
-    } else {
-      transfers.push(
-        transfer(
-          result.runId,
-          runTag,
-          ledger,
-          fill.id,
-          'sell-proceeds',
-          cash.id,
-          inventory.id,
-          notional,
-          TransferCode.sellBasis,
-          fill,
-        ),
-      )
-      transfers.push(
-        transfer(
-          result.runId,
-          runTag,
-          ledger,
-          fill.id,
-          'realized-loss',
-          realizedLoss.id,
-          inventory.id,
-          costBasis - notional,
-          TransferCode.realizedLoss,
-          fill,
-        ),
-      )
     }
-  }
-  const feeEvents = result.events.filter((event): event is FeeEvent => event.kind === 'fee')
-  for (const fee of feeEvents) {
-    const amount = positiveAmount(fee.totalMicros, 'fee total')
-    if (amount > 0n) {
-      transfers.push(
-        transfer(result.runId, runTag, ledger, fee.id, 'fee', fees.id, cash.id, amount, TransferCode.fee, fee),
-      )
+    const feeEvents = result.events.filter((event): event is FeeEvent => event.kind === 'fee')
+    for (const fee of feeEvents) {
+      const amount = yield* nonNegativeAmount('fee.totalMicros', fee.totalMicros, fee.id)
+      if (amount > 0n) {
+        transfers.push(
+          yield* transfer(result.runId, runTag, ledger, fee.id, 'fee', fees.id, cash.id, amount, TransferCode.fee, fee),
+        )
+      }
     }
-  }
-  const cashYieldEvents = result.events.filter((event): event is CashYieldEvent => event.kind === 'cash-yield')
-  for (const cashYield of cashYieldEvents) {
-    const amount = positiveAmount(cashYield.amountMicros, 'cash yield')
-    if (amount > 0n) {
-      transfers.push(
-        transfer(
-          result.runId,
-          runTag,
-          ledger,
-          cashYield.id,
-          'cash-yield',
-          cash.id,
-          cashYieldIncome.id,
-          amount,
-          TransferCode.cashYield,
-          cashYield,
-        ),
-      )
+    const cashYieldEvents = result.events.filter((event): event is CashYieldEvent => event.kind === 'cash-yield')
+    for (const cashYield of cashYieldEvents) {
+      const amount = yield* nonNegativeAmount('cashYield.amountMicros', cashYield.amountMicros, cashYield.id)
+      if (amount > 0n) {
+        transfers.push(
+          yield* transfer(
+            result.runId,
+            runTag,
+            ledger,
+            cashYield.id,
+            'cash-yield',
+            cash.id,
+            cashYieldIncome.id,
+            amount,
+            TransferCode.cashYield,
+            cashYield,
+          ),
+        )
+      }
     }
-  }
 
-  if (accountsByName.size >= LEDGER_BATCH_MAX || transfers.length >= LEDGER_BATCH_MAX) {
-    throw new Error('Bayn ledger run exceeds the exact single-query reconciliation limit')
-  }
-  return {
-    runKey,
-    runTag,
-    accounts: [...accountsByName.values()].sort((left, right) => (left.id < right.id ? -1 : 1)),
-    transfers: transfers.sort((left, right) => (left.id < right.id ? -1 : 1)),
-  }
-}
-
-const causeMessage = (cause: unknown): string => {
-  const rendered = Result.try({
-    try: () => String(cause instanceof Error ? cause.message : cause),
-    catch: () => undefined,
+    if (accountsByName.size >= LEDGER_BATCH_MAX || transfers.length >= LEDGER_BATCH_MAX) {
+      return yield* failLedgerPlan({
+        kind: 'single-query-limit-exceeded',
+        runId: result.runId,
+        accountCount: accountsByName.size,
+        transferCount: transfers.length,
+        limit: LEDGER_BATCH_MAX,
+      })
+    }
+    return {
+      runKey,
+      runTag,
+      accounts: [...accountsByName.values()].sort((left, right) => (left.id < right.id ? -1 : 1)),
+      transfers: transfers.sort((left, right) => (left.id < right.id ? -1 : 1)),
+    }
   })
-  return Result.isSuccess(rendered) ? rendered.success : 'unrenderable cause'
-}
 
-export const buildLedgerPlan = (
-  result: LedgerInput,
-  ledger: number,
-): Result.Result<LedgerPlan, LedgerValidationError> =>
-  Result.try({
-    try: () => buildLedgerPlanUnsafe(result, ledger),
-    catch: (cause) =>
-      ledgerValidationError(
-        'build-plan',
-        'ledger-plan-failure',
-        `TigerBeetle build-plan failed: ${causeMessage(cause)}`,
-        { ledger },
-        cause,
-      ),
-  })
+export const buildLedgerPlan = (result: LedgerInput, ledger: number): Result.Result<LedgerPlan, LedgerPlanFailure> =>
+  Result.mapError(buildLedgerPlanDecision(result, ledger), (failure) => makeLedgerPlanFailure(ledger, failure))
 
 const serializeRecord = (record: Account | Transfer): Record<string, number | string> =>
   Object.fromEntries(
