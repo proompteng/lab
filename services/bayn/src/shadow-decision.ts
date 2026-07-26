@@ -4,7 +4,7 @@ import { Data, Effect, Result, Schema } from 'effect'
 
 import { AutonomousCycleSchema, CycleState, type AutonomousCycle } from './cycle'
 import { DecisionPlanSchema, type DecisionPlan } from './evidence-contracts'
-import { intentIdForPlan, IntentPlanSchema, type IntentPlan } from './execution/intents'
+import { intentIdForPlan, IntentPlanSchema, type IntentPlan } from './execution/intents/domain'
 import { canonicalHashV1Result } from './hash'
 import {
   Authority,
