@@ -1,7 +1,7 @@
 import { Data, DateTime, Result, Schema } from 'effect'
 
 import type { MarketCalendarObservation, MarketCalendarSession } from './broker/alpaca'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { ExecutionModelV2Schema } from './protocol'
 import {
   IsoDateSchema,
@@ -16,10 +16,8 @@ const autonomousCycleSubmissionWindowMs = 30 * 60_000
 const SubmissionWindowMsSchema = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(86_400_000))
 const maximumSubmissionDurationMs = 86_400_000
 
-const canonicalHashResult = (value: unknown): Result.Result<string, unknown> => Result.try(() => canonicalHashV1(value))
-
 const canonicalHashMatches = (value: unknown, expectedHash: string): boolean => {
-  const hash = canonicalHashResult(value)
+  const hash = canonicalHashV1Result(value)
   return Result.isSuccess(hash) && hash.success === expectedHash
 }
 
@@ -589,13 +587,11 @@ export const makeCycleExecutionPolicy = (
     ),
     (decoded) =>
       Result.flatMap(
-        Result.try({
-          try: () => ({ ...decoded, executionPolicyHash: canonicalHashV1(decoded) }),
-          catch: (cause) =>
-            executionPolicyFailure('hash', 'cycle execution policy material is not canonicalizable', {}, cause),
-        }),
-        (policy) =>
-          Result.mapError(decodeCycleExecutionPolicyResult(policy), (cause) =>
+        Result.mapError(canonicalHashV1Result(decoded), (cause) =>
+          executionPolicyFailure('hash', 'cycle execution policy material is not canonicalizable', {}, cause),
+        ),
+        (executionPolicyHash) =>
+          Result.mapError(decodeCycleExecutionPolicyResult({ ...decoded, executionPolicyHash }), (cause) =>
             executionPolicyFailure('decode', 'cycle execution policy is invalid', {}, cause),
           ),
       ),
@@ -610,11 +606,9 @@ export const makeCycleExecutionPolicyFromModel = (
     ),
     (decodedModel) =>
       Result.flatMap(
-        Result.try({
-          try: () => canonicalHashV1(decodedModel),
-          catch: (cause) =>
-            executionPolicyFailure('hash', 'strategy execution model is not canonicalizable', {}, cause),
-        }),
+        Result.mapError(canonicalHashV1Result(decodedModel), (cause) =>
+          executionPolicyFailure('hash', 'strategy execution model is not canonicalizable', {}, cause),
+        ),
         (strategyExecutionModelHash) =>
           makeCycleExecutionPolicy({
             schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
@@ -656,24 +650,24 @@ export const makeExecutionCalendarObservation = (
         ),
         (material) =>
           Result.flatMap(
-            Result.try({
-              try: () => ({ ...material, executionCalendarHash: canonicalHashV1(material) }),
-              catch: (cause) =>
-                executionCalendarFailure(
-                  'hash',
-                  'broker calendar session is not canonicalizable',
-                  { sessionDate: decoded.date },
-                  cause,
-                ),
-            }),
-            (observation) =>
-              Result.mapError(decodeExecutionCalendarObservationResult(observation), (cause) =>
-                executionCalendarFailure(
-                  'decode',
-                  'selected broker calendar session is invalid',
-                  { sessionDate: decoded.date },
-                  cause,
-                ),
+            Result.mapError(canonicalHashV1Result(material), (cause) =>
+              executionCalendarFailure(
+                'hash',
+                'broker calendar session is not canonicalizable',
+                { sessionDate: decoded.date },
+                cause,
+              ),
+            ),
+            (executionCalendarHash) =>
+              Result.mapError(
+                decodeExecutionCalendarObservationResult({ ...material, executionCalendarHash }),
+                (cause) =>
+                  executionCalendarFailure(
+                    'decode',
+                    'selected broker calendar session is invalid',
+                    { sessionDate: decoded.date },
+                    cause,
+                  ),
               ),
           ),
       )
@@ -687,12 +681,11 @@ export const makeCycleIdentity = (material: unknown): Result.Result<CycleIdentit
     ),
     (decoded) =>
       Result.flatMap(
-        Result.try({
-          try: () => ({ ...decoded, cycleId: canonicalHashV1(decoded) }),
-          catch: (cause) => cycleIdentityFailure('hash', 'cycle identity material is not canonicalizable', {}, cause),
-        }),
-        (identity) =>
-          Result.mapError(decodeCycleIdentityResult(identity), (cause) =>
+        Result.mapError(canonicalHashV1Result(decoded), (cause) =>
+          cycleIdentityFailure('hash', 'cycle identity material is not canonicalizable', {}, cause),
+        ),
+        (cycleId) =>
+          Result.mapError(decodeCycleIdentityResult({ ...decoded, cycleId }), (cause) =>
             cycleIdentityFailure(
               'session-order',
               'execution session must follow the Signal session',
@@ -875,9 +868,9 @@ export const cycleDraftOf = (cycle: AutonomousCycle): CycleDraft => ({
 })
 
 export const cycleDraftMatches = (left: CycleDraft, right: CycleDraft): boolean => {
-  const leftHash = canonicalHashResult(left)
+  const leftHash = canonicalHashV1Result(left)
   if (Result.isFailure(leftHash)) return false
-  const rightHash = canonicalHashResult(right)
+  const rightHash = canonicalHashV1Result(right)
   return Result.isSuccess(rightHash) && leftHash.success === rightHash.success
 }
 

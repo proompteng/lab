@@ -7,7 +7,7 @@ import {
   type AutonomousCycle,
   type ExecutionCalendarObservation,
 } from './cycle'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { ExecutionModelV2Schema, type ExecutionModel } from './protocol'
 import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from './schemas'
 
@@ -155,10 +155,9 @@ const calendarObservationMaterial = (observation: CalendarIdentity) => ({
 })
 
 const validateCalendarHash = (calendar: CalendarIdentity): Result.Result<void, ExecutionSessionBindingFailure> => {
-  const observedCalendarHash = Result.try({
-    try: () => canonicalHashV1(calendarObservationMaterial(calendar)),
-    catch: (cause) => deriveWindowFailure('hash', 'Alpaca market calendar content is not canonicalizable', {}, cause),
-  })
+  const observedCalendarHash = Result.mapError(canonicalHashV1Result(calendarObservationMaterial(calendar)), (cause) =>
+    deriveWindowFailure('hash', 'Alpaca market calendar content is not canonicalizable', {}, cause),
+  )
   if (Result.isFailure(observedCalendarHash)) return Result.fail(observedCalendarHash.failure)
   if (observedCalendarHash.success !== calendar.normalizedResponseHash) {
     return Result.fail(
@@ -341,7 +340,7 @@ const bindingIssues = (binding: typeof ExecutionSessionBindingBase.Type): readon
     }
   }
   const { bindingHash, ...material } = binding
-  const expectedBindingHash = Result.try(() => canonicalHashV1(material))
+  const expectedBindingHash = canonicalHashV1Result(material)
   if (Result.isFailure(expectedBindingHash)) {
     issues.push({ path: ['bindingHash'], issue: 'execution-session material must be canonicalizable' })
   } else if (bindingHash !== expectedBindingHash.success) {
@@ -419,12 +418,11 @@ const bindDecodedExecutionSession = (
         submissionCutoffLeadMinutes: input.executionModel.order.submissionCutoffLeadMinutes,
       } as const
       return Result.flatMap(
-        Result.try({
-          try: () => ({ ...material, bindingHash: canonicalHashV1(material) }),
-          catch: (cause) => bindFailure('hash', 'execution-session binding material is not canonicalizable', {}, cause),
-        }),
-        (binding) =>
-          Result.mapError(decodeExecutionSessionBindingResult(binding), (cause) =>
+        Result.mapError(canonicalHashV1Result(material), (cause) =>
+          bindFailure('hash', 'execution-session binding material is not canonicalizable', {}, cause),
+        ),
+        (bindingHash) =>
+          Result.mapError(decodeExecutionSessionBindingResult({ ...material, bindingHash }), (cause) =>
             bindFailure('decode', 'derived execution-session binding is invalid', {}, cause),
           ),
       )
@@ -536,16 +534,14 @@ const validateCycleExecutionPolicy = (
   input: DecodedBindCycleExecutionSessionInput,
   binding: ExecutionSessionBinding,
 ): Result.Result<void, ExecutionSessionBindingFailure> => {
-  const executionModelHash = Result.try({
-    try: () => canonicalHashV1(input.executionModel),
-    catch: (cause) =>
-      bindCycleFailure(
-        'hash',
-        'execution model is not canonicalizable',
-        { cycleId: input.cycle.identity.cycleId },
-        cause,
-      ),
-  })
+  const executionModelHash = Result.mapError(canonicalHashV1Result(input.executionModel), (cause) =>
+    bindCycleFailure(
+      'hash',
+      'execution model is not canonicalizable',
+      { cycleId: input.cycle.identity.cycleId },
+      cause,
+    ),
+  )
   if (Result.isFailure(executionModelHash)) return Result.fail(executionModelHash.failure)
   if (executionModelHash.success !== input.cycle.identity.executionPolicy.strategyExecutionModelHash) {
     return Result.fail(

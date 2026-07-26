@@ -2,7 +2,7 @@ import { Data, Result, Schema, pipe } from 'effect'
 
 import { IntentPlanSchema, type IntentPlan } from './execution/intents'
 import { desiredQuantityMicros, MICROS } from './execution-model'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import {
   AccountSnapshotSchema,
   AccountStatus,
@@ -457,10 +457,7 @@ const TargetPlanResultSemanticSchema = TargetPlanResultBase.check(Schema.makeFil
 
 const targetPlanHashIssues = (result: typeof TargetPlanResultSemanticSchema.Type): readonly Schema.FilterIssue[] => {
   const { outputHash, ...material } = result
-  const expectedHash = Result.try({
-    try: () => canonicalHashV1(material),
-    catch: (cause) => cause,
-  })
+  const expectedHash = canonicalHashV1Result(material)
   if (Result.isFailure(expectedHash)) {
     return [{ path: ['outputHash'], issue: 'target-plan output material must be canonicalizable' }]
   }
@@ -595,7 +592,7 @@ const plannerInputHash = (
   value: unknown,
 ): Result.Result<string, TargetPlannerFailure> =>
   pipe(
-    Result.try(() => canonicalHashV1(value)),
+    canonicalHashV1Result(value),
     Result.mapError((cause) =>
       canonicalizePlannerInputFailure(
         'hash',
@@ -921,17 +918,18 @@ const computeTargetPlan = (facts: TargetPlannerFacts): Result.Result<OutputMater
 
 const finalizeTargetPlan = (material: OutputMaterial): Result.Result<TargetPlanResult, TargetPlannerFailure> =>
   Result.flatMap(
-    Result.try({
-      try: () => ({ ...material, outputHash: canonicalHashV1(material) }),
-      catch: (cause) =>
+    pipe(
+      canonicalHashV1Result(material),
+      Result.mapError((cause) =>
         canonicalizePlannerOutputFailure(
           'hash',
           'target-plan output material is not canonicalizable',
           { inputHash: material.inputHash, status: material.status },
           cause,
         ),
-    }),
-    decodeTargetPlanResult,
+      ),
+    ),
+    (outputHash) => decodeTargetPlanResult({ ...material, outputHash }),
   )
 
 export const decodeTargetPlanResult = (input: unknown): Result.Result<TargetPlanResult, TargetPlannerFailure> =>
@@ -942,16 +940,17 @@ export const decodeTargetPlanResult = (input: unknown): Result.Result<TargetPlan
     (decoded) => {
       const { outputHash, ...material } = decoded
       return Result.flatMap(
-        Result.try({
-          try: () => canonicalHashV1(material),
-          catch: (cause) =>
+        pipe(
+          canonicalHashV1Result(material),
+          Result.mapError((cause) =>
             canonicalizePlannerOutputFailure(
               'hash',
               'target-plan output material is not canonicalizable',
               { inputHash: decoded.inputHash, path: ['outputHash'], status: decoded.status },
               cause,
             ),
-        }),
+          ),
+        ),
         (expectedHash) =>
           expectedHash === outputHash
             ? Result.succeed(decoded)
