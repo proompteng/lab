@@ -1,4 +1,4 @@
-import { pipe, Result } from 'effect'
+import { Chunk, pipe, Result } from 'effect'
 
 import {
   calculateSessionFees,
@@ -684,7 +684,7 @@ const validateOrdersAndFills = (
   }))
   if (Result.isFailure(orders)) return failIssues(orders.failure)
   const preparedFills = [...orders.success.values()].reduce<
-    Validation<readonly { readonly eventIndex: number; readonly fill: ValidatedFill }[]>
+    Validation<Chunk.Chunk<{ readonly eventIndex: number; readonly fill: ValidatedFill }>>
   >(
     (prepared, order) =>
       pipe(
@@ -696,18 +696,20 @@ const validateOrdersAndFills = (
             Result.map((fill) =>
               fill === undefined || indexedFill === undefined
                 ? items
-                : [...items, { eventIndex: indexedFill.eventIndex, fill }],
+                : Chunk.prepend(items, { eventIndex: indexedFill.eventIndex, fill }),
             ),
           )
         }),
       ),
-    Result.succeed([]),
+    Result.succeed(Chunk.empty()),
   )
   if (Result.isFailure(preparedFills)) return failIssues(preparedFills.failure)
   const orphan = fills.find((fill) => !orders.success.has(fill.orderId))
   return orphan === undefined
     ? Result.succeed(
-        preparedFills.success.toSorted((left, right) => left.eventIndex - right.eventIndex).map(({ fill }) => fill),
+        Chunk.toReadonlyArray(preparedFills.success)
+          .toSorted((left, right) => left.eventIndex - right.eventIndex)
+          .map(({ fill }) => fill),
       )
     : fail({
         _tag: 'MissingReference',
@@ -737,18 +739,21 @@ const validateFeesAndYields = (
   }))
   if (Result.isFailure(indexedCashYields)) return failIssues(indexedCashYields.failure)
   const fillsBySession = groupValuesBy(fills, (fill) => fill.event.sessionDate)
-  return fees.reduce<Validation<readonly ValidatedFee[]>>(
-    (prepared, fee) =>
-      pipe(
-        prepared,
-        Result.flatMap((items) =>
-          pipe(
-            validateFee(runId, fee, fillsBySession.get(fee.sessionDate) ?? [], simulation, costMultiplierMicros),
-            Result.map((valid) => [...items, valid]),
+  return pipe(
+    fees.reduce<Validation<Chunk.Chunk<ValidatedFee>>>(
+      (prepared, fee) =>
+        pipe(
+          prepared,
+          Result.flatMap((items) =>
+            pipe(
+              validateFee(runId, fee, fillsBySession.get(fee.sessionDate) ?? [], simulation, costMultiplierMicros),
+              Result.map((valid) => Chunk.prepend(items, valid)),
+            ),
           ),
         ),
-      ),
-    Result.succeed([]),
+      Result.succeed(Chunk.empty()),
+    ),
+    Result.map((reversed) => Chunk.toReadonlyArray(Chunk.reverse(reversed))),
   )
 }
 
@@ -773,7 +778,7 @@ interface MonetaryEvidence {
 }
 
 interface MonetaryAccumulator {
-  readonly events: readonly PreparedMonetaryEvent[]
+  readonly reversedEvents: Chunk.Chunk<PreparedMonetaryEvent>
   readonly fillIndex: number
   readonly feeIndex: number
 }
@@ -833,25 +838,37 @@ const validateMonetaryEvidence = (
             if (event.kind === 'cash-yield') {
               return Result.succeed({
                 ...accumulator,
-                events: [...accumulator.events, { kind: 'cash-yield', event, cashChange }],
+                reversedEvents: Chunk.prepend(accumulator.reversedEvents, {
+                  kind: 'cash-yield',
+                  event,
+                  cashChange,
+                }),
               })
             }
             return event.kind === 'fill'
               ? Result.succeed({
-                  events: [...accumulator.events, { ...fills[accumulator.fillIndex], cashChange }],
+                  reversedEvents: Chunk.prepend(accumulator.reversedEvents, {
+                    ...fills[accumulator.fillIndex],
+                    cashChange,
+                  }),
                   fillIndex: accumulator.fillIndex + 1,
                   feeIndex: accumulator.feeIndex,
                 })
               : Result.succeed({
-                  events: [...accumulator.events, { ...fees[accumulator.feeIndex], cashChange }],
+                  reversedEvents: Chunk.prepend(accumulator.reversedEvents, {
+                    ...fees[accumulator.feeIndex],
+                    cashChange,
+                  }),
                   fillIndex: accumulator.fillIndex,
                   feeIndex: accumulator.feeIndex + 1,
                 })
           }),
         ),
-      Result.succeed({ events: [], fillIndex: 0, feeIndex: 0 }),
+      Result.succeed({ reversedEvents: Chunk.empty(), fillIndex: 0, feeIndex: 0 }),
     ),
-    Result.map(({ events: monetaryEvents }) => ({ events: monetaryEvents })),
+    Result.map(({ reversedEvents }) => ({
+      events: Chunk.toReadonlyArray(Chunk.reverse(reversedEvents)),
+    })),
   )
 }
 

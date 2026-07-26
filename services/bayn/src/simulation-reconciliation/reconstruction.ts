@@ -368,27 +368,49 @@ const valueMarkedPositions = (state: ReconstructionState, mark: DailyPositionMar
       })
 }
 
-const eventsDueAtMark = (
+interface DueEventRange {
+  readonly startIndex: number
+  readonly endIndex: number
+}
+
+const selectDueEventRange = (
   prepared: PreparedReconciliation,
   state: ReconstructionState,
   mark: DailyPositionMark,
-): Validation<readonly PreparedMonetaryEvent[]> => {
-  const remaining = prepared.monetaryEvents.slice(state.eventIndex)
-  const firstFutureIndex = remaining.findIndex((event) => event.event.sessionDate > mark.sessionDate)
-  const due = firstFutureIndex === -1 ? remaining : remaining.slice(0, firstFutureIndex)
-  const missed = due.find((event) => event.event.sessionDate !== mark.sessionDate)
-  return missed === undefined
-    ? Result.succeed(due)
-    : fail({
-        _tag: 'IncompleteEvidence',
-        problem: {
-          _tag: 'MissingSessionMark',
-          eventId: missed.event.id,
-          eventSessionDate: missed.event.sessionDate,
-          nextMarkSessionDate: mark.sessionDate,
-        },
-      })
+): Validation<DueEventRange> => {
+  const first = prepared.monetaryEvents[state.eventIndex]
+  if (first === undefined || first.event.sessionDate > mark.sessionDate) {
+    return Result.succeed({ startIndex: state.eventIndex, endIndex: state.eventIndex })
+  }
+  if (first.event.sessionDate < mark.sessionDate) {
+    return fail({
+      _tag: 'IncompleteEvidence',
+      problem: {
+        _tag: 'MissingSessionMark',
+        eventId: first.event.id,
+        eventSessionDate: first.event.sessionDate,
+        nextMarkSessionDate: mark.sessionDate,
+      },
+    })
+  }
+  let endIndex = state.eventIndex + 1
+  while (prepared.monetaryEvents[endIndex]?.event.sessionDate === mark.sessionDate) endIndex += 1
+  return Result.succeed({ startIndex: state.eventIndex, endIndex })
 }
+
+const applyEventRange = (
+  prepared: PreparedReconciliation,
+  state: ReconstructionState,
+  range: DueEventRange,
+): Validation<ReconstructionState> =>
+  prepared.monetaryEvents.slice(range.startIndex, range.endIndex).reduce<Validation<ReconstructionState>>(
+    (reconstructed, event) =>
+      pipe(
+        reconstructed,
+        Result.flatMap((snapshot) => applyEvent(prepared, snapshot, event)),
+      ),
+    Result.succeed(state),
+  )
 
 const applyEventsAtMark = (
   prepared: PreparedReconciliation,
@@ -396,17 +418,8 @@ const applyEventsAtMark = (
   mark: DailyPositionMark,
 ): Validation<ReconstructionState> =>
   pipe(
-    eventsDueAtMark(prepared, state, mark),
-    Result.flatMap((events) =>
-      events.reduce<Validation<ReconstructionState>>(
-        (current, event) =>
-          pipe(
-            current,
-            Result.flatMap((snapshot) => applyEvent(prepared, snapshot, event)),
-          ),
-        Result.succeed(state),
-      ),
-    ),
+    selectDueEventRange(prepared, state, mark),
+    Result.flatMap((range) => applyEventRange(prepared, state, range)),
   )
 
 const reconcileDailyMark = (

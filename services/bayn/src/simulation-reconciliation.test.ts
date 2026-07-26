@@ -112,19 +112,10 @@ const makeEmptyInput = (): MarkedEquityReconciliationInput => {
 }
 
 const makeRoundTripInput = (dayCount: number): MarkedEquityReconciliationInput => {
-  const sessionDates = [
-    '2026-02-01',
-    '2026-02-02',
-    '2026-02-03',
-    '2026-02-04',
-    '2026-02-05',
-    '2026-02-06',
-    '2026-02-07',
-    '2026-02-08',
-    '2026-02-09',
-    '2026-02-10',
-  ] as const
-  assert(dayCount <= sessionDates.length, 'round-trip fixture day count must be bounded')
+  const sessionDates = Array.from(
+    { length: dayCount },
+    (_, index) => new Date(Date.UTC(2026, 1, index + 1)).toISOString().slice(0, 10) as `${number}-${number}-${number}`,
+  )
   const input = makeEmptyInput()
   const markTemplate = input.simulation.dailyMarks[0]
   const events: EvaluationEvent[] = []
@@ -347,21 +338,13 @@ describe('independent marked-equity reconciliation', () => {
   })
 
   test('reconciles a production-length equity history through persistent accumulation', () => {
-    const input = makeEmptyInput()
-    const mark = input.simulation.dailyMarks[0]
-    const dailyMarks = Array.from({ length: 2_266 }, (_, index) => ({
-      ...mark,
-      sessionDate: new Date(Date.UTC(2015, 0, index + 1)).toISOString().slice(0, 10) as `${number}-${number}-${number}`,
-    }))
-    const result = reconcileMarkedEquity({
-      ...input,
-      simulation: { ...input.simulation, dailyMarks },
-    })
+    const input = makeRoundTripInput(2_266)
+    const result = reconcileMarkedEquity(input)
 
     assert(Result.isSuccess(result), 'production-length history must reconcile')
-    expect(result.success.equitySeries).toHaveLength(dailyMarks.length)
-    expect(result.success.equitySeries[0]?.sessionDate).toBe(dailyMarks[0]?.sessionDate)
-    expect(result.success.equitySeries.at(-1)?.sessionDate).toBe(dailyMarks.at(-1)?.sessionDate)
+    expect(result.success.equitySeries).toHaveLength(input.simulation.dailyMarks.length)
+    expect(result.success.equitySeries[0]?.sessionDate).toBe(input.simulation.dailyMarks[0]?.sessionDate)
+    expect(result.success.equitySeries.at(-1)?.sessionDate).toBe(input.simulation.dailyMarks.at(-1)?.sessionDate)
   })
 
   test('returns immutable plain issues and preserves them through Result.match', () => {
