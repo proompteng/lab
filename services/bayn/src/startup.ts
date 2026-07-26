@@ -1,7 +1,7 @@
 import { Effect, Option, pipe, Ref, Result } from 'effect'
 
 import type { RuntimeConfig } from './config'
-import { makeRuntimeProvenance, makeStrategyProtocolHash, type RuntimeProvenance } from './contracts'
+import { makeRuntimeProvenanceResult, makeStrategyProtocolHash, type RuntimeProvenance } from './contracts'
 import {
   EvidenceStore,
   type EvidenceStoreService,
@@ -519,24 +519,25 @@ const provenanceFromStored = (
     stored.protocol.schemaVersion === 'bayn.risk-balanced-trend.protocol.v2'
       ? 'bayn.risk-balanced-trend.protocol.v2'
       : 'bayn.risk-balanced-trend.protocol.v3'
-  const provenanceResult = Result.try({
-    try: () =>
-      makeRuntimeProvenance({
-        sourceRevision: stored.run.sourceRevision,
-        image: { repository: stored.run.imageRepository, digest: stored.run.imageDigest },
-        strategy: {
-          name: 'risk-balanced-trend',
-          behaviorHash: stored.protocol.behaviorHash,
-          parameterHash: stored.protocol.parameterHash,
-          parameterSchemaVersion,
-        },
-      }),
-    catch: (cause): StartupDecisionFailure => ({
-      _tag: 'StoredProvenanceInvalid',
-      identity,
-      issue: { reason: 'malformed', cause },
+  const provenanceResult = pipe(
+    makeRuntimeProvenanceResult({
+      sourceRevision: stored.run.sourceRevision,
+      image: { repository: stored.run.imageRepository, digest: stored.run.imageDigest },
+      strategy: {
+        name: 'risk-balanced-trend',
+        behaviorHash: stored.protocol.behaviorHash,
+        parameterHash: stored.protocol.parameterHash,
+        parameterSchemaVersion,
+      },
     }),
-  })
+    Result.mapError(
+      (cause): StartupDecisionFailure => ({
+        _tag: 'StoredProvenanceInvalid',
+        identity,
+        issue: { reason: 'malformed', cause },
+      }),
+    ),
+  )
   if (Result.isFailure(provenanceResult)) return provenanceResult
   const provenance = provenanceResult.success
   const parameterHashResult = canonicalStartupHash(

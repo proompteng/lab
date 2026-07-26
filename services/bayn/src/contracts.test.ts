@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Exit, Schema } from 'effect'
+import { Effect, Exit, Result, Schema } from 'effect'
 
 import {
   FinalizedSnapshotProvenanceSchema,
@@ -10,6 +10,7 @@ import {
   decodeRunIdentity,
   decodeRuntimeProvenance,
   makeRunIdentity,
+  makeRuntimeProvenanceResult,
 } from './contracts'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
@@ -73,6 +74,15 @@ describe('current contracts', () => {
 
   test('accepts current and immutable historical runtime provenance', async () => {
     const provenance = makeTestProvenance()
+    expect(
+      Result.getOrThrow(
+        makeRuntimeProvenanceResult({
+          sourceRevision: provenance.sourceRevision,
+          image: provenance.image,
+          strategy: provenance.strategy,
+        }),
+      ),
+    ).toEqual(provenance)
     expect(await Effect.runPromise(decodeRuntimeProvenance(provenance))).toEqual(provenance)
     expect(provenance).toMatchObject({
       schemaVersion: 'bayn.runtime-provenance.v2',
@@ -105,5 +115,22 @@ describe('current contracts', () => {
         strategy: { ...provenance.strategy, name: 'tsmom', parameterSchemaVersion: 'bayn.tsmom.protocol.v2' },
       }),
     )
+  })
+
+  test('returns malformed runtime provenance as a typed construction failure', () => {
+    const provenance = makeTestProvenance()
+    const result = makeRuntimeProvenanceResult({
+      sourceRevision: 'not-a-revision',
+      image: provenance.image,
+      strategy: provenance.strategy,
+    } as never)
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toMatchObject({
+        _tag: 'ContractSchemaInvalid',
+        operation: 'runtime-provenance',
+      })
+    }
   })
 })
