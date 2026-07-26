@@ -442,8 +442,8 @@ type CycleCalendarCandidateFailure =
       readonly cause: CycleConstructionFailure
     }
 
-const selectCycleCalendarPublication = (
-  context: CycleRunContext,
+const selectCycleCalendarPublication = <R>(
+  context: CycleRunContext<R>,
   publication: MarketDataInspection,
   observation: MarketCalendarObservation,
   calendarReadContentHash: string,
@@ -483,8 +483,8 @@ const selectCycleCalendarPublication = (
   )
 }
 
-export const selectCycleCalendarCandidate = (
-  context: CycleRunContext,
+export const selectCycleCalendarCandidate = <R>(
+  context: CycleRunContext<R>,
   publications: NonEmptyPublications,
   observation: MarketCalendarObservation,
   calendarReadContentHash: string,

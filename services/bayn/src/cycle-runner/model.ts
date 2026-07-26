@@ -14,14 +14,14 @@ export class CycleDecisionBuildError extends Data.TaggedError('CycleDecisionBuil
   readonly cause?: unknown
 }> {}
 
-export interface CycleRunContext {
+export interface CycleRunContext<R = never> {
   readonly qualificationRunId: string
   readonly strategyProtocolHash: string
   readonly accountId: string
   readonly executionPolicy: CycleExecutionPolicy
   readonly buildDecision: (
     cycle: AutonomousCycle,
-  ) => Effect.Effect<ObserveShadowDecisionDocument, CycleDecisionBuildError>
+  ) => Effect.Effect<ObserveShadowDecisionDocument, CycleDecisionBuildError, R>
 }
 
 export interface CycleCandidate {
@@ -129,8 +129,8 @@ export type CyclePassObservation =
       readonly error: CycleRunnerError
     }
 
-export interface AutonomousCycleLoopOptions<E = never, R = never> {
-  readonly context: Effect.Effect<CycleRunContext, E, R>
+export interface AutonomousCycleLoopOptions<E = never, ContextR = never, DecisionR = never> {
+  readonly context: Effect.Effect<CycleRunContext<DecisionR>, E, ContextR>
   readonly observePass: (observation: CyclePassObservation) => Effect.Effect<void>
   readonly pollIntervalMs: number
 }

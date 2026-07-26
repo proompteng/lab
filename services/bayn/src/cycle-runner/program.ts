@@ -70,9 +70,9 @@ const bindDiscoveredPublication = (
     ),
   )
 
-const readCycleAuthoritySlot = (
+const readCycleAuthoritySlot = <R>(
   store: CycleStoreShape,
-  context: CycleRunContext,
+  context: CycleRunContext<R>,
   publication: MarketDataInspection,
 ): Effect.Effect<CycleAuthoritySlot, CycleRunnerError> => {
   const signalSessionDate = publication.signalSession.session_date
@@ -89,9 +89,9 @@ const readCycleAuthoritySlot = (
   )
 }
 
-const continueCycleAuthorityReads = (
+const continueCycleAuthorityReads = <R>(
   store: CycleStoreShape,
-  context: CycleRunContext,
+  context: CycleRunContext<R>,
   state: CycleAuthoritySelectionState,
   publications: readonly MarketDataInspection[],
 ): Effect.Effect<CycleAuthoritySelection, CycleRunnerError> => {
@@ -110,8 +110,8 @@ const continueCycleAuthorityReads = (
   )
 }
 
-const readCycleAuthoritySlots = (
-  context: CycleRunContext,
+const readCycleAuthoritySlots = <R>(
+  context: CycleRunContext<R>,
   publications: NonEmptyPublications,
 ): Effect.Effect<CycleAuthoritySelection, CycleRunnerError, CycleStore> =>
   pipe(
@@ -192,8 +192,8 @@ const acquireCycleCandidate = (
     ),
   )
 
-const interpretCycleCalendar = (
-  context: CycleRunContext,
+const interpretCycleCalendar = <R>(
+  context: CycleRunContext<R>,
   publications: NonEmptyPublications,
   observation: MarketCalendarObservation,
   calendarReadContentHash: string,
@@ -208,8 +208,8 @@ const interpretCycleCalendar = (
     ),
   )
 
-const readCycleCalendar = (
-  context: CycleRunContext,
+const readCycleCalendar = <R>(
+  context: CycleRunContext<R>,
   publications: NonEmptyPublications,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> =>
   pipe(
@@ -235,8 +235,8 @@ const readCycleCalendar = (
     ),
   )
 
-const interpretCycleAuthoritySelection = (
-  context: CycleRunContext,
+const interpretCycleAuthoritySelection = <R>(
+  context: CycleRunContext<R>,
   selection: CycleAuthoritySelection,
   discoveryObservedAt: string,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> => {
@@ -262,8 +262,8 @@ const interpretCycleAuthoritySelection = (
   }
 }
 
-export const discoverAutonomousCyclePass = (
-  context: CycleRunContext,
+export const discoverAutonomousCyclePass = <R>(
+  context: CycleRunContext<R>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData> =>
   pipe(
     MarketData,
@@ -296,11 +296,11 @@ const chooseRecovery = (state: CycleRecoveryState): Effect.Effect<CycleRecoveryS
     ),
   )
 
-const recoverCycle = (
+const recoverCycle = <R>(
   selection: CycleRecoverySelection,
-  context: CycleRunContext,
+  context: CycleRunContext<R>,
   observedAt: string,
-): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData> => {
+): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData | R> => {
   switch (selection.action) {
     case 'DISCOVER':
       return discoverAutonomousCyclePass(context)
@@ -431,9 +431,9 @@ const recoverCycle = (
   }
 }
 
-export const runAutonomousCyclePass = (
-  context: CycleRunContext,
-): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData> =>
+export const runAutonomousCyclePass = <R>(
+  context: CycleRunContext<R>,
+): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData | R> =>
   pipe(
     CycleStore,
     Effect.flatMap((store) =>
@@ -470,9 +470,9 @@ const logCyclePass = (observation: CyclePassObservation): Effect.Effect<void> =>
   return log.pipe(Effect.annotateLogs(facts.annotations))
 }
 
-const runLoopPass = <E, R>(
-  context: Effect.Effect<CycleRunContext, E, R>,
-): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData | R> =>
+const runLoopPass = <E, ContextR, DecisionR>(
+  context: Effect.Effect<CycleRunContext<DecisionR>, E, ContextR>,
+): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData | ContextR | DecisionR> =>
   context.pipe(
     Effect.mapError((cause) =>
       runnerError('load-context', 'context', 'autonomous cycle context loading failed', cause),
@@ -481,8 +481,8 @@ const runLoopPass = <E, R>(
     Effect.withLogSpan('autonomous-cycle'),
   )
 
-const observeSuccessfulPass = <E, R>(
-  options: AutonomousCycleLoopOptions<E, R>,
+const observeSuccessfulPass = <E, ContextR, DecisionR>(
+  options: AutonomousCycleLoopOptions<E, ContextR, DecisionR>,
   result: CycleRunResult,
 ): Effect.Effect<void> =>
   pipe(
@@ -493,8 +493,8 @@ const observeSuccessfulPass = <E, R>(
     }),
   )
 
-const observeFailedPass = <E, R>(
-  options: AutonomousCycleLoopOptions<E, R>,
+const observeFailedPass = <E, ContextR, DecisionR>(
+  options: AutonomousCycleLoopOptions<E, ContextR, DecisionR>,
   error: CycleRunnerError,
 ): Effect.Effect<void> =>
   pipe(
@@ -505,9 +505,9 @@ const observeFailedPass = <E, R>(
     }),
   )
 
-const cycleLoopProgram = <E, R>(
-  options: AutonomousCycleLoopOptions<E, R>,
-): Effect.Effect<void, never, BrokerRead | CycleStore | MarketData | R> =>
+const cycleLoopProgram = <E, ContextR, DecisionR>(
+  options: AutonomousCycleLoopOptions<E, ContextR, DecisionR>,
+): Effect.Effect<void, never, BrokerRead | CycleStore | MarketData | ContextR | DecisionR> =>
   pipe(
     runLoopPass(options.context),
     Effect.flatMap((result) => observeSuccessfulPass(options, result)),
@@ -516,9 +516,12 @@ const cycleLoopProgram = <E, R>(
     Effect.asVoid,
   )
 
-export const makeAutonomousCycleLoop = <E, R>(
-  options: AutonomousCycleLoopOptions<E, R>,
-): Result.Result<Effect.Effect<void, never, BrokerRead | CycleStore | MarketData | R>, CycleRunnerError> =>
+export const makeAutonomousCycleLoop = <E, ContextR, DecisionR>(
+  options: AutonomousCycleLoopOptions<E, ContextR, DecisionR>,
+): Result.Result<
+  Effect.Effect<void, never, BrokerRead | CycleStore | MarketData | ContextR | DecisionR>,
+  CycleRunnerError
+> =>
   pipe(
     validateCycleLoopInterval(options.pollIntervalMs),
     Result.map(() => cycleLoopProgram(options)),
