@@ -1,15 +1,17 @@
-import { Result } from 'effect'
+import { pipe, Result } from 'effect'
 
 import type { RuntimeBuildMetadata } from '../config'
-import { makeStrategyProtocolHash } from '../contracts'
-import { canonicalHashV1 } from '../hash'
+import { makeStrategyProtocolHashResult, type ContractConstructionFailure } from '../contracts'
+import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import {
   Authority,
   KillState,
   ReconciliationStatus,
-  makePaperAuthorityGeneration,
+  makePaperAuthorityGenerationResult,
   type AuthorityState,
   type PaperAuthorityGeneration,
+  type PaperAuthorityGenerationConstructionFailure,
+  type PaperAuthorityGenerationMaterial,
   type PaperAuthorityProofBinding,
 } from '../paper'
 import type { QualificationLock, QualificationResult } from '../qualification'
@@ -79,10 +81,49 @@ export interface DerivedPaperGeneration {
   readonly reconciliation: ExactReconciliationFacts
 }
 
+interface QualificationEvidenceVerificationFacts {
+  readonly verdict: QualificationResult['verdict']
+  readonly runStatus: PaperGenerationEvidenceFacts['runStatus']
+  readonly expectedArtifactCount: number
+  readonly expectedEventCount: number
+  readonly expectedGateCount: number
+  readonly artifactCount: number
+  readonly eventCount: number
+  readonly gateCount: number
+  readonly statusCount: number
+  readonly writingStatusCount: number
+  readonly completeStatusCount: number
+  readonly writingDetail: unknown
+  readonly completeDetail: unknown
+  readonly evaluationVerdictStatus: QualificationResult['evaluationVerdict']['status']
+  readonly resultRunId: string
+  readonly resultLockId: string
+  readonly lockId: string
+  readonly candidateRunId: string
+  readonly protocolSchemaVersion: PaperGenerationEvidenceFacts['protocolSchemaVersion']
+  readonly strategyName: PaperGenerationEvidenceFacts['strategyName']
+  readonly behaviorHash: string
+  readonly parameterHash: string
+  readonly parameters: unknown
+  readonly strategyBehaviorHash: string
+  readonly strategyParameterHash: string
+  readonly lockProtocolHash: string
+}
+
 type AuthorityBuildFacts = Pick<
   RuntimeBuildMetadata,
   'sourceRevision' | 'imageRepository' | 'imageDigest' | 'strategyBehaviorHash' | 'strategyParameterHash'
 >
+
+type QualificationEvidenceVerificationOperation =
+  | 'complete-detail'
+  | 'complete-expected'
+  | 'parameters'
+  | 'strategy-protocol'
+  | 'writing-detail'
+  | 'writing-expected'
+
+type QualificationEvidenceVerificationCause = ContractConstructionFailure | CanonicalHashFailure
 
 export interface ObserveGenerationRequest {
   readonly generationHash: string
@@ -127,7 +168,7 @@ export type PaperAuthorityAlgebraFailure =
       readonly _tag: 'InvalidGenerationHistoryActivatedAt'
       readonly generationHash: string
       readonly activatedAt: Date
-      readonly cause: unknown
+      readonly epochMillis: number
     }
   | {
       readonly _tag: 'CurrentGenerationHistoryMismatch'
@@ -179,9 +220,15 @@ export type PaperAuthorityAlgebraFailure =
     }
   | { readonly _tag: 'QualificationEvidenceUnavailable'; readonly qualificationRunId: string }
   | {
-      readonly _tag: 'QualificationEvidenceVerificationFailed'
+      readonly _tag: 'QualificationEvidenceAccessFailed'
       readonly qualificationRunId: string
       readonly cause: unknown
+    }
+  | {
+      readonly _tag: 'QualificationEvidenceVerificationFailed'
+      readonly qualificationRunId: string
+      readonly operation: QualificationEvidenceVerificationOperation
+      readonly cause: QualificationEvidenceVerificationCause
     }
   | {
       readonly _tag: 'QualificationEvidenceMismatch'
@@ -323,17 +370,16 @@ export const validateCurrentGenerationHistory = <History extends AuthorityGenera
       authorityVersion: history.authorityVersion,
     })
   }
-  const historyActivatedAtResult = Result.try({
-    try: () => history.activatedAt.toISOString(),
-    catch: (cause): PaperAuthorityAlgebraFailure => ({
+  const historyActivatedAtEpochMillis = history.activatedAt.getTime()
+  if (!Number.isFinite(historyActivatedAtEpochMillis)) {
+    return fail({
       _tag: 'InvalidGenerationHistoryActivatedAt',
       generationHash: history.generationHash,
       activatedAt: history.activatedAt,
-      cause,
-    }),
-  })
-  if (Result.isFailure(historyActivatedAtResult)) return Result.fail(historyActivatedAtResult.failure)
-  const historyActivatedAt = historyActivatedAtResult.success
+      epochMillis: historyActivatedAtEpochMillis,
+    })
+  }
+  const historyActivatedAt = new Date(historyActivatedAtEpochMillis).toISOString()
   if (
     history.generationHash !== current.generationHash ||
     history.maximum !== current.maximum ||
@@ -411,6 +457,62 @@ export const validatePaperPrepareGeneration = (
         configuredGenerationHash: binding.configuredGenerationHash,
       })
 
+const readQualificationEvidenceVerificationFacts = (
+  evidence: PaperGenerationEvidenceFacts,
+  binding: PaperGenerationRuntimeBinding,
+  build: AuthorityBuildFacts,
+): Result.Result<QualificationEvidenceVerificationFacts, PaperAuthorityAlgebraFailure> =>
+  Result.try({
+    try: () => ({
+      verdict: evidence.result.verdict,
+      runStatus: evidence.runStatus,
+      expectedArtifactCount: evidence.expectedArtifactCount,
+      expectedEventCount: evidence.expectedEventCount,
+      expectedGateCount: evidence.expectedGateCount,
+      artifactCount: evidence.artifactCount,
+      eventCount: evidence.eventCount,
+      gateCount: evidence.gateCount,
+      statusCount: evidence.statusCount,
+      writingStatusCount: evidence.writingStatusCount,
+      completeStatusCount: evidence.completeStatusCount,
+      writingDetail: evidence.writingDetail,
+      completeDetail: evidence.completeDetail,
+      evaluationVerdictStatus: evidence.result.evaluationVerdict.status,
+      resultRunId: evidence.result.runId,
+      resultLockId: evidence.result.lockId,
+      lockId: evidence.lock.lockId,
+      candidateRunId: evidence.lock.candidateRunId,
+      protocolSchemaVersion: evidence.protocolSchemaVersion,
+      strategyName: evidence.strategyName,
+      behaviorHash: evidence.behaviorHash,
+      parameterHash: evidence.parameterHash,
+      parameters: evidence.parameters,
+      strategyBehaviorHash: build.strategyBehaviorHash,
+      strategyParameterHash: build.strategyParameterHash,
+      lockProtocolHash: evidence.lock.protocolHash,
+    }),
+    catch: (cause): PaperAuthorityAlgebraFailure => ({
+      _tag: 'QualificationEvidenceAccessFailed',
+      qualificationRunId: binding.qualificationRunId,
+      cause,
+    }),
+  })
+
+const qualificationEvidenceHash = (
+  operation: Exclude<QualificationEvidenceVerificationOperation, 'strategy-protocol'>,
+  value: unknown,
+  binding: PaperGenerationRuntimeBinding,
+): Result.Result<string, PaperAuthorityAlgebraFailure> =>
+  Result.mapError(
+    canonicalHashV1Result(value),
+    (cause): PaperAuthorityAlgebraFailure => ({
+      _tag: 'QualificationEvidenceVerificationFailed',
+      qualificationRunId: binding.qualificationRunId,
+      operation,
+      cause,
+    }),
+  )
+
 export const validatePaperGenerationEvidence = (
   evidence: PaperGenerationEvidenceFacts | undefined,
   binding: PaperGenerationRuntimeBinding,
@@ -419,62 +521,70 @@ export const validatePaperGenerationEvidence = (
   if (evidence === undefined) {
     return fail({ _tag: 'QualificationEvidenceUnavailable', qualificationRunId: binding.qualificationRunId })
   }
-  const verified = Result.try({
-    try: () => {
-      const strategyProtocolHash = makeStrategyProtocolHash({
-        name: evidence.strategyName,
-        behaviorHash: evidence.behaviorHash,
-        parameterHash: evidence.parameterHash,
-        parameterSchemaVersion: evidence.protocolSchemaVersion,
-      })
-      return (
-        evidence.result.verdict === 'QUALIFIED' &&
-        evidence.runStatus === 'COMPLETE' &&
-        evidence.expectedArtifactCount === evidence.artifactCount &&
-        evidence.expectedEventCount === evidence.eventCount &&
-        evidence.expectedGateCount === evidence.gateCount &&
-        evidence.statusCount === 2 &&
-        evidence.writingStatusCount === 1 &&
-        evidence.completeStatusCount === 1 &&
-        canonicalHashV1(evidence.writingDetail) ===
-          canonicalHashV1({
-            artifactCount: evidence.expectedArtifactCount,
-            eventCount: evidence.expectedEventCount,
-            gateCount: evidence.expectedGateCount,
-          }) &&
-        canonicalHashV1(evidence.completeDetail) ===
-          canonicalHashV1({
-            reconciliationExact: true,
-            verdict: evidence.result.evaluationVerdict.status,
-          }) &&
-        evidence.result.runId === binding.qualificationRunId &&
-        evidence.result.lockId === evidence.lock.lockId &&
-        evidence.lock.candidateRunId === binding.qualificationRunId &&
-        evidence.protocolSchemaVersion === 'bayn.risk-balanced-trend.protocol.v3' &&
-        evidence.strategyName === 'risk-balanced-trend' &&
-        evidence.behaviorHash === build.strategyBehaviorHash &&
-        evidence.parameterHash === build.strategyParameterHash &&
-        canonicalHashV1(evidence.parameters) === evidence.parameterHash &&
-        strategyProtocolHash === evidence.lock.protocolHash
-      )
-    },
-    catch: (cause): PaperAuthorityAlgebraFailure => ({
-      _tag: 'QualificationEvidenceVerificationFailed',
-      qualificationRunId: binding.qualificationRunId,
-      cause,
-    }),
-  })
-  if (Result.isFailure(verified)) return Result.fail(verified.failure)
-  return verified.success
-    ? Result.succeed(evidence)
-    : fail({
-        _tag: 'QualificationEvidenceMismatch',
+  return Result.gen(function* () {
+    const facts = yield* readQualificationEvidenceVerificationFacts(evidence, binding, build)
+    const strategyProtocolHash = yield* Result.mapError(
+      makeStrategyProtocolHashResult({
+        name: facts.strategyName,
+        behaviorHash: facts.behaviorHash,
+        parameterHash: facts.parameterHash,
+        parameterSchemaVersion: facts.protocolSchemaVersion,
+      }),
+      (cause): PaperAuthorityAlgebraFailure => ({
+        _tag: 'QualificationEvidenceVerificationFailed',
         qualificationRunId: binding.qualificationRunId,
-        evidenceRunId: evidence.result.runId,
-        evidenceLockId: evidence.lock.lockId,
-        behaviorHash: evidence.behaviorHash,
-        parameterHash: evidence.parameterHash,
-      })
+        operation: 'strategy-protocol',
+        cause,
+      }),
+    )
+    const writingDetailHash = yield* qualificationEvidenceHash('writing-detail', facts.writingDetail, binding)
+    const writingExpectedHash = yield* qualificationEvidenceHash(
+      'writing-expected',
+      {
+        artifactCount: facts.expectedArtifactCount,
+        eventCount: facts.expectedEventCount,
+        gateCount: facts.expectedGateCount,
+      },
+      binding,
+    )
+    const completeDetailHash = yield* qualificationEvidenceHash('complete-detail', facts.completeDetail, binding)
+    const completeExpectedHash = yield* qualificationEvidenceHash(
+      'complete-expected',
+      { reconciliationExact: true, verdict: facts.evaluationVerdictStatus },
+      binding,
+    )
+    const parametersHash = yield* qualificationEvidenceHash('parameters', facts.parameters, binding)
+    const verified =
+      facts.verdict === 'QUALIFIED' &&
+      facts.runStatus === 'COMPLETE' &&
+      facts.expectedArtifactCount === facts.artifactCount &&
+      facts.expectedEventCount === facts.eventCount &&
+      facts.expectedGateCount === facts.gateCount &&
+      facts.statusCount === 2 &&
+      facts.writingStatusCount === 1 &&
+      facts.completeStatusCount === 1 &&
+      writingDetailHash === writingExpectedHash &&
+      completeDetailHash === completeExpectedHash &&
+      facts.resultRunId === binding.qualificationRunId &&
+      facts.resultLockId === facts.lockId &&
+      facts.candidateRunId === binding.qualificationRunId &&
+      facts.protocolSchemaVersion === 'bayn.risk-balanced-trend.protocol.v3' &&
+      facts.strategyName === 'risk-balanced-trend' &&
+      facts.behaviorHash === facts.strategyBehaviorHash &&
+      facts.parameterHash === facts.strategyParameterHash &&
+      parametersHash === facts.parameterHash &&
+      strategyProtocolHash === facts.lockProtocolHash
+
+    if (verified) return evidence
+    return yield* fail<PaperGenerationEvidenceFacts>({
+      _tag: 'QualificationEvidenceMismatch',
+      qualificationRunId: binding.qualificationRunId,
+      evidenceRunId: facts.resultRunId,
+      evidenceLockId: facts.lockId,
+      behaviorHash: facts.behaviorHash,
+      parameterHash: facts.parameterHash,
+    })
+  })
 }
 
 export const validateLatestExactReconciliation = (
@@ -511,6 +621,43 @@ export const validateMutationCoverage = (
         reconciledAt: reconciliation.reconciledAt,
       })
 
+const readPaperAuthorityGenerationMaterial = (input: {
+  readonly current: AuthorityState
+  readonly proof: PaperAuthorityProofBinding
+  readonly binding: PaperGenerationRuntimeBinding
+  readonly evidence: PaperGenerationEvidenceFacts
+  readonly reconciliation: ExactReconciliationFacts
+  readonly build: AuthorityBuildFacts
+}): Result.Result<PaperAuthorityGenerationMaterial, PaperAuthorityAlgebraFailure> =>
+  Result.try({
+    try: () => ({
+      schemaVersion: 'bayn.paper-authority-generation.v2',
+      maximum: Authority.Paper,
+      previousGenerationHash: input.current.generationHash,
+      qualificationRunId: input.evidence.result.runId,
+      qualificationLockId: input.evidence.result.lockId,
+      qualificationResultHash: input.evidence.result.resultHash,
+      protocolHash: input.evidence.lock.protocolHash,
+      qualificationExecutionPolicyHash: input.evidence.lock.policies.execution.contentHash,
+      qualificationSourceRevision: input.evidence.lock.sourceRevision,
+      qualificationImageRepository: input.evidence.lock.image.repository,
+      qualificationImageDigest: input.evidence.lock.image.digest,
+      activationSourceRevision: input.build.sourceRevision,
+      activationImageRepository: input.build.imageRepository,
+      activationImageDigest: input.build.imageDigest,
+      strategyName: input.evidence.strategyName,
+      strategyBehaviorHash: input.evidence.behaviorHash,
+      strategyParameterHash: input.evidence.parameterHash,
+      strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
+      accountId: input.binding.accountId,
+      riskPolicyHash: input.proof.riskPolicyHash,
+      proofPlanHash: input.proof.proofPlanHash,
+      reconciliationId: input.reconciliation.reconciliationId,
+      reconciliationContentHash: input.reconciliation.contentHash,
+    }),
+    catch: (cause): PaperAuthorityAlgebraFailure => ({ _tag: 'PaperGenerationDerivationFailed', cause }),
+  })
+
 export const derivePaperAuthorityGeneration = (input: {
   readonly current: AuthorityState
   readonly proof: PaperAuthorityProofBinding
@@ -519,38 +666,21 @@ export const derivePaperAuthorityGeneration = (input: {
   readonly reconciliation: ExactReconciliationFacts
   readonly build: AuthorityBuildFacts
 }): Result.Result<DerivedPaperGeneration, PaperAuthorityAlgebraFailure> =>
-  Result.try({
-    try: () => ({
-      current: input.current,
-      generation: makePaperAuthorityGeneration({
-        schemaVersion: 'bayn.paper-authority-generation.v2',
-        maximum: Authority.Paper,
-        previousGenerationHash: input.current.generationHash,
-        qualificationRunId: input.evidence.result.runId,
-        qualificationLockId: input.evidence.result.lockId,
-        qualificationResultHash: input.evidence.result.resultHash,
-        protocolHash: input.evidence.lock.protocolHash,
-        qualificationExecutionPolicyHash: input.evidence.lock.policies.execution.contentHash,
-        qualificationSourceRevision: input.evidence.lock.sourceRevision,
-        qualificationImageRepository: input.evidence.lock.image.repository,
-        qualificationImageDigest: input.evidence.lock.image.digest,
-        activationSourceRevision: input.build.sourceRevision,
-        activationImageRepository: input.build.imageRepository,
-        activationImageDigest: input.build.imageDigest,
-        strategyName: input.evidence.strategyName,
-        strategyBehaviorHash: input.evidence.behaviorHash,
-        strategyParameterHash: input.evidence.parameterHash,
-        strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
-        accountId: input.binding.accountId,
-        riskPolicyHash: input.proof.riskPolicyHash,
-        proofPlanHash: input.proof.proofPlanHash,
-        reconciliationId: input.reconciliation.reconciliationId,
-        reconciliationContentHash: input.reconciliation.contentHash,
-      }),
-      reconciliation: input.reconciliation,
-    }),
-    catch: (cause): PaperAuthorityAlgebraFailure => ({ _tag: 'PaperGenerationDerivationFailed', cause }),
-  })
+  pipe(
+    readPaperAuthorityGenerationMaterial(input),
+    Result.flatMap((material) =>
+      pipe(
+        makePaperAuthorityGenerationResult(material),
+        Result.mapError(
+          (cause: PaperAuthorityGenerationConstructionFailure): PaperAuthorityAlgebraFailure => ({
+            _tag: 'PaperGenerationDerivationFailed',
+            cause,
+          }),
+        ),
+      ),
+    ),
+    Result.map((generation) => ({ current: input.current, generation, reconciliation: input.reconciliation })),
+  )
 
 export const validatePaperGenerationFreshness = (
   reconciliation: ExactReconciliationFacts,
@@ -643,7 +773,7 @@ export const paperAuthorityFailureDetails = (failure: PaperAuthorityAlgebraFailu
       return {
         failure: 'invariant',
         message: 'current authority generation history differs from state',
-        cause: failure.cause,
+        cause: failure,
       }
     case 'CurrentGenerationHistoryMismatch':
       return { failure: 'invariant', message: 'current authority generation history differs from state' }
@@ -675,10 +805,16 @@ export const paperAuthorityFailureDetails = (failure: PaperAuthorityAlgebraFailu
       }
     case 'QualificationEvidenceUnavailable':
       return { failure: 'invariant', message: 'exact terminal qualification evidence is unavailable' }
+    case 'QualificationEvidenceAccessFailed':
+      return {
+        failure: 'invariant',
+        message: 'PAPER qualification evidence could not be read safely',
+        cause: failure.cause,
+      }
     case 'QualificationEvidenceVerificationFailed':
       return {
         failure: 'invariant',
-        message: 'PAPER generation differs from terminal qualification evidence or current strategy build',
+        message: `PAPER qualification evidence ${failure.operation} verification failed`,
         cause: failure.cause,
       }
     case 'QualificationEvidenceMismatch':

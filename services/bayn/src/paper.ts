@@ -1,6 +1,6 @@
-import { Schema } from 'effect'
+import { pipe, Result, Schema } from 'effect'
 
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
 import {
   ImageDigestSchema as ImageDigest,
   Sha256Schema as Sha256,
@@ -649,26 +649,81 @@ export const PaperAuthorityGenerationSchema = PaperAuthorityGenerationBase.check
   Schema.makeFilter(
     (generation: typeof PaperAuthorityGenerationBase.Type) => {
       const { generationHash, ...material } = generation
-      return generationHash === canonicalHashV1(paperAuthorityGenerationIdentity(material))
+      const expectedHash = canonicalHashV1Result(paperAuthorityGenerationIdentity(material))
+      return Result.isSuccess(expectedHash) && generationHash === expectedHash.success
     },
     { expected: 'a generation hash matching the stable PAPER authority identity' },
   ),
 )
 export type PaperAuthorityGeneration = typeof PaperAuthorityGenerationSchema.Type
 
-const decodePaperAuthorityGenerationMaterialSync = Schema.decodeUnknownSync(
+export type PaperAuthorityGenerationConstructionFailure =
+  | {
+      readonly _tag: 'PaperAuthorityGenerationSchemaInvalid'
+      readonly operation: 'material' | 'generation'
+      readonly cause: Schema.SchemaError
+    }
+  | {
+      readonly _tag: 'PaperAuthorityGenerationCanonicalizationFailed'
+      readonly cause: CanonicalHashFailure
+    }
+
+const decodePaperAuthorityGenerationMaterialResult = Schema.decodeUnknownResult(
   PaperAuthorityGenerationMaterialSchema,
   StrictParseOptions,
 )
-const decodePaperAuthorityGenerationSync = Schema.decodeUnknownSync(PaperAuthorityGenerationSchema, StrictParseOptions)
+const decodePaperAuthorityGenerationResult = Schema.decodeUnknownResult(
+  PaperAuthorityGenerationSchema,
+  StrictParseOptions,
+)
 
-export const makePaperAuthorityGeneration = (input: PaperAuthorityGenerationMaterial): PaperAuthorityGeneration => {
-  const material = decodePaperAuthorityGenerationMaterialSync(input)
-  return decodePaperAuthorityGenerationSync({
-    ...material,
-    generationHash: canonicalHashV1(paperAuthorityGenerationIdentity(material)),
-  })
-}
+export const makePaperAuthorityGenerationResult = (
+  input: PaperAuthorityGenerationMaterial,
+): Result.Result<PaperAuthorityGeneration, PaperAuthorityGenerationConstructionFailure> =>
+  pipe(
+    decodePaperAuthorityGenerationMaterialResult(input),
+    Result.mapError(
+      (cause): PaperAuthorityGenerationConstructionFailure => ({
+        _tag: 'PaperAuthorityGenerationSchemaInvalid',
+        operation: 'material',
+        cause,
+      }),
+    ),
+    Result.flatMap((material) =>
+      pipe(
+        canonicalHashV1Result(paperAuthorityGenerationIdentity(material)),
+        Result.mapError(
+          (cause): PaperAuthorityGenerationConstructionFailure => ({
+            _tag: 'PaperAuthorityGenerationCanonicalizationFailed',
+            cause,
+          }),
+        ),
+        Result.flatMap((generationHash) =>
+          pipe(
+            decodePaperAuthorityGenerationResult({ ...material, generationHash }),
+            Result.mapError(
+              (cause): PaperAuthorityGenerationConstructionFailure => ({
+                _tag: 'PaperAuthorityGenerationSchemaInvalid',
+                operation: 'generation',
+                cause,
+              }),
+            ),
+          ),
+        ),
+      ),
+    ),
+  )
+
+export const makePaperAuthorityGeneration = (input: PaperAuthorityGenerationMaterial): PaperAuthorityGeneration =>
+  pipe(
+    makePaperAuthorityGenerationResult(input),
+    Result.match({
+      onSuccess: (generation) => generation,
+      onFailure: (failure) => {
+        throw failure.cause
+      },
+    }),
+  )
 
 const AuthorityStateBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.paper-authority.v1'),
