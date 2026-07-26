@@ -1,11 +1,22 @@
 import { ClickhouseClient } from '@effect/sql-clickhouse'
-import { Clock, Context, Effect, Layer, Schema } from 'effect'
-import { isSqlError } from 'effect/unstable/sql/SqlError'
+import { Clock, Context, Effect, Layer, Option, Result, Schema, pipe } from 'effect'
+import { isSqlError, type SqlError } from 'effect/unstable/sql/SqlError'
 
 import type { RuntimeConfig } from './config'
-import { type EvaluationBounds, type FinalizedSnapshotProvenance, FinalizedSnapshotProvenanceSchema } from './contracts'
+import type { EvaluationBounds, FinalizedSnapshotProvenance } from './contracts'
 import { OperationalError, operationalError, retryableOperationalError } from './errors'
-import { canonicalHashV1, sha256 } from './hash'
+import {
+  decodeSignalCount,
+  renderMarketDataVerificationError,
+  selectCyclePublicationManifests,
+  selectPublicationManifest,
+  verifyFinalizedCalendar,
+  verifyFinalizedManifest,
+  verifyFinalizedSnapshot,
+  verifyBoundFinalizedPublication,
+  verifyCyclePublications,
+  type MarketDataVerificationError,
+} from './market-data-verification'
 import {
   DigitsSchema,
   GitSourceRevisionSchema as SourceRevisionSchema,
@@ -26,15 +37,21 @@ import {
   type InputManifest,
   type IsoDate,
   type Protocol,
-  type SymbolCoverage,
 } from './types'
 
-const database = 'signal' as const
-const tables = {
-  bars: 'adjusted_daily_bars_v2',
-  sessions: 'exchange_sessions_v1',
-  manifests: 'snapshot_manifests_v2',
-} as const
+export {
+  renderMarketDataVerificationError,
+  selectCyclePublicationManifests,
+  selectPublicationManifest,
+  verifyFinalizedCalendar,
+  verifyFinalizedManifest,
+  verifyFinalizedPublication,
+  verifyFinalizedSnapshot,
+  verifyBoundFinalizedPublication,
+  verifyCyclePublications,
+  type MarketDataVerificationError,
+} from './market-data-verification'
+
 const calendarTimeZone = 'America/New_York' as const
 // A 21-calendar-day catch-up interval contains at most 15 weekday publications. One extra bounded row keeps the
 // MarketData seam complete while the runner clamps by calendar date before its single broker-calendar read.
@@ -198,7 +215,12 @@ export interface MarketDataService {
   readonly load: Effect.Effect<MarketDataSnapshot, OperationalError>
 }
 
-export class MarketData extends Context.Service<MarketData, MarketDataService>()('bayn/MarketData') {}
+export type MarketData = {
+  readonly MarketData: unique symbol
+  readonly Service: MarketDataService
+}
+
+export const MarketData = Context.Service<MarketData, MarketDataService>('bayn/MarketData')
 
 export const marketDataOperationError = (
   operation: 'check' | 'inspect' | 'inspect-publication' | 'load',
@@ -210,398 +232,81 @@ export const marketDataOperationError = (
   return makeError('market-data', operation, message, cause)
 }
 
-const asCount = (value: string | number, name: string): number => {
-  const parsed = typeof value === 'number' ? value : Number(value)
-  if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(`${name} is not a safe non-negative integer`)
-  return parsed
-}
-
-const decodeBars = Schema.decodeUnknownSync(Schema.Array(SignalBarRowSchema), StrictParseOptions)
-const decodeSessions = Schema.decodeUnknownSync(Schema.Array(SignalSessionRowSchema), StrictParseOptions)
-const decodeManifests = Schema.decodeUnknownSync(Schema.Array(SignalManifestRowSchema), StrictParseOptions)
-const decodeFinalizedSnapshot = Schema.decodeUnknownSync(FinalizedSnapshotProvenanceSchema, StrictParseOptions)
-
-const canonicalUniverse = (universe: readonly string[]): readonly string[] => {
-  const canonical = [...new Set(universe)].sort()
-  if (canonical.length === 0 || canonical.length !== universe.length) {
-    throw new Error('evaluation universe must be non-empty and unique')
-  }
-  if (canonical.some((symbol, index) => symbol !== universe[index])) {
-    throw new Error('evaluation universe must use canonical sorted order')
-  }
-  return canonical
-}
-
-const withoutSnapshot = <A extends { readonly snapshot_id: string }>({ snapshot_id: _, ...row }: A) => row
-const withoutManifestHash = ({ manifest_content_hash: _, ...manifest }: SignalManifestRow) => manifest
-
-const toUtcInstant = (value: string): string => `${value.replace(' ', 'T')}Z`
-
-const toNumber = (value: string, name: string, positive: boolean): number => {
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed) || (positive ? parsed <= 0 : parsed < 0)) {
-    throw new Error(`${name} must be a finite ${positive ? 'positive' : 'non-negative'} number`)
-  }
-  return parsed
-}
-
-const toDailyBar = (row: SignalBarRow, publicationSchemaVersion: PublicationSchema): DailyBar => {
-  const bar: DailyBar = {
-    symbol: row.symbol,
-    sessionDate: row.session_date,
-    open: toNumber(row.adjusted_open, 'adjusted_open', true),
-    high: toNumber(row.adjusted_high, 'adjusted_high', true),
-    low: toNumber(row.adjusted_low, 'adjusted_low', true),
-    close: toNumber(row.adjusted_close, 'adjusted_close', true),
-    volume: toNumber(row.adjusted_volume, 'adjusted_volume', false),
-    source: row.provider,
-    sourceFeed: row.source_feed,
-    adjustment: row.adjustment,
-    publicationSchemaVersion,
-  }
-  if (bar.low > Math.min(bar.open, bar.close) || bar.high < Math.max(bar.open, bar.close) || bar.low > bar.high) {
-    throw new Error(`${bar.symbol} ${bar.sessionDate} contains inconsistent OHLC prices`)
-  }
-  return bar
-}
-
-const assertBoundSessions = (sessions: ReadonlySet<string>, bounds: EvaluationBounds): void => {
-  for (const [name, value] of Object.entries(bounds)) {
-    if (name === 'schemaVersion') continue
-    if (!sessions.has(value)) throw new Error(`${name} ${value} is not an exchange session in the snapshot`)
-  }
-}
-
-interface VerifiedManifest {
-  readonly manifest: SignalManifestRow
-  readonly finalizedSnapshot: FinalizedSnapshotProvenance
-  readonly universe: readonly string[]
-}
-
-const verifyManifest = (manifests: readonly SignalManifestRow[], request: SnapshotRequest): VerifiedManifest => {
-  const universe = canonicalUniverse(request.universe)
-  if (manifests.length !== 1) {
-    throw new Error(`snapshot ${request.snapshotId} has ${manifests.length} manifests; expected exactly one`)
-  }
-  const manifest = manifests[0]
-  if (manifest.snapshot_id !== request.snapshotId) throw new Error('manifest snapshot ID does not match request')
-  if (manifest.calendar_version !== request.calendarVersion) throw new Error('manifest calendar version does not match')
-  if (manifest.publication_asof !== request.publicationAsOf) {
-    throw new Error(
-      `snapshot publication ${manifest.publication_asof} does not match expected session ${request.publicationAsOf}`,
-    )
-  }
-  const finalizedAt = toUtcInstant(manifest.finalized_at)
-  if (finalizedAt > request.observedAt) throw new Error('snapshot finalization is in the future')
-  if (manifest.manifest_content_hash !== canonicalHashV1(withoutManifestHash(manifest))) {
-    throw new Error('snapshot manifest content hash is invalid')
-  }
-  if (manifest.symbol_count !== universe.length) throw new Error('manifest symbol count does not match request')
-  if (manifest.bar_count !== manifest.session_count * manifest.symbol_count) {
-    throw new Error('manifest does not describe a complete symbol-session product')
-  }
-  const snapshotIdentity = {
-    schemaVersion: manifest.schema_version,
-    provider: manifest.provider,
-    feed: manifest.source_feed,
-    adjustment: manifest.adjustment,
-    calendarVersion: manifest.calendar_version,
-    requestedStart: manifest.requested_start,
-    publicationAsOf: manifest.publication_asof,
-    symbols: universe,
-    barsContentHash: manifest.bars_content_hash,
-    sessionsContentHash: manifest.sessions_content_hash,
-  } as const
-  const expectedSnapshotId = canonicalHashV1({
-    ...snapshotIdentity,
-    universeId: manifest.universe_id,
-    universeSymbolHash: manifest.universe_symbol_hash,
-  })
-  if (manifest.snapshot_id !== expectedSnapshotId) throw new Error('snapshot ID does not match finalized content')
-  if (request.bounds.dataStart < manifest.first_session || request.bounds.dataEnd > manifest.last_session) {
-    throw new Error('evaluation data bounds are outside the finalized snapshot')
-  }
-
-  const commonSnapshot = {
-    snapshotId: manifest.snapshot_id,
-    publicationId: manifest.manifest_content_hash,
-    publicationSchemaVersion: manifest.schema_version,
-    source: manifest.provider,
-    sourceFeed: manifest.source_feed,
-    adjustment: manifest.adjustment,
-    calendarVersion: manifest.calendar_version,
-    publisherSourceRevision: manifest.publisher_source_revision,
-    publisherImage: {
-      repository: manifest.publisher_image_repository,
-      digest: manifest.publisher_image_digest,
-    },
-    finalizedAt,
-    requestedStart: manifest.requested_start,
-    firstSession: manifest.first_session,
-    lastSession: manifest.last_session,
-    asOfSession: manifest.publication_asof,
-    symbols: universe,
-    rowCount: manifest.bar_count,
-    sessionCount: manifest.session_count,
-    contentHash: manifest.bars_content_hash,
-    sessionsContentHash: manifest.sessions_content_hash,
-  } as const
-
-  if (manifest.universe_id !== request.universeId) throw new Error('manifest universe ID does not match request')
-  if (manifest.universe_symbol_hash !== request.universeSymbolHash) {
-    throw new Error('manifest universe symbol hash does not match request')
-  }
-  if (sha256(universe.join(',')) !== request.universeSymbolHash) {
-    throw new Error('requested universe symbol hash does not match its symbols')
-  }
-  if (manifest.requested_start !== request.historyStart || manifest.first_session !== request.historyStart) {
-    throw new Error('snapshot history start does not match the compiled strategy')
-  }
-  if (
-    request.bounds.dataStart !== request.historyStart ||
-    request.bounds.lookbackStart !== request.historyStart ||
-    request.bounds.evaluationStart !== request.evaluationStart
-  ) {
-    throw new Error('evaluation bounds do not match the compiled strategy history')
-  }
-  if (request.bounds.dataEnd !== request.publicationAsOf || request.bounds.evaluationEnd !== request.publicationAsOf) {
-    throw new Error('evaluation end must match the finalized publication session')
-  }
-
-  return {
-    manifest,
-    universe,
-    finalizedSnapshot: decodeFinalizedSnapshot({
-      schemaVersion: 'bayn.finalized-snapshot.v3',
-      universeId: manifest.universe_id,
-      universeSymbolHash: manifest.universe_symbol_hash,
-      ...commonSnapshot,
-    }),
-  }
-}
-
-export const verifyFinalizedManifest = (
-  manifests: readonly SignalManifestRow[],
-  request: SnapshotRequest,
-): FinalizedSnapshotProvenance => verifyManifest(manifests, request).finalizedSnapshot
-
-interface VerifiedCalendar {
-  readonly verifiedManifest: VerifiedManifest
-  readonly orderedSessions: readonly SignalSessionRow[]
-  readonly boundedSessions: readonly SignalSessionRow[]
-  readonly inputManifest: InputManifest
-}
-
-const verifyCalendar = (
-  sessions: readonly SignalSessionRow[],
-  manifests: readonly SignalManifestRow[],
-  request: SnapshotRequest,
-): VerifiedCalendar => {
-  const verifiedManifest = verifyManifest(manifests, request)
-  const { finalizedSnapshot, manifest, universe } = verifiedManifest
-  const orderedSessions = [...sessions].sort((left, right) =>
-    left.session_date < right.session_date ? -1 : left.session_date > right.session_date ? 1 : 0,
+const decodeBars = (rows: readonly unknown[]): Result.Result<readonly SignalBarRow[], MarketDataVerificationError> =>
+  pipe(
+    Schema.decodeUnknownResult(Schema.Array(SignalBarRowSchema), StrictParseOptions)(rows),
+    Result.mapError(
+      (cause): MarketDataVerificationError => ({
+        _tag: 'RowDecodeFailed',
+        rows: 'bars',
+        cause,
+      }),
+    ),
   )
-  const sessionDates = new Set<string>()
-  for (const session of orderedSessions) {
-    if (session.snapshot_id !== request.snapshotId) throw new Error('exchange session has a mixed snapshot ID')
-    if (session.calendar_version !== manifest.calendar_version)
-      throw new Error('exchange session mixes calendar versions')
-    if (session.provider !== manifest.provider) throw new Error('exchange session mixes providers')
-    if (session.open_time >= session.close_time)
-      throw new Error(`exchange session ${session.session_date} has invalid hours`)
-    if (sessionDates.has(session.session_date)) throw new Error(`duplicate exchange session: ${session.session_date}`)
-    sessionDates.add(session.session_date)
-  }
-  if (orderedSessions.length !== manifest.session_count)
-    throw new Error('exchange-session count does not match manifest')
-  const firstSession = orderedSessions.at(0)
-  const lastSession = orderedSessions.at(-1)
-  if (firstSession === undefined || lastSession === undefined) throw new Error('snapshot has no exchange sessions')
-  if (firstSession.session_date !== manifest.first_session) throw new Error('first exchange session does not match')
-  if (lastSession.session_date !== manifest.last_session) throw new Error('last exchange session does not match')
-  if (canonicalHashV1(orderedSessions.map(withoutSnapshot)) !== manifest.sessions_content_hash) {
-    throw new Error('exchange-session content hash is invalid')
-  }
-  assertBoundSessions(sessionDates, request.bounds)
-  const boundedSessions = orderedSessions.filter(
-    (session) => session.session_date >= request.bounds.dataStart && session.session_date <= request.bounds.dataEnd,
-  )
-  const firstBoundedSession = boundedSessions.at(0)
-  const lastBoundedSession = boundedSessions.at(-1)
-  if (firstBoundedSession === undefined || lastBoundedSession === undefined) {
-    throw new Error('evaluation bounds contain no exchange sessions')
-  }
-  const symbols: SymbolCoverage[] = universe.map((symbol) => ({
-    symbol,
-    rows: boundedSessions.length,
-    firstSession: firstBoundedSession.session_date,
-    lastSession: lastBoundedSession.session_date,
-  }))
-  const manifestFields = {
-    database,
-    bounds: request.bounds,
-    rowCount: boundedSessions.length * universe.length,
-    sessionCount: boundedSessions.length,
-    firstSession: firstBoundedSession.session_date,
-    lastSession: lastBoundedSession.session_date,
-    symbols,
-  } as const
-  const material: Omit<InputManifest, 'hash'> = {
-    schemaVersion: 'bayn.input-manifest.v3',
-    tables,
-    ...manifestFields,
-    finalizedSnapshot,
-  }
-  const inputManifest = { ...material, hash: canonicalHashV1(material) }
-  return {
-    verifiedManifest,
-    orderedSessions,
-    boundedSessions,
-    inputManifest,
-  }
-}
 
-export const verifyFinalizedCalendar = (
-  rows: Pick<SnapshotRows, 'sessions' | 'manifests'>,
-  request: SnapshotRequest,
-): MarketDataInspection => {
-  const calendar = verifyCalendar(rows.sessions, rows.manifests, request)
-  const signalSession = calendar.boundedSessions.at(-1)
-  if (signalSession === undefined) throw new Error('finalized Signal calendar has no terminal session')
-  return {
-    manifest: calendar.inputManifest,
-    sessionDates: calendar.boundedSessions.map((session) => session.session_date),
-    signalSession: {
-      calendar_version: signalSession.calendar_version,
-      session_date: signalSession.session_date,
-      close_time: signalSession.close_time,
-      timezone: signalSession.timezone,
-    },
-  }
-}
-
-export const verifyFinalizedPublication = (
-  rows: Pick<SnapshotRows, 'sessions' | 'manifests'>,
-  input: FinalizedPublicationRequest,
-  contract: MarketDataContract,
-  observedAt: string,
-): MarketDataInspection | undefined => {
-  const manifests = rows.manifests.filter((manifest) => manifest.calendar_version === input.signalCalendarVersion)
-  if (manifests.length === 0) return undefined
-  if (manifests.length !== 1) {
-    throw new Error(
-      `Signal session ${input.signalSessionDate} and calendar ${input.signalCalendarVersion} have ${manifests.length} finalized manifests; expected exactly one`,
-    )
-  }
-  const manifest = manifests[0]
-  if (manifest === undefined) throw new Error('finalized Signal manifest disappeared during verification')
-  return verifyFinalizedCalendar(
-    { sessions: rows.sessions, manifests },
-    {
-      snapshotId: manifest.snapshot_id,
-      publicationAsOf: input.signalSessionDate,
-      calendarVersion: input.signalCalendarVersion,
-      universe: contract.universe,
-      bounds: {
-        schemaVersion: 'bayn.evaluation-bounds.v1',
-        dataStart: contract.historyStart,
-        dataEnd: input.signalSessionDate,
-        lookbackStart: contract.historyStart,
-        evaluationStart: contract.evaluationStart,
-        evaluationEnd: input.signalSessionDate,
-      },
-      observedAt,
-      universeId: contract.universeId,
-      universeSymbolHash: contract.universeSymbolHash,
-      historyStart: contract.historyStart,
-      evaluationStart: contract.evaluationStart,
-    },
+const decodeSessions = (
+  rows: readonly unknown[],
+): Result.Result<readonly SignalSessionRow[], MarketDataVerificationError> =>
+  pipe(
+    Schema.decodeUnknownResult(Schema.Array(SignalSessionRowSchema), StrictParseOptions)(rows),
+    Result.mapError(
+      (cause): MarketDataVerificationError => ({
+        _tag: 'RowDecodeFailed',
+        rows: 'sessions',
+        cause,
+      }),
+    ),
   )
-}
 
-export const verifyFinalizedSnapshot = (rows: SnapshotRows, request: SnapshotRequest): MarketDataSnapshot => {
-  const calendar = verifyCalendar(rows.sessions, rows.manifests, request)
-  const { manifest, universe } = calendar.verifiedManifest
-  const sessionDates = new Set(calendar.orderedSessions.map((session) => session.session_date))
-  const orderedBars = [...rows.bars].sort((left, right) =>
-    left.session_date === right.session_date
-      ? left.symbol < right.symbol
-        ? -1
-        : 1
-      : left.session_date < right.session_date
-        ? -1
-        : left.session_date > right.session_date
-          ? 1
-          : 0,
+const decodeManifests = (
+  rows: readonly unknown[],
+): Result.Result<readonly SignalManifestRow[], MarketDataVerificationError> =>
+  pipe(
+    Schema.decodeUnknownResult(Schema.Array(SignalManifestRowSchema), StrictParseOptions)(rows),
+    Result.mapError(
+      (cause): MarketDataVerificationError => ({
+        _tag: 'RowDecodeFailed',
+        rows: 'manifests',
+        cause,
+      }),
+    ),
+    Result.flatMap((manifests) =>
+      Result.all(
+        manifests.map((manifest) =>
+          pipe(
+            Result.all({
+              symbol_count: decodeSignalCount(manifest.symbol_count, 'symbol_count'),
+              session_count: decodeSignalCount(manifest.session_count, 'session_count'),
+              bar_count: decodeSignalCount(manifest.bar_count, 'bar_count'),
+            }),
+            Result.map((counts): SignalManifestRow => ({ ...manifest, ...counts })),
+          ),
+        ),
+      ),
+    ),
   )
-  const barKeys = new Set<string>()
-  const actualSymbols = new Set<string>()
-  for (const bar of orderedBars) {
-    if (bar.snapshot_id !== request.snapshotId) throw new Error('adjusted bar has a mixed snapshot ID')
-    if (
-      bar.provider !== manifest.provider ||
-      bar.source_feed !== manifest.source_feed ||
-      bar.adjustment !== manifest.adjustment
-    ) {
-      throw new Error('adjusted bars mix provider, feed, or adjustment provenance')
-    }
-    if (bar.publication_asof !== manifest.publication_asof) throw new Error('adjusted bar mixes publication as-of')
-    if (!sessionDates.has(bar.session_date))
-      throw new Error(`${bar.symbol} ${bar.session_date} is not an exchange session`)
-    const key = `${bar.symbol}\u001f${bar.session_date}`
-    if (barKeys.has(key)) throw new Error(`duplicate adjusted bar: ${bar.symbol} ${bar.session_date}`)
-    barKeys.add(key)
-    actualSymbols.add(bar.symbol)
-  }
-  if (orderedBars.length !== manifest.bar_count) throw new Error('adjusted-bar count does not match manifest')
-  if ([...actualSymbols].sort().join(',') !== universe.join(','))
-    throw new Error('snapshot universe does not match request')
-  for (const session of calendar.orderedSessions) {
-    for (const symbol of universe) {
-      if (!barKeys.has(`${symbol}\u001f${session.session_date}`)) {
-        throw new Error(`incomplete snapshot: missing ${symbol} ${session.session_date}`)
-      }
-    }
-  }
-  if (canonicalHashV1(orderedBars.map(withoutSnapshot)) !== manifest.bars_content_hash) {
-    throw new Error('adjusted-bar content hash is invalid')
-  }
-  const boundedSessionDates = new Set(calendar.boundedSessions.map((session) => session.session_date))
-  const boundedRows = orderedBars.filter((bar) => boundedSessionDates.has(bar.session_date))
-  if (boundedRows.length !== calendar.inputManifest.rowCount) {
-    throw new Error('bounded snapshot is not a complete symbol-session product')
-  }
-  return {
-    bars: boundedRows.map((row) => toDailyBar(row, manifest.schema_version)),
-    manifest: calendar.inputManifest,
-  }
-}
 
 const decodeSnapshotRows = (
   bars: readonly unknown[],
   sessions: readonly unknown[],
   manifests: readonly unknown[],
-): SnapshotRows => ({
-  bars: decodeBars(bars),
-  sessions: decodeSessions(sessions),
-  manifests: decodeManifests(manifests).map((manifest) => ({
-    ...manifest,
-    symbol_count: asCount(manifest.symbol_count, 'symbol_count'),
-    session_count: asCount(manifest.session_count, 'session_count'),
-    bar_count: asCount(manifest.bar_count, 'bar_count'),
-  })),
-})
+): Result.Result<SnapshotRows, MarketDataVerificationError> =>
+  Result.all({
+    bars: decodeBars(bars),
+    sessions: decodeSessions(sessions),
+    manifests: decodeManifests(manifests),
+  })
 
 const makeMarketData = (
   config: Pick<RuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
   contract: MarketDataContract,
 ): Effect.Effect<MarketDataService, never, ClickhouseClient.ClickhouseClient> =>
-  Effect.gen(function* () {
-    const sql = yield* ClickhouseClient.ClickhouseClient
-    // The Bayn principal is readonly=1, so query-level setting changes are forbidden. Snapshot counts and content
-    // hashes below make an incomplete or stale replica read fail closed.
-    const loadManifests = sql`
+  pipe(
+    ClickhouseClient.ClickhouseClient,
+    Effect.map((sql): MarketDataService => {
+      // The Bayn principal is readonly=1, so query-level setting changes are forbidden. Snapshot counts and content
+      // hashes below make an incomplete or stale replica read fail closed.
+      const loadManifests = sql`
         SELECT
           snapshot_id,
           schema_version,
@@ -629,7 +334,7 @@ const makeMarketData = (
         WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
         ORDER BY finalized_at
       `.pipe(sql.withQueryId(`bayn-manifest-${config.clickhouse.snapshotId.slice(-32)}`))
-    const loadSessions = sql`
+      const loadSessions = sql`
             SELECT
               snapshot_id,
               calendar_version,
@@ -642,7 +347,7 @@ const makeMarketData = (
             WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
             ORDER BY session_date
           `.pipe(sql.withQueryId(`bayn-sessions-${config.clickhouse.snapshotId.slice(-32)}`))
-    const loadBars = sql`
+      const loadBars = sql`
             SELECT
               snapshot_id,
               symbol,
@@ -663,8 +368,8 @@ const makeMarketData = (
             ORDER BY session_date, symbol
           `.pipe(sql.withQueryId(`bayn-bars-${config.clickhouse.snapshotId.slice(-32)}`))
 
-    const loadPublicationManifests = (request: FinalizedPublicationRequest) =>
-      sql`
+      const loadPublicationManifests = (request: FinalizedPublicationRequest) =>
+        sql`
         SELECT
           snapshot_id,
           schema_version,
@@ -698,7 +403,7 @@ const makeMarketData = (
         LIMIT 1
       `.pipe(sql.withQueryId(`bayn-cycle-manifest-${request.signalSessionDate}`))
 
-    const loadCyclePublicationManifests = sql`
+      const loadCyclePublicationManifests = sql`
       SELECT
         snapshot_id,
         schema_version,
@@ -731,8 +436,8 @@ const makeMarketData = (
       LIMIT ${sql.param('UInt8', cyclePublicationCandidateLimit)}
     `.pipe(sql.withQueryId('bayn-cycle-publication-candidates'))
 
-    const loadSnapshotPublicationManifest = (request: SnapshotPublicationRequest) =>
-      sql`
+      const loadSnapshotPublicationManifest = (request: SnapshotPublicationRequest) =>
+        sql`
         SELECT
           snapshot_id,
           schema_version,
@@ -761,8 +466,8 @@ const makeMarketData = (
         ORDER BY finalized_at
       `.pipe(sql.withQueryId(`bayn-bound-manifest-${request.snapshotId.slice(-32)}`))
 
-    const loadPublicationSessions = (snapshotId: string) =>
-      sql`
+      const loadPublicationSessions = (snapshotId: string) =>
+        sql`
         SELECT
           snapshot_id,
           calendar_version,
@@ -776,8 +481,8 @@ const makeMarketData = (
         ORDER BY session_date
       `.pipe(sql.withQueryId(`bayn-cycle-sessions-${snapshotId.slice(-32)}`))
 
-    const loadSnapshotPublicationBars = (snapshotId: string) =>
-      sql`
+      const loadSnapshotPublicationBars = (snapshotId: string) =>
+        sql`
         SELECT
           snapshot_id,
           symbol,
@@ -798,8 +503,8 @@ const makeMarketData = (
         ORDER BY session_date, symbol
       `.pipe(sql.withQueryId(`bayn-bound-bars-${snapshotId.slice(-32)}`))
 
-    const loadCyclePublicationSessions = (snapshotIds: readonly string[]) =>
-      sql`
+      const loadCyclePublicationSessions = (snapshotIds: readonly string[]) =>
+        sql`
         SELECT
           snapshot_id,
           calendar_version,
@@ -813,253 +518,293 @@ const makeMarketData = (
         ORDER BY snapshot_id, session_date
       `.pipe(sql.withQueryId('bayn-cycle-publication-candidate-sessions'))
 
-    const request = (observedAt: string): SnapshotRequest => {
-      const common = {
-        snapshotId: config.clickhouse.snapshotId,
-        publicationAsOf: config.clickhouse.publicationAsOf,
-        calendarVersion: config.clickhouse.calendarVersion,
+      const request = (observedAt: string): SnapshotRequest => {
+        const common = {
+          snapshotId: config.clickhouse.snapshotId,
+          publicationAsOf: config.clickhouse.publicationAsOf,
+          calendarVersion: config.clickhouse.calendarVersion,
+          universe: contract.universe,
+          bounds: config.clickhouse.bounds,
+          observedAt,
+        } as const
+        return {
+          ...common,
+          universeId: contract.universeId,
+          universeSymbolHash: contract.universeSymbolHash,
+          historyStart: contract.historyStart,
+          evaluationStart: contract.evaluationStart,
+        }
+      }
+      const snapshotPublicationRequest = (input: SnapshotPublicationRequest, observedAt: string): SnapshotRequest => ({
+        snapshotId: input.snapshotId,
+        publicationAsOf: input.signalSessionDate,
+        calendarVersion: input.signalCalendarVersion,
         universe: contract.universe,
-        bounds: config.clickhouse.bounds,
+        bounds: {
+          schemaVersion: 'bayn.evaluation-bounds.v1',
+          dataStart: contract.historyStart,
+          dataEnd: input.signalSessionDate,
+          lookbackStart: contract.historyStart,
+          evaluationStart: contract.evaluationStart,
+          evaluationEnd: input.signalSessionDate,
+        },
         observedAt,
-      } as const
-      return {
-        ...common,
         universeId: contract.universeId,
         universeSymbolHash: contract.universeSymbolHash,
         historyStart: contract.historyStart,
         evaluationStart: contract.evaluationStart,
+      })
+      const verify = <A>(
+        operation: 'check' | 'inspect' | 'inspect-publication' | 'verify',
+        result: Result.Result<A, MarketDataVerificationError>,
+      ): Effect.Effect<A, OperationalError> =>
+        pipe(
+          Effect.fromResult(result),
+          Effect.mapError(
+            (cause) =>
+              new OperationalError({
+                component: 'market-data',
+                operation,
+                message: renderMarketDataVerificationError(cause),
+                retryable: false,
+                cause,
+              }),
+          ),
+        )
+
+      const observedAt = pipe(
+        Clock.currentTimeMillis,
+        Effect.map((millis) => new Date(millis).toISOString()),
+      )
+
+      const decodeManifestRows = (
+        rows: readonly unknown[],
+      ): Result.Result<readonly SignalManifestRow[], MarketDataVerificationError> =>
+        pipe(
+          decodeSnapshotRows([], [], rows),
+          Result.map((snapshot) => snapshot.manifests),
+        )
+
+      const inspectPublicationRows = (
+        input: FinalizedPublicationRequest,
+        manifestRows: readonly unknown[],
+        expectedSnapshotId?: string,
+      ): Effect.Effect<FinalizedPublicationInspection, OperationalError | SqlError> =>
+        pipe(
+          decodeManifestRows(manifestRows),
+          Result.flatMap((manifests) => selectPublicationManifest(manifests, expectedSnapshotId)),
+          (result) => verify('inspect-publication', result),
+          Effect.flatMap((manifest) =>
+            pipe(
+              Option.fromNullishOr(manifest),
+              Option.match({
+                onNone: () =>
+                  pipe(
+                    observedAt,
+                    Effect.map(
+                      (instant): FinalizedPublicationInspection => ({ outcome: 'MISSING', observedAt: instant }),
+                    ),
+                  ),
+                onSome: (selected) =>
+                  pipe(
+                    loadPublicationSessions(selected.snapshot_id),
+                    Effect.flatMap((sessionRows) =>
+                      pipe(
+                        observedAt,
+                        Effect.flatMap((inspectedAt) =>
+                          pipe(
+                            decodeSnapshotRows([], sessionRows, manifestRows),
+                            Result.flatMap((rows) =>
+                              verifyBoundFinalizedPublication(rows, input, contract, inspectedAt, expectedSnapshotId),
+                            ),
+                            (result) => verify('inspect-publication', result),
+                            Effect.map(
+                              (inspection): FinalizedPublicationInspection => ({
+                                outcome: 'FINALIZED',
+                                observedAt: inspectedAt,
+                                inspection,
+                              }),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              }),
+            ),
+          ),
+        )
+
+      const inspectCyclePublicationRows = (
+        manifestRows: readonly unknown[],
+      ): Effect.Effect<FinalizedPublicationDiscovery, OperationalError | SqlError> =>
+        pipe(
+          decodeManifestRows(manifestRows),
+          Result.flatMap((manifests) => selectCyclePublicationManifests(manifests, cyclePublicationCandidateLimit)),
+          (result) => verify('inspect-publication', result),
+          Effect.flatMap((manifests) =>
+            pipe(
+              Option.fromNullishOr(manifests[0]),
+              Option.match({
+                onNone: () =>
+                  pipe(
+                    observedAt,
+                    Effect.map(
+                      (instant): FinalizedPublicationDiscovery => ({ outcome: 'MISSING', observedAt: instant }),
+                    ),
+                  ),
+                onSome: () => {
+                  const snapshotIds = manifests.map((manifest) => manifest.snapshot_id)
+                  return pipe(
+                    loadCyclePublicationSessions(snapshotIds),
+                    Effect.flatMap((sessionRows) =>
+                      pipe(
+                        observedAt,
+                        Effect.flatMap((inspectedAt) =>
+                          pipe(
+                            decodeSnapshotRows([], sessionRows, []),
+                            Result.flatMap((rows) =>
+                              verifyCyclePublications(manifests, rows.sessions, contract, inspectedAt),
+                            ),
+                            (result) => verify('inspect-publication', result),
+                            Effect.map(
+                              (publications): FinalizedPublicationDiscovery => ({
+                                outcome: 'FINALIZED',
+                                observedAt: inspectedAt,
+                                publications,
+                              }),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                },
+              }),
+            ),
+          ),
+        )
+
+      return {
+        check: pipe(
+          observedAt,
+          Effect.flatMap((instant) =>
+            pipe(
+              loadManifests,
+              Effect.flatMap((manifests) =>
+                pipe(
+                  decodeSnapshotRows([], [], manifests),
+                  Result.flatMap((rows) => verifyFinalizedManifest(rows.manifests, request(instant))),
+                  (result) => verify('check', result),
+                ),
+              ),
+            ),
+          ),
+          Effect.mapError((cause) =>
+            marketDataOperationError('check', 'failed to check finalized Signal snapshot', cause),
+          ),
+        ),
+        inspect: pipe(
+          observedAt,
+          Effect.flatMap((instant) =>
+            pipe(
+              Effect.all({ manifests: loadManifests, sessions: loadSessions }, { concurrency: 2 }),
+              Effect.flatMap(({ manifests, sessions }) =>
+                pipe(
+                  decodeSnapshotRows([], sessions, manifests),
+                  Result.flatMap((rows) => verifyFinalizedCalendar(rows, request(instant))),
+                  (result) => verify('inspect', result),
+                ),
+              ),
+            ),
+          ),
+          Effect.mapError((cause) =>
+            marketDataOperationError('inspect', 'failed to inspect finalized Signal calendar', cause),
+          ),
+        ),
+        inspectCyclePublications: loadCyclePublicationManifests.pipe(
+          Effect.flatMap(inspectCyclePublicationRows),
+          Effect.mapError((cause) =>
+            marketDataOperationError(
+              'inspect-publication',
+              'failed to inspect bounded finalized Signal publication candidates',
+              cause,
+            ),
+          ),
+        ),
+        inspectPublication: (input) =>
+          loadPublicationManifests(input).pipe(
+            Effect.flatMap((manifestRows) => inspectPublicationRows(input, manifestRows)),
+            Effect.mapError((cause) =>
+              marketDataOperationError(
+                'inspect-publication',
+                `failed to inspect finalized Signal publication for ${input.signalSessionDate}`,
+                cause,
+              ),
+            ),
+          ),
+        inspectSnapshotPublication: (input) =>
+          loadSnapshotPublicationManifest(input).pipe(
+            Effect.flatMap((manifestRows) => inspectPublicationRows(input, manifestRows, input.snapshotId)),
+            Effect.mapError((cause) =>
+              marketDataOperationError(
+                'inspect-publication',
+                `failed to inspect bound finalized Signal publication ${input.snapshotId}`,
+                cause,
+              ),
+            ),
+          ),
+        loadSnapshotPublication: (input) =>
+          pipe(
+            Effect.all(
+              {
+                manifests: loadSnapshotPublicationManifest(input),
+                sessions: loadPublicationSessions(input.snapshotId),
+                bars: loadSnapshotPublicationBars(input.snapshotId),
+              },
+              { concurrency: 3 },
+            ),
+            Effect.flatMap(({ bars, manifests, sessions }) =>
+              pipe(
+                observedAt,
+                Effect.flatMap((instant) =>
+                  pipe(
+                    decodeSnapshotRows(bars, sessions, manifests),
+                    Result.flatMap((rows) => verifyFinalizedSnapshot(rows, snapshotPublicationRequest(input, instant))),
+                    (result) => verify('verify', result),
+                  ),
+                ),
+              ),
+            ),
+            Effect.mapError((cause) =>
+              marketDataOperationError(
+                'load',
+                `failed to load bound finalized Signal snapshot ${input.snapshotId}`,
+                cause,
+              ),
+            ),
+          ),
+        load: pipe(
+          observedAt,
+          Effect.flatMap((instant) =>
+            pipe(
+              Effect.all({ manifests: loadManifests, sessions: loadSessions, bars: loadBars }, { concurrency: 3 }),
+              Effect.flatMap(({ bars, manifests, sessions }) =>
+                pipe(
+                  decodeSnapshotRows(bars, sessions, manifests),
+                  Result.flatMap((rows) => verifyFinalizedSnapshot(rows, request(instant))),
+                  (result) => verify('verify', result),
+                ),
+              ),
+            ),
+          ),
+          Effect.mapError((cause) =>
+            marketDataOperationError('load', 'failed to load finalized Signal snapshot', cause),
+          ),
+        ),
       }
-    }
-    const snapshotPublicationRequest = (input: SnapshotPublicationRequest, observedAt: string): SnapshotRequest => ({
-      snapshotId: input.snapshotId,
-      publicationAsOf: input.signalSessionDate,
-      calendarVersion: input.signalCalendarVersion,
-      universe: contract.universe,
-      bounds: {
-        schemaVersion: 'bayn.evaluation-bounds.v1',
-        dataStart: contract.historyStart,
-        dataEnd: input.signalSessionDate,
-        lookbackStart: contract.historyStart,
-        evaluationStart: contract.evaluationStart,
-        evaluationEnd: input.signalSessionDate,
-      },
-      observedAt,
-      universeId: contract.universeId,
-      universeSymbolHash: contract.universeSymbolHash,
-      historyStart: contract.historyStart,
-      evaluationStart: contract.evaluationStart,
-    })
-    const verify = <A>(operation: string, body: () => A): Effect.Effect<A, OperationalError> =>
-      Effect.try({
-        try: body,
-        catch: (cause) => operationalError('market-data', operation, 'Signal snapshot verification failed', cause),
-      })
-    const inspectPublicationRows = (
-      input: FinalizedPublicationRequest,
-      manifestRows: readonly unknown[],
-      expectedSnapshotId?: string,
-    ) =>
-      Effect.gen(function* () {
-        const manifests = yield* verify('inspect-publication', () => decodeSnapshotRows([], [], manifestRows).manifests)
-        const observedAt = (): Effect.Effect<string> =>
-          Clock.currentTimeMillis.pipe(Effect.map((millis) => new Date(millis).toISOString()))
-        if (manifests.length === 0) {
-          return { outcome: 'MISSING', observedAt: yield* observedAt() } as const
-        }
-        if (
-          expectedSnapshotId !== undefined &&
-          manifests.some((manifest) => manifest.snapshot_id !== expectedSnapshotId)
-        ) {
-          return yield* verify('inspect-publication', () => {
-            throw new Error('bound finalized Signal query returned a different snapshot ID')
-          })
-        }
-        const manifest = manifests[0]
-        if (manifest === undefined) {
-          return yield* verify('inspect-publication', () => {
-            throw new Error('finalized Signal manifest disappeared before its session read')
-          })
-        }
-        const sessionRows = yield* loadPublicationSessions(manifest.snapshot_id)
-        const inspectedAt = yield* observedAt()
-        const inspection = yield* verify('inspect-publication', () =>
-          verifyFinalizedPublication(decodeSnapshotRows([], sessionRows, manifestRows), input, contract, inspectedAt),
-        )
-        if (inspection === undefined) {
-          return yield* verify('inspect-publication', () => {
-            throw new Error('finalized Signal manifest disappeared before verification')
-          })
-        }
-        if (
-          expectedSnapshotId !== undefined &&
-          inspection.manifest.finalizedSnapshot.snapshotId !== expectedSnapshotId
-        ) {
-          return yield* verify('inspect-publication', () => {
-            throw new Error('verified finalized Signal publication differs from the bound snapshot ID')
-          })
-        }
-        return { outcome: 'FINALIZED', observedAt: inspectedAt, inspection } as const
-      })
-
-    const inspectCyclePublicationRows = (manifestRows: readonly unknown[]) =>
-      Effect.gen(function* () {
-        const manifests = yield* verify('inspect-publication', () => decodeSnapshotRows([], [], manifestRows).manifests)
-        if (manifests.length === 0) {
-          const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-          return { outcome: 'MISSING', observedAt } as const
-        }
-        if (manifests.length > cyclePublicationCandidateLimit) {
-          return yield* verify('inspect-publication', () => {
-            throw new Error(
-              `cycle publication discovery returned ${manifests.length} manifests; expected at most ${cyclePublicationCandidateLimit}`,
-            )
-          })
-        }
-        const ordered = [...manifests].sort((left, right) => {
-          if (left.publication_asof !== right.publication_asof) {
-            return right.publication_asof.localeCompare(left.publication_asof)
-          }
-          if (left.finalized_at !== right.finalized_at) return right.finalized_at.localeCompare(left.finalized_at)
-          return right.snapshot_id.localeCompare(left.snapshot_id)
-        })
-        const publicationDates = new Set<string>()
-        for (const manifest of ordered) {
-          if (publicationDates.has(manifest.publication_asof)) {
-            return yield* verify('inspect-publication', () => {
-              throw new Error(`cycle publication discovery returned duplicate date ${manifest.publication_asof}`)
-            })
-          }
-          publicationDates.add(manifest.publication_asof)
-        }
-        const snapshotIds = ordered.map((manifest) => manifest.snapshot_id)
-        const sessionRows = yield* loadCyclePublicationSessions(snapshotIds)
-        const inspectedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-        const publications = yield* verify('inspect-publication', () => {
-          const sessions = decodeSnapshotRows([], sessionRows, []).sessions
-          const expectedSnapshotIds = new Set(snapshotIds)
-          if (sessions.some((session) => !expectedSnapshotIds.has(session.snapshot_id))) {
-            throw new Error('cycle publication session query returned an unexpected snapshot ID')
-          }
-          return ordered.map((manifest) => {
-            const inspection = verifyFinalizedPublication(
-              {
-                manifests: [manifest],
-                sessions: sessions.filter((session) => session.snapshot_id === manifest.snapshot_id),
-              },
-              {
-                signalSessionDate: manifest.publication_asof,
-                signalCalendarVersion: manifest.calendar_version,
-              },
-              contract,
-              inspectedAt,
-            )
-            if (inspection === undefined) {
-              throw new Error(`cycle publication ${manifest.snapshot_id} disappeared before verification`)
-            }
-            return inspection
-          })
-        })
-        return {
-          outcome: 'FINALIZED',
-          observedAt: inspectedAt,
-          publications,
-        } as const
-      })
-
-    return {
-      check: Effect.gen(function* () {
-        const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-        const manifests = yield* loadManifests
-        return yield* verify('check', () =>
-          verifyFinalizedManifest(decodeSnapshotRows([], [], manifests).manifests, request(observedAt)),
-        )
-      }).pipe(
-        Effect.mapError((cause) =>
-          marketDataOperationError('check', 'failed to check finalized Signal snapshot', cause),
-        ),
-      ),
-      inspect: Effect.gen(function* () {
-        const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-        const [manifests, sessions] = yield* Effect.all([loadManifests, loadSessions], { concurrency: 2 })
-        return yield* verify('inspect', () =>
-          verifyFinalizedCalendar(decodeSnapshotRows([], sessions, manifests), request(observedAt)),
-        )
-      }).pipe(
-        Effect.mapError((cause) =>
-          marketDataOperationError('inspect', 'failed to inspect finalized Signal calendar', cause),
-        ),
-      ),
-      inspectCyclePublications: loadCyclePublicationManifests.pipe(
-        Effect.flatMap(inspectCyclePublicationRows),
-        Effect.mapError((cause) =>
-          marketDataOperationError(
-            'inspect-publication',
-            'failed to inspect bounded finalized Signal publication candidates',
-            cause,
-          ),
-        ),
-      ),
-      inspectPublication: (input) =>
-        loadPublicationManifests(input).pipe(
-          Effect.flatMap((manifestRows) => inspectPublicationRows(input, manifestRows)),
-          Effect.mapError((cause) =>
-            marketDataOperationError(
-              'inspect-publication',
-              `failed to inspect finalized Signal publication for ${input.signalSessionDate}`,
-              cause,
-            ),
-          ),
-        ),
-      inspectSnapshotPublication: (input) =>
-        loadSnapshotPublicationManifest(input).pipe(
-          Effect.flatMap((manifestRows) => inspectPublicationRows(input, manifestRows, input.snapshotId)),
-          Effect.mapError((cause) =>
-            marketDataOperationError(
-              'inspect-publication',
-              `failed to inspect bound finalized Signal publication ${input.snapshotId}`,
-              cause,
-            ),
-          ),
-        ),
-      loadSnapshotPublication: (input) =>
-        Effect.gen(function* () {
-          const [manifests, sessions, bars] = yield* Effect.all(
-            [
-              loadSnapshotPublicationManifest(input),
-              loadPublicationSessions(input.snapshotId),
-              loadSnapshotPublicationBars(input.snapshotId),
-            ],
-            { concurrency: 3 },
-          )
-          const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-          return yield* verify('verify', () =>
-            verifyFinalizedSnapshot(
-              decodeSnapshotRows(bars, sessions, manifests),
-              snapshotPublicationRequest(input, observedAt),
-            ),
-          )
-        }).pipe(
-          Effect.mapError((cause) =>
-            marketDataOperationError(
-              'load',
-              `failed to load bound finalized Signal snapshot ${input.snapshotId}`,
-              cause,
-            ),
-          ),
-        ),
-      load: Effect.gen(function* () {
-        const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-        const [manifests, sessions, bars] = yield* Effect.all([loadManifests, loadSessions, loadBars], {
-          concurrency: 3,
-        })
-        return yield* verify('verify', () =>
-          verifyFinalizedSnapshot(decodeSnapshotRows(bars, sessions, manifests), request(observedAt)),
-        )
-      }).pipe(
-        Effect.mapError((cause) => marketDataOperationError('load', 'failed to load finalized Signal snapshot', cause)),
-      ),
-    }
-  })
+    }),
+  )
 
 export const MarketDataLive = (
   config: Pick<RuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
