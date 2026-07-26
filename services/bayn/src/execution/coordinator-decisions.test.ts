@@ -34,8 +34,11 @@ import {
   encodeOrder,
   ensureRecoveryDelay,
   makeDryRunSubmit,
+  nextInstant,
   selectRecovery,
+  validateActiveSubmitRiskDecision,
   validateRecovery,
+  type ExecutionDecisionFailure,
 } from './coordinator-decisions'
 
 const encodedRequest = (value: Intent) => Result.getOrThrow(orderRequestBody(value))
@@ -208,6 +211,91 @@ describe('execution coordinator decisions', () => {
     expect(
       Result.getOrThrow(ensureRecoveryDelay(MutationOperation.Submit, submit, Date.parse(submit.occurredAt) + 1_000)),
     ).toEqual(submit)
+  })
+
+  test('returns malformed and overflowing coordinator instants through the closed failure algebra', () => {
+    const expectInvalidInstant = <A>(
+      result: Result.Result<A, ExecutionDecisionFailure>,
+      expected: {
+        readonly operation: MutationOperation
+        readonly field: Extract<ExecutionDecisionFailure, { readonly _tag: 'InvalidInstant' }>['field']
+        readonly value: string | number
+      },
+    ) => {
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure).toMatchObject({ _tag: 'InvalidInstant', ...expected })
+      }
+    }
+
+    expect(
+      Result.getOrThrow(nextInstant(MutationOperation.Submit, '2026-07-25T00:00:00.000Z', '2026-07-25T00:00:00.000Z')),
+    ).toBe('2026-07-25T00:00:00.001Z')
+
+    expectInvalidInstant(nextInstant(MutationOperation.Submit, 'not-an-instant', '2026-07-25T00:00:00.000Z'), {
+      operation: MutationOperation.Submit,
+      field: 'stored-updated-at',
+      value: 'not-an-instant',
+    })
+    expectInvalidInstant(nextInstant(MutationOperation.Cancel, '2026-07-25T00:00:00.000Z', 'not-an-instant'), {
+      operation: MutationOperation.Cancel,
+      field: 'occurred-at',
+      value: 'not-an-instant',
+    })
+    expectInvalidInstant(
+      nextInstant(MutationOperation.Submit, '+275760-09-13T00:00:00.000Z', '2026-07-25T00:00:00.000Z'),
+      { operation: MutationOperation.Submit, field: 'stored-updated-at', value: 8_640_000_000_000_001 },
+    )
+    expectInvalidInstant(validateActiveSubmitRiskDecision(stored(), Number.NaN), {
+      operation: MutationOperation.Submit,
+      field: 'current-time',
+      value: Number.NaN,
+    })
+    expectInvalidInstant(validateActiveSubmitRiskDecision(stored(), Number.MAX_VALUE), {
+      operation: MutationOperation.Submit,
+      field: 'current-time',
+      value: Number.MAX_VALUE,
+    })
+    expectInvalidInstant(validateActiveSubmitRiskDecision(stored(), 253_402_300_800_000), {
+      operation: MutationOperation.Submit,
+      field: 'current-time',
+      value: 253_402_300_800_000,
+    })
+    expectInvalidInstant(
+      ensureRecoveryDelay(
+        MutationOperation.Submit,
+        mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown),
+        Number.NaN,
+      ),
+      { operation: MutationOperation.Submit, field: 'current-time', value: Number.NaN },
+    )
+    expectInvalidInstant(
+      ensureRecoveryDelay(
+        MutationOperation.Submit,
+        mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown),
+        Number.MAX_VALUE,
+      ),
+      { operation: MutationOperation.Submit, field: 'current-time', value: Number.MAX_VALUE },
+    )
+    expectInvalidInstant(
+      ensureRecoveryDelay(
+        MutationOperation.Submit,
+        mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown),
+        253_402_300_800_000,
+      ),
+      { operation: MutationOperation.Submit, field: 'current-time', value: 253_402_300_800_000 },
+    )
+    expectInvalidInstant(
+      ensureRecoveryDelay(
+        MutationOperation.Cancel,
+        {
+          ...mutation(MutationOperation.Cancel, MutationEventType.CancelUnknown),
+          occurredAt: 'not-an-instant',
+        } as MutationEvent,
+        Date.parse('2026-07-25T00:00:00.000Z'),
+      ),
+      { operation: MutationOperation.Cancel, field: 'occurred-at', value: 'not-an-instant' },
+    )
   })
 
   test('neutralizes the exact zero-fill canceled broker order but not a different order', () => {
