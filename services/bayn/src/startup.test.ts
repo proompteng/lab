@@ -184,6 +184,11 @@ describe('Bayn startup pure decisions', () => {
             ? 'stored qualification provenance is invalid: stored evaluation uses an unsupported strategy contract'
             : expect.stringContaining('stored qualification provenance is invalid:'),
       })
+      if (reason === 'malformed') {
+        const rendered = renderStartupDecisionFailure(failure).message
+        expect(rendered).not.toContain('[object Object]')
+        expect(rendered).toContain('sourceRevision')
+      }
     }
   })
 

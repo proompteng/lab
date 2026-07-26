@@ -204,7 +204,7 @@ export type ContractConstructionFailure =
     }
   | {
       readonly _tag: 'ContractSchemaInvalid'
-      readonly operation: 'run-identity' | 'run-identity-material'
+      readonly operation: 'run-identity' | 'run-identity-material' | 'runtime-provenance'
       readonly cause: Schema.SchemaError
     }
 
@@ -235,9 +235,9 @@ export const decodeRuntimeProvenance = Schema.decodeUnknownEffect(RuntimeProvena
 
 const decodeRunIdentityMaterialSync = Schema.decodeUnknownSync(RunIdentityMaterialSchema, StrictParseOptions)
 const decodeRunIdentitySync = Schema.decodeUnknownSync(RunIdentitySchema, StrictParseOptions)
-const decodeRuntimeProvenanceSync = Schema.decodeUnknownSync(RuntimeProvenanceSchema, StrictParseOptions)
 const decodeRunIdentityMaterialResult = Schema.decodeUnknownResult(RunIdentityMaterialSchema, StrictParseOptions)
 const decodeRunIdentityResult = Schema.decodeUnknownResult(RunIdentitySchema, StrictParseOptions)
+const decodeRuntimeProvenanceResult = Schema.decodeUnknownResult(RuntimeProvenanceSchema, StrictParseOptions)
 
 export const makeRunIdentity = (input: RunIdentityMaterial): RunIdentity => {
   const material = decodeRunIdentityMaterialSync(input)
@@ -282,16 +282,29 @@ export const makeRunIdentityResult = (
     ),
   )
 
-export const makeRuntimeProvenance = (input: RuntimeProvenanceInput): RuntimeProvenance => {
-  return decodeRuntimeProvenanceSync({
-    schemaVersion: 'bayn.runtime-provenance.v2',
-    ...input,
-    contractVersions: {
-      runtimeProvenance: 'bayn.runtime-provenance.v2',
-      inputManifest: 'bayn.input-manifest.v3',
-      evaluation: ContractVersion.Evaluation,
-    },
-  })
-}
+export const makeRuntimeProvenanceResult = (
+  input: RuntimeProvenanceInput,
+): Result.Result<RuntimeProvenance, ContractConstructionFailure> =>
+  pipe(
+    decodeRuntimeProvenanceResult({
+      schemaVersion: 'bayn.runtime-provenance.v2',
+      ...input,
+      contractVersions: {
+        runtimeProvenance: 'bayn.runtime-provenance.v2',
+        inputManifest: 'bayn.input-manifest.v3',
+        evaluation: ContractVersion.Evaluation,
+      },
+    }),
+    Result.mapError(
+      (cause): ContractConstructionFailure => ({
+        _tag: 'ContractSchemaInvalid',
+        operation: 'runtime-provenance',
+        cause,
+      }),
+    ),
+  )
+
+export const makeRuntimeProvenance = (input: RuntimeProvenanceInput): RuntimeProvenance =>
+  Result.getOrThrow(makeRuntimeProvenanceResult(input))
 
 export { IsoDateSchema, Sha256Schema } from './schemas'

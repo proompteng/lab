@@ -7,7 +7,12 @@ import { riskBalancedTrendBehaviorHash } from './behavior'
 import { BrokerRead, live as AlpacaReadLive, scopedReadAdapterLayer, type BrokerReadShape } from './broker/alpaca'
 import { verifyBehaviorHash, verifyParameterHash } from './build'
 import { loadConfig, type LoadedRuntimeConfig } from './config'
-import { makeRuntimeProvenance, makeStrategyProtocolHashResult, type ContractConstructionFailure } from './contracts'
+import {
+  makeRuntimeProvenanceResult,
+  makeStrategyProtocolHashResult,
+  type ContractConstructionFailure,
+  type RuntimeProvenance,
+} from './contracts'
 import { CycleObservabilityLive } from './db/cycle-observability'
 import { CycleStoreLive } from './db/cycle-store'
 import { EvidenceStoreFromPostgres, PostgresClientLive } from './db/evidence-store'
@@ -70,7 +75,7 @@ type RuntimeSeed = {
 
 type ParameterizedRuntime = RuntimeSeed & { readonly parameterHash: string }
 type ProvenanceRuntime = ParameterizedRuntime & {
-  readonly provenance: ReturnType<typeof makeRuntimeProvenance>
+  readonly provenance: RuntimeProvenance
 }
 type StrategyRuntime = ProvenanceRuntime & { readonly strategy: Strategy }
 
@@ -85,26 +90,25 @@ const addRuntimeProvenance = (
   parameterized: ParameterizedRuntime,
 ): Result.Result<ProvenanceRuntime, RuntimeIdentityFailure> =>
   pipe(
-    Result.try({
-      try: () =>
-        makeRuntimeProvenance({
-          sourceRevision: parameterized.config.build.sourceRevision,
-          image: {
-            repository: parameterized.config.build.imageRepository,
-            digest: parameterized.config.build.imageDigest,
-          },
-          strategy: {
-            name: 'risk-balanced-trend',
-            behaviorHash: riskBalancedTrendBehaviorHash,
-            parameterHash: parameterized.parameterHash,
-            parameterSchemaVersion: parameterized.protocol.schemaVersion,
-          },
-        }),
-      catch: (cause): RuntimeIdentityFailure => ({
+    makeRuntimeProvenanceResult({
+      sourceRevision: parameterized.config.build.sourceRevision,
+      image: {
+        repository: parameterized.config.build.imageRepository,
+        digest: parameterized.config.build.imageDigest,
+      },
+      strategy: {
+        name: 'risk-balanced-trend',
+        behaviorHash: riskBalancedTrendBehaviorHash,
+        parameterHash: parameterized.parameterHash,
+        parameterSchemaVersion: parameterized.protocol.schemaVersion,
+      },
+    }),
+    Result.mapError(
+      (cause): RuntimeIdentityFailure => ({
         _tag: 'RuntimeProvenanceFailed',
         cause,
       }),
-    }),
+    ),
     Result.map((provenance) => ({ ...parameterized, provenance })),
   )
 

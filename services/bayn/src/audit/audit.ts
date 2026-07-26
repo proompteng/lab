@@ -1,6 +1,6 @@
 import { Result, Schema } from 'effect'
 
-import { makeRuntimeProvenance } from '../contracts'
+import { makeRuntimeProvenanceResult, type ContractConstructionFailure, type RuntimeProvenance } from '../contracts'
 import { ReconciliationResultSchema } from '../evidence-contracts'
 import { canonicalHashV1 } from '../hash'
 import type { QualificationLock, QualificationResult } from '../qualification'
@@ -232,6 +232,7 @@ export const validateSignalReplicaTopology = (
 
 export type QualificationAuditFailure =
   | ReferenceEvaluationFailure
+  | ContractConstructionFailure
   | {
       readonly _tag: 'UnsupportedAuditStrategyContract'
       readonly protocolStrategyName: string
@@ -387,7 +388,7 @@ interface QualificationAuditFacts {
   readonly result: QualificationResult
   readonly reference: ReferenceEvaluation
   readonly trace: SimulationTrace
-  readonly provenance: ReturnType<typeof makeRuntimeProvenance>
+  readonly provenance: RuntimeProvenance
   readonly policyDocuments: ReturnType<typeof makePolicyDocuments>
   readonly sortedReplicas: readonly string[]
   readonly replicaSet: ReadonlySet<string>
@@ -440,7 +441,7 @@ const makeAuditFacts = (
       requiredSchemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
     })
   }
-  const provenance = makeRuntimeProvenance({
+  const provenanceResult = makeRuntimeProvenanceResult({
     sourceRevision: database.run.sourceRevision,
     image: { repository: database.run.imageRepository, digest: database.run.imageDigest },
     strategy: {
@@ -450,6 +451,8 @@ const makeAuditFacts = (
       parameterSchemaVersion: database.protocol.schemaVersion,
     },
   })
+  if (Result.isFailure(provenanceResult)) return Result.fail(provenanceResult.failure)
+  const provenance = provenanceResult.success
   const referenceResult = evaluateReference(input.bars, input.manifest, input.protocol, provenance)
   if (Result.isFailure(referenceResult)) return Result.fail(referenceResult.failure)
   const reference = referenceResult.success
