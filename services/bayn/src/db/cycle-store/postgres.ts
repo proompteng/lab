@@ -1,21 +1,17 @@
 import { PgClient } from '@effect/sql-pg'
-import { Context, Data, Effect, Layer, Option, Schema } from 'effect'
+import { Context, Data, Effect, Layer, Match, Option, Result, Schema } from 'effect'
 import { isSqlError, type SqlError } from 'effect/unstable/sql/SqlError'
 
 import {
   CycleDraftSchema,
   CycleState,
   CycleTerminalReason,
-  cycleDraftMatches,
-  cycleDraftOf,
   decodeAutonomousCycle,
-  isCycleStateTransitionAllowed,
   type AutonomousCycle,
   type CycleCompletionState,
   type CycleDraft,
-} from '../cycle'
-import { cycleTerminalReasonForBlockedTargetPlan } from '../cycle-recovery'
-import { decodeInputManifestArtifact } from '../evidence-contracts'
+} from '../../cycle'
+import { decodeInputManifestArtifact } from '../../evidence-contracts'
 import {
   IsoDateSchema,
   PositiveIntegerSchema,
@@ -23,11 +19,28 @@ import {
   StrictNonEmptyStringSchema,
   UtcInstantSchema,
   strictParseOptions,
-} from '../schemas'
-import { ObserveShadowDecisionDocumentSchema, type ObserveShadowDecisionDocument } from '../shadow-decision-contract'
-import { TargetPlanStatus } from '../target-planner'
-import type { InputManifest, IsoDate } from '../types'
-import { ensureSnapshotReference } from './snapshot-reference'
+} from '../../schemas'
+import { ObserveShadowDecisionDocumentSchema, type ObserveShadowDecisionDocument } from '../../shadow-decision-contract'
+import type { InputManifest, IsoDate } from '../../types'
+import { ensureSnapshotReference } from '../snapshot-reference'
+import {
+  decideAcquire,
+  decideActivation,
+  decideBlock,
+  decideCompletion,
+  decideDecisionBinding,
+  decideSnapshotBinding,
+  makeInitialCycle,
+  validateBlockedDecision,
+  validateCompletionDocument,
+  type AcquireDecision,
+  type ActivationDecision,
+  type BlockDecision,
+  type CompletionDecision,
+  type CycleStoreDecisionFailure,
+  type DecisionBindingDecision,
+  type SnapshotDecision,
+} from './decisions'
 
 type CycleStoreInternalError = CycleStoreError | Schema.SchemaError | SqlError
 
@@ -191,8 +204,6 @@ const decodeStoredDecisionDocumentRows = Schema.decodeUnknownEffect(
   StoredDecisionDocumentRowsSchema,
   strictParseOptions,
 )
-const shadowDecisionEquivalent = Schema.toEquivalence(ObserveShadowDecisionDocumentSchema)
-
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
 
 const storeError = (
@@ -232,6 +243,12 @@ const fail = (
   failure: CycleStoreError['failure'],
   message: string,
 ): Effect.Effect<never, CycleStoreError> => Effect.fail(storeError(operation, failure, message))
+
+const liftDecision = <A>(
+  operation: CycleStoreError['operation'],
+  decision: Result.Result<A, CycleStoreDecisionFailure>,
+): Effect.Effect<A, CycleStoreError> =>
+  Effect.fromResult(decision).pipe(Effect.mapError(({ failure, message }) => storeError(operation, failure, message)))
 
 const rowToCycle = (row: StoredCycleRow): Effect.Effect<AutonomousCycle, Schema.SchemaError> =>
   decodeAutonomousCycle({
@@ -398,24 +415,12 @@ const exactlyOne = (
   return Effect.succeed(cycle)
 }
 
-const initialCycle = (draft: CycleDraft, observedAt: string): Effect.Effect<AutonomousCycle, Schema.SchemaError> => {
-  const missed = observedAt >= draft.window.publicationDeadlineAt
-  return decodeAutonomousCycle({
-    ...draft,
-    state: missed ? CycleState.Blocked : CycleState.Pending,
-    bindings: {},
-    ...(missed ? { terminalReason: CycleTerminalReason.MissedPublication, terminalAt: observedAt } : {}),
-    stateVersion: 1,
-    createdAt: observedAt,
-    updatedAt: observedAt,
-  })
-}
-
-const makeCycleStore = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-
+const makeCycleStore = Effect.map(PgClient.PgClient, (sql) => {
   const readLocked = (operation: CycleStoreError['operation'], cycleId: string) =>
     selectCycle(sql, cycleId, true).pipe(Effect.flatMap((rows) => exactlyOne(operation, rows)))
+
+  const readDocuments = (cycleId: string) =>
+    selectDecisionDocument(sql, cycleId).pipe(Effect.map((rows) => rows.map(({ document }) => document)))
 
   const requireApplied = (
     operation: CycleStoreError['operation'],
@@ -453,154 +458,166 @@ const makeCycleStore = Effect.gen(function* () {
       Effect.map(([match]) => match.matches),
     )
 
-  const verifyDecisionBoundBlock = (
+  const persistSnapshotReference = (inputManifest: InputManifest): Effect.Effect<void, CycleStoreInternalError> =>
+    ensureSnapshotReference(sql, inputManifest).pipe(
+      Effect.flatMap((matches) =>
+        matches
+          ? Effect.void
+          : fail(
+              'bind-snapshot',
+              'conflict',
+              'stored snapshot reference diverged from the finalized Signal publication',
+            ),
+      ),
+    )
+
+  const persistBlockedCycle = (
+    operation: CycleStoreError['operation'],
     cycle: AutonomousCycle,
     reason: CycleTerminalReason,
-  ): Effect.Effect<void, CycleStoreInternalError> =>
-    Effect.gen(function* () {
-      const storedRows = yield* selectDecisionDocument(sql, cycle.identity.cycleId)
-      const storedDocument = storedRows[0]?.document
-      if (
-        storedRows.length !== 1 ||
-        storedDocument === undefined ||
-        storedDocument.contentHash !== cycle.bindings.decisionHash ||
-        storedDocument.targetPlan.status !== TargetPlanStatus.Blocked
-      ) {
-        return yield* fail(
-          'block',
-          'invariant',
-          'decision-bound cycle may block only from its exact blocked shadow decision',
-        )
-      }
-      const expectedReason = cycleTerminalReasonForBlockedTargetPlan(storedDocument.targetPlan.reason)
-      if (reason !== expectedReason) {
-        return yield* fail('block', 'invariant', 'cycle blocked reason must match its exact durable shadow decision')
-      }
-    })
+    observedAt: string,
+  ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> =>
+    sql<Record<string, unknown>>`
+      UPDATE autonomous_cycles
+      SET
+        state = ${CycleState.Blocked},
+        terminal_reason = ${reason},
+        state_version = ${cycle.stateVersion + 1},
+        updated_at = ${observedAt},
+        terminal_at = ${observedAt}
+      WHERE cycle_id = ${cycle.identity.cycleId}
+        AND state = ${cycle.state}
+        AND state_version = ${cycle.stateVersion}
+      RETURNING cycle_id
+    `.pipe(
+      Effect.flatMap((rows) => requireApplied(operation, rows)),
+      Effect.flatMap(() => readLocked(operation, cycle.identity.cycleId)),
+      Effect.map((updated) => ({ cycle: updated, changed: true })),
+    )
+
+  const interpretBlockDecision = (
+    operation: CycleStoreError['operation'],
+    observedAt: string,
+    decision: BlockDecision,
+  ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> =>
+    Match.value(decision).pipe(
+      Match.tagsExhaustive({
+        Replay: ({ cycle }) => Effect.succeed({ cycle, changed: false }),
+        Persist: ({ cycle, reason }) => persistBlockedCycle(operation, cycle, reason, observedAt),
+        VerifyDecision: (verification) =>
+          readDocuments(verification.cycle.identity.cycleId).pipe(
+            Effect.flatMap((documents) => liftDecision(operation, validateBlockedDecision(verification, documents))),
+            Effect.andThen(persistBlockedCycle(operation, verification.cycle, verification.reason, observedAt)),
+          ),
+      }),
+    )
 
   const blockCycle = (
     operation: CycleStoreError['operation'],
     cycle: AutonomousCycle,
     reason: CycleTerminalReason,
     observedAt: string,
-  ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> => {
-    if (cycle.state === CycleState.Blocked && cycle.terminalReason === reason) {
-      return Effect.succeed({ cycle, changed: false })
-    }
-    if (!isCycleStateTransitionAllowed(cycle.state, CycleState.Blocked)) {
-      return fail(operation, 'conflict', `terminal cycle ${cycle.identity.cycleId} cannot be blocked again`)
-    }
-    if (
-      reason === CycleTerminalReason.MissedPublication &&
-      (cycle.state !== CycleState.Pending ||
-        cycle.bindings.snapshotId !== undefined ||
-        observedAt < cycle.window.publicationDeadlineAt)
-    ) {
-      return fail(
-        operation,
-        'invariant',
-        'missed-publication transition requires an unbound pending cycle at or after its publication deadline',
-      )
-    }
-    if (reason === CycleTerminalReason.MissedSubmission && observedAt < cycle.window.submissionCutoffAt) {
-      return fail(operation, 'invariant', 'missed-submission transition cannot precede the broker submission cutoff')
-    }
-    if (observedAt < cycle.updatedAt) {
-      return fail(operation, 'conflict', 'cycle update time cannot move backward')
-    }
-    const verifyDecision =
-      cycle.state === CycleState.Active && cycle.bindings.decisionHash !== undefined
-        ? verifyDecisionBoundBlock(cycle, reason)
-        : Effect.void
-    return verifyDecision.pipe(
-      Effect.andThen(sql<Record<string, unknown>>`
-        UPDATE autonomous_cycles
-        SET
-          state = ${CycleState.Blocked},
-          terminal_reason = ${reason},
-          state_version = ${cycle.stateVersion + 1},
-          updated_at = ${observedAt},
-          terminal_at = ${observedAt}
-        WHERE cycle_id = ${cycle.identity.cycleId}
-          AND state = ${cycle.state}
-          AND state_version = ${cycle.stateVersion}
-        RETURNING cycle_id
-      `),
-      Effect.flatMap((rows) => requireApplied(operation, rows)),
-      Effect.flatMap(() => readLocked(operation, cycle.identity.cycleId)),
-      Effect.map((updated) => ({ cycle: updated, changed: true })),
+  ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> =>
+    liftDecision(operation, decideBlock(cycle, reason, observedAt)).pipe(
+      Effect.flatMap((decision) => interpretBlockDecision(operation, observedAt, decision)),
     )
-  }
+
+  const insertCycle = (candidate: AutonomousCycle) =>
+    sql<Record<string, unknown>>`
+      INSERT INTO autonomous_cycles (
+        cycle_id, schema_version, identity_schema_version, strategy_name,
+        qualification_run_id, strategy_protocol_hash, account_id,
+        signal_session_date, signal_calendar_version,
+        execution_policy_schema_version, execution_policy_hash,
+        strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
+        window_schema_version, execution_calendar_schema_version,
+        execution_calendar_source, execution_calendar_hash, execution_session_date,
+        signal_close_at, publication_deadline_at, submission_open_at,
+        execution_open_at, execution_close_at, submission_cutoff_at, state, snapshot_id,
+        decision_hash, terminal_reason, state_version,
+        created_at, updated_at, terminal_at
+      ) VALUES (
+        ${candidate.identity.cycleId}, ${candidate.schemaVersion},
+        ${candidate.identity.schemaVersion}, ${candidate.identity.strategyName},
+        ${candidate.identity.qualificationRunId}, ${candidate.identity.strategyProtocolHash},
+        ${candidate.identity.accountId}, ${candidate.identity.signalSessionDate},
+        ${candidate.identity.signalCalendarVersion},
+        ${candidate.identity.executionPolicy.schemaVersion},
+        ${candidate.identity.executionPolicy.executionPolicyHash},
+        ${candidate.identity.executionPolicy.strategyExecutionModelHash},
+        ${candidate.identity.executionPolicy.submissionWindowMs},
+        ${candidate.identity.executionPolicy.submissionCutoffBeforeOpenMs},
+        ${candidate.window.schemaVersion}, ${candidate.window.executionCalendarSchemaVersion},
+        ${candidate.window.executionCalendarSource}, ${candidate.window.executionCalendarHash},
+        ${candidate.window.executionSessionDate},
+        ${candidate.window.signalCloseAt}, ${candidate.window.publicationDeadlineAt},
+        ${candidate.window.submissionOpenAt}, ${candidate.window.executionOpenAt},
+        ${candidate.window.executionCloseAt},
+        ${candidate.window.submissionCutoffAt}, ${candidate.state}, NULL, NULL,
+        ${candidate.terminalReason ?? null}, ${candidate.stateVersion},
+        ${candidate.createdAt}, ${candidate.updatedAt}, ${candidate.terminalAt ?? null}
+      )
+      ON CONFLICT DO NOTHING
+      RETURNING cycle_id
+    `.pipe(Effect.flatMap(decodeMutationRows))
+
+  const lockAuthoritySlot = (candidate: AutonomousCycle): Effect.Effect<string, CycleStoreInternalError> =>
+    sql<Record<string, unknown>>`
+      SELECT cycle_id
+      FROM autonomous_cycles
+      WHERE qualification_run_id = ${candidate.identity.qualificationRunId}
+        AND account_id = ${candidate.identity.accountId}
+        AND signal_session_date = ${candidate.identity.signalSessionDate}
+      FOR UPDATE
+    `.pipe(
+      Effect.flatMap(decodeMutationRows),
+      Effect.flatMap((rows) => {
+        const cycleId = rows[0]?.cycle_id
+        return rows.length === 1 && cycleId !== undefined
+          ? Effect.succeed(cycleId)
+          : fail('acquire', 'invariant', 'autonomous cycle authority slot was not found exactly once')
+      }),
+    )
+
+  const interpretAcquireDecision = (
+    observedAt: string,
+    decision: AcquireDecision,
+  ): Effect.Effect<CycleAcquireReceipt, CycleStoreInternalError> =>
+    Match.value(decision).pipe(
+      Match.tagsExhaustive({
+        Return: ({ cycle, created }) => Effect.succeed({ cycle, created }),
+        Block: ({ cycle, created, reason }) =>
+          blockCycle('acquire', cycle, reason, observedAt).pipe(
+            Effect.map((receipt) => ({ cycle: receipt.cycle, created })),
+          ),
+      }),
+    )
 
   const acquire = (draft: CycleDraft, observedAt: string): Effect.Effect<CycleAcquireReceipt, CycleStoreError> =>
     run(
       'acquire',
-      Effect.gen(function* () {
-        const decodedDraft = yield* decodeCycleDraft(draft)
-        const decodedTime = yield* Schema.decodeUnknownEffect(UtcInstantSchema, strictParseOptions)(observedAt)
-        const candidate = yield* initialCycle(decodedDraft, decodedTime)
-        return yield* sql.withTransaction(
-          Effect.gen(function* () {
-            const inserted = yield* sql<Record<string, unknown>>`
-              INSERT INTO autonomous_cycles (
-                cycle_id, schema_version, identity_schema_version, strategy_name,
-                qualification_run_id, strategy_protocol_hash, account_id,
-                signal_session_date, signal_calendar_version,
-                execution_policy_schema_version, execution_policy_hash,
-                strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
-                window_schema_version, execution_calendar_schema_version,
-                execution_calendar_source, execution_calendar_hash, execution_session_date,
-                signal_close_at, publication_deadline_at, submission_open_at,
-                execution_open_at, execution_close_at, submission_cutoff_at, state, snapshot_id,
-                decision_hash, terminal_reason, state_version,
-                created_at, updated_at, terminal_at
-              ) VALUES (
-                ${candidate.identity.cycleId}, ${candidate.schemaVersion},
-                ${candidate.identity.schemaVersion}, ${candidate.identity.strategyName},
-                ${candidate.identity.qualificationRunId}, ${candidate.identity.strategyProtocolHash},
-                ${candidate.identity.accountId}, ${candidate.identity.signalSessionDate},
-                ${candidate.identity.signalCalendarVersion},
-                ${candidate.identity.executionPolicy.schemaVersion},
-                ${candidate.identity.executionPolicy.executionPolicyHash},
-                ${candidate.identity.executionPolicy.strategyExecutionModelHash},
-                ${candidate.identity.executionPolicy.submissionWindowMs},
-                ${candidate.identity.executionPolicy.submissionCutoffBeforeOpenMs},
-                ${candidate.window.schemaVersion}, ${candidate.window.executionCalendarSchemaVersion},
-                ${candidate.window.executionCalendarSource}, ${candidate.window.executionCalendarHash},
-                ${candidate.window.executionSessionDate},
-                ${candidate.window.signalCloseAt}, ${candidate.window.publicationDeadlineAt},
-                ${candidate.window.submissionOpenAt}, ${candidate.window.executionOpenAt},
-                ${candidate.window.executionCloseAt},
-                ${candidate.window.submissionCutoffAt}, ${candidate.state}, NULL, NULL,
-                ${candidate.terminalReason ?? null}, ${candidate.stateVersion},
-                ${candidate.createdAt}, ${candidate.updatedAt}, ${candidate.terminalAt ?? null}
-              )
-              ON CONFLICT DO NOTHING
-              RETURNING cycle_id
-            `.pipe(Effect.flatMap(decodeMutationRows))
-            const slot = yield* sql<Record<string, unknown>>`
-              SELECT cycle_id
-              FROM autonomous_cycles
-              WHERE qualification_run_id = ${candidate.identity.qualificationRunId}
-                AND account_id = ${candidate.identity.accountId}
-                AND signal_session_date = ${candidate.identity.signalSessionDate}
-              FOR UPDATE
-            `.pipe(Effect.flatMap(decodeMutationRows))
-            const storedCycleId = slot[0]?.cycle_id
-            if (slot.length !== 1 || storedCycleId === undefined) {
-              return yield* fail('acquire', 'invariant', 'autonomous cycle authority slot was not found exactly once')
-            }
-            let stored = yield* readLocked('acquire', storedCycleId)
-            if (!cycleDraftMatches(cycleDraftOf(stored), decodedDraft)) {
-              return yield* fail('acquire', 'conflict', 'stored cycle differs from deterministic acquisition input')
-            }
-            if (stored.state === CycleState.Pending && decodedTime >= stored.window.publicationDeadlineAt) {
-              stored = (yield* blockCycle('acquire', stored, CycleTerminalReason.MissedPublication, decodedTime)).cycle
-            }
-            return { cycle: stored, created: inserted.length === 1 }
-          }),
-        )
-      }),
+      decodeCycleDraft(draft).pipe(
+        Effect.bindTo('draft'),
+        Effect.bind('observedAt', () => Schema.decodeUnknownEffect(UtcInstantSchema, strictParseOptions)(observedAt)),
+        Effect.map(({ draft: decodedDraft, observedAt: decodedTime }) => ({
+          draft: decodedDraft,
+          observedAt: decodedTime,
+          candidate: makeInitialCycle(decodedDraft, decodedTime),
+        })),
+        Effect.flatMap(({ draft: decodedDraft, observedAt: decodedTime, candidate }) =>
+          sql.withTransaction(
+            insertCycle(candidate).pipe(
+              Effect.bindTo('inserted'),
+              Effect.bind('storedCycleId', () => lockAuthoritySlot(candidate)),
+              Effect.bind('stored', ({ storedCycleId }) => readLocked('acquire', storedCycleId)),
+              Effect.flatMap(({ inserted, stored }) =>
+                liftDecision('acquire', decideAcquire(stored, decodedDraft, decodedTime, inserted.length === 1)),
+              ),
+              Effect.flatMap((decision) => interpretAcquireDecision(decodedTime, decision)),
+            ),
+          ),
+        ),
+      ),
     )
 
   const read = (cycleId: string): Effect.Effect<Option.Option<AutonomousCycle>, CycleStoreError> =>
@@ -643,12 +660,12 @@ const makeCycleStore = Effect.gen(function* () {
         Sha256Schema,
         strictParseOptions,
       )(cycleId).pipe(
-        Effect.flatMap((decodedId) => selectDecisionDocument(sql, decodedId)),
-        Effect.flatMap((rows) => {
-          if (rows.length > 1) {
+        Effect.flatMap(readDocuments),
+        Effect.flatMap((documents) => {
+          if (documents.length > 1) {
             return fail('read-decision-document', 'invariant', 'cycle decision document returned multiple rows')
           }
-          return Effect.succeed(rows[0] === undefined ? Option.none() : Option.some(rows[0].document))
+          return Effect.succeed(documents[0] === undefined ? Option.none() : Option.some(documents[0]))
         }),
       ),
     )
@@ -664,17 +681,40 @@ const makeCycleStore = Effect.gen(function* () {
       ),
     )
 
-  const persistSnapshotReference = (inputManifest: InputManifest): Effect.Effect<void, CycleStoreInternalError> =>
-    ensureSnapshotReference(sql, inputManifest).pipe(
-      Effect.flatMap((matches) =>
-        matches
-          ? Effect.void
-          : fail(
-              'bind-snapshot',
-              'conflict',
-              'stored snapshot reference diverged from the finalized Signal publication',
-            ),
-      ),
+  const persistSnapshot = (
+    manifest: InputManifest,
+    observedAt: string,
+    decision: Extract<SnapshotDecision, { readonly _tag: 'Persist' }>,
+  ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> =>
+    persistSnapshotReference(manifest).pipe(
+      Effect.andThen(sql<Record<string, unknown>>`
+        UPDATE autonomous_cycles
+        SET
+          snapshot_id = ${decision.snapshotId},
+          state_version = ${decision.cycle.stateVersion + 1},
+          updated_at = ${observedAt}
+        WHERE cycle_id = ${decision.cycle.identity.cycleId}
+          AND state = ${CycleState.Pending}
+          AND state_version = ${decision.cycle.stateVersion}
+          AND snapshot_id IS NULL
+        RETURNING cycle_id
+      `),
+      Effect.flatMap((rows) => requireApplied('bind-snapshot', rows)),
+      Effect.flatMap(() => readLocked('bind-snapshot', decision.cycle.identity.cycleId)),
+      Effect.map((cycle) => ({ cycle, changed: true })),
+    )
+
+  const interpretSnapshotDecision = (
+    manifest: InputManifest,
+    observedAt: string,
+    decision: SnapshotDecision,
+  ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> =>
+    Match.value(decision).pipe(
+      Match.tagsExhaustive({
+        Replay: ({ cycle }) => persistSnapshotReference(manifest).pipe(Effect.as({ cycle, changed: false })),
+        Persist: (persist) => persistSnapshot(manifest, observedAt, persist),
+        Block: ({ cycle, reason }) => blockCycle('bind-snapshot', cycle, reason, observedAt),
+      }),
     )
 
   const bindSnapshot = (
@@ -685,71 +725,55 @@ const makeCycleStore = Effect.gen(function* () {
     run(
       'bind-snapshot',
       decodeSnapshotInput({ cycleId, observedAt }).pipe(
-        Effect.flatMap((input) =>
+        Effect.bindTo('input'),
+        Effect.bind('manifest', () => decodeInputManifestArtifact(inputManifest)),
+        Effect.flatMap(({ input, manifest }) =>
           sql.withTransaction(
-            Effect.gen(function* () {
-              const decodedManifest = yield* decodeInputManifestArtifact(inputManifest)
-              const cycle = yield* readLocked('bind-snapshot', input.cycleId)
-              const snapshot = decodedManifest.finalizedSnapshot
-              if (input.observedAt < cycle.window.signalCloseAt) {
-                return yield* fail(
+            readLocked('bind-snapshot', input.cycleId).pipe(
+              Effect.flatMap((cycle) =>
+                liftDecision(
                   'bind-snapshot',
-                  'invariant',
-                  'snapshot binding cannot precede the Signal session close',
-                )
-              }
-              if (
-                snapshot.asOfSession !== cycle.identity.signalSessionDate ||
-                snapshot.lastSession !== cycle.identity.signalSessionDate ||
-                snapshot.calendarVersion !== cycle.identity.signalCalendarVersion
-              ) {
-                return yield* fail(
-                  'bind-snapshot',
-                  'invariant',
-                  'finalized Signal publication does not match the cycle signal session and calendar',
-                )
-              }
-              if (cycle.bindings.snapshotId !== undefined) {
-                if (cycle.bindings.snapshotId !== snapshot.snapshotId) {
-                  return yield* fail('bind-snapshot', 'conflict', 'cycle snapshot binding cannot be replaced')
-                }
-                yield* persistSnapshotReference(decodedManifest)
-                return { cycle, changed: false }
-              }
-              if (cycle.state !== CycleState.Pending) {
-                return yield* fail('bind-snapshot', 'conflict', 'snapshot may bind only while a cycle is pending')
-              }
-              if (input.observedAt >= cycle.window.publicationDeadlineAt) {
-                return yield* blockCycle(
-                  'bind-snapshot',
-                  cycle,
-                  CycleTerminalReason.MissedPublication,
-                  input.observedAt,
-                )
-              }
-              if (input.observedAt < cycle.updatedAt) {
-                return yield* fail('bind-snapshot', 'conflict', 'cycle update time cannot move backward')
-              }
-              yield* persistSnapshotReference(decodedManifest)
-              const updatedRows = yield* sql<Record<string, unknown>>`
-                UPDATE autonomous_cycles
-                SET
-                  snapshot_id = ${snapshot.snapshotId},
-                  state_version = ${cycle.stateVersion + 1},
-                  updated_at = ${input.observedAt}
-                WHERE cycle_id = ${input.cycleId}
-                  AND state = ${CycleState.Pending}
-                  AND state_version = ${cycle.stateVersion}
-                  AND snapshot_id IS NULL
-                RETURNING cycle_id
-              `
-              yield* requireApplied('bind-snapshot', updatedRows)
-              const updated = yield* readLocked('bind-snapshot', input.cycleId)
-              return { cycle: updated, changed: true }
-            }),
+                  decideSnapshotBinding(cycle, manifest.finalizedSnapshot, input.observedAt),
+                ),
+              ),
+              Effect.flatMap((decision) => interpretSnapshotDecision(manifest, input.observedAt, decision)),
+            ),
           ),
         ),
       ),
+    )
+
+  const persistActivation = (
+    observedAt: string,
+    decision: Extract<ActivationDecision, { readonly _tag: 'Persist' }>,
+  ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> =>
+    sql<Record<string, unknown>>`
+      UPDATE autonomous_cycles
+      SET
+        state = ${CycleState.Active},
+        state_version = ${decision.cycle.stateVersion + 1},
+        updated_at = ${observedAt}
+      WHERE cycle_id = ${decision.cycle.identity.cycleId}
+        AND state = ${CycleState.Pending}
+        AND state_version = ${decision.cycle.stateVersion}
+        AND snapshot_id IS NOT NULL
+      RETURNING cycle_id
+    `.pipe(
+      Effect.flatMap((rows) => requireApplied('activate', rows)),
+      Effect.flatMap(() => readLocked('activate', decision.cycle.identity.cycleId)),
+      Effect.map((cycle) => ({ cycle, changed: true })),
+    )
+
+  const interpretActivationDecision = (
+    observedAt: string,
+    decision: ActivationDecision,
+  ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> =>
+    Match.value(decision).pipe(
+      Match.tagsExhaustive({
+        Replay: ({ cycle }) => Effect.succeed({ cycle, changed: false }),
+        Persist: (persist) => persistActivation(observedAt, persist),
+        Block: ({ cycle, reason }) => blockCycle('activate', cycle, reason, observedAt),
+      }),
     )
 
   const activate = (cycleId: string, observedAt: string): Effect.Effect<CycleMutationReceipt, CycleStoreError> =>
@@ -758,40 +782,69 @@ const makeCycleStore = Effect.gen(function* () {
       decodeCycleIdInput({ cycleId, observedAt }).pipe(
         Effect.flatMap((input) =>
           sql.withTransaction(
-            Effect.gen(function* () {
-              const cycle = yield* readLocked('activate', input.cycleId)
-              if (cycle.state === CycleState.Active) return { cycle, changed: false }
-              if (!isCycleStateTransitionAllowed(cycle.state, CycleState.Active)) {
-                return yield* fail('activate', 'conflict', 'only a pending cycle may become active')
-              }
-              if (cycle.bindings.snapshotId === undefined) {
-                return yield* fail('activate', 'invariant', 'cycle activation requires a bound snapshot')
-              }
-              if (input.observedAt >= cycle.window.submissionCutoffAt) {
-                return yield* blockCycle('activate', cycle, CycleTerminalReason.MissedSubmission, input.observedAt)
-              }
-              if (input.observedAt < cycle.updatedAt) {
-                return yield* fail('activate', 'conflict', 'cycle update time cannot move backward')
-              }
-              const updatedRows = yield* sql<Record<string, unknown>>`
-                UPDATE autonomous_cycles
-                SET
-                  state = ${CycleState.Active},
-                  state_version = ${cycle.stateVersion + 1},
-                  updated_at = ${input.observedAt}
-                WHERE cycle_id = ${input.cycleId}
-                  AND state = ${CycleState.Pending}
-                  AND state_version = ${cycle.stateVersion}
-                  AND snapshot_id IS NOT NULL
-                RETURNING cycle_id
-              `
-              yield* requireApplied('activate', updatedRows)
-              const updated = yield* readLocked('activate', input.cycleId)
-              return { cycle: updated, changed: true }
-            }),
+            readLocked('activate', input.cycleId).pipe(
+              Effect.flatMap((cycle) => liftDecision('activate', decideActivation(cycle, input.observedAt))),
+              Effect.flatMap((decision) => interpretActivationDecision(input.observedAt, decision)),
+            ),
           ),
         ),
       ),
+    )
+
+  const persistDecisionBinding = (
+    observedAt: string,
+    decision: Extract<DecisionBindingDecision, { readonly _tag: 'Persist' }>,
+  ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> =>
+    decisionEvidenceMatches(decision.document).pipe(
+      Effect.flatMap((matches) =>
+        matches
+          ? Effect.void
+          : fail(
+              'bind-decision',
+              'invariant',
+              'shadow decision does not match the durable snapshot and exact reconciliation evidence',
+            ),
+      ),
+      Effect.andThen(sql`
+        INSERT INTO autonomous_cycle_shadow_decisions (
+          cycle_id,
+          schema_version,
+          document,
+          created_at
+        ) VALUES (
+          ${decision.cycle.identity.cycleId},
+          ${decision.document.schemaVersion},
+          ${sql.json(decision.document)},
+          ${decision.document.createdAt}
+        )
+      `),
+      Effect.andThen(sql<Record<string, unknown>>`
+        UPDATE autonomous_cycles
+        SET
+          decision_hash = ${decision.document.contentHash},
+          state_version = ${decision.cycle.stateVersion + 1},
+          updated_at = ${observedAt}
+        WHERE cycle_id = ${decision.cycle.identity.cycleId}
+          AND state = ${CycleState.Active}
+          AND state_version = ${decision.cycle.stateVersion}
+          AND decision_hash IS NULL
+        RETURNING cycle_id
+      `),
+      Effect.flatMap((rows) => requireApplied('bind-decision', rows)),
+      Effect.flatMap(() => readLocked('bind-decision', decision.cycle.identity.cycleId)),
+      Effect.map((cycle) => ({ cycle, changed: true })),
+    )
+
+  const interpretDecisionBinding = (
+    observedAt: string,
+    decision: DecisionBindingDecision,
+  ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> =>
+    Match.value(decision).pipe(
+      Match.tagsExhaustive({
+        Replay: ({ cycle }) => Effect.succeed({ cycle, changed: false }),
+        Persist: (persist) => persistDecisionBinding(observedAt, persist),
+        Block: ({ cycle, reason }) => blockCycle('bind-decision', cycle, reason, observedAt),
+      }),
     )
 
   const bindDecision = (
@@ -804,85 +857,59 @@ const makeCycleStore = Effect.gen(function* () {
       decodeDecisionInput({ cycleId, document, observedAt }).pipe(
         Effect.flatMap((input) =>
           sql.withTransaction(
-            Effect.gen(function* () {
-              const cycle = yield* readLocked('bind-decision', input.cycleId)
-              if (cycle.bindings.decisionHash !== undefined) {
-                const storedRows = yield* selectDecisionDocument(sql, input.cycleId)
-                const storedDocument = storedRows[0]?.document
-                if (
-                  cycle.bindings.decisionHash !== input.document.contentHash ||
-                  storedRows.length !== 1 ||
-                  storedDocument === undefined ||
-                  !shadowDecisionEquivalent(storedDocument, input.document)
-                ) {
-                  return yield* fail('bind-decision', 'conflict', 'cycle decision binding cannot be replaced')
-                }
-                return { cycle, changed: false }
-              }
-              if (cycle.state !== CycleState.Active) {
-                return yield* fail('bind-decision', 'conflict', 'decision may bind only while a cycle is active')
-              }
-              if (input.observedAt >= cycle.window.submissionCutoffAt) {
-                return yield* blockCycle('bind-decision', cycle, CycleTerminalReason.MissedSubmission, input.observedAt)
-              }
-              if (
-                input.document.bindings.cycleId !== cycle.identity.cycleId ||
-                input.document.bindings.strategyName !== cycle.identity.strategyName ||
-                input.document.bindings.strategyProtocolHash !== cycle.identity.strategyProtocolHash ||
-                input.document.bindings.snapshotId !== cycle.bindings.snapshotId ||
-                input.document.bindings.accountId !== cycle.identity.accountId ||
-                input.document.submissionCutoffAt !== cycle.window.submissionCutoffAt ||
-                input.document.createdAt > input.observedAt ||
-                input.document.createdAt < cycle.updatedAt
-              ) {
-                return yield* fail(
+            readLocked('bind-decision', input.cycleId).pipe(
+              Effect.bindTo('cycle'),
+              Effect.bind('documents', ({ cycle }) =>
+                cycle.bindings.decisionHash === undefined ? Effect.succeed([]) : readDocuments(input.cycleId),
+              ),
+              Effect.flatMap(({ cycle, documents }) =>
+                liftDecision(
                   'bind-decision',
-                  'invariant',
-                  'shadow decision does not match the active autonomous cycle',
-                )
-              }
-              if (input.observedAt < cycle.updatedAt) {
-                return yield* fail('bind-decision', 'conflict', 'cycle update time cannot move backward')
-              }
-              if (!(yield* decisionEvidenceMatches(input.document))) {
-                return yield* fail(
-                  'bind-decision',
-                  'invariant',
-                  'shadow decision does not match the durable snapshot and exact reconciliation evidence',
-                )
-              }
-              yield* sql`
-                INSERT INTO autonomous_cycle_shadow_decisions (
-                  cycle_id,
-                  schema_version,
-                  document,
-                  created_at
-                ) VALUES (
-                  ${input.cycleId},
-                  ${input.document.schemaVersion},
-                  ${sql.json(input.document)},
-                  ${input.document.createdAt}
-                )
-              `
-              const updatedRows = yield* sql<Record<string, unknown>>`
-                UPDATE autonomous_cycles
-                SET
-                  decision_hash = ${input.document.contentHash},
-                  state_version = ${cycle.stateVersion + 1},
-                  updated_at = ${input.observedAt}
-                WHERE cycle_id = ${input.cycleId}
-                  AND state = ${CycleState.Active}
-                  AND state_version = ${cycle.stateVersion}
-                  AND decision_hash IS NULL
-                RETURNING cycle_id
-              `
-              yield* requireApplied('bind-decision', updatedRows)
-              const updated = yield* readLocked('bind-decision', input.cycleId)
-              return { cycle: updated, changed: true }
-            }),
+                  decideDecisionBinding(cycle, input.document, input.observedAt, documents),
+                ),
+              ),
+              Effect.flatMap((decision) => interpretDecisionBinding(input.observedAt, decision)),
+            ),
           ),
         ),
       ),
+    )
+
+  const persistCompletion = (
+    observedAt: string,
+    decision: Extract<CompletionDecision, { readonly _tag: 'VerifyDecision' }>,
+  ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> =>
+    sql<Record<string, unknown>>`
+      UPDATE autonomous_cycles
+      SET
+        state = ${decision.state},
+        state_version = ${decision.cycle.stateVersion + 1},
+        updated_at = ${observedAt},
+        terminal_at = ${observedAt}
+      WHERE cycle_id = ${decision.cycle.identity.cycleId}
+        AND state = ${CycleState.Active}
+        AND state_version = ${decision.cycle.stateVersion}
+        AND decision_hash = ${decision.decisionHash}
+      RETURNING cycle_id
+    `.pipe(
+      Effect.flatMap((rows) => requireApplied('finish', rows)),
+      Effect.flatMap(() => readLocked('finish', decision.cycle.identity.cycleId)),
+      Effect.map((cycle) => ({ cycle, changed: true })),
+    )
+
+  const interpretCompletionDecision = (
+    observedAt: string,
+    decision: CompletionDecision,
+  ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> =>
+    Match.value(decision).pipe(
+      Match.tagsExhaustive({
+        Replay: ({ cycle }) => Effect.succeed({ cycle, changed: false }),
+        VerifyDecision: (verification) =>
+          readDocuments(verification.cycle.identity.cycleId).pipe(
+            Effect.flatMap((documents) => liftDecision('finish', validateCompletionDocument(verification, documents))),
+            Effect.andThen(persistCompletion(observedAt, verification)),
+          ),
+      }),
     )
 
   const finish = (
@@ -895,52 +922,10 @@ const makeCycleStore = Effect.gen(function* () {
       decodeFinishInput({ cycleId, state, observedAt }).pipe(
         Effect.flatMap((input) =>
           sql.withTransaction(
-            Effect.gen(function* () {
-              const cycle = yield* readLocked('finish', input.cycleId)
-              if (cycle.state === input.state) return { cycle, changed: false }
-              if (!isCycleStateTransitionAllowed(cycle.state, input.state)) {
-                return yield* fail('finish', 'conflict', 'only an active cycle may finish from its bound decision')
-              }
-              if (input.observedAt < cycle.updatedAt) {
-                return yield* fail('finish', 'conflict', 'cycle update time cannot move backward')
-              }
-              const decisionHash = cycle.bindings.decisionHash
-              if (decisionHash === undefined) {
-                return yield* fail('finish', 'invariant', 'cycle completion requires a bound shadow decision')
-              }
-              const storedRows = yield* selectDecisionDocument(sql, input.cycleId)
-              const storedDocument = storedRows[0]?.document
-              const expectedStatus =
-                input.state === CycleState.Completed ? TargetPlanStatus.Planned : TargetPlanStatus.NoTrade
-              if (
-                storedRows.length !== 1 ||
-                storedDocument === undefined ||
-                storedDocument.contentHash !== decisionHash ||
-                storedDocument.targetPlan.status !== expectedStatus
-              ) {
-                return yield* fail(
-                  'finish',
-                  'invariant',
-                  'cycle terminal state must match its exact durable shadow decision',
-                )
-              }
-              const updatedRows = yield* sql<Record<string, unknown>>`
-                UPDATE autonomous_cycles
-                SET
-                  state = ${input.state},
-                  state_version = ${cycle.stateVersion + 1},
-                  updated_at = ${input.observedAt},
-                  terminal_at = ${input.observedAt}
-                WHERE cycle_id = ${input.cycleId}
-                  AND state = ${CycleState.Active}
-                  AND state_version = ${cycle.stateVersion}
-                  AND decision_hash = ${decisionHash}
-                RETURNING cycle_id
-              `
-              yield* requireApplied('finish', updatedRows)
-              const updated = yield* readLocked('finish', input.cycleId)
-              return { cycle: updated, changed: true }
-            }),
+            readLocked('finish', input.cycleId).pipe(
+              Effect.flatMap((cycle) => liftDecision('finish', decideCompletion(cycle, input.state, input.observedAt))),
+              Effect.flatMap((decision) => interpretCompletionDecision(input.observedAt, decision)),
+            ),
           ),
         ),
       ),
