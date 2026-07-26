@@ -55,8 +55,14 @@ interface Target {
 }
 
 interface Position {
-  quantityMicros: bigint
-  costBasisMicros: bigint
+  readonly quantityMicros: bigint
+  readonly costBasisMicros: bigint
+}
+
+export interface ReferenceReplayWork {
+  readonly sessionsProcessed: number
+  readonly positionStateCopies: number
+  readonly positionWrites: number
 }
 
 interface Replay {
@@ -65,6 +71,10 @@ interface Replay {
   readonly decisions: readonly SignalDecision[]
   readonly daily: readonly DailyPerformancePoint[]
   readonly trace: SimulationTrace | null
+}
+
+interface ReplayWithWork extends Replay {
+  readonly work: ReferenceReplayWork
 }
 
 export interface ReferenceEvaluation {
@@ -77,12 +87,197 @@ export interface ReferenceEvaluation {
   readonly verdict: EconomicVerdict
 }
 
+export interface ReferenceEvaluationWork {
+  readonly strategy: ReferenceReplayWork
+  readonly buyAndHold: ReferenceReplayWork
+  readonly directVolTiming: ReferenceReplayWork
+  readonly doubleCostStrategy: ReferenceReplayWork
+}
+
+interface ReferenceEvaluationWithWork {
+  readonly runId: string
+  readonly protocolHash: string
+  readonly strategy: ReplayWithWork
+  readonly buyAndHold: ReplayWithWork
+  readonly directVolTiming: ReplayWithWork
+  readonly doubleCostStrategy: ReplayWithWork
+  readonly verdict: EconomicVerdict
+}
+
 export type ReferenceEvaluationFailure =
   | ExecutionModelFailure
   | {
       readonly _tag: 'UnsupportedReferenceExecutionModel'
       readonly actual: string
       readonly required: 'bayn.execution-model.v2'
+    }
+  | {
+      readonly _tag: 'ReferenceInputRowCountMismatch'
+      readonly expected: number
+      readonly actual: number
+    }
+  | {
+      readonly _tag: 'ReferenceUnexpectedSymbol'
+      readonly symbol: string
+      readonly sessionDate: IsoDate
+      readonly universe: readonly string[]
+    }
+  | {
+      readonly _tag: 'ReferenceDuplicateBar'
+      readonly symbol: string
+      readonly sessionDate: IsoDate
+    }
+  | {
+      readonly _tag: 'ReferenceIncompleteSession'
+      readonly sessionDate: IsoDate
+      readonly missingSymbols: readonly string[]
+      readonly actualSymbolCount: number
+      readonly expectedSymbolCount: number
+    }
+  | {
+      readonly _tag: 'ReferenceManifestSessionMismatch'
+      readonly expectedSessionCount: number
+      readonly actualSessionCount: number
+      readonly expectedFirstSession: IsoDate
+      readonly actualFirstSession: IsoDate | null
+      readonly expectedLastSession: IsoDate
+      readonly actualLastSession: IsoDate | null
+    }
+  | {
+      readonly _tag: 'ReferenceInvalidWeight'
+      readonly symbol: string
+      readonly weight: number
+      readonly maximumWeight: number
+    }
+  | {
+      readonly _tag: 'ReferenceWeightBoundingFailed'
+      readonly totalUnits: number
+      readonly excessUnits: number
+      readonly weightScale: number
+    }
+  | {
+      readonly _tag: 'ReferenceCovarianceInputMismatch'
+      readonly leftLength: number
+      readonly rightLength: number
+    }
+  | {
+      readonly _tag: 'ReferenceCovarianceNotFinite'
+      readonly leftLength: number
+      readonly rightLength: number
+      readonly covariance: number
+    }
+  | {
+      readonly _tag: 'ReferencePortfolioVarianceInvalid'
+      readonly dailyVariance: number
+    }
+  | {
+      readonly _tag: 'ReferencePortfolioVolatilityInvalid'
+      readonly dailyVariance: number
+      readonly annualizedVolatility: number
+    }
+  | {
+      readonly _tag: 'ReferenceInsufficientHistory'
+      readonly signalIndex: number
+      readonly requiredHistory: number
+      readonly sessionCount: number
+    }
+  | {
+      readonly _tag: 'ReferenceInvalidClose'
+      readonly symbol: string
+      readonly sessionDate: IsoDate
+      readonly close: number
+    }
+  | {
+      readonly _tag: 'ReferenceMissingCurrentClose'
+      readonly symbol: string
+      readonly signalIndex: number
+    }
+  | {
+      readonly _tag: 'ReferenceInvalidReturn'
+      readonly symbol: string
+      readonly sessionDate: IsoDate
+      readonly value: number
+    }
+  | {
+      readonly _tag: 'ReferenceMissingPriorClose'
+      readonly symbol: string
+      readonly signalIndex: number
+      readonly horizonSessions: number
+    }
+  | {
+      readonly _tag: 'ReferenceInvalidHorizonSignal'
+      readonly symbol: string
+      readonly horizonSessions: number
+      readonly return: number
+      readonly normalizedTrend: number
+    }
+  | {
+      readonly _tag: 'ReferenceInvalidScore'
+      readonly symbol: string
+      readonly annualizedVolatility: number
+      readonly compositeScore: number
+    }
+  | {
+      readonly _tag: 'ReferenceWeightsOutsideLimits'
+      readonly totalWeight: number
+      readonly maximumSymbolWeight: number
+      readonly portfolioVolatility: number
+      readonly maximumPortfolioVolatility: number
+    }
+  | {
+      readonly _tag: 'ReferenceDirectVolatilityWindowInvalid'
+      readonly signalIndex: number
+      readonly requiredPriorIndex: number
+      readonly sessionCount: number
+    }
+  | {
+      readonly _tag: 'ReferenceInvalidEquityCurve'
+      readonly observationCount: number
+      readonly firstNonPositiveIndex: number | null
+      readonly firstNonPositiveValueMicros: string | null
+    }
+  | {
+      readonly _tag: 'ReferenceBuyFillRestrictionInvalid'
+      readonly orderId: string
+      readonly modeledQuantityMicros: string
+      readonly permittedQuantityMicros: string
+    }
+  | {
+      readonly _tag: 'ReferenceMissingDecisionPlan'
+      readonly signalIndex: number
+      readonly executionIndex: number
+    }
+  | {
+      readonly _tag: 'ReferenceTargetSignalMissing'
+      readonly signalIndex: number
+      readonly executionIndex: number
+      readonly sessionCount: number
+    }
+  | {
+      readonly _tag: 'ReferenceNegativeCash'
+      readonly sessionDate: IsoDate
+      readonly cashMicros: string
+    }
+  | {
+      readonly _tag: 'ReferenceNoEligibleSignal'
+      readonly sessionCount: number
+      readonly lookbackStart: IsoDate
+      readonly evaluationStart: IsoDate
+      readonly evaluationEnd: IsoDate
+    }
+  | {
+      readonly _tag: 'ReferenceInsufficientObservations'
+      readonly actual: number
+      readonly required: number
+      readonly startIndex: number
+      readonly endExclusive: number
+    }
+  | {
+      readonly _tag: 'ReferenceProvenanceMismatch'
+      readonly requiredStrategyName: 'risk-balanced-trend'
+      readonly actualStrategyName: string
+      readonly expectedParameterHash: string
+      readonly actualParameterHash: string
     }
 
 type ReferenceComputation<A> = Result.Result<A, ReferenceEvaluationFailure>
@@ -100,40 +295,82 @@ const sampleDeviation = (values: readonly number[]): number => {
   return Math.sqrt(variance)
 }
 
-const align = (bars: readonly DailyBar[], manifest: InputManifest, universe: readonly string[]): readonly Session[] => {
-  if (bars.length !== manifest.rowCount) throw new Error('reference input row count differs from the manifest')
+const align = (
+  bars: readonly DailyBar[],
+  manifest: InputManifest,
+  universe: readonly string[],
+): ReferenceComputation<readonly Session[]> => {
+  if (bars.length !== manifest.rowCount) {
+    return Result.fail({
+      _tag: 'ReferenceInputRowCountMismatch',
+      expected: manifest.rowCount,
+      actual: bars.length,
+    })
+  }
   const expected = new Set(universe)
   const grouped = new Map<IsoDate, Map<string, DailyBar>>()
   for (const bar of bars) {
-    if (!expected.has(bar.symbol)) throw new Error(`reference input has unexpected symbol ${bar.symbol}`)
+    if (!expected.has(bar.symbol)) {
+      return Result.fail({
+        _tag: 'ReferenceUnexpectedSymbol',
+        symbol: bar.symbol,
+        sessionDate: bar.sessionDate,
+        universe,
+      })
+    }
     const day = grouped.get(bar.sessionDate) ?? new Map<string, DailyBar>()
-    if (day.has(bar.symbol)) throw new Error(`reference input duplicates ${bar.symbol} ${bar.sessionDate}`)
+    if (day.has(bar.symbol)) {
+      return Result.fail({ _tag: 'ReferenceDuplicateBar', symbol: bar.symbol, sessionDate: bar.sessionDate })
+    }
     day.set(bar.symbol, bar)
     grouped.set(bar.sessionDate, day)
   }
-  const sessions = [...grouped.entries()]
-    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-    .map(([date, day]): Session => {
-      if (day.size !== universe.length || universe.some((symbol) => !day.has(symbol))) {
-        throw new Error(`reference input session ${date} is incomplete`)
+  const sessions: Session[] = []
+  for (const [date, day] of [...grouped.entries()].sort(([left], [right]) =>
+    left < right ? -1 : left > right ? 1 : 0,
+  )) {
+    const missingSymbols = universe.filter((symbol) => !day.has(symbol))
+    if (day.size !== universe.length || missingSymbols.length > 0) {
+      return Result.fail({
+        _tag: 'ReferenceIncompleteSession',
+        sessionDate: date,
+        missingSymbols,
+        actualSymbolCount: day.size,
+        expectedSymbolCount: universe.length,
+      })
+    }
+    const sessionBars: Record<string, DailyBar> = {}
+    for (const symbol of universe) {
+      const bar = day.get(symbol)
+      if (bar === undefined) {
+        return Result.fail({
+          _tag: 'ReferenceIncompleteSession',
+          sessionDate: date,
+          missingSymbols: [symbol],
+          actualSymbolCount: day.size,
+          expectedSymbolCount: universe.length,
+        })
       }
-      const sessionBars = Object.fromEntries(
-        universe.map((symbol) => {
-          const bar = day.get(symbol)
-          if (bar === undefined) throw new Error(`reference input session ${date} is missing ${symbol}`)
-          return [symbol, bar]
-        }),
-      )
-      return { date, bars: sessionBars }
-    })
+      sessionBars[symbol] = bar
+    }
+    sessions.push({ date, bars: sessionBars })
+  }
   if (
     sessions.length !== manifest.sessionCount ||
     sessions[0]?.date !== manifest.firstSession ||
     sessions.at(-1)?.date !== manifest.lastSession
   ) {
-    throw new Error('reference input sessions differ from the manifest')
+    return Result.fail({
+      _tag: 'ReferenceManifestSessionMismatch',
+      expectedSessionCount: manifest.sessionCount,
+      actualSessionCount: sessions.length,
+      expectedFirstSession: manifest.firstSession,
+      actualFirstSession: sessions[0]?.date ?? null,
+      expectedLastSession: manifest.lastSession,
+      actualLastSession: sessions.at(-1)?.date ?? null,
+    })
   }
-  return sessions
+  return Result.succeed(sessions)
 }
 
 const monthEnds = (dates: readonly IsoDate[]): readonly number[] => {
@@ -144,7 +381,7 @@ const monthEnds = (dates: readonly IsoDate[]): readonly number[] => {
   return result
 }
 
-const riskBalancedHistoryLength = (protocol: Protocol): number =>
+const riskBalancedHistoryLength = (protocol: Pick<Protocol, 'volatilityWindow' | 'horizons'>): number =>
   Math.max(protocol.volatilityWindow, ...protocol.horizons)
 
 const allocateCapped = (
@@ -185,17 +422,16 @@ const weightScale = 1_000_000_000_000
 const quantizeCappedWeights = (
   weights: Readonly<Record<string, number>>,
   maximumWeight: number,
-): Readonly<Record<string, number>> => {
+): ReferenceComputation<Readonly<Record<string, number>>> => {
   const maximumUnits = Math.floor(maximumWeight * weightScale + Number.EPSILON)
-  const units: Record<string, number> = Object.fromEntries(
-    Object.keys(weights)
-      .sort()
-      .map((symbol) => {
-        const weight = weights[symbol]
-        if (!Number.isFinite(weight) || weight < 0) throw new Error(`reference target weight is invalid for ${symbol}`)
-        return [symbol, Math.min(maximumUnits, Math.max(0, Math.round(weight * weightScale)))]
-      }),
-  )
+  const units: Record<string, number> = {}
+  for (const symbol of Object.keys(weights).sort()) {
+    const weight = weights[symbol]
+    if (!Number.isFinite(weight) || weight < 0) {
+      return Result.fail({ _tag: 'ReferenceInvalidWeight', symbol, weight, maximumWeight })
+    }
+    units[symbol] = Math.min(maximumUnits, Math.max(0, Math.round(weight * weightScale)))
+  }
   let total = Object.values(units).reduce((sum, value) => sum + value, 0)
   let excess = Math.max(0, total - weightScale)
   for (const symbol of Object.keys(units).sort().reverse()) {
@@ -205,83 +441,140 @@ const quantizeCappedWeights = (
     excess -= reduction
     total -= reduction
   }
-  if (total > weightScale || excess > 0) throw new Error('reference weights cannot be bounded at full exposure')
-  return Object.fromEntries(Object.entries(units).map(([symbol, value]) => [symbol, value / weightScale]))
+  if (total > weightScale || excess > 0) {
+    return Result.fail({ _tag: 'ReferenceWeightBoundingFailed', totalUnits: total, excessUnits: excess, weightScale })
+  }
+  return Result.succeed(
+    Object.fromEntries(Object.entries(units).map(([symbol, value]) => [symbol, value / weightScale])),
+  )
 }
 
-const sampleCovariance = (left: readonly number[], right: readonly number[]): number => {
-  if (left.length !== right.length || left.length < 2) throw new Error('reference covariance inputs are not aligned')
+const sampleCovariance = (left: readonly number[], right: readonly number[]): ReferenceComputation<number> => {
+  if (left.length !== right.length || left.length < 2) {
+    return Result.fail({ _tag: 'ReferenceCovarianceInputMismatch', leftLength: left.length, rightLength: right.length })
+  }
   const leftAverage = average(left)
   const rightAverage = average(right)
   const value =
     left.reduce((total, observation, index) => total + (observation - leftAverage) * (right[index] - rightAverage), 0) /
     (left.length - 1)
-  if (!Number.isFinite(value)) throw new Error('reference covariance is not finite')
-  return value
+  if (!Number.isFinite(value)) {
+    return Result.fail({
+      _tag: 'ReferenceCovarianceNotFinite',
+      leftLength: left.length,
+      rightLength: right.length,
+      covariance: value,
+    })
+  }
+  return Result.succeed(value)
 }
 
 const portfolioVolatility = (
   weights: Readonly<Record<string, number>>,
   returns: Readonly<Record<string, readonly number[]>>,
-): number => {
+): ReferenceComputation<number> => {
   const symbols = Object.keys(weights).sort()
-  const dailyVariance = symbols.reduce(
-    (outer, left) =>
-      outer +
-      symbols.reduce(
-        (inner, right) => inner + weights[left] * weights[right] * sampleCovariance(returns[left], returns[right]),
-        0,
-      ),
-    0,
-  )
+  let dailyVariance = 0
+  for (const left of symbols) {
+    let innerVariance = 0
+    for (const right of symbols) {
+      const covariance = sampleCovariance(returns[left], returns[right])
+      if (Result.isFailure(covariance)) return covariance
+      innerVariance += weights[left] * weights[right] * covariance.success
+    }
+    dailyVariance += innerVariance
+  }
   if (!Number.isFinite(dailyVariance) || dailyVariance < -1e-12) {
-    throw new Error('reference covariance produced an invalid portfolio variance')
+    return Result.fail({ _tag: 'ReferencePortfolioVarianceInvalid', dailyVariance })
   }
   const annualized = Math.sqrt(Math.max(0, dailyVariance) * tradingDays)
-  if (!Number.isFinite(annualized)) throw new Error('reference portfolio volatility is not finite')
-  return annualized
+  if (!Number.isFinite(annualized)) {
+    return Result.fail({
+      _tag: 'ReferencePortfolioVolatilityInvalid',
+      dailyVariance,
+      annualizedVolatility: annualized,
+    })
+  }
+  return Result.succeed(annualized)
 }
 
 const riskBalancedDecisionPlan = (
   signalIndex: number,
   sessions: readonly Session[],
   protocol: Protocol,
-): DecisionPlan => {
+): ReferenceComputation<DecisionPlan> => {
   const requiredHistory = riskBalancedHistoryLength(protocol)
-  if (signalIndex < requiredHistory) throw new Error('reference risk-balanced trend has insufficient history')
+  if (signalIndex < requiredHistory || signalIndex >= sessions.length) {
+    return Result.fail({
+      _tag: 'ReferenceInsufficientHistory',
+      signalIndex,
+      requiredHistory,
+      sessionCount: sessions.length,
+    })
+  }
   const history = sessions.slice(signalIndex - requiredHistory, signalIndex + 1)
   const sessionDates = history.map((session) => session.date)
   const returnsBySymbol: Record<string, readonly number[]> = {}
-  const baseSignals = protocol.universe.map((symbol) => {
+  const baseSignals: DecisionPlan['signals'][number][] = []
+  for (const symbol of protocol.universe) {
     const closes = history.map((session) => session.bars[symbol].close)
-    if (closes.some((close) => !Number.isFinite(close) || close <= 0)) {
-      throw new Error(`reference risk-balanced trend has an invalid close for ${symbol}`)
+    const invalidCloseIndex = closes.findIndex((close) => !Number.isFinite(close) || close <= 0)
+    if (invalidCloseIndex !== -1) {
+      return Result.fail({
+        _tag: 'ReferenceInvalidClose',
+        symbol,
+        sessionDate: history[invalidCloseIndex].date,
+        close: closes[invalidCloseIndex],
+      })
     }
     const current = closes.at(-1)
-    if (current === undefined) throw new Error(`reference risk-balanced trend has no current close for ${symbol}`)
+    if (current === undefined) {
+      return Result.fail({ _tag: 'ReferenceMissingCurrentClose', symbol, signalIndex })
+    }
     const volatilityCloses = closes.slice(-(protocol.volatilityWindow + 1))
     const recentReturns = volatilityCloses.slice(1).map((close, index) => close / volatilityCloses[index] - 1)
-    if (recentReturns.some((value) => !Number.isFinite(value))) {
-      throw new Error(`reference risk-balanced trend has an invalid return for ${symbol}`)
+    const invalidReturnIndex = recentReturns.findIndex((value) => !Number.isFinite(value))
+    if (invalidReturnIndex !== -1) {
+      const firstVolatilitySessionIndex = history.length - volatilityCloses.length
+      return Result.fail({
+        _tag: 'ReferenceInvalidReturn',
+        symbol,
+        sessionDate: history[firstVolatilitySessionIndex + invalidReturnIndex + 1].date,
+        value: recentReturns[invalidReturnIndex],
+      })
     }
     returnsBySymbol[symbol] = recentReturns
     const dailyVolatility = sampleDeviation(recentReturns)
     const annualizedVolatility = dailyVolatility * Math.sqrt(tradingDays)
-    const horizons = protocol.horizons.map((horizonSessions) => {
+    const horizons: DecisionPlan['signals'][number]['horizons'][number][] = []
+    for (const horizonSessions of protocol.horizons) {
       const prior = closes[closes.length - 1 - horizonSessions]
-      if (prior === undefined) throw new Error(`reference risk-balanced trend has no prior close for ${symbol}`)
+      if (prior === undefined) {
+        return Result.fail({ _tag: 'ReferenceMissingPriorClose', symbol, signalIndex, horizonSessions })
+      }
       const value = current / prior - 1
       const normalizedTrend = dailyVolatility === 0 ? 0 : value / (dailyVolatility * Math.sqrt(horizonSessions))
       if (![value, normalizedTrend].every(Number.isFinite)) {
-        throw new Error(`reference risk-balanced trend has an invalid horizon signal for ${symbol}`)
+        return Result.fail({
+          _tag: 'ReferenceInvalidHorizonSignal',
+          symbol,
+          horizonSessions,
+          return: value,
+          normalizedTrend,
+        })
       }
-      return { horizonSessions, return: value, normalizedTrend }
-    })
+      horizons.push({ horizonSessions, return: value, normalizedTrend })
+    }
     const compositeScore = dailyVolatility === 0 ? 0 : average(horizons.map((horizon) => horizon.normalizedTrend))
     if (![annualizedVolatility, compositeScore].every(Number.isFinite)) {
-      throw new Error(`reference risk-balanced trend has an invalid score for ${symbol}`)
+      return Result.fail({
+        _tag: 'ReferenceInvalidScore',
+        symbol,
+        annualizedVolatility,
+        compositeScore,
+      })
     }
-    return {
+    baseSignals.push({
       symbol,
       horizons,
       dailyVolatility,
@@ -289,28 +582,39 @@ const riskBalancedDecisionPlan = (
       compositeScore,
       positiveScore: Math.max(0, compositeScore),
       eligible: dailyVolatility > 0,
-    }
-  })
+      uncappedWeight: 0,
+      cappedWeight: 0,
+      targetWeight: 0,
+    })
+  }
 
   const scores = Object.fromEntries(baseSignals.map((signal) => [signal.symbol, signal.positiveScore]))
   const scoreTotal = Object.values(scores).reduce((total, score) => total + score, 0)
   const uncappedWeights = Object.fromEntries(
     protocol.universe.map((symbol) => [symbol, scoreTotal === 0 ? 0 : scores[symbol] / scoreTotal]),
   )
-  const cappedWeights = quantizeCappedWeights(
+  const cappedWeightsResult = quantizeCappedWeights(
     allocateCapped(scores, protocol.maximumSymbolWeight),
     protocol.maximumSymbolWeight,
   )
-  const estimatedAnnualizedPortfolioVolatility = portfolioVolatility(cappedWeights, returnsBySymbol)
+  if (Result.isFailure(cappedWeightsResult)) return Result.fail(cappedWeightsResult.failure)
+  const cappedWeights = cappedWeightsResult.success
+  const estimatedVolatilityResult = portfolioVolatility(cappedWeights, returnsBySymbol)
+  if (Result.isFailure(estimatedVolatilityResult)) return Result.fail(estimatedVolatilityResult.failure)
+  const estimatedAnnualizedPortfolioVolatility = estimatedVolatilityResult.success
   const exposureScale =
     estimatedAnnualizedPortfolioVolatility === 0
       ? 1
       : Math.min(1, protocol.maximumPortfolioVolatility / estimatedAnnualizedPortfolioVolatility)
-  let targetWeights = quantizeCappedWeights(
+  const targetWeightsResult = quantizeCappedWeights(
     Object.fromEntries(protocol.universe.map((symbol) => [symbol, cappedWeights[symbol] * exposureScale])),
     protocol.maximumSymbolWeight,
   )
-  const scaledVolatility = portfolioVolatility(targetWeights, returnsBySymbol)
+  if (Result.isFailure(targetWeightsResult)) return Result.fail(targetWeightsResult.failure)
+  let targetWeights = targetWeightsResult.success
+  const scaledVolatilityResult = portfolioVolatility(targetWeights, returnsBySymbol)
+  if (Result.isFailure(scaledVolatilityResult)) return Result.fail(scaledVolatilityResult.failure)
+  const scaledVolatility = scaledVolatilityResult.success
   if (scaledVolatility > protocol.maximumPortfolioVolatility) {
     const correction = protocol.maximumPortfolioVolatility / scaledVolatility
     targetWeights = Object.fromEntries(
@@ -321,24 +625,43 @@ const riskBalancedDecisionPlan = (
     )
   }
   const totalWeight = Object.values(targetWeights).reduce((total, weight) => total + weight, 0)
+  const finalVolatilityResult = portfolioVolatility(targetWeights, returnsBySymbol)
+  if (Result.isFailure(finalVolatilityResult)) return Result.fail(finalVolatilityResult.failure)
+  const finalVolatility = finalVolatilityResult.success
   if (
     totalWeight > 1 + 1e-12 ||
     Object.values(targetWeights).some(
       (weight) => !Number.isFinite(weight) || weight < 0 || weight > protocol.maximumSymbolWeight + 1e-12,
     ) ||
-    portfolioVolatility(targetWeights, returnsBySymbol) > protocol.maximumPortfolioVolatility + 1e-12
+    finalVolatility > protocol.maximumPortfolioVolatility + 1e-12
   ) {
-    throw new Error('reference risk-balanced trend produced weights outside the protocol limits')
+    return Result.fail({
+      _tag: 'ReferenceWeightsOutsideLimits',
+      totalWeight,
+      maximumSymbolWeight: protocol.maximumSymbolWeight,
+      portfolioVolatility: finalVolatility,
+      maximumPortfolioVolatility: protocol.maximumPortfolioVolatility,
+    })
   }
 
   const covarianceDates = sessionDates.slice(-protocol.volatilityWindow)
-  return {
+  const signalSession = sessions[signalIndex]
+  const firstCovarianceSession = covarianceDates[0]
+  if (signalSession === undefined || firstCovarianceSession === undefined) {
+    return Result.fail({
+      _tag: 'ReferenceInsufficientHistory',
+      signalIndex,
+      requiredHistory,
+      sessionCount: sessions.length,
+    })
+  }
+  return Result.succeed({
     schemaVersion: 'bayn.risk-balanced-trend-decision-plan.v1',
-    signalDate: sessions[signalIndex].date,
+    signalDate: signalSession.date,
     covarianceWindow: {
       returnCount: protocol.volatilityWindow,
-      firstSession: covarianceDates[0],
-      lastSession: covarianceDates.at(-1) ?? sessions[signalIndex].date,
+      firstSession: firstCovarianceSession,
+      lastSession: covarianceDates.at(-1) ?? signalSession.date,
       sessionsHash: canonicalHashV1(covarianceDates),
     },
     estimatedAnnualizedPortfolioVolatility,
@@ -350,25 +673,50 @@ const riskBalancedDecisionPlan = (
       cappedWeight: cappedWeights[signal.symbol],
       targetWeight: targetWeights[signal.symbol],
     })),
-  }
+  })
 }
 
 const directVolatilityTarget = (
   sessions: readonly Session[],
   signalIndex: number,
   protocol: SimulationProtocol,
-): Readonly<Record<string, number>> => {
+): ReferenceComputation<Readonly<Record<string, number>>> => {
+  if (signalIndex < 63 || signalIndex >= sessions.length) {
+    return Result.fail({
+      _tag: 'ReferenceDirectVolatilityWindowInvalid',
+      signalIndex,
+      requiredPriorIndex: signalIndex - 63,
+      sessionCount: sessions.length,
+    })
+  }
   const portfolioReturns: number[] = []
   for (let index = signalIndex - 62; index <= signalIndex; index += 1) {
-    const returns = protocol.universe.map(
-      (symbol) => sessions[index].bars[symbol].close / sessions[index - 1].bars[symbol].close - 1,
-    )
+    const session = sessions[index]
+    const priorSession = sessions[index - 1]
+    if (session === undefined || priorSession === undefined) {
+      return Result.fail({
+        _tag: 'ReferenceDirectVolatilityWindowInvalid',
+        signalIndex,
+        requiredPriorIndex: index - 1,
+        sessionCount: sessions.length,
+      })
+    }
+    const returns = protocol.universe.map((symbol) => session.bars[symbol].close / priorSession.bars[symbol].close - 1)
+    const invalidReturnIndex = returns.findIndex((value) => !Number.isFinite(value))
+    if (invalidReturnIndex !== -1) {
+      return Result.fail({
+        _tag: 'ReferenceInvalidReturn',
+        symbol: protocol.universe[invalidReturnIndex],
+        sessionDate: session.date,
+        value: returns[invalidReturnIndex],
+      })
+    }
     portfolioReturns.push(average(returns))
   }
   const volatility = sampleDeviation(portfolioReturns) * Math.sqrt(tradingDays)
   const exposure = volatility <= 0 ? 0 : Math.min(1, protocol.directVolatilityTarget / volatility)
   const weight = roundWeight(exposure / protocol.universe.length)
-  return Object.fromEntries(protocol.universe.map((symbol) => [symbol, weight]))
+  return Result.succeed(Object.fromEntries(protocol.universe.map((symbol) => [symbol, weight])))
 }
 
 const metrics = (
@@ -379,12 +727,26 @@ const metrics = (
   slippageMicros: bigint,
   yieldMicros: bigint,
   initialMicros: bigint,
-): PerformanceMetrics => {
-  if (equityMicros.length < 2 || equityMicros.some((value) => value <= 0n)) {
-    throw new Error('reference replay produced an invalid equity curve')
+): ReferenceComputation<PerformanceMetrics> => {
+  const firstNonPositiveIndex = equityMicros.findIndex((value) => value <= 0n)
+  if (equityMicros.length < 2 || firstNonPositiveIndex !== -1) {
+    return Result.fail({
+      _tag: 'ReferenceInvalidEquityCurve',
+      observationCount: equityMicros.length,
+      firstNonPositiveIndex: firstNonPositiveIndex === -1 ? null : firstNonPositiveIndex,
+      firstNonPositiveValueMicros:
+        firstNonPositiveIndex === -1 ? null : (equityMicros[firstNonPositiveIndex]?.toString() ?? null),
+    })
   }
   const endingEquityMicros = equityMicros.at(-1)
-  if (endingEquityMicros === undefined) throw new Error('reference replay produced an empty equity curve')
+  if (endingEquityMicros === undefined) {
+    return Result.fail({
+      _tag: 'ReferenceInvalidEquityCurve',
+      observationCount: equityMicros.length,
+      firstNonPositiveIndex: null,
+      firstNonPositiveValueMicros: null,
+    })
+  }
   const equity = equityMicros.map(microsToNumber)
   const initial = microsToNumber(initialMicros)
   const endingEquity = microsToNumber(endingEquityMicros)
@@ -399,7 +761,7 @@ const metrics = (
     peak = Math.max(peak, value)
     maximumDrawdown = Math.max(maximumDrawdown, 1 - value / peak)
   }
-  return {
+  return Result.succeed({
     observations: equity.length,
     totalReturn,
     annualizedReturn,
@@ -412,7 +774,7 @@ const metrics = (
     totalSlippageCostMicros: slippageMicros.toString(),
     totalCashYieldMicros: yieldMicros.toString(),
     endingEquityMicros: endingEquityMicros.toString(),
-  }
+  })
 }
 
 const order = (
@@ -455,15 +817,20 @@ const order = (
     }),
   )
 
-const restrictReferenceBuyFill = (
+export const restrictReferenceBuyFill = (
   runId: string,
   simulatedOrder: SimulatedOrder,
   permittedQuantity: bigint,
-): SimulatedOrder => {
+): ReferenceComputation<SimulatedOrder> => {
   const modeledQuantity = BigInt(simulatedOrder.filledQuantityMicros)
-  if (modeledQuantity === 0n || modeledQuantity === permittedQuantity) return simulatedOrder
+  if (modeledQuantity === 0n || modeledQuantity === permittedQuantity) return Result.succeed(simulatedOrder)
   if (permittedQuantity < 0n || permittedQuantity > modeledQuantity) {
-    throw new Error('reference buying-power adjustment must only reduce a modeled buy fill')
+    return Result.fail({
+      _tag: 'ReferenceBuyFillRestrictionInvalid',
+      orderId: simulatedOrder.id,
+      modeledQuantityMicros: modeledQuantity.toString(),
+      permittedQuantityMicros: permittedQuantity.toString(),
+    })
   }
   const material = {
     decisionId: simulatedOrder.decisionId,
@@ -476,7 +843,7 @@ const restrictReferenceBuyFill = (
     rejectionReason: permittedQuantity === 0n ? ('insufficient-buying-power' as const) : null,
     unfilledRemainder: 'canceled' as const,
   }
-  return { id: canonicalHashV1({ runId, kind: 'order', ...material }), ...material }
+  return Result.succeed({ id: canonicalHashV1({ runId, kind: 'order', ...material }), ...material })
 }
 
 const fill = (
@@ -648,6 +1015,19 @@ const replayBuysFitCash = (
     ),
   )
 
+interface ReplayState {
+  readonly positions: ReadonlyMap<string, Position>
+  readonly cashMicros: bigint
+  readonly turnoverMicros: bigint
+  readonly feeMicros: bigint
+  readonly spreadMicros: bigint
+  readonly slippageMicros: bigint
+  readonly cashYieldMicros: bigint
+  readonly previousEquityMicros: bigint
+  readonly peakEquityMicros: bigint
+  readonly previousDate?: IsoDate
+}
+
 const replay = (
   sessions: readonly Session[],
   targets: readonly Target[],
@@ -656,7 +1036,7 @@ const replay = (
   costMultiplierMicros: bigint,
   runId: string,
   retainTrace: boolean,
-): ReferenceComputation<Replay> => {
+): ReferenceComputation<ReplayWithWork> => {
   if (protocol.executionModel.schemaVersion !== 'bayn.execution-model.v2') {
     return Result.fail({
       _tag: 'UnsupportedReferenceExecutionModel',
@@ -665,17 +1045,20 @@ const replay = (
     })
   }
   const targetBySession = new Map(targets.map((target) => [target.executionIndex, target]))
-  const positions = new Map<string, Position>()
   const initial = BigInt(protocol.initialCapitalMicros)
-  let cash = initial
-  let turnover = 0n
-  let fees = 0n
-  let spread = 0n
-  let slippage = 0n
-  let cashYield = 0n
-  let previousEquity = initial
-  let peakEquity = initial
-  let previousDate: IsoDate | undefined
+  let state: ReplayState = {
+    positions: new Map(),
+    cashMicros: initial,
+    turnoverMicros: 0n,
+    feeMicros: 0n,
+    spreadMicros: 0n,
+    slippageMicros: 0n,
+    cashYieldMicros: 0n,
+    previousEquityMicros: initial,
+    peakEquityMicros: initial,
+  }
+  let positionStateCopies = 0
+  let positionWrites = 0
   const equity: bigint[] = []
   const events: EvaluationEvent[] = []
   const decisions: SignalDecision[] = []
@@ -687,15 +1070,32 @@ const replay = (
   for (let index = startIndex; index < sessions.length; index += 1) {
     const session = sessions[index]
     const target = targetBySession.get(index)
-    const beforeTurnover = turnover
-    const beforeFees = fees
-    const beforeSpread = spread
-    const beforeSlippage = slippage
-    const beforeYield = cashYield
-    const planningCashSnapshot = cash
+    const beforeTurnover = state.turnoverMicros
+    const beforeFees = state.feeMicros
+    const beforeSpread = state.spreadMicros
+    const beforeSlippage = state.slippageMicros
+    const beforeYield = state.cashYieldMicros
+    const planningCashSnapshot = state.cashMicros
+    let cash = state.cashMicros
+    let turnover = state.turnoverMicros
+    let fees = state.feeMicros
+    let spread = state.spreadMicros
+    let slippage = state.slippageMicros
+    let cashYield = state.cashYieldMicros
+    let positions = state.positions
+    let writablePositions: Map<string, Position> | undefined
+    const writePosition = (symbol: string, position: Position): void => {
+      if (writablePositions === undefined) {
+        writablePositions = new Map(positions)
+        positionStateCopies += 1
+      }
+      writablePositions.set(symbol, position)
+      positions = writablePositions
+      positionWrites += 1
+    }
 
-    if (previousDate !== undefined) {
-      const elapsedDaysResult = elapsedCalendarDays(previousDate, session.date)
+    if (state.previousDate !== undefined) {
+      const elapsedDaysResult = elapsedCalendarDays(state.previousDate, session.date)
       if (Result.isFailure(elapsedDaysResult)) return Result.fail(elapsedDaysResult.failure)
       const elapsedDays = elapsedDaysResult.success
       const accruedResult = accrueCashYield(cash, elapsedDays, protocol.executionModel)
@@ -721,11 +1121,19 @@ const replay = (
         }
       }
     }
-    previousDate = session.date
 
     if (target !== undefined) {
+      const signalSession = sessions[target.signalIndex]
+      if (signalSession === undefined) {
+        return Result.fail({
+          _tag: 'ReferenceTargetSignalMissing',
+          signalIndex: target.signalIndex,
+          executionIndex: target.executionIndex,
+          sessionCount: sessions.length,
+        })
+      }
       const decisionMaterial = {
-        signalDate: sessions[target.signalIndex].date,
+        signalDate: signalSession.date,
         executionDate: session.date,
         targetWeights: target.weights,
       }
@@ -735,12 +1143,18 @@ const replay = (
         ...decisionMaterial,
       }
       if (retainTrace) {
-        if (target.plan === undefined) throw new Error('reference candidate target lacks a signal plan')
+        if (target.plan === undefined) {
+          return Result.fail({
+            _tag: 'ReferenceMissingDecisionPlan',
+            signalIndex: target.signalIndex,
+            executionIndex: target.executionIndex,
+          })
+        }
         events.push(decision)
         decisions.push({ ...target.plan, decisionId: decision.id, executionDate: decision.executionDate })
       }
 
-      const planPricesResult = replayPrices(sessions[target.signalIndex], protocol, (bar) => bar.close)
+      const planPricesResult = replayPrices(signalSession, protocol, (bar) => bar.close)
       if (Result.isFailure(planPricesResult)) return Result.fail(planPricesResult.failure)
       const planPrices = planPricesResult.success
       const fillPricesResult = replayPrices(session, protocol, (bar) => bar.open)
@@ -852,7 +1266,9 @@ const replay = (
           protocol.executionModel,
         )
         if (Result.isFailure(permittedQuantity)) return Result.fail(permittedQuantity.failure)
-        buyOrders.push(restrictReferenceBuyFill(runId, candidate, permittedQuantity.success))
+        const restricted = restrictReferenceBuyFill(runId, candidate, permittedQuantity.success)
+        if (Result.isFailure(restricted)) return Result.fail(restricted.failure)
+        buyOrders.push(restricted.success)
       }
 
       for (const simulatedOrder of sellOrders) {
@@ -877,9 +1293,10 @@ const replay = (
         turnover += terms.notionalMicros
         spread += terms.spreadCostMicros
         slippage += terms.slippageCostMicros
-        position.quantityMicros -= quantity
-        position.costBasisMicros -= costBasis
-        positions.set(simulatedOrder.symbol, position)
+        writePosition(simulatedOrder.symbol, {
+          quantityMicros: position.quantityMicros - quantity,
+          costBasisMicros: position.costBasisMicros - costBasis,
+        })
         sessionFills.push(event)
         if (retainTrace) {
           events.push(event)
@@ -906,9 +1323,10 @@ const replay = (
         spread += terms.spreadCostMicros
         slippage += terms.slippageCostMicros
         const position = positions.get(simulatedOrder.symbol) ?? { quantityMicros: 0n, costBasisMicros: 0n }
-        position.quantityMicros += quantity
-        position.costBasisMicros += terms.notionalMicros
-        positions.set(simulatedOrder.symbol, position)
+        writePosition(simulatedOrder.symbol, {
+          quantityMicros: position.quantityMicros + quantity,
+          costBasisMicros: position.costBasisMicros + terms.notionalMicros,
+        })
         sessionFills.push(event)
         if (retainTrace) {
           events.push(event)
@@ -948,7 +1366,9 @@ const replay = (
           changes.push(cashChange(runId, event, -fee.totalMicros, cash))
         }
       }
-      if (cash < 0n) throw new Error('reference replay spent unavailable cash')
+      if (cash < 0n) {
+        return Result.fail({ _tag: 'ReferenceNegativeCash', sessionDate: session.date, cashMicros: cash.toString() })
+      }
     }
 
     const closesResult = replayPrices(session, protocol, (bar) => bar.close)
@@ -958,11 +1378,11 @@ const replay = (
     if (Result.isFailure(closingPositionValue)) return Result.fail(closingPositionValue.failure)
     const closingEquity = cash + closingPositionValue.success
     equity.push(closingEquity)
-    peakEquity = peakEquity > closingEquity ? peakEquity : closingEquity
+    const peakEquity = state.peakEquityMicros > closingEquity ? state.peakEquityMicros : closingEquity
     const point: DailyPerformancePoint = {
       sessionDate: session.date,
       equityMicros: closingEquity.toString(),
-      netReturn: Number(closingEquity) / Number(previousEquity) - 1,
+      netReturn: Number(closingEquity) / Number(state.previousEquityMicros) - 1,
       turnoverMicros: (turnover - beforeTurnover).toString(),
       cumulativeTurnoverMicros: turnover.toString(),
       feeMicros: (fees - beforeFees).toString(),
@@ -997,11 +1417,32 @@ const replay = (
         positions: markedPositions,
       })
     }
-    previousEquity = closingEquity
+    state = {
+      positions,
+      cashMicros: cash,
+      turnoverMicros: turnover,
+      feeMicros: fees,
+      spreadMicros: spread,
+      slippageMicros: slippage,
+      cashYieldMicros: cashYield,
+      previousEquityMicros: closingEquity,
+      peakEquityMicros: peakEquity,
+      previousDate: session.date,
+    }
   }
 
+  const metricsResult = metrics(
+    equity,
+    state.turnoverMicros,
+    state.feeMicros,
+    state.spreadMicros,
+    state.slippageMicros,
+    state.cashYieldMicros,
+    initial,
+  )
+  if (Result.isFailure(metricsResult)) return Result.fail(metricsResult.failure)
   return Result.succeed({
-    metrics: metrics(equity, turnover, fees, spread, slippage, cashYield, initial),
+    metrics: metricsResult.success,
     events,
     decisions,
     daily,
@@ -1015,6 +1456,11 @@ const replay = (
           dailyMarks: marks,
         }
       : null,
+    work: {
+      sessionsProcessed: daily.length,
+      positionStateCopies,
+      positionWrites,
+    },
   })
 }
 
@@ -1076,13 +1522,15 @@ const verdict = (
   return { status: gates.every((gate) => gate.passed) ? 'PASS' : 'FAIL_CLOSED', gates }
 }
 
-export const evaluateReference = (
+const evaluateReferenceWithWork = (
   bars: readonly DailyBar[],
   manifest: InputManifest,
   protocol: Protocol,
   provenance: RuntimeProvenance,
-): ReferenceComputation<ReferenceEvaluation> => {
-  const sessions = align(bars, manifest, protocol.universe)
+): ReferenceComputation<ReferenceEvaluationWithWork> => {
+  const sessionsResult = align(bars, manifest, protocol.universe)
+  if (Result.isFailure(sessionsResult)) return Result.fail(sessionsResult.failure)
+  const sessions = sessionsResult.success
   const dates = sessions.map((session) => session.date)
   const requiredHistory = riskBalancedHistoryLength(protocol)
   const eligibleSignals = monthEnds(dates).filter(
@@ -1093,13 +1541,28 @@ export const evaluateReference = (
       dates[index + 1] >= manifest.bounds.evaluationStart &&
       dates[index + 1] <= manifest.bounds.evaluationEnd,
   )
-  if (eligibleSignals.length === 0) throw new Error('reference dataset has no eligible signal session')
-  const startIndex = eligibleSignals[0] + 1
+  const firstEligibleSignal = eligibleSignals[0]
+  if (firstEligibleSignal === undefined) {
+    return Result.fail({
+      _tag: 'ReferenceNoEligibleSignal',
+      sessionCount: sessions.length,
+      lookbackStart: manifest.bounds.lookbackStart,
+      evaluationStart: manifest.bounds.evaluationStart,
+      evaluationEnd: manifest.bounds.evaluationEnd,
+    })
+  }
+  const startIndex = firstEligibleSignal + 1
   const firstAfterEnd = dates.findIndex((date) => date > manifest.bounds.evaluationEnd)
   const endExclusive = firstAfterEnd === -1 ? dates.length : firstAfterEnd
   const boundedSessions = sessions.slice(0, endExclusive)
   if (endExclusive - startIndex < protocol.thresholds.minimumObservations) {
-    throw new Error('reference dataset has too few evaluation observations')
+    return Result.fail({
+      _tag: 'ReferenceInsufficientObservations',
+      actual: endExclusive - startIndex,
+      required: protocol.thresholds.minimumObservations,
+      startIndex,
+      endExclusive,
+    })
   }
 
   const parameterHash = canonicalHashV1(protocol)
@@ -1110,7 +1573,13 @@ export const evaluateReference = (
     parameterSchemaVersion: protocol.schemaVersion,
   }
   if (parameterHash !== provenance.strategy.parameterHash || provenance.strategy.name !== 'risk-balanced-trend') {
-    throw new Error('reference protocol does not match runtime provenance')
+    return Result.fail({
+      _tag: 'ReferenceProvenanceMismatch',
+      requiredStrategyName: 'risk-balanced-trend',
+      actualStrategyName: provenance.strategy.name,
+      expectedParameterHash: parameterHash,
+      actualParameterHash: provenance.strategy.parameterHash,
+    })
   }
   const runId = makeRunIdentity({
     schemaVersion: 'bayn.run-identity.v1',
@@ -1126,10 +1595,18 @@ export const evaluateReference = (
     bounds: manifest.bounds,
   }).runId
   const protocolHash = makeStrategyProtocolHash(strategyIdentity)
-  const candidateTargets = eligibleSignals.map((signalIndex): Target => {
-    const plan = riskBalancedDecisionPlan(signalIndex, sessions, protocol)
-    return { signalIndex, executionIndex: signalIndex + 1, weights: plan.targetWeights, plan }
-  })
+  const candidateTargetsResult = Result.all(
+    eligibleSignals.map((signalIndex) =>
+      pipe(
+        riskBalancedDecisionPlan(signalIndex, sessions, protocol),
+        Result.map(
+          (plan): Target => ({ signalIndex, executionIndex: signalIndex + 1, weights: plan.targetWeights, plan }),
+        ),
+      ),
+    ),
+  )
+  if (Result.isFailure(candidateTargetsResult)) return Result.fail(candidateTargetsResult.failure)
+  const candidateTargets = candidateTargetsResult.success
   const equalWeight = roundWeight(1 / protocol.universe.length)
   const buyAndHoldTargets: readonly Target[] = [
     {
@@ -1138,13 +1615,22 @@ export const evaluateReference = (
       weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, equalWeight])),
     },
   ]
-  const directVolTargets = eligibleSignals.map(
-    (signalIndex): Target => ({
-      signalIndex,
-      executionIndex: signalIndex + 1,
-      weights: directVolatilityTarget(sessions, signalIndex, protocol),
-    }),
+  const directVolTargetsResult = Result.all(
+    eligibleSignals.map((signalIndex) =>
+      pipe(
+        directVolatilityTarget(sessions, signalIndex, protocol),
+        Result.map(
+          (weights): Target => ({
+            signalIndex,
+            executionIndex: signalIndex + 1,
+            weights,
+          }),
+        ),
+      ),
+    ),
   )
+  if (Result.isFailure(directVolTargetsResult)) return Result.fail(directVolTargetsResult.failure)
+  const directVolTargets = directVolTargetsResult.success
   const strategy = replay(boundedSessions, candidateTargets, startIndex, protocol, MICROS, runId, true)
   const buyAndHold = replay(boundedSessions, buyAndHoldTargets, startIndex, protocol, MICROS, runId, false)
   const directVolTiming = replay(boundedSessions, directVolTargets, startIndex, protocol, MICROS, runId, false)
@@ -1160,7 +1646,7 @@ export const evaluateReference = (
   return pipe(
     Result.all({ strategy, buyAndHold, directVolTiming, doubleCostStrategy }),
     Result.map(
-      ({ strategy, buyAndHold, directVolTiming, doubleCostStrategy }): ReferenceEvaluation => ({
+      ({ strategy, buyAndHold, directVolTiming, doubleCostStrategy }): ReferenceEvaluationWithWork => ({
         runId,
         protocolHash,
         strategy,
@@ -1178,3 +1664,46 @@ export const evaluateReference = (
     ),
   )
 }
+
+const stripReplayWork = (replay: ReplayWithWork): Replay => ({
+  metrics: replay.metrics,
+  events: replay.events,
+  decisions: replay.decisions,
+  daily: replay.daily,
+  trace: replay.trace,
+})
+
+export const evaluateReference = (
+  bars: readonly DailyBar[],
+  manifest: InputManifest,
+  protocol: Protocol,
+  provenance: RuntimeProvenance,
+): ReferenceComputation<ReferenceEvaluation> =>
+  pipe(
+    evaluateReferenceWithWork(bars, manifest, protocol, provenance),
+    Result.map((reference) => ({
+      runId: reference.runId,
+      protocolHash: reference.protocolHash,
+      strategy: stripReplayWork(reference.strategy),
+      buyAndHold: stripReplayWork(reference.buyAndHold),
+      directVolTiming: stripReplayWork(reference.directVolTiming),
+      doubleCostStrategy: stripReplayWork(reference.doubleCostStrategy),
+      verdict: reference.verdict,
+    })),
+  )
+
+export const measureReferenceEvaluationWork = (
+  bars: readonly DailyBar[],
+  manifest: InputManifest,
+  protocol: Protocol,
+  provenance: RuntimeProvenance,
+): ReferenceComputation<ReferenceEvaluationWork> =>
+  pipe(
+    evaluateReferenceWithWork(bars, manifest, protocol, provenance),
+    Result.map((reference) => ({
+      strategy: reference.strategy.work,
+      buyAndHold: reference.buyAndHold.work,
+      directVolTiming: reference.directVolTiming.work,
+      doubleCostStrategy: reference.doubleCostStrategy.work,
+    })),
+  )
