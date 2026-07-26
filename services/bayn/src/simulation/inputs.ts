@@ -1,9 +1,10 @@
-import { Chunk, pipe, Result } from 'effect'
+import { Chunk, Option, pipe, Result } from 'effect'
 
 import { makeRunIdentityResult, makeStrategyProtocolHashResult, type RuntimeProvenance } from '../contracts'
 import { canonicalHashV1Result } from '../hash'
 import { ContractVersion, type DailyBar, type InputManifest, type IsoDate, type Protocol } from '../types'
 import type { AlignedSession, EvaluationIdentity, EvaluationWindow, SimulationFailure } from './model'
+import { optionalRecordValue } from './record'
 
 const fail = <A = never>(failure: SimulationFailure): Result.Result<A, SimulationFailure> => Result.fail(failure)
 
@@ -78,8 +79,15 @@ export const requiredRecordValue = <A>(
   operation: RecordOperation,
   context: string,
 ): Result.Result<A, SimulationFailure> => {
-  const value = Reflect.get(values, key) as A | undefined
-  return value === undefined ? fail({ _tag: 'MissingRecordValue', operation, key, context }) : Result.succeed(value)
+  return pipe(
+    optionalRecordValue(values, key, operation, context),
+    Result.flatMap(
+      Option.match({
+        onNone: () => fail({ _tag: 'MissingRecordValue', operation, key, context }),
+        onSome: Result.succeed,
+      }),
+    ),
+  )
 }
 
 const buildAlignedSession = (
