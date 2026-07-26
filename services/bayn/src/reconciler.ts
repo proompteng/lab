@@ -1,4 +1,4 @@
-import { Cause, Chunk, Clock, Data, Effect, Exit, HashMap, HashSet, Option, Result } from 'effect'
+import { Cause, Chunk, Clock, Data, Effect, Exit, HashMap, HashSet, Option, Result, pipe } from 'effect'
 
 import {
   BrokerRead,
@@ -18,8 +18,10 @@ import {
   fillObservation,
   orderObservation,
   positionSnapshot,
+  renderBrokerObservationError,
   sourceTimestamp,
   type BrokerEventInput,
+  type BrokerObservationError,
   type FillEventInput,
   type PositionSnapshotInput,
 } from './broker/observations'
@@ -38,7 +40,6 @@ const maximumRows = 10_000
 const ordersPageSize = 500
 const fillsPageSize = 100
 const incompletePassReason = 'reconciliation pass incomplete'
-const normalizationMessage = 'broker snapshot normalization failed'
 
 interface Observed<A> {
   readonly value: A
@@ -106,11 +107,7 @@ type ValidationFailureReason =
   | 'FillOrderMissing'
   | 'UnexpectedAccountEvent'
 
-type NormalizationStage = 'order' | 'fill-ordering' | 'fill' | 'account' | 'positions'
-
-type NormalizationDecisionFailure =
-  | ReconciliationError
-  | { readonly _tag: 'Defect'; readonly cause: Cause.Cause<never> }
+type NormalizationStage = 'order-timestamp' | 'order' | 'fill-ordering' | 'fill' | 'account' | 'positions'
 
 type ReconciliationFailure =
   | { readonly _tag: 'Pagination'; readonly reason: PaginationFailureReason }
@@ -120,7 +117,7 @@ type ReconciliationFailure =
       readonly _tag: 'Normalization'
       readonly stage: NormalizationStage
       readonly identity?: string
-      readonly cause: Error
+      readonly error: BrokerObservationError
     }
   | {
       readonly _tag: 'AuthorityRestrictionFailed'
@@ -156,38 +153,42 @@ const snapshotFailure = (reason: SnapshotFailureReason, message: string): Reconc
 const validationFailure = (reason: ValidationFailureReason, detail: string): ReconciliationError =>
   new ReconciliationError({
     operation: 'normalization',
-    message: normalizationMessage,
+    message: detail,
     failure: { _tag: 'Validation', reason, detail },
   })
 
-const decideNormalizationFailure = (
+const normalizationFailure = (
   stage: NormalizationStage,
   identity: string | undefined,
-  cause: unknown,
-): NormalizationDecisionFailure => {
-  if (!(cause instanceof Error)) return { _tag: 'Defect', cause: Cause.die(cause) }
-  return new ReconciliationError({
+  error: BrokerObservationError,
+): ReconciliationError =>
+  new ReconciliationError({
     operation: 'normalization',
-    message: normalizationMessage,
-    cause,
+    message: renderBrokerObservationError(error),
+    cause: error,
     failure: {
       _tag: 'Normalization',
       stage,
       ...(identity === undefined ? {} : { identity }),
-      cause,
+      error,
     },
   })
-}
 
-const normalizationAttempt = <A>(
+const mapObservationFailure = <A>(
   stage: NormalizationStage,
   identity: string | undefined,
-  evaluate: () => A,
-): Result.Result<A, NormalizationDecisionFailure> =>
-  Result.try({
-    try: evaluate,
-    catch: (cause) => decideNormalizationFailure(stage, identity, cause),
-  })
+  result: Result.Result<A, BrokerObservationError>,
+): Result.Result<A, ReconciliationError> =>
+  pipe(
+    result,
+    Result.mapError((error) => normalizationFailure(stage, identity, error)),
+  )
+
+const normalizeTimestamp = (
+  stage: Extract<NormalizationStage, 'order-timestamp' | 'fill-ordering'>,
+  identity: string,
+  value: string,
+): Result.Result<string, ReconciliationError> => mapObservationFailure(stage, identity, sourceTimestamp(value))
 
 const compareText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
 
@@ -265,10 +266,34 @@ const decideOrderPage = (
       }
 
       const previousSubmittedAt = result.success.previousSubmittedAt
-      if (previousSubmittedAt !== undefined && sourceTimestamp(submittedAt) < sourceTimestamp(previousSubmittedAt)) {
+      const normalizedSubmittedAt = normalizeTimestamp('order-timestamp', order.brokerOrderId, submittedAt)
+      if (Result.isFailure(normalizedSubmittedAt)) return Result.fail(normalizedSubmittedAt.failure)
+      const normalizedPrevious =
+        previousSubmittedAt === undefined
+          ? undefined
+          : normalizeTimestamp('order-timestamp', order.brokerOrderId, previousSubmittedAt)
+      if (normalizedPrevious !== undefined && Result.isFailure(normalizedPrevious)) {
+        return Result.fail(normalizedPrevious.failure)
+      }
+      const normalizedCursor =
+        state.cursor === undefined
+          ? undefined
+          : normalizeTimestamp('order-timestamp', order.brokerOrderId, state.cursor)
+      if (normalizedCursor !== undefined && Result.isFailure(normalizedCursor)) {
+        return Result.fail(normalizedCursor.failure)
+      }
+      if (
+        normalizedPrevious !== undefined &&
+        Result.isSuccess(normalizedPrevious) &&
+        normalizedSubmittedAt.success < normalizedPrevious.success
+      ) {
         return Result.fail(paginationFailure('OrderHistoryNotAscending', 'Alpaca order history is not ascending'))
       }
-      if (state.cursor !== undefined && sourceTimestamp(submittedAt) <= sourceTimestamp(state.cursor)) {
+      if (
+        normalizedCursor !== undefined &&
+        Result.isSuccess(normalizedCursor) &&
+        normalizedSubmittedAt.success <= normalizedCursor.success
+      ) {
         return Result.fail(
           paginationFailure('OrderTimestampCursorDidNotAdvance', 'Alpaca order timestamp cursor did not advance'),
         )
@@ -461,8 +486,8 @@ const readStableBrokerSnapshot = (
 
 const indexBindings = (
   bindings: readonly IntentBinding[],
-): Result.Result<HashMap.HashMap<string, string>, NormalizationDecisionFailure> =>
-  bindings.reduce<Result.Result<HashMap.HashMap<string, string>, NormalizationDecisionFailure>>((result, binding) => {
+): Result.Result<HashMap.HashMap<string, string>, ReconciliationError> =>
+  bindings.reduce<Result.Result<HashMap.HashMap<string, string>, ReconciliationError>>((result, binding) => {
     if (Result.isFailure(result)) return result
     if (HashMap.has(result.success, binding.clientOrderId)) {
       return Result.fail(
@@ -481,8 +506,8 @@ interface OrderNormalizationState {
 const normalizeOrders = (
   rows: readonly Observed<BrokerOrder>[],
   intentByClient: HashMap.HashMap<string, string>,
-): Result.Result<OrderNormalizationState, NormalizationDecisionFailure> =>
-  rows.reduce<Result.Result<OrderNormalizationState, NormalizationDecisionFailure>>(
+): Result.Result<OrderNormalizationState, ReconciliationError> =>
+  rows.reduce<Result.Result<OrderNormalizationState, ReconciliationError>>(
     (result, observed) => {
       if (Result.isFailure(result)) return result
       if (HashSet.has(result.success.clientOrderIds, observed.value.clientOrderId)) {
@@ -494,7 +519,9 @@ const normalizeOrders = (
         )
       }
 
-      const normalized = normalizationAttempt('order', observed.value.brokerOrderId, () =>
+      const normalized = mapObservationFailure(
+        'order',
+        observed.value.brokerOrderId,
         orderObservation(
           observed.value,
           observed.evidence,
@@ -522,27 +549,32 @@ const normalizeFills = (
   fills: readonly Observed<FillActivity>[],
   orders: OrderNormalizationState,
   intentByClient: HashMap.HashMap<string, string>,
-): Result.Result<readonly FillEventInput[], NormalizationDecisionFailure> => {
-  const ordered = normalizationAttempt('fill-ordering', undefined, () =>
-    [...fills].sort((left, right) => {
-      const byTime = compareText(
-        sourceTimestamp(left.value.transactionTime),
-        sourceTimestamp(right.value.transactionTime),
-      )
-      return byTime === 0 ? compareText(left.value.activityId, right.value.activityId) : byTime
-    }),
+): Result.Result<readonly FillEventInput[], ReconciliationError> => {
+  const timestamped = Result.all(
+    fills.map((observed) =>
+      pipe(
+        normalizeTimestamp('fill-ordering', observed.value.activityId, observed.value.transactionTime),
+        Result.map((timestamp) => ({ observed, timestamp })),
+      ),
+    ),
   )
-  if (Result.isFailure(ordered)) return Result.fail(ordered.failure)
+  if (Result.isFailure(timestamped)) return Result.fail(timestamped.failure)
+  const ordered = [...timestamped.success].sort((left, right) => {
+    const byTime = compareText(left.timestamp, right.timestamp)
+    return byTime === 0 ? compareText(left.observed.value.activityId, right.observed.value.activityId) : byTime
+  })
 
   return Result.all(
-    ordered.success.map((observed) => {
+    ordered.map(({ observed }) => {
       const order = Option.getOrUndefined(HashMap.get(orders.orderById, observed.value.brokerOrderId))
       if (order === undefined) {
         return Result.fail(
           validationFailure('FillOrderMissing', `Alpaca fill ${observed.value.activityId} references a missing order`),
         )
       }
-      return normalizationAttempt('fill', observed.value.activityId, () =>
+      return mapObservationFailure(
+        'fill',
+        observed.value.activityId,
         fillObservation(observed.value, order, observed.evidence, {
           intentId: Option.getOrUndefined(HashMap.get(intentByClient, order.clientOrderId)),
         }),
@@ -553,8 +585,8 @@ const normalizeFills = (
 
 const normalizeAccount = (
   account: ReadResult<BrokerAccount>,
-): Result.Result<AccountEventInput, NormalizationDecisionFailure> => {
-  const normalized = normalizationAttempt('account', account.value.id, () => accountObservation(account))
+): Result.Result<AccountEventInput, ReconciliationError> => {
+  const normalized = mapObservationFailure('account', account.value.id, accountObservation(account))
   if (Result.isFailure(normalized)) return Result.fail(normalized.failure)
   return normalized.success._tag === 'Account'
     ? Result.succeed(normalized.success)
@@ -564,13 +596,13 @@ const normalizeAccount = (
 const normalizePositions = (
   accountId: string,
   positions: ReadResult<readonly BrokerPosition[]>,
-): Result.Result<PositionSnapshotInput, NormalizationDecisionFailure> =>
-  normalizationAttempt('positions', accountId, () => positionSnapshot(accountId, positions))
+): Result.Result<PositionSnapshotInput, ReconciliationError> =>
+  mapObservationFailure('positions', accountId, positionSnapshot(accountId, positions))
 
 const normalizeSnapshot = (
   snapshot: StableBrokerSnapshot,
   bindings: readonly IntentBinding[],
-): Result.Result<NormalizedBrokerSnapshot, NormalizationDecisionFailure> =>
+): Result.Result<NormalizedBrokerSnapshot, ReconciliationError> =>
   Result.gen(function* () {
     const intentByClient = yield* indexBindings(bindings)
     const orders = yield* normalizeOrders(snapshot.history.orders.rows, intentByClient)
@@ -586,16 +618,8 @@ const normalizeSnapshot = (
   })
 
 const interpretNormalizationDecision = <A>(
-  decision: Result.Result<A, NormalizationDecisionFailure>,
-): Effect.Effect<A, ReconciliationError> => {
-  if (Result.isSuccess(decision)) return Effect.succeed(decision.success)
-  switch (decision.failure._tag) {
-    case 'ReconciliationError':
-      return Effect.fail(decision.failure)
-    case 'Defect':
-      return Effect.failCause(decision.failure.cause)
-  }
-}
+  decision: Result.Result<A, ReconciliationError>,
+): Effect.Effect<A, ReconciliationError> => Effect.fromResult(decision)
 
 const decideAccountBaseline = (hasAccountBaseline: boolean): Result.Result<void, ReconciliationError> =>
   hasAccountBaseline

@@ -723,7 +723,7 @@ const fillEvent = (
   quantityMicros: string,
   priceMicros: string,
   eventOccurredAt = occurredAt,
-  brokerTimestamp = sourceTimestamp(eventOccurredAt),
+  brokerTimestamp = Result.getOrThrow(sourceTimestamp(eventOccurredAt)),
   eventAccountId = accountId,
   eventObservedAt = observedAt,
 ): FillEventInput => {
@@ -2699,7 +2699,7 @@ describePostgres('paper accounting persistence', () => {
       '1000000',
       '70000000',
       '2026-07-21T19:58:00.000Z',
-      sourceTimestamp('2026-07-21T19:58:00.000Z'),
+      Result.getOrThrow(sourceTimestamp('2026-07-21T19:58:00.000Z')),
       accountId,
       '2026-07-21T19:58:01.000Z',
     )
@@ -2709,7 +2709,7 @@ describePostgres('paper accounting persistence', () => {
       '1000000',
       '70000000',
       '2026-07-21T19:59:00.000Z',
-      sourceTimestamp('2026-07-21T19:59:00.000Z'),
+      Result.getOrThrow(sourceTimestamp('2026-07-21T19:59:00.000Z')),
       accountId,
       '2026-07-21T19:59:01.000Z',
     )
@@ -2720,7 +2720,7 @@ describePostgres('paper accounting persistence', () => {
       '1000000',
       '70000000',
       occurredAt,
-      sourceTimestamp(occurredAt),
+      Result.getOrThrow(sourceTimestamp(occurredAt)),
       otherAccountId,
     )
     try {

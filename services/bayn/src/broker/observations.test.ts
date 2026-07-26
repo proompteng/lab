@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { Result } from 'effect'
 
 import {
   AccountStatus as AlpacaAccountStatus,
@@ -18,7 +19,21 @@ import {
   type ReadEvidence,
 } from './alpaca'
 import { AccountStatus, OrderSide, OrderStatus } from '../paper'
-import { accountObservation, fillObservation, orderObservation, positionSnapshot } from './observations'
+import {
+  accountObservation,
+  fillObservation,
+  orderObservation,
+  positionSnapshot,
+  renderBrokerObservationError,
+  sourceTimestamp,
+  type BrokerObservationError,
+} from './observations'
+
+const success = <A>(result: Result.Result<A, BrokerObservationError>): A => Result.getOrThrow(result)
+const failure = <A>(result: Result.Result<A, BrokerObservationError>): BrokerObservationError => {
+  if (Result.isFailure(result)) return result.failure
+  return expect.unreachable('expected broker observation failure')
+}
 
 const observedAt = '2026-07-22T15:30:01.000Z'
 const evidence: ReadEvidence = {
@@ -80,8 +95,8 @@ const activity: FillActivity = {
 
 describe('paper broker observations', () => {
   test('normalizes account status and preserves observation freshness', () => {
-    const first = accountObservation({ value: account, evidence })
-    const replay = accountObservation({ value: account, evidence: { ...evidence, requestId: 'request-2' } })
+    const first = success(accountObservation({ value: account, evidence }))
+    const replay = success(accountObservation({ value: account, evidence: { ...evidence, requestId: 'request-2' } }))
 
     expect(first._tag).toBe('Account')
     if (first._tag !== 'Account') throw new Error('expected account observation')
@@ -89,13 +104,15 @@ describe('paper broker observations', () => {
     expect(first.sourceEventId).toBe(`account:${evidence.contentHash}:${observedAt}`)
     expect(replay).toEqual(first)
     const laterObservedAt = '2026-07-22T15:31:01.000Z'
-    const later = accountObservation({
-      value: { ...account, observedAt: laterObservedAt },
-      evidence: { ...evidence, observedAt: laterObservedAt },
-    })
+    const later = success(
+      accountObservation({
+        value: { ...account, observedAt: laterObservedAt },
+        evidence: { ...evidence, observedAt: laterObservedAt },
+      }),
+    )
     expect(later.sourceEventId).not.toBe(first.sourceEventId)
     expect(later.contentHash).toBe(first.contentHash)
-    const restricted = accountObservation({ value: { ...account, tradingBlocked: true }, evidence })
+    const restricted = success(accountObservation({ value: { ...account, tradingBlocked: true }, evidence }))
     expect(restricted._tag === 'Account' && restricted.account.status).toBe(AccountStatus.Restricted)
   })
 
@@ -130,27 +147,29 @@ describe('paper broker observations', () => {
         observedAt,
       },
     ]
-    const snapshot = positionSnapshot(account.id, { value: positions, evidence })
+    const snapshot = success(positionSnapshot(account.id, { value: positions, evidence }))
     const events = snapshot.positions
 
     expect(events).toHaveLength(2)
     expect(events.map((event) => (event._tag === 'Position' ? event.position.symbol : ''))).toEqual(['AMD', 'NVDA'])
     expect(new Set(events.map((event) => event.sourceEventId)).size).toBe(2)
     const laterObservedAt = '2026-07-22T15:31:01.000Z'
-    const later = positionSnapshot(account.id, {
-      value: positions.map((position) => ({ ...position, observedAt: laterObservedAt })),
-      evidence: { ...evidence, observedAt: laterObservedAt },
-    }).positions
+    const later = success(
+      positionSnapshot(account.id, {
+        value: positions.map((position) => ({ ...position, observedAt: laterObservedAt })),
+        evidence: { ...evidence, observedAt: laterObservedAt },
+      }),
+    ).positions
     expect(later.map((event) => event.sourceEventId)).not.toEqual(events.map((event) => event.sourceEventId))
     expect(later.map((event) => event.contentHash)).toEqual(events.map((event) => event.contentHash))
-    expect(() =>
-      positionSnapshot(account.id, { value: [positions[0], { ...positions[1], symbol: 'NVDA' }], evidence }),
-    ).toThrow('duplicate Alpaca position symbol')
-    expect(positionSnapshot(account.id, { value: [], evidence }).positions).toEqual([])
+    expect(
+      failure(positionSnapshot(account.id, { value: [positions[0], { ...positions[1], symbol: 'NVDA' }], evidence })),
+    ).toEqual({ _tag: 'DuplicatePositionSymbol', symbol: 'NVDA' })
+    expect(success(positionSnapshot(account.id, { value: [], evidence })).positions).toEqual([])
   })
 
   test('maps a partially filled pending order without discarding fill state', () => {
-    const event = orderObservation(order, evidence, 'b'.repeat(64))
+    const event = success(orderObservation(order, evidence, 'b'.repeat(64)))
 
     expect(event._tag).toBe('Order')
     if (event._tag !== 'Order') throw new Error('expected order observation')
@@ -162,16 +181,18 @@ describe('paper broker observations', () => {
     })
     expect(event.occurredAt).toBe('2026-07-22T15:30:00.500Z')
     expect(event.sourceEventId).toBe(`order:${order.brokerOrderId}:${order.updatedAt}`)
-    expect(() => orderObservation({ ...order, extendedHours: true }, evidence)).toThrow(
-      'paper execution requires extended hours to be disabled',
-    )
-    expect(() => orderObservation({ ...order, updatedAt: undefined }, evidence)).toThrow(
-      'paper order event requires Alpaca updated_at',
-    )
+    expect(failure(orderObservation({ ...order, extendedHours: true }, evidence))).toEqual({
+      _tag: 'ExtendedHoursUnsupported',
+      brokerOrderId: order.brokerOrderId,
+    })
+    expect(failure(orderObservation({ ...order, updatedAt: undefined }, evidence))).toEqual({
+      _tag: 'OrderUpdatedAtMissing',
+      brokerOrderId: order.brokerOrderId,
+    })
   })
 
   test('binds a fill to its order and defaults paper fees to zero', () => {
-    const event = fillObservation(activity, order, evidence, { intentId: 'b'.repeat(64) })
+    const event = success(fillObservation(activity, order, evidence, { intentId: 'b'.repeat(64) }))
 
     expect(event.fill).toMatchObject({
       fillId: activity.activityId,
@@ -181,8 +202,36 @@ describe('paper broker observations', () => {
       occurredAt: '2026-07-22T15:30:00.000Z',
     })
     expect(event.sourceTimestamp).toBe('2026-07-22T15:30:00.000987000Z')
-    expect(() => fillObservation({ ...activity, symbol: 'AMD' }, order, evidence)).toThrow(
-      'Alpaca fill activity does not match its order',
-    )
+    expect(failure(fillObservation({ ...activity, symbol: 'AMD' }, order, evidence))).toEqual({
+      _tag: 'FillOrderMismatch',
+      activityId: activity.activityId,
+      brokerOrderId: order.brokerOrderId,
+    })
+  })
+
+  test('returns closed fact-bearing failures for malformed broker observations', () => {
+    expect(failure(sourceTimestamp('not-a-timestamp'))).toEqual({
+      _tag: 'TimestampInvalid',
+      value: 'not-a-timestamp',
+    })
+    expect(failure(sourceTimestamp('2026-99-99T15:30:00Z'))).toEqual({
+      _tag: 'TimestampInvalid',
+      value: '2026-99-99T15:30:00Z',
+    })
+    expect(
+      failure(
+        accountObservation({
+          value: account,
+          evidence: { ...evidence, observedAt: '2026-07-22T15:30:02.000Z' },
+        }),
+      ),
+    ).toEqual({
+      _tag: 'ObservationTimeMismatch',
+      valueObservedAt: observedAt,
+      evidenceObservedAt: '2026-07-22T15:30:02.000Z',
+    })
+    const unsupported = failure(orderObservation({ ...order, orderType: AlpacaOrderType.Stop }, evidence))
+    expect(unsupported).toEqual({ _tag: 'UnsupportedOrderType', value: AlpacaOrderType.Stop })
+    expect(renderBrokerObservationError(unsupported)).toBe('unsupported paper order type stop')
   })
 })
