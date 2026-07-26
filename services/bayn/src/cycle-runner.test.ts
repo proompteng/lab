@@ -826,19 +826,31 @@ describe('autonomous cycle runner', () => {
     if (malformedNonLatest.failure._tag !== 'CyclePublicationDateInvalid') {
       throw new Error('malformed publication fixture must retain its date failure')
     }
-    expect(malformedNonLatest.failure.cause).toBeInstanceOf(RangeError)
-    if (!(malformedNonLatest.failure.cause instanceof RangeError)) {
-      throw new Error('malformed publication cause must remain a RangeError')
-    }
-    expect(malformedNonLatest.failure.cause.message).toBe('Invalid Date')
+    expect(malformedNonLatest.failure.cause).toEqual({
+      _tag: 'IsoDateInputInvalid',
+      date: '0000-00-00',
+      epochMillis: Number.NaN,
+    })
 
     const malformedQuery = marketCalendarQueryForSignal('0000-00-00')
     if (Result.isSuccess(malformedQuery)) throw new Error('malformed query fixture must fail')
-    expect(malformedQuery.failure.cause).toBeInstanceOf(RangeError)
-    if (!(malformedQuery.failure.cause instanceof RangeError)) {
-      throw new Error('malformed query cause must remain a RangeError')
-    }
-    expect(malformedQuery.failure.cause.message).toBe('Invalid Date')
+    expect(malformedQuery.failure.cause).toEqual({
+      _tag: 'IsoDateInputInvalid',
+      date: '0000-00-00',
+      epochMillis: Number.NaN,
+    })
+    expect(marketCalendarQueryForSignal('2026-02-30')).toEqual(
+      Result.fail({
+        _tag: 'CycleCalendarQueryRangeOutOfRange',
+        signalSessionDate: '2026-02-30',
+        offsetDays: 30,
+        cause: {
+          _tag: 'IsoDateInputNotCanonical',
+          date: '2026-02-30',
+          normalized: '2026-03-02T00:00:00.000Z',
+        },
+      }),
+    )
   })
 
   test('classifies publication discovery as a pure typed decision before dependency reads', () => {

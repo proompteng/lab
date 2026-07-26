@@ -215,18 +215,47 @@ interface CyclePublicationDateInput {
   }
 }
 
+type IsoDateShiftCause =
+  | {
+      readonly _tag: 'IsoDateInputInvalid'
+      readonly date: string
+      readonly epochMillis: number
+    }
+  | {
+      readonly _tag: 'IsoDateInputNotCanonical'
+      readonly date: string
+      readonly normalized: string
+    }
+  | {
+      readonly _tag: 'IsoDateOffsetInvalid'
+      readonly date: string
+      readonly days: number
+    }
+  | {
+      readonly _tag: 'IsoDateShiftEpochOutOfRange'
+      readonly date: string
+      readonly days: number
+      readonly epochMillis: number
+    }
+  | {
+      readonly _tag: 'IsoDateShiftResultOutOfRange'
+      readonly date: string
+      readonly days: number
+      readonly shifted: string
+    }
+
 type IsoDateShiftFailure = {
   readonly _tag: 'IsoDateShiftOutOfRange'
   readonly date: string
   readonly days: number
-  readonly cause: unknown
+  readonly cause: IsoDateShiftCause
 }
 
 type CyclePublicationFailure =
   | {
       readonly _tag: 'CyclePublicationDateInvalid'
       readonly signalSessionDate: string
-      readonly cause: unknown
+      readonly cause: IsoDateShiftCause
     }
   | {
       readonly _tag: 'CyclePublicationDuplicate'
@@ -236,46 +265,49 @@ type CyclePublicationFailure =
       readonly _tag: 'CyclePublicationRangeOutOfRange'
       readonly signalSessionDate: string
       readonly offsetDays: number
-      readonly cause: unknown
+      readonly cause: IsoDateShiftCause
     }
 
 type CycleCalendarQueryFailure = {
   readonly _tag: 'CycleCalendarQueryRangeOutOfRange'
   readonly signalSessionDate: string
   readonly offsetDays: number
-  readonly cause: unknown
+  readonly cause: IsoDateShiftCause
 }
 
 const shiftIsoDate = (date: string, days: number): Result.Result<string, IsoDateShiftFailure> => {
-  const failure = (cause: unknown): IsoDateShiftFailure => ({
-    _tag: 'IsoDateShiftOutOfRange',
-    date,
-    days,
-    cause,
-  })
-  return Result.flatMap(
-    Result.try({
-      try: () => {
-        const input = new Date(`${date}T00:00:00.000Z`).toISOString()
-        if (input !== `${date}T00:00:00.000Z`) {
-          return {
-            _tag: 'INVALID' as const,
-            cause: { _tag: 'IsoDateInputNotCanonical', date, normalized: input } as const,
-          }
-        }
-        const shifted = new Date(Date.parse(input) + days * millisecondsPerDay).toISOString()
-        const shiftedDate = shifted.slice(0, 10)
-        return /^\d{4}-\d{2}-\d{2}$/.test(shiftedDate) && shifted === `${shiftedDate}T00:00:00.000Z`
-          ? { _tag: 'VALID' as const, shiftedDate }
-          : {
-              _tag: 'INVALID' as const,
-              cause: { _tag: 'IsoDateShiftResultOutOfRange', date, days, shifted } as const,
-            }
-      },
-      catch: failure,
-    }),
-    (outcome) => (outcome._tag === 'VALID' ? Result.succeed(outcome.shiftedDate) : Result.fail(failure(outcome.cause))),
-  )
+  const failure = (cause: IsoDateShiftCause): Result.Result<never, IsoDateShiftFailure> =>
+    Result.fail({
+      _tag: 'IsoDateShiftOutOfRange',
+      date,
+      days,
+      cause,
+    })
+
+  if (!Number.isSafeInteger(days)) return failure({ _tag: 'IsoDateOffsetInvalid', date, days })
+
+  const inputDate = new Date(`${date}T00:00:00.000Z`)
+  const inputEpochMillis = inputDate.getTime()
+  if (!Number.isFinite(inputEpochMillis)) {
+    return failure({ _tag: 'IsoDateInputInvalid', date, epochMillis: inputEpochMillis })
+  }
+
+  const input = inputDate.toISOString()
+  if (input !== `${date}T00:00:00.000Z`) {
+    return failure({ _tag: 'IsoDateInputNotCanonical', date, normalized: input })
+  }
+
+  const shiftedEpochMillis = inputEpochMillis + days * millisecondsPerDay
+  const shiftedDateValue = new Date(shiftedEpochMillis)
+  if (!Number.isFinite(shiftedDateValue.getTime())) {
+    return failure({ _tag: 'IsoDateShiftEpochOutOfRange', date, days, epochMillis: shiftedEpochMillis })
+  }
+
+  const shifted = shiftedDateValue.toISOString()
+  const shiftedDate = shifted.slice(0, 10)
+  return /^\d{4}-\d{2}-\d{2}$/.test(shiftedDate) && shifted === `${shiftedDate}T00:00:00.000Z`
+    ? Result.succeed(shiftedDate)
+    : failure({ _tag: 'IsoDateShiftResultOutOfRange', date, days, shifted })
 }
 
 export const marketCalendarQueryForSignal = (
