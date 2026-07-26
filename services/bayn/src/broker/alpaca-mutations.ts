@@ -1,4 +1,4 @@
-import { Cause, Clock, Context, Data, Effect, Redacted, Result, Schema } from 'effect'
+import { Cause, Context, Data, Effect, Redacted, Result, Schema } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 
 import { canonicalHashV1 } from '../hash'
@@ -13,6 +13,7 @@ import {
   type Intent,
 } from '../paper'
 import { StrictNonEmptyStringSchema as NonEmptyString, UtcInstantSchema as UtcInstant } from '../schemas'
+import { currentUtcInstant } from '../time'
 import {
   OrderResponseSchema,
   OrderSide,
@@ -382,7 +383,7 @@ export const makeMutation = (
                 ),
               ),
             )
-            const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+            const observedAt = yield* currentUtcInstant
             const contentHash = yield* Effect.try({
               try: () => canonicalHashV1(raw),
               catch: (cause) =>
@@ -505,7 +506,7 @@ export const makeMutation = (
                       ),
                     ),
                   )
-            const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+            const observedAt = yield* currentUtcInstant
             const evidence = responseEvidence(headers['x-request-id'], response.status, contentHash, observedAt)
             if (response.status !== 204) {
               return yield* Effect.fail(

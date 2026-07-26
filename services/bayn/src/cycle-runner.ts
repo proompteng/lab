@@ -1,4 +1,4 @@
-import { Clock, Data, Duration, Effect, HashSet, Option, pipe, Result, Schedule } from 'effect'
+import { Data, Duration, Effect, HashSet, Option, pipe, Result, Schedule } from 'effect'
 
 import {
   BrokerRead,
@@ -34,6 +34,7 @@ import {
   type SignalSessionRow,
 } from './market-data'
 import type { ObserveShadowDecisionDocument } from './shadow-decision-contract'
+import { currentUtcInstant } from './time'
 
 const calendarRangeDays = 31
 // This leaves at least 10 calendar days after the newest candidate inside Alpaca's 31-day observation bound.
@@ -169,7 +170,7 @@ export interface AutonomousCycleLoopOptions<E = never, R = never> {
   readonly pollIntervalMs: number
 }
 
-const currentIsoTime = Clock.currentTimeMillis.pipe(Effect.map((millis) => new Date(millis).toISOString()))
+const currentIsoTime = currentUtcInstant
 
 const runnerError = (
   operation: CycleRunnerError['operation'],

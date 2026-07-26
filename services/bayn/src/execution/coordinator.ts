@@ -29,6 +29,7 @@ import {
 import { IntentStore, type IntentStoreError, type StoredIntent } from './intents'
 import { MutationStore, type MutationEvent } from './mutations'
 import { WriterFence } from './writer-fence'
+import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 
 export enum ExecutionFailure {
   IntentNotFound = 'INTENT_NOT_FOUND',
@@ -57,7 +58,7 @@ interface RecoveryServices {
   readonly broker: BrokerRead['Service']
 }
 
-const currentInstant = Clock.currentTimeMillis.pipe(Effect.map((millis) => new Date(millis).toISOString()))
+const currentInstant = currentUtcInstant
 
 const executionError = (failure: ExecutionDecisionFailure): ExecutionError =>
   Match.value(failure).pipe(
@@ -418,7 +419,7 @@ const continueRecovery = (
     Effect.flatMap((currentMillis) =>
       liftDecision(ensureRecoveryDelay(operation, event, currentMillis)).pipe(
         Effect.flatMap((ready) =>
-          markInterruptedStart(services.mutations, ready, new Date(currentMillis).toISOString()),
+          markInterruptedStart(services.mutations, ready, utcInstantFromEpochMillis(currentMillis)),
         ),
       ),
     ),

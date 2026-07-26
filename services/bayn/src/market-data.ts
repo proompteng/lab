@@ -1,5 +1,5 @@
 import { ClickhouseClient } from '@effect/sql-clickhouse'
-import { Clock, Context, Effect, Layer, Option, Result, Schema, pipe } from 'effect'
+import { Context, Effect, Layer, Option, Result, Schema, pipe } from 'effect'
 import { isSqlError, type SqlError } from 'effect/unstable/sql/SqlError'
 
 import type { RuntimeConfig } from './config'
@@ -28,6 +28,7 @@ import {
   UniverseIdSchema,
   strictParseOptions as StrictParseOptions,
 } from './schemas'
+import { currentUtcInstant } from './time'
 import {
   DataFeed,
   DataSource,
@@ -572,10 +573,7 @@ const makeMarketData = (
           ),
         )
 
-      const observedAt = pipe(
-        Clock.currentTimeMillis,
-        Effect.map((millis) => new Date(millis).toISOString()),
-      )
+      const observedAt = currentUtcInstant
 
       const decodeManifestRows = (
         rows: readonly unknown[],

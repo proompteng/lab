@@ -1,4 +1,4 @@
-import { Cause, Chunk, Clock, Data, Effect, Exit, HashMap, HashSet, Option, Result, pipe } from 'effect'
+import { Cause, Chunk, Data, Effect, Exit, HashMap, HashSet, Option, Result, pipe } from 'effect'
 
 import {
   BrokerRead,
@@ -33,6 +33,7 @@ import {
   type ReconciliationWriteResult,
 } from './db/reconciliation'
 import { WriterFence, type WriterFenceError, type WriterFenceService } from './execution/writer-fence'
+import { currentUtcInstant } from './time'
 import { canonicalHashV1 } from './hash'
 import type { ReconciledBrokerState, ReconciliationRiskContext } from './reconciliation'
 
@@ -467,9 +468,7 @@ const decideStableHistory = (
     ? Result.succeed(after)
     : Result.fail(snapshotFailure('HistoryChanged', 'broker history changed during reconciliation'))
 
-const currentInstant = Clock.currentTimeMillis.pipe(
-  Effect.map((currentTimeMillis) => new Date(currentTimeMillis).toISOString()),
-)
+const currentInstant = currentUtcInstant
 
 const readStableBrokerSnapshot = (
   read: BrokerReadShape,

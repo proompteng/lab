@@ -1,4 +1,4 @@
-import { Clock, Effect, Fiber, Layer, Option, pipe, Ref, Schema, Scope } from 'effect'
+import { Clock, Effect, Fiber, Layer, Option, pipe, Ref, Scope } from 'effect'
 
 import type { LoadedRuntimeConfig, RuntimeConfig } from './config'
 import { CycleObservability } from './db/cycle-observability'
@@ -9,9 +9,9 @@ import { makeHttpLayer } from './http'
 import { Journal } from './ledger'
 import { MarketData } from './market-data'
 import { initialState, type AutonomousCyclePassObservation, type RuntimeState } from './runtime-state'
-import { UtcInstantSchema } from './schemas'
 import { initialize } from './startup'
 import type { Strategy } from './strategy'
+import { utcInstantFromEpochMillis } from './time'
 
 export type RecordAutonomousCyclePass = (observation: AutonomousCyclePassObservation) => Effect.Effect<void>
 
@@ -93,12 +93,18 @@ const initialRuntimeState = <R>(runtime: ApplicationRuntime<R>): RuntimeState =>
     }),
   )
 
-const currentUtcInstant = pipe(
-  Clock.currentTimeMillis,
-  Effect.map((millis) => new Date(millis).toJSON()),
-  Effect.flatMap(Schema.decodeUnknownEffect(UtcInstantSchema)),
-  Effect.mapError((cause) =>
-    operationalError('strategy', 'cycle-loop-clock', 'runtime clock did not produce a canonical UTC instant', cause),
+const currentUtcInstant = Clock.currentTimeMillis.pipe(
+  Effect.flatMap((millis) =>
+    Effect.try({
+      try: () => utcInstantFromEpochMillis(millis),
+      catch: (cause) =>
+        operationalError(
+          'strategy',
+          'cycle-loop-clock',
+          'runtime clock did not produce a canonical UTC instant',
+          cause,
+        ),
+    }),
   ),
 )
 

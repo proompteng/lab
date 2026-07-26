@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Context, Data, Effect, Layer, Result, Schema } from 'effect'
+import { Context, Data, Effect, Layer, Result, Schema } from 'effect'
 
 import { prepareAccounting } from '../accounting/domain'
 import { renderAccountingFailure } from '../accounting/failure'
@@ -19,6 +19,7 @@ import type { RuntimeConfig } from '../config'
 import { WriterFence } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
 import { Journal } from '../ledger'
+import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import {
   AccountingReceiptSchema,
   Authority,
@@ -867,7 +868,7 @@ const makeStore = (config: PaperStoreRuntimeConfig) =>
               tigerBeetleLedger: stable.tigerBeetleLedger,
             })
             const contentHash = canonicalHashV1(stable)
-            const recordedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+            const recordedAt = yield* currentUtcInstant
             const candidate = yield* decodeReceipt({ ...stable, receiptId, contentHash, recordedAt })
             yield* sql`
             INSERT INTO accounting_receipts (
@@ -1127,7 +1128,7 @@ const makeStore = (config: PaperStoreRuntimeConfig) =>
                   longMarketValueMicros: longMarketValue.toString(),
                   shortMarketValueMicros: shortMarketValue.toString(),
                   equityMicros: (cash + longMarketValue + shortMarketValue).toString(),
-                  asOf: new Date(Math.max(accountTime, positionTime)).toISOString(),
+                  asOf: utcInstantFromEpochMillis(Math.max(accountTime, positionTime)),
                 })
                 yield* sql`
                   INSERT INTO valuations (
