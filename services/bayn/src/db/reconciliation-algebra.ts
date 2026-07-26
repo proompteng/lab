@@ -6,7 +6,7 @@ import type { AccountingTransaction } from '../accounting/schema'
 import { MutationOperation } from '../broker/alpaca-mutations'
 import type { RuntimeConfig } from '../config'
 import { MutationEventType } from '../execution/mutations'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import type { LedgerPlan } from '../ledger-plan'
 import {
   Authority,
@@ -113,7 +113,9 @@ export interface RiskContextRow {
   readonly peak_equity_micros: string
 }
 
-type AccountingProjectionOperation = 'accounting-hash' | 'expected-cash'
+type AccountingProjectionOperation = 'accounting-hash'
+
+type AccountingAmountSource = 'opening-cash' | 'transaction-cash-delta'
 
 type ReconciliationIdentityOperation = 'content-hash' | 'decode' | 'reconciliation-id'
 
@@ -125,7 +127,11 @@ export type ReconciliationAlgebraFailure =
       readonly cause: AccountingFailure
     }
   | { readonly _tag: 'DuplicateReceiptBrokerEvent'; readonly brokerEventId: string }
-  | { readonly _tag: 'ReceiptVerificationFailed'; readonly brokerEventId: string; readonly cause: unknown }
+  | {
+      readonly _tag: 'ReceiptVerificationFailed'
+      readonly brokerEventId: string
+      readonly cause: CanonicalHashFailure
+    }
   | {
       readonly _tag: 'AccountingPredatesOpeningCash'
       readonly transactionId: string
@@ -133,9 +139,15 @@ export type ReconciliationAlgebraFailure =
       readonly openingObservedAt: string
     }
   | {
+      readonly _tag: 'AccountingAmountParseFailed'
+      readonly source: AccountingAmountSource
+      readonly value: string
+      readonly transactionId?: string
+    }
+  | {
       readonly _tag: 'AccountingProjectionFailed'
       readonly operation: AccountingProjectionOperation
-      readonly cause: unknown
+      readonly cause: CanonicalHashFailure
     }
   | {
       readonly _tag: 'ReconciliationDecisionFailed'
@@ -170,7 +182,7 @@ export type ReconciliationAlgebraFailure =
   | {
       readonly _tag: 'RiskContextTimestampFailed'
       readonly field: 'authority_observed_at' | 'authority_updated_at'
-      readonly cause: unknown
+      readonly epochMillis: number
     }
 
 const unresolvedEvents = new Set<MutationEventType>([
@@ -238,32 +250,56 @@ const receiptMatches = (
   config: AccountingLedgerIdentity,
 ): Result.Result<boolean, ReconciliationAlgebraFailure> => {
   if (receipt === undefined) return Result.succeed(false)
-  return Result.try({
-    try: () => {
-      const accountIds = plan.accounts.map((account) => account.id.toString())
-      const transferIds = plan.transfers.map((transfer) => transfer.id.toString())
-      const posted = plan.transfers.reduce((sum, transfer) => sum + transfer.amount, 0n).toString()
-      return (
-        receipt.brokerEventId === transaction.brokerEventId &&
-        receipt.intentId === transaction.intentId &&
-        receipt.tigerBeetleClusterId === config.tigerBeetle.clusterId.toString() &&
-        receipt.tigerBeetleLedger === config.tigerBeetle.ledger &&
-        receipt.debitMicros === posted &&
-        receipt.creditMicros === posted &&
-        receipt.accountIds.length === accountIds.length &&
-        receipt.accountIds.every((value, index) => value === accountIds[index]) &&
-        receipt.transferIds.length === transferIds.length &&
-        receipt.transferIds.every((value, index) => value === transferIds[index]) &&
-        canonicalHashV1(canonicalAccountingReceiptMaterial(receipt)) === receipt.contentHash
-      )
-    },
-    catch: (cause): ReconciliationAlgebraFailure => ({
-      _tag: 'ReceiptVerificationFailed',
-      brokerEventId: transaction.brokerEventId,
+  const accountIds = plan.accounts.map((account) => account.id.toString())
+  const transferIds = plan.transfers.map((transfer) => transfer.id.toString())
+  const posted = plan.transfers.reduce((sum, transfer) => sum + transfer.amount, 0n).toString()
+  return Result.map(
+    Result.mapError(
+      canonicalHashV1Result(canonicalAccountingReceiptMaterial(receipt)),
+      (cause): ReconciliationAlgebraFailure => ({
+        _tag: 'ReceiptVerificationFailed',
+        brokerEventId: transaction.brokerEventId,
+        cause,
+      }),
+    ),
+    (contentHash) =>
+      receipt.brokerEventId === transaction.brokerEventId &&
+      receipt.intentId === transaction.intentId &&
+      receipt.tigerBeetleClusterId === config.tigerBeetle.clusterId.toString() &&
+      receipt.tigerBeetleLedger === config.tigerBeetle.ledger &&
+      receipt.debitMicros === posted &&
+      receipt.creditMicros === posted &&
+      receipt.accountIds.length === accountIds.length &&
+      receipt.accountIds.every((value, index) => value === accountIds[index]) &&
+      receipt.transferIds.length === transferIds.length &&
+      receipt.transferIds.every((value, index) => value === transferIds[index]) &&
+      contentHash === receipt.contentHash,
+  )
+}
+
+const parseAccountingAmount = (
+  source: AccountingAmountSource,
+  value: string,
+  transactionId?: string,
+): Result.Result<bigint, ReconciliationAlgebraFailure> =>
+  /^-?[0-9]+$/.test(value)
+    ? Result.succeed(BigInt(value))
+    : fail({
+        _tag: 'AccountingAmountParseFailed',
+        source,
+        value,
+        ...(transactionId === undefined ? {} : { transactionId }),
+      })
+
+const accountingHash = (value: unknown): Result.Result<string, ReconciliationAlgebraFailure> =>
+  Result.mapError(
+    canonicalHashV1Result(value),
+    (cause): ReconciliationAlgebraFailure => ({
+      _tag: 'AccountingProjectionFailed',
+      operation: 'accounting-hash',
       cause,
     }),
-  })
-}
+  )
 
 export const verifyAccountingReceipts = (
   transactions: readonly AccountingTransaction[],
@@ -308,15 +344,6 @@ export const verifyAccountingReceipts = (
     return { exactReceipts, plans: planned.map(({ plan }) => plan) }
   })
 
-const accountingProjection = <A>(
-  operation: AccountingProjectionOperation,
-  evaluate: () => A,
-): Result.Result<A, ReconciliationAlgebraFailure> =>
-  Result.try({
-    try: evaluate,
-    catch: (cause): ReconciliationAlgebraFailure => ({ _tag: 'AccountingProjectionFailed', operation, cause }),
-  })
-
 export const compareOpeningCash = (input: {
   readonly accountId: string
   readonly openingCash: OpeningCashRow
@@ -338,24 +365,23 @@ export const compareOpeningCash = (input: {
         openingObservedAt: input.openingCash.observed_at,
       })
     }
-    const expectedCashMicros = yield* accountingProjection('expected-cash', () =>
-      input.transactions
-        .reduce(
-          (cash, transaction) => cash + BigInt(transaction.cashDeltaMicros),
-          BigInt(input.openingCash.cash_micros),
-        )
-        .toString(),
-    )
-    const accountingHash = yield* accountingProjection('accounting-hash', () =>
-      canonicalHashV1({
-        schemaVersion: 'bayn.paper-accounting-state.v1',
-        accountId: input.accountId,
-        openingCash: input.openingCash,
-        transactions: input.transactions,
-        receipts: input.receipts,
-        ledgerExact: input.ledgerExact,
-      }),
-    )
+    let expectedCash = yield* parseAccountingAmount('opening-cash', input.openingCash.cash_micros)
+    for (const transaction of input.transactions) {
+      expectedCash += yield* parseAccountingAmount(
+        'transaction-cash-delta',
+        transaction.cashDeltaMicros,
+        transaction.transactionId,
+      )
+    }
+    const expectedCashMicros = expectedCash.toString()
+    const accountingHashValue = yield* accountingHash({
+      schemaVersion: 'bayn.paper-accounting-state.v1',
+      accountId: input.accountId,
+      openingCash: input.openingCash,
+      transactions: input.transactions,
+      receipts: input.receipts,
+      ledgerExact: input.ledgerExact,
+    })
     const stateHash = yield* Result.mapError(
       reconciledStateHash({
         account: input.snapshot.account,
@@ -363,7 +389,7 @@ export const compareOpeningCash = (input: {
         positionsObservedAt: input.snapshot.positionsObservedAt,
         orders: input.snapshot.orders,
         ordersObservedAt: input.snapshot.ordersObservedAt,
-        accountingHash,
+        accountingHash: accountingHashValue,
       }),
       (error): ReconciliationAlgebraFailure => ({ _tag: 'ReconciliationDecisionFailed', error }),
     )
@@ -380,13 +406,13 @@ export const compareOpeningCash = (input: {
         projectedPositions: input.projectedPositions,
         expectedCashMicros,
         valuation: input.snapshot.valuation,
-        accountingHash,
+        accountingHash: accountingHashValue,
         ledgerExact: input.ledgerExact,
         reconciledAt: input.snapshot.reconciledAt,
       }),
       (error): ReconciliationAlgebraFailure => ({ _tag: 'ReconciliationDecisionFailed', error }),
     )
-    return { accountingHash, comparison }
+    return { accountingHash: accountingHashValue, comparison }
   })
 
 export const ageDiscrepancies = (
@@ -429,15 +455,6 @@ export const ageDiscrepancies = (
   })
 }
 
-const reconciliationIdentity = <A>(
-  operation: ReconciliationIdentityOperation,
-  evaluate: () => A,
-): Result.Result<A, ReconciliationAlgebraFailure> =>
-  Result.try({
-    try: evaluate,
-    catch: (cause): ReconciliationAlgebraFailure => ({ _tag: 'ReconciliationIdentityFailed', operation, cause }),
-  })
-
 export const makeReconciliationIdentity = (input: {
   readonly accountId: string
   readonly comparison: ReconciliationComparison
@@ -454,14 +471,24 @@ export const makeReconciliationIdentity = (input: {
       discrepancies: input.aged.discrepancies,
       reconciledAt: input.reconciledAt,
     }
-    const reconciliationId = yield* reconciliationIdentity('reconciliation-id', () =>
-      canonicalHashV1({
+    const reconciliationId = yield* Result.mapError(
+      canonicalHashV1Result({
         schemaVersion: 'bayn.paper-reconciliation-id.v1',
         material,
       }),
+      (cause): ReconciliationAlgebraFailure => ({
+        _tag: 'ReconciliationIdentityFailed',
+        operation: 'reconciliation-id',
+        cause,
+      }),
     )
-    const contentHash = yield* reconciliationIdentity('content-hash', () =>
-      canonicalHashV1({ ...material, reconciliationId }),
+    const contentHash = yield* Result.mapError(
+      canonicalHashV1Result({ ...material, reconciliationId }),
+      (cause): ReconciliationAlgebraFailure => ({
+        _tag: 'ReconciliationIdentityFailed',
+        operation: 'content-hash',
+        cause,
+      }),
     )
     const decoded = decodeReconciliation({ ...material, reconciliationId, contentHash })
     if (Result.isFailure(decoded)) {
@@ -502,10 +529,9 @@ const timestamp = (
   field: 'authority_observed_at' | 'authority_updated_at',
   value: Date,
 ): Result.Result<string, ReconciliationAlgebraFailure> =>
-  Result.try({
-    try: () => value.toISOString(),
-    catch: (cause): ReconciliationAlgebraFailure => ({ _tag: 'RiskContextTimestampFailed', field, cause }),
-  })
+  Number.isFinite(value.getTime())
+    ? Result.succeed(value.toISOString())
+    : fail({ _tag: 'RiskContextTimestampFailed', field, epochMillis: value.getTime() })
 
 const riskMaterial = (row: RiskContextRow, unknownMutationCount: number) => ({
   tradingDate: row.trading_date,
@@ -640,6 +666,15 @@ export const reconciliationAlgebraFailureDetails = (
         message: `accounting transaction ${failure.transactionId} predates the opening cash snapshot`,
         cause: failure,
       }
+    case 'AccountingAmountParseFailed':
+      return {
+        failure: 'invariant',
+        message:
+          failure.source === 'opening-cash'
+            ? `opening cash is not an integer micros value: ${failure.value}`
+            : `accounting transaction ${failure.transactionId ?? 'unknown'} cash delta is not an integer micros value: ${failure.value}`,
+        cause: failure,
+      }
     case 'AccountingProjectionFailed':
       return {
         failure: 'invariant',
@@ -686,7 +721,7 @@ export const reconciliationAlgebraFailureDetails = (
       return {
         failure: 'invariant',
         message: `reconciliation risk context timestamp ${failure.field} is invalid`,
-        cause: failure.cause,
+        cause: failure,
       }
   }
 }
