@@ -311,7 +311,13 @@ const buildLedgerPlanUnsafe = (result: LedgerInput, ledger: number): LedgerPlan 
   }
 }
 
-const causeMessage = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
+const causeMessage = (cause: unknown): string => {
+  const rendered = Result.try({
+    try: () => String(cause instanceof Error ? cause.message : cause),
+    catch: () => undefined,
+  })
+  return Result.isSuccess(rendered) ? rendered.success : 'unrenderable cause'
+}
 
 export const buildLedgerPlan = (
   result: LedgerInput,

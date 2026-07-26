@@ -76,6 +76,31 @@ describe('ledger plan Result algebra', () => {
     expect(String(failure.cause)).toContain('no fill events')
   })
 
+  test('contains hostile cause rendering inside the closed build failure', () => {
+    const { result } = evaluationPlan()
+    const hostileCause = new Proxy(new Error('hidden cause'), {
+      get: (target, property, receiver) => {
+        if (property === 'message') throw new Error('cause message is unavailable')
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const inputManifest = new Proxy(result.inputManifest, {
+      get: (target, property, receiver) => {
+        if (property === 'symbols') throw hostileCause
+        return Reflect.get(target, property, receiver)
+      },
+    })
+
+    const failure = assertFailure(buildLedgerPlan({ ...result, inputManifest }, ledger))
+
+    expect(failure).toMatchObject({
+      operation: 'build-plan',
+      reason: 'ledger-plan-failure',
+      message: 'TigerBeetle build-plan failed: unrenderable cause',
+    })
+    expect(failure.cause).toBe(hostileCause)
+  })
+
   test('partitions exact existing transfers and preserves missing request order', () => {
     const { plan } = evaluationPlan()
     const existing = [plan.transfers[1], plan.transfers.at(-1)].filter(
