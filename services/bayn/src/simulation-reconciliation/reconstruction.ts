@@ -1,4 +1,4 @@
-import { pipe, Result } from 'effect'
+import { Chunk, pipe, Result } from 'effect'
 
 import { accrueCashYield, notionalMicros } from '../execution-model'
 import type { CashYieldEvent, DailyPositionMark, EquityPoint, SimulationTrace } from '../types'
@@ -35,7 +35,7 @@ interface ReconstructionState {
   readonly cumulativeCashYieldMicros: bigint
   readonly maximumDifferenceMicros: bigint
   readonly finalPositionValueMicros: bigint
-  readonly equitySeries: readonly EquityPoint[]
+  readonly reversedEquitySeries: Chunk.Chunk<EquityPoint>
 }
 
 interface EventTransition {
@@ -464,15 +464,12 @@ const reconcileDailyMark = (
     maximumDifferenceMicros:
       next.maximumDifferenceMicros > equityDifference ? next.maximumDifferenceMicros : equityDifference,
     finalPositionValueMicros: positionValue.success,
-    equitySeries: [
-      ...next.equitySeries,
-      {
-        sessionDate: mark.sessionDate,
-        evaluatorEquityMicros: evaluatorEquity.success.toString(),
-        reconstructedEquityMicros: reconstructedEquityMicros.toString(),
-        differenceMicros: equityDifference.toString(),
-      },
-    ],
+    reversedEquitySeries: Chunk.prepend(next.reversedEquitySeries, {
+      sessionDate: mark.sessionDate,
+      evaluatorEquityMicros: evaluatorEquity.success.toString(),
+      reconstructedEquityMicros: reconstructedEquityMicros.toString(),
+      differenceMicros: equityDifference.toString(),
+    }),
   })
 }
 
@@ -494,7 +491,7 @@ const initialReconstructionState = (prepared: PreparedReconciliation): Validatio
       cumulativeCashYieldMicros: 0n,
       maximumDifferenceMicros: 0n,
       finalPositionValueMicros: 0n,
-      equitySeries: [],
+      reversedEquitySeries: Chunk.empty(),
     })),
   )
 
@@ -588,7 +585,7 @@ const buildMarkedEquityProof = (
       exact: maximumDifferenceMicros === 0n && feeDifferenceMicros === 0n,
       withinTolerance: true,
     },
-    equitySeries: state.equitySeries,
+    equitySeries: Chunk.toReadonlyArray(Chunk.reverse(state.reversedEquitySeries)),
   })
 }
 

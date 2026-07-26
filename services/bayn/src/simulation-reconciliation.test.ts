@@ -346,6 +346,24 @@ describe('independent marked-equity reconciliation', () => {
     expect(result.success.equitySeries).toHaveLength(3)
   })
 
+  test('reconciles a production-length equity history through persistent accumulation', () => {
+    const input = makeEmptyInput()
+    const mark = input.simulation.dailyMarks[0]
+    const dailyMarks = Array.from({ length: 2_266 }, (_, index) => ({
+      ...mark,
+      sessionDate: new Date(Date.UTC(2015, 0, index + 1)).toISOString().slice(0, 10) as `${number}-${number}-${number}`,
+    }))
+    const result = reconcileMarkedEquity({
+      ...input,
+      simulation: { ...input.simulation, dailyMarks },
+    })
+
+    assert(Result.isSuccess(result), 'production-length history must reconcile')
+    expect(result.success.equitySeries).toHaveLength(dailyMarks.length)
+    expect(result.success.equitySeries[0]?.sessionDate).toBe(dailyMarks[0]?.sessionDate)
+    expect(result.success.equitySeries.at(-1)?.sessionDate).toBe(dailyMarks.at(-1)?.sessionDate)
+  })
+
   test('returns immutable plain issues and preserves them through Result.match', () => {
     const firstChange = evaluation.simulation.cashChanges[0]
     const simulation: SimulationTrace = {
