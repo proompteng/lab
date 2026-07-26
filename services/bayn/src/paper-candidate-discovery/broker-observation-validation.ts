@@ -195,19 +195,48 @@ export const assembleValidatedObservations = (
   capturedAtMs: number,
 ): Result.Result<ValidatedPaperCandidateObservations, PaperCandidateDiscoveryError> =>
   pipe(
-    requireCondition(capturedAtMs < Date.parse(validatedSnapshot.snapshot.document.expiresAt), {
-      _tag: 'DocumentStale',
-      failure: 'document-stale',
-      observedAtMs: capturedAtMs,
-      expiresAt: validatedSnapshot.snapshot.document.expiresAt,
+    Result.try({
+      try: () => new Date(capturedAtMs).toISOString(),
+      catch: (cause): PaperCandidateDiscoveryError => ({
+        _tag: 'ObservationCaptureTimeInvalid',
+        failure: 'broker',
+        observedAtMs: capturedAtMs,
+        cause,
+      }),
     }),
-    Result.map(() => ({
-      [ValidatedObservationsTypeId]: true as const,
-      account,
-      accountConfiguration,
-      assets,
-      capturedAt: new Date(capturedAtMs).toISOString(),
-    })),
+    Result.flatMap((capturedAt) =>
+      pipe(
+        Result.all([
+          requireCondition(capturedAtMs < Date.parse(validatedSnapshot.snapshot.document.expiresAt), {
+            _tag: 'DocumentStale',
+            failure: 'document-stale',
+            observedAtMs: capturedAtMs,
+            expiresAt: validatedSnapshot.snapshot.document.expiresAt,
+          }),
+          pipe(
+            assets.reads.map((asset) =>
+              requireCondition(Date.parse(asset.value.observedAt) <= capturedAtMs, {
+                _tag: 'ObservationChronologyMismatch',
+                failure: 'broker',
+                earlier: 'asset',
+                later: 'capture',
+                symbol: asset.value.symbol,
+                earlierObservedAt: asset.value.observedAt,
+                laterObservedAt: capturedAt,
+              }),
+            ),
+            Result.all,
+          ),
+        ]),
+        Result.map(() => ({
+          [ValidatedObservationsTypeId]: true as const,
+          account,
+          accountConfiguration,
+          assets,
+          capturedAt,
+        })),
+      ),
+    ),
   )
 
 export const validatePaperCandidateDiscoveryObservations = (

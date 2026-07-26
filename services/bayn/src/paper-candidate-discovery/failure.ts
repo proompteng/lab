@@ -257,6 +257,21 @@ export type PaperCandidateDiscoveryError =
       readonly laterObservedAt: string
     }
   | {
+      readonly _tag: 'ObservationChronologyMismatch'
+      readonly failure: 'broker'
+      readonly earlier: 'asset'
+      readonly later: 'capture'
+      readonly symbol: string
+      readonly earlierObservedAt: string
+      readonly laterObservedAt: string
+    }
+  | {
+      readonly _tag: 'ObservationCaptureTimeInvalid'
+      readonly failure: 'broker'
+      readonly observedAtMs: number
+      readonly cause: unknown
+    }
+  | {
       readonly _tag: 'AssetMissing'
       readonly failure: 'broker'
       readonly ordinal: number
@@ -358,6 +373,7 @@ const paperCandidateDiscoveryErrorTags: ReadonlySet<string> = new Set([
   'AccountMismatch',
   'ObservationTimeMismatch',
   'ObservationChronologyMismatch',
+  'ObservationCaptureTimeInvalid',
   'AssetMissing',
   'AssetSymbolMismatch',
   'AssetCountMismatch',
@@ -442,6 +458,8 @@ export const renderPaperCandidateDiscoveryError = (error: PaperCandidateDiscover
       return `paper candidate ${error.observation} evidence time mismatch: symbol=${error.symbol ?? 'none'} value=${error.valueObservedAt} evidence=${error.evidenceObservedAt}`
     case 'ObservationChronologyMismatch':
       return `paper candidate observation chronology mismatch: earlier=${error.earlier}:${error.earlierObservedAt} later=${error.later}:${error.laterObservedAt} symbol=${error.symbol ?? 'none'}`
+    case 'ObservationCaptureTimeInvalid':
+      return `paper candidate observation capture time is invalid: observedMs=${error.observedAtMs}`
     case 'AssetMissing':
       return `paper candidate asset observation is missing: ordinal=${error.ordinal} symbol=${error.symbol}`
     case 'AssetSymbolMismatch':
