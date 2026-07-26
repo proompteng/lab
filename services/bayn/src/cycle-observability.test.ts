@@ -1,9 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 
+import { Result } from 'effect'
+
 import {
   CycleOperationsCondition,
   CycleOperationsReason,
   deriveCycleOperationsStatus,
+  deriveCycleOperationsStatusResult,
+  renderCycleOperationsStatusFailure,
   type CycleOperationsProjection,
   type CycleOperationsSnapshot,
 } from './cycle-observability'
@@ -50,6 +54,41 @@ const projection = (overrides: Partial<CycleOperationsProjection> = {}): CycleOp
 })
 
 describe('autonomous cycle operations classification', () => {
+  test('returns exact clock failures without defecting', () => {
+    const notInteger = deriveCycleOperationsStatusResult(projection(), 0.5, Authority.Observe, thresholds)
+    expect(notInteger).toEqual(
+      Result.fail({
+        _tag: 'CycleOperationsClockInvalid',
+        nowMs: 0.5,
+        cause: { _tag: 'UtcEpochMillisNotSafeInteger', epochMillis: 0.5 },
+      }),
+    )
+    if (Result.isFailure(notInteger)) {
+      expect(renderCycleOperationsStatusFailure(notInteger.failure)).toBe(
+        'cycle operations clock must be a safe integer epoch millisecond: observed=0.5',
+      )
+    }
+
+    const outOfRange = deriveCycleOperationsStatusResult(
+      projection(),
+      8_640_000_000_000_001,
+      Authority.Observe,
+      thresholds,
+    )
+    expect(outOfRange).toEqual(
+      Result.fail({
+        _tag: 'CycleOperationsClockInvalid',
+        nowMs: 8_640_000_000_000_001,
+        cause: { _tag: 'UtcEpochMillisOutOfRange', epochMillis: 8_640_000_000_000_001 },
+      }),
+    )
+    if (Result.isFailure(outOfRange)) {
+      expect(renderCycleOperationsStatusFailure(outOfRange.failure)).toBe(
+        'cycle operations clock is outside the supported UTC range: observed=8640000000000001',
+      )
+    }
+  })
+
   test('distinguishes expected publication waiting from exact deadline and attempt stalls', () => {
     const pending = snapshot(CycleState.Pending, {
       submissionOpenAt: '2026-07-20T12:00:00.000Z',

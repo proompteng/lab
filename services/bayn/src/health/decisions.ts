@@ -4,7 +4,8 @@ import type { RuntimeConfig } from '../config'
 import type { FinalizedSnapshotProvenance } from '../contracts'
 import {
   CycleOperationsCondition,
-  deriveCycleOperationsStatus,
+  deriveCycleOperationsStatusResult,
+  renderCycleOperationsStatusFailure,
   type CycleOperationsProjection,
   type CycleOperationsStatus,
   unknownCycleOperationsStatus,
@@ -26,6 +27,7 @@ import type {
   HealthDependencyName,
   HealthFailureSummary,
   HealthLogDecision,
+  HealthProbeClock,
   HealthProbeResults,
   HealthTransition,
   HealthTransitionInput,
@@ -168,20 +170,21 @@ export const renderDurableEvidenceFailure = (failure: DurableEvidenceFailure): s
   return exhaustive
 }
 
-const dependencyHealth = <A>(result: ProbeResult<A>, checkedAt: string): DependencyHealth => ({
+const dependencyHealth = <A>(result: ProbeResult<A>, checkedAt: string | null): DependencyHealth => ({
   status: result._tag === 'Available' ? 'AVAILABLE' : 'UNAVAILABLE',
   checkedAt,
   error: result._tag === 'Available' ? null : result.error,
 })
 
 const cycleLoopHealth = (
+  previous: DependencyHealth,
   loop: AutonomousCycleLoopStatus,
   fiber: AutonomousCycleFiberObservation,
-  checkedAt: string,
-  checkedAtMs: number,
+  clock: HealthProbeClock,
   stallThresholdMs: number,
   required: boolean,
 ): DependencyHealth => {
+  const checkedAt = clock._tag === 'Available' ? clock.checkedAt : null
   const available = (): DependencyHealth => ({ status: 'AVAILABLE', checkedAt, error: null })
   const unavailable = (error: string): DependencyHealth => ({ status: 'UNAVAILABLE', checkedAt, error })
   if (!loop.configured) {
@@ -195,7 +198,8 @@ const cycleLoopHealth = (
   }
   const progressAt = loop.lastPass?.observedAt ?? loop.startedAt
   if (progressAt === null) return unavailable('autonomous cycle loop start time is unavailable')
-  const ageMs = checkedAtMs - Date.parse(progressAt)
+  if (clock._tag === 'Unavailable') return previous
+  const ageMs = clock.checkedAtMs - Date.parse(progressAt)
   if (!Number.isFinite(ageMs) || ageMs < 0) {
     return unavailable('autonomous cycle loop progress time is invalid or in the future')
   }
@@ -209,7 +213,7 @@ const deriveBrokerStatus = (
   current: BrokerStatus | null,
   broker: BrokerConfiguration | undefined,
   result: ProbeResult<string> | null,
-  checkedAt: string,
+  checkedAt: string | null,
 ): BrokerStatus | null => {
   if (broker === undefined) return current
   const observed = result ?? { _tag: 'Unavailable', error: 'broker probe did not run' }
@@ -237,20 +241,40 @@ const deriveBrokerStatus = (
 const deriveCycleStatus = (
   result: ProbeResult<CycleOperationsProjection>,
   config: RuntimeConfig,
-  checkedAt: string,
-  checkedAtMs: number,
+  clock: HealthProbeClock,
 ): CycleOperationsStatus => {
+  const clockError =
+    clock._tag === 'Unavailable'
+      ? renderCycleOperationsStatusFailure({
+          _tag: 'CycleOperationsClockInvalid',
+          nowMs: clock.observedAtMs,
+          cause: clock.failure,
+        })
+      : null
   if (result._tag === 'Available') {
-    return deriveCycleOperationsStatus(result.value, checkedAtMs, config.maximumAuthority, config)
+    if (clock._tag === 'Unavailable') return unknownCycleOperationsStatus(clockError)
+    return Result.match(
+      deriveCycleOperationsStatusResult(result.value, clock.checkedAtMs, config.maximumAuthority, config),
+      {
+        onFailure: (failure) => ({
+          ...unknownCycleOperationsStatus(renderCycleOperationsStatusFailure(failure)),
+          checkedAt: null,
+        }),
+        onSuccess: (status) => status,
+      },
+    )
   }
-  return { ...unknownCycleOperationsStatus(result.error), checkedAt }
+  return {
+    ...unknownCycleOperationsStatus(clockError === null ? result.error : `${result.error}; ${clockError}`),
+    checkedAt: clock._tag === 'Available' ? clock.checkedAt : null,
+  }
 }
 
 const deriveRuntimeHealth = (
   current: RuntimeState,
   results: HealthProbeResults,
   cycleRunner: DependencyHealth,
-  checkedAt: string,
+  checkedAt: string | null,
 ): RuntimeHealth => ({
   sequence: current.health.sequence + 1,
   checkedAt,
@@ -268,6 +292,7 @@ const summarizeHealthFailures = (
   health: RuntimeHealth,
   broker: BrokerStatus | null,
   cycle: CycleOperationsStatus,
+  clockError: string | null,
 ): HealthFailureSummary => {
   const dependencyFailures = (
     Object.entries(health.dependencies) as readonly [keyof RuntimeHealth['dependencies'], DependencyHealth][]
@@ -278,18 +303,25 @@ const summarizeHealthFailures = (
       ? `broker: ${broker.error ?? 'account binding unavailable'}`
       : null
   const cycleFailure =
-    cycle.condition === CycleOperationsCondition.Stalled || cycle.condition === CycleOperationsCondition.Failed
-      ? `cycle: ${cycle.reason}`
-      : null
+    dependencyNames.includes('cycle') || (clockError !== null && cycle.error === clockError)
+      ? null
+      : cycle.error !== null
+        ? `cycle: ${cycle.error}`
+        : cycle.condition === CycleOperationsCondition.Stalled || cycle.condition === CycleOperationsCondition.Failed
+          ? `cycle: ${cycle.reason}`
+          : null
   const brokerDependencies: readonly HealthDependencyName[] = brokerFailure === null ? [] : ['broker']
-  const cycleDependencies: readonly HealthDependencyName[] =
-    cycleFailure === null || dependencyNames.includes('cycle') ? [] : ['cycle']
+  const cycleDependencies: readonly HealthDependencyName[] = cycleFailure === null ? [] : ['cycle']
+  const clockDependencies: readonly HealthDependencyName[] = clockError === null ? [] : ['cycle']
   return {
-    failedDependencies: [...dependencyNames, ...brokerDependencies, ...cycleDependencies],
+    failedDependencies: [
+      ...new Set([...dependencyNames, ...brokerDependencies, ...cycleDependencies, ...clockDependencies]),
+    ],
     messages: [
       ...dependencyFailures.map(([name, dependency]) => `${name}: ${dependency.error}`),
       ...(brokerFailure === null ? [] : [brokerFailure]),
       ...(cycleFailure === null ? [] : [cycleFailure]),
+      ...(clockError === null ? [] : [`cycle clock: ${clockError}`]),
     ],
   }
 }
@@ -310,25 +342,36 @@ const deriveNextRuntimeState = (
 }
 
 export const deriveHealthTransition = (current: RuntimeState, input: HealthTransitionInput): HealthTransition => {
+  const checkedAt = input.clock._tag === 'Available' ? input.clock.checkedAt : null
+  const clockFailure = input.clock._tag === 'Unavailable' ? input.clock.failure : null
+  const clockError =
+    input.clock._tag === 'Unavailable'
+      ? renderCycleOperationsStatusFailure({
+          _tag: 'CycleOperationsClockInvalid',
+          nowMs: input.clock.observedAtMs,
+          cause: input.clock.failure,
+        })
+      : null
   const cycleRunner = cycleLoopHealth(
+    current.health.dependencies.cycleRunner,
     current.autonomousCycleLoop,
     input.cycleFiber,
-    input.checkedAt,
-    input.checkedAtMs,
+    input.clock,
     input.config.cycleStallThresholdMs,
     input.broker !== undefined,
   )
-  const cycle = deriveCycleStatus(input.results.cycle, input.config, input.checkedAt, input.checkedAtMs)
-  const broker = deriveBrokerStatus(current.broker, input.broker, input.results.broker, input.checkedAt)
-  const health = deriveRuntimeHealth(current, input.results, cycleRunner, input.checkedAt)
-  const failures = summarizeHealthFailures(health, broker, cycle)
+  const cycle = deriveCycleStatus(input.results.cycle, input.config, input.clock)
+  const broker = deriveBrokerStatus(current.broker, input.broker, input.results.broker, checkedAt)
+  const health = deriveRuntimeHealth(current, input.results, cycleRunner, checkedAt)
+  const failures = summarizeHealthFailures(health, broker, cycle, clockError)
   const next = deriveNextRuntimeState(current, input.evidenceAvailable, health, cycle, broker, failures)
   return {
     current,
     next,
     health,
     failedDependencies: failures.failedDependencies,
-    checkedAt: input.checkedAt,
+    checkedAt,
+    clockFailure,
   }
 }
 
@@ -340,7 +383,7 @@ const runtimeStatusLogDecision = (transition: HealthTransition): HealthLogDecisi
     message: `Bayn health changed to ${transition.next.status}`,
     annotations: {
       service: 'bayn',
-      checkedAt: transition.checkedAt,
+      ...(transition.checkedAt === null ? {} : { checkedAt: transition.checkedAt }),
       probeSequence: transition.health.sequence,
       failedDependencies: transition.failedDependencies.join(','),
     },
@@ -350,7 +393,8 @@ const runtimeStatusLogDecision = (transition: HealthTransition): HealthLogDecisi
 const cycleOperationsLogDecision = (transition: HealthTransition): HealthLogDecision | null => {
   if (
     transition.next.cycle.condition === transition.current.cycle.condition &&
-    transition.next.cycle.reason === transition.current.cycle.reason
+    transition.next.cycle.reason === transition.current.cycle.reason &&
+    transition.next.cycle.error === transition.current.cycle.error
   ) {
     return null
   }
@@ -365,9 +409,10 @@ const cycleOperationsLogDecision = (transition: HealthTransition): HealthLogDeci
     message: `Bayn cycle operations changed to ${cycle.condition}`,
     annotations: {
       service: 'bayn',
-      checkedAt: transition.checkedAt,
+      ...(transition.checkedAt === null ? {} : { checkedAt: transition.checkedAt }),
       cycleCondition: cycle.condition,
       cycleReason: cycle.reason,
+      ...(cycle.error === null ? {} : { cycleError: cycle.error }),
       currentCycleId: cycle.current?.cycleId ?? '',
       currentPhase: cycle.current?.phase ?? '',
       signalSessionDate: cycle.current?.signalSessionDate ?? '',

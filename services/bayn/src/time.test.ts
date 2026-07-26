@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect } from 'effect'
+import { Effect, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -9,6 +9,7 @@ import {
   currentUtcInstant,
   utcDateFromEpochMillis,
   utcInstantFromEpochMillis,
+  utcInstantFromEpochMillisResult,
 } from './time'
 
 describe('Bayn UTC clock boundary', () => {
@@ -18,6 +19,18 @@ describe('Bayn UTC clock boundary', () => {
     expect(utcInstantFromEpochMillis(epochMillis)).toBe('2026-07-26T06:23:57.295Z')
     expect(utcDateFromEpochMillis(epochMillis)).toBe('2026-07-26')
     expect(addUtcDays('2026-12-31', 1)).toBe('2027-01-01')
+  })
+
+  test('returns closed failures for invalid epoch milliseconds', () => {
+    expect(utcInstantFromEpochMillisResult(0.5)).toEqual(
+      Result.fail({ _tag: 'UtcEpochMillisNotSafeInteger', epochMillis: 0.5 }),
+    )
+    expect(utcInstantFromEpochMillisResult(Number.NaN)).toEqual(
+      Result.fail({ _tag: 'UtcEpochMillisNotSafeInteger', epochMillis: Number.NaN }),
+    )
+    expect(utcInstantFromEpochMillisResult(8_640_000_000_000_001)).toEqual(
+      Result.fail({ _tag: 'UtcEpochMillisOutOfRange', epochMillis: 8_640_000_000_000_001 }),
+    )
   })
 
   test('samples the injected Effect clock for instant and date projections', async () => {
