@@ -20,8 +20,8 @@ import ./bun-workspace-service.nix {
   serviceName = "bayn";
   packageName = "@proompteng/bayn";
   depsHash = {
-    x86_64-linux = "sha256-EJ8ou1PUnUiriEfmQQdMf5pBMgxArvohiNLJ0b31+aA=";
-    aarch64-linux = "sha256-Vnmvmiwd/Ae4nJNbxDS8BK5ZrqjwulvqLal/O1Z62lg=";
+    x86_64-linux = "sha256-tjcCPsL0+UqWO5lRXqTh9+wDVJOqLgglZqpj200vhhs=";
+    aarch64-linux = "sha256-z2dV0qKetJ6Pq3whWxFjnN/1xop1KJ2wWgLGLHbgA78=";
   };
   installFilters = [
     "@proompteng/bayn"
