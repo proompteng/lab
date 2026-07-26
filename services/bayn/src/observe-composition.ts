@@ -1,12 +1,12 @@
-import { Clock, Effect, Result } from 'effect'
+import { Clock, Effect, pipe, Result } from 'effect'
 
 import type { AutonomousCycleStartup } from './app'
 import { BrokerRead, type BrokerReadShape, type MarketCalendarQuery } from './broker/alpaca'
 import { makeCycleExecutionPolicyFromModel, type AutonomousCycle, type CycleExecutionPolicy } from './cycle'
 import {
   CycleDecisionBuildError,
+  makeAutonomousCycleLoop,
   marketCalendarQueryForSignal,
-  startAutonomousCycleLoop,
   type CyclePassObservation,
 } from './cycle-runner'
 import { CycleStore, type CycleStoreShape } from './db/cycle-store'
@@ -575,7 +575,7 @@ const initializeObserveAuthority = (
       Effect.flatMap((authority) => Effect.fromResult(validateObserveAuthorityInitialization(authority, input))),
     )
 
-const startObserveAutonomousLoop = (
+const makeObserveAutonomousLoop = (
   input: ObserveAutonomousCycleInput,
   services: ObserveRuntimeServices,
   startup: Parameters<AutonomousCycleStartup>[0],
@@ -587,31 +587,32 @@ const startObserveAutonomousLoop = (
     Effect.provideService(PaperStore, services.paperStore),
     Effect.provideService(WriterFence, services.writerFence),
   )
-  return startAutonomousCycleLoop({
-    context: Effect.succeed({
-      qualificationRunId: startup.qualificationRunId,
-      strategyProtocolHash: preparation.strategyProtocolHash,
-      accountId: input.accountId,
-      executionPolicy: preparation.executionPolicy,
-      buildDecision: (cycle) =>
-        buildObserveCycleDecision({
-          authorityGenerationHash: input.authorityGenerationHash,
-          cycle,
-          executionModel: preparation.executionModel,
-          marketCalendar: services.brokerRead.marketCalendar,
-          marketData: services.marketData,
-          policy,
-          reconcile,
-          strategy: input.strategy,
-        }).pipe(Effect.mapError(decisionBuildError)),
+  return pipe(
+    makeAutonomousCycleLoop({
+      context: Effect.succeed({
+        qualificationRunId: startup.qualificationRunId,
+        strategyProtocolHash: preparation.strategyProtocolHash,
+        accountId: input.accountId,
+        executionPolicy: preparation.executionPolicy,
+        buildDecision: (cycle) =>
+          buildObserveCycleDecision({
+            authorityGenerationHash: input.authorityGenerationHash,
+            cycle,
+            executionModel: preparation.executionModel,
+            marketCalendar: services.brokerRead.marketCalendar,
+            marketData: services.marketData,
+            policy,
+            reconcile,
+            strategy: input.strategy,
+          }).pipe(Effect.mapError(decisionBuildError)),
+      }),
+      observePass: (observation) => observePass(startup.recordPass, observation),
+      pollIntervalMs: input.pollIntervalMs,
     }),
-    observePass: (observation) => observePass(startup.recordPass, observation),
-    pollIntervalMs: input.pollIntervalMs,
-  }).pipe(
-    Effect.mapError((cause) =>
+    Result.mapError((cause) =>
       operationalError('strategy', 'cycle-loop', 'autonomous cycle loop failed to start', cause),
     ),
-    Effect.map((loop) =>
+    Result.map((loop) =>
       loop.pipe(
         Effect.provideService(BrokerRead, services.brokerRead),
         Effect.provideService(CycleStore, services.cycleStore),
@@ -639,5 +640,5 @@ export const makeObserveAutonomousCycleStartup =
         writerFence: yield* WriterFence,
       }
       yield* initializeObserveAuthority(input, services.paperStore)
-      return yield* startObserveAutonomousLoop(input, services, startup, preparation, policy)
+      return yield* Effect.fromResult(makeObserveAutonomousLoop(input, services, startup, preparation, policy))
     })

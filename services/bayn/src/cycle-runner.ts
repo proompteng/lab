@@ -1298,11 +1298,10 @@ const validateCycleLoopInterval = (pollIntervalMs: number): Result.Result<number
     ? Result.succeed(pollIntervalMs)
     : Result.fail(runnerError('configure', 'invalid-config', 'cycle loop interval must be a positive safe integer'))
 
-export const startAutonomousCycleLoop = <E, R>(
+export const makeAutonomousCycleLoop = <E, R>(
   options: AutonomousCycleLoopOptions<E, R>,
-): Effect.Effect<Effect.Effect<void, never, BrokerRead | CycleStore | MarketData | R>, CycleRunnerError> =>
+): Result.Result<Effect.Effect<void, never, BrokerRead | CycleStore | MarketData | R>, CycleRunnerError> =>
   pipe(
     validateCycleLoopInterval(options.pollIntervalMs),
     Result.map(() => cycleLoopProgram(options)),
-    Effect.fromResult,
   )
