@@ -266,12 +266,12 @@ describe('PAPER authority algebra', () => {
       _tag: 'InvalidGenerationHistoryActivatedAt',
       generationHash: observeGenerationHash,
       activatedAt: invalidActivatedAt,
-      cause: expect.any(RangeError),
+      epochMillis: Number.NaN,
     })
     if (invalidTimestamp._tag !== 'InvalidGenerationHistoryActivatedAt') {
       throw new Error('expected invalid generation history timestamp')
     }
-    expect(paperAuthorityFailureDetails(invalidTimestamp).cause).toBe(invalidTimestamp.cause)
+    expect(paperAuthorityFailureDetails(invalidTimestamp).cause).toBe(invalidTimestamp)
     expect(
       failureOf(
         validateCurrentGenerationHistory(observeAuthority, {
@@ -370,7 +370,12 @@ describe('PAPER authority algebra', () => {
     )
     expect(failure).toMatchObject({
       _tag: 'QualificationEvidenceVerificationFailed',
-      cause: expect.any(Error),
+      operation: 'parameters',
+      cause: {
+        _tag: 'CanonicalJsonFailure',
+        path: '$.self',
+        reason: 'cycle',
+      },
     })
     if (failure._tag !== 'QualificationEvidenceVerificationFailed') {
       throw new Error('expected qualification evidence verification failure')
@@ -378,9 +383,33 @@ describe('PAPER authority algebra', () => {
     const details = paperAuthorityFailureDetails(failure)
     expect(details).toMatchObject({
       failure: 'invariant',
-      message: 'PAPER generation differs from terminal qualification evidence or current strategy build',
+      message: 'PAPER qualification evidence parameters verification failed',
     })
     expect(details.cause).toBe(failure.cause)
+
+    const accessCause = new Error('injected qualification evidence access failure')
+    const accessFailure = failureOf(
+      validatePaperGenerationEvidence(
+        {
+          ...evidence,
+          get writingDetail(): unknown {
+            throw accessCause
+          },
+        },
+        prepareBinding,
+        config.build,
+      ),
+    )
+    expect(accessFailure).toEqual({
+      _tag: 'QualificationEvidenceAccessFailed',
+      qualificationRunId: prepareBinding.qualificationRunId,
+      cause: accessCause,
+    })
+    expect(paperAuthorityFailureDetails(accessFailure)).toEqual({
+      failure: 'invariant',
+      message: 'PAPER qualification evidence could not be read safely',
+      cause: accessCause,
+    })
   })
 
   test('derives stable generation identity from exact covered reconciliation facts', () => {
@@ -421,6 +450,24 @@ describe('PAPER authority algebra', () => {
     )
     expect(derivationFailure).toEqual({ _tag: 'PaperGenerationDerivationFailed', cause: derivationCause })
     expect(paperAuthorityFailureDetails(derivationFailure).cause).toBe(derivationCause)
+    expect(
+      failureOf(
+        derivePaperAuthorityGeneration({
+          current: observeAuthority,
+          proof,
+          binding: { ...prepareBinding, accountId: '' },
+          evidence,
+          reconciliation,
+          build: config.build,
+        }),
+      ),
+    ).toMatchObject({
+      _tag: 'PaperGenerationDerivationFailed',
+      cause: {
+        _tag: 'PaperAuthorityGenerationSchemaInvalid',
+        operation: 'material',
+      },
+    })
     const refreshed = successOf(
       derivePaperAuthorityGeneration({
         current: observeAuthority,

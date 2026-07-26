@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Exit } from 'effect'
+import { Effect, Exit, Result } from 'effect'
 
 import {
   AccountStatus,
@@ -34,6 +34,7 @@ import {
   decodeValuation,
   isIntentTransitionAllowed,
   makePaperAuthorityGeneration,
+  makePaperAuthorityGenerationResult,
 } from './paper'
 
 const instant = '2026-07-22T06:00:00.000Z'
@@ -448,6 +449,7 @@ describe('paper contracts', () => {
       reconciliationContentHash: hash('f'),
     }
     const generation = makePaperAuthorityGeneration(material)
+    const generationResult = makePaperAuthorityGenerationResult(material)
 
     expect(await Effect.runPromise(decodePaperAuthorityProofBinding(proof))).toEqual(proof)
     await expectFailure(
@@ -463,6 +465,8 @@ describe('paper contracts', () => {
       }),
     )
     expect(await Effect.runPromise(decodePaperAuthorityGeneration(generation))).toEqual(generation)
+    expect(Result.isSuccess(generationResult)).toBe(true)
+    if (Result.isSuccess(generationResult)) expect(generationResult.success).toEqual(generation)
     expect(generation.generationHash).toMatch(/^[0-9a-f]{64}$/)
     expect(makePaperAuthorityGeneration(structuredClone(material))).toEqual(generation)
     expect(
@@ -502,5 +506,29 @@ describe('paper contracts', () => {
         strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v2' as never,
       }),
     ).toThrow()
+    expect(
+      makePaperAuthorityGenerationResult({
+        ...material,
+        strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v2' as never,
+      }),
+    ).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'PaperAuthorityGenerationSchemaInvalid',
+        operation: 'material',
+      },
+    })
+    expect(
+      makePaperAuthorityGenerationResult({
+        ...material,
+        accountId: '\ud800',
+      }),
+    ).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'PaperAuthorityGenerationSchemaInvalid',
+        operation: 'material',
+      },
+    })
   })
 })
