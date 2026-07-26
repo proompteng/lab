@@ -509,6 +509,59 @@ describe('paper candidate discovery', () => {
     }
   })
 
+  test('keeps capture-time conversion and broker chronology inside the typed Result channel', () => {
+    const validSnapshot = {
+      projection: projection(),
+      cycle: cycle(),
+      document: document(),
+    }
+    const validatedSnapshot = validatePaperCandidateDiscoverySnapshot(identity, validSnapshot, Date.parse(observedAt))
+    expect(Result.isSuccess(validatedSnapshot)).toBe(true)
+    if (Result.isFailure(validatedSnapshot)) return
+
+    const observations = {
+      account: Effect.runSync(account()),
+      accountConfiguration: accountConfiguration(),
+      assets: symbols.map((symbol) => asset(symbol)),
+    }
+    const invalidCapture = validatePaperCandidateDiscoveryObservations(validatedSnapshot.success, {
+      ...observations,
+      capturedAtMs: -8_640_000_000_000_001,
+    })
+    expect(Result.isFailure(invalidCapture)).toBe(true)
+    if (Result.isFailure(invalidCapture)) {
+      expect(invalidCapture.failure).toMatchObject({
+        _tag: 'ObservationCaptureTimeInvalid',
+        failure: 'broker',
+        observedAtMs: -8_640_000_000_000_001,
+      })
+      expect(renderPaperCandidateDiscoveryError(invalidCapture.failure)).toBe(
+        'paper candidate observation capture time is invalid: observedMs=-8640000000000001',
+      )
+    }
+
+    const futureAssetObservedAt = '2099-07-24T12:00:01.000Z'
+    const capturedAt = '2099-07-24T12:00:00.500Z'
+    const noncausalCapture = validatePaperCandidateDiscoveryObservations(validatedSnapshot.success, {
+      account: observations.account,
+      accountConfiguration: observations.accountConfiguration,
+      assets: symbols.map((symbol) => asset(symbol, symbol.toLowerCase(), futureAssetObservedAt)),
+      capturedAtMs: Date.parse(capturedAt),
+    })
+    expect(Result.isFailure(noncausalCapture)).toBe(true)
+    if (Result.isFailure(noncausalCapture)) {
+      expect(noncausalCapture.failure).toEqual({
+        _tag: 'ObservationChronologyMismatch',
+        failure: 'broker',
+        earlier: 'asset',
+        later: 'capture',
+        symbol: 'VNQ',
+        earlierObservedAt: futureAssetObservedAt,
+        laterObservedAt: capturedAt,
+      })
+    }
+  })
+
   test('reads one immutable snapshot and emits every ordered candidate without mutation capabilities', async () => {
     const state = control()
     const receipt = await Effect.runPromise(program(state))
