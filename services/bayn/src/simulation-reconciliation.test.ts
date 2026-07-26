@@ -336,6 +336,16 @@ describe('independent marked-equity reconciliation', () => {
     )
   })
 
+  test('replays through immutable state without changing caller evidence', () => {
+    const input = makeRoundTripInput(3)
+    const before = structuredClone(input)
+    const result = reconcileMarkedEquity(input)
+
+    assert(Result.isSuccess(result), 'frozen-state replay fixture must reconcile')
+    expect(input).toEqual(before)
+    expect(result.success.equitySeries).toHaveLength(3)
+  })
+
   test('returns immutable plain issues and preserves them through Result.match', () => {
     const firstChange = evaluation.simulation.cashChanges[0]
     const simulation: SimulationTrace = {
@@ -366,7 +376,7 @@ describe('independent marked-equity reconciliation', () => {
     expect(propagated).toBe(result.failure)
   })
 
-  test('freezes every known nested issue payload without freezing the original unknown cause', () => {
+  test('freezes every known nested issue payload without mutating source failure values', () => {
     const markIndex = evaluation.simulation.dailyMarks.findIndex((mark) => mark.positions.length > 0)
     assert(markIndex >= 0, 'evaluation fixture must contain a position mark')
     const mark = evaluation.simulation.dailyMarks[markIndex]
@@ -455,7 +465,7 @@ describe('independent marked-equity reconciliation', () => {
     ])
   })
 
-  test('retains canonicalization facts and the original cause without throwing', () => {
+  test('returns canonicalization facts as a typed failure without throwing', () => {
     const decisionIndex = evaluation.events.findIndex((event) => event.kind === 'decision')
     const decision = evaluation.events[decisionIndex]
     assert(decision?.kind === 'decision', 'evaluation fixture must contain a decision')
@@ -471,24 +481,15 @@ describe('independent marked-equity reconciliation', () => {
     })
     assert(issue._tag === 'InvalidIdentity', 'canonicalization must produce an identity issue')
     assert(issue.problem._tag === 'CanonicalizationFailed', 'identity issue must retain its cause')
-    expect(issue.problem.cause).toBeInstanceOf(TypeError)
+    expect(issue.problem.cause).toEqual({
+      _tag: 'CanonicalJsonFailure',
+      path: '$.targetWeights',
+      reason: 'invalid-unicode-key',
+      actualType: 'string',
+    })
     expect(Object.isFrozen(issue.problem)).toBe(true)
     expect(Object.isFrozen(issue.problem.cause as object)).toBe(false)
-
-    const hostileCause = Object.create(null)
-    Object.defineProperty(hostileCause, Symbol.toPrimitive, {
-      value: () => {
-        throw new TypeError('cause cannot be rendered')
-      },
-    })
-    const render = () =>
-      renderSimulationReconciliationIssue({
-        _tag: 'InvalidIdentity',
-        evidence: { kind: 'decision', id: evaluation.runId, signalDate: '2026-01-30' },
-        problem: { _tag: 'CanonicalizationFailed', cause: hostileCause },
-      })
-    expect(render).not.toThrow()
-    expect(render()).toEndWith('unrenderable cause')
+    expect(renderSimulationReconciliationIssue(issue)).toEndWith('invalid-unicode-key at $.targetWeights (string)')
   })
 
   test('captures canonical calculation failures without duplicating execution-model validation', () => {
