@@ -547,10 +547,10 @@ const assembleShadowDecisionDocument = (
   reduction: ShadowReduction,
 ): Result.Result<ObserveShadowDecisionDocument, ShadowDecisionError> => {
   const { input, policyHash, strategyDecisionHash } = context
-  const planningBrokerStateHash = Result.try({
-    try: () => reconciledStateHash(plannerBrokerStateMaterial(input.plannerInput)),
-    catch: (cause) => error('contract', 'planning broker state hash could not be derived', cause),
-  })
+  const planningBrokerStateHash = Result.mapError(
+    reconciledStateHash(plannerBrokerStateMaterial(input.plannerInput)),
+    (cause) => error('contract', 'planning broker state hash could not be derived', cause),
+  )
   if (Result.isFailure(planningBrokerStateHash)) return Result.fail(planningBrokerStateHash.failure)
   const document = Result.mapError(
     makeObserveShadowDecisionDocument({

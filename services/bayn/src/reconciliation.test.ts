@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
+import { Result } from 'effect'
+
 import {
   AccountStatus,
   DiscrepancyKind,
@@ -15,7 +17,19 @@ import {
   type Position,
   type Valuation,
 } from './paper'
-import { compareReconciliation, type ReconciliationSnapshot } from './reconciliation'
+import {
+  compareReconciliation,
+  reconciledStateHash,
+  renderReconciliationDecisionError,
+  type ReconciliationDecisionError,
+  type ReconciliationSnapshot,
+} from './reconciliation'
+
+const successOf = <A>(result: Result.Result<A, ReconciliationDecisionError>): A => Result.getOrThrow(result)
+const failureOf = <A>(result: Result.Result<A, ReconciliationDecisionError>): ReconciliationDecisionError => {
+  if (Result.isFailure(result)) return result.failure
+  return expect.unreachable('expected reconciliation decision failure')
+}
 
 const hash = (value: string): string => value.repeat(64).slice(0, 64)
 const observedAt = '2026-07-22T15:30:00.000Z'
@@ -123,7 +137,7 @@ const snapshot = (overrides: Partial<ReconciliationSnapshot> = {}): Reconciliati
 
 describe('paper reconciliation', () => {
   test('returns one exact hash for a completely reconciled state', () => {
-    const result = compareReconciliation(snapshot())
+    const result = successOf(compareReconciliation(snapshot()))
 
     expect(result.expectedHash).toBe(hash('4'))
     expect(result.observedHash).toBe(result.expectedHash)
@@ -140,7 +154,9 @@ describe('paper reconciliation', () => {
   })
 
   test('treats a restricted broker account as a blocking discrepancy', () => {
-    const result = compareReconciliation(snapshot({ account: { ...account, status: AccountStatus.Restricted } }))
+    const result = successOf(
+      compareReconciliation(snapshot({ account: { ...account, status: AccountStatus.Restricted } })),
+    )
 
     expect(result.discrepancies).toHaveLength(1)
     expect(result.discrepancies[0]).toMatchObject({
@@ -177,8 +193,8 @@ describe('paper reconciliation', () => {
       ledgerExact: false,
     })
 
-    const first = compareReconciliation(input)
-    const second = compareReconciliation(input)
+    const first = successOf(compareReconciliation(input))
+    const second = successOf(compareReconciliation(input))
     const kinds = new Set(first.discrepancies.map((value) => value.kind))
 
     expect(first).toEqual(second)
@@ -204,7 +220,7 @@ describe('paper reconciliation', () => {
   })
 
   test('detects a missing expected broker order', () => {
-    const result = compareReconciliation(snapshot({ orders: [] }))
+    const result = successOf(compareReconciliation(snapshot({ orders: [] })))
 
     expect(result.discrepancies).toHaveLength(1)
     expect(result.discrepancies[0]).toMatchObject({
@@ -216,14 +232,18 @@ describe('paper reconciliation', () => {
 
   test('detects a broker order before the intent expects one', () => {
     const input = snapshot()
-    const result = compareReconciliation({
-      ...input,
-      intents: input.intents.map(({ brokerOrderId: _brokerOrderId, terminalOutcome: _terminalOutcome, ...intent }) => ({
-        ...intent,
-        state: IntentState.IoStarted,
-        expectsBrokerOrder: false,
-      })),
-    })
+    const result = successOf(
+      compareReconciliation({
+        ...input,
+        intents: input.intents.map(
+          ({ brokerOrderId: _brokerOrderId, terminalOutcome: _terminalOutcome, ...intent }) => ({
+            ...intent,
+            state: IntentState.IoStarted,
+            expectsBrokerOrder: false,
+          }),
+        ),
+      }),
+    )
 
     expect(result.discrepancies).toHaveLength(1)
     expect(result.discrepancies[0]).toMatchObject({
@@ -235,8 +255,8 @@ describe('paper reconciliation', () => {
   })
 
   test('detects broker position cost drift independently of quantity', () => {
-    const result = compareReconciliation(
-      snapshot({ positions: [{ ...position, averageEntryPriceMicros: '91000000' }] }),
+    const result = successOf(
+      compareReconciliation(snapshot({ positions: [{ ...position, averageEntryPriceMicros: '91000000' }] })),
     )
 
     expect(result.discrepancies).toHaveLength(1)
@@ -249,11 +269,13 @@ describe('paper reconciliation', () => {
   })
 
   test('preserves exact-half position cost discrepancy identities and hashes', () => {
-    const result = compareReconciliation(
-      snapshot({
-        positions: [{ ...position, quantityMicros: '500000', averageEntryPriceMicros: '1' }],
-        projectedPositions: [{ symbol: position.symbol, quantityMicros: '500000', costBasisMicros: '0' }],
-      }),
+    const result = successOf(
+      compareReconciliation(
+        snapshot({
+          positions: [{ ...position, quantityMicros: '500000', averageEntryPriceMicros: '1' }],
+          projectedPositions: [{ symbol: position.symbol, quantityMicros: '500000', costBasisMicros: '0' }],
+        }),
+      ),
     )
 
     expect(result.observedHash).toBe('eddcbffe34a93edb13621d0f3b4a29b4530550fe0947da942bb11cf46d649c91')
@@ -271,17 +293,19 @@ describe('paper reconciliation', () => {
 
   test('preserves reconciliation output above U128 and its exact evidence hashes', () => {
     const quantityMicros = '170141183460469231731687303715884105727'
-    const result = compareReconciliation(
-      snapshot({
-        positions: [
-          {
-            ...position,
-            quantityMicros,
-            averageEntryPriceMicros: '340282366920938463463374607431768211455',
-          },
-        ],
-        projectedPositions: [{ symbol: position.symbol, quantityMicros, costBasisMicros: '0' }],
-      }),
+    const result = successOf(
+      compareReconciliation(
+        snapshot({
+          positions: [
+            {
+              ...position,
+              quantityMicros,
+              averageEntryPriceMicros: '340282366920938463463374607431768211455',
+            },
+          ],
+          projectedPositions: [{ symbol: position.symbol, quantityMicros, costBasisMicros: '0' }],
+        }),
+      ),
     )
 
     expect(result.observedHash).toBe('7d475d168ec5d130dbc08418eb200deef0775f8ab8339c453e3016a2d3caa7f1')
@@ -298,8 +322,8 @@ describe('paper reconciliation', () => {
   })
 
   test('keeps a ledger discrepancy identity stable while its evidence changes', () => {
-    const first = compareReconciliation(snapshot({ ledgerExact: false, accountingHash: hash('a') }))
-    const second = compareReconciliation(snapshot({ ledgerExact: false, accountingHash: hash('b') }))
+    const first = successOf(compareReconciliation(snapshot({ ledgerExact: false, accountingHash: hash('a') })))
+    const second = successOf(compareReconciliation(snapshot({ ledgerExact: false, accountingHash: hash('b') })))
 
     expect(first.discrepancies).toHaveLength(1)
     expect(second.discrepancies).toHaveLength(1)
@@ -308,18 +332,20 @@ describe('paper reconciliation', () => {
   })
 
   test('compares the complete order contract, lifecycle, and aggregate fill quantity', () => {
-    const result = compareReconciliation(
-      snapshot({
-        orders: [
-          {
-            ...order,
-            orderType: OrderType.Limit,
-            limitPriceMicros: '90000000',
-            status: OrderStatus.PartiallyFilled,
-            filledQuantityMicros: '500000',
-          },
-        ],
-      }),
+    const result = successOf(
+      compareReconciliation(
+        snapshot({
+          orders: [
+            {
+              ...order,
+              orderType: OrderType.Limit,
+              limitPriceMicros: '90000000',
+              status: OrderStatus.PartiallyFilled,
+              filledQuantityMicros: '500000',
+            },
+          ],
+        }),
+      ),
     )
 
     expect(new Set(result.discrepancies.map((value) => value.identity))).toEqual(
@@ -331,9 +357,57 @@ describe('paper reconciliation', () => {
     )
   })
 
+  test('returns fact-bearing failures for account, timestamp, integer, and canonicalization defects', () => {
+    expect(failureOf(compareReconciliation(snapshot({ orders: [{ ...order, accountId: 'other-account' }] })))).toEqual({
+      _tag: 'AccountBindingMismatch',
+      source: 'order',
+      identity: order.brokerOrderId,
+      expectedAccountId: account.accountId,
+      observedAccountId: 'other-account',
+    })
+    expect(failureOf(compareReconciliation(snapshot({ reconciledAt: 'not-an-instant' })))).toEqual({
+      _tag: 'InvalidInstant',
+      field: 'reconciledAt',
+      identity: account.accountId,
+      value: 'not-an-instant',
+    })
+    expect(failureOf(compareReconciliation(snapshot({ expectedCashMicros: 'not-an-integer' })))).toMatchObject({
+      _tag: 'InvalidInteger',
+      source: 'expected-cash',
+      identity: account.accountId,
+      value: 'not-an-integer',
+      cause: expect.any(SyntaxError),
+    })
+    const canonicalization = failureOf(
+      reconciledStateHash({
+        account: { ...account, accountId: '\ud800' },
+        positions: [position],
+        positionsObservedAt: observedAt,
+        orders: [order],
+        ordersObservedAt: observedAt,
+        accountingHash: hash('5'),
+      }),
+    )
+    expect(canonicalization).toMatchObject({
+      _tag: 'CanonicalizationFailed',
+      operation: 'broker-state-hash',
+      cause: expect.any(TypeError),
+    })
+    expect(renderReconciliationDecisionError(canonicalization)).toBe(
+      'reconciliation broker-state-hash canonicalization failed',
+    )
+  })
+
   test('rejects duplicate broker identities before comparing', () => {
-    expect(() => compareReconciliation(snapshot({ orders: [order, { ...order }] }))).toThrow(
-      'duplicate broker client order ID',
+    const error = failureOf(compareReconciliation(snapshot({ orders: [order, { ...order }] })))
+
+    expect(error).toEqual({
+      _tag: 'DuplicateIdentity',
+      collection: 'broker-client-order',
+      identity: order.clientOrderId,
+    })
+    expect(renderReconciliationDecisionError(error)).toBe(
+      `duplicate broker-client-order identity ${order.clientOrderId}`,
     )
   })
 })

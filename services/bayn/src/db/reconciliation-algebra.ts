@@ -28,10 +28,12 @@ import {
 import {
   compareReconciliation,
   reconciledStateHash,
+  renderReconciliationDecisionError,
   type DurableFill,
   type IntentExpectation,
   type ProjectedPosition,
   type ReconciliationComparison,
+  type ReconciliationDecisionError,
   type ReconciliationRiskContext,
 } from '../reconciliation'
 import { strictParseOptions, type IsoDate } from '../schemas'
@@ -108,11 +110,7 @@ export interface RiskContextRow {
   readonly peak_equity_micros: string
 }
 
-type AccountingProjectionOperation =
-  | 'accounting-hash'
-  | 'expected-cash'
-  | 'reconciliation-comparison'
-  | 'reconciled-state-hash'
+type AccountingProjectionOperation = 'accounting-hash' | 'expected-cash'
 
 type ReconciliationIdentityOperation = 'content-hash' | 'decode' | 'reconciliation-id'
 
@@ -135,6 +133,10 @@ export type ReconciliationAlgebraFailure =
       readonly _tag: 'AccountingProjectionFailed'
       readonly operation: AccountingProjectionOperation
       readonly cause: unknown
+    }
+  | {
+      readonly _tag: 'ReconciliationDecisionFailed'
+      readonly error: ReconciliationDecisionError
     }
   | {
       readonly _tag: 'DuplicateReconciliationDiscrepancy'
@@ -351,7 +353,7 @@ export const compareOpeningCash = (input: {
         ledgerExact: input.ledgerExact,
       }),
     )
-    const stateHash = yield* accountingProjection('reconciled-state-hash', () =>
+    const stateHash = yield* Result.mapError(
       reconciledStateHash({
         account: input.snapshot.account,
         positions: input.snapshot.positions,
@@ -360,8 +362,9 @@ export const compareOpeningCash = (input: {
         ordersObservedAt: input.snapshot.ordersObservedAt,
         accountingHash,
       }),
+      (error): ReconciliationAlgebraFailure => ({ _tag: 'ReconciliationDecisionFailed', error }),
     )
-    const comparison = yield* accountingProjection('reconciliation-comparison', () =>
+    const comparison = yield* Result.mapError(
       compareReconciliation({
         accountId: input.accountId,
         stateHash,
@@ -378,6 +381,7 @@ export const compareOpeningCash = (input: {
         ledgerExact: input.ledgerExact,
         reconciledAt: input.snapshot.reconciledAt,
       }),
+      (error): ReconciliationAlgebraFailure => ({ _tag: 'ReconciliationDecisionFailed', error }),
     )
     return { accountingHash, comparison }
   })
@@ -638,6 +642,12 @@ export const reconciliationAlgebraFailureDetails = (
         failure: 'invariant',
         message: `paper accounting ${failure.operation} computation failed`,
         cause: failure.cause,
+      }
+    case 'ReconciliationDecisionFailed':
+      return {
+        failure: 'invariant',
+        message: renderReconciliationDecisionError(failure.error),
+        cause: failure.error,
       }
     case 'DuplicateReconciliationDiscrepancy':
       return {

@@ -187,14 +187,16 @@ const baseState = (): State => {
   ]
   const orders: readonly ReturnType<typeof openOrder>[] = []
   const accountingHash = hash('a')
-  const reconciledStateHashValue = reconciledStateHash({
-    account,
-    positions,
-    positionsObservedAt: observedAt,
-    orders,
-    ordersObservedAt: observedAt,
-    accountingHash,
-  })
+  const reconciledStateHashValue = Result.getOrThrow(
+    reconciledStateHash({
+      account,
+      positions,
+      positionsObservedAt: observedAt,
+      orders,
+      ordersObservedAt: observedAt,
+      accountingHash,
+    }),
+  )
   const calendar = {
     schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
     source: 'alpaca-v2-calendar' as const,
@@ -272,14 +274,16 @@ const baseState = (): State => {
 
 const makeState = (overrides: Partial<State> = {}): State => {
   const merged = { ...baseState(), ...overrides }
-  const reconciledStateHashValue = reconciledStateHash({
-    account: merged.account,
-    positions: merged.positions,
-    positionsObservedAt: merged.positionsObservedAt,
-    orders: merged.orders,
-    ordersObservedAt: merged.ordersObservedAt,
-    accountingHash: merged.accountingHash,
-  })
+  const reconciledStateHashValue = Result.getOrThrow(
+    reconciledStateHash({
+      account: merged.account,
+      positions: merged.positions,
+      positionsObservedAt: merged.positionsObservedAt,
+      orders: merged.orders,
+      ordersObservedAt: merged.ordersObservedAt,
+      accountingHash: merged.accountingHash,
+    }),
+  )
   const reconciliation =
     overrides.reconciliation ??
     ({
