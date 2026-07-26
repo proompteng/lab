@@ -534,7 +534,7 @@ const provenanceFromStored = (
       (cause): StartupDecisionFailure => ({
         _tag: 'StoredProvenanceInvalid',
         identity,
-        issue: { reason: 'malformed', cause },
+        issue: { reason: 'malformed', cause: cause.cause },
       }),
     ),
   )
