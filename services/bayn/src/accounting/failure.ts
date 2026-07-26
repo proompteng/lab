@@ -1,5 +1,6 @@
 import type { Schema } from 'effect'
 
+import type { CanonicalHashFailure } from '../hash'
 import type { UnsignedRoundHalfUpFailure } from '../unsigned-round-half-up'
 
 export type AccountingMicrosField =
@@ -16,7 +17,6 @@ export type AccountingFailure =
       readonly _tag: 'AccountingMicrosParseFailed'
       readonly field: AccountingMicrosField
       readonly value: string
-      readonly cause: unknown
     }
   | {
       readonly _tag: 'AccountingUnsignedDivisionFailed'
@@ -45,7 +45,12 @@ export type AccountingFailure =
     }
   | {
       readonly _tag: 'AccountingCanonicalizationFailed'
-      readonly operation: AccountingHashOperation
+      readonly operation: Exclude<AccountingHashOperation, 'ledger-plan'>
+      readonly cause: CanonicalHashFailure
+    }
+  | {
+      readonly _tag: 'AccountingCanonicalizationFailed'
+      readonly operation: 'ledger-plan'
       readonly cause: unknown
     }
   | {

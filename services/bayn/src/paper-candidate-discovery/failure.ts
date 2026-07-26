@@ -1,6 +1,6 @@
 import { Result } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import { Authority, RiskOutcome } from '../paper'
 
 export type PaperCandidateDiscoveryError =
@@ -310,7 +310,7 @@ export type PaperCandidateDiscoveryError =
       readonly failure: 'output'
       readonly cycleId: string
       readonly documentContentHash: string
-      readonly cause: unknown
+      readonly cause: CanonicalHashFailure
     }
   | {
       readonly _tag: 'CandidateFactsDecodeFailed'
@@ -324,14 +324,14 @@ export type PaperCandidateDiscoveryError =
       readonly failure: 'output'
       readonly immutableBindingHash: string
       readonly candidateCount: number
-      readonly cause: unknown
+      readonly cause: CanonicalHashFailure
     }
   | {
       readonly _tag: 'ReceiptHashFailed'
       readonly failure: 'output'
       readonly schemaVersion: string
       readonly candidateFactsHash: string
-      readonly cause: unknown
+      readonly cause: CanonicalHashFailure
     }
   | {
       readonly _tag: 'ReceiptDecodeFailed'
@@ -494,9 +494,5 @@ export const requireValue = <A>(
 
 export const canonicalHashResult = (
   value: unknown,
-  onFailure: (cause: unknown) => PaperCandidateDiscoveryError,
-): Result.Result<string, PaperCandidateDiscoveryError> =>
-  Result.try({
-    try: () => canonicalHashV1(value),
-    catch: onFailure,
-  })
+  onFailure: (cause: CanonicalHashFailure) => PaperCandidateDiscoveryError,
+): Result.Result<string, PaperCandidateDiscoveryError> => Result.mapError(canonicalHashV1Result(value), onFailure)
