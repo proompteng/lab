@@ -2256,7 +2256,7 @@ describe('autonomous cycle runner', () => {
     expect(control).toEqual({ acquisitions: [], binds: 0 })
   })
 
-  test('rejects invalid loop intervals before starting discovery', async () => {
+  test('rejects invalid loop intervals before starting discovery', () => {
     const control: StoreControl = { acquisitions: [], binds: 0 }
     for (const pollIntervalMs of [0, -1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
       const result = makeAutonomousCycleLoop({
