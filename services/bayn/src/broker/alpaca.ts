@@ -1,5 +1,5 @@
 import { NodeHttpClient, Undici } from '@effect/platform-node'
-import { Cause, Clock, Context, Data, DateTime, Effect, Layer, Redacted, Schema, Scope } from 'effect'
+import { Cause, Context, Data, DateTime, Effect, Layer, Redacted, Schema, Scope } from 'effect'
 import { Headers, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 
 import { canonicalHashV1 } from '../hash'
@@ -8,6 +8,7 @@ import {
   StrictNonEmptyStringSchema as NonEmptyString,
   SymbolSchema as SymbolName,
 } from '../schemas'
+import { addUtcDays, currentUtcDate, currentUtcInstant } from '../time'
 
 export const paperTradingUrl = 'https://paper-api.alpaca.markets'
 const defaultFillActivitiesPageSize = 100
@@ -1255,7 +1256,7 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
               cause,
             ),
         })
-        const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+        const observedAt = yield* currentUtcInstant
         const evidence = yield* Effect.try({
           try: () => responseEvidence(headers, response.status, contentHash, observedAt),
           catch: (cause) =>
@@ -1519,12 +1520,8 @@ const verifyOrderLookup = (
 export const verifyReadAccess = (read: BrokerReadShape): Effect.Effect<ReadPreflight, BrokerReadError> =>
   Effect.gen(function* () {
     const account = yield* read.account
-    const calendarStart = new Date(yield* Clock.currentTimeMillis).toISOString().slice(0, 10)
-    const calendarEnd = new Date(
-      Date.parse(`${calendarStart}T00:00:00.000Z`) + (marketCalendarPreflightRangeDays - 1) * millisecondsPerDay,
-    )
-      .toISOString()
-      .slice(0, 10)
+    const calendarStart = yield* currentUtcDate
+    const calendarEnd = addUtcDays(calendarStart, marketCalendarPreflightRangeDays - 1)
     const responses = yield* Effect.all(
       {
         positions: read.positions,

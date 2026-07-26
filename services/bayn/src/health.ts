@@ -26,6 +26,7 @@ import type {
   RuntimeHealth,
   RuntimeState,
 } from './runtime-state'
+import { utcInstantFromEpochMillis } from './time'
 
 type ProbeResult<A> =
   | { readonly _tag: 'Available'; readonly value: A }
@@ -688,7 +689,7 @@ export const probe = (
       broker,
     )
     const checkedAtMs = yield* Clock.currentTimeMillis
-    const checkedAt = new Date(checkedAtMs).toISOString()
+    const checkedAt = utcInstantFromEpochMillis(checkedAtMs)
     const cycleFiber = sampleAutonomousCycleFiber(autonomousCycleFiber)
     const transition = yield* Ref.modify(state, (current) => {
       const decision = deriveHealthTransition(current, {

@@ -1,4 +1,4 @@
-import { Clock, Data, Effect, Result } from 'effect'
+import { Data, Effect, Result } from 'effect'
 
 import {
   CycleState,
@@ -10,6 +10,7 @@ import {
 import { CycleStore, type CycleMutationReceipt, type CycleStoreError, type CycleStoreShape } from './db/cycle-store'
 import type { OperationalError } from './errors'
 import { MarketData, type MarketDataInspection, type MarketDataService } from './market-data'
+import { currentUtcInstant } from './time'
 
 export interface PublicationFreshness {
   readonly dataAgeMs: number
@@ -50,7 +51,7 @@ const readinessError = (
   cause?: unknown,
 ): CycleReadinessError => new CycleReadinessError({ operation, failure, message, cause })
 
-const currentTime = Clock.currentTimeMillis.pipe(Effect.map((millis) => new Date(millis).toISOString()))
+const currentTime = currentUtcInstant
 
 export type PublicationFreshnessFailure =
   | {

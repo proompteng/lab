@@ -11,6 +11,7 @@
         "includeSuggestionsInTsc": false,
         "diagnosticSeverity": {
           "anyUnknownInErrorContext": "error",
+          "globalDateInEffect": "error",
           "globalErrorInEffectCatch": "error",
           "globalErrorInEffectFailure": "error",
           "multipleEffectProvide": "error",
@@ -24,6 +25,7 @@
             "options": {
               "diagnosticSeverity": {
                 "anyUnknownInErrorContext": "off",
+                "globalDateInEffect": "off",
                 "globalErrorInEffectCatch": "off",
                 "globalErrorInEffectFailure": "off",
                 "multipleEffectProvide": "off",

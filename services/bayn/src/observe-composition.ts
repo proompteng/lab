@@ -1,4 +1,4 @@
-import { Clock, Effect, pipe, Result } from 'effect'
+import { Effect, pipe, Result } from 'effect'
 
 import type { AutonomousCycleStartup } from './app'
 import { BrokerRead, type BrokerReadShape, type MarketCalendarQuery } from './broker/alpaca'
@@ -29,6 +29,7 @@ import { reconciledStateHash } from './reconciliation'
 import { BrokerMode, decodePolicy, type Policy, type State } from './risk'
 import { buildObserveShadowDecision, type ShadowDecisionError, type ShadowDeltaRiskInput } from './shadow-decision'
 import type { ObserveShadowDecisionDocument } from './shadow-decision-contract'
+import { currentUtcInstant } from './time'
 import {
   planTargets,
   type SignalSessionReferencePrices,
@@ -265,7 +266,7 @@ const readObserveDecisionFacts = (
       ],
       { concurrency: 3 },
     )
-    const evaluatedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+    const evaluatedAt = yield* currentUtcInstant
     return { snapshot, calendar, reconciliation, evaluatedAt }
   })
 
