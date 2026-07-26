@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Fiber, Redacted, Result } from 'effect'
+import { Deferred, Effect, Fiber, Redacted, Ref, Result } from 'effect'
 import { TestClock } from 'effect/testing'
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http'
 
 import { canonicalHashV1 } from '../hash'
 import { Authority, IntentState, MutationOutcome, OrderSide, OrderType, TimeInForce, type Intent } from '../paper'
@@ -160,8 +160,11 @@ describe('Alpaca paper mutations', () => {
       failure: 'invalid-order',
     })
     const malformedQuantity = assertFailure(orderRequestBody({ ...intent, quantityMicros: 'not-an-integer' }))
-    expect(malformedQuantity).toMatchObject({ _tag: 'OrderRequestError', failure: 'invalid-order' })
-    expect(malformedQuantity.cause).toBeInstanceOf(Error)
+    expect(malformedQuantity).toMatchObject({
+      _tag: 'OrderRequestError',
+      failure: 'invalid-order',
+      quantityMicros: 'not-an-integer',
+    })
   })
 
   test('refuses to construct mutation capability below explicit PAPER authority', async () => {
@@ -319,7 +322,7 @@ describe('Alpaca paper mutations', () => {
     })
   })
 
-  test('fails before I/O for an unmarked intent or unsupported fractional GTC order', async () => {
+  test('fails before I/O for invalid state, order constraints, or malformed intent data', async () => {
     let calls = 0
     const client = HttpClient.make((request) => {
       calls += 1
@@ -327,19 +330,60 @@ describe('Alpaca paper mutations', () => {
     })
     const approved = { ...intent, state: IntentState.Approved }
     const fractionalGtc = { ...intent, timeInForce: TimeInForce.GoodUntilCanceled }
+    const limit = { ...intent, orderType: OrderType.Limit }
+    const malformed = { ...intent, quantityMicros: 'not-micros' } as Intent
 
     const failures = await Effect.runPromise(
       Effect.all([
         Effect.flip(withMutation(client, (mutation) => mutation.submit(approved))),
         Effect.flip(withMutation(client, (mutation) => mutation.submit(fractionalGtc))),
+        Effect.flip(withMutation(client, (mutation) => mutation.submit(limit))),
+        Effect.flip(withMutation(client, (mutation) => mutation.submit(malformed))),
       ]),
     )
 
     expect(failures).toEqual([
       expect.objectContaining({ failure: MutationFailure.InvalidRequest, outcome: MutationOutcome.Known }),
       expect.objectContaining({ failure: MutationFailure.InvalidRequest, outcome: MutationOutcome.Known }),
+      expect.objectContaining({ failure: MutationFailure.InvalidRequest, outcome: MutationOutcome.Known }),
+      expect.objectContaining({ failure: MutationFailure.InvalidRequest, outcome: MutationOutcome.Known }),
     ])
     expect(calls).toBe(0)
+  })
+
+  test('classifies malformed accepted and rejected responses as UNKNOWN with exact evidence', async () => {
+    const malformedAccepted = { ...orderResponse, qty: null, notional: null }
+    const malformedRejected = { message: 'missing broker code' }
+    let calls = 0
+    const client = HttpClient.make((request) => {
+      calls += 1
+      return Effect.succeed(
+        calls === 1 ? response(request, malformedAccepted) : response(request, malformedRejected, 422),
+      )
+    })
+
+    const acceptedFailure = await Effect.runPromise(
+      Effect.flip(withMutation(client, (mutation) => mutation.submit(intent))),
+    )
+    const rejectedFailure = await Effect.runPromise(
+      Effect.flip(withMutation(client, (mutation) => mutation.submit(intent))),
+    )
+
+    expect(acceptedFailure).toMatchObject({
+      operation: MutationOperation.Submit,
+      failure: MutationFailure.Unknown,
+      outcome: MutationOutcome.Unknown,
+      message: 'Alpaca submit response violates the order contract',
+      evidence: { status: 200, requestId: 'req-123', contentHash: canonicalHashV1(malformedAccepted) },
+    })
+    expect(rejectedFailure).toMatchObject({
+      operation: MutationOperation.Submit,
+      failure: MutationFailure.Unknown,
+      outcome: MutationOutcome.Unknown,
+      message: 'Alpaca submit error response is invalid',
+      evidence: { status: 422, requestId: 'req-123', contentHash: canonicalHashV1(malformedRejected) },
+    })
+    expect(calls).toBe(2)
   })
 
   test('classifies a decoded 422 as a known rejection and never retries', async () => {
@@ -399,6 +443,33 @@ describe('Alpaca paper mutations', () => {
     expect(interrupted).toBe(true)
   })
 
+  test('redacts credentials from an ambiguous submit transport failure', async () => {
+    let calls = 0
+    const client = HttpClient.make((request) => {
+      calls += 1
+      return Effect.fail(
+        new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({
+            request,
+            description: 'connection refused for paper-key and paper-secret',
+          }),
+        }),
+      )
+    })
+
+    const failure = await Effect.runPromise(Effect.flip(withMutation(client, (mutation) => mutation.submit(intent))))
+
+    expect(failure).toMatchObject({
+      operation: MutationOperation.Submit,
+      failure: MutationFailure.Unknown,
+      outcome: MutationOutcome.Unknown,
+      cause: { tag: 'HttpClientError', reason: 'TransportError' },
+    })
+    expect(JSON.stringify(failure)).not.toContain('paper-key')
+    expect(JSON.stringify(failure)).not.toContain('paper-secret')
+    expect(calls).toBe(1)
+  })
+
   test('applies the mutation deadline while the broker response body is still streaming', async () => {
     let calls = 0
     const client = HttpClient.make((request) => {
@@ -431,6 +502,33 @@ describe('Alpaca paper mutations', () => {
     expect(calls).toBe(1)
   })
 
+  test('propagates external interruption and finalizes an in-flight submit exactly once', async () => {
+    let calls = 0
+    const finalizations = await Effect.runPromise(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>()
+        const finalized = yield* Ref.make(0)
+        const client = HttpClient.make(() => {
+          calls += 1
+          return Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Effect.never),
+            Effect.ensuring(Ref.update(finalized, (count) => count + 1)),
+          )
+        })
+        const mutation = yield* makeMutation(options).pipe(
+          Effect.provideService(HttpClient.HttpClient, withVerifiedAccount(client)),
+        )
+        const fiber = yield* mutation.submit(intent).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Deferred.await(started)
+        yield* Fiber.interrupt(fiber)
+        return yield* Ref.get(finalized)
+      }),
+    )
+
+    expect(calls).toBe(1)
+    expect(finalizations).toBe(1)
+  })
+
   test('cancels a positively identified order once; every non-204 result requires lookup', async () => {
     let status = 204
     const requests: Array<{ method: string; url: string }> = []
@@ -461,6 +559,26 @@ describe('Alpaca paper mutations', () => {
       { method: 'DELETE', url: `https://paper-api.alpaca.markets/v2/orders/${orderId}` },
       { method: 'DELETE', url: `https://paper-api.alpaca.markets/v2/orders/${orderId}` },
     ])
+  })
+
+  test('rejects an invalid cancel target before DELETE I/O', async () => {
+    let calls = 0
+    const client = HttpClient.make(() => {
+      calls += 1
+      return Effect.die(new Error('invalid cancel target must not make a mutation request'))
+    })
+
+    const failure = await Effect.runPromise(
+      Effect.flip(withMutation(client, (mutation) => mutation.cancel('../orders/all'))),
+    )
+
+    expect(failure).toMatchObject({
+      operation: MutationOperation.Cancel,
+      failure: MutationFailure.InvalidRequest,
+      outcome: MutationOutcome.Known,
+      message: 'invalid Alpaca order ID',
+    })
+    expect(calls).toBe(0)
   })
 
   test('samples ambiguous cancel evidence after the complete response body', async () => {
