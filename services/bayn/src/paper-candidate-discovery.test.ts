@@ -1,8 +1,23 @@
+import { createHash } from 'node:crypto'
+
 import { describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Context, Effect, Exit, Layer, ManagedRuntime, Option, Redacted, Result } from 'effect'
+import {
+  Cause,
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Redacted,
+  Ref,
+  Result,
+} from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 
@@ -35,7 +50,13 @@ import {
   validatePaperCandidateDiscoveryObservations,
   validatePaperCandidateDiscoverySnapshot,
   type PaperCandidateDiscoveryIdentity,
+  type PaperCandidateFactsMaterial,
 } from './paper-candidate-discovery'
+import { validatePaperCandidateDiscoveryObservations as validateObservationsImplementation } from './paper-candidate-discovery/broker-observation-validation'
+import { renderPaperCandidateDiscoveryError as renderErrorImplementation } from './paper-candidate-discovery/failure'
+import { PaperCandidateIneligibility as PaperCandidateIneligibilityImplementation } from './paper-candidate-discovery/model'
+import { discoverPaperCandidates as discoverPaperCandidatesImplementation } from './paper-candidate-discovery/program'
+import { validatePaperCandidateDiscoverySnapshot as validateSnapshotImplementation } from './paper-candidate-discovery/snapshot-validation'
 import { Gate, Reason } from './risk'
 import type { ObserveShadowDecisionDocument } from './shadow-decision-contract'
 import { TargetPlanStatus } from './target-planner'
@@ -296,6 +317,7 @@ interface TestControl {
   cycleReads: number
   decisionReads: number
   inTransaction: boolean
+  observabilityReads: number
   statements: string[]
   transactions: number
 }
@@ -307,6 +329,7 @@ const control = (): TestControl => ({
   cycleReads: 0,
   decisionReads: 0,
   inTransaction: false,
+  observabilityReads: 0,
   statements: [],
   transactions: 0,
 })
@@ -357,6 +380,7 @@ const stores = (state: TestControl, input: Fixture) => {
     read: () =>
       Effect.sync(() => {
         if (!state.inTransaction) throw new Error('observability read escaped the transaction')
+        state.observabilityReads += 1
         return input.projection
       }),
   }
@@ -421,6 +445,14 @@ const program = (
 }
 
 describe('paper candidate discovery', () => {
+  test('preserves the public facade exports', () => {
+    expect(PaperCandidateIneligibility).toBe(PaperCandidateIneligibilityImplementation)
+    expect(discoverPaperCandidates).toBe(discoverPaperCandidatesImplementation)
+    expect(renderPaperCandidateDiscoveryError).toBe(renderErrorImplementation)
+    expect(validatePaperCandidateDiscoveryObservations).toBe(validateObservationsImplementation)
+    expect(validatePaperCandidateDiscoverySnapshot).toBe(validateSnapshotImplementation)
+  })
+
   test('returns fact-bearing Result failures from pure snapshot and receipt decisions', () => {
     const missingAuthoritySnapshot = {
       projection: { ...projection(), authority: null },
@@ -480,8 +512,10 @@ describe('paper candidate discovery', () => {
   test('reads one immutable snapshot and emits every ordered candidate without mutation capabilities', async () => {
     const state = control()
     const receipt = await Effect.runPromise(program(state))
+    const publicCandidateFacts: PaperCandidateFactsMaterial = receipt.candidateFacts
 
     expect(state.transactions).toBe(1)
+    expect(publicCandidateFacts).toBe(receipt.candidateFacts)
     expect(state.statements).toEqual(['SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'])
     expect(state.cycleReads).toBe(1)
     expect(state.decisionReads).toBe(1)
@@ -542,8 +576,74 @@ describe('paper candidate discovery', () => {
       },
     })
     const serialized = JSON.stringify(receipt)
+    expect(receipt.immutableBindingHash).toBe('6ab1d19be479bfbd58e7ae673864b57913dcf8d0817d6087655468eda84ac9a5')
+    expect(receipt.candidateFactsHash).toBe('e3c32cfc6678d5d465ae216567b91bbacdf545c66073442f39e3d056c351e40b')
+    expect(receipt.observationReceiptHash).toBe('6ea8f7e85e513490e4567509dad11d071deba2a9792d3b72219c07c250208d46')
+    expect(createHash('sha256').update(serialized).digest('hex')).toBe(
+      '6f64a60a8181c61acd2ae0577907e59c95d99ea8fbc1f53f5b33d419e74cb049',
+    )
     expect(serialized).not.toContain('account_number')
     expect(serialized).not.toContain('paper-secret')
+  })
+
+  test('rejects an invalid identity before any database or broker I/O', async () => {
+    const state = control()
+    const error = await Effect.runPromise(
+      Effect.flip(
+        program(state, fixture(), broker(state), observedAt, fakeSql(state), {
+          ...identity,
+          strategyProtocolHash: hash('f'),
+        }),
+      ),
+    )
+
+    expect(error).toMatchObject({ _tag: 'StrategyProtocolMismatch', failure: 'invalid-input' })
+    expect(state).toMatchObject({
+      transactions: 0,
+      statements: [],
+      observabilityReads: 0,
+      cycleReads: 0,
+      decisionReads: 0,
+      brokerAccountReads: 0,
+      brokerAccountConfigurationReads: 0,
+      assetSymbols: [],
+    })
+  })
+
+  test('propagates interruption through an in-flight broker read and runs its finalizer once', async () => {
+    const state = control()
+    const finalizations = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>()
+          const finalized = yield* Ref.make(0)
+          const base = broker(state)
+          const interruptedRead: BrokerReadShape = {
+            ...base,
+            account: Effect.sync(() => {
+              state.brokerAccountReads += 1
+            }).pipe(
+              Effect.andThen(Deferred.succeed(started, undefined)),
+              Effect.andThen(Effect.never),
+              Effect.ensuring(Ref.update(finalized, (count) => count + 1)),
+            ),
+          }
+          const fiber = yield* program(state, fixture(), interruptedRead).pipe(
+            Effect.forkScoped({ startImmediately: true }),
+          )
+          yield* Deferred.await(started)
+          yield* Fiber.interrupt(fiber)
+          return yield* Ref.get(finalized)
+        }),
+      ),
+    )
+
+    expect(finalizations).toBe(1)
+    expect(state.transactions).toBe(1)
+    expect(state.inTransaction).toBe(false)
+    expect(state.brokerAccountReads).toBe(1)
+    expect(state.brokerAccountConfigurationReads).toBe(0)
+    expect(state.assetSymbols).toEqual([])
   })
 
   test('constructs the read adapter without preflight and receipts only bounded DISCOVER GETs', async () => {
