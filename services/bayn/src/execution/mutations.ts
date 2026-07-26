@@ -1,5 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Context, Data, Effect, Layer, Result, Schema } from 'effect'
+import type { SqlError } from 'effect/unstable/sql/SqlError'
 
 import { canonicalHashV1 } from '../hash'
 import { Authority, IntentState, KillState, TerminalOutcome } from '../paper'
@@ -10,7 +11,7 @@ import {
   strictParseOptions,
 } from '../schemas'
 import { MutationEvidenceSchema, MutationOperation, type MutationEvidence } from '../broker/alpaca-mutations'
-import { WriterFence, WriterFenceError } from './writer-fence'
+import { WriterFence, WriterFenceError, type WriterFenceService } from './writer-fence'
 
 export enum MutationEventType {
   SubmitStarted = 'SUBMIT_STARTED',
@@ -47,24 +48,6 @@ const MutationEventSchema = Schema.Struct({
 })
 export type MutationEvent = typeof MutationEventSchema.Type
 
-const StoredEventRow = Schema.Struct({
-  schema_version: Schema.Literal('bayn.paper-mutation-event.v1'),
-  event_id: Sha256,
-  mutation_id: Sha256,
-  intent_id: Sha256,
-  sequence: Sequence,
-  operation: Schema.Enum(MutationOperation),
-  event_type: Schema.Enum(MutationEventType),
-  request_hash: Sha256,
-  consistency_delay_ms: ConsistencyDelay,
-  broker_order_id: Schema.NullOr(NonEmptyString),
-  request_id: Schema.NullOr(NonEmptyString),
-  response_status: Schema.NullOr(HttpStatus),
-  response_content_hash: Schema.NullOr(Sha256),
-  occurred_at: UtcInstant,
-})
-const decodeRowsResult = Schema.decodeUnknownResult(Schema.Array(StoredEventRow), strictParseOptions)
-const decodeIntentIdResult = Schema.decodeUnknownResult(Sha256)
 const StartInputSchema = Schema.Struct({
   intentId: Sha256,
   requestHash: Sha256,
@@ -172,66 +155,6 @@ const mutationEventResult = (
     (eventId) => ({ ...content, eventId }),
   )
 }
-
-const toEvent = (row: typeof StoredEventRow.Type): MutationEvent => ({
-  schemaVersion: row.schema_version,
-  eventId: row.event_id,
-  mutationId: row.mutation_id,
-  intentId: row.intent_id,
-  sequence: row.sequence,
-  operation: row.operation,
-  eventType: row.event_type,
-  requestHash: row.request_hash,
-  consistencyDelayMs: row.consistency_delay_ms,
-  ...(row.broker_order_id === null ? {} : { brokerOrderId: row.broker_order_id }),
-  ...(row.request_id === null ? {} : { requestId: row.request_id }),
-  ...(row.response_status === null ? {} : { responseStatus: row.response_status }),
-  ...(row.response_content_hash === null ? {} : { responseContentHash: row.response_content_hash }),
-  occurredAt: row.occurred_at,
-})
-
-const AuthorityRows = Schema.Array(
-  Schema.Struct({
-    effective: Schema.Enum(Authority),
-    generation_hash: Sha256,
-    generation_account_id: Schema.NullOr(NonEmptyString),
-    generation_maximum: Schema.NullOr(Schema.Enum(Authority)),
-    kill_state: Schema.Enum(KillState),
-    maximum: Schema.Enum(Authority),
-  }),
-)
-const IntentRows = Schema.Array(
-  Schema.Struct({
-    account_id: NonEmptyString,
-    authority_generation_hash: Sha256,
-    generation_account_id: Schema.NullOr(NonEmptyString),
-    generation_maximum: Schema.NullOr(Schema.Enum(Authority)),
-    generation_risk_policy_hash: Schema.NullOr(Sha256),
-    generation_strategy_name: Schema.NullOr(NonEmptyString),
-    policy_hash: Sha256,
-    state: Schema.Enum(IntentState),
-    strategy_name: NonEmptyString,
-    updated_at: UtcInstant,
-  }),
-)
-const UnresolvedRows = Schema.Array(Schema.Struct({ unresolved: Schema.Boolean }))
-const EventIdRows = Schema.Array(Schema.Struct({ event_id: Sha256 }))
-const IntentIdRows = Schema.Array(Schema.Struct({ intent_id: Sha256 }))
-const OutcomeIntentRows = Schema.Array(
-  Schema.Struct({
-    state: Schema.Enum(IntentState),
-    terminal_outcome: Schema.NullOr(Schema.Enum(TerminalOutcome)),
-  }),
-)
-const AcknowledgedRows = Schema.Array(Schema.Struct({ acknowledged: Schema.Boolean }))
-
-const decodeAuthorityRowsResult = Schema.decodeUnknownResult(AuthorityRows, strictParseOptions)
-const decodeIntentRowsResult = Schema.decodeUnknownResult(IntentRows, strictParseOptions)
-const decodeUnresolvedRowsResult = Schema.decodeUnknownResult(UnresolvedRows, strictParseOptions)
-const decodeEventIdRowsResult = Schema.decodeUnknownResult(EventIdRows, strictParseOptions)
-const decodeIntentIdRowsResult = Schema.decodeUnknownResult(IntentIdRows, strictParseOptions)
-const decodeOutcomeIntentRowsResult = Schema.decodeUnknownResult(OutcomeIntentRows, strictParseOptions)
-const decodeAcknowledgedRowsResult = Schema.decodeUnknownResult(AcknowledgedRows, strictParseOptions)
 
 export class MutationStoreError extends Data.TaggedError('MutationStoreError')<{
   readonly operation: 'begin-submit' | 'record-submit' | 'begin-cancel' | 'record-cancel' | 'record-recovery' | 'read'
@@ -1073,28 +996,6 @@ const decideCancelRecoveryState = (
   return Result.fail(storeError(storeOperation, 'conflict', 'intent mutation outcome lost its race'))
 }
 
-const selectLatest = (sql: PgClient.PgClient, intentId: string, operation: MutationOperation) => sql`
-  SELECT
-    schema_version,
-    event_id,
-    mutation_id,
-    intent_id,
-    sequence::integer,
-    operation,
-    event_type,
-    request_hash,
-    consistency_delay_ms,
-    broker_order_id,
-    request_id,
-    response_status::integer,
-    response_content_hash,
-    to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS occurred_at
-  FROM mutation_events
-  WHERE intent_id = ${intentId} AND operation = ${operation}
-  ORDER BY sequence DESC
-  LIMIT 1
-`
-
 const decodeStartInput = (
   operation: MutationOperation,
   input: unknown,
@@ -1126,20 +1027,106 @@ const decodeOutcomeInput = (
   )
 }
 
+const StoredEventRows = Schema.Array(
+  Schema.Struct({
+    schema_version: Schema.Literal('bayn.paper-mutation-event.v1'),
+    event_id: Sha256,
+    mutation_id: Sha256,
+    intent_id: Sha256,
+    sequence: Sequence,
+    operation: Schema.Enum(MutationOperation),
+    event_type: Schema.Enum(MutationEventType),
+    request_hash: Sha256,
+    consistency_delay_ms: ConsistencyDelay,
+    broker_order_id: Schema.NullOr(NonEmptyString),
+    request_id: Schema.NullOr(NonEmptyString),
+    response_status: Schema.NullOr(HttpStatus),
+    response_content_hash: Schema.NullOr(Sha256),
+    occurred_at: UtcInstant,
+  }),
+)
+
+const AuthorityRows = Schema.Array(
+  Schema.Struct({
+    effective: Schema.Enum(Authority),
+    generation_hash: Sha256,
+    generation_account_id: Schema.NullOr(NonEmptyString),
+    generation_maximum: Schema.NullOr(Schema.Enum(Authority)),
+    kill_state: Schema.Enum(KillState),
+    maximum: Schema.Enum(Authority),
+  }),
+)
+
+const IntentRows = Schema.Array(
+  Schema.Struct({
+    account_id: NonEmptyString,
+    authority_generation_hash: Sha256,
+    generation_account_id: Schema.NullOr(NonEmptyString),
+    generation_maximum: Schema.NullOr(Schema.Enum(Authority)),
+    generation_risk_policy_hash: Schema.NullOr(Sha256),
+    generation_strategy_name: Schema.NullOr(NonEmptyString),
+    policy_hash: Sha256,
+    state: Schema.Enum(IntentState),
+    strategy_name: NonEmptyString,
+    updated_at: UtcInstant,
+  }),
+)
+
+const UnresolvedRows = Schema.Array(Schema.Struct({ unresolved: Schema.Boolean }))
+const EventIdRows = Schema.Array(Schema.Struct({ event_id: Sha256 }))
+const IntentIdRows = Schema.Array(Schema.Struct({ intent_id: Sha256 }))
+const OutcomeIntentRows = Schema.Array(
+  Schema.Struct({
+    state: Schema.Enum(IntentState),
+    terminal_outcome: Schema.NullOr(Schema.Enum(TerminalOutcome)),
+  }),
+)
+const AcknowledgedRows = Schema.Array(Schema.Struct({ acknowledged: Schema.Boolean }))
+
+const decodeStoredEventRows = Schema.decodeUnknownResult(StoredEventRows, strictParseOptions)
+const decodeAuthorityRows = Schema.decodeUnknownResult(AuthorityRows, strictParseOptions)
+const decodeIntentRows = Schema.decodeUnknownResult(IntentRows, strictParseOptions)
+const decodeUnresolvedRows = Schema.decodeUnknownResult(UnresolvedRows, strictParseOptions)
+const decodeEventIdRows = Schema.decodeUnknownResult(EventIdRows, strictParseOptions)
+const decodeIntentIdRows = Schema.decodeUnknownResult(IntentIdRows, strictParseOptions)
+const decodeOutcomeIntentRows = Schema.decodeUnknownResult(OutcomeIntentRows, strictParseOptions)
+const decodeAcknowledgedRows = Schema.decodeUnknownResult(AcknowledgedRows, strictParseOptions)
+const decodeIntentIdResult = Schema.decodeUnknownResult(Sha256)
+
+const toEvent = (row: (typeof StoredEventRows.Type)[number]): MutationEvent => ({
+  schemaVersion: row.schema_version,
+  eventId: row.event_id,
+  mutationId: row.mutation_id,
+  intentId: row.intent_id,
+  sequence: row.sequence,
+  operation: row.operation,
+  eventType: row.event_type,
+  requestHash: row.request_hash,
+  consistencyDelayMs: row.consistency_delay_ms,
+  ...(row.broker_order_id === null ? {} : { brokerOrderId: row.broker_order_id }),
+  ...(row.request_id === null ? {} : { requestId: row.request_id }),
+  ...(row.response_status === null ? {} : { responseStatus: row.response_status }),
+  ...(row.response_content_hash === null ? {} : { responseContentHash: row.response_content_hash }),
+  occurredAt: row.occurred_at,
+})
+
 const decodeStoredEvents = (rows: unknown): Result.Result<readonly MutationEvent[], MutationStoreError> =>
   Result.map(
-    Result.mapError(decodeRowsResult(rows), (cause) =>
+    Result.mapError(decodeStoredEventRows(rows), (cause) =>
       storeError('read', 'decode', 'stored mutation event failed decoding', cause),
     ),
     (decoded) => decoded.map(toEvent),
   )
+
+const decodeIntentId = (intentId: string): Result.Result<string, MutationStoreError> =>
+  Result.mapError(decodeIntentIdResult(intentId), (cause) => storeError('read', 'decode', 'invalid intent ID', cause))
 
 const decodeAuthoritySnapshot = (
   operation: MutationOperation,
   rows: unknown,
 ): Result.Result<MutationAuthoritySnapshot | undefined, MutationStoreError> =>
   Result.map(
-    Result.mapError(decodeAuthorityRowsResult(rows), (cause) =>
+    Result.mapError(decodeAuthorityRows(rows), (cause) =>
       storeError(startStoreOperationFor(operation), 'decode', 'stored mutation authority failed decoding', cause),
     ),
     (decoded) => {
@@ -1162,7 +1149,7 @@ const decodeIntentSnapshot = (
   rows: unknown,
 ): Result.Result<MutationIntentSnapshot | undefined, MutationStoreError> =>
   Result.map(
-    Result.mapError(decodeIntentRowsResult(rows), (cause) =>
+    Result.mapError(decodeIntentRows(rows), (cause) =>
       storeError(startStoreOperationFor(operation), 'decode', 'stored mutation intent failed decoding', cause),
     ),
     (decoded) => {
@@ -1184,47 +1171,118 @@ const decodeIntentSnapshot = (
     },
   )
 
+const decodeUnresolved = (rows: unknown): Result.Result<boolean | undefined, MutationStoreError> =>
+  Result.map(
+    Result.mapError(decodeUnresolvedRows(rows), (cause) =>
+      storeError('begin-submit', 'decode', 'unresolved mutation result failed decoding', cause),
+    ),
+    (decoded) => decoded[0]?.unresolved,
+  )
+
+const decodeEventIds = (
+  operation: MutationStoreError['operation'],
+  rows: unknown,
+): Result.Result<readonly string[], MutationStoreError> =>
+  Result.map(
+    Result.mapError(decodeEventIdRows(rows), (cause) =>
+      storeError(operation, 'decode', 'mutation event append result failed decoding', cause),
+    ),
+    (decoded) => decoded.map((row) => row.event_id),
+  )
+
+const decodeIntentIds = (
+  operation: OutcomeStoreOperation | 'begin-submit',
+  message: string,
+  rows: unknown,
+): Result.Result<readonly string[], MutationStoreError> =>
+  Result.map(
+    Result.mapError(decodeIntentIdRows(rows), (cause) => storeError(operation, 'decode', message, cause)),
+    (decoded) => decoded.map((row) => row.intent_id),
+  )
+
+const decodeOutcomeIntentSnapshot = (
+  operation: OutcomeStoreOperation,
+  rows: unknown,
+): Result.Result<MutationReplayIntentSnapshot | undefined, MutationStoreError> =>
+  Result.map(
+    Result.mapError(decodeOutcomeIntentRows(rows), (cause) =>
+      storeError(operation, 'decode', 'stored mutation intent state failed decoding', cause),
+    ),
+    (decoded) => {
+      const intent = decoded[0]
+      return intent === undefined
+        ? undefined
+        : {
+            state: intent.state,
+            terminalOutcome: intent.terminal_outcome,
+          }
+    },
+  )
+
+const decodeAcknowledged = (
+  operation: OutcomeStoreOperation,
+  rows: unknown,
+): Result.Result<boolean | undefined, MutationStoreError> =>
+  Result.map(
+    Result.mapError(decodeAcknowledgedRows(rows), (cause) =>
+      storeError(operation, 'decode', 'acknowledged submit recovery result failed decoding', cause),
+    ),
+    (decoded) => decoded[0]?.acknowledged,
+  )
+
 const fromDecision = <A, E>(evaluate: () => Result.Result<A, E>): Effect.Effect<A, E> =>
   Effect.suspend(() => Effect.fromResult(evaluate()))
 
-const makeStore = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  const fence = yield* WriterFence
-
-  const run = <A, E, R>(
+interface MutationEventPostgres {
+  readonly readLatest: (
+    intentId: string,
+    operation: MutationOperation,
+  ) => Effect.Effect<MutationEvent | undefined, MutationStoreError | SqlError>
+  readonly latest: MutationStoreShape['latest']
+  readonly appendEvent: (
     operation: MutationStoreError['operation'],
-    effect: Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, MutationStoreError | WriterFenceError, R> =>
-    effect.pipe(
-      Effect.mapError((cause) =>
-        cause instanceof MutationStoreError || cause instanceof WriterFenceError
-          ? cause
-          : storeError(operation, 'query', `mutation ${operation} failed`, cause),
-      ),
-    )
+    event: MutationEvent,
+    requireCurrentRisk?: boolean,
+  ) => Effect.Effect<MutationEvent, MutationStoreError | SqlError>
+}
 
+const selectLatest = (sql: PgClient.PgClient, intentId: string, operation: MutationOperation) => sql`
+  SELECT
+    schema_version,
+    event_id,
+    mutation_id,
+    intent_id,
+    sequence::integer,
+    operation,
+    event_type,
+    request_hash,
+    consistency_delay_ms,
+    broker_order_id,
+    request_id,
+    response_status::integer,
+    response_content_hash,
+    to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS occurred_at
+  FROM mutation_events
+  WHERE intent_id = ${intentId} AND operation = ${operation}
+  ORDER BY sequence DESC
+  LIMIT 1
+`
+
+const makeMutationEventPostgres = (sql: PgClient.PgClient): MutationEventPostgres => {
   const readLatest = (intentId: string, operation: MutationOperation) =>
     selectLatest(sql, intentId, operation).pipe(
       Effect.flatMap((rows) => fromDecision(() => Result.map(decodeStoredEvents(rows), (events) => events[0]))),
     )
 
   const latest = (intentId: string, operation: MutationOperation) =>
-    fromDecision(() =>
-      Result.mapError(decodeIntentIdResult(intentId), (cause) =>
-        storeError('read', 'decode', 'invalid intent ID', cause),
-      ),
-    ).pipe(
+    fromDecision(() => decodeIntentId(intentId)).pipe(
       Effect.flatMap((decodedIntentId) => readLatest(decodedIntentId, operation)),
       Effect.mapError((cause) =>
         cause instanceof MutationStoreError ? cause : storeError('read', 'query', 'mutation read failed', cause),
       ),
     )
 
-  const appendEvent = (
-    storeOperation: MutationStoreError['operation'],
-    event: MutationEvent,
-    requireCurrentRisk = false,
-  ) =>
+  const appendEvent = (operation: MutationStoreError['operation'], event: MutationEvent, requireCurrentRisk = false) =>
     sql<{ event_id: string }>`
       INSERT INTO mutation_events (
         event_id,
@@ -1273,22 +1331,32 @@ const makeStore = Effect.gen(function* () {
     `.pipe(
       Effect.flatMap((rows) =>
         fromDecision(() =>
-          Result.flatMap(
-            Result.mapError(decodeEventIdRowsResult(rows), (cause) =>
-              storeError(storeOperation, 'decode', 'mutation event append result failed decoding', cause),
-            ),
-            (decoded) =>
-              decideMutationAppend(
-                storeOperation,
-                event,
-                decoded.map((row) => row.event_id),
-                requireCurrentRisk,
-              ),
+          Result.flatMap(decodeEventIds(operation, rows), (eventIds) =>
+            decideMutationAppend(operation, event, eventIds, requireCurrentRisk),
           ),
         ),
       ),
     )
 
+  return { readLatest, latest, appendEvent }
+}
+
+interface MutationStartPostgres {
+  readonly begin: (
+    operation: MutationOperation,
+    intentId: string,
+    requestHash: string,
+    consistencyDelayMs: number,
+    occurredAt: string,
+    brokerOrderId?: string,
+  ) => Effect.Effect<StartReceipt, MutationStoreError | SqlError | WriterFenceError>
+}
+
+const makeMutationStartPostgres = (
+  sql: PgClient.PgClient,
+  fence: WriterFenceService,
+  events: MutationEventPostgres,
+): MutationStartPostgres => {
   const readAuthorityBinding = (operation: MutationOperation) =>
     sql<{
       effective: string
@@ -1353,16 +1421,7 @@ const makeStore = Effect.gen(function* () {
           )
       ) AS unresolved
     `.pipe(
-      Effect.flatMap((rows) =>
-        fromDecision(() =>
-          Result.flatMap(
-            Result.mapError(decodeUnresolvedRowsResult(rows), (cause) =>
-              storeError('begin-submit', 'decode', 'unresolved mutation result failed decoding', cause),
-            ),
-            (decoded) => decideMutationContainment(decoded[0]?.unresolved),
-          ),
-        ),
-      ),
+      Effect.flatMap((rows) => fromDecision(() => Result.flatMap(decodeUnresolved(rows), decideMutationContainment))),
     )
 
   const readIntent = (operation: MutationOperation, intentId: string) =>
@@ -1406,10 +1465,8 @@ const makeStore = Effect.gen(function* () {
       Effect.flatMap((rows) =>
         fromDecision(() =>
           Result.flatMap(
-            Result.mapError(decodeIntentIdRowsResult(rows), (cause) =>
-              storeError('begin-submit', 'decode', 'submit transition result failed decoding', cause),
-            ),
-            (decoded) => decideSubmitStartWrite(decoded.map((row) => row.intent_id)),
+            decodeIntentIds('begin-submit', 'submit transition result failed decoding', rows),
+            decideSubmitStartWrite,
           ),
         ),
       ),
@@ -1417,7 +1474,7 @@ const makeStore = Effect.gen(function* () {
 
   const beginTransaction = (operation: MutationOperation, input: MutationStartInput) =>
     Effect.gen(function* () {
-      const existing = yield* readLatest(input.intentId, operation)
+      const existing = yield* events.readLatest(input.intentId, operation)
       const replay = yield* fromDecision(() => decideMutationStartReplay(operation, input, existing))
       if (replay._tag === 'ReplayMutation') return replay.receipt
 
@@ -1425,9 +1482,15 @@ const makeStore = Effect.gen(function* () {
       if (operation === MutationOperation.Submit) yield* requireNoOtherUnresolved(input.intentId)
       const intent = yield* readIntent(operation, input.intentId)
       const submitted =
-        operation === MutationOperation.Cancel ? yield* readLatest(input.intentId, MutationOperation.Submit) : undefined
+        operation === MutationOperation.Cancel
+          ? yield* events.readLatest(input.intentId, MutationOperation.Submit)
+          : undefined
       const decision = yield* fromDecision(() => decideMutationStart(operation, input, authority, intent, submitted))
-      yield* appendEvent(startStoreOperationFor(operation), decision.event, operation === MutationOperation.Submit)
+      yield* events.appendEvent(
+        startStoreOperationFor(operation),
+        decision.event,
+        operation === MutationOperation.Submit,
+      )
       if (decision.intentTransition === 'ApprovedToIoStarted') yield* transitionSubmitStart(input)
       return { event: decision.event, started: true } satisfies StartReceipt
     })
@@ -1440,58 +1503,45 @@ const makeStore = Effect.gen(function* () {
     occurredAt: string,
     brokerOrderId?: string,
   ) =>
-    run(
-      startStoreOperationFor(operation),
-      fromDecision(() =>
-        decodeStartInput(operation, {
-          intentId,
-          requestHash,
-          consistencyDelayMs,
-          occurredAt,
-          ...(brokerOrderId === undefined ? {} : { brokerOrderId }),
-        }),
-      ).pipe(Effect.flatMap((input) => fence.transaction(beginTransaction(operation, input)))),
-    )
+    fromDecision(() =>
+      decodeStartInput(operation, {
+        intentId,
+        requestHash,
+        consistencyDelayMs,
+        occurredAt,
+        ...(brokerOrderId === undefined ? {} : { brokerOrderId }),
+      }),
+    ).pipe(Effect.flatMap((input) => fence.transaction(beginTransaction(operation, input))))
 
-  const decodeIntentWriteRows = (
-    storeOperation: OutcomeStoreOperation,
-    message: string,
-    rows: unknown,
-  ): Result.Result<readonly string[], MutationStoreError> =>
-    Result.map(
-      Result.mapError(decodeIntentIdRowsResult(rows), (cause) => storeError(storeOperation, 'decode', message, cause)),
-      (decoded) => decoded.map((row) => row.intent_id),
-    )
+  return { begin }
+}
 
-  const readOutcomeIntentSnapshot = (storeOperation: OutcomeStoreOperation, intentId: string) =>
+interface MutationOutcomePostgres {
+  readonly appendOutcome: (
+    definition: MutationOutcomeDefinition,
+    intentId: string,
+    requestHash: string,
+    occurredAt: string,
+    evidence?: Partial<MutationEvidence>,
+    brokerOrderId?: string,
+  ) => Effect.Effect<MutationEvent, MutationStoreError | SqlError | WriterFenceError>
+}
+
+const makeMutationOutcomePostgres = (
+  sql: PgClient.PgClient,
+  fence: WriterFenceService,
+  events: MutationEventPostgres,
+): MutationOutcomePostgres => {
+  const readOutcomeIntentSnapshot = (operation: OutcomeStoreOperation, intentId: string) =>
     sql<{ state: string; terminal_outcome: string | null }>`
       SELECT state, terminal_outcome
       FROM intents
       WHERE intent_id = ${intentId}
       FOR UPDATE
-    `.pipe(
-      Effect.flatMap((rows) =>
-        fromDecision(() =>
-          Result.map(
-            Result.mapError(decodeOutcomeIntentRowsResult(rows), (cause) =>
-              storeError(storeOperation, 'decode', 'stored mutation intent state failed decoding', cause),
-            ),
-            (decoded): MutationReplayIntentSnapshot | undefined => {
-              const intent = decoded[0]
-              return intent === undefined
-                ? undefined
-                : {
-                    state: intent.state,
-                    terminalOutcome: intent.terminal_outcome,
-                  }
-            },
-          ),
-        ),
-      ),
-    )
+    `.pipe(Effect.flatMap((rows) => fromDecision(() => decodeOutcomeIntentSnapshot(operation, rows))))
 
   const transitionFromIoStarted = (
-    storeOperation: OutcomeStoreOperation,
+    operation: OutcomeStoreOperation,
     input: MutationOutcomeInput,
     transition: Extract<MutationIntentTransition, { readonly _tag: 'TransitionFromIoStarted' }>,
   ) =>
@@ -1508,14 +1558,14 @@ const makeStore = Effect.gen(function* () {
       Effect.flatMap((rows) =>
         fromDecision(() =>
           Result.flatMap(
-            decodeIntentWriteRows(storeOperation, 'mutation outcome transition result failed decoding', rows),
-            (decoded) => decideMutationOutcomeWrite(storeOperation, decoded),
+            decodeIntentIds(operation, 'mutation outcome transition result failed decoding', rows),
+            (intentIds) => decideMutationOutcomeWrite(operation, intentIds),
           ),
         ),
       ),
     )
 
-  const recoverUnknownSubmit = (storeOperation: OutcomeStoreOperation, input: MutationOutcomeInput) =>
+  const recoverUnknownSubmit = (operation: OutcomeStoreOperation, input: MutationOutcomeInput) =>
     sql<{ intent_id: string }>`
       UPDATE intents
       SET state = ${IntentState.Recovered}, state_version = state_version + 1, updated_at = ${input.occurredAt}
@@ -1523,12 +1573,12 @@ const makeStore = Effect.gen(function* () {
       RETURNING intent_id
     `.pipe(
       Effect.flatMap((rows) =>
-        fromDecision(() => decodeIntentWriteRows(storeOperation, 'submit recovery result failed decoding', rows)),
+        fromDecision(() => decodeIntentIds(operation, 'submit recovery result failed decoding', rows)),
       ),
     )
 
   const transitionRecoveredSubmit = (
-    storeOperation: OutcomeStoreOperation,
+    operation: OutcomeStoreOperation,
     input: MutationOutcomeInput,
     transition: Extract<MutationIntentTransition, { readonly _tag: 'RecoverSubmit' }>,
   ) =>
@@ -1548,15 +1598,15 @@ const makeStore = Effect.gen(function* () {
       Effect.flatMap((rows) =>
         fromDecision(() =>
           Result.flatMap(
-            decodeIntentWriteRows(storeOperation, 'recovered submit transition result failed decoding', rows),
-            (decoded) => decideRecoveredOutcomeWrite(storeOperation, decoded, false),
+            decodeIntentIds(operation, 'recovered submit transition result failed decoding', rows),
+            (intentIds) => decideRecoveredOutcomeWrite(operation, intentIds, false),
           ),
         ),
       ),
     )
 
   const transitionAcknowledgedSubmit = (
-    storeOperation: OutcomeStoreOperation,
+    operation: OutcomeStoreOperation,
     input: MutationOutcomeInput,
     transition: Extract<MutationIntentTransition, { readonly _tag: 'RecoverSubmit' }>,
   ) =>
@@ -1576,14 +1626,14 @@ const makeStore = Effect.gen(function* () {
       Effect.flatMap((rows) =>
         fromDecision(() =>
           Result.flatMap(
-            decodeIntentWriteRows(storeOperation, 'acknowledged submit transition result failed decoding', rows),
-            (decoded) => decideRecoveredOutcomeWrite(storeOperation, decoded, true),
+            decodeIntentIds(operation, 'acknowledged submit transition result failed decoding', rows),
+            (intentIds) => decideRecoveredOutcomeWrite(operation, intentIds, true),
           ),
         ),
       ),
     )
 
-  const verifyAcknowledgedSubmit = (storeOperation: OutcomeStoreOperation, intentId: string) =>
+  const verifyAcknowledgedSubmit = (operation: OutcomeStoreOperation, intentId: string) =>
     sql<{ acknowledged: boolean }>`
       SELECT EXISTS (
         SELECT 1
@@ -1593,35 +1643,32 @@ const makeStore = Effect.gen(function* () {
     `.pipe(
       Effect.flatMap((rows) =>
         fromDecision(() =>
-          Result.flatMap(
-            Result.mapError(decodeAcknowledgedRowsResult(rows), (cause) =>
-              storeError(storeOperation, 'decode', 'acknowledged submit recovery result failed decoding', cause),
-            ),
-            (decoded) => decideAcknowledgedRecovery(storeOperation, decoded[0]?.acknowledged),
+          Result.flatMap(decodeAcknowledged(operation, rows), (acknowledged) =>
+            decideAcknowledgedRecovery(operation, acknowledged),
           ),
         ),
       ),
     )
 
   const applySubmitRecovery = (
-    storeOperation: OutcomeStoreOperation,
+    operation: OutcomeStoreOperation,
     input: MutationOutcomeInput,
     transition: Extract<MutationIntentTransition, { readonly _tag: 'RecoverSubmit' }>,
   ) =>
     Effect.gen(function* () {
-      const recovered = yield* recoverUnknownSubmit(storeOperation, input)
-      const decision = yield* fromDecision(() => decideSubmitRecoveryWrite(storeOperation, recovered, transition))
+      const recoveredIntentIds = yield* recoverUnknownSubmit(operation, input)
+      const decision = yield* fromDecision(() => decideSubmitRecoveryWrite(operation, recoveredIntentIds, transition))
       switch (decision._tag) {
         case 'TransitionRecoveredIntent':
-          return yield* transitionRecoveredSubmit(storeOperation, input, transition)
+          return yield* transitionRecoveredSubmit(operation, input, transition)
         case 'TransitionAcknowledgedTerminalIntent':
-          return yield* transitionAcknowledgedSubmit(storeOperation, input, transition)
+          return yield* transitionAcknowledgedSubmit(operation, input, transition)
         case 'VerifyAcknowledgedIntent':
-          return yield* verifyAcknowledgedSubmit(storeOperation, input.intentId)
+          return yield* verifyAcknowledgedSubmit(operation, input.intentId)
       }
     })
 
-  const recoverUnknownCancel = (storeOperation: OutcomeStoreOperation, input: MutationOutcomeInput) =>
+  const recoverUnknownCancel = (operation: OutcomeStoreOperation, input: MutationOutcomeInput) =>
     sql<{ intent_id: string }>`
       UPDATE intents
       SET
@@ -1632,18 +1679,18 @@ const makeStore = Effect.gen(function* () {
       RETURNING intent_id
     `.pipe(
       Effect.flatMap((rows) =>
-        fromDecision(() => decodeIntentWriteRows(storeOperation, 'cancel recovery result failed decoding', rows)),
+        fromDecision(() => decodeIntentIds(operation, 'cancel recovery result failed decoding', rows)),
       ),
     )
 
   const applyCancelRecovery = (
-    storeOperation: OutcomeStoreOperation,
+    operation: OutcomeStoreOperation,
     input: MutationOutcomeInput,
     transition: Extract<MutationIntentTransition, { readonly _tag: 'RecoverCancelTerminal' }>,
   ) =>
     Effect.gen(function* () {
-      const recovered = yield* recoverUnknownCancel(storeOperation, input)
-      const fromState = yield* fromDecision(() => decideCancelRecoveryState(storeOperation, recovered))
+      const recoveredIntentIds = yield* recoverUnknownCancel(operation, input)
+      const fromState = yield* fromDecision(() => decideCancelRecoveryState(operation, recoveredIntentIds))
       const transitioned = yield* sql<{ intent_id: string }>`
         UPDATE intents
         SET
@@ -1656,14 +1703,14 @@ const makeStore = Effect.gen(function* () {
       `
       return yield* fromDecision(() =>
         Result.flatMap(
-          decodeIntentWriteRows(storeOperation, 'cancel terminal transition result failed decoding', transitioned),
-          (decoded) => decideMutationOutcomeWrite(storeOperation, decoded),
+          decodeIntentIds(operation, 'cancel terminal transition result failed decoding', transitioned),
+          (intentIds) => decideMutationOutcomeWrite(operation, intentIds),
         ),
       )
     })
 
   const applyOutcomeTransition = (
-    storeOperation: OutcomeStoreOperation,
+    operation: OutcomeStoreOperation,
     input: MutationOutcomeInput,
     transition: MutationIntentTransition,
   ) => {
@@ -1671,32 +1718,32 @@ const makeStore = Effect.gen(function* () {
       case 'KeepIntentState':
         return Effect.void
       case 'TransitionFromIoStarted':
-        return transitionFromIoStarted(storeOperation, input, transition)
+        return transitionFromIoStarted(operation, input, transition)
       case 'RecoverSubmit':
-        return applySubmitRecovery(storeOperation, input, transition)
+        return applySubmitRecovery(operation, input, transition)
       case 'RecoverCancelTerminal':
-        return applyCancelRecovery(storeOperation, input, transition)
+        return applyCancelRecovery(operation, input, transition)
     }
   }
 
   const outcomeTransaction = (
-    storeOperation: OutcomeStoreOperation,
+    operation: OutcomeStoreOperation,
     input: MutationOutcomeInput,
     definition: MutationOutcomeDefinition,
   ) => {
     const facts = decideMutationOutcomeDefinition(definition)
     return Effect.gen(function* () {
-      const previous = yield* readLatest(input.intentId, facts.operation)
-      const currentIntent = yield* readOutcomeIntentSnapshot(storeOperation, input.intentId)
+      const previous = yield* events.readLatest(input.intentId, facts.operation)
+      const currentIntent = yield* readOutcomeIntentSnapshot(operation, input.intentId)
       const decision = yield* fromDecision(() => decideMutationOutcome(input, definition, previous, currentIntent))
       if (decision._tag === 'ReplayMutation') return decision.event
 
       if (decision.cancelFirst._tag === 'RequireNoDurableCancellation') {
-        const cancellation = yield* readLatest(input.intentId, MutationOperation.Cancel)
+        const cancellation = yield* events.readLatest(input.intentId, MutationOperation.Cancel)
         yield* fromDecision(() => decideCancelFirst(decision.cancelFirst, cancellation))
       }
-      yield* appendEvent(storeOperation, decision.event)
-      yield* applyOutcomeTransition(storeOperation, input, decision.transition)
+      yield* events.appendEvent(operation, decision.event)
+      yield* applyOutcomeTransition(operation, input, decision.transition)
       return decision.event
     })
   }
@@ -1709,72 +1756,118 @@ const makeStore = Effect.gen(function* () {
     evidence?: Partial<MutationEvidence>,
     brokerOrderId?: string,
   ) => {
-    const storeOperation = outcomeStoreOperation(definition)
-    return run(
-      storeOperation,
-      fromDecision(() =>
-        Result.map(
-          decodeOutcomeInput(storeOperation, {
-            intentId,
-            requestHash,
-            occurredAt,
-            ...(evidence === undefined ? {} : { evidence }),
-            ...(brokerOrderId === undefined ? {} : { brokerOrderId }),
-          }),
-          (input) => ({ definition, input }),
-        ),
-      ).pipe(
-        Effect.flatMap(({ definition, input }) =>
-          fence.transaction(outcomeTransaction(storeOperation, input, definition)),
-        ),
+    const operation = outcomeStoreOperation(definition)
+    return fromDecision(() =>
+      Result.map(
+        decodeOutcomeInput(operation, {
+          intentId,
+          requestHash,
+          occurredAt,
+          ...(evidence === undefined ? {} : { evidence }),
+          ...(brokerOrderId === undefined ? {} : { brokerOrderId }),
+        }),
+        (input) => ({ definition, input }),
       ),
+    ).pipe(
+      Effect.flatMap(({ definition, input }) => fence.transaction(outcomeTransaction(operation, input, definition))),
     )
   }
 
+  return { appendOutcome }
+}
+
+const makePostgresMutationStore = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  const fence = yield* WriterFence
+  const events = makeMutationEventPostgres(sql)
+  const start = makeMutationStartPostgres(sql, fence, events)
+  const outcome = makeMutationOutcomePostgres(sql, fence, events)
+
+  const run = <A, E, R>(
+    operation: MutationStoreError['operation'],
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, MutationStoreError | WriterFenceError, R> =>
+    effect.pipe(
+      Effect.mapError((cause) =>
+        cause instanceof MutationStoreError || cause instanceof WriterFenceError
+          ? cause
+          : storeError(operation, 'query', `mutation ${operation} failed`, cause),
+      ),
+    )
+
+  const appendOutcome = outcome.appendOutcome
+
   return {
     beginSubmit: (intentId, requestHash, consistencyDelayMs, occurredAt) =>
-      begin(MutationOperation.Submit, intentId, requestHash, consistencyDelayMs, occurredAt),
+      run('begin-submit', start.begin(MutationOperation.Submit, intentId, requestHash, consistencyDelayMs, occurredAt)),
     submitAccepted: (intentId, requestHash, brokerOrderId, evidence, terminalOutcome) =>
-      appendOutcome(
-        {
-          _tag: 'SubmitAccepted',
-          ...(terminalOutcome === undefined ? {} : { terminalOutcome }),
-        },
-        intentId,
-        requestHash,
-        evidence.observedAt,
-        evidence,
-        brokerOrderId,
+      run(
+        'record-submit',
+        appendOutcome(
+          {
+            _tag: 'SubmitAccepted',
+            ...(terminalOutcome === undefined ? {} : { terminalOutcome }),
+          },
+          intentId,
+          requestHash,
+          evidence.observedAt,
+          evidence,
+          brokerOrderId,
+        ),
       ),
     submitRejected: (intentId, requestHash, evidence) =>
-      appendOutcome({ _tag: 'SubmitRejected' }, intentId, requestHash, evidence.observedAt, evidence),
+      run(
+        'record-submit',
+        appendOutcome({ _tag: 'SubmitRejected' }, intentId, requestHash, evidence.observedAt, evidence),
+      ),
     submitUnknown: (intentId, requestHash, occurredAt, evidence, brokerOrderId) =>
-      appendOutcome({ _tag: 'SubmitUnknown' }, intentId, requestHash, occurredAt, evidence, brokerOrderId),
+      run(
+        'record-submit',
+        appendOutcome({ _tag: 'SubmitUnknown' }, intentId, requestHash, occurredAt, evidence, brokerOrderId),
+      ),
     beginCancel: (intentId, requestHash, brokerOrderId, consistencyDelayMs, occurredAt) =>
-      begin(MutationOperation.Cancel, intentId, requestHash, consistencyDelayMs, occurredAt, brokerOrderId),
+      run(
+        'begin-cancel',
+        start.begin(MutationOperation.Cancel, intentId, requestHash, consistencyDelayMs, occurredAt, brokerOrderId),
+      ),
     cancelAccepted: (intentId, requestHash, brokerOrderId, evidence) =>
-      appendOutcome({ _tag: 'CancelAccepted' }, intentId, requestHash, evidence.observedAt, evidence, brokerOrderId),
+      run(
+        'record-cancel',
+        appendOutcome({ _tag: 'CancelAccepted' }, intentId, requestHash, evidence.observedAt, evidence, brokerOrderId),
+      ),
     cancelUnknown: (intentId, requestHash, brokerOrderId, occurredAt, evidence) =>
-      appendOutcome({ _tag: 'CancelUnknown' }, intentId, requestHash, occurredAt, evidence, brokerOrderId),
+      run(
+        'record-cancel',
+        appendOutcome({ _tag: 'CancelUnknown' }, intentId, requestHash, occurredAt, evidence, brokerOrderId),
+      ),
     recoveryFound: (intentId, operation, requestHash, brokerOrderId, evidence, terminalOutcome) =>
-      appendOutcome(
-        {
-          _tag: 'RecoveryFound',
-          operation,
-          ...(terminalOutcome === undefined ? {} : { terminalOutcome }),
-        },
-        intentId,
-        requestHash,
-        evidence.observedAt,
-        evidence,
-        brokerOrderId,
+      run(
+        'record-recovery',
+        appendOutcome(
+          {
+            _tag: 'RecoveryFound',
+            operation,
+            ...(terminalOutcome === undefined ? {} : { terminalOutcome }),
+          },
+          intentId,
+          requestHash,
+          evidence.observedAt,
+          evidence,
+          brokerOrderId,
+        ),
       ),
     recoveryNotFound: (intentId, operation, requestHash, evidence) =>
-      appendOutcome({ _tag: 'RecoveryNotFound', operation }, intentId, requestHash, evidence.observedAt, evidence),
+      run(
+        'record-recovery',
+        appendOutcome({ _tag: 'RecoveryNotFound', operation }, intentId, requestHash, evidence.observedAt, evidence),
+      ),
     recoveryUnknown: (intentId, operation, requestHash, occurredAt, evidence) =>
-      appendOutcome({ _tag: 'RecoveryUnknown', operation }, intentId, requestHash, occurredAt, evidence),
-    latest,
+      run(
+        'record-recovery',
+        appendOutcome({ _tag: 'RecoveryUnknown', operation }, intentId, requestHash, occurredAt, evidence),
+      ),
+    latest: events.latest,
   } satisfies MutationStoreShape
 })
 
-export const MutationStoreLive = Layer.effect(MutationStore, makeStore)
+export const MutationStoreLive = Layer.effect(MutationStore, makePostgresMutationStore)
