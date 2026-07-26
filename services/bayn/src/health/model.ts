@@ -4,6 +4,7 @@ import type { CycleOperationsProjection } from '../cycle-observability'
 import type { QualificationRecord } from '../db/evidence-store'
 import type { CanonicalHashFailure } from '../hash'
 import type { BrokerConfiguration, RuntimeHealth, RuntimeState } from '../runtime-state'
+import type { UtcEpochMillisFailure } from '../time'
 
 export type ProbeResult<A> =
   | { readonly _tag: 'Available'; readonly value: A }
@@ -70,14 +71,25 @@ export type AutonomousCycleFiberObservation =
   | { readonly _tag: 'ExitedSuccessfully' }
   | { readonly _tag: 'ExitedWithFailure'; readonly error: string }
 
+export type HealthProbeClock =
+  | {
+      readonly _tag: 'Available'
+      readonly checkedAt: string
+      readonly checkedAtMs: number
+    }
+  | {
+      readonly _tag: 'Unavailable'
+      readonly observedAtMs: number
+      readonly failure: UtcEpochMillisFailure
+    }
+
 export interface HealthTransitionInput {
   readonly config: RuntimeConfig
   readonly evidenceAvailable: boolean
   readonly results: HealthProbeResults
   readonly broker: BrokerConfiguration | undefined
   readonly cycleFiber: AutonomousCycleFiberObservation
-  readonly checkedAt: string
-  readonly checkedAtMs: number
+  readonly clock: HealthProbeClock
 }
 
 export interface HealthFailureSummary {
@@ -90,7 +102,8 @@ export interface HealthTransition {
   readonly next: RuntimeState
   readonly health: RuntimeHealth
   readonly failedDependencies: readonly HealthDependencyName[]
-  readonly checkedAt: string
+  readonly checkedAt: string | null
+  readonly clockFailure: UtcEpochMillisFailure | null
 }
 
 export type LogAnnotation = string | number | boolean

@@ -1,5 +1,8 @@
+import { Result } from 'effect'
+
 import { Authority, KillState, ReconciliationStatus } from './paper'
 import { CycleState, type CycleTerminalReason } from './cycle'
+import { utcInstantFromEpochMillisResult, type UtcEpochMillisFailure } from './time'
 
 export interface CycleOperationsThresholds {
   readonly cycleStallThresholdMs: number
@@ -115,6 +118,23 @@ export interface CycleOperationsStatus extends CycleOperationsProjection {
   readonly error: string | null
 }
 
+export type CycleOperationsStatusFailure = {
+  readonly _tag: 'CycleOperationsClockInvalid'
+  readonly nowMs: number
+  readonly cause: UtcEpochMillisFailure
+}
+
+export const renderCycleOperationsStatusFailure = (failure: CycleOperationsStatusFailure): string => {
+  switch (failure.cause._tag) {
+    case 'UtcEpochMillisNotSafeInteger':
+      return `cycle operations clock must be a safe integer epoch millisecond: observed=${failure.nowMs}`
+    case 'UtcEpochMillisOutOfRange':
+      return `cycle operations clock is outside the supported UTC range: observed=${failure.nowMs}`
+  }
+  const exhaustive: never = failure.cause
+  return exhaustive
+}
+
 const ageAt = (instant: string | null, nowMs: number): number | null =>
   instant === null ? null : Math.max(0, nowMs - Date.parse(instant))
 
@@ -203,13 +223,13 @@ const lifecycleCondition = (
   return [CycleOperationsCondition.Failed, CycleOperationsReason.MultipleUnfinishedCycles]
 }
 
-export const deriveCycleOperationsStatus = (
+const deriveCycleOperationsStatusWithCheckedAt = (
   projection: CycleOperationsProjection,
   nowMs: number,
   maximumAuthority: Authority,
   thresholds: CycleOperationsThresholds,
+  checkedAt: string,
 ): CycleOperationsStatus => {
-  const checkedAt = new Date(nowMs).toISOString()
   const attemptAgeMs = ageAt(projection.current?.updatedAt ?? null, nowMs)
   const oldestUnresolvedMutationAgeMs = ageAt(projection.mutations.oldestUnresolvedAt, nowMs)
   const reconciliationAgeMs = ageAt(projection.reconciliation?.reconciledAt ?? null, nowMs)
@@ -288,3 +308,25 @@ export const deriveCycleOperationsStatus = (
     error: null,
   }
 }
+
+export const deriveCycleOperationsStatusResult = (
+  projection: CycleOperationsProjection,
+  nowMs: number,
+  maximumAuthority: Authority,
+  thresholds: CycleOperationsThresholds,
+): Result.Result<CycleOperationsStatus, CycleOperationsStatusFailure> =>
+  Result.map(
+    Result.mapError(
+      utcInstantFromEpochMillisResult(nowMs),
+      (cause): CycleOperationsStatusFailure => ({ _tag: 'CycleOperationsClockInvalid', nowMs, cause }),
+    ),
+    (checkedAt) => deriveCycleOperationsStatusWithCheckedAt(projection, nowMs, maximumAuthority, thresholds, checkedAt),
+  )
+
+export const deriveCycleOperationsStatus = (
+  projection: CycleOperationsProjection,
+  nowMs: number,
+  maximumAuthority: Authority,
+  thresholds: CycleOperationsThresholds,
+): CycleOperationsStatus =>
+  Result.getOrThrow(deriveCycleOperationsStatusResult(projection, nowMs, maximumAuthority, thresholds))

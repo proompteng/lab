@@ -1,4 +1,4 @@
-import { Cause, Clock, Duration, Effect, Exit, Fiber, Option, Ref, Schedule } from 'effect'
+import { Cause, Clock, Duration, Effect, Exit, Fiber, Option, Ref, Result, Schedule } from 'effect'
 
 import type { BrokerReadShape } from '../broker/alpaca'
 import type { RuntimeConfig } from '../config'
@@ -10,7 +10,7 @@ import { Journal } from '../ledger'
 import { MarketData } from '../market-data'
 import { databaseOperation, withinDeadline } from '../operations'
 import type { BrokerConfiguration, RuntimeEvidence, RuntimeState } from '../runtime-state'
-import { utcInstantFromEpochMillis } from '../time'
+import { utcInstantFromEpochMillisResult } from '../time'
 import {
   deriveHealthLogDecisions,
   deriveHealthTransition,
@@ -234,7 +234,11 @@ export const probe = (
       broker,
     )
     const checkedAtMs = yield* Clock.currentTimeMillis
-    const checkedAt = utcInstantFromEpochMillis(checkedAtMs)
+    const checkedAtResult = utcInstantFromEpochMillisResult(checkedAtMs)
+    const clock = Result.match(checkedAtResult, {
+      onFailure: (failure) => ({ _tag: 'Unavailable' as const, observedAtMs: checkedAtMs, failure }),
+      onSuccess: (checkedAt) => ({ _tag: 'Available' as const, checkedAt, checkedAtMs }),
+    })
     const cycleFiber = sampleAutonomousCycleFiber(autonomousCycleFiber)
     const transition = yield* Ref.modify(state, (current) => {
       const decision = deriveHealthTransition(current, {
@@ -243,8 +247,7 @@ export const probe = (
         results,
         broker: brokerConfiguration(broker),
         cycleFiber,
-        checkedAt,
-        checkedAtMs,
+        clock,
       })
       return [decision, decision.next] as const
     })

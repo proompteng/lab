@@ -1,4 +1,24 @@
-import { Clock, DateTime, Effect, pipe } from 'effect'
+import { Clock, DateTime, Effect, Option, pipe, Result } from 'effect'
+
+export type UtcEpochMillisFailure =
+  | {
+      readonly _tag: 'UtcEpochMillisNotSafeInteger'
+      readonly epochMillis: number
+    }
+  | {
+      readonly _tag: 'UtcEpochMillisOutOfRange'
+      readonly epochMillis: number
+    }
+
+export const utcInstantFromEpochMillisResult = (epochMillis: number): Result.Result<string, UtcEpochMillisFailure> => {
+  if (!Number.isSafeInteger(epochMillis)) {
+    return Result.fail({ _tag: 'UtcEpochMillisNotSafeInteger', epochMillis })
+  }
+  return Option.match(DateTime.make(epochMillis), {
+    onNone: () => Result.fail({ _tag: 'UtcEpochMillisOutOfRange', epochMillis }),
+    onSome: (dateTime) => Result.succeed(DateTime.formatIso(dateTime)),
+  })
+}
 
 export const utcInstantFromEpochMillis = (epochMillis: number): string =>
   DateTime.formatIso(DateTime.makeUnsafe(epochMillis))

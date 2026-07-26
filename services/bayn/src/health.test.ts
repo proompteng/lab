@@ -28,6 +28,16 @@ import { initialState, type RuntimeState } from './runtime-state'
 import { makeSnapshot } from './test-fixtures'
 
 const brokerAccountId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+const availableClock = (checkedAt: string) =>
+  ({ _tag: 'Available', checkedAt, checkedAtMs: Date.parse(checkedAt) }) as const
+const unsafeClock = (observedAtMs: number) =>
+  ({
+    _tag: 'Unavailable',
+    observedAtMs,
+    failure: Number.isSafeInteger(observedAtMs)
+      ? ({ _tag: 'UtcEpochMillisOutOfRange', epochMillis: observedAtMs } as const)
+      : ({ _tag: 'UtcEpochMillisNotSafeInteger', epochMillis: observedAtMs } as const),
+  }) as const
 const accountResult = (id = brokerAccountId): ReadResult<Account> => ({
   value: {
     id,
@@ -364,7 +374,6 @@ describe('Bayn continuous health', () => {
     const current = readyState()
     const original = structuredClone(current)
     const checkedAt = '2026-07-20T00:04:00.000Z'
-    const checkedAtMs = Date.parse(checkedAt)
     const pending = pendingCycle('2026-07-20T00:03:30.000Z')
     const transition = deriveHealthTransition(current, {
       config,
@@ -386,8 +395,7 @@ describe('Bayn continuous health', () => {
       },
       broker: undefined,
       cycleFiber: { _tag: 'NotProvided' },
-      checkedAt,
-      checkedAtMs,
+      clock: availableClock(checkedAt),
     })
 
     expect(current).toEqual(original)
@@ -405,6 +413,7 @@ describe('Bayn continuous health', () => {
       },
       failedDependencies: ['signal'],
       checkedAt,
+      clockFailure: null,
     })
     expect(deriveHealthLogDecisions(transition)).toEqual([
       {
@@ -438,6 +447,374 @@ describe('Bayn continuous health', () => {
         },
       },
     ])
+  })
+
+  test('does not manufacture a cycle-runner stall from a rejected finite clock', () => {
+    const progressAt = '2026-07-20T00:00:00.000Z'
+    const current: RuntimeState = {
+      ...readyState(),
+      autonomousCycleLoop: {
+        configured: true,
+        startedAt: progressAt,
+        lastPass: { result: 'SUCCESS', observedAt: progressAt, outcome: 'NO_PUBLICATION' },
+      },
+    }
+    const transition = deriveHealthTransition(current, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: { _tag: 'Available', value: emptyCycleProjection() },
+        broker: null,
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'Running' },
+      clock: unsafeClock(8_640_000_000_000_001),
+    })
+
+    expect(transition).toMatchObject({
+      next: {
+        status: 'DEGRADED',
+        error: 'cycle clock: cycle operations clock is outside the supported UTC range: observed=8640000000000001',
+        health: {
+          checkedAt: null,
+          dependencies: {
+            cycleRunner: {
+              status: 'AVAILABLE',
+              checkedAt: '2026-07-20T00:00:00.000Z',
+              error: null,
+            },
+          },
+        },
+        cycle: {
+          condition: CycleOperationsCondition.Unknown,
+          reason: CycleOperationsReason.ObservationUnavailable,
+          checkedAt: null,
+          error: 'cycle operations clock is outside the supported UTC range: observed=8640000000000001',
+        },
+      },
+      failedDependencies: ['cycle'],
+      checkedAt: null,
+      clockFailure: {
+        _tag: 'UtcEpochMillisOutOfRange',
+        epochMillis: 8_640_000_000_000_001,
+      },
+    })
+  })
+
+  test('preserves the prior validated cycle-runner failure when the clock is unavailable', () => {
+    const progressAt = '2026-07-20T00:00:00.000Z'
+    const previousRunner = {
+      status: 'UNAVAILABLE' as const,
+      checkedAt: '2026-07-20T00:06:00.000Z',
+      error: 'autonomous cycle loop has not completed a successful pass for 360000ms',
+    }
+    const ready = readyState()
+    const current: RuntimeState = {
+      ...ready,
+      health: {
+        ...ready.health,
+        dependencies: { ...ready.health.dependencies, cycleRunner: previousRunner },
+      },
+      autonomousCycleLoop: {
+        configured: true,
+        startedAt: progressAt,
+        lastPass: { result: 'SUCCESS', observedAt: progressAt, outcome: 'NO_PUBLICATION' },
+      },
+    }
+    const transition = deriveHealthTransition(current, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: { _tag: 'Available', value: emptyCycleProjection() },
+        broker: null,
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'Running' },
+      clock: unsafeClock(8_640_000_000_000_001),
+    })
+
+    expect(transition).toMatchObject({
+      next: {
+        status: 'DEGRADED',
+        error: `${`cycleRunner: ${previousRunner.error}`}; cycle clock: cycle operations clock is outside the supported UTC range: observed=8640000000000001`,
+        health: { dependencies: { cycleRunner: previousRunner } },
+      },
+      failedDependencies: ['cycleRunner', 'cycle'],
+      clockFailure: {
+        _tag: 'UtcEpochMillisOutOfRange',
+        epochMillis: 8_640_000_000_000_001,
+      },
+    })
+  })
+
+  test('degrades with a closed cycle-classification failure instead of defecting', () => {
+    const current = readyState()
+    const transition = deriveHealthTransition(current, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: { _tag: 'Available', value: emptyCycleProjection() },
+        broker: null,
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: unsafeClock(Number.NaN),
+    })
+
+    expect(transition).toMatchObject({
+      next: {
+        status: 'DEGRADED',
+        error: 'cycle clock: cycle operations clock must be a safe integer epoch millisecond: observed=NaN',
+        cycle: {
+          condition: CycleOperationsCondition.Unknown,
+          reason: CycleOperationsReason.ObservationUnavailable,
+          checkedAt: null,
+          error: 'cycle operations clock must be a safe integer epoch millisecond: observed=NaN',
+        },
+        health: { checkedAt: null },
+      },
+      failedDependencies: ['cycle'],
+      checkedAt: null,
+      clockFailure: { _tag: 'UtcEpochMillisNotSafeInteger', epochMillis: Number.NaN },
+    })
+    const logDecisions = deriveHealthLogDecisions(transition)
+    expect(logDecisions).toMatchObject([
+      {
+        _tag: 'RuntimeStatusChanged',
+        level: 'WARNING',
+        message: 'Bayn health changed to DEGRADED',
+        annotations: {
+          service: 'bayn',
+          probeSequence: 2,
+          failedDependencies: 'cycle',
+        },
+      },
+      {
+        _tag: 'CycleOperationsChanged',
+        level: 'INFO',
+        message: 'Bayn cycle operations changed to UNKNOWN',
+        annotations: {
+          service: 'bayn',
+          cycleCondition: CycleOperationsCondition.Unknown,
+          cycleReason: CycleOperationsReason.ObservationUnavailable,
+        },
+      },
+    ])
+    expect(logDecisions.every((decision) => !('checkedAt' in decision.annotations))).toBe(true)
+  })
+
+  test('reports an unavailable cycle dependency once', () => {
+    const current = readyState()
+    const checkedAt = '2026-07-20T00:04:00.000Z'
+    const transition = deriveHealthTransition(current, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: { _tag: 'Unavailable', error: 'cycle projection timed out' },
+        broker: null,
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: availableClock(checkedAt),
+    })
+
+    expect(transition).toMatchObject({
+      next: {
+        status: 'DEGRADED',
+        error: 'cycle: cycle projection timed out',
+        cycle: {
+          condition: CycleOperationsCondition.Unknown,
+          reason: CycleOperationsReason.ObservationUnavailable,
+          checkedAt,
+          error: 'cycle projection timed out',
+        },
+      },
+      failedDependencies: ['cycle'],
+    })
+  })
+
+  test('retains clock failure alongside an unavailable cycle projection and logs clock recovery', () => {
+    const projectionError = 'cycle projection timed out'
+    const clockError = 'cycle operations clock must be a safe integer epoch millisecond: observed=NaN'
+    const failed = deriveHealthTransition(readyState(), {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: { _tag: 'Unavailable', error: projectionError },
+        broker: null,
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: unsafeClock(Number.NaN),
+    })
+
+    expect(failed).toMatchObject({
+      next: {
+        status: 'DEGRADED',
+        error: `cycle: ${projectionError}; cycle clock: ${clockError}`,
+        cycle: {
+          condition: CycleOperationsCondition.Unknown,
+          reason: CycleOperationsReason.ObservationUnavailable,
+          checkedAt: null,
+          error: `${projectionError}; ${clockError}`,
+        },
+      },
+      failedDependencies: ['cycle'],
+      checkedAt: null,
+      clockFailure: { _tag: 'UtcEpochMillisNotSafeInteger', epochMillis: Number.NaN },
+    })
+
+    const checkedAt = '2026-07-20T00:04:00.000Z'
+    const recoveredClock = deriveHealthTransition(failed.next, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: { _tag: 'Unavailable', error: projectionError },
+        broker: null,
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: availableClock(checkedAt),
+    })
+
+    expect(recoveredClock).toMatchObject({
+      next: {
+        status: 'DEGRADED',
+        error: `cycle: ${projectionError}`,
+        cycle: {
+          condition: CycleOperationsCondition.Unknown,
+          reason: CycleOperationsReason.ObservationUnavailable,
+          checkedAt,
+          error: projectionError,
+        },
+      },
+      failedDependencies: ['cycle'],
+      checkedAt,
+      clockFailure: null,
+    })
+    expect(deriveHealthLogDecisions(recoveredClock)).toMatchObject([
+      {
+        _tag: 'CycleOperationsChanged',
+        level: 'INFO',
+        message: 'Bayn cycle operations changed to UNKNOWN',
+        annotations: {
+          service: 'bayn',
+          checkedAt,
+          cycleCondition: CycleOperationsCondition.Unknown,
+          cycleReason: CycleOperationsReason.ObservationUnavailable,
+          cycleError: projectionError,
+        },
+      },
+    ])
+  })
+
+  test('logs a changed UNKNOWN cycle failure without fabricating its time', () => {
+    const checkedAt = '2026-07-20T00:04:00.000Z'
+    const unavailable = deriveHealthTransition(readyState(), {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: { _tag: 'Unavailable', error: 'cycle projection timed out' },
+        broker: null,
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: availableClock(checkedAt),
+    }).next
+    const invalidClock = deriveHealthTransition(unavailable, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: { _tag: 'Available', value: emptyCycleProjection() },
+        broker: null,
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: unsafeClock(Number.NaN),
+    })
+
+    expect(deriveHealthLogDecisions(invalidClock)).toMatchObject([
+      {
+        _tag: 'CycleOperationsChanged',
+        level: 'INFO',
+        message: 'Bayn cycle operations changed to UNKNOWN',
+        annotations: {
+          service: 'bayn',
+          cycleCondition: CycleOperationsCondition.Unknown,
+          cycleReason: CycleOperationsReason.ObservationUnavailable,
+          cycleError: 'cycle operations clock must be a safe integer epoch millisecond: observed=NaN',
+        },
+      },
+    ])
+    expect(deriveHealthLogDecisions(invalidClock).every((decision) => !('checkedAt' in decision.annotations))).toBe(
+      true,
+    )
+  })
+
+  test('keeps the repeating probe alive when the injected clock is invalid', async () => {
+    const initial = readyState()
+    const state = await Effect.runPromise(Ref.make(initial))
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Number.NaN)
+        yield* provideHealthyDependencies(initial, probe(config, state))
+        expect(yield* Ref.get(state)).toMatchObject({
+          status: 'DEGRADED',
+          error: 'cycle clock: cycle operations clock must be a safe integer epoch millisecond: observed=NaN',
+          health: {
+            checkedAt: null,
+            dependencies: {
+              postgresql: { checkedAt: null },
+              signal: { checkedAt: null },
+              tigerBeetle: { checkedAt: null },
+              evidence: { checkedAt: null },
+              cycle: { checkedAt: null },
+              cycleRunner: { checkedAt: null },
+            },
+          },
+          cycle: {
+            condition: CycleOperationsCondition.Unknown,
+            reason: CycleOperationsReason.ObservationUnavailable,
+            checkedAt: null,
+            error: 'cycle operations clock must be a safe integer epoch millisecond: observed=NaN',
+          },
+        })
+      }),
+    ).pipe(Effect.provide(TestClock.layer()))
+
+    await Effect.runPromise(program)
   })
 
   test('requires the configured broker account GET while keeping execution disabled under OBSERVE', async () => {
