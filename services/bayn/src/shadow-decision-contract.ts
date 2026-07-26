@@ -1,7 +1,7 @@
 import { Data, Result, Schema } from 'effect'
 
 import { intentIdForPlan } from './execution/intents'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { PositiveMicrosSchema, RiskOutcome } from './paper'
 import { EvaluationSchema, Reason } from './risk'
 import { Sha256Schema, StrictNonEmptyStringSchema, UtcInstantSchema, strictParseOptions } from './schemas'
@@ -127,7 +127,11 @@ const documentHashIssues = (
   document: typeof ObserveShadowDecisionDocumentSemanticSchema.Type,
 ): readonly Schema.FilterIssue[] => {
   const { contentHash, ...material } = document
-  return contentHash === canonicalHashV1(material)
+  const expectedHash = canonicalHashV1Result(material)
+  if (Result.isFailure(expectedHash)) {
+    return [{ path: ['contentHash'], issue: 'shadow decision material must be canonicalizable' }]
+  }
+  return contentHash === expectedHash.success
     ? []
     : [{ path: ['contentHash'], issue: 'must match the canonical shadow decision material' }]
 }
@@ -185,13 +189,11 @@ export const makeObserveShadowDecisionDocument = (
     return Result.fail(makeDocumentFailure('contract', 'shadow decision material must be an object'))
   }
   return Result.flatMap(
-    Result.try({
-      try: () => ({ ...material, contentHash: canonicalHashV1(material) }),
-      catch: (cause) =>
-        makeDocumentFailure('canonicalization', 'shadow decision material is not canonicalizable', cause),
-    }),
-    (candidate) =>
-      Result.mapError(decodeDocumentResult(candidate), (cause) =>
+    Result.mapError(canonicalHashV1Result(material), (cause) =>
+      makeDocumentFailure('canonicalization', 'shadow decision material is not canonicalizable', cause),
+    ),
+    (contentHash) =>
+      Result.mapError(decodeDocumentResult({ ...material, contentHash }), (cause) =>
         makeDocumentFailure('contract', 'shadow decision material failed its durable contract', cause),
       ),
   )

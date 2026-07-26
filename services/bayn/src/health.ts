@@ -13,7 +13,7 @@ import {
 import { CycleObservability } from './db/cycle-observability'
 import { EvidenceStore, type QualificationRecord, type RecoveredEvaluationEvidence } from './db/evidence-store'
 import { OperationalError, operationalError } from './errors'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result, renderCanonicalJsonFailure, type CanonicalHashFailure } from './hash'
 import { Journal } from './ledger'
 import { MarketData } from './market-data'
 import { databaseOperation, withinDeadline } from './operations'
@@ -82,7 +82,7 @@ export type DurableEvidenceFailure =
         | 'OBSERVED_DURABLE_EVIDENCE'
         | 'EXPECTED_QUALIFICATION'
         | 'OBSERVED_QUALIFICATION'
-      readonly cause: unknown
+      readonly cause: CanonicalHashFailure
     }
 
 export type HealthDependencyName = keyof RuntimeHealth['dependencies'] | 'broker'
@@ -237,10 +237,10 @@ const canonicalHashResult = (
   material: Extract<DurableEvidenceFailure, { readonly _tag: 'CanonicalizationFailed' }>['material'],
   value: unknown,
 ): Result.Result<string, DurableEvidenceFailure> =>
-  Result.try({
-    try: () => canonicalHashV1(value),
-    catch: (cause): DurableEvidenceFailure => ({ _tag: 'CanonicalizationFailed', runId, material, cause }),
-  })
+  Result.mapError(
+    canonicalHashV1Result(value),
+    (cause): DurableEvidenceFailure => ({ _tag: 'CanonicalizationFailed', runId, material, cause }),
+  )
 
 export const validateDurableEvidence = (
   recovered: RecoveredEvaluationEvidence | null,
@@ -313,7 +313,7 @@ export const renderDurableEvidenceFailure = (failure: DurableEvidenceFailure): s
     case 'TerminalQualificationMismatch':
       return `terminal qualification ${failure.runId} hash ${failure.observedQualificationHash} differs from active proof hash ${failure.expectedQualificationHash}`
     case 'CanonicalizationFailed':
-      return `canonicalization of ${failure.material} for run ${failure.runId} failed: ${String(failure.cause)}`
+      return `canonicalization of ${failure.material} for run ${failure.runId} failed: ${renderCanonicalJsonFailure(failure.cause)}`
   }
   const exhaustive: never = failure
   return exhaustive

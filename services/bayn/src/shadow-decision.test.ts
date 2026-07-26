@@ -763,6 +763,15 @@ describe('OBSERVE shadow decision', () => {
       ['make', 'canonicalization'],
       ['decode', 'contract'],
     ])
+    const cyclicFailure = constructorFailures[2]
+    if (Result.isFailure(cyclicFailure)) {
+      expect(cyclicFailure.failure.cause).toEqual({
+        _tag: 'CanonicalJsonFailure',
+        path: '$.self',
+        reason: 'cycle',
+        actualType: 'object',
+      })
+    }
 
     const contractFailures = shadowContractFailurePairs.map(
       (pair) => new ShadowDecisionContractFailure({ ...pair, message: 'failure-pair coverage' }),

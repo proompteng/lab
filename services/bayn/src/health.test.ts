@@ -275,12 +275,14 @@ describe('Bayn continuous health', () => {
       if (Result.isFailure(canonicalization) && canonicalization.failure._tag === 'CanonicalizationFailed') {
         expect(canonicalization.failure.runId).toBe(evidence.evaluation.runId)
         expect(canonicalization.failure.material).toBe('EXPECTED_DURABLE_EVIDENCE')
-        expect(canonicalization.failure.cause).toBeInstanceOf(TypeError)
-        expect(String(canonicalization.failure.cause)).toBe(
-          'TypeError: $.persistence.runId contains an invalid Unicode surrogate',
-        )
+        expect(canonicalization.failure.cause).toEqual({
+          _tag: 'CanonicalJsonFailure',
+          path: '$.persistence.runId',
+          reason: 'invalid-unicode-surrogate',
+          actualType: 'string',
+        })
         expect(renderDurableEvidenceFailure(canonicalization.failure)).toBe(
-          `canonicalization of EXPECTED_DURABLE_EVIDENCE for run ${evidence.evaluation.runId} failed: TypeError: $.persistence.runId contains an invalid Unicode surrogate`,
+          `canonicalization of EXPECTED_DURABLE_EVIDENCE for run ${evidence.evaluation.runId} failed: invalid-unicode-surrogate at $.persistence.runId (string)`,
         )
       }
     }
@@ -346,10 +348,15 @@ describe('Bayn continuous health', () => {
       durableCause._tag === 'CanonicalizationFailed' &&
       'cause' in durableCause
     ) {
-      expect(durableCause.cause).toBeInstanceOf(TypeError)
+      expect(durableCause.cause).toEqual({
+        _tag: 'CanonicalJsonFailure',
+        path: '$.persistence.runId',
+        reason: 'invalid-unicode-surrogate',
+        actualType: 'string',
+      })
     }
     expect(durableError.message).toBe(
-      `durable evidence verification failed: canonicalization of EXPECTED_DURABLE_EVIDENCE for run ${evidence.evaluation.runId} failed: TypeError: $.persistence.runId contains an invalid Unicode surrogate`,
+      `durable evidence verification failed: canonicalization of EXPECTED_DURABLE_EVIDENCE for run ${evidence.evaluation.runId} failed: invalid-unicode-surrogate at $.persistence.runId (string)`,
     )
   })
 

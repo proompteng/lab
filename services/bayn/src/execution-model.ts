@@ -1,6 +1,6 @@
 import { pipe, Result } from 'effect'
 
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
 import type { ExecutionModel, IsoDate, OrderRejectionReason, OrderStatus } from './types'
 import { roundUnsignedHalfUp, type UnsignedRoundHalfUpFailure } from './unsigned-round-half-up'
 
@@ -121,7 +121,7 @@ export type ExecutionModelFailure =
   | {
       readonly _tag: 'OrderOutcomeCanonicalizationFailed'
       readonly identity: unknown
-      readonly cause: unknown
+      readonly cause: CanonicalHashFailure
     }
   | {
       readonly _tag: 'InvalidFeeCostMultiplier'
@@ -461,14 +461,14 @@ export const makeOrderOutcome = (input: OrderOutcomeInput): ExecutionResult<Orde
             integerNumber(input.model.partialFills.probabilityPpm, 'partial fill probability', 0, Number(PPM)),
             Result.flatMap((probability) =>
               pipe(
-                Result.try({
-                  try: () => canonicalHashV1(input.identity),
-                  catch: (cause): ExecutionModelFailure => ({
+                Result.mapError(
+                  canonicalHashV1Result(input.identity),
+                  (cause): ExecutionModelFailure => ({
                     _tag: 'OrderOutcomeCanonicalizationFailed',
                     identity: input.identity,
                     cause,
                   }),
-                }),
+                ),
                 Result.flatMap((identityHash) => {
                   const bucket = BigInt(`0x${identityHash.slice(0, 16)}`) % PPM
                   if (bucket >= probability) {
