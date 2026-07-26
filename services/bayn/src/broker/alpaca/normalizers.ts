@@ -347,12 +347,6 @@ export const normalizeOrdersResult = (
 ): Result.Result<readonly Order[], BrokerReadContractFailure> =>
   Result.all(raw.map((order) => normalizeOrderResult(order, accountId, observedAt)))
 
-export const normalizeOrder = (raw: typeof OrderResponseSchema.Type, accountId: string, observedAt: string): Order => {
-  const result = normalizeOrderResult(raw, accountId, observedAt)
-  if (Result.isFailure(result)) throw new Error(result.failure.message)
-  return result.success
-}
-
 export const normalizeFillActivityResult = (
   raw: typeof FillActivityResponseSchema.Type,
   accountId: string,

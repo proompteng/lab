@@ -1,8 +1,9 @@
-import { Effect, Layer } from 'effect'
+import { Effect, Layer, Result } from 'effect'
 import { HttpClient } from 'effect/unstable/http'
 
 import { alpacaHttpLayer, make } from './alpaca/http'
-import { BrokerRead, type ReadOptions } from './alpaca/model'
+import { BrokerRead, OrderResponseSchema, type Order, type ReadOptions } from './alpaca/model'
+import { normalizeOrderResult } from './alpaca/normalizers'
 import { verifyReadAccess } from './alpaca/preflight'
 
 export {
@@ -59,8 +60,11 @@ export {
   type ReadResult,
 } from './alpaca/model'
 export { alpacaHttpLayer, make, makeProxyDispatcher } from './alpaca/http'
-export { normalizeOrder } from './alpaca/normalizers'
 export { verifyReadAccess } from './alpaca/preflight'
+
+/** @deprecated Mutation compatibility adapter. Read-side normalization uses `normalizeOrderResult`. */
+export const normalizeOrder = (raw: typeof OrderResponseSchema.Type, accountId: string, observedAt: string): Order =>
+  Result.getOrThrow(normalizeOrderResult(raw, accountId, observedAt))
 
 export const layer = (
   options: ReadOptions,

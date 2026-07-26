@@ -303,12 +303,16 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
 
     const assetBySymbol = (symbol: string) =>
       decodeInput('asset-by-symbol', decodeAssetSymbol, symbol, 'invalid Alpaca asset symbol').pipe(
-        Effect.flatMap((decoded) => readJson('asset-by-symbol', assetBySymbolUrl(decoded), decodeAsset)),
-        Effect.flatMap((result) =>
+        Effect.flatMap((decoded) =>
+          readJson('asset-by-symbol', assetBySymbolUrl(decoded), decodeAsset).pipe(
+            Effect.map((result) => ({ decoded, result })),
+          ),
+        ),
+        Effect.flatMap(({ decoded, result }) =>
           normalizeRead(
             'asset-by-symbol',
             result.evidence,
-            normalizeAssetResult(result.value, symbol, result.evidence.observedAt),
+            normalizeAssetResult(result.value, decoded, result.evidence.observedAt),
           ),
         ),
       )
