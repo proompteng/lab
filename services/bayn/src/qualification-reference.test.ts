@@ -71,7 +71,7 @@ describe('independent qualification reference', () => {
         assert(build.metafile !== undefined, 'dependency-boundary build omitted its metafile')
         return Object.keys(build.metafile.inputs).map((path) => path.replaceAll('\\', '/'))
       }
-      const productionEvaluator = /(?:^|\/)services\/bayn\/src\/risk-balanced-trend(?:\.ts|\/)/
+      const productionEvaluator = /(?:^|\/)risk-balanced-trend(?:\.ts|\/)/
       const productionInputs = await buildInputs(new URL('./risk-balanced-trend/index.ts', import.meta.url))
       const referenceInputs = await buildInputs(new URL('./audit/reference.ts', import.meta.url))
 
