@@ -1,6 +1,7 @@
 import { Result, Schema } from 'effect'
 
 import type { RuntimeProvenance } from './contracts'
+import type { ExecutionModelFailure } from './execution-model'
 import { InputManifestArtifactSchema } from './evidence-contracts'
 import {
   defaultQualificationStatisticsPolicyDocument,
@@ -28,6 +29,7 @@ import type { DailyBar, EvaluationResult, InputManifest, IsoDate, Protocol } fro
 
 export type CurrentStrategyDecision = CurrentRiskBalancedTrendDecision
 export type CurrentStrategyDecisionCycleBinding = CurrentDecisionCycleBinding
+export type CurrentStrategyDecisionFailure = ExecutionModelFailure
 
 export interface Strategy {
   readonly name: string
@@ -41,7 +43,7 @@ export interface Strategy {
     bars: readonly DailyBar[],
     manifest: InputManifest,
     cycleBinding: CurrentStrategyDecisionCycleBinding,
-  ) => CurrentStrategyDecision
+  ) => Result.Result<CurrentStrategyDecision, CurrentStrategyDecisionFailure>
   readonly prepareLock: (
     manifest: InputManifest,
     sessionDates: readonly IsoDate[],

@@ -164,13 +164,15 @@ const makeRoundTripInput = (dayCount: number): MarkedEquityReconciliationInput =
       }
       const orderId = canonicalHashV1({ runId: input.runId, kind: 'order', ...orderPayload })
       orders.push({ id: orderId, ...orderPayload })
-      const terms = makeFillTerms(
+      const termsResult = makeFillTerms(
         side,
         quantityMicros,
         referencePriceMicros,
         input.simulation.executionModel,
         costMultiplierMicros,
       )
+      assert(Result.isSuccess(termsResult), 'reconciliation fixture fill terms must succeed')
+      const terms = termsResult.success
       const fillPayload = {
         orderId,
         decisionId,
@@ -275,6 +277,7 @@ type IssueLeaf =
   | 'ComputationFailed/FillTerms'
   | 'ComputationFailed/FeeSchedule'
   | 'ComputationFailed/CashYield'
+  | 'ComputationFailed/PositionNotional'
 
 const issueLeaf = (issue: SimulationReconciliationIssue): IssueLeaf => {
   switch (issue._tag) {
@@ -505,7 +508,12 @@ describe('independent marked-equity reconciliation', () => {
     assert(fillIssue._tag === 'ComputationFailed', 'fill calculation must retain its failure')
     expect(Object.isFrozen(fillIssue.computation)).toBe(true)
     expect(Reflect.set(fillIssue.computation, 'costMultiplierMicros', '0')).toBe(false)
-    expect(fillIssue.cause).toEqual(expect.objectContaining({ message: 'price increment must be positive' }))
+    expect(fillIssue.cause).toEqual({
+      _tag: 'InvalidUnsignedInteger',
+      field: 'price increment',
+      value: '0',
+      minimum: 1n,
+    })
     expect(Object.isFrozen(fillIssue.cause as object)).toBe(false)
 
     const zeroFeeIncrement: SimulationTrace = {

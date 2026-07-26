@@ -20,7 +20,7 @@ describe('independent qualification reference', () => {
     const actual = assertSuccess(
       evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance),
     )
-    const reference = evaluateReference(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+    const reference = assertSuccess(evaluateReference(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance))
 
     expect(reference.runId).toBe(actual.runId)
     expect(reference.protocolHash).toBe(actual.protocolHash)
@@ -40,9 +40,9 @@ describe('independent qualification reference', () => {
   test('binds the result to raw market data', () => {
     const snapshot = makeSnapshot(900)
     const provenance = makeTestProvenance()
-    const original = evaluateReference(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+    const original = assertSuccess(evaluateReference(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance))
     const bars = snapshot.bars.map((bar, index) => (index === 4_000 ? { ...bar, close: bar.close * 1.5 } : bar))
-    const changed = evaluateReference(bars, snapshot.manifest, fixtureProtocol, provenance)
+    const changed = assertSuccess(evaluateReference(bars, snapshot.manifest, fixtureProtocol, provenance))
 
     expect(canonicalHashV1(changed.strategy.decisions)).not.toBe(canonicalHashV1(original.strategy.decisions))
   })
@@ -69,7 +69,9 @@ describe('independent qualification reference', () => {
     const changedActual = assertSuccess(
       evaluateRiskBalancedTrend(changedBars, snapshot.manifest, fixtureProtocol, provenance),
     )
-    const changedReference = evaluateReference(changedBars, snapshot.manifest, fixtureProtocol, provenance)
+    const changedReference = assertSuccess(
+      evaluateReference(changedBars, snapshot.manifest, fixtureProtocol, provenance),
+    )
     const requests = (orders: typeof actual.simulation.orders) =>
       orders
         .filter((order) => order.sessionDate === executionDate)

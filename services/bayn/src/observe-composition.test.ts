@@ -368,7 +368,7 @@ describe('OBSERVE runtime composition', () => {
             expect(binding.signal.sessionDate).toBe(signalDate)
             expect(binding.executionSession.date).toBe(executionDate)
             expect(binding.submissionOpenAt).toBe(reconciledAt)
-            return { decision, priceMicros }
+            return Result.succeed({ decision, priceMicros })
           },
         },
       })
@@ -430,7 +430,7 @@ describe('OBSERVE runtime composition', () => {
             strategy: {
               currentDecision: () => {
                 strategyCalls += 1
-                return { decision, priceMicros }
+                return Result.succeed({ decision, priceMicros })
               },
             },
           })
@@ -543,7 +543,7 @@ describe('OBSERVE runtime composition', () => {
             marketData: testCase.marketData,
             policy,
             reconcile: testCase.reconcile,
-            strategy: { currentDecision: () => ({ decision, priceMicros }) },
+            strategy: { currentDecision: () => Result.succeed({ decision, priceMicros }) },
           }),
         ),
       )

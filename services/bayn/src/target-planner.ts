@@ -747,12 +747,11 @@ const derivePlannedTargetFacts = (
         Result.flatMap(result, (targetFacts) => {
           const currentQuantity = facts.positions.get(symbol) ?? 0n
           return Result.map(
-            Result.try({
-              try: () =>
-                desiredQuantityMicros(facts.equity, facts.input.targetWeights[symbol], referencePrice, {
-                  precision: facts.input.precision,
-                }),
-              catch: (cause) =>
+            Result.mapError(
+              desiredQuantityMicros(facts.equity, facts.input.targetWeights[symbol], referencePrice, {
+                precision: facts.input.precision,
+              }),
+              (cause) =>
                 deriveTargetsFailure(
                   'precision',
                   'target quantity could not be represented at the declared precision',
@@ -763,7 +762,7 @@ const derivePlannedTargetFacts = (
                   },
                   cause,
                 ),
-            }),
+            ),
             (targetQuantity) => [
               ...targetFacts,
               {

@@ -1,6 +1,14 @@
 import { Result } from 'effect'
 
-import { accrueCashYield, calculateSessionFees, makeFillTerms, notionalMicros, type FeeInput } from './execution-model'
+import {
+  accrueCashYield,
+  calculateSessionFees,
+  makeFillTerms,
+  notionalMicros,
+  type FeeBreakdown,
+  type FeeInput,
+  type FillTerms,
+} from './execution-model'
 import { canonicalHashV1 } from './hash'
 import type {
   CashChange,
@@ -323,6 +331,13 @@ type FailedComputation =
       readonly elapsedDays: number
       readonly annualYieldBps: number
     }
+  | {
+      readonly _tag: 'PositionNotional'
+      readonly sessionDate: string
+      readonly symbol: string
+      readonly quantityMicros: string
+      readonly priceMicros: string
+    }
 
 type InvalidIntegerIssue =
   | {
@@ -487,6 +502,7 @@ const freezePublicIssue = (issue: SimulationReconciliationIssue): SimulationReco
         case 'FillTerms':
         case 'FeeSchedule':
         case 'CashYield':
+        case 'PositionNotional':
           return Object.freeze(Object.assign({}, issue, { computation: Object.freeze({ ...issue.computation }) }))
       }
     }
@@ -663,7 +679,7 @@ const computeFillTerms = (
   referencePriceMicros: bigint,
   simulation: SimulationTrace,
   costMultiplierMicros: bigint,
-): Validation<ReturnType<typeof makeFillTerms>> => {
+): Validation<FillTerms> => {
   const computation: FailedComputation = {
     _tag: 'FillTerms',
     fillId: fill.id,
@@ -672,11 +688,10 @@ const computeFillTerms = (
     referencePriceMicros: referencePriceMicros.toString(),
     costMultiplierMicros: costMultiplierMicros.toString(),
   }
-  return Result.try({
-    try: () =>
-      makeFillTerms(fill.side, quantityMicros, referencePriceMicros, simulation.executionModel, costMultiplierMicros),
-    catch: (cause): readonly SimulationReconciliationIssue[] => [{ _tag: 'ComputationFailed', computation, cause }],
-  })
+  return Result.mapError(
+    makeFillTerms(fill.side, quantityMicros, referencePriceMicros, simulation.executionModel, costMultiplierMicros),
+    (cause): readonly SimulationReconciliationIssue[] => [{ _tag: 'ComputationFailed', computation, cause }],
+  )
 }
 
 const validateFill = (
@@ -871,17 +886,17 @@ const feeSchedule = (
   inputs: readonly FeeInput[],
   simulation: SimulationTrace,
   costMultiplierMicros: bigint,
-): Validation<ReturnType<typeof calculateSessionFees>> => {
+): Validation<FeeBreakdown> => {
   const computation: FailedComputation = {
     _tag: 'FeeSchedule',
     feeId: fee.id,
     fillCount: inputs.length,
     costMultiplierMicros: costMultiplierMicros.toString(),
   }
-  return Result.try({
-    try: () => calculateSessionFees(inputs, simulation.executionModel, costMultiplierMicros),
-    catch: (cause): readonly SimulationReconciliationIssue[] => [{ _tag: 'ComputationFailed', computation, cause }],
-  })
+  return Result.mapError(
+    calculateSessionFees(inputs, simulation.executionModel, costMultiplierMicros),
+    (cause): readonly SimulationReconciliationIssue[] => [{ _tag: 'ComputationFailed', computation, cause }],
+  )
 }
 
 const validateFee = (
@@ -1400,10 +1415,10 @@ const cashYieldTransition = (
     elapsedDays: event.elapsedDays,
     annualYieldBps: simulation.executionModel.cash.annualYieldBps,
   }
-  const expected = Result.try({
-    try: () => accrueCashYield(cashMicros, event.elapsedDays, simulation.executionModel),
-    catch: (cause): readonly SimulationReconciliationIssue[] => [{ _tag: 'ComputationFailed', computation, cause }],
-  })
+  const expected = Result.mapError(
+    accrueCashYield(cashMicros, event.elapsedDays, simulation.executionModel),
+    (cause): readonly SimulationReconciliationIssue[] => [{ _tag: 'ComputationFailed', computation, cause }],
+  )
   if (Result.isFailure(expected)) return failIssues(expected.failure)
   const amount = unsigned({
     kind: 'cash-yield',
@@ -1576,14 +1591,26 @@ const valueMarkedPositions = (state: MutableReconstructionState, mark: DailyPosi
     if (Result.isFailure(costBasis)) {
       return positionIssues.length > 0 ? failIssues(positionIssues) : Result.fail(costBasis.failure)
     }
-    // Both operands are parsed unsigned integers and notionalMicros divides by the fixed non-zero MICROS constant.
     const reconstructedValue = notionalMicros(quantity, price.success)
-    reconstructedPositionValueMicros += reconstructedValue
+    if (Result.isFailure(reconstructedValue)) {
+      return fail({
+        _tag: 'ComputationFailed',
+        computation: {
+          _tag: 'PositionNotional',
+          sessionDate: mark.sessionDate,
+          symbol: position.symbol,
+          quantityMicros: quantity.toString(),
+          priceMicros: price.success.toString(),
+        },
+        cause: reconstructedValue.failure,
+      })
+    }
+    reconstructedPositionValueMicros += reconstructedValue.success
     const marketValue = positionUnsigned(mark, position, 'marketValueMicros')
     if (Result.isFailure(marketValue)) {
       return positionIssues.length > 0 ? failIssues(positionIssues) : Result.fail(marketValue.failure)
     }
-    if (marketValue.success !== reconstructedValue) {
+    if (marketValue.success !== reconstructedValue.success) {
       positionIssues.push({
         _tag: 'EvidenceMismatch',
         problem: {
@@ -1592,7 +1619,7 @@ const valueMarkedPositions = (state: MutableReconstructionState, mark: DailyPosi
           symbol: position.symbol,
           field: 'marketValueMicros',
           actualMicros: marketValue.success.toString(),
-          expectedMicros: reconstructedValue.toString(),
+          expectedMicros: reconstructedValue.success.toString(),
         },
       })
     }
