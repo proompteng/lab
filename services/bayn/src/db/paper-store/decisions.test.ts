@@ -2,14 +2,18 @@ import { describe, expect, test } from 'bun:test'
 
 import { Result } from 'effect'
 
+import { prepareAccounting } from '../../accounting/domain'
 import type { BrokerEventInput, PositionEventInput, PositionSnapshotInput } from '../../broker/observations'
 import { canonicalHashV1 } from '../../hash'
-import { AccountStatus, Broker } from '../../paper'
+import { AccountStatus, Broker, OrderSide, type AccountingReceipt, type Fill } from '../../paper'
 import {
+  brokerEventIdResult,
+  decideAccountingReceiptReplay,
   decideBrokerEventAppend,
   decideNextSourceSequence,
   decidePositionSnapshotInsert,
   decidePredecessorCoverage,
+  decidePreparedAccountingReplay,
   decideStoredValuation,
   finishPositionSnapshot,
   planPositionSnapshot,
@@ -96,6 +100,41 @@ const positionSnapshot = (): PositionSnapshotInput => {
   }
 }
 
+const accountingFill: Fill = {
+  schemaVersion: 'bayn.paper-fill.v1',
+  accountId,
+  fillId: 'fill-1',
+  brokerOrderId: 'broker-order-1',
+  clientOrderId: 'client-order-1',
+  symbol: 'NVDA',
+  side: OrderSide.Buy,
+  quantityMicros: '1000000',
+  priceMicros: '100000000',
+  feeMicros: '0',
+  occurredAt,
+}
+
+const preparedResult = prepareAccounting('a'.repeat(64), accountingFill, { quantityMicros: '0', costMicros: '0' }, 7001)
+if (Result.isFailure(preparedResult)) throw new Error(`accounting fixture failed: ${preparedResult.failure._tag}`)
+const prepared = preparedResult.success
+const postedMicros = prepared.ledger.transfers.reduce((sum, transfer) => sum + transfer.amount, 0n).toString()
+const receiptMaterial = {
+  schemaVersion: 'bayn.paper-accounting-receipt.v1' as const,
+  brokerEventId: prepared.transaction.brokerEventId,
+  tigerBeetleClusterId: '1',
+  tigerBeetleLedger: 7001,
+  accountIds: prepared.ledger.accounts.map((account) => account.id.toString()),
+  transferIds: prepared.ledger.transfers.map((transfer) => transfer.id.toString()),
+  debitMicros: postedMicros,
+  creditMicros: postedMicros,
+}
+const accountingReceipt: AccountingReceipt = {
+  ...receiptMaterial,
+  receiptId: hash('receipt-1'),
+  contentHash: canonicalHashV1(receiptMaterial),
+  recordedAt: observedAt,
+}
+
 describe('PaperStore decisions', () => {
   test('separates broker replay, append, and conflicting source reuse', () => {
     const input = accountEvent()
@@ -122,10 +161,80 @@ describe('PaperStore decisions', () => {
   test('derives source sequences without a hidden partial bigint conversion', () => {
     expect(value(decideNextSourceSequence('-1'))).toBe('0')
     expect(value(decideNextSourceSequence('9007199254740993'))).toBe('9007199254740994')
-    expect(failure(decideNextSourceSequence('not-an-integer'))).toMatchObject({
+    expect(failure(decideNextSourceSequence('not-an-integer'))).toEqual({
       failure: 'invariant',
-      message: expect.stringContaining('source sequence'),
-      cause: expect.anything(),
+      message: 'durable broker source sequence is not an integer',
+      cause: {
+        _tag: 'PaperStoreIntegerFailure',
+        source: 'source-sequence',
+        value: 'not-an-integer',
+      },
+    })
+  })
+
+  test('returns exact canonicalization failures for broker, snapshot, accounting, and receipt identities', () => {
+    const hostileAccount = {
+      ...accountEvent(),
+      accountId: '\ud800',
+      account: { ...accountEvent().account, accountId: '\ud800' },
+    }
+    expect(failure(brokerEventIdResult(hostileAccount))).toMatchObject({
+      failure: 'invariant',
+      message: 'broker event identity is not canonicalizable',
+      cause: {
+        _tag: 'PaperStoreHashFailure',
+        operation: 'broker-event-id',
+        cause: { reason: 'invalid-unicode-surrogate', path: '$.accountId' },
+      },
+    })
+
+    const hostileSnapshot = positionSnapshot()
+    const hostilePositions = hostileSnapshot.positions.map((position) => ({
+      ...position,
+      accountId: '\ud800',
+      position: { ...position.position, accountId: '\ud800' },
+    }))
+    expect(
+      failure(planPositionSnapshot({ ...hostileSnapshot, accountId: '\ud800', positions: hostilePositions })),
+    ).toMatchObject({
+      failure: 'invariant',
+      cause: {
+        _tag: 'PaperStoreHashFailure',
+        operation: 'broker-event-id',
+        cause: { reason: 'invalid-unicode-surrogate', path: '$.accountId' },
+      },
+    })
+
+    expect(
+      failure(
+        decidePreparedAccountingReplay(prepared.transaction, {
+          ...prepared,
+          transaction: { ...prepared.transaction, accountId: '\ud800' },
+        }),
+      ),
+    ).toMatchObject({
+      failure: 'invariant',
+      cause: {
+        _tag: 'PaperStoreHashFailure',
+        operation: 'accounting-transaction-candidate',
+        cause: { reason: 'invalid-unicode-surrogate', path: '$.accountId' },
+      },
+    })
+
+    expect(
+      failure(
+        decideAccountingReceiptReplay(accountingReceipt, {
+          ...accountingReceipt,
+          accountIds: ['\ud800'],
+        }),
+      ),
+    ).toMatchObject({
+      failure: 'invariant',
+      cause: {
+        _tag: 'PaperStoreHashFailure',
+        operation: 'accounting-receipt-candidate',
+        cause: { reason: 'invalid-unicode-surrogate', path: '$.accountIds[0]' },
+      },
     })
   })
 
@@ -178,6 +287,17 @@ describe('PaperStore decisions', () => {
       deduplicated: true,
     })
     expect(failure(finishPositionSnapshot(plan, [], true))).toMatchObject({ failure: 'conflict' })
+    expect(
+      failure(validateStoredPositionSnapshot(input, plan, [{ ...stored, observed_at: new Date(Number.NaN) }])),
+    ).toEqual({
+      failure: 'invariant',
+      message: 'valuation timestamp evidence is invalid',
+      cause: {
+        _tag: 'PaperStoreTimestampFailure',
+        source: 'stored-position-snapshot-observed-at',
+        epochMillis: Number.NaN,
+      },
+    })
   })
 
   test('derives valuation totals as a pure decision and detects replay drift', () => {
@@ -228,6 +348,88 @@ describe('PaperStore decisions', () => {
     expect(failure(decideStoredValuation([{ ...valuation, equityMicros: '1' }], valuation))).toMatchObject({
       failure: 'conflict',
       message: expect.stringContaining('deterministic replay'),
+    })
+    expect(
+      failure(
+        planValuation(
+          { accountEventId: hash('account-event'), positionSnapshotId: plan.snapshotId },
+          {
+            event_id: hash('account-event'),
+            account_id: accountId,
+            cash_micros: 'not-an-integer',
+            observed_at: new Date(observedAt),
+          },
+          snapshot,
+          rows,
+          30_000,
+        ),
+      ),
+    ).toEqual({
+      failure: 'invariant',
+      message: 'valuation account cash is invalid',
+      cause: {
+        _tag: 'PaperStoreIntegerFailure',
+        source: 'account-cash',
+        value: 'not-an-integer',
+      },
+    })
+    expect(
+      failure(
+        planValuation(
+          { accountEventId: hash('account-event'), positionSnapshotId: plan.snapshotId },
+          {
+            event_id: hash('account-event'),
+            account_id: accountId,
+            cash_micros: '1000000000',
+            observed_at: new Date(observedAt),
+          },
+          snapshot,
+          [{ ...rows[0]!, market_value_micros: 'invalid-market-value' }, rows[1]!],
+          30_000,
+        ),
+      ),
+    ).toMatchObject({
+      failure: 'invariant',
+      message: 'valuation position market value is invalid',
+      cause: {
+        _tag: 'PaperStoreIntegerFailure',
+        source: 'position-market-value',
+        value: 'invalid-market-value',
+        eventId: rows[0]?.event_id,
+        symbol: rows[0]?.symbol,
+      },
+    })
+    expect(
+      failure(
+        planValuation(
+          { accountEventId: hash('account-event'), positionSnapshotId: plan.snapshotId },
+          {
+            event_id: hash('account-event'),
+            account_id: accountId,
+            cash_micros: '1000000000',
+            observed_at: new Date(Number.NaN),
+          },
+          snapshot,
+          rows,
+          30_000,
+        ),
+      ),
+    ).toEqual({
+      failure: 'invariant',
+      message: 'valuation timestamp evidence is invalid',
+      cause: {
+        _tag: 'PaperStoreTimestampFailure',
+        source: 'account-observed-at',
+        epochMillis: Number.NaN,
+      },
+    })
+    expect(failure(decideStoredValuation([{ ...valuation, accountId: '\ud800' }], valuation))).toMatchObject({
+      failure: 'invariant',
+      cause: {
+        _tag: 'PaperStoreHashFailure',
+        operation: 'valuation-stored',
+        cause: { reason: 'invalid-unicode-surrogate', path: '$.accountId' },
+      },
     })
   })
 

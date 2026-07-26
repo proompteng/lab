@@ -1,10 +1,9 @@
-import { Result } from 'effect'
+import { pipe, Result } from 'effect'
 
 import type { PreparedAccounting } from '../../accounting/model'
 import type { AccountingTransaction } from '../../accounting/schema'
 import type { BrokerEventInput, PositionSnapshotInput, ValuationInput } from '../../broker/observations'
-import { canonicalHashV1 } from '../../hash'
-import { utcInstantFromEpochMillis } from '../../time'
+import { canonicalHashV1, canonicalHashV1Result, type CanonicalHashFailure } from '../../hash'
 import type { AccountingReceipt, Valuation } from '../../paper'
 import type { EventReceipt, PositionSnapshotReceipt } from './contract'
 import type { AccountRow, EventIdRow, EventRow, PositionRow, PositionSnapshotRow } from './rows'
@@ -16,11 +15,97 @@ export interface PaperStoreDecisionFailure {
   readonly cause?: unknown
 }
 
+type PaperStoreHashOperation =
+  | 'broker-event-id'
+  | 'position-snapshot-id'
+  | 'position-snapshot-content'
+  | 'accounting-transaction-stored'
+  | 'accounting-transaction-candidate'
+  | 'accounting-receipt-stored'
+  | 'accounting-receipt-candidate'
+  | 'valuation-source'
+  | 'valuation-id'
+  | 'valuation-stored'
+  | 'valuation-candidate'
+
+type PaperStoreIntegerSource = 'source-sequence' | 'account-cash' | 'position-market-value'
+
+interface PaperStoreHashFailure {
+  readonly _tag: 'PaperStoreHashFailure'
+  readonly operation: PaperStoreHashOperation
+  readonly cause: CanonicalHashFailure
+}
+
+interface PaperStoreIntegerFailure {
+  readonly _tag: 'PaperStoreIntegerFailure'
+  readonly source: PaperStoreIntegerSource
+  readonly value: string
+  readonly eventId?: string
+  readonly symbol?: string
+}
+
+interface PaperStoreTimestampFailure {
+  readonly _tag: 'PaperStoreTimestampFailure'
+  readonly source:
+    | 'stored-position-snapshot-observed-at'
+    | 'account-observed-at'
+    | 'position-observed-at'
+    | 'position-row-observed-at'
+    | 'valuation-as-of'
+  readonly epochMillis: number
+}
+
 const fail = (
   failure: PaperStoreDecisionFailure['failure'],
   message: string,
   cause?: unknown,
 ): Result.Result<never, PaperStoreDecisionFailure> => Result.fail({ failure, message, cause })
+
+const hashDecision = (
+  operation: PaperStoreHashOperation,
+  value: unknown,
+  message: string,
+): Result.Result<string, PaperStoreDecisionFailure> =>
+  pipe(
+    canonicalHashV1Result(value),
+    Result.mapError(
+      (cause): PaperStoreDecisionFailure => ({
+        failure: 'invariant',
+        message,
+        cause: { _tag: 'PaperStoreHashFailure', operation, cause } satisfies PaperStoreHashFailure,
+      }),
+    ),
+  )
+
+const integerDecision = (
+  source: PaperStoreIntegerSource,
+  value: string,
+  message: string,
+  facts: Pick<PaperStoreIntegerFailure, 'eventId' | 'symbol'> = {},
+): Result.Result<bigint, PaperStoreDecisionFailure> =>
+  /^-?[0-9]+$/.test(value)
+    ? Result.succeed(BigInt(value))
+    : fail('invariant', message, {
+        _tag: 'PaperStoreIntegerFailure',
+        source,
+        value,
+        ...(facts.eventId === undefined ? {} : { eventId: facts.eventId }),
+        ...(facts.symbol === undefined ? {} : { symbol: facts.symbol }),
+      } satisfies PaperStoreIntegerFailure)
+
+const timestampDecision = (
+  source: PaperStoreTimestampFailure['source'],
+  epochMillis: number,
+): Result.Result<string, PaperStoreDecisionFailure> => {
+  const instant = new Date(epochMillis)
+  return Number.isFinite(instant.getTime())
+    ? Result.succeed(instant.toISOString())
+    : fail('invariant', 'valuation timestamp evidence is invalid', {
+        _tag: 'PaperStoreTimestampFailure',
+        source,
+        epochMillis,
+      } satisfies PaperStoreTimestampFailure)
+}
 
 export const brokerEventKind = (input: BrokerEventInput): typeof EventKind.Type => {
   switch (input._tag) {
@@ -44,6 +129,19 @@ export const brokerEventId = (input: BrokerEventInput): string =>
     contentHash: input.contentHash,
   })
 
+export const brokerEventIdResult = (input: BrokerEventInput): Result.Result<string, PaperStoreDecisionFailure> =>
+  hashDecision(
+    'broker-event-id',
+    {
+      schemaVersion: 'bayn.paper-broker-event-id.v1',
+      broker: input.broker,
+      accountId: input.accountId,
+      sourceEventId: input.sourceEventId,
+      contentHash: input.contentHash,
+    },
+    'broker event identity is not canonicalizable',
+  )
+
 export type BrokerEventAppendDecision =
   | { readonly _tag: 'ReplayBrokerEvent'; readonly receipt: EventReceipt }
   | {
@@ -60,7 +158,7 @@ export const decideBrokerEventAppend = (
   const found = existing[0]
   const eventKind = brokerEventKind(input)
   if (found === undefined) {
-    return Result.succeed({ _tag: 'AppendBrokerEvent', eventId: brokerEventId(input), eventKind })
+    return Result.map(brokerEventIdResult(input), (eventId) => ({ _tag: 'AppendBrokerEvent', eventId, eventKind }))
   }
   if (found.event_kind !== eventKind || found.content_hash !== input.contentHash) {
     return fail('conflict', 'broker source identity was reused with different content')
@@ -76,13 +174,9 @@ export const decideBrokerEventAppend = (
 }
 
 export const decideNextSourceSequence = (lastSequence: string): Result.Result<string, PaperStoreDecisionFailure> =>
-  Result.mapError(
-    Result.try(() => (BigInt(lastSequence) + 1n).toString()),
-    (cause) => ({
-      failure: 'invariant' as const,
-      message: 'durable broker source sequence is not an integer',
-      cause,
-    }),
+  Result.map(
+    integerDecision('source-sequence', lastSequence, 'durable broker source sequence is not an integer'),
+    (sequence) => (sequence + 1n).toString(),
   )
 
 export interface PositionSnapshotPlan {
@@ -93,45 +187,57 @@ export interface PositionSnapshotPlan {
 
 export const planPositionSnapshot = (
   input: PositionSnapshotInput,
-): Result.Result<PositionSnapshotPlan, PaperStoreDecisionFailure> => {
-  const sourcePrefix = `position:${input.sourceHash}:${input.observedAt}:`
-  if (
-    input.positions.some(
-      (position) =>
-        position.accountId !== input.accountId ||
-        position.position.accountId !== input.accountId ||
-        position.observedAt !== input.observedAt ||
-        position.position.observedAt !== input.observedAt ||
-        !position.sourceEventId.startsWith(sourcePrefix) ||
-        position.sourceEventId.length === sourcePrefix.length,
+): Result.Result<PositionSnapshotPlan, PaperStoreDecisionFailure> =>
+  Result.gen(function* () {
+    const sourcePrefix = `position:${input.sourceHash}:${input.observedAt}:`
+    if (
+      input.positions.some(
+        (position) =>
+          position.accountId !== input.accountId ||
+          position.position.accountId !== input.accountId ||
+          position.observedAt !== input.observedAt ||
+          position.position.observedAt !== input.observedAt ||
+          !position.sourceEventId.startsWith(sourcePrefix) ||
+          position.sourceEventId.length === sourcePrefix.length,
+      )
+    ) {
+      return yield* fail('conflict', 'position snapshot identity is inconsistent')
+    }
+    const sourceIds = input.positions.map((position) => position.sourceEventId)
+    const symbols = input.positions.map((position) => position.position.symbol)
+    if (new Set(sourceIds).size !== sourceIds.length || new Set(symbols).size !== symbols.length) {
+      return yield* fail('conflict', 'position snapshot contains a duplicate source or symbol')
+    }
+    const eventIds: string[] = []
+    for (const position of input.positions) eventIds.push(yield* brokerEventIdResult(position))
+    eventIds.sort()
+    const snapshotId = yield* hashDecision(
+      'position-snapshot-id',
+      {
+        schemaVersion: 'bayn.paper-position-snapshot-id.v1',
+        accountId: input.accountId,
+        sourceHash: input.sourceHash,
+        observedAt: input.observedAt,
+      },
+      'position snapshot identity is not canonicalizable',
     )
-  ) {
-    return fail('conflict', 'position snapshot identity is inconsistent')
-  }
-  const sourceIds = input.positions.map((position) => position.sourceEventId)
-  const symbols = input.positions.map((position) => position.position.symbol)
-  if (new Set(sourceIds).size !== sourceIds.length || new Set(symbols).size !== symbols.length) {
-    return fail('conflict', 'position snapshot contains a duplicate source or symbol')
-  }
-  const eventIds = input.positions.map(brokerEventId).sort()
-  const snapshotId = canonicalHashV1({
-    schemaVersion: 'bayn.paper-position-snapshot-id.v1',
-    accountId: input.accountId,
-    sourceHash: input.sourceHash,
-    observedAt: input.observedAt,
-  })
-  return Result.succeed({
-    snapshotId,
-    eventIds,
-    contentHash: canonicalHashV1({
-      schemaVersion: 'bayn.paper-position-snapshot.v1',
-      accountId: input.accountId,
-      sourceHash: input.sourceHash,
-      observedAt: input.observedAt,
+    const contentHash = yield* hashDecision(
+      'position-snapshot-content',
+      {
+        schemaVersion: 'bayn.paper-position-snapshot.v1',
+        accountId: input.accountId,
+        sourceHash: input.sourceHash,
+        observedAt: input.observedAt,
+        eventIds,
+      },
+      'position snapshot content is not canonicalizable',
+    )
+    return {
+      snapshotId,
       eventIds,
-    }),
+      contentHash,
+    }
   })
-}
 
 export const decidePositionSnapshotInsert = (
   insertedSnapshotIds: readonly string[],
@@ -144,22 +250,29 @@ export const validateStoredPositionSnapshot = (
   input: PositionSnapshotInput,
   plan: PositionSnapshotPlan,
   snapshots: readonly PositionSnapshotRow[],
-): Result.Result<void, PaperStoreDecisionFailure> => {
-  if (snapshots.length !== 1) return fail('invariant', 'position snapshot was not persisted exactly once')
-  const stored = snapshots[0]
-  if (
-    stored === undefined ||
-    stored.snapshot_id !== plan.snapshotId ||
-    stored.account_id !== input.accountId ||
-    stored.source_hash !== input.sourceHash ||
-    stored.observed_at.toISOString() !== input.observedAt ||
-    stored.position_count !== plan.eventIds.length ||
-    stored.content_hash !== plan.contentHash
-  ) {
-    return fail('conflict', 'stored position snapshot differs from replay')
-  }
-  return Result.succeed(undefined)
-}
+): Result.Result<void, PaperStoreDecisionFailure> =>
+  Result.gen(function* () {
+    if (snapshots.length !== 1) {
+      return yield* fail('invariant', 'position snapshot was not persisted exactly once')
+    }
+    const stored = snapshots[0]
+    if (stored === undefined) return yield* fail('invariant', 'position snapshot was not persisted exactly once')
+    const storedObservedAt = yield* timestampDecision(
+      'stored-position-snapshot-observed-at',
+      stored.observed_at.getTime(),
+    )
+    if (
+      stored.snapshot_id !== plan.snapshotId ||
+      stored.account_id !== input.accountId ||
+      stored.source_hash !== input.sourceHash ||
+      storedObservedAt !== input.observedAt ||
+      stored.position_count !== plan.eventIds.length ||
+      stored.content_hash !== plan.contentHash
+    ) {
+      return yield* fail('conflict', 'stored position snapshot differs from replay')
+    }
+    return undefined
+  })
 
 export const finishPositionSnapshot = (
   plan: PositionSnapshotPlan,
@@ -195,9 +308,23 @@ export const decidePreparedAccountingReplay = (
   stored: AccountingTransaction | undefined,
   expected: PreparedAccounting,
 ): Result.Result<PreparedAccounting, PaperStoreDecisionFailure> =>
-  stored === undefined || canonicalHashV1(stored) === canonicalHashV1(expected.transaction)
+  stored === undefined
     ? Result.succeed(expected)
-    : fail('conflict', 'stored accounting plan differs from deterministic replay')
+    : Result.gen(function* () {
+        const storedHash = yield* hashDecision(
+          'accounting-transaction-stored',
+          stored,
+          'stored accounting transaction is not canonicalizable',
+        )
+        const candidateHash = yield* hashDecision(
+          'accounting-transaction-candidate',
+          expected.transaction,
+          'candidate accounting transaction is not canonicalizable',
+        )
+        return storedHash === candidateHash
+          ? expected
+          : yield* fail('conflict', 'stored accounting plan differs from deterministic replay')
+      })
 
 export const decideAccountingReceipt = (
   receipts: readonly AccountingReceipt[],
@@ -225,9 +352,21 @@ export const decideAccountingReceiptReplay = (
   candidate: AccountingReceipt,
 ): Result.Result<AccountingReceipt, PaperStoreDecisionFailure> => {
   if (stored === undefined) return fail('invariant', 'accounting receipt was not persisted')
-  return canonicalHashV1(stableAccountingReceipt(stored)) === canonicalHashV1(stableAccountingReceipt(candidate))
-    ? Result.succeed(stored)
-    : fail('conflict', 'stored accounting receipt differs from deterministic replay')
+  return Result.gen(function* () {
+    const storedHash = yield* hashDecision(
+      'accounting-receipt-stored',
+      stableAccountingReceipt(stored),
+      'stored accounting receipt is not canonicalizable',
+    )
+    const candidateHash = yield* hashDecision(
+      'accounting-receipt-candidate',
+      stableAccountingReceipt(candidate),
+      'candidate accounting receipt is not canonicalizable',
+    )
+    return storedHash === candidateHash
+      ? stored
+      : yield* fail('conflict', 'stored accounting receipt differs from deterministic replay')
+  })
 }
 
 export const planValuation = (
@@ -236,42 +375,57 @@ export const planValuation = (
   positionSnapshot: PositionSnapshotRow,
   positionRows: readonly PositionRow[],
   maximumSkewMs: number,
-): Result.Result<Valuation, PaperStoreDecisionFailure> => {
-  if (positionSnapshot.account_id !== accountSnapshot.account_id) {
-    return fail('conflict', 'valuation snapshots belong to different accounts')
-  }
-  if (positionRows.length !== positionSnapshot.position_count) {
-    return fail('conflict', 'valuation position snapshot is incomplete')
-  }
-  const positionsObservedAt = positionSnapshot.observed_at.toISOString()
-  const positionSourcePrefix = `position:${positionSnapshot.source_hash}:${positionsObservedAt}:`
-  if (
-    positionRows.some(
-      (position) =>
+): Result.Result<Valuation, PaperStoreDecisionFailure> =>
+  Result.gen(function* () {
+    if (positionSnapshot.account_id !== accountSnapshot.account_id) {
+      return yield* fail('conflict', 'valuation snapshots belong to different accounts')
+    }
+    if (positionRows.length !== positionSnapshot.position_count) {
+      return yield* fail('conflict', 'valuation position snapshot is incomplete')
+    }
+    const positionTime = positionSnapshot.observed_at.getTime()
+    const positionsObservedAt = yield* timestampDecision('position-observed-at', positionTime)
+    const positionSourcePrefix = `position:${positionSnapshot.source_hash}:${positionsObservedAt}:`
+    for (const position of positionRows) {
+      const rowObservedAt = yield* timestampDecision('position-row-observed-at', position.observed_at.getTime())
+      if (
         position.account_id !== accountSnapshot.account_id ||
-        position.observed_at.toISOString() !== positionsObservedAt ||
+        rowObservedAt !== positionsObservedAt ||
         !position.source_event_id.startsWith(positionSourcePrefix) ||
-        position.source_event_id.length === positionSourcePrefix.length,
+        position.source_event_id.length === positionSourcePrefix.length
+      ) {
+        return yield* fail('conflict', 'valuation snapshots disagree on source, account, or time')
+      }
+    }
+    if (new Set(positionRows.map((position) => position.symbol)).size !== positionRows.length) {
+      return yield* fail('conflict', 'valuation position symbols are not unique')
+    }
+    const accountTime = accountSnapshot.observed_at.getTime()
+    const accountObservedAt = yield* timestampDecision('account-observed-at', accountTime)
+    if (Math.abs(accountTime - positionTime) > maximumSkewMs) {
+      return yield* fail('conflict', 'valuation snapshots exceed the maximum observation skew')
+    }
+    const cash = yield* integerDecision(
+      'account-cash',
+      accountSnapshot.cash_micros,
+      'valuation account cash is invalid',
     )
-  ) {
-    return fail('conflict', 'valuation snapshots disagree on source, account, or time')
-  }
-  if (new Set(positionRows.map((position) => position.symbol)).size !== positionRows.length) {
-    return fail('conflict', 'valuation position symbols are not unique')
-  }
-  const accountObservedAt = accountSnapshot.observed_at.toISOString()
-  const accountTime = accountSnapshot.observed_at.getTime()
-  const positionTime = positionSnapshot.observed_at.getTime()
-  if (Math.abs(accountTime - positionTime) > maximumSkewMs) {
-    return fail('conflict', 'valuation snapshots exceed the maximum observation skew')
-  }
-  return Result.mapError(
-    Result.try(() => {
-      const cash = BigInt(accountSnapshot.cash_micros)
-      const marketValues = positionRows.map((position) => BigInt(position.market_value_micros))
-      const longMarketValue = marketValues.filter((value) => value >= 0n).reduce((sum, value) => sum + value, 0n)
-      const shortMarketValue = marketValues.filter((value) => value < 0n).reduce((sum, value) => sum + value, 0n)
-      const sourceHash = canonicalHashV1({
+    const marketValues: bigint[] = []
+    for (const position of positionRows) {
+      marketValues.push(
+        yield* integerDecision(
+          'position-market-value',
+          position.market_value_micros,
+          'valuation position market value is invalid',
+          { eventId: position.event_id, symbol: position.symbol },
+        ),
+      )
+    }
+    const longMarketValue = marketValues.filter((value) => value >= 0n).reduce((sum, value) => sum + value, 0n)
+    const shortMarketValue = marketValues.filter((value) => value < 0n).reduce((sum, value) => sum + value, 0n)
+    const sourceHash = yield* hashDecision(
+      'valuation-source',
+      {
         schemaVersion: 'bayn.paper-valuation-source.v1',
         accountEventId: input.accountEventId,
         positionSnapshotId: positionSnapshot.snapshot_id,
@@ -279,30 +433,31 @@ export const planValuation = (
         positionsSourceHash: positionSnapshot.source_hash,
         accountObservedAt,
         positionsObservedAt,
-      })
-      return {
-        schemaVersion: 'bayn.paper-valuation.v1' as const,
-        valuationId: canonicalHashV1({
-          schemaVersion: 'bayn.paper-valuation-id.v1',
-          accountId: accountSnapshot.account_id,
-          sourceHash,
-        }),
+      },
+      'valuation source identity is not canonicalizable',
+    )
+    const valuationId = yield* hashDecision(
+      'valuation-id',
+      {
+        schemaVersion: 'bayn.paper-valuation-id.v1',
         accountId: accountSnapshot.account_id,
         sourceHash,
-        cashMicros: cash.toString(),
-        longMarketValueMicros: longMarketValue.toString(),
-        shortMarketValueMicros: shortMarketValue.toString(),
-        equityMicros: (cash + longMarketValue + shortMarketValue).toString(),
-        asOf: utcInstantFromEpochMillis(Math.max(accountTime, positionTime)),
-      }
-    }),
-    (cause) => ({
-      failure: 'invariant' as const,
-      message: 'valuation numeric evidence is invalid',
-      cause,
-    }),
-  )
-}
+      },
+      'valuation identity is not canonicalizable',
+    )
+    const asOf = yield* timestampDecision('valuation-as-of', Math.max(accountTime, positionTime))
+    return {
+      schemaVersion: 'bayn.paper-valuation.v1',
+      valuationId,
+      accountId: accountSnapshot.account_id,
+      sourceHash,
+      cashMicros: cash.toString(),
+      longMarketValueMicros: longMarketValue.toString(),
+      shortMarketValueMicros: shortMarketValue.toString(),
+      equityMicros: (cash + longMarketValue + shortMarketValue).toString(),
+      asOf,
+    }
+  })
 
 export const requireValuationPositionSnapshot = (
   positionSnapshots: readonly PositionSnapshotRow[],
@@ -320,7 +475,15 @@ export const decideStoredValuation = (
   if (storedValuations.length !== 1) return fail('invariant', 'valuation was not persisted')
   const stored = storedValuations[0]
   if (stored === undefined) return fail('invariant', 'valuation was not persisted')
-  return canonicalHashV1(stored) === canonicalHashV1(candidate)
-    ? Result.succeed(stored)
-    : fail('conflict', 'stored valuation differs from deterministic replay')
+  return Result.gen(function* () {
+    const storedHash = yield* hashDecision('valuation-stored', stored, 'stored valuation is not canonicalizable')
+    const candidateHash = yield* hashDecision(
+      'valuation-candidate',
+      candidate,
+      'candidate valuation is not canonicalizable',
+    )
+    return storedHash === candidateHash
+      ? stored
+      : yield* fail('conflict', 'stored valuation differs from deterministic replay')
+  })
 }
