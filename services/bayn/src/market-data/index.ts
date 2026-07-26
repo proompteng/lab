@@ -13,7 +13,7 @@ export type {
 } from './model'
 export type { SignalBarRow, SignalManifestRow, SignalSessionRow, SnapshotRows } from './rows'
 export { marketDataOperationError } from './errors'
-export { MarketDataLive } from './program'
+export { makeMarketData, MarketDataLive } from './program'
 export {
   renderMarketDataVerificationError,
   selectCyclePublicationManifests,
