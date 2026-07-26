@@ -1,4 +1,4 @@
-import { Data, Result, Schema } from 'effect'
+import { Data, Result, Schema, pipe } from 'effect'
 
 import { canonicalHashV1 } from './hash'
 import { ExecutionSessionBindingSchema } from './execution-session'
@@ -694,24 +694,24 @@ const deriveRiskMetrics = (facts: RiskFacts): DerivedRiskMetrics => {
 }
 
 const deriveReconciledHash = (facts: RiskFacts): Result.Result<string, RiskEvaluationFailure> =>
-  Result.try({
-    try: () =>
-      reconciledStateHash({
-        account: facts.state.account,
-        positions: facts.state.positions,
-        positionsObservedAt: facts.state.positionsObservedAt,
-        orders: facts.state.orders,
-        ordersObservedAt: facts.state.ordersObservedAt,
-        accountingHash: facts.state.accountingHash,
-      }),
-    catch: (cause) =>
+  pipe(
+    reconciledStateHash({
+      account: facts.state.account,
+      positions: facts.state.positions,
+      positionsObservedAt: facts.state.positionsObservedAt,
+      orders: facts.state.orders,
+      ordersObservedAt: facts.state.ordersObservedAt,
+      accountingHash: facts.state.accountingHash,
+    }),
+    Result.mapError((cause) =>
       canonicalizeRiskInputFailure(
         'reconciliation',
         'validated reconciled broker state is not canonicalizable',
         { intentId: facts.intent.intentId },
         cause,
       ),
-  })
+    ),
+  )
 
 const buildIntentContractGates = (facts: RiskFacts): readonly GateResult[] => {
   const { intent, policy, state } = facts

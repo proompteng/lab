@@ -1,4 +1,4 @@
-import { Data, Result, Schema } from 'effect'
+import { Data, Result, Schema, pipe } from 'effect'
 
 import { IntentPlanSchema, type IntentPlan } from './execution/intents'
 import { desiredQuantityMicros, MICROS } from './execution-model'
@@ -589,22 +589,40 @@ const deriveTargetsFailure = (
 const decodeTargetPlannerInputResult = Schema.decodeUnknownResult(TargetPlannerInputSchema, strictParseOptions)
 const decodeTargetPlanSemanticResult = Schema.decodeUnknownResult(TargetPlanResultSemanticSchema, strictParseOptions)
 
-const deriveTargetPlannerHashes = (
+const plannerInputHash = (
   input: TargetPlannerInput,
-): Result.Result<TargetPlannerHashes, TargetPlannerFailure> =>
-  Result.try({
-    try: () => ({
-      inputHash: canonicalHashV1(input),
-      referencePriceHash: canonicalHashV1(referencePriceMaterial(input.referencePrices)),
-      reconciledBrokerStateHash: reconciledStateHash(input.brokerState),
-    }),
-    catch: (cause) =>
+  operation: 'input' | 'reference-price',
+  value: unknown,
+): Result.Result<string, TargetPlannerFailure> =>
+  pipe(
+    Result.try(() => canonicalHashV1(value)),
+    Result.mapError((cause) =>
       canonicalizePlannerInputFailure(
         'hash',
-        'validated target-planner evidence is not canonicalizable',
+        `validated target-planner ${operation} evidence is not canonicalizable`,
         { cycleId: input.cycleId },
         cause,
       ),
+    ),
+  )
+
+const deriveTargetPlannerHashes = (
+  input: TargetPlannerInput,
+): Result.Result<TargetPlannerHashes, TargetPlannerFailure> =>
+  Result.all({
+    inputHash: plannerInputHash(input, 'input', input),
+    referencePriceHash: plannerInputHash(input, 'reference-price', referencePriceMaterial(input.referencePrices)),
+    reconciledBrokerStateHash: pipe(
+      reconciledStateHash(input.brokerState),
+      Result.mapError((cause) =>
+        canonicalizePlannerInputFailure(
+          'hash',
+          'validated target-planner reconciled broker state is not canonicalizable',
+          { cycleId: input.cycleId },
+          cause,
+        ),
+      ),
+    ),
   })
 
 const parseTargetPlannerFacts = (input: TargetPlannerInput, hashes: TargetPlannerHashes): TargetPlannerFacts => {

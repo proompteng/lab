@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Deferred, Effect, Exit, Fiber } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -119,14 +119,16 @@ const receipt: AccountingReceipt = {
 
 const report = (snapshot: BrokerSnapshot): ReconciliationWriteResult => {
   const accountingHash = hash('accounting-state')
-  const stateHash = reconciledStateHash({
-    account: snapshot.account,
-    positions: snapshot.positions,
-    positionsObservedAt: snapshot.positionsObservedAt,
-    orders: snapshot.orders,
-    ordersObservedAt: snapshot.ordersObservedAt,
-    accountingHash,
-  })
+  const stateHash = Result.getOrThrow(
+    reconciledStateHash({
+      account: snapshot.account,
+      positions: snapshot.positions,
+      positionsObservedAt: snapshot.positionsObservedAt,
+      orders: snapshot.orders,
+      ordersObservedAt: snapshot.ordersObservedAt,
+      accountingHash,
+    }),
+  )
   return {
     reconciliation: {
       schemaVersion: 'bayn.paper-reconciliation.v1',
@@ -272,7 +274,7 @@ describe('paper reconciliation loop', () => {
       allOrders.map((candidate) => candidate.brokerOrderId).sort(),
     )
     expect(result.brokerState.unknownOrderCount).toBe(500)
-    const stateHash = reconciledStateHash(result.brokerState)
+    const stateHash = Result.getOrThrow(reconciledStateHash(result.brokerState))
     expect(result.report.reconciliation.expectedHash).toBe(stateHash)
     expect(result.report.reconciliation.observedHash).toBe(stateHash)
     expect(result.brokerState.reconciliation).toEqual(result.report.reconciliation)

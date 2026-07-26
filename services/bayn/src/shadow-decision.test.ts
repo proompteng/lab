@@ -172,14 +172,16 @@ const makeBrokerState = () => {
   }
   const positions = [position('AMD'), position('NVDA')]
   const orders = [] as const
-  const stateHash = reconciledStateHash({
-    account,
-    positions,
-    positionsObservedAt: brokerObservedAt,
-    orders,
-    ordersObservedAt: brokerObservedAt,
-    accountingHash,
-  })
+  const stateHash = Result.getOrThrow(
+    reconciledStateHash({
+      account,
+      positions,
+      positionsObservedAt: brokerObservedAt,
+      orders,
+      ordersObservedAt: brokerObservedAt,
+      accountingHash,
+    }),
+  )
   const reconciliationMaterial = {
     schemaVersion: 'bayn.paper-reconciliation.v1' as const,
     accountId,

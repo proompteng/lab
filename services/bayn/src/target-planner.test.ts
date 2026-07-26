@@ -118,14 +118,16 @@ const reconciliation = (
   orders: readonly Order[],
   ordersObservedAt: string,
 ): Reconciliation => {
-  const stateHash = reconciledStateHash({
-    account,
-    positions,
-    positionsObservedAt,
-    orders,
-    ordersObservedAt,
-    accountingHash,
-  })
+  const stateHash = Result.getOrThrow(
+    reconciledStateHash({
+      account,
+      positions,
+      positionsObservedAt,
+      orders,
+      ordersObservedAt,
+      accountingHash,
+    }),
+  )
   const material = {
     schemaVersion: 'bayn.paper-reconciliation.v1' as const,
     accountId: account.accountId,

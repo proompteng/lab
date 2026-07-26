@@ -322,7 +322,7 @@ describe('PostgreSQL reconciliation algebra', () => {
     })
   })
 
-  test('rejects accounting before the opening snapshot and contains comparison throws', () => {
+  test('rejects accounting before the opening snapshot and preserves typed comparison failures', () => {
     const exact = makeComparison()
     const predates = failureOf(
       compareOpeningCash({
@@ -394,9 +394,21 @@ describe('PostgreSQL reconciliation algebra', () => {
       }),
     )
     expect(duplicateComparison).toMatchObject({
-      _tag: 'AccountingProjectionFailed',
-      operation: 'reconciliation-comparison',
-      cause: expect.any(Error),
+      _tag: 'ReconciliationDecisionFailed',
+      error: {
+        _tag: 'DuplicateIdentity',
+        collection: 'broker-client-order',
+        identity: order.clientOrderId,
+      },
+    })
+    expect(reconciliationAlgebraFailureDetails(duplicateComparison)).toMatchObject({
+      failure: 'invariant',
+      message: `duplicate broker-client-order identity ${order.clientOrderId}`,
+      cause: {
+        _tag: 'DuplicateIdentity',
+        collection: 'broker-client-order',
+        identity: order.clientOrderId,
+      },
     })
     expect(exact.comparison.discrepancies).toEqual([])
   })

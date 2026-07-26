@@ -299,10 +299,8 @@ const prepareExecutionSessionBinding = (
 ): Result.Result<ExecutionSessionBinding, ExecutionSessionBindingFailure | ObserveDecisionCompositionFailure> => {
   const finalizedSnapshot = facts.snapshot.manifest.finalizedSnapshot
   return Result.flatMap(
-    Result.mapError(
-      Result.try(() => reconciledStateHash(facts.reconciliation.brokerState)),
-      (cause) =>
-        compositionFailure('reconciled-state-hash', 'same-pass reconciled broker state is not canonicalizable', cause),
+    Result.mapError(reconciledStateHash(facts.reconciliation.brokerState), (cause) =>
+      compositionFailure('reconciled-state-hash', 'same-pass reconciled broker state is not canonicalizable', cause),
     ),
     (contentHash) =>
       bindCycleExecutionSession({
