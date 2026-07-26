@@ -38,7 +38,7 @@ import {
   validateRecovery,
 } from './coordinator-decisions'
 import type { StoredIntent } from './intents'
-import { MutationEventType, mutationId, type MutationEvent } from './mutations'
+import { MutationEventType, mutationIdResult, type MutationEvent } from './mutations'
 
 const intentId = 'a'.repeat(64)
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
@@ -126,7 +126,7 @@ const mutation = (
   return {
     schemaVersion: 'bayn.paper-mutation-event.v1',
     eventId: '3'.repeat(64),
-    mutationId: mutationId(intentId, operation),
+    mutationId: Result.getOrThrow(mutationIdResult(intentId, operation)),
     intentId,
     sequence: 1,
     operation,
