@@ -1,12 +1,13 @@
-import { Context, Effect, pipe, Result } from 'effect'
+import { Effect, pipe, Result } from 'effect'
 
-import type { AutonomousCycleStartup } from './app'
+import type { AutonomousCycleLoop, AutonomousCycleStartup } from './app'
 import { BrokerRead, type BrokerReadShape, type MarketCalendarQuery } from './broker/alpaca'
 import { makeCycleExecutionPolicyFromModel, type AutonomousCycle, type CycleExecutionPolicy } from './cycle'
 import {
   CycleDecisionBuildError,
   makeAutonomousCycleLoop,
   marketCalendarQueryForSignal,
+  type CycleRunContext,
   type CyclePassObservation,
 } from './cycle-runner'
 import { CycleStore } from './db/cycle-store'
@@ -494,7 +495,8 @@ export type ObserveAutonomousCycleInput = {
   readonly strategy: Pick<Strategy, 'currentDecision' | 'parameters' | 'provenance'>
 }
 
-type ObserveRuntime = BrokerRead | CycleStore | MarketData | PaperStore | WriterFence
+type ObserveDecisionRuntime = BrokerRead | MarketData | PaperStore | WriterFence
+type ObserveRuntime = CycleStore | ObserveDecisionRuntime
 
 export type ObserveStartupPreparation = {
   readonly executionModel: CausalProtocol['executionModel']
@@ -562,41 +564,39 @@ const initializeObserveAuthority = (
 
 const makeObserveAutonomousLoop = (
   input: ObserveAutonomousCycleInput,
-  runtime: Context.Context<ObserveRuntime>,
   startup: Parameters<AutonomousCycleStartup>[0],
   preparation: ObserveStartupPreparation,
   policy: Policy,
-) => {
-  const reconcile = runOnce.pipe(Effect.provideContext(runtime))
+): Result.Result<AutonomousCycleLoop<ObserveRuntime>, OperationalError> => {
+  const context: CycleRunContext<ObserveDecisionRuntime> = {
+    qualificationRunId: startup.qualificationRunId,
+    strategyProtocolHash: preparation.strategyProtocolHash,
+    accountId: input.accountId,
+    executionPolicy: preparation.executionPolicy,
+    buildDecision: (cycle) =>
+      buildObserveCycleDecision({
+        authorityGenerationHash: input.authorityGenerationHash,
+        cycle,
+        executionModel: preparation.executionModel,
+        policy,
+        reconcile: runOnce,
+        strategy: input.strategy,
+      }).pipe(Effect.mapError(decisionBuildError)),
+  }
   return pipe(
     makeAutonomousCycleLoop({
-      context: Effect.succeed({
-        qualificationRunId: startup.qualificationRunId,
-        strategyProtocolHash: preparation.strategyProtocolHash,
-        accountId: input.accountId,
-        executionPolicy: preparation.executionPolicy,
-        buildDecision: (cycle) =>
-          buildObserveCycleDecision({
-            authorityGenerationHash: input.authorityGenerationHash,
-            cycle,
-            executionModel: preparation.executionModel,
-            policy,
-            reconcile,
-            strategy: input.strategy,
-          }).pipe(Effect.mapError(decisionBuildError), Effect.provideContext(runtime)),
-      }),
+      context: Effect.succeed(context),
       observePass: (observation) => observePass(startup.recordPass, observation),
       pollIntervalMs: input.pollIntervalMs,
     }),
     Result.mapError((cause) =>
       operationalError('strategy', 'cycle-loop', 'autonomous cycle loop failed to start', cause),
     ),
-    Result.map((loop) => loop.pipe(Effect.provideContext(runtime))),
   )
 }
 
 export const makeObserveAutonomousCycleStartup =
-  (input: ObserveAutonomousCycleInput): AutonomousCycleStartup<ObserveRuntime> =>
+  (input: ObserveAutonomousCycleInput): AutonomousCycleStartup<PaperStore, ObserveRuntime> =>
   (startup) =>
     Effect.gen(function* () {
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
@@ -605,7 +605,6 @@ export const makeObserveAutonomousCycleStartup =
           operationalError('strategy', 'risk-policy', 'source-controlled paper risk policy is invalid', cause),
         ),
       )
-      const runtime = yield* Effect.context<ObserveRuntime>()
       yield* initializeObserveAuthority(input)
-      return yield* Effect.fromResult(makeObserveAutonomousLoop(input, runtime, startup, preparation, policy))
+      return yield* Effect.fromResult(makeObserveAutonomousLoop(input, startup, preparation, policy))
     })

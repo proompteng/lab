@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Effect, Exit, Result } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
+import type { AutonomousCycleLoop } from './app'
 import { fixtureStrategy } from './app-test-support'
 import {
   BrokerRead,
@@ -25,7 +26,7 @@ import {
 import { makeStrategyProtocolHash } from './contracts'
 import { CycleStore, type CycleStoreShape } from './db/cycle-store'
 import { PaperStore, PaperStoreError, type PaperStoreShape } from './db/paper-store'
-import { operationalError } from './errors'
+import { operationalError, type OperationalError } from './errors'
 import { WriterFence, WriterFenceError, type WriterFenceService } from './execution/writer-fence'
 import { canonicalHashV1 } from './hash'
 import { MarketData, type MarketDataService, type MarketDataSnapshot } from './market-data'
@@ -646,6 +647,98 @@ describe('OBSERVE runtime composition', () => {
       expect(failure.operation).toBe(testCase.expectedOperation)
       expect(failure.cause).toBe(testCase.cause)
     }
+  })
+
+  test('keeps startup and long-lived loop requirements explicit at separate composition boundaries', async () => {
+    const unused = Effect.die(new Error('missing-publication loop must not use this capability'))
+    const authority = reconciliationResult().riskContext.authority
+    if (authority === null) return expect.unreachable('fixture authority is required')
+    const paperStore: PaperStoreShape = {
+      ingest: () => unused,
+      ingestPositions: () => unused,
+      account: () => unused,
+      value: () => unused,
+      hasAccountBaseline: () => unused,
+      bindings: () => unused,
+      reconcile: () => unused,
+      ensureAuthorityGeneration: () => Effect.succeed(authority),
+      preparePaperGeneration: () => unused,
+      activatePaperGeneration: () => unused,
+      restrictAuthority: () => unused,
+    }
+    const cycleStore: CycleStoreShape = {
+      acquire: () => unused,
+      read: () => unused,
+      readAuthoritySlot: () => unused,
+      readDecisionDocument: () => unused,
+      readOldestUnfinished: () => Effect.succeed(Option.none()),
+      bindSnapshot: () => unused,
+      activate: () => unused,
+      bindDecision: () => unused,
+      finish: () => unused,
+      block: () => unused,
+    }
+    const brokerRead: BrokerReadShape = {
+      account: unused,
+      accountConfiguration: unused,
+      assetBySymbol: unusedAssetBySymbol,
+      positions: unused,
+      orders: () => unused,
+      orderById: () => unused,
+      orderByClientId: () => unused,
+      fillActivities: () => unused,
+      marketCalendar: () => unused,
+    }
+    const marketDataService: MarketDataService = {
+      ...marketData([]),
+      inspectCyclePublications: Effect.succeed({
+        outcome: 'MISSING',
+        observedAt: '2026-01-30T21:20:00.000Z',
+      }),
+    }
+    const writerFence: WriterFenceService = {
+      backendPid: 1,
+      check: unused,
+      transaction: (effect) => effect,
+    }
+    const startup = makeObserveAutonomousCycleStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      maximumAuthority: Authority.Observe,
+      pollIntervalMs: 30_000,
+      strategy: fixtureStrategy,
+    })
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const pass = yield* Deferred.make<Parameters<Parameters<typeof startup>[0]['recordPass']>[0]>()
+          const acquireLoop: Effect.Effect<
+            AutonomousCycleLoop<BrokerRead | CycleStore | MarketData | PaperStore | WriterFence>,
+            OperationalError,
+            PaperStore
+          > = startup({
+            qualificationRunId: 'c'.repeat(64),
+            recordPass: (observation) => Deferred.succeed(pass, observation).pipe(Effect.asVoid),
+          })
+          const loop = yield* acquireLoop.pipe(Effect.provideService(PaperStore, paperStore))
+          const fiber = yield* loop.pipe(
+            Effect.provideService(BrokerRead, brokerRead),
+            Effect.provideService(CycleStore, cycleStore),
+            Effect.provideService(MarketData, marketDataService),
+            Effect.provideService(PaperStore, paperStore),
+            Effect.provideService(WriterFence, writerFence),
+            Effect.forkScoped,
+          )
+          const observation = yield* Deferred.await(pass).pipe(Effect.timeout('1 second'))
+          expect(observation).toMatchObject({
+            result: 'SUCCESS',
+            outcome: 'NO_PUBLICATION',
+          })
+          yield* Fiber.interrupt(fiber)
+        }),
+      ),
+    )
   })
 
   test('fails PAPER startup before authority initialization or autonomous work can begin', async () => {

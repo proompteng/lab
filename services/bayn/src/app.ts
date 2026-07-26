@@ -20,11 +20,11 @@ export type AutonomousCycleStartupInput = {
   readonly recordPass: RecordAutonomousCyclePass
 }
 
-export type AutonomousCycleLoop = Effect.Effect<void>
+export type AutonomousCycleLoop<R = never> = Effect.Effect<void, never, R>
 
-export type AutonomousCycleStartup<R = never> = (
+export type AutonomousCycleStartup<StartupR = never, LoopR = StartupR> = (
   input: AutonomousCycleStartupInput,
-) => Effect.Effect<AutonomousCycleLoop, OperationalError, R>
+) => Effect.Effect<AutonomousCycleLoop<LoopR>, OperationalError, StartupR>
 
 export type BrokerlessApplicationConfig = Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'BrokerlessService' }>
 
@@ -33,12 +33,12 @@ export type AutonomousObserveApplicationConfig = Extract<
   { readonly runtimeMode: 'AutonomousObserveService' }
 >
 
-type AutonomousObserveRuntime<R> = {
+type AutonomousObserveRuntime<StartupR, LoopR> = {
   readonly broker: BrokerProbe
-  readonly startCycle: AutonomousCycleStartup<R>
+  readonly startCycle: AutonomousCycleStartup<StartupR, LoopR>
 }
 
-type ApplicationRuntime<R> = Option.Option<AutonomousObserveRuntime<R>>
+type ApplicationRuntime<StartupR, LoopR> = Option.Option<AutonomousObserveRuntime<StartupR, LoopR>>
 
 const cyclePassError = (observation: Extract<AutonomousCyclePassObservation, { readonly result: 'FAILURE' }>): string =>
   `cycleRunner: ${observation.operation}/${observation.failure}: ${observation.message}`
@@ -77,14 +77,14 @@ const applyAutonomousCyclePass = (current: RuntimeState, observation: Autonomous
     : next
 }
 
-const brokerProbe = <R>(runtime: ApplicationRuntime<R>): BrokerProbe | undefined =>
+const brokerProbe = <StartupR, LoopR>(runtime: ApplicationRuntime<StartupR, LoopR>): BrokerProbe | undefined =>
   pipe(
     runtime,
     Option.map(({ broker }) => broker),
     Option.getOrUndefined,
   )
 
-const initialRuntimeState = <R>(runtime: ApplicationRuntime<R>): RuntimeState =>
+const initialRuntimeState = <StartupR, LoopR>(runtime: ApplicationRuntime<StartupR, LoopR>): RuntimeState =>
   pipe(
     runtime,
     Option.match({
@@ -114,11 +114,11 @@ const markAutonomousCycleStarted = (state: Ref.Ref<RuntimeState>, startedAt: str
     autonomousCycleLoop: { ...current.autonomousCycleLoop, startedAt },
   }))
 
-const forkAutonomousCycle = <R>(
-  runtime: AutonomousObserveRuntime<R>,
+const forkAutonomousCycle = <StartupR, LoopR>(
+  runtime: AutonomousObserveRuntime<StartupR, LoopR>,
   state: Ref.Ref<RuntimeState>,
   qualificationRunId: string,
-): Effect.Effect<Fiber.Fiber<void, never>, OperationalError, R | Scope.Scope> =>
+): Effect.Effect<Fiber.Fiber<void, never>, OperationalError, StartupR | LoopR | Scope.Scope> =>
   pipe(
     currentUtcInstant,
     Effect.tap((startedAt) => markAutonomousCycleStarted(state, startedAt)),
@@ -131,10 +131,10 @@ const forkAutonomousCycle = <R>(
     Effect.flatMap(Effect.forkScoped({ startImmediately: true })),
   )
 
-const startAutonomousCycle = <R>(
-  runtime: ApplicationRuntime<R>,
+const startAutonomousCycle = <StartupR, LoopR>(
+  runtime: ApplicationRuntime<StartupR, LoopR>,
   state: Ref.Ref<RuntimeState>,
-): Effect.Effect<Fiber.Fiber<void, never> | undefined, OperationalError, R | Scope.Scope> =>
+): Effect.Effect<Fiber.Fiber<void, never> | undefined, OperationalError, StartupR | LoopR | Scope.Scope> =>
   pipe(
     runtime,
     Option.match({
@@ -162,11 +162,15 @@ const startHttpServer = (
     Effect.mapError((cause) => operationalError('http', 'listen', 'HTTP server failed to listen', cause)),
   )
 
-const runApplication = <R>(
+const runApplication = <StartupR, LoopR>(
   config: RuntimeConfig,
   strategy: Strategy,
-  runtime: ApplicationRuntime<R>,
-): Effect.Effect<never, OperationalError, MarketData | Journal | EvidenceStore | CycleObservability | R> =>
+  runtime: ApplicationRuntime<StartupR, LoopR>,
+): Effect.Effect<
+  never,
+  OperationalError,
+  MarketData | Journal | EvidenceStore | CycleObservability | StartupR | LoopR
+> =>
   pipe(
     Effect.Do,
     Effect.bind('evidenceStore', () => EvidenceStore),
@@ -190,13 +194,16 @@ export const brokerlessApplication = (
 ): Effect.Effect<never, OperationalError, MarketData | Journal | EvidenceStore | CycleObservability> =>
   runApplication(config, strategy, Option.none())
 
-export const autonomousObserveApplication = <R>(
+export const autonomousObserveApplication = <StartupR, LoopR>(
   config: AutonomousObserveApplicationConfig,
   strategy: Strategy,
   broker: BrokerProbe,
-  startCycle: AutonomousCycleStartup<R>,
-): Effect.Effect<never, OperationalError, MarketData | Journal | EvidenceStore | CycleObservability | R> =>
-  runApplication(config, strategy, Option.some({ broker, startCycle }))
+  startCycle: AutonomousCycleStartup<StartupR, LoopR>,
+): Effect.Effect<
+  never,
+  OperationalError,
+  MarketData | Journal | EvidenceStore | CycleObservability | StartupR | LoopR
+> => runApplication(config, strategy, Option.some({ broker, startCycle }))
 
 export { monitor, probe } from './health'
 export { initialize } from './startup'
