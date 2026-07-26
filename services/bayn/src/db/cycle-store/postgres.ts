@@ -22,7 +22,11 @@ import {
 } from '../../schemas'
 import { ObserveShadowDecisionDocumentSchema, type ObserveShadowDecisionDocument } from '../../shadow-decision-contract'
 import type { InputManifest, IsoDate } from '../../types'
-import { ensureSnapshotReference } from '../snapshot-reference'
+import {
+  ensureSnapshotReference,
+  renderSnapshotReferenceIssue,
+  snapshotReferenceIssueTags,
+} from '../snapshot-reference'
 import {
   decideAcquire,
   decideActivation,
@@ -460,14 +464,15 @@ const makeCycleStore = Effect.map(PgClient.PgClient, (sql) => {
 
   const persistSnapshotReference = (inputManifest: InputManifest): Effect.Effect<void, CycleStoreInternalError> =>
     ensureSnapshotReference(sql, inputManifest).pipe(
-      Effect.flatMap((matches) =>
-        matches
-          ? Effect.void
-          : fail(
-              'bind-snapshot',
-              'conflict',
-              'stored snapshot reference diverged from the finalized Signal publication',
-            ),
+      Effect.catchTag(snapshotReferenceIssueTags, (cause) =>
+        Effect.fail(
+          storeError(
+            'bind-snapshot',
+            'conflict',
+            `stored snapshot reference diverged from the finalized Signal publication: ${renderSnapshotReferenceIssue(cause)}`,
+            cause,
+          ),
+        ),
       ),
     )
 

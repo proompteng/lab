@@ -46,6 +46,12 @@ export type SnapshotReferenceIssue =
       readonly cause: CanonicalJsonFailure
     }
 
+export const snapshotReferenceIssueTags = [
+  'SnapshotReferenceCardinalityMismatch',
+  'SnapshotReferenceMismatch',
+  'SnapshotReferenceCanonicalizationFailed',
+] as const
+
 const decodeSnapshotReferenceRows = Schema.decodeUnknownEffect(
   Schema.Array(SnapshotReferenceRowSchema),
   strictParseOptions,
@@ -149,10 +155,10 @@ export const renderSnapshotReferenceIssue = (issue: SnapshotReferenceIssue): str
   }
 }
 
-export const ensureSnapshotReferenceResult = (
+export const ensureSnapshotReference = (
   sql: PgClient.PgClient,
   inputManifest: InputManifest,
-): Effect.Effect<Result.Result<void, SnapshotReferenceIssue>, SqlError | Schema.SchemaError> =>
+): Effect.Effect<void, SnapshotReferenceIssue | SqlError | Schema.SchemaError> =>
   Effect.gen(function* () {
     const snapshot = inputManifest.finalizedSnapshot
     yield* sql`
@@ -205,11 +211,5 @@ export const ensureSnapshotReferenceResult = (
       FROM snapshot_references
       WHERE snapshot_id = ${snapshot.snapshotId}
     `.pipe(Effect.flatMap(decodeSnapshotReferenceRows))
-    return validateSnapshotReference(inputManifest, rows)
+    yield* Effect.fromResult(validateSnapshotReference(inputManifest, rows))
   })
-
-export const ensureSnapshotReference = (
-  sql: PgClient.PgClient,
-  inputManifest: InputManifest,
-): Effect.Effect<boolean, SqlError | Schema.SchemaError> =>
-  ensureSnapshotReferenceResult(sql, inputManifest).pipe(Effect.map(Result.isSuccess))

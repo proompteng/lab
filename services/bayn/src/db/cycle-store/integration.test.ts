@@ -907,9 +907,9 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     expect(result.atClose.changed).toBe(true)
     expect(Exit.isFailure(result.missingReference)).toBe(true)
     if (Exit.isFailure(result.missingReference)) {
-      expect(Cause.pretty(result.missingReference.cause)).toContain(
-        'stored snapshot reference diverged from the finalized Signal publication',
-      )
+      const cause = Cause.pretty(result.missingReference.cause)
+      expect(cause).toContain('stored snapshot reference diverged from the finalized Signal publication')
+      expect(cause).toContain('snapshot reference mismatch at manifestHash')
     }
     expect(Exit.isFailure(result.staleReference)).toBe(true)
     if (Exit.isFailure(result.staleReference)) {
