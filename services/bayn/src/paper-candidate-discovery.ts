@@ -17,8 +17,8 @@ import {
 import { RuntimeProvenanceSchema, makeStrategyProtocolHash } from './contracts'
 import { CycleState, type AutonomousCycle } from './cycle'
 import type { CycleOperationsProjection } from './cycle-observability'
-import { CycleObservability } from './db/cycle-observability'
-import { CycleStore } from './db/cycle-store'
+import { CycleObservability, type CycleObservabilityError } from './db/cycle-observability'
+import { CycleStore, type CycleStoreError } from './db/cycle-store'
 import { canonicalHashV1 } from './hash'
 import { Authority, OrderSide, OrderType, RiskOutcome, TimeInForce } from './paper'
 import { Gate, Reason } from './risk'
@@ -836,7 +836,10 @@ const selectCompletedCycle = (
     ),
   )
 
-const readCycle = (store: CycleStore['Service'], cycleId: string): Effect.Effect<AutonomousCycle, unknown, never> =>
+const readCycle = (
+  store: CycleStore['Service'],
+  cycleId: string,
+): Effect.Effect<AutonomousCycle, CycleStoreError | PaperCandidateDiscoveryError, never> =>
   pipe(
     store.read(cycleId),
     Effect.flatMap((cycle) =>
@@ -856,7 +859,7 @@ const readCycle = (store: CycleStore['Service'], cycleId: string): Effect.Effect
 const readDecisionDocument = (
   store: CycleStore['Service'],
   cycleId: string,
-): Effect.Effect<ObserveShadowDecisionDocument, unknown, never> =>
+): Effect.Effect<ObserveShadowDecisionDocument, CycleStoreError | PaperCandidateDiscoveryError, never> =>
   pipe(
     store.readDecisionDocument(cycleId),
     Effect.flatMap((document) =>
@@ -872,7 +875,10 @@ const readSnapshotTransaction = (
   identity: PaperCandidateDiscoveryIdentity,
   observability: CycleObservability['Service'],
   store: CycleStore['Service'],
-): Effect.Effect<PaperCandidateDiscoverySnapshot, unknown> =>
+): Effect.Effect<
+  PaperCandidateDiscoverySnapshot,
+  CycleObservabilityError | CycleStoreError | PaperCandidateDiscoveryError
+> =>
   pipe(
     Effect.Do,
     Effect.bind('projection', () => observability.read(identity.qualificationRunId, identity.accountId)),
