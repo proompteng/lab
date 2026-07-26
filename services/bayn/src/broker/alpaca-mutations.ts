@@ -124,6 +124,22 @@ export interface BrokerMutationShape {
 
 export class BrokerMutation extends Context.Service<BrokerMutation, BrokerMutationShape>()('bayn/BrokerMutation') {}
 
+export interface OrderRequestBody {
+  readonly symbol: string
+  readonly qty: string
+  readonly side: OrderSide
+  readonly type: OrderType.Market
+  readonly time_in_force: TimeInForce
+  readonly client_order_id: string
+  readonly extended_hours: false
+}
+
+export class OrderRequestError extends Data.TaggedError('OrderRequestError')<{
+  readonly failure: 'invalid-intent-state' | 'invalid-order'
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
 const causeSummary = (cause: unknown): Readonly<Record<string, string>> => {
   if (Schema.isSchemaError(cause)) return { tag: cause._tag, message: cause.message }
   if (typeof cause === 'object' && cause !== null && '_tag' in cause && typeof cause._tag === 'string') {
@@ -223,7 +239,7 @@ const timeInForce = (value: DomainTimeInForce): TimeInForce => {
   }
 }
 
-export const orderRequestBody = (intent: Intent) => {
+const orderRequestBodyUnsafe = (intent: Intent): OrderRequestBody => {
   if (intent.orderType !== DomainOrderType.Market) throw new Error('Bayn broker submission supports market orders only')
   if (intent.timeInForce !== DomainTimeInForce.Day && BigInt(intent.quantityMicros) % 1_000_000n !== 0n) {
     throw new Error('fractional market orders require DAY time in force')
@@ -239,10 +255,26 @@ export const orderRequestBody = (intent: Intent) => {
   } as const
 }
 
-export const submitBody = (intent: Intent) => {
-  if (intent.state !== IntentState.IoStarted) throw new Error('intent must be IO_STARTED before broker submission')
-  return orderRequestBody(intent)
-}
+export const orderRequestBody = (intent: Intent): Result.Result<OrderRequestBody, OrderRequestError> =>
+  Result.try({
+    try: () => orderRequestBodyUnsafe(intent),
+    catch: (cause) =>
+      new OrderRequestError({
+        failure: 'invalid-order',
+        message: 'intent cannot be represented as an Alpaca paper order',
+        cause,
+      }),
+  })
+
+export const submitBody = (intent: Intent): Result.Result<OrderRequestBody, OrderRequestError> =>
+  intent.state !== IntentState.IoStarted
+    ? Result.fail(
+        new OrderRequestError({
+          failure: 'invalid-intent-state',
+          message: 'intent must be IO_STARTED before broker submission',
+        }),
+      )
+    : orderRequestBody(intent)
 
 export const cancelRequestHash = (brokerOrderId: string): string =>
   canonicalHashV1({ operation: MutationOperation.Cancel, brokerOrderId })
@@ -339,10 +371,11 @@ export const makeMutation = (
             ),
           )
         }
-        const body = yield* Effect.try({
-          try: () => submitBody(intent),
-          catch: (cause) => invalidRequest(MutationOperation.Submit, 'order intent cannot be submitted', cause),
-        })
+        const body = yield* Effect.fromResult(submitBody(intent)).pipe(
+          Effect.mapError((cause) =>
+            invalidRequest(MutationOperation.Submit, 'order intent cannot be submitted', cause),
+          ),
+        )
         const requestHash = canonicalHashV1(body)
         const request = yield* HttpClientRequest.bodyJson(
           HttpClientRequest.post(new URL('/v2/orders', paperTradingUrl), {

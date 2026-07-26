@@ -37,6 +37,8 @@ import {
   selectRecovery,
   validateRecovery,
 } from './coordinator-decisions'
+
+const encodedRequest = (value: Intent) => Result.getOrThrow(orderRequestBody(value))
 import type { StoredIntent } from './intents'
 import { MutationEventType, mutationIdResult, type MutationEvent } from './mutations'
 
@@ -121,7 +123,7 @@ const mutation = (
 ): MutationEvent => {
   const requestHash =
     operation === MutationOperation.Submit
-      ? canonicalHashV1(orderRequestBody(stateIntent))
+      ? canonicalHashV1(encodedRequest(stateIntent))
       : cancelRequestHash(brokerOrderId)
   return {
     schemaVersion: 'bayn.paper-mutation-event.v1',
@@ -147,8 +149,8 @@ describe('execution coordinator decisions', () => {
       schemaVersion: 'bayn.paper-submit-dry-run.v1',
       intentId,
       clientOrderId: intent.clientOrderId,
-      requestHash: canonicalHashV1(orderRequestBody(intent)),
-      request: orderRequestBody(intent),
+      requestHash: canonicalHashV1(encodedRequest(intent)),
+      request: encodedRequest(intent),
     })
     expect(Option.getOrUndefined(Result.getFailure(expired))).toMatchObject({
       _tag: 'ExpiredRiskDecision',
