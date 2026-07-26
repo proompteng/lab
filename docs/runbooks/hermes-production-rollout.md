@@ -7,7 +7,8 @@ channel without dual writers, and retains a tested rollback path. All `kubectl` 
 
 - Never run OpenClaw and Hermes with the same Discord token at the same time.
 - Never pass `--migrate-secrets` to the OpenClaw migration.
-- Never store or print the API key or Discord token in Git, shell history, logs, Job specs, or evidence artifacts.
+- Never store or print the API key, Exa API key, or Discord token in Git, shell history, logs, Job specs, or evidence
+  artifacts.
 - Never run `hermes claw cleanup`, delete the OpenClaw VM/PVC, or delete Hermes PVCs during the 14-day rollback window.
 - Never start migration or restore until the backup CronJob is suspended and every active backup Job has finished.
 - Never create a migration or restore Job until every earlier Hermes maintenance Job is terminal.
@@ -88,14 +89,15 @@ The expected Hermes toolchain multi-architecture index digest is
    `NetworkPolicy is not enforced` is a hard rollout blocker. Do not sync Hermes or weaken the containment test; install
    and validate a compatible policy engine first.
 
-3. Ensure the `infra` 1Password vault contains exactly one `hermes-runtime` item with a minimum 32-byte API key. The
-   command is safe to rerun: it reuses and validates an existing item, and creates one only when none exists. Do this from
-   a private shell with 1Password unlocked; do not echo the generated value:
+3. Ensure the `infra` 1Password vault contains exactly one `hermes-runtime` item with a minimum 32-byte API server key and
+   a provisioned Exa API key. The command is safe to rerun: it reuses and validates an existing item, and creates one only
+   when none exists. The Exa key must be added through the Exa dashboard before this preflight. Do this from a private
+   shell with 1Password unlocked; do not echo either value:
 
    ```bash
    set -euo pipefail
    cleanup_api_key() {
-     unset hermes_api_key hermes_item_count hermes_item_id api_key_bytes
+     unset hermes_api_key hermes_item_count hermes_item_id api_key_bytes exa_key_bytes
    }
    abort_api_key() { trap - EXIT HUP INT TERM; cleanup_api_key; exit 130; }
    trap cleanup_api_key EXIT
@@ -131,7 +133,14 @@ The expected Hermes toolchain multi-architecture index digest is
        then ($fields[0].value | length)
        else error("exactly one concealed API_SERVER_KEY field is required")
        end')
+   exa_key_bytes=$(op item get --vault infra "$hermes_item_id" --format json | \
+     jq -er '[.fields[] | select(.label == "EXA_API_KEY")] as $fields |
+       if ($fields | length) == 1 and $fields[0].type == "CONCEALED" and ($fields[0].value | type) == "string"
+       then ($fields[0].value | length)
+       else error("exactly one concealed EXA_API_KEY field is required")
+       end')
    test "$api_key_bytes" -ge 32
+   test "$exa_key_bytes" -ge 32
    cleanup_api_key
    trap - EXIT HUP INT TERM
    ```
@@ -148,15 +157,22 @@ The expected Hermes toolchain multi-architecture index digest is
    hermes_deployed_revision=$(kubectl -n argocd get application hermes -o json | jq -r '.status.history[-1].revision // empty')
    test "$hermes_deployed_revision" = "$(git rev-parse HEAD)"
    kubectl -n hermes wait externalsecret/hermes-api-auth --for=condition=Ready --timeout=5m
+   kubectl -n hermes wait externalsecret/hermes-exa-auth --for=condition=Ready --timeout=5m
+   api_secret_keys=$(kubectl -n hermes get secret hermes-api-auth -o json | jq -r '.data | keys | sort | join(",")')
+   exa_secret_keys=$(kubectl -n hermes get secret hermes-exa-auth -o json | jq -r '.data | keys | sort | join(",")')
+   test "$api_secret_keys" = API_SERVER_KEY
+   test "$exa_secret_keys" = EXA_API_KEY
    api_key_bytes=$(kubectl -n hermes get secret hermes-api-auth -o jsonpath='{.data.API_SERVER_KEY}' | base64 -d | wc -c | tr -d '[:space:]')
+   exa_key_bytes=$(kubectl -n hermes get secret hermes-exa-auth -o jsonpath='{.data.EXA_API_KEY}' | base64 -d | wc -c | tr -d '[:space:]')
    test "$api_key_bytes" -ge 32
-   printf '%s\n' "$api_key_bytes"
-   unset api_key_bytes hermes_deployed_revision
+   test "$exa_key_bytes" -ge 32
+   printf 'api_key_bytes=%s exa_key_bytes=%s\n' "$api_key_bytes" "$exa_key_bytes"
+   unset api_secret_keys exa_secret_keys api_key_bytes exa_key_bytes hermes_deployed_revision
    ```
 
    The Argo deployment history is the durable alert-enablement source and must contain a successful deployment. It remains
-   outside the Hermes namespace and is re-exported after monitoring restarts. The reported key length must be at least 32.
-   Do not include the value in rollout evidence.
+   outside the Hermes namespace and is re-exported after monitoring restarts. Both reported key lengths must be at least
+   32. Do not include either value in rollout evidence.
 
 ## Phase 1: API-only canary
 
@@ -297,7 +313,50 @@ The expected Hermes toolchain multi-architecture index digest is
    unset hermes_api_key
    ```
 
-4. Prove state survives a restart. Create a harmless canary file, restart the pod, and read it back:
+4. Prove native Exa search/extract and the allowlisted Exa MCP tools from the production container:
+
+   ```bash
+   set -euo pipefail
+   kubectl -n hermes exec -i hermes-0 -c hermes -- /opt/hermes/.venv/bin/python - <<'PY'
+   import asyncio
+   import json
+
+   from tools.web_tools import web_extract_tool, web_search_tool
+
+   search = json.loads(web_search_tool("Hermes Agent GitHub", limit=2))
+   assert search.get("success") is True, search
+   results = search.get("data", {}).get("web", [])
+   assert len(results) == 2, search
+   assert all(result.get("url", "").startswith("http") for result in results), search
+
+   extract = json.loads(
+       asyncio.run(
+           web_extract_tool(
+               ["https://exa.ai/docs/reference/exa-mcp"],
+               format="markdown",
+               char_limit=4000,
+           )
+       )
+   )
+   pages = extract.get("results", [])
+   assert len(pages) == 1, extract
+   assert not pages[0].get("error"), extract
+   assert "Web Search MCP" in pages[0].get("content", ""), extract
+   print(f"native_web_canary=ok search_results={len(results)} extracted_pages={len(pages)}")
+   PY
+   kubectl -n hermes exec hermes-0 -c hermes -- /bin/sh -lc '
+     set -eu
+     mcp_test=$(hermes mcp test exa 2>&1)
+     printf "%s" "$mcp_test" | grep -F "✓ Connected" >/dev/null
+     printf "%s" "$mcp_test" | grep -F "✓ Tools discovered: 2" >/dev/null
+     printf "%s" "$mcp_test" | grep -F "web_search_exa" >/dev/null
+     printf "%s" "$mcp_test" | grep -F "web_fetch_exa" >/dev/null
+     unset mcp_test
+     printf "exa_mcp_canary=ok tools=2\n"
+   '
+   ```
+
+5. Prove state survives a restart. Create a harmless canary file, restart the pod, and read it back:
 
    ```bash
    set -euo pipefail
@@ -307,7 +366,7 @@ The expected Hermes toolchain multi-architecture index digest is
    kubectl -n hermes exec hermes-0 -c hermes -- test -s /opt/data/workspace/tuslagch/.rollout-canary
    ```
 
-5. Prove direct-egress containment, public HTTPS through Squid, and private-destination denial:
+6. Prove direct-egress containment, public HTTPS through Squid, and private-destination denial:
 
    ```bash
    set -euo pipefail
@@ -336,7 +395,7 @@ The expected Hermes toolchain multi-architecture index digest is
    The direct public request must fail. Discord, GitHub, and an arbitrary public HTTPS destination must work through Squid,
    while the metadata destination must receive Squid's explicit denial.
 
-6. Prove the cluster reader and local lab checkout from inside the gateway:
+7. Prove the cluster reader and local lab checkout from inside the gateway:
 
    ```bash
    set -euo pipefail
@@ -810,8 +869,8 @@ Cutover sequence:
    ```
 
 4. Keep the Lease-owning shell open. Sync Hermes from merged `main` only after the OpenClaw VMI is gone. Wait for the
-   API ExternalSecret, Discord SealedSecret, and rollout; verify backups are enabled, then release the Lease. Prove only one
-   Discord bot session is active. This sync restores the Hermes replicas and backups:
+   API and Exa ExternalSecrets, Discord SealedSecret, and rollout; verify backups are enabled, then release the Lease.
+   Prove only one Discord bot session is active. This sync restores the Hermes replicas and backups:
 
    ```bash
    set -euo pipefail
@@ -819,13 +878,16 @@ Cutover sequence:
    test "$(kubectl -n hermes get lease hermes-maintenance -o jsonpath='{.spec.holderIdentity}')" = "$maintenance_holder"
    argocd app sync hermes --prune=false
    kubectl -n hermes wait externalsecret/hermes-api-auth --for=condition=Ready --timeout=5m
+   kubectl -n hermes wait externalsecret/hermes-exa-auth --for=condition=Ready --timeout=5m
    kubectl -n hermes wait sealedsecret/hermes-discord-auth --for=condition=Synced --timeout=5m
    kubectl -n hermes rollout status statefulset/hermes --timeout=15m
    api_secret_keys=$(kubectl -n hermes get secret hermes-api-auth -o json | jq -r '.data | keys | sort | join(",")')
+   exa_secret_keys=$(kubectl -n hermes get secret hermes-exa-auth -o json | jq -r '.data | keys | sort | join(",")')
    discord_secret_keys=$(kubectl -n hermes get secret hermes-discord-auth -o json | jq -r '.data | keys | sort | join(",")')
    test "$api_secret_keys" = API_SERVER_KEY
+   test "$exa_secret_keys" = EXA_API_KEY
    test "$discord_secret_keys" = DISCORD_ALLOWED_USERS,DISCORD_BOT_TOKEN
-   unset api_secret_keys discord_secret_keys
+   unset api_secret_keys exa_secret_keys discord_secret_keys
    test "$(kubectl -n hermes get cronjob hermes-backup -o jsonpath='{.spec.suspend}')" = false
    test -z "$(kubectl -n openclaw get virtualmachineinstance openclaw --ignore-not-found -o name)"
    test "$(kubectl -n hermes get statefulset hermes -o jsonpath='{.status.readyReplicas}')" = 1
@@ -963,10 +1025,11 @@ The rollout record is complete only when it includes:
 - Hermes toolchain index digest, both platform manifests, OCI version labels, exact login-shell versions, and real lab
   validation with an unchanged checkout status;
 - Argo `Synced/Healthy` readback at those revisions;
-- ExternalSecret Ready conditions and secret field lengths/counts without values;
+- API and Exa ExternalSecret Ready conditions and secret field lengths/counts without values;
 - pod UID, read-only rootfs, scoped service-account token, NetworkPolicy, PVC, and verified backup evidence;
 - gateway service-account identity, allowed cluster-wide reads, rejected Secret reads and writes, and the lab checkout SHA;
-- authenticated API rejection/success, Flamingo model response, and persistence after restart;
+- authenticated API rejection/success, Flamingo model response, native Exa search/extract, the two allowlisted Exa MCP
+  tools, and persistence after restart;
 - migration dry-run/apply Job identities and report counts;
 - single-writer Discord message lifecycle IDs and non-allowlisted-user rejection;
 - retained OpenClaw VM/PVC identities, rollback revision, and rollback-window end timestamp.

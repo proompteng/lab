@@ -356,24 +356,36 @@ test('rejects a broadly scoped GitHub SealedSecret', async () => {
 test('rejects API sessions without the terminal toolset', async () => {
   const files = await loadProductionFiles()
   files.config = files.config.replace(
-    '  api_server: [file, memory, terminal, todo]',
-    '  api_server: [file, memory, todo]',
+    '  api_server: [file, memory, terminal, todo, web, exa]',
+    '  api_server: [file, memory, todo, web, exa]',
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.config}: missing production invariant "platform_toolsets:\\n  cli: [file, memory, terminal, todo]\\n  api_server: [file, memory, terminal, todo]\\n  discord: [file, memory, terminal, todo]"`,
+    `${productionPaths.config}: missing production invariant "platform_toolsets:\\n  cli: [file, memory, terminal, todo, web, exa]\\n  api_server: [file, memory, terminal, todo, web, exa]\\n  discord: [file, memory, terminal, todo, web, exa]"`,
   )
 })
 
 test('rejects duplicate platform toolset keys', async () => {
   const files = await loadProductionFiles()
   files.config = files.config.replace(
-    '  discord: [file, memory, terminal, todo]\n',
-    '  discord: [file, memory, terminal, todo]\n  discord: [file, memory, terminal, todo]\n',
+    '  discord: [file, memory, terminal, todo, web, exa]\n',
+    '  discord: [file, memory, terminal, todo, web, exa]\n  discord: [file, memory, terminal, todo, web, exa]\n',
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.config}: discord must have exactly one production terminal toolset`,
+    `${productionPaths.config}: discord must have exactly one production web and terminal toolset`,
+  )
+})
+
+test('rejects a gateway without the Exa SecretKeyRef', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    '                  name: hermes-exa-auth',
+    '                  name: missing-exa-auth',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: the gateway must receive exactly one Exa SecretKeyRef`,
   )
 })
 
@@ -407,6 +419,46 @@ test('rejects Discord fields in the API ExternalSecret', async () => {
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.externalSecret}: contains forbidden production term "DISCORD_BOT_TOKEN"`,
+  )
+})
+
+test('rejects an Exa ExternalSecret outside the infra vault', async () => {
+  const files = await loadProductionFiles()
+  files.exaExternalSecret = files.exaExternalSecret.replace('name: onepassword-infra', 'name: onepassword-media')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.exaExternalSecret}: missing production invariant "name: onepassword-infra"`,
+  )
+})
+
+test('rejects a duplicate Exa API key mapping', async () => {
+  const files = await loadProductionFiles()
+  files.exaExternalSecret +=
+    '\n    - secretKey: EXA_API_KEY\n      remoteRef:\n        key: hermes-runtime/EXA_API_KEY\n'
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.exaExternalSecret}: EXA_API_KEY must have exactly one 1Password mapping`,
+  )
+})
+
+test('rejects Exa MCP tools with mutation or agent authority', async () => {
+  const files = await loadProductionFiles()
+  files.config = files.config.replace('        - web_fetch_exa', '        - web_fetch_exa\n        - agent_run')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.config}: contains forbidden production term "agent_run"`,
+  )
+})
+
+test('rejects an additional MCP server', async () => {
+  const files = await loadProductionFiles()
+  files.config = files.config.replace(
+    '\ndelegation:',
+    '\n  unreviewed:\n    url: "https://example.com/mcp"\n\ndelegation:',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.config}: Exa must be the only MCP server with exactly two read-only web tools`,
   )
 })
 
@@ -548,12 +600,21 @@ test('rejects a Discord credential transfer without exact-value verification', a
 test('rejects secret bridge verification that does not enforce key length', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
-    'test "$api_key_bytes" -ge 32\n   printf \'%s\\n\' "$api_key_bytes"',
-    'echo "$api_key_bytes"',
+    'test "$api_key_bytes" -ge 32\n   test "$exa_key_bytes" -ge 32\n   printf \'api_key_bytes=%s exa_key_bytes=%s\\n\'',
+    'test "$api_key_bytes" -ge 16\n   test "$exa_key_bytes" -ge 32\n   printf \'api_key_bytes=%s exa_key_bytes=%s\\n\'',
   )
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.runbook}: 1Password and bridged API keys must both enforce the minimum length`,
+  )
+})
+
+test('rejects Exa secret verification that does not enforce key length', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace('test "$exa_key_bytes" -ge 32', 'test "$exa_key_bytes" -ge 16')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: 1Password and bridged Exa keys must both enforce the minimum length`,
   )
 })
 

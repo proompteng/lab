@@ -33,6 +33,7 @@ resources:
   - serviceaccount.yaml
   - rbac.yaml
   - external-secret.yaml
+  - exa-external-secret.yaml
   - discord-sealed-secret.yaml
   - github-sealed-secret.yaml
   - service.yaml

@@ -186,6 +186,11 @@ spec:
                 secretKeyRef:
                   name: hermes-api-auth
                   key: API_SERVER_KEY
+            - name: EXA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-exa-auth
+                  key: EXA_API_KEY
             - name: DISCORD_BOT_TOKEN
               valueFrom:
                 secretKeyRef:

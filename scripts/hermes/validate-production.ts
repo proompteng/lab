@@ -19,6 +19,7 @@ export const productionPaths = {
   backupScript: 'argocd/applications/hermes/backup-once.sh',
   config: 'argocd/applications/hermes/config.yaml',
   externalSecret: 'argocd/applications/hermes/external-secret.yaml',
+  exaExternalSecret: 'argocd/applications/hermes/exa-external-secret.yaml',
   discordSealedSecret: 'argocd/applications/hermes/discord-sealed-secret.yaml',
   githubSealedSecret: 'argocd/applications/hermes/github-sealed-secret.yaml',
   networkPolicy: 'argocd/applications/hermes/network-policy.yaml',
@@ -99,6 +100,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '- network-policy.yaml',
     '- rbac.yaml',
     '- external-secret.yaml',
+    '- exa-external-secret.yaml',
     '- discord-sealed-secret.yaml',
     '- github-sealed-secret.yaml',
     '- bootstrap-lab-checkout.sh',
@@ -129,6 +131,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'capabilities:\n              drop:\n                - ALL',
     'seccompProfile:\n              type: RuntimeDefault',
     'API_SERVER_KEY',
+    'EXA_API_KEY',
     'DISCORD_BOT_TOKEN',
     'DISCORD_ALLOWED_USERS',
     'name: data',
@@ -159,6 +162,16 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   ])
   if (count(files.statefulSet, 'mountPath: /etc/profile.d/hermes-tools.sh\n') !== 1) {
     failures.push(`${productionPaths.statefulSet}: the gateway must mount exactly one immutable terminal login profile`)
+  }
+  const exaSecretKeyRef = [
+    '            - name: EXA_API_KEY',
+    '              valueFrom:',
+    '                secretKeyRef:',
+    '                  name: hermes-exa-auth',
+    '                  key: EXA_API_KEY',
+  ].join('\n')
+  if (count(files.statefulSet, exaSecretKeyRef) !== 1) {
+    failures.push(`${productionPaths.statefulSet}: the gateway must receive exactly one Exa SecretKeyRef`)
   }
   forbidTerms(failures, productionPaths.statefulSet, files.statefulSet, [
     ':latest',
@@ -307,13 +320,19 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'cron_mode: deny',
     'orchestrator_enabled: false',
     'inherit_mcp_toolsets: false',
-    'mcp_servers: {}',
+    'web:\n  search_backend: exa\n  extract_backend: exa',
+    'mcp_servers:\n  exa:',
+    'url: "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa"',
+    'x-api-key: "${EXA_API_KEY}"',
+    'connect_timeout: 15',
+    'timeout: 120',
+    'tools:\n      include:\n        - web_search_exa\n        - web_fetch_exa',
     'hooks_auto_accept: false',
     'memory_char_limit: 4400',
     'code_execution:\n  timeout: 120\n  max_tool_calls: 100',
     'Treat /opt/data/workspace/tuslagch/lab as the project root and default working directory',
     'Use the authenticated tuslagch GitHub identity, codex/ branches, and pull requests',
-    'platform_toolsets:\n  cli: [file, memory, terminal, todo]\n  api_server: [file, memory, terminal, todo]\n  discord: [file, memory, terminal, todo]',
+    'platform_toolsets:\n  cli: [file, memory, terminal, todo, web, exa]\n  api_server: [file, memory, terminal, todo, web, exa]\n  discord: [file, memory, terminal, todo, web, exa]',
     'Kubernetes access is cluster-wide read-only',
     '    - "*git push --force*"',
     '  - "kubectl get *"',
@@ -326,12 +345,31 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'api_key:',
     'token:',
     'allow_all_users: true',
+    'agent_run',
+    'web_search_advanced_exa',
     '    - "*kubectl*"',
   ])
   for (const platform of ['cli', 'api_server', 'discord']) {
-    if (count(files.config, `  ${platform}: [file, memory, terminal, todo]\n`) !== 1) {
-      failures.push(`${productionPaths.config}: ${platform} must have exactly one production terminal toolset`)
+    if (count(files.config, `  ${platform}: [file, memory, terminal, todo, web, exa]\n`) !== 1) {
+      failures.push(`${productionPaths.config}: ${platform} must have exactly one production web and terminal toolset`)
     }
+  }
+  const expectedMcpConfig = [
+    'mcp_servers:',
+    '  exa:',
+    '    url: "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa"',
+    '    headers:',
+    '      x-api-key: "${EXA_API_KEY}"',
+    '    connect_timeout: 15',
+    '    timeout: 120',
+    '    tools:',
+    '      include:',
+    '        - web_search_exa',
+    '        - web_fetch_exa',
+  ].join('\n')
+  const mcpConfig = files.config.match(/\nmcp_servers:\n[\s\S]*?\n\ndelegation:/)?.[0] ?? ''
+  if (mcpConfig !== `\n${expectedMcpConfig}\n\ndelegation:`) {
+    failures.push(`${productionPaths.config}: Exa must be the only MCP server with exactly two read-only web tools`)
   }
 
   requireTerms(failures, productionPaths.externalSecret, files.externalSecret, [
@@ -351,6 +389,27 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     count(files.externalSecret, '        key: hermes-runtime/API_SERVER_KEY\n') !== 1
   ) {
     failures.push(`${productionPaths.externalSecret}: API_SERVER_KEY must have exactly one 1Password mapping`)
+  }
+
+  requireTerms(failures, productionPaths.exaExternalSecret, files.exaExternalSecret, [
+    'name: hermes-exa-auth',
+    'name: onepassword-infra',
+    'deletionPolicy: Retain',
+    'secretKey: EXA_API_KEY',
+    'key: hermes-runtime/EXA_API_KEY',
+  ])
+  forbidTerms(failures, productionPaths.exaExternalSecret, files.exaExternalSecret, [
+    'dataFrom:',
+    'kind: Secret',
+    'API_SERVER_KEY',
+    'DISCORD_BOT_TOKEN',
+    'DISCORD_ALLOWED_USERS',
+  ])
+  if (
+    count(files.exaExternalSecret, '    - secretKey: EXA_API_KEY\n') !== 1 ||
+    count(files.exaExternalSecret, '        key: hermes-runtime/EXA_API_KEY\n') !== 1
+  ) {
+    failures.push(`${productionPaths.exaExternalSecret}: EXA_API_KEY must have exactly one 1Password mapping`)
   }
 
   requireTerms(failures, productionPaths.discordSealedSecret, files.discordSealedSecret, [
@@ -947,6 +1006,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'Never create a migration or restore Job until every earlier Hermes maintenance Job is terminal.',
     'Never enable Hermes Discord until a final audited migration is applied after the OpenClaw gateway is inactive.',
     'Never sync Hermes until the disposable NetworkPolicy enforcement probe passes on the live cluster.',
+    'Never store or print the API key, Exa API key, or Discord token',
     'kubectl -n hermes get namespace hermes -o json',
     'Argo CD globally excludes Kubernetes Lease objects',
     "stale_maintenance_holder=$(kubectl -n hermes get lease hermes-maintenance -o jsonpath='{.spec.holderIdentity}')",
@@ -977,6 +1037,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'The CronJob must remain suspended until every prior backup',
     'if kubectl -n hermes exec hermes-0 -c hermes -- /opt/hermes/.venv/bin/python -c',
     'direct public egress unexpectedly succeeded',
+    'native_web_canary=ok search_results={len(results)} extracted_pages={len(pages)}',
+    'exa_mcp_canary=ok tools=2',
     'git ls-remote --exit-code https://github.com/proompteng/lab.git refs/heads/main',
     'opener.open("https://169.254.169.254", timeout=5)',
     '*"403 Forbidden"*)',
@@ -1046,7 +1108,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.runbook, phaseZeroSection, [
     'bash scripts/hermes/verify-network-policy-enforcement.sh',
     '`NetworkPolicy is not enforced` is a hard rollout blocker.',
-    'unset hermes_api_key hermes_item_count hermes_item_id api_key_bytes',
+    'unset hermes_api_key hermes_item_count hermes_item_id api_key_bytes exa_key_bytes',
     'trap cleanup_api_key EXIT',
     'hermes_item_count=$(op item list --vault infra --format json',
     '[.[] | select(.title == "hermes-runtime")] | length',
@@ -1058,8 +1120,12 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'if length == 1 then .[0] else error("exactly one hermes-runtime item is required") end',
     'op item get --vault infra "$hermes_item_id" --format json',
     'else error("exactly one concealed API_SERVER_KEY field is required")',
+    'else error("exactly one concealed EXA_API_KEY field is required")',
     'test "$api_key_bytes" -ge 32',
-    'printf \'%s\\n\' "$api_key_bytes"',
+    'test "$exa_key_bytes" -ge 32',
+    'kubectl -n hermes wait externalsecret/hermes-exa-auth --for=condition=Ready --timeout=5m',
+    'test "$exa_secret_keys" = EXA_API_KEY',
+    'printf \'api_key_bytes=%s exa_key_bytes=%s\\n\' "$api_key_bytes" "$exa_key_bytes"',
     "hermes_deployed_revision=$(kubectl -n argocd get application hermes -o json | jq -r '.status.history[-1].revision // empty')",
     'test "$hermes_deployed_revision" = "$(git rev-parse HEAD)"',
   ])
@@ -1073,6 +1139,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
   if (count(phaseZeroSection, 'test "$api_key_bytes" -ge 32') !== 2) {
     failures.push(`${productionPaths.runbook}: 1Password and bridged API keys must both enforce the minimum length`)
+  }
+  if (count(phaseZeroSection, 'test "$exa_key_bytes" -ge 32') !== 2) {
+    failures.push(`${productionPaths.runbook}: 1Password and bridged Exa keys must both enforce the minimum length`)
   }
   const rotationSection = files.runbook.match(/## API key rotation[\s\S]*?## Maintenance lock recovery/)?.[0] ?? ''
   requireTerms(failures, productionPaths.runbook, rotationSection, [
