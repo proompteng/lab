@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
+import { fixtureStrategy } from './app-test-support'
 import {
   BrokerRead,
   BrokerReadError,
@@ -21,6 +22,7 @@ import {
   makeCycleWindow,
   makeExecutionCalendarObservation,
 } from './cycle'
+import { makeStrategyProtocolHash } from './contracts'
 import { CycleStore, type CycleStoreShape } from './db/cycle-store'
 import { PaperStore, PaperStoreError, type PaperStoreShape } from './db/paper-store'
 import { operationalError } from './errors'
@@ -31,6 +33,7 @@ import {
   buildObserveCycleDecision,
   loadObserveRiskPolicy,
   makeObserveAutonomousCycleStartup,
+  prepareObserveStartup,
 } from './observe-composition'
 import {
   AccountStatus,
@@ -315,6 +318,21 @@ const calendarRead =
     })
 
 describe('OBSERVE runtime composition', () => {
+  test('derives the autonomous cycle protocol identity from the current strategy provenance', () => {
+    const prepared = prepareObserveStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      maximumAuthority: Authority.Observe,
+      pollIntervalMs: 30_000,
+      strategy: fixtureStrategy,
+    })
+
+    expect(Result.isSuccess(prepared)).toBe(true)
+    if (Result.isSuccess(prepared)) {
+      expect(prepared.success.strategyProtocolHash).toBe(makeStrategyProtocolHash(fixtureStrategy.provenance.strategy))
+    }
+  })
+
   test('decodes the bounded source policy with the configured account and canonical universe', async () => {
     const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, [...fixtureProtocol.universe].reverse()))
 
@@ -594,6 +612,7 @@ describe('OBSERVE runtime composition', () => {
           throw new Error('PAPER startup must not compile a shadow decision')
         },
         parameters: fixtureProtocol,
+        provenance: fixtureStrategy.provenance,
       },
     })
 
@@ -601,7 +620,6 @@ describe('OBSERVE runtime composition', () => {
       Effect.scoped(
         startup({
           qualificationRunId: 'c'.repeat(64),
-          strategyProtocolHash: 'd'.repeat(64),
           recordPass: () => unused,
         }).pipe(
           Effect.provideService(BrokerRead, brokerRead),

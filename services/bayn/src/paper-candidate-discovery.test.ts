@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Context, Effect, Exit, Layer, ManagedRuntime, Option, Redacted } from 'effect'
+import { Cause, Context, Effect, Exit, Layer, ManagedRuntime, Option, Redacted, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 
@@ -29,10 +29,13 @@ import { PostgresClientLive } from './db/evidence-store'
 import { canonicalHashV1 } from './hash'
 import { Authority, KillState, OrderSide, OrderType, ReconciliationStatus, RiskOutcome, TimeInForce } from './paper'
 import {
-  PaperProofCandidateIneligibility,
-  discoverPaperProofCandidates,
-  type PaperProofDiscoveryIdentity,
-} from './paper-proof-discovery'
+  PaperCandidateIneligibility,
+  discoverPaperCandidates,
+  renderPaperCandidateDiscoveryError,
+  validatePaperCandidateDiscoveryObservations,
+  validatePaperCandidateDiscoverySnapshot,
+  type PaperCandidateDiscoveryIdentity,
+} from './paper-candidate-discovery'
 import { Gate, Reason } from './risk'
 import type { ObserveShadowDecisionDocument } from './shadow-decision-contract'
 import { TargetPlanStatus } from './target-planner'
@@ -55,7 +58,7 @@ const strategy: RuntimeProvenance['strategy'] = {
   parameterHash: hash('9'),
   parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
 }
-const identity: PaperProofDiscoveryIdentity = {
+const identity: PaperCandidateDiscoveryIdentity = {
   sourceRevision: 'a'.repeat(40),
   image: {
     repository: 'registry.ide-newton.ts.net/lab/bayn',
@@ -402,12 +405,12 @@ const program = (
   read: BrokerReadShape = broker(state),
   now = observedAt,
   sql: PgClient.PgClient = fakeSql(state),
-  candidateIdentity: PaperProofDiscoveryIdentity = identity,
+  candidateIdentity: PaperCandidateDiscoveryIdentity = identity,
 ) => {
   const { observability, cycleStore } = stores(state, input)
   return Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse(now))
-    return yield* discoverPaperProofCandidates(candidateIdentity)
+    return yield* discoverPaperCandidates(candidateIdentity)
   }).pipe(
     Effect.provideService(PgClient.PgClient, sql),
     Effect.provideService(CycleObservability, observability),
@@ -417,7 +420,63 @@ const program = (
   )
 }
 
-describe('paper proof DISCOVER', () => {
+describe('paper candidate discovery', () => {
+  test('returns fact-bearing Result failures from pure snapshot and receipt decisions', () => {
+    const missingAuthoritySnapshot = {
+      projection: { ...projection(), authority: null },
+      cycle: cycle(),
+      document: document(),
+    }
+    const snapshotFailure = validatePaperCandidateDiscoverySnapshot(
+      identity,
+      missingAuthoritySnapshot,
+      Date.parse(observedAt),
+    )
+
+    expect(Result.isFailure(snapshotFailure)).toBe(true)
+    if (Result.isFailure(snapshotFailure)) {
+      expect(snapshotFailure.failure).toMatchObject({
+        _tag: 'AuthorityMismatch',
+        failure: 'authority-mismatch',
+        expectedGenerationHash: authorityGenerationHash,
+        observedGenerationHash: null,
+      })
+      expect(renderPaperCandidateDiscoveryError(snapshotFailure.failure)).toBe(
+        `paper candidate authority mismatch: expectedGeneration=${authorityGenerationHash} observedGeneration=none maximum=none effective=none`,
+      )
+    }
+
+    const validSnapshot = {
+      projection: projection(),
+      cycle: cycle(),
+      document: document(),
+    }
+    const validatedSnapshot = validatePaperCandidateDiscoverySnapshot(identity, validSnapshot, Date.parse(observedAt))
+    expect(Result.isSuccess(validatedSnapshot)).toBe(true)
+    if (Result.isFailure(validatedSnapshot)) return
+
+    const observedAccount = Effect.runSync(account())
+    const observationFailure = validatePaperCandidateDiscoveryObservations(validatedSnapshot.success, {
+      account: {
+        ...observedAccount,
+        value: { ...observedAccount.value, id: '0f52e894-e17a-4b30-9a8f-e9f1f6fb701e' },
+      },
+      accountConfiguration: accountConfiguration(),
+      assets: symbols.map((symbol) => asset(symbol)),
+      capturedAtMs: Date.parse(observedAt),
+    })
+
+    expect(Result.isFailure(observationFailure)).toBe(true)
+    if (Result.isFailure(observationFailure)) {
+      expect(observationFailure.failure).toMatchObject({
+        _tag: 'AccountMismatch',
+        failure: 'account-mismatch',
+        expectedAccountId: accountId,
+        observedAccountId: '0f52e894-e17a-4b30-9a8f-e9f1f6fb701e',
+      })
+    }
+  })
+
   test('reads one immutable snapshot and emits every ordered candidate without mutation capabilities', async () => {
     const state = control()
     const receipt = await Effect.runPromise(program(state))
@@ -430,9 +489,8 @@ describe('paper proof DISCOVER', () => {
     expect(state.brokerAccountConfigurationReads).toBe(1)
     expect(state.assetSymbols).toEqual([...symbols])
     expect(receipt).toMatchObject({
-      schemaVersion: 'bayn.paper-proof-discovery.v2',
-      command: 'PREPARE',
-      phase: 'DISCOVER',
+      schemaVersion: 'bayn.paper-candidate-discovery.v2',
+      operation: 'PAPER_CANDIDATE_DISCOVERY',
       authority: Authority.Observe,
       dispatchable: false,
       binding: {
@@ -441,7 +499,7 @@ describe('paper proof DISCOVER', () => {
         document: { reconciliationId, policyHash },
       },
       candidateFacts: {
-        schemaVersion: 'bayn.paper-proof-candidate-facts.v2',
+        schemaVersion: 'bayn.paper-candidate-facts.v1',
         accountConfiguration: {
           fractionalTrading: true,
         },
@@ -463,20 +521,20 @@ describe('paper proof DISCOVER', () => {
             assetEligibility: {
               eligible: false,
               reasons: [
-                PaperProofCandidateIneligibility.AssetClass,
-                PaperProofCandidateIneligibility.Inactive,
-                PaperProofCandidateIneligibility.NotTradable,
-                PaperProofCandidateIneligibility.NotFractionable,
-                PaperProofCandidateIneligibility.Otc,
-                PaperProofCandidateIneligibility.Ipo,
-                PaperProofCandidateIneligibility.PtpNoException,
+                PaperCandidateIneligibility.AssetClass,
+                PaperCandidateIneligibility.Inactive,
+                PaperCandidateIneligibility.NotTradable,
+                PaperCandidateIneligibility.NotFractionable,
+                PaperCandidateIneligibility.Otc,
+                PaperCandidateIneligibility.Ipo,
+                PaperCandidateIneligibility.PtpNoException,
               ],
             },
             fractionalTradingEligible: false,
           },
         ],
       },
-      observationReceiptSchemaVersion: 'bayn.paper-proof-observation-receipt.v2',
+      observationReceiptSchemaVersion: 'bayn.paper-candidate-observation-receipt.v1',
       observations: {
         accountConfiguration: {
           value: { fractionalTrading: true },
@@ -682,7 +740,7 @@ describe('paper proof DISCOVER', () => {
     const error = await Effect.runPromise(Effect.flip(program(state, fixture(), wrongAccount)))
 
     expect(error).toMatchObject({
-      _tag: 'PaperProofDiscoveryError',
+      _tag: 'AccountMismatch',
       failure: 'account-mismatch',
     })
     expect(state.brokerAccountReads).toBe(1)
@@ -717,7 +775,7 @@ describe('paper proof DISCOVER', () => {
     const error = await Effect.runPromise(Effect.flip(program(state, fixture(), nonCausal)))
 
     expect(error).toMatchObject({
-      _tag: 'PaperProofDiscoveryError',
+      _tag: 'ObservationChronologyMismatch',
       failure: 'broker',
     })
     expect(state.brokerAccountReads).toBe(1)
@@ -833,7 +891,6 @@ describe('paper proof DISCOVER', () => {
       const state = control()
       const error = await Effect.runPromise(Effect.flip(program(state, mutate(fixture()), broker(state), now)))
       expect(error, label).toMatchObject({
-        _tag: 'PaperProofDiscoveryError',
         failure: expectedFailure,
       })
       expect(state.brokerAccountReads, label).toBe(0)
@@ -854,7 +911,7 @@ describe('paper proof DISCOVER', () => {
     expect(Option.isSome(invalidFailure)).toBe(true)
     if (Option.isNone(invalidFailure)) throw new Error('invalid protocol became a defect')
     expect(invalidFailure.value).toMatchObject({
-      _tag: 'PaperProofDiscoveryError',
+      _tag: 'StrategyProtocolMismatch',
       failure: 'invalid-input',
     })
     expect(invalidState.transactions).toBe(0)
@@ -873,7 +930,7 @@ describe('paper proof DISCOVER', () => {
     expect(Option.isSome(cutoffFailure)).toBe(true)
     if (Option.isNone(cutoffFailure)) throw new Error('post-read cutoff became a defect')
     expect(cutoffFailure.value).toMatchObject({
-      _tag: 'PaperProofDiscoveryError',
+      _tag: 'DocumentStale',
       failure: 'document-stale',
     })
   })
@@ -882,7 +939,7 @@ describe('paper proof DISCOVER', () => {
 const postgresUrl = process.env.BAYN_TEST_POSTGRES_URL
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
 
-describePostgres('paper proof DISCOVER PostgreSQL transaction', () => {
+describePostgres('paper candidate discovery PostgreSQL transaction', () => {
   test('runs every domain read in one repeatable-read read-only transaction', async () => {
     const runtime = ManagedRuntime.make(
       PostgresClientLive({
@@ -933,7 +990,7 @@ describePostgres('paper proof DISCOVER PostgreSQL transaction', () => {
             block: unexpected,
           }
           yield* TestClock.setTime(Date.parse(observedAt))
-          return yield* discoverPaperProofCandidates(identity).pipe(
+          return yield* discoverPaperCandidates(identity).pipe(
             Effect.provideService(CycleObservability, observability),
             Effect.provideService(CycleStore, cycleStore),
             Effect.provideService(BrokerRead, broker(state)),

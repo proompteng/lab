@@ -1,4 +1,4 @@
-import { Config, Effect, Option, Redacted, Result, Schema, SchemaTransformation } from 'effect'
+import { Config, Effect, Match, Option, pipe, Redacted, Result, Schema, SchemaTransformation } from 'effect'
 
 import { EmbeddedBuildMetadataSchema, embeddedBuildMetadata, type EmbeddedBuildMetadata } from './build'
 import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema, type EvaluationBounds } from './contracts'
@@ -18,16 +18,10 @@ export interface RuntimeBuildMetadata extends EmbeddedBuildMetadata {
   readonly verification: 'embedded' | 'development-configured'
 }
 
-export interface PaperProofRuntimeCommand {
-  readonly command: 'PREPARE'
-  readonly phase: 'DISCOVER'
-}
-
 export interface RuntimeConfig {
   readonly host: string
   readonly port: number
   readonly qualificationRunId?: string
-  readonly paperProofCommand?: PaperProofRuntimeCommand
   readonly maximumAuthority: Authority
   readonly build: RuntimeBuildMetadata
   readonly healthIntervalMs: number
@@ -69,14 +63,40 @@ export interface AutonomousCycleRuntimeConfig {
   readonly cyclePollIntervalMs: number
 }
 
-export type LoadedRuntimeConfig = RuntimeConfig & AutonomousCycleRuntimeConfig
+export type RuntimeOperation = 'PAPER_CANDIDATE_DISCOVERY'
+
+export type AlpacaRuntimeConfig = NonNullable<RuntimeConfig['alpaca']>
+
+type LoadedRuntimeConfigBase = Omit<RuntimeConfig, 'alpaca' | 'maximumAuthority' | 'qualificationRunId'> &
+  AutonomousCycleRuntimeConfig
+
+export type LoadedRuntimeConfig = LoadedRuntimeConfigBase &
+  (
+    | {
+        readonly runtimeMode: 'BrokerlessService'
+        readonly qualificationRunId?: string
+        readonly maximumAuthority: Authority.Observe
+        readonly alpaca?: undefined
+      }
+    | {
+        readonly runtimeMode: 'AutonomousObserveService'
+        readonly qualificationRunId?: string
+        readonly maximumAuthority: Authority.Observe
+        readonly alpaca: AlpacaRuntimeConfig
+      }
+    | {
+        readonly runtimeMode: 'PaperCandidateDiscovery'
+        readonly qualificationRunId: string
+        readonly maximumAuthority: Authority.Observe
+        readonly alpaca: AlpacaRuntimeConfig
+      }
+  )
 
 export interface ParsedRuntimeConfig {
   readonly host: string
   readonly port: number
   readonly qualificationRunId: string | undefined
-  readonly configuredPaperProofCommand: 'PREPARE' | undefined
-  readonly configuredPaperProofPhase: 'DISCOVER' | undefined
+  readonly configuredOperation: RuntimeOperation | undefined
   readonly maximumAuthority: Authority
   readonly configuredBuild: EmbeddedBuildMetadata & {
     readonly imageDigest: string
@@ -135,19 +155,18 @@ export type RuntimeConfigResolutionFailure =
       readonly maximumAuthority: Authority.Paper
     }
   | {
-      readonly _tag: 'IncompletePaperProofCommand'
-      readonly commandConfigured: boolean
-      readonly phaseConfigured: boolean
-    }
-  | {
-      readonly _tag: 'PaperProofCommandRequiresObserveAuthority'
+      readonly _tag: 'PaperAuthorityRequiresBoundedOperation'
       readonly maximumAuthority: Authority.Paper
     }
   | {
-      readonly _tag: 'PaperProofCommandRequiresQualificationRun'
+      readonly _tag: 'PaperCandidateDiscoveryRequiresObserveAuthority'
+      readonly maximumAuthority: Authority.Paper
     }
   | {
-      readonly _tag: 'PaperProofCommandRequiresAlpacaBinding'
+      readonly _tag: 'PaperCandidateDiscoveryRequiresQualificationRun'
+    }
+  | {
+      readonly _tag: 'PaperCandidateDiscoveryRequiresAlpacaBinding'
     }
   | {
       readonly _tag: 'ProductionProvenanceRequiresEmbeddedMetadata'
@@ -223,8 +242,7 @@ const runtimeConfig = Config.all({
   strategyParameterHash: Config.schema(Sha256Schema, 'BAYN_STRATEGY_PARAMETER_HASH'),
   provenanceMode: Config.schema(ProvenanceMode, 'BAYN_PROVENANCE_MODE').pipe(Config.withDefault('production')),
   qualificationRunId: Config.option(Config.schema(Sha256Schema, 'BAYN_QUALIFICATION_RUN_ID')),
-  paperProofCommand: Config.option(Config.schema(Schema.Literal('PREPARE'), 'BAYN_PAPER_COMMAND')),
-  paperProofPhase: Config.option(Config.schema(Schema.Literal('DISCOVER'), 'BAYN_PAPER_PREPARE_PHASE')),
+  operation: Config.option(Config.schema(Schema.Literal('PAPER_CANDIDATE_DISCOVERY'), 'BAYN_OPERATION')),
   maximumAuthority: Config.schema(Schema.Enum(Authority), 'BAYN_MAXIMUM_AUTHORITY').pipe(
     Config.withDefault(Authority.Observe),
   ),
@@ -268,8 +286,7 @@ const runtimeConfig = Config.all({
       host: config.host,
       port: config.port,
       qualificationRunId: Option.getOrUndefined(config.qualificationRunId),
-      configuredPaperProofCommand: Option.getOrUndefined(config.paperProofCommand),
-      configuredPaperProofPhase: Option.getOrUndefined(config.paperProofPhase),
+      configuredOperation: Option.getOrUndefined(config.operation),
       maximumAuthority: config.maximumAuthority,
       configuredBuild: {
         sourceRevision: config.sourceRevision,
@@ -327,185 +344,454 @@ const runtimeConfig = Config.all({
 const decodeEvaluationBounds = Schema.decodeUnknownResult(EvaluationBoundsSchema)
 const decodeEmbeddedBuildMetadata = Schema.decodeUnknownResult(EmbeddedBuildMetadataSchema, StrictParseOptions)
 
-export const resolveRuntimeConfig = ({
-  parsed: config,
-  embeddedBuildMetadata: embedded,
-}: RuntimeConfigResolutionInput): Result.Result<LoadedRuntimeConfig, RuntimeConfigResolutionFailure> => {
-  const boundsResult = decodeEvaluationBounds(config.clickhouse.bounds)
-  if (Result.isFailure(boundsResult)) {
-    return Result.fail({ _tag: 'InvalidEvaluationBounds', cause: boundsResult.failure })
-  }
-  if (config.cyclePollIntervalMs >= config.cycleStallThresholdMs) {
-    return Result.fail({
-      _tag: 'CyclePollIntervalNotShorterThanStallThreshold',
-      cyclePollIntervalMs: config.cyclePollIntervalMs,
-      cycleStallThresholdMs: config.cycleStallThresholdMs,
-    })
-  }
+type RuntimeModeResolutionInput = {
+  readonly configuredOperation: RuntimeOperation | undefined
+  readonly qualificationRunId: string | undefined
+  readonly maximumAuthority: Authority
+  readonly alpaca: AlpacaRuntimeConfig | undefined
+}
 
-  const credentialPresence = {
-    accountId: config.configuredAlpaca.accountId !== undefined,
-    keyId: config.configuredAlpaca.key !== undefined,
-    secretKey: config.configuredAlpaca.secret !== undefined,
-  } satisfies AlpacaCredentialPresence
-  const anyCredential = credentialPresence.accountId || credentialPresence.keyId || credentialPresence.secretKey
-  const credentials =
-    config.configuredAlpaca.accountId !== undefined &&
-    config.configuredAlpaca.key !== undefined &&
-    config.configuredAlpaca.secret !== undefined
-      ? {
-          accountId: config.configuredAlpaca.accountId,
-          key: config.configuredAlpaca.key,
-          secret: config.configuredAlpaca.secret,
-        }
-      : undefined
-  if (anyCredential && credentials === undefined) {
-    return Result.fail({ _tag: 'IncompleteAlpacaCredentials', configured: credentialPresence })
-  }
+type RuntimeModeSelection =
+  | {
+      readonly runtimeMode: 'BrokerlessService'
+      readonly qualificationRunId: string | undefined
+      readonly maximumAuthority: Authority.Observe
+      readonly alpaca: undefined
+    }
+  | {
+      readonly runtimeMode: 'AutonomousObserveService'
+      readonly qualificationRunId: string | undefined
+      readonly maximumAuthority: Authority.Observe
+      readonly alpaca: AlpacaRuntimeConfig
+    }
+  | {
+      readonly runtimeMode: 'PaperCandidateDiscovery'
+      readonly qualificationRunId: string
+      readonly maximumAuthority: Authority.Observe
+      readonly alpaca: AlpacaRuntimeConfig
+    }
 
-  let alpaca: RuntimeConfig['alpaca']
-  if (credentials === undefined) {
-    alpaca = undefined
-  } else {
-    if (config.authorityGenerationHash === undefined) {
-      return Result.fail({ _tag: 'MissingAlpacaAuthorityGeneration' })
-    }
-    alpaca = {
-      ...credentials,
-      authorityGenerationHash: config.authorityGenerationHash,
-      proxyUrl: config.configuredAlpaca.proxyUrl,
-      retryAttempts: config.configuredAlpaca.retryAttempts,
-      reconciliationIntervalMs: config.configuredAlpaca.reconciliationIntervalMs,
-    }
-  }
-  if (config.maximumAuthority === Authority.Paper && alpaca === undefined) {
-    return Result.fail({
-      _tag: 'PaperAuthorityRequiresAlpacaBinding',
-      maximumAuthority: Authority.Paper,
-    })
-  }
+const serviceRuntimeMode = (
+  input: RuntimeModeResolutionInput,
+): Result.Result<RuntimeModeSelection, RuntimeConfigResolutionFailure> =>
+  pipe(
+    Option.fromNullishOr(input.alpaca),
+    Option.match({
+      onNone: () =>
+        pipe(
+          Match.value(input.maximumAuthority),
+          Match.when(Authority.Observe, () =>
+            Result.succeed<RuntimeModeSelection>({
+              runtimeMode: 'BrokerlessService',
+              qualificationRunId: input.qualificationRunId,
+              maximumAuthority: Authority.Observe,
+              alpaca: undefined,
+            }),
+          ),
+          Match.when(Authority.Paper, () =>
+            Result.fail<RuntimeConfigResolutionFailure>({
+              _tag: 'PaperAuthorityRequiresAlpacaBinding',
+              maximumAuthority: Authority.Paper,
+            }),
+          ),
+          Match.exhaustive,
+        ),
+      onSome: (alpaca) =>
+        pipe(
+          Match.value(input.maximumAuthority),
+          Match.when(Authority.Observe, () =>
+            Result.succeed<RuntimeModeSelection>({
+              runtimeMode: 'AutonomousObserveService',
+              qualificationRunId: input.qualificationRunId,
+              maximumAuthority: Authority.Observe,
+              alpaca,
+            }),
+          ),
+          Match.when(Authority.Paper, () =>
+            Result.fail<RuntimeConfigResolutionFailure>({
+              _tag: 'PaperAuthorityRequiresBoundedOperation',
+              maximumAuthority: Authority.Paper,
+            }),
+          ),
+          Match.exhaustive,
+        ),
+    }),
+  )
 
-  const commandConfigured = config.configuredPaperProofCommand !== undefined
-  const phaseConfigured = config.configuredPaperProofPhase !== undefined
-  if (commandConfigured !== phaseConfigured) {
-    return Result.fail({
-      _tag: 'IncompletePaperProofCommand',
-      commandConfigured,
-      phaseConfigured,
-    })
-  }
+const paperCandidateDiscoveryMode = (
+  input: RuntimeModeResolutionInput,
+): Result.Result<RuntimeModeSelection, RuntimeConfigResolutionFailure> =>
+  pipe(
+    Match.value(input.maximumAuthority),
+    Match.when(Authority.Paper, () =>
+      Result.fail<RuntimeConfigResolutionFailure>({
+        _tag: 'PaperCandidateDiscoveryRequiresObserveAuthority',
+        maximumAuthority: Authority.Paper,
+      }),
+    ),
+    Match.when(Authority.Observe, () =>
+      pipe(
+        Option.fromNullishOr(input.qualificationRunId),
+        Result.fromOption(
+          (): RuntimeConfigResolutionFailure => ({
+            _tag: 'PaperCandidateDiscoveryRequiresQualificationRun',
+          }),
+        ),
+        Result.flatMap((qualificationRunId) =>
+          pipe(
+            Option.fromNullishOr(input.alpaca),
+            Result.fromOption(
+              (): RuntimeConfigResolutionFailure => ({
+                _tag: 'PaperCandidateDiscoveryRequiresAlpacaBinding',
+              }),
+            ),
+            Result.map(
+              (alpaca): RuntimeModeSelection => ({
+                runtimeMode: 'PaperCandidateDiscovery',
+                qualificationRunId,
+                maximumAuthority: Authority.Observe,
+                alpaca,
+              }),
+            ),
+          ),
+        ),
+      ),
+    ),
+    Match.exhaustive,
+  )
 
-  let paperProofCommand: PaperProofRuntimeCommand | undefined
-  if (config.configuredPaperProofCommand !== undefined && config.configuredPaperProofPhase !== undefined) {
-    if (config.maximumAuthority !== Authority.Observe) {
-      return Result.fail({
-        _tag: 'PaperProofCommandRequiresObserveAuthority',
-        maximumAuthority: config.maximumAuthority,
-      })
-    }
-    if (config.qualificationRunId === undefined) {
-      return Result.fail({ _tag: 'PaperProofCommandRequiresQualificationRun' })
-    }
-    if (alpaca === undefined) {
-      return Result.fail({ _tag: 'PaperProofCommandRequiresAlpacaBinding' })
-    }
-    paperProofCommand = {
-      command: config.configuredPaperProofCommand,
-      phase: config.configuredPaperProofPhase,
-    }
-  }
+const resolveRuntimeMode = (
+  input: RuntimeModeResolutionInput,
+): Result.Result<RuntimeModeSelection, RuntimeConfigResolutionFailure> =>
+  pipe(
+    Option.fromNullishOr(input.configuredOperation),
+    Option.match({
+      onNone: () => serviceRuntimeMode(input),
+      onSome: () => paperCandidateDiscoveryMode(input),
+    }),
+  )
 
-  if (embedded === undefined && config.provenanceMode !== 'development') {
-    return Result.fail({
-      _tag: 'ProductionProvenanceRequiresEmbeddedMetadata',
-      provenanceMode: 'production',
-    })
-  }
-  if (embedded !== undefined && config.provenanceMode !== 'production') {
-    return Result.fail({
-      _tag: 'EmbeddedMetadataRequiresProductionProvenance',
-      provenanceMode: 'development',
-    })
-  }
-  if (embedded !== undefined && !config.postgres.tls) {
-    return Result.fail({
-      _tag: 'ProductionPostgresRequiresTls',
-      postgresTls: false,
-    })
-  }
+const attachRuntimeMode = (base: LoadedRuntimeConfigBase, selection: RuntimeModeSelection): LoadedRuntimeConfig => ({
+  ...base,
+  ...selection,
+})
 
-  let decodedBuild: EmbeddedBuildMetadata
-  if (embedded === undefined) {
-    decodedBuild = {
-      sourceRevision: config.configuredBuild.sourceRevision,
-      imageRepository: config.configuredBuild.imageRepository,
-      strategyBehaviorHash: config.configuredBuild.strategyBehaviorHash,
-      strategyParameterHash: config.configuredBuild.strategyParameterHash,
-    }
-  } else {
-    const decodedBuildResult = decodeEmbeddedBuildMetadata(embedded)
-    if (Result.isFailure(decodedBuildResult)) {
-      return Result.fail({
-        _tag: 'InvalidEmbeddedBuildMetadata',
-        cause: decodedBuildResult.failure,
-      })
-    }
-    decodedBuild = decodedBuildResult.success
-    if (config.configuredBuild.sourceRevision !== decodedBuild.sourceRevision) {
-      return Result.fail({
+type BoundsResolved = RuntimeConfigResolutionInput & {
+  readonly evaluationBounds: EvaluationBounds
+}
+
+type AlpacaCredentials = {
+  readonly accountId: string
+  readonly key: Redacted.Redacted<string>
+  readonly secret: Redacted.Redacted<string>
+}
+
+type CredentialsResolved = BoundsResolved & {
+  readonly alpacaCredentials: AlpacaCredentials | undefined
+}
+
+type AlpacaResolved = CredentialsResolved & {
+  readonly alpaca: AlpacaRuntimeConfig | undefined
+}
+
+type RuntimeModeResolved = AlpacaResolved & {
+  readonly runtimeMode: RuntimeModeSelection
+}
+
+type BuildResolved = RuntimeModeResolved & {
+  readonly decodedBuild: EmbeddedBuildMetadata
+}
+
+const resolveEvaluationBounds = (
+  input: RuntimeConfigResolutionInput,
+): Result.Result<BoundsResolved, RuntimeConfigResolutionFailure> =>
+  pipe(
+    decodeEvaluationBounds(input.parsed.clickhouse.bounds),
+    Result.mapError(
+      (cause): RuntimeConfigResolutionFailure => ({
+        _tag: 'InvalidEvaluationBounds',
+        cause,
+      }),
+    ),
+    Result.map((evaluationBounds) => ({ ...input, evaluationBounds })),
+  )
+
+const validateCycleTiming = (input: BoundsResolved): Result.Result<BoundsResolved, RuntimeConfigResolutionFailure> =>
+  pipe(
+    Result.succeed(input),
+    Result.filterOrFail(
+      ({ parsed }) => parsed.cyclePollIntervalMs < parsed.cycleStallThresholdMs,
+      ({ parsed }): RuntimeConfigResolutionFailure => ({
+        _tag: 'CyclePollIntervalNotShorterThanStallThreshold',
+        cyclePollIntervalMs: parsed.cyclePollIntervalMs,
+        cycleStallThresholdMs: parsed.cycleStallThresholdMs,
+      }),
+    ),
+  )
+
+const alpacaCredentialPresence = (config: ParsedRuntimeConfig): AlpacaCredentialPresence => ({
+  accountId: config.configuredAlpaca.accountId !== undefined,
+  keyId: config.configuredAlpaca.key !== undefined,
+  secretKey: config.configuredAlpaca.secret !== undefined,
+})
+
+const completeAlpacaCredentials = (config: ParsedRuntimeConfig): Option.Option<AlpacaCredentials> =>
+  Option.all({
+    accountId: Option.fromNullishOr(config.configuredAlpaca.accountId),
+    key: Option.fromNullishOr(config.configuredAlpaca.key),
+    secret: Option.fromNullishOr(config.configuredAlpaca.secret),
+  })
+
+const hasAnyAlpacaCredential = (presence: AlpacaCredentialPresence): boolean =>
+  presence.accountId || presence.keyId || presence.secretKey
+
+const resolveAlpacaCredentials = (
+  input: BoundsResolved,
+): Result.Result<CredentialsResolved, RuntimeConfigResolutionFailure> => {
+  const presence = alpacaCredentialPresence(input.parsed)
+  const alpacaCredentials = Option.getOrUndefined(completeAlpacaCredentials(input.parsed))
+  return pipe(
+    Result.succeed({ ...input, alpacaCredentials }),
+    Result.filterOrFail(
+      () => !hasAnyAlpacaCredential(presence) || alpacaCredentials !== undefined,
+      (): RuntimeConfigResolutionFailure => ({
+        _tag: 'IncompleteAlpacaCredentials',
+        configured: presence,
+      }),
+    ),
+  )
+}
+
+const resolveAlpacaBinding = (
+  input: CredentialsResolved,
+): Result.Result<AlpacaResolved, RuntimeConfigResolutionFailure> =>
+  pipe(
+    Option.fromNullishOr(input.alpacaCredentials),
+    Option.match({
+      onNone: () => Result.succeed({ ...input, alpaca: undefined }),
+      onSome: (credentials) =>
+        pipe(
+          Option.fromNullishOr(input.parsed.authorityGenerationHash),
+          Result.fromOption(
+            (): RuntimeConfigResolutionFailure => ({
+              _tag: 'MissingAlpacaAuthorityGeneration',
+            }),
+          ),
+          Result.map(
+            (authorityGenerationHash): AlpacaResolved => ({
+              ...input,
+              alpaca: {
+                ...credentials,
+                authorityGenerationHash,
+                proxyUrl: input.parsed.configuredAlpaca.proxyUrl,
+                retryAttempts: input.parsed.configuredAlpaca.retryAttempts,
+                reconciliationIntervalMs: input.parsed.configuredAlpaca.reconciliationIntervalMs,
+              },
+            }),
+          ),
+        ),
+    }),
+  )
+
+const resolveConfiguredRuntimeMode = (
+  input: AlpacaResolved,
+): Result.Result<RuntimeModeResolved, RuntimeConfigResolutionFailure> =>
+  pipe(
+    resolveRuntimeMode({
+      configuredOperation: input.parsed.configuredOperation,
+      qualificationRunId: input.parsed.qualificationRunId,
+      maximumAuthority: input.parsed.maximumAuthority,
+      alpaca: input.alpaca,
+    }),
+    Result.map((runtimeMode) => ({ ...input, runtimeMode })),
+  )
+
+const validateProvenanceMode = (
+  input: RuntimeModeResolved,
+): Result.Result<RuntimeModeResolved, RuntimeConfigResolutionFailure> =>
+  pipe(
+    Option.fromNullishOr(input.embeddedBuildMetadata),
+    Option.match({
+      onNone: () =>
+        pipe(
+          Match.value(input.parsed.provenanceMode),
+          Match.when('development', () => Result.succeed(input)),
+          Match.when('production', () =>
+            Result.fail<RuntimeConfigResolutionFailure>({
+              _tag: 'ProductionProvenanceRequiresEmbeddedMetadata',
+              provenanceMode: 'production',
+            }),
+          ),
+          Match.exhaustive,
+        ),
+      onSome: () =>
+        pipe(
+          Match.value(input.parsed.provenanceMode),
+          Match.when('production', () => Result.succeed(input)),
+          Match.when('development', () =>
+            Result.fail<RuntimeConfigResolutionFailure>({
+              _tag: 'EmbeddedMetadataRequiresProductionProvenance',
+              provenanceMode: 'development',
+            }),
+          ),
+          Match.exhaustive,
+        ),
+    }),
+  )
+
+const validateProductionPostgresTls = (
+  input: RuntimeModeResolved,
+): Result.Result<RuntimeModeResolved, RuntimeConfigResolutionFailure> =>
+  pipe(
+    Result.succeed(input),
+    Result.filterOrFail(
+      ({ embeddedBuildMetadata, parsed }) => embeddedBuildMetadata === undefined || parsed.postgres.tls,
+      (): RuntimeConfigResolutionFailure => ({
+        _tag: 'ProductionPostgresRequiresTls',
+        postgresTls: false,
+      }),
+    ),
+  )
+
+const configuredBuildMetadata = (config: ParsedRuntimeConfig): EmbeddedBuildMetadata => ({
+  sourceRevision: config.configuredBuild.sourceRevision,
+  imageRepository: config.configuredBuild.imageRepository,
+  strategyBehaviorHash: config.configuredBuild.strategyBehaviorHash,
+  strategyParameterHash: config.configuredBuild.strategyParameterHash,
+})
+
+const resolveBuildMetadata = (
+  input: RuntimeModeResolved,
+): Result.Result<BuildResolved, RuntimeConfigResolutionFailure> =>
+  pipe(
+    Option.fromNullishOr(input.embeddedBuildMetadata),
+    Option.match({
+      onNone: () =>
+        Result.succeed({
+          ...input,
+          decodedBuild: configuredBuildMetadata(input.parsed),
+        }),
+      onSome: (embedded) =>
+        pipe(
+          decodeEmbeddedBuildMetadata(embedded),
+          Result.mapError(
+            (cause): RuntimeConfigResolutionFailure => ({
+              _tag: 'InvalidEmbeddedBuildMetadata',
+              cause,
+            }),
+          ),
+          Result.map((decodedBuild) => ({ ...input, decodedBuild })),
+        ),
+    }),
+  )
+
+const validateSourceRevision = (input: BuildResolved): Result.Result<BuildResolved, RuntimeConfigResolutionFailure> =>
+  pipe(
+    Result.succeed(input),
+    Result.filterOrFail(
+      ({ parsed, decodedBuild }) => parsed.configuredBuild.sourceRevision === decodedBuild.sourceRevision,
+      ({ parsed, decodedBuild }): RuntimeConfigResolutionFailure => ({
         _tag: 'SourceRevisionMismatch',
-        configuredSourceRevision: config.configuredBuild.sourceRevision,
+        configuredSourceRevision: parsed.configuredBuild.sourceRevision,
         embeddedSourceRevision: decodedBuild.sourceRevision,
-      })
-    }
-    if (config.configuredBuild.imageRepository !== decodedBuild.imageRepository) {
-      return Result.fail({
-        _tag: 'ImageRepositoryMismatch',
-        configuredImageRepository: config.configuredBuild.imageRepository,
-        embeddedImageRepository: decodedBuild.imageRepository,
-      })
-    }
-    if (config.configuredBuild.strategyBehaviorHash !== decodedBuild.strategyBehaviorHash) {
-      return Result.fail({
-        _tag: 'StrategyBehaviorHashMismatch',
-        configuredStrategyBehaviorHash: config.configuredBuild.strategyBehaviorHash,
-        embeddedStrategyBehaviorHash: decodedBuild.strategyBehaviorHash,
-      })
-    }
-    if (config.configuredBuild.strategyParameterHash !== decodedBuild.strategyParameterHash) {
-      return Result.fail({
-        _tag: 'StrategyParameterHashMismatch',
-        configuredStrategyParameterHash: config.configuredBuild.strategyParameterHash,
-        embeddedStrategyParameterHash: decodedBuild.strategyParameterHash,
-      })
-    }
-  }
+      }),
+    ),
+  )
 
+const validateImageRepository = (input: BuildResolved): Result.Result<BuildResolved, RuntimeConfigResolutionFailure> =>
+  pipe(
+    Result.succeed(input),
+    Result.filterOrFail(
+      ({ parsed, decodedBuild }) => parsed.configuredBuild.imageRepository === decodedBuild.imageRepository,
+      ({ parsed, decodedBuild }): RuntimeConfigResolutionFailure => ({
+        _tag: 'ImageRepositoryMismatch',
+        configuredImageRepository: parsed.configuredBuild.imageRepository,
+        embeddedImageRepository: decodedBuild.imageRepository,
+      }),
+    ),
+  )
+
+const validateStrategyBehaviorHash = (
+  input: BuildResolved,
+): Result.Result<BuildResolved, RuntimeConfigResolutionFailure> =>
+  pipe(
+    Result.succeed(input),
+    Result.filterOrFail(
+      ({ parsed, decodedBuild }) => parsed.configuredBuild.strategyBehaviorHash === decodedBuild.strategyBehaviorHash,
+      ({ parsed, decodedBuild }): RuntimeConfigResolutionFailure => ({
+        _tag: 'StrategyBehaviorHashMismatch',
+        configuredStrategyBehaviorHash: parsed.configuredBuild.strategyBehaviorHash,
+        embeddedStrategyBehaviorHash: decodedBuild.strategyBehaviorHash,
+      }),
+    ),
+  )
+
+const validateStrategyParameterHash = (
+  input: BuildResolved,
+): Result.Result<BuildResolved, RuntimeConfigResolutionFailure> =>
+  pipe(
+    Result.succeed(input),
+    Result.filterOrFail(
+      ({ parsed, decodedBuild }) => parsed.configuredBuild.strategyParameterHash === decodedBuild.strategyParameterHash,
+      ({ parsed, decodedBuild }): RuntimeConfigResolutionFailure => ({
+        _tag: 'StrategyParameterHashMismatch',
+        configuredStrategyParameterHash: parsed.configuredBuild.strategyParameterHash,
+        embeddedStrategyParameterHash: decodedBuild.strategyParameterHash,
+      }),
+    ),
+  )
+
+const assembleLoadedRuntimeConfig = ({
+  parsed: config,
+  evaluationBounds,
+  runtimeMode,
+  decodedBuild,
+}: BuildResolved): LoadedRuntimeConfig => {
   const {
     configuredAlpaca: _configuredAlpaca,
     authorityGenerationHash: _authorityGenerationHash,
-    configuredPaperProofCommand: _configuredPaperProofCommand,
-    configuredPaperProofPhase: _configuredPaperProofPhase,
+    configuredOperation: _configuredOperation,
+    qualificationRunId: _qualificationRunId,
+    maximumAuthority: _maximumAuthority,
     configuredBuild,
     provenanceMode,
     ...runtime
   } = config
-  const resolved: LoadedRuntimeConfig = {
-    ...runtime,
-    clickhouse: {
-      ...runtime.clickhouse,
-      bounds: boundsResult.success,
+  return attachRuntimeMode(
+    {
+      ...runtime,
+      clickhouse: {
+        ...runtime.clickhouse,
+        bounds: evaluationBounds,
+      },
+      build: {
+        ...decodedBuild,
+        imageDigest: configuredBuild.imageDigest,
+        verification: provenanceMode === 'production' ? 'embedded' : 'development-configured',
+      },
     },
-    build: {
-      ...decodedBuild,
-      imageDigest: configuredBuild.imageDigest,
-      verification: provenanceMode === 'production' ? 'embedded' : 'development-configured',
-    },
-    ...(paperProofCommand === undefined ? {} : { paperProofCommand }),
-    ...(alpaca === undefined ? {} : { alpaca }),
-  }
-  return Result.succeed(resolved)
+    runtimeMode,
+  )
 }
+
+export const resolveRuntimeConfig = (
+  input: RuntimeConfigResolutionInput,
+): Result.Result<LoadedRuntimeConfig, RuntimeConfigResolutionFailure> =>
+  pipe(
+    resolveEvaluationBounds(input),
+    Result.flatMap(validateCycleTiming),
+    Result.flatMap(resolveAlpacaCredentials),
+    Result.flatMap(resolveAlpacaBinding),
+    Result.flatMap(resolveConfiguredRuntimeMode),
+    Result.flatMap(validateProvenanceMode),
+    Result.flatMap(validateProductionPostgresTls),
+    Result.flatMap(resolveBuildMetadata),
+    Result.flatMap(validateSourceRevision),
+    Result.flatMap(validateImageRepository),
+    Result.flatMap(validateStrategyBehaviorHash),
+    Result.flatMap(validateStrategyParameterHash),
+    Result.map(assembleLoadedRuntimeConfig),
+  )
 
 interface RuntimeConfigFailurePresentation {
   readonly operation: string
@@ -539,25 +825,25 @@ const presentRuntimeConfigFailure = (failure: RuntimeConfigResolutionFailure): R
         operation: 'alpaca',
         message: 'PAPER maximum authority requires a complete Alpaca account binding',
       }
-    case 'IncompletePaperProofCommand':
+    case 'PaperAuthorityRequiresBoundedOperation':
       return {
-        operation: 'paper-command',
-        message: 'BAYN_PAPER_COMMAND and BAYN_PAPER_PREPARE_PHASE must be configured together',
+        operation: 'operation',
+        message: 'PAPER maximum authority requires an explicit bounded runtime operation',
       }
-    case 'PaperProofCommandRequiresObserveAuthority':
+    case 'PaperCandidateDiscoveryRequiresObserveAuthority':
       return {
-        operation: 'paper-command',
-        message: 'PREPARE DISCOVER requires OBSERVE maximum authority',
+        operation: 'operation',
+        message: 'PAPER_CANDIDATE_DISCOVERY requires OBSERVE maximum authority',
       }
-    case 'PaperProofCommandRequiresQualificationRun':
+    case 'PaperCandidateDiscoveryRequiresQualificationRun':
       return {
-        operation: 'paper-command',
-        message: 'PREPARE DISCOVER requires a pinned terminal qualification run',
+        operation: 'operation',
+        message: 'PAPER_CANDIDATE_DISCOVERY requires a pinned terminal qualification run',
       }
-    case 'PaperProofCommandRequiresAlpacaBinding':
+    case 'PaperCandidateDiscoveryRequiresAlpacaBinding':
       return {
-        operation: 'paper-command',
-        message: 'PREPARE DISCOVER requires a complete Alpaca read binding',
+        operation: 'operation',
+        message: 'PAPER_CANDIDATE_DISCOVERY requires a complete Alpaca read binding',
       }
     case 'ProductionProvenanceRequiresEmbeddedMetadata':
       return {

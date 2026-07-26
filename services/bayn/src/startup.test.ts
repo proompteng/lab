@@ -26,7 +26,7 @@ import {
   pinnedStrategy,
   pinnedStore,
 } from './app-test-support'
-import { initialize, run } from './app'
+import { brokerlessApplication, initialize, type BrokerlessApplicationConfig } from './app'
 import { makeStrategyProtocolHash } from './contracts'
 import { CycleObservability } from './db/cycle-observability'
 import {
@@ -41,6 +41,7 @@ import { operationalError } from './errors'
 import { canonicalHashV1 } from './hash'
 import { Journal, type JournalService } from './ledger'
 import { MarketData } from './market-data'
+import { Authority } from './paper'
 import { defaultProtocolDocument, loadProtocol } from './protocol'
 import { makeQualificationLock, makeQualificationResult } from './qualification'
 import {
@@ -73,6 +74,14 @@ const cycleObservability = {
       mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null, latestOccurredAt: null },
     }),
 }
+
+const brokerlessConfig = (runtime: typeof config): BrokerlessApplicationConfig => ({
+  ...runtime,
+  runtimeMode: 'BrokerlessService',
+  cyclePollIntervalMs: 30_000,
+  maximumAuthority: Authority.Observe,
+  alpaca: undefined,
+})
 
 const recoveredFixture = (runId = fixtureEvaluation.runId) => ({
   evaluation: { ...summarizeEvaluation(fixtureEvaluation), runId },
@@ -1341,7 +1350,7 @@ describe('Bayn startup lifecycle', () => {
   test('propagates an unexpected defect instead of leaving a detached STARTING worker', async () => {
     const marketData = marketDataService(Effect.die(new Error('unexpected startup defect')))
     const exit = await Effect.runPromiseExit(
-      run(config, fixtureStrategy).pipe(
+      brokerlessApplication(brokerlessConfig(config), fixtureStrategy).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
@@ -1361,27 +1370,6 @@ describe('Bayn startup lifecycle', () => {
     }
   })
 
-  test('terminates the runtime when continuous reconciliation dies', async () => {
-    const exit = await Effect.runPromiseExit(
-      run(config, fixtureStrategy, Effect.die(new Error('unexpected reconciliation defect'))).pipe(
-        Effect.provideService(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
-        Effect.provideService(Journal, successfulJournal),
-        Effect.provideService(EvidenceStore, successfulEvidenceStore),
-        Effect.provideService(CycleObservability, cycleObservability),
-        Effect.timeoutOrElse({
-          duration: 250,
-          orElse: () => Effect.fail(operationalError('http', 'test', 'run remained alive after reconciliation died')),
-        }),
-      ),
-    )
-
-    expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit)) {
-      expect(Cause.pretty(exit.cause)).toContain('unexpected reconciliation defect')
-      expect(Cause.pretty(exit.cause)).not.toContain('remained alive')
-    }
-  })
-
   test('exits the scoped runtime on a retryable startup dependency failure', async () => {
     let interrupted = false
     const journal: JournalService = {
@@ -1389,7 +1377,7 @@ describe('Bayn startup lifecycle', () => {
       check: Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true)))),
     }
     const exit = await Effect.runPromiseExit(
-      run({ ...config, operationTimeoutMs: 10 }, fixtureStrategy).pipe(
+      brokerlessApplication(brokerlessConfig({ ...config, operationTimeoutMs: 10 }), fixtureStrategy).pipe(
         Effect.provideService(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
         Effect.provideService(Journal, journal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),

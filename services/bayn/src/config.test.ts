@@ -33,8 +33,7 @@ const baseParsedConfig: ParsedRuntimeConfig = {
   host: '0.0.0.0',
   port: 8080,
   qualificationRunId: undefined,
-  configuredPaperProofCommand: undefined,
-  configuredPaperProofPhase: undefined,
+  configuredOperation: undefined,
   maximumAuthority: Authority.Observe,
   configuredBuild: {
     ...buildMetadata,
@@ -149,7 +148,7 @@ describe('pure runtime configuration resolution', () => {
         maximumAuthority: Authority.Observe,
         verification: 'embedded',
         hasAlpaca: false,
-        hasPaperProofCommand: false,
+        runtimeMode: 'BrokerlessService',
       },
     },
     {
@@ -159,35 +158,21 @@ describe('pure runtime configuration resolution', () => {
         maximumAuthority: Authority.Observe,
         verification: 'embedded',
         hasAlpaca: true,
-        hasPaperProofCommand: false,
+        runtimeMode: 'AutonomousObserveService',
       },
     },
     {
-      name: 'production OBSERVE PREPARE DISCOVER',
+      name: 'production OBSERVE paper candidate discovery',
       input: resolutionInput({
         qualificationRunId,
-        configuredPaperProofCommand: 'PREPARE',
-        configuredPaperProofPhase: 'DISCOVER',
+        configuredOperation: 'PAPER_CANDIDATE_DISCOVERY',
         configuredAlpaca: completeAlpacaConfig,
       }),
       expected: {
         maximumAuthority: Authority.Observe,
         verification: 'embedded',
         hasAlpaca: true,
-        hasPaperProofCommand: true,
-      },
-    },
-    {
-      name: 'production PAPER with a complete Alpaca binding',
-      input: resolutionInput({
-        maximumAuthority: Authority.Paper,
-        configuredAlpaca: completeAlpacaConfig,
-      }),
-      expected: {
-        maximumAuthority: Authority.Paper,
-        verification: 'embedded',
-        hasAlpaca: true,
-        hasPaperProofCommand: false,
+        runtimeMode: 'PaperCandidateDiscovery',
       },
     },
     {
@@ -204,7 +189,7 @@ describe('pure runtime configuration resolution', () => {
         maximumAuthority: Authority.Observe,
         verification: 'development-configured',
         hasAlpaca: false,
-        hasPaperProofCommand: false,
+        runtimeMode: 'BrokerlessService',
       },
     },
     {
@@ -220,17 +205,16 @@ describe('pure runtime configuration resolution', () => {
         maximumAuthority: Authority.Observe,
         verification: 'development-configured',
         hasAlpaca: true,
-        hasPaperProofCommand: false,
+        runtimeMode: 'AutonomousObserveService',
       },
     },
     {
-      name: 'development OBSERVE PREPARE DISCOVER',
+      name: 'development OBSERVE paper candidate discovery',
       input: resolutionInput(
         {
           provenanceMode: 'development',
           qualificationRunId,
-          configuredPaperProofCommand: 'PREPARE',
-          configuredPaperProofPhase: 'DISCOVER',
+          configuredOperation: 'PAPER_CANDIDATE_DISCOVERY',
           configuredAlpaca: completeAlpacaConfig,
         },
         null,
@@ -239,24 +223,7 @@ describe('pure runtime configuration resolution', () => {
         maximumAuthority: Authority.Observe,
         verification: 'development-configured',
         hasAlpaca: true,
-        hasPaperProofCommand: true,
-      },
-    },
-    {
-      name: 'development PAPER with a complete Alpaca binding',
-      input: resolutionInput(
-        {
-          provenanceMode: 'development',
-          maximumAuthority: Authority.Paper,
-          configuredAlpaca: completeAlpacaConfig,
-        },
-        null,
-      ),
-      expected: {
-        maximumAuthority: Authority.Paper,
-        verification: 'development-configured',
-        hasAlpaca: true,
-        hasPaperProofCommand: false,
+        runtimeMode: 'PaperCandidateDiscovery',
       },
     },
   ] as const
@@ -271,7 +238,7 @@ describe('pure runtime configuration resolution', () => {
           maximumAuthority: result.success.maximumAuthority,
           verification: result.success.build.verification,
           hasAlpaca: result.success.alpaca !== undefined,
-          hasPaperProofCommand: result.success.paperProofCommand !== undefined,
+          runtimeMode: result.success.runtimeMode,
         }).toEqual(mode.expected)
         expect(result.success.build.imageDigest).toBe(imageDigest)
         expect(Redacted.isRedacted(result.success.clickhouse.password)).toBe(true)
@@ -353,56 +320,46 @@ describe('pure runtime configuration resolution', () => {
       },
     },
     {
-      name: 'paper command without its phase',
-      input: resolutionInput({ configuredPaperProofCommand: 'PREPARE' }),
-      expected: {
-        _tag: 'IncompletePaperProofCommand',
-        commandConfigured: true,
-        phaseConfigured: false,
-      },
-    },
-    {
-      name: 'paper phase without its command',
-      input: resolutionInput({ configuredPaperProofPhase: 'DISCOVER' }),
-      expected: {
-        _tag: 'IncompletePaperProofCommand',
-        commandConfigured: false,
-        phaseConfigured: true,
-      },
-    },
-    {
-      name: 'PREPARE DISCOVER with PAPER authority',
+      name: 'PAPER service with a complete Alpaca binding but no bounded operation',
       input: resolutionInput({
         maximumAuthority: Authority.Paper,
         configuredAlpaca: completeAlpacaConfig,
-        configuredPaperProofCommand: 'PREPARE',
-        configuredPaperProofPhase: 'DISCOVER',
       }),
       expected: {
-        _tag: 'PaperProofCommandRequiresObserveAuthority',
+        _tag: 'PaperAuthorityRequiresBoundedOperation',
         maximumAuthority: Authority.Paper,
       },
     },
     {
-      name: 'PREPARE DISCOVER without a qualification run',
+      name: 'paper candidate discovery with PAPER authority',
       input: resolutionInput({
+        maximumAuthority: Authority.Paper,
         configuredAlpaca: completeAlpacaConfig,
-        configuredPaperProofCommand: 'PREPARE',
-        configuredPaperProofPhase: 'DISCOVER',
+        configuredOperation: 'PAPER_CANDIDATE_DISCOVERY',
       }),
       expected: {
-        _tag: 'PaperProofCommandRequiresQualificationRun',
+        _tag: 'PaperCandidateDiscoveryRequiresObserveAuthority',
+        maximumAuthority: Authority.Paper,
       },
     },
     {
-      name: 'PREPARE DISCOVER without an Alpaca read binding',
+      name: 'paper candidate discovery without a qualification run',
+      input: resolutionInput({
+        configuredAlpaca: completeAlpacaConfig,
+        configuredOperation: 'PAPER_CANDIDATE_DISCOVERY',
+      }),
+      expected: {
+        _tag: 'PaperCandidateDiscoveryRequiresQualificationRun',
+      },
+    },
+    {
+      name: 'paper candidate discovery without an Alpaca read binding',
       input: resolutionInput({
         qualificationRunId,
-        configuredPaperProofCommand: 'PREPARE',
-        configuredPaperProofPhase: 'DISCOVER',
+        configuredOperation: 'PAPER_CANDIDATE_DISCOVERY',
       }),
       expected: {
-        _tag: 'PaperProofCommandRequiresAlpacaBinding',
+        _tag: 'PaperCandidateDiscoveryRequiresAlpacaBinding',
       },
     },
     {
@@ -633,48 +590,45 @@ describe('pure runtime configuration resolution', () => {
       expectedTag: 'MissingAlpacaAuthorityGeneration',
     },
     {
-      name: 'PAPER binding before paper command completeness',
+      name: 'PAPER binding before bounded operation',
       input: resolutionInput({
         maximumAuthority: Authority.Paper,
-        configuredPaperProofCommand: 'PREPARE',
       }),
       expectedTag: 'PaperAuthorityRequiresAlpacaBinding',
     },
     {
-      name: 'paper command completeness before provenance',
-      input: resolutionInput({
-        configuredPaperProofCommand: 'PREPARE',
-        provenanceMode: 'development',
-      }),
-      expectedTag: 'IncompletePaperProofCommand',
-    },
-    {
-      name: 'paper command authority before qualification pin',
+      name: 'bounded PAPER operation before provenance',
       input: resolutionInput({
         maximumAuthority: Authority.Paper,
         configuredAlpaca: completeAlpacaConfig,
-        configuredPaperProofCommand: 'PREPARE',
-        configuredPaperProofPhase: 'DISCOVER',
+        provenanceMode: 'development',
       }),
-      expectedTag: 'PaperProofCommandRequiresObserveAuthority',
+      expectedTag: 'PaperAuthorityRequiresBoundedOperation',
+    },
+    {
+      name: 'paper candidate discovery authority before qualification pin',
+      input: resolutionInput({
+        maximumAuthority: Authority.Paper,
+        configuredAlpaca: completeAlpacaConfig,
+        configuredOperation: 'PAPER_CANDIDATE_DISCOVERY',
+      }),
+      expectedTag: 'PaperCandidateDiscoveryRequiresObserveAuthority',
     },
     {
       name: 'qualification pin before Alpaca read binding',
       input: resolutionInput({
-        configuredPaperProofCommand: 'PREPARE',
-        configuredPaperProofPhase: 'DISCOVER',
+        configuredOperation: 'PAPER_CANDIDATE_DISCOVERY',
       }),
-      expectedTag: 'PaperProofCommandRequiresQualificationRun',
+      expectedTag: 'PaperCandidateDiscoveryRequiresQualificationRun',
     },
     {
       name: 'Alpaca read binding before provenance',
       input: resolutionInput({
         qualificationRunId,
-        configuredPaperProofCommand: 'PREPARE',
-        configuredPaperProofPhase: 'DISCOVER',
+        configuredOperation: 'PAPER_CANDIDATE_DISCOVERY',
         provenanceMode: 'development',
       }),
-      expectedTag: 'PaperProofCommandRequiresAlpacaBinding',
+      expectedTag: 'PaperCandidateDiscoveryRequiresAlpacaBinding',
     },
     {
       name: 'missing embedded metadata before PostgreSQL TLS',
@@ -793,7 +747,7 @@ describe('Effect configuration', () => {
     expect(config.host).toBe('0.0.0.0')
     expect(config.port).toBe(8080)
     expect(config.qualificationRunId).toBeUndefined()
-    expect(config.paperProofCommand).toBeUndefined()
+    expect(config.runtimeMode).toBe('BrokerlessService')
     expect(config.maximumAuthority).toBe(Authority.Observe)
     expect(config.healthIntervalMs).toBe(30_000)
     expect(config.operationTimeoutMs).toBe(30_000)
@@ -835,22 +789,25 @@ describe('Effect configuration', () => {
     expect(config.qualificationRunId).toBe('e'.repeat(64))
   })
 
-  test('enables only an explicit OBSERVE PREPARE DISCOVER command', async () => {
+  test('enables only explicit OBSERVE paper candidate discovery', async () => {
     const configured = new Map(runtimeEnvironment)
     configured.set('BAYN_QUALIFICATION_RUN_ID', 'e'.repeat(64))
     configured.set('BAYN_ALPACA_ACCOUNT_ID', '61e69015-8549-4bfd-b9c3-01e75843f47d')
     configured.set('BAYN_ALPACA_KEY_ID', 'paper-key')
     configured.set('BAYN_ALPACA_SECRET_KEY', 'paper-secret')
-    configured.set('BAYN_PAPER_COMMAND', 'PREPARE')
-    configured.set('BAYN_PAPER_PREPARE_PHASE', 'DISCOVER')
+    configured.set('BAYN_OPERATION', 'PAPER_CANDIDATE_DISCOVERY')
 
     const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), configured))
 
-    expect(config.paperProofCommand).toEqual({ command: 'PREPARE', phase: 'DISCOVER' })
+    expect(config.runtimeMode).toBe('PaperCandidateDiscovery')
     expect(config.maximumAuthority).toBe(Authority.Observe)
+    if (config.runtimeMode === 'PaperCandidateDiscovery') {
+      expect(config.qualificationRunId).toBe('e'.repeat(64))
+      expect(config.alpaca.accountId).toBe('61e69015-8549-4bfd-b9c3-01e75843f47d')
+    }
   })
 
-  test('rejects invalid, incomplete, and PAPER discovery commands before runtime composition', async () => {
+  test('rejects invalid and PAPER candidate discovery operations before runtime composition', async () => {
     const complete = new Map(runtimeEnvironment)
     complete.set('BAYN_QUALIFICATION_RUN_ID', 'e'.repeat(64))
     complete.set('BAYN_ALPACA_ACCOUNT_ID', '61e69015-8549-4bfd-b9c3-01e75843f47d')
@@ -858,59 +815,45 @@ describe('Effect configuration', () => {
     complete.set('BAYN_ALPACA_SECRET_KEY', 'paper-secret')
 
     const invalid = new Map(complete)
-    invalid.set('BAYN_PAPER_COMMAND', 'SUBMIT')
-    invalid.set('BAYN_PAPER_PREPARE_PHASE', 'DISCOVER')
+    invalid.set('BAYN_OPERATION', 'PAPER_SUBMIT')
     expect(await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), invalid)))).toMatchObject({
       _tag: 'OperationalError',
       component: 'config',
       operation: 'load',
     })
 
-    const incomplete = new Map(complete)
-    incomplete.set('BAYN_PAPER_COMMAND', 'PREPARE')
-    expect(
-      await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), incomplete))),
-    ).toMatchObject({
-      _tag: 'OperationalError',
-      component: 'config',
-      operation: 'paper-command',
-    })
-
     const missingPin = new Map(complete)
     missingPin.delete('BAYN_QUALIFICATION_RUN_ID')
-    missingPin.set('BAYN_PAPER_COMMAND', 'PREPARE')
-    missingPin.set('BAYN_PAPER_PREPARE_PHASE', 'DISCOVER')
+    missingPin.set('BAYN_OPERATION', 'PAPER_CANDIDATE_DISCOVERY')
     expect(
       await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), missingPin))),
     ).toMatchObject({
       _tag: 'OperationalError',
       component: 'config',
-      operation: 'paper-command',
-      message: 'PREPARE DISCOVER requires a pinned terminal qualification run',
+      operation: 'operation',
+      message: 'PAPER_CANDIDATE_DISCOVERY requires a pinned terminal qualification run',
     })
 
     const missingBroker = new Map(runtimeEnvironment)
     missingBroker.set('BAYN_QUALIFICATION_RUN_ID', 'e'.repeat(64))
-    missingBroker.set('BAYN_PAPER_COMMAND', 'PREPARE')
-    missingBroker.set('BAYN_PAPER_PREPARE_PHASE', 'DISCOVER')
+    missingBroker.set('BAYN_OPERATION', 'PAPER_CANDIDATE_DISCOVERY')
     expect(
       await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), missingBroker))),
     ).toMatchObject({
       _tag: 'OperationalError',
       component: 'config',
-      operation: 'paper-command',
-      message: 'PREPARE DISCOVER requires a complete Alpaca read binding',
+      operation: 'operation',
+      message: 'PAPER_CANDIDATE_DISCOVERY requires a complete Alpaca read binding',
     })
 
     const paper = new Map(complete)
-    paper.set('BAYN_PAPER_COMMAND', 'PREPARE')
-    paper.set('BAYN_PAPER_PREPARE_PHASE', 'DISCOVER')
+    paper.set('BAYN_OPERATION', 'PAPER_CANDIDATE_DISCOVERY')
     paper.set('BAYN_MAXIMUM_AUTHORITY', Authority.Paper)
     expect(await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), paper)))).toMatchObject({
       _tag: 'OperationalError',
       component: 'config',
-      operation: 'paper-command',
-      message: 'PREPARE DISCOVER requires OBSERVE maximum authority',
+      operation: 'operation',
+      message: 'PAPER_CANDIDATE_DISCOVERY requires OBSERVE maximum authority',
     })
   })
 
@@ -1000,7 +943,7 @@ describe('Effect configuration', () => {
     expect(String(error)).not.toContain(alpacaKey)
   })
 
-  test('requires a complete Alpaca binding for PAPER while allowing credential-free OBSERVE', async () => {
+  test('rejects PAPER service startup while allowing credential-free OBSERVE', async () => {
     const observe = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), runtimeEnvironment))
     expect(observe.maximumAuthority).toBe(Authority.Observe)
     expect(observe.alpaca).toBeUndefined()
@@ -1014,6 +957,25 @@ describe('Effect configuration', () => {
       component: 'config',
       operation: 'alpaca',
       message: 'PAPER maximum authority requires a complete Alpaca account binding',
+    })
+
+    const boundPaper = new Map(paper)
+    boundPaper.set('BAYN_ALPACA_ACCOUNT_ID', alpacaAccountId)
+    boundPaper.set('BAYN_ALPACA_KEY_ID', 'paper-key')
+    boundPaper.set('BAYN_ALPACA_SECRET_KEY', 'paper-secret')
+    const boundedOperationError = await Effect.runPromise(
+      Effect.flip(provideEnvironment(loadConfig(buildMetadata), boundPaper)),
+    )
+
+    expect(boundedOperationError).toMatchObject({
+      _tag: 'OperationalError',
+      component: 'config',
+      operation: 'operation',
+      message: 'PAPER maximum authority requires an explicit bounded runtime operation',
+      cause: {
+        _tag: 'PaperAuthorityRequiresBoundedOperation',
+        maximumAuthority: Authority.Paper,
+      },
     })
   })
 
@@ -1117,9 +1079,9 @@ describe('Effect configuration', () => {
     paper.set('BAYN_ALPACA_ACCOUNT_ID', '61e69015-8549-4bfd-b9c3-01e75843f47d')
     paper.set('BAYN_ALPACA_KEY_ID', 'paper-key')
     paper.set('BAYN_ALPACA_SECRET_KEY', 'paper-secret')
-    expect((await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), paper))).maximumAuthority).toBe(
-      Authority.Paper,
-    )
+    expect(await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), paper)))).toMatchObject({
+      cause: { _tag: 'PaperAuthorityRequiresBoundedOperation' },
+    })
 
     const live = new Map(runtimeEnvironment)
     live.set('BAYN_MAXIMUM_AUTHORITY', 'LIVE')

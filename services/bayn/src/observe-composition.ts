@@ -18,6 +18,7 @@ import {
   type ExecutionSessionBindingFailure,
 } from './execution-session'
 import { makeFillTerms, MICROS } from './execution-model'
+import { makeStrategyProtocolHash } from './contracts'
 import { operationalError, type OperationalError } from './errors'
 import { canonicalHashV1 } from './hash'
 import { MarketData, type MarketDataService } from './market-data'
@@ -68,7 +69,7 @@ type ObserveStrategy = Pick<Strategy, 'currentDecision'>
 
 type ReconciliationPassError = Effect.Error<typeof runOnce>
 
-export interface ObserveDecisionInput {
+export type ObserveDecisionInput = {
   readonly authorityGenerationHash: string
   readonly cycle: AutonomousCycle
   readonly executionModel: CausalProtocol['executionModel']
@@ -105,24 +106,24 @@ export type ObserveDecisionFailure =
   | ShadowDecisionError
   | TargetPlannerFailure
 
-interface ObserveDecisionReadPreparation {
+type ObserveDecisionReadPreparation = {
   readonly snapshotId: string
   readonly marketCalendarQuery: MarketCalendarQuery
 }
 
-interface ObserveDecisionFacts {
+type ObserveDecisionFacts = {
   readonly snapshot: LoadedSnapshotPublication
   readonly calendar: MarketCalendarRead
   readonly reconciliation: ReconciliationPassResult
   readonly evaluatedAt: string
 }
 
-interface ObserveAuthorityObservation {
+type ObserveAuthorityObservation = {
   readonly authority: AuthorityState
   readonly observedAt: string
 }
 
-interface ObservePlannerPreparation {
+type ObservePlannerPreparation = {
   readonly plannerInput: TargetPlannerInput
   readonly prices: SignalSessionReferencePrices
 }
@@ -483,17 +484,17 @@ const observePass = (
         message: observation.error.message,
       })
 
-export interface ObserveAutonomousCycleInput {
+export type ObserveAutonomousCycleInput = {
   readonly accountId: string
   readonly authorityGenerationHash: string
   readonly maximumAuthority: Authority
   readonly pollIntervalMs: number
-  readonly strategy: Pick<Strategy, 'currentDecision' | 'parameters'>
+  readonly strategy: Pick<Strategy, 'currentDecision' | 'parameters' | 'provenance'>
 }
 
 type ObserveRuntime = BrokerRead | CycleStore | MarketData | PaperStore | WriterFence
 
-interface ObserveRuntimeServices {
+type ObserveRuntimeServices = {
   readonly brokerRead: BrokerReadShape
   readonly cycleStore: CycleStoreShape
   readonly marketData: MarketDataService
@@ -501,12 +502,13 @@ interface ObserveRuntimeServices {
   readonly writerFence: WriterFenceService
 }
 
-interface ObserveStartupPreparation {
+export type ObserveStartupPreparation = {
   readonly executionModel: CausalProtocol['executionModel']
   readonly executionPolicy: CycleExecutionPolicy
+  readonly strategyProtocolHash: string
 }
 
-const prepareObserveStartup = (
+export const prepareObserveStartup = (
   input: ObserveAutonomousCycleInput,
 ): Result.Result<ObserveStartupPreparation, OperationalError> => {
   const executionModel = input.strategy.parameters.executionModel
@@ -528,7 +530,11 @@ const prepareObserveStartup = (
     Result.mapError(makeCycleExecutionPolicyFromModel(executionModel), (cause) =>
       operationalError('strategy', 'cycle-policy', 'autonomous cycle execution policy construction failed', cause),
     ),
-    (executionPolicy) => ({ executionModel, executionPolicy }),
+    (executionPolicy) => ({
+      executionModel,
+      executionPolicy,
+      strategyProtocolHash: makeStrategyProtocolHash(input.strategy.provenance.strategy),
+    }),
   )
 }
 
@@ -575,7 +581,7 @@ const startObserveAutonomousLoop = (
   return startAutonomousCycleLoop({
     context: Effect.succeed({
       qualificationRunId: startup.qualificationRunId,
-      strategyProtocolHash: startup.strategyProtocolHash,
+      strategyProtocolHash: preparation.strategyProtocolHash,
       accountId: input.accountId,
       executionPolicy: preparation.executionPolicy,
       buildDecision: (cycle) =>
