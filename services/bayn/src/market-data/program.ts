@@ -33,7 +33,7 @@ import { decodeSnapshotRows, type SignalManifestRow } from './rows'
 // MarketData seam complete while the runner clamps by calendar date before its single broker-calendar read.
 const cyclePublicationCandidateLimit = 16
 
-const makeMarketData = (
+export const makeMarketData = (
   config: Pick<RuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
   contract: MarketDataContract,
 ): Effect.Effect<MarketDataService, never, ClickhouseClient.ClickhouseClient> =>

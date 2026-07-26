@@ -2,10 +2,10 @@ import type { ConnectionOptions } from 'node:tls'
 
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
-import { Context, Effect, FileSystem, Layer, PlatformError, Redacted, Scope } from 'effect'
+import { Effect, FileSystem, PlatformError, Redacted, Scope } from 'effect'
 import * as Reactivity from 'effect/unstable/reactivity/Reactivity'
 
-import { MarketData, MarketDataLive } from '../market-data'
+import { makeMarketData } from '../market-data'
 import type { IsoDate } from '../schemas'
 import type { CausalProtocol } from '../types'
 import type { QualificationCandidateFailure } from './failure'
@@ -50,15 +50,15 @@ const makeCandidateClickhouse = (
   })
 
 export interface CandidateReplicaClient<R, E> {
-  readonly read: Effect.Effect<CandidateReplicaObservation, E, Scope.Scope | R>
+  readonly read: Effect.Effect<CandidateReplicaObservation, E, R>
 }
 
-export type AcquireCandidateReplicaClient<R, AcquireError, ReadError> = (
+export type AcquireCandidateReplicaClient<AcquireR, ReadR, AcquireError, ReadError> = (
   input: QualificationCandidateInput,
   endpoint: CandidateReplicaEndpoint,
   password: Redacted.Redacted<string>,
   operationTimeoutMs: number,
-) => Effect.Effect<CandidateReplicaClient<R, ReadError>, AcquireError, Scope.Scope | R>
+) => Effect.Effect<CandidateReplicaClient<ReadR, ReadError>, AcquireError, Scope.Scope | AcquireR>
 
 const acquireCandidateReplicaClient = (
   input: QualificationCandidateInput,
@@ -75,42 +75,39 @@ const acquireCandidateReplicaClient = (
         } = yield* Effect.all(
           {
             identityRows: sql`
-              SELECT hostName() AS replica, currentUser() AS principal
-            `.pipe(sql.withQueryId('bayn-candidate-replica-identity'), Effect.flatMap(decodeReplicaIdentityRows)),
+                SELECT hostName() AS replica, currentUser() AS principal
+              `.pipe(sql.withQueryId('bayn-candidate-replica-identity'), Effect.flatMap(decodeReplicaIdentityRows)),
             candidateRows: sql`
-              SELECT snapshot_id, calendar_version
-              FROM signal.snapshot_manifests_v2
-              WHERE universe_id = ${sql.param('String', input.protocol.universeId)}
-                AND universe_symbol_hash = ${sql.param('String', input.protocol.universeSymbolHash)}
-                AND requested_start = toDate(${sql.param('String', input.protocol.historyStart)})
-                AND publication_asof = toDate(${sql.param('String', input.publicationDate)})
-              ORDER BY finalized_at DESC, snapshot_id DESC
-              LIMIT 1
-            `.pipe(
+                SELECT snapshot_id, calendar_version
+                FROM signal.snapshot_manifests_v2
+                WHERE universe_id = ${sql.param('String', input.protocol.universeId)}
+                  AND universe_symbol_hash = ${sql.param('String', input.protocol.universeSymbolHash)}
+                  AND requested_start = toDate(${sql.param('String', input.protocol.historyStart)})
+                  AND publication_asof = toDate(${sql.param('String', input.publicationDate)})
+                ORDER BY finalized_at DESC, snapshot_id DESC
+                LIMIT 1
+              `.pipe(
               sql.withQueryId(`bayn-candidate-select-${input.publicationDate}`),
               Effect.flatMap(decodeCandidateRows),
             ),
           },
           { concurrency: 1 },
         )
-        const marketDataContext = yield* Layer.build(
-          MarketDataLive(
-            {
-              operationTimeoutMs,
-              clickhouse: {
-                url: endpoint.href,
-                username: input.publisherPrincipal,
-                password,
-                snapshotId: candidate.snapshot_id,
-                publicationAsOf: input.publicationDate,
-                calendarVersion: candidate.calendar_version,
-                bounds: candidateBounds(input.protocol, input.publicationDate),
-              },
+        const marketData = yield* makeMarketData(
+          {
+            operationTimeoutMs,
+            clickhouse: {
+              url: endpoint.href,
+              username: input.publisherPrincipal,
+              password,
+              snapshotId: candidate.snapshot_id,
+              publicationAsOf: input.publicationDate,
+              calendarVersion: candidate.calendar_version,
+              bounds: candidateBounds(input.protocol, input.publicationDate),
             },
-            input.protocol,
-          ).pipe(Layer.provide(Layer.succeed(ClickhouseClient.ClickhouseClient, sql))),
-        )
-        const marketData = Context.get(marketDataContext, MarketData)
+          },
+          input.protocol,
+        ).pipe(Effect.provideService(ClickhouseClient.ClickhouseClient, sql))
         const snapshot = yield* marketData.loadSnapshotPublication({
           snapshotId: candidate.snapshot_id,
           signalSessionDate: input.publicationDate,
@@ -126,13 +123,13 @@ const acquireCandidateReplicaClient = (
     })),
   )
 
-const readCandidateReplicaWith = <R, AcquireError, ReadError>(
+const readCandidateReplicaWith = <AcquireR, ReadR, AcquireError, ReadError>(
   input: QualificationCandidateInput,
   endpoint: CandidateReplicaEndpoint,
   password: Redacted.Redacted<string>,
   operationTimeoutMs: number,
-  acquireClient: AcquireCandidateReplicaClient<R, AcquireError, ReadError>,
-): Effect.Effect<CandidateReplicaObservation, QualificationCandidateFailure, R> =>
+  acquireClient: AcquireCandidateReplicaClient<AcquireR, ReadR, AcquireError, ReadError>,
+): Effect.Effect<CandidateReplicaObservation, QualificationCandidateFailure, Exclude<AcquireR | ReadR, Scope.Scope>> =>
   Effect.scoped(
     acquireClient(input, endpoint, password, operationTimeoutMs).pipe(Effect.flatMap((client) => client.read)),
   ).pipe(
@@ -151,20 +148,24 @@ export function readCandidateReplica(
   password: Redacted.Redacted<string>,
   operationTimeoutMs: number,
 ): Effect.Effect<CandidateReplicaObservation, QualificationCandidateFailure, Reactivity.Reactivity>
-export function readCandidateReplica<R, AcquireError, ReadError>(
+export function readCandidateReplica<AcquireR, ReadR, AcquireError, ReadError>(
   input: QualificationCandidateInput,
   endpoint: CandidateReplicaEndpoint,
   password: Redacted.Redacted<string>,
   operationTimeoutMs: number,
-  acquireClient: AcquireCandidateReplicaClient<R, AcquireError, ReadError>,
-): Effect.Effect<CandidateReplicaObservation, QualificationCandidateFailure, R>
-export function readCandidateReplica<R, AcquireError, ReadError>(
+  acquireClient: AcquireCandidateReplicaClient<AcquireR, ReadR, AcquireError, ReadError>,
+): Effect.Effect<CandidateReplicaObservation, QualificationCandidateFailure, Exclude<AcquireR | ReadR, Scope.Scope>>
+export function readCandidateReplica<AcquireR, ReadR, AcquireError, ReadError>(
   input: QualificationCandidateInput,
   endpoint: CandidateReplicaEndpoint,
   password: Redacted.Redacted<string>,
   operationTimeoutMs: number,
-  acquireClient?: AcquireCandidateReplicaClient<R, AcquireError, ReadError>,
-): Effect.Effect<CandidateReplicaObservation, QualificationCandidateFailure, R | Reactivity.Reactivity> {
+  acquireClient?: AcquireCandidateReplicaClient<AcquireR, ReadR, AcquireError, ReadError>,
+): Effect.Effect<
+  CandidateReplicaObservation,
+  QualificationCandidateFailure,
+  Exclude<AcquireR | ReadR, Scope.Scope> | Reactivity.Reactivity
+> {
   return acquireClient === undefined
     ? readCandidateReplicaWith(input, endpoint, password, operationTimeoutMs, acquireCandidateReplicaClient)
     : readCandidateReplicaWith(input, endpoint, password, operationTimeoutMs, acquireClient)

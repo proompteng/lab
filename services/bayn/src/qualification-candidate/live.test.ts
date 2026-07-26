@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { Deferred, Effect, Fiber, Redacted, Ref } from 'effect'
+import { Context, Deferred, Effect, Fiber, Redacted, Ref } from 'effect'
 
 import { readCandidateReplica, readQualificationLocks } from './live'
 import type { CandidateConfig } from './model'
@@ -23,6 +23,14 @@ const candidateConfig = (): CandidateConfig => ({
   tigerBeetleLedger: candidateInput().tigerBeetleLedger,
   operationTimeoutMs: 5_000,
 })
+
+class ReplicaAcquireRequirement extends Context.Service<ReplicaAcquireRequirement, { readonly enabled: true }>()(
+  'bayn/test/ReplicaAcquireRequirement',
+) {}
+
+class ReplicaReadRequirement extends Context.Service<ReplicaReadRequirement, { readonly enabled: true }>()(
+  'bayn/test/ReplicaReadRequirement',
+) {}
 
 describe('qualification candidate live client lifecycle', () => {
   test('acquires and releases the ClickHouse client exactly once after a successful replica read', async () => {
@@ -87,6 +95,52 @@ describe('qualification candidate live client lifecycle', () => {
     )
 
     expect(counts).toEqual({ acquisitions: 1, releases: 1 })
+  })
+
+  test('keeps ClickHouse acquisition and replica-read requirements visible at separate boundaries', async () => {
+    let acquireRequirements = 0
+    let readRequirements = 0
+    let releases = 0
+    const observation = candidateObservations()[0]
+
+    const program: Effect.Effect<
+      ReturnType<typeof candidateObservations>[number],
+      unknown,
+      ReplicaAcquireRequirement | ReplicaReadRequirement
+    > = readCandidateReplica(
+      candidateInput(),
+      candidateReplicaEndpoints[0],
+      Redacted.make('publisher-password'),
+      5_000,
+      () =>
+        ReplicaAcquireRequirement.pipe(
+          Effect.tap(() => Effect.sync(() => void (acquireRequirements += 1))),
+          Effect.flatMap(() =>
+            Effect.acquireRelease(
+              Effect.succeed({
+                read: ReplicaReadRequirement.pipe(
+                  Effect.tap(() => Effect.sync(() => void (readRequirements += 1))),
+                  Effect.as(observation),
+                ),
+              }),
+              () => Effect.sync(() => void (releases += 1)),
+            ),
+          ),
+        ),
+    )
+    const result = await Effect.runPromise(
+      program.pipe(
+        Effect.provideService(ReplicaAcquireRequirement, { enabled: true }),
+        Effect.provideService(ReplicaReadRequirement, { enabled: true }),
+      ),
+    )
+
+    expect(result).toEqual(observation)
+    expect({ acquireRequirements, readRequirements, releases }).toEqual({
+      acquireRequirements: 1,
+      readRequirements: 1,
+      releases: 1,
+    })
   })
 
   test('acquires and releases the PostgreSQL client exactly once after a successful lock read', async () => {
