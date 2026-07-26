@@ -1,6 +1,6 @@
 import { Data, Result, Schema } from 'effect'
 
-import { intentIdForPlan } from './execution/intents'
+import { intentIdForPlan } from './execution/intents/domain'
 import { canonicalHashV1Result } from './hash'
 import { PositiveMicrosSchema, RiskOutcome } from './paper'
 import { EvaluationSchema, Reason } from './risk'

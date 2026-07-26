@@ -1,6 +1,6 @@
 import { Data, Result, Schema, pipe } from 'effect'
 
-import { IntentPlanSchema, type IntentPlan } from './execution/intents'
+import { IntentPlanSchema, type IntentPlan } from './execution/intents/domain'
 import { desiredQuantityMicros, MICROS } from './execution-model'
 import { canonicalHashV1Result } from './hash'
 import {

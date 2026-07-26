@@ -21,7 +21,7 @@ import {
 import { canonicalHashV1Result } from '../hash'
 import { IntentState, RiskOutcome, TerminalOutcome, type Intent } from '../paper'
 import { UtcInstantSchema } from '../schemas'
-import type { StoredIntent } from './intents'
+import type { StoredIntent } from './intents/domain'
 import { MutationEventType, type MutationEvent } from './mutations'
 
 // Pure decisions for the effectful coordinator interpreter.

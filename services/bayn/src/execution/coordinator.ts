@@ -26,7 +26,7 @@ import {
   type RecoveryPersistenceDecision,
   type SubmitPersistenceDecision,
 } from './coordinator-decisions'
-import { IntentStore, type IntentStoreError, type StoredIntent } from './intents'
+import { IntentStore, type IntentStoreError, type StoredIntent } from './intents/domain'
 import { MutationStore, type MutationEvent } from './mutations'
 import { WriterFence } from './writer-fence'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
