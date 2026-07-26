@@ -251,6 +251,19 @@ describe('independent qualification reference', () => {
       assertFailure(evaluateReference(snapshot.bars, snapshot.manifest, fixtureProtocol, changedProvenance))._tag,
     ).toBe('ReferenceProvenanceMismatch')
 
+    const malformedIdentityProvenance = {
+      ...makeTestProvenance(),
+      sourceRevision: 'not-a-source-revision',
+    }
+    expect(
+      assertFailure(
+        evaluateReference(snapshot.bars, snapshot.manifest, fixtureProtocol, malformedIdentityProvenance as never),
+      ),
+    ).toMatchObject({
+      _tag: 'ContractSchemaInvalid',
+      operation: 'run-identity-material',
+    })
+
     const noSignalManifest = {
       ...snapshot.manifest,
       bounds: {
