@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Result } from 'effect'
+import { Cause, Effect, Exit, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { fixtureStrategy } from './app-test-support'
@@ -48,7 +48,7 @@ import { ReconciliationError, type ReconciliationPassResult } from './reconciler
 import { reconciledStateHash } from './reconciliation'
 import { Reason } from './risk'
 import { fixtureProtocol, makeSnapshot } from './test-fixtures'
-import type { DecisionPlan } from './types'
+import type { DecisionPlan, IsoDate } from './types'
 
 const signalDate = '2020-04-30'
 const executionDate = '2020-05-01'
@@ -472,6 +472,73 @@ describe('OBSERVE runtime composition', () => {
       cause: undefined,
     })
     expect(strategyCalls).toBe(0)
+  })
+
+  test('maps an expected strategy decision failure into the typed operational channel', async () => {
+    const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, fixtureProtocol.universe))
+    const strategyFailure = {
+      _tag: 'CurrentDecisionCoverageMismatch' as const,
+      signalDate: signalDate as IsoDate,
+      expectedSymbols: fixtureProtocol.universe,
+      observedSymbols: [],
+    }
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(evaluatedAt))
+          return yield* buildObserveCycleDecision({
+            authorityGenerationHash: generationHash,
+            cycle,
+            executionModel: fixtureProtocol.executionModel,
+            policy,
+            reconcile: Effect.succeed(reconciliationResult()),
+            strategy: { currentDecision: () => Result.fail(strategyFailure) },
+          })
+        }).pipe(
+          (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
+          Effect.provide(TestClock.layer()),
+        ),
+      ),
+    )
+
+    expect(failure._tag).toBe('OperationalError')
+    if (failure._tag === 'OperationalError') {
+      expect(failure.component).toBe('strategy')
+      expect(failure.operation).toBe('current-decision')
+      expect(failure.message).toStartWith('current strategy decision compilation failed')
+      expect(failure.cause).toBe(strategyFailure)
+    }
+  })
+
+  test('preserves a thrown strategy decision bug as the identical Effect defect', async () => {
+    const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, fixtureProtocol.universe))
+    const defect = new Error('unexpected current-decision defect')
+    const exit = await Effect.runPromiseExit(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(evaluatedAt))
+        return yield* buildObserveCycleDecision({
+          authorityGenerationHash: generationHash,
+          cycle,
+          executionModel: fixtureProtocol.executionModel,
+          policy,
+          reconcile: Effect.succeed(reconciliationResult()),
+          strategy: {
+            currentDecision: () => {
+              throw defect
+            },
+          },
+        })
+      }).pipe(
+        (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) {
+      const defects = exit.cause.reasons.flatMap((reason) => (Cause.isDieReason(reason) ? [reason.defect] : []))
+      expect(defects).toContain(defect)
+    }
   })
 
   test('closes read and reconciliation failures with their operational classifications and exact causes', async () => {
