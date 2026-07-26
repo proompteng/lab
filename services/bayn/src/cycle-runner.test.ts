@@ -27,6 +27,7 @@ import {
   CycleRunnerError,
   cyclePassLogFacts,
   isMonthEndCycleDue,
+  makeAutonomousCycleLoop,
   makeDueCycleDraft,
   marketCalendarQueryForPublications,
   marketCalendarQueryForSignal,
@@ -35,7 +36,7 @@ import {
   selectCycleCalendarCandidate,
   selectDiscoveredPublications,
   selectNextExecutionSession,
-  startAutonomousCycleLoop,
+  type AutonomousCycleLoopOptions,
   type CycleCandidate,
   type CyclePassObservation,
   type CycleRunContext,
@@ -53,6 +54,9 @@ import {
 import { makeObserveShadowDecisionDocument, type ObserveShadowDecisionDocument } from './shadow-decision-contract'
 import { TargetPlanReason, TargetPlanStatus } from './target-planner'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputManifest, type IsoDate } from './types'
+
+const cycleLoop = <E, R>(options: AutonomousCycleLoopOptions<E, R>) =>
+  Effect.fromResult(makeAutonomousCycleLoop(options))
 
 const signalCalendarVersion = 'signal-XNYS-2026-v1'
 const snapshotId = 'd'.repeat(64)
@@ -1337,7 +1341,7 @@ describe('autonomous cycle runner', () => {
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
-        const loop = yield* startAutonomousCycleLoop({
+        const loop = yield* cycleLoop({
           context: Effect.succeed(context()),
           observePass: (observation) => Effect.sync(() => observations.push(observation)),
           pollIntervalMs: 100,
@@ -1847,7 +1851,7 @@ describe('autonomous cycle runner', () => {
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
-        const loop = yield* startAutonomousCycleLoop({
+        const loop = yield* cycleLoop({
           context: Effect.succeed(context()),
           observePass: (observation) => Effect.sync(() => observations.push(observation)),
           pollIntervalMs: 100,
@@ -1907,7 +1911,7 @@ describe('autonomous cycle runner', () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const loop = yield* startAutonomousCycleLoop({
+          const loop = yield* cycleLoop({
             context: Effect.succeed(context()),
             observePass: ignorePass,
             pollIntervalMs: 100,
@@ -1939,7 +1943,7 @@ describe('autonomous cycle runner', () => {
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
-        const loop = yield* startAutonomousCycleLoop({
+        const loop = yield* cycleLoop({
           context: Effect.succeed(context()),
           observePass: (observation) => Effect.sync(() => observations.push(observation)),
           pollIntervalMs: 100,
@@ -2012,7 +2016,7 @@ describe('autonomous cycle runner', () => {
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
-        const loop = yield* startAutonomousCycleLoop({
+        const loop = yield* cycleLoop({
           context: Effect.succeed(context()),
           observePass: (observation) => Effect.sync(() => observations.push(observation)),
           pollIntervalMs: 100,
@@ -2093,7 +2097,7 @@ describe('autonomous cycle runner', () => {
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(active.window.submissionOpenAt))
-        const loop = yield* startAutonomousCycleLoop({
+        const loop = yield* cycleLoop({
           context: Effect.succeed(context(undefined, buildDecision)),
           observePass: (observation) => Effect.sync(() => observations.push(observation)),
           pollIntervalMs: 100,
@@ -2145,7 +2149,7 @@ describe('autonomous cycle runner', () => {
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
-        const loop = yield* startAutonomousCycleLoop({
+        const loop = yield* cycleLoop({
           context: Effect.suspend(() => {
             contextLoads += 1
             return contextLoads === 1 ? Effect.fail(contextFailure) : Effect.succeed(context())
@@ -2205,7 +2209,7 @@ describe('autonomous cycle runner', () => {
     const exit = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const loop = yield* startAutonomousCycleLoop({
+          const loop = yield* cycleLoop({
             context: Effect.die(defect),
             observePass: (observation) => Effect.sync(() => observations.push(observation)),
             pollIntervalMs: 100,
@@ -2233,7 +2237,7 @@ describe('autonomous cycle runner', () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const loop = yield* startAutonomousCycleLoop({
+          const loop = yield* cycleLoop({
             context: Effect.fail(contextFailure),
             observePass: ignorePass,
             pollIntervalMs: 100,
@@ -2252,21 +2256,16 @@ describe('autonomous cycle runner', () => {
     expect(control).toEqual({ acquisitions: [], binds: 0 })
   })
 
-  test('rejects invalid loop intervals before starting discovery', async () => {
+  test('rejects invalid loop intervals before starting discovery', () => {
     const control: StoreControl = { acquisitions: [], binds: 0 }
     for (const pollIntervalMs of [0, -1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
-      const failure = await Effect.runPromise(
-        Effect.flip(
-          Effect.scoped(
-            startAutonomousCycleLoop({
-              context: Effect.succeed(context()),
-              observePass: ignorePass,
-              pollIntervalMs,
-            }),
-          ),
-        ),
-      )
-      expect(failure).toMatchObject({
+      const result = makeAutonomousCycleLoop({
+        context: Effect.succeed(context()),
+        observePass: ignorePass,
+        pollIntervalMs,
+      })
+      expect(Result.isFailure(result)).toBe(true)
+      expect(Result.isFailure(result) ? result.failure : undefined).toMatchObject({
         _tag: 'CycleRunnerError',
         operation: 'configure',
         failure: 'invalid-config',
