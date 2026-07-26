@@ -1,4 +1,4 @@
-import { Effect, Option, Ref, Result } from 'effect'
+import { Effect, Option, pipe, Ref, Result } from 'effect'
 
 import type { RuntimeConfig } from './config'
 import { makeRuntimeProvenance, makeStrategyProtocolHash, type RuntimeProvenance } from './contracts'
@@ -12,18 +12,26 @@ import {
   type StoredEvaluationEvidence,
 } from './db/evidence-store'
 import { OperationalError, formatError, type Component } from './errors'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result, renderCanonicalJsonFailure, type CanonicalJsonFailure } from './hash'
 import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataInspection, type MarketDataService, type MarketDataSnapshot } from './market-data'
 import { databaseOperation, withinDeadline } from './operations'
-import { makeQualificationResult, type QualificationLock, type QualificationResult } from './qualification'
 import {
+  makeQualificationResult,
+  renderQualificationConstructionFailure,
+  type QualificationConstructionFailure,
+  type QualificationLock,
+  type QualificationResult,
+} from './qualification'
+import { renderQualificationStatisticsFailure, type QualificationStatisticsFailure } from './qualification-statistics'
+import {
+  renderRiskBalancedTrendFailure,
   renderRiskBalancedTrendEvaluationIssues,
   summarizeEvaluation,
   type RiskBalancedTrendEvaluationIssue,
 } from './risk-balanced-trend'
 import type { RuntimeEvidence, RuntimeState } from './runtime-state'
-import type { Strategy } from './strategy'
+import type { Strategy, StrategyPrepareLockFailure } from './strategy'
 import type { EvaluationResult, ReconciliationResult } from './types'
 
 type TerminalQualificationRecord = Extract<QualificationRecord, { readonly state: 'TERMINAL' }>
@@ -93,7 +101,7 @@ type StartupCanonicalizationContext =
   | { readonly target: 'pinned-verdict' | 'terminal-verdict'; readonly side: 'qualification' | 'recovered' }
   | { readonly target: 'locked-manifest'; readonly side: 'inspection' | 'loaded' }
 
-type StartupCanonicalizationFailure = StartupCanonicalizationContext & { readonly cause: unknown }
+type StartupCanonicalizationFailure = StartupCanonicalizationContext & { readonly cause: CanonicalJsonFailure }
 type StartupCanonicalizationInput = readonly [context: StartupCanonicalizationContext, value: unknown]
 
 type StartupQualificationFailure =
@@ -220,9 +228,21 @@ export type StartupDecisionFailure =
     }
   | {
       readonly _tag: 'StrategyOperationFailed'
-      readonly operation: 'prepare-lock' | 'analyze' | 'qualify'
+      readonly operation: 'prepare-lock'
       readonly strategyName: string
-      readonly cause: unknown
+      readonly cause: StrategyPrepareLockFailure
+    }
+  | {
+      readonly _tag: 'StrategyOperationFailed'
+      readonly operation: 'analyze'
+      readonly strategyName: string
+      readonly cause: QualificationStatisticsFailure
+    }
+  | {
+      readonly _tag: 'StrategyOperationFailed'
+      readonly operation: 'qualify'
+      readonly strategyName: string
+      readonly cause: QualificationConstructionFailure
     }
 
 const failStartupState = (current: RuntimeState, error: OperationalError): RuntimeState => ({
@@ -272,7 +292,7 @@ const presentFailure = (component: Component, operation: string, message: string
 const renderCanonicalizationFailure = (
   failure: Extract<StartupDecisionFailure, { readonly _tag: 'CanonicalizationFailed' }>,
 ): StartupFailurePresentation => {
-  const detail = causeMessage(failure.details.cause)
+  const detail = renderCanonicalJsonFailure(failure.details.cause)
   switch (failure.details.target) {
     case 'stored-protocol-parameters':
       return presentFailure(
@@ -299,6 +319,33 @@ const renderCanonicalizationFailure = (
       return presentFailure('database', 'recover-qualification', `qualification recovery failed: ${detail}`)
     case 'locked-manifest':
       return presentFailure('market-data', 'load-locked', `locked Signal load failed: ${detail}`)
+  }
+}
+
+const renderPrepareLockFailure = (failure: StrategyPrepareLockFailure): string => {
+  switch (failure._tag) {
+    case 'QualificationCanonicalizationFailed':
+    case 'QualificationSchemaInvalid':
+    case 'QualificationRunIdMismatch':
+    case 'QualificationPriorTrialLineageMismatch':
+      return renderQualificationConstructionFailure(failure)
+    default:
+      return renderRiskBalancedTrendFailure(failure)
+  }
+}
+
+const renderStrategyOperationFailure = (
+  failure: Extract<StartupDecisionFailure, { readonly _tag: 'StrategyOperationFailed' }>,
+): string => {
+  switch (failure.operation) {
+    case 'prepare-lock':
+      return renderPrepareLockFailure(failure.cause)
+    case 'evaluate':
+      return renderRiskBalancedTrendEvaluationIssues(failure.cause)
+    case 'analyze':
+      return renderQualificationStatisticsFailure(failure.cause)
+    case 'qualify':
+      return renderQualificationConstructionFailure(failure.cause)
   }
 }
 
@@ -406,10 +453,7 @@ const startupFailurePresentation = (failure: StartupDecisionFailure): StartupFai
         analyze: 'analysis',
         qualify: 'qualification',
       }[failure.operation]
-      const detail =
-        failure.operation === 'evaluate'
-          ? renderRiskBalancedTrendEvaluationIssues(failure.cause)
-          : causeMessage(failure.cause)
+      const detail = renderStrategyOperationFailure(failure)
       return presentFailure('strategy', failure.operation, `${failure.strategyName} ${label} failed: ${detail}`)
     }
   }
@@ -430,13 +474,15 @@ const canonicalStartupHash = (
   context: StartupCanonicalizationContext,
   value: unknown,
 ): Result.Result<string, StartupDecisionFailure> =>
-  Result.try({
-    try: () => canonicalHashV1(value),
-    catch: (cause): StartupDecisionFailure => ({
-      _tag: 'CanonicalizationFailed',
-      details: { ...context, cause },
-    }),
-  })
+  pipe(
+    canonicalHashV1Result(value),
+    Result.mapError(
+      (cause): StartupDecisionFailure => ({
+        _tag: 'CanonicalizationFailed',
+        details: { ...context, cause },
+      }),
+    ),
+  )
 
 const validateCanonicalBinding = (
   left: StartupCanonicalizationInput,
@@ -644,15 +690,15 @@ const prepareQualificationLock = (
   inspection: MarketDataInspection,
   priorTrialRunIds: readonly string[],
 ): Result.Result<QualificationLock, StartupDecisionFailure> =>
-  Result.try({
-    try: () => strategy.prepareLock(inspection.manifest, inspection.sessionDates, priorTrialRunIds),
-    catch: (cause): StartupDecisionFailure => ({
+  Result.mapError(
+    strategy.prepareLock(inspection.manifest, inspection.sessionDates, priorTrialRunIds),
+    (cause): StartupDecisionFailure => ({
       _tag: 'StrategyOperationFailed',
       operation: 'prepare-lock',
       strategyName: strategy.name,
       cause,
     }),
-  })
+  )
 
 export const decideQualificationPath = (
   expectedLock: QualificationLock,
@@ -851,25 +897,29 @@ export const qualifyEvaluation = (
   evaluation: EvaluationResult,
   reconciliation: ReconciliationResult,
 ): Result.Result<EvaluationEvidence, StartupDecisionFailure> => {
-  const analysisResult = Result.try({
-    try: () => strategy.analyze(evaluation, lock.priorTrialRunIds),
-    catch: (cause): StartupDecisionFailure => ({
-      _tag: 'StrategyOperationFailed',
-      operation: 'analyze',
-      strategyName: strategy.name,
-      cause,
-    }),
-  })
+  const analysisResult = pipe(
+    strategy.analyze(evaluation, lock.priorTrialRunIds),
+    Result.mapError(
+      (cause): StartupDecisionFailure => ({
+        _tag: 'StrategyOperationFailed',
+        operation: 'analyze',
+        strategyName: strategy.name,
+        cause,
+      }),
+    ),
+  )
   if (Result.isFailure(analysisResult)) return Result.fail(analysisResult.failure)
-  const qualificationResult = Result.try({
-    try: () => makeQualificationResult(lock, evaluation.verdict, analysisResult.success),
-    catch: (cause): StartupDecisionFailure => ({
-      _tag: 'StrategyOperationFailed',
-      operation: 'qualify',
-      strategyName: strategy.name,
-      cause,
-    }),
-  })
+  const qualificationResult = pipe(
+    makeQualificationResult(lock, evaluation.verdict, analysisResult.success),
+    Result.mapError(
+      (cause): StartupDecisionFailure => ({
+        _tag: 'StrategyOperationFailed',
+        operation: 'qualify',
+        strategyName: strategy.name,
+        cause,
+      }),
+    ),
+  )
   return Result.isFailure(qualificationResult)
     ? Result.fail(qualificationResult.failure)
     : Result.succeed({ evaluation, reconciliation, qualification: qualificationResult.success })

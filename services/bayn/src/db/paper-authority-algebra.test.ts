@@ -44,9 +44,9 @@ import {
   type PaperGenerationRuntimeBinding,
 } from './paper-authority-algebra'
 
-const successOf = <A>(result: Result.Result<A, PaperAuthorityAlgebraFailure>): A => {
+const successOf = <A, E>(result: Result.Result<A, E>): A => {
   expect(Result.isSuccess(result)).toBe(true)
-  if (Result.isFailure(result)) throw new Error(`expected success, received ${result.failure._tag}`)
+  if (Result.isFailure(result)) throw new Error('expected success')
   return result.success
 }
 
@@ -123,18 +123,22 @@ const qualificationSeries = (runId: string): QualificationSeries => {
   }
 }
 
-const qualifiedAnalysis = analyzeQualification(
-  qualificationSeries(fixtureLock.candidateRunId),
-  defaultQualificationStatisticsPolicy,
-  fixtureLock.priorTrialRunIds,
+const qualifiedAnalysis = successOf(
+  analyzeQualification(
+    qualificationSeries(fixtureLock.candidateRunId),
+    defaultQualificationStatisticsPolicy,
+    fixtureLock.priorTrialRunIds,
+  ),
 )
-const qualifiedResult = makeQualificationResult(
-  fixtureLock,
-  {
-    status: 'PASS',
-    gates: [{ name: 'paper_authority_algebra_fixture', passed: true, actual: 1, required: 1 }],
-  },
-  qualifiedAnalysis,
+const qualifiedResult = successOf(
+  makeQualificationResult(
+    fixtureLock,
+    {
+      status: 'PASS',
+      gates: [{ name: 'paper_authority_algebra_fixture', passed: true, actual: 1, required: 1 }],
+    },
+    qualifiedAnalysis,
+  ),
 )
 
 const evidence: PaperGenerationEvidenceFacts = {

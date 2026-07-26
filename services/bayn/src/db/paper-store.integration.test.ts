@@ -1,3 +1,5 @@
+import assert from 'node:assert/strict'
+
 import { beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
@@ -53,6 +55,11 @@ const postgresUrl = process.env.BAYN_TEST_POSTGRES_URL
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
 const accountId = 'paper-account-1'
+
+const successOfResult = <A, E>(result: Result.Result<A, E>): A => {
+  assert(Result.isSuccess(result), 'fixture Result must succeed')
+  return result.success
+}
 const observedAt = '2026-07-22T15:30:01.000Z'
 const occurredAt = '2026-07-22T15:30:00.000Z'
 const hash = (value: string): string => canonicalHashV1({ value })
@@ -69,10 +76,12 @@ const qualifiedProtocolHash = makeStrategyProtocolHash({
 })
 
 const qualificationPolicy = (name: string) =>
-  makeQualificationPolicyDocument(`bayn.${name}.v1`, {
-    schemaVersion: `bayn.${name}.v1`,
-    enabled: true,
-  })
+  successOfResult(
+    makeQualificationPolicyDocument(`bayn.${name}.v1`, {
+      schemaVersion: `bayn.${name}.v1`,
+      enabled: true,
+    }),
+  )
 
 const qualificationSeries = (runId: string): QualificationSeries => {
   const sessionDate = (index: number): `${number}-${number}-${number}` => {
@@ -106,54 +115,57 @@ interface QualificationFixture {
 const makeQualificationFixture = (name: string, qualified: boolean): QualificationFixture => {
   const runId = hash(`${name}-run`)
   const snapshotId = hash(`${name}-snapshot`)
-  const lock = makeQualificationLock({
-    schemaVersion: 'bayn.qualification-lock.v3',
-    candidateRunId: runId,
-    protocolHash: qualifiedProtocolHash,
-    sourceRevision: qualifiedSourceRevision,
-    image: {
-      repository: qualifiedImageRepository,
-      digest: qualifiedImageDigest,
-    },
-    universeId: fixtureProtocol.universeId,
-    universeSymbolHash: fixtureProtocol.universeSymbolHash,
-    universe: fixtureProtocol.universe,
-    universeRationale: 'Precommitted cross-asset universe for the authority activation persistence test.',
-    data: {
-      snapshotId,
-      publicationId: hash(`${name}-publication`),
-      inputManifestHash: hash(`${name}-manifest`),
-      contentHash: hash(`${name}-content`),
-      sessionsContentHash: hash(`${name}-sessions`),
-      provider: 'alpaca',
-      sourceFeed: 'sip',
-      adjustment: 'all',
-      calendarVersion: 'alpaca-us-equity-calendar-v1',
-      firstSession: '2016-01-04',
-      lastSession: '2026-07-21',
-      selectedSessionCount: 1_900,
-      selectedRebalanceCount: 91,
-      bounds: {
-        schemaVersion: 'bayn.evaluation-bounds.v1',
-        dataStart: '2016-01-04',
-        dataEnd: '2026-07-21',
-        lookbackStart: '2016-01-04',
-        evaluationStart: '2017-01-03',
-        evaluationEnd: '2026-07-21',
+  const lock = successOfResult(
+    makeQualificationLock({
+      schemaVersion: 'bayn.qualification-lock.v3',
+      candidateRunId: runId,
+      protocolHash: qualifiedProtocolHash,
+      sourceRevision: qualifiedSourceRevision,
+      image: {
+        repository: qualifiedImageRepository,
+        digest: qualifiedImageDigest,
       },
-    },
-    policies: {
-      benchmark: qualificationPolicy(`${name}-benchmark-policy`),
-      thresholds: qualificationPolicy(`${name}-threshold-policy`),
-      uncertainty: qualificationPolicy(`${name}-uncertainty-policy`),
-      execution: makeQualificationPolicyDocument(
-        fixtureProtocol.executionModel.schemaVersion,
-        fixtureProtocol.executionModel,
-      ),
-    },
-    priorTrialRunIds: [],
-  })
-  const analysis = analyzeQualification(qualificationSeries(runId), defaultQualificationStatisticsPolicy, [])
+      universeId: fixtureProtocol.universeId,
+      universeSymbolHash: fixtureProtocol.universeSymbolHash,
+      universe: fixtureProtocol.universe,
+      universeRationale: 'Precommitted cross-asset universe for the authority activation persistence test.',
+      data: {
+        snapshotId,
+        publicationId: hash(`${name}-publication`),
+        inputManifestHash: hash(`${name}-manifest`),
+        contentHash: hash(`${name}-content`),
+        sessionsContentHash: hash(`${name}-sessions`),
+        provider: 'alpaca',
+        sourceFeed: 'sip',
+        adjustment: 'all',
+        calendarVersion: 'alpaca-us-equity-calendar-v1',
+        firstSession: '2016-01-04',
+        lastSession: '2026-07-21',
+        selectedSessionCount: 1_900,
+        selectedRebalanceCount: 91,
+        bounds: {
+          schemaVersion: 'bayn.evaluation-bounds.v1',
+          dataStart: '2016-01-04',
+          dataEnd: '2026-07-21',
+          lookbackStart: '2016-01-04',
+          evaluationStart: '2017-01-03',
+          evaluationEnd: '2026-07-21',
+        },
+      },
+      policies: {
+        benchmark: qualificationPolicy(`${name}-benchmark-policy`),
+        thresholds: qualificationPolicy(`${name}-threshold-policy`),
+        uncertainty: qualificationPolicy(`${name}-uncertainty-policy`),
+        execution: successOfResult(
+          makeQualificationPolicyDocument(fixtureProtocol.executionModel.schemaVersion, fixtureProtocol.executionModel),
+        ),
+      },
+      priorTrialRunIds: [],
+    }),
+  )
+  const analysis = successOfResult(
+    analyzeQualification(qualificationSeries(runId), defaultQualificationStatisticsPolicy, []),
+  )
   const evaluationVerdict = qualified
     ? {
         status: 'PASS' as const,
@@ -163,7 +175,10 @@ const makeQualificationFixture = (name: string, qualified: boolean): Qualificati
         status: 'FAIL_CLOSED' as const,
         gates: [{ name: 'paper_activation_fixture', passed: false, actual: 0, required: 1 }],
       }
-  return { lock, result: makeQualificationResult(lock, evaluationVerdict, analysis) }
+  return {
+    lock,
+    result: successOfResult(makeQualificationResult(lock, evaluationVerdict, analysis)),
+  }
 }
 
 const qualifiedEvidence = makeQualificationFixture('qualified-authority', true)

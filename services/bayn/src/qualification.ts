@@ -1,7 +1,7 @@
-import { Schema } from 'effect'
+import { pipe, Result, Schema } from 'effect'
 
 import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema } from './contracts'
-import { canonicalHashV1, sha256 } from './hash'
+import { canonicalHashV1Result, renderCanonicalJsonFailure, sha256, type CanonicalJsonFailure } from './hash'
 import {
   QualificationAnalysisSchema,
   defaultQualificationStatisticsPolicy,
@@ -27,10 +27,15 @@ const PolicyDocumentBase = Schema.Struct({
   content: CanonicalJson,
 })
 
+const canonicalHashMatches = (expected: string, value: unknown): boolean => {
+  const result = canonicalHashV1Result(value)
+  return Result.isSuccess(result) && result.success === expected
+}
+
 export const QualificationPolicyDocumentSchema = PolicyDocumentBase.check(
   Schema.makeFilter(
     (document: typeof PolicyDocumentBase.Type) =>
-      document.contentHash === canonicalHashV1(document.content) ||
+      canonicalHashMatches(document.contentHash, document.content) ||
       ({ path: ['contentHash'], issue: 'must match the canonical policy content hash' } as const),
   ),
 )
@@ -100,7 +105,7 @@ const QualificationLockMaterialBase = Schema.Struct({
 const canonicalListIssues = (path: string, values: readonly string[]): readonly Schema.FilterIssue[] => {
   const canonical = [...new Set(values)].sort()
   if (canonical.length !== values.length) return [{ path: [path], issue: 'must not contain duplicates' }]
-  if (canonical.some((value, index) => value !== values[index])) {
+  if (canonical.some((value, index) => value !== values.at(index))) {
     return [{ path: [path], issue: 'must be sorted in canonical order' }]
   }
   return []
@@ -130,7 +135,7 @@ const QualificationLockBase = Schema.Struct({
 const qualificationLockIssues = (lock: typeof QualificationLockBase.Type): readonly Schema.FilterIssue[] => {
   const { lockId, ...material } = lock
   const issues = [...lockMaterialIssues(material)]
-  if (lockId !== canonicalHashV1(material)) {
+  if (!canonicalHashMatches(lockId, material)) {
     issues.push({ path: ['lockId'], issue: 'must match the canonical lock material hash' })
   }
   return issues
@@ -139,21 +144,113 @@ const qualificationLockIssues = (lock: typeof QualificationLockBase.Type): reado
 export const QualificationLockSchema = QualificationLockBase.check(Schema.makeFilter(qualificationLockIssues))
 export type QualificationLock = typeof QualificationLockSchema.Type
 
-const decodePolicyDocumentSync = Schema.decodeUnknownSync(QualificationPolicyDocumentSchema, StrictParseOptions)
-const decodeLockMaterialSync = Schema.decodeUnknownSync(QualificationLockMaterialSchema, StrictParseOptions)
-const decodeLockSync = Schema.decodeUnknownSync(QualificationLockSchema, StrictParseOptions)
+const decodePolicyDocumentResult = Schema.decodeUnknownResult(QualificationPolicyDocumentSchema, StrictParseOptions)
+const decodeLockMaterialResult = Schema.decodeUnknownResult(QualificationLockMaterialSchema, StrictParseOptions)
+const decodeLockResult = Schema.decodeUnknownResult(QualificationLockSchema, StrictParseOptions)
 
-export const makeQualificationPolicyDocument = (schemaVersion: string, content: unknown): QualificationPolicyDocument =>
-  decodePolicyDocumentSync({
-    schemaVersion,
-    contentHash: canonicalHashV1(content),
-    content,
-  })
+export type QualificationConstructionFailure =
+  | {
+      readonly _tag: 'QualificationCanonicalizationFailed'
+      readonly operation: 'lock-material' | 'policy-content' | 'result-material'
+      readonly cause: CanonicalJsonFailure
+    }
+  | {
+      readonly _tag: 'QualificationSchemaInvalid'
+      readonly operation: 'lock' | 'lock-material' | 'policy-document' | 'result'
+      readonly cause: Schema.SchemaError
+    }
+  | {
+      readonly _tag: 'QualificationRunIdMismatch'
+      readonly lockRunId: string
+      readonly analysisRunId: string
+    }
+  | {
+      readonly _tag: 'QualificationPriorTrialLineageMismatch'
+      readonly lockedRunIds: readonly string[]
+      readonly analyzedRunIds: readonly string[]
+    }
 
-export const makeQualificationLock = (input: QualificationLockMaterial): QualificationLock => {
-  const material = decodeLockMaterialSync(input)
-  return decodeLockSync({ ...material, lockId: canonicalHashV1(material) })
+export const renderQualificationConstructionFailure = (failure: QualificationConstructionFailure): string => {
+  switch (failure._tag) {
+    case 'QualificationCanonicalizationFailed':
+      return `${failure.operation} canonicalization failed: ${renderCanonicalJsonFailure(failure.cause)}`
+    case 'QualificationSchemaInvalid':
+      return `${failure.operation} schema validation failed: ${failure.cause.message}`
+    case 'QualificationRunIdMismatch':
+      return `qualification analysis run ${failure.analysisRunId} does not match locked run ${failure.lockRunId}`
+    case 'QualificationPriorTrialLineageMismatch':
+      return `qualification analysis lineage ${failure.analyzedRunIds.join(',')} does not match locked lineage ${failure.lockedRunIds.join(',')}`
+  }
 }
+
+const canonicalHashResult = (
+  operation: Extract<
+    QualificationConstructionFailure,
+    { readonly _tag: 'QualificationCanonicalizationFailed' }
+  >['operation'],
+  value: unknown,
+): Result.Result<string, QualificationConstructionFailure> =>
+  pipe(
+    canonicalHashV1Result(value),
+    Result.mapError(
+      (cause): QualificationConstructionFailure => ({
+        _tag: 'QualificationCanonicalizationFailed',
+        operation,
+        cause,
+      }),
+    ),
+  )
+
+export const makeQualificationPolicyDocument = (
+  schemaVersion: string,
+  content: unknown,
+): Result.Result<QualificationPolicyDocument, QualificationConstructionFailure> =>
+  pipe(
+    canonicalHashResult('policy-content', content),
+    Result.flatMap((contentHash) =>
+      pipe(
+        decodePolicyDocumentResult({ schemaVersion, contentHash, content }),
+        Result.mapError(
+          (cause): QualificationConstructionFailure => ({
+            _tag: 'QualificationSchemaInvalid',
+            operation: 'policy-document',
+            cause,
+          }),
+        ),
+      ),
+    ),
+  )
+
+export const makeQualificationLock = (
+  input: QualificationLockMaterial,
+): Result.Result<QualificationLock, QualificationConstructionFailure> =>
+  pipe(
+    decodeLockMaterialResult(input),
+    Result.mapError(
+      (cause): QualificationConstructionFailure => ({
+        _tag: 'QualificationSchemaInvalid',
+        operation: 'lock-material',
+        cause,
+      }),
+    ),
+    Result.flatMap((material) =>
+      pipe(
+        canonicalHashResult('lock-material', material),
+        Result.flatMap((lockId) =>
+          pipe(
+            decodeLockResult({ ...material, lockId }),
+            Result.mapError(
+              (cause): QualificationConstructionFailure => ({
+                _tag: 'QualificationSchemaInvalid',
+                operation: 'lock',
+                cause,
+              }),
+            ),
+          ),
+        ),
+      ),
+    ),
+  )
 
 export const defaultQualificationStatisticsPolicyDocument = makeQualificationPolicyDocument(
   defaultQualificationStatisticsPolicy.schemaVersion,
@@ -206,7 +303,7 @@ export const QualificationResultSchema = QualificationResultBase.check(
     if ((shouldQualify && result.reasonCodes.length !== 0) || (!shouldQualify && result.reasonCodes.length === 0)) {
       issues.push({ path: ['reasonCodes'], issue: 'must explain every rejection and be empty only when qualified' })
     }
-    if (resultHash !== canonicalHashV1(material)) {
+    if (!canonicalHashMatches(resultHash, material)) {
       issues.push({ path: ['resultHash'], issue: 'must match the canonical result content hash' })
     }
     return issues
@@ -220,18 +317,29 @@ const resultReason = (name: string): string =>
     .replace(/[^A-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')}_FAILED`
 
-const decodeResultSync = Schema.decodeUnknownSync(QualificationResultSchema, StrictParseOptions)
+const decodeResult = Schema.decodeUnknownResult(QualificationResultSchema, StrictParseOptions)
 
 export const makeQualificationResult = (
   lock: QualificationLock,
   evaluationVerdict: EconomicVerdict,
   analysis: QualificationAnalysis,
-): QualificationResult => {
+): Result.Result<QualificationResult, QualificationConstructionFailure> => {
   if (lock.candidateRunId !== analysis.runId) {
-    throw new TypeError('qualification lock, candidate, and analysis run IDs must match')
+    return Result.fail({
+      _tag: 'QualificationRunIdMismatch',
+      lockRunId: lock.candidateRunId,
+      analysisRunId: analysis.runId,
+    })
   }
-  if (canonicalHashV1(lock.priorTrialRunIds) !== canonicalHashV1(analysis.priorTrialRunIds)) {
-    throw new TypeError('qualification analysis must use the locked prior-trial lineage')
+  if (
+    lock.priorTrialRunIds.length !== analysis.priorTrialRunIds.length ||
+    lock.priorTrialRunIds.some((runId, index) => runId !== analysis.priorTrialRunIds.at(index))
+  ) {
+    return Result.fail({
+      _tag: 'QualificationPriorTrialLineageMismatch',
+      lockedRunIds: lock.priorTrialRunIds,
+      analyzedRunIds: analysis.priorTrialRunIds,
+    })
   }
   const economicReasons = evaluationVerdict.gates.filter((gate) => !gate.passed).map((gate) => resultReason(gate.name))
   const reasonCodes = [...new Set([...economicReasons, ...analysis.reasonCodes])].sort()
@@ -247,5 +355,19 @@ export const makeQualificationResult = (
     analysis,
     reasonCodes,
   }
-  return decodeResultSync({ ...material, resultHash: canonicalHashV1(material) })
+  return pipe(
+    canonicalHashResult('result-material', material),
+    Result.flatMap((resultHash) =>
+      pipe(
+        decodeResult({ ...material, resultHash }),
+        Result.mapError(
+          (cause): QualificationConstructionFailure => ({
+            _tag: 'QualificationSchemaInvalid',
+            operation: 'result',
+            cause,
+          }),
+        ),
+      ),
+    ),
+  )
 }

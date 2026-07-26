@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Schema } from 'effect'
+import { Result, Schema } from 'effect'
 
 import {
   defaultQualificationStatisticsPolicyDocument,
@@ -16,7 +16,12 @@ import {
   type QualificationSeries,
 } from './qualification-statistics'
 
-const policy = (name: string) => makeQualificationPolicyDocument(`bayn.${name}.v1`, { name, enabled: true })
+const successOf = <A, E>(result: Result.Result<A, E>): A => {
+  expect(Result.isSuccess(result)).toBe(true)
+  return Result.isSuccess(result) ? result.success : (result.failure as never)
+}
+
+const policy = (name: string) => successOf(makeQualificationPolicyDocument(`bayn.${name}.v1`, { name, enabled: true }))
 
 const material: QualificationLockMaterial = {
   schemaVersion: 'bayn.qualification-lock.v3' as const,
@@ -65,7 +70,7 @@ const material: QualificationLockMaterial = {
 
 describe('qualification lock', () => {
   test('binds the exact default statistical policy as a canonical lock document', () => {
-    expect(defaultQualificationStatisticsPolicyDocument).toMatchObject({
+    expect(successOf(defaultQualificationStatisticsPolicyDocument)).toMatchObject({
       schemaVersion: 'bayn.qualification-statistics-policy.v1',
       content: {
         schemaVersion: 'bayn.qualification-statistics-policy.v1',
@@ -75,15 +80,15 @@ describe('qualification lock', () => {
   })
 
   test('builds a deterministic identity from the complete precommit', () => {
-    const first = makeQualificationLock(material)
-    const second = makeQualificationLock(structuredClone(material))
+    const first = successOf(makeQualificationLock(material))
+    const second = successOf(makeQualificationLock(structuredClone(material)))
 
     expect(second).toEqual(first)
     expect(first.lockId).toMatch(/^[0-9a-f]{64}$/)
   })
 
   test('changes identity for every authority-bearing input group', () => {
-    const baseline = makeQualificationLock(material).lockId
+    const baseline = successOf(makeQualificationLock(material)).lockId
     const variants = [
       { ...material, sourceRevision: 'a'.repeat(40) },
       { ...material, candidateRunId: 'b'.repeat(64) },
@@ -101,30 +106,38 @@ describe('qualification lock', () => {
       { ...material, priorTrialRunIds: [...material.priorTrialRunIds, 'a'.repeat(64)].sort() },
     ]
 
-    for (const variant of variants) expect(makeQualificationLock(variant).lockId).not.toBe(baseline)
+    for (const variant of variants) {
+      expect(successOf(makeQualificationLock(variant)).lockId).not.toBe(baseline)
+    }
   })
 
   test('rejects weak windows, unordered lineage, divergent policy hashes, and forged lock ids', () => {
-    expect(() =>
-      makeQualificationLock({
-        ...material,
-        data: { ...material.data, selectedSessionCount: 503 },
-      }),
-    ).toThrow()
-    expect(() =>
-      makeQualificationLock({ ...material, priorTrialRunIds: [...material.priorTrialRunIds].reverse() }),
-    ).toThrow()
-    expect(() =>
-      makeQualificationLock({
-        ...material,
-        policies: {
-          ...material.policies,
-          benchmark: { ...material.policies.benchmark, contentHash: 'f'.repeat(64) },
-        },
-      }),
-    ).toThrow()
+    expect(
+      Result.isFailure(
+        makeQualificationLock({
+          ...material,
+          data: { ...material.data, selectedSessionCount: 503 },
+        }),
+      ),
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        makeQualificationLock({ ...material, priorTrialRunIds: [...material.priorTrialRunIds].reverse() }),
+      ),
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        makeQualificationLock({
+          ...material,
+          policies: {
+            ...material.policies,
+            benchmark: { ...material.policies.benchmark, contentHash: 'f'.repeat(64) },
+          },
+        }),
+      ),
+    ).toBe(true)
 
-    const lock = makeQualificationLock(material)
+    const lock = successOf(makeQualificationLock(material))
     expect(() =>
       Schema.decodeUnknownSync(QualificationLockSchema)({ ...lock, universeId: 'equity-infrastructure-v1' }),
     ).toThrow()
@@ -158,24 +171,24 @@ const qualificationSeries = (): QualificationSeries => {
 
 describe('qualification result', () => {
   test('qualifies only when both locked economic and statistical gates pass', () => {
-    const lock = makeQualificationLock(material)
-    const analysis = analyzeQualification(
-      qualificationSeries(),
-      defaultQualificationStatisticsPolicy,
-      material.priorTrialRunIds,
+    const lock = successOf(makeQualificationLock(material))
+    const analysis = successOf(
+      analyzeQualification(qualificationSeries(), defaultQualificationStatisticsPolicy, material.priorTrialRunIds),
     )
     const passingVerdict = {
       status: 'PASS' as const,
       gates: [{ name: 'benchmark_sharpe_improvement', passed: true, actual: 0.1, required: '>0' }],
     }
-    const qualified = makeQualificationResult(lock, passingVerdict, analysis)
-    const rejected = makeQualificationResult(
-      lock,
-      {
-        status: 'FAIL_CLOSED',
-        gates: [{ name: 'benchmark_sharpe_improvement', passed: false, actual: -0.1, required: '>0' }],
-      },
-      analysis,
+    const qualified = successOf(makeQualificationResult(lock, passingVerdict, analysis))
+    const rejected = successOf(
+      makeQualificationResult(
+        lock,
+        {
+          status: 'FAIL_CLOSED',
+          gates: [{ name: 'benchmark_sharpe_improvement', passed: false, actual: -0.1, required: '>0' }],
+        },
+        analysis,
+      ),
     )
 
     expect(analysis.status).toBe('PASS')
@@ -185,25 +198,41 @@ describe('qualification result', () => {
       reasonCodes: ['EVALUATION_BENCHMARK_SHARPE_IMPROVEMENT_FAILED'],
     })
     expect(qualified.resultHash).toMatch(/^[0-9a-f]{64}$/)
-    expect(() => makeQualificationResult(lock, { ...passingVerdict, status: 'FAIL_CLOSED' }, analysis)).toThrow(
-      'must match every economic gate outcome',
-    )
+    expect(
+      Result.isFailure(makeQualificationResult(lock, { ...passingVerdict, status: 'FAIL_CLOSED' }, analysis)),
+    ).toBe(true)
   })
 
   test('rejects analysis from a different candidate or prior-trial lineage', () => {
-    const lock = makeQualificationLock(material)
-    const wrongLineage = analyzeQualification(qualificationSeries(), defaultQualificationStatisticsPolicy, [])
-    const wrongCandidate = analyzeQualification(
-      { ...qualificationSeries(), runId: 'b'.repeat(64) },
-      defaultQualificationStatisticsPolicy,
-      material.priorTrialRunIds,
+    const lock = successOf(makeQualificationLock(material))
+    const wrongLineage = successOf(
+      analyzeQualification(qualificationSeries(), defaultQualificationStatisticsPolicy, []),
+    )
+    const wrongCandidate = successOf(
+      analyzeQualification(
+        { ...qualificationSeries(), runId: 'b'.repeat(64) },
+        defaultQualificationStatisticsPolicy,
+        material.priorTrialRunIds,
+      ),
     )
 
     const passingVerdict = {
       status: 'PASS' as const,
       gates: [{ name: 'benchmark_sharpe_improvement', passed: true, actual: 0.1, required: '>0' }],
     }
-    expect(() => makeQualificationResult(lock, passingVerdict, wrongLineage)).toThrow('prior-trial lineage')
-    expect(() => makeQualificationResult(lock, passingVerdict, wrongCandidate)).toThrow('run IDs must match')
+    expect(makeQualificationResult(lock, passingVerdict, wrongLineage)).toEqual(
+      Result.fail({
+        _tag: 'QualificationPriorTrialLineageMismatch',
+        lockedRunIds: material.priorTrialRunIds,
+        analyzedRunIds: [],
+      }),
+    )
+    expect(makeQualificationResult(lock, passingVerdict, wrongCandidate)).toEqual(
+      Result.fail({
+        _tag: 'QualificationRunIdMismatch',
+        lockRunId: material.candidateRunId,
+        analysisRunId: 'b'.repeat(64),
+      }),
+    )
   })
 })

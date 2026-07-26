@@ -61,6 +61,11 @@ const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
 const orderId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 
+const successOfResult = <A, E>(result: Result.Result<A, E>): A => {
+  assert(Result.isSuccess(result), 'fixture Result must succeed')
+  return result.success
+}
+
 const makeConfig = (url = testUrl): RuntimeConfig => ({
   host: '127.0.0.1',
   port: 8080,
@@ -409,12 +414,12 @@ const makeInput = (
 const makeLockedInput = (input: PersistEvaluationInput, priorTrialRunIds: readonly string[] = []) => {
   const strategy = makeStrategy(fixtureProtocol, input.provenance)
   const sessionDates = [...new Set(riskBalancedTrendSnapshot.bars.map((bar) => bar.sessionDate))].sort()
-  const lock = strategy.prepareLock(input.evaluation.inputManifest, sessionDates, priorTrialRunIds)
-  const result = makeQualificationResult(
-    lock,
-    input.evaluation.verdict,
-    strategy.analyze(input.evaluation, priorTrialRunIds),
-  )
+  const lockResult = strategy.prepareLock(input.evaluation.inputManifest, sessionDates, priorTrialRunIds)
+  assert(Result.isSuccess(lockResult), 'qualification lock fixture must succeed')
+  const lock = lockResult.success
+  const analysisResult = strategy.analyze(input.evaluation, priorTrialRunIds)
+  assert(Result.isSuccess(analysisResult), 'qualification analysis fixture must succeed')
+  const result = successOfResult(makeQualificationResult(lock, input.evaluation.verdict, analysisResult.success))
   return {
     open: {
       lock,
@@ -457,69 +462,80 @@ const passingQualificationSeries = (runId: string): QualificationSeries => {
 const mutationQualificationProvenance = makeTestProvenance()
 const mutationQualificationRunId = fixtureHash('mutation-authority-qualification-run')
 const mutationQualificationSnapshotId = fixtureHash('mutation-authority-qualification-snapshot')
-const mutationQualificationLock = makeQualificationLock({
-  schemaVersion: 'bayn.qualification-lock.v3',
-  candidateRunId: mutationQualificationRunId,
-  protocolHash: makeStrategyProtocolHash(mutationQualificationProvenance.strategy),
-  sourceRevision: mutationQualificationProvenance.sourceRevision,
-  image: mutationQualificationProvenance.image,
-  universeId: fixtureProtocol.universeId,
-  universeSymbolHash: fixtureProtocol.universeSymbolHash,
-  universe: fixtureProtocol.universe,
-  universeRationale: 'Deterministic qualified evidence for mutation persistence tests.',
-  data: {
-    snapshotId: mutationQualificationSnapshotId,
-    publicationId: fixtureHash('mutation-authority-qualification-publication'),
-    inputManifestHash: fixtureHash('mutation-authority-qualification-manifest'),
-    contentHash: fixtureHash('mutation-authority-qualification-content'),
-    sessionsContentHash: fixtureHash('mutation-authority-qualification-sessions'),
-    provider: 'alpaca',
-    sourceFeed: 'sip',
-    adjustment: 'all',
-    calendarVersion: 'alpaca-us-equity-calendar-v1',
-    firstSession: '2016-01-04',
-    lastSession: '2026-07-21',
-    selectedSessionCount: 1_900,
-    selectedRebalanceCount: 91,
-    bounds: {
-      schemaVersion: 'bayn.evaluation-bounds.v1',
-      dataStart: '2016-01-04',
-      dataEnd: '2026-07-21',
-      lookbackStart: '2016-01-04',
-      evaluationStart: '2017-01-03',
-      evaluationEnd: '2026-07-21',
+const mutationQualificationLock = successOfResult(
+  makeQualificationLock({
+    schemaVersion: 'bayn.qualification-lock.v3',
+    candidateRunId: mutationQualificationRunId,
+    protocolHash: makeStrategyProtocolHash(mutationQualificationProvenance.strategy),
+    sourceRevision: mutationQualificationProvenance.sourceRevision,
+    image: mutationQualificationProvenance.image,
+    universeId: fixtureProtocol.universeId,
+    universeSymbolHash: fixtureProtocol.universeSymbolHash,
+    universe: fixtureProtocol.universe,
+    universeRationale: 'Deterministic qualified evidence for mutation persistence tests.',
+    data: {
+      snapshotId: mutationQualificationSnapshotId,
+      publicationId: fixtureHash('mutation-authority-qualification-publication'),
+      inputManifestHash: fixtureHash('mutation-authority-qualification-manifest'),
+      contentHash: fixtureHash('mutation-authority-qualification-content'),
+      sessionsContentHash: fixtureHash('mutation-authority-qualification-sessions'),
+      provider: 'alpaca',
+      sourceFeed: 'sip',
+      adjustment: 'all',
+      calendarVersion: 'alpaca-us-equity-calendar-v1',
+      firstSession: '2016-01-04',
+      lastSession: '2026-07-21',
+      selectedSessionCount: 1_900,
+      selectedRebalanceCount: 91,
+      bounds: {
+        schemaVersion: 'bayn.evaluation-bounds.v1',
+        dataStart: '2016-01-04',
+        dataEnd: '2026-07-21',
+        lookbackStart: '2016-01-04',
+        evaluationStart: '2017-01-03',
+        evaluationEnd: '2026-07-21',
+      },
     },
-  },
-  policies: {
-    benchmark: makeQualificationPolicyDocument('bayn.mutation-benchmark-policy.v1', {
-      schemaVersion: 'bayn.mutation-benchmark-policy.v1',
-      enabled: true,
-    }),
-    thresholds: makeQualificationPolicyDocument('bayn.mutation-threshold-policy.v1', {
-      schemaVersion: 'bayn.mutation-threshold-policy.v1',
-      enabled: true,
-    }),
-    uncertainty: makeQualificationPolicyDocument('bayn.mutation-uncertainty-policy.v1', {
-      schemaVersion: 'bayn.mutation-uncertainty-policy.v1',
-      enabled: true,
-    }),
-    execution: makeQualificationPolicyDocument(
-      fixtureProtocol.executionModel.schemaVersion,
-      fixtureProtocol.executionModel,
+    policies: {
+      benchmark: successOfResult(
+        makeQualificationPolicyDocument('bayn.mutation-benchmark-policy.v1', {
+          schemaVersion: 'bayn.mutation-benchmark-policy.v1',
+          enabled: true,
+        }),
+      ),
+      thresholds: successOfResult(
+        makeQualificationPolicyDocument('bayn.mutation-threshold-policy.v1', {
+          schemaVersion: 'bayn.mutation-threshold-policy.v1',
+          enabled: true,
+        }),
+      ),
+      uncertainty: successOfResult(
+        makeQualificationPolicyDocument('bayn.mutation-uncertainty-policy.v1', {
+          schemaVersion: 'bayn.mutation-uncertainty-policy.v1',
+          enabled: true,
+        }),
+      ),
+      execution: successOfResult(
+        makeQualificationPolicyDocument(fixtureProtocol.executionModel.schemaVersion, fixtureProtocol.executionModel),
+      ),
+    },
+    priorTrialRunIds: [],
+  }),
+)
+const mutationQualificationResult = successOfResult(
+  makeQualificationResult(
+    mutationQualificationLock,
+    {
+      status: 'PASS',
+      gates: [{ name: 'mutation_authority_fixture', passed: true, actual: 1, required: 1 }],
+    },
+    successOfResult(
+      analyzeQualification(
+        passingQualificationSeries(mutationQualificationRunId),
+        defaultQualificationStatisticsPolicy,
+        [],
+      ),
     ),
-  },
-  priorTrialRunIds: [],
-})
-const mutationQualificationResult = makeQualificationResult(
-  mutationQualificationLock,
-  {
-    status: 'PASS',
-    gates: [{ name: 'mutation_authority_fixture', passed: true, actual: 1, required: 1 }],
-  },
-  analyzeQualification(
-    passingQualificationSeries(mutationQualificationRunId),
-    defaultQualificationStatisticsPolicy,
-    [],
   ),
 )
 
@@ -3996,7 +4012,9 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const priorTrialRunIds = yield* store.listPriorTrials
         const strategy = makeStrategy(fixtureProtocol, candidate.provenance)
         const sessionDates = [...new Set(riskBalancedTrendSnapshot.bars.map((bar) => bar.sessionDate))].sort()
-        const lock = strategy.prepareLock(candidate.evaluation.inputManifest, sessionDates, priorTrialRunIds)
+        const lock = yield* Effect.fromResult(
+          strategy.prepareLock(candidate.evaluation.inputManifest, sessionDates, priorTrialRunIds),
+        )
         return { lock, priorTrialRunIds }
       }),
     )

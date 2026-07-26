@@ -148,18 +148,27 @@ export const successfulEvidenceStore: EvidenceStoreService = {
 export const fixtureSnapshot = makeSnapshot()
 export const fixtureStrategy = makeStrategy(fixtureProtocol, provenance)
 const fixtureEvaluationResult = fixtureStrategy.evaluate(fixtureSnapshot.bars, fixtureSnapshot.manifest)
-assert(Result.isSuccess(fixtureEvaluationResult), 'fixture strategy evaluation must succeed')
+assert(
+  Result.isSuccess(fixtureEvaluationResult),
+  `fixture strategy evaluation must succeed: ${JSON.stringify(fixtureEvaluationResult)}`,
+)
 export const fixtureEvaluation = fixtureEvaluationResult.success
-export const fixtureLock = fixtureStrategy.prepareLock(
+const fixtureLockResult = fixtureStrategy.prepareLock(
   fixtureSnapshot.manifest,
   [...new Set(fixtureSnapshot.bars.map((bar) => bar.sessionDate))].sort(),
   [],
 )
-export const fixtureQualification = makeQualificationResult(
+assert(Result.isSuccess(fixtureLockResult), 'fixture qualification lock must succeed')
+export const fixtureLock = fixtureLockResult.success
+const fixtureAnalysisResult = fixtureStrategy.analyze(fixtureEvaluation, [])
+assert(Result.isSuccess(fixtureAnalysisResult), 'fixture qualification analysis must succeed')
+const fixtureQualificationResult = makeQualificationResult(
   fixtureLock,
   fixtureEvaluation.verdict,
-  fixtureStrategy.analyze(fixtureEvaluation, []),
+  fixtureAnalysisResult.success,
 )
+assert(Result.isSuccess(fixtureQualificationResult), 'fixture qualification result must succeed')
+export const fixtureQualification = fixtureQualificationResult.success
 export const pinnedExecutionProvenance = {
   ...provenance,
   sourceRevision: 'e'.repeat(40),
@@ -169,16 +178,22 @@ export const pinnedStrategy = makeStrategy(fixtureProtocol, pinnedExecutionProve
 const pinnedEvaluationResult = pinnedStrategy.evaluate(fixtureSnapshot.bars, fixtureSnapshot.manifest)
 assert(Result.isSuccess(pinnedEvaluationResult), 'pinned strategy evaluation must succeed')
 export const pinnedEvaluation = pinnedEvaluationResult.success
-export const pinnedLock = pinnedStrategy.prepareLock(
+const pinnedLockResult = pinnedStrategy.prepareLock(
   fixtureSnapshot.manifest,
   [...new Set(fixtureSnapshot.bars.map((bar) => bar.sessionDate))].sort(),
   [],
 )
-export const pinnedQualification = makeQualificationResult(
+assert(Result.isSuccess(pinnedLockResult), 'pinned qualification lock must succeed')
+export const pinnedLock = pinnedLockResult.success
+const pinnedAnalysisResult = pinnedStrategy.analyze(pinnedEvaluation, [])
+assert(Result.isSuccess(pinnedAnalysisResult), 'pinned qualification analysis must succeed')
+const pinnedQualificationResult = makeQualificationResult(
   pinnedLock,
   pinnedEvaluation.verdict,
-  pinnedStrategy.analyze(pinnedEvaluation, []),
+  pinnedAnalysisResult.success,
 )
+assert(Result.isSuccess(pinnedQualificationResult), 'pinned qualification result must succeed')
+export const pinnedQualification = pinnedQualificationResult.success
 export const pinnedStoredEvidence: StoredEvaluationEvidence = {
   protocol: {
     protocolHash: pinnedEvaluation.protocolHash,

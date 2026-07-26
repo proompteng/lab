@@ -1,6 +1,6 @@
-import { Schema } from 'effect'
+import { pipe, Result, Schema } from 'effect'
 
-import { canonicalHashV1, sha256 } from './hash'
+import { canonicalHashV1, canonicalHashV1Result, sha256, type CanonicalJsonFailure } from './hash'
 import {
   ImageDigestSchema as ImageDigest,
   IsoDateSchema,
@@ -196,6 +196,38 @@ export const makeStrategyProtocolHash = (strategy: RuntimeProvenance['strategy']
     parameterSchemaVersion: strategy.parameterSchemaVersion,
   })
 
+export type ContractConstructionFailure =
+  | {
+      readonly _tag: 'ContractCanonicalizationFailed'
+      readonly operation: 'run-identity' | 'strategy-protocol'
+      readonly cause: CanonicalJsonFailure
+    }
+  | {
+      readonly _tag: 'ContractSchemaInvalid'
+      readonly operation: 'run-identity' | 'run-identity-material'
+      readonly cause: Schema.SchemaError
+    }
+
+export const makeStrategyProtocolHashResult = (
+  strategy: RuntimeProvenance['strategy'],
+): Result.Result<string, ContractConstructionFailure> =>
+  pipe(
+    canonicalHashV1Result({
+      schemaVersion: 'bayn.strategy-protocol.v1',
+      name: strategy.name,
+      behaviorHash: strategy.behaviorHash,
+      parameterHash: strategy.parameterHash,
+      parameterSchemaVersion: strategy.parameterSchemaVersion,
+    }),
+    Result.mapError(
+      (cause): ContractConstructionFailure => ({
+        _tag: 'ContractCanonicalizationFailed',
+        operation: 'strategy-protocol',
+        cause,
+      }),
+    ),
+  )
+
 export const decodeFinalizedSnapshot = Schema.decodeUnknownEffect(FinalizedSnapshotProvenanceSchema, StrictParseOptions)
 export const decodeEvaluationBounds = Schema.decodeUnknownEffect(EvaluationBoundsSchema, StrictParseOptions)
 export const decodeRunIdentity = Schema.decodeUnknownEffect(RunIdentitySchema, StrictParseOptions)
@@ -204,11 +236,51 @@ export const decodeRuntimeProvenance = Schema.decodeUnknownEffect(RuntimeProvena
 const decodeRunIdentityMaterialSync = Schema.decodeUnknownSync(RunIdentityMaterialSchema, StrictParseOptions)
 const decodeRunIdentitySync = Schema.decodeUnknownSync(RunIdentitySchema, StrictParseOptions)
 const decodeRuntimeProvenanceSync = Schema.decodeUnknownSync(RuntimeProvenanceSchema, StrictParseOptions)
+const decodeRunIdentityMaterialResult = Schema.decodeUnknownResult(RunIdentityMaterialSchema, StrictParseOptions)
+const decodeRunIdentityResult = Schema.decodeUnknownResult(RunIdentitySchema, StrictParseOptions)
 
 export const makeRunIdentity = (input: RunIdentityMaterial): RunIdentity => {
   const material = decodeRunIdentityMaterialSync(input)
   return decodeRunIdentitySync({ ...material, runId: canonicalHashV1(material) })
 }
+
+export const makeRunIdentityResult = (
+  input: RunIdentityMaterial,
+): Result.Result<RunIdentity, ContractConstructionFailure> =>
+  pipe(
+    decodeRunIdentityMaterialResult(input),
+    Result.mapError(
+      (cause): ContractConstructionFailure => ({
+        _tag: 'ContractSchemaInvalid',
+        operation: 'run-identity-material',
+        cause,
+      }),
+    ),
+    Result.flatMap((material) =>
+      pipe(
+        canonicalHashV1Result(material),
+        Result.mapError(
+          (cause): ContractConstructionFailure => ({
+            _tag: 'ContractCanonicalizationFailed',
+            operation: 'run-identity',
+            cause,
+          }),
+        ),
+        Result.flatMap((runId) =>
+          pipe(
+            decodeRunIdentityResult({ ...material, runId }),
+            Result.mapError(
+              (cause): ContractConstructionFailure => ({
+                _tag: 'ContractSchemaInvalid',
+                operation: 'run-identity',
+                cause,
+              }),
+            ),
+          ),
+        ),
+      ),
+    ),
+  )
 
 export const makeRuntimeProvenance = (input: RuntimeProvenanceInput): RuntimeProvenance => {
   return decodeRuntimeProvenanceSync({
