@@ -5,7 +5,7 @@ import { Context, Data, Effect, Layer, Option, Result, Schema } from 'effect'
 import { isSqlError } from 'effect/unstable/sql/SqlError'
 import type { Fragment } from 'effect/unstable/sql/Statement'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import {
   Authority,
   IntentSchema,
@@ -82,17 +82,17 @@ export type IntentCanonicalMaterial =
 export interface IntentCanonicalizationFailure {
   readonly _tag: 'CanonicalizationFailed'
   readonly material: IntentCanonicalMaterial
-  readonly cause: unknown
+  readonly cause: CanonicalHashFailure
 }
 
 const canonicalHashResult = (
   material: IntentCanonicalMaterial,
   value: unknown,
 ): Result.Result<string, IntentCanonicalizationFailure> =>
-  Result.try({
-    try: () => canonicalHashV1(value),
-    catch: (cause): IntentCanonicalizationFailure => ({ _tag: 'CanonicalizationFailed', material, cause }),
-  })
+  Result.mapError(
+    canonicalHashV1Result(value),
+    (cause): IntentCanonicalizationFailure => ({ _tag: 'CanonicalizationFailed', material, cause }),
+  )
 
 const referenceIdentityMaterial = (input: IntentPlan) => ({
   schemaVersion: 'bayn.paper-intent-identity.v1',

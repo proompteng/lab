@@ -1,6 +1,6 @@
 import { HashMap, HashSet, Option, Result, pipe } from 'effect'
 
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
 import {
   AccountStatus,
   DiscrepancyKind,
@@ -170,7 +170,7 @@ export type ReconciliationDecisionError =
       readonly _tag: 'CanonicalizationFailed'
       readonly operation: ReconciliationHashOperation
       readonly identity?: string
-      readonly cause: unknown
+      readonly cause: CanonicalHashFailure
     }
   | {
       readonly _tag: 'FixedPointRoundingFailed'
@@ -190,7 +190,6 @@ export type ReconciliationDecisionError =
       readonly source: ReconciliationIntegerSource
       readonly identity: string
       readonly value: string
-      readonly cause: unknown
     }
   | {
       readonly _tag: 'DuplicateIdentity'
@@ -237,37 +236,33 @@ const canonicalHash = (
   value: unknown,
   identity?: string,
 ): ReconciliationDecision<string> =>
-  pipe(
-    Result.try(() => canonicalHashV1(value)),
-    Result.mapError(
-      (cause): ReconciliationDecisionError => ({
-        _tag: 'CanonicalizationFailed',
-        operation,
-        ...(identity === undefined ? {} : { identity }),
-        cause,
-      }),
-    ),
+  Result.mapError(
+    canonicalHashV1Result(value),
+    (cause): ReconciliationDecisionError => ({
+      _tag: 'CanonicalizationFailed',
+      operation,
+      ...(identity === undefined ? {} : { identity }),
+      cause,
+    }),
   )
 
 const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
+
+const canonicalIntegerPattern = /^(?:0|-?[1-9][0-9]*)$/
 
 const integer = (
   source: ReconciliationIntegerSource,
   identity: string,
   value: string,
 ): ReconciliationDecision<bigint> =>
-  pipe(
-    Result.try(() => BigInt(value)),
-    Result.mapError(
-      (cause): ReconciliationDecisionError => ({
+  canonicalIntegerPattern.test(value)
+    ? Result.succeed(BigInt(value))
+    : fail({
         _tag: 'InvalidInteger',
         source,
         identity,
         value,
-        cause,
-      }),
-    ),
-  )
+      })
 
 const roundMicrosProduct = (
   symbol: string,

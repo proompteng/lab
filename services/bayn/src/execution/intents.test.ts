@@ -306,8 +306,13 @@ describe('pure intent commit decisions', () => {
       expect(invalid.failure).toMatchObject({
         _tag: 'CanonicalizationFailed',
         material: { _tag: 'ReferenceIntentIdentity', strategyName: 'invalid\ud800strategy' },
+        cause: {
+          _tag: 'CanonicalJsonFailure',
+          path: '$.strategyName',
+          reason: 'invalid-unicode-surrogate',
+          actualType: 'string',
+        },
       })
-      expect(invalid.failure.cause).toBeInstanceOf(TypeError)
     }
   })
 
