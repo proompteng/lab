@@ -193,8 +193,16 @@ export const makeObserveShadowDecisionDocument = (
       makeDocumentFailure('canonicalization', 'shadow decision material is not canonicalizable', cause),
     ),
     (contentHash) =>
-      Result.mapError(decodeDocumentResult({ ...material, contentHash }), (cause) =>
-        makeDocumentFailure('contract', 'shadow decision material failed its durable contract', cause),
+      Result.flatMap(
+        Result.try({
+          try: () => ({ ...material, contentHash }),
+          catch: (cause) =>
+            makeDocumentFailure('canonicalization', 'shadow decision material is not canonicalizable', cause),
+        }),
+        (candidate) =>
+          Result.mapError(decodeDocumentResult(candidate), (cause) =>
+            makeDocumentFailure('contract', 'shadow decision material failed its durable contract', cause),
+          ),
       ),
   )
 }
