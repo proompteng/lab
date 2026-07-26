@@ -18,7 +18,7 @@ import {
   type ReadEvidence,
   type ReadResult,
 } from '../broker/alpaca'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { IntentState, RiskOutcome, TerminalOutcome, type Intent } from '../paper'
 import type { StoredIntent } from './intents'
 import { MutationEventType, type MutationEvent } from './mutations'
@@ -63,6 +63,12 @@ export type ExecutionDecisionFailure =
       readonly _tag: 'RecoveryTooEarly'
       readonly operation: MutationOperation
       readonly eligibleAt: string
+    }
+  | {
+      readonly _tag: 'InvalidInstant'
+      readonly operation: MutationOperation
+      readonly field: 'stored-updated-at' | 'occurred-at' | 'risk-expires-at' | 'current-time'
+      readonly value: string | number
     }
 
 export interface EncodedOrder {
@@ -170,8 +176,47 @@ export const selectStoredIntent = (
     onSome: Result.succeed,
   })
 
-export const nextInstant = (instant: string, current: string): string =>
-  new Date(Math.max(Date.parse(current), Date.parse(instant) + 1)).toISOString()
+const parseInstant = (
+  operation: MutationOperation,
+  field: Extract<ExecutionDecisionFailure, { readonly _tag: 'InvalidInstant' }>['field'],
+  value: string,
+): Result.Result<number, ExecutionDecisionFailure> => {
+  const epochMillis = Date.parse(value)
+  return Number.isFinite(epochMillis)
+    ? Result.succeed(epochMillis)
+    : Result.fail({ _tag: 'InvalidInstant', operation, field, value })
+}
+
+const validateCurrentTime = (
+  operation: MutationOperation,
+  currentTimeMillis: number,
+): Result.Result<number, ExecutionDecisionFailure> =>
+  Number.isFinite(currentTimeMillis)
+    ? Result.succeed(currentTimeMillis)
+    : Result.fail({ _tag: 'InvalidInstant', operation, field: 'current-time', value: currentTimeMillis })
+
+const formatInstant = (
+  operation: MutationOperation,
+  field: Extract<ExecutionDecisionFailure, { readonly _tag: 'InvalidInstant' }>['field'],
+  epochMillis: number,
+): Result.Result<string, ExecutionDecisionFailure> =>
+  Result.try({
+    try: () => new Date(epochMillis).toISOString(),
+    catch: (): ExecutionDecisionFailure => ({ _tag: 'InvalidInstant', operation, field, value: epochMillis }),
+  })
+
+export const nextInstant = (
+  operation: MutationOperation,
+  instant: string,
+  current: string,
+): Result.Result<string, ExecutionDecisionFailure> =>
+  Result.flatMap(parseInstant(operation, 'stored-updated-at', instant), (instantMillis) =>
+    Result.flatMap(parseInstant(operation, 'occurred-at', current), (currentMillis) =>
+      currentMillis >= instantMillis + 1
+        ? formatInstant(operation, 'occurred-at', currentMillis)
+        : formatInstant(operation, 'stored-updated-at', instantMillis + 1),
+    ),
+  )
 
 export const encodeOrder = (
   operation: MutationOperation,
@@ -183,15 +228,17 @@ export const encodeOrder = (
       (cause): ExecutionDecisionFailure => ({ _tag: 'OrderCanonicalizationFailed', operation, message, cause }),
     ),
     Result.flatMap((request) =>
-      Result.try({
-        try: () => ({ request, requestHash: canonicalHashV1(request) }),
-        catch: (cause): ExecutionDecisionFailure => ({
-          _tag: 'OrderCanonicalizationFailed',
-          operation,
-          message,
-          cause,
-        }),
-      }),
+      canonicalHashV1Result(request).pipe(
+        Result.map((requestHash) => ({ request, requestHash })),
+        Result.mapError(
+          (cause): ExecutionDecisionFailure => ({
+            _tag: 'OrderCanonicalizationFailed',
+            operation,
+            message,
+            cause,
+          }),
+        ),
+      ),
     ),
   )
 
@@ -208,9 +255,13 @@ export const validateActiveSubmitRiskDecision = (
   ) {
     return Result.fail({ _tag: 'InvalidRiskDecision', operationLabel })
   }
-  return currentTimeMillis >= Date.parse(decision.expiresAt)
-    ? Result.fail({ _tag: 'ExpiredRiskDecision', operationLabel, expiresAt: decision.expiresAt })
-    : Result.succeed(stored)
+  return Result.flatMap(validateCurrentTime(MutationOperation.Submit, currentTimeMillis), (currentMillis) =>
+    Result.flatMap(parseInstant(MutationOperation.Submit, 'risk-expires-at', decision.expiresAt), (expiresAt) =>
+      currentMillis >= expiresAt
+        ? Result.fail({ _tag: 'ExpiredRiskDecision', operationLabel, expiresAt: decision.expiresAt })
+        : Result.succeed(stored),
+    ),
+  )
 }
 
 export const makeDryRunSubmit = (
@@ -400,14 +451,20 @@ export const ensureRecoveryDelay = (
   event: MutationEvent,
   currentMillis: number,
 ): Result.Result<MutationEvent, ExecutionDecisionFailure> => {
-  const eligibleMillis = Date.parse(event.occurredAt) + event.consistencyDelayMs
-  return currentMillis >= eligibleMillis
-    ? Result.succeed(event)
-    : Result.fail({
-        _tag: 'RecoveryTooEarly',
-        operation,
-        eligibleAt: new Date(eligibleMillis).toISOString(),
-      })
+  return Result.flatMap(parseInstant(operation, 'occurred-at', event.occurredAt), (occurredAt) =>
+    Result.flatMap(validateCurrentTime(operation, currentMillis), (now) => {
+      const eligibleMillis = occurredAt + event.consistencyDelayMs
+      return now >= eligibleMillis
+        ? Result.succeed(event)
+        : Result.flatMap(formatInstant(operation, 'occurred-at', eligibleMillis), (eligibleAt) =>
+            Result.fail({
+              _tag: 'RecoveryTooEarly',
+              operation,
+              eligibleAt,
+            }),
+          )
+    }),
+  )
 }
 
 export const decideInterruptedStart = (event: MutationEvent, occurredAt: string): InterruptedStartDecision => {

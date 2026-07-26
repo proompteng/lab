@@ -119,6 +119,12 @@ const executionError = (failure: ExecutionDecisionFailure): ExecutionError =>
           message: `broker lookup is not allowed before ${eligibleAt}`,
           eligibleAt,
         }),
+      InvalidInstant: ({ operation, field, value }) =>
+        new ExecutionError({
+          operation,
+          failure: ExecutionFailure.InvalidState,
+          message: `execution coordinator ${field} instant is invalid: ${value}`,
+        }),
     }),
   )
 
@@ -209,11 +215,10 @@ const startSubmit = (
     Effect.andThen(requireActiveSubmitRiskDecision(stored)),
     Effect.andThen(currentInstant),
     Effect.flatMap((occurredAt) =>
-      services.mutations.beginSubmit(
-        stored.intent.intentId,
-        requestHash,
-        consistencyDelayMs,
-        nextInstant(stored.updatedAt, occurredAt),
+      liftDecision(nextInstant(MutationOperation.Submit, stored.updatedAt, occurredAt)).pipe(
+        Effect.flatMap((nextOccurredAt) =>
+          services.mutations.beginSubmit(stored.intent.intentId, requestHash, consistencyDelayMs, nextOccurredAt),
+        ),
       ),
     ),
     Effect.flatMap((started) =>
@@ -295,12 +300,16 @@ const startCancel = (
   services.fence.check.pipe(
     Effect.andThen(currentInstant),
     Effect.flatMap((occurredAt) =>
-      services.mutations.beginCancel(
-        stored.intent.intentId,
-        requestHash,
-        brokerOrderId,
-        consistencyDelayMs,
-        nextInstant(stored.updatedAt, occurredAt),
+      liftDecision(nextInstant(MutationOperation.Cancel, stored.updatedAt, occurredAt)).pipe(
+        Effect.flatMap((nextOccurredAt) =>
+          services.mutations.beginCancel(
+            stored.intent.intentId,
+            requestHash,
+            brokerOrderId,
+            consistencyDelayMs,
+            nextOccurredAt,
+          ),
+        ),
       ),
     ),
     Effect.flatMap((started) =>
