@@ -1,14 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { ConfigProvider, Effect } from 'effect'
 
-import { loadQualificationCandidateConfig, verifyQualificationCandidate } from './program'
-import {
-  renderQualificationCandidateFailure,
-  type QualificationCandidateFailure,
-  type QualificationCandidateInput,
-  type QualificationCandidateReaders,
-} from './model'
+import { renderQualificationCandidateFailure, type QualificationCandidateFailure } from './failure'
 import { makeCandidatePostgresSslOptions } from './live'
+import type { QualificationCandidateInput, QualificationCandidateReaders } from './model'
+import { loadQualificationCandidateConfig, verifyQualificationCandidate } from './program'
 import {
   candidateEndpoints,
   candidateEnvironment,

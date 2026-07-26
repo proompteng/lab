@@ -8,11 +8,11 @@ import { Effect, FileSystem, Layer, PlatformError, Redacted } from 'effect'
 import { MarketData, MarketDataLive } from '../market-data'
 import type { IsoDate } from '../schemas'
 import type { CausalProtocol } from '../types'
+import type { QualificationCandidateFailure } from './failure'
 import {
   type CandidateConfig,
   type CandidateReplicaEndpoint,
   type CandidateReplicaObservation,
-  type QualificationCandidateFailure,
   type QualificationCandidateInput,
   type QualificationLockObservation,
 } from './model'

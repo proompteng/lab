@@ -4,6 +4,7 @@ import { Option, pipe, Redacted, Result } from 'effect'
 
 import { canonicalJsonV1, sha256 } from '../hash'
 import type { MarketDataSnapshot } from '../market-data'
+import type { QualificationCandidateFailure } from './failure'
 import type {
   CandidateConfig,
   CandidateConfigInput,
@@ -11,7 +12,6 @@ import type {
   CandidateReplicaEndpoint,
   CandidateReplicaObservation,
   QualificationCandidateConsensus,
-  QualificationCandidateFailure,
   QualificationCandidateInput,
   QualificationCandidateReport,
   QualificationLockObservation,

@@ -4,15 +4,14 @@ import { canonicalJsonV1 } from '../hash'
 import { loadDefaultProtocol } from '../protocol'
 import { IsoDateSchema, PositiveIntegerSchema, TrimmedNonEmptyStringSchema } from '../schemas'
 import type { CausalProtocol } from '../types'
+import { toQualificationCandidateError, type QualificationCandidateFailure } from './failure'
 import {
   type CandidateConfig,
   type CandidateReplicaEndpoint,
   type CandidateReplicaObservation,
-  type QualificationCandidateFailure,
   type QualificationCandidateInput,
   type QualificationCandidateReaders,
   type QualificationCandidateReport,
-  toQualificationCandidateError,
 } from './model'
 import {
   acceptQualificationLocks,
