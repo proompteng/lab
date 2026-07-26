@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { ConfigProvider, Effect } from 'effect'
+import { ConfigProvider, Context, Effect } from 'effect'
 
 import {
   QualificationCandidateError,
@@ -33,6 +33,10 @@ const failure = async (
   candidateReaders: QualificationCandidateReaders,
 ): Promise<QualificationCandidateFailure> =>
   Effect.runPromise(Effect.flip(verifyQualificationCandidate(candidateInput, candidateReaders)))
+
+class ReaderRequirement extends Context.Service<ReaderRequirement, { readonly enabled: true }>()(
+  'bayn/test/QualificationCandidateReaderRequirement',
+) {}
 
 describe('qualification candidate command', () => {
   test('converts pure failure data to one cause-preserving runtime error', () => {
@@ -265,6 +269,34 @@ describe('qualification candidate command', () => {
       'chi-torghut-clickhouse-default-0-1-0',
     ])
     expect(new Set(report.replicas.map((replica) => replica.snapshotCanonicalHash)).size).toBe(1)
+  })
+
+  test('keeps reader requirements visible until the composition boundary', async () => {
+    const readers = candidateReaders()
+    const report = await Effect.runPromise(
+      verifyQualificationCandidate(candidateInput(), {
+        readReplica: (endpoint) =>
+          ReaderRequirement.pipe(
+            Effect.flatMap((requirement) =>
+              requirement.enabled
+                ? readers.readReplica(endpoint)
+                : Effect.die(new Error('reader requirement must be enabled')),
+            ),
+          ),
+        readQualificationLocks: (snapshotId) =>
+          ReaderRequirement.pipe(
+            Effect.flatMap((requirement) =>
+              requirement.enabled
+                ? readers.readQualificationLocks(snapshotId)
+                : Effect.die(new Error('reader requirement must be enabled')),
+            ),
+          ),
+      }).pipe(Effect.provideService(ReaderRequirement, { enabled: true })),
+    )
+
+    expect(report.candidateRuntime.BAYN_SIGNAL_SNAPSHOT_ID).toBe(
+      candidateSnapshot.manifest.finalizedSnapshot.snapshotId,
+    )
   })
 
   test.each([

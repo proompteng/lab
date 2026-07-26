@@ -1,4 +1,5 @@
 import { Config, Effect, FileSystem, Result, Stdio, Stream } from 'effect'
+import * as Reactivity from 'effect/unstable/reactivity/Reactivity'
 
 import { canonicalJsonV1 } from '../hash'
 import { loadDefaultProtocol } from '../protocol'
@@ -46,10 +47,14 @@ export const loadQualificationCandidateConfig = rawConfig.pipe(
   Effect.flatMap((input) => Effect.fromResult(resolveCandidateConfig(input))),
 )
 
-const readReplicaPair = (
+const readReplicaPair = <R>(
   endpoints: readonly [CandidateReplicaEndpoint, CandidateReplicaEndpoint],
-  readers: QualificationCandidateReaders,
-): Effect.Effect<readonly [CandidateReplicaObservation, CandidateReplicaObservation], QualificationCandidateFailure> =>
+  readers: QualificationCandidateReaders<R>,
+): Effect.Effect<
+  readonly [CandidateReplicaObservation, CandidateReplicaObservation],
+  QualificationCandidateFailure,
+  R
+> =>
   readers
     .readReplica(endpoints[0])
     .pipe(
@@ -58,10 +63,10 @@ const readReplicaPair = (
       ),
     )
 
-export const verifyQualificationCandidate = (
+export const verifyQualificationCandidate = <R>(
   input: QualificationCandidateInput,
-  readers: QualificationCandidateReaders,
-): Effect.Effect<QualificationCandidateReport, QualificationCandidateFailure> =>
+  readers: QualificationCandidateReaders<R>,
+): Effect.Effect<QualificationCandidateReport, QualificationCandidateFailure, R> =>
   Effect.fromResult(validateCandidateEndpoints(input.clickhouseUrls)).pipe(
     Effect.flatMap((endpoints) =>
       readReplicaPair(endpoints, readers).pipe(
@@ -87,19 +92,20 @@ const candidateInput = (input: CandidateConfig, protocol: CausalProtocol): Quali
 
 const verifyConfiguredCandidate = (
   input: CandidateConfig,
-): Effect.Effect<QualificationCandidateReport, QualificationCandidateFailure, FileSystem.FileSystem> =>
+): Effect.Effect<
+  QualificationCandidateReport,
+  QualificationCandidateFailure,
+  FileSystem.FileSystem | Reactivity.Reactivity
+> =>
   loadDefaultProtocol.pipe(
     Effect.mapError((cause): QualificationCandidateFailure => ({ _tag: 'ProtocolLoadFailed', cause })),
     Effect.flatMap((protocol) => {
       const candidate = candidateInput(input, protocol)
-      return Effect.flatMap(FileSystem.FileSystem, (fileSystem) =>
-        verifyQualificationCandidate(candidate, {
-          readReplica: (endpoint) =>
-            readCandidateReplica(candidate, endpoint, input.publisherPassword, input.operationTimeoutMs),
-          readQualificationLocks: (snapshotId) =>
-            readQualificationLocks(input, snapshotId).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem)),
-        }),
-      )
+      return verifyQualificationCandidate(candidate, {
+        readReplica: (endpoint) =>
+          readCandidateReplica(candidate, endpoint, input.publisherPassword, input.operationTimeoutMs),
+        readQualificationLocks: (snapshotId) => readQualificationLocks(input, snapshotId),
+      })
     }),
   )
 

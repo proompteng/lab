@@ -61,13 +61,13 @@ export interface QualificationCandidateInput {
   readonly tigerBeetleLedger: string
 }
 
-export interface QualificationCandidateReaders {
+export interface QualificationCandidateReaders<R = never> {
   readonly readReplica: (
     endpoint: CandidateReplicaEndpoint,
-  ) => Effect.Effect<CandidateReplicaObservation, QualificationCandidateFailure>
+  ) => Effect.Effect<CandidateReplicaObservation, QualificationCandidateFailure, R>
   readonly readQualificationLocks: (
     snapshotId: string,
-  ) => Effect.Effect<QualificationLockObservation, QualificationCandidateFailure>
+  ) => Effect.Effect<QualificationLockObservation, QualificationCandidateFailure, R>
 }
 
 export interface QualificationCandidateReport {
