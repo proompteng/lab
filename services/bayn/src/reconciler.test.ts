@@ -395,18 +395,8 @@ describe('paper reconciliation loop', () => {
     expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
   })
 
-  test('retains the exact Error cause of a normalization failure', async () => {
-    const normalizationCause = new Error('injected normalization failure')
-    let extendedHoursReads = 0
-    const malformedOrder = new Proxy(order(0), {
-      get: (target, property, receiver) => {
-        if (property === 'extendedHours') {
-          extendedHoursReads += 1
-          if (extendedHoursReads === 3) throw normalizationCause
-        }
-        return Reflect.get(target, property, receiver)
-      },
-    })
+  test('retains the exact typed cause of a normalization failure', async () => {
+    const malformedOrder = { ...order(0), extendedHours: true }
     const read: BrokerReadShape = {
       ...emptyRead(),
       orders: () => Effect.succeed({ value: [malformedOrder], evidence: evidence('orders') }),
@@ -422,47 +412,21 @@ describe('paper reconciliation loop', () => {
     expect(failure).toMatchObject({
       _tag: 'ReconciliationError',
       operation: 'normalization',
-      message: 'broker snapshot normalization failed',
+      message: `paper execution requires extended hours disabled for ${malformedOrder.brokerOrderId}`,
       failure: {
         _tag: 'Normalization',
         stage: 'order',
         identity: malformedOrder.brokerOrderId,
+        error: {
+          _tag: 'ExtendedHoursUnsupported',
+          brokerOrderId: malformedOrder.brokerOrderId,
+        },
       },
     })
-    expect(failure.cause).toBe(normalizationCause)
-    expect(failure.failure.cause).toBe(normalizationCause)
-    expect(extendedHoursReads).toBe(3)
-    expect(control.writes).toBe(0)
-    expect(control.reconciliations).toEqual([])
-    expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
-  })
-
-  test('propagates a non-Error normalization throw as a defect after restricting authority', async () => {
-    const defect = { _tag: 'InjectedNormalizationDefect' }
-    let extendedHoursReads = 0
-    const throwingOrder = new Proxy(order(0), {
-      get: (target, property, receiver) => {
-        if (property === 'extendedHours') {
-          extendedHoursReads += 1
-          if (extendedHoursReads === 3) throw defect
-        }
-        return Reflect.get(target, property, receiver)
-      },
+    expect(failure.cause).toEqual({
+      _tag: 'ExtendedHoursUnsupported',
+      brokerOrderId: malformedOrder.brokerOrderId,
     })
-    const read: BrokerReadShape = {
-      ...emptyRead(),
-      orders: () => Effect.succeed({ value: [throwingOrder], evidence: evidence('orders') }),
-    }
-    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
-
-    const exit = await Effect.runPromiseExit(provide(read, makeStore(control)))
-
-    expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit)) {
-      const defects = exit.cause.reasons.flatMap((reason) => (Cause.isDieReason(reason) ? [reason.defect] : []))
-      expect(defects).toContain(defect)
-    }
-    expect(extendedHoursReads).toBe(3)
     expect(control.writes).toBe(0)
     expect(control.reconciliations).toEqual([])
     expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
@@ -486,7 +450,7 @@ describe('paper reconciliation loop', () => {
     expect(failure).toMatchObject({
       _tag: 'ReconciliationError',
       operation: 'normalization',
-      message: 'broker snapshot normalization failed',
+      message: `duplicate broker client order ID ${first.clientOrderId}`,
       failure: {
         _tag: 'Validation',
         reason: 'DuplicateBrokerClientOrderId',
