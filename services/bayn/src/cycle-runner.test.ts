@@ -1043,6 +1043,26 @@ describe('autonomous cycle runner', () => {
       },
     })
     expect(
+      selectCycleCalendarCandidate(
+        context(),
+        [dailyPublication, finalizedPublicationInspection('2026-01-29')],
+        catchUpCalendar,
+        evidence.contentHash,
+        observedAt,
+      ),
+    ).toMatchObject({
+      _tag: 'Success',
+      success: {
+        _tag: 'NOT_DUE',
+        result: {
+          outcome: 'NOT_DUE',
+          signalSessionDate: '2026-02-02',
+          executionSessionDate: '2026-02-03',
+          observedAt,
+        },
+      },
+    })
+    expect(
       selectCycleCalendarCandidate(context(), publications, monthEndCalendar, evidence.contentHash, observedAt),
     ).toEqual(
       Result.fail({

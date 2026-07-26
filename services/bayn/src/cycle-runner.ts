@@ -637,9 +637,17 @@ export const selectCycleCalendarCandidate = (
   const [first, ...remaining] = publications
   return remaining.reduce<Result.Result<CycleCalendarCandidateDecision, CycleCalendarCandidateFailure>>(
     (decision, publication) =>
-      Result.isFailure(decision) || decision.success._tag === 'ACQUIRE'
-        ? decision
-        : selectCycleCalendarPublication(context, publication, observation, calendarReadContentHash, observedAt),
+      pipe(
+        decision,
+        Result.flatMap((current) =>
+          current._tag === 'ACQUIRE'
+            ? Result.succeed(current)
+            : pipe(
+                selectCycleCalendarPublication(context, publication, observation, calendarReadContentHash, observedAt),
+                Result.map((next) => (next._tag === 'ACQUIRE' ? next : current)),
+              ),
+        ),
+      ),
     selectCycleCalendarPublication(context, first, observation, calendarReadContentHash, observedAt),
   )
 }
