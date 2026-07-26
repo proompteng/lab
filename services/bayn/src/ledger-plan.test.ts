@@ -272,6 +272,37 @@ describe('ledger plan Result algebra', () => {
     })
   })
 
+  test('retains hostile event collection and discriminator access as closed failures', () => {
+    const result = evaluationResult()
+    const fill = firstFill(result, 'buy')
+    const eventsCause = new TypeError('ledger-plan events are unavailable')
+    const kindCause = new TypeError('ledger-plan event kind is unavailable')
+    const hostileInput = new Proxy(result, {
+      get: (target, property, receiver) => {
+        if (property === 'events') throw eventsCause
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const hostileFill = new Proxy(fill, {
+      get: (target, property, receiver) => {
+        if (property === 'kind') throw kindCause
+        return Reflect.get(target, property, receiver)
+      },
+    })
+
+    expect(assertLedgerPlanFailure(buildLedgerPlan(hostileInput, ledger))).toEqual({
+      kind: 'input-access-failed',
+      field: 'events',
+      cause: eventsCause,
+    })
+    expect(assertLedgerPlanFailure(buildLedgerPlan({ ...result, events: [hostileFill] }, ledger))).toEqual({
+      kind: 'input-access-failed',
+      field: 'event.kind',
+      eventIndex: 0,
+      cause: kindCause,
+    })
+  })
+
   test('preserves exact TigerBeetle identity, ordering, amounts, flags, and replay hash', () => {
     const result = evaluationResult()
     const first = assertSuccess(buildLedgerPlan(result, ledger))

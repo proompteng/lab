@@ -114,6 +114,22 @@ export type LedgerPlanAmountField =
   | 'fill.notionalMicros'
   | 'initialCapitalMicros'
 
+export type LedgerPlanInputField =
+  | 'cashYield.amountMicros'
+  | 'cashYield.id'
+  | 'event.kind'
+  | 'events'
+  | 'fee.id'
+  | 'fee.totalMicros'
+  | 'fill.costBasisMicros'
+  | 'fill.id'
+  | 'fill.notionalMicros'
+  | 'fill.side'
+  | 'fill.symbol'
+  | 'initialCapitalMicros'
+  | 'inputManifest.symbols'
+  | 'runId'
+
 export type LedgerPlanFailureDetail =
   | {
       readonly kind: 'no-fill-events'
@@ -152,7 +168,9 @@ export type LedgerPlanFailureDetail =
     }
   | {
       readonly kind: 'input-access-failed'
-      readonly field: 'inputManifest.symbols'
+      readonly field: LedgerPlanInputField
+      readonly eventIndex?: number
+      readonly eventKind?: EvaluationEvent['kind']
       readonly cause: unknown
     }
   | {
@@ -303,16 +321,131 @@ const nonNegativeAmount = (
     parsed < 0n ? failLedgerPlan({ kind: 'negative-amount', field, value: parsed, eventId }) : Result.succeed(parsed),
   )
 
+interface PlannedFillEvent {
+  readonly event: FillEvent
+  readonly id: string
+  readonly symbol: string
+  readonly side: FillEvent['side']
+  readonly notionalMicros: string
+  readonly costBasisMicros: string
+}
+
+interface PlannedFeeEvent {
+  readonly event: FeeEvent
+  readonly id: string
+  readonly totalMicros: string
+}
+
+interface PlannedCashYieldEvent {
+  readonly event: CashYieldEvent
+  readonly id: string
+  readonly amountMicros: string
+}
+
+interface PlannedEvents {
+  readonly eventCount: number
+  readonly fills: readonly PlannedFillEvent[]
+  readonly fees: readonly PlannedFeeEvent[]
+  readonly cashYields: readonly PlannedCashYieldEvent[]
+}
+
+const inputAccessFailure = (
+  field: LedgerPlanInputField,
+  cause: unknown,
+  eventIndex?: number,
+  eventKind?: EvaluationEvent['kind'],
+): LedgerPlanFailureDetail => ({
+  kind: 'input-access-failed',
+  field,
+  ...(eventIndex === undefined ? {} : { eventIndex }),
+  ...(eventKind === undefined ? {} : { eventKind }),
+  cause,
+})
+
+const planEvents = (result: LedgerInput): Result.Result<PlannedEvents, LedgerPlanFailureDetail> =>
+  Result.gen(function* () {
+    const events = yield* Result.mapError(
+      Result.try(() => [...result.events]),
+      (cause) => inputAccessFailure('events', cause),
+    )
+    const fills: PlannedFillEvent[] = []
+    const fees: PlannedFeeEvent[] = []
+    const cashYields: PlannedCashYieldEvent[] = []
+
+    for (const [eventIndex, event] of events.entries()) {
+      const kind = yield* Result.mapError(
+        Result.try(() => event.kind),
+        (cause) => inputAccessFailure('event.kind', cause, eventIndex),
+      )
+      if (kind === 'fill') {
+        const fill = event as FillEvent
+        const id = yield* Result.mapError(
+          Result.try(() => fill.id),
+          (cause) => inputAccessFailure('fill.id', cause, eventIndex, kind),
+        )
+        const symbol = yield* Result.mapError(
+          Result.try(() => fill.symbol),
+          (cause) => inputAccessFailure('fill.symbol', cause, eventIndex, kind),
+        )
+        const side = yield* Result.mapError(
+          Result.try(() => fill.side),
+          (cause) => inputAccessFailure('fill.side', cause, eventIndex, kind),
+        )
+        const notionalMicros = yield* Result.mapError(
+          Result.try(() => fill.notionalMicros),
+          (cause) => inputAccessFailure('fill.notionalMicros', cause, eventIndex, kind),
+        )
+        const costBasisMicros = yield* Result.mapError(
+          Result.try(() => fill.costBasisMicros),
+          (cause) => inputAccessFailure('fill.costBasisMicros', cause, eventIndex, kind),
+        )
+        fills.push({ event: fill, id, symbol, side, notionalMicros, costBasisMicros })
+      } else if (kind === 'fee') {
+        const fee = event as FeeEvent
+        const id = yield* Result.mapError(
+          Result.try(() => fee.id),
+          (cause) => inputAccessFailure('fee.id', cause, eventIndex, kind),
+        )
+        const totalMicros = yield* Result.mapError(
+          Result.try(() => fee.totalMicros),
+          (cause) => inputAccessFailure('fee.totalMicros', cause, eventIndex, kind),
+        )
+        fees.push({ event: fee, id, totalMicros })
+      } else if (kind === 'cash-yield') {
+        const cashYield = event as CashYieldEvent
+        const id = yield* Result.mapError(
+          Result.try(() => cashYield.id),
+          (cause) => inputAccessFailure('cashYield.id', cause, eventIndex, kind),
+        )
+        const amountMicros = yield* Result.mapError(
+          Result.try(() => cashYield.amountMicros),
+          (cause) => inputAccessFailure('cashYield.amountMicros', cause, eventIndex, kind),
+        )
+        cashYields.push({ event: cashYield, id, amountMicros })
+      }
+    }
+
+    return { eventCount: events.length, fills, fees, cashYields }
+  })
+
 const buildLedgerPlanDecision = (
   result: LedgerInput,
   ledger: number,
 ): Result.Result<LedgerPlan, LedgerPlanFailureDetail> =>
   Result.gen(function* () {
-    const runKey = stableU128('bayn-run-v1', result.runId)
-    const runTag = stableU64('bayn-run-v1', result.runId)
+    const runId = yield* Result.mapError(
+      Result.try(() => result.runId),
+      (cause) => inputAccessFailure('runId', cause),
+    )
+    const initialCapitalMicros = yield* Result.mapError(
+      Result.try(() => result.initialCapitalMicros),
+      (cause) => inputAccessFailure('initialCapitalMicros', cause),
+    )
+    const runKey = stableU128('bayn-run-v1', runId)
+    const runTag = stableU64('bayn-run-v1', runId)
     const accountsByName = new Map<string, Account>()
     const addAccount = (name: string, code: number): Account => {
-      const created = account(result.runId, runKey, runTag, ledger, name, code)
+      const created = account(runId, runKey, runTag, ledger, name, code)
       accountsByName.set(name, created)
       return created
     }
@@ -335,21 +468,21 @@ const buildLedgerPlanDecision = (
     }
 
     const transfers: Transfer[] = []
-    const fillEvents = result.events.filter((event): event is FillEvent => event.kind === 'fill')
-    if (fillEvents.length === 0) {
+    const events = yield* planEvents(result)
+    if (events.fills.length === 0) {
       return yield* failLedgerPlan({
         kind: 'no-fill-events',
-        runId: result.runId,
-        eventCount: result.events.length,
+        runId,
+        eventCount: events.eventCount,
       })
     }
-    const startingCapital = yield* parseAmount('initialCapitalMicros', result.initialCapitalMicros)
+    const startingCapital = yield* parseAmount('initialCapitalMicros', initialCapitalMicros)
     if (startingCapital <= 0n) {
       return yield* failLedgerPlan({ kind: 'initial-capital-not-positive', value: startingCapital })
     }
     transfers.push(
       yield* transfer(
-        result.runId,
+        runId,
         runTag,
         ledger,
         'funding',
@@ -358,16 +491,16 @@ const buildLedgerPlanDecision = (
         equity.id,
         startingCapital,
         TransferCode.funding,
-        { kind: 'funding', runId: result.runId, amountMicros: startingCapital.toString() },
+        { kind: 'funding', runId, amountMicros: startingCapital.toString() },
       ),
     )
 
-    for (const fill of fillEvents) {
+    for (const fill of events.fills) {
       const inventory = accountsByName.get(`inventory:${fill.symbol}`)
       if (inventory === undefined) {
         return yield* failLedgerPlan({
           kind: 'inventory-account-missing',
-          runId: result.runId,
+          runId,
           eventId: fill.id,
           symbol: fill.symbol,
         })
@@ -379,7 +512,7 @@ const buildLedgerPlanDecision = (
       if (fill.side === 'buy') {
         transfers.push(
           yield* transfer(
-            result.runId,
+            runId,
             runTag,
             ledger,
             fill.id,
@@ -388,14 +521,14 @@ const buildLedgerPlanDecision = (
             cash.id,
             notional,
             TransferCode.buy,
-            fill,
+            fill.event,
           ),
         )
       } else if (notional >= costBasis) {
         if (costBasis > 0n) {
           transfers.push(
             yield* transfer(
-              result.runId,
+              runId,
               runTag,
               ledger,
               fill.id,
@@ -404,14 +537,14 @@ const buildLedgerPlanDecision = (
               inventory.id,
               costBasis,
               TransferCode.sellBasis,
-              fill,
+              fill.event,
             ),
           )
         }
         if (notional > costBasis) {
           transfers.push(
             yield* transfer(
-              result.runId,
+              runId,
               runTag,
               ledger,
               fill.id,
@@ -420,14 +553,14 @@ const buildLedgerPlanDecision = (
               realizedGain.id,
               notional - costBasis,
               TransferCode.realizedGain,
-              fill,
+              fill.event,
             ),
           )
         }
       } else {
         transfers.push(
           yield* transfer(
-            result.runId,
+            runId,
             runTag,
             ledger,
             fill.id,
@@ -436,12 +569,12 @@ const buildLedgerPlanDecision = (
             inventory.id,
             notional,
             TransferCode.sellBasis,
-            fill,
+            fill.event,
           ),
         )
         transfers.push(
           yield* transfer(
-            result.runId,
+            runId,
             runTag,
             ledger,
             fill.id,
@@ -450,27 +583,25 @@ const buildLedgerPlanDecision = (
             inventory.id,
             costBasis - notional,
             TransferCode.realizedLoss,
-            fill,
+            fill.event,
           ),
         )
       }
     }
-    const feeEvents = result.events.filter((event): event is FeeEvent => event.kind === 'fee')
-    for (const fee of feeEvents) {
+    for (const fee of events.fees) {
       const amount = yield* nonNegativeAmount('fee.totalMicros', fee.totalMicros, fee.id)
       if (amount > 0n) {
         transfers.push(
-          yield* transfer(result.runId, runTag, ledger, fee.id, 'fee', fees.id, cash.id, amount, TransferCode.fee, fee),
+          yield* transfer(runId, runTag, ledger, fee.id, 'fee', fees.id, cash.id, amount, TransferCode.fee, fee.event),
         )
       }
     }
-    const cashYieldEvents = result.events.filter((event): event is CashYieldEvent => event.kind === 'cash-yield')
-    for (const cashYield of cashYieldEvents) {
+    for (const cashYield of events.cashYields) {
       const amount = yield* nonNegativeAmount('cashYield.amountMicros', cashYield.amountMicros, cashYield.id)
       if (amount > 0n) {
         transfers.push(
           yield* transfer(
-            result.runId,
+            runId,
             runTag,
             ledger,
             cashYield.id,
@@ -479,7 +610,7 @@ const buildLedgerPlanDecision = (
             cashYieldIncome.id,
             amount,
             TransferCode.cashYield,
-            cashYield,
+            cashYield.event,
           ),
         )
       }
@@ -488,7 +619,7 @@ const buildLedgerPlanDecision = (
     if (accountsByName.size >= LEDGER_BATCH_MAX || transfers.length >= LEDGER_BATCH_MAX) {
       return yield* failLedgerPlan({
         kind: 'single-query-limit-exceeded',
-        runId: result.runId,
+        runId,
         accountCount: accountsByName.size,
         transferCount: transfers.length,
         limit: LEDGER_BATCH_MAX,

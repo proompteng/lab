@@ -27,6 +27,7 @@ import {
 import { LEDGER_BATCH_MAX } from './ledger-plan'
 import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
+import type { FillEvent } from './types'
 
 const assertSuccess = <A, E>(result: Result.Result<A, E>): A => {
   assert(Result.isSuccess(result), 'strategy evaluation fixture must succeed')
@@ -492,6 +493,49 @@ describe('TigerBeetle simulation journal', () => {
         kind: 'no-fill-events',
         runId: result.runId,
         eventCount: 0,
+      })
+    }
+    expect(writes).toBe(0)
+  })
+
+  test('retains hostile event access inside the non-retryable journal boundary', async () => {
+    const { result } = evaluationPlan()
+    const fill = result.events.find((event): event is FillEvent => event.kind === 'fill')
+    assert(fill, 'evaluation fixture must contain a fill event')
+    const cause = new TypeError('ledger-plan event kind is unavailable')
+    const hostileFill = new Proxy(fill, {
+      get: (target, property, receiver) => {
+        if (property === 'kind') throw cause
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    let writes = 0
+    const client = makeTigerBeetleClient({
+      createAccounts: async () => {
+        writes += 1
+        return []
+      },
+      createTransfers: async () => {
+        writes += 1
+        return []
+      },
+    })
+
+    const error = await Effect.runPromise(
+      Effect.flip(withJournal(client, (journal) => journal.journalAndReconcile({ ...result, events: [hostileFill] }))),
+    )
+
+    expect(error.retryable).toBeFalse()
+    expect(error.cause).toBeInstanceOf(LedgerValidationError)
+    if (error.cause instanceof LedgerValidationError) {
+      expect(error.cause).toMatchObject({
+        operation: 'build-plan',
+        reason: 'ledger-plan-failure',
+        material: {
+          ledger: journalConfig.tigerBeetle.ledger,
+          failure: { kind: 'input-access-failed', field: 'event.kind', eventIndex: 0, cause },
+        },
+        cause,
       })
     }
     expect(writes).toBe(0)
