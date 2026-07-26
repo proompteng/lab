@@ -33,6 +33,7 @@ import {
   runAutonomousCyclePass,
   selectCycleAuthoritySlots,
   selectCycleCalendarCandidate,
+  selectDiscoveredPublications,
   selectNextExecutionSession,
   startAutonomousCycleLoop,
   type CycleCandidate,
@@ -834,6 +835,50 @@ describe('autonomous cycle runner', () => {
       throw new Error('malformed query cause must remain a RangeError')
     }
     expect(malformedQuery.failure.cause.message).toBe('Invalid Date')
+  })
+
+  test('classifies publication discovery as a pure typed decision before dependency reads', () => {
+    const observedAt = '2026-01-30T21:15:00.000Z'
+    const newest = finalizedPublicationInspection('2026-01-30')
+    const prior = finalizedPublicationInspection('2026-01-29')
+
+    expect(selectDiscoveredPublications({ outcome: 'MISSING', observedAt })).toEqual(
+      Result.succeed({
+        _tag: 'NO_PUBLICATION',
+        result: { outcome: 'NO_PUBLICATION', observedAt },
+      }),
+    )
+    expect(selectDiscoveredPublications(finalizedPublications([prior, newest], observedAt))).toEqual(
+      Result.succeed({
+        _tag: 'PUBLICATIONS',
+        observedAt,
+        publications: [newest, prior],
+      }),
+    )
+    expect(selectDiscoveredPublications(finalizedPublications([], observedAt))).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'CycleRunnerError',
+        operation: 'inspect-publication',
+        failure: 'contract',
+      },
+    })
+    expect(
+      selectDiscoveredPublications(
+        finalizedPublications([newest, finalizedPublicationInspection('2026-01-30')], observedAt),
+      ),
+    ).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'CycleRunnerError',
+        operation: 'inspect-publication',
+        failure: 'contract',
+        cause: {
+          _tag: 'CyclePublicationDuplicate',
+          signalSessionDate: '2026-01-30',
+        },
+      },
+    })
   })
 
   test('selects authority slots with exhaustive precedence without mutating its inputs', () => {

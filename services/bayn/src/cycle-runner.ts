@@ -1,4 +1,4 @@
-import { Clock, Data, Duration, Effect, Option, Result, Schedule } from 'effect'
+import { Clock, Data, Duration, Effect, HashSet, Option, pipe, Result, Schedule } from 'effect'
 
 import {
   BrokerRead,
@@ -25,9 +25,14 @@ import {
   type CycleReadinessError,
 } from './cycle-readiness'
 import { selectCycleRecovery, type CycleRecoverySelection, type CycleRecoveryState } from './cycle-recovery'
-import { CycleStore, type CycleAcquireReceipt } from './db/cycle-store'
+import { CycleStore, type CycleAcquireReceipt, type CycleStoreShape } from './db/cycle-store'
 import type { OperationalError } from './errors'
-import { MarketData, type MarketDataInspection, type SignalSessionRow } from './market-data'
+import {
+  MarketData,
+  type FinalizedPublicationDiscovery,
+  type MarketDataInspection,
+  type SignalSessionRow,
+} from './market-data'
 import type { ObserveShadowDecisionDocument } from './shadow-decision-contract'
 
 const calendarRangeDays = 31
@@ -164,6 +169,8 @@ export interface AutonomousCycleLoopOptions<E = never, R = never> {
   readonly pollIntervalMs: number
 }
 
+const currentIsoTime = Clock.currentTimeMillis.pipe(Effect.map((millis) => new Date(millis).toISOString()))
+
 const runnerError = (
   operation: CycleRunnerError['operation'],
   failure: CycleRunnerError['failure'],
@@ -298,48 +305,72 @@ export const marketCalendarQueryForPublications = (
 export const boundedCyclePublications = <Publication extends CyclePublicationDateInput>(
   publications: NonEmptyReadonlyArray<Publication>,
 ): Result.Result<NonEmptyReadonlyArray<Publication>, CyclePublicationFailure> => {
-  for (const publication of publications) {
-    const signalSessionDate = publication.signalSession.session_date
-    const validation = shiftIsoDate(signalSessionDate, 0)
-    if (Result.isFailure(validation)) {
-      return Result.fail({
-        _tag: 'CyclePublicationDateInvalid',
-        signalSessionDate,
-        cause: validation.failure.cause,
-      })
-    }
-  }
-  const sessionDates = new Set<string>()
-  for (const publication of publications) {
-    const signalSessionDate = publication.signalSession.session_date
-    if (sessionDates.has(signalSessionDate)) {
-      return Result.fail({ _tag: 'CyclePublicationDuplicate', signalSessionDate })
-    }
-    sessionDates.add(signalSessionDate)
-  }
-  const latestPublication = publications.reduce((latest, publication) =>
-    publication.signalSession.session_date > latest.signalSession.session_date ? publication : latest,
+  const validated = Result.all(
+    publications.map((publication): Result.Result<Publication, CyclePublicationFailure> => {
+      const signalSessionDate = publication.signalSession.session_date
+      return pipe(
+        shiftIsoDate(signalSessionDate, 0),
+        Result.mapError(
+          (failure): CyclePublicationFailure => ({
+            _tag: 'CyclePublicationDateInvalid',
+            signalSessionDate,
+            cause: failure.cause,
+          }),
+        ),
+        Result.map(() => publication),
+      )
+    }),
   )
-  const latest = latestPublication.signalSession.session_date
-  const offsetDays = -(publicationCatchUpRangeDays - 1)
-  return Result.mapError(
-    Result.map(
-      shiftIsoDate(latest, offsetDays),
-      (earliest): NonEmptyReadonlyArray<Publication> => [
-        latestPublication,
-        ...publications
-          .filter((publication) => {
-            const sessionDate = publication.signalSession.session_date
-            return sessionDate !== latest && sessionDate >= earliest
-          })
-          .sort((left, right) => right.signalSession.session_date.localeCompare(left.signalSession.session_date)),
-      ],
+  return pipe(
+    validated,
+    Result.flatMap((validated) =>
+      validated.reduce<Result.Result<HashSet.HashSet<string>, CyclePublicationFailure>>(
+        (seen, publication) =>
+          pipe(
+            seen,
+            Result.flatMap((sessionDates) => {
+              const signalSessionDate = publication.signalSession.session_date
+              return HashSet.has(sessionDates, signalSessionDate)
+                ? Result.fail({
+                    _tag: 'CyclePublicationDuplicate',
+                    signalSessionDate,
+                  } satisfies CyclePublicationFailure)
+                : Result.succeed(HashSet.add(sessionDates, signalSessionDate))
+            }),
+          ),
+        Result.succeed(HashSet.empty()),
+      ),
     ),
-    (failure) => ({
-      _tag: 'CyclePublicationRangeOutOfRange',
-      signalSessionDate: latest,
-      offsetDays,
-      cause: failure.cause,
+    Result.flatMap(() => {
+      const latestPublication = publications.reduce((latest, publication) =>
+        publication.signalSession.session_date > latest.signalSession.session_date ? publication : latest,
+      )
+      const latest = latestPublication.signalSession.session_date
+      const offsetDays = -(publicationCatchUpRangeDays - 1)
+      return pipe(
+        shiftIsoDate(latest, offsetDays),
+        Result.map(
+          (earliest): NonEmptyReadonlyArray<Publication> => [
+            latestPublication,
+            ...publications
+              .filter((publication) => {
+                const sessionDate = publication.signalSession.session_date
+                return sessionDate !== latest && sessionDate >= earliest
+              })
+              .toSorted((left, right) =>
+                right.signalSession.session_date.localeCompare(left.signalSession.session_date),
+              ),
+          ],
+        ),
+        Result.mapError(
+          (failure): CyclePublicationFailure => ({
+            _tag: 'CyclePublicationRangeOutOfRange',
+            signalSessionDate: latest,
+            offsetDays,
+            cause: failure.cause,
+          }),
+        ),
+      )
     }),
   )
 }
@@ -347,15 +378,12 @@ export const boundedCyclePublications = <Publication extends CyclePublicationDat
 export const selectNextExecutionSession = (
   signalSessionDate: string,
   observation: MarketCalendarObservation,
-): MarketCalendarSession | undefined => {
-  let selected: MarketCalendarSession | undefined
-  for (const session of observation.sessions) {
-    if (session.date > signalSessionDate && (selected === undefined || session.date < selected.date)) {
-      selected = session
-    }
-  }
-  return selected
-}
+): MarketCalendarSession | undefined =>
+  observation.sessions.reduce<MarketCalendarSession | undefined>(
+    (selected, session) =>
+      session.date > signalSessionDate && (selected === undefined || session.date < selected.date) ? session : selected,
+    undefined,
+  )
 
 export const isMonthEndCycleDue = (signalSessionDate: string, executionSessionDate: string): boolean =>
   signalSessionDate.slice(0, 7) !== executionSessionDate.slice(0, 7)
@@ -519,15 +547,11 @@ const completeCycleAuthoritySelection = (state: CycleAuthoritySelectionState): C
 
 export const selectCycleAuthoritySlots = (slots: NonEmptyAuthoritySlots): CycleAuthoritySelection => {
   const [first, ...remaining] = slots
-  const initial = beginCycleAuthoritySelection(first)
-  if (initial._tag !== 'CONTINUE') return initial
-  let state = initial.state
-  for (const slot of remaining) {
-    const reduction = reduceCycleAuthoritySelection(state, slot)
-    if (reduction._tag !== 'CONTINUE') return reduction
-    state = reduction.state
-  }
-  return completeCycleAuthoritySelection(state)
+  const reduction = remaining.reduce<CycleAuthoritySelectionReduction>(
+    (current, slot) => (current._tag === 'CONTINUE' ? reduceCycleAuthoritySelection(current.state, slot) : current),
+    beginCycleAuthoritySelection(first),
+  )
+  return reduction._tag === 'CONTINUE' ? completeCycleAuthoritySelection(reduction.state) : reduction
 }
 
 type CycleNotDueResult = Extract<CycleRunResult, { readonly outcome: 'NOT_DUE' }>
@@ -611,19 +635,13 @@ export const selectCycleCalendarCandidate = (
   observedAt: string,
 ): Result.Result<CycleCalendarCandidateDecision, CycleCalendarCandidateFailure> => {
   const [first, ...remaining] = publications
-  const firstDecision = selectCycleCalendarPublication(context, first, observation, calendarReadContentHash, observedAt)
-  if (Result.isFailure(firstDecision) || firstDecision.success._tag === 'ACQUIRE') return firstDecision
-  for (const publication of remaining) {
-    const decision = selectCycleCalendarPublication(
-      context,
-      publication,
-      observation,
-      calendarReadContentHash,
-      observedAt,
-    )
-    if (Result.isFailure(decision) || decision.success._tag === 'ACQUIRE') return decision
-  }
-  return firstDecision
+  return remaining.reduce<Result.Result<CycleCalendarCandidateDecision, CycleCalendarCandidateFailure>>(
+    (decision, publication) =>
+      Result.isFailure(decision) || decision.success._tag === 'ACQUIRE'
+        ? decision
+        : selectCycleCalendarPublication(context, publication, observation, calendarReadContentHash, observedAt),
+    selectCycleCalendarPublication(context, first, observation, calendarReadContentHash, observedAt),
+  )
 }
 
 const publicationFailureError = (cause: CyclePublicationFailure): CycleRunnerError =>
@@ -646,89 +664,127 @@ const calendarCandidateFailureError = (cause: CycleCalendarCandidateFailure): Cy
   }
 }
 
+const readCycleAuthoritySlot = (
+  store: CycleStoreShape,
+  context: CycleRunContext,
+  publication: MarketDataInspection,
+): Effect.Effect<CycleAuthoritySlot, CycleRunnerError> => {
+  const signalSessionDate = publication.signalSession.session_date
+  return pipe(
+    store.readAuthoritySlot({
+      qualificationRunId: context.qualificationRunId,
+      accountId: context.accountId,
+      signalSessionDate,
+    }),
+    Effect.mapError((cause) =>
+      runnerError('read-authority-slot', 'store', 'durable autonomous cycle authority-slot read failed', cause),
+    ),
+    Effect.map((existing) => ({ publication, existing: Option.getOrUndefined(existing) })),
+  )
+}
+
+const continueCycleAuthorityReads = (
+  store: CycleStoreShape,
+  context: CycleRunContext,
+  state: CycleAuthoritySelectionState,
+  publications: readonly MarketDataInspection[],
+): Effect.Effect<CycleAuthoritySelection, CycleRunnerError> => {
+  const [publication, ...remaining] = publications
+  if (publication === undefined) {
+    return Effect.succeed(completeCycleAuthoritySelection(state))
+  }
+  return pipe(
+    readCycleAuthoritySlot(store, context, publication),
+    Effect.flatMap((slot) => {
+      const reduction = reduceCycleAuthoritySelection(state, slot)
+      return reduction._tag === 'CONTINUE'
+        ? continueCycleAuthorityReads(store, context, reduction.state, remaining)
+        : Effect.succeed(reduction)
+    }),
+  )
+}
+
 const readCycleAuthoritySlots = (
   context: CycleRunContext,
   publications: NonEmptyPublications,
 ): Effect.Effect<CycleAuthoritySelection, CycleRunnerError, CycleStore> =>
-  Effect.gen(function* () {
-    const store = yield* CycleStore
-    const readSlot = (publication: MarketDataInspection) => {
-      const signalSessionDate = publication.signalSession.session_date
-      return store
-        .readAuthoritySlot({
-          qualificationRunId: context.qualificationRunId,
-          accountId: context.accountId,
-          signalSessionDate,
-        })
-        .pipe(
-          Effect.mapError((cause) =>
-            runnerError('read-authority-slot', 'store', 'durable autonomous cycle authority-slot read failed', cause),
-          ),
-          Effect.map(
-            (existing): CycleAuthoritySlot => ({
-              publication,
-              existing: Option.match(existing, {
-                onNone: () => undefined,
-                onSome: (cycle) => cycle,
-              }),
-            }),
-          ),
-        )
-    }
-
-    const [firstPublication, ...remainingPublications] = publications
-    const initial = beginCycleAuthoritySelection(yield* readSlot(firstPublication))
-    if (initial._tag !== 'CONTINUE') return initial
-
-    let state = initial.state
-    for (const publication of remainingPublications) {
-      const reduction = reduceCycleAuthoritySelection(state, yield* readSlot(publication))
-      if (reduction._tag !== 'CONTINUE') return reduction
-      state = reduction.state
-    }
-    return completeCycleAuthoritySelection(state)
-  })
+  pipe(
+    CycleStore,
+    Effect.flatMap((store) => {
+      const [firstPublication, ...remainingPublications] = publications
+      return pipe(
+        readCycleAuthoritySlot(store, context, firstPublication),
+        Effect.flatMap((slot) => {
+          const initial = beginCycleAuthoritySelection(slot)
+          return initial._tag === 'CONTINUE'
+            ? continueCycleAuthorityReads(store, context, initial.state, remainingPublications)
+            : Effect.succeed(initial)
+        }),
+      )
+    }),
+  )
 
 const resumeDiscoveredPublication = (
   selection: Extract<CycleAuthoritySelection, { readonly _tag: 'RESUME' }>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, CycleStore> =>
-  Effect.gen(function* () {
-    const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-    const readiness = yield* bindDiscoveredPublication(selection.cycle, selection.publication, observedAt)
-    return {
-      outcome: 'RESUMED',
-      signalSessionDate: selection.publication.signalSession.session_date,
-      observedAt,
-      readiness,
-    }
-  })
+  pipe(
+    currentIsoTime,
+    Effect.flatMap((observedAt) =>
+      pipe(
+        bindDiscoveredPublication(selection.cycle, selection.publication, observedAt),
+        Effect.map(
+          (readiness): CycleRunResult => ({
+            outcome: 'RESUMED',
+            signalSessionDate: selection.publication.signalSession.session_date,
+            observedAt,
+            readiness,
+          }),
+        ),
+      ),
+    ),
+  )
 
 const acquireCycleCandidate = (
   material: CycleAcquireMaterial,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, CycleStore> =>
-  Effect.gen(function* () {
-    const store = yield* CycleStore
-    const acquiredAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-    const receipt = yield* store
-      .acquire(material.draft, acquiredAt)
-      .pipe(
-        Effect.mapError((cause) =>
-          runnerError('acquire-cycle', 'store', 'durable autonomous cycle acquisition failed', cause),
+  pipe(
+    CycleStore,
+    Effect.flatMap((store) =>
+      pipe(
+        currentIsoTime,
+        Effect.flatMap((acquiredAt) =>
+          pipe(
+            store.acquire(material.draft, acquiredAt),
+            Effect.mapError((cause) =>
+              runnerError('acquire-cycle', 'store', 'durable autonomous cycle acquisition failed', cause),
+            ),
+          ),
         ),
-      )
-    const bindingObservedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-    const readiness = yield* bindDiscoveredPublication(receipt.cycle, material.publication, bindingObservedAt)
-    return {
-      outcome: receipt.created ? 'ACQUIRED' : 'REACQUIRED',
-      signalSessionDate: material.signalSessionDate,
-      executionSessionDate: material.executionSessionDate,
-      observedAt: bindingObservedAt,
-      calendarResponseHash: material.calendarResponseHash,
-      calendarReadContentHash: material.calendarReadContentHash,
-      receipt,
-      readiness,
-    }
-  })
+        Effect.flatMap((receipt) =>
+          pipe(
+            currentIsoTime,
+            Effect.flatMap((bindingObservedAt) =>
+              pipe(
+                bindDiscoveredPublication(receipt.cycle, material.publication, bindingObservedAt),
+                Effect.map(
+                  (readiness): CycleRunResult => ({
+                    outcome: receipt.created ? 'ACQUIRED' : 'REACQUIRED',
+                    signalSessionDate: material.signalSessionDate,
+                    executionSessionDate: material.executionSessionDate,
+                    observedAt: bindingObservedAt,
+                    calendarResponseHash: material.calendarResponseHash,
+                    calendarReadContentHash: material.calendarReadContentHash,
+                    receipt,
+                    readiness,
+                  }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  )
 
 const interpretCycleCalendar = (
   context: CycleRunContext,
@@ -750,27 +806,28 @@ const readCycleCalendar = (
   context: CycleRunContext,
   publications: NonEmptyPublications,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> =>
-  Effect.gen(function* () {
-    const query = yield* Effect.fromResult(marketCalendarQueryForPublications(publications)).pipe(
-      Effect.mapError(calendarQueryFailureError),
-    )
-    const broker = yield* BrokerRead
-    const calendar = yield* broker
-      .marketCalendar(query)
-      .pipe(
+  pipe(
+    marketCalendarQueryForPublications(publications),
+    Effect.fromResult,
+    Effect.mapError(calendarQueryFailureError),
+    Effect.flatMap((query) =>
+      pipe(
+        BrokerRead,
+        Effect.flatMap((broker) => broker.marketCalendar(query)),
         Effect.mapError((cause) =>
           runnerError('market-calendar', 'calendar-read', 'authoritative broker calendar read failed', cause),
         ),
-      )
-    const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-    return yield* interpretCycleCalendar(
-      context,
-      publications,
-      calendar.value,
-      calendar.evidence.contentHash,
-      observedAt,
-    )
-  })
+      ),
+    ),
+    Effect.flatMap((calendar) =>
+      pipe(
+        currentIsoTime,
+        Effect.flatMap((observedAt) =>
+          interpretCycleCalendar(context, publications, calendar.value, calendar.evidence.contentHash, observedAt),
+        ),
+      ),
+    ),
+  )
 
 const interpretCycleAuthoritySelection = (
   context: CycleRunContext,
@@ -799,40 +856,73 @@ const interpretCycleAuthoritySelection = (
   }
 }
 
+type CycleDiscoveryDecision =
+  | {
+      readonly _tag: 'NO_PUBLICATION'
+      readonly result: Extract<CycleRunResult, { readonly outcome: 'NO_PUBLICATION' }>
+    }
+  | {
+      readonly _tag: 'PUBLICATIONS'
+      readonly observedAt: string
+      readonly publications: NonEmptyPublications
+    }
+
+export const selectDiscoveredPublications = (
+  discovery: FinalizedPublicationDiscovery,
+): Result.Result<CycleDiscoveryDecision, CycleRunnerError> => {
+  if (discovery.outcome === 'MISSING') {
+    return Result.succeed({
+      _tag: 'NO_PUBLICATION',
+      result: { outcome: 'NO_PUBLICATION', observedAt: discovery.observedAt },
+    })
+  }
+  const [firstPublication, ...remainingPublications] = discovery.publications
+  if (firstPublication === undefined) {
+    return Result.fail(
+      runnerError(
+        'inspect-publication',
+        'contract',
+        'FINALIZED cycle publication discovery must contain a publication',
+      ),
+    )
+  }
+  return pipe(
+    boundedCyclePublications([firstPublication, ...remainingPublications]),
+    Result.mapError(publicationFailureError),
+    Result.map((publications) => ({
+      _tag: 'PUBLICATIONS' as const,
+      observedAt: discovery.observedAt,
+      publications,
+    })),
+  )
+}
+
 export const discoverAutonomousCyclePass = (
   context: CycleRunContext,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData> =>
-  Effect.gen(function* () {
-    const marketData = yield* MarketData
-    const discovery = yield* marketData.inspectCyclePublications.pipe(
-      Effect.mapError((cause: OperationalError) =>
-        runnerError(
-          'inspect-publication',
-          'market-data',
-          'bounded finalized Signal publication discovery failed',
-          cause,
+  pipe(
+    MarketData,
+    Effect.flatMap((marketData) => marketData.inspectCyclePublications),
+    Effect.mapError((cause: OperationalError) =>
+      runnerError('inspect-publication', 'market-data', 'bounded finalized Signal publication discovery failed', cause),
+    ),
+    Effect.flatMap((discovery) =>
+      pipe(
+        selectDiscoveredPublications(discovery),
+        Effect.fromResult,
+        Effect.flatMap((decision) =>
+          decision._tag === 'NO_PUBLICATION'
+            ? Effect.succeed(decision.result)
+            : pipe(
+                readCycleAuthoritySlots(context, decision.publications),
+                Effect.flatMap((selection) =>
+                  interpretCycleAuthoritySelection(context, selection, decision.observedAt),
+                ),
+              ),
         ),
       ),
-    )
-    if (discovery.outcome === 'MISSING') {
-      return { outcome: 'NO_PUBLICATION', observedAt: discovery.observedAt }
-    }
-    const firstPublication = discovery.publications[0]
-    if (firstPublication === undefined) {
-      return yield* Effect.fail(
-        runnerError(
-          'inspect-publication',
-          'contract',
-          'FINALIZED cycle publication discovery must contain a publication',
-        ),
-      )
-    }
-    const publications = yield* Effect.fromResult(
-      boundedCyclePublications([firstPublication, ...discovery.publications.slice(1)]),
-    ).pipe(Effect.mapError(publicationFailureError))
-    const selection = yield* readCycleAuthoritySlots(context, publications)
-    return yield* interpretCycleAuthoritySelection(context, selection, discovery.observedAt)
-  })
+    ),
+  )
 
 const chooseRecovery = (state: CycleRecoveryState): Effect.Effect<CycleRecoverySelection, CycleRunnerError> =>
   Effect.fromResult(selectCycleRecovery(state)).pipe(
@@ -852,6 +942,31 @@ const readinessFailure = (cause: CycleReadinessError): CycleRunnerError['failure
   }
 }
 
+const finishRecoveryResult = (
+  selection: Extract<CycleRecoverySelection, { readonly action: 'FINISH' }>,
+  cycle: AutonomousCycle,
+): Result.Result<CycleRunResult, CycleRunnerError> => {
+  const result = (
+    action: Extract<CycleRunResult, { readonly outcome: 'RECOVERED' }>['action'],
+  ): Result.Result<CycleRunResult, CycleRunnerError> =>
+    Result.succeed({
+      outcome: 'RECOVERED',
+      action,
+      observedAt: selection.observedAt,
+      cycle,
+    })
+  switch (cycle.state) {
+    case CycleState.Completed:
+      return result('COMPLETED')
+    case CycleState.NoTrade:
+      return result('NO_TRADE')
+    case CycleState.Blocked:
+      return result('BLOCKED')
+    default:
+      return Result.fail(runnerError('recover-cycle', 'contract', 'cycle finish did not produce a terminal state'))
+  }
+}
+
 const recoverCycle = (
   selection: CycleRecoverySelection,
   context: CycleRunContext,
@@ -861,22 +976,21 @@ const recoverCycle = (
     case 'DISCOVER':
       return discoverAutonomousCyclePass(context)
     case 'BLOCK':
-      return Effect.gen(function* () {
-        const store = yield* CycleStore
-        const blocked = yield* store
-          .block(selection.cycleId, selection.reason, selection.observedAt)
-          .pipe(
-            Effect.mapError((cause) =>
-              runnerError('recover-cycle', 'store', 'unfinished autonomous cycle blocking failed', cause),
-            ),
-          )
-        return {
-          outcome: 'RECOVERED',
-          action: 'BLOCKED',
-          observedAt: selection.observedAt,
-          cycle: blocked.cycle,
-        }
-      })
+      return pipe(
+        CycleStore,
+        Effect.flatMap((store) => store.block(selection.cycleId, selection.reason, selection.observedAt)),
+        Effect.mapError((cause) =>
+          runnerError('recover-cycle', 'store', 'unfinished autonomous cycle blocking failed', cause),
+        ),
+        Effect.map(
+          (blocked): CycleRunResult => ({
+            outcome: 'RECOVERED',
+            action: 'BLOCKED',
+            observedAt: selection.observedAt,
+            cycle: blocked.cycle,
+          }),
+        ),
+      )
     case 'READ_PUBLICATION':
       return runCyclePublicationReadiness(selection.cycle).pipe(
         Effect.mapError((cause: CycleReadinessError) =>
@@ -902,22 +1016,21 @@ const recoverCycle = (
         cycle: selection.result.cycle,
       })
     case 'ACTIVATE':
-      return Effect.gen(function* () {
-        const store = yield* CycleStore
-        const activation = yield* store
-          .activate(selection.cycleId, selection.observedAt)
-          .pipe(
-            Effect.mapError((cause) =>
-              runnerError('recover-cycle', 'store', 'snapshot-bound cycle activation failed', cause),
-            ),
-          )
-        return {
-          outcome: 'RECOVERED',
-          action: activation.cycle.state === CycleState.Blocked ? 'BLOCKED' : 'ACTIVATED',
-          observedAt: selection.observedAt,
-          cycle: activation.cycle,
-        }
-      })
+      return pipe(
+        CycleStore,
+        Effect.flatMap((store) => store.activate(selection.cycleId, selection.observedAt)),
+        Effect.mapError((cause) =>
+          runnerError('recover-cycle', 'store', 'snapshot-bound cycle activation failed', cause),
+        ),
+        Effect.map(
+          (activation): CycleRunResult => ({
+            outcome: 'RECOVERED',
+            action: activation.cycle.state === CycleState.Blocked ? 'BLOCKED' : 'ACTIVATED',
+            observedAt: selection.observedAt,
+            cycle: activation.cycle,
+          }),
+        ),
+      )
     case 'WAIT':
       return Effect.succeed({
         outcome: 'RECOVERED',
@@ -929,114 +1042,98 @@ const recoverCycle = (
       return context.buildDecision(selection.cycle).pipe(
         Effect.mapError((cause) => runnerError('build-decision', cause.failure, cause.message, cause)),
         Effect.flatMap((document) =>
-          Effect.gen(function* () {
-            const store = yield* CycleStore
-            const bindObservedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-            const binding = yield* store
-              .bindDecision(selection.cycle.identity.cycleId, document, bindObservedAt)
-              .pipe(
+          pipe(
+            currentIsoTime,
+            Effect.flatMap((bindObservedAt) =>
+              pipe(
+                CycleStore,
+                Effect.flatMap((store) =>
+                  store.bindDecision(selection.cycle.identity.cycleId, document, bindObservedAt),
+                ),
                 Effect.mapError((cause) =>
                   runnerError('recover-cycle', 'store', 'durable shadow decision binding failed', cause),
                 ),
-              )
-            return {
-              outcome: 'RECOVERED',
-              action: binding.cycle.state === CycleState.Blocked ? 'BLOCKED' : 'BOUND_DECISION',
-              observedAt: binding.cycle.updatedAt,
-              cycle: binding.cycle,
-            }
-          }),
+                Effect.map(
+                  (binding): CycleRunResult => ({
+                    outcome: 'RECOVERED',
+                    action: binding.cycle.state === CycleState.Blocked ? 'BLOCKED' : 'BOUND_DECISION',
+                    observedAt: binding.cycle.updatedAt,
+                    cycle: binding.cycle,
+                  }),
+                ),
+              ),
+            ),
+          ),
         ),
       )
     case 'READ_DECISION':
-      return Effect.gen(function* () {
-        const store = yield* CycleStore
-        const document = yield* store
-          .readDecisionDocument(selection.cycle.identity.cycleId)
-          .pipe(
-            Effect.mapError((cause) =>
-              runnerError('recover-cycle', 'store', 'durable shadow decision read failed', cause),
+      return pipe(
+        CycleStore,
+        Effect.flatMap((store) => store.readDecisionDocument(selection.cycle.identity.cycleId)),
+        Effect.mapError((cause) => runnerError('recover-cycle', 'store', 'durable shadow decision read failed', cause)),
+        Effect.flatMap((document) =>
+          pipe(
+            currentIsoTime,
+            Effect.flatMap((decisionObservedAt) =>
+              pipe(
+                chooseRecovery({
+                  qualificationRunId: context.qualificationRunId,
+                  accountId: context.accountId,
+                  strategyProtocolHash: context.strategyProtocolHash,
+                  observedAt: decisionObservedAt,
+                  cycle: selection.cycle,
+                  decisionDocument: Option.getOrNull(document),
+                }),
+                Effect.flatMap((next) => recoverCycle(next, context, decisionObservedAt)),
+              ),
             ),
-          )
-        const decisionObservedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-        const next = yield* chooseRecovery({
-          qualificationRunId: context.qualificationRunId,
-          accountId: context.accountId,
-          strategyProtocolHash: context.strategyProtocolHash,
-          observedAt: decisionObservedAt,
-          cycle: selection.cycle,
-          decisionDocument: Option.match(document, {
-            onNone: () => null,
-            onSome: (value) => value,
-          }),
-        })
-        return yield* recoverCycle(next, context, decisionObservedAt)
-      })
+          ),
+        ),
+      )
     case 'FINISH':
-      return Effect.gen(function* () {
-        const store = yield* CycleStore
-        const finished = yield* store
-          .finish(selection.cycleId, selection.state, selection.observedAt)
-          .pipe(
-            Effect.mapError((cause) =>
-              runnerError('recover-cycle', 'store', 'shadow cycle terminal transition failed', cause),
-            ),
-          )
-        let action: Extract<CycleRunResult, { readonly outcome: 'RECOVERED' }>['action']
-        switch (finished.cycle.state) {
-          case CycleState.Completed:
-            action = 'COMPLETED'
-            break
-          case CycleState.NoTrade:
-            action = 'NO_TRADE'
-            break
-          case CycleState.Blocked:
-            action = 'BLOCKED'
-            break
-          default:
-            return yield* Effect.fail(
-              runnerError('recover-cycle', 'contract', 'cycle finish did not produce a terminal state'),
-            )
-        }
-        return {
-          outcome: 'RECOVERED',
-          action,
-          observedAt: selection.observedAt,
-          cycle: finished.cycle,
-        }
-      })
+      return pipe(
+        CycleStore,
+        Effect.flatMap((store) => store.finish(selection.cycleId, selection.state, selection.observedAt)),
+        Effect.mapError((cause) =>
+          runnerError('recover-cycle', 'store', 'shadow cycle terminal transition failed', cause),
+        ),
+        Effect.flatMap((finished) => Effect.fromResult(finishRecoveryResult(selection, finished.cycle))),
+      )
   }
 }
 
 export const runAutonomousCyclePass = (
   context: CycleRunContext,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData> =>
-  Effect.gen(function* () {
-    const store = yield* CycleStore
-    const unfinished = yield* store
-      .readOldestUnfinished({
+  pipe(
+    CycleStore,
+    Effect.flatMap((store) =>
+      store.readOldestUnfinished({
         qualificationRunId: context.qualificationRunId,
         accountId: context.accountId,
-      })
-      .pipe(
-        Effect.mapError((cause) =>
-          runnerError('read-oldest-unfinished', 'store', 'oldest unfinished autonomous cycle read failed', cause),
+      }),
+    ),
+    Effect.mapError((cause) =>
+      runnerError('read-oldest-unfinished', 'store', 'oldest unfinished autonomous cycle read failed', cause),
+    ),
+    Effect.flatMap((unfinished) =>
+      pipe(
+        currentIsoTime,
+        Effect.flatMap((observedAt) =>
+          pipe(
+            chooseRecovery({
+              qualificationRunId: context.qualificationRunId,
+              accountId: context.accountId,
+              strategyProtocolHash: context.strategyProtocolHash,
+              observedAt,
+              cycle: Option.getOrUndefined(unfinished),
+            }),
+            Effect.flatMap((selection) => recoverCycle(selection, context, observedAt)),
+          ),
         ),
-      )
-    const cycle = Option.match(unfinished, {
-      onNone: () => undefined,
-      onSome: (value) => value,
-    })
-    const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-    const selection = yield* chooseRecovery({
-      qualificationRunId: context.qualificationRunId,
-      accountId: context.accountId,
-      strategyProtocolHash: context.strategyProtocolHash,
-      observedAt,
-      cycle,
-    })
-    return yield* recoverCycle(selection, context, observedAt)
-  })
+      ),
+    ),
+  )
 
 interface CyclePassLogFacts {
   readonly level: 'INFO' | 'ERROR'
@@ -1153,36 +1250,51 @@ const runLoopPass = <E, R>(
     Effect.withLogSpan('autonomous-cycle'),
   )
 
-const observationTime = Clock.currentTimeMillis.pipe(Effect.map((millis) => new Date(millis).toISOString()))
+const observeSuccessfulPass = <E, R>(
+  options: AutonomousCycleLoopOptions<E, R>,
+  result: CycleRunResult,
+): Effect.Effect<void> =>
+  pipe(
+    currentIsoTime,
+    Effect.flatMap((observedAt) => {
+      const observation: CyclePassObservation = { outcome: 'SUCCEEDED', observedAt, result }
+      return pipe(options.observePass(observation), Effect.andThen(logCyclePass(observation)))
+    }),
+  )
+
+const observeFailedPass = <E, R>(
+  options: AutonomousCycleLoopOptions<E, R>,
+  error: CycleRunnerError,
+): Effect.Effect<void> =>
+  pipe(
+    currentIsoTime,
+    Effect.flatMap((observedAt) => {
+      const observation: CyclePassObservation = { outcome: 'FAILED', observedAt, error }
+      return pipe(options.observePass(observation), Effect.andThen(logCyclePass(observation)))
+    }),
+  )
+
+const cycleLoopProgram = <E, R>(
+  options: AutonomousCycleLoopOptions<E, R>,
+): Effect.Effect<void, never, BrokerRead | CycleStore | MarketData | R> =>
+  pipe(
+    runLoopPass(options.context),
+    Effect.flatMap((result) => observeSuccessfulPass(options, result)),
+    Effect.catch((error) => observeFailedPass(options, error)),
+    Effect.repeat(Schedule.spaced(Duration.millis(options.pollIntervalMs))),
+    Effect.asVoid,
+  )
+
+const validateCycleLoopInterval = (pollIntervalMs: number): Result.Result<number, CycleRunnerError> =>
+  Number.isSafeInteger(pollIntervalMs) && pollIntervalMs > 0
+    ? Result.succeed(pollIntervalMs)
+    : Result.fail(runnerError('configure', 'invalid-config', 'cycle loop interval must be a positive safe integer'))
 
 export const startAutonomousCycleLoop = <E, R>(
   options: AutonomousCycleLoopOptions<E, R>,
-): Effect.Effect<Effect.Effect<void, never, BrokerRead | CycleStore | MarketData | R>, CycleRunnerError> => {
-  if (!Number.isSafeInteger(options.pollIntervalMs) || options.pollIntervalMs <= 0) {
-    return Effect.fail(
-      runnerError('configure', 'invalid-config', 'cycle loop interval must be a positive safe integer'),
-    )
-  }
-  return Effect.succeed(
-    runLoopPass(options.context).pipe(
-      Effect.flatMap((result) =>
-        observationTime.pipe(
-          Effect.flatMap((observedAt) => {
-            const observation: CyclePassObservation = { outcome: 'SUCCEEDED', observedAt, result }
-            return options.observePass(observation).pipe(Effect.andThen(logCyclePass(observation)))
-          }),
-        ),
-      ),
-      Effect.catch((error) =>
-        observationTime.pipe(
-          Effect.flatMap((observedAt) => {
-            const observation: CyclePassObservation = { outcome: 'FAILED', observedAt, error }
-            return options.observePass(observation).pipe(Effect.andThen(logCyclePass(observation)))
-          }),
-        ),
-      ),
-      Effect.repeat(Schedule.spaced(Duration.millis(options.pollIntervalMs))),
-      Effect.asVoid,
-    ),
+): Effect.Effect<Effect.Effect<void, never, BrokerRead | CycleStore | MarketData | R>, CycleRunnerError> =>
+  pipe(
+    validateCycleLoopInterval(options.pollIntervalMs),
+    Result.map(() => cycleLoopProgram(options)),
+    Effect.fromResult,
   )
-}
