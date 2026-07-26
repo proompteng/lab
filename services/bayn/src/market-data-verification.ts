@@ -1,7 +1,7 @@
 import { Result, Schema, pipe } from 'effect'
 
 import { type EvaluationBounds, type FinalizedSnapshotProvenance, FinalizedSnapshotProvenanceSchema } from './contracts'
-import { canonicalHashV1, sha256 } from './hash'
+import { canonicalHashV1Result, sha256, type CanonicalHashFailure } from './hash'
 import { strictParseOptions } from './schemas'
 import {
   type FinalizedPublicationRequest,
@@ -122,7 +122,7 @@ export type MarketDataVerificationError =
       readonly _tag: 'CanonicalizationFailed'
       readonly target: 'bars' | 'input-manifest' | 'manifest' | 'sessions' | 'snapshot-identity'
       readonly snapshotId: string
-      readonly cause: unknown
+      readonly cause: CanonicalHashFailure
     }
   | {
       readonly _tag: 'SessionFieldMismatch'
@@ -237,15 +237,15 @@ const canonicalHashResult = (
   snapshotId: string,
   value: unknown,
 ): Result.Result<string, MarketDataVerificationError> =>
-  Result.try({
-    try: () => canonicalHashV1(value),
-    catch: (cause): MarketDataVerificationError => ({
+  Result.mapError(
+    canonicalHashV1Result(value),
+    (cause): MarketDataVerificationError => ({
       _tag: 'CanonicalizationFailed',
       target,
       snapshotId,
       cause,
     }),
-  })
+  )
 
 export const decodeSignalCount = (
   value: string | number,

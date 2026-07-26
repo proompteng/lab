@@ -2,7 +2,7 @@ import type { Account, Transfer } from 'tigerbeetle-node'
 import { AccountFlags } from 'tigerbeetle-node'
 import { pipe, Result } from 'effect'
 
-import { canonicalHashV1, stableU128, stableU64 } from '../hash'
+import { canonicalHashV1Result, stableU128, stableU64 } from '../hash'
 import { AccountCode, hashLedgerPlan, LEDGER_SCHEMA_VERSION, TransferCode, type LedgerPlan } from '../ledger-plan'
 import { OrderSide, type Fill } from '../paper'
 import { roundUnsignedHalfUp } from '../unsigned-round-half-up'
@@ -51,11 +51,12 @@ type AccountSpec = {
 
 const failAccounting = (failure: AccountingFailure): Result.Result<never, AccountingFailure> => Result.fail(failure)
 
+const canonicalIntegerPattern = /^(?:0|-?[1-9][0-9]*)$/
+
 const parseMicros = (field: AccountingMicrosField, value: string): Result.Result<bigint, AccountingFailure> =>
-  Result.mapError(
-    Result.try(() => BigInt(value)),
-    (cause) => ({ _tag: 'AccountingMicrosParseFailed', field, value, cause }),
-  )
+  canonicalIntegerPattern.test(value)
+    ? Result.succeed(BigInt(value))
+    : failAccounting({ _tag: 'AccountingMicrosParseFailed', field, value })
 
 const parseAccountingInput = (
   fill: Fill,
@@ -309,10 +310,11 @@ const hashAccountingMaterial = (
   operation: AccountingHashOperation,
   material: unknown,
 ): Result.Result<string, AccountingFailure> =>
-  Result.mapError(
-    Result.try(() => canonicalHashV1(material)),
-    (cause) => ({ _tag: 'AccountingCanonicalizationFailed', operation, cause }),
-  )
+  Result.mapError(canonicalHashV1Result(material), (cause) => ({
+    _tag: 'AccountingCanonicalizationFailed',
+    operation,
+    cause,
+  }))
 
 const hashAccountingLedgerPlan = (plan: LedgerPlan): Result.Result<string, AccountingFailure> =>
   Result.mapError(

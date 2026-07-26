@@ -207,25 +207,28 @@ describe('paper accounting', () => {
   })
 
   test('returns parse and canonicalization defects as concrete failure data', () => {
-    const malformed = Result.try(() =>
-      prepareAccounting(eventId, fill(), { quantityMicros: 'invalid', costMicros: '0' }, 7001),
+    expect(failureOf(prepareAccounting(eventId, fill(), { quantityMicros: 'invalid', costMicros: '0' }, 7001))).toEqual(
+      {
+        _tag: 'AccountingMicrosParseFailed',
+        field: 'position.quantityMicros',
+        value: 'invalid',
+      },
     )
-    assert(Result.isSuccess(malformed), 'accounting must not throw for malformed micros')
-    expect(failureOf(malformed.success)).toMatchObject({
+    expect(failureOf(prepareAccounting(eventId, fill(), { quantityMicros: '+1', costMicros: '0' }, 7001))).toEqual({
       _tag: 'AccountingMicrosParseFailed',
       field: 'position.quantityMicros',
-      value: 'invalid',
-      cause: expect.any(SyntaxError),
+      value: '+1',
     })
 
-    const invalidUnicode = Result.try(() =>
-      prepareAccounting(eventId, fill({ accountId: '\ud800' }), emptyPosition, 7001),
-    )
-    assert(Result.isSuccess(invalidUnicode), 'accounting must not throw for invalid canonical material')
-    expect(failureOf(invalidUnicode.success)).toMatchObject({
+    expect(failureOf(prepareAccounting(eventId, fill({ accountId: '\ud800' }), emptyPosition, 7001))).toMatchObject({
       _tag: 'AccountingCanonicalizationFailed',
       operation: 'transaction-content',
-      cause: expect.any(TypeError),
+      cause: {
+        _tag: 'CanonicalJsonFailure',
+        path: '$.accountId',
+        reason: 'invalid-unicode-surrogate',
+        actualType: 'string',
+      },
     })
   })
 
