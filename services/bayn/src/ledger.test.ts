@@ -21,6 +21,7 @@ import {
   transactionTransferQuery,
   validatePersistedRunEvidence,
   type JournalService,
+  type LedgerPlan,
   type TigerBeetleClient,
 } from './ledger'
 import { LEDGER_BATCH_MAX } from './ledger-plan'
@@ -37,7 +38,7 @@ const assertFailure = <A, E>(result: Result.Result<A, E>): E => {
   return result.failure
 }
 
-const materializeAccounts = (plan: ReturnType<typeof buildLedgerPlan>): Account[] => {
+const materializeAccounts = (plan: LedgerPlan): Account[] => {
   const balances = new Map(plan.accounts.map((account) => [account.id, { debits: 0n, credits: 0n }]))
   const balance = (accountId: bigint) => {
     const value = balances.get(accountId)
@@ -56,7 +57,7 @@ const materializeAccounts = (plan: ReturnType<typeof buildLedgerPlan>): Account[
   }))
 }
 
-const materializeTransfers = (plan: ReturnType<typeof buildLedgerPlan>): Transfer[] =>
+const materializeTransfers = (plan: LedgerPlan): Transfer[] =>
   plan.transfers.map((transfer) => ({ ...transfer, timestamp: 1n }))
 
 const journalConfig = {
@@ -93,7 +94,7 @@ const evaluationPlan = () => {
   const result = assertSuccess(
     evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance()),
   )
-  return { result, plan: buildLedgerPlan(result, journalConfig.tigerBeetle.ledger) }
+  return { result, plan: assertSuccess(buildLedgerPlan(result, journalConfig.tigerBeetle.ledger)) }
 }
 
 const makeTigerBeetleClient = (overrides: Partial<TigerBeetleClient> = {}): TigerBeetleClient => ({
@@ -348,12 +349,12 @@ describe('TigerBeetle simulation journal', () => {
     const result = assertSuccess(
       evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance()),
     )
-    const first = buildLedgerPlan(result, 7001)
-    const second = buildLedgerPlan(result, 7001)
+    const first = assertSuccess(buildLedgerPlan(result, 7001))
+    const second = assertSuccess(buildLedgerPlan(result, 7001))
     expect(first).toEqual(second)
     expect(hashLedgerPlan(first)).toMatch(/^[a-f0-9]{64}$/)
     expect(hashLedgerPlan(first)).toBe(hashLedgerPlan(second))
-    expect(hashLedgerPlan(first)).not.toBe(hashLedgerPlan(buildLedgerPlan(result, 7002)))
+    expect(hashLedgerPlan(first)).not.toBe(hashLedgerPlan(assertSuccess(buildLedgerPlan(result, 7002))))
     expect(first.accounts).toHaveLength(fixtureProtocol.universe.length + 6)
     expect(first.transfers.length).toBeGreaterThan(1)
     expect(
@@ -366,7 +367,7 @@ describe('TigerBeetle simulation journal', () => {
     const result = assertSuccess(
       evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance()),
     )
-    const plan = buildLedgerPlan(result, 7001)
+    const plan = assertSuccess(buildLedgerPlan(result, 7001))
     const accounts = materializeAccounts(plan)
     const transfers = materializeTransfers(plan)
     expect(
@@ -388,7 +389,7 @@ describe('TigerBeetle simulation journal', () => {
     const result = assertSuccess(
       evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance()),
     )
-    const plan = buildLedgerPlan(result, journalConfig.tigerBeetle.ledger)
+    const plan = assertSuccess(buildLedgerPlan(result, journalConfig.tigerBeetle.ledger))
     const target = makeLedgerClient()
 
     const reconciliations = await Effect.runPromise(
@@ -451,7 +452,7 @@ describe('TigerBeetle simulation journal', () => {
     expect(transferCreates).toBe(0)
   })
 
-  test('retains the exact throwing ledger-plan cause without starting TigerBeetle writes', async () => {
+  test('retains the exact typed ledger-plan failure without starting TigerBeetle writes', async () => {
     const { result } = evaluationPlan()
     let writes = 0
     const client = makeTigerBeetleClient({
@@ -733,7 +734,7 @@ describe('TigerBeetle simulation journal', () => {
     const result = assertSuccess(
       evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance()),
     )
-    const plan = buildLedgerPlan(result, journalConfig.tigerBeetle.ledger)
+    const plan = assertSuccess(buildLedgerPlan(result, journalConfig.tigerBeetle.ledger))
     const target = makeLedgerClient()
     target.accounts.set(plan.accounts[0].id, { ...plan.accounts[0], code: plan.accounts[0].code + 1, timestamp: 1n })
 
@@ -751,7 +752,7 @@ describe('TigerBeetle simulation journal', () => {
     const result = assertSuccess(
       evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance),
     )
-    const plan = buildLedgerPlan(result, 7001)
+    const plan = assertSuccess(buildLedgerPlan(result, 7001))
     let accounts = materializeAccounts(plan)
     const transfers = materializeTransfers(plan)
     let writes = 0

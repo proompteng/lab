@@ -1070,23 +1070,23 @@ const validateReconciliationShape = (prepared: PreparedEvidenceRecovery): Result
     if (reconciliation.runId !== prepared.runId) {
       return yield* mismatch('reconciliation', ['runId'], reconciliation.runId, prepared.runId)
     }
-    const ledgerPlan = yield* Result.try({
-      try: () =>
-        buildLedgerPlan(
-          {
-            runId: prepared.runId,
-            initialCapitalMicros: prepared.decoded.evaluation.initialCapitalMicros,
-            inputManifest: prepared.decoded.inputManifest,
-            events: prepared.decoded.events,
-          },
-          cardinalityOnlyLedger,
-        ),
-      catch: (cause): EvidenceRecoveryIssue => ({
-        _tag: 'ComputationFailure',
-        operation: 'build-ledger-plan',
-        cause,
-      }),
-    })
+    const ledgerPlan = yield* buildLedgerPlan(
+      {
+        runId: prepared.runId,
+        initialCapitalMicros: prepared.decoded.evaluation.initialCapitalMicros,
+        inputManifest: prepared.decoded.inputManifest,
+        events: prepared.decoded.events,
+      },
+      cardinalityOnlyLedger,
+    ).pipe(
+      Result.mapError(
+        (cause): EvidenceRecoveryIssue => ({
+          _tag: 'ComputationFailure',
+          operation: 'build-ledger-plan',
+          cause,
+        }),
+      ),
+    )
     if (reconciliation.accountCount !== ledgerPlan.accounts.length) {
       return yield* mismatch(
         'reconciliation',

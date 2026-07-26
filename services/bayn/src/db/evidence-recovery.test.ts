@@ -7,7 +7,7 @@ import { Result } from 'effect'
 import { fixtureEvaluation, provenance } from '../app-test-support'
 import { makeEquitySeriesArtifact, QualificationArtifactManifestSchema } from '../evidence-contracts'
 import { canonicalHashV1 } from '../hash'
-import { buildLedgerPlan } from '../ledger-plan'
+import { buildLedgerPlan, LedgerValidationError } from '../ledger-plan'
 import { summarizeEvaluation } from '../risk-balanced-trend'
 import { fixtureProtocol } from '../test-fixtures'
 import type { EvaluationEvent } from '../types'
@@ -40,7 +40,9 @@ const artifact = (name: string, schemaVersion: string, payload: unknown, itemCou
 
 const makeRecoveryFixture = (): RecoveryFixture => {
   const evaluation = fixtureEvaluation
-  const ledger = buildLedgerPlan(evaluation, 1)
+  const ledgerResult = buildLedgerPlan(evaluation, 1)
+  assert(Result.isSuccess(ledgerResult), 'ledger recovery fixture must succeed')
+  const ledger = ledgerResult.success
   const reconciliation = {
     runId: evaluation.runId,
     accountCount: ledger.accounts.length,
@@ -709,7 +711,10 @@ describe('evidence recovery verifier', () => {
       _tag: 'ComputationFailure',
       operation: 'build-ledger-plan',
     })
-    if (issue._tag === 'ComputationFailure') expect(issue.cause).toBeInstanceOf(TypeError)
+    if (issue._tag === 'ComputationFailure') {
+      expect(issue.cause).toBeInstanceOf(LedgerValidationError)
+      if (issue.cause instanceof LedgerValidationError) expect(issue.cause.cause).toBeInstanceOf(TypeError)
+    }
   })
 
   test('retains typed reconciliation issues and reports final component and status drift', () => {
