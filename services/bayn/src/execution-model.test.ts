@@ -235,6 +235,12 @@ describe('explicit paper execution model', () => {
     expect(failure(result)).toMatchObject({
       _tag: 'OrderOutcomeCanonicalizationFailed',
       identity: { invalid: 1n },
+      cause: {
+        _tag: 'CanonicalJsonFailure',
+        path: '$.invalid',
+        reason: 'non-json-type',
+        actualType: 'bigint',
+      },
     })
   })
 })

@@ -5,7 +5,7 @@ import { Data, Effect, Result, Schema } from 'effect'
 import { AutonomousCycleSchema, CycleState, type AutonomousCycle } from './cycle'
 import { DecisionPlanSchema, type DecisionPlan } from './evidence-contracts'
 import { intentIdForPlan, IntentPlanSchema, type IntentPlan } from './execution/intents'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import {
   Authority,
   IntentState,
@@ -164,9 +164,7 @@ const hashValue = (
   failure: ShadowDecisionError['failure'],
   message: string,
 ): Result.Result<string, ShadowDecisionError> =>
-  Result.mapError(Result.try({ try: () => canonicalHashV1(value), catch: (cause) => cause }), (cause) =>
-    error(failure, message, cause),
-  )
+  Result.mapError(canonicalHashV1Result(value), (cause) => error(failure, message, cause))
 
 const compiledDecisionOf = (input: unknown): Result.Result<DecisionPlan, ShadowDecisionError> =>
   Result.mapError(decodeDecisionPlanResult(input), (cause) =>

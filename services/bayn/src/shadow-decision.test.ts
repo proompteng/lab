@@ -720,6 +720,7 @@ describe('OBSERVE shadow decision', () => {
 
   test('returns each closed shadow failure category and contract-constructor failure', async () => {
     const input = makeInput()
+    const validDocument = await build(input)
     const bindingFailure = {
       ...input,
       snapshot: { ...input.snapshot, snapshotId: hash('f') },
@@ -763,6 +764,36 @@ describe('OBSERVE shadow decision', () => {
       ['make', 'canonicalization'],
       ['decode', 'contract'],
     ])
+    const cyclicFailure = constructorFailures[2]
+    if (Result.isFailure(cyclicFailure)) {
+      expect(cyclicFailure.failure.cause).toEqual({
+        _tag: 'CanonicalJsonFailure',
+        path: '$.self',
+        reason: 'cycle',
+        actualType: 'object',
+      })
+    }
+
+    const { contentHash: _, ...validMaterial } = validDocument
+    const reflectionCause = new Error('second ownKeys failed')
+    let ownKeysCalls = 0
+    const statefulMaterial = new Proxy(validMaterial, {
+      ownKeys: (target) => {
+        ownKeysCalls += 1
+        if (ownKeysCalls === 2) throw reflectionCause
+        return Reflect.ownKeys(target)
+      },
+    })
+    const statefulFailure = makeObserveShadowDecisionDocument(statefulMaterial)
+    expect(Result.isFailure(statefulFailure)).toBe(true)
+    if (Result.isFailure(statefulFailure)) {
+      expect(statefulFailure.failure).toMatchObject({
+        _tag: 'ShadowDecisionContractFailure',
+        operation: 'make',
+        reason: 'canonicalization',
+      })
+      expect(statefulFailure.failure.cause).toBe(reflectionCause)
+    }
 
     const contractFailures = shadowContractFailurePairs.map(
       (pair) => new ShadowDecisionContractFailure({ ...pair, message: 'failure-pair coverage' }),
