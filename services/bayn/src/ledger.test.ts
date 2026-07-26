@@ -541,6 +541,62 @@ describe('TigerBeetle simulation journal', () => {
     expect(writes).toBe(0)
   })
 
+  test('retains hostile amount coercion inside the non-retryable journal boundary', async () => {
+    const { result } = evaluationPlan()
+    const fill = result.events.find((event): event is FillEvent => event.kind === 'fill')
+    assert(fill, 'evaluation fixture must contain a fill event')
+    const cause = new TypeError('ledger-plan amount coercion is unavailable')
+    const hostileAmount = {
+      [Symbol.toPrimitive]: () => {
+        throw cause
+      },
+    }
+    let writes = 0
+    const client = makeTigerBeetleClient({
+      createAccounts: async () => {
+        writes += 1
+        return []
+      },
+      createTransfers: async () => {
+        writes += 1
+        return []
+      },
+    })
+
+    const error = await Effect.runPromise(
+      Effect.flip(
+        withJournal(client, (journal) =>
+          journal.journalAndReconcile({
+            ...result,
+            events: [{ ...fill, notionalMicros: hostileAmount as unknown as string }],
+          }),
+        ),
+      ),
+    )
+
+    expect(error.retryable).toBeFalse()
+    expect(error.operation).toBe('build-plan')
+    expect(error.cause).toBeInstanceOf(LedgerValidationError)
+    if (error.cause instanceof LedgerValidationError) {
+      expect(error.cause).toMatchObject({
+        operation: 'build-plan',
+        message: 'TigerBeetle build-plan failed: fill.notionalMicros is not an integer micros value (object)',
+        material: {
+          ledger: journalConfig.tigerBeetle.ledger,
+          failure: {
+            kind: 'amount-parse-failed',
+            field: 'fill.notionalMicros',
+            actualType: 'object',
+            eventId: fill.id,
+            cause,
+          },
+        },
+        cause,
+      })
+    }
+    expect(writes).toBe(0)
+  })
+
   test('keeps event canonicalization failures under the build-plan journal operation', async () => {
     const { result } = evaluationPlan()
     const fill = result.events.find((event): event is FillEvent => event.kind === 'fill')

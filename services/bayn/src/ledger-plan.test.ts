@@ -129,6 +129,7 @@ describe('ledger plan Result algebra', () => {
         expected: {
           kind: 'amount-parse-failed',
           field: 'initialCapitalMicros',
+          actualType: 'string',
           value: 'invalid',
         },
       },
@@ -145,6 +146,7 @@ describe('ledger plan Result algebra', () => {
         expected: {
           kind: 'amount-parse-failed',
           field: 'fill.notionalMicros',
+          actualType: 'string',
           value: 'invalid',
           eventId: fill.id,
         },
@@ -163,6 +165,7 @@ describe('ledger plan Result algebra', () => {
         expected: {
           kind: 'amount-parse-failed',
           field: 'fill.costBasisMicros',
+          actualType: 'string',
           value: 'invalid',
           eventId: fill.id,
         },
@@ -181,6 +184,7 @@ describe('ledger plan Result algebra', () => {
         expected: {
           kind: 'amount-parse-failed',
           field: 'fee.totalMicros',
+          actualType: 'string',
           value: 'invalid',
           eventId: fee.id,
         },
@@ -199,6 +203,7 @@ describe('ledger plan Result algebra', () => {
         expected: {
           kind: 'amount-parse-failed',
           field: 'cashYield.amountMicros',
+          actualType: 'string',
           value: 'invalid',
           eventId: cashYield.id,
         },
@@ -217,6 +222,57 @@ describe('ledger plan Result algebra', () => {
     for (const { input, expected } of cases) {
       expect(assertLedgerPlanFailure(buildLedgerPlan(input, ledger))).toMatchObject(expected)
     }
+  })
+
+  test('never re-coerces rejected amount values while constructing failures', () => {
+    const result = evaluationResult()
+    const fill = firstFill(result, 'buy')
+    const coercionCause = new TypeError('amount coercion is unavailable')
+    const hostileAmount = {
+      [Symbol.toPrimitive]: () => {
+        throw coercionCause
+      },
+    }
+
+    const symbolFailure = assertFailure(
+      buildLedgerPlan(
+        { ...result, initialCapitalMicros: Symbol('invalid') as unknown as string, events: [fill] },
+        ledger,
+      ),
+    )
+    expect(symbolFailure).toMatchObject({
+      operation: 'build-plan',
+      message: 'TigerBeetle build-plan failed: initialCapitalMicros is not an integer micros value (symbol)',
+      detail: {
+        kind: 'amount-parse-failed',
+        field: 'initialCapitalMicros',
+        actualType: 'symbol',
+      },
+    })
+    expect(symbolFailure.detail).not.toHaveProperty('value')
+
+    const hostileFailure = assertFailure(
+      buildLedgerPlan(
+        {
+          ...result,
+          events: [{ ...fill, notionalMicros: hostileAmount as unknown as string }],
+        },
+        ledger,
+      ),
+    )
+    expect(hostileFailure).toMatchObject({
+      operation: 'build-plan',
+      message: 'TigerBeetle build-plan failed: fill.notionalMicros is not an integer micros value (object)',
+      detail: {
+        kind: 'amount-parse-failed',
+        field: 'fill.notionalMicros',
+        actualType: 'object',
+        eventId: fill.id,
+        cause: coercionCause,
+      },
+      cause: coercionCause,
+    })
+    expect(hostileFailure.detail).not.toHaveProperty('value')
   })
 
   test('returns exact inventory and event canonicalization failures', () => {

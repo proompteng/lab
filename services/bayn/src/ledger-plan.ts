@@ -139,7 +139,8 @@ export type LedgerPlanFailureDetail =
   | {
       readonly kind: 'amount-parse-failed'
       readonly field: LedgerPlanAmountField
-      readonly value: string
+      readonly actualType: string
+      readonly value?: string
       readonly eventId?: string
       readonly cause: unknown
     }
@@ -191,7 +192,9 @@ export const renderLedgerPlanFailure = (failure: LedgerPlanFailureDetail): strin
     case 'no-fill-events':
       return 'evaluation produced no fill events to journal'
     case 'amount-parse-failed':
-      return `${failure.field} is not an integer micros value: ${failure.value}`
+      return failure.value === undefined
+        ? `${failure.field} is not an integer micros value (${failure.actualType})`
+        : `${failure.field} is not an integer micros value: ${failure.value}`
     case 'negative-amount':
       return `${failure.field} must not be negative`
     case 'initial-capital-not-positive':
@@ -297,15 +300,16 @@ const transfer = (
 
 const parseAmount = (
   field: LedgerPlanAmountField,
-  value: string,
+  value: unknown,
   eventId?: string,
 ): Result.Result<bigint, LedgerPlanFailureDetail> =>
   Result.mapError(
-    Result.try(() => BigInt(value)),
+    Result.try(() => BigInt(value as string)),
     (cause): LedgerPlanFailureDetail => ({
       kind: 'amount-parse-failed',
       field,
-      value,
+      actualType: value === null ? 'null' : typeof value,
+      ...(typeof value === 'string' ? { value } : {}),
       ...(eventId === undefined ? {} : { eventId }),
       cause,
     }),
@@ -313,7 +317,7 @@ const parseAmount = (
 
 const nonNegativeAmount = (
   field: Exclude<LedgerPlanAmountField, 'initialCapitalMicros'>,
-  value: string,
+  value: unknown,
   eventId: string,
 ): Result.Result<bigint, LedgerPlanFailureDetail> =>
   Result.flatMap(parseAmount(field, value, eventId), (parsed) =>
@@ -325,20 +329,20 @@ interface PlannedFillEvent {
   readonly id: string
   readonly symbol: string
   readonly side: FillEvent['side']
-  readonly notionalMicros: string
-  readonly costBasisMicros: string
+  readonly notionalMicros: unknown
+  readonly costBasisMicros: unknown
 }
 
 interface PlannedFeeEvent {
   readonly event: FeeEvent
   readonly id: string
-  readonly totalMicros: string
+  readonly totalMicros: unknown
 }
 
 interface PlannedCashYieldEvent {
   readonly event: CashYieldEvent
   readonly id: string
-  readonly amountMicros: string
+  readonly amountMicros: unknown
 }
 
 interface PlannedEvents {
