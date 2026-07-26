@@ -149,7 +149,7 @@ const intentRow = {
   mutation_occurred_at: observedAt,
 } as const
 
-const makeComparison = (status: AccountStatus = AccountStatus.Active) => {
+const comparisonInput = (status: AccountStatus = AccountStatus.Active): Parameters<typeof compareOpeningCash>[0] => {
   const intentProjection = successOf(projectIntentExpectations([intentRow]))
   const accounting = successOf(verifyAccountingReceipts([prepared.transaction], [receipt], { tigerBeetle }))
   const durableFills = [
@@ -166,39 +166,40 @@ const makeComparison = (status: AccountStatus = AccountStatus.Active) => {
       costBasisMicros: prepared.transaction.costBasisMicros,
     },
   ]
-  return successOf(
-    compareOpeningCash({
-      accountId,
-      openingCash: { cash_micros: '1000000000', observed_at: openingObservedAt },
-      transactions: [prepared.transaction],
-      receipts: [receipt],
-      ledgerExact: true,
-      snapshot: {
-        account: { ...account, status },
-        positions: [position],
-        positionsObservedAt: observedAt,
-        orders: [order],
-        ordersObservedAt: observedAt,
-        fills: [fill],
-        valuation: {
-          schemaVersion: 'bayn.paper-valuation.v1',
-          valuationId: hash('valuation-1'),
-          accountId,
-          sourceHash: hash('valuation-source'),
-          cashMicros: account.cashMicros,
-          longMarketValueMicros: position.marketValueMicros,
-          shortMarketValueMicros: '0',
-          equityMicros: account.equityMicros,
-          asOf: observedAt,
-        },
-        reconciledAt,
+  return {
+    accountId,
+    openingCash: { cash_micros: '1000000000', observed_at: openingObservedAt },
+    transactions: [prepared.transaction],
+    receipts: [receipt],
+    ledgerExact: true,
+    snapshot: {
+      account: { ...account, status },
+      positions: [position],
+      positionsObservedAt: observedAt,
+      orders: [order],
+      ordersObservedAt: observedAt,
+      fills: [fill],
+      valuation: {
+        schemaVersion: 'bayn.paper-valuation.v1',
+        valuationId: hash('valuation-1'),
+        accountId,
+        sourceHash: hash('valuation-source'),
+        cashMicros: account.cashMicros,
+        longMarketValueMicros: position.marketValueMicros,
+        shortMarketValueMicros: '0',
+        equityMicros: account.equityMicros,
+        asOf: observedAt,
       },
-      intents: intentProjection.intents,
-      durableFills,
-      projectedPositions,
-    }),
-  )
+      reconciledAt,
+    },
+    intents: intentProjection.intents,
+    durableFills,
+    projectedPositions,
+  }
 }
+
+const makeComparison = (status: AccountStatus = AccountStatus.Active) =>
+  successOf(compareOpeningCash(comparisonInput(status)))
 
 const emptyRiskRow = (): RiskContextRow => ({
   trading_date: '2026-07-22',
@@ -327,6 +328,54 @@ describe('PostgreSQL reconciliation algebra', () => {
       cashDifferenceMicros: '0',
       positionDifferenceMicros: '0',
       equityDifferenceMicros: '0',
+    })
+  })
+
+  test('returns exact accounting amount and canonicalization failures without throwing', () => {
+    const invalidOpeningCash = failureOf(
+      compareOpeningCash({
+        ...comparisonInput(),
+        openingCash: { cash_micros: '1000.5', observed_at: openingObservedAt },
+      }),
+    )
+    expect(invalidOpeningCash).toEqual({
+      _tag: 'AccountingAmountParseFailed',
+      source: 'opening-cash',
+      value: '1000.5',
+    })
+    expect(reconciliationAlgebraFailureDetails(invalidOpeningCash)).toEqual({
+      failure: 'invariant',
+      message: 'opening cash is not an integer micros value: 1000.5',
+      cause: invalidOpeningCash,
+    })
+
+    const invalidCashDelta = failureOf(
+      compareOpeningCash({
+        ...comparisonInput(),
+        transactions: [{ ...prepared.transaction, cashDeltaMicros: 'not-an-integer' }],
+      }),
+    )
+    expect(invalidCashDelta).toEqual({
+      _tag: 'AccountingAmountParseFailed',
+      source: 'transaction-cash-delta',
+      value: 'not-an-integer',
+      transactionId: prepared.transaction.transactionId,
+    })
+
+    const invalidAccountingHash = failureOf(
+      compareOpeningCash({
+        ...comparisonInput(),
+        accountId: '\ud800',
+      }),
+    )
+    expect(invalidAccountingHash).toMatchObject({
+      _tag: 'AccountingProjectionFailed',
+      operation: 'accounting-hash',
+      cause: {
+        _tag: 'CanonicalJsonFailure',
+        path: '$.accountId',
+        reason: 'invalid-unicode-surrogate',
+      },
     })
   })
 
@@ -490,6 +539,25 @@ describe('PostgreSQL reconciliation algebra', () => {
       source: 'current',
       discrepancyId: firstDiscrepancy.discrepancyId,
     })
+
+    expect(
+      failureOf(
+        decideReconciliation({
+          accountId: '\ud800',
+          comparison: mismatch.comparison,
+          previous: [],
+          reconciledAt,
+        }),
+      ),
+    ).toMatchObject({
+      _tag: 'ReconciliationIdentityFailed',
+      operation: 'reconciliation-id',
+      cause: {
+        _tag: 'CanonicalJsonFailure',
+        path: '$.material.accountId',
+        reason: 'invalid-unicode-surrogate',
+      },
+    })
   })
 
   test('validates absent and complete authority risk context without Effects', () => {
@@ -613,7 +681,12 @@ describe('PostgreSQL reconciliation algebra', () => {
     expect(invalidTimestamp).toMatchObject({
       _tag: 'RiskContextTimestampFailed',
       field: 'authority_updated_at',
-      cause: expect.any(RangeError),
+      epochMillis: Number.NaN,
+    })
+    expect(reconciliationAlgebraFailureDetails(invalidTimestamp)).toEqual({
+      failure: 'invariant',
+      message: 'reconciliation risk context timestamp authority_updated_at is invalid',
+      cause: invalidTimestamp,
     })
   })
 })
