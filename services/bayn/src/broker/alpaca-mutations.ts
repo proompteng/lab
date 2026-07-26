@@ -1,4 +1,4 @@
-import { Cause, Clock, Context, Data, Effect, Redacted, Schema } from 'effect'
+import { Cause, Clock, Context, Data, Effect, Redacted, Result, Schema } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 
 import { canonicalHashV1 } from '../hash'
@@ -61,6 +61,7 @@ const decodeErrorResponse = Schema.decodeUnknownEffect(ErrorResponseSchema, resp
 const decodeOrderResponse = Schema.decodeUnknownEffect(OrderResponseSchema, responseParseOptions)
 const decodeIntent = Schema.decodeUnknownEffect(IntentSchema, inputParseOptions)
 const decodeOptions = Schema.decodeUnknownEffect(OptionsSchema, inputParseOptions)
+const decodeJsonResponseBody = Schema.decodeUnknownResult(Schema.UnknownFromJsonString)
 
 export enum MutationOperation {
   Submit = 'SUBMIT',
@@ -256,6 +257,12 @@ const responseEvidence = (
   contentHash: string,
   observedAt: string,
 ): MutationEvidence => ({ requestId, status, contentHash, observedAt })
+
+const canonicalResponseBodyHash = (body: string): string =>
+  Result.match(decodeJsonResponseBody(body), {
+    onFailure: () => canonicalHashV1(body),
+    onSuccess: canonicalHashV1,
+  })
 
 const withDeadline = <A, E>(
   operation: MutationOperation,
@@ -487,12 +494,7 @@ export const makeMutation = (
               response.status === 204
                 ? canonicalHashV1(null)
                 : yield* response.text.pipe(
-                    Effect.flatMap((body) =>
-                      Effect.try({
-                        try: () => canonicalHashV1(JSON.parse(body)),
-                        catch: () => undefined,
-                      }).pipe(Effect.orElseSucceed(() => canonicalHashV1(body))),
-                    ),
+                    Effect.map(canonicalResponseBodyHash),
                     Effect.mapError((cause) =>
                       unknownOutcome(
                         MutationOperation.Cancel,
