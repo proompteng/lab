@@ -29,6 +29,7 @@ import {
   type BrokerReadShape,
   type ReadOptions,
 } from './alpaca'
+import { parseProxyUrl } from './alpaca/http'
 import { decodeOrder } from './alpaca/model'
 import { decimalToMicrosResult, normalizeOrderResult } from './alpaca/normalizers'
 import { responseEvidenceResult } from './alpaca/requests'
@@ -1428,6 +1429,32 @@ describe('Alpaca paper reads', () => {
 })
 
 describe('Alpaca proxy lifecycle', () => {
+  test('parses only credential-free HTTP origins as a pure Result decision', () => {
+    const valid = parseProxyUrl('https://proxy.test:3128')
+    expect(Result.isSuccess(valid)).toBe(true)
+    if (Result.isSuccess(valid)) expect(valid.success.origin).toBe('https://proxy.test:3128')
+
+    for (const [proxyUrl, message] of [
+      ['not a URL', 'invalid Alpaca proxy configuration'],
+      ['socks5://proxy.test:1080', 'Alpaca proxy URL must use HTTP or HTTPS'],
+      ['http://user:secret@proxy.test:3128', 'Alpaca proxy credentials must not be embedded in the URL'],
+      ['http://proxy.test:3128/path', 'Alpaca proxy URL must contain only an origin'],
+      ['http://proxy.test:3128?route=paper', 'Alpaca proxy URL must contain only an origin'],
+      ['http://proxy.test:3128#paper', 'Alpaca proxy URL must contain only an origin'],
+    ] as const) {
+      const result = parseProxyUrl(proxyUrl)
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure).toMatchObject({
+          kind: BrokerReadErrorKind.Configuration,
+          operation: 'proxy',
+          retryable: false,
+          message,
+        })
+      }
+    }
+  })
+
   test('keeps its Undici proxy dispatcher alive until the owning scope exits and releases it exactly once', async () => {
     let releases = 0
     await Effect.runPromise(
@@ -1458,5 +1485,32 @@ describe('Alpaca proxy lifecycle', () => {
       operation: 'proxy',
       retryable: false,
     })
+  })
+
+  test('contains dispatcher construction failures in the typed acquisition channel', async () => {
+    let releases = 0
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        Effect.scoped(
+          makeProxyDispatcher('http://proxy.test:3128', {
+            create: () => {
+              throw new Error('dispatcher construction failed')
+            },
+            destroy: () => {
+              releases += 1
+              return Promise.resolve()
+            },
+          }),
+        ),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      kind: BrokerReadErrorKind.Configuration,
+      operation: 'proxy',
+      retryable: false,
+      message: 'Alpaca proxy dispatcher acquisition failed',
+    })
+    expect(releases).toBe(0)
   })
 })

@@ -1,5 +1,5 @@
 import { NodeHttpClient, Undici } from '@effect/platform-node'
-import { Cause, Effect, Layer, Redacted, Result, Scope } from 'effect'
+import { Cause, Effect, Layer, pipe, Redacted, Result, Scope } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
@@ -100,21 +100,36 @@ export const makeProxyDispatcher = (
   },
 ): Effect.Effect<Undici.Dispatcher, BrokerReadError, Scope.Scope> =>
   Effect.acquireRelease(
-    Effect.try({
-      try: () => {
-        const url = new URL(proxyUrl)
-        if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('proxy URL must use HTTP or HTTPS')
-        if (url.username !== '' || url.password !== '') {
-          throw new Error('proxy credentials must not be embedded in the URL')
-        }
-        if (url.pathname !== '/' || url.search !== '' || url.hash !== '') {
-          throw new Error('proxy URL must contain only an origin')
-        }
-        return dependencies.create(url)
-      },
+    pipe(
+      Effect.fromResult(parseProxyUrl(proxyUrl)),
+      Effect.flatMap((url) =>
+        Effect.try({
+          try: () => dependencies.create(url),
+          catch: (cause) => configurationError('proxy', 'Alpaca proxy dispatcher acquisition failed', cause),
+        }),
+      ),
+    ),
+    (dispatcher) => Effect.promise(() => dependencies.destroy(dispatcher)),
+  )
+
+export const parseProxyUrl = (proxyUrl: string): Result.Result<URL, BrokerReadError> =>
+  pipe(
+    Result.try({
+      try: () => new URL(proxyUrl),
       catch: (cause) => configurationError('proxy', 'invalid Alpaca proxy configuration', cause),
     }),
-    (dispatcher) => Effect.promise(() => dependencies.destroy(dispatcher)),
+    Result.flatMap((url) => {
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        return Result.fail(configurationError('proxy', 'Alpaca proxy URL must use HTTP or HTTPS'))
+      }
+      if (url.username !== '' || url.password !== '') {
+        return Result.fail(configurationError('proxy', 'Alpaca proxy credentials must not be embedded in the URL'))
+      }
+      if (url.pathname !== '/' || url.search !== '' || url.hash !== '') {
+        return Result.fail(configurationError('proxy', 'Alpaca proxy URL must contain only an origin'))
+      }
+      return Result.succeed(url)
+    }),
   )
 
 const proxyLayer = (proxyUrl: string): Layer.Layer<NodeHttpClient.Dispatcher, BrokerReadError> =>
