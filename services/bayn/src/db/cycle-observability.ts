@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Context, Data, Effect, Layer, Schema } from 'effect'
+import { Context, Data, Effect, Layer, pipe, Result, Schema } from 'effect'
 import { isSqlError } from 'effect/unstable/sql/SqlError'
 
 import {
@@ -95,13 +95,18 @@ const ProjectionRowSchema = Schema.Struct({
   latest_mutation_at: NullableDate,
 })
 type ProjectionRow = typeof ProjectionRowSchema.Type
+export type CycleObservabilityProjectionRow = ProjectionRow
 
 const ProjectionRowsSchema = Schema.Tuple([ProjectionRowSchema])
 const decodeRunId = Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)
 const decodeAccountId = Schema.decodeUnknownEffect(StrictNonEmptyStringSchema, strictParseOptions)
 const decodeProjectionRows = Schema.decodeUnknownEffect(ProjectionRowsSchema, strictParseOptions)
 
-const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
+const messageOf = (cause: unknown): string =>
+  pipe(
+    Result.try(() => (cause instanceof Error ? cause.message : String(cause))),
+    Result.getOrElse(() => '<unrenderable cause>'),
+  )
 
 const readError = (
   failure: CycleObservabilityError['failure'],
@@ -115,9 +120,12 @@ const readError = (
     cause,
   })
 
-const snapshotFromRow = (row: ProjectionRow, prefix: 'current' | 'last'): CycleOperationsSnapshot | null => {
+const snapshotFromRow = (
+  row: ProjectionRow,
+  prefix: 'current' | 'last',
+): Result.Result<CycleOperationsSnapshot | null, CycleObservabilityError> => {
   const cycleId = row[`${prefix}_cycle_id`]
-  if (cycleId === null) return null
+  if (cycleId === null) return Result.succeed(null)
   const accountId = row[`${prefix}_account_id`]
   const signalSessionDate = row[`${prefix}_signal_session_date`]
   const executionSessionDate = row[`${prefix}_execution_session_date`]
@@ -140,9 +148,9 @@ const snapshotFromRow = (row: ProjectionRow, prefix: 'current' | 'last'): CycleO
     createdAt === null ||
     updatedAt === null
   ) {
-    throw readError('invariant', `${prefix} cycle projection is incomplete`)
+    return Result.fail(readError('invariant', `${prefix} cycle projection is incomplete`))
   }
-  return {
+  return Result.succeed({
     cycleId,
     accountId,
     signalSessionDate,
@@ -158,31 +166,35 @@ const snapshotFromRow = (row: ProjectionRow, prefix: 'current' | 'last'): CycleO
     createdAt: createdAt.toISOString(),
     updatedAt: updatedAt.toISOString(),
     terminalAt: row[`${prefix}_terminal_at`]?.toISOString() ?? null,
-  }
+  })
 }
 
-const authorityFromRow = (row: ProjectionRow): DurableAuthorityObservation | null => {
-  if (row.authority_maximum === null) return null
+const authorityFromRow = (
+  row: ProjectionRow,
+): Result.Result<DurableAuthorityObservation | null, CycleObservabilityError> => {
+  if (row.authority_maximum === null) return Result.succeed(null)
   if (
     row.authority_generation_hash === null ||
     row.authority_effective === null ||
     row.authority_kill === null ||
     row.authority_updated_at === null
   ) {
-    throw readError('invariant', 'durable authority projection is incomplete')
+    return Result.fail(readError('invariant', 'durable authority projection is incomplete'))
   }
-  return {
+  return Result.succeed({
     generationHash: row.authority_generation_hash,
     maximum: row.authority_maximum,
     effective: row.authority_effective,
     kill: row.authority_kill,
     reason: row.authority_reason,
     updatedAt: row.authority_updated_at.toISOString(),
-  }
+  })
 }
 
-const reconciliationFromRow = (row: ProjectionRow): ReconciliationObservation | null => {
-  if (row.reconciliation_id === null) return null
+const reconciliationFromRow = (
+  row: ProjectionRow,
+): Result.Result<ReconciliationObservation | null, CycleObservabilityError> => {
+  if (row.reconciliation_id === null) return Result.succeed(null)
   if (
     row.reconciliation_account_id === null ||
     row.reconciliation_status === null ||
@@ -190,38 +202,50 @@ const reconciliationFromRow = (row: ProjectionRow): ReconciliationObservation | 
     row.reconciled_at === null ||
     row.reconciliation_covers_latest_mutation === null
   ) {
-    throw readError('invariant', 'reconciliation projection is incomplete')
+    return Result.fail(readError('invariant', 'reconciliation projection is incomplete'))
   }
-  return {
+  return Result.succeed({
     reconciliationId: row.reconciliation_id,
     accountId: row.reconciliation_account_id,
     status: row.reconciliation_status,
     discrepancyCount: row.reconciliation_discrepancy_count,
     reconciledAt: row.reconciled_at.toISOString(),
     coversLatestMutation: row.reconciliation_covers_latest_mutation,
-  }
+  })
 }
 
-const projectionFromRow = (row: ProjectionRow): CycleOperationsProjection => {
+export const projectCycleObservabilityRow = (
+  row: CycleObservabilityProjectionRow,
+): Result.Result<CycleOperationsProjection, CycleObservabilityError> => {
   if (row.account_mismatch) {
-    throw readError(
-      'invariant',
-      `configured account ${row.selected_account_id ?? 'unknown'} differs from the projected current or last cycle`,
+    return Result.fail(
+      readError(
+        'invariant',
+        `configured account ${row.selected_account_id ?? 'unknown'} differs from the projected current or last cycle`,
+      ),
     )
   }
-  return {
-    current: snapshotFromRow(row, 'current'),
-    last: snapshotFromRow(row, 'last'),
-    unfinishedCycleCount: row.unfinished_cycle_count,
-    authority: authorityFromRow(row),
-    reconciliation: reconciliationFromRow(row),
-    mutations: {
-      eventCount: row.mutation_event_count,
-      unresolvedCount: row.unresolved_mutation_count,
-      oldestUnresolvedAt: row.oldest_unresolved_mutation_at?.toISOString() ?? null,
-      latestOccurredAt: row.latest_mutation_at?.toISOString() ?? null,
-    },
-  }
+  return pipe(
+    Result.all({
+      current: snapshotFromRow(row, 'current'),
+      last: snapshotFromRow(row, 'last'),
+      authority: authorityFromRow(row),
+      reconciliation: reconciliationFromRow(row),
+    }),
+    Result.map(({ current, last, authority, reconciliation }) => ({
+      current,
+      last,
+      unfinishedCycleCount: row.unfinished_cycle_count,
+      authority,
+      reconciliation,
+      mutations: {
+        eventCount: row.mutation_event_count,
+        unresolvedCount: row.unresolved_mutation_count,
+        oldestUnresolvedAt: row.oldest_unresolved_mutation_at?.toISOString() ?? null,
+        latestOccurredAt: row.latest_mutation_at?.toISOString() ?? null,
+      },
+    })),
+  )
 }
 
 const makeCycleObservability = Effect.gen(function* () {
@@ -405,15 +429,7 @@ const makeCycleObservability = Effect.gen(function* () {
           Effect.mapError((cause) => readError('decode', 'autonomous cycle observability decoding failed', cause)),
         ),
       ),
-      Effect.flatMap(([row]) =>
-        Effect.try({
-          try: () => projectionFromRow(row),
-          catch: (cause) =>
-            cause instanceof CycleObservabilityError
-              ? cause
-              : readError('invariant', 'autonomous cycle observability projection failed', cause),
-        }),
-      ),
+      Effect.flatMap(([row]) => Effect.fromResult(projectCycleObservabilityRow(row))),
     )
 
   return { read } satisfies CycleObservabilityShape
