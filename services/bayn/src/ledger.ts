@@ -321,7 +321,7 @@ const journalAndReconcile = (
       { concurrency: 'unbounded' },
     )
     yield* validationBoundary(reconcileLedgerPlan(plan, accounts, transfers))
-    return { runId: result.runId, accountCount: accounts.length, transferCount: transfers.length, exact: true }
+    return { runId: plan.runId, accountCount: accounts.length, transferCount: transfers.length, exact: true }
   })
 
 const post = (client: TigerBeetleRequestClient, plan: LedgerPlan): Effect.Effect<void, OperationalError> =>
@@ -437,6 +437,7 @@ export {
   LedgerValidationError,
   reconcileLedgerPlan,
   validatePersistedRunEvidence,
+  type EvaluationLedgerPlan,
   type LedgerInput,
   type LedgerPlan,
   type LedgerPlanFailure,

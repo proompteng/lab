@@ -592,6 +592,35 @@ describe('TigerBeetle simulation journal', () => {
     expect(writes).toBe(0)
   })
 
+  test('reuses the validated run identity after writes without reading mutable input again', async () => {
+    const { result, plan } = evaluationPlan()
+    const target = makeLedgerClient()
+    let runIdReads = 0
+    const secondReadCause = new TypeError('ledger run identity was read after the plan committed')
+    const input = {
+      initialCapitalMicros: result.initialCapitalMicros,
+      inputManifest: result.inputManifest,
+      events: result.events,
+      get runId(): string {
+        runIdReads += 1
+        if (runIdReads > 1) throw secondReadCause
+        return result.runId
+      },
+    }
+
+    const reconciled = await Effect.runPromise(
+      withJournal(target.client, (journal) => journal.journalAndReconcile(input)),
+    )
+
+    expect(reconciled).toEqual({
+      runId: result.runId,
+      accountCount: plan.accounts.length,
+      transferCount: plan.transfers.length,
+      exact: true,
+    })
+    expect(runIdReads).toBe(1)
+  })
+
   test('retains hostile amount coercion inside the non-retryable journal boundary', async () => {
     const { result } = evaluationPlan()
     const fill = result.events.find((event): event is FillEvent => event.kind === 'fill')

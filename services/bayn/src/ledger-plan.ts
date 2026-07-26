@@ -100,6 +100,10 @@ export interface LedgerPlan {
   readonly transfers: readonly Transfer[]
 }
 
+export interface EvaluationLedgerPlan extends LedgerPlan {
+  readonly runId: string
+}
+
 export interface LedgerInput {
   readonly runId: string
   readonly initialCapitalMicros: string
@@ -496,7 +500,7 @@ const planEvents = (result: LedgerInput): Result.Result<PlannedEvents, LedgerPla
 const buildLedgerPlanDecision = (
   result: LedgerInput,
   ledger: number,
-): Result.Result<LedgerPlan, LedgerPlanFailureDetail> =>
+): Result.Result<EvaluationLedgerPlan, LedgerPlanFailureDetail> =>
   Result.gen(function* () {
     const rawRunId = yield* Result.mapError(
       Result.try(() => result.runId),
@@ -695,6 +699,7 @@ const buildLedgerPlanDecision = (
       })
     }
     return {
+      runId,
       runKey,
       runTag,
       accounts: [...accountsByName.values()].sort((left, right) => (left.id < right.id ? -1 : 1)),
@@ -702,7 +707,10 @@ const buildLedgerPlanDecision = (
     }
   })
 
-export const buildLedgerPlan = (result: LedgerInput, ledger: number): Result.Result<LedgerPlan, LedgerPlanFailure> =>
+export const buildLedgerPlan = (
+  result: LedgerInput,
+  ledger: number,
+): Result.Result<EvaluationLedgerPlan, LedgerPlanFailure> =>
   Result.mapError(buildLedgerPlanDecision(result, ledger), (failure) => makeLedgerPlanFailure(ledger, failure))
 
 const serializeRecord = (record: Account | Transfer): Record<string, number | string> =>
