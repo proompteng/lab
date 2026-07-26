@@ -156,7 +156,7 @@ const positiveAmount = (value: string, name: string): bigint => {
   return parsed
 }
 
-export const buildLedgerPlan = (result: LedgerInput, ledger: number): LedgerPlan => {
+const buildLedgerPlanUnsafe = (result: LedgerInput, ledger: number): LedgerPlan => {
   const runKey = stableU128('bayn-run-v1', result.runId)
   const runTag = stableU64('bayn-run-v1', result.runId)
   const accountsByName = new Map<string, Account>()
@@ -310,6 +310,24 @@ export const buildLedgerPlan = (result: LedgerInput, ledger: number): LedgerPlan
     transfers: transfers.sort((left, right) => (left.id < right.id ? -1 : 1)),
   }
 }
+
+const causeMessage = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
+
+export const buildLedgerPlan = (
+  result: LedgerInput,
+  ledger: number,
+): Result.Result<LedgerPlan, LedgerValidationError> =>
+  Result.try({
+    try: () => buildLedgerPlanUnsafe(result, ledger),
+    catch: (cause) =>
+      ledgerValidationError(
+        'build-plan',
+        'ledger-plan-failure',
+        `TigerBeetle build-plan failed: ${causeMessage(cause)}`,
+        { ledger },
+        cause,
+      ),
+  })
 
 const serializeRecord = (record: Account | Transfer): Record<string, number | string> =>
   Object.fromEntries(

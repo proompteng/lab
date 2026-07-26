@@ -34,7 +34,7 @@ const evaluationPlan = () => {
   const result = assertSuccess(
     evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance()),
   )
-  return { result, plan: buildLedgerPlan(result, ledger) }
+  return { result, plan: assertSuccess(buildLedgerPlan(result, ledger)) }
 }
 
 const materialize = (plan: LedgerPlan): { readonly accounts: Account[]; readonly transfers: Transfer[] } => {
@@ -63,6 +63,19 @@ const materialize = (plan: LedgerPlan): { readonly accounts: Account[]; readonly
 }
 
 describe('ledger plan Result algebra', () => {
+  test('returns a closed build failure without throwing', () => {
+    const { result } = evaluationPlan()
+    const failure = assertFailure(buildLedgerPlan({ ...result, events: [] }, ledger))
+
+    expect(failure).toMatchObject({
+      operation: 'build-plan',
+      reason: 'ledger-plan-failure',
+      material: { ledger },
+    })
+    expect(failure.cause).toBeInstanceOf(Error)
+    expect(String(failure.cause)).toContain('no fill events')
+  })
+
   test('partitions exact existing transfers and preserves missing request order', () => {
     const { plan } = evaluationPlan()
     const existing = [plan.transfers[1], plan.transfers.at(-1)].filter(

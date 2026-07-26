@@ -45,8 +45,6 @@ export interface JournalService {
 
 export class Journal extends Context.Service<Journal, JournalService>()('bayn/Journal') {}
 
-const causeMessage = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
-
 const validationBoundary = <A>(decision: Result.Result<A, LedgerValidationError>): Effect.Effect<A, OperationalError> =>
   Effect.fromResult(decision).pipe(
     Effect.mapError(
@@ -304,26 +302,13 @@ const checkRun = (
     yield* validationBoundary(validatePersistedRunEvidence(result, ledger, accounts, transfers))
   })
 
-const buildJournalPlan = (result: LedgerInput, ledger: number): Result.Result<LedgerPlan, LedgerValidationError> =>
-  Result.try({
-    try: () => buildLedgerPlan(result, ledger),
-    catch: (cause) =>
-      validationError(
-        'build-plan',
-        'ledger-plan-failure',
-        `TigerBeetle build-plan failed: ${causeMessage(cause)}`,
-        { ledger },
-        cause,
-      ),
-  })
-
 const journalAndReconcile = (
   client: TigerBeetleRequestClient,
   ledger: number,
   result: LedgerInput,
 ): Effect.Effect<ReconciliationResult, OperationalError> =>
   Effect.gen(function* () {
-    const plan = yield* validationBoundary(buildJournalPlan(result, ledger))
+    const plan = yield* validationBoundary(buildLedgerPlan(result, ledger))
     yield* createAndVerifyAccounts(client, plan.accounts)
     yield* createAndVerifyTransfers(client, plan.transfers)
     const accountQuery = { ...queryFilter(ledger), user_data_128: plan.runKey, limit: plan.accounts.length + 1 }

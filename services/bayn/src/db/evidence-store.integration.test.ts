@@ -438,7 +438,9 @@ const makeInput = (
   )
   assert(Result.isSuccess(evaluationResult), 'strategy evaluation fixture must succeed')
   const evaluation = evaluationResult.success
-  const ledger = buildLedgerPlan(evaluation, 7_001)
+  const ledgerResult = buildLedgerPlan(evaluation, 7_001)
+  assert(Result.isSuccess(ledgerResult), 'ledger plan fixture must succeed')
+  const ledger = ledgerResult.success
   return {
     provenance,
     parameters: protocol,
