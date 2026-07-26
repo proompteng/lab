@@ -483,4 +483,26 @@ describe('Alpaca paper mutations', () => {
       },
     })
   })
+
+  test('hashes a non-JSON cancel response as exact raw text', async () => {
+    const body = 'upstream unavailable\n'
+    const client = HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(request, new Response(body, { status: 502, headers: responseHeaders })),
+      ),
+    )
+
+    const failure = await Effect.runPromise(Effect.flip(withMutation(client, (mutation) => mutation.cancel(orderId))))
+
+    expect(failure).toMatchObject({
+      operation: MutationOperation.Cancel,
+      failure: MutationFailure.Unknown,
+      outcome: MutationOutcome.Unknown,
+      evidence: {
+        contentHash: canonicalHashV1(body),
+        requestId: 'req-123',
+        status: 502,
+      },
+    })
+  })
 })
