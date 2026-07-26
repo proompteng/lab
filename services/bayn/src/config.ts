@@ -1,4 +1,4 @@
-import { Config, Effect, Match, Option, pipe, Redacted, Result, Schema, SchemaTransformation } from 'effect'
+import { Config, Effect, Option, pipe, Redacted, Result, Schema, SchemaTransformation } from 'effect'
 
 import { EmbeddedBuildMetadataSchema, embeddedBuildMetadata, type EmbeddedBuildMetadata } from './build'
 import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema, type EvaluationBounds } from './contracts'
@@ -373,103 +373,60 @@ type RuntimeModeSelection =
 
 const serviceRuntimeMode = (
   input: RuntimeModeResolutionInput,
-): Result.Result<RuntimeModeSelection, RuntimeConfigResolutionFailure> =>
-  pipe(
-    Option.fromNullishOr(input.alpaca),
-    Option.match({
-      onNone: () =>
-        pipe(
-          Match.value(input.maximumAuthority),
-          Match.when(Authority.Observe, () =>
-            Result.succeed<RuntimeModeSelection>({
-              runtimeMode: 'BrokerlessService',
-              qualificationRunId: input.qualificationRunId,
-              maximumAuthority: Authority.Observe,
-              alpaca: undefined,
-            }),
-          ),
-          Match.when(Authority.Paper, () =>
-            Result.fail<RuntimeConfigResolutionFailure>({
-              _tag: 'PaperAuthorityRequiresAlpacaBinding',
-              maximumAuthority: Authority.Paper,
-            }),
-          ),
-          Match.exhaustive,
-        ),
-      onSome: (alpaca) =>
-        pipe(
-          Match.value(input.maximumAuthority),
-          Match.when(Authority.Observe, () =>
-            Result.succeed<RuntimeModeSelection>({
-              runtimeMode: 'AutonomousObserveService',
-              qualificationRunId: input.qualificationRunId,
-              maximumAuthority: Authority.Observe,
-              alpaca,
-            }),
-          ),
-          Match.when(Authority.Paper, () =>
-            Result.fail<RuntimeConfigResolutionFailure>({
-              _tag: 'PaperAuthorityRequiresBoundedOperation',
-              maximumAuthority: Authority.Paper,
-            }),
-          ),
-          Match.exhaustive,
-        ),
-    }),
-  )
+): Result.Result<RuntimeModeSelection, RuntimeConfigResolutionFailure> => {
+  if (input.alpaca === undefined) {
+    return input.maximumAuthority === Authority.Observe
+      ? Result.succeed({
+          runtimeMode: 'BrokerlessService',
+          qualificationRunId: input.qualificationRunId,
+          maximumAuthority: Authority.Observe,
+          alpaca: undefined,
+        })
+      : Result.fail({
+          _tag: 'PaperAuthorityRequiresAlpacaBinding',
+          maximumAuthority: Authority.Paper,
+        })
+  }
+  return input.maximumAuthority === Authority.Observe
+    ? Result.succeed({
+        runtimeMode: 'AutonomousObserveService',
+        qualificationRunId: input.qualificationRunId,
+        maximumAuthority: Authority.Observe,
+        alpaca: input.alpaca,
+      })
+    : Result.fail({
+        _tag: 'PaperAuthorityRequiresBoundedOperation',
+        maximumAuthority: Authority.Paper,
+      })
+}
 
 const paperCandidateDiscoveryMode = (
   input: RuntimeModeResolutionInput,
-): Result.Result<RuntimeModeSelection, RuntimeConfigResolutionFailure> =>
-  pipe(
-    Match.value(input.maximumAuthority),
-    Match.when(Authority.Paper, () =>
-      Result.fail<RuntimeConfigResolutionFailure>({
-        _tag: 'PaperCandidateDiscoveryRequiresObserveAuthority',
-        maximumAuthority: Authority.Paper,
-      }),
-    ),
-    Match.when(Authority.Observe, () =>
-      pipe(
-        Option.fromNullishOr(input.qualificationRunId),
-        Result.fromOption(
-          (): RuntimeConfigResolutionFailure => ({
-            _tag: 'PaperCandidateDiscoveryRequiresQualificationRun',
-          }),
-        ),
-        Result.flatMap((qualificationRunId) =>
-          pipe(
-            Option.fromNullishOr(input.alpaca),
-            Result.fromOption(
-              (): RuntimeConfigResolutionFailure => ({
-                _tag: 'PaperCandidateDiscoveryRequiresAlpacaBinding',
-              }),
-            ),
-            Result.map(
-              (alpaca): RuntimeModeSelection => ({
-                runtimeMode: 'PaperCandidateDiscovery',
-                qualificationRunId,
-                maximumAuthority: Authority.Observe,
-                alpaca,
-              }),
-            ),
-          ),
-        ),
-      ),
-    ),
-    Match.exhaustive,
-  )
+): Result.Result<RuntimeModeSelection, RuntimeConfigResolutionFailure> => {
+  if (input.maximumAuthority === Authority.Paper) {
+    return Result.fail({
+      _tag: 'PaperCandidateDiscoveryRequiresObserveAuthority',
+      maximumAuthority: Authority.Paper,
+    })
+  }
+  if (input.qualificationRunId === undefined) {
+    return Result.fail({ _tag: 'PaperCandidateDiscoveryRequiresQualificationRun' })
+  }
+  if (input.alpaca === undefined) {
+    return Result.fail({ _tag: 'PaperCandidateDiscoveryRequiresAlpacaBinding' })
+  }
+  return Result.succeed({
+    runtimeMode: 'PaperCandidateDiscovery',
+    qualificationRunId: input.qualificationRunId,
+    maximumAuthority: Authority.Observe,
+    alpaca: input.alpaca,
+  })
+}
 
 const resolveRuntimeMode = (
   input: RuntimeModeResolutionInput,
 ): Result.Result<RuntimeModeSelection, RuntimeConfigResolutionFailure> =>
-  pipe(
-    Option.fromNullishOr(input.configuredOperation),
-    Option.match({
-      onNone: () => serviceRuntimeMode(input),
-      onSome: () => paperCandidateDiscoveryMode(input),
-    }),
-  )
+  input.configuredOperation === undefined ? serviceRuntimeMode(input) : paperCandidateDiscoveryMode(input)
 
 const attachRuntimeMode = (base: LoadedRuntimeConfigBase, selection: RuntimeModeSelection): LoadedRuntimeConfig => ({
   ...base,
@@ -517,17 +474,13 @@ const resolveEvaluationBounds = (
   )
 
 const validateCycleTiming = (input: BoundsResolved): Result.Result<BoundsResolved, RuntimeConfigResolutionFailure> =>
-  pipe(
-    Result.succeed(input),
-    Result.filterOrFail(
-      ({ parsed }) => parsed.cyclePollIntervalMs < parsed.cycleStallThresholdMs,
-      ({ parsed }): RuntimeConfigResolutionFailure => ({
+  input.parsed.cyclePollIntervalMs < input.parsed.cycleStallThresholdMs
+    ? Result.succeed(input)
+    : Result.fail({
         _tag: 'CyclePollIntervalNotShorterThanStallThreshold',
-        cyclePollIntervalMs: parsed.cyclePollIntervalMs,
-        cycleStallThresholdMs: parsed.cycleStallThresholdMs,
-      }),
-    ),
-  )
+        cyclePollIntervalMs: input.parsed.cyclePollIntervalMs,
+        cycleStallThresholdMs: input.parsed.cycleStallThresholdMs,
+      })
 
 const alpacaCredentialPresence = (config: ParsedRuntimeConfig): AlpacaCredentialPresence => ({
   accountId: config.configuredAlpaca.accountId !== undefined,
@@ -550,48 +503,32 @@ const resolveAlpacaCredentials = (
 ): Result.Result<CredentialsResolved, RuntimeConfigResolutionFailure> => {
   const presence = alpacaCredentialPresence(input.parsed)
   const alpacaCredentials = Option.getOrUndefined(completeAlpacaCredentials(input.parsed))
-  return pipe(
-    Result.succeed({ ...input, alpacaCredentials }),
-    Result.filterOrFail(
-      () => !hasAnyAlpacaCredential(presence) || alpacaCredentials !== undefined,
-      (): RuntimeConfigResolutionFailure => ({
+  return !hasAnyAlpacaCredential(presence) || alpacaCredentials !== undefined
+    ? Result.succeed({ ...input, alpacaCredentials })
+    : Result.fail({
         _tag: 'IncompleteAlpacaCredentials',
         configured: presence,
-      }),
-    ),
-  )
+      })
 }
 
 const resolveAlpacaBinding = (
   input: CredentialsResolved,
-): Result.Result<AlpacaResolved, RuntimeConfigResolutionFailure> =>
-  pipe(
-    Option.fromNullishOr(input.alpacaCredentials),
-    Option.match({
-      onNone: () => Result.succeed({ ...input, alpaca: undefined }),
-      onSome: (credentials) =>
-        pipe(
-          Option.fromNullishOr(input.parsed.authorityGenerationHash),
-          Result.fromOption(
-            (): RuntimeConfigResolutionFailure => ({
-              _tag: 'MissingAlpacaAuthorityGeneration',
-            }),
-          ),
-          Result.map(
-            (authorityGenerationHash): AlpacaResolved => ({
-              ...input,
-              alpaca: {
-                ...credentials,
-                authorityGenerationHash,
-                proxyUrl: input.parsed.configuredAlpaca.proxyUrl,
-                retryAttempts: input.parsed.configuredAlpaca.retryAttempts,
-                reconciliationIntervalMs: input.parsed.configuredAlpaca.reconciliationIntervalMs,
-              },
-            }),
-          ),
-        ),
-    }),
-  )
+): Result.Result<AlpacaResolved, RuntimeConfigResolutionFailure> => {
+  if (input.alpacaCredentials === undefined) return Result.succeed({ ...input, alpaca: undefined })
+  if (input.parsed.authorityGenerationHash === undefined) {
+    return Result.fail({ _tag: 'MissingAlpacaAuthorityGeneration' })
+  }
+  return Result.succeed({
+    ...input,
+    alpaca: {
+      ...input.alpacaCredentials,
+      authorityGenerationHash: input.parsed.authorityGenerationHash,
+      proxyUrl: input.parsed.configuredAlpaca.proxyUrl,
+      retryAttempts: input.parsed.configuredAlpaca.retryAttempts,
+      reconciliationIntervalMs: input.parsed.configuredAlpaca.reconciliationIntervalMs,
+    },
+  })
+}
 
 const resolveConfiguredRuntimeMode = (
   input: AlpacaResolved,
@@ -608,50 +545,32 @@ const resolveConfiguredRuntimeMode = (
 
 const validateProvenanceMode = (
   input: RuntimeModeResolved,
-): Result.Result<RuntimeModeResolved, RuntimeConfigResolutionFailure> =>
-  pipe(
-    Option.fromNullishOr(input.embeddedBuildMetadata),
-    Option.match({
-      onNone: () =>
-        pipe(
-          Match.value(input.parsed.provenanceMode),
-          Match.when('development', () => Result.succeed(input)),
-          Match.when('production', () =>
-            Result.fail<RuntimeConfigResolutionFailure>({
-              _tag: 'ProductionProvenanceRequiresEmbeddedMetadata',
-              provenanceMode: 'production',
-            }),
-          ),
-          Match.exhaustive,
-        ),
-      onSome: () =>
-        pipe(
-          Match.value(input.parsed.provenanceMode),
-          Match.when('production', () => Result.succeed(input)),
-          Match.when('development', () =>
-            Result.fail<RuntimeConfigResolutionFailure>({
-              _tag: 'EmbeddedMetadataRequiresProductionProvenance',
-              provenanceMode: 'development',
-            }),
-          ),
-          Match.exhaustive,
-        ),
-    }),
-  )
+): Result.Result<RuntimeModeResolved, RuntimeConfigResolutionFailure> => {
+  if (input.embeddedBuildMetadata === undefined) {
+    return input.parsed.provenanceMode === 'development'
+      ? Result.succeed(input)
+      : Result.fail({
+          _tag: 'ProductionProvenanceRequiresEmbeddedMetadata',
+          provenanceMode: 'production',
+        })
+  }
+  return input.parsed.provenanceMode === 'production'
+    ? Result.succeed(input)
+    : Result.fail({
+        _tag: 'EmbeddedMetadataRequiresProductionProvenance',
+        provenanceMode: 'development',
+      })
+}
 
 const validateProductionPostgresTls = (
   input: RuntimeModeResolved,
 ): Result.Result<RuntimeModeResolved, RuntimeConfigResolutionFailure> =>
-  pipe(
-    Result.succeed(input),
-    Result.filterOrFail(
-      ({ embeddedBuildMetadata, parsed }) => embeddedBuildMetadata === undefined || parsed.postgres.tls,
-      (): RuntimeConfigResolutionFailure => ({
+  input.embeddedBuildMetadata === undefined || input.parsed.postgres.tls
+    ? Result.succeed(input)
+    : Result.fail({
         _tag: 'ProductionPostgresRequiresTls',
         postgresTls: false,
-      }),
-    ),
-  )
+      })
 
 const configuredBuildMetadata = (config: ParsedRuntimeConfig): EmbeddedBuildMetadata => ({
   sourceRevision: config.configuredBuild.sourceRevision,
@@ -662,84 +581,64 @@ const configuredBuildMetadata = (config: ParsedRuntimeConfig): EmbeddedBuildMeta
 
 const resolveBuildMetadata = (
   input: RuntimeModeResolved,
-): Result.Result<BuildResolved, RuntimeConfigResolutionFailure> =>
-  pipe(
-    Option.fromNullishOr(input.embeddedBuildMetadata),
-    Option.match({
-      onNone: () =>
-        Result.succeed({
-          ...input,
-          decodedBuild: configuredBuildMetadata(input.parsed),
-        }),
-      onSome: (embedded) =>
-        pipe(
-          decodeEmbeddedBuildMetadata(embedded),
-          Result.mapError(
-            (cause): RuntimeConfigResolutionFailure => ({
-              _tag: 'InvalidEmbeddedBuildMetadata',
-              cause,
-            }),
-          ),
-          Result.map((decodedBuild) => ({ ...input, decodedBuild })),
-        ),
-    }),
+): Result.Result<BuildResolved, RuntimeConfigResolutionFailure> => {
+  if (input.embeddedBuildMetadata === undefined) {
+    return Result.succeed({
+      ...input,
+      decodedBuild: configuredBuildMetadata(input.parsed),
+    })
+  }
+  return pipe(
+    decodeEmbeddedBuildMetadata(input.embeddedBuildMetadata),
+    Result.mapError(
+      (cause): RuntimeConfigResolutionFailure => ({
+        _tag: 'InvalidEmbeddedBuildMetadata',
+        cause,
+      }),
+    ),
+    Result.map((decodedBuild) => ({ ...input, decodedBuild })),
   )
+}
 
 const validateSourceRevision = (input: BuildResolved): Result.Result<BuildResolved, RuntimeConfigResolutionFailure> =>
-  pipe(
-    Result.succeed(input),
-    Result.filterOrFail(
-      ({ parsed, decodedBuild }) => parsed.configuredBuild.sourceRevision === decodedBuild.sourceRevision,
-      ({ parsed, decodedBuild }): RuntimeConfigResolutionFailure => ({
+  input.parsed.configuredBuild.sourceRevision === input.decodedBuild.sourceRevision
+    ? Result.succeed(input)
+    : Result.fail({
         _tag: 'SourceRevisionMismatch',
-        configuredSourceRevision: parsed.configuredBuild.sourceRevision,
-        embeddedSourceRevision: decodedBuild.sourceRevision,
-      }),
-    ),
-  )
+        configuredSourceRevision: input.parsed.configuredBuild.sourceRevision,
+        embeddedSourceRevision: input.decodedBuild.sourceRevision,
+      })
 
 const validateImageRepository = (input: BuildResolved): Result.Result<BuildResolved, RuntimeConfigResolutionFailure> =>
-  pipe(
-    Result.succeed(input),
-    Result.filterOrFail(
-      ({ parsed, decodedBuild }) => parsed.configuredBuild.imageRepository === decodedBuild.imageRepository,
-      ({ parsed, decodedBuild }): RuntimeConfigResolutionFailure => ({
+  input.parsed.configuredBuild.imageRepository === input.decodedBuild.imageRepository
+    ? Result.succeed(input)
+    : Result.fail({
         _tag: 'ImageRepositoryMismatch',
-        configuredImageRepository: parsed.configuredBuild.imageRepository,
-        embeddedImageRepository: decodedBuild.imageRepository,
-      }),
-    ),
-  )
+        configuredImageRepository: input.parsed.configuredBuild.imageRepository,
+        embeddedImageRepository: input.decodedBuild.imageRepository,
+      })
 
 const validateStrategyBehaviorHash = (
   input: BuildResolved,
 ): Result.Result<BuildResolved, RuntimeConfigResolutionFailure> =>
-  pipe(
-    Result.succeed(input),
-    Result.filterOrFail(
-      ({ parsed, decodedBuild }) => parsed.configuredBuild.strategyBehaviorHash === decodedBuild.strategyBehaviorHash,
-      ({ parsed, decodedBuild }): RuntimeConfigResolutionFailure => ({
+  input.parsed.configuredBuild.strategyBehaviorHash === input.decodedBuild.strategyBehaviorHash
+    ? Result.succeed(input)
+    : Result.fail({
         _tag: 'StrategyBehaviorHashMismatch',
-        configuredStrategyBehaviorHash: parsed.configuredBuild.strategyBehaviorHash,
-        embeddedStrategyBehaviorHash: decodedBuild.strategyBehaviorHash,
-      }),
-    ),
-  )
+        configuredStrategyBehaviorHash: input.parsed.configuredBuild.strategyBehaviorHash,
+        embeddedStrategyBehaviorHash: input.decodedBuild.strategyBehaviorHash,
+      })
 
 const validateStrategyParameterHash = (
   input: BuildResolved,
 ): Result.Result<BuildResolved, RuntimeConfigResolutionFailure> =>
-  pipe(
-    Result.succeed(input),
-    Result.filterOrFail(
-      ({ parsed, decodedBuild }) => parsed.configuredBuild.strategyParameterHash === decodedBuild.strategyParameterHash,
-      ({ parsed, decodedBuild }): RuntimeConfigResolutionFailure => ({
+  input.parsed.configuredBuild.strategyParameterHash === input.decodedBuild.strategyParameterHash
+    ? Result.succeed(input)
+    : Result.fail({
         _tag: 'StrategyParameterHashMismatch',
-        configuredStrategyParameterHash: parsed.configuredBuild.strategyParameterHash,
-        embeddedStrategyParameterHash: decodedBuild.strategyParameterHash,
-      }),
-    ),
-  )
+        configuredStrategyParameterHash: input.parsed.configuredBuild.strategyParameterHash,
+        embeddedStrategyParameterHash: input.decodedBuild.strategyParameterHash,
+      })
 
 const assembleLoadedRuntimeConfig = ({
   parsed: config,

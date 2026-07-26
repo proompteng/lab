@@ -192,8 +192,8 @@ const runStore = <A, E, R>(
 const attempt = <A>(
   operation: ReconciliationStoreError['operation'],
   evaluate: () => A,
-): Effect.Effect<A, ReconciliationStoreError> =>
-  Effect.try({
+): Result.Result<A, ReconciliationStoreError> =>
+  Result.try({
     try: evaluate,
     catch: (cause) => storeError(operation, 'invariant', `paper reconciliation ${operation} invariant failed`, cause),
   })
@@ -307,7 +307,9 @@ export const makeReconciliation = (
           WHERE account_id = ${accountId}
           ORDER BY occurred_at, transaction_id COLLATE "C"
         `.pipe(Effect.flatMap(decodeTransactions))
-        const transactions = yield* attempt('reconcile', () => transactionRows.map(accountingTransactionFromRow))
+        const transactions = yield* Effect.fromResult(
+          attempt('reconcile', () => transactionRows.map(accountingTransactionFromRow)),
+        )
         const receiptRows = yield* sql<Record<string, unknown>>`
           SELECT
             schema_version, receipt_id, intent_id, broker_event_id,
@@ -442,8 +444,8 @@ export const makeReconciliation = (
             reconciledAt,
           }),
         )
-        const encodedDiscrepancies = yield* attempt('reconcile', () =>
-          encodeDiscrepancies(reconciliation.discrepancies),
+        const encodedDiscrepancies = yield* Effect.fromResult(
+          attempt('reconcile', () => encodeDiscrepancies(reconciliation.discrepancies)),
         )
         yield* sql`
           INSERT INTO reconciliations (

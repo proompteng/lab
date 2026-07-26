@@ -42,15 +42,12 @@ const assetEligibilityRules = [
 
 export const assetEligibility = (
   asset: AssetObservation,
-): Result.Result<
-  {
-    readonly eligible: boolean
-    readonly reasons: ReadonlyArray<PaperCandidateIneligibility>
-  },
-  never
-> => {
+): {
+  readonly eligible: boolean
+  readonly reasons: ReadonlyArray<PaperCandidateIneligibility>
+} => {
   const reasons = assetEligibilityRules.flatMap(([reason, applies]) => (applies(asset) ? [reason] : []))
-  return Result.succeed({ eligible: reasons.length === 0, reasons })
+  return { eligible: reasons.length === 0, reasons }
 }
 
 const validateReadEvidence = <A extends { readonly observedAt: string }>(
@@ -213,40 +210,35 @@ export const assembleValidatedObservations = (
   }
   const capturedAt = capturedAtDate.toISOString()
   return pipe(
-    Result.succeed(capturedAt),
-    Result.flatMap((capturedAt) =>
+    Result.all([
+      requireCondition(capturedAtMs < Date.parse(validatedSnapshot.snapshot.document.expiresAt), {
+        _tag: 'DocumentStale',
+        failure: 'document-stale',
+        observedAtMs: capturedAtMs,
+        expiresAt: validatedSnapshot.snapshot.document.expiresAt,
+      }),
       pipe(
-        Result.all([
-          requireCondition(capturedAtMs < Date.parse(validatedSnapshot.snapshot.document.expiresAt), {
-            _tag: 'DocumentStale',
-            failure: 'document-stale',
-            observedAtMs: capturedAtMs,
-            expiresAt: validatedSnapshot.snapshot.document.expiresAt,
+        assets.reads.map((asset) =>
+          requireCondition(Date.parse(asset.value.observedAt) <= capturedAtMs, {
+            _tag: 'ObservationChronologyMismatch',
+            failure: 'broker',
+            earlier: 'asset',
+            later: 'capture',
+            symbol: asset.value.symbol,
+            earlierObservedAt: asset.value.observedAt,
+            laterObservedAt: capturedAt,
           }),
-          pipe(
-            assets.reads.map((asset) =>
-              requireCondition(Date.parse(asset.value.observedAt) <= capturedAtMs, {
-                _tag: 'ObservationChronologyMismatch',
-                failure: 'broker',
-                earlier: 'asset',
-                later: 'capture',
-                symbol: asset.value.symbol,
-                earlierObservedAt: asset.value.observedAt,
-                laterObservedAt: capturedAt,
-              }),
-            ),
-            Result.all,
-          ),
-        ]),
-        Result.map(() => ({
-          [ValidatedObservationsTypeId]: true as const,
-          account,
-          accountConfiguration,
-          assets,
-          capturedAt,
-        })),
+        ),
+        Result.all,
       ),
-    ),
+    ]),
+    Result.map(() => ({
+      [ValidatedObservationsTypeId]: true as const,
+      account,
+      accountConfiguration,
+      assets,
+      capturedAt,
+    })),
   )
 }
 
