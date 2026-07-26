@@ -1,6 +1,11 @@
 import { pipe, Result } from 'effect'
 
-import { makeRunIdentity, makeStrategyProtocolHash, type RuntimeProvenance } from '../contracts'
+import {
+  makeRunIdentityResult,
+  makeStrategyProtocolHashResult,
+  type ContractConstructionFailure,
+  type RuntimeProvenance,
+} from '../contracts'
 import {
   MICROS,
   accrueCashYield,
@@ -19,7 +24,7 @@ import {
   type FeeInput,
   type FillTerms,
 } from '../execution-model'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1, canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import type {
   CashChange,
   DailyBar,
@@ -106,6 +111,8 @@ interface ReferenceEvaluationWithWork {
 
 export type ReferenceEvaluationFailure =
   | ExecutionModelFailure
+  | ContractConstructionFailure
+  | CanonicalHashFailure
   | {
       readonly _tag: 'UnsupportedReferenceExecutionModel'
       readonly actual: string
@@ -1565,7 +1572,9 @@ const evaluateReferenceWithWork = (
     })
   }
 
-  const parameterHash = canonicalHashV1(protocol)
+  const parameterHashResult = canonicalHashV1Result(protocol)
+  if (Result.isFailure(parameterHashResult)) return Result.fail(parameterHashResult.failure)
+  const parameterHash = parameterHashResult.success
   const strategyIdentity = {
     name: provenance.strategy.name,
     behaviorHash: provenance.strategy.behaviorHash,
@@ -1581,7 +1590,7 @@ const evaluateReferenceWithWork = (
       actualParameterHash: provenance.strategy.parameterHash,
     })
   }
-  const runId = makeRunIdentity({
+  const runIdentityResult = makeRunIdentityResult({
     schemaVersion: 'bayn.run-identity.v1',
     sourceRevision: provenance.sourceRevision,
     image: provenance.image,
@@ -1593,8 +1602,12 @@ const evaluateReferenceWithWork = (
     finalizedSnapshot: manifest.finalizedSnapshot,
     calendarVersion: manifest.finalizedSnapshot.calendarVersion,
     bounds: manifest.bounds,
-  }).runId
-  const protocolHash = makeStrategyProtocolHash(strategyIdentity)
+  })
+  if (Result.isFailure(runIdentityResult)) return Result.fail(runIdentityResult.failure)
+  const protocolHashResult = makeStrategyProtocolHashResult(strategyIdentity)
+  if (Result.isFailure(protocolHashResult)) return Result.fail(protocolHashResult.failure)
+  const runId = runIdentityResult.success.runId
+  const protocolHash = protocolHashResult.success
   const candidateTargetsResult = Result.all(
     eligibleSignals.map((signalIndex) =>
       pipe(
