@@ -14,7 +14,11 @@
 - `package.json` is authoritative for the Effect version. Bayn uses the exact Effect 4 beta cohort; keep `effect` and
   `@effect/platform-node` on the same version. Verify APIs against installed sources and `~/github.com/effect` only when
   its package versions match. APIs under `effect/unstable/**` may change between betas, so never use floating ranges.
-- Use Effect at I/O and application boundaries, not as a wrapper around pure functions or constants.
+- Return a plain value from total pure code. Use `Result` only for eager, in-memory validation, parsing, or decisions that
+  can fail; once data is validated, keep downstream construction plain instead of wrapping it in `Result<_, never>`.
+- Use `Effect` for lazy work involving I/O, services, async execution, time, concurrency, resources, interruption,
+  retries, or deadlines. Lift `Result` once with `Effect.fromResult`; avoid `Effect<Result<...>>` unless the inner
+  failure is intentionally successful business data.
 - Prefer official Effect integrations when they remove hand-written lifecycle, interruption, or decoding code. Add them
   as direct, peer-compatible dependencies; never rely on another workspace's transitive dependency.
 

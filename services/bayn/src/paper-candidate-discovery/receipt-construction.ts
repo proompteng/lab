@@ -109,7 +109,7 @@ const makeCandidate = (
             symbol: plannedIntent.symbol,
           }),
         ),
-        Result.bind('eligibility', ({ asset }) => assetEligibility(asset.value)),
+        Result.let('eligibility', ({ asset }) => assetEligibility(asset.value)),
         Result.map(({ asset, eligibility, risk, target }) => ({
           ordinal,
           observedPlanIntentId: risk.evaluation.input.intentId,
