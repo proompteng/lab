@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { Result } from 'effect'
 
 import { defaultExecutionModel, MICROS } from './execution-model'
 import { canonicalHashV1 } from './hash'
@@ -105,7 +106,11 @@ const targets: readonly SimulationTarget[] = [
   },
 ]
 
-const run = (input: readonly AlignedSession[]) => simulate(input, targets, 1, protocol, MICROS, 'a'.repeat(64), true)
+const run = (input: readonly AlignedSession[]) => {
+  const result = simulate(input, targets, 1, protocol, MICROS, 'a'.repeat(64), true)
+  if (Result.isFailure(result)) throw new Error(result.failure._tag)
+  return result.success
+}
 
 const requests = (result: ReturnType<typeof run>, sessionDate: IsoDate) =>
   result.simulation?.orders

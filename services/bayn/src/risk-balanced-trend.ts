@@ -1,7 +1,7 @@
-import { Result, Schema } from 'effect'
+import { pipe, Result, Schema } from 'effect'
 
 import type { RuntimeProvenance } from './contracts'
-import { MICROS, referencePriceMicros } from './execution-model'
+import { MICROS, referencePriceMicros, type ExecutionModelFailure } from './execution-model'
 import { ExecutionSessionBindingSchema, type ExecutionSessionBinding } from './execution-session'
 import { canonicalHashV1 } from './hash'
 import { strictParseOptions } from './schemas'
@@ -22,6 +22,8 @@ import {
   simulate,
   TRADING_DAYS,
   type AlignedSession,
+  type SimulationFailure,
+  type SimulationResult,
   type SimulationTarget,
 } from './simulation'
 import {
@@ -305,7 +307,7 @@ export const compileCurrentRiskBalancedTrendDecision = (
   inputManifest: InputManifest,
   protocol: Protocol,
   cycleBinding: CurrentDecisionCycleBinding,
-): CurrentRiskBalancedTrendDecision => {
+): Result.Result<CurrentRiskBalancedTrendDecision, ExecutionModelFailure> => {
   const binding = decodeCurrentDecisionCycleBinding(cycleBinding)
   const sessions = alignBars(bars, protocol.universe, inputManifest)
   const signalIndex = sessions.length - 1
@@ -325,12 +327,17 @@ export const compileCurrentRiskBalancedTrendDecision = (
     throw new Error('current strategy decision requires a month-end due cycle')
   }
   const decision = decisionFromAlignedSessions(sessions, signalIndex, protocol)
-  const priceMicros = Object.fromEntries(
-    protocol.universe.map((symbol) => [
-      symbol,
-      referencePriceMicros(terminalSession.bars[symbol].close, protocol.executionModel).toString(),
-    ]),
+  const prices = pipe(
+    protocol.universe.map((symbol) =>
+      Result.map(
+        referencePriceMicros(terminalSession.bars[symbol].close, protocol.executionModel),
+        (price) => [symbol, price.toString()] as const,
+      ),
+    ),
+    Result.all,
   )
+  if (Result.isFailure(prices)) return Result.fail(prices.failure)
+  const priceMicros = Object.fromEntries(prices.success)
   const priceSymbols = Object.keys(priceMicros)
   if (
     decision.signalDate !== terminalSession.date ||
@@ -341,7 +348,7 @@ export const compileCurrentRiskBalancedTrendDecision = (
   ) {
     throw new Error('current strategy decision and terminal closes do not cover one compiled universe session')
   }
-  return { decision, priceMicros }
+  return Result.succeed({ decision, priceMicros })
 }
 
 export interface QualificationPrecommit {
@@ -382,16 +389,24 @@ export interface RiskBalancedTrendCompatibilityFailure {
   readonly cause: unknown
 }
 
-export type RiskBalancedTrendEvaluationIssue = SimulationReconciliationIssue | RiskBalancedTrendCompatibilityFailure
+export interface RiskBalancedTrendSimulationFailure {
+  readonly _tag: 'RiskBalancedTrendSimulationFailure'
+  readonly cause: SimulationFailure
+}
+
+export type RiskBalancedTrendEvaluationIssue =
+  | SimulationReconciliationIssue
+  | RiskBalancedTrendCompatibilityFailure
+  | RiskBalancedTrendSimulationFailure
 
 interface PreparedEvaluation {
   readonly runId: string
   readonly protocolHash: string
-  readonly strategy: ReturnType<typeof simulate>
-  readonly buyAndHold: ReturnType<typeof simulate>
-  readonly directVolTiming: ReturnType<typeof simulate>
-  readonly doubleCost: ReturnType<typeof simulate>
-  readonly simulation: NonNullable<ReturnType<typeof simulate>['simulation']>
+  readonly strategy: SimulationResult
+  readonly buyAndHold: SimulationResult
+  readonly directVolTiming: SimulationResult
+  readonly doubleCost: SimulationResult
+  readonly simulation: NonNullable<SimulationResult['simulation']>
   readonly signalDecisions: readonly SignalDecision[]
 }
 
@@ -401,7 +416,7 @@ const prepareEvaluation = (
   inputManifest: InputManifest,
   protocol: Protocol,
   provenance: RuntimeProvenance,
-): PreparedEvaluation => {
+): Result.Result<PreparedEvaluation, readonly RiskBalancedTrendEvaluationIssue[]> => {
   const { runId, protocolHash } = makeEvaluationIdentity(inputManifest, protocol, provenance)
   const sessions = alignBars(bars, protocol.universe, inputManifest)
   const sessionDates = sessions.map((session) => session.date)
@@ -449,23 +464,33 @@ const prepareEvaluation = (
     runId,
     false,
   )
-  if (strategy.simulation === null) throw new Error('candidate simulation did not retain its evidence trace')
-  const signalDecisions = strategy.signalDecisions.map((decision) => {
+  const simulations = Result.all({ strategy, buyAndHold, directVolTiming, doubleCost })
+  if (Result.isFailure(simulations)) {
+    return Result.fail(
+      Object.freeze([
+        Object.freeze({
+          _tag: 'RiskBalancedTrendSimulationFailure' as const,
+          cause: simulations.failure,
+        }),
+      ]),
+    )
+  }
+  if (simulations.success.strategy.simulation === null) {
+    return Result.fail(riskBalancedTrendCompatibilityFailure('prepare', 'candidate simulation omitted its trace'))
+  }
+  const signalDecisions = simulations.success.strategy.signalDecisions.map((decision) => {
     if (decision.schemaVersion !== ContractVersion.DecisionPlan) {
       throw new Error('risk-balanced trend simulation retained a decision from another strategy')
     }
     return decision
   })
-  return {
+  return Result.succeed({
     runId,
     protocolHash,
-    strategy,
-    buyAndHold,
-    directVolTiming,
-    doubleCost,
-    simulation: strategy.simulation,
+    ...simulations.success,
+    simulation: simulations.success.strategy.simulation,
     signalDecisions,
-  }
+  })
 }
 
 export const riskBalancedTrendCompatibilityFailure = (
@@ -486,6 +511,7 @@ export const renderRiskBalancedTrendEvaluationIssues = (issues: readonly RiskBal
   issues
     .map((issue) => {
       if (issue._tag === 'RiskBalancedTrendCompatibilityFailure') return renderCompatibilityCause(issue.cause)
+      if (issue._tag === 'RiskBalancedTrendSimulationFailure') return renderCompatibilityCause(issue.cause)
       return renderSimulationReconciliationIssue(issue)
     })
     .join('; ')
@@ -496,10 +522,13 @@ export const evaluateRiskBalancedTrend = (
   protocol: Protocol,
   provenance: RuntimeProvenance,
 ): Result.Result<EvaluationResult, readonly RiskBalancedTrendEvaluationIssue[]> => {
-  const prepared = Result.try({
-    try: () => prepareEvaluation(bars, inputManifest, protocol, provenance),
-    catch: (cause) => riskBalancedTrendCompatibilityFailure('prepare', cause),
-  })
+  const prepared = pipe(
+    Result.try({
+      try: () => prepareEvaluation(bars, inputManifest, protocol, provenance),
+      catch: (cause) => riskBalancedTrendCompatibilityFailure('prepare', cause),
+    }),
+    Result.flatMap((decision) => decision),
+  )
   if (Result.isFailure(prepared)) return Result.fail(prepared.failure)
   const markedEquity = reconcileMarkedEquity({
     runId: prepared.success.runId,

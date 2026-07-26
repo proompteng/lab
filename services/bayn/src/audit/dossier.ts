@@ -1,4 +1,4 @@
-import { Schema } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { canonicalHashV1 } from '../hash'
 import { QualificationLockSchema, QualificationResultSchema } from '../qualification'
@@ -10,6 +10,7 @@ import {
   type QualificationAuditInput,
   type QualificationAuditReport,
 } from './audit'
+import type { ReferenceEvaluationFailure } from './reference'
 
 const decodeLock = Schema.decodeUnknownSync(QualificationLockSchema, StrictParseOptions)
 const decodeResult = Schema.decodeUnknownSync(QualificationResultSchema, StrictParseOptions)
@@ -98,8 +99,12 @@ export interface QualificationDossier {
   readonly dossierHash: string
 }
 
-export const makeQualificationDossier = (input: QualificationAuditInput): QualificationDossier => {
-  const audit = auditQualification(input)
+export const makeQualificationDossier = (
+  input: QualificationAuditInput,
+): Result.Result<QualificationDossier, ReferenceEvaluationFailure> => {
+  const auditResult = auditQualification(input)
+  if (Result.isFailure(auditResult)) return Result.fail(auditResult.failure)
+  const audit = auditResult.success
   const database = input.database
   validateSubject(database, input.manifest, audit)
   const lock = decodeLock(database.qualification.lock)
@@ -144,5 +149,5 @@ export const makeQualificationDossier = (input: QualificationAuditInput): Qualif
       capitalPromotion: false as const,
     },
   }
-  return { ...material, dossierHash: canonicalHashV1(material) }
+  return Result.succeed({ ...material, dossierHash: canonicalHashV1(material) })
 }

@@ -329,7 +329,14 @@ const compileObserveStrategyDecision = (
     try: () => input.strategy.currentDecision(facts.snapshot.bars, facts.snapshot.manifest, executionSession),
     catch: (cause) =>
       operationalError('strategy', 'current-decision', 'current strategy decision compilation failed', cause),
-  })
+  }).pipe(
+    Effect.flatMap(Effect.fromResult),
+    Effect.mapError((cause) =>
+      cause._tag === 'OperationalError'
+        ? cause
+        : operationalError('strategy', 'current-decision', 'current strategy decision compilation failed', cause),
+    ),
+  )
 
 const prepareObservePlanner = (
   input: ObserveDecisionInput,
@@ -378,48 +385,52 @@ const reduceObserveRiskInputs = (
   prices: SignalSessionReferencePrices,
 ): Result.Result<readonly ShadowDeltaRiskInput[], ObserveDecisionCompositionFailure> =>
   Result.mapError(
-    Result.try((): readonly ShadowDeltaRiskInput[] =>
-      targetPlan.intentTargets.map((target): ShadowDeltaRiskInput => {
+    Result.all(
+      targetPlan.intentTargets.map((target) => {
         const referencePrice = BigInt(prices.priceMicros[target.symbol])
-        const fillTerms = makeFillTerms(
-          target.side === OrderSide.Buy ? 'buy' : 'sell',
-          BigInt(target.quantityMicros),
-          referencePrice,
-          input.executionModel,
-          MICROS,
+        return Result.map(
+          makeFillTerms(
+            target.side === OrderSide.Buy ? 'buy' : 'sell',
+            BigInt(target.quantityMicros),
+            referencePrice,
+            input.executionModel,
+            MICROS,
+          ),
+          (fillTerms): ShadowDeltaRiskInput => {
+            const reconciliation = facts.reconciliation
+            const finalizedSnapshot = facts.snapshot.manifest.finalizedSnapshot
+            const state: State = {
+              schemaVersion: 'bayn.paper-risk-state.v2',
+              brokerMode: BrokerMode.Paper,
+              account: reconciliation.brokerState.account,
+              positions: reconciliation.brokerState.positions,
+              positionsObservedAt: reconciliation.brokerState.positionsObservedAt,
+              orders: reconciliation.brokerState.orders,
+              ordersObservedAt: reconciliation.brokerState.ordersObservedAt,
+              reconciliation: reconciliation.brokerState.reconciliation,
+              authority: authorityObservation.authority,
+              authorityObservedAt: authorityObservation.observedAt,
+              unknownMutationCount: reconciliation.riskContext.unknownMutationCount,
+              dailyTradedNotionalMicros: reconciliation.riskContext.dailyTradedNotionalMicros,
+              dayStartEquityMicros: reconciliation.riskContext.dayStartEquityMicros,
+              peakEquityMicros: reconciliation.riskContext.peakEquityMicros,
+              accountingHash: reconciliation.brokerState.accountingHash,
+              marketDataSymbol: target.symbol,
+              marketDataHash: finalizedSnapshot.contentHash,
+              referencePriceMicros: referencePrice.toString(),
+              expectedExecutionPriceMicros: fillTerms.fillPriceMicros.toString(),
+              marketDataObservedAt: facts.evaluatedAt,
+              executionSession,
+              reservedBuyingPowerMicros: '0',
+              evaluatedAt: facts.evaluatedAt,
+            }
+            return {
+              symbol: target.symbol,
+              notionalLimitMicros: fillTerms.notionalMicros.toString(),
+              state,
+            }
+          },
         )
-        const reconciliation = facts.reconciliation
-        const finalizedSnapshot = facts.snapshot.manifest.finalizedSnapshot
-        const state: State = {
-          schemaVersion: 'bayn.paper-risk-state.v2',
-          brokerMode: BrokerMode.Paper,
-          account: reconciliation.brokerState.account,
-          positions: reconciliation.brokerState.positions,
-          positionsObservedAt: reconciliation.brokerState.positionsObservedAt,
-          orders: reconciliation.brokerState.orders,
-          ordersObservedAt: reconciliation.brokerState.ordersObservedAt,
-          reconciliation: reconciliation.brokerState.reconciliation,
-          authority: authorityObservation.authority,
-          authorityObservedAt: authorityObservation.observedAt,
-          unknownMutationCount: reconciliation.riskContext.unknownMutationCount,
-          dailyTradedNotionalMicros: reconciliation.riskContext.dailyTradedNotionalMicros,
-          dayStartEquityMicros: reconciliation.riskContext.dayStartEquityMicros,
-          peakEquityMicros: reconciliation.riskContext.peakEquityMicros,
-          accountingHash: reconciliation.brokerState.accountingHash,
-          marketDataSymbol: target.symbol,
-          marketDataHash: finalizedSnapshot.contentHash,
-          referencePriceMicros: referencePrice.toString(),
-          expectedExecutionPriceMicros: fillTerms.fillPriceMicros.toString(),
-          marketDataObservedAt: facts.evaluatedAt,
-          executionSession,
-          reservedBuyingPowerMicros: '0',
-          evaluatedAt: facts.evaluatedAt,
-        }
-        return {
-          symbol: target.symbol,
-          notionalLimitMicros: fillTerms.notionalMicros.toString(),
-          state,
-        }
       }),
     ),
     (cause) => compositionFailure('shadow-risk-inputs', 'shadow risk input construction failed', cause),

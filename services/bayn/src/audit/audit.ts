@@ -19,7 +19,7 @@ import {
   type Protocol,
   type SimulationTrace,
 } from '../types'
-import { evaluateReference, type ReferenceEvaluation } from './reference'
+import { evaluateReference, type ReferenceEvaluation, type ReferenceEvaluationFailure } from './reference'
 
 const decodeReconciliation = Schema.decodeUnknownSync(ReconciliationResultSchema, StrictParseOptions)
 type GateScalar = EconomicVerdict['gates'][number]['actual']
@@ -298,7 +298,9 @@ const makeMarkedEquityAuditMaterial = (
       }
 }
 
-const makeAuditFacts = (input: QualificationAuditInput): QualificationAuditFacts => {
+const makeAuditFacts = (
+  input: QualificationAuditInput,
+): Result.Result<QualificationAuditFacts, ReferenceEvaluationFailure> => {
   const database = input.database
   if (database.protocol.strategyName !== contract.name || database.run.strategyName !== contract.name) {
     throw new Error('stored qualification uses an unsupported strategy contract')
@@ -321,7 +323,9 @@ const makeAuditFacts = (input: QualificationAuditInput): QualificationAuditFacts
       parameterSchemaVersion: database.protocol.schemaVersion,
     },
   })
-  const reference = evaluateReference(input.bars, input.manifest, input.protocol, provenance)
+  const referenceResult = evaluateReference(input.bars, input.manifest, input.protocol, provenance)
+  if (Result.isFailure(referenceResult)) return Result.fail(referenceResult.failure)
+  const reference = referenceResult.success
   const trace = reference.strategy.trace
   if (trace === null) throw new Error('reference evaluation omitted its candidate trace')
   const sortedReplicas = [...input.signalReplicas].sort()
@@ -330,7 +334,7 @@ const makeAuditFacts = (input: QualificationAuditInput): QualificationAuditFacts
     if (left.replica !== right.replica) return left.replica < right.replica ? -1 : 1
     return left.queryId < right.queryId ? -1 : left.queryId > right.queryId ? 1 : 0
   })
-  return {
+  return Result.succeed({
     input,
     database,
     artifact: new Map(database.artifacts.map((value) => [value.name, value])),
@@ -345,7 +349,7 @@ const makeAuditFacts = (input: QualificationAuditInput): QualificationAuditFacts
     sortedAccess,
     publisherSet: new Set(input.signalPrincipals.publishers),
     markedEquity: makeMarkedEquityAuditMaterial(input, reference, trace),
-  }
+  })
 }
 
 const auditStoredEvidence = (facts: QualificationAuditFacts): readonly AuditCheck[] => {
@@ -836,8 +840,12 @@ const makeAuditReport = (facts: QualificationAuditFacts, checks: readonly AuditC
   return { ...material, auditHash: canonicalHashV1(material) }
 }
 
-export const auditQualification = (input: QualificationAuditInput): QualificationAuditReport => {
-  const facts = makeAuditFacts(input)
+export const auditQualification = (
+  input: QualificationAuditInput,
+): Result.Result<QualificationAuditReport, ReferenceEvaluationFailure> => {
+  const factsResult = makeAuditFacts(input)
+  if (Result.isFailure(factsResult)) return Result.fail(factsResult.failure)
+  const facts = factsResult.success
   const checks = [
     ...auditStoredEvidence(facts),
     ...auditReferenceArtifacts(facts),
@@ -845,5 +853,5 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
     ...auditQualificationBindings(facts),
     ...auditSignalAndRepository(facts),
   ]
-  return makeAuditReport(facts, checks)
+  return Result.succeed(makeAuditReport(facts, checks))
 }

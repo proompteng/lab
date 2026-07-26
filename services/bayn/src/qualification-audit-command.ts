@@ -1,7 +1,7 @@
 import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
-import { Config, Data, Effect, FileSystem, Layer, Logger, Redacted, Schema, Stdio, Stream } from 'effect'
+import { Config, Data, Effect, FileSystem, Layer, Logger, Redacted, Result, Schema, Stdio, Stream } from 'effect'
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process'
 
 import { EvaluationEventSchema, decodeInputManifestArtifact } from './evidence-contracts'
@@ -12,10 +12,12 @@ import {
   auditQualification,
   classifySignalTableAccess,
   type AuditDatabaseSnapshot,
+  type QualificationAuditReport,
   type RepositoryAudit,
   type SignalAccessRecord,
 } from './audit/audit'
-import { makeQualificationDossier } from './audit/dossier'
+import { makeQualificationDossier, type QualificationDossier } from './audit/dossier'
+import type { ReferenceEvaluationFailure } from './audit/reference'
 import {
   NonNegativeIntegerSchema as NonNegativeInteger,
   PositiveIntegerSchema as PositiveInteger,
@@ -571,10 +573,14 @@ const main = Effect.gen(function* () {
     signalPrincipals: { candidate: input.signalUsername, publishers: [input.signalPublisherUsername] },
     repository,
   }
-  const report = yield* Effect.try({
-    try: () => (input.output === 'dossier' ? makeQualificationDossier(auditInput) : auditQualification(auditInput)),
+  const reportDecision = yield* Effect.try({
+    try: (): Result.Result<QualificationAuditReport | QualificationDossier, ReferenceEvaluationFailure> =>
+      input.output === 'dossier' ? makeQualificationDossier(auditInput) : auditQualification(auditInput),
     catch: (cause) => commandError('audit', 'qualification audit evaluation failed', cause),
   })
+  const report = yield* Effect.fromResult(reportDecision).pipe(
+    Effect.mapError((cause) => commandError('audit', 'qualification audit execution model failed', cause)),
+  )
   const output = yield* encodeJson(report)
   const stdio = yield* Stdio.Stdio
   yield* Stream.run(Stream.make(`${output}\n`), stdio.stdout())

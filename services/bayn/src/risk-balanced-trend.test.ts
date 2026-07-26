@@ -280,10 +280,12 @@ describe('risk-balanced trend candidate', () => {
         ? { ...bar, close: 100.123456 }
         : bar,
     )
-    const current = strategy.currentDecision(
-      bars,
-      snapshot.manifest,
-      currentDecisionBinding(snapshot.manifest.lastSession, ['2020-04-30', '2020-05-01', '2020-05-04']),
+    const current = assertSuccess(
+      strategy.currentDecision(
+        bars,
+        snapshot.manifest,
+        currentDecisionBinding(snapshot.manifest.lastSession, ['2020-04-30', '2020-05-01', '2020-05-04']),
+      ),
     )
     const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
     const historyLength = Math.max(fixtureProtocol.volatilityWindow, ...fixtureProtocol.horizons) + 1
@@ -295,7 +297,7 @@ describe('risk-balanced trend candidate', () => {
       fixtureProtocol.universe.map((symbol) => {
         const close = closesBySymbolAndDate.get(`${symbol}\u001f${snapshot.manifest.finalizedSnapshot.lastSession}`)
         if (close === undefined) throw new Error(`fixture is missing terminal close for ${symbol}`)
-        return [symbol, referencePriceMicros(close, fixtureProtocol.executionModel).toString()]
+        return [symbol, assertSuccess(referencePriceMicros(close, fixtureProtocol.executionModel)).toString()]
       }),
     )
     const expectedDecision = makeRiskBalancedTrendDecision(
@@ -319,6 +321,32 @@ describe('risk-balanced trend candidate', () => {
     expect(current.priceMicros[fixtureProtocol.universe[0]]).toBe('100123500')
     expect(Object.keys(current.priceMicros)).toEqual([...fixtureProtocol.universe])
     expect(Object.values(current.priceMicros).every((price) => /^[1-9][0-9]*$/.test(price))).toBe(true)
+  })
+
+  test('returns terminal-price quantization failures through the current-decision Result', () => {
+    const snapshot = makeSnapshot(1_129)
+    const protocol = {
+      ...fixtureProtocol,
+      executionModel: {
+        ...fixtureProtocol.executionModel,
+        precision: {
+          ...fixtureProtocol.executionModel.precision,
+          priceIncrementMicros: '1000000000000',
+        },
+      },
+    }
+    const strategy = makeStrategy(protocol, makeTestProvenance(protocol))
+    const current = strategy.currentDecision(
+      snapshot.bars,
+      snapshot.manifest,
+      currentDecisionBinding(snapshot.manifest.lastSession, ['2020-04-30', '2020-05-01', '2020-05-04']),
+    )
+
+    assert(Result.isFailure(current), 'current decision must preserve execution-model price failure data')
+    expect(current.failure).toMatchObject({
+      _tag: 'InvalidReferencePrice',
+      reason: 'rounded-to-zero',
+    })
   })
 
   test('rejects a current decision outside the bound month-end cycle', () => {

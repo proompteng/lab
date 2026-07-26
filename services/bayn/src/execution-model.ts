@@ -1,8 +1,8 @@
-import { Result } from 'effect'
+import { pipe, Result } from 'effect'
 
 import { canonicalHashV1 } from './hash'
 import type { ExecutionModel, IsoDate, OrderRejectionReason, OrderStatus } from './types'
-import { roundUnsignedHalfUp } from './unsigned-round-half-up'
+import { roundUnsignedHalfUp, type UnsignedRoundHalfUpFailure } from './unsigned-round-half-up'
 
 export const MICROS = 1_000_000n
 const PPM = 1_000_000n
@@ -59,61 +59,208 @@ export const defaultExecutionModel: ExecutionModel = {
   doubleCostMultiplier: 2,
 }
 
-const ensureUnsigned = (value: string, name: string): bigint => {
-  if (!/^[0-9]+$/.test(value)) throw new Error(`${name} must be an unsigned integer string`)
-  return BigInt(value)
+type FixedPointFailureReason = 'negative' | 'not-finite' | 'precision-exceeded'
+
+export type ExecutionModelFailure =
+  | {
+      readonly _tag: 'InvalidUnsignedInteger'
+      readonly field: string
+      readonly value: string
+      readonly minimum: bigint
+    }
+  | {
+      readonly _tag: 'InvalidFixedPointNumber'
+      readonly field: string
+      readonly value: number
+      readonly scale: number
+      readonly reason: FixedPointFailureReason
+    }
+  | {
+      readonly _tag: 'InvalidIntegerNumber'
+      readonly field: string
+      readonly value: number
+      readonly minimum: number
+      readonly maximum: number
+    }
+  | {
+      readonly _tag: 'InvalidCeilingDivision'
+      readonly numerator: bigint
+      readonly denominator: bigint
+      readonly minimumNumerator: 0n
+      readonly minimumDenominator: 1n
+    }
+  | UnsignedRoundHalfUpFailure
+  | {
+      readonly _tag: 'InvalidQuantization'
+      readonly operation: 'down'
+      readonly value: bigint
+      readonly increment: bigint
+      readonly minimumValue: 0n
+      readonly minimumIncrement: 1n
+    }
+  | {
+      readonly _tag: 'InvalidReferencePrice'
+      readonly price: number
+      readonly reason: 'not-positive' | 'rounded-to-zero'
+    }
+  | {
+      readonly _tag: 'InvalidDesiredQuantity'
+      readonly equityMicros: bigint
+      readonly weight: number
+      readonly priceMicros: bigint
+      readonly reason: 'invalid-equity-or-price' | 'weight-exceeds-one'
+    }
+  | {
+      readonly _tag: 'InvalidFillTerms'
+      readonly side: 'buy' | 'sell'
+      readonly quantityMicros: bigint
+      readonly referencePriceMicros: bigint
+      readonly costMultiplierMicros: bigint
+      readonly reason: 'invalid-quantity-or-price' | 'invalid-cost-multiplier' | 'costs-consume-reference-price'
+    }
+  | {
+      readonly _tag: 'OrderOutcomeCanonicalizationFailed'
+      readonly identity: unknown
+      readonly cause: unknown
+    }
+  | {
+      readonly _tag: 'InvalidFeeCostMultiplier'
+      readonly costMultiplierMicros: bigint
+      readonly minimum: 1n
+    }
+  | {
+      readonly _tag: 'InvalidCashYield'
+      readonly cashMicros: bigint
+      readonly elapsedDays: number
+      readonly reason: 'negative-cash' | 'invalid-elapsed-days'
+    }
+  | {
+      readonly _tag: 'InvalidCashAccrualPeriod'
+      readonly from: IsoDate
+      readonly to: IsoDate
+    }
+  | {
+      readonly _tag: 'InvalidSaleCostBasis'
+      readonly positionCostBasisMicros: bigint
+      readonly soldQuantityMicros: bigint
+      readonly positionQuantityMicros: bigint
+      readonly reason: 'invalid-position' | 'quantity-exceeds-position'
+    }
+  | {
+      readonly _tag: 'InvalidQuantityScale'
+      readonly quantityMicros: bigint
+      readonly scalePpm: bigint
+      readonly minimumScalePpm: 0n
+      readonly maximumScalePpm: 1_000_000n
+    }
+
+type ExecutionResult<A> = Result.Result<A, ExecutionModelFailure>
+
+const fail = <A>(failure: ExecutionModelFailure): ExecutionResult<A> => Result.fail(failure)
+
+const ensureUnsigned = (value: string, field: string, minimum = 0n): ExecutionResult<bigint> => {
+  if (!/^[0-9]+$/.test(value)) {
+    return fail({ _tag: 'InvalidUnsignedInteger', field, value, minimum })
+  }
+  const parsed = BigInt(value)
+  return parsed < minimum ? fail({ _tag: 'InvalidUnsignedInteger', field, value, minimum }) : Result.succeed(parsed)
 }
 
-const scaledNumber = (value: number, name: string, scale = Number(MICROS)): bigint => {
-  if (!Number.isFinite(value) || value < 0) throw new Error(`${name} must be finite and non-negative`)
+const scaledNumber = (value: number, field: string, scale = Number(MICROS)): ExecutionResult<bigint> => {
+  if (!Number.isFinite(value)) {
+    return fail({ _tag: 'InvalidFixedPointNumber', field, value, scale, reason: 'not-finite' })
+  }
+  if (value < 0) {
+    return fail({ _tag: 'InvalidFixedPointNumber', field, value, scale, reason: 'negative' })
+  }
   const scaled = value * scale
   const rounded = Math.round(scaled)
   const floatingPointTolerance = Math.max(1e-9, Number.EPSILON * Math.abs(scaled) * 4)
-  if (!Number.isSafeInteger(rounded) || Math.abs(scaled - rounded) > floatingPointTolerance) {
-    throw new Error(`${name} exceeds fixed-point precision`)
+  return !Number.isSafeInteger(rounded) || Math.abs(scaled - rounded) > floatingPointTolerance
+    ? fail({ _tag: 'InvalidFixedPointNumber', field, value, scale, reason: 'precision-exceeded' })
+    : Result.succeed(BigInt(rounded))
+}
+
+const integerNumber = (value: number, field: string, minimum: number, maximum: number): ExecutionResult<bigint> =>
+  Number.isSafeInteger(value) && value >= minimum && value <= maximum
+    ? Result.succeed(BigInt(value))
+    : fail({ _tag: 'InvalidIntegerNumber', field, value, minimum, maximum })
+
+const ceilDiv = (numerator: bigint, denominator: bigint): ExecutionResult<bigint> => {
+  if (numerator < 0n || denominator <= 0n) {
+    return fail({
+      _tag: 'InvalidCeilingDivision',
+      numerator,
+      denominator,
+      minimumNumerator: 0n,
+      minimumDenominator: 1n,
+    })
   }
-  return BigInt(rounded)
+  return Result.succeed(numerator === 0n ? 0n : (numerator - 1n) / denominator + 1n)
 }
 
-const ceilDiv = (numerator: bigint, denominator: bigint): bigint => {
-  if (numerator < 0n || denominator <= 0n) throw new Error('ceilDiv requires non-negative numerator and denominator')
-  return numerator === 0n ? 0n : (numerator - 1n) / denominator + 1n
-}
+const roundDiv = (numerator: bigint, denominator: bigint): ExecutionResult<bigint> =>
+  roundUnsignedHalfUp(numerator, denominator)
 
-const roundDiv = (numerator: bigint, denominator: bigint): bigint => {
-  const rounded = roundUnsignedHalfUp(numerator, denominator)
-  if (Result.isFailure(rounded)) throw new Error('roundDiv requires non-negative numerator and denominator')
-  return rounded.success
-}
+const quantizeDown = (value: bigint, increment: bigint): ExecutionResult<bigint> =>
+  value < 0n || increment <= 0n
+    ? fail({
+        _tag: 'InvalidQuantization',
+        operation: 'down',
+        value,
+        increment,
+        minimumValue: 0n,
+        minimumIncrement: 1n,
+      })
+    : Result.succeed((value / increment) * increment)
 
-const quantizeDown = (value: bigint, increment: bigint): bigint => {
-  if (value < 0n || increment <= 0n) throw new Error('quantization requires non-negative value and positive increment')
-  return (value / increment) * increment
-}
+const quantizeUp = (value: bigint, increment: bigint): ExecutionResult<bigint> =>
+  pipe(
+    ceilDiv(value, increment),
+    Result.map((quotient) => quotient * increment),
+  )
 
-const quantizeUp = (value: bigint, increment: bigint): bigint => ceilDiv(value, increment) * increment
+const quantizeNearest = (value: bigint, increment: bigint): ExecutionResult<bigint> =>
+  pipe(
+    roundDiv(value, increment),
+    Result.map((quotient) => quotient * increment),
+  )
 
-const quantizeNearest = (value: bigint, increment: bigint): bigint => roundDiv(value, increment) * increment
-
-export const numberToMicros = (value: number, name = 'value'): bigint => {
-  if (!Number.isFinite(value) || value < 0) throw new Error(`${name} must be finite and non-negative`)
-  const scaled = Math.round(value * Number(MICROS))
-  if (!Number.isSafeInteger(scaled)) throw new Error(`${name} exceeds monetary precision`)
-  return BigInt(scaled)
+export const numberToMicros = (value: number, field = 'value'): ExecutionResult<bigint> => {
+  const scale = Number(MICROS)
+  if (!Number.isFinite(value)) {
+    return fail({ _tag: 'InvalidFixedPointNumber', field, value, scale, reason: 'not-finite' })
+  }
+  if (value < 0) {
+    return fail({ _tag: 'InvalidFixedPointNumber', field, value, scale, reason: 'negative' })
+  }
+  const scaled = Math.round(value * scale)
+  return Number.isSafeInteger(scaled)
+    ? Result.succeed(BigInt(scaled))
+    : fail({ _tag: 'InvalidFixedPointNumber', field, value, scale, reason: 'precision-exceeded' })
 }
 
 export const microsToNumber = (value: bigint): number => Number(value) / Number(MICROS)
 
-export const referencePriceMicros = (price: number, model: ExecutionModel): bigint => {
-  if (!Number.isFinite(price) || price <= 0) throw new Error('reference price must be finite and positive')
-  const increment = ensureUnsigned(model.precision.priceIncrementMicros, 'price increment')
-  if (increment === 0n) throw new Error('price increment must be positive')
-  const quantized = quantizeNearest(numberToMicros(price, 'reference price'), increment)
-  if (quantized === 0n) throw new Error('reference price rounds to zero')
-  return quantized
+export const referencePriceMicros = (price: number, model: ExecutionModel): ExecutionResult<bigint> => {
+  if (!Number.isFinite(price) || price <= 0) {
+    return fail({ _tag: 'InvalidReferencePrice', price, reason: 'not-positive' })
+  }
+  return pipe(
+    Result.all({
+      increment: ensureUnsigned(model.precision.priceIncrementMicros, 'price increment', 1n),
+      priceMicros: numberToMicros(price, 'reference price'),
+    }),
+    Result.flatMap(({ increment, priceMicros }) => quantizeNearest(priceMicros, increment)),
+    Result.flatMap((quantized) =>
+      quantized === 0n
+        ? fail({ _tag: 'InvalidReferencePrice', price, reason: 'rounded-to-zero' })
+        : Result.succeed(quantized),
+    ),
+  )
 }
 
-export const notionalMicros = (quantityMicros: bigint, priceMicros: bigint): bigint =>
+export const notionalMicros = (quantityMicros: bigint, priceMicros: bigint): ExecutionResult<bigint> =>
   roundDiv(quantityMicros * priceMicros, MICROS)
 
 export const desiredQuantityMicros = (
@@ -121,20 +268,50 @@ export const desiredQuantityMicros = (
   weight: number,
   priceMicros: bigint,
   model: Pick<ExecutionModel, 'precision'>,
-): bigint => {
-  if (equityMicros < 0n || priceMicros <= 0n) throw new Error('desired quantity requires valid equity and price')
-  const weightUnits = scaledNumber(weight, 'target weight', Number(WEIGHT_SCALE))
-  if (weightUnits > WEIGHT_SCALE) throw new Error('target weight exceeds one')
-  const increment = ensureUnsigned(model.precision.quantityIncrementMicros, 'quantity increment')
-  if (increment === 0n) throw new Error('quantity increment must be positive')
-  const raw = (equityMicros * weightUnits * MICROS) / (WEIGHT_SCALE * priceMicros)
-  return quantizeDown(raw, increment)
+): ExecutionResult<bigint> => {
+  if (equityMicros < 0n || priceMicros <= 0n) {
+    return fail({
+      _tag: 'InvalidDesiredQuantity',
+      equityMicros,
+      weight,
+      priceMicros,
+      reason: 'invalid-equity-or-price',
+    })
+  }
+  return pipe(
+    scaledNumber(weight, 'target weight', Number(WEIGHT_SCALE)),
+    Result.flatMap((weightUnits) => {
+      if (weightUnits > WEIGHT_SCALE) {
+        return fail({
+          _tag: 'InvalidDesiredQuantity',
+          equityMicros,
+          weight,
+          priceMicros,
+          reason: 'weight-exceeds-one',
+        })
+      }
+      return pipe(
+        ensureUnsigned(model.precision.quantityIncrementMicros, 'quantity increment', 1n),
+        Result.flatMap((increment) => {
+          const raw = (equityMicros * weightUnits * MICROS) / (WEIGHT_SCALE * priceMicros)
+          return quantizeDown(raw, increment)
+        }),
+      )
+    }),
+  )
 }
 
-const impactedDelta = (reference: bigint, bps: number, costMultiplierMicros: bigint): bigint => {
-  const bpsMicros = scaledNumber(bps, 'execution cost basis points')
-  return ceilDiv(reference * bpsMicros * costMultiplierMicros, BPS * MICROS * MICROS)
-}
+const impactedDelta = (
+  referencePriceMicros: bigint,
+  basisPoints: number,
+  costMultiplierMicros: bigint,
+): ExecutionResult<bigint> =>
+  pipe(
+    scaledNumber(basisPoints, 'execution cost basis points'),
+    Result.flatMap((basisPointMicros) =>
+      ceilDiv(referencePriceMicros * basisPointMicros * costMultiplierMicros, BPS * MICROS * MICROS),
+    ),
+  )
 
 export interface FillTerms {
   readonly referencePriceMicros: bigint
@@ -150,38 +327,81 @@ export const makeFillTerms = (
   referencePrice: bigint,
   model: ExecutionModel,
   costMultiplierMicros: bigint,
-): FillTerms => {
-  if (quantityMicros <= 0n || referencePrice <= 0n) throw new Error('fill terms require positive quantity and price')
-  if (costMultiplierMicros <= 0n) throw new Error('cost multiplier must be positive')
-  const increment = ensureUnsigned(model.precision.priceIncrementMicros, 'price increment')
-  if (increment === 0n) throw new Error('price increment must be positive')
-  const spreadDelta = impactedDelta(referencePrice, model.priceImpact.halfSpreadBps, costMultiplierMicros)
-  const slippageDelta = impactedDelta(referencePrice, model.priceImpact.slippageBps, costMultiplierMicros)
-  const spreadPrice =
-    side === 'buy'
-      ? quantizeUp(referencePrice + spreadDelta, increment)
-      : quantizeDown(referencePrice > spreadDelta ? referencePrice - spreadDelta : 0n, increment)
-  const fillPrice =
-    side === 'buy'
-      ? quantizeUp(referencePrice + spreadDelta + slippageDelta, increment)
-      : quantizeDown(
-          referencePrice > spreadDelta + slippageDelta ? referencePrice - spreadDelta - slippageDelta : 0n,
-          increment,
-        )
-  if (spreadPrice <= 0n || fillPrice <= 0n) throw new Error('execution costs consume the reference price')
-  return {
-    referencePriceMicros: referencePrice,
-    fillPriceMicros: fillPrice,
-    notionalMicros: notionalMicros(quantityMicros, fillPrice),
-    spreadCostMicros: notionalMicros(
+): ExecutionResult<FillTerms> => {
+  const invalid = <A>(
+    reason: Extract<ExecutionModelFailure, { readonly _tag: 'InvalidFillTerms' }>['reason'],
+  ): ExecutionResult<A> =>
+    fail({
+      _tag: 'InvalidFillTerms',
+      side,
       quantityMicros,
-      spreadPrice > referencePrice ? spreadPrice - referencePrice : referencePrice - spreadPrice,
-    ),
-    slippageCostMicros: notionalMicros(
-      quantityMicros,
-      fillPrice > spreadPrice ? fillPrice - spreadPrice : spreadPrice - fillPrice,
-    ),
-  }
+      referencePriceMicros: referencePrice,
+      costMultiplierMicros,
+      reason,
+    })
+  if (quantityMicros <= 0n || referencePrice <= 0n) return invalid('invalid-quantity-or-price')
+  if (costMultiplierMicros <= 0n) return invalid('invalid-cost-multiplier')
+
+  return pipe(
+    Result.all({
+      increment: ensureUnsigned(model.precision.priceIncrementMicros, 'price increment', 1n),
+      spreadDelta: impactedDelta(referencePrice, model.priceImpact.halfSpreadBps, costMultiplierMicros),
+      slippageDelta: impactedDelta(referencePrice, model.priceImpact.slippageBps, costMultiplierMicros),
+    }),
+    Result.flatMap(({ increment, spreadDelta, slippageDelta }) => {
+      const spreadPrice = pipe(
+        side === 'buy'
+          ? quantizeUp(referencePrice + spreadDelta, increment)
+          : quantizeDown(referencePrice > spreadDelta ? referencePrice - spreadDelta : 0n, increment),
+        Result.flatMap((price) => {
+          if (price <= 0n) return invalid<bigint>('costs-consume-reference-price')
+          return Result.succeed(price)
+        }),
+      )
+      return pipe(
+        spreadPrice,
+        Result.flatMap((quantizedSpreadPrice) =>
+          pipe(
+            side === 'buy'
+              ? quantizeUp(referencePrice + spreadDelta + slippageDelta, increment)
+              : quantizeDown(
+                  referencePrice > spreadDelta + slippageDelta ? referencePrice - spreadDelta - slippageDelta : 0n,
+                  increment,
+                ),
+            Result.flatMap((fillPrice) => {
+              if (fillPrice <= 0n) return invalid<FillTerms>('costs-consume-reference-price')
+              return pipe(
+                Result.all({
+                  notional: notionalMicros(quantityMicros, fillPrice),
+                  spreadCost: notionalMicros(
+                    quantityMicros,
+                    quantizedSpreadPrice > referencePrice
+                      ? quantizedSpreadPrice - referencePrice
+                      : referencePrice - quantizedSpreadPrice,
+                  ),
+                  slippageCost: notionalMicros(
+                    quantityMicros,
+                    fillPrice > quantizedSpreadPrice
+                      ? fillPrice - quantizedSpreadPrice
+                      : quantizedSpreadPrice - fillPrice,
+                  ),
+                }),
+                Result.map(
+                  ({ notional, spreadCost, slippageCost }): FillTerms => ({
+                    referencePriceMicros: referencePrice,
+                    fillPriceMicros: fillPrice,
+                    notionalMicros: notional,
+                    spreadCostMicros: spreadCost,
+                    slippageCostMicros: slippageCost,
+                  }),
+                ),
+              )
+            }),
+          ),
+        ),
+      )
+    }),
+  )
 }
 
 export interface OrderOutcome {
@@ -192,53 +412,100 @@ export interface OrderOutcome {
   readonly unfilledRemainder: 'none' | 'canceled'
 }
 
-export const makeOrderOutcome = (input: {
+export interface OrderOutcomeInput {
   readonly identity: unknown
   readonly side: 'buy' | 'sell'
   readonly requestedQuantityMicros: bigint
   readonly referencePriceMicros: bigint
   readonly model: ExecutionModel
-}): OrderOutcome => {
-  const quantityIncrement = ensureUnsigned(input.model.precision.quantityIncrementMicros, 'quantity increment')
-  if (quantityIncrement === 0n) throw new Error('quantity increment must be positive')
-  const requested = quantizeDown(input.requestedQuantityMicros, quantityIncrement)
-  const reject = (reason: OrderRejectionReason): OrderOutcome => ({
-    requestedQuantityMicros: requested,
-    filledQuantityMicros: 0n,
-    status: 'rejected',
-    rejectionReason: reason,
-    unfilledRemainder: 'canceled',
-  })
-  if (requested === 0n) return reject('zero-after-rounding')
-  if (
-    input.side === 'buy' &&
-    notionalMicros(requested, input.referencePriceMicros) <
-      ensureUnsigned(input.model.precision.minimumBuyNotionalMicros, 'minimum buy notional')
-  ) {
-    return reject('below-minimum-buy-notional')
-  }
-
-  const probability = BigInt(input.model.partialFills.probabilityPpm)
-  const bucket = BigInt(`0x${canonicalHashV1(input.identity).slice(0, 16)}`) % PPM
-  if (bucket >= probability) {
-    return {
-      requestedQuantityMicros: requested,
-      filledQuantityMicros: requested,
-      status: 'filled',
-      rejectionReason: null,
-      unfilledRemainder: 'none',
-    }
-  }
-  const filled = quantizeDown((requested * BigInt(input.model.partialFills.filledFractionPpm)) / PPM, quantityIncrement)
-  if (filled === 0n) return reject('zero-after-rounding')
-  return {
-    requestedQuantityMicros: requested,
-    filledQuantityMicros: filled,
-    status: 'partially-filled',
-    rejectionReason: null,
-    unfilledRemainder: 'canceled',
-  }
 }
+
+export const makeOrderOutcome = (input: OrderOutcomeInput): ExecutionResult<OrderOutcome> =>
+  pipe(
+    ensureUnsigned(input.model.precision.quantityIncrementMicros, 'quantity increment', 1n),
+    Result.flatMap((quantityIncrement) =>
+      pipe(
+        quantizeDown(input.requestedQuantityMicros, quantityIncrement),
+        Result.map((requested) => ({ quantityIncrement, requested })),
+      ),
+    ),
+    Result.flatMap(({ quantityIncrement, requested }) => {
+      const reject = (reason: OrderRejectionReason): OrderOutcome => ({
+        requestedQuantityMicros: requested,
+        filledQuantityMicros: 0n,
+        status: 'rejected',
+        rejectionReason: reason,
+        unfilledRemainder: 'canceled',
+      })
+      if (requested === 0n) return Result.succeed(reject('zero-after-rounding'))
+
+      const belowMinimumBuyNotional =
+        input.side === 'sell'
+          ? Result.succeed(false)
+          : pipe(
+              notionalMicros(requested, input.referencePriceMicros),
+              Result.flatMap((requestedNotional) =>
+                pipe(
+                  ensureUnsigned(input.model.precision.minimumBuyNotionalMicros, 'minimum buy notional'),
+                  Result.map((minimumBuyNotional) => requestedNotional < minimumBuyNotional),
+                ),
+              ),
+            )
+      return pipe(
+        belowMinimumBuyNotional,
+        Result.flatMap((belowMinimum) => {
+          if (belowMinimum) {
+            return Result.succeed(reject('below-minimum-buy-notional'))
+          }
+          return pipe(
+            integerNumber(input.model.partialFills.probabilityPpm, 'partial fill probability', 0, Number(PPM)),
+            Result.flatMap((probability) =>
+              pipe(
+                Result.try({
+                  try: () => canonicalHashV1(input.identity),
+                  catch: (cause): ExecutionModelFailure => ({
+                    _tag: 'OrderOutcomeCanonicalizationFailed',
+                    identity: input.identity,
+                    cause,
+                  }),
+                }),
+                Result.flatMap((identityHash) => {
+                  const bucket = BigInt(`0x${identityHash.slice(0, 16)}`) % PPM
+                  if (bucket >= probability) {
+                    return Result.succeed({
+                      requestedQuantityMicros: requested,
+                      filledQuantityMicros: requested,
+                      status: 'filled',
+                      rejectionReason: null,
+                      unfilledRemainder: 'none',
+                    })
+                  }
+                  return pipe(
+                    integerNumber(input.model.partialFills.filledFractionPpm, 'partial fill fraction', 0, Number(PPM)),
+                    Result.flatMap((filledFraction) =>
+                      quantizeDown((requested * filledFraction) / PPM, quantityIncrement),
+                    ),
+                    Result.map(
+                      (filled): OrderOutcome =>
+                        filled === 0n
+                          ? reject('zero-after-rounding')
+                          : {
+                              requestedQuantityMicros: requested,
+                              filledQuantityMicros: filled,
+                              status: 'partially-filled',
+                              rejectionReason: null,
+                              unfilledRemainder: 'canceled',
+                            },
+                    ),
+                  )
+                }),
+              ),
+            ),
+          )
+        }),
+      )
+    }),
+  )
 
 export interface FeeInput {
   readonly side: 'buy' | 'sell'
@@ -254,84 +521,137 @@ export interface FeeBreakdown {
   readonly totalMicros: bigint
 }
 
-const roundedFee = (numerator: bigint, denominator: bigint, increment: bigint): bigint =>
-  numerator === 0n ? 0n : ceilDiv(numerator, denominator * increment) * increment
+const roundedFee = (numerator: bigint, denominator: bigint, increment: bigint): ExecutionResult<bigint> =>
+  numerator === 0n
+    ? Result.succeed(0n)
+    : pipe(
+        ceilDiv(numerator, denominator * increment),
+        Result.map((quotient) => quotient * increment),
+      )
 
 export const calculateSessionFees = (
   fills: readonly FeeInput[],
   model: ExecutionModel,
   costMultiplierMicros: bigint,
-): FeeBreakdown => {
-  if (costMultiplierMicros <= 0n) throw new Error('cost multiplier must be positive')
-  const rounding = ensureUnsigned(model.fees.roundingIncrementMicros, 'fee rounding increment')
-  if (rounding === 0n) throw new Error('fee rounding increment must be positive')
+): ExecutionResult<FeeBreakdown> => {
+  if (costMultiplierMicros <= 0n) {
+    return fail({ _tag: 'InvalidFeeCostMultiplier', costMultiplierMicros, minimum: 1n })
+  }
   const totalNotional = fills.reduce((sum, fill) => sum + fill.notionalMicros, 0n)
   const sellNotional = fills.reduce((sum, fill) => sum + (fill.side === 'sell' ? fill.notionalMicros : 0n), 0n)
   const totalQuantity = fills.reduce((sum, fill) => sum + fill.quantityMicros, 0n)
-  const commission = roundedFee(
-    totalNotional * scaledNumber(model.fees.commissionBps, 'commission basis points') * costMultiplierMicros,
-    BPS * MICROS * MICROS,
-    rounding,
+
+  return pipe(
+    Result.all({
+      rounding: ensureUnsigned(model.fees.roundingIncrementMicros, 'fee rounding increment', 1n),
+      commissionRate: scaledNumber(model.fees.commissionBps, 'commission basis points'),
+      secRate: scaledNumber(model.fees.secSellBps, 'SEC basis points'),
+      tafRate: ensureUnsigned(model.fees.tafSellPerShareMicros, 'TAF share rate'),
+      tafCap: ensureUnsigned(model.fees.tafMaximumPerOrderMicros, 'TAF order cap'),
+      catRate: ensureUnsigned(model.fees.catPerShareMicros, 'CAT share rate'),
+    }),
+    Result.flatMap(({ rounding, commissionRate, secRate, tafRate, tafCap, catRate }) => {
+      const tafNumerator = fills.reduce(
+        (sum, fill) =>
+          fill.side === 'sell'
+            ? sum + (fill.quantityMicros * tafRate < tafCap * MICROS ? fill.quantityMicros * tafRate : tafCap * MICROS)
+            : sum,
+        0n,
+      )
+      return pipe(
+        Result.all({
+          commission: roundedFee(
+            totalNotional * commissionRate * costMultiplierMicros,
+            BPS * MICROS * MICROS,
+            rounding,
+          ),
+          sec: roundedFee(sellNotional * secRate * costMultiplierMicros, BPS * MICROS * MICROS, rounding),
+          taf: roundedFee(tafNumerator * costMultiplierMicros, MICROS * MICROS, rounding),
+          cat: roundedFee(totalQuantity * catRate * costMultiplierMicros, MICROS * MICROS, rounding),
+        }),
+        Result.map(
+          ({ commission, sec, taf, cat }): FeeBreakdown => ({
+            commissionMicros: commission,
+            secMicros: sec,
+            tafMicros: taf,
+            catMicros: cat,
+            totalMicros: commission + sec + taf + cat,
+          }),
+        ),
+      )
+    }),
   )
-  const sec = roundedFee(
-    sellNotional * scaledNumber(model.fees.secSellBps, 'SEC basis points') * costMultiplierMicros,
-    BPS * MICROS * MICROS,
-    rounding,
-  )
-  const tafRate = ensureUnsigned(model.fees.tafSellPerShareMicros, 'TAF share rate')
-  const tafCap = ensureUnsigned(model.fees.tafMaximumPerOrderMicros, 'TAF order cap')
-  const tafNumerator = fills.reduce(
-    (sum, fill) =>
-      fill.side === 'sell'
-        ? sum + (fill.quantityMicros * tafRate < tafCap * MICROS ? fill.quantityMicros * tafRate : tafCap * MICROS)
-        : sum,
-    0n,
-  )
-  const taf = roundedFee(tafNumerator * costMultiplierMicros, MICROS * MICROS, rounding)
-  const catRate = ensureUnsigned(model.fees.catPerShareMicros, 'CAT share rate')
-  const cat = roundedFee(totalQuantity * catRate * costMultiplierMicros, MICROS * MICROS, rounding)
-  const total = commission + sec + taf + cat
-  return {
-    commissionMicros: commission,
-    secMicros: sec,
-    tafMicros: taf,
-    catMicros: cat,
-    totalMicros: total,
+}
+
+export const accrueCashYield = (
+  cashMicros: bigint,
+  elapsedDays: number,
+  model: ExecutionModel,
+): ExecutionResult<bigint> => {
+  if (cashMicros < 0n) {
+    return fail({ _tag: 'InvalidCashYield', cashMicros, elapsedDays, reason: 'negative-cash' })
   }
+  if (!Number.isInteger(elapsedDays) || elapsedDays < 0) {
+    return fail({ _tag: 'InvalidCashYield', cashMicros, elapsedDays, reason: 'invalid-elapsed-days' })
+  }
+  return pipe(
+    scaledNumber(model.cash.annualYieldBps, 'annual cash yield basis points'),
+    Result.map((annualYieldBps) => (cashMicros * annualYieldBps * BigInt(elapsedDays)) / (BPS * MICROS * 365n)),
+  )
 }
 
-export const accrueCashYield = (cashMicros: bigint, elapsedDays: number, model: ExecutionModel): bigint => {
-  if (cashMicros < 0n) throw new Error('cash yield cannot accrue on negative cash')
-  if (!Number.isInteger(elapsedDays) || elapsedDays < 0) throw new Error('elapsed days must be a non-negative integer')
-  const annualYieldBps = scaledNumber(model.cash.annualYieldBps, 'annual cash yield basis points')
-  return (cashMicros * annualYieldBps * BigInt(elapsedDays)) / (BPS * MICROS * 365n)
-}
-
-export const elapsedCalendarDays = (from: IsoDate, to: IsoDate): number => {
+export const elapsedCalendarDays = (from: IsoDate, to: IsoDate): ExecutionResult<number> => {
   const fromTime = Date.parse(`${from}T00:00:00Z`)
   const toTime = Date.parse(`${to}T00:00:00Z`)
-  if (!Number.isFinite(fromTime) || !Number.isFinite(toTime) || toTime < fromTime) {
-    throw new Error('cash accrual dates are invalid or unordered')
-  }
-  return (toTime - fromTime) / 86_400_000
+  return !Number.isFinite(fromTime) || !Number.isFinite(toTime) || toTime < fromTime
+    ? fail({ _tag: 'InvalidCashAccrualPeriod', from, to })
+    : Result.succeed((toTime - fromTime) / 86_400_000)
 }
 
 export const saleCostBasisMicros = (
   positionCostBasisMicros: bigint,
   soldQuantityMicros: bigint,
   positionQuantityMicros: bigint,
-): bigint => {
+): ExecutionResult<bigint> => {
   if (positionCostBasisMicros < 0n || soldQuantityMicros < 0n || positionQuantityMicros <= 0n) {
-    throw new Error('sale cost basis requires a positive position and non-negative values')
+    return fail({
+      _tag: 'InvalidSaleCostBasis',
+      positionCostBasisMicros,
+      soldQuantityMicros,
+      positionQuantityMicros,
+      reason: 'invalid-position',
+    })
   }
-  if (soldQuantityMicros > positionQuantityMicros) throw new Error('sale quantity exceeds the position')
+  if (soldQuantityMicros > positionQuantityMicros) {
+    return fail({
+      _tag: 'InvalidSaleCostBasis',
+      positionCostBasisMicros,
+      soldQuantityMicros,
+      positionQuantityMicros,
+      reason: 'quantity-exceeds-position',
+    })
+  }
   return roundDiv(positionCostBasisMicros * soldQuantityMicros, positionQuantityMicros)
 }
 
-export const scaleQuantityMicros = (quantityMicros: bigint, scalePpm: bigint, model: ExecutionModel): bigint => {
-  if (scalePpm < 0n || scalePpm > PPM) throw new Error('quantity scale must be between zero and one million')
-  const increment = ensureUnsigned(model.precision.quantityIncrementMicros, 'quantity increment')
-  return quantizeDown((quantityMicros * scalePpm) / PPM, increment)
+export const scaleQuantityMicros = (
+  quantityMicros: bigint,
+  scalePpm: bigint,
+  model: ExecutionModel,
+): ExecutionResult<bigint> => {
+  if (scalePpm < 0n || scalePpm > PPM) {
+    return fail({
+      _tag: 'InvalidQuantityScale',
+      quantityMicros,
+      scalePpm,
+      minimumScalePpm: 0n,
+      maximumScalePpm: PPM,
+    })
+  }
+  return pipe(
+    ensureUnsigned(model.precision.quantityIncrementMicros, 'quantity increment'),
+    Result.flatMap((increment) => quantizeDown((quantityMicros * scalePpm) / PPM, increment)),
+  )
 }
 
 export const ppm = PPM

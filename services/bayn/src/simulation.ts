@@ -1,3 +1,5 @@
+import { pipe, Result } from 'effect'
+
 import { makeRunIdentity, makeStrategyProtocolHash, type RuntimeProvenance } from './contracts'
 import {
   MICROS,
@@ -13,6 +15,8 @@ import {
   referencePriceMicros,
   saleCostBasisMicros,
   scaleQuantityMicros,
+  type ExecutionModelFailure,
+  type FeeBreakdown,
   type FeeInput,
   type FillTerms,
 } from './execution-model'
@@ -65,6 +69,18 @@ export interface SimulationResult {
   readonly dailyPerformance: readonly DailyPerformancePoint[]
   readonly simulation: SimulationTrace | null
 }
+
+export type SimulationFailure =
+  | ExecutionModelFailure
+  | {
+      readonly _tag: 'UnsupportedSimulationExecutionModel'
+      readonly actual: string
+      readonly required: 'bayn.execution-model.v2'
+    }
+
+export type SimulationDecision = Result.Result<SimulationResult, SimulationFailure>
+
+type SimulationComputation<A> = Result.Result<A, SimulationFailure>
 
 export const TRADING_DAYS = 252
 
@@ -226,33 +242,36 @@ const makeOrder = (
   requestedQuantityMicros: bigint,
   referencePrice: bigint,
   protocol: SimulationProtocol,
-): SimulatedOrder => {
-  const outcome = makeOrderOutcome({
-    identity: {
-      schemaVersion: ContractVersion.PartialFillSeed,
-      signalDate: decision.signalDate,
-      executionDate: decision.executionDate,
-      symbol,
+): SimulationComputation<SimulatedOrder> =>
+  pipe(
+    makeOrderOutcome({
+      identity: {
+        schemaVersion: ContractVersion.PartialFillSeed,
+        signalDate: decision.signalDate,
+        executionDate: decision.executionDate,
+        symbol,
+        side,
+      },
       side,
-    },
-    side,
-    requestedQuantityMicros,
-    referencePriceMicros: referencePrice,
-    model: protocol.executionModel,
-  })
-  const payload = {
-    decisionId: decision.id,
-    sessionDate,
-    symbol,
-    side,
-    requestedQuantityMicros: outcome.requestedQuantityMicros.toString(),
-    filledQuantityMicros: outcome.filledQuantityMicros.toString(),
-    status: outcome.status,
-    rejectionReason: outcome.rejectionReason,
-    unfilledRemainder: outcome.unfilledRemainder,
-  }
-  return { id: canonicalHashV1({ runId, kind: 'order', ...payload }), ...payload }
-}
+      requestedQuantityMicros,
+      referencePriceMicros: referencePrice,
+      model: protocol.executionModel,
+    }),
+    Result.map((outcome) => {
+      const payload = {
+        decisionId: decision.id,
+        sessionDate,
+        symbol,
+        side,
+        requestedQuantityMicros: outcome.requestedQuantityMicros.toString(),
+        filledQuantityMicros: outcome.filledQuantityMicros.toString(),
+        status: outcome.status,
+        rejectionReason: outcome.rejectionReason,
+        unfilledRemainder: outcome.unfilledRemainder,
+      }
+      return { id: canonicalHashV1({ runId, kind: 'order', ...payload }), ...payload }
+    }),
+  )
 
 const limitOrderFillToBuyingPower = (
   runId: string,
@@ -320,7 +339,7 @@ const makeCashChange = (
   return { id: canonicalHashV1({ runId, kind: 'cash-change', ...payload }), ...payload }
 }
 
-const makeFeeEvent = (runId: string, sessionDate: IsoDate, fees: ReturnType<typeof calculateSessionFees>): FeeEvent => {
+const makeFeeEvent = (runId: string, sessionDate: IsoDate, fees: FeeBreakdown): FeeEvent => {
   const payload = {
     sessionDate,
     commissionMicros: fees.commissionMicros.toString(),
@@ -343,6 +362,131 @@ const makeCashYieldEvent = (
   return { kind: 'cash-yield' as const, id: canonicalHashV1({ runId, kind: 'cash-yield', ...payload }), ...payload }
 }
 
+const referencePricesFor = (
+  bars: Readonly<Record<string, DailyBar>>,
+  protocol: SimulationProtocol,
+  price: (bar: DailyBar) => number,
+): SimulationComputation<Readonly<Record<string, bigint>>> =>
+  pipe(
+    Result.all(
+      Object.entries(bars).map(([symbol, bar]) =>
+        pipe(
+          referencePriceMicros(price(bar), protocol.executionModel),
+          Result.map((priceMicros) => [symbol, priceMicros] as const),
+        ),
+      ),
+    ),
+    Result.map((entries) => Object.fromEntries(entries)),
+  )
+
+const positionValueMicros = (
+  prices: Readonly<Record<string, bigint>>,
+  positions: ReadonlyMap<string, Position>,
+): SimulationComputation<bigint> =>
+  Object.entries(prices).reduce<SimulationComputation<bigint>>(
+    (total, [symbol, price]) =>
+      pipe(
+        total,
+        Result.flatMap((value) =>
+          pipe(
+            notionalMicros(positions.get(symbol)?.quantityMicros ?? 0n, price),
+            Result.map((notional) => value + notional),
+          ),
+        ),
+      ),
+    Result.succeed(0n),
+  )
+
+const desiredQuantitiesFor = (
+  planningEquityMicros: bigint,
+  weights: Readonly<Record<string, number>>,
+  prices: Readonly<Record<string, bigint>>,
+  protocol: SimulationProtocol,
+): SimulationComputation<Readonly<Record<string, bigint>>> =>
+  pipe(
+    Result.all(
+      Object.entries(weights).map(([symbol, weight]) =>
+        pipe(
+          desiredQuantityMicros(planningEquityMicros, weight, prices[symbol], protocol.executionModel),
+          Result.map((quantityMicros) => [symbol, quantityMicros] as const),
+        ),
+      ),
+    ),
+    Result.map((entries) => Object.fromEntries(entries)),
+  )
+
+interface BuyCandidate {
+  readonly symbol: string
+  readonly quantityMicros: bigint
+}
+
+const scaledBuyFeeInputs = (
+  buys: readonly BuyCandidate[],
+  scalePpm: bigint,
+  prices: Readonly<Record<string, bigint>>,
+  protocol: SimulationProtocol,
+  costMultiplierMicros: bigint,
+  minimumNotionalMicros?: bigint,
+): SimulationComputation<readonly FeeInput[]> =>
+  buys.reduce<SimulationComputation<readonly FeeInput[]>>(
+    (result, buy) =>
+      pipe(
+        result,
+        Result.flatMap((inputs) =>
+          pipe(
+            scaleQuantityMicros(buy.quantityMicros, scalePpm, protocol.executionModel),
+            Result.flatMap((quantityMicros) => {
+              if (quantityMicros === 0n) return Result.succeed(inputs)
+              return pipe(
+                notionalMicros(quantityMicros, prices[buy.symbol]),
+                Result.flatMap((referenceNotionalMicros) => {
+                  if (minimumNotionalMicros !== undefined && referenceNotionalMicros < minimumNotionalMicros) {
+                    return Result.succeed(inputs)
+                  }
+                  return pipe(
+                    makeFillTerms(
+                      'buy',
+                      quantityMicros,
+                      prices[buy.symbol],
+                      protocol.executionModel,
+                      costMultiplierMicros,
+                    ),
+                    Result.map((terms) => [
+                      ...inputs,
+                      { side: 'buy' as const, quantityMicros, notionalMicros: terms.notionalMicros },
+                    ]),
+                  )
+                }),
+              )
+            }),
+          ),
+        ),
+      ),
+    Result.succeed([]),
+  )
+
+const buysAffordable = (
+  buys: readonly BuyCandidate[],
+  scalePpm: bigint,
+  prices: Readonly<Record<string, bigint>>,
+  protocol: SimulationProtocol,
+  costMultiplierMicros: bigint,
+  availableCashMicros: bigint,
+  minimumNotionalMicros?: bigint,
+): SimulationComputation<boolean> =>
+  pipe(
+    scaledBuyFeeInputs(buys, scalePpm, prices, protocol, costMultiplierMicros, minimumNotionalMicros),
+    Result.flatMap((inputs) =>
+      pipe(
+        calculateSessionFees(inputs, protocol.executionModel, costMultiplierMicros),
+        Result.map(
+          (fees) =>
+            inputs.reduce((sum, fill) => sum + fill.notionalMicros, 0n) + fees.totalMicros <= availableCashMicros,
+        ),
+      ),
+    ),
+  )
+
 export const simulate = (
   sessions: readonly AlignedSession[],
   targets: readonly SimulationTarget[],
@@ -351,9 +495,13 @@ export const simulate = (
   costMultiplierMicros: bigint,
   runId: string,
   recordEvents: boolean,
-): SimulationResult => {
+): SimulationDecision => {
   if (protocol.executionModel.schemaVersion !== 'bayn.execution-model.v2') {
-    throw new Error('simulation requires the causal bayn.execution-model.v2 contract')
+    return Result.fail({
+      _tag: 'UnsupportedSimulationExecutionModel',
+      actual: protocol.executionModel.schemaVersion,
+      required: 'bayn.execution-model.v2',
+    })
   }
   const targetsByExecution = new Map(targets.map((target) => [target.executionIndex, target]))
   const positions = new Map<string, Position>()
@@ -386,8 +534,12 @@ export const simulate = (
     const planningCashSnapshotMicros = cashMicros
 
     if (previousSessionDate !== undefined) {
-      const elapsedDays = elapsedCalendarDays(previousSessionDate, session.date)
-      const cashYield = accrueCashYield(cashMicros, elapsedDays, protocol.executionModel)
+      const elapsedDaysResult = elapsedCalendarDays(previousSessionDate, session.date)
+      if (Result.isFailure(elapsedDaysResult)) return Result.fail(elapsedDaysResult.failure)
+      const elapsedDays = elapsedDaysResult.success
+      const cashYieldResult = accrueCashYield(cashMicros, elapsedDays, protocol.executionModel)
+      if (Result.isFailure(cashYieldResult)) return Result.fail(cashYieldResult.failure)
+      const cashYield = cashYieldResult.success
       if (cashYield > 0n) {
         cashMicros += cashYield
         totalCashYieldMicros += cashYield
@@ -429,31 +581,24 @@ export const simulate = (
         signalDecisions.push({ ...target.decision, decisionId: decision.id, executionDate: decision.executionDate })
       }
 
-      const planningPrices = Object.fromEntries(
-        Object.entries(sessions[target.signalIndex].bars).map(([symbol, bar]) => [
-          symbol,
-          referencePriceMicros(bar.close, protocol.executionModel),
-        ]),
-      ) as Readonly<Record<string, bigint>>
-      const executionOpenPrices = Object.fromEntries(
-        Object.entries(session.bars).map(([symbol, bar]) => [
-          symbol,
-          referencePriceMicros(bar.open, protocol.executionModel),
-        ]),
-      ) as Readonly<Record<string, bigint>>
+      const planningPricesResult = referencePricesFor(sessions[target.signalIndex].bars, protocol, (bar) => bar.close)
+      if (Result.isFailure(planningPricesResult)) return Result.fail(planningPricesResult.failure)
+      const planningPrices = planningPricesResult.success
+      const executionOpenPricesResult = referencePricesFor(session.bars, protocol, (bar) => bar.open)
+      if (Result.isFailure(executionOpenPricesResult)) return Result.fail(executionOpenPricesResult.failure)
+      const executionOpenPrices = executionOpenPricesResult.success
       const planningCashMicros = planningCashSnapshotMicros
-      const planningEquityMicros =
-        planningCashSnapshotMicros +
-        Object.entries(planningPrices).reduce(
-          (value, [symbol, price]) => value + notionalMicros(positions.get(symbol)?.quantityMicros ?? 0n, price),
-          0n,
-        )
-      const desiredQuantities = Object.fromEntries(
-        Object.entries(target.weights).map(([symbol, weight]) => [
-          symbol,
-          desiredQuantityMicros(planningEquityMicros, weight, planningPrices[symbol], protocol.executionModel),
-        ]),
-      ) as Readonly<Record<string, bigint>>
+      const planningPositionValue = positionValueMicros(planningPrices, positions)
+      if (Result.isFailure(planningPositionValue)) return Result.fail(planningPositionValue.failure)
+      const planningEquityMicros = planningCashSnapshotMicros + planningPositionValue.success
+      const desiredQuantitiesResult = desiredQuantitiesFor(
+        planningEquityMicros,
+        target.weights,
+        planningPrices,
+        protocol,
+      )
+      if (Result.isFailure(desiredQuantitiesResult)) return Result.fail(desiredQuantitiesResult.failure)
+      const desiredQuantities = desiredQuantitiesResult.success
       const sessionFills: FillEvent[] = []
 
       const plannedSells = Object.keys(target.weights)
@@ -482,110 +627,109 @@ export const simulate = (
           }
         })
         .filter((buy) => buy.quantityMicros > 0n)
-      const plannedBuysAffordable = (scalePpm: bigint): boolean => {
-        const buyInputs = proposedBuys.flatMap((buy): FeeInput[] => {
-          const quantity = scaleQuantityMicros(buy.quantityMicros, scalePpm, protocol.executionModel)
-          if (
-            quantity === 0n ||
-            notionalMicros(quantity, planningPrices[buy.symbol]) <
-              BigInt(protocol.executionModel.precision.minimumBuyNotionalMicros)
-          ) {
-            return []
-          }
-          const terms = makeFillTerms(
-            'buy',
-            quantity,
-            planningPrices[buy.symbol],
-            protocol.executionModel,
-            costMultiplierMicros,
-          )
-          return [{ side: 'buy', quantityMicros: quantity, notionalMicros: terms.notionalMicros }]
-        })
-        const fees = calculateSessionFees(buyInputs, protocol.executionModel, costMultiplierMicros)
-        return buyInputs.reduce((sum, fill) => sum + fill.notionalMicros, 0n) + fees.totalMicros <= planningCashMicros
-      }
+      const minimumBuyNotionalMicros = BigInt(protocol.executionModel.precision.minimumBuyNotionalMicros)
       let plannedBuyScale = 0n
       let maximumPlannedBuyScale = ppm
       while (plannedBuyScale < maximumPlannedBuyScale) {
         const candidate = (plannedBuyScale + maximumPlannedBuyScale + 1n) / 2n
-        if (plannedBuysAffordable(candidate)) plannedBuyScale = candidate
+        const affordable = buysAffordable(
+          proposedBuys,
+          candidate,
+          planningPrices,
+          protocol,
+          costMultiplierMicros,
+          planningCashMicros,
+          minimumBuyNotionalMicros,
+        )
+        if (Result.isFailure(affordable)) return Result.fail(affordable.failure)
+        if (affordable.success) plannedBuyScale = candidate
         else maximumPlannedBuyScale = candidate - 1n
       }
-      const sellOrders = plannedSells.map((sell) =>
-        makeOrder(
+      const sellOrdersResult = Result.all(
+        plannedSells.map((sell) =>
+          makeOrder(
+            runId,
+            decision,
+            session.date,
+            sell.symbol,
+            'sell',
+            sell.quantityMicros,
+            executionOpenPrices[sell.symbol],
+            protocol,
+          ),
+        ),
+      )
+      if (Result.isFailure(sellOrdersResult)) return Result.fail(sellOrdersResult.failure)
+      const sellOrders = sellOrdersResult.success
+      const plannedBuyOrders: SimulatedOrder[] = []
+      for (const buy of proposedBuys) {
+        const requestedQuantity = scaleQuantityMicros(buy.quantityMicros, plannedBuyScale, protocol.executionModel)
+        if (Result.isFailure(requestedQuantity)) return Result.fail(requestedQuantity.failure)
+        if (requestedQuantity.success === 0n) continue
+        const requestedNotional = notionalMicros(requestedQuantity.success, planningPrices[buy.symbol])
+        if (Result.isFailure(requestedNotional)) return Result.fail(requestedNotional.failure)
+        if (requestedNotional.success < minimumBuyNotionalMicros) continue
+        const order = makeOrder(
           runId,
           decision,
           session.date,
-          sell.symbol,
-          'sell',
-          sell.quantityMicros,
-          executionOpenPrices[sell.symbol],
+          buy.symbol,
+          'buy',
+          requestedQuantity.success,
+          executionOpenPrices[buy.symbol],
           protocol,
-        ),
-      )
-      const plannedBuyOrders = proposedBuys.flatMap((buy): SimulatedOrder[] => {
-        const requestedQuantity = scaleQuantityMicros(buy.quantityMicros, plannedBuyScale, protocol.executionModel)
-        return requestedQuantity === 0n ||
-          notionalMicros(requestedQuantity, planningPrices[buy.symbol]) <
-            BigInt(protocol.executionModel.precision.minimumBuyNotionalMicros)
-          ? []
-          : [
-              makeOrder(
-                runId,
-                decision,
-                session.date,
-                buy.symbol,
-                'buy',
-                requestedQuantity,
-                executionOpenPrices[buy.symbol],
-                protocol,
-              ),
-            ]
-      })
-      const executionBuysAffordable = (scalePpm: bigint): boolean => {
-        const buyInputs = plannedBuyOrders.flatMap((order): FeeInput[] => {
-          const quantity = scaleQuantityMicros(BigInt(order.filledQuantityMicros), scalePpm, protocol.executionModel)
-          if (quantity === 0n) return []
-          const terms = makeFillTerms(
-            'buy',
-            quantity,
-            executionOpenPrices[order.symbol],
-            protocol.executionModel,
-            costMultiplierMicros,
-          )
-          return [{ side: 'buy', quantityMicros: quantity, notionalMicros: terms.notionalMicros }]
-        })
-        const fees = calculateSessionFees(buyInputs, protocol.executionModel, costMultiplierMicros)
-        return buyInputs.reduce((sum, fill) => sum + fill.notionalMicros, 0n) + fees.totalMicros <= planningCashMicros
+        )
+        if (Result.isFailure(order)) return Result.fail(order.failure)
+        plannedBuyOrders.push(order.success)
       }
+      const plannedFillCandidates = plannedBuyOrders.map((order) => ({
+        symbol: order.symbol,
+        quantityMicros: BigInt(order.filledQuantityMicros),
+      }))
       let executionBuyScale = 0n
       let maximumExecutionBuyScale = ppm
       while (executionBuyScale < maximumExecutionBuyScale) {
         const candidate = (executionBuyScale + maximumExecutionBuyScale + 1n) / 2n
-        if (executionBuysAffordable(candidate)) executionBuyScale = candidate
+        const affordable = buysAffordable(
+          plannedFillCandidates,
+          candidate,
+          executionOpenPrices,
+          protocol,
+          costMultiplierMicros,
+          planningCashMicros,
+        )
+        if (Result.isFailure(affordable)) return Result.fail(affordable.failure)
+        if (affordable.success) executionBuyScale = candidate
         else maximumExecutionBuyScale = candidate - 1n
       }
-      const buyOrders = plannedBuyOrders.map((order) =>
-        limitOrderFillToBuyingPower(
-          runId,
-          order,
-          scaleQuantityMicros(BigInt(order.filledQuantityMicros), executionBuyScale, protocol.executionModel),
-        ),
-      )
+      const buyOrders: SimulatedOrder[] = []
+      for (const order of plannedBuyOrders) {
+        const filledQuantity = scaleQuantityMicros(
+          BigInt(order.filledQuantityMicros),
+          executionBuyScale,
+          protocol.executionModel,
+        )
+        if (Result.isFailure(filledQuantity)) return Result.fail(filledQuantity.failure)
+        buyOrders.push(limitOrderFillToBuyingPower(runId, order, filledQuantity.success))
+      }
 
       for (const order of sellOrders) {
         if (recordEvents) orders.push(order)
         const position = positions.get(order.symbol) ?? { quantityMicros: 0n, costBasisMicros: 0n }
         const filledQuantity = BigInt(order.filledQuantityMicros)
         if (filledQuantity > 0n) {
-          const terms = makeFillTerms(
+          const termsResult = makeFillTerms(
             'sell',
             filledQuantity,
             executionOpenPrices[order.symbol],
             protocol.executionModel,
             costMultiplierMicros,
           )
-          const costBasis = saleCostBasisMicros(position.costBasisMicros, filledQuantity, position.quantityMicros)
+          if (Result.isFailure(termsResult)) return Result.fail(termsResult.failure)
+          const terms = termsResult.success
+          const costBasisResult = saleCostBasisMicros(position.costBasisMicros, filledQuantity, position.quantityMicros)
+          if (Result.isFailure(costBasisResult)) return Result.fail(costBasisResult.failure)
+          const costBasis = costBasisResult.success
           const fill = makeFill(runId, decision, order, terms, costBasis)
           cashMicros += terms.notionalMicros
           turnoverMicros += terms.notionalMicros
@@ -606,13 +750,15 @@ export const simulate = (
         if (recordEvents) orders.push(order)
         const filledQuantity = BigInt(order.filledQuantityMicros)
         if (filledQuantity > 0n) {
-          const terms = makeFillTerms(
+          const termsResult = makeFillTerms(
             'buy',
             filledQuantity,
             executionOpenPrices[order.symbol],
             protocol.executionModel,
             costMultiplierMicros,
           )
+          if (Result.isFailure(termsResult)) return Result.fail(termsResult.failure)
+          const terms = termsResult.success
           const fill = makeFill(runId, decision, order, terms, terms.notionalMicros)
           cashMicros -= terms.notionalMicros
           turnoverMicros += terms.notionalMicros
@@ -635,7 +781,9 @@ export const simulate = (
         quantityMicros: BigInt(fill.quantityMicros),
         notionalMicros: BigInt(fill.notionalMicros),
       }))
-      const fees = calculateSessionFees(feeInputs, protocol.executionModel, costMultiplierMicros)
+      const feesResult = calculateSessionFees(feeInputs, protocol.executionModel, costMultiplierMicros)
+      if (Result.isFailure(feesResult)) return Result.fail(feesResult.failure)
+      const fees = feesResult.success
       if (fees.totalMicros > 0n) {
         cashMicros -= fees.totalMicros
         totalFeesMicros += fees.totalMicros
@@ -648,18 +796,12 @@ export const simulate = (
       if (cashMicros < 0n) throw new Error(`simulation spent unavailable cash: ${cashMicros}`)
     }
 
-    const closingPrices = Object.fromEntries(
-      Object.entries(session.bars).map(([symbol, bar]) => [
-        symbol,
-        referencePriceMicros(bar.close, protocol.executionModel),
-      ]),
-    ) as Readonly<Record<string, bigint>>
-    const closingEquityMicros =
-      cashMicros +
-      Object.entries(closingPrices).reduce(
-        (value, [symbol, price]) => value + notionalMicros(positions.get(symbol)?.quantityMicros ?? 0n, price),
-        0n,
-      )
+    const closingPricesResult = referencePricesFor(session.bars, protocol, (bar) => bar.close)
+    if (Result.isFailure(closingPricesResult)) return Result.fail(closingPricesResult.failure)
+    const closingPrices = closingPricesResult.success
+    const closingPositionValue = positionValueMicros(closingPrices, positions)
+    if (Result.isFailure(closingPositionValue)) return Result.fail(closingPositionValue.failure)
+    const closingEquityMicros = cashMicros + closingPositionValue.success
     equityMicros.push(closingEquityMicros)
     const netReturn = Number(closingEquityMicros) / Number(previousEquityMicros) - 1
     peakEquityMicros = peakEquityMicros > closingEquityMicros ? peakEquityMicros : closingEquityMicros
@@ -682,28 +824,32 @@ export const simulate = (
     } satisfies DailyPerformancePoint
     dailyPerformance.push(performance)
     if (recordEvents) {
+      const markedPositions: DailyPositionMark['positions'][number][] = []
+      for (const [symbol] of Object.entries(session.bars).sort(([left], [right]) =>
+        left < right ? -1 : left > right ? 1 : 0,
+      )) {
+        const position = positions.get(symbol) ?? { quantityMicros: 0n, costBasisMicros: 0n }
+        const priceMicros = closingPrices[symbol]
+        const marketValue = notionalMicros(position.quantityMicros, priceMicros)
+        if (Result.isFailure(marketValue)) return Result.fail(marketValue.failure)
+        markedPositions.push({
+          symbol,
+          quantityMicros: position.quantityMicros.toString(),
+          costBasisMicros: position.costBasisMicros.toString(),
+          priceMicros: priceMicros.toString(),
+          marketValueMicros: marketValue.success.toString(),
+        })
+      }
       dailyMarks.push({
         ...performance,
         cashMicros: cashMicros.toString(),
-        positions: Object.entries(session.bars)
-          .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-          .map(([symbol]) => {
-            const position = positions.get(symbol) ?? { quantityMicros: 0n, costBasisMicros: 0n }
-            const priceMicros = closingPrices[symbol]
-            return {
-              symbol,
-              quantityMicros: position.quantityMicros.toString(),
-              costBasisMicros: position.costBasisMicros.toString(),
-              priceMicros: priceMicros.toString(),
-              marketValueMicros: notionalMicros(position.quantityMicros, priceMicros).toString(),
-            }
-          }),
+        positions: markedPositions,
       })
     }
     previousEquityMicros = closingEquityMicros
   }
 
-  return {
+  return Result.succeed({
     metrics: calculateExactPerformanceMetrics(
       equityMicros,
       turnoverMicros,
@@ -726,7 +872,7 @@ export const simulate = (
           dailyMarks,
         }
       : null,
-  }
+  })
 }
 
 export const buildVerdict = (

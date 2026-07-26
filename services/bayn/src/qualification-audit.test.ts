@@ -8,15 +8,28 @@ import { makeStrategyProtocolHash } from './contracts'
 import { canonicalHashV1 } from './hash'
 import { makeQualificationResult } from './qualification'
 import {
-  auditQualification,
+  auditQualification as auditQualificationResult,
   classifySignalTableAccess,
   type AuditDatabaseSnapshot,
   type QualificationAuditInput,
+  type QualificationAuditReport,
 } from './audit/audit'
-import { makeQualificationDossier } from './audit/dossier'
+import { makeQualificationDossier as makeQualificationDossierResult, type QualificationDossier } from './audit/dossier'
 import { makeStrategy } from './strategy'
 import { summarizeEvaluation } from './risk-balanced-trend'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
+
+const auditQualification = (input: QualificationAuditInput): QualificationAuditReport => {
+  const result = auditQualificationResult(input)
+  assert(Result.isSuccess(result), 'qualification audit fixture must produce a report')
+  return result.success
+}
+
+const makeQualificationDossier = (input: QualificationAuditInput): QualificationDossier => {
+  const result = makeQualificationDossierResult(input)
+  assert(Result.isSuccess(result), 'qualification dossier fixture must produce a dossier')
+  return result.success
+}
 
 const fixture = (priorTrialRunIds: readonly string[] = []): QualificationAuditInput => {
   const snapshot = makeSnapshot(900)
