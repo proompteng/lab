@@ -1,6 +1,11 @@
 import { Result, Schema } from 'effect'
 
-import { type FinalizedSnapshotProvenance, makeStrategyProtocolHash, type RuntimeProvenance } from '../contracts'
+import {
+  type ContractConstructionFailure,
+  type FinalizedSnapshotProvenance,
+  makeStrategyProtocolHashResult,
+  type RuntimeProvenance,
+} from '../contracts'
 import {
   CashChangesArtifactSchema,
   DailyPerformanceSeriesArtifactSchema,
@@ -15,11 +20,12 @@ import {
   RiskBalancedTrendSignalDecisionsArtifactSchema,
   SimulatedOrdersArtifactSchema,
 } from '../evidence-contracts'
-import { canonicalHashV1 } from '../hash'
-import { buildLedgerPlan } from '../ledger-plan'
+import { canonicalHashV1Result, renderCanonicalJsonFailure, type CanonicalJsonFailure } from '../hash'
+import { buildLedgerPlan, type LedgerValidationError } from '../ledger-plan'
 import { strictParseOptions } from '../schemas'
 import {
   reconcileMarkedEquity,
+  renderSimulationReconciliationIssues,
   type MarkedEquityProof,
   type SimulationReconciliationIssue,
 } from '../simulation-reconciliation'
@@ -280,13 +286,13 @@ export type EvidenceRecoveryIssue =
       readonly _tag: 'DecodeFailure'
       readonly artifactName: string
       readonly schemaVersion: string
-      readonly cause: unknown
+      readonly cause: Schema.SchemaError
     }
   | {
       readonly _tag: 'CanonicalizationFailure'
       readonly operation: RecoveryCanonicalizationOperation
       readonly subject?: string
-      readonly cause: unknown
+      readonly cause: CanonicalJsonFailure
     }
   | {
       readonly _tag: 'SimulationFailure'
@@ -295,7 +301,12 @@ export type EvidenceRecoveryIssue =
   | {
       readonly _tag: 'ComputationFailure'
       readonly operation: 'build-ledger-plan'
-      readonly cause: unknown
+      readonly cause: LedgerValidationError
+    }
+  | {
+      readonly _tag: 'ContractConstructionFailure'
+      readonly operation: 'runtime-protocol-hash'
+      readonly cause: ContractConstructionFailure
     }
 
 interface ValidatedStoredGraph {
@@ -372,26 +383,20 @@ const mismatch = (
 ): Result.Result<never, EvidenceRecoveryIssue> =>
   recoveryFailure({ _tag: 'RecoveryMismatch', stage, path, observed, expected })
 
-const canonicalize = <A>(
+const canonicalHash = (
   operation: RecoveryCanonicalizationOperation,
-  compute: () => A,
+  value: unknown,
   subject?: string,
-): Result.Result<A, EvidenceRecoveryIssue> =>
-  Result.try({
-    try: compute,
-    catch: (cause): EvidenceRecoveryIssue => ({
+): Result.Result<string, EvidenceRecoveryIssue> =>
+  Result.mapError(
+    canonicalHashV1Result(value),
+    (cause): EvidenceRecoveryIssue => ({
       _tag: 'CanonicalizationFailure',
       operation,
       ...(subject === undefined ? {} : { subject }),
       cause,
     }),
-  })
-
-const canonicalHash = (
-  operation: RecoveryCanonicalizationOperation,
-  value: unknown,
-  subject?: string,
-): Result.Result<string, EvidenceRecoveryIssue> => canonicalize(operation, () => canonicalHashV1(value), subject)
+  )
 
 const validateStoredReceipt = (
   runId: string,
@@ -703,10 +708,13 @@ const validateRuntimeIdentity = (
     for (const [path, observed, expected] of facts) {
       if (observed !== expected) return yield* mismatch('runtime', [path], observed, expected)
     }
-    const protocolHash = yield* canonicalize(
-      'runtime-protocol-hash',
-      () => makeStrategyProtocolHash(provenance.strategy),
-      runId,
+    const protocolHash = yield* Result.mapError(
+      makeStrategyProtocolHashResult(provenance.strategy),
+      (cause): EvidenceRecoveryIssue => ({
+        _tag: 'ContractConstructionFailure',
+        operation: 'runtime-protocol-hash',
+        cause,
+      }),
     )
     if (stored.run.protocolHash !== protocolHash) {
       return yield* mismatch('runtime', ['protocolHash'], stored.run.protocolHash, protocolHash)
@@ -734,34 +742,22 @@ const decodePayload = <A>(
   artifactName: string,
   schemaVersion: string,
   payload: unknown,
-  decoder: (input: unknown) => Result.Result<A, unknown>,
-): Result.Result<A, EvidenceRecoveryIssue> => {
-  const attempted = Result.try({
-    try: () => decoder(payload),
-    catch: (cause): EvidenceRecoveryIssue => ({
+  decoder: (input: unknown) => Result.Result<A, Schema.SchemaError>,
+): Result.Result<A, EvidenceRecoveryIssue> =>
+  Result.mapError(
+    decoder(payload),
+    (cause): EvidenceRecoveryIssue => ({
       _tag: 'DecodeFailure',
       artifactName,
       schemaVersion,
       cause,
     }),
-  })
-  return Result.andThen(attempted, (decoded) =>
-    Result.mapError(
-      decoded,
-      (cause): EvidenceRecoveryIssue => ({
-        _tag: 'DecodeFailure',
-        artifactName,
-        schemaVersion,
-        cause,
-      }),
-    ),
   )
-}
 
 const decodeArtifact = <A>(
   artifacts: ArtifactIndex,
   name: string,
-  decoder: (input: unknown) => Result.Result<A, unknown>,
+  decoder: (input: unknown) => Result.Result<A, Schema.SchemaError>,
 ): Result.Result<A, EvidenceRecoveryIssue> =>
   Result.gen(function* () {
     const artifact = yield* requiredArtifact(artifacts, name)
@@ -1490,3 +1486,64 @@ export const completeEvidenceRecovery = (
       },
     }
   })
+
+const renderArtifactSetProblem = (problem: ArtifactSetProblem): string => {
+  switch (problem._tag) {
+    case 'DuplicateArtifact':
+      return `duplicate artifact ${problem.name}: observed ${problem.observedCount}, expected ${problem.expectedCount}`
+    case 'MissingArtifact':
+      return `missing artifact ${problem.name} at schema ${problem.expectedSchemaVersion}`
+    case 'ExtraArtifact':
+      return `unexpected artifact ${problem.name} at schema ${problem.observedSchemaVersion}`
+    case 'WrongArtifactSchema':
+      return `artifact ${problem.name} has schema ${problem.observedSchemaVersion}, expected ${problem.expectedSchemaVersion}`
+  }
+}
+
+const renderContractConstructionFailure = (failure: ContractConstructionFailure): string => {
+  switch (failure._tag) {
+    case 'ContractCanonicalizationFailed':
+      return `${failure.operation}: ${renderCanonicalJsonFailure(failure.cause)}`
+    case 'ContractSchemaInvalid':
+      return `${failure.operation}: ${failure.cause.message}`
+  }
+}
+
+const renderFact = (value: unknown): string => {
+  if (value === null) return 'null'
+  switch (typeof value) {
+    case 'string':
+      return JSON.stringify(value)
+    case 'number':
+    case 'boolean':
+    case 'bigint':
+    case 'undefined':
+      return String(value)
+    case 'symbol':
+      return value.description === undefined ? 'symbol' : `symbol(${value.description})`
+    case 'function':
+      return 'function'
+    case 'object':
+      return Array.isArray(value) ? `array(length=${value.length})` : 'object'
+  }
+  return 'unknown'
+}
+
+export const renderEvidenceRecoveryIssue = (issue: EvidenceRecoveryIssue): string => {
+  switch (issue._tag) {
+    case 'RecoveryMismatch':
+      return `${issue.stage} mismatch at ${issue.path.join('.')}: observed ${renderFact(issue.observed)}, expected ${renderFact(issue.expected)}`
+    case 'ArtifactSetFailure':
+      return renderArtifactSetProblem(issue.problem)
+    case 'DecodeFailure':
+      return `${issue.artifactName} (${issue.schemaVersion}) failed decoding: ${issue.cause.message}`
+    case 'CanonicalizationFailure':
+      return `${issue.operation}${issue.subject === undefined ? '' : ` (${issue.subject})`} failed: ${renderCanonicalJsonFailure(issue.cause)}`
+    case 'SimulationFailure':
+      return `simulation reconciliation failed: ${renderSimulationReconciliationIssues(issue.issues)}`
+    case 'ComputationFailure':
+      return `${issue.operation} failed: ${issue.cause.message}`
+    case 'ContractConstructionFailure':
+      return `${issue.operation} failed: ${renderContractConstructionFailure(issue.cause)}`
+  }
+}
