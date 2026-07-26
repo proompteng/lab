@@ -8,6 +8,7 @@ import {
   cancelRequestHash,
   orderRequestBody,
   type MutationEvidence,
+  type OrderRequestBody,
 } from '../broker/alpaca-mutations'
 import {
   type BrokerReadError,
@@ -65,7 +66,7 @@ export type ExecutionDecisionFailure =
     }
 
 export interface EncodedOrder {
-  readonly request: ReturnType<typeof orderRequestBody>
+  readonly request: OrderRequestBody
   readonly requestHash: string
 }
 
@@ -177,18 +178,22 @@ export const encodeOrder = (
   intent: Intent,
   message = 'intent cannot be represented as an Alpaca paper order',
 ): Result.Result<EncodedOrder, ExecutionDecisionFailure> =>
-  Result.try({
-    try: () => {
-      const request = orderRequestBody(intent)
-      return { request, requestHash: canonicalHashV1(request) }
-    },
-    catch: (cause): ExecutionDecisionFailure => ({
-      _tag: 'OrderCanonicalizationFailed',
-      operation,
-      message,
-      cause,
-    }),
-  })
+  orderRequestBody(intent).pipe(
+    Result.mapError(
+      (cause): ExecutionDecisionFailure => ({ _tag: 'OrderCanonicalizationFailed', operation, message, cause }),
+    ),
+    Result.flatMap((request) =>
+      Result.try({
+        try: () => ({ request, requestHash: canonicalHashV1(request) }),
+        catch: (cause): ExecutionDecisionFailure => ({
+          _tag: 'OrderCanonicalizationFailed',
+          operation,
+          message,
+          cause,
+        }),
+      }),
+    ),
+  )
 
 export const validateActiveSubmitRiskDecision = (
   stored: StoredIntent,

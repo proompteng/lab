@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Fiber, Redacted } from 'effect'
+import { Effect, Fiber, Redacted, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 
@@ -11,6 +11,8 @@ import {
   MutationFailure,
   MutationOperation,
   makeMutation,
+  orderRequestBody,
+  submitBody,
   type BrokerMutationShape,
   type MutationOptions,
 } from './alpaca-mutations'
@@ -138,7 +140,30 @@ const requestBody = (request: Parameters<Parameters<typeof HttpClient.make>[0]>[
   return JSON.parse(new TextDecoder().decode(request.body.body))
 }
 
+const assertFailure = <A, E>(result: Result.Result<A, E>): E => {
+  if (Result.isSuccess(result)) throw new Error('expected request encoding failure')
+  return result.failure
+}
+
 describe('Alpaca paper mutations', () => {
+  test('returns closed request encoding failures without throwing', () => {
+    expect(assertFailure(submitBody({ ...intent, state: IntentState.Approved }))).toMatchObject({
+      _tag: 'OrderRequestError',
+      failure: 'invalid-intent-state',
+    })
+    expect(assertFailure(orderRequestBody({ ...intent, orderType: OrderType.Limit }))).toMatchObject({
+      _tag: 'OrderRequestError',
+      failure: 'invalid-order',
+    })
+    expect(assertFailure(orderRequestBody({ ...intent, timeInForce: TimeInForce.GoodUntilCanceled }))).toMatchObject({
+      _tag: 'OrderRequestError',
+      failure: 'invalid-order',
+    })
+    const malformedQuantity = assertFailure(orderRequestBody({ ...intent, quantityMicros: 'not-an-integer' }))
+    expect(malformedQuantity).toMatchObject({ _tag: 'OrderRequestError', failure: 'invalid-order' })
+    expect(malformedQuantity.cause).toBeInstanceOf(Error)
+  })
+
   test('refuses to construct mutation capability below explicit PAPER authority', async () => {
     let requests = 0
     const client = HttpClient.make(() => {

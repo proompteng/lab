@@ -1957,7 +1957,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           yield* Deferred.succeed(submitEntered, undefined)
           yield* Deferred.await(releaseSubmit)
           return {
-            requestHash: canonicalHashV1(orderRequestBody(submitted)),
+            requestHash: canonicalHashV1(Result.getOrThrow(orderRequestBody(submitted))),
             order: {
               accountId: submitted.accountId,
               brokerOrderId: orderId,

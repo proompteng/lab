@@ -43,6 +43,8 @@ import {
 } from '../paper'
 import { cancel, dryRunSubmit, ExecutionError, ExecutionFailure, recover, submit } from './coordinator'
 import { IntentStore, type IntentStoreService, type StoredIntent } from './intents'
+
+const encodedRequest = (value: Intent) => Result.getOrThrow(orderRequestBody(value))
 import {
   decideMutationAuthority,
   decideMutationOutcome,
@@ -1393,7 +1395,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
       }
       if (options.crashAfterSubmit) return Effect.die(new Error('injected crash after send'))
       if (options.submitError !== undefined) return Effect.fail(options.submitError)
-      const hash = canonicalHashV1(orderRequestBody(submitted))
+      const hash = canonicalHashV1(encodedRequest(submitted))
       if (options.unknownSubmit) {
         return Effect.fail(
           new BrokerMutationError({
@@ -1508,7 +1510,7 @@ const mismatchedSubmissionError = () =>
     failure: MutationFailure.Unknown,
     outcome: MutationOutcome.Unknown,
     message: 'accepted order differs from durable intent',
-    requestHash: canonicalHashV1(orderRequestBody(intent)),
+    requestHash: canonicalHashV1(encodedRequest(intent)),
     evidence: evidence(200, '1970-01-01T00:00:00.100Z'),
     brokerOrderId: orderId,
   })
@@ -1522,8 +1524,8 @@ describe('paper execution coordinator', () => {
       schemaVersion: 'bayn.paper-submit-dry-run.v1',
       intentId,
       clientOrderId: intent.clientOrderId,
-      requestHash: canonicalHashV1(orderRequestBody(intent)),
-      request: orderRequestBody(intent),
+      requestHash: canonicalHashV1(encodedRequest(intent)),
+      request: encodedRequest(intent),
     })
     expect(harness.calls()).toEqual({ submit: 0, cancel: 0, lookup: 0 })
     expect(harness.state()).toBe(IntentState.Approved)
