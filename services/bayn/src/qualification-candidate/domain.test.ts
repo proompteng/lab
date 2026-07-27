@@ -154,7 +154,16 @@ describe('qualification candidate decisions', () => {
           candidateObservations([{ snapshot: malformed }, { snapshot: malformed }]),
         ),
       ),
-    ).toMatchObject({ _tag: 'CanonicalizationFailed', subject: 'snapshot' })
+    ).toEqual({
+      _tag: 'CanonicalizationFailed',
+      subject: 'snapshot',
+      cause: {
+        _tag: 'CanonicalJsonFailure',
+        path: '$.manifest.finalizedSnapshot.calendarVersion',
+        reason: 'invalid-unicode-surrogate',
+        actualType: 'string',
+      },
+    })
   })
 
   test('accepts only an unused snapshot observed through a read-only transaction', () => {

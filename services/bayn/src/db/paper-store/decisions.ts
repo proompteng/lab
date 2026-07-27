@@ -21,6 +21,8 @@ type PaperStoreHashOperation =
   | 'position-snapshot-content'
   | 'accounting-transaction-stored'
   | 'accounting-transaction-candidate'
+  | 'accounting-receipt-id'
+  | 'accounting-receipt-content'
   | 'accounting-receipt-stored'
   | 'accounting-receipt-candidate'
   | 'valuation-source'
@@ -332,6 +334,46 @@ export const decideAccountingReceipt = (
   if (receipts.length > 1) return fail('invariant', 'fill has multiple accounting receipts')
   return Result.succeed(receipts[0])
 }
+
+export type AccountingReceiptPlan = Omit<AccountingReceipt, 'recordedAt'>
+
+export const planAccountingReceipt = (
+  prepared: PreparedAccounting,
+  tigerBeetleClusterId: string,
+  tigerBeetleLedger: number,
+): Result.Result<AccountingReceiptPlan, PaperStoreDecisionFailure> =>
+  Result.gen(function* () {
+    const accountIds = prepared.ledger.accounts.map((account) => account.id.toString())
+    const transferIds = prepared.ledger.transfers.map((transfer) => transfer.id.toString())
+    const postedMicros = prepared.ledger.transfers.reduce((sum, transfer) => sum + transfer.amount, 0n).toString()
+    const stable = {
+      schemaVersion: 'bayn.paper-accounting-receipt.v1' as const,
+      ...(prepared.transaction.intentId === undefined ? {} : { intentId: prepared.transaction.intentId }),
+      brokerEventId: prepared.transaction.brokerEventId,
+      tigerBeetleClusterId,
+      tigerBeetleLedger,
+      accountIds,
+      transferIds,
+      debitMicros: postedMicros,
+      creditMicros: postedMicros,
+    }
+    const receiptId = yield* hashDecision(
+      'accounting-receipt-id',
+      {
+        schemaVersion: 'bayn.paper-accounting-receipt-id.v1',
+        brokerEventId: prepared.transaction.brokerEventId,
+        tigerBeetleClusterId,
+        tigerBeetleLedger,
+      },
+      'accounting receipt identity is not canonicalizable',
+    )
+    const contentHash = yield* hashDecision(
+      'accounting-receipt-content',
+      stable,
+      'accounting receipt content is not canonicalizable',
+    )
+    return { ...stable, receiptId, contentHash }
+  })
 
 export const stableAccountingReceipt = (receipt: AccountingReceipt) => ({
   schemaVersion: receipt.schemaVersion,

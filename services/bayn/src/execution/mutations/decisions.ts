@@ -1,7 +1,7 @@
 import { Result, Schema } from 'effect'
 
 import { MutationOperation, type MutationEvidence } from '../../broker/alpaca-mutations'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { Authority, IntentState, KillState, TerminalOutcome } from '../../paper'
 import { strictParseOptions } from '../../schemas'
 import {
@@ -69,14 +69,14 @@ const canonicalHashResult = (
   fact: MutationCanonicalizationFact,
   value: unknown,
 ): Result.Result<string, MutationCanonicalizationFailure> =>
-  Result.try({
-    try: () => canonicalHashV1(value),
-    catch: (cause): MutationCanonicalizationFailure => ({
+  Result.mapError(
+    canonicalHashV1Result(value),
+    (cause): MutationCanonicalizationFailure => ({
       _tag: 'MutationCanonicalizationFailure',
       fact,
       cause,
     }),
-  })
+  )
 
 export const mutationIdResult = (
   intentId: string,

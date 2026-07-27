@@ -1,7 +1,7 @@
 import { Config, Effect, FileSystem, Result, Stdio, Stream } from 'effect'
 import * as Reactivity from 'effect/unstable/reactivity/Reactivity'
 
-import { canonicalJsonV1 } from '../hash'
+import { canonicalJsonV1Result } from '../hash'
 import { loadDefaultProtocol } from '../protocol'
 import { IsoDateSchema, PositiveIntegerSchema, TrimmedNonEmptyStringSchema } from '../schemas'
 import type { CausalProtocol } from '../types'
@@ -113,11 +113,16 @@ const writeReport = (
   report: QualificationCandidateReport,
 ): Effect.Effect<void, QualificationCandidateFailure, Stdio.Stdio> =>
   Effect.fromResult(
-    Result.try({
-      try: () => `${canonicalJsonV1(report)}\n`,
-      catch: (cause): QualificationCandidateFailure => ({ _tag: 'CanonicalizationFailed', subject: 'report', cause }),
-    }),
+    Result.mapError(
+      canonicalJsonV1Result(report),
+      (cause): QualificationCandidateFailure => ({
+        _tag: 'CanonicalizationFailed',
+        subject: 'report',
+        cause,
+      }),
+    ),
   ).pipe(
+    Effect.map((encoded) => `${encoded}\n`),
     Effect.flatMap((encoded) =>
       Effect.flatMap(Stdio.Stdio, (stdio) =>
         Stream.run(Stream.make(encoded), stdio.stdout()).pipe(

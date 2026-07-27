@@ -6,7 +6,6 @@ import { renderAccountingFailure } from '../../accounting/failure'
 import type { PositionCost, PreparedAccounting } from '../../accounting/model'
 import type { AccountingTransaction } from '../../accounting/schema'
 import type { FillEventInput } from '../../broker/observations'
-import { canonicalHashV1 } from '../../hash'
 import type { JournalService } from '../../ledger'
 import { currentUtcInstant } from '../../time'
 import type { AccountingReceipt } from '../../paper'
@@ -20,6 +19,7 @@ import {
   decidePreparedAccountingReplay,
   decidePreparedTransaction,
   decideSuccessorAbsence,
+  planAccountingReceipt,
 } from './decisions'
 import { liftPaperDecision, paperStoreError, runPaperOperation } from './errors'
 import {
@@ -228,46 +228,32 @@ export const makeAccountingInterpreter = (
   const recordReceipt = (prepared: PreparedAccounting): Effect.Effect<AccountingReceipt, PaperStoreError> =>
     runPaperOperation(
       'receipt',
-      sql.withTransaction(
-        Effect.gen(function* () {
-          const accountIds = prepared.ledger.accounts.map((account) => account.id.toString())
-          const transferIds = prepared.ledger.transfers.map((transfer) => transfer.id.toString())
-          const postedMicros = prepared.ledger.transfers.reduce((sum, transfer) => sum + transfer.amount, 0n).toString()
-          const stable = {
-            schemaVersion: 'bayn.paper-accounting-receipt.v1' as const,
-            ...(prepared.transaction.intentId === undefined ? {} : { intentId: prepared.transaction.intentId }),
-            brokerEventId: prepared.transaction.brokerEventId,
-            tigerBeetleClusterId: config.tigerBeetle.clusterId.toString(),
-            tigerBeetleLedger: config.tigerBeetle.ledger,
-            accountIds,
-            transferIds,
-            debitMicros: postedMicros,
-            creditMicros: postedMicros,
-          }
-          const receiptId = canonicalHashV1({
-            schemaVersion: 'bayn.paper-accounting-receipt-id.v1',
-            brokerEventId: prepared.transaction.brokerEventId,
-            tigerBeetleClusterId: stable.tigerBeetleClusterId,
-            tigerBeetleLedger: stable.tigerBeetleLedger,
-          })
-          const contentHash = canonicalHashV1(stable)
-          const recordedAt = yield* currentUtcInstant
-          const candidate = yield* decodeReceipt({ ...stable, receiptId, contentHash, recordedAt })
-          yield* sql`
-            INSERT INTO accounting_receipts (
-              receipt_id, schema_version, intent_id, broker_event_id, tigerbeetle_cluster_id, tigerbeetle_ledger,
-              account_ids, transfer_ids, debit_micros, credit_micros, content_hash, recorded_at
-            ) VALUES (
-              ${candidate.receiptId}, ${candidate.schemaVersion}, ${candidate.intentId ?? null},
-              ${candidate.brokerEventId}, ${candidate.tigerBeetleClusterId}, ${candidate.tigerBeetleLedger},
-              ${candidate.accountIds}, ${candidate.transferIds}, ${candidate.debitMicros}, ${candidate.creditMicros},
-              ${candidate.contentHash}, ${candidate.recordedAt}
-            )
-            ON CONFLICT (broker_event_id) DO NOTHING
-          `
-          const stored = yield* readReceipt(candidate.brokerEventId)
-          return yield* liftPaperDecision('receipt', decideAccountingReceiptReplay(stored, candidate))
-        }),
+      liftPaperDecision(
+        'receipt',
+        planAccountingReceipt(prepared, config.tigerBeetle.clusterId.toString(), config.tigerBeetle.ledger),
+      ).pipe(
+        Effect.flatMap((planned) =>
+          sql.withTransaction(
+            Effect.gen(function* () {
+              const recordedAt = yield* currentUtcInstant
+              const candidate = yield* decodeReceipt({ ...planned, recordedAt })
+              yield* sql`
+                INSERT INTO accounting_receipts (
+                  receipt_id, schema_version, intent_id, broker_event_id, tigerbeetle_cluster_id, tigerbeetle_ledger,
+                  account_ids, transfer_ids, debit_micros, credit_micros, content_hash, recorded_at
+                ) VALUES (
+                  ${candidate.receiptId}, ${candidate.schemaVersion}, ${candidate.intentId ?? null},
+                  ${candidate.brokerEventId}, ${candidate.tigerBeetleClusterId}, ${candidate.tigerBeetleLedger},
+                  ${candidate.accountIds}, ${candidate.transferIds}, ${candidate.debitMicros}, ${candidate.creditMicros},
+                  ${candidate.contentHash}, ${candidate.recordedAt}
+                )
+                ON CONFLICT (broker_event_id) DO NOTHING
+              `
+              const stored = yield* readReceipt(candidate.brokerEventId)
+              return yield* liftPaperDecision('receipt', decideAccountingReceiptReplay(stored, candidate))
+            }),
+          ),
+        ),
       ),
     )
 

@@ -2,7 +2,7 @@ import { isIP } from 'node:net'
 
 import { Option, pipe, Redacted, Result } from 'effect'
 
-import { canonicalJsonV1, sha256 } from '../hash'
+import { canonicalJsonV1Result, sha256 } from '../hash'
 import type { MarketDataSnapshot } from '../market-data'
 import type { QualificationCandidateFailure } from './failure'
 import type {
@@ -214,10 +214,14 @@ const canonicalSnapshot = (
   snapshot: MarketDataSnapshot,
 ): Result.Result<CanonicalSnapshot, QualificationCandidateFailure> =>
   pipe(
-    Result.try({
-      try: () => canonicalJsonV1(snapshot),
-      catch: (cause) => ({ _tag: 'CanonicalizationFailed' as const, subject: 'snapshot' as const, cause }),
-    }),
+    canonicalJsonV1Result(snapshot),
+    Result.mapError(
+      (cause): QualificationCandidateFailure => ({
+        _tag: 'CanonicalizationFailed',
+        subject: 'snapshot',
+        cause,
+      }),
+    ),
     Result.map((json) => ({ json, hash: sha256(json) })),
   )
 
