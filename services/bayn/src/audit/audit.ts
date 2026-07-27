@@ -2,7 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { makeRuntimeProvenanceResult, type ContractConstructionFailure, type RuntimeProvenance } from '../contracts'
 import { ReconciliationResultSchema } from '../evidence-contracts'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import type { QualificationLock, QualificationResult } from '../qualification'
 import { strictParseOptions as StrictParseOptions } from '../schemas'
 import {
@@ -234,6 +234,11 @@ export type QualificationAuditFailure =
   | ReferenceEvaluationFailure
   | ContractConstructionFailure
   | {
+      readonly _tag: 'AuditCanonicalizationFailed'
+      readonly subject: AuditCanonicalizationSubject
+      readonly cause: CanonicalHashFailure
+    }
+  | {
       readonly _tag: 'UnsupportedAuditStrategyContract'
       readonly protocolStrategyName: string
       readonly runStrategyName: string
@@ -262,6 +267,25 @@ export type QualificationAuditFailure =
       readonly artifactName: string
       readonly supportedArtifactNames: readonly string[]
     }
+
+export interface AuditCanonicalizationSubject {
+  readonly scope:
+    | 'analysis'
+    | 'artifact'
+    | 'audit'
+    | 'event'
+    | 'gate'
+    | 'lineage'
+    | 'lock'
+    | 'policy'
+    | 'protocol'
+    | 'qualification-manifest'
+    | 'reference'
+    | 'result'
+    | 'status'
+  readonly name?: string
+  readonly ordinal?: number
+}
 
 export interface AuditCheck {
   readonly name: string
@@ -308,7 +332,32 @@ export interface QualificationAuditReport {
   readonly auditHash: string
 }
 
-const same = (left: unknown, right: unknown): boolean => canonicalHashV1(left) === canonicalHashV1(right)
+const hashAuditMaterial = (
+  subject: AuditCanonicalizationSubject,
+  value: unknown,
+): Result.Result<string, QualificationAuditFailure> =>
+  Result.mapError(
+    canonicalHashV1Result(value),
+    (cause): QualificationAuditFailure => ({ _tag: 'AuditCanonicalizationFailed', subject, cause }),
+  )
+
+const same = (
+  subject: AuditCanonicalizationSubject,
+  left: unknown,
+  right: unknown,
+): Result.Result<boolean, QualificationAuditFailure> =>
+  Result.gen(function* () {
+    const leftHash = yield* hashAuditMaterial(subject, left)
+    const rightHash = yield* hashAuditMaterial(subject, right)
+    return leftHash === rightHash
+  })
+
+const hashMatches = (
+  subject: AuditCanonicalizationSubject,
+  value: unknown,
+  expectedHash: string,
+): Result.Result<boolean, QualificationAuditFailure> =>
+  Result.map(hashAuditMaterial(subject, value), (actualHash) => actualHash === expectedHash)
 
 const expectedResultReason = (gateName: string): string =>
   `EVALUATION_${gateName
@@ -489,401 +538,490 @@ const makeAuditFacts = (
   })
 }
 
-const auditStoredEvidence = (facts: QualificationAuditFacts): readonly AuditCheck[] => {
-  const { database, input, provenance, reference } = facts
-  const expectedArtifactSchemas = new Map<string, string>([
-    ['evaluation-summary', contract.summarySchemaVersion],
-    ['input-manifest', input.manifest.schemaVersion],
-    ['strategy', 'bayn.performance-metrics.v2'],
-    ['buy-and-hold', 'bayn.performance-metrics.v2'],
-    ['direct-volatility-timing', 'bayn.performance-metrics.v2'],
-    ['double-cost-strategy', 'bayn.performance-metrics.v2'],
-    ['simulated-orders', 'bayn.simulated-orders.v2'],
-    ['cash-changes', 'bayn.cash-changes.v2'],
-    ['daily-position-marks', 'bayn.daily-position-marks.v3'],
-    [contract.decisionArtifactName, contract.decisionArtifactSchemaVersion],
-    ['buy-and-hold-series', 'bayn.daily-performance-series.v1'],
-    ['direct-volatility-timing-series', 'bayn.daily-performance-series.v1'],
-    ['double-cost-strategy-series', 'bayn.daily-performance-series.v1'],
-    ['equity-series', 'bayn.equity-series.v1'],
-    ['marked-equity-reconciliation', 'bayn.marked-equity-reconciliation.v2'],
-    ['reconciliation', 'bayn.reconciliation.v1'],
-    ['qualification-artifact-manifest', 'bayn.qualification-artifact-manifest.v1'],
-  ])
-  return [
-    makeAuditCheck('postgres-transaction-read-only', database.transactionReadOnly, 'transaction_read_only=on'),
-    makeAuditCheck(
-      'protocol-content',
-      same(input.protocol, database.protocol.parameters) &&
-        canonicalHashV1(input.protocol) === database.protocol.parameterHash &&
-        reference.protocolHash === database.protocol.protocolHash,
-      `parameterHash=${database.protocol.parameterHash}`,
-    ),
-    makeAuditCheck(
-      'run-identity',
-      reference.runId === database.run.runId &&
-        reference.protocolHash === database.run.protocolHash &&
-        input.manifest.finalizedSnapshot.snapshotId === database.run.snapshotId &&
-        database.protocol.strategyName === contract.name &&
-        database.run.strategyName === contract.name &&
-        database.run.evaluationSchemaVersion === contract.evaluationSchemaVersion &&
-        provenance.contractVersions.evaluation === contract.evaluationSchemaVersion &&
-        database.run.initialCapitalMicros === input.protocol.initialCapitalMicros &&
-        database.run.status === 'COMPLETE',
-      `runId=${database.run.runId}`,
-    ),
-    makeAuditCheck(
-      'evidence-counts',
-      database.artifacts.length === database.run.artifactCount &&
-        database.events.length === database.run.eventCount &&
-        database.gates.length === database.run.gateCount,
-      `${database.artifacts.length}/${database.events.length}/${database.gates.length}`,
-    ),
-    makeAuditCheck(
-      'artifact-hashes',
-      database.artifacts.every((value) => canonicalHashV1(value.payload) === value.contentHash),
-      `${database.artifacts.length} artifacts`,
-    ),
-    makeAuditCheck(
-      'artifact-schema-versions',
-      database.artifacts.length === expectedArtifactSchemas.size &&
-        database.artifacts.every((value) => expectedArtifactSchemas.get(value.name) === value.schemaVersion),
-      `${database.artifacts.length} versioned artifacts`,
-    ),
-    makeAuditCheck(
-      'event-hashes-and-order',
-      database.events.every(
-        (value, index) =>
-          value.ordinal === index &&
-          value.id === value.payload.id &&
-          value.kind === value.payload.kind &&
-          canonicalHashV1(value.payload) === value.contentHash,
+const auditStoredEvidence = (
+  facts: QualificationAuditFacts,
+): Result.Result<readonly AuditCheck[], QualificationAuditFailure> =>
+  Result.gen(function* () {
+    const { database, input, provenance, reference } = facts
+    const expectedArtifactSchemas = new Map<string, string>([
+      ['evaluation-summary', contract.summarySchemaVersion],
+      ['input-manifest', input.manifest.schemaVersion],
+      ['strategy', 'bayn.performance-metrics.v2'],
+      ['buy-and-hold', 'bayn.performance-metrics.v2'],
+      ['direct-volatility-timing', 'bayn.performance-metrics.v2'],
+      ['double-cost-strategy', 'bayn.performance-metrics.v2'],
+      ['simulated-orders', 'bayn.simulated-orders.v2'],
+      ['cash-changes', 'bayn.cash-changes.v2'],
+      ['daily-position-marks', 'bayn.daily-position-marks.v3'],
+      [contract.decisionArtifactName, contract.decisionArtifactSchemaVersion],
+      ['buy-and-hold-series', 'bayn.daily-performance-series.v1'],
+      ['direct-volatility-timing-series', 'bayn.daily-performance-series.v1'],
+      ['double-cost-strategy-series', 'bayn.daily-performance-series.v1'],
+      ['equity-series', 'bayn.equity-series.v1'],
+      ['marked-equity-reconciliation', 'bayn.marked-equity-reconciliation.v2'],
+      ['reconciliation', 'bayn.reconciliation.v1'],
+      ['qualification-artifact-manifest', 'bayn.qualification-artifact-manifest.v1'],
+    ])
+    const protocolContentMatches = yield* same(
+      { scope: 'protocol', name: 'parameters' },
+      input.protocol,
+      database.protocol.parameters,
+    )
+    const protocolHashMatches = yield* hashMatches(
+      { scope: 'protocol', name: 'parameter-hash' },
+      input.protocol,
+      database.protocol.parameterHash,
+    )
+    const artifactHashes = yield* Result.all(
+      database.artifacts.map((value) =>
+        hashMatches({ scope: 'artifact', name: value.name }, value.payload, value.contentHash),
       ),
-      `${database.events.length} events`,
-    ),
-    makeAuditCheck(
-      'gate-hashes-and-order',
-      database.gates.every(
-        (value, index) =>
-          value.ordinal === index &&
-          canonicalHashV1({
-            name: value.name,
-            passed: value.passed,
-            actual: value.actual,
-            required: value.required,
-          }) === value.contentHash,
+    )
+    const eventHashes = yield* Result.all(
+      database.events.map((value) =>
+        hashMatches({ scope: 'event', name: value.kind, ordinal: value.ordinal }, value.payload, value.contentHash),
       ),
-      `${database.gates.length} gates`,
-    ),
-    makeAuditCheck(
-      'status-history',
+    )
+    const gateHashes = yield* Result.all(
+      database.gates.map((value) =>
+        hashMatches(
+          { scope: 'gate', name: value.name, ordinal: value.ordinal },
+          { name: value.name, passed: value.passed, actual: value.actual, required: value.required },
+          value.contentHash,
+        ),
+      ),
+    )
+    const [writingStatus, completeStatus] = database.statuses
+    let statusHistoryMatches = false
+    if (
       database.statuses.length === 2 &&
-        database.statuses[0].status === 'WRITING' &&
-        database.statuses[1].status === 'COMPLETE' &&
-        same(database.statuses[0].detail, {
-          artifactCount: database.run.artifactCount,
-          eventCount: database.run.eventCount,
-          gateCount: database.run.gateCount,
-        }) &&
-        same(database.statuses[1].detail, { reconciliationExact: true, verdict: reference.verdict.status }),
-      database.statuses.map((status) => status.status).join(' -> '),
-    ),
-  ]
-}
-
-const auditReferenceArtifacts = (facts: QualificationAuditFacts): readonly AuditCheck[] => {
-  const { artifact, database, input, markedEquity, reference, trace } = facts
-  const checks: AuditCheck[] = []
-  const checkArtifact = (name: string, expected: unknown): void => {
-    checks.push(
+      writingStatus?.status === 'WRITING' &&
+      completeStatus?.status === 'COMPLETE'
+    ) {
+      const writingDetailMatches = yield* same({ scope: 'status', name: 'WRITING' }, writingStatus.detail, {
+        artifactCount: database.run.artifactCount,
+        eventCount: database.run.eventCount,
+        gateCount: database.run.gateCount,
+      })
+      const completeDetailMatches = yield* same({ scope: 'status', name: 'COMPLETE' }, completeStatus.detail, {
+        reconciliationExact: true,
+        verdict: reference.verdict.status,
+      })
+      statusHistoryMatches = writingDetailMatches && completeDetailMatches
+    }
+    return [
+      makeAuditCheck('postgres-transaction-read-only', database.transactionReadOnly, 'transaction_read_only=on'),
       makeAuditCheck(
-        `reference-${name}`,
-        same(artifact.get(name)?.payload, expected),
-        `contentHash=${canonicalHashV1(expected)}`,
+        'protocol-content',
+        protocolContentMatches && protocolHashMatches && reference.protocolHash === database.protocol.protocolHash,
+        `parameterHash=${database.protocol.parameterHash}`,
       ),
+      makeAuditCheck(
+        'run-identity',
+        reference.runId === database.run.runId &&
+          reference.protocolHash === database.run.protocolHash &&
+          input.manifest.finalizedSnapshot.snapshotId === database.run.snapshotId &&
+          database.protocol.strategyName === contract.name &&
+          database.run.strategyName === contract.name &&
+          database.run.evaluationSchemaVersion === contract.evaluationSchemaVersion &&
+          provenance.contractVersions.evaluation === contract.evaluationSchemaVersion &&
+          database.run.initialCapitalMicros === input.protocol.initialCapitalMicros &&
+          database.run.status === 'COMPLETE',
+        `runId=${database.run.runId}`,
+      ),
+      makeAuditCheck(
+        'evidence-counts',
+        database.artifacts.length === database.run.artifactCount &&
+          database.events.length === database.run.eventCount &&
+          database.gates.length === database.run.gateCount,
+        `${database.artifacts.length}/${database.events.length}/${database.gates.length}`,
+      ),
+      makeAuditCheck('artifact-hashes', artifactHashes.every(Boolean), `${database.artifacts.length} artifacts`),
+      makeAuditCheck(
+        'artifact-schema-versions',
+        database.artifacts.length === expectedArtifactSchemas.size &&
+          database.artifacts.every((value) => expectedArtifactSchemas.get(value.name) === value.schemaVersion),
+        `${database.artifacts.length} versioned artifacts`,
+      ),
+      makeAuditCheck(
+        'event-hashes-and-order',
+        eventHashes.every(Boolean) &&
+          database.events.every(
+            (value, index) =>
+              value.ordinal === index && value.id === value.payload.id && value.kind === value.payload.kind,
+          ),
+        `${database.events.length} events`,
+      ),
+      makeAuditCheck(
+        'gate-hashes-and-order',
+        gateHashes.every(Boolean) && database.gates.every((value, index) => value.ordinal === index),
+        `${database.gates.length} gates`,
+      ),
+      makeAuditCheck(
+        'status-history',
+        statusHistoryMatches,
+        database.statuses.map((status) => status.status).join(' -> '),
+      ),
+    ]
+  })
+
+const auditReferenceArtifacts = (
+  facts: QualificationAuditFacts,
+): Result.Result<readonly AuditCheck[], QualificationAuditFailure> =>
+  Result.gen(function* () {
+    const { artifact, database, input, markedEquity, reference, trace } = facts
+    const checks: AuditCheck[] = []
+    const checkArtifact = (name: string, expected: unknown): Result.Result<void, QualificationAuditFailure> =>
+      Result.gen(function* () {
+        const expectedHash = yield* hashAuditMaterial({ scope: 'reference', name }, expected)
+        const stored = artifact.get(name)
+        if (stored === undefined) {
+          checks.push(makeAuditCheck(`reference-${name}`, false, `missing; expected contentHash=${expectedHash}`))
+          return
+        }
+        const matches = yield* same({ scope: 'reference', name }, stored.payload, expected)
+        checks.push(makeAuditCheck(`reference-${name}`, matches, `contentHash=${expectedHash}`))
+      })
+    if (markedEquity._tag === 'Unavailable') {
+      checks.push(makeAuditCheck('reference-evaluation-summary', false, markedEquity.evidence))
+    } else {
+      yield* checkArtifact(
+        'evaluation-summary',
+        makeSummary(input, reference, trace, markedEquity.proof.reconciliation),
+      )
+    }
+    const expectedArtifacts = new Map<string, unknown>([
+      ['input-manifest', input.manifest],
+      ['strategy', reference.strategy.metrics],
+      ['buy-and-hold', reference.buyAndHold.metrics],
+      ['direct-volatility-timing', reference.directVolTiming.metrics],
+      ['double-cost-strategy', reference.doubleCostStrategy.metrics],
+      [
+        'simulated-orders',
+        {
+          schemaVersion: 'bayn.simulated-orders.v2',
+          executionModel: input.protocol.executionModel,
+          costMultiplierMicros: MICROS_STRING,
+          items: trace.orders,
+        },
+      ],
+      ['cash-changes', { schemaVersion: 'bayn.cash-changes.v2', items: trace.cashChanges }],
+      ['daily-position-marks', { schemaVersion: 'bayn.daily-position-marks.v3', items: trace.dailyMarks }],
+      [
+        contract.decisionArtifactName,
+        { schemaVersion: contract.decisionArtifactSchemaVersion, items: reference.strategy.decisions },
+      ],
+      [
+        'buy-and-hold-series',
+        {
+          schemaVersion: 'bayn.daily-performance-series.v1',
+          series: 'buy-and-hold',
+          items: reference.buyAndHold.daily,
+        },
+      ],
+      [
+        'direct-volatility-timing-series',
+        {
+          schemaVersion: 'bayn.daily-performance-series.v1',
+          series: 'direct-volatility-timing',
+          items: reference.directVolTiming.daily,
+        },
+      ],
+      [
+        'double-cost-strategy-series',
+        {
+          schemaVersion: 'bayn.daily-performance-series.v1',
+          series: 'double-cost-strategy',
+          items: reference.doubleCostStrategy.daily,
+        },
+      ],
+    ])
+    for (const [name, expected] of expectedArtifacts) yield* checkArtifact(name, expected)
+    if (markedEquity._tag === 'Unavailable') {
+      checks.push(
+        makeAuditCheck('reference-equity-series', false, markedEquity.evidence),
+        makeAuditCheck('reference-marked-equity-reconciliation', false, markedEquity.evidence),
+      )
+    } else {
+      yield* checkArtifact('equity-series', {
+        schemaVersion: 'bayn.equity-series.v1',
+        items: markedEquity.proof.equitySeries,
+      })
+      yield* checkArtifact('marked-equity-reconciliation', markedEquity.proof.reconciliation)
+    }
+    const referenceEventsHash = yield* hashAuditMaterial(
+      { scope: 'reference', name: 'events' },
+      reference.strategy.events,
     )
-  }
-  if (markedEquity._tag === 'Unavailable') {
-    checks.push(makeAuditCheck('reference-evaluation-summary', false, markedEquity.evidence))
-  } else {
-    checkArtifact('evaluation-summary', makeSummary(input, reference, trace, markedEquity.proof.reconciliation))
-  }
-  const expectedArtifacts = new Map<string, unknown>([
-    ['input-manifest', input.manifest],
-    ['strategy', reference.strategy.metrics],
-    ['buy-and-hold', reference.buyAndHold.metrics],
-    ['direct-volatility-timing', reference.directVolTiming.metrics],
-    ['double-cost-strategy', reference.doubleCostStrategy.metrics],
-    [
-      'simulated-orders',
-      {
-        schemaVersion: 'bayn.simulated-orders.v2',
-        executionModel: input.protocol.executionModel,
-        costMultiplierMicros: MICROS_STRING,
-        items: trace.orders,
-      },
-    ],
-    ['cash-changes', { schemaVersion: 'bayn.cash-changes.v2', items: trace.cashChanges }],
-    ['daily-position-marks', { schemaVersion: 'bayn.daily-position-marks.v3', items: trace.dailyMarks }],
-    [
-      contract.decisionArtifactName,
-      { schemaVersion: contract.decisionArtifactSchemaVersion, items: reference.strategy.decisions },
-    ],
-    [
-      'buy-and-hold-series',
-      {
-        schemaVersion: 'bayn.daily-performance-series.v1',
-        series: 'buy-and-hold',
-        items: reference.buyAndHold.daily,
-      },
-    ],
-    [
-      'direct-volatility-timing-series',
-      {
-        schemaVersion: 'bayn.daily-performance-series.v1',
-        series: 'direct-volatility-timing',
-        items: reference.directVolTiming.daily,
-      },
-    ],
-    [
-      'double-cost-strategy-series',
-      {
-        schemaVersion: 'bayn.daily-performance-series.v1',
-        series: 'double-cost-strategy',
-        items: reference.doubleCostStrategy.daily,
-      },
-    ],
-  ])
-  for (const [name, expected] of expectedArtifacts) checkArtifact(name, expected)
-  if (markedEquity._tag === 'Unavailable') {
+    const referenceEventsMatch = yield* same(
+      { scope: 'reference', name: 'events' },
+      database.events.map((value) => value.payload),
+      reference.strategy.events,
+    )
+    const referenceGatesMatch = yield* same(
+      { scope: 'reference', name: 'gates' },
+      database.gates.map(({ name, passed, actual, required }) => ({ name, passed, actual, required })),
+      reference.verdict.gates,
+    )
     checks.push(
-      makeAuditCheck('reference-equity-series', false, markedEquity.evidence),
-      makeAuditCheck('reference-marked-equity-reconciliation', false, markedEquity.evidence),
+      makeAuditCheck('reference-events', referenceEventsMatch, `contentHash=${referenceEventsHash}`),
+      makeAuditCheck('reference-gates', referenceGatesMatch, `economicStatus=${reference.verdict.status}`),
     )
-  } else {
-    checkArtifact('equity-series', {
-      schemaVersion: 'bayn.equity-series.v1',
-      items: markedEquity.proof.equitySeries,
-    })
-    checkArtifact('marked-equity-reconciliation', markedEquity.proof.reconciliation)
-  }
-  checks.push(
-    makeAuditCheck(
-      'reference-events',
-      same(
-        database.events.map((value) => value.payload),
-        reference.strategy.events,
-      ),
-      `contentHash=${canonicalHashV1(reference.strategy.events)}`,
-    ),
-    makeAuditCheck(
-      'reference-gates',
-      same(
-        database.gates.map(({ name, passed, actual, required }) => ({ name, passed, actual, required })),
-        reference.verdict.gates,
-      ),
-      `economicStatus=${reference.verdict.status}`,
-    ),
-  )
-  return checks
-}
+    return checks
+  })
 
 const auditArtifactManifest = (
   facts: QualificationAuditFacts,
-): Result.Result<readonly AuditCheck[], QualificationAuditFailure> => {
-  const { artifact, database, input, markedEquity, reference, trace } = facts
-  const reconciliationResult = decodeReconciliation(artifact.get('reconciliation')?.payload)
-  if (Result.isFailure(reconciliationResult)) {
-    return Result.fail({
-      _tag: 'ReconciliationArtifactInvalid',
-      artifactName: 'reconciliation',
-      cause: reconciliationResult.failure,
-    })
-  }
-  const reconciliation = reconciliationResult.success
-  const checks = [
-    makeAuditCheck(
-      'accounting-reconciliation-identity',
-      reconciliation.runId === database.run.runId && reconciliation.exact === true,
-      `runId=${reconciliation.runId} exact=${reconciliation.exact}`,
-    ),
-  ]
-  if (markedEquity._tag === 'Unavailable') {
-    checks.push(makeAuditCheck('qualification-artifact-manifest', false, markedEquity.evidence))
-    return Result.succeed(checks)
-  }
-  const artifactItemCounts = new Map<string, number>([
-    ['evaluation-summary', 0],
-    ['input-manifest', 0],
-    ['strategy', 0],
-    ['buy-and-hold', 0],
-    ['direct-volatility-timing', 0],
-    ['double-cost-strategy', 0],
-    ['simulated-orders', trace.orders.length],
-    ['cash-changes', trace.cashChanges.length],
-    ['daily-position-marks', trace.dailyMarks.length],
-    [contract.decisionArtifactName, reference.strategy.decisions.length],
-    ['buy-and-hold-series', reference.buyAndHold.daily.length],
-    ['direct-volatility-timing-series', reference.directVolTiming.daily.length],
-    ['double-cost-strategy-series', reference.doubleCostStrategy.daily.length],
-    ['equity-series', markedEquity.proof.equitySeries.length],
-    ['marked-equity-reconciliation', 0],
-    ['reconciliation', 0],
-  ])
-  const baseArtifacts = database.artifacts.filter((value) => value.name !== 'qualification-artifact-manifest')
-  const supportedArtifactNames = [...artifactItemCounts.keys()].sort()
-  const manifestArtifacts: {
-    readonly name: string
-    readonly schemaVersion: string
-    readonly itemCount: number
-    readonly contentHash: string
-  }[] = []
-  for (const value of [...baseArtifacts].sort((left, right) =>
-    left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
-  )) {
-    const itemCount = artifactItemCounts.get(value.name)
-    if (itemCount === undefined) {
-      return Result.fail({
-        _tag: 'UnsupportedQualificationArtifact',
-        artifactName: value.name,
-        supportedArtifactNames,
+): Result.Result<readonly AuditCheck[], QualificationAuditFailure> =>
+  Result.gen(function* () {
+    const { artifact, database, input, markedEquity, reference, trace } = facts
+    const reconciliationResult = decodeReconciliation(artifact.get('reconciliation')?.payload)
+    if (Result.isFailure(reconciliationResult)) {
+      return yield* Result.fail({
+        _tag: 'ReconciliationArtifactInvalid',
+        artifactName: 'reconciliation',
+        cause: reconciliationResult.failure,
+      } satisfies QualificationAuditFailure)
+    }
+    const reconciliation = reconciliationResult.success
+    const checks = [
+      makeAuditCheck(
+        'accounting-reconciliation-identity',
+        reconciliation.runId === database.run.runId && reconciliation.exact === true,
+        `runId=${reconciliation.runId} exact=${reconciliation.exact}`,
+      ),
+    ]
+    if (markedEquity._tag === 'Unavailable') {
+      checks.push(makeAuditCheck('qualification-artifact-manifest', false, markedEquity.evidence))
+      return checks
+    }
+    const artifactItemCounts = new Map<string, number>([
+      ['evaluation-summary', 0],
+      ['input-manifest', 0],
+      ['strategy', 0],
+      ['buy-and-hold', 0],
+      ['direct-volatility-timing', 0],
+      ['double-cost-strategy', 0],
+      ['simulated-orders', trace.orders.length],
+      ['cash-changes', trace.cashChanges.length],
+      ['daily-position-marks', trace.dailyMarks.length],
+      [contract.decisionArtifactName, reference.strategy.decisions.length],
+      ['buy-and-hold-series', reference.buyAndHold.daily.length],
+      ['direct-volatility-timing-series', reference.directVolTiming.daily.length],
+      ['double-cost-strategy-series', reference.doubleCostStrategy.daily.length],
+      ['equity-series', markedEquity.proof.equitySeries.length],
+      ['marked-equity-reconciliation', 0],
+      ['reconciliation', 0],
+    ])
+    const baseArtifacts = database.artifacts.filter((value) => value.name !== 'qualification-artifact-manifest')
+    const supportedArtifactNames = [...artifactItemCounts.keys()].sort()
+    const manifestArtifacts: {
+      readonly name: string
+      readonly schemaVersion: string
+      readonly itemCount: number
+      readonly contentHash: string
+    }[] = []
+    for (const value of [...baseArtifacts].sort((left, right) =>
+      left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
+    )) {
+      const itemCount = artifactItemCounts.get(value.name)
+      if (itemCount === undefined) {
+        return yield* Result.fail({
+          _tag: 'UnsupportedQualificationArtifact',
+          artifactName: value.name,
+          supportedArtifactNames,
+        } satisfies QualificationAuditFailure)
+      }
+      manifestArtifacts.push({
+        name: value.name,
+        schemaVersion: value.schemaVersion,
+        itemCount,
+        contentHash: value.contentHash,
       })
     }
-    manifestArtifacts.push({
-      name: value.name,
-      schemaVersion: value.schemaVersion,
-      itemCount,
-      contentHash: value.contentHash,
-    })
-  }
-  const qualificationManifest = {
-    schemaVersion: 'bayn.qualification-artifact-manifest.v1',
-    identity: {
-      runId: database.run.runId,
-      evaluationSchemaVersion: database.run.evaluationSchemaVersion,
-      protocolHash: database.run.protocolHash,
-      sourceRevision: database.run.sourceRevision,
-      image: { repository: database.run.imageRepository, digest: database.run.imageDigest },
-      snapshotId: database.run.snapshotId,
-      publicationId: input.manifest.finalizedSnapshot.publicationId,
-      inputManifestHash: input.manifest.hash,
-      bounds: input.manifest.bounds,
-      calendarVersion: input.manifest.finalizedSnapshot.calendarVersion,
-    },
-    execution: {
-      parameterSchemaVersion: database.protocol.schemaVersion,
-      parameterHash: database.protocol.parameterHash,
-      simulationSchemaVersion: 'bayn.simulation-trace.v3',
-      executionModel: input.protocol.executionModel,
-      costMultiplierMicros: MICROS_STRING,
-    },
-    artifacts: manifestArtifacts,
-    events: {
-      count: database.events.length,
-      contentHash: canonicalHashV1(
-        database.events.map(({ ordinal, id, kind, contentHash }) => ({ ordinal, id, kind, contentHash })),
+    const eventsContentHash = yield* hashAuditMaterial(
+      { scope: 'qualification-manifest', name: 'events' },
+      database.events.map(({ ordinal, id, kind, contentHash }) => ({ ordinal, id, kind, contentHash })),
+    )
+    const gatesContentHash = yield* hashAuditMaterial(
+      { scope: 'qualification-manifest', name: 'gates' },
+      database.gates.map(({ ordinal, name, passed, contentHash }) => ({ ordinal, name, passed, contentHash })),
+    )
+    const qualificationManifest = {
+      schemaVersion: 'bayn.qualification-artifact-manifest.v1',
+      identity: {
+        runId: database.run.runId,
+        evaluationSchemaVersion: database.run.evaluationSchemaVersion,
+        protocolHash: database.run.protocolHash,
+        sourceRevision: database.run.sourceRevision,
+        image: { repository: database.run.imageRepository, digest: database.run.imageDigest },
+        snapshotId: database.run.snapshotId,
+        publicationId: input.manifest.finalizedSnapshot.publicationId,
+        inputManifestHash: input.manifest.hash,
+        bounds: input.manifest.bounds,
+        calendarVersion: input.manifest.finalizedSnapshot.calendarVersion,
+      },
+      execution: {
+        parameterSchemaVersion: database.protocol.schemaVersion,
+        parameterHash: database.protocol.parameterHash,
+        simulationSchemaVersion: 'bayn.simulation-trace.v3',
+        executionModel: input.protocol.executionModel,
+        costMultiplierMicros: MICROS_STRING,
+      },
+      artifacts: manifestArtifacts,
+      events: { count: database.events.length, contentHash: eventsContentHash },
+      gates: { count: database.gates.length, contentHash: gatesContentHash },
+    }
+    const qualificationManifestHash = yield* hashAuditMaterial(
+      { scope: 'qualification-manifest', name: 'document' },
+      qualificationManifest,
+    )
+    const storedQualificationManifest = artifact.get('qualification-artifact-manifest')
+    const qualificationManifestMatches =
+      storedQualificationManifest === undefined
+        ? false
+        : yield* same(
+            { scope: 'qualification-manifest', name: 'stored-document' },
+            storedQualificationManifest.payload,
+            qualificationManifest,
+          )
+    checks.push(
+      makeAuditCheck(
+        'qualification-artifact-manifest',
+        qualificationManifestMatches,
+        `contentHash=${qualificationManifestHash}`,
       ),
-    },
-    gates: {
-      count: database.gates.length,
-      contentHash: canonicalHashV1(
-        database.gates.map(({ ordinal, name, passed, contentHash }) => ({ ordinal, name, passed, contentHash })),
-      ),
-    },
-  }
-  checks.push(
-    makeAuditCheck(
-      'qualification-artifact-manifest',
-      same(artifact.get('qualification-artifact-manifest')?.payload, qualificationManifest),
-      `contentHash=${canonicalHashV1(qualificationManifest)}`,
-    ),
-  )
-  return Result.succeed(checks)
-}
+    )
+    return checks
+  })
 
-const auditQualificationBindings = (facts: QualificationAuditFacts): readonly AuditCheck[] => {
-  const { database, input, lock, policyDocuments, reference, result } = facts
-  const { lockId, ...lockMaterial } = lock
-  const { resultHash, ...resultMaterial } = result
-  const analysis = result.analysis
-  const { analysisHash, ...analysisMaterial } = analysis
-  const lockData = lock.data
-  const lockContractBinding =
-    lock.schemaVersion === 'bayn.qualification-lock.v3' &&
-    lock.universeId === input.protocol.universeId &&
-    lock.universeSymbolHash === input.protocol.universeSymbolHash &&
-    lockData.inputManifestHash === input.manifest.hash
-  const economicPass = reference.verdict.gates.every((gate) => gate.passed)
-  const analysisPass = analysis.status === 'PASS'
-  const expectedQualification = economicPass && analysisPass ? 'QUALIFIED' : 'REJECTED'
-  const expectedEconomicReasons = reference.verdict.gates
-    .filter((gate) => !gate.passed)
-    .map((gate) => expectedResultReason(gate.name))
-  const expectedReasonCodes = [...new Set([...expectedEconomicReasons, ...analysis.reasonCodes])].sort()
-  return [
-    makeAuditCheck('lock-hash', canonicalHashV1(lockMaterial) === lockId, `lockId=${lockId}`),
-    makeAuditCheck(
-      'qualification-row-binding',
-      database.qualification.storedLockId === lockId &&
-        database.qualification.storedAnalysisHash === analysis.analysisHash &&
-        database.qualification.storedResultHash === resultHash &&
-        database.qualification.storedVerdict === result.verdict,
-      `storedResultHash=${database.qualification.storedResultHash}`,
-    ),
-    makeAuditCheck(
-      'lock-candidate-binding',
-      lock.candidateRunId === database.run.runId &&
-        lock.protocolHash === database.run.protocolHash &&
-        lock.sourceRevision === database.run.sourceRevision &&
-        same(lock.image, { repository: database.run.imageRepository, digest: database.run.imageDigest }) &&
-        lockContractBinding &&
-        same(lock.universe, input.protocol.universe),
-      `candidateRunId=${String(lock.candidateRunId)}`,
-    ),
-    makeAuditCheck(
-      'lock-data-binding',
-      lockData.snapshotId === input.manifest.finalizedSnapshot.snapshotId &&
-        lockData.publicationId === input.manifest.finalizedSnapshot.publicationId &&
-        lockData.contentHash === input.manifest.finalizedSnapshot.contentHash &&
-        lockData.sessionsContentHash === input.manifest.finalizedSnapshot.sessionsContentHash &&
-        lockData.selectedSessionCount === reference.strategy.metrics.observations &&
-        lockData.selectedRebalanceCount === reference.strategy.decisions.length &&
-        same(lockData.bounds, input.manifest.bounds),
-      `snapshotId=${String(lockData.snapshotId)}`,
-    ),
-    makeAuditCheck(
-      'lock-policy-hashes',
-      same(
-        policyDocuments.map((policy) => policy.name),
-        ['benchmark', 'execution', 'thresholds', 'uncertainty'],
-      ) && policyDocuments.every((policy) => policy.contentHash === canonicalHashV1(policy.content)),
-      `${policyDocuments.length} policies policySetHash=${canonicalHashV1(policyDocuments)}`,
-    ),
-    makeAuditCheck(
-      'locked-prior-trial-lineage',
-      same(lock.priorTrialRunIds, [...database.priorTrialRunIds].sort()),
-      `${database.priorTrialRunIds.length} prior trials`,
-    ),
-    makeAuditCheck('analysis-hash', canonicalHashV1(analysisMaterial) === analysisHash, `analysisHash=${analysisHash}`),
-    makeAuditCheck('result-hash', canonicalHashV1(resultMaterial) === resultHash, `resultHash=${resultHash}`),
-    makeAuditCheck(
-      'analysis-lineage',
-      analysis.runId === database.run.runId &&
-        same(analysis.priorTrialRunIds, lock.priorTrialRunIds) &&
-        analysis.candidateOrdinal === database.priorTrialRunIds.length + 1,
-      `candidateOrdinal=${String(analysis.candidateOrdinal)}`,
-    ),
-    makeAuditCheck(
-      'terminal-result-binding',
-      result.lockId === lockId &&
-        result.runId === database.run.runId &&
-        result.verdict === expectedQualification &&
-        same(result.evaluationVerdict, reference.verdict) &&
-        same(result.reasonCodes, expectedReasonCodes),
-      `verdict=${String(result.verdict)} reasons=${result.reasonCodes.join(',')}`,
-    ),
-  ]
-}
+const auditQualificationBindings = (
+  facts: QualificationAuditFacts,
+): Result.Result<readonly AuditCheck[], QualificationAuditFailure> =>
+  Result.gen(function* () {
+    const { database, input, lock, policyDocuments, reference, result } = facts
+    const { lockId, ...lockMaterial } = lock
+    const { resultHash, ...resultMaterial } = result
+    const analysis = result.analysis
+    const { analysisHash, ...analysisMaterial } = analysis
+    const lockData = lock.data
+    const lockContractBinding =
+      lock.schemaVersion === 'bayn.qualification-lock.v3' &&
+      lock.universeId === input.protocol.universeId &&
+      lock.universeSymbolHash === input.protocol.universeSymbolHash &&
+      lockData.inputManifestHash === input.manifest.hash
+    const economicPass = reference.verdict.gates.every((gate) => gate.passed)
+    const analysisPass = analysis.status === 'PASS'
+    const expectedQualification = economicPass && analysisPass ? 'QUALIFIED' : 'REJECTED'
+    const expectedEconomicReasons = reference.verdict.gates
+      .filter((gate) => !gate.passed)
+      .map((gate) => expectedResultReason(gate.name))
+    const expectedReasonCodes = [...new Set([...expectedEconomicReasons, ...analysis.reasonCodes])].sort()
+    const lockHashMatches = yield* hashMatches({ scope: 'lock', name: 'document' }, lockMaterial, lockId)
+    const lockImageMatches = yield* same({ scope: 'lock', name: 'image' }, lock.image, {
+      repository: database.run.imageRepository,
+      digest: database.run.imageDigest,
+    })
+    const lockUniverseMatches = yield* same({ scope: 'lock', name: 'universe' }, lock.universe, input.protocol.universe)
+    const lockBoundsMatch = yield* same({ scope: 'lock', name: 'bounds' }, lockData.bounds, input.manifest.bounds)
+    const policyNamesMatch = yield* same(
+      { scope: 'policy', name: 'names' },
+      policyDocuments.map((policy) => policy.name),
+      ['benchmark', 'execution', 'thresholds', 'uncertainty'],
+    )
+    const policyHashes = yield* Result.all(
+      policyDocuments.map((policy) =>
+        hashMatches({ scope: 'policy', name: policy.name }, policy.content, policy.contentHash),
+      ),
+    )
+    const policySetHash = yield* hashAuditMaterial({ scope: 'policy', name: 'set' }, policyDocuments)
+    const priorLineageMatches = yield* same(
+      { scope: 'lineage', name: 'prior-trials' },
+      lock.priorTrialRunIds,
+      [...database.priorTrialRunIds].sort(),
+    )
+    const analysisHashMatches = yield* hashMatches(
+      { scope: 'analysis', name: 'document' },
+      analysisMaterial,
+      analysisHash,
+    )
+    const resultHashMatches = yield* hashMatches({ scope: 'result', name: 'document' }, resultMaterial, resultHash)
+    const analysisLineageMatches = yield* same(
+      { scope: 'analysis', name: 'prior-trials' },
+      analysis.priorTrialRunIds,
+      lock.priorTrialRunIds,
+    )
+    const evaluationVerdictMatches = yield* same(
+      { scope: 'result', name: 'evaluation-verdict' },
+      result.evaluationVerdict,
+      reference.verdict,
+    )
+    const reasonCodesMatch = yield* same(
+      { scope: 'result', name: 'reason-codes' },
+      result.reasonCodes,
+      expectedReasonCodes,
+    )
+    return [
+      makeAuditCheck('lock-hash', lockHashMatches, `lockId=${lockId}`),
+      makeAuditCheck(
+        'qualification-row-binding',
+        database.qualification.storedLockId === lockId &&
+          database.qualification.storedAnalysisHash === analysis.analysisHash &&
+          database.qualification.storedResultHash === resultHash &&
+          database.qualification.storedVerdict === result.verdict,
+        `storedResultHash=${database.qualification.storedResultHash}`,
+      ),
+      makeAuditCheck(
+        'lock-candidate-binding',
+        lock.candidateRunId === database.run.runId &&
+          lock.protocolHash === database.run.protocolHash &&
+          lock.sourceRevision === database.run.sourceRevision &&
+          lockImageMatches &&
+          lockContractBinding &&
+          lockUniverseMatches,
+        `candidateRunId=${String(lock.candidateRunId)}`,
+      ),
+      makeAuditCheck(
+        'lock-data-binding',
+        lockData.snapshotId === input.manifest.finalizedSnapshot.snapshotId &&
+          lockData.publicationId === input.manifest.finalizedSnapshot.publicationId &&
+          lockData.contentHash === input.manifest.finalizedSnapshot.contentHash &&
+          lockData.sessionsContentHash === input.manifest.finalizedSnapshot.sessionsContentHash &&
+          lockData.selectedSessionCount === reference.strategy.metrics.observations &&
+          lockData.selectedRebalanceCount === reference.strategy.decisions.length &&
+          lockBoundsMatch,
+        `snapshotId=${String(lockData.snapshotId)}`,
+      ),
+      makeAuditCheck(
+        'lock-policy-hashes',
+        policyNamesMatch && policyHashes.every(Boolean),
+        `${policyDocuments.length} policies policySetHash=${policySetHash}`,
+      ),
+      makeAuditCheck(
+        'locked-prior-trial-lineage',
+        priorLineageMatches,
+        `${database.priorTrialRunIds.length} prior trials`,
+      ),
+      makeAuditCheck('analysis-hash', analysisHashMatches, `analysisHash=${analysisHash}`),
+      makeAuditCheck('result-hash', resultHashMatches, `resultHash=${resultHash}`),
+      makeAuditCheck(
+        'analysis-lineage',
+        analysis.runId === database.run.runId &&
+          analysisLineageMatches &&
+          analysis.candidateOrdinal === database.priorTrialRunIds.length + 1,
+        `candidateOrdinal=${String(analysis.candidateOrdinal)}`,
+      ),
+      makeAuditCheck(
+        'terminal-result-binding',
+        result.lockId === lockId &&
+          result.runId === database.run.runId &&
+          result.verdict === expectedQualification &&
+          evaluationVerdictMatches &&
+          reasonCodesMatch,
+        `verdict=${String(result.verdict)} reasons=${result.reasonCodes.join(',')}`,
+      ),
+    ]
+  })
 
 const auditSignalAndRepository = (facts: QualificationAuditFacts): readonly AuditCheck[] => {
   const { database, input, publisherSet, replicaSet, sortedAccess, sortedReplicas } = facts
@@ -963,57 +1101,64 @@ const auditSignalAndRepository = (facts: QualificationAuditFacts): readonly Audi
   ]
 }
 
-const makeAuditReport = (facts: QualificationAuditFacts, checks: readonly AuditCheck[]): QualificationAuditReport => {
-  const { database, input, lock, policyDocuments, reference, result, sortedAccess, sortedReplicas } = facts
-  const material = {
-    schemaVersion: 'bayn.qualification-audit.v2' as const,
-    runId: database.run.runId,
-    status: checks.every((value) => value.passed) ? ('PASS' as const) : ('FAIL' as const),
-    reference: {
-      economicStatus: reference.verdict.status,
-      observations: reference.strategy.metrics.observations,
-      rebalanceCount: reference.strategy.decisions.length,
-    },
-    evidence: {
-      artifactCount: database.artifacts.length,
-      eventCount: database.events.length,
-      gateCount: database.gates.length,
-      lockId: lock.lockId,
-      resultHash: result.resultHash,
-    },
-    policies: {
-      declaredAt: database.qualification.lockCreatedAt,
-      lockId: lock.lockId,
-      policySetHash: canonicalHashV1(policyDocuments),
-      documents: policyDocuments,
-    },
-    contamination: {
-      lockCreatedAt: database.qualification.lockCreatedAt,
-      resultCommittedAt: database.qualification.resultCommittedAt,
-      replicas: sortedReplicas,
-      principals: input.signalPrincipals,
-      access: sortedAccess,
-    },
-    repository: { ...input.repository, sourceRevision: database.run.sourceRevision },
-    checks,
-  }
-  return { ...material, auditHash: canonicalHashV1(material) }
-}
+const makeAuditReport = (
+  facts: QualificationAuditFacts,
+  checks: readonly AuditCheck[],
+): Result.Result<QualificationAuditReport, QualificationAuditFailure> =>
+  Result.gen(function* () {
+    const { database, input, lock, policyDocuments, reference, result, sortedAccess, sortedReplicas } = facts
+    const policySetHash = yield* hashAuditMaterial({ scope: 'policy', name: 'report-set' }, policyDocuments)
+    const material = {
+      schemaVersion: 'bayn.qualification-audit.v2' as const,
+      runId: database.run.runId,
+      status: checks.every((value) => value.passed) ? ('PASS' as const) : ('FAIL' as const),
+      reference: {
+        economicStatus: reference.verdict.status,
+        observations: reference.strategy.metrics.observations,
+        rebalanceCount: reference.strategy.decisions.length,
+      },
+      evidence: {
+        artifactCount: database.artifacts.length,
+        eventCount: database.events.length,
+        gateCount: database.gates.length,
+        lockId: lock.lockId,
+        resultHash: result.resultHash,
+      },
+      policies: {
+        declaredAt: database.qualification.lockCreatedAt,
+        lockId: lock.lockId,
+        policySetHash,
+        documents: policyDocuments,
+      },
+      contamination: {
+        lockCreatedAt: database.qualification.lockCreatedAt,
+        resultCommittedAt: database.qualification.resultCommittedAt,
+        replicas: sortedReplicas,
+        principals: input.signalPrincipals,
+        access: sortedAccess,
+      },
+      repository: { ...input.repository, sourceRevision: database.run.sourceRevision },
+      checks,
+    }
+    const auditHash = yield* hashAuditMaterial({ scope: 'audit', name: 'report' }, material)
+    return { ...material, auditHash }
+  })
 
 export const auditQualification = (
   input: QualificationAuditInput,
-): Result.Result<QualificationAuditReport, QualificationAuditFailure> => {
-  const factsResult = makeAuditFacts(input)
-  if (Result.isFailure(factsResult)) return Result.fail(factsResult.failure)
-  const facts = factsResult.success
-  const artifactManifestChecks = auditArtifactManifest(facts)
-  if (Result.isFailure(artifactManifestChecks)) return Result.fail(artifactManifestChecks.failure)
-  const checks = [
-    ...auditStoredEvidence(facts),
-    ...auditReferenceArtifacts(facts),
-    ...artifactManifestChecks.success,
-    ...auditQualificationBindings(facts),
-    ...auditSignalAndRepository(facts),
-  ]
-  return Result.succeed(makeAuditReport(facts, checks))
-}
+): Result.Result<QualificationAuditReport, QualificationAuditFailure> =>
+  Result.gen(function* () {
+    const facts = yield* makeAuditFacts(input)
+    const artifactManifestChecks = yield* auditArtifactManifest(facts)
+    const storedEvidenceChecks = yield* auditStoredEvidence(facts)
+    const referenceArtifactChecks = yield* auditReferenceArtifacts(facts)
+    const qualificationBindingChecks = yield* auditQualificationBindings(facts)
+    const checks = [
+      ...storedEvidenceChecks,
+      ...referenceArtifactChecks,
+      ...artifactManifestChecks,
+      ...qualificationBindingChecks,
+      ...auditSignalAndRepository(facts),
+    ]
+    return yield* makeAuditReport(facts, checks)
+  })
