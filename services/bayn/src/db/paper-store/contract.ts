@@ -86,5 +86,5 @@ export type PaperStoreRuntimeConfig = Pick<
   RuntimeConfig,
   'build' | 'maximumAuthority' | 'qualificationRunId' | 'reconciliationStaleThresholdMs' | 'tigerBeetle'
 > & {
-  readonly alpaca?: Pick<NonNullable<RuntimeConfig['alpaca']>, 'accountId' | 'authorityGenerationHash'>
+  readonly alpaca?: Pick<NonNullable<RuntimeConfig['alpaca']>, 'expectedAccountId' | 'authorityGenerationHash'>
 }

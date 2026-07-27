@@ -28,13 +28,16 @@ import {
 } from '../broker/alpaca-mutations'
 import {
   AssetClass,
+  BrokerProvider,
   OrderClass,
   OrderSide as BrokerOrderSide,
   OrderStatus,
   OrderType as BrokerOrderType,
   TimeInForce as BrokerTimeInForce,
+  alpacaSandboxBaseUrl,
 } from '../broker/alpaca'
 import { cancel, submit } from '../execution/coordinator'
+import { BrokerEnvironment } from '../execution/authority'
 import { WriterFence, WriterFenceLive, type WriterFenceService } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
 import { buildLedgerPlan, Journal, type JournalService } from '../ledger'
@@ -729,11 +732,15 @@ const makePaperActivationConfig = (activation: PaperAuthorityGeneration): Runtim
       strategyParameterHash: activation.strategyParameterHash,
     },
     alpaca: {
-      accountId: activation.accountId,
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Sandbox,
+      baseUrl: alpacaSandboxBaseUrl,
+      expectedAccountId: activation.accountId,
       authorityGenerationHash: activation.generationHash,
       key: Redacted.make('unused'),
       secret: Redacted.make('unused'),
       proxyUrl: 'http://bayn-egress-proxy.invalid',
+      operationTimeoutMs: config.operationTimeoutMs,
       retryAttempts: 0,
       reconciliationIntervalMs: 30_000,
     },

@@ -1,7 +1,8 @@
-import { Effect, Result } from 'effect'
+import { Data, Effect, Result } from 'effect'
 
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
 import { addUtcDays, currentUtcDate } from '../../time'
+import type { BrokerConnection } from '../connection'
 import {
   BrokerReadError,
   BrokerReadErrorKind,
@@ -11,10 +12,13 @@ import {
   type BrokerReadContractFailure,
 } from './failures'
 import {
+  AccountStatus,
   OrderCollection,
   SortDirection,
   marketCalendarPreflightRangeDays,
   readPreflightTimeoutMs,
+  type Account,
+  type AccountConfigurationObservation,
   type BrokerReadShape,
   type Order,
   type ReadPreflight,
@@ -23,6 +27,72 @@ import {
 
 const missingOrderId = '00000000-0000-4000-8000-000000000000'
 const missingClientOrderId = 'bayn-observe-read-proof-does-not-exist'
+
+export type BrokerAccountPreflightFailure =
+  | {
+      readonly _tag: 'BrokerAccountNotActive'
+      readonly status: AccountStatus
+    }
+  | {
+      readonly _tag: 'BrokerAccountBlocked'
+    }
+  | {
+      readonly _tag: 'BrokerTradingBlocked'
+    }
+  | {
+      readonly _tag: 'BrokerTradingSuspendedByUser'
+    }
+  | {
+      readonly _tag: 'BrokerFractionalTradingDisabled'
+    }
+
+export interface VerifiedBrokerAccountPermissions {
+  readonly accountStatus: AccountStatus.Active
+  readonly accountBlocked: false
+  readonly tradingBlocked: false
+  readonly tradeSuspendedByUser: false
+  readonly fractionalTrading: true
+}
+
+export class BrokerAccountPreflightError extends Data.TaggedError('BrokerAccountPreflightError')<{
+  readonly provider: BrokerConnection['provider']
+  readonly environment: BrokerConnection['environment']
+  readonly baseUrl: string
+  readonly expectedAccountId: string
+  readonly failure: BrokerAccountPreflightFailure
+}> {}
+
+export const verifyBrokerAccountPermissions = (
+  account: Account,
+  configuration: AccountConfigurationObservation,
+): Result.Result<VerifiedBrokerAccountPermissions, BrokerAccountPreflightFailure> => {
+  if (account.status !== AccountStatus.Active) {
+    return Result.fail({ _tag: 'BrokerAccountNotActive', status: account.status })
+  }
+  if (account.accountBlocked) return Result.fail({ _tag: 'BrokerAccountBlocked' })
+  if (account.tradingBlocked) return Result.fail({ _tag: 'BrokerTradingBlocked' })
+  if (account.tradeSuspendedByUser) return Result.fail({ _tag: 'BrokerTradingSuspendedByUser' })
+  if (!configuration.fractionalTrading) return Result.fail({ _tag: 'BrokerFractionalTradingDisabled' })
+  return Result.succeed({
+    accountStatus: AccountStatus.Active,
+    accountBlocked: false,
+    tradingBlocked: false,
+    tradeSuspendedByUser: false,
+    fractionalTrading: true,
+  })
+}
+
+const permissionFailure = (
+  connection: BrokerConnection,
+  failure: BrokerAccountPreflightFailure,
+): BrokerAccountPreflightError =>
+  new BrokerAccountPreflightError({
+    provider: connection.provider,
+    environment: connection.environment,
+    baseUrl: connection.baseUrl,
+    expectedAccountId: connection.expectedAccountId,
+    failure,
+  })
 
 const proofHashResult = (value: unknown, field: string): Result.Result<string, BrokerReadContractFailure> =>
   Result.mapError(canonicalHashV1Result(value), (failure) =>
@@ -72,9 +142,16 @@ const verifyOrderLookup = (
     ),
   )
 
-export const verifyReadAccess = (read: BrokerReadShape): Effect.Effect<ReadPreflight, BrokerReadError> =>
+export const verifyReadAccess = (
+  connection: BrokerConnection,
+  read: BrokerReadShape,
+): Effect.Effect<ReadPreflight, BrokerReadError | BrokerAccountPreflightError> =>
   Effect.gen(function* () {
     const account = yield* read.account
+    const accountConfiguration = yield* read.accountConfiguration
+    const permissions = yield* Effect.fromResult(
+      verifyBrokerAccountPermissions(account.value, accountConfiguration.value),
+    ).pipe(Effect.mapError((failure) => permissionFailure(connection, failure)))
     const calendarStart = yield* currentUtcDate
     const calendarEnd = addUtcDays(calendarStart, marketCalendarPreflightRangeDays - 1)
     const responses = yield* Effect.all(
@@ -105,6 +182,10 @@ export const verifyReadAccess = (read: BrokerReadShape): Effect.Effect<ReadPrefl
     const proof = yield* Effect.fromResult(
       Result.gen(function* (): Generator<Result.Result<unknown, BrokerReadContractFailure>, ReadPreflight, never> {
         const accountHash = yield* proofHashResult(account.value, 'preflight account')
+        const accountConfigurationHash = yield* proofHashResult(
+          accountConfiguration.value,
+          'preflight account configuration',
+        )
         const positionsHash = yield* proofHashResult(responses.positions.value, 'preflight positions')
         const ordersHash = yield* proofHashResult(
           { open: responses.openOrders.value, recent: responses.recentOrders.value },
@@ -112,8 +193,13 @@ export const verifyReadAccess = (read: BrokerReadShape): Effect.Effect<ReadPrefl
         )
         const fillsHash = yield* proofHashResult(responses.fills.value.items, 'preflight fills')
         return {
+          provider: connection.provider,
+          environment: connection.environment,
+          baseUrl: connection.baseUrl,
           accountId: account.value.id,
+          ...permissions,
           accountHash,
+          accountConfigurationHash,
           positionCount: responses.positions.value.length,
           positionsHash,
           openOrderCount: responses.openOrders.value.length,
@@ -141,7 +227,16 @@ export const verifyReadAccess = (read: BrokerReadShape): Effect.Effect<ReadPrefl
     yield* Effect.logInfo('Alpaca observe-only read preflight passed').pipe(
       Effect.annotateLogs({
         accountId: proof.accountId,
+        provider: proof.provider,
+        environment: proof.environment,
+        baseUrl: proof.baseUrl,
+        accountStatus: proof.accountStatus,
+        accountBlocked: proof.accountBlocked,
+        tradingBlocked: proof.tradingBlocked,
+        tradeSuspendedByUser: proof.tradeSuspendedByUser,
+        fractionalTrading: proof.fractionalTrading,
         accountHash: proof.accountHash,
+        accountConfigurationHash: proof.accountConfigurationHash,
         positionCount: proof.positionCount,
         positionsHash: proof.positionsHash,
         openOrderCount: proof.openOrderCount,

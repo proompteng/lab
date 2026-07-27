@@ -27,12 +27,15 @@ import {
   AssetExchange,
   AssetStatus,
   BrokerRead,
-  make as makeAlpacaRead,
+  BrokerProvider,
+  BrokerSession,
+  alpacaSandboxBaseUrl,
+  decodeBrokerConnection,
+  layer as alpacaBrokerLayer,
   type AccountConfigurationObservation,
   type AssetObservation,
   type BrokerReadShape,
   type ReadEvidence,
-  type ReadOptions,
   type ReadResult,
 } from './broker/alpaca'
 import { makeStrategyProtocolHash, type RuntimeProvenance } from './contracts'
@@ -58,6 +61,7 @@ import { PaperCandidateIneligibility as PaperCandidateIneligibilityImplementatio
 import { discoverPaperCandidates as discoverPaperCandidatesImplementation } from './paper-candidate-discovery/program'
 import { validatePaperCandidateDiscoverySnapshot as validateSnapshotImplementation } from './paper-candidate-discovery/snapshot-validation'
 import { Gate, Reason } from './risk'
+import { BrokerEnvironment } from './execution/authority'
 import type { ObserveShadowDecisionDocument } from './shadow-decision-contract'
 import { TargetPlanStatus } from './target-planner'
 
@@ -719,17 +723,22 @@ describe('paper candidate discovery', () => {
     expect(state.assetSymbols).toEqual([])
   })
 
-  test('constructs the read adapter without preflight and receipts only bounded DISCOVER GETs', async () => {
+  test('acquires one verified broker session before bounded DISCOVER GETs', async () => {
     const state = control()
     const requests: Array<{ method: string; path: string }> = []
-    const readOptions: ReadOptions = {
-      expectedAccountId: accountId,
-      key: Redacted.make('paper-key'),
-      secret: Redacted.make('paper-secret'),
-      proxyUrl: 'http://bayn-egress-proxy:3128',
-      operationTimeoutMs: 1_000,
-      retryAttempts: 0,
-    }
+    const connection = Result.getOrThrow(
+      decodeBrokerConnection({
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Sandbox,
+        baseUrl: alpacaSandboxBaseUrl,
+        expectedAccountId: accountId,
+        key: Redacted.make('paper-key'),
+        secret: Redacted.make('paper-secret'),
+        proxyUrl: 'http://bayn-egress-proxy:3128',
+        operationTimeoutMs: 1_000,
+        retryAttempts: 0,
+      }),
+    )
     const client = HttpClient.make((request, url) => {
       requests.push({ method: request.method, path: url.pathname })
       let body: unknown
@@ -748,6 +757,23 @@ describe('paper candidate discovery', () => {
         }
       } else if (url.pathname === '/v2/account/configurations') {
         body = { fractional_trading: true }
+      } else if (
+        url.pathname === '/v2/positions' ||
+        url.pathname === '/v2/orders' ||
+        url.pathname === '/v2/account/activities/FILL' ||
+        url.pathname === '/v2/calendar'
+      ) {
+        body = []
+      } else if (url.pathname.startsWith('/v2/orders')) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify({ code: 40410000, message: 'order not found' }), {
+              status: 404,
+              headers: { 'content-type': 'application/json', 'x-request-id': `request-${requests.length}` },
+            }),
+          ),
+        )
       } else {
         const symbol = decodeURIComponent(url.pathname.slice('/v2/assets/'.length))
         body = {
@@ -776,22 +802,22 @@ describe('paper candidate discovery', () => {
       Effect.scoped(
         Effect.gen(function* () {
           const brokerContext = yield* Layer.build(
-            Layer.effect(BrokerRead, makeAlpacaRead(readOptions)).pipe(
-              Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
-            ),
+            alpacaBrokerLayer(connection).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client))),
           )
-          expect(requests).toEqual([])
+          const session = Context.get(brokerContext, BrokerSession)
+          expect(session.preflight.accountId).toBe(accountId)
+          expect(requests).toHaveLength(9)
           return yield* program(state, fixture(), Context.get(brokerContext, BrokerRead))
         }),
       ),
     )
 
     expect(receipt.candidateFacts.candidates).toHaveLength(symbols.length)
-    expect(requests.slice(0, 2)).toEqual([
+    expect(requests.slice(9, 11)).toEqual([
       { method: 'GET', path: '/v2/account' },
       { method: 'GET', path: '/v2/account/configurations' },
     ])
-    expect(requests.slice(2).sort((left, right) => left.path.localeCompare(right.path))).toEqual([
+    expect(requests.slice(11).sort((left, right) => left.path.localeCompare(right.path))).toEqual([
       { method: 'GET', path: '/v2/assets/SPY' },
       { method: 'GET', path: '/v2/assets/VNQ' },
     ])

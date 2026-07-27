@@ -6,6 +6,7 @@ import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http'
 
 import { canonicalHashV1 } from '../hash'
+import { BrokerEnvironment } from '../execution/authority'
 import {
   AccountStatus,
   AssetClass,
@@ -14,6 +15,11 @@ import {
   BrokerRead,
   BrokerReadError,
   BrokerReadErrorKind,
+  BrokerAccountPreflightError,
+  BrokerProvider,
+  BrokerSession,
+  BrokerSessionAcquisitionError,
+  BrokerSessionAcquisitionStage,
   OrderCollection,
   OrderSide,
   OrderStatus,
@@ -21,13 +27,15 @@ import {
   PositionSide,
   SortDirection,
   TradeActivityType,
+  alpacaSandboxBaseUrl,
+  decodeBrokerConnection,
   layer,
   make,
   makeProxyDispatcher,
   readPreflightTimeoutMs,
   verifyReadAccess,
   type BrokerReadShape,
-  type ReadOptions,
+  type BrokerConnection,
 } from './alpaca'
 import { parseProxyUrl } from './alpaca/http'
 import { decodeOrder } from './alpaca/model'
@@ -39,14 +47,19 @@ const assetId = 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415'
 const orderId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const clientOrderId = 'bayn-test-order-1'
 
-const options: ReadOptions = {
-  expectedAccountId: accountId,
-  key: Redacted.make('paper-key'),
-  secret: Redacted.make('paper-secret'),
-  proxyUrl: 'http://bayn-egress-proxy:3128',
-  operationTimeoutMs: 1_000,
-  retryAttempts: 2,
-}
+const options = Result.getOrThrow(
+  decodeBrokerConnection({
+    provider: BrokerProvider.Alpaca,
+    environment: BrokerEnvironment.Sandbox,
+    baseUrl: alpacaSandboxBaseUrl,
+    expectedAccountId: accountId,
+    key: Redacted.make('paper-key'),
+    secret: Redacted.make('paper-secret'),
+    proxyUrl: 'http://bayn-egress-proxy:3128',
+    operationTimeoutMs: 1_000,
+    retryAttempts: 2,
+  }),
+)
 
 const accountResponse = {
   id: accountId,
@@ -171,9 +184,11 @@ const jsonResponse = (
 const withClient = <A, E>(
   client: HttpClient.HttpClient,
   use: (read: BrokerReadShape) => Effect.Effect<A, E>,
-  readOptions: ReadOptions = options,
+  readOptions: BrokerConnection = options,
 ): Effect.Effect<A, BrokerReadError | E> =>
   make(readOptions).pipe(Effect.flatMap(use), Effect.provideService(HttpClient.HttpClient, client))
+
+const verifyConnectionReadAccess = (read: BrokerReadShape) => verifyReadAccess(options, read)
 
 describe('Alpaca paper reads', () => {
   test('reads and runtime-decodes the configured paper account without leaking credentials', async () => {
@@ -654,6 +669,9 @@ describe('Alpaca paper reads', () => {
     const client = HttpClient.make((request, url) => {
       requests.push({ method: request.method, url })
       if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      if (url.pathname === '/v2/account/configurations') {
+        return Effect.succeed(jsonResponse(request, accountConfigurationResponse))
+      }
       if (url.pathname === '/v2/positions') return Effect.succeed(jsonResponse(request, []))
       if (
         url.pathname === '/v2/orders' ||
@@ -665,10 +683,20 @@ describe('Alpaca paper reads', () => {
       return Effect.succeed(jsonResponse(request, { code: 40410000, message: 'order not found' }, 404))
     })
 
-    const proof = await Effect.runPromise(withClient(client, verifyReadAccess).pipe(Effect.provide(TestClock.layer())))
+    const proof = await Effect.runPromise(
+      withClient(client, verifyConnectionReadAccess).pipe(Effect.provide(TestClock.layer())),
+    )
 
     expect(proof).toMatchObject({
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Sandbox,
+      baseUrl: alpacaSandboxBaseUrl,
       accountId,
+      accountStatus: AccountStatus.Active,
+      accountBlocked: false,
+      tradingBlocked: false,
+      tradeSuspendedByUser: false,
+      fractionalTrading: true,
       positionCount: 0,
       openOrderCount: 0,
       recentOrderCount: 0,
@@ -678,11 +706,12 @@ describe('Alpaca paper reads', () => {
       orderByClientId: 'NOT_FOUND',
     })
     expect(proof.accountHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(proof.accountConfigurationHash).toMatch(/^[a-f0-9]{64}$/)
     expect(proof.positionsHash).toMatch(/^[a-f0-9]{64}$/)
     expect(proof.ordersHash).toMatch(/^[a-f0-9]{64}$/)
     expect(proof.fillsHash).toMatch(/^[a-f0-9]{64}$/)
     expect(proof.marketCalendarHash).toMatch(/^[a-f0-9]{64}$/)
-    expect(requests).toHaveLength(8)
+    expect(requests).toHaveLength(9)
     expect(requests.every(({ method }) => method === 'GET')).toBe(true)
     expect(
       requests
@@ -702,6 +731,9 @@ describe('Alpaca paper reads', () => {
   test('preflights ordinary non-empty orders whose optional Alpaca fields are null', async () => {
     const client = HttpClient.make((request, url) => {
       if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      if (url.pathname === '/v2/account/configurations') {
+        return Effect.succeed(jsonResponse(request, accountConfigurationResponse))
+      }
       if (
         url.pathname === '/v2/positions' ||
         url.pathname === '/v2/account/activities/FILL' ||
@@ -712,7 +744,7 @@ describe('Alpaca paper reads', () => {
       return Effect.succeed(jsonResponse(request, url.pathname === '/v2/orders' ? [orderResponse] : orderResponse))
     })
 
-    const proof = await Effect.runPromise(withClient(client, verifyReadAccess))
+    const proof = await Effect.runPromise(withClient(client, verifyConnectionReadAccess))
 
     expect(proof).toMatchObject({
       accountId,
@@ -727,19 +759,83 @@ describe('Alpaca paper reads', () => {
   test('fails the complete startup preflight when the market calendar payload is invalid', async () => {
     const client = HttpClient.make((request, url) => {
       if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      if (url.pathname === '/v2/account/configurations') {
+        return Effect.succeed(jsonResponse(request, accountConfigurationResponse))
+      }
       if (url.pathname === '/v2/calendar') {
         return Effect.succeed(jsonResponse(request, [{ date: '2026-07-23', open: '9:30', close: '16:00' }]))
       }
       return Effect.succeed(jsonResponse(request, []))
     })
 
-    const failure = await Effect.runPromise(Effect.flip(withClient(client, verifyReadAccess)))
+    const failure = await Effect.runPromise(Effect.flip(withClient(client, verifyConnectionReadAccess)))
 
     expect(failure).toMatchObject({
       operation: 'market-calendar',
       kind: BrokerReadErrorKind.InvalidResponse,
       retryable: false,
     })
+  })
+
+  test('fails closed on every account permission gate before reading positions, orders, fills, or calendar', async () => {
+    const cases = [
+      {
+        name: 'inactive account',
+        account: { ...accountResponse, status: AccountStatus.Inactive },
+        configuration: accountConfigurationResponse,
+        failure: { _tag: 'BrokerAccountNotActive', status: AccountStatus.Inactive },
+      },
+      {
+        name: 'blocked account',
+        account: { ...accountResponse, account_blocked: true },
+        configuration: accountConfigurationResponse,
+        failure: { _tag: 'BrokerAccountBlocked' },
+      },
+      {
+        name: 'trading blocked',
+        account: { ...accountResponse, trading_blocked: true },
+        configuration: accountConfigurationResponse,
+        failure: { _tag: 'BrokerTradingBlocked' },
+      },
+      {
+        name: 'trading suspended by user',
+        account: { ...accountResponse, trade_suspended_by_user: true },
+        configuration: accountConfigurationResponse,
+        failure: { _tag: 'BrokerTradingSuspendedByUser' },
+      },
+      {
+        name: 'fractional trading disabled',
+        account: accountResponse,
+        configuration: { ...accountConfigurationResponse, fractional_trading: false },
+        failure: { _tag: 'BrokerFractionalTradingDisabled' },
+      },
+    ] as const
+
+    for (const invalid of cases) {
+      const paths: string[] = []
+      const client = HttpClient.make((request, url) => {
+        paths.push(url.pathname)
+        if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, invalid.account))
+        if (url.pathname === '/v2/account/configurations') {
+          return Effect.succeed(jsonResponse(request, invalid.configuration))
+        }
+        return Effect.die(new Error(`unexpected preflight request to ${url.pathname}`))
+      })
+
+      const failure = await Effect.runPromise(
+        Effect.flip(withClient(client, verifyConnectionReadAccess)).pipe(Effect.provide(TestClock.layer())),
+      )
+
+      expect(failure, invalid.name).toBeInstanceOf(BrokerAccountPreflightError)
+      expect(failure, invalid.name).toMatchObject({
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Sandbox,
+        baseUrl: alpacaSandboxBaseUrl,
+        expectedAccountId: accountId,
+        failure: invalid.failure,
+      })
+      expect(paths, invalid.name).toEqual(['/v2/account', '/v2/account/configurations'])
+    }
   })
 
   test('bounds the complete startup preflight below the Kubernetes startup-probe budget', async () => {
@@ -759,7 +855,7 @@ describe('Alpaca paper reads', () => {
       client,
       (read) =>
         Effect.gen(function* () {
-          const fiber = yield* Effect.flip(verifyReadAccess(read)).pipe(Effect.forkChild)
+          const fiber = yield* Effect.flip(verifyReadAccess(options, read)).pipe(Effect.forkChild)
           yield* Effect.yieldNow
           yield* TestClock.adjust(readPreflightTimeoutMs)
           return yield* Fiber.join(fiber)
@@ -1382,26 +1478,46 @@ describe('Alpaca paper reads', () => {
     expect(JSON.stringify(failure.cause)).not.toContain('paper-secret')
   })
 
-  test('retains the failing configuration path without invoking Alpaca', async () => {
-    let calls = 0
-    const client = HttpClient.make((request) => {
-      calls += 1
-      return Effect.succeed(jsonResponse(request, accountResponse))
+  test('acquires one verified session and publishes its exact read capability once', async () => {
+    const paths: string[] = []
+    const client = HttpClient.make((request, url) => {
+      paths.push(url.pathname)
+      if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      if (url.pathname === '/v2/account/configurations') {
+        return Effect.succeed(jsonResponse(request, accountConfigurationResponse))
+      }
+      if (
+        url.pathname === '/v2/positions' ||
+        url.pathname === '/v2/orders' ||
+        url.pathname === '/v2/account/activities/FILL' ||
+        url.pathname === '/v2/calendar'
+      ) {
+        return Effect.succeed(jsonResponse(request, []))
+      }
+      return Effect.succeed(jsonResponse(request, { code: 40410000, message: 'order not found' }, 404))
     })
+    const testLayer = layer(options).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client)))
 
-    const failure = await Effect.runPromise(
-      Effect.flip(withClient(client, (read) => read.account, { ...options, operationTimeoutMs: 0 })),
+    const services = await Effect.runPromise(
+      Effect.all({ session: BrokerSession, read: BrokerRead }).pipe(
+        Effect.provide(testLayer),
+        Effect.provide(TestClock.layer()),
+      ),
     )
 
-    expect(failure).toMatchObject({
-      kind: BrokerReadErrorKind.Configuration,
-      operation: 'configuration',
-      cause: {
-        tag: 'SchemaError',
-        message: expect.stringContaining('["operationTimeoutMs"]'),
-      },
+    expect(services.session.read).toBe(services.read)
+    expect(services.session.connection).toBe(options)
+    expect(services.session.preflight).toMatchObject({
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Sandbox,
+      baseUrl: alpacaSandboxBaseUrl,
+      accountId,
+      accountStatus: AccountStatus.Active,
+      fractionalTrading: true,
     })
-    expect(calls).toBe(0)
+    expect(paths).toHaveLength(9)
+    expect(paths.filter((path) => path === '/v2/account')).toHaveLength(1)
+    expect(paths.filter((path) => path === '/v2/account/configurations')).toHaveLength(1)
   })
 
   test('refuses to publish the live capability for the wrong paper account', async () => {
@@ -1417,14 +1533,22 @@ describe('Alpaca paper reads', () => {
         }).pipe(Effect.provide(testLayer)),
       ),
     )
+    expect(failure).toBeInstanceOf(BrokerSessionAcquisitionError)
     expect(failure).toMatchObject({
-      kind: BrokerReadErrorKind.AccountMismatch,
-      operation: 'account',
-      retryable: false,
-      requestId: 'req-123',
+      stage: BrokerSessionAcquisitionStage.Account,
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Sandbox,
+      baseUrl: alpacaSandboxBaseUrl,
+      expectedAccountId: accountId,
+      cause: {
+        kind: BrokerReadErrorKind.AccountMismatch,
+        operation: 'account',
+        retryable: false,
+        requestId: 'req-123',
+      },
     })
-    expect(failure.message).toContain(wrongAccount)
-    expect(failure.message).toContain(accountId)
+    expect(failure.cause.message).toContain(wrongAccount)
+    expect(failure.cause.message).toContain(accountId)
   })
 })
 

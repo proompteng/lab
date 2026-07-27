@@ -4,6 +4,7 @@ import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effe
 
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
 import { currentUtcInstant } from '../../time'
+import { decodeBrokerProxyUrl, type BrokerConnection } from '../connection'
 import {
   BrokerReadContractFailure,
   BrokerReadError,
@@ -34,7 +35,6 @@ import {
   decodeOrders,
   decodeOrdersQuery,
   decodePositions,
-  decodeRuntimeOptions,
   redactedHeaders,
   responseParseOptions,
   type BrokerReadShape,
@@ -44,7 +44,6 @@ import {
   type OrdersQuery,
   type ProxyDispatcherDependencies,
   type ReadEvidence,
-  type ReadOptions,
   type ReadResult,
 } from './model'
 import {
@@ -114,49 +113,49 @@ export const makeProxyDispatcher = (
 
 export const parseProxyUrl = (proxyUrl: string): Result.Result<URL, BrokerReadError> =>
   pipe(
-    Result.try({
-      try: () => new URL(proxyUrl),
-      catch: (cause) => configurationError('proxy', 'invalid Alpaca proxy configuration', cause),
-    }),
-    Result.flatMap((url) => {
-      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-        return Result.fail(configurationError('proxy', 'Alpaca proxy URL must use HTTP or HTTPS'))
-      }
-      if (url.username !== '' || url.password !== '') {
-        return Result.fail(configurationError('proxy', 'Alpaca proxy credentials must not be embedded in the URL'))
-      }
-      if (url.pathname !== '/' || url.search !== '' || url.hash !== '') {
-        return Result.fail(configurationError('proxy', 'Alpaca proxy URL must contain only an origin'))
-      }
-      return Result.succeed(url)
+    decodeBrokerProxyUrl(proxyUrl),
+    Result.map((origin) => new URL(origin)),
+    Result.mapError((cause) => {
+      const message =
+        cause.reason === 'INVALID_URL'
+          ? 'invalid Alpaca proxy configuration'
+          : cause.reason === 'HTTP_OR_HTTPS_REQUIRED'
+            ? 'Alpaca proxy URL must use HTTP or HTTPS'
+            : cause.reason === 'CREDENTIALS_FORBIDDEN'
+              ? 'Alpaca proxy credentials must not be embedded in the URL'
+              : 'Alpaca proxy URL must contain only an origin'
+      return configurationError('proxy', message, cause)
     }),
   )
 
-const proxyLayer = (proxyUrl: string): Layer.Layer<NodeHttpClient.Dispatcher, BrokerReadError> =>
-  Layer.effect(NodeHttpClient.Dispatcher, makeProxyDispatcher(proxyUrl))
+const makeVerifiedProxyDispatcher = (
+  proxyUrl: string,
+  dependencies: ProxyDispatcherDependencies = {
+    create: (url) => new Undici.ProxyAgent({ uri: url.toString() }),
+    destroy: (dispatcher) => dispatcher.destroy(),
+  },
+): Effect.Effect<Undici.Dispatcher, BrokerReadError, Scope.Scope> =>
+  Effect.acquireRelease(
+    Effect.try({
+      try: () => dependencies.create(new URL(proxyUrl)),
+      catch: (cause) => configurationError('proxy', 'Alpaca proxy dispatcher acquisition failed', cause),
+    }),
+    (dispatcher) => Effect.promise(() => dependencies.destroy(dispatcher)),
+  )
 
-export const alpacaHttpLayer = (proxyUrl: string): Layer.Layer<HttpClient.HttpClient, BrokerReadError> =>
-  NodeHttpClient.layerUndiciNoDispatcher.pipe(Layer.provide(proxyLayer(proxyUrl)))
+const proxyLayer = (connection: BrokerConnection): Layer.Layer<NodeHttpClient.Dispatcher, BrokerReadError> =>
+  Layer.effect(NodeHttpClient.Dispatcher, makeVerifiedProxyDispatcher(connection.proxyUrl))
 
-export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, BrokerReadError, HttpClient.HttpClient> =>
+export const alpacaHttpLayer = (connection: BrokerConnection): Layer.Layer<HttpClient.HttpClient, BrokerReadError> =>
+  NodeHttpClient.layerUndiciNoDispatcher.pipe(Layer.provide(proxyLayer(connection)))
+
+export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShape, never, HttpClient.HttpClient> =>
   Effect.gen(function* () {
-    const runtime = yield* Effect.fromResult(
-      decodeRuntimeOptions({
-        expectedAccountId: options.expectedAccountId,
-        operationTimeoutMs: options.operationTimeoutMs,
-        retryAttempts: options.retryAttempts,
-      }),
-    ).pipe(Effect.mapError((cause) => configurationError('configuration', 'invalid Alpaca read options', cause)))
-    const key = Redacted.value(options.key)
-    const secret = Redacted.value(options.secret)
-    if (key.length === 0 || key.trim() !== key || secret.length === 0 || secret.trim() !== secret) {
-      return yield* Effect.fail(
-        configurationError('configuration', 'Alpaca credentials must be non-empty without surrounding whitespace'),
-      )
-    }
+    const key = Redacted.value(connection.key)
+    const secret = Redacted.value(connection.secret)
     const sensitiveValues = [key, secret]
     const baseClient = yield* HttpClient.HttpClient
-    const client = baseClient.pipe(HttpClient.retryTransient({ times: runtime.retryAttempts }))
+    const client = baseClient.pipe(HttpClient.retryTransient({ times: connection.retryAttempts }))
 
     const readJson = <A>(
       operation: BrokerReadOperation,
@@ -258,27 +257,31 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
         })
         return { value, evidence }
       }).pipe(
-        Effect.timeout(`${runtime.operationTimeoutMs} millis`),
+        Effect.timeout(`${connection.operationTimeoutMs} millis`),
         Effect.mapError((cause) =>
           cause instanceof BrokerReadError
             ? cause
             : Cause.isTimeoutError(cause)
-              ? timeoutError(operation, runtime.operationTimeoutMs, cause, sensitiveValues)
+              ? timeoutError(operation, connection.operationTimeoutMs, cause, sensitiveValues)
               : transportError(operation, cause, sensitiveValues),
         ),
         Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders),
         Effect.withSpan('broker.read', { attributes: { 'broker.system': 'alpaca', 'broker.operation': operation } }),
       )
 
-    const account = readJson('account', accountUrl(), decodeAccount).pipe(
+    const account = readJson('account', accountUrl(connection.baseUrl), decodeAccount).pipe(
       Effect.flatMap((result) => {
-        const normalized = normalizeAccountResult(result.value, runtime.expectedAccountId, result.evidence.observedAt)
+        const normalized = normalizeAccountResult(
+          result.value,
+          connection.expectedAccountId,
+          result.evidence.observedAt,
+        )
         if (Result.isFailure(normalized) && normalized.failure.reason === 'ACCOUNT_BINDING') {
           return Effect.fail(
             new BrokerReadError({
               operation: 'account',
               kind: BrokerReadErrorKind.AccountMismatch,
-              message: `Alpaca credential resolved account ${result.value.id}, expected ${runtime.expectedAccountId}`,
+              message: `Alpaca credential resolved account ${result.value.id}, expected ${connection.expectedAccountId}`,
               retryable: false,
               status: result.evidence.status,
               requestId: result.evidence.requestId,
@@ -294,7 +297,7 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
 
     const accountConfiguration = readJson(
       'account-configuration',
-      accountConfigurationUrl(),
+      accountConfigurationUrl(connection.baseUrl),
       decodeAccountConfiguration,
     ).pipe(
       Effect.flatMap((result) =>
@@ -306,12 +309,12 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
       ),
     )
 
-    const positions = readJson('positions', positionsUrl(), decodePositions).pipe(
+    const positions = readJson('positions', positionsUrl(connection.baseUrl), decodePositions).pipe(
       Effect.flatMap((result) =>
         normalizeRead(
           'positions',
           result.evidence,
-          normalizePositionsResult(result.value, runtime.expectedAccountId, result.evidence.observedAt),
+          normalizePositionsResult(result.value, connection.expectedAccountId, result.evidence.observedAt),
         ),
       ),
     )
@@ -319,7 +322,7 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
     const assetBySymbol = (symbol: string) =>
       decodeInput('asset-by-symbol', decodeAssetSymbol, symbol, 'invalid Alpaca asset symbol').pipe(
         Effect.flatMap((decoded) =>
-          readJson('asset-by-symbol', assetBySymbolUrl(decoded), decodeAsset).pipe(
+          readJson('asset-by-symbol', assetBySymbolUrl(connection.baseUrl, decoded), decodeAsset).pipe(
             Effect.map((result) => ({ decoded, result })),
           ),
         ),
@@ -335,7 +338,7 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
     const marketCalendar = (query: MarketCalendarQuery) =>
       decodeInput('market-calendar', decodeMarketCalendarQuery, query, 'invalid Alpaca market calendar query').pipe(
         Effect.flatMap((decoded) =>
-          readJson('market-calendar', marketCalendarUrl(decoded), decodeMarketCalendar).pipe(
+          readJson('market-calendar', marketCalendarUrl(connection.baseUrl, decoded), decodeMarketCalendar).pipe(
             Effect.map((result) => ({ decoded, result })),
           ),
         ),
@@ -346,24 +349,24 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
 
     const orders = (query: OrdersQuery = {}) =>
       decodeInput('orders', decodeOrdersQuery, query, 'invalid Alpaca orders query').pipe(
-        Effect.flatMap((decoded) => readJson('orders', ordersUrl(decoded), decodeOrders)),
+        Effect.flatMap((decoded) => readJson('orders', ordersUrl(connection.baseUrl, decoded), decodeOrders)),
         Effect.flatMap((result) =>
           normalizeRead(
             'orders',
             result.evidence,
-            normalizeOrdersResult(result.value, runtime.expectedAccountId, result.evidence.observedAt),
+            normalizeOrdersResult(result.value, connection.expectedAccountId, result.evidence.observedAt),
           ),
         ),
       )
 
     const orderById = (orderId: string) =>
       decodeInput('order-by-id', decodeOrderId, orderId, 'invalid Alpaca order ID').pipe(
-        Effect.flatMap((decoded) => readJson('order-by-id', orderByIdUrl(decoded), decodeOrder)),
+        Effect.flatMap((decoded) => readJson('order-by-id', orderByIdUrl(connection.baseUrl, decoded), decodeOrder)),
         Effect.flatMap((result) =>
           normalizeRead(
             'order-by-id',
             result.evidence,
-            normalizeOrderResult(result.value, runtime.expectedAccountId, result.evidence.observedAt),
+            normalizeOrderResult(result.value, connection.expectedAccountId, result.evidence.observedAt),
           ),
         ),
       )
@@ -375,12 +378,14 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
         clientOrderId,
         'invalid Alpaca client order ID',
       ).pipe(
-        Effect.flatMap((decoded) => readJson('order-by-client-id', orderByClientIdUrl(decoded), decodeOrder)),
+        Effect.flatMap((decoded) =>
+          readJson('order-by-client-id', orderByClientIdUrl(connection.baseUrl, decoded), decodeOrder),
+        ),
         Effect.flatMap((result) =>
           normalizeRead(
             'order-by-client-id',
             result.evidence,
-            normalizeOrderResult(result.value, runtime.expectedAccountId, result.evidence.observedAt),
+            normalizeOrderResult(result.value, connection.expectedAccountId, result.evidence.observedAt),
           ),
         ),
       )
@@ -388,13 +393,13 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
     const fillActivities = (query: FillActivitiesQuery = {}) =>
       decodeInput('fill-activities', decodeFillActivitiesQuery, query, 'invalid Alpaca fill activities query').pipe(
         Effect.flatMap((decoded) => {
-          const request = fillActivitiesRequest(decoded)
+          const request = fillActivitiesRequest(connection.baseUrl, decoded)
           return readJson('fill-activities', request.url, decodeFillActivities).pipe(
             Effect.map((result) => ({ result, pageSize: request.pageSize })),
           )
         }),
         Effect.flatMap(({ pageSize, result }) =>
-          Effect.fromResult(normalizeFillActivitiesResult(result.value, runtime.expectedAccountId)).pipe(
+          Effect.fromResult(normalizeFillActivitiesResult(result.value, connection.expectedAccountId)).pipe(
             Effect.map((items) => ({
               value: {
                 items,

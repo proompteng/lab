@@ -1,14 +1,15 @@
 import type { Undici } from '@effect/platform-node'
-import { Context, Effect, Redacted, Schema, type Result } from 'effect'
+import { Context, Effect, Schema, type Result } from 'effect'
 
+import type { BrokerEnvironment } from '../../execution/authority'
 import {
   IsoDateSchema as IsoDate,
   StrictNonEmptyStringSchema as NonEmptyString,
   SymbolSchema as SymbolName,
 } from '../../schemas'
+import type { BrokerProvider } from '../connection'
 import { BrokerReadError } from './failures'
 
-export const paperTradingUrl = 'https://paper-api.alpaca.markets'
 export const defaultFillActivitiesPageSize = 100
 const maxMarketCalendarRangeDays = 31
 export const marketCalendarPreflightRangeDays = 14
@@ -40,7 +41,6 @@ const Uuid = Schema.String.check(
   Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
 )
 const Decimal = Schema.String.check(Schema.isPattern(/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$|^-[1-9][0-9]*(?:\.[0-9]+)?$/))
-const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
 const isUtcTimestamp = (value: string): boolean => {
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?Z$/.exec(value)
   if (match === null) return false
@@ -195,15 +195,6 @@ export enum SortDirection {
 export enum TradeActivityType {
   Fill = 'fill',
   PartialFill = 'partial_fill',
-}
-
-export interface ReadOptions {
-  readonly expectedAccountId: string
-  readonly key: Redacted.Redacted<string>
-  readonly secret: Redacted.Redacted<string>
-  readonly proxyUrl: string
-  readonly operationTimeoutMs: number
-  readonly retryAttempts: number
 }
 
 export interface ProxyDispatcherDependencies {
@@ -399,8 +390,17 @@ export interface BrokerReadShape {
 export class BrokerRead extends Context.Service<BrokerRead, BrokerReadShape>()('bayn/BrokerRead') {}
 
 export interface ReadPreflight {
+  readonly provider: BrokerProvider
+  readonly environment: BrokerEnvironment
+  readonly baseUrl: string
   readonly accountId: string
+  readonly accountStatus: AccountStatus.Active
+  readonly accountBlocked: false
+  readonly tradingBlocked: false
+  readonly tradeSuspendedByUser: false
   readonly accountHash: string
+  readonly fractionalTrading: true
+  readonly accountConfigurationHash: string
   readonly positionCount: number
   readonly positionsHash: string
   readonly openOrderCount: number
@@ -587,12 +587,6 @@ const MarketCalendarQuerySchema = MarketCalendarQueryBase.check(
   }),
 )
 
-const RuntimeOptionsSchema = Schema.Struct({
-  expectedAccountId: Uuid,
-  operationTimeoutMs: PositiveInteger,
-  retryAttempts: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 })),
-})
-
 export type Decoder<A> = (input: unknown) => Result.Result<A, Schema.SchemaError>
 
 export const decodeAccount = Schema.decodeUnknownResult(AccountResponseSchema, responseParseOptions)
@@ -616,4 +610,3 @@ export const decodeMarketCalendarQuery = Schema.decodeUnknownResult(MarketCalend
 export const decodeAssetSymbol = Schema.decodeUnknownResult(SymbolName)
 export const decodeOrderId = Schema.decodeUnknownResult(Uuid)
 export const decodeExternalClientOrderId = Schema.decodeUnknownResult(ExternalClientOrderId)
-export const decodeRuntimeOptions = Schema.decodeUnknownResult(RuntimeOptionsSchema, inputParseOptions)
