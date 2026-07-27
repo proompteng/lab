@@ -618,7 +618,10 @@ const PaperAuthorityGenerationIdentityMaterialSchema = Schema.Struct({
   strategyName: Schema.Literal('risk-balanced-trend'),
   strategyBehaviorHash: Sha256,
   strategyParameterHash: Sha256,
-  strategyParameterSchemaVersion: Schema.Literal('bayn.risk-balanced-trend.protocol.v3'),
+  strategyParameterSchemaVersion: Schema.Literals([
+    'bayn.risk-balanced-trend.protocol.v3',
+    'bayn.risk-balanced-trend.protocol.v4',
+  ]),
   accountId: NonEmptyString,
   riskPolicyHash: Sha256,
   proofPlanHash: Sha256,

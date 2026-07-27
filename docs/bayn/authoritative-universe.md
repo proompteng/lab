@@ -120,7 +120,7 @@ that pre-lock Bayn/operator reads of the bars table returned only bounded public
 independent audits therefore fail both candidate-bar chronology and principal checks rather than exempting those reads.
 PROOMPT-406 owns the causal contract and corrected precommit; this record clears no M2.2 or paper-mutation gate.
 
-## Corrected causal precommit
+## Corrected causal baseline
 
 `bayn.risk-balanced-trend.protocol.v3` plans quantities from the finalized signal-session close and reconciled
 pre-plan broker state, then treats the selected next-session open only as a fill outcome. The bounded Alpaca calendar
@@ -128,14 +128,30 @@ identity fixes the future session open, close, and a 15-minute pre-open cutoff. 
 cash and cannot spend planned sell proceeds. The strategy horizons, weight cap, volatility target, universe, and
 qualification gates remain unchanged.
 
-The source-controlled identities are:
+Its released source-controlled identities are:
 
 - behavior `dc614c54bbf43842d83cd88497e835f7bb25c413eb6e8bd7cbab0a925ec9b2dd`;
-- parameters `e5e4cc5d22b84c4dc8fc65c306d097fda063b0058253da5b900fe1d462d437b3`; and
-- deterministic fixture evaluation `8be4f2f76c69bd7eeb2984bc08cd1d49013d2b349c8c574683851d4052a4901f`.
+- parameters `e5e4cc5d22b84c4dc8fc65c306d097fda063b0058253da5b900fe1d462d437b3`.
 
-These hashes are a corrected precommit, not a qualification result. The pinned v2 run remains terminal `REJECTED`;
-no qualification rerun is part of PROOMPT-406.
+The terminal v3 qualification run remains `REJECTED` because its Sharpe-difference lower confidence bound is not
+positive. It remains pinned and non-authorizing under `OBSERVE`.
+
+## Robust trend qualification precommit
+
+`bayn.risk-balanced-trend.protocol.v4` preserves the causal v3 execution model, five-sleeve universe, monthly
+rebalance, 35% per-symbol cap, 10% portfolio-volatility ceiling, benchmarks, costs, and qualification policy. It clips
+each normalized horizon score to `[-2, 2]`, uses the median score, requires at least three of four horizons to be
+positive, and allocates eligible sleeves by positive conviction per unit annualized volatility before the existing
+cap and covariance-aware portfolio scaling.
+
+The v4 source-controlled identities are:
+
+- behavior `9e87fe0f66048c48da2191ef1fae36ef3ee0eb4ddcd036ef40881f0fe0f6eb42`;
+- parameters `19bc51c7361b181aa48845d178cb63373b3f2e017bcbea1cf3b70ab16647f8a9`; and
+- deterministic fixture evaluation `81002ac221b557498e06cbcd9307d986ed21ff2c2ce883adcc489fef7f468416`.
+
+These hashes are a precommit, not a qualification result. The changed strategy identity cannot consume the already
+observed 2026-07-24 snapshot; release remains held until a fresher finalized snapshot exists.
 
 Publication rollback remains fail-closed: stop new publication through GitOps and preserve finalized or partially
 staged rows for diagnosis. Never delete M2.1 evidence or Signal publication tables.

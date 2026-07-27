@@ -353,7 +353,7 @@ describe('qualification audit', () => {
     ])
     expect(first.policies.policySetHash).toBe(canonicalHashV1(first.policies.documents))
     expect(second.auditHash).toBe(first.auditHash)
-    expect(first.auditHash).toBe('b3a9ee416e1a97794acebb9ad071da4a01b1513f1ba6c87cc5f206c76b168043')
+    expect(first.auditHash).toBe('864443531b3431094e3750f21436e79b1d6447043608e88192b4749a976268b3')
   })
 
   test('passes for a later candidate when prior terminal result lineage is complete', () => {
@@ -432,7 +432,7 @@ describe('qualification audit', () => {
       _tag: 'UnsupportedAuditProtocolVersion',
       storedSchemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
       suppliedSchemaVersion: fixtureProtocol.schemaVersion,
-      requiredSchemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
+      supportedSchemaVersions: ['bayn.risk-balanced-trend.protocol.v3', 'bayn.risk-balanced-trend.protocol.v4'],
     })
   })
 

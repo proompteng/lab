@@ -243,7 +243,10 @@ export type QualificationAuditFailure =
       readonly _tag: 'UnsupportedAuditProtocolVersion'
       readonly storedSchemaVersion: string
       readonly suppliedSchemaVersion: string
-      readonly requiredSchemaVersion: 'bayn.risk-balanced-trend.protocol.v3'
+      readonly supportedSchemaVersions: readonly [
+        'bayn.risk-balanced-trend.protocol.v3',
+        'bayn.risk-balanced-trend.protocol.v4',
+      ]
     }
   | {
       readonly _tag: 'ReferenceCandidateTraceMissing'
@@ -430,15 +433,19 @@ const makeAuditFacts = (
       requiredStrategyName: contract.name,
     })
   }
+  const supportedSchemaVersions = [
+    'bayn.risk-balanced-trend.protocol.v3',
+    'bayn.risk-balanced-trend.protocol.v4',
+  ] as const
   if (
-    database.protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v3' ||
-    input.protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v3'
+    database.protocol.schemaVersion !== input.protocol.schemaVersion ||
+    !supportedSchemaVersions.some((schemaVersion) => schemaVersion === database.protocol.schemaVersion)
   ) {
     return Result.fail({
       _tag: 'UnsupportedAuditProtocolVersion',
       storedSchemaVersion: database.protocol.schemaVersion,
       suppliedSchemaVersion: input.protocol.schemaVersion,
-      requiredSchemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
+      supportedSchemaVersions,
     })
   }
   const provenanceResult = makeRuntimeProvenanceResult({

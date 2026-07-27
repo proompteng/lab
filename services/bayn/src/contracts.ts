@@ -174,6 +174,7 @@ const RuntimeProvenanceBase = Schema.Struct({
     parameterSchemaVersion: Schema.Literals([
       'bayn.risk-balanced-trend.protocol.v2',
       'bayn.risk-balanced-trend.protocol.v3',
+      'bayn.risk-balanced-trend.protocol.v4',
     ]),
   }),
   contractVersions: Schema.Struct({

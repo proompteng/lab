@@ -12,6 +12,7 @@ import type { DatabaseError, EvidenceStoreService } from './db/evidence-store'
 import type { OperationalError } from './errors'
 import { databaseOperation, withinDeadline } from './operations'
 import { Authority } from './paper'
+import { makeQualificationDiagnosis } from './qualification-diagnosis'
 import { isReady, type DependencyHealth, type RuntimeState } from './runtime-state'
 
 type ReadEvidence = EvidenceStoreService['read']
@@ -129,6 +130,10 @@ export const statusFacts = (
       analysisHash: state.evidence?.qualification.analysis.analysisHash ?? null,
       candidateOrdinal: state.evidence?.qualification.analysis.candidateOrdinal ?? null,
       reasonCodes: state.evidence?.qualification.reasonCodes ?? [],
+      diagnosis:
+        state.evidence === null
+          ? null
+          : makeQualificationDiagnosis(state.evidence.evaluation, state.evidence.qualification),
       executionProvenance: state.evidence?.provenance ?? null,
     },
     accounting: {

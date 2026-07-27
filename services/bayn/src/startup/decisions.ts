@@ -62,7 +62,8 @@ const provenanceFromStored = (
   if (
     stored.protocol.strategyName !== 'risk-balanced-trend' ||
     (stored.protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v2' &&
-      stored.protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v3')
+      stored.protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v3' &&
+      stored.protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v4')
   ) {
     return Result.fail({
       _tag: 'StoredProvenanceInvalid',
@@ -70,10 +71,7 @@ const provenanceFromStored = (
       issue: { reason: 'unsupported-contract' },
     })
   }
-  const parameterSchemaVersion =
-    stored.protocol.schemaVersion === 'bayn.risk-balanced-trend.protocol.v2'
-      ? 'bayn.risk-balanced-trend.protocol.v2'
-      : 'bayn.risk-balanced-trend.protocol.v3'
+  const parameterSchemaVersion = stored.protocol.schemaVersion
   const provenanceResult = pipe(
     makeRuntimeProvenanceResult({
       sourceRevision: stored.run.sourceRevision,

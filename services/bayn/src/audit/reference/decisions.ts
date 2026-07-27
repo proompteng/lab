@@ -11,6 +11,15 @@ export const roundWeight = (value: number): number => Number.parseFloat(value.to
 export const average = (values: readonly number[]): number =>
   values.reduce((sum, value) => sum + value, 0) / values.length
 
+const median = (values: readonly number[]): number => {
+  const sorted = [...values].sort((left, right) => left - right)
+  const midpoint = Math.floor(sorted.length / 2)
+  const upper = sorted.at(midpoint) ?? 0
+  if (sorted.length % 2 === 1) return upper
+  const lower = sorted.at(midpoint - 1) ?? upper
+  return (lower + upper) / 2
+}
+
 export const sampleDeviation = (values: readonly number[]): number => {
   if (values.length < 2) return 0
   const center = average(values)
@@ -288,8 +297,29 @@ export const riskBalancedDecisionPlan = (
       }
       horizons.push({ horizonSessions, return: value, normalizedTrend })
     }
-    const compositeScore = dailyVolatility === 0 ? 0 : average(horizons.map((horizon) => horizon.normalizedTrend))
-    if (![annualizedVolatility, compositeScore].every(Number.isFinite)) {
+    if (horizons.length === 0) {
+      return Result.fail({
+        _tag: 'ReferenceInvalidScore',
+        symbol,
+        annualizedVolatility,
+        compositeScore: Number.NaN,
+      })
+    }
+    let compositeScore = 0
+    let positiveScore = 0
+    let eligible = false
+    if (dailyVolatility > 0 && protocol.schemaVersion === 'bayn.risk-balanced-trend.protocol.v4') {
+      const cap = protocol.signal.normalizedTrendCap
+      compositeScore = median(horizons.map(({ normalizedTrend }) => Math.max(-cap, Math.min(cap, normalizedTrend))))
+      const positiveHorizons = horizons.filter(({ normalizedTrend }) => normalizedTrend > 0).length
+      eligible = positiveHorizons >= protocol.signal.minimumPositiveHorizons && compositeScore > 0
+      positiveScore = eligible ? compositeScore / annualizedVolatility : 0
+    } else if (dailyVolatility > 0) {
+      compositeScore = average(horizons.map((horizon) => horizon.normalizedTrend))
+      positiveScore = Math.max(0, compositeScore)
+      eligible = true
+    }
+    if (![annualizedVolatility, compositeScore, positiveScore].every(Number.isFinite)) {
       return Result.fail({
         _tag: 'ReferenceInvalidScore',
         symbol,
@@ -303,8 +333,8 @@ export const riskBalancedDecisionPlan = (
       dailyVolatility,
       annualizedVolatility,
       compositeScore,
-      positiveScore: Math.max(0, compositeScore),
-      eligible: dailyVolatility > 0,
+      positiveScore,
+      eligible,
       uncappedWeight: 0,
       cappedWeight: 0,
       targetWeight: 0,

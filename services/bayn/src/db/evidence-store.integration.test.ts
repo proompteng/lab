@@ -655,7 +655,7 @@ const makeMutationPaperAuthorityGeneration = (
   }
   const strategy = mutationQualificationProvenance.strategy
   const strategyParameterSchemaVersion = strategy.parameterSchemaVersion
-  if (strategyParameterSchemaVersion !== 'bayn.risk-balanced-trend.protocol.v3') {
+  if (strategyParameterSchemaVersion !== 'bayn.risk-balanced-trend.protocol.v4') {
     throw new Error('audited mutation fixture requires the current strategy parameter contract')
   }
 
@@ -1037,6 +1037,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 15, name: 'acknowledged_submit_recovery' },
       { migration_id: 16, name: 'authority_bound_intents' },
       { migration_id: 17, name: 'stable_paper_authority_generation' },
+      { migration_id: 18, name: 'robust_trend_protocol' },
     ])
   })
 
@@ -4289,7 +4290,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             '{}'::jsonb
           )
         `)
-        const current = yield* Effect.exit(sql`
+        const causalHistorical = yield* Effect.exit(sql`
           INSERT INTO protocol_locks (
             protocol_hash, schema_version, strategy_name, behavior_hash, parameter_hash, parameters
           ) VALUES (
@@ -4301,12 +4302,25 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             '{}'::jsonb
           )
         `)
-        return { current, historical, unsupported }
+        const current = yield* Effect.exit(sql`
+          INSERT INTO protocol_locks (
+            protocol_hash, schema_version, strategy_name, behavior_hash, parameter_hash, parameters
+          ) VALUES (
+            ${'9'.repeat(64)},
+            'bayn.risk-balanced-trend.protocol.v4',
+            'risk-balanced-trend',
+            ${'a'.repeat(64)},
+            ${'b'.repeat(64)},
+            '{}'::jsonb
+          )
+        `)
+        return { causalHistorical, current, historical, unsupported }
       }),
     )
 
     expect(Exit.isFailure(exits.unsupported)).toBe(true)
     expect(Exit.isSuccess(exits.historical)).toBe(true)
+    expect(Exit.isSuccess(exits.causalHistorical)).toBe(true)
     expect(Exit.isSuccess(exits.current)).toBe(true)
   })
 
@@ -5269,7 +5283,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     if (Option.isSome(result.stored)) {
       expect(result.stored.value.protocol).toMatchObject({
         strategyName: 'risk-balanced-trend',
-        schemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
+        schemaVersion: 'bayn.risk-balanced-trend.protocol.v4',
         parameters: fixtureProtocol,
       })
       expect(result.stored.value.run).toMatchObject({

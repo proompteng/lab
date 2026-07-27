@@ -435,20 +435,20 @@ describe('ledger plan Result algebra', () => {
     const replay = assertSuccess(buildLedgerPlan(result, ledger))
 
     expect(replay).toEqual(first)
-    expect(first.runKey).toBe(79_792_431_000_025_543_657_647_989_592_544_810_778n)
-    expect(first.runTag).toBe(18_307_385_734_514_644_762n)
+    expect(first.runKey).toBe(69_942_771_251_131_843_050_516_581_237_517_927_397n)
+    expect(first.runTag).toBe(2_699_395_039_088_034_789n)
     expect(first.accounts).toHaveLength(11)
-    expect(first.transfers).toHaveLength(269)
-    expect(first.accounts[0].id).toBe(28_174_988_367_779_630_772_009_788_722_886_677_084n)
-    expect(first.accounts.at(-1)?.id).toBe(328_386_117_789_076_263_753_212_874_624_739_142_962n)
-    expect(first.transfers[0].id).toBe(532_337_791_250_265_855_850_739_987_090_731_240n)
-    expect(first.transfers.at(-1)?.id).toBe(340_248_724_424_856_676_616_453_965_797_055_502_080n)
+    expect(first.transfers).toHaveLength(249)
+    expect(first.accounts[0].id).toBe(43_249_501_142_936_952_057_395_946_051_265_147_876n)
+    expect(first.accounts.at(-1)?.id).toBe(187_166_520_106_165_147_592_061_639_881_212_135_452n)
+    expect(first.transfers[0].id).toBe(843_588_107_247_104_286_364_813_362_505_705_787n)
+    expect(first.transfers.at(-1)?.id).toBe(339_931_206_364_908_967_505_523_512_953_605_189_254n)
     expect(first.transfers.find((transfer) => transfer.code === TransferCode.funding)?.id).toBe(
-      109_353_885_019_586_710_761_486_091_928_106_698_321n,
+      91_698_455_022_344_017_785_425_376_077_893_533_948n,
     )
     expect(first.accounts.every((account) => account.flags === AccountFlags.history)).toBeTrue()
     expect(first.transfers.every((transfer) => transfer.flags === 0 && transfer.amount > 0n)).toBeTrue()
-    expect(hashPlan(first)).toBe('9c6888ca700beb1c5fb698d28c6d42a5e0b913d4340b08554b475fe96da92074')
+    expect(hashPlan(first)).toBe('92365839d645ebb14e6cefcefe92f6459aadde44b101926952767962112c8762')
   })
 
   test('returns exact ledger-plan hash access, serialization, and canonicalization failures', () => {

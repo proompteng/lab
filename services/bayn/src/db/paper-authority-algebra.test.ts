@@ -156,7 +156,7 @@ const evidence: PaperGenerationEvidenceFacts = {
   completeStatusCount: 1,
   writingDetail: { artifactCount: 3, eventCount: 4, gateCount: 5 },
   completeDetail: { reconciliationExact: true, verdict: 'PASS' },
-  protocolSchemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
+  protocolSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4',
   strategyName: 'risk-balanced-trend',
   behaviorHash: config.build.strategyBehaviorHash,
   parameterHash: config.build.strategyParameterHash,
