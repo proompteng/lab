@@ -269,7 +269,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
         Effect.withSpan('broker.read', { attributes: { 'broker.system': 'alpaca', 'broker.operation': operation } }),
       )
 
-    const account = readJson('account', accountUrl(connection.baseUrl), decodeAccount).pipe(
+    const account = readJson('account', accountUrl(connection), decodeAccount).pipe(
       Effect.flatMap((result) => {
         const normalized = normalizeAccountResult(
           result.value,
@@ -297,7 +297,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
 
     const accountConfiguration = readJson(
       'account-configuration',
-      accountConfigurationUrl(connection.baseUrl),
+      accountConfigurationUrl(connection),
       decodeAccountConfiguration,
     ).pipe(
       Effect.flatMap((result) =>
@@ -309,7 +309,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
       ),
     )
 
-    const positions = readJson('positions', positionsUrl(connection.baseUrl), decodePositions).pipe(
+    const positions = readJson('positions', positionsUrl(connection), decodePositions).pipe(
       Effect.flatMap((result) =>
         normalizeRead(
           'positions',
@@ -322,7 +322,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
     const assetBySymbol = (symbol: string) =>
       decodeInput('asset-by-symbol', decodeAssetSymbol, symbol, 'invalid Alpaca asset symbol').pipe(
         Effect.flatMap((decoded) =>
-          readJson('asset-by-symbol', assetBySymbolUrl(connection.baseUrl, decoded), decodeAsset).pipe(
+          readJson('asset-by-symbol', assetBySymbolUrl(connection, decoded), decodeAsset).pipe(
             Effect.map((result) => ({ decoded, result })),
           ),
         ),
@@ -338,7 +338,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
     const marketCalendar = (query: MarketCalendarQuery) =>
       decodeInput('market-calendar', decodeMarketCalendarQuery, query, 'invalid Alpaca market calendar query').pipe(
         Effect.flatMap((decoded) =>
-          readJson('market-calendar', marketCalendarUrl(connection.baseUrl, decoded), decodeMarketCalendar).pipe(
+          readJson('market-calendar', marketCalendarUrl(connection, decoded), decodeMarketCalendar).pipe(
             Effect.map((result) => ({ decoded, result })),
           ),
         ),
@@ -349,7 +349,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
 
     const orders = (query: OrdersQuery = {}) =>
       decodeInput('orders', decodeOrdersQuery, query, 'invalid Alpaca orders query').pipe(
-        Effect.flatMap((decoded) => readJson('orders', ordersUrl(connection.baseUrl, decoded), decodeOrders)),
+        Effect.flatMap((decoded) => readJson('orders', ordersUrl(connection, decoded), decodeOrders)),
         Effect.flatMap((result) =>
           normalizeRead(
             'orders',
@@ -361,7 +361,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
 
     const orderById = (orderId: string) =>
       decodeInput('order-by-id', decodeOrderId, orderId, 'invalid Alpaca order ID').pipe(
-        Effect.flatMap((decoded) => readJson('order-by-id', orderByIdUrl(connection.baseUrl, decoded), decodeOrder)),
+        Effect.flatMap((decoded) => readJson('order-by-id', orderByIdUrl(connection, decoded), decodeOrder)),
         Effect.flatMap((result) =>
           normalizeRead(
             'order-by-id',
@@ -379,7 +379,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
         'invalid Alpaca client order ID',
       ).pipe(
         Effect.flatMap((decoded) =>
-          readJson('order-by-client-id', orderByClientIdUrl(connection.baseUrl, decoded), decodeOrder),
+          readJson('order-by-client-id', orderByClientIdUrl(connection, decoded), decodeOrder),
         ),
         Effect.flatMap((result) =>
           normalizeRead(
@@ -393,7 +393,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
     const fillActivities = (query: FillActivitiesQuery = {}) =>
       decodeInput('fill-activities', decodeFillActivitiesQuery, query, 'invalid Alpaca fill activities query').pipe(
         Effect.flatMap((decoded) => {
-          const request = fillActivitiesRequest(connection.baseUrl, decoded)
+          const request = fillActivitiesRequest(connection, decoded)
           return readJson('fill-activities', request.url, decodeFillActivities).pipe(
             Effect.map((result) => ({ result, pageSize: request.pageSize })),
           )

@@ -1,5 +1,6 @@
 import { Result } from 'effect'
 
+import type { BrokerConnection } from '../connection'
 import { contractFailure, type BrokerReadContractFailure } from './failures'
 import {
   ResponseHeadersSchema,
@@ -29,26 +30,26 @@ export const assetRequestMaterial = (requestedSymbol: string) => ({
   requestedSymbol,
 })
 
-export const accountUrl = (baseUrl: string): URL => new URL('/v2/account', baseUrl)
+export const accountUrl = (connection: BrokerConnection): URL => new URL('/v2/account', connection.baseUrl)
 
-export const accountConfigurationUrl = (baseUrl: string): URL =>
-  new URL(accountConfigurationRequestMaterial.path, baseUrl)
+export const accountConfigurationUrl = (connection: BrokerConnection): URL =>
+  new URL(accountConfigurationRequestMaterial.path, connection.baseUrl)
 
-export const positionsUrl = (baseUrl: string): URL => new URL('/v2/positions', baseUrl)
+export const positionsUrl = (connection: BrokerConnection): URL => new URL('/v2/positions', connection.baseUrl)
 
-export const assetBySymbolUrl = (baseUrl: string, requestedSymbol: string): URL =>
-  new URL(assetRequestMaterial(requestedSymbol).path, baseUrl)
+export const assetBySymbolUrl = (connection: BrokerConnection, requestedSymbol: string): URL =>
+  new URL(assetRequestMaterial(requestedSymbol).path, connection.baseUrl)
 
-export const marketCalendarUrl = (baseUrl: string, query: MarketCalendarQuery): URL => {
-  const url = new URL('/v2/calendar', baseUrl)
+export const marketCalendarUrl = (connection: BrokerConnection, query: MarketCalendarQuery): URL => {
+  const url = new URL('/v2/calendar', connection.baseUrl)
   url.searchParams.set('start', query.start)
   url.searchParams.set('end', query.end)
   url.searchParams.set('date_type', 'TRADING')
   return url
 }
 
-export const ordersUrl = (baseUrl: string, query: OrdersQuery): URL => {
-  const url = new URL('/v2/orders', baseUrl)
+export const ordersUrl = (connection: BrokerConnection, query: OrdersQuery): URL => {
+  const url = new URL('/v2/orders', connection.baseUrl)
   if (query.status !== undefined) url.searchParams.set('status', query.status)
   if (query.limit !== undefined) url.searchParams.set('limit', String(query.limit))
   if (query.after !== undefined) url.searchParams.set('after', query.after)
@@ -59,11 +60,11 @@ export const ordersUrl = (baseUrl: string, query: OrdersQuery): URL => {
   return url
 }
 
-export const orderByIdUrl = (baseUrl: string, orderId: string): URL =>
-  new URL(`/v2/orders/${encodeURIComponent(orderId)}`, baseUrl)
+export const orderByIdUrl = (connection: BrokerConnection, orderId: string): URL =>
+  new URL(`/v2/orders/${encodeURIComponent(orderId)}`, connection.baseUrl)
 
-export const orderByClientIdUrl = (baseUrl: string, clientOrderId: string): URL => {
-  const url = new URL('/v2/orders:by_client_order_id', baseUrl)
+export const orderByClientIdUrl = (connection: BrokerConnection, clientOrderId: string): URL => {
+  const url = new URL('/v2/orders:by_client_order_id', connection.baseUrl)
   url.searchParams.set('client_order_id', clientOrderId)
   return url
 }
@@ -73,8 +74,11 @@ export interface FillActivitiesRequest {
   readonly pageSize: number
 }
 
-export const fillActivitiesRequest = (baseUrl: string, query: FillActivitiesQuery): FillActivitiesRequest => {
-  const url = new URL('/v2/account/activities/FILL', baseUrl)
+export const fillActivitiesRequest = (
+  connection: BrokerConnection,
+  query: FillActivitiesQuery,
+): FillActivitiesRequest => {
+  const url = new URL('/v2/account/activities/FILL', connection.baseUrl)
   const pageSize = query.pageSize ?? defaultFillActivitiesPageSize
   if (query.date !== undefined) url.searchParams.set('date', query.date)
   if (query.after !== undefined) url.searchParams.set('after', query.after)
