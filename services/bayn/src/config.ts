@@ -1,8 +1,17 @@
 import { Config, Effect, Option, pipe, Redacted, Result, Schema, SchemaTransformation } from 'effect'
 
+import {
+  BrokerProvider,
+  alpacaSandboxBaseUrl,
+  decodeBrokerConnection,
+  renderBrokerConnectionDecodeFailure,
+  type BrokerConnection,
+  type BrokerConnectionDecodeFailure,
+} from './broker/connection'
 import { EmbeddedBuildMetadataSchema, embeddedBuildMetadata, type EmbeddedBuildMetadata } from './build'
 import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema, type EvaluationBounds } from './contracts'
 import { OperationalError, operationalError } from './errors'
+import { BrokerEnvironment, BrokerEnvironmentSchema } from './execution/authority'
 import { Authority } from './paper'
 import {
   GitSourceRevisionSchema as SourceRevision,
@@ -29,13 +38,8 @@ export interface RuntimeConfig {
   readonly cycleStallThresholdMs: number
   readonly reconciliationStaleThresholdMs: number
   readonly unknownMutationThresholdMs: number
-  readonly alpaca?: {
-    readonly accountId: string
+  readonly alpaca?: BrokerConnection & {
     readonly authorityGenerationHash: string
-    readonly key: Redacted.Redacted<string>
-    readonly secret: Redacted.Redacted<string>
-    readonly proxyUrl: string
-    readonly retryAttempts: number
     readonly reconciliationIntervalMs: number
   }
   readonly clickhouse: {
@@ -110,6 +114,9 @@ export interface ParsedRuntimeConfig {
   readonly cyclePollIntervalMs: number
   readonly authorityGenerationHash: string | undefined
   readonly configuredAlpaca: {
+    readonly provider: BrokerProvider
+    readonly environment: BrokerEnvironment
+    readonly baseUrl: string
     readonly accountId: string | undefined
     readonly key: Redacted.Redacted<string> | undefined
     readonly secret: Redacted.Redacted<string> | undefined
@@ -149,6 +156,10 @@ export type RuntimeConfigResolutionFailure =
     }
   | {
       readonly _tag: 'MissingAlpacaAuthorityGeneration'
+    }
+  | {
+      readonly _tag: 'InvalidBrokerConnection'
+      readonly cause: BrokerConnectionDecodeFailure
     }
   | {
       readonly _tag: 'PaperAuthorityRequiresAlpacaBinding'
@@ -253,6 +264,13 @@ const runtimeConfig = Config.all({
   unknownMutationThresholdMs: operationalThreshold('BAYN_UNKNOWN_MUTATION_THRESHOLD_MS', 300_000),
   cyclePollIntervalMs: operationalThreshold('BAYN_CYCLE_POLL_INTERVAL_MS', 30_000),
   authorityGenerationHash: Config.option(Config.schema(Sha256Schema, 'BAYN_AUTHORITY_GENERATION_HASH')),
+  brokerProvider: Config.schema(Schema.Enum(BrokerProvider), 'BAYN_BROKER_PROVIDER').pipe(
+    Config.withDefault(BrokerProvider.Alpaca),
+  ),
+  brokerEnvironment: Config.schema(BrokerEnvironmentSchema, 'BAYN_BROKER_ENVIRONMENT').pipe(
+    Config.withDefault(BrokerEnvironment.Sandbox),
+  ),
+  alpacaBaseUrl: nonEmptyString('BAYN_ALPACA_BASE_URL').pipe(Config.withDefault(alpacaSandboxBaseUrl)),
   alpacaAccountId: Config.option(nonEmptyString('BAYN_ALPACA_ACCOUNT_ID')),
   alpacaKey: Config.option(secretString('BAYN_ALPACA_KEY_ID')),
   alpacaSecret: Config.option(secretString('BAYN_ALPACA_SECRET_KEY')),
@@ -304,6 +322,9 @@ const runtimeConfig = Config.all({
       cyclePollIntervalMs: config.cyclePollIntervalMs,
       authorityGenerationHash: Option.getOrUndefined(config.authorityGenerationHash),
       configuredAlpaca: {
+        provider: config.brokerProvider,
+        environment: config.brokerEnvironment,
+        baseUrl: config.alpacaBaseUrl,
         accountId: Option.getOrUndefined(config.alpacaAccountId),
         key: Option.getOrUndefined(config.alpacaKey),
         secret: Option.getOrUndefined(config.alpacaSecret),
@@ -518,16 +539,34 @@ const resolveAlpacaBinding = (
   if (input.parsed.authorityGenerationHash === undefined) {
     return Result.fail({ _tag: 'MissingAlpacaAuthorityGeneration' })
   }
-  return Result.succeed({
-    ...input,
-    alpaca: {
-      ...input.alpacaCredentials,
-      authorityGenerationHash: input.parsed.authorityGenerationHash,
+  const authorityGenerationHash = input.parsed.authorityGenerationHash
+  return pipe(
+    decodeBrokerConnection({
+      provider: input.parsed.configuredAlpaca.provider,
+      environment: input.parsed.configuredAlpaca.environment,
+      baseUrl: input.parsed.configuredAlpaca.baseUrl,
+      expectedAccountId: input.alpacaCredentials.accountId,
+      key: input.alpacaCredentials.key,
+      secret: input.alpacaCredentials.secret,
       proxyUrl: input.parsed.configuredAlpaca.proxyUrl,
+      operationTimeoutMs: input.parsed.operationTimeoutMs,
       retryAttempts: input.parsed.configuredAlpaca.retryAttempts,
-      reconciliationIntervalMs: input.parsed.configuredAlpaca.reconciliationIntervalMs,
-    },
-  })
+    }),
+    Result.mapError(
+      (cause): RuntimeConfigResolutionFailure => ({
+        _tag: 'InvalidBrokerConnection',
+        cause,
+      }),
+    ),
+    Result.map((connection) => ({
+      ...input,
+      alpaca: {
+        ...connection,
+        authorityGenerationHash,
+        reconciliationIntervalMs: input.parsed.configuredAlpaca.reconciliationIntervalMs,
+      },
+    })),
+  )
 }
 
 const resolveConfiguredRuntimeMode = (
@@ -718,6 +757,11 @@ const presentRuntimeConfigFailure = (failure: RuntimeConfigResolutionFailure): R
       return {
         operation: 'authority-generation',
         message: 'Alpaca account binding requires an authority generation hash',
+      }
+    case 'InvalidBrokerConnection':
+      return {
+        operation: 'broker-connection',
+        message: renderBrokerConnectionDecodeFailure(failure.cause),
       }
     case 'PaperAuthorityRequiresAlpacaBinding':
       return {

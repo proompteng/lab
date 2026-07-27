@@ -18,11 +18,12 @@ import {
   type AutonomousCycleStartupInput,
   type AutonomousObserveApplicationConfig,
 } from './app'
-import { AccountStatus, type BrokerReadShape } from './broker/alpaca'
+import { AccountStatus, BrokerProvider, alpacaSandboxBaseUrl, type BrokerReadShape } from './broker/alpaca'
 import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
 import { makeStrategyProtocolHash } from './contracts'
 import { CycleObservability } from './db/cycle-observability'
 import { EvidenceStore } from './db/evidence-store'
+import { BrokerEnvironment } from './execution/authority'
 import type { BrokerProbe } from './health'
 import { Journal } from './ledger'
 import { MarketData } from './market-data'
@@ -90,11 +91,15 @@ const autonomousConfig = (runtime: typeof config): AutonomousObserveApplicationC
   cyclePollIntervalMs: 30_000,
   maximumAuthority: Authority.Observe,
   alpaca: {
-    accountId: brokerAccountId,
+    provider: BrokerProvider.Alpaca,
+    environment: BrokerEnvironment.Sandbox,
+    baseUrl: alpacaSandboxBaseUrl,
+    expectedAccountId: brokerAccountId,
     authorityGenerationHash: 'f'.repeat(64),
     key: Redacted.make('test-key'),
     secret: Redacted.make('test-secret'),
     proxyUrl: 'http://proxy.test:3128',
+    operationTimeoutMs: runtime.operationTimeoutMs,
     retryAttempts: 0,
     reconciliationIntervalMs: 30_000,
   },

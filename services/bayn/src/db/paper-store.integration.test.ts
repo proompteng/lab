@@ -9,6 +9,7 @@ import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, 
 import type { RuntimeConfig } from '../config'
 import { makeStrategyProtocolHash } from '../contracts'
 import { operationalError } from '../errors'
+import { BrokerEnvironment } from '../execution/authority'
 import { WriterFence, WriterFenceError, WriterFenceLive, type WriterFenceService } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
 import { hashLedgerPlanResult } from '../ledger-plan'
@@ -48,6 +49,7 @@ import {
   type PositionSnapshotInput,
   type ValuationInput,
 } from '../broker/observations'
+import { BrokerProvider, alpacaSandboxBaseUrl } from '../broker/alpaca'
 import { EvidenceStore, EvidenceStoreLive, PostgresClientLive } from './evidence-store'
 import { PaperStore, PaperStoreError, PaperStoreLive } from './paper-store'
 
@@ -655,11 +657,15 @@ const paperRuntimeConfig = (
     strategyParameterHash: activation.strategyParameterHash,
   },
   alpaca: {
-    accountId: activation.accountId,
+    provider: BrokerProvider.Alpaca,
+    environment: BrokerEnvironment.Sandbox,
+    baseUrl: alpacaSandboxBaseUrl,
+    expectedAccountId: activation.accountId,
     authorityGenerationHash: activation.generationHash,
     key: Redacted.make('unused'),
     secret: Redacted.make('unused'),
     proxyUrl: 'http://bayn-egress-proxy.invalid',
+    operationTimeoutMs: config.operationTimeoutMs,
     retryAttempts: 0,
     reconciliationIntervalMs: 30_000,
   },
@@ -1464,7 +1470,7 @@ describePostgres('paper accounting persistence', () => {
         ...validConfig,
         alpaca: {
           ...validAlpaca,
-          accountId: 'wrong-configured-paper-account',
+          expectedAccountId: 'wrong-configured-paper-account',
         },
       },
       { ...validConfig, qualificationRunId: hash('wrong-configured-qualification-run') },
@@ -1909,7 +1915,7 @@ describePostgres('paper accounting persistence', () => {
         ...validConfig,
         alpaca: {
           ...validAlpaca,
-          accountId: 'changed-replay-account',
+          expectedAccountId: 'changed-replay-account',
         },
       },
     )

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { ConfigProvider, Effect, Redacted, Result } from 'effect'
 
+import { BrokerProvider, alpacaLiveBaseUrl, alpacaSandboxBaseUrl } from './broker/connection'
 import type { EmbeddedBuildMetadata } from './build'
 import {
   loadConfig,
@@ -11,6 +12,7 @@ import {
   type RuntimeConfigResolutionInput,
 } from './config'
 import { Authority } from './paper'
+import { BrokerEnvironment } from './execution/authority'
 
 const sourceRevision = 'a'.repeat(40)
 const imageRepository = 'registry.ide-newton.ts.net/lab/bayn'
@@ -48,6 +50,9 @@ const baseParsedConfig: ParsedRuntimeConfig = {
   cyclePollIntervalMs: 30_000,
   authorityGenerationHash,
   configuredAlpaca: {
+    provider: BrokerProvider.Alpaca,
+    environment: BrokerEnvironment.Sandbox,
+    baseUrl: alpacaSandboxBaseUrl,
     accountId: undefined,
     key: undefined,
     secret: undefined,
@@ -250,6 +255,51 @@ describe('pure runtime configuration resolution', () => {
       }
     })
   }
+
+  test('resolves one approved live Alpaca connection without changing execution authority', () => {
+    const result = resolveRuntimeConfig(
+      resolutionInput({
+        configuredAlpaca: {
+          ...completeAlpacaConfig,
+          environment: BrokerEnvironment.Live,
+          baseUrl: alpacaLiveBaseUrl,
+        },
+      }),
+    )
+
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result) && result.success.alpaca !== undefined) {
+      expect(result.success.maximumAuthority).toBe(Authority.Observe)
+      expect(result.success.alpaca).toMatchObject({
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Live,
+        baseUrl: alpacaLiveBaseUrl,
+        expectedAccountId: alpacaAccountId,
+      })
+    }
+  })
+
+  test('rejects a mismatched Alpaca endpoint and environment before runtime composition', () => {
+    expectResolutionFailure(
+      resolutionInput({
+        configuredAlpaca: {
+          ...completeAlpacaConfig,
+          environment: BrokerEnvironment.Live,
+          baseUrl: alpacaSandboxBaseUrl,
+        },
+      }),
+      {
+        _tag: 'InvalidBrokerConnection',
+        cause: {
+          _tag: 'BrokerEndpointEnvironmentMismatch',
+          provider: BrokerProvider.Alpaca,
+          environment: BrokerEnvironment.Live,
+          baseUrl: alpacaSandboxBaseUrl,
+          approvedBaseUrl: alpacaLiveBaseUrl,
+        },
+      },
+    )
+  })
 
   const partialCredentialCases = [
     ['account ID only', true, false, false],
@@ -803,7 +853,7 @@ describe('Effect configuration', () => {
     expect(config.maximumAuthority).toBe(Authority.Observe)
     if (config.runtimeMode === 'PaperCandidateDiscovery') {
       expect(config.qualificationRunId).toBe('e'.repeat(64))
-      expect(config.alpaca.accountId).toBe('61e69015-8549-4bfd-b9c3-01e75843f47d')
+      expect(config.alpaca.expectedAccountId).toBe('61e69015-8549-4bfd-b9c3-01e75843f47d')
     }
   })
 
@@ -906,7 +956,10 @@ describe('Effect configuration', () => {
     const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), configured))
 
     expect(config.alpaca).toMatchObject({
-      accountId: '61e69015-8549-4bfd-b9c3-01e75843f47d',
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Sandbox,
+      baseUrl: alpacaSandboxBaseUrl,
+      expectedAccountId: '61e69015-8549-4bfd-b9c3-01e75843f47d',
       authorityGenerationHash,
       proxyUrl: 'http://bayn-egress-proxy:3128',
       retryAttempts: 2,

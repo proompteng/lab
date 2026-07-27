@@ -4,7 +4,7 @@ import { Effect, flow, Layer, Match, pipe, Redacted, Result, Schema, Stdio, Stre
 
 import { autonomousObserveApplication, brokerlessApplication } from './app'
 import { riskBalancedTrendBehaviorHash } from './behavior'
-import { BrokerRead, live as AlpacaReadLive, scopedReadAdapterLayer, type BrokerReadShape } from './broker/alpaca'
+import { BrokerSession, live as AlpacaBrokerLive, type BrokerReadShape } from './broker/alpaca'
 import { verifyBehaviorHash, verifyParameterHash } from './build'
 import { loadConfig, type LoadedRuntimeConfig } from './config'
 import {
@@ -240,23 +240,9 @@ const databaseLayer = (config: LoadedRuntimeConfig) =>
     ),
   )
 
-const alpacaReadConfig = (config: LoadedRuntimeConfig, alpaca: AlpacaBinding) => ({
-  expectedAccountId: alpaca.accountId,
-  key: alpaca.key,
-  secret: alpaca.secret,
-  proxyUrl: alpaca.proxyUrl,
-  operationTimeoutMs: config.operationTimeoutMs,
-  retryAttempts: alpaca.retryAttempts,
-})
-
-const serviceBrokerReadLayer = (config: LoadedRuntimeConfig, alpaca: AlpacaBinding) =>
-  mapLayerError(AlpacaReadLive(alpacaReadConfig(config, alpaca)), (cause) =>
-    operationalError('config', 'alpaca', 'Alpaca paper account binding failed', cause),
-  )
-
-const discoveryBrokerReadLayer = (config: LoadedRuntimeConfig, alpaca: AlpacaBinding) =>
-  mapLayerError(scopedReadAdapterLayer(alpacaReadConfig(config, alpaca)), (cause) =>
-    operationalError('config', 'alpaca', 'Alpaca scoped read adapter construction failed', cause),
+const brokerSessionLayer = (alpaca: AlpacaBinding) =>
+  mapLayerError(AlpacaBrokerLive(alpaca), (cause) =>
+    operationalError('config', 'broker-session', 'Alpaca broker session acquisition failed', cause),
   )
 
 const serviceCoreLayers = (plan: RuntimeIdentity) => {
@@ -279,7 +265,7 @@ const brokerServiceLayers = (plan: RuntimePlanFor<'AutonomousObserveService'>) =
   const storage = Layer.merge(database, journal)
   return Layer.mergeAll(
     core,
-    serviceBrokerReadLayer(plan.config, plan.config.alpaca),
+    brokerSessionLayer(plan.config.alpaca),
     pipe(PaperStoreLive(plan.config), Layer.provide(storage)),
     pipe(WriterFenceLive, Layer.provide(database)),
     pipe(CycleStoreLive, Layer.provide(database)),
@@ -288,14 +274,14 @@ const brokerServiceLayers = (plan: RuntimePlanFor<'AutonomousObserveService'>) =
 
 const observeBroker = (plan: RuntimePlanFor<'AutonomousObserveService'>, read: BrokerReadShape) => ({
   read,
-  expectedAccountId: plan.config.alpaca.accountId,
+  expectedAccountId: plan.config.alpaca.expectedAccountId,
   executionEligible: false,
   executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE' as const,
 })
 
 const observeCycle = (plan: RuntimePlanFor<'AutonomousObserveService'>) =>
   makeObserveAutonomousCycleStartup({
-    accountId: plan.config.alpaca.accountId,
+    accountId: plan.config.alpaca.expectedAccountId,
     authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
     maximumAuthority: plan.config.maximumAuthority,
     pollIntervalMs: plan.config.cyclePollIntervalMs,
@@ -304,9 +290,9 @@ const observeCycle = (plan: RuntimePlanFor<'AutonomousObserveService'>) =>
 
 const runAutonomousObserveService = (plan: RuntimePlanFor<'AutonomousObserveService'>) =>
   pipe(
-    BrokerRead,
-    Effect.flatMap((read) =>
-      autonomousObserveApplication(plan.config, plan.strategy, observeBroker(plan, read), observeCycle(plan)),
+    BrokerSession,
+    Effect.flatMap((session) =>
+      autonomousObserveApplication(plan.config, plan.strategy, observeBroker(plan, session.read), observeCycle(plan)),
     ),
     Effect.provide(brokerServiceLayers(plan)),
   )
@@ -347,7 +333,7 @@ const discoveryLayers = (plan: RuntimePlanFor<'PaperCandidateDiscovery'>) => {
     postgres,
     pipe(CycleObservabilityLive, Layer.provide(postgres)),
     pipe(CycleStoreLive, Layer.provide(postgres)),
-    discoveryBrokerReadLayer(plan.config, plan.config.alpaca),
+    brokerSessionLayer(plan.config.alpaca),
   )
 }
 
@@ -360,7 +346,7 @@ const paperCandidateIdentity = (plan: RuntimePlanFor<'PaperCandidateDiscovery'>,
   strategy: plan.strategy.provenance.strategy,
   strategyProtocolHash: plan.strategyProtocolHash,
   qualificationRunId: plan.config.qualificationRunId,
-  accountId: plan.config.alpaca.accountId,
+  accountId: plan.config.alpaca.expectedAccountId,
   authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
   policyHash: riskPolicyHash,
 })
@@ -376,7 +362,7 @@ const discoverPaperCandidate = (plan: RuntimePlanFor<'PaperCandidateDiscovery'>,
 
 const runPaperCandidateDiscovery = (plan: RuntimePlanFor<'PaperCandidateDiscovery'>) =>
   pipe(
-    loadObserveRiskPolicy(plan.config.alpaca.accountId, plan.strategy.parameters.universe),
+    loadObserveRiskPolicy(plan.config.alpaca.expectedAccountId, plan.strategy.parameters.universe),
     Effect.mapError((cause) =>
       operationalError(
         'config',

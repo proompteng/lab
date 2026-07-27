@@ -2,9 +2,10 @@ import { Cause, Effect, Schema } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 
 import type { Intent } from '../../paper'
+import { BrokerEnvironment } from '../../execution/authority'
 import { StrictNonEmptyStringSchema as NonEmptyString } from '../../schemas'
 import { currentUtcInstant } from '../../time'
-import { make as makeRead, paperTradingUrl } from '../alpaca'
+import { BrokerProvider, alpacaSandboxBaseUrl, decodeBrokerConnection, make as makeRead } from '../alpaca'
 import {
   classifyCancelResponse,
   classifySubmitResponse,
@@ -125,16 +126,20 @@ export const makeMutation = (
   Effect.gen(function* () {
     const runtime = yield* Effect.fromResult(resolveMutationOptions(options))
     const client = yield* HttpClient.HttpClient
-    const read = yield* makeRead({
-      expectedAccountId: runtime.expectedAccountId,
-      key: options.key,
-      secret: options.secret,
-      proxyUrl: runtime.proxyUrl,
-      operationTimeoutMs: runtime.operationTimeoutMs,
-      retryAttempts: 0,
-    }).pipe(
-      Effect.mapError((cause) => configurationError('Alpaca mutation account verification could not start', cause)),
-    )
+    const connection = yield* Effect.fromResult(
+      decodeBrokerConnection({
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Sandbox,
+        baseUrl: alpacaSandboxBaseUrl,
+        expectedAccountId: runtime.expectedAccountId,
+        key: options.key,
+        secret: options.secret,
+        proxyUrl: runtime.proxyUrl,
+        operationTimeoutMs: runtime.operationTimeoutMs,
+        retryAttempts: 0,
+      }),
+    ).pipe(Effect.mapError((cause) => configurationError('Alpaca mutation broker connection is invalid', cause)))
+    const read = yield* makeRead(connection)
     yield* read.account.pipe(
       Effect.mapError((cause) => configurationError('Alpaca mutation account verification failed', cause)),
     )
@@ -145,7 +150,7 @@ export const makeMutation = (
       function* (input: Intent) {
         const prepared = yield* Effect.fromResult(prepareSubmit(input, runtime.expectedAccountId))
         const request = yield* HttpClientRequest.bodyJson(
-          HttpClientRequest.post(new URL('/v2/orders', paperTradingUrl), {
+          HttpClientRequest.post(new URL('/v2/orders', alpacaSandboxBaseUrl), {
             acceptJson: true,
             headers: credentials(runtime.key, runtime.secret),
           }),
@@ -185,7 +190,7 @@ export const makeMutation = (
       function* (input: string) {
         const prepared = yield* Effect.fromResult(prepareCancel(input))
         const request = HttpClientRequest.delete(
-          new URL(`/v2/orders/${encodeURIComponent(prepared.brokerOrderId)}`, paperTradingUrl),
+          new URL(`/v2/orders/${encodeURIComponent(prepared.brokerOrderId)}`, alpacaSandboxBaseUrl),
           { headers: credentials(runtime.key, runtime.secret) },
         )
         return yield* withDeadline(

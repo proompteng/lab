@@ -66,7 +66,7 @@ export const makePaperAuthorityInterpreter = (
             config.alpaca === undefined
               ? undefined
               : {
-                  accountId: config.alpaca.accountId,
+                  accountId: config.alpaca.expectedAccountId,
                   authorityGenerationHash: config.alpaca.authorityGenerationHash,
                 },
           qualificationRunId: config.qualificationRunId,

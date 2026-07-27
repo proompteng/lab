@@ -1,10 +1,19 @@
-import { Effect, Layer, Result } from 'effect'
-import { HttpClient } from 'effect/unstable/http'
+import { Result } from 'effect'
 
-import { alpacaHttpLayer, make } from './alpaca/http'
-import { BrokerRead, OrderResponseSchema, type Order, type ReadOptions } from './alpaca/model'
+import { OrderResponseSchema, type Order } from './alpaca/model'
 import { normalizeOrderResult } from './alpaca/normalizers'
-import { verifyReadAccess } from './alpaca/preflight'
+
+export {
+  BrokerProvider,
+  alpacaLiveBaseUrl,
+  alpacaSandboxBaseUrl,
+  decodeBrokerConnection,
+  decodeBrokerProxyUrl,
+  renderBrokerConnectionDecodeFailure,
+  type BrokerConnection,
+  type BrokerConnectionDecodeFailure,
+  type BrokerConnectionInput,
+} from './connection'
 
 export {
   BrokerReadContractFailure,
@@ -37,7 +46,6 @@ export {
   SortDirection,
   TimeInForce,
   TradeActivityType,
-  paperTradingUrl,
   readPreflightTimeoutMs,
   type Account,
   type AccountConfigurationObservation,
@@ -55,26 +63,27 @@ export {
   type Position,
   type RateLimitEvidence,
   type ReadEvidence,
-  type ReadOptions,
   type ReadPreflight,
   type ReadResult,
 } from './alpaca/model'
 export { alpacaHttpLayer, make, makeProxyDispatcher } from './alpaca/http'
-export { verifyReadAccess } from './alpaca/preflight'
+export {
+  BrokerAccountPreflightError,
+  verifyBrokerAccountPermissions,
+  verifyReadAccess,
+  type BrokerAccountPreflightFailure,
+  type VerifiedBrokerAccountPermissions,
+} from './alpaca/preflight'
+export {
+  BrokerSession,
+  BrokerSessionAcquisitionError,
+  BrokerSessionAcquisitionStage,
+  acquireBrokerSession,
+  layer,
+  live,
+  type BrokerSessionShape,
+} from './alpaca/session'
 
 /** @deprecated Mutation compatibility adapter. Read-side normalization uses `normalizeOrderResult`. */
 export const normalizeOrder = (raw: typeof OrderResponseSchema.Type, accountId: string, observedAt: string): Order =>
   Result.getOrThrow(normalizeOrderResult(raw, accountId, observedAt))
-
-export const layer = (
-  options: ReadOptions,
-): Layer.Layer<BrokerRead, import('./alpaca/failures').BrokerReadError, HttpClient.HttpClient> =>
-  Layer.effect(BrokerRead, make(options).pipe(Effect.tap(verifyReadAccess)))
-
-export const scopedReadAdapterLayer = (
-  options: ReadOptions,
-): Layer.Layer<BrokerRead, import('./alpaca/failures').BrokerReadError> =>
-  Layer.effect(BrokerRead, make(options)).pipe(Layer.provide(alpacaHttpLayer(options.proxyUrl)))
-
-export const live = (options: ReadOptions): Layer.Layer<BrokerRead, import('./alpaca/failures').BrokerReadError> =>
-  layer(options).pipe(Layer.provide(alpacaHttpLayer(options.proxyUrl)))
