@@ -560,6 +560,74 @@ describe('paper reconciliation loop', () => {
     expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
   })
 
+  test('returns exact history materialization and canonicalization failures without defecting', async () => {
+    const materializationDefect = new Error('hostile broker order asset access')
+    const hostileOrder = Object.defineProperty({ ...order(0) }, 'assetId', {
+      enumerable: true,
+      get: () => {
+        throw materializationDefect
+      },
+    }) as BrokerOrder
+    const malformedOrder = { ...order(1), clientOrderId: '\ud800' }
+
+    const cases = [
+      {
+        input: hostileOrder,
+        expected: {
+          message: 'broker before history materialization failed',
+          cause: materializationDefect,
+          error: { _tag: 'HistoryMaterializationFailed', cause: materializationDefect },
+        },
+      },
+      {
+        input: malformedOrder,
+        expected: {
+          message: 'broker before history canonicalization failed',
+          cause: {
+            _tag: 'CanonicalJsonFailure',
+            path: '$.orders[0].clientOrderId',
+            reason: 'invalid-unicode-surrogate',
+            actualType: 'string',
+          },
+          error: {
+            _tag: 'HistoryCanonicalizationFailed',
+            cause: {
+              _tag: 'CanonicalJsonFailure',
+              path: '$.orders[0].clientOrderId',
+              reason: 'invalid-unicode-surrogate',
+              actualType: 'string',
+            },
+          },
+        },
+      },
+    ] as const
+
+    for (const testCase of cases) {
+      const read: BrokerReadShape = {
+        ...emptyRead(),
+        orders: () => Effect.succeed({ value: [testCase.input], evidence: evidence('hostile-order') }),
+      }
+      const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+
+      const failure = await Effect.runPromise(provide(read, makeStore(control)).pipe(Effect.flip))
+
+      expect(failure).toMatchObject({
+        _tag: 'ReconciliationError',
+        operation: 'snapshot',
+        message: testCase.expected.message,
+        cause: testCase.expected.cause,
+        failure: {
+          _tag: 'HistoryHash',
+          side: 'before',
+          error: testCase.expected.error,
+        },
+      })
+      expect(control.writes).toBe(0)
+      expect(control.reconciliations).toEqual([])
+      expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+    }
+  })
+
   test('rejects broker history beyond the hard row limit before persisting', async () => {
     let offset = 0
     const read: BrokerReadShape = {
