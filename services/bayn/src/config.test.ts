@@ -256,8 +256,8 @@ describe('pure runtime configuration resolution', () => {
     })
   }
 
-  test('resolves one approved live Alpaca connection without changing execution authority', () => {
-    const result = resolveRuntimeConfig(
+  test('rejects a live Alpaca connection until durable identities encode the broker environment', () => {
+    expectResolutionFailure(
       resolutionInput({
         configuredAlpaca: {
           ...completeAlpacaConfig,
@@ -265,18 +265,17 @@ describe('pure runtime configuration resolution', () => {
           baseUrl: alpacaLiveBaseUrl,
         },
       }),
+      {
+        _tag: 'InvalidBrokerConnection',
+        cause: {
+          _tag: 'BrokerEnvironmentUnsupported',
+          provider: BrokerProvider.Alpaca,
+          environment: BrokerEnvironment.Live,
+          baseUrl: alpacaLiveBaseUrl,
+          reason: 'DURABLE_IDENTITY_UNAVAILABLE',
+        },
+      },
     )
-
-    expect(Result.isSuccess(result)).toBe(true)
-    if (Result.isSuccess(result) && result.success.alpaca !== undefined) {
-      expect(result.success.maximumAuthority).toBe(Authority.Observe)
-      expect(result.success.alpaca).toMatchObject({
-        provider: BrokerProvider.Alpaca,
-        environment: BrokerEnvironment.Live,
-        baseUrl: alpacaLiveBaseUrl,
-        expectedAccountId: alpacaAccountId,
-      })
-    }
   })
 
   test('rejects a mismatched Alpaca endpoint and environment before runtime composition', () => {

@@ -50,14 +50,19 @@ describe('BrokerConnection decoding', () => {
     expect(JSON.stringify(result.success)).not.toContain(secret)
   })
 
-  test('decodes only the approved Alpaca live endpoint for the live environment', () => {
+  test('rejects the approved Alpaca live endpoint until durable identities encode the environment', () => {
     const result = decodeBrokerConnection(input({ environment: BrokerEnvironment.Live, baseUrl: alpacaLiveBaseUrl }))
 
-    expect(Result.isSuccess(result)).toBe(true)
-    if (Result.isSuccess(result)) {
-      expect(result.success.environment).toBe(BrokerEnvironment.Live)
-      expect(result.success.baseUrl).toBe(alpacaLiveBaseUrl)
-    }
+    expect(result).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'BrokerEnvironmentUnsupported',
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Live,
+        baseUrl: alpacaLiveBaseUrl,
+        reason: 'DURABLE_IDENTITY_UNAVAILABLE',
+      },
+    })
   })
 
   for (const [environment, baseUrl, approvedBaseUrl] of [

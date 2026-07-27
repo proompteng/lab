@@ -43,7 +43,7 @@ export interface BrokerConnectionInput {
 
 export interface BrokerConnection {
   readonly provider: BrokerProvider.Alpaca
-  readonly environment: BrokerEnvironment
+  readonly environment: BrokerEnvironment.Sandbox
   readonly baseUrl: string
   readonly expectedAccountId: string
   readonly key: Redacted.Redacted<string>
@@ -72,6 +72,13 @@ export type BrokerConnectionDecodeFailure =
       readonly environment: BrokerEnvironment
       readonly baseUrl: string
       readonly approvedBaseUrl: string
+    }
+  | {
+      readonly _tag: 'BrokerEnvironmentUnsupported'
+      readonly provider: BrokerProvider.Alpaca
+      readonly environment: BrokerEnvironment.Live
+      readonly baseUrl: string
+      readonly reason: 'DURABLE_IDENTITY_UNAVAILABLE'
     }
   | {
       readonly _tag: 'InvalidBrokerProxyUrl'
@@ -125,6 +132,21 @@ const validateEndpointPairing = (
         approvedBaseUrl,
       })
 }
+
+const validateSupportedEnvironment = (
+  provider: BrokerProvider.Alpaca,
+  environment: BrokerEnvironment,
+  baseUrl: string,
+): Result.Result<BrokerEnvironment.Sandbox, BrokerConnectionDecodeFailure> =>
+  environment === BrokerEnvironment.Sandbox
+    ? Result.succeed(BrokerEnvironment.Sandbox)
+    : Result.fail({
+        _tag: 'BrokerEnvironmentUnsupported',
+        provider,
+        environment: BrokerEnvironment.Live,
+        baseUrl,
+        reason: 'DURABLE_IDENTITY_UNAVAILABLE',
+      })
 
 const invalidBrokerProxyUrl = (
   reason: Extract<BrokerConnectionDecodeFailure, { readonly _tag: 'InvalidBrokerProxyUrl' }>['reason'],
@@ -183,10 +205,15 @@ export const decodeBrokerConnection = (
   return Result.gen(function* () {
     const baseUrl = yield* validateBrokerBaseUrl(material.success.baseUrl)
     yield* validateEndpointPairing(material.success.provider, material.success.environment, baseUrl)
+    const environment = yield* validateSupportedEnvironment(
+      material.success.provider,
+      material.success.environment,
+      baseUrl,
+    )
     const proxyUrl = yield* decodeBrokerProxyUrl(material.success.proxyUrl)
     return Object.freeze({
       provider: material.success.provider,
-      environment: material.success.environment,
+      environment,
       baseUrl,
       expectedAccountId: material.success.expectedAccountId,
       key: input.key,
@@ -208,6 +235,8 @@ export const renderBrokerConnectionDecodeFailure = (failure: BrokerConnectionDec
       return `invalid broker base URL: ${failure.reason}`
     case 'BrokerEndpointEnvironmentMismatch':
       return `broker endpoint ${failure.baseUrl} is not approved for ${failure.environment}; expected ${failure.approvedBaseUrl}`
+    case 'BrokerEnvironmentUnsupported':
+      return `broker environment ${failure.environment} is unsupported until durable broker identities encode the environment`
     case 'InvalidBrokerProxyUrl':
       return `invalid broker proxy URL: ${failure.reason}`
   }
