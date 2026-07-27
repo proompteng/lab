@@ -384,6 +384,60 @@ describe('qualification audit', () => {
     expect(report.checks.find((check) => check.name === 'reference-strategy')?.passed).toBe(false)
   })
 
+  test('returns malformed artifact canonicalization through the typed audit failure channel', () => {
+    const input = fixture()
+    const database = {
+      ...input.database,
+      artifacts: input.database.artifacts.map((artifact) =>
+        artifact.name === 'strategy' ? { ...artifact, payload: { invalid: 'value\ud800' } } : artifact,
+      ),
+    }
+    const audited = () => auditQualificationResult({ ...input, database })
+
+    expect(audited).not.toThrow()
+    expect(assertFailure(audited())).toEqual({
+      _tag: 'AuditCanonicalizationFailed',
+      subject: { scope: 'artifact', name: 'strategy' },
+      cause: {
+        _tag: 'CanonicalJsonFailure',
+        path: '$.invalid',
+        reason: 'invalid-unicode-surrogate',
+        actualType: 'string',
+      },
+    })
+  })
+
+  test('retains the exact event ordinal and introspection cause without defecting', () => {
+    const input = fixture()
+    const event = input.database.events[0]
+    if (event === undefined) throw new Error('event fixture is missing')
+    const cause = new Error('event keys unavailable')
+    const payload = new Proxy(event.payload, {
+      ownKeys: () => {
+        throw cause
+      },
+    })
+    const database = {
+      ...input.database,
+      events: [{ ...event, payload }, ...input.database.events.slice(1)],
+    }
+    const audited = () => auditQualificationResult({ ...input, database })
+
+    expect(audited).not.toThrow()
+    expect(assertFailure(audited())).toEqual({
+      _tag: 'AuditCanonicalizationFailed',
+      subject: { scope: 'event', name: event.kind, ordinal: 0 },
+      cause: {
+        _tag: 'CanonicalJsonFailure',
+        path: '$',
+        reason: 'introspection-failed',
+        actualType: 'object',
+        operation: 'own-keys',
+        cause,
+      },
+    })
+  })
+
   test('continues independent checks when public input cannot be reconciled', () => {
     const input = fixture()
     const protocol = { ...input.protocol, initialCapitalMicros: '+1000000000000' }
@@ -734,6 +788,58 @@ describe('qualification dossier', () => {
       check: 'audit-passed',
       actual: false,
       expected: true,
+    })
+  })
+
+  test('propagates typed audit canonicalization failures without throwing', () => {
+    const input = fixture()
+    const database = {
+      ...input.database,
+      artifacts: input.database.artifacts.map((artifact) =>
+        artifact.name === 'strategy' ? { ...artifact, payload: { invalid: Number.NaN } } : artifact,
+      ),
+    }
+    const dossier = () => makeQualificationDossierResult({ ...input, database })
+
+    expect(dossier).not.toThrow()
+    expect(assertFailure(dossier())).toEqual({
+      _tag: 'AuditCanonicalizationFailed',
+      subject: { scope: 'artifact', name: 'strategy' },
+      cause: {
+        _tag: 'CanonicalJsonFailure',
+        path: '$.invalid',
+        reason: 'non-finite-number',
+        actualType: 'number',
+      },
+    })
+  })
+
+  test('returns hostile dossier evidence inspection as data with the original cause', () => {
+    const input = fixture()
+    const strategy = input.database.artifacts.find((artifact) => artifact.name === 'strategy')
+    if (strategy === undefined || typeof strategy.payload !== 'object' || strategy.payload === null) {
+      throw new Error('strategy artifact fixture is missing')
+    }
+    const cause = new Error('items membership unavailable')
+    const payload = new Proxy(strategy.payload, {
+      has: () => {
+        throw cause
+      },
+    })
+    const database = {
+      ...input.database,
+      artifacts: input.database.artifacts.map((artifact) =>
+        artifact.name === 'strategy' ? { ...artifact, payload } : artifact,
+      ),
+    }
+    const dossier = () => makeQualificationDossierResult({ ...input, database })
+
+    expect(dossier).not.toThrow()
+    expect(assertFailure(dossier())).toEqual({
+      _tag: 'QualificationDossierEvidenceInspectionFailed',
+      artifactName: 'strategy',
+      operation: 'item-count',
+      cause,
     })
   })
 })
