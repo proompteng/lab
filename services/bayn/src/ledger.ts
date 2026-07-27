@@ -433,7 +433,7 @@ export const JournalLive = (
   )
 export {
   buildLedgerPlan,
-  hashLedgerPlan,
+  hashLedgerPlanResult,
   LedgerValidationError,
   reconcileLedgerPlan,
   validatePersistedRunEvidence,

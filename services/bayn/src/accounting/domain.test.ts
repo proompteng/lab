@@ -230,6 +230,19 @@ describe('paper accounting', () => {
         actualType: 'string',
       },
     })
+    expect(failureOf(prepareAccounting(eventId, fill(), emptyPosition, Number.NaN))).toEqual({
+      _tag: 'AccountingCanonicalizationFailed',
+      operation: 'ledger-plan',
+      cause: {
+        _tag: 'LedgerPlanHashCanonicalizationFailed',
+        cause: {
+          _tag: 'CanonicalJsonFailure',
+          path: '$.accounts[0].ledger',
+          reason: 'non-finite-number',
+          actualType: 'number',
+        },
+      },
+    })
   })
 
   test('validates decoded transaction content and ledger identity as separate failures', () => {

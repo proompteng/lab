@@ -3,7 +3,7 @@ import { AccountFlags } from 'tigerbeetle-node'
 import { pipe, Result } from 'effect'
 
 import { canonicalHashV1Result, stableU128, stableU64 } from '../hash'
-import { AccountCode, hashLedgerPlan, LEDGER_SCHEMA_VERSION, TransferCode, type LedgerPlan } from '../ledger-plan'
+import { AccountCode, hashLedgerPlanResult, LEDGER_SCHEMA_VERSION, TransferCode, type LedgerPlan } from '../ledger-plan'
 import { OrderSide, type Fill } from '../paper'
 import { roundUnsignedHalfUp } from '../unsigned-round-half-up'
 import { type AccountingFailure, type AccountingHashOperation, type AccountingMicrosField } from './failure'
@@ -317,10 +317,11 @@ const hashAccountingMaterial = (
   }))
 
 const hashAccountingLedgerPlan = (plan: LedgerPlan): Result.Result<string, AccountingFailure> =>
-  Result.mapError(
-    Result.try(() => hashLedgerPlan(plan)),
-    (cause) => ({ _tag: 'AccountingCanonicalizationFailed', operation: 'ledger-plan', cause }),
-  )
+  Result.mapError(hashLedgerPlanResult(plan), (cause) => ({
+    _tag: 'AccountingCanonicalizationFailed',
+    operation: 'ledger-plan',
+    cause,
+  }))
 
 const requireContentHash = (
   transaction: AccountingTransaction,
