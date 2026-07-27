@@ -142,9 +142,10 @@ audit therefore fails candidate-bar chronology and principal checks. GitOps may 
 database recovery under `OBSERVE`; the pin clears no qualification or mutation gate.
 
 At each month-end close, the strategy computes volatility-normalized returns over 21, 63, 126, and 252 sessions,
-averages them into a composite score, and assigns weight only to positive scores. Weights are redistributed under a 35%
-per-symbol cap, quantized deterministically, and scaled down when estimated portfolio volatility exceeds 10%. Residual
-exposure remains cash. The strategy parameters and thresholds are unchanged from the rejected v2 run.
+clips each score to `[-2, 2]`, and uses the median as the composite. A sleeve is eligible only when at least three of
+four horizons are positive and the median is positive. Eligible sleeves are weighted by positive conviction per unit
+annualized volatility, redistributed under a 35% per-symbol cap, quantized deterministically, and scaled down when
+estimated portfolio volatility exceeds 10%. Residual exposure remains cash.
 
 The v3 execution model is live-causal. Once the signal session is finalized, planning uses that session's close-price
 vector and a content-hashed reconciled broker state observed before planning. The bounded Alpaca calendar response
@@ -156,10 +157,11 @@ Ordinary non-extended `DAY` market orders may be submitted only after the plan i
 aggregate pre-submit buying power and cannot spend planned sell proceeds. The selected session open is a fill outcome:
 changing it may alter fills, gaps, slippage, shortfall, and performance, but cannot alter planned quantities.
 
-The source-controlled precommit identities are behavior
-`dc614c54bbf43842d83cd88497e835f7bb25c413eb6e8bd7cbab0a925ec9b2dd` and parameters
-`e5e4cc5d22b84c4dc8fc65c306d097fda063b0058253da5b900fe1d462d437b3`. They do not relabel
-the terminal v2 rejection and do not constitute a new qualification.
+The source-controlled v4 precommit identities are behavior
+`9e87fe0f66048c48da2191ef1fae36ef3ee0eb4ddcd036ef40881f0fe0f6eb42` and parameters
+`19bc51c7361b181aa48845d178cb63373b3f2e017bcbea1cf3b70ab16647f8a9`. They do not relabel the terminal v3
+rejection and do not constitute a new qualification. GitOps must hold this changed identity until a finalized snapshot
+newer than the observed 2026-07-24 snapshot is available.
 
 The evaluator compares the candidate with buy-and-hold, direct-volatility timing, and doubled-cost results over aligned
 dates. Qualification also applies the committed statistical and walk-forward policy. Every decision, benchmark,
