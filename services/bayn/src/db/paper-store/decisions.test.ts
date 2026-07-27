@@ -16,6 +16,7 @@ import {
   decidePreparedAccountingReplay,
   decideStoredValuation,
   finishPositionSnapshot,
+  planAccountingReceipt,
   planPositionSnapshot,
   planValuation,
   requireValuationPositionSnapshot,
@@ -117,21 +118,9 @@ const accountingFill: Fill = {
 const preparedResult = prepareAccounting('a'.repeat(64), accountingFill, { quantityMicros: '0', costMicros: '0' }, 7001)
 if (Result.isFailure(preparedResult)) throw new Error(`accounting fixture failed: ${preparedResult.failure._tag}`)
 const prepared = preparedResult.success
-const postedMicros = prepared.ledger.transfers.reduce((sum, transfer) => sum + transfer.amount, 0n).toString()
-const receiptMaterial = {
-  schemaVersion: 'bayn.paper-accounting-receipt.v1' as const,
-  brokerEventId: prepared.transaction.brokerEventId,
-  tigerBeetleClusterId: '1',
-  tigerBeetleLedger: 7001,
-  accountIds: prepared.ledger.accounts.map((account) => account.id.toString()),
-  transferIds: prepared.ledger.transfers.map((transfer) => transfer.id.toString()),
-  debitMicros: postedMicros,
-  creditMicros: postedMicros,
-}
+const receiptPlan = value(planAccountingReceipt(prepared, '1', 7001))
 const accountingReceipt: AccountingReceipt = {
-  ...receiptMaterial,
-  receiptId: hash('receipt-1'),
-  contentHash: canonicalHashV1(receiptMaterial),
+  ...receiptPlan,
   recordedAt: observedAt,
 }
 
@@ -234,6 +223,30 @@ describe('PaperStore decisions', () => {
         _tag: 'PaperStoreHashFailure',
         operation: 'accounting-receipt-candidate',
         cause: { reason: 'invalid-unicode-surrogate', path: '$.accountIds[0]' },
+      },
+    })
+
+    expect(failure(planAccountingReceipt(prepared, '1', Number.NaN))).toMatchObject({
+      failure: 'invariant',
+      message: 'accounting receipt identity is not canonicalizable',
+      cause: {
+        _tag: 'PaperStoreHashFailure',
+        operation: 'accounting-receipt-id',
+        cause: { reason: 'non-finite-number', path: '$.tigerBeetleLedger' },
+      },
+    })
+
+    expect(
+      failure(
+        planAccountingReceipt({ ...prepared, transaction: { ...prepared.transaction, intentId: '\ud800' } }, '1', 7001),
+      ),
+    ).toMatchObject({
+      failure: 'invariant',
+      message: 'accounting receipt content is not canonicalizable',
+      cause: {
+        _tag: 'PaperStoreHashFailure',
+        operation: 'accounting-receipt-content',
+        cause: { reason: 'invalid-unicode-surrogate', path: '$.intentId' },
       },
     })
   })

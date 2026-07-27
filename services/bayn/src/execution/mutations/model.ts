@@ -1,6 +1,7 @@
 import { Context, Data, Effect, Schema } from 'effect'
 
 import { MutationEvidenceSchema, MutationOperation, type MutationEvidence } from '../../broker/alpaca-mutations'
+import type { CanonicalHashFailure } from '../../hash'
 import { Authority, IntentState, KillState, TerminalOutcome } from '../../paper'
 import {
   Sha256Schema as Sha256,
@@ -76,7 +77,7 @@ export type MutationCanonicalizationFact =
 export interface MutationCanonicalizationFailure {
   readonly _tag: 'MutationCanonicalizationFailure'
   readonly fact: MutationCanonicalizationFact
-  readonly cause: unknown
+  readonly cause: CanonicalHashFailure
 }
 
 export class MutationStoreError extends Data.TaggedError('MutationStoreError')<{

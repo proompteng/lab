@@ -1,5 +1,7 @@
 import { Data } from 'effect'
 
+import type { CanonicalJsonFailure } from '../hash'
+
 export type QualificationCandidateFailure =
   | { readonly _tag: 'ConfigurationLoadFailed'; readonly cause: unknown }
   | { readonly _tag: 'PostgresUrlMalformed' }
@@ -52,7 +54,7 @@ export type QualificationCandidateFailure =
   | {
       readonly _tag: 'CanonicalizationFailed'
       readonly subject: 'snapshot' | 'report'
-      readonly cause: unknown
+      readonly cause: CanonicalJsonFailure
     }
   | {
       readonly _tag: 'ReplicaSnapshotsDiverged'

@@ -221,8 +221,13 @@ describe('MutationStore decision algebra', () => {
         intentId: '\ud800',
         operation: MutationOperation.Submit,
       },
+      cause: {
+        _tag: 'CanonicalJsonFailure',
+        path: '$.intentId',
+        reason: 'invalid-unicode-surrogate',
+        actualType: 'string',
+      },
     })
-    expect(identity.failure.cause).toBeInstanceOf(TypeError)
   })
 
   test('makes every authority outcome explicit', () => {
@@ -326,9 +331,14 @@ describe('MutationStore decision algebra', () => {
       operation: 'begin-submit',
       failure: 'invariant',
       message: 'mutation identity canonicalization failed',
+      cause: {
+        _tag: 'CanonicalJsonFailure',
+        path: '$.intentId',
+        reason: 'invalid-unicode-surrogate',
+        actualType: 'string',
+      },
     })
-    expect(malformedReplay.cause).toBeInstanceOf(TypeError)
-    expect(malformedReplay.canonicalizationFailure?.cause).toBe(malformedReplay.cause)
+    expect(malformedReplay.cause).toBe(malformedReplay.canonicalizationFailure?.cause)
 
     const authority = resultSuccess(decideMutationAuthority(MutationOperation.Submit, decisionAuthority))
     const submit = resultSuccess(
@@ -473,9 +483,14 @@ describe('MutationStore decision algebra', () => {
       operation: 'begin-cancel',
       failure: 'invariant',
       message: 'mutation event canonicalization failed',
+      cause: {
+        _tag: 'CanonicalJsonFailure',
+        path: '$.brokerOrderId',
+        reason: 'invalid-unicode-surrogate',
+        actualType: 'string',
+      },
     })
-    expect(malformedEvent.cause).toBeInstanceOf(TypeError)
-    expect(malformedEvent.canonicalizationFailure?.cause).toBe(malformedEvent.cause)
+    expect(malformedEvent.cause).toBe(malformedEvent.canonicalizationFailure?.cause)
   })
 
   test('maps every public outcome to one closed transition decision', () => {
@@ -781,9 +796,14 @@ describe('MutationStore decision algebra', () => {
       operation: 'record-submit',
       failure: 'invariant',
       message: 'mutation event canonicalization failed',
+      cause: {
+        _tag: 'CanonicalJsonFailure',
+        path: '$.brokerOrderId',
+        reason: 'invalid-unicode-surrogate',
+        actualType: 'string',
+      },
     })
-    expect(canonicalizationFailure.cause).toBeInstanceOf(TypeError)
-    expect(canonicalizationFailure.canonicalizationFailure?.cause).toBe(canonicalizationFailure.cause)
+    expect(canonicalizationFailure.cause).toBe(canonicalizationFailure.canonicalizationFailure?.cause)
 
     const outcomeFailures: readonly [
       MutationOutcomeInput,
