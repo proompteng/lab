@@ -100,6 +100,25 @@ export interface LedgerPlan {
   readonly transfers: readonly Transfer[]
 }
 
+export type LedgerPlanHashAccessSource = 'accounts' | 'run-key' | 'run-tag' | 'transfers'
+
+export type LedgerPlanHashFailure =
+  | {
+      readonly _tag: 'LedgerPlanHashAccessFailed'
+      readonly source: LedgerPlanHashAccessSource
+      readonly cause: unknown
+    }
+  | {
+      readonly _tag: 'LedgerPlanRecordSerializationFailed'
+      readonly record: 'account' | 'transfer'
+      readonly ordinal: number
+      readonly cause: unknown
+    }
+  | {
+      readonly _tag: 'LedgerPlanHashCanonicalizationFailed'
+      readonly cause: CanonicalJsonFailure
+    }
+
 export interface EvaluationLedgerPlan extends LedgerPlan {
   readonly runId: string
 }
@@ -713,18 +732,55 @@ export const buildLedgerPlan = (
 ): Result.Result<EvaluationLedgerPlan, LedgerPlanFailure> =>
   Result.mapError(buildLedgerPlanDecision(result, ledger), (failure) => makeLedgerPlanFailure(ledger, failure))
 
-const serializeRecord = (record: Account | Transfer): Record<string, number | string> =>
-  Object.fromEntries(
-    Object.entries(record).map(([key, value]) => [key, typeof value === 'bigint' ? value.toString() : value]),
-  )
+const accessLedgerPlan = <A>(
+  source: LedgerPlanHashAccessSource,
+  evaluate: () => A,
+): Result.Result<A, LedgerPlanHashFailure> =>
+  Result.try({
+    try: evaluate,
+    catch: (cause): LedgerPlanHashFailure => ({ _tag: 'LedgerPlanHashAccessFailed', source, cause }),
+  })
 
-export const hashLedgerPlan = (plan: LedgerPlan): string =>
-  canonicalHashV1({
-    schemaVersion: 'bayn.ledger-plan.v1',
-    runKey: plan.runKey.toString(),
-    runTag: plan.runTag.toString(),
-    accounts: plan.accounts.map(serializeRecord),
-    transfers: plan.transfers.map(serializeRecord),
+const serializeRecordResult = (
+  record: Account | Transfer,
+  kind: 'account' | 'transfer',
+  ordinal: number,
+): Result.Result<Record<string, number | string>, LedgerPlanHashFailure> =>
+  Result.try({
+    try: () =>
+      Object.fromEntries(
+        Object.entries(record).map(([key, value]) => [key, typeof value === 'bigint' ? value.toString() : value]),
+      ),
+    catch: (cause): LedgerPlanHashFailure => ({
+      _tag: 'LedgerPlanRecordSerializationFailed',
+      record: kind,
+      ordinal,
+      cause,
+    }),
+  })
+
+export const hashLedgerPlanResult = (plan: LedgerPlan): Result.Result<string, LedgerPlanHashFailure> =>
+  Result.gen(function* () {
+    const runKey = yield* accessLedgerPlan('run-key', () => plan.runKey.toString())
+    const runTag = yield* accessLedgerPlan('run-tag', () => plan.runTag.toString())
+    const accountRecords = yield* accessLedgerPlan('accounts', () => [...plan.accounts])
+    const transferRecords = yield* accessLedgerPlan('transfers', () => [...plan.transfers])
+    const accounts = yield* Result.all(
+      accountRecords.map((record, ordinal) => serializeRecordResult(record, 'account', ordinal)),
+    )
+    const transfers = yield* Result.all(
+      transferRecords.map((record, ordinal) => serializeRecordResult(record, 'transfer', ordinal)),
+    )
+    return yield* Result.mapError(
+      canonicalHashV1Result({
+        schemaVersion: 'bayn.ledger-plan.v1',
+        runKey,
+        runTag,
+        accounts,
+        transfers,
+      }),
+      (cause): LedgerPlanHashFailure => ({ _tag: 'LedgerPlanHashCanonicalizationFailed', cause }),
+    )
   })
 
 export const accountMetadataMatches = (actual: Account, expected: Account): boolean =>

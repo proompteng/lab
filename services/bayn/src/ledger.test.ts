@@ -12,7 +12,7 @@ import {
   buildLedgerPlan,
   classifyAccountCreateBatch,
   classifyTransferCreateBatch,
-  hashLedgerPlan,
+  hashLedgerPlanResult,
   Journal,
   JournalLive,
   LedgerValidationError,
@@ -38,6 +38,8 @@ const assertFailure = <A, E>(result: Result.Result<A, E>): E => {
   assert(Result.isFailure(result), 'ledger decision fixture must fail')
   return result.failure
 }
+
+const hashPlan = (plan: LedgerPlan): string => assertSuccess(hashLedgerPlanResult(plan))
 
 const materializeAccounts = (plan: LedgerPlan): Account[] => {
   const balances = new Map(plan.accounts.map((account) => [account.id, { debits: 0n, credits: 0n }]))
@@ -353,9 +355,9 @@ describe('TigerBeetle simulation journal', () => {
     const first = assertSuccess(buildLedgerPlan(result, 7001))
     const second = assertSuccess(buildLedgerPlan(result, 7001))
     expect(first).toEqual(second)
-    expect(hashLedgerPlan(first)).toMatch(/^[a-f0-9]{64}$/)
-    expect(hashLedgerPlan(first)).toBe(hashLedgerPlan(second))
-    expect(hashLedgerPlan(first)).not.toBe(hashLedgerPlan(assertSuccess(buildLedgerPlan(result, 7002))))
+    expect(hashPlan(first)).toMatch(/^[a-f0-9]{64}$/)
+    expect(hashPlan(first)).toBe(hashPlan(second))
+    expect(hashPlan(first)).not.toBe(hashPlan(assertSuccess(buildLedgerPlan(result, 7002))))
     expect(first.accounts).toHaveLength(fixtureProtocol.universe.length + 6)
     expect(first.transfers.length).toBeGreaterThan(1)
     expect(

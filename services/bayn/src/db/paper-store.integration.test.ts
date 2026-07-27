@@ -11,7 +11,7 @@ import { makeStrategyProtocolHash } from '../contracts'
 import { operationalError } from '../errors'
 import { WriterFence, WriterFenceError, WriterFenceLive, type WriterFenceService } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
-import { hashLedgerPlan } from '../ledger-plan'
+import { hashLedgerPlanResult } from '../ledger-plan'
 import { Journal, type JournalService } from '../ledger'
 import {
   AccountStatus,
@@ -241,7 +241,7 @@ interface JournalControl {
 const journal = (control: JournalControl): JournalService => ({
   post: (plan) =>
     Effect.suspend(() => {
-      control.planHashes.push(hashLedgerPlan(plan))
+      control.planHashes.push(successOfResult(hashLedgerPlanResult(plan)))
       return control.fail
         ? Effect.fail(operationalError('journal', 'post', 'injected TigerBeetle failure'))
         : Effect.void

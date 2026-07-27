@@ -7,7 +7,7 @@ import { AccountFlags, type Account, type Transfer } from 'tigerbeetle-node'
 import {
   AccountCode,
   buildLedgerPlan,
-  hashLedgerPlan,
+  hashLedgerPlanResult,
   LEDGER_BATCH_MAX,
   preflightTransfers,
   reconcileLedgerPlan,
@@ -33,6 +33,8 @@ const assertFailure = <A, E>(result: Result.Result<A, E>): E => {
   assert(Result.isFailure(result), 'ledger plan decision must fail')
   return result.failure
 }
+
+const hashPlan = (plan: LedgerPlan): string => assertSuccess(hashLedgerPlanResult(plan))
 
 const assertLedgerPlanFailure = <A>(result: Result.Result<A, LedgerValidationError>): LedgerPlanFailureDetail => {
   const failure = assertFailure(result)
@@ -446,7 +448,56 @@ describe('ledger plan Result algebra', () => {
     )
     expect(first.accounts.every((account) => account.flags === AccountFlags.history)).toBeTrue()
     expect(first.transfers.every((transfer) => transfer.flags === 0 && transfer.amount > 0n)).toBeTrue()
-    expect(hashLedgerPlan(first)).toBe('9c6888ca700beb1c5fb698d28c6d42a5e0b913d4340b08554b475fe96da92074')
+    expect(hashPlan(first)).toBe('9c6888ca700beb1c5fb698d28c6d42a5e0b913d4340b08554b475fe96da92074')
+  })
+
+  test('returns exact ledger-plan hash access, serialization, and canonicalization failures', () => {
+    const plan = assertSuccess(buildLedgerPlan(evaluationResult(), ledger))
+    const accessCause = new Error('accounts unavailable')
+    const inaccessible = Object.defineProperty({ ...plan }, 'accounts', {
+      enumerable: true,
+      get: () => {
+        throw accessCause
+      },
+    }) as LedgerPlan
+    expect(assertFailure(hashLedgerPlanResult(inaccessible))).toEqual({
+      _tag: 'LedgerPlanHashAccessFailed',
+      source: 'accounts',
+      cause: accessCause,
+    })
+
+    const serializationCause = new Error('account field unavailable')
+    const hostileAccount = Object.defineProperty({ ...plan.accounts[0] }, 'ledger', {
+      enumerable: true,
+      get: () => {
+        throw serializationCause
+      },
+    }) as Account
+    expect(
+      assertFailure(hashLedgerPlanResult({ ...plan, accounts: [hostileAccount, ...plan.accounts.slice(1)] })),
+    ).toEqual({
+      _tag: 'LedgerPlanRecordSerializationFailed',
+      record: 'account',
+      ordinal: 0,
+      cause: serializationCause,
+    })
+
+    expect(
+      assertFailure(
+        hashLedgerPlanResult({
+          ...plan,
+          accounts: [{ ...plan.accounts[0], ledger: Number.NaN }, ...plan.accounts.slice(1)],
+        }),
+      ),
+    ).toEqual({
+      _tag: 'LedgerPlanHashCanonicalizationFailed',
+      cause: {
+        _tag: 'CanonicalJsonFailure',
+        path: '$.accounts[0].ledger',
+        reason: 'non-finite-number',
+        actualType: 'number',
+      },
+    })
   })
 
   test('accepts the last exact single-query size and rejects both next records', () => {
