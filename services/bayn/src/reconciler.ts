@@ -34,7 +34,7 @@ import {
 } from './db/reconciliation'
 import { WriterFence, type WriterFenceError, type WriterFenceService } from './execution/writer-fence'
 import { currentUtcInstant } from './time'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
 import type { ReconciledBrokerState, ReconciliationRiskContext } from './reconciliation'
 
 const maximumRows = 10_000
@@ -101,6 +101,12 @@ type PaginationFailureReason =
 
 type SnapshotFailureReason = 'HistoryChanged' | 'AccountBaselineMissing'
 
+type HistorySnapshotSide = 'before' | 'after'
+
+type HistoryHashFailure =
+  | { readonly _tag: 'HistoryMaterializationFailed'; readonly cause: unknown }
+  | { readonly _tag: 'HistoryCanonicalizationFailed'; readonly cause: CanonicalHashFailure }
+
 type ValidationFailureReason =
   | 'DuplicateIntentClientOrderId'
   | 'DuplicateBrokerClientOrderId'
@@ -113,6 +119,11 @@ type NormalizationStage = 'order-timestamp' | 'order' | 'fill-ordering' | 'fill'
 type ReconciliationFailure =
   | { readonly _tag: 'Pagination'; readonly reason: PaginationFailureReason }
   | { readonly _tag: 'Snapshot'; readonly reason: SnapshotFailureReason }
+  | {
+      readonly _tag: 'HistoryHash'
+      readonly side: HistorySnapshotSide
+      readonly error: HistoryHashFailure
+    }
   | { readonly _tag: 'Validation'; readonly reason: ValidationFailureReason; readonly detail: string }
   | {
       readonly _tag: 'Normalization'
@@ -149,6 +160,17 @@ const snapshotFailure = (reason: SnapshotFailureReason, message: string): Reconc
     operation: 'snapshot',
     message,
     failure: { _tag: 'Snapshot', reason },
+  })
+
+const historyHashFailure = (side: HistorySnapshotSide, error: HistoryHashFailure): ReconciliationError =>
+  new ReconciliationError({
+    operation: 'snapshot',
+    message:
+      error._tag === 'HistoryMaterializationFailed'
+        ? `broker ${side} history materialization failed`
+        : `broker ${side} history canonicalization failed`,
+    cause: error.cause,
+    failure: { _tag: 'HistoryHash', side, error },
   })
 
 const validationFailure = (reason: ValidationFailureReason, detail: string): ReconciliationError =>
@@ -446,27 +468,48 @@ const readHistory = (
     { concurrency: 2 },
   )
 
-const historyHash = (history: BrokerHistory): string =>
-  canonicalHashV1({
-    schemaVersion: 'bayn.paper-broker-history.v1',
-    orders: history.orders.rows
-      .map(({ value }) => {
-        const { observedAt: _observedAt, ...material } = value
-        return material
-      })
-      .sort((left, right) => left.brokerOrderId.localeCompare(right.brokerOrderId)),
-    fills: history.fills
-      .map(({ value }) => value)
-      .sort((left, right) => left.activityId.localeCompare(right.activityId)),
-  })
+const historyHashResult = (history: BrokerHistory): Result.Result<string, HistoryHashFailure> =>
+  pipe(
+    Result.try({
+      try: () => ({
+        schemaVersion: 'bayn.paper-broker-history.v1',
+        orders: history.orders.rows
+          .map(({ value }) => {
+            const { observedAt: _observedAt, ...material } = value
+            return material
+          })
+          .sort((left, right) => left.brokerOrderId.localeCompare(right.brokerOrderId)),
+        fills: history.fills
+          .map(({ value }) => value)
+          .sort((left, right) => left.activityId.localeCompare(right.activityId)),
+      }),
+      catch: (cause): HistoryHashFailure => ({ _tag: 'HistoryMaterializationFailed', cause }),
+    }),
+    Result.flatMap((material) =>
+      pipe(
+        canonicalHashV1Result(material),
+        Result.mapError((cause): HistoryHashFailure => ({ _tag: 'HistoryCanonicalizationFailed', cause })),
+      ),
+    ),
+  )
 
 const decideStableHistory = (
   before: BrokerHistory,
   after: BrokerHistory,
 ): Result.Result<BrokerHistory, ReconciliationError> =>
-  historyHash(before) === historyHash(after)
-    ? Result.succeed(after)
-    : Result.fail(snapshotFailure('HistoryChanged', 'broker history changed during reconciliation'))
+  Result.gen(function* () {
+    const beforeHash = yield* pipe(
+      historyHashResult(before),
+      Result.mapError((error) => historyHashFailure('before', error)),
+    )
+    const afterHash = yield* pipe(
+      historyHashResult(after),
+      Result.mapError((error) => historyHashFailure('after', error)),
+    )
+    return beforeHash === afterHash
+      ? after
+      : yield* Result.fail(snapshotFailure('HistoryChanged', 'broker history changed during reconciliation'))
+  })
 
 const currentInstant = currentUtcInstant
 
