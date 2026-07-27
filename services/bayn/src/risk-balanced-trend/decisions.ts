@@ -299,6 +299,63 @@ interface PreparedSignal {
   readonly returns: readonly number[]
 }
 
+const median = (values: readonly number[]): number => {
+  const sorted = [...values].sort((left, right) => left - right)
+  const midpoint = Math.floor(sorted.length / 2)
+  const upper = sorted.at(midpoint) ?? 0
+  if (sorted.length % 2 === 1) return upper
+  const lower = sorted.at(midpoint - 1) ?? upper
+  return (lower + upper) / 2
+}
+
+const scoreSignal = (
+  protocol: Protocol,
+  horizons: readonly SymbolSignal['horizons'][number][],
+  dailyVolatility: number,
+  annualizedVolatility: number,
+  symbol: string,
+): Result.Result<Pick<SymbolSignal, 'compositeScore' | 'positiveScore' | 'eligible'>, RiskBalancedTrendFailure> => {
+  if (horizons.length === 0) {
+    return fail({
+      _tag: 'InvalidRiskBalancedTrendNumber',
+      operation: 'composite-score',
+      value: Number.NaN,
+      symbol,
+      reason: 'not-finite',
+    })
+  }
+  if (dailyVolatility === 0) {
+    return Result.succeed({ compositeScore: 0, positiveScore: 0, eligible: false })
+  }
+  if (protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v4') {
+    return pipe(
+      mean(horizons.map((value) => value.normalizedTrend)),
+      Result.flatMap((value) => finite(value, 'composite-score', symbol)),
+      Result.map((compositeScore) => ({
+        compositeScore,
+        positiveScore: Math.max(0, compositeScore),
+        eligible: true,
+      })),
+    )
+  }
+  const cap = protocol.signal.normalizedTrendCap
+  const clipped = horizons.map(({ normalizedTrend }) => Math.max(-cap, Math.min(cap, normalizedTrend)))
+  const compositeScore = median(clipped)
+  const positiveHorizons = horizons.filter(({ normalizedTrend }) => normalizedTrend > 0).length
+  const eligible = positiveHorizons >= protocol.signal.minimumPositiveHorizons && compositeScore > 0
+  return pipe(
+    Result.all({
+      compositeScore: finite(compositeScore, 'composite-score', symbol),
+      positiveScore: finite(eligible ? compositeScore / annualizedVolatility : 0, 'weight-allocation', symbol),
+    }),
+    Result.map(({ compositeScore: score, positiveScore }) => ({
+      compositeScore: score,
+      positiveScore,
+      eligible,
+    })),
+  )
+}
+
 const prepareSignal = (
   symbol: string,
   closes: Readonly<Record<string, readonly number[]>>,
@@ -370,21 +427,14 @@ const prepareSignal = (
                 ),
                 Result.flatMap((horizons) =>
                   pipe(
-                    dailyVolatility === 0
-                      ? Result.succeed(0)
-                      : pipe(
-                          mean(horizons.map((value) => value.normalizedTrend)),
-                          Result.flatMap((value) => finite(value, 'composite-score', symbol)),
-                        ),
-                    Result.map((compositeScore) => ({
+                    scoreSignal(protocol, horizons, dailyVolatility, annualizedVolatility, symbol),
+                    Result.map((score) => ({
                       signal: {
                         symbol,
                         horizons,
                         dailyVolatility,
                         annualizedVolatility,
-                        compositeScore,
-                        positiveScore: Math.max(0, compositeScore),
-                        eligible: dailyVolatility > 0,
+                        ...score,
                       },
                       returns: recentReturns,
                     })),

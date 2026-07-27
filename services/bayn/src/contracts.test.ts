@@ -88,7 +88,7 @@ describe('current contracts', () => {
       schemaVersion: 'bayn.runtime-provenance.v2',
       strategy: {
         name: 'risk-balanced-trend',
-        parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
+        parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4',
       },
       contractVersions: {
         inputManifest: 'bayn.input-manifest.v3',

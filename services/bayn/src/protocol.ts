@@ -167,8 +167,20 @@ const ProtocolV3Base = Schema.Struct({
   executionModel: ExecutionModelV2Schema,
 })
 
+const ProtocolV4Base = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.risk-balanced-trend.protocol.v4'),
+  ...ProtocolCommon,
+  signal: Schema.Struct({
+    aggregation: Schema.Literal('clipped-median-consensus'),
+    normalizedTrendCap: PositiveFinite,
+    minimumPositiveHorizons: PositiveInteger,
+    allocation: Schema.Literal('conviction-inverse-volatility'),
+  }),
+  executionModel: ExecutionModelV2Schema,
+})
+
 const protocolIssues = (
-  parameters: typeof ProtocolV2Base.Type | typeof ProtocolV3Base.Type,
+  parameters: typeof ProtocolV2Base.Type | typeof ProtocolV3Base.Type | typeof ProtocolV4Base.Type,
 ): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   const sortedUniverse = [...new Set(parameters.universe)].sort()
@@ -206,17 +218,27 @@ const protocolIssues = (
       issue: `must provide at least ${DIRECT_VOLATILITY_WINDOW} sessions for the direct-volatility benchmark`,
     })
   }
+  if (
+    parameters.schemaVersion === 'bayn.risk-balanced-trend.protocol.v4' &&
+    parameters.signal.minimumPositiveHorizons > parameters.horizons.length
+  ) {
+    issues.push({
+      path: ['signal', 'minimumPositiveHorizons'],
+      issue: 'must not exceed the configured horizon count',
+    })
+  }
   return issues
 }
 
 export const ProtocolV2Schema = ProtocolV2Base.check(Schema.makeFilter(protocolIssues))
 export const ProtocolV3Schema = ProtocolV3Base.check(Schema.makeFilter(protocolIssues))
-export const ProtocolSchema = Schema.Union([ProtocolV2Schema, ProtocolV3Schema])
+export const ProtocolV4Schema = ProtocolV4Base.check(Schema.makeFilter(protocolIssues))
+export const ProtocolSchema = Schema.Union([ProtocolV2Schema, ProtocolV3Schema, ProtocolV4Schema])
 export type Protocol = typeof ProtocolSchema.Type
-export type CausalProtocol = typeof ProtocolV3Schema.Type
+export type CausalProtocol = typeof ProtocolV4Schema.Type
 
 export const defaultProtocolDocument = {
-  schemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
+  schemaVersion: 'bayn.risk-balanced-trend.protocol.v4',
   universeId: universeContract.id,
   universeSymbolHash: universeContract.symbolHash,
   universe: universeContract.symbols,
@@ -229,6 +251,12 @@ export const defaultProtocolDocument = {
   maximumSymbolWeight: 0.35,
   maximumPortfolioVolatility: 0.1,
   directVolatilityTarget: 0.1,
+  signal: {
+    aggregation: 'clipped-median-consensus',
+    normalizedTrendCap: 2,
+    minimumPositiveHorizons: 3,
+    allocation: 'conviction-inverse-volatility',
+  },
   initialCapitalMicros: '1000000000000',
   executionModel: defaultExecutionModel,
   thresholds: defaultEconomicThresholds,
@@ -245,7 +273,7 @@ export const loadProtocol = (input: unknown): Effect.Effect<Protocol, Operationa
   )
 
 export const loadDefaultProtocol: Effect.Effect<CausalProtocol, OperationalError> = Schema.decodeUnknownEffect(
-  ProtocolV3Schema,
+  ProtocolV4Schema,
   StrictParseOptions,
 )(defaultProtocolDocument).pipe(
   Effect.mapError((cause) =>

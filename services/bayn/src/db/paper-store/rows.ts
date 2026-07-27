@@ -131,7 +131,9 @@ export const AuthorityGenerationRow = Schema.Struct({
   strategy_name: Schema.NullOr(Schema.Literal('risk-balanced-trend')),
   strategy_behavior_hash: Schema.NullOr(Sha256),
   strategy_parameter_hash: Schema.NullOr(Sha256),
-  strategy_parameter_schema_version: Schema.NullOr(Schema.Literal('bayn.risk-balanced-trend.protocol.v3')),
+  strategy_parameter_schema_version: Schema.NullOr(
+    Schema.Literals(['bayn.risk-balanced-trend.protocol.v3', 'bayn.risk-balanced-trend.protocol.v4']),
+  ),
   account_id: Schema.NullOr(NonEmptyString),
   risk_policy_hash: Schema.NullOr(Sha256),
   proof_plan_hash: Schema.NullOr(Sha256),
@@ -160,6 +162,7 @@ export const ActivationEvidenceRow = Schema.Struct({
   protocol_schema_version: Schema.Literals([
     'bayn.risk-balanced-trend.protocol.v2',
     'bayn.risk-balanced-trend.protocol.v3',
+    'bayn.risk-balanced-trend.protocol.v4',
   ]),
   strategy_name: Schema.Literal('risk-balanced-trend'),
   behavior_hash: Sha256,

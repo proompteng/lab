@@ -15,20 +15,38 @@ import {
 } from './risk-balanced-trend'
 import { makeStrategy } from './strategy'
 import { makeSnapshot, makeTestProvenance, fixtureProtocol } from './test-fixtures'
-import type { CausalProtocol, IsoDate } from './types'
+import type { CausalProtocol, IsoDate, Protocol } from './types'
 
 const assertSuccess = <A, E>(result: Result.Result<A, E>): A => {
   assert(Result.isSuccess(result), 'strategy evaluation fixture must succeed')
   return result.success
 }
 
-const shortProtocol = (overrides: Partial<CausalProtocol> = {}): CausalProtocol => ({
-  ...fixtureProtocol,
+type HistoricalProtocol = Extract<Protocol, { readonly schemaVersion: 'bayn.risk-balanced-trend.protocol.v3' }>
+
+const { signal: _candidateSignal, ...historicalProtocolBase } = fixtureProtocol
+const historicalProtocol: HistoricalProtocol = {
+  ...historicalProtocolBase,
+  schemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
+}
+
+const shortProtocol = (overrides: Partial<HistoricalProtocol> = {}): HistoricalProtocol => ({
+  ...historicalProtocol,
   universe: ['DBC', 'EEM', 'EFA'],
   horizons: [1, 2],
   volatilityWindow: 2,
   maximumSymbolWeight: 0.35,
   maximumPortfolioVolatility: 0.1,
+  ...overrides,
+})
+
+const shortCandidateProtocol = (overrides: Partial<CausalProtocol> = {}): CausalProtocol => ({
+  ...fixtureProtocol,
+  universe: ['DBC', 'EEM', 'EFA'],
+  horizons: [1, 2, 3, 4],
+  volatilityWindow: 4,
+  maximumSymbolWeight: 0.35,
+  maximumPortfolioVolatility: 1,
   ...overrides,
 })
 
@@ -120,6 +138,38 @@ describe('risk-balanced trend candidate', () => {
     expect(efa.compositeScore).toBeCloseTo(-Math.sqrt(8), 12)
     expect(efa.positiveScore).toBe(0)
     expect(decision.targetWeights).toEqual({ DBC: 0.666666666667, EEM: 0.333333333333, EFA: 0 })
+  })
+
+  test('requires three positive horizons and allocates by conviction per unit volatility in protocol v4', () => {
+    const protocol = shortCandidateProtocol()
+    const dates = [
+      '2026-07-13',
+      '2026-07-14',
+      '2026-07-15',
+      '2026-07-16',
+      '2026-07-17',
+    ] as const satisfies readonly IsoDate[]
+    const decision = assertSuccess(
+      makeRiskBalancedTrendDecision(
+        dates[4],
+        dates,
+        {
+          DBC: [100, 99, 101, 98, 100],
+          EEM: [100, 99, 98, 99, 101],
+          EFA: [100, 101, 102, 101, 99],
+        },
+        protocol,
+      ),
+    )
+    const dbc = decision.signals.find((signal) => signal.symbol === 'DBC')
+    const eem = decision.signals.find((signal) => signal.symbol === 'EEM')
+    const efa = decision.signals.find((signal) => signal.symbol === 'EFA')
+
+    expect(dbc).toMatchObject({ eligible: false, positiveScore: 0, targetWeight: 0 })
+    expect(eem?.eligible).toBe(true)
+    expect(eem?.targetWeight).toBeGreaterThan(0)
+    expect(eem?.positiveScore).toBeCloseTo((eem?.compositeScore ?? 0) / (eem?.annualizedVolatility ?? 1), 12)
+    expect(efa).toMatchObject({ eligible: false, positiveScore: 0, targetWeight: 0 })
   })
 
   test('normalizes continuous trend, retains cash under cap capacity, and scales portfolio volatility', () => {
@@ -538,9 +588,9 @@ describe('risk-balanced trend candidate', () => {
     )
     expect(analysis.priorTrialRunIds).toEqual(priorTrialRunIds)
     expect(analysis.candidateOrdinal).toBe(9)
-    expect(canonicalHashV1(first)).toBe('8be4f2f76c69bd7eeb2984bc08cd1d49013d2b349c8c574683851d4052a4901f')
+    expect(canonicalHashV1(first)).toBe('81002ac221b557498e06cbcd9307d986ed21ff2c2ce883adcc489fef7f468416')
     expect(canonicalHashV1(first.signalDecisions)).toBe(
-      'e0803e7a3d0258f508b054262f6ba5a1760b4a35d78816c1c701c7d783061568',
+      'a7ee602d168b076e56759e852ac3a207d7f74774ee0f2650c0922ad1e1f4e272',
     )
   })
 })

@@ -11,7 +11,7 @@ describe('strategy protocol', () => {
     const protocol = await Effect.runPromise(loadDefaultProtocol)
 
     expect(protocol).toMatchObject({
-      schemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
+      schemaVersion: 'bayn.risk-balanced-trend.protocol.v4',
       universeId: 'cross-asset-taa-v1',
       universeSymbolHash: 'c15a52d125073a20c3addee154974ef32b4ef009c40a46b05b54743f075c0fe8',
       universe: ['DBC', 'EFA', 'IEF', 'SPY', 'VNQ'],
@@ -21,6 +21,12 @@ describe('strategy protocol', () => {
       volatilityWindow: 63,
       maximumSymbolWeight: 0.35,
       maximumPortfolioVolatility: 0.1,
+      signal: {
+        aggregation: 'clipped-median-consensus',
+        normalizedTrendCap: 2,
+        minimumPositiveHorizons: 3,
+        allocation: 'conviction-inverse-volatility',
+      },
       executionModel: {
         schemaVersion: 'bayn.execution-model.v2',
         order: {
@@ -69,6 +75,10 @@ describe('strategy protocol', () => {
       { ...defaultProtocolDocument, horizons: [1, 2], volatilityWindow: 2 },
       { ...defaultProtocolDocument, maximumSymbolWeight: 0 },
       { ...defaultProtocolDocument, maximumPortfolioVolatility: 1.1 },
+      {
+        ...defaultProtocolDocument,
+        signal: { ...defaultProtocolDocument.signal, minimumPositiveHorizons: 5 },
+      },
       { ...defaultProtocolDocument, universeSymbolHash: '0'.repeat(64) },
       { ...defaultProtocolDocument, universeId: 'equity-infrastructure-v1' },
       { ...defaultProtocolDocument, evaluationStart: defaultProtocolDocument.historyStart },
@@ -83,8 +93,9 @@ describe('strategy protocol', () => {
   })
 
   test('decodes the frozen v2 protocol only for immutable historical evidence', async () => {
+    const { signal: _signal, ...historicalBase } = defaultProtocolDocument
     const historical = {
-      ...defaultProtocolDocument,
+      ...historicalBase,
       schemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
       executionModel: {
         ...defaultProtocolDocument.executionModel,
@@ -104,6 +115,16 @@ describe('strategy protocol', () => {
 
     expect(protocol.schemaVersion).toBe('bayn.risk-balanced-trend.protocol.v2')
     expect(protocol.executionModel.schemaVersion).toBe('bayn.execution-model.v1')
+  })
+
+  test('decodes the frozen v3 protocol only for immutable historical evidence', async () => {
+    const { signal: _signal, ...historicalBase } = defaultProtocolDocument
+    const protocol = await Effect.runPromise(
+      loadProtocol({ ...historicalBase, schemaVersion: 'bayn.risk-balanced-trend.protocol.v3' }),
+    )
+
+    expect(protocol.schemaVersion).toBe('bayn.risk-balanced-trend.protocol.v3')
+    expect('signal' in protocol).toBe(false)
   })
 
   test('requires every execution fact', async () => {

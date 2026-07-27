@@ -749,10 +749,11 @@ describe('Bayn startup lifecycle', () => {
     })
   })
 
-  test('recovers immutable protocol v2 evidence independently of the compiled v3 strategy', async () => {
+  test('recovers immutable protocol v2 evidence independently of the compiled v4 strategy', async () => {
+    const { signal: _signal, ...historicalBase } = defaultProtocolDocument
     const historicalProtocol = Effect.runSync(
       loadProtocol({
-        ...defaultProtocolDocument,
+        ...historicalBase,
         schemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
         executionModel: {
           ...defaultProtocolDocument.executionModel,
@@ -847,7 +848,7 @@ describe('Bayn startup lifecycle', () => {
       ),
     )
 
-    expect(fixtureStrategy.provenance.strategy.parameterSchemaVersion).toBe('bayn.risk-balanced-trend.protocol.v3')
+    expect(fixtureStrategy.provenance.strategy.parameterSchemaVersion).toBe('bayn.risk-balanced-trend.protocol.v4')
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
       status: 'STARTING',
       evidence: {
