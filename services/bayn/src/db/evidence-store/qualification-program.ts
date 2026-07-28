@@ -1,13 +1,19 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Option } from 'effect'
 
-import { decodeSingleQualification, liftQualificationResult } from './boundary'
-import { databaseError, ensure, runDatabase } from './errors'
+import {
+  databaseError,
+  ensure,
+  qualificationDecisionDatabaseError,
+  runDatabase,
+  storedQualificationDatabaseError,
+} from './errors'
 import type { EvidenceStoreService } from './model'
 import {
   validateQualificationLineage,
   validateQualificationLockMatch,
   validateQualificationOpenInput,
+  decodeQualificationRows,
   renderQualificationDecisionFailure,
 } from './qualification'
 import type { QualificationStatements } from './qualification-statements'
@@ -34,7 +40,9 @@ export const makeQualificationPrograms = (
       'read-qualification',
       Effect.gen(function* () {
         const rows = yield* statements.getQualificationByCandidate({ candidateRunId })
-        return yield* decodeSingleQualification(rows, 'read-qualification')
+        return yield* Effect.fromResult(decodeQualificationRows(rows)).pipe(
+          Effect.mapError((failure) => storedQualificationDatabaseError('read-qualification', failure)),
+        )
       }),
     )
 
@@ -63,11 +71,12 @@ export const makeQualificationPrograms = (
               candidateRunId: lock.candidateRunId,
               snapshotId: lock.data.snapshotId,
             })
-            const existing = yield* decodeSingleQualification(existingRows, 'open-qualification')
+            const existing = yield* Effect.fromResult(decodeQualificationRows(existingRows)).pipe(
+              Effect.mapError((failure) => storedQualificationDatabaseError('open-qualification', failure)),
+            )
             if (Option.isSome(existing)) {
-              yield* liftQualificationResult(
-                'open-qualification',
-                validateQualificationLockMatch(existing.value.lock, lock),
+              yield* Effect.fromResult(validateQualificationLockMatch(existing.value.lock, lock)).pipe(
+                Effect.mapError((failure) => qualificationDecisionDatabaseError('open-qualification', failure)),
               )
               return existing.value
             }
@@ -80,9 +89,8 @@ export const makeQualificationPrograms = (
             )
 
             const priorTrialRunIds = (yield* statements.getPriorTrials(undefined)).map((row) => row.run_id)
-            yield* liftQualificationResult(
-              'open-qualification',
-              validateQualificationLineage(priorTrialRunIds, lock.priorTrialRunIds),
+            yield* Effect.fromResult(validateQualificationLineage(priorTrialRunIds, lock.priorTrialRunIds)).pipe(
+              Effect.mapError((failure) => qualificationDecisionDatabaseError('open-qualification', failure)),
             )
             const candidateRunCount = yield* statements.getCandidateRunCount({ candidateRunId: lock.candidateRunId })
             yield* ensure(
@@ -109,15 +117,16 @@ export const makeQualificationPrograms = (
               candidateRunId: lock.candidateRunId,
               snapshotId: lock.data.snapshotId,
             })
-            const stored = yield* decodeSingleQualification(rows, 'open-qualification')
+            const stored = yield* Effect.fromResult(decodeQualificationRows(rows)).pipe(
+              Effect.mapError((failure) => storedQualificationDatabaseError('open-qualification', failure)),
+            )
             if (Option.isNone(stored)) {
               return yield* Effect.fail(
                 databaseError('invariant', 'open-qualification', 'conflicting qualification lock is missing'),
               )
             }
-            yield* liftQualificationResult(
-              'open-qualification',
-              validateQualificationLockMatch(stored.value.lock, lock),
+            yield* Effect.fromResult(validateQualificationLockMatch(stored.value.lock, lock)).pipe(
+              Effect.mapError((failure) => qualificationDecisionDatabaseError('open-qualification', failure)),
             )
             return stored.value
           }),

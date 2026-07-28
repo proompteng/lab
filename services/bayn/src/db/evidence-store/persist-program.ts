@@ -1,12 +1,18 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Option, Schema } from 'effect'
 
-import { decodeSingleQualification, liftQualificationResult, persistencePlanDatabaseError } from './boundary'
-import { databaseError, ensure, runDatabase } from './errors'
+import {
+  databaseError,
+  ensure,
+  persistencePlanDatabaseError,
+  qualificationDecisionDatabaseError,
+  runDatabase,
+  storedQualificationDatabaseError,
+} from './errors'
 import type { EvidenceStatements } from './evidence-statements'
 import type { EvidenceStoreService } from './model'
 import { makePersistencePlan } from './persistence-plan'
-import { validateQualificationLockMatch } from './qualification'
+import { decodeQualificationRows, validateQualificationLockMatch } from './qualification'
 import type { QualificationStatements } from './qualification-statements'
 import type { EvidenceReferencePrograms } from './reference-programs'
 
@@ -33,7 +39,9 @@ export const makeEvidencePersistenceProgram = (
             const qualificationRows = yield* qualificationStatements.getQualificationByCandidate({
               candidateRunId: plan.evaluation.runId,
             })
-            const storedQualification = yield* decodeSingleQualification(qualificationRows, 'persist-qualification')
+            const storedQualification = yield* Effect.fromResult(decodeQualificationRows(qualificationRows)).pipe(
+              Effect.mapError((failure) => storedQualificationDatabaseError('persist-qualification', failure)),
+            )
             if (plan.qualification !== undefined) {
               if (Option.isNone(storedQualification)) {
                 return yield* Effect.fail(
@@ -45,10 +53,9 @@ export const makeEvidencePersistenceProgram = (
                 'persist-qualification',
                 'qualification lock is already terminal',
               )
-              yield* liftQualificationResult(
-                'persist-qualification',
+              yield* Effect.fromResult(
                 validateQualificationLockMatch(storedQualification.value.lock, plan.qualification.lock),
-              )
+              ).pipe(Effect.mapError((failure) => qualificationDecisionDatabaseError('persist-qualification', failure)))
             } else {
               yield* ensure(
                 Option.isNone(storedQualification),

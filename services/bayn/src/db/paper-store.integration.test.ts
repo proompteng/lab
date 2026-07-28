@@ -50,7 +50,7 @@ import {
   type ValuationInput,
 } from '../broker/observations'
 import { BrokerProvider, alpacaSandboxBaseUrl } from '../broker/alpaca'
-import { EvidenceStore, EvidenceStoreLive, PostgresClientLive } from './evidence-store'
+import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from './evidence-store'
 import {
   BrokerEventStore,
   AuthorityGenerationStore,
@@ -359,7 +359,13 @@ const makeIndependentStoreRuntime = (
 
 const makeClientRuntime = () => ManagedRuntime.make(PostgresClientLive(config).pipe(Layer.provide(NodeServices.layer)))
 
-const makeEvidenceRuntime = () => ManagedRuntime.make(EvidenceStoreLive(config).pipe(Layer.provide(NodeServices.layer)))
+const makeEvidenceRuntime = () =>
+  ManagedRuntime.make(
+    EvidenceStoreFromPostgres(config).pipe(
+      Layer.provideMerge(PostgresClientLive(config)),
+      Layer.provide(NodeServices.layer),
+    ),
+  )
 
 interface AuthorityTupleRow {
   readonly row: Readonly<Record<string, unknown>>

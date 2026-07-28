@@ -317,4 +317,29 @@ describe('independent qualification reference', () => {
       permittedQuantityMicros: '81',
     })
   })
+
+  test('returns replay identity canonicalization failures as local typed data', () => {
+    const order = {
+      id: '1'.repeat(64),
+      decisionId: '2'.repeat(64),
+      sessionDate: '2026-07-21' as const,
+      symbol: fixtureProtocol.universe[0],
+      side: 'buy' as const,
+      requestedQuantityMicros: '100',
+      filledQuantityMicros: '80',
+      status: 'partially-filled' as const,
+      rejectionReason: null,
+      unfilledRemainder: 'canceled' as const,
+    }
+
+    expect(assertFailure(restrictReferenceBuyFill('\ud800', order, 79n))).toMatchObject({
+      _tag: 'ReferenceCanonicalizationFailed',
+      subject: 'simulated-order',
+      cause: {
+        _tag: 'CanonicalJsonFailure',
+        path: '$.runId',
+        reason: 'invalid-unicode-surrogate',
+      },
+    })
+  })
 })

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { describe, expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Option, Result } from 'effect'
 
 import { makeQualificationResult } from '../../qualification'
 import { evaluateRiskBalancedTrend } from '../../risk-balanced-trend'
@@ -9,6 +9,7 @@ import { makeStrategy } from '../../strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from '../../test-fixtures'
 import {
   decodeQualificationRecord,
+  decodeQualificationRows,
   validateQualificationOpenInput,
   type QualificationRowPayload,
 } from './qualification'
@@ -119,5 +120,25 @@ describe('EvidenceStore qualification decisions', () => {
         expected: fixture.lock.candidateRunId,
       },
     })
+  })
+
+  test('decodes zero or one stored qualification and rejects duplicate identity rows as typed data', () => {
+    const fixture = makeFixture()
+    const row: QualificationRowPayload = {
+      lock_payload: fixture.lock,
+      result_payload: fixture.result,
+    }
+
+    expect(decodeQualificationRows([])).toEqual(Result.succeed(Option.none()))
+    expect(decodeQualificationRows([row])).toEqual(
+      Result.succeed(Option.some({ state: 'TERMINAL', lock: fixture.lock, result: fixture.result })),
+    )
+    expect(decodeQualificationRows([row, row])).toEqual(
+      Result.fail({
+        _tag: 'StoredQualificationCardinalityMismatch',
+        observedCount: 2,
+        expectedMaximum: 1,
+      }),
+    )
   })
 })

@@ -2,7 +2,6 @@ import { pipe, Result } from 'effect'
 
 import { makeRunIdentityResult, makeStrategyProtocolHashResult, type RuntimeProvenance } from '../contracts'
 import { MICROS } from '../execution-model'
-import { canonicalHashV1Result } from '../hash'
 import type {
   DailyBar,
   EconomicVerdict,
@@ -20,6 +19,7 @@ import {
   riskBalancedHistoryLength,
   roundWeight,
 } from './reference/decisions'
+import { hashReferenceMaterial } from './reference/replay/identities'
 import type {
   ReferenceComputation,
   ReferenceEvaluation,
@@ -135,7 +135,7 @@ const evaluateReferenceWithWork = (
     })
   }
 
-  const parameterHashResult = canonicalHashV1Result(protocol)
+  const parameterHashResult = hashReferenceMaterial('strategy-parameters', protocol)
   if (Result.isFailure(parameterHashResult)) return Result.fail(parameterHashResult.failure)
   const parameterHash = parameterHashResult.success
   const strategyIdentity = {

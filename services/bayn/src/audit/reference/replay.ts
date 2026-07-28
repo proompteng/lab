@@ -10,7 +10,6 @@ import {
   saleCostBasisMicros,
   scaleQuantityMicros,
 } from '../../execution-model'
-import { canonicalHashV1 } from '../../hash'
 import type {
   CashChange,
   DailyPerformancePoint,
@@ -25,6 +24,7 @@ import type {
   SimulationProtocol,
 } from '../../types'
 import type { Position, ReferenceComputation, ReplayWithWork, Session, Target } from './model'
+import { makeReferenceCashYieldEvent, makeReferenceDecisionEvent, makeReferenceFeeEvent } from './replay/identities'
 import {
   calculateReplayMetrics,
   makeCashChange,
@@ -35,9 +35,9 @@ import {
   replayPositionValue,
   replayPrices,
   restrictReferenceBuyFill,
-} from './replay/support'
+} from './replay-calculations'
 
-export { restrictReferenceBuyFill } from './replay/support'
+export { restrictReferenceBuyFill } from './replay-calculations'
 
 interface ReplayState {
   readonly positions: ReadonlyMap<string, Position>
@@ -135,13 +135,13 @@ export const replay = (
             annualYieldBps: protocol.executionModel.cash.annualYieldBps,
             amountMicros: accrued.toString(),
           }
-          const event = {
-            kind: 'cash-yield' as const,
-            id: canonicalHashV1({ runId, kind: 'cash-yield', ...material }),
-            ...material,
-          }
+          const eventResult = makeReferenceCashYieldEvent(runId, material)
+          if (Result.isFailure(eventResult)) return Result.fail(eventResult.failure)
+          const event = eventResult.success
           events.push(event)
-          changes.push(makeCashChange(runId, event, accrued, cash))
+          const change = makeCashChange(runId, event, accrued, cash)
+          if (Result.isFailure(change)) return Result.fail(change.failure)
+          changes.push(change.success)
         }
       }
     }
@@ -161,11 +161,9 @@ export const replay = (
         executionDate: session.date,
         targetWeights: target.weights,
       }
-      const decision: DecisionEvent = {
-        kind: 'decision',
-        id: canonicalHashV1({ runId, kind: 'decision', ...decisionMaterial }),
-        ...decisionMaterial,
-      }
+      const decisionResult = makeReferenceDecisionEvent(runId, decisionMaterial)
+      if (Result.isFailure(decisionResult)) return Result.fail(decisionResult.failure)
+      const decision: DecisionEvent = decisionResult.success
       if (retainTrace) {
         if (target.plan === undefined) {
           return Result.fail({
@@ -312,7 +310,9 @@ export const replay = (
         const costBasisResult = saleCostBasisMicros(position.costBasisMicros, quantity, position.quantityMicros)
         if (Result.isFailure(costBasisResult)) return Result.fail(costBasisResult.failure)
         const costBasis = costBasisResult.success
-        const event = makeReferenceFill(runId, decision, simulatedOrder, terms, costBasis)
+        const eventResult = makeReferenceFill(runId, decision, simulatedOrder, terms, costBasis)
+        if (Result.isFailure(eventResult)) return Result.fail(eventResult.failure)
+        const event = eventResult.success
         cash += terms.notionalMicros
         turnover += terms.notionalMicros
         spread += terms.spreadCostMicros
@@ -324,7 +324,9 @@ export const replay = (
         sessionFills.push(event)
         if (retainTrace) {
           events.push(event)
-          changes.push(makeCashChange(runId, event, terms.notionalMicros, cash))
+          const change = makeCashChange(runId, event, terms.notionalMicros, cash)
+          if (Result.isFailure(change)) return Result.fail(change.failure)
+          changes.push(change.success)
         }
       }
 
@@ -341,7 +343,9 @@ export const replay = (
         )
         if (Result.isFailure(termsResult)) return Result.fail(termsResult.failure)
         const terms = termsResult.success
-        const event = makeReferenceFill(runId, decision, simulatedOrder, terms, terms.notionalMicros)
+        const eventResult = makeReferenceFill(runId, decision, simulatedOrder, terms, terms.notionalMicros)
+        if (Result.isFailure(eventResult)) return Result.fail(eventResult.failure)
+        const event = eventResult.success
         cash -= terms.notionalMicros
         turnover += terms.notionalMicros
         spread += terms.spreadCostMicros
@@ -354,7 +358,9 @@ export const replay = (
         sessionFills.push(event)
         if (retainTrace) {
           events.push(event)
-          changes.push(makeCashChange(runId, event, -terms.notionalMicros, cash))
+          const change = makeCashChange(runId, event, -terms.notionalMicros, cash)
+          if (Result.isFailure(change)) return Result.fail(change.failure)
+          changes.push(change.success)
         }
       }
 
@@ -381,13 +387,13 @@ export const replay = (
             catMicros: fee.catMicros.toString(),
             totalMicros: fee.totalMicros.toString(),
           }
-          const event: FeeEvent = {
-            kind: 'fee',
-            id: canonicalHashV1({ runId, kind: 'fee', ...material }),
-            ...material,
-          }
+          const eventResult = makeReferenceFeeEvent(runId, material)
+          if (Result.isFailure(eventResult)) return Result.fail(eventResult.failure)
+          const event: FeeEvent = eventResult.success
           events.push(event)
-          changes.push(makeCashChange(runId, event, -fee.totalMicros, cash))
+          const change = makeCashChange(runId, event, -fee.totalMicros, cash)
+          if (Result.isFailure(change)) return Result.fail(change.failure)
+          changes.push(change.success)
         }
       }
       if (cash < 0n) {

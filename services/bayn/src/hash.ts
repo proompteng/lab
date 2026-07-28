@@ -302,14 +302,8 @@ const compatibilityError = (failure: CanonicalJsonFailure): unknown => {
   }
 }
 
-export const canonicalJsonV1OrThrow = (value: unknown): string =>
-  pipe(canonicalJsonV1Result(value), Result.getOrThrowWith(compatibilityError))
-
 export const canonicalHashV1OrThrow = (value: unknown): string =>
   pipe(canonicalHashV1Result(value), Result.getOrThrowWith(compatibilityError))
-
-/** @deprecated Use canonicalJsonV1Result. This alias remains while callers migrate to total canonicalization. */
-export const canonicalJsonV1 = canonicalJsonV1OrThrow
 
 /** @deprecated Use canonicalHashV1Result. This alias remains while callers migrate to total canonicalization. */
 export const canonicalHashV1 = canonicalHashV1OrThrow

@@ -8,8 +8,7 @@ import {
   type RecoveredEvaluationEvidence,
   type StoredEvaluationEvidence,
 } from '../evidence-recovery'
-import { liftRecoveryResult } from './boundary'
-import { databaseError, ensure, runDatabase } from './errors'
+import { databaseError, ensure, evidenceRecoveryDatabaseError, runDatabase } from './errors'
 import type { EvidenceStatements } from './evidence-statements'
 import type { ArtifactItemPage, EvidenceStoreService } from './model'
 import {
@@ -42,7 +41,9 @@ export const makeEvidenceReadPrograms = (
     Effect.gen(function* () {
       const rows = yield* references.loadStoredRows(runId)
       if (Option.isNone(rows)) return Option.none<StoredEvaluationEvidence>()
-      const stored = yield* liftRecoveryResult(operation, validateStoredEvidence(runId, rows.value))
+      const stored = yield* Effect.fromResult(validateStoredEvidence(runId, rows.value)).pipe(
+        Effect.mapError((issue) => evidenceRecoveryDatabaseError(operation, issue)),
+      )
       return Option.some(stored)
     })
 
@@ -101,14 +102,12 @@ export const makeEvidenceReadPrograms = (
           Effect.gen(function* () {
             const rows = yield* references.loadStoredRows(decodedRunId)
             if (Option.isNone(rows)) return Option.none<RecoveredEvaluationEvidence>()
-            const prepared = yield* liftRecoveryResult(
-              'recover-evidence',
+            const prepared = yield* Effect.fromResult(
               prepareEvidenceRecovery({ runId: decodedRunId, provenance, rows: rows.value }),
-            )
+            ).pipe(Effect.mapError((issue) => evidenceRecoveryDatabaseError('recover-evidence', issue)))
             const snapshot = yield* statements.getSnapshot({ snapshotId: prepared.stored.run.snapshotId })
-            const recovered = yield* liftRecoveryResult(
-              'recover-evidence',
-              completeEvidenceRecovery(prepared, snapshot),
+            const recovered = yield* Effect.fromResult(completeEvidenceRecovery(prepared, snapshot)).pipe(
+              Effect.mapError((issue) => evidenceRecoveryDatabaseError('recover-evidence', issue)),
             )
             return Option.some(recovered)
           }),

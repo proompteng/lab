@@ -100,21 +100,23 @@ const withMigrationDeadline = <R>(
     }),
   )
 
-export const makeEvidenceStoreLayer = <RMigration, RStore>(
-  config: Pick<RuntimeConfig, 'operationTimeoutMs'>,
-  migration: Effect.Effect<void, DatabaseError, RMigration>,
-  store: Effect.Effect<EvidenceStoreService, DatabaseError, RStore>,
-) =>
-  Layer.effect(
-    EvidenceStore,
-    Effect.gen(function* () {
-      yield* withMigrationDeadline(migration, config.operationTimeoutMs)
-      return yield* store
-    }),
-  )
+export interface EvidenceStoreInitialization<RMigration, RStore> {
+  readonly operationTimeoutMs: number
+  readonly migration: Effect.Effect<void, DatabaseError, RMigration>
+  readonly store: Effect.Effect<EvidenceStoreService, DatabaseError, RStore>
+}
+
+export const initializeEvidenceStore = <RMigration, RStore>(
+  input: EvidenceStoreInitialization<RMigration, RStore>,
+): Effect.Effect<EvidenceStoreService, DatabaseError, RMigration | RStore> =>
+  withMigrationDeadline(input.migration, input.operationTimeoutMs).pipe(Effect.andThen(input.store))
 
 export const EvidenceStoreFromPostgres = (config: Pick<RuntimeConfig, 'operationTimeoutMs'>) =>
-  makeEvidenceStoreLayer(config, migrations, makeEvidenceStore)
-
-export const EvidenceStoreLive = (config: RuntimeConfig) =>
-  EvidenceStoreFromPostgres(config).pipe(Layer.provideMerge(PostgresClientLive(config)))
+  Layer.effect(
+    EvidenceStore,
+    initializeEvidenceStore({
+      operationTimeoutMs: config.operationTimeoutMs,
+      migration: migrations,
+      store: Effect.map(PgClient.PgClient, makeEvidenceStore),
+    }),
+  )
