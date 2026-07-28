@@ -292,14 +292,21 @@ jobs:
     env:
       BAYN_ALPACA_SANDBOX_CONTRACT: '1'
       BAYN_ALPACA_BASE_URL: https://paper-api.alpaca.markets
-      BAYN_ALPACA_ACCOUNT_ID: ${{ secrets.BAYN_ALPACA_SANDBOX_ACCOUNT_ID }}
-      BAYN_ALPACA_KEY_ID: ${{ secrets.BAYN_ALPACA_SANDBOX_KEY_ID }}
-      BAYN_ALPACA_SECRET_KEY: ${{ secrets.BAYN_ALPACA_SANDBOX_SECRET_KEY }}
       BAYN_ALPACA_SANDBOX_EXACT_HEAD_SHA: ${{ inputs.exact_head_sha }}
       BAYN_ALPACA_SANDBOX_IMAGE_BUILD_RUN_ID: ${{ inputs.image_build_run_id }}
       BAYN_ALPACA_SANDBOX_RECEIPT_PATH: /tmp/alpaca-sandbox-contract-receipt.json
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Establish overall protected proof deadline
+        shell: bash
+        run: |
+          set -euo pipefail
+          job_started_epoch_ms="$(date +%s%3N)"
+          job_deadline_epoch_ms="$((job_started_epoch_ms + 13 * 60 * 1000))"
+          {
+            printf 'BAYN_ALPACA_SANDBOX_JOB_STARTED_EPOCH_MS=%s\n' "${job_started_epoch_ms}"
+            printf 'BAYN_ALPACA_SANDBOX_JOB_DEADLINE_EPOCH_MS=%s\n' "${job_deadline_epoch_ms}"
+          } >> "${GITHUB_ENV}"
       - name: Validate protected dispatch inputs
         shell: bash
         run: |
@@ -314,6 +321,10 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "${BAYN_ALPACA_SANDBOX_EXACT_HEAD_SHA}"
       - name: Fail closed on protected credential binding
         shell: bash
+        env:
+          BAYN_ALPACA_ACCOUNT_ID: ${{ secrets.BAYN_ALPACA_SANDBOX_ACCOUNT_ID }}
+          BAYN_ALPACA_KEY_ID: ${{ secrets.BAYN_ALPACA_SANDBOX_KEY_ID }}
+          BAYN_ALPACA_SECRET_KEY: ${{ secrets.BAYN_ALPACA_SANDBOX_SECRET_KEY }}
         run: |
           set -euo pipefail
           set +x
@@ -417,6 +428,10 @@ jobs:
           --filter @proompteng/source
           --filter @proompteng/bayn
       - name: Execute bounded real Alpaca sandbox proof
+        env:
+          BAYN_ALPACA_ACCOUNT_ID: ${{ secrets.BAYN_ALPACA_SANDBOX_ACCOUNT_ID }}
+          BAYN_ALPACA_KEY_ID: ${{ secrets.BAYN_ALPACA_SANDBOX_KEY_ID }}
+          BAYN_ALPACA_SECRET_KEY: ${{ secrets.BAYN_ALPACA_SANDBOX_SECRET_KEY }}
         run: bun test --cwd services/bayn src/broker/alpaca-sandbox-contract.test.ts
       - name: Upload redacted exact-head contract receipt
         if: always()

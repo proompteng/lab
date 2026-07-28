@@ -53,6 +53,9 @@ const retryDelayMs = 1_000
 const minimumPreOpenSafetyMs = 30 * 60_000
 const mutationPhaseDeadlineMs = 2 * 60_000
 const cleanupDeadlineMs = 3 * 60_000
+const workflowJobTimeoutMs = 15 * 60_000
+const overallProofDeadlineMs = 13 * 60_000
+const requiredSubmitBudgetMs = mutationPhaseDeadlineMs + cleanupDeadlineMs
 const mutationPhaseDeadline = Duration.millis(mutationPhaseDeadlineMs)
 const cleanupDeadline = Duration.millis(cleanupDeadlineMs)
 const maximumRetryReadMs = (lookupRetryCount + 1) * brokerOperationTimeoutMs + lookupRetryCount * retryDelayMs
@@ -67,6 +70,14 @@ const required = (name: string): string => {
     throw new Error(`${name} must be present and free of surrounding whitespace`)
   }
   return value
+}
+
+const requiredEpochMillis = (name: string): number => {
+  const value = required(name)
+  if (!/^[0-9]{13}$/.test(value)) throw new Error(`${name} must be a 13-digit epoch-millisecond value`)
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed)) throw new Error(`${name} must be a safe epoch-millisecond integer`)
+  return parsed
 }
 
 const hashIdentity = (value: string): string => canonicalHashV1({ value })
@@ -138,6 +149,12 @@ interface ProofState {
   filledQuantityMicros?: string
   cancelAttempts: number
   cancelAcknowledged: boolean
+  submitBudget?: {
+    readonly checkedAt: string
+    readonly jobDeadlineAt: string
+    readonly remainingMs: number
+    readonly requiredRemainingMs: number
+  }
   lifecycle: LifecycleEvent[]
   cleanup: {
     result: 'NOT_RUN' | 'CONFIRMED_NOT_CREATED' | 'VERIFIED_TERMINAL' | 'FAILED'
@@ -245,6 +262,28 @@ const isCancellableStatus = (status: OrderStatus): boolean =>
 const hasFilledQuantity = (order: Order): boolean => order.filledQuantityMicros !== '0'
 const preOpenSafetyMillis = (observedAt: string, nextMarketOpenAt: string): number =>
   Date.parse(nextMarketOpenAt) - Date.parse(observedAt)
+const remainingJobBudgetMs = (checkedAtEpochMs: number, jobDeadlineEpochMs: number): number =>
+  jobDeadlineEpochMs - checkedAtEpochMs
+const hasRequiredSubmitBudget = (checkedAtEpochMs: number, jobDeadlineEpochMs: number): boolean =>
+  remainingJobBudgetMs(checkedAtEpochMs, jobDeadlineEpochMs) >= requiredSubmitBudgetMs
+const requireOverallSubmitBudget = (
+  jobDeadlineEpochMs: number,
+  state: ProofState,
+): Effect.Effect<void, SandboxContractProofError> =>
+  Effect.gen(function* () {
+    const checkedAt = yield* currentUtcInstant
+    const checkedAtEpochMs = Date.parse(checkedAt)
+    const remainingMs = remainingJobBudgetMs(checkedAtEpochMs, jobDeadlineEpochMs)
+    state.submitBudget = {
+      checkedAt,
+      jobDeadlineAt: new Date(jobDeadlineEpochMs).toISOString(),
+      remainingMs,
+      requiredRemainingMs: requiredSubmitBudgetMs,
+    }
+    if (!hasRequiredSubmitBudget(checkedAtEpochMs, jobDeadlineEpochMs)) {
+      return yield* Effect.fail(proofFailure('SUBMIT', 'OVERALL_JOB_DEADLINE_CANNOT_RESERVE_CLEANUP'))
+    }
+  })
 const requireZeroFill = (order: Order): Effect.Effect<void, SandboxContractProofError> =>
   hasFilledQuantity(order)
     ? Effect.fail(proofFailure('CLEANUP', 'ORDER_FILLED_DURING_PROOF'))
@@ -590,7 +629,14 @@ test('treats every Alpaca nonterminal status as open for cleanup', () => {
 
 test('keeps the cleanup network bound below its explicit deadline', () => {
   expect(maximumCleanupNetworkMs).toBeLessThan(cleanupDeadlineMs)
-  expect(mutationPhaseDeadlineMs + cleanupDeadlineMs).toBeLessThan(15 * 60_000)
+  expect(requiredSubmitBudgetMs).toBeLessThan(overallProofDeadlineMs)
+  expect(overallProofDeadlineMs).toBeLessThan(workflowJobTimeoutMs)
+})
+
+test('reserves the complete mutation and cleanup budget before submit', () => {
+  const checkedAtEpochMs = Date.parse('2026-07-28T00:00:00.000Z')
+  expect(hasRequiredSubmitBudget(checkedAtEpochMs, checkedAtEpochMs + requiredSubmitBudgetMs)).toBeTrue()
+  expect(hasRequiredSubmitBudget(checkedAtEpochMs, checkedAtEpochMs + requiredSubmitBudgetMs - 1)).toBeFalse()
 })
 
 test('requires a full pre-open safety window', () => {
@@ -771,6 +817,8 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
   const imageIdentity = required('BAYN_ALPACA_SANDBOX_IMAGE_IDENTITY')
   const imageTag = required('BAYN_ALPACA_SANDBOX_IMAGE_TAG')
   const imageBuildRunId = required('BAYN_ALPACA_SANDBOX_IMAGE_BUILD_RUN_ID')
+  const jobStartedEpochMs = requiredEpochMillis('BAYN_ALPACA_SANDBOX_JOB_STARTED_EPOCH_MS')
+  const jobDeadlineEpochMs = requiredEpochMillis('BAYN_ALPACA_SANDBOX_JOB_DEADLINE_EPOCH_MS')
 
   if (configuredOrigin !== alpacaSandboxBaseUrl) throw new Error('sandbox endpoint guard failed')
   if (!/^[0-9a-f]{40}$/.test(sourceSha)) throw new Error('GITHUB_SHA must be an exact lowercase commit SHA')
@@ -780,6 +828,9 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
   }
   if (imageTag !== `registry.ide-newton.ts.net/lab/bayn:sha-${sourceSha}`) {
     throw new Error('image tag is not bound to the exact proof source SHA')
+  }
+  if (jobDeadlineEpochMs - jobStartedEpochMs !== overallProofDeadlineMs) {
+    throw new Error('overall protected proof deadline is not bound to the configured job budget')
   }
   if (receiptPath === undefined || receiptPath !== '/tmp/alpaca-sandbox-contract-receipt.json') {
     throw new Error('BAYN_ALPACA_SANDBOX_RECEIPT_PATH must use the protected temporary receipt path')
@@ -877,6 +928,7 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
       () =>
         Effect.gen(function* () {
           yield* verifySafeMarketWindow(session, state, 'SUBMIT_CLOCK_PREFLIGHT')
+          yield* requireOverallSubmitBudget(jobDeadlineEpochMs, state)
           const submit = yield* mutation.submit(intent).pipe(
             Effect.tapError((error) =>
               Effect.sync(() => {
@@ -949,6 +1001,13 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
       startedAt: state.startedAt,
       preflightCompletedAt: state.preflightCompletedAt,
       completedAt: state.completedAt,
+    },
+    overallJobBudget: {
+      startedAt: new Date(jobStartedEpochMs).toISOString(),
+      deadlineAt: new Date(jobDeadlineEpochMs).toISOString(),
+      proofWindowMs: overallProofDeadlineMs,
+      requiredRemainingBeforeSubmitMs: requiredSubmitBudgetMs,
+      submitCheck: state.submitBudget,
     },
     endpointClass: 'ALPACA_PAPER',
     endpoint: alpacaSandboxBaseUrl,
