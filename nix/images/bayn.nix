@@ -19,6 +19,8 @@ import ./bun-workspace-service.nix {
   inherit pkgs lib repoRoot bun nodejs;
   serviceName = "bayn";
   packageName = "@proompteng/bayn";
+  # Bayn's fixed-output dependency closure is intentionally isolated from TypeScript source-tree topology.
+  dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
     x86_64-linux = "sha256-TnXWfeZzFjKVroWLF0G8kOWuePxMD058YeqsXevi9kE=";
     aarch64-linux = "sha256-kEMBQ4Tn5od4hfpbulZPy5VdJNnp3k7uwz6m57+JFWE=";

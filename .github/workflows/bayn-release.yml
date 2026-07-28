@@ -70,12 +70,25 @@ jobs:
           git merge-base --is-ancestor "$source_sha" HEAD
           git diff --quiet "$source_sha..HEAD" -- \
             services/bayn \
+            packages/scripts/src/bayn/update-manifests.ts \
             nix/images/bayn.nix \
             nix/images/bun-workspace-service.nix \
+            nix/images/bun-workspace-deps-source.nix \
+            nix/packages.nix \
+            nix/cache-push.sh \
+            nix/ci-nix-oci-summary.sh \
+            nix/ci-run-timed.sh \
+            nix/oci-inspect-archive.sh \
+            nix/oci-push.sh \
             flake.nix \
             flake.lock \
             package.json \
-            bun.lock
+            bun.lock \
+            ':(glob)**/package.json' \
+            .npmrc \
+            bunfig.toml \
+            patches \
+            tsconfig.base.json
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           {
             echo "source_sha=$source_sha"
