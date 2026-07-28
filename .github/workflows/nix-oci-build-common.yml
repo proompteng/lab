@@ -15,6 +15,10 @@ on:
       tag:
         required: true
         type: string
+      source_revision:
+        required: false
+        type: string
+        default: ''
       latest:
         required: false
         type: boolean
@@ -80,6 +84,8 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_revision != '' && inputs.source_revision || github.sha }}
 
       - name: Record checkout timing
         if: always()
@@ -295,6 +301,8 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_revision != '' && inputs.source_revision || github.sha }}
 
       - name: Record checkout timing
         if: always()
