@@ -236,6 +236,11 @@ describe('candidate 6 pure decision', () => {
       '2024-05-29',
       '2024-05-30',
       '2024-05-31',
+      '2024-06-24',
+      '2024-06-25',
+      '2024-06-26',
+      '2024-06-27',
+      '2024-06-28',
     ] as const satisfies readonly IsoDate[]
     const excluded = success(
       makeCandidate6Decision(
@@ -256,12 +261,26 @@ describe('candidate 6 pure decision', () => {
           executionDate: '2024-05-28',
           calendar: transitionCalendar,
           bars: [],
-          position: { activeEntrySignalDate: null, currentWeights: { SPY: 0.2 } },
+          position: { activeEntrySignalDate: '2024-05-24', currentWeights: { SPY: 0.2 } },
         }),
       ),
     )
     expect(liquidate).toMatchObject({ action: 'exit', reason: 'calendar-exclusion', targetWeights: { SPY: 0 } })
     expect(liquidate.orderIntents[0]?.reason).toBe('calendar-exclusion-exit')
+
+    const malformedLineage = failure(
+      makeCandidate6Decision(
+        input({
+          signalDate: '2024-05-24',
+          executionDate: '2024-05-28',
+          publicationAsOf: '2024-06-28',
+          calendar: transitionCalendar,
+          bars: [],
+          position: { activeEntrySignalDate: '2024-06-24', currentWeights: { SPY: 0.2 } },
+        }),
+      ),
+    )
+    expect(malformedLineage).toEqual({ _tag: 'UnknownActiveEntry', activeEntrySignalDate: '2024-06-24' })
   })
 })
 

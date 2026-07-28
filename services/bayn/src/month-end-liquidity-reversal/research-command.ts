@@ -1,4 +1,5 @@
-import { Result } from 'effect'
+import { NodeRuntime } from '@effect/platform-node'
+import { Data, Effect, Result } from 'effect'
 import { resolve } from 'node:path'
 
 import { parseCandidate6DevelopmentCsv } from './development-data'
@@ -63,4 +64,30 @@ const main = async (arguments_: readonly string[]): Promise<number> => {
   return 0
 }
 
-if (import.meta.main) process.exitCode = await main(process.argv.slice(2))
+class Candidate6ResearchCommandError extends Data.TaggedError('Candidate6ResearchCommandError')<{
+  readonly operation: 'run'
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
+const program = Effect.tryPromise({
+  try: async () => {
+    const exitCode = await main(process.argv.slice(2))
+    if (exitCode !== 0) {
+      throw new Candidate6ResearchCommandError({
+        operation: 'run',
+        message: `candidate 6 research command failed with exit code ${exitCode}`,
+      })
+    }
+  },
+  catch: (cause) =>
+    cause instanceof Candidate6ResearchCommandError
+      ? cause
+      : new Candidate6ResearchCommandError({
+          operation: 'run',
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+})
+
+if (import.meta.main) NodeRuntime.runMain(program)

@@ -59,6 +59,22 @@ const behaviorBar = (sessionDate: IsoDate): DailyBar => {
 const behaviorBars = behaviorCalendar.map(behaviorBar)
 const behaviorSimulationStart = '2022-01-25' as IsoDate
 const behaviorPublicationAsOf = '2022-02-04' as IsoDate
+const transitionCalendar = [
+  '2024-05-20',
+  '2024-05-21',
+  '2024-05-22',
+  '2024-05-23',
+  '2024-05-24',
+  '2024-05-28',
+  '2024-05-29',
+  '2024-05-30',
+  '2024-05-31',
+  '2024-06-24',
+  '2024-06-25',
+  '2024-06-26',
+  '2024-06-27',
+  '2024-06-28',
+] as const satisfies readonly IsoDate[]
 
 const decisionInput = (
   signalDate: IsoDate,
@@ -84,6 +100,23 @@ const resultEvidence = <A, E>(result: Result.Result<A, E>) =>
     ? ({ outcome: 'success', value: result.success } as const)
     : ({ outcome: 'failure', failure: result.failure } as const)
 
+const transitionInput = (
+  activeEntrySignalDate: IsoDate | null,
+  currentWeight: number,
+  protocol: Candidate6Protocol,
+): Candidate6DecisionInput => ({
+  signalDate: '2024-05-24',
+  executionDate: '2024-05-28',
+  publicationAsOf: '2024-06-28',
+  calendar: transitionCalendar,
+  bars: [],
+  position: { activeEntrySignalDate, currentWeights: { SPY: currentWeight } },
+  portfolioEquityUsd: 1_000_000,
+  finalizedAtEpochMilliseconds: 1,
+  observedAtEpochMilliseconds: 2,
+  protocol,
+})
+
 export const candidate6ExecutableBehaviorEvidence = (protocol: Candidate6Protocol = candidate6Protocol) => ({
   schemaVersion: 'bayn.month-end-liquidity-reversal.executable-behavior.v1',
   vectors: {
@@ -103,6 +136,9 @@ export const candidate6ExecutableBehaviorEvidence = (protocol: Candidate6Protoco
         bars: behaviorBars.filter((bar) => bar.sessionDate < '2022-02-02'),
       }),
     ),
+    transitionCash: resultEvidence(makeCandidate6Decision(transitionInput(null, 0, protocol))),
+    transitionLiquidation: resultEvidence(makeCandidate6Decision(transitionInput('2024-05-24', 0.2, protocol))),
+    transitionRejectFutureLineage: resultEvidence(makeCandidate6Decision(transitionInput('2024-06-24', 0.2, protocol))),
     completeSimulation: resultEvidence(
       simulateCandidate6(
         behaviorCalendar,

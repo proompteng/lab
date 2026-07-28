@@ -305,6 +305,17 @@ export const makeCandidate6Decision = (input: Candidate6DecisionInput): Decision
   const calendarResult = validateCalendar(input.calendar, input.signalDate, input.executionDate)
   if (Result.isFailure(calendarResult)) return fail(calendarResult.failure)
   const signalIndex = calendarResult.success
+  const activeEntrySignalDate = input.position.activeEntrySignalDate
+  const activeEntryIndex = activeEntrySignalDate === null ? null : input.calendar.indexOf(activeEntrySignalDate)
+  if (
+    activeEntrySignalDate !== null &&
+    (activeEntryIndex === null ||
+      activeEntryIndex < 0 ||
+      activeEntryIndex > signalIndex ||
+      remainingSessionsInMonth(input.calendar, activeEntryIndex) !== protocol.signal.signalSessionsBeforeMonthEnd)
+  ) {
+    return fail({ _tag: 'UnknownActiveEntry', activeEntrySignalDate })
+  }
   const calendarExcluded = protocol.signal.calendarExclusions.some(
     (exclusion) =>
       (input.signalDate >= exclusion.start && input.signalDate <= exclusion.end) ||
@@ -318,16 +329,8 @@ export const makeCandidate6Decision = (input: Candidate6DecisionInput): Decision
   const barsResult = prepareBars(input.bars, input.signalDate, protocol)
   if (Result.isFailure(barsResult)) return fail(barsResult.failure)
 
-  const activeEntrySignalDate = input.position.activeEntrySignalDate
   if (activeEntrySignalDate !== null) {
-    const entryIndex = input.calendar.indexOf(activeEntrySignalDate)
-    if (
-      entryIndex < 0 ||
-      entryIndex > signalIndex ||
-      remainingSessionsInMonth(input.calendar, entryIndex) !== protocol.signal.signalSessionsBeforeMonthEnd
-    ) {
-      return fail({ _tag: 'UnknownActiveEntry', activeEntrySignalDate })
-    }
+    const entryIndex = activeEntryIndex as number
     const activeHistoryResult = requiredHistory(input.calendar, signalIndex, barsResult.success, protocol)
     if (Result.isFailure(activeHistoryResult)) return fail(activeHistoryResult.failure)
     const exitSignalIndex =
