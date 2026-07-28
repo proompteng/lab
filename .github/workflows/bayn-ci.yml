@@ -6,6 +6,11 @@ permissions:
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      exact_head_sha:
+        description: Exact commit SHA approved for the protected Alpaca sandbox proof
+        required: true
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -271,3 +276,42 @@ jobs:
             exit 1
           fi
           echo 'All applicable Bayn unit, type, Effect, PostgreSQL, dependency-boundary, and multi-architecture image checks passed.'
+
+  alpaca-sandbox-contract-proof:
+    if: github.event_name == 'workflow_dispatch' && github.sha == inputs.exact_head_sha
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: bayn-alpaca-sandbox
+    permissions:
+      contents: read
+    env:
+      BAYN_ALPACA_SANDBOX_CONTRACT: '1'
+      BAYN_ALPACA_BASE_URL: https://paper-api.alpaca.markets
+      BAYN_ALPACA_ACCOUNT_ID: ${{ secrets.BAYN_ALPACA_SANDBOX_ACCOUNT_ID }}
+      BAYN_ALPACA_KEY_ID: ${{ secrets.BAYN_ALPACA_SANDBOX_KEY_ID }}
+      BAYN_ALPACA_SECRET_KEY: ${{ secrets.BAYN_ALPACA_SANDBOX_SECRET_KEY }}
+      BAYN_ALPACA_SANDBOX_RECEIPT_PATH: /tmp/alpaca-sandbox-contract-receipt.json
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.exact_head_sha }}
+          persist-credentials: false
+      - name: Verify exact checked-out head
+        run: test "$(git rev-parse HEAD)" = "${{ inputs.exact_head_sha }}"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install focused dependencies
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/source
+          --filter @proompteng/bayn
+      - name: Execute bounded real Alpaca sandbox proof
+        run: bun run --cwd services/bayn test:broker-sandbox-real
+      - name: Upload redacted exact-head contract receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpaca-sandbox-contract-${{ inputs.exact_head_sha }}
+          path: /tmp/alpaca-sandbox-contract-receipt.json
+          if-no-files-found: error
+          retention-days: 30
