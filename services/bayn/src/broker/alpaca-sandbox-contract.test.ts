@@ -250,6 +250,58 @@ const requireZeroFill = (order: Order): Effect.Effect<void, SandboxContractProof
   hasFilledQuantity(order)
     ? Effect.fail(proofFailure('CLEANUP', 'ORDER_FILLED_DURING_PROOF'))
     : Effect.succeed(undefined)
+const hasCancellationEvidence = (state: ProofState): boolean =>
+  state.lifecycle.some((event) => event.stage === 'CANCEL' || event.stage === 'CANCEL_UNKNOWN')
+const requireCanceledCleanup = (order: Order, state: ProofState): Effect.Effect<void, SandboxContractProofError> =>
+  Effect.gen(function* () {
+    yield* requireZeroFill(order)
+    if (order.status !== OrderStatus.Canceled) {
+      return yield* Effect.fail(proofFailure('CLEANUP', 'ORDER_DID_NOT_REACH_CANCELED'))
+    }
+    if (state.cancelAttempts === 0 || !hasCancellationEvidence(state)) {
+      return yield* Effect.fail(proofFailure('CLEANUP', 'CANCEL_PATH_NOT_PROVEN'))
+    }
+  })
+
+const verifySafeMarketWindow = (
+  session: BrokerSessionShape,
+  state: ProofState,
+  lifecycleStage: 'CLOCK_PREFLIGHT' | 'SUBMIT_CLOCK_PREFLIGHT',
+): Effect.Effect<void, BrokerReadError | SandboxContractProofError> =>
+  Effect.gen(function* () {
+    const today = yield* currentUtcDate
+    const clockObservedAt = yield* currentUtcInstant
+    const calendar = yield* session.read.marketCalendar({ start: today, end: addUtcDays(today, 14) })
+    const marketOpen = calendar.value.sessions.some(
+      (marketSession) => clockObservedAt >= marketSession.openAt && clockObservedAt < marketSession.closeAt,
+    )
+    if (marketOpen) return yield* Effect.fail(proofFailure('CLOCK_PREFLIGHT', 'REGULAR_MARKET_IS_OPEN'))
+    const nextMarketSession = [...calendar.value.sessions]
+      .filter((marketSession) => marketSession.openAt > clockObservedAt)
+      .sort((left, right) => left.openAt.localeCompare(right.openAt))[0]
+    if (nextMarketSession === undefined) {
+      return yield* Effect.fail(proofFailure('CLOCK_PREFLIGHT', 'NEXT_MARKET_OPEN_UNAVAILABLE'))
+    }
+    const millisecondsUntilNextOpen = preOpenSafetyMillis(clockObservedAt, nextMarketSession.openAt)
+    if (millisecondsUntilNextOpen < minimumPreOpenSafetyMs) {
+      return yield* Effect.fail(proofFailure('CLOCK_PREFLIGHT', 'NEXT_MARKET_OPEN_TOO_CLOSE'))
+    }
+    state.clock = {
+      observedAt: clockObservedAt,
+      marketOpen: false,
+      nextMarketOpenAt: nextMarketSession.openAt,
+      millisecondsUntilNextOpen,
+      sessionCount: calendar.value.sessions.length,
+      calendarHash: calendar.value.normalizedResponseHash,
+    }
+    state.lifecycle.push({
+      stage: lifecycleStage,
+      observedAt: calendar.evidence.observedAt,
+      status: calendar.value.sessions.length,
+      requestBinding: hashIdentity(calendar.evidence.requestId),
+      contentHash: calendar.evidence.contentHash,
+    })
+  })
 
 const retryRead = <A>(
   effect: Effect.Effect<A, BrokerReadError>,
@@ -467,7 +519,7 @@ const cleanupOrder = (
     yield* verifyNoOpenProofOrder(session, clientOrderId, state)
     state.finalStatus = terminal.value.status
     state.filledQuantityMicros = terminal.value.filledQuantityMicros
-    yield* requireZeroFill(terminal.value)
+    yield* requireCanceledCleanup(terminal.value, state)
     state.cleanup.result = 'VERIFIED_TERMINAL'
     state.cleanup.verifiedAt = yield* currentUtcInstant
   }).pipe(
@@ -552,6 +604,25 @@ test('rejects terminal cleanup when any quantity filled', () => {
   expect(Exit.isFailure(Effect.runSync(Effect.exit(requireZeroFill(testOrder(OrderStatus.Canceled, '1')))))).toBeTrue()
   expect(
     Exit.isFailure(Effect.runSync(Effect.exit(requireZeroFill(testOrder(OrderStatus.Filled, '10000'))))),
+  ).toBeTrue()
+})
+
+test('requires an exact canceled outcome with cancellation evidence', () => {
+  const state = testProofState()
+  expect(
+    Exit.isFailure(Effect.runSync(Effect.exit(requireCanceledCleanup(testOrder(OrderStatus.Canceled), state)))),
+  ).toBeTrue()
+
+  state.cancelAttempts = 1
+  state.lifecycle.push({
+    stage: 'CANCEL_UNKNOWN',
+    observedAt: '2026-07-28T00:00:02.000Z',
+  })
+  expect(
+    Exit.isSuccess(Effect.runSync(Effect.exit(requireCanceledCleanup(testOrder(OrderStatus.Canceled), state)))),
+  ).toBeTrue()
+  expect(
+    Exit.isFailure(Effect.runSync(Effect.exit(requireCanceledCleanup(testOrder(OrderStatus.Filled), state)))),
   ).toBeTrue()
 })
 
@@ -750,32 +821,7 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
       return yield* Effect.fail(proofFailure('SESSION_PREFLIGHT', 'VERIFIED_SESSION_BINDING_MISMATCH'))
     }
     state.preflightCompletedAt = yield* currentUtcInstant
-
-    const today = yield* currentUtcDate
-    const clockObservedAt = yield* currentUtcInstant
-    const calendar = yield* session.read.marketCalendar({ start: today, end: addUtcDays(today, 14) })
-    const marketOpen = calendar.value.sessions.some(
-      (marketSession) => clockObservedAt >= marketSession.openAt && clockObservedAt < marketSession.closeAt,
-    )
-    if (marketOpen) return yield* Effect.fail(proofFailure('CLOCK_PREFLIGHT', 'REGULAR_MARKET_IS_OPEN'))
-    const nextMarketSession = [...calendar.value.sessions]
-      .filter((marketSession) => marketSession.openAt > clockObservedAt)
-      .sort((left, right) => left.openAt.localeCompare(right.openAt))[0]
-    if (nextMarketSession === undefined) {
-      return yield* Effect.fail(proofFailure('CLOCK_PREFLIGHT', 'NEXT_MARKET_OPEN_UNAVAILABLE'))
-    }
-    const millisecondsUntilNextOpen = preOpenSafetyMillis(clockObservedAt, nextMarketSession.openAt)
-    if (millisecondsUntilNextOpen < minimumPreOpenSafetyMs) {
-      return yield* Effect.fail(proofFailure('CLOCK_PREFLIGHT', 'NEXT_MARKET_OPEN_TOO_CLOSE'))
-    }
-    state.clock = {
-      observedAt: clockObservedAt,
-      marketOpen: false,
-      nextMarketOpenAt: nextMarketSession.openAt,
-      millisecondsUntilNextOpen,
-      sessionCount: calendar.value.sessions.length,
-      calendarHash: calendar.value.normalizedResponseHash,
-    }
+    yield* verifySafeMarketWindow(session, state, 'CLOCK_PREFLIGHT')
 
     const asset = yield* session.read.assetBySymbol(proofSymbol)
     if (asset.value.status !== AssetStatus.Active || !asset.value.tradable || !asset.value.fractionable) {
@@ -803,6 +849,7 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
       Effect.succeed(undefined),
       () =>
         Effect.gen(function* () {
+          yield* verifySafeMarketWindow(session, state, 'SUBMIT_CLOCK_PREFLIGHT')
           const submit = yield* mutation.submit(intent).pipe(
             Effect.tapError((error) =>
               Effect.sync(() => {
