@@ -1,6 +1,6 @@
 import { Data, Redacted, Result, Schema } from 'effect'
 
-import { canonicalHashV1OrThrow, canonicalHashV1Result } from '../../hash'
+import { canonicalHashV1Result, sha256 } from '../../hash'
 import {
   BrokerEnvironment,
   CapitalAccessState,
@@ -8,13 +8,13 @@ import {
   type ExecutionAuthority,
 } from '../../execution/authority'
 import {
-  IntentSchema,
+  decodeExecutionIntentResult,
   IntentState,
   OrderSide as DomainSide,
   OrderType as DomainOrderType,
   TimeInForce as DomainTimeInForce,
   type Intent,
-} from '../../paper'
+} from '../../execution/contracts'
 import { AssetClass, OrderSide, OrderType, TimeInForce, type BrokerSessionShape, type Order } from '../alpaca'
 import { decodeErrorResponse, decodeOrder } from '../alpaca/model'
 import { normalizeOrderResult } from '../alpaca/normalizers'
@@ -32,12 +32,9 @@ import {
   type SubmitReceipt,
 } from './model'
 
-const inputParseOptions = { onExcessProperty: 'error' } as const
-
 const Uuid = Schema.String.check(
   Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
 )
-const decodeIntent = Schema.decodeUnknownResult(IntentSchema, inputParseOptions)
 const decodeOrderId = Schema.decodeUnknownResult(Uuid)
 const decodeJsonResponseBody = Schema.decodeUnknownResult(Schema.UnknownFromJsonString)
 
@@ -255,7 +252,7 @@ export const prepareSubmit = (
   input: unknown,
   expectedAccountId: string,
 ): Result.Result<PreparedSubmit, BrokerMutationError> => {
-  const decoded = decodeIntent(input)
+  const decoded = decodeExecutionIntentResult(input)
   if (Result.isFailure(decoded)) {
     return Result.fail(invalidRequest(MutationOperation.Submit, 'invalid order intent', decoded.failure))
   }
@@ -277,7 +274,7 @@ export const prepareSubmit = (
 }
 
 export const cancelRequestHash = (brokerOrderId: string): string =>
-  canonicalHashV1OrThrow({ operation: MutationOperation.Cancel, brokerOrderId })
+  sha256(`{"brokerOrderId":${JSON.stringify(brokerOrderId)},"operation":"${MutationOperation.Cancel}"}`)
 
 export const prepareCancel = (input: unknown): Result.Result<PreparedCancel, BrokerMutationError> => {
   const decoded = decodeOrderId(input)

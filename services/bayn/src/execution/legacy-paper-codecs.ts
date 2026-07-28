@@ -676,19 +676,8 @@ export const makePaperAuthorityGenerationResult = (
     ),
   )
 
-/**
- * Legacy source-compatibility constructor. Valid typed material still returns
- * the historical value directly; malformed runtime material returns the same
- * closed Result failure as `makePaperAuthorityGenerationResult` and never
- * throws.
- */
-export function makePaperAuthorityGeneration(input: PaperAuthorityGenerationMaterial): PaperAuthorityGeneration
-export function makePaperAuthorityGeneration(
-  input: PaperAuthorityGenerationMaterial,
-): PaperAuthorityGeneration | Result.Result<PaperAuthorityGeneration, PaperAuthorityGenerationConstructionFailure> {
-  const result = makePaperAuthorityGenerationResult(input)
-  return Result.isSuccess(result) ? result.success : result
-}
+/** @deprecated Use `makePaperAuthorityGenerationResult`. */
+export const makePaperAuthorityGeneration = makePaperAuthorityGenerationResult
 
 const AuthorityStateBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.paper-authority.v1'),
@@ -786,7 +775,9 @@ export const encodeLegacyReferenceIntent = (value: DomainReferenceIntent): Refer
 })
 
 export const decodeLegacyIntentResult = (input: unknown): Result.Result<DomainIntent, Schema.SchemaError> =>
-  Result.map(decodeLegacyIntentResultInternal(input), withoutSchemaVersion)
+  Result.map(decodeLegacyIntentResultInternal(input), executionIntentFromLegacy)
+
+export const executionIntentFromLegacy = (value: Intent): DomainIntent => withoutSchemaVersion(value)
 
 export const encodeLegacyIntent = (value: DomainIntent): Intent => ({
   schemaVersion: 'bayn.paper-intent.v3',

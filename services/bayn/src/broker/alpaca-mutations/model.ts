@@ -1,8 +1,7 @@
 import { Context, Data, Effect, Schema } from 'effect'
 
-import { MutationOutcome } from '../../paper'
+import { MutationOutcome, type Intent } from '../../execution/contracts'
 import { StrictNonEmptyStringSchema as NonEmptyString, UtcInstantSchema as UtcInstant } from '../../schemas'
-import type { Intent } from '../../paper'
 import type { BrokerReadError, Order, ReadResult } from '../alpaca'
 
 const RequestId = NonEmptyString.check(Schema.isMaxLength(256))
@@ -56,6 +55,11 @@ export interface BrokerMutationShape {
   readonly cancel: (brokerOrderId: string) => Effect.Effect<CancelReceipt, BrokerMutationError>
   readonly orderById?: (brokerOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
   readonly orderByClientId?: (clientOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
+}
+
+export interface BrokerExecutionShape extends BrokerMutationShape {
+  readonly orderById: (brokerOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
+  readonly orderByClientId: (clientOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
 }
 
 export class BrokerMutation extends Context.Service<BrokerMutation, BrokerMutationShape>()('bayn/BrokerMutation') {}

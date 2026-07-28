@@ -13,16 +13,17 @@ import {
   makeExecutionAuthority,
   type ExecutionAuthority,
 } from '../execution/authority'
-import { IntentState, MutationOutcome, OrderSide, OrderType, TimeInForce, type Intent } from '../paper'
+import { IntentState, MutationOutcome, OrderSide, OrderType, TimeInForce, type Intent } from '../execution/contracts'
 import {
   BrokerMutationError,
   MutationFailure,
   MutationOperation,
   authorizeMutationAccess,
+  cancelRequestHash,
   makeMutation,
   orderRequestBody,
   submitBody,
-  type BrokerMutationShape,
+  type BrokerExecutionShape,
 } from './alpaca-mutations'
 import {
   AccountStatus,
@@ -121,7 +122,6 @@ interface MutationHarnessOptions {
 }
 
 const intent: Intent = {
-  schemaVersion: 'bayn.paper-intent.v3',
   intentId: 'a'.repeat(64),
   authorityGenerationHash: 'f'.repeat(64),
   riskDecisionId: 'b'.repeat(64),
@@ -197,7 +197,7 @@ const response = (
 
 const withMutation = <A, E>(
   client: HttpClient.HttpClient,
-  use: (mutation: BrokerMutationShape) => Effect.Effect<A, E>,
+  use: (mutation: BrokerExecutionShape) => Effect.Effect<A, E>,
   options: MutationHarnessOptions = {},
 ): Effect.Effect<A, BrokerMutationError | E> => {
   const session = options.session ?? verifiedSession({ operationTimeoutMs: options.operationTimeoutMs })
@@ -237,6 +237,10 @@ describe('Alpaca paper mutations', () => {
       failure: 'invalid-order',
       quantityMicros: 'not-an-integer',
     })
+    expect(cancelRequestHash(orderId)).toBe(
+      canonicalHashV1({ operation: MutationOperation.Cancel, brokerOrderId: orderId }),
+    )
+    expect(() => cancelRequestHash('\ud800')).not.toThrow()
   })
 
   test('refuses to construct mutation capability without explicit submit-orders access', async () => {

@@ -527,18 +527,12 @@ describe('paper contracts', () => {
         schemaVersion: 'bayn.paper-authority-generation.v1',
       }),
     )
-    expect(
+    expect(() =>
       makePaperAuthorityGeneration({
         ...material,
         strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v2' as never,
-      }) as unknown,
-    ).toMatchObject({
-      _tag: 'Failure',
-      failure: {
-        _tag: 'PaperAuthorityGenerationSchemaInvalid',
-        operation: 'material',
-      },
-    })
+      }),
+    ).toThrow()
     expect(
       makePaperAuthorityGenerationResult({
         ...material,

@@ -2,7 +2,7 @@ import { Cause, Effect } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 
 import type { ExecutionAuthority } from '../../execution/authority'
-import type { Intent } from '../../paper'
+import type { Intent } from '../../execution/contracts'
 import { currentUtcInstant } from '../../time'
 import type { BrokerSessionShape } from '../alpaca'
 import { ResponseHeadersSchema, redactedHeaders, responseParseOptions } from '../alpaca/model'
@@ -19,7 +19,7 @@ import {
   MutationOperation,
   invalidRequest,
   unknownOutcome,
-  type BrokerMutationShape,
+  type BrokerExecutionShape,
 } from './model'
 
 const decodeHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
@@ -108,7 +108,7 @@ const readCancelBody = (
 export const makeMutation = (
   session: BrokerSessionShape,
   authority: ExecutionAuthority,
-): Effect.Effect<BrokerMutationShape, BrokerMutationError, HttpClient.HttpClient> =>
+): Effect.Effect<BrokerExecutionShape, BrokerMutationError, HttpClient.HttpClient> =>
   Effect.gen(function* () {
     const runtime = yield* Effect.fromResult(resolveMutationCapability(session, authority))
     const client = yield* HttpClient.HttpClient

@@ -1,3 +1,14 @@
+import { Schema } from 'effect'
+
+import {
+  PositiveMicrosSchema,
+  Sha256Schema,
+  StrictNonEmptyStringSchema,
+  SymbolSchema,
+  UtcInstantSchema,
+  strictParseOptions,
+} from '../schemas'
+
 export enum Broker {
   Alpaca = 'ALPACA',
 }
@@ -171,31 +182,60 @@ export type BrokerEvent =
   | (BrokerEventSource & { readonly _tag: 'Error'; readonly error: BrokerError })
   | (BrokerEventSource & { readonly _tag: 'RateLimit'; readonly rateLimit: RateLimit })
 
-interface IntentFields {
-  readonly intentId: Sha256
-  readonly riskDecisionId?: Sha256
-  readonly strategyName: string
-  readonly cycleId: Sha256
-  readonly decisionHash: Sha256
-  readonly policyHash: Sha256
-  readonly accountId: string
-  readonly clientOrderId: string
-  readonly symbol: string
-  readonly side: OrderSide
-  readonly orderType: OrderType
-  readonly timeInForce: TimeInForce
-  readonly quantityMicros: PositiveMicros
-  readonly notionalLimitMicros: PositiveMicros
+const IntentFieldsSchema = {
+  intentId: Sha256Schema,
+  riskDecisionId: Schema.optionalKey(Sha256Schema),
+  strategyName: StrictNonEmptyStringSchema,
+  cycleId: Sha256Schema,
+  decisionHash: Sha256Schema,
+  policyHash: Sha256Schema,
+  accountId: StrictNonEmptyStringSchema,
+  clientOrderId: StrictNonEmptyStringSchema,
+  symbol: SymbolSchema,
+  side: Schema.Enum(OrderSide),
+  orderType: Schema.Enum(OrderType),
+  timeInForce: Schema.Enum(TimeInForce),
+  quantityMicros: PositiveMicrosSchema,
+  notionalLimitMicros: PositiveMicrosSchema,
+  state: Schema.Enum(IntentState),
+  terminalOutcome: Schema.optionalKey(Schema.Enum(TerminalOutcome)),
+  createdAt: UtcInstantSchema,
+} as const
+
+const intentContractIssues = (intent: {
   readonly state: IntentState
   readonly terminalOutcome?: TerminalOutcome
-  readonly createdAt: UtcInstant
+  readonly riskDecisionId?: string
+}): readonly Schema.FilterIssue[] => {
+  const issues: Schema.FilterIssue[] = []
+  const terminal = intent.state === IntentState.Terminal
+  if (terminal !== (intent.terminalOutcome !== undefined)) {
+    issues.push({
+      path: ['terminalOutcome'],
+      issue: terminal ? 'is required for a terminal intent' : 'must be absent before terminal state',
+    })
+  }
+  const planned = intent.state === IntentState.Planned
+  if (planned === (intent.riskDecisionId !== undefined)) {
+    issues.push({
+      path: ['riskDecisionId'],
+      issue: planned ? 'must be absent before risk evaluation' : 'is required after risk evaluation',
+    })
+  }
+  return issues
 }
 
-export interface ReferenceIntent extends IntentFields {}
+export const ReferenceIntentSchema = Schema.Struct(IntentFieldsSchema).check(Schema.makeFilter(intentContractIssues))
+export type ReferenceIntent = typeof ReferenceIntentSchema.Type
 
-export interface Intent extends IntentFields {
-  readonly authorityGenerationHash: Sha256
-}
+const ExecutionIntentBase = Schema.Struct({
+  authorityGenerationHash: Sha256Schema,
+  ...IntentFieldsSchema,
+})
+
+export const ExecutionIntentSchema = ExecutionIntentBase.check(Schema.makeFilter(intentContractIssues))
+export type Intent = typeof ExecutionIntentSchema.Type
+export const decodeExecutionIntentResult = Schema.decodeUnknownResult(ExecutionIntentSchema, strictParseOptions)
 
 export interface RiskInput {
   readonly inputHash: Sha256

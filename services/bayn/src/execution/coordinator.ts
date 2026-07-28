@@ -2,7 +2,8 @@ import { Clock, Data, Effect, Match, Result } from 'effect'
 
 import { BrokerMutation, MutationOperation } from '../broker/alpaca-mutations'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca'
-import { IntentState, type Intent } from '../paper'
+import { IntentState, type Intent } from './contracts'
+import { executionIntentFromLegacy } from './legacy-paper-codecs'
 import {
   cancellationIdentity,
   decideCancelFailure,
@@ -188,7 +189,10 @@ const submitToBroker = (
   requestHash: string,
   request: DryRunSubmitDecision['request'],
 ) => {
-  const submittedIntent: Intent = { ...stored.intent, state: IntentState.IoStarted }
+  const submittedIntent: Intent = {
+    ...executionIntentFromLegacy(stored.intent),
+    state: IntentState.IoStarted,
+  }
   return services.broker.submit(submittedIntent).pipe(
     Effect.matchEffect({
       onFailure: (error) =>
