@@ -32,13 +32,13 @@ holds cash. It does not reuse candidate 5's trend horizons, ranking, risk-balanc
 Etula, Rinne, Suominen, and Vaittinen document low equity returns during `T-8` through `T-4`, a positive reversal during
 `T-3` through `T+3`, institutional net selling around month-end liquidity dates, and stronger reversal evidence in large,
 liquid stocks. The proposed mechanism is temporary price pressure caused by clustered institutional cash needs and
-payment cycles rather than persistent trend. See *Dash for Cash: Monthly Market Impact of Institutional Liquidity
-Needs*, Review of Financial Studies 33(1), 2020: https://doi.org/10.1093/rfs/hhz054.
+payment cycles rather than persistent trend. See _Dash for Cash: Monthly Market Impact of Institutional Liquidity
+Needs_, Review of Financial Studies 33(1), 2020: https://doi.org/10.1093/rfs/hhz054.
 
 Kayaçetin examines thirty equity markets over 1994–2023 and reports a persistent turn-of-the-month return concentration,
 with evidence consistent with infrequent institutional rebalancing and risk deferral. This supports a broader modern
-rebalancing mechanism rather than treating the older settlement convention as the sole cause. See *Infrequent
-rebalancing, risk deferral, and equity returns at the turn of the month*, Journal of International Financial Markets,
+rebalancing mechanism rather than treating the older settlement convention as the sole cause. See _Infrequent
+rebalancing, risk deferral, and equity returns at the turn of the month_, Journal of International Financial Markets,
 Institutions and Money 109, 2026: https://doi.org/10.1016/j.intfin.2026.102309.
 
 The U.S. standard equity settlement cycle changed to T+1 on May 28, 2024. This is a structural break for any
@@ -86,21 +86,21 @@ are committed.
 
 These results are design evidence only and are not the official trial.
 
-| Metric | Gross | Net |
-| --- | ---: | ---: |
-| Total return | 10.1087% | 8.4429% |
-| Annualized return | 1.6201% | 1.3619% |
-| Annualized volatility | 2.5329% | 2.4873% |
-| Sharpe | 0.6472 | 0.5563 |
-| Maximum drawdown | 3.1231% | 3.1828% |
-| Annual turnover | 2.8148x | 2.6141x |
-| Average gross exposure | 3.9029% | 3.6350% |
-| Maximum observed gross exposure | 31.4316% | 31.4362% |
-| Daily observations | 1,510 | 1,510 |
-| Entries | 28 | 28 |
-| Orders | 56 | 57 |
-| Partial fills | 0 | 5 |
-| Modeled costs | $0 | $8,385.97 |
+| Metric                          |    Gross |       Net |
+| ------------------------------- | -------: | --------: |
+| Total return                    | 10.1087% |   8.4429% |
+| Annualized return               |  1.6201% |   1.3619% |
+| Annualized volatility           |  2.5329% |   2.4873% |
+| Sharpe                          |   0.6472 |    0.5563 |
+| Maximum drawdown                |  3.1231% |   3.1828% |
+| Annual turnover                 |  2.8148x |   2.6141x |
+| Average gross exposure          |  3.9029% |   3.6350% |
+| Maximum observed gross exposure | 31.4316% |  31.4362% |
+| Daily observations              |    1,510 |     1,510 |
+| Entries                         |       28 |        28 |
+| Orders                          |       56 |        57 |
+| Partial fills                   |        0 |         5 |
+| Modeled costs                   |       $0 | $8,385.97 |
 
 The deterministic 2,000-replicate, 20-session moving-block bootstrap gives a 95% annualized-return interval of
 `[-0.1931%, 3.0565%]` and a Sharpe interval of `[-0.0638, 1.2211]`. Both intervals cross zero. SPY buy-and-hold over the

@@ -78,14 +78,8 @@
     "method": "deterministic-moving-block-bootstrap",
     "replicates": 2000,
     "blockLengthSessions": 20,
-    "annualizedReturn": [
-      -0.0019306206637097476,
-      0.03056540440085885
-    ],
-    "sharpe": [
-      -0.06380780962075909,
-      1.2211071751178983
-    ]
+    "annualizedReturn": [-0.0019306206637097476, 0.03056540440085885],
+    "sharpe": [-0.06380780962075909, 1.2211071751178983]
   },
   "walkForward": [
     {
