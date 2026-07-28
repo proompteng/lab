@@ -1,7 +1,7 @@
-import { expect, test } from 'bun:test'
+import { test } from 'bun:test'
 
 import { NodeHttpClient } from '@effect/platform-node'
-import { Effect, Redacted, Result } from 'effect'
+import { Data, Duration, Effect, Exit, Redacted, References, Result, Schedule } from 'effect'
 import { HttpClient } from 'effect/unstable/http'
 
 import { canonicalHashV1 } from '../hash'
@@ -12,18 +12,30 @@ import {
   makeExecutionAuthority,
 } from '../execution/authority'
 import { IntentState, OrderSide, OrderType, TimeInForce, type Intent } from '../paper'
-import { BrokerMutationError, MutationFailure, makeMutation } from './alpaca-mutations'
+import { currentUtcDate, currentUtcInstant } from '../time'
+import { BrokerMutationError, MutationFailure, makeMutation, type BrokerMutationShape } from './alpaca-mutations'
 import {
+  AssetStatus,
   BrokerProvider,
+  BrokerReadError,
+  BrokerReadErrorKind,
+  OrderCollection,
   OrderStatus,
-  alpacaLiveBaseUrl,
   alpacaSandboxBaseUrl,
   acquireBrokerSession,
   decodeBrokerConnection,
+  type BrokerSessionShape,
+  type Order,
+  type ReadResult,
 } from './alpaca'
 
 const enabled = Bun.env.BAYN_ALPACA_SANDBOX_CONTRACT === '1'
 const receiptPath = Bun.env.BAYN_ALPACA_SANDBOX_RECEIPT_PATH
+const proofSymbol = 'AAPL'
+const proofQuantityMicros = '10000'
+const lookupRetryCount = 4
+const terminalPollCount = 15
+const retryDelay = Duration.seconds(1)
 
 const required = (name: string): string => {
   const value = Bun.env[name]
@@ -33,16 +45,347 @@ const required = (name: string): string => {
   return value
 }
 
-const redact = (value: string): string => canonicalHashV1({ value }).slice(0, 16)
+const hashIdentity = (value: string): string => canonicalHashV1({ value })
+
+type ProofStage =
+  | 'CONFIGURATION'
+  | 'SESSION_PREFLIGHT'
+  | 'CLOCK_PREFLIGHT'
+  | 'ASSET_PREFLIGHT'
+  | 'SUBMIT'
+  | 'LOOKUP_BY_CLIENT_ID'
+  | 'CANCEL'
+  | 'TERMINAL_LOOKUP'
+  | 'CLEANUP'
+
+class SandboxContractProofError extends Data.TaggedError('SandboxContractProofError')<{
+  readonly stage: ProofStage
+  readonly failure: string
+}> {}
+
+interface SanitizedFailure {
+  readonly stage: ProofStage
+  readonly tag: string
+  readonly failure: string
+  readonly operation?: string
+  readonly status?: number
+  readonly retryable?: boolean
+}
+
+interface LifecycleEvent {
+  readonly stage: string
+  readonly observedAt: string
+  readonly status?: string | number
+  readonly requestBinding?: string
+  readonly contentHash?: string
+}
+
+interface ProofState {
+  startedAt?: string
+  completedAt?: string
+  preflightCompletedAt?: string
+  clock?: {
+    readonly observedAt: string
+    readonly marketOpen: false
+    readonly sessionCount: number
+    readonly calendarHash: string
+  }
+  asset?: {
+    readonly status: AssetStatus.Active
+    readonly tradable: true
+    readonly fractionable: true
+    readonly observationHash: string
+  }
+  submitOutcome: 'NOT_ATTEMPTED' | 'ACKNOWLEDGED' | 'REJECTED' | 'UNKNOWN'
+  brokerOrderId?: string
+  finalStatus?: OrderStatus
+  cancelAttempts: number
+  cancelAcknowledged: boolean
+  lifecycle: LifecycleEvent[]
+  cleanup: {
+    result: 'NOT_RUN' | 'CONFIRMED_NOT_CREATED' | 'VERIFIED_TERMINAL' | 'FAILED'
+    verifiedAt?: string
+    residualOpenOrderCount?: number
+  }
+  failure?: SanitizedFailure
+  cleanupFailure?: SanitizedFailure
+}
+
+const proofFailure = (stage: ProofStage, failure: string): SandboxContractProofError =>
+  new SandboxContractProofError({ stage, failure })
+
+const sanitizeFailure = (stage: ProofStage, error: unknown): SanitizedFailure => {
+  if (error instanceof BrokerReadError) {
+    return {
+      stage,
+      tag: error._tag,
+      failure: error.kind,
+      operation: error.operation,
+      status: error.status,
+      retryable: error.retryable,
+    }
+  }
+  if (error instanceof BrokerMutationError) {
+    return {
+      stage,
+      tag: error._tag,
+      failure: error.failure,
+      operation: error.operation,
+      status: error.evidence?.status,
+      retryable: error.failure === MutationFailure.Unknown,
+    }
+  }
+  if (error instanceof SandboxContractProofError) {
+    return { stage: error.stage, tag: error._tag, failure: error.failure, retryable: false }
+  }
+  return { stage, tag: 'UnexpectedFailure', failure: 'UNCLASSIFIED', retryable: false }
+}
+
+const failureStage = (error: unknown): ProofStage => {
+  if (error instanceof SandboxContractProofError) return error.stage
+  if (error instanceof BrokerMutationError) return error.operation === 'CANCEL' ? 'CANCEL' : 'SUBMIT'
+  if (error instanceof BrokerReadError) {
+    switch (error.operation) {
+      case 'market-calendar':
+        return 'CLOCK_PREFLIGHT'
+      case 'asset-by-symbol':
+        return 'ASSET_PREFLIGHT'
+      case 'order-by-client-id':
+        return 'LOOKUP_BY_CLIENT_ID'
+      case 'order-by-id':
+      case 'orders':
+        return 'CLEANUP'
+      case 'configuration':
+      case 'proxy':
+        return 'CONFIGURATION'
+      case 'preflight':
+      case 'account':
+      case 'account-configuration':
+      case 'positions':
+      case 'fill-activities':
+        return 'SESSION_PREFLIGHT'
+    }
+  }
+  return 'CONFIGURATION'
+}
+
+const isOpenStatus = (status: OrderStatus): boolean =>
+  [
+    OrderStatus.New,
+    OrderStatus.PartiallyFilled,
+    OrderStatus.PendingCancel,
+    OrderStatus.PendingReplace,
+    OrderStatus.PendingReview,
+    OrderStatus.Accepted,
+    OrderStatus.PendingNew,
+    OrderStatus.AcceptedForBidding,
+    OrderStatus.Held,
+  ].includes(status)
+
+const retryRead = <A>(
+  effect: Effect.Effect<A, BrokerReadError>,
+  retryNotFound = false,
+): Effect.Effect<A, BrokerReadError> =>
+  effect.pipe(
+    Effect.retry({
+      times: lookupRetryCount,
+      schedule: Schedule.spaced(retryDelay),
+      while: (error) => error.retryable || (retryNotFound && error.kind === BrokerReadErrorKind.NotFound),
+    }),
+  )
+
+const mutationEvidence = (
+  stage: string,
+  evidence: { status: number; requestId: string; contentHash: string; observedAt: string },
+): LifecycleEvent => ({
+  stage,
+  observedAt: evidence.observedAt,
+  status: evidence.status,
+  requestBinding: hashIdentity(evidence.requestId),
+  contentHash: evidence.contentHash,
+})
+
+const readEvidence = (stage: string, result: ReadResult<Order>): LifecycleEvent => ({
+  stage,
+  observedAt: result.evidence.observedAt,
+  status: result.value.status,
+  requestBinding: hashIdentity(result.evidence.requestId),
+  contentHash: result.evidence.contentHash,
+})
+
+const requireOrderBinding = (
+  order: Order,
+  clientOrderId: string,
+  brokerOrderId: string,
+  stage: ProofStage,
+): Effect.Effect<void, SandboxContractProofError> =>
+  order.clientOrderId === clientOrderId && order.brokerOrderId === brokerOrderId
+    ? Effect.succeed(undefined)
+    : Effect.fail(proofFailure(stage, 'ORDER_BINDING_MISMATCH'))
+
+const waitForTerminalOrder = (
+  orderById: (brokerOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>,
+  brokerOrderId: string,
+  clientOrderId: string,
+  state: ProofState,
+  attempt = 0,
+): Effect.Effect<ReadResult<Order>, BrokerReadError | SandboxContractProofError> =>
+  retryRead(orderById(brokerOrderId)).pipe(
+    Effect.flatMap((result) =>
+      requireOrderBinding(result.value, clientOrderId, brokerOrderId, 'TERMINAL_LOOKUP').pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            state.lifecycle.push(readEvidence('TERMINAL_LOOKUP', result))
+            state.finalStatus = result.value.status
+          }),
+        ),
+        Effect.andThen(
+          !isOpenStatus(result.value.status)
+            ? Effect.succeed(result)
+            : attempt >= terminalPollCount
+              ? Effect.fail(proofFailure('TERMINAL_LOOKUP', 'ORDER_REMAINED_OPEN'))
+              : Effect.sleep(retryDelay).pipe(
+                  Effect.andThen(waitForTerminalOrder(orderById, brokerOrderId, clientOrderId, state, attempt + 1)),
+                ),
+        ),
+      ),
+    ),
+  )
+
+const cancelIfOpen = (
+  mutation: BrokerMutationShape,
+  order: Order,
+  state: ProofState,
+): Effect.Effect<void, BrokerMutationError> => {
+  if (!isOpenStatus(order.status)) return Effect.succeed(undefined)
+  state.cancelAttempts += 1
+  return mutation.cancel(order.brokerOrderId).pipe(
+    Effect.tap((receipt) =>
+      Effect.sync(() => {
+        state.cancelAcknowledged = true
+        state.lifecycle.push(mutationEvidence('CANCEL', receipt.evidence))
+      }),
+    ),
+    Effect.asVoid,
+    Effect.catch((error) =>
+      Effect.gen(function* () {
+        const observedAt = error.evidence?.observedAt ?? (yield* currentUtcInstant)
+        state.lifecycle.push({
+          stage: 'CANCEL_UNKNOWN',
+          observedAt,
+          status: error.evidence?.status,
+          requestBinding: error.evidence?.requestId === undefined ? undefined : hashIdentity(error.evidence.requestId),
+          contentHash: error.evidence?.contentHash,
+        })
+        if (error.failure !== MutationFailure.Unknown) return yield* Effect.fail(error)
+      }),
+    ),
+  )
+}
+
+const verifyNoOpenProofOrder = (
+  session: BrokerSessionShape,
+  clientOrderId: string,
+  state: ProofState,
+): Effect.Effect<void, BrokerReadError | SandboxContractProofError> =>
+  retryRead(session.read.orders({ status: OrderCollection.Open, limit: 500, symbols: [proofSymbol] })).pipe(
+    Effect.flatMap((result) => {
+      const residual = result.value.filter((order) => order.clientOrderId === clientOrderId)
+      state.cleanup.residualOpenOrderCount = residual.length
+      state.lifecycle.push({
+        stage: 'OPEN_ORDER_VERIFICATION',
+        observedAt: result.evidence.observedAt,
+        status: residual.length,
+        requestBinding: hashIdentity(result.evidence.requestId),
+        contentHash: result.evidence.contentHash,
+      })
+      return residual.length === 0
+        ? Effect.succeed(undefined)
+        : Effect.fail(proofFailure('CLEANUP', 'RESIDUAL_OPEN_ORDER'))
+    }),
+  )
+
+const cleanupOrder = (
+  session: BrokerSessionShape,
+  mutation: BrokerMutationShape,
+  clientOrderId: string,
+  state: ProofState,
+): Effect.Effect<void, BrokerReadError | BrokerMutationError | SandboxContractProofError> => {
+  const orderById = mutation.orderById
+  const orderByClientId = mutation.orderByClientId
+  if (orderById === undefined || orderByClientId === undefined) {
+    return Effect.fail(proofFailure('CLEANUP', 'RECOVERY_LOOKUP_UNAVAILABLE'))
+  }
+
+  return Effect.gen(function* () {
+    let brokerOrderId = state.brokerOrderId
+    let observed: ReadResult<Order> | undefined
+
+    if (brokerOrderId === undefined) {
+      const lookup = yield* retryRead(orderByClientId(clientOrderId), true).pipe(
+        Effect.map((result) => ({ _tag: 'Found' as const, result })),
+        Effect.catch((error) => Effect.succeed({ _tag: 'Failed' as const, error })),
+      )
+      if (lookup._tag === 'Failed') {
+        if (lookup.error.kind === BrokerReadErrorKind.NotFound && state.submitOutcome === 'REJECTED') {
+          yield* verifyNoOpenProofOrder(session, clientOrderId, state)
+          state.cleanup.result = 'CONFIRMED_NOT_CREATED'
+          state.cleanup.verifiedAt = yield* currentUtcInstant
+          return
+        }
+        if (lookup.error.kind === BrokerReadErrorKind.NotFound) {
+          return yield* Effect.fail(proofFailure('CLEANUP', 'UNKNOWN_SUBMIT_NOT_RESOLVED'))
+        }
+        return yield* Effect.fail(lookup.error)
+      }
+      observed = lookup.result
+      brokerOrderId = lookup.result.value.brokerOrderId
+      state.brokerOrderId = brokerOrderId
+      state.lifecycle.push(readEvidence('CLEANUP_LOOKUP_BY_CLIENT_ID', lookup.result))
+    }
+
+    if (observed === undefined) observed = yield* retryRead(orderById(brokerOrderId))
+    yield* requireOrderBinding(observed.value, clientOrderId, brokerOrderId, 'CLEANUP')
+    yield* cancelIfOpen(mutation, observed.value, state)
+    const terminal = yield* waitForTerminalOrder(orderById, brokerOrderId, clientOrderId, state)
+    yield* verifyNoOpenProofOrder(session, clientOrderId, state)
+    state.finalStatus = terminal.value.status
+    state.cleanup.result = 'VERIFIED_TERMINAL'
+    state.cleanup.verifiedAt = yield* currentUtcInstant
+  }).pipe(
+    Effect.tapError((error) =>
+      Effect.sync(() => {
+        state.cleanup.result = 'FAILED'
+        state.cleanupFailure = sanitizeFailure('CLEANUP', error)
+      }),
+    ),
+  )
+}
 
 test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the production adapter', async () => {
   const expectedAccountId = required('BAYN_ALPACA_ACCOUNT_ID')
   const key = required('BAYN_ALPACA_KEY_ID')
   const secret = required('BAYN_ALPACA_SECRET_KEY')
   const configuredOrigin = required('BAYN_ALPACA_BASE_URL')
+  const sourceSha = required('GITHUB_SHA')
+  const runId = required('GITHUB_RUN_ID')
+  const runAttempt = required('GITHUB_RUN_ATTEMPT')
+  const imageIdentity = required('BAYN_ALPACA_SANDBOX_IMAGE_IDENTITY')
+  const imageTag = required('BAYN_ALPACA_SANDBOX_IMAGE_TAG')
+  const imageBuildRunId = required('BAYN_ALPACA_SANDBOX_IMAGE_BUILD_RUN_ID')
 
-  expect(configuredOrigin).toBe(alpacaSandboxBaseUrl)
-  expect(configuredOrigin).not.toBe(alpacaLiveBaseUrl)
+  if (configuredOrigin !== alpacaSandboxBaseUrl) throw new Error('sandbox endpoint guard failed')
+  if (!/^[0-9a-f]{40}$/.test(sourceSha)) throw new Error('GITHUB_SHA must be an exact lowercase commit SHA')
+  if (!/^[0-9]+$/.test(imageBuildRunId)) throw new Error('image build run ID must be numeric')
+  if (!/^registry\.ide-newton\.ts\.net\/lab\/bayn@sha256:[0-9a-f]{64}$/.test(imageIdentity)) {
+    throw new Error('image identity must be the verified Bayn multi-architecture digest reference')
+  }
+  if (imageTag !== `registry.ide-newton.ts.net/lab/bayn:sha-${sourceSha}`) {
+    throw new Error('image tag is not bound to the exact proof source SHA')
+  }
+  if (receiptPath === undefined || receiptPath !== '/tmp/alpaca-sandbox-contract-receipt.json') {
+    throw new Error('BAYN_ALPACA_SANDBOX_RECEIPT_PATH must use the protected temporary receipt path')
+  }
 
   const decoded = decodeBrokerConnection({
     provider: BrokerProvider.Alpaca,
@@ -51,33 +394,21 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
     expectedAccountId,
     key: Redacted.make(key),
     secret: Redacted.make(secret),
-    // The credentialed CI proof supplies a direct Node client. This value remains
-    // validated because it is part of the same production BrokerConnection.
     proxyUrl: 'http://127.0.0.1:1',
     operationTimeoutMs: 30_000,
     retryAttempts: 0,
   })
-  if (Result.isFailure(decoded)) throw new Error(`sandbox connection rejected: ${decoded.failure._tag}`)
+  if (Result.isFailure(decoded)) throw new Error('sandbox broker connection guard rejected the protected binding')
   const connection = decoded.success
   const run = <A, E>(effect: Effect.Effect<A, E, HttpClient.HttpClient>) =>
-    Effect.runPromise(effect.pipe(Effect.provide(NodeHttpClient.layerNodeHttp)))
+    Effect.runPromise(
+      effect.pipe(
+        Effect.provideService(References.MinimumLogLevel, 'None'),
+        Effect.provide(NodeHttpClient.layerNodeHttp),
+      ),
+    )
 
-  // Acquisition performs the real account/configuration/read preflight before
-  // mutation capability can exist. Account identifiers never enter the receipt.
-  const session = await run(acquireBrokerSession(connection))
-  expect(session.preflight.accountId).toBe(expectedAccountId)
-  expect(session.preflight.environment).toBe(BrokerEnvironment.Sandbox)
-  expect(session.preflight.baseUrl).toBe(alpacaSandboxBaseUrl)
-
-  const authority = makeExecutionAuthority(
-    BrokerEnvironment.Sandbox,
-    ExecutionAccess.SubmitOrders,
-    disabledCapitalAccess,
-  )
-  const mutation = await run(makeMutation(session, authority))
-  const runId = required('GITHUB_RUN_ID')
-  const runAttempt = required('GITHUB_RUN_ATTEMPT')
-  const identity = canonicalHashV1({ runId, runAttempt, head: required('GITHUB_SHA') })
+  const identity = canonicalHashV1({ runId, runAttempt, sourceSha, imageIdentity })
   const clientOrderId = `b1_${identity.slice(0, 43)}`
   const intent: Intent = {
     schemaVersion: 'bayn.paper-intent.v3',
@@ -90,111 +421,177 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
     policyHash: canonicalHashV1({ identity, kind: 'policy' }),
     accountId: expectedAccountId,
     clientOrderId,
-    symbol: 'AAPL',
+    symbol: proofSymbol,
     side: OrderSide.Buy,
     orderType: OrderType.Market,
     timeInForce: TimeInForce.Day,
-    quantityMicros: '1',
-    notionalLimitMicros: '1000000',
+    quantityMicros: proofQuantityMicros,
+    notionalLimitMicros: '5000000',
     state: IntentState.IoStarted,
-    createdAt: new Date().toISOString(),
+    createdAt: await run(currentUtcInstant),
+  }
+  const state: ProofState = {
+    submitOutcome: 'NOT_ATTEMPTED',
+    cancelAttempts: 0,
+    cancelAcknowledged: false,
+    lifecycle: [],
+    cleanup: { result: 'NOT_RUN' },
   }
 
-  let brokerOrderId: string | undefined
-  let submitStatus: OrderStatus | undefined
-  let cancelStatus: OrderStatus | undefined
-  let cleanupStatus = 'not-required'
-  let submitEvidence: { readonly status: number; readonly request: string; readonly content: string } | undefined
-  let cancelEvidence: { readonly status: number; readonly request: string; readonly content: string } | undefined
+  const proof = Effect.gen(function* () {
+    state.startedAt = yield* currentUtcInstant
+    const session = yield* acquireBrokerSession(connection)
+    if (
+      session.preflight.accountId !== expectedAccountId ||
+      session.preflight.environment !== BrokerEnvironment.Sandbox ||
+      session.preflight.baseUrl !== alpacaSandboxBaseUrl
+    ) {
+      return yield* Effect.fail(proofFailure('SESSION_PREFLIGHT', 'VERIFIED_SESSION_BINDING_MISMATCH'))
+    }
+    state.preflightCompletedAt = yield* currentUtcInstant
 
-  try {
-    const submit = await run(mutation.submit(intent))
-    brokerOrderId = submit.order.brokerOrderId
-    submitEvidence = {
-      status: submit.evidence.status,
-      request: redact(submit.evidence.requestId),
-      content: submit.evidence.contentHash,
+    const today = yield* currentUtcDate
+    const clockObservedAt = yield* currentUtcInstant
+    const calendar = yield* session.read.marketCalendar({ start: today, end: today })
+    const marketOpen = calendar.value.sessions.some(
+      (marketSession) => clockObservedAt >= marketSession.openAt && clockObservedAt < marketSession.closeAt,
+    )
+    if (marketOpen) return yield* Effect.fail(proofFailure('CLOCK_PREFLIGHT', 'REGULAR_MARKET_IS_OPEN'))
+    state.clock = {
+      observedAt: clockObservedAt,
+      marketOpen: false,
+      sessionCount: calendar.value.sessions.length,
+      calendarHash: calendar.value.normalizedResponseHash,
     }
 
-    // Model the interruption window by discarding the acknowledged outcome and
-    // recovering solely from the deterministic client ID. No second POST occurs.
-    const recoveredSubmit = await run(mutation.orderByClientId!(clientOrderId))
-    expect(recoveredSubmit.value.brokerOrderId).toBe(brokerOrderId)
-    expect(recoveredSubmit.value.clientOrderId).toBe(clientOrderId)
-    expect(recoveredSubmit.value.quantityMicros).toBe('1')
-    submitStatus = recoveredSubmit.value.status
-
-    try {
-      const cancel = await run(mutation.cancel(brokerOrderId))
-      cancelEvidence = {
-        status: cancel.evidence.status,
-        request: redact(cancel.evidence.requestId),
-        content: cancel.evidence.contentHash,
-      }
-    } catch (cause) {
-      if (!(cause instanceof BrokerMutationError) || cause.failure !== MutationFailure.Unknown) throw cause
+    const asset = yield* session.read.assetBySymbol(proofSymbol)
+    if (asset.value.status !== AssetStatus.Active || !asset.value.tradable || !asset.value.fractionable) {
+      return yield* Effect.fail(proofFailure('ASSET_PREFLIGHT', 'PROOF_ASSET_NOT_SAFE'))
+    }
+    state.asset = {
+      status: AssetStatus.Active,
+      tradable: true,
+      fractionable: true,
+      observationHash: asset.value.normalizedResponseHash,
     }
 
-    // Both a lost 204 and an ambiguous DELETE are recovered by the same GET path.
-    const recoveredCancel = await run(mutation.orderById!(brokerOrderId))
-    expect(recoveredCancel.value.brokerOrderId).toBe(brokerOrderId)
-    cancelStatus = recoveredCancel.value.status
-    expect([OrderStatus.Canceled, OrderStatus.Filled, OrderStatus.PendingCancel]).toContain(cancelStatus)
-
-    const fills = await run(session.read.fillActivities({ pageSize: 100 }))
-    const matchingFills = fills.value.items.filter((fill) => fill.brokerOrderId === brokerOrderId)
-    for (const fill of matchingFills) expect(fill.brokerOrderId).toBe(brokerOrderId)
-  } finally {
-    if (brokerOrderId === undefined) {
-      try {
-        const recovered = await run(mutation.orderByClientId!(clientOrderId))
-        brokerOrderId = recovered.value.brokerOrderId
-        cleanupStatus = 'recovered-after-submit-failure'
-      } catch {
-        cleanupStatus = 'no-order-found-after-submit-failure'
-      }
+    const authority = makeExecutionAuthority(
+      BrokerEnvironment.Sandbox,
+      ExecutionAccess.SubmitOrders,
+      disabledCapitalAccess,
+    )
+    const mutation = yield* makeMutation(session, authority)
+    const orderByClientId = mutation.orderByClientId
+    if (orderByClientId === undefined) {
+      return yield* Effect.fail(proofFailure('CONFIGURATION', 'CLIENT_ORDER_LOOKUP_UNAVAILABLE'))
     }
-    if (brokerOrderId !== undefined) {
-      try {
-        await run(mutation.cancel(brokerOrderId))
-        cleanupStatus = 'cancel-acknowledged'
-      } catch {
-        const observed = await run(mutation.orderById!(brokerOrderId))
-        cleanupStatus = `idempotent-${observed.value.status.toLowerCase()}`
-      }
-    }
-  }
 
-  const receipt = {
-    schemaVersion: 'bayn.alpaca-sandbox-contract-receipt.v1',
-    head: required('GITHUB_SHA'),
+    return yield* Effect.acquireUseRelease(
+      Effect.succeed(undefined),
+      () =>
+        Effect.gen(function* () {
+          const submit = yield* mutation.submit(intent).pipe(
+            Effect.tapError((error) =>
+              Effect.sync(() => {
+                state.submitOutcome = error.failure === MutationFailure.Rejected ? 'REJECTED' : 'UNKNOWN'
+              }),
+            ),
+          )
+          state.submitOutcome = 'ACKNOWLEDGED'
+          state.brokerOrderId = submit.order.brokerOrderId
+          state.lifecycle.push(mutationEvidence('SUBMIT', submit.evidence))
+
+          const recoveredSubmit = yield* retryRead(orderByClientId(clientOrderId), true)
+          yield* requireOrderBinding(
+            recoveredSubmit.value,
+            clientOrderId,
+            submit.order.brokerOrderId,
+            'LOOKUP_BY_CLIENT_ID',
+          )
+          if (recoveredSubmit.value.quantityMicros !== proofQuantityMicros) {
+            return yield* Effect.fail(proofFailure('LOOKUP_BY_CLIENT_ID', 'ORDER_QUANTITY_MISMATCH'))
+          }
+          state.lifecycle.push(readEvidence('LOOKUP_BY_CLIENT_ID', recoveredSubmit))
+          yield* cancelIfOpen(mutation, recoveredSubmit.value, state)
+        }),
+      () => cleanupOrder(session, mutation, clientOrderId, state),
+    )
+  }).pipe(
+    Effect.tapError((error) =>
+      Effect.sync(() => {
+        if (state.failure === undefined) state.failure = sanitizeFailure(failureStage(error), error)
+      }),
+    ),
+  )
+
+  const proofExit = await run(Effect.exit(proof))
+  state.completedAt = await run(currentUtcInstant)
+  const receiptBody = {
+    schemaVersion: 'bayn.alpaca-sandbox-contract-receipt.v2',
+    proofStatus: Exit.isSuccess(proofExit) ? 'SUCCESS' : 'FAILURE',
+    sourceSha,
+    repository: required('GITHUB_REPOSITORY'),
+    workflow: {
+      runId,
+      runAttempt,
+    },
+    image: {
+      buildRunId: imageBuildRunId,
+      tag: imageTag,
+      identity: imageIdentity,
+    },
+    timestamps: {
+      startedAt: state.startedAt,
+      preflightCompletedAt: state.preflightCompletedAt,
+      completedAt: state.completedAt,
+    },
+    endpointClass: 'ALPACA_PAPER',
     endpoint: alpacaSandboxBaseUrl,
-    accountBinding: redact(session.preflight.accountHash),
+    accountIdentityHash: hashIdentity(expectedAccountId),
+    credentialBindingHash: canonicalHashV1({
+      identity,
+      endpoint: configuredOrigin,
+      accountId: expectedAccountId,
+      key,
+      secret,
+    }),
     preflight: {
-      accountStatus: session.preflight.accountStatus,
-      accountBlocked: session.preflight.accountBlocked,
-      tradingBlocked: session.preflight.tradingBlocked,
-      readLookups: [session.preflight.orderById, session.preflight.orderByClientId],
+      accountStatus: state.preflightCompletedAt === undefined ? undefined : 'ACTIVE',
+      paperEnvironment: true,
+      liveCapitalAccess: false,
+      clock: state.clock,
+      asset: state.asset,
     },
     order: {
-      clientOrderBinding: redact(clientOrderId),
-      brokerOrderBinding: brokerOrderId === undefined ? undefined : redact(brokerOrderId),
-      quantityMicros: '1',
-      submitStatus,
-      cancelStatus,
+      clientOrderId,
+      brokerOrderIdentityHash: state.brokerOrderId === undefined ? undefined : hashIdentity(state.brokerOrderId),
+      symbol: proofSymbol,
+      quantityMicros: proofQuantityMicros,
+      submitOutcome: state.submitOutcome,
+      finalStatus: state.finalStatus,
     },
-    evidence: { submit: submitEvidence, cancel: cancelEvidence },
-    cleanup: cleanupStatus,
+    orderLifecycle: state.lifecycle,
+    cleanup: {
+      ...state.cleanup,
+      cancelAttempts: state.cancelAttempts,
+      cancelAcknowledged: state.cancelAcknowledged,
+    },
     duplicateSubmitCount: 0,
     liveEndpointUsed: false,
-    residualOmissions: [
-      'Alpaca cannot deterministically inject a lost POST or DELETE response; real acknowledgement-loss recovery is represented by discarding the acknowledgement before production GET recovery.',
-      'A fill is decoded and reconciled only if the minimum fractional market order fills before cancellation.',
-    ],
+    failure: state.failure,
+    cleanupFailure: state.cleanupFailure,
   }
-  expect(JSON.stringify(receipt)).not.toContain(expectedAccountId)
-  expect(JSON.stringify(receipt)).not.toContain(key)
-  expect(JSON.stringify(receipt)).not.toContain(secret)
-  if (receiptPath === undefined) throw new Error('BAYN_ALPACA_SANDBOX_RECEIPT_PATH is required')
-  await Bun.write(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`)
+  const receipt = { ...receiptBody, receiptHash: canonicalHashV1(receiptBody) }
+  const serialized = `${JSON.stringify(receipt, null, 2)}\n`
+  if ([expectedAccountId, key, secret].some((sensitive) => serialized.includes(sensitive))) {
+    throw new Error('sanitized receipt secret-leak guard failed')
+  }
+  await Bun.write(receiptPath, serialized)
+
+  if (Exit.isFailure(proofExit)) {
+    throw new Error('Alpaca sandbox contract proof failed; inspect the sanitized receipt artifact')
+  }
+  if (state.cleanup.result !== 'VERIFIED_TERMINAL' || state.cleanup.residualOpenOrderCount !== 0) {
+    throw new Error('Alpaca sandbox cleanup was not proven terminal and residual-free')
+  }
 })

@@ -11,10 +11,14 @@ on:
         description: Exact commit SHA approved for the protected Alpaca sandbox proof
         required: true
         type: string
+      image_build_run_id:
+        description: Successful exact-head bayn-build-push workflow_dispatch run containing bayn-release-contract
+        required: true
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
@@ -280,9 +284,10 @@ jobs:
   alpaca-sandbox-contract-proof:
     if: github.event_name == 'workflow_dispatch' && github.sha == inputs.exact_head_sha
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     environment: bayn-alpaca-sandbox
     permissions:
+      actions: read
       contents: read
     env:
       BAYN_ALPACA_SANDBOX_CONTRACT: '1'
@@ -290,7 +295,9 @@ jobs:
       BAYN_ALPACA_ACCOUNT_ID: ${{ secrets.BAYN_ALPACA_SANDBOX_ACCOUNT_ID }}
       BAYN_ALPACA_KEY_ID: ${{ secrets.BAYN_ALPACA_SANDBOX_KEY_ID }}
       BAYN_ALPACA_SECRET_KEY: ${{ secrets.BAYN_ALPACA_SANDBOX_SECRET_KEY }}
+      BAYN_ALPACA_SANDBOX_IMAGE_BUILD_RUN_ID: ${{ inputs.image_build_run_id }}
       BAYN_ALPACA_SANDBOX_RECEIPT_PATH: /tmp/alpaca-sandbox-contract-receipt.json
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -298,6 +305,102 @@ jobs:
           persist-credentials: false
       - name: Verify exact checked-out head
         run: test "$(git rev-parse HEAD)" = "${{ inputs.exact_head_sha }}"
+      - name: Fail closed on protected credential binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+
+          jq -n \
+            --arg sourceSha "${GITHUB_SHA}" \
+            --arg imageBuildRunId "${BAYN_ALPACA_SANDBOX_IMAGE_BUILD_RUN_ID}" \
+            --arg startedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{
+              schemaVersion: "bayn.alpaca-sandbox-contract-receipt.v2",
+              proofStatus: "GUARD_PENDING",
+              sourceSha: $sourceSha,
+              image: { buildRunId: $imageBuildRunId },
+              timestamps: { startedAt: $startedAt },
+              endpointClass: "ALPACA_PAPER"
+            }' > "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}"
+
+          [[ "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${GITHUB_SHA}" == "${{ inputs.exact_head_sha }}" ]]
+          [[ "${BAYN_ALPACA_BASE_URL}" == 'https://paper-api.alpaca.markets' ]]
+          [[ "${BAYN_ALPACA_SANDBOX_CONTRACT}" == '1' ]]
+          [[ "${BAYN_ALPACA_SANDBOX_IMAGE_BUILD_RUN_ID}" =~ ^[0-9]+$ ]]
+
+          required_secrets=(
+            BAYN_ALPACA_ACCOUNT_ID
+            BAYN_ALPACA_KEY_ID
+            BAYN_ALPACA_SECRET_KEY
+          )
+          for name in "${required_secrets[@]}"; do
+            value="${!name:-}"
+            if [[ -z "${value}" || "${value}" != "${value//[$'\t\r\n ']/}" ]]; then
+              echo "::error title=Missing protected Alpaca binding::${name} is absent or malformed in environment bayn-alpaca-sandbox." >&2
+              exit 2
+            fi
+          done
+          [[ "${BAYN_ALPACA_ACCOUNT_ID}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          [[ "${BAYN_ALPACA_ACCOUNT_ID}" != "${BAYN_ALPACA_KEY_ID}" ]]
+          [[ "${BAYN_ALPACA_KEY_ID}" != "${BAYN_ALPACA_SECRET_KEY}" ]]
+      - name: Bind the proof to the exact multi-architecture image
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+
+          image_run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BAYN_ALPACA_SANDBOX_IMAGE_BUILD_RUN_ID}")"
+          jq -e \
+            --arg sourceSha "${GITHUB_SHA}" '
+            .name == "bayn-build-push"
+            and .path == ".github/workflows/bayn-build-push.yml"
+            and .event == "workflow_dispatch"
+            and .head_sha == $sourceSha
+            and .status == "completed"
+            and .conclusion == "success"
+          ' <<<"${image_run_json}" >/dev/null
+
+          image_contract_dir="$(mktemp -d "${RUNNER_TEMP}/bayn-image-contract.XXXXXXXX")"
+          gh run download "${BAYN_ALPACA_SANDBOX_IMAGE_BUILD_RUN_ID}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name bayn-release-contract \
+            --dir "${image_contract_dir}"
+          image_contract="${image_contract_dir}/release-contract.json"
+          test -f "${image_contract}"
+          jq -e \
+            --arg sourceSha "${GITHUB_SHA}" '
+            .service == "bayn"
+            and .image == "registry.ide-newton.ts.net/lab/bayn"
+            and .tag == ("sha-" + $sourceSha)
+            and .sourceSha == $sourceSha
+            and .packageAttr == "bayn-image"
+            and .builder == "nix-dockerTools-skopeo"
+            and .invocation == "github-actions"
+            and (.digest | test("^sha256:[0-9a-f]{64}$"))
+            and .reference == (.image + "@" + .digest)
+            and ((.platforms | sort) == ["linux/amd64", "linux/arm64"])
+            and (.platformDigests["linux/amd64"] | test("^sha256:[0-9a-f]{64}$"))
+            and (.platformDigests["linux/arm64"] | test("^sha256:[0-9a-f]{64}$"))
+          ' "${image_contract}" >/dev/null
+
+          image_identity="$(jq -r '.reference' "${image_contract}")"
+          image_tag="$(jq -r '.image + ":" + .tag' "${image_contract}")"
+          printf 'BAYN_ALPACA_SANDBOX_IMAGE_IDENTITY=%s\n' "${image_identity}" >> "${GITHUB_ENV}"
+          printf 'BAYN_ALPACA_SANDBOX_IMAGE_TAG=%s\n' "${image_tag}" >> "${GITHUB_ENV}"
+
+          receipt_tmp="${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}.tmp"
+          jq \
+            --arg imageIdentity "${image_identity}" \
+            --arg imageTag "${image_tag}" '
+            .proofStatus = "GUARD_READY"
+            | .image.identity = $imageIdentity
+            | .image.tag = $imageTag
+          ' "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}" > "${receipt_tmp}"
+          mv "${receipt_tmp}" "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
@@ -309,6 +412,7 @@ jobs:
       - name: Execute bounded real Alpaca sandbox proof
         run: bun run --cwd services/bayn test:broker-sandbox-real
       - name: Upload redacted exact-head contract receipt
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: alpaca-sandbox-contract-${{ inputs.exact_head_sha }}
