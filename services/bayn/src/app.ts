@@ -3,15 +3,15 @@ import { HttpServer } from 'effect/unstable/http'
 
 import type { LoadedRuntimeConfig, RuntimeConfig } from './config'
 import type { CausalProtocol } from './protocol'
-import { CycleObservability, type CycleObservabilityShape } from './db/cycle-observability'
-import { EvidenceStore, type EvidenceStoreService } from './db/evidence-store'
+import type { CycleObservabilityShape } from './db/cycle-observability'
+import type { EvidenceStoreService } from './db/evidence-store'
 import { operationalError, type OperationalError } from './errors'
-import { monitorWithDependencies, type BrokerProbe, type HealthDependencies } from './health'
+import { runHealthMonitor, type BrokerProbe, type HealthDependencies } from './health'
 import { serveHttp } from './http'
-import { Journal, type JournalService } from './ledger'
-import { MarketData, type MarketDataService } from './market-data'
+import type { JournalService } from './ledger'
+import type { MarketDataService } from './market-data'
 import { initialState, type AutonomousCyclePassObservation, type RuntimeState } from './runtime-state'
-import { initializeWithDependencies, type StartupDependencies } from './startup'
+import { runStartup, type StartupDependencies } from './startup'
 import type { Strategy } from './strategy'
 import { utcInstantFromEpochMillis } from './time'
 
@@ -80,7 +80,7 @@ export interface ApplicationDependencies extends StartupDependencies, HealthDepe
   readonly cycleObservability: CycleObservabilityShape
 }
 
-type ApplicationRuntime<StartupR, LoopR> =
+export type ApplicationRuntime<StartupR, LoopR> =
   | { readonly _tag: 'Brokerless' }
   | {
       readonly _tag: 'AutonomousObserve'
@@ -188,7 +188,7 @@ const startAutonomousCycle = <StartupR, LoopR>(
         ),
       )
 
-const runApplicationWithDependencies = <StartupR, LoopR>(
+export const runApplication = <StartupR, LoopR>(
   config: RuntimeConfig,
   strategy: Strategy,
   dependencies: ApplicationDependencies,
@@ -200,72 +200,14 @@ const runApplicationWithDependencies = <StartupR, LoopR>(
     Effect.tap(({ state }) =>
       serveHttp(config, state, strategy.provenance, config.build.verification, dependencies.evidenceStore.read),
     ),
-    Effect.tap(({ state }) => initializeWithDependencies(config, state, strategy, dependencies)),
+    Effect.tap(({ state }) => runStartup(config, state, strategy, dependencies)),
     Effect.bind('autonomousCycleFiber', ({ state }) => startAutonomousCycle(runtime, state)),
     Effect.tap(({ autonomousCycleFiber, state }) =>
       pipe(
-        monitorWithDependencies(config, state, dependencies, brokerProbe(runtime), autonomousCycleFiber),
+        runHealthMonitor(config, state, dependencies, brokerProbe(runtime), autonomousCycleFiber),
         Effect.forkScoped({ startImmediately: true }),
       ),
     ),
     Effect.andThen(Effect.never),
     Effect.scoped,
   )
-
-const loadApplicationDependencies: Effect.Effect<
-  ApplicationDependencies,
-  never,
-  MarketData | Journal | EvidenceStore | CycleObservability
-> = Effect.all({
-  marketData: MarketData,
-  journal: Journal,
-  evidenceStore: EvidenceStore,
-  cycleObservability: CycleObservability,
-})
-
-export const brokerlessApplicationWithDependencies = (
-  config: BrokerlessApplicationConfig,
-  strategy: Strategy,
-  dependencies: ApplicationDependencies,
-): Effect.Effect<never, OperationalError, HttpServer.HttpServer> =>
-  runApplicationWithDependencies(config, strategy, dependencies, { _tag: 'Brokerless' })
-
-export const autonomousObserveApplicationWithDependencies = <StartupR, LoopR>(
-  config: AutonomousObserveApplicationConfig,
-  strategy: Strategy,
-  dependencies: ApplicationDependencies,
-  broker: BrokerProbe,
-  startCycle: AutonomousCycleStartup<StartupR, LoopR>,
-): Effect.Effect<never, OperationalError, HttpServer.HttpServer | StartupR | LoopR> =>
-  runApplicationWithDependencies(config, strategy, dependencies, { _tag: 'AutonomousObserve', broker, startCycle })
-
-export const brokerlessApplication = (
-  config: BrokerlessApplicationConfig,
-  strategy: Strategy,
-): Effect.Effect<
-  never,
-  OperationalError,
-  HttpServer.HttpServer | MarketData | Journal | EvidenceStore | CycleObservability
-> =>
-  loadApplicationDependencies.pipe(
-    Effect.flatMap((dependencies) => brokerlessApplicationWithDependencies(config, strategy, dependencies)),
-  )
-
-export const autonomousObserveApplication = <StartupR, LoopR>(
-  config: AutonomousObserveApplicationConfig,
-  strategy: Strategy,
-  broker: BrokerProbe,
-  startCycle: AutonomousCycleStartup<StartupR, LoopR>,
-): Effect.Effect<
-  never,
-  OperationalError,
-  HttpServer.HttpServer | MarketData | Journal | EvidenceStore | CycleObservability | StartupR | LoopR
-> =>
-  loadApplicationDependencies.pipe(
-    Effect.flatMap((dependencies) =>
-      autonomousObserveApplicationWithDependencies(config, strategy, dependencies, broker, startCycle),
-    ),
-  )
-
-export { monitor, monitorWithDependencies, probe, probeWithDependencies } from './health'
-export { initialize, initializeWithDependencies } from './startup'

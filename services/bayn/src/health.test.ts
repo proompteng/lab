@@ -4,7 +4,6 @@ import { Deferred, Effect, Fiber, Ref, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { config, fixtureLock, successfulJournal, readyState, recoveringStore } from './app-test-support'
-import { monitor, probe } from './app'
 import { AccountStatus, type BrokerReadShape, type ReadResult, type Account } from './broker/alpaca'
 import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
 import { CycleOperationsCondition, CycleOperationsReason, type CycleOperationsProjection } from './cycle-observability'
@@ -14,6 +13,8 @@ import { EvidenceStore } from './db/evidence-store'
 import {
   deriveHealthLogDecisions,
   deriveHealthTransition,
+  checkHealth,
+  runHealthMonitor,
   type BrokerProbe,
   ensureDurableEvidence,
   ensureSignalIdentity,
@@ -26,6 +27,33 @@ import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
 import { initialState, type RuntimeState } from './runtime-state'
 import { makeSnapshot } from './test-fixtures'
+
+const testHealthDependencies = Effect.all({
+  marketData: MarketData,
+  journal: Journal,
+  evidenceStore: EvidenceStore,
+  cycleObservability: CycleObservability,
+})
+
+const probe = (
+  runtimeConfig: typeof config,
+  state: Ref.Ref<RuntimeState>,
+  broker?: BrokerProbe,
+  cycleFiber?: Fiber.Fiber<void, never>,
+) =>
+  testHealthDependencies.pipe(
+    Effect.flatMap((dependencies) => checkHealth(runtimeConfig, state, dependencies, broker, cycleFiber)),
+  )
+
+const monitor = (
+  runtimeConfig: typeof config,
+  state: Ref.Ref<RuntimeState>,
+  broker?: BrokerProbe,
+  cycleFiber?: Fiber.Fiber<void, never>,
+) =>
+  testHealthDependencies.pipe(
+    Effect.flatMap((dependencies) => runHealthMonitor(runtimeConfig, state, dependencies, broker, cycleFiber)),
+  )
 
 const brokerAccountId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const availableClock = (checkedAt: string) =>

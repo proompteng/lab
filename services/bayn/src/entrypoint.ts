@@ -3,9 +3,8 @@ import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Effect, flow, Layer, Match, pipe, Redacted, Result, Schema, Stdio, Stream } from 'effect'
 
 import {
-  autonomousObserveApplicationWithDependencies,
-  brokerlessApplicationWithDependencies,
   makeApplicationPlan,
+  runApplication,
   type ApplicationDependencies,
   type ApplicationIdentity,
   type ApplicationPlan,
@@ -269,7 +268,9 @@ const applicationDependencies: Effect.Effect<
 
 const runBrokerlessService = (plan: ApplicationPlanFor<'BrokerlessService'>) =>
   applicationDependencies.pipe(
-    Effect.flatMap((dependencies) => brokerlessApplicationWithDependencies(plan.config, plan.strategy, dependencies)),
+    Effect.flatMap((dependencies) =>
+      runApplication<never, never>(plan.config, plan.strategy, dependencies, { _tag: 'Brokerless' }),
+    ),
   )
 
 const observeBroker = (plan: ApplicationPlanFor<'AutonomousObserveService'>, read: BrokerReadShape) => ({
@@ -291,13 +292,11 @@ const observeCycle = (plan: ApplicationPlanFor<'AutonomousObserveService'>) =>
 const runAutonomousObserveService = (plan: ApplicationPlanFor<'AutonomousObserveService'>) =>
   Effect.all({ dependencies: applicationDependencies, session: BrokerSession }).pipe(
     Effect.flatMap(({ dependencies, session }) =>
-      autonomousObserveApplicationWithDependencies(
-        plan.config,
-        plan.strategy,
-        dependencies,
-        observeBroker(plan, session.read),
-        observeCycle(plan),
-      ),
+      runApplication(plan.config, plan.strategy, dependencies, {
+        _tag: 'AutonomousObserve',
+        broker: observeBroker(plan, session.read),
+        startCycle: observeCycle(plan),
+      }),
     ),
   )
 
