@@ -368,6 +368,31 @@ describe('ledger plan Result algebra', () => {
     })
   })
 
+  test('rejects noncanonical event shapes without invoking accessors or collapsing distinct material', () => {
+    const result = evaluationResult()
+    const fill = firstFill(result, 'buy')
+    let accessorReads = 0
+    const accessorFill = Object.defineProperty({ ...fill }, 'notionalMicros', {
+      enumerable: true,
+      get: () => {
+        accessorReads += 1
+        return fill.notionalMicros
+      },
+    }) as FillEvent
+    const symbolFill = { ...fill } as FillEvent & { [key: symbol]: string }
+    symbolFill[Symbol('distinct-material')] = 'present'
+    const classFill = Object.assign(Object.create({ inherited: true }), fill) as FillEvent
+
+    for (const event of [accessorFill, symbolFill, classFill]) {
+      expect(assertLedgerPlanFailure(buildLedgerPlan({ ...result, events: [event] }, ledger))).toMatchObject({
+        kind: 'input-access-failed',
+        eventIndex: 0,
+        eventKind: 'fill',
+      })
+    }
+    expect(accessorReads).toBe(0)
+  })
+
   test('rejects hostile scalar identities before hashing or rendering can coerce them', () => {
     const result = evaluationResult()
     const fill = firstFill(result, 'buy')
