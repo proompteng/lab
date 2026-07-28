@@ -2,7 +2,7 @@ import { Clock, Data, Effect, Match, Result } from 'effect'
 
 import { BrokerMutation, MutationOperation } from '../broker/alpaca-mutations'
 import { BrokerRead, type BrokerReadShape } from '../broker/alpaca'
-import { IntentState, type Intent } from '../paper'
+import { IntentState, type Intent } from './contracts'
 import {
   cancellationIdentity,
   decideCancelFailure,

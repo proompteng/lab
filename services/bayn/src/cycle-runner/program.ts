@@ -1,4 +1,4 @@
-import { Duration, Effect, Option, pipe, Result, Schedule } from 'effect'
+import { Effect, Option, pipe } from 'effect'
 
 import { BrokerRead, type MarketCalendarObservation } from '../broker/alpaca'
 import { CycleState, type AutonomousCycle } from '../cycle'
@@ -17,14 +17,12 @@ import {
   calendarCandidateFailureError,
   calendarQueryFailureError,
   completeCycleAuthoritySelection,
-  cyclePassLogFacts,
   finishRecoveryResult,
   marketCalendarQueryForPublications,
   readinessFailure,
   reduceCycleAuthoritySelection,
   selectCycleCalendarCandidate,
   selectDiscoveredPublications,
-  validateCycleLoopInterval,
   type CycleAcquireMaterial,
   type CycleAuthoritySelection,
   type CycleAuthoritySelectionState,
@@ -33,9 +31,7 @@ import {
 } from './decisions'
 import {
   runnerError,
-  type AutonomousCycleLoopOptions,
   type CycleBindingResult,
-  type CyclePassObservation,
   type CycleRunContext,
   type CycleRunnerError,
   type CycleRunResult,
@@ -462,67 +458,4 @@ export const runAutonomousCyclePass = <R>(
         ),
       ),
     ),
-  )
-
-const logCyclePass = (observation: CyclePassObservation): Effect.Effect<void> => {
-  const facts = cyclePassLogFacts(observation)
-  const log = facts.level === 'INFO' ? Effect.logInfo(facts.message) : Effect.logError(facts.message)
-  return log.pipe(Effect.annotateLogs(facts.annotations))
-}
-
-const runLoopPass = <E, ContextR, DecisionR>(
-  context: Effect.Effect<CycleRunContext<DecisionR>, E, ContextR>,
-): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData | ContextR | DecisionR> =>
-  context.pipe(
-    Effect.mapError((cause) =>
-      runnerError('load-context', 'context', 'autonomous cycle context loading failed', cause),
-    ),
-    Effect.flatMap(runAutonomousCyclePass),
-    Effect.withLogSpan('autonomous-cycle'),
-  )
-
-const observeSuccessfulPass = <E, ContextR, DecisionR>(
-  options: AutonomousCycleLoopOptions<E, ContextR, DecisionR>,
-  result: CycleRunResult,
-): Effect.Effect<void> =>
-  pipe(
-    currentIsoTime,
-    Effect.flatMap((observedAt) => {
-      const observation: CyclePassObservation = { outcome: 'SUCCEEDED', observedAt, result }
-      return pipe(options.observePass(observation), Effect.andThen(logCyclePass(observation)))
-    }),
-  )
-
-const observeFailedPass = <E, ContextR, DecisionR>(
-  options: AutonomousCycleLoopOptions<E, ContextR, DecisionR>,
-  error: CycleRunnerError,
-): Effect.Effect<void> =>
-  pipe(
-    currentIsoTime,
-    Effect.flatMap((observedAt) => {
-      const observation: CyclePassObservation = { outcome: 'FAILED', observedAt, error }
-      return pipe(options.observePass(observation), Effect.andThen(logCyclePass(observation)))
-    }),
-  )
-
-const cycleLoopProgram = <E, ContextR, DecisionR>(
-  options: AutonomousCycleLoopOptions<E, ContextR, DecisionR>,
-): Effect.Effect<void, never, BrokerRead | CycleStore | MarketData | ContextR | DecisionR> =>
-  pipe(
-    runLoopPass(options.context),
-    Effect.flatMap((result) => observeSuccessfulPass(options, result)),
-    Effect.catch((error) => observeFailedPass(options, error)),
-    Effect.repeat(Schedule.spaced(Duration.millis(options.pollIntervalMs))),
-    Effect.asVoid,
-  )
-
-export const makeAutonomousCycleLoop = <E, ContextR, DecisionR>(
-  options: AutonomousCycleLoopOptions<E, ContextR, DecisionR>,
-): Result.Result<
-  Effect.Effect<void, never, BrokerRead | CycleStore | MarketData | ContextR | DecisionR>,
-  CycleRunnerError
-> =>
-  pipe(
-    validateCycleLoopInterval(options.pollIntervalMs),
-    Result.map(() => cycleLoopProgram(options)),
   )

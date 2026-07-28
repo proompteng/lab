@@ -19,6 +19,11 @@ import {
   type ReadResult,
 } from '../broker/alpaca'
 import { canonicalHashV1Result } from '../hash'
+import type {
+  InterruptedStartDecision,
+  RecoveryPersistenceDecision,
+  RecoverySelection,
+} from '../cycle-runner/execution-recovery-model'
 import { IntentState, RiskOutcome, TerminalOutcome, type Intent } from './contracts'
 import { UtcInstantSchema } from '../schemas'
 import { utcInstantFromEpochMillisResult } from '../time'
@@ -111,48 +116,11 @@ export type CancelPersistenceDecision =
       readonly evidence?: MutationEvidence
     }
 
-export type RecoverySelection =
-  | {
-      readonly _tag: 'RecoveryComplete'
-      readonly event: MutationEvent
-    }
-  | {
-      readonly _tag: 'RecoveryRequired'
-      readonly event: MutationEvent
-    }
-
-export type InterruptedStartDecision =
-  | {
-      readonly _tag: 'MarkSubmitUnknown'
-      readonly event: MutationEvent
-      readonly occurredAt: string
-    }
-  | {
-      readonly _tag: 'MarkCancelUnknown'
-      readonly event: MutationEvent
-      readonly brokerOrderId: string
-      readonly occurredAt: string
-    }
-  | {
-      readonly _tag: 'KeepMutation'
-      readonly event: MutationEvent
-    }
-
-export type RecoveryPersistenceDecision =
-  | {
-      readonly _tag: 'RecoveryFound'
-      readonly brokerOrderId: string
-      readonly evidence: MutationEvidence
-      readonly terminalOutcome?: TerminalOutcome
-    }
-  | {
-      readonly _tag: 'RecoveryNotFound'
-      readonly evidence: MutationEvidence
-    }
-  | {
-      readonly _tag: 'RecoveryUnknown'
-      readonly evidence?: MutationEvidence
-    }
+export type {
+  InterruptedStartDecision,
+  RecoveryPersistenceDecision,
+  RecoverySelection,
+} from '../cycle-runner/execution-recovery-model'
 
 interface SubmitReceipt {
   readonly requestHash: string

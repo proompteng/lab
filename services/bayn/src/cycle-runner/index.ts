@@ -18,4 +18,5 @@ export {
   selectDiscoveredPublications,
   selectNextExecutionSession,
 } from './decisions'
-export { discoverAutonomousCyclePass, makeAutonomousCycleLoop, runAutonomousCyclePass } from './program'
+export { makeAutonomousCycleLoop } from './loop'
+export { discoverAutonomousCyclePass, runAutonomousCyclePass } from './program'

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Deferred, Effect, Exit, Fiber, Result } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, HashSet, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -41,6 +41,9 @@ import type { BrokerSnapshot, ReconciliationWriteResult } from './db/reconciliat
 import { WriterFence, type WriterFenceService } from './execution/writer-fence'
 import { ReconciliationError, runOnce } from './reconciler'
 import { reconciledStateHash } from './reconciliation'
+import { decideContainment } from './simulation-reconciliation/broker-containment'
+import { decideFillPage, decideOrderPage, decideStableHistory } from './simulation-reconciliation/broker-history'
+import { decideAccountBaseline } from './simulation-reconciliation/broker-normalization'
 
 const accountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const observedAt = '1970-01-01T00:00:00.000Z'
@@ -250,6 +253,99 @@ const provide = (read: BrokerReadShape, store: TestStore, writerFence = fence) =
     Effect.provideService(AuthorityRestrictionStore, store),
     Effect.provideService(WriterFence, writerFence),
   )
+
+describe('reconciliation pure decisions', () => {
+  test('classifies order and fill pages without effects', () => {
+    const firstOrder = order(0)
+    const orderPageEvidence = evidence('order-page')
+    const orderPage = decideOrderPage(
+      {
+        rows: [],
+        ids: HashSet.empty(),
+        cursor: undefined,
+        previousSubmittedAt: undefined,
+        observedAt: undefined,
+      },
+      500,
+      { value: [firstOrder], evidence: orderPageEvidence },
+    )
+    expect(orderPage).toEqual(
+      Result.succeed({
+        _tag: 'Complete',
+        read: {
+          rows: [{ value: firstOrder, evidence: orderPageEvidence }],
+          observedAt: orderPageEvidence.observedAt,
+        },
+      }),
+    )
+
+    const missingTimestamp = decideOrderPage(
+      {
+        rows: [],
+        ids: HashSet.empty(),
+        cursor: undefined,
+        previousSubmittedAt: undefined,
+        observedAt: undefined,
+      },
+      500,
+      { value: [{ ...firstOrder, submittedAt: undefined }], evidence: orderPageEvidence },
+    )
+    expect(missingTimestamp).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        failure: { _tag: 'Pagination', reason: 'OrderSubmittedAtMissing' },
+      },
+    })
+
+    const firstFill = fill(0, firstOrder)
+    const fillPageEvidence = evidence('fill-page')
+    const fillPage = decideFillPage({ rows: [], ids: HashSet.empty(), cursor: undefined }, 1, {
+      value: { items: [firstFill], nextPageToken: firstFill.activityId },
+      evidence: fillPageEvidence,
+    })
+    expect(fillPage).toEqual(
+      Result.succeed({
+        _tag: 'Continue',
+        state: {
+          rows: [{ value: firstFill, evidence: fillPageEvidence }],
+          ids: HashSet.make(firstFill.activityId),
+          cursor: firstFill.activityId,
+        },
+      }),
+    )
+  })
+
+  test('classifies stable history, missing baselines, and containment without effects', () => {
+    const emptyHistory = {
+      orders: { rows: [], observedAt },
+      fills: [],
+    }
+    expect(decideStableHistory(emptyHistory, emptyHistory)).toEqual(Result.succeed(emptyHistory))
+
+    const changedHistory = {
+      ...emptyHistory,
+      fills: [{ value: fill(0), evidence: evidence('changed-fill') }],
+    }
+    expect(decideStableHistory(emptyHistory, changedHistory)).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        failure: { _tag: 'Snapshot', reason: 'HistoryChanged' },
+      },
+    })
+
+    expect(decideAccountBaseline(true)).toEqual(Result.succeed(undefined))
+    expect(decideAccountBaseline(false)).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        failure: { _tag: 'Snapshot', reason: 'AccountBaselineMissing' },
+      },
+    })
+    expect(decideContainment(Cause.fail(new Error('read failed')))).toEqual({
+      _tag: 'RestrictAuthority',
+      reason: 'reconciliation pass incomplete',
+    })
+  })
+})
 
 describe('paper reconciliation loop', () => {
   test('reads every broker page before persisting and binds fills to their orders', async () => {
