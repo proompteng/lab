@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Effect, Result } from 'effect'
+import { Cause, Deferred, Effect, Fiber, Result } from 'effect'
 
 import {
   AccountStatus,
@@ -288,6 +288,86 @@ describe('final broker mutation authority', () => {
     expect(observed.trace.indexOf('grant')).toBeGreaterThan(observed.trace.indexOf('orders'))
     expect(observed.trace.indexOf('clock')).toBeGreaterThan(observed.trace.indexOf('grant'))
     expect(observed.trace.at(-1)).toBe('submit')
+  })
+
+  test('serializes concurrent live snapshots through broker submission', async () => {
+    const grant = liveGrant({ ...defaultLimits, maxOpenOrders: 1 })
+    const observed = await Effect.runPromise(
+      Effect.gen(function* () {
+        const firstSubmitStarted = yield* Deferred.make<void>()
+        const releaseFirstSubmit = yield* Deferred.make<void>()
+        let openOrders: readonly Order[] = []
+        let snapshotReads = 0
+        let submits = 0
+        const unusedRead = Effect.die(new Error('unused broker read in concurrent mutation authority test'))
+        const brokerRead: BrokerReadShape = {
+          account: Effect.succeed(readResult(account())),
+          accountConfiguration: unusedRead,
+          assetBySymbol: () => unusedRead,
+          positions: Effect.succeed(readResult([])),
+          orders: () =>
+            Effect.sync(() => {
+              snapshotReads += 1
+              return readResult(openOrders)
+            }),
+          orderById: () => unusedRead,
+          orderByClientId: () => unusedRead,
+          fillActivities: () => unusedRead,
+          marketCalendar: () => unusedRead,
+        }
+        const brokerMutation: BrokerMutationShape = {
+          submit: (submittedIntent) =>
+            Effect.gen(function* () {
+              submits += 1
+              if (submits === 1) {
+                yield* Deferred.succeed(firstSubmitStarted, undefined)
+                yield* Deferred.await(releaseFirstSubmit)
+              }
+              const accepted = order({ clientOrderId: submittedIntent.clientOrderId })
+              openOrders = [...openOrders, accepted]
+              return { ...submitReceipt, order: accepted }
+            }),
+          cancel: () => Effect.succeed(cancelReceipt),
+        }
+        const guarded = makeAuthorityGuardedBrokerMutation(
+          mutationAuthority(BrokerEnvironment.Live, liveCapitalAuthority(grant)),
+          {
+            brokerRead,
+            brokerMutation,
+            liveCapitalGrants: { read: () => Effect.succeed(liveCapitalAuthority(grant)) },
+            currentUtcInstant: Effect.succeed(activeAt),
+          },
+        )
+        const first = yield* guarded
+          .submit(intent({ intentId: 'a'.repeat(64), clientOrderId: 'concurrent-live-1' }))
+          .pipe(Effect.exit, Effect.forkChild)
+        yield* Deferred.await(firstSubmitStarted)
+        const second = yield* guarded
+          .submit(intent({ intentId: 'b'.repeat(64), clientOrderId: 'concurrent-live-2' }))
+          .pipe(Effect.exit, Effect.forkChild)
+        yield* Effect.sleep('10 millis')
+        const snapshotReadsWhileFirstBlocked = snapshotReads
+        yield* Deferred.succeed(releaseFirstSubmit, undefined)
+        return {
+          first: yield* Fiber.join(first),
+          second: yield* Fiber.join(second),
+          snapshotReads,
+          snapshotReadsWhileFirstBlocked,
+          submits,
+        }
+      }),
+    )
+
+    expect(observed.snapshotReadsWhileFirstBlocked).toBe(1)
+    expect(observed.snapshotReads).toBe(2)
+    expect(observed.submits).toBe(1)
+    expect([observed.first._tag, observed.second._tag].sort()).toEqual(['Failure', 'Success'])
+    const rejected = observed.first._tag === 'Failure' ? observed.first : observed.second
+    expect(rejected._tag).toBe('Failure')
+    if (rejected._tag === 'Failure') {
+      const failure = rejected.cause.reasons.find(Cause.isFailReason)?.error
+      expect(failure?.cause?.tag).toBe('LiveOpenOrderLimitExceeded')
+    }
   })
 
   test.each([

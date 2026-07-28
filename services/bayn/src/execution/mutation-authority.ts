@@ -1,4 +1,4 @@
-import { Effect, Result } from 'effect'
+import { Effect, Result, Semaphore } from 'effect'
 
 import {
   AccountStatus,
@@ -360,6 +360,7 @@ export const makeAuthorityGuardedBrokerMutation = (
   authority: MutationExecutionAuthority,
   dependencies: MutationAuthorityDependencies,
 ): BrokerMutationShape => {
+  const liveSubmitPermit = Semaphore.makeUnsafe(1)
   const submit = (intent: Intent) => {
     const binding = validateIntentAuthorityBinding(authority, intent)
     if (Result.isFailure(binding)) {
@@ -372,54 +373,56 @@ export const makeAuthorityGuardedBrokerMutation = (
     }
     const liveAuthority = authority
 
-    return Effect.gen(function* () {
-      const snapshot = yield* Effect.all({
-        account: dependencies.brokerRead.account,
-        positions: dependencies.brokerRead.positions,
-        openOrders: dependencies.brokerRead.orders({
-          status: OrderCollection.Open,
-          limit: liveAuthority.capitalAuthority.grant.limits.maxOpenOrders,
-        }),
-      }).pipe(
-        Effect.mapError((cause) =>
-          mutationAuthorizationError('live broker exposure snapshot could not be refreshed', cause),
-        ),
-      )
-      const grantHash = liveAuthority.capitalAuthority.grant.grantHash
-      const persisted = yield* dependencies.liveCapitalGrants.read(grantHash).pipe(
-        Effect.mapError((cause) =>
-          mutationAuthorizationError('live capital grant could not be refreshed before submit', cause),
-        ),
-        Effect.flatMap((grant) =>
-          grant === undefined
-            ? Effect.fail(
-                mutationAuthorizationError('live capital grant is missing before submit', {
-                  _tag: 'LiveCapitalGrantMissing',
-                  grantHash,
-                }),
-              )
-            : Effect.succeed(grant),
-        ),
-      )
-      const observedAt = yield* dependencies.currentUtcInstant
-      const fresh = freshLiveAuthority(liveAuthority, persisted, observedAt)
-      if (Result.isFailure(fresh)) {
-        return yield* Effect.fail(
-          mutationAuthorizationError('live capital grant is no longer valid before submit', fresh.failure),
+    return liveSubmitPermit.withPermit(
+      Effect.gen(function* () {
+        const snapshot = yield* Effect.all({
+          account: dependencies.brokerRead.account,
+          positions: dependencies.brokerRead.positions,
+          openOrders: dependencies.brokerRead.orders({
+            status: OrderCollection.Open,
+            limit: liveAuthority.capitalAuthority.grant.limits.maxOpenOrders,
+          }),
+        }).pipe(
+          Effect.mapError((cause) =>
+            mutationAuthorizationError('live broker exposure snapshot could not be refreshed', cause),
+          ),
         )
-      }
-      const limits = validateLiveCapitalLimits(fresh.success, intent, {
-        account: snapshot.account.value,
-        positions: snapshot.positions.value,
-        openOrders: snapshot.openOrders.value,
-      })
-      if (Result.isFailure(limits)) {
-        return yield* Effect.fail(
-          mutationAuthorizationError('live capital limit rejected the broker submit', limits.failure),
+        const grantHash = liveAuthority.capitalAuthority.grant.grantHash
+        const persisted = yield* dependencies.liveCapitalGrants.read(grantHash).pipe(
+          Effect.mapError((cause) =>
+            mutationAuthorizationError('live capital grant could not be refreshed before submit', cause),
+          ),
+          Effect.flatMap((grant) =>
+            grant === undefined
+              ? Effect.fail(
+                  mutationAuthorizationError('live capital grant is missing before submit', {
+                    _tag: 'LiveCapitalGrantMissing',
+                    grantHash,
+                  }),
+                )
+              : Effect.succeed(grant),
+          ),
         )
-      }
-      return yield* dependencies.brokerMutation.submit(intent)
-    })
+        const observedAt = yield* dependencies.currentUtcInstant
+        const fresh = freshLiveAuthority(liveAuthority, persisted, observedAt)
+        if (Result.isFailure(fresh)) {
+          return yield* Effect.fail(
+            mutationAuthorizationError('live capital grant is no longer valid before submit', fresh.failure),
+          )
+        }
+        const limits = validateLiveCapitalLimits(fresh.success, intent, {
+          account: snapshot.account.value,
+          positions: snapshot.positions.value,
+          openOrders: snapshot.openOrders.value,
+        })
+        if (Result.isFailure(limits)) {
+          return yield* Effect.fail(
+            mutationAuthorizationError('live capital limit rejected the broker submit', limits.failure),
+          )
+        }
+        return yield* dependencies.brokerMutation.submit(intent)
+      }),
+    )
   }
 
   return {
