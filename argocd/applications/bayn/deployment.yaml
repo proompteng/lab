@@ -23,7 +23,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-07-27T00:43:08Z"
+        kubectl.kubernetes.io/restartedAt: "2026-07-28T06:38:06Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -47,19 +47,43 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: 38308da5f55e290eaaf796812fbc9fdc3d529d1a
+              value: "5c3bb55917c9082e8b77dc61ae284cbf74dd9268"
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:cf7d8070ba7a031de204913f4ce037304d82fc2eaf5dd1f296be5bb6aeac2c8a
+              value: "sha256:f1310487798cafd7909266f36a4f94e135f812f310d3fc1220836ea6a6e1c4a8"
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "dc614c54bbf43842d83cd88497e835f7bb25c413eb6e8bd7cbab0a925ec9b2dd"
+              value: "9e87fe0f66048c48da2191ef1fae36ef3ee0eb4ddcd036ef40881f0fe0f6eb42"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "e5e4cc5d22b84c4dc8fc65c306d097fda063b0058253da5b900fe1d462d437b3"
-            - name: BAYN_QUALIFICATION_RUN_ID
-              value: "440f5d079247f42c52f31111345c18bfa694263cef052dfb9a32b2b1c8f20861"
+              value: "19bc51c7361b181aa48845d178cb63373b3f2e017bcbea1cf3b70ab16647f8a9"
             - name: BAYN_MAXIMUM_AUTHORITY
               value: OBSERVE
+            # sha256("bayn/authority-generation/autonomous-observe-v1")
+            - name: BAYN_AUTHORITY_GENERATION_HASH
+              value: "d290539ec85334d8ce267f98919c139cb382068101042d69b5433832136dc063"
+            - name: BAYN_CYCLE_POLL_INTERVAL_MS
+              value: "30000"
+            - name: BAYN_BROKER_PROVIDER
+              value: alpaca
+            - name: BAYN_BROKER_ENVIRONMENT
+              value: sandbox
+            - name: BAYN_ALPACA_BASE_URL
+              value: https://paper-api.alpaca.markets
+            - name: BAYN_ALPACA_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: account-id
+            - name: BAYN_ALPACA_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: key-id
+            - name: BAYN_ALPACA_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: secret-key
             - name: BAYN_HEALTH_INTERVAL_MS
               value: "30000"
             - name: BAYN_OPERATION_TIMEOUT_MS
@@ -77,21 +101,21 @@ spec:
                   name: bayn-clickhouse-auth
                   key: password
             - name: BAYN_SIGNAL_SNAPSHOT_ID
-              value: "1b963bb9550d07e1c7239ebe1a021e82c0f112b8f21fce0ab4e922c47b272a27"
+              value: "2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0"
             - name: BAYN_SIGNAL_PUBLICATION_ASOF
-              value: "2026-07-24"
+              value: "2026-07-27"
             - name: BAYN_SIGNAL_CALENDAR_VERSION
               value: "alpaca-us-equity-calendar-v1"
             - name: BAYN_SIGNAL_DATA_START
               value: "2016-01-04"
             - name: BAYN_SIGNAL_DATA_END
-              value: "2026-07-24"
+              value: "2026-07-27"
             - name: BAYN_SIGNAL_LOOKBACK_START
               value: "2016-01-04"
             - name: BAYN_SIGNAL_EVALUATION_START
               value: "2017-01-03"
             - name: BAYN_SIGNAL_EVALUATION_END
-              value: "2026-07-24"
+              value: "2026-07-27"
             - name: BAYN_POSTGRES_URL
               valueFrom:
                 secretKeyRef:
