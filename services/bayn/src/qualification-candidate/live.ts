@@ -3,7 +3,6 @@ import type { ConnectionOptions } from 'node:tls'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, FileSystem, PlatformError, Redacted, Scope } from 'effect'
-import * as Reactivity from 'effect/unstable/reactivity/Reactivity'
 
 import { makeMarketData } from '../market-data'
 import type { IsoDate } from '../schemas'
@@ -60,7 +59,7 @@ export type AcquireCandidateReplicaClient<AcquireR, ReadR, AcquireError, ReadErr
   operationTimeoutMs: number,
 ) => Effect.Effect<CandidateReplicaClient<ReadR, ReadError>, AcquireError, Scope.Scope | AcquireR>
 
-const acquireCandidateReplicaClient = (
+export const acquireCandidateReplicaClient = (
   input: QualificationCandidateInput,
   endpoint: CandidateReplicaEndpoint,
   password: Redacted.Redacted<string>,
@@ -142,34 +141,14 @@ const readCandidateReplicaWith = <AcquireR, ReadR, AcquireError, ReadError>(
     ),
   )
 
-export function readCandidateReplica(
-  input: QualificationCandidateInput,
-  endpoint: CandidateReplicaEndpoint,
-  password: Redacted.Redacted<string>,
-  operationTimeoutMs: number,
-): Effect.Effect<CandidateReplicaObservation, QualificationCandidateFailure, Reactivity.Reactivity>
-export function readCandidateReplica<AcquireR, ReadR, AcquireError, ReadError>(
+export const readCandidateReplica = <AcquireR, ReadR, AcquireError, ReadError>(
   input: QualificationCandidateInput,
   endpoint: CandidateReplicaEndpoint,
   password: Redacted.Redacted<string>,
   operationTimeoutMs: number,
   acquireClient: AcquireCandidateReplicaClient<AcquireR, ReadR, AcquireError, ReadError>,
-): Effect.Effect<CandidateReplicaObservation, QualificationCandidateFailure, Exclude<AcquireR | ReadR, Scope.Scope>>
-export function readCandidateReplica<AcquireR, ReadR, AcquireError, ReadError>(
-  input: QualificationCandidateInput,
-  endpoint: CandidateReplicaEndpoint,
-  password: Redacted.Redacted<string>,
-  operationTimeoutMs: number,
-  acquireClient?: AcquireCandidateReplicaClient<AcquireR, ReadR, AcquireError, ReadError>,
-): Effect.Effect<
-  CandidateReplicaObservation,
-  QualificationCandidateFailure,
-  Exclude<AcquireR | ReadR, Scope.Scope> | Reactivity.Reactivity
-> {
-  return acquireClient === undefined
-    ? readCandidateReplicaWith(input, endpoint, password, operationTimeoutMs, acquireCandidateReplicaClient)
-    : readCandidateReplicaWith(input, endpoint, password, operationTimeoutMs, acquireClient)
-}
+): Effect.Effect<CandidateReplicaObservation, QualificationCandidateFailure, Exclude<AcquireR | ReadR, Scope.Scope>> =>
+  readCandidateReplicaWith(input, endpoint, password, operationTimeoutMs, acquireClient)
 
 const postgresSsl = (
   input: CandidateConfig,
@@ -205,7 +184,7 @@ export type AcquireQualificationLockClient<R, AcquireError, ReadError> = (
   input: CandidateConfig,
 ) => Effect.Effect<QualificationLockClient<R, ReadError>, AcquireError, Scope.Scope | R>
 
-const acquireQualificationLockClient = (input: CandidateConfig) =>
+export const acquireQualificationLockClient = (input: CandidateConfig) =>
   makeCandidatePostgres(input).pipe(
     Effect.map((sql) => ({
       read: (snapshotId: string) =>
@@ -244,29 +223,9 @@ const readQualificationLocksWith = <R, AcquireError, ReadError>(
     Effect.mapError((cause): QualificationCandidateFailure => ({ _tag: 'PostgresReadFailed', cause })),
   )
 
-export function readQualificationLocks(
-  input: CandidateConfig,
-  snapshotId: string,
-): Effect.Effect<
-  QualificationLockObservation,
-  QualificationCandidateFailure,
-  FileSystem.FileSystem | Reactivity.Reactivity
->
-export function readQualificationLocks<R, AcquireError, ReadError>(
+export const readQualificationLocks = <R, AcquireError, ReadError>(
   input: CandidateConfig,
   snapshotId: string,
   acquireClient: AcquireQualificationLockClient<R, AcquireError, ReadError>,
-): Effect.Effect<QualificationLockObservation, QualificationCandidateFailure, R>
-export function readQualificationLocks<R, AcquireError, ReadError>(
-  input: CandidateConfig,
-  snapshotId: string,
-  acquireClient?: AcquireQualificationLockClient<R, AcquireError, ReadError>,
-): Effect.Effect<
-  QualificationLockObservation,
-  QualificationCandidateFailure,
-  R | FileSystem.FileSystem | Reactivity.Reactivity
-> {
-  return acquireClient === undefined
-    ? readQualificationLocksWith(input, snapshotId, acquireQualificationLockClient)
-    : readQualificationLocksWith(input, snapshotId, acquireClient)
-}
+): Effect.Effect<QualificationLockObservation, QualificationCandidateFailure, R> =>
+  readQualificationLocksWith(input, snapshotId, acquireClient)

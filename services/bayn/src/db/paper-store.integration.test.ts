@@ -29,6 +29,7 @@ import {
   type CapitalGrantGeneration,
 } from '../execution/contracts'
 import {
+  defaultQualificationStatisticsPolicyDocument,
   makeQualificationLock,
   makeQualificationPolicyDocument,
   makeQualificationResult,
@@ -188,7 +189,7 @@ const makeQualificationFixture = (name: string, qualified: boolean): Qualificati
       policies: {
         benchmark: qualificationPolicy(`${name}-benchmark-policy`),
         thresholds: qualificationPolicy(`${name}-threshold-policy`),
-        uncertainty: qualificationPolicy(`${name}-uncertainty-policy`),
+        uncertainty: successOfResult(defaultQualificationStatisticsPolicyDocument),
         execution: successOfResult(
           makeQualificationPolicyDocument(fixtureProtocol.executionModel.schemaVersion, fixtureProtocol.executionModel),
         ),

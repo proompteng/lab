@@ -56,7 +56,12 @@ import {
   type CapitalGrantGeneration,
   type RiskDecision,
 } from '../execution/contracts'
-import { makeQualificationLock, makeQualificationPolicyDocument, makeQualificationResult } from '../qualification'
+import {
+  defaultQualificationStatisticsPolicyDocument,
+  makeQualificationLock,
+  makeQualificationPolicyDocument,
+  makeQualificationResult,
+} from '../qualification'
 import { readAuditDatabase, type AuditConfig } from '../qualification-audit-command'
 import {
   analyzeQualification,
@@ -652,12 +657,7 @@ const mutationQualificationLock = successOfResult(
           enabled: true,
         }),
       ),
-      uncertainty: successOfResult(
-        makeQualificationPolicyDocument('bayn.mutation-uncertainty-policy.v1', {
-          schemaVersion: 'bayn.mutation-uncertainty-policy.v1',
-          enabled: true,
-        }),
-      ),
+      uncertainty: successOfResult(defaultQualificationStatisticsPolicyDocument),
       execution: successOfResult(
         makeQualificationPolicyDocument(fixtureProtocol.executionModel.schemaVersion, fixtureProtocol.executionModel),
       ),

@@ -8,6 +8,7 @@ import {
   QualificationAnalysisSchema,
   QualificationStatisticsPolicySchema,
   analyzeQualification,
+  analyzeQualificationInput,
   calculateQualificationPower,
   defaultQualificationStatisticsPolicy,
   prepareQualificationSeries,
@@ -22,6 +23,7 @@ import {
   maximumDrawdown,
   mean,
   nearestRankLowerQuantile,
+  roundStatistic,
   sampleStandardDeviation,
 } from './qualification-statistics/numerical-methods'
 import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
@@ -154,6 +156,11 @@ describe('pure numerical and decision kernels', () => {
     expect(compoundedReturn([])).toBe(0)
     expect(successOf(maximumDrawdown([]))).toBe(0)
     expect(successOf(maximumDrawdown([0.1, -0.5, 0.1]))).toBe(0.5)
+    for (const value of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(roundStatistic(value)).toEqual(
+        Result.fail({ _tag: 'QualificationStatisticNotFinite', operation: 'round', value }),
+      )
+    }
   })
 
   test('aggregates gates and reasons with insufficient evidence taking precedence over rejection', () => {
@@ -173,6 +180,124 @@ describe('pure numerical and decision kernels', () => {
     })
     expect(analysis.status).toBe('INSUFFICIENT')
     expect(analysis.bootstrap.annualizedExcessReturnLowerBound).toBeGreaterThan(0)
+  })
+
+  test('classifies every gate boundary from explicit evidence', () => {
+    const baseline = successOf(analyzeQualification(makeSeries(), policy(), []))
+    const baseInput = {
+      policy: baseline.policy,
+      power: baseline.power,
+      bootstrap: baseline.bootstrap,
+      walkForward: baseline.walkForward,
+    }
+    const cases = [
+      {
+        name: 'power blocks one below',
+        input: {
+          ...baseInput,
+          power: {
+            ...baseInput.power,
+            availableCompleteRebalanceBlocks: baseInput.power.requiredCompleteRebalanceBlocks - 1,
+            sufficient: false,
+          },
+        },
+        status: 'INSUFFICIENT',
+        reason: 'INSUFFICIENT_POWER_BLOCKS',
+      },
+      {
+        name: 'power sessions one below',
+        input: {
+          ...baseInput,
+          power: {
+            ...baseInput.power,
+            availableCompleteSessions: baseInput.power.requiredSessions - 1,
+            sufficient: false,
+          },
+        },
+        status: 'INSUFFICIENT',
+        reason: 'INSUFFICIENT_POWER_SESSIONS',
+      },
+      {
+        name: 'tail one below',
+        input: {
+          ...baseInput,
+          bootstrap: {
+            ...baseInput.bootstrap,
+            tailSampleCount: baseInput.bootstrap.minimumTailSamples - 1,
+            tailResolutionSufficient: false,
+          },
+        },
+        status: 'INSUFFICIENT',
+        reason: 'INSUFFICIENT_BOOTSTRAP_TAIL',
+      },
+      {
+        name: 'walk-forward folds one below',
+        input: {
+          ...baseInput,
+          walkForward: {
+            ...baseInput.walkForward,
+            folds: baseInput.walkForward.folds.slice(0, baseInput.walkForward.requiredFolds - 1),
+            sufficient: false,
+          },
+        },
+        status: 'INSUFFICIENT',
+        reason: 'INSUFFICIENT_WALK_FORWARD_FOLDS',
+      },
+      {
+        name: 'excess exactly zero',
+        input: { ...baseInput, bootstrap: { ...baseInput.bootstrap, annualizedExcessReturnLowerBound: 0 } },
+        status: 'REJECTED',
+        reason: 'NON_POSITIVE_EXCESS_RETURN_LCB',
+      },
+      {
+        name: 'sharpe exactly zero',
+        input: { ...baseInput, bootstrap: { ...baseInput.bootstrap, sharpeDifferenceLowerBound: 0 } },
+        status: 'REJECTED',
+        reason: 'NON_POSITIVE_SHARPE_DIFFERENCE_LCB',
+      },
+      {
+        name: 'positive fraction one epsilon below',
+        input: {
+          ...baseInput,
+          walkForward: {
+            ...baseInput.walkForward,
+            positiveFoldFraction: baseInput.walkForward.requiredPositiveFoldFraction - Number.EPSILON,
+          },
+        },
+        status: 'REJECTED',
+        reason: 'WALK_FORWARD_POSITIVE_FRACTION_FAILED',
+      },
+      {
+        name: 'drawdown above limit',
+        input: {
+          ...baseInput,
+          walkForward: {
+            ...baseInput.walkForward,
+            allDrawdownsWithinLimit: false,
+            maximumFoldDrawdown: baseInput.policy.walkForward.maximumFoldDrawdown + Number.EPSILON,
+          },
+        },
+        status: 'REJECTED',
+        reason: 'WALK_FORWARD_DRAWDOWN_FAILED',
+      },
+    ] as const
+
+    for (const item of cases) {
+      const decision = decideQualification(item.input)
+      expect(decision.status, item.name).toBe(item.status)
+      expect(decision.reasonCodes, item.name).toContain(item.reason)
+    }
+
+    const equality = decideQualification({
+      ...baseInput,
+      walkForward: {
+        ...baseInput.walkForward,
+        positiveFoldFraction: baseInput.walkForward.requiredPositiveFoldFraction,
+        maximumFoldDrawdown: baseInput.policy.walkForward.maximumFoldDrawdown,
+        allDrawdownsWithinLimit: true,
+      },
+    })
+    expect(equality.status).toBe('PASS')
   })
 })
 
@@ -380,5 +505,38 @@ describe('evaluation adapter', () => {
     expect(series.observations).toHaveLength(evaluation.simulation.dailyMarks.length)
     expect(series.rebalanceExecutionDates).toEqual(evaluation.signalDecisions.map((decision) => decision.executionDate))
     expect(series.observations.every((observation) => observation.cashReturn === 0)).toBe(true)
+  })
+
+  test('is deterministic across irrelevant benchmark input orderings and rejects semantic order changes', () => {
+    const snapshot = makeSnapshot()
+    const evaluationResult = evaluateRiskBalancedTrend(
+      snapshot.bars,
+      snapshot.manifest,
+      fixtureProtocol,
+      makeTestProvenance(),
+    )
+    assert(Result.isSuccess(evaluationResult), 'strategy evaluation fixture must succeed')
+    const evaluation = evaluationResult.success
+    const canonical = successOf(prepareQualificationSeries(evaluation))
+    const reordered = successOf(
+      prepareQualificationSeries({
+        ...evaluation,
+        benchmarkSeries: {
+          ...evaluation.benchmarkSeries,
+          buyAndHold: [...evaluation.benchmarkSeries.buyAndHold].reverse(),
+          directVolTiming: [...evaluation.benchmarkSeries.directVolTiming].reverse(),
+        },
+      }),
+    )
+    expect(reordered).toEqual(canonical)
+    expect(
+      Result.isFailure(
+        analyzeQualificationInput({
+          series: { ...canonical, observations: [...canonical.observations].reverse() },
+          policy: policy(),
+          priorTrialRunIds: [],
+        }),
+      ),
+    ).toBe(true)
   })
 })
