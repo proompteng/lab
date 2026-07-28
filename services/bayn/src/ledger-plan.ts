@@ -9,7 +9,11 @@ import {
   stableU64,
   type CanonicalJsonFailure,
 } from './hash'
-import type { CashYieldEvent, EvaluationEvent, FeeEvent, FillEvent, InputManifest, ReconciliationResult } from './types'
+import { decodeLedgerInput, type LedgerInputDecodeFailure } from './ledger-plan/input'
+import type { LedgerInput, LedgerPlanInputField } from './ledger-plan/input'
+import type { CashYieldEvent, EvaluationEvent, FeeEvent, FillEvent, ReconciliationResult } from './types'
+
+export type { LedgerInput, LedgerPlanInputField } from './ledger-plan/input'
 
 export const LEDGER_SCHEMA_VERSION = 2
 export const LEDGER_BATCH_MAX = 8_189
@@ -123,36 +127,12 @@ export interface EvaluationLedgerPlan extends LedgerPlan {
   readonly runId: string
 }
 
-export interface LedgerInput {
-  readonly runId: string
-  readonly initialCapitalMicros: string
-  readonly inputManifest: InputManifest
-  readonly events: readonly EvaluationEvent[]
-}
-
 export type LedgerPlanAmountField =
   | 'cashYield.amountMicros'
   | 'fee.totalMicros'
   | 'fill.costBasisMicros'
   | 'fill.notionalMicros'
   | 'initialCapitalMicros'
-
-export type LedgerPlanInputField =
-  | 'cashYield.amountMicros'
-  | 'cashYield.id'
-  | 'event.kind'
-  | 'events'
-  | 'fee.id'
-  | 'fee.totalMicros'
-  | 'fill.costBasisMicros'
-  | 'fill.id'
-  | 'fill.notionalMicros'
-  | 'fill.side'
-  | 'fill.symbol'
-  | 'initialCapitalMicros'
-  | 'inputManifest.symbol'
-  | 'inputManifest.symbols'
-  | 'runId'
 
 type LedgerPlanInputExpectation = 'evaluation-event-kind' | 'fill-side' | 'string'
 
@@ -446,74 +426,32 @@ const requireFillSide = (
 
 const planEvents = (result: LedgerInput): Result.Result<PlannedEvents, LedgerPlanFailureDetail> =>
   Result.gen(function* () {
-    const events = yield* Result.mapError(
-      Result.try(() => [...result.events]),
-      (cause) => inputAccessFailure('events', cause),
-    )
     const fills: PlannedFillEvent[] = []
     const fees: PlannedFeeEvent[] = []
     const cashYields: PlannedCashYieldEvent[] = []
 
-    for (const [eventIndex, event] of events.entries()) {
-      const rawKind = yield* Result.mapError(
-        Result.try(() => event.kind),
-        (cause) => inputAccessFailure('event.kind', cause, eventIndex),
-      )
-      const kind = yield* requireEventKind(rawKind, eventIndex)
+    for (const [eventIndex, event] of result.events.entries()) {
+      const kind = yield* requireEventKind(event.kind, eventIndex)
       if (kind === 'fill') {
         const fill = event as FillEvent
-        const rawId = yield* Result.mapError(
-          Result.try(() => fill.id),
-          (cause) => inputAccessFailure('fill.id', cause, eventIndex, kind),
-        )
-        const id = yield* requireStringInput('fill.id', rawId, eventIndex, kind)
-        const rawSymbol = yield* Result.mapError(
-          Result.try(() => fill.symbol),
-          (cause) => inputAccessFailure('fill.symbol', cause, eventIndex, kind),
-        )
-        const symbol = yield* requireStringInput('fill.symbol', rawSymbol, eventIndex, kind)
-        const rawSide = yield* Result.mapError(
-          Result.try(() => fill.side),
-          (cause) => inputAccessFailure('fill.side', cause, eventIndex, kind),
-        )
-        const side = yield* requireFillSide(rawSide, eventIndex)
-        const notionalMicros = yield* Result.mapError(
-          Result.try(() => fill.notionalMicros),
-          (cause) => inputAccessFailure('fill.notionalMicros', cause, eventIndex, kind),
-        )
-        const costBasisMicros = yield* Result.mapError(
-          Result.try(() => fill.costBasisMicros),
-          (cause) => inputAccessFailure('fill.costBasisMicros', cause, eventIndex, kind),
-        )
+        const id = yield* requireStringInput('fill.id', fill.id, eventIndex, kind)
+        const symbol = yield* requireStringInput('fill.symbol', fill.symbol, eventIndex, kind)
+        const side = yield* requireFillSide(fill.side, eventIndex)
+        const notionalMicros = fill.notionalMicros
+        const costBasisMicros = fill.costBasisMicros
         fills.push({ event: fill, id, symbol, side, notionalMicros, costBasisMicros })
       } else if (kind === 'fee') {
         const fee = event as FeeEvent
-        const rawId = yield* Result.mapError(
-          Result.try(() => fee.id),
-          (cause) => inputAccessFailure('fee.id', cause, eventIndex, kind),
-        )
-        const id = yield* requireStringInput('fee.id', rawId, eventIndex, kind)
-        const totalMicros = yield* Result.mapError(
-          Result.try(() => fee.totalMicros),
-          (cause) => inputAccessFailure('fee.totalMicros', cause, eventIndex, kind),
-        )
-        fees.push({ event: fee, id, totalMicros })
+        const id = yield* requireStringInput('fee.id', fee.id, eventIndex, kind)
+        fees.push({ event: fee, id, totalMicros: fee.totalMicros })
       } else if (kind === 'cash-yield') {
         const cashYield = event as CashYieldEvent
-        const rawId = yield* Result.mapError(
-          Result.try(() => cashYield.id),
-          (cause) => inputAccessFailure('cashYield.id', cause, eventIndex, kind),
-        )
-        const id = yield* requireStringInput('cashYield.id', rawId, eventIndex, kind)
-        const amountMicros = yield* Result.mapError(
-          Result.try(() => cashYield.amountMicros),
-          (cause) => inputAccessFailure('cashYield.amountMicros', cause, eventIndex, kind),
-        )
-        cashYields.push({ event: cashYield, id, amountMicros })
+        const id = yield* requireStringInput('cashYield.id', cashYield.id, eventIndex, kind)
+        cashYields.push({ event: cashYield, id, amountMicros: cashYield.amountMicros })
       }
     }
 
-    return { eventCount: events.length, fills, fees, cashYields }
+    return { eventCount: result.events.length, fills, fees, cashYields }
   })
 
 const buildLedgerPlanDecision = (
@@ -521,15 +459,8 @@ const buildLedgerPlanDecision = (
   ledger: number,
 ): Result.Result<EvaluationLedgerPlan, LedgerPlanFailureDetail> =>
   Result.gen(function* () {
-    const rawRunId = yield* Result.mapError(
-      Result.try(() => result.runId),
-      (cause) => inputAccessFailure('runId', cause),
-    )
-    const runId = yield* requireStringInput('runId', rawRunId)
-    const initialCapitalMicros = yield* Result.mapError(
-      Result.try(() => result.initialCapitalMicros),
-      (cause) => inputAccessFailure('initialCapitalMicros', cause),
-    )
+    const runId = yield* requireStringInput('runId', result.runId)
+    const initialCapitalMicros = result.initialCapitalMicros
     const runKey = stableU128('bayn-run-v1', runId)
     const runTag = stableU64('bayn-run-v1', runId)
     const accountsByName = new Map<string, Account>()
@@ -544,16 +475,10 @@ const buildLedgerPlanDecision = (
     const cashYieldIncome = addAccount('cash-yield-income', AccountCode.cashYieldIncome)
     const realizedGain = addAccount('realized-gain', AccountCode.realizedGain)
     const realizedLoss = addAccount('realized-loss', AccountCode.realizedLoss)
-    const rawInventorySymbols = yield* Result.mapError(
-      Result.try(() => result.inputManifest.symbols.map((coverage) => coverage.symbol as unknown)),
-      (cause): LedgerPlanFailureDetail => ({
-        kind: 'input-access-failed',
-        field: 'inputManifest.symbols',
-        cause,
-      }),
-    )
     const inventorySymbols = yield* Result.all(
-      rawInventorySymbols.map((symbol, index) => requireStringInput('inputManifest.symbol', symbol, index)),
+      result.inputManifest.symbols.map((coverage, index) =>
+        requireStringInput('inputManifest.symbol', coverage.symbol, index),
+      ),
     )
     for (const symbol of inventorySymbols.toSorted()) {
       addAccount(`inventory:${symbol}`, AccountCode.inventory)
@@ -730,7 +655,15 @@ export const buildLedgerPlan = (
   result: LedgerInput,
   ledger: number,
 ): Result.Result<EvaluationLedgerPlan, LedgerPlanFailure> =>
-  Result.mapError(buildLedgerPlanDecision(result, ledger), (failure) => makeLedgerPlanFailure(ledger, failure))
+  Result.mapError(
+    Result.flatMap(
+      Result.mapError(decodeLedgerInput(result), (failure: LedgerInputDecodeFailure) =>
+        inputAccessFailure(failure.field, failure.cause, failure.eventIndex, failure.eventKind),
+      ),
+      (decoded) => buildLedgerPlanDecision(decoded, ledger),
+    ),
+    (failure) => makeLedgerPlanFailure(ledger, failure),
+  )
 
 const accessLedgerPlan = <A>(
   source: LedgerPlanHashAccessSource,
