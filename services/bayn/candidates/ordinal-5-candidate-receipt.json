@@ -1,0 +1,35 @@
+{
+  "candidateRuntime": {
+    "BAYN_SIGNAL_CALENDAR_VERSION": "alpaca-us-equity-calendar-v1",
+    "BAYN_SIGNAL_DATA_END": "2026-07-27",
+    "BAYN_SIGNAL_DATA_START": "2016-01-04",
+    "BAYN_SIGNAL_EVALUATION_END": "2026-07-27",
+    "BAYN_SIGNAL_EVALUATION_START": "2017-01-03",
+    "BAYN_SIGNAL_LOOKBACK_START": "2016-01-04",
+    "BAYN_SIGNAL_PUBLICATION_ASOF": "2026-07-27",
+    "BAYN_SIGNAL_SNAPSHOT_ID": "2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0",
+    "BAYN_TIGERBEETLE_ADDRESSES": "ledger-0.ledger-headless.bayn.svc.cluster.local:3000,ledger-1.ledger-headless.bayn.svc.cluster.local:3000,ledger-2.ledger-headless.bayn.svc.cluster.local:3000",
+    "BAYN_TIGERBEETLE_CLUSTER_ID": "122731676035874920802382025803517750735",
+    "BAYN_TIGERBEETLE_LEDGER": "7001"
+  },
+  "inputManifestHash": "9523a29175199877c2d73121e68d7e72c055a7639524e0e41dd8083b5f4ced51",
+  "publicationDate": "2026-07-27",
+  "publisherPrincipal": "signal_publisher",
+  "qualificationLockCount": 0,
+  "replicas": [
+    {
+      "endpointHost": "chi-torghut-clickhouse-default-0-0.torghut.svc.cluster.local",
+      "replica": "chi-torghut-clickhouse-default-0-0-0",
+      "snapshotCanonicalHash": "4523d6ac6adc843dd98f1e84c54c2af65448339be2f00f04f1aa0ef6bcd14aac"
+    },
+    {
+      "endpointHost": "chi-torghut-clickhouse-default-0-1.torghut.svc.cluster.local",
+      "replica": "chi-torghut-clickhouse-default-0-1-0",
+      "snapshotCanonicalHash": "4523d6ac6adc843dd98f1e84c54c2af65448339be2f00f04f1aa0ef6bcd14aac"
+    }
+  ],
+  "rowCount": 13275,
+  "schemaVersion": "bayn.qualification-candidate.v1",
+  "sessionCount": 2655,
+  "snapshotCanonicalHash": "4523d6ac6adc843dd98f1e84c54c2af65448339be2f00f04f1aa0ef6bcd14aac"
+}
