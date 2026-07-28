@@ -1,7 +1,7 @@
 import { Clock, Data, Effect, Match, Result } from 'effect'
 
 import { BrokerMutation, MutationOperation } from '../broker/alpaca-mutations'
-import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca'
+import { BrokerRead, type BrokerReadShape } from '../broker/alpaca'
 import { IntentState, type Intent } from '../paper'
 import {
   cancellationIdentity,
@@ -55,7 +55,7 @@ interface MutationServices {
 
 interface RecoveryServices {
   readonly mutations: MutationStore['Service']
-  readonly broker: BrokerMutation['Service']
+  readonly broker: BrokerReadShape
 }
 
 const currentInstant = currentUtcInstant
@@ -392,18 +392,7 @@ const recoverAtBroker = (
   operation: MutationOperation,
   interrupted: MutationEvent,
 ) => {
-  const lookup =
-    services.broker.orderByClientId ??
-    (() =>
-      Effect.fail(
-        new BrokerReadError({
-          operation: 'order-by-client-id',
-          kind: BrokerReadErrorKind.Configuration,
-          message: 'broker trading capability does not expose deterministic recovery lookup',
-          retryable: false,
-        }),
-      ))
-  return lookup(stored.intent.clientOrderId).pipe(
+  return services.broker.orderByClientId(stored.intent.clientOrderId).pipe(
     Effect.matchEffect({
       onFailure: (error) =>
         persistRecoveryDecision(
@@ -467,5 +456,5 @@ const runRecovery = (services: RecoveryServices, intentId: string, operation: Mu
 export const recover = (intentId: string, operation: MutationOperation) =>
   Effect.all({
     mutations: MutationStore,
-    broker: BrokerMutation,
+    broker: BrokerRead,
   }).pipe(Effect.flatMap((services) => runRecovery(services, intentId, operation)))

@@ -15,6 +15,7 @@ import {
 } from '../broker/alpaca-mutations'
 import {
   AssetClass,
+  BrokerRead,
   BrokerReadError,
   BrokerReadErrorKind,
   OrderClass,
@@ -22,6 +23,7 @@ import {
   OrderStatus,
   OrderType as BrokerOrderType,
   TimeInForce as BrokerTimeInForce,
+  type BrokerReadShape,
   type Order,
 } from '../broker/alpaca'
 import { canonicalHashV1 } from '../hash'
@@ -1198,6 +1200,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
   let submitCalls = 0
   let cancelCalls = 0
   let lookupCalls = 0
+  let lookupClientOrderId: string | undefined
 
   const event = (
     operation: MutationOperation,
@@ -1404,6 +1407,59 @@ const makeHarness = (options: HarnessOptions = {}) => {
     latest: (_intentId, operation) => Effect.succeed(latest.get(operation)),
   }
 
+  const orderByClientId: BrokerReadShape['orderByClientId'] = (clientOrderId) =>
+    Effect.gen(function* () {
+      lookupCalls += 1
+      lookupClientOrderId = clientOrderId
+      if (options.lookupFailureOnceAfterMs !== undefined && lookupCalls === 1) {
+        yield* Effect.sleep(Duration.millis(options.lookupFailureOnceAfterMs))
+        return yield* Effect.fail(
+          new BrokerReadError({
+            operation: 'order-by-client-id',
+            kind: BrokerReadErrorKind.Timeout,
+            message: 'injected delayed lookup timeout',
+            retryable: false,
+          }),
+        )
+      }
+      const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+      if (options.notFoundOnce && lookupCalls === 1) {
+        return yield* Effect.fail(
+          new BrokerReadError({
+            operation: 'order-by-client-id',
+            kind: BrokerReadErrorKind.NotFound,
+            message: 'injected delayed visibility',
+            retryable: false,
+            status: 404,
+            requestId: 'lookup-not-found',
+            contentHash: canonicalHashV1({ code: 404, message: 'order not found' }),
+            observedAt,
+          }),
+        )
+      }
+      const selected =
+        options.lookupOrders?.[Math.min(lookupCalls - 1, options.lookupOrders.length - 1)] ??
+        options.lookupOrder ??
+        (latest.get(MutationOperation.Cancel) === undefined
+          ? brokerOrder(OrderStatus.Accepted)
+          : brokerOrder(OrderStatus.Canceled))
+      const value = { ...selected, observedAt }
+      return { value, evidence: evidence(200, observedAt) }
+    })
+
+  const unexpectedRead = () => Effect.die(new Error('unexpected broker read'))
+  const read: BrokerReadShape = {
+    account: unexpectedRead(),
+    accountConfiguration: unexpectedRead(),
+    assetBySymbol: unexpectedRead,
+    positions: unexpectedRead(),
+    orders: unexpectedRead,
+    orderById: unexpectedRead,
+    orderByClientId,
+    fillActivities: unexpectedRead,
+    marketCalendar: unexpectedRead,
+  }
+
   const mutation: BrokerMutationShape = {
     submit: (submitted) => {
       submitCalls += 1
@@ -1432,45 +1488,6 @@ const makeHarness = (options: HarnessOptions = {}) => {
       const response = evidence(204, '1970-01-01T00:00:01.100Z')
       return Effect.succeed({ requestHash: cancelRequestHash(brokerOrderId), brokerOrderId, evidence: response })
     },
-    orderById: () => Effect.die(new Error('unexpected order-by-id read')),
-    orderByClientId: () =>
-      Effect.gen(function* () {
-        lookupCalls += 1
-        if (options.lookupFailureOnceAfterMs !== undefined && lookupCalls === 1) {
-          yield* Effect.sleep(Duration.millis(options.lookupFailureOnceAfterMs))
-          return yield* Effect.fail(
-            new BrokerReadError({
-              operation: 'order-by-client-id',
-              kind: BrokerReadErrorKind.Timeout,
-              message: 'injected delayed lookup timeout',
-              retryable: false,
-            }),
-          )
-        }
-        const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-        if (options.notFoundOnce && lookupCalls === 1) {
-          return yield* Effect.fail(
-            new BrokerReadError({
-              operation: 'order-by-client-id',
-              kind: BrokerReadErrorKind.NotFound,
-              message: 'injected delayed visibility',
-              retryable: false,
-              status: 404,
-              requestId: 'lookup-not-found',
-              contentHash: canonicalHashV1({ code: 404, message: 'order not found' }),
-              observedAt,
-            }),
-          )
-        }
-        const selected =
-          options.lookupOrders?.[Math.min(lookupCalls - 1, options.lookupOrders.length - 1)] ??
-          options.lookupOrder ??
-          (latest.get(MutationOperation.Cancel) === undefined
-            ? brokerOrder(OrderStatus.Accepted)
-            : brokerOrder(OrderStatus.Canceled))
-        const value = { ...selected, observedAt }
-        return { value, evidence: evidence(200, observedAt) }
-      }),
   }
 
   const fenceCheck = Effect.suspend(() => {
@@ -1491,6 +1508,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
       Effect.provideService(IntentStore, intentStore),
       Effect.provideService(MutationStore, mutationStore),
       Effect.provideService(BrokerMutation, mutation),
+      Effect.provideService(BrokerRead, read),
       Effect.provideService(WriterFence, {
         backendPid: 1,
         check: fenceCheck,
@@ -1500,11 +1518,21 @@ const makeHarness = (options: HarnessOptions = {}) => {
     )
   const provideIntentRead = <A, E>(effect: Effect.Effect<A, E, IntentStore>) =>
     effect.pipe(Effect.provideService(IntentStore, intentStore), Effect.provide(TestClock.layer()))
+  const provideRecovery = <A, E>(effect: Effect.Effect<A, E, IntentStore | MutationStore | BrokerRead>) =>
+    effect.pipe(
+      Effect.provideService(IntentStore, intentStore),
+      Effect.provideService(MutationStore, mutationStore),
+      Effect.provideService(BrokerRead, read),
+      Effect.provide(TestClock.layer()),
+    )
 
   return {
     provide,
     provideIntentRead,
+    provideRecovery,
+    mutations: mutationStore,
     calls: () => ({ submit: submitCalls, cancel: cancelCalls, lookup: lookupCalls }),
+    lookupClientOrderId: () => lookupClientOrderId,
     intent: () => stored.intent,
     state: () => stored.intent.state,
   }
@@ -1885,7 +1913,7 @@ describe('paper execution coordinator', () => {
     expect(harness.state()).toBe(IntentState.Approved)
   })
 
-  test('recovers an ambiguous POST through the mutation capability lookup after the committed delay', async () => {
+  test('recovers an ambiguous POST through verified read lookup after the committed delay', async () => {
     const harness = makeHarness({ notFoundOnce: true, unknownSubmit: true })
     const result = await Effect.runPromise(
       harness.provide(
@@ -1908,6 +1936,70 @@ describe('paper execution coordinator', () => {
     expect(result.found.eventType).toBe(MutationEventType.RecoveryFound)
     expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 2 })
     expect(harness.state()).toBe(IntentState.Acknowledged)
+  })
+
+  test('recovers SUBMIT_UNKNOWN through verified read capability after mutation authority is removed', async () => {
+    const harness = makeHarness({ lookupOrder: brokerOrder(OrderStatus.Filled) })
+    const requestHash = canonicalHashV1(encodedRequest(intent))
+    const { found, unknown } = await Effect.runPromise(
+      harness.provideRecovery(
+        Effect.gen(function* () {
+          yield* harness.mutations.beginSubmit(intentId, requestHash, 1_000, '1970-01-01T00:00:00.000Z')
+          const unknown = yield* harness.mutations.submitUnknown(intentId, requestHash, '1969-12-31T23:59:58.000Z')
+          yield* TestClock.adjust(1_000)
+          const found = yield* recover(intentId, MutationOperation.Submit)
+          return { found, unknown }
+        }),
+      ),
+    )
+    const replay = await Effect.runPromise(harness.provideRecovery(recover(intentId, MutationOperation.Submit)))
+
+    expect(unknown.eventType).toBe(MutationEventType.SubmitUnknown)
+    expect(found.eventType).toBe(MutationEventType.RecoveryFound)
+    expect(replay.eventId).toBe(found.eventId)
+    expect(harness.lookupClientOrderId()).toBe(intent.clientOrderId)
+    expect(harness.calls()).toEqual({ submit: 0, cancel: 0, lookup: 1 })
+  })
+
+  test('recovers CANCEL_UNKNOWN through verified read capability after mutation authority is removed', async () => {
+    const harness = makeHarness()
+    const requestHash = canonicalHashV1(encodedRequest(intent))
+    const { found, unknown } = await Effect.runPromise(
+      harness.provideRecovery(
+        Effect.gen(function* () {
+          yield* harness.mutations.beginSubmit(intentId, requestHash, 1_000, '1970-01-01T00:00:00.000Z')
+          yield* harness.mutations.submitAccepted(
+            intentId,
+            requestHash,
+            orderId,
+            evidence(200, '1970-01-01T00:00:00.100Z'),
+          )
+          yield* harness.mutations.beginCancel(
+            intentId,
+            cancelRequestHash(orderId),
+            orderId,
+            1_000,
+            '1970-01-01T00:00:00.200Z',
+          )
+          const unknown = yield* harness.mutations.cancelUnknown(
+            intentId,
+            cancelRequestHash(orderId),
+            orderId,
+            '1970-01-01T00:00:00.200Z',
+          )
+          yield* TestClock.adjust(1_200)
+          const found = yield* recover(intentId, MutationOperation.Cancel)
+          return { found, unknown }
+        }),
+      ),
+    )
+    const replay = await Effect.runPromise(harness.provideRecovery(recover(intentId, MutationOperation.Cancel)))
+
+    expect(unknown.eventType).toBe(MutationEventType.CancelUnknown)
+    expect(found.eventType).toBe(MutationEventType.RecoveryFound)
+    expect(replay.eventId).toBe(found.eventId)
+    expect(harness.lookupClientOrderId()).toBe(intent.clientOrderId)
+    expect(harness.calls()).toEqual({ submit: 0, cancel: 0, lookup: 1 })
   })
 
   test('recovers an injected post-send crash by lookup without resubmitting', async () => {
