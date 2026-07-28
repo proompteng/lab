@@ -77,6 +77,29 @@ const inputAccessFailure = (access: InputAccessContext, cause: unknown): LedgerI
   cause,
 })
 
+const snapshotEvent = (event: EvaluationEvent, eventIndex: number, access: InputAccessContext): EvaluationEvent => {
+  access.field = 'event.kind'
+  access.eventIndex = eventIndex
+  const kind = event.kind
+  access.eventKind = kind
+
+  const prototype = Object.getPrototypeOf(event)
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError('ledger-plan event must be a plain object')
+  }
+
+  const entries = Reflect.ownKeys(event).map((property) => {
+    access.field = eventInputField(kind, property)
+    if (typeof property !== 'string') throw new TypeError('ledger-plan event must not contain symbol keys')
+    const descriptor = Object.getOwnPropertyDescriptor(event, property)
+    if (descriptor?.enumerable !== true || !('value' in descriptor)) {
+      throw new TypeError('ledger-plan event properties must be enumerable data properties')
+    }
+    return [property, descriptor.value] as const
+  })
+  return Object.fromEntries(entries) as unknown as EvaluationEvent
+}
+
 export const decodeLedgerInput = (input: unknown): Result.Result<LedgerInput, LedgerInputDecodeFailure> => {
   let access: InputAccessContext = { field: 'runId' }
   const snapshot = Result.mapError(
@@ -94,15 +117,7 @@ export const decodeLedgerInput = (input: unknown): Result.Result<LedgerInput, Le
       })
       access = { field: 'events' }
       const rawEvents = [...source.events]
-      const events = rawEvents.map((event, eventIndex) => {
-        access = { field: 'event.kind', eventIndex }
-        const kind = event.kind
-        const entries = Object.keys(event).map((property) => {
-          access = { field: eventInputField(kind, property), eventIndex, eventKind: kind }
-          return [property, (event as unknown as Record<string, unknown>)[property]] as const
-        })
-        return Object.fromEntries(entries)
-      })
+      const events = rawEvents.map((event, eventIndex) => snapshotEvent(event, eventIndex, access))
       return { runId, initialCapitalMicros, inputManifest: { symbols }, events }
     }),
     (cause) => inputAccessFailure(access, cause),
