@@ -83,7 +83,7 @@ jobs:
                 image=true
                 ;;
             esac
-          done < <(git diff --no-renames --name-only "${BASE_SHA}" "${HEAD_SHA}")
+          done < <(git diff --no-renames --name-only "${BASE_SHA}...${HEAD_SHA}")
           {
             echo "bayn=${bayn}"
             echo "image=${image}"

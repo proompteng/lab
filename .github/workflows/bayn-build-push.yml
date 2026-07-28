@@ -20,6 +20,7 @@ on:
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
+      - 'nix/oci-release-contract.sh'
       - 'flake.nix'
       - 'flake.lock'
       - 'bun.lock'
@@ -29,6 +30,9 @@ on:
       - 'bunfig.toml'
       - 'patches/**'
       - 'tsconfig.base.json'
+      - '.github/actions/setup-nix-toolchain/**'
+      - '.github/workflows/bayn-*.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
   workflow_dispatch:
 
 concurrency:
