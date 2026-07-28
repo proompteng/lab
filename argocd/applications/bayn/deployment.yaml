@@ -23,7 +23,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-07-28T06:38:06Z"
+        kubectl.kubernetes.io/restartedAt: "2026-07-28T07:08:17Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -56,6 +56,8 @@ spec:
               value: "9e87fe0f66048c48da2191ef1fae36ef3ee0eb4ddcd036ef40881f0fe0f6eb42"
             - name: BAYN_STRATEGY_PARAMETER_HASH
               value: "19bc51c7361b181aa48845d178cb63373b3f2e017bcbea1cf3b70ab16647f8a9"
+            - name: BAYN_QUALIFICATION_RUN_ID
+              value: "a6530496d594a5425f091f30148012b12b6b030d49b396f925efe9ead3496217"
             - name: BAYN_MAXIMUM_AUTHORITY
               value: OBSERVE
             # sha256("bayn/authority-generation/autonomous-observe-v1")
