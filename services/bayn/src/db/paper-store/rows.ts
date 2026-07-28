@@ -44,7 +44,7 @@ export const AccountRow = Schema.Tuple([
     event_id: Sha256,
     account_id: NonEmptyString,
     cash_micros: Schema.String,
-    observed_at: Schema.DateValid,
+    observed_at: Schema.Date,
   }),
 ])
 export type AccountRow = (typeof AccountRow.Type)[0]
@@ -55,7 +55,7 @@ export const PositionRow = Schema.Struct({
   source_event_id: NonEmptyString,
   symbol: Schema.String,
   market_value_micros: Schema.String,
-  observed_at: Schema.DateValid,
+  observed_at: Schema.Date,
 })
 export type PositionRow = typeof PositionRow.Type
 
@@ -64,7 +64,7 @@ export const PositionSnapshotRow = Schema.Struct({
   schema_version: Schema.Literal('bayn.paper-position-snapshot.v1'),
   account_id: NonEmptyString,
   source_hash: Sha256,
-  observed_at: Schema.DateValid,
+  observed_at: Schema.Date,
   position_count: Schema.Int,
   content_hash: Sha256,
 })
@@ -83,7 +83,7 @@ export const ValuationRow = Schema.Struct({
   long_market_value_micros: Schema.String,
   short_market_value_micros: Schema.String,
   equity_micros: Schema.String,
-  as_of: Schema.DateValid,
+  as_of: Schema.Date,
 })
 export type ValuationRow = typeof ValuationRow.Type
 
@@ -99,13 +99,13 @@ export const AuthorityStateRow = Schema.Struct({
   kill_state: Schema.Enum(KillState),
   reason: Schema.NullOr(NonEmptyString),
   version: Schema.String,
-  updated_at: Schema.DateValid,
+  updated_at: Schema.Date,
 })
 export type AuthorityStateRow = typeof AuthorityStateRow.Type
 
 export const AuthorityStateObservationRow = Schema.Struct({
   ...AuthorityStateRow.fields,
-  observed_at: Schema.DateValid,
+  observed_at: Schema.Date,
 })
 export type AuthorityStateObservationRow = typeof AuthorityStateObservationRow.Type
 
@@ -139,7 +139,7 @@ export const AuthorityGenerationRow = Schema.Struct({
   proof_plan_hash: Schema.NullOr(Sha256),
   reconciliation_id: Schema.NullOr(Sha256),
   reconciliation_content_hash: Schema.NullOr(Sha256),
-  activated_at: Schema.DateValid,
+  activated_at: Schema.Date,
 })
 export type AuthorityGenerationRow = typeof AuthorityGenerationRow.Type
 
@@ -177,7 +177,7 @@ export const ActivationReconciliationRow = Schema.Struct({
   account_id: NonEmptyString,
   content_hash: Sha256,
   status: Schema.Enum(ReconciliationStatus),
-  reconciled_at: Schema.DateValid,
+  reconciled_at: Schema.Date,
 })
 export type ActivationReconciliationRow = typeof ActivationReconciliationRow.Type
 
@@ -185,10 +185,10 @@ export const ActivationReconciliationRows = Schema.Array(ActivationReconciliatio
 export const MutationBaselineRow = Schema.Tuple([
   Schema.Struct({
     unresolved_count: Schema.Int,
-    latest_mutation_at: Schema.NullOr(Schema.DateValid),
+    latest_mutation_at: Schema.NullOr(Schema.Date),
   }),
 ])
-export const DatabaseInstantRow = Schema.Tuple([Schema.Struct({ activated_at: Schema.DateValid })])
+export const DatabaseInstantRow = Schema.Tuple([Schema.Struct({ activated_at: Schema.Date })])
 export const AuthorityRestrictionInput = Schema.Struct({ reason: NonEmptyString, updatedAt: UtcInstant })
 
 export const decodeEventInput = Schema.decodeUnknownEffect(BrokerEventInputSchema, strictParseOptions)

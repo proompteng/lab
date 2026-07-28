@@ -36,10 +36,10 @@ export class CycleObservability extends Context.Service<CycleObservability, Cycl
   'bayn/CycleObservability',
 ) {}
 
-const NullableDate = Schema.NullOr(Schema.DateValid)
+const NullableDate = Schema.NullOr(Schema.Date)
 const NullableString = Schema.NullOr(Schema.String)
 const NullableSha256 = Schema.NullOr(Sha256Schema)
-const NullableInstant = Schema.NullOr(Schema.DateValid)
+const NullableInstant = Schema.NullOr(Schema.Date)
 const NullableCycleState = Schema.NullOr(Schema.Enum(CycleState))
 const NullableTerminalReason = Schema.NullOr(Schema.Enum(CycleTerminalReason))
 
