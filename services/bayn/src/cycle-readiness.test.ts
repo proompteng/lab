@@ -15,6 +15,11 @@ import {
   type CycleExecutionPolicy,
 } from './cycle'
 import { measurePublicationFreshness, runCyclePublicationReadiness } from './cycle-readiness'
+import {
+  decideCyclePublicationAdmission,
+  decideFinalizedPublicationBinding,
+  decidePublicationInspection,
+} from './cycle-runner/publication-decisions'
 import { CycleStore, type CycleStoreShape } from './db/cycle-store'
 import { operationalError } from './errors'
 import { canonicalHashV1, sha256 } from './hash'
@@ -244,6 +249,57 @@ const provide = (
   )
 
 describe('autonomous cycle finalized-publication readiness', () => {
+  test('decides every publication admission and binding transition without effects', () => {
+    const pending = makeCycle()
+    const active = { ...pending, state: CycleState.Active } as AutonomousCycle
+    const bound = { ...pending, bindings: { snapshotId } } as AutonomousCycle
+    const blocked = {
+      ...pending,
+      state: CycleState.Blocked,
+      terminalReason: CycleTerminalReason.MissedPublication,
+      terminalAt: pending.window.publicationDeadlineAt,
+      updatedAt: pending.window.publicationDeadlineAt,
+    } as AutonomousCycle
+
+    expect(decideCyclePublicationAdmission(blocked, pending.window.signalCloseAt)._tag).toBe('RETURN_BLOCKED')
+    expect(decideCyclePublicationAdmission(bound, pending.window.signalCloseAt)._tag).toBe('INSPECT_BOUND')
+    expect(decideCyclePublicationAdmission(active, pending.window.signalCloseAt)._tag).toBe('REJECT_UNBOUND_STATE')
+    expect(decideCyclePublicationAdmission(pending, pending.window.publicationDeadlineAt)._tag).toBe('BLOCK_MISSED')
+    expect(decideCyclePublicationAdmission(pending, '2026-01-30T20:59:59.999Z')._tag).toBe('WAIT_SIGNAL')
+    expect(decideCyclePublicationAdmission(pending, pending.window.signalCloseAt)._tag).toBe('INSPECT_PUBLICATION')
+
+    expect(decideFinalizedPublicationBinding(blocked, snapshotId, pending.window.signalCloseAt)._tag).toBe(
+      'RETURN_BLOCKED',
+    )
+    expect(decideFinalizedPublicationBinding(bound, 'e'.repeat(64), pending.window.signalCloseAt)._tag).toBe(
+      'REJECT_IMMUTABLE_BINDING',
+    )
+    expect(decideFinalizedPublicationBinding(bound, snapshotId, pending.window.signalCloseAt)._tag).toBe(
+      'RETURN_ALREADY_BOUND',
+    )
+    expect(decideFinalizedPublicationBinding(active, snapshotId, pending.window.signalCloseAt)._tag).toBe(
+      'REJECT_UNBOUND_STATE',
+    )
+    expect(decideFinalizedPublicationBinding(pending, snapshotId, pending.window.publicationDeadlineAt)._tag).toBe(
+      'BLOCK_MISSED',
+    )
+    expect(decideFinalizedPublicationBinding(pending, snapshotId, '2026-01-30T20:59:59.999Z')._tag).toBe(
+      'REJECT_BEFORE_SIGNAL_CLOSE',
+    )
+    expect(decideFinalizedPublicationBinding(pending, snapshotId, pending.window.signalCloseAt)._tag).toBe('BIND')
+
+    expect(
+      decidePublicationInspection(false, pending.window.signalCloseAt, pending.window.publicationDeadlineAt)._tag,
+    ).toBe('WAIT_MISSING')
+    expect(
+      decidePublicationInspection(true, pending.window.signalCloseAt, pending.window.publicationDeadlineAt)._tag,
+    ).toBe('BIND_FINALIZED')
+    expect(
+      decidePublicationInspection(true, pending.window.publicationDeadlineAt, pending.window.publicationDeadlineAt)
+        ._tag,
+    ).toBe('BLOCK_MISSED')
+  })
+
   test('waits before Signal close without reading publication data', async () => {
     const cycle = makeCycle()
     const control: StoreControl = { current: cycle, binds: 0, blocks: 0 }

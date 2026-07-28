@@ -1,12 +1,11 @@
 import { Data, Effect, Result } from 'effect'
 
+import { CycleTerminalReason, signalSessionCloseAt, type AutonomousCycle, type CycleConstructionFailure } from './cycle'
 import {
-  CycleState,
-  CycleTerminalReason,
-  signalSessionCloseAt,
-  type AutonomousCycle,
-  type CycleConstructionFailure,
-} from './cycle'
+  decideCyclePublicationAdmission,
+  decideFinalizedPublicationBinding,
+  decidePublicationInspection,
+} from './cycle-runner/publication-decisions'
 import { CycleStore, type CycleMutationReceipt, type CycleStoreError, type CycleStoreShape } from './db/cycle-store'
 import type { OperationalError } from './errors'
 import { MarketData, type MarketDataInspection, type MarketDataService } from './market-data'
@@ -51,7 +50,11 @@ const readinessError = (
   cause?: unknown,
 ): CycleReadinessError => new CycleReadinessError({ operation, failure, message, cause })
 
-const currentTime = currentUtcInstant
+interface CyclePublicationDependencies {
+  readonly marketData: MarketDataService
+  readonly store: CycleStoreShape
+  readonly now: Effect.Effect<string>
+}
 
 export type PublicationFreshnessFailure =
   | {
@@ -203,19 +206,18 @@ const blockMissedPublication = (
     ),
   )
 
-export const bindFinalizedCyclePublication = (
+const bindFinalizedCyclePublicationWith = (
+  store: CycleStoreShape,
   cycle: AutonomousCycle,
   inspection: MarketDataInspection,
   observedAt: string,
-): Effect.Effect<CyclePublicationReadiness, CycleReadinessError, CycleStore> =>
+): Effect.Effect<CyclePublicationReadiness, CycleReadinessError> =>
   Effect.gen(function* () {
-    const store = yield* CycleStore
-    if (cycle.state === CycleState.Blocked) {
-      return { outcome: 'BLOCKED', observedAt, cycle }
-    }
     const snapshotId = inspection.manifest.finalizedSnapshot.snapshotId
-    if (cycle.bindings.snapshotId !== undefined) {
-      if (cycle.bindings.snapshotId !== snapshotId) {
+    switch (decideFinalizedPublicationBinding(cycle, snapshotId, observedAt)._tag) {
+      case 'RETURN_BLOCKED':
+        return { outcome: 'BLOCKED', observedAt, cycle }
+      case 'REJECT_IMMUTABLE_BINDING':
         return yield* Effect.fail(
           readinessError(
             'bind-publication',
@@ -223,31 +225,31 @@ export const bindFinalizedCyclePublication = (
             'finalized Signal publication differs from the immutable cycle binding',
           ),
         )
+      case 'RETURN_ALREADY_BOUND': {
+        const freshness = yield* measureFreshness(
+          cycle,
+          inspection,
+          observedAt,
+          'finalized Signal publication freshness is invalid',
+        )
+        return { outcome: 'ALREADY_BOUND', observedAt, cycle, snapshotId, freshness }
       }
-      const freshness = yield* measureFreshness(
-        cycle,
-        inspection,
-        observedAt,
-        'finalized Signal publication freshness is invalid',
-      )
-      return { outcome: 'ALREADY_BOUND', observedAt, cycle, snapshotId, freshness }
-    }
-    if (cycle.state !== CycleState.Pending) {
-      return yield* Effect.fail(
-        readinessError('bind-publication', 'contract', `unbound cycle ${cycle.identity.cycleId} is not pending`),
-      )
-    }
-    if (observedAt >= cycle.window.publicationDeadlineAt) {
-      return yield* blockMissedPublication(store, cycle.identity.cycleId, observedAt)
-    }
-    if (observedAt < cycle.window.signalCloseAt) {
-      return yield* Effect.fail(
-        readinessError(
-          'bind-publication',
-          'contract',
-          'finalized Signal publication cannot bind before the cycle signal close',
-        ),
-      )
+      case 'REJECT_UNBOUND_STATE':
+        return yield* Effect.fail(
+          readinessError('bind-publication', 'contract', `unbound cycle ${cycle.identity.cycleId} is not pending`),
+        )
+      case 'BLOCK_MISSED':
+        return yield* blockMissedPublication(store, cycle.identity.cycleId, observedAt)
+      case 'REJECT_BEFORE_SIGNAL_CLOSE':
+        return yield* Effect.fail(
+          readinessError(
+            'bind-publication',
+            'contract',
+            'finalized Signal publication cannot bind before the cycle signal close',
+          ),
+        )
+      case 'BIND':
+        break
     }
     const freshness = yield* measureFreshness(
       cycle,
@@ -281,9 +283,17 @@ export const bindFinalizedCyclePublication = (
     )
   })
 
+export const bindFinalizedCyclePublication = (
+  cycle: AutonomousCycle,
+  inspection: MarketDataInspection,
+  observedAt: string,
+): Effect.Effect<CyclePublicationReadiness, CycleReadinessError, CycleStore> =>
+  Effect.flatMap(CycleStore, (store) => bindFinalizedCyclePublicationWith(store, cycle, inspection, observedAt))
+
 const inspectBoundPublication = (
   cycle: AutonomousCycle,
   marketData: MarketDataService,
+  now: Effect.Effect<string>,
 ): Effect.Effect<CyclePublicationReadiness, CycleReadinessError> => {
   const boundSnapshotId = cycle.bindings.snapshotId
   if (boundSnapshotId === undefined) {
@@ -324,7 +334,7 @@ const inspectBoundPublication = (
               ),
             )
           }
-          const observedAt = yield* currentTime
+          const observedAt = yield* now
           const freshness = yield* measureFreshness(
             cycle,
             publication.inspection,
@@ -343,48 +353,40 @@ const inspectBoundPublication = (
     )
 }
 
-export const runCyclePublicationReadiness = (
+const runCyclePublicationReadinessWith = (
+  dependencies: CyclePublicationDependencies,
   cycle: AutonomousCycle,
-): Effect.Effect<CyclePublicationReadiness, CycleReadinessError, MarketData | CycleStore> =>
+): Effect.Effect<CyclePublicationReadiness, CycleReadinessError> =>
   Effect.gen(function* () {
-    const marketData = yield* MarketData
-    const store = yield* CycleStore
-    const initialObservedAt = yield* currentTime
-
-    if (cycle.state === CycleState.Blocked) {
-      return { outcome: 'BLOCKED', observedAt: initialObservedAt, cycle }
-    }
-    if (cycle.bindings.snapshotId !== undefined) {
-      return yield* inspectBoundPublication(cycle, marketData)
-    }
-    if (cycle.state !== CycleState.Pending) {
-      return yield* Effect.fail(
-        readinessError('inspect-publication', 'contract', `unbound cycle ${cycle.identity.cycleId} is not pending`),
-      )
-    }
-    if (initialObservedAt >= cycle.window.publicationDeadlineAt) {
-      return yield* blockMissedPublication(store, cycle.identity.cycleId, initialObservedAt)
-    }
-    if (initialObservedAt < cycle.window.signalCloseAt) {
-      return {
-        outcome: 'WAITING',
-        reason: 'SIGNAL_SESSION_OPEN',
-        observedAt: initialObservedAt,
-        cycle,
-      }
+    const initialObservedAt = yield* dependencies.now
+    switch (decideCyclePublicationAdmission(cycle, initialObservedAt)._tag) {
+      case 'RETURN_BLOCKED':
+        return { outcome: 'BLOCKED', observedAt: initialObservedAt, cycle }
+      case 'INSPECT_BOUND':
+        return yield* inspectBoundPublication(cycle, dependencies.marketData, dependencies.now)
+      case 'REJECT_UNBOUND_STATE':
+        return yield* Effect.fail(
+          readinessError('inspect-publication', 'contract', `unbound cycle ${cycle.identity.cycleId} is not pending`),
+        )
+      case 'BLOCK_MISSED':
+        return yield* blockMissedPublication(dependencies.store, cycle.identity.cycleId, initialObservedAt)
+      case 'WAIT_SIGNAL':
+        return { outcome: 'WAITING', reason: 'SIGNAL_SESSION_OPEN', observedAt: initialObservedAt, cycle }
+      case 'INSPECT_PUBLICATION':
+        break
     }
 
     return yield* Effect.matchEffect(
-      marketData.inspectPublication({
+      dependencies.marketData.inspectPublication({
         signalSessionDate: cycle.identity.signalSessionDate,
         signalCalendarVersion: cycle.identity.signalCalendarVersion,
       }),
       {
         onFailure: (cause: OperationalError) =>
           Effect.gen(function* () {
-            const observedAt = yield* currentTime
+            const observedAt = yield* dependencies.now
             if (observedAt >= cycle.window.publicationDeadlineAt) {
-              return yield* blockMissedPublication(store, cycle.identity.cycleId, observedAt)
+              return yield* blockMissedPublication(dependencies.store, cycle.identity.cycleId, observedAt)
             }
             return yield* Effect.fail(
               readinessError(
@@ -397,20 +399,41 @@ export const runCyclePublicationReadiness = (
           }),
         onSuccess: (publication) =>
           Effect.gen(function* () {
-            const observedAt = yield* currentTime
-            if (observedAt >= cycle.window.publicationDeadlineAt) {
-              return yield* blockMissedPublication(store, cycle.identity.cycleId, observedAt)
-            }
-            if (publication.outcome === 'MISSING') {
-              return {
-                outcome: 'WAITING',
-                reason: 'PUBLICATION_MISSING',
+            const observedAt = yield* dependencies.now
+            switch (
+              decidePublicationInspection(
+                publication.outcome !== 'MISSING',
                 observedAt,
-                cycle,
-              } as const
+                cycle.window.publicationDeadlineAt,
+              )._tag
+            ) {
+              case 'BLOCK_MISSED':
+                return yield* blockMissedPublication(dependencies.store, cycle.identity.cycleId, observedAt)
+              case 'WAIT_MISSING':
+                return { outcome: 'WAITING', reason: 'PUBLICATION_MISSING', observedAt, cycle } as const
+              case 'BIND_FINALIZED':
+                if (publication.outcome === 'MISSING') {
+                  return yield* Effect.fail(
+                    readinessError('inspect-publication', 'contract', 'publication decision lost finalized evidence'),
+                  )
+                }
+                return yield* bindFinalizedCyclePublicationWith(
+                  dependencies.store,
+                  cycle,
+                  publication.inspection,
+                  observedAt,
+                )
             }
-            return yield* bindFinalizedCyclePublication(cycle, publication.inspection, observedAt)
           }),
       },
     )
   })
+
+export const runCyclePublicationReadiness = (
+  cycle: AutonomousCycle,
+): Effect.Effect<CyclePublicationReadiness, CycleReadinessError, MarketData | CycleStore> =>
+  Effect.all({ marketData: MarketData, store: CycleStore }).pipe(
+    Effect.flatMap(({ marketData, store }) =>
+      runCyclePublicationReadinessWith({ marketData, store, now: currentUtcInstant }, cycle),
+    ),
+  )

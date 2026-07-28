@@ -1,7 +1,7 @@
-import { pipe, Result } from 'effect'
+import { Result } from 'effect'
 
 import type { ExecutionModelFailure } from '../execution-model'
-import { canonicalJsonV1Result, renderCanonicalJsonFailure, type CanonicalJsonFailure } from '../hash'
+import type { CanonicalJsonFailure } from '../hash'
 import type {
   CashYieldEvent,
   EquityPoint,
@@ -358,50 +358,6 @@ export type SimulationReconciliationIssue =
       readonly cause: ExecutionModelFailure
     }
 
-const renderEvidence = (value: unknown): string =>
-  pipe(
-    canonicalJsonV1Result(value),
-    Result.match({
-      onSuccess: (json) => json,
-      onFailure: (failure) => `<unrenderable: ${renderCanonicalJsonFailure(failure)}>`,
-    }),
-  )
-
-const renderSimulationReconciliationIssueUnsafe = (issue: SimulationReconciliationIssue): string => {
-  switch (issue._tag) {
-    case 'InvalidInteger':
-      return `invalid integer (${issue.expected}): ${renderEvidence(issue.evidence)}`
-    case 'InvalidIdentity': {
-      if (issue.problem._tag !== 'CanonicalizationFailed') {
-        return `invalid identity: ${renderEvidence({ evidence: issue.evidence, problem: issue.problem })}`
-      }
-      return `identity canonicalization failed for ${renderEvidence(issue.evidence)}: ${renderCanonicalJsonFailure(issue.problem.cause)}`
-    }
-    case 'MissingReference':
-      return `missing reference: ${renderEvidence(issue.problem)}`
-    case 'EvidenceMismatch':
-      return `evidence mismatch: ${renderEvidence(issue.problem)}`
-    case 'InvalidEvidenceState':
-      return `invalid evidence state: ${renderEvidence(issue.problem)}`
-    case 'IncompleteEvidence':
-      return `incomplete evidence: ${renderEvidence(issue.problem)}`
-    case 'ComputationFailed':
-      return `${issue.computation._tag} calculation failed for ${renderEvidence(issue.computation)}: ${issue.cause._tag}`
-  }
-}
-
-export const renderSimulationReconciliationIssue = (issue: SimulationReconciliationIssue): string =>
-  pipe(
-    Result.try(() => renderSimulationReconciliationIssueUnsafe(issue)),
-    Result.getOrElse(() => 'unrenderable simulation reconciliation issue'),
-  )
-
-export const renderSimulationReconciliationIssues = (issues: readonly SimulationReconciliationIssue[]): string =>
-  pipe(
-    Result.try(() => issues.map(renderSimulationReconciliationIssue).join('; ')),
-    Result.getOrElse(() => 'unrenderable simulation reconciliation issues'),
-  )
-
 export interface MarkedEquityReconciliationInput {
   readonly runId: string
   readonly initialCapitalMicros: string
@@ -420,104 +376,3 @@ export interface MarkedEquityProof {
 export type SimulationReconciliationResult = Result.Result<MarkedEquityProof, readonly SimulationReconciliationIssue[]>
 
 export type Validation<A> = Result.Result<A, readonly SimulationReconciliationIssue[]>
-
-const freezePublicIssue = (issue: SimulationReconciliationIssue): SimulationReconciliationIssue => {
-  switch (issue._tag) {
-    case 'InvalidInteger': {
-      switch (issue.expected) {
-        case 'unsigned-integer':
-        case 'positive-unsigned-integer':
-        case 'signed-integer':
-          return Object.freeze(Object.assign({}, issue, { evidence: Object.freeze({ ...issue.evidence }) }))
-      }
-    }
-    case 'InvalidIdentity': {
-      switch (issue.problem._tag) {
-        case 'InvalidFormat':
-        case 'HashMismatch':
-        case 'CanonicalizationFailed':
-          return Object.freeze(
-            Object.assign({}, issue, {
-              evidence: Object.freeze({ ...issue.evidence }),
-              problem: Object.freeze({ ...issue.problem }),
-            }),
-          )
-      }
-    }
-    case 'MissingReference': {
-      switch (issue.problem._tag) {
-        case 'OrderDecision':
-        case 'FillOrder':
-        case 'MonetaryEventCashChange':
-          return Object.freeze(Object.assign({}, issue, { problem: Object.freeze({ ...issue.problem }) }))
-      }
-    }
-    case 'EvidenceMismatch': {
-      switch (issue.problem._tag) {
-        case 'OrderExecutionSession':
-        case 'FillBinding':
-        case 'FillQuantity':
-        case 'FillTerms':
-        case 'FeeComponents':
-        case 'FeeSchedule':
-        case 'CashChange':
-        case 'CashYield':
-        case 'DailyMark':
-        case 'PositionMark':
-          return Object.freeze(Object.assign({}, issue, { problem: Object.freeze({ ...issue.problem }) }))
-      }
-    }
-    case 'InvalidEvidenceState': {
-      switch (issue.problem._tag) {
-        case 'DuplicateMarkedPosition':
-        case 'UnsortedMarkedPositions':
-          return Object.freeze(
-            Object.assign({}, issue, {
-              problem: Object.freeze({ ...issue.problem, symbols: Object.freeze([...issue.problem.symbols]) }),
-            }),
-          )
-        case 'DuplicateIdentity':
-        case 'DuplicateFillForOrder':
-        case 'DuplicateCashChangeForEvent':
-        case 'InvalidOrder':
-        case 'InvalidMarkOrder':
-        case 'NegativeCash':
-        case 'NegativeLongPosition':
-        case 'DailyOutsideTolerance':
-        case 'FinalOutsideTolerance':
-        case 'NegativeTolerance':
-        case 'UnsupportedSimulationSchema':
-          return Object.freeze(Object.assign({}, issue, { problem: Object.freeze({ ...issue.problem }) }))
-      }
-    }
-    case 'IncompleteEvidence': {
-      switch (issue.problem._tag) {
-        case 'EmptyDailyMarks':
-        case 'CashChangeCountMismatch':
-        case 'MissingSessionMark':
-        case 'MissingOpenPositionMark':
-        case 'MonetaryEventsAfterFinalMark':
-          return Object.freeze(Object.assign({}, issue, { problem: Object.freeze({ ...issue.problem }) }))
-      }
-    }
-    case 'ComputationFailed': {
-      switch (issue.computation._tag) {
-        case 'FillTerms':
-        case 'FeeSchedule':
-        case 'CashYield':
-        case 'PositionNotional':
-          return Object.freeze(Object.assign({}, issue, { computation: Object.freeze({ ...issue.computation }) }))
-      }
-    }
-  }
-}
-
-export const freezePublicIssues = (
-  issues: readonly SimulationReconciliationIssue[],
-): readonly SimulationReconciliationIssue[] => Object.freeze(issues.map(freezePublicIssue))
-
-export const freezePublicProof = (proof: MarkedEquityProof): MarkedEquityProof =>
-  Object.freeze({
-    reconciliation: Object.freeze({ ...proof.reconciliation }),
-    equitySeries: Object.freeze(proof.equitySeries.map((point) => Object.freeze({ ...point }))),
-  })
