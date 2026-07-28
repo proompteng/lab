@@ -9,7 +9,7 @@ import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, 
 import type { RuntimeConfig } from '../config'
 import { makeStrategyProtocolHash } from '../contracts'
 import { operationalError } from '../errors'
-import { BrokerEnvironment } from '../execution/authority'
+import { BrokerAccess, BrokerEnvironment, noCapitalAuthority, sandboxCapitalAuthority } from '../execution/authority'
 import { WriterFence, WriterFenceError, WriterFenceLive, type WriterFenceService } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
 import { hashLedgerPlanResult } from '../ledger-plan'
@@ -51,6 +51,7 @@ import {
   type ValuationInput,
 } from '../broker/observations'
 import { BrokerProvider, alpacaSandboxBaseUrl } from '../broker/alpaca'
+import { makeBrokerIdentity } from '../broker/identity'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from './evidence-store'
 import {
   BrokerEventStore,
@@ -233,7 +234,11 @@ const exactReconciliation = (name: string, databaseAgeMs = 0): ReconciliationFix
 const config: RuntimeConfig = {
   host: '127.0.0.1',
   port: 8080,
-  maximumAuthority: Authority.Observe,
+  execution: {
+    brokerIdentity: undefined,
+    brokerAccess: BrokerAccess.ReadOnly,
+    capitalAuthority: noCapitalAuthority,
+  },
   build: {
     sourceRevision: 'a'.repeat(40),
     imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
@@ -687,7 +692,18 @@ const paperRuntimeConfig = (
   overrides: Partial<RuntimeConfig> = {},
 ): RuntimeConfig => ({
   ...config,
-  maximumAuthority: Authority.Paper,
+  execution: {
+    brokerIdentity: Result.getOrThrow(
+      makeBrokerIdentity({
+        schemaVersion: 'bayn.broker-identity.v2',
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Sandbox,
+        accountId: activation.accountId,
+      }),
+    ),
+    brokerAccess: BrokerAccess.Mutation,
+    capitalAuthority: sandboxCapitalAuthority(activation.generationHash),
+  },
   qualificationRunId: activation.qualificationRunId,
   build: {
     ...config.build,
@@ -697,6 +713,14 @@ const paperRuntimeConfig = (
   alpaca: {
     provider: BrokerProvider.Alpaca,
     environment: BrokerEnvironment.Sandbox,
+    identity: Result.getOrThrow(
+      makeBrokerIdentity({
+        schemaVersion: 'bayn.broker-identity.v2',
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Sandbox,
+        accountId: activation.accountId,
+      }),
+    ),
     baseUrl: alpacaSandboxBaseUrl,
     expectedAccountId: activation.accountId,
     authorityGenerationHash: activation.generationHash,
@@ -718,7 +742,11 @@ const prepareRuntimeConfig = (activation: CapitalGrantGeneration): RuntimeConfig
   }
   return {
     ...runtimeConfig,
-    maximumAuthority: Authority.Observe,
+    execution: {
+      brokerIdentity: alpaca.identity,
+      brokerAccess: BrokerAccess.ReadOnly,
+      capitalAuthority: noCapitalAuthority,
+    },
     alpaca: {
       ...alpaca,
       authorityGenerationHash: activation.previousGenerationHash,
@@ -1495,7 +1523,14 @@ describePostgres('paper accounting persistence', () => {
     }
     const { alpaca: _alpaca, ...missingAlpacaConfig } = validConfig
     const invalidConfigs: readonly RuntimeConfig[] = [
-      { ...validConfig, maximumAuthority: Authority.Observe },
+      {
+        ...validConfig,
+        execution: {
+          brokerIdentity: validAlpaca.identity,
+          brokerAccess: BrokerAccess.ReadOnly,
+          capitalAuthority: noCapitalAuthority,
+        },
+      },
       missingAlpacaConfig,
       {
         ...validConfig,

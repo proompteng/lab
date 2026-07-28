@@ -10,6 +10,7 @@ import type { EvidenceStoreService, StoredEvaluationEvidence } from './db/eviden
 import type { JournalService } from './ledger'
 import type { MarketDataService } from './market-data'
 import { Authority } from './execution/contracts'
+import { BrokerAccess, noCapitalAuthority } from './execution/authority'
 import { makeQualificationResult } from './qualification'
 import { summarizeEvaluation } from './risk-balanced-trend'
 import type { RuntimeState } from './runtime-state'
@@ -50,7 +51,11 @@ export const historicalEvidence: StoredEvaluationEvidence = {
 export const config: RuntimeConfig = {
   host: '127.0.0.1',
   port: 0,
-  maximumAuthority: Authority.Observe,
+  execution: {
+    brokerIdentity: undefined,
+    brokerAccess: BrokerAccess.ReadOnly,
+    capitalAuthority: noCapitalAuthority,
+  },
   build: {
     sourceRevision: provenance.sourceRevision,
     imageRepository: provenance.image.repository,

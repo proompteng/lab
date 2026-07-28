@@ -4,11 +4,11 @@ import { Cause, Effect, Exit, Option, Redacted, Ref, Result } from 'effect'
 import { AuthorizationError, SqlError } from 'effect/unstable/sql/SqlError'
 
 import type { RuntimeConfig } from './config'
+import { BrokerAccess, noCapitalAuthority } from './execution/authority'
 import { EvidenceStore, type EvidenceStoreService } from './db/evidence-store'
 import { operationalError } from './errors'
 import { Journal, JournalLive, type JournalService, type TigerBeetleClient } from './ledger'
 import { MarketData, marketDataOperationError, type MarketDataService } from './market-data'
-import { Authority } from './paper'
 import { initialState, type RuntimeState } from './runtime-state'
 import { runStartup } from './startup'
 import { makeStrategy, type Strategy } from './strategy'
@@ -32,7 +32,11 @@ const fixtureStrategy = makeStrategy(fixtureProtocol, provenance)
 const config: RuntimeConfig = {
   host: '127.0.0.1',
   port: 0,
-  maximumAuthority: Authority.Observe,
+  execution: {
+    brokerIdentity: undefined,
+    brokerAccess: BrokerAccess.ReadOnly,
+    capitalAuthority: noCapitalAuthority,
+  },
   build: {
     sourceRevision: provenance.sourceRevision,
     imageRepository: provenance.image.repository,

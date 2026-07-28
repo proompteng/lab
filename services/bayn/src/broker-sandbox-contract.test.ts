@@ -10,7 +10,6 @@ import {
   type BrokerConnectionInput,
 } from './broker/connection'
 import { BrokerEnvironment } from './execution/authority'
-import { Authority } from './paper'
 
 const accountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const input = (overrides: Partial<BrokerConnectionInput> = {}): BrokerConnectionInput => ({
@@ -27,7 +26,7 @@ const input = (overrides: Partial<BrokerConnectionInput> = {}): BrokerConnection
 })
 
 describe('committed broker sandbox contract', () => {
-  test('admits only a frozen, redacted Alpaca sandbox connection without capital authority', () => {
+  test('admits a frozen, redacted Alpaca sandbox connection without mutation capability', () => {
     const result = decodeBrokerConnection(input())
 
     expect(Result.isSuccess(result)).toBe(true)
@@ -37,32 +36,39 @@ describe('committed broker sandbox contract', () => {
       environment: BrokerEnvironment.Sandbox,
       baseUrl: alpacaSandboxBaseUrl,
       expectedAccountId: accountId,
+      identity: {
+        schemaVersion: 'bayn.broker-identity.v2',
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Sandbox,
+        accountId,
+      },
     })
     expect(Object.isFrozen(result.success)).toBe(true)
     expect(Redacted.isRedacted(result.success.key)).toBe(true)
     expect(Redacted.isRedacted(result.success.secret)).toBe(true)
     expect(Object.hasOwn(result.success, 'maximumAuthority')).toBe(false)
-    expect(String(Authority.Observe)).toBe('OBSERVE')
+    expect(Object.hasOwn(result.success, 'mutation')).toBe(false)
   })
 
-  test('rejects the live endpoint before any broker client or mutation capability exists', () => {
-    expect(
-      decodeBrokerConnection(
-        input({
-          environment: BrokerEnvironment.Live,
-          baseUrl: alpacaLiveBaseUrl,
-        }),
-      ),
-    ).toMatchObject({
-      _tag: 'Failure',
-      failure: {
-        _tag: 'BrokerEnvironmentUnsupported',
+  test('binds a live endpoint to a distinct durable identity without creating mutation capability', () => {
+    const sandbox = Result.getOrThrow(decodeBrokerConnection(input()))
+    const live = Result.getOrThrow(
+      decodeBrokerConnection(input({ environment: BrokerEnvironment.Live, baseUrl: alpacaLiveBaseUrl })),
+    )
+
+    expect(live).toMatchObject({
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Live,
+      baseUrl: alpacaLiveBaseUrl,
+      identity: {
+        schemaVersion: 'bayn.broker-identity.v2',
         provider: BrokerProvider.Alpaca,
         environment: BrokerEnvironment.Live,
-        baseUrl: alpacaLiveBaseUrl,
-        reason: 'DURABLE_IDENTITY_UNAVAILABLE',
+        accountId,
       },
     })
+    expect(live.identity.identityHash).not.toBe(sandbox.identity.identityHash)
+    expect(Object.hasOwn(live, 'mutation')).toBe(false)
   })
 
   test('rejects incomplete or unsafe credential material without exposing secrets', () => {

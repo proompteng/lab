@@ -2,6 +2,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
 
 import { WriterFence } from '../../execution/writer-fence'
+import { historicalSandboxAuthority } from '../../execution/legacy-authority'
 import {
   Authority,
   decodeCapitalGrantProofBinding,
@@ -61,7 +62,7 @@ export const makeCapitalGrantInterpreter = (
     liftAuthorityDecision(
       bindPaperGenerationRuntime(
         {
-          maximumAuthority: config.maximumAuthority,
+          maximumAuthority: historicalSandboxAuthority(config.execution),
           alpaca:
             config.alpaca === undefined
               ? undefined

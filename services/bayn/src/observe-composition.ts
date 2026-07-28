@@ -497,7 +497,6 @@ const observePass = (
 export type ObserveAutonomousCycleInput = {
   readonly accountId: string
   readonly authorityGenerationHash: string
-  readonly maximumAuthority: Authority
   readonly pollIntervalMs: number
   readonly strategy: Pick<Strategy, 'currentDecision' | 'parameters' | 'provenance'>
 }
@@ -524,15 +523,6 @@ export const prepareObserveStartup = (
   input: ObserveAutonomousCycleInput,
 ): Result.Result<ObserveStartupPreparation, OperationalError> => {
   const executionModel = input.strategy.parameters.executionModel
-  if (input.maximumAuthority !== Authority.Observe) {
-    return Result.fail(
-      operationalError(
-        'config',
-        'cycle-loop',
-        'PAPER autonomous startup requires the gated Phase B authority generation and dispatch transition',
-      ),
-    )
-  }
   if (executionModel.schemaVersion !== 'bayn.execution-model.v2') {
     return Result.fail(
       operationalError('strategy', 'cycle-loop', 'autonomous cycles require the causal v2 execution model'),

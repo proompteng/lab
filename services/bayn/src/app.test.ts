@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Clock, Deferred, Effect, Fiber, pipe, Redacted } from 'effect'
+import { Clock, Deferred, Effect, Fiber, pipe, Redacted, Result } from 'effect'
 
 import {
   config,
@@ -16,19 +16,19 @@ import {
 import {
   type ApplicationIdentity,
   type AutonomousCycleStartupInput,
-  type AutonomousObserveApplicationConfig,
+  type AutonomousApplicationConfig,
   type BrokerlessApplicationConfig,
   makeApplicationPlan,
   runApplication,
 } from './app'
 import { AccountStatus, BrokerProvider, alpacaSandboxBaseUrl, type BrokerReadShape } from './broker/alpaca'
 import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
+import { makeBrokerIdentity } from './broker/identity'
 import type { LoadedRuntimeConfig } from './config'
 import { makeStrategyProtocolHash } from './contracts'
-import { BrokerEnvironment } from './execution/authority'
+import { BrokerAccess, BrokerEnvironment, noCapitalAuthority } from './execution/authority'
 import type { BrokerProbe } from './health'
 import { HttpServerLive } from './http'
-import { Authority } from './paper'
 import { makeStrategy } from './strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
@@ -86,14 +86,33 @@ const broker: BrokerProbe = {
   executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
 }
 
-const autonomousConfig = (runtime: typeof config): AutonomousObserveApplicationConfig => ({
+const autonomousConfig = (runtime: typeof config): AutonomousApplicationConfig => ({
   ...runtime,
-  runtimeMode: 'AutonomousObserveService',
+  runtimeMode: 'AutonomousService',
   cyclePollIntervalMs: 30_000,
-  maximumAuthority: Authority.Observe,
+  execution: {
+    brokerIdentity: Result.getOrThrow(
+      makeBrokerIdentity({
+        schemaVersion: 'bayn.broker-identity.v2',
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Sandbox,
+        accountId: brokerAccountId,
+      }),
+    ),
+    brokerAccess: BrokerAccess.ReadOnly,
+    capitalAuthority: noCapitalAuthority,
+  },
   alpaca: {
     provider: BrokerProvider.Alpaca,
     environment: BrokerEnvironment.Sandbox,
+    identity: Result.getOrThrow(
+      makeBrokerIdentity({
+        schemaVersion: 'bayn.broker-identity.v2',
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Sandbox,
+        accountId: brokerAccountId,
+      }),
+    ),
     baseUrl: alpacaSandboxBaseUrl,
     expectedAccountId: brokerAccountId,
     authorityGenerationHash: 'f'.repeat(64),
@@ -110,7 +129,11 @@ const brokerlessConfig = (runtime: typeof config): BrokerlessApplicationConfig =
   ...runtime,
   runtimeMode: 'BrokerlessService',
   cyclePollIntervalMs: 30_000,
-  maximumAuthority: Authority.Observe,
+  execution: {
+    brokerIdentity: undefined,
+    brokerAccess: BrokerAccess.ReadOnly,
+    capitalAuthority: noCapitalAuthority,
+  },
   alpaca: undefined,
 })
 
@@ -120,6 +143,11 @@ const discoveryConfig = (
   ...autonomousConfig(runtime),
   runtimeMode: 'ExecutionCandidateDiscovery',
   qualificationRunId: pinnedEvaluation.runId,
+  execution: {
+    brokerIdentity: autonomousConfig(runtime).alpaca.identity,
+    brokerAccess: BrokerAccess.ReadOnly,
+    capitalAuthority: noCapitalAuthority,
+  },
 })
 
 const applicationIdentity = (loaded: LoadedRuntimeConfig): ApplicationIdentity => ({
@@ -134,7 +162,7 @@ describe('Bayn application composition', () => {
   test('constructs one exhaustive immutable application plan for every resolved runtime mode', () => {
     const modes = [
       { config: brokerlessConfig(config), expectedTag: 'BrokerlessService' },
-      { config: autonomousConfig(config), expectedTag: 'AutonomousObserveService' },
+      { config: autonomousConfig(config), expectedTag: 'AutonomousService' },
       { config: discoveryConfig(pinnedRuntimeConfig), expectedTag: 'ExecutionCandidateDiscovery' },
     ] as const
 
@@ -193,7 +221,7 @@ describe('Bayn application composition', () => {
                 evidenceStore: successfulEvidenceStore,
                 cycleObservability,
               },
-              { _tag: 'AutonomousObserve', broker, startCycle },
+              { _tag: 'AutonomousRead', broker, startCycle },
             ),
             Effect.provide(HttpServerLive(config)),
             Effect.forkScoped,
@@ -237,7 +265,7 @@ describe('Bayn application composition', () => {
                 evidenceStore: pinnedStore(),
                 cycleObservability,
               },
-              { _tag: 'AutonomousObserve', broker, startCycle },
+              { _tag: 'AutonomousRead', broker, startCycle },
             ),
             Effect.provide(HttpServerLive(pinnedRuntimeConfig)),
             Effect.forkScoped,

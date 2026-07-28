@@ -36,8 +36,9 @@ import {
   TimeInForce as BrokerTimeInForce,
   alpacaSandboxBaseUrl,
 } from '../broker/alpaca'
+import { makeBrokerIdentity } from '../broker/identity'
 import { cancel, submit } from '../execution/coordinator'
-import { BrokerEnvironment } from '../execution/authority'
+import { BrokerAccess, BrokerEnvironment, noCapitalAuthority, sandboxCapitalAuthority } from '../execution/authority'
 import { WriterFence, WriterFenceLive, type WriterFenceService } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
 import { buildLedgerPlan, Journal, type JournalService } from '../ledger'
@@ -124,7 +125,11 @@ const makeCapitalGrantGeneration = (input: Parameters<typeof makeCapitalGrantGen
 const makeConfig = (url = testUrl): RuntimeConfig => ({
   host: '127.0.0.1',
   port: 8080,
-  maximumAuthority: Authority.Observe,
+  execution: {
+    brokerIdentity: undefined,
+    brokerAccess: BrokerAccess.ReadOnly,
+    capitalAuthority: noCapitalAuthority,
+  },
   build: {
     sourceRevision: 'a'.repeat(40),
     imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
@@ -759,7 +764,18 @@ const makePaperActivationConfig = (activation: CapitalGrantGeneration): RuntimeC
   const config = makeConfig()
   return {
     ...config,
-    maximumAuthority: Authority.Paper,
+    execution: {
+      brokerIdentity: Result.getOrThrow(
+        makeBrokerIdentity({
+          schemaVersion: 'bayn.broker-identity.v2',
+          provider: BrokerProvider.Alpaca,
+          environment: BrokerEnvironment.Sandbox,
+          accountId: activation.accountId,
+        }),
+      ),
+      brokerAccess: BrokerAccess.Mutation,
+      capitalAuthority: sandboxCapitalAuthority(activation.generationHash),
+    },
     qualificationRunId: activation.qualificationRunId,
     build: {
       ...config.build,
@@ -769,6 +785,14 @@ const makePaperActivationConfig = (activation: CapitalGrantGeneration): RuntimeC
     alpaca: {
       provider: BrokerProvider.Alpaca,
       environment: BrokerEnvironment.Sandbox,
+      identity: Result.getOrThrow(
+        makeBrokerIdentity({
+          schemaVersion: 'bayn.broker-identity.v2',
+          provider: BrokerProvider.Alpaca,
+          environment: BrokerEnvironment.Sandbox,
+          accountId: activation.accountId,
+        }),
+      ),
       baseUrl: alpacaSandboxBaseUrl,
       expectedAccountId: activation.accountId,
       authorityGenerationHash: activation.generationHash,

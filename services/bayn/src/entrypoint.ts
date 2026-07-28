@@ -12,6 +12,7 @@ import {
 } from './app'
 import { riskBalancedTrendBehaviorHash } from './behavior'
 import { BrokerSession, live as AlpacaBrokerLive, type BrokerReadShape } from './broker/alpaca'
+import { BrokerMutationError, makeMutation } from './broker/alpaca-mutations'
 import { verifyBehaviorHash, verifyParameterHash } from './build'
 import { loadConfig, type LoadedRuntimeConfig } from './config'
 import {
@@ -24,7 +25,13 @@ import { CycleObservability, CycleObservabilityLive } from './db/cycle-observabi
 import { CycleStoreLive } from './db/cycle-store'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from './db/evidence-store'
 import { ExecutionStoreLive } from './db/execution-store'
-import { WriterFenceLive } from './execution/writer-fence'
+import { LiveCapitalGrantStore, LiveCapitalGrantStoreLive } from './db/live-capital-grant'
+import { BrokerAccess } from './execution/authority'
+import { IntentStore, IntentStoreLive } from './execution/intents'
+import { MutationStore, MutationStoreLive } from './execution/mutations'
+import { makeExecutionProgram } from './execution/runtime-program'
+import { renderRuntimeAuthorityFailure, resolveRuntimeAuthority } from './execution/runtime-authority'
+import { WriterFence, WriterFenceLive } from './execution/writer-fence'
 import { operationalError } from './errors'
 import { canonicalHashV1Result, type CanonicalJsonFailure } from './hash'
 import { HttpServerLive } from './http'
@@ -33,12 +40,13 @@ import { MarketData, MarketDataLive } from './market-data'
 import { loadObserveRiskPolicy, makeObserveAutonomousCycleStartup } from './observe-composition'
 import { sqlResource } from './operations'
 import {
-  discoverPaperCandidates,
+  discoverPaperCandidates as discoverExecutionCandidatesHistoricalCodec,
   renderExecutionCandidateDiscoveryError,
   type ExecutionCandidateDiscoveryReceipt,
 } from './execution-candidate-discovery'
 import { loadDefaultProtocol, type CausalProtocol } from './protocol'
 import { makeStrategy, type Strategy } from './strategy'
+import { currentUtcInstant } from './time'
 
 type RuntimeIdentityFailure =
   | {
@@ -229,9 +237,16 @@ export const BrokerlessApplicationResourcesLive = (plan: ApplicationPlanFor<'Bro
   ).pipe(Layer.provideMerge(ApplicationPlatformLive))
 }
 
-export const AutonomousObserveApplicationResourcesLive = (plan: ApplicationPlanFor<'AutonomousObserveService'>) => {
+export const AutonomousApplicationResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
   const postgres = PostgresAuthorityLive(plan.config)
   const journal = JournalResourceLive(plan.config)
+  const writerFence = WriterFenceResourceLive.pipe(Layer.provide(postgres))
+  const executionPersistence = Layer.mergeAll(
+    ExecutionStoreResourceLive(plan.config),
+    IntentStoreLive,
+    MutationStoreLive,
+    LiveCapitalGrantStoreLive,
+  ).pipe(Layer.provideMerge(writerFence), Layer.provideMerge(postgres), Layer.provideMerge(journal))
   return Layer.mergeAll(
     HttpServerLive(plan.config),
     SignalMarketDataLive(plan),
@@ -239,8 +254,7 @@ export const AutonomousObserveApplicationResourcesLive = (plan: ApplicationPlanF
     journal,
     CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
     BrokerSessionResourceLive(plan.config),
-    ExecutionStoreResourceLive(plan.config).pipe(Layer.provide(Layer.merge(postgres, journal))),
-    WriterFenceResourceLive.pipe(Layer.provide(postgres)),
+    executionPersistence,
     CycleStoreResourceLive.pipe(Layer.provide(postgres)),
   ).pipe(Layer.provideMerge(ApplicationPlatformLive))
 }
@@ -273,32 +287,78 @@ const runBrokerlessService = (plan: ApplicationPlanFor<'BrokerlessService'>) =>
     ),
   )
 
-const observeBroker = (plan: ApplicationPlanFor<'AutonomousObserveService'>, read: BrokerReadShape) => ({
+const runtimeBroker = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  read: BrokerReadShape,
+  mutationEnabled: boolean,
+) => ({
   read,
   expectedAccountId: plan.config.alpaca.expectedAccountId,
-  executionEligible: false,
-  executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE' as const,
+  executionEligible: mutationEnabled,
+  executionDisabledReason: mutationEnabled ? null : ('BROKER_ACCESS_READ_ONLY' as const),
 })
 
-const observeCycle = (plan: ApplicationPlanFor<'AutonomousObserveService'>) =>
+const observeCycle = (plan: ApplicationPlanFor<'AutonomousService'>) =>
   makeObserveAutonomousCycleStartup({
     accountId: plan.config.alpaca.expectedAccountId,
     authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
-    maximumAuthority: plan.config.maximumAuthority,
     pollIntervalMs: plan.config.cyclePollIntervalMs,
     strategy: plan.strategy,
   })
 
-const runAutonomousObserveService = (plan: ApplicationPlanFor<'AutonomousObserveService'>) =>
-  Effect.all({ dependencies: applicationDependencies, session: BrokerSession }).pipe(
-    Effect.flatMap(({ dependencies, session }) =>
-      runApplication(plan.config, plan.strategy, dependencies, {
-        _tag: 'AutonomousObserve',
-        broker: observeBroker(plan, session.read),
+const authorityError = (cause: Effect.Error<ReturnType<typeof resolveRuntimeAuthority>>) =>
+  operationalError('config', 'execution-authority', renderRuntimeAuthorityFailure(cause), cause)
+
+const executionProgramError = (
+  cause: BrokerMutationError | Result.Result.Failure<ReturnType<typeof makeExecutionProgram>>,
+) =>
+  cause instanceof BrokerMutationError
+    ? operationalError('config', 'broker-mutation', cause.message, cause)
+    : operationalError('config', 'execution-program', 'execution program requires validated mutation authority', cause)
+
+const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
+  Effect.gen(function* () {
+    const { dependencies, session, liveCapitalGrants } = yield* Effect.all({
+      dependencies: applicationDependencies,
+      session: BrokerSession,
+      liveCapitalGrants: LiveCapitalGrantStore,
+    })
+    const observedAt = yield* currentUtcInstant
+    const authority = yield* resolveRuntimeAuthority(
+      {
+        policy: plan.config.execution,
+        strategy: plan.strategy.provenance.strategy,
+        observedAt,
+      },
+      { liveCapitalGrants },
+    ).pipe(Effect.mapError(authorityError))
+
+    if (authority.brokerAccess === BrokerAccess.ReadOnly) {
+      return yield* runApplication(plan.config, plan.strategy, dependencies, {
+        _tag: 'AutonomousRead',
+        broker: runtimeBroker(plan, session.read, false),
         startCycle: observeCycle(plan),
+      })
+    }
+
+    const executionDependencies = yield* Effect.all({
+      intentStore: IntentStore,
+      mutationStore: MutationStore,
+      writerFence: WriterFence,
+      brokerMutation: makeMutation(session, authority),
+    })
+    const executionProgram = yield* Effect.fromResult(
+      makeExecutionProgram(authority, {
+        brokerRead: session.read,
+        ...executionDependencies,
       }),
-    ),
-  )
+    ).pipe(Effect.mapError(executionProgramError))
+    return yield* runApplication<never, never>(plan.config, plan.strategy, dependencies, {
+      _tag: 'AutonomousMutation',
+      broker: runtimeBroker(plan, session.read, true),
+      executionProgram,
+    })
+  })
 
 const encodeJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Json))
 
@@ -330,7 +390,10 @@ const policyHash = (policy: unknown): Effect.Effect<string, ReturnType<typeof op
     Effect.fromResult,
   )
 
-const paperCandidateIdentity = (plan: ApplicationPlanFor<'ExecutionCandidateDiscovery'>, riskPolicyHash: string) => ({
+const executionCandidateIdentity = (
+  plan: ApplicationPlanFor<'ExecutionCandidateDiscovery'>,
+  riskPolicyHash: string,
+) => ({
   sourceRevision: plan.config.build.sourceRevision,
   image: {
     repository: plan.config.build.imageRepository,
@@ -344,8 +407,8 @@ const paperCandidateIdentity = (plan: ApplicationPlanFor<'ExecutionCandidateDisc
   policyHash: riskPolicyHash,
 })
 
-const discoverPaperCandidate = (plan: ApplicationPlanFor<'ExecutionCandidateDiscovery'>, riskPolicyHash: string) =>
-  discoverPaperCandidates(paperCandidateIdentity(plan, riskPolicyHash)).pipe(
+const discoverExecutionCandidate = (plan: ApplicationPlanFor<'ExecutionCandidateDiscovery'>, riskPolicyHash: string) =>
+  discoverExecutionCandidatesHistoricalCodec(executionCandidateIdentity(plan, riskPolicyHash)).pipe(
     Effect.mapError((cause) =>
       operationalError(
         'strategy',
@@ -368,7 +431,7 @@ const runExecutionCandidateDiscovery = (plan: ApplicationPlanFor<'ExecutionCandi
       ),
     ),
     Effect.flatMap(policyHash),
-    Effect.flatMap((riskPolicyHash) => discoverPaperCandidate(plan, riskPolicyHash)),
+    Effect.flatMap((riskPolicyHash) => discoverExecutionCandidate(plan, riskPolicyHash)),
     Effect.flatMap(writeDiscoveryReceipt),
   )
 
@@ -377,8 +440,8 @@ export const runApplicationPlan = pipe(
   Match.tag('BrokerlessService', (plan) =>
     runBrokerlessService(plan).pipe(Effect.provide(BrokerlessApplicationResourcesLive(plan))),
   ),
-  Match.tag('AutonomousObserveService', (plan) =>
-    runAutonomousObserveService(plan).pipe(Effect.provide(AutonomousObserveApplicationResourcesLive(plan))),
+  Match.tag('AutonomousService', (plan) =>
+    runAutonomousService(plan).pipe(Effect.provide(AutonomousApplicationResourcesLive(plan))),
   ),
   Match.tag('ExecutionCandidateDiscovery', (plan) =>
     runExecutionCandidateDiscovery(plan).pipe(Effect.provide(ExecutionCandidateDiscoveryResourcesLive(plan))),

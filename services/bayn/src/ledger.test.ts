@@ -6,7 +6,8 @@ import { CreateAccountStatus, CreateTransferStatus, type Account, type Transfer 
 
 import { prepareAccounting, rebuildAccountingLedger } from './accounting/domain'
 import type { RuntimeConfig } from './config'
-import { Authority, OrderSide, type Fill } from './paper'
+import { BrokerAccess, noCapitalAuthority } from './execution/authority'
+import { OrderSide, type Fill } from './paper'
 import {
   assembleAccountPlan,
   buildLedgerPlan,
@@ -1006,7 +1007,11 @@ describe('TigerBeetle simulation journal', () => {
     const config: RuntimeConfig = {
       host: '127.0.0.1',
       port: 0,
-      maximumAuthority: Authority.Observe,
+      execution: {
+        brokerIdentity: undefined,
+        brokerAccess: BrokerAccess.ReadOnly,
+        capitalAuthority: noCapitalAuthority,
+      },
       build: {
         sourceRevision: provenance.sourceRevision,
         imageRepository: provenance.image.repository,

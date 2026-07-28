@@ -16,7 +16,7 @@
     "test": "bun test",
     "test:broker-sandbox": "bun test src/broker-sandbox-contract.test.ts",
     "test:effect-runtime": "bun test src/clickhouse-patch.test.ts src/effect-runtime-compatibility.test.ts",
-    "test:postgres": "bun test src/db/cycle-observability.integration.test.ts && bun test src/db/evidence-store.integration.test.ts && bun test src/db/paper-store.integration.test.ts && bun test src/db/cycle-store/integration.test.ts",
+    "test:postgres": "bun test src/db/cycle-observability.integration.test.ts && bun test src/db/evidence-store.integration.test.ts && bun test src/db/paper-store.integration.test.ts && bun test src/db/live-capital-grant.integration.test.ts && bun test src/db/cycle-store/integration.test.ts",
     "tsc": "bun node_modules/typescript/bin/tsc --noEmit"
   },
   "dependencies": {

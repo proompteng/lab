@@ -364,7 +364,6 @@ describe('OBSERVE runtime composition', () => {
     const prepared = prepareObserveStartup({
       accountId,
       authorityGenerationHash: generationHash,
-      maximumAuthority: Authority.Observe,
       pollIntervalMs: 30_000,
       strategy: fixtureStrategy,
     })
@@ -722,7 +721,6 @@ describe('OBSERVE runtime composition', () => {
     const startup = makeObserveAutonomousCycleStartup({
       accountId,
       authorityGenerationHash: generationHash,
-      maximumAuthority: Authority.Observe,
       pollIntervalMs: 30_000,
       strategy: fixtureStrategy,
     })
@@ -775,93 +773,14 @@ describe('OBSERVE runtime composition', () => {
     )
   })
 
-  test('fails PAPER startup before authority initialization or autonomous work can begin', async () => {
-    const unused = Effect.die(new Error('PAPER startup must fail before using runtime capabilities'))
-    let authorityInitializations = 0
-    const executionStore: BrokerEventStoreShape &
-      FillAccountingStoreShape &
-      ValuationStoreShape &
-      ReconciliationStoreShape &
-      AuthorityGenerationStoreShape &
-      AuthorityRestrictionStoreShape = {
-      ingest: () => unused,
-      ingestPositions: () => unused,
-      account: () => unused,
-      value: () => unused,
-      hasAccountBaseline: () => unused,
-      bindings: () => unused,
-      reconcile: () => unused,
-      ensureAuthorityGeneration: () =>
-        Effect.sync(() => {
-          authorityInitializations += 1
-          throw new Error('PAPER startup must not initialize synthetic OBSERVE authority')
-        }),
-      restrictAuthority: () => unused,
-    }
-    const cycleStore: CycleStoreShape = {
-      acquire: () => unused,
-      read: () => unused,
-      readAuthoritySlot: () => unused,
-      readDecisionDocument: () => unused,
-      readOldestUnfinished: () => unused,
-      bindSnapshot: () => unused,
-      activate: () => unused,
-      bindDecision: () => unused,
-      finish: () => unused,
-      block: () => unused,
-    }
-    const brokerRead: BrokerReadShape = {
-      account: unused,
-      accountConfiguration: unused,
-      assetBySymbol: unusedAssetBySymbol,
-      positions: unused,
-      orders: () => unused,
-      orderById: () => unused,
-      orderByClientId: () => unused,
-      fillActivities: () => unused,
-      marketCalendar: () => unused,
-    }
-    const writerFence: WriterFenceService = {
-      backendPid: 1,
-      check: unused,
-      transaction: (effect) => effect,
-    }
+  test('keeps the observe startup interface read-only by construction', () => {
     const startup = makeObserveAutonomousCycleStartup({
       accountId,
       authorityGenerationHash: generationHash,
-      maximumAuthority: Authority.Paper,
       pollIntervalMs: 30_000,
-      strategy: {
-        currentDecision: () => {
-          throw new Error('PAPER startup must not compile a shadow decision')
-        },
-        parameters: fixtureProtocol,
-        provenance: fixtureStrategy.provenance,
-      },
+      strategy: fixtureStrategy,
     })
 
-    const exit = await Effect.runPromiseExit(
-      Effect.scoped(
-        startup({
-          qualificationRunId: 'c'.repeat(64),
-          recordPass: () => unused,
-        }).pipe(
-          Effect.provideService(BrokerRead, brokerRead),
-          Effect.provideService(CycleStore, cycleStore),
-          Effect.provideService(MarketData, marketData([])),
-          Effect.provideService(BrokerEventStore, executionStore),
-          Effect.provideService(FillAccountingStore, executionStore),
-          Effect.provideService(ValuationStore, executionStore),
-          Effect.provideService(ReconciliationStore, executionStore),
-          Effect.provideService(AuthorityGenerationStore, executionStore),
-          Effect.provideService(WriterFence, writerFence),
-        ),
-      ),
-    )
-
-    expect(exit.toString()).toContain(
-      'PAPER autonomous startup requires the gated Phase B authority generation and dispatch transition',
-    )
-    expect(authorityInitializations).toBe(0)
+    expect(typeof startup).toBe('function')
   })
 })

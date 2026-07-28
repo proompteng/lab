@@ -1,12 +1,7 @@
 import { Data, Redacted, Result, Schema } from 'effect'
 
 import { canonicalHashV1OrThrow, canonicalHashV1Result } from '../../hash'
-import {
-  BrokerEnvironment,
-  CapitalAccessState,
-  ExecutionAccess,
-  type ExecutionAuthority,
-} from '../../execution/authority'
+import { BrokerAccess, type ExecutionAuthority } from '../../execution/authority'
 import {
   IntentSchema,
   IntentState,
@@ -134,25 +129,11 @@ const microsToDecimal = (micros: bigint): string => {
 
 export const authorizeMutationAccess = (
   authority: ExecutionAuthority,
-): Result.Result<ExecutionAccess.SubmitOrders, BrokerMutationError> => {
-  if (authority.executionAccess !== ExecutionAccess.SubmitOrders) {
-    return Result.fail(
-      configurationError('Alpaca mutation capability requires explicit submit-orders execution access'),
-    )
+): Result.Result<BrokerAccess.Mutation, BrokerMutationError> => {
+  if (authority.brokerAccess !== BrokerAccess.Mutation) {
+    return Result.fail(configurationError('Alpaca mutation capability requires explicit mutation broker access'))
   }
-  if (
-    authority.brokerEnvironment === BrokerEnvironment.Live &&
-    authority.capitalAccess._tag !== CapitalAccessState.Enabled
-  ) {
-    return Result.fail(configurationError('live broker mutation requires explicit enabled capital access'))
-  }
-  if (
-    authority.brokerEnvironment === BrokerEnvironment.Sandbox &&
-    authority.capitalAccess._tag !== CapitalAccessState.Disabled
-  ) {
-    return Result.fail(configurationError('sandbox broker mutation forbids live capital access'))
-  }
-  return Result.succeed(ExecutionAccess.SubmitOrders)
+  return Result.succeed(BrokerAccess.Mutation)
 }
 
 export const resolveMutationCapability = (
@@ -183,12 +164,12 @@ export const resolveMutationCapability = (
   }
   return Result.gen(function* () {
     yield* authorizeMutationAccess(authority)
-    if (authority.brokerEnvironment !== connection.environment) {
+    if (authority.brokerIdentity.identityHash !== connection.identity.identityHash) {
       return yield* Result.fail(
-        configurationError('Alpaca mutation authority environment does not match the verified broker session', {
-          _tag: 'BrokerEnvironmentMismatch',
-          authorityEnvironment: authority.brokerEnvironment,
-          connectionEnvironment: connection.environment,
+        configurationError('Alpaca mutation authority identity does not match the verified broker session', {
+          _tag: 'BrokerIdentityMismatch',
+          authorityIdentityHash: authority.brokerIdentity.identityHash,
+          connectionIdentityHash: connection.identity.identityHash,
         }),
       )
     }
