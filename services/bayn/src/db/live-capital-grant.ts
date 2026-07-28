@@ -47,6 +47,11 @@ const RowSchema = Schema.Struct({
   broker_environment: BrokerEnvironmentSchema,
   account_id: StrictNonEmptyStringSchema,
   authority_generation_hash: Sha256Schema,
+  generation_broker_identity_schema_version: Schema.NullOr(Schema.Literal('bayn.broker-identity.v2')),
+  generation_broker_identity_hash: Schema.NullOr(Sha256Schema),
+  generation_broker_provider: Schema.NullOr(BrokerProviderSchema),
+  generation_broker_environment: Schema.NullOr(BrokerEnvironmentSchema),
+  generation_account_id: Schema.NullOr(StrictNonEmptyStringSchema),
   strategy_name: StrictNonEmptyStringSchema,
   strategy_behavior_hash: Sha256Schema,
   strategy_parameter_hash: Sha256Schema,
@@ -100,6 +105,17 @@ const authorityFromRow = (row: Row): Result.Result<LiveCapitalAuthority, LiveCap
   }
   if (identity.success.identityHash !== row.broker_identity_hash) {
     return Result.fail(storeError('read', 'invariant', 'persisted live grant broker identity hash mismatch'))
+  }
+  if (
+    row.generation_broker_identity_schema_version !== identity.success.schemaVersion ||
+    row.generation_broker_identity_hash !== identity.success.identityHash ||
+    row.generation_broker_provider !== identity.success.provider ||
+    row.generation_broker_environment !== identity.success.environment ||
+    row.generation_account_id !== identity.success.accountId
+  ) {
+    return Result.fail(
+      storeError('read', 'invariant', 'live capital grant does not match its authority-generation broker identity'),
+    )
   }
 
   const grant = decodeLiveCapitalGrant({
@@ -160,6 +176,11 @@ const makeStore = Effect.gen(function* () {
       grants.broker_environment,
       grants.account_id,
       grants.authority_generation_hash,
+      generation.broker_identity_schema_version AS generation_broker_identity_schema_version,
+      generation.broker_identity_hash AS generation_broker_identity_hash,
+      generation.broker_provider AS generation_broker_provider,
+      generation.broker_environment AS generation_broker_environment,
+      generation.account_id AS generation_account_id,
       grants.strategy_name,
       grants.strategy_behavior_hash,
       grants.strategy_parameter_hash,
@@ -178,6 +199,8 @@ const makeStore = Effect.gen(function* () {
       revocations.revoked_by,
       revocations.reason AS revocation_reason
     FROM live_capital_grants AS grants
+    LEFT JOIN authority_generations AS generation
+      ON generation.generation_hash = grants.authority_generation_hash
     LEFT JOIN live_capital_grant_revocations AS revocations USING (grant_hash)
     WHERE grants.grant_hash = ${grantHash}
   `
@@ -217,7 +240,8 @@ const makeStore = Effect.gen(function* () {
         max_gross_notional_micros, max_order_notional_micros, max_position_notional_micros,
         max_daily_loss_micros, max_open_orders,
         valid_from, valid_until, issued_at, issued_by
-      ) VALUES (
+      )
+      SELECT
         ${grant.grantHash}, ${grant.schemaVersion},
         ${grant.brokerIdentity.schemaVersion}, ${grant.brokerIdentity.identityHash},
         ${grant.brokerIdentity.provider}, ${grant.brokerIdentity.environment}, ${grant.brokerIdentity.accountId},
@@ -227,7 +251,13 @@ const makeStore = Effect.gen(function* () {
         ${grant.limits.maxGrossNotionalMicros}, ${grant.limits.maxOrderNotionalMicros},
         ${grant.limits.maxPositionNotionalMicros}, ${grant.limits.maxDailyLossMicros}, ${grant.limits.maxOpenOrders},
         ${new Date(grant.validFrom)}, ${new Date(grant.validUntil)}, ${new Date(grant.issuedAt)}, ${grant.issuedBy}
-      )
+      FROM authority_generations AS generation
+      WHERE generation.generation_hash = ${grant.authorityGenerationHash}
+        AND generation.broker_identity_schema_version = ${grant.brokerIdentity.schemaVersion}
+        AND generation.broker_identity_hash = ${grant.brokerIdentity.identityHash}
+        AND generation.broker_provider = ${grant.brokerIdentity.provider}
+        AND generation.broker_environment = ${grant.brokerIdentity.environment}
+        AND generation.account_id = ${grant.brokerIdentity.accountId}
       ON CONFLICT (grant_hash) DO NOTHING
     `.pipe(
       Effect.mapError((cause) => storeError('record', 'query', 'live capital grant insert failed', cause)),

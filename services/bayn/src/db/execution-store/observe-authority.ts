@@ -1,6 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
 
+import type { BrokerIdentity } from '../../broker/identity'
 import type { AuthorityState } from '../../execution/contracts'
 import {
   decideObserveGeneration,
@@ -28,7 +29,13 @@ export interface ObserveAuthorityInterpreter {
 export const makeObserveAuthorityInterpreter = (
   sql: PgClient.PgClient,
   authority: AuthorityPostgres,
+  brokerIdentity: BrokerIdentity | undefined,
 ): ObserveAuthorityInterpreter => {
+  const requireBrokerIdentity = () =>
+    brokerIdentity === undefined
+      ? failExecutionStore('authority', 'invariant', 'authority generation requires a configured broker identity')
+      : Effect.succeed(brokerIdentity)
+
   const initializeObserveGeneration = (
     decision: Extract<ObserveGenerationDecision, { readonly _tag: 'InitializeObserveGeneration' }>,
   ) =>
@@ -41,13 +48,18 @@ export const makeObserveAuthorityInterpreter = (
       if (databaseTime === undefined) {
         return yield* failExecutionStore('authority', 'invariant', 'authority initialization time is unavailable')
       }
+      const identity = yield* requireBrokerIdentity()
       yield* sql`
         INSERT INTO authority_generations (
           generation_hash, schema_version, previous_generation_hash, maximum,
-          authority_version, activated_at
+          authority_version, account_id,
+          broker_identity_schema_version, broker_identity_hash, broker_provider, broker_environment,
+          activated_at
         ) VALUES (
           ${decision.generationHash}, 'bayn.authority-generation-history.v1', NULL,
-          'OBSERVE', 1, ${databaseTime.activated_at}
+          'OBSERVE', 1, ${identity.accountId},
+          ${identity.schemaVersion}, ${identity.identityHash}, ${identity.provider}, ${identity.environment},
+          ${databaseTime.activated_at}
         )
       `
       const inserted = yield* sql<Record<string, unknown>>`
@@ -84,13 +96,18 @@ export const makeObserveAuthorityInterpreter = (
       const [existing] = yield* authority.readGeneration(decision.generationHash)
       yield* authority.requireUnusedGeneration(decision.generationHash, existing)
       const activatedAt = yield* authority.nextAuthorityInstant
+      const identity = yield* requireBrokerIdentity()
       yield* sql`
         INSERT INTO authority_generations (
           generation_hash, schema_version, previous_generation_hash, maximum,
-          authority_version, activated_at
+          authority_version, account_id,
+          broker_identity_schema_version, broker_identity_hash, broker_provider, broker_environment,
+          activated_at
         ) VALUES (
           ${decision.generationHash}, 'bayn.authority-generation-history.v1',
-          ${decision.current.generationHash}, 'OBSERVE', ${decision.authorityVersion}, ${activatedAt}
+          ${decision.current.generationHash}, 'OBSERVE', ${decision.authorityVersion}, ${identity.accountId},
+          ${identity.schemaVersion}, ${identity.identityHash}, ${identity.provider}, ${identity.environment},
+          ${activatedAt}
         )
       `
       const rotated = yield* sql<Record<string, unknown>>`

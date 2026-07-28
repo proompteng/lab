@@ -1170,11 +1170,24 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             accountId: 'live-account-integration',
           }),
         )
+        const liveGenerationHash = fixtureHash('explicit-execution-authority-live-generation')
+        yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash, schema_version, previous_generation_hash, maximum,
+            authority_version, account_id,
+            broker_identity_schema_version, broker_identity_hash, broker_provider, broker_environment,
+            activated_at
+          ) VALUES (
+            ${liveGenerationHash}, 'bayn.authority-generation-history.v1', ${historical.generation_hash},
+            'PAPER', 2, ${identity.accountId}, ${identity.schemaVersion}, ${identity.identityHash},
+            ${identity.provider}, ${identity.environment}, '2026-07-28T06:30:00.000Z'
+          )
+        `
         const grant = successOfResult(
           makeLiveCapitalGrant({
             schemaVersion: 'bayn.live-capital-grant.v1',
             brokerIdentity: identity,
-            authorityGenerationHash: historical.generation_hash,
+            authorityGenerationHash: liveGenerationHash,
             strategy: {
               name: 'risk-balanced-trend',
               behaviorHash: '1'.repeat(64),
@@ -1196,6 +1209,33 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         )
         const recorded = yield* store.record(grant)
         const readBack = yield* store.read(grant.grantHash)
+        const sandboxIdentity = successOfResult(
+          makeBrokerIdentity({
+            schemaVersion: 'bayn.broker-identity.v2',
+            provider: BrokerProvider.Alpaca,
+            environment: BrokerEnvironment.Sandbox,
+            accountId: 'sandbox-account-integration',
+          }),
+        )
+        const sandboxGenerationHash = fixtureHash('explicit-execution-authority-sandbox-generation')
+        yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash, schema_version, previous_generation_hash, maximum,
+            authority_version, account_id,
+            broker_identity_schema_version, broker_identity_hash, broker_provider, broker_environment,
+            activated_at
+          ) VALUES (
+            ${sandboxGenerationHash}, 'bayn.authority-generation-history.v1', ${liveGenerationHash},
+            'PAPER', 3, ${sandboxIdentity.accountId}, ${sandboxIdentity.schemaVersion},
+            ${sandboxIdentity.identityHash}, ${sandboxIdentity.provider}, ${sandboxIdentity.environment},
+            '2026-07-28T06:45:00.000Z'
+          )
+        `
+        const { grantHash: _grantHash, ...grantMaterial } = grant
+        const mismatchedGrant = successOfResult(
+          makeLiveCapitalGrant({ ...grantMaterial, authorityGenerationHash: sandboxGenerationHash }),
+        )
+        const crossEnvironmentRecord = yield* Effect.exit(store.record(mismatchedGrant))
         const revocation: LiveCapitalGrantRevocation = {
           schemaVersion: 'bayn.live-capital-grant-revocation.v1',
           revokedAt: '2026-07-28T08:15:00.000Z',
@@ -1235,6 +1275,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           recorded,
           readBack,
           revoked,
+          crossEnvironmentRecord,
           mutateGrant,
           mutateHistorical,
           historicalAfter,
@@ -1257,6 +1298,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       accountId: 'live-account-integration',
     })
     expect(result.readBack).toEqual(result.recorded)
+    expect(Exit.isFailure(result.crossEnvironmentRecord)).toBe(true)
     expect(result.revoked.revocation).toMatchObject({
       schemaVersion: 'bayn.live-capital-grant-revocation.v1',
       reason: 'integration containment proof',

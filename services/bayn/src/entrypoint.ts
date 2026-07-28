@@ -355,10 +355,11 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
         ...executionDependencies,
       }),
     ).pipe(Effect.mapError(executionProgramError))
-    return yield* runApplication<never, never>(plan.config, plan.strategy, dependencies, {
+    return yield* runApplication(plan.config, plan.strategy, dependencies, {
       _tag: 'AutonomousMutation',
       broker: runtimeBroker(plan, session.read, true),
       executionProgram,
+      startCycle: observeCycle(plan),
     })
   })
 

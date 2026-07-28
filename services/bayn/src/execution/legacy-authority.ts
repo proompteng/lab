@@ -7,4 +7,4 @@ import { Authority } from '../paper'
  * New runtime composition must use ExecutionPolicy and ExecutionAuthority directly.
  */
 export const historicalSandboxAuthority = (execution: ExecutionPolicy): Authority =>
-  execution.capitalAuthority._tag === CapitalAuthorityKind.Sandbox ? Authority.Paper : Authority.Observe
+  execution.capitalAuthority._tag === CapitalAuthorityKind.None ? Authority.Observe : Authority.Paper

@@ -27,6 +27,7 @@ import { makeBrokerIdentity } from './broker/identity'
 import type { LoadedRuntimeConfig } from './config'
 import { makeStrategyProtocolHash } from './contracts'
 import { BrokerAccess, BrokerEnvironment, noCapitalAuthority } from './execution/authority'
+import type { ExecutionProgram } from './execution/runtime-program'
 import type { BrokerProbe } from './health'
 import { HttpServerLive } from './http'
 import { makeStrategy } from './strategy'
@@ -236,6 +237,48 @@ describe('Bayn application composition', () => {
     expect(calls).toEqual(['initialize', 'autonomous-cycle'])
     expect(startupQualificationRunId).toBe(fixtureEvaluation.runId)
     expect(backgroundInterrupted).toBe(true)
+  })
+
+  test('starts the same scoped autonomous cycle for mutation runtime readiness', async () => {
+    let startedQualificationRunId: string | undefined
+    let interrupted = false
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>()
+          const startCycle = ({ qualificationRunId }: AutonomousCycleStartupInput) =>
+            Effect.sync(() => void (startedQualificationRunId = qualificationRunId)).pipe(
+              Effect.as(
+                Deferred.succeed(started, undefined).pipe(
+                  Effect.andThen(Effect.never),
+                  Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true))),
+                ),
+              ),
+            )
+          const fiber = yield* runApplication(
+            autonomousConfig(config),
+            fixtureStrategy,
+            {
+              marketData: marketDataService(Effect.succeed(makeSnapshot())),
+              journal: successfulJournal,
+              evidenceStore: successfulEvidenceStore,
+              cycleObservability,
+            },
+            {
+              _tag: 'AutonomousMutation',
+              broker: { ...broker, executionEligible: true, executionDisabledReason: null },
+              executionProgram: {} as ExecutionProgram,
+              startCycle,
+            },
+          ).pipe(Effect.provide(HttpServerLive(config)), Effect.forkScoped)
+          yield* Deferred.await(started).pipe(Effect.timeout('1 second'))
+          yield* Fiber.interrupt(fiber)
+        }),
+      ),
+    )
+
+    expect(startedQualificationRunId).toBe(fixtureEvaluation.runId)
+    expect(interrupted).toBe(true)
   })
 
   test('keeps the pinned qualification scope separate from the current decision protocol identity', async () => {

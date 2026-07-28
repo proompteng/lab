@@ -4,12 +4,15 @@ import { Deferred, Effect, Fiber, Ref, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { config, fixtureLock, successfulJournal, readyState, recoveringStore } from './app-test-support'
-import { AccountStatus, type BrokerReadShape, type ReadResult, type Account } from './broker/alpaca'
+import { AccountStatus, BrokerProvider, type BrokerReadShape, type ReadResult, type Account } from './broker/alpaca'
 import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
+import { BrokerEnvironment, makeBrokerIdentity } from './broker/identity'
 import { CycleOperationsCondition, CycleOperationsReason, type CycleOperationsProjection } from './cycle-observability'
 import { CycleState } from './cycle'
 import { CycleObservability, type CycleObservabilityShape } from './db/cycle-observability'
 import { EvidenceStore } from './db/evidence-store'
+import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
+import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
 import {
   deriveHealthLogDecisions,
   deriveHealthTransition,
@@ -476,6 +479,78 @@ describe('Bayn continuous health', () => {
         },
       },
     ])
+  })
+
+  test('projects live-capital mutation health through the durable PAPER capital stage', () => {
+    const checkedAt = '2026-07-20T00:04:00.000Z'
+    const liveIdentity = Result.getOrThrow(
+      makeBrokerIdentity({
+        schemaVersion: 'bayn.broker-identity.v2',
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Live,
+        accountId: brokerAccountId,
+      }),
+    )
+    const liveConfig = {
+      ...config,
+      execution: {
+        brokerIdentity: liveIdentity,
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: {
+          _tag: CapitalAuthorityKind.LiveGrant,
+          grantHash: 'b'.repeat(64),
+          authorityGenerationHash: 'c'.repeat(64),
+        },
+      },
+    } as typeof config
+    const current = {
+      ...readyState(),
+      autonomousCycleLoop: {
+        configured: true,
+        startedAt: checkedAt,
+        lastPass: { result: 'SUCCESS' as const, observedAt: checkedAt, outcome: 'NO_PUBLICATION' as const },
+      },
+    }
+    const transition = deriveHealthTransition(current, {
+      config: liveConfig,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: {
+          _tag: 'Available',
+          value: {
+            ...emptyCycleProjection(),
+            authority: {
+              generationHash: 'c'.repeat(64),
+              maximum: Authority.Paper,
+              effective: Authority.Paper,
+              kill: KillState.Clear,
+              reason: null,
+              updatedAt: checkedAt,
+            },
+            reconciliation: {
+              accountId: brokerAccountId,
+              reconciliationId: 'd'.repeat(64),
+              status: ReconciliationStatus.Exact,
+              discrepancyCount: 0,
+              reconciledAt: checkedAt,
+              coversLatestMutation: true,
+            },
+          },
+        },
+        broker: null,
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'Running' },
+      clock: availableClock(checkedAt),
+    })
+
+    expect(transition.next.status).toBe('READY')
+    expect(transition.next.cycle.reason).not.toBe(CycleOperationsReason.AuthorityMaximumMismatch)
+    expect(transition.next.cycle.alerts.authorityIncoherent).toBe(false)
   })
 
   test('does not manufacture a cycle-runner stall from a rejected finite clock', () => {

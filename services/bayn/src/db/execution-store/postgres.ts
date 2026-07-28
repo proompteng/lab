@@ -22,7 +22,7 @@ export const makeExecutionPersistence = (config: ExecutionStoreRuntimeConfig) =>
     const valuation = makeValuationInterpreter(sql)
     const reconciliation = makeReconciliation(sql, journal, config)
     const authorityPostgres = makeAuthorityPostgres(sql)
-    const observeAuthority = makeObserveAuthorityInterpreter(sql, authorityPostgres)
+    const observeAuthority = makeObserveAuthorityInterpreter(sql, authorityPostgres, config.execution.brokerIdentity)
     const capitalGrant = makeCapitalGrantInterpreter(sql, authorityPostgres, config)
 
     return {

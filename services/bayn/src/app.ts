@@ -89,11 +89,12 @@ export type ApplicationRuntime<StartupR, LoopR> =
       readonly _tag: 'AutonomousMutation'
       readonly broker: BrokerProbe
       readonly executionProgram: ExecutionProgram
+      readonly startCycle: AutonomousCycleStartup<StartupR, LoopR>
     }
 
 type AutonomousRuntime<StartupR, LoopR> = Extract<
   ApplicationRuntime<StartupR, LoopR>,
-  { readonly _tag: 'AutonomousRead' }
+  { readonly _tag: 'AutonomousRead' | 'AutonomousMutation' }
 >
 
 const cyclePassError = (observation: Extract<AutonomousCyclePassObservation, { readonly result: 'FAILURE' }>): string =>
@@ -137,7 +138,7 @@ const brokerProbe = <StartupR, LoopR>(runtime: ApplicationRuntime<StartupR, Loop
   runtime._tag === 'Brokerless' ? undefined : runtime.broker
 
 const initialRuntimeState = <StartupR, LoopR>(runtime: ApplicationRuntime<StartupR, LoopR>): RuntimeState =>
-  runtime._tag === 'Brokerless' ? initialState() : initialState(runtime.broker, runtime._tag === 'AutonomousRead')
+  runtime._tag === 'Brokerless' ? initialState() : initialState(runtime.broker, true)
 
 const currentUtcInstant = Clock.currentTimeMillis.pipe(
   Effect.flatMap((millis) =>
@@ -181,7 +182,7 @@ const startAutonomousCycle = <StartupR, LoopR>(
   runtime: ApplicationRuntime<StartupR, LoopR>,
   state: Ref.Ref<RuntimeState>,
 ): Effect.Effect<Fiber.Fiber<void, never> | undefined, OperationalError, StartupR | LoopR | Scope.Scope> =>
-  runtime._tag !== 'AutonomousRead'
+  runtime._tag === 'Brokerless'
     ? Effect.succeed(undefined)
     : Ref.get(state).pipe(
         Effect.flatMap((initialized) =>
