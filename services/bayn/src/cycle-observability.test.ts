@@ -371,7 +371,7 @@ describe('autonomous cycle operations classification', () => {
       reason: null,
       updatedAt: now,
     } as const
-    const paperAuthority = {
+    const capitalGrant = {
       ...observeAuthority,
       maximum: Authority.Paper,
       effective: Authority.Paper,
@@ -385,7 +385,7 @@ describe('autonomous cycle operations classification', () => {
       coversLatestMutation: true,
     } as const
     const observeClear = projection({ authority: observeAuthority })
-    const paperClear = projection({ authority: paperAuthority, reconciliation: exactReconciliation })
+    const paperClear = projection({ authority: capitalGrant, reconciliation: exactReconciliation })
     const scenarios = [
       {
         name: 'kill',
@@ -399,7 +399,7 @@ describe('autonomous cycle operations classification', () => {
         name: 'reconciliation discrepancy',
         maximum: Authority.Paper,
         injected: projection({
-          authority: paperAuthority,
+          authority: capitalGrant,
           reconciliation: {
             ...exactReconciliation,
             status: ReconciliationStatus.Discrepancy,

@@ -49,17 +49,17 @@ import { Authority, KillState, OrderSide, OrderType, ReconciliationStatus, RiskO
 import {
   PaperCandidateIneligibility,
   discoverPaperCandidates,
-  renderPaperCandidateDiscoveryError,
-  validatePaperCandidateDiscoveryObservations,
-  validatePaperCandidateDiscoverySnapshot,
-  type PaperCandidateDiscoveryIdentity,
+  renderExecutionCandidateDiscoveryError,
+  validateExecutionCandidateDiscoveryObservations,
+  validateExecutionCandidateDiscoverySnapshot,
+  type ExecutionCandidateDiscoveryIdentity,
   type PaperCandidateFactsMaterial,
-} from './paper-candidate-discovery'
-import { validatePaperCandidateDiscoveryObservations as validateObservationsImplementation } from './paper-candidate-discovery/broker-observation-validation'
-import { renderPaperCandidateDiscoveryError as renderErrorImplementation } from './paper-candidate-discovery/failure'
-import { PaperCandidateIneligibility as PaperCandidateIneligibilityImplementation } from './paper-candidate-discovery/model'
-import { discoverPaperCandidates as discoverPaperCandidatesImplementation } from './paper-candidate-discovery/program'
-import { validatePaperCandidateDiscoverySnapshot as validateSnapshotImplementation } from './paper-candidate-discovery/snapshot-validation'
+} from './execution-candidate-discovery'
+import { validateExecutionCandidateDiscoveryObservations as validateObservationsImplementation } from './execution-candidate-discovery/broker-observation-validation'
+import { renderExecutionCandidateDiscoveryError as renderErrorImplementation } from './execution-candidate-discovery/failure'
+import { PaperCandidateIneligibility as PaperCandidateIneligibilityImplementation } from './execution-candidate-discovery/model'
+import { discoverPaperCandidates as discoverPaperCandidatesImplementation } from './execution-candidate-discovery/program'
+import { validateExecutionCandidateDiscoverySnapshot as validateSnapshotImplementation } from './execution-candidate-discovery/snapshot-validation'
 import { Gate, Reason } from './risk'
 import { BrokerEnvironment } from './execution/authority'
 import type { ObserveShadowDecisionDocument } from './shadow-decision-contract'
@@ -83,7 +83,7 @@ const strategy: RuntimeProvenance['strategy'] = {
   parameterHash: hash('9'),
   parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
 }
-const identity: PaperCandidateDiscoveryIdentity = {
+const identity: ExecutionCandidateDiscoveryIdentity = {
   sourceRevision: 'a'.repeat(40),
   image: {
     repository: 'registry.ide-newton.ts.net/lab/bayn',
@@ -433,7 +433,7 @@ const program = (
   read: BrokerReadShape = broker(state),
   now = observedAt,
   sql: PgClient.PgClient = fakeSql(state),
-  candidateIdentity: PaperCandidateDiscoveryIdentity = identity,
+  candidateIdentity: ExecutionCandidateDiscoveryIdentity = identity,
 ) => {
   const { observability, cycleStore } = stores(state, input)
   return Effect.gen(function* () {
@@ -452,9 +452,9 @@ describe('paper candidate discovery', () => {
   test('preserves the public facade exports', () => {
     expect(PaperCandidateIneligibility).toBe(PaperCandidateIneligibilityImplementation)
     expect(discoverPaperCandidates).toBe(discoverPaperCandidatesImplementation)
-    expect(renderPaperCandidateDiscoveryError).toBe(renderErrorImplementation)
-    expect(validatePaperCandidateDiscoveryObservations).toBe(validateObservationsImplementation)
-    expect(validatePaperCandidateDiscoverySnapshot).toBe(validateSnapshotImplementation)
+    expect(renderExecutionCandidateDiscoveryError).toBe(renderErrorImplementation)
+    expect(validateExecutionCandidateDiscoveryObservations).toBe(validateObservationsImplementation)
+    expect(validateExecutionCandidateDiscoverySnapshot).toBe(validateSnapshotImplementation)
   })
 
   test('returns fact-bearing Result failures from pure snapshot and receipt decisions', () => {
@@ -463,7 +463,7 @@ describe('paper candidate discovery', () => {
       cycle: cycle(),
       document: document(),
     }
-    const snapshotFailure = validatePaperCandidateDiscoverySnapshot(
+    const snapshotFailure = validateExecutionCandidateDiscoverySnapshot(
       identity,
       missingAuthoritySnapshot,
       Date.parse(observedAt),
@@ -477,7 +477,7 @@ describe('paper candidate discovery', () => {
         expectedGenerationHash: authorityGenerationHash,
         observedGenerationHash: null,
       })
-      expect(renderPaperCandidateDiscoveryError(snapshotFailure.failure)).toBe(
+      expect(renderExecutionCandidateDiscoveryError(snapshotFailure.failure)).toBe(
         `paper candidate authority mismatch: expectedGeneration=${authorityGenerationHash} observedGeneration=none maximum=none effective=none`,
       )
     }
@@ -487,12 +487,16 @@ describe('paper candidate discovery', () => {
       cycle: cycle(),
       document: document(),
     }
-    const validatedSnapshot = validatePaperCandidateDiscoverySnapshot(identity, validSnapshot, Date.parse(observedAt))
+    const validatedSnapshot = validateExecutionCandidateDiscoverySnapshot(
+      identity,
+      validSnapshot,
+      Date.parse(observedAt),
+    )
     expect(Result.isSuccess(validatedSnapshot)).toBe(true)
     if (Result.isFailure(validatedSnapshot)) return
 
     const observedAccount = Effect.runSync(account())
-    const observationFailure = validatePaperCandidateDiscoveryObservations(validatedSnapshot.success, {
+    const observationFailure = validateExecutionCandidateDiscoveryObservations(validatedSnapshot.success, {
       account: {
         ...observedAccount,
         value: { ...observedAccount.value, id: '0f52e894-e17a-4b30-9a8f-e9f1f6fb701e' },
@@ -519,7 +523,11 @@ describe('paper candidate discovery', () => {
       cycle: cycle(),
       document: document(),
     }
-    const validatedSnapshot = validatePaperCandidateDiscoverySnapshot(identity, validSnapshot, Date.parse(observedAt))
+    const validatedSnapshot = validateExecutionCandidateDiscoverySnapshot(
+      identity,
+      validSnapshot,
+      Date.parse(observedAt),
+    )
     expect(Result.isSuccess(validatedSnapshot)).toBe(true)
     if (Result.isFailure(validatedSnapshot)) return
 
@@ -528,7 +536,7 @@ describe('paper candidate discovery', () => {
       accountConfiguration: accountConfiguration(),
       assets: symbols.map((symbol) => asset(symbol)),
     }
-    const invalidCapture = validatePaperCandidateDiscoveryObservations(validatedSnapshot.success, {
+    const invalidCapture = validateExecutionCandidateDiscoveryObservations(validatedSnapshot.success, {
       ...observations,
       capturedAtMs: -8_640_000_000_000_001,
     })
@@ -543,12 +551,12 @@ describe('paper candidate discovery', () => {
           observedAtMs: -8_640_000_000_000_001,
         },
       })
-      expect(renderPaperCandidateDiscoveryError(invalidCapture.failure)).toBe(
+      expect(renderExecutionCandidateDiscoveryError(invalidCapture.failure)).toBe(
         'paper candidate observation capture time is invalid: observedMs=-8640000000000001',
       )
     }
 
-    const fractionalCapture = validatePaperCandidateDiscoveryObservations(validatedSnapshot.success, {
+    const fractionalCapture = validateExecutionCandidateDiscoveryObservations(validatedSnapshot.success, {
       ...observations,
       capturedAtMs: Date.parse(observedAt) + 0.5,
     })
@@ -566,7 +574,7 @@ describe('paper candidate discovery', () => {
 
     const futureAssetObservedAt = '2099-07-24T12:00:01.000Z'
     const capturedAt = '2099-07-24T12:00:00.500Z'
-    const noncausalCapture = validatePaperCandidateDiscoveryObservations(validatedSnapshot.success, {
+    const noncausalCapture = validateExecutionCandidateDiscoveryObservations(validatedSnapshot.success, {
       account: observations.account,
       accountConfiguration: observations.accountConfiguration,
       assets: symbols.map((symbol) => asset(symbol, symbol.toLowerCase(), futureAssetObservedAt)),

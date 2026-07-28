@@ -17,15 +17,15 @@ import {
   ValidatedAccountTypeId,
   ValidatedAssetsTypeId,
   ValidatedObservationsTypeId,
-  type PaperCandidateDiscoveryIdentity,
-  type PaperCandidateDiscoverySnapshot,
+  type ExecutionCandidateDiscoveryIdentity,
+  type ExecutionCandidateDiscoverySnapshot,
   type ValidatedAccount,
   type ValidatedAccountConfiguration,
   type ValidatedAssets,
   type ValidatedPaperCandidateObservations,
   type ValidatedPaperCandidateSnapshot,
 } from './model'
-import { requireCondition, requireValue, type PaperCandidateDiscoveryError } from './failure'
+import { requireCondition, requireValue, type ExecutionCandidateDiscoveryError } from './failure'
 
 const assetEligibilityRules = [
   [PaperCandidateIneligibility.AssetClass, (asset: AssetObservation) => asset.assetClass !== AssetClass.UsEquity],
@@ -55,7 +55,7 @@ const validateReadEvidence = <A extends { readonly observedAt: string }>(
   identity:
     | { readonly observation: 'account' | 'account-configuration'; readonly symbol: null }
     | { readonly observation: 'asset'; readonly symbol: string },
-): Result.Result<ReadResult<A>, PaperCandidateDiscoveryError> =>
+): Result.Result<ReadResult<A>, ExecutionCandidateDiscoveryError> =>
   pipe(
     requireCondition(result.value.observedAt === result.evidence.observedAt, {
       _tag: 'ObservationTimeMismatch',
@@ -87,9 +87,9 @@ export const normalizedReadEvidence = (evidence: ReadEvidence): typeof ReadEvide
 }
 
 export const validateAccountObservation = (
-  identity: PaperCandidateDiscoveryIdentity,
+  identity: ExecutionCandidateDiscoveryIdentity,
   account: ReadResult<Account>,
-): Result.Result<ValidatedAccount, PaperCandidateDiscoveryError> =>
+): Result.Result<ValidatedAccount, ExecutionCandidateDiscoveryError> =>
   pipe(
     Result.all([
       requireCondition(account.value.id === identity.accountId, {
@@ -106,7 +106,7 @@ export const validateAccountObservation = (
 export const validateAccountConfiguration = (
   account: ValidatedAccount,
   configuration: ReadResult<AccountConfigurationObservation>,
-): Result.Result<ValidatedAccountConfiguration, PaperCandidateDiscoveryError> =>
+): Result.Result<ValidatedAccountConfiguration, ExecutionCandidateDiscoveryError> =>
   pipe(
     Result.all([
       validateReadEvidence(configuration, { observation: 'account-configuration', symbol: null }),
@@ -131,7 +131,7 @@ const validateAssetObservation = (
   ordinal: number,
   accountConfigurationObservedAt: string,
   asset: ReadResult<AssetObservation> | undefined,
-): Result.Result<ReadResult<AssetObservation>, PaperCandidateDiscoveryError> =>
+): Result.Result<ReadResult<AssetObservation>, ExecutionCandidateDiscoveryError> =>
   pipe(
     requireValue(asset, { _tag: 'AssetMissing', failure: 'broker', ordinal, symbol }),
     Result.flatMap((observed) =>
@@ -162,10 +162,10 @@ const validateAssetObservation = (
   )
 
 export const validateAssetObservations = (
-  snapshot: PaperCandidateDiscoverySnapshot,
+  snapshot: ExecutionCandidateDiscoverySnapshot,
   configuration: ValidatedAccountConfiguration,
   assets: ReadonlyArray<ReadResult<AssetObservation>>,
-): Result.Result<ValidatedAssets, PaperCandidateDiscoveryError> =>
+): Result.Result<ValidatedAssets, ExecutionCandidateDiscoveryError> =>
   pipe(
     requireCondition(assets.length === snapshot.document.targetPlan.intentTargets.length, {
       _tag: 'AssetCountMismatch',
@@ -190,7 +190,7 @@ export const assembleValidatedObservations = (
   accountConfiguration: ValidatedAccountConfiguration,
   assets: ValidatedAssets,
   capturedAtMs: number,
-): Result.Result<ValidatedPaperCandidateObservations, PaperCandidateDiscoveryError> => {
+): Result.Result<ValidatedPaperCandidateObservations, ExecutionCandidateDiscoveryError> => {
   if (!Number.isSafeInteger(capturedAtMs)) {
     return Result.fail({
       _tag: 'ObservationCaptureTimeInvalid',
@@ -242,7 +242,7 @@ export const assembleValidatedObservations = (
   )
 }
 
-export const validatePaperCandidateDiscoveryObservations = (
+export const validateExecutionCandidateDiscoveryObservations = (
   validatedSnapshot: ValidatedPaperCandidateSnapshot,
   input: {
     readonly account: ReadResult<Account>
@@ -250,7 +250,7 @@ export const validatePaperCandidateDiscoveryObservations = (
     readonly assets: ReadonlyArray<ReadResult<AssetObservation>>
     readonly capturedAtMs: number
   },
-): Result.Result<ValidatedPaperCandidateObservations, PaperCandidateDiscoveryError> =>
+): Result.Result<ValidatedPaperCandidateObservations, ExecutionCandidateDiscoveryError> =>
   pipe(
     Result.Do,
     Result.bind('account', () => validateAccountObservation(validatedSnapshot.identity, input.account)),

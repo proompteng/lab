@@ -2,7 +2,7 @@ import { Context, Data, Effect, Schema } from 'effect'
 
 import { MutationEvidenceSchema, MutationOperation, type MutationEvidence } from '../../broker/alpaca-mutations'
 import type { CanonicalHashFailure } from '../../hash'
-import { Authority, IntentState, KillState, TerminalOutcome } from '../../paper'
+import { Authority, IntentState, KillState, TerminalOutcome } from '../contracts'
 import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,

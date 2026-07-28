@@ -25,7 +25,15 @@ import {
   type FillEventInput,
   type PositionSnapshotInput,
 } from './broker/observations'
-import { PaperStore, type PaperStoreError, type PaperStoreShape } from './db/paper-store'
+import {
+  BrokerEventStore,
+  AuthorityRestrictionStore,
+  FillAccountingStore,
+  ReconciliationStore,
+  ValuationStore,
+  type ExecutionStoreError,
+  type ReconciliationPersistence,
+} from './db/execution-store'
 import {
   type BrokerSnapshot,
   type IntentBinding,
@@ -134,9 +142,9 @@ type ReconciliationFailure =
   | {
       readonly _tag: 'AuthorityRestrictionFailed'
       readonly reconciliationCause: Cause.Cause<
-        BrokerReadError | PaperStoreError | ReconciliationError | WriterFenceError
+        BrokerReadError | ExecutionStoreError | ReconciliationError | WriterFenceError
       >
-      readonly restrictionCause: Cause.Cause<PaperStoreError | WriterFenceError>
+      readonly restrictionCause: Cause.Cause<ExecutionStoreError | WriterFenceError>
     }
 
 export class ReconciliationError extends Data.TaggedError('ReconciliationError')<{
@@ -146,7 +154,7 @@ export class ReconciliationError extends Data.TaggedError('ReconciliationError')
   readonly cause?: unknown
 }> {}
 
-export type ReconciliationPassError = BrokerReadError | PaperStoreError | ReconciliationError | WriterFenceError
+export type ReconciliationPassError = BrokerReadError | ExecutionStoreError | ReconciliationError | WriterFenceError
 
 const paginationFailure = (reason: PaginationFailureReason, message: string): ReconciliationError =>
   new ReconciliationError({
@@ -674,25 +682,25 @@ const decideAccountBaseline = (hasAccountBaseline: boolean): Result.Result<void,
       )
 
 const prepareNormalizedSnapshot = (
-  store: PaperStoreShape,
+  store: ReconciliationPersistence,
   snapshot: StableBrokerSnapshot,
-): Effect.Effect<NormalizedBrokerSnapshot, PaperStoreError | ReconciliationError> =>
+): Effect.Effect<NormalizedBrokerSnapshot, ExecutionStoreError | ReconciliationError> =>
   Effect.gen(function* () {
-    const bindings = yield* store.bindings(snapshot.account.value.id)
+    const bindings = yield* store.reconciliation.bindings(snapshot.account.value.id)
     if (snapshot.history.fills.length > 0) {
-      const hasAccountBaseline = yield* store.hasAccountBaseline(snapshot.account.value.id)
+      const hasAccountBaseline = yield* store.valuation.hasAccountBaseline(snapshot.account.value.id)
       yield* Effect.fromResult(decideAccountBaseline(hasAccountBaseline))
     }
     return yield* interpretNormalizationDecision(normalizeSnapshot(snapshot, bindings))
   })
 
-const ingestBrokerEvents = (store: PaperStoreShape, normalized: NormalizedBrokerSnapshot) =>
+const ingestBrokerEvents = (store: ReconciliationPersistence, normalized: NormalizedBrokerSnapshot) =>
   Effect.gen(function* () {
-    const accountReceipt = yield* store.ingest(normalized.account)
-    const positionsReceipt = yield* store.ingestPositions(normalized.positions)
-    yield* Effect.forEach(normalized.orderEvents, store.ingest, { discard: true })
-    yield* Effect.forEach(normalized.fillEvents, store.account, { discard: true })
-    const valuation = yield* store.value({
+    const accountReceipt = yield* store.events.ingest(normalized.account)
+    const positionsReceipt = yield* store.events.ingestPositions(normalized.positions)
+    yield* Effect.forEach(normalized.orderEvents, store.events.ingest, { discard: true })
+    yield* Effect.forEach(normalized.fillEvents, store.accounting.account, { discard: true })
+    const valuation = yield* store.valuation.value({
       accountEventId: accountReceipt.eventId,
       positionSnapshotId: positionsReceipt.snapshotId,
     })
@@ -768,25 +776,25 @@ const logCompletedPass = (result: ReconciliationPassResult, decision: Reconcilia
   )
 
 const writeReconciliation = (
-  store: PaperStoreShape,
+  store: ReconciliationPersistence,
   normalized: NormalizedBrokerSnapshot,
   ordersObservedAt: string,
-): Effect.Effect<ReconciliationPassResult, PaperStoreError> =>
+): Effect.Effect<ReconciliationPassResult, ExecutionStoreError> =>
   Effect.gen(function* () {
     const valuation = yield* ingestBrokerEvents(store, normalized)
     const reconciledAt = yield* currentInstant
     const decision = makeReconciliationDecision(normalized, ordersObservedAt, valuation, reconciledAt)
-    const persisted = yield* store.reconcile(decision.snapshot)
+    const persisted = yield* store.reconciliation.reconcile(decision.snapshot)
     const result = makePassResult(decision, persisted)
     yield* logCompletedPass(result, decision)
     return result
   })
 
 const persistStableSnapshot = (
-  store: PaperStoreShape,
+  store: ReconciliationPersistence,
   fence: WriterFenceService,
   snapshot: StableBrokerSnapshot,
-): Effect.Effect<ReconciliationPassResult, PaperStoreError | ReconciliationError | WriterFenceError> =>
+): Effect.Effect<ReconciliationPassResult, ExecutionStoreError | ReconciliationError | WriterFenceError> =>
   fence.transaction(
     prepareNormalizedSnapshot(store, snapshot).pipe(
       Effect.flatMap((normalized) => writeReconciliation(store, normalized, snapshot.history.orders.observedAt)),
@@ -795,7 +803,7 @@ const persistStableSnapshot = (
 
 const run = (
   read: BrokerReadShape,
-  store: PaperStoreShape,
+  store: ReconciliationPersistence,
   fence: WriterFenceService,
 ): Effect.Effect<ReconciliationPassResult, ReconciliationPassError> =>
   readStableBrokerSnapshot(read).pipe(
@@ -813,12 +821,14 @@ const decideContainment = <E>(cause: Cause.Cause<E>): ContainmentDecision =>
     : { _tag: 'RestrictAuthority', reason: incompletePassReason }
 
 const restrictAuthority = (
-  store: PaperStoreShape,
+  store: ReconciliationPersistence,
   fence: WriterFenceService,
   decision: Extract<ContainmentDecision, { readonly _tag: 'RestrictAuthority' }>,
-): Effect.Effect<void, PaperStoreError | WriterFenceError> =>
+): Effect.Effect<void, ExecutionStoreError | WriterFenceError> =>
   currentInstant.pipe(
-    Effect.flatMap((failedAt) => fence.transaction(store.restrictAuthority(decision.reason, failedAt))),
+    Effect.flatMap((failedAt) =>
+      fence.transaction(store.authorityRestriction.restrictAuthority(decision.reason, failedAt)),
+    ),
   )
 
 const hasDefectOrInterruption = <E>(cause: Cause.Cause<E>): boolean =>
@@ -826,7 +836,7 @@ const hasDefectOrInterruption = <E>(cause: Cause.Cause<E>): boolean =>
 
 const authorityRestrictionFailure = (
   reconciliationCause: Cause.Cause<ReconciliationPassError>,
-  restrictionCause: Cause.Cause<PaperStoreError | WriterFenceError>,
+  restrictionCause: Cause.Cause<ExecutionStoreError | WriterFenceError>,
 ): ReconciliationError =>
   new ReconciliationError({
     operation: 'containment',
@@ -840,7 +850,7 @@ const authorityRestrictionFailure = (
 
 const preserveFailureAfterContainment = (
   cause: Cause.Cause<ReconciliationPassError>,
-  containmentExit: Exit.Exit<void, PaperStoreError | WriterFenceError>,
+  containmentExit: Exit.Exit<void, ExecutionStoreError | WriterFenceError>,
 ): Effect.Effect<never, ReconciliationPassError> => {
   if (Exit.isSuccess(containmentExit)) return Effect.failCause(cause)
   if (hasDefectOrInterruption(containmentExit.cause)) {
@@ -854,7 +864,7 @@ const preserveFailureAfterContainment = (
 
 const containRuntimeFailure = <A, R>(
   effect: Effect.Effect<A, ReconciliationPassError, R>,
-  store: PaperStoreShape,
+  store: ReconciliationPersistence,
   fence: WriterFenceService,
 ): Effect.Effect<A, ReconciliationPassError, R> =>
   Effect.matchCauseEffect(effect, {
@@ -871,10 +881,22 @@ const containRuntimeFailure = <A, R>(
 export const runOnce: Effect.Effect<
   ReconciliationPassResult,
   ReconciliationPassError,
-  BrokerRead | PaperStore | WriterFence
+  | BrokerRead
+  | BrokerEventStore
+  | FillAccountingStore
+  | ValuationStore
+  | ReconciliationStore
+  | AuthorityRestrictionStore
+  | WriterFence
 > = Effect.gen(function* () {
   const read = yield* BrokerRead
-  const store = yield* PaperStore
+  const store: ReconciliationPersistence = {
+    events: yield* BrokerEventStore,
+    accounting: yield* FillAccountingStore,
+    valuation: yield* ValuationStore,
+    reconciliation: yield* ReconciliationStore,
+    authorityRestriction: yield* AuthorityRestrictionStore,
+  }
   const fence = yield* WriterFence
   return yield* containRuntimeFailure(run(read, store, fence), store, fence)
 })

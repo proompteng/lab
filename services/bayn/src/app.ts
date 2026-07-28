@@ -65,9 +65,9 @@ export const makeApplicationPlan = (identity: ApplicationIdentity): ApplicationP
       _tag: 'AutonomousObserveService' as const,
       config,
     })),
-    Match.when({ runtimeMode: 'PaperCandidateDiscovery' }, (config) => ({
+    Match.when({ runtimeMode: 'ExecutionCandidateDiscovery' }, (config) => ({
       ...identity,
-      _tag: 'PaperCandidateDiscovery' as const,
+      _tag: 'ExecutionCandidateDiscovery' as const,
       config,
     })),
     Match.exhaustive,

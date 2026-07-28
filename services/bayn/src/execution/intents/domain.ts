@@ -19,7 +19,7 @@ import {
   type Intent,
   type ReferenceIntent,
   type RiskDecision,
-} from '../../paper'
+} from '../contracts'
 import type { State } from '../../risk'
 import {
   Sha256Schema as Sha256,
@@ -635,7 +635,7 @@ export const validateCurrentAuthority = (
   rows: readonly AuthorityBindingRow[],
   intent: Intent,
 ): Result.Result<
-  { readonly _tag: 'CurrentPaperAuthority'; readonly binding: AuthorityBindingRow },
+  { readonly _tag: 'CurrentCapitalGrant'; readonly binding: AuthorityBindingRow },
   AuthorityBindingFailure
 > => {
   if (rows.length === 0) return Result.fail({ _tag: 'AuthorityMissing' })
@@ -674,7 +674,7 @@ export const validateCurrentAuthority = (
       expected,
     })
   }
-  return Result.succeed({ _tag: 'CurrentPaperAuthority', binding: authority })
+  return Result.succeed({ _tag: 'CurrentCapitalGrant', binding: authority })
 }
 
 export type WriteDispositionFailure =

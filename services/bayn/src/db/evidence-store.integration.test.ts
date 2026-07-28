@@ -8,7 +8,7 @@ import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, 
 import * as Reactivity from 'effect/unstable/reactivity/Reactivity'
 
 import authorityBoundIntents from '../../migrations/0016_authority_bound_intents'
-import stablePaperAuthorityGeneration from '../../migrations/0017_stable_paper_authority_generation'
+import stableCapitalGrantGeneration from '../../migrations/0017_stable_paper_authority_generation'
 import type { RuntimeConfig } from '../config'
 import { makeStrategyProtocolHash, type RuntimeProvenance } from '../contracts'
 import { IntentStore, IntentStoreLive, planPaperIntent, type IntentPlan } from '../execution/intents'
@@ -46,16 +46,16 @@ import {
   decodeRiskDecision,
   IntentState,
   KillState,
-  makePaperAuthorityGeneration,
+  makeCapitalGrantGenerationResult,
   OrderSide,
   OrderType,
   RiskOutcome,
   TerminalOutcome,
   TimeInForce,
   type Intent,
-  type PaperAuthorityGeneration,
+  type CapitalGrantGeneration,
   type RiskDecision,
-} from '../paper'
+} from '../execution/contracts'
 import { makeQualificationLock, makeQualificationPolicyDocument, makeQualificationResult } from '../qualification'
 import { readAuditDatabase, type AuditConfig } from '../qualification-audit-command'
 import {
@@ -74,7 +74,35 @@ import {
   PostgresClientLive,
   type PersistEvaluationInput,
 } from './evidence-store'
-import { PaperStore, PaperStoreLive } from './paper-store'
+import {
+  BrokerEventStore,
+  AuthorityGenerationStore,
+  AuthorityRestrictionStore,
+  CapitalGrantLifecycleStore,
+  ExecutionStoreLive,
+  FillAccountingStore,
+  ReconciliationStore,
+  ValuationStore,
+} from './execution-store'
+
+const ExecutionStore = Effect.gen(function* () {
+  const events = yield* BrokerEventStore
+  const accounting = yield* FillAccountingStore
+  const valuation = yield* ValuationStore
+  const reconciliation = yield* ReconciliationStore
+  const authorityGeneration = yield* AuthorityGenerationStore
+  const capitalGrantLifecycle = yield* CapitalGrantLifecycleStore
+  const authorityRestriction = yield* AuthorityRestrictionStore
+  return {
+    ...events,
+    ...accounting,
+    ...valuation,
+    ...reconciliation,
+    ...authorityGeneration,
+    ...capitalGrantLifecycle,
+    ...authorityRestriction,
+  }
+})
 
 const postgresUrl = process.env.BAYN_TEST_POSTGRES_URL
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
@@ -85,6 +113,8 @@ const successOfResult = <A, E>(result: Result.Result<A, E>): A => {
   assert(Result.isSuccess(result), 'fixture Result must succeed')
   return result.success
 }
+const makeCapitalGrantGeneration = (input: Parameters<typeof makeCapitalGrantGenerationResult>[0]) =>
+  successOfResult(makeCapitalGrantGenerationResult(input))
 
 const makeConfig = (url = testUrl): RuntimeConfig => ({
   host: '127.0.0.1',
@@ -189,9 +219,9 @@ const unusedJournal: JournalService = {
   checkRun: () => Effect.die(new Error('unexpected simulation journal verification')),
 }
 
-const makePaperStoreRuntime = (config = makeConfig()) =>
+const makeExecutionStoreRuntime = (config = makeConfig()) =>
   ManagedRuntime.make(
-    PaperStoreLive(config).pipe(
+    ExecutionStoreLive(config).pipe(
       Layer.provideMerge(WriterFenceLive),
       Layer.provideMerge(Layer.succeed(Journal, unusedJournal)),
       Layer.provideMerge(PostgresClientLive(config)),
@@ -201,7 +231,7 @@ const makePaperStoreRuntime = (config = makeConfig()) =>
 
 const makeAuthorityMutationRuntime = (config = makeConfig()) =>
   ManagedRuntime.make(
-    Layer.mergeAll(PaperStoreLive(config), IntentStoreLive, MutationStoreLive).pipe(
+    Layer.mergeAll(ExecutionStoreLive(config), IntentStoreLive, MutationStoreLive).pipe(
       Layer.provideMerge(WriterFenceLive),
       Layer.provideMerge(Layer.succeed(Journal, unusedJournal)),
       Layer.provideMerge(PostgresClientLive(config)),
@@ -647,7 +677,7 @@ const mutationQualificationResult = successOfResult(
   ),
 )
 
-const makeMutationPaperAuthorityGeneration = (
+const makeMutationCapitalGrantGeneration = (
   previousGenerationHash: string,
   reconciliationId: string,
   reconciliationContentHash: string,
@@ -663,7 +693,7 @@ const makeMutationPaperAuthorityGeneration = (
   }
 
   const config = makeConfig()
-  return makePaperAuthorityGeneration({
+  return makeCapitalGrantGeneration({
     schemaVersion: 'bayn.paper-authority-generation.v2',
     maximum: Authority.Paper,
     previousGenerationHash,
@@ -694,7 +724,7 @@ const mutationObserveGenerationHash = fixtureHash('mutation-observe-authority-ge
 const mutationReconciliationId = fixtureHash('mutation-authority-reconciliation')
 const mutationReconciliationContentHash = fixtureHash('mutation-authority-reconciliation-content')
 const mutationPaperActivation = () =>
-  makeMutationPaperAuthorityGeneration(
+  makeMutationCapitalGrantGeneration(
     mutationObserveGenerationHash,
     mutationReconciliationId,
     mutationReconciliationContentHash,
@@ -714,13 +744,13 @@ const planForGeneration = (input: IntentPlan, generationHash: string) => {
 }
 const plan = (input: IntentPlan) => planForGeneration(input, mutationPaperActivation().generationHash)
 
-const proofBinding = (activation: PaperAuthorityGeneration) => ({
+const proofBinding = (activation: CapitalGrantGeneration) => ({
   schemaVersion: 'bayn.paper-authority-proof-binding.v1' as const,
   riskPolicyHash: activation.riskPolicyHash,
   proofPlanHash: activation.proofPlanHash,
 })
 
-const makePaperActivationConfig = (activation: PaperAuthorityGeneration): RuntimeConfig => {
+const makePaperActivationConfig = (activation: CapitalGrantGeneration): RuntimeConfig => {
   const config = makeConfig()
   return {
     ...config,
@@ -747,15 +777,15 @@ const makePaperActivationConfig = (activation: PaperAuthorityGeneration): Runtim
   }
 }
 
-const activateAuditedPaperAuthority = async () => {
+const activateAuditedCapitalGrant = async () => {
   const activation = mutationPaperActivation()
   const config = makePaperActivationConfig(activation)
   const strategy = mutationQualificationProvenance.strategy
-  const paperRuntime = makePaperStoreRuntime(config)
+  const paperRuntime = makeExecutionStoreRuntime(config)
   try {
     await paperRuntime.runPromise(
       Effect.gen(function* () {
-        const store = yield* PaperStore
+        const store = yield* ExecutionStore
         const sql = yield* PgClient.PgClient
         const accountStateHash = fixtureHash('mutation-authority-account-state')
         yield* sql`
@@ -861,7 +891,7 @@ const activateAuditedPaperAuthority = async () => {
           generationHash: mutationObserveGenerationHash,
           maximum: Authority.Observe,
         })
-        yield* store.activatePaperGeneration(proofBinding(activation))
+        yield* store.activateCapitalGrant(proofBinding(activation))
       }),
     )
   } finally {
@@ -870,7 +900,7 @@ const activateAuditedPaperAuthority = async () => {
   return activation
 }
 
-const rotateAuditedPaperAuthority = (
+const rotateAuditedCapitalGrant = (
   accountId: string,
   options: { readonly activateKill?: boolean; readonly reason?: string } = {},
 ) => {
@@ -885,17 +915,17 @@ const rotateAuditedPaperAuthority = (
   const reconciliationStateHash = fixtureHash(
     `canonical-rotation-reconciliation-state-${observeGenerationHash}-${accountId}`,
   )
-  const paperGeneration = makeMutationPaperAuthorityGeneration(
+  const paperGeneration = makeMutationCapitalGrantGeneration(
     observeGenerationHash,
     reconciliationId,
     reconciliationContentHash,
     accountId,
   )
-  const paperRuntime = makePaperStoreRuntime(makePaperActivationConfig(paperGeneration))
+  const paperRuntime = makeExecutionStoreRuntime(makePaperActivationConfig(paperGeneration))
   return paperRuntime
     .runPromise(
       Effect.gen(function* () {
-        const store = yield* PaperStore
+        const store = yield* ExecutionStore
         const sql = yield* PgClient.PgClient
         if (options.activateKill === true) {
           const [databaseTime] = yield* sql<{ updated_at: Date }>`
@@ -928,7 +958,7 @@ const rotateAuditedPaperAuthority = (
             'EXACT', ${sql.json(JSON.stringify([]))}, clock_timestamp()
           )
         `
-        const activated = yield* store.activatePaperGeneration(proofBinding(paperGeneration))
+        const activated = yield* store.activateCapitalGrant(proofBinding(paperGeneration))
         return {
           generationHash: activated.generationHash,
           accountId,
@@ -1126,7 +1156,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const [before] = yield* readEvidence()
         const authorityBoundMigration = yield* Effect.exit(authorityBoundIntents)
         const [afterAuthorityBound] = yield* readEvidence()
-        const stableGenerationMigration = yield* Effect.exit(stablePaperAuthorityGeneration)
+        const stableGenerationMigration = yield* Effect.exit(stableCapitalGrantGeneration)
         const [afterStableGeneration] = yield* readEvidence()
         return {
           afterAuthorityBound,
@@ -1156,7 +1186,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('hard-fails the stable authority-generation migration before reinterpreting PAPER history', async () => {
-    await activateAuditedPaperAuthority()
+    await activateAuditedCapitalGrant()
     const observed = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -1182,7 +1212,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
               AND conname = 'authority_generations_activation_schema_version_check'
           `
         const [before] = yield* readEvidence()
-        const migration = yield* Effect.exit(stablePaperAuthorityGeneration)
+        const migration = yield* Effect.exit(stableCapitalGrantGeneration)
         const [after] = yield* readEvidence()
         return { after, before, migration }
       }),
@@ -1199,7 +1229,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('atomically commits one deterministic approved intent under one writer fence', async () => {
-    await activateAuditedPaperAuthority()
+    await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
     const secondOwner = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan()))
@@ -1277,7 +1307,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('atomically blocks rejected risk and rejects divergent deterministic reuse', async () => {
-    await activateAuditedPaperAuthority()
+    await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
     const input = intentPlan({ cycleId: 'e'.repeat(64) })
     const intent = await Effect.runPromise(plan(input))
@@ -1346,12 +1376,12 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('rejects a stale generation before its first commit and accepts the same target on the current generation', async () => {
-    const originalGeneration = await activateAuditedPaperAuthority()
+    const originalGeneration = await activateAuditedCapitalGrant()
     const input = intentPlan({ cycleId: fixtureHash('generation-race-cycle') })
     const staleIntent = await Effect.runPromise(planForGeneration(input, originalGeneration.generationHash))
     const staleDecision = await Effect.runPromise(riskDecision(staleIntent, RiskOutcome.Approved))
 
-    const rotated = await rotateAuditedPaperAuthority(staleIntent.accountId)
+    const rotated = await rotateAuditedCapitalGrant(staleIntent.accountId)
     const currentIntent = await Effect.runPromise(planForGeneration(input, rotated.generationHash))
     const currentDecision = await Effect.runPromise(riskDecision(currentIntent, RiskOutcome.Approved))
     const execution = makeExecutionRuntime()
@@ -1412,7 +1442,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('exactly replays an already committed intent without writes after authority rotates', async () => {
-    const originalGeneration = await activateAuditedPaperAuthority()
+    const originalGeneration = await activateAuditedCapitalGrant()
     const input = intentPlan({ cycleId: fixtureHash('generation-replay-cycle') })
     const intent = await Effect.runPromise(planForGeneration(input, originalGeneration.generationHash))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
@@ -1420,7 +1450,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     await initialRuntime.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
     await initialRuntime.dispose()
 
-    const rotated = await rotateAuditedPaperAuthority(intent.accountId)
+    const rotated = await rotateAuditedCapitalGrant(intent.accountId)
     const replayRuntime = makeExecutionRuntime()
     try {
       const observed = await replayRuntime.runPromise(
@@ -1451,7 +1481,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('rejects first and incomplete commits under effective OBSERVE or an ACTIVE kill without content or xmin writes', async () => {
-    const generation = await activateAuditedPaperAuthority()
+    const generation = await activateAuditedCapitalGrant()
     const commits = await Effect.runPromise(
       Effect.forEach(
         [
@@ -1525,7 +1555,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('rejects first-commit policy or strategy drift from the current authority generation without writes', async () => {
-    const generation = await activateAuditedPaperAuthority()
+    const generation = await activateAuditedCapitalGrant()
     const variants = await Effect.runPromise(
       Effect.forEach(
         [
@@ -1591,7 +1621,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('rejects an intent whose generation history binds a different account without writing', async () => {
-    const generation = await activateAuditedPaperAuthority()
+    const generation = await activateAuditedCapitalGrant()
     const intent = await Effect.runPromise(
       plan(intentPlan({ accountId: 'paper-account-2', cycleId: fixtureHash('wrong-generation-account-cycle') })),
     )
@@ -1637,7 +1667,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('rolls back both records when an approval is stale at commit', async () => {
-    await activateAuditedPaperAuthority()
+    await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
     const now = Date.now()
     const intent = await Effect.runPromise(
@@ -1681,7 +1711,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('runs mutations on the lease session and rolls back when that session dies', async () => {
-    await activateAuditedPaperAuthority()
+    await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
     const nextOwner = makeExecutionRuntime()
     const blocker = makeClientRuntime()
@@ -1829,7 +1859,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       }
     }
 
-    await activateAuditedPaperAuthority()
+    await activateAuditedCapitalGrant()
     const intent = await Effect.runPromise(
       plan(intentPlan({ cycleId: fixtureHash('mutation-writer-fence-failure-cycle') })),
     )
@@ -1891,7 +1921,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('linearizes one submit and records its exact acknowledged outcome', async () => {
-    await activateAuditedPaperAuthority()
+    await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '1'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
@@ -1956,7 +1986,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('omits explicitly undefined partial evidence before decoding a durable unknown outcome', async () => {
-    await activateAuditedPaperAuthority()
+    await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(
       plan(intentPlan({ cycleId: fixtureHash('mutation-explicit-undefined-evidence-cycle') })),
@@ -2005,7 +2035,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('causally serializes concurrent coordinator submit and cancel calls around one POST and DELETE', async () => {
-    await activateAuditedPaperAuthority()
+    await activateAuditedCapitalGrant()
     const intent = await Effect.runPromise(
       plan(intentPlan({ cycleId: fixtureHash('mutation-concurrent-submit-cancel-cycle') })),
     )
@@ -2133,7 +2163,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   }, 20_000)
 
   test('linearizes accepted submit terminal recovery and replays without another durable write', async () => {
-    await activateAuditedPaperAuthority()
+    await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '6'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
@@ -2258,7 +2288,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('keeps an accepted submit recoverable after a 404 with its exact broker order identity', async () => {
-    await activateAuditedPaperAuthority()
+    await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '8'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
@@ -2341,7 +2371,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('does not let terminal submit recovery overtake a durable cancellation', async () => {
-    await activateAuditedPaperAuthority()
+    await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '9'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
@@ -2479,7 +2509,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('retains acknowledged state for open recovery before a later exact terminal observation', async () => {
-    await activateAuditedPaperAuthority()
+    await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '7'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
@@ -2577,12 +2607,12 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('serializes PAPER activation behind a writer-fenced mutation outcome and rechecks the baseline', async () => {
-    await activateAuditedPaperAuthority()
+    await activateAuditedCapitalGrant()
 
     const observeGenerationHash = fixtureHash('writer-fenced-return-observe-generation')
     const reconciliationId = fixtureHash('writer-fenced-reconciliation')
     const reconciliationContentHash = fixtureHash('writer-fenced-reconciliation-content')
-    const paperActivation = makeMutationPaperAuthorityGeneration(
+    const paperActivation = makeMutationCapitalGrantGeneration(
       observeGenerationHash,
       reconciliationId,
       reconciliationContentHash,
@@ -2609,13 +2639,13 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         Effect.gen(function* () {
           const intentStore = yield* IntentStore
           const mutationStore = yield* MutationStore
-          const paperStore = yield* PaperStore
+          const executionStore = yield* ExecutionStore
           const sql = yield* PgClient.PgClient
           const requestHash = fixtureHash('writer-fenced-late-submit-outcome')
           yield* intentStore.commit(intent, decision)
           yield* mutationStore.beginSubmit(intent.intentId, requestHash, 1_000, new Date(base - 3_000).toISOString())
 
-          yield* paperStore.ensureAuthorityGeneration({
+          yield* executionStore.ensureAuthorityGeneration({
             generationHash: observeGenerationHash,
             maximum: Authority.Observe,
           })
@@ -2698,7 +2728,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             }
 
             const activationFiber = yield* Effect.forkChild(
-              Effect.exit(paperStore.activatePaperGeneration(proofBinding(paperActivation))),
+              Effect.exit(executionStore.activateCapitalGrant(proofBinding(paperActivation))),
               { startImmediately: true },
             )
             yield* Effect.sleep(Duration.millis(20))
@@ -2731,7 +2761,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   }, 20_000)
 
   test('does not append a mutation start after its approved risk decision expires', async () => {
-    await activateAuditedPaperAuthority()
+    await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '0'.repeat(64) })))
     const expiresAtMillis = Date.now() + 1_000
@@ -2774,7 +2804,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('keeps an ambiguous submit UNKNOWN until lookup recovers the exact broker order', async () => {
-    await activateAuditedPaperAuthority()
+    await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '2'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
@@ -2819,7 +2849,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('cancels an identified mismatched order while its submit remains UNKNOWN', async () => {
-    await activateAuditedPaperAuthority()
+    await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '8'.repeat(64) })))
     const laterIntent = await Effect.runPromise(
@@ -2935,7 +2965,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('allows expired identified cancellation under an active kill while blocking new submission', async () => {
-    const originalGeneration = await activateAuditedPaperAuthority()
+    const originalGeneration = await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '3'.repeat(64) })))
     const blockedIntent = await Effect.runPromise(plan(intentPlan({ cycleId: 'b'.repeat(64) })))
@@ -2972,7 +3002,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     await mutation.dispose()
     await Bun.sleep(5)
 
-    const rotated = await rotateAuditedPaperAuthority('paper-account-1', {
+    const rotated = await rotateAuditedCapitalGrant('paper-account-1', {
       activateKill: true,
       reason: 'operator kill',
     })
@@ -3035,7 +3065,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   }, 20_000)
 
   test('rejects intent policy or strategy drift before submit, identified cancel, or broker writes', async () => {
-    const generation = await activateAuditedPaperAuthority()
+    const generation = await activateAuditedCapitalGrant()
     const now = Date.now()
     const createdAt = new Date(now - 2_000).toISOString()
     const decidedAt = new Date(now - 1_000).toISOString()
@@ -3129,14 +3159,14 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('rejects a same-account historical generation before submit or broker writes', async () => {
-    const originalGeneration = await activateAuditedPaperAuthority()
+    const originalGeneration = await activateAuditedCapitalGrant()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: fixtureHash('stale-generation-cycle') })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
     const execution = makeExecutionRuntime()
     await execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
     await execution.dispose()
 
-    const rotated = await rotateAuditedPaperAuthority(intent.accountId)
+    const rotated = await rotateAuditedCapitalGrant(intent.accountId)
 
     let brokerCalls = 0
     const coordinator = makeCoordinatorRuntime({
@@ -3211,7 +3241,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('rejects cross-account rotation before submit or identified cancel writes', async () => {
-    const originalGeneration = await activateAuditedPaperAuthority()
+    const originalGeneration = await activateAuditedCapitalGrant()
     const submitIntent = await Effect.runPromise(plan(intentPlan({ cycleId: 'c'.repeat(64) })))
     const cancelIntent = await Effect.runPromise(plan(intentPlan({ cycleId: 'd'.repeat(64) })))
     const submitDecision = await Effect.runPromise(riskDecision(submitIntent, RiskOutcome.Approved))
@@ -3243,7 +3273,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     )
     await mutation.dispose()
 
-    const rotated = await rotateAuditedPaperAuthority('paper-account-2')
+    const rotated = await rotateAuditedCapitalGrant('paper-account-2')
 
     const brokerCalls = { cancel: 0, submit: 0 }
     const broker: BrokerMutationShape = {
@@ -3329,7 +3359,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('rejects non-submitted and mismatched broker order identities before cancellation starts', async () => {
-    await activateAuditedPaperAuthority()
+    await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: 'e'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
@@ -3387,7 +3417,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('blocks later exposure only while an earlier mutation outcome remains unresolved', async () => {
-    await activateAuditedPaperAuthority()
+    await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
     const first = await Effect.runPromise(plan(intentPlan({ cycleId: '4'.repeat(64) })))
     const second = await Effect.runPromise(plan(intentPlan({ cycleId: '5'.repeat(64) })))

@@ -9,7 +9,7 @@ import {
   type ReconciliationObservation,
 } from '../cycle-observability'
 import { CycleState, CycleTerminalReason } from '../cycle'
-import { Authority, KillState, ReconciliationStatus } from '../paper'
+import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
 import {
   IsoDateSchema,
   NonNegativeIntegerSchema,

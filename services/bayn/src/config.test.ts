@@ -177,7 +177,7 @@ describe('pure runtime configuration resolution', () => {
         maximumAuthority: Authority.Observe,
         verification: 'embedded',
         hasAlpaca: true,
-        runtimeMode: 'PaperCandidateDiscovery',
+        runtimeMode: 'ExecutionCandidateDiscovery',
       },
     },
     {
@@ -228,7 +228,7 @@ describe('pure runtime configuration resolution', () => {
         maximumAuthority: Authority.Observe,
         verification: 'development-configured',
         hasAlpaca: true,
-        runtimeMode: 'PaperCandidateDiscovery',
+        runtimeMode: 'ExecutionCandidateDiscovery',
       },
     },
   ] as const
@@ -364,7 +364,7 @@ describe('pure runtime configuration resolution', () => {
       name: 'PAPER without an Alpaca binding',
       input: resolutionInput({ maximumAuthority: Authority.Paper }),
       expected: {
-        _tag: 'PaperAuthorityRequiresAlpacaBinding',
+        _tag: 'CapitalGrantRequiresAlpacaBinding',
         maximumAuthority: Authority.Paper,
       },
     },
@@ -375,7 +375,7 @@ describe('pure runtime configuration resolution', () => {
         configuredAlpaca: completeAlpacaConfig,
       }),
       expected: {
-        _tag: 'PaperAuthorityRequiresBoundedOperation',
+        _tag: 'CapitalGrantRequiresBoundedOperation',
         maximumAuthority: Authority.Paper,
       },
     },
@@ -387,7 +387,7 @@ describe('pure runtime configuration resolution', () => {
         configuredOperation: 'PAPER_CANDIDATE_DISCOVERY',
       }),
       expected: {
-        _tag: 'PaperCandidateDiscoveryRequiresObserveAuthority',
+        _tag: 'ExecutionCandidateDiscoveryRequiresObserveAuthority',
         maximumAuthority: Authority.Paper,
       },
     },
@@ -398,7 +398,7 @@ describe('pure runtime configuration resolution', () => {
         configuredOperation: 'PAPER_CANDIDATE_DISCOVERY',
       }),
       expected: {
-        _tag: 'PaperCandidateDiscoveryRequiresQualificationRun',
+        _tag: 'ExecutionCandidateDiscoveryRequiresQualificationRun',
       },
     },
     {
@@ -408,7 +408,7 @@ describe('pure runtime configuration resolution', () => {
         configuredOperation: 'PAPER_CANDIDATE_DISCOVERY',
       }),
       expected: {
-        _tag: 'PaperCandidateDiscoveryRequiresAlpacaBinding',
+        _tag: 'ExecutionCandidateDiscoveryRequiresAlpacaBinding',
       },
     },
     {
@@ -643,7 +643,7 @@ describe('pure runtime configuration resolution', () => {
       input: resolutionInput({
         maximumAuthority: Authority.Paper,
       }),
-      expectedTag: 'PaperAuthorityRequiresAlpacaBinding',
+      expectedTag: 'CapitalGrantRequiresAlpacaBinding',
     },
     {
       name: 'bounded PAPER operation before provenance',
@@ -652,7 +652,7 @@ describe('pure runtime configuration resolution', () => {
         configuredAlpaca: completeAlpacaConfig,
         provenanceMode: 'development',
       }),
-      expectedTag: 'PaperAuthorityRequiresBoundedOperation',
+      expectedTag: 'CapitalGrantRequiresBoundedOperation',
     },
     {
       name: 'paper candidate discovery authority before qualification pin',
@@ -661,14 +661,14 @@ describe('pure runtime configuration resolution', () => {
         configuredAlpaca: completeAlpacaConfig,
         configuredOperation: 'PAPER_CANDIDATE_DISCOVERY',
       }),
-      expectedTag: 'PaperCandidateDiscoveryRequiresObserveAuthority',
+      expectedTag: 'ExecutionCandidateDiscoveryRequiresObserveAuthority',
     },
     {
       name: 'qualification pin before Alpaca read binding',
       input: resolutionInput({
         configuredOperation: 'PAPER_CANDIDATE_DISCOVERY',
       }),
-      expectedTag: 'PaperCandidateDiscoveryRequiresQualificationRun',
+      expectedTag: 'ExecutionCandidateDiscoveryRequiresQualificationRun',
     },
     {
       name: 'Alpaca read binding before provenance',
@@ -677,7 +677,7 @@ describe('pure runtime configuration resolution', () => {
         configuredOperation: 'PAPER_CANDIDATE_DISCOVERY',
         provenanceMode: 'development',
       }),
-      expectedTag: 'PaperCandidateDiscoveryRequiresAlpacaBinding',
+      expectedTag: 'ExecutionCandidateDiscoveryRequiresAlpacaBinding',
     },
     {
       name: 'missing embedded metadata before PostgreSQL TLS',
@@ -848,9 +848,9 @@ describe('Effect configuration', () => {
 
     const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), configured))
 
-    expect(config.runtimeMode).toBe('PaperCandidateDiscovery')
+    expect(config.runtimeMode).toBe('ExecutionCandidateDiscovery')
     expect(config.maximumAuthority).toBe(Authority.Observe)
-    if (config.runtimeMode === 'PaperCandidateDiscovery') {
+    if (config.runtimeMode === 'ExecutionCandidateDiscovery') {
       expect(config.qualificationRunId).toBe('e'.repeat(64))
       expect(config.alpaca.expectedAccountId).toBe('61e69015-8549-4bfd-b9c3-01e75843f47d')
     }
@@ -1025,7 +1025,7 @@ describe('Effect configuration', () => {
       operation: 'operation',
       message: 'PAPER maximum authority requires an explicit bounded runtime operation',
       cause: {
-        _tag: 'PaperAuthorityRequiresBoundedOperation',
+        _tag: 'CapitalGrantRequiresBoundedOperation',
         maximumAuthority: Authority.Paper,
       },
     })
@@ -1132,7 +1132,7 @@ describe('Effect configuration', () => {
     paper.set('BAYN_ALPACA_KEY_ID', 'paper-key')
     paper.set('BAYN_ALPACA_SECRET_KEY', 'paper-secret')
     expect(await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), paper)))).toMatchObject({
-      cause: { _tag: 'PaperAuthorityRequiresBoundedOperation' },
+      cause: { _tag: 'CapitalGrantRequiresBoundedOperation' },
     })
 
     const live = new Map(runtimeEnvironment)

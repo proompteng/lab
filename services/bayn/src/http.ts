@@ -11,7 +11,7 @@ import { CycleState, CycleTerminalReason } from './cycle'
 import type { DatabaseError, EvidenceStoreService } from './db/evidence-store'
 import type { OperationalError } from './errors'
 import { databaseOperation, withinDeadline } from './operations'
-import { Authority } from './paper'
+import { Authority } from './execution/contracts'
 import { makeQualificationDiagnosis } from './qualification-diagnosis'
 import { isReady, type DependencyHealth, type RuntimeState } from './runtime-state'
 

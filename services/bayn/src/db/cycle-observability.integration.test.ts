@@ -15,7 +15,7 @@ import {
 } from '../cycle'
 import { CycleOperationsCondition, CycleOperationsReason, deriveCycleOperationsStatus } from '../cycle-observability'
 import type { SignalSessionRow } from '../market-data'
-import { Authority, KillState } from '../paper'
+import { Authority, KillState } from '../execution/contracts'
 import type { IsoDate } from '../types'
 import { CycleObservability, CycleObservabilityLive } from './cycle-observability'
 import { CycleStore, CycleStoreLive } from './cycle-store'

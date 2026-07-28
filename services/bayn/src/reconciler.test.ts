@@ -24,7 +24,19 @@ import {
 import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
 import { canonicalHashV1 } from './hash'
 import { ReconciliationStatus, type AccountingReceipt, type Valuation } from './paper'
-import { PaperStore, PaperStoreError, type PaperStoreShape } from './db/paper-store'
+import {
+  BrokerEventStore,
+  AuthorityRestrictionStore,
+  ExecutionStoreError,
+  FillAccountingStore,
+  ReconciliationStore,
+  ValuationStore,
+  type BrokerEventStoreShape,
+  type AuthorityRestrictionStoreShape,
+  type FillAccountingStoreShape,
+  type ReconciliationStoreShape,
+  type ValuationStoreShape,
+} from './db/execution-store'
 import type { BrokerSnapshot, ReconciliationWriteResult } from './db/reconciliation'
 import { WriterFence, type WriterFenceService } from './execution/writer-fence'
 import { ReconciliationError, runOnce } from './reconciler'
@@ -169,7 +181,13 @@ interface StoreControl {
   restrictions: string[]
 }
 
-const makeStore = (control: StoreControl, hasAccountBaseline = true): PaperStoreShape => ({
+type TestStore = BrokerEventStoreShape &
+  FillAccountingStoreShape &
+  ValuationStoreShape &
+  ReconciliationStoreShape &
+  AuthorityRestrictionStoreShape
+
+const makeStore = (control: StoreControl, hasAccountBaseline = true): TestStore => ({
   ingest: (input) =>
     Effect.sync(() => {
       control.writes += 1
@@ -198,9 +216,6 @@ const makeStore = (control: StoreControl, hasAccountBaseline = true): PaperStore
       control.reconciliations.push(snapshot)
       return report(snapshot)
     }),
-  ensureAuthorityGeneration: () => Effect.die(new Error('unexpected authority generation initialization')),
-  preparePaperGeneration: () => Effect.die(new Error('unexpected PAPER authority preparation')),
-  activatePaperGeneration: () => Effect.die(new Error('unexpected PAPER authority activation')),
   restrictAuthority: (reason) =>
     Effect.sync(() => {
       control.restrictions.push(reason)
@@ -225,10 +240,14 @@ const fence: WriterFenceService = {
   transaction: (effect) => effect,
 }
 
-const provide = (read: BrokerReadShape, store: PaperStoreShape, writerFence = fence) =>
+const provide = (read: BrokerReadShape, store: TestStore, writerFence = fence) =>
   runOnce.pipe(
     Effect.provideService(BrokerRead, read),
-    Effect.provideService(PaperStore, store),
+    Effect.provideService(BrokerEventStore, store),
+    Effect.provideService(FillAccountingStore, store),
+    Effect.provideService(ValuationStore, store),
+    Effect.provideService(ReconciliationStore, store),
+    Effect.provideService(AuthorityRestrictionStore, store),
     Effect.provideService(WriterFence, writerFence),
   )
 
@@ -685,12 +704,12 @@ describe('paper reconciliation loop', () => {
         expect(transactionDepth).toBe(1)
       }).pipe(Effect.andThen(effect))
     const baseStore = makeStore(control)
-    const persistenceFailure = new PaperStoreError({
+    const persistenceFailure = new ExecutionStoreError({
       operation: 'reconciliation',
       failure: 'query',
       message: 'injected reconciliation write failure',
     })
-    const store: PaperStoreShape = {
+    const store: TestStore = {
       ...baseStore,
       ingest: (input) => insideTransaction(baseStore.ingest(input)),
       ingestPositions: (input) => insideTransaction(baseStore.ingestPositions(input)),
@@ -721,7 +740,7 @@ describe('paper reconciliation loop', () => {
       message: 'injected primary read failure',
       retryable: true,
     })
-    const containmentFailure = new PaperStoreError({
+    const containmentFailure = new ExecutionStoreError({
       operation: 'authority',
       failure: 'query',
       message: 'injected authority restriction failure',
@@ -732,7 +751,7 @@ describe('paper reconciliation loop', () => {
     }
     const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
     let restrictionAttempts = 0
-    const store: PaperStoreShape = {
+    const store: TestStore = {
       ...makeStore(control),
       restrictAuthority: () =>
         Effect.sync(() => {

@@ -3,7 +3,7 @@ import { Result, Schema, pipe } from 'effect'
 import { makeStrategyProtocolHash } from '../contracts'
 import { CycleState } from '../cycle'
 import type { CycleOperationsProjection } from '../cycle-observability'
-import { Authority, RiskOutcome } from '../paper'
+import { Authority, RiskOutcome } from '../execution/contracts'
 import { Gate, Reason } from '../risk'
 import { strictParseOptions } from '../schemas'
 import type { ObserveShadowDecisionDocument } from '../shadow-decision-contract'
@@ -12,20 +12,20 @@ import {
   RuntimeIdentitySchema,
   ValidatedSnapshotTypeId,
   bindingSchemaVersion,
-  type PaperCandidateDiscoveryBinding,
-  type PaperCandidateDiscoveryIdentity,
-  type PaperCandidateDiscoverySnapshot,
+  type ExecutionCandidateDiscoveryBinding,
+  type ExecutionCandidateDiscoveryIdentity,
+  type ExecutionCandidateDiscoverySnapshot,
   type ValidatedPaperCandidateSnapshot,
 } from './model'
-import { requireCondition, requireValue, type PaperCandidateDiscoveryError } from './failure'
+import { requireCondition, requireValue, type ExecutionCandidateDiscoveryError } from './failure'
 
 export const validateIdentity = (
-  input: PaperCandidateDiscoveryIdentity,
-): Result.Result<PaperCandidateDiscoveryIdentity, PaperCandidateDiscoveryError> =>
+  input: ExecutionCandidateDiscoveryIdentity,
+): Result.Result<ExecutionCandidateDiscoveryIdentity, ExecutionCandidateDiscoveryError> =>
   pipe(
     Schema.decodeUnknownResult(RuntimeIdentitySchema, strictParseOptions)(input),
     Result.mapError(
-      (cause): PaperCandidateDiscoveryError => ({ _tag: 'IdentityDecodeFailed', failure: 'invalid-input', cause }),
+      (cause): ExecutionCandidateDiscoveryError => ({ _tag: 'IdentityDecodeFailed', failure: 'invalid-input', cause }),
     ),
     Result.flatMap((identity) =>
       pipe(
@@ -42,7 +42,7 @@ export const validateIdentity = (
 
 export const selectCompletedCycle = (
   projection: CycleOperationsProjection,
-): Result.Result<NonNullable<CycleOperationsProjection['last']>, PaperCandidateDiscoveryError> =>
+): Result.Result<NonNullable<CycleOperationsProjection['last']>, ExecutionCandidateDiscoveryError> =>
   pipe(
     requireCondition(projection.unfinishedCycleCount === 0 && projection.current === null, {
       _tag: 'CycleUnfinished',
@@ -61,11 +61,11 @@ export const selectCompletedCycle = (
   )
 
 const validateCycleProjection = (
-  identity: PaperCandidateDiscoveryIdentity,
-  snapshot: PaperCandidateDiscoverySnapshot,
+  identity: ExecutionCandidateDiscoveryIdentity,
+  snapshot: ExecutionCandidateDiscoverySnapshot,
   last: NonNullable<CycleOperationsProjection['last']>,
   terminalAt: string,
-): Result.Result<void, PaperCandidateDiscoveryError> => {
+): Result.Result<void, ExecutionCandidateDiscoveryError> => {
   const { cycle } = snapshot
   return pipe(
     Result.all([
@@ -144,13 +144,13 @@ const validateCycleProjection = (
 }
 
 const validateDocumentBinding = (
-  identity: PaperCandidateDiscoveryIdentity,
-  snapshot: PaperCandidateDiscoverySnapshot,
+  identity: ExecutionCandidateDiscoveryIdentity,
+  snapshot: ExecutionCandidateDiscoverySnapshot,
   last: NonNullable<CycleOperationsProjection['last']>,
   snapshotId: string,
   decisionHash: string,
   now: number,
-): Result.Result<void, PaperCandidateDiscoveryError> => {
+): Result.Result<void, ExecutionCandidateDiscoveryError> => {
   const { cycle, document } = snapshot
   return pipe(
     Result.all([
@@ -234,9 +234,9 @@ const validateDocumentBinding = (
 }
 
 const validateAuthority = (
-  identity: PaperCandidateDiscoveryIdentity,
+  identity: ExecutionCandidateDiscoveryIdentity,
   projection: CycleOperationsProjection,
-): Result.Result<void, PaperCandidateDiscoveryError> => {
+): Result.Result<void, ExecutionCandidateDiscoveryError> => {
   const authority = projection.authority
   return requireCondition(
     authority !== null &&
@@ -254,7 +254,7 @@ const validateAuthority = (
   )
 }
 
-const validateRisk = (document: ObserveShadowDecisionDocument): Result.Result<void, PaperCandidateDiscoveryError> =>
+const validateRisk = (document: ObserveShadowDecisionDocument): Result.Result<void, ExecutionCandidateDiscoveryError> =>
   pipe(
     document.deltaRisk.map((risk, index) => {
       const failed = risk.evaluation.gates.filter((gate) => !gate.passed)
@@ -280,10 +280,10 @@ const validateRisk = (document: ObserveShadowDecisionDocument): Result.Result<vo
   )
 
 const validateReconciliation = (
-  identity: PaperCandidateDiscoveryIdentity,
-  snapshot: PaperCandidateDiscoverySnapshot,
+  identity: ExecutionCandidateDiscoveryIdentity,
+  snapshot: ExecutionCandidateDiscoverySnapshot,
   reconciliation: NonNullable<CycleOperationsProjection['reconciliation']>,
-): Result.Result<void, PaperCandidateDiscoveryError> =>
+): Result.Result<void, ExecutionCandidateDiscoveryError> =>
   pipe(
     Result.all([
       requireCondition(
@@ -315,11 +315,11 @@ const validateReconciliation = (
   )
 
 const assembleBinding = (
-  identity: PaperCandidateDiscoveryIdentity,
-  snapshot: PaperCandidateDiscoverySnapshot,
+  identity: ExecutionCandidateDiscoveryIdentity,
+  snapshot: ExecutionCandidateDiscoverySnapshot,
   terminalAt: string,
   snapshotId: string,
-): PaperCandidateDiscoveryBinding => ({
+): ExecutionCandidateDiscoveryBinding => ({
   schemaVersion: bindingSchemaVersion,
   runtime: identity,
   cycle: {
@@ -348,10 +348,10 @@ const assembleBinding = (
 })
 
 export const validateSnapshotForIdentity = (
-  identity: PaperCandidateDiscoveryIdentity,
-  snapshot: PaperCandidateDiscoverySnapshot,
+  identity: ExecutionCandidateDiscoveryIdentity,
+  snapshot: ExecutionCandidateDiscoverySnapshot,
   now: number,
-): Result.Result<ValidatedPaperCandidateSnapshot, PaperCandidateDiscoveryError> =>
+): Result.Result<ValidatedPaperCandidateSnapshot, ExecutionCandidateDiscoveryError> =>
   pipe(
     Result.Do,
     Result.bind('last', () =>
@@ -411,11 +411,11 @@ export const validateSnapshotForIdentity = (
     ),
   )
 
-export const validatePaperCandidateDiscoverySnapshot = (
-  identity: PaperCandidateDiscoveryIdentity,
-  snapshot: PaperCandidateDiscoverySnapshot,
+export const validateExecutionCandidateDiscoverySnapshot = (
+  identity: ExecutionCandidateDiscoveryIdentity,
+  snapshot: ExecutionCandidateDiscoverySnapshot,
   now: number,
-): Result.Result<ValidatedPaperCandidateSnapshot, PaperCandidateDiscoveryError> =>
+): Result.Result<ValidatedPaperCandidateSnapshot, ExecutionCandidateDiscoveryError> =>
   pipe(
     validateIdentity(identity),
     Result.flatMap((validatedIdentity) => validateSnapshotForIdentity(validatedIdentity, snapshot, now)),

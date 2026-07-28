@@ -8,10 +8,10 @@ import type { AccountingTransaction } from '../../accounting/schema'
 import type { FillEventInput } from '../../broker/observations'
 import type { JournalService } from '../../ledger'
 import { currentUtcInstant } from '../../time'
-import type { AccountingReceipt } from '../../paper'
+import type { AccountingReceipt } from '../../execution/contracts'
 import { accountingReceiptFromRow, accountingTransactionFromRow } from '../accounting-rows'
 import type { BrokerEventInterpreter } from './broker-events'
-import type { PaperStoreError, PaperStoreRuntimeConfig } from './contract'
+import type { ExecutionStoreError, ExecutionStoreRuntimeConfig } from './contract'
 import {
   decideAccountingReceipt,
   decideAccountingReceiptReplay,
@@ -21,7 +21,7 @@ import {
   decideSuccessorAbsence,
   planAccountingReceipt,
 } from './decisions'
-import { liftPaperDecision, paperStoreError, runPaperOperation } from './errors'
+import { liftStoreDecision, executionStoreError, runExecutionOperation } from './errors'
 import {
   decodeFillInput,
   decodePositionCost,
@@ -33,13 +33,13 @@ import {
 } from './rows'
 
 export interface AccountingInterpreter {
-  readonly account: (input: FillEventInput) => Effect.Effect<AccountingReceipt, PaperStoreError>
+  readonly account: (input: FillEventInput) => Effect.Effect<AccountingReceipt, ExecutionStoreError>
 }
 
 export const makeAccountingInterpreter = (
   sql: PgClient.PgClient,
   journal: JournalService,
-  config: PaperStoreRuntimeConfig,
+  config: ExecutionStoreRuntimeConfig,
   events: Pick<BrokerEventInterpreter, 'append'>,
 ): AccountingInterpreter => {
   const economicallyPrecedes = (input: FillEventInput) => sql`
@@ -62,8 +62,8 @@ export const makeAccountingInterpreter = (
     )
   `
 
-  const priorPosition = (input: FillEventInput): Effect.Effect<PositionCost, PaperStoreError> =>
-    runPaperOperation(
+  const priorPosition = (input: FillEventInput): Effect.Effect<PositionCost, ExecutionStoreError> =>
+    runExecutionOperation(
       'account',
       sql<Record<string, unknown>>`
         SELECT
@@ -83,8 +83,8 @@ export const makeAccountingInterpreter = (
       ),
     )
 
-  const requirePostedPredecessors = (input: FillEventInput): Effect.Effect<void, PaperStoreError> =>
-    runPaperOperation(
+  const requirePostedPredecessors = (input: FillEventInput): Effect.Effect<void, ExecutionStoreError> =>
+    runExecutionOperation(
       'account',
       sql<Record<string, unknown>>`
         SELECT EXISTS (
@@ -101,12 +101,12 @@ export const makeAccountingInterpreter = (
         ) AS unresolved
       `.pipe(
         Effect.flatMap(decodeUnresolvedPredecessor),
-        Effect.flatMap(([result]) => liftPaperDecision('account', decidePredecessorCoverage(result.unresolved))),
+        Effect.flatMap(([result]) => liftStoreDecision('account', decidePredecessorCoverage(result.unresolved))),
       ),
     )
 
-  const requireNoPreparedSuccessors = (input: FillEventInput): Effect.Effect<void, PaperStoreError> =>
-    runPaperOperation(
+  const requireNoPreparedSuccessors = (input: FillEventInput): Effect.Effect<void, ExecutionStoreError> =>
+    runExecutionOperation(
       'account',
       sql<Record<string, unknown>>`
         SELECT EXISTS (
@@ -119,12 +119,12 @@ export const makeAccountingInterpreter = (
         ) AS unresolved
       `.pipe(
         Effect.flatMap(decodeUnresolvedPredecessor),
-        Effect.flatMap(([result]) => liftPaperDecision('account', decideSuccessorAbsence(result.unresolved))),
+        Effect.flatMap(([result]) => liftStoreDecision('account', decideSuccessorAbsence(result.unresolved))),
       ),
     )
 
-  const readPrepared = (brokerEventId: string): Effect.Effect<AccountingTransaction | undefined, PaperStoreError> =>
-    runPaperOperation(
+  const readPrepared = (brokerEventId: string): Effect.Effect<AccountingTransaction | undefined, ExecutionStoreError> =>
+    runExecutionOperation(
       'account',
       sql<Record<string, unknown>>`
         SELECT
@@ -140,12 +140,12 @@ export const makeAccountingInterpreter = (
       `.pipe(
         Effect.flatMap(decodeTransactionRows),
         Effect.flatMap((rows) => Effect.all(rows.map((row) => decodeTransaction(accountingTransactionFromRow(row))))),
-        Effect.flatMap((transactions) => liftPaperDecision('account', decidePreparedTransaction(transactions))),
+        Effect.flatMap((transactions) => liftStoreDecision('account', decidePreparedTransaction(transactions))),
       ),
     )
 
-  const insertPrepared = (prepared: PreparedAccounting): Effect.Effect<void, PaperStoreError> =>
-    runPaperOperation(
+  const insertPrepared = (prepared: PreparedAccounting): Effect.Effect<void, ExecutionStoreError> =>
+    runExecutionOperation(
       'account',
       sql`
         INSERT INTO accounting_transactions (
@@ -167,8 +167,8 @@ export const makeAccountingInterpreter = (
       `.pipe(Effect.asVoid),
     )
 
-  const prepare = (input: FillEventInput): Effect.Effect<PreparedAccounting, PaperStoreError> =>
-    runPaperOperation(
+  const prepare = (input: FillEventInput): Effect.Effect<PreparedAccounting, ExecutionStoreError> =>
+    runExecutionOperation(
       'account',
       sql.withTransaction(
         Effect.gen(function* () {
@@ -185,7 +185,7 @@ export const makeAccountingInterpreter = (
           ).pipe(
             Effect.fromResult,
             Effect.mapError((cause) =>
-              paperStoreError(
+              executionStoreError(
                 'account',
                 'invariant',
                 `fill accounting plan is invalid: ${renderAccountingFailure(cause)}`,
@@ -193,15 +193,15 @@ export const makeAccountingInterpreter = (
               ),
             ),
           )
-          const replay = yield* liftPaperDecision('account', decidePreparedAccountingReplay(stored, expected))
+          const replay = yield* liftStoreDecision('account', decidePreparedAccountingReplay(stored, expected))
           if (stored === undefined) yield* insertPrepared(replay)
           return replay
         }),
       ),
     )
 
-  const readReceipt = (brokerEventId: string): Effect.Effect<AccountingReceipt | undefined, PaperStoreError> =>
-    runPaperOperation(
+  const readReceipt = (brokerEventId: string): Effect.Effect<AccountingReceipt | undefined, ExecutionStoreError> =>
+    runExecutionOperation(
       'receipt',
       sql<Record<string, unknown>>`
         SELECT
@@ -221,14 +221,14 @@ export const makeAccountingInterpreter = (
       `.pipe(
         Effect.flatMap(decodeReceiptRows),
         Effect.flatMap((rows) => Effect.all(rows.map((row) => decodeReceipt(accountingReceiptFromRow(row))))),
-        Effect.flatMap((receipts) => liftPaperDecision('receipt', decideAccountingReceipt(receipts))),
+        Effect.flatMap((receipts) => liftStoreDecision('receipt', decideAccountingReceipt(receipts))),
       ),
     )
 
-  const recordReceipt = (prepared: PreparedAccounting): Effect.Effect<AccountingReceipt, PaperStoreError> =>
-    runPaperOperation(
+  const recordReceipt = (prepared: PreparedAccounting): Effect.Effect<AccountingReceipt, ExecutionStoreError> =>
+    runExecutionOperation(
       'receipt',
-      liftPaperDecision(
+      liftStoreDecision(
         'receipt',
         planAccountingReceipt(prepared, config.tigerBeetle.clusterId.toString(), config.tigerBeetle.ledger),
       ).pipe(
@@ -250,15 +250,15 @@ export const makeAccountingInterpreter = (
                 ON CONFLICT (broker_event_id) DO NOTHING
               `
               const stored = yield* readReceipt(candidate.brokerEventId)
-              return yield* liftPaperDecision('receipt', decideAccountingReceiptReplay(stored, candidate))
+              return yield* liftStoreDecision('receipt', decideAccountingReceiptReplay(stored, candidate))
             }),
           ),
         ),
       ),
     )
 
-  const account = (input: FillEventInput): Effect.Effect<AccountingReceipt, PaperStoreError> =>
-    runPaperOperation(
+  const account = (input: FillEventInput): Effect.Effect<AccountingReceipt, ExecutionStoreError> =>
+    runExecutionOperation(
       'account',
       decodeFillInput(input).pipe(
         Effect.flatMap(prepare),
@@ -267,7 +267,7 @@ export const makeAccountingInterpreter = (
             .post(prepared.ledger)
             .pipe(
               Effect.mapError((cause) =>
-                paperStoreError('account', 'ledger', 'TigerBeetle accounting post failed', cause),
+                executionStoreError('account', 'ledger', 'TigerBeetle accounting post failed', cause),
               ),
             ),
         ),

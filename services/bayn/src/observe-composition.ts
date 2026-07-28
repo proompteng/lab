@@ -11,7 +11,14 @@ import {
   type CyclePassObservation,
 } from './cycle-runner'
 import { CycleStore } from './db/cycle-store'
-import { PaperStore } from './db/paper-store'
+import {
+  BrokerEventStore,
+  AuthorityGenerationStore,
+  AuthorityRestrictionStore,
+  FillAccountingStore,
+  ReconciliationStore,
+  ValuationStore,
+} from './db/execution-store'
 import { WriterFence } from './execution/writer-fence'
 import {
   bindCycleExecutionSession,
@@ -23,7 +30,7 @@ import { makeStrategyProtocolHash } from './contracts'
 import { operationalError, type OperationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
 import { MarketData, type MarketDataService } from './market-data'
-import { Authority, OrderSide, OrderType, TimeInForce, type AuthorityState } from './paper'
+import { Authority, OrderSide, OrderType, TimeInForce, type AuthorityState } from './execution/contracts'
 import type { CausalProtocol } from './protocol'
 import { runOnce, type ReconciliationPassResult } from './reconciler'
 import { reconciledStateHash } from './reconciliation'
@@ -143,7 +150,7 @@ const reconciliationOperationalError = (cause: ReconciliationPassError): Operati
   switch (cause._tag) {
     case 'BrokerReadError':
       return operationalError('market-data', 'reconciliation', 'same-pass broker reconciliation read failed', cause)
-    case 'PaperStoreError':
+    case 'ExecutionStoreError':
       return operationalError('database', 'reconciliation', 'same-pass reconciliation store operation failed', cause)
     case 'ReconciliationError':
       return operationalError('strategy', 'reconciliation', 'same-pass reconciliation failed', cause)
@@ -495,7 +502,16 @@ export type ObserveAutonomousCycleInput = {
   readonly strategy: Pick<Strategy, 'currentDecision' | 'parameters' | 'provenance'>
 }
 
-type ObserveDecisionRuntime = BrokerRead | MarketData | PaperStore | WriterFence
+type ObserveDecisionRuntime =
+  | BrokerRead
+  | MarketData
+  | BrokerEventStore
+  | FillAccountingStore
+  | ValuationStore
+  | ReconciliationStore
+  | AuthorityGenerationStore
+  | AuthorityRestrictionStore
+  | WriterFence
 type ObserveRuntime = CycleStore | ObserveDecisionRuntime
 
 export type ObserveStartupPreparation = {
@@ -548,10 +564,10 @@ const validateObserveAuthorityInitialization = (
 
 const initializeObserveAuthority = (
   input: ObserveAutonomousCycleInput,
-): Effect.Effect<AuthorityState, OperationalError, PaperStore> =>
-  PaperStore.pipe(
-    Effect.flatMap((paperStore) =>
-      paperStore.ensureAuthorityGeneration({
+): Effect.Effect<AuthorityState, OperationalError, AuthorityGenerationStore> =>
+  AuthorityGenerationStore.pipe(
+    Effect.flatMap((executionStore) =>
+      executionStore.ensureAuthorityGeneration({
         generationHash: input.authorityGenerationHash,
         maximum: Authority.Observe,
       }),
@@ -596,7 +612,7 @@ const makeObserveAutonomousLoop = (
 }
 
 export const makeObserveAutonomousCycleStartup =
-  (input: ObserveAutonomousCycleInput): AutonomousCycleStartup<PaperStore, ObserveRuntime> =>
+  (input: ObserveAutonomousCycleInput): AutonomousCycleStartup<AuthorityGenerationStore, ObserveRuntime> =>
   (startup) =>
     Effect.gen(function* () {
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))

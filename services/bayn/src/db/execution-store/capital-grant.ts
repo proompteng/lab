@@ -4,15 +4,15 @@ import { Effect } from 'effect'
 import { WriterFence } from '../../execution/writer-fence'
 import {
   Authority,
-  decodePaperAuthorityProofBinding,
+  decodeCapitalGrantProofBinding,
   type AuthorityState,
-  type PaperAuthorityGeneration,
-  type PaperAuthorityProofBinding,
-} from '../../paper'
+  type CapitalGrantGeneration,
+  type CapitalGrantProofBinding,
+} from '../../execution/contracts'
 import {
   bindPaperGenerationRuntime,
   decidePaperActivation,
-  derivePaperAuthorityGeneration,
+  deriveCapitalGrantGeneration,
   paperActivationEffectiveAuthority,
   validateDerivedPaperGeneration,
   validateLatestExactReconciliation,
@@ -27,10 +27,10 @@ import {
   type PaperActivationDecision,
   type PaperGenerationEvidenceFacts,
   type PaperGenerationRuntimeBinding,
-} from '../paper-authority-algebra'
+} from '../capital-grant-algebra'
 import { authorityStateFromRow, paperGenerationFromRow, type AuthorityPostgres } from './authority-shared'
-import type { PaperStoreError, PaperStoreRuntimeConfig } from './contract'
-import { failPaperStore, liftAuthorityDecision, runPaperOperation } from './errors'
+import type { ExecutionStoreError, ExecutionStoreRuntimeConfig } from './contract'
+import { failExecutionStore, liftAuthorityDecision, runExecutionOperation } from './errors'
 import {
   decodeActivationEvidenceRows,
   decodeActivationReconciliationRows,
@@ -40,24 +40,24 @@ import {
   type ActivationReconciliationRow,
 } from './rows'
 
-export interface PaperAuthorityInterpreter {
-  readonly preparePaperGeneration: (
-    proof: PaperAuthorityProofBinding,
-  ) => Effect.Effect<PaperAuthorityGeneration, PaperStoreError, WriterFence>
-  readonly activatePaperGeneration: (
-    proof: PaperAuthorityProofBinding,
-  ) => Effect.Effect<AuthorityState, PaperStoreError, WriterFence>
+export interface CapitalGrantInterpreter {
+  readonly prepareCapitalGrant: (
+    proof: CapitalGrantProofBinding,
+  ) => Effect.Effect<CapitalGrantGeneration, ExecutionStoreError, WriterFence>
+  readonly activateCapitalGrant: (
+    proof: CapitalGrantProofBinding,
+  ) => Effect.Effect<AuthorityState, ExecutionStoreError, WriterFence>
 }
 
-export const makePaperAuthorityInterpreter = (
+export const makeCapitalGrantInterpreter = (
   sql: PgClient.PgClient,
   authority: AuthorityPostgres,
-  config: PaperStoreRuntimeConfig,
-): PaperAuthorityInterpreter => {
+  config: ExecutionStoreRuntimeConfig,
+): CapitalGrantInterpreter => {
   const requirePaperGenerationRuntime = (
     expectedMaximum: Authority,
     operation: 'PREPARE' | 'activation',
-  ): Effect.Effect<PaperGenerationRuntimeBinding, PaperStoreError> =>
+  ): Effect.Effect<PaperGenerationRuntimeBinding, ExecutionStoreError> =>
     liftAuthorityDecision(
       bindPaperGenerationRuntime(
         {
@@ -260,7 +260,7 @@ export const makePaperAuthorityInterpreter = (
     )
 
   const derivePaperGeneration = (
-    proof: PaperAuthorityProofBinding,
+    proof: CapitalGrantProofBinding,
     binding: PaperGenerationRuntimeBinding,
     current: AuthorityState,
   ) =>
@@ -270,7 +270,7 @@ export const makePaperAuthorityInterpreter = (
       const reconciliation = yield* readLatestExactReconciliation(binding)
       yield* verifyMutationCoverage(binding, reconciliation)
       return yield* liftAuthorityDecision(
-        derivePaperAuthorityGeneration({
+        deriveCapitalGrantGeneration({
           current,
           proof,
           binding,
@@ -290,33 +290,30 @@ export const makePaperAuthorityInterpreter = (
       ),
     )
 
-  const preparePaperGenerationTransaction = (
-    proof: PaperAuthorityProofBinding,
-    binding: PaperGenerationRuntimeBinding,
-  ) =>
+  const prepareCapitalGrantTransaction = (proof: CapitalGrantProofBinding, binding: PaperGenerationRuntimeBinding) =>
     Effect.gen(function* () {
-      const locked = yield* authority.lockPaperAuthority(binding.accountId)
+      const locked = yield* authority.lockCapitalGrant(binding.accountId)
       yield* liftAuthorityDecision(validatePaperPrepareGeneration(locked.current, binding))
       const derived = yield* derivePaperGeneration(proof, binding, locked.current)
       yield* requireFreshPaperGeneration(derived)
       return derived.generation
     })
 
-  const preparePaperGeneration = (candidate: PaperAuthorityProofBinding) =>
-    runPaperOperation(
+  const prepareCapitalGrant = (candidate: CapitalGrantProofBinding) =>
+    runExecutionOperation(
       'authority',
       Effect.gen(function* () {
-        const proof = yield* decodePaperAuthorityProofBinding(candidate)
+        const proof = yield* decodeCapitalGrantProofBinding(candidate)
         const binding = yield* requirePaperGenerationRuntime(Authority.Observe, 'PREPARE')
         const fence = yield* WriterFence
-        return yield* fence.transaction(preparePaperGenerationTransaction(proof, binding))
+        return yield* fence.transaction(prepareCapitalGrantTransaction(proof, binding))
       }),
     )
 
   const replayPaperGeneration = (
     current: AuthorityState,
     history: Parameters<typeof paperGenerationFromRow>[0],
-    proof: PaperAuthorityProofBinding,
+    proof: CapitalGrantProofBinding,
     binding: PaperGenerationRuntimeBinding,
   ) =>
     paperGenerationFromRow(history).pipe(
@@ -377,17 +374,17 @@ export const makePaperAuthorityInterpreter = (
       `.pipe(Effect.flatMap(decodeAuthorityStateRows))
       const activatedRow = activatedRows[0]
       if (activatedRow === undefined) {
-        return yield* failPaperStore('authority', 'invariant', 'PAPER authority was not activated')
+        return yield* failExecutionStore('authority', 'invariant', 'PAPER authority was not activated')
       }
       return yield* authorityStateFromRow(activatedRow)
     })
 
   const activatePaperGenerationTransaction = (
-    proof: PaperAuthorityProofBinding,
+    proof: CapitalGrantProofBinding,
     binding: PaperGenerationRuntimeBinding,
   ) =>
     Effect.gen(function* () {
-      const locked = yield* authority.lockPaperAuthority(binding.accountId)
+      const locked = yield* authority.lockCapitalGrant(binding.accountId)
       const decision = yield* liftAuthorityDecision(decidePaperActivation(locked.current, binding))
       if (decision._tag === 'ReplayPaperGeneration') {
         return yield* replayPaperGeneration(decision.current, locked.history, proof, binding)
@@ -400,16 +397,16 @@ export const makePaperAuthorityInterpreter = (
       return yield* writePaperGenerationActivation(decision, derived, activatedAt)
     })
 
-  const activatePaperGeneration = (candidate: PaperAuthorityProofBinding) =>
-    runPaperOperation(
+  const activateCapitalGrant = (candidate: CapitalGrantProofBinding) =>
+    runExecutionOperation(
       'authority',
       Effect.gen(function* () {
-        const proof = yield* decodePaperAuthorityProofBinding(candidate)
+        const proof = yield* decodeCapitalGrantProofBinding(candidate)
         const binding = yield* requirePaperGenerationRuntime(Authority.Paper, 'activation')
         const fence = yield* WriterFence
         return yield* fence.transaction(activatePaperGenerationTransaction(proof, binding))
       }),
     )
 
-  return { preparePaperGeneration, activatePaperGeneration }
+  return { prepareCapitalGrant, activateCapitalGrant }
 }

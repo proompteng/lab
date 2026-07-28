@@ -25,7 +25,21 @@ import {
 } from './cycle'
 import { makeStrategyProtocolHash } from './contracts'
 import { CycleStore, type CycleStoreShape } from './db/cycle-store'
-import { PaperStore, PaperStoreError, type PaperStoreShape } from './db/paper-store'
+import {
+  BrokerEventStore,
+  AuthorityGenerationStore,
+  AuthorityRestrictionStore,
+  ExecutionStoreError,
+  FillAccountingStore,
+  ReconciliationStore,
+  ValuationStore,
+  type BrokerEventStoreShape,
+  type AuthorityGenerationStoreShape,
+  type AuthorityRestrictionStoreShape,
+  type FillAccountingStoreShape,
+  type ReconciliationStoreShape,
+  type ValuationStoreShape,
+} from './db/execution-store'
 import { operationalError, type OperationalError } from './errors'
 import { WriterFence, WriterFenceError, type WriterFenceService } from './execution/writer-fence'
 import { canonicalHashV1 } from './hash'
@@ -559,7 +573,7 @@ describe('OBSERVE runtime composition', () => {
       message: 'reconciliation broker read fixture failed',
       retryable: true,
     })
-    const reconciliationStoreCause = new PaperStoreError({
+    const reconciliationStoreCause = new ExecutionStoreError({
       operation: 'reconciliation',
       failure: 'query',
       message: 'reconciliation store fixture failed',
@@ -653,7 +667,13 @@ describe('OBSERVE runtime composition', () => {
     const unused = Effect.die(new Error('missing-publication loop must not use this capability'))
     const authority = reconciliationResult().riskContext.authority
     if (authority === null) return expect.unreachable('fixture authority is required')
-    const paperStore: PaperStoreShape = {
+    type TestStore = BrokerEventStoreShape &
+      FillAccountingStoreShape &
+      ValuationStoreShape &
+      ReconciliationStoreShape &
+      AuthorityGenerationStoreShape &
+      AuthorityRestrictionStoreShape
+    const executionStore: TestStore = {
       ingest: () => unused,
       ingestPositions: () => unused,
       account: () => unused,
@@ -662,8 +682,6 @@ describe('OBSERVE runtime composition', () => {
       bindings: () => unused,
       reconcile: () => unused,
       ensureAuthorityGeneration: () => Effect.succeed(authority),
-      preparePaperGeneration: () => unused,
-      activatePaperGeneration: () => unused,
       restrictAuthority: () => unused,
     }
     const cycleStore: CycleStoreShape = {
@@ -714,19 +732,35 @@ describe('OBSERVE runtime composition', () => {
         Effect.gen(function* () {
           const pass = yield* Deferred.make<Parameters<Parameters<typeof startup>[0]['recordPass']>[0]>()
           const acquireLoop: Effect.Effect<
-            AutonomousCycleLoop<BrokerRead | CycleStore | MarketData | PaperStore | WriterFence>,
+            AutonomousCycleLoop<
+              | BrokerRead
+              | CycleStore
+              | MarketData
+              | BrokerEventStore
+              | FillAccountingStore
+              | ValuationStore
+              | ReconciliationStore
+              | AuthorityGenerationStore
+              | AuthorityRestrictionStore
+              | WriterFence
+            >,
             OperationalError,
-            PaperStore
+            AuthorityGenerationStore
           > = startup({
             qualificationRunId: 'c'.repeat(64),
             recordPass: (observation) => Deferred.succeed(pass, observation).pipe(Effect.asVoid),
           })
-          const loop = yield* acquireLoop.pipe(Effect.provideService(PaperStore, paperStore))
+          const loop = yield* acquireLoop.pipe(Effect.provideService(AuthorityGenerationStore, executionStore))
           const fiber = yield* loop.pipe(
             Effect.provideService(BrokerRead, brokerRead),
             Effect.provideService(CycleStore, cycleStore),
             Effect.provideService(MarketData, marketDataService),
-            Effect.provideService(PaperStore, paperStore),
+            Effect.provideService(BrokerEventStore, executionStore),
+            Effect.provideService(FillAccountingStore, executionStore),
+            Effect.provideService(ValuationStore, executionStore),
+            Effect.provideService(ReconciliationStore, executionStore),
+            Effect.provideService(AuthorityGenerationStore, executionStore),
+            Effect.provideService(AuthorityRestrictionStore, executionStore),
             Effect.provideService(WriterFence, writerFence),
             Effect.forkScoped,
           )
@@ -744,7 +778,12 @@ describe('OBSERVE runtime composition', () => {
   test('fails PAPER startup before authority initialization or autonomous work can begin', async () => {
     const unused = Effect.die(new Error('PAPER startup must fail before using runtime capabilities'))
     let authorityInitializations = 0
-    const paperStore: PaperStoreShape = {
+    const executionStore: BrokerEventStoreShape &
+      FillAccountingStoreShape &
+      ValuationStoreShape &
+      ReconciliationStoreShape &
+      AuthorityGenerationStoreShape &
+      AuthorityRestrictionStoreShape = {
       ingest: () => unused,
       ingestPositions: () => unused,
       account: () => unused,
@@ -757,8 +796,6 @@ describe('OBSERVE runtime composition', () => {
           authorityInitializations += 1
           throw new Error('PAPER startup must not initialize synthetic OBSERVE authority')
         }),
-      preparePaperGeneration: () => unused,
-      activatePaperGeneration: () => unused,
       restrictAuthority: () => unused,
     }
     const cycleStore: CycleStoreShape = {
@@ -812,7 +849,11 @@ describe('OBSERVE runtime composition', () => {
           Effect.provideService(BrokerRead, brokerRead),
           Effect.provideService(CycleStore, cycleStore),
           Effect.provideService(MarketData, marketData([])),
-          Effect.provideService(PaperStore, paperStore),
+          Effect.provideService(BrokerEventStore, executionStore),
+          Effect.provideService(FillAccountingStore, executionStore),
+          Effect.provideService(ValuationStore, executionStore),
+          Effect.provideService(ReconciliationStore, executionStore),
+          Effect.provideService(AuthorityGenerationStore, executionStore),
           Effect.provideService(WriterFence, writerFence),
         ),
       ),

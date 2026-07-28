@@ -14,7 +14,7 @@ import {
   RiskOutcome,
   type Position,
   type ReferenceIntent,
-} from './paper'
+} from './execution/contracts'
 import { reconciledStateHash } from './reconciliation'
 import { evaluate, PolicySchema, Reason, StateSchema, type Policy, type State } from './risk'
 import {

@@ -2,7 +2,7 @@ import { Data, Result, Schema } from 'effect'
 
 import { intentIdForPlan } from './execution/intents/domain'
 import { canonicalHashV1Result } from './hash'
-import { PositiveMicrosSchema, RiskOutcome } from './paper'
+import { PositiveMicrosSchema, RiskOutcome } from './execution/contracts'
 import { EvaluationSchema, Reason } from './risk'
 import { Sha256Schema, StrictNonEmptyStringSchema, UtcInstantSchema, strictParseOptions } from './schemas'
 import { TargetPlanResultSchema, TargetPlanStatus } from './target-planner'

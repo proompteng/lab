@@ -14,7 +14,7 @@ import {
   PositionSchema,
   ReconciliationStatus,
   TimeInForce,
-} from './paper'
+} from './execution/contracts'
 import { reconciledStateHash } from './reconciliation'
 import {
   NonNegativeIntegerSchema,

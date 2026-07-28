@@ -12,7 +12,7 @@ import { EmbeddedBuildMetadataSchema, embeddedBuildMetadata, type EmbeddedBuildM
 import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema, type EvaluationBounds } from './contracts'
 import { OperationalError, operationalError } from './errors'
 import { BrokerEnvironment, BrokerEnvironmentSchema } from './execution/authority'
-import { Authority } from './paper'
+import { Authority } from './execution/contracts'
 import {
   GitSourceRevisionSchema as SourceRevision,
   ImageDigestSchema as ImageDigest,
@@ -89,7 +89,7 @@ export type LoadedRuntimeConfig = LoadedRuntimeConfigBase &
         readonly alpaca: AlpacaRuntimeConfig
       }
     | {
-        readonly runtimeMode: 'PaperCandidateDiscovery'
+        readonly runtimeMode: 'ExecutionCandidateDiscovery'
         readonly qualificationRunId: string
         readonly maximumAuthority: Authority.Observe
         readonly alpaca: AlpacaRuntimeConfig
@@ -162,22 +162,22 @@ export type RuntimeConfigResolutionFailure =
       readonly cause: BrokerConnectionDecodeFailure
     }
   | {
-      readonly _tag: 'PaperAuthorityRequiresAlpacaBinding'
+      readonly _tag: 'CapitalGrantRequiresAlpacaBinding'
       readonly maximumAuthority: Authority.Paper
     }
   | {
-      readonly _tag: 'PaperAuthorityRequiresBoundedOperation'
+      readonly _tag: 'CapitalGrantRequiresBoundedOperation'
       readonly maximumAuthority: Authority.Paper
     }
   | {
-      readonly _tag: 'PaperCandidateDiscoveryRequiresObserveAuthority'
+      readonly _tag: 'ExecutionCandidateDiscoveryRequiresObserveAuthority'
       readonly maximumAuthority: Authority.Paper
     }
   | {
-      readonly _tag: 'PaperCandidateDiscoveryRequiresQualificationRun'
+      readonly _tag: 'ExecutionCandidateDiscoveryRequiresQualificationRun'
     }
   | {
-      readonly _tag: 'PaperCandidateDiscoveryRequiresAlpacaBinding'
+      readonly _tag: 'ExecutionCandidateDiscoveryRequiresAlpacaBinding'
     }
   | {
       readonly _tag: 'ProductionProvenanceRequiresEmbeddedMetadata'
@@ -386,7 +386,7 @@ type RuntimeModeSelection =
       readonly alpaca: AlpacaRuntimeConfig
     }
   | {
-      readonly runtimeMode: 'PaperCandidateDiscovery'
+      readonly runtimeMode: 'ExecutionCandidateDiscovery'
       readonly qualificationRunId: string
       readonly maximumAuthority: Authority.Observe
       readonly alpaca: AlpacaRuntimeConfig
@@ -404,7 +404,7 @@ const serviceRuntimeMode = (
           alpaca: undefined,
         })
       : Result.fail({
-          _tag: 'PaperAuthorityRequiresAlpacaBinding',
+          _tag: 'CapitalGrantRequiresAlpacaBinding',
           maximumAuthority: Authority.Paper,
         })
   }
@@ -416,28 +416,28 @@ const serviceRuntimeMode = (
         alpaca: input.alpaca,
       })
     : Result.fail({
-        _tag: 'PaperAuthorityRequiresBoundedOperation',
+        _tag: 'CapitalGrantRequiresBoundedOperation',
         maximumAuthority: Authority.Paper,
       })
 }
 
-const paperCandidateDiscoveryMode = (
+const executionCandidateDiscoveryMode = (
   input: RuntimeModeResolutionInput,
 ): Result.Result<RuntimeModeSelection, RuntimeConfigResolutionFailure> => {
   if (input.maximumAuthority === Authority.Paper) {
     return Result.fail({
-      _tag: 'PaperCandidateDiscoveryRequiresObserveAuthority',
+      _tag: 'ExecutionCandidateDiscoveryRequiresObserveAuthority',
       maximumAuthority: Authority.Paper,
     })
   }
   if (input.qualificationRunId === undefined) {
-    return Result.fail({ _tag: 'PaperCandidateDiscoveryRequiresQualificationRun' })
+    return Result.fail({ _tag: 'ExecutionCandidateDiscoveryRequiresQualificationRun' })
   }
   if (input.alpaca === undefined) {
-    return Result.fail({ _tag: 'PaperCandidateDiscoveryRequiresAlpacaBinding' })
+    return Result.fail({ _tag: 'ExecutionCandidateDiscoveryRequiresAlpacaBinding' })
   }
   return Result.succeed({
-    runtimeMode: 'PaperCandidateDiscovery',
+    runtimeMode: 'ExecutionCandidateDiscovery',
     qualificationRunId: input.qualificationRunId,
     maximumAuthority: Authority.Observe,
     alpaca: input.alpaca,
@@ -447,7 +447,7 @@ const paperCandidateDiscoveryMode = (
 const resolveRuntimeMode = (
   input: RuntimeModeResolutionInput,
 ): Result.Result<RuntimeModeSelection, RuntimeConfigResolutionFailure> =>
-  input.configuredOperation === undefined ? serviceRuntimeMode(input) : paperCandidateDiscoveryMode(input)
+  input.configuredOperation === undefined ? serviceRuntimeMode(input) : executionCandidateDiscoveryMode(input)
 
 const attachRuntimeMode = (base: LoadedRuntimeConfigBase, selection: RuntimeModeSelection): LoadedRuntimeConfig => ({
   ...base,
@@ -763,27 +763,27 @@ const presentRuntimeConfigFailure = (failure: RuntimeConfigResolutionFailure): R
         operation: 'broker-connection',
         message: renderBrokerConnectionDecodeFailure(failure.cause),
       }
-    case 'PaperAuthorityRequiresAlpacaBinding':
+    case 'CapitalGrantRequiresAlpacaBinding':
       return {
         operation: 'alpaca',
         message: 'PAPER maximum authority requires a complete Alpaca account binding',
       }
-    case 'PaperAuthorityRequiresBoundedOperation':
+    case 'CapitalGrantRequiresBoundedOperation':
       return {
         operation: 'operation',
         message: 'PAPER maximum authority requires an explicit bounded runtime operation',
       }
-    case 'PaperCandidateDiscoveryRequiresObserveAuthority':
+    case 'ExecutionCandidateDiscoveryRequiresObserveAuthority':
       return {
         operation: 'operation',
         message: 'PAPER_CANDIDATE_DISCOVERY requires OBSERVE maximum authority',
       }
-    case 'PaperCandidateDiscoveryRequiresQualificationRun':
+    case 'ExecutionCandidateDiscoveryRequiresQualificationRun':
       return {
         operation: 'operation',
         message: 'PAPER_CANDIDATE_DISCOVERY requires a pinned terminal qualification run',
       }
-    case 'PaperCandidateDiscoveryRequiresAlpacaBinding':
+    case 'ExecutionCandidateDiscoveryRequiresAlpacaBinding':
       return {
         operation: 'operation',
         message: 'PAPER_CANDIDATE_DISCOVERY requires a complete Alpaca read binding',

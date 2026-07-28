@@ -3,7 +3,7 @@ import { Effect, Result } from 'effect'
 import type { SqlError } from 'effect/unstable/sql/SqlError'
 
 import { MutationOperation, type MutationEvidence } from '../../../broker/alpaca-mutations'
-import { IntentState } from '../../../paper'
+import { IntentState } from '../../contracts'
 import {
   decideAcknowledgedRecovery,
   decideCancelFirst,
