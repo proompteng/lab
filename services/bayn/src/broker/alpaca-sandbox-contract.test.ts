@@ -53,7 +53,6 @@ const retryDelayMs = 1_000
 const minimumPreOpenSafetyMs = 30 * 60_000
 const mutationPhaseDeadlineMs = 2 * 60_000
 const cleanupDeadlineMs = 3 * 60_000
-const retryDelay = Duration.millis(retryDelayMs)
 const mutationPhaseDeadline = Duration.millis(mutationPhaseDeadlineMs)
 const cleanupDeadline = Duration.millis(cleanupDeadlineMs)
 const maximumRetryReadMs = (lookupRetryCount + 1) * brokerOperationTimeoutMs + lookupRetryCount * retryDelayMs
@@ -306,11 +305,12 @@ const verifySafeMarketWindow = (
 const retryRead = <A>(
   effect: Effect.Effect<A, BrokerReadError>,
   retryNotFound = false,
+  retrySpacingMs = retryDelayMs,
 ): Effect.Effect<A, BrokerReadError> =>
   effect.pipe(
     Effect.retry({
       times: lookupRetryCount,
-      schedule: Schedule.spaced(retryDelay),
+      schedule: Schedule.spaced(Duration.millis(retrySpacingMs)),
       while: (error) => error.retryable || (retryNotFound && error.kind === BrokerReadErrorKind.NotFound),
     }),
   )
@@ -407,7 +407,7 @@ const resolveOrderCleanup = (
           ? Effect.fail(proofFailure('TERMINAL_LOOKUP', 'ORDER_REMAINED_OPEN_AFTER_CANCEL_RETRIES'))
           : attemptCancellation(mutation, current.value, state).pipe(
               Effect.andThen(Effect.sleep(Duration.millis(pollDelayMs))),
-              Effect.andThen(retryRead(orderById(brokerOrderId))),
+              Effect.andThen(retryRead(orderById(brokerOrderId), true)),
               Effect.flatMap((next) =>
                 Effect.sync(() => {
                   state.lifecycle.push(readEvidence('TERMINAL_LOOKUP', next))
@@ -497,7 +497,7 @@ const cleanupOrder = (
     }
 
     if (observed === undefined) {
-      observed = yield* retryRead(orderById(brokerOrderId))
+      observed = yield* retryRead(orderById(brokerOrderId), true)
       state.lifecycle.push(readEvidence('CLEANUP_LOOKUP_BY_ID', observed))
     }
     yield* requireOrderBinding(
@@ -683,6 +683,33 @@ test('retries exact cancellation after an unknown outcome', async () => {
   expect(terminal.value.status).toBe(OrderStatus.Canceled)
   expect(state.cancelAttempts).toBe(2)
   expect(state.cancelAcknowledged).toBeTrue()
+})
+
+test('retries bounded not-found reads for a known broker order ID', async () => {
+  let attempts = 0
+  const result = await Effect.runPromise(
+    retryRead(
+      Effect.suspend(() => {
+        attempts += 1
+        return attempts === 1
+          ? Effect.fail(
+              new BrokerReadError({
+                operation: 'order-by-id',
+                kind: BrokerReadErrorKind.NotFound,
+                message: 'accepted order is not visible yet',
+                retryable: false,
+                status: 404,
+              }),
+            )
+          : Effect.succeed('visible')
+      }),
+      true,
+      0,
+    ),
+  )
+
+  expect(result).toBe('visible')
+  expect(attempts).toBe(2)
 })
 
 test('preserves typed session acquisition evidence in the sanitized failure', () => {
