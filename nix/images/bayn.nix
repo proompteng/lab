@@ -21,9 +21,11 @@ import ./bun-workspace-service.nix {
   packageName = "@proompteng/bayn";
   # Bayn's fixed-output dependency closure is intentionally isolated from TypeScript source-tree topology.
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
+  # Refreshed once after dependencySource became a manifest/lock/patch-only file set. Source-only tree changes
+  # can no longer perturb these architecture-specific dependency outputs.
   depsHash = {
-    x86_64-linux = "sha256-TnXWfeZzFjKVroWLF0G8kOWuePxMD058YeqsXevi9kE=";
-    aarch64-linux = "sha256-kEMBQ4Tn5od4hfpbulZPy5VdJNnp3k7uwz6m57+JFWE=";
+    x86_64-linux = "sha256-1klocII3DNB/tQctQ+tBZPQu6pSUPYl97Rpnq+y2WgQ=";
+    aarch64-linux = "sha256-xycrSU7eH29eiEKNkrJDk+YnZURj8+xFMCcuUZgajyY=";
   };
   installFilters = [
     "@proompteng/bayn"

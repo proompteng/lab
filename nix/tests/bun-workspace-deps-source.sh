@@ -36,13 +36,13 @@ printf 'fixture patch\n' > "${fixture}/patches/example.patch"
 printf 'export const existing = true\n' > "${fixture}/apps/demo/src/existing/index.ts"
 
 dependency_source() {
-  FIXTURE_ROOT="${fixture}" nix eval --impure --raw --expr "
+  nix eval --impure --raw --expr "
     let
       flake = builtins.getFlake (toString ${repo_root});
     in
     import ${repo_root}/nix/images/bun-workspace-deps-source.nix {
       lib = flake.inputs.nixpkgs.lib;
-      repoRoot = builtins.toPath (builtins.getEnv \"FIXTURE_ROOT\");
+      repoRoot = ${fixture};
     }
   "
 }
