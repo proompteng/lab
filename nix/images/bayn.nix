@@ -14,26 +14,11 @@ let
   # Canonical hash of the compiled bayn.risk-balanced-trend.protocol.v4 document.
   strategyParameterHash = "19bc51c7361b181aa48845d178cb63373b3f2e017bcbea1cf3b70ab16647f8a9";
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
-in
-import ./bun-workspace-service.nix {
-  inherit pkgs lib repoRoot bun nodejs;
-  serviceName = "bayn";
-  packageName = "@proompteng/bayn";
-  # Bayn's fixed-output dependency closure is intentionally isolated from TypeScript source-tree topology.
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
-  # Refreshed once after dependencySource became a manifest/lock/patch-only file set. Source-only tree changes
-  # can no longer perturb these architecture-specific dependency outputs.
   depsHash = {
     x86_64-linux = "sha256-1klocII3DNB/tQctQ+tBZPQu6pSUPYl97Rpnq+y2WgQ=";
     aarch64-linux = "sha256-xycrSU7eH29eiEKNkrJDk+YnZURj8+xFMCcuUZgajyY=";
   };
-  installFilters = [
-    "@proompteng/bayn"
-  ];
-  sourcePaths = [
-    "services/bayn"
-    "packages/scripts/src/bayn/update-manifests.ts"
-  ];
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
@@ -59,6 +44,32 @@ import ./bun-workspace-service.nix {
     cp -R -L "$TMPDIR/work/services/bayn/node_modules/tigerbeetle-node/." \
       "$out/app/services/bayn/node_modules/tigerbeetle-node/"
   '';
+  runtimeRoot = import ./bayn-runtime-root.nix {
+    inherit
+      pkgs
+      lib
+      repoRoot
+      dependencySource
+      depsHash
+      bun
+      nodejs
+      buildCommands
+      runtimeInstallPhase
+      ;
+  };
+in
+import ./bun-workspace-service.nix {
+  inherit pkgs lib bun nodejs depsHash runtimeRoot;
+  repoRoot = dependencySource;
+  serviceName = "bayn";
+  packageName = "@proompteng/bayn";
+  # Bayn's fixed-output dependency closure is intentionally isolated from TypeScript source-tree topology.
+  # Refreshed once after dependencySource became a manifest/lock/patch-only file set. Source-only tree changes
+  # can no longer perturb these architecture-specific dependency outputs.
+  installFilters = [
+    "@proompteng/bayn"
+  ];
+  sourcePaths = [ ];
   command = [
     "node"
     "dist/index.js"

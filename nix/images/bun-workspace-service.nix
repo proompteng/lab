@@ -8,7 +8,6 @@
   imageName ? serviceName,
   packageName,
   depsHash,
-  dependencySource ? null,
   installFilters,
   sourcePaths,
   runtimeSourceFilter ? (_path: _type: true),
@@ -44,8 +43,6 @@ let
     else
       pathString;
 
-  isUnder = prefix: rel: rel == prefix || lib.hasPrefix "${prefix}/" rel;
-
   isPackageManifest = rel:
     rel == "package.json"
     || rel == "bun.lock"
@@ -54,13 +51,13 @@ let
     || rel == "tsconfig.base.json"
     || lib.hasSuffix "/package.json" rel;
 
-  defaultDependencySource = lib.cleanSourceWith {
+  isUnder = prefix: rel: rel == prefix || lib.hasPrefix "${prefix}/" rel;
+
+  depsSource = lib.cleanSourceWith {
     src = repoRoot;
     filter = path: type:
       type == "directory" || isPackageManifest (relativePath path) || isUnder "patches" (relativePath path);
   };
-
-  depsSource = if dependencySource == null then defaultDependencySource else dependencySource;
 
   runtimeSource = lib.cleanSourceWith {
     src = repoRoot;
