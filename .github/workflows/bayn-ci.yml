@@ -295,16 +295,23 @@ jobs:
       BAYN_ALPACA_ACCOUNT_ID: ${{ secrets.BAYN_ALPACA_SANDBOX_ACCOUNT_ID }}
       BAYN_ALPACA_KEY_ID: ${{ secrets.BAYN_ALPACA_SANDBOX_KEY_ID }}
       BAYN_ALPACA_SECRET_KEY: ${{ secrets.BAYN_ALPACA_SANDBOX_SECRET_KEY }}
+      BAYN_ALPACA_SANDBOX_EXACT_HEAD_SHA: ${{ inputs.exact_head_sha }}
       BAYN_ALPACA_SANDBOX_IMAGE_BUILD_RUN_ID: ${{ inputs.image_build_run_id }}
       BAYN_ALPACA_SANDBOX_RECEIPT_PATH: /tmp/alpaca-sandbox-contract-receipt.json
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Validate protected dispatch inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${BAYN_ALPACA_SANDBOX_EXACT_HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${BAYN_ALPACA_SANDBOX_IMAGE_BUILD_RUN_ID}" =~ ^[0-9]+$ ]]
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.exact_head_sha }}
+          ref: ${{ env.BAYN_ALPACA_SANDBOX_EXACT_HEAD_SHA }}
           persist-credentials: false
       - name: Verify exact checked-out head
-        run: test "$(git rev-parse HEAD)" = "${{ inputs.exact_head_sha }}"
+        run: test "$(git rev-parse HEAD)" = "${BAYN_ALPACA_SANDBOX_EXACT_HEAD_SHA}"
       - name: Fail closed on protected credential binding
         shell: bash
         run: |
@@ -326,7 +333,7 @@ jobs:
             }' > "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}"
 
           [[ "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]]
-          [[ "${GITHUB_SHA}" == "${{ inputs.exact_head_sha }}" ]]
+          [[ "${GITHUB_SHA}" == "${BAYN_ALPACA_SANDBOX_EXACT_HEAD_SHA}" ]]
           [[ "${BAYN_ALPACA_BASE_URL}" == 'https://paper-api.alpaca.markets' ]]
           [[ "${BAYN_ALPACA_SANDBOX_CONTRACT}" == '1' ]]
           [[ "${BAYN_ALPACA_SANDBOX_IMAGE_BUILD_RUN_ID}" =~ ^[0-9]+$ ]]
@@ -415,7 +422,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: alpaca-sandbox-contract-${{ inputs.exact_head_sha }}
+          name: alpaca-sandbox-contract-${{ github.sha }}
           path: /tmp/alpaca-sandbox-contract-receipt.json
           if-no-files-found: error
           retention-days: 30
