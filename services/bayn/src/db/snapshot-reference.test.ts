@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { makeSnapshot } from '../test-fixtures'
-import { validateSnapshotReference, type SnapshotReferenceRow } from './snapshot-reference'
+import { decodeSnapshotReferenceRows, validateSnapshotReference, type SnapshotReferenceRow } from './snapshot-reference'
 
 const manifest = makeSnapshot(800).manifest
 const snapshot = manifest.finalizedSnapshot
@@ -45,6 +45,13 @@ describe('snapshot reference decisions', () => {
         observed: 'f'.repeat(64),
         expected: snapshot.contentHash,
       },
+    })
+  })
+
+  test('decodes unknown SQL rows once at the adapter boundary', () => {
+    expect(decodeSnapshotReferenceRows([reference])).toEqual(Result.succeed([reference]))
+    expect(decodeSnapshotReferenceRows([{ ...reference, row_count: '800' }])).toMatchObject({
+      _tag: 'Failure',
     })
   })
 })

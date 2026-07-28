@@ -2,9 +2,11 @@ import { Data, Effect, Match, Schema } from 'effect'
 import { isSqlError, type SqlErrorReason } from 'effect/unstable/sql/SqlError'
 
 export type DatabaseFailure = 'constraint' | 'decode' | 'invariant' | 'migration' | 'query' | 'unavailable'
+export type PersistenceFailure = 'connectivity' | 'constraint' | 'decode' | 'invariant' | 'query' | 'transaction'
 
 export class DatabaseError extends Data.TaggedError('DatabaseError')<{
   readonly failure: DatabaseFailure
+  readonly persistenceFailure?: PersistenceFailure
   readonly operation: string
   readonly message: string
   readonly cause?: unknown
@@ -12,34 +14,58 @@ export class DatabaseError extends Data.TaggedError('DatabaseError')<{
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
 
-const unavailable = (): DatabaseFailure => 'unavailable'
-const constraint = (): DatabaseFailure => 'constraint'
-const query = (): DatabaseFailure => 'query'
+interface ClassifiedSqlFailure {
+  readonly failure: DatabaseFailure
+  readonly persistenceFailure: PersistenceFailure
+}
 
-const classifySqlReason: (reason: SqlErrorReason) => DatabaseFailure = Match.type<SqlErrorReason>().pipe(
+const connectivity = (): ClassifiedSqlFailure => ({ failure: 'unavailable', persistenceFailure: 'connectivity' })
+const constraint = (): ClassifiedSqlFailure => ({ failure: 'constraint', persistenceFailure: 'constraint' })
+const query = (): ClassifiedSqlFailure => ({ failure: 'query', persistenceFailure: 'query' })
+const transaction = (): ClassifiedSqlFailure => ({ failure: 'unavailable', persistenceFailure: 'transaction' })
+
+const classifySqlReason: (reason: SqlErrorReason) => ClassifiedSqlFailure = Match.type<SqlErrorReason>().pipe(
   Match.tagsExhaustive({
-    AuthenticationError: unavailable,
-    AuthorizationError: unavailable,
-    ConnectionError: unavailable,
+    AuthenticationError: connectivity,
+    AuthorizationError: connectivity,
+    ConnectionError: connectivity,
     ConstraintError: constraint,
-    DeadlockError: unavailable,
-    LockTimeoutError: unavailable,
-    SerializationError: unavailable,
+    DeadlockError: transaction,
+    LockTimeoutError: transaction,
+    SerializationError: transaction,
     SqlSyntaxError: query,
-    StatementTimeoutError: unavailable,
+    StatementTimeoutError: transaction,
     UniqueViolation: constraint,
-    UnknownError: unavailable,
+    UnknownError: connectivity,
   }),
 )
+
+const defaultPersistenceFailure = (failure: DatabaseFailure): PersistenceFailure => {
+  switch (failure) {
+    case 'constraint':
+      return 'constraint'
+    case 'decode':
+      return 'decode'
+    case 'query':
+      return 'query'
+    case 'unavailable':
+      return 'connectivity'
+    case 'invariant':
+    case 'migration':
+      return 'invariant'
+  }
+}
 
 export const databaseError = (
   failure: DatabaseFailure,
   operation: string,
   message: string,
   cause?: unknown,
+  persistenceFailure = defaultPersistenceFailure(failure),
 ): DatabaseError =>
   new DatabaseError({
     failure,
+    persistenceFailure,
     operation,
     message: cause === undefined ? message : `${message}: ${messageOf(cause)}`,
     cause,
@@ -49,7 +75,14 @@ export const classifyDatabaseError = (operation: string, cause: unknown): Databa
   if (cause instanceof DatabaseError) return cause
   if (Schema.isSchemaError(cause)) return databaseError('decode', operation, 'database row decoding failed', cause)
   if (isSqlError(cause)) {
-    return databaseError(classifySqlReason(cause.reason), operation, 'PostgreSQL operation failed', cause)
+    const classified = classifySqlReason(cause.reason)
+    return databaseError(
+      classified.failure,
+      operation,
+      'PostgreSQL operation failed',
+      cause,
+      classified.persistenceFailure,
+    )
   }
   return databaseError('invariant', operation, 'unexpected database result', cause)
 }

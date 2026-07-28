@@ -4,7 +4,11 @@ import { Result } from 'effect'
 
 import { CycleState, CycleTerminalReason } from '../cycle'
 import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
-import { projectCycleObservabilityRow, type CycleObservabilityProjectionRow } from './cycle-observability'
+import {
+  decodeCycleObservabilityProjectionRows,
+  projectCycleObservabilityRow,
+  type CycleObservabilityProjectionRow,
+} from './cycle-observability'
 
 const emptyRow = (): CycleObservabilityProjectionRow => ({
   current_cycle_id: null,
@@ -77,6 +81,13 @@ const currentCycleRow = (): CycleObservabilityProjectionRow => ({
 })
 
 describe('cycle observability projection', () => {
+  test('decodes the unknown SQL projection once at the adapter boundary', () => {
+    expect(decodeCycleObservabilityProjectionRows([emptyRow()])).toEqual(Result.succeed([emptyRow()]))
+    expect(decodeCycleObservabilityProjectionRows([{ ...emptyRow(), unfinished_cycle_count: '0' }])).toMatchObject({
+      _tag: 'Failure',
+    })
+  })
+
   test('projects the empty durable state without effects', () => {
     expect(projectCycleObservabilityRow(emptyRow())).toEqual(
       Result.succeed({

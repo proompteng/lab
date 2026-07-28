@@ -52,10 +52,14 @@ export const snapshotReferenceIssueTags = [
   'SnapshotReferenceCanonicalizationFailed',
 ] as const
 
-const decodeSnapshotReferenceRows = Schema.decodeUnknownEffect(
+const decodeSnapshotReferenceRowsResult = Schema.decodeUnknownResult(
   Schema.Array(SnapshotReferenceRowSchema),
   strictParseOptions,
 )
+
+export const decodeSnapshotReferenceRows = (
+  rows: unknown,
+): Result.Result<readonly SnapshotReferenceRow[], Schema.SchemaError> => decodeSnapshotReferenceRowsResult(rows)
 
 const mismatch = (
   path: SnapshotReferencePath,
@@ -193,7 +197,7 @@ export const ensureSnapshotReference = (
       )
       ON CONFLICT (snapshot_id) DO NOTHING
     `
-    const rows = yield* sql<Record<string, unknown>>`
+    const rawRows = yield* sql<Record<string, unknown>>`
       SELECT
         snapshot_id,
         schema_version,
@@ -210,6 +214,7 @@ export const ensureSnapshotReference = (
         manifest
       FROM snapshot_references
       WHERE snapshot_id = ${snapshot.snapshotId}
-    `.pipe(Effect.flatMap(decodeSnapshotReferenceRows))
+    `
+    const rows = yield* Effect.fromResult(decodeSnapshotReferenceRows(rawRows))
     yield* Effect.fromResult(validateSnapshotReference(inputManifest, rows))
   })
