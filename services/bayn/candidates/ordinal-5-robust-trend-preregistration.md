@@ -16,11 +16,11 @@ cross-asset tactical allocation rule using liquid asset-class proxies.
 
 Primary sources:
 
-- Tobias J. Moskowitz, Yao Hua Ooi, and Lasse Heje Pedersen, “Time Series Momentum,” *Journal of Financial Economics*
+- Tobias J. Moskowitz, Yao Hua Ooi, and Lasse Heje Pedersen, “Time Series Momentum,” _Journal of Financial Economics_
   104 (2012), 228–250: <https://doi.org/10.1016/j.jfineco.2011.11.003>.
-- Brian Hurst, Yao Hua Ooi, and Lasse Heje Pedersen, “A Century of Evidence on Trend-Following Investing,” *Journal of
-  Portfolio Management* 44 (2017), 15–29: <https://doi.org/10.3905/jpm.2017.44.1.015>.
-- Mebane T. Faber, “A Quantitative Approach to Tactical Asset Allocation,” *Journal of Wealth Management* 9 (2007),
+- Brian Hurst, Yao Hua Ooi, and Lasse Heje Pedersen, “A Century of Evidence on Trend-Following Investing,” _Journal of
+  Portfolio Management_ 44 (2017), 15–29: <https://doi.org/10.3905/jpm.2017.44.1.015>.
+- Mebane T. Faber, “A Quantitative Approach to Tactical Asset Allocation,” _Journal of Wealth Management_ 9 (2007),
   69–79: <https://papers.ssrn.com/sol3/papers.cfm?abstract_id=962461>.
 
 Bayn does not claim that those papers specify this exact rule. The candidate-specific robustness response is fixed from
@@ -31,22 +31,22 @@ hypothesis chosen before reading the candidate window, not a promise of improvem
 
 ## Frozen strategy and universe
 
-| Binding | Frozen value |
-| --- | --- |
-| Protocol | `bayn.risk-balanced-trend.protocol.v4` |
-| Behavior hash | `9e87fe0f66048c48da2191ef1fae36ef3ee0eb4ddcd036ef40881f0fe0f6eb42` |
-| Parameter hash | `19bc51c7361b181aa48845d178cb63373b3f2e017bcbea1cf3b70ab16647f8a9` |
-| Fixture evaluation | `81002ac221b557498e06cbcd9307d986ed21ff2c2ce883adcc489fef7f468416` |
-| Universe | `DBC,EFA,IEF,SPY,VNQ` |
-| Universe ID/hash | `cross-asset-taa-v1` / `c15a52d125073a20c3addee154974ef32b4ef009c40a46b05b54743f075c0fe8` |
-| History/evaluation start | `2016-01-04` / `2017-01-03` |
-| Horizons | 21, 63, 126, and 252 sessions |
-| Signal | normalized scores clipped to `[-2,2]`; median; at least 3 of 4 horizons positive |
-| Allocation | positive conviction divided by 63-session annualized volatility |
-| Rebalance | month-end |
-| Position policy | long-or-cash |
-| Sleeve/portfolio risk caps | 35% per sleeve / 10% annualized portfolio volatility |
-| Initial simulated capital | $1,000,000 |
+| Binding                    | Frozen value                                                                              |
+| -------------------------- | ----------------------------------------------------------------------------------------- |
+| Protocol                   | `bayn.risk-balanced-trend.protocol.v4`                                                    |
+| Behavior hash              | `9e87fe0f66048c48da2191ef1fae36ef3ee0eb4ddcd036ef40881f0fe0f6eb42`                        |
+| Parameter hash             | `19bc51c7361b181aa48845d178cb63373b3f2e017bcbea1cf3b70ab16647f8a9`                        |
+| Fixture evaluation         | `81002ac221b557498e06cbcd9307d986ed21ff2c2ce883adcc489fef7f468416`                        |
+| Universe                   | `DBC,EFA,IEF,SPY,VNQ`                                                                     |
+| Universe ID/hash           | `cross-asset-taa-v1` / `c15a52d125073a20c3addee154974ef32b4ef009c40a46b05b54743f075c0fe8` |
+| History/evaluation start   | `2016-01-04` / `2017-01-03`                                                               |
+| Horizons                   | 21, 63, 126, and 252 sessions                                                             |
+| Signal                     | normalized scores clipped to `[-2,2]`; median; at least 3 of 4 horizons positive          |
+| Allocation                 | positive conviction divided by 63-session annualized volatility                           |
+| Rebalance                  | month-end                                                                                 |
+| Position policy            | long-or-cash                                                                              |
+| Sleeve/portfolio risk caps | 35% per sleeve / 10% annualized portfolio volatility                                      |
+| Initial simulated capital  | $1,000,000                                                                                |
 
 ## Frozen natural dataset
 
@@ -54,13 +54,13 @@ The untouched qualification window is the first normally scheduled finalized pub
 `2026-07-24` snapshot. Manifest-only inspection selected the natural `2026-07-27` publication before any candidate bar,
 return, weight, metric, benchmark comparison, or verdict was read.
 
-| Binding | Frozen value |
-| --- | --- |
-| Snapshot ID | `2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0` |
-| Publication/evaluation end | `2026-07-27` |
-| Provider/feed/adjustment | Alpaca / SIP / all |
-| Calendar | `alpaca-us-equity-calendar-v1` |
-| Selection rule | first normally finalized snapshot strictly after `2026-07-24` |
+| Binding                    | Frozen value                                                       |
+| -------------------------- | ------------------------------------------------------------------ |
+| Snapshot ID                | `2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0` |
+| Publication/evaluation end | `2026-07-27`                                                       |
+| Provider/feed/adjustment   | Alpaca / SIP / all                                                 |
+| Calendar                   | `alpaca-us-equity-calendar-v1`                                     |
+| Selection rule             | first normally finalized snapshot strictly after `2026-07-24`      |
 
 The candidate verifier must still establish byte-identical complete material on both physical ClickHouse replicas and
 zero existing locks before GitOps may remove the ordinal-4 pin.
