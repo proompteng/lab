@@ -384,6 +384,49 @@ const readEvidence = (stage: string, result: ReadResult<Order>): LifecycleEvent 
   contentHash: result.evidence.contentHash,
 })
 
+const recoverUnknownSubmitOrder = (
+  orderByClientId: (clientOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>,
+  openOrders: BrokerSessionShape['read']['orders'],
+  clientOrderId: string,
+  state: ProofState,
+  pollDelayMs = retryDelayMs,
+): Effect.Effect<ReadResult<Order>, BrokerReadError | SandboxContractProofError> =>
+  Effect.gen(function* () {
+    const lookup = yield* retryRead(orderByClientId(clientOrderId), true, pollDelayMs).pipe(
+      Effect.map((result) => ({ _tag: 'Found' as const, result })),
+      Effect.catch((error) => Effect.succeed({ _tag: 'Failed' as const, error })),
+    )
+    if (lookup._tag === 'Found') {
+      state.lifecycle.push(readEvidence('CLEANUP_LOOKUP_BY_CLIENT_ID', lookup.result))
+      return lookup.result
+    }
+    if (lookup.error.kind !== BrokerReadErrorKind.NotFound) return yield* Effect.fail(lookup.error)
+
+    const open = yield* retryRead(openOrders({ status: OrderCollection.Open, limit: 500 }), false, pollDelayMs)
+    const matching = open.value.filter((order) => order.clientOrderId === clientOrderId)
+    state.lifecycle.push({
+      stage: 'UNKNOWN_SUBMIT_OPEN_ORDER_SCAN',
+      observedAt: open.evidence.observedAt,
+      status: matching.length,
+      requestBinding: hashIdentity(open.evidence.requestId),
+      contentHash: open.evidence.contentHash,
+    })
+    if (matching.length > 1) {
+      return yield* Effect.fail(proofFailure('CLEANUP', 'MULTIPLE_MATCHING_OPEN_ORDERS'))
+    }
+    const recovered = matching[0]
+    if (recovered !== undefined) {
+      const result = { value: recovered, evidence: open.evidence }
+      state.lifecycle.push(readEvidence('CLEANUP_RECOVERED_FROM_OPEN_ORDERS', result))
+      return result
+    }
+
+    yield* Effect.sleep(Duration.millis(pollDelayMs))
+    return yield* Effect.suspend(() =>
+      recoverUnknownSubmitOrder(orderByClientId, openOrders, clientOrderId, state, pollDelayMs),
+    )
+  })
+
 const requireOrderBinding = (
   order: Order,
   clientOrderId: string,
@@ -535,17 +578,29 @@ const cleanupOrder = (
           state.cleanup.verifiedAt = yield* currentUtcInstant
           return
         }
-        if (lookup.error.kind === BrokerReadErrorKind.NotFound) {
-          return yield* Effect.fail(proofFailure('CLEANUP', 'UNKNOWN_SUBMIT_NOT_RESOLVED'))
+        if (lookup.error.kind === BrokerReadErrorKind.NotFound && state.submitOutcome === 'UNKNOWN') {
+          observed = yield* recoverUnknownSubmitOrder(orderByClientId, session.read.orders, clientOrderId, state)
+          brokerOrderId = observed.value.brokerOrderId
+          state.brokerOrderId = brokerOrderId
         }
-        return yield* Effect.fail(lookup.error)
+        if (lookup.error.kind === BrokerReadErrorKind.NotFound) {
+          if (observed === undefined) {
+            return yield* Effect.fail(proofFailure('CLEANUP', 'UNKNOWN_SUBMIT_NOT_RESOLVED'))
+          }
+        } else {
+          return yield* Effect.fail(lookup.error)
+        }
+      } else {
+        observed = lookup.result
+        brokerOrderId = lookup.result.value.brokerOrderId
+        state.brokerOrderId = brokerOrderId
+        state.lifecycle.push(readEvidence('CLEANUP_LOOKUP_BY_CLIENT_ID', lookup.result))
       }
-      observed = lookup.result
-      brokerOrderId = lookup.result.value.brokerOrderId
-      state.brokerOrderId = brokerOrderId
-      state.lifecycle.push(readEvidence('CLEANUP_LOOKUP_BY_CLIENT_ID', lookup.result))
     }
 
+    if (brokerOrderId === undefined) {
+      return yield* Effect.fail(proofFailure('CLEANUP', 'BROKER_ORDER_ID_UNAVAILABLE'))
+    }
     if (observed === undefined) {
       observed = yield* retryRead(orderById(brokerOrderId), true)
       state.lifecycle.push(readEvidence('CLEANUP_LOOKUP_BY_ID', observed))
@@ -790,6 +845,50 @@ test('retries bounded not-found reads for a known broker order ID', async () => 
 
   expect(result).toBe('visible')
   expect(attempts).toBe(2)
+})
+
+test('keeps recovering an unknown submit after bounded client lookup misses', async () => {
+  const state = testProofState()
+  state.submitOutcome = 'UNKNOWN'
+  const order = testOrder(OrderStatus.New)
+  let lookupAttempts = 0
+  let openOrderScans = 0
+  const orderByClientId: NonNullable<BrokerMutationShape['orderByClientId']> = (clientOrderId) => {
+    expect(clientOrderId).toBe(order.clientOrderId)
+    return Effect.suspend(() => {
+      lookupAttempts += 1
+      return Effect.fail(
+        new BrokerReadError({
+          operation: 'order-by-client-id',
+          kind: BrokerReadErrorKind.NotFound,
+          message: 'accepted order is not visible by client ID yet',
+          retryable: false,
+          status: 404,
+        }),
+      )
+    })
+  }
+  const openOrders: BrokerSessionShape['read']['orders'] = () => {
+    openOrderScans += 1
+    return Effect.succeed({
+      value: openOrderScans === 1 ? [] : [order],
+      evidence: {
+        requestId: `open-order-scan-${openOrderScans}`,
+        status: 200,
+        contentHash: `${openOrderScans}`.repeat(64),
+        observedAt: `2026-07-28T00:00:0${openOrderScans}.000Z`,
+      },
+    })
+  }
+
+  const recovered = await Effect.runPromise(
+    recoverUnknownSubmitOrder(orderByClientId, openOrders, order.clientOrderId, state, 0),
+  )
+
+  expect(lookupAttempts).toBe((lookupRetryCount + 1) * 2)
+  expect(openOrderScans).toBe(2)
+  expect(recovered.value.brokerOrderId).toBe(order.brokerOrderId)
+  expect(state.lifecycle.map((event) => event.stage)).toContain('CLEANUP_RECOVERED_FROM_OPEN_ORDERS')
 })
 
 test('preserves typed session acquisition evidence in the sanitized failure', () => {
