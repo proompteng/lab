@@ -410,7 +410,7 @@ jobs:
           --filter @proompteng/source
           --filter @proompteng/bayn
       - name: Execute bounded real Alpaca sandbox proof
-        run: bun run --cwd services/bayn test:broker-sandbox-real
+        run: bun test --cwd services/bayn src/broker/alpaca-sandbox-contract.test.ts
       - name: Upload redacted exact-head contract receipt
         if: always()
         uses: actions/upload-artifact@v4
