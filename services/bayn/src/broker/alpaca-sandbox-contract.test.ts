@@ -178,6 +178,18 @@ interface ProofState {
 const proofFailure = (stage: ProofStage, failure: string): SandboxContractProofError =>
   new SandboxContractProofError({ stage, failure })
 
+const withInterruptibleCleanupDeadline = <A, E, R>(
+  cleanup: Effect.Effect<A, E, R>,
+  duration = cleanupDeadline,
+): Effect.Effect<A, E | SandboxContractProofError, R> =>
+  cleanup.pipe(
+    Effect.timeoutOrElse({
+      duration,
+      orElse: () => Effect.fail(proofFailure('CLEANUP', 'CLEANUP_DEADLINE_EXCEEDED')),
+    }),
+    Effect.interruptible,
+  )
+
 const sanitizeFailure = (stage: ProofStage, error: unknown): SanitizedFailure => {
   if (error instanceof BrokerSessionAcquisitionError) {
     const cause = error.cause
@@ -670,6 +682,17 @@ test('keeps the cleanup network bound below its explicit deadline', () => {
   expect(overallProofDeadlineMs).toBeLessThan(workflowJobTimeoutMs)
 })
 
+test('keeps the cleanup deadline interruptible inside the release finalizer', async () => {
+  const exit = await Effect.runPromise(
+    Effect.acquireUseRelease(
+      Effect.succeed(undefined),
+      () => Effect.succeed(undefined),
+      () => withInterruptibleCleanupDeadline(Effect.never, Duration.millis(5)),
+    ).pipe(Effect.exit),
+  )
+  expect(Exit.isFailure(exit)).toBeTrue()
+})
+
 test('reserves the complete mutation and cleanup budget before submit', () => {
   const checkedAtEpochMs = Date.parse('2026-07-28T00:00:00.000Z')
   expect(hasRequiredSubmitBudget(checkedAtEpochMs, checkedAtEpochMs + requiredSubmitBudgetMs)).toBeTrue()
@@ -1074,11 +1097,7 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
           }),
         ),
       () =>
-        cleanupOrder(session, mutation, clientOrderId, state).pipe(
-          Effect.timeoutOrElse({
-            duration: cleanupDeadline,
-            orElse: () => Effect.fail(proofFailure('CLEANUP', 'CLEANUP_DEADLINE_EXCEEDED')),
-          }),
+        withInterruptibleCleanupDeadline(cleanupOrder(session, mutation, clientOrderId, state)).pipe(
           Effect.tapError((error) =>
             Effect.sync(() => {
               state.cleanup.result = 'FAILED'
