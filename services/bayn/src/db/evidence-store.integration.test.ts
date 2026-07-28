@@ -1155,7 +1155,13 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         `
         if (historical === undefined) throw new Error('stable historical authority generation is missing')
 
-        const decodedHistorical = decodePersistedBrokerIdentity(historical)
+        const decodedHistorical = decodePersistedBrokerIdentity({
+          account_id: historical.account_id,
+          broker_identity_schema_version: historical.broker_identity_schema_version,
+          broker_identity_hash: historical.broker_identity_hash,
+          broker_provider: historical.broker_provider,
+          broker_environment: historical.broker_environment,
+        })
         const identity = successOfResult(
           makeBrokerIdentity({
             schemaVersion: 'bayn.broker-identity.v2',
