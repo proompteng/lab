@@ -22,7 +22,7 @@ import {
   type Fill,
   type Order,
   type Position,
-} from '../paper'
+} from '../execution/contracts'
 import {
   canonicalAccountingReceiptMaterial,
   compareOpeningCash,

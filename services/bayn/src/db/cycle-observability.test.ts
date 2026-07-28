@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { CycleState, CycleTerminalReason } from '../cycle'
-import { Authority, KillState, ReconciliationStatus } from '../paper'
+import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
 import { projectCycleObservabilityRow, type CycleObservabilityProjectionRow } from './cycle-observability'
 
 const emptyRow = (): CycleObservabilityProjectionRow => ({

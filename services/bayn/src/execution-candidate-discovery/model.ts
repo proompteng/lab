@@ -14,7 +14,7 @@ import {
 import { RuntimeProvenanceSchema } from '../contracts'
 import type { AutonomousCycle } from '../cycle'
 import type { CycleOperationsProjection } from '../cycle-observability'
-import { Authority, OrderSide, OrderType, TimeInForce } from '../paper'
+import { Authority, OrderSide, OrderType, TimeInForce } from '../execution/contracts'
 import {
   GitSourceRevisionSchema,
   ImageDigestSchema,
@@ -122,7 +122,7 @@ export const RuntimeIdentitySchema = Schema.Struct({
   authorityGenerationHash: Sha256Schema,
   policyHash: Sha256Schema,
 })
-export type PaperCandidateDiscoveryIdentity = typeof RuntimeIdentitySchema.Type
+export type ExecutionCandidateDiscoveryIdentity = typeof RuntimeIdentitySchema.Type
 
 export const DiscoveryBindingSchema = Schema.Struct({
   schemaVersion: Schema.Literal(bindingSchemaVersion),
@@ -151,7 +151,7 @@ export const DiscoveryBindingSchema = Schema.Struct({
     expiresAt: UtcInstantSchema,
   }),
 })
-export type PaperCandidateDiscoveryBinding = typeof DiscoveryBindingSchema.Type
+export type ExecutionCandidateDiscoveryBinding = typeof DiscoveryBindingSchema.Type
 
 export const AccountFactsSchema = Schema.Struct({
   id: StrictNonEmptyStringSchema,
@@ -261,9 +261,9 @@ export const DiscoveryReceiptSchema = Schema.Struct({
   ...DiscoveryReceiptMaterialSchema.fields,
   observationReceiptHash: Sha256Schema,
 })
-export type PaperCandidateDiscoveryReceipt = typeof DiscoveryReceiptSchema.Type
+export type ExecutionCandidateDiscoveryReceipt = typeof DiscoveryReceiptSchema.Type
 
-export type PaperCandidateDiscoverySnapshot = {
+export type ExecutionCandidateDiscoverySnapshot = {
   readonly projection: CycleOperationsProjection
   readonly cycle: AutonomousCycle
   readonly document: ObserveShadowDecisionDocument
@@ -272,9 +272,9 @@ export type PaperCandidateDiscoverySnapshot = {
 export const ValidatedSnapshotTypeId: unique symbol = Symbol('bayn/ValidatedPaperCandidateSnapshot')
 export type ValidatedPaperCandidateSnapshot = {
   readonly [ValidatedSnapshotTypeId]: true
-  readonly identity: PaperCandidateDiscoveryIdentity
-  readonly snapshot: PaperCandidateDiscoverySnapshot
-  readonly binding: PaperCandidateDiscoveryBinding
+  readonly identity: ExecutionCandidateDiscoveryIdentity
+  readonly snapshot: ExecutionCandidateDiscoverySnapshot
+  readonly binding: ExecutionCandidateDiscoveryBinding
 }
 
 export const ValidatedAccountTypeId: unique symbol = Symbol('bayn/ValidatedPaperCandidateAccount')

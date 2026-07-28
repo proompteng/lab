@@ -14,7 +14,7 @@ import {
   KillState,
   ReconciliationStatus,
   ValuationSchema,
-} from '../../paper'
+} from '../../execution/contracts'
 import { QualificationLockSchema, QualificationResultSchema } from '../../qualification'
 import {
   Sha256Schema as Sha256,

@@ -27,7 +27,7 @@ import {
   type Position,
   type Reconciliation,
   type Valuation,
-} from '../paper'
+} from '../execution/contracts'
 import {
   compareReconciliation,
   reconciledStateHash,

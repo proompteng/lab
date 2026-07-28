@@ -8,16 +8,16 @@ import type { AutonomousCycle } from '../cycle'
 import type { ObserveShadowDecisionDocument } from '../shadow-decision-contract'
 import {
   assetReadConcurrency,
-  type PaperCandidateDiscoveryIdentity,
-  type PaperCandidateDiscoveryReceipt,
-  type PaperCandidateDiscoverySnapshot,
+  type ExecutionCandidateDiscoveryIdentity,
+  type ExecutionCandidateDiscoveryReceipt,
+  type ExecutionCandidateDiscoverySnapshot,
   type ValidatedAccount,
   type ValidatedAccountConfiguration,
   type ValidatedAssets,
   type ValidatedPaperCandidateObservations,
   type ValidatedPaperCandidateSnapshot,
 } from './model'
-import { isPaperCandidateDiscoveryError, requireValue, type PaperCandidateDiscoveryError } from './failure'
+import { isExecutionCandidateDiscoveryError, requireValue, type ExecutionCandidateDiscoveryError } from './failure'
 import { selectCompletedCycle, validateIdentity, validateSnapshotForIdentity } from './snapshot-validation'
 import {
   assembleValidatedObservations,
@@ -25,12 +25,12 @@ import {
   validateAccountObservation,
   validateAssetObservations,
 } from './broker-observation-validation'
-import { makePaperCandidateDiscoveryReceipt } from './receipt-construction'
+import { makeExecutionCandidateDiscoveryReceipt } from './receipt-construction'
 
 const readCycle = (
   store: CycleStore['Service'],
   cycleId: string,
-): Effect.Effect<AutonomousCycle, CycleStoreError | PaperCandidateDiscoveryError, never> =>
+): Effect.Effect<AutonomousCycle, CycleStoreError | ExecutionCandidateDiscoveryError, never> =>
   pipe(
     store.read(cycleId),
     Effect.flatMap((cycle) =>
@@ -50,7 +50,7 @@ const readCycle = (
 const readDecisionDocument = (
   store: CycleStore['Service'],
   cycleId: string,
-): Effect.Effect<ObserveShadowDecisionDocument, CycleStoreError | PaperCandidateDiscoveryError, never> =>
+): Effect.Effect<ObserveShadowDecisionDocument, CycleStoreError | ExecutionCandidateDiscoveryError, never> =>
   pipe(
     store.readDecisionDocument(cycleId),
     Effect.flatMap((document) =>
@@ -63,12 +63,12 @@ const readDecisionDocument = (
   )
 
 const readSnapshotTransaction = (
-  identity: PaperCandidateDiscoveryIdentity,
+  identity: ExecutionCandidateDiscoveryIdentity,
   observability: CycleObservability['Service'],
   store: CycleStore['Service'],
 ): Effect.Effect<
-  PaperCandidateDiscoverySnapshot,
-  CycleObservabilityError | CycleStoreError | PaperCandidateDiscoveryError
+  ExecutionCandidateDiscoverySnapshot,
+  CycleObservabilityError | CycleStoreError | ExecutionCandidateDiscoveryError
 > =>
   pipe(
     Effect.Do,
@@ -80,10 +80,10 @@ const readSnapshotTransaction = (
   )
 
 const readDiscoverySnapshot = (
-  identity: PaperCandidateDiscoveryIdentity,
+  identity: ExecutionCandidateDiscoveryIdentity,
 ): Effect.Effect<
-  PaperCandidateDiscoverySnapshot,
-  PaperCandidateDiscoveryError,
+  ExecutionCandidateDiscoverySnapshot,
+  ExecutionCandidateDiscoveryError,
   PgClient.PgClient | CycleObservability | CycleStore
 > =>
   pipe(
@@ -101,7 +101,7 @@ const readDiscoverySnapshot = (
       ),
     ),
     Effect.mapError((cause) =>
-      isPaperCandidateDiscoveryError(cause)
+      isExecutionCandidateDiscoveryError(cause)
         ? cause
         : {
             _tag: 'SnapshotTransactionFailed',
@@ -115,12 +115,12 @@ const readDiscoverySnapshot = (
 
 const readAccount = (
   broker: BrokerRead['Service'],
-  identity: PaperCandidateDiscoveryIdentity,
-): Effect.Effect<ValidatedAccount, PaperCandidateDiscoveryError> =>
+  identity: ExecutionCandidateDiscoveryIdentity,
+): Effect.Effect<ValidatedAccount, ExecutionCandidateDiscoveryError> =>
   pipe(
     broker.account,
     Effect.mapError(
-      (cause): PaperCandidateDiscoveryError => ({
+      (cause): ExecutionCandidateDiscoveryError => ({
         _tag: 'BrokerReadFailed',
         failure: 'broker',
         read: 'account',
@@ -134,11 +134,11 @@ const readAccount = (
 const readAccountConfiguration = (
   broker: BrokerRead['Service'],
   account: ValidatedAccount,
-): Effect.Effect<ValidatedAccountConfiguration, PaperCandidateDiscoveryError> =>
+): Effect.Effect<ValidatedAccountConfiguration, ExecutionCandidateDiscoveryError> =>
   pipe(
     broker.accountConfiguration,
     Effect.mapError(
-      (cause): PaperCandidateDiscoveryError => ({
+      (cause): ExecutionCandidateDiscoveryError => ({
         _tag: 'BrokerReadFailed',
         failure: 'broker',
         read: 'account-configuration',
@@ -151,15 +151,15 @@ const readAccountConfiguration = (
 
 const readAssets = (
   broker: BrokerRead['Service'],
-  snapshot: PaperCandidateDiscoverySnapshot,
+  snapshot: ExecutionCandidateDiscoverySnapshot,
   configuration: ValidatedAccountConfiguration,
-): Effect.Effect<ValidatedAssets, PaperCandidateDiscoveryError> =>
+): Effect.Effect<ValidatedAssets, ExecutionCandidateDiscoveryError> =>
   pipe(
     Effect.forEach(snapshot.document.targetPlan.intentTargets, (intent) => broker.assetBySymbol(intent.symbol), {
       concurrency: assetReadConcurrency,
     }),
     Effect.mapError(
-      (cause): PaperCandidateDiscoveryError => ({
+      (cause): ExecutionCandidateDiscoveryError => ({
         _tag: 'BrokerReadFailed',
         failure: 'broker',
         read: 'assets',
@@ -173,7 +173,7 @@ const readAssets = (
 
 const observeBroker = (
   validatedSnapshot: ValidatedPaperCandidateSnapshot,
-): Effect.Effect<ValidatedPaperCandidateObservations, PaperCandidateDiscoveryError, BrokerRead> =>
+): Effect.Effect<ValidatedPaperCandidateObservations, ExecutionCandidateDiscoveryError, BrokerRead> =>
   pipe(
     BrokerRead,
     Effect.flatMap((broker) =>
@@ -195,10 +195,10 @@ const observeBroker = (
   )
 
 export const discoverPaperCandidates = (
-  candidateIdentity: PaperCandidateDiscoveryIdentity,
+  candidateIdentity: ExecutionCandidateDiscoveryIdentity,
 ): Effect.Effect<
-  PaperCandidateDiscoveryReceipt,
-  PaperCandidateDiscoveryError,
+  ExecutionCandidateDiscoveryReceipt,
+  ExecutionCandidateDiscoveryError,
   PgClient.PgClient | CycleObservability | CycleStore | BrokerRead
 > =>
   pipe(
@@ -214,7 +214,7 @@ export const discoverPaperCandidates = (
         ),
         Effect.bind('observations', ({ validatedSnapshot }) => observeBroker(validatedSnapshot)),
         Effect.flatMap(({ observations, validatedSnapshot }) =>
-          Effect.fromResult(makePaperCandidateDiscoveryReceipt(validatedSnapshot, observations)),
+          Effect.fromResult(makeExecutionCandidateDiscoveryReceipt(validatedSnapshot, observations)),
         ),
       ),
     ),

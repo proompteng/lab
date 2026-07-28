@@ -2,8 +2,8 @@ import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
 
 import type { BrokerEventInput, PositionSnapshotInput } from '../../broker/observations'
-import { Broker } from '../../paper'
-import type { EventReceipt, PaperStoreError, PositionSnapshotReceipt } from './contract'
+import { Broker } from '../../execution/contracts'
+import type { EventReceipt, ExecutionStoreError, PositionSnapshotReceipt } from './contract'
 import {
   decideBrokerEventAppend,
   decideNextSourceSequence,
@@ -12,7 +12,7 @@ import {
   planPositionSnapshot,
   validateStoredPositionSnapshot,
 } from './decisions'
-import { failPaperStore, liftPaperDecision, runPaperOperation } from './errors'
+import { failExecutionStore, liftStoreDecision, runExecutionOperation } from './errors'
 import {
   decodeBrokerEvent,
   decodeEventIdRows,
@@ -28,9 +28,11 @@ export interface BrokerEventInterpreter {
   readonly append: (
     input: BrokerEventInput,
     positionSnapshotId?: string,
-  ) => Effect.Effect<EventReceipt, PaperStoreError>
-  readonly ingest: (input: BrokerEventInput) => Effect.Effect<EventReceipt, PaperStoreError>
-  readonly ingestPositions: (input: PositionSnapshotInput) => Effect.Effect<PositionSnapshotReceipt, PaperStoreError>
+  ) => Effect.Effect<EventReceipt, ExecutionStoreError>
+  readonly ingest: (input: BrokerEventInput) => Effect.Effect<EventReceipt, ExecutionStoreError>
+  readonly ingestPositions: (
+    input: PositionSnapshotInput,
+  ) => Effect.Effect<PositionSnapshotReceipt, ExecutionStoreError>
 }
 
 export const makeBrokerEventInterpreter = (sql: PgClient.PgClient): BrokerEventInterpreter => {
@@ -49,7 +51,7 @@ export const makeBrokerEventInterpreter = (sql: PgClient.PgClient): BrokerEventI
         `.pipe(Effect.asVoid)
       case 'Position':
         if (positionSnapshotId === undefined) {
-          return failPaperStore('ingest', 'invariant', 'position events require a complete position snapshot')
+          return failExecutionStore('ingest', 'invariant', 'position events require a complete position snapshot')
         }
         return sql`
           INSERT INTO positions (
@@ -88,8 +90,11 @@ export const makeBrokerEventInterpreter = (sql: PgClient.PgClient): BrokerEventI
     }
   }
 
-  const append = (input: BrokerEventInput, positionSnapshotId?: string): Effect.Effect<EventReceipt, PaperStoreError> =>
-    runPaperOperation(
+  const append = (
+    input: BrokerEventInput,
+    positionSnapshotId?: string,
+  ): Effect.Effect<EventReceipt, ExecutionStoreError> =>
+    runExecutionOperation(
       'ingest',
       Effect.gen(function* () {
         yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${input.broker}:${input.accountId}`}, 0))`
@@ -100,7 +105,7 @@ export const makeBrokerEventInterpreter = (sql: PgClient.PgClient): BrokerEventI
             AND account_id = ${input.accountId}
             AND source_event_id = ${input.sourceEventId}
         `.pipe(Effect.flatMap(decodeEventRows))
-        const decision = yield* liftPaperDecision('ingest', decideBrokerEventAppend(input, existing))
+        const decision = yield* liftStoreDecision('ingest', decideBrokerEventAppend(input, existing))
         if (decision._tag === 'ReplayBrokerEvent') return decision.receipt
 
         const [last] = yield* sql<Record<string, unknown>>`
@@ -108,7 +113,7 @@ export const makeBrokerEventInterpreter = (sql: PgClient.PgClient): BrokerEventI
           FROM broker_events
           WHERE broker = ${input.broker} AND account_id = ${input.accountId}
         `.pipe(Effect.flatMap(decodeLastSequence))
-        const sourceSequence = yield* liftPaperDecision('ingest', decideNextSourceSequence(last.last_sequence))
+        const sourceSequence = yield* liftStoreDecision('ingest', decideNextSourceSequence(last.last_sequence))
         yield* decodeBrokerEvent({
           ...input,
           schemaVersion: 'bayn.paper-broker-event.v1',
@@ -130,26 +135,26 @@ export const makeBrokerEventInterpreter = (sql: PgClient.PgClient): BrokerEventI
       }),
     )
 
-  const ingest = (input: BrokerEventInput): Effect.Effect<EventReceipt, PaperStoreError> =>
-    runPaperOperation(
+  const ingest = (input: BrokerEventInput): Effect.Effect<EventReceipt, ExecutionStoreError> =>
+    runExecutionOperation(
       'ingest',
       decodeEventInput(input).pipe(
         Effect.flatMap((decoded) =>
           decoded._tag === 'Position'
-            ? failPaperStore('ingest', 'invariant', 'position events require a complete position snapshot')
+            ? failExecutionStore('ingest', 'invariant', 'position events require a complete position snapshot')
             : sql.withTransaction(append(decoded)),
         ),
       ),
     )
 
-  const ingestPositions = (input: PositionSnapshotInput): Effect.Effect<PositionSnapshotReceipt, PaperStoreError> =>
-    runPaperOperation(
+  const ingestPositions = (input: PositionSnapshotInput): Effect.Effect<PositionSnapshotReceipt, ExecutionStoreError> =>
+    runExecutionOperation(
       'positions',
       decodePositionSnapshotInput(input).pipe(
         Effect.flatMap((decoded) =>
           sql.withTransaction(
             Effect.gen(function* () {
-              const plan = yield* liftPaperDecision('positions', planPositionSnapshot(decoded))
+              const plan = yield* liftStoreDecision('positions', planPositionSnapshot(decoded))
               yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${Broker.Alpaca}:${decoded.accountId}`}, 0))`
               const inserted = yield* sql<Record<string, unknown>>`
                 INSERT INTO position_snapshots (
@@ -161,7 +166,7 @@ export const makeBrokerEventInterpreter = (sql: PgClient.PgClient): BrokerEventI
                 ON CONFLICT (account_id, source_hash, observed_at) DO NOTHING
                 RETURNING snapshot_id
               `.pipe(Effect.flatMap(decodeSnapshotIdRows))
-              const deduplicated = yield* liftPaperDecision(
+              const deduplicated = yield* liftStoreDecision(
                 'positions',
                 decidePositionSnapshotInsert(inserted.map((row) => row.snapshot_id)),
               )
@@ -181,12 +186,12 @@ export const makeBrokerEventInterpreter = (sql: PgClient.PgClient): BrokerEventI
                   AND source_hash = ${decoded.sourceHash}
                   AND observed_at = ${decoded.observedAt}
               `.pipe(Effect.flatMap(decodePositionSnapshotRows))
-              yield* liftPaperDecision('positions', validateStoredPositionSnapshot(decoded, plan, snapshots))
+              yield* liftStoreDecision('positions', validateStoredPositionSnapshot(decoded, plan, snapshots))
 
               const storedEvents = yield* sql<Record<string, unknown>>`
                 SELECT event_id FROM positions WHERE snapshot_id = ${plan.snapshotId} ORDER BY event_id
               `.pipe(Effect.flatMap(decodeEventIdRows))
-              return yield* liftPaperDecision('positions', finishPositionSnapshot(plan, storedEvents, deduplicated))
+              return yield* liftStoreDecision('positions', finishPositionSnapshot(plan, storedEvents, deduplicated))
             }),
           ),
         ),

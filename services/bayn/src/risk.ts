@@ -28,7 +28,7 @@ import {
   type Intent,
   type Position,
   type ReferenceIntent,
-} from './paper'
+} from './execution/contracts'
 import { reconciledStateHash } from './reconciliation'
 import {
   Sha256Schema as Sha256,

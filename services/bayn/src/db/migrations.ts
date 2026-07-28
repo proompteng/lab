@@ -16,7 +16,7 @@ import autonomousCycleTerminalTransitions from '../../migrations/0013_autonomous
 import authorityGenerationHistory from '../../migrations/0014_authority_generation_history'
 import acknowledgedSubmitRecovery from '../../migrations/0015_acknowledged_submit_recovery'
 import authorityBoundIntents from '../../migrations/0016_authority_bound_intents'
-import stablePaperAuthorityGeneration from '../../migrations/0017_stable_paper_authority_generation'
+import stableCapitalGrantGeneration from '../../migrations/0017_stable_paper_authority_generation'
 import robustTrendProtocol from '../../migrations/0018_robust_trend_protocol'
 
 export const migrationLoader = PgMigrator.fromRecord({
@@ -36,6 +36,6 @@ export const migrationLoader = PgMigrator.fromRecord({
   '14_authority_generation_history': authorityGenerationHistory,
   '15_acknowledged_submit_recovery': acknowledgedSubmitRecovery,
   '16_authority_bound_intents': authorityBoundIntents,
-  '17_stable_paper_authority_generation': stablePaperAuthorityGeneration,
+  '17_stable_paper_authority_generation': stableCapitalGrantGeneration,
   '18_robust_trend_protocol': robustTrendProtocol,
 })

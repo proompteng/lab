@@ -4,18 +4,18 @@ import type { PreparedAccounting } from '../../accounting/model'
 import type { AccountingTransaction } from '../../accounting/schema'
 import type { BrokerEventInput, PositionSnapshotInput, ValuationInput } from '../../broker/observations'
 import { canonicalHashV1, canonicalHashV1Result, type CanonicalHashFailure } from '../../hash'
-import type { AccountingReceipt, Valuation } from '../../paper'
+import type { AccountingReceipt, Valuation } from '../../execution/contracts'
 import type { EventReceipt, PositionSnapshotReceipt } from './contract'
 import type { AccountRow, EventIdRow, EventRow, PositionRow, PositionSnapshotRow } from './rows'
 import { EventKind } from './rows'
 
-export interface PaperStoreDecisionFailure {
+export interface ExecutionStoreDecisionFailure {
   readonly failure: 'conflict' | 'invariant'
   readonly message: string
   readonly cause?: unknown
 }
 
-type PaperStoreHashOperation =
+type ExecutionStoreHashOperation =
   | 'broker-event-id'
   | 'position-snapshot-id'
   | 'position-snapshot-content'
@@ -30,24 +30,24 @@ type PaperStoreHashOperation =
   | 'valuation-stored'
   | 'valuation-candidate'
 
-type PaperStoreIntegerSource = 'source-sequence' | 'account-cash' | 'position-market-value'
+type ExecutionStoreIntegerSource = 'source-sequence' | 'account-cash' | 'position-market-value'
 
-interface PaperStoreHashFailure {
-  readonly _tag: 'PaperStoreHashFailure'
-  readonly operation: PaperStoreHashOperation
+interface ExecutionStoreHashFailure {
+  readonly _tag: 'ExecutionStoreHashFailure'
+  readonly operation: ExecutionStoreHashOperation
   readonly cause: CanonicalHashFailure
 }
 
-interface PaperStoreIntegerFailure {
-  readonly _tag: 'PaperStoreIntegerFailure'
-  readonly source: PaperStoreIntegerSource
+interface ExecutionStoreIntegerFailure {
+  readonly _tag: 'ExecutionStoreIntegerFailure'
+  readonly source: ExecutionStoreIntegerSource
   readonly value: string
   readonly eventId?: string
   readonly symbol?: string
 }
 
-interface PaperStoreTimestampFailure {
-  readonly _tag: 'PaperStoreTimestampFailure'
+interface ExecutionStoreTimestampFailure {
+  readonly _tag: 'ExecutionStoreTimestampFailure'
   readonly source:
     | 'stored-position-snapshot-observed-at'
     | 'account-observed-at'
@@ -58,55 +58,55 @@ interface PaperStoreTimestampFailure {
 }
 
 const fail = (
-  failure: PaperStoreDecisionFailure['failure'],
+  failure: ExecutionStoreDecisionFailure['failure'],
   message: string,
   cause?: unknown,
-): Result.Result<never, PaperStoreDecisionFailure> => Result.fail({ failure, message, cause })
+): Result.Result<never, ExecutionStoreDecisionFailure> => Result.fail({ failure, message, cause })
 
 const hashDecision = (
-  operation: PaperStoreHashOperation,
+  operation: ExecutionStoreHashOperation,
   value: unknown,
   message: string,
-): Result.Result<string, PaperStoreDecisionFailure> =>
+): Result.Result<string, ExecutionStoreDecisionFailure> =>
   pipe(
     canonicalHashV1Result(value),
     Result.mapError(
-      (cause): PaperStoreDecisionFailure => ({
+      (cause): ExecutionStoreDecisionFailure => ({
         failure: 'invariant',
         message,
-        cause: { _tag: 'PaperStoreHashFailure', operation, cause } satisfies PaperStoreHashFailure,
+        cause: { _tag: 'ExecutionStoreHashFailure', operation, cause } satisfies ExecutionStoreHashFailure,
       }),
     ),
   )
 
 const integerDecision = (
-  source: PaperStoreIntegerSource,
+  source: ExecutionStoreIntegerSource,
   value: string,
   message: string,
-  facts: Pick<PaperStoreIntegerFailure, 'eventId' | 'symbol'> = {},
-): Result.Result<bigint, PaperStoreDecisionFailure> =>
+  facts: Pick<ExecutionStoreIntegerFailure, 'eventId' | 'symbol'> = {},
+): Result.Result<bigint, ExecutionStoreDecisionFailure> =>
   /^-?[0-9]+$/.test(value)
     ? Result.succeed(BigInt(value))
     : fail('invariant', message, {
-        _tag: 'PaperStoreIntegerFailure',
+        _tag: 'ExecutionStoreIntegerFailure',
         source,
         value,
         ...(facts.eventId === undefined ? {} : { eventId: facts.eventId }),
         ...(facts.symbol === undefined ? {} : { symbol: facts.symbol }),
-      } satisfies PaperStoreIntegerFailure)
+      } satisfies ExecutionStoreIntegerFailure)
 
 const timestampDecision = (
-  source: PaperStoreTimestampFailure['source'],
+  source: ExecutionStoreTimestampFailure['source'],
   epochMillis: number,
-): Result.Result<string, PaperStoreDecisionFailure> => {
+): Result.Result<string, ExecutionStoreDecisionFailure> => {
   const instant = new Date(epochMillis)
   return Number.isFinite(instant.getTime())
     ? Result.succeed(instant.toISOString())
     : fail('invariant', 'valuation timestamp evidence is invalid', {
-        _tag: 'PaperStoreTimestampFailure',
+        _tag: 'ExecutionStoreTimestampFailure',
         source,
         epochMillis,
-      } satisfies PaperStoreTimestampFailure)
+      } satisfies ExecutionStoreTimestampFailure)
 }
 
 export const brokerEventKind = (input: BrokerEventInput): typeof EventKind.Type => {
@@ -131,7 +131,7 @@ export const brokerEventId = (input: BrokerEventInput): string =>
     contentHash: input.contentHash,
   })
 
-export const brokerEventIdResult = (input: BrokerEventInput): Result.Result<string, PaperStoreDecisionFailure> =>
+export const brokerEventIdResult = (input: BrokerEventInput): Result.Result<string, ExecutionStoreDecisionFailure> =>
   hashDecision(
     'broker-event-id',
     {
@@ -155,7 +155,7 @@ export type BrokerEventAppendDecision =
 export const decideBrokerEventAppend = (
   input: BrokerEventInput,
   existing: readonly EventRow[],
-): Result.Result<BrokerEventAppendDecision, PaperStoreDecisionFailure> => {
+): Result.Result<BrokerEventAppendDecision, ExecutionStoreDecisionFailure> => {
   if (existing.length > 1) return fail('invariant', 'broker source identity is not unique')
   const found = existing[0]
   const eventKind = brokerEventKind(input)
@@ -175,7 +175,7 @@ export const decideBrokerEventAppend = (
   })
 }
 
-export const decideNextSourceSequence = (lastSequence: string): Result.Result<string, PaperStoreDecisionFailure> =>
+export const decideNextSourceSequence = (lastSequence: string): Result.Result<string, ExecutionStoreDecisionFailure> =>
   Result.map(
     integerDecision('source-sequence', lastSequence, 'durable broker source sequence is not an integer'),
     (sequence) => (sequence + 1n).toString(),
@@ -189,7 +189,7 @@ export interface PositionSnapshotPlan {
 
 export const planPositionSnapshot = (
   input: PositionSnapshotInput,
-): Result.Result<PositionSnapshotPlan, PaperStoreDecisionFailure> =>
+): Result.Result<PositionSnapshotPlan, ExecutionStoreDecisionFailure> =>
   Result.gen(function* () {
     const sourcePrefix = `position:${input.sourceHash}:${input.observedAt}:`
     if (
@@ -243,7 +243,7 @@ export const planPositionSnapshot = (
 
 export const decidePositionSnapshotInsert = (
   insertedSnapshotIds: readonly string[],
-): Result.Result<boolean, PaperStoreDecisionFailure> =>
+): Result.Result<boolean, ExecutionStoreDecisionFailure> =>
   insertedSnapshotIds.length > 1
     ? fail('invariant', 'position snapshot insert returned multiple rows')
     : Result.succeed(insertedSnapshotIds.length === 0)
@@ -252,7 +252,7 @@ export const validateStoredPositionSnapshot = (
   input: PositionSnapshotInput,
   plan: PositionSnapshotPlan,
   snapshots: readonly PositionSnapshotRow[],
-): Result.Result<void, PaperStoreDecisionFailure> =>
+): Result.Result<void, ExecutionStoreDecisionFailure> =>
   Result.gen(function* () {
     if (snapshots.length !== 1) {
       return yield* fail('invariant', 'position snapshot was not persisted exactly once')
@@ -280,7 +280,7 @@ export const finishPositionSnapshot = (
   plan: PositionSnapshotPlan,
   storedEvents: readonly EventIdRow[],
   deduplicated: boolean,
-): Result.Result<PositionSnapshotReceipt, PaperStoreDecisionFailure> => {
+): Result.Result<PositionSnapshotReceipt, ExecutionStoreDecisionFailure> => {
   const storedEventIds = storedEvents.map((row) => row.event_id)
   if (
     storedEventIds.length !== plan.eventIds.length ||
@@ -291,17 +291,17 @@ export const finishPositionSnapshot = (
   return Result.succeed({ snapshotId: plan.snapshotId, eventIds: plan.eventIds, deduplicated })
 }
 
-export const decidePredecessorCoverage = (unresolved: boolean): Result.Result<void, PaperStoreDecisionFailure> =>
+export const decidePredecessorCoverage = (unresolved: boolean): Result.Result<void, ExecutionStoreDecisionFailure> =>
   unresolved ? fail('conflict', 'an earlier fill has not been posted to TigerBeetle') : Result.succeed(undefined)
 
-export const decideSuccessorAbsence = (unresolved: boolean): Result.Result<void, PaperStoreDecisionFailure> =>
+export const decideSuccessorAbsence = (unresolved: boolean): Result.Result<void, ExecutionStoreDecisionFailure> =>
   unresolved
     ? fail('conflict', 'a later fill was already accounted before this economic predecessor')
     : Result.succeed(undefined)
 
 export const decidePreparedTransaction = (
   transactions: readonly AccountingTransaction[],
-): Result.Result<AccountingTransaction | undefined, PaperStoreDecisionFailure> => {
+): Result.Result<AccountingTransaction | undefined, ExecutionStoreDecisionFailure> => {
   if (transactions.length > 1) return fail('invariant', 'fill has multiple accounting transactions')
   return Result.succeed(transactions[0])
 }
@@ -309,7 +309,7 @@ export const decidePreparedTransaction = (
 export const decidePreparedAccountingReplay = (
   stored: AccountingTransaction | undefined,
   expected: PreparedAccounting,
-): Result.Result<PreparedAccounting, PaperStoreDecisionFailure> =>
+): Result.Result<PreparedAccounting, ExecutionStoreDecisionFailure> =>
   stored === undefined
     ? Result.succeed(expected)
     : Result.gen(function* () {
@@ -330,7 +330,7 @@ export const decidePreparedAccountingReplay = (
 
 export const decideAccountingReceipt = (
   receipts: readonly AccountingReceipt[],
-): Result.Result<AccountingReceipt | undefined, PaperStoreDecisionFailure> => {
+): Result.Result<AccountingReceipt | undefined, ExecutionStoreDecisionFailure> => {
   if (receipts.length > 1) return fail('invariant', 'fill has multiple accounting receipts')
   return Result.succeed(receipts[0])
 }
@@ -341,7 +341,7 @@ export const planAccountingReceipt = (
   prepared: PreparedAccounting,
   tigerBeetleClusterId: string,
   tigerBeetleLedger: number,
-): Result.Result<AccountingReceiptPlan, PaperStoreDecisionFailure> =>
+): Result.Result<AccountingReceiptPlan, ExecutionStoreDecisionFailure> =>
   Result.gen(function* () {
     const accountIds = prepared.ledger.accounts.map((account) => account.id.toString())
     const transferIds = prepared.ledger.transfers.map((transfer) => transfer.id.toString())
@@ -392,7 +392,7 @@ export const stableAccountingReceipt = (receipt: AccountingReceipt) => ({
 export const decideAccountingReceiptReplay = (
   stored: AccountingReceipt | undefined,
   candidate: AccountingReceipt,
-): Result.Result<AccountingReceipt, PaperStoreDecisionFailure> => {
+): Result.Result<AccountingReceipt, ExecutionStoreDecisionFailure> => {
   if (stored === undefined) return fail('invariant', 'accounting receipt was not persisted')
   return Result.gen(function* () {
     const storedHash = yield* hashDecision(
@@ -417,7 +417,7 @@ export const planValuation = (
   positionSnapshot: PositionSnapshotRow,
   positionRows: readonly PositionRow[],
   maximumSkewMs: number,
-): Result.Result<Valuation, PaperStoreDecisionFailure> =>
+): Result.Result<Valuation, ExecutionStoreDecisionFailure> =>
   Result.gen(function* () {
     if (positionSnapshot.account_id !== accountSnapshot.account_id) {
       return yield* fail('conflict', 'valuation snapshots belong to different accounts')
@@ -503,7 +503,7 @@ export const planValuation = (
 
 export const requireValuationPositionSnapshot = (
   positionSnapshots: readonly PositionSnapshotRow[],
-): Result.Result<PositionSnapshotRow, PaperStoreDecisionFailure> => {
+): Result.Result<PositionSnapshotRow, ExecutionStoreDecisionFailure> => {
   const snapshot = positionSnapshots[0]
   return positionSnapshots.length === 1 && snapshot !== undefined
     ? Result.succeed(snapshot)
@@ -513,7 +513,7 @@ export const requireValuationPositionSnapshot = (
 export const decideStoredValuation = (
   storedValuations: readonly Valuation[],
   candidate: Valuation,
-): Result.Result<Valuation, PaperStoreDecisionFailure> => {
+): Result.Result<Valuation, ExecutionStoreDecisionFailure> => {
   if (storedValuations.length !== 1) return fail('invariant', 'valuation was not persisted')
   const stored = storedValuations[0]
   if (stored === undefined) return fail('invariant', 'valuation was not persisted')

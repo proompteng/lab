@@ -5,7 +5,7 @@ import { Result } from 'effect'
 import { prepareAccounting } from '../../accounting/domain'
 import type { BrokerEventInput, PositionEventInput, PositionSnapshotInput } from '../../broker/observations'
 import { canonicalHashV1 } from '../../hash'
-import { AccountStatus, Broker, OrderSide, type AccountingReceipt, type Fill } from '../../paper'
+import { AccountStatus, Broker, OrderSide, type AccountingReceipt, type Fill } from '../../execution/contracts'
 import {
   brokerEventIdResult,
   decideAccountingReceiptReplay,
@@ -21,7 +21,7 @@ import {
   planValuation,
   requireValuationPositionSnapshot,
   validateStoredPositionSnapshot,
-  type PaperStoreDecisionFailure,
+  type ExecutionStoreDecisionFailure,
 } from './decisions'
 import type { EventRow, PositionRow, PositionSnapshotRow } from './rows'
 
@@ -32,13 +32,13 @@ const hash = (value: string): string => canonicalHashV1({ value })
 
 const value = <A, E>(result: Result.Result<A, E>): A => {
   expect(Result.isSuccess(result)).toBe(true)
-  if (Result.isFailure(result)) return expect.unreachable('expected a successful PaperStore decision')
+  if (Result.isFailure(result)) return expect.unreachable('expected a successful ExecutionStore decision')
   return result.success
 }
 
-const failure = <A>(result: Result.Result<A, PaperStoreDecisionFailure>): PaperStoreDecisionFailure => {
+const failure = <A>(result: Result.Result<A, ExecutionStoreDecisionFailure>): ExecutionStoreDecisionFailure => {
   expect(Result.isFailure(result)).toBe(true)
-  if (Result.isSuccess(result)) return expect.unreachable('expected a failed PaperStore decision')
+  if (Result.isSuccess(result)) return expect.unreachable('expected a failed ExecutionStore decision')
   return result.failure
 }
 
@@ -124,7 +124,7 @@ const accountingReceipt: AccountingReceipt = {
   recordedAt: observedAt,
 }
 
-describe('PaperStore decisions', () => {
+describe('ExecutionStore decisions', () => {
   test('separates broker replay, append, and conflicting source reuse', () => {
     const input = accountEvent()
     const append = value(decideBrokerEventAppend(input, []))
@@ -154,7 +154,7 @@ describe('PaperStore decisions', () => {
       failure: 'invariant',
       message: 'durable broker source sequence is not an integer',
       cause: {
-        _tag: 'PaperStoreIntegerFailure',
+        _tag: 'ExecutionStoreIntegerFailure',
         source: 'source-sequence',
         value: 'not-an-integer',
       },
@@ -171,7 +171,7 @@ describe('PaperStore decisions', () => {
       failure: 'invariant',
       message: 'broker event identity is not canonicalizable',
       cause: {
-        _tag: 'PaperStoreHashFailure',
+        _tag: 'ExecutionStoreHashFailure',
         operation: 'broker-event-id',
         cause: { reason: 'invalid-unicode-surrogate', path: '$.accountId' },
       },
@@ -188,7 +188,7 @@ describe('PaperStore decisions', () => {
     ).toMatchObject({
       failure: 'invariant',
       cause: {
-        _tag: 'PaperStoreHashFailure',
+        _tag: 'ExecutionStoreHashFailure',
         operation: 'broker-event-id',
         cause: { reason: 'invalid-unicode-surrogate', path: '$.accountId' },
       },
@@ -204,7 +204,7 @@ describe('PaperStore decisions', () => {
     ).toMatchObject({
       failure: 'invariant',
       cause: {
-        _tag: 'PaperStoreHashFailure',
+        _tag: 'ExecutionStoreHashFailure',
         operation: 'accounting-transaction-candidate',
         cause: { reason: 'invalid-unicode-surrogate', path: '$.accountId' },
       },
@@ -220,7 +220,7 @@ describe('PaperStore decisions', () => {
     ).toMatchObject({
       failure: 'invariant',
       cause: {
-        _tag: 'PaperStoreHashFailure',
+        _tag: 'ExecutionStoreHashFailure',
         operation: 'accounting-receipt-candidate',
         cause: { reason: 'invalid-unicode-surrogate', path: '$.accountIds[0]' },
       },
@@ -230,7 +230,7 @@ describe('PaperStore decisions', () => {
       failure: 'invariant',
       message: 'accounting receipt identity is not canonicalizable',
       cause: {
-        _tag: 'PaperStoreHashFailure',
+        _tag: 'ExecutionStoreHashFailure',
         operation: 'accounting-receipt-id',
         cause: { reason: 'non-finite-number', path: '$.tigerBeetleLedger' },
       },
@@ -244,7 +244,7 @@ describe('PaperStore decisions', () => {
       failure: 'invariant',
       message: 'accounting receipt content is not canonicalizable',
       cause: {
-        _tag: 'PaperStoreHashFailure',
+        _tag: 'ExecutionStoreHashFailure',
         operation: 'accounting-receipt-content',
         cause: { reason: 'invalid-unicode-surrogate', path: '$.intentId' },
       },
@@ -306,7 +306,7 @@ describe('PaperStore decisions', () => {
       failure: 'invariant',
       message: 'valuation timestamp evidence is invalid',
       cause: {
-        _tag: 'PaperStoreTimestampFailure',
+        _tag: 'ExecutionStoreTimestampFailure',
         source: 'stored-position-snapshot-observed-at',
         epochMillis: Number.NaN,
       },
@@ -381,7 +381,7 @@ describe('PaperStore decisions', () => {
       failure: 'invariant',
       message: 'valuation account cash is invalid',
       cause: {
-        _tag: 'PaperStoreIntegerFailure',
+        _tag: 'ExecutionStoreIntegerFailure',
         source: 'account-cash',
         value: 'not-an-integer',
       },
@@ -405,7 +405,7 @@ describe('PaperStore decisions', () => {
       failure: 'invariant',
       message: 'valuation position market value is invalid',
       cause: {
-        _tag: 'PaperStoreIntegerFailure',
+        _tag: 'ExecutionStoreIntegerFailure',
         source: 'position-market-value',
         value: 'invalid-market-value',
         eventId: rows[0]?.event_id,
@@ -431,7 +431,7 @@ describe('PaperStore decisions', () => {
       failure: 'invariant',
       message: 'valuation timestamp evidence is invalid',
       cause: {
-        _tag: 'PaperStoreTimestampFailure',
+        _tag: 'ExecutionStoreTimestampFailure',
         source: 'account-observed-at',
         epochMillis: Number.NaN,
       },
@@ -439,7 +439,7 @@ describe('PaperStore decisions', () => {
     expect(failure(decideStoredValuation([{ ...valuation, accountId: '\ud800' }], valuation))).toMatchObject({
       failure: 'invariant',
       cause: {
-        _tag: 'PaperStoreHashFailure',
+        _tag: 'ExecutionStoreHashFailure',
         operation: 'valuation-stored',
         cause: { reason: 'invalid-unicode-surrogate', path: '$.accountId' },
       },

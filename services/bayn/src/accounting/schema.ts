@@ -5,7 +5,7 @@ import {
   PositiveMicrosSchema as PositiveMicros,
   SignedMicrosSchema as SignedMicros,
   UnsignedMicrosSchema as UnsignedMicros,
-} from '../paper'
+} from '../execution/contracts'
 import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,

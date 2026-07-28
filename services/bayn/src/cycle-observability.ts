@@ -1,6 +1,6 @@
 import { Result } from 'effect'
 
-import { Authority, KillState, ReconciliationStatus } from './paper'
+import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
 import { CycleState, type CycleTerminalReason } from './cycle'
 import { utcInstantFromEpochMillisResult, type UtcEpochMillisFailure } from './time'
 

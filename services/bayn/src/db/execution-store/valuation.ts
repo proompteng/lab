@@ -2,11 +2,11 @@ import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
 
 import type { ValuationInput } from '../../broker/observations'
-import type { Valuation } from '../../paper'
-import type { PaperStoreError } from './contract'
+import type { Valuation } from '../../execution/contracts'
+import type { ExecutionStoreError } from './contract'
 import { VALUATION_SNAPSHOT_MAX_SKEW_MS } from './contract'
 import { decideStoredValuation, planValuation, requireValuationPositionSnapshot } from './decisions'
-import { liftPaperDecision, runPaperOperation } from './errors'
+import { liftStoreDecision, runExecutionOperation } from './errors'
 import {
   decodeAccountBaseline,
   decodeAccountId,
@@ -32,13 +32,13 @@ const valuationFromRow = (row: ValuationRow): Valuation => ({
 })
 
 export interface ValuationInterpreter {
-  readonly value: (input: ValuationInput) => Effect.Effect<Valuation, PaperStoreError>
-  readonly hasAccountBaseline: (accountId: string) => Effect.Effect<boolean, PaperStoreError>
+  readonly value: (input: ValuationInput) => Effect.Effect<Valuation, ExecutionStoreError>
+  readonly hasAccountBaseline: (accountId: string) => Effect.Effect<boolean, ExecutionStoreError>
 }
 
 export const makeValuationInterpreter = (sql: PgClient.PgClient): ValuationInterpreter => {
-  const value = (input: ValuationInput): Effect.Effect<Valuation, PaperStoreError> =>
-    runPaperOperation(
+  const value = (input: ValuationInput): Effect.Effect<Valuation, ExecutionStoreError> =>
+    runExecutionOperation(
       'valuation',
       decodeValuationInput(input).pipe(
         Effect.flatMap((decoded) =>
@@ -59,7 +59,7 @@ export const makeValuationInterpreter = (sql: PgClient.PgClient): ValuationInter
                 FROM position_snapshots
                 WHERE snapshot_id = ${decoded.positionSnapshotId}
               `.pipe(Effect.flatMap(decodePositionSnapshotRows))
-              const positionSnapshot = yield* liftPaperDecision(
+              const positionSnapshot = yield* liftStoreDecision(
                 'valuation',
                 requireValuationPositionSnapshot(positionSnapshots),
               )
@@ -72,7 +72,7 @@ export const makeValuationInterpreter = (sql: PgClient.PgClient): ValuationInter
                 WHERE position.snapshot_id = ${positionSnapshot.snapshot_id}
                 ORDER BY position.event_id
               `.pipe(Effect.flatMap(decodePositionRows))
-              const planned = yield* liftPaperDecision(
+              const planned = yield* liftStoreDecision(
                 'valuation',
                 planValuation(decoded, accountSnapshot, positionSnapshot, positionRows, VALUATION_SNAPSHOT_MAX_SKEW_MS),
               )
@@ -99,15 +99,15 @@ export const makeValuationInterpreter = (sql: PgClient.PgClient): ValuationInter
                 WHERE account_id = ${candidate.accountId} AND source_hash = ${candidate.sourceHash}
               `.pipe(Effect.flatMap(decodeValuationRows))
               const stored = yield* Effect.all(rows.map((row) => decodeValuation(valuationFromRow(row))))
-              return yield* liftPaperDecision('valuation', decideStoredValuation(stored, candidate))
+              return yield* liftStoreDecision('valuation', decideStoredValuation(stored, candidate))
             }),
           ),
         ),
       ),
     )
 
-  const hasAccountBaseline = (accountId: string): Effect.Effect<boolean, PaperStoreError> =>
-    runPaperOperation(
+  const hasAccountBaseline = (accountId: string): Effect.Effect<boolean, ExecutionStoreError> =>
+    runExecutionOperation(
       'baseline',
       decodeAccountId(accountId).pipe(
         Effect.flatMap((decodedAccountId) =>

@@ -19,7 +19,7 @@ import {
   type ReadResult,
 } from '../broker/alpaca'
 import { canonicalHashV1Result } from '../hash'
-import { IntentState, RiskOutcome, TerminalOutcome, type Intent } from '../paper'
+import { IntentState, RiskOutcome, TerminalOutcome, type Intent } from './contracts'
 import { UtcInstantSchema } from '../schemas'
 import { utcInstantFromEpochMillisResult } from '../time'
 import type { StoredIntent } from './intents/domain'

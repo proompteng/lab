@@ -25,17 +25,16 @@ import {
   decodeIntent,
   decodeOrder,
   decodePosition,
-  decodePaperAuthorityProofBinding,
-  decodePaperAuthorityGeneration,
+  decodeCapitalGrantProofBinding,
+  decodeCapitalGrantGeneration,
   decodeRateLimit,
   decodeReconciliation,
   decodeRiskDecision,
   decodeRiskInput,
   decodeValuation,
   isIntentTransitionAllowed,
-  makePaperAuthorityGeneration,
-  makePaperAuthorityGenerationResult,
-} from './paper'
+  makeCapitalGrantGenerationResult,
+} from './execution/contracts'
 
 const instant = '2026-07-22T06:00:00.000Z'
 const later = '2026-07-22T06:01:00.000Z'
@@ -44,6 +43,8 @@ const u64Max = '18446744073709551615'
 const u128Max = '340282366920938463463374607431768211455'
 const i128Min = '-170141183460469231731687303715884105728'
 const i128Max = '170141183460469231731687303715884105727'
+const makeCapitalGrantGeneration = (input: Parameters<typeof makeCapitalGrantGenerationResult>[0]) =>
+  Result.getOrThrow(makeCapitalGrantGenerationResult(input))
 
 const expectFailure = async (effect: Effect.Effect<unknown, unknown>): Promise<void> => {
   expect(Exit.isFailure(await Effect.runPromiseExit(effect))).toBe(true)
@@ -448,85 +449,85 @@ describe('paper contracts', () => {
       reconciliationId: hash('e'),
       reconciliationContentHash: hash('f'),
     }
-    const generation = makePaperAuthorityGeneration(material)
-    const generationResult = makePaperAuthorityGenerationResult(material)
+    const generation = makeCapitalGrantGeneration(material)
+    const generationResult = makeCapitalGrantGenerationResult(material)
 
-    expect(await Effect.runPromise(decodePaperAuthorityProofBinding(proof))).toEqual(proof)
+    expect(await Effect.runPromise(decodeCapitalGrantProofBinding(proof))).toEqual(proof)
     await expectFailure(
-      decodePaperAuthorityProofBinding({
+      decodeCapitalGrantProofBinding({
         ...proof,
         previousGenerationHash: material.previousGenerationHash,
       }),
     )
     await expectFailure(
-      decodePaperAuthorityProofBinding({
+      decodeCapitalGrantProofBinding({
         ...proof,
         reconciliationId: material.reconciliationId,
       }),
     )
-    expect(await Effect.runPromise(decodePaperAuthorityGeneration(generation))).toEqual(generation)
+    expect(await Effect.runPromise(decodeCapitalGrantGeneration(generation))).toEqual(generation)
     expect(Result.isSuccess(generationResult)).toBe(true)
     if (Result.isSuccess(generationResult)) expect(generationResult.success).toEqual(generation)
     expect(generation.generationHash).toMatch(/^[0-9a-f]{64}$/)
-    expect(makePaperAuthorityGeneration(structuredClone(material))).toEqual(generation)
+    expect(makeCapitalGrantGeneration(structuredClone(material))).toEqual(generation)
     expect(
-      makePaperAuthorityGeneration({
+      makeCapitalGrantGeneration({
         ...material,
         proofPlanHash: hash('0'),
       }).generationHash,
     ).not.toBe(generation.generationHash)
     expect(
-      makePaperAuthorityGeneration({
+      makeCapitalGrantGeneration({
         ...material,
         activationSourceRevision: '2'.repeat(40),
       }).generationHash,
     ).not.toBe(generation.generationHash)
     expect(
-      makePaperAuthorityGeneration({
+      makeCapitalGrantGeneration({
         ...material,
         reconciliationId: hash('0'),
         reconciliationContentHash: hash('1'),
       }).generationHash,
     ).toBe(generation.generationHash)
     await expectFailure(
-      decodePaperAuthorityGeneration({
+      decodeCapitalGrantGeneration({
         ...generation,
         generationHash: hash('1'),
       }),
     )
     await expectFailure(
-      decodePaperAuthorityGeneration({
+      decodeCapitalGrantGeneration({
         ...generation,
         schemaVersion: 'bayn.paper-authority-generation.v1',
       }),
     )
     expect(() =>
-      makePaperAuthorityGeneration({
+      makeCapitalGrantGeneration({
         ...material,
         strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v2' as never,
       }),
     ).toThrow()
     expect(
-      makePaperAuthorityGenerationResult({
+      makeCapitalGrantGenerationResult({
         ...material,
         strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v2' as never,
       }),
     ).toMatchObject({
       _tag: 'Failure',
       failure: {
-        _tag: 'PaperAuthorityGenerationSchemaInvalid',
+        _tag: 'CapitalGrantGenerationSchemaInvalid',
         operation: 'material',
       },
     })
     expect(
-      makePaperAuthorityGenerationResult({
+      makeCapitalGrantGenerationResult({
         ...material,
         accountId: '\ud800',
       }),
     ).toMatchObject({
       _tag: 'Failure',
       failure: {
-        _tag: 'PaperAuthorityGenerationSchemaInvalid',
+        _tag: 'CapitalGrantGenerationSchemaInvalid',
         operation: 'material',
       },
     })

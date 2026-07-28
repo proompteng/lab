@@ -2,12 +2,12 @@ import { expect, test } from 'bun:test'
 
 import { Result } from 'effect'
 
-import { canonicalHashResult, type PaperCandidateDiscoveryError } from './failure'
+import { canonicalHashResult, type ExecutionCandidateDiscoveryError } from './failure'
 
 test('paper candidate hashing retains closed canonical failure facts', () => {
   const result = canonicalHashResult(
     { cycleId: '\ud800' },
-    (cause): PaperCandidateDiscoveryError => ({
+    (cause): ExecutionCandidateDiscoveryError => ({
       _tag: 'BindingHashFailed',
       failure: 'output',
       cycleId: 'cycle-1',

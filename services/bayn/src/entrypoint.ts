@@ -23,7 +23,7 @@ import {
 import { CycleObservability, CycleObservabilityLive } from './db/cycle-observability'
 import { CycleStoreLive } from './db/cycle-store'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from './db/evidence-store'
-import { PaperStoreLive } from './db/paper-store'
+import { ExecutionStoreLive } from './db/execution-store'
 import { WriterFenceLive } from './execution/writer-fence'
 import { operationalError } from './errors'
 import { canonicalHashV1Result, type CanonicalJsonFailure } from './hash'
@@ -34,9 +34,9 @@ import { loadObserveRiskPolicy, makeObserveAutonomousCycleStartup } from './obse
 import { sqlResource } from './operations'
 import {
   discoverPaperCandidates,
-  renderPaperCandidateDiscoveryError,
-  type PaperCandidateDiscoveryReceipt,
-} from './paper-candidate-discovery'
+  renderExecutionCandidateDiscoveryError,
+  type ExecutionCandidateDiscoveryReceipt,
+} from './execution-candidate-discovery'
 import { loadDefaultProtocol, type CausalProtocol } from './protocol'
 import { makeStrategy, type Strategy } from './strategy'
 
@@ -199,7 +199,7 @@ export const JournalResourceLive = (config: LoadedRuntimeConfig) => JournalLive(
 
 export const CycleObservabilityResourceLive = CycleObservabilityLive
 
-export const PaperStoreResourceLive = (config: LoadedRuntimeConfig) => PaperStoreLive(config)
+export const ExecutionStoreResourceLive = (config: LoadedRuntimeConfig) => ExecutionStoreLive(config)
 
 export const CycleStoreResourceLive = CycleStoreLive
 
@@ -239,13 +239,13 @@ export const AutonomousObserveApplicationResourcesLive = (plan: ApplicationPlanF
     journal,
     CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
     BrokerSessionResourceLive(plan.config),
-    PaperStoreResourceLive(plan.config).pipe(Layer.provide(Layer.merge(postgres, journal))),
+    ExecutionStoreResourceLive(plan.config).pipe(Layer.provide(Layer.merge(postgres, journal))),
     WriterFenceResourceLive.pipe(Layer.provide(postgres)),
     CycleStoreResourceLive.pipe(Layer.provide(postgres)),
   ).pipe(Layer.provideMerge(ApplicationPlatformLive))
 }
 
-export const PaperCandidateDiscoveryResourcesLive = (plan: ApplicationPlanFor<'PaperCandidateDiscovery'>) => {
+export const ExecutionCandidateDiscoveryResourcesLive = (plan: ApplicationPlanFor<'ExecutionCandidateDiscovery'>) => {
   const postgres = sqlResource(PostgresClientResourceLive(plan.config))
   return Layer.mergeAll(
     postgres,
@@ -302,7 +302,7 @@ const runAutonomousObserveService = (plan: ApplicationPlanFor<'AutonomousObserve
 
 const encodeJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Json))
 
-const writeDiscoveryReceipt = (receipt: PaperCandidateDiscoveryReceipt) =>
+const writeDiscoveryReceipt = (receipt: ExecutionCandidateDiscoveryReceipt) =>
   pipe(
     encodeJson(receipt),
     Effect.mapError((cause) =>
@@ -330,7 +330,7 @@ const policyHash = (policy: unknown): Effect.Effect<string, ReturnType<typeof op
     Effect.fromResult,
   )
 
-const paperCandidateIdentity = (plan: ApplicationPlanFor<'PaperCandidateDiscovery'>, riskPolicyHash: string) => ({
+const paperCandidateIdentity = (plan: ApplicationPlanFor<'ExecutionCandidateDiscovery'>, riskPolicyHash: string) => ({
   sourceRevision: plan.config.build.sourceRevision,
   image: {
     repository: plan.config.build.imageRepository,
@@ -344,20 +344,25 @@ const paperCandidateIdentity = (plan: ApplicationPlanFor<'PaperCandidateDiscover
   policyHash: riskPolicyHash,
 })
 
-const discoverPaperCandidate = (plan: ApplicationPlanFor<'PaperCandidateDiscovery'>, riskPolicyHash: string) =>
+const discoverPaperCandidate = (plan: ApplicationPlanFor<'ExecutionCandidateDiscovery'>, riskPolicyHash: string) =>
   discoverPaperCandidates(paperCandidateIdentity(plan, riskPolicyHash)).pipe(
     Effect.mapError((cause) =>
-      operationalError('strategy', 'paper-candidate-discovery', renderPaperCandidateDiscoveryError(cause), cause),
+      operationalError(
+        'strategy',
+        'execution-candidate-discovery',
+        renderExecutionCandidateDiscoveryError(cause),
+        cause,
+      ),
     ),
   )
 
-const runPaperCandidateDiscovery = (plan: ApplicationPlanFor<'PaperCandidateDiscovery'>) =>
+const runExecutionCandidateDiscovery = (plan: ApplicationPlanFor<'ExecutionCandidateDiscovery'>) =>
   pipe(
     loadObserveRiskPolicy(plan.config.alpaca.expectedAccountId, plan.strategy.parameters.universe),
     Effect.mapError((cause) =>
       operationalError(
         'config',
-        'paper-candidate-discovery',
+        'execution-candidate-discovery',
         'source-controlled OBSERVE risk policy is invalid',
         cause,
       ),
@@ -375,8 +380,8 @@ export const runApplicationPlan = pipe(
   Match.tag('AutonomousObserveService', (plan) =>
     runAutonomousObserveService(plan).pipe(Effect.provide(AutonomousObserveApplicationResourcesLive(plan))),
   ),
-  Match.tag('PaperCandidateDiscovery', (plan) =>
-    runPaperCandidateDiscovery(plan).pipe(Effect.provide(PaperCandidateDiscoveryResourcesLive(plan))),
+  Match.tag('ExecutionCandidateDiscovery', (plan) =>
+    runExecutionCandidateDiscovery(plan).pipe(Effect.provide(ExecutionCandidateDiscoveryResourcesLive(plan))),
   ),
   Match.exhaustive,
 )

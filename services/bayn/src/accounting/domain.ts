@@ -4,7 +4,7 @@ import { pipe, Result } from 'effect'
 
 import { canonicalHashV1Result, stableU128, stableU64 } from '../hash'
 import { AccountCode, hashLedgerPlanResult, LEDGER_SCHEMA_VERSION, TransferCode, type LedgerPlan } from '../ledger-plan'
-import { OrderSide, type Fill } from '../paper'
+import { OrderSide, type Fill } from '../execution/contracts'
 import { roundUnsignedHalfUp } from '../unsigned-round-half-up'
 import { type AccountingFailure, type AccountingHashOperation, type AccountingMicrosField } from './failure'
 import type { PositionCost, PreparedAccounting } from './model'

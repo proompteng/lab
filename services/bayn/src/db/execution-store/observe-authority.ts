@@ -1,17 +1,17 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
 
-import type { AuthorityState } from '../../paper'
+import type { AuthorityState } from '../../execution/contracts'
 import {
   decideObserveGeneration,
   validateAuthorityObservation,
   validateObserveGenerationRequest,
   type ObserveGenerationDecision,
   type ObserveGenerationRequest,
-} from '../paper-authority-algebra'
+} from '../capital-grant-algebra'
 import { authorityStateFromRow, type AuthorityPostgres } from './authority-shared'
-import type { EnsureAuthorityGenerationInput, PaperStoreError } from './contract'
-import { failPaperStore, liftAuthorityDecision, runPaperOperation } from './errors'
+import type { EnsureAuthorityGenerationInput, ExecutionStoreError } from './contract'
+import { failExecutionStore, liftAuthorityDecision, runExecutionOperation } from './errors'
 import {
   decodeAuthorityStateObservationRows,
   decodeAuthorityStateRows,
@@ -22,7 +22,7 @@ import {
 export interface ObserveAuthorityInterpreter {
   readonly ensureAuthorityGeneration: (
     input: EnsureAuthorityGenerationInput,
-  ) => Effect.Effect<AuthorityState, PaperStoreError>
+  ) => Effect.Effect<AuthorityState, ExecutionStoreError>
 }
 
 export const makeObserveAuthorityInterpreter = (
@@ -39,7 +39,7 @@ export const makeObserveAuthorityInterpreter = (
         SELECT clock_timestamp() AS activated_at
       `.pipe(Effect.flatMap(decodeDatabaseInstant))
       if (databaseTime === undefined) {
-        return yield* failPaperStore('authority', 'invariant', 'authority initialization time is unavailable')
+        return yield* failExecutionStore('authority', 'invariant', 'authority initialization time is unavailable')
       }
       yield* sql`
         INSERT INTO authority_generations (
@@ -64,7 +64,7 @@ export const makeObserveAuthorityInterpreter = (
       `.pipe(Effect.flatMap(decodeAuthorityStateRows))
       const insertedRow = inserted[0]
       if (insertedRow === undefined) {
-        return yield* failPaperStore('authority', 'invariant', 'authority generation was not initialized')
+        return yield* failExecutionStore('authority', 'invariant', 'authority generation was not initialized')
       }
       return yield* authorityStateFromRow(insertedRow)
     })
@@ -108,7 +108,7 @@ export const makeObserveAuthorityInterpreter = (
       `.pipe(Effect.flatMap(decodeAuthorityStateRows))
       const rotatedRow = rotated[0]
       if (rotatedRow === undefined) {
-        return yield* failPaperStore('authority', 'invariant', 'authority generation was not rotated')
+        return yield* failExecutionStore('authority', 'invariant', 'authority generation was not rotated')
       }
       return yield* authorityStateFromRow(rotatedRow)
     })
@@ -141,7 +141,7 @@ export const makeObserveAuthorityInterpreter = (
     })
 
   const ensureAuthorityGeneration = (candidate: EnsureAuthorityGenerationInput) =>
-    runPaperOperation(
+    runExecutionOperation(
       'authority',
       decodeEnsureAuthorityGenerationInput(candidate).pipe(
         Effect.flatMap((input) =>

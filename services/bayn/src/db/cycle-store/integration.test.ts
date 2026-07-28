@@ -31,7 +31,7 @@ import {
   type MarketDataService,
   type SignalSessionRow,
 } from '../../market-data'
-import { ReconciliationStatus } from '../../paper'
+import { ReconciliationStatus } from '../../execution/contracts'
 import { makeObserveShadowDecisionDocument } from '../../shadow-decision-contract'
 import { TargetPlanReason, TargetPlanStatus } from '../../target-planner'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputManifest, type IsoDate } from '../../types'

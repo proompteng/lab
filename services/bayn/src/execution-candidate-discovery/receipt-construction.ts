@@ -1,7 +1,7 @@
 import { Result, Schema, pipe } from 'effect'
 
 import type { Account, AccountConfigurationObservation, AssetObservation } from '../broker/alpaca'
-import { Authority } from '../paper'
+import { Authority } from '../execution/contracts'
 import { strictParseOptions } from '../schemas'
 import {
   AccountConfigurationFactsSchema,
@@ -14,15 +14,15 @@ import {
   candidateFactsSchemaVersion,
   discoverySchemaVersion,
   observationReceiptSchemaVersion,
-  type PaperCandidateDiscoveryReceipt,
-  type PaperCandidateDiscoverySnapshot,
+  type ExecutionCandidateDiscoveryReceipt,
+  type ExecutionCandidateDiscoverySnapshot,
   type ValidatedAccountConfiguration,
   type ValidatedAssets,
   type ValidatedPaperCandidateObservations,
   type ValidatedPaperCandidateSnapshot,
 } from './model'
 import { assetEligibility, normalizedReadEvidence } from './broker-observation-validation'
-import { canonicalHashResult, requireValue, type PaperCandidateDiscoveryError } from './failure'
+import { canonicalHashResult, requireValue, type ExecutionCandidateDiscoveryError } from './failure'
 
 const accountFacts = (account: Account): typeof AccountFactsSchema.Type => ({
   id: account.id,
@@ -63,11 +63,11 @@ const assetFacts = (asset: AssetObservation): typeof AssetFactsSchema.Type => ({
 })
 
 const makeCandidate = (
-  snapshot: PaperCandidateDiscoverySnapshot,
+  snapshot: ExecutionCandidateDiscoverySnapshot,
   configuration: ValidatedAccountConfiguration,
   assets: ValidatedAssets,
   ordinal: number,
-): Result.Result<typeof CandidateFactsSchema.Type, PaperCandidateDiscoveryError> => {
+): Result.Result<typeof CandidateFactsSchema.Type, ExecutionCandidateDiscoveryError> => {
   const intent = snapshot.document.targetPlan.intentTargets[ordinal]
   return pipe(
     requireValue(intent, {
@@ -136,10 +136,10 @@ const makeCandidate = (
 }
 
 const makeCandidates = (
-  snapshot: PaperCandidateDiscoverySnapshot,
+  snapshot: ExecutionCandidateDiscoverySnapshot,
   configuration: ValidatedAccountConfiguration,
   assets: ValidatedAssets,
-): Result.Result<ReadonlyArray<typeof CandidateFactsSchema.Type>, PaperCandidateDiscoveryError> =>
+): Result.Result<ReadonlyArray<typeof CandidateFactsSchema.Type>, ExecutionCandidateDiscoveryError> =>
   pipe(
     snapshot.document.targetPlan.intentTargets.map((_, ordinal) =>
       makeCandidate(snapshot, configuration, assets, ordinal),
@@ -149,11 +149,11 @@ const makeCandidates = (
 
 const decodeReceipt = (
   material: typeof DiscoveryReceiptMaterialSchema.Type,
-): Result.Result<PaperCandidateDiscoveryReceipt, PaperCandidateDiscoveryError> =>
+): Result.Result<ExecutionCandidateDiscoveryReceipt, ExecutionCandidateDiscoveryError> =>
   pipe(
     canonicalHashResult(
       material,
-      (cause): PaperCandidateDiscoveryError => ({
+      (cause): ExecutionCandidateDiscoveryError => ({
         _tag: 'ReceiptHashFailed',
         failure: 'output',
         schemaVersion: material.schemaVersion,
@@ -171,7 +171,7 @@ const decodeReceipt = (
           observationReceiptHash,
         }),
         Result.mapError(
-          (cause): PaperCandidateDiscoveryError => ({
+          (cause): ExecutionCandidateDiscoveryError => ({
             _tag: 'ReceiptDecodeFailed',
             failure: 'output',
             schemaVersion: material.schemaVersion,
@@ -183,10 +183,10 @@ const decodeReceipt = (
     ),
   )
 
-export const makePaperCandidateDiscoveryReceipt = (
+export const makeExecutionCandidateDiscoveryReceipt = (
   validatedSnapshot: ValidatedPaperCandidateSnapshot,
   observations: ValidatedPaperCandidateObservations,
-): Result.Result<PaperCandidateDiscoveryReceipt, PaperCandidateDiscoveryError> => {
+): Result.Result<ExecutionCandidateDiscoveryReceipt, ExecutionCandidateDiscoveryError> => {
   const { binding, snapshot } = validatedSnapshot
   return pipe(
     Result.Do,
@@ -194,7 +194,7 @@ export const makePaperCandidateDiscoveryReceipt = (
     Result.bind('immutableBindingHash', () =>
       canonicalHashResult(
         binding,
-        (cause): PaperCandidateDiscoveryError => ({
+        (cause): ExecutionCandidateDiscoveryError => ({
           _tag: 'BindingHashFailed',
           failure: 'output',
           cycleId: binding.cycle.cycleId,
@@ -215,7 +215,7 @@ export const makePaperCandidateDiscoveryReceipt = (
         },
         Schema.decodeUnknownResult(CandidateFactsMaterialSchema, strictParseOptions),
         Result.mapError(
-          (cause): PaperCandidateDiscoveryError => ({
+          (cause): ExecutionCandidateDiscoveryError => ({
             _tag: 'CandidateFactsDecodeFailed',
             failure: 'output',
             immutableBindingHash,
@@ -228,7 +228,7 @@ export const makePaperCandidateDiscoveryReceipt = (
     Result.bind('candidateFactsHash', ({ candidateFacts }) =>
       canonicalHashResult(
         candidateFacts,
-        (cause): PaperCandidateDiscoveryError => ({
+        (cause): ExecutionCandidateDiscoveryError => ({
           _tag: 'CandidateFactsHashFailed',
           failure: 'output',
           immutableBindingHash: candidateFacts.immutableBindingHash,

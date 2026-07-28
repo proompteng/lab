@@ -116,9 +116,9 @@ const brokerlessConfig = (runtime: typeof config): BrokerlessApplicationConfig =
 
 const discoveryConfig = (
   runtime: typeof pinnedRuntimeConfig,
-): Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'PaperCandidateDiscovery' }> => ({
+): Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'ExecutionCandidateDiscovery' }> => ({
   ...autonomousConfig(runtime),
-  runtimeMode: 'PaperCandidateDiscovery',
+  runtimeMode: 'ExecutionCandidateDiscovery',
   qualificationRunId: pinnedEvaluation.runId,
 })
 
@@ -135,7 +135,7 @@ describe('Bayn application composition', () => {
     const modes = [
       { config: brokerlessConfig(config), expectedTag: 'BrokerlessService' },
       { config: autonomousConfig(config), expectedTag: 'AutonomousObserveService' },
-      { config: discoveryConfig(pinnedRuntimeConfig), expectedTag: 'PaperCandidateDiscovery' },
+      { config: discoveryConfig(pinnedRuntimeConfig), expectedTag: 'ExecutionCandidateDiscovery' },
     ] as const
 
     for (const mode of modes) {

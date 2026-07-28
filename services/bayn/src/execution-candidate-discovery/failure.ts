@@ -1,9 +1,9 @@
 import { Result } from 'effect'
 
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
-import { Authority, RiskOutcome } from '../paper'
+import { Authority, RiskOutcome } from '../execution/contracts'
 
-export type PaperCandidateDiscoveryError =
+export type ExecutionCandidateDiscoveryError =
   | { readonly _tag: 'IdentityDecodeFailed'; readonly failure: 'invalid-input'; readonly cause: unknown }
   | {
       readonly _tag: 'StrategyProtocolMismatch'
@@ -349,7 +349,7 @@ export type PaperCandidateDiscoveryError =
       readonly cause: unknown
     }
 
-const paperCandidateDiscoveryErrorTags: ReadonlySet<string> = new Set([
+const executionCandidateDiscoveryErrorTags: ReadonlySet<string> = new Set([
   'IdentityDecodeFailed',
   'StrategyProtocolMismatch',
   'CycleUnfinished',
@@ -393,14 +393,14 @@ const paperCandidateDiscoveryErrorTags: ReadonlySet<string> = new Set([
   'ReceiptDecodeFailed',
 ])
 
-export const isPaperCandidateDiscoveryError = (cause: unknown): cause is PaperCandidateDiscoveryError =>
+export const isExecutionCandidateDiscoveryError = (cause: unknown): cause is ExecutionCandidateDiscoveryError =>
   typeof cause === 'object' &&
   cause !== null &&
   '_tag' in cause &&
   typeof cause._tag === 'string' &&
-  paperCandidateDiscoveryErrorTags.has(cause._tag)
+  executionCandidateDiscoveryErrorTags.has(cause._tag)
 
-export const renderPaperCandidateDiscoveryError = (error: PaperCandidateDiscoveryError): string => {
+export const renderExecutionCandidateDiscoveryError = (error: ExecutionCandidateDiscoveryError): string => {
   switch (error._tag) {
     case 'IdentityDecodeFailed':
       return 'paper candidate identity decoding failed'
@@ -491,16 +491,16 @@ export const renderPaperCandidateDiscoveryError = (error: PaperCandidateDiscover
 
 export const requireCondition = (
   condition: boolean,
-  error: PaperCandidateDiscoveryError,
-): Result.Result<void, PaperCandidateDiscoveryError> => (condition ? Result.succeed(undefined) : Result.fail(error))
+  error: ExecutionCandidateDiscoveryError,
+): Result.Result<void, ExecutionCandidateDiscoveryError> => (condition ? Result.succeed(undefined) : Result.fail(error))
 
 export const requireValue = <A>(
   value: A | null | undefined,
-  error: PaperCandidateDiscoveryError,
-): Result.Result<A, PaperCandidateDiscoveryError> =>
+  error: ExecutionCandidateDiscoveryError,
+): Result.Result<A, ExecutionCandidateDiscoveryError> =>
   value === null || value === undefined ? Result.fail(error) : Result.succeed(value)
 
 export const canonicalHashResult = (
   value: unknown,
-  onFailure: (cause: CanonicalHashFailure) => PaperCandidateDiscoveryError,
-): Result.Result<string, PaperCandidateDiscoveryError> => Result.mapError(canonicalHashV1Result(value), onFailure)
+  onFailure: (cause: CanonicalHashFailure) => ExecutionCandidateDiscoveryError,
+): Result.Result<string, ExecutionCandidateDiscoveryError> => Result.mapError(canonicalHashV1Result(value), onFailure)

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { Result } from 'effect'
 
 import { canonicalHashV1 } from '../hash'
-import { OrderSide, type Fill } from '../paper'
+import { OrderSide, type Fill } from '../execution/contracts'
 import { prepareAccounting, rebuildAccountingLedger } from './domain'
 import type { AccountingFailure } from './failure'
 import type { PositionCost, PreparedAccounting } from './model'

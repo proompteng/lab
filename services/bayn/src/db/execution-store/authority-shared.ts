@@ -3,18 +3,18 @@ import { Effect, Schema } from 'effect'
 
 import {
   decodeAuthorityState,
-  decodePaperAuthorityGeneration,
+  decodeCapitalGrantGeneration,
   type AuthorityState,
-  type PaperAuthorityGeneration,
-} from '../../paper'
+  type CapitalGrantGeneration,
+} from '../../execution/contracts'
 import {
   requireUnusedAuthorityGeneration,
   validateAuthorityObservation,
   validateCurrentGenerationHistory,
   type AuthorityGenerationHistoryFacts,
-} from '../paper-authority-algebra'
-import type { PaperStoreError } from './contract'
-import { failPaperStore, liftAuthorityDecision, runPaperOperation } from './errors'
+} from '../capital-grant-algebra'
+import type { ExecutionStoreError } from './contract'
+import { failExecutionStore, liftAuthorityDecision, runExecutionOperation } from './errors'
 import {
   decodeAuthorityGenerationRows,
   decodeAuthorityStateObservationRows,
@@ -25,10 +25,10 @@ import {
 
 export const authorityStateFromRow = (
   row: AuthorityStateRow,
-): Effect.Effect<AuthorityState, PaperStoreError | Schema.SchemaError> => {
+): Effect.Effect<AuthorityState, ExecutionStoreError | Schema.SchemaError> => {
   const version = Number(row.version)
   if (!Number.isSafeInteger(version) || version <= 0) {
-    return failPaperStore('authority', 'invariant', 'durable authority version is not a safe positive integer')
+    return failExecutionStore('authority', 'invariant', 'durable authority version is not a safe positive integer')
   }
   return decodeAuthorityState({
     schemaVersion: row.schema_version,
@@ -44,7 +44,7 @@ export const authorityStateFromRow = (
 
 export const paperGenerationFromRow = (
   row: AuthorityGenerationRow,
-): Effect.Effect<PaperAuthorityGeneration, PaperStoreError | Schema.SchemaError> => {
+): Effect.Effect<CapitalGrantGeneration, ExecutionStoreError | Schema.SchemaError> => {
   if (
     row.activation_schema_version === null ||
     row.previous_generation_hash === null ||
@@ -69,9 +69,9 @@ export const paperGenerationFromRow = (
     row.reconciliation_id === null ||
     row.reconciliation_content_hash === null
   ) {
-    return failPaperStore('authority', 'invariant', 'PAPER authority generation history is incomplete')
+    return failExecutionStore('authority', 'invariant', 'PAPER authority generation history is incomplete')
   }
-  return decodePaperAuthorityGeneration({
+  return decodeCapitalGrantGeneration({
     schemaVersion: row.activation_schema_version,
     generationHash: row.generation_hash,
     maximum: row.maximum,
@@ -109,7 +109,7 @@ const generationHistoryFacts = (
   row: history,
 })
 
-export interface LockedPaperAuthority {
+export interface LockedCapitalGrant {
   readonly current: AuthorityState
   readonly history: AuthorityGenerationRow
 }
@@ -148,7 +148,7 @@ export const makeAuthorityPostgres = (sql: PgClient.PgClient) => {
   const requireCurrentGenerationHistory = (
     current: AuthorityState,
     history: AuthorityGenerationRow | undefined,
-  ): Effect.Effect<AuthorityGenerationRow, PaperStoreError> =>
+  ): Effect.Effect<AuthorityGenerationRow, ExecutionStoreError> =>
     liftAuthorityDecision(
       validateCurrentGenerationHistory(current, history === undefined ? undefined : generationHistoryFacts(history)),
     ).pipe(Effect.map((validated) => validated.row))
@@ -172,13 +172,13 @@ export const makeAuthorityPostgres = (sql: PgClient.PgClient) => {
     Effect.flatMap(decodeDatabaseInstant),
     Effect.flatMap((rows) =>
       rows[0] === undefined
-        ? failPaperStore('authority', 'invariant', 'authority update time is unavailable')
+        ? failExecutionStore('authority', 'invariant', 'authority update time is unavailable')
         : Effect.succeed(rows[0].activated_at),
     ),
   )
 
-  const lockPaperAuthority = (accountId: string): Effect.Effect<LockedPaperAuthority, PaperStoreError> =>
-    runPaperOperation(
+  const lockCapitalGrant = (accountId: string): Effect.Effect<LockedCapitalGrant, ExecutionStoreError> =>
+    runExecutionOperation(
       'authority',
       Effect.gen(function* () {
         yield* sql`
@@ -197,7 +197,7 @@ export const makeAuthorityPostgres = (sql: PgClient.PgClient) => {
         `.pipe(Effect.flatMap(decodeAuthorityStateObservationRows))
         const currentRow = currentRows[0]
         if (currentRow === undefined) {
-          return yield* failPaperStore('authority', 'invariant', 'PAPER generation requires initialized authority')
+          return yield* failExecutionStore('authority', 'invariant', 'PAPER generation requires initialized authority')
         }
         const current = yield* authorityStateFromRow(currentRow)
         yield* liftAuthorityDecision(validateAuthorityObservation(current, currentRow.observed_at))
@@ -214,7 +214,7 @@ export const makeAuthorityPostgres = (sql: PgClient.PgClient) => {
     verifyCurrentGenerationHistory,
     requireUnusedGeneration,
     nextAuthorityInstant,
-    lockPaperAuthority,
+    lockCapitalGrant,
   }
 }
 

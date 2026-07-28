@@ -7,13 +7,13 @@ import {
   Authority,
   KillState,
   ReconciliationStatus,
-  makePaperAuthorityGenerationResult,
+  makeCapitalGrantGenerationResult,
   type AuthorityState,
-  type PaperAuthorityGeneration,
-  type PaperAuthorityGenerationConstructionFailure,
-  type PaperAuthorityGenerationMaterial,
-  type PaperAuthorityProofBinding,
-} from '../paper'
+  type CapitalGrantGeneration,
+  type CapitalGrantGenerationConstructionFailure,
+  type CapitalGrantGenerationMaterial,
+  type CapitalGrantProofBinding,
+} from '../execution/contracts'
 import type { QualificationLock, QualificationResult } from '../qualification'
 
 export interface AuthorityGenerationHistoryFacts {
@@ -80,7 +80,7 @@ export interface MutationBaselineFacts {
 
 export interface DerivedPaperGeneration {
   readonly current: AuthorityState
-  readonly generation: PaperAuthorityGeneration
+  readonly generation: CapitalGrantGeneration
   readonly reconciliation: ExactReconciliationFacts
 }
 
@@ -159,7 +159,7 @@ export type PaperActivationDecision =
     }
   | { readonly _tag: 'ReplayPaperGeneration'; readonly current: AuthorityState }
 
-export type PaperAuthorityAlgebraFailure =
+export type CapitalGrantAlgebraFailure =
   | { readonly _tag: 'ObserveMaximumRequired'; readonly maximum: Authority }
   | { readonly _tag: 'CurrentGenerationHistoryMissing'; readonly generationHash: string }
   | {
@@ -278,19 +278,19 @@ export type PaperAuthorityAlgebraFailure =
       readonly configuredGenerationHash: string
     }
 
-export interface PaperAuthorityFailureDetails {
+export interface CapitalGrantFailureDetails {
   readonly failure: 'conflict' | 'decode' | 'invariant'
   readonly message: string
   readonly cause?: unknown
 }
 
-const fail = <A>(failure: PaperAuthorityAlgebraFailure): Result.Result<A, PaperAuthorityAlgebraFailure> =>
+const fail = <A>(failure: CapitalGrantAlgebraFailure): Result.Result<A, CapitalGrantAlgebraFailure> =>
   Result.fail(failure)
 
 export const validateObserveGenerationRequest = (input: {
   readonly generationHash: string
   readonly maximum: Authority
-}): Result.Result<ObserveGenerationRequest, PaperAuthorityAlgebraFailure> =>
+}): Result.Result<ObserveGenerationRequest, CapitalGrantAlgebraFailure> =>
   input.maximum === Authority.Observe
     ? Result.succeed({ generationHash: input.generationHash, maximum: Authority.Observe })
     : fail({ _tag: 'ObserveMaximumRequired', maximum: input.maximum })
@@ -298,7 +298,7 @@ export const validateObserveGenerationRequest = (input: {
 export const nextAuthorityVersion = (current: {
   readonly generationHash: string
   readonly version: number
-}): Result.Result<number, PaperAuthorityAlgebraFailure> => {
+}): Result.Result<number, CapitalGrantAlgebraFailure> => {
   const authorityVersion = current.version + 1
   return Number.isSafeInteger(authorityVersion)
     ? Result.succeed(authorityVersion)
@@ -312,7 +312,7 @@ export const nextAuthorityVersion = (current: {
 export const decideObserveGeneration = (
   input: ObserveGenerationRequest,
   current: AuthorityState | undefined,
-): Result.Result<ObserveGenerationDecision, PaperAuthorityAlgebraFailure> => {
+): Result.Result<ObserveGenerationDecision, CapitalGrantAlgebraFailure> => {
   if (current === undefined) {
     return Result.succeed({
       _tag: 'InitializeObserveGeneration',
@@ -346,7 +346,7 @@ export const decideObserveGeneration = (
 export const validateAuthorityObservation = (
   current: AuthorityState,
   observedAt: Date,
-): Result.Result<void, PaperAuthorityAlgebraFailure> => {
+): Result.Result<void, CapitalGrantAlgebraFailure> => {
   const updatedAt = new Date(current.updatedAt)
   return updatedAt.getTime() <= observedAt.getTime()
     ? Result.succeed(undefined)
@@ -361,7 +361,7 @@ export const validateAuthorityObservation = (
 export const validateCurrentGenerationHistory = <History extends AuthorityGenerationHistoryFacts>(
   current: AuthorityState,
   history: History | undefined,
-): Result.Result<History, PaperAuthorityAlgebraFailure> => {
+): Result.Result<History, CapitalGrantAlgebraFailure> => {
   if (history === undefined) {
     return fail({ _tag: 'CurrentGenerationHistoryMissing', generationHash: current.generationHash })
   }
@@ -407,14 +407,14 @@ export const validateCurrentGenerationHistory = <History extends AuthorityGenera
 export const requireUnusedAuthorityGeneration = (
   generationHash: string,
   existing: AuthorityGenerationHistoryFacts | undefined,
-): Result.Result<void, PaperAuthorityAlgebraFailure> =>
+): Result.Result<void, CapitalGrantAlgebraFailure> =>
   existing === undefined ? Result.succeed(undefined) : fail({ _tag: 'AuthorityGenerationAlreadyUsed', generationHash })
 
 export const bindPaperGenerationRuntime = (
   facts: PaperGenerationRuntimeFacts,
   expectedMaximum: Authority,
   operation: 'PREPARE' | 'activation',
-): Result.Result<PaperGenerationRuntimeBinding, PaperAuthorityAlgebraFailure> => {
+): Result.Result<PaperGenerationRuntimeBinding, CapitalGrantAlgebraFailure> => {
   if (
     facts.maximumAuthority !== expectedMaximum ||
     facts.alpaca === undefined ||
@@ -438,7 +438,7 @@ export const bindPaperGenerationRuntime = (
 
 export const validatePaperSourceAuthority = (
   current: AuthorityState,
-): Result.Result<void, PaperAuthorityAlgebraFailure> =>
+): Result.Result<void, CapitalGrantAlgebraFailure> =>
   current.maximum === Authority.Observe && current.effective === Authority.Observe
     ? Result.succeed(undefined)
     : fail({
@@ -451,7 +451,7 @@ export const validatePaperSourceAuthority = (
 export const validatePaperPrepareGeneration = (
   current: AuthorityState,
   binding: PaperGenerationRuntimeBinding,
-): Result.Result<void, PaperAuthorityAlgebraFailure> =>
+): Result.Result<void, CapitalGrantAlgebraFailure> =>
   current.generationHash === binding.configuredGenerationHash
     ? Result.succeed(undefined)
     : fail({
@@ -464,7 +464,7 @@ const readQualificationEvidenceVerificationFacts = (
   evidence: PaperGenerationEvidenceFacts,
   binding: PaperGenerationRuntimeBinding,
   build: AuthorityBuildFacts,
-): Result.Result<QualificationEvidenceVerificationFacts, PaperAuthorityAlgebraFailure> =>
+): Result.Result<QualificationEvidenceVerificationFacts, CapitalGrantAlgebraFailure> =>
   Result.try({
     try: () => ({
       verdict: evidence.result.verdict,
@@ -494,7 +494,7 @@ const readQualificationEvidenceVerificationFacts = (
       strategyParameterHash: build.strategyParameterHash,
       lockProtocolHash: evidence.lock.protocolHash,
     }),
-    catch: (cause): PaperAuthorityAlgebraFailure => ({
+    catch: (cause): CapitalGrantAlgebraFailure => ({
       _tag: 'QualificationEvidenceAccessFailed',
       qualificationRunId: binding.qualificationRunId,
       cause,
@@ -505,10 +505,10 @@ const qualificationEvidenceHash = (
   operation: Exclude<QualificationEvidenceVerificationOperation, 'strategy-protocol'>,
   value: unknown,
   binding: PaperGenerationRuntimeBinding,
-): Result.Result<string, PaperAuthorityAlgebraFailure> =>
+): Result.Result<string, CapitalGrantAlgebraFailure> =>
   Result.mapError(
     canonicalHashV1Result(value),
-    (cause): PaperAuthorityAlgebraFailure => ({
+    (cause): CapitalGrantAlgebraFailure => ({
       _tag: 'QualificationEvidenceVerificationFailed',
       qualificationRunId: binding.qualificationRunId,
       operation,
@@ -520,7 +520,7 @@ export const validatePaperGenerationEvidence = (
   evidence: PaperGenerationEvidenceFacts | undefined,
   binding: PaperGenerationRuntimeBinding,
   build: AuthorityBuildFacts,
-): Result.Result<PaperGenerationEvidenceFacts, PaperAuthorityAlgebraFailure> => {
+): Result.Result<PaperGenerationEvidenceFacts, CapitalGrantAlgebraFailure> => {
   if (evidence === undefined) {
     return fail({ _tag: 'QualificationEvidenceUnavailable', qualificationRunId: binding.qualificationRunId })
   }
@@ -533,7 +533,7 @@ export const validatePaperGenerationEvidence = (
         parameterHash: facts.parameterHash,
         parameterSchemaVersion: facts.protocolSchemaVersion,
       }),
-      (cause): PaperAuthorityAlgebraFailure => ({
+      (cause): CapitalGrantAlgebraFailure => ({
         _tag: 'QualificationEvidenceVerificationFailed',
         qualificationRunId: binding.qualificationRunId,
         operation: 'strategy-protocol',
@@ -593,7 +593,7 @@ export const validatePaperGenerationEvidence = (
 export const validateLatestExactReconciliation = (
   reconciliation: ExactReconciliationFacts | undefined,
   accountId: string,
-): Result.Result<ExactReconciliationFacts, PaperAuthorityAlgebraFailure> => {
+): Result.Result<ExactReconciliationFacts, CapitalGrantAlgebraFailure> => {
   if (
     reconciliation === undefined ||
     reconciliation.accountId !== accountId ||
@@ -613,7 +613,7 @@ export const validateLatestExactReconciliation = (
 export const validateMutationCoverage = (
   baseline: MutationBaselineFacts,
   reconciliation: ExactReconciliationFacts,
-): Result.Result<void, PaperAuthorityAlgebraFailure> =>
+): Result.Result<void, CapitalGrantAlgebraFailure> =>
   baseline.unresolvedCount === 0 &&
   (baseline.latestMutationAt === null || baseline.latestMutationAt.getTime() <= reconciliation.reconciledAt.getTime())
     ? Result.succeed(undefined)
@@ -624,14 +624,14 @@ export const validateMutationCoverage = (
         reconciledAt: reconciliation.reconciledAt,
       })
 
-const readPaperAuthorityGenerationMaterial = (input: {
+const readCapitalGrantGenerationMaterial = (input: {
   readonly current: AuthorityState
-  readonly proof: PaperAuthorityProofBinding
+  readonly proof: CapitalGrantProofBinding
   readonly binding: PaperGenerationRuntimeBinding
   readonly evidence: PaperGenerationEvidenceFacts
   readonly reconciliation: ExactReconciliationFacts
   readonly build: AuthorityBuildFacts
-}): Result.Result<PaperAuthorityGenerationMaterial, PaperAuthorityAlgebraFailure> =>
+}): Result.Result<CapitalGrantGenerationMaterial, CapitalGrantAlgebraFailure> =>
   Result.try({
     try: () => ({
       schemaVersion: 'bayn.paper-authority-generation.v2',
@@ -658,24 +658,24 @@ const readPaperAuthorityGenerationMaterial = (input: {
       reconciliationId: input.reconciliation.reconciliationId,
       reconciliationContentHash: input.reconciliation.contentHash,
     }),
-    catch: (cause): PaperAuthorityAlgebraFailure => ({ _tag: 'PaperGenerationDerivationFailed', cause }),
+    catch: (cause): CapitalGrantAlgebraFailure => ({ _tag: 'PaperGenerationDerivationFailed', cause }),
   })
 
-export const derivePaperAuthorityGeneration = (input: {
+export const deriveCapitalGrantGeneration = (input: {
   readonly current: AuthorityState
-  readonly proof: PaperAuthorityProofBinding
+  readonly proof: CapitalGrantProofBinding
   readonly binding: PaperGenerationRuntimeBinding
   readonly evidence: PaperGenerationEvidenceFacts
   readonly reconciliation: ExactReconciliationFacts
   readonly build: AuthorityBuildFacts
-}): Result.Result<DerivedPaperGeneration, PaperAuthorityAlgebraFailure> =>
+}): Result.Result<DerivedPaperGeneration, CapitalGrantAlgebraFailure> =>
   pipe(
-    readPaperAuthorityGenerationMaterial(input),
+    readCapitalGrantGenerationMaterial(input),
     Result.flatMap((material) =>
       pipe(
-        makePaperAuthorityGenerationResult(material),
+        makeCapitalGrantGenerationResult(material),
         Result.mapError(
-          (cause: PaperAuthorityGenerationConstructionFailure): PaperAuthorityAlgebraFailure => ({
+          (cause: CapitalGrantGenerationConstructionFailure): CapitalGrantAlgebraFailure => ({
             _tag: 'PaperGenerationDerivationFailed',
             cause,
           }),
@@ -689,7 +689,7 @@ export const validatePaperGenerationFreshness = (
   reconciliation: ExactReconciliationFacts,
   observedAt: Date,
   staleThresholdMs: number,
-): Result.Result<Date, PaperAuthorityAlgebraFailure> =>
+): Result.Result<Date, CapitalGrantAlgebraFailure> =>
   reconciliation.reconciledAt.getTime() <= observedAt.getTime() &&
   observedAt.getTime() - reconciliation.reconciledAt.getTime() < staleThresholdMs
     ? Result.succeed(observedAt)
@@ -703,7 +703,7 @@ export const validatePaperGenerationFreshness = (
 export const decidePaperActivation = (
   current: AuthorityState,
   binding: PaperGenerationRuntimeBinding,
-): Result.Result<PaperActivationDecision, PaperAuthorityAlgebraFailure> => {
+): Result.Result<PaperActivationDecision, CapitalGrantAlgebraFailure> => {
   if (current.maximum !== Authority.Paper) {
     return Result.map(
       nextAuthorityVersion(current),
@@ -724,11 +724,11 @@ export const decidePaperActivation = (
 }
 
 export const validatePaperGenerationReplay = (
-  stored: PaperAuthorityGeneration,
+  stored: CapitalGrantGeneration,
   binding: PaperGenerationRuntimeBinding,
-  proof: PaperAuthorityProofBinding,
+  proof: CapitalGrantProofBinding,
   build: AuthorityBuildFacts,
-): Result.Result<void, PaperAuthorityAlgebraFailure> =>
+): Result.Result<void, CapitalGrantAlgebraFailure> =>
   stored.accountId === binding.accountId &&
   stored.qualificationRunId === binding.qualificationRunId &&
   stored.activationSourceRevision === build.sourceRevision &&
@@ -747,9 +747,9 @@ export const validatePaperGenerationReplay = (
       })
 
 export const validateDerivedPaperGeneration = (
-  generation: PaperAuthorityGeneration,
+  generation: CapitalGrantGeneration,
   binding: PaperGenerationRuntimeBinding,
-): Result.Result<void, PaperAuthorityAlgebraFailure> =>
+): Result.Result<void, CapitalGrantAlgebraFailure> =>
   generation.generationHash === binding.configuredGenerationHash
     ? Result.succeed(undefined)
     : fail({
@@ -761,7 +761,7 @@ export const validateDerivedPaperGeneration = (
 export const paperActivationEffectiveAuthority = (kill: KillState): Authority =>
   kill === KillState.Active ? Authority.Observe : Authority.Paper
 
-export const paperAuthorityFailureDetails = (failure: PaperAuthorityAlgebraFailure): PaperAuthorityFailureDetails => {
+export const capitalGrantFailureDetails = (failure: CapitalGrantAlgebraFailure): CapitalGrantFailureDetails => {
   switch (failure._tag) {
     case 'ObserveMaximumRequired':
       return { failure: 'invariant', message: 'Phase A authority maximum must be OBSERVE' }
