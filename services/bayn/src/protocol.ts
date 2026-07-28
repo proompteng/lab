@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect'
+import { Data, Effect, Result, Schema } from 'effect'
 
 import { operationalError, type OperationalError } from './errors'
 import { defaultExecutionModel } from './execution-model'
@@ -262,23 +262,48 @@ export const defaultProtocolDocument = {
   thresholds: defaultEconomicThresholds,
 } as const
 
-export const loadProtocol = (input: unknown): Effect.Effect<Protocol, OperationalError> =>
-  Schema.decodeUnknownEffect(
-    ProtocolSchema,
-    StrictParseOptions,
-  )(input).pipe(
-    Effect.mapError((cause) =>
-      operationalError('strategy', 'parameters', 'invalid risk-balanced trend parameters', cause),
-    ),
+export class ProtocolDecodeError extends Data.TaggedError('ProtocolDecodeError')<{
+  readonly document: 'causal-default' | 'protocol'
+  readonly message: string
+  readonly cause: Schema.SchemaError
+}> {}
+
+const decodeProtocolDocument = Schema.decodeUnknownResult(ProtocolSchema, StrictParseOptions)
+const decodeCausalProtocolDocument = Schema.decodeUnknownResult(ProtocolV4Schema, StrictParseOptions)
+
+export const decodeProtocol = (input: unknown): Result.Result<Protocol, ProtocolDecodeError> =>
+  Result.mapError(
+    decodeProtocolDocument(input),
+    (cause) =>
+      new ProtocolDecodeError({
+        document: 'protocol',
+        message: 'invalid risk-balanced trend parameters',
+        cause,
+      }),
   )
 
-export const loadDefaultProtocol: Effect.Effect<CausalProtocol, OperationalError> = Schema.decodeUnknownEffect(
-  ProtocolV4Schema,
-  StrictParseOptions,
-)(defaultProtocolDocument).pipe(
-  Effect.mapError((cause) =>
-    operationalError('strategy', 'parameters', 'invalid risk-balanced trend parameters', cause),
-  ),
-)
+export const decodeDefaultProtocol = (): Result.Result<CausalProtocol, ProtocolDecodeError> =>
+  Result.mapError(
+    decodeCausalProtocolDocument(defaultProtocolDocument),
+    (cause) =>
+      new ProtocolDecodeError({
+        document: 'causal-default',
+        message: 'invalid default risk-balanced trend parameters',
+        cause,
+      }),
+  )
+
+const protocolOperationalBoundary = <A>(
+  decoded: Result.Result<A, ProtocolDecodeError>,
+): Effect.Effect<A, OperationalError> =>
+  Effect.fromResult(decoded).pipe(
+    Effect.mapError((error) => operationalError('strategy', 'parameters', error.message, error)),
+  )
+
+export const loadProtocol = (input: unknown): Effect.Effect<Protocol, OperationalError> =>
+  protocolOperationalBoundary(decodeProtocol(input))
+
+export const loadDefaultProtocol: Effect.Effect<CausalProtocol, OperationalError> =
+  protocolOperationalBoundary(decodeDefaultProtocol())
 
 export const hashParameters = (parameters: Protocol): string => canonicalHashV1(parameters)

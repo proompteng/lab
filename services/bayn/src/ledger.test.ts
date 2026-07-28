@@ -15,9 +15,12 @@ import {
   hashLedgerPlanResult,
   Journal,
   JournalLive,
+  JournalValidationError,
   LedgerValidationError,
+  ReplicaAddressOperationalError,
   reconcileLedgerPlan,
   resolveReplicaAddresses,
+  TigerBeetleTransportError,
   transactionTransferQuery,
   validatePersistedRunEvidence,
   type JournalService,
@@ -428,6 +431,7 @@ describe('TigerBeetle simulation journal', () => {
     })
 
     const rejected = await Effect.runPromise(Effect.flip(withJournal(rejectedClient, (journal) => journal.post(plan))))
+    expect(rejected).toBeInstanceOf(JournalValidationError)
     expect(rejected.retryable).toBeFalse()
     expect(rejected.cause).toBeInstanceOf(LedgerValidationError)
     expect(rejected.cause).toMatchObject({
@@ -450,6 +454,7 @@ describe('TigerBeetle simulation journal', () => {
     const unavailable = await Effect.runPromise(
       Effect.flip(withJournal(unavailableClient, (journal) => journal.post(plan))),
     )
+    expect(unavailable).toBeInstanceOf(TigerBeetleTransportError)
     expect(unavailable.retryable).toBeTrue()
     expect(unavailable.cause).toBe(ioCause)
     expect(transferCreates).toBe(0)
@@ -1137,6 +1142,13 @@ describe('TigerBeetle replica addresses', () => {
   })
 
   test('rejects malformed, out-of-range, and IPv6-only endpoints', async () => {
+    const malformed = await Effect.runPromise(
+      Effect.flip(resolveReplicaAddresses(['missing-port'], () => Effect.succeed(['10.0.0.1']))),
+    )
+    expect(malformed).toBeInstanceOf(ReplicaAddressOperationalError)
+    if (malformed instanceof ReplicaAddressOperationalError) {
+      expect(malformed.validation.reason).toBe('invalid-address')
+    }
     expect(
       Effect.runPromise(resolveReplicaAddresses(['missing-port'], () => Effect.succeed(['10.0.0.1']))),
     ).rejects.toThrow('invalid TigerBeetle replica address')
