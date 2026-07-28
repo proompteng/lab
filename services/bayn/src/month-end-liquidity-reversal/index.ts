@@ -1,5 +1,5 @@
 export { makeCandidate6Decision, candidate6RequiredPressureReturn } from './decision'
-export { candidate6ExecutableBehaviorHash } from './behavior-evidence'
+export { candidate6ExecutableBehaviorEvidence, candidate6ExecutableBehaviorHash } from './behavior-evidence'
 export {
   candidate6BoundedBarsContentHash,
   candidate6BoundedSessionsContentHash,

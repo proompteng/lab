@@ -106,6 +106,12 @@ describe('candidate 6 pure decision', () => {
     expect(issue).toEqual({ _tag: 'FutureBar', sessionDate: executionDate, signalDate })
   })
 
+  test('preserves a snapshot publication identity later than the historical signal', () => {
+    const decision = success(makeCandidate6Decision(input({ publicationAsOf: '2026-07-27' })))
+    expect(decision.action).toBe('enter')
+    expect(decision.signalDate).toBe(signalDate)
+  })
+
   test('keeps target exposure and turnover bounded, including liquidity sizing', () => {
     const decision = success(makeCandidate6Decision(input({ portfolioEquityUsd: 1_000_000_000 })))
     expect(decision.targetWeights.SPY).toBeCloseTo(0.0009998, 12)

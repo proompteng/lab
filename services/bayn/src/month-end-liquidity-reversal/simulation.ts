@@ -234,6 +234,7 @@ export const simulateCandidate6 = (
   calendar: readonly IsoDate[],
   bars: readonly DailyBar[],
   simulationStart: IsoDate,
+  publicationAsOf: IsoDate,
   protocol: Candidate6Protocol,
   costMultiplier: number,
   includePartialFills: boolean,
@@ -304,7 +305,7 @@ export const simulateCandidate6 = (
     const decisionResult = makeCandidate6Decision({
       signalDate: sessionDate,
       executionDate,
-      publicationAsOf: sessionDate,
+      publicationAsOf,
       calendar,
       bars: bars.slice(Math.max(0, index - 19), index + 1),
       position: { activeEntrySignalDate, currentWeights: { SPY: grossExposure } },

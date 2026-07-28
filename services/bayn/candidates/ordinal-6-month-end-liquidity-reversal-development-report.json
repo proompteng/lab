@@ -6,7 +6,7 @@
   "identity": {
     "strategyVersion": "1.0.0",
     "parameterHash": "59889076e9cff0b8c79c30f8c095b50ae9c4cd6044fe536004f3432a3287a645",
-    "executableBehaviorHash": "1af0bda2a602bc621d1f3cb39ca5455b9f5b9cf0b0c4be161f08b96dbee8ea30"
+    "executableBehaviorHash": "d9b2f386aeef96dd15ca82e63d3d0e44a98cccc434b39a3243100fbf2bec4ba0"
   },
   "dataset": {
     "snapshotId": "2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0",
@@ -277,5 +277,5 @@
     "Daily adjusted bars cannot represent intraday spread variation or queue position; costs are explicit conservative model assumptions.",
     "All development observations predate the May 28, 2024 U.S. T+1 transition; the sealed official trial excludes the transition month and requires positive pre- and post-transition regime results."
   ],
-  "reportHash": "1c90f239f436c77d3b400ce5101d667631ed7ba8f56e73f405de56bca1fd1cda"
+  "reportHash": "328eada282d1af688954571fcd6c5169744e409eaa20446d865d41c58f196074"
 }

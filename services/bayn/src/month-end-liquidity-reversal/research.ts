@@ -360,9 +360,25 @@ export const buildCandidate6DevelopmentReport = (
     return fail({ _tag: 'DevelopmentBehaviorHashFailure', cause: executableBehaviorHash.failure })
   }
   const { bars, calendar } = prepared.success
-  const gross = simulateCandidate6(calendar, bars, CANDIDATE_6_DEVELOPMENT_SIMULATION_START, protocol, 0, false)
+  const gross = simulateCandidate6(
+    calendar,
+    bars,
+    CANDIDATE_6_DEVELOPMENT_SIMULATION_START,
+    dataset.publicationAsOf,
+    protocol,
+    0,
+    false,
+  )
   if (Result.isFailure(gross)) return fail(gross.failure)
-  const net = simulateCandidate6(calendar, bars, CANDIDATE_6_DEVELOPMENT_SIMULATION_START, protocol, 1, true)
+  const net = simulateCandidate6(
+    calendar,
+    bars,
+    CANDIDATE_6_DEVELOPMENT_SIMULATION_START,
+    dataset.publicationAsOf,
+    protocol,
+    1,
+    true,
+  )
   if (Result.isFailure(net)) return fail(net.failure)
   const buyAndHold = simulateCandidate6BuyAndHold(calendar, bars, CANDIDATE_6_DEVELOPMENT_SIMULATION_START)
   if (Result.isFailure(buyAndHold)) return fail(buyAndHold.failure)
@@ -381,6 +397,7 @@ export const buildCandidate6DevelopmentReport = (
       calendar,
       bars,
       CANDIDATE_6_DEVELOPMENT_SIMULATION_START,
+      dataset.publicationAsOf,
       protocol,
       costMultiplier,
       true,

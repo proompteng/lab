@@ -295,7 +295,7 @@ export const makeCandidate6Decision = (input: Candidate6DecisionInput): Decision
   }
   const timeResult = validateTimes(input.finalizedAtEpochMilliseconds, input.observedAtEpochMilliseconds, protocol)
   if (Result.isFailure(timeResult)) return fail(timeResult.failure)
-  if (input.publicationAsOf !== input.signalDate) {
+  if (input.publicationAsOf < input.signalDate) {
     return fail({
       _tag: 'PublicationSessionMismatch',
       expected: input.signalDate,

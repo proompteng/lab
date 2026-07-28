@@ -57,6 +57,8 @@ const behaviorBar = (sessionDate: IsoDate): DailyBar => {
 }
 
 const behaviorBars = behaviorCalendar.map(behaviorBar)
+const behaviorSimulationStart = '2022-01-25' as IsoDate
+const behaviorPublicationAsOf = '2022-02-04' as IsoDate
 
 const decisionInput = (
   signalDate: IsoDate,
@@ -67,7 +69,7 @@ const decisionInput = (
 ): Candidate6DecisionInput => ({
   signalDate,
   executionDate,
-  publicationAsOf: signalDate,
+  publicationAsOf: behaviorPublicationAsOf,
   calendar: behaviorCalendar,
   bars: behaviorBars.filter((bar) => bar.sessionDate <= signalDate),
   position: { activeEntrySignalDate, currentWeights: { SPY: currentWeight } },
@@ -82,38 +84,49 @@ const resultEvidence = <A, E>(result: Result.Result<A, E>) =>
     ? ({ outcome: 'success', value: result.success } as const)
     : ({ outcome: 'failure', failure: result.failure } as const)
 
+export const candidate6ExecutableBehaviorEvidence = (protocol: Candidate6Protocol = candidate6Protocol) => ({
+  schemaVersion: 'bayn.month-end-liquidity-reversal.executable-behavior.v1',
+  vectors: {
+    enter: resultEvidence(makeCandidate6Decision(decisionInput('2022-01-25', '2022-01-26', null, 0, protocol))),
+    hold: resultEvidence(
+      makeCandidate6Decision(decisionInput('2022-02-02', '2022-02-03', '2022-01-25', 0.3, protocol)),
+    ),
+    exit: resultEvidence(
+      makeCandidate6Decision(decisionInput('2022-02-03', '2022-02-04', '2022-01-25', 0.3, protocol)),
+    ),
+    rejectFutureEntry: resultEvidence(
+      makeCandidate6Decision(decisionInput('2022-01-10', '2022-01-11', '2022-01-25', 0.2, protocol)),
+    ),
+    rejectMissingActiveBar: resultEvidence(
+      makeCandidate6Decision({
+        ...decisionInput('2022-02-02', '2022-02-03', '2022-01-25', 0.3, protocol),
+        bars: behaviorBars.filter((bar) => bar.sessionDate < '2022-02-02'),
+      }),
+    ),
+    completeSimulation: resultEvidence(
+      simulateCandidate6(
+        behaviorCalendar,
+        behaviorBars,
+        behaviorSimulationStart,
+        behaviorPublicationAsOf,
+        protocol,
+        1,
+        true,
+      ),
+    ),
+    truncatedSimulation: resultEvidence(
+      simulateCandidate6(
+        behaviorCalendar.slice(0, -1),
+        behaviorBars.slice(0, -1),
+        behaviorSimulationStart,
+        behaviorPublicationAsOf,
+        protocol,
+        1,
+        true,
+      ),
+    ),
+  },
+})
+
 export const candidate6ExecutableBehaviorHash = (protocol: Candidate6Protocol = candidate6Protocol) =>
-  canonicalHashV1Result({
-    schemaVersion: 'bayn.month-end-liquidity-reversal.executable-behavior.v1',
-    vectors: {
-      enter: resultEvidence(makeCandidate6Decision(decisionInput('2022-01-25', '2022-01-26', null, 0, protocol))),
-      hold: resultEvidence(
-        makeCandidate6Decision(decisionInput('2022-02-02', '2022-02-03', '2022-01-25', 0.3, protocol)),
-      ),
-      exit: resultEvidence(
-        makeCandidate6Decision(decisionInput('2022-02-03', '2022-02-04', '2022-01-25', 0.3, protocol)),
-      ),
-      rejectFutureEntry: resultEvidence(
-        makeCandidate6Decision(decisionInput('2022-01-10', '2022-01-11', '2022-01-25', 0.2, protocol)),
-      ),
-      rejectMissingActiveBar: resultEvidence(
-        makeCandidate6Decision({
-          ...decisionInput('2022-02-02', '2022-02-03', '2022-01-25', 0.3, protocol),
-          bars: behaviorBars.filter((bar) => bar.sessionDate < '2022-02-02'),
-        }),
-      ),
-      completeSimulation: resultEvidence(
-        simulateCandidate6(behaviorCalendar, behaviorBars, behaviorCalendar[0], protocol, 1, true),
-      ),
-      truncatedSimulation: resultEvidence(
-        simulateCandidate6(
-          behaviorCalendar.slice(0, -4),
-          behaviorBars.slice(0, -4),
-          behaviorCalendar[0],
-          protocol,
-          1,
-          true,
-        ),
-      ),
-    },
-  })
+  canonicalHashV1Result(candidate6ExecutableBehaviorEvidence(protocol))

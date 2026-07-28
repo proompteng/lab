@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { candidate6ExecutableBehaviorHash } from './behavior-evidence'
+import { candidate6ExecutableBehaviorEvidence, candidate6ExecutableBehaviorHash } from './behavior-evidence'
 import {
   admitCandidate6Trial,
   candidate6PriorTerminalLineage,
@@ -34,6 +34,22 @@ const mutate = (
 }
 
 describe('candidate 6 sealed preregistration', () => {
+  test('binds a successful simulator path and the terminal truncation guard', () => {
+    const evidence = candidate6ExecutableBehaviorEvidence()
+    expect(evidence.vectors.completeSimulation.outcome).toBe('success')
+    if (evidence.vectors.completeSimulation.outcome === 'success') {
+      expect(evidence.vectors.completeSimulation.value.metrics.entryCount).toBe(1)
+      expect(evidence.vectors.completeSimulation.value.metrics.orderCount).toBe(2)
+    }
+    expect(evidence.vectors.truncatedSimulation).toEqual({
+      outcome: 'failure',
+      failure: {
+        _tag: 'ResearchSimulationInvariant',
+        reason: 'simulation ended with open event from 2022-01-25',
+      },
+    })
+  })
+
   test('is deterministic and binds the complete decision identity', () => {
     const first = success(makeSealedCandidate6Preregistration())
     const second = success(makeSealedCandidate6Preregistration())
