@@ -21,14 +21,19 @@ import {
   type BrokerMutationShape,
 } from './alpaca-mutations'
 import {
+  AssetClass,
   AssetStatus,
   BrokerProvider,
   BrokerReadError,
   BrokerReadErrorKind,
   BrokerSessionAcquisitionError,
   BrokerSessionAcquisitionStage,
+  OrderClass,
   OrderCollection,
+  OrderSide as BrokerOrderSide,
   OrderStatus,
+  OrderType as BrokerOrderType,
+  TimeInForce as BrokerTimeInForce,
   alpacaSandboxBaseUrl,
   acquireBrokerSession,
   decodeBrokerConnection,
@@ -43,8 +48,9 @@ const proofSymbol = 'AAPL'
 const proofQuantityMicros = '10000'
 const brokerOperationTimeoutMs = 5_000
 const lookupRetryCount = 2
-const terminalPollCount = 5
+const terminalPollCount = 4
 const retryDelayMs = 1_000
+const minimumPreOpenSafetyMs = 30 * 60_000
 const mutationPhaseDeadlineMs = 2 * 60_000
 const cleanupDeadlineMs = 3 * 60_000
 const retryDelay = Duration.millis(retryDelayMs)
@@ -53,9 +59,7 @@ const cleanupDeadline = Duration.millis(cleanupDeadlineMs)
 const maximumRetryReadMs = (lookupRetryCount + 1) * brokerOperationTimeoutMs + lookupRetryCount * retryDelayMs
 const maximumCleanupNetworkMs =
   maximumRetryReadMs +
-  brokerOperationTimeoutMs +
-  (terminalPollCount + 1) * maximumRetryReadMs +
-  terminalPollCount * retryDelayMs +
+  (terminalPollCount + 1) * (brokerOperationTimeoutMs + retryDelayMs + maximumRetryReadMs) +
   maximumRetryReadMs
 
 const required = (name: string): string => {
@@ -67,6 +71,12 @@ const required = (name: string): string => {
 }
 
 const hashIdentity = (value: string): string => canonicalHashV1({ value })
+
+const addUtcDays = (date: string, days: number): string => {
+  const value = new Date(`${date}T00:00:00.000Z`)
+  value.setUTCDate(value.getUTCDate() + days)
+  return value.toISOString().slice(0, 10)
+}
 
 type ProofStage =
   | 'CONFIGURATION'
@@ -111,6 +121,8 @@ interface ProofState {
   clock?: {
     readonly observedAt: string
     readonly marketOpen: false
+    readonly nextMarketOpenAt: string
+    readonly millisecondsUntilNextOpen: number
     readonly sessionCount: number
     readonly calendarHash: string
   }
@@ -124,6 +136,7 @@ interface ProofState {
   brokerOrderId?: string
   acceptedOrderContractMismatch: boolean
   finalStatus?: OrderStatus
+  filledQuantityMicros?: string
   cancelAttempts: number
   cancelAcknowledged: boolean
   lifecycle: LifecycleEvent[]
@@ -228,6 +241,15 @@ const terminalOrderStatuses: ReadonlySet<OrderStatus> = new Set([
 ])
 
 const isOpenStatus = (status: OrderStatus): boolean => !terminalOrderStatuses.has(status)
+const isCancellableStatus = (status: OrderStatus): boolean =>
+  isOpenStatus(status) && status !== OrderStatus.PendingCancel
+const hasFilledQuantity = (order: Order): boolean => order.filledQuantityMicros !== '0'
+const preOpenSafetyMillis = (observedAt: string, nextMarketOpenAt: string): number =>
+  Date.parse(nextMarketOpenAt) - Date.parse(observedAt)
+const requireZeroFill = (order: Order): Effect.Effect<void, SandboxContractProofError> =>
+  hasFilledQuantity(order)
+    ? Effect.fail(proofFailure('CLEANUP', 'ORDER_FILLED_DURING_PROOF'))
+    : Effect.succeed(undefined)
 
 const retryRead = <A>(
   effect: Effect.Effect<A, BrokerReadError>,
@@ -271,57 +293,12 @@ const requireOrderBinding = (
     ? Effect.succeed(undefined)
     : Effect.fail(proofFailure(stage, 'ORDER_BINDING_MISMATCH'))
 
-const waitForTerminalOrder = (
-  orderById: (brokerOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>,
-  brokerOrderId: string,
-  clientOrderId: string,
-  allowAcceptedContractMismatch: boolean,
-  state: ProofState,
-  attempt = 0,
-): Effect.Effect<ReadResult<Order>, BrokerReadError | SandboxContractProofError> =>
-  retryRead(orderById(brokerOrderId)).pipe(
-    Effect.flatMap((result) =>
-      requireOrderBinding(
-        result.value,
-        clientOrderId,
-        brokerOrderId,
-        allowAcceptedContractMismatch,
-        'TERMINAL_LOOKUP',
-      ).pipe(
-        Effect.andThen(
-          Effect.sync(() => {
-            state.lifecycle.push(readEvidence('TERMINAL_LOOKUP', result))
-            state.finalStatus = result.value.status
-          }),
-        ),
-        Effect.andThen(
-          !isOpenStatus(result.value.status)
-            ? Effect.succeed(result)
-            : attempt >= terminalPollCount
-              ? Effect.fail(proofFailure('TERMINAL_LOOKUP', 'ORDER_REMAINED_OPEN'))
-              : Effect.sleep(retryDelay).pipe(
-                  Effect.andThen(
-                    waitForTerminalOrder(
-                      orderById,
-                      brokerOrderId,
-                      clientOrderId,
-                      allowAcceptedContractMismatch,
-                      state,
-                      attempt + 1,
-                    ),
-                  ),
-                ),
-        ),
-      ),
-    ),
-  )
-
-const cancelIfOpen = (
+const attemptCancellation = (
   mutation: BrokerMutationShape,
   order: Order,
   state: ProofState,
 ): Effect.Effect<void, BrokerMutationError> => {
-  if (!isOpenStatus(order.status)) return Effect.succeed(undefined)
+  if (!isCancellableStatus(order.status)) return Effect.succeed(undefined)
   state.cancelAttempts += 1
   return mutation.cancel(order.brokerOrderId).pipe(
     Effect.tap((receipt) =>
@@ -346,6 +323,61 @@ const cancelIfOpen = (
     ),
   )
 }
+
+const resolveOrderCleanup = (
+  mutation: BrokerMutationShape,
+  orderById: (brokerOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>,
+  current: ReadResult<Order>,
+  clientOrderId: string,
+  brokerOrderId: string,
+  allowAcceptedContractMismatch: boolean,
+  state: ProofState,
+  attempt = 0,
+  pollDelayMs = retryDelayMs,
+): Effect.Effect<ReadResult<Order>, BrokerReadError | BrokerMutationError | SandboxContractProofError> =>
+  requireOrderBinding(
+    current.value,
+    clientOrderId,
+    brokerOrderId,
+    allowAcceptedContractMismatch,
+    'TERMINAL_LOOKUP',
+  ).pipe(
+    Effect.andThen(
+      Effect.sync(() => {
+        state.finalStatus = current.value.status
+        state.filledQuantityMicros = current.value.filledQuantityMicros
+      }),
+    ),
+    Effect.andThen(
+      !isOpenStatus(current.value.status)
+        ? Effect.succeed(current)
+        : attempt > terminalPollCount
+          ? Effect.fail(proofFailure('TERMINAL_LOOKUP', 'ORDER_REMAINED_OPEN_AFTER_CANCEL_RETRIES'))
+          : attemptCancellation(mutation, current.value, state).pipe(
+              Effect.andThen(Effect.sleep(Duration.millis(pollDelayMs))),
+              Effect.andThen(retryRead(orderById(brokerOrderId))),
+              Effect.flatMap((next) =>
+                Effect.sync(() => {
+                  state.lifecycle.push(readEvidence('TERMINAL_LOOKUP', next))
+                }).pipe(
+                  Effect.andThen(
+                    resolveOrderCleanup(
+                      mutation,
+                      orderById,
+                      next,
+                      clientOrderId,
+                      brokerOrderId,
+                      allowAcceptedContractMismatch,
+                      state,
+                      attempt + 1,
+                      pollDelayMs,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+    ),
+  )
 
 const verifyNoOpenProofOrder = (
   session: BrokerSessionShape,
@@ -412,7 +444,10 @@ const cleanupOrder = (
       state.lifecycle.push(readEvidence('CLEANUP_LOOKUP_BY_CLIENT_ID', lookup.result))
     }
 
-    if (observed === undefined) observed = yield* retryRead(orderById(brokerOrderId))
+    if (observed === undefined) {
+      observed = yield* retryRead(orderById(brokerOrderId))
+      state.lifecycle.push(readEvidence('CLEANUP_LOOKUP_BY_ID', observed))
+    }
     yield* requireOrderBinding(
       observed.value,
       clientOrderId,
@@ -420,16 +455,19 @@ const cleanupOrder = (
       state.acceptedOrderContractMismatch,
       'CLEANUP',
     )
-    yield* cancelIfOpen(mutation, observed.value, state)
-    const terminal = yield* waitForTerminalOrder(
+    const terminal = yield* resolveOrderCleanup(
+      mutation,
       orderById,
-      brokerOrderId,
+      observed,
       clientOrderId,
+      brokerOrderId,
       state.acceptedOrderContractMismatch,
       state,
     )
     yield* verifyNoOpenProofOrder(session, clientOrderId, state)
     state.finalStatus = terminal.value.status
+    state.filledQuantityMicros = terminal.value.filledQuantityMicros
+    yield* requireZeroFill(terminal.value)
     state.cleanup.result = 'VERIFIED_TERMINAL'
     state.cleanup.verifiedAt = yield* currentUtcInstant
   }).pipe(
@@ -450,6 +488,44 @@ const recordSubmitFailure = (state: ProofState, error: BrokerMutationError): voi
   }
 }
 
+const testProofState = (): ProofState => ({
+  submitOutcome: 'NOT_ATTEMPTED',
+  acceptedOrderContractMismatch: false,
+  cancelAttempts: 0,
+  cancelAcknowledged: false,
+  lifecycle: [],
+  cleanup: { result: 'NOT_RUN' },
+})
+
+const testOrder = (status: OrderStatus, filledQuantityMicros = '0'): Order => ({
+  accountId: '00000000-0000-4000-8000-000000000001',
+  brokerOrderId: '00000000-0000-4000-8000-000000000002',
+  clientOrderId: 'sandbox-proof-client-order',
+  createdAt: '2026-07-28T00:00:00.000Z',
+  assetId: '00000000-0000-4000-8000-000000000003',
+  symbol: proofSymbol,
+  assetClass: AssetClass.UsEquity,
+  quantityMicros: proofQuantityMicros,
+  filledQuantityMicros,
+  orderClass: OrderClass.Simple,
+  orderType: BrokerOrderType.Market,
+  side: BrokerOrderSide.Buy,
+  timeInForce: BrokerTimeInForce.Day,
+  status,
+  extendedHours: false,
+  observedAt: '2026-07-28T00:00:01.000Z',
+})
+
+const testReadResult = (status: OrderStatus, filledQuantityMicros = '0'): ReadResult<Order> => ({
+  value: testOrder(status, filledQuantityMicros),
+  evidence: {
+    requestId: `request-${status}`,
+    status: 200,
+    contentHash: '0'.repeat(64),
+    observedAt: '2026-07-28T00:00:01.000Z',
+  },
+})
+
 test('treats every Alpaca nonterminal status as open for cleanup', () => {
   for (const status of Object.values(OrderStatus)) {
     expect(isOpenStatus(status)).toBe(!terminalOrderStatuses.has(status))
@@ -463,6 +539,79 @@ test('treats every Alpaca nonterminal status as open for cleanup', () => {
 test('keeps the cleanup network bound below its explicit deadline', () => {
   expect(maximumCleanupNetworkMs).toBeLessThan(cleanupDeadlineMs)
   expect(mutationPhaseDeadlineMs + cleanupDeadlineMs).toBeLessThan(15 * 60_000)
+})
+
+test('requires a full pre-open safety window', () => {
+  const observedAt = '2026-07-28T13:00:00.000Z'
+  expect(preOpenSafetyMillis(observedAt, '2026-07-28T13:30:00.000Z')).toBe(minimumPreOpenSafetyMs)
+  expect(preOpenSafetyMillis(observedAt, '2026-07-28T13:29:59.999Z')).toBeLessThan(minimumPreOpenSafetyMs)
+})
+
+test('rejects terminal cleanup when any quantity filled', () => {
+  expect(Exit.isSuccess(Effect.runSync(Effect.exit(requireZeroFill(testOrder(OrderStatus.Canceled)))))).toBeTrue()
+  expect(Exit.isFailure(Effect.runSync(Effect.exit(requireZeroFill(testOrder(OrderStatus.Canceled, '1')))))).toBeTrue()
+  expect(
+    Exit.isFailure(Effect.runSync(Effect.exit(requireZeroFill(testOrder(OrderStatus.Filled, '10000'))))),
+  ).toBeTrue()
+})
+
+test('retries exact cancellation after an unknown outcome', async () => {
+  const state = testProofState()
+  const initial = testReadResult(OrderStatus.New)
+  let cancelCalls = 0
+  let readCalls = 0
+  const orderById: NonNullable<BrokerMutationShape['orderById']> = (brokerOrderId) => {
+    expect(brokerOrderId).toBe(initial.value.brokerOrderId)
+    readCalls += 1
+    return Effect.succeed(testReadResult(readCalls === 1 ? OrderStatus.New : OrderStatus.Canceled))
+  }
+  const mutation: BrokerMutationShape = {
+    submit: () => Effect.die(new Error('submit is not used by cleanup retry coverage')),
+    cancel: (brokerOrderId) => {
+      expect(brokerOrderId).toBe(initial.value.brokerOrderId)
+      cancelCalls += 1
+      return cancelCalls === 1
+        ? Effect.fail(
+            new BrokerMutationError({
+              operation: MutationOperation.Cancel,
+              failure: MutationFailure.Unknown,
+              outcome: MutationOutcome.Unknown,
+              message: 'cancel response was lost',
+            }),
+          )
+        : Effect.succeed({
+            requestHash: '1'.repeat(64),
+            brokerOrderId,
+            evidence: {
+              requestId: 'cancel-retry-acknowledged',
+              status: 204,
+              contentHash: '2'.repeat(64),
+              observedAt: '2026-07-28T00:00:02.000Z',
+            },
+          })
+    },
+    orderById,
+  }
+
+  const terminal = await Effect.runPromise(
+    resolveOrderCleanup(
+      mutation,
+      orderById,
+      initial,
+      initial.value.clientOrderId,
+      initial.value.brokerOrderId,
+      false,
+      state,
+      0,
+      0,
+    ),
+  )
+
+  expect(cancelCalls).toBe(2)
+  expect(readCalls).toBe(2)
+  expect(terminal.value.status).toBe(OrderStatus.Canceled)
+  expect(state.cancelAttempts).toBe(2)
+  expect(state.cancelAcknowledged).toBeTrue()
 })
 
 test('preserves typed session acquisition evidence in the sanitized failure', () => {
@@ -496,14 +645,7 @@ test('preserves typed session acquisition evidence in the sanitized failure', ()
 })
 
 test('retains an accepted mismatched broker ID for exact cleanup', () => {
-  const state: ProofState = {
-    submitOutcome: 'NOT_ATTEMPTED',
-    acceptedOrderContractMismatch: false,
-    cancelAttempts: 0,
-    cancelAcknowledged: false,
-    lifecycle: [],
-    cleanup: { result: 'NOT_RUN' },
-  }
+  const state = testProofState()
   recordSubmitFailure(
     state,
     new BrokerMutationError({
@@ -611,14 +753,26 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
 
     const today = yield* currentUtcDate
     const clockObservedAt = yield* currentUtcInstant
-    const calendar = yield* session.read.marketCalendar({ start: today, end: today })
+    const calendar = yield* session.read.marketCalendar({ start: today, end: addUtcDays(today, 14) })
     const marketOpen = calendar.value.sessions.some(
       (marketSession) => clockObservedAt >= marketSession.openAt && clockObservedAt < marketSession.closeAt,
     )
     if (marketOpen) return yield* Effect.fail(proofFailure('CLOCK_PREFLIGHT', 'REGULAR_MARKET_IS_OPEN'))
+    const nextMarketSession = [...calendar.value.sessions]
+      .filter((marketSession) => marketSession.openAt > clockObservedAt)
+      .sort((left, right) => left.openAt.localeCompare(right.openAt))[0]
+    if (nextMarketSession === undefined) {
+      return yield* Effect.fail(proofFailure('CLOCK_PREFLIGHT', 'NEXT_MARKET_OPEN_UNAVAILABLE'))
+    }
+    const millisecondsUntilNextOpen = preOpenSafetyMillis(clockObservedAt, nextMarketSession.openAt)
+    if (millisecondsUntilNextOpen < minimumPreOpenSafetyMs) {
+      return yield* Effect.fail(proofFailure('CLOCK_PREFLIGHT', 'NEXT_MARKET_OPEN_TOO_CLOSE'))
+    }
     state.clock = {
       observedAt: clockObservedAt,
       marketOpen: false,
+      nextMarketOpenAt: nextMarketSession.openAt,
+      millisecondsUntilNextOpen,
       sessionCount: calendar.value.sessions.length,
       calendarHash: calendar.value.normalizedResponseHash,
     }
@@ -672,7 +826,7 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
             return yield* Effect.fail(proofFailure('LOOKUP_BY_CLIENT_ID', 'ORDER_QUANTITY_MISMATCH'))
           }
           state.lifecycle.push(readEvidence('LOOKUP_BY_CLIENT_ID', recoveredSubmit))
-          yield* cancelIfOpen(mutation, recoveredSubmit.value, state)
+          yield* attemptCancellation(mutation, recoveredSubmit.value, state)
         }).pipe(
           Effect.timeoutOrElse({
             duration: mutationPhaseDeadline,
@@ -747,6 +901,7 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
       submitOutcome: state.submitOutcome,
       acceptedOrderContractMismatch: state.acceptedOrderContractMismatch,
       finalStatus: state.finalStatus,
+      filledQuantityMicros: state.filledQuantityMicros,
     },
     orderLifecycle: state.lifecycle,
     cleanup: {

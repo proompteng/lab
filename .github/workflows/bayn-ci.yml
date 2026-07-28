@@ -282,7 +282,7 @@ jobs:
           echo 'All applicable Bayn unit, type, Effect, PostgreSQL, dependency-boundary, and multi-architecture image checks passed.'
 
   alpaca-sandbox-contract-proof:
-    if: github.event_name == 'workflow_dispatch' && github.sha == inputs.exact_head_sha
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: bayn-alpaca-sandbox
