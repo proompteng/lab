@@ -2,7 +2,15 @@ import { NodeHttpClient, NodeServices } from '@effect/platform-node'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Effect, flow, Layer, Match, pipe, Redacted, Result, Schema, Stdio, Stream } from 'effect'
 
-import { autonomousObserveApplication, brokerlessApplication } from './app'
+import {
+  autonomousObserveApplicationWithDependencies,
+  brokerlessApplicationWithDependencies,
+  makeApplicationPlan,
+  type ApplicationDependencies,
+  type ApplicationIdentity,
+  type ApplicationPlan,
+  type ApplicationPlanFor,
+} from './app'
 import { riskBalancedTrendBehaviorHash } from './behavior'
 import { BrokerSession, live as AlpacaBrokerLive, type BrokerReadShape } from './broker/alpaca'
 import { verifyBehaviorHash, verifyParameterHash } from './build'
@@ -13,17 +21,18 @@ import {
   type ContractConstructionFailure,
   type RuntimeProvenance,
 } from './contracts'
-import { CycleObservabilityLive } from './db/cycle-observability'
+import { CycleObservability, CycleObservabilityLive } from './db/cycle-observability'
 import { CycleStoreLive } from './db/cycle-store'
-import { EvidenceStoreFromPostgres, PostgresClientLive } from './db/evidence-store'
+import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from './db/evidence-store'
 import { PaperStoreLive } from './db/paper-store'
 import { WriterFenceLive } from './execution/writer-fence'
 import { operationalError } from './errors'
 import { canonicalHashV1Result, type CanonicalJsonFailure } from './hash'
-import { JournalLive } from './ledger'
-import { MarketDataLive } from './market-data'
+import { HttpServerLive } from './http'
+import { Journal, JournalLive } from './ledger'
+import { MarketData, MarketDataLive } from './market-data'
 import { loadObserveRiskPolicy, makeObserveAutonomousCycleStartup } from './observe-composition'
-import { retrySqlLayer } from './operations'
+import { sqlResource } from './operations'
 import {
   discoverPaperCandidates,
   renderPaperCandidateDiscoveryError,
@@ -31,17 +40,6 @@ import {
 } from './paper-candidate-discovery'
 import { loadDefaultProtocol, type CausalProtocol } from './protocol'
 import { makeStrategy, type Strategy } from './strategy'
-
-type AlpacaBinding = NonNullable<LoadedRuntimeConfig['alpaca']>
-type RuntimeMode = LoadedRuntimeConfig['runtimeMode']
-
-type RuntimeIdentity<C extends LoadedRuntimeConfig = LoadedRuntimeConfig> = {
-  readonly config: C
-  readonly protocol: CausalProtocol
-  readonly parameterHash: string
-  readonly strategy: Strategy
-  readonly strategyProtocolHash: string
-}
 
 type RuntimeIdentityFailure =
   | {
@@ -57,26 +55,13 @@ type RuntimeIdentityFailure =
       readonly cause: ContractConstructionFailure
     }
 
-type RuntimePlanFor<M extends RuntimeMode> = RuntimeIdentity<
-  Extract<LoadedRuntimeConfig, { readonly runtimeMode: M }>
-> & {
-  readonly _tag: M
-}
-
-type RuntimePlan = { readonly [M in RuntimeMode]: RuntimePlanFor<M> }[RuntimeMode]
-
-const mapLayerError = <A, E, R, E2>(layer: Layer.Layer<A, E, R>, map: (error: E) => E2): Layer.Layer<A, E2, R> =>
-  Layer.unwrap(pipe(Layer.build(layer), Effect.mapError(map), Effect.map(Layer.succeedContext)))
-
 type RuntimeSeed = {
   readonly config: LoadedRuntimeConfig
   readonly protocol: CausalProtocol
 }
 
 type ParameterizedRuntime = RuntimeSeed & { readonly parameterHash: string }
-type ProvenanceRuntime = ParameterizedRuntime & {
-  readonly provenance: RuntimeProvenance
-}
+type ProvenanceRuntime = ParameterizedRuntime & { readonly provenance: RuntimeProvenance }
 type StrategyRuntime = ProvenanceRuntime & { readonly strategy: Strategy }
 
 const hashRuntimeParameters = (seed: RuntimeSeed): Result.Result<ParameterizedRuntime, RuntimeIdentityFailure> =>
@@ -117,7 +102,9 @@ const addStrategy = (runtime: ProvenanceRuntime): StrategyRuntime => ({
   strategy: makeStrategy(runtime.protocol, runtime.provenance),
 })
 
-const addStrategyProtocolHash = (runtime: StrategyRuntime): Result.Result<RuntimeIdentity, RuntimeIdentityFailure> =>
+const addStrategyProtocolHash = (
+  runtime: StrategyRuntime,
+): Result.Result<ApplicationIdentity, RuntimeIdentityFailure> =>
   pipe(
     makeStrategyProtocolHashResult(runtime.strategy.provenance.strategy),
     Result.mapError(
@@ -173,8 +160,8 @@ const runtimeIdentityError = (failure: RuntimeIdentityFailure) =>
   )
 
 const verifyRuntimeIdentity = (
-  identity: RuntimeIdentity,
-): Effect.Effect<RuntimeIdentity, ReturnType<typeof operationalError>> =>
+  identity: ApplicationIdentity,
+): Effect.Effect<ApplicationIdentity, ReturnType<typeof operationalError>> =>
   pipe(
     Effect.all(
       [
@@ -186,100 +173,113 @@ const verifyRuntimeIdentity = (
     Effect.as(identity),
   )
 
-const attachRuntimeMode = (identity: RuntimeIdentity): RuntimePlan =>
-  pipe(
-    Match.value(identity.config),
-    Match.when({ runtimeMode: 'BrokerlessService' }, (config) => ({
-      ...identity,
-      _tag: 'BrokerlessService' as const,
-      config,
-    })),
-    Match.when({ runtimeMode: 'AutonomousObserveService' }, (config) => ({
-      ...identity,
-      _tag: 'AutonomousObserveService' as const,
-      config,
-    })),
-    Match.when({ runtimeMode: 'PaperCandidateDiscovery' }, (config) => ({
-      ...identity,
-      _tag: 'PaperCandidateDiscovery' as const,
-      config,
-    })),
-    Match.exhaustive,
-  )
-
-const loadRuntimePlan = pipe(
+export const loadApplicationPlan = pipe(
   Effect.all({ config: loadConfig(), protocol: loadDefaultProtocol }),
   Effect.flatMap(flow(makeRuntimeIdentity, Effect.fromResult, Effect.mapError(runtimeIdentityError))),
   Effect.flatMap(verifyRuntimeIdentity),
-  Effect.map(attachRuntimeMode),
+  Effect.map(makeApplicationPlan),
 )
 
-const clickhouseLayer = (config: LoadedRuntimeConfig) =>
-  retrySqlLayer(
-    pipe(
-      ClickhouseClient.layer({
-        url: config.clickhouse.url,
-        username: config.clickhouse.username,
-        password: Redacted.value(config.clickhouse.password),
-        database: 'signal',
-        application: 'bayn',
-        request_timeout: config.operationTimeoutMs,
-      }),
-      Layer.provide(NodeHttpClient.layerNodeHttp),
-    ),
-  )
+export const ClickHouseClientResourceLive = (config: LoadedRuntimeConfig) =>
+  ClickhouseClient.layer({
+    url: config.clickhouse.url,
+    username: config.clickhouse.username,
+    password: Redacted.value(config.clickhouse.password),
+    database: 'signal',
+    application: 'bayn',
+    request_timeout: config.operationTimeoutMs,
+  })
 
-const postgresClientLayer = (config: LoadedRuntimeConfig) =>
-  retrySqlLayer(pipe(PostgresClientLive(config), Layer.provide(NodeServices.layer)))
+export const PostgresClientResourceLive = (config: LoadedRuntimeConfig) => PostgresClientLive(config)
 
-const databaseLayer = (config: LoadedRuntimeConfig) =>
-  retrySqlLayer(
-    pipe(
-      EvidenceStoreFromPostgres(config),
-      Layer.provideMerge(pipe(PostgresClientLive(config), Layer.provide(NodeServices.layer))),
-    ),
-  )
+export const EvidenceStoreResourceLive = (config: LoadedRuntimeConfig) => EvidenceStoreFromPostgres(config)
 
-const brokerSessionLayer = (alpaca: AlpacaBinding) =>
-  mapLayerError(AlpacaBrokerLive(alpaca), (cause) =>
-    operationalError('config', 'broker-session', 'Alpaca broker session acquisition failed', cause),
-  )
+export const MarketDataResourceLive = (plan: ApplicationIdentity) => MarketDataLive(plan.config, plan.protocol)
 
-const serviceCoreLayers = (plan: RuntimeIdentity) => {
-  const database = databaseLayer(plan.config)
-  const journal = JournalLive(plan.config)
-  const marketData = pipe(MarketDataLive(plan.config, plan.protocol), Layer.provide(clickhouseLayer(plan.config)))
-  const cycleObservability = pipe(CycleObservabilityLive, Layer.provide(database))
-  return {
-    database,
-    journal,
-    core: Layer.mergeAll(marketData, database, journal, cycleObservability),
-  }
+export const JournalResourceLive = (config: LoadedRuntimeConfig) => JournalLive(config)
+
+export const CycleObservabilityResourceLive = CycleObservabilityLive
+
+export const PaperStoreResourceLive = (config: LoadedRuntimeConfig) => PaperStoreLive(config)
+
+export const CycleStoreResourceLive = CycleStoreLive
+
+export const WriterFenceResourceLive = WriterFenceLive
+
+export const BrokerSessionResourceLive = (config: Extract<LoadedRuntimeConfig, { readonly alpaca: object }>) =>
+  AlpacaBrokerLive(config.alpaca)
+
+export const ApplicationPlatformLive = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)
+
+const SignalMarketDataLive = (plan: ApplicationIdentity) => {
+  const clickHouse = sqlResource(ClickHouseClientResourceLive(plan.config))
+  return MarketDataResourceLive(plan).pipe(Layer.provide(clickHouse))
 }
 
-const runBrokerlessService = (plan: RuntimePlanFor<'BrokerlessService'>) =>
-  pipe(brokerlessApplication(plan.config, plan.strategy), Effect.provide(serviceCoreLayers(plan).core))
+const PostgresAuthorityLive = (config: LoadedRuntimeConfig) =>
+  sqlResource(EvidenceStoreResourceLive(config).pipe(Layer.provideMerge(PostgresClientResourceLive(config))))
 
-const brokerServiceLayers = (plan: RuntimePlanFor<'AutonomousObserveService'>) => {
-  const { database, journal, core } = serviceCoreLayers(plan)
-  const storage = Layer.merge(database, journal)
+export const BrokerlessApplicationResourcesLive = (plan: ApplicationPlanFor<'BrokerlessService'>) => {
+  const postgres = PostgresAuthorityLive(plan.config)
   return Layer.mergeAll(
-    core,
-    brokerSessionLayer(plan.config.alpaca),
-    pipe(PaperStoreLive(plan.config), Layer.provide(storage)),
-    pipe(WriterFenceLive, Layer.provide(database)),
-    pipe(CycleStoreLive, Layer.provide(database)),
-  )
+    HttpServerLive(plan.config),
+    SignalMarketDataLive(plan),
+    postgres,
+    JournalResourceLive(plan.config),
+    CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
+  ).pipe(Layer.provideMerge(ApplicationPlatformLive))
 }
 
-const observeBroker = (plan: RuntimePlanFor<'AutonomousObserveService'>, read: BrokerReadShape) => ({
+export const AutonomousObserveApplicationResourcesLive = (plan: ApplicationPlanFor<'AutonomousObserveService'>) => {
+  const postgres = PostgresAuthorityLive(plan.config)
+  const journal = JournalResourceLive(plan.config)
+  return Layer.mergeAll(
+    HttpServerLive(plan.config),
+    SignalMarketDataLive(plan),
+    postgres,
+    journal,
+    CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
+    BrokerSessionResourceLive(plan.config),
+    PaperStoreResourceLive(plan.config).pipe(Layer.provide(Layer.merge(postgres, journal))),
+    WriterFenceResourceLive.pipe(Layer.provide(postgres)),
+    CycleStoreResourceLive.pipe(Layer.provide(postgres)),
+  ).pipe(Layer.provideMerge(ApplicationPlatformLive))
+}
+
+export const PaperCandidateDiscoveryResourcesLive = (plan: ApplicationPlanFor<'PaperCandidateDiscovery'>) => {
+  const postgres = sqlResource(PostgresClientResourceLive(plan.config))
+  return Layer.mergeAll(
+    postgres,
+    CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
+    CycleStoreResourceLive.pipe(Layer.provide(postgres)),
+    BrokerSessionResourceLive(plan.config),
+  ).pipe(Layer.provideMerge(ApplicationPlatformLive))
+}
+
+const applicationDependencies: Effect.Effect<
+  ApplicationDependencies,
+  never,
+  MarketData | Journal | EvidenceStore | CycleObservability
+> = Effect.all({
+  marketData: MarketData,
+  journal: Journal,
+  evidenceStore: EvidenceStore,
+  cycleObservability: CycleObservability,
+})
+
+const runBrokerlessService = (plan: ApplicationPlanFor<'BrokerlessService'>) =>
+  applicationDependencies.pipe(
+    Effect.flatMap((dependencies) => brokerlessApplicationWithDependencies(plan.config, plan.strategy, dependencies)),
+  )
+
+const observeBroker = (plan: ApplicationPlanFor<'AutonomousObserveService'>, read: BrokerReadShape) => ({
   read,
   expectedAccountId: plan.config.alpaca.expectedAccountId,
   executionEligible: false,
   executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE' as const,
 })
 
-const observeCycle = (plan: RuntimePlanFor<'AutonomousObserveService'>) =>
+const observeCycle = (plan: ApplicationPlanFor<'AutonomousObserveService'>) =>
   makeObserveAutonomousCycleStartup({
     accountId: plan.config.alpaca.expectedAccountId,
     authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
@@ -288,13 +288,17 @@ const observeCycle = (plan: RuntimePlanFor<'AutonomousObserveService'>) =>
     strategy: plan.strategy,
   })
 
-const runAutonomousObserveService = (plan: RuntimePlanFor<'AutonomousObserveService'>) =>
-  pipe(
-    BrokerSession,
-    Effect.flatMap((session) =>
-      autonomousObserveApplication(plan.config, plan.strategy, observeBroker(plan, session.read), observeCycle(plan)),
+const runAutonomousObserveService = (plan: ApplicationPlanFor<'AutonomousObserveService'>) =>
+  Effect.all({ dependencies: applicationDependencies, session: BrokerSession }).pipe(
+    Effect.flatMap(({ dependencies, session }) =>
+      autonomousObserveApplicationWithDependencies(
+        plan.config,
+        plan.strategy,
+        dependencies,
+        observeBroker(plan, session.read),
+        observeCycle(plan),
+      ),
     ),
-    Effect.provide(brokerServiceLayers(plan)),
   )
 
 const encodeJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Json))
@@ -327,17 +331,7 @@ const policyHash = (policy: unknown): Effect.Effect<string, ReturnType<typeof op
     Effect.fromResult,
   )
 
-const discoveryLayers = (plan: RuntimePlanFor<'PaperCandidateDiscovery'>) => {
-  const postgres = postgresClientLayer(plan.config)
-  return Layer.mergeAll(
-    postgres,
-    pipe(CycleObservabilityLive, Layer.provide(postgres)),
-    pipe(CycleStoreLive, Layer.provide(postgres)),
-    brokerSessionLayer(plan.config.alpaca),
-  )
-}
-
-const paperCandidateIdentity = (plan: RuntimePlanFor<'PaperCandidateDiscovery'>, riskPolicyHash: string) => ({
+const paperCandidateIdentity = (plan: ApplicationPlanFor<'PaperCandidateDiscovery'>, riskPolicyHash: string) => ({
   sourceRevision: plan.config.build.sourceRevision,
   image: {
     repository: plan.config.build.imageRepository,
@@ -351,16 +345,14 @@ const paperCandidateIdentity = (plan: RuntimePlanFor<'PaperCandidateDiscovery'>,
   policyHash: riskPolicyHash,
 })
 
-const discoverPaperCandidate = (plan: RuntimePlanFor<'PaperCandidateDiscovery'>, riskPolicyHash: string) =>
-  pipe(
-    discoverPaperCandidates(paperCandidateIdentity(plan, riskPolicyHash)),
+const discoverPaperCandidate = (plan: ApplicationPlanFor<'PaperCandidateDiscovery'>, riskPolicyHash: string) =>
+  discoverPaperCandidates(paperCandidateIdentity(plan, riskPolicyHash)).pipe(
     Effect.mapError((cause) =>
       operationalError('strategy', 'paper-candidate-discovery', renderPaperCandidateDiscoveryError(cause), cause),
     ),
-    Effect.provide(discoveryLayers(plan)),
   )
 
-const runPaperCandidateDiscovery = (plan: RuntimePlanFor<'PaperCandidateDiscovery'>) =>
+const runPaperCandidateDiscovery = (plan: ApplicationPlanFor<'PaperCandidateDiscovery'>) =>
   pipe(
     loadObserveRiskPolicy(plan.config.alpaca.expectedAccountId, plan.strategy.parameters.universe),
     Effect.mapError((cause) =>
@@ -376,12 +368,18 @@ const runPaperCandidateDiscovery = (plan: RuntimePlanFor<'PaperCandidateDiscover
     Effect.flatMap(writeDiscoveryReceipt),
   )
 
-const interpretRuntimePlan = pipe(
-  Match.type<RuntimePlan>(),
-  Match.tag('BrokerlessService', runBrokerlessService),
-  Match.tag('AutonomousObserveService', runAutonomousObserveService),
-  Match.tag('PaperCandidateDiscovery', runPaperCandidateDiscovery),
+export const runApplicationPlan = pipe(
+  Match.type<ApplicationPlan>(),
+  Match.tag('BrokerlessService', (plan) =>
+    runBrokerlessService(plan).pipe(Effect.provide(BrokerlessApplicationResourcesLive(plan))),
+  ),
+  Match.tag('AutonomousObserveService', (plan) =>
+    runAutonomousObserveService(plan).pipe(Effect.provide(AutonomousObserveApplicationResourcesLive(plan))),
+  ),
+  Match.tag('PaperCandidateDiscovery', (plan) =>
+    runPaperCandidateDiscovery(plan).pipe(Effect.provide(PaperCandidateDiscoveryResourcesLive(plan))),
+  ),
   Match.exhaustive,
 )
 
-export const program = pipe(loadRuntimePlan, Effect.flatMap(interpretRuntimePlan), Effect.scoped)
+export const program = loadApplicationPlan.pipe(Effect.flatMap(runApplicationPlan), Effect.scoped)

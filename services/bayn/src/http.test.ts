@@ -2,7 +2,7 @@ import { connect, type Socket } from 'node:net'
 
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpServer } from 'effect/unstable/http'
 
@@ -24,10 +24,11 @@ import {
   fallbackResponseDecision,
   historicalEvidenceResponseDecision,
   historicalReadFailureDecision,
-  makeHttpLayer,
+  HttpServerLive,
   readHistoricalEvidence,
   readinessResponseDecision,
   renderPrometheusMetrics,
+  serveHttp,
   statusFacts,
   statusResponseDecision,
   validateHistoricalRunRequest,
@@ -56,38 +57,37 @@ interface TestServer {
 const withHttpServer = (
   options: TestServerOptions,
   use: (server: TestServer) => Effect.Effect<void, unknown>,
-): Promise<void> =>
-  Effect.runPromise(
+): Promise<void> => {
+  const serverConfig = {
+    cycleStallThresholdMs: config.cycleStallThresholdMs,
+    host: '127.0.0.1',
+    maximumAuthority: options.maximumAuthority ?? Authority.Observe,
+    operationTimeoutMs: options.operationTimeoutMs ?? 250,
+    port: 0,
+    reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
+    unknownMutationThresholdMs: config.unknownMutationThresholdMs,
+  }
+  return Effect.runPromise(
     Effect.scoped(
-      Ref.make(options.state ?? initialState()).pipe(
-        Effect.flatMap((state) =>
-          Layer.build(
-            makeHttpLayer(
-              {
-                cycleStallThresholdMs: config.cycleStallThresholdMs,
-                host: '127.0.0.1',
-                maximumAuthority: options.maximumAuthority ?? Authority.Observe,
-                operationTimeoutMs: options.operationTimeoutMs ?? 250,
-                port: 0,
-                reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
-                unknownMutationThresholdMs: config.unknownMutationThresholdMs,
-              },
-              state,
-              provenance,
-              'embedded',
-              options.readEvidence ?? successfulEvidenceStore.read,
-            ),
-          ).pipe(
-            Effect.flatMap((context) => {
-              const address = Context.get(context, HttpServer.HttpServer).address
-              expect(address._tag).toBe('TcpAddress')
-              return address._tag === 'TcpAddress' ? use({ port: address.port, state }) : Effect.die('expected TCP')
-            }),
-          ),
-        ),
-      ),
+      Effect.gen(function* () {
+        const state = yield* Ref.make(options.state ?? initialState())
+        yield* serveHttp(
+          serverConfig,
+          state,
+          provenance,
+          'embedded',
+          options.readEvidence ?? successfulEvidenceStore.read,
+        )
+        const server = yield* HttpServer.HttpServer
+        const address = server.address
+        expect(address._tag).toBe('TcpAddress')
+        return address._tag === 'TcpAddress'
+          ? yield* use({ port: address.port, state })
+          : yield* Effect.die('expected TCP')
+      }).pipe(Effect.provide(HttpServerLive(serverConfig))),
     ),
   )
+}
 
 const request = (port: number, path: string, method = 'GET') =>
   Effect.tryPromise({

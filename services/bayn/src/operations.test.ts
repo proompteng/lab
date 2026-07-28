@@ -12,7 +12,7 @@ import {
 
 import { CycleObservabilityError } from './db/cycle-observability'
 import { DatabaseError } from './db/evidence-store'
-import { acquireSqlLayer, databaseOperation } from './operations'
+import { acquireSqlResource, databaseOperation } from './operations'
 
 describe('Bayn SQL dependency acquisition', () => {
   test('retries only retryable SQL failures', async () => {
@@ -28,7 +28,7 @@ describe('Bayn SQL dependency acquisition', () => {
     )
     const program = Effect.scoped(
       Effect.gen(function* () {
-        const fiber = yield* acquireSqlLayer(dependencies).pipe(Effect.forkScoped({ startImmediately: true }))
+        const fiber = yield* acquireSqlResource(dependencies).pipe(Effect.forkScoped({ startImmediately: true }))
         yield* Effect.yieldNow
         expect(attempts).toBe(1)
         yield* TestClock.adjust('1 second')
@@ -45,7 +45,7 @@ describe('Bayn SQL dependency acquisition', () => {
     })
     const exit = await Effect.runPromiseExit(
       Effect.scoped(
-        acquireSqlLayer(
+        acquireSqlResource(
           Layer.effectDiscard(
             Effect.sync(() => {
               attempts += 1
@@ -78,7 +78,7 @@ describe('Bayn SQL dependency acquisition', () => {
     )
     const program = Effect.scoped(
       Effect.gen(function* () {
-        const fiber = yield* acquireSqlLayer(dependencies).pipe(Effect.forkScoped({ startImmediately: true }))
+        const fiber = yield* acquireSqlResource(dependencies).pipe(Effect.forkScoped({ startImmediately: true }))
         yield* Effect.yieldNow
         expect(attempts).toBe(1)
         yield* TestClock.adjust('1 second')
@@ -111,7 +111,7 @@ describe('Bayn SQL dependency acquisition', () => {
     )
     const program = Effect.scoped(
       Effect.gen(function* () {
-        const fiber = yield* acquireSqlLayer(dependencies).pipe(Effect.forkScoped({ startImmediately: true }))
+        const fiber = yield* acquireSqlResource(dependencies).pipe(Effect.forkScoped({ startImmediately: true }))
         yield* Effect.yieldNow
         expect(attempts).toBe(1)
         yield* TestClock.adjust('1 second')
@@ -128,7 +128,7 @@ describe('Bayn SQL dependency acquisition', () => {
       let attempts = 0
       return Effect.scoped(
         Effect.gen(function* () {
-          const fiber = yield* acquireSqlLayer(
+          const fiber = yield* acquireSqlResource(
             Layer.effectDiscard(
               Effect.sync(() => {
                 attempts += 1
@@ -178,7 +178,7 @@ describe('Bayn SQL dependency acquisition', () => {
     })
     const program = Effect.scoped(
       Effect.gen(function* () {
-        const fiber = yield* acquireSqlLayer(
+        const fiber = yield* acquireSqlResource(
           Layer.effectDiscard(
             Effect.sync(() => {
               attempts += 1
@@ -201,7 +201,7 @@ describe('Bayn SQL dependency acquisition', () => {
 
     await Effect.runPromise(
       Effect.scoped(
-        acquireSqlLayer(
+        acquireSqlResource(
           Layer.effectDiscard(
             Effect.acquireRelease(Effect.void, () =>
               Effect.sync(() => {

@@ -25,6 +25,7 @@ import type {
   EvaluationWorkflow,
   PinnedQualificationFacts,
   QualificationPath,
+  StartupDependencies,
   StartupCompletion,
   StartupDecisionFailure,
 } from './model'
@@ -283,19 +284,16 @@ const recoverPinnedQualification = (
   config: RuntimeConfig,
   runId: string,
   state: Ref.Ref<RuntimeState>,
-): Effect.Effect<void, OperationalError, EvidenceStore> =>
-  EvidenceStore.pipe(
-    Effect.tap(() =>
-      Effect.logInfo('Bayn pinned qualification recovery started').pipe(
-        Effect.annotateLogs({
-          service: 'bayn',
-          runId,
-          currentSourceRevision: config.build.sourceRevision,
-          currentImageDigest: config.build.imageDigest,
-        }),
-      ),
-    ),
-    Effect.flatMap((evidenceStore) =>
+  evidenceStore: EvidenceStoreService,
+): Effect.Effect<void, OperationalError> =>
+  Effect.logInfo('Bayn pinned qualification recovery started').pipe(
+    Effect.annotateLogs({
+      service: 'bayn',
+      runId,
+      currentSourceRevision: config.build.sourceRevision,
+      currentImageDigest: config.build.imageDigest,
+    }),
+    Effect.andThen(
       readPinnedQualification(config, runId, evidenceStore).pipe(
         Effect.flatMap((facts) => fromStartupDecision(decidePinnedQualification(config, runId, facts))),
         Effect.flatMap((decision) =>
@@ -315,6 +313,20 @@ const recoverPinnedQualification = (
     Effect.withLogSpan('startup'),
   )
 
+const logEvaluationStart = (config: RuntimeConfig, strategy: Strategy): Effect.Effect<void> =>
+  Effect.logInfo('Bayn startup evaluation started').pipe(
+    Effect.annotateLogs({
+      service: 'bayn',
+      sourceRevision: config.build.sourceRevision,
+      imageDigest: config.build.imageDigest,
+      strategyBehaviorHash: strategy.provenance.strategy.behaviorHash,
+      parameterHash: strategy.provenance.strategy.parameterHash,
+      snapshotId: config.clickhouse.snapshotId,
+      evaluationStart: config.clickhouse.bounds.evaluationStart,
+      evaluationEnd: config.clickhouse.bounds.evaluationEnd,
+    }),
+  )
+
 const runEvaluationWorkflow = (workflow: EvaluationWorkflow): Effect.Effect<StartupCompletion, OperationalError> =>
   checkStartupDependencies(workflow).pipe(
     Effect.andThen(inspectSignalSnapshot(workflow)),
@@ -330,44 +342,32 @@ const evaluateAndJournal = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
   strategy: Strategy,
-): Effect.Effect<void, OperationalError, MarketData | Journal | EvidenceStore> =>
-  Effect.all({
-    marketData: MarketData,
-    journal: Journal,
-    evidenceStore: EvidenceStore,
-  }).pipe(
-    Effect.map(
-      (dependencies): EvaluationWorkflow => ({
-        config,
-        strategy,
-        dependencies,
-      }),
-    ),
-    Effect.tap(() =>
-      Effect.logInfo('Bayn startup evaluation started').pipe(
-        Effect.annotateLogs({
-          service: 'bayn',
-          sourceRevision: config.build.sourceRevision,
-          imageDigest: config.build.imageDigest,
-          strategyBehaviorHash: strategy.provenance.strategy.behaviorHash,
-          parameterHash: strategy.provenance.strategy.parameterHash,
-          snapshotId: config.clickhouse.snapshotId,
-          evaluationStart: config.clickhouse.bounds.evaluationStart,
-          evaluationEnd: config.clickhouse.bounds.evaluationEnd,
-        }),
-      ),
-    ),
-    Effect.flatMap(runEvaluationWorkflow),
+  dependencies: StartupDependencies,
+): Effect.Effect<void, OperationalError> =>
+  logEvaluationStart(config, strategy).pipe(
+    Effect.andThen(runEvaluationWorkflow({ config, strategy, dependencies })),
     Effect.flatMap((completion) => publishStartupCompletion(state, completion)),
     Effect.withLogSpan('startup'),
   )
+
+export const initializeWithDependencies = (
+  config: RuntimeConfig,
+  state: Ref.Ref<RuntimeState>,
+  strategy: Strategy,
+  dependencies: StartupDependencies,
+): Effect.Effect<void, OperationalError> =>
+  (config.qualificationRunId === undefined
+    ? evaluateAndJournal(config, state, strategy, dependencies)
+    : recoverPinnedQualification(config, config.qualificationRunId, state, dependencies.evidenceStore)
+  ).pipe(Effect.catch((error) => (error.retryable ? Effect.fail(error) : failStartup(state, error))))
 
 export const initialize = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
   strategy: Strategy,
 ): Effect.Effect<void, OperationalError, MarketData | Journal | EvidenceStore> =>
-  (config.qualificationRunId === undefined
-    ? evaluateAndJournal(config, state, strategy)
-    : recoverPinnedQualification(config, config.qualificationRunId, state)
-  ).pipe(Effect.catch((error) => (error.retryable ? Effect.fail(error) : failStartup(state, error))))
+  Effect.all({
+    marketData: MarketData,
+    journal: Journal,
+    evidenceStore: EvidenceStore,
+  }).pipe(Effect.flatMap((dependencies) => initializeWithDependencies(config, state, strategy, dependencies)))

@@ -1,8 +1,11 @@
 import type { BrokerReadShape } from '../broker/alpaca'
 import type { RuntimeConfig } from '../config'
 import type { CycleOperationsProjection } from '../cycle-observability'
-import type { QualificationRecord } from '../db/evidence-store'
+import type { CycleObservabilityShape } from '../db/cycle-observability'
+import type { EvidenceStoreService, QualificationRecord } from '../db/evidence-store'
 import type { CanonicalHashFailure } from '../hash'
+import type { JournalService } from '../ledger'
+import type { MarketDataService } from '../market-data'
 import type { BrokerConfiguration, RuntimeHealth, RuntimeState } from '../runtime-state'
 import type { UtcEpochMillisFailure } from '../time'
 
@@ -17,6 +20,13 @@ export interface HealthProbeResults {
   readonly durableEvidence: ProbeResult<void>
   readonly cycle: ProbeResult<CycleOperationsProjection>
   readonly broker: ProbeResult<string> | null
+}
+
+export interface HealthDependencies {
+  readonly marketData: MarketDataService
+  readonly journal: JournalService
+  readonly evidenceStore: EvidenceStoreService
+  readonly cycleObservability: CycleObservabilityShape
 }
 
 export type SignalIdentityFailure =

@@ -14,17 +14,22 @@ import {
   successfulJournal,
 } from './app-test-support'
 import {
+  type ApplicationIdentity,
   autonomousObserveApplication,
   type AutonomousCycleStartupInput,
   type AutonomousObserveApplicationConfig,
+  type BrokerlessApplicationConfig,
+  makeApplicationPlan,
 } from './app'
 import { AccountStatus, BrokerProvider, alpacaSandboxBaseUrl, type BrokerReadShape } from './broker/alpaca'
 import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
+import type { LoadedRuntimeConfig } from './config'
 import { makeStrategyProtocolHash } from './contracts'
 import { CycleObservability } from './db/cycle-observability'
 import { EvidenceStore } from './db/evidence-store'
 import { BrokerEnvironment } from './execution/authority'
 import type { BrokerProbe } from './health'
+import { HttpServerLive } from './http'
 import { Journal } from './ledger'
 import { MarketData } from './market-data'
 import { Authority } from './paper'
@@ -105,7 +110,52 @@ const autonomousConfig = (runtime: typeof config): AutonomousObserveApplicationC
   },
 })
 
+const brokerlessConfig = (runtime: typeof config): BrokerlessApplicationConfig => ({
+  ...runtime,
+  runtimeMode: 'BrokerlessService',
+  cyclePollIntervalMs: 30_000,
+  maximumAuthority: Authority.Observe,
+  alpaca: undefined,
+})
+
+const discoveryConfig = (
+  runtime: typeof pinnedRuntimeConfig,
+): Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'PaperCandidateDiscovery' }> => ({
+  ...autonomousConfig(runtime),
+  runtimeMode: 'PaperCandidateDiscovery',
+  qualificationRunId: pinnedEvaluation.runId,
+})
+
+const applicationIdentity = (loaded: LoadedRuntimeConfig): ApplicationIdentity => ({
+  config: loaded,
+  protocol: fixtureProtocol,
+  parameterHash: fixtureStrategy.provenance.strategy.parameterHash,
+  strategy: fixtureStrategy,
+  strategyProtocolHash: makeStrategyProtocolHash(fixtureStrategy.provenance.strategy),
+})
+
 describe('Bayn application composition', () => {
+  test('constructs one exhaustive immutable application plan for every resolved runtime mode', () => {
+    const modes = [
+      { config: brokerlessConfig(config), expectedTag: 'BrokerlessService' },
+      { config: autonomousConfig(config), expectedTag: 'AutonomousObserveService' },
+      { config: discoveryConfig(pinnedRuntimeConfig), expectedTag: 'PaperCandidateDiscovery' },
+    ] as const
+
+    for (const mode of modes) {
+      const identity = Object.freeze(applicationIdentity(mode.config))
+      const plan = makeApplicationPlan(identity)
+
+      expect(plan._tag).toBe(mode.expectedTag)
+      expect(plan.config).toBe(mode.config)
+      expect(plan.protocol).toBe(identity.protocol)
+      expect(plan.strategy).toBe(identity.strategy)
+      expect(plan.parameterHash).toBe(identity.parameterHash)
+      expect(plan.strategyProtocolHash).toBe(identity.strategyProtocolHash)
+      expect(identity).not.toHaveProperty('_tag')
+    }
+  })
+
   test('starts one scoped autonomous cycle after initialization and interrupts it with the application', async () => {
     const calls: string[] = []
     let backgroundInterrupted = false
@@ -143,6 +193,7 @@ describe('Bayn application composition', () => {
             Effect.provideService(Journal, successfulJournal),
             Effect.provideService(EvidenceStore, successfulEvidenceStore),
             Effect.provideService(CycleObservability, cycleObservability),
+            Effect.provide(HttpServerLive(config)),
             Effect.forkScoped,
           )
           yield* pipe(Deferred.await(started), Effect.timeout('1 second'))
@@ -183,6 +234,7 @@ describe('Bayn application composition', () => {
             Effect.provideService(Journal, successfulJournal),
             Effect.provideService(EvidenceStore, pinnedStore()),
             Effect.provideService(CycleObservability, cycleObservability),
+            Effect.provide(HttpServerLive(pinnedRuntimeConfig)),
             Effect.forkScoped,
           )
           yield* pipe(Deferred.await(started), Effect.timeout('1 second'))
