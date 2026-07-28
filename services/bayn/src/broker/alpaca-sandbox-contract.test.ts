@@ -1,4 +1,4 @@
-import { test } from 'bun:test'
+import { expect, test } from 'bun:test'
 
 import { NodeHttpClient } from '@effect/platform-node'
 import { Data, Duration, Effect, Exit, Redacted, References, Result, Schedule } from 'effect'
@@ -11,14 +11,22 @@ import {
   disabledCapitalAccess,
   makeExecutionAuthority,
 } from '../execution/authority'
-import { IntentState, OrderSide, OrderType, TimeInForce, type Intent } from '../paper'
+import { IntentState, MutationOutcome, OrderSide, OrderType, TimeInForce, type Intent } from '../paper'
 import { currentUtcDate, currentUtcInstant } from '../time'
-import { BrokerMutationError, MutationFailure, makeMutation, type BrokerMutationShape } from './alpaca-mutations'
+import {
+  BrokerMutationError,
+  MutationFailure,
+  MutationOperation,
+  makeMutation,
+  type BrokerMutationShape,
+} from './alpaca-mutations'
 import {
   AssetStatus,
   BrokerProvider,
   BrokerReadError,
   BrokerReadErrorKind,
+  BrokerSessionAcquisitionError,
+  BrokerSessionAcquisitionStage,
   OrderCollection,
   OrderStatus,
   alpacaSandboxBaseUrl,
@@ -33,9 +41,22 @@ const enabled = Bun.env.BAYN_ALPACA_SANDBOX_CONTRACT === '1'
 const receiptPath = Bun.env.BAYN_ALPACA_SANDBOX_RECEIPT_PATH
 const proofSymbol = 'AAPL'
 const proofQuantityMicros = '10000'
-const lookupRetryCount = 4
-const terminalPollCount = 15
-const retryDelay = Duration.seconds(1)
+const brokerOperationTimeoutMs = 5_000
+const lookupRetryCount = 2
+const terminalPollCount = 5
+const retryDelayMs = 1_000
+const mutationPhaseDeadlineMs = 2 * 60_000
+const cleanupDeadlineMs = 3 * 60_000
+const retryDelay = Duration.millis(retryDelayMs)
+const mutationPhaseDeadline = Duration.millis(mutationPhaseDeadlineMs)
+const cleanupDeadline = Duration.millis(cleanupDeadlineMs)
+const maximumRetryReadMs = (lookupRetryCount + 1) * brokerOperationTimeoutMs + lookupRetryCount * retryDelayMs
+const maximumCleanupNetworkMs =
+  maximumRetryReadMs +
+  brokerOperationTimeoutMs +
+  (terminalPollCount + 1) * maximumRetryReadMs +
+  terminalPollCount * retryDelayMs +
+  maximumRetryReadMs
 
 const required = (name: string): string => {
   const value = Bun.env[name]
@@ -67,6 +88,9 @@ interface SanitizedFailure {
   readonly stage: ProofStage
   readonly tag: string
   readonly failure: string
+  readonly acquisitionStage?: string
+  readonly causeTag?: string
+  readonly causeFailure?: string
   readonly operation?: string
   readonly status?: number
   readonly retryable?: boolean
@@ -98,6 +122,7 @@ interface ProofState {
   }
   submitOutcome: 'NOT_ATTEMPTED' | 'ACKNOWLEDGED' | 'REJECTED' | 'UNKNOWN'
   brokerOrderId?: string
+  acceptedOrderContractMismatch: boolean
   finalStatus?: OrderStatus
   cancelAttempts: number
   cancelAcknowledged: boolean
@@ -115,6 +140,31 @@ const proofFailure = (stage: ProofStage, failure: string): SandboxContractProofE
   new SandboxContractProofError({ stage, failure })
 
 const sanitizeFailure = (stage: ProofStage, error: unknown): SanitizedFailure => {
+  if (error instanceof BrokerSessionAcquisitionError) {
+    const cause = error.cause
+    if (cause instanceof BrokerReadError) {
+      return {
+        stage: 'SESSION_PREFLIGHT',
+        tag: error._tag,
+        failure: error.stage,
+        acquisitionStage: error.stage,
+        causeTag: cause._tag,
+        causeFailure: cause.kind,
+        operation: cause.operation,
+        status: cause.status,
+        retryable: cause.retryable,
+      }
+    }
+    return {
+      stage: 'SESSION_PREFLIGHT',
+      tag: error._tag,
+      failure: error.stage,
+      acquisitionStage: error.stage,
+      causeTag: cause._tag,
+      causeFailure: cause.failure._tag,
+      retryable: false,
+    }
+  }
   if (error instanceof BrokerReadError) {
     return {
       stage,
@@ -143,6 +193,7 @@ const sanitizeFailure = (stage: ProofStage, error: unknown): SanitizedFailure =>
 
 const failureStage = (error: unknown): ProofStage => {
   if (error instanceof SandboxContractProofError) return error.stage
+  if (error instanceof BrokerSessionAcquisitionError) return 'SESSION_PREFLIGHT'
   if (error instanceof BrokerMutationError) return error.operation === 'CANCEL' ? 'CANCEL' : 'SUBMIT'
   if (error instanceof BrokerReadError) {
     switch (error.operation) {
@@ -169,18 +220,14 @@ const failureStage = (error: unknown): ProofStage => {
   return 'CONFIGURATION'
 }
 
-const isOpenStatus = (status: OrderStatus): boolean =>
-  [
-    OrderStatus.New,
-    OrderStatus.PartiallyFilled,
-    OrderStatus.PendingCancel,
-    OrderStatus.PendingReplace,
-    OrderStatus.PendingReview,
-    OrderStatus.Accepted,
-    OrderStatus.PendingNew,
-    OrderStatus.AcceptedForBidding,
-    OrderStatus.Held,
-  ].includes(status)
+const terminalOrderStatuses: ReadonlySet<OrderStatus> = new Set([
+  OrderStatus.Filled,
+  OrderStatus.Canceled,
+  OrderStatus.Expired,
+  OrderStatus.Rejected,
+])
+
+const isOpenStatus = (status: OrderStatus): boolean => !terminalOrderStatuses.has(status)
 
 const retryRead = <A>(
   effect: Effect.Effect<A, BrokerReadError>,
@@ -217,9 +264,10 @@ const requireOrderBinding = (
   order: Order,
   clientOrderId: string,
   brokerOrderId: string,
+  allowAcceptedContractMismatch: boolean,
   stage: ProofStage,
 ): Effect.Effect<void, SandboxContractProofError> =>
-  order.clientOrderId === clientOrderId && order.brokerOrderId === brokerOrderId
+  order.brokerOrderId === brokerOrderId && (allowAcceptedContractMismatch || order.clientOrderId === clientOrderId)
     ? Effect.succeed(undefined)
     : Effect.fail(proofFailure(stage, 'ORDER_BINDING_MISMATCH'))
 
@@ -227,12 +275,19 @@ const waitForTerminalOrder = (
   orderById: (brokerOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>,
   brokerOrderId: string,
   clientOrderId: string,
+  allowAcceptedContractMismatch: boolean,
   state: ProofState,
   attempt = 0,
 ): Effect.Effect<ReadResult<Order>, BrokerReadError | SandboxContractProofError> =>
   retryRead(orderById(brokerOrderId)).pipe(
     Effect.flatMap((result) =>
-      requireOrderBinding(result.value, clientOrderId, brokerOrderId, 'TERMINAL_LOOKUP').pipe(
+      requireOrderBinding(
+        result.value,
+        clientOrderId,
+        brokerOrderId,
+        allowAcceptedContractMismatch,
+        'TERMINAL_LOOKUP',
+      ).pipe(
         Effect.andThen(
           Effect.sync(() => {
             state.lifecycle.push(readEvidence('TERMINAL_LOOKUP', result))
@@ -245,7 +300,16 @@ const waitForTerminalOrder = (
             : attempt >= terminalPollCount
               ? Effect.fail(proofFailure('TERMINAL_LOOKUP', 'ORDER_REMAINED_OPEN'))
               : Effect.sleep(retryDelay).pipe(
-                  Effect.andThen(waitForTerminalOrder(orderById, brokerOrderId, clientOrderId, state, attempt + 1)),
+                  Effect.andThen(
+                    waitForTerminalOrder(
+                      orderById,
+                      brokerOrderId,
+                      clientOrderId,
+                      allowAcceptedContractMismatch,
+                      state,
+                      attempt + 1,
+                    ),
+                  ),
                 ),
         ),
       ),
@@ -288,9 +352,13 @@ const verifyNoOpenProofOrder = (
   clientOrderId: string,
   state: ProofState,
 ): Effect.Effect<void, BrokerReadError | SandboxContractProofError> =>
-  retryRead(session.read.orders({ status: OrderCollection.Open, limit: 500, symbols: [proofSymbol] })).pipe(
+  retryRead(session.read.orders({ status: OrderCollection.Open, limit: 500 })).pipe(
     Effect.flatMap((result) => {
-      const residual = result.value.filter((order) => order.clientOrderId === clientOrderId)
+      const residual = result.value.filter(
+        (order) =>
+          order.clientOrderId === clientOrderId ||
+          (state.brokerOrderId !== undefined && order.brokerOrderId === state.brokerOrderId),
+      )
       state.cleanup.residualOpenOrderCount = residual.length
       state.lifecycle.push({
         stage: 'OPEN_ORDER_VERIFICATION',
@@ -345,9 +413,21 @@ const cleanupOrder = (
     }
 
     if (observed === undefined) observed = yield* retryRead(orderById(brokerOrderId))
-    yield* requireOrderBinding(observed.value, clientOrderId, brokerOrderId, 'CLEANUP')
+    yield* requireOrderBinding(
+      observed.value,
+      clientOrderId,
+      brokerOrderId,
+      state.acceptedOrderContractMismatch,
+      'CLEANUP',
+    )
     yield* cancelIfOpen(mutation, observed.value, state)
-    const terminal = yield* waitForTerminalOrder(orderById, brokerOrderId, clientOrderId, state)
+    const terminal = yield* waitForTerminalOrder(
+      orderById,
+      brokerOrderId,
+      clientOrderId,
+      state.acceptedOrderContractMismatch,
+      state,
+    )
     yield* verifyNoOpenProofOrder(session, clientOrderId, state)
     state.finalStatus = terminal.value.status
     state.cleanup.result = 'VERIFIED_TERMINAL'
@@ -361,6 +441,84 @@ const cleanupOrder = (
     ),
   )
 }
+
+const recordSubmitFailure = (state: ProofState, error: BrokerMutationError): void => {
+  state.submitOutcome = error.failure === MutationFailure.Rejected ? 'REJECTED' : 'UNKNOWN'
+  if (error.brokerOrderId !== undefined) {
+    state.brokerOrderId = error.brokerOrderId
+    state.acceptedOrderContractMismatch = true
+  }
+}
+
+test('treats every Alpaca nonterminal status as open for cleanup', () => {
+  for (const status of Object.values(OrderStatus)) {
+    expect(isOpenStatus(status)).toBe(!terminalOrderStatuses.has(status))
+  }
+  expect(isOpenStatus(OrderStatus.DoneForDay)).toBeTrue()
+  expect(isOpenStatus(OrderStatus.Calculated)).toBeTrue()
+  expect(isOpenStatus(OrderStatus.Stopped)).toBeTrue()
+  expect(isOpenStatus(OrderStatus.Suspended)).toBeTrue()
+})
+
+test('keeps the cleanup network bound below its explicit deadline', () => {
+  expect(maximumCleanupNetworkMs).toBeLessThan(cleanupDeadlineMs)
+  expect(mutationPhaseDeadlineMs + cleanupDeadlineMs).toBeLessThan(15 * 60_000)
+})
+
+test('preserves typed session acquisition evidence in the sanitized failure', () => {
+  const cause = new BrokerReadError({
+    operation: 'account',
+    kind: BrokerReadErrorKind.Authentication,
+    message: 'Alpaca account request was rejected',
+    retryable: false,
+    status: 401,
+  })
+  const error = new BrokerSessionAcquisitionError({
+    stage: BrokerSessionAcquisitionStage.Account,
+    provider: BrokerProvider.Alpaca,
+    environment: BrokerEnvironment.Sandbox,
+    baseUrl: alpacaSandboxBaseUrl,
+    expectedAccountId: 'not-in-receipt',
+    cause,
+  })
+
+  expect(sanitizeFailure(failureStage(error), error)).toEqual({
+    stage: 'SESSION_PREFLIGHT',
+    tag: 'BrokerSessionAcquisitionError',
+    failure: BrokerSessionAcquisitionStage.Account,
+    acquisitionStage: BrokerSessionAcquisitionStage.Account,
+    causeTag: 'BrokerReadError',
+    causeFailure: BrokerReadErrorKind.Authentication,
+    operation: 'account',
+    status: 401,
+    retryable: false,
+  })
+})
+
+test('retains an accepted mismatched broker ID for exact cleanup', () => {
+  const state: ProofState = {
+    submitOutcome: 'NOT_ATTEMPTED',
+    acceptedOrderContractMismatch: false,
+    cancelAttempts: 0,
+    cancelAcknowledged: false,
+    lifecycle: [],
+    cleanup: { result: 'NOT_RUN' },
+  }
+  recordSubmitFailure(
+    state,
+    new BrokerMutationError({
+      operation: MutationOperation.Submit,
+      failure: MutationFailure.Unknown,
+      outcome: MutationOutcome.Unknown,
+      message: 'accepted order did not match the request',
+      brokerOrderId: '00000000-0000-4000-8000-000000000001',
+    }),
+  )
+
+  expect(state.submitOutcome).toBe('UNKNOWN')
+  expect(state.brokerOrderId).toBe('00000000-0000-4000-8000-000000000001')
+  expect(state.acceptedOrderContractMismatch).toBeTrue()
+})
 
 test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the production adapter', async () => {
   const expectedAccountId = required('BAYN_ALPACA_ACCOUNT_ID')
@@ -395,7 +553,7 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
     key: Redacted.make(key),
     secret: Redacted.make(secret),
     proxyUrl: 'http://127.0.0.1:1',
-    operationTimeoutMs: 30_000,
+    operationTimeoutMs: brokerOperationTimeoutMs,
     retryAttempts: 0,
   })
   if (Result.isFailure(decoded)) throw new Error('sandbox broker connection guard rejected the protected binding')
@@ -432,6 +590,7 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
   }
   const state: ProofState = {
     submitOutcome: 'NOT_ATTEMPTED',
+    acceptedOrderContractMismatch: false,
     cancelAttempts: 0,
     cancelAcknowledged: false,
     lifecycle: [],
@@ -493,7 +652,7 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
           const submit = yield* mutation.submit(intent).pipe(
             Effect.tapError((error) =>
               Effect.sync(() => {
-                state.submitOutcome = error.failure === MutationFailure.Rejected ? 'REJECTED' : 'UNKNOWN'
+                recordSubmitFailure(state, error)
               }),
             ),
           )
@@ -506,6 +665,7 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
             recoveredSubmit.value,
             clientOrderId,
             submit.order.brokerOrderId,
+            false,
             'LOOKUP_BY_CLIENT_ID',
           )
           if (recoveredSubmit.value.quantityMicros !== proofQuantityMicros) {
@@ -513,8 +673,25 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
           }
           state.lifecycle.push(readEvidence('LOOKUP_BY_CLIENT_ID', recoveredSubmit))
           yield* cancelIfOpen(mutation, recoveredSubmit.value, state)
-        }),
-      () => cleanupOrder(session, mutation, clientOrderId, state),
+        }).pipe(
+          Effect.timeoutOrElse({
+            duration: mutationPhaseDeadline,
+            orElse: () => Effect.fail(proofFailure('SUBMIT', 'MUTATION_PHASE_DEADLINE_EXCEEDED')),
+          }),
+        ),
+      () =>
+        cleanupOrder(session, mutation, clientOrderId, state).pipe(
+          Effect.timeoutOrElse({
+            duration: cleanupDeadline,
+            orElse: () => Effect.fail(proofFailure('CLEANUP', 'CLEANUP_DEADLINE_EXCEEDED')),
+          }),
+          Effect.tapError((error) =>
+            Effect.sync(() => {
+              state.cleanup.result = 'FAILED'
+              state.cleanupFailure = sanitizeFailure('CLEANUP', error)
+            }),
+          ),
+        ),
     )
   }).pipe(
     Effect.tapError((error) =>
@@ -568,6 +745,7 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
       symbol: proofSymbol,
       quantityMicros: proofQuantityMicros,
       submitOutcome: state.submitOutcome,
+      acceptedOrderContractMismatch: state.acceptedOrderContractMismatch,
       finalStatus: state.finalStatus,
     },
     orderLifecycle: state.lifecycle,
