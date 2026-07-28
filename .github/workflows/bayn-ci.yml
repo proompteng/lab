@@ -42,7 +42,7 @@ jobs:
               nix/images/bayn.nix | \
               nix/images/bun-workspace-service.nix | \
               nix/images/bun-workspace-deps-source.nix | \
-              nix/tests/bun-workspace-deps-source.sh | \
+              nix/images/bun-workspace-deps-source.test.sh | \
               nix/packages.nix | \
               nix/cache-push.sh | \
               nix/ci-nix-oci-summary.sh | \
@@ -202,7 +202,7 @@ jobs:
             experimental-features = nix-command flakes
             substituters = https://cache.nixos.org/
       - name: Prove dependency source boundary
-        run: bash nix/tests/bun-workspace-deps-source.sh
+        run: bash nix/images/bun-workspace-deps-source.test.sh
 
   image:
     needs: changes
