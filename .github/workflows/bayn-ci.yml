@@ -75,6 +75,11 @@ jobs:
               .npmrc | bunfig.toml | patches/* | tsconfig.base.json)
                 image=true
                 ;;
+              .github/actions/setup-nix-toolchain/* | \
+              .github/workflows/bayn-*.yml | \
+              .github/workflows/nix-oci-build-common.yml)
+                image=true
+                ;;
             esac
           done < <(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}")
           {
@@ -88,7 +93,7 @@ jobs:
         run: |
           {
             echo 'bayn=true'
-            echo 'image=true'
+            echo 'image=false'
           } >> "$GITHUB_OUTPUT"
 
   pr-checks:
@@ -201,7 +206,7 @@ jobs:
 
   image:
     needs: changes
-    if: needs.changes.outputs.image == 'true'
+    if: github.event_name == 'pull_request' && needs.changes.outputs.image == 'true'
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: bayn
