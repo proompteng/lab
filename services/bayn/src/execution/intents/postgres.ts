@@ -3,7 +3,7 @@ import { Effect, Layer, Option, Result, Schema } from 'effect'
 import { isSqlError } from 'effect/unstable/sql/SqlError'
 import type { Fragment } from 'effect/unstable/sql/Statement'
 
-import { IntentState, RiskOutcome, TerminalOutcome, type Intent, type RiskDecision } from '../../paper'
+import { IntentState, RiskOutcome, TerminalOutcome, type Intent, type RiskDecision } from '../legacy-paper-codecs'
 import { Sha256Schema as Sha256, strictParseOptions } from '../../schemas'
 import { WriterFence, WriterFenceError } from '../writer-fence'
 import {

@@ -10,7 +10,7 @@ import {
   MutationOperation,
   cancelRequestHash,
   orderRequestBody,
-  type BrokerMutationShape,
+  type BrokerExecutionShape,
   type MutationEvidence,
 } from '../broker/alpaca-mutations'
 import {
@@ -39,9 +39,10 @@ import {
   type RiskDecision,
 } from '../paper'
 import { cancel, dryRunSubmit, ExecutionError, ExecutionFailure, recover, submit } from './coordinator'
+import type { Intent as ExecutionIntent } from './contracts'
 import { IntentStore, type IntentStoreService, type StoredIntent } from './intents'
 
-const encodedRequest = (value: Intent) => Result.getOrThrow(orderRequestBody(value))
+const encodedRequest = (value: ExecutionIntent) => Result.getOrThrow(orderRequestBody(value))
 import {
   decideMutationAuthority,
   decideMutationOutcome,
@@ -1404,7 +1405,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     latest: (_intentId, operation) => Effect.succeed(latest.get(operation)),
   }
 
-  const mutation: BrokerMutationShape = {
+  const mutation: BrokerExecutionShape = {
     submit: (submitted) => {
       submitCalls += 1
       if (latest.get(MutationOperation.Submit)?.eventType !== MutationEventType.SubmitStarted) {

@@ -2,7 +2,8 @@ import { Result, Schema } from 'effect'
 
 import { MutationOperation, type MutationEvidence } from '../../broker/alpaca-mutations'
 import { canonicalHashV1Result } from '../../hash'
-import { Authority, IntentState, KillState, TerminalOutcome } from '../../paper'
+import { IntentState, TerminalOutcome } from '../contracts'
+import { Authority, KillState } from '../legacy-paper-codecs'
 import { strictParseOptions } from '../../schemas'
 import {
   MutationEventType,

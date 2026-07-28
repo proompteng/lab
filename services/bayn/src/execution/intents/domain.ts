@@ -19,7 +19,7 @@ import {
   type Intent,
   type ReferenceIntent,
   type RiskDecision,
-} from '../../paper'
+} from '../legacy-paper-codecs'
 import type { State } from '../../risk'
 import {
   Sha256Schema as Sha256,

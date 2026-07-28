@@ -1,7 +1,7 @@
 import { Result, Schema, pipe } from 'effect'
 
 import type { Account, AccountConfigurationObservation, AssetObservation } from '../broker/alpaca'
-import { Authority } from '../paper'
+import { Authority } from '../execution/legacy-paper-codecs'
 import { strictParseOptions } from '../schemas'
 import {
   AccountConfigurationFactsSchema,

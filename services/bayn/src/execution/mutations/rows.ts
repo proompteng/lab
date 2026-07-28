@@ -1,7 +1,8 @@
 import { Result, Schema } from 'effect'
 
 import { MutationOperation } from '../../broker/alpaca-mutations'
-import { Authority, IntentState, KillState, TerminalOutcome } from '../../paper'
+import { IntentState, TerminalOutcome } from '../contracts'
+import { Authority, KillState } from '../legacy-paper-codecs'
 import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,

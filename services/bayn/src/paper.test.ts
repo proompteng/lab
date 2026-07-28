@@ -23,6 +23,11 @@ import {
   decodeBrokerEvent,
   decodeFill,
   decodeIntent,
+  decodeLegacyAccountSnapshotResult,
+  decodeLegacyFillResult,
+  decodeLegacyIntentResult,
+  decodeLegacyOrderResult,
+  decodeLegacyPositionResult,
   decodeOrder,
   decodePosition,
   decodePaperAuthorityProofBinding,
@@ -32,6 +37,11 @@ import {
   decodeRiskDecision,
   decodeRiskInput,
   decodeValuation,
+  encodeLegacyAccountSnapshot,
+  encodeLegacyFill,
+  encodeLegacyIntent,
+  encodeLegacyOrder,
+  encodeLegacyPosition,
   isIntentTransitionAllowed,
   makePaperAuthorityGeneration,
   makePaperAuthorityGenerationResult,
@@ -186,6 +196,23 @@ describe('paper contracts', () => {
     await expectFailure(decodeBrokerEvent({ ...events[1], position: { ...position, accountId: 'other-account' } }))
     await expectFailure(decodeBrokerEvent({ ...events[4], error: { ...brokerError, observedAt: instant } }))
     await expectFailure(decodeBrokerEvent({ ...events[2], futureField: true }))
+  })
+
+  test('isolates bayn.paper wire identifiers behind explicit compatibility codecs', () => {
+    const decodedAccount = Result.getOrThrow(decodeLegacyAccountSnapshotResult(account))
+    const decodedPosition = Result.getOrThrow(decodeLegacyPositionResult(position))
+    const decodedOrder = Result.getOrThrow(decodeLegacyOrderResult(order))
+    const decodedFill = Result.getOrThrow(decodeLegacyFillResult(fill))
+    const decodedIntent = Result.getOrThrow(decodeLegacyIntentResult(intent))
+
+    for (const decoded of [decodedAccount, decodedPosition, decodedOrder, decodedFill, decodedIntent]) {
+      expect(decoded).not.toHaveProperty('schemaVersion')
+    }
+    expect(encodeLegacyAccountSnapshot(decodedAccount)).toEqual(account)
+    expect(encodeLegacyPosition(decodedPosition)).toEqual(position)
+    expect(encodeLegacyOrder(decodedOrder)).toEqual(order)
+    expect(encodeLegacyFill(decodedFill)).toEqual(fill)
+    expect(encodeLegacyIntent(decodedIntent)).toEqual(intent)
   })
 
   test('enforces order and rate-limit invariants', async () => {
@@ -500,12 +527,18 @@ describe('paper contracts', () => {
         schemaVersion: 'bayn.paper-authority-generation.v1',
       }),
     )
-    expect(() =>
+    expect(
       makePaperAuthorityGeneration({
         ...material,
         strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v2' as never,
-      }),
-    ).toThrow()
+      }) as unknown,
+    ).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'PaperAuthorityGenerationSchemaInvalid',
+        operation: 'material',
+      },
+    })
     expect(
       makePaperAuthorityGenerationResult({
         ...material,

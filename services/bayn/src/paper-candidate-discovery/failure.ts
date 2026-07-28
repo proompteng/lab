@@ -1,7 +1,8 @@
 import { Result } from 'effect'
 
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
-import { Authority, RiskOutcome } from '../paper'
+import { RiskOutcome } from '../execution/contracts'
+import { Authority } from '../execution/legacy-paper-codecs'
 
 export type PaperCandidateDiscoveryError =
   | { readonly _tag: 'IdentityDecodeFailed'; readonly failure: 'invalid-input'; readonly cause: unknown }

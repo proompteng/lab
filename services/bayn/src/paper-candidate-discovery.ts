@@ -13,3 +13,8 @@ export {
 export { validatePaperCandidateDiscoverySnapshot } from './paper-candidate-discovery/snapshot-validation'
 export { validatePaperCandidateDiscoveryObservations } from './paper-candidate-discovery/broker-observation-validation'
 export { discoverPaperCandidates } from './paper-candidate-discovery/program'
+export {
+  makeCandidateDiscovery,
+  type CandidateDiscovery,
+  type CandidateDiscoveryDependencies,
+} from './paper-candidate-discovery/interpreter'
