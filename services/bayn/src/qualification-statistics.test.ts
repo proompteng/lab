@@ -15,6 +15,15 @@ import {
   type QualificationStatisticsPolicy,
 } from './qualification-statistics'
 import { canonicalHashV1 } from './hash'
+import { buildQualificationGates, decideQualification } from './qualification-statistics/decision'
+import {
+  annualizedSharpe,
+  compoundedReturn,
+  maximumDrawdown,
+  mean,
+  nearestRankLowerQuantile,
+  sampleStandardDeviation,
+} from './qualification-statistics/numerical-methods'
 import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
@@ -82,6 +91,7 @@ describe('qualification statistics policy and power', () => {
     const decode = Schema.decodeUnknownSync(QualificationStatisticsPolicySchema, {
       onExcessProperty: 'error',
     })
+
     expect(decode(defaultQualificationStatisticsPolicy)).toEqual(defaultQualificationStatisticsPolicy)
     expect(() =>
       decode({
@@ -130,6 +140,39 @@ describe('qualification statistics policy and power', () => {
     })
     expect(smallerEffect.requiredCompleteRebalanceBlocks).toBeGreaterThan(baseline.requiredCompleteRebalanceBlocks)
     expect(largerEffect.requiredCompleteRebalanceBlocks).toBeLessThan(baseline.requiredCompleteRebalanceBlocks)
+  })
+})
+
+describe('pure numerical and decision kernels', () => {
+  test('defines degenerate samples without ambient state or non-finite output', () => {
+    expect(mean([])).toBe(0)
+    expect(sampleStandardDeviation([])).toBe(0)
+    expect(sampleStandardDeviation([0.25])).toBe(0)
+    expect(annualizedSharpe([0.25], 252)).toBe(0)
+    expect(nearestRankLowerQuantile([], 0.05)).toBe(0)
+    expect(nearestRankLowerQuantile([3, 1, 2], 0.5)).toBe(2)
+    expect(compoundedReturn([])).toBe(0)
+    expect(successOf(maximumDrawdown([]))).toBe(0)
+    expect(successOf(maximumDrawdown([0.1, -0.5, 0.1]))).toBe(0.5)
+  })
+
+  test('aggregates gates and reasons with insufficient evidence taking precedence over rejection', () => {
+    const analysis = successOf(analyzeQualification(makeSeries({ blocks: 30 }), policy(), []))
+    const input = {
+      policy: analysis.policy,
+      power: analysis.power,
+      bootstrap: analysis.bootstrap,
+      walkForward: analysis.walkForward,
+    }
+
+    expect(buildQualificationGates(input)).toEqual(analysis.gates)
+    expect(decideQualification(input)).toEqual({
+      gates: analysis.gates,
+      status: analysis.status,
+      reasonCodes: analysis.reasonCodes,
+    })
+    expect(analysis.status).toBe('INSUFFICIENT')
+    expect(analysis.bootstrap.annualizedExcessReturnLowerBound).toBeGreaterThan(0)
   })
 })
 

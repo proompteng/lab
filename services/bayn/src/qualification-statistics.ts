@@ -11,6 +11,14 @@ import {
   strictParseOptions as StrictParseOptions,
 } from './schemas'
 import type { EvaluationResult, IsoDate } from './types'
+import { decideQualification } from './qualification-statistics/decision'
+import {
+  annualizedSharpe,
+  mean,
+  nearestRankLowerQuantile,
+  roundStatistic,
+} from './qualification-statistics/numerical-methods'
+import { calculateWalkForward } from './qualification-statistics/walk-forward'
 
 const PositiveUnitInterval = Schema.Finite.check(Schema.isGreaterThan(0), Schema.isLessThan(1))
 const SimpleReturn = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(-1))
@@ -404,27 +412,6 @@ const finiteStatistic = (
 ): Result.Result<number, QualificationStatisticsFailure> =>
   Number.isFinite(value) ? Result.succeed(value) : fail({ _tag: 'QualificationStatisticNotFinite', operation, value })
 
-const roundStatistic = (value: number): Result.Result<number, QualificationStatisticsFailure> =>
-  pipe(
-    finiteStatistic('round', value),
-    Result.map((finite) => Number.parseFloat(finite.toFixed(12))),
-  )
-
-const mean = (values: readonly number[]): number =>
-  values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length
-
-const sampleStandardDeviation = (values: readonly number[]): number => {
-  if (values.length < 2) return 0
-  const average = mean(values)
-  const variance = values.reduce((sum, value) => sum + (value - average) ** 2, 0) / (values.length - 1)
-  return Math.sqrt(Math.max(0, variance))
-}
-
-const sharpe = (returns: readonly number[], annualizationSessions: number): number => {
-  const volatility = sampleStandardDeviation(returns)
-  return volatility === 0 ? 0 : (mean(returns) / volatility) * Math.sqrt(annualizationSessions)
-}
-
 const daysBetween = (left: IsoDate, right: IsoDate): Result.Result<number, QualificationStatisticsFailure> => {
   const milliseconds = Date.parse(`${right}T00:00:00.000Z`) - Date.parse(`${left}T00:00:00.000Z`)
   return Number.isFinite(milliseconds) && milliseconds > 0
@@ -658,11 +645,11 @@ const strongerBenchmark = (
   observations: readonly QualificationObservation[],
   annualizationSessions: number,
 ): { readonly name: 'buy-and-hold' | 'direct-volatility-timing'; readonly sharpe: number } => {
-  const buyAndHold = sharpe(
+  const buyAndHold = annualizedSharpe(
     observations.map((observation) => observation.buyAndHoldReturn - observation.cashReturn),
     annualizationSessions,
   )
-  const directVolatility = sharpe(
+  const directVolatility = annualizedSharpe(
     observations.map((observation) => observation.directVolatilityReturn - observation.cashReturn),
     annualizationSessions,
   )
@@ -698,13 +685,6 @@ const drawRandomIndex = (
     return next.value >= limit ? select(next) : { index: next.value % maximum, state: next }
   }
   return Result.succeed(select(state))
-}
-
-const nearestRankLowerQuantile = (values: readonly number[], probability: number): number => {
-  if (values.length === 0) return 0
-  const sorted = [...values].sort((left, right) => left - right)
-  const rank = Math.max(1, Math.ceil(probability * sorted.length))
-  return sorted.at(rank - 1) ?? 0
 }
 
 interface BootstrapAccumulator {
@@ -812,8 +792,8 @@ const runBootstrap = (
                               mean(candidateReturns) * policy.annualizationSessions,
                             ),
                             sharpeDifference: roundStatistic(
-                              sharpe(candidateReturns, policy.annualizationSessions) -
-                                sharpe(benchmarkReturns, policy.annualizationSessions),
+                              annualizedSharpe(candidateReturns, policy.annualizationSessions) -
+                                annualizedSharpe(benchmarkReturns, policy.annualizationSessions),
                             ),
                           }),
                           Result.map(({ annualizedExcessReturn, sharpeDifference }) => ({
@@ -880,108 +860,6 @@ const runBootstrap = (
   )
 }
 
-const compoundedReturn = (returns: readonly number[]): number =>
-  returns.reduce((growth, value) => growth * (1 + value), 1) - 1
-
-const maximumDrawdown = (returns: readonly number[]): Result.Result<number, QualificationStatisticsFailure> => {
-  const state = returns.reduce(
-    (current, value) => {
-      const equity = current.equity * (1 + value)
-      const peak = Math.max(current.peak, equity)
-      return { equity, peak, drawdown: Math.max(current.drawdown, 1 - equity / peak) }
-    },
-    { equity: 1, peak: 1, drawdown: 0 },
-  )
-  return roundStatistic(state.drawdown)
-}
-
-const runWalkForward = (
-  series: QualificationSeries,
-  policy: QualificationStatisticsPolicy,
-): Result.Result<typeof WalkForwardAnalysisSchema.Type, QualificationStatisticsFailure> => {
-  const { minimumTrainingSessions, testSessions } = policy.walkForward
-  const foldCount = Math.max(0, Math.floor((series.observations.length - minimumTrainingSessions) / testSessions))
-  return pipe(
-    Result.all(
-      Array.from({ length: foldCount }, (_, ordinal) => minimumTrainingSessions + ordinal * testSessions).map(
-        (testStart, ordinal) => {
-          const test = series.observations.slice(testStart, testStart + testSessions)
-          const trainingStart = series.observations.at(0)
-          const trainingEnd = series.observations.at(testStart - 1)
-          const firstTestObservation = test.at(0)
-          const lastTestObservation = test.at(-1)
-          if (
-            trainingStart === undefined ||
-            trainingEnd === undefined ||
-            firstTestObservation === undefined ||
-            lastTestObservation === undefined
-          ) {
-            return fail({
-              _tag: 'QualificationWalkForwardBoundaryMissing',
-              testStart,
-              testSessions,
-              observationCount: series.observations.length,
-            })
-          }
-          const strategyReturns = test.map((observation) => observation.strategyReturn)
-          const cashReturns = test.map((observation) => observation.cashReturn)
-          const strategyReturn = compoundedReturn(strategyReturns)
-          const cashReturn = compoundedReturn(cashReturns)
-          const excessReturn = strategyReturn - cashReturn
-          return pipe(
-            Result.all({
-              strategyReturn: roundStatistic(strategyReturn),
-              cashReturn: roundStatistic(cashReturn),
-              excessReturn: roundStatistic(excessReturn),
-              maximumDrawdown: maximumDrawdown(strategyReturns),
-            }),
-            Result.flatMap((statistics) => {
-              const material = {
-                schemaVersion: 'bayn.walk-forward-fold.v1' as const,
-                ordinal,
-                trainingStart: trainingStart.sessionDate,
-                trainingEnd: trainingEnd.sessionDate,
-                testStart: firstTestObservation.sessionDate,
-                testEnd: lastTestObservation.sessionDate,
-                testObservationCount: test.length,
-                strategyReturn: statistics.strategyReturn,
-                cashReturn: statistics.cashReturn,
-                excessReturn: statistics.excessReturn,
-                maximumDrawdown: statistics.maximumDrawdown,
-                positiveExcess: excessReturn > 0,
-                drawdownWithinLimit: statistics.maximumDrawdown <= policy.walkForward.maximumFoldDrawdown,
-              }
-              return pipe(
-                canonicalHashResult('walk-forward-fold', material),
-                Result.map((contentHash) => ({ ...material, contentHash })),
-              )
-            }),
-          )
-        },
-      ),
-    ),
-    Result.flatMap((folds) => {
-      const positiveFolds = folds.filter((fold) => fold.positiveExcess).length
-      const positiveFoldFraction = folds.length === 0 ? 0 : positiveFolds / folds.length
-      return pipe(
-        roundStatistic(positiveFoldFraction),
-        Result.map((roundedPositiveFoldFraction) => ({
-          schemaVersion: 'bayn.walk-forward.v1' as const,
-          method: policy.walkForward.method,
-          folds,
-          requiredFolds: policy.walkForward.minimumFolds,
-          positiveFolds,
-          positiveFoldFraction: roundedPositiveFoldFraction,
-          requiredPositiveFoldFraction: policy.walkForward.minimumPositiveFoldFraction,
-          allDrawdownsWithinLimit: folds.every((fold) => fold.drawdownWithinLimit),
-          maximumFoldDrawdown: folds.reduce((maximum, fold) => Math.max(maximum, fold.maximumDrawdown), 0),
-          sufficient: folds.length >= policy.walkForward.minimumFolds,
-        })),
-      )
-    }),
-  )
-}
-
 export const analyzeQualification = (
   input: QualificationSeries,
   policyInput: QualificationStatisticsPolicy,
@@ -1008,76 +886,10 @@ export const analyzeQualification = (
             Result.all({
               power: calculateQualificationPower(policy, blocks.length, availableCompleteSessions),
               bootstrap: runBootstrap(series, blocks, policy, priorTrialRunIds.length),
-              walkForward: runWalkForward(series, policy),
+              walkForward: calculateWalkForward(series, policy),
             }),
             Result.flatMap(({ bootstrap, power, walkForward }) => {
-              const gates = [
-                {
-                  name: 'power',
-                  passed: power.sufficient,
-                  actual: `${power.availableCompleteRebalanceBlocks} blocks/${power.availableCompleteSessions} sessions`,
-                  required: `${power.requiredCompleteRebalanceBlocks} blocks/${power.requiredSessions} sessions`,
-                },
-                {
-                  name: 'bootstrap_tail_resolution',
-                  passed: bootstrap.tailResolutionSufficient,
-                  actual: bootstrap.tailSampleCount,
-                  required: bootstrap.minimumTailSamples,
-                },
-                {
-                  name: 'annualized_excess_return_lower_bound',
-                  passed: bootstrap.annualizedExcessReturnLowerBound > 0,
-                  actual: bootstrap.annualizedExcessReturnLowerBound,
-                  required: '>0',
-                },
-                {
-                  name: 'sharpe_difference_lower_bound',
-                  passed: bootstrap.sharpeDifferenceLowerBound > 0,
-                  actual: bootstrap.sharpeDifferenceLowerBound,
-                  required: '>0',
-                },
-                {
-                  name: 'walk_forward_folds',
-                  passed: walkForward.sufficient,
-                  actual: walkForward.folds.length,
-                  required: walkForward.requiredFolds,
-                },
-                {
-                  name: 'walk_forward_positive_fraction',
-                  passed:
-                    walkForward.sufficient &&
-                    walkForward.positiveFoldFraction >= walkForward.requiredPositiveFoldFraction,
-                  actual: walkForward.positiveFoldFraction,
-                  required: `>=${walkForward.requiredPositiveFoldFraction}`,
-                },
-                {
-                  name: 'walk_forward_drawdown',
-                  passed: walkForward.sufficient && walkForward.allDrawdownsWithinLimit,
-                  actual: walkForward.maximumFoldDrawdown,
-                  required: `<=${policy.walkForward.maximumFoldDrawdown}`,
-                },
-              ] as const
-              const insufficientReasons = [
-                ...(power.availableCompleteRebalanceBlocks < power.requiredCompleteRebalanceBlocks
-                  ? ['INSUFFICIENT_POWER_BLOCKS']
-                  : []),
-                ...(power.availableCompleteSessions < power.requiredSessions ? ['INSUFFICIENT_POWER_SESSIONS'] : []),
-                ...(!bootstrap.tailResolutionSufficient ? ['INSUFFICIENT_BOOTSTRAP_TAIL'] : []),
-                ...(!walkForward.sufficient ? ['INSUFFICIENT_WALK_FORWARD_FOLDS'] : []),
-              ]
-              const rejectedReasons = [
-                ...(bootstrap.annualizedExcessReturnLowerBound <= 0 ? ['NON_POSITIVE_EXCESS_RETURN_LCB'] : []),
-                ...(bootstrap.sharpeDifferenceLowerBound <= 0 ? ['NON_POSITIVE_SHARPE_DIFFERENCE_LCB'] : []),
-                ...(walkForward.sufficient &&
-                walkForward.positiveFoldFraction < walkForward.requiredPositiveFoldFraction
-                  ? ['WALK_FORWARD_POSITIVE_FRACTION_FAILED']
-                  : []),
-                ...(walkForward.sufficient && !walkForward.allDrawdownsWithinLimit
-                  ? ['WALK_FORWARD_DRAWDOWN_FAILED']
-                  : []),
-              ]
-              const status =
-                insufficientReasons.length > 0 ? 'INSUFFICIENT' : rejectedReasons.length > 0 ? 'REJECTED' : 'PASS'
+              const { gates, reasonCodes, status } = decideQualification({ policy, power, bootstrap, walkForward })
               const material = {
                 schemaVersion: 'bayn.qualification-analysis.v1' as const,
                 runId: series.runId,
@@ -1090,7 +902,7 @@ export const analyzeQualification = (
                 walkForward,
                 gates,
                 status,
-                reasonCodes: status === 'INSUFFICIENT' ? insufficientReasons : rejectedReasons,
+                reasonCodes,
               }
               return pipe(
                 canonicalHashResult('analysis', material),
