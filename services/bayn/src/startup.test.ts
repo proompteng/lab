@@ -32,8 +32,9 @@ import { CycleObservability } from './db/cycle-observability'
 import {
   DatabaseError,
   EvidenceStore,
-  EvidenceStoreLive,
-  makeEvidenceStoreLayer,
+  EvidenceStoreFromPostgres,
+  initializeEvidenceStore,
+  PostgresClientLive,
   type EvidenceStoreService,
   type StoredEvaluationEvidence,
 } from './db/evidence-store'
@@ -1495,7 +1496,14 @@ describe('Bayn startup lifecycle', () => {
       },
     }
     const exit = await Effect.runPromiseExit(
-      Effect.scoped(Layer.build(EvidenceStoreLive(unavailableDatabase).pipe(Layer.provide(NodeServices.layer)))),
+      Effect.scoped(
+        Layer.build(
+          EvidenceStoreFromPostgres(unavailableDatabase).pipe(
+            Layer.provideMerge(PostgresClientLive(unavailableDatabase)),
+            Layer.provide(NodeServices.layer),
+          ),
+        ),
+      ),
     )
 
     expect(Exit.isFailure(exit)).toBe(true)
@@ -1510,11 +1518,11 @@ describe('Bayn startup lifecycle', () => {
     }
     const stalledMigration = Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true))))
     const exit = await Effect.runPromiseExit(
-      Effect.scoped(
-        Layer.build(
-          makeEvidenceStoreLayer(timedOutDatabase, stalledMigration, Effect.succeed(successfulEvidenceStore)),
-        ),
-      ),
+      initializeEvidenceStore({
+        operationTimeoutMs: timedOutDatabase.operationTimeoutMs,
+        migration: stalledMigration,
+        store: Effect.succeed(successfulEvidenceStore),
+      }),
     )
 
     expect(interrupted).toBe(true)

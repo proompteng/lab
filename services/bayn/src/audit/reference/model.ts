@@ -80,7 +80,11 @@ export interface ReferenceEvaluationWithWork {
 export type ReferenceEvaluationFailure =
   | ExecutionModelFailure
   | ContractConstructionFailure
-  | CanonicalHashFailure
+  | {
+      readonly _tag: 'ReferenceCanonicalizationFailed'
+      readonly subject: ReferenceCanonicalizationSubject
+      readonly cause: CanonicalHashFailure
+    }
   | {
       readonly _tag: 'UnsupportedReferenceExecutionModel'
       readonly actual: string
@@ -254,5 +258,15 @@ export type ReferenceEvaluationFailure =
       readonly expectedParameterHash: string
       readonly actualParameterHash: string
     }
+
+export type ReferenceCanonicalizationSubject =
+  | 'cash-change'
+  | 'cash-yield-event'
+  | 'covariance-sessions'
+  | 'decision-event'
+  | 'fee-event'
+  | 'fill-event'
+  | 'simulated-order'
+  | 'strategy-parameters'
 
 export type ReferenceComputation<A> = Result.Result<A, ReferenceEvaluationFailure>

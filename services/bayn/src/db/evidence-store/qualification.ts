@@ -1,4 +1,4 @@
-import { Result, Schema } from 'effect'
+import { Option, Result, Schema } from 'effect'
 
 import {
   makeRunIdentityResult,
@@ -47,6 +47,14 @@ export type QualificationDecisionFailure =
       readonly path: QualificationPath
       readonly observed: unknown
       readonly expected: unknown
+    }
+
+export type StoredQualificationFailure =
+  | QualificationDecisionFailure
+  | {
+      readonly _tag: 'StoredQualificationCardinalityMismatch'
+      readonly observedCount: number
+      readonly expectedMaximum: 1
     }
 
 export interface QualificationRowPayload {
@@ -234,6 +242,28 @@ export const decodeQualificationRecord = (
   return Result.succeed({ state: 'TERMINAL', lock, result })
 }
 
+export const decodeQualificationRows = (
+  rows: readonly QualificationRowPayload[],
+): Result.Result<Option.Option<QualificationRecord>, StoredQualificationFailure> => {
+  if (rows.length === 0) return Result.succeed(Option.none())
+  if (rows.length !== 1) {
+    return Result.fail({
+      _tag: 'StoredQualificationCardinalityMismatch',
+      observedCount: rows.length,
+      expectedMaximum: 1,
+    })
+  }
+  const row = rows[0]
+  if (row === undefined) {
+    return Result.fail({
+      _tag: 'StoredQualificationCardinalityMismatch',
+      observedCount: 0,
+      expectedMaximum: 1,
+    })
+  }
+  return Result.map(decodeQualificationRecord(row), Option.some)
+}
+
 export const validateQualificationLockMatch = (
   observed: QualificationLock,
   expected: QualificationLock,
@@ -305,3 +335,8 @@ export const renderQualificationDecisionFailure = (failure: QualificationDecisio
       return `${failure.stage} mismatch at ${failure.path.join('.')}: observed ${renderFact(failure.observed)}, expected ${renderFact(failure.expected)}`
   }
 }
+
+export const renderStoredQualificationFailure = (failure: StoredQualificationFailure): string =>
+  failure._tag === 'StoredQualificationCardinalityMismatch'
+    ? `qualification identity has ${failure.observedCount} rows, expected at most ${failure.expectedMaximum}`
+    : renderQualificationDecisionFailure(failure)

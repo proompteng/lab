@@ -70,7 +70,7 @@ import type { CausalProtocol, Protocol } from '../types'
 import {
   DatabaseError,
   EvidenceStore,
-  EvidenceStoreLive,
+  EvidenceStoreFromPostgres,
   PostgresClientLive,
   type PersistEvaluationInput,
 } from './evidence-store'
@@ -154,7 +154,12 @@ const makeConfig = (url = testUrl): RuntimeConfig => ({
 })
 
 const makeEvidenceRuntime = (config = makeConfig()) =>
-  ManagedRuntime.make(EvidenceStoreLive(config).pipe(Layer.provide(NodeServices.layer)))
+  ManagedRuntime.make(
+    EvidenceStoreFromPostgres(config).pipe(
+      Layer.provideMerge(PostgresClientLive(config)),
+      Layer.provide(NodeServices.layer),
+    ),
+  )
 
 const makeClientRuntime = (config = makeConfig()) =>
   ManagedRuntime.make(PostgresClientLive(config).pipe(Layer.provide(NodeServices.layer)))
@@ -4450,7 +4455,9 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const store = yield* EvidenceStore
         const sql = yield* PgClient.PgClient
         const first = yield* store.persist(input)
+        const beforeReplay = yield* evidenceGraphBytes
         const second = yield* store.persist(input)
+        const afterReplay = yield* evidenceGraphBytes
         const runs = yield* sql<{
           status: string
           artifact_count: number
@@ -4481,13 +4488,14 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           WHERE run_id = ${input.evaluation.runId}
           ORDER BY ordinal
         `
-        return { first, second, runs, gates }
+        return { afterReplay, beforeReplay, first, second, runs, gates }
       }),
     )
 
     expect(result.first).toMatchObject({ runId: input.evaluation.runId, deduplicated: false })
     expect(result.first.artifactCount).toBe(17)
     expect(result.second).toEqual({ ...result.first, deduplicated: true })
+    expect(result.afterReplay).toBe(result.beforeReplay)
     expect(result.runs).toEqual([
       {
         status: 'COMPLETE',
@@ -4505,6 +4513,44 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         required_type: typeof gate.required,
       })),
     )
+  })
+
+  test('rejects divergent deterministic replay with a typed conflict and no writes', async () => {
+    const input = makeInput()
+    const divergent: PersistEvaluationInput = {
+      ...input,
+      evaluation: {
+        ...input.evaluation,
+        verdict: {
+          ...input.evaluation.verdict,
+          gates: input.evaluation.verdict.gates.map((gate, index) =>
+            index === 0 ? { ...gate, name: `${gate.name}-divergent` } : gate,
+          ),
+        },
+      },
+    }
+    const observed = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        yield* store.persist(input)
+        const before = yield* evidenceGraphBytes
+        const failure = yield* store.persist(divergent).pipe(Effect.flip)
+        const after = yield* evidenceGraphBytes
+        return { after, before, failure }
+      }),
+    )
+
+    expect(observed.after).toBe(observed.before)
+    expect(observed.failure).toBeInstanceOf(DatabaseError)
+    expect(observed.failure).toMatchObject({
+      failure: 'invariant',
+      operation: 'read-receipt',
+      cause: {
+        _tag: 'PersistenceMismatch',
+        invariant: 'receipt-artifact-content',
+        path: ['artifacts', 9],
+      },
+    })
   })
 
   test('rejects every former qualification invariant with a byte-identical no-write graph', async () => {

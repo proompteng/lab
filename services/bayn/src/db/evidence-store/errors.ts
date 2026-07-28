@@ -1,6 +1,16 @@
 import { Data, Effect, Match, Schema } from 'effect'
 import { isSqlError, type SqlErrorReason } from 'effect/unstable/sql/SqlError'
 
+import { renderEvidenceRecoveryIssue, type EvidenceRecoveryIssue } from '../evidence-recovery'
+import { renderPersistencePlanFailure } from './persistence-failures'
+import type { PersistencePlanFailure } from './persistence-model'
+import {
+  renderQualificationDecisionFailure,
+  renderStoredQualificationFailure,
+  type QualificationDecisionFailure,
+  type StoredQualificationFailure,
+} from './qualification'
+
 export type DatabaseFailure = 'constraint' | 'decode' | 'invariant' | 'migration' | 'query' | 'unavailable'
 export type PersistenceFailure = 'connectivity' | 'constraint' | 'decode' | 'invariant' | 'query' | 'transaction'
 
@@ -95,3 +105,29 @@ export const runDatabase = <A, E, R>(
 
 export const ensure = (condition: boolean, operation: string, message: string): Effect.Effect<void, DatabaseError> =>
   condition ? Effect.void : Effect.fail(databaseError('invariant', operation, message))
+
+export const persistencePlanDatabaseError = (operation: string, failure: PersistencePlanFailure): DatabaseError =>
+  databaseError(
+    'invariant',
+    operation,
+    renderPersistencePlanFailure(failure),
+    failure._tag === 'SimulationReconciliationFailed' ? failure.issues : failure,
+  )
+
+export const qualificationDecisionDatabaseError = (
+  operation: string,
+  failure: QualificationDecisionFailure,
+): DatabaseError => databaseError('invariant', operation, renderQualificationDecisionFailure(failure), failure)
+
+export const storedQualificationDatabaseError = (
+  operation: string,
+  failure: StoredQualificationFailure,
+): DatabaseError => databaseError('invariant', operation, renderStoredQualificationFailure(failure), failure)
+
+export const evidenceRecoveryDatabaseError = (operation: string, issue: EvidenceRecoveryIssue): DatabaseError =>
+  databaseError(
+    issue._tag === 'DecodeFailure' ? 'decode' : 'invariant',
+    operation,
+    renderEvidenceRecoveryIssue(issue),
+    issue._tag === 'SimulationFailure' ? issue.issues : issue,
+  )

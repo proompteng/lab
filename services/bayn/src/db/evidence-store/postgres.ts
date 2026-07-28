@@ -10,8 +10,7 @@ import { makeQualificationStatements } from './qualification-statements'
 import { makeEvidenceReadPrograms } from './read-program'
 import { makeEvidenceReferencePrograms } from './reference-programs'
 
-export const makeEvidenceStore = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
+export const makeEvidenceStore = (sql: PgClient.PgClient): EvidenceStoreService => {
   const evidenceStatements = makeEvidenceStatements(sql)
   const qualificationStatements = makeQualificationStatements(sql)
   const references = makeEvidenceReferencePrograms(sql, evidenceStatements)
@@ -24,4 +23,4 @@ export const makeEvidenceStore = Effect.gen(function* () {
     ...reads,
     ...qualifications,
   } satisfies EvidenceStoreService
-})
+}

@@ -10,8 +10,7 @@ import {
   renderSnapshotReferenceIssue,
   snapshotReferenceIssueTags,
 } from '../snapshot-reference'
-import { liftPersistenceResult } from './boundary'
-import { databaseError, type DatabaseError } from './errors'
+import { databaseError, persistencePlanDatabaseError, type DatabaseError } from './errors'
 import type { EvidenceStatements } from './evidence-statements'
 import type { PersistencePlan } from './persistence-model'
 import { validatePersistenceReceipt, validateProtocolReference } from './persistence-receipt'
@@ -59,7 +58,9 @@ export const makeEvidenceReferencePrograms = (
         ON CONFLICT (protocol_hash) DO NOTHING
       `
       const protocol = yield* statements.getProtocol({ protocolHash: input.protocolHash })
-      yield* liftPersistenceResult('protocol-lock', validateProtocolReference(input, protocol))
+      yield* Effect.fromResult(validateProtocolReference(input, protocol)).pipe(
+        Effect.mapError((failure) => persistencePlanDatabaseError('protocol-lock', failure)),
+      )
     })
 
   const ensureSnapshotReference: EvidenceReferencePrograms['ensureSnapshotReference'] = (inputManifest) =>
@@ -77,10 +78,9 @@ export const makeEvidenceReferencePrograms = (
       const events = yield* statements.getEventReferences({ runId })
       const gates = yield* statements.getGateReferences({ runId })
       const statuses = yield* statements.getStatusReferences({ runId })
-      return yield* liftPersistenceResult(
-        'read-receipt',
+      return yield* Effect.fromResult(
         validatePersistenceReceipt(plan, { receipts, artifacts, events, gates, statuses }, deduplicated),
-      )
+      ).pipe(Effect.mapError((failure) => persistencePlanDatabaseError('read-receipt', failure)))
     })
 
   const loadStoredRows: EvidenceReferencePrograms['loadStoredRows'] = (runId) =>

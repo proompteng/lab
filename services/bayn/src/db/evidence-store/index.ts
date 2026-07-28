@@ -1,4 +1,4 @@
-export { EvidenceStoreFromPostgres, EvidenceStoreLive, makeEvidenceStoreLayer, PostgresClientLive } from './bootstrap'
+export { EvidenceStoreFromPostgres, initializeEvidenceStore, PostgresClientLive } from './bootstrap'
 export { DatabaseError, type DatabaseFailure } from './errors'
 export {
   EvidenceStore,

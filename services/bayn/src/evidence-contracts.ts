@@ -1,7 +1,7 @@
-import { Schema } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { EvaluationBoundsSchema, FinalizedSnapshotProvenanceSchema, IsoDateSchema, Sha256Schema } from './contracts'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result, renderCanonicalJsonFailure } from './hash'
 import { ExecutionModelSchema } from './protocol'
 import {
   DigitsSchema as Micros,
@@ -52,7 +52,15 @@ const inputManifestIssues = (manifest: typeof InputManifestBase.Type): readonly 
   const { hash, ...material } = manifest
   const symbolNames = manifest.symbols.map((coverage) => coverage.symbol)
   const issues: Schema.FilterIssue[] = []
-  if (canonicalHashV1(material) !== hash) issues.push({ path: ['hash'], issue: 'does not match the manifest' })
+  const materialHash = canonicalHashV1Result(material)
+  if (Result.isFailure(materialHash)) {
+    issues.push({
+      path: ['hash'],
+      issue: `cannot hash the manifest: ${renderCanonicalJsonFailure(materialHash.failure)}`,
+    })
+  } else if (materialHash.success !== hash) {
+    issues.push({ path: ['hash'], issue: 'does not match the manifest' })
+  }
   if (manifest.firstSession !== manifest.bounds.dataStart) {
     issues.push({ path: ['firstSession'], issue: 'must equal bounds.dataStart' })
   }
@@ -62,7 +70,19 @@ const inputManifestIssues = (manifest: typeof InputManifestBase.Type): readonly 
   if (manifest.rowCount !== manifest.sessionCount * manifest.symbols.length) {
     issues.push({ path: ['rowCount'], issue: 'must equal sessionCount multiplied by symbol count' })
   }
-  if (canonicalHashV1(symbolNames) !== canonicalHashV1(manifest.finalizedSnapshot.symbols)) {
+  const symbolNamesHash = canonicalHashV1Result(symbolNames)
+  const finalizedSymbolsHash = canonicalHashV1Result(manifest.finalizedSnapshot.symbols)
+  if (Result.isFailure(symbolNamesHash)) {
+    issues.push({
+      path: ['symbols'],
+      issue: `cannot hash the manifest universe: ${renderCanonicalJsonFailure(symbolNamesHash.failure)}`,
+    })
+  } else if (Result.isFailure(finalizedSymbolsHash)) {
+    issues.push({
+      path: ['finalizedSnapshot', 'symbols'],
+      issue: `cannot hash the finalized universe: ${renderCanonicalJsonFailure(finalizedSymbolsHash.failure)}`,
+    })
+  } else if (symbolNamesHash.success !== finalizedSymbolsHash.success) {
     issues.push({ path: ['symbols'], issue: 'must match the finalized snapshot universe' })
   }
   for (const [index, coverage] of manifest.symbols.entries()) {

@@ -1,7 +1,7 @@
 import { Result } from 'effect'
 
-import { canonicalHashV1 } from '../../hash'
 import type { DailyBar, DecisionPlan, InputManifest, IsoDate, Protocol, SimulationProtocol } from '../../types'
+import { hashReferenceMaterial } from './replay/identities'
 import type { ReferenceComputation, Session } from './model'
 
 export const tradingDays = 252
@@ -408,6 +408,8 @@ export const riskBalancedDecisionPlan = (
       sessionCount: sessions.length,
     })
   }
+  const sessionsHash = hashReferenceMaterial('covariance-sessions', covarianceDates)
+  if (Result.isFailure(sessionsHash)) return Result.fail(sessionsHash.failure)
   return Result.succeed({
     schemaVersion: 'bayn.risk-balanced-trend-decision-plan.v1',
     signalDate: signalSession.date,
@@ -415,7 +417,7 @@ export const riskBalancedDecisionPlan = (
       returnCount: protocol.volatilityWindow,
       firstSession: firstCovarianceSession,
       lastSession: covarianceDates.at(-1) ?? signalSession.date,
-      sessionsHash: canonicalHashV1(covarianceDates),
+      sessionsHash: sessionsHash.success,
     },
     estimatedAnnualizedPortfolioVolatility,
     exposureScale,

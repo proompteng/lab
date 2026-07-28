@@ -5,8 +5,6 @@ import {
   canonicalHashV1,
   canonicalHashV1OrThrow,
   canonicalHashV1Result,
-  canonicalJsonV1,
-  canonicalJsonV1OrThrow,
   canonicalJsonV1Result,
   renderCanonicalJsonFailure,
   stableU128,
@@ -30,9 +28,7 @@ describe('canonical hashing', () => {
 
     expect(canonicalJsonV1Result(value)).toEqual(Result.succeed(canonical))
     expect(canonicalHashV1Result(value)).toEqual(Result.succeed(hash))
-    expect(canonicalJsonV1(value)).toBe(canonical)
     expect(canonicalHashV1(value)).toBe(hash)
-    expect(canonicalJsonV1OrThrow(value)).toBe(canonical)
     expect(canonicalHashV1OrThrow(value)).toBe(hash)
     expect(canonicalHashV1({ b: 2, a: 1 })).toBe(canonicalHashV1({ a: 1, b: 2 }))
   })
@@ -243,15 +239,14 @@ describe('canonical hashing', () => {
     expect(renderCanonicalJsonFailure(ownKeysFailure)).toBe('introspection-failed at $ (object; own-keys)')
   })
 
-  test('keeps the throwing compatibility aliases behaviorally explicit', () => {
-    expect(() => canonicalJsonV1({ missing: undefined })).toThrow('non-JSON undefined')
-    expect(() => canonicalJsonV1({ invalid: Number.NaN })).toThrow('non-finite number')
-    expect(() => canonicalJsonV1({ invalid: 1n })).toThrow('non-JSON bigint')
-    expect(() => canonicalJsonV1(new Date('2026-01-01T00:00:00.000Z'))).toThrow('plain JSON objects')
+  test('keeps empty values and insertion-order permutations byte-identical', () => {
+    const permutations = [{}, Object.fromEntries([]), Object.assign(Object.create(null), {})]
+    for (const value of permutations) expect(canonicalJsonV1Result(value)).toEqual(Result.succeed('{}'))
 
-    const cyclic: Record<string, unknown> = {}
-    cyclic.self = cyclic
-    expect(() => canonicalJsonV1(cyclic)).toThrow('cycle')
+    const first = { emptyArray: [], emptyObject: {}, nested: { z: 0, a: '' } }
+    const second = { nested: { a: '', z: -0 }, emptyObject: {}, emptyArray: [] }
+    expect(canonicalJsonV1Result(first)).toEqual(canonicalJsonV1Result(second))
+    expect(canonicalHashV1Result(first)).toEqual(canonicalHashV1Result(second))
   })
 
   test('produces stable non-zero TigerBeetle identifiers', () => {

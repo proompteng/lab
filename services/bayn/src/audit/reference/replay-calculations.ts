@@ -11,8 +11,7 @@ import {
   scaleQuantityMicros,
   type FeeInput,
   type FillTerms,
-} from '../../../execution-model'
-import { canonicalHashV1 } from '../../../hash'
+} from '../../execution-model'
 import type {
   CashChange,
   DailyBar,
@@ -23,9 +22,14 @@ import type {
   PerformanceMetrics,
   SimulatedOrder,
   SimulationProtocol,
-} from '../../../types'
-import { average, sampleDeviation, tradingDays } from '../decisions'
-import type { Position, ReferenceComputation, Session } from '../model'
+} from '../../types'
+import { average, sampleDeviation, tradingDays } from './decisions'
+import {
+  makeReferenceCashChangeIdentity,
+  makeReferenceFillIdentity,
+  makeReferenceOrderIdentity,
+} from './replay/identities'
+import type { Position, ReferenceComputation, Session } from './model'
 
 export const calculateReplayMetrics = (
   equityMicros: readonly bigint[],
@@ -109,7 +113,7 @@ export const makeReferenceOrder = (
       referencePriceMicros: referencePrice,
       model: protocol.executionModel,
     }),
-    Result.map((outcome) => {
+    Result.flatMap((outcome) => {
       const material = {
         decisionId: decision.id,
         sessionDate,
@@ -121,7 +125,7 @@ export const makeReferenceOrder = (
         rejectionReason: outcome.rejectionReason,
         unfilledRemainder: outcome.unfilledRemainder,
       }
-      return { id: canonicalHashV1({ runId, kind: 'order', ...material }), ...material }
+      return makeReferenceOrderIdentity(runId, material)
     }),
   )
 
@@ -151,7 +155,7 @@ export const restrictReferenceBuyFill = (
     rejectionReason: permittedQuantity === 0n ? ('insufficient-buying-power' as const) : null,
     unfilledRemainder: 'canceled' as const,
   }
-  return Result.succeed({ id: canonicalHashV1({ runId, kind: 'order', ...material }), ...material })
+  return makeReferenceOrderIdentity(runId, material)
 }
 
 export const makeReferenceFill = (
@@ -160,7 +164,7 @@ export const makeReferenceFill = (
   simulatedOrder: SimulatedOrder,
   terms: FillTerms,
   costBasisMicros: bigint,
-): FillEvent => {
+): ReferenceComputation<FillEvent> => {
   const material = {
     orderId: simulatedOrder.id,
     decisionId: decision.id,
@@ -175,7 +179,7 @@ export const makeReferenceFill = (
     slippageCostMicros: terms.slippageCostMicros.toString(),
     costBasisMicros: costBasisMicros.toString(),
   }
-  return { kind: 'fill', id: canonicalHashV1({ runId, kind: 'fill', ...material }), ...material }
+  return makeReferenceFillIdentity(runId, material)
 }
 
 export const makeCashChange = (
@@ -185,16 +189,7 @@ export const makeCashChange = (
     | { kind: 'cash-yield'; id: string; sessionDate: IsoDate },
   amountMicros: bigint,
   cashAfterMicros: bigint,
-): CashChange => {
-  const material = {
-    sourceKind: source.kind,
-    sourceId: source.id,
-    sessionDate: source.sessionDate,
-    amountMicros: amountMicros.toString(),
-    cashAfterMicros: cashAfterMicros.toString(),
-  }
-  return { id: canonicalHashV1({ runId, kind: 'cash-change', ...material }), ...material }
-}
+): ReferenceComputation<CashChange> => makeReferenceCashChangeIdentity(runId, source, amountMicros, cashAfterMicros)
 
 export const replayPrices = (
   session: Session,
