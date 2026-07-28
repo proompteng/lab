@@ -155,7 +155,6 @@ interface ProofState {
   }
   submitOutcome: 'NOT_ATTEMPTED' | 'ACKNOWLEDGED' | 'REJECTED' | 'UNKNOWN'
   brokerOrderId?: string
-  acceptedOrderContractMismatch: boolean
   finalStatus?: OrderStatus
   filledQuantityMicros?: string
   cancelAttempts: number
@@ -431,10 +430,9 @@ const requireOrderBinding = (
   order: Order,
   clientOrderId: string,
   brokerOrderId: string,
-  allowAcceptedContractMismatch: boolean,
   stage: ProofStage,
 ): Effect.Effect<void, SandboxContractProofError> =>
-  order.brokerOrderId === brokerOrderId && (allowAcceptedContractMismatch || order.clientOrderId === clientOrderId)
+  order.brokerOrderId === brokerOrderId && order.clientOrderId === clientOrderId
     ? Effect.succeed(undefined)
     : Effect.fail(proofFailure(stage, 'ORDER_BINDING_MISMATCH'))
 
@@ -475,18 +473,11 @@ const resolveOrderCleanup = (
   current: ReadResult<Order>,
   clientOrderId: string,
   brokerOrderId: string,
-  allowAcceptedContractMismatch: boolean,
   state: ProofState,
   attempt = 0,
   pollDelayMs = retryDelayMs,
 ): Effect.Effect<ReadResult<Order>, BrokerReadError | BrokerMutationError | SandboxContractProofError> =>
-  requireOrderBinding(
-    current.value,
-    clientOrderId,
-    brokerOrderId,
-    allowAcceptedContractMismatch,
-    'TERMINAL_LOOKUP',
-  ).pipe(
+  requireOrderBinding(current.value, clientOrderId, brokerOrderId, 'TERMINAL_LOOKUP').pipe(
     Effect.andThen(
       Effect.sync(() => {
         state.finalStatus = current.value.status
@@ -512,7 +503,6 @@ const resolveOrderCleanup = (
                       next,
                       clientOrderId,
                       brokerOrderId,
-                      allowAcceptedContractMismatch,
                       state,
                       attempt + 1,
                       pollDelayMs,
@@ -605,22 +595,8 @@ const cleanupOrder = (
       observed = yield* retryRead(orderById(brokerOrderId), true)
       state.lifecycle.push(readEvidence('CLEANUP_LOOKUP_BY_ID', observed))
     }
-    yield* requireOrderBinding(
-      observed.value,
-      clientOrderId,
-      brokerOrderId,
-      state.acceptedOrderContractMismatch,
-      'CLEANUP',
-    )
-    const terminal = yield* resolveOrderCleanup(
-      mutation,
-      orderById,
-      observed,
-      clientOrderId,
-      brokerOrderId,
-      state.acceptedOrderContractMismatch,
-      state,
-    )
+    yield* requireOrderBinding(observed.value, clientOrderId, brokerOrderId, 'CLEANUP')
+    const terminal = yield* resolveOrderCleanup(mutation, orderById, observed, clientOrderId, brokerOrderId, state)
     yield* verifyNoOpenProofOrder(session, clientOrderId, state)
     state.finalStatus = terminal.value.status
     state.filledQuantityMicros = terminal.value.filledQuantityMicros
@@ -639,15 +615,10 @@ const cleanupOrder = (
 
 const recordSubmitFailure = (state: ProofState, error: BrokerMutationError): void => {
   state.submitOutcome = error.failure === MutationFailure.Rejected ? 'REJECTED' : 'UNKNOWN'
-  if (error.brokerOrderId !== undefined) {
-    state.brokerOrderId = error.brokerOrderId
-    state.acceptedOrderContractMismatch = true
-  }
 }
 
 const testProofState = (): ProofState => ({
   submitOutcome: 'NOT_ATTEMPTED',
-  acceptedOrderContractMismatch: false,
   cancelAttempts: 0,
   cancelAcknowledged: false,
   lifecycle: [],
@@ -806,7 +777,6 @@ test('retries exact cancellation after an unknown outcome', async () => {
       initial,
       initial.value.clientOrderId,
       initial.value.brokerOrderId,
-      false,
       state,
       0,
       0,
@@ -921,7 +891,7 @@ test('preserves typed session acquisition evidence in the sanitized failure', ()
   })
 })
 
-test('retains an accepted mismatched broker ID for exact cleanup', () => {
+test('discards an unbound accepted broker ID and requires exact client-order recovery', async () => {
   const state = testProofState()
   recordSubmitFailure(
     state,
@@ -935,8 +905,17 @@ test('retains an accepted mismatched broker ID for exact cleanup', () => {
   )
 
   expect(state.submitOutcome).toBe('UNKNOWN')
-  expect(state.brokerOrderId).toBe('00000000-0000-4000-8000-000000000001')
-  expect(state.acceptedOrderContractMismatch).toBeTrue()
+  expect(state.brokerOrderId).toBeUndefined()
+
+  const mismatched = {
+    ...testOrder(OrderStatus.New),
+    brokerOrderId: '00000000-0000-4000-8000-000000000001',
+    clientOrderId: 'unrelated-client-order',
+  }
+  const binding = await Effect.runPromiseExit(
+    requireOrderBinding(mismatched, 'sandbox-proof-client-order', mismatched.brokerOrderId, 'CLEANUP'),
+  )
+  expect(Exit.isFailure(binding)).toBeTrue()
 })
 
 test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the production adapter', async () => {
@@ -1018,7 +997,6 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
   }
   const state: ProofState = {
     submitOutcome: 'NOT_ATTEMPTED',
-    acceptedOrderContractMismatch: false,
     cancelAttempts: 0,
     cancelAcknowledged: false,
     lifecycle: [],
@@ -1082,7 +1060,6 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
             recoveredSubmit.value,
             clientOrderId,
             submit.order.brokerOrderId,
-            false,
             'LOOKUP_BY_CLIENT_ID',
           )
           if (recoveredSubmit.value.quantityMicros !== proofQuantityMicros) {
@@ -1181,7 +1158,6 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
       symbol: proofSymbol,
       quantityMicros: proofQuantityMicros,
       submitOutcome: state.submitOutcome,
-      acceptedOrderContractMismatch: state.acceptedOrderContractMismatch,
       finalStatus: state.finalStatus,
       filledQuantityMicros: state.filledQuantityMicros,
     },
