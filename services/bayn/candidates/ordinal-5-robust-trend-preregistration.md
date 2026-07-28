@@ -80,8 +80,9 @@ zero existing locks before GitOps may remove the ordinal-4 pin.
 - Statistical inference uses 5,000 paired complete-rebalance-block bootstrap samples, 5% family one-sided alpha with
   Bonferroni adjustment, at least 20 tail samples, and positive lower bounds for annualized excess return and Sharpe
   difference.
-- Power requires 80% target power for a 3% annualized excess return at 10% tracking volatility, at least 504 sessions,
-  and at least 24 complete rebalance blocks.
+- Power requires 80% target power for a 3% annualized excess return at 10% tracking volatility. The absolute floors are
+  504 sessions and 24 complete rebalance blocks; for this frozen effect and volatility, the effective computed minimums
+  are 1,449 sessions and 69 complete rebalance blocks.
 - Expanding-origin walk-forward requires at least five 252-session test folds after 504 training sessions, at least 60%
   positive-excess folds, and no fold drawdown above 35%.
 - The complete prior-trial lineage is immutable and feeds the repository's multiplicity adjustment. Deflated Sharpe
