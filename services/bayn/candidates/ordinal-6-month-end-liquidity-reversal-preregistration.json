@@ -5,7 +5,7 @@
     "strategyName": "month-end-liquidity-reversal",
     "strategyVersion": "1.0.0",
     "parameterHash": "59889076e9cff0b8c79c30f8c095b50ae9c4cd6044fe536004f3432a3287a645",
-    "strategyHash": "34784700cbb8b689c2c9c3220b982fa81bc162feeb4676343771d437905eb8ba"
+    "strategyHash": "dc86a30c6c3e8e44a59c7a3c7f5de0f7965c98cacea31eba50baa265b153a273"
   },
   "lineage": {
     "priorTerminalCandidates": [
@@ -91,6 +91,8 @@
     "entryExecutionSession": "T-3-next-open",
     "exitSignalSession": "T+3",
     "exitExecutionSession": "T+4-next-open",
+    "activeEntryChronology": "entry-signal-no-later-than-current-signal",
+    "terminalEvaluationPolicy": "fail-closed-unless-every-entered-event-is-fully-exited",
     "expectedReversionFraction": 0.5,
     "requiredPressureReturn": -0.003,
     "targetWeight": 0.3,
@@ -174,5 +176,5 @@
     "liveCapitalEnabled": false,
     "brokerMutationEnabled": false
   },
-  "preregistrationHash": "9d960586464a2214f77f988a51196488903370b0dde760239049eb26c236905d"
+  "preregistrationHash": "7a7d12d05522af95964319e470b753a9f676c2a0afcf9bef31283ead0548b1b9"
 }

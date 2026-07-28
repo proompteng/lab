@@ -126,6 +126,8 @@ export interface Candidate6PreregistrationMaterial {
     readonly entryExecutionSession: 'T-3-next-open'
     readonly exitSignalSession: 'T+3'
     readonly exitExecutionSession: 'T+4-next-open'
+    readonly activeEntryChronology: 'entry-signal-no-later-than-current-signal'
+    readonly terminalEvaluationPolicy: 'fail-closed-unless-every-entered-event-is-fully-exited'
     readonly expectedReversionFraction: number
     readonly requiredPressureReturn: number
     readonly targetWeight: number
@@ -230,6 +232,8 @@ export const makeCandidate6PreregistrationMaterial = (
     signal: 'five-session-adjusted-close-pressure-at-T-minus-4',
     entry: 'next-open-T-minus-3-after-cost-aware-negative-pressure',
     exit: 'next-open-T-plus-4-after-holding-through-T-plus-3',
+    activeEntryChronology: 'entry-signal-no-later-than-current-signal',
+    terminalEvaluation: 'fail-closed-unless-every-entered-event-is-fully-exited',
     sizing: 'long-cash-fixed-target-with-liquidity-and-exposure-caps',
     malformedData: 'fail-closed',
     parameterHash: parameterHash.success,
@@ -300,6 +304,8 @@ export const makeCandidate6PreregistrationMaterial = (
       entryExecutionSession: 'T-3-next-open',
       exitSignalSession: 'T+3',
       exitExecutionSession: 'T+4-next-open',
+      activeEntryChronology: 'entry-signal-no-later-than-current-signal',
+      terminalEvaluationPolicy: 'fail-closed-unless-every-entered-event-is-fully-exited',
       expectedReversionFraction: protocol.signal.expectedReversionFraction,
       requiredPressureReturn: requiredPressureReturn(protocol),
       targetWeight: protocol.sizing.targetWeight,

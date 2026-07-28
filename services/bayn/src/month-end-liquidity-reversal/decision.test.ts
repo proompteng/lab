@@ -187,6 +187,23 @@ describe('candidate 6 pure decision', () => {
     expect(trim.orderIntents[0]?.reason).toBe('exposure-cap-trim')
   })
 
+  test('rejects an active entry signal that occurs after the current signal', () => {
+    const currentSignal = '2022-01-24' as IsoDate
+    const currentIndex = calendar.indexOf(currentSignal)
+    const issue = failure(
+      makeCandidate6Decision(
+        input({
+          signalDate: currentSignal,
+          executionDate: signalDate,
+          publicationAsOf: currentSignal,
+          bars: calendar.slice(currentIndex - 19, currentIndex + 1).map((date) => makeBar(date)),
+          position: { activeEntrySignalDate: signalDate, currentWeights: { SPY: 0.2 } },
+        }),
+      ),
+    )
+    expect(issue).toEqual({ _tag: 'UnknownActiveEntry', activeEntrySignalDate: signalDate })
+  })
+
   test('stays cash through the T+1 transition and liquidates any unexpected exposure', () => {
     const transitionCalendar = [
       '2024-05-23',

@@ -81,6 +81,9 @@ describe('candidate 6 sealed preregistration', () => {
         ;(copy.decisions as { targetWeight: number }).targetWeight = 0.34
       }),
       mutate(material, (copy) => {
+        ;(copy.decisions as { terminalEvaluationPolicy: string }).terminalEvaluationPolicy = 'changed-terminal-policy'
+      }),
+      mutate(material, (copy) => {
         ;(copy.benchmark as { comparison: string }).comparison = 'changed-benchmark-comparison'
       }),
       mutate(material, (copy) => {

@@ -44,7 +44,7 @@ const weekdays = (start: IsoDate, end: IsoDate): readonly IsoDate[] => {
   return dates
 }
 
-const syntheticDataset = (): Candidate6DevelopmentDataset => {
+const syntheticDataset = (includeIncompleteFinalEvent = false): Candidate6DevelopmentDataset => {
   const calendar = weekdays(CANDIDATE_6_DEVELOPMENT_DATA_START, CANDIDATE_6_DEVELOPMENT_END)
   const snapshotId = 'synthetic-development-only'
   const calendarVersion = 'alpaca-us-equity-calendar-v1'
@@ -59,7 +59,7 @@ const syntheticDataset = (): Candidate6DevelopmentDataset => {
       remaining += 1
     }
 
-    if (remaining === 4) signalDates.add(current)
+    if (remaining === 4 && (includeIncompleteFinalEvent || month !== '2022-12')) signalDates.add(current)
   }
   const bars = calendar.map((sessionDate, index): DailyBar => {
     const priorDate = calendar[index - 1]
@@ -328,6 +328,14 @@ describe('candidate 6 deterministic development simulation', () => {
       field: 'rawSessionsExportSha256',
       expected: dataset.rawSessionsExportSha256,
       observed: 'c'.repeat(64),
+    })
+  })
+
+  test('rejects a simulation that ends before an entered event can exit', () => {
+    const issue = failure(buildSyntheticReport(syntheticDataset(true)))
+    expect(issue).toEqual({
+      _tag: 'ResearchSimulationInvariant',
+      reason: 'simulation ended with open event from 2022-12-26',
     })
   })
 

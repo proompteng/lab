@@ -309,6 +309,18 @@ export const simulateCandidate6 = (
       }
     }
   }
+  if (pending !== null) {
+    return fail({
+      _tag: 'ResearchSimulationInvariant',
+      reason: `simulation ended before pending ${pending.decision.action} executed on ${pending.decision.executionDate}`,
+    })
+  }
+  if (activeEntrySignalDate !== null || shares > 0) {
+    return fail({
+      _tag: 'ResearchSimulationInvariant',
+      reason: `simulation ended with open event from ${activeEntrySignalDate ?? 'unknown'}`,
+    })
+  }
   return Result.succeed({ metrics: candidate6Metrics(observations), observations })
 }
 

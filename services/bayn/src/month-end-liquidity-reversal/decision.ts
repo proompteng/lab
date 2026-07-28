@@ -323,6 +323,7 @@ export const makeCandidate6Decision = (input: Candidate6DecisionInput): Decision
     const entryIndex = input.calendar.indexOf(activeEntrySignalDate)
     if (
       entryIndex < 0 ||
+      entryIndex > signalIndex ||
       remainingSessionsInMonth(input.calendar, entryIndex) !== protocol.signal.signalSessionsBeforeMonthEnd
     ) {
       return fail({ _tag: 'UnknownActiveEntry', activeEntrySignalDate })

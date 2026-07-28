@@ -9,8 +9,8 @@ live-capital trade occurred.
 - Strategy: `month-end-liquidity-reversal`
 - Strategy version: `1.0.0`
 - Parameter hash: `59889076e9cff0b8c79c30f8c095b50ae9c4cd6044fe536004f3432a3287a645`
-- Strategy hash: `34784700cbb8b689c2c9c3220b982fa81bc162feeb4676343771d437905eb8ba`
-- Canonical preregistration hash: `9d960586464a2214f77f988a51196488903370b0dde760239049eb26c236905d`
+- Strategy hash: `dc86a30c6c3e8e44a59c7a3c7f5de0f7965c98cacea31eba50baa265b153a273`
+- Canonical preregistration hash: `7a7d12d05522af95964319e470b753a9f676c2a0afcf9bef31283ead0548b1b9`
 - Canonical preregistration: `ordinal-6-month-end-liquidity-reversal-preregistration.json`
 - Development report hash: `64d4f3ad11d83bccf4accfe92436d9ea79fb83cd51d6281f0799b8360c843c63`
 - Development report: `ordinal-6-month-end-liquidity-reversal-development-report.json`
@@ -82,6 +82,9 @@ duplicate, or extra SPY bar relative to the sealed official session calendar, so
 - Cost-aware threshold: expected 50% reversion must exceed 1.5 times a modeled 10 bps round trip. This freezes the
   pressure threshold at `-0.30%` or lower.
 - Exit: signal after `T+3` close; execute at `T+4` next open. Partial exits are retried fail-closed.
+- Active-position lineage must name an entry signal no later than the current signal. A simulation fails closed unless
+  every entered event has completed its exit before the evaluation boundary; truncated terminal events cannot contribute
+  return, turnover, cost, or bootstrap evidence.
 - Operating target: 30% SPY weight.
 - Hard limits: 35% symbol and gross exposure; one-way turnover at most 100%; 20-session average dollar volume at least
   $100 million; intended notional at most 0.5% of average daily dollar volume.
