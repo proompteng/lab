@@ -5,7 +5,7 @@ import { type Client, type ClientInitArgs, createClient } from 'tigerbeetle-node
 import { Data, Effect, Option, Result, Scope, ScopedRef, Semaphore } from 'effect'
 
 import type { RuntimeConfig } from './config'
-import { OperationalError, operationalError, retryableOperationalError } from './errors'
+import { OperationalError, operationalError } from './errors'
 
 type ResolveHostname = (hostname: string) => Effect.Effect<readonly string[], OperationalError>
 
@@ -23,6 +23,38 @@ export class ReplicaAddressValidationError extends Data.TaggedError('ReplicaAddr
   readonly message: string
   readonly material: Readonly<Record<string, unknown>>
 }> {}
+
+export class ReplicaAddressOperationalError extends OperationalError {
+  readonly validation: ReplicaAddressValidationError
+
+  constructor(validation: ReplicaAddressValidationError) {
+    super({
+      component: 'journal',
+      operation: 'resolve-replica-addresses',
+      message: validation.message,
+      retryable: false,
+      cause: validation,
+    })
+    this.validation = validation
+  }
+}
+
+const renderTransportCause = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
+
+export class TigerBeetleTransportError extends OperationalError {
+  readonly transportOperation: string
+
+  constructor(operation: string, message: string, cause?: unknown) {
+    super({
+      component: 'journal',
+      operation,
+      message: cause === undefined ? message : `${message}: ${renderTransportCause(cause)}`,
+      retryable: true,
+      cause,
+    })
+    this.transportOperation = operation
+  }
+}
 
 export type ReplicaEndpoint =
   | {
@@ -47,18 +79,7 @@ const failReplicaAddressValidation = (
 const replicaAddressBoundary = <A>(
   decision: Result.Result<A, ReplicaAddressValidationError>,
 ): Effect.Effect<A, OperationalError> =>
-  Effect.fromResult(decision).pipe(
-    Effect.mapError(
-      (cause) =>
-        new OperationalError({
-          component: 'journal',
-          operation: 'resolve-replica-addresses',
-          message: cause.message,
-          retryable: false,
-          cause,
-        }),
-    ),
-  )
+  Effect.fromResult(decision).pipe(Effect.mapError((validation) => new ReplicaAddressOperationalError(validation)))
 
 const lookupIpv4: ResolveHostname = (hostname) =>
   Effect.suspend(() => {
@@ -66,8 +87,7 @@ const lookupIpv4: ResolveHostname = (hostname) =>
     return Effect.tryPromise({
       try: () => resolver.resolve4(hostname),
       catch: (cause) =>
-        retryableOperationalError(
-          'journal',
+        new TigerBeetleTransportError(
           'resolve-replica-addresses',
           `failed to resolve TigerBeetle hostname ${hostname}`,
           cause,
@@ -273,15 +293,14 @@ const connectTigerBeetleClient = (
             cluster_id: config.tigerBeetle.clusterId,
             replica_addresses: replicaAddresses,
           }),
-        catch: (cause) => retryableOperationalError('journal', 'connect', 'failed to create TigerBeetle client', cause),
+        catch: (cause) => new TigerBeetleTransportError('connect', 'failed to create TigerBeetle client', cause),
       }),
     ),
     Effect.timeoutOrElse({
       duration: config.operationTimeoutMs,
       orElse: () =>
         Effect.fail(
-          retryableOperationalError(
-            'journal',
+          new TigerBeetleTransportError(
             'connect',
             `TigerBeetle client creation timed out after ${config.operationTimeoutMs}ms`,
           ),
@@ -302,7 +321,7 @@ const requireInstalledTigerBeetleClient = (
     Effect.flatMap(
       Option.match({
         onSome: (client) => Effect.succeed(client),
-        onNone: () => Effect.fail(retryableOperationalError('journal', 'connect', 'TigerBeetle client is unavailable')),
+        onNone: () => Effect.fail(new TigerBeetleTransportError('connect', 'TigerBeetle client is unavailable')),
       }),
     ),
   )
@@ -369,7 +388,7 @@ const tigerBeetleRequest = <A>(
     Effect.flatMap((active) =>
       Effect.tryPromise({
         try: () => execute(active),
-        catch: (cause) => retryableOperationalError('journal', operation, `TigerBeetle ${operation} failed`, cause),
+        catch: (cause) => new TigerBeetleTransportError(operation, `TigerBeetle ${operation} failed`, cause),
       }).pipe(
         Effect.onInterrupt(() => invalidateClient(active, `interrupted:${operation}`)),
         Effect.tapError(() => invalidateClient(active, `failed:${operation}`)),

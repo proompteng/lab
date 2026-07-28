@@ -1,12 +1,32 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Exit } from 'effect'
+import { Effect, Exit, Result } from 'effect'
 
 import { riskBalancedTrendBehaviorHash } from './behavior'
 import { verifyBehaviorHash, verifyParameterHash, type EmbeddedBuildMetadata } from './build'
-import { defaultProtocolDocument, hashParameters, loadDefaultProtocol, loadProtocol } from './protocol'
+import {
+  decodeDefaultProtocol,
+  decodeProtocol,
+  defaultProtocolDocument,
+  hashParameters,
+  loadDefaultProtocol,
+  loadProtocol,
+  ProtocolDecodeError,
+} from './protocol'
 
 describe('strategy protocol', () => {
+  test('decodes unknown protocol documents once into a typed pure result', () => {
+    const decodedDefault = decodeDefaultProtocol()
+    expect(Result.isSuccess(decodedDefault)).toBeTrue()
+
+    const rejected = decodeProtocol({ ...defaultProtocolDocument, futureField: true })
+    expect(Result.isFailure(rejected)).toBeTrue()
+    if (Result.isFailure(rejected)) {
+      expect(rejected.failure).toBeInstanceOf(ProtocolDecodeError)
+      expect(rejected.failure).toMatchObject({ document: 'protocol' })
+    }
+  })
+
   test('decodes the committed protocol', async () => {
     const protocol = await Effect.runPromise(loadDefaultProtocol)
 

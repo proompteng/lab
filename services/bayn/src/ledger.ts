@@ -1,23 +1,11 @@
-import {
-  type Account,
-  type CreateAccountResult,
-  CreateAccountStatus,
-  type CreateTransferResult,
-  CreateTransferStatus,
-  type QueryFilter,
-  type Transfer,
-} from 'tigerbeetle-node'
+import type { Account, Transfer } from 'tigerbeetle-node'
 import { Context, Effect, Layer, Result } from 'effect'
 
 import type { RuntimeConfig } from './config'
 import { OperationalError } from './errors'
-import { stableU128, stableU64 } from './hash'
+import { stableU128 } from './hash'
 import {
-  accountMetadataMatches,
   buildLedgerPlan,
-  failLedgerValidation as failedValidation,
-  LEDGER_BATCH_MAX as BATCH_MAX,
-  ledgerValidationError as validationError,
   LedgerValidationError,
   preflightTransfers,
   reconcileLedgerPlan,
@@ -29,108 +17,55 @@ import {
   type LedgerPlan,
 } from './ledger-plan'
 import {
+  accountReconciliationQueries,
+  assembleAccountPlan,
+  classifyAccountCreateBatch,
+  classifyTransferCreateBatch,
+  persistedRunQueries,
+  runPlanQueries,
+  transactionTransferQuery,
+} from './ledger/decisions'
+import {
   makeTigerBeetleRequestClient,
   type JournalDependencies,
   type TigerBeetleRequestClient,
 } from './tigerbeetle-client'
 import type { ReconciliationResult } from './types'
 
+export class JournalValidationError extends OperationalError {
+  readonly validation: LedgerValidationError
+
+  constructor(validation: LedgerValidationError) {
+    super({
+      component: 'journal',
+      operation: validation.operation,
+      message: validation.message,
+      retryable: false,
+      cause: validation,
+    })
+    this.validation = validation
+  }
+}
+
+export type JournalError = OperationalError
+
 export interface JournalService {
-  readonly post: (plan: LedgerPlan) => Effect.Effect<void, OperationalError>
-  readonly verifyAccount: (accountId: string, plans: readonly LedgerPlan[]) => Effect.Effect<boolean, OperationalError>
-  readonly journalAndReconcile: (result: LedgerInput) => Effect.Effect<ReconciliationResult, OperationalError>
+  readonly post: (plan: LedgerPlan) => Effect.Effect<void, JournalError>
+  readonly verifyAccount: (accountId: string, plans: readonly LedgerPlan[]) => Effect.Effect<boolean, JournalError>
+  readonly journalAndReconcile: (result: LedgerInput) => Effect.Effect<ReconciliationResult, JournalError>
   readonly check: Effect.Effect<void, OperationalError>
-  readonly checkRun: (result: ReconciliationResult) => Effect.Effect<void, OperationalError>
+  readonly checkRun: (result: ReconciliationResult) => Effect.Effect<void, JournalError>
 }
 
 export class Journal extends Context.Service<Journal, JournalService>()('bayn/Journal') {}
 
-const validationBoundary = <A>(decision: Result.Result<A, LedgerValidationError>): Effect.Effect<A, OperationalError> =>
-  Effect.fromResult(decision).pipe(
-    Effect.mapError(
-      (error) =>
-        new OperationalError({
-          component: 'journal',
-          operation: error.operation,
-          message: error.message,
-          retryable: false,
-          cause: error,
-        }),
-    ),
-  )
-
-type CreateResult = CreateAccountResult | CreateTransferResult
-
-const classifyCreateBatch = <Record extends { readonly id: bigint }>(
-  kind: 'account' | 'transfer',
-  operation: 'verify-account-results' | 'verify-transfer-results',
-  records: readonly Record[],
-  results: readonly CreateResult[],
-  created: number,
-  exists: number,
-): Result.Result<readonly Record[], LedgerValidationError> => {
-  if (results.length !== records.length) {
-    return failedValidation(
-      operation,
-      'batch-result-count',
-      `TigerBeetle returned an incomplete ${kind} result batch`,
-      { kind, expectedCount: records.length, actualCount: results.length },
-    )
-  }
-
-  const existing: Record[] = []
-  for (let index = 0; index < results.length; index += 1) {
-    const result = results[index]
-    const record = records[index]
-    if (result.status === created) continue
-    if (result.status === exists) {
-      existing.push(record)
-      continue
-    }
-    return failedValidation(
-      operation,
-      'create-rejected',
-      `TigerBeetle rejected ${kind} ${record.id} with status ${result.status}`,
-      {
-        kind,
-        id: record.id,
-        status: result.status,
-      },
-    )
-  }
-  return Result.succeed(existing)
-}
-
-export const classifyAccountCreateBatch = (
-  accounts: readonly Account[],
-  results: readonly CreateAccountResult[],
-): Result.Result<readonly Account[], LedgerValidationError> =>
-  classifyCreateBatch(
-    'account',
-    'verify-account-results',
-    accounts,
-    results,
-    CreateAccountStatus.created,
-    CreateAccountStatus.exists,
-  )
-
-export const classifyTransferCreateBatch = (
-  transfers: readonly Transfer[],
-  results: readonly CreateTransferResult[],
-): Result.Result<readonly Transfer[], LedgerValidationError> =>
-  classifyCreateBatch(
-    'transfer',
-    'verify-transfer-results',
-    transfers,
-    results,
-    CreateTransferStatus.created,
-    CreateTransferStatus.exists,
-  )
+const validationBoundary = <A>(decision: Result.Result<A, LedgerValidationError>) =>
+  Effect.fromResult(decision).pipe(Effect.mapError((validation) => new JournalValidationError(validation)))
 
 const createAndVerifyAccounts = (
   client: TigerBeetleRequestClient,
   accounts: readonly Account[],
-): Effect.Effect<void, OperationalError> =>
+): Effect.Effect<void, JournalError> =>
   Effect.gen(function* () {
     const results = yield* client.request('create-accounts', (active) => active.createAccounts([...accounts]))
     const existingExpected = yield* validationBoundary(classifyAccountCreateBatch(accounts, results))
@@ -147,7 +82,7 @@ const createAndVerifyAccounts = (
 const createAndVerifyTransfers = (
   client: TigerBeetleRequestClient,
   transfers: readonly Transfer[],
-): Effect.Effect<void, OperationalError> =>
+): Effect.Effect<void, JournalError> =>
   Effect.gen(function* () {
     const existing = yield* client.request('lookup-preflight-transfers', (active) =>
       active.lookupTransfers(transfers.map((transfer) => transfer.id)),
@@ -167,129 +102,11 @@ const createAndVerifyTransfers = (
     )
   })
 
-const queryFilter = (ledger: number): QueryFilter => ({
-  user_data_128: 0n,
-  user_data_64: 0n,
-  user_data_32: 0,
-  ledger,
-  code: 0,
-  timestamp_min: 0n,
-  timestamp_max: 0n,
-  limit: BATCH_MAX,
-  flags: 0,
-})
-
-export const transactionTransferQuery = (plan: LedgerPlan): Result.Result<QueryFilter, LedgerValidationError> => {
-  if (plan.accounts.length === 0 || plan.transfers.length === 0) {
-    return Result.fail(
-      validationError('post', 'empty-plan', 'TigerBeetle posting plan must contain accounts and transfers', {
-        accountCount: plan.accounts.length,
-        transferCount: plan.transfers.length,
-      }),
-    )
-  }
-  if (plan.accounts.length >= BATCH_MAX || plan.transfers.length >= BATCH_MAX) {
-    return Result.fail(
-      validationError('post', 'batch-limit', 'TigerBeetle posting plan exceeds batch limits', {
-        accountCount: plan.accounts.length,
-        transferCount: plan.transfers.length,
-        limit: BATCH_MAX,
-      }),
-    )
-  }
-
-  const first = plan.transfers[0]
-  if (
-    first === undefined ||
-    first.user_data_128 === 0n ||
-    plan.transfers.some(
-      (transfer) => transfer.ledger !== first.ledger || transfer.user_data_128 !== first.user_data_128,
-    )
-  ) {
-    return failedValidation(
-      'build-transaction-transfer-query',
-      'invalid-transaction',
-      first === undefined
-        ? 'accounting plan contains no transfers'
-        : 'accounting transfers do not share one nonzero transaction tag and ledger',
-      {
-        transferCount: plan.transfers.length,
-        transactionTag: first?.user_data_128,
-        ledger: first?.ledger,
-      },
-    )
-  }
-  return Result.succeed({
-    ...queryFilter(first.ledger),
-    user_data_128: first.user_data_128,
-    limit: plan.transfers.length + 1,
-  })
-}
-
-interface LedgerQueries {
-  readonly accounts: QueryFilter
-  readonly transfers: QueryFilter
-}
-
-const persistedRunQueries = (
-  result: ReconciliationResult,
-  ledger: number,
-): Result.Result<LedgerQueries, LedgerValidationError> => {
-  if (result.accountCount >= BATCH_MAX || result.transferCount >= BATCH_MAX) {
-    return Result.fail(
-      validationError('check-run', 'batch-limit', 'persisted TigerBeetle counts exceed the exact query limit', {
-        accountCount: result.accountCount,
-        transferCount: result.transferCount,
-        limit: BATCH_MAX,
-      }),
-    )
-  }
-  return Result.succeed({
-    accounts: {
-      ...queryFilter(ledger),
-      user_data_128: stableU128('bayn-run-v1', result.runId),
-      limit: result.accountCount + 1,
-    },
-    transfers: {
-      ...queryFilter(ledger),
-      user_data_64: stableU64('bayn-run-v1', result.runId),
-      limit: result.transferCount + 1,
-    },
-  })
-}
-
-const accountReconciliationQueries = (
-  plan: LedgerPlan,
-  ledger: number,
-): Result.Result<LedgerQueries, LedgerValidationError> => {
-  if (plan.accounts.length >= BATCH_MAX || plan.transfers.length >= BATCH_MAX) {
-    return Result.fail(
-      validationError('verify-account', 'batch-limit', 'paper account exceeds the exact reconciliation limit', {
-        accountCount: plan.accounts.length,
-        transferCount: plan.transfers.length,
-        limit: BATCH_MAX,
-      }),
-    )
-  }
-  return Result.succeed({
-    accounts: {
-      ...queryFilter(ledger),
-      user_data_128: plan.runKey,
-      limit: plan.accounts.length + 1,
-    },
-    transfers: {
-      ...queryFilter(ledger),
-      user_data_64: plan.runTag,
-      limit: plan.transfers.length + 1,
-    },
-  })
-}
-
 const checkRun = (
   client: TigerBeetleRequestClient,
   ledger: number,
   result: ReconciliationResult,
-): Effect.Effect<void, OperationalError> =>
+): Effect.Effect<void, JournalError> =>
   Effect.gen(function* () {
     const queries = yield* validationBoundary(persistedRunQueries(result, ledger))
     const [accounts, transfers] = yield* Effect.all(
@@ -306,17 +123,16 @@ const journalAndReconcile = (
   client: TigerBeetleRequestClient,
   ledger: number,
   result: LedgerInput,
-): Effect.Effect<ReconciliationResult, OperationalError> =>
+): Effect.Effect<ReconciliationResult, JournalError> =>
   Effect.gen(function* () {
     const plan = yield* validationBoundary(buildLedgerPlan(result, ledger))
     yield* createAndVerifyAccounts(client, plan.accounts)
     yield* createAndVerifyTransfers(client, plan.transfers)
-    const accountQuery = { ...queryFilter(ledger), user_data_128: plan.runKey, limit: plan.accounts.length + 1 }
-    const transferQuery = { ...queryFilter(ledger), user_data_64: plan.runTag, limit: plan.transfers.length + 1 }
+    const queries = runPlanQueries(plan, ledger)
     const [accounts, transfers] = yield* Effect.all(
       [
-        client.request('query-accounts', (active) => active.queryAccounts(accountQuery)),
-        client.request('query-transfers', (active) => active.queryTransfers(transferQuery)),
+        client.request('query-accounts', (active) => active.queryAccounts(queries.accounts)),
+        client.request('query-transfers', (active) => active.queryTransfers(queries.transfers)),
       ],
       { concurrency: 'unbounded' },
     )
@@ -324,7 +140,7 @@ const journalAndReconcile = (
     return { runId: plan.runId, accountCount: accounts.length, transferCount: transfers.length, exact: true }
   })
 
-const post = (client: TigerBeetleRequestClient, plan: LedgerPlan): Effect.Effect<void, OperationalError> =>
+const post = (client: TigerBeetleRequestClient, plan: LedgerPlan): Effect.Effect<void, JournalError> =>
   Effect.gen(function* () {
     const transferQuery = yield* validationBoundary(transactionTransferQuery(plan))
     yield* createAndVerifyAccounts(client, plan.accounts)
@@ -343,61 +159,12 @@ const post = (client: TigerBeetleRequestClient, plan: LedgerPlan): Effect.Effect
     )
   })
 
-export const assembleAccountPlan = (
-  accountId: string,
-  plans: readonly LedgerPlan[],
-): Result.Result<LedgerPlan, LedgerValidationError> => {
-  const runKey = stableU128('bayn-paper-account-v1', accountId)
-  const runTag = stableU64('bayn-paper-account-v1', accountId)
-  const accounts = new Map<bigint, Account>()
-  const transfers = new Map<bigint, Transfer>()
-  for (const plan of plans) {
-    if (plan.runKey !== runKey || plan.runTag !== runTag) {
-      return failedValidation(
-        'build-account-reconciliation',
-        'wrong-account',
-        `accounting plan does not belong to paper account ${accountId}`,
-        { accountId, planRunKey: plan.runKey, planRunTag: plan.runTag, expectedRunKey: runKey, expectedRunTag: runTag },
-      )
-    }
-    for (const account of plan.accounts) {
-      const existing = accounts.get(account.id)
-      if (existing !== undefined && !accountMetadataMatches(account, existing)) {
-        return failedValidation(
-          'build-account-reconciliation',
-          'record-mismatch',
-          `accounting account ${account.id} does not match its plan`,
-          { kind: 'accounting account', id: account.id, actual: account, expected: existing },
-        )
-      }
-      if (existing === undefined) accounts.set(account.id, account)
-    }
-    for (const transfer of plan.transfers) {
-      if (transfers.has(transfer.id)) {
-        return failedValidation(
-          'build-account-reconciliation',
-          'duplicate-transfer',
-          `duplicate accounting transfer ${transfer.id}`,
-          { accountId, transferId: transfer.id },
-        )
-      }
-      transfers.set(transfer.id, transfer)
-    }
-  }
-  return Result.succeed({
-    runKey,
-    runTag,
-    accounts: [...accounts.values()].sort((left, right) => (left.id < right.id ? -1 : 1)),
-    transfers: [...transfers.values()].sort((left, right) => (left.id < right.id ? -1 : 1)),
-  })
-}
-
 const verifyAccount = (
   client: TigerBeetleRequestClient,
   ledger: number,
   accountId: string,
   plans: readonly LedgerPlan[],
-): Effect.Effect<boolean, OperationalError> =>
+): Effect.Effect<boolean, JournalError> =>
   Effect.gen(function* () {
     const expected = yield* validationBoundary(assembleAccountPlan(accountId, plans))
     const queries = yield* validationBoundary(accountReconciliationQueries(expected, ledger))
@@ -431,6 +198,13 @@ export const JournalLive = (
       ),
     ),
   )
+
+export {
+  assembleAccountPlan,
+  classifyAccountCreateBatch,
+  classifyTransferCreateBatch,
+  transactionTransferQuery,
+} from './ledger/decisions'
 export {
   buildLedgerPlan,
   hashLedgerPlanResult,
@@ -444,4 +218,11 @@ export {
   type LedgerValidationOperation,
   type LedgerValidationReason,
 } from './ledger-plan'
-export { resolveReplicaAddresses, type JournalDependencies, type TigerBeetleClient } from './tigerbeetle-client'
+export {
+  ReplicaAddressOperationalError,
+  ReplicaAddressValidationError,
+  resolveReplicaAddresses,
+  TigerBeetleTransportError,
+  type JournalDependencies,
+  type TigerBeetleClient,
+} from './tigerbeetle-client'

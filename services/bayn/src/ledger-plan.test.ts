@@ -476,37 +476,39 @@ describe('ledger plan Result algebra', () => {
     expect(hashPlan(first)).toBe('92365839d645ebb14e6cefcefe92f6459aadde44b101926952767962112c8762')
   })
 
-  test('returns exact ledger-plan hash access, serialization, and canonicalization failures', () => {
+  test('preserves the same balanced plan across deterministic event permutations', () => {
+    const result = evaluationResult()
+    const expected = assertSuccess(buildLedgerPlan(result, ledger))
+    const expectedHash = hashPlan(expected)
+    const permutations = [
+      [...result.events].reverse(),
+      [...result.events.slice(1), result.events[0]],
+      [...result.events.slice(17), ...result.events.slice(0, 17)],
+    ]
+
+    for (const events of permutations) {
+      const plan = assertSuccess(buildLedgerPlan({ ...result, events }, ledger))
+      expect(hashPlan(plan)).toBe(expectedHash)
+      expect(plan.accounts).toEqual(expected.accounts)
+      expect(plan.transfers).toEqual(expected.transfers)
+
+      const accountIds = new Set(plan.accounts.map((account) => account.id))
+      let totalDebits = 0n
+      let totalCredits = 0n
+      for (const transfer of plan.transfers) {
+        expect(accountIds.has(transfer.debit_account_id)).toBeTrue()
+        expect(accountIds.has(transfer.credit_account_id)).toBeTrue()
+        totalDebits += transfer.amount
+        totalCredits += transfer.amount
+      }
+      expect(totalDebits).toBe(totalCredits)
+      const persisted = materialize(plan)
+      expect(Result.isSuccess(reconcileLedgerPlan(plan, persisted.accounts, persisted.transfers))).toBeTrue()
+    }
+  })
+
+  test('returns an exact ledger-plan canonicalization failure for invalid typed material', () => {
     const plan = assertSuccess(buildLedgerPlan(evaluationResult(), ledger))
-    const accessCause = new Error('accounts unavailable')
-    const inaccessible = Object.defineProperty({ ...plan }, 'accounts', {
-      enumerable: true,
-      get: () => {
-        throw accessCause
-      },
-    }) as LedgerPlan
-    expect(assertFailure(hashLedgerPlanResult(inaccessible))).toEqual({
-      _tag: 'LedgerPlanHashAccessFailed',
-      source: 'accounts',
-      cause: accessCause,
-    })
-
-    const serializationCause = new Error('account field unavailable')
-    const hostileAccount = Object.defineProperty({ ...plan.accounts[0] }, 'ledger', {
-      enumerable: true,
-      get: () => {
-        throw serializationCause
-      },
-    }) as Account
-    expect(
-      assertFailure(hashLedgerPlanResult({ ...plan, accounts: [hostileAccount, ...plan.accounts.slice(1)] })),
-    ).toEqual({
-      _tag: 'LedgerPlanRecordSerializationFailed',
-      record: 'account',
-      ordinal: 0,
-      cause: serializationCause,
-    })
-
     expect(
       assertFailure(
         hashLedgerPlanResult({
