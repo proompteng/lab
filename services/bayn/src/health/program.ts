@@ -3,11 +3,8 @@ import { Cause, Clock, Duration, Effect, Exit, Fiber, Option, Ref, Result, Sched
 import type { BrokerReadShape } from '../broker/alpaca'
 import type { RuntimeConfig } from '../config'
 import type { FinalizedSnapshotProvenance } from '../contracts'
-import { CycleObservability } from '../db/cycle-observability'
-import { EvidenceStore, type QualificationRecord, type RecoveredEvaluationEvidence } from '../db/evidence-store'
+import type { QualificationRecord, RecoveredEvaluationEvidence } from '../db/evidence-store'
 import { OperationalError, operationalError } from '../errors'
-import { Journal } from '../ledger'
-import { MarketData } from '../market-data'
 import { databaseOperation, withinDeadline } from '../operations'
 import type { BrokerConfiguration, RuntimeEvidence, RuntimeState } from '../runtime-state'
 import { utcInstantFromEpochMillisResult } from '../time'
@@ -133,10 +130,10 @@ const interpretHealthLogs = (decisions: readonly HealthLogDecision[]): Effect.Ef
 const collectHealthProbeResults = (
   config: RuntimeConfig,
   evidence: RuntimeEvidence | null,
-  marketData: MarketData['Service'],
-  journal: Journal['Service'],
-  evidenceStore: EvidenceStore['Service'],
-  cycleObservability: CycleObservability['Service'],
+  marketData: HealthDependencies['marketData'],
+  journal: HealthDependencies['journal'],
+  evidenceStore: HealthDependencies['evidenceStore'],
+  cycleObservability: HealthDependencies['cycleObservability'],
   broker: BrokerProbe | undefined,
 ): Effect.Effect<HealthProbeResults, never> =>
   Effect.map(
@@ -213,7 +210,7 @@ const collectHealthProbeResults = (
     }),
   )
 
-export const probeWithDependencies = (
+export const checkHealth = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
   dependencies: HealthDependencies,
@@ -252,47 +249,14 @@ export const probeWithDependencies = (
     yield* interpretHealthLogs(deriveHealthLogDecisions(transition))
   }).pipe(Effect.withLogSpan('health'))
 
-export const monitorWithDependencies = (
+export const runHealthMonitor = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
   dependencies: HealthDependencies,
   broker?: BrokerProbe,
   autonomousCycleFiber?: Fiber.Fiber<void, never>,
 ): Effect.Effect<void> =>
-  probeWithDependencies(config, state, dependencies, broker, autonomousCycleFiber).pipe(
+  checkHealth(config, state, dependencies, broker, autonomousCycleFiber).pipe(
     Effect.repeat(Schedule.spaced(Duration.millis(config.healthIntervalMs))),
     Effect.asVoid,
-  )
-
-const loadHealthDependencies: Effect.Effect<
-  HealthDependencies,
-  never,
-  MarketData | Journal | EvidenceStore | CycleObservability
-> = Effect.all({
-  marketData: MarketData,
-  journal: Journal,
-  evidenceStore: EvidenceStore,
-  cycleObservability: CycleObservability,
-})
-
-export const probe = (
-  config: RuntimeConfig,
-  state: Ref.Ref<RuntimeState>,
-  broker?: BrokerProbe,
-  autonomousCycleFiber?: Fiber.Fiber<void, never>,
-): Effect.Effect<void, never, MarketData | Journal | EvidenceStore | CycleObservability> =>
-  loadHealthDependencies.pipe(
-    Effect.flatMap((dependencies) => probeWithDependencies(config, state, dependencies, broker, autonomousCycleFiber)),
-  )
-
-export const monitor = (
-  config: RuntimeConfig,
-  state: Ref.Ref<RuntimeState>,
-  broker?: BrokerProbe,
-  autonomousCycleFiber?: Fiber.Fiber<void, never>,
-): Effect.Effect<void, never, MarketData | Journal | EvidenceStore | CycleObservability> =>
-  loadHealthDependencies.pipe(
-    Effect.flatMap((dependencies) =>
-      monitorWithDependencies(config, state, dependencies, broker, autonomousCycleFiber),
-    ),
   )

@@ -1,10 +1,9 @@
 import { Effect, Ref, Result } from 'effect'
 
 import type { RuntimeConfig } from '../config'
-import { EvidenceStore, type EvidenceStoreService } from '../db/evidence-store'
+import type { EvidenceStoreService } from '../db/evidence-store'
 import { OperationalError, formatError } from '../errors'
-import { Journal } from '../ledger'
-import { MarketData, type MarketDataInspection } from '../market-data'
+import type { MarketDataInspection } from '../market-data'
 import { databaseOperation, withinDeadline } from '../operations'
 import type { RuntimeState } from '../runtime-state'
 import type { Strategy } from '../strategy'
@@ -350,7 +349,7 @@ const evaluateAndJournal = (
     Effect.withLogSpan('startup'),
   )
 
-export const initializeWithDependencies = (
+export const runStartup = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
   strategy: Strategy,
@@ -360,14 +359,3 @@ export const initializeWithDependencies = (
     ? evaluateAndJournal(config, state, strategy, dependencies)
     : recoverPinnedQualification(config, config.qualificationRunId, state, dependencies.evidenceStore)
   ).pipe(Effect.catch((error) => (error.retryable ? Effect.fail(error) : failStartup(state, error))))
-
-export const initialize = (
-  config: RuntimeConfig,
-  state: Ref.Ref<RuntimeState>,
-  strategy: Strategy,
-): Effect.Effect<void, OperationalError, MarketData | Journal | EvidenceStore> =>
-  Effect.all({
-    marketData: MarketData,
-    journal: Journal,
-    evidenceStore: EvidenceStore,
-  }).pipe(Effect.flatMap((dependencies) => initializeWithDependencies(config, state, strategy, dependencies)))

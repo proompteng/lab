@@ -8,4 +8,4 @@ export {
 } from './decisions'
 export type { StartupDecisionFailure, StartupDependencies } from './model'
 export { renderStartupDecisionFailure } from './presentation'
-export { initialize, initializeWithDependencies } from './program'
+export { runStartup } from './program'

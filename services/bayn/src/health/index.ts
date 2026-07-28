@@ -16,11 +16,4 @@ export {
   validateDurableEvidence,
   validateSignalIdentity,
 } from './decisions'
-export {
-  ensureDurableEvidence,
-  ensureSignalIdentity,
-  monitor,
-  monitorWithDependencies,
-  probe,
-  probeWithDependencies,
-} from './program'
+export { checkHealth, ensureDurableEvidence, ensureSignalIdentity, runHealthMonitor } from './program'

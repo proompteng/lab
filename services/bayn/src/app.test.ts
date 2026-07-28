@@ -15,23 +15,19 @@ import {
 } from './app-test-support'
 import {
   type ApplicationIdentity,
-  autonomousObserveApplication,
   type AutonomousCycleStartupInput,
   type AutonomousObserveApplicationConfig,
   type BrokerlessApplicationConfig,
   makeApplicationPlan,
+  runApplication,
 } from './app'
 import { AccountStatus, BrokerProvider, alpacaSandboxBaseUrl, type BrokerReadShape } from './broker/alpaca'
 import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
 import type { LoadedRuntimeConfig } from './config'
 import { makeStrategyProtocolHash } from './contracts'
-import { CycleObservability } from './db/cycle-observability'
-import { EvidenceStore } from './db/evidence-store'
 import { BrokerEnvironment } from './execution/authority'
 import type { BrokerProbe } from './health'
 import { HttpServerLive } from './http'
-import { Journal } from './ledger'
-import { MarketData } from './market-data'
 import { Authority } from './paper'
 import { makeStrategy } from './strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
@@ -188,11 +184,17 @@ describe('Bayn application composition', () => {
               ),
             )
           const fiber = yield* pipe(
-            autonomousObserveApplication(autonomousConfig(config), fixtureStrategy, broker, startCycle),
-            Effect.provideService(MarketData, marketData),
-            Effect.provideService(Journal, successfulJournal),
-            Effect.provideService(EvidenceStore, successfulEvidenceStore),
-            Effect.provideService(CycleObservability, cycleObservability),
+            runApplication(
+              autonomousConfig(config),
+              fixtureStrategy,
+              {
+                marketData,
+                journal: successfulJournal,
+                evidenceStore: successfulEvidenceStore,
+                cycleObservability,
+              },
+              { _tag: 'AutonomousObserve', broker, startCycle },
+            ),
             Effect.provide(HttpServerLive(config)),
             Effect.forkScoped,
           )
@@ -226,14 +228,17 @@ describe('Bayn application composition', () => {
               Effect.as(pipe(Deferred.succeed(started, undefined), Effect.andThen(Effect.never))),
             )
           const fiber = yield* pipe(
-            autonomousObserveApplication(autonomousConfig(pinnedRuntimeConfig), currentStrategy, broker, startCycle),
-            Effect.provideService(
-              MarketData,
-              marketDataService(Effect.die(new Error('pinned startup must not load Signal bars'))),
+            runApplication(
+              autonomousConfig(pinnedRuntimeConfig),
+              currentStrategy,
+              {
+                marketData: marketDataService(Effect.die(new Error('pinned startup must not load Signal bars'))),
+                journal: successfulJournal,
+                evidenceStore: pinnedStore(),
+                cycleObservability,
+              },
+              { _tag: 'AutonomousObserve', broker, startCycle },
             ),
-            Effect.provideService(Journal, successfulJournal),
-            Effect.provideService(EvidenceStore, pinnedStore()),
-            Effect.provideService(CycleObservability, cycleObservability),
             Effect.provide(HttpServerLive(pinnedRuntimeConfig)),
             Effect.forkScoped,
           )

@@ -3,15 +3,15 @@ import { describe, expect, test } from 'bun:test'
 import { Cause, Effect, Exit, Option, Redacted, Ref, Result } from 'effect'
 import { AuthorizationError, SqlError } from 'effect/unstable/sql/SqlError'
 
-import { initialize } from './app'
 import type { RuntimeConfig } from './config'
 import { EvidenceStore, type EvidenceStoreService } from './db/evidence-store'
 import { operationalError } from './errors'
 import { Journal, JournalLive, type JournalService, type TigerBeetleClient } from './ledger'
 import { MarketData, marketDataOperationError, type MarketDataService } from './market-data'
 import { Authority } from './paper'
-import { initialState } from './runtime-state'
-import { makeStrategy } from './strategy'
+import { initialState, type RuntimeState } from './runtime-state'
+import { runStartup } from './startup'
+import { makeStrategy, type Strategy } from './strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 import {
   parseReplicaEndpoints,
@@ -20,6 +20,11 @@ import {
   validateResolvedReplicaEndpoint,
   type ReplicaAddressValidationError,
 } from './tigerbeetle-client'
+
+const initialize = (runtimeConfig: RuntimeConfig, state: Ref.Ref<RuntimeState>, strategy: Strategy) =>
+  Effect.all({ marketData: MarketData, journal: Journal, evidenceStore: EvidenceStore }).pipe(
+    Effect.flatMap((dependencies) => runStartup(runtimeConfig, state, strategy, dependencies)),
+  )
 
 const provenance = makeTestProvenance()
 const fixtureStrategy = makeStrategy(fixtureProtocol, provenance)

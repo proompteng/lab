@@ -26,7 +26,7 @@ import {
   pinnedStrategy,
   pinnedStore,
 } from './app-test-support'
-import { brokerlessApplication, initialize, type BrokerlessApplicationConfig } from './app'
+import { runApplication, type BrokerlessApplicationConfig } from './app'
 import { makeStrategyProtocolHash } from './contracts'
 import { CycleObservability } from './db/cycle-observability'
 import {
@@ -46,7 +46,7 @@ import { Authority } from './paper'
 import { defaultProtocolDocument, loadProtocol } from './protocol'
 import { makeQualificationLock, makeQualificationResult } from './qualification'
 import { evaluateRiskBalancedTrend, summarizeEvaluation } from './risk-balanced-trend'
-import { initialState } from './runtime-state'
+import { initialState, type RuntimeState } from './runtime-state'
 import {
   decidePinnedQualification,
   decidePinnedRecovery,
@@ -55,10 +55,34 @@ import {
   evaluateLockedSnapshot,
   qualifyEvaluation,
   renderStartupDecisionFailure,
+  runStartup,
   type StartupDecisionFailure,
 } from './startup'
 import type { Strategy } from './strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
+
+const testStartupDependencies = Effect.all({
+  marketData: MarketData,
+  journal: Journal,
+  evidenceStore: EvidenceStore,
+})
+
+const initialize = (runtimeConfig: typeof config, state: Ref.Ref<RuntimeState>, strategy: Strategy) =>
+  testStartupDependencies.pipe(
+    Effect.flatMap((dependencies) => runStartup(runtimeConfig, state, strategy, dependencies)),
+  )
+
+const brokerlessApplication = (runtimeConfig: BrokerlessApplicationConfig, strategy: Strategy) =>
+  Effect.all({
+    marketData: MarketData,
+    journal: Journal,
+    evidenceStore: EvidenceStore,
+    cycleObservability: CycleObservability,
+  }).pipe(
+    Effect.flatMap((dependencies) =>
+      runApplication<never, never>(runtimeConfig, strategy, dependencies, { _tag: 'Brokerless' }),
+    ),
+  )
 
 const cycleObservability = {
   read: () =>

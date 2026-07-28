@@ -22,8 +22,6 @@ const isRetryableSqlAcquisition = (error: unknown): boolean => {
   )
 }
 
-export const acquireSqlResource = <A, E, R>(layer: Layer.Layer<A, E, R>) => Layer.build(sqlResource(layer))
-
 export const sqlResource = <A, E, R>(layer: Layer.Layer<A, E, R>): Layer.Layer<A, E, R> =>
   Layer.effectContext(
     Layer.build(layer).pipe(
