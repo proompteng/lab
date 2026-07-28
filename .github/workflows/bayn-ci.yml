@@ -293,7 +293,7 @@ jobs:
       BAYN_ALPACA_SANDBOX_CONTRACT: '1'
       BAYN_ALPACA_BASE_URL: https://paper-api.alpaca.markets
       BAYN_ALPACA_SANDBOX_EXACT_HEAD_SHA: ${{ inputs.exact_head_sha }}
-      BAYN_ALPACA_SANDBOX_IMAGE_BUILD_RUN_ID: ${{ inputs.image_build_run_id }}
+      BAYN_ALPACA_SANDBOX_RELEASE_IMAGE_BUILD_RUN_ID: ${{ inputs.image_build_run_id }}
       BAYN_ALPACA_SANDBOX_RECEIPT_PATH: /tmp/alpaca-sandbox-contract-receipt.json
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -312,7 +312,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "${BAYN_ALPACA_SANDBOX_EXACT_HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]
-          [[ "${BAYN_ALPACA_SANDBOX_IMAGE_BUILD_RUN_ID}" =~ ^[0-9]+$ ]]
+          [[ "${BAYN_ALPACA_SANDBOX_RELEASE_IMAGE_BUILD_RUN_ID}" =~ ^[0-9]+$ ]]
       - uses: actions/checkout@v5
         with:
           ref: ${{ env.BAYN_ALPACA_SANDBOX_EXACT_HEAD_SHA }}
@@ -332,13 +332,20 @@ jobs:
 
           jq -n \
             --arg sourceSha "${GITHUB_SHA}" \
-            --arg imageBuildRunId "${BAYN_ALPACA_SANDBOX_IMAGE_BUILD_RUN_ID}" \
+            --arg imageBuildRunId "${BAYN_ALPACA_SANDBOX_RELEASE_IMAGE_BUILD_RUN_ID}" \
             --arg startedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{
-              schemaVersion: "bayn.alpaca-sandbox-contract-receipt.v2",
+              schemaVersion: "bayn.alpaca-sandbox-contract-receipt.v3",
               proofStatus: "GUARD_PENDING",
               sourceSha: $sourceSha,
-              image: { buildRunId: $imageBuildRunId },
+              releaseGate: {
+                buildRunId: $imageBuildRunId,
+                claim: "EXACT_IMAGE_ARTIFACT_VERIFIED_NOT_PROOF_RUNTIME"
+              },
+              proofRuntime: {
+                kind: "CHECKED_OUT_SOURCE",
+                sourceSha: $sourceSha
+              },
               timestamps: { startedAt: $startedAt },
               endpointClass: "ALPACA_PAPER"
             }' > "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}"
@@ -347,7 +354,7 @@ jobs:
           [[ "${GITHUB_SHA}" == "${BAYN_ALPACA_SANDBOX_EXACT_HEAD_SHA}" ]]
           [[ "${BAYN_ALPACA_BASE_URL}" == 'https://paper-api.alpaca.markets' ]]
           [[ "${BAYN_ALPACA_SANDBOX_CONTRACT}" == '1' ]]
-          [[ "${BAYN_ALPACA_SANDBOX_IMAGE_BUILD_RUN_ID}" =~ ^[0-9]+$ ]]
+          [[ "${BAYN_ALPACA_SANDBOX_RELEASE_IMAGE_BUILD_RUN_ID}" =~ ^[0-9]+$ ]]
 
           required_secrets=(
             BAYN_ALPACA_ACCOUNT_ID
@@ -364,14 +371,14 @@ jobs:
           [[ "${BAYN_ALPACA_ACCOUNT_ID}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
           [[ "${BAYN_ALPACA_ACCOUNT_ID}" != "${BAYN_ALPACA_KEY_ID}" ]]
           [[ "${BAYN_ALPACA_KEY_ID}" != "${BAYN_ALPACA_SECRET_KEY}" ]]
-      - name: Bind the proof to the exact multi-architecture image
+      - name: Verify the exact multi-architecture release artifact
         shell: bash
         run: |
           set -euo pipefail
           set +x
           umask 077
 
-          image_run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BAYN_ALPACA_SANDBOX_IMAGE_BUILD_RUN_ID}")"
+          image_run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BAYN_ALPACA_SANDBOX_RELEASE_IMAGE_BUILD_RUN_ID}")"
           jq -e \
             --arg sourceSha "${GITHUB_SHA}" '
             .name == "bayn-build-push"
@@ -383,7 +390,7 @@ jobs:
           ' <<<"${image_run_json}" >/dev/null
 
           image_contract_dir="$(mktemp -d "${RUNNER_TEMP}/bayn-image-contract.XXXXXXXX")"
-          gh run download "${BAYN_ALPACA_SANDBOX_IMAGE_BUILD_RUN_ID}" \
+          gh run download "${BAYN_ALPACA_SANDBOX_RELEASE_IMAGE_BUILD_RUN_ID}" \
             --repo "${GITHUB_REPOSITORY}" \
             --name bayn-release-contract \
             --dir "${image_contract_dir}"
@@ -407,16 +414,16 @@ jobs:
 
           image_identity="$(jq -r '.reference' "${image_contract}")"
           image_tag="$(jq -r '.image + ":" + .tag' "${image_contract}")"
-          printf 'BAYN_ALPACA_SANDBOX_IMAGE_IDENTITY=%s\n' "${image_identity}" >> "${GITHUB_ENV}"
-          printf 'BAYN_ALPACA_SANDBOX_IMAGE_TAG=%s\n' "${image_tag}" >> "${GITHUB_ENV}"
+          printf 'BAYN_ALPACA_SANDBOX_RELEASE_IMAGE_IDENTITY=%s\n' "${image_identity}" >> "${GITHUB_ENV}"
+          printf 'BAYN_ALPACA_SANDBOX_RELEASE_IMAGE_TAG=%s\n' "${image_tag}" >> "${GITHUB_ENV}"
 
           receipt_tmp="${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}.tmp"
           jq \
             --arg imageIdentity "${image_identity}" \
             --arg imageTag "${image_tag}" '
             .proofStatus = "GUARD_READY"
-            | .image.identity = $imageIdentity
-            | .image.tag = $imageTag
+            | .releaseGate.identity = $imageIdentity
+            | .releaseGate.tag = $imageTag
           ' "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}" > "${receipt_tmp}"
           mv "${receipt_tmp}" "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}"
       - uses: oven-sh/setup-bun@v2
@@ -432,7 +439,81 @@ jobs:
           BAYN_ALPACA_ACCOUNT_ID: ${{ secrets.BAYN_ALPACA_SANDBOX_ACCOUNT_ID }}
           BAYN_ALPACA_KEY_ID: ${{ secrets.BAYN_ALPACA_SANDBOX_KEY_ID }}
           BAYN_ALPACA_SECRET_KEY: ${{ secrets.BAYN_ALPACA_SANDBOX_SECRET_KEY }}
-        run: bun test --cwd services/bayn src/broker/alpaca-sandbox-contract.test.ts
+          BAYN_ALPACA_SANDBOX_PROXY_URL: http://127.0.0.1:18080
+        shell: bash
+        run: |
+          set -euo pipefail
+          proxy_script="${RUNNER_TEMP}/bayn-alpaca-connect-proxy.mjs"
+          proxy_pid=''
+          cleanup_proxy() {
+            if [[ -n "${proxy_pid}" ]]; then
+              kill "${proxy_pid}" 2>/dev/null || true
+              wait "${proxy_pid}" 2>/dev/null || true
+            fi
+            rm -f "${proxy_script}"
+          }
+          trap cleanup_proxy EXIT
+
+          cat > "${proxy_script}" <<'EOF'
+          import http from 'node:http'
+          import net from 'node:net'
+
+          const allowedHost = 'paper-api.alpaca.markets'
+          const allowedPort = 443
+          const listenHost = '127.0.0.1'
+          const listenPort = 18080
+
+          const reject = (socket, status) => {
+            socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`)
+          }
+
+          const server = http.createServer((_request, response) => {
+            response.writeHead(405, { Connection: 'close' })
+            response.end()
+          })
+
+          server.on('connect', (request, client, head) => {
+            let target
+            try {
+              target = new URL(`http://${request.url}`)
+            } catch {
+              reject(client, '400 Bad Request')
+              return
+            }
+            if (target.hostname !== allowedHost || Number(target.port) !== allowedPort) {
+              reject(client, '403 Forbidden')
+              return
+            }
+
+            const upstream = net.connect({ host: allowedHost, port: allowedPort }, () => {
+              client.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+              if (head.length > 0) upstream.write(head)
+              upstream.pipe(client)
+              client.pipe(upstream)
+            })
+            const close = () => {
+              upstream.destroy()
+              client.destroy()
+            }
+            upstream.on('error', close)
+            client.on('error', close)
+          })
+
+          server.listen(listenPort, listenHost)
+          process.on('SIGTERM', () => server.close(() => process.exit(0)))
+          EOF
+
+          node "${proxy_script}" >/dev/null 2>&1 &
+          proxy_pid="$!"
+          for _ in $(seq 1 50); do
+            if node -e "const net=require('node:net');const socket=net.connect(18080,'127.0.0.1',()=>{socket.end();process.exit(0)});socket.on('error',()=>process.exit(1))"; then
+              break
+            fi
+            sleep 0.1
+          done
+          kill -0 "${proxy_pid}"
+
+          bun test --cwd services/bayn src/broker/alpaca-sandbox-contract.test.ts
       - name: Upload redacted exact-head contract receipt
         if: always()
         uses: actions/upload-artifact@v4

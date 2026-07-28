@@ -1,6 +1,5 @@
 import { expect, test } from 'bun:test'
 
-import { NodeHttpClient } from '@effect/platform-node'
 import { Data, Duration, Effect, Exit, Redacted, References, Result, Schedule } from 'effect'
 import { HttpClient } from 'effect/unstable/http'
 
@@ -34,6 +33,7 @@ import {
   OrderStatus,
   OrderType as BrokerOrderType,
   TimeInForce as BrokerTimeInForce,
+  alpacaHttpLayer,
   alpacaSandboxBaseUrl,
   acquireBrokerSession,
   decodeBrokerConnection,
@@ -56,6 +56,7 @@ const cleanupDeadlineMs = 3 * 60_000
 const workflowJobTimeoutMs = 15 * 60_000
 const overallProofDeadlineMs = 13 * 60_000
 const requiredSubmitBudgetMs = mutationPhaseDeadlineMs + cleanupDeadlineMs
+const protectedProxyUrl = 'http://127.0.0.1:18080'
 const mutationPhaseDeadline = Duration.millis(mutationPhaseDeadlineMs)
 const cleanupDeadline = Duration.millis(cleanupDeadlineMs)
 const maximumRetryReadMs = (lookupRetryCount + 1) * brokerOperationTimeoutMs + lookupRetryCount * retryDelayMs
@@ -658,8 +659,18 @@ test('hashes the exact JSON-safe receipt representation', () => {
       omitted: undefined,
     },
   })
+
   expect(body).toEqual({ proofStatus: 'SUCCESS', nested: { retained: 'evidence' } })
   expect(canonicalHashV1(body)).toBe(canonicalHashV1({ proofStatus: 'SUCCESS', nested: { retained: 'evidence' } }))
+})
+
+test('binds the real proof to the restricted production proxy transport', () => {
+  expect(new URL(protectedProxyUrl)).toMatchObject({
+    protocol: 'http:',
+    hostname: '127.0.0.1',
+    port: '18080',
+    pathname: '/',
+  })
 })
 
 test('requires a full pre-open safety window', () => {
@@ -837,20 +848,24 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
   const sourceSha = required('GITHUB_SHA')
   const runId = required('GITHUB_RUN_ID')
   const runAttempt = required('GITHUB_RUN_ATTEMPT')
-  const imageIdentity = required('BAYN_ALPACA_SANDBOX_IMAGE_IDENTITY')
-  const imageTag = required('BAYN_ALPACA_SANDBOX_IMAGE_TAG')
-  const imageBuildRunId = required('BAYN_ALPACA_SANDBOX_IMAGE_BUILD_RUN_ID')
+  const releaseImageIdentity = required('BAYN_ALPACA_SANDBOX_RELEASE_IMAGE_IDENTITY')
+  const releaseImageTag = required('BAYN_ALPACA_SANDBOX_RELEASE_IMAGE_TAG')
+  const releaseImageBuildRunId = required('BAYN_ALPACA_SANDBOX_RELEASE_IMAGE_BUILD_RUN_ID')
+  const proxyUrl = required('BAYN_ALPACA_SANDBOX_PROXY_URL')
   const jobStartedEpochMs = requiredEpochMillis('BAYN_ALPACA_SANDBOX_JOB_STARTED_EPOCH_MS')
   const jobDeadlineEpochMs = requiredEpochMillis('BAYN_ALPACA_SANDBOX_JOB_DEADLINE_EPOCH_MS')
 
   if (configuredOrigin !== alpacaSandboxBaseUrl) throw new Error('sandbox endpoint guard failed')
   if (!/^[0-9a-f]{40}$/.test(sourceSha)) throw new Error('GITHUB_SHA must be an exact lowercase commit SHA')
-  if (!/^[0-9]+$/.test(imageBuildRunId)) throw new Error('image build run ID must be numeric')
-  if (!/^registry\.ide-newton\.ts\.net\/lab\/bayn@sha256:[0-9a-f]{64}$/.test(imageIdentity)) {
-    throw new Error('image identity must be the verified Bayn multi-architecture digest reference')
+  if (!/^[0-9]+$/.test(releaseImageBuildRunId)) throw new Error('release image build run ID must be numeric')
+  if (!/^registry\.ide-newton\.ts\.net\/lab\/bayn@sha256:[0-9a-f]{64}$/.test(releaseImageIdentity)) {
+    throw new Error('release image identity must be the verified Bayn multi-architecture digest reference')
   }
-  if (imageTag !== `registry.ide-newton.ts.net/lab/bayn:sha-${sourceSha}`) {
-    throw new Error('image tag is not bound to the exact proof source SHA')
+  if (releaseImageTag !== `registry.ide-newton.ts.net/lab/bayn:sha-${sourceSha}`) {
+    throw new Error('release image tag is not bound to the exact proof source SHA')
+  }
+  if (proxyUrl !== protectedProxyUrl) {
+    throw new Error('sandbox proof must use the restricted loopback CONNECT proxy')
   }
   if (jobDeadlineEpochMs - jobStartedEpochMs !== overallProofDeadlineMs) {
     throw new Error('overall protected proof deadline is not bound to the configured job budget')
@@ -866,7 +881,7 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
     expectedAccountId,
     key: Redacted.make(key),
     secret: Redacted.make(secret),
-    proxyUrl: 'http://127.0.0.1:1',
+    proxyUrl,
     operationTimeoutMs: brokerOperationTimeoutMs,
     retryAttempts: 0,
   })
@@ -876,11 +891,11 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
     Effect.runPromise(
       effect.pipe(
         Effect.provideService(References.MinimumLogLevel, 'None'),
-        Effect.provide(NodeHttpClient.layerNodeHttp),
+        Effect.provide(alpacaHttpLayer(connection)),
       ),
     )
 
-  const identity = canonicalHashV1({ runId, runAttempt, sourceSha, imageIdentity })
+  const identity = canonicalHashV1({ runId, runAttempt, sourceSha, releaseImageIdentity })
   const clientOrderId = `b1_${identity.slice(0, 43)}`
   const intent: Intent = {
     schemaVersion: 'bayn.paper-intent.v3',
@@ -1007,7 +1022,7 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
   const proofExit = await run(Effect.exit(proof))
   state.completedAt = await run(currentUtcInstant)
   const receiptBody = {
-    schemaVersion: 'bayn.alpaca-sandbox-contract-receipt.v2',
+    schemaVersion: 'bayn.alpaca-sandbox-contract-receipt.v3',
     proofStatus: Exit.isSuccess(proofExit) ? 'SUCCESS' : 'FAILURE',
     sourceSha,
     repository: required('GITHUB_REPOSITORY'),
@@ -1015,10 +1030,21 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
       runId,
       runAttempt,
     },
-    image: {
-      buildRunId: imageBuildRunId,
-      tag: imageTag,
-      identity: imageIdentity,
+    releaseGate: {
+      buildRunId: releaseImageBuildRunId,
+      tag: releaseImageTag,
+      identity: releaseImageIdentity,
+      platforms: ['linux/amd64', 'linux/arm64'],
+      claim: 'EXACT_IMAGE_ARTIFACT_VERIFIED_NOT_PROOF_RUNTIME',
+    },
+    proofRuntime: {
+      kind: 'CHECKED_OUT_SOURCE',
+      sourceSha,
+    },
+    transport: {
+      httpLayer: 'ALPACA_HTTP_LAYER',
+      proxyClass: 'LOOPBACK_CONNECT_ALLOWLIST',
+      proxyUrlHash: hashIdentity(proxyUrl),
     },
     timestamps: {
       startedAt: state.startedAt,
@@ -1038,6 +1064,7 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
     credentialBindingHash: canonicalHashV1({
       identity,
       endpoint: configuredOrigin,
+      proxyUrl,
       accountId: expectedAccountId,
       key,
       secret,
