@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 
 import { NodeServices } from '@effect/platform-node'
-import { Cause, Effect, Exit, Layer, Option, pipe, Ref, Result } from 'effect'
+import { Cause, Effect, Exit, Layer, Option, Ref, Result } from 'effect'
 import { AuthenticationError, SqlError } from 'effect/unstable/sql/SqlError'
 
 import {
@@ -45,7 +45,8 @@ import { Journal, type JournalService } from './ledger'
 import { MarketData } from './market-data'
 import { Authority } from './paper'
 import { defaultProtocolDocument, loadProtocol } from './protocol'
-import { makeQualificationLock, makeQualificationResult } from './qualification'
+import { makeQualificationLock, makeQualificationPolicyDocument, makeQualificationResult } from './qualification'
+import { defaultQualificationStatisticsPolicy } from './qualification-statistics'
 import { evaluateRiskBalancedTrend, summarizeEvaluation } from './risk-balanced-trend'
 import { initialState, type RuntimeState } from './runtime-state'
 import {
@@ -604,6 +605,37 @@ describe('Bayn startup pure decisions', () => {
     })
   })
 
+  test('routes production qualification through the immutable locked statistics policy', () => {
+    const tunedPolicy = {
+      ...defaultQualificationStatisticsPolicy,
+      bootstrap: { ...defaultQualificationStatisticsPolicy.bootstrap, samples: 1_000 },
+    } as const
+    const uncertainty = makeQualificationPolicyDocument(tunedPolicy.schemaVersion, tunedPolicy)
+    assert(Result.isSuccess(uncertainty), 'tuned statistics policy document must succeed')
+    const { lockId: _, ...lockMaterial } = fixtureLock
+    const tunedLockResult = makeQualificationLock({
+      ...lockMaterial,
+      policies: { ...lockMaterial.policies, uncertainty: uncertainty.success },
+    })
+    assert(Result.isSuccess(tunedLockResult), 'tuned qualification lock must succeed')
+    const tunedLock = tunedLockResult.success
+    const strategy: Strategy = {
+      ...fixtureStrategy,
+      analyze: () => {
+        throw new Error('legacy default-policy analyzer must not run')
+      },
+    }
+
+    const evidence = decisionSuccess(
+      qualifyEvaluation(strategy, tunedLock, fixtureEvaluation, recoveredFixture().reconciliation),
+    )
+
+    expect(evidence.qualification.lockId).toBe(tunedLock.lockId)
+    expect(evidence.qualification.analysis.policy).toEqual(tunedPolicy)
+    expect(evidence.qualification.analysis.bootstrap.requestedSamples).toBe(1_000)
+    expect(evidence.qualification.analysis.policy).not.toEqual(defaultQualificationStatisticsPolicy)
+  })
+
   test('renders evaluate, analyze, and qualify failures from their typed causes', () => {
     const evaluationCause = {
       _tag: 'CanonicalJsonFailure',
@@ -611,11 +643,23 @@ describe('Bayn startup pure decisions', () => {
       reason: 'non-json-type',
       actualType: 'undefined',
     } as const
-    const analysisCause = {
-      _tag: 'QualificationLineageInvalid',
-      priorTrialRunIds: ['0'.repeat(64), '0'.repeat(64)],
-    } as const
     const reconciliation = recoveredFixture().reconciliation
+    const duplicatedBuyAndHold = fixtureEvaluation.benchmarkSeries.buyAndHold.at(0)
+    assert(duplicatedBuyAndHold !== undefined, 'fixture buy-and-hold series must not be empty')
+    const misalignedEvaluation = {
+      ...fixtureEvaluation,
+      benchmarkSeries: {
+        ...fixtureEvaluation.benchmarkSeries,
+        buyAndHold: [duplicatedBuyAndHold, ...fixtureEvaluation.benchmarkSeries.buyAndHold],
+      },
+    }
+    const { lockId: _, ...lockMaterial } = fixtureLock
+    const mismatchedLockResult = makeQualificationLock({
+      ...lockMaterial,
+      candidateRunId: '0'.repeat(64),
+    })
+    assert(Result.isSuccess(mismatchedLockResult), 'mismatched qualification lock fixture must succeed')
+    const mismatchedLock = mismatchedLockResult.success
     const cases: readonly {
       readonly operation: 'evaluate' | 'analyze' | 'qualify'
       readonly message: string
@@ -644,38 +688,13 @@ describe('Bayn startup pure decisions', () => {
       },
       {
         operation: 'analyze',
-        message: `${fixtureStrategy.name} analysis failed: prior qualification run IDs are not canonical: ${analysisCause.priorTrialRunIds.join(',')}`,
-        decide: () =>
-          qualifyEvaluation(
-            {
-              ...fixtureStrategy,
-              analyze: () => Result.fail(analysisCause),
-            },
-            fixtureLock,
-            fixtureEvaluation,
-            reconciliation,
-          ),
+        message: `${fixtureStrategy.name} analysis failed: qualification series duplicate-buy-and-hold-date at ${duplicatedBuyAndHold.sessionDate} (strategy=${fixtureEvaluation.simulation.dailyMarks.length}, buy-and-hold=${misalignedEvaluation.benchmarkSeries.buyAndHold.length}, direct-volatility=${fixtureEvaluation.benchmarkSeries.directVolTiming.length})`,
+        decide: () => qualifyEvaluation(fixtureStrategy, fixtureLock, misalignedEvaluation, reconciliation),
       },
       {
         operation: 'qualify',
-        message: `${fixtureStrategy.name} qualification failed: qualification analysis lineage ${'0'.repeat(64)} does not match locked lineage ${fixtureLock.priorTrialRunIds.join(',')}`,
-        decide: () =>
-          qualifyEvaluation(
-            {
-              ...fixtureStrategy,
-              analyze: (evaluation, priorTrialRunIds) =>
-                pipe(
-                  fixtureStrategy.analyze(evaluation, priorTrialRunIds),
-                  Result.map((analysis) => ({
-                    ...analysis,
-                    priorTrialRunIds: ['0'.repeat(64)],
-                  })),
-                ),
-            },
-            fixtureLock,
-            fixtureEvaluation,
-            reconciliation,
-          ),
+        message: `${fixtureStrategy.name} qualification failed: qualification analysis run ${fixtureEvaluation.runId} does not match locked run ${mismatchedLock.candidateRunId}`,
+        decide: () => qualifyEvaluation(fixtureStrategy, mismatchedLock, fixtureEvaluation, reconciliation),
       },
     ]
 
@@ -1259,10 +1278,6 @@ describe('Bayn startup lifecycle', () => {
         calls.push('evaluate')
         return fixtureStrategy.evaluate(bars, manifest)
       },
-      analyze: (evaluation, priorTrialRunIds) => {
-        calls.push('analyze')
-        return fixtureStrategy.analyze(evaluation, priorTrialRunIds)
-      },
     }
     const journal: JournalService = {
       ...successfulJournal,
@@ -1322,7 +1337,6 @@ describe('Bayn startup lifecycle', () => {
       'load',
       'evaluate',
       'journal',
-      'analyze',
       'persist',
     ])
   })

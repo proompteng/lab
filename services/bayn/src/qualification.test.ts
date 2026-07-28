@@ -62,7 +62,7 @@ const material: QualificationLockMaterial = {
   policies: {
     benchmark: policy('benchmark-policy'),
     thresholds: policy('threshold-policy'),
-    uncertainty: policy('uncertainty-policy'),
+    uncertainty: successOf(defaultQualificationStatisticsPolicyDocument),
     execution: policy('execution-policy'),
   },
   priorTrialRunIds: ['8'.repeat(64), '9'.repeat(64)],
@@ -234,5 +234,65 @@ describe('qualification result', () => {
         analysisRunId: 'b'.repeat(64),
       }),
     )
+  })
+
+  test('rejects terminal receipt construction when analysis policy differs from the lock', () => {
+    const lock = successOf(makeQualificationLock(material))
+    const tunedPolicy = {
+      ...defaultQualificationStatisticsPolicy,
+      bootstrap: { ...defaultQualificationStatisticsPolicy.bootstrap, samples: 1_000 },
+    } as const
+    const analysis = successOf(analyzeQualification(qualificationSeries(), tunedPolicy, material.priorTrialRunIds))
+    const result = makeQualificationResult(
+      lock,
+      {
+        status: 'PASS',
+        gates: [{ name: 'benchmark_sharpe_improvement', passed: true, actual: 0.1, required: '>0' }],
+      },
+      analysis,
+    )
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure._tag).toBe('QualificationSchemaInvalid')
+      if (result.failure._tag === 'QualificationSchemaInvalid') {
+        expect(result.failure.operation).toBe('result')
+        expect(result.failure.cause.message).toContain('must match the immutable lock uncertainty policy')
+      }
+    }
+  })
+
+  test('rejects terminal receipt construction when the outer policy version differs', () => {
+    const uncertainty = successOf(
+      makeQualificationPolicyDocument('bayn.qualification-statistics-policy.alias.v1', {
+        ...defaultQualificationStatisticsPolicy,
+      }),
+    )
+    const lock = successOf(
+      makeQualificationLock({
+        ...material,
+        policies: { ...material.policies, uncertainty },
+      }),
+    )
+    const analysis = successOf(
+      analyzeQualification(qualificationSeries(), defaultQualificationStatisticsPolicy, material.priorTrialRunIds),
+    )
+    const result = makeQualificationResult(
+      lock,
+      {
+        status: 'PASS',
+        gates: [{ name: 'benchmark_sharpe_improvement', passed: true, actual: 0.1, required: '>0' }],
+      },
+      analysis,
+    )
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure._tag).toBe('QualificationSchemaInvalid')
+      if (result.failure._tag === 'QualificationSchemaInvalid') {
+        expect(result.failure.operation).toBe('result')
+        expect(result.failure.cause.message).toContain('must match the immutable lock uncertainty policy')
+      }
+    }
   })
 })

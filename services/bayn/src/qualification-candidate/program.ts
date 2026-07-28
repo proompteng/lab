@@ -20,7 +20,12 @@ import {
   resolveCandidateConfig,
   validateCandidateEndpoints,
 } from './domain'
-import { readCandidateReplica, readQualificationLocks } from './live'
+import {
+  acquireCandidateReplicaClient,
+  acquireQualificationLockClient,
+  readCandidateReplica,
+  readQualificationLocks,
+} from './live'
 import { CandidatePostgresTlsServerNameSchema, CandidateReplicaUrlsSchema } from './schema'
 
 const rawConfig = Config.all({
@@ -103,8 +108,15 @@ const verifyConfiguredCandidate = (
       const candidate = candidateInput(input, protocol)
       return verifyQualificationCandidate(candidate, {
         readReplica: (endpoint) =>
-          readCandidateReplica(candidate, endpoint, input.publisherPassword, input.operationTimeoutMs),
-        readQualificationLocks: (snapshotId) => readQualificationLocks(input, snapshotId),
+          readCandidateReplica(
+            candidate,
+            endpoint,
+            input.publisherPassword,
+            input.operationTimeoutMs,
+            acquireCandidateReplicaClient,
+          ),
+        readQualificationLocks: (snapshotId) =>
+          readQualificationLocks(input, snapshotId, acquireQualificationLockClient),
       })
     }),
   )

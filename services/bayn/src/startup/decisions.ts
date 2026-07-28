@@ -10,7 +10,13 @@ import type {
 } from '../db/evidence-store'
 import { canonicalHashV1Result } from '../hash'
 import type { MarketDataInspection, MarketDataSnapshot } from '../market-data'
-import { makeQualificationResult, type QualificationLock, type QualificationResult } from '../qualification'
+import {
+  runQualificationPipeline,
+  type QualificationLock,
+  type QualificationPipelineFailure,
+  type QualificationResult,
+} from '../qualification'
+import { prepareQualificationSeries } from '../qualification-statistics'
 import { summarizeEvaluation } from '../risk-balanced-trend'
 import type { Strategy } from '../strategy'
 import type { EvaluationResult, ReconciliationResult } from '../types'
@@ -445,14 +451,39 @@ export const evaluateLockedSnapshot = (
   return Result.succeed(evaluationResult.success)
 }
 
+const qualificationPipelineFailure = (
+  strategyName: string,
+  cause: QualificationPipelineFailure,
+): StartupDecisionFailure => {
+  switch (cause._tag) {
+    case 'QualificationCanonicalizationFailed':
+    case 'QualificationSchemaInvalid':
+    case 'QualificationRunIdMismatch':
+    case 'QualificationPriorTrialLineageMismatch':
+      return {
+        _tag: 'StrategyOperationFailed',
+        operation: 'qualify',
+        strategyName,
+        cause,
+      }
+    default:
+      return {
+        _tag: 'StrategyOperationFailed',
+        operation: 'analyze',
+        strategyName,
+        cause,
+      }
+  }
+}
+
 export const qualifyEvaluation = (
   strategy: Strategy,
   lock: QualificationLock,
   evaluation: EvaluationResult,
   reconciliation: ReconciliationResult,
 ): Result.Result<EvaluationEvidence, StartupDecisionFailure> => {
-  const analysisResult = pipe(
-    strategy.analyze(evaluation, lock.priorTrialRunIds),
+  const seriesResult = pipe(
+    prepareQualificationSeries(evaluation),
     Result.mapError(
       (cause): StartupDecisionFailure => ({
         _tag: 'StrategyOperationFailed',
@@ -462,21 +493,18 @@ export const qualifyEvaluation = (
       }),
     ),
   )
-  if (Result.isFailure(analysisResult)) return Result.fail(analysisResult.failure)
-  const qualificationResult = pipe(
-    makeQualificationResult(lock, evaluation.verdict, analysisResult.success),
-    Result.mapError(
-      (cause): StartupDecisionFailure => ({
-        _tag: 'StrategyOperationFailed',
-        operation: 'qualify',
-        strategyName: strategy.name,
-        cause,
-      }),
-    ),
+  if (Result.isFailure(seriesResult)) return Result.fail(seriesResult.failure)
+  const qualification = pipe(
+    runQualificationPipeline({
+      lock,
+      evaluationVerdict: evaluation.verdict,
+      series: seriesResult.success,
+    }),
+    Result.mapError((cause) => qualificationPipelineFailure(strategy.name, cause)),
   )
-  return Result.isFailure(qualificationResult)
-    ? Result.fail(qualificationResult.failure)
-    : Result.succeed({ evaluation, reconciliation, qualification: qualificationResult.success })
+  return Result.isFailure(qualification)
+    ? Result.fail(qualification.failure)
+    : Result.succeed({ evaluation, reconciliation, qualification: qualification.success.result })
 }
 
 export const evaluatedCompletion = (

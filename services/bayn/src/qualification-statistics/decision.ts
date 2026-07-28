@@ -1,10 +1,11 @@
-import type { QualificationAnalysis, QualificationStatisticsPolicy } from '../qualification-statistics'
-
-type PowerAnalysis = QualificationAnalysis['power']
-type BootstrapAnalysis = QualificationAnalysis['bootstrap']
-type WalkForwardAnalysis = QualificationAnalysis['walkForward']
-type QualificationGate = QualificationAnalysis['gates'][number]
-type QualificationStatus = QualificationAnalysis['status']
+import type {
+  BootstrapAnalysis,
+  PowerAnalysis,
+  QualificationGate,
+  QualificationStatisticsPolicy,
+  QualificationStatus,
+  WalkForwardAnalysis,
+} from './model'
 
 export interface QualificationDecision {
   readonly gates: readonly QualificationGate[]

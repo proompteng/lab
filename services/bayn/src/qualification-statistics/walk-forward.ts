@@ -1,33 +1,14 @@
 import { pipe, Result } from 'effect'
 
-import { canonicalHashV1Result } from '../hash'
-import type {
-  QualificationAnalysis,
-  QualificationSeries,
-  QualificationStatisticsFailure,
-  QualificationStatisticsPolicy,
-} from '../qualification-statistics'
+import { statisticsFailure, type QualificationStatisticsFailure } from './failure'
+import { hashQualificationEvidence } from './hashing'
+import type { QualificationSeries, QualificationStatisticsPolicy, WalkForwardAnalysis } from './model'
 import { compoundedReturn, maximumDrawdown, roundStatistic } from './numerical-methods'
-
-const fail = <A = never>(failure: QualificationStatisticsFailure): Result.Result<A, QualificationStatisticsFailure> =>
-  Result.fail(failure)
-
-const hashFold = (value: unknown): Result.Result<string, QualificationStatisticsFailure> =>
-  pipe(
-    canonicalHashV1Result(value),
-    Result.mapError(
-      (cause): QualificationStatisticsFailure => ({
-        _tag: 'QualificationStatisticsCanonicalizationFailed',
-        operation: 'walk-forward-fold',
-        cause,
-      }),
-    ),
-  )
 
 export const calculateWalkForward = (
   series: QualificationSeries,
   policy: QualificationStatisticsPolicy,
-): Result.Result<QualificationAnalysis['walkForward'], QualificationStatisticsFailure> => {
+): Result.Result<WalkForwardAnalysis, QualificationStatisticsFailure> => {
   const { minimumTrainingSessions, testSessions } = policy.walkForward
   const foldCount = Math.max(0, Math.floor((series.observations.length - minimumTrainingSessions) / testSessions))
   return pipe(
@@ -45,7 +26,7 @@ export const calculateWalkForward = (
             firstTestObservation === undefined ||
             lastTestObservation === undefined
           ) {
-            return fail({
+            return statisticsFailure({
               _tag: 'QualificationWalkForwardBoundaryMissing',
               testStart,
               testSessions,
@@ -81,7 +62,7 @@ export const calculateWalkForward = (
                 drawdownWithinLimit: statistics.maximumDrawdown <= policy.walkForward.maximumFoldDrawdown,
               }
               return pipe(
-                hashFold(material),
+                hashQualificationEvidence('walk-forward-fold', material),
                 Result.map((contentHash) => ({ ...material, contentHash })),
               )
             }),

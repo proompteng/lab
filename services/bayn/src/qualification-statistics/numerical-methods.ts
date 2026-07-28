@@ -1,14 +1,11 @@
 import { pipe, Result } from 'effect'
 
-import type { QualificationStatisticsFailure } from '../qualification-statistics'
-
-const fail = <A = never>(failure: QualificationStatisticsFailure): Result.Result<A, QualificationStatisticsFailure> =>
-  Result.fail(failure)
+import { statisticsFailure, type QualificationStatisticsFailure } from './failure'
 
 export const roundStatistic = (value: number): Result.Result<number, QualificationStatisticsFailure> =>
   Number.isFinite(value)
     ? Result.succeed(Number.parseFloat(value.toFixed(12)))
-    : fail({ _tag: 'QualificationStatisticNotFinite', operation: 'round', value })
+    : statisticsFailure({ _tag: 'QualificationStatisticNotFinite', operation: 'round', value })
 
 export const mean = (values: readonly number[]): number =>
   values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length
