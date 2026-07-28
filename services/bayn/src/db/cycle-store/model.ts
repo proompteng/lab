@@ -1,0 +1,191 @@
+import { Context, Data, Effect, Option, Result, Schema } from 'effect'
+import { isSqlError, type SqlError } from 'effect/unstable/sql/SqlError'
+
+import type { AutonomousCycle, CycleCompletionState, CycleDraft, CycleTerminalReason } from '../../cycle'
+import type { ObserveShadowDecisionDocument } from '../../shadow-decision-contract'
+import type { InputManifest, IsoDate } from '../../types'
+import type { CycleStoreDecisionFailure } from './decisions'
+
+export interface CycleAcquireReceipt {
+  readonly cycle: AutonomousCycle
+  readonly created: boolean
+}
+
+export interface CycleMutationReceipt {
+  readonly cycle: AutonomousCycle
+  readonly changed: boolean
+}
+
+export interface CycleAuthoritySlot {
+  readonly qualificationRunId: string
+  readonly accountId: string
+  readonly signalSessionDate: IsoDate
+}
+
+export interface CycleRecoveryScope {
+  readonly qualificationRunId: string
+  readonly accountId: string
+}
+
+export class CycleStoreError extends Data.TaggedError('CycleStoreError')<{
+  readonly operation:
+    | 'acquire'
+    | 'activate'
+    | 'bind-decision'
+    | 'bind-snapshot'
+    | 'block'
+    | 'finish'
+    | 'read'
+    | 'read-authority-slot'
+    | 'read-decision-document'
+    | 'read-oldest-unfinished'
+  readonly failure: 'conflict' | 'decode' | 'invariant' | 'not-found' | 'query'
+  readonly persistenceFailure?: 'connectivity' | 'constraint' | 'decode' | 'invariant' | 'query' | 'transaction'
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
+export interface CycleStoreShape {
+  readonly acquire: (draft: CycleDraft, observedAt: string) => Effect.Effect<CycleAcquireReceipt, CycleStoreError>
+  readonly read: (cycleId: string) => Effect.Effect<Option.Option<AutonomousCycle>, CycleStoreError>
+  readonly readAuthoritySlot: (
+    slot: CycleAuthoritySlot,
+  ) => Effect.Effect<Option.Option<AutonomousCycle>, CycleStoreError>
+  readonly readDecisionDocument: (
+    cycleId: string,
+  ) => Effect.Effect<Option.Option<ObserveShadowDecisionDocument>, CycleStoreError>
+  readonly readOldestUnfinished: (
+    scope: CycleRecoveryScope,
+  ) => Effect.Effect<Option.Option<AutonomousCycle>, CycleStoreError>
+  readonly bindSnapshot: (
+    cycleId: string,
+    inputManifest: InputManifest,
+    observedAt: string,
+  ) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
+  readonly activate: (cycleId: string, observedAt: string) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
+  readonly bindDecision: (
+    cycleId: string,
+    document: ObserveShadowDecisionDocument,
+    observedAt: string,
+  ) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
+  readonly finish: (
+    cycleId: string,
+    state: CycleCompletionState,
+    observedAt: string,
+  ) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
+  readonly block: (
+    cycleId: string,
+    reason: CycleTerminalReason,
+    observedAt: string,
+  ) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
+}
+
+export class CycleStore extends Context.Service<CycleStore, CycleStoreShape>()('bayn/CycleStore') {}
+
+export type CycleStoreInternalError = CycleStoreError | Schema.SchemaError | SqlError
+
+const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
+
+const defaultPersistenceFailure = (
+  failure: CycleStoreError['failure'],
+): NonNullable<CycleStoreError['persistenceFailure']> => {
+  switch (failure) {
+    case 'conflict':
+      return 'constraint'
+    case 'decode':
+      return 'decode'
+    case 'query':
+      return 'query'
+    case 'invariant':
+    case 'not-found':
+      return 'invariant'
+  }
+}
+
+export const cycleStoreError = (
+  operation: CycleStoreError['operation'],
+  failure: CycleStoreError['failure'],
+  message: string,
+  cause?: unknown,
+  persistenceFailure = defaultPersistenceFailure(failure),
+): CycleStoreError =>
+  new CycleStoreError({
+    operation,
+    failure,
+    persistenceFailure,
+    message: cause === undefined ? message : `${message}: ${messageOf(cause)}`,
+    cause,
+  })
+
+export const runCycleStore = <A, E, R>(
+  operation: CycleStoreError['operation'],
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, CycleStoreError, R> =>
+  effect.pipe(
+    Effect.mapError((cause) => {
+      if (cause instanceof CycleStoreError) return cause
+      if (Schema.isSchemaError(cause)) {
+        return cycleStoreError(operation, 'decode', 'autonomous cycle contract decoding failed', cause)
+      }
+      if (isSqlError(cause)) {
+        const failure =
+          cause.reason._tag === 'ConstraintError' || cause.reason._tag === 'UniqueViolation' ? 'conflict' : 'query'
+        const persistenceFailure = (() => {
+          switch (cause.reason._tag) {
+            case 'AuthenticationError':
+            case 'AuthorizationError':
+            case 'ConnectionError':
+            case 'UnknownError':
+              return 'connectivity'
+            case 'ConstraintError':
+            case 'UniqueViolation':
+              return 'constraint'
+            case 'DeadlockError':
+            case 'LockTimeoutError':
+            case 'SerializationError':
+            case 'StatementTimeoutError':
+              return 'transaction'
+            case 'SqlSyntaxError':
+              return 'query'
+          }
+        })()
+        return cycleStoreError(
+          operation,
+          failure,
+          'autonomous cycle PostgreSQL operation failed',
+          cause,
+          persistenceFailure,
+        )
+      }
+      return cycleStoreError(operation, 'invariant', 'autonomous cycle operation failed unexpectedly', cause)
+    }),
+  )
+
+export const failCycleStore = (
+  operation: CycleStoreError['operation'],
+  failure: CycleStoreError['failure'],
+  message: string,
+): Effect.Effect<never, CycleStoreError> => Effect.fail(cycleStoreError(operation, failure, message))
+
+export const liftCycleDecision = <A>(
+  operation: CycleStoreError['operation'],
+  decision: Result.Result<A, CycleStoreDecisionFailure>,
+): Effect.Effect<A, CycleStoreError> =>
+  Effect.fromResult(decision).pipe(
+    Effect.mapError(({ failure, message }) => cycleStoreError(operation, failure, message)),
+  )
+
+export const exactlyOneCycle = (
+  operation: CycleStoreError['operation'],
+  rows: readonly AutonomousCycle[],
+): Effect.Effect<AutonomousCycle, CycleStoreError> => {
+  const cycle = rows[0]
+  if (rows.length !== 1 || cycle === undefined) {
+    return failCycleStore(
+      operation,
+      rows.length === 0 ? 'not-found' : 'invariant',
+      'autonomous cycle was not found exactly once',
+    )
+  }
+  return Effect.succeed(cycle)
+}

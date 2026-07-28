@@ -100,7 +100,11 @@ export type CycleObservabilityProjectionRow = ProjectionRow
 const ProjectionRowsSchema = Schema.Tuple([ProjectionRowSchema])
 const decodeRunId = Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)
 const decodeAccountId = Schema.decodeUnknownEffect(StrictNonEmptyStringSchema, strictParseOptions)
-const decodeProjectionRows = Schema.decodeUnknownEffect(ProjectionRowsSchema, strictParseOptions)
+const decodeProjectionRowsResult = Schema.decodeUnknownResult(ProjectionRowsSchema, strictParseOptions)
+
+export const decodeCycleObservabilityProjectionRows = (
+  rows: unknown,
+): Result.Result<readonly [CycleObservabilityProjectionRow], Schema.SchemaError> => decodeProjectionRowsResult(rows)
 
 const messageOf = (cause: unknown): string =>
   pipe(
@@ -425,7 +429,7 @@ const makeCycleObservability = Effect.gen(function* () {
         ),
       ),
       Effect.flatMap((rows) =>
-        decodeProjectionRows(rows).pipe(
+        Effect.fromResult(decodeCycleObservabilityProjectionRows(rows)).pipe(
           Effect.mapError((cause) => readError('decode', 'autonomous cycle observability decoding failed', cause)),
         ),
       ),
