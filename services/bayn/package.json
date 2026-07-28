@@ -9,19 +9,22 @@
     "build": "bun build src/index.ts --target=node --external tigerbeetle-node --outdir=dist",
     "dev": "BAYN_PROVENANCE_MODE=development bun --watch src/index.ts",
     "start": "BAYN_PROVENANCE_MODE=development node dist/index.js",
-    "lint": "bunx oxfmt --check src",
+    "lint": "bun ../../node_modules/oxfmt/bin/oxfmt --check src",
     "lint:effect": "find ../../node_modules/.bun -path '*/@effect/tsgo-*/lib/tsc*' -type f ! -name '*.json' -exec chmod +x {} + 2>/dev/null || true; bun node_modules/@effect/tsgo/dist/effect-tsgo.js diagnostics --project tsconfig.json --format text --severity error",
-    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
-    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
+    "lint:oxlint": "bun ../../node_modules/oxlint/bin/oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "bun ../../node_modules/oxlint/bin/oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
     "test": "bun test",
-    "tsc": "bunx tsc --noEmit"
+    "test:broker-sandbox": "bun test src/broker-sandbox-contract.test.ts",
+    "test:effect-runtime": "bun test src/clickhouse-patch.test.ts src/effect-runtime-compatibility.test.ts",
+    "test:postgres": "bun test src/db/cycle-observability.integration.test.ts && bun test src/db/evidence-store.integration.test.ts && bun test src/db/paper-store.integration.test.ts && bun test src/db/cycle-store/integration.test.ts && bun test src/effect-sql-runtime-compatibility.integration.test.ts",
+    "tsc": "bun node_modules/typescript/bin/tsc --noEmit"
   },
   "dependencies": {
     "@clickhouse/client": "1.23.1",
-    "@effect/platform-node": "4.0.0-beta.100",
-    "@effect/sql-clickhouse": "4.0.0-beta.100",
-    "@effect/sql-pg": "4.0.0-beta.100",
-    "effect": "4.0.0-beta.100",
+    "@effect/platform-node": "4.0.0-beta.102",
+    "@effect/sql-clickhouse": "4.0.0-beta.102",
+    "@effect/sql-pg": "4.0.0-beta.102",
+    "effect": "4.0.0-beta.102",
     "tigerbeetle-node": "0.17.9"
   },
   "devDependencies": {

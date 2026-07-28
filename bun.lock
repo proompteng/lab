@@ -718,10 +718,10 @@
       "version": "0.1.0",
       "dependencies": {
         "@clickhouse/client": "1.23.1",
-        "@effect/platform-node": "4.0.0-beta.100",
-        "@effect/sql-clickhouse": "4.0.0-beta.100",
-        "@effect/sql-pg": "4.0.0-beta.100",
-        "effect": "4.0.0-beta.100",
+        "@effect/platform-node": "4.0.0-beta.102",
+        "@effect/sql-clickhouse": "4.0.0-beta.102",
+        "@effect/sql-pg": "4.0.0-beta.102",
+        "effect": "4.0.0-beta.102",
         "tigerbeetle-node": "0.17.9",
       },
       "devDependencies": {
@@ -1031,7 +1031,8 @@
   },
   "patchedDependencies": {
     "@effect/sql-clickhouse@4.0.0-beta.99": "patches/@effect%2Fsql-clickhouse@4.0.0-beta.99.patch",
-    "@effect/sql-clickhouse@4.0.0-beta.100": "patches/@effect%2Fsql-clickhouse@4.0.0-beta.100.patch",
+    "@effect/sql-clickhouse@4.0.0-beta.102": "patches/@effect%2Fsql-clickhouse@4.0.0-beta.102.patch",
+    "effect@4.0.0-beta.102": "patches/effect@4.0.0-beta.102.patch",
   },
   "packages": {
     "@a2a-js/sdk": ["@a2a-js/sdk@0.3.13", "", { "dependencies": { "uuid": "^11.1.0" }, "peerDependencies": { "@bufbuild/protobuf": "^2.10.2", "@grpc/grpc-js": "^1.11.0", "express": "^4.21.2 || ^5.1.0" }, "optionalPeers": ["@bufbuild/protobuf", "@grpc/grpc-js", "express"] }, "sha512-BZr0f9JVNQs3GKOM9xINWCh6OKIJWZFPyqqVqTym5mxO2Eemc6I/0zL7zWnljHzGdaf5aZQyQN5xa6PSH62q+A=="],
@@ -1406,9 +1407,9 @@
 
     "@effect/sql": ["@effect/sql@0.51.1", "", { "dependencies": { "uuid": "^11.0.3" }, "peerDependencies": { "@effect/experimental": "^0.60.0", "@effect/platform": "^0.96.1", "effect": "^3.21.2" } }, "sha512-iPDAefrJcI0HcTk9keP9Gq8Pg08K1HmpnmZZt85AqyTcvorhoNsXDFiKBbPldfV2CortwVkacX8KjO9GPpSYCA=="],
 
-    "@effect/sql-clickhouse": ["@effect/sql-clickhouse@4.0.0-beta.100", "", { "dependencies": { "@clickhouse/client": "^1.23.1" }, "peerDependencies": { "@effect/platform-node": "^4.0.0-beta.100", "effect": "^4.0.0-beta.100" } }, "sha512-Ezypiv/jySrTHQ4GReAikQHwnHP1NB1Ae/uV/FyVHVfsOJSrdSzzN9rzOvihuga+OnyJUmNfWuPhhNrenWLqIw=="],
+    "@effect/sql-clickhouse": ["@effect/sql-clickhouse@4.0.0-beta.102", "", { "dependencies": { "@clickhouse/client": "^1.23.1" }, "peerDependencies": { "@effect/platform-node": "^4.0.0-beta.102", "effect": "^4.0.0-beta.102" } }, "sha512-fuPzG3JTGM2Z7TB5KRQWgXkyNr/lhIp1w2mdipl6txXGuNHYTArGlha3i4G0xqWDTZJgG98F0p2m6mNONE69pg=="],
 
-    "@effect/sql-pg": ["@effect/sql-pg@4.0.0-beta.100", "", { "dependencies": { "pg": "^8.22.0", "pg-connection-string": "2.14.0", "pg-cursor": "^2.21.0", "pg-pool": "^3.14.0", "pg-types": "^4.1.0" }, "peerDependencies": { "effect": "^4.0.0-beta.100" } }, "sha512-KU8P7FMeYw/0bbTrqpRIvmRaUetY/r5JAkX8ydsxtryBJu4JL7v8lm6ijOtoDHHS9kdcNGYGpiZZnn5AaQQJMQ=="],
+    "@effect/sql-pg": ["@effect/sql-pg@4.0.0-beta.102", "", { "dependencies": { "pg": "^8.22.0", "pg-connection-string": "2.14.0", "pg-cursor": "^2.21.0", "pg-pool": "^3.14.0", "pg-types": "^4.1.0" }, "peerDependencies": { "effect": "^4.0.0-beta.102" } }, "sha512-02a+fNfECWCZIZcgHl7OLQN2jZj42gq90EdwdnvR3KA6GLGypY02swABS4zFtaW9H80rTa0ukqVnTdcO/DT5GQ=="],
 
     "@effect/tsgo": ["@effect/tsgo@0.24.3", "", { "optionalDependencies": { "@effect/tsgo-darwin-arm64": "0.24.3", "@effect/tsgo-darwin-x64": "0.24.3", "@effect/tsgo-linux-arm": "0.24.3", "@effect/tsgo-linux-arm64": "0.24.3", "@effect/tsgo-linux-x64": "0.24.3", "@effect/tsgo-win32-arm64": "0.24.3", "@effect/tsgo-win32-x64": "0.24.3" }, "bin": { "effect-tsgo": "dist/effect-tsgo.js" } }, "sha512-WQxKU3MFzWzI38GbE9cf0POkVX4y0xahD8QqDjLfixW1AEValuHNfOQvyKM2MDWOLdGff4hP8VnIOeduwQt66A=="],
 
@@ -5978,11 +5979,11 @@
 
     "@effect/platform-node-shared/ws": ["ws@8.20.0", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA=="],
 
-    "@effect/sql-clickhouse/@effect/platform-node": ["@effect/platform-node@4.0.0-beta.100", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.0-beta.100", "mime": "^4.1.0", "undici": "^8.7.0" }, "peerDependencies": { "effect": "^4.0.0-beta.100", "ioredis": "^5.7.0" } }, "sha512-nH5xgxOLfPj5Bi0/o4OaDsR98Z59lHKGty+TDqckg7zRz6jry82hGW982NRPduzX0MJloDsGp/3rfeN4Hu7Keg=="],
+    "@effect/sql-clickhouse/@effect/platform-node": ["@effect/platform-node@4.0.0-beta.102", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.0-beta.102", "mime": "^4.1.0", "undici": "^8.7.0" }, "peerDependencies": { "effect": "^4.0.0-beta.102", "ioredis": "^5.7.0" } }, "sha512-wYVAU9jAePT+gouMr/EVz1CaW6yDLjPAgXYeEFLz7wugT5iZhFRag6mqajV/wwN3bzWP2fzZHokLuPmqD/rqeA=="],
 
-    "@effect/sql-clickhouse/effect": ["effect@4.0.0-beta.100", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "fast-check": "^4.9.0", "find-my-way-ts": "^0.1.6", "ini": "^7.0.0", "kubernetes-types": "^1.30.0", "msgpackr": "^2.0.4", "multipasta": "^0.2.8", "toml": "^4.1.2", "uuid": "^14.0.1", "yaml": "^2.9.0" } }, "sha512-K4ed+BS3HyE+NoAZ8pJss2DpuK41mb856IO7ZlPfnwBXbq8oTtAAurrsVnwe2hzPamIuaZp/Pq4/xp9qORYv8Q=="],
+    "@effect/sql-clickhouse/effect": ["effect@4.0.0-beta.102", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "fast-check": "^4.9.0", "find-my-way-ts": "^0.1.6", "ini": "^7.0.0", "kubernetes-types": "^1.30.0", "msgpackr": "^2.0.4", "multipasta": "^0.2.8", "toml": "^4.1.2", "uuid": "^14.0.1", "yaml": "^2.9.0" } }, "sha512-z8Y+Q76Hh/kjLFZrXu8tGn6e+tDsg45R+UHhxd190pXxD53OGwf/G/zDxXTkse4HJ5mobNZfitLfUCp4fMvu6w=="],
 
-    "@effect/sql-pg/effect": ["effect@4.0.0-beta.100", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "fast-check": "^4.9.0", "find-my-way-ts": "^0.1.6", "ini": "^7.0.0", "kubernetes-types": "^1.30.0", "msgpackr": "^2.0.4", "multipasta": "^0.2.8", "toml": "^4.1.2", "uuid": "^14.0.1", "yaml": "^2.9.0" } }, "sha512-K4ed+BS3HyE+NoAZ8pJss2DpuK41mb856IO7ZlPfnwBXbq8oTtAAurrsVnwe2hzPamIuaZp/Pq4/xp9qORYv8Q=="],
+    "@effect/sql-pg/effect": ["effect@4.0.0-beta.102", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "fast-check": "^4.9.0", "find-my-way-ts": "^0.1.6", "ini": "^7.0.0", "kubernetes-types": "^1.30.0", "msgpackr": "^2.0.4", "multipasta": "^0.2.8", "toml": "^4.1.2", "uuid": "^14.0.1", "yaml": "^2.9.0" } }, "sha512-z8Y+Q76Hh/kjLFZrXu8tGn6e+tDsg45R+UHhxd190pXxD53OGwf/G/zDxXTkse4HJ5mobNZfitLfUCp4fMvu6w=="],
 
     "@effect/sql-pg/pg": ["pg@8.22.0", "", { "dependencies": { "pg-connection-string": "^2.14.0", "pg-pool": "^3.14.0", "pg-protocol": "^1.15.0", "pg-types": "2.2.0", "pgpass": "1.0.5" }, "optionalDependencies": { "pg-cloudflare": "^1.4.0" }, "peerDependencies": { "pg-native": ">=3.0.1" }, "optionalPeers": ["pg-native"] }, "sha512-8wih1vVIBMxoUM2oB4soJsD9tDnDpLv4OXBJ+EJzFsvycD+lfyIreC2gGHq78f8jbLLt+bvlPTFdFZfJkOuzAA=="],
 
@@ -6252,9 +6253,9 @@
 
     "@proompteng/agents/nitro": ["nitro@3.0.260522-beta", "", { "dependencies": { "consola": "^3.4.2", "crossws": "^0.4.5", "db0": "^0.3.4", "env-runner": "^0.1.9", "h3": "^2.0.1-rc.22", "hookable": "^6.1.1", "nf3": "^0.3.17", "ocache": "^0.1.4", "ofetch": "^2.0.0-alpha.3", "ohash": "^2.0.11", "rolldown": "^1.0.2", "srvx": "^0.11.15", "unenv": "^2.0.0-rc.24", "unstorage": "^2.0.0-alpha.7" }, "peerDependencies": { "@vercel/queue": "^0.2.0", "dotenv": "*", "giget": "*", "jiti": "^2.6.1", "rollup": "^4.60.3", "vite": "^7 || ^8", "xml2js": "^0.6.2", "zephyr-agent": "^0.2.0" }, "optionalPeers": ["@vercel/queue", "dotenv", "giget", "jiti", "rollup", "vite", "xml2js", "zephyr-agent"], "bin": { "nitro": "dist/cli/index.mjs" } }, "sha512-L/z2eOWgkiQHc65kv+SEMgau505afSRF7NJlbooaaZEZscFrNSD7rXZzeVubQlgIzPbhOG8o73bk9soIiGTHRA=="],
 
-    "@proompteng/bayn/@effect/platform-node": ["@effect/platform-node@4.0.0-beta.100", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.0-beta.100", "mime": "^4.1.0", "undici": "^8.7.0" }, "peerDependencies": { "effect": "^4.0.0-beta.100", "ioredis": "^5.7.0" } }, "sha512-nH5xgxOLfPj5Bi0/o4OaDsR98Z59lHKGty+TDqckg7zRz6jry82hGW982NRPduzX0MJloDsGp/3rfeN4Hu7Keg=="],
+    "@proompteng/bayn/@effect/platform-node": ["@effect/platform-node@4.0.0-beta.102", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.0-beta.102", "mime": "^4.1.0", "undici": "^8.7.0" }, "peerDependencies": { "effect": "^4.0.0-beta.102", "ioredis": "^5.7.0" } }, "sha512-wYVAU9jAePT+gouMr/EVz1CaW6yDLjPAgXYeEFLz7wugT5iZhFRag6mqajV/wwN3bzWP2fzZHokLuPmqD/rqeA=="],
 
-    "@proompteng/bayn/effect": ["effect@4.0.0-beta.100", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "fast-check": "^4.9.0", "find-my-way-ts": "^0.1.6", "ini": "^7.0.0", "kubernetes-types": "^1.30.0", "msgpackr": "^2.0.4", "multipasta": "^0.2.8", "toml": "^4.1.2", "uuid": "^14.0.1", "yaml": "^2.9.0" } }, "sha512-K4ed+BS3HyE+NoAZ8pJss2DpuK41mb856IO7ZlPfnwBXbq8oTtAAurrsVnwe2hzPamIuaZp/Pq4/xp9qORYv8Q=="],
+    "@proompteng/bayn/effect": ["effect@4.0.0-beta.102", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "fast-check": "^4.9.0", "find-my-way-ts": "^0.1.6", "ini": "^7.0.0", "kubernetes-types": "^1.30.0", "msgpackr": "^2.0.4", "multipasta": "^0.2.8", "toml": "^4.1.2", "uuid": "^14.0.1", "yaml": "^2.9.0" } }, "sha512-z8Y+Q76Hh/kjLFZrXu8tGn6e+tDsg45R+UHhxd190pXxD53OGwf/G/zDxXTkse4HJ5mobNZfitLfUCp4fMvu6w=="],
 
     "@proompteng/design/react": ["react@19.2.5", "", {}, "sha512-llUJLzz1zTUBrskt2pwZgLq59AemifIftw4aB7JxOqf1HY2FDaGDxgwpAPVzHU1kdWabH7FauP4i1oEeer2WCA=="],
 
@@ -6454,7 +6455,7 @@
 
     "anymatch/picomatch": ["picomatch@2.3.1", "", {}, "sha512-JU3teHTNjmE2VCGFzuY8EXzCDVwEqB2a8fsIvwaStHhAWJEeVd1o1QD80CU6+ZdEXXSLbSsuLwJjkCBWqRQUVA=="],
 
-    "app/nitro": ["nitro-nightly@3.0.1-20260721-095825-c1ff6ba6", "", { "dependencies": { "consola": "^3.4.2", "crossws": "^0.4.10", "db0": "^0.3.4", "env-runner": "^0.1.16", "h3": "^2.0.1-rc.25", "h3-rules": "^0.1.0", "hookable": "^6.1.1", "nf3": "^0.3.22", "ocache": "^0.2.0", "ofetch": "^2.0.0-alpha.3", "ohash": "^2.0.11", "rolldown": "^1.2.0", "rou3": "^0.9.1", "srvx": "^0.11.22", "unenv": "^2.0.0-rc.24", "unstorage": "^2.0.0-alpha.7" }, "peerDependencies": { "@vercel/queue": "^0.4.0", "dotenv": "*", "giget": "*", "jiti": "^2.7.0", "rollup": "^4.62.2", "vite": "^7 || ^8", "xml2js": "^0.6.2", "zephyr-agent": "^1.1.2" }, "optionalPeers": ["@vercel/queue", "dotenv", "giget", "jiti", "rollup", "vite", "xml2js", "zephyr-agent"], "bin": { "nitro": "dist/cli/index.mjs" } }, "sha512-/zs7m2lfMlrt45B0cqbemv04cLsbc2cEwd6SsdU2zQ2NDww58BxqT87D1EWu8w08RxOqqBR7T1hb0m5I3fz0JA=="],
+    "app/nitro": ["nitro-nightly@3.0.1-20260722-224121-77b77ffb", "", { "dependencies": { "consola": "^3.4.2", "crossws": "^0.4.10", "db0": "^0.3.4", "env-runner": "^0.1.16", "h3": "^2.0.1-rc.25", "h3-rules": "^0.1.0", "hookable": "^6.1.1", "nf3": "^0.3.22", "ocache": "^0.2.0", "ofetch": "^2.0.0-alpha.3", "ohash": "^2.0.11", "rolldown": "^1.2.0", "rou3": "^0.9.1", "srvx": "^0.11.22", "unenv": "^2.0.0-rc.24", "unstorage": "^2.0.0-alpha.7" }, "peerDependencies": { "@vercel/queue": "^0.4.0", "dotenv": "*", "giget": "*", "jiti": "^2.7.0", "rollup": "^4.62.2", "vite": "^7 || ^8", "xml2js": "^0.6.2", "zephyr-agent": "^1.1.2" }, "optionalPeers": ["@vercel/queue", "dotenv", "giget", "jiti", "rollup", "vite", "xml2js", "zephyr-agent"], "bin": { "nitro": "dist/cli/index.mjs" } }, "sha512-29DHcZ8+KRozWOq9VrEyBMIzx1jJVv9fAeHDiQkiaS9I9fT5FAYmofwAeOYT6pgg31unbLVGvDkcQ9U3mIxvFA=="],
 
     "app/pg": ["pg@8.22.0", "", { "dependencies": { "pg-connection-string": "^2.14.0", "pg-pool": "^3.14.0", "pg-protocol": "^1.15.0", "pg-types": "2.2.0", "pgpass": "1.0.5" }, "optionalDependencies": { "pg-cloudflare": "^1.4.0" }, "peerDependencies": { "pg-native": ">=3.0.1" }, "optionalPeers": ["pg-native"] }, "sha512-8wih1vVIBMxoUM2oB4soJsD9tDnDpLv4OXBJ+EJzFsvycD+lfyIreC2gGHq78f8jbLLt+bvlPTFdFZfJkOuzAA=="],
 
@@ -7196,7 +7197,7 @@
 
     "@effect/experimental/@effect/platform/msgpackr": ["msgpackr@1.11.8", "", { "optionalDependencies": { "msgpackr-extract": "^3.0.2" } }, "sha512-bC4UGzHhVvgDNS7kn9tV8fAucIYUBuGojcaLiz7v+P63Lmtm0Xeji8B/8tYKddALXxJLpwIeBmUN3u64C4YkRA=="],
 
-    "@effect/sql-clickhouse/@effect/platform-node/@effect/platform-node-shared": ["@effect/platform-node-shared@4.0.0-beta.100", "", { "dependencies": { "@types/ws": "^8.18.1", "ws": "^8.21.0" }, "peerDependencies": { "effect": "^4.0.0-beta.100" } }, "sha512-PMsCXQeK2wnlmnqGCc79oqK9CX8ipZvoHxAy/CRojMF+zHIluxh61L3pzWAYEbMb19Be4Bxgqs7gK2hiV8H8Pg=="],
+    "@effect/sql-clickhouse/@effect/platform-node/@effect/platform-node-shared": ["@effect/platform-node-shared@4.0.0-beta.102", "", { "dependencies": { "@types/ws": "^8.18.1", "ws": "^8.21.0" }, "peerDependencies": { "effect": "^4.0.0-beta.102" } }, "sha512-gVd793I72MrkX4dXo7eYtRKfNj0RW4eMRfVEKEJI16h2+mBDCzQ+gqMrog2hSTHQnaIbvbYShNQ4TVGuRCYZeQ=="],
 
     "@effect/sql-clickhouse/@effect/platform-node/mime": ["mime@4.1.0", "", { "bin": { "mime": "bin/cli.js" } }, "sha512-X5ju04+cAzsojXKes0B/S4tcYtFAJ6tTMuSPBEn9CPGlrWr8Fiw7qYeLT0XyH80HSoAoqWCaz+MWKh22P7G1cw=="],
 
@@ -7524,7 +7525,7 @@
 
     "@proompteng/agents/nitro/rolldown": ["rolldown@1.0.2", "", { "dependencies": { "@oxc-project/types": "=0.132.0", "@rolldown/pluginutils": "^1.0.0" }, "optionalDependencies": { "@rolldown/binding-android-arm64": "1.0.2", "@rolldown/binding-darwin-arm64": "1.0.2", "@rolldown/binding-darwin-x64": "1.0.2", "@rolldown/binding-freebsd-x64": "1.0.2", "@rolldown/binding-linux-arm-gnueabihf": "1.0.2", "@rolldown/binding-linux-arm64-gnu": "1.0.2", "@rolldown/binding-linux-arm64-musl": "1.0.2", "@rolldown/binding-linux-ppc64-gnu": "1.0.2", "@rolldown/binding-linux-s390x-gnu": "1.0.2", "@rolldown/binding-linux-x64-gnu": "1.0.2", "@rolldown/binding-linux-x64-musl": "1.0.2", "@rolldown/binding-openharmony-arm64": "1.0.2", "@rolldown/binding-wasm32-wasi": "1.0.2", "@rolldown/binding-win32-arm64-msvc": "1.0.2", "@rolldown/binding-win32-x64-msvc": "1.0.2" }, "bin": { "rolldown": "./bin/cli.mjs" } }, "sha512-oZx5zVDtVB44AW3eaifgDml1gWRDZGvjcfdxonE4swNPG98PrrXjaO/KrnUjzlMnztCCRVlUueA1kCXhARGk6g=="],
 
-    "@proompteng/bayn/@effect/platform-node/@effect/platform-node-shared": ["@effect/platform-node-shared@4.0.0-beta.100", "", { "dependencies": { "@types/ws": "^8.18.1", "ws": "^8.21.0" }, "peerDependencies": { "effect": "^4.0.0-beta.100" } }, "sha512-PMsCXQeK2wnlmnqGCc79oqK9CX8ipZvoHxAy/CRojMF+zHIluxh61L3pzWAYEbMb19Be4Bxgqs7gK2hiV8H8Pg=="],
+    "@proompteng/bayn/@effect/platform-node/@effect/platform-node-shared": ["@effect/platform-node-shared@4.0.0-beta.102", "", { "dependencies": { "@types/ws": "^8.18.1", "ws": "^8.21.0" }, "peerDependencies": { "effect": "^4.0.0-beta.102" } }, "sha512-gVd793I72MrkX4dXo7eYtRKfNj0RW4eMRfVEKEJI16h2+mBDCzQ+gqMrog2hSTHQnaIbvbYShNQ4TVGuRCYZeQ=="],
 
     "@proompteng/bayn/@effect/platform-node/mime": ["mime@4.1.0", "", { "bin": { "mime": "bin/cli.js" } }, "sha512-X5ju04+cAzsojXKes0B/S4tcYtFAJ6tTMuSPBEn9CPGlrWr8Fiw7qYeLT0XyH80HSoAoqWCaz+MWKh22P7G1cw=="],
 

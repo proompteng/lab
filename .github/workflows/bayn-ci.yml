@@ -33,6 +33,44 @@ jobs:
       build-command: bun run --cwd services/bayn build
     secrets: inherit
 
+  effect-runtime-compatibility:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install focused dependencies
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/source
+          --filter @proompteng/bayn
+      - name: Verify Effect runtime compatibility cohort
+        run: bun run --cwd services/bayn test:effect-runtime
+
+  broker-sandbox-contract:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install focused dependencies
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/source
+          --filter @proompteng/bayn
+      - name: Verify OBSERVE sandbox contract without broker I/O
+        run: >-
+          env -u BAYN_ALPACA_ACCOUNT_ID
+          -u BAYN_ALPACA_KEY_ID
+          -u BAYN_ALPACA_SECRET_KEY
+          bun run --cwd services/bayn test:broker-sandbox
+
   postgres-integration:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -63,8 +101,5 @@ jobs:
           bun install --frozen-lockfile --ignore-scripts
           --filter @proompteng/source
           --filter @proompteng/bayn
-      - name: Verify durable evidence on PostgreSQL 18
-        run: |
-          bun test services/bayn/src/db/evidence-store.integration.test.ts
-          bun test services/bayn/src/db/paper-store.integration.test.ts
-          bun test services/bayn/src/db/cycle-store/integration.test.ts
+      - name: Verify complete durable workflow and Effect SQL compatibility on PostgreSQL 18
+        run: bun run --cwd services/bayn test:postgres
