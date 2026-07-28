@@ -80,6 +80,16 @@ const requiredEpochMillis = (name: string): number => {
   return parsed
 }
 
+const jsonSafeObject = (value: unknown): Record<string, unknown> => {
+  const serialized = JSON.stringify(value)
+  if (serialized === undefined) throw new Error('receipt body is not JSON serializable')
+  const parsed: unknown = JSON.parse(serialized)
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('receipt body must serialize to a JSON object')
+  }
+  return parsed as Record<string, unknown>
+}
+
 const hashIdentity = (value: string): string => canonicalHashV1({ value })
 
 const addUtcDays = (date: string, days: number): string => {
@@ -639,6 +649,19 @@ test('reserves the complete mutation and cleanup budget before submit', () => {
   expect(hasRequiredSubmitBudget(checkedAtEpochMs, checkedAtEpochMs + requiredSubmitBudgetMs - 1)).toBeFalse()
 })
 
+test('hashes the exact JSON-safe receipt representation', () => {
+  const body = jsonSafeObject({
+    proofStatus: 'SUCCESS',
+    failure: undefined,
+    nested: {
+      retained: 'evidence',
+      omitted: undefined,
+    },
+  })
+  expect(body).toEqual({ proofStatus: 'SUCCESS', nested: { retained: 'evidence' } })
+  expect(canonicalHashV1(body)).toBe(canonicalHashV1({ proofStatus: 'SUCCESS', nested: { retained: 'evidence' } }))
+})
+
 test('requires a full pre-open safety window', () => {
   const observedAt = '2026-07-28T13:00:00.000Z'
   expect(preOpenSafetyMillis(observedAt, '2026-07-28T13:30:00.000Z')).toBe(minimumPreOpenSafetyMs)
@@ -1047,7 +1070,8 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
     failure: state.failure,
     cleanupFailure: state.cleanupFailure,
   }
-  const receipt = { ...receiptBody, receiptHash: canonicalHashV1(receiptBody) }
+  const jsonSafeReceiptBody = jsonSafeObject(receiptBody)
+  const receipt = { ...jsonSafeReceiptBody, receiptHash: canonicalHashV1(jsonSafeReceiptBody) }
   const serialized = `${JSON.stringify(receipt, null, 2)}\n`
   if ([expectedAccountId, key, secret].some((sensitive) => serialized.includes(sensitive))) {
     throw new Error('sanitized receipt secret-leak guard failed')
