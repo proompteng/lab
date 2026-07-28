@@ -1,0 +1,248 @@
+import { Data, Schema } from 'effect'
+
+import {
+  AccountSnapshotSchema,
+  DiscrepancySchema,
+  OrderSchema,
+  PositionSchema,
+  ReconciliationStatus,
+} from '../execution/contracts'
+import { IntentPlanSchema, type IntentPlan } from '../execution/intents/domain'
+import {
+  IsoDateSchema,
+  NonNegativeIntegerSchema,
+  PositiveIntegerSchema,
+  PositiveMicrosSchema,
+  Sha256Schema,
+  SignedMicrosSchema,
+  StrictNonEmptyStringSchema,
+  SymbolSchema,
+  UnitIntervalSchema,
+  UnsignedMicrosSchema,
+  UtcInstantSchema,
+} from '../schemas'
+
+export const SignalSessionReferencePricesSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.signal-session-reference-prices.v1'),
+  signalDate: IsoDateSchema,
+  observedAt: UtcInstantSchema,
+  contentHash: Sha256Schema,
+  priceMicros: Schema.Record(SymbolSchema, PositiveMicrosSchema),
+})
+
+export const TargetPlannerBrokerStateSchema = Schema.Struct({
+  account: AccountSnapshotSchema,
+  positions: Schema.Array(PositionSchema),
+  positionsObservedAt: UtcInstantSchema,
+  orders: Schema.Array(OrderSchema),
+  ordersObservedAt: UtcInstantSchema,
+  accountingHash: Sha256Schema,
+  reconciliation: Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.paper-reconciliation.v1'),
+    reconciliationId: Sha256Schema,
+    accountId: StrictNonEmptyStringSchema,
+    expectedHash: Sha256Schema,
+    observedHash: Sha256Schema,
+    contentHash: Sha256Schema,
+    status: Schema.Enum(ReconciliationStatus),
+    discrepancies: Schema.Array(DiscrepancySchema),
+    reconciledAt: UtcInstantSchema,
+  }),
+  unknownOrderCount: NonNegativeIntegerSchema,
+})
+
+export const TargetPlannerInputSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.paper-target-planner-input.v1'),
+  strategyName: StrictNonEmptyStringSchema,
+  cycleId: Sha256Schema,
+  decisionHash: Sha256Schema,
+  policyHash: Sha256Schema,
+  accountId: StrictNonEmptyStringSchema,
+  signalDate: SignalSessionReferencePricesSchema.fields.signalDate,
+  targetWeights: Schema.Record(SymbolSchema, UnitIntervalSchema),
+  referencePrices: SignalSessionReferencePricesSchema,
+  brokerState: TargetPlannerBrokerStateSchema,
+  precision: Schema.Struct({
+    quantityIncrementMicros: PositiveMicrosSchema,
+    priceIncrementMicros: PositiveMicrosSchema,
+    minimumBuyNotionalMicros: PositiveMicrosSchema,
+  }),
+  maximumInputAgeMs: PositiveIntegerSchema,
+  submissionCutoffAt: UtcInstantSchema,
+  observedAt: UtcInstantSchema,
+})
+
+export type SignalSessionReferencePrices = typeof SignalSessionReferencePricesSchema.Type
+export type TargetPlannerBrokerState = typeof TargetPlannerBrokerStateSchema.Type
+export type TargetPlannerInput = typeof TargetPlannerInputSchema.Type
+
+export interface PlannedTargetQuantity {
+  readonly symbol: string
+  readonly targetWeight: number
+  readonly referencePriceMicros: string
+  readonly currentQuantityMicros: string
+  readonly targetQuantityMicros: string
+}
+
+export type ReferenceTargetIntent = Omit<IntentPlan, 'schemaVersion' | 'notionalLimitMicros'>
+
+export enum TargetPlanStatus {
+  Planned = 'PLANNED',
+  NoTrade = 'NO_TRADE',
+  Blocked = 'BLOCKED',
+}
+
+export enum TargetPlanReason {
+  AccountNotActive = 'ACCOUNT_NOT_ACTIVE',
+  BelowMinimumBuyNotional = 'BELOW_MINIMUM_BUY_NOTIONAL',
+  IdentityMismatch = 'IDENTITY_MISMATCH',
+  InputMismatch = 'INPUT_MISMATCH',
+  InputStale = 'INPUT_STALE',
+  InsufficientBuyingPower = 'INSUFFICIENT_BUYING_POWER',
+  NonPositiveEquity = 'NON_POSITIVE_EQUITY',
+  ReconciliationNotExact = 'RECONCILIATION_NOT_EXACT',
+  ShortPositionNotAllowed = 'SHORT_POSITION_NOT_ALLOWED',
+  SubmissionCutoffReached = 'SUBMISSION_CUTOFF_REACHED',
+  TargetsSatisfied = 'TARGETS_SATISFIED',
+  UnknownOrder = 'UNKNOWN_ORDER',
+  UnresolvedOrder = 'UNRESOLVED_ORDER',
+}
+
+export const blockedTargetPlanReasons = [
+  TargetPlanReason.AccountNotActive,
+  TargetPlanReason.BelowMinimumBuyNotional,
+  TargetPlanReason.IdentityMismatch,
+  TargetPlanReason.InputMismatch,
+  TargetPlanReason.InputStale,
+  TargetPlanReason.InsufficientBuyingPower,
+  TargetPlanReason.NonPositiveEquity,
+  TargetPlanReason.ReconciliationNotExact,
+  TargetPlanReason.ShortPositionNotAllowed,
+  TargetPlanReason.SubmissionCutoffReached,
+  TargetPlanReason.UnknownOrder,
+  TargetPlanReason.UnresolvedOrder,
+] as const
+export type BlockedTargetPlanReason = (typeof blockedTargetPlanReasons)[number]
+
+interface CanonicalizeTargetPlannerInputIssue {
+  readonly operation: 'canonicalize-input'
+  readonly reason: 'hash'
+}
+
+interface CanonicalizeTargetPlannerOutputIssue {
+  readonly operation: 'canonicalize-output'
+  readonly reason: 'hash'
+}
+
+interface DecodeTargetPlannerInputIssue {
+  readonly operation: 'decode-input'
+  readonly reason: 'contract'
+}
+
+interface DecodeTargetPlannerOutputIssue {
+  readonly operation: 'decode-output'
+  readonly reason: 'contract' | 'hash'
+}
+
+interface DeriveTargetPlannerTargetsIssue {
+  readonly operation: 'derive-targets'
+  readonly reason: 'precision'
+}
+
+export type TargetPlannerIssue =
+  | CanonicalizeTargetPlannerInputIssue
+  | CanonicalizeTargetPlannerOutputIssue
+  | DecodeTargetPlannerInputIssue
+  | DecodeTargetPlannerOutputIssue
+  | DeriveTargetPlannerTargetsIssue
+
+interface TargetPlannerFailureDetails {
+  readonly message: string
+  readonly facts: Readonly<Record<string, unknown>>
+  readonly cause?: unknown
+}
+
+const TargetPlannerFailureClass = Data.TaggedError('TargetPlannerFailure')<
+  TargetPlannerIssue & TargetPlannerFailureDetails
+>
+export type TargetPlannerFailure = InstanceType<typeof TargetPlannerFailureClass>
+
+type TargetPlannerReasonFor<Operation extends TargetPlannerIssue['operation']> = Extract<
+  TargetPlannerIssue,
+  { readonly operation: Operation }
+>['reason']
+
+const failure = <Operation extends TargetPlannerIssue['operation']>(
+  operation: Operation,
+  reason: TargetPlannerReasonFor<Operation>,
+  message: string,
+  facts: Readonly<Record<string, unknown>> = {},
+  cause?: unknown,
+): TargetPlannerFailure => new TargetPlannerFailureClass({ operation, reason, message, facts, cause } as never)
+
+export const canonicalizePlannerInputFailure = (
+  reason: TargetPlannerReasonFor<'canonicalize-input'>,
+  message: string,
+  facts: Readonly<Record<string, unknown>> = {},
+  cause?: unknown,
+): TargetPlannerFailure => failure('canonicalize-input', reason, message, facts, cause)
+
+export const canonicalizePlannerOutputFailure = (
+  reason: TargetPlannerReasonFor<'canonicalize-output'>,
+  message: string,
+  facts: Readonly<Record<string, unknown>> = {},
+  cause?: unknown,
+): TargetPlannerFailure => failure('canonicalize-output', reason, message, facts, cause)
+
+export const decodePlannerInputFailure = (
+  reason: TargetPlannerReasonFor<'decode-input'>,
+  message: string,
+  facts: Readonly<Record<string, unknown>> = {},
+  cause?: unknown,
+): TargetPlannerFailure => failure('decode-input', reason, message, facts, cause)
+
+export const decodePlannerOutputFailure = (
+  reason: TargetPlannerReasonFor<'decode-output'>,
+  message: string,
+  facts: Readonly<Record<string, unknown>> = {},
+  cause?: unknown,
+): TargetPlannerFailure => failure('decode-output', reason, message, facts, cause)
+
+export const deriveTargetsFailure = (
+  reason: TargetPlannerReasonFor<'derive-targets'>,
+  message: string,
+  facts: Readonly<Record<string, unknown>> = {},
+  cause?: unknown,
+): TargetPlannerFailure => failure('derive-targets', reason, message, facts, cause)
+
+export const PlannedTargetQuantitySchema = Schema.Struct({
+  symbol: SymbolSchema,
+  targetWeight: UnitIntervalSchema,
+  referencePriceMicros: PositiveMicrosSchema,
+  currentQuantityMicros: UnsignedMicrosSchema,
+  targetQuantityMicros: UnsignedMicrosSchema,
+})
+
+export const ReferenceTargetIntentSchema = Schema.Struct({
+  strategyName: IntentPlanSchema.fields.strategyName,
+  cycleId: IntentPlanSchema.fields.cycleId,
+  decisionHash: IntentPlanSchema.fields.decisionHash,
+  policyHash: IntentPlanSchema.fields.policyHash,
+  accountId: IntentPlanSchema.fields.accountId,
+  symbol: IntentPlanSchema.fields.symbol,
+  side: IntentPlanSchema.fields.side,
+  orderType: IntentPlanSchema.fields.orderType,
+  timeInForce: IntentPlanSchema.fields.timeInForce,
+  quantityMicros: IntentPlanSchema.fields.quantityMicros,
+  createdAt: IntentPlanSchema.fields.createdAt,
+})
+
+export const TargetPlanResultFields = {
+  schemaVersion: Schema.Literal('bayn.paper-reference-target-plan.v1'),
+  inputHash: Sha256Schema,
+  outputHash: Sha256Schema,
+  targets: Schema.Array(PlannedTargetQuantitySchema),
+  requiredReferenceBuyNotionalMicros: UnsignedMicrosSchema,
+  availableBuyingPowerMicros: SignedMicrosSchema,
+  residualBuyingPowerMicros: SignedMicrosSchema,
+} as const

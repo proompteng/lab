@@ -23,6 +23,7 @@ import {
   type SnapshotPublicationRequest,
   type MarketDataVerificationError,
 } from './market-data'
+import { decodeSnapshotRows } from './market-data/rows'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema } from './types'
 
 const symbols = ['EEM', 'SPY'] as const
@@ -394,6 +395,12 @@ describe('finalized Signal snapshot reader', () => {
       expect(authorization).toMatchObject({ component: 'market-data', operation, retryable: false })
       expect(connection).toMatchObject({ component: 'market-data', operation, retryable: true })
     }
+
+    expect(marketDataOperationError('load', 'Signal query failed', { _tag: 'UnrelatedTaggedFailure' })).toMatchObject({
+      component: 'market-data',
+      operation: 'load',
+      retryable: true,
+    })
   })
 
   test('returns malformed inspection rows through the typed operational channel', async () => {
@@ -1149,6 +1156,79 @@ describe('finalized Signal snapshot reader', () => {
         ),
       ),
     ).toMatchObject({ _tag: 'DuplicateBar', symbol: 'EEM', sessionDate: '2025-01-02' })
+  })
+
+  test('normalizes row ordering and classifies hostile, missing, duplicate, and degenerate pure inputs', () => {
+    const fixture = makeFixture()
+    const expected = verificationSuccess(verifyFinalizedSnapshot(fixture.rows, fixture.request))
+    const reorderings: readonly SnapshotRows[] = [
+      { ...fixture.rows, bars: [...fixture.rows.bars].reverse() },
+      { ...fixture.rows, sessions: [...fixture.rows.sessions].reverse() },
+      {
+        ...fixture.rows,
+        bars: [fixture.rows.bars[2], fixture.rows.bars[0], fixture.rows.bars[3], fixture.rows.bars[1]],
+        sessions: [fixture.rows.sessions[1], fixture.rows.sessions[0]],
+      },
+    ]
+    for (const rows of reorderings) {
+      expect(verificationSuccess(verifyFinalizedSnapshot(rows, fixture.request))).toEqual(expected)
+    }
+
+    const hostileDecode = decodeSnapshotRows([{ ...fixture.rows.bars[0], adjusted_close: Number.NaN }], [], [])
+    expect(verificationFailure(hostileDecode)).toMatchObject({ _tag: 'RowDecodeFailed', rows: 'bars' })
+
+    const cases = [
+      {
+        rows: { ...fixture.rows, bars: [...fixture.rows.bars, fixture.rows.bars[0]] },
+        expected: { _tag: 'DuplicateBar', symbol: 'EEM', sessionDate: '2025-01-02' },
+      },
+      {
+        rows: { ...fixture.rows, sessions: fixture.rows.sessions.slice(1) },
+        expected: { _tag: 'SessionFieldMismatch', field: 'count' },
+      },
+    ] as const
+    for (const { expected: failure, rows } of cases) {
+      expect(verificationFailure(verifyFinalizedSnapshot(rows, fixture.request))).toMatchObject(failure)
+    }
+
+    const degenerateBars = [{ ...fixture.rows.bars[0], adjusted_close: 'NaN' }, ...fixture.rows.bars.slice(1)]
+    const barsContentHash = canonicalHashV1(degenerateBars.map(({ snapshot_id: _, ...bar }) => bar))
+    const sourceManifest = fixture.rows.manifests[0]
+    const degenerateSnapshotId = canonicalHashV1({
+      schemaVersion: sourceManifest.schema_version,
+      provider: sourceManifest.provider,
+      feed: sourceManifest.source_feed,
+      adjustment: sourceManifest.adjustment,
+      calendarVersion: sourceManifest.calendar_version,
+      requestedStart: sourceManifest.requested_start,
+      publicationAsOf: sourceManifest.publication_asof,
+      symbols,
+      barsContentHash,
+      sessionsContentHash: sourceManifest.sessions_content_hash,
+      universeId: sourceManifest.universe_id,
+      universeSymbolHash: sourceManifest.universe_symbol_hash,
+    })
+    const { manifest_content_hash: _, ...sourceManifestMaterial } = sourceManifest
+    const degenerateManifestMaterial = {
+      ...sourceManifestMaterial,
+      snapshot_id: degenerateSnapshotId,
+      bars_content_hash: barsContentHash,
+    }
+    const degenerateRows: SnapshotRows = {
+      bars: degenerateBars.map((bar) => ({ ...bar, snapshot_id: degenerateSnapshotId })),
+      sessions: fixture.rows.sessions.map((session) => ({ ...session, snapshot_id: degenerateSnapshotId })),
+      manifests: [
+        {
+          ...degenerateManifestMaterial,
+          manifest_content_hash: canonicalHashV1(degenerateManifestMaterial),
+        },
+      ],
+    }
+    expect(
+      verificationFailure(
+        verifyFinalizedSnapshot(degenerateRows, { ...fixture.request, snapshotId: degenerateSnapshotId }),
+      ),
+    ).toMatchObject({ _tag: 'DecimalInvalid', field: 'adjusted_close' })
   })
 
   test('rejects incomplete replica reads instead of silently shrinking history', () => {
