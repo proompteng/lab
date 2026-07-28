@@ -6,6 +6,6 @@ export {
   evaluateLockedSnapshot,
   qualifyEvaluation,
 } from './decisions'
-export type { StartupDecisionFailure } from './model'
+export type { StartupDecisionFailure, StartupDependencies } from './model'
 export { renderStartupDecisionFailure } from './presentation'
-export { initialize } from './program'
+export { initialize, initializeWithDependencies } from './program'

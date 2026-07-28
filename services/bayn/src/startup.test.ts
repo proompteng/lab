@@ -38,6 +38,7 @@ import {
   type StoredEvaluationEvidence,
 } from './db/evidence-store'
 import { operationalError } from './errors'
+import { HttpServerLive } from './http'
 import { canonicalHashV1 } from './hash'
 import { Journal, type JournalService } from './ledger'
 import { MarketData } from './market-data'
@@ -1349,6 +1350,7 @@ describe('Bayn startup lifecycle', () => {
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
         Effect.provideService(CycleObservability, cycleObservability),
+        Effect.provide(HttpServerLive(config)),
         Effect.timeoutOrElse({
           duration: 250,
           orElse: () =>
@@ -1376,6 +1378,7 @@ describe('Bayn startup lifecycle', () => {
         Effect.provideService(Journal, journal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
         Effect.provideService(CycleObservability, cycleObservability),
+        Effect.provide(HttpServerLive(config)),
         Effect.timeoutOrElse({
           duration: 250,
           orElse: () =>

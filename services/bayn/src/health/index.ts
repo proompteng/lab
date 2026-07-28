@@ -2,6 +2,7 @@ export type {
   AutonomousCycleFiberObservation,
   BrokerProbe,
   DurableEvidenceFailure,
+  HealthDependencies,
   HealthDependencyName,
   HealthLogDecision,
   HealthTransition,
@@ -15,4 +16,11 @@ export {
   validateDurableEvidence,
   validateSignalIdentity,
 } from './decisions'
-export { ensureDurableEvidence, ensureSignalIdentity, monitor, probe } from './program'
+export {
+  ensureDurableEvidence,
+  ensureSignalIdentity,
+  monitor,
+  monitorWithDependencies,
+  probe,
+  probeWithDependencies,
+} from './program'

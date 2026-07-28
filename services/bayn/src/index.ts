@@ -1,8 +1,8 @@
-import { NodeRuntime, NodeServices } from '@effect/platform-node'
-import { Effect, Layer, Logger, pipe } from 'effect'
+import { NodeRuntime } from '@effect/platform-node'
+import { Effect, Logger, pipe } from 'effect'
 
 import { program } from './entrypoint'
 
-const runtime = Layer.merge(Logger.layer([Logger.consoleJson]), NodeServices.layer)
-
-NodeRuntime.runMain(pipe(program, Effect.annotateLogs({ service: 'bayn' }), Effect.provide(runtime)))
+NodeRuntime.runMain(
+  pipe(program, Effect.annotateLogs({ service: 'bayn' }), Effect.provide(Logger.layer([Logger.consoleJson]))),
+)

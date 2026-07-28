@@ -1,8 +1,8 @@
 import { createServer } from 'node:http'
 
 import { NodeHttpServer, NodeHttpServerRequest } from '@effect/platform-node'
-import { Deferred, Effect, Layer, Option, Ref } from 'effect'
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
+import { Deferred, Effect, Option, Ref, Scope } from 'effect'
+import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
 
 import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
 import type { RuntimeProvenance } from './contracts'
@@ -523,22 +523,28 @@ const interruptOnClientDisconnect = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> => Effect.raceFirst(effect, clientDisconnect(request)).pipe(Effect.interruptible)
 
-export const makeHttpLayer = (
-  config: Pick<
-    RuntimeConfig,
-    | 'cycleStallThresholdMs'
-    | 'host'
-    | 'maximumAuthority'
-    | 'operationTimeoutMs'
-    | 'port'
-    | 'reconciliationStaleThresholdMs'
-    | 'unknownMutationThresholdMs'
-  >,
+type HttpConfig = Pick<
+  RuntimeConfig,
+  | 'cycleStallThresholdMs'
+  | 'host'
+  | 'maximumAuthority'
+  | 'operationTimeoutMs'
+  | 'port'
+  | 'reconciliationStaleThresholdMs'
+  | 'unknownMutationThresholdMs'
+>
+
+export const HttpServerLive = (config: Pick<RuntimeConfig, 'host' | 'port'>) =>
+  NodeHttpServer.layer(createServer, { host: config.host, port: config.port })
+
+const registerHttpRoutes = (
+  config: HttpConfig,
   state: Ref.Ref<RuntimeState>,
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
   readEvidence: ReadEvidence,
-): ReturnType<typeof NodeHttpServer.layer> => {
+  router: HttpRouter.HttpRouter,
+): Effect.Effect<void> => {
   const ready = Ref.get(state).pipe(Effect.map(readinessResponseDecision), Effect.flatMap(interpretResponseDecision))
   const status = Ref.get(state).pipe(
     Effect.map((current) =>
@@ -576,16 +582,28 @@ export const makeHttpLayer = (
     request: HttpServerRequest.HttpServerRequest,
   ): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
     interpretResponseDecision(fallbackResponseDecision(request.method))
-  const routes = HttpRouter.addAll([
-    HttpRouter.route('GET', '/livez', interpretResponseDecision(jsonDecision({ service: 'bayn', live: true }))),
-    HttpRouter.route('GET', '/readyz', ready),
-    HttpRouter.route('GET', '/metrics', metrics),
-    HttpRouter.route('GET', '/v1/status', status),
-    HttpRouter.route('GET', '/v1/evaluations/:runId', historicalEvaluation),
-    HttpRouter.route('*', '*', fallback),
-  ] as const)
-
-  return HttpRouter.serve(routes, { disableLogger: true }).pipe(
-    Layer.provideMerge(NodeHttpServer.layer(createServer, { host: config.host, port: config.port })),
-  )
+  return Effect.gen(function* () {
+    yield* router.add('GET', '/livez', interpretResponseDecision(jsonDecision({ service: 'bayn', live: true })))
+    yield* router.add('GET', '/readyz', ready)
+    yield* router.add('GET', '/metrics', metrics)
+    yield* router.add('GET', '/v1/status', status)
+    yield* router.add('GET', '/v1/evaluations/:runId', historicalEvaluation)
+    yield* router.add('*', '*', fallback)
+  })
 }
+
+export const serveHttp = (
+  config: HttpConfig,
+  state: Ref.Ref<RuntimeState>,
+  provenance: RuntimeProvenance,
+  provenanceVerification: RuntimeBuildMetadata['verification'],
+  readEvidence: ReadEvidence,
+): Effect.Effect<void, never, HttpServer.HttpServer | Scope.Scope> =>
+  Effect.gen(function* () {
+    const router = yield* HttpRouter.make
+    yield* registerHttpRoutes(config, state, provenance, provenanceVerification, readEvidence, router)
+    // The router API erases the closed route error set to unknown; the total fallback makes any residue a defect.
+    // @effect-diagnostics-next-line anyUnknownInErrorContext:off
+    const handler = router.asHttpEffect().pipe(Effect.orDie)
+    yield* HttpServer.serveEffect(handler)
+  })

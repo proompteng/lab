@@ -22,6 +22,7 @@ import {
 import type {
   AutonomousCycleFiberObservation,
   BrokerProbe,
+  HealthDependencies,
   HealthLogDecision,
   HealthProbeResults,
   ProbeResult,
@@ -212,25 +213,22 @@ const collectHealthProbeResults = (
     }),
   )
 
-export const probe = (
+export const probeWithDependencies = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
+  dependencies: HealthDependencies,
   broker?: BrokerProbe,
   autonomousCycleFiber?: Fiber.Fiber<void, never>,
-): Effect.Effect<void, never, MarketData | Journal | EvidenceStore | CycleObservability> =>
+): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const marketData = yield* MarketData
-    const journal = yield* Journal
-    const evidenceStore = yield* EvidenceStore
-    const cycleObservability = yield* CycleObservability
     const initial = yield* Ref.get(state)
     const results = yield* collectHealthProbeResults(
       config,
       initial.evidence,
-      marketData,
-      journal,
-      evidenceStore,
-      cycleObservability,
+      dependencies.marketData,
+      dependencies.journal,
+      dependencies.evidenceStore,
+      dependencies.cycleObservability,
       broker,
     )
     const checkedAtMs = yield* Clock.currentTimeMillis
@@ -254,13 +252,47 @@ export const probe = (
     yield* interpretHealthLogs(deriveHealthLogDecisions(transition))
   }).pipe(Effect.withLogSpan('health'))
 
+export const monitorWithDependencies = (
+  config: RuntimeConfig,
+  state: Ref.Ref<RuntimeState>,
+  dependencies: HealthDependencies,
+  broker?: BrokerProbe,
+  autonomousCycleFiber?: Fiber.Fiber<void, never>,
+): Effect.Effect<void> =>
+  probeWithDependencies(config, state, dependencies, broker, autonomousCycleFiber).pipe(
+    Effect.repeat(Schedule.spaced(Duration.millis(config.healthIntervalMs))),
+    Effect.asVoid,
+  )
+
+const loadHealthDependencies: Effect.Effect<
+  HealthDependencies,
+  never,
+  MarketData | Journal | EvidenceStore | CycleObservability
+> = Effect.all({
+  marketData: MarketData,
+  journal: Journal,
+  evidenceStore: EvidenceStore,
+  cycleObservability: CycleObservability,
+})
+
+export const probe = (
+  config: RuntimeConfig,
+  state: Ref.Ref<RuntimeState>,
+  broker?: BrokerProbe,
+  autonomousCycleFiber?: Fiber.Fiber<void, never>,
+): Effect.Effect<void, never, MarketData | Journal | EvidenceStore | CycleObservability> =>
+  loadHealthDependencies.pipe(
+    Effect.flatMap((dependencies) => probeWithDependencies(config, state, dependencies, broker, autonomousCycleFiber)),
+  )
+
 export const monitor = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
   broker?: BrokerProbe,
   autonomousCycleFiber?: Fiber.Fiber<void, never>,
 ): Effect.Effect<void, never, MarketData | Journal | EvidenceStore | CycleObservability> =>
-  probe(config, state, broker, autonomousCycleFiber).pipe(
-    Effect.repeat(Schedule.spaced(Duration.millis(config.healthIntervalMs))),
-    Effect.asVoid,
+  loadHealthDependencies.pipe(
+    Effect.flatMap((dependencies) =>
+      monitorWithDependencies(config, state, dependencies, broker, autonomousCycleFiber),
+    ),
   )
