@@ -36,9 +36,16 @@ import {
   TimeInForce as BrokerTimeInForce,
   alpacaSandboxBaseUrl,
 } from '../broker/alpaca'
-import { makeBrokerIdentity } from '../broker/identity'
+import { decodePersistedBrokerIdentity, makeBrokerIdentity } from '../broker/identity'
 import { cancel, submit } from '../execution/coordinator'
-import { BrokerAccess, BrokerEnvironment, noCapitalAuthority, sandboxCapitalAuthority } from '../execution/authority'
+import {
+  BrokerAccess,
+  BrokerEnvironment,
+  makeLiveCapitalGrant,
+  noCapitalAuthority,
+  sandboxCapitalAuthority,
+  type LiveCapitalGrantRevocation,
+} from '../execution/authority'
 import { WriterFence, WriterFenceLive, type WriterFenceService } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
 import { buildLedgerPlan, Journal, type JournalService } from '../ledger'
@@ -90,6 +97,7 @@ import {
   ReconciliationStore,
   ValuationStore,
 } from './execution-store'
+import { LiveCapitalGrantStore, LiveCapitalGrantStoreLive } from './live-capital-grant'
 
 const ExecutionStore = Effect.gen(function* () {
   const events = yield* BrokerEventStore
@@ -163,13 +171,15 @@ const makeConfig = (url = testUrl): RuntimeConfig => ({
   tigerBeetle: { clusterId: 2_001n, replicaAddresses: ['127.0.0.1:3000'], ledger: 7_001 },
 })
 
-const makeEvidenceRuntime = (config = makeConfig()) =>
-  ManagedRuntime.make(
-    EvidenceStoreFromPostgres(config).pipe(
-      Layer.provideMerge(PostgresClientLive(config)),
+const makeEvidenceRuntime = (config = makeConfig()) => {
+  const postgres = PostgresClientLive(config)
+  return ManagedRuntime.make(
+    Layer.merge(EvidenceStoreFromPostgres(config), LiveCapitalGrantStoreLive).pipe(
+      Layer.provideMerge(postgres),
       Layer.provide(NodeServices.layer),
     ),
   )
+}
 
 const makeClientRuntime = (config = makeConfig()) =>
   ManagedRuntime.make(PostgresClientLive(config).pipe(Layer.provide(NodeServices.layer)))
@@ -1069,6 +1079,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       'fills',
       'gate_outcomes',
       'intents',
+      'live_capital_grant_revocations',
+      'live_capital_grants',
       'mutation_events',
       'orders',
       'position_snapshots',
@@ -1104,7 +1116,145 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 16, name: 'authority_bound_intents' },
       { migration_id: 17, name: 'stable_paper_authority_generation' },
       { migration_id: 18, name: 'robust_trend_protocol' },
+      { migration_id: 19, name: 'explicit_execution_authority' },
     ])
+  })
+
+  test('preserves historical authority evidence and round-trips a versioned live grant and revocation', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const store = yield* LiveCapitalGrantStore
+        const [historical] = yield* sql<{
+          generation_hash: string
+          account_id: string | null
+          broker_identity_schema_version: string | null
+          broker_identity_hash: string | null
+          broker_provider: BrokerProvider | null
+          broker_environment: BrokerEnvironment | null
+        }>`
+          SELECT
+            generation_hash,
+            account_id,
+            broker_identity_schema_version,
+            broker_identity_hash,
+            broker_provider,
+            broker_environment
+          FROM authority_generations
+          ORDER BY authority_version
+          LIMIT 1
+        `
+        if (historical === undefined) throw new Error('stable historical authority generation is missing')
+
+        const decodedHistorical = decodePersistedBrokerIdentity(historical)
+        const identity = successOfResult(
+          makeBrokerIdentity({
+            schemaVersion: 'bayn.broker-identity.v2',
+            provider: BrokerProvider.Alpaca,
+            environment: BrokerEnvironment.Live,
+            accountId: 'live-account-integration',
+          }),
+        )
+        const grant = successOfResult(
+          makeLiveCapitalGrant({
+            schemaVersion: 'bayn.live-capital-grant.v1',
+            brokerIdentity: identity,
+            authorityGenerationHash: historical.generation_hash,
+            strategy: {
+              name: 'risk-balanced-trend',
+              behaviorHash: '1'.repeat(64),
+              parameterHash: '2'.repeat(64),
+              parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4',
+            },
+            limits: {
+              maxGrossNotionalMicros: '100000000000',
+              maxOrderNotionalMicros: '10000000000',
+              maxPositionNotionalMicros: '25000000000',
+              maxDailyLossMicros: '1000000000',
+              maxOpenOrders: 5,
+            },
+            validFrom: '2026-07-28T07:00:00.000Z',
+            validUntil: '2026-07-28T09:00:00.000Z',
+            issuedAt: '2026-07-28T06:00:00.000Z',
+            issuedBy: 'integration:test',
+          }),
+        )
+        const recorded = yield* store.record(grant)
+        const readBack = yield* store.read(grant.grantHash)
+        const revocation: LiveCapitalGrantRevocation = {
+          schemaVersion: 'bayn.live-capital-grant-revocation.v1',
+          revokedAt: '2026-07-28T08:15:00.000Z',
+          revokedBy: 'integration:test',
+          reason: 'integration containment proof',
+        }
+        const revoked = yield* store.revoke(grant.grantHash, revocation)
+        const mutateGrant = yield* Effect.exit(sql`
+          UPDATE live_capital_grants
+          SET issued_by = 'forbidden'
+          WHERE grant_hash = ${grant.grantHash}
+        `)
+        const mutateHistorical = yield* Effect.exit(sql`
+          UPDATE authority_generations
+          SET broker_identity_schema_version = 'bayn.broker-identity.v2'
+          WHERE generation_hash = ${historical.generation_hash}
+        `)
+        const [historicalAfter] = yield* sql<{
+          generation_hash: string
+          broker_identity_schema_version: string | null
+          broker_identity_hash: string | null
+          broker_provider: string | null
+          broker_environment: string | null
+        }>`
+          SELECT
+            generation_hash,
+            broker_identity_schema_version,
+            broker_identity_hash,
+            broker_provider,
+            broker_environment
+          FROM authority_generations
+          WHERE generation_hash = ${historical.generation_hash}
+        `
+        return {
+          historical,
+          decodedHistorical,
+          recorded,
+          readBack,
+          revoked,
+          mutateGrant,
+          mutateHistorical,
+          historicalAfter,
+        }
+      }),
+    )
+
+    expect(result.historical).toMatchObject({
+      account_id: null,
+      broker_identity_schema_version: null,
+      broker_identity_hash: null,
+      broker_provider: null,
+      broker_environment: null,
+    })
+    expect(result.decodedHistorical).toEqual(Result.succeed(undefined))
+    expect(result.recorded.grant.brokerIdentity).toMatchObject({
+      schemaVersion: 'bayn.broker-identity.v2',
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Live,
+      accountId: 'live-account-integration',
+    })
+    expect(result.readBack).toEqual(result.recorded)
+    expect(result.revoked.revocation).toMatchObject({
+      schemaVersion: 'bayn.live-capital-grant-revocation.v1',
+      reason: 'integration containment proof',
+    })
+    expect(Exit.isFailure(result.mutateGrant)).toBe(true)
+    expect(Exit.isFailure(result.mutateHistorical)).toBe(true)
+    expect(result.historicalAfter).toEqual({
+      generation_hash: result.historical.generation_hash,
+      broker_identity_schema_version: null,
+      broker_identity_hash: null,
+      broker_provider: null,
+      broker_environment: null,
+    })
   })
 
   test('hard-fails both intent hard cuts before touching nonempty intent history or generation DDL', async () => {
