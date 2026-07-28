@@ -3,18 +3,20 @@ import { describe, expect, test } from 'bun:test'
 import { Redacted, Result } from 'effect'
 
 import { BrokerEnvironment } from '../../execution/authority'
-import { BrokerProvider, alpacaSandboxBaseUrl, decodeBrokerConnection } from '../connection'
+import { BrokerProvider, alpacaLiveBaseUrl, alpacaSandboxBaseUrl, decodeBrokerConnection } from '../connection'
 import { OrderCollection, OrderSide, SortDirection } from './model'
 import {
   accountConfigurationUrl,
   accountUrl,
   assetBySymbolUrl,
+  cancelOrderUrl,
   fillActivitiesRequest,
   marketCalendarUrl,
   orderByClientIdUrl,
   orderByIdUrl,
   ordersUrl,
   positionsUrl,
+  submitOrderUrl,
 } from './requests'
 
 const connection = Result.getOrThrow(
@@ -31,6 +33,14 @@ const connection = Result.getOrThrow(
   }),
 )
 
+const liveConnection: typeof connection = Object.freeze({
+  ...connection,
+  environment: BrokerEnvironment.Live,
+  baseUrl: alpacaLiveBaseUrl,
+  key: Redacted.make('live-key'),
+  secret: Redacted.make('live-secret'),
+})
+
 describe('Alpaca read request builders', () => {
   test('binds every fixed read endpoint to the verified connection', () => {
     expect(accountUrl(connection).toString()).toBe(`${alpacaSandboxBaseUrl}/v2/account`)
@@ -41,6 +51,23 @@ describe('Alpaca read request builders', () => {
     expect(orderByClientIdUrl(connection, 'client/order').toString()).toBe(
       `${alpacaSandboxBaseUrl}/v2/orders:by_client_order_id?client_order_id=client%2Forder`,
     )
+    expect(submitOrderUrl(connection).toString()).toBe(`${alpacaSandboxBaseUrl}/v2/orders`)
+    expect(cancelOrderUrl(connection, 'order/id').toString()).toBe(`${alpacaSandboxBaseUrl}/v2/orders/order%2Fid`)
+  })
+
+  test('constructs identical trading operations for sandbox and live connections', () => {
+    const operations = (selected: typeof connection) => [
+      accountUrl(selected).pathname,
+      ordersUrl(selected, {}).pathname,
+      orderByIdUrl(selected, 'order/id').pathname,
+      orderByClientIdUrl(selected, 'client/order').pathname,
+      submitOrderUrl(selected).pathname,
+      cancelOrderUrl(selected, 'order/id').pathname,
+    ]
+
+    expect(operations(liveConnection)).toEqual(operations(connection))
+    expect(submitOrderUrl(connection).origin).toBe(alpacaSandboxBaseUrl)
+    expect(submitOrderUrl(liveConnection).origin).toBe(alpacaLiveBaseUrl)
   })
 
   test('constructs ordered, encoded collection and calendar queries from decoded values', () => {

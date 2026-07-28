@@ -1,43 +1,28 @@
-import { Cause, Effect, Schema } from 'effect'
+import { Cause, Effect } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 
+import type { ExecutionAuthority } from '../../execution/authority'
 import type { Intent } from '../../paper'
-import { BrokerEnvironment } from '../../execution/authority'
-import { StrictNonEmptyStringSchema as NonEmptyString } from '../../schemas'
 import { currentUtcInstant } from '../../time'
-import { BrokerProvider, alpacaSandboxBaseUrl, decodeBrokerConnection, make as makeRead } from '../alpaca'
+import type { BrokerSessionShape } from '../alpaca'
+import { ResponseHeadersSchema, redactedHeaders, responseParseOptions } from '../alpaca/model'
+import { cancelOrderUrl, submitOrderUrl } from '../alpaca/requests'
 import {
   classifyCancelResponse,
   classifySubmitResponse,
   prepareCancel,
   prepareSubmit,
-  resolveMutationOptions,
+  resolveMutationCapability,
 } from './decisions'
 import {
   BrokerMutationError,
   MutationOperation,
-  configurationError,
   invalidRequest,
   unknownOutcome,
   type BrokerMutationShape,
-  type MutationOptions,
 } from './model'
 
-const responseParseOptions = { onExcessProperty: 'ignore' } as const
-const RequestId = NonEmptyString.check(Schema.isMaxLength(256))
-const ResponseHeadersSchema = Schema.Struct({
-  'x-request-id': RequestId,
-})
 const decodeHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
-
-const redactedHeaders = [
-  'authorization',
-  'cookie',
-  'set-cookie',
-  'x-api-key',
-  'apca-api-key-id',
-  'apca-api-secret-key',
-] as const
 
 const credentials = (key: string, secret: string) => ({
   'APCA-API-KEY-ID': key,
@@ -121,28 +106,12 @@ const readCancelBody = (
       )
 
 export const makeMutation = (
-  options: MutationOptions,
+  session: BrokerSessionShape,
+  authority: ExecutionAuthority,
 ): Effect.Effect<BrokerMutationShape, BrokerMutationError, HttpClient.HttpClient> =>
   Effect.gen(function* () {
-    const runtime = yield* Effect.fromResult(resolveMutationOptions(options))
+    const runtime = yield* Effect.fromResult(resolveMutationCapability(session, authority))
     const client = yield* HttpClient.HttpClient
-    const connection = yield* Effect.fromResult(
-      decodeBrokerConnection({
-        provider: BrokerProvider.Alpaca,
-        environment: BrokerEnvironment.Sandbox,
-        baseUrl: alpacaSandboxBaseUrl,
-        expectedAccountId: runtime.expectedAccountId,
-        key: options.key,
-        secret: options.secret,
-        proxyUrl: runtime.proxyUrl,
-        operationTimeoutMs: runtime.operationTimeoutMs,
-        retryAttempts: 0,
-      }),
-    ).pipe(Effect.mapError((cause) => configurationError('Alpaca mutation broker connection is invalid', cause)))
-    const read = yield* makeRead(connection)
-    yield* read.account.pipe(
-      Effect.mapError((cause) => configurationError('Alpaca mutation account verification failed', cause)),
-    )
 
     const submit = Effect.fn('BrokerMutation.submit', {
       attributes: { 'broker.system': 'alpaca', 'broker.operation': MutationOperation.Submit },
@@ -150,7 +119,7 @@ export const makeMutation = (
       function* (input: Intent) {
         const prepared = yield* Effect.fromResult(prepareSubmit(input, runtime.expectedAccountId))
         const request = yield* HttpClientRequest.bodyJson(
-          HttpClientRequest.post(new URL('/v2/orders', alpacaSandboxBaseUrl), {
+          HttpClientRequest.post(submitOrderUrl(runtime.connection), {
             acceptJson: true,
             headers: credentials(runtime.key, runtime.secret),
           }),
@@ -189,10 +158,9 @@ export const makeMutation = (
     })(
       function* (input: string) {
         const prepared = yield* Effect.fromResult(prepareCancel(input))
-        const request = HttpClientRequest.delete(
-          new URL(`/v2/orders/${encodeURIComponent(prepared.brokerOrderId)}`, alpacaSandboxBaseUrl),
-          { headers: credentials(runtime.key, runtime.secret) },
-        )
+        const request = HttpClientRequest.delete(cancelOrderUrl(runtime.connection, prepared.brokerOrderId), {
+          headers: credentials(runtime.key, runtime.secret),
+        })
         return yield* withDeadline(
           MutationOperation.Cancel,
           prepared.requestHash,
@@ -217,5 +185,10 @@ export const makeMutation = (
       (effect) => effect.pipe(Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders)),
     )
 
-    return { submit, cancel }
+    return {
+      submit,
+      cancel,
+      orderById: session.read.orderById,
+      orderByClientId: session.read.orderByClientId,
+    }
   })
