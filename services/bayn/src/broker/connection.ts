@@ -43,7 +43,7 @@ export interface BrokerConnectionInput {
 
 export interface BrokerConnection {
   readonly provider: BrokerProvider.Alpaca
-  readonly environment: BrokerEnvironment.Sandbox
+  readonly environment: BrokerEnvironment
   readonly baseUrl: string
   readonly expectedAccountId: string
   readonly key: Redacted.Redacted<string>

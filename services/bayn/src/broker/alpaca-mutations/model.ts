@@ -1,9 +1,9 @@
-import { Context, Data, Effect, Redacted, Schema } from 'effect'
+import { Context, Data, Effect, Schema } from 'effect'
 
 import { MutationOutcome } from '../../paper'
 import { StrictNonEmptyStringSchema as NonEmptyString, UtcInstantSchema as UtcInstant } from '../../schemas'
 import type { Intent } from '../../paper'
-import type { Order } from '../alpaca'
+import type { BrokerReadError, Order, ReadResult } from '../alpaca'
 
 const RequestId = NonEmptyString.check(Schema.isMaxLength(256))
 
@@ -39,15 +39,6 @@ export class BrokerMutationError extends Data.TaggedError('BrokerMutationError')
   readonly cause?: Readonly<Record<string, string>>
 }> {}
 
-export interface MutationOptions {
-  readonly expectedAccountId: string
-  readonly maximumAuthority: import('../../paper').Authority
-  readonly key: Redacted.Redacted<string>
-  readonly secret: Redacted.Redacted<string>
-  readonly proxyUrl: string
-  readonly operationTimeoutMs: number
-}
-
 export interface SubmitReceipt {
   readonly requestHash: string
   readonly order: Order
@@ -63,6 +54,8 @@ export interface CancelReceipt {
 export interface BrokerMutationShape {
   readonly submit: (intent: Intent) => Effect.Effect<SubmitReceipt, BrokerMutationError>
   readonly cancel: (brokerOrderId: string) => Effect.Effect<CancelReceipt, BrokerMutationError>
+  readonly orderById?: (brokerOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
+  readonly orderByClientId?: (clientOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
 }
 
 export class BrokerMutation extends Context.Service<BrokerMutation, BrokerMutationShape>()('bayn/BrokerMutation') {}

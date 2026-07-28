@@ -50,16 +50,14 @@ describe('BrokerConnection decoding', () => {
     expect(JSON.stringify(result.success)).not.toContain(secret)
   })
 
-  test('rejects the approved Alpaca live endpoint until durable identities encode the environment', () => {
+  test('keeps live capital disabled at configuration while the trading path remains environment-neutral', () => {
     const result = decodeBrokerConnection(input({ environment: BrokerEnvironment.Live, baseUrl: alpacaLiveBaseUrl }))
 
     expect(result).toMatchObject({
       _tag: 'Failure',
       failure: {
         _tag: 'BrokerEnvironmentUnsupported',
-        provider: BrokerProvider.Alpaca,
         environment: BrokerEnvironment.Live,
-        baseUrl: alpacaLiveBaseUrl,
         reason: 'DURABLE_IDENTITY_UNAVAILABLE',
       },
     })

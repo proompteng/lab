@@ -15,7 +15,6 @@ import {
 } from '../broker/alpaca-mutations'
 import {
   AssetClass,
-  BrokerRead,
   BrokerReadError,
   BrokerReadErrorKind,
   OrderClass,
@@ -23,10 +22,8 @@ import {
   OrderStatus,
   OrderType as BrokerOrderType,
   TimeInForce as BrokerTimeInForce,
-  type BrokerReadShape,
   type Order,
 } from '../broker/alpaca'
-import { unusedAssetBySymbol, unusedMarketCalendar } from '../broker/alpaca-test-support'
 import { canonicalHashV1 } from '../hash'
 import {
   Authority,
@@ -1435,14 +1432,6 @@ const makeHarness = (options: HarnessOptions = {}) => {
       const response = evidence(204, '1970-01-01T00:00:01.100Z')
       return Effect.succeed({ requestHash: cancelRequestHash(brokerOrderId), brokerOrderId, evidence: response })
     },
-  }
-
-  const read: BrokerReadShape = {
-    account: Effect.die(new Error('unexpected account read')),
-    accountConfiguration: Effect.die(new Error('unexpected account configuration read')),
-    assetBySymbol: unusedAssetBySymbol,
-    positions: Effect.die(new Error('unexpected positions read')),
-    orders: () => Effect.die(new Error('unexpected orders read')),
     orderById: () => Effect.die(new Error('unexpected order-by-id read')),
     orderByClientId: () =>
       Effect.gen(function* () {
@@ -1482,8 +1471,6 @@ const makeHarness = (options: HarnessOptions = {}) => {
         const value = { ...selected, observedAt }
         return { value, evidence: evidence(200, observedAt) }
       }),
-    fillActivities: () => Effect.die(new Error('unexpected fill read')),
-    marketCalendar: unusedMarketCalendar,
   }
 
   const fenceCheck = Effect.suspend(() => {
@@ -1504,7 +1491,6 @@ const makeHarness = (options: HarnessOptions = {}) => {
       Effect.provideService(IntentStore, intentStore),
       Effect.provideService(MutationStore, mutationStore),
       Effect.provideService(BrokerMutation, mutation),
-      Effect.provideService(BrokerRead, read),
       Effect.provideService(WriterFence, {
         backendPid: 1,
         check: fenceCheck,
@@ -1899,7 +1885,7 @@ describe('paper execution coordinator', () => {
     expect(harness.state()).toBe(IntentState.Approved)
   })
 
-  test('persists UNKNOWN and refuses lookup until the committed consistency delay elapses', async () => {
+  test('recovers an ambiguous POST through the mutation capability lookup after the committed delay', async () => {
     const harness = makeHarness({ notFoundOnce: true, unknownSubmit: true })
     const result = await Effect.runPromise(
       harness.provide(

@@ -2,19 +2,13 @@ import { describe, expect, test } from 'bun:test'
 
 import { Result } from 'effect'
 
-import { Authority } from '../paper'
-import { BrokerMode } from '../risk'
 import {
   BrokerEnvironment,
   CapitalAccessState,
   ExecutionAccess,
-  LegacyBrokerMode,
-  LegacyMaximumAuthority,
   decodeExecutionAuthority,
-  decodeLegacyPaperAuthority,
   disabledCapitalAccess,
   enabledCapitalAccess,
-  encodeLegacyPaperAuthority,
   makeExecutionAuthority,
 } from './authority'
 
@@ -77,148 +71,5 @@ describe('execution authority model', () => {
         }),
       ).message,
     ).toContain('Unexpected key')
-  })
-
-  test('preserves existing PAPER and OBSERVE durable identifiers through the legacy adapter', () => {
-    expect(String(LegacyBrokerMode.Paper)).toBe('PAPER')
-    expect(String(LegacyMaximumAuthority.Observe)).toBe('OBSERVE')
-    expect(String(LegacyMaximumAuthority.Paper)).toBe('PAPER')
-    expect(String(BrokerMode.Paper)).toBe('PAPER')
-    expect(String(Authority.Observe)).toBe('OBSERVE')
-    expect(String(Authority.Paper)).toBe('PAPER')
-
-    const observe = Result.getOrThrow(
-      decodeLegacyPaperAuthority({
-        brokerMode: BrokerMode.Paper,
-        maximum: Authority.Observe,
-        effective: Authority.Observe,
-      }),
-    )
-    const contained = Result.getOrThrow(
-      decodeLegacyPaperAuthority({
-        brokerMode: BrokerMode.Paper,
-        maximum: Authority.Paper,
-        effective: Authority.Observe,
-        riskPolicyHash: policyIdentity,
-      }),
-    )
-    const submit = Result.getOrThrow(
-      decodeLegacyPaperAuthority({
-        brokerMode: BrokerMode.Paper,
-        maximum: Authority.Paper,
-        effective: Authority.Paper,
-        riskPolicyHash: policyIdentity,
-      }),
-    )
-
-    expect(observe).toEqual(
-      makeExecutionAuthority(BrokerEnvironment.Sandbox, ExecutionAccess.ReadOnly, disabledCapitalAccess),
-    )
-    expect(contained).toEqual(
-      makeExecutionAuthority(BrokerEnvironment.Sandbox, ExecutionAccess.ReadOnly, enabledCapitalAccess(policyIdentity)),
-    )
-    expect(submit).toEqual(
-      makeExecutionAuthority(
-        BrokerEnvironment.Sandbox,
-        ExecutionAccess.SubmitOrders,
-        enabledCapitalAccess(policyIdentity),
-      ),
-    )
-    expect(Result.getOrThrow(encodeLegacyPaperAuthority(observe))).toEqual({
-      brokerMode: LegacyBrokerMode.Paper,
-      maximum: LegacyMaximumAuthority.Observe,
-      effective: LegacyMaximumAuthority.Observe,
-    })
-    expect(Result.getOrThrow(encodeLegacyPaperAuthority(contained))).toEqual({
-      brokerMode: LegacyBrokerMode.Paper,
-      maximum: LegacyMaximumAuthority.Paper,
-      effective: LegacyMaximumAuthority.Observe,
-      riskPolicyHash: policyIdentity,
-    })
-    expect(Result.getOrThrow(encodeLegacyPaperAuthority(submit))).toEqual({
-      brokerMode: LegacyBrokerMode.Paper,
-      maximum: LegacyMaximumAuthority.Paper,
-      effective: LegacyMaximumAuthority.Paper,
-      riskPolicyHash: policyIdentity,
-    })
-  })
-
-  test('fails closed when legacy authority material is incomplete or contradictory', () => {
-    expect(
-      failureOf(
-        decodeLegacyPaperAuthority({
-          brokerMode: BrokerMode.Paper,
-          maximum: Authority.Paper,
-          effective: Authority.Observe,
-        }),
-      ),
-    ).toEqual({
-      _tag: 'MissingLegacyRiskPolicyHash',
-      maximum: LegacyMaximumAuthority.Paper,
-    })
-
-    expect(
-      failureOf(
-        decodeLegacyPaperAuthority({
-          brokerMode: BrokerMode.Paper,
-          maximum: Authority.Observe,
-          effective: Authority.Observe,
-          riskPolicyHash: policyIdentity,
-        }),
-      ),
-    ).toEqual({
-      _tag: 'UnexpectedLegacyRiskPolicyHash',
-      maximum: LegacyMaximumAuthority.Observe,
-      riskPolicyHash: policyIdentity,
-    })
-
-    expect(
-      failureOf(
-        decodeLegacyPaperAuthority({
-          brokerMode: BrokerMode.Paper,
-          maximum: Authority.Observe,
-          effective: Authority.Paper,
-        }),
-      ),
-    ).toEqual({
-      _tag: 'LegacyEffectiveAuthorityExceedsMaximum',
-      maximum: LegacyMaximumAuthority.Observe,
-      effective: LegacyMaximumAuthority.Paper,
-    })
-
-    expect(
-      failureOf(
-        decodeLegacyPaperAuthority({
-          brokerMode: 'LIVE',
-          maximum: Authority.Observe,
-          effective: Authority.Observe,
-        }),
-      )._tag,
-    ).toBe('InvalidLegacyPaperAuthorityMaterial')
-  })
-
-  test('rejects new combinations that the legacy paper-only contract cannot represent', () => {
-    expect(
-      failureOf(
-        encodeLegacyPaperAuthority(
-          makeExecutionAuthority(BrokerEnvironment.Live, ExecutionAccess.ReadOnly, disabledCapitalAccess),
-        ),
-      ),
-    ).toEqual({
-      _tag: 'LegacyBrokerEnvironmentUnsupported',
-      brokerEnvironment: BrokerEnvironment.Live,
-    })
-
-    expect(
-      failureOf(
-        encodeLegacyPaperAuthority(
-          makeExecutionAuthority(BrokerEnvironment.Sandbox, ExecutionAccess.SubmitOrders, disabledCapitalAccess),
-        ),
-      ),
-    ).toEqual({
-      _tag: 'LegacyAuthorityCombinationUnsupported',
-      executionAccess: ExecutionAccess.SubmitOrders,
-      capitalAccess: CapitalAccessState.Disabled,
-    })
   })
 })

@@ -60,8 +60,12 @@ export const ordersUrl = (connection: BrokerConnection, query: OrdersQuery): URL
   return url
 }
 
+export const submitOrderUrl = (connection: BrokerConnection): URL => new URL('/v2/orders', connection.baseUrl)
+
 export const orderByIdUrl = (connection: BrokerConnection, orderId: string): URL =>
   new URL(`/v2/orders/${encodeURIComponent(orderId)}`, connection.baseUrl)
+
+export const cancelOrderUrl = (connection: BrokerConnection, orderId: string): URL => orderByIdUrl(connection, orderId)
 
 export const orderByClientIdUrl = (connection: BrokerConnection, clientOrderId: string): URL => {
   const url = new URL('/v2/orders:by_client_order_id', connection.baseUrl)
