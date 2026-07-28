@@ -1179,7 +1179,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             activated_at
           ) VALUES (
             ${liveGenerationHash}, 'bayn.authority-generation-history.v1', ${historical.generation_hash},
-            'PAPER', 2, ${identity.accountId}, ${identity.schemaVersion}, ${identity.identityHash},
+            'OBSERVE', 2, ${identity.accountId}, ${identity.schemaVersion}, ${identity.identityHash},
             ${identity.provider}, ${identity.environment}, '2026-07-28T06:30:00.000Z'
           )
         `
@@ -1226,7 +1226,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             activated_at
           ) VALUES (
             ${sandboxGenerationHash}, 'bayn.authority-generation-history.v1', ${liveGenerationHash},
-            'PAPER', 3, ${sandboxIdentity.accountId}, ${sandboxIdentity.schemaVersion},
+            'OBSERVE', 3, ${sandboxIdentity.accountId}, ${sandboxIdentity.schemaVersion},
             ${sandboxIdentity.identityHash}, ${sandboxIdentity.provider}, ${sandboxIdentity.environment},
             '2026-07-28T06:45:00.000Z'
           )
