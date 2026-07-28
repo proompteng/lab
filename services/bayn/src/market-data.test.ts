@@ -315,13 +315,13 @@ const makeClickhouseFixture = (
     Effect.gen(function* () {
       const text = strings.join('?')
       const parameters = fragments.map((fragment) => fragment.value)
-      if (text.includes('FROM signal.snapshot_manifests_v2') && text.includes('WHERE universe_id')) {
+      if (text.includes('FROM signal.snapshot_manifests_v2 AS manifest')) {
         queries.push({ kind: 'manifest', text, parameters })
         const calendarVersion = parameters.at(-1)
-        const matching = text.includes('AND calendar_version =')
+        const matching = text.includes('AND manifest.calendar_version =')
           ? manifests.filter((manifest) => manifest.calendar_version === calendarVersion)
           : manifests
-        if (text.includes('ORDER BY finalized_at DESC, snapshot_id DESC')) {
+        if (text.includes('ORDER BY manifest.finalized_at DESC, manifest.snapshot_id DESC')) {
           return [...matching]
             .sort((left, right) => {
               if (left.finalized_at !== right.finalized_at) return right.finalized_at.localeCompare(left.finalized_at)
@@ -329,7 +329,7 @@ const makeClickhouseFixture = (
             })
             .slice(0, 1)
         }
-        if (!text.includes('ORDER BY publication_asof DESC')) return matching
+        if (!text.includes('ORDER BY manifest.publication_asof DESC')) return matching
         const ordered = [...matching].sort((left, right) => {
           if (left.publication_asof !== right.publication_asof) {
             return right.publication_asof.localeCompare(left.publication_asof)
@@ -769,7 +769,7 @@ describe('finalized Signal snapshot reader', () => {
     expect(queries.filter((query) => query.kind === 'sessions')).toHaveLength(2)
     expect(queries.filter((query) => query.kind === 'bars')).toHaveLength(0)
     for (const query of manifestQueries) {
-      expect(query.text).toContain('AND calendar_version =')
+      expect(query.text).toContain('AND manifest.calendar_version =')
       expect(query.parameters).toContain(fixture.request.calendarVersion)
     }
   })
@@ -843,8 +843,8 @@ describe('finalized Signal snapshot reader', () => {
     expect(manifestQueries).toHaveLength(1)
     expect(queries.filter((query) => query.kind === 'sessions')).toHaveLength(1)
     expect(queries.filter((query) => query.kind === 'bars')).toHaveLength(0)
-    expect(manifestQueries[0]?.text).toContain('AND universe_symbol_hash =')
-    expect(manifestQueries[0]?.text).toContain('ORDER BY finalized_at DESC, snapshot_id DESC')
+    expect(manifestQueries[0]?.text).toContain('AND manifest.universe_symbol_hash =')
+    expect(manifestQueries[0]?.text).toContain('ORDER BY manifest.finalized_at DESC, manifest.snapshot_id DESC')
     expect(manifestQueries[0]?.text).toContain('LIMIT 1')
     expect(manifestQueries[0]?.parameters).toContain(fixture.request.universeSymbolHash)
     expect(queries.find((query) => query.kind === 'sessions')?.parameters).toEqual([expected.manifest.snapshot_id])
@@ -914,9 +914,14 @@ describe('finalized Signal snapshot reader', () => {
     expect(manifestQueries).toHaveLength(1)
     expect(sessionQueries).toHaveLength(1)
     expect(queries.filter((query) => query.kind === 'bars')).toHaveLength(0)
-    expect(manifestQueries[0]?.text).toContain('AND universe_symbol_hash =')
-    expect(manifestQueries[0]?.text).toContain('ORDER BY publication_asof DESC, finalized_at DESC, snapshot_id DESC')
-    expect(manifestQueries[0]?.text).toContain('LIMIT 1 BY publication_asof')
+    expect(manifestQueries[0]?.text).toContain('toString(manifest.requested_start) AS requested_start')
+    expect(manifestQueries[0]?.text).toContain('AND manifest.universe_symbol_hash =')
+    expect(manifestQueries[0]?.text).toContain('AND manifest.requested_start = toDate(')
+    expect(manifestQueries[0]?.text).not.toContain('AND requested_start = toDate(')
+    expect(manifestQueries[0]?.text).toContain(
+      'ORDER BY manifest.publication_asof DESC, manifest.finalized_at DESC, manifest.snapshot_id DESC',
+    )
+    expect(manifestQueries[0]?.text).toContain('LIMIT 1 BY manifest.publication_asof')
     expect(manifestQueries[0]?.text).toContain('LIMIT ?')
     expect(manifestQueries[0]?.parameters).not.toContain(snapshotId)
     expect(manifestQueries[0]?.parameters).not.toContain(fixture.request.publicationAsOf)

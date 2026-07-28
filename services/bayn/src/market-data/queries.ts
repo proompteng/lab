@@ -92,24 +92,24 @@ export const makeMarketDataQueries = (
         source_feed,
         adjustment,
         calendar_version,
-        toString(requested_start) AS requested_start,
-        toString(publication_asof) AS publication_asof,
-        toString(first_session) AS first_session,
-        toString(last_session) AS last_session,
+        toString(manifest.requested_start) AS requested_start,
+        toString(manifest.publication_asof) AS publication_asof,
+        toString(manifest.first_session) AS first_session,
+        toString(manifest.last_session) AS last_session,
         symbol_count,
         session_count,
         bar_count,
         bars_content_hash,
         sessions_content_hash,
         manifest_content_hash,
-        toString(finalized_at) AS finalized_at
-      FROM signal.snapshot_manifests_v2
-      WHERE universe_id = ${sql.param('String', contract.universeId)}
-        AND universe_symbol_hash = ${sql.param('String', contract.universeSymbolHash)}
-        AND requested_start = toDate(${sql.param('String', contract.historyStart)})
-        AND publication_asof = toDate(${sql.param('String', request.signalSessionDate)})
-        AND calendar_version = ${sql.param('String', request.signalCalendarVersion)}
-      ORDER BY finalized_at DESC, snapshot_id DESC
+        toString(manifest.finalized_at) AS finalized_at
+      FROM signal.snapshot_manifests_v2 AS manifest
+      WHERE manifest.universe_id = ${sql.param('String', contract.universeId)}
+        AND manifest.universe_symbol_hash = ${sql.param('String', contract.universeSymbolHash)}
+        AND manifest.requested_start = toDate(${sql.param('String', contract.historyStart)})
+        AND manifest.publication_asof = toDate(${sql.param('String', request.signalSessionDate)})
+        AND manifest.calendar_version = ${sql.param('String', request.signalCalendarVersion)}
+      ORDER BY manifest.finalized_at DESC, manifest.snapshot_id DESC
       LIMIT 1
     `.pipe(sql.withQueryId(`bayn-cycle-manifest-${request.signalSessionDate}`))
 
@@ -126,23 +126,23 @@ export const makeMarketDataQueries = (
       source_feed,
       adjustment,
       calendar_version,
-      toString(requested_start) AS requested_start,
-      toString(publication_asof) AS publication_asof,
-      toString(first_session) AS first_session,
-      toString(last_session) AS last_session,
+      toString(manifest.requested_start) AS requested_start,
+      toString(manifest.publication_asof) AS publication_asof,
+      toString(manifest.first_session) AS first_session,
+      toString(manifest.last_session) AS last_session,
       symbol_count,
       session_count,
       bar_count,
       bars_content_hash,
       sessions_content_hash,
       manifest_content_hash,
-      toString(finalized_at) AS finalized_at
-    FROM signal.snapshot_manifests_v2
-    WHERE universe_id = ${sql.param('String', contract.universeId)}
-      AND universe_symbol_hash = ${sql.param('String', contract.universeSymbolHash)}
-      AND requested_start = toDate(${sql.param('String', contract.historyStart)})
-    ORDER BY publication_asof DESC, finalized_at DESC, snapshot_id DESC
-    LIMIT 1 BY publication_asof
+      toString(manifest.finalized_at) AS finalized_at
+    FROM signal.snapshot_manifests_v2 AS manifest
+    WHERE manifest.universe_id = ${sql.param('String', contract.universeId)}
+      AND manifest.universe_symbol_hash = ${sql.param('String', contract.universeSymbolHash)}
+      AND manifest.requested_start = toDate(${sql.param('String', contract.historyStart)})
+    ORDER BY manifest.publication_asof DESC, manifest.finalized_at DESC, manifest.snapshot_id DESC
+    LIMIT 1 BY manifest.publication_asof
     LIMIT ${sql.param('UInt8', cyclePublicationCandidateLimit)}
   `.pipe(sql.withQueryId('bayn-cycle-publication-candidates'))
 
