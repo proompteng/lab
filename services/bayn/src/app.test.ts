@@ -55,6 +55,7 @@ const brokerRead = (): BrokerReadShape => {
         currency: 'USD',
         cashMicros: '1000000',
         equityMicros: '1000000',
+        lastEquityMicros: '1000000',
         buyingPowerMicros: '1000000',
         accountBlocked: false,
         tradingBlocked: false,

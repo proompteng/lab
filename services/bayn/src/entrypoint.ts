@@ -350,6 +350,8 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
     const executionProgram = yield* Effect.fromResult(
       makeExecutionProgram(authority, {
         brokerRead: session.read,
+        liveCapitalGrants,
+        currentUtcInstant,
         ...executionDependencies,
       }),
     ).pipe(Effect.mapError(executionProgramError))

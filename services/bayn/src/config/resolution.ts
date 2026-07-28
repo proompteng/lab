@@ -98,7 +98,7 @@ const resolvePolicy = (
     brokerAccess: parsed.brokerAccess,
     capitalAuthority: parsed.capitalAuthority,
     authorityGenerationHash:
-      parsed.capitalAuthority === CapitalAuthoritySelection.Sandbox ? parsed.authorityGenerationHash : undefined,
+      parsed.capitalAuthority === CapitalAuthoritySelection.None ? undefined : parsed.authorityGenerationHash,
     liveCapitalGrantHash: parsed.liveCapitalGrantHash,
   })
   return Result.isFailure(policy)

@@ -61,7 +61,11 @@ const grant = Result.getOrThrow(
 const livePolicy = {
   brokerIdentity: liveIdentity,
   brokerAccess: BrokerAccess.Mutation,
-  capitalAuthority: { _tag: CapitalAuthorityKind.LiveGrant, grantHash: grant.grantHash },
+  capitalAuthority: {
+    _tag: CapitalAuthorityKind.LiveGrant,
+    grantHash: grant.grantHash,
+    authorityGenerationHash,
+  },
 } satisfies ExecutionPolicy
 
 describe('runtime authority resolution', () => {
@@ -130,6 +134,30 @@ describe('runtime authority resolution', () => {
     expect(revoked).toMatchObject({
       _tag: 'ExecutionAuthorityInvalid',
       cause: { _tag: 'LiveGrantRevoked' },
+    })
+
+    const mismatchedGeneration = await Effect.runPromise(
+      Effect.flip(
+        resolveRuntimeAuthority(
+          {
+            policy: {
+              ...livePolicy,
+              capitalAuthority: {
+                ...livePolicy.capitalAuthority,
+                authorityGenerationHash: '9'.repeat(64),
+              },
+            },
+            strategy,
+            observedAt,
+          },
+          { liveCapitalGrants: { read: () => Effect.succeed(liveCapitalAuthority(grant)) } },
+        ),
+      ),
+    )
+    expect(mismatchedGeneration).toMatchObject({
+      _tag: 'LiveCapitalGrantAuthorityGenerationMismatch',
+      expected: '9'.repeat(64),
+      observed: authorityGenerationHash,
     })
   })
 })

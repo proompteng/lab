@@ -8,7 +8,6 @@ import {
 } from '../broker/identity'
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import {
-  PositiveIntegerSchema as PositiveInteger,
   PositiveMicrosSchema as PositiveMicros,
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
@@ -60,7 +59,7 @@ export const LiveCapitalLimitsSchema = Schema.Struct({
   maxOrderNotionalMicros: PositiveMicros,
   maxPositionNotionalMicros: PositiveMicros,
   maxDailyLossMicros: PositiveMicros,
-  maxOpenOrders: PositiveInteger,
+  maxOpenOrders: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 500 })),
 })
 
 export const ExecutionStrategyIdentitySchema = Schema.Struct({
@@ -147,17 +146,22 @@ export type ExecutionAuthority =
       readonly brokerIdentity: BrokerIdentity
       readonly brokerAccess: BrokerAccess.ReadOnly
       readonly capitalAuthority: NoCapitalAuthority
+      readonly strategy: ExecutionStrategyIdentity
     }
   | {
       readonly brokerIdentity: BrokerIdentity & { readonly environment: BrokerEnvironment.Sandbox }
       readonly brokerAccess: BrokerAccess.Mutation
       readonly capitalAuthority: SandboxCapitalAuthority
+      readonly strategy: ExecutionStrategyIdentity
     }
   | {
       readonly brokerIdentity: BrokerIdentity & { readonly environment: BrokerEnvironment.Live }
       readonly brokerAccess: BrokerAccess.Mutation
       readonly capitalAuthority: LiveCapitalAuthority
+      readonly strategy: ExecutionStrategyIdentity
     }
+
+export type MutationExecutionAuthority = Extract<ExecutionAuthority, { readonly brokerAccess: BrokerAccess.Mutation }>
 
 export type ExecutionAuthorityConstructionFailure =
   | {
@@ -225,6 +229,7 @@ export const makeExecutionAuthority = (
           brokerIdentity: input.brokerIdentity,
           brokerAccess: BrokerAccess.ReadOnly,
           capitalAuthority: noCapitalAuthority,
+          strategy: input.strategy,
         })
       : Result.fail({
           _tag: 'ReadOnlyBrokerRequiresNoCapital',
@@ -247,6 +252,7 @@ export const makeExecutionAuthority = (
           },
           brokerAccess: BrokerAccess.Mutation,
           capitalAuthority: input.capitalAuthority,
+          strategy: input.strategy,
         })
       : Result.fail({
           _tag: 'SandboxBrokerRequiresSandboxCapital',
@@ -300,6 +306,7 @@ export const makeExecutionAuthority = (
     brokerIdentity: input.brokerIdentity as BrokerIdentity & { readonly environment: BrokerEnvironment.Live },
     brokerAccess: BrokerAccess.Mutation,
     capitalAuthority: capital,
+    strategy: input.strategy,
   })
 }
 

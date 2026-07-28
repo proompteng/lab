@@ -40,7 +40,7 @@ describe('execution policy configuration', () => {
             brokerAccess,
             capitalAuthority,
             authorityGenerationHash:
-              capitalAuthority === CapitalAuthoritySelection.Sandbox ? authorityGenerationHash : undefined,
+              capitalAuthority === CapitalAuthoritySelection.None ? undefined : authorityGenerationHash,
             liveCapitalGrantHash:
               capitalAuthority === CapitalAuthoritySelection.LiveGrant ? liveCapitalGrantHash : undefined,
           }),
@@ -78,6 +78,15 @@ describe('execution policy configuration', () => {
         brokerAccess: BrokerAccess.Mutation,
         capitalAuthority: CapitalAuthoritySelection.LiveGrant,
         authorityGenerationHash: undefined,
+        liveCapitalGrantHash,
+      }),
+    ).toMatchObject({ _tag: 'Failure', failure: { _tag: 'LiveCapitalRequiresAuthorityGeneration' } })
+    expect(
+      resolveExecutionPolicy({
+        brokerIdentity: identity(BrokerEnvironment.Live),
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: CapitalAuthoritySelection.LiveGrant,
+        authorityGenerationHash,
         liveCapitalGrantHash: undefined,
       }),
     ).toMatchObject({ _tag: 'Failure', failure: { _tag: 'LiveCapitalRequiresGrantHash' } })
@@ -112,10 +121,14 @@ describe('execution policy configuration', () => {
           brokerIdentity: identity(BrokerEnvironment.Live),
           brokerAccess: BrokerAccess.Mutation,
           capitalAuthority: CapitalAuthoritySelection.LiveGrant,
-          authorityGenerationHash: undefined,
+          authorityGenerationHash,
           liveCapitalGrantHash,
         }),
-      ).capitalAuthority._tag,
-    ).toBe(CapitalAuthorityKind.LiveGrant)
+      ).capitalAuthority,
+    ).toEqual({
+      _tag: CapitalAuthorityKind.LiveGrant,
+      grantHash: liveCapitalGrantHash,
+      authorityGenerationHash,
+    })
   })
 })

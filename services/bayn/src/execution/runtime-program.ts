@@ -2,11 +2,13 @@ import { Effect, Result } from 'effect'
 
 import { BrokerRead, type BrokerReadShape } from '../broker/alpaca'
 import { BrokerMutation, type BrokerMutationShape } from '../broker/alpaca-mutations'
+import type { LiveCapitalGrantStoreShape } from '../db/live-capital-grant'
 import type { MutationOperation } from '../broker/alpaca-mutations'
 import { cancel, dryRunSubmit, recover, submit } from './coordinator'
 import { BrokerAccess, type ExecutionAuthority } from './authority'
 import { IntentStore, type IntentStoreService } from './intents'
 import { MutationStore, type MutationStoreShape } from './mutations'
+import { makeAuthorityGuardedBrokerMutation } from './mutation-authority'
 import { WriterFence, type WriterFenceService } from './writer-fence'
 
 export interface ExecutionProgramDependencies {
@@ -15,6 +17,8 @@ export interface ExecutionProgramDependencies {
   readonly intentStore: IntentStoreService
   readonly mutationStore: MutationStoreShape
   readonly writerFence: WriterFenceService
+  readonly liveCapitalGrants: Pick<LiveCapitalGrantStoreShape, 'read'>
+  readonly currentUtcInstant: Effect.Effect<string>
 }
 
 export interface ExecutionProgramConstructionFailure {
@@ -41,17 +45,21 @@ export const makeExecutionProgram = (authority: ExecutionAuthority, dependencies
       brokerAccess: authority.brokerAccess,
     })
   }
+  const coordinatorDependencies: ExecutionProgramDependencies = {
+    ...dependencies,
+    brokerMutation: makeAuthorityGuardedBrokerMutation(authority, dependencies),
+  }
   return Result.succeed({
     _tag: 'ExecutionProgram' as const,
     schemaVersion: 'bayn.execution-program.v1' as const,
     authority,
-    dryRunSubmit: (intentId: string) => provideCoordinatorDependencies(dryRunSubmit(intentId), dependencies),
+    dryRunSubmit: (intentId: string) => provideCoordinatorDependencies(dryRunSubmit(intentId), coordinatorDependencies),
     submit: (intentId: string, consistencyDelayMs: number) =>
-      provideCoordinatorDependencies(submit(intentId, consistencyDelayMs), dependencies),
+      provideCoordinatorDependencies(submit(intentId, consistencyDelayMs), coordinatorDependencies),
     cancel: (intentId: string, consistencyDelayMs: number) =>
-      provideCoordinatorDependencies(cancel(intentId, consistencyDelayMs), dependencies),
+      provideCoordinatorDependencies(cancel(intentId, consistencyDelayMs), coordinatorDependencies),
     recover: (intentId: string, operation: MutationOperation) =>
-      provideCoordinatorDependencies(recover(intentId, operation), dependencies),
+      provideCoordinatorDependencies(recover(intentId, operation), coordinatorDependencies),
   })
 }
 

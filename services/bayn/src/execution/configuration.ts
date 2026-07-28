@@ -22,6 +22,7 @@ export interface SandboxCapitalRequest {
 export interface LiveCapitalGrantRequest {
   readonly _tag: CapitalAuthorityKind.LiveGrant
   readonly grantHash: string
+  readonly authorityGenerationHash: string
 }
 
 export type CapitalAuthorityRequest = NoCapitalRequest | SandboxCapitalRequest | LiveCapitalGrantRequest
@@ -88,6 +89,9 @@ export type ExecutionPolicyResolutionFailure =
       readonly _tag: 'LiveCapitalRequiresGrantHash'
     }
   | {
+      readonly _tag: 'LiveCapitalRequiresAuthorityGeneration'
+    }
+  | {
       readonly _tag: 'UnexpectedAuthorityGenerationHash'
       readonly brokerEnvironment: BrokerEnvironment | undefined
       readonly capitalAuthority: CapitalAuthoritySelection
@@ -103,7 +107,7 @@ const noCapitalRequest: NoCapitalRequest = Object.freeze({ _tag: CapitalAuthorit
 const rejectUnexpectedBindings = (
   input: ExecutionPolicyInput,
 ): Result.Result<void, ExecutionPolicyResolutionFailure> => {
-  if (input.capitalAuthority !== CapitalAuthoritySelection.Sandbox && input.authorityGenerationHash !== undefined) {
+  if (input.capitalAuthority === CapitalAuthoritySelection.None && input.authorityGenerationHash !== undefined) {
     return Result.fail({
       _tag: 'UnexpectedAuthorityGenerationHash',
       brokerEnvironment: input.brokerIdentity?.environment,
@@ -192,12 +196,16 @@ export const resolveExecutionPolicy = (
   if (input.liveCapitalGrantHash === undefined) {
     return Result.fail({ _tag: 'LiveCapitalRequiresGrantHash' })
   }
+  if (input.authorityGenerationHash === undefined) {
+    return Result.fail({ _tag: 'LiveCapitalRequiresAuthorityGeneration' })
+  }
   return Result.succeed({
     brokerIdentity: input.brokerIdentity as BrokerIdentity & { readonly environment: BrokerEnvironment.Live },
     brokerAccess: BrokerAccess.Mutation,
     capitalAuthority: {
       _tag: CapitalAuthorityKind.LiveGrant,
       grantHash: input.liveCapitalGrantHash,
+      authorityGenerationHash: input.authorityGenerationHash,
     },
   })
 }
@@ -220,6 +228,8 @@ export const renderExecutionPolicyFailure = (failure: ExecutionPolicyResolutionF
       return 'sandbox-capital authority requires an authority generation hash'
     case 'LiveCapitalRequiresGrantHash':
       return 'live-capital-grant authority requires a persisted grant hash'
+    case 'LiveCapitalRequiresAuthorityGeneration':
+      return 'live-capital-grant authority requires the configured authority generation hash'
     case 'UnexpectedAuthorityGenerationHash':
       return `authority generation hash is not valid for ${failure.capitalAuthority}`
     case 'UnexpectedLiveCapitalGrantHash':

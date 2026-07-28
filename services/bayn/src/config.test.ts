@@ -178,7 +178,11 @@ describe('pure runtime configuration resolution', () => {
       runtimeMode: 'AutonomousService',
       execution: {
         brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: { _tag: CapitalAuthorityKind.LiveGrant, grantHash: liveCapitalGrantHash },
+        capitalAuthority: {
+          _tag: CapitalAuthorityKind.LiveGrant,
+          grantHash: liveCapitalGrantHash,
+          authorityGenerationHash,
+        },
       },
     })
   })

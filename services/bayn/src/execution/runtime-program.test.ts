@@ -43,6 +43,10 @@ const dependencies = (label: string): ExecutionProgramDependencies => ({
   intentStore: {} as ExecutionProgramDependencies['intentStore'],
   mutationStore: {} as ExecutionProgramDependencies['mutationStore'],
   writerFence: {} as ExecutionProgramDependencies['writerFence'],
+  liveCapitalGrants: {
+    read: () => Effect.die(new Error(`${label} live grant read must not run during composition proof`)),
+  },
+  currentUtcInstant: Effect.succeed(observedAt),
 })
 
 describe('same-code execution program composition', () => {

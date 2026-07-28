@@ -25,6 +25,12 @@ export type RuntimeAuthorityFailure =
       readonly cause: unknown
     }
   | {
+      readonly _tag: 'LiveCapitalGrantAuthorityGenerationMismatch'
+      readonly grantHash: string
+      readonly expected: string
+      readonly observed: string
+    }
+  | {
       readonly _tag: 'ExecutionAuthorityInvalid'
       readonly cause: ExecutionAuthorityConstructionFailure
     }
@@ -77,7 +83,8 @@ export const resolveRuntimeAuthority = (
       },
     })
   }
-  const grantHash = input.policy.capitalAuthority.grantHash
+  const liveRequest = input.policy.capitalAuthority
+  const grantHash = liveRequest.grantHash
   return dependencies.liveCapitalGrants.read(grantHash).pipe(
     Effect.mapError(
       (cause): RuntimeAuthorityFailure => ({
@@ -92,7 +99,14 @@ export const resolveRuntimeAuthority = (
             _tag: 'LiveCapitalGrantMissing' as const,
             grantHash,
           })
-        : construct(input, authority),
+        : authority.grant.authorityGenerationHash !== liveRequest.authorityGenerationHash
+          ? Effect.fail<RuntimeAuthorityFailure>({
+              _tag: 'LiveCapitalGrantAuthorityGenerationMismatch' as const,
+              grantHash,
+              expected: liveRequest.authorityGenerationHash,
+              observed: authority.grant.authorityGenerationHash,
+            })
+          : construct(input, authority),
     ),
   )
 }
@@ -103,6 +117,8 @@ export const renderRuntimeAuthorityFailure = (failure: RuntimeAuthorityFailure):
       return `persisted live capital grant ${failure.grantHash} was not found`
     case 'LiveCapitalGrantReadFailed':
       return `persisted live capital grant ${failure.grantHash} could not be read`
+    case 'LiveCapitalGrantAuthorityGenerationMismatch':
+      return `persisted live capital grant ${failure.grantHash} is not bound to the configured authority generation`
     case 'ExecutionAuthorityInvalid':
       return `execution authority is invalid: ${failure.cause._tag}`
   }

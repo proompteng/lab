@@ -4,6 +4,7 @@ export {
   MutationEvidenceSchema,
   MutationFailure,
   MutationOperation,
+  invalidRequest,
   type BrokerMutationShape,
   type MutationEvidence,
 } from './alpaca-mutations/model'

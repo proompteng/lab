@@ -1125,6 +1125,16 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         const store = yield* LiveCapitalGrantStore
+        const historicalGenerationHash = fixtureHash('explicit-execution-authority-historical-generation')
+        yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash, schema_version, previous_generation_hash, maximum,
+            authority_version, activated_at
+          ) VALUES (
+            ${historicalGenerationHash}, 'bayn.authority-generation-history.v1', NULL,
+            'OBSERVE', 1, '2026-07-22T06:00:00.000Z'
+          )
+        `
         const [historical] = yield* sql<{
           generation_hash: string
           account_id: string | null
@@ -1141,8 +1151,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             broker_provider,
             broker_environment
           FROM authority_generations
-          ORDER BY authority_version
-          LIMIT 1
+          WHERE generation_hash = ${historicalGenerationHash}
         `
         if (historical === undefined) throw new Error('stable historical authority generation is missing')
 

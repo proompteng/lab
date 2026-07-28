@@ -266,6 +266,7 @@ const account = (suffix = 'a', time = observedAt): BrokerReadShape['account'] =>
       currency: 'USD',
       cashMicros: '500000000',
       equityMicros: '1000000000',
+      lastEquityMicros: '1000000000',
       buyingPowerMicros: '500000000',
       accountBlocked: false,
       tradingBlocked: false,
@@ -663,9 +664,9 @@ describe('paper candidate discovery', () => {
     const serialized = JSON.stringify(receipt)
     expect(receipt.immutableBindingHash).toBe('6ab1d19be479bfbd58e7ae673864b57913dcf8d0817d6087655468eda84ac9a5')
     expect(receipt.candidateFactsHash).toBe('e3c32cfc6678d5d465ae216567b91bbacdf545c66073442f39e3d056c351e40b')
-    expect(receipt.observationReceiptHash).toBe('6ea8f7e85e513490e4567509dad11d071deba2a9792d3b72219c07c250208d46')
+    expect(receipt.observationReceiptHash).toBe('a04bf24ba8de2cc5b1f99f12dcc4df5225405614ffb9a691df9665fec88a9505')
     expect(createHash('sha256').update(serialized).digest('hex')).toBe(
-      '6f64a60a8181c61acd2ae0577907e59c95d99ea8fbc1f53f5b33d419e74cb049',
+      '47776b6b5a860db14d70c22f690291c877f54cee4f6df788597572046936c994',
     )
     expect(serialized).not.toContain('account_number')
     expect(serialized).not.toContain('paper-secret')
@@ -758,6 +759,7 @@ describe('paper candidate discovery', () => {
           currency: 'USD',
           cash: '500',
           equity: '1000',
+          last_equity: '1000',
           buying_power: '500',
           account_blocked: false,
           trading_blocked: false,
