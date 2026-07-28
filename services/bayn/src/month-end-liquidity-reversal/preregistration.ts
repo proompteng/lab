@@ -1,6 +1,7 @@
 import { Result } from 'effect'
 
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
+import { candidate6ExecutableBehaviorHash } from './behavior-evidence'
 import {
   CANDIDATE_6_ORDINAL,
   CANDIDATE_6_STRATEGY_NAME,
@@ -10,6 +11,8 @@ import {
 } from './model'
 import {
   CANDIDATE_6_DEVELOPMENT_BARS_EXPORT_SHA256,
+  CANDIDATE_6_DEVELOPMENT_BOUNDED_BARS_CONTENT_HASH,
+  CANDIDATE_6_DEVELOPMENT_BOUNDED_SESSIONS_CONTENT_HASH,
   CANDIDATE_6_DEVELOPMENT_DATA_START,
   CANDIDATE_6_DEVELOPMENT_END,
   CANDIDATE_6_DEVELOPMENT_MANIFEST_CONTENT_HASH,
@@ -71,6 +74,7 @@ export interface Candidate6PreregistrationMaterial {
     readonly strategyName: typeof CANDIDATE_6_STRATEGY_NAME
     readonly strategyVersion: typeof CANDIDATE_6_STRATEGY_VERSION
     readonly parameterHash: string
+    readonly executableBehaviorHash: string
     readonly strategyHash: string
   }
   readonly lineage: {
@@ -95,6 +99,8 @@ export interface Candidate6PreregistrationMaterial {
     readonly developmentManifestExportSha256: typeof CANDIDATE_6_DEVELOPMENT_MANIFEST_EXPORT_SHA256
     readonly developmentBarsExportSha256: typeof CANDIDATE_6_DEVELOPMENT_BARS_EXPORT_SHA256
     readonly developmentSessionsExportSha256: typeof CANDIDATE_6_DEVELOPMENT_SESSIONS_EXPORT_SHA256
+    readonly developmentBoundedBarsContentHash: typeof CANDIDATE_6_DEVELOPMENT_BOUNDED_BARS_CONTENT_HASH
+    readonly developmentBoundedSessionsContentHash: typeof CANDIDATE_6_DEVELOPMENT_BOUNDED_SESSIONS_CONTENT_HASH
     readonly developmentSessionCount: typeof CANDIDATE_6_DEVELOPMENT_SESSION_COUNT
     readonly tradableUniverse: readonly ['SPY']
     readonly developmentDataStart: typeof CANDIDATE_6_DEVELOPMENT_DATA_START
@@ -199,7 +205,7 @@ export interface Candidate6Preregistration extends Candidate6PreregistrationMate
 export type Candidate6PreregistrationFailure =
   | {
       readonly _tag: 'PreregistrationHashFailure'
-      readonly operation: 'parameters' | 'strategy' | 'seal'
+      readonly operation: 'parameters' | 'behavior' | 'strategy' | 'seal'
       readonly cause: CanonicalHashFailure
     }
   | { readonly _tag: 'CandidateOrdinalMismatch'; readonly observed: number }
@@ -225,6 +231,10 @@ export const makeCandidate6PreregistrationMaterial = (
   if (Result.isFailure(parameterHash)) {
     return fail({ _tag: 'PreregistrationHashFailure', operation: 'parameters', cause: parameterHash.failure })
   }
+  const executableBehaviorHash = candidate6ExecutableBehaviorHash(protocol)
+  if (Result.isFailure(executableBehaviorHash)) {
+    return fail({ _tag: 'PreregistrationHashFailure', operation: 'behavior', cause: executableBehaviorHash.failure })
+  }
   const strategyMaterial = {
     schemaVersion: 'bayn.month-end-liquidity-reversal.behavior.v1',
     strategyName: CANDIDATE_6_STRATEGY_NAME,
@@ -237,6 +247,7 @@ export const makeCandidate6PreregistrationMaterial = (
     sizing: 'long-cash-fixed-target-with-liquidity-and-exposure-caps',
     malformedData: 'fail-closed',
     parameterHash: parameterHash.success,
+    executableBehaviorHash: executableBehaviorHash.success,
   } as const
   const strategyHash = canonicalHashV1Result(strategyMaterial)
   if (Result.isFailure(strategyHash)) {
@@ -249,6 +260,7 @@ export const makeCandidate6PreregistrationMaterial = (
       strategyName: CANDIDATE_6_STRATEGY_NAME,
       strategyVersion: CANDIDATE_6_STRATEGY_VERSION,
       parameterHash: parameterHash.success,
+      executableBehaviorHash: executableBehaviorHash.success,
       strategyHash: strategyHash.success,
     },
     lineage: {
@@ -273,6 +285,8 @@ export const makeCandidate6PreregistrationMaterial = (
       developmentManifestExportSha256: CANDIDATE_6_DEVELOPMENT_MANIFEST_EXPORT_SHA256,
       developmentBarsExportSha256: CANDIDATE_6_DEVELOPMENT_BARS_EXPORT_SHA256,
       developmentSessionsExportSha256: CANDIDATE_6_DEVELOPMENT_SESSIONS_EXPORT_SHA256,
+      developmentBoundedBarsContentHash: CANDIDATE_6_DEVELOPMENT_BOUNDED_BARS_CONTENT_HASH,
+      developmentBoundedSessionsContentHash: CANDIDATE_6_DEVELOPMENT_BOUNDED_SESSIONS_CONTENT_HASH,
       developmentSessionCount: CANDIDATE_6_DEVELOPMENT_SESSION_COUNT,
       tradableUniverse: ['SPY'],
       developmentDataStart: CANDIDATE_6_DEVELOPMENT_DATA_START,

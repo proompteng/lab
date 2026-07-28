@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
+import { candidate6ExecutableBehaviorHash } from './behavior-evidence'
 import {
   admitCandidate6Trial,
   candidate6PriorTerminalLineage,
@@ -39,6 +40,8 @@ describe('candidate 6 sealed preregistration', () => {
 
     expect(second).toEqual(first)
     expect(first.preregistrationHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(first.identity.executableBehaviorHash).toBe(success(candidate6ExecutableBehaviorHash()))
+    expect(first.identity.executableBehaviorHash).toMatch(/^[0-9a-f]{64}$/)
     expect(first).toMatchObject({
       candidateOrdinal: 6,
       identity: {
@@ -73,6 +76,12 @@ describe('candidate 6 sealed preregistration', () => {
       }),
       mutate(material, (copy) => {
         ;(copy.data as { developmentManifestExportSha256: string }).developmentManifestExportSha256 = '0'.repeat(64)
+      }),
+      mutate(material, (copy) => {
+        ;(copy.data as { developmentBoundedBarsContentHash: string }).developmentBoundedBarsContentHash = '0'.repeat(64)
+      }),
+      mutate(material, (copy) => {
+        ;(copy.identity as { executableBehaviorHash: string }).executableBehaviorHash = '0'.repeat(64)
       }),
       mutate(material, (copy) => {
         ;(copy.features as { pressureReturn: string }).pressureReturn = 'different-feature'

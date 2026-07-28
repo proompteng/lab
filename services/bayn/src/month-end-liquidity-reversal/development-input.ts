@@ -82,6 +82,11 @@ export type Candidate6DevelopmentDataFailure =
       readonly operation: 'manifest' | 'snapshot-identity'
       readonly cause: CanonicalHashFailure
     }
+  | {
+      readonly _tag: 'DevelopmentContentHashFailed'
+      readonly artifact: 'bars' | 'sessions'
+      readonly cause: CanonicalHashFailure
+    }
   | { readonly _tag: 'SnapshotIdMismatch'; readonly row: number; readonly expected: string; readonly observed: string }
   | {
       readonly _tag: 'CalendarVersionMismatch'

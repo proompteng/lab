@@ -5,7 +5,8 @@
     "strategyName": "month-end-liquidity-reversal",
     "strategyVersion": "1.0.0",
     "parameterHash": "59889076e9cff0b8c79c30f8c095b50ae9c4cd6044fe536004f3432a3287a645",
-    "strategyHash": "dc86a30c6c3e8e44a59c7a3c7f5de0f7965c98cacea31eba50baa265b153a273"
+    "executableBehaviorHash": "2053e0b14e134489ba6f35c87d1b6ee55102bc668602833226288ec487504ba5",
+    "strategyHash": "c7e8eb2b5572bf581859668445545795e4e73e841d1f9b7b87e64bfffa7298ba"
   },
   "lineage": {
     "priorTerminalCandidates": [
@@ -60,6 +61,8 @@
     "developmentManifestExportSha256": "79400b64fcd981fc87874fbc0fd647033cfe8acadd1abb2f6a3f0af092699e43",
     "developmentBarsExportSha256": "c71ba30f3bcdd373708636f7c799d6caf3e24e07fd7d428522c69167c11a0c9c",
     "developmentSessionsExportSha256": "d0f182b5436c3ce374f4afaf2735c4b66247edfb78378aeff42af1efc889aabf",
+    "developmentBoundedBarsContentHash": "9fac08a198bac2dea6530e12a4406c695c84da8829b9a198f26511c822164785",
+    "developmentBoundedSessionsContentHash": "8fb5cf8accec311c6d34dd5d1074b9ac2cee38c51eaf906df26fd3479f48e358",
     "developmentSessionCount": 1762,
     "tradableUniverse": ["SPY"],
     "developmentDataStart": "2016-01-04",
@@ -176,5 +179,5 @@
     "liveCapitalEnabled": false,
     "brokerMutationEnabled": false
   },
-  "preregistrationHash": "7a7d12d05522af95964319e470b753a9f676c2a0afcf9bef31283ead0548b1b9"
+  "preregistrationHash": "3f7412630d5730aa35e26d6d22d9a161d423bad720b62ac64fcd4ae592ecccfa"
 }

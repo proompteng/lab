@@ -1,18 +1,23 @@
 import { Result } from 'effect'
 
-import { canonicalHashV1Result } from '../hash'
+import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import type { DailyBar, IsoDate } from '../types'
+import { candidate6ExecutableBehaviorHash } from './behavior-evidence'
+import { candidate6BoundedContentHashes } from './development-data'
 import {
   CANDIDATE_6_STRATEGY_NAME,
   CANDIDATE_6_STRATEGY_VERSION,
   CANDIDATE_6_SYMBOL,
+  candidate6DevelopmentIdentity,
   candidate6DevelopmentProvenance,
   candidate6Protocol,
+  type Candidate6DevelopmentIdentity,
   type Candidate6DevelopmentDataset,
   type Candidate6Protocol,
 } from './model'
 import {
   CANDIDATE_6_SESSIONS_PER_YEAR,
+  candidate6CalendarYearReturns,
   candidate6Mean,
   candidate6Metrics,
   candidate6Quantile,
@@ -35,29 +40,10 @@ export const CANDIDATE_6_DEVELOPMENT_BARS_EXPORT_SHA256 = candidate6DevelopmentP
 export const CANDIDATE_6_DEVELOPMENT_SESSIONS_EXPORT_SHA256 = candidate6DevelopmentProvenance.rawSessionsExportSha256
 export const CANDIDATE_6_DEVELOPMENT_MANIFEST_CONTENT_HASH = candidate6DevelopmentProvenance.manifestContentHash
 export const CANDIDATE_6_DEVELOPMENT_PUBLICATION_AS_OF = candidate6DevelopmentProvenance.publicationAsOf
+export const CANDIDATE_6_DEVELOPMENT_BOUNDED_BARS_CONTENT_HASH = candidate6DevelopmentProvenance.boundedBarsContentHash
+export const CANDIDATE_6_DEVELOPMENT_BOUNDED_SESSIONS_CONTENT_HASH =
+  candidate6DevelopmentProvenance.boundedSessionsContentHash
 export const CANDIDATE_6_DEVELOPMENT_SESSION_COUNT = candidate6DevelopmentProvenance.developmentSessionCount
-
-export interface Candidate6DevelopmentIdentity {
-  readonly snapshotId: string
-  readonly calendarVersion: string
-  readonly publicationAsOf: string
-  readonly manifestContentHash: string
-  readonly rawManifestExportSha256: string
-  readonly rawBarsExportSha256: string
-  readonly rawSessionsExportSha256: string
-  readonly sessionCount: number
-}
-
-export const candidate6DevelopmentIdentity: Candidate6DevelopmentIdentity = {
-  snapshotId: CANDIDATE_6_DEVELOPMENT_SNAPSHOT_ID,
-  calendarVersion: candidate6Protocol.marketData.calendarVersion,
-  publicationAsOf: CANDIDATE_6_DEVELOPMENT_PUBLICATION_AS_OF,
-  manifestContentHash: CANDIDATE_6_DEVELOPMENT_MANIFEST_CONTENT_HASH,
-  rawManifestExportSha256: CANDIDATE_6_DEVELOPMENT_MANIFEST_EXPORT_SHA256,
-  rawBarsExportSha256: CANDIDATE_6_DEVELOPMENT_BARS_EXPORT_SHA256,
-  rawSessionsExportSha256: CANDIDATE_6_DEVELOPMENT_SESSIONS_EXPORT_SHA256,
-  sessionCount: CANDIDATE_6_DEVELOPMENT_SESSION_COUNT,
-}
 
 const BOOTSTRAP_REPLICATES = 2_000
 const BOOTSTRAP_BLOCK_LENGTH = 20
@@ -77,6 +63,12 @@ export type Candidate6ResearchFailure =
   | { readonly _tag: 'BarOutsideDevelopmentCalendar'; readonly symbol: string; readonly sessionDate: IsoDate }
   | { readonly _tag: 'DuplicateDevelopmentSession'; readonly sessionDate: IsoDate }
   | { readonly _tag: 'DuplicateDevelopmentBar'; readonly symbol: string; readonly sessionDate: IsoDate }
+  | {
+      readonly _tag: 'DevelopmentContentHashFailure'
+      readonly artifact: 'bars' | 'sessions'
+      readonly cause: CanonicalHashFailure
+    }
+  | { readonly _tag: 'DevelopmentBehaviorHashFailure'; readonly cause: CanonicalHashFailure }
 
 export interface Candidate6ConfidenceInterval {
   readonly confidenceLevel: 0.95
@@ -95,6 +87,7 @@ export interface Candidate6DevelopmentReport {
   readonly identity: {
     readonly strategyVersion: typeof CANDIDATE_6_STRATEGY_VERSION
     readonly parameterHash: string
+    readonly executableBehaviorHash: string
   }
   readonly dataset: {
     readonly snapshotId: string
@@ -104,6 +97,8 @@ export interface Candidate6DevelopmentReport {
     readonly rawManifestExportSha256: string
     readonly rawBarsExportSha256: string
     readonly rawSessionsExportSha256: string
+    readonly boundedBarsContentHash: string
+    readonly boundedSessionsContentHash: string
     readonly requestedDataStart: IsoDate
     readonly observedFirstSession: IsoDate
     readonly simulationStart: IsoDate
@@ -168,6 +163,8 @@ const prepareDataset = (
     'rawManifestExportSha256',
     'rawBarsExportSha256',
     'rawSessionsExportSha256',
+    'boundedBarsContentHash',
+    'boundedSessionsContentHash',
     'sessionCount',
   ] as const) {
     if (dataset[field] !== expectedIdentity[field]) {
@@ -278,6 +275,30 @@ const prepareDataset = (
     }
     spyBars.push(bar)
   }
+  const recomputedContentHashes = candidate6BoundedContentHashes(dataset.bars, dataset.sessions)
+  if (Result.isFailure(recomputedContentHashes)) {
+    return fail({
+      _tag: 'DevelopmentContentHashFailure',
+      artifact: recomputedContentHashes.failure.artifact,
+      cause: recomputedContentHashes.failure.cause,
+    })
+  }
+  if (recomputedContentHashes.success.bars !== expectedIdentity.boundedBarsContentHash) {
+    return fail({
+      _tag: 'DevelopmentIdentityMismatch',
+      field: 'boundedBarsContentHash',
+      expected: expectedIdentity.boundedBarsContentHash,
+      observed: recomputedContentHashes.success.bars,
+    })
+  }
+  if (recomputedContentHashes.success.sessions !== expectedIdentity.boundedSessionsContentHash) {
+    return fail({
+      _tag: 'DevelopmentIdentityMismatch',
+      field: 'boundedSessionsContentHash',
+      expected: expectedIdentity.boundedSessionsContentHash,
+      observed: recomputedContentHashes.success.sessions,
+    })
+  }
   return Result.succeed({ calendar, bars: spyBars })
 }
 
@@ -323,16 +344,6 @@ const bootstrapConfidenceInterval = (
   }
 }
 
-const calendarYearReturns = (observations: readonly Candidate6DailyObservation[]): Readonly<Record<string, number>> => {
-  const years = [...new Set(observations.map((observation) => observation.sessionDate.slice(0, 4)))]
-  return Object.fromEntries(
-    years.map((year) => [
-      year,
-      candidate6SubsetMetrics(observations, (observation) => observation.sessionDate.startsWith(year)).totalReturn,
-    ]),
-  )
-}
-
 export const buildCandidate6DevelopmentReport = (
   dataset: Candidate6DevelopmentDataset,
   protocol: Candidate6Protocol = candidate6Protocol,
@@ -343,6 +354,10 @@ export const buildCandidate6DevelopmentReport = (
   const parameterHash = canonicalHashV1Result(protocol)
   if (Result.isFailure(parameterHash)) {
     return fail({ _tag: 'ResearchHashFailure', operation: 'protocol', cause: parameterHash.failure })
+  }
+  const executableBehaviorHash = candidate6ExecutableBehaviorHash(protocol)
+  if (Result.isFailure(executableBehaviorHash)) {
+    return fail({ _tag: 'DevelopmentBehaviorHashFailure', cause: executableBehaviorHash.failure })
   }
   const { bars, calendar } = prepared.success
   const gross = simulateCandidate6(calendar, bars, CANDIDATE_6_DEVELOPMENT_SIMULATION_START, protocol, 0, false)
@@ -381,6 +396,7 @@ export const buildCandidate6DevelopmentReport = (
     identity: {
       strategyVersion: CANDIDATE_6_STRATEGY_VERSION,
       parameterHash: parameterHash.success,
+      executableBehaviorHash: executableBehaviorHash.success,
     },
     dataset: {
       snapshotId: dataset.snapshotId,
@@ -390,6 +406,8 @@ export const buildCandidate6DevelopmentReport = (
       rawManifestExportSha256: dataset.rawManifestExportSha256,
       rawBarsExportSha256: dataset.rawBarsExportSha256,
       rawSessionsExportSha256: dataset.rawSessionsExportSha256,
+      boundedBarsContentHash: dataset.boundedBarsContentHash,
+      boundedSessionsContentHash: dataset.boundedSessionsContentHash,
       requestedDataStart: CANDIDATE_6_DEVELOPMENT_DATA_START,
       observedFirstSession: dataset.firstSession,
       simulationStart: CANDIDATE_6_DEVELOPMENT_SIMULATION_START,
@@ -422,7 +440,7 @@ export const buildCandidate6DevelopmentReport = (
       ),
     })),
     regimes: {
-      calendarYears: calendarYearReturns(net.success.observations),
+      calendarYears: candidate6CalendarYearReturns(net.success.observations),
       lowVolatility: candidate6SubsetMetrics(
         net.success.observations,
         (observation) =>

@@ -9,10 +9,11 @@ live-capital trade occurred.
 - Strategy: `month-end-liquidity-reversal`
 - Strategy version: `1.0.0`
 - Parameter hash: `59889076e9cff0b8c79c30f8c095b50ae9c4cd6044fe536004f3432a3287a645`
-- Strategy hash: `dc86a30c6c3e8e44a59c7a3c7f5de0f7965c98cacea31eba50baa265b153a273`
-- Canonical preregistration hash: `7a7d12d05522af95964319e470b753a9f676c2a0afcf9bef31283ead0548b1b9`
+- Executable behavior hash: `2053e0b14e134489ba6f35c87d1b6ee55102bc668602833226288ec487504ba5`
+- Strategy hash: `c7e8eb2b5572bf581859668445545795e4e73e841d1f9b7b87e64bfffa7298ba`
+- Canonical preregistration hash: `3f7412630d5730aa35e26d6d22d9a161d423bad720b62ac64fcd4ae592ecccfa`
 - Canonical preregistration: `ordinal-6-month-end-liquidity-reversal-preregistration.json`
-- Development report hash: `64d4f3ad11d83bccf4accfe92436d9ea79fb83cd51d6281f0799b8360c843c63`
+- Development report hash: `f57299b45b259938d773bd8817ca11f22fef40573cd4580889fefc8d1a342a36`
 - Development report: `ordinal-6-month-end-liquidity-reversal-development-report.json`
 - Source base: `3a2d6aad649a5ec935b6efc291273f0818628ca5`
 
@@ -58,6 +59,8 @@ pressure may partially reverse in SPY after sufficiently negative pressure throu
 - Raw manifest export SHA-256: `79400b64fcd981fc87874fbc0fd647033cfe8acadd1abb2f6a3f0af092699e43`
 - Raw bounded bars export SHA-256: `c71ba30f3bcdd373708636f7c799d6caf3e24e07fd7d428522c69167c11a0c9c`
 - Raw bounded official-session export SHA-256: `d0f182b5436c3ce374f4afaf2735c4b66247edfb78378aeff42af1efc889aabf`
+- Canonical bounded bars content hash: `9fac08a198bac2dea6530e12a4406c695c84da8829b9a198f26511c822164785`
+- Canonical bounded sessions content hash: `8fb5cf8accec311c6d34dd5d1074b9ac2cee38c51eaf906df26fd3479f48e358`
 - Authoritative manifest source: `signal.snapshot_manifests_v2`
 - Official calendar version: `alpaca-us-equity-calendar-v1` from `signal.exchange_sessions_v1`
 - Development data requested and observed: `2016-01-04` through `2022-12-30`
@@ -72,7 +75,8 @@ or after `2023-01-03` was queried, exported, simulated, or inspected. Every boun
 publication date and must match the independently decoded, canonically verified manifest. The raw exports are not
 committed; only their identities and the deterministic report are committed. The simulator rejects any missing,
 duplicate, or extra SPY bar relative to the sealed official session calendar, so omitted sessions cannot shift
-`T-4`/`T+3` offsets.
+`T-4`/`T+3` offsets. Before reporting metrics it independently recomputes canonical hashes from every parsed bar and
+session, so mutating a decoded value while retaining the raw-export identity fails closed.
 
 ## Frozen strategy and execution
 
@@ -94,6 +98,9 @@ duplicate, or extra SPY bar relative to the sealed official session calendar, so
 - Missing, blank, or whitespace numeric fields; missing, duplicate, or extra official-session bars; invalid calendar
   dates; manifest, snapshot, or publication mismatches; future, stale, non-finite, unadjusted, wrong-source, wrong-feed,
   wrong-schema, insufficient-history, or insufficient-liquidity inputs fail closed. No imputation is allowed.
+- The one-shot identity hashes executable outputs for frozen entry, hold, exit, malformed-position, complete-simulation,
+  and truncated-simulation vectors. A behavior change that changes those actual decisions or state transitions changes
+  the executable behavior hash, strategy hash, preregistration hash, and trial identity.
 
 ## Development evidence
 

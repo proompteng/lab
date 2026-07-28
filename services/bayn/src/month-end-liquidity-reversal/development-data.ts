@@ -1,6 +1,7 @@
 import { Result } from 'effect'
 
-import { sha256 } from '../hash'
+import { canonicalHashV1Result, sha256 } from '../hash'
+import type { CanonicalHashFailure } from '../hash'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type DailyBar, type IsoDate } from '../types'
 import {
   candidate6DataFail,
@@ -14,6 +15,61 @@ import {
 import type { Candidate6DevelopmentDataset, Candidate6DevelopmentManifest, Candidate6DevelopmentSession } from './model'
 
 export type { Candidate6DevelopmentDataFailure } from './development-input'
+
+export const candidate6BoundedBarsContentHash = (bars: readonly DailyBar[]) =>
+  canonicalHashV1Result(
+    [...bars]
+      .sort((left, right) =>
+        left.sessionDate === right.sessionDate
+          ? left.symbol.localeCompare(right.symbol)
+          : left.sessionDate.localeCompare(right.sessionDate),
+      )
+      .map((bar) => ({
+        symbol: bar.symbol,
+        sessionDate: bar.sessionDate,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        volume: bar.volume,
+        source: bar.source,
+        sourceFeed: bar.sourceFeed,
+        adjustment: bar.adjustment,
+        publicationSchemaVersion: bar.publicationSchemaVersion,
+      })),
+  )
+
+export const candidate6BoundedSessionsContentHash = (sessions: readonly Candidate6DevelopmentSession[]) =>
+  canonicalHashV1Result(
+    [...sessions]
+      .sort((left, right) => left.sessionDate.localeCompare(right.sessionDate))
+      .map((session) => ({
+        snapshotId: session.snapshotId,
+        calendarVersion: session.calendarVersion,
+        sessionDate: session.sessionDate,
+        openTime: session.openTime,
+        closeTime: session.closeTime,
+        timezone: session.timezone,
+        provider: session.provider,
+      })),
+  )
+
+export type Candidate6BoundedContentHashFailure = {
+  readonly artifact: 'bars' | 'sessions'
+  readonly cause: CanonicalHashFailure
+}
+
+export const candidate6BoundedContentHashes = (
+  bars: readonly DailyBar[],
+  sessions: readonly Candidate6DevelopmentSession[],
+): Result.Result<{ readonly bars: string; readonly sessions: string }, Candidate6BoundedContentHashFailure> => {
+  const barsHash = candidate6BoundedBarsContentHash(bars)
+  if (Result.isFailure(barsHash)) return Result.fail({ artifact: 'bars', cause: barsHash.failure })
+  const sessionsHash = candidate6BoundedSessionsContentHash(sessions)
+  return Result.isFailure(sessionsHash)
+    ? Result.fail({ artifact: 'sessions', cause: sessionsHash.failure })
+    : Result.succeed({ bars: barsHash.success, sessions: sessionsHash.success })
+}
 
 const EXPECTED_BARS_HEADER = [
   'snapshot_id',
@@ -198,6 +254,14 @@ export const parseCandidate6DevelopmentCsv = (
     if (Result.isFailure(decoded)) return candidate6DataFail(decoded.failure)
     sessions.push(decoded.success)
   }
+  const boundedContentHashes = candidate6BoundedContentHashes(bars, sessions)
+  if (Result.isFailure(boundedContentHashes)) {
+    return candidate6DataFail({
+      _tag: 'DevelopmentContentHashFailed',
+      artifact: boundedContentHashes.failure.artifact,
+      cause: boundedContentHashes.failure.cause,
+    })
+  }
   const dates = sessions.map((session) => session.sessionDate).sort()
   return Result.succeed({
     snapshotId: manifest.success.snapshotId,
@@ -207,6 +271,8 @@ export const parseCandidate6DevelopmentCsv = (
     rawManifestExportSha256: sha256(manifestCsv),
     rawBarsExportSha256: sha256(barsCsv),
     rawSessionsExportSha256: sha256(sessionsCsv),
+    boundedBarsContentHash: boundedContentHashes.success.bars,
+    boundedSessionsContentHash: boundedContentHashes.success.sessions,
     firstSession: dates[0] as IsoDate,
     lastSession: dates.at(-1) as IsoDate,
     barCount: bars.length,

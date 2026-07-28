@@ -5,7 +5,8 @@
   "status": "DEVELOPMENT_ONLY_HOLDOUT_UNTOUCHED",
   "identity": {
     "strategyVersion": "1.0.0",
-    "parameterHash": "59889076e9cff0b8c79c30f8c095b50ae9c4cd6044fe536004f3432a3287a645"
+    "parameterHash": "59889076e9cff0b8c79c30f8c095b50ae9c4cd6044fe536004f3432a3287a645",
+    "executableBehaviorHash": "2053e0b14e134489ba6f35c87d1b6ee55102bc668602833226288ec487504ba5"
   },
   "dataset": {
     "snapshotId": "2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0",
@@ -15,6 +16,8 @@
     "rawManifestExportSha256": "79400b64fcd981fc87874fbc0fd647033cfe8acadd1abb2f6a3f0af092699e43",
     "rawBarsExportSha256": "c71ba30f3bcdd373708636f7c799d6caf3e24e07fd7d428522c69167c11a0c9c",
     "rawSessionsExportSha256": "d0f182b5436c3ce374f4afaf2735c4b66247edfb78378aeff42af1efc889aabf",
+    "boundedBarsContentHash": "9fac08a198bac2dea6530e12a4406c695c84da8829b9a198f26511c822164785",
+    "boundedSessionsContentHash": "8fb5cf8accec311c6d34dd5d1074b9ac2cee38c51eaf906df26fd3479f48e358",
     "requestedDataStart": "2016-01-04",
     "observedFirstSession": "2016-01-04",
     "simulationStart": "2017-01-03",
@@ -274,5 +277,5 @@
     "Daily adjusted bars cannot represent intraday spread variation or queue position; costs are explicit conservative model assumptions.",
     "All development observations predate the May 28, 2024 U.S. T+1 transition; the sealed official trial excludes the transition month and requires positive pre- and post-transition regime results."
   ],
-  "reportHash": "64d4f3ad11d83bccf4accfe92436d9ea79fb83cd51d6281f0799b8360c843c63"
+  "reportHash": "f57299b45b259938d773bd8817ca11f22fef40573cd4580889fefc8d1a342a36"
 }

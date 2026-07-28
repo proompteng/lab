@@ -3,11 +3,16 @@ import assert from 'node:assert/strict'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { parseCandidate6DevelopmentCsv } from './development-data'
+import {
+  candidate6BoundedBarsContentHash,
+  candidate6BoundedSessionsContentHash,
+  parseCandidate6DevelopmentCsv,
+} from './development-data'
 import {
   candidate6DevelopmentProvenance,
   candidate6Protocol,
   type Candidate6DevelopmentDataset,
+  type Candidate6DevelopmentIdentity,
   type Candidate6DevelopmentManifest,
   type Candidate6DevelopmentSession,
 } from './model'
@@ -17,7 +22,6 @@ import {
   CANDIDATE_6_DEVELOPMENT_END,
   CANDIDATE_6_HOLDOUT_START,
   buildCandidate6DevelopmentReport,
-  type Candidate6DevelopmentIdentity,
   type Candidate6ResearchFailure,
 } from './research'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type DailyBar, type IsoDate } from '../types'
@@ -116,6 +120,8 @@ const syntheticDataset = (includeIncompleteFinalEvent = false): Candidate6Develo
     manifestContentHash: '6'.repeat(64),
     finalizedAt: '2026-07-27 22:30:01.850',
   }
+  const boundedBarsContentHash = success(candidate6BoundedBarsContentHash(bars))
+  const boundedSessionsContentHash = success(candidate6BoundedSessionsContentHash(sessions))
   return {
     snapshotId,
     calendarVersion,
@@ -124,6 +130,8 @@ const syntheticDataset = (includeIncompleteFinalEvent = false): Candidate6Develo
     rawManifestExportSha256: 'c'.repeat(64),
     rawBarsExportSha256: 'a'.repeat(64),
     rawSessionsExportSha256: 'b'.repeat(64),
+    boundedBarsContentHash,
+    boundedSessionsContentHash,
     firstSession: CANDIDATE_6_DEVELOPMENT_DATA_START,
     lastSession: CANDIDATE_6_DEVELOPMENT_END,
     barCount: bars.length,
@@ -142,6 +150,8 @@ const syntheticIdentity = (dataset: Candidate6DevelopmentDataset): Candidate6Dev
   rawManifestExportSha256: dataset.rawManifestExportSha256,
   rawBarsExportSha256: dataset.rawBarsExportSha256,
   rawSessionsExportSha256: dataset.rawSessionsExportSha256,
+  boundedBarsContentHash: dataset.boundedBarsContentHash,
+  boundedSessionsContentHash: dataset.boundedSessionsContentHash,
   sessionCount: dataset.sessionCount,
 })
 
@@ -175,6 +185,8 @@ describe('candidate 6 development data decoder', () => {
     expect(dataset.rawManifestExportSha256).toBe(candidate6DevelopmentProvenance.rawManifestExportSha256)
     expect(dataset.rawBarsExportSha256).toMatch(/^[0-9a-f]{64}$/)
     expect(dataset.rawSessionsExportSha256).toMatch(/^[0-9a-f]{64}$/)
+    expect(dataset.boundedBarsContentHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(dataset.boundedSessionsContentHash).toMatch(/^[0-9a-f]{64}$/)
     expect(dataset.bars[0]).toMatchObject({ symbol: 'SPY', close: 100.5, source: 'alpaca' })
     expect(dataset.sessions[0]).toMatchObject({
       snapshotId: candidate6DevelopmentProvenance.snapshotId,
@@ -274,7 +286,9 @@ describe('candidate 6 deterministic development simulation', () => {
 
     expect(reversed).toEqual(ordered)
     expect(ordered.status).toBe('DEVELOPMENT_ONLY_HOLDOUT_UNTOUCHED')
-    expect(ordered.identity.parameterHash).toBe(success(makeSealedCandidate6Preregistration()).identity.parameterHash)
+    const sealed = success(makeSealedCandidate6Preregistration())
+    expect(ordered.identity.parameterHash).toBe(sealed.identity.parameterHash)
+    expect(ordered.identity.executableBehaviorHash).toBe(sealed.identity.executableBehaviorHash)
     expect(ordered.dataset.untouchedHoldoutStart).toBe(CANDIDATE_6_HOLDOUT_START)
     expect(ordered.net.observationCount).toBeGreaterThanOrEqual(1_500)
     expect(ordered.net.entryCount).toBeGreaterThan(0)
@@ -329,6 +343,28 @@ describe('candidate 6 deterministic development simulation', () => {
       expected: dataset.rawSessionsExportSha256,
       observed: 'c'.repeat(64),
     })
+  })
+
+  test('recomputes parsed bar content before attributing metrics to the sealed export', () => {
+    const dataset = syntheticDataset()
+    const expectedIdentity = syntheticIdentity(dataset)
+    const first = dataset.bars[0] as DailyBar
+    const changed = { ...first, close: first.close + 0.5, high: Math.max(first.high, first.close + 0.5) }
+    const issue = failure(
+      buildCandidate6DevelopmentReport(
+        { ...dataset, bars: [changed, ...dataset.bars.slice(1)] },
+        candidate6Protocol,
+        expectedIdentity,
+      ),
+    )
+    expect(issue).toMatchObject({
+      _tag: 'DevelopmentIdentityMismatch',
+      field: 'boundedBarsContentHash',
+      expected: expectedIdentity.boundedBarsContentHash,
+    })
+    if (issue._tag === 'DevelopmentIdentityMismatch') {
+      expect(issue.observed).not.toBe(expectedIdentity.boundedBarsContentHash)
+    }
   })
 
   test('rejects a simulation that ends before an entered event can exit', () => {

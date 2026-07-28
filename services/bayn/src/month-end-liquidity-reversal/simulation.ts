@@ -133,6 +133,18 @@ export const candidate6SubsetMetrics = (
   predicate: (observation: Candidate6DailyObservation) => boolean,
 ): Candidate6PerformanceMetrics => candidate6Metrics(observations.filter(predicate))
 
+export const candidate6CalendarYearReturns = (
+  observations: readonly Candidate6DailyObservation[],
+): Readonly<Record<string, number>> => {
+  const years = [...new Set(observations.map((observation) => observation.sessionDate.slice(0, 4)))]
+  return Object.fromEntries(
+    years.map((year) => [
+      year,
+      candidate6SubsetMetrics(observations, (observation) => observation.sessionDate.startsWith(year)).totalReturn,
+    ]),
+  )
+}
+
 const partialFillFraction = (
   decision: Candidate6Decision,
   protocol: Candidate6Protocol,

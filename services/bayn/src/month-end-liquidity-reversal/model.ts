@@ -19,8 +19,36 @@ export const candidate6DevelopmentProvenance = {
   rawManifestExportSha256: '79400b64fcd981fc87874fbc0fd647033cfe8acadd1abb2f6a3f0af092699e43',
   rawBarsExportSha256: 'c71ba30f3bcdd373708636f7c799d6caf3e24e07fd7d428522c69167c11a0c9c',
   rawSessionsExportSha256: 'd0f182b5436c3ce374f4afaf2735c4b66247edfb78378aeff42af1efc889aabf',
+  boundedBarsContentHash: '9fac08a198bac2dea6530e12a4406c695c84da8829b9a198f26511c822164785',
+  boundedSessionsContentHash: '8fb5cf8accec311c6d34dd5d1074b9ac2cee38c51eaf906df26fd3479f48e358',
   developmentSessionCount: 1_762,
 } as const
+
+export interface Candidate6DevelopmentIdentity {
+  readonly snapshotId: string
+  readonly calendarVersion: string
+  readonly publicationAsOf: string
+  readonly manifestContentHash: string
+  readonly rawManifestExportSha256: string
+  readonly rawBarsExportSha256: string
+  readonly rawSessionsExportSha256: string
+  readonly boundedBarsContentHash: string
+  readonly boundedSessionsContentHash: string
+  readonly sessionCount: number
+}
+
+export const candidate6DevelopmentIdentity: Candidate6DevelopmentIdentity = {
+  snapshotId: candidate6DevelopmentProvenance.snapshotId,
+  calendarVersion: candidate6DevelopmentProvenance.calendarVersion,
+  publicationAsOf: candidate6DevelopmentProvenance.publicationAsOf,
+  manifestContentHash: candidate6DevelopmentProvenance.manifestContentHash,
+  rawManifestExportSha256: candidate6DevelopmentProvenance.rawManifestExportSha256,
+  rawBarsExportSha256: candidate6DevelopmentProvenance.rawBarsExportSha256,
+  rawSessionsExportSha256: candidate6DevelopmentProvenance.rawSessionsExportSha256,
+  boundedBarsContentHash: candidate6DevelopmentProvenance.boundedBarsContentHash,
+  boundedSessionsContentHash: candidate6DevelopmentProvenance.boundedSessionsContentHash,
+  sessionCount: candidate6DevelopmentProvenance.developmentSessionCount,
+}
 
 export interface Candidate6Protocol {
   readonly schemaVersion: 'bayn.month-end-liquidity-reversal.protocol.v1'
@@ -283,6 +311,8 @@ export interface Candidate6DevelopmentDataset {
   readonly rawManifestExportSha256: string
   readonly rawBarsExportSha256: string
   readonly rawSessionsExportSha256: string
+  readonly boundedBarsContentHash: string
+  readonly boundedSessionsContentHash: string
   readonly firstSession: IsoDate
   readonly lastSession: IsoDate
   readonly barCount: number
