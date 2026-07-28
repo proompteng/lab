@@ -5,43 +5,119 @@ import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http'
 
 import { canonicalHashV1 } from '../hash'
-import { Authority, IntentState, MutationOutcome, OrderSide, OrderType, TimeInForce, type Intent } from '../paper'
+import {
+  BrokerEnvironment,
+  ExecutionAccess,
+  disabledCapitalAccess,
+  enabledCapitalAccess,
+  makeExecutionAuthority,
+  type ExecutionAuthority,
+} from '../execution/authority'
+import { IntentState, MutationOutcome, OrderSide, OrderType, TimeInForce, type Intent } from '../paper'
 import {
   BrokerMutationError,
   MutationFailure,
   MutationOperation,
+  authorizeMutationAccess,
   makeMutation,
   orderRequestBody,
   submitBody,
   type BrokerMutationShape,
-  type MutationOptions,
 } from './alpaca-mutations'
-import { OrderStatus } from './alpaca'
+import {
+  AccountStatus,
+  BrokerProvider,
+  OrderStatus,
+  alpacaSandboxBaseUrl,
+  decodeBrokerConnection,
+  type BrokerReadShape,
+  type BrokerSessionShape,
+  type ReadPreflight,
+} from './alpaca'
+import { unusedAssetBySymbol, unusedMarketCalendar } from './alpaca-test-support'
+import { decodeOrder } from './alpaca/model'
+import { normalizeOrderResult } from './alpaca/normalizers'
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const orderId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const assetId = 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415'
 
-const accountResponse = {
-  id: accountId,
-  account_number: '010203ABCD',
-  status: 'ACTIVE',
-  currency: 'USD',
-  cash: '100000',
-  equity: '100000',
-  buying_power: '200000',
-  account_blocked: false,
-  trading_blocked: false,
-  trade_suspended_by_user: false,
+const connection = Result.getOrThrow(
+  decodeBrokerConnection({
+    provider: BrokerProvider.Alpaca,
+    environment: BrokerEnvironment.Sandbox,
+    baseUrl: alpacaSandboxBaseUrl,
+    expectedAccountId: accountId,
+    key: Redacted.make('paper-key'),
+    secret: Redacted.make('paper-secret'),
+    proxyUrl: 'http://bayn-egress-proxy:3128',
+    operationTimeoutMs: 1_000,
+    retryAttempts: 0,
+  }),
+)
+
+const submitAuthority = makeExecutionAuthority(
+  BrokerEnvironment.Sandbox,
+  ExecutionAccess.SubmitOrders,
+  disabledCapitalAccess,
+)
+
+const preflight: ReadPreflight = {
+  provider: BrokerProvider.Alpaca,
+  environment: BrokerEnvironment.Sandbox,
+  baseUrl: alpacaSandboxBaseUrl,
+  accountId,
+  accountStatus: AccountStatus.Active,
+  accountBlocked: false,
+  tradingBlocked: false,
+  tradeSuspendedByUser: false,
+  accountHash: '1'.repeat(64),
+  fractionalTrading: true,
+  accountConfigurationHash: '2'.repeat(64),
+  positionCount: 0,
+  positionsHash: '3'.repeat(64),
+  openOrderCount: 0,
+  recentOrderCount: 0,
+  ordersHash: '4'.repeat(64),
+  fillCount: 0,
+  fillsHash: '5'.repeat(64),
+  marketCalendarSessionCount: 1,
+  marketCalendarHash: '6'.repeat(64),
+  orderById: 'NOT_FOUND',
+  orderByClientId: 'NOT_FOUND',
 }
 
-const options: MutationOptions = {
-  expectedAccountId: accountId,
-  maximumAuthority: Authority.Paper,
-  key: Redacted.make('paper-key'),
-  secret: Redacted.make('paper-secret'),
-  proxyUrl: 'http://bayn-egress-proxy:3128',
-  operationTimeoutMs: 1_000,
+const unexpectedRead = <A>(label: string): Effect.Effect<A> => Effect.die(new Error(`unexpected ${label}`))
+
+const verifiedSession = (
+  options: {
+    readonly operationTimeoutMs?: number
+    readonly read?: Partial<BrokerReadShape>
+  } = {},
+): BrokerSessionShape => ({
+  connection: {
+    ...connection,
+    operationTimeoutMs: options.operationTimeoutMs ?? connection.operationTimeoutMs,
+  },
+  read: {
+    account: unexpectedRead('account read'),
+    accountConfiguration: unexpectedRead('account configuration read'),
+    assetBySymbol: unusedAssetBySymbol,
+    positions: unexpectedRead('positions read'),
+    orders: () => unexpectedRead('orders read'),
+    orderById: () => unexpectedRead('order-by-id read'),
+    orderByClientId: () => unexpectedRead('order-by-client-id read'),
+    fillActivities: () => unexpectedRead('fill activities read'),
+    marketCalendar: unusedMarketCalendar,
+    ...options.read,
+  },
+  preflight,
+})
+
+interface MutationHarnessOptions {
+  readonly authority?: ExecutionAuthority
+  readonly operationTimeoutMs?: number
+  readonly session?: BrokerSessionShape
 }
 
 const intent: Intent = {
@@ -119,19 +195,15 @@ const response = (
     }),
   )
 
-const withVerifiedAccount = (client: HttpClient.HttpClient): HttpClient.HttpClient =>
-  HttpClient.make((request, url) =>
-    url.pathname === '/v2/account' ? Effect.succeed(response(request, accountResponse)) : client.execute(request),
-  )
-
 const withMutation = <A, E>(
   client: HttpClient.HttpClient,
   use: (mutation: BrokerMutationShape) => Effect.Effect<A, E>,
-  mutationOptions: MutationOptions = options,
+  options: MutationHarnessOptions = {},
 ): Effect.Effect<A, BrokerMutationError | E> => {
-  return makeMutation(mutationOptions).pipe(
+  const session = options.session ?? verifiedSession({ operationTimeoutMs: options.operationTimeoutMs })
+  return makeMutation(session, options.authority ?? submitAuthority).pipe(
     Effect.flatMap(use),
-    Effect.provideService(HttpClient.HttpClient, withVerifiedAccount(client)),
+    Effect.provideService(HttpClient.HttpClient, client),
   )
 }
 
@@ -167,48 +239,119 @@ describe('Alpaca paper mutations', () => {
     })
   })
 
-  test('refuses to construct mutation capability below explicit PAPER authority', async () => {
+  test('refuses to construct mutation capability without explicit submit-orders access', async () => {
     let requests = 0
     const client = HttpClient.make(() => {
       requests += 1
-      return Effect.die(new Error('OBSERVE must not make a broker request through the mutation constructor'))
+      return Effect.die(new Error('read-only access must not make a broker mutation request'))
     })
+    const readOnly = makeExecutionAuthority(BrokerEnvironment.Sandbox, ExecutionAccess.ReadOnly, disabledCapitalAccess)
 
     const failure = await Effect.runPromise(
-      Effect.flip(
-        makeMutation({ ...options, maximumAuthority: Authority.Observe }).pipe(
-          Effect.provideService(HttpClient.HttpClient, client),
-        ),
-      ),
+      Effect.flip(makeMutation(verifiedSession(), readOnly).pipe(Effect.provideService(HttpClient.HttpClient, client))),
     )
 
     expect(failure).toMatchObject({
       operation: MutationOperation.Submit,
       failure: MutationFailure.Configuration,
       outcome: MutationOutcome.Known,
-      message: 'Alpaca mutation capability requires explicit PAPER maximum authority',
+      message: 'Alpaca mutation capability requires explicit submit-orders execution access',
     })
     expect(requests).toBe(0)
   })
 
-  test('refuses to expose mutation capability when the credentials resolve a different account', async () => {
+  test('gates execution access independently from broker environment and capital access', () => {
+    for (const environment of [BrokerEnvironment.Sandbox, BrokerEnvironment.Live]) {
+      for (const capitalAccess of [disabledCapitalAccess, enabledCapitalAccess('8'.repeat(64))]) {
+        const readOnly = makeExecutionAuthority(environment, ExecutionAccess.ReadOnly, capitalAccess)
+        const submitOrders = makeExecutionAuthority(environment, ExecutionAccess.SubmitOrders, capitalAccess)
+        expect(Result.isFailure(authorizeMutationAccess(readOnly))).toBe(true)
+        expect(authorizeMutationAccess(submitOrders)).toEqual(Result.succeed(ExecutionAccess.SubmitOrders))
+      }
+    }
+  })
+
+  test('refuses authority and verified-session environment mismatch without broker I/O', async () => {
     let mutationCalls = 0
     const client = HttpClient.make(() => {
       mutationCalls += 1
-      return Effect.die(new Error('mutation request must not run'))
+      return Effect.die(new Error('environment mismatch must not make a mutation request'))
     })
-    const wrongAccount = '40b22fc4-23bc-446c-bf07-bea43b5d6c35'
+    const liveAuthority = makeExecutionAuthority(
+      BrokerEnvironment.Live,
+      ExecutionAccess.SubmitOrders,
+      disabledCapitalAccess,
+    )
 
     const failure = await Effect.runPromise(
-      Effect.flip(withMutation(client, () => Effect.void, { ...options, expectedAccountId: wrongAccount })),
+      Effect.flip(withMutation(client, () => Effect.void, { authority: liveAuthority })),
     )
 
     expect(failure).toMatchObject({
       operation: MutationOperation.Submit,
       failure: MutationFailure.Configuration,
       outcome: MutationOutcome.Known,
+      message: 'Alpaca mutation authority environment does not match the verified broker session',
     })
     expect(mutationCalls).toBe(0)
+  })
+
+  test('refuses a structurally mismatched verified session before broker I/O', async () => {
+    let mutationCalls = 0
+    const client = HttpClient.make(() => {
+      mutationCalls += 1
+      return Effect.die(new Error('session binding mismatch must not make a mutation request'))
+    })
+    const session: BrokerSessionShape = {
+      ...verifiedSession(),
+      preflight: {
+        ...preflight,
+        accountId: '40b22fc4-23bc-446c-bf07-bea43b5d6c35',
+      },
+    }
+
+    const failure = await Effect.runPromise(Effect.flip(withMutation(client, () => Effect.void, { session })))
+
+    expect(failure).toMatchObject({
+      operation: MutationOperation.Submit,
+      failure: MutationFailure.Configuration,
+      outcome: MutationOutcome.Known,
+      message: 'Alpaca mutation capability requires an exact verified broker session binding',
+    })
+    expect(mutationCalls).toBe(0)
+  })
+
+  test('delegates durable recovery lookups to the exact verified session read adapter', async () => {
+    const lookups: string[] = []
+    const readResult = {
+      value: Result.getOrThrow(
+        normalizeOrderResult(Result.getOrThrow(decodeOrder(orderResponse)), accountId, intent.createdAt),
+      ),
+      evidence: { requestId: 'lookup', status: 200, contentHash: '7'.repeat(64), observedAt: intent.createdAt },
+    }
+    const session = verifiedSession({
+      read: {
+        orderById: (value) => {
+          lookups.push(`id:${value}`)
+          return Effect.succeed(readResult)
+        },
+        orderByClientId: (value) => {
+          lookups.push(`client:${value}`)
+          return Effect.succeed(readResult)
+        },
+      },
+    })
+    const client = HttpClient.make(() => Effect.die(new Error('lookup delegation must not use mutation HTTP I/O')))
+
+    await Effect.runPromise(
+      withMutation(
+        client,
+        (mutation) => Effect.all([mutation.orderById(orderId), mutation.orderByClientId(intent.clientOrderId)]),
+        { session },
+      ),
+    )
+
+    expect(lookups).toEqual([`id:${orderId}`, `client:${intent.clientOrderId}`])
   })
 
   test('submits the exact IO_STARTED intent once and verifies the accepted order', async () => {
@@ -299,7 +442,7 @@ describe('Alpaca paper mutations', () => {
           releaseBody()
           return yield* Fiber.join(fiber)
         }),
-      { ...options, operationTimeoutMs: 5_000 },
+      { operationTimeoutMs: 5_000 },
     ).pipe(Effect.provide(TestClock.layer()))
 
     const receipt = await Effect.runPromise(program)
@@ -420,7 +563,7 @@ describe('Alpaca paper mutations', () => {
       )
     })
 
-    const program = makeMutation({ ...options, operationTimeoutMs: 10 }).pipe(
+    const program = makeMutation(verifiedSession({ operationTimeoutMs: 10 }), submitAuthority).pipe(
       Effect.flatMap((mutation) =>
         Effect.gen(function* () {
           const fiber = yield* Effect.flip(mutation.submit(intent)).pipe(Effect.forkChild)
@@ -429,7 +572,7 @@ describe('Alpaca paper mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       ),
-      Effect.provideService(HttpClient.HttpClient, withVerifiedAccount(client)),
+      Effect.provideService(HttpClient.HttpClient, client),
       Effect.provide(TestClock.layer()),
     )
 
@@ -480,7 +623,7 @@ describe('Alpaca paper mutations', () => {
       )
     })
 
-    const program = makeMutation({ ...options, operationTimeoutMs: 10 }).pipe(
+    const program = makeMutation(verifiedSession({ operationTimeoutMs: 10 }), submitAuthority).pipe(
       Effect.flatMap((mutation) =>
         Effect.gen(function* () {
           const fiber = yield* Effect.flip(mutation.submit(intent)).pipe(Effect.forkChild)
@@ -489,7 +632,7 @@ describe('Alpaca paper mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       ),
-      Effect.provideService(HttpClient.HttpClient, withVerifiedAccount(client)),
+      Effect.provideService(HttpClient.HttpClient, client),
       Effect.provide(TestClock.layer()),
     )
 
@@ -515,8 +658,8 @@ describe('Alpaca paper mutations', () => {
             Effect.ensuring(Ref.update(finalized, (count) => count + 1)),
           )
         })
-        const mutation = yield* makeMutation(options).pipe(
-          Effect.provideService(HttpClient.HttpClient, withVerifiedAccount(client)),
+        const mutation = yield* makeMutation(verifiedSession(), submitAuthority).pipe(
+          Effect.provideService(HttpClient.HttpClient, client),
         )
         const fiber = yield* mutation.submit(intent).pipe(Effect.forkChild({ startImmediately: true }))
         yield* Deferred.await(started)
@@ -610,7 +753,7 @@ describe('Alpaca paper mutations', () => {
           releaseBody()
           return yield* Fiber.join(fiber)
         }),
-      { ...options, operationTimeoutMs: 5_000 },
+      { operationTimeoutMs: 5_000 },
     ).pipe(Effect.provide(TestClock.layer()))
 
     const failure = await Effect.runPromise(program)

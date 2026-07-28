@@ -2069,6 +2069,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           },
         })
       },
+      orderById: () => Effect.die(new Error('unexpected coordinator order-by-id lookup')),
+      orderByClientId: () => Effect.die(new Error('unexpected coordinator order-by-client-id lookup')),
     }
     const coordinator = makeCoordinatorRuntime(broker)
     const observed = await coordinator
@@ -3076,6 +3078,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         brokerCalls.cancel += 1
         return Effect.die(new Error('generation-binding failure must not reach the broker'))
       },
+      orderById: () => Effect.die(new Error('generation-binding order lookup must not reach the broker')),
+      orderByClientId: () => Effect.die(new Error('generation-binding order lookup must not reach the broker')),
     })
     try {
       for (const variant of variants) {
@@ -3145,6 +3149,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         return Effect.die(new Error('historical-generation submit must not reach the broker'))
       },
       cancel: () => Effect.die(new Error('unexpected cancel')),
+      orderById: () => Effect.die(new Error('historical-generation order lookup must not reach the broker')),
+      orderByClientId: () => Effect.die(new Error('historical-generation order lookup must not reach the broker')),
     })
     try {
       const observed = await coordinator.runPromise(
@@ -3255,6 +3261,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         brokerCalls.cancel += 1
         return Effect.die(new Error('mismatched-account cancel must not reach the broker'))
       },
+      orderById: () => Effect.die(new Error('mismatched-account order lookup must not reach the broker')),
+      orderByClientId: () => Effect.die(new Error('mismatched-account order lookup must not reach the broker')),
     }
     const coordinator = makeCoordinatorRuntime(broker)
 

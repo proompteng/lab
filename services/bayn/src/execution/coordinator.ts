@@ -1,7 +1,6 @@
 import { Clock, Data, Effect, Match, Result } from 'effect'
 
 import { BrokerMutation, MutationOperation } from '../broker/alpaca-mutations'
-import { BrokerRead } from '../broker/alpaca'
 import { IntentState, type Intent } from '../paper'
 import {
   cancellationIdentity,
@@ -55,7 +54,7 @@ interface MutationServices {
 
 interface RecoveryServices {
   readonly mutations: MutationStore['Service']
-  readonly broker: BrokerRead['Service']
+  readonly broker: BrokerMutation['Service']
 }
 
 const currentInstant = currentUtcInstant
@@ -455,5 +454,5 @@ const runRecovery = (services: RecoveryServices, intentId: string, operation: Mu
 export const recover = (intentId: string, operation: MutationOperation) =>
   Effect.all({
     mutations: MutationStore,
-    broker: BrokerRead,
+    broker: BrokerMutation,
   }).pipe(Effect.flatMap((services) => runRecovery(services, intentId, operation)))

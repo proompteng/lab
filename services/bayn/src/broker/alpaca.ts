@@ -1,8 +1,3 @@
-import { Result } from 'effect'
-
-import { OrderResponseSchema, type Order } from './alpaca/model'
-import { normalizeOrderResult } from './alpaca/normalizers'
-
 export {
   BrokerProvider,
   alpacaLiveBaseUrl,
@@ -83,7 +78,3 @@ export {
   live,
   type BrokerSessionShape,
 } from './alpaca/session'
-
-/** @deprecated Mutation compatibility adapter. Read-side normalization uses `normalizeOrderResult`. */
-export const normalizeOrder = (raw: typeof OrderResponseSchema.Type, accountId: string, observedAt: string): Order =>
-  Result.getOrThrow(normalizeOrderResult(raw, accountId, observedAt))

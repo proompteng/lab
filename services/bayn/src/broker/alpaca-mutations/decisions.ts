@@ -1,8 +1,8 @@
 import { Data, Redacted, Result, Schema } from 'effect'
 
 import { canonicalHashV1OrThrow, canonicalHashV1Result } from '../../hash'
+import { ExecutionAccess, type ExecutionAuthority } from '../../execution/authority'
 import {
-  Authority,
   IntentSchema,
   IntentState,
   OrderSide as DomainSide,
@@ -10,16 +10,10 @@ import {
   TimeInForce as DomainTimeInForce,
   type Intent,
 } from '../../paper'
-import { StrictNonEmptyStringSchema as NonEmptyString } from '../../schemas'
-import {
-  AssetClass,
-  OrderResponseSchema,
-  OrderSide,
-  OrderType,
-  TimeInForce,
-  normalizeOrder,
-  type Order,
-} from '../alpaca'
+import { AssetClass, OrderSide, OrderType, TimeInForce, type BrokerSessionShape, type Order } from '../alpaca'
+import { decodeErrorResponse, decodeOrder } from '../alpaca/model'
+import { normalizeOrderResult } from '../alpaca/normalizers'
+import type { BrokerConnection } from '../connection'
 import {
   BrokerMutationError,
   MutationOperation,
@@ -30,43 +24,24 @@ import {
   unknownOutcome,
   type CancelReceipt,
   type MutationEvidence,
-  type MutationOptions,
   type SubmitReceipt,
 } from './model'
 
-const responseParseOptions = { onExcessProperty: 'ignore' } as const
 const inputParseOptions = { onExcessProperty: 'error' } as const
 
 const Uuid = Schema.String.check(
   Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
 )
-const ErrorCode = Schema.Union([NonEmptyString.check(Schema.isMaxLength(64)), Schema.Int])
-const ErrorMessage = NonEmptyString.check(Schema.isMaxLength(1_000))
-const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
-
-const ErrorResponseSchema = Schema.Struct({
-  code: ErrorCode,
-  message: ErrorMessage,
-})
-const OptionsSchema = Schema.Struct({
-  expectedAccountId: Uuid,
-  maximumAuthority: Schema.Enum(Authority),
-  operationTimeoutMs: PositiveInteger,
-})
-
-const decodeErrorResponse = Schema.decodeUnknownResult(ErrorResponseSchema, responseParseOptions)
-const decodeOrderResponse = Schema.decodeUnknownResult(OrderResponseSchema, responseParseOptions)
 const decodeIntent = Schema.decodeUnknownResult(IntentSchema, inputParseOptions)
-const decodeOptions = Schema.decodeUnknownResult(OptionsSchema, inputParseOptions)
 const decodeOrderId = Schema.decodeUnknownResult(Uuid)
 const decodeJsonResponseBody = Schema.decodeUnknownResult(Schema.UnknownFromJsonString)
 
-export interface ResolvedMutationOptions {
+export interface ResolvedMutationCapability {
+  readonly connection: BrokerConnection
   readonly expectedAccountId: string
   readonly operationTimeoutMs: number
   readonly key: string
   readonly secret: string
-  readonly proxyUrl: string
 }
 
 export interface OrderRequestBody {
@@ -152,31 +127,57 @@ const microsToDecimal = (micros: bigint): string => {
   return fraction.length === 0 ? whole.toString() : `${whole.toString()}.${fraction}`
 }
 
-export const resolveMutationOptions = (
-  options: MutationOptions,
-): Result.Result<ResolvedMutationOptions, BrokerMutationError> => {
-  const decoded = decodeOptions({
-    expectedAccountId: options.expectedAccountId,
-    maximumAuthority: options.maximumAuthority,
-    operationTimeoutMs: options.operationTimeoutMs,
-  })
-  if (Result.isFailure(decoded)) {
-    return Result.fail(configurationError('invalid Alpaca mutation options', decoded.failure))
+export const authorizeMutationAccess = (
+  authority: ExecutionAuthority,
+): Result.Result<ExecutionAccess.SubmitOrders, BrokerMutationError> =>
+  authority.executionAccess === ExecutionAccess.SubmitOrders
+    ? Result.succeed(ExecutionAccess.SubmitOrders)
+    : Result.fail(configurationError('Alpaca mutation capability requires explicit submit-orders execution access'))
+
+export const resolveMutationCapability = (
+  session: BrokerSessionShape,
+  authority: ExecutionAuthority,
+): Result.Result<ResolvedMutationCapability, BrokerMutationError> => {
+  const connection = session.connection
+  const preflight = session.preflight
+  if (
+    preflight.provider !== connection.provider ||
+    preflight.environment !== connection.environment ||
+    preflight.baseUrl !== connection.baseUrl ||
+    preflight.accountId !== connection.expectedAccountId
+  ) {
+    return Result.fail(
+      configurationError('Alpaca mutation capability requires an exact verified broker session binding', {
+        _tag: 'BrokerSessionBindingMismatch',
+        connectionProvider: connection.provider,
+        preflightProvider: preflight.provider,
+        connectionEnvironment: connection.environment,
+        preflightEnvironment: preflight.environment,
+        connectionBaseUrl: connection.baseUrl,
+        preflightBaseUrl: preflight.baseUrl,
+        connectionAccountId: connection.expectedAccountId,
+        preflightAccountId: preflight.accountId,
+      }),
+    )
   }
-  if (decoded.success.maximumAuthority !== Authority.Paper) {
-    return Result.fail(configurationError('Alpaca mutation capability requires explicit PAPER maximum authority'))
-  }
-  const key = Redacted.value(options.key)
-  const secret = Redacted.value(options.secret)
-  if (key.length === 0 || key.trim() !== key || secret.length === 0 || secret.trim() !== secret) {
-    return Result.fail(configurationError('Alpaca credentials must be non-empty without surrounding whitespace'))
-  }
-  return Result.succeed({
-    expectedAccountId: decoded.success.expectedAccountId,
-    operationTimeoutMs: decoded.success.operationTimeoutMs,
-    key,
-    secret,
-    proxyUrl: options.proxyUrl,
+  return Result.gen(function* () {
+    yield* authorizeMutationAccess(authority)
+    if (authority.brokerEnvironment !== connection.environment) {
+      return yield* Result.fail(
+        configurationError('Alpaca mutation authority environment does not match the verified broker session', {
+          _tag: 'BrokerEnvironmentMismatch',
+          authorityEnvironment: authority.brokerEnvironment,
+          connectionEnvironment: connection.environment,
+        }),
+      )
+    }
+    return {
+      connection,
+      expectedAccountId: connection.expectedAccountId,
+      operationTimeoutMs: connection.operationTimeoutMs,
+      key: Redacted.value(connection.key),
+      secret: Redacted.value(connection.secret),
+    }
   })
 }
 
@@ -324,21 +325,19 @@ const canonicalCancelResponseHash = (facts: CancelResponseFacts): Result.Result<
 }
 
 const normalizeAcceptedOrder = (
-  raw: typeof OrderResponseSchema.Type,
+  raw: Parameters<typeof normalizeOrderResult>[0],
   facts: SubmitResponseFacts,
   evidence: MutationEvidence,
 ): Result.Result<Order, BrokerMutationError> =>
-  Result.try({
-    try: () => normalizeOrder(raw, facts.intent.accountId, facts.observedAt),
-    catch: (cause) =>
-      unknownOutcome(
-        MutationOperation.Submit,
-        'Alpaca submit response violates the order contract',
-        facts.requestHash,
-        evidence,
-        cause,
-      ),
-  })
+  Result.mapError(normalizeOrderResult(raw, facts.intent.accountId, facts.observedAt), (cause) =>
+    unknownOutcome(
+      MutationOperation.Submit,
+      'Alpaca submit response violates the order contract',
+      facts.requestHash,
+      evidence,
+      cause,
+    ),
+  )
 
 const acceptedOrderMatches = (order: Order, facts: SubmitResponseFacts): boolean =>
   order.accountId === facts.intent.accountId &&
@@ -384,7 +383,7 @@ export const classifySubmitResponse = (
     )
   }
 
-  const decoded = decodeOrderResponse(facts.body)
+  const decoded = decodeOrder(facts.body)
   if (Result.isFailure(decoded)) {
     return Result.fail(
       unknownOutcome(

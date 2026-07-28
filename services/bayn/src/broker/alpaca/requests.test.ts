@@ -9,12 +9,14 @@ import {
   accountConfigurationUrl,
   accountUrl,
   assetBySymbolUrl,
+  cancelOrderUrl,
   fillActivitiesRequest,
   marketCalendarUrl,
   orderByClientIdUrl,
   orderByIdUrl,
   ordersUrl,
   positionsUrl,
+  submitOrderUrl,
 } from './requests'
 
 const connection = Result.getOrThrow(
@@ -41,6 +43,8 @@ describe('Alpaca read request builders', () => {
     expect(orderByClientIdUrl(connection, 'client/order').toString()).toBe(
       `${alpacaSandboxBaseUrl}/v2/orders:by_client_order_id?client_order_id=client%2Forder`,
     )
+    expect(submitOrderUrl(connection).toString()).toBe(`${alpacaSandboxBaseUrl}/v2/orders`)
+    expect(cancelOrderUrl(connection, 'order/id').toString()).toBe(`${alpacaSandboxBaseUrl}/v2/orders/order%2Fid`)
   })
 
   test('constructs ordered, encoded collection and calendar queries from decoded values', () => {
