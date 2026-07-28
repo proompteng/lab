@@ -11,8 +11,8 @@ import ./bun-workspace-service.nix {
   serviceName = "froussard";
   packageName = "froussard";
   depsHash = {
-    x86_64-linux = "sha256-PDp28eJpWfMAzRDCWsMVBFwIkJeUt6m/7tRUVk27au4=";
-    aarch64-linux = "sha256-EaohxXM/f1NFx6Sx0tPJZ9RB5yQADHkDK+iJVyxwD20=";
+    x86_64-linux = "sha256-0HkC0E6wnNY9cUsAgYC7pfrTxgAzTblLNl730QNbIHI=";
+    aarch64-linux = "sha256-PzfUuI8vbOUedsg/aS7TE0AMlND/ojeDrhOiKrE9jIY=";
   };
   installFilters = [
     "@proompteng/agent-contracts"
