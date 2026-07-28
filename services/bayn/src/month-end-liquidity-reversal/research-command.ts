@@ -21,18 +21,25 @@ const formatJsonArtifacts = async (paths: readonly string[]): Promise<boolean> =
 }
 
 const main = async (arguments_: readonly string[]): Promise<number> => {
-  const [inputPath, snapshotId, outputPath, preregistrationOutputPath] = arguments_
+  const [barsInputPath, sessionsInputPath, manifestInputPath, outputPath, preregistrationOutputPath] = arguments_
   if (
-    inputPath === undefined ||
-    snapshotId === undefined ||
+    barsInputPath === undefined ||
+    sessionsInputPath === undefined ||
+    manifestInputPath === undefined ||
     outputPath === undefined ||
     preregistrationOutputPath === undefined
   ) {
-    console.error('usage: research-command.ts <csv> <snapshot-id> <report-json> <preregistration-json>')
+    console.error(
+      'usage: research-command.ts <bars-csv> <sessions-csv> <manifest-csv> <report-json> <preregistration-json>',
+    )
     return 2
   }
-  const csv = await Bun.file(inputPath).text()
-  const dataset = parseCandidate6DevelopmentCsv(csv, snapshotId)
+  const [barsCsv, sessionsCsv, manifestCsv] = await Promise.all([
+    Bun.file(barsInputPath).text(),
+    Bun.file(sessionsInputPath).text(),
+    Bun.file(manifestInputPath).text(),
+  ])
+  const dataset = parseCandidate6DevelopmentCsv(barsCsv, sessionsCsv, manifestCsv)
   if (Result.isFailure(dataset)) {
     console.error(JSON.stringify(dataset.failure))
     return 1

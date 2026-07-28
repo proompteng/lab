@@ -69,6 +69,12 @@ describe('candidate 6 sealed preregistration', () => {
         ;(copy.data as { qualificationEnd: string }).qualificationEnd = '2025-12-30'
       }),
       mutate(material, (copy) => {
+        ;(copy.data as { developmentSessionsExportSha256: string }).developmentSessionsExportSha256 = '0'.repeat(64)
+      }),
+      mutate(material, (copy) => {
+        ;(copy.data as { developmentManifestExportSha256: string }).developmentManifestExportSha256 = '0'.repeat(64)
+      }),
+      mutate(material, (copy) => {
         ;(copy.features as { pressureReturn: string }).pressureReturn = 'different-feature'
       }),
       mutate(material, (copy) => {

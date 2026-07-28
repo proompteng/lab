@@ -8,11 +8,11 @@ live-capital trade occurred.
 - Candidate ordinal: `6`
 - Strategy: `month-end-liquidity-reversal`
 - Strategy version: `1.0.0`
-- Parameter hash: `8dddde2843a6134328937653e504f9f3c5ad343db3a748da403b46025143de9a`
-- Strategy hash: `48482eb04977dfe3368ffcd26fffe91aab60d05819d7e962130f8527f61c7f73`
-- Canonical preregistration hash: `9e6b4239e7573b5413a7a7a62389e873d7e8ee5e0c022ac5ce6fdcfe5c532359`
+- Parameter hash: `59889076e9cff0b8c79c30f8c095b50ae9c4cd6044fe536004f3432a3287a645`
+- Strategy hash: `34784700cbb8b689c2c9c3220b982fa81bc162feeb4676343771d437905eb8ba`
+- Canonical preregistration hash: `9d960586464a2214f77f988a51196488903370b0dde760239049eb26c236905d`
 - Canonical preregistration: `ordinal-6-month-end-liquidity-reversal-preregistration.json`
-- Development report hash: `674caeaee707bd0f8d4ed55c209f91336e974982080702beaf0d51708ea7977c`
+- Development report hash: `64d4f3ad11d83bccf4accfe92436d9ea79fb83cd51d6281f0799b8360c843c63`
 - Development report: `ordinal-6-month-end-liquidity-reversal-development-report.json`
 - Source base: `3a2d6aad649a5ec935b6efc291273f0818628ca5`
 
@@ -53,17 +53,26 @@ pressure may partially reverse in SPY after sufficiently negative pressure throu
 ## Frozen data boundary
 
 - Development source snapshot: `2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0`
-- Raw bounded export SHA-256: `f9bcce0068addb5e1f517e0e37c40b30a615a6837436618cc29811a6add5600f`
+- Snapshot manifest publication as-of: `2026-07-27`
+- Snapshot manifest content hash: `7b1216c8d698da4b2e74a5a77584c9863608edab0ad1c7331f37d039ddb1a764`
+- Raw manifest export SHA-256: `79400b64fcd981fc87874fbc0fd647033cfe8acadd1abb2f6a3f0af092699e43`
+- Raw bounded bars export SHA-256: `c71ba30f3bcdd373708636f7c799d6caf3e24e07fd7d428522c69167c11a0c9c`
+- Raw bounded official-session export SHA-256: `d0f182b5436c3ce374f4afaf2735c4b66247edfb78378aeff42af1efc889aabf`
+- Authoritative manifest source: `signal.snapshot_manifests_v2`
+- Official calendar version: `alpaca-us-equity-calendar-v1` from `signal.exchange_sessions_v1`
 - Development data requested and observed: `2016-01-04` through `2022-12-30`
 - Development simulation: `2017-01-03` through `2022-12-30`
-- Export size: 8,810 cross-asset bars; 1,762 SPY bars used by the strategy
+- Export size: 8,810 cross-asset bars and 1,762 official sessions; all 1,762 SPY bars match the calendar exactly
 - Untouched official qualification window: `2023-01-03` through `2025-12-31`
 - Required official publication cut: `2025-12-31`
 
-The available immutable snapshot catalog began after the development period. Research used the current immutable
-snapshot but issued a bounded query containing `session_date <= 2022-12-30`. No row on or after `2023-01-03` was
-queried, exported, simulated, or inspected. The raw export is not committed; only its identity and deterministic report
-are committed.
+The available immutable snapshot catalog began after the development period. Research read one manifest metadata row,
+then issued bounded bar and official-session queries containing `session_date <= 2022-12-30`. No bar or session row on
+or after `2023-01-03` was queried, exported, simulated, or inspected. Every bounded bar carries the snapshot ID and
+publication date and must match the independently decoded, canonically verified manifest. The raw exports are not
+committed; only their identities and the deterministic report are committed. The simulator rejects any missing,
+duplicate, or extra SPY bar relative to the sealed official session calendar, so omitted sessions cannot shift
+`T-4`/`T+3` offsets.
 
 ## Frozen strategy and execution
 
@@ -79,7 +88,8 @@ are committed.
 - Costs: 2.5 bps half-spread plus 2.5 bps slippage per side, SEC/TAF/CAT sell fees, one-session latency, and a
   deterministic 10% probability of a 50% partial fill.
 - Transition exclusion: no entry or held exposure from May 28 through June 28, 2024.
-- Missing, duplicate, future, stale, publication-session-mismatched, non-finite, unadjusted, wrong-source, wrong-feed,
+- Missing, blank, or whitespace numeric fields; missing, duplicate, or extra official-session bars; invalid calendar
+  dates; manifest, snapshot, or publication mismatches; future, stale, non-finite, unadjusted, wrong-source, wrong-feed,
   wrong-schema, insufficient-history, or insufficient-liquidity inputs fail closed. No imputation is allowed.
 
 ## Development evidence

@@ -4,8 +4,8 @@
   "identity": {
     "strategyName": "month-end-liquidity-reversal",
     "strategyVersion": "1.0.0",
-    "parameterHash": "8dddde2843a6134328937653e504f9f3c5ad343db3a748da403b46025143de9a",
-    "strategyHash": "48482eb04977dfe3368ffcd26fffe91aab60d05819d7e962130f8527f61c7f73"
+    "parameterHash": "59889076e9cff0b8c79c30f8c095b50ae9c4cd6044fe536004f3432a3287a645",
+    "strategyHash": "34784700cbb8b689c2c9c3220b982fa81bc162feeb4676343771d437905eb8ba"
   },
   "lineage": {
     "priorTerminalCandidates": [
@@ -49,6 +49,18 @@
   },
   "data": {
     "universeId": "cross-asset-taa-v1",
+    "calendarVersion": "alpaca-us-equity-calendar-v1",
+    "authoritativeManifestSource": "signal.snapshot_manifests_v2",
+    "authoritativeSessionSource": "signal.exchange_sessions_v1",
+    "requireExactBarCalendarMatch": true,
+    "requireExportManifestProvenanceMatch": true,
+    "developmentSnapshotId": "2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0",
+    "developmentPublicationAsOf": "2026-07-27",
+    "developmentManifestContentHash": "7b1216c8d698da4b2e74a5a77584c9863608edab0ad1c7331f37d039ddb1a764",
+    "developmentManifestExportSha256": "79400b64fcd981fc87874fbc0fd647033cfe8acadd1abb2f6a3f0af092699e43",
+    "developmentBarsExportSha256": "c71ba30f3bcdd373708636f7c799d6caf3e24e07fd7d428522c69167c11a0c9c",
+    "developmentSessionsExportSha256": "d0f182b5436c3ce374f4afaf2735c4b66247edfb78378aeff42af1efc889aabf",
+    "developmentSessionCount": 1762,
     "tradableUniverse": ["SPY"],
     "developmentDataStart": "2016-01-04",
     "developmentSimulationStart": "2017-01-03",
@@ -162,5 +174,5 @@
     "liveCapitalEnabled": false,
     "brokerMutationEnabled": false
   },
-  "preregistrationHash": "9e6b4239e7573b5413a7a7a62389e873d7e8ee5e0c022ac5ce6fdcfe5c532359"
+  "preregistrationHash": "9d960586464a2214f77f988a51196488903370b0dde760239049eb26c236905d"
 }

@@ -9,9 +9,16 @@ import {
   type Candidate6Protocol,
 } from './model'
 import {
+  CANDIDATE_6_DEVELOPMENT_BARS_EXPORT_SHA256,
   CANDIDATE_6_DEVELOPMENT_DATA_START,
   CANDIDATE_6_DEVELOPMENT_END,
+  CANDIDATE_6_DEVELOPMENT_MANIFEST_CONTENT_HASH,
+  CANDIDATE_6_DEVELOPMENT_MANIFEST_EXPORT_SHA256,
+  CANDIDATE_6_DEVELOPMENT_PUBLICATION_AS_OF,
+  CANDIDATE_6_DEVELOPMENT_SESSION_COUNT,
+  CANDIDATE_6_DEVELOPMENT_SESSIONS_EXPORT_SHA256,
   CANDIDATE_6_DEVELOPMENT_SIMULATION_START,
+  CANDIDATE_6_DEVELOPMENT_SNAPSHOT_ID,
   CANDIDATE_6_HOLDOUT_START,
 } from './research'
 
@@ -77,6 +84,18 @@ export interface Candidate6PreregistrationMaterial {
   }
   readonly data: {
     readonly universeId: 'cross-asset-taa-v1'
+    readonly calendarVersion: 'alpaca-us-equity-calendar-v1'
+    readonly authoritativeManifestSource: 'signal.snapshot_manifests_v2'
+    readonly authoritativeSessionSource: 'signal.exchange_sessions_v1'
+    readonly requireExactBarCalendarMatch: true
+    readonly requireExportManifestProvenanceMatch: true
+    readonly developmentSnapshotId: typeof CANDIDATE_6_DEVELOPMENT_SNAPSHOT_ID
+    readonly developmentPublicationAsOf: typeof CANDIDATE_6_DEVELOPMENT_PUBLICATION_AS_OF
+    readonly developmentManifestContentHash: typeof CANDIDATE_6_DEVELOPMENT_MANIFEST_CONTENT_HASH
+    readonly developmentManifestExportSha256: typeof CANDIDATE_6_DEVELOPMENT_MANIFEST_EXPORT_SHA256
+    readonly developmentBarsExportSha256: typeof CANDIDATE_6_DEVELOPMENT_BARS_EXPORT_SHA256
+    readonly developmentSessionsExportSha256: typeof CANDIDATE_6_DEVELOPMENT_SESSIONS_EXPORT_SHA256
+    readonly developmentSessionCount: typeof CANDIDATE_6_DEVELOPMENT_SESSION_COUNT
     readonly tradableUniverse: readonly ['SPY']
     readonly developmentDataStart: typeof CANDIDATE_6_DEVELOPMENT_DATA_START
     readonly developmentSimulationStart: typeof CANDIDATE_6_DEVELOPMENT_SIMULATION_START
@@ -239,6 +258,18 @@ export const makeCandidate6PreregistrationMaterial = (
     },
     data: {
       universeId: 'cross-asset-taa-v1',
+      calendarVersion: candidate6Protocol.marketData.calendarVersion,
+      authoritativeManifestSource: 'signal.snapshot_manifests_v2',
+      authoritativeSessionSource: 'signal.exchange_sessions_v1',
+      requireExactBarCalendarMatch: true,
+      requireExportManifestProvenanceMatch: true,
+      developmentSnapshotId: CANDIDATE_6_DEVELOPMENT_SNAPSHOT_ID,
+      developmentPublicationAsOf: CANDIDATE_6_DEVELOPMENT_PUBLICATION_AS_OF,
+      developmentManifestContentHash: CANDIDATE_6_DEVELOPMENT_MANIFEST_CONTENT_HASH,
+      developmentManifestExportSha256: CANDIDATE_6_DEVELOPMENT_MANIFEST_EXPORT_SHA256,
+      developmentBarsExportSha256: CANDIDATE_6_DEVELOPMENT_BARS_EXPORT_SHA256,
+      developmentSessionsExportSha256: CANDIDATE_6_DEVELOPMENT_SESSIONS_EXPORT_SHA256,
+      developmentSessionCount: CANDIDATE_6_DEVELOPMENT_SESSION_COUNT,
       tradableUniverse: ['SPY'],
       developmentDataStart: CANDIDATE_6_DEVELOPMENT_DATA_START,
       developmentSimulationStart: CANDIDATE_6_DEVELOPMENT_SIMULATION_START,

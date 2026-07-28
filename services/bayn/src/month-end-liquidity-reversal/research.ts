@@ -6,6 +6,7 @@ import {
   CANDIDATE_6_STRATEGY_NAME,
   CANDIDATE_6_STRATEGY_VERSION,
   CANDIDATE_6_SYMBOL,
+  candidate6DevelopmentProvenance,
   candidate6Protocol,
   type Candidate6DevelopmentDataset,
   type Candidate6Protocol,
@@ -28,6 +29,35 @@ export const CANDIDATE_6_DEVELOPMENT_DATA_START = '2016-01-04' as IsoDate
 export const CANDIDATE_6_DEVELOPMENT_SIMULATION_START = '2017-01-03' as IsoDate
 export const CANDIDATE_6_DEVELOPMENT_END = '2022-12-30' as IsoDate
 export const CANDIDATE_6_HOLDOUT_START = '2023-01-03' as IsoDate
+export const CANDIDATE_6_DEVELOPMENT_SNAPSHOT_ID = candidate6DevelopmentProvenance.snapshotId
+export const CANDIDATE_6_DEVELOPMENT_MANIFEST_EXPORT_SHA256 = candidate6DevelopmentProvenance.rawManifestExportSha256
+export const CANDIDATE_6_DEVELOPMENT_BARS_EXPORT_SHA256 = candidate6DevelopmentProvenance.rawBarsExportSha256
+export const CANDIDATE_6_DEVELOPMENT_SESSIONS_EXPORT_SHA256 = candidate6DevelopmentProvenance.rawSessionsExportSha256
+export const CANDIDATE_6_DEVELOPMENT_MANIFEST_CONTENT_HASH = candidate6DevelopmentProvenance.manifestContentHash
+export const CANDIDATE_6_DEVELOPMENT_PUBLICATION_AS_OF = candidate6DevelopmentProvenance.publicationAsOf
+export const CANDIDATE_6_DEVELOPMENT_SESSION_COUNT = candidate6DevelopmentProvenance.developmentSessionCount
+
+export interface Candidate6DevelopmentIdentity {
+  readonly snapshotId: string
+  readonly calendarVersion: string
+  readonly publicationAsOf: string
+  readonly manifestContentHash: string
+  readonly rawManifestExportSha256: string
+  readonly rawBarsExportSha256: string
+  readonly rawSessionsExportSha256: string
+  readonly sessionCount: number
+}
+
+export const candidate6DevelopmentIdentity: Candidate6DevelopmentIdentity = {
+  snapshotId: CANDIDATE_6_DEVELOPMENT_SNAPSHOT_ID,
+  calendarVersion: candidate6Protocol.marketData.calendarVersion,
+  publicationAsOf: CANDIDATE_6_DEVELOPMENT_PUBLICATION_AS_OF,
+  manifestContentHash: CANDIDATE_6_DEVELOPMENT_MANIFEST_CONTENT_HASH,
+  rawManifestExportSha256: CANDIDATE_6_DEVELOPMENT_MANIFEST_EXPORT_SHA256,
+  rawBarsExportSha256: CANDIDATE_6_DEVELOPMENT_BARS_EXPORT_SHA256,
+  rawSessionsExportSha256: CANDIDATE_6_DEVELOPMENT_SESSIONS_EXPORT_SHA256,
+  sessionCount: CANDIDATE_6_DEVELOPMENT_SESSION_COUNT,
+}
 
 const BOOTSTRAP_REPLICATES = 2_000
 const BOOTSTRAP_BLOCK_LENGTH = 20
@@ -35,7 +65,17 @@ const BOOTSTRAP_BLOCK_LENGTH = 20
 export type Candidate6ResearchFailure =
   | Candidate6SimulationFailure
   | { readonly _tag: 'InvalidDevelopmentBoundary'; readonly field: string; readonly observed: string | number }
+  | {
+      readonly _tag: 'DevelopmentIdentityMismatch'
+      readonly field: keyof Candidate6DevelopmentIdentity
+      readonly expected: string | number
+      readonly observed: string | number
+    }
+  | { readonly _tag: 'InvalidDevelopmentSession'; readonly field: string; readonly observed: string }
   | { readonly _tag: 'MissingDevelopmentSymbol'; readonly symbol: string }
+  | { readonly _tag: 'MissingDevelopmentBar'; readonly symbol: string; readonly sessionDate: IsoDate }
+  | { readonly _tag: 'BarOutsideDevelopmentCalendar'; readonly symbol: string; readonly sessionDate: IsoDate }
+  | { readonly _tag: 'DuplicateDevelopmentSession'; readonly sessionDate: IsoDate }
   | { readonly _tag: 'DuplicateDevelopmentBar'; readonly symbol: string; readonly sessionDate: IsoDate }
 
 export interface Candidate6ConfidenceInterval {
@@ -58,13 +98,19 @@ export interface Candidate6DevelopmentReport {
   }
   readonly dataset: {
     readonly snapshotId: string
-    readonly rawExportSha256: string
+    readonly calendarVersion: string
+    readonly publicationAsOf: IsoDate
+    readonly manifestContentHash: string
+    readonly rawManifestExportSha256: string
+    readonly rawBarsExportSha256: string
+    readonly rawSessionsExportSha256: string
     readonly requestedDataStart: IsoDate
     readonly observedFirstSession: IsoDate
     readonly simulationStart: IsoDate
     readonly developmentEnd: IsoDate
     readonly untouchedHoldoutStart: IsoDate
     readonly totalBarCount: number
+    readonly officialSessionCount: number
     readonly strategyBarCount: number
   }
   readonly assumptions: {
@@ -111,7 +157,28 @@ const fail = <A>(failure: Candidate6ResearchFailure): ResearchResult<A> => Resul
 
 const prepareDataset = (
   dataset: Candidate6DevelopmentDataset,
+  protocol: Candidate6Protocol,
+  expectedIdentity: Candidate6DevelopmentIdentity,
 ): ResearchResult<{ readonly calendar: readonly IsoDate[]; readonly bars: readonly DailyBar[] }> => {
+  for (const field of [
+    'snapshotId',
+    'calendarVersion',
+    'publicationAsOf',
+    'manifestContentHash',
+    'rawManifestExportSha256',
+    'rawBarsExportSha256',
+    'rawSessionsExportSha256',
+    'sessionCount',
+  ] as const) {
+    if (dataset[field] !== expectedIdentity[field]) {
+      return fail({
+        _tag: 'DevelopmentIdentityMismatch',
+        field,
+        expected: expectedIdentity[field],
+        observed: dataset[field],
+      })
+    }
+  }
   if (dataset.firstSession !== CANDIDATE_6_DEVELOPMENT_DATA_START) {
     return fail({ _tag: 'InvalidDevelopmentBoundary', field: 'firstSession', observed: dataset.firstSession })
   }
@@ -121,23 +188,95 @@ const prepareDataset = (
   if (dataset.barCount !== dataset.bars.length) {
     return fail({ _tag: 'InvalidDevelopmentBoundary', field: 'barCount', observed: dataset.barCount })
   }
-  const seen = new Set<string>()
-  const spyBars: DailyBar[] = []
+  if (dataset.sessionCount !== dataset.sessions.length) {
+    return fail({ _tag: 'InvalidDevelopmentBoundary', field: 'sessionCount', observed: dataset.sessionCount })
+  }
+  if (
+    dataset.manifest.snapshotId !== dataset.snapshotId ||
+    dataset.manifest.calendarVersion !== dataset.calendarVersion ||
+    dataset.manifest.publicationAsOf !== dataset.publicationAsOf ||
+    dataset.manifest.manifestContentHash !== dataset.manifestContentHash ||
+    dataset.manifest.provider !== protocol.marketData.source ||
+    dataset.manifest.sourceFeed !== protocol.marketData.sourceFeed ||
+    dataset.manifest.adjustment !== protocol.marketData.adjustment ||
+    dataset.manifest.schemaVersion !== protocol.marketData.publicationSchemaVersion ||
+    dataset.manifest.universeId !== protocol.marketData.universeId
+  ) {
+    return fail({
+      _tag: 'InvalidDevelopmentSession',
+      field: 'manifestProvenance',
+      observed: dataset.manifest.manifestContentHash,
+    })
+  }
+  if (dataset.calendarVersion !== protocol.marketData.calendarVersion) {
+    return fail({
+      _tag: 'InvalidDevelopmentSession',
+      field: 'calendarVersion',
+      observed: dataset.calendarVersion,
+    })
+  }
+  const orderedSessions = [...dataset.sessions].sort((left, right) => left.sessionDate.localeCompare(right.sessionDate))
+  const calendar: IsoDate[] = []
+  const sessionDates = new Set<IsoDate>()
+  for (const session of orderedSessions) {
+    if (sessionDates.has(session.sessionDate)) {
+      return fail({ _tag: 'DuplicateDevelopmentSession', sessionDate: session.sessionDate })
+    }
+    if (session.snapshotId !== dataset.snapshotId) {
+      return fail({ _tag: 'InvalidDevelopmentSession', field: 'snapshotId', observed: session.snapshotId })
+    }
+    if (session.calendarVersion !== dataset.calendarVersion) {
+      return fail({
+        _tag: 'InvalidDevelopmentSession',
+        field: 'calendarVersion',
+        observed: session.calendarVersion,
+      })
+    }
+    if (
+      session.provider !== protocol.marketData.source ||
+      !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(session.openTime) ||
+      !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(session.closeTime) ||
+      session.openTime >= session.closeTime ||
+      session.timezone.length === 0
+    ) {
+      return fail({
+        _tag: 'InvalidDevelopmentSession',
+        field: 'sessionContract',
+        observed: session.sessionDate,
+      })
+    }
+    if (session.sessionDate > CANDIDATE_6_DEVELOPMENT_END) {
+      return fail({ _tag: 'InvalidDevelopmentBoundary', field: 'futureSession', observed: session.sessionDate })
+    }
+    sessionDates.add(session.sessionDate)
+    calendar.push(session.sessionDate)
+  }
+  if (calendar[0] !== CANDIDATE_6_DEVELOPMENT_DATA_START || calendar.at(-1) !== CANDIDATE_6_DEVELOPMENT_END) {
+    return fail({ _tag: 'InvalidDevelopmentBoundary', field: 'officialCalendar', observed: calendar.length })
+  }
+  const seenBars = new Set<string>()
+  const spyBarsByDate = new Map<IsoDate, DailyBar>()
   for (const bar of dataset.bars) {
     if (bar.sessionDate > CANDIDATE_6_DEVELOPMENT_END) {
       return fail({ _tag: 'InvalidDevelopmentBoundary', field: 'futureBar', observed: bar.sessionDate })
     }
     const key = `${bar.symbol}\u001f${bar.sessionDate}`
-    if (seen.has(key))
+    if (seenBars.has(key))
       return fail({ _tag: 'DuplicateDevelopmentBar', symbol: bar.symbol, sessionDate: bar.sessionDate })
-    seen.add(key)
-    if (bar.symbol === CANDIDATE_6_SYMBOL) spyBars.push(bar)
+    seenBars.add(key)
+    if (!sessionDates.has(bar.sessionDate)) {
+      return fail({ _tag: 'BarOutsideDevelopmentCalendar', symbol: bar.symbol, sessionDate: bar.sessionDate })
+    }
+    if (bar.symbol === CANDIDATE_6_SYMBOL) spyBarsByDate.set(bar.sessionDate, bar)
   }
-  if (spyBars.length === 0) return fail({ _tag: 'MissingDevelopmentSymbol', symbol: CANDIDATE_6_SYMBOL })
-  spyBars.sort((left, right) => left.sessionDate.localeCompare(right.sessionDate))
-  const calendar = spyBars.map((bar) => bar.sessionDate)
-  if (calendar[0] !== CANDIDATE_6_DEVELOPMENT_DATA_START || calendar.at(-1) !== CANDIDATE_6_DEVELOPMENT_END) {
-    return fail({ _tag: 'InvalidDevelopmentBoundary', field: 'strategyCalendar', observed: calendar.length })
+  if (spyBarsByDate.size === 0) return fail({ _tag: 'MissingDevelopmentSymbol', symbol: CANDIDATE_6_SYMBOL })
+  const spyBars: DailyBar[] = []
+  for (const sessionDate of calendar) {
+    const bar = spyBarsByDate.get(sessionDate)
+    if (bar === undefined) {
+      return fail({ _tag: 'MissingDevelopmentBar', symbol: CANDIDATE_6_SYMBOL, sessionDate })
+    }
+    spyBars.push(bar)
   }
   return Result.succeed({ calendar, bars: spyBars })
 }
@@ -197,8 +336,9 @@ const calendarYearReturns = (observations: readonly Candidate6DailyObservation[]
 export const buildCandidate6DevelopmentReport = (
   dataset: Candidate6DevelopmentDataset,
   protocol: Candidate6Protocol = candidate6Protocol,
+  expectedIdentity: Candidate6DevelopmentIdentity = candidate6DevelopmentIdentity,
 ): ResearchResult<Candidate6DevelopmentReport> => {
-  const prepared = prepareDataset(dataset)
+  const prepared = prepareDataset(dataset, protocol, expectedIdentity)
   if (Result.isFailure(prepared)) return fail(prepared.failure)
   const parameterHash = canonicalHashV1Result(protocol)
   if (Result.isFailure(parameterHash)) {
@@ -244,13 +384,19 @@ export const buildCandidate6DevelopmentReport = (
     },
     dataset: {
       snapshotId: dataset.snapshotId,
-      rawExportSha256: dataset.rawExportSha256,
+      calendarVersion: dataset.calendarVersion,
+      publicationAsOf: dataset.publicationAsOf,
+      manifestContentHash: dataset.manifestContentHash,
+      rawManifestExportSha256: dataset.rawManifestExportSha256,
+      rawBarsExportSha256: dataset.rawBarsExportSha256,
+      rawSessionsExportSha256: dataset.rawSessionsExportSha256,
       requestedDataStart: CANDIDATE_6_DEVELOPMENT_DATA_START,
       observedFirstSession: dataset.firstSession,
       simulationStart: CANDIDATE_6_DEVELOPMENT_SIMULATION_START,
       developmentEnd: CANDIDATE_6_DEVELOPMENT_END,
       untouchedHoldoutStart: CANDIDATE_6_HOLDOUT_START,
       totalBarCount: dataset.barCount,
+      officialSessionCount: dataset.sessionCount,
       strategyBarCount: bars.length,
     },
     assumptions: {

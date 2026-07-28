@@ -5,6 +5,23 @@ export const CANDIDATE_6_STRATEGY_NAME = 'month-end-liquidity-reversal' as const
 export const CANDIDATE_6_STRATEGY_VERSION = '1.0.0' as const
 export const CANDIDATE_6_SYMBOL = 'SPY' as const
 
+export const candidate6DevelopmentProvenance = {
+  snapshotId: '2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0',
+  developmentDataStart: '2016-01-04',
+  developmentEnd: '2022-12-30',
+  publicationAsOf: '2026-07-27',
+  finalizedAt: '2026-07-27 22:30:01.850',
+  calendarVersion: 'alpaca-us-equity-calendar-v1',
+  universeId: 'cross-asset-taa-v1',
+  universeSymbolHash: 'c15a52d125073a20c3addee154974ef32b4ef009c40a46b05b54743f075c0fe8',
+  snapshotUniverse: ['DBC', 'EFA', 'IEF', 'SPY', 'VNQ'],
+  manifestContentHash: '7b1216c8d698da4b2e74a5a77584c9863608edab0ad1c7331f37d039ddb1a764',
+  rawManifestExportSha256: '79400b64fcd981fc87874fbc0fd647033cfe8acadd1abb2f6a3f0af092699e43',
+  rawBarsExportSha256: 'c71ba30f3bcdd373708636f7c799d6caf3e24e07fd7d428522c69167c11a0c9c',
+  rawSessionsExportSha256: 'd0f182b5436c3ce374f4afaf2735c4b66247edfb78378aeff42af1efc889aabf',
+  developmentSessionCount: 1_762,
+} as const
+
 export interface Candidate6Protocol {
   readonly schemaVersion: 'bayn.month-end-liquidity-reversal.protocol.v1'
   readonly candidateOrdinal: 6
@@ -13,6 +30,7 @@ export interface Candidate6Protocol {
   readonly universe: readonly [typeof CANDIDATE_6_SYMBOL]
   readonly marketData: {
     readonly universeId: 'cross-asset-taa-v1'
+    readonly calendarVersion: 'alpaca-us-equity-calendar-v1'
     readonly source: 'alpaca'
     readonly sourceFeed: 'sip'
     readonly adjustment: 'all'
@@ -67,6 +85,7 @@ export const candidate6Protocol: Candidate6Protocol = {
   universe: [CANDIDATE_6_SYMBOL],
   marketData: {
     universeId: 'cross-asset-taa-v1',
+    calendarVersion: 'alpaca-us-equity-calendar-v1',
     source: 'alpaca',
     sourceFeed: 'sip',
     adjustment: 'all',
@@ -221,11 +240,54 @@ export type Candidate6DecisionFailure =
       readonly value: number
     }
 
+export interface Candidate6DevelopmentSession {
+  readonly snapshotId: string
+  readonly calendarVersion: string
+  readonly sessionDate: IsoDate
+  readonly openTime: string
+  readonly closeTime: string
+  readonly timezone: string
+  readonly provider: 'alpaca'
+}
+
+export interface Candidate6DevelopmentManifest {
+  readonly snapshotId: string
+  readonly schemaVersion: 'signal.adjusted-daily-snapshot.v2'
+  readonly publisherSourceRevision: string
+  readonly publisherImageRepository: string
+  readonly publisherImageDigest: string
+  readonly universeId: string
+  readonly universeSymbolHash: string
+  readonly provider: 'alpaca'
+  readonly sourceFeed: 'sip'
+  readonly adjustment: 'all'
+  readonly calendarVersion: string
+  readonly requestedStart: IsoDate
+  readonly publicationAsOf: IsoDate
+  readonly firstSession: IsoDate
+  readonly lastSession: IsoDate
+  readonly symbolCount: number
+  readonly sessionCount: number
+  readonly barCount: number
+  readonly barsContentHash: string
+  readonly sessionsContentHash: string
+  readonly manifestContentHash: string
+  readonly finalizedAt: string
+}
+
 export interface Candidate6DevelopmentDataset {
   readonly snapshotId: string
-  readonly rawExportSha256: string
+  readonly calendarVersion: string
+  readonly publicationAsOf: IsoDate
+  readonly manifestContentHash: string
+  readonly rawManifestExportSha256: string
+  readonly rawBarsExportSha256: string
+  readonly rawSessionsExportSha256: string
   readonly firstSession: IsoDate
   readonly lastSession: IsoDate
   readonly barCount: number
+  readonly sessionCount: number
+  readonly manifest: Candidate6DevelopmentManifest
+  readonly sessions: readonly Candidate6DevelopmentSession[]
   readonly bars: readonly DailyBar[]
 }
