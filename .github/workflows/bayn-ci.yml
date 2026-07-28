@@ -101,5 +101,5 @@ jobs:
           bun install --frozen-lockfile --ignore-scripts
           --filter @proompteng/source
           --filter @proompteng/bayn
-      - name: Verify complete durable workflow and Effect SQL compatibility on PostgreSQL 18
+      - name: Verify complete Bayn PostgreSQL persistence workflows
         run: bun run --cwd services/bayn test:postgres

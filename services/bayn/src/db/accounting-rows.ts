@@ -23,7 +23,7 @@ export const AccountingTransactionRowSchema = Schema.Struct({
   cash_delta_micros: Schema.String,
   ledger_plan_hash: Sha256,
   content_hash: Sha256,
-  occurred_at: Schema.DateValid,
+  occurred_at: Schema.Date,
 })
 
 export const AccountingReceiptRowSchema = Schema.Struct({
@@ -38,7 +38,7 @@ export const AccountingReceiptRowSchema = Schema.Struct({
   debit_micros: Schema.String,
   credit_micros: Schema.String,
   content_hash: Sha256,
-  recorded_at: Schema.DateValid,
+  recorded_at: Schema.Date,
 })
 
 export const accountingTransactionFromRow = (
