@@ -204,6 +204,24 @@ describe('candidate 6 pure decision', () => {
     expect(issue).toEqual({ _tag: 'UnknownActiveEntry', activeEntrySignalDate: signalDate })
   })
 
+  test('rejects an active hold when the current SPY bar is missing', () => {
+    const holdSignal = '2022-01-31' as IsoDate
+    const issue = failure(
+      makeCandidate6Decision(
+        input({
+          signalDate: holdSignal,
+          executionDate: '2022-02-01',
+          position: { activeEntrySignalDate: signalDate, currentWeights: { SPY: 0.3 } },
+          bars: calendar
+            .slice(0, calendar.indexOf(holdSignal) + 1)
+            .filter((date) => date !== holdSignal)
+            .map((date) => makeBar(date)),
+        }),
+      ),
+    )
+    expect(issue).toEqual({ _tag: 'MissingBar', sessionDate: holdSignal })
+  })
+
   test('stays cash through the T+1 transition and liquidates any unexpected exposure', () => {
     const transitionCalendar = [
       '2024-05-23',

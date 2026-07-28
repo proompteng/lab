@@ -96,6 +96,12 @@ export const candidate6ExecutableBehaviorHash = (protocol: Candidate6Protocol = 
       rejectFutureEntry: resultEvidence(
         makeCandidate6Decision(decisionInput('2022-01-10', '2022-01-11', '2022-01-25', 0.2, protocol)),
       ),
+      rejectMissingActiveBar: resultEvidence(
+        makeCandidate6Decision({
+          ...decisionInput('2022-02-02', '2022-02-03', '2022-01-25', 0.3, protocol),
+          bars: behaviorBars.filter((bar) => bar.sessionDate < '2022-02-02'),
+        }),
+      ),
       completeSimulation: resultEvidence(
         simulateCandidate6(behaviorCalendar, behaviorBars, behaviorCalendar[0], protocol, 1, true),
       ),

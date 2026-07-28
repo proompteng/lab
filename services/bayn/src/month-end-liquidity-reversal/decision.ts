@@ -328,6 +328,8 @@ export const makeCandidate6Decision = (input: Candidate6DecisionInput): Decision
     ) {
       return fail({ _tag: 'UnknownActiveEntry', activeEntrySignalDate })
     }
+    const activeHistoryResult = requiredHistory(input.calendar, signalIndex, barsResult.success, protocol)
+    if (Result.isFailure(activeHistoryResult)) return fail(activeHistoryResult.failure)
     const exitSignalIndex =
       entryIndex + protocol.signal.signalSessionsBeforeMonthEnd + protocol.signal.exitSessionsAfterMonthEnd
     if (signalIndex < exitSignalIndex) {

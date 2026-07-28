@@ -9,11 +9,11 @@ live-capital trade occurred.
 - Strategy: `month-end-liquidity-reversal`
 - Strategy version: `1.0.0`
 - Parameter hash: `59889076e9cff0b8c79c30f8c095b50ae9c4cd6044fe536004f3432a3287a645`
-- Executable behavior hash: `2053e0b14e134489ba6f35c87d1b6ee55102bc668602833226288ec487504ba5`
-- Strategy hash: `c7e8eb2b5572bf581859668445545795e4e73e841d1f9b7b87e64bfffa7298ba`
-- Canonical preregistration hash: `3f7412630d5730aa35e26d6d22d9a161d423bad720b62ac64fcd4ae592ecccfa`
+- Executable behavior hash: `1af0bda2a602bc621d1f3cb39ca5455b9f5b9cf0b0c4be161f08b96dbee8ea30`
+- Strategy hash: `482c9323839859252183480d4af3bfe85fe0d321c966eb9093225a2389025b10`
+- Canonical preregistration hash: `d1af0bfd26e94145c09ad0b4f5ddb5d25f698e01aaabcd0dde4d77557d11a66e`
 - Canonical preregistration: `ordinal-6-month-end-liquidity-reversal-preregistration.json`
-- Development report hash: `f57299b45b259938d773bd8817ca11f22fef40573cd4580889fefc8d1a342a36`
+- Development report hash: `1c90f239f436c77d3b400ce5101d667631ed7ba8f56e73f405de56bca1fd1cda`
 - Development report: `ordinal-6-month-end-liquidity-reversal-development-report.json`
 - Source base: `3a2d6aad649a5ec935b6efc291273f0818628ca5`
 
