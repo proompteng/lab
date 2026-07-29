@@ -37,6 +37,7 @@ import {
   nextInstant,
   selectRecovery,
   validateActiveSubmitRiskDecision,
+  validateStartedSubmitRiskDecision,
   validateRecovery,
   type ExecutionDecisionFailure,
 } from './coordinator-decisions'
@@ -110,7 +111,8 @@ const order = (overrides: Partial<Order> = {}): Order => ({
   quantityMicros: intent.quantityMicros,
   filledQuantityMicros: '0',
   orderClass: OrderClass.Simple,
-  orderType: BrokerOrderType.Market,
+  orderType: BrokerOrderType.Limit,
+  limitPriceMicros: '160000000',
   side: BrokerSide.Buy,
   timeInForce: BrokerTimeInForce.Day,
   status: OrderStatus.Accepted,
@@ -157,6 +159,19 @@ describe('execution coordinator decisions', () => {
     })
     expect(Option.getOrUndefined(Result.getFailure(expired))).toMatchObject({
       _tag: 'ExpiredRiskDecision',
+      expiresAt: riskDecision.expiresAt,
+    })
+  })
+
+  test('rechecks the started submit decision at the final broker boundary', () => {
+    const started = stored(IntentState.IoStarted)
+    const active = validateStartedSubmitRiskDecision(started, Date.parse('2026-07-25T00:04:59.999Z'))
+    const expired = validateStartedSubmitRiskDecision(started, Date.parse(riskDecision.expiresAt))
+
+    expect(Result.getOrThrow(active)).toBe(started)
+    expect(Option.getOrUndefined(Result.getFailure(expired))).toMatchObject({
+      _tag: 'ExpiredRiskDecision',
+      operationLabel: 'final submission',
       expiresAt: riskDecision.expiresAt,
     })
   })

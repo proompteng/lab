@@ -10,6 +10,8 @@ import { CycleOperationsCondition, CycleOperationsReason } from './cycle-observa
 import { CycleState, CycleTerminalReason } from './cycle'
 import type { DatabaseError, EvidenceStoreService } from './db/evidence-store'
 import type { OperationalError } from './errors'
+import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
+import type { ExecutionPolicy } from './execution/configuration'
 import { databaseOperation, withinDeadline } from './operations'
 import { Authority } from './execution/contracts'
 import { makeQualificationDiagnosis } from './qualification-diagnosis'
@@ -97,7 +99,7 @@ const publicCycleState = (state: RuntimeState) =>
 
 export const statusFacts = (
   state: RuntimeState,
-  maximumAuthority: Authority,
+  execution: ExecutionPolicy,
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
 ) => {
@@ -144,7 +146,9 @@ export const statusFacts = (
     autonomousCycleLoop: state.autonomousCycleLoop,
     broker: publicBrokerState(state),
     authority: {
-      maximum: maximumAuthority === Authority.Paper ? 'paper' : 'observe',
+      brokerEnvironment: execution.brokerIdentity?.environment ?? null,
+      brokerAccess: execution.brokerAccess,
+      capitalAuthority: execution.capitalAuthority._tag,
       durable:
         state.cycle.condition === CycleOperationsCondition.Unknown
           ? {
@@ -163,14 +167,14 @@ export const statusFacts = (
             : {
                 available: true,
                 configured: true,
-                maximum: state.cycle.authority.maximum === Authority.Paper ? 'paper' : 'observe',
-                effective: state.cycle.authority.effective === Authority.Paper ? 'paper' : 'observe',
+                maximum: state.cycle.authority.maximum.toLowerCase(),
+                effective: state.cycle.authority.effective.toLowerCase(),
                 kill: state.cycle.authority.kill.toLowerCase(),
                 reason: state.cycle.authority.reason,
                 updatedAt: state.cycle.authority.updatedAt,
               },
-      brokerOrders: false,
-      capitalPromotion: false,
+      brokerOrders: execution.brokerAccess === BrokerAccess.Mutation,
+      capitalPromotion: execution.capitalAuthority._tag !== CapitalAuthorityKind.None,
     },
     build: {
       sourceRevision: provenance.sourceRevision,
@@ -183,10 +187,10 @@ export const statusFacts = (
 
 export const statusResponseDecision = (
   state: RuntimeState,
-  maximumAuthority: Authority,
+  execution: ExecutionPolicy,
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
-): HttpResponseDecision => jsonDecision(statusFacts(state, maximumAuthority, provenance, provenanceVerification))
+): HttpResponseDecision => jsonDecision(statusFacts(state, execution, provenance, provenanceVerification))
 
 const appendFailure = (failures: readonly string[], name: string, failed: boolean): readonly string[] =>
   failed && !failures.includes(name) ? [...failures, name] : failures
@@ -278,7 +282,7 @@ export const renderPrometheusMetrics = (
   state: RuntimeState,
   config: Pick<
     RuntimeConfig,
-    'cycleStallThresholdMs' | 'maximumAuthority' | 'reconciliationStaleThresholdMs' | 'unknownMutationThresholdMs'
+    'cycleStallThresholdMs' | 'execution' | 'reconciliationStaleThresholdMs' | 'unknownMutationThresholdMs'
   >,
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
@@ -423,10 +427,16 @@ export const renderPrometheusMetrics = (
     '# HELP bayn_reconciliation_stale_threshold_seconds Configured reconciliation staleness threshold.',
     '# TYPE bayn_reconciliation_stale_threshold_seconds gauge',
     `bayn_reconciliation_stale_threshold_seconds ${prometheusNumber(config.reconciliationStaleThresholdMs / 1_000)}`,
-    '# HELP bayn_authority_maximum Configured maximum authority.',
-    '# TYPE bayn_authority_maximum gauge',
-    `bayn_authority_maximum{authority="observe"} ${config.maximumAuthority === Authority.Observe ? 1 : 0}`,
-    `bayn_authority_maximum{authority="paper"} ${config.maximumAuthority === Authority.Paper ? 1 : 0}`,
+    '# HELP bayn_broker_access Configured broker access capability.',
+    '# TYPE bayn_broker_access gauge',
+    `bayn_broker_access{access="read-only"} ${config.execution.brokerAccess === BrokerAccess.ReadOnly ? 1 : 0}`,
+    `bayn_broker_access{access="mutation"} ${config.execution.brokerAccess === BrokerAccess.Mutation ? 1 : 0}`,
+    '# HELP bayn_capital_authority Configured capital authority.',
+    '# TYPE bayn_capital_authority gauge',
+    ...Object.values(CapitalAuthorityKind).map(
+      (authority) =>
+        `bayn_capital_authority{authority="${authority}"} ${config.execution.capitalAuthority._tag === authority ? 1 : 0}`,
+    ),
     ...(cycleObservationAvailable
       ? [
           '# HELP bayn_authority_effective Durable effective authority when initialized.',
@@ -454,10 +464,10 @@ export const renderPrometheusMetrics = (
     `bayn_broker_account_bound ${booleanMetric(publicBroker.accountBound)}`,
     '# HELP bayn_broker_orders_enabled Whether broker mutation dispatch is enabled in this runtime.',
     '# TYPE bayn_broker_orders_enabled gauge',
-    'bayn_broker_orders_enabled 0',
+    `bayn_broker_orders_enabled ${config.execution.brokerAccess === BrokerAccess.Mutation ? 1 : 0}`,
     '# HELP bayn_capital_promotion_enabled Whether capital promotion is enabled in this runtime.',
     '# TYPE bayn_capital_promotion_enabled gauge',
-    'bayn_capital_promotion_enabled 0',
+    `bayn_capital_promotion_enabled ${config.execution.capitalAuthority._tag === CapitalAuthorityKind.None ? 0 : 1}`,
     '# HELP bayn_build_info Verified runtime build provenance.',
     '# TYPE bayn_build_info gauge',
     `bayn_build_info{source_revision="${prometheusLabel(provenance.sourceRevision)}",image_digest="${prometheusLabel(provenance.image.digest)}",verification="${prometheusLabel(provenanceVerification)}"} 1`,
@@ -526,8 +536,8 @@ const interruptOnClientDisconnect = <A, E, R>(
 type HttpConfig = Pick<
   RuntimeConfig,
   | 'cycleStallThresholdMs'
+  | 'execution'
   | 'host'
-  | 'maximumAuthority'
   | 'operationTimeoutMs'
   | 'port'
   | 'reconciliationStaleThresholdMs'
@@ -547,9 +557,7 @@ const registerHttpRoutes = (
 ): Effect.Effect<void> => {
   const ready = Ref.get(state).pipe(Effect.map(readinessResponseDecision), Effect.flatMap(interpretResponseDecision))
   const status = Ref.get(state).pipe(
-    Effect.map((current) =>
-      statusResponseDecision(current, config.maximumAuthority, provenance, provenanceVerification),
-    ),
+    Effect.map((current) => statusResponseDecision(current, config.execution, provenance, provenanceVerification)),
     Effect.flatMap(interpretResponseDecision),
   )
   const metrics = Ref.get(state).pipe(

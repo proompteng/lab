@@ -7,6 +7,7 @@ import { IntentState } from '../../contracts'
 import {
   decideMutationAuthority,
   decideMutationContainment,
+  decideFinalSubmitAuthorization,
   decideMutationStart,
   decideMutationStartReplay,
   decideSubmitStartWrite,
@@ -20,6 +21,7 @@ import { fromDecision } from './shared'
 import type { WriterFenceError, WriterFenceService } from '../../writer-fence'
 
 export interface MutationStartPostgres {
+  readonly authorizeSubmit: (intentId: string) => Effect.Effect<void, MutationStoreError | SqlError>
   readonly begin: (
     operation: MutationOperation,
     intentId: string,
@@ -191,5 +193,12 @@ export const makeMutationStartPostgres = (
       }),
     ).pipe(Effect.flatMap((input) => fence.transaction(beginTransaction(operation, input))))
 
-  return { begin }
+  const authorizeSubmit = (intentId: string) =>
+    Effect.gen(function* () {
+      const authority = yield* readAuthorityBinding(MutationOperation.Submit)
+      const intent = yield* readIntent(MutationOperation.Submit, intentId)
+      yield* fromDecision(() => decideFinalSubmitAuthorization(authority, intent))
+    })
+
+  return { authorizeSubmit, begin }
 }

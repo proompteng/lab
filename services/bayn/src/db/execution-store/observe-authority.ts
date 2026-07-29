@@ -1,7 +1,13 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect } from 'effect'
+import { Effect, Result } from 'effect'
 
-import type { AuthorityState } from '../../execution/contracts'
+import {
+  BrokerEnvironment,
+  BrokerProvider,
+  decodePersistedBrokerIdentity,
+  type BrokerIdentity,
+} from '../../broker/identity'
+import { Authority, type AuthorityState } from '../../execution/contracts'
 import {
   decideObserveGeneration,
   validateAuthorityObservation,
@@ -17,7 +23,84 @@ import {
   decodeAuthorityStateRows,
   decodeDatabaseInstant,
   decodeEnsureAuthorityGenerationInput,
+  type AuthorityGenerationRow,
 } from './rows'
+
+export const LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH =
+  'd290539ec85334d8ce267f98919c139cb382068101042d69b5433832136dc063'
+
+export interface ObserveGenerationBrokerIdentityFailure {
+  readonly failure: 'conflict' | 'invariant'
+  readonly message: string
+  readonly cause?: unknown
+}
+
+const exactBrokerIdentity = (persisted: BrokerIdentity, configured: BrokerIdentity): boolean =>
+  persisted.schemaVersion === configured.schemaVersion &&
+  persisted.identityHash === configured.identityHash &&
+  persisted.provider === configured.provider &&
+  persisted.environment === configured.environment &&
+  persisted.accountId === configured.accountId
+
+const legacyAutonomousObserveCompatible = (history: AuthorityGenerationRow, configured: BrokerIdentity): boolean =>
+  history.generation_hash === LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH &&
+  history.previous_generation_hash === null &&
+  history.maximum === Authority.Observe &&
+  history.authority_version === '1' &&
+  history.account_id === null &&
+  configured.provider === BrokerProvider.Alpaca &&
+  configured.environment === BrokerEnvironment.Sandbox
+
+export const validateObserveGenerationBrokerIdentityReplay = (
+  history: AuthorityGenerationRow,
+  configured: BrokerIdentity | undefined,
+): Result.Result<void, ObserveGenerationBrokerIdentityFailure> => {
+  if (configured === undefined) {
+    return Result.fail({
+      failure: 'conflict',
+      message: 'authority generation replay requires a configured broker identity',
+    })
+  }
+  const decoded = decodePersistedBrokerIdentity({
+    broker_identity_schema_version: history.broker_identity_schema_version,
+    broker_identity_hash: history.broker_identity_hash,
+    broker_provider: history.broker_provider,
+    broker_environment: history.broker_environment,
+    account_id: history.account_id,
+  })
+  if (Result.isFailure(decoded)) {
+    return Result.fail({
+      failure: 'invariant',
+      message: 'persisted authority generation broker identity is invalid',
+      cause: decoded.failure,
+    })
+  }
+  const persisted = decoded.success
+  if (persisted === undefined) {
+    return legacyAutonomousObserveCompatible(history, configured)
+      ? Result.succeed(undefined)
+      : Result.fail({
+          failure: 'conflict',
+          message: 'identity-less authority generation is not the compatible legacy autonomous OBSERVE root',
+        })
+  }
+  if (persisted.schemaVersion === 'bayn.broker-account.v1') {
+    return persisted.provider === configured.provider &&
+      persisted.environment === configured.environment &&
+      persisted.accountId === configured.accountId
+      ? Result.succeed(undefined)
+      : Result.fail({
+          failure: 'conflict',
+          message: 'historical authority generation broker account does not match configured sandbox identity',
+        })
+  }
+  return exactBrokerIdentity(persisted, configured)
+    ? Result.succeed(undefined)
+    : Result.fail({
+        failure: 'conflict',
+        message: 'authority generation broker identity does not match configured broker identity',
+      })
+}
 
 export interface ObserveAuthorityInterpreter {
   readonly ensureAuthorityGeneration: (
@@ -28,7 +111,13 @@ export interface ObserveAuthorityInterpreter {
 export const makeObserveAuthorityInterpreter = (
   sql: PgClient.PgClient,
   authority: AuthorityPostgres,
+  brokerIdentity: BrokerIdentity | undefined,
 ): ObserveAuthorityInterpreter => {
+  const requireBrokerIdentity = () =>
+    brokerIdentity === undefined
+      ? failExecutionStore('authority', 'invariant', 'authority generation requires a configured broker identity')
+      : Effect.succeed(brokerIdentity)
+
   const initializeObserveGeneration = (
     decision: Extract<ObserveGenerationDecision, { readonly _tag: 'InitializeObserveGeneration' }>,
   ) =>
@@ -41,13 +130,18 @@ export const makeObserveAuthorityInterpreter = (
       if (databaseTime === undefined) {
         return yield* failExecutionStore('authority', 'invariant', 'authority initialization time is unavailable')
       }
+      const identity = yield* requireBrokerIdentity()
       yield* sql`
         INSERT INTO authority_generations (
           generation_hash, schema_version, previous_generation_hash, maximum,
-          authority_version, activated_at
+          authority_version, account_id,
+          broker_identity_schema_version, broker_identity_hash, broker_provider, broker_environment,
+          activated_at
         ) VALUES (
           ${decision.generationHash}, 'bayn.authority-generation-history.v1', NULL,
-          'OBSERVE', 1, ${databaseTime.activated_at}
+          'OBSERVE', 1, ${identity.accountId},
+          ${identity.schemaVersion}, ${identity.identityHash}, ${identity.provider}, ${identity.environment},
+          ${databaseTime.activated_at}
         )
       `
       const inserted = yield* sql<Record<string, unknown>>`
@@ -70,10 +164,18 @@ export const makeObserveAuthorityInterpreter = (
     })
 
   const replayObserveGeneration = (current: AuthorityState) =>
-    authority.readGeneration(current.generationHash).pipe(
-      Effect.flatMap((rows) => authority.verifyCurrentGenerationHistory(current, rows[0])),
-      Effect.as(current),
-    )
+    Effect.gen(function* () {
+      const [history] = yield* authority.readGeneration(current.generationHash)
+      yield* authority.verifyCurrentGenerationHistory(current, history)
+      if (history === undefined) {
+        return yield* failExecutionStore('authority', 'invariant', 'current authority generation history is missing')
+      }
+      const validation = validateObserveGenerationBrokerIdentityReplay(history, brokerIdentity)
+      if (Result.isFailure(validation)) {
+        return yield* failExecutionStore('authority', validation.failure.failure, validation.failure.message)
+      }
+      return current
+    })
 
   const rotateObserveGeneration = (
     decision: Extract<ObserveGenerationDecision, { readonly _tag: 'RotateObserveGeneration' }>,
@@ -84,13 +186,18 @@ export const makeObserveAuthorityInterpreter = (
       const [existing] = yield* authority.readGeneration(decision.generationHash)
       yield* authority.requireUnusedGeneration(decision.generationHash, existing)
       const activatedAt = yield* authority.nextAuthorityInstant
+      const identity = yield* requireBrokerIdentity()
       yield* sql`
         INSERT INTO authority_generations (
           generation_hash, schema_version, previous_generation_hash, maximum,
-          authority_version, activated_at
+          authority_version, account_id,
+          broker_identity_schema_version, broker_identity_hash, broker_provider, broker_environment,
+          activated_at
         ) VALUES (
           ${decision.generationHash}, 'bayn.authority-generation-history.v1',
-          ${decision.current.generationHash}, 'OBSERVE', ${decision.authorityVersion}, ${activatedAt}
+          ${decision.current.generationHash}, 'OBSERVE', ${decision.authorityVersion}, ${identity.accountId},
+          ${identity.schemaVersion}, ${identity.identityHash}, ${identity.provider}, ${identity.environment},
+          ${activatedAt}
         )
       `
       const rotated = yield* sql<Record<string, unknown>>`

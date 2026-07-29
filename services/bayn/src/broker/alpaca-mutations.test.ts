@@ -6,11 +6,14 @@ import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable
 
 import { canonicalHashV1 } from '../hash'
 import {
+  BrokerAccess,
   BrokerEnvironment,
-  ExecutionAccess,
-  disabledCapitalAccess,
-  enabledCapitalAccess,
+  liveCapitalAuthority,
   makeExecutionAuthority,
+  makeLiveCapitalGrant,
+  noCapitalAuthority,
+  sandboxCapitalAuthority,
+  type ExecutionStrategyIdentity,
   type ExecutionAuthority,
 } from '../execution/authority'
 import { IntentState, MutationOutcome, OrderSide, OrderType, TimeInForce, type Intent } from '../paper'
@@ -20,6 +23,7 @@ import {
   MutationOperation,
   authorizeMutationAccess,
   makeMutation,
+  orderPriceBoundaryMicros,
   orderRequestBody,
   submitBody,
   type BrokerMutationShape,
@@ -28,6 +32,7 @@ import {
   AccountStatus,
   BrokerProvider,
   OrderStatus,
+  alpacaLiveBaseUrl,
   alpacaSandboxBaseUrl,
   decodeBrokerConnection,
   type BrokerReadShape,
@@ -41,6 +46,14 @@ import { normalizeOrderResult } from './alpaca/normalizers'
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const orderId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const assetId = 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415'
+const authorityGenerationHash = 'f'.repeat(64)
+const strategyIdentity: ExecutionStrategyIdentity = {
+  name: 'risk-balanced-trend',
+  behaviorHash: '8'.repeat(64),
+  parameterHash: '9'.repeat(64),
+  parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4',
+}
+const authorityObservedAt = '2026-07-28T08:00:00.000Z'
 
 const connection = Result.getOrThrow(
   decodeBrokerConnection({
@@ -56,10 +69,14 @@ const connection = Result.getOrThrow(
   }),
 )
 
-const submitAuthority = makeExecutionAuthority(
-  BrokerEnvironment.Sandbox,
-  ExecutionAccess.SubmitOrders,
-  disabledCapitalAccess,
+const submitAuthority = Result.getOrThrow(
+  makeExecutionAuthority({
+    brokerIdentity: connection.identity,
+    brokerAccess: BrokerAccess.Mutation,
+    capitalAuthority: sandboxCapitalAuthority(authorityGenerationHash),
+    strategy: strategyIdentity,
+    observedAt: authorityObservedAt,
+  }),
 )
 
 const preflight: ReadPreflight = {
@@ -162,11 +179,11 @@ const orderResponse = {
   filled_qty: '0',
   filled_avg_price: null,
   order_class: '',
-  order_type: 'market',
-  type: 'market',
+  order_type: 'limit',
+  type: 'limit',
   side: 'buy',
   time_in_force: 'day',
-  limit_price: null,
+  limit_price: '160',
   stop_price: null,
   status: 'accepted',
   extended_hours: false,
@@ -201,10 +218,7 @@ const withMutation = <A, E>(
   options: MutationHarnessOptions = {},
 ): Effect.Effect<A, BrokerMutationError | E> => {
   const session = options.session ?? verifiedSession({ operationTimeoutMs: options.operationTimeoutMs })
-  return makeMutation(session, options.authority ?? submitAuthority).pipe(
-    Effect.flatMap(use),
-    Effect.provideService(HttpClient.HttpClient, client),
-  )
+  return makeMutation(session, options.authority ?? submitAuthority, client).pipe(Effect.flatMap(use))
 }
 
 const requestBody = (request: Parameters<Parameters<typeof HttpClient.make>[0]>[0]): unknown => {
@@ -217,7 +231,7 @@ const assertFailure = <A, E>(result: Result.Result<A, E>): E => {
   return result.failure
 }
 
-describe('Alpaca paper mutations', () => {
+describe('Alpaca broker mutations', () => {
   test('returns closed request encoding failures without throwing', () => {
     expect(assertFailure(submitBody({ ...intent, state: IntentState.Approved }))).toMatchObject({
       _tag: 'OrderRequestError',
@@ -239,51 +253,49 @@ describe('Alpaca paper mutations', () => {
     })
   })
 
+  test('derives side-safe broker limit prices from the durable notional boundary', () => {
+    const boundaryIntent = {
+      ...intent,
+      quantityMicros: '3000000',
+      notionalLimitMicros: '100000001',
+    }
+
+    expect(orderPriceBoundaryMicros({ ...boundaryIntent, side: OrderSide.Buy })).toEqual(Result.succeed(33_330_000n))
+    expect(orderPriceBoundaryMicros({ ...boundaryIntent, side: OrderSide.Sell })).toEqual(Result.succeed(33_340_000n))
+    expect(orderRequestBody({ ...boundaryIntent, side: OrderSide.Sell })).toMatchObject(
+      Result.succeed({ type: 'limit', limit_price: '33.34', side: 'sell' }),
+    )
+  })
+
   test('refuses to construct mutation capability without explicit submit-orders access', async () => {
     let requests = 0
     const client = HttpClient.make(() => {
       requests += 1
       return Effect.die(new Error('read-only access must not make a broker mutation request'))
     })
-    const readOnly = makeExecutionAuthority(BrokerEnvironment.Sandbox, ExecutionAccess.ReadOnly, disabledCapitalAccess)
-
-    const failure = await Effect.runPromise(
-      Effect.flip(makeMutation(verifiedSession(), readOnly).pipe(Effect.provideService(HttpClient.HttpClient, client))),
+    const readOnly = Result.getOrThrow(
+      makeExecutionAuthority({
+        brokerIdentity: connection.identity,
+        brokerAccess: BrokerAccess.ReadOnly,
+        capitalAuthority: noCapitalAuthority,
+        strategy: strategyIdentity,
+        observedAt: authorityObservedAt,
+      }),
     )
+
+    const failure = await Effect.runPromise(Effect.flip(makeMutation(verifiedSession(), readOnly, client)))
 
     expect(failure).toMatchObject({
       operation: MutationOperation.Submit,
       failure: MutationFailure.Configuration,
       outcome: MutationOutcome.Known,
-      message: 'Alpaca mutation capability requires explicit submit-orders execution access',
+      message: 'Alpaca mutation capability requires explicit mutation broker access',
     })
     expect(requests).toBe(0)
   })
 
-  test('requires environment-consistent capital authority before exposing mutation access', () => {
-    const policy = enabledCapitalAccess('8'.repeat(64))
-    expect(
-      authorizeMutationAccess(
-        makeExecutionAuthority(BrokerEnvironment.Sandbox, ExecutionAccess.SubmitOrders, disabledCapitalAccess),
-      ),
-    ).toEqual(Result.succeed(ExecutionAccess.SubmitOrders))
-    expect(
-      authorizeMutationAccess(makeExecutionAuthority(BrokerEnvironment.Live, ExecutionAccess.SubmitOrders, policy)),
-    ).toEqual(Result.succeed(ExecutionAccess.SubmitOrders))
-    expect(
-      Result.isFailure(
-        authorizeMutationAccess(
-          makeExecutionAuthority(BrokerEnvironment.Live, ExecutionAccess.SubmitOrders, disabledCapitalAccess),
-        ),
-      ),
-    ).toBe(true)
-    expect(
-      Result.isFailure(
-        authorizeMutationAccess(
-          makeExecutionAuthority(BrokerEnvironment.Sandbox, ExecutionAccess.SubmitOrders, policy),
-        ),
-      ),
-    ).toBe(true)
+  test('exposes mutation access only from a validated mutation authority', () => {
+    expect(authorizeMutationAccess(submitAuthority)).toEqual(Result.succeed(BrokerAccess.Mutation))
   })
 
   test('refuses authority and verified-session environment mismatch without broker I/O', async () => {
@@ -292,10 +304,46 @@ describe('Alpaca paper mutations', () => {
       mutationCalls += 1
       return Effect.die(new Error('environment mismatch must not make a mutation request'))
     })
-    const liveAuthority = makeExecutionAuthority(
-      BrokerEnvironment.Live,
-      ExecutionAccess.SubmitOrders,
-      enabledCapitalAccess('8'.repeat(64)),
+    const liveConnection = Result.getOrThrow(
+      decodeBrokerConnection({
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Live,
+        baseUrl: alpacaLiveBaseUrl,
+        expectedAccountId: accountId,
+        key: Redacted.make('live-key'),
+        secret: Redacted.make('live-secret'),
+        proxyUrl: 'http://bayn-egress-proxy:3128',
+        operationTimeoutMs: 1_000,
+        retryAttempts: 0,
+      }),
+    )
+    const grant = Result.getOrThrow(
+      makeLiveCapitalGrant({
+        schemaVersion: 'bayn.live-capital-grant.v1',
+        brokerIdentity: liveConnection.identity,
+        authorityGenerationHash,
+        strategy: strategyIdentity,
+        limits: {
+          maxGrossNotionalMicros: '100000000000',
+          maxOrderNotionalMicros: '10000000000',
+          maxPositionNotionalMicros: '25000000000',
+          maxDailyLossMicros: '1000000000',
+          maxOpenOrders: 5,
+        },
+        validFrom: '2026-07-28T07:00:00.000Z',
+        validUntil: '2026-07-28T09:00:00.000Z',
+        issuedAt: '2026-07-28T06:00:00.000Z',
+        issuedBy: 'operator:test',
+      }),
+    )
+    const liveAuthority = Result.getOrThrow(
+      makeExecutionAuthority({
+        brokerIdentity: liveConnection.identity,
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: liveCapitalAuthority(grant),
+        strategy: strategyIdentity,
+        observedAt: authorityObservedAt,
+      }),
     )
 
     const failure = await Effect.runPromise(
@@ -306,7 +354,7 @@ describe('Alpaca paper mutations', () => {
       operation: MutationOperation.Submit,
       failure: MutationFailure.Configuration,
       outcome: MutationOutcome.Known,
-      message: 'Alpaca mutation authority environment does not match the verified broker session',
+      message: 'Alpaca mutation authority identity does not match the verified broker session',
     })
     expect(mutationCalls).toBe(0)
   })
@@ -382,8 +430,9 @@ describe('Alpaca paper mutations', () => {
       symbol: 'AMD',
       qty: '1.25',
       side: 'buy',
-      type: 'market',
+      type: 'limit',
       time_in_force: 'day',
+      limit_price: '160',
       client_order_id: intent.clientOrderId,
       extended_hours: false,
     }
@@ -578,7 +627,7 @@ describe('Alpaca paper mutations', () => {
       )
     })
 
-    const program = makeMutation(verifiedSession({ operationTimeoutMs: 10 }), submitAuthority).pipe(
+    const program = makeMutation(verifiedSession({ operationTimeoutMs: 10 }), submitAuthority, client).pipe(
       Effect.flatMap((mutation) =>
         Effect.gen(function* () {
           const fiber = yield* Effect.flip(mutation.submit(intent)).pipe(Effect.forkChild)
@@ -587,7 +636,6 @@ describe('Alpaca paper mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       ),
-      Effect.provideService(HttpClient.HttpClient, client),
       Effect.provide(TestClock.layer()),
     )
 
@@ -638,7 +686,7 @@ describe('Alpaca paper mutations', () => {
       )
     })
 
-    const program = makeMutation(verifiedSession({ operationTimeoutMs: 10 }), submitAuthority).pipe(
+    const program = makeMutation(verifiedSession({ operationTimeoutMs: 10 }), submitAuthority, client).pipe(
       Effect.flatMap((mutation) =>
         Effect.gen(function* () {
           const fiber = yield* Effect.flip(mutation.submit(intent)).pipe(Effect.forkChild)
@@ -647,7 +695,6 @@ describe('Alpaca paper mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       ),
-      Effect.provideService(HttpClient.HttpClient, client),
       Effect.provide(TestClock.layer()),
     )
 
@@ -673,9 +720,7 @@ describe('Alpaca paper mutations', () => {
             Effect.ensuring(Ref.update(finalized, (count) => count + 1)),
           )
         })
-        const mutation = yield* makeMutation(verifiedSession(), submitAuthority).pipe(
-          Effect.provideService(HttpClient.HttpClient, client),
-        )
+        const mutation = yield* makeMutation(verifiedSession(), submitAuthority, client)
         const fiber = yield* mutation.submit(intent).pipe(Effect.forkChild({ startImmediately: true }))
         yield* Deferred.await(started)
         yield* Fiber.interrupt(fiber)

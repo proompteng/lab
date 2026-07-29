@@ -50,17 +50,31 @@ describe('BrokerConnection decoding', () => {
     expect(JSON.stringify(result.success)).not.toContain(secret)
   })
 
-  test('keeps live capital disabled at configuration while the trading path remains environment-neutral', () => {
+  test('decodes live credentials into an environment-bound durable identity', () => {
     const result = decodeBrokerConnection(input({ environment: BrokerEnvironment.Live, baseUrl: alpacaLiveBaseUrl }))
 
     expect(result).toMatchObject({
-      _tag: 'Failure',
-      failure: {
-        _tag: 'BrokerEnvironmentUnsupported',
+      _tag: 'Success',
+      success: {
         environment: BrokerEnvironment.Live,
-        reason: 'DURABLE_IDENTITY_UNAVAILABLE',
+        identity: {
+          schemaVersion: 'bayn.broker-identity.v2',
+          provider: BrokerProvider.Alpaca,
+          environment: BrokerEnvironment.Live,
+          accountId,
+        },
       },
     })
+  })
+
+  test('does not allow sandbox credentials to share a durable identity with live credentials', () => {
+    const sandbox = Result.getOrThrow(decodeBrokerConnection(input()))
+    const live = Result.getOrThrow(
+      decodeBrokerConnection(input({ environment: BrokerEnvironment.Live, baseUrl: alpacaLiveBaseUrl })),
+    )
+
+    expect(sandbox.expectedAccountId).toBe(live.expectedAccountId)
+    expect(sandbox.identity.identityHash).not.toBe(live.identity.identityHash)
   })
 
   for (const [environment, baseUrl, approvedBaseUrl] of [

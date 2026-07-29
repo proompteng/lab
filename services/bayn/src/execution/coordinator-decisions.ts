@@ -6,6 +6,7 @@ import {
   MutationFailure,
   MutationOperation,
   cancelRequestHash,
+  orderPriceBoundaryMicros,
   orderRequestBody,
   type MutationEvidence,
   type OrderRequestBody,
@@ -24,7 +25,7 @@ import type {
   RecoveryPersistenceDecision,
   RecoverySelection,
 } from '../cycle-runner/execution-recovery-model'
-import { IntentState, RiskOutcome, TerminalOutcome, type Intent } from './contracts'
+import { IntentState, MutationOutcome, RiskOutcome, TerminalOutcome, type Intent } from './contracts'
 import { UtcInstantSchema } from '../schemas'
 import { utcInstantFromEpochMillisResult } from '../time'
 import type { StoredIntent } from './intents/domain'
@@ -99,6 +100,9 @@ export type SubmitPersistenceDecision =
   | {
       readonly _tag: 'SubmitRejected'
       readonly evidence: MutationEvidence
+    }
+  | {
+      readonly _tag: 'SubmitDenied'
     }
   | {
       readonly _tag: 'SubmitUnknown'
@@ -217,14 +221,15 @@ export const encodeOrder = (
     ),
   )
 
-export const validateActiveSubmitRiskDecision = (
+const validateSubmitRiskDecision = (
   stored: StoredIntent,
   currentTimeMillis: number,
-  operationLabel = 'submission',
+  operationLabel: string,
+  expectedState: IntentState,
 ): Result.Result<StoredIntent, ExecutionDecisionFailure> => {
   const decision = stored.decision
   if (
-    stored.intent.state !== IntentState.Approved ||
+    stored.intent.state !== expectedState ||
     decision?.outcome !== RiskOutcome.Approved ||
     stored.intent.riskDecisionId !== decision.decisionId
   ) {
@@ -238,6 +243,19 @@ export const validateActiveSubmitRiskDecision = (
     ),
   )
 }
+
+export const validateActiveSubmitRiskDecision = (
+  stored: StoredIntent,
+  currentTimeMillis: number,
+  operationLabel = 'submission',
+): Result.Result<StoredIntent, ExecutionDecisionFailure> =>
+  validateSubmitRiskDecision(stored, currentTimeMillis, operationLabel, IntentState.Approved)
+
+export const validateStartedSubmitRiskDecision = (
+  stored: StoredIntent,
+  currentTimeMillis: number,
+): Result.Result<StoredIntent, ExecutionDecisionFailure> =>
+  validateSubmitRiskDecision(stored, currentTimeMillis, 'final submission', IntentState.IoStarted)
 
 export const makeDryRunSubmit = (
   stored: StoredIntent,
@@ -277,15 +295,20 @@ export const terminalOutcome = (status: OrderStatus): TerminalOutcome | undefine
 }
 
 export const exactOrder = (intent: Intent, request: EncodedOrder['request'], order: Order): boolean =>
-  order.accountId === intent.accountId &&
-  order.clientOrderId === intent.clientOrderId &&
-  order.symbol === intent.symbol &&
-  order.side === request.side &&
-  order.orderType === request.type &&
-  order.timeInForce === request.time_in_force &&
-  order.quantityMicros === intent.quantityMicros &&
-  (order.status !== OrderStatus.Filled || order.filledQuantityMicros === intent.quantityMicros) &&
-  order.extendedHours === false
+  Result.match(orderPriceBoundaryMicros(intent), {
+    onFailure: () => false,
+    onSuccess: (limitPriceMicros) =>
+      order.accountId === intent.accountId &&
+      order.clientOrderId === intent.clientOrderId &&
+      order.symbol === intent.symbol &&
+      order.side === request.side &&
+      order.orderType === request.type &&
+      order.timeInForce === request.time_in_force &&
+      order.quantityMicros === intent.quantityMicros &&
+      order.limitPriceMicros === limitPriceMicros.toString() &&
+      (order.status !== OrderStatus.Filled || order.filledQuantityMicros === intent.quantityMicros) &&
+      order.extendedHours === false,
+  })
 
 export const completeEvidence = (value: unknown): MutationEvidence | undefined =>
   completeMutationEvidence(value) ? value : undefined
@@ -314,11 +337,16 @@ export const decideSubmitFailure = (
     error.requestHash === expectedRequestHash &&
     evidence !== undefined
     ? { _tag: 'SubmitRejected', evidence }
-    : {
-        _tag: 'SubmitUnknown',
-        ...(error.brokerOrderId === undefined ? {} : { brokerOrderId: error.brokerOrderId }),
-        ...(evidence === undefined ? {} : { evidence }),
-      }
+    : error.failure === MutationFailure.InvalidRequest &&
+        error.outcome === MutationOutcome.Known &&
+        error.brokerOrderId === undefined &&
+        evidence === undefined
+      ? { _tag: 'SubmitDenied' }
+      : {
+          _tag: 'SubmitUnknown',
+          ...(error.brokerOrderId === undefined ? {} : { brokerOrderId: error.brokerOrderId }),
+          ...(evidence === undefined ? {} : { evidence }),
+        }
 }
 
 export const decideSubmitSuccess = (
@@ -373,6 +401,7 @@ const submitResolved = (intent: Intent, event: MutationEvent): boolean =>
   intent.state === IntentState.Terminal &&
   (event.eventType === MutationEventType.SubmitAccepted ||
     event.eventType === MutationEventType.SubmitRejected ||
+    event.eventType === MutationEventType.SubmitDenied ||
     event.eventType === MutationEventType.RecoveryFound)
 
 export const selectRecovery = (

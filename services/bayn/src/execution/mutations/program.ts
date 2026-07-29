@@ -31,6 +31,7 @@ export const makePostgresMutationStore = Effect.gen(function* () {
   const appendOutcome = outcome.appendOutcome
 
   return {
+    authorizeSubmit: (intentId) => run('begin-submit', start.authorizeSubmit(intentId)),
     beginSubmit: (intentId, requestHash, consistencyDelayMs, occurredAt) =>
       run('begin-submit', start.begin(MutationOperation.Submit, intentId, requestHash, consistencyDelayMs, occurredAt)),
     submitAccepted: (intentId, requestHash, brokerOrderId, evidence, terminalOutcome) =>
@@ -53,6 +54,8 @@ export const makePostgresMutationStore = Effect.gen(function* () {
         'record-submit',
         appendOutcome({ _tag: 'SubmitRejected' }, intentId, requestHash, evidence.observedAt, evidence),
       ),
+    submitDenied: (intentId, requestHash, occurredAt) =>
+      run('record-submit', appendOutcome({ _tag: 'SubmitDenied' }, intentId, requestHash, occurredAt)),
     submitUnknown: (intentId, requestHash, occurredAt, evidence, brokerOrderId) =>
       run(
         'record-submit',

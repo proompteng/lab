@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { prepareAccounting } from '../accounting/domain'
-import { MutationOperation } from '../broker/alpaca-mutations'
+import { MutationOperation, historicalMarketOrderRequestBody, orderRequestBody } from '../broker/alpaca-mutations'
 import { MutationEventType } from '../execution/mutations'
 import { canonicalHashV1 } from '../hash'
 import {
@@ -125,7 +125,8 @@ const order: Order = {
   intentId: fill.intentId,
   symbol: fill.symbol,
   side: fill.side,
-  orderType: OrderType.Market,
+  orderType: OrderType.Limit,
+  limitPriceMicros: fill.priceMicros,
   timeInForce: TimeInForce.Day,
   quantityMicros: fill.quantityMicros,
   filledQuantityMicros: fill.quantityMicros,
@@ -133,20 +134,35 @@ const order: Order = {
   observedAt,
 }
 
+const requestIntent = {
+  clientOrderId: fill.clientOrderId,
+  notionalLimitMicros: fill.priceMicros,
+  orderType: OrderType.Market,
+  quantityMicros: fill.quantityMicros,
+  side: fill.side,
+  symbol: fill.symbol,
+  timeInForce: TimeInForce.Day,
+} as const
+
+const boundedSubmitRequestHash = canonicalHashV1(Result.getOrThrow(orderRequestBody(requestIntent)))
+const historicalSubmitRequestHash = canonicalHashV1(Result.getOrThrow(historicalMarketOrderRequestBody(requestIntent)))
+
 const intentRow = {
   intent_id: fill.intentId ?? hash('missing-intent'),
   client_order_id: fill.clientOrderId,
   symbol: fill.symbol,
   side: fill.side,
-  order_type: order.orderType,
+  order_type: OrderType.Market,
   time_in_force: order.timeInForce,
   quantity_micros: fill.quantityMicros,
+  notional_limit_micros: fill.priceMicros,
   state: IntentState.Terminal,
   terminal_outcome: TerminalOutcome.Filled,
   broker_order_id: fill.brokerOrderId,
   mutation_operation: MutationOperation.Submit,
   mutation_event_type: MutationEventType.SubmitAccepted,
   mutation_occurred_at: observedAt,
+  submit_request_hash: boundedSubmitRequestHash,
 } as const
 
 const comparisonInput = (status: AccountStatus = AccountStatus.Active): Parameters<typeof compareOpeningCash>[0] => {
@@ -235,6 +251,19 @@ describe('PostgreSQL reconciliation algebra', () => {
     expect(projection.unknownMutationCount).toBe(1)
     expect(projection.intents[0]).toMatchObject({ intentId: fill.intentId, unknownSince: observedAt })
     expect(projection.intents[1]?.unknownSince).toBeUndefined()
+  })
+
+  test('projects historical MARKET and bounded LIMIT representations from exact durable request hashes', () => {
+    const projection = successOf(
+      projectIntentExpectations([{ ...intentRow, submit_request_hash: historicalSubmitRequestHash }, intentRow]),
+    )
+
+    expect(projection.intents[0]).toMatchObject({ submittedOrderType: OrderType.Market })
+    expect(projection.intents[0]?.submittedLimitPriceMicros).toBeUndefined()
+    expect(projection.intents[1]).toMatchObject({
+      submittedOrderType: OrderType.Limit,
+      submittedLimitPriceMicros: fill.priceMicros,
+    })
   })
 
   test('verifies ledger plans, receipt material, and exact accounting bindings', () => {

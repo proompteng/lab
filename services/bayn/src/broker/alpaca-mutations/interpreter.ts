@@ -108,10 +108,10 @@ const readCancelBody = (
 export const makeMutation = (
   session: BrokerSessionShape,
   authority: ExecutionAuthority,
-): Effect.Effect<BrokerMutationShape, BrokerMutationError, HttpClient.HttpClient> =>
+  client: HttpClient.HttpClient,
+): Effect.Effect<BrokerMutationShape, BrokerMutationError> =>
   Effect.gen(function* () {
     const runtime = yield* Effect.fromResult(resolveMutationCapability(session, authority))
-    const client = yield* HttpClient.HttpClient
 
     const submit = Effect.fn('BrokerMutation.submit', {
       attributes: { 'broker.system': 'alpaca', 'broker.operation': MutationOperation.Submit },

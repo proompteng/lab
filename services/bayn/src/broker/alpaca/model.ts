@@ -228,6 +228,7 @@ export interface Account {
   readonly currency: 'USD'
   readonly cashMicros: string
   readonly equityMicros: string
+  readonly lastEquityMicros: string
   readonly buyingPowerMicros: string
   readonly accountBlocked: boolean
   readonly tradingBlocked: boolean
@@ -421,6 +422,7 @@ export const AccountResponseSchema = Schema.Struct({
   currency: Schema.Literal('USD'),
   cash: Decimal,
   equity: Decimal,
+  last_equity: Decimal,
   buying_power: Decimal,
   account_blocked: Schema.Boolean,
   trading_blocked: Schema.Boolean,

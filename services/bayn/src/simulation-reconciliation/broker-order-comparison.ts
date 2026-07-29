@@ -88,9 +88,10 @@ const compareObservedOrder = (
         expectedBrokerOrderId,
         intent.symbol,
         intent.side,
-        intent.orderType,
+        intent.submittedOrderType,
         intent.timeInForce,
         intent.quantityMicros,
+        intent.submittedLimitPriceMicros ?? absent,
       ].join(':')
       const observedOrder = [
         order.brokerOrderId,
@@ -99,6 +100,7 @@ const compareObservedOrder = (
         order.orderType,
         order.timeInForce,
         order.quantityMicros,
+        order.limitPriceMicros ?? absent,
       ].join(':')
       return pipe(
         Result.all({

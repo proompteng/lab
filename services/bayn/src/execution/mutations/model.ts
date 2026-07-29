@@ -14,6 +14,7 @@ export enum MutationEventType {
   SubmitStarted = 'SUBMIT_STARTED',
   SubmitAccepted = 'SUBMIT_ACCEPTED',
   SubmitRejected = 'SUBMIT_REJECTED',
+  SubmitDenied = 'SUBMIT_DENIED',
   SubmitUnknown = 'SUBMIT_UNKNOWN',
   RecoveryFound = 'RECOVERY_FOUND',
   RecoveryNotFound = 'RECOVERY_NOT_FOUND',
@@ -100,6 +101,7 @@ export interface StartReceipt {
 }
 
 export interface MutationStoreShape {
+  readonly authorizeSubmit: (intentId: string) => Effect.Effect<void, MutationStoreError | WriterFenceError>
   readonly beginSubmit: (
     intentId: string,
     requestHash: string,
@@ -117,6 +119,11 @@ export interface MutationStoreShape {
     intentId: string,
     requestHash: string,
     evidence: MutationEvidence,
+  ) => Effect.Effect<MutationEvent, MutationStoreError | WriterFenceError>
+  readonly submitDenied: (
+    intentId: string,
+    requestHash: string,
+    occurredAt: string,
   ) => Effect.Effect<MutationEvent, MutationStoreError | WriterFenceError>
   readonly submitUnknown: (
     intentId: string,
@@ -238,6 +245,7 @@ export type MutationCancelFirstDecision =
 export type MutationOutcomeDefinition =
   | { readonly _tag: 'SubmitAccepted'; readonly terminalOutcome?: TerminalOutcome }
   | { readonly _tag: 'SubmitRejected' }
+  | { readonly _tag: 'SubmitDenied' }
   | { readonly _tag: 'SubmitUnknown' }
   | { readonly _tag: 'CancelAccepted' }
   | { readonly _tag: 'CancelUnknown' }

@@ -68,6 +68,7 @@ const accountResponse = {
   currency: 'USD',
   cash: '-23140.2',
   equity: '103820.56',
+  last_equity: '104000.00',
   buying_power: '262113.632',
   account_blocked: false,
   trading_blocked: false,
@@ -238,6 +239,7 @@ describe('Alpaca paper reads', () => {
       status: AccountStatus.Active,
       cashMicros: '-23140200000',
       equityMicros: '103820560000',
+      lastEquityMicros: '104000000000',
       buyingPowerMicros: '262113632000',
       observedAt: '1970-01-01T00:00:00.000Z',
     })

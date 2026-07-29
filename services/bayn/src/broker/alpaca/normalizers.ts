@@ -139,6 +139,7 @@ export const normalizeAccountResult = (
   return Result.gen(function* () {
     const cashMicros = yield* decimalToMicrosResult(raw.cash, true, 'account cash')
     const equityMicros = yield* decimalToMicrosResult(raw.equity, true, 'account equity')
+    const lastEquityMicros = yield* decimalToMicrosResult(raw.last_equity, true, 'account last equity')
     const buyingPowerMicros = yield* decimalToMicrosResult(raw.buying_power, true, 'account buying power')
     return {
       id: raw.id,
@@ -146,6 +147,7 @@ export const normalizeAccountResult = (
       currency: raw.currency,
       cashMicros,
       equityMicros,
+      lastEquityMicros,
       buyingPowerMicros,
       accountBlocked: raw.account_blocked,
       tradingBlocked: raw.trading_blocked,

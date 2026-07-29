@@ -1,6 +1,7 @@
 import { Result } from 'effect'
 
 import type { RuntimeConfig } from '../config'
+import { historicalSandboxAuthority } from '../execution/legacy-authority'
 import type { FinalizedSnapshotProvenance } from '../contracts'
 import {
   CycleOperationsCondition,
@@ -254,7 +255,12 @@ const deriveCycleStatus = (
   if (result._tag === 'Available') {
     if (clock._tag === 'Unavailable') return unknownCycleOperationsStatus(clockError)
     return Result.match(
-      deriveCycleOperationsStatusResult(result.value, clock.checkedAtMs, config.maximumAuthority, config),
+      deriveCycleOperationsStatusResult(
+        result.value,
+        clock.checkedAtMs,
+        historicalSandboxAuthority(config.execution),
+        config,
+      ),
       {
         onFailure: (failure) => ({
           ...unknownCycleOperationsStatus(renderCycleOperationsStatusFailure(failure)),

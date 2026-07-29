@@ -1,20 +1,25 @@
 import { Redacted, Result, Schema } from 'effect'
 
-import { BrokerEnvironment, BrokerEnvironmentSchema } from '../execution/authority'
+import {
+  BrokerEnvironment,
+  BrokerEnvironmentSchema,
+  BrokerProvider,
+  BrokerProviderSchema,
+  makeBrokerIdentity,
+  type BrokerIdentity,
+  type BrokerIdentityConstructionFailure,
+} from './identity'
 import {
   PositiveIntegerSchema as PositiveInteger,
   StrictNonEmptyStringSchema as NonEmptyString,
   strictParseOptions as StrictParseOptions,
 } from '../schemas'
 
-export enum BrokerProvider {
-  Alpaca = 'alpaca',
-}
+export { BrokerProvider }
 
 export const alpacaSandboxBaseUrl = 'https://paper-api.alpaca.markets' as const
 export const alpacaLiveBaseUrl = 'https://api.alpaca.markets' as const
 
-const BrokerProviderSchema = Schema.Enum(BrokerProvider)
 const AccountId = Schema.String.check(
   Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
 )
@@ -44,6 +49,7 @@ export interface BrokerConnectionInput {
 export interface BrokerConnection {
   readonly provider: BrokerProvider.Alpaca
   readonly environment: BrokerEnvironment
+  readonly identity: BrokerIdentity
   readonly baseUrl: string
   readonly expectedAccountId: string
   readonly key: Redacted.Redacted<string>
@@ -74,11 +80,8 @@ export type BrokerConnectionDecodeFailure =
       readonly approvedBaseUrl: string
     }
   | {
-      readonly _tag: 'BrokerEnvironmentUnsupported'
-      readonly provider: BrokerProvider.Alpaca
-      readonly environment: BrokerEnvironment.Live
-      readonly baseUrl: string
-      readonly reason: 'DURABLE_IDENTITY_UNAVAILABLE'
+      readonly _tag: 'InvalidBrokerIdentity'
+      readonly cause: BrokerIdentityConstructionFailure
     }
   | {
       readonly _tag: 'InvalidBrokerProxyUrl'
@@ -132,21 +135,6 @@ const validateEndpointPairing = (
         approvedBaseUrl,
       })
 }
-
-const validateSupportedEnvironment = (
-  provider: BrokerProvider.Alpaca,
-  environment: BrokerEnvironment,
-  baseUrl: string,
-): Result.Result<BrokerEnvironment.Sandbox, BrokerConnectionDecodeFailure> =>
-  environment === BrokerEnvironment.Sandbox
-    ? Result.succeed(BrokerEnvironment.Sandbox)
-    : Result.fail({
-        _tag: 'BrokerEnvironmentUnsupported',
-        provider,
-        environment: BrokerEnvironment.Live,
-        baseUrl,
-        reason: 'DURABLE_IDENTITY_UNAVAILABLE',
-      })
 
 const invalidBrokerProxyUrl = (
   reason: Extract<BrokerConnectionDecodeFailure, { readonly _tag: 'InvalidBrokerProxyUrl' }>['reason'],
@@ -205,15 +193,24 @@ export const decodeBrokerConnection = (
   return Result.gen(function* () {
     const baseUrl = yield* validateBrokerBaseUrl(material.success.baseUrl)
     yield* validateEndpointPairing(material.success.provider, material.success.environment, baseUrl)
-    const environment = yield* validateSupportedEnvironment(
-      material.success.provider,
-      material.success.environment,
-      baseUrl,
+    const identity = yield* makeBrokerIdentity({
+      schemaVersion: 'bayn.broker-identity.v2',
+      provider: material.success.provider,
+      environment: material.success.environment,
+      accountId: material.success.expectedAccountId,
+    }).pipe(
+      Result.mapError(
+        (cause): BrokerConnectionDecodeFailure => ({
+          _tag: 'InvalidBrokerIdentity',
+          cause,
+        }),
+      ),
     )
     const proxyUrl = yield* decodeBrokerProxyUrl(material.success.proxyUrl)
     return Object.freeze({
       provider: material.success.provider,
-      environment,
+      environment: material.success.environment,
+      identity,
       baseUrl,
       expectedAccountId: material.success.expectedAccountId,
       key: input.key,
@@ -235,8 +232,8 @@ export const renderBrokerConnectionDecodeFailure = (failure: BrokerConnectionDec
       return `invalid broker base URL: ${failure.reason}`
     case 'BrokerEndpointEnvironmentMismatch':
       return `broker endpoint ${failure.baseUrl} is not approved for ${failure.environment}; expected ${failure.approvedBaseUrl}`
-    case 'BrokerEnvironmentUnsupported':
-      return `broker environment ${failure.environment} is unsupported until durable broker identities encode the environment`
+    case 'InvalidBrokerIdentity':
+      return `invalid durable broker identity: ${failure.cause._tag}`
     case 'InvalidBrokerProxyUrl':
       return `invalid broker proxy URL: ${failure.reason}`
   }

@@ -39,11 +39,11 @@ import {
   type StoredEvaluationEvidence,
 } from './db/evidence-store'
 import { operationalError } from './errors'
+import { BrokerAccess, noCapitalAuthority } from './execution/authority'
 import { HttpServerLive } from './http'
 import { canonicalHashV1 } from './hash'
 import { Journal, type JournalService } from './ledger'
 import { MarketData } from './market-data'
-import { Authority } from './paper'
 import { defaultProtocolDocument, loadProtocol } from './protocol'
 import { makeQualificationLock, makeQualificationPolicyDocument, makeQualificationResult } from './qualification'
 import { defaultQualificationStatisticsPolicy } from './qualification-statistics'
@@ -102,7 +102,11 @@ const brokerlessConfig = (runtime: typeof config): BrokerlessApplicationConfig =
   ...runtime,
   runtimeMode: 'BrokerlessService',
   cyclePollIntervalMs: 30_000,
-  maximumAuthority: Authority.Observe,
+  execution: {
+    brokerIdentity: undefined,
+    brokerAccess: BrokerAccess.ReadOnly,
+    capitalAuthority: noCapitalAuthority,
+  },
   alpaca: undefined,
 })
 

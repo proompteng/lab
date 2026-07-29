@@ -2,6 +2,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
 
 import { WriterFence } from '../../execution/writer-fence'
+import { historicalSandboxAuthority } from '../../execution/legacy-authority'
 import {
   Authority,
   decodeCapitalGrantProofBinding,
@@ -61,7 +62,7 @@ export const makeCapitalGrantInterpreter = (
     liftAuthorityDecision(
       bindPaperGenerationRuntime(
         {
-          maximumAuthority: config.maximumAuthority,
+          maximumAuthority: historicalSandboxAuthority(config.execution),
           alpaca:
             config.alpaca === undefined
               ? undefined
@@ -330,6 +331,21 @@ export const makeCapitalGrantInterpreter = (
   ) =>
     Effect.gen(function* () {
       const input = derived.generation
+      const identity = config.execution.brokerIdentity
+      if (identity === undefined) {
+        return yield* failExecutionStore(
+          'authority',
+          'invariant',
+          'PAPER generation requires a configured broker identity',
+        )
+      }
+      if (identity.accountId !== input.accountId) {
+        return yield* failExecutionStore(
+          'authority',
+          'invariant',
+          'PAPER generation account does not match the configured broker identity',
+        )
+      }
       yield* sql`
         INSERT INTO authority_generations (
           generation_hash, schema_version, activation_schema_version,
@@ -341,6 +357,7 @@ export const makeCapitalGrantInterpreter = (
           activation_image_repository, activation_image_digest,
           strategy_name, strategy_behavior_hash,
           strategy_parameter_hash, strategy_parameter_schema_version, account_id,
+          broker_identity_schema_version, broker_identity_hash, broker_provider, broker_environment,
           risk_policy_hash, proof_plan_hash, reconciliation_id,
           reconciliation_content_hash, activated_at
         ) VALUES (
@@ -354,6 +371,7 @@ export const makeCapitalGrantInterpreter = (
           ${input.activationImageDigest}, ${input.strategyName},
           ${input.strategyBehaviorHash}, ${input.strategyParameterHash},
           ${input.strategyParameterSchemaVersion}, ${input.accountId},
+          ${identity.schemaVersion}, ${identity.identityHash}, ${identity.provider}, ${identity.environment},
           ${input.riskPolicyHash}, ${input.proofPlanHash}, ${input.reconciliationId},
           ${input.reconciliationContentHash}, ${activatedAt}
         )

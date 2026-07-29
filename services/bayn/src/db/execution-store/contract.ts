@@ -138,7 +138,7 @@ export interface ExecutionPersistence extends ReconciliationPersistence {
 
 export type ExecutionStoreRuntimeConfig = Pick<
   RuntimeConfig,
-  'build' | 'maximumAuthority' | 'qualificationRunId' | 'reconciliationStaleThresholdMs' | 'tigerBeetle'
+  'build' | 'execution' | 'qualificationRunId' | 'reconciliationStaleThresholdMs' | 'tigerBeetle'
 > & {
   readonly alpaca?: Pick<NonNullable<RuntimeConfig['alpaca']>, 'expectedAccountId' | 'authorityGenerationHash'>
 }

@@ -64,6 +64,7 @@ export const AccountObservationSchema = Schema.Struct({
   currency: Schema.Literal('USD'),
   cashMicros: SignedMicrosSchema,
   equityMicros: SignedMicrosSchema,
+  lastEquityMicros: SignedMicrosSchema,
   buyingPowerMicros: SignedMicrosSchema,
   accountBlocked: Schema.Boolean,
   tradingBlocked: Schema.Boolean,

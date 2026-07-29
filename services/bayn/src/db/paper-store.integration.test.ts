@@ -7,9 +7,10 @@ import { PgClient } from '@effect/sql-pg'
 import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 
 import type { RuntimeConfig } from '../config'
+import { orderRequestBody } from '../broker/alpaca-mutations'
 import { makeStrategyProtocolHash } from '../contracts'
 import { operationalError } from '../errors'
-import { BrokerEnvironment } from '../execution/authority'
+import { BrokerAccess, BrokerEnvironment, noCapitalAuthority, sandboxCapitalAuthority } from '../execution/authority'
 import { WriterFence, WriterFenceError, WriterFenceLive, type WriterFenceService } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
 import { hashLedgerPlanResult } from '../ledger-plan'
@@ -51,6 +52,7 @@ import {
   type ValuationInput,
 } from '../broker/observations'
 import { BrokerProvider, alpacaSandboxBaseUrl } from '../broker/alpaca'
+import { makeBrokerIdentity, type BrokerIdentity } from '../broker/identity'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from './evidence-store'
 import {
   BrokerEventStore,
@@ -63,6 +65,7 @@ import {
   ReconciliationStore,
   ValuationStore,
 } from './execution-store'
+import { LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH } from './execution-store/observe-authority'
 
 const ExecutionStore = Effect.gen(function* () {
   const events = yield* BrokerEventStore
@@ -107,6 +110,34 @@ const qualifiedProtocolHash = makeStrategyProtocolHash({
   behaviorHash: qualifiedStrategyBehaviorHash,
   parameterHash: qualifiedStrategyParameterHash,
   parameterSchemaVersion: fixtureProtocol.schemaVersion,
+})
+const sandboxBrokerIdentity = (brokerAccountId: string) =>
+  Result.getOrThrow(
+    makeBrokerIdentity({
+      schemaVersion: 'bayn.broker-identity.v2',
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Sandbox,
+      accountId: brokerAccountId,
+    }),
+  )
+
+const brokerIdentity = <Environment extends BrokerEnvironment>(environment: Environment, brokerAccountId: string) =>
+  Result.getOrThrow(
+    makeBrokerIdentity({
+      schemaVersion: 'bayn.broker-identity.v2',
+      provider: BrokerProvider.Alpaca,
+      environment,
+      accountId: brokerAccountId,
+    }),
+  )
+
+const observeConfigWithIdentity = (identity: BrokerIdentity): RuntimeConfig => ({
+  ...config,
+  execution: {
+    brokerIdentity: identity,
+    brokerAccess: BrokerAccess.ReadOnly,
+    capitalAuthority: noCapitalAuthority,
+  },
 })
 
 const qualificationPolicy = (name: string) =>
@@ -233,7 +264,11 @@ const exactReconciliation = (name: string, databaseAgeMs = 0): ReconciliationFix
 const config: RuntimeConfig = {
   host: '127.0.0.1',
   port: 8080,
-  maximumAuthority: Authority.Observe,
+  execution: {
+    brokerIdentity: sandboxBrokerIdentity(accountId),
+    brokerAccess: BrokerAccess.ReadOnly,
+    capitalAuthority: noCapitalAuthority,
+  },
   build: {
     sourceRevision: 'a'.repeat(40),
     imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
@@ -687,7 +722,11 @@ const paperRuntimeConfig = (
   overrides: Partial<RuntimeConfig> = {},
 ): RuntimeConfig => ({
   ...config,
-  maximumAuthority: Authority.Paper,
+  execution: {
+    brokerIdentity: sandboxBrokerIdentity(activation.accountId),
+    brokerAccess: BrokerAccess.Mutation,
+    capitalAuthority: sandboxCapitalAuthority(activation.generationHash),
+  },
   qualificationRunId: activation.qualificationRunId,
   build: {
     ...config.build,
@@ -697,6 +736,7 @@ const paperRuntimeConfig = (
   alpaca: {
     provider: BrokerProvider.Alpaca,
     environment: BrokerEnvironment.Sandbox,
+    identity: sandboxBrokerIdentity(activation.accountId),
     baseUrl: alpacaSandboxBaseUrl,
     expectedAccountId: activation.accountId,
     authorityGenerationHash: activation.generationHash,
@@ -718,7 +758,11 @@ const prepareRuntimeConfig = (activation: CapitalGrantGeneration): RuntimeConfig
   }
   return {
     ...runtimeConfig,
-    maximumAuthority: Authority.Observe,
+    execution: {
+      brokerIdentity: alpaca.identity,
+      brokerAccess: BrokerAccess.ReadOnly,
+      capitalAuthority: noCapitalAuthority,
+    },
     alpaca: {
       ...alpaca,
       authorityGenerationHash: activation.previousGenerationHash,
@@ -964,6 +1008,155 @@ describePostgres('paper accounting persistence', () => {
       expect(result.historyVersions[1]?.authority_version).toBe(result.rotated.version)
     } finally {
       await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('rejects OBSERVE replay when the same generation hash is rebound to another v2 broker identity', async () => {
+    const generationHash = hash('observe-replay-broker-identity')
+    const initialRuntime = makeStoreRuntime({ fail: false, planHashes: [] })
+    try {
+      await initialRuntime.runPromise(
+        Effect.flatMap(ExecutionStore, (store) =>
+          store.ensureAuthorityGeneration({ generationHash, maximum: Authority.Observe }),
+        ),
+      )
+    } finally {
+      await initialRuntime.dispose()
+    }
+
+    for (const configuredIdentity of [
+      brokerIdentity(BrokerEnvironment.Sandbox, 'changed-observe-account'),
+      brokerIdentity(BrokerEnvironment.Live, accountId),
+    ]) {
+      const replayRuntime = makeStoreRuntime(
+        { fail: false, planHashes: [] },
+        observeConfigWithIdentity(configuredIdentity),
+      )
+      try {
+        const observed = await replayRuntime.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            const [before] = yield* sql<{ authority: unknown; history: unknown }>`
+              SELECT
+                (SELECT to_jsonb(state) FROM authority_state AS state WHERE singleton) AS authority,
+                (
+                  SELECT to_jsonb(history)
+                  FROM authority_generations AS history
+                  WHERE generation_hash = ${generationHash}
+                ) AS history
+            `
+            const failure = yield* Effect.flip(
+              Effect.flatMap(ExecutionStore, (store) =>
+                store.ensureAuthorityGeneration({ generationHash, maximum: Authority.Observe }),
+              ),
+            )
+            const [after] = yield* sql<{ authority: unknown; history: unknown }>`
+              SELECT
+                (SELECT to_jsonb(state) FROM authority_state AS state WHERE singleton) AS authority,
+                (
+                  SELECT to_jsonb(history)
+                  FROM authority_generations AS history
+                  WHERE generation_hash = ${generationHash}
+                ) AS history
+            `
+            return { after, before, failure }
+          }),
+        )
+        expect(observed.failure).toMatchObject({
+          operation: 'authority',
+          failure: 'conflict',
+          message: 'authority generation broker identity does not match configured broker identity',
+        })
+        expect(observed.after).toEqual(observed.before)
+      } finally {
+        await replayRuntime.dispose()
+      }
+    }
+  }, 15_000)
+
+  test('replays only the source-controlled pre-v2 autonomous OBSERVE root under sandbox identity', async () => {
+    const activatedAt = '2026-07-28T06:49:28.305Z'
+    const sandboxRuntime = makeStoreRuntime({ fail: false, planHashes: [] })
+    try {
+      const observed = await sandboxRuntime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql`
+            INSERT INTO authority_generations (
+              generation_hash, schema_version, previous_generation_hash, maximum,
+              authority_version, activated_at
+            ) VALUES (
+              ${LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH},
+              'bayn.authority-generation-history.v1', NULL, 'OBSERVE', 1, ${activatedAt}
+            )
+          `
+          yield* sql`
+            INSERT INTO authority_state (
+              schema_version, generation_hash, maximum, effective, kill_state,
+              reason, version, updated_at
+            ) VALUES (
+              'bayn.paper-authority.v1', ${LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH},
+              'OBSERVE', 'OBSERVE', 'CLEAR', NULL, 1, ${activatedAt}
+            )
+          `
+          const [before] = yield* sql<{ authority_xmin: string; history_xmin: string }>`
+            SELECT
+              state.xmin::text AS authority_xmin,
+              history.xmin::text AS history_xmin
+            FROM authority_state AS state
+            JOIN authority_generations AS history USING (generation_hash)
+            WHERE state.singleton
+          `
+          const replay = yield* Effect.flatMap(ExecutionStore, (store) =>
+            store.ensureAuthorityGeneration({
+              generationHash: LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH,
+              maximum: Authority.Observe,
+            }),
+          )
+          const [after] = yield* sql<{ authority_xmin: string; history_xmin: string }>`
+            SELECT
+              state.xmin::text AS authority_xmin,
+              history.xmin::text AS history_xmin
+            FROM authority_state AS state
+            JOIN authority_generations AS history USING (generation_hash)
+            WHERE state.singleton
+          `
+          return { after, before, replay }
+        }),
+      )
+      expect(observed.replay).toMatchObject({
+        generationHash: LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH,
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        version: 1,
+      })
+      expect(observed.after).toEqual(observed.before)
+    } finally {
+      await sandboxRuntime.dispose()
+    }
+
+    const liveRuntime = makeStoreRuntime(
+      { fail: false, planHashes: [] },
+      observeConfigWithIdentity(brokerIdentity(BrokerEnvironment.Live, accountId)),
+    )
+    try {
+      const failure = await liveRuntime.runPromise(
+        Effect.flip(
+          Effect.flatMap(ExecutionStore, (store) =>
+            store.ensureAuthorityGeneration({
+              generationHash: LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH,
+              maximum: Authority.Observe,
+            }),
+          ),
+        ),
+      )
+      expect(failure).toMatchObject({
+        operation: 'authority',
+        failure: 'conflict',
+        message: 'identity-less authority generation is not the compatible legacy autonomous OBSERVE root',
+      })
+    } finally {
+      await liveRuntime.dispose()
     }
   }, 15_000)
 
@@ -1495,7 +1688,14 @@ describePostgres('paper accounting persistence', () => {
     }
     const { alpaca: _alpaca, ...missingAlpacaConfig } = validConfig
     const invalidConfigs: readonly RuntimeConfig[] = [
-      { ...validConfig, maximumAuthority: Authority.Observe },
+      {
+        ...validConfig,
+        execution: {
+          brokerIdentity: validAlpaca.identity,
+          brokerAccess: BrokerAccess.ReadOnly,
+          capitalAuthority: noCapitalAuthority,
+        },
+      },
       missingAlpacaConfig,
       {
         ...validConfig,
@@ -1739,7 +1939,7 @@ describePostgres('paper accounting persistence', () => {
           maximum: Authority.Observe,
           authority_version: 1,
           qualification_result_hash: null,
-          account_id: null,
+          account_id: accountId,
           risk_policy_hash: null,
           proof_plan_hash: null,
           qualification_source_revision: null,
@@ -2649,6 +2849,19 @@ describePostgres('paper accounting persistence', () => {
     const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
     const intentId = 'a'.repeat(64)
     const brokerOrderId = orderEvent().order.brokerOrderId
+    const submitRequestHash = canonicalHashV1(
+      Result.getOrThrow(
+        orderRequestBody({
+          clientOrderId: orderEvent().order.clientOrderId,
+          notionalLimitMicros: '300000000',
+          orderType: OrderType.Market,
+          quantityMicros: '3000000',
+          side: OrderSide.Buy,
+          symbol: orderEvent().order.symbol,
+          timeInForce: TimeInForce.Day,
+        }),
+      ),
+    )
     try {
       const result = await runtime.runPromise(
         Effect.gen(function* () {
@@ -2698,11 +2911,11 @@ describePostgres('paper accounting persistence', () => {
             ) VALUES
               (
                 ${'1'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'3'.repeat(64)}, ${intentId}, 1,
-                'SUBMIT', 'SUBMIT_STARTED', ${'4'.repeat(64)}, 1000, NULL, NULL, NULL, NULL, ${occurredAt}
+                'SUBMIT', 'SUBMIT_STARTED', ${submitRequestHash}, 1000, NULL, NULL, NULL, NULL, ${occurredAt}
               ),
               (
                 ${'f'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'3'.repeat(64)}, ${intentId}, 2,
-                'SUBMIT', 'SUBMIT_ACCEPTED', ${'4'.repeat(64)}, 1000, ${brokerOrderId}, 'submit-request',
+                'SUBMIT', 'SUBMIT_ACCEPTED', ${submitRequestHash}, 1000, ${brokerOrderId}, 'submit-request',
                 200, ${'5'.repeat(64)}, ${occurredAt}
               ),
               (
@@ -2719,7 +2932,14 @@ describePostgres('paper accounting persistence', () => {
             account: exactAccount.account,
             positions: [],
             positionsObservedAt: observedAt,
-            orders: [{ ...orderEvent().order, intentId }],
+            orders: [
+              {
+                ...orderEvent().order,
+                intentId,
+                orderType: OrderType.Limit,
+                limitPriceMicros: '100000000',
+              },
+            ],
             ordersObservedAt: observedAt,
             fills: [],
             valuation,

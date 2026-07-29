@@ -23,6 +23,7 @@ import {
   BrokerMutation,
   MutationOperation,
   cancelRequestHash,
+  orderPriceBoundaryMicros,
   orderRequestBody,
   type BrokerMutationShape,
 } from '../broker/alpaca-mutations'
@@ -36,8 +37,19 @@ import {
   TimeInForce as BrokerTimeInForce,
   alpacaSandboxBaseUrl,
 } from '../broker/alpaca'
+import { decodePersistedBrokerIdentity, makeBrokerIdentity, type BrokerIdentity } from '../broker/identity'
 import { cancel, submit } from '../execution/coordinator'
-import { BrokerEnvironment } from '../execution/authority'
+import {
+  BrokerAccess,
+  BrokerEnvironment,
+  liveCapitalAuthority,
+  makeExecutionAuthority,
+  makeLiveCapitalGrant,
+  noCapitalAuthority,
+  sandboxCapitalAuthority,
+  type LiveCapitalGrantRevocation,
+} from '../execution/authority'
+import { validateLiveGrantForSubmit } from '../execution/mutation-authority'
 import { WriterFence, WriterFenceLive, type WriterFenceService } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
 import { buildLedgerPlan, Journal, type JournalService } from '../ledger'
@@ -89,6 +101,7 @@ import {
   ReconciliationStore,
   ValuationStore,
 } from './execution-store'
+import { LiveCapitalGrantStore, LiveCapitalGrantStoreLive } from './live-capital-grant'
 
 const ExecutionStore = Effect.gen(function* () {
   const events = yield* BrokerEventStore
@@ -124,7 +137,11 @@ const makeCapitalGrantGeneration = (input: Parameters<typeof makeCapitalGrantGen
 const makeConfig = (url = testUrl): RuntimeConfig => ({
   host: '127.0.0.1',
   port: 8080,
-  maximumAuthority: Authority.Observe,
+  execution: {
+    brokerIdentity: undefined,
+    brokerAccess: BrokerAccess.ReadOnly,
+    capitalAuthority: noCapitalAuthority,
+  },
   build: {
     sourceRevision: 'a'.repeat(40),
     imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
@@ -158,9 +175,19 @@ const makeConfig = (url = testUrl): RuntimeConfig => ({
   tigerBeetle: { clusterId: 2_001n, replicaAddresses: ['127.0.0.1:3000'], ledger: 7_001 },
 })
 
-const makeEvidenceRuntime = (config = makeConfig()) =>
+const makeEvidenceRuntime = (config = makeConfig()) => {
+  const postgres = PostgresClientLive(config)
+  return ManagedRuntime.make(
+    Layer.merge(EvidenceStoreFromPostgres(config), LiveCapitalGrantStoreLive).pipe(
+      Layer.provideMerge(postgres),
+      Layer.provide(NodeServices.layer),
+    ),
+  )
+}
+
+const makeLiveGrantSubmitRuntime = (config = makeConfig()) =>
   ManagedRuntime.make(
-    EvidenceStoreFromPostgres(config).pipe(
+    Layer.merge(LiveCapitalGrantStoreLive, WriterFenceLive).pipe(
       Layer.provideMerge(PostgresClientLive(config)),
       Layer.provide(NodeServices.layer),
     ),
@@ -759,7 +786,18 @@ const makePaperActivationConfig = (activation: CapitalGrantGeneration): RuntimeC
   const config = makeConfig()
   return {
     ...config,
-    maximumAuthority: Authority.Paper,
+    execution: {
+      brokerIdentity: Result.getOrThrow(
+        makeBrokerIdentity({
+          schemaVersion: 'bayn.broker-identity.v2',
+          provider: BrokerProvider.Alpaca,
+          environment: BrokerEnvironment.Sandbox,
+          accountId: activation.accountId,
+        }),
+      ),
+      brokerAccess: BrokerAccess.Mutation,
+      capitalAuthority: sandboxCapitalAuthority(activation.generationHash),
+    },
     qualificationRunId: activation.qualificationRunId,
     build: {
       ...config.build,
@@ -769,6 +807,14 @@ const makePaperActivationConfig = (activation: CapitalGrantGeneration): RuntimeC
     alpaca: {
       provider: BrokerProvider.Alpaca,
       environment: BrokerEnvironment.Sandbox,
+      identity: Result.getOrThrow(
+        makeBrokerIdentity({
+          schemaVersion: 'bayn.broker-identity.v2',
+          provider: BrokerProvider.Alpaca,
+          environment: BrokerEnvironment.Sandbox,
+          accountId: activation.accountId,
+        }),
+      ),
       baseUrl: alpacaSandboxBaseUrl,
       expectedAccountId: activation.accountId,
       authorityGenerationHash: activation.generationHash,
@@ -904,6 +950,49 @@ const activateAuditedCapitalGrant = async () => {
   }
   return activation
 }
+
+const insertLivePaperGeneration = (source: CapitalGrantGeneration, generationHash: string, identity: BrokerIdentity) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const inserted = yield* sql<{ generation_hash: string }>`
+      INSERT INTO authority_generations (
+        generation_hash, schema_version, activation_schema_version,
+        previous_generation_hash, maximum, authority_version,
+        qualification_run_id, qualification_lock_id, qualification_result_hash,
+        protocol_hash, qualification_execution_policy_hash,
+        qualification_source_revision, qualification_image_repository,
+        qualification_image_digest, activation_source_revision,
+        activation_image_repository, activation_image_digest,
+        strategy_name, strategy_behavior_hash,
+        strategy_parameter_hash, strategy_parameter_schema_version, account_id,
+        broker_identity_schema_version, broker_identity_hash, broker_provider, broker_environment,
+        risk_policy_hash, proof_plan_hash, reconciliation_id,
+        reconciliation_content_hash, activated_at
+      )
+      SELECT
+        ${generationHash}, source.schema_version, source.activation_schema_version,
+        source.generation_hash, 'PAPER',
+        (SELECT max(authority_version) + 1 FROM authority_generations),
+        source.qualification_run_id, source.qualification_lock_id, source.qualification_result_hash,
+        source.protocol_hash, source.qualification_execution_policy_hash,
+        source.qualification_source_revision, source.qualification_image_repository,
+        source.qualification_image_digest, source.activation_source_revision,
+        source.activation_image_repository, source.activation_image_digest,
+        source.strategy_name, source.strategy_behavior_hash,
+        source.strategy_parameter_hash, source.strategy_parameter_schema_version, ${identity.accountId},
+        ${identity.schemaVersion}, ${identity.identityHash}, ${identity.provider}, ${identity.environment},
+        source.risk_policy_hash, source.proof_plan_hash, source.reconciliation_id,
+        source.reconciliation_content_hash,
+        (SELECT max(activated_at) + interval '1 millisecond' FROM authority_generations)
+      FROM authority_generations AS source
+      WHERE source.generation_hash = ${source.generationHash}
+        AND source.maximum = 'PAPER'
+      RETURNING generation_hash
+    `
+    if (inserted.length !== 1 || inserted[0]?.generation_hash !== generationHash) {
+      return yield* Effect.die(new Error('live PAPER authority-generation fixture was not inserted exactly once'))
+    }
+  })
 
 const rotateAuditedCapitalGrant = (
   accountId: string,
@@ -1045,6 +1134,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       'fills',
       'gate_outcomes',
       'intents',
+      'live_capital_grant_revocations',
+      'live_capital_grants',
       'mutation_events',
       'orders',
       'position_snapshots',
@@ -1080,7 +1171,326 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 16, name: 'authority_bound_intents' },
       { migration_id: 17, name: 'stable_paper_authority_generation' },
       { migration_id: 18, name: 'robust_trend_protocol' },
+      { migration_id: 19, name: 'explicit_execution_authority' },
+      { migration_id: 20, name: 'pretransmit_submit_denial' },
     ])
+  })
+
+  test('preserves historical authority evidence and binds live grants to exact PAPER strategy identity', async () => {
+    const auditedPaper = await activateAuditedCapitalGrant()
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const store = yield* LiveCapitalGrantStore
+        const identity = successOfResult(
+          makeBrokerIdentity({
+            schemaVersion: 'bayn.broker-identity.v2',
+            provider: BrokerProvider.Alpaca,
+            environment: BrokerEnvironment.Live,
+            accountId: 'live-account-integration',
+          }),
+        )
+        const liveGenerationHash = fixtureHash('explicit-execution-authority-live-generation')
+        yield* insertLivePaperGeneration(auditedPaper, liveGenerationHash, identity)
+
+        const historicalGenerationHash = fixtureHash('explicit-execution-authority-historical-generation')
+        yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash, schema_version, previous_generation_hash, maximum,
+            authority_version, activated_at
+          ) SELECT
+            ${historicalGenerationHash}, 'bayn.authority-generation-history.v1', ${liveGenerationHash},
+            'OBSERVE',
+            (SELECT max(authority_version) + 1 FROM authority_generations),
+            (SELECT max(activated_at) + interval '1 millisecond' FROM authority_generations)
+        `
+        const [historical] = yield* sql<{
+          generation_hash: string
+          account_id: string | null
+          broker_identity_schema_version: string | null
+          broker_identity_hash: string | null
+          broker_provider: BrokerProvider | null
+          broker_environment: BrokerEnvironment | null
+        }>`
+          SELECT
+            generation_hash,
+            account_id,
+            broker_identity_schema_version,
+            broker_identity_hash,
+            broker_provider,
+            broker_environment
+          FROM authority_generations
+          WHERE generation_hash = ${historicalGenerationHash}
+        `
+        if (historical === undefined) throw new Error('stable historical authority generation is missing')
+
+        const decodedHistorical = decodePersistedBrokerIdentity({
+          account_id: historical.account_id,
+          broker_identity_schema_version: historical.broker_identity_schema_version,
+          broker_identity_hash: historical.broker_identity_hash,
+          broker_provider: historical.broker_provider,
+          broker_environment: historical.broker_environment,
+        })
+        const grant = successOfResult(
+          makeLiveCapitalGrant({
+            schemaVersion: 'bayn.live-capital-grant.v1',
+            brokerIdentity: identity,
+            authorityGenerationHash: liveGenerationHash,
+            strategy: {
+              name: auditedPaper.strategyName,
+              behaviorHash: auditedPaper.strategyBehaviorHash,
+              parameterHash: auditedPaper.strategyParameterHash,
+              parameterSchemaVersion: auditedPaper.strategyParameterSchemaVersion,
+            },
+            limits: {
+              maxGrossNotionalMicros: '100000000000',
+              maxOrderNotionalMicros: '10000000000',
+              maxPositionNotionalMicros: '25000000000',
+              maxDailyLossMicros: '1000000000',
+              maxOpenOrders: 5,
+            },
+            validFrom: '2026-07-28T07:00:00.000Z',
+            validUntil: '2026-07-28T09:00:00.000Z',
+            issuedAt: '2026-07-28T06:00:00.000Z',
+            issuedBy: 'integration:test',
+          }),
+        )
+        const recorded = yield* store.record(grant)
+        const readBack = yield* store.read(grant.grantHash)
+
+        const observeGenerationHash = fixtureHash('explicit-execution-authority-live-observe-generation')
+        yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash, schema_version, previous_generation_hash, maximum,
+            authority_version, account_id,
+            broker_identity_schema_version, broker_identity_hash, broker_provider, broker_environment,
+            activated_at
+          ) SELECT
+            ${observeGenerationHash}, 'bayn.authority-generation-history.v1', ${historicalGenerationHash},
+            'OBSERVE', (SELECT max(authority_version) + 1 FROM authority_generations),
+            ${identity.accountId}, ${identity.schemaVersion}, ${identity.identityHash},
+            ${identity.provider}, ${identity.environment},
+            (SELECT max(activated_at) + interval '1 millisecond' FROM authority_generations)
+        `
+        const { grantHash: _grantHash, ...grantMaterial } = grant
+        const crossEnvironmentGrant = successOfResult(
+          makeLiveCapitalGrant({ ...grantMaterial, authorityGenerationHash: auditedPaper.generationHash }),
+        )
+        const observeGenerationGrant = successOfResult(
+          makeLiveCapitalGrant({ ...grantMaterial, authorityGenerationHash: observeGenerationHash }),
+        )
+        const mismatchedStrategyGrant = successOfResult(
+          makeLiveCapitalGrant({
+            ...grantMaterial,
+            strategy: { ...grant.strategy, behaviorHash: fixtureHash('mismatched-live-grant-strategy') },
+          }),
+        )
+        const crossEnvironmentRecord = yield* Effect.exit(store.record(crossEnvironmentGrant))
+        const observeGenerationRecord = yield* Effect.exit(store.record(observeGenerationGrant))
+        const mismatchedStrategyRecord = yield* Effect.exit(store.record(mismatchedStrategyGrant))
+        const [grantCount] = yield* sql<{ count: number }>`
+          SELECT count(*)::integer AS count FROM live_capital_grants
+        `
+        const revocation: LiveCapitalGrantRevocation = {
+          schemaVersion: 'bayn.live-capital-grant-revocation.v1',
+          revokedAt: '2026-07-28T08:15:00.000Z',
+          revokedBy: 'integration:test',
+          reason: 'integration containment proof',
+        }
+        const revoked = yield* store.revoke(grant.grantHash, revocation)
+        const mutateGrant = yield* Effect.exit(sql`
+          UPDATE live_capital_grants
+          SET issued_by = 'forbidden'
+          WHERE grant_hash = ${grant.grantHash}
+        `)
+        const mutateHistorical = yield* Effect.exit(sql`
+          UPDATE authority_generations
+          SET broker_identity_schema_version = 'bayn.broker-identity.v2'
+          WHERE generation_hash = ${historical.generation_hash}
+        `)
+        const [historicalAfter] = yield* sql<{
+          generation_hash: string
+          broker_identity_schema_version: string | null
+          broker_identity_hash: string | null
+          broker_provider: string | null
+          broker_environment: string | null
+        }>`
+          SELECT
+            generation_hash,
+            broker_identity_schema_version,
+            broker_identity_hash,
+            broker_provider,
+            broker_environment
+          FROM authority_generations
+          WHERE generation_hash = ${historical.generation_hash}
+        `
+        return {
+          historical,
+          decodedHistorical,
+          recorded,
+          readBack,
+          revoked,
+          crossEnvironmentRecord,
+          observeGenerationRecord,
+          mismatchedStrategyRecord,
+          grantCount: grantCount?.count,
+          mutateGrant,
+          mutateHistorical,
+          historicalAfter,
+        }
+      }),
+    )
+
+    expect(result.historical).toMatchObject({
+      account_id: null,
+      broker_identity_schema_version: null,
+      broker_identity_hash: null,
+      broker_provider: null,
+      broker_environment: null,
+    })
+    expect(result.decodedHistorical).toEqual(Result.succeed(undefined))
+    expect(result.recorded.grant.brokerIdentity).toMatchObject({
+      schemaVersion: 'bayn.broker-identity.v2',
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Live,
+      accountId: 'live-account-integration',
+    })
+    expect(result.readBack).toEqual(result.recorded)
+    expect(Exit.isFailure(result.crossEnvironmentRecord)).toBe(true)
+    expect(Exit.isFailure(result.observeGenerationRecord)).toBe(true)
+    expect(Exit.isFailure(result.mismatchedStrategyRecord)).toBe(true)
+    expect(result.grantCount).toBe(1)
+    expect(result.revoked.revocation).toMatchObject({
+      schemaVersion: 'bayn.live-capital-grant-revocation.v1',
+      reason: 'integration containment proof',
+    })
+    expect(Exit.isFailure(result.mutateGrant)).toBe(true)
+    expect(Exit.isFailure(result.mutateHistorical)).toBe(true)
+    expect(result.historicalAfter).toEqual({
+      generation_hash: result.historical.generation_hash,
+      broker_identity_schema_version: null,
+      broker_identity_hash: null,
+      broker_provider: null,
+      broker_environment: null,
+    })
+  })
+
+  test('serializes revocation ahead of final live submit authorization with zero broker POSTs', async () => {
+    const auditedPaper = await activateAuditedCapitalGrant()
+    const identity = successOfResult(
+      makeBrokerIdentity({
+        schemaVersion: 'bayn.broker-identity.v2',
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Live,
+        accountId: 'live-race-account',
+      }),
+    )
+    const generationHash = fixtureHash('live-grant-final-submit-race-generation')
+    const grant = successOfResult(
+      makeLiveCapitalGrant({
+        schemaVersion: 'bayn.live-capital-grant.v1',
+        brokerIdentity: identity,
+        authorityGenerationHash: generationHash,
+        strategy: {
+          name: auditedPaper.strategyName,
+          behaviorHash: auditedPaper.strategyBehaviorHash,
+          parameterHash: auditedPaper.strategyParameterHash,
+          parameterSchemaVersion: auditedPaper.strategyParameterSchemaVersion,
+        },
+        limits: {
+          maxGrossNotionalMicros: '100000000000',
+          maxOrderNotionalMicros: '10000000000',
+          maxPositionNotionalMicros: '25000000000',
+          maxDailyLossMicros: '1000000000',
+          maxOpenOrders: 5,
+        },
+        validFrom: '2026-07-28T07:00:00.000Z',
+        validUntil: '2026-07-28T09:00:00.000Z',
+        issuedAt: '2026-07-28T06:00:00.000Z',
+        issuedBy: 'integration:test',
+      }),
+    )
+    const captured = successOfResult(
+      makeExecutionAuthority({
+        brokerIdentity: identity,
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: liveCapitalAuthority(grant),
+        strategy: grant.strategy,
+        observedAt: '2026-07-28T08:00:00.000Z',
+      }),
+    )
+    if (captured.brokerAccess !== BrokerAccess.Mutation) throw new Error('fixture requires mutation authority')
+
+    const preflight = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* LiveCapitalGrantStore
+        yield* insertLivePaperGeneration(auditedPaper, generationHash, identity)
+        yield* store.record(grant)
+        return yield* store.read(grant.grantHash)
+      }),
+    )
+    expect(preflight?.revocation).toBeUndefined()
+
+    const revocationLockHeld = await Effect.runPromise(Deferred.make<void>())
+    const releaseRevocation = await Effect.runPromise(Deferred.make<void>())
+    const revocation: LiveCapitalGrantRevocation = {
+      schemaVersion: 'bayn.live-capital-grant-revocation.v1',
+      revokedAt: '2026-07-28T08:05:00.000Z',
+      revokedBy: 'integration:test',
+      reason: 'race containment',
+    }
+    const revocationPromise = runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const store = yield* LiveCapitalGrantStore
+        return yield* sql.withTransaction(
+          sql`
+            SELECT grant_hash
+            FROM live_capital_grants
+            WHERE grant_hash = ${grant.grantHash}
+            FOR UPDATE
+          `.pipe(
+            Effect.andThen(Deferred.succeed(revocationLockHeld, undefined)),
+            Effect.andThen(Deferred.await(releaseRevocation)),
+            Effect.andThen(store.revoke(grant.grantHash, revocation)),
+          ),
+        )
+      }),
+    )
+    await Effect.runPromise(Deferred.await(revocationLockHeld))
+
+    const authorizationRuntime = makeLiveGrantSubmitRuntime()
+    let brokerPosts = 0
+    const authorizationPromise = authorizationRuntime.runPromiseExit(
+      Effect.gen(function* () {
+        const fence = yield* WriterFence
+        const store = yield* LiveCapitalGrantStore
+        return yield* fence.transaction(
+          Effect.gen(function* () {
+            const persisted = yield* store.lockForSubmit(grant.grantHash)
+            if (persisted === undefined) return yield* Effect.fail({ _tag: 'LiveCapitalGrantMissing' as const })
+            const validated = validateLiveGrantForSubmit(captured, persisted, '2026-07-28T08:06:00.000Z')
+            if (Result.isFailure(validated)) return yield* Effect.fail(validated.failure)
+            brokerPosts += 1
+          }),
+        )
+      }),
+    )
+
+    const beforeCommit = await Promise.race([
+      authorizationPromise.then(() => 'settled' as const),
+      Bun.sleep(25).then(() => 'blocked' as const),
+    ])
+    expect(beforeCommit).toBe('blocked')
+    expect(brokerPosts).toBe(0)
+
+    await Effect.runPromise(Deferred.succeed(releaseRevocation, undefined))
+    const [revoked, authorization] = await Promise.all([revocationPromise, authorizationPromise])
+    await authorizationRuntime.dispose()
+
+    expect(revoked.revocation).toEqual(revocation)
+    expect(Exit.isFailure(authorization)).toBe(true)
+    expect(brokerPosts).toBe(0)
   })
 
   test('hard-fails both intent hard cuts before touching nonempty intent history or generation DDL', async () => {
@@ -2076,7 +2486,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
               quantityMicros: submitted.quantityMicros,
               filledQuantityMicros: '0',
               orderClass: OrderClass.Simple,
-              orderType: BrokerOrderType.Market,
+              orderType: BrokerOrderType.Limit,
+              limitPriceMicros: Result.getOrThrow(orderPriceBoundaryMicros(submitted)).toString(),
               side: BrokerOrderSide.Buy,
               timeInForce: BrokerTimeInForce.Day,
               status: OrderStatus.Accepted,
@@ -2974,16 +3385,19 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '3'.repeat(64) })))
     const blockedIntent = await Effect.runPromise(plan(intentPlan({ cycleId: 'b'.repeat(64) })))
+    const startedIntent = await Effect.runPromise(plan(intentPlan({ cycleId: 'c'.repeat(64) })))
     const expiresAtMillis = Date.now() + 10_000
     const decision = await Effect.runPromise(
       riskDecision(intent, RiskOutcome.Approved, { expiresAt: new Date(expiresAtMillis).toISOString() }),
     )
     const blockedDecision = await Effect.runPromise(riskDecision(blockedIntent, RiskOutcome.Approved))
+    const startedDecision = await Effect.runPromise(riskDecision(startedIntent, RiskOutcome.Approved))
     await execution.runPromise(
       Effect.gen(function* () {
         const store = yield* IntentStore
         yield* store.commit(intent, decision)
         yield* store.commit(blockedIntent, blockedDecision)
+        yield* store.commit(startedIntent, startedDecision)
       }),
     )
     await execution.dispose()
@@ -3002,21 +3416,47 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           contentHash: '1'.repeat(64),
           observedAt: new Date(base + 1).toISOString(),
         })
+        yield* store.beginSubmit(startedIntent.intentId, '5'.repeat(64), 1_000, new Date(base + 2).toISOString())
       }),
     )
     await mutation.dispose()
-    await Bun.sleep(5)
-
-    const rotated = await rotateAuditedCapitalGrant('paper-account-1', {
-      activateKill: true,
-      reason: 'operator kill',
-    })
+    const containment = makeExecutionStoreRuntime(makePaperActivationConfig(originalGeneration))
+    const contained = await containment.runPromise(
+      Effect.gen(function* () {
+        const store = yield* ExecutionStore
+        const sql = yield* PgClient.PgClient
+        const [databaseTime] = yield* sql<{ updated_at: Date }>`
+          SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
+          FROM authority_state
+          WHERE singleton
+        `
+        if (databaseTime === undefined) {
+          return yield* Effect.die(new Error('active-kill fixture requires initialized authority'))
+        }
+        yield* store.restrictAuthority('operator kill', databaseTime.updated_at.toISOString())
+        const [authority] = yield* sql<{
+          effective: Authority
+          generation_hash: string
+          kill_state: KillState
+        }>`
+          SELECT effective, generation_hash, kill_state
+          FROM authority_state
+          WHERE singleton
+        `
+        if (authority === undefined) {
+          return yield* Effect.die(new Error('active-kill fixture requires durable authority'))
+        }
+        return authority
+      }),
+    )
+    await containment.dispose()
     await Bun.sleep(Math.max(0, expiresAtMillis - Date.now() + 10))
 
     const cancellation = makeMutationRuntime()
     const observed = await cancellation.runPromise(
       Effect.gen(function* () {
         const store = yield* MutationStore
+        const blockedFinalAuthorization = yield* Effect.exit(store.authorizeSubmit(startedIntent.intentId))
         const blockedSubmit = yield* Effect.exit(
           store.beginSubmit(
             blockedIntent.intentId,
@@ -3047,7 +3487,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           },
           TerminalOutcome.Canceled,
         )
-        return { blockedSubmit, notFound, state: yield* sqlIntentState(intent.intentId) }
+        return { blockedFinalAuthorization, blockedSubmit, notFound, state: yield* sqlIntentState(intent.intentId) }
       }),
     )
     await cancellation.dispose()
@@ -3056,15 +3496,21 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     if (Exit.isFailure(observed.blockedSubmit)) {
       expect(Cause.pretty(observed.blockedSubmit.cause)).toContain('effective authority is not PAPER and clear')
     }
+    expect(Exit.isFailure(observed.blockedFinalAuthorization)).toBe(true)
+    if (Exit.isFailure(observed.blockedFinalAuthorization)) {
+      expect(Cause.pretty(observed.blockedFinalAuthorization.cause)).toContain(
+        'effective authority is not PAPER and clear',
+      )
+    }
     expect(observed.notFound).toMatchObject({
       eventType: MutationEventType.RecoveryNotFound,
       brokerOrderId: orderId,
     })
-    expect(rotated).toMatchObject({
-      accountId: intent.accountId,
-      kill: KillState.Active,
+    expect(contained).toEqual({
+      effective: Authority.Observe,
+      generation_hash: originalGeneration.generationHash,
+      kill_state: KillState.Active,
     })
-    expect(rotated.generationHash).not.toBe(originalGeneration.generationHash)
     expect(intent.authorityGenerationHash).toBe(originalGeneration.generationHash)
     expect(observed.state).toEqual({ state: 'TERMINAL', state_version: 5 })
   }, 20_000)
@@ -3488,6 +3934,48 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(Exit.isFailure(observed.blockedBySubmit)).toBe(true)
     expect(Exit.isFailure(observed.blockedByCancel)).toBe(true)
     expect(observed.secondStart.started).toBe(true)
+  })
+
+  test('terminal pre-transmit denial never enters recovery containment', async () => {
+    await activateAuditedCapitalGrant()
+    const execution = makeExecutionRuntime()
+    const deniedIntent = await Effect.runPromise(plan(intentPlan({ cycleId: fixtureHash('pretransmit-denied-cycle') })))
+    const laterIntent = await Effect.runPromise(plan(intentPlan({ cycleId: fixtureHash('post-denial-cycle') })))
+    const deniedDecision = await Effect.runPromise(riskDecision(deniedIntent, RiskOutcome.Approved))
+    const laterDecision = await Effect.runPromise(riskDecision(laterIntent, RiskOutcome.Approved))
+    await execution.runPromise(
+      Effect.gen(function* () {
+        const store = yield* IntentStore
+        yield* store.commit(deniedIntent, deniedDecision)
+        yield* store.commit(laterIntent, laterDecision)
+      }),
+    )
+    await execution.dispose()
+
+    const mutation = makeMutationRuntime()
+    const deniedHash = fixtureHash('pretransmit-denied-request')
+    const laterHash = fixtureHash('post-denial-request')
+    const base = Date.now() + 100
+    const observed = await mutation.runPromise(
+      Effect.gen(function* () {
+        const store = yield* MutationStore
+        yield* store.beginSubmit(deniedIntent.intentId, deniedHash, 1_000, new Date(base).toISOString())
+        const denied = yield* store.submitDenied(deniedIntent.intentId, deniedHash, new Date(base + 1).toISOString())
+        const later = yield* store.beginSubmit(laterIntent.intentId, laterHash, 1_000, new Date(base + 2).toISOString())
+        return {
+          denied,
+          later,
+          deniedState: yield* sqlIntentState(deniedIntent.intentId),
+          latestDenied: yield* store.latest(deniedIntent.intentId, MutationOperation.Submit),
+        }
+      }),
+    )
+    await mutation.dispose()
+
+    expect(observed.denied.eventType).toBe(MutationEventType.SubmitDenied)
+    expect(observed.latestDenied).toEqual(observed.denied)
+    expect(observed.deniedState).toEqual({ state: 'TERMINAL', state_version: 4 })
+    expect(observed.later.started).toBe(true)
   })
 
   test('requires one typed append-only payload and unique broker source ordering', async () => {

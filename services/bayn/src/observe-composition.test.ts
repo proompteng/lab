@@ -14,6 +14,8 @@ import {
   type ReadResult,
 } from './broker/alpaca'
 import { unusedAssetBySymbol } from './broker/alpaca-test-support'
+import { MutationOperation } from './broker/alpaca-mutations'
+import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from './broker/identity'
 import {
   CycleState,
   decodeAutonomousCycle,
@@ -41,22 +43,42 @@ import {
   type ValuationStoreShape,
 } from './db/execution-store'
 import { operationalError, type OperationalError } from './errors'
+import { BrokerAccess, makeExecutionAuthority, sandboxCapitalAuthority } from './execution/authority'
+import { IntentStore, type IntentStoreService } from './execution/intents'
+import { MutationEventType, MutationStore, type MutationEvent, type MutationStoreShape } from './execution/mutations'
+import type { ExecutionProgram } from './execution/runtime-program'
 import { WriterFence, WriterFenceError, type WriterFenceService } from './execution/writer-fence'
 import { canonicalHashV1 } from './hash'
 import { MarketData, type MarketDataService, type MarketDataSnapshot } from './market-data'
 import {
+  buildMutationShadowCycleDecision,
   buildObserveCycleDecision,
+  appendPendingMutationOrder,
+  decidePreparedMutationIntent,
+  decideMutationIntentSettlement,
+  executeMutationIntent,
+  mutationIntentReconciliationDelayMs,
+  projectWorstCasePendingMutationPosition,
   loadObserveRiskPolicy,
+  makeMutationAutonomousCycleStartup,
   makeObserveAutonomousCycleStartup,
   prepareObserveStartup,
 } from './observe-composition'
 import {
   AccountStatus,
   Authority,
+  IntentState,
   KillState,
+  OrderSide,
+  OrderStatus,
+  OrderType,
   ReconciliationStatus,
   RiskOutcome,
+  TerminalOutcome,
+  TimeInForce,
   type AccountSnapshot,
+  type Intent,
+  type Position,
   type Reconciliation,
 } from './paper'
 import { ReconciliationError, type ReconciliationPassResult } from './reconciler'
@@ -224,7 +246,10 @@ const reconciliation = (): Reconciliation => {
   }
 }
 
-const reconciliationResult = (authorityGenerationHash = generationHash): ReconciliationPassResult => {
+const reconciliationResult = (
+  authorityGenerationHash = generationHash,
+  maximum: Authority = Authority.Observe,
+): ReconciliationPassResult => {
   const exact = reconciliation()
   return {
     report: {
@@ -254,8 +279,8 @@ const reconciliationResult = (authorityGenerationHash = generationHash): Reconci
       authority: {
         schemaVersion: 'bayn.paper-authority.v1',
         generationHash: authorityGenerationHash,
-        maximum: Authority.Observe,
-        effective: Authority.Observe,
+        maximum,
+        effective: maximum,
         kill: KillState.Clear,
         version: 1,
         updatedAt: window.submissionOpenAt,
@@ -359,12 +384,249 @@ const provideDecisionServices = <A, E>(
     Effect.provideService(MarketData, marketDataService),
   )
 
+const sandboxExecutionProgram = (
+  authorityGenerationHash = generationHash,
+  strategy = fixtureStrategy.provenance.strategy,
+): ExecutionProgram => {
+  const brokerIdentity = Result.getOrThrow(
+    makeBrokerIdentity({
+      schemaVersion: 'bayn.broker-identity.v2',
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Sandbox,
+      accountId,
+    }),
+  )
+  const authority = Result.getOrThrow(
+    makeExecutionAuthority({
+      brokerIdentity,
+      brokerAccess: BrokerAccess.Mutation,
+      capitalAuthority: sandboxCapitalAuthority(authorityGenerationHash),
+      strategy,
+      observedAt: evaluatedAt,
+    }),
+  ) as ExecutionProgram['authority']
+  const unused = Effect.die(new Error('execution program operation must not run during startup validation'))
+  return {
+    _tag: 'ExecutionProgram',
+    schemaVersion: 'bayn.execution-program.v1',
+    authority,
+    dryRunSubmit: () => unused,
+    submit: () => unused,
+    cancel: () => unused,
+    recover: () => unused,
+  }
+}
+
 describe('OBSERVE runtime composition', () => {
+  test('projects accepted nonterminal intents as one unresolved order for the next risk pass', () => {
+    const intent: Intent = {
+      schemaVersion: 'bayn.paper-intent.v3',
+      intentId: '1'.repeat(64),
+      authorityGenerationHash: generationHash,
+      riskDecisionId: '2'.repeat(64),
+      strategyName: 'risk-balanced-trend',
+      cycleId: '3'.repeat(64),
+      decisionHash: '4'.repeat(64),
+      policyHash: '5'.repeat(64),
+      accountId,
+      clientOrderId: 'accepted-prior-intent',
+      symbol: 'NVDA',
+      side: OrderSide.Buy,
+      orderType: OrderType.Market,
+      timeInForce: TimeInForce.Day,
+      quantityMicros: '1000000',
+      notionalLimitMicros: '100000000',
+      state: IntentState.Acknowledged,
+      createdAt: evaluatedAt,
+    }
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '6'.repeat(64),
+      mutationId: '7'.repeat(64),
+      intentId: intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: '8'.repeat(64),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'accepted-broker-order',
+      occurredAt: evaluatedAt,
+    }
+
+    const decision = Result.getOrThrow(decidePreparedMutationIntent(intent, accepted))
+    expect(decision._tag).toBe('Pending')
+    if (decision._tag !== 'Pending') return expect.unreachable(decision._tag)
+    expect(decision.order).toMatchObject({
+      brokerOrderId: accepted.brokerOrderId,
+      clientOrderId: intent.clientOrderId,
+      intentId: intent.intentId,
+      status: OrderStatus.New,
+      filledQuantityMicros: '0',
+    })
+    const projected = appendPendingMutationOrder([], decision.order)
+    expect(projected).toEqual([decision.order])
+    expect(appendPendingMutationOrder(projected, decision.order)).toBe(projected)
+  })
+
+  test('executes unsubmitted intents and skips terminal intents in fresh mutation passes', () => {
+    const base: Intent = {
+      schemaVersion: 'bayn.paper-intent.v3',
+      intentId: '9'.repeat(64),
+      authorityGenerationHash: generationHash,
+      strategyName: 'risk-balanced-trend',
+      cycleId: 'a'.repeat(64),
+      decisionHash: 'b'.repeat(64),
+      policyHash: 'c'.repeat(64),
+      accountId,
+      clientOrderId: 'fresh-pass-intent',
+      symbol: 'AMD',
+      side: OrderSide.Buy,
+      orderType: OrderType.Market,
+      timeInForce: TimeInForce.Day,
+      quantityMicros: '1000000',
+      notionalLimitMicros: '100000000',
+      state: IntentState.Planned,
+      createdAt: evaluatedAt,
+    }
+
+    expect(Result.getOrThrow(decidePreparedMutationIntent(base, undefined))).toEqual({ _tag: 'Execute' })
+    expect(
+      Result.getOrThrow(
+        decidePreparedMutationIntent(
+          { ...base, state: IntentState.Terminal, terminalOutcome: TerminalOutcome.Filled },
+          undefined,
+        ),
+      ),
+    ).toEqual({ _tag: 'SkipTerminal' })
+  })
+
+  test('retains an unfilled sell while reserving a later buy in projected risk positions', () => {
+    const observedAt = '2026-07-28T13:45:00.000Z'
+    const existing: Position = {
+      schemaVersion: 'bayn.paper-position.v1',
+      accountId,
+      symbol: 'AAPL',
+      quantityMicros: '100000000',
+      averageEntryPriceMicros: '100000000',
+      marketPriceMicros: '100000000',
+      marketValueMicros: '10000000000',
+      unrealizedPnlMicros: '0',
+      observedAt,
+    }
+    const afterSell = projectWorstCasePendingMutationPosition(
+      [existing],
+      {
+        symbol: 'AAPL',
+        targetWeight: 0.2,
+        referencePriceMicros: '100000000',
+        currentQuantityMicros: '100000000',
+        targetQuantityMicros: '20000000',
+      },
+      accountId,
+      observedAt,
+    )
+    const afterLaterBuy = projectWorstCasePendingMutationPosition(
+      afterSell,
+      {
+        symbol: 'AMD',
+        targetWeight: 0.6,
+        referencePriceMicros: '50000000',
+        currentQuantityMicros: '0',
+        targetQuantityMicros: '60000000',
+      },
+      accountId,
+      observedAt,
+    )
+
+    expect(afterSell).toEqual([existing])
+    expect(afterLaterBuy.map(({ symbol, quantityMicros }) => ({ symbol, quantityMicros }))).toEqual([
+      { symbol: 'AAPL', quantityMicros: '100000000' },
+      { symbol: 'AMD', quantityMicros: '60000000' },
+    ])
+  })
+
+  test('settles terminal submit denials and broker rejections so later cycles can continue', () => {
+    expect(decideMutationIntentSettlement(MutationEventType.SubmitRejected)).toEqual({
+      _tag: 'Settled',
+      outcome: 'rejected',
+    })
+
+    expect(decideMutationIntentSettlement(MutationEventType.SubmitDenied)).toEqual({
+      _tag: 'Settled',
+      outcome: 'denied',
+    })
+    expect(decideMutationIntentSettlement(MutationEventType.SubmitUnknown)).toEqual({
+      _tag: 'Unresolved',
+      eventType: MutationEventType.SubmitUnknown,
+    })
+  })
+
+  test('waits the durable consistency window only after accepted submit settlement', () => {
+    expect(
+      mutationIntentReconciliationDelayMs({
+        settlement: { _tag: 'Settled', outcome: 'accepted' },
+        consistencyDelayMs: 1_250,
+      }),
+    ).toBe(1_250)
+    expect(
+      mutationIntentReconciliationDelayMs({
+        settlement: { _tag: 'Settled', outcome: 'rejected' },
+        consistencyDelayMs: 1_250,
+      }),
+    ).toBe(0)
+  })
+
+  test('replays a terminal rejection without resubmission and executes the later-cycle intent', async () => {
+    const rejectedIntentId = 'a'.repeat(64)
+    const laterIntentId = 'b'.repeat(64)
+    const event = (intentId: string, eventType: MutationEventType) => ({
+      schemaVersion: 'bayn.paper-mutation-event.v1' as const,
+      eventId: canonicalHashV1({ intentId, eventType }),
+      mutationId: canonicalHashV1({ intentId, operation: 'SUBMIT' }),
+      intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType,
+      requestHash: '1'.repeat(64),
+      consistencyDelayMs: 1_000,
+      occurredAt: evaluatedAt,
+    })
+    const rejected = event(rejectedIntentId, MutationEventType.SubmitRejected)
+    const accepted = event(laterIntentId, MutationEventType.SubmitAccepted)
+    const submitted: string[] = []
+    let recoveries = 0
+    const program: ExecutionProgram = {
+      ...sandboxExecutionProgram(),
+      submit: (intentId) =>
+        Effect.sync(() => {
+          submitted.push(intentId)
+          return accepted
+        }),
+      recover: () =>
+        Effect.sync(() => {
+          recoveries += 1
+          return accepted
+        }),
+    }
+    const store = {
+      latest: (intentId: string) => Effect.succeed(intentId === rejectedIntentId ? rejected : undefined),
+    } as unknown as MutationStoreShape
+
+    await Effect.runPromise(
+      Effect.forEach([rejectedIntentId, laterIntentId], (intentId) => executeMutationIntent(program, intentId), {
+        concurrency: 1,
+        discard: true,
+      }).pipe(Effect.provideService(MutationStore, store)),
+    )
+
+    expect(submitted).toEqual([laterIntentId])
+    expect(recoveries).toBe(0)
+  })
+
   test('derives the autonomous cycle protocol identity from the current strategy provenance', () => {
     const prepared = prepareObserveStartup({
       accountId,
       authorityGenerationHash: generationHash,
-      maximumAuthority: Authority.Observe,
       pollIntervalMs: 30_000,
       strategy: fixtureStrategy,
     })
@@ -450,6 +712,42 @@ describe('OBSERVE runtime composition', () => {
       ],
       createdAt: evaluatedAt,
       expiresAt: cycle.window.submissionCutoffAt,
+    })
+  })
+
+  test('builds the durable non-dispatchable shadow plan from an exact PAPER authority without requiring OBSERVE', async () => {
+    const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, fixtureProtocol.universe))
+    const program = Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(evaluatedAt))
+      return yield* buildMutationShadowCycleDecision({
+        authorityGenerationHash: generationHash,
+        cycle,
+        executionModel: fixtureProtocol.executionModel,
+        policy,
+        reconcile: Effect.succeed(reconciliationResult(generationHash, Authority.Paper)),
+        strategy: { currentDecision: () => Result.succeed({ decision, priceMicros }) },
+      })
+    }).pipe(
+      (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
+      Effect.provide(TestClock.layer()),
+    )
+
+    const document = await Effect.runPromise(program)
+
+    expect(document).toMatchObject({
+      mode: 'OBSERVE',
+      dispatchable: false,
+      bindings: { accountId, cycleId: cycle.identity.cycleId },
+      deltaRisk: [
+        {
+          evaluation: {
+            decision: {
+              outcome: RiskOutcome.Blocked,
+              reasonCodes: [Reason.AuthorityNotPaper],
+            },
+          },
+        },
+      ],
     })
   })
 
@@ -722,7 +1020,6 @@ describe('OBSERVE runtime composition', () => {
     const startup = makeObserveAutonomousCycleStartup({
       accountId,
       authorityGenerationHash: generationHash,
-      maximumAuthority: Authority.Observe,
       pollIntervalMs: 30_000,
       strategy: fixtureStrategy,
     })
@@ -775,15 +1072,10 @@ describe('OBSERVE runtime composition', () => {
     )
   })
 
-  test('fails PAPER startup before authority initialization or autonomous work can begin', async () => {
-    const unused = Effect.die(new Error('PAPER startup must fail before using runtime capabilities'))
+  test('starts mutation mode without projecting or initializing OBSERVE authority', async () => {
+    const unused = Effect.die(new Error('missing-publication mutation loop must not use this capability'))
     let authorityInitializations = 0
-    const executionStore: BrokerEventStoreShape &
-      FillAccountingStoreShape &
-      ValuationStoreShape &
-      ReconciliationStoreShape &
-      AuthorityGenerationStoreShape &
-      AuthorityRestrictionStoreShape = {
+    const executionStore = {
       ingest: () => unused,
       ingestPositions: () => unused,
       account: () => unused,
@@ -794,16 +1086,21 @@ describe('OBSERVE runtime composition', () => {
       ensureAuthorityGeneration: () =>
         Effect.sync(() => {
           authorityInitializations += 1
-          throw new Error('PAPER startup must not initialize synthetic OBSERVE authority')
+          throw new Error('mutation startup must not initialize OBSERVE authority')
         }),
       restrictAuthority: () => unused,
-    }
+    } satisfies BrokerEventStoreShape &
+      FillAccountingStoreShape &
+      ValuationStoreShape &
+      ReconciliationStoreShape &
+      AuthorityGenerationStoreShape &
+      AuthorityRestrictionStoreShape
     const cycleStore: CycleStoreShape = {
       acquire: () => unused,
       read: () => unused,
       readAuthoritySlot: () => unused,
       readDecisionDocument: () => unused,
-      readOldestUnfinished: () => unused,
+      readOldestUnfinished: () => Effect.succeed(Option.none()),
       bindSnapshot: () => unused,
       activate: () => unused,
       bindDecision: () => unused,
@@ -821,47 +1118,105 @@ describe('OBSERVE runtime composition', () => {
       fillActivities: () => unused,
       marketCalendar: () => unused,
     }
+    const marketDataService: MarketDataService = {
+      ...marketData([]),
+      inspectCyclePublications: Effect.succeed({
+        outcome: 'MISSING',
+        observedAt: '2026-01-30T21:20:00.000Z',
+      }),
+    }
     const writerFence: WriterFenceService = {
       backendPid: 1,
       check: unused,
       transaction: (effect) => effect,
     }
+    const intentStore = {} as IntentStoreService
+    const mutationStore = {} as MutationStoreShape
+    const startup = makeMutationAutonomousCycleStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      pollIntervalMs: 30_000,
+      strategy: fixtureStrategy,
+      executionProgram: sandboxExecutionProgram(),
+    })
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const pass = yield* Deferred.make<Parameters<Parameters<typeof startup>[0]['recordPass']>[0]>()
+          const loop = yield* startup({
+            qualificationRunId: 'c'.repeat(64),
+            recordPass: (observation) => Deferred.succeed(pass, observation).pipe(Effect.asVoid),
+          })
+          const fiber = yield* loop.pipe(
+            Effect.provideService(BrokerRead, brokerRead),
+            Effect.provideService(CycleStore, cycleStore),
+            Effect.provideService(MarketData, marketDataService),
+            Effect.provideService(BrokerEventStore, executionStore),
+            Effect.provideService(FillAccountingStore, executionStore),
+            Effect.provideService(ValuationStore, executionStore),
+            Effect.provideService(ReconciliationStore, executionStore),
+            Effect.provideService(AuthorityGenerationStore, executionStore),
+            Effect.provideService(AuthorityRestrictionStore, executionStore),
+            Effect.provideService(WriterFence, writerFence),
+            Effect.provideService(IntentStore, intentStore),
+            Effect.provideService(MutationStore, mutationStore),
+            Effect.forkScoped,
+          )
+          const observation = yield* Deferred.await(pass).pipe(Effect.timeout('1 second'))
+          expect(observation).toMatchObject({
+            result: 'SUCCESS',
+            outcome: 'NO_PUBLICATION',
+          })
+          expect(authorityInitializations).toBe(0)
+          yield* Fiber.interrupt(fiber)
+        }),
+      ),
+    )
+  })
+
+  test('keeps the observe startup interface read-only by construction', () => {
     const startup = makeObserveAutonomousCycleStartup({
       accountId,
       authorityGenerationHash: generationHash,
-      maximumAuthority: Authority.Paper,
       pollIntervalMs: 30_000,
-      strategy: {
-        currentDecision: () => {
-          throw new Error('PAPER startup must not compile a shadow decision')
-        },
-        parameters: fixtureProtocol,
-        provenance: fixtureStrategy.provenance,
-      },
+      strategy: fixtureStrategy,
     })
 
-    const exit = await Effect.runPromiseExit(
-      Effect.scoped(
-        startup({
-          qualificationRunId: 'c'.repeat(64),
-          recordPass: () => unused,
-        }).pipe(
-          Effect.provideService(BrokerRead, brokerRead),
-          Effect.provideService(CycleStore, cycleStore),
-          Effect.provideService(MarketData, marketData([])),
-          Effect.provideService(BrokerEventStore, executionStore),
-          Effect.provideService(FillAccountingStore, executionStore),
-          Effect.provideService(ValuationStore, executionStore),
-          Effect.provideService(ReconciliationStore, executionStore),
-          Effect.provideService(AuthorityGenerationStore, executionStore),
-          Effect.provideService(WriterFence, writerFence),
-        ),
-      ),
-    )
+    expect(typeof startup).toBe('function')
+  })
 
-    expect(exit.toString()).toContain(
-      'PAPER autonomous startup requires the gated Phase B authority generation and dispatch transition',
-    )
-    expect(authorityInitializations).toBe(0)
+  test('binds mutation startup to the exact guarded execution program authority and strategy identity', async () => {
+    for (const executionProgram of [
+      sandboxExecutionProgram('9'.repeat(64)),
+      sandboxExecutionProgram(generationHash, {
+        ...fixtureStrategy.provenance.strategy,
+        behaviorHash: '8'.repeat(64),
+      }),
+    ]) {
+      const startup = makeMutationAutonomousCycleStartup({
+        accountId,
+        authorityGenerationHash: generationHash,
+        pollIntervalMs: 30_000,
+        strategy: fixtureStrategy,
+        executionProgram,
+      })
+
+      const failure = await Effect.runPromise(
+        Effect.flip(
+          startup({
+            qualificationRunId: 'c'.repeat(64),
+            recordPass: () => Effect.void,
+          }),
+        ),
+      )
+
+      expect(failure).toMatchObject({
+        _tag: 'OperationalError',
+        component: 'config',
+        operation: 'cycle-loop',
+        message: 'mutation cycle execution program does not match its account, authority generation, and strategy',
+      })
+    }
   })
 })

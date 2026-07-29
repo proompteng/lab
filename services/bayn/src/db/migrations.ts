@@ -18,6 +18,8 @@ import acknowledgedSubmitRecovery from '../../migrations/0015_acknowledged_submi
 import authorityBoundIntents from '../../migrations/0016_authority_bound_intents'
 import stableCapitalGrantGeneration from '../../migrations/0017_stable_paper_authority_generation'
 import robustTrendProtocol from '../../migrations/0018_robust_trend_protocol'
+import explicitExecutionAuthority from '../../migrations/0019_explicit_execution_authority'
+import pretransmitSubmitDenial from '../../migrations/0020_pretransmit_submit_denial'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -38,4 +40,6 @@ export const migrationLoader = PgMigrator.fromRecord({
   '16_authority_bound_intents': authorityBoundIntents,
   '17_stable_paper_authority_generation': stableCapitalGrantGeneration,
   '18_robust_trend_protocol': robustTrendProtocol,
+  '19_explicit_execution_authority': explicitExecutionAuthority,
+  '20_pretransmit_submit_denial': pretransmitSubmitDenial,
 })

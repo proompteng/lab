@@ -66,7 +66,8 @@ const order: Order = {
   intentId: hash('1'),
   symbol: position.symbol,
   side: OrderSide.Buy,
-  orderType: OrderType.Market,
+  orderType: OrderType.Limit,
+  limitPriceMicros: '100000000',
   timeInForce: TimeInForce.Day,
   quantityMicros: position.quantityMicros,
   filledQuantityMicros: position.quantityMicros,
@@ -114,7 +115,9 @@ const snapshot = (overrides: Partial<ReconciliationSnapshot> = {}): Reconciliati
       clientOrderId: order.clientOrderId,
       symbol: order.symbol,
       side: order.side,
-      orderType: order.orderType,
+      orderType: OrderType.Market,
+      submittedOrderType: OrderType.Limit,
+      submittedLimitPriceMicros: order.limitPriceMicros,
       timeInForce: order.timeInForce,
       quantityMicros: order.quantityMicros,
       state: IntentState.Terminal,
@@ -179,7 +182,9 @@ describe('paper reconciliation', () => {
           clientOrderId: order.clientOrderId,
           symbol: order.symbol,
           side: order.side,
-          orderType: order.orderType,
+          orderType: OrderType.Market,
+          submittedOrderType: OrderType.Limit,
+          submittedLimitPriceMicros: order.limitPriceMicros,
           timeInForce: order.timeInForce,
           quantityMicros: order.quantityMicros,
           state: IntentState.Terminal,
@@ -338,7 +343,6 @@ describe('paper reconciliation', () => {
           orders: [
             {
               ...order,
-              orderType: OrderType.Limit,
               limitPriceMicros: '90000000',
               status: OrderStatus.PartiallyFilled,
               filledQuantityMicros: '500000',
@@ -355,6 +359,22 @@ describe('paper reconciliation', () => {
         `${order.brokerOrderId}:quantity`,
       ]),
     )
+  })
+
+  test('preserves exact historical MARKET broker orders', () => {
+    const input = snapshot()
+    const result = successOf(
+      compareReconciliation({
+        ...input,
+        orders: [{ ...order, orderType: OrderType.Market, limitPriceMicros: undefined }],
+        intents: input.intents.map(({ submittedLimitPriceMicros: _limit, ...intent }) => ({
+          ...intent,
+          submittedOrderType: OrderType.Market,
+        })),
+      }),
+    )
+
+    expect(result.discrepancies).toEqual([])
   })
 
   test('returns fact-bearing failures for account, timestamp, integer, and canonicalization defects', () => {

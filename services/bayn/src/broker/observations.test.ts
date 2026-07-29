@@ -49,6 +49,7 @@ const account: AlpacaAccount = {
   currency: 'USD',
   cashMicros: '1000000000',
   equityMicros: '1200000000',
+  lastEquityMicros: '1200000000',
   buyingPowerMicros: '2000000000',
   accountBlocked: false,
   tradingBlocked: false,

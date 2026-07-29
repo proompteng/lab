@@ -62,6 +62,7 @@ const account: BrokerAccount = {
   currency: 'USD',
   cashMicros: '1000000000',
   equityMicros: '1000000000',
+  lastEquityMicros: '1000000000',
   buyingPowerMicros: '2000000000',
   accountBlocked: false,
   tradingBlocked: false,

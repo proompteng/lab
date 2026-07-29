@@ -45,6 +45,7 @@ import { IntentStore, type IntentStoreService, type StoredIntent } from './inten
 
 const encodedRequest = (value: Intent) => Result.getOrThrow(orderRequestBody(value))
 import {
+  decideFinalSubmitAuthorization,
   decideMutationAuthority,
   decideMutationOutcome,
   decideMutationStart,
@@ -116,7 +117,8 @@ const brokerOrder = (status = OrderStatus.Accepted, observedAt = '1970-01-01T00:
   quantityMicros: intent.quantityMicros,
   filledQuantityMicros: status === OrderStatus.Filled ? intent.quantityMicros : '0',
   orderClass: OrderClass.Simple,
-  orderType: BrokerOrderType.Market,
+  orderType: BrokerOrderType.Limit,
+  limitPriceMicros: '160000000',
   side: BrokerSide.Buy,
   timeInForce: BrokerTimeInForce.Day,
   status,
@@ -235,6 +237,7 @@ describe('MutationStore decision algebra', () => {
       accountId,
       generationHash: intent.authorityGenerationHash,
     })
+
     expect(
       resultSuccess(
         decideMutationAuthority(MutationOperation.Cancel, {
@@ -283,6 +286,24 @@ describe('MutationStore decision algebra', () => {
         _tag: 'MutationStoreError',
         failure: 'authority',
         message,
+      })
+    }
+  })
+
+  test('rechecks active authority and immutable IO-started intent bindings before final submit', () => {
+    const binding = resultSuccess(decideMutationAuthority(MutationOperation.Submit, decisionAuthority))
+
+    expect(
+      resultSuccess(decideFinalSubmitAuthorization(binding, decisionIntent(IntentState.IoStarted))),
+    ).toBeUndefined()
+    for (const snapshot of [
+      undefined,
+      decisionIntent(IntentState.Approved),
+      { ...decisionIntent(IntentState.IoStarted), authorityGenerationHash: '9'.repeat(64) },
+      { ...decisionIntent(IntentState.IoStarted), generationAccountId: 'another-account' },
+    ]) {
+      expect(resultFailure(decideFinalSubmitAuthorization(binding, snapshot))).toMatchObject({
+        operation: 'begin-submit',
       })
     }
   })
@@ -674,6 +695,7 @@ describe('MutationStore decision algebra', () => {
     const allowed: readonly [MutationOperation, MutationEventType, MutationEventType][] = [
       [MutationOperation.Submit, MutationEventType.SubmitStarted, MutationEventType.SubmitAccepted],
       [MutationOperation.Submit, MutationEventType.SubmitStarted, MutationEventType.SubmitRejected],
+      [MutationOperation.Submit, MutationEventType.SubmitStarted, MutationEventType.SubmitDenied],
       [MutationOperation.Submit, MutationEventType.SubmitStarted, MutationEventType.SubmitUnknown],
       [MutationOperation.Cancel, MutationEventType.CancelStarted, MutationEventType.CancelAccepted],
       [MutationOperation.Cancel, MutationEventType.CancelStarted, MutationEventType.CancelUnknown],
@@ -691,7 +713,9 @@ describe('MutationStore decision algebra', () => {
           ? decisionEvent(operation, previousType)
           : decisionEvent(operation, previousType, { brokerOrderId: orderId })
       const brokerOrderId =
-        nextType === MutationEventType.SubmitRejected || nextType === MutationEventType.SubmitUnknown
+        nextType === MutationEventType.SubmitRejected ||
+        nextType === MutationEventType.SubmitDenied ||
+        nextType === MutationEventType.SubmitUnknown
           ? undefined
           : orderId
       const status =
@@ -708,6 +732,8 @@ describe('MutationStore decision algebra', () => {
             return { _tag: 'SubmitAccepted' }
           case MutationEventType.SubmitRejected:
             return { _tag: 'SubmitRejected' }
+          case MutationEventType.SubmitDenied:
+            return { _tag: 'SubmitDenied' }
           case MutationEventType.SubmitUnknown:
             return { _tag: 'SubmitUnknown' }
           case MutationEventType.CancelAccepted:
@@ -729,7 +755,7 @@ describe('MutationStore decision algebra', () => {
         decideMutationOutcome(
           decisionOutcomeInput({
             ...(brokerOrderId === undefined ? {} : { brokerOrderId }),
-            evidence: evidence(status, decisionOutcomeAt),
+            ...(nextType === MutationEventType.SubmitDenied ? {} : { evidence: evidence(status, decisionOutcomeAt) }),
           }),
           definition,
           previous,
@@ -1254,6 +1280,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
   }
 
   const mutationStore: MutationStoreShape = {
+    authorizeSubmit: () => Effect.void,
     beginSubmit: (_intentId, requestHash, consistencyDelayMs, occurredAt) => {
       const existing = latest.get(MutationOperation.Submit)
       if (existing !== undefined) {
@@ -1297,6 +1324,17 @@ const makeHarness = (options: HarnessOptions = {}) => {
       )
       setState(IntentState.Terminal, response.observedAt, TerminalOutcome.Rejected)
       return Effect.succeed(rejected)
+    },
+    submitDenied: (_intentId, requestHash, occurredAt) => {
+      const denied = event(
+        MutationOperation.Submit,
+        MutationEventType.SubmitDenied,
+        requestHash,
+        latest.get(MutationOperation.Submit)?.consistencyDelayMs ?? 1,
+        occurredAt,
+      )
+      setState(IntentState.Terminal, occurredAt, TerminalOutcome.Rejected)
+      return Effect.succeed(denied)
     },
     submitUnknown: (_intentId, requestHash, occurredAt, response, brokerOrderId) => {
       const unknown = event(
@@ -1848,6 +1886,35 @@ describe('paper execution coordinator', () => {
     })
     expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
     expect(harness.state()).toBe(IntentState.Unknown)
+  })
+
+  test('records a deterministic pre-transmit denial as terminal without recovery or containment', async () => {
+    const harness = makeHarness({
+      submitError: new BrokerMutationError({
+        operation: MutationOperation.Submit,
+        failure: MutationFailure.InvalidRequest,
+        outcome: MutationOutcome.Known,
+        message: 'fresh quote crossed the durable order bound before transmission',
+      }),
+    })
+
+    const result = await Effect.runPromise(
+      harness.provide(
+        Effect.gen(function* () {
+          const denied = yield* submit(intentId, 1_000)
+          const replay = yield* recover(intentId, MutationOperation.Submit)
+          return { denied, replay }
+        }),
+      ),
+    )
+
+    expect(result.denied.eventType).toBe(MutationEventType.SubmitDenied)
+    expect(result.replay).toEqual(result.denied)
+    expect(harness.intent()).toMatchObject({
+      state: IntentState.Terminal,
+      terminalOutcome: TerminalOutcome.Rejected,
+    })
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
   })
 
   test('cancels and closes a zero-fill mismatched accepted order by its broker ID', async () => {

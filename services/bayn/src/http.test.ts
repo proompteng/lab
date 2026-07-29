@@ -2,7 +2,7 @@ import { connect, type Socket } from 'node:net'
 
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpServer } from 'effect/unstable/http'
 
@@ -16,6 +16,9 @@ import {
 } from './app-test-support'
 import type { BrokerReadShape } from './broker/alpaca'
 import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
+import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from './broker/identity'
+import type { ExecutionPolicy } from './execution/configuration'
+import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
 import { CycleOperationsCondition, CycleOperationsReason } from './cycle-observability'
 import { CycleState, CycleTerminalReason } from './cycle'
 import { DatabaseError, type EvidenceStoreService } from './db/evidence-store'
@@ -44,9 +47,26 @@ const metricValue = (metrics: string, name: string): number => {
 
 interface TestServerOptions {
   readonly state?: RuntimeState
-  readonly maximumAuthority?: Authority
+  readonly execution?: ExecutionPolicy
   readonly operationTimeoutMs?: number
   readonly readEvidence?: EvidenceStoreService['read']
+}
+
+const readOnlyExecution = config.execution
+const sandboxMutationExecution: ExecutionPolicy = {
+  brokerIdentity: Result.getOrThrow(
+    makeBrokerIdentity({
+      schemaVersion: 'bayn.broker-identity.v2',
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Sandbox,
+      accountId: 'paper-account-1',
+    }),
+  ),
+  brokerAccess: BrokerAccess.Mutation,
+  capitalAuthority: {
+    _tag: CapitalAuthorityKind.Sandbox,
+    authorityGenerationHash: 'a'.repeat(64),
+  },
 }
 
 interface TestServer {
@@ -61,7 +81,7 @@ const withHttpServer = (
   const serverConfig = {
     cycleStallThresholdMs: config.cycleStallThresholdMs,
     host: '127.0.0.1',
-    maximumAuthority: options.maximumAuthority ?? Authority.Observe,
+    execution: options.execution ?? readOnlyExecution,
     operationTimeoutMs: options.operationTimeoutMs ?? 250,
     port: 0,
     reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
@@ -215,10 +235,10 @@ describe('Bayn HTTP pure decisions', () => {
         },
       },
     ])
-    expect(statusResponseDecision(initial, Authority.Observe, provenance, 'embedded')).toEqual({
+    expect(statusResponseDecision(initial, readOnlyExecution, provenance, 'embedded')).toEqual({
       _tag: 'Json',
       status: 200,
-      body: statusFacts(initial, Authority.Observe, provenance, 'embedded'),
+      body: statusFacts(initial, readOnlyExecution, provenance, 'embedded'),
     })
   })
 
@@ -429,13 +449,15 @@ describe('Bayn HTTP pure decisions', () => {
       {
         name: 'no evidence or observations',
         state: initial,
-        maximum: Authority.Observe,
+        execution: readOnlyExecution,
         expected: {
           data: 'UNKNOWN',
           evidence: 'UNKNOWN',
           accounting: 'UNKNOWN',
           observationAvailable: false,
-          maximum: 'observe',
+          brokerEnvironment: null,
+          brokerAccess: BrokerAccess.ReadOnly,
+          capitalAuthority: CapitalAuthorityKind.None,
           durable: { available: false },
           broker: { configured: false, accountBound: false, readAvailable: false },
         },
@@ -443,13 +465,15 @@ describe('Bayn HTTP pure decisions', () => {
       {
         name: 'current evidence without durable authority',
         state: healthy,
-        maximum: Authority.Observe,
+        execution: readOnlyExecution,
         expected: {
           data: 'CURRENT',
           evidence: 'CURRENT',
           accounting: 'EXACT',
           observationAvailable: true,
-          maximum: 'observe',
+          brokerEnvironment: null,
+          brokerAccess: BrokerAccess.ReadOnly,
+          capitalAuthority: CapitalAuthorityKind.None,
           durable: {
             available: true,
             configured: false,
@@ -465,13 +489,15 @@ describe('Bayn HTTP pure decisions', () => {
       {
         name: 'unknown dependency verification',
         state: unknownDependencies,
-        maximum: Authority.Observe,
+        execution: readOnlyExecution,
         expected: {
           data: 'UNKNOWN',
           evidence: 'UNKNOWN',
           accounting: 'UNKNOWN',
           observationAvailable: true,
-          maximum: 'observe',
+          brokerEnvironment: null,
+          brokerAccess: BrokerAccess.ReadOnly,
+          capitalAuthority: CapitalAuthorityKind.None,
           durable: {
             available: true,
             configured: false,
@@ -487,13 +513,15 @@ describe('Bayn HTTP pure decisions', () => {
       {
         name: 'invalid dependency verification',
         state: unavailableDependencies,
-        maximum: Authority.Observe,
+        execution: readOnlyExecution,
         expected: {
           data: 'INVALID',
           evidence: 'INVALID',
           accounting: 'UNAVAILABLE',
           observationAvailable: true,
-          maximum: 'observe',
+          brokerEnvironment: null,
+          brokerAccess: BrokerAccess.ReadOnly,
+          capitalAuthority: CapitalAuthorityKind.None,
           durable: {
             available: true,
             configured: false,
@@ -509,13 +537,15 @@ describe('Bayn HTTP pure decisions', () => {
       {
         name: 'configured paper ceiling and durable observe kill',
         state: configured,
-        maximum: Authority.Paper,
+        execution: sandboxMutationExecution,
         expected: {
           data: 'CURRENT',
           evidence: 'CURRENT',
           accounting: 'EXACT',
           observationAvailable: true,
-          maximum: 'paper',
+          brokerEnvironment: BrokerEnvironment.Sandbox,
+          brokerAccess: BrokerAccess.Mutation,
+          capitalAuthority: CapitalAuthorityKind.Sandbox,
           durable: {
             available: true,
             configured: true,
@@ -531,14 +561,16 @@ describe('Bayn HTTP pure decisions', () => {
     ] as const
 
     for (const testCase of cases) {
-      const facts = statusFacts(testCase.state, testCase.maximum, provenance, 'embedded')
+      const facts = statusFacts(testCase.state, testCase.execution, provenance, 'embedded')
       expect(
         {
           data: facts.data.status,
           evidence: facts.evidence.status,
           accounting: facts.accounting.status,
           observationAvailable: facts.cycle.observationAvailable,
-          maximum: facts.authority.maximum,
+          brokerEnvironment: facts.authority.brokerEnvironment,
+          brokerAccess: facts.authority.brokerAccess,
+          capitalAuthority: facts.authority.capitalAuthority,
           durable: facts.authority.durable,
           broker: {
             configured: facts.broker.configured,
@@ -681,7 +713,7 @@ describe('Bayn HTTP probes', () => {
             allow: null,
             cacheControl: null,
             contentType: 'application/json',
-            body: statusFacts(initial, Authority.Observe, provenance, 'embedded'),
+            body: statusFacts(initial, readOnlyExecution, provenance, 'embedded'),
           },
         },
         {
@@ -770,7 +802,7 @@ describe('Bayn HTTP probes', () => {
         Effect.andThen(request(server.port, '/v1/status')),
         Effect.tap((response) =>
           Effect.sync(() =>
-            expect(response.body).toEqual(statusFacts(ready, Authority.Observe, provenance, 'embedded')),
+            expect(response.body).toEqual(statusFacts(ready, readOnlyExecution, provenance, 'embedded')),
           ),
         ),
         Effect.asVoid,
@@ -1120,15 +1152,25 @@ describe('Bayn HTTP probes', () => {
     )
   })
 
-  test('reports the configured ceiling without implying broker capability', async () => {
-    await withHttpServer({ maximumAuthority: Authority.Paper }, ({ port }) =>
-      request(port, '/v1/status').pipe(
-        Effect.tap((response) =>
+  test('reports explicit mutation and sandbox-capital capability without submitting an order', async () => {
+    await withHttpServer({ execution: sandboxMutationExecution }, ({ port }) =>
+      Effect.all([request(port, '/v1/status'), request(port, '/metrics')]).pipe(
+        Effect.tap(([status, metrics]) =>
           Effect.sync(() => {
-            expect(response).toMatchObject({
+            expect(status).toMatchObject({
               status: 200,
-              body: { authority: { maximum: 'paper', brokerOrders: false, capitalPromotion: false } },
+              body: {
+                authority: {
+                  brokerEnvironment: BrokerEnvironment.Sandbox,
+                  brokerAccess: BrokerAccess.Mutation,
+                  capitalAuthority: CapitalAuthorityKind.Sandbox,
+                  brokerOrders: true,
+                  capitalPromotion: true,
+                },
+              },
             })
+            expect(metrics.body).toContain('bayn_broker_orders_enabled 1')
+            expect(metrics.body).toContain('bayn_capital_promotion_enabled 1')
           }),
         ),
         Effect.asVoid,
