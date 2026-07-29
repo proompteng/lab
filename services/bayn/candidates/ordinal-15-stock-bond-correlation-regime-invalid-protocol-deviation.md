@@ -37,8 +37,10 @@ statistics.
 - Immutable preregistration SHA-256:
   `e11ad74f8f4d8ab8e9c57528fe021b809190a9b0e56c5c01c55e25cf3f527828`.
 - Evaluated implementation commit: `4c511bdad0593e23cb07de2dbf9be8360c56a337`.
-- Rejection-evidence commit: `f2ca7ce7719711143addbe4c180d28416d27e7e5`.
+- Raw emitted-status evidence commit: `f2ca7ce7719711143addbe4c180d28416d27e7e5`.
 - Executable-cleanup commit: `2431fe3ac343c95c4ac4110c62e875568ef3dc2d`.
+- Cleanup-evidence binding commit: `9308b6fecf098a1df498c5a50cb3419169f5c4a0`.
+- Corrective protocol-deviation classification commit: `ed7b15ba63bdb2502cd18007b4c9c0bf105c4463`.
 - Evaluated command SHA-256: `1ff3ee4b5fdf80ce1666f450cd89930c69e4e64c8ca26e873fdca833259d6097`.
 - Evaluated strategy SHA-256: `29540a392796e1f9ab9c8441f6ad120453c83f6be12c7dec4e00ddec074d8b35`.
 - Evaluated model SHA-256: `7708abd1ef2fcff2078a660387a31b269a997462e6774a26a7d48b8836bdcd85`.
@@ -67,6 +69,8 @@ Git ancestry was explicitly verified as:
   -> 4c511bdad0593e23cb07de2dbf9be8360c56a337
   -> f2ca7ce7719711143addbe4c180d28416d27e7e5
   -> 2431fe3ac343c95c4ac4110c62e875568ef3dc2d
+  -> 9308b6fecf098a1df498c5a50cb3419169f5c4a0
+  -> ed7b15ba63bdb2502cd18007b4c9c0bf105c4463
 ```
 
 ## Raw emitted report identities and consumed-attempt identity
@@ -84,8 +88,10 @@ Git ancestry was explicitly verified as:
 | Qualification analysis         | `2d4ca2a681737170f4a2da6968f507116ca9807ffb075e6f45547f4f4903bc70` |
 | Bootstrap samples              | `cf2926255344a3753fc149a87490c4c12d47c4c5107d7936ef15a062cc3d0d13` |
 
-The raw family-run identity above came from a report whose benchmark-relative gates were not implemented as frozen. It
-is retained for byte-level audit only and is **not** valid family-run evidence. Candidate 15's canonical consumed
+The remote evidence branch preserves this complete commit chain and the pull request is required to close unmerged, so
+the immutable preregistration, evaluated implementation, raw report record, cleanup, and corrective classification remain
+reachable without squash. The raw family-run identity above came from a report whose benchmark-relative gates were not
+implemented as frozen and is retained for byte-level audit only and is **not** valid family-run evidence. Candidate 15's canonical consumed
 protocol-deviation attempt identity is:
 
 ```text
