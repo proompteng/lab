@@ -33,6 +33,8 @@ as a JSON evidence dump.
 - Immutable preregistration SHA-256:
   `e11ad74f8f4d8ab8e9c57528fe021b809190a9b0e56c5c01c55e25cf3f527828`.
 - Evaluated implementation commit: `4c511bdad0593e23cb07de2dbf9be8360c56a337`.
+- Rejection-evidence commit: `f2ca7ce7719711143addbe4c180d28416d27e7e5`.
+- Executable-cleanup commit: `2431fe3ac343c95c4ac4110c62e875568ef3dc2d`.
 - Evaluated command SHA-256: `1ff3ee4b5fdf80ce1666f450cd89930c69e4e64c8ca26e873fdca833259d6097`.
 - Evaluated strategy SHA-256: `29540a392796e1f9ab9c8441f6ad120453c83f6be12c7dec4e00ddec074d8b35`.
 - Evaluated model SHA-256: `7708abd1ef2fcff2078a660387a31b269a997462e6774a26a7d48b8836bdcd85`.
@@ -59,6 +61,8 @@ Git ancestry was explicitly verified as:
 66a973a11ed3c46a25624c324705136e8fb72233
   -> 9aac01753a332aeeeac2bc20d7536eeb45d74a51
   -> 4c511bdad0593e23cb07de2dbf9be8360c56a337
+  -> f2ca7ce7719711143addbe4c180d28416d27e7e5
+  -> 2431fe3ac343c95c4ac4110c62e875568ef3dc2d
 ```
 
 ## Canonical report and family identities
@@ -250,7 +254,9 @@ Post-evaluation runtime state remained:
 
 Because the terminal result is `HOLD_REJECT`, the final branch must remove the Candidate 15 executable module, tests, CLI,
 and package script while preserving the base, preregistration, evaluated implementation, this evidence, and cleanup
-ancestry. The evidence PR must remain closed and unmerged.
+ancestry. Cleanup commit `2431fe3ac343c95c4ac4110c62e875568ef3dc2d` completed that removal; the final tree retains
+only the immutable preregistration and this honest Markdown outcome for Candidate 15. The evidence PR must remain closed
+and unmerged.
 
 Candidate 15 showed lower volatility and drawdown than SPY and a slightly higher point Sharpe, but its annualized return
 was substantially lower and neither adjusted benchmark-relative lower bound was positive. It is not a qualified
