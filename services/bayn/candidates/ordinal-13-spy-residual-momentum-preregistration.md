@@ -49,7 +49,7 @@ parameter in any of those rules and does not reuse their observed development re
 
 The sole hypothesis is that the idiosyncratic component of intermediate-horizon return persists more reliably than raw
 total return because common SPY exposure can reverse independently of asset-specific information. The primary research
-motivation is Blitz, Huij, and Martens, “Residual Momentum,” *Journal of Empirical Finance* 18(3), 2011,
+motivation is Blitz, Huij, and Martens, “Residual Momentum,” _Journal of Empirical Finance_ 18(3), 2011,
 DOI `10.1016/j.jempfin.2011.01.003`. That paper ranks stocks on factor-residualized 12-minus-1 returns standardized by
 residual volatility and reports lower common-factor exposure than conventional total-return momentum.
 

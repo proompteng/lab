@@ -18,6 +18,8 @@ profitability.
 - Preregistration parent: `e0d6f23814df4749f6c9432d6b53d5f8c9e00f80`.
 - Preregistration file SHA-256:
   `69d9f06cc53cc54265279ad969396bc6fa5d0aedea1c50eda78313a22d444af8`.
+- Retained formatter-normalized presentation copy SHA-256:
+  `95c3b5a4f2a0891f201cbbd8520c76278622f888ad91280625af3d6b5401bbc8`.
 - Evaluated implementation commit: `864c9f5d1c0867f31924357e913bed12df9c3b3d`.
 - Evaluated implementation parent: `3e8edb4f15d54f9d6be177c411062c3ee614c992`.
 - Candidate ordinal: `13`.
@@ -27,8 +29,13 @@ profitability.
 - Bootstrap policy: 10,000 samples, adjusted lower-tail sample count 38, one-sided family alpha `0.05 / 13`.
 
 The Git ancestry remains the durable proof that the evaluated implementation followed the immutable preregistration.
-The final cleanup commit is a descendant of the evaluated implementation and removes its executable code without
-rewriting either frozen commit.
+The cleanup commit is a descendant of the evaluated implementation and removes its executable code without rewriting
+either frozen commit.
+
+After the terminal run, root CI identified one formatter-only difference in the retained presentation copy: Markdown
+emphasis around the journal title used `*...*` rather than Oxfmt's `_..._`. The branch tip normalizes only those two
+delimiter bytes. The authoritative preregistration bytes, words, numbers, rules, hash, and evaluated binding remain
+unchanged at commit `3e8edb4f15d54f9d6be177c411062c3ee614c992`; no research content or evaluator behavior changed.
 
 ## Frozen data request and preflight
 
