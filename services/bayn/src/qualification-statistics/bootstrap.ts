@@ -119,9 +119,16 @@ export const runQualificationBootstrap = (
   blocks: readonly CompleteBlockWork[],
   policy: QualificationStatisticsPolicy,
   priorTrialCount: number,
+  selectionMultiplicity = 1,
 ): Result.Result<BootstrapAnalysis, QualificationStatisticsFailure> => {
+  if (!Number.isSafeInteger(selectionMultiplicity) || selectionMultiplicity <= 0) {
+    return statisticsFailure({
+      _tag: 'QualificationSelectionMultiplicityInvalid',
+      selectionMultiplicity,
+    })
+  }
   const benchmark = strongerBenchmark(series.observations, policy.annualizationSessions)
-  const adjustedOneSidedAlpha = policy.confidence.familyOneSidedAlpha / (priorTrialCount + 1)
+  const adjustedOneSidedAlpha = policy.confidence.familyOneSidedAlpha / ((priorTrialCount + 1) * selectionMultiplicity)
   const tailSampleCount = Math.floor(policy.bootstrap.samples * adjustedOneSidedAlpha)
   return pipe(
     hashQualificationEvidence('bootstrap-seed', {

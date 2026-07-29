@@ -1,4 +1,8 @@
-export { analyzeQualification, analyzeQualificationInput } from './qualification-statistics/analysis'
+export {
+  analyzeQualification,
+  analyzeQualificationInput,
+  analyzeQualificationWithSelectionMultiplicity,
+} from './qualification-statistics/analysis'
 export { calculateQualificationPower } from './qualification-statistics/power'
 export { prepareQualificationSeries } from './qualification-statistics/series'
 export {

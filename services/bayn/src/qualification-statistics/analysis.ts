@@ -22,8 +22,9 @@ import { calculateQualificationPower } from './power'
 import { buildCompleteBlocks } from './series'
 import { calculateWalkForward } from './walk-forward'
 
-export const analyzeQualificationInput = (
+const analyzeQualificationInputWithSelectionMultiplicity = (
   input: QualificationAnalysisInput,
+  selectionMultiplicity: number,
 ): Result.Result<QualificationAnalysis, QualificationStatisticsFailure> =>
   pipe(
     Result.all({
@@ -51,7 +52,13 @@ export const analyzeQualificationInput = (
           return pipe(
             Result.all({
               power: calculateQualificationPower(policy, blocks.length, availableCompleteSessions),
-              bootstrap: runQualificationBootstrap(series, blocks, policy, priorTrialRunIds.length),
+              bootstrap: runQualificationBootstrap(
+                series,
+                blocks,
+                policy,
+                priorTrialRunIds.length,
+                selectionMultiplicity,
+              ),
               walkForward: calculateWalkForward(series, policy),
             }),
             Result.flatMap(({ bootstrap, power, walkForward }) => {
@@ -86,9 +93,22 @@ export const analyzeQualificationInput = (
     }),
   )
 
+export const analyzeQualificationInput = (
+  input: QualificationAnalysisInput,
+): Result.Result<QualificationAnalysis, QualificationStatisticsFailure> =>
+  analyzeQualificationInputWithSelectionMultiplicity(input, 1)
+
 export const analyzeQualification = (
   series: QualificationSeries,
   policy: QualificationStatisticsPolicy,
   priorTrialRunIds: readonly string[],
 ): Result.Result<QualificationAnalysis, QualificationStatisticsFailure> =>
   analyzeQualificationInput({ series, policy, priorTrialRunIds })
+
+export const analyzeQualificationWithSelectionMultiplicity = (
+  series: QualificationSeries,
+  policy: QualificationStatisticsPolicy,
+  priorTrialRunIds: readonly string[],
+  selectionMultiplicity: number,
+): Result.Result<QualificationAnalysis, QualificationStatisticsFailure> =>
+  analyzeQualificationInputWithSelectionMultiplicity({ series, policy, priorTrialRunIds }, selectionMultiplicity)
