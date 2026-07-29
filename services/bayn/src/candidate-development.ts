@@ -87,22 +87,26 @@ export interface CandidateDevelopmentProtocolIdentity {
   readonly schemaVersion: 'bayn.candidate-development-protocol-identity.v1'
   readonly candidateOrdinal: number
   readonly priorTrialCount: number
+  readonly featureLookbackSessions: number
   readonly protocolHash: string
 }
 
 export const identifyCandidateDevelopmentProtocol = (
   attempt: CandidateDevelopmentBootstrapTailCapacity,
+  featureLookbackSessions: number,
 ): Result.Result<CandidateDevelopmentProtocolIdentity, CanonicalHashFailure> =>
   pipe(
     canonicalHashV1Result({
       schemaVersion: 'bayn.candidate-development-protocol-binding.v1',
       protocol: candidateDevelopmentProtocol,
       attempt,
+      featureLookbackSessions,
     }),
     Result.map((protocolHash) => ({
       schemaVersion: 'bayn.candidate-development-protocol-identity.v1' as const,
       candidateOrdinal: attempt.candidateOrdinal,
       priorTrialCount: attempt.priorTrialCount,
+      featureLookbackSessions,
       protocolHash,
     })),
   )
@@ -509,6 +513,10 @@ export type CandidateDevelopmentRunFailure =
       readonly _tag: 'CandidateDevelopmentPreflightFailed'
       readonly preflight: CandidateDevelopmentGeometryFail
     }
+  | {
+      readonly _tag: 'CandidateDevelopmentDoubledCostInvalid'
+      readonly cause: CandidateDevelopmentDoubledCostIssue
+    }
 
 export interface CandidateDevelopmentPreflightInput {
   readonly candidateOrdinal: number
@@ -529,7 +537,15 @@ export interface CandidateDevelopmentEffects<Registration, Data, Report, Error, 
   readonly evaluateDevelopment: (
     data: Data,
     preflight: CandidateDevelopmentPreflightPass,
-  ) => Effect.Effect<Report, Error, Requirements>
+  ) => Effect.Effect<CandidateDevelopmentEvaluation<Report>, Error, Requirements>
+}
+
+export interface CandidateDevelopmentEvaluation<Report> {
+  readonly report: Report
+  readonly doubledCost: {
+    readonly baseline: CandidateDevelopmentDoubledCostRun
+    readonly stressed: CandidateDevelopmentDoubledCostRun
+  }
 }
 
 const validIsoDate = (value: string): value is IsoDate => {
@@ -873,7 +889,7 @@ export const preflightCandidateDevelopment = (
             candidateDevelopmentWalkForwardProtocol,
           ),
           protocolIdentity: pipe(
-            identifyCandidateDevelopmentProtocol(attempt),
+            identifyCandidateDevelopmentProtocol(attempt, input.featureLookbackSessions),
             Result.mapError(
               (cause): CandidateDevelopmentPreflightIssue => ({
                 _tag: 'CandidateDevelopmentProtocolHashFailed',
@@ -919,6 +935,22 @@ export const runCandidateDevelopment = <Registration, Data, Report, Error, Requi
           : effects.preregisterCandidate(preflight).pipe(
               Effect.flatMap((registration) => effects.loadDevelopmentData(registration, preflight)),
               Effect.flatMap((data) => effects.evaluateDevelopment(data, preflight)),
+              Effect.flatMap((evaluation) =>
+                Effect.fromResult(
+                  validateCandidateDevelopmentDoubledCostCausalPath(
+                    evaluation.doubledCost.baseline,
+                    evaluation.doubledCost.stressed,
+                  ),
+                ).pipe(
+                  Effect.mapError(
+                    (cause): CandidateDevelopmentRunFailure => ({
+                      _tag: 'CandidateDevelopmentDoubledCostInvalid',
+                      cause,
+                    }),
+                  ),
+                  Effect.map(() => evaluation.report),
+                ),
+              ),
             ),
     ),
   )

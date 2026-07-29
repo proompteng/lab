@@ -243,6 +243,24 @@ const simulationTrace = (costMultiplierMicros: string, order: SimulatedOrder = s
   dailyMarks: [],
 })
 
+const candidateDevelopmentEvaluation = <Report>(
+  report: Report,
+  stressedOrder: SimulatedOrder = simulatedOrder(),
+  stressedSignalDecisions: readonly SignalDecision[] = [signalDecision()],
+) => ({
+  report,
+  doubledCost: {
+    baseline: {
+      signalDecisions: [signalDecision()],
+      simulation: simulationTrace(candidateDevelopmentDoubledCostContract.baselineCostMultiplierMicros),
+    },
+    stressed: {
+      signalDecisions: stressedSignalDecisions,
+      simulation: simulationTrace(candidateDevelopmentDoubledCostContract.stressedCostMultiplierMicros, stressedOrder),
+    },
+  },
+})
+
 describe('candidate development walk-forward protocol', () => {
   test('freezes the exact 1,762-session development calendar without touching the holdout', () => {
     const sessions = developmentSessions()
@@ -353,17 +371,22 @@ describe('candidate development walk-forward protocol', () => {
 
   test('binds one deterministic versioned protocol identity into preflight', () => {
     const candidate13 = successOf(bindCandidateDevelopmentAttempt(13, 12))
-    const first = successOf(identifyCandidateDevelopmentProtocol(candidate13))
-    const second = successOf(identifyCandidateDevelopmentProtocol(candidate13))
-    const next = successOf(identifyCandidateDevelopmentProtocol(successOf(bindCandidateDevelopmentAttempt(14, 13))))
+    const first = successOf(identifyCandidateDevelopmentProtocol(candidate13, 252))
+    const second = successOf(identifyCandidateDevelopmentProtocol(candidate13, 252))
+    const differentLookback = successOf(identifyCandidateDevelopmentProtocol(candidate13, 63))
+    const next = successOf(
+      identifyCandidateDevelopmentProtocol(successOf(bindCandidateDevelopmentAttempt(14, 13)), 252),
+    )
     const preflight = successOf(preflightCandidateDevelopment(candidate13Input(developmentSessions())))
 
     expect(first).toEqual(second)
+    expect(first).not.toEqual(differentLookback)
     expect(first).not.toEqual(next)
     expect(first.schemaVersion).toBe('bayn.candidate-development-protocol-identity.v1')
     expect(first.candidateOrdinal).toBe(13)
     expect(first.priorTrialCount).toBe(12)
-    expect(first.protocolHash).toBe('fcd9331b0fdbc92815c36182c27b0cee7f66e2cc32f66ab9701c3c0496f34d33')
+    expect(first.featureLookbackSessions).toBe(252)
+    expect(first.protocolHash).toBe('e9cc365a8b1c2cffe2aa37b496387000695e2a78d1093ad36e142261eab88454')
     expect(preflight).toMatchObject({
       status: 'PASS',
       schemaVersion: 'bayn.candidate-development-preflight.v2',
@@ -608,7 +631,7 @@ describe('candidate development walk-forward protocol', () => {
             },
             evaluateDevelopment: () => {
               evaluations += 1
-              return Effect.succeed('report')
+              return Effect.succeed(candidateDevelopmentEvaluation('report'))
             },
           },
         ),
@@ -653,7 +676,7 @@ describe('candidate development walk-forward protocol', () => {
           },
           evaluateDevelopment: () => {
             evaluations += 1
-            return Effect.succeed('report')
+            return Effect.succeed(candidateDevelopmentEvaluation('report'))
           },
         },
       ),
@@ -663,6 +686,52 @@ describe('candidate development walk-forward protocol', () => {
     expect(preregistrations).toBe(0)
     expect(loads).toBe(0)
     expect(evaluations).toBe(0)
+  })
+
+  test('rejects an evaluated report when doubled-cost quantities diverge', async () => {
+    const sessions = developmentSessions()
+    let preregistrations = 0
+    let loads = 0
+    let evaluations = 0
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        runCandidateDevelopment(candidate13Input(sessions), {
+          preregisterCandidate: () => {
+            preregistrations += 1
+            return Effect.succeed('registration')
+          },
+          loadDevelopmentData: () => {
+            loads += 1
+            return Effect.succeed('data')
+          },
+          evaluateDevelopment: () => {
+            evaluations += 1
+            return Effect.succeed(
+              candidateDevelopmentEvaluation(
+                'invalid-report',
+                simulatedOrder({
+                  filledQuantityMicros: '900000',
+                  status: 'partially-filled',
+                  unfilledRemainder: 'canceled',
+                }),
+              ),
+            )
+          },
+        }),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      _tag: 'CandidateDevelopmentDoubledCostInvalid',
+      cause: {
+        _tag: 'CandidateDevelopmentDoubledCostProtocolDeviation',
+        disposition: 'INVALID_PROTOCOL_DEVIATION',
+        reason: 'ORDER_QUANTITY_PATH_CHANGED',
+      },
+    })
+    expect(preregistrations).toBe(1)
+    expect(loads).toBe(1)
+    expect(evaluations).toBe(1)
   })
 
   test('preregisters, loads, and evaluates exactly once only after a passing preflight', async () => {
@@ -682,7 +751,7 @@ describe('candidate development walk-forward protocol', () => {
         },
         evaluateDevelopment: (data, preflight) => {
           evaluations += 1
-          return Effect.succeed(`${data}:${preflight.selectedObservationEnd}`)
+          return Effect.succeed(candidateDevelopmentEvaluation(`${data}:${preflight.selectedObservationEnd}`))
         },
       }),
     )
