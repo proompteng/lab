@@ -3,6 +3,7 @@ import { Effect, pipe, Result } from 'effect'
 import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
 import { defaultQualificationStatisticsPolicy, type QualificationStatisticsPolicy } from './qualification-statistics'
 import type { IsoDate } from './schemas'
+import type { SignalDecision, SimulatedOrder, SimulationTrace } from './types'
 
 export const candidateDevelopmentCalendarContract = {
   schemaVersion: 'bayn.candidate-development-calendar.v1',
@@ -34,10 +35,36 @@ export const candidateDevelopmentWalkForwardProtocol = {
   executionLagSessions: 1,
 } as const
 
+export const candidateDevelopmentAttemptHorizon = {
+  schemaVersion: 'bayn.candidate-development-attempt-horizon.v1',
+  maximumCandidateOrdinal: 25,
+  ordinalBinding: 'candidate-ordinal-equals-prior-trial-count-plus-one',
+} as const
+
+/**
+ * Doubled-cost development evidence is a second causal simulator run at exactly 2x modeled execution costs. The run is
+ * admissible only when the complete signal decisions and ordered requested/filled quantity path exactly match the 1x
+ * baseline. Any affordability or equity feedback that changes that path is an invalid protocol deviation rather than
+ * an alternative stressed result. Cash, fill prices, fees, and marked equity remain free to change causally.
+ */
+export const candidateDevelopmentDoubledCostContract = {
+  schemaVersion: 'bayn.candidate-development-doubled-cost.v1',
+  method: 'causal-rerun-with-invariant-signal-and-quantity-path',
+  baselineCostMultiplierMicros: '1000000',
+  stressedCostMultiplierMicros: '2000000',
+  divergenceDisposition: 'INVALID_PROTOCOL_DEVIATION',
+  invariants: ['signal-decisions', 'ordered-order-quantity-path'],
+} as const
+
+export const candidateDevelopmentBootstrapSamples = 10_000
+
 export const candidateDevelopmentStatisticsPolicy = {
   ...defaultQualificationStatisticsPolicy,
   confidence: { ...defaultQualificationStatisticsPolicy.confidence },
-  bootstrap: { ...defaultQualificationStatisticsPolicy.bootstrap },
+  bootstrap: {
+    ...defaultQualificationStatisticsPolicy.bootstrap,
+    samples: candidateDevelopmentBootstrapSamples,
+  },
   power: { ...defaultQualificationStatisticsPolicy.power },
   walkForward: {
     ...defaultQualificationStatisticsPolicy.walkForward,
@@ -46,6 +73,277 @@ export const candidateDevelopmentStatisticsPolicy = {
   },
   cashReturn: { ...defaultQualificationStatisticsPolicy.cashReturn },
 } as const satisfies QualificationStatisticsPolicy
+
+export const candidateDevelopmentProtocol = {
+  schemaVersion: 'bayn.candidate-development-protocol.v2',
+  calendar: candidateDevelopmentCalendarContract,
+  walkForward: candidateDevelopmentWalkForwardProtocol,
+  attemptHorizon: candidateDevelopmentAttemptHorizon,
+  doubledCost: candidateDevelopmentDoubledCostContract,
+  statisticsPolicy: candidateDevelopmentStatisticsPolicy,
+} as const
+
+export interface CandidateDevelopmentProtocolIdentity {
+  readonly schemaVersion: 'bayn.candidate-development-protocol-identity.v1'
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly protocolHash: string
+}
+
+export const identifyCandidateDevelopmentProtocol = (
+  attempt: CandidateDevelopmentBootstrapTailCapacity,
+): Result.Result<CandidateDevelopmentProtocolIdentity, CanonicalHashFailure> =>
+  pipe(
+    canonicalHashV1Result({
+      schemaVersion: 'bayn.candidate-development-protocol-binding.v1',
+      protocol: candidateDevelopmentProtocol,
+      attempt,
+    }),
+    Result.map((protocolHash) => ({
+      schemaVersion: 'bayn.candidate-development-protocol-identity.v1' as const,
+      candidateOrdinal: attempt.candidateOrdinal,
+      priorTrialCount: attempt.priorTrialCount,
+      protocolHash,
+    })),
+  )
+
+export interface CandidateDevelopmentBootstrapTailCapacity {
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly bootstrapSamples: number
+  readonly adjustedOneSidedAlpha: number
+  readonly tailSampleCount: number
+  readonly minimumTailSamples: number
+  readonly maximumCandidateOrdinal: number
+}
+
+export type CandidateDevelopmentAttemptIssue =
+  | {
+      readonly _tag: 'CandidateDevelopmentCandidateOrdinalInvalid'
+      readonly candidateOrdinal: number
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentPriorTrialCountInvalid'
+      readonly priorTrialCount: number
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentAttemptLineageMismatch'
+      readonly candidateOrdinal: number
+      readonly priorTrialCount: number
+      readonly expectedCandidateOrdinal: number
+    }
+  | ({
+      readonly _tag: 'CandidateDevelopmentBootstrapTailInfeasible'
+    } & CandidateDevelopmentBootstrapTailCapacity)
+
+export const bindCandidateDevelopmentAttempt = (
+  candidateOrdinal: number,
+  priorTrialCount: number,
+): Result.Result<CandidateDevelopmentBootstrapTailCapacity, CandidateDevelopmentAttemptIssue> => {
+  if (!Number.isSafeInteger(candidateOrdinal) || candidateOrdinal <= 0) {
+    return Result.fail({ _tag: 'CandidateDevelopmentCandidateOrdinalInvalid', candidateOrdinal })
+  }
+  if (!Number.isSafeInteger(priorTrialCount) || priorTrialCount < 0) {
+    return Result.fail({ _tag: 'CandidateDevelopmentPriorTrialCountInvalid', priorTrialCount })
+  }
+  const expectedCandidateOrdinal = priorTrialCount + 1
+  if (candidateOrdinal !== expectedCandidateOrdinal) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentAttemptLineageMismatch',
+      candidateOrdinal,
+      priorTrialCount,
+      expectedCandidateOrdinal,
+    })
+  }
+
+  const adjustedOneSidedAlpha = candidateDevelopmentStatisticsPolicy.confidence.familyOneSidedAlpha / candidateOrdinal
+  const tailSampleCount = Math.floor(candidateDevelopmentStatisticsPolicy.bootstrap.samples * adjustedOneSidedAlpha)
+  const capacity = {
+    candidateOrdinal,
+    priorTrialCount,
+    bootstrapSamples: candidateDevelopmentStatisticsPolicy.bootstrap.samples,
+    adjustedOneSidedAlpha,
+    tailSampleCount,
+    minimumTailSamples: candidateDevelopmentStatisticsPolicy.confidence.minimumTailSamples,
+    maximumCandidateOrdinal: candidateDevelopmentAttemptHorizon.maximumCandidateOrdinal,
+  }
+  return candidateOrdinal <= candidateDevelopmentAttemptHorizon.maximumCandidateOrdinal &&
+    tailSampleCount >= candidateDevelopmentStatisticsPolicy.confidence.minimumTailSamples
+    ? Result.succeed(capacity)
+    : Result.fail({ _tag: 'CandidateDevelopmentBootstrapTailInfeasible', ...capacity })
+}
+
+type CandidateDevelopmentOrderQuantityPathEntry = Pick<
+  SimulatedOrder,
+  | 'decisionId'
+  | 'sessionDate'
+  | 'symbol'
+  | 'side'
+  | 'requestedQuantityMicros'
+  | 'filledQuantityMicros'
+  | 'status'
+  | 'rejectionReason'
+  | 'unfilledRemainder'
+>
+
+export interface CandidateDevelopmentDoubledCostRun {
+  readonly signalDecisions: readonly SignalDecision[]
+  readonly simulation: SimulationTrace
+}
+
+export interface CandidateDevelopmentDoubledCostPass {
+  readonly schemaVersion: 'bayn.candidate-development-doubled-cost-check.v1'
+  readonly status: 'PASS'
+  readonly signalDecisionsHash: string
+  readonly orderQuantityPathHash: string
+  readonly executionModelHash: string
+}
+
+export type CandidateDevelopmentDoubledCostIssue =
+  | {
+      readonly _tag: 'CandidateDevelopmentDoubledCostMultiplierMismatch'
+      readonly run: 'baseline' | 'stressed'
+      readonly expected: string
+      readonly observed: string
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentDoubledCostHashFailed'
+      readonly material:
+        | 'baseline-signals'
+        | 'stressed-signals'
+        | 'baseline-orders'
+        | 'stressed-orders'
+        | 'baseline-execution-model'
+        | 'stressed-execution-model'
+      readonly cause: CanonicalHashFailure
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentDoubledCostProtocolDeviation'
+      readonly disposition: 'INVALID_PROTOCOL_DEVIATION'
+      readonly reason: 'EXECUTION_MODEL_CHANGED' | 'SIGNAL_DECISIONS_CHANGED' | 'ORDER_QUANTITY_PATH_CHANGED'
+      readonly baselineHash: string
+      readonly stressedHash: string
+    }
+
+type CandidateDevelopmentDoubledCostHashMaterial = Extract<
+  CandidateDevelopmentDoubledCostIssue,
+  { readonly _tag: 'CandidateDevelopmentDoubledCostHashFailed' }
+>['material']
+
+const orderQuantityPath = (orders: readonly SimulatedOrder[]): readonly CandidateDevelopmentOrderQuantityPathEntry[] =>
+  orders.map(
+    ({
+      decisionId,
+      sessionDate,
+      symbol,
+      side,
+      requestedQuantityMicros,
+      filledQuantityMicros,
+      status,
+      rejectionReason,
+      unfilledRemainder,
+    }) => ({
+      decisionId,
+      sessionDate,
+      symbol,
+      side,
+      requestedQuantityMicros,
+      filledQuantityMicros,
+      status,
+      rejectionReason,
+      unfilledRemainder,
+    }),
+  )
+
+const doubledCostHash = (
+  material: CandidateDevelopmentDoubledCostHashMaterial,
+  value: unknown,
+): Result.Result<string, CandidateDevelopmentDoubledCostIssue> =>
+  pipe(
+    canonicalHashV1Result(value),
+    Result.mapError((cause) => ({
+      _tag: 'CandidateDevelopmentDoubledCostHashFailed' as const,
+      material,
+      cause,
+    })),
+  )
+
+const invariantHash = (
+  reason: Extract<
+    CandidateDevelopmentDoubledCostIssue,
+    { readonly _tag: 'CandidateDevelopmentDoubledCostProtocolDeviation' }
+  >['reason'],
+  baselineHash: string,
+  stressedHash: string,
+): Result.Result<string, CandidateDevelopmentDoubledCostIssue> =>
+  baselineHash === stressedHash
+    ? Result.succeed(baselineHash)
+    : Result.fail({
+        _tag: 'CandidateDevelopmentDoubledCostProtocolDeviation',
+        disposition: candidateDevelopmentDoubledCostContract.divergenceDisposition,
+        reason,
+        baselineHash,
+        stressedHash,
+      })
+
+export const validateCandidateDevelopmentDoubledCostCausalPath = (
+  baseline: CandidateDevelopmentDoubledCostRun,
+  stressed: CandidateDevelopmentDoubledCostRun,
+): Result.Result<CandidateDevelopmentDoubledCostPass, CandidateDevelopmentDoubledCostIssue> => {
+  const multipliers = [
+    ['baseline', candidateDevelopmentDoubledCostContract.baselineCostMultiplierMicros, baseline.simulation],
+    ['stressed', candidateDevelopmentDoubledCostContract.stressedCostMultiplierMicros, stressed.simulation],
+  ] as const
+  for (const [run, expected, simulation] of multipliers) {
+    if (simulation.costMultiplierMicros !== expected) {
+      return Result.fail({
+        _tag: 'CandidateDevelopmentDoubledCostMultiplierMismatch',
+        run,
+        expected,
+        observed: simulation.costMultiplierMicros,
+      })
+    }
+  }
+
+  return pipe(
+    Result.all({
+      baselineSignals: doubledCostHash('baseline-signals', baseline.signalDecisions),
+      stressedSignals: doubledCostHash('stressed-signals', stressed.signalDecisions),
+      baselineOrders: doubledCostHash('baseline-orders', orderQuantityPath(baseline.simulation.orders)),
+      stressedOrders: doubledCostHash('stressed-orders', orderQuantityPath(stressed.simulation.orders)),
+      baselineExecutionModel: doubledCostHash('baseline-execution-model', baseline.simulation.executionModel),
+      stressedExecutionModel: doubledCostHash('stressed-execution-model', stressed.simulation.executionModel),
+    }),
+    Result.flatMap(
+      ({
+        baselineExecutionModel,
+        baselineOrders,
+        baselineSignals,
+        stressedExecutionModel,
+        stressedOrders,
+        stressedSignals,
+      }) =>
+        pipe(
+          Result.all({
+            executionModelHash: invariantHash(
+              'EXECUTION_MODEL_CHANGED',
+              baselineExecutionModel,
+              stressedExecutionModel,
+            ),
+            signalDecisionsHash: invariantHash('SIGNAL_DECISIONS_CHANGED', baselineSignals, stressedSignals),
+            orderQuantityPathHash: invariantHash('ORDER_QUANTITY_PATH_CHANGED', baselineOrders, stressedOrders),
+          }),
+          Result.map(({ executionModelHash, orderQuantityPathHash, signalDecisionsHash }) => ({
+            schemaVersion: 'bayn.candidate-development-doubled-cost-check.v1' as const,
+            status: 'PASS' as const,
+            signalDecisionsHash,
+            orderQuantityPathHash,
+            executionModelHash,
+          })),
+        ),
+    ),
+  )
+}
 
 export interface CandidateDevelopmentWalkForwardGeometry {
   readonly minimumTrainingSessions: number
@@ -133,6 +431,7 @@ export type CandidateDevelopmentGeometryIssue =
 
 export type CandidateDevelopmentPreflightIssue =
   | CandidateDevelopmentGeometryIssue
+  | CandidateDevelopmentAttemptIssue
   | {
       readonly _tag: 'CandidateDevelopmentCalendarDateInvalid'
       readonly index: number
@@ -184,11 +483,18 @@ export type CandidateDevelopmentPreflightIssue =
       readonly _tag: 'CandidateDevelopmentEligibleExecutionMissing'
       readonly featureLookbackSessions: number
     }
+  | {
+      readonly _tag: 'CandidateDevelopmentProtocolHashFailed'
+      readonly cause: CanonicalHashFailure
+    }
 
 export interface CandidateDevelopmentPreflightPass extends CandidateDevelopmentGeometryPass {
-  readonly schemaVersion: 'bayn.candidate-development-preflight.v1'
+  readonly schemaVersion: 'bayn.candidate-development-preflight.v2'
+  readonly attempt: CandidateDevelopmentBootstrapTailCapacity
   readonly featureLookbackSessions: number
   readonly firstEligibleExecution: CandidateDevelopmentExecutionBoundary
+  readonly protocolIdentity: CandidateDevelopmentProtocolIdentity
+  readonly doubledCostContract: typeof candidateDevelopmentDoubledCostContract
   readonly statisticsPolicy: typeof candidateDevelopmentStatisticsPolicy
 }
 
@@ -205,6 +511,8 @@ export type CandidateDevelopmentRunFailure =
     }
 
 export interface CandidateDevelopmentPreflightInput {
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
   readonly officialSessions: readonly IsoDate[]
   readonly signalSessionDates: readonly IsoDate[]
   readonly featureLookbackSessions: number
@@ -542,30 +850,50 @@ export const preflightCandidateDevelopment = (
   input: CandidateDevelopmentPreflightInput,
 ): Result.Result<CandidateDevelopmentPreflightDecision, CandidateDevelopmentPreflightIssue> =>
   pipe(
-    validateFrozenDevelopmentCalendar(input.officialSessions),
-    Result.flatMap(() =>
-      firstEligibleExecutionAfterLookback(
-        input.officialSessions,
-        input.signalSessionDates,
-        input.featureLookbackSessions,
+    bindCandidateDevelopmentAttempt(input.candidateOrdinal, input.priorTrialCount),
+    Result.flatMap((attempt) =>
+      pipe(
+        validateFrozenDevelopmentCalendar(input.officialSessions),
+        Result.flatMap(() =>
+          firstEligibleExecutionAfterLookback(
+            input.officialSessions,
+            input.signalSessionDates,
+            input.featureLookbackSessions,
+          ),
+        ),
+        Result.map((firstEligibleExecution) => ({ attempt, firstEligibleExecution })),
       ),
     ),
-    Result.flatMap((firstEligibleExecution) =>
+    Result.flatMap(({ attempt, firstEligibleExecution }) =>
       pipe(
-        computeEndAnchoredWalkForwardBoundaries(
-          input.officialSessions,
-          firstEligibleExecution.executionIndex,
-          candidateDevelopmentWalkForwardProtocol,
-        ),
+        Result.all({
+          geometry: computeEndAnchoredWalkForwardBoundaries(
+            input.officialSessions,
+            firstEligibleExecution.executionIndex,
+            candidateDevelopmentWalkForwardProtocol,
+          ),
+          protocolIdentity: pipe(
+            identifyCandidateDevelopmentProtocol(attempt),
+            Result.mapError(
+              (cause): CandidateDevelopmentPreflightIssue => ({
+                _tag: 'CandidateDevelopmentProtocolHashFailed',
+                cause,
+              }),
+            ),
+          ),
+        }),
         Result.map(
-          (geometry): CandidateDevelopmentPreflightDecision =>
+          ({ geometry, protocolIdentity }): CandidateDevelopmentPreflightDecision =>
             geometry.status === 'FAIL'
               ? geometry
               : {
                   ...geometry,
-                  schemaVersion: 'bayn.candidate-development-preflight.v1',
+                  schemaVersion: 'bayn.candidate-development-preflight.v2',
+                  attempt,
                   featureLookbackSessions: input.featureLookbackSessions,
                   firstEligibleExecution,
+                  protocolIdentity,
+                  doubledCostContract: candidateDevelopmentDoubledCostContract,
                   statisticsPolicy: candidateDevelopmentStatisticsPolicy,
                 },
         ),
