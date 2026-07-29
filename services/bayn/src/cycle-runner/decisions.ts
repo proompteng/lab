@@ -33,3 +33,4 @@ export {
   validateCycleLoopInterval,
   type CyclePassLogFacts,
 } from './pass-decisions'
+export { selectCyclePassContinuation, type CyclePassContinuation, type CyclePassProgress } from './pass-continuation'
