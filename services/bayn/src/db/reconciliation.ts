@@ -112,12 +112,14 @@ const IntentRow = Schema.Struct({
   order_type: Schema.Enum(OrderType),
   time_in_force: Schema.Enum(TimeInForce),
   quantity_micros: Schema.String,
+  notional_limit_micros: Schema.String,
   state: Schema.Enum(IntentState),
   terminal_outcome: Schema.NullOr(Schema.Enum(TerminalOutcome)),
   broker_order_id: Schema.NullOr(NonEmptyString),
   mutation_operation: Schema.NullOr(Schema.Enum(MutationOperation)),
   mutation_event_type: Schema.NullOr(Schema.Enum(MutationEventType)),
   mutation_occurred_at: Schema.NullOr(UtcInstant),
+  submit_request_hash: Schema.NullOr(Sha256),
 })
 const DurableFillRow = Schema.Struct({
   fill_id: NonEmptyString,
@@ -261,12 +263,14 @@ export const makeReconciliation = (
             intent.order_type,
             intent.time_in_force,
             intent.quantity_micros::text AS quantity_micros,
+            intent.notional_limit_micros::text AS notional_limit_micros,
             intent.state,
             intent.terminal_outcome,
             accepted.broker_order_id,
             latest.operation AS mutation_operation,
             latest.event_type AS mutation_event_type,
-            to_char(latest.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS mutation_occurred_at
+            to_char(latest.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS mutation_occurred_at,
+            submitted.request_hash AS submit_request_hash
           FROM intents AS intent
           LEFT JOIN LATERAL (
             SELECT operation, event_type, occurred_at
@@ -286,6 +290,13 @@ export const makeReconciliation = (
               sequence DESC
             LIMIT 1
           ) AS accepted ON true
+          LEFT JOIN LATERAL (
+            SELECT request_hash
+            FROM mutation_events
+            WHERE intent_id = intent.intent_id AND operation = 'SUBMIT'
+            ORDER BY sequence DESC
+            LIMIT 1
+          ) AS submitted ON true
           WHERE intent.account_id = ${accountId}
           ORDER BY intent.client_order_id COLLATE "C"
         `.pipe(Effect.flatMap(decodeIntents))

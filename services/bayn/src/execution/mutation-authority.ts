@@ -4,14 +4,22 @@ import {
   AccountStatus,
   OrderCollection,
   OrderSide as BrokerOrderSide,
+  OrderType as BrokerOrderType,
   type Account,
   type BrokerReadShape,
   type Order,
   type Position,
 } from '../broker/alpaca'
-import { MutationOperation, invalidRequest, type BrokerMutationShape } from '../broker/alpaca-mutations'
+import {
+  BrokerMutationError,
+  MutationOperation,
+  invalidRequest,
+  orderPriceBoundaryMicros,
+  type BrokerMutationShape,
+} from '../broker/alpaca-mutations'
 import type { LiveCapitalGrantStoreShape } from '../db/live-capital-grant'
 import type { OperationalError } from '../errors'
+import { canonicalHashV1Result } from '../hash'
 import { OrderSide as IntentOrderSide, type Intent } from '../paper'
 import {
   BrokerAccess,
@@ -24,12 +32,12 @@ import {
   type MutationExecutionAuthority,
 } from './authority'
 
-type LiveMutationExecutionAuthority = Extract<
+export type LiveMutationExecutionAuthority = Extract<
   ExecutionAuthority,
   { readonly brokerIdentity: { readonly environment: BrokerEnvironment.Live } }
 >
 
-const isLiveMutationExecutionAuthority = (
+export const isLiveMutationExecutionAuthority = (
   authority: MutationExecutionAuthority | ExecutionAuthority,
 ): authority is LiveMutationExecutionAuthority =>
   authority.brokerAccess === BrokerAccess.Mutation &&
@@ -85,6 +93,23 @@ export type LiveCapitalLimitFailure =
       readonly symbol: string
     }
   | {
+      readonly _tag: 'OpenOrderMarketPriceUnbounded'
+      readonly brokerOrderId: string
+      readonly symbol: string
+    }
+  | {
+      readonly _tag: 'OpenOrderQuantityUnavailable'
+      readonly brokerOrderId: string
+      readonly symbol: string
+    }
+  | {
+      readonly _tag: 'OpenOrderQuantityInvalid'
+      readonly brokerOrderId: string
+      readonly symbol: string
+      readonly quantityMicros: string
+      readonly filledQuantityMicros: string
+    }
+  | {
       readonly _tag: 'LiveOrderNotionalLimitExceeded'
       readonly limitMicros: string
       readonly proposedMicros: string
@@ -111,6 +136,15 @@ export type LiveCapitalLimitFailure =
       readonly observed: number
     }
   | {
+      readonly _tag: 'LiveBrokerPositionSnapshotChanged'
+      readonly beforeHash: string
+      readonly afterHash: string
+    }
+  | {
+      readonly _tag: 'LiveBrokerPositionSnapshotInvalid'
+      readonly cause: unknown
+    }
+  | {
       readonly _tag: 'FreshBrokerPriceInvalid'
       readonly symbol: string
       readonly priceMicros: string
@@ -124,6 +158,29 @@ export type LiveCapitalLimitFailure =
       readonly observedAt: string
       readonly maximumAgeMs: number
     }
+  | {
+      readonly _tag: 'FreshBrokerPriceGap'
+      readonly symbol: string
+      readonly side: IntentOrderSide
+      readonly boundaryMicros: string
+      readonly observedMicros: string
+    }
+  | {
+      readonly _tag: 'LiveIncreasingSellUnsupported'
+      readonly symbol: string
+      readonly currentQuantityMicros: string
+      readonly projectedQuantityMicros: string
+    }
+  | {
+      readonly _tag: 'LivePendingSellUncovered'
+      readonly symbol: string
+      readonly currentQuantityMicros: string
+      readonly pendingSellQuantityMicros: string
+    }
+  | {
+      readonly _tag: 'BoundedBrokerOrderInvalid'
+      readonly symbol: string
+    }
 
 export interface LiveCapitalSnapshot {
   readonly account: Account
@@ -131,24 +188,75 @@ export interface LiveCapitalSnapshot {
   readonly openOrders: readonly Order[]
 }
 
-export interface FreshBrokerPrice {
+export interface FreshBrokerQuote {
   readonly symbol: string
-  readonly priceMicros: string
+  readonly bidPriceMicros: string
+  readonly askPriceMicros: string
   readonly quotedAt: string
   readonly observedAt: string
+}
+
+export interface FinalSubmitAuthorizationFailure {
+  readonly _tag: string
+}
+
+export interface FinalSubmitAuthorization {
+  <A, E, R>(intent: Intent, transmit: Effect.Effect<A, E, R>): Effect.Effect<A, E | FinalSubmitAuthorizationFailure, R>
 }
 
 export interface MutationAuthorityDependencies {
   readonly brokerRead: BrokerReadShape
   readonly brokerMutation: BrokerMutationShape
   readonly liveCapitalGrants: Pick<LiveCapitalGrantStoreShape, 'read'>
-  readonly freshBrokerPrice: (symbol: string) => Effect.Effect<FreshBrokerPrice, OperationalError>
+  readonly freshBrokerPrice: (symbol: string) => Effect.Effect<FreshBrokerQuote, OperationalError>
   readonly currentUtcInstant: Effect.Effect<string>
+  readonly finalSubmitAuthorization: FinalSubmitAuthorization
 }
+
+export interface LiveBrokerSubmitSnapshot extends LiveCapitalSnapshot {
+  readonly quotes: ReadonlyMap<string, FreshBrokerQuote>
+}
+
+export type LiveBrokerSubmitRefreshDependencies = Pick<MutationAuthorityDependencies, 'brokerRead' | 'freshBrokerPrice'>
 
 const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
 const freshBrokerPriceMaximumAgeMs = 5_000
 const microsPerUnit = 1_000_000n
+
+const positionExposureIdentity = (positions: readonly Position[]) =>
+  positions
+    .map((position) => ({
+      accountId: position.accountId,
+      assetId: position.assetId,
+      symbol: position.symbol,
+      side: position.side,
+      quantityMicros: position.quantityMicros,
+      averageEntryPriceMicros: position.averageEntryPriceMicros,
+    }))
+    .sort((left, right) =>
+      left.assetId < right.assetId ? -1 : left.assetId > right.assetId ? 1 : left.symbol.localeCompare(right.symbol),
+    )
+
+export const validateStableLivePositionSnapshot = (
+  before: readonly Position[],
+  after: readonly Position[],
+): Result.Result<readonly Position[], LiveCapitalLimitFailure> => {
+  const beforeHash = canonicalHashV1Result(positionExposureIdentity(before))
+  if (Result.isFailure(beforeHash)) {
+    return Result.fail({ _tag: 'LiveBrokerPositionSnapshotInvalid', cause: beforeHash.failure })
+  }
+  const afterHash = canonicalHashV1Result(positionExposureIdentity(after))
+  if (Result.isFailure(afterHash)) {
+    return Result.fail({ _tag: 'LiveBrokerPositionSnapshotInvalid', cause: afterHash.failure })
+  }
+  return beforeHash.success === afterHash.success
+    ? Result.succeed(after)
+    : Result.fail({
+        _tag: 'LiveBrokerPositionSnapshotChanged',
+        beforeHash: beforeHash.success,
+        afterHash: afterHash.success,
+      })
+}
 
 const expectedAuthorityGeneration = (authority: MutationExecutionAuthority): string =>
   authority.capitalAuthority._tag === CapitalAuthorityKind.Sandbox
@@ -184,27 +292,27 @@ export const validateIntentAuthorityBinding = (
   return Result.succeed(undefined)
 }
 
-const signedIntentNotional = (intent: Intent, notional: bigint): bigint => {
-  return intent.side === IntentOrderSide.Buy ? notional : -notional
-}
+const signedIntentNotional = (intent: Intent, notional: bigint): bigint =>
+  intent.side === IntentOrderSide.Buy ? notional : -notional
 
 const parseCanonicalPositiveMicros = (value: string): bigint | undefined =>
   /^[1-9][0-9]*$/.test(value) ? BigInt(value) : undefined
 
-export const transmittedOrderNotional = (
-  intent: Intent,
-  price: FreshBrokerPrice,
+const freshSidePrice = (
+  symbol: string,
+  side: IntentOrderSide | BrokerOrderSide,
+  quote: FreshBrokerQuote,
   observedAt: string,
 ): Result.Result<bigint, LiveCapitalLimitFailure> => {
-  const priceMicros = parseCanonicalPositiveMicros(price.priceMicros)
-  const quantityMicros = parseCanonicalPositiveMicros(intent.quantityMicros)
-  const quotedAtMs = Date.parse(price.quotedAt)
-  const priceObservedAtMs = Date.parse(price.observedAt)
+  const priceText =
+    side === IntentOrderSide.Buy || side === BrokerOrderSide.Buy ? quote.askPriceMicros : quote.bidPriceMicros
+  const priceMicros = parseCanonicalPositiveMicros(priceText)
+  const quotedAtMs = Date.parse(quote.quotedAt)
+  const priceObservedAtMs = Date.parse(quote.observedAt)
   const observedAtMs = Date.parse(observedAt)
   if (
-    price.symbol !== intent.symbol ||
+    quote.symbol !== symbol ||
     priceMicros === undefined ||
-    quantityMicros === undefined ||
     !Number.isFinite(quotedAtMs) ||
     !Number.isFinite(priceObservedAtMs) ||
     !Number.isFinite(observedAtMs) ||
@@ -213,34 +321,129 @@ export const transmittedOrderNotional = (
   ) {
     return Result.fail({
       _tag: 'FreshBrokerPriceInvalid',
-      symbol: price.symbol,
-      priceMicros: price.priceMicros,
-      quotedAt: price.quotedAt,
-      observedAt: price.observedAt,
+      symbol: quote.symbol,
+      priceMicros: priceText,
+      quotedAt: quote.quotedAt,
+      observedAt: quote.observedAt,
     })
   }
   if (observedAtMs - quotedAtMs > freshBrokerPriceMaximumAgeMs) {
     return Result.fail({
       _tag: 'FreshBrokerPriceStale',
-      symbol: price.symbol,
-      quotedAt: price.quotedAt,
+      symbol: quote.symbol,
+      quotedAt: quote.quotedAt,
       observedAt,
       maximumAgeMs: freshBrokerPriceMaximumAgeMs,
     })
   }
-  return Result.succeed((quantityMicros * priceMicros + microsPerUnit - 1n) / microsPerUnit)
+  return Result.succeed(priceMicros)
 }
 
-const signedOrderNotional = (
-  order: Order,
-): Result.Result<bigint, Extract<LiveCapitalLimitFailure, { readonly _tag: 'OpenOrderNotionalUnavailable' }>> => {
-  if (order.notionalMicros !== undefined) {
-    const notional = absolute(BigInt(order.notionalMicros))
-    return Result.succeed(order.side === BrokerOrderSide.Buy ? notional : -notional)
+export const boundedBrokerOrderNotional = (intent: Intent): Result.Result<bigint, LiveCapitalLimitFailure> => {
+  const quantityMicros = parseCanonicalPositiveMicros(intent.quantityMicros)
+  const priceBoundary = orderPriceBoundaryMicros(intent)
+  if (quantityMicros === undefined || Result.isFailure(priceBoundary)) {
+    return Result.fail({
+      _tag: 'BoundedBrokerOrderInvalid',
+      symbol: intent.symbol,
+    })
   }
-  if (order.quantityMicros === undefined) {
+  return Result.succeed((quantityMicros * priceBoundary.success + microsPerUnit - 1n) / microsPerUnit)
+}
+
+export const liveOrderCapNotional = (
+  intent: Intent,
+  quote: FreshBrokerQuote,
+  observedAt: string,
+): Result.Result<bigint, LiveCapitalLimitFailure> => {
+  if (intent.side === IntentOrderSide.Buy) return boundedBrokerOrderNotional(intent)
+  const quantityMicros = parseCanonicalPositiveMicros(intent.quantityMicros)
+  const freshBid = freshSidePrice(intent.symbol, intent.side, quote, observedAt)
+  if (quantityMicros === undefined || Result.isFailure(freshBid)) {
+    return Result.isFailure(freshBid)
+      ? Result.fail(freshBid.failure)
+      : Result.fail({
+          _tag: 'BoundedBrokerOrderInvalid',
+          symbol: intent.symbol,
+        })
+  }
+  return Result.succeed((quantityMicros * freshBid.success + microsPerUnit - 1n) / microsPerUnit)
+}
+
+export const validateBrokerPriceBoundary = (
+  intent: Intent,
+  quote: FreshBrokerQuote,
+  observedAt: string,
+): Result.Result<void, LiveCapitalLimitFailure> => {
+  const observedPrice = freshSidePrice(intent.symbol, intent.side, quote, observedAt)
+  if (Result.isFailure(observedPrice)) return Result.fail(observedPrice.failure)
+  const boundary = orderPriceBoundaryMicros(intent)
+  if (Result.isFailure(boundary)) {
+    return Result.fail({
+      _tag: 'BoundedBrokerOrderInvalid',
+      symbol: intent.symbol,
+    })
+  }
+  const marketable =
+    intent.side === IntentOrderSide.Buy
+      ? observedPrice.success <= boundary.success
+      : observedPrice.success >= boundary.success
+  return marketable
+    ? Result.succeed(undefined)
+    : Result.fail({
+        _tag: 'FreshBrokerPriceGap',
+        symbol: intent.symbol,
+        side: intent.side,
+        boundaryMicros: boundary.success.toString(),
+        observedMicros: observedPrice.success.toString(),
+      })
+}
+
+const orderHasUnboundedExecutionPrice = (order: Order): boolean =>
+  order.notionalMicros === undefined &&
+  order.quantityMicros !== undefined &&
+  order.limitPriceMicros === undefined &&
+  (order.orderType === BrokerOrderType.Stop || order.orderType === BrokerOrderType.TrailingStop)
+
+export const quoteSymbolsForLiveExposure = (intent: Intent, _openOrders: readonly Order[]): readonly string[] => [
+  intent.symbol,
+]
+
+const signedOrderNotional = (order: Order): Result.Result<bigint, LiveCapitalLimitFailure> => {
+  const remainingQuantity = unfilledOrderQuantity(order)
+  if (Result.isFailure(remainingQuantity)) return Result.fail(remainingQuantity.failure)
+  if (orderHasUnboundedExecutionPrice(order)) {
     return Result.fail({
       _tag: 'OpenOrderNotionalUnavailable',
+      brokerOrderId: order.brokerOrderId,
+      symbol: order.symbol,
+    })
+  }
+  if (remainingQuantity.success === undefined) {
+    if (order.notionalMicros !== undefined) {
+      const notional = absolute(BigInt(order.notionalMicros))
+      return Result.succeed(order.side === BrokerOrderSide.Buy ? notional : -notional)
+    }
+    return Result.fail({
+      _tag: 'OpenOrderNotionalUnavailable',
+      brokerOrderId: order.brokerOrderId,
+      symbol: order.symbol,
+    })
+  }
+  if (order.notionalMicros !== undefined && order.quantityMicros !== undefined) {
+    const originalNotional = absolute(BigInt(order.notionalMicros))
+    const originalQuantity = BigInt(order.quantityMicros)
+    const notional = (originalNotional * remainingQuantity.success + originalQuantity - 1n) / originalQuantity
+    return Result.succeed(order.side === BrokerOrderSide.Buy ? notional : -notional)
+  }
+  const quantityMarketRemainder =
+    order.orderType === BrokerOrderType.Market &&
+    order.notionalMicros === undefined &&
+    order.limitPriceMicros === undefined &&
+    order.stopPriceMicros === undefined
+  if (quantityMarketRemainder) {
+    return Result.fail({
+      _tag: 'OpenOrderMarketPriceUnbounded',
       brokerOrderId: order.brokerOrderId,
       symbol: order.symbol,
     })
@@ -255,10 +458,137 @@ const signedOrderNotional = (
       symbol: order.symbol,
     })
   }
-  const conservativePrice = prices.reduce((maximum, price) => (price > maximum ? price : maximum), 0n)
-  const numerator = absolute(BigInt(order.quantityMicros)) * conservativePrice
-  const notional = (numerator + 999_999n) / 1_000_000n
+  const conservativePrice =
+    order.side === BrokerOrderSide.Buy
+      ? prices.reduce((maximum, price) => (price > maximum ? price : maximum))
+      : prices.reduce((minimum, price) => (price < minimum ? price : minimum))
+  const numerator = remainingQuantity.success * conservativePrice
+  const notional = (numerator + microsPerUnit - 1n) / microsPerUnit
   return Result.succeed(order.side === BrokerOrderSide.Buy ? notional : -notional)
+}
+
+const unfilledOrderQuantity = (
+  order: Order,
+): Result.Result<
+  bigint | undefined,
+  Extract<LiveCapitalLimitFailure, { readonly _tag: 'OpenOrderQuantityUnavailable' | 'OpenOrderQuantityInvalid' }>
+> => {
+  if (order.quantityMicros === undefined) return Result.succeed(undefined)
+  const quantity = BigInt(order.quantityMicros)
+  const filled = BigInt(order.filledQuantityMicros)
+  if (quantity <= 0n || filled < 0n || filled > quantity) {
+    return Result.fail({
+      _tag: 'OpenOrderQuantityInvalid',
+      brokerOrderId: order.brokerOrderId,
+      symbol: order.symbol,
+      quantityMicros: order.quantityMicros,
+      filledQuantityMicros: order.filledQuantityMicros,
+    })
+  }
+  return Result.succeed(quantity - filled)
+}
+
+export const priceOpenOrders = (
+  openOrders: readonly Order[],
+): Result.Result<ReadonlyMap<string, bigint>, LiveCapitalLimitFailure> => {
+  const notionals = new Map<string, bigint>()
+  for (const order of openOrders) {
+    const notional = signedOrderNotional(order)
+    if (Result.isFailure(notional)) return Result.fail(notional.failure)
+    notionals.set(order.brokerOrderId, notional.success)
+  }
+  return Result.succeed(notionals)
+}
+
+const minimumSymbolQuantityAfterPendingSells = (
+  intent: Intent,
+  snapshot: LiveCapitalSnapshot,
+): Result.Result<
+  { readonly beforeIntentMicros: bigint; readonly afterIntentMicros: bigint },
+  Extract<LiveCapitalLimitFailure, { readonly _tag: 'OpenOrderQuantityUnavailable' | 'OpenOrderQuantityInvalid' }>
+> => {
+  let beforeIntentMicros = snapshot.positions
+    .filter((position) => position.symbol === intent.symbol)
+    .reduce((total, position) => total + BigInt(position.quantityMicros), 0n)
+  for (const order of snapshot.openOrders.filter(
+    (candidate) => candidate.symbol === intent.symbol && candidate.side === BrokerOrderSide.Sell,
+  )) {
+    const remaining = unfilledOrderQuantity(order)
+    if (Result.isFailure(remaining)) return Result.fail(remaining.failure)
+    if (remaining.success === undefined) {
+      return Result.fail({
+        _tag: 'OpenOrderQuantityUnavailable',
+        brokerOrderId: order.brokerOrderId,
+        symbol: order.symbol,
+      })
+    }
+
+    beforeIntentMicros -= remaining.success
+  }
+  const intentQuantity = BigInt(intent.quantityMicros)
+  return Result.succeed({
+    beforeIntentMicros,
+    afterIntentMicros: beforeIntentMicros + (intent.side === IntentOrderSide.Buy ? intentQuantity : -intentQuantity),
+  })
+}
+
+export const validatePendingSellCoverage = (
+  snapshot: LiveCapitalSnapshot,
+): Result.Result<
+  void,
+  Extract<
+    LiveCapitalLimitFailure,
+    | { readonly _tag: 'OpenOrderQuantityUnavailable' }
+    | { readonly _tag: 'OpenOrderQuantityInvalid' }
+    | { readonly _tag: 'LivePendingSellUncovered' }
+  >
+> => {
+  const currentBySymbol = new Map<string, bigint>()
+  for (const position of snapshot.positions) {
+    currentBySymbol.set(position.symbol, (currentBySymbol.get(position.symbol) ?? 0n) + BigInt(position.quantityMicros))
+  }
+  const pendingSellsBySymbol = new Map<string, bigint>()
+  for (const order of snapshot.openOrders.filter((candidate) => candidate.side === BrokerOrderSide.Sell)) {
+    const remaining = unfilledOrderQuantity(order)
+    if (Result.isFailure(remaining)) return Result.fail(remaining.failure)
+    if (remaining.success === undefined) {
+      return Result.fail({
+        _tag: 'OpenOrderQuantityUnavailable',
+        brokerOrderId: order.brokerOrderId,
+        symbol: order.symbol,
+      })
+    }
+    pendingSellsBySymbol.set(order.symbol, (pendingSellsBySymbol.get(order.symbol) ?? 0n) + remaining.success)
+  }
+  for (const [symbol, pendingSellQuantity] of pendingSellsBySymbol) {
+    const currentQuantity = currentBySymbol.get(symbol) ?? 0n
+    if (pendingSellQuantity > currentQuantity) {
+      return Result.fail({
+        _tag: 'LivePendingSellUncovered',
+        symbol,
+        currentQuantityMicros: currentQuantity.toString(),
+        pendingSellQuantityMicros: pendingSellQuantity.toString(),
+      })
+    }
+  }
+  return Result.succeed(undefined)
+}
+
+interface PendingSymbolExposure {
+  readonly buyMicros: bigint
+  readonly sellMicros: bigint
+}
+
+const emptyPendingSymbolExposure: PendingSymbolExposure = { buyMicros: 0n, sellMicros: 0n }
+
+export const maximumAbsoluteExposureAcrossPendingFills = (
+  currentMicros: bigint,
+  pending: PendingSymbolExposure,
+  proposedMicros: bigint,
+): bigint => {
+  const lowerBound = currentMicros + proposedMicros - pending.sellMicros
+  const upperBound = currentMicros + proposedMicros + pending.buyMicros
+  return absolute(lowerBound) > absolute(upperBound) ? absolute(lowerBound) : absolute(upperBound)
 }
 
 const validateSnapshotBindings = (
@@ -314,23 +644,19 @@ export const validateLiveCapitalLimits = (
   authority: LiveMutationExecutionAuthority,
   intent: Intent,
   snapshot: LiveCapitalSnapshot,
-  proposedNotional: bigint,
+  proposedExposureNotional: bigint,
+  proposedOrderNotional: bigint,
+  openOrderNotionals: ReadonlyMap<string, bigint>,
 ): Result.Result<void, LiveCapitalLimitFailure> => {
   const binding = validateIntentAuthorityBinding(authority, intent)
   if (Result.isFailure(binding)) return Result.fail(binding.failure)
   const snapshotBinding = validateSnapshotBindings(authority, snapshot)
   if (Result.isFailure(snapshotBinding)) return Result.fail(snapshotBinding.failure)
+  const pendingSellCoverage = validatePendingSellCoverage(snapshot)
+  if (Result.isFailure(pendingSellCoverage)) return Result.fail(pendingSellCoverage.failure)
 
   const limits = authority.capitalAuthority.grant.limits
-  const intentNotionalLimit = absolute(BigInt(intent.notionalLimitMicros))
   const orderLimit = BigInt(limits.maxOrderNotionalMicros)
-  if (intentNotionalLimit > orderLimit || proposedNotional > intentNotionalLimit || proposedNotional > orderLimit) {
-    return Result.fail({
-      _tag: 'LiveOrderNotionalLimitExceeded',
-      limitMicros: (intentNotionalLimit < orderLimit ? intentNotionalLimit : orderLimit).toString(),
-      proposedMicros: proposedNotional.toString(),
-    })
-  }
   if (snapshot.openOrders.length >= limits.maxOpenOrders) {
     return Result.fail({
       _tag: 'LiveOpenOrderLimitExceeded',
@@ -339,35 +665,87 @@ export const validateLiveCapitalLimits = (
     })
   }
 
-  const pendingBySymbol = new Map<string, bigint>()
-  let pendingGross = 0n
+  const currentBySymbol = new Map<string, bigint>()
+  for (const position of snapshot.positions) {
+    currentBySymbol.set(
+      position.symbol,
+      (currentBySymbol.get(position.symbol) ?? 0n) + BigInt(position.marketValueMicros),
+    )
+  }
+  const pendingBySymbol = new Map<string, PendingSymbolExposure>()
   for (const order of snapshot.openOrders) {
-    const notional = signedOrderNotional(order)
-    if (Result.isFailure(notional)) return Result.fail(notional.failure)
-    pendingBySymbol.set(order.symbol, (pendingBySymbol.get(order.symbol) ?? 0n) + notional.success)
-    pendingGross += absolute(notional.success)
+    const notional = openOrderNotionals.get(order.brokerOrderId)
+    if (notional === undefined) {
+      return Result.fail({
+        _tag: 'OpenOrderNotionalUnavailable',
+        brokerOrderId: order.brokerOrderId,
+        symbol: order.symbol,
+      })
+    }
+    const pending = pendingBySymbol.get(order.symbol) ?? emptyPendingSymbolExposure
+    pendingBySymbol.set(
+      order.symbol,
+      notional > 0n
+        ? { ...pending, buyMicros: pending.buyMicros + notional }
+        : { ...pending, sellMicros: pending.sellMicros + absolute(notional) },
+    )
   }
 
-  let currentGross = 0n
-  let currentSymbol = 0n
-  for (const position of snapshot.positions) {
-    const marketValue = BigInt(position.marketValueMicros)
-    currentGross += absolute(marketValue)
-    if (position.symbol === intent.symbol) currentSymbol += marketValue
+  const symbols = new Set([...currentBySymbol.keys(), ...pendingBySymbol.keys(), intent.symbol])
+  const proposedSignedNotional = signedIntentNotional(intent, proposedExposureNotional)
+  const worstCaseGross = (includeProposed: boolean): bigint => {
+    let gross = 0n
+    for (const symbol of symbols) {
+      gross += maximumAbsoluteExposureAcrossPendingFills(
+        currentBySymbol.get(symbol) ?? 0n,
+        pendingBySymbol.get(symbol) ?? emptyPendingSymbolExposure,
+        includeProposed && symbol === intent.symbol ? proposedSignedNotional : 0n,
+      )
+    }
+    return gross
   }
-  const projectedSymbol =
-    currentSymbol + (pendingBySymbol.get(intent.symbol) ?? 0n) + signedIntentNotional(intent, proposedNotional)
-  if (absolute(projectedSymbol) > BigInt(limits.maxPositionNotionalMicros)) {
+  const pendingForIntent = pendingBySymbol.get(intent.symbol) ?? emptyPendingSymbolExposure
+  const currentSymbol = maximumAbsoluteExposureAcrossPendingFills(
+    currentBySymbol.get(intent.symbol) ?? 0n,
+    pendingForIntent,
+    0n,
+  )
+  const projectedSymbol = maximumAbsoluteExposureAcrossPendingFills(
+    currentBySymbol.get(intent.symbol) ?? 0n,
+    pendingForIntent,
+    proposedSignedNotional,
+  )
+  const currentGross = worstCaseGross(false)
+  const projectedGross = worstCaseGross(true)
+  const projectedQuantity = minimumSymbolQuantityAfterPendingSells(intent, snapshot)
+  if (Result.isFailure(projectedQuantity)) return Result.fail(projectedQuantity.failure)
+
+  if (proposedOrderNotional > orderLimit) {
+    return Result.fail({
+      _tag: 'LiveOrderNotionalLimitExceeded',
+      limitMicros: limits.maxOrderNotionalMicros,
+      proposedMicros: proposedOrderNotional.toString(),
+    })
+  }
+  if (intent.side === IntentOrderSide.Sell && projectedQuantity.success.afterIntentMicros < 0n) {
+    return Result.fail({
+      _tag: 'LiveIncreasingSellUnsupported',
+      symbol: intent.symbol,
+      currentQuantityMicros: projectedQuantity.success.beforeIntentMicros.toString(),
+      projectedQuantityMicros: projectedQuantity.success.afterIntentMicros.toString(),
+    })
+  }
+
+  if (projectedSymbol > BigInt(limits.maxPositionNotionalMicros) && projectedSymbol >= currentSymbol) {
     return Result.fail({
       _tag: 'LivePositionNotionalLimitExceeded',
       symbol: intent.symbol,
       limitMicros: limits.maxPositionNotionalMicros,
-      projectedMicros: absolute(projectedSymbol).toString(),
+      projectedMicros: projectedSymbol.toString(),
     })
   }
 
-  const projectedGross = currentGross + pendingGross + proposedNotional
-  if (projectedGross > BigInt(limits.maxGrossNotionalMicros)) {
+  if (projectedGross > BigInt(limits.maxGrossNotionalMicros) && projectedGross >= currentGross) {
     return Result.fail({
       _tag: 'LiveGrossNotionalLimitExceeded',
       limitMicros: limits.maxGrossNotionalMicros,
@@ -390,7 +768,64 @@ export const validateLiveCapitalLimits = (
 const mutationAuthorizationError = (message: string, cause: unknown) =>
   invalidRequest(MutationOperation.Submit, message, cause)
 
-type LiveGrantRefreshFailure =
+export const refreshLiveBrokerSubmitSnapshot = (
+  authority: LiveMutationExecutionAuthority,
+  intent: Intent,
+  dependencies: LiveBrokerSubmitRefreshDependencies,
+): Effect.Effect<LiveBrokerSubmitSnapshot, BrokerMutationError> =>
+  Effect.gen(function* () {
+    const account = yield* dependencies.brokerRead.account.pipe(
+      Effect.mapError((cause) =>
+        mutationAuthorizationError('live broker account could not be refreshed before submit', cause),
+      ),
+    )
+    const positionsBefore = yield* dependencies.brokerRead.positions.pipe(
+      Effect.mapError((cause) =>
+        mutationAuthorizationError('live broker positions could not be refreshed before submit', cause),
+      ),
+    )
+    const openOrders = yield* dependencies.brokerRead
+      .orders({
+        status: OrderCollection.Open,
+        limit: authority.capitalAuthority.grant.limits.maxOpenOrders,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          mutationAuthorizationError('live broker open orders could not be refreshed before submit', cause),
+        ),
+      )
+    const positionsAfter = yield* dependencies.brokerRead.positions.pipe(
+      Effect.mapError((cause) =>
+        mutationAuthorizationError('live broker positions could not be confirmed after open-order refresh', cause),
+      ),
+    )
+    const stablePositions = validateStableLivePositionSnapshot(positionsBefore.value, positionsAfter.value)
+    if (Result.isFailure(stablePositions)) {
+      return yield* Effect.fail(
+        mutationAuthorizationError(
+          'live broker position snapshot changed during exposure refresh',
+          stablePositions.failure,
+        ),
+      )
+    }
+    const quoteSymbols = quoteSymbolsForLiveExposure(intent, openOrders.value)
+    const quoteEntries = yield* Effect.forEach(quoteSymbols, (symbol) =>
+      dependencies.freshBrokerPrice(symbol).pipe(
+        Effect.map((quote) => [symbol, quote] as const),
+        Effect.mapError((cause) =>
+          mutationAuthorizationError('fresh broker price could not be refreshed before submit', cause),
+        ),
+      ),
+    )
+    return {
+      account: account.value,
+      positions: stablePositions.success,
+      openOrders: openOrders.value,
+      quotes: new Map(quoteEntries),
+    }
+  })
+
+export type LiveGrantRefreshFailure =
   | ExecutionAuthorityConstructionFailure
   | {
       readonly _tag: 'LiveGrantHashMismatch'
@@ -401,11 +836,14 @@ type LiveGrantRefreshFailure =
       readonly _tag: 'FreshAuthorityCapabilityMismatch'
     }
 
-const freshLiveAuthority = (
-  captured: LiveMutationExecutionAuthority,
+export const validateLiveGrantForSubmit = (
+  captured: MutationExecutionAuthority,
   persisted: LiveCapitalAuthority,
   observedAt: string,
 ): Result.Result<LiveMutationExecutionAuthority, LiveGrantRefreshFailure> => {
+  if (!isLiveMutationExecutionAuthority(captured)) {
+    return Result.fail({ _tag: 'FreshAuthorityCapabilityMismatch' })
+  }
   if (persisted.grant.grantHash !== captured.capitalAuthority.grant.grantHash) {
     return Result.fail({
       _tag: 'LiveGrantHashMismatch' as const,
@@ -426,11 +864,63 @@ const freshLiveAuthority = (
     : Result.fail({ _tag: 'FreshAuthorityCapabilityMismatch' })
 }
 
+export type LiveBrokerSubmitValidationFailure =
+  | LiveGrantRefreshFailure
+  | LiveCapitalLimitFailure
+  | {
+      readonly _tag: 'FreshBrokerPriceMissing'
+      readonly symbol: string
+    }
+
+export const validateLiveBrokerSubmitSnapshot = (
+  captured: LiveMutationExecutionAuthority,
+  persisted: LiveCapitalAuthority,
+  intent: Intent,
+  snapshot: LiveBrokerSubmitSnapshot,
+  observedAt: string,
+): Result.Result<void, LiveBrokerSubmitValidationFailure> => {
+  const fresh = validateLiveGrantForSubmit(captured, persisted, observedAt)
+  if (Result.isFailure(fresh)) return Result.fail(fresh.failure)
+  const intentQuote = snapshot.quotes.get(intent.symbol)
+  if (intentQuote === undefined) {
+    return Result.fail({
+      _tag: 'FreshBrokerPriceMissing',
+      symbol: intent.symbol,
+    })
+  }
+  const priceBoundary = validateBrokerPriceBoundary(intent, intentQuote, observedAt)
+  if (Result.isFailure(priceBoundary)) return Result.fail(priceBoundary.failure)
+  const requestedNotional = boundedBrokerOrderNotional(intent)
+  if (Result.isFailure(requestedNotional)) return Result.fail(requestedNotional.failure)
+  const orderCapNotional = liveOrderCapNotional(intent, intentQuote, observedAt)
+  if (Result.isFailure(orderCapNotional)) return Result.fail(orderCapNotional.failure)
+  const openOrderNotionals = priceOpenOrders(snapshot.openOrders)
+  if (Result.isFailure(openOrderNotionals)) return Result.fail(openOrderNotionals.failure)
+  return validateLiveCapitalLimits(
+    fresh.success,
+    intent,
+    snapshot,
+    requestedNotional.success,
+    orderCapNotional.success,
+    openOrderNotionals.success,
+  )
+}
+
 export const makeAuthorityGuardedBrokerMutation = (
   authority: MutationExecutionAuthority,
   dependencies: MutationAuthorityDependencies,
 ): BrokerMutationShape => {
   const liveSubmitPermit = Semaphore.makeUnsafe(1)
+  const transmit = (intent: Intent) =>
+    dependencies
+      .finalSubmitAuthorization(intent, dependencies.brokerMutation.submit(intent))
+      .pipe(
+        Effect.mapError((cause) =>
+          cause instanceof BrokerMutationError
+            ? cause
+            : mutationAuthorizationError('final submit authorization failed after broker preflight', cause),
+        ),
+      )
   const submit = (intent: Intent) => {
     const binding = validateIntentAuthorityBinding(authority, intent)
     if (Result.isFailure(binding)) {
@@ -439,24 +929,13 @@ export const makeAuthorityGuardedBrokerMutation = (
       )
     }
     if (!isLiveMutationExecutionAuthority(authority)) {
-      return dependencies.brokerMutation.submit(intent)
+      return transmit(intent)
     }
     const liveAuthority = authority
 
     return liveSubmitPermit.withPermit(
       Effect.gen(function* () {
-        const snapshot = yield* Effect.all({
-          account: dependencies.brokerRead.account,
-          positions: dependencies.brokerRead.positions,
-          openOrders: dependencies.brokerRead.orders({
-            status: OrderCollection.Open,
-            limit: liveAuthority.capitalAuthority.grant.limits.maxOpenOrders,
-          }),
-        }).pipe(
-          Effect.mapError((cause) =>
-            mutationAuthorizationError('live broker exposure snapshot could not be refreshed', cause),
-          ),
-        )
+        const snapshot = yield* refreshLiveBrokerSubmitSnapshot(liveAuthority, intent, dependencies)
         const grantHash = liveAuthority.capitalAuthority.grant.grantHash
         const persisted = yield* dependencies.liveCapitalGrants.read(grantHash).pipe(
           Effect.mapError((cause) =>
@@ -473,42 +952,14 @@ export const makeAuthorityGuardedBrokerMutation = (
               : Effect.succeed(grant),
           ),
         )
-        const price = yield* dependencies
-          .freshBrokerPrice(intent.symbol)
-          .pipe(
-            Effect.mapError((cause) =>
-              mutationAuthorizationError('fresh broker price could not be refreshed before submit', cause),
-            ),
-          )
         const observedAt = yield* dependencies.currentUtcInstant
-        const fresh = freshLiveAuthority(liveAuthority, persisted, observedAt)
-        if (Result.isFailure(fresh)) {
+        const validation = validateLiveBrokerSubmitSnapshot(liveAuthority, persisted, intent, snapshot, observedAt)
+        if (Result.isFailure(validation)) {
           return yield* Effect.fail(
-            mutationAuthorizationError('live capital grant is no longer valid before submit', fresh.failure),
+            mutationAuthorizationError('live broker submit preflight rejected the broker submit', validation.failure),
           )
         }
-        const requestedNotional = transmittedOrderNotional(intent, price, observedAt)
-        if (Result.isFailure(requestedNotional)) {
-          return yield* Effect.fail(
-            mutationAuthorizationError('fresh broker price rejected the transmitted order', requestedNotional.failure),
-          )
-        }
-        const limits = validateLiveCapitalLimits(
-          fresh.success,
-          intent,
-          {
-            account: snapshot.account.value,
-            positions: snapshot.positions.value,
-            openOrders: snapshot.openOrders.value,
-          },
-          requestedNotional.success,
-        )
-        if (Result.isFailure(limits)) {
-          return yield* Effect.fail(
-            mutationAuthorizationError('live capital limit rejected the broker submit', limits.failure),
-          )
-        }
-        return yield* dependencies.brokerMutation.submit(intent)
+        return yield* transmit(intent)
       }),
     )
   }

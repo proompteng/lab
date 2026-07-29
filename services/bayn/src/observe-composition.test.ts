@@ -14,6 +14,7 @@ import {
   type ReadResult,
 } from './broker/alpaca'
 import { unusedAssetBySymbol } from './broker/alpaca-test-support'
+import { MutationOperation } from './broker/alpaca-mutations'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from './broker/identity'
 import {
   CycleState,
@@ -44,7 +45,7 @@ import {
 import { operationalError, type OperationalError } from './errors'
 import { BrokerAccess, makeExecutionAuthority, sandboxCapitalAuthority } from './execution/authority'
 import { IntentStore, type IntentStoreService } from './execution/intents'
-import { MutationStore, type MutationStoreShape } from './execution/mutations'
+import { MutationEventType, MutationStore, type MutationEvent, type MutationStoreShape } from './execution/mutations'
 import type { ExecutionProgram } from './execution/runtime-program'
 import { WriterFence, WriterFenceError, type WriterFenceService } from './execution/writer-fence'
 import { canonicalHashV1 } from './hash'
@@ -52,6 +53,12 @@ import { MarketData, type MarketDataService, type MarketDataSnapshot } from './m
 import {
   buildMutationShadowCycleDecision,
   buildObserveCycleDecision,
+  appendPendingMutationOrder,
+  decidePreparedMutationIntent,
+  decideMutationIntentSettlement,
+  executeMutationIntent,
+  mutationIntentReconciliationDelayMs,
+  projectWorstCasePendingMutationPosition,
   loadObserveRiskPolicy,
   makeMutationAutonomousCycleStartup,
   makeObserveAutonomousCycleStartup,
@@ -60,10 +67,18 @@ import {
 import {
   AccountStatus,
   Authority,
+  IntentState,
   KillState,
+  OrderSide,
+  OrderStatus,
+  OrderType,
   ReconciliationStatus,
   RiskOutcome,
+  TerminalOutcome,
+  TimeInForce,
   type AccountSnapshot,
+  type Intent,
+  type Position,
   type Reconciliation,
 } from './paper'
 import { ReconciliationError, type ReconciliationPassResult } from './reconciler'
@@ -403,6 +418,211 @@ const sandboxExecutionProgram = (
 }
 
 describe('OBSERVE runtime composition', () => {
+  test('projects accepted nonterminal intents as one unresolved order for the next risk pass', () => {
+    const intent: Intent = {
+      schemaVersion: 'bayn.paper-intent.v3',
+      intentId: '1'.repeat(64),
+      authorityGenerationHash: generationHash,
+      riskDecisionId: '2'.repeat(64),
+      strategyName: 'risk-balanced-trend',
+      cycleId: '3'.repeat(64),
+      decisionHash: '4'.repeat(64),
+      policyHash: '5'.repeat(64),
+      accountId,
+      clientOrderId: 'accepted-prior-intent',
+      symbol: 'NVDA',
+      side: OrderSide.Buy,
+      orderType: OrderType.Market,
+      timeInForce: TimeInForce.Day,
+      quantityMicros: '1000000',
+      notionalLimitMicros: '100000000',
+      state: IntentState.Acknowledged,
+      createdAt: evaluatedAt,
+    }
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '6'.repeat(64),
+      mutationId: '7'.repeat(64),
+      intentId: intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: '8'.repeat(64),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'accepted-broker-order',
+      occurredAt: evaluatedAt,
+    }
+
+    const decision = Result.getOrThrow(decidePreparedMutationIntent(intent, accepted))
+    expect(decision._tag).toBe('Pending')
+    if (decision._tag !== 'Pending') return expect.unreachable(decision._tag)
+    expect(decision.order).toMatchObject({
+      brokerOrderId: accepted.brokerOrderId,
+      clientOrderId: intent.clientOrderId,
+      intentId: intent.intentId,
+      status: OrderStatus.New,
+      filledQuantityMicros: '0',
+    })
+    const projected = appendPendingMutationOrder([], decision.order)
+    expect(projected).toEqual([decision.order])
+    expect(appendPendingMutationOrder(projected, decision.order)).toBe(projected)
+  })
+
+  test('executes unsubmitted intents and skips terminal intents in fresh mutation passes', () => {
+    const base: Intent = {
+      schemaVersion: 'bayn.paper-intent.v3',
+      intentId: '9'.repeat(64),
+      authorityGenerationHash: generationHash,
+      strategyName: 'risk-balanced-trend',
+      cycleId: 'a'.repeat(64),
+      decisionHash: 'b'.repeat(64),
+      policyHash: 'c'.repeat(64),
+      accountId,
+      clientOrderId: 'fresh-pass-intent',
+      symbol: 'AMD',
+      side: OrderSide.Buy,
+      orderType: OrderType.Market,
+      timeInForce: TimeInForce.Day,
+      quantityMicros: '1000000',
+      notionalLimitMicros: '100000000',
+      state: IntentState.Planned,
+      createdAt: evaluatedAt,
+    }
+
+    expect(Result.getOrThrow(decidePreparedMutationIntent(base, undefined))).toEqual({ _tag: 'Execute' })
+    expect(
+      Result.getOrThrow(
+        decidePreparedMutationIntent(
+          { ...base, state: IntentState.Terminal, terminalOutcome: TerminalOutcome.Filled },
+          undefined,
+        ),
+      ),
+    ).toEqual({ _tag: 'SkipTerminal' })
+  })
+
+  test('retains an unfilled sell while reserving a later buy in projected risk positions', () => {
+    const observedAt = '2026-07-28T13:45:00.000Z'
+    const existing: Position = {
+      schemaVersion: 'bayn.paper-position.v1',
+      accountId,
+      symbol: 'AAPL',
+      quantityMicros: '100000000',
+      averageEntryPriceMicros: '100000000',
+      marketPriceMicros: '100000000',
+      marketValueMicros: '10000000000',
+      unrealizedPnlMicros: '0',
+      observedAt,
+    }
+    const afterSell = projectWorstCasePendingMutationPosition(
+      [existing],
+      {
+        symbol: 'AAPL',
+        targetWeight: 0.2,
+        referencePriceMicros: '100000000',
+        currentQuantityMicros: '100000000',
+        targetQuantityMicros: '20000000',
+      },
+      accountId,
+      observedAt,
+    )
+    const afterLaterBuy = projectWorstCasePendingMutationPosition(
+      afterSell,
+      {
+        symbol: 'AMD',
+        targetWeight: 0.6,
+        referencePriceMicros: '50000000',
+        currentQuantityMicros: '0',
+        targetQuantityMicros: '60000000',
+      },
+      accountId,
+      observedAt,
+    )
+
+    expect(afterSell).toEqual([existing])
+    expect(afterLaterBuy.map(({ symbol, quantityMicros }) => ({ symbol, quantityMicros }))).toEqual([
+      { symbol: 'AAPL', quantityMicros: '100000000' },
+      { symbol: 'AMD', quantityMicros: '60000000' },
+    ])
+  })
+
+  test('settles terminal submit denials and broker rejections so later cycles can continue', () => {
+    expect(decideMutationIntentSettlement(MutationEventType.SubmitRejected)).toEqual({
+      _tag: 'Settled',
+      outcome: 'rejected',
+    })
+
+    expect(decideMutationIntentSettlement(MutationEventType.SubmitDenied)).toEqual({
+      _tag: 'Settled',
+      outcome: 'denied',
+    })
+    expect(decideMutationIntentSettlement(MutationEventType.SubmitUnknown)).toEqual({
+      _tag: 'Unresolved',
+      eventType: MutationEventType.SubmitUnknown,
+    })
+  })
+
+  test('waits the durable consistency window only after accepted submit settlement', () => {
+    expect(
+      mutationIntentReconciliationDelayMs({
+        settlement: { _tag: 'Settled', outcome: 'accepted' },
+        consistencyDelayMs: 1_250,
+      }),
+    ).toBe(1_250)
+    expect(
+      mutationIntentReconciliationDelayMs({
+        settlement: { _tag: 'Settled', outcome: 'rejected' },
+        consistencyDelayMs: 1_250,
+      }),
+    ).toBe(0)
+  })
+
+  test('replays a terminal rejection without resubmission and executes the later-cycle intent', async () => {
+    const rejectedIntentId = 'a'.repeat(64)
+    const laterIntentId = 'b'.repeat(64)
+    const event = (intentId: string, eventType: MutationEventType) => ({
+      schemaVersion: 'bayn.paper-mutation-event.v1' as const,
+      eventId: canonicalHashV1({ intentId, eventType }),
+      mutationId: canonicalHashV1({ intentId, operation: 'SUBMIT' }),
+      intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType,
+      requestHash: '1'.repeat(64),
+      consistencyDelayMs: 1_000,
+      occurredAt: evaluatedAt,
+    })
+    const rejected = event(rejectedIntentId, MutationEventType.SubmitRejected)
+    const accepted = event(laterIntentId, MutationEventType.SubmitAccepted)
+    const submitted: string[] = []
+    let recoveries = 0
+    const program: ExecutionProgram = {
+      ...sandboxExecutionProgram(),
+      submit: (intentId) =>
+        Effect.sync(() => {
+          submitted.push(intentId)
+          return accepted
+        }),
+      recover: () =>
+        Effect.sync(() => {
+          recoveries += 1
+          return accepted
+        }),
+    }
+    const store = {
+      latest: (intentId: string) => Effect.succeed(intentId === rejectedIntentId ? rejected : undefined),
+    } as unknown as MutationStoreShape
+
+    await Effect.runPromise(
+      Effect.forEach([rejectedIntentId, laterIntentId], (intentId) => executeMutationIntent(program, intentId), {
+        concurrency: 1,
+        discard: true,
+      }).pipe(Effect.provideService(MutationStore, store)),
+    )
+
+    expect(submitted).toEqual([laterIntentId])
+    expect(recoveries).toBe(0)
+  })
+
   test('derives the autonomous cycle protocol identity from the current strategy provenance', () => {
     const prepared = prepareObserveStartup({
       accountId,

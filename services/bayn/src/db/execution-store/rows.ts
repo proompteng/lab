@@ -7,6 +7,7 @@ import {
   PositionSnapshotInputSchema,
   ValuationInputSchema,
 } from '../../broker/observations'
+import { BrokerEnvironmentSchema, BrokerProviderSchema } from '../../broker/identity'
 import {
   AccountingReceiptSchema,
   Authority,
@@ -117,6 +118,10 @@ export const AuthorityGenerationRow = Schema.Struct({
   previous_generation_hash: Schema.NullOr(Sha256),
   maximum: Schema.Enum(Authority),
   authority_version: Schema.String,
+  broker_identity_schema_version: Schema.NullOr(Schema.Literal('bayn.broker-identity.v2')),
+  broker_identity_hash: Schema.NullOr(Sha256),
+  broker_provider: Schema.NullOr(BrokerProviderSchema),
+  broker_environment: Schema.NullOr(BrokerEnvironmentSchema),
   qualification_run_id: Schema.NullOr(Sha256),
   qualification_lock_id: Schema.NullOr(Sha256),
   qualification_result_hash: Schema.NullOr(Sha256),

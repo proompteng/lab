@@ -3,7 +3,12 @@ import { Result, Schema } from 'effect'
 import { rebuildAccountingLedger } from '../accounting/domain'
 import type { AccountingFailure } from '../accounting/failure'
 import type { AccountingTransaction } from '../accounting/schema'
-import { MutationOperation } from '../broker/alpaca-mutations'
+import {
+  MutationOperation,
+  historicalMarketOrderRequestBody,
+  orderPriceBoundaryMicros,
+  orderRequestBody,
+} from '../broker/alpaca-mutations'
 import type { RuntimeConfig } from '../config'
 import { MutationEventType } from '../execution/mutations'
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
@@ -49,12 +54,14 @@ export interface IntentProjectionRow {
   readonly order_type: OrderType
   readonly time_in_force: TimeInForce
   readonly quantity_micros: string
+  readonly notional_limit_micros: string
   readonly state: IntentState
   readonly terminal_outcome: TerminalOutcome | null
   readonly broker_order_id: string | null
   readonly mutation_operation: MutationOperation | null
   readonly mutation_event_type: MutationEventType | null
   readonly mutation_occurred_at: string | null
+  readonly submit_request_hash: string | null
 }
 
 export interface IntentProjection {
@@ -154,6 +161,12 @@ export type ReconciliationAlgebraFailure =
       readonly error: ReconciliationDecisionError
     }
   | {
+      readonly _tag: 'IntentSubmitRepresentationInvalid'
+      readonly intentId: string
+      readonly requestHash: string | null
+      readonly cause: unknown
+    }
+  | {
       readonly _tag: 'DuplicateReconciliationDiscrepancy'
       readonly source: 'current' | 'previous'
       readonly discrepancyId: string
@@ -204,31 +217,123 @@ const fail = (failure: ReconciliationAlgebraFailure): Result.Result<never, Recon
 export const projectIntentExpectations = (
   rows: readonly IntentProjectionRow[],
 ): Result.Result<IntentProjection, ReconciliationAlgebraFailure> => {
-  const intents: readonly IntentExpectation[] = rows.map((row) => ({
-    intentId: row.intent_id,
-    clientOrderId: row.client_order_id,
-    symbol: row.symbol,
-    side: row.side,
-    orderType: row.order_type,
-    timeInForce: row.time_in_force,
-    quantityMicros: row.quantity_micros,
-    state: row.state,
-    ...(row.terminal_outcome === null ? {} : { terminalOutcome: row.terminal_outcome }),
-    expectsBrokerOrder: row.broker_order_id !== null,
-    ...(row.broker_order_id === null ? {} : { brokerOrderId: row.broker_order_id }),
-    ...(row.mutation_event_type !== null &&
-    (unresolvedEvents.has(row.mutation_event_type) ||
-      (row.mutation_operation === MutationOperation.Cancel &&
-        row.mutation_event_type === MutationEventType.RecoveryFound &&
-        row.state !== IntentState.Terminal)) &&
-    row.mutation_occurred_at !== null
-      ? { unknownSince: row.mutation_occurred_at }
-      : {}),
+  const intents = Result.all(
+    rows.map((row): Result.Result<IntentExpectation, ReconciliationAlgebraFailure> => {
+      const requestIntent = {
+        clientOrderId: row.client_order_id,
+        notionalLimitMicros: row.notional_limit_micros,
+        orderType: row.order_type,
+        quantityMicros: row.quantity_micros,
+        side: row.side,
+        symbol: row.symbol,
+        timeInForce: row.time_in_force,
+      }
+      const representation = (): Result.Result<
+        Pick<IntentExpectation, 'submittedLimitPriceMicros' | 'submittedOrderType'>,
+        ReconciliationAlgebraFailure
+      > => {
+        if (row.broker_order_id === null) {
+          return Result.succeed({ submittedOrderType: row.order_type })
+        }
+        if (row.submit_request_hash === null) {
+          return Result.fail({
+            _tag: 'IntentSubmitRepresentationInvalid',
+            intentId: row.intent_id,
+            requestHash: null,
+            cause: 'accepted broker order is missing its durable submit request hash',
+          })
+        }
+        const boundedBody = orderRequestBody(requestIntent)
+        if (Result.isFailure(boundedBody)) {
+          return Result.fail({
+            _tag: 'IntentSubmitRepresentationInvalid',
+            intentId: row.intent_id,
+            requestHash: row.submit_request_hash,
+            cause: boundedBody.failure,
+          })
+        }
+        const historicalBody = historicalMarketOrderRequestBody(requestIntent)
+        if (Result.isFailure(historicalBody)) {
+          return Result.fail({
+            _tag: 'IntentSubmitRepresentationInvalid',
+            intentId: row.intent_id,
+            requestHash: row.submit_request_hash,
+            cause: historicalBody.failure,
+          })
+        }
+        const boundary = orderPriceBoundaryMicros(requestIntent)
+        if (Result.isFailure(boundary)) {
+          return Result.fail({
+            _tag: 'IntentSubmitRepresentationInvalid',
+            intentId: row.intent_id,
+            requestHash: row.submit_request_hash,
+            cause: boundary.failure,
+          })
+        }
+        const boundedHash = canonicalHashV1Result(boundedBody.success)
+        if (Result.isFailure(boundedHash)) {
+          return Result.fail({
+            _tag: 'IntentSubmitRepresentationInvalid',
+            intentId: row.intent_id,
+            requestHash: row.submit_request_hash,
+            cause: boundedHash.failure,
+          })
+        }
+        const historicalHash = canonicalHashV1Result(historicalBody.success)
+        if (Result.isFailure(historicalHash)) {
+          return Result.fail({
+            _tag: 'IntentSubmitRepresentationInvalid',
+            intentId: row.intent_id,
+            requestHash: row.submit_request_hash,
+            cause: historicalHash.failure,
+          })
+        }
+        if (row.submit_request_hash === boundedHash.success) {
+          return Result.succeed({
+            submittedOrderType: OrderType.Limit,
+            submittedLimitPriceMicros: boundary.success.toString(),
+          })
+        }
+        return row.submit_request_hash === historicalHash.success
+          ? Result.succeed({ submittedOrderType: OrderType.Market })
+          : Result.fail({
+              _tag: 'IntentSubmitRepresentationInvalid',
+              intentId: row.intent_id,
+              requestHash: row.submit_request_hash,
+              cause: {
+                expectedBoundedHash: boundedHash.success,
+                expectedHistoricalHash: historicalHash.success,
+              },
+            })
+      }
+      return Result.map(representation(), (submitted) => ({
+        intentId: row.intent_id,
+        clientOrderId: row.client_order_id,
+        symbol: row.symbol,
+        side: row.side,
+        orderType: row.order_type,
+        ...submitted,
+        timeInForce: row.time_in_force,
+        quantityMicros: row.quantity_micros,
+        state: row.state,
+        ...(row.terminal_outcome === null ? {} : { terminalOutcome: row.terminal_outcome }),
+        expectsBrokerOrder: row.broker_order_id !== null,
+        ...(row.broker_order_id === null ? {} : { brokerOrderId: row.broker_order_id }),
+        ...(row.mutation_event_type !== null &&
+        (unresolvedEvents.has(row.mutation_event_type) ||
+          (row.mutation_operation === MutationOperation.Cancel &&
+            row.mutation_event_type === MutationEventType.RecoveryFound &&
+            row.state !== IntentState.Terminal)) &&
+        row.mutation_occurred_at !== null
+          ? { unknownSince: row.mutation_occurred_at }
+          : {}),
+      }))
+    }),
+  )
+  return Result.map(intents, (projected) => ({
+    intents: projected,
+    unknownMutationCount: projected.filter((intent) => intent.unknownSince !== undefined).length,
   }))
-  return Result.succeed({
-    intents,
-    unknownMutationCount: intents.filter((intent) => intent.unknownSince !== undefined).length,
-  })
 }
 
 export const canonicalAccountingReceiptMaterial = (receipt: AccountingReceipt) => ({
@@ -686,6 +791,12 @@ export const reconciliationAlgebraFailureDetails = (
         failure: 'invariant',
         message: renderReconciliationDecisionError(failure.error),
         cause: failure.error,
+      }
+    case 'IntentSubmitRepresentationInvalid':
+      return {
+        failure: 'invariant',
+        message: `intent ${failure.intentId} durable submit representation is invalid`,
+        cause: failure.cause,
       }
     case 'DuplicateReconciliationDiscrepancy':
       return {

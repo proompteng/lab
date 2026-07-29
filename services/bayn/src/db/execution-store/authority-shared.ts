@@ -128,7 +128,9 @@ export const makeAuthorityPostgres = (sql: PgClient.PgClient) => {
     sql<Record<string, unknown>>`
       SELECT
         generation_hash, activation_schema_version, previous_generation_hash, maximum,
-        authority_version::text AS authority_version, qualification_run_id,
+        authority_version::text AS authority_version,
+        broker_identity_schema_version, broker_identity_hash, broker_provider, broker_environment,
+        qualification_run_id,
         qualification_lock_id, qualification_result_hash, protocol_hash,
         qualification_execution_policy_hash, qualification_source_revision,
         qualification_image_repository, qualification_image_digest,

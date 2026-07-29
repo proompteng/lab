@@ -28,7 +28,7 @@ import { WriterFence } from './execution/writer-fence'
 import { MutationOperation } from './broker/alpaca-mutations'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
 import { IntentStore, planPaperIntent } from './execution/intents'
-import { MutationEventType, MutationStore } from './execution/mutations'
+import { MutationEventType, MutationStore, type MutationEvent } from './execution/mutations'
 import type { ExecutionProgram } from './execution/runtime-program'
 import {
   bindCycleExecutionSession,
@@ -42,11 +42,15 @@ import { canonicalHashV1Result } from './hash'
 import { MarketData, type MarketDataService } from './market-data'
 import {
   Authority,
+  IntentState,
   OrderSide,
+  OrderStatus,
   OrderType,
   RiskOutcome,
   TimeInForce,
   type AuthorityState,
+  type Intent,
+  type Order,
   type Position,
 } from './execution/contracts'
 import type { CausalProtocol } from './protocol'
@@ -746,6 +750,20 @@ const projectMutationPosition = (
   return [...retained, projected].sort(comparePositionSymbol)
 }
 
+export const projectWorstCasePendingMutationPosition = (
+  positions: readonly Position[],
+  target: PlannedTargetQuantity,
+  accountId: string,
+  observedAt: string,
+): readonly Position[] => {
+  const current = positions.find((position) => position.symbol === target.symbol)
+  const currentQuantity = current === undefined ? 0n : BigInt(current.quantityMicros)
+  const targetQuantity = BigInt(target.targetQuantityMicros)
+  return targetQuantity <= currentQuantity
+    ? positions
+    : projectMutationPosition(positions, target, accountId, observedAt)
+}
+
 const validateBoundMutationDocument = (
   input: MutationAutonomousCycleInput,
   cycle: AutonomousCycle,
@@ -805,16 +823,86 @@ const mutationDecisionInput = (
   strategy: input.strategy,
 })
 
-const prepareMutationIntents = (
+export type PreparedMutationIntentDecision =
+  | { readonly _tag: 'Execute' }
+  | { readonly _tag: 'Pending'; readonly order: Order }
+  | { readonly _tag: 'SkipTerminal' }
+
+export type PreparedMutationIntentDecisionFailure = {
+  readonly _tag: 'PreparedMutationIntentDecisionFailure'
+  readonly intentId: string
+  readonly message: string
+  readonly eventType?: MutationEventType
+}
+
+export const decidePreparedMutationIntent = (
+  intent: Intent,
+  latest: MutationEvent | undefined,
+): Result.Result<PreparedMutationIntentDecision, PreparedMutationIntentDecisionFailure> => {
+  if (intent.state === IntentState.Terminal) return Result.succeed({ _tag: 'SkipTerminal' })
+  if (latest === undefined) return Result.succeed({ _tag: 'Execute' })
+  switch (latest.eventType) {
+    case MutationEventType.SubmitAccepted:
+    case MutationEventType.RecoveryFound:
+      return latest.brokerOrderId === undefined
+        ? Result.fail({
+            _tag: 'PreparedMutationIntentDecisionFailure',
+            intentId: intent.intentId,
+            eventType: latest.eventType,
+            message: 'accepted nonterminal submit lacks a durable broker order identity',
+          })
+        : Result.succeed({
+            _tag: 'Pending',
+            order: {
+              schemaVersion: 'bayn.paper-order.v1',
+              accountId: intent.accountId,
+              brokerOrderId: latest.brokerOrderId,
+              clientOrderId: intent.clientOrderId,
+              intentId: intent.intentId,
+              symbol: intent.symbol,
+              side: intent.side,
+              orderType: intent.orderType,
+              timeInForce: intent.timeInForce,
+              quantityMicros: intent.quantityMicros,
+              filledQuantityMicros: '0',
+              status: OrderStatus.New,
+              observedAt: latest.occurredAt,
+            },
+          })
+    case MutationEventType.SubmitRejected:
+    case MutationEventType.SubmitDenied:
+      return Result.fail({
+        _tag: 'PreparedMutationIntentDecisionFailure',
+        intentId: intent.intentId,
+        eventType: latest.eventType,
+        message: 'terminal submit event does not match the nonterminal durable intent state',
+      })
+    case MutationEventType.SubmitStarted:
+    case MutationEventType.SubmitUnknown:
+    case MutationEventType.RecoveryNotFound:
+    case MutationEventType.RecoveryUnknown:
+    case MutationEventType.CancelStarted:
+    case MutationEventType.CancelAccepted:
+    case MutationEventType.CancelUnknown:
+      return Result.succeed({ _tag: 'Execute' })
+  }
+}
+
+export const appendPendingMutationOrder = (orders: readonly Order[], pending: Order): readonly Order[] =>
+  orders.some((order) => order.brokerOrderId === pending.brokerOrderId || order.clientOrderId === pending.clientOrderId)
+    ? orders
+    : [...orders, pending]
+
+const prepareNextMutationIntent = (
   input: MutationAutonomousCycleInput,
   preparation: ObserveStartupPreparation,
   policy: Policy,
   cycle: AutonomousCycle,
   document: ObserveShadowDecisionDocument,
-): Effect.Effect<readonly string[], CycleRunnerError, ObserveDecisionRuntime | IntentStore> =>
+): Effect.Effect<string | undefined, CycleRunnerError, ObserveDecisionRuntime | IntentStore | MutationStore> =>
   Effect.gen(function* () {
     yield* Effect.fromResult(validateBoundMutationDocument(input, cycle, policy, document))
-    if (document.targetPlan.status !== TargetPlanStatus.Planned) return []
+    if (document.targetPlan.status !== TargetPlanStatus.Planned) return undefined
 
     const decisionInput = mutationDecisionInput(input, preparation, policy, cycle)
     const reads = yield* Effect.fromResult(prepareObserveDecisionReads(decisionInput)).pipe(
@@ -842,11 +930,12 @@ const prepareMutationIntents = (
     }
 
     const intentStore = yield* IntentStore
+    const mutationStore = yield* MutationStore
     const targets = new Map(document.targetPlan.targets.map((target) => [target.symbol, target]))
     let reservedBuyingPower = 0n
     let dailyTradedNotional = BigInt(facts.reconciliation.riskContext.dailyTradedNotionalMicros)
     let projectedPositions: readonly Position[] = facts.reconciliation.brokerState.positions
-    const intentIds: string[] = []
+    let projectedOrders: readonly Order[] = facts.reconciliation.brokerState.orders
 
     for (const [index, targetIntent] of document.targetPlan.intentTargets.entries()) {
       const riskBinding = document.deltaRisk[index]
@@ -878,13 +967,13 @@ const prepareMutationIntents = (
           ),
         )
       }
-      const state: State = {
+      const state = (): State => ({
         schemaVersion: 'bayn.paper-risk-state.v2',
         brokerMode: BrokerMode.Paper,
         account: facts.reconciliation.brokerState.account,
         positions: facts.reconciliation.brokerState.positions,
         positionsObservedAt: facts.reconciliation.brokerState.positionsObservedAt,
-        orders: facts.reconciliation.brokerState.orders,
+        orders: projectedOrders,
         ordersObservedAt: facts.reconciliation.brokerState.ordersObservedAt,
         reconciliation: facts.reconciliation.brokerState.reconciliation,
         authority: authority.authority,
@@ -902,7 +991,7 @@ const prepareMutationIntents = (
         executionSession,
         reservedBuyingPowerMicros: reservedBuyingPower.toString(),
         evaluatedAt: facts.evaluatedAt,
-      }
+      })
       const intent = yield* planPaperIntent(
         {
           schemaVersion: 'bayn.paper-intent-plan.v1',
@@ -910,7 +999,7 @@ const prepareMutationIntents = (
           notionalLimitMicros: riskBinding.notionalLimitMicros,
           createdAt: document.createdAt,
         },
-        state,
+        state(),
       ).pipe(Effect.mapError((cause) => mutationRunnerError('durable PAPER intent planning failed', cause, 'contract')))
       const stored = yield* intentStore
         .read(intent.intentId)
@@ -918,9 +1007,29 @@ const prepareMutationIntents = (
           Effect.mapError((cause) => mutationRunnerError('durable PAPER intent recovery read failed', cause, 'store')),
         )
       const existing = Option.getOrUndefined(stored)
+      const latest = yield* mutationStore
+        .latest(intent.intentId, MutationOperation.Submit)
+        .pipe(Effect.mapError((cause) => mutationRunnerError('durable submit state read failed', cause, 'store')))
+      const prepared = yield* Effect.fromResult(decidePreparedMutationIntent(existing?.intent ?? intent, latest)).pipe(
+        Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')),
+      )
+      if (prepared._tag === 'SkipTerminal') continue
+      if (prepared._tag === 'Pending') {
+        projectedOrders = appendPendingMutationOrder(projectedOrders, prepared.order)
+        const orderNotional = fillTerms.notionalMicros
+        reservedBuyingPower += targetIntent.side === OrderSide.Buy ? orderNotional : 0n
+        dailyTradedNotional += orderNotional
+        projectedPositions = projectWorstCasePendingMutationPosition(
+          projectedPositions,
+          target,
+          input.accountId,
+          facts.reconciliation.brokerState.positionsObservedAt,
+        )
+        continue
+      }
       const decision =
         existing?.decision === undefined
-          ? yield* Effect.fromResult(evaluate(intent, state, policy, projectedPositions)).pipe(
+          ? yield* Effect.fromResult(evaluate(intent, state(), policy, projectedPositions)).pipe(
               Effect.mapError((cause) => mutationRunnerError('PAPER intent risk evaluation failed', cause, 'contract')),
               Effect.flatMap((evaluation) =>
                 evaluation.decision.outcome === RiskOutcome.Approved
@@ -943,30 +1052,55 @@ const prepareMutationIntents = (
       yield* intentStore
         .commit(intent, decision)
         .pipe(Effect.mapError((cause) => mutationRunnerError('durable PAPER intent commit failed', cause, 'store')))
-      const orderNotional = fillTerms.notionalMicros
-      reservedBuyingPower += targetIntent.side === OrderSide.Buy ? orderNotional : 0n
-      dailyTradedNotional += orderNotional
-      projectedPositions = projectMutationPosition(
-        projectedPositions,
-        target,
-        input.accountId,
-        facts.reconciliation.brokerState.positionsObservedAt,
-      )
-      intentIds.push(intent.intentId)
+      return intent.intentId
     }
-    return intentIds
+    return undefined
   })
 
 const submitSucceeded = (eventType: MutationEventType): boolean =>
   eventType === MutationEventType.SubmitAccepted || eventType === MutationEventType.RecoveryFound
 
 const submitTerminal = (eventType: MutationEventType): boolean =>
-  submitSucceeded(eventType) || eventType === MutationEventType.SubmitRejected
+  submitSucceeded(eventType) ||
+  eventType === MutationEventType.SubmitRejected ||
+  eventType === MutationEventType.SubmitDenied
 
-const executeMutationIntent = (
+export type MutationIntentSettlementDecision =
+  | {
+      readonly _tag: 'Settled'
+      readonly outcome: 'accepted' | 'rejected' | 'denied'
+    }
+  | {
+      readonly _tag: 'Unresolved'
+      readonly eventType: MutationEventType
+    }
+
+export const decideMutationIntentSettlement = (eventType: MutationEventType): MutationIntentSettlementDecision => {
+  switch (eventType) {
+    case MutationEventType.SubmitAccepted:
+    case MutationEventType.RecoveryFound:
+      return { _tag: 'Settled', outcome: 'accepted' }
+    case MutationEventType.SubmitRejected:
+      return { _tag: 'Settled', outcome: 'rejected' }
+    case MutationEventType.SubmitDenied:
+      return { _tag: 'Settled', outcome: 'denied' }
+    default:
+      return { _tag: 'Unresolved', eventType }
+  }
+}
+
+export interface MutationIntentExecutionResult {
+  readonly settlement: Extract<MutationIntentSettlementDecision, { readonly _tag: 'Settled' }>
+  readonly consistencyDelayMs: number
+}
+
+export const mutationIntentReconciliationDelayMs = (result: MutationIntentExecutionResult): number =>
+  result.settlement.outcome === 'accepted' ? result.consistencyDelayMs : 0
+
+export const executeMutationIntent = (
   executionProgram: ExecutionProgram,
   intentId: string,
-): Effect.Effect<void, CycleRunnerError, MutationStore> =>
+): Effect.Effect<MutationIntentExecutionResult, CycleRunnerError, MutationStore> =>
   MutationStore.pipe(
     Effect.flatMap((store) => store.latest(intentId, MutationOperation.Submit)),
     Effect.mapError((cause) => mutationRunnerError('durable submit recovery read failed', cause, 'store')),
@@ -978,19 +1112,18 @@ const executeMutationIntent = (
           : executionProgram.recover(intentId, MutationOperation.Submit)
       ).pipe(Effect.mapError((cause) => mutationRunnerError('guarded PAPER submit or recovery failed', cause))),
     ),
-    Effect.flatMap((event) =>
-      submitSucceeded(event.eventType)
-        ? Effect.void
-        : event.eventType === MutationEventType.SubmitRejected
-          ? Effect.fail(mutationRunnerError('guarded PAPER submit was rejected by the broker', event, 'operational'))
-          : Effect.fail(
-              mutationRunnerError(
-                `guarded PAPER submit remains unresolved at ${event.eventType}`,
-                event,
-                'operational',
-              ),
+    Effect.flatMap((event) => {
+      const settlement = decideMutationIntentSettlement(event.eventType)
+      return settlement._tag === 'Settled'
+        ? Effect.succeed({ settlement, consistencyDelayMs: event.consistencyDelayMs })
+        : Effect.fail(
+            mutationRunnerError(
+              `guarded PAPER submit remains unresolved at ${settlement.eventType}`,
+              event,
+              'operational',
             ),
-    ),
+          )
+    }),
   )
 
 const executeBoundMutationCycle = (
@@ -1001,14 +1134,20 @@ const executeBoundMutationCycle = (
 ): Effect.Effect<void, CycleRunnerError, MutationRuntime> =>
   readBoundMutationDocument(cycle).pipe(
     Effect.flatMap((document) =>
-      prepareMutationIntents(input, preparation, policy, cycle, document).pipe(
-        Effect.flatMap((intentIds) =>
-          Effect.forEach(intentIds, (intentId) => executeMutationIntent(input.executionProgram, intentId), {
-            concurrency: 1,
-            discard: true,
-          }),
-        ),
-      ),
+      Effect.gen(function* () {
+        const maximumPasses =
+          document.targetPlan.status === TargetPlanStatus.Planned ? document.targetPlan.intentTargets.length + 1 : 1
+        for (let pass = 0; pass < maximumPasses; pass += 1) {
+          const intentId = yield* prepareNextMutationIntent(input, preparation, policy, cycle, document)
+          if (intentId === undefined) return
+          const executed = yield* executeMutationIntent(input.executionProgram, intentId)
+          const delayMs = mutationIntentReconciliationDelayMs(executed)
+          if (delayMs > 0) yield* Effect.sleep(Duration.millis(delayMs))
+        }
+        return yield* Effect.fail(
+          mutationRunnerError('mutation cycle did not converge after one fresh pass per target', undefined, 'contract'),
+        )
+      }),
     ),
   )
 

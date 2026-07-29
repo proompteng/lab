@@ -167,14 +167,8 @@ export const statusFacts = (
             : {
                 available: true,
                 configured: true,
-                maximum:
-                  state.cycle.authority.maximum === Authority.Paper
-                    ? CapitalAuthorityKind.Sandbox
-                    : CapitalAuthorityKind.None,
-                effective:
-                  state.cycle.authority.effective === Authority.Paper
-                    ? CapitalAuthorityKind.Sandbox
-                    : CapitalAuthorityKind.None,
+                maximum: state.cycle.authority.maximum.toLowerCase(),
+                effective: state.cycle.authority.effective.toLowerCase(),
                 kill: state.cycle.authority.kill.toLowerCase(),
                 reason: state.cycle.authority.reason,
                 updatedAt: state.cycle.authority.updatedAt,
@@ -470,10 +464,10 @@ export const renderPrometheusMetrics = (
     `bayn_broker_account_bound ${booleanMetric(publicBroker.accountBound)}`,
     '# HELP bayn_broker_orders_enabled Whether broker mutation dispatch is enabled in this runtime.',
     '# TYPE bayn_broker_orders_enabled gauge',
-    'bayn_broker_orders_enabled 0',
+    `bayn_broker_orders_enabled ${config.execution.brokerAccess === BrokerAccess.Mutation ? 1 : 0}`,
     '# HELP bayn_capital_promotion_enabled Whether capital promotion is enabled in this runtime.',
     '# TYPE bayn_capital_promotion_enabled gauge',
-    'bayn_capital_promotion_enabled 0',
+    `bayn_capital_promotion_enabled ${config.execution.capitalAuthority._tag === CapitalAuthorityKind.None ? 0 : 1}`,
     '# HELP bayn_build_info Verified runtime build provenance.',
     '# TYPE bayn_build_info gauge',
     `bayn_build_info{source_revision="${prometheusLabel(provenance.sourceRevision)}",image_digest="${prometheusLabel(provenance.image.digest)}",verification="${prometheusLabel(provenanceVerification)}"} 1`,

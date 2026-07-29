@@ -1,8 +1,21 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Result } from 'effect'
+import { Cause, Effect, Exit, Option, Result } from 'effect'
+import { TestClock } from 'effect/testing'
 
+import {
+  AccountStatus,
+  AssetClass,
+  AssetExchange,
+  PositionSide,
+  type Account,
+  type BrokerReadShape,
+  type Position,
+  type ReadEvidence,
+  type ReadResult,
+} from '../broker/alpaca'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
+import { BrokerMutationError, MutationFailure } from '../broker/alpaca-mutations'
 import {
   BrokerAccess,
   CapitalAuthorityKind,
@@ -13,7 +26,19 @@ import {
   sandboxCapitalAuthority,
   type ExecutionStrategyIdentity,
 } from './authority'
-import { makeExecutionProgram, type ExecutionProgramDependencies } from './runtime-program'
+import {
+  IntentState,
+  MutationOutcome,
+  OrderSide,
+  OrderType,
+  RiskOutcome,
+  TimeInForce,
+  type Intent,
+  type RiskDecision,
+} from './contracts'
+import type { StoredIntent } from './intents'
+import { authorizeFinalBrokerSubmit, makeExecutionProgram, type ExecutionProgramDependencies } from './runtime-program'
+import { WriterFenceError } from './writer-fence'
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const authorityGenerationHash = '1'.repeat(64)
@@ -44,11 +69,127 @@ const dependencies = (label: string): ExecutionProgramDependencies => ({
   mutationStore: {} as ExecutionProgramDependencies['mutationStore'],
   writerFence: {} as ExecutionProgramDependencies['writerFence'],
   liveCapitalGrants: {
+    lockForSubmit: () => Effect.die(new Error(`${label} live grant lock must not run during composition proof`)),
     read: () => Effect.die(new Error(`${label} live grant read must not run during composition proof`)),
   },
   freshBrokerPrice: () => Effect.die(new Error(`${label} fresh price read must not run during composition proof`)),
   currentUtcInstant: Effect.succeed(observedAt),
 })
+
+const readEvidence: ReadEvidence = {
+  requestId: 'runtime-program-test',
+  status: 200,
+  contentHash: '4'.repeat(64),
+  observedAt,
+}
+const readResult = <A>(value: A): ReadResult<A> => ({ value, evidence: readEvidence })
+const brokerAccount = (): Account => ({
+  id: accountId,
+  status: AccountStatus.Active,
+  currency: 'USD',
+  cashMicros: '1000000000',
+  equityMicros: '1000000000',
+  lastEquityMicros: '1000000000',
+  buyingPowerMicros: '1000000000',
+  accountBlocked: false,
+  tradingBlocked: false,
+  tradeSuspendedByUser: false,
+  observedAt,
+})
+const brokerPosition = (): Position => ({
+  accountId,
+  assetId: 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415',
+  symbol: 'AMD',
+  exchange: AssetExchange.Nasdaq,
+  assetClass: AssetClass.UsEquity,
+  side: PositionSide.Long,
+  quantityMicros: '1000000',
+  averageEntryPriceMicros: '100000000',
+  marketPriceMicros: '100000000',
+  marketValueMicros: '100000000',
+  unrealizedPnlMicros: '0',
+  observedAt,
+})
+
+const finalLiveFixture = () => {
+  const liveIdentity = identity(BrokerEnvironment.Live)
+  const grant = Result.getOrThrow(
+    makeLiveCapitalGrant({
+      schemaVersion: 'bayn.live-capital-grant.v1',
+      brokerIdentity: liveIdentity,
+      authorityGenerationHash,
+      strategy,
+      limits: {
+        maxGrossNotionalMicros: '100000000000',
+        maxOrderNotionalMicros: '10000000000',
+        maxPositionNotionalMicros: '25000000000',
+        maxDailyLossMicros: '1000000000',
+        maxOpenOrders: 5,
+      },
+      validFrom: '2026-07-28T07:00:00.000Z',
+      validUntil: '2026-07-28T09:00:00.000Z',
+      issuedAt: '2026-07-28T06:00:00.000Z',
+      issuedBy: 'operator:test',
+    }),
+  )
+  const authority = Result.getOrThrow(
+    makeExecutionAuthority({
+      brokerIdentity: liveIdentity,
+      brokerAccess: BrokerAccess.Mutation,
+      capitalAuthority: liveCapitalAuthority(grant),
+      strategy,
+      observedAt,
+    }),
+  )
+  if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('fixture requires mutation authority')
+  const riskDecisionId = '6'.repeat(64)
+  const intent: Intent = {
+    schemaVersion: 'bayn.paper-intent.v3',
+    intentId: '5'.repeat(64),
+    authorityGenerationHash,
+    riskDecisionId,
+    strategyName: strategy.name,
+    cycleId: '7'.repeat(64),
+    decisionHash: '8'.repeat(64),
+    policyHash: '9'.repeat(64),
+    accountId,
+    clientOrderId: `b1_${'C'.repeat(43)}`,
+    symbol: 'AMD',
+    side: OrderSide.Buy,
+    orderType: OrderType.Market,
+    timeInForce: TimeInForce.Day,
+    quantityMicros: '1000000',
+    notionalLimitMicros: '100000000',
+    state: IntentState.IoStarted,
+    createdAt: '2026-07-28T07:59:00.000Z',
+  }
+  const stored: StoredIntent = {
+    intent,
+    decision: {
+      schemaVersion: 'bayn.paper-risk-decision.v1',
+      decisionId: riskDecisionId,
+      inputHash: 'a'.repeat(64),
+      intentId: intent.intentId,
+      policyHash: intent.policyHash,
+      outcome: RiskOutcome.Approved,
+      reasonCodes: [],
+      decidedAt: '2026-07-28T07:59:00.001Z',
+      expiresAt: '2026-07-28T08:30:00.000Z',
+    },
+    stateVersion: 4,
+    updatedAt: '2026-07-28T07:59:00.002Z',
+  }
+  return { authority, grant, intent, stored }
+}
+
+const finalAuthorizationFailureTag = <A, E>(exit: Exit.Exit<A, E>): string | undefined => {
+  if (Exit.isSuccess(exit)) return undefined
+  const failure: unknown = exit.cause.reasons.find(Cause.isFailReason)?.error
+  if (failure instanceof BrokerMutationError) return failure.cause?.tag
+  return typeof failure === 'object' && failure !== null && '_tag' in failure
+    ? String((failure as { readonly _tag: unknown })._tag)
+    : undefined
+}
 
 describe('same-code execution program composition', () => {
   test('uses one program factory for sandbox and live with only injected authority and adapters changed', () => {
@@ -120,5 +261,364 @@ describe('same-code execution program composition', () => {
         brokerAccess: BrokerAccess.ReadOnly,
       }),
     )
+  })
+
+  test('rechecks risk expiry after a blocking live-grant lock and performs zero broker posts', async () => {
+    const liveIdentity = identity(BrokerEnvironment.Live)
+    const expiresAt = '2026-07-28T08:00:00.010Z'
+    const grant = Result.getOrThrow(
+      makeLiveCapitalGrant({
+        schemaVersion: 'bayn.live-capital-grant.v1',
+        brokerIdentity: liveIdentity,
+        authorityGenerationHash,
+        strategy,
+        limits: {
+          maxGrossNotionalMicros: '100000000000',
+          maxOrderNotionalMicros: '10000000000',
+          maxPositionNotionalMicros: '25000000000',
+          maxDailyLossMicros: '1000000000',
+          maxOpenOrders: 5,
+        },
+        validFrom: '2026-07-28T07:00:00.000Z',
+        validUntil: '2026-07-28T09:00:00.000Z',
+        issuedAt: '2026-07-28T06:00:00.000Z',
+        issuedBy: 'operator:test',
+      }),
+    )
+    const authority = Result.getOrThrow(
+      makeExecutionAuthority({
+        brokerIdentity: liveIdentity,
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: liveCapitalAuthority(grant),
+        strategy,
+        observedAt,
+      }),
+    )
+    if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('fixture requires mutation authority')
+    const intentId = 'a'.repeat(64)
+    const decisionId = 'b'.repeat(64)
+    const intent: Intent = {
+      schemaVersion: 'bayn.paper-intent.v3',
+      intentId,
+      authorityGenerationHash,
+      riskDecisionId: decisionId,
+      strategyName: strategy.name,
+      cycleId: 'c'.repeat(64),
+      decisionHash: 'd'.repeat(64),
+      policyHash: 'e'.repeat(64),
+      accountId,
+      clientOrderId: `b1_${'A'.repeat(43)}`,
+      symbol: 'AMD',
+      side: OrderSide.Buy,
+      orderType: OrderType.Market,
+      timeInForce: TimeInForce.Day,
+      quantityMicros: '1000000',
+      notionalLimitMicros: '100000000',
+      state: IntentState.IoStarted,
+      createdAt: '2026-07-28T07:59:00.000Z',
+    }
+    const decision: RiskDecision = {
+      schemaVersion: 'bayn.paper-risk-decision.v1',
+      decisionId,
+      inputHash: 'f'.repeat(64),
+      intentId,
+      policyHash: intent.policyHash,
+      outcome: RiskOutcome.Approved,
+      reasonCodes: [],
+      decidedAt: '2026-07-28T07:59:00.001Z',
+      expiresAt,
+    }
+    const stored: StoredIntent = {
+      intent,
+      decision,
+      stateVersion: 4,
+      updatedAt: '2026-07-28T07:59:00.002Z',
+    }
+    let reads = 0
+    let locks = 0
+    let posts = 0
+    const testDependencies: ExecutionProgramDependencies = {
+      ...dependencies('final-risk'),
+      intentStore: {
+        commit: () => Effect.die(new Error('final risk proof must not commit')),
+        read: () =>
+          Effect.sync(() => {
+            reads += 1
+            return Option.some(stored)
+          }),
+      },
+      mutationStore: {
+        authorizeSubmit: () => Effect.void,
+      } as unknown as ExecutionProgramDependencies['mutationStore'],
+      writerFence: {
+        backendPid: 1,
+        check: Effect.void,
+        transaction: (effect) => effect,
+      },
+      liveCapitalGrants: {
+        read: () => Effect.die(new Error('final risk proof must use the locked grant read')),
+        lockForSubmit: () =>
+          Effect.sync(() => {
+            locks += 1
+          }).pipe(Effect.andThen(TestClock.setTime(Date.parse(expiresAt))), Effect.as(liveCapitalAuthority(grant))),
+      },
+      currentUtcInstant: Effect.succeed(observedAt),
+    }
+
+    const exit = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(expiresAt) - 1)
+        return yield* authorizeFinalBrokerSubmit(
+          authority,
+          intent,
+          Effect.sync(() => {
+            posts += 1
+          }),
+          testDependencies,
+        ).pipe(Effect.exit)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    expect(reads).toBe(2)
+    expect(locks).toBe(1)
+    expect(posts).toBe(0)
+  })
+
+  test('rejects a post-lock position snapshot change with zero broker posts', async () => {
+    const { authority, grant, intent, stored } = finalLiveFixture()
+    const trace: string[] = []
+    let positionReads = 0
+    let posts = 0
+    const unusedRead = Effect.die(new Error('post-lock position proof used an unrelated broker read'))
+    const brokerRead: BrokerReadShape = {
+      account: Effect.sync(() => {
+        trace.push('account')
+        return readResult(brokerAccount())
+      }),
+      accountConfiguration: unusedRead,
+      assetBySymbol: () => unusedRead,
+      positions: Effect.sync(() => {
+        trace.push('positions')
+        positionReads += 1
+        return readResult(positionReads === 1 ? [] : [brokerPosition()])
+      }),
+      orders: () =>
+        Effect.sync(() => {
+          trace.push('orders')
+          return readResult([])
+        }),
+      orderById: () => unusedRead,
+      orderByClientId: () => unusedRead,
+      fillActivities: () => unusedRead,
+      marketCalendar: () => unusedRead,
+    }
+    const testDependencies: ExecutionProgramDependencies = {
+      ...dependencies('post-lock-position'),
+      brokerRead,
+      intentStore: {
+        commit: () => Effect.die(new Error('post-lock position proof must not commit')),
+        read: () => Effect.succeed(Option.some(stored)),
+      },
+      mutationStore: { authorizeSubmit: () => Effect.void } as unknown as ExecutionProgramDependencies['mutationStore'],
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
+      liveCapitalGrants: {
+        read: () => Effect.die(new Error('post-lock position proof must use the locked grant read')),
+        lockForSubmit: () =>
+          Effect.sync(() => {
+            trace.push('lock')
+            return liveCapitalAuthority(grant)
+          }),
+      },
+      freshBrokerPrice: () => Effect.die(new Error('changed positions must fail before quote refresh')),
+      currentUtcInstant: Effect.succeed(observedAt),
+    }
+
+    const exit = await Effect.runPromise(
+      authorizeFinalBrokerSubmit(
+        authority,
+        intent,
+        Effect.sync(() => {
+          posts += 1
+        }),
+        testDependencies,
+      ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
+    )
+
+    expect(finalAuthorizationFailureTag(exit)).toBe('LiveBrokerPositionSnapshotChanged')
+    expect(trace).toEqual(['lock', 'account', 'positions', 'orders', 'positions'])
+    expect(posts).toBe(0)
+  })
+
+  test('rejects a stale post-lock quote with zero broker posts', async () => {
+    const { authority, grant, intent, stored } = finalLiveFixture()
+    const trace: string[] = []
+    let posts = 0
+    const unusedRead = Effect.die(new Error('post-lock quote proof used an unrelated broker read'))
+    const brokerRead: BrokerReadShape = {
+      account: Effect.sync(() => {
+        trace.push('account')
+        return readResult(brokerAccount())
+      }),
+      accountConfiguration: unusedRead,
+      assetBySymbol: () => unusedRead,
+      positions: Effect.sync(() => {
+        trace.push('positions')
+        return readResult([])
+      }),
+      orders: () =>
+        Effect.sync(() => {
+          trace.push('orders')
+          return readResult([])
+        }),
+      orderById: () => unusedRead,
+      orderByClientId: () => unusedRead,
+      fillActivities: () => unusedRead,
+      marketCalendar: () => unusedRead,
+    }
+    const staleObservedAt = '2026-07-28T08:00:06.000Z'
+    const testDependencies: ExecutionProgramDependencies = {
+      ...dependencies('post-lock-quote'),
+      brokerRead,
+      intentStore: {
+        commit: () => Effect.die(new Error('post-lock quote proof must not commit')),
+        read: () => Effect.succeed(Option.some(stored)),
+      },
+      mutationStore: { authorizeSubmit: () => Effect.void } as unknown as ExecutionProgramDependencies['mutationStore'],
+      writerFence: { backendPid: 1, check: Effect.void, transaction: (effect) => effect },
+      liveCapitalGrants: {
+        read: () => Effect.die(new Error('post-lock quote proof must use the locked grant read')),
+        lockForSubmit: () =>
+          Effect.sync(() => {
+            trace.push('lock')
+            return liveCapitalAuthority(grant)
+          }),
+      },
+      freshBrokerPrice: (symbol) =>
+        Effect.sync(() => {
+          trace.push('price')
+          return {
+            symbol,
+            bidPriceMicros: '100000000',
+            askPriceMicros: '100000000',
+            quotedAt: observedAt,
+            observedAt,
+          }
+        }),
+      currentUtcInstant: Effect.succeed(staleObservedAt),
+    }
+
+    const exit = await Effect.runPromise(
+      authorizeFinalBrokerSubmit(
+        authority,
+        intent,
+        Effect.sync(() => {
+          posts += 1
+        }),
+        testDependencies,
+      ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
+    )
+
+    expect(finalAuthorizationFailureTag(exit)).toBe('FreshBrokerPriceStale')
+    expect(trace).toEqual(['lock', 'account', 'positions', 'orders', 'positions', 'price'])
+    expect(posts).toBe(0)
+  })
+
+  test('keeps a post-transmit transaction failure unknown for broker recovery', async () => {
+    const sandboxIdentity = identity(BrokerEnvironment.Sandbox)
+    const authority = Result.getOrThrow(
+      makeExecutionAuthority({
+        brokerIdentity: sandboxIdentity,
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: sandboxCapitalAuthority(authorityGenerationHash),
+        strategy,
+        observedAt,
+      }),
+    )
+    if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('fixture requires mutation authority')
+    const intentId = '7'.repeat(64)
+    const decisionId = '8'.repeat(64)
+    const intent: Intent = {
+      schemaVersion: 'bayn.paper-intent.v3',
+      intentId,
+      authorityGenerationHash,
+      riskDecisionId: decisionId,
+      strategyName: strategy.name,
+      cycleId: '9'.repeat(64),
+      decisionHash: 'a'.repeat(64),
+      policyHash: 'b'.repeat(64),
+      accountId,
+      clientOrderId: `b1_${'B'.repeat(43)}`,
+      symbol: 'AMD',
+      side: OrderSide.Buy,
+      orderType: OrderType.Market,
+      timeInForce: TimeInForce.Day,
+      quantityMicros: '1000000',
+      notionalLimitMicros: '100000000',
+      state: IntentState.IoStarted,
+      createdAt: '2026-07-28T07:59:00.000Z',
+    }
+    const decision: RiskDecision = {
+      schemaVersion: 'bayn.paper-risk-decision.v1',
+      decisionId,
+      inputHash: 'c'.repeat(64),
+      intentId,
+      policyHash: intent.policyHash,
+      outcome: RiskOutcome.Approved,
+      reasonCodes: [],
+      decidedAt: '2026-07-28T07:59:00.001Z',
+      expiresAt: '2026-07-28T08:01:00.000Z',
+    }
+    const stored: StoredIntent = {
+      intent,
+      decision,
+      stateVersion: 4,
+      updatedAt: '2026-07-28T07:59:00.002Z',
+    }
+    let posts = 0
+    const commitFailure = new WriterFenceError({
+      failure: 'unavailable',
+      operation: 'transaction',
+      message: 'injected commit acknowledgement loss',
+    })
+    const testDependencies: ExecutionProgramDependencies = {
+      ...dependencies('post-transmit'),
+      intentStore: {
+        commit: () => Effect.die(new Error('post-transmit proof must not commit an intent')),
+        read: () => Effect.succeed(Option.some(stored)),
+      },
+      mutationStore: {
+        authorizeSubmit: () => Effect.void,
+      } as unknown as ExecutionProgramDependencies['mutationStore'],
+      writerFence: {
+        backendPid: 1,
+        check: Effect.void,
+        transaction: (effect) => effect.pipe(Effect.andThen(Effect.fail(commitFailure))),
+      },
+      currentUtcInstant: Effect.succeed(observedAt),
+    }
+
+    const failure = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(observedAt))
+        return yield* Effect.flip(
+          authorizeFinalBrokerSubmit(
+            authority,
+            intent,
+            Effect.sync(() => {
+              posts += 1
+            }),
+            testDependencies,
+          ),
+        )
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(posts).toBe(1)
+    expect(failure).toBeInstanceOf(BrokerMutationError)
+    expect(failure).toMatchObject({
+      failure: MutationFailure.Unknown,
+      outcome: MutationOutcome.Unknown,
+    })
   })
 })

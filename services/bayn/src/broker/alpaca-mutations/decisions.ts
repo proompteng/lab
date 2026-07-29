@@ -48,11 +48,27 @@ export interface OrderRequestBody {
   readonly symbol: string
   readonly qty: string
   readonly side: OrderSide
+  readonly type: OrderType.Limit
+  readonly time_in_force: TimeInForce
+  readonly limit_price: string
+  readonly client_order_id: string
+  readonly extended_hours: false
+}
+
+export interface HistoricalMarketOrderRequestBody {
+  readonly symbol: string
+  readonly qty: string
+  readonly side: OrderSide
   readonly type: OrderType.Market
   readonly time_in_force: TimeInForce
   readonly client_order_id: string
   readonly extended_hours: false
 }
+
+export type OrderRequestIntent = Pick<
+  Intent,
+  'clientOrderId' | 'notionalLimitMicros' | 'orderType' | 'quantityMicros' | 'side' | 'symbol' | 'timeInForce'
+>
 
 export class OrderRequestError extends Data.TaggedError('OrderRequestError')<{
   readonly failure: 'invalid-intent-state' | 'invalid-order'
@@ -61,6 +77,7 @@ export class OrderRequestError extends Data.TaggedError('OrderRequestError')<{
   readonly orderType?: DomainOrderType
   readonly timeInForce?: DomainTimeInForce
   readonly quantityMicros?: string
+  readonly notionalLimitMicros?: string
 }> {}
 
 export interface PreparedSubmit {
@@ -121,10 +138,51 @@ const quantityMicros = (value: string): Result.Result<bigint, OrderRequestError>
         }),
       )
 
+const notionalMicros = (value: string): Result.Result<bigint, OrderRequestError> =>
+  /^[1-9][0-9]*$/.test(value)
+    ? Result.succeed(BigInt(value))
+    : Result.fail(
+        new OrderRequestError({
+          failure: 'invalid-order',
+          message: 'order notional limit must be canonical positive micros',
+          notionalLimitMicros: value,
+        }),
+      )
+
 const microsToDecimal = (micros: bigint): string => {
   const whole = micros / 1_000_000n
   const fraction = (micros % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '')
   return fraction.length === 0 ? whole.toString() : `${whole.toString()}.${fraction}`
+}
+
+const alpacaLimitPriceIncrementMicros = (priceMicros: bigint): bigint => (priceMicros >= 1_000_000n ? 10_000n : 100n)
+
+const quantizeDown = (value: bigint, increment: bigint): bigint => (value / increment) * increment
+const quantizeUp = (value: bigint, increment: bigint): bigint => ((value + increment - 1n) / increment) * increment
+
+export const orderPriceBoundaryMicros = (intent: OrderRequestIntent): Result.Result<bigint, OrderRequestError> => {
+  const quantity = quantityMicros(intent.quantityMicros)
+  if (Result.isFailure(quantity)) return Result.fail(quantity.failure)
+  const notional = notionalMicros(intent.notionalLimitMicros)
+  if (Result.isFailure(notional)) return Result.fail(notional.failure)
+  const numerator = notional.success * 1_000_000n
+  const unquantized =
+    intent.side === DomainSide.Buy
+      ? numerator / quantity.success
+      : (numerator + quantity.success - 1n) / quantity.success
+  const increment = alpacaLimitPriceIncrementMicros(unquantized)
+  const price =
+    intent.side === DomainSide.Buy ? quantizeDown(unquantized, increment) : quantizeUp(unquantized, increment)
+  return price > 0n
+    ? Result.succeed(price)
+    : Result.fail(
+        new OrderRequestError({
+          failure: 'invalid-order',
+          message: 'order price boundary must be positive',
+          quantityMicros: intent.quantityMicros,
+          notionalLimitMicros: intent.notionalLimitMicros,
+        }),
+      )
 }
 
 export const authorizeMutationAccess = (
@@ -183,12 +241,14 @@ export const resolveMutationCapability = (
   })
 }
 
-export const orderRequestBody = (intent: Intent): Result.Result<OrderRequestBody, OrderRequestError> => {
+export const historicalMarketOrderRequestBody = (
+  intent: OrderRequestIntent,
+): Result.Result<HistoricalMarketOrderRequestBody, OrderRequestError> => {
   if (intent.orderType !== DomainOrderType.Market) {
     return Result.fail(
       new OrderRequestError({
         failure: 'invalid-order',
-        message: 'Bayn broker submission supports market orders only',
+        message: 'historical Bayn broker submission supported market orders only',
         orderType: intent.orderType,
       }),
     )
@@ -211,6 +271,42 @@ export const orderRequestBody = (intent: Intent): Result.Result<OrderRequestBody
     side: side(intent.side),
     type: OrderType.Market,
     time_in_force: timeInForce(intent.timeInForce),
+    client_order_id: intent.clientOrderId,
+    extended_hours: false,
+  })
+}
+
+export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<OrderRequestBody, OrderRequestError> => {
+  if (intent.orderType !== DomainOrderType.Market) {
+    return Result.fail(
+      new OrderRequestError({
+        failure: 'invalid-order',
+        message: 'Bayn broker submission supports market orders only',
+        orderType: intent.orderType,
+      }),
+    )
+  }
+  const quantity = quantityMicros(intent.quantityMicros)
+  if (Result.isFailure(quantity)) return Result.fail(quantity.failure)
+  const priceBoundary = orderPriceBoundaryMicros(intent)
+  if (Result.isFailure(priceBoundary)) return Result.fail(priceBoundary.failure)
+  if (intent.timeInForce !== DomainTimeInForce.Day && quantity.success % 1_000_000n !== 0n) {
+    return Result.fail(
+      new OrderRequestError({
+        failure: 'invalid-order',
+        message: 'fractional market orders require DAY time in force',
+        timeInForce: intent.timeInForce,
+        quantityMicros: intent.quantityMicros,
+      }),
+    )
+  }
+  return Result.succeed({
+    symbol: intent.symbol,
+    qty: microsToDecimal(quantity.success),
+    side: side(intent.side),
+    type: OrderType.Limit,
+    time_in_force: timeInForce(intent.timeInForce),
+    limit_price: microsToDecimal(priceBoundary.success),
     client_order_id: intent.clientOrderId,
     extended_hours: false,
   })
@@ -342,15 +438,20 @@ const normalizeAcceptedOrder = (
   )
 
 const acceptedOrderMatches = (order: Order, facts: SubmitResponseFacts): boolean =>
-  order.accountId === facts.intent.accountId &&
-  order.assetClass === AssetClass.UsEquity &&
-  order.clientOrderId === facts.intent.clientOrderId &&
-  order.symbol === facts.intent.symbol &&
-  order.side === facts.request.side &&
-  order.orderType === facts.request.type &&
-  order.timeInForce === facts.request.time_in_force &&
-  order.quantityMicros === facts.intent.quantityMicros &&
-  !order.extendedHours
+  Result.match(orderPriceBoundaryMicros(facts.intent), {
+    onFailure: () => false,
+    onSuccess: (limitPriceMicros) =>
+      order.accountId === facts.intent.accountId &&
+      order.assetClass === AssetClass.UsEquity &&
+      order.clientOrderId === facts.intent.clientOrderId &&
+      order.symbol === facts.intent.symbol &&
+      order.side === facts.request.side &&
+      order.orderType === facts.request.type &&
+      order.timeInForce === facts.request.time_in_force &&
+      order.quantityMicros === facts.intent.quantityMicros &&
+      order.limitPriceMicros === limitPriceMicros.toString() &&
+      !order.extendedHours,
+  })
 
 export const classifySubmitResponse = (
   facts: SubmitResponseFacts,

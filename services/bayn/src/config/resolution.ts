@@ -245,34 +245,41 @@ const loadedConfig = (
   execution: ExecutionPolicy,
   build: RuntimeBuildMetadata,
   alpaca: AlpacaRuntimeConfig | undefined,
-): LoadedRuntimeConfig => {
+): Result.Result<LoadedRuntimeConfig, RuntimeConfigResolutionFailure> => {
   const common = baseConfig(parsed, execution, build, alpaca)
   if (parsed.configuredOperation === 'ExecutionCandidateDiscovery') {
-    return {
+    const qualificationRunId = parsed.qualificationRunId
+    if (qualificationRunId === undefined) {
+      return fail({ _tag: 'ExecutionCandidateDiscoveryRequiresQualificationRun' })
+    }
+    if (alpaca === undefined) {
+      return fail({ _tag: 'ExecutionCandidateDiscoveryRequiresAlpacaBinding' })
+    }
+    return Result.succeed({
       ...common,
       runtimeMode: 'ExecutionCandidateDiscovery',
-      qualificationRunId: parsed.qualificationRunId!,
+      qualificationRunId,
       execution: execution as Extract<
         LoadedRuntimeConfig,
         { readonly runtimeMode: 'ExecutionCandidateDiscovery' }
       >['execution'],
-      alpaca: alpaca!,
-    }
+      alpaca,
+    })
   }
   if (alpaca === undefined) {
-    return {
+    return Result.succeed({
       ...common,
       runtimeMode: 'BrokerlessService',
       execution: execution as Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'BrokerlessService' }>['execution'],
       alpaca: undefined,
-    }
+    })
   }
-  return {
+  return Result.succeed({
     ...common,
     runtimeMode: 'AutonomousService',
     execution: execution as Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'AutonomousService' }>['execution'],
     alpaca,
-  }
+  })
 }
 
 export const resolveRuntimeConfig = (
@@ -297,7 +304,7 @@ export const resolveRuntimeConfig = (
   if (Result.isFailure(postgresTls)) return Result.fail(postgresTls.failure)
   const build = runtimeBuildMetadata(parsed, input.embeddedBuildMetadata)
   if (Result.isFailure(build)) return Result.fail(build.failure)
-  return Result.succeed(loadedConfig(parsed, execution.success, build.success, alpaca.success))
+  return loadedConfig(parsed, execution.success, build.success, alpaca.success)
 }
 
 export const redactedConfigSummary = (config: LoadedRuntimeConfig) => ({

@@ -16,6 +16,7 @@ export type {
   StartReceipt,
 } from './model'
 export {
+  decideFinalSubmitAuthorization,
   decideMutationAuthority,
   decideMutationOutcome,
   decideMutationStart,

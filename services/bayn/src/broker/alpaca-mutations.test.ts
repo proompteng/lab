@@ -23,6 +23,7 @@ import {
   MutationOperation,
   authorizeMutationAccess,
   makeMutation,
+  orderPriceBoundaryMicros,
   orderRequestBody,
   submitBody,
   type BrokerMutationShape,
@@ -178,11 +179,11 @@ const orderResponse = {
   filled_qty: '0',
   filled_avg_price: null,
   order_class: '',
-  order_type: 'market',
-  type: 'market',
+  order_type: 'limit',
+  type: 'limit',
   side: 'buy',
   time_in_force: 'day',
-  limit_price: null,
+  limit_price: '160',
   stop_price: null,
   status: 'accepted',
   extended_hours: false,
@@ -217,10 +218,7 @@ const withMutation = <A, E>(
   options: MutationHarnessOptions = {},
 ): Effect.Effect<A, BrokerMutationError | E> => {
   const session = options.session ?? verifiedSession({ operationTimeoutMs: options.operationTimeoutMs })
-  return makeMutation(session, options.authority ?? submitAuthority).pipe(
-    Effect.flatMap(use),
-    Effect.provideService(HttpClient.HttpClient, client),
-  )
+  return makeMutation(session, options.authority ?? submitAuthority, client).pipe(Effect.flatMap(use))
 }
 
 const requestBody = (request: Parameters<Parameters<typeof HttpClient.make>[0]>[0]): unknown => {
@@ -255,6 +253,20 @@ describe('Alpaca broker mutations', () => {
     })
   })
 
+  test('derives side-safe broker limit prices from the durable notional boundary', () => {
+    const boundaryIntent = {
+      ...intent,
+      quantityMicros: '3000000',
+      notionalLimitMicros: '100000001',
+    }
+
+    expect(orderPriceBoundaryMicros({ ...boundaryIntent, side: OrderSide.Buy })).toEqual(Result.succeed(33_330_000n))
+    expect(orderPriceBoundaryMicros({ ...boundaryIntent, side: OrderSide.Sell })).toEqual(Result.succeed(33_340_000n))
+    expect(orderRequestBody({ ...boundaryIntent, side: OrderSide.Sell })).toMatchObject(
+      Result.succeed({ type: 'limit', limit_price: '33.34', side: 'sell' }),
+    )
+  })
+
   test('refuses to construct mutation capability without explicit submit-orders access', async () => {
     let requests = 0
     const client = HttpClient.make(() => {
@@ -271,9 +283,7 @@ describe('Alpaca broker mutations', () => {
       }),
     )
 
-    const failure = await Effect.runPromise(
-      Effect.flip(makeMutation(verifiedSession(), readOnly).pipe(Effect.provideService(HttpClient.HttpClient, client))),
-    )
+    const failure = await Effect.runPromise(Effect.flip(makeMutation(verifiedSession(), readOnly, client)))
 
     expect(failure).toMatchObject({
       operation: MutationOperation.Submit,
@@ -420,8 +430,9 @@ describe('Alpaca broker mutations', () => {
       symbol: 'AMD',
       qty: '1.25',
       side: 'buy',
-      type: 'market',
+      type: 'limit',
       time_in_force: 'day',
+      limit_price: '160',
       client_order_id: intent.clientOrderId,
       extended_hours: false,
     }
@@ -616,7 +627,7 @@ describe('Alpaca broker mutations', () => {
       )
     })
 
-    const program = makeMutation(verifiedSession({ operationTimeoutMs: 10 }), submitAuthority).pipe(
+    const program = makeMutation(verifiedSession({ operationTimeoutMs: 10 }), submitAuthority, client).pipe(
       Effect.flatMap((mutation) =>
         Effect.gen(function* () {
           const fiber = yield* Effect.flip(mutation.submit(intent)).pipe(Effect.forkChild)
@@ -625,7 +636,6 @@ describe('Alpaca broker mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       ),
-      Effect.provideService(HttpClient.HttpClient, client),
       Effect.provide(TestClock.layer()),
     )
 
@@ -676,7 +686,7 @@ describe('Alpaca broker mutations', () => {
       )
     })
 
-    const program = makeMutation(verifiedSession({ operationTimeoutMs: 10 }), submitAuthority).pipe(
+    const program = makeMutation(verifiedSession({ operationTimeoutMs: 10 }), submitAuthority, client).pipe(
       Effect.flatMap((mutation) =>
         Effect.gen(function* () {
           const fiber = yield* Effect.flip(mutation.submit(intent)).pipe(Effect.forkChild)
@@ -685,7 +695,6 @@ describe('Alpaca broker mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       ),
-      Effect.provideService(HttpClient.HttpClient, client),
       Effect.provide(TestClock.layer()),
     )
 
@@ -711,9 +720,7 @@ describe('Alpaca broker mutations', () => {
             Effect.ensuring(Ref.update(finalized, (count) => count + 1)),
           )
         })
-        const mutation = yield* makeMutation(verifiedSession(), submitAuthority).pipe(
-          Effect.provideService(HttpClient.HttpClient, client),
-        )
+        const mutation = yield* makeMutation(verifiedSession(), submitAuthority, client)
         const fiber = yield* mutation.submit(intent).pipe(Effect.forkChild({ startImmediately: true }))
         yield* Deferred.await(started)
         yield* Fiber.interrupt(fiber)

@@ -39,7 +39,7 @@ import { IntentStore, IntentStoreLive } from './execution/intents'
 import { MutationStore, MutationStoreLive } from './execution/mutations'
 import { makeExecutionProgram, type ExecutionProgram } from './execution/runtime-program'
 import { renderRuntimeAuthorityFailure, resolveRuntimeAuthority } from './execution/runtime-authority'
-import type { FreshBrokerPrice } from './execution/mutation-authority'
+import type { FreshBrokerQuote } from './execution/mutation-authority'
 import { WriterFence, WriterFenceLive } from './execution/writer-fence'
 import { operationalError } from './errors'
 import { canonicalHashV1Result, type CanonicalJsonFailure } from './hash'
@@ -315,6 +315,7 @@ const LatestQuoteResponseSchema = Schema.Struct({
   symbol: Schema.String,
   quote: Schema.Struct({
     ap: Schema.Finite,
+    bp: Schema.Finite,
     t: Schema.String,
   }),
 })
@@ -323,12 +324,14 @@ export type LatestQuoteDecodeFailure =
   | { readonly _tag: 'LatestQuoteResponseInvalid'; readonly cause: unknown }
   | { readonly _tag: 'LatestQuoteSymbolMismatch'; readonly expected: string; readonly observed: string }
   | { readonly _tag: 'LatestQuoteAskInvalid'; readonly symbol: string; readonly ask: number }
+  | { readonly _tag: 'LatestQuoteBidInvalid'; readonly symbol: string; readonly bid: number }
+  | { readonly _tag: 'LatestQuoteSpreadInvalid'; readonly symbol: string; readonly bid: number; readonly ask: number }
 
 export const decodeFreshBrokerPrice = (
   requestedSymbol: string,
   raw: unknown,
   observedAt: string,
-): Result.Result<FreshBrokerPrice, LatestQuoteDecodeFailure> => {
+): Result.Result<FreshBrokerQuote, LatestQuoteDecodeFailure> => {
   const decoded = Schema.decodeUnknownResult(LatestQuoteResponseSchema, { onExcessProperty: 'ignore' })(raw)
   if (Result.isFailure(decoded)) {
     return Result.fail({ _tag: 'LatestQuoteResponseInvalid', cause: decoded.failure })
@@ -340,7 +343,15 @@ export const decodeFreshBrokerPrice = (
       observed: decoded.success.symbol,
     })
   }
+  const bidMicros = Math.floor(decoded.success.quote.bp * 1_000_000)
   const askMicros = Math.ceil(decoded.success.quote.ap * 1_000_000)
+  if (!Number.isFinite(decoded.success.quote.bp) || decoded.success.quote.bp <= 0 || !Number.isSafeInteger(bidMicros)) {
+    return Result.fail({
+      _tag: 'LatestQuoteBidInvalid',
+      symbol: requestedSymbol,
+      bid: decoded.success.quote.bp,
+    })
+  }
   if (!Number.isFinite(decoded.success.quote.ap) || decoded.success.quote.ap <= 0 || !Number.isSafeInteger(askMicros)) {
     return Result.fail({
       _tag: 'LatestQuoteAskInvalid',
@@ -348,9 +359,18 @@ export const decodeFreshBrokerPrice = (
       ask: decoded.success.quote.ap,
     })
   }
+  if (bidMicros > askMicros) {
+    return Result.fail({
+      _tag: 'LatestQuoteSpreadInvalid',
+      symbol: requestedSymbol,
+      bid: decoded.success.quote.bp,
+      ask: decoded.success.quote.ap,
+    })
+  }
   return Result.succeed({
     symbol: requestedSymbol,
-    priceMicros: askMicros.toString(),
+    bidPriceMicros: bidMicros.toString(),
+    askPriceMicros: askMicros.toString(),
     quotedAt: decoded.success.quote.t,
     observedAt,
   })
@@ -365,7 +385,7 @@ export const latestQuoteUrl = (symbol: string): URL => {
 export const makeFreshBrokerPriceReader = (
   connection: BrokerConnection,
   client: HttpClient.HttpClient,
-): ((symbol: string) => Effect.Effect<FreshBrokerPrice, ReturnType<typeof operationalError>>) => {
+): ((symbol: string) => Effect.Effect<FreshBrokerQuote, ReturnType<typeof operationalError>>) => {
   const authenticated = client.pipe(HttpClient.retryTransient({ times: connection.retryAttempts }))
   const key = Redacted.value(connection.key)
   const secret = Redacted.value(connection.secret)
@@ -476,25 +496,23 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
       })
     }
 
-    const quoteHttpContext = yield* Layer.build(alpacaHttpLayer(session.connection)).pipe(
+    const alpacaHttpContext = yield* Layer.build(alpacaHttpLayer(session.connection)).pipe(
       Effect.mapError((cause) =>
-        operationalError('http', 'alpaca-latest-quote-client', 'Alpaca latest quote client acquisition failed', cause),
+        operationalError('http', 'alpaca-client', 'Alpaca proxy-backed HTTP client acquisition failed', cause),
       ),
     )
+    const alpacaHttpClient = Context.get(alpacaHttpContext, HttpClient.HttpClient)
     const executionDependencies = yield* Effect.all({
       intentStore: IntentStore,
       mutationStore: MutationStore,
       writerFence: WriterFence,
-      brokerMutation: makeMutation(session, authority),
+      brokerMutation: makeMutation(session, authority, alpacaHttpClient),
     })
     const executionProgram = yield* Effect.fromResult(
       makeExecutionProgram(authority, {
         brokerRead: session.read,
         liveCapitalGrants,
-        freshBrokerPrice: makeFreshBrokerPriceReader(
-          session.connection,
-          Context.get(quoteHttpContext, HttpClient.HttpClient),
-        ),
+        freshBrokerPrice: makeFreshBrokerPriceReader(session.connection, alpacaHttpClient),
         currentUtcInstant,
         ...executionDependencies,
       }),

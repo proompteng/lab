@@ -549,8 +549,8 @@ describe('Bayn HTTP pure decisions', () => {
           durable: {
             available: true,
             configured: true,
-            maximum: CapitalAuthorityKind.Sandbox,
-            effective: CapitalAuthorityKind.None,
+            maximum: 'paper',
+            effective: 'observe',
             kill: 'active',
             reason: 'operator kill',
             updatedAt: observedAt,
@@ -1154,10 +1154,10 @@ describe('Bayn HTTP probes', () => {
 
   test('reports explicit mutation and sandbox-capital capability without submitting an order', async () => {
     await withHttpServer({ execution: sandboxMutationExecution }, ({ port }) =>
-      request(port, '/v1/status').pipe(
-        Effect.tap((response) =>
+      Effect.all([request(port, '/v1/status'), request(port, '/metrics')]).pipe(
+        Effect.tap(([status, metrics]) =>
           Effect.sync(() => {
-            expect(response).toMatchObject({
+            expect(status).toMatchObject({
               status: 200,
               body: {
                 authority: {
@@ -1169,6 +1169,8 @@ describe('Bayn HTTP probes', () => {
                 },
               },
             })
+            expect(metrics.body).toContain('bayn_broker_orders_enabled 1')
+            expect(metrics.body).toContain('bayn_capital_promotion_enabled 1')
           }),
         ),
         Effect.asVoid,

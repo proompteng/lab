@@ -12,9 +12,13 @@ export {
   OrderRequestError,
   authorizeMutationAccess,
   cancelRequestHash,
+  historicalMarketOrderRequestBody,
+  orderPriceBoundaryMicros,
   orderRequestBody,
   resolveMutationCapability,
   submitBody,
+  type HistoricalMarketOrderRequestBody,
+  type OrderRequestIntent,
   type OrderRequestBody,
   type ResolvedMutationCapability,
 } from './alpaca-mutations/decisions'

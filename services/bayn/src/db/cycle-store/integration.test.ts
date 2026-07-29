@@ -13,6 +13,7 @@ import {
   type ReadEvidence,
 } from '../../broker/alpaca'
 import { unusedAssetBySymbol } from '../../broker/alpaca-test-support'
+import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../../broker/identity'
 import type { RuntimeConfig } from '../../config'
 import {
   CycleState,
@@ -50,6 +51,7 @@ import {
   type ObserveDecisionFailure,
 } from '../../observe-composition'
 import { Authority, ReconciliationStatus } from '../../execution/contracts'
+import { BrokerAccess, noCapitalAuthority } from '../../execution/authority'
 import { runOnce } from '../../reconciler'
 import { makeObserveShadowDecisionDocument } from '../../shadow-decision-contract'
 import { makeStrategy } from '../../strategy'
@@ -181,6 +183,14 @@ const makeRuntime = () =>
   )
 
 const dueAccountId = '13354000-0000-4000-8000-000000000054'
+const dueBrokerIdentity = Result.getOrThrow(
+  makeBrokerIdentity({
+    schemaVersion: 'bayn.broker-identity.v2',
+    provider: BrokerProvider.Alpaca,
+    environment: BrokerEnvironment.Sandbox,
+    accountId: dueAccountId,
+  }),
+)
 const dueAuthorityGenerationHash = '5'.repeat(64)
 const dueSignalDate = '2099-12-31' as const
 const dueExecutionDate = '2100-01-04' as const
@@ -200,7 +210,11 @@ const dueStrategy = makeStrategy(dueProtocol, makeTestProvenance(dueProtocol))
 const autonomousRuntimeConfig: RuntimeConfig = {
   host: '127.0.0.1',
   port: 0,
-  maximumAuthority: Authority.Observe,
+  execution: {
+    brokerIdentity: dueBrokerIdentity,
+    brokerAccess: BrokerAccess.ReadOnly,
+    capitalAuthority: noCapitalAuthority,
+  },
   build: {
     sourceRevision: '1'.repeat(40),
     imageRepository: 'registry.example.test/lab/bayn',
@@ -390,6 +404,7 @@ const dueBrokerRead = (control: DueIoControl): BrokerReadShape => {
           currency: 'USD',
           cashMicros: '1000000000',
           equityMicros: '1000000000',
+          lastEquityMicros: '1000000000',
           buyingPowerMicros: '1000000000',
           accountBlocked: false,
           tradingBlocked: false,
@@ -496,7 +511,6 @@ const makeProductionDueContext = Effect.gen(function* () {
     prepareObserveStartup({
       accountId: dueAccountId,
       authorityGenerationHash: dueAuthorityGenerationHash,
-      maximumAuthority: Authority.Observe,
       pollIntervalMs: 30_000,
       strategy: dueStrategy,
     }),

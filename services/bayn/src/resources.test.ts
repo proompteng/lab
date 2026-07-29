@@ -155,17 +155,18 @@ describe('Alpaca latest quote boundary', () => {
     )
   })
 
-  test('rounds the fresh ask upward to micros and binds it to the requested symbol', () => {
+  test('rounds the fresh bid down and ask up to micros and binds them to the requested symbol', () => {
     expect(
       decodeFreshBrokerPrice(
         'AAPL',
-        { symbol: 'AAPL', quote: { ap: 100.0000001, t: '2026-07-28T08:00:00.000Z' } },
+        { symbol: 'AAPL', quote: { bp: 99.9999999, ap: 100.0000001, t: '2026-07-28T08:00:00.000Z' } },
         '2026-07-28T08:00:00.100Z',
       ),
     ).toEqual(
       Result.succeed({
         symbol: 'AAPL',
-        priceMicros: '100000001',
+        bidPriceMicros: '99999999',
+        askPriceMicros: '100000001',
         quotedAt: '2026-07-28T08:00:00.000Z',
         observedAt: '2026-07-28T08:00:00.100Z',
       }),
@@ -174,7 +175,7 @@ describe('Alpaca latest quote boundary', () => {
     expect(
       decodeFreshBrokerPrice(
         'AAPL',
-        { symbol: 'MSFT', quote: { ap: 100, t: '2026-07-28T08:00:00.000Z' } },
+        { symbol: 'MSFT', quote: { bp: 99, ap: 100, t: '2026-07-28T08:00:00.000Z' } },
         '2026-07-28T08:00:00.100Z',
       ),
     ).toMatchObject(Result.fail({ _tag: 'LatestQuoteSymbolMismatch' }))

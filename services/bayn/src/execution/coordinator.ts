@@ -173,6 +173,10 @@ const persistSubmitDecision = (
       SubmitAccepted: ({ brokerOrderId, evidence, terminalOutcome }) =>
         services.mutations.submitAccepted(intentId, requestHash, brokerOrderId, evidence, terminalOutcome),
       SubmitRejected: ({ evidence }) => services.mutations.submitRejected(intentId, requestHash, evidence),
+      SubmitDenied: () =>
+        currentInstant.pipe(
+          Effect.flatMap((occurredAt) => services.mutations.submitDenied(intentId, requestHash, occurredAt)),
+        ),
       SubmitUnknown: ({ brokerOrderId, evidence }) =>
         (evidence === undefined ? currentInstant : Effect.succeed(evidence.observedAt)).pipe(
           Effect.flatMap((occurredAt) =>

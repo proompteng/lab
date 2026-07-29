@@ -34,7 +34,7 @@ import {
   type LiveCapitalLimits,
   type MutationExecutionAuthority,
 } from './authority'
-import { makeAuthorityGuardedBrokerMutation } from './mutation-authority'
+import { makeAuthorityGuardedBrokerMutation, type FinalSubmitAuthorization } from './mutation-authority'
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const authorityGenerationHash = '1'.repeat(64)
@@ -204,10 +204,15 @@ interface ScenarioInput {
   readonly observedAt?: string
   readonly brokerAccount?: Account
   readonly positions?: readonly Position[]
+  readonly positionSnapshots?: readonly (readonly Position[])[]
   readonly openOrders?: readonly Order[]
   readonly proposedIntent?: Intent
-  readonly freshPriceMicros?: string
+  readonly freshBidPriceMicros?: string
+  readonly freshAskPriceMicros?: string
+  readonly freshPricesBySymbol?: Readonly<Record<string, { readonly bid: string; readonly ask: string }>>
   readonly quotedAt?: string
+  readonly persistedAtRead?: (priceReads: number) => LiveCapitalAuthority | undefined
+  readonly finalSubmitAuthorization?: FinalSubmitAuthorization
 }
 
 const runLiveSubmit = async (input: ScenarioInput = {}) => {
@@ -216,6 +221,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
   let submits = 0
   let grantReads = 0
   let priceReads = 0
+  let positionReads = 0
   let orderLimit: number | undefined
   const unusedRead = Effect.die(new Error('unused broker read in mutation authority test'))
   const brokerRead: BrokerReadShape = {
@@ -227,7 +233,10 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
     assetBySymbol: () => unusedRead,
     positions: Effect.sync(() => {
       trace.push('positions')
-      return readResult(input.positions ?? [])
+      const snapshots = input.positionSnapshots
+      const positions = snapshots?.[Math.min(positionReads, snapshots.length - 1)] ?? input.positions ?? []
+      positionReads += 1
+      return readResult(positions)
     }),
     orders: (query) =>
       Effect.sync(() => {
@@ -259,6 +268,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
           Effect.sync(() => {
             trace.push('grant')
             grantReads += 1
+            if (input.persistedAtRead !== undefined) return input.persistedAtRead(priceReads)
             return input.persisted === undefined && !('persisted' in input)
               ? liveCapitalAuthority(grant)
               : input.persisted
@@ -268,9 +278,11 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
         Effect.sync(() => {
           trace.push('price')
           priceReads += 1
+          const quote = input.freshPricesBySymbol?.[symbol]
           return {
             symbol,
-            priceMicros: input.freshPriceMicros ?? '100000000',
+            bidPriceMicros: quote?.bid ?? input.freshBidPriceMicros ?? '100000000',
+            askPriceMicros: quote?.ask ?? input.freshAskPriceMicros ?? '100000000',
             quotedAt: input.quotedAt ?? activeAt,
             observedAt: input.observedAt ?? activeAt,
           }
@@ -279,10 +291,16 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
         trace.push('clock')
         return input.observedAt ?? activeAt
       }),
+      finalSubmitAuthorization:
+        input.finalSubmitAuthorization ??
+        ((_intent, transmit) =>
+          Effect.sync(() => {
+            trace.push('authorize')
+          }).pipe(Effect.andThen(transmit))),
     },
   )
   const exit = await Effect.runPromiseExit(guarded.submit(input.proposedIntent ?? intent()))
-  return { exit, grant, grantReads, orderLimit, priceReads, submits, trace }
+  return { exit, grant, grantReads, orderLimit, positionReads, priceReads, submits, trace }
 }
 
 const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): string | undefined => {
@@ -298,13 +316,29 @@ describe('final broker mutation authority', () => {
     expect(observed.exit._tag).toBe('Success')
     expect(observed.submits).toBe(1)
     expect(observed.grantReads).toBe(1)
+    expect(observed.positionReads).toBe(2)
     expect(observed.priceReads).toBe(1)
     expect(observed.orderLimit).toBe(defaultLimits.maxOpenOrders)
-    expect(observed.trace.indexOf('grant')).toBeGreaterThan(observed.trace.indexOf('orders'))
+    expect(observed.trace.indexOf('price')).toBeGreaterThan(observed.trace.indexOf('orders'))
+    expect(observed.trace.indexOf('grant')).toBeGreaterThan(observed.trace.indexOf('price'))
     expect(observed.trace.indexOf('clock')).toBeGreaterThan(observed.trace.indexOf('grant'))
-    expect(observed.trace.indexOf('price')).toBeGreaterThan(observed.trace.indexOf('grant'))
-    expect(observed.trace.indexOf('clock')).toBeGreaterThan(observed.trace.indexOf('price'))
+    expect(observed.trace.indexOf('authorize')).toBeGreaterThan(observed.trace.indexOf('clock'))
     expect(observed.trace.at(-1)).toBe('submit')
+  })
+
+  test('rejects a fill that moves between the position and open-order reads', async () => {
+    const filledPosition = position()
+    const observed = await runLiveSubmit({
+      positionSnapshots: [[], [filledPosition]],
+      openOrders: [],
+    })
+
+    expect(failureTag(observed.exit)).toBe('LiveBrokerPositionSnapshotChanged')
+    expect(observed.positionReads).toBe(2)
+    expect(observed.priceReads).toBe(0)
+    expect(observed.grantReads).toBe(0)
+    expect(observed.submits).toBe(0)
+    expect(observed.trace.slice(0, 4)).toEqual(['account', 'positions', 'orders', 'positions'])
   })
 
   test('serializes concurrent live snapshots through broker submission', async () => {
@@ -353,8 +387,15 @@ describe('final broker mutation authority', () => {
             brokerMutation,
             liveCapitalGrants: { read: () => Effect.succeed(liveCapitalAuthority(grant)) },
             freshBrokerPrice: (symbol) =>
-              Effect.succeed({ symbol, priceMicros: '100000000', quotedAt: activeAt, observedAt: activeAt }),
+              Effect.succeed({
+                symbol,
+                bidPriceMicros: '100000000',
+                askPriceMicros: '100000000',
+                quotedAt: activeAt,
+                observedAt: activeAt,
+              }),
             currentUtcInstant: Effect.succeed(activeAt),
+            finalSubmitAuthorization: (_intent, transmit) => transmit,
           },
         )
         const first = yield* guarded
@@ -422,6 +463,35 @@ describe('final broker mutation authority', () => {
     expect(observed.submits).toBe(0)
   })
 
+  test('observes a revocation that lands while live quotes are collected', async () => {
+    const grant = liveGrant()
+    const active = liveCapitalAuthority(grant)
+    const revoked = liveCapitalAuthority(grant, {
+      schemaVersion: 'bayn.live-capital-grant-revocation.v1',
+      revokedAt: activeAt,
+      revokedBy: 'operator:test',
+      reason: 'containment',
+    })
+    const observed = await runLiveSubmit({
+      grant,
+      persistedAtRead: (priceReads) => (priceReads === 0 ? active : revoked),
+    })
+
+    expect(observed.trace.indexOf('grant')).toBeGreaterThan(observed.trace.indexOf('price'))
+    expect(failureTag(observed.exit)).toBe('LiveGrantRevoked')
+    expect(observed.submits).toBe(0)
+  })
+
+  test('rechecks the final submit window after live preflight with zero broker submits', async () => {
+    const observed = await runLiveSubmit({
+      finalSubmitAuthorization: () => Effect.fail({ _tag: 'ExpiredRiskDecision' as const }),
+    })
+
+    expect(failureTag(observed.exit)).toBe('ExpiredRiskDecision')
+    expect(observed.priceReads).toBe(1)
+    expect(observed.submits).toBe(0)
+  })
+
   test.each([
     ['order notional', { maxOrderNotionalMicros: '99999999' }, {}, 'LiveOrderNotionalLimitExceeded'],
     [
@@ -463,10 +533,270 @@ describe('final broker mutation authority', () => {
     expect(observed.submits).toBe(0)
   })
 
-  test('rejects a transmitted quantity whose fresh ask exceeds the intent and grant notional ceiling', async () => {
-    const observed = await runLiveSubmit({ freshPriceMicros: '100000001' })
+  test('rejects a queued stop order whose triggered market fill has no enforceable price bound', async () => {
+    const observed = await runLiveSubmit({
+      openOrders: [
+        order({
+          orderType: BrokerOrderType.Stop,
+          notionalMicros: undefined,
+          quantityMicros: '1000000',
+          limitPriceMicros: undefined,
+          stopPriceMicros: '100000000',
+          filledAveragePriceMicros: undefined,
+        }),
+      ],
+    })
+
+    expect(failureTag(observed.exit)).toBe('OpenOrderNotionalUnavailable')
+    expect(observed.priceReads).toBe(1)
+    expect(observed.submits).toBe(0)
+  })
+
+  test('rejects a queued quantity market order whose future fill has no enforceable ceiling', async () => {
+    const queued = order({
+      brokerOrderId: 'c14cb7fb-0890-47dd-bbca-7778cfc61ec6',
+      symbol: 'NVDA',
+      notionalMicros: undefined,
+      quantityMicros: '1000000',
+      limitPriceMicros: undefined,
+      stopPriceMicros: undefined,
+      filledAveragePriceMicros: undefined,
+    })
+    const observed = await runLiveSubmit({
+      openOrders: [queued],
+      freshPricesBySymbol: {
+        AMD: { bid: '100000000', ask: '100000000' },
+        NVDA: { bid: '50000000', ask: '50000000' },
+      },
+    })
+
+    expect(failureTag(observed.exit)).toBe('OpenOrderMarketPriceUnbounded')
+    expect(observed.priceReads).toBe(1)
+    expect(observed.submits).toBe(0)
+  })
+
+  test('admits an ordinary sell exit using the adverse proceeds floor rather than the ask', async () => {
+    const observed = await runLiveSubmit({
+      positions: [position()],
+      proposedIntent: intent({ side: OrderSide.Sell, notionalLimitMicros: '99000000' }),
+      freshBidPriceMicros: '100000000',
+      freshAskPriceMicros: '101000000',
+    })
+
+    expect(observed.exit._tag).toBe('Success')
+    expect(observed.submits).toBe(1)
+  })
+
+  test('nets a reducing sell by symbol before applying the gross-exposure ceiling', async () => {
+    const grant = liveGrant({ ...defaultLimits, maxGrossNotionalMicros: '100000000' })
+    const observed = await runLiveSubmit({
+      grant,
+      positions: [position({ quantityMicros: '900000', marketValueMicros: '90000000' })],
+      proposedIntent: intent({
+        side: OrderSide.Sell,
+        quantityMicros: '200000',
+        notionalLimitMicros: '20000000',
+      }),
+    })
+
+    expect(observed.exit._tag).toBe('Success')
+    expect(observed.submits).toBe(1)
+  })
+
+  test('rejects a sell that would increase exposure through a short position', async () => {
+    const observed = await runLiveSubmit({
+      positions: [position({ quantityMicros: '100000', marketValueMicros: '10000000' })],
+      proposedIntent: intent({
+        side: OrderSide.Sell,
+        quantityMicros: '200000',
+        notionalLimitMicros: '20000000',
+      }),
+    })
+
+    expect(failureTag(observed.exit)).toBe('LiveIncreasingSellUnsupported')
+    expect(observed.submits).toBe(0)
+  })
+
+  test('does not let a queued buy hide an overshort that can fill first', async () => {
+    const grant = liveGrant({ ...defaultLimits, maxOrderNotionalMicros: '200000000' })
+    const queuedBuy = order({
+      brokerOrderId: '5ea242d9-9fa2-423b-908d-d2cccfcd5a5c',
+      side: BrokerOrderSide.Buy,
+      quantityMicros: '1000000',
+      notionalMicros: '100000000',
+    })
+    const observed = await runLiveSubmit({
+      grant,
+      positions: [position()],
+      openOrders: [queuedBuy],
+      proposedIntent: intent({
+        side: OrderSide.Sell,
+        quantityMicros: '1500000',
+        notionalLimitMicros: '150000000',
+      }),
+    })
+
+    expect(failureTag(observed.exit)).toBe('LiveIncreasingSellUnsupported')
+    expect(observed.submits).toBe(0)
+  })
+
+  test('does not let a queued reducing sell subsidize a new symbol gross exposure', async () => {
+    const grant = liveGrant({ ...defaultLimits, maxGrossNotionalMicros: '150000000' })
+    const queuedSell = order({
+      brokerOrderId: 'ee49ed03-d957-45f7-b725-a32d9c215cd5',
+      symbol: 'NVDA',
+      side: BrokerOrderSide.Sell,
+      quantityMicros: '1000000',
+      notionalMicros: '100000000',
+    })
+    const observed = await runLiveSubmit({
+      grant,
+      positions: [position({ symbol: 'NVDA' })],
+      openOrders: [queuedSell],
+    })
+
+    expect(failureTag(observed.exit)).toBe('LiveGrossNotionalLimitExceeded')
+    expect(observed.submits).toBe(0)
+  })
+
+  test('rejects an uncovered pending sell on another symbol before authorizing a candidate buy', async () => {
+    const uncoveredSell = order({
+      brokerOrderId: 'c87ed037-a814-4e28-aef4-57f23831a54b',
+      symbol: 'NVDA',
+      side: BrokerOrderSide.Sell,
+      quantityMicros: '1000000',
+      notionalMicros: undefined,
+      limitPriceMicros: '1000000',
+    })
+    const observed = await runLiveSubmit({
+      openOrders: [uncoveredSell],
+      freshPricesBySymbol: {
+        AMD: { bid: '100000000', ask: '100000000' },
+        NVDA: { bid: '100000000', ask: '100000000' },
+      },
+    })
+
+    expect(failureTag(observed.exit)).toBe('LivePendingSellUncovered')
+    expect(observed.submits).toBe(0)
+  })
+
+  test('prices only the unfilled remainder of a partially filled queued buy', async () => {
+    const grant = liveGrant({ ...defaultLimits, maxPositionNotionalMicros: '120000000' })
+    const partialBuy = order({
+      brokerOrderId: '2a9722db-503f-47ad-82ef-6ba5a444be52',
+      side: BrokerOrderSide.Buy,
+      quantityMicros: '1000000',
+      filledQuantityMicros: '500000',
+      notionalMicros: undefined,
+      limitPriceMicros: '100000000',
+      status: OrderStatus.PartiallyFilled,
+    })
+    const observed = await runLiveSubmit({
+      grant,
+      positions: [position({ quantityMicros: '500000', marketValueMicros: '50000000' })],
+      openOrders: [partialBuy],
+      proposedIntent: intent({ quantityMicros: '100000', notionalLimitMicros: '10000000' }),
+    })
+
+    expect(observed.exit._tag).toBe('Success')
+    expect(observed.submits).toBe(1)
+  })
+
+  test('rejects a partially filled market-order remainder whose future fill remains unbounded', async () => {
+    const grant = liveGrant({ ...defaultLimits, maxPositionNotionalMicros: '150000000' })
+    const partialMarketBuy = order({
+      brokerOrderId: 'baf250d8-f7ac-48e8-b54b-1ed2fc870bf0',
+      side: BrokerOrderSide.Buy,
+      orderType: BrokerOrderType.Market,
+      quantityMicros: '1000000',
+      filledQuantityMicros: '500000',
+      notionalMicros: undefined,
+      limitPriceMicros: undefined,
+      stopPriceMicros: undefined,
+      filledAveragePriceMicros: '100000000',
+      status: OrderStatus.PartiallyFilled,
+    })
+    const observed = await runLiveSubmit({
+      grant,
+      positions: [position({ quantityMicros: '500000', marketValueMicros: '50000000' })],
+      openOrders: [partialMarketBuy],
+      proposedIntent: intent({ quantityMicros: '50000', notionalLimitMicros: '10000000' }),
+      freshBidPriceMicros: '200000000',
+      freshAskPriceMicros: '200000000',
+    })
+
+    expect(failureTag(observed.exit)).toBe('OpenOrderMarketPriceUnbounded')
+    expect(observed.priceReads).toBe(1)
+    expect(observed.submits).toBe(0)
+  })
+
+  test('uses only the unfilled remainder of a partially filled queued sell for overshort protection', async () => {
+    const partialSell = order({
+      brokerOrderId: '318a5a2b-b976-4df3-9fbd-1030ab46e937',
+      side: BrokerOrderSide.Sell,
+      quantityMicros: '1000000',
+      filledQuantityMicros: '500000',
+      notionalMicros: undefined,
+      limitPriceMicros: '100000000',
+      status: OrderStatus.PartiallyFilled,
+    })
+    const observed = await runLiveSubmit({
+      positions: [position()],
+      openOrders: [partialSell],
+      proposedIntent: intent({
+        side: OrderSide.Sell,
+        quantityMicros: '400000',
+        notionalLimitMicros: '40000000',
+      }),
+    })
+
+    expect(observed.exit._tag).toBe('Success')
+    expect(observed.submits).toBe(1)
+  })
+
+  test('applies the immutable order-notional ceiling to a reducing sell', async () => {
+    const grant = liveGrant({ ...defaultLimits, maxOrderNotionalMicros: '98999999' })
+    const observed = await runLiveSubmit({
+      grant,
+      positions: [position()],
+      proposedIntent: intent({ side: OrderSide.Sell, notionalLimitMicros: '99000000' }),
+    })
 
     expect(failureTag(observed.exit)).toBe('LiveOrderNotionalLimitExceeded')
+    expect(observed.submits).toBe(0)
+  })
+
+  test('values a marketable sell at the higher fresh bid for the order-notional cap', async () => {
+    const grant = liveGrant({ ...defaultLimits, maxOrderNotionalMicros: '100000000' })
+    const observed = await runLiveSubmit({
+      grant,
+      positions: [position()],
+      proposedIntent: intent({ side: OrderSide.Sell, notionalLimitMicros: '90000000' }),
+      freshBidPriceMicros: '120000000',
+      freshAskPriceMicros: '121000000',
+    })
+
+    expect(failureTag(observed.exit)).toBe('LiveOrderNotionalLimitExceeded')
+    expect(observed.submits).toBe(0)
+  })
+
+  test('rejects a buy when the fresh ask is above the broker-enforced price ceiling', async () => {
+    const observed = await runLiveSubmit({ freshAskPriceMicros: '100000001' })
+
+    expect(failureTag(observed.exit)).toBe('FreshBrokerPriceGap')
+    expect(observed.priceReads).toBe(1)
+    expect(observed.submits).toBe(0)
+  })
+
+  test('rejects a sell when the fresh bid is below the broker-enforced proceeds floor', async () => {
+    const observed = await runLiveSubmit({
+      positions: [position()],
+      proposedIntent: intent({ side: OrderSide.Sell, notionalLimitMicros: '99000000' }),
+      freshBidPriceMicros: '98999999',
+      freshAskPriceMicros: '100000000',
+    })
+
+    expect(failureTag(observed.exit)).toBe('FreshBrokerPriceGap')
     expect(observed.priceReads).toBe(1)
     expect(observed.submits).toBe(0)
   })
@@ -522,6 +852,7 @@ describe('final broker mutation authority', () => {
         },
         freshBrokerPrice: () => Effect.die(new Error('sandbox must not read a live broker price')),
         currentUtcInstant: Effect.die(new Error('sandbox must not read the live grant clock')),
+        finalSubmitAuthorization: (_intent, transmit) => transmit,
       },
     )
 
@@ -566,6 +897,7 @@ describe('final broker mutation authority', () => {
         },
         freshBrokerPrice: () => Effect.die(new Error('cancellation must not read a broker price')),
         currentUtcInstant: Effect.succeed(activeAt),
+        finalSubmitAuthorization: () => Effect.die(new Error('cancellation must not authorize submit')),
       },
     )
 

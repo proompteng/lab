@@ -235,6 +235,34 @@ export const decideMutationAuthority = (
   })
 }
 
+export const decideFinalSubmitAuthorization = (
+  authority: MutationAuthorityBinding,
+  intent: MutationIntentSnapshot | undefined,
+): Result.Result<void, MutationStoreError> => {
+  if (intent === undefined) {
+    return Result.fail(storeError('begin-submit', 'invariant', 'final submit intent does not exist'))
+  }
+  if (
+    intent.state !== IntentState.IoStarted ||
+    intent.generationMaximum !== Authority.Paper ||
+    intent.generationAccountId === null ||
+    intent.generationAccountId !== intent.accountId ||
+    intent.generationRiskPolicyHash !== intent.policyHash ||
+    intent.generationStrategyName !== intent.strategyName ||
+    intent.accountId !== authority.accountId ||
+    intent.authorityGenerationHash !== authority.generationHash
+  ) {
+    return Result.fail(
+      storeError(
+        'begin-submit',
+        'authority',
+        'final submit no longer matches active PAPER authority and immutable intent bindings',
+      ),
+    )
+  }
+  return Result.succeed(undefined)
+}
+
 export const decideMutationContainment = (unresolved: boolean | undefined): Result.Result<void, MutationStoreError> =>
   unresolved === false
     ? Result.succeed(undefined)
@@ -369,6 +397,24 @@ export const decideMutationOutcomeDefinition = (definition: MutationOutcomeDefin
         },
         cancelFirst: { _tag: 'SkipCancelFirstRead' },
       }
+    case 'SubmitDenied':
+      return {
+        operation: MutationOperation.Submit,
+        eventType: MutationEventType.SubmitDenied,
+        transition: {
+          _tag: 'TransitionFromIoStarted',
+          nextState: IntentState.Terminal,
+          terminalOutcome: TerminalOutcome.Rejected,
+        },
+        replayIntent: {
+          _tag: 'ExactReplayIntent',
+          snapshot: {
+            state: IntentState.Terminal,
+            terminalOutcome: TerminalOutcome.Rejected,
+          },
+        },
+        cancelFirst: { _tag: 'SkipCancelFirstRead' },
+      }
     case 'SubmitUnknown':
       return {
         operation: MutationOperation.Submit,
@@ -462,6 +508,7 @@ export const outcomeStoreOperation = (definition: MutationOutcomeDefinition): Ou
   switch (definition._tag) {
     case 'SubmitAccepted':
     case 'SubmitRejected':
+    case 'SubmitDenied':
     case 'SubmitUnknown':
       return 'record-submit'
     case 'CancelAccepted':
@@ -485,6 +532,7 @@ const allowsOutcomeEvent = (previous: MutationEventType, next: MutationEventType
       return (
         next === MutationEventType.SubmitAccepted ||
         next === MutationEventType.SubmitRejected ||
+        next === MutationEventType.SubmitDenied ||
         next === MutationEventType.SubmitUnknown
       )
     case MutationEventType.CancelStarted:
@@ -498,6 +546,7 @@ const allowsOutcomeEvent = (previous: MutationEventType, next: MutationEventType
     case MutationEventType.RecoveryUnknown:
       return isRecoveryEventType(next)
     case MutationEventType.SubmitRejected:
+    case MutationEventType.SubmitDenied:
       return false
   }
 }
@@ -543,6 +592,14 @@ const decideMutationEventContract = (
             event.responseStatus === 403 ||
             event.responseStatus === 404 ||
             event.responseStatus === 422)
+        )
+      case MutationEventType.SubmitDenied:
+        return (
+          event.operation === MutationOperation.Submit &&
+          event.brokerOrderId === undefined &&
+          event.requestId === undefined &&
+          event.responseStatus === undefined &&
+          event.responseContentHash === undefined
         )
       case MutationEventType.SubmitUnknown:
         return event.operation === MutationOperation.Submit
