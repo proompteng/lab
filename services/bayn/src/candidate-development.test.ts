@@ -2,18 +2,27 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Exit, Result } from 'effect'
 
 import {
+  bindCandidateDevelopmentAttempt,
+  candidateDevelopmentAttemptHorizon,
+  candidateDevelopmentBootstrapSamples,
   candidateDevelopmentCalendarContract,
+  candidateDevelopmentDoubledCostContract,
   candidateDevelopmentStatisticsPolicy,
   candidateDevelopmentWalkForwardProtocol,
   computeEndAnchoredWalkForwardBoundaries,
   firstEligibleExecutionAfterLookback,
+  identifyCandidateDevelopmentProtocol,
   officialMonthEndSignalDates,
   preflightCandidateDevelopment,
   requiredObservationsForWalkForward,
   runCandidateDevelopment,
+  validateCandidateDevelopmentDoubledCostCausalPath,
 } from './candidate-development'
+import { defaultExecutionModel } from './execution-model'
+import { canonicalHashV1Result } from './hash'
 import { defaultQualificationStatisticsPolicy } from './qualification-statistics'
 import type { IsoDate } from './schemas'
+import type { SignalDecision, SimulatedOrder, SimulationTrace } from './types'
 
 const fullMarketClosures = new Set<IsoDate>([
   '2016-01-18',
@@ -172,16 +181,90 @@ const successOf = <A, E>(result: Result.Result<A, E>): A => {
   return result.success
 }
 
+const candidate13Input = (sessions: readonly IsoDate[]) => ({
+  candidateOrdinal: 13,
+  priorTrialCount: 12,
+  officialSessions: sessions,
+  signalSessionDates: officialMonthEndSignalDates(sessions),
+  featureLookbackSessions: 252,
+})
+
+const simulatedOrder = (overrides: Partial<SimulatedOrder> = {}): SimulatedOrder => ({
+  id: 'a'.repeat(64),
+  decisionId: 'b'.repeat(64),
+  sessionDate: '2022-01-03',
+  symbol: 'SPY',
+  side: 'buy',
+  requestedQuantityMicros: '1000000',
+  filledQuantityMicros: '1000000',
+  status: 'filled',
+  rejectionReason: null,
+  unfilledRemainder: 'none',
+  ...overrides,
+})
+
+const signalDecision = (overrides: Partial<SignalDecision> = {}): SignalDecision => ({
+  schemaVersion: 'bayn.risk-balanced-trend-decision-plan.v1',
+  decisionId: 'b'.repeat(64),
+  signalDate: '2021-12-31',
+  executionDate: '2022-01-03',
+  covarianceWindow: {
+    returnCount: 63,
+    firstSession: '2021-10-01',
+    lastSession: '2021-12-31',
+    sessionsHash: 'c'.repeat(64),
+  },
+  estimatedAnnualizedPortfolioVolatility: 0.16,
+  exposureScale: 1,
+  targetWeights: { SPY: 1 },
+  signals: [
+    {
+      symbol: 'SPY',
+      horizons: [{ horizonSessions: 21, return: 0.05, normalizedTrend: 0.5 }],
+      dailyVolatility: 0.01,
+      annualizedVolatility: 0.16,
+      compositeScore: 0.5,
+      positiveScore: 0.5,
+      eligible: true,
+      uncappedWeight: 1,
+      cappedWeight: 1,
+      targetWeight: 1,
+    },
+  ],
+  ...overrides,
+})
+
+const simulationTrace = (costMultiplierMicros: string, order: SimulatedOrder = simulatedOrder()): SimulationTrace => ({
+  schemaVersion: 'bayn.simulation-trace.v3',
+  executionModel: defaultExecutionModel,
+  costMultiplierMicros,
+  orders: [order],
+  cashChanges: [],
+  dailyMarks: [],
+})
+
+const candidateDevelopmentEvaluation = <Report>(
+  report: Report,
+  stressedOrder: SimulatedOrder = simulatedOrder(),
+  stressedSignalDecisions: readonly SignalDecision[] = [signalDecision()],
+) => ({
+  report,
+  doubledCost: {
+    baseline: {
+      signalDecisions: [signalDecision()],
+      simulation: simulationTrace(candidateDevelopmentDoubledCostContract.baselineCostMultiplierMicros),
+    },
+    stressed: {
+      signalDecisions: stressedSignalDecisions,
+      simulation: simulationTrace(candidateDevelopmentDoubledCostContract.stressedCostMultiplierMicros, stressedOrder),
+    },
+  },
+})
+
 describe('candidate development walk-forward protocol', () => {
   test('freezes the exact 1,762-session development calendar without touching the holdout', () => {
     const sessions = developmentSessions()
-    const result = successOf(
-      preflightCandidateDevelopment({
-        officialSessions: sessions,
-        signalSessionDates: officialMonthEndSignalDates(sessions),
-        featureLookbackSessions: 252,
-      }),
-    )
+    const result = successOf(preflightCandidateDevelopment(candidate13Input(sessions)))
 
     expect(sessions).toHaveLength(1_762)
     expect(sessions.at(0)).toBe('2016-01-04')
@@ -225,6 +308,8 @@ describe('candidate development walk-forward protocol', () => {
     ] of expectedAvailability) {
       const preflight = successOf(
         preflightCandidateDevelopment({
+          candidateOrdinal: 13,
+          priorTrialCount: 12,
           officialSessions: sessions,
           signalSessionDates: signals,
           featureLookbackSessions,
@@ -244,6 +329,117 @@ describe('candidate development walk-forward protocol', () => {
         folds: expectedFolds,
       })
     }
+  })
+
+  test('binds Candidate 13 and the deterministic bootstrap horizon before any effects', () => {
+    const candidate13 = successOf(bindCandidateDevelopmentAttempt(13, 12))
+    const horizon = successOf(bindCandidateDevelopmentAttempt(25, 24))
+
+    expect(candidateDevelopmentBootstrapSamples).toBe(10_000)
+    expect(candidateDevelopmentStatisticsPolicy.bootstrap.samples).toBe(10_000)
+    expect(defaultQualificationStatisticsPolicy.bootstrap.samples).toBe(5_000)
+    expect(bindCandidateDevelopmentAttempt(13, 11)).toEqual(
+      Result.fail({
+        _tag: 'CandidateDevelopmentAttemptLineageMismatch',
+        candidateOrdinal: 13,
+        priorTrialCount: 11,
+        expectedCandidateOrdinal: 12,
+      }),
+    )
+    expect(candidate13).toMatchObject({
+      candidateOrdinal: 13,
+      priorTrialCount: 12,
+      bootstrapSamples: 10_000,
+      tailSampleCount: 38,
+      minimumTailSamples: 20,
+      maximumCandidateOrdinal: 25,
+    })
+    expect(horizon.tailSampleCount).toBe(20)
+    expect(Math.floor((candidateDevelopmentBootstrapSamples - 1) * (0.05 / 25))).toBe(19)
+    expect(bindCandidateDevelopmentAttempt(26, 25)).toMatchObject(
+      Result.fail({
+        _tag: 'CandidateDevelopmentBootstrapTailInfeasible',
+        candidateOrdinal: 26,
+        priorTrialCount: 25,
+        bootstrapSamples: 10_000,
+        tailSampleCount: 19,
+        minimumTailSamples: 20,
+        maximumCandidateOrdinal: 25,
+      }),
+    )
+  })
+
+  test('binds one deterministic versioned protocol identity into preflight', () => {
+    const candidate13 = successOf(bindCandidateDevelopmentAttempt(13, 12))
+    const first = successOf(identifyCandidateDevelopmentProtocol(candidate13, 252))
+    const second = successOf(identifyCandidateDevelopmentProtocol(candidate13, 252))
+    const differentLookback = successOf(identifyCandidateDevelopmentProtocol(candidate13, 63))
+    const next = successOf(
+      identifyCandidateDevelopmentProtocol(successOf(bindCandidateDevelopmentAttempt(14, 13)), 252),
+    )
+    const preflight = successOf(preflightCandidateDevelopment(candidate13Input(developmentSessions())))
+
+    expect(first).toEqual(second)
+    expect(first).not.toEqual(differentLookback)
+    expect(first).not.toEqual(next)
+    expect(first.schemaVersion).toBe('bayn.candidate-development-protocol-identity.v1')
+    expect(first.candidateOrdinal).toBe(13)
+    expect(first.priorTrialCount).toBe(12)
+    expect(first.featureLookbackSessions).toBe(252)
+    expect(first.protocolHash).toBe('e9cc365a8b1c2cffe2aa37b496387000695e2a78d1093ad36e142261eab88454')
+    expect(preflight).toMatchObject({
+      status: 'PASS',
+      schemaVersion: 'bayn.candidate-development-preflight.v2',
+      attempt: {
+        candidateOrdinal: 13,
+        priorTrialCount: 12,
+        tailSampleCount: 38,
+      },
+      protocolIdentity: first,
+      doubledCostContract: candidateDevelopmentDoubledCostContract,
+    })
+  })
+
+  test('rejects Candidate 12 quantity-changing doubled-cost reruns as protocol deviations', () => {
+    const decisions = [signalDecision()]
+    const baseline = {
+      signalDecisions: decisions,
+      simulation: simulationTrace(candidateDevelopmentDoubledCostContract.baselineCostMultiplierMicros),
+    }
+    const invariantStress = {
+      signalDecisions: decisions,
+      simulation: simulationTrace(candidateDevelopmentDoubledCostContract.stressedCostMultiplierMicros),
+    }
+    const quantityChangingStress = {
+      signalDecisions: decisions,
+      simulation: simulationTrace(
+        candidateDevelopmentDoubledCostContract.stressedCostMultiplierMicros,
+        simulatedOrder({ filledQuantityMicros: '900000', status: 'partially-filled', unfilledRemainder: 'canceled' }),
+      ),
+    }
+    const signalChangingStress = {
+      signalDecisions: [signalDecision({ exposureScale: 0.5, targetWeights: { SPY: 0.5 } })],
+      simulation: simulationTrace(candidateDevelopmentDoubledCostContract.stressedCostMultiplierMicros),
+    }
+
+    expect(successOf(validateCandidateDevelopmentDoubledCostCausalPath(baseline, invariantStress))).toMatchObject({
+      schemaVersion: 'bayn.candidate-development-doubled-cost-check.v1',
+      status: 'PASS',
+    })
+    expect(validateCandidateDevelopmentDoubledCostCausalPath(baseline, quantityChangingStress)).toMatchObject(
+      Result.fail({
+        _tag: 'CandidateDevelopmentDoubledCostProtocolDeviation',
+        disposition: 'INVALID_PROTOCOL_DEVIATION',
+        reason: 'ORDER_QUANTITY_PATH_CHANGED',
+      }),
+    )
+    expect(validateCandidateDevelopmentDoubledCostCausalPath(baseline, signalChangingStress)).toMatchObject(
+      Result.fail({
+        _tag: 'CandidateDevelopmentDoubledCostProtocolDeviation',
+        disposition: 'INVALID_PROTOCOL_DEVIATION',
+        reason: 'SIGNAL_DECISIONS_CHANGED',
+      }),
+    )
   })
 
   test('proves the official terminal geometry is impossible while the distinct development geometry is feasible', () => {
@@ -277,7 +473,36 @@ describe('candidate development walk-forward protocol', () => {
     })
     expect(candidateDevelopmentStatisticsPolicy.walkForward.testSessions).toBe(197)
     expect(defaultQualificationStatisticsPolicy.walkForward.testSessions).toBe(252)
-    expect(candidateDevelopmentStatisticsPolicy.bootstrap).toEqual(defaultQualificationStatisticsPolicy.bootstrap)
+    expect(candidateDevelopmentStatisticsPolicy.bootstrap).toEqual({
+      ...defaultQualificationStatisticsPolicy.bootstrap,
+      samples: 10_000,
+    })
+    expect(defaultQualificationStatisticsPolicy).toMatchObject({
+      schemaVersion: 'bayn.qualification-statistics-policy.v1',
+      annualizationSessions: 252,
+      confidence: {
+        familyOneSidedAlpha: 0.05,
+        multiplicityAdjustment: 'bonferroni',
+        minimumTailSamples: 20,
+      },
+      bootstrap: {
+        method: 'paired-complete-rebalance-blocks',
+        samples: 5_000,
+        seedNamespace: 'bayn-risk-balanced-trend-qualification-v1',
+        lowerQuantile: 'nearest-rank',
+      },
+      walkForward: {
+        method: 'expanding-origin',
+        minimumTrainingSessions: 504,
+        testSessions: 252,
+        minimumFolds: 5,
+        minimumPositiveFoldFraction: 0.6,
+        maximumFoldDrawdown: 0.35,
+      },
+    })
+    expect(successOf(canonicalHashV1Result(defaultQualificationStatisticsPolicy))).toBe(
+      '8090c35a5e76e02bde5c74f7a71b5d0b005c3e0409165fde96f2748e827e88de',
+    )
   })
 
   test('covers exact off-by-one pass/fail boundaries and an infeasible 198-session protocol', () => {
@@ -325,6 +550,8 @@ describe('candidate development walk-forward protocol', () => {
 
     expect(
       preflightCandidateDevelopment({
+        candidateOrdinal: 13,
+        priorTrialCount: 12,
         officialSessions: sessions,
         signalSessionDates: officialMonthEndSignalDates(sessions),
         featureLookbackSessions: 63,
@@ -379,6 +606,51 @@ describe('candidate development walk-forward protocol', () => {
     )
   })
 
+  test('rejects the first infeasible ordinal before preregistration or data I/O', async () => {
+    let preregistrations = 0
+    let loads = 0
+    let evaluations = 0
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        runCandidateDevelopment(
+          {
+            candidateOrdinal: candidateDevelopmentAttemptHorizon.maximumCandidateOrdinal + 1,
+            priorTrialCount: candidateDevelopmentAttemptHorizon.maximumCandidateOrdinal,
+            officialSessions: [],
+            signalSessionDates: [],
+            featureLookbackSessions: 0,
+          },
+          {
+            preregisterCandidate: () => {
+              preregistrations += 1
+              return Effect.succeed('registration')
+            },
+            loadDevelopmentData: () => {
+              loads += 1
+              return Effect.succeed('data')
+            },
+            evaluateDevelopment: () => {
+              evaluations += 1
+              return Effect.succeed(candidateDevelopmentEvaluation('report'))
+            },
+          },
+        ),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      _tag: 'CandidateDevelopmentPreflightInvalid',
+      cause: {
+        _tag: 'CandidateDevelopmentBootstrapTailInfeasible',
+        candidateOrdinal: 26,
+        tailSampleCount: 19,
+      },
+    })
+    expect(preregistrations).toBe(0)
+    expect(loads).toBe(0)
+    expect(evaluations).toBe(0)
+  })
+
   test('stops before preregistration, data loading, and evaluation when the schedule is infeasible', async () => {
     const sessions = developmentSessions()
     let preregistrations = 0
@@ -387,6 +659,8 @@ describe('candidate development walk-forward protocol', () => {
     const exit = await Effect.runPromiseExit(
       runCandidateDevelopment(
         {
+          candidateOrdinal: 13,
+          priorTrialCount: 12,
           officialSessions: sessions,
           signalSessionDates: [sessions[273]],
           featureLookbackSessions: 0,
@@ -402,7 +676,7 @@ describe('candidate development walk-forward protocol', () => {
           },
           evaluateDevelopment: () => {
             evaluations += 1
-            return Effect.succeed('report')
+            return Effect.succeed(candidateDevelopmentEvaluation('report'))
           },
         },
       ),
@@ -414,36 +688,75 @@ describe('candidate development walk-forward protocol', () => {
     expect(evaluations).toBe(0)
   })
 
+  test('rejects an evaluated report when doubled-cost quantities diverge', async () => {
+    const sessions = developmentSessions()
+    let preregistrations = 0
+    let loads = 0
+    let evaluations = 0
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        runCandidateDevelopment(candidate13Input(sessions), {
+          preregisterCandidate: () => {
+            preregistrations += 1
+            return Effect.succeed('registration')
+          },
+          loadDevelopmentData: () => {
+            loads += 1
+            return Effect.succeed('data')
+          },
+          evaluateDevelopment: () => {
+            evaluations += 1
+            return Effect.succeed(
+              candidateDevelopmentEvaluation(
+                'invalid-report',
+                simulatedOrder({
+                  filledQuantityMicros: '900000',
+                  status: 'partially-filled',
+                  unfilledRemainder: 'canceled',
+                }),
+              ),
+            )
+          },
+        }),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      _tag: 'CandidateDevelopmentDoubledCostInvalid',
+      cause: {
+        _tag: 'CandidateDevelopmentDoubledCostProtocolDeviation',
+        disposition: 'INVALID_PROTOCOL_DEVIATION',
+        reason: 'ORDER_QUANTITY_PATH_CHANGED',
+      },
+    })
+    expect(preregistrations).toBe(1)
+    expect(loads).toBe(1)
+    expect(evaluations).toBe(1)
+  })
+
   test('preregisters, loads, and evaluates exactly once only after a passing preflight', async () => {
     const sessions = developmentSessions()
     let preregistrations = 0
     let loads = 0
     let evaluations = 0
     const report = await Effect.runPromise(
-      runCandidateDevelopment(
-        {
-          officialSessions: sessions,
-          signalSessionDates: officialMonthEndSignalDates(sessions),
-          featureLookbackSessions: 252,
+      runCandidateDevelopment(candidate13Input(sessions), {
+        preregisterCandidate: (preflight) => {
+          preregistrations += 1
+          return Effect.succeed(preflight.schemaVersion)
         },
-        {
-          preregisterCandidate: (preflight) => {
-            preregistrations += 1
-            return Effect.succeed(preflight.schemaVersion)
-          },
-          loadDevelopmentData: (registration, preflight) => {
-            loads += 1
-            return Effect.succeed(`${registration}:${preflight.selectedObservationStart}`)
-          },
-          evaluateDevelopment: (data, preflight) => {
-            evaluations += 1
-            return Effect.succeed(`${data}:${preflight.selectedObservationEnd}`)
-          },
+        loadDevelopmentData: (registration, preflight) => {
+          loads += 1
+          return Effect.succeed(`${registration}:${preflight.selectedObservationStart}`)
         },
-      ),
+        evaluateDevelopment: (data, preflight) => {
+          evaluations += 1
+          return Effect.succeed(candidateDevelopmentEvaluation(`${data}:${preflight.selectedObservationEnd}`))
+        },
+      }),
     )
 
-    expect(report).toBe('bayn.candidate-development-preflight.v1:2017-02-02:2022-12-30')
+    expect(report).toBe('bayn.candidate-development-preflight.v2:2017-02-02:2022-12-30')
     expect(preregistrations).toBe(1)
     expect(loads).toBe(1)
     expect(evaluations).toBe(1)
