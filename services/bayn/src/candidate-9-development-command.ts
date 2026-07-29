@@ -100,7 +100,7 @@ const acquireClickHouse = (config: Candidate9CommandConfig): Effect.Effect<Click
     catch: (cause) => ioFailure('create-clickhouse-client', cause),
   })
 
-const queryDevelopmentData = (
+export const queryCandidate9DevelopmentData = (
   client: ClickHouseClient,
 ): Effect.Effect<
   { readonly sessions: readonly string[]; readonly bars: readonly Candidate9Bar[] },
@@ -108,51 +108,52 @@ const queryDevelopmentData = (
 > =>
   Effect.tryPromise({
     try: async () => {
-      const [sessionResult, barResult] = await Promise.all([
-        client.query({
-          query: `
-            SELECT toString(session_date) AS session_date
-            FROM signal.exchange_sessions_v1
-            WHERE snapshot_id = {snapshotId:String}
-              AND session_date >= toDate({start:String})
-              AND session_date <= toDate({end:String})
-            ORDER BY session_date
-          `,
-          query_params: {
-            snapshotId: CANDIDATE_9_SNAPSHOT_ID,
-            start: CANDIDATE_9_DEVELOPMENT_START,
-            end: CANDIDATE_9_DEVELOPMENT_END,
-          },
-          format: 'JSONEachRow',
-          query_id: 'bayn-candidate-9-development-sessions',
-        }),
-        client.query({
-          query: `
-            SELECT
-              toString(session_date) AS session_date,
-              toDecimalString(adjusted_open, 8) AS adjusted_open,
-              toDecimalString(adjusted_high, 8) AS adjusted_high,
-              toDecimalString(adjusted_low, 8) AS adjusted_low,
-              toDecimalString(adjusted_close, 8) AS adjusted_close,
-              toDecimalString(adjusted_volume, 8) AS adjusted_volume
-            FROM signal.adjusted_daily_bars_v2
-            WHERE snapshot_id = {snapshotId:String}
-              AND symbol = {symbol:String}
-              AND session_date >= toDate({start:String})
-              AND session_date <= toDate({end:String})
-            ORDER BY session_date
-          `,
-          query_params: {
-            snapshotId: CANDIDATE_9_SNAPSHOT_ID,
-            symbol: CANDIDATE_9_SYMBOL,
-            start: CANDIDATE_9_DEVELOPMENT_START,
-            end: CANDIDATE_9_DEVELOPMENT_END,
-          },
-          format: 'JSONEachRow',
-          query_id: 'bayn-candidate-9-development-bars',
-        }),
-      ])
-      const [sessionRows, barRows] = await Promise.all([sessionResult.json<SessionRow>(), barResult.json<BarRow>()])
+      const sessionResult = await client.query({
+        query: `
+          SELECT toString(session_date) AS session_date
+          FROM signal.exchange_sessions_v1
+          WHERE snapshot_id = {snapshotId:String}
+            AND toString(session_date) >= {start:String}
+            AND toString(session_date) <= {end:String}
+          ORDER BY session_date
+        `,
+        query_params: {
+          snapshotId: CANDIDATE_9_SNAPSHOT_ID,
+          start: CANDIDATE_9_DEVELOPMENT_START,
+          end: CANDIDATE_9_DEVELOPMENT_END,
+        },
+        format: 'JSONEachRow',
+        query_id: 'bayn-candidate-9-development-sessions',
+      })
+      const sessionRows = await sessionResult.json<SessionRow>()
+
+      // Calendar materialization is deliberately complete before the first return-data query.
+      const barResult = await client.query({
+        query: `
+          SELECT
+            toString(session_date) AS session_date,
+            toDecimalString(adjusted_open, 8) AS adjusted_open,
+            toDecimalString(adjusted_high, 8) AS adjusted_high,
+            toDecimalString(adjusted_low, 8) AS adjusted_low,
+            toDecimalString(adjusted_close, 8) AS adjusted_close,
+            toDecimalString(adjusted_volume, 8) AS adjusted_volume
+          FROM signal.adjusted_daily_bars_v2
+          WHERE snapshot_id = {snapshotId:String}
+            AND symbol = {symbol:String}
+            AND toString(session_date) >= {start:String}
+            AND toString(session_date) <= {end:String}
+          ORDER BY session_date
+        `,
+        query_params: {
+          snapshotId: CANDIDATE_9_SNAPSHOT_ID,
+          symbol: CANDIDATE_9_SYMBOL,
+          start: CANDIDATE_9_DEVELOPMENT_START,
+          end: CANDIDATE_9_DEVELOPMENT_END,
+        },
+        format: 'JSONEachRow',
+        query_id: 'bayn-candidate-9-development-bars',
+      })
+      const barRows = await barResult.json<BarRow>()
       return {
         sessions: sessionRows.map((row) => row.session_date),
         bars: barRows.map((row) => ({
@@ -176,7 +177,7 @@ const loadDevelopmentData = (config: Candidate9CommandConfig): Effect.Effect<Can
         catch: (cause) => ioFailure('close-clickhouse-client', cause),
       }).pipe(Effect.orDie),
     ).pipe(
-      Effect.flatMap(queryDevelopmentData),
+      Effect.flatMap(queryCandidate9DevelopmentData),
       Effect.flatMap(({ bars, sessions }) =>
         Effect.fromResult(
           candidate9DatasetHashes(sessions as Candidate9Dataset['sessions'], bars).pipe(
@@ -229,17 +230,25 @@ const main = commandConfig.pipe(
     )
   }),
   Effect.tap((report) => Effect.sync(() => process.stdout.write(`${JSON.stringify(report, null, 2)}\n`))),
-  Effect.flatMap((report) =>
+  Effect.tap((report) =>
     report.status === 'PASS'
-      ? Effect.succeed(report)
-      : Effect.fail(
-          ioFailure(
-            'development-rejected',
-            `Candidate 9 failed the preregistered development screen: ${report.uncertainty.reasonCodes.join(',')}`,
-          ),
-        ),
+      ? Effect.void
+      : Effect.sync(() => {
+          process.exitCode = 2
+        }),
   ),
   Effect.mapError((failure) => new Candidate9DevelopmentCommandError({ message: renderFailure(failure), failure })),
 )
 
-if (import.meta.main) NodeRuntime.runMain(main)
+if (import.meta.main)
+  NodeRuntime.runMain(
+    main.pipe(
+      Effect.catch((error) =>
+        Effect.sync(() => {
+          process.stderr.write(`${error.message}\n`)
+          process.exitCode = 1
+        }),
+      ),
+    ),
+    { disableErrorReporting: true },
+  )

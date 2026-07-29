@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import type { ClickHouseClient } from '@clickhouse/client'
 import { Effect, Result } from 'effect'
 
 import {
@@ -8,12 +9,14 @@ import {
   runCandidateDevelopment,
   type CandidateDevelopmentPreflightPass,
 } from '../candidate-development'
+import { queryCandidate9DevelopmentData } from '../candidate-9-development-command'
 import { analyzeQualification, type QualificationSeries } from '../qualification-statistics'
 import type { AlignedSession } from '../simulation'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type DailyBar, type IsoDate } from '../types'
 import { candidate9DatasetHashes, evaluateCandidate9Development, prepareCandidate9DevelopmentData } from './development'
 import {
   CANDIDATE_9_PREREGISTRATION_SHA256,
+  CANDIDATE_9_DEVELOPMENT_START,
   CANDIDATE_9_SNAPSHOT_ID,
   candidate9DevelopmentSessions,
   candidate9PriorAttemptIds,
@@ -170,6 +173,45 @@ describe('Candidate 9 asymmetric range-volatility strategy', () => {
 
     expect(report).toBe(5)
     expect(order).toEqual(['preregister', 'data', 'evaluate'])
+  })
+
+  test('materializes the bounded string calendar before querying return data', async () => {
+    const operations: string[] = []
+    const client = {
+      query: async (request: { readonly query: string; readonly query_id: string }) => {
+        operations.push(`query:${request.query_id}`)
+        expect(request.query).toContain('toString(session_date) >= {start:String}')
+        expect(request.query).toContain('toString(session_date) <= {end:String}')
+        return {
+          json: async () => {
+            operations.push(`json:${request.query_id}`)
+            return request.query_id.endsWith('sessions')
+              ? [{ session_date: CANDIDATE_9_DEVELOPMENT_START }]
+              : [
+                  {
+                    session_date: CANDIDATE_9_DEVELOPMENT_START,
+                    adjusted_open: '100.00000000',
+                    adjusted_high: '101.00000000',
+                    adjusted_low: '99.00000000',
+                    adjusted_close: '100.50000000',
+                    adjusted_volume: '1000000.00000000',
+                  },
+                ]
+          },
+        }
+      },
+    } as unknown as ClickHouseClient
+
+    const loaded = await Effect.runPromise(queryCandidate9DevelopmentData(client))
+
+    expect(loaded.sessions).toEqual([CANDIDATE_9_DEVELOPMENT_START])
+    expect(loaded.bars).toHaveLength(1)
+    expect(operations).toEqual([
+      'query:bayn-candidate-9-development-sessions',
+      'json:bayn-candidate-9-development-sessions',
+      'query:bayn-candidate-9-development-bars',
+      'json:bayn-candidate-9-development-bars',
+    ])
   })
 
   test('applies the singleton bounded-selection penalty and non-wrapping fold geometry', () => {
