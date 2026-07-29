@@ -86,6 +86,95 @@ const databaseConfig = {
   postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
 }
 
+interface CommandResult {
+  readonly exitCode: number
+  readonly stderr: string
+  readonly stdout: string
+}
+
+const runCommand = async (command: readonly string[]): Promise<CommandResult> => {
+  const childProcess = Bun.spawn({ cmd: [...command], stdout: 'pipe', stderr: 'pipe' })
+  const [exitCode, stdout, stderr] = await Promise.all([
+    childProcess.exited,
+    new Response(childProcess.stdout).text(),
+    new Response(childProcess.stderr).text(),
+  ])
+  return { exitCode, stdout: stdout.trim(), stderr: stderr.trim() }
+}
+
+const requireCommand = async (command: readonly string[]): Promise<string> => {
+  const result = await runCommand(command)
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `command failed (${command.join(' ')}): ${result.stderr.length === 0 ? result.stdout : result.stderr}`,
+    )
+  }
+  return result.stdout
+}
+
+interface PostgresProcessRestartEvidence {
+  readonly containerId: string
+  readonly image: string
+  readonly startedAtBefore: string
+  readonly startedAtAfter: string
+}
+
+const restartGithubPostgres18Process = async (): Promise<PostgresProcessRestartEvidence | undefined> => {
+  if (process.env.GITHUB_ACTIONS !== 'true') return undefined
+
+  const url = new URL(testUrl)
+  const port = url.port.length === 0 ? '5432' : url.port
+  const database = url.pathname.slice(1)
+  const containers = (
+    await requireCommand(['docker', 'ps', '--filter', `publish=${port}`, '--format', '{{.ID}}\t{{.Image}}'])
+  )
+    .split('\n')
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const [containerId, image] = line.split('\t')
+      return { containerId, image }
+    })
+    .filter(
+      (entry): entry is { readonly containerId: string; readonly image: string } =>
+        entry.containerId !== undefined && entry.image !== undefined && /^postgres:18(?:-|$)/.test(entry.image),
+    )
+
+  if (containers.length !== 1) {
+    throw new Error(`expected exactly one published PostgreSQL 18 service container, found ${containers.length}`)
+  }
+  const [{ containerId, image }] = containers
+  const startedAtBefore = await requireCommand(['docker', 'inspect', '--format', '{{.State.StartedAt}}', containerId])
+
+  await requireCommand(['docker', 'restart', '--time', '0', containerId])
+  let ready = false
+  let lastReadiness = ''
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const result = await runCommand([
+      'docker',
+      'exec',
+      containerId,
+      'pg_isready',
+      '-U',
+      decodeURIComponent(url.username),
+      '-d',
+      decodeURIComponent(database),
+    ])
+    lastReadiness = result.stderr.length === 0 ? result.stdout : result.stderr
+    if (result.exitCode === 0) {
+      ready = true
+      break
+    }
+    await Bun.sleep(250)
+  }
+  if (!ready) throw new Error(`PostgreSQL 18 did not become ready after process restart: ${lastReadiness}`)
+
+  const startedAtAfter = await requireCommand(['docker', 'inspect', '--format', '{{.State.StartedAt}}', containerId])
+  if (startedAtAfter === startedAtBefore) {
+    throw new Error('PostgreSQL 18 service container did not record a new process start')
+  }
+  return { containerId, image, startedAtBefore, startedAtAfter }
+}
+
 const makeRuntime = () =>
   ManagedRuntime.make(
     CycleStoreLive.pipe(Layer.provideMerge(PostgresClientLive(databaseConfig)), Layer.provideMerge(NodeServices.layer)),
@@ -2182,6 +2271,17 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       const ioBeforeRestart = { ...io }
       await firstRuntime.dispose()
 
+      const processRestart = await restartGithubPostgres18Process()
+      if (process.env.GITHUB_ACTIONS === 'true') {
+        expect(processRestart).toMatchObject({
+          containerId: expect.any(String),
+          image: expect.stringMatching(/^postgres:18(?:-|$)/),
+          startedAtBefore: expect.any(String),
+          startedAtAfter: expect.any(String),
+        })
+        expect(processRestart?.startedAtAfter).not.toBe(processRestart?.startedAtBefore)
+      }
+
       restartedRuntime = makeAutonomousRuntime()
       const restarted = await runProductionDuePass(restartedRuntime, io)
       expect(restarted).toMatchObject({
@@ -2207,5 +2307,5 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       await firstRuntime.dispose()
       if (restartedRuntime !== undefined) await restartedRuntime.dispose()
     }
-  }, 30_000)
+  }, 60_000)
 })
