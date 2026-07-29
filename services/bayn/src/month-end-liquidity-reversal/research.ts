@@ -20,6 +20,7 @@ import {
   candidate6CalendarYearReturns,
   candidate6Mean,
   candidate6Metrics,
+  candidate6MovingBlockBootstrapSample,
   candidate6Quantile,
   candidate6SampleStandardDeviation,
   candidate6SubsetMetrics,
@@ -322,13 +323,7 @@ const bootstrapConfidenceInterval = (
   const annualizedReturns: number[] = []
   const sharpes: number[] = []
   for (let replicate = 0; replicate < BOOTSTRAP_REPLICATES; replicate += 1) {
-    const sample: number[] = []
-    while (sample.length < returns.length) {
-      const start = Math.floor(random() * returns.length)
-      for (let offset = 0; offset < BOOTSTRAP_BLOCK_LENGTH && sample.length < returns.length; offset += 1) {
-        sample.push(returns[(start + offset) % returns.length] ?? 0)
-      }
-    }
+    const sample = candidate6MovingBlockBootstrapSample(returns, BOOTSTRAP_BLOCK_LENGTH, random)
     const growth = sample.reduce((value, dailyReturn) => value * (1 + dailyReturn), 1)
     annualizedReturns.push(growth > 0 ? growth ** (CANDIDATE_6_SESSIONS_PER_YEAR / sample.length) - 1 : -1)
     const volatility = candidate6SampleStandardDeviation(sample) * Math.sqrt(CANDIDATE_6_SESSIONS_PER_YEAR)

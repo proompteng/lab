@@ -4,7 +4,7 @@ import { canonicalHashV1Result } from '../hash'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type DailyBar, type IsoDate } from '../types'
 import { makeCandidate6Decision } from './decision'
 import { candidate6Protocol, type Candidate6DecisionInput, type Candidate6Protocol } from './model'
-import { simulateCandidate6 } from './simulation'
+import { candidate6MovingBlockBootstrapSample, executeCandidate6OrderIntent, simulateCandidate6 } from './simulation'
 
 const behaviorCalendar = [
   '2021-12-27',
@@ -100,6 +100,27 @@ const resultEvidence = <A, E>(result: Result.Result<A, E>) =>
     ? ({ outcome: 'success', value: result.success } as const)
     : ({ outcome: 'failure', failure: result.failure } as const)
 
+const boundedGapTrimEvidence = (protocol: Candidate6Protocol) => {
+  const decision = makeCandidate6Decision(decisionInput('2022-02-02', '2022-02-03', '2022-01-25', 0.5, protocol))
+  if (Result.isFailure(decision)) return resultEvidence(decision)
+  const orderIntent = decision.success.orderIntents[0]
+  if (orderIntent === undefined) {
+    return { outcome: 'failure', failure: { _tag: 'MissingBehaviorOrderIntent' } } as const
+  }
+  return resultEvidence(
+    executeCandidate6OrderIntent({
+      cashUsd: 500_000,
+      shares: 5_000,
+      openPrice: 200,
+      decision: decision.success,
+      orderIntent,
+      protocol,
+      costMultiplier: 0,
+      includePartialFills: false,
+    }),
+  )
+}
+
 const transitionInput = (
   activeEntrySignalDate: IsoDate | null,
   currentWeight: number,
@@ -139,6 +160,8 @@ export const candidate6ExecutableBehaviorEvidence = (protocol: Candidate6Protoco
     transitionCash: resultEvidence(makeCandidate6Decision(transitionInput(null, 0, protocol))),
     transitionLiquidation: resultEvidence(makeCandidate6Decision(transitionInput('2024-05-24', 0.2, protocol))),
     transitionRejectFutureLineage: resultEvidence(makeCandidate6Decision(transitionInput('2024-06-24', 0.2, protocol))),
+    boundedGapTrim: boundedGapTrimEvidence(protocol),
+    movingBlockBootstrap: candidate6MovingBlockBootstrapSample([1, 2, 3, 4, 5], 3, () => 0.999_999),
     completeSimulation: resultEvidence(
       simulateCandidate6(
         behaviorCalendar,

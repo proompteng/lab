@@ -3,7 +3,12 @@ import { Result } from 'effect'
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import type { DailyBar, IsoDate } from '../types'
 import { makeCandidate6Decision } from './decision'
-import { type Candidate6Decision, type Candidate6DecisionFailure, type Candidate6Protocol } from './model'
+import {
+  type Candidate6Decision,
+  type Candidate6DecisionFailure,
+  type Candidate6OrderIntent,
+  type Candidate6Protocol,
+} from './model'
 
 export const CANDIDATE_6_INITIAL_CAPITAL_USD = 1_000_000
 export const CANDIDATE_6_SESSIONS_PER_YEAR = 252
@@ -54,10 +59,21 @@ export interface Candidate6SimulationOutcome {
 
 interface PendingDecision {
   readonly decision: Candidate6Decision
-  readonly targetWeight: number
+  readonly orderIntent: Candidate6OrderIntent
 }
 
-interface FillOutcome {
+export interface Candidate6OrderExecutionInput {
+  readonly cashUsd: number
+  readonly shares: number
+  readonly openPrice: number
+  readonly decision: Candidate6Decision
+  readonly orderIntent: Candidate6OrderIntent
+  readonly protocol: Candidate6Protocol
+  readonly costMultiplier: number
+  readonly includePartialFills: boolean
+}
+
+export interface Candidate6FillOutcome {
   readonly cashUsd: number
   readonly shares: number
   readonly turnoverFraction: number
@@ -88,6 +104,27 @@ export const candidate6Quantile = (values: readonly number[], probability: numbe
   const lowerValue = sorted[lower] ?? 0
   const upperValue = sorted[upper] ?? lowerValue
   return lowerValue + (upperValue - lowerValue) * (position - lower)
+}
+
+export const candidate6MovingBlockBootstrapSample = (
+  values: readonly number[],
+  blockLength: number,
+  random: () => number,
+): readonly number[] => {
+  if (values.length === 0) return []
+  const boundedBlockLength = Math.min(values.length, Math.max(1, Math.floor(blockLength)))
+  const startCount = values.length - boundedBlockLength + 1
+  const sample: number[] = []
+  while (sample.length < values.length) {
+    const draw = random()
+    const boundedDraw = Number.isFinite(draw) ? Math.min(Math.max(draw, 0), 1 - Number.EPSILON) : 0
+    const start = Math.floor(boundedDraw * startCount)
+    for (const value of values.slice(start, start + boundedBlockLength)) {
+      if (sample.length >= values.length) break
+      sample.push(value)
+    }
+  }
+  return sample
 }
 
 export const candidate6Metrics = (
@@ -164,29 +201,31 @@ const partialFillFraction = (
   return Result.succeed(bucket < protocol.execution.partialFillProbability ? protocol.execution.partialFillFraction : 1)
 }
 
-const executeTarget = (
-  cashUsd: number,
-  shares: number,
-  openPrice: number,
-  pending: PendingDecision,
-  protocol: Candidate6Protocol,
-  costMultiplier: number,
-  includePartialFills: boolean,
-): SimulationResult<FillOutcome> => {
+export const executeCandidate6OrderIntent = (
+  input: Candidate6OrderExecutionInput,
+): SimulationResult<Candidate6FillOutcome> => {
+  const { cashUsd, shares, openPrice, decision, orderIntent, protocol, costMultiplier, includePartialFills } = input
+  if (!Number.isFinite(openPrice) || openPrice <= 0) {
+    return fail({ _tag: 'ResearchSimulationInvariant', reason: 'order execution requires a positive open price' })
+  }
+  if (!Number.isFinite(orderIntent.maximumNotionalUsd) || orderIntent.maximumNotionalUsd < 0) {
+    return fail({ _tag: 'ResearchSimulationInvariant', reason: 'order intent has invalid maximum notional' })
+  }
   const equityAtOpen = cashUsd + shares * openPrice
-  const currentNotional = shares * openPrice
-  const desiredNotional = pending.targetWeight * equityAtOpen
-  const referenceNotionalDelta = desiredNotional - currentNotional
-  if (Math.abs(referenceNotionalDelta) < 0.01) {
+  if (!Number.isFinite(equityAtOpen) || equityAtOpen <= 0) {
+    return fail({ _tag: 'ResearchSimulationInvariant', reason: 'order execution requires positive opening equity' })
+  }
+  if (orderIntent.maximumNotionalUsd < 0.01) {
     return Result.succeed({ cashUsd, shares, turnoverFraction: 0, modeledCostUsd: 0, partial: false })
   }
-  const fractionResult = partialFillFraction(pending.decision, protocol, includePartialFills)
+  const fractionResult = partialFillFraction(decision, protocol, includePartialFills)
   if (Result.isFailure(fractionResult)) return fail(fractionResult.failure)
   const fraction = fractionResult.success
+  const requestedReferenceNotional = orderIntent.maximumNotionalUsd * fraction
   const oneWayBps = (protocol.execution.halfSpreadBps + protocol.execution.slippageBps) * costMultiplier
   const priceAdjustment = oneWayBps / 10_000
-  if (referenceNotionalDelta > 0) {
-    const requestedQuantity = (referenceNotionalDelta / openPrice) * fraction
+  if (orderIntent.side === 'buy') {
+    const requestedQuantity = requestedReferenceNotional / openPrice
     const fillPrice = openPrice * (1 + priceAdjustment)
     const maximumQuantity = cashUsd / fillPrice
     const quantity = Math.max(0, Math.min(requestedQuantity, maximumQuantity))
@@ -199,7 +238,7 @@ const executeTarget = (
       partial: fraction < 1,
     })
   }
-  const requestedQuantity = Math.min(shares, (-referenceNotionalDelta / openPrice) * fraction)
+  const requestedQuantity = Math.min(shares, requestedReferenceNotional / openPrice)
   const fillPrice = openPrice * Math.max(0, 1 - priceAdjustment)
   const referenceNotional = requestedQuantity * openPrice
   const secFee = referenceNotional * ((protocol.execution.secSellBps * costMultiplier) / 10_000)
@@ -265,7 +304,16 @@ export const simulateCandidate6 = (
     let partialFillCount = 0
     let modeledCostUsd = 0
     if (pending !== null && pending.decision.executionDate === sessionDate) {
-      const fill = executeTarget(cashUsd, shares, bar.open, pending, protocol, costMultiplier, includePartialFills)
+      const fill = executeCandidate6OrderIntent({
+        cashUsd,
+        shares,
+        openPrice: bar.open,
+        decision: pending.decision,
+        orderIntent: pending.orderIntent,
+        protocol,
+        costMultiplier,
+        includePartialFills,
+      })
       if (Result.isFailure(fill)) return fail(fill.failure)
       cashUsd = fill.success.cashUsd
       shares = fill.success.shares
@@ -316,9 +364,16 @@ export const simulateCandidate6 = (
     })
     if (Result.isFailure(decisionResult)) return fail(decisionResult.failure)
     if (decisionResult.success.orderIntents.length > 0) {
+      const orderIntent = decisionResult.success.orderIntents[0]
+      if (orderIntent === undefined || decisionResult.success.orderIntents.length !== 1) {
+        return fail({
+          _tag: 'ResearchSimulationInvariant',
+          reason: `expected one SPY order intent on ${sessionDate}`,
+        })
+      }
       pending = {
         decision: decisionResult.success,
-        targetWeight: decisionResult.success.targetWeights.SPY,
+        orderIntent,
       }
     }
   }
