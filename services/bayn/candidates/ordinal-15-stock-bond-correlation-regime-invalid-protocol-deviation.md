@@ -1,11 +1,14 @@
-# Candidate ordinal 15: stock-bond-correlation regime development rejection
+# Candidate ordinal 15: stock-bond-correlation regime invalid protocol deviation
 
-Status: **HOLD_REJECT — one valid v2 development attempt consumed**
+Status: **INVALID_PROTOCOL_DEVIATION — one metric-bearing attempt consumed; executable candidate removed**
 
-Candidate 15 does not provide evidence of a genuinely qualified profitable strategy. Its fixed stock-bond-correlation
-regime rule passed every mechanical point-estimate economic gate and produced a higher point Sharpe than the mechanically
-stronger benchmark, but both Candidate-15-adjusted lower confidence bounds were negative. No retune, rerun, alternate
-seed, family substitution, holdout access, or capital action is authorized.
+Candidate 15 did not produce valid v2 development evidence. Its sole command emitted `HOLD_REJECT`, but exact-commit
+review found that the evaluated shared uncertainty implementation did not execute the immutable benchmark-relative
+gates. The bootstrap field named `annualizedExcessReturn` annualized candidate return above cash without subtracting the
+selected benchmark, and walk-forward `excessReturn` also compared candidate return with cash instead of the selected
+benchmark. This contradicts the preregistration's benchmark-relative lower-bound and fold gates. Under the immutable
+one-shot rules, the command's emitted status is superseded by terminal `INVALID_PROTOCOL_DEVIATION`. No retune, rerun,
+alternate seed, family substitution, holdout access, or capital action is authorized.
 
 ## Terminal disposition
 
@@ -15,16 +18,17 @@ seed, family substitution, holdout access, or capital action is authorized.
 - Frozen specification: `spy-ief-correlation-126-spy45-hedge45-reserve10`.
 - Sole metric-bearing development evaluation started at `2026-07-29T23:32:52Z` and finished at
   `2026-07-29T23:32:59Z`.
-- Command exit: `2`, the expected CLI disposition for a conforming `HOLD_REJECT` report.
+- Command exit: `2`, the CLI disposition emitted by the nonconforming `HOLD_REJECT` report.
 - No application error was emitted. Standard error contained only the `kubectl exec` wrapper's
   `command terminated with exit code 2` message.
 - The attempt is consumed. The result must not be rerun, retuned, repaired, reseeded, reframed, or replaced by another
   specification in this family.
 - `developmentPass=false`; `selectedSpecificationId=null`.
-- Terminal status: `HOLD_REJECT`, not `INVALID_PROTOCOL_DEVIATION`.
+- Terminal status: `INVALID_PROTOCOL_DEVIATION`; the emitted `HOLD_REJECT` is retained only as raw output identity.
 
 The sole report bytes were retained outside the repository for audit during this task but are deliberately not committed
-as a JSON evidence dump.
+as a JSON evidence dump. Candidate 15 is consumed and cannot be rerun to recompute the missing benchmark-relative
+statistics.
 
 ## Immutable ancestry and executable identity
 
@@ -65,7 +69,7 @@ Git ancestry was explicitly verified as:
   -> 2431fe3ac343c95c4ac4110c62e875568ef3dc2d
 ```
 
-## Canonical report and family identities
+## Raw emitted report identities and consumed-attempt identity
 
 | Identity                       | SHA-256                                                            |
 | ------------------------------ | ------------------------------------------------------------------ |
@@ -73,14 +77,26 @@ Git ancestry was explicitly verified as:
 | Parameter                      | `856d731795849781b9f824a3b7fdf2f535262cd96144b1aabc7c60f84726a288` |
 | Behavior                       | `f125b14022360895525c8941310b430236451229dff85214d9251b22d8ebced2` |
 | Family strategy                | `4e294049f5f90d9373c0aaff38187dc6bf358928b9dbff041dd53f4e8d228695` |
-| Family run                     | `e8e273266688c8907031d2a919230bf2da6fef25615aa2e2403ee33226b25549` |
+| Raw emitted family run         | `e8e273266688c8907031d2a919230bf2da6fef25615aa2e2403ee33226b25549` |
 | Specification strategy         | `e2a397e35a7b583513671ed84a2058d5074f5af4e0cf2441d97abf5d3533272d` |
 | Specification run              | `01072fb403c91e1938492556507c2585444c9c7b01aa5a9b68781ddac97464a9` |
 | Canonical report               | `f4252f5d3ffb20d361b2f6f64b8a59b7b366d964fd3395ccb47df85292fd1514` |
 | Qualification analysis         | `2d4ca2a681737170f4a2da6968f507116ca9807ffb075e6f45547f4f4903bc70` |
 | Bootstrap samples              | `cf2926255344a3753fc149a87490c4c12d47c4c5107d7936ef15a062cc3d0d13` |
 
-The family run identity above is Candidate 15's consumed attempt identity for future lineage accounting.
+The raw family-run identity above came from a report whose benchmark-relative gates were not implemented as frozen. It
+is retained for byte-level audit only and is **not** valid family-run evidence. Candidate 15's canonical consumed
+protocol-deviation attempt identity is:
+
+```text
+a673b246253836ab95a1836e10efeb8315c0978cebda8dbf00d8767c60d399eb
+```
+
+That identity is the repository canonical hash of schema
+`bayn.candidate-development-invalid-attempt.v1` over Candidate ordinal `15`, the immutable preregistration commit and
+SHA-256, evaluated commit, sole report SHA-256, and deviation code
+`benchmark-relative-uncertainty-gates-implemented-as-cash-relative`. Future prior-attempt lineage must use this consumed
+protocol-deviation identity, not the raw family-run identity.
 
 ## Bounded development data identity
 
@@ -131,9 +147,36 @@ return at 10% assumed tracking volatility and 80% target power; absolute minima 
 origin with five 197-session tests, at least 60% positive folds, and maximum fold drawdown 35%; actual/365 simple cash
 return.
 
-## Complete emitted performance metrics
+## Exact benchmark-relative gate deviation
 
-All monetary accounting values below are integer micros exactly as emitted.
+The frozen preregistration required both of these gates to be relative to the mechanically selected stronger benchmark:
+
+1. the Candidate-15-adjusted annualized excess-return lower confidence bound must be strictly positive; and
+2. at least three of five walk-forward folds must have positive benchmark excess return.
+
+Evaluated commit `4c511bdad0593e23cb07de2dbf9be8360c56a337` called the shared `analyzeQualification` path without a
+candidate-specific correction. In the exact evaluated shared source:
+
+- `qualification-statistics/bootstrap.ts` selected the stronger benchmark and used it for Sharpe-difference samples, but
+  constructed every `annualizedExcessReturn` sample as
+  `mean(strategyReturn - cashReturn) * 252`. It did not subtract the selected benchmark return.
+- `qualification-statistics/walk-forward.ts` constructed every fold `excessReturn` as compounded strategy return minus
+  compounded cash return. It did not select or subtract either benchmark.
+
+Therefore the emitted field named `annualizedExcessReturnLowerBound` is a candidate-above-cash lower bound, and the
+emitted `4 / 5` positive-fold count is a candidate-above-cash count. Neither implements the immutable benchmark-relative
+gate. The emitted Sharpe-difference bootstrap did use the selected benchmark, but one conforming gate cannot cure two
+other contract violations. The one-shot rule classifies any contract breach after metrics as
+`INVALID_PROTOCOL_DEVIATION` and forbids a corrected rerun.
+
+No benchmark-relative annualized-return bootstrap distribution, benchmark-relative annualized-return lower confidence
+bound, or benchmark-relative walk-forward fold set was durably emitted. Those values are unavailable and must not be
+inferred from the raw report.
+
+## Complete emitted diagnostic performance metrics
+
+All monetary accounting values below are integer micros exactly as emitted. They remain useful for reproducing the sole
+command output, but they do not constitute a conforming Candidate 15 v2 evaluation.
 
 | Path                                  | Observations |          Total return |     Annualized return | Annualized volatility |               Sharpe |      Maximum drawdown |      Annual turnover | Fees micros | Spread micros | Slippage micros | Cash yield micros | Ending equity micros |
 | ------------------------------------- | -----------: | --------------------: | --------------------: | --------------------: | -------------------: | --------------------: | -------------------: | ----------: | ------------: | --------------: | ----------------: | -------------------: |
@@ -151,9 +194,10 @@ SPY buy-and-hold was mechanically selected as the stronger benchmark because its
 The candidate therefore produced a modestly higher point Sharpe but materially lower annualized return than SPY. Point
 estimates alone do not satisfy the v2 uncertainty contract.
 
-## Every mechanical economic gate
+## Every emitted point-estimate economic gate
 
-The mechanical economic verdict was `PASS` before uncertainty gates were applied.
+The command's point-estimate economic verdict was `PASS`. These gates are retained as diagnostic output; they do not
+override the terminal protocol deviation in the uncertainty contract.
 
 | Gate                           | Passed | Actual                 | Required |
 | ------------------------------ | ------ | ---------------------- | -------- |
@@ -165,9 +209,10 @@ The mechanical economic verdict was `PASS` before uncertainty gates were applied
 | `maximum_turnover`             | true   | `1.3206578844455177`   | `<=12`   |
 | `double_cost_return`           | true   | `0.0634504722154523`   | `>0`     |
 
-## Multiplicity-adjusted uncertainty and power result
+## Nonconforming emitted uncertainty and power output
 
-Uncertainty status: **REJECTED**.
+The command emitted uncertainty status `REJECTED`, but this is not a valid frozen-gate disposition because two named
+statistics were cash-relative rather than benchmark-relative.
 
 Reason codes:
 
@@ -178,23 +223,25 @@ Complete uncertainty output:
 
 - Adjusted one-sided alpha: `0.0033333333333333335`.
 - Produced bootstrap samples: `10,000`.
-- Annualized excess-return lower confidence bound: `-0.03248474065`.
+- Misnamed annualized candidate-above-cash lower confidence bound: `-0.03248474065`.
 - Sharpe-difference lower confidence bound: `-0.360771458451`.
 - Complete non-wrapping rebalance blocks: `70`; required: `69`.
 - Available complete sessions: `1,470`; required: `1,449`.
 - Positive walk-forward folds: `4 / 5`; required fraction: at least `0.6`.
 - Every fold drawdown was below the frozen `0.35` ceiling.
 
-| Fold | Training dates           | Test dates               | Test observations | Benchmark excess return | Maximum drawdown | Positive excess |
-| ---: | ------------------------ | ------------------------ | ----------------: | ----------------------: | ---------------: | --------------- |
-|    0 | `2017-02-02..2019-02-04` | `2019-02-05..2019-11-13` |               197 |        `0.108224316841` | `0.015705961893` | true            |
-|    1 | `2017-02-02..2019-11-13` | `2019-11-14..2020-08-26` |               197 |        `0.122519471831` | `0.135939868633` | true            |
-|    2 | `2017-02-02..2020-08-26` | `2020-08-27..2021-06-09` |               197 |        `0.096141253516` | `0.044872572075` | true            |
-|    3 | `2017-02-02..2021-06-09` | `2021-06-10..2022-03-21` |               197 |        `0.029050164251` | `0.080840835451` | true            |
-|    4 | `2017-02-02..2022-03-21` | `2022-03-22..2022-12-30` |               197 |       `-0.081074072668` | `0.130497425901` | false           |
+| Fold | Training dates           | Test dates               | Test observations | Candidate-above-cash return | Maximum drawdown | Positive above cash |
+| ---: | ------------------------ | ------------------------ | ----------------: | --------------------------: | ---------------: | ------------------- |
+|    0 | `2017-02-02..2019-02-04` | `2019-02-05..2019-11-13` |               197 |            `0.108224316841` | `0.015705961893` | true                |
+|    1 | `2017-02-02..2019-11-13` | `2019-11-14..2020-08-26` |               197 |            `0.122519471831` | `0.135939868633` | true                |
+|    2 | `2017-02-02..2020-08-26` | `2020-08-27..2021-06-09` |               197 |            `0.096141253516` | `0.044872572075` | true                |
+|    3 | `2017-02-02..2021-06-09` | `2021-06-10..2022-03-21` |               197 |            `0.029050164251` | `0.080840835451` | true                |
+|    4 | `2017-02-02..2022-03-21` | `2022-03-22..2022-12-30` |               197 |           `-0.081074072668` | `0.130497425901` | false               |
 
-The sample met the preregistered power floors, so the result is not classified as insufficient. The valid rejection is
-caused by both adjusted lower confidence bounds remaining below zero.
+The sample met the preregistered power floors. That does not make the emitted uncertainty analysis conforming. The
+benchmark-relative Sharpe-difference lower bound was negative, but the annualized-return lower bound and positive-fold
+count did not test their frozen benchmark-relative gates. The controlling outcome is protocol deviation, not a valid
+statistical rejection.
 
 ## Doubled-cost causal-path and terminal-cash proof
 
@@ -219,8 +266,8 @@ directVolatility=true
 doubleCostStrategy=true
 ```
 
-The invariant-quantity stressed replay remained non-borrowing. Candidate 15 therefore failed statistically, not because
-of a quantity-path divergence or a protocol breach.
+The invariant-quantity stressed replay remained non-borrowing and its signal/quantity hashes conformed. That successful
+causal-path check does not cure the separate benchmark-relative uncertainty-gate protocol breach.
 
 ## Holdout and zero-mutation attestation
 
@@ -252,13 +299,14 @@ Post-evaluation runtime state remained:
 
 ## Required cleanup and final conclusion
 
-Because the terminal result is `HOLD_REJECT`, the final branch must remove the Candidate 15 executable module, tests, CLI,
-and package script while preserving the base, preregistration, evaluated implementation, this evidence, and cleanup
-ancestry. Cleanup commit `2431fe3ac343c95c4ac4110c62e875568ef3dc2d` completed that removal; the final tree retains
-only the immutable preregistration and this honest Markdown outcome for Candidate 15. The evidence PR must remain closed
-and unmerged.
+Because the terminal result is `INVALID_PROTOCOL_DEVIATION`, the final branch must remove the Candidate 15 executable
+module, tests, CLI, and package script while preserving the base, preregistration, evaluated implementation, raw emitted
+evidence, corrective classification, and cleanup ancestry. Cleanup commit
+`2431fe3ac343c95c4ac4110c62e875568ef3dc2d` completed the executable removal; the final tree retains only the immutable
+preregistration and this honest Markdown outcome for Candidate 15. The evidence PR must remain closed and unmerged.
 
-Candidate 15 showed lower volatility and drawdown than SPY and a slightly higher point Sharpe, but its annualized return
-was substantially lower and neither adjusted benchmark-relative lower bound was positive. It is not a qualified
-profitable strategy and must not advance to holdout, terminal qualification, merge, deployment, capital, or order
+The raw point estimates showed lower volatility and drawdown than SPY, a slightly higher point Sharpe, and substantially
+lower annualized return. The sole command did not produce the frozen benchmark-relative annualized-return lower bound or
+benchmark-relative fold evidence, so Candidate 15 is not a valid development rejection and supplies no qualified
+profitability evidence. It must not advance to holdout, terminal qualification, merge, deployment, capital, or order
 authority.
