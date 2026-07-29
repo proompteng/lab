@@ -1,12 +1,15 @@
-# Candidate ordinal 12: development rejection
+# Candidate ordinal 12: invalid development attempt
 
-Status: **HOLD_REJECT — terminal qualification not authorized**
+Status: **INVALID_PROTOCOL_DEVIATION — attempt consumed; terminal qualification not authorized**
 
-Candidate 12 evaluated the singleton `same-month-seasonal-excess-lag1` specification exactly once on the frozen
-development interval. It remained profitable after declared and double execution costs, satisfied the power geometry,
-and produced positive benchmark excess in four of five chronological folds. It nevertheless failed the point Sharpe
-gate and both prior-attempt-adjusted lower-confidence-bound gates by a wide margin. The untouched `2023-01-03` through
-`2025-12-31` holdout was not inspected or queried.
+Candidate 12 consumed exactly one metric-bearing development attempt for the singleton
+`same-month-seasonal-excess-lag1` specification on the frozen development interval. A post-run exact-commit audit found
+that the evaluated double-cost path violated the immutable preregistration: it reran the simulation with doubled costs,
+allowing cost-dependent equity and affordability to change requested quantities and turnover instead of applying
+doubled costs to the ordinary-run quantities. The command's emitted `HOLD_REJECT` is therefore not a valid
+preregistered development verdict. The attempt is classified `INVALID_PROTOCOL_DEVIATION`, is consumed, and cannot be
+repaired or rerun after metrics were observed. The untouched `2023-01-03` through `2025-12-31` holdout was not inspected
+or queried.
 
 ## Immutable lineage
 
@@ -42,11 +45,34 @@ before any metric existed. The local agents-shell image provides BusyBox `base64
 preregistration byte, or evaluated commit changed. The wrapper alone was corrected to use BusyBox-compatible `base64
 -d`.
 
-The next invocation was the sole metric-bearing development evaluation. It ran the package command
+The next invocation was the sole metric-bearing development attempt. It ran the package command
 `candidate:12:development`, used `runCandidateDevelopment`, bound the exact evaluated commit above, produced one report,
-and exited `2` for the frozen `HOLD_REJECT` result. It was not rerun.
+and exited `2` after emitting `HOLD_REJECT`. It was not rerun. The later exact-commit review identified the double-cost
+protocol deviation described below, so the emitted status is retained only as raw output identity and is superseded by
+the terminal research classification `INVALID_PROTOCOL_DEVIATION`.
 
-## Frozen data and geometry actually evaluated
+The one metric-bearing attempt is consumed. Candidate 12 may not be rerun, retuned, repaired, or replaced under this
+ordinal after metrics were visible. It authorizes no terminal qualification.
+
+## Double-cost protocol deviation
+
+The frozen preregistration required the double-cost simulation to double spread, slippage, and fees **without changing
+signals or quantities**. Evaluated commit `81790d2e342bc97d4474f203bcdb4946e2b803b1` instead called the complete
+`runSimulation` function twice: once with the ordinary cost multiplier and once with the doubled multiplier. The shared
+simulator derives desired quantities from evolving planning equity and scales buys through a cost-dependent
+affordability calculation. Higher costs therefore changed later equity, requested quantities, fills, and turnover.
+
+The metric output confirms the changed trade path:
+
+- ordinary annual turnover: `10.641571549406327`;
+- doubled-cost annual turnover: `10.471096816847805`.
+
+Those values cannot differ when the same quantities are held fixed. The doubled-cost return and every claim that the
+candidate passed the preregistered double-cost gate are invalid. This defect cannot be corrected by rerunning because
+the sole metric-bearing attempt has already exposed development metrics, and the preregistration forbids a post-result
+protocol change or rerun.
+
+## Frozen inputs and geometry used by the invalid attempt
 
 - Development data: `2016-01-04` through `2022-12-30` only.
 - Exact official calendar: 1,762 sessions and 8,810 all-adjusted daily bars for `DBC,EFA,IEF,SPY,VNQ`.
@@ -59,34 +85,39 @@ and exited `2` for the frozen `HOLD_REJECT` result. It was not rerun.
 - Bootstrap: 5,000 paired, non-wrapping, complete-rebalance-block samples with 20 lower-tail samples.
 - Power: 70 complete rebalance blocks versus 69 required and 1,470 complete sessions versus 1,449 required.
 - Selected benchmark: SPY buy-and-hold, because its point Sharpe exceeded the direct-volatility SPY benchmark.
-- Terminal cash checks: strategy, SPY buy-and-hold, direct-volatility SPY, and double-cost strategy all passed.
+- Terminal cash checks reported true for strategy, SPY buy-and-hold, direct-volatility SPY, and the nonconforming
+  doubled-cost rerun. This does not cure the quantity-path deviation.
 
-## Exact development metrics
+## Observed metrics from the invalid attempt
 
-| Metric                      | Candidate 12           | SPY buy-and-hold      | Direct-volatility SPY | Candidate at double costs |
-| --------------------------- | ---------------------- | --------------------- | --------------------- | ------------------------- |
-| Observations                | 1,489                  | 1,489                 | 1,489                 | 1,489                     |
-| Total return                | `0.19903466916`        | `0.8414113282769999`  | `0.41073962511499995` | `0.16219306583600002`     |
-| Annualized return           | `0.031196833125716195` | `0.10885412195491528` | `0.05996750638676862` | `0.02576474377162441`     |
-| Annualized volatility       | `0.12085319223156205`  | `0.1958486063843709`  | `0.12035750340021738` | `0.12088884826233125`     |
-| Sharpe                      | `0.31474697718717237`  | `0.6261106133105618`  | `0.5444198206211452`  | `0.27099640983930945`     |
-| Maximum drawdown            | `0.19962651075258786`  | `0.33793804201984956` | `0.25461900836879736` | `0.20978882481568306`     |
-| Annual turnover             | `10.641571549406327`   | `0.48088993816188313` | `1.5395889215634841`  | `10.471096816847805`      |
-| Total fees, micros          | `801000000`            | `38970000`            | `102050000`           | `1577230000`              |
-| Total spread cost, micros   | `15808571490`          | `710745942`           | `2276003763`          | `31030453065`             |
-| Total slippage cost, micros | `15726760562`          | `710745942`           | `2274307660`          | `30926878628`             |
-| Ending equity, micros       | `1199034669160`        | `1841411328277`       | `1410739625115`       | `1162193065836`           |
+These values reproduce the sole command output and remain useful for audit identity. They do not constitute an exact
+preregistered development evaluation, and the doubled-cost column is specifically nonconforming.
+
+| Metric                      | Candidate 12           | SPY buy-and-hold      | Direct-volatility SPY | Nonconforming 2x-cost rerun |
+| --------------------------- | ---------------------- | --------------------- | --------------------- | --------------------------- |
+| Observations                | 1,489                  | 1,489                 | 1,489                 | 1,489                       |
+| Total return                | `0.19903466916`        | `0.8414113282769999`  | `0.41073962511499995` | `0.16219306583600002`       |
+| Annualized return           | `0.031196833125716195` | `0.10885412195491528` | `0.05996750638676862` | `0.02576474377162441`       |
+| Annualized volatility       | `0.12085319223156205`  | `0.1958486063843709`  | `0.12035750340021738` | `0.12088884826233125`       |
+| Sharpe                      | `0.31474697718717237`  | `0.6261106133105618`  | `0.5444198206211452`  | `0.27099640983930945`       |
+| Maximum drawdown            | `0.19962651075258786`  | `0.33793804201984956` | `0.25461900836879736` | `0.20978882481568306`       |
+| Annual turnover             | `10.641571549406327`   | `0.48088993816188313` | `1.5395889215634841`  | `10.471096816847805`        |
+| Total fees, micros          | `801000000`            | `38970000`            | `102050000`           | `1577230000`                |
+| Total spread cost, micros   | `15808571490`          | `710745942`           | `2276003763`          | `31030453065`               |
+| Total slippage cost, micros | `15726760562`          | `710745942`           | `2274307660`          | `30926878628`               |
+| Ending equity, micros       | `1199034669160`        | `1841411328277`       | `1410739625115`       | `1162193065836`             |
 
 Benchmark-relative annualized return was `-0.07765728882919909`, or approximately `-7.7657` percentage points. The
 point Sharpe difference was `-0.31136363612338946`.
 
-## Gate disposition
+## Non-authorizing diagnostic outputs
 
-The candidate passed finite metrics, the 504-observation minimum, positive net annualized return, maximum drawdown at
-or below 35%, annual turnover at or below 12x, and positive annualized return under double costs. It failed the required
-strictly positive point Sharpe improvement over the selected benchmark.
+There is no valid frozen gate disposition because the complete preregistered evaluation protocol was not followed. The
+ordinary-run and bootstrap outputs reported a negative point Sharpe difference and negative adjusted lower bounds, but
+they remain diagnostic outputs from a consumed invalid attempt rather than an exact Candidate 12 development rejection.
+The previous claim that Candidate 12 passed the double-cost gate is withdrawn.
 
-The adjusted bootstrap independently rejected the candidate for both frozen reasons:
+The command reported these two statistical reason codes:
 
 - `NON_POSITIVE_EXCESS_RETURN_LCB`: annualized excess-return lower bound `-0.10360412761`.
 - `NON_POSITIVE_SHARPE_DIFFERENCE_LCB`: Sharpe-difference lower bound `-1.498490188294`.
@@ -98,12 +129,14 @@ fold ceiling.
 
 ## Terminal and authority disposition
 
-No specification passed every development gate, so `selectedSpecificationId` is `null`. Terminal qualification was not
-authorized and the holdout record remains exactly:
+The command emitted `selectedSpecificationId: null`, but the controlling disposition is
+`INVALID_PROTOCOL_DEVIATION`, not `HOLD_REJECT`. The one metric-bearing attempt is consumed and cannot be rerun. Terminal
+qualification was not authorized, no terminal trial was consumed, and the holdout record remains exactly:
 
 - `inspected: false`
 - `accessCount: 0`
 
-This rejection authorizes no deployment, PAPER or LIVE authority, broker mutation, order submission, or capital
-promotion. Candidate 12 executable research code and package wiring are removed in the branch's final cleanup commit;
-the preregistration, evaluated implementation, and this rejection proof remain durable in branch ancestry.
+This invalid attempt authorizes no deployment, PAPER or LIVE authority, broker mutation, order submission, or capital
+promotion. Candidate 12 executable research code and package wiring remain removed; the immutable preregistration,
+evaluated implementation, original report-recording commit, and this corrective evidence remain durable in branch
+ancestry.
