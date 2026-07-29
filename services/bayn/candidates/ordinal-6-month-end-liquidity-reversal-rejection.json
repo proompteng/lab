@@ -1,0 +1,88 @@
+{
+  "schemaVersion": "bayn.candidate-research-rejection.v1",
+  "candidateOrdinal": 6,
+  "strategyName": "month-end-liquidity-reversal",
+  "disposition": "REJECTED_DEVELOPMENT_EVIDENCE_INSUFFICIENT",
+  "evaluatedImplementation": {
+    "commit": "665b5034bf481f29f15e491a6f9367655d8ac222",
+    "parameterHash": "59889076e9cff0b8c79c30f8c095b50ae9c4cd6044fe536004f3432a3287a645",
+    "executableBehaviorHash": "ff5704048e04827e02631a462ebb49e11e637647c5578b8060b4633b9a3274e8",
+    "strategyHash": "290d8bf4597ae27e15af6f6dd8f5e49bd925995ff6807387104579f6c2193456",
+    "preregistrationHash": "300feda2b9815e05575b6bc9bb9d8dd633b446a88fc04f1335c31be934b6ad47"
+  },
+  "dataset": {
+    "snapshotId": "2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0",
+    "publicationAsOf": "2026-07-27",
+    "developmentStart": "2016-01-04",
+    "developmentEnd": "2022-12-30",
+    "untouchedHoldoutStart": "2023-01-03",
+    "untouchedHoldoutEnd": "2025-12-31",
+    "rawManifestExportSha256": "79400b64fcd981fc87874fbc0fd647033cfe8acadd1abb2f6a3f0af092699e43",
+    "rawBarsExportSha256": "c71ba30f3bcdd373708636f7c799d6caf3e24e07fd7d428522c69167c11a0c9c",
+    "rawSessionsExportSha256": "d0f182b5436c3ce374f4afaf2735c4b66247edfb78378aeff42af1efc889aabf",
+    "boundedBarsContentHash": "9fac08a198bac2dea6530e12a4406c695c84da8829b9a198f26511c822164785",
+    "boundedSessionsContentHash": "8fb5cf8accec311c6d34dd5d1074b9ac2cee38c51eaf906df26fd3479f48e358",
+    "officialSessionCount": 1762
+  },
+  "methodology": {
+    "signalPrice": "finalized-adjusted-close",
+    "fillPrice": "next-session-open",
+    "orderSizing": "close-time-bounded-notional-executed-at-next-session-open",
+    "confidenceIntervalMethod": "deterministic-non-wrapping-moving-block-bootstrap",
+    "bootstrapReplicates": 2000,
+    "bootstrapBlockLengthSessions": 20
+  },
+  "evidence": {
+    "correctedDevelopmentReportHash": "490806da15333b2723e7dabbda2b8f5677e3f8889b6fd0cc8c91853205e62b9d",
+    "correctedDevelopmentReportFileSha256": "742cf1bbfa431b9fc285519b07b90439560aecb1e53121e8a83e6726863ef92c",
+    "gross": {
+      "totalReturn": 0.10107371420929989,
+      "annualizedReturn": 0.016198688655270965,
+      "sharpe": 0.6470830066049843
+    },
+    "net": {
+      "totalReturn": 0.08440634139843062,
+      "annualizedReturn": 0.013615189649529347,
+      "annualizedVolatility": 0.02487268900470754,
+      "sharpe": 0.5561433659477207,
+      "maximumDrawdown": 0.03187724596205377,
+      "annualTurnover": 2.6140928678079276,
+      "observationCount": 1510,
+      "entryCount": 28,
+      "orderCount": 88,
+      "partialFillCount": 11,
+      "modeledCostUsd": 8385.979577933764
+    },
+    "buyAndHoldSpy": {
+      "totalReturn": 0.8784547416007396,
+      "annualizedReturn": 0.11094842513266845,
+      "sharpe": 0.6386425320738072
+    },
+    "confidenceInterval": {
+      "confidenceLevel": 0.95,
+      "method": "deterministic-moving-block-bootstrap",
+      "replicates": 2000,
+      "blockLengthSessions": 20,
+      "annualizedReturn": [-0.0010095656992797435, 0.03036320620238341],
+      "sharpe": [-0.02703043492393884, 1.214213314331432]
+    }
+  },
+  "advancementGate": {
+    "decision": "HOLD_REJECT",
+    "failures": [
+      "net-sharpe-does-not-exceed-buy-and-hold-spy",
+      "annualized-return-confidence-interval-includes-zero",
+      "sharpe-confidence-interval-includes-zero"
+    ],
+    "productionStrategyRetained": false,
+    "officialTrialAuthorized": false,
+    "brokerMutationEnabled": false,
+    "capitalEnabled": false,
+    "pullRequestRecommendation": "CLOSE_WITHOUT_MERGE"
+  },
+  "holdoutAttestation": {
+    "status": "UNTOUCHED",
+    "statement": "No 2023-01-03 through 2025-12-31 holdout bar or session was queried, inspected, simulated, qualified, or used for this decision."
+  },
+  "receiptHash": "86923571a093da1f439f81a33e78eb68ed202853bbd5c96f71728130d27a1e56"
+}
