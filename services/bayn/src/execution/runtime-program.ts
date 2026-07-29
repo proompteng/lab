@@ -3,12 +3,13 @@ import { Effect, Result } from 'effect'
 import { BrokerRead, type BrokerReadShape } from '../broker/alpaca'
 import { BrokerMutation, type BrokerMutationShape } from '../broker/alpaca-mutations'
 import type { LiveCapitalGrantStoreShape } from '../db/live-capital-grant'
+import type { OperationalError } from '../errors'
 import type { MutationOperation } from '../broker/alpaca-mutations'
 import { cancel, dryRunSubmit, recover, submit } from './coordinator'
 import { BrokerAccess, type ExecutionAuthority } from './authority'
 import { IntentStore, type IntentStoreService } from './intents'
 import { MutationStore, type MutationStoreShape } from './mutations'
-import { makeAuthorityGuardedBrokerMutation } from './mutation-authority'
+import { makeAuthorityGuardedBrokerMutation, type FreshBrokerPrice } from './mutation-authority'
 import { WriterFence, type WriterFenceService } from './writer-fence'
 
 export interface ExecutionProgramDependencies {
@@ -18,6 +19,7 @@ export interface ExecutionProgramDependencies {
   readonly mutationStore: MutationStoreShape
   readonly writerFence: WriterFenceService
   readonly liveCapitalGrants: Pick<LiveCapitalGrantStoreShape, 'read'>
+  readonly freshBrokerPrice: (symbol: string) => Effect.Effect<FreshBrokerPrice, OperationalError>
   readonly currentUtcInstant: Effect.Effect<string>
 }
 

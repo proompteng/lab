@@ -206,6 +206,8 @@ interface ScenarioInput {
   readonly positions?: readonly Position[]
   readonly openOrders?: readonly Order[]
   readonly proposedIntent?: Intent
+  readonly freshPriceMicros?: string
+  readonly quotedAt?: string
 }
 
 const runLiveSubmit = async (input: ScenarioInput = {}) => {
@@ -213,6 +215,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
   const trace: string[] = []
   let submits = 0
   let grantReads = 0
+  let priceReads = 0
   let orderLimit: number | undefined
   const unusedRead = Effect.die(new Error('unused broker read in mutation authority test'))
   const brokerRead: BrokerReadShape = {
@@ -261,6 +264,17 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
               : input.persisted
           }),
       },
+      freshBrokerPrice: (symbol) =>
+        Effect.sync(() => {
+          trace.push('price')
+          priceReads += 1
+          return {
+            symbol,
+            priceMicros: input.freshPriceMicros ?? '100000000',
+            quotedAt: input.quotedAt ?? activeAt,
+            observedAt: input.observedAt ?? activeAt,
+          }
+        }),
       currentUtcInstant: Effect.sync(() => {
         trace.push('clock')
         return input.observedAt ?? activeAt
@@ -268,7 +282,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
     },
   )
   const exit = await Effect.runPromiseExit(guarded.submit(input.proposedIntent ?? intent()))
-  return { exit, grant, grantReads, orderLimit, submits, trace }
+  return { exit, grant, grantReads, orderLimit, priceReads, submits, trace }
 }
 
 const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): string | undefined => {
@@ -284,9 +298,12 @@ describe('final broker mutation authority', () => {
     expect(observed.exit._tag).toBe('Success')
     expect(observed.submits).toBe(1)
     expect(observed.grantReads).toBe(1)
+    expect(observed.priceReads).toBe(1)
     expect(observed.orderLimit).toBe(defaultLimits.maxOpenOrders)
     expect(observed.trace.indexOf('grant')).toBeGreaterThan(observed.trace.indexOf('orders'))
     expect(observed.trace.indexOf('clock')).toBeGreaterThan(observed.trace.indexOf('grant'))
+    expect(observed.trace.indexOf('price')).toBeGreaterThan(observed.trace.indexOf('grant'))
+    expect(observed.trace.indexOf('clock')).toBeGreaterThan(observed.trace.indexOf('price'))
     expect(observed.trace.at(-1)).toBe('submit')
   })
 
@@ -335,6 +352,8 @@ describe('final broker mutation authority', () => {
             brokerRead,
             brokerMutation,
             liveCapitalGrants: { read: () => Effect.succeed(liveCapitalAuthority(grant)) },
+            freshBrokerPrice: (symbol) =>
+              Effect.succeed({ symbol, priceMicros: '100000000', quotedAt: activeAt, observedAt: activeAt }),
             currentUtcInstant: Effect.succeed(activeAt),
           },
         )
@@ -444,6 +463,22 @@ describe('final broker mutation authority', () => {
     expect(observed.submits).toBe(0)
   })
 
+  test('rejects a transmitted quantity whose fresh ask exceeds the intent and grant notional ceiling', async () => {
+    const observed = await runLiveSubmit({ freshPriceMicros: '100000001' })
+
+    expect(failureTag(observed.exit)).toBe('LiveOrderNotionalLimitExceeded')
+    expect(observed.priceReads).toBe(1)
+    expect(observed.submits).toBe(0)
+  })
+
+  test('rejects a stale broker quote before transmitting the order', async () => {
+    const observed = await runLiveSubmit({ quotedAt: '2026-07-28T07:59:54.999Z' })
+
+    expect(failureTag(observed.exit)).toBe('FreshBrokerPriceStale')
+    expect(observed.priceReads).toBe(1)
+    expect(observed.submits).toBe(0)
+  })
+
   test.each([
     ['account', { accountId: 'other-account' }, 'IntentAccountMismatch'],
     ['strategy', { strategyName: 'other-strategy' }, 'IntentStrategyMismatch'],
@@ -485,6 +520,7 @@ describe('final broker mutation authority', () => {
             return Effect.succeed(undefined)
           },
         },
+        freshBrokerPrice: () => Effect.die(new Error('sandbox must not read a live broker price')),
         currentUtcInstant: Effect.die(new Error('sandbox must not read the live grant clock')),
       },
     )
@@ -528,6 +564,7 @@ describe('final broker mutation authority', () => {
             )
           },
         },
+        freshBrokerPrice: () => Effect.die(new Error('cancellation must not read a broker price')),
         currentUtcInstant: Effect.succeed(activeAt),
       },
     )

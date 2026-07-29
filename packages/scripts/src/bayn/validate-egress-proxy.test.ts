@@ -6,10 +6,10 @@ import { validateBaynEgressProxy } from './validate-egress-proxy'
 const deployedConfig = readFileSync('argocd/applications/bayn/squid.conf', 'utf8')
 
 describe('Bayn egress proxy contract', () => {
-  test('allows only the exact Alpaca sandbox and live API hosts over TLS CONNECT', () => {
+  test('allows only the exact Alpaca sandbox, live, and market-data hosts over TLS CONNECT', () => {
     expect(validateBaynEgressProxy(deployedConfig)).toEqual({
       aclName: 'alpaca_api',
-      allowedHosts: ['api.alpaca.markets', 'paper-api.alpaca.markets'],
+      allowedHosts: ['api.alpaca.markets', 'data.alpaca.markets', 'paper-api.alpaca.markets'],
     })
   })
 

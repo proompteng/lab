@@ -1,4 +1,4 @@
-const requiredAlpacaHosts = new Set(['paper-api.alpaca.markets', 'api.alpaca.markets'])
+const requiredAlpacaHosts = new Set(['paper-api.alpaca.markets', 'api.alpaca.markets', 'data.alpaca.markets'])
 
 export interface BaynEgressProxyContract {
   readonly aclName: string
@@ -30,7 +30,7 @@ export const validateBaynEgressProxy = (source: string): BaynEgressProxyContract
     throw new Error('destination-domain ACL is incomplete')
   }
   if (allowedHosts.length !== requiredAlpacaHosts.size || allowedHosts.some((host) => !requiredAlpacaHosts.has(host))) {
-    throw new Error('destination-domain ACL must contain only the Alpaca sandbox and live trading API hosts')
+    throw new Error('destination-domain ACL must contain only the Alpaca sandbox, live trading, and market-data hosts')
   }
 
   const denyNonConnect = lines.indexOf('http_access deny !CONNECT')

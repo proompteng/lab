@@ -1,15 +1,20 @@
-import { Effect, pipe, Result } from 'effect'
+import { Duration, Effect, Option, pipe, Result, Schedule } from 'effect'
 
 import type { AutonomousCycleLoop, AutonomousCycleStartup } from './app'
 import { BrokerRead, type BrokerReadShape, type MarketCalendarQuery } from './broker/alpaca'
-import { makeCycleExecutionPolicyFromModel, type AutonomousCycle, type CycleExecutionPolicy } from './cycle'
+import { CycleState, makeCycleExecutionPolicyFromModel, type AutonomousCycle, type CycleExecutionPolicy } from './cycle'
 import {
   CycleDecisionBuildError,
+  CycleRunnerError,
+  cyclePassLogFacts,
   makeAutonomousCycleLoop,
   marketCalendarQueryForSignal,
+  runAutonomousCyclePass,
   type CycleRunContext,
   type CyclePassObservation,
+  type CycleRunResult,
 } from './cycle-runner'
+import { validateCycleLoopInterval } from './cycle-runner/decisions'
 import { CycleStore } from './db/cycle-store'
 import {
   BrokerEventStore,
@@ -20,6 +25,11 @@ import {
   ValuationStore,
 } from './db/execution-store'
 import { WriterFence } from './execution/writer-fence'
+import { MutationOperation } from './broker/alpaca-mutations'
+import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
+import { IntentStore, planPaperIntent } from './execution/intents'
+import { MutationEventType, MutationStore } from './execution/mutations'
+import type { ExecutionProgram } from './execution/runtime-program'
 import {
   bindCycleExecutionSession,
   type ExecutionSessionBinding,
@@ -30,16 +40,26 @@ import { makeStrategyProtocolHash } from './contracts'
 import { operationalError, type OperationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
 import { MarketData, type MarketDataService } from './market-data'
-import { Authority, OrderSide, OrderType, TimeInForce, type AuthorityState } from './execution/contracts'
+import {
+  Authority,
+  OrderSide,
+  OrderType,
+  RiskOutcome,
+  TimeInForce,
+  type AuthorityState,
+  type Position,
+} from './execution/contracts'
 import type { CausalProtocol } from './protocol'
 import { runOnce, type ReconciliationPassResult } from './reconciler'
 import { reconciledStateHash } from './reconciliation'
-import { BrokerMode, decodePolicy, type Policy, type State } from './risk'
+import { BrokerMode, decodePolicy, evaluate, type Policy, type State } from './risk'
 import { buildObserveShadowDecision, type ShadowDecisionError, type ShadowDeltaRiskInput } from './shadow-decision'
 import type { ObserveShadowDecisionDocument } from './shadow-decision-contract'
 import { currentUtcInstant } from './time'
 import {
   planTargets,
+  TargetPlanStatus,
+  type PlannedTargetQuantity,
   type SignalSessionReferencePrices,
   type TargetPlannerInput,
   type TargetPlannerFailure,
@@ -275,24 +295,27 @@ const readObserveDecisionFacts = <R>(
     return { snapshot, calendar, reconciliation, evaluatedAt }
   })
 
-const requireObserveAuthority = (
+type DecisionAuthorityRequirement = Authority.Observe | Authority.Paper
+
+const requireDecisionAuthority = (
   result: ReconciliationPassResult,
   policy: Policy,
   authorityGenerationHash: string,
+  required: DecisionAuthorityRequirement,
 ): Result.Result<ObserveAuthorityObservation, ObserveDecisionCompositionFailure> => {
   const authority = result.riskContext.authority
   if (
     authority === null ||
     result.riskContext.authorityObservedAt === null ||
     authority.generationHash !== authorityGenerationHash ||
-    authority.maximum !== Authority.Observe ||
-    authority.effective !== Authority.Observe ||
+    authority.maximum !== required ||
+    authority.effective !== required ||
     result.brokerState.account.accountId !== policy.accountId
   ) {
     return Result.fail(
       compositionFailure(
         'observe-authority',
-        'same-pass reconciliation did not return the configured OBSERVE authority',
+        `same-pass reconciliation did not return the configured ${required} authority`,
       ),
     )
   }
@@ -440,25 +463,38 @@ const reduceObserveRiskInputs = <R>(
 export const buildObserveCycleDecision = <R>(
   input: ObserveDecisionInput<R>,
 ): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | MarketData | R> =>
+  buildCycleDecision(input, Authority.Observe)
+
+const projectShadowAuthority = (observation: ObserveAuthorityObservation): ObserveAuthorityObservation => ({
+  // The durable shadow contract is deliberately OBSERVE-only and non-dispatchable. Mutation execution never
+  // consumes this projected authority: it re-reads the same generation and requires exact PAPER authority
+  // before constructing and committing executable intents.
+  ...observation,
+  authority: {
+    ...observation.authority,
+    maximum: Authority.Observe,
+    effective: Authority.Observe,
+  },
+})
+
+const buildCycleDecision = <R>(
+  input: ObserveDecisionInput<R>,
+  authorityRequirement: DecisionAuthorityRequirement,
+): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | MarketData | R> =>
   Effect.gen(function* () {
     const readPreparation = yield* Effect.fromResult(prepareObserveDecisionReads(input))
     const facts = yield* readObserveDecisionFacts(input, readPreparation)
-    const authorityObservation = yield* Effect.fromResult(
-      requireObserveAuthority(facts.reconciliation, input.policy, input.authorityGenerationHash),
+    const executionAuthority = yield* Effect.fromResult(
+      requireDecisionAuthority(facts.reconciliation, input.policy, input.authorityGenerationHash, authorityRequirement),
     )
+    const shadowAuthority =
+      authorityRequirement === Authority.Observe ? executionAuthority : projectShadowAuthority(executionAuthority)
     const executionSession = yield* Effect.fromResult(prepareExecutionSessionBinding(input, facts))
     const compiled = yield* compileObserveStrategyDecision(input, facts, executionSession)
     const plannerPreparation = yield* Effect.fromResult(prepareObservePlanner(input, facts, compiled))
     const targetPlan = yield* Effect.fromResult(planTargets(plannerPreparation.plannerInput))
     const riskInputs = yield* Effect.fromResult(
-      reduceObserveRiskInputs(
-        input,
-        facts,
-        authorityObservation,
-        executionSession,
-        targetPlan,
-        plannerPreparation.prices,
-      ),
+      reduceObserveRiskInputs(input, facts, shadowAuthority, executionSession, targetPlan, plannerPreparation.prices),
     )
     const finalizedSnapshot = facts.snapshot.manifest.finalizedSnapshot
     return yield* buildObserveShadowDecision({
@@ -475,6 +511,11 @@ export const buildObserveCycleDecision = <R>(
       riskInputs,
     })
   })
+
+export const buildMutationShadowCycleDecision = <R>(
+  input: ObserveDecisionInput<R>,
+): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | MarketData | R> =>
+  buildCycleDecision(input, Authority.Paper)
 
 const observePass = (
   recordPass: Parameters<AutonomousCycleStartup>[0]['recordPass'],
@@ -613,4 +654,472 @@ export const makeObserveAutonomousCycleStartup =
       )
       yield* initializeObserveAuthority(input)
       return yield* Effect.fromResult(makeObserveAutonomousLoop(input, startup, preparation, policy))
+    })
+
+const mutationConsistencyDelayMs = 1_000
+const quantityScale = 1_000_000n
+
+export type MutationAutonomousCycleInput = ObserveAutonomousCycleInput & {
+  readonly executionProgram: ExecutionProgram
+}
+
+type MutationRuntime = ObserveRuntime | IntentStore | MutationStore
+
+const mutationRunnerError = (
+  message: string,
+  cause?: unknown,
+  failure: CycleRunnerError['failure'] = 'operational',
+): CycleRunnerError =>
+  new CycleRunnerError({
+    operation: 'recover-cycle',
+    failure,
+    message,
+    cause,
+  })
+
+const configuredMutationGeneration = (input: MutationAutonomousCycleInput): string | undefined => {
+  const capital = input.executionProgram.authority.capitalAuthority
+  switch (capital._tag) {
+    case CapitalAuthorityKind.Sandbox:
+      return capital.authorityGenerationHash
+    case CapitalAuthorityKind.LiveGrant:
+      return capital.grant.authorityGenerationHash
+  }
+}
+
+const validateMutationExecutionProgram = (
+  input: MutationAutonomousCycleInput,
+): Result.Result<void, OperationalError> => {
+  const authority = input.executionProgram.authority
+  const generationHash = configuredMutationGeneration(input)
+  const strategy = input.strategy.provenance.strategy
+  return authority.brokerAccess !== BrokerAccess.Mutation ||
+    generationHash === undefined ||
+    generationHash !== input.authorityGenerationHash ||
+    authority.brokerIdentity.accountId !== input.accountId ||
+    authority.strategy.name !== strategy.name ||
+    authority.strategy.behaviorHash !== strategy.behaviorHash ||
+    authority.strategy.parameterHash !== strategy.parameterHash ||
+    authority.strategy.parameterSchemaVersion !== strategy.parameterSchemaVersion
+    ? Result.fail(
+        operationalError(
+          'config',
+          'cycle-loop',
+          'mutation cycle execution program does not match its account, authority generation, and strategy',
+        ),
+      )
+    : Result.succeed(undefined)
+}
+
+const comparePositionSymbol = (left: Position, right: Position): number =>
+  left.symbol < right.symbol ? -1 : left.symbol > right.symbol ? 1 : 0
+
+const divideAwayFromZero = (numerator: bigint): bigint => {
+  const magnitude = numerator < 0n ? -numerator : numerator
+  const rounded = magnitude === 0n ? 0n : (magnitude + quantityScale - 1n) / quantityScale
+  return numerator < 0n ? -rounded : rounded
+}
+
+const projectMutationPosition = (
+  positions: readonly Position[],
+  target: PlannedTargetQuantity,
+  accountId: string,
+  observedAt: string,
+): readonly Position[] => {
+  const retained = positions.filter((position) => position.symbol !== target.symbol)
+  const quantity = BigInt(target.targetQuantityMicros)
+  if (quantity === 0n) return retained
+  const previous = positions.find((position) => position.symbol === target.symbol)
+  const referencePrice = BigInt(target.referencePriceMicros)
+  const averageEntryPrice = BigInt(previous?.averageEntryPriceMicros ?? target.referencePriceMicros)
+  const projected: Position = {
+    schemaVersion: 'bayn.paper-position.v1',
+    accountId: previous?.accountId ?? accountId,
+    symbol: target.symbol,
+    quantityMicros: target.targetQuantityMicros,
+    averageEntryPriceMicros: averageEntryPrice.toString(),
+    marketPriceMicros: target.referencePriceMicros,
+    marketValueMicros: divideAwayFromZero(quantity * referencePrice).toString(),
+    unrealizedPnlMicros: divideAwayFromZero(quantity * (referencePrice - averageEntryPrice)).toString(),
+    observedAt: previous?.observedAt ?? observedAt,
+  }
+  return [...retained, projected].sort(comparePositionSymbol)
+}
+
+const validateBoundMutationDocument = (
+  input: MutationAutonomousCycleInput,
+  cycle: AutonomousCycle,
+  policy: Policy,
+  document: ObserveShadowDecisionDocument,
+): Result.Result<void, CycleRunnerError> => {
+  const policyHash = canonicalHashV1Result(policy)
+  if (Result.isFailure(policyHash)) {
+    return Result.fail(mutationRunnerError('mutation cycle risk policy is not canonicalizable', policyHash.failure))
+  }
+  return cycle.state !== CycleState.Active ||
+    cycle.bindings.decisionHash !== document.contentHash ||
+    cycle.bindings.snapshotId !== document.bindings.snapshotId ||
+    cycle.identity.cycleId !== document.bindings.cycleId ||
+    cycle.identity.accountId !== document.bindings.accountId ||
+    cycle.identity.strategyProtocolHash !== document.bindings.strategyProtocolHash ||
+    input.accountId !== document.bindings.accountId ||
+    policyHash.success !== document.bindings.policyHash
+    ? Result.fail(
+        mutationRunnerError(
+          'durable shadow plan does not match the mutation cycle account, protocol, policy, and decision binding',
+          undefined,
+          'contract',
+        ),
+      )
+    : Result.succeed(undefined)
+}
+
+const readBoundMutationDocument = (
+  cycle: AutonomousCycle,
+): Effect.Effect<ObserveShadowDecisionDocument, CycleRunnerError, CycleStore> =>
+  CycleStore.pipe(
+    Effect.flatMap((store) => store.readDecisionDocument(cycle.identity.cycleId)),
+    Effect.mapError((cause) => mutationRunnerError('durable mutation-cycle shadow plan read failed', cause, 'store')),
+    Effect.flatMap((document) =>
+      Option.match(document, {
+        onNone: () =>
+          Effect.fail(
+            mutationRunnerError('decision-bound mutation cycle is missing its durable shadow plan', undefined, 'store'),
+          ),
+        onSome: Effect.succeed,
+      }),
+    ),
+  )
+
+const mutationDecisionInput = (
+  input: MutationAutonomousCycleInput,
+  preparation: ObserveStartupPreparation,
+  policy: Policy,
+  cycle: AutonomousCycle,
+): ObserveDecisionInput<ObserveDecisionRuntime> => ({
+  authorityGenerationHash: input.authorityGenerationHash,
+  cycle,
+  executionModel: preparation.executionModel,
+  policy,
+  reconcile: runOnce,
+  strategy: input.strategy,
+})
+
+const prepareMutationIntents = (
+  input: MutationAutonomousCycleInput,
+  preparation: ObserveStartupPreparation,
+  policy: Policy,
+  cycle: AutonomousCycle,
+  document: ObserveShadowDecisionDocument,
+): Effect.Effect<readonly string[], CycleRunnerError, ObserveDecisionRuntime | IntentStore> =>
+  Effect.gen(function* () {
+    yield* Effect.fromResult(validateBoundMutationDocument(input, cycle, policy, document))
+    if (document.targetPlan.status !== TargetPlanStatus.Planned) return []
+
+    const decisionInput = mutationDecisionInput(input, preparation, policy, cycle)
+    const reads = yield* Effect.fromResult(prepareObserveDecisionReads(decisionInput)).pipe(
+      Effect.mapError((cause) => mutationRunnerError('mutation cycle decision reads are invalid', cause, 'contract')),
+    )
+    const facts = yield* readObserveDecisionFacts(decisionInput, reads).pipe(
+      Effect.mapError((cause) => {
+        const converted = decisionBuildError(cause)
+        return mutationRunnerError(converted.message, cause, converted.failure)
+      }),
+    )
+    const authority = yield* Effect.fromResult(
+      requireDecisionAuthority(facts.reconciliation, policy, input.authorityGenerationHash, Authority.Paper),
+    ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
+    const executionSession = yield* Effect.fromResult(prepareExecutionSessionBinding(decisionInput, facts)).pipe(
+      Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')),
+    )
+    if (
+      document.bindings.snapshotContentHash !== facts.snapshot.manifest.finalizedSnapshot.contentHash ||
+      document.bindings.snapshotFinalizedAt !== facts.snapshot.manifest.finalizedSnapshot.finalizedAt
+    ) {
+      return yield* Effect.fail(
+        mutationRunnerError('bound mutation cycle snapshot publication changed after planning', undefined, 'contract'),
+      )
+    }
+
+    const intentStore = yield* IntentStore
+    const targets = new Map(document.targetPlan.targets.map((target) => [target.symbol, target]))
+    let reservedBuyingPower = 0n
+    let dailyTradedNotional = BigInt(facts.reconciliation.riskContext.dailyTradedNotionalMicros)
+    let projectedPositions: readonly Position[] = facts.reconciliation.brokerState.positions
+    const intentIds: string[] = []
+
+    for (const [index, targetIntent] of document.targetPlan.intentTargets.entries()) {
+      const riskBinding = document.deltaRisk[index]
+      const target = targets.get(targetIntent.symbol)
+      if (riskBinding === undefined || target === undefined) {
+        return yield* Effect.fail(
+          mutationRunnerError(
+            'durable mutation target is missing its risk or final-position binding',
+            undefined,
+            'contract',
+          ),
+        )
+      }
+      const fillTerms = yield* Effect.fromResult(
+        makeFillTerms(
+          targetIntent.side === OrderSide.Buy ? 'buy' : 'sell',
+          BigInt(targetIntent.quantityMicros),
+          BigInt(target.referencePriceMicros),
+          preparation.executionModel,
+          MICROS,
+        ),
+      ).pipe(Effect.mapError((cause) => mutationRunnerError('mutation execution terms are invalid', cause, 'contract')))
+      if (fillTerms.notionalMicros.toString() !== riskBinding.notionalLimitMicros) {
+        return yield* Effect.fail(
+          mutationRunnerError(
+            'durable mutation notional changed from its bound execution model',
+            undefined,
+            'contract',
+          ),
+        )
+      }
+      const state: State = {
+        schemaVersion: 'bayn.paper-risk-state.v2',
+        brokerMode: BrokerMode.Paper,
+        account: facts.reconciliation.brokerState.account,
+        positions: facts.reconciliation.brokerState.positions,
+        positionsObservedAt: facts.reconciliation.brokerState.positionsObservedAt,
+        orders: facts.reconciliation.brokerState.orders,
+        ordersObservedAt: facts.reconciliation.brokerState.ordersObservedAt,
+        reconciliation: facts.reconciliation.brokerState.reconciliation,
+        authority: authority.authority,
+        authorityObservedAt: authority.observedAt,
+        unknownMutationCount: facts.reconciliation.riskContext.unknownMutationCount,
+        dailyTradedNotionalMicros: dailyTradedNotional.toString(),
+        dayStartEquityMicros: facts.reconciliation.riskContext.dayStartEquityMicros,
+        peakEquityMicros: facts.reconciliation.riskContext.peakEquityMicros,
+        accountingHash: facts.reconciliation.brokerState.accountingHash,
+        marketDataSymbol: targetIntent.symbol,
+        marketDataHash: document.bindings.snapshotContentHash,
+        referencePriceMicros: target.referencePriceMicros,
+        expectedExecutionPriceMicros: fillTerms.fillPriceMicros.toString(),
+        marketDataObservedAt: facts.evaluatedAt,
+        executionSession,
+        reservedBuyingPowerMicros: reservedBuyingPower.toString(),
+        evaluatedAt: facts.evaluatedAt,
+      }
+      const intent = yield* planPaperIntent(
+        {
+          schemaVersion: 'bayn.paper-intent-plan.v1',
+          ...targetIntent,
+          notionalLimitMicros: riskBinding.notionalLimitMicros,
+          createdAt: document.createdAt,
+        },
+        state,
+      ).pipe(Effect.mapError((cause) => mutationRunnerError('durable PAPER intent planning failed', cause, 'contract')))
+      const stored = yield* intentStore
+        .read(intent.intentId)
+        .pipe(
+          Effect.mapError((cause) => mutationRunnerError('durable PAPER intent recovery read failed', cause, 'store')),
+        )
+      const existing = Option.getOrUndefined(stored)
+      const decision =
+        existing?.decision === undefined
+          ? yield* Effect.fromResult(evaluate(intent, state, policy, projectedPositions)).pipe(
+              Effect.mapError((cause) => mutationRunnerError('PAPER intent risk evaluation failed', cause, 'contract')),
+              Effect.flatMap((evaluation) =>
+                evaluation.decision.outcome === RiskOutcome.Approved
+                  ? Effect.succeed(evaluation.decision)
+                  : Effect.fail(
+                      mutationRunnerError(
+                        `PAPER intent risk blocked execution: ${evaluation.decision.reasonCodes.join(',')}`,
+                        evaluation,
+                        'operational',
+                      ),
+                    ),
+              ),
+            )
+          : existing.decision
+      if (decision.outcome !== RiskOutcome.Approved) {
+        return yield* Effect.fail(
+          mutationRunnerError('recovered PAPER intent has a non-approved risk decision', decision, 'contract'),
+        )
+      }
+      yield* intentStore
+        .commit(intent, decision)
+        .pipe(Effect.mapError((cause) => mutationRunnerError('durable PAPER intent commit failed', cause, 'store')))
+      const orderNotional = fillTerms.notionalMicros
+      reservedBuyingPower += targetIntent.side === OrderSide.Buy ? orderNotional : 0n
+      dailyTradedNotional += orderNotional
+      projectedPositions = projectMutationPosition(
+        projectedPositions,
+        target,
+        input.accountId,
+        facts.reconciliation.brokerState.positionsObservedAt,
+      )
+      intentIds.push(intent.intentId)
+    }
+    return intentIds
+  })
+
+const submitSucceeded = (eventType: MutationEventType): boolean =>
+  eventType === MutationEventType.SubmitAccepted || eventType === MutationEventType.RecoveryFound
+
+const submitTerminal = (eventType: MutationEventType): boolean =>
+  submitSucceeded(eventType) || eventType === MutationEventType.SubmitRejected
+
+const executeMutationIntent = (
+  executionProgram: ExecutionProgram,
+  intentId: string,
+): Effect.Effect<void, CycleRunnerError, MutationStore> =>
+  MutationStore.pipe(
+    Effect.flatMap((store) => store.latest(intentId, MutationOperation.Submit)),
+    Effect.mapError((cause) => mutationRunnerError('durable submit recovery read failed', cause, 'store')),
+    Effect.flatMap((existing) =>
+      (existing === undefined
+        ? executionProgram.submit(intentId, mutationConsistencyDelayMs)
+        : submitTerminal(existing.eventType)
+          ? Effect.succeed(existing)
+          : executionProgram.recover(intentId, MutationOperation.Submit)
+      ).pipe(Effect.mapError((cause) => mutationRunnerError('guarded PAPER submit or recovery failed', cause))),
+    ),
+    Effect.flatMap((event) =>
+      submitSucceeded(event.eventType)
+        ? Effect.void
+        : event.eventType === MutationEventType.SubmitRejected
+          ? Effect.fail(mutationRunnerError('guarded PAPER submit was rejected by the broker', event, 'operational'))
+          : Effect.fail(
+              mutationRunnerError(
+                `guarded PAPER submit remains unresolved at ${event.eventType}`,
+                event,
+                'operational',
+              ),
+            ),
+    ),
+  )
+
+const executeBoundMutationCycle = (
+  input: MutationAutonomousCycleInput,
+  preparation: ObserveStartupPreparation,
+  policy: Policy,
+  cycle: AutonomousCycle,
+): Effect.Effect<void, CycleRunnerError, MutationRuntime> =>
+  readBoundMutationDocument(cycle).pipe(
+    Effect.flatMap((document) =>
+      prepareMutationIntents(input, preparation, policy, cycle, document).pipe(
+        Effect.flatMap((intentIds) =>
+          Effect.forEach(intentIds, (intentId) => executeMutationIntent(input.executionProgram, intentId), {
+            concurrency: 1,
+            discard: true,
+          }),
+        ),
+      ),
+    ),
+  )
+
+const readUnfinishedMutationCycle = (
+  context: CycleRunContext<ObserveDecisionRuntime>,
+): Effect.Effect<AutonomousCycle | undefined, CycleRunnerError, CycleStore> =>
+  CycleStore.pipe(
+    Effect.flatMap((store) =>
+      store.readOldestUnfinished({
+        qualificationRunId: context.qualificationRunId,
+        accountId: context.accountId,
+      }),
+    ),
+    Effect.mapError((cause) => mutationRunnerError('oldest unfinished mutation cycle read failed', cause, 'store')),
+    Effect.map(Option.getOrUndefined),
+  )
+
+const mutationBound = (cycle: AutonomousCycle | undefined): cycle is AutonomousCycle =>
+  cycle !== undefined && cycle.state === CycleState.Active && cycle.bindings.decisionHash !== undefined
+
+const runMutationCyclePass = (
+  input: MutationAutonomousCycleInput,
+  preparation: ObserveStartupPreparation,
+  policy: Policy,
+  context: CycleRunContext<ObserveDecisionRuntime>,
+): Effect.Effect<CycleRunResult, CycleRunnerError, MutationRuntime> =>
+  readUnfinishedMutationCycle(context).pipe(
+    Effect.flatMap((unfinished) =>
+      mutationBound(unfinished)
+        ? executeBoundMutationCycle(input, preparation, policy, unfinished).pipe(
+            Effect.andThen(runAutonomousCyclePass(context)),
+          )
+        : runAutonomousCyclePass(context).pipe(
+            Effect.flatMap((result) =>
+              result.outcome === 'RECOVERED' && result.action === 'BOUND_DECISION'
+                ? executeBoundMutationCycle(input, preparation, policy, result.cycle).pipe(
+                    Effect.andThen(runAutonomousCyclePass(context)),
+                  )
+                : Effect.succeed(result),
+            ),
+          ),
+    ),
+  )
+
+const observeMutationPass = (
+  startup: Parameters<AutonomousCycleStartup>[0],
+  observation: CyclePassObservation,
+): Effect.Effect<void> => {
+  const facts = cyclePassLogFacts(observation)
+  const log = facts.level === 'INFO' ? Effect.logInfo(facts.message) : Effect.logError(facts.message)
+  return observePass(startup.recordPass, observation).pipe(
+    Effect.andThen(log.pipe(Effect.annotateLogs(facts.annotations))),
+  )
+}
+
+const mutationCycleLoop = (
+  input: MutationAutonomousCycleInput,
+  startup: Parameters<AutonomousCycleStartup>[0],
+  preparation: ObserveStartupPreparation,
+  policy: Policy,
+  context: CycleRunContext<ObserveDecisionRuntime>,
+): Effect.Effect<void, never, MutationRuntime> =>
+  runMutationCyclePass(input, preparation, policy, context).pipe(
+    Effect.matchEffect({
+      onFailure: (error) =>
+        currentUtcInstant.pipe(
+          Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
+        ),
+      onSuccess: (result) =>
+        currentUtcInstant.pipe(
+          Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'SUCCEEDED', observedAt, result })),
+        ),
+    }),
+    Effect.repeat(Schedule.spaced(Duration.millis(input.pollIntervalMs))),
+    Effect.asVoid,
+  )
+
+const makeMutationAutonomousLoop = (
+  input: MutationAutonomousCycleInput,
+  startup: Parameters<AutonomousCycleStartup>[0],
+  preparation: ObserveStartupPreparation,
+  policy: Policy,
+): Result.Result<AutonomousCycleLoop<MutationRuntime>, OperationalError> => {
+  const context: CycleRunContext<ObserveDecisionRuntime> = {
+    qualificationRunId: startup.qualificationRunId,
+    strategyProtocolHash: preparation.strategyProtocolHash,
+    accountId: input.accountId,
+    executionPolicy: preparation.executionPolicy,
+    buildDecision: (cycle) =>
+      buildMutationShadowCycleDecision(mutationDecisionInput(input, preparation, policy, cycle)).pipe(
+        Effect.mapError(decisionBuildError),
+      ),
+  }
+  return Result.mapError(
+    Result.map(validateCycleLoopInterval(input.pollIntervalMs), () =>
+      mutationCycleLoop(input, startup, preparation, policy, context),
+    ),
+    (cause) => operationalError('strategy', 'cycle-loop', 'mutation autonomous cycle loop failed to start', cause),
+  )
+}
+
+export const makeMutationAutonomousCycleStartup =
+  (input: MutationAutonomousCycleInput): AutonomousCycleStartup<never, MutationRuntime> =>
+  (startup) =>
+    Effect.gen(function* () {
+      const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
+      yield* Effect.fromResult(validateMutationExecutionProgram(input))
+      const policy = yield* loadObserveRiskPolicy(input.accountId, input.strategy.parameters.universe).pipe(
+        Effect.mapError((cause) =>
+          operationalError('strategy', 'risk-policy', 'source-controlled paper risk policy is invalid', cause),
+        ),
+      )
+      return yield* Effect.fromResult(makeMutationAutonomousLoop(input, startup, preparation, policy))
     })

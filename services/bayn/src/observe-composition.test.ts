@@ -14,6 +14,7 @@ import {
   type ReadResult,
 } from './broker/alpaca'
 import { unusedAssetBySymbol } from './broker/alpaca-test-support'
+import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from './broker/identity'
 import {
   CycleState,
   decodeAutonomousCycle,
@@ -41,12 +42,18 @@ import {
   type ValuationStoreShape,
 } from './db/execution-store'
 import { operationalError, type OperationalError } from './errors'
+import { BrokerAccess, makeExecutionAuthority, sandboxCapitalAuthority } from './execution/authority'
+import { IntentStore, type IntentStoreService } from './execution/intents'
+import { MutationStore, type MutationStoreShape } from './execution/mutations'
+import type { ExecutionProgram } from './execution/runtime-program'
 import { WriterFence, WriterFenceError, type WriterFenceService } from './execution/writer-fence'
 import { canonicalHashV1 } from './hash'
 import { MarketData, type MarketDataService, type MarketDataSnapshot } from './market-data'
 import {
+  buildMutationShadowCycleDecision,
   buildObserveCycleDecision,
   loadObserveRiskPolicy,
+  makeMutationAutonomousCycleStartup,
   makeObserveAutonomousCycleStartup,
   prepareObserveStartup,
 } from './observe-composition'
@@ -224,7 +231,10 @@ const reconciliation = (): Reconciliation => {
   }
 }
 
-const reconciliationResult = (authorityGenerationHash = generationHash): ReconciliationPassResult => {
+const reconciliationResult = (
+  authorityGenerationHash = generationHash,
+  maximum: Authority = Authority.Observe,
+): ReconciliationPassResult => {
   const exact = reconciliation()
   return {
     report: {
@@ -254,8 +264,8 @@ const reconciliationResult = (authorityGenerationHash = generationHash): Reconci
       authority: {
         schemaVersion: 'bayn.paper-authority.v1',
         generationHash: authorityGenerationHash,
-        maximum: Authority.Observe,
-        effective: Authority.Observe,
+        maximum,
+        effective: maximum,
         kill: KillState.Clear,
         version: 1,
         updatedAt: window.submissionOpenAt,
@@ -359,6 +369,39 @@ const provideDecisionServices = <A, E>(
     Effect.provideService(MarketData, marketDataService),
   )
 
+const sandboxExecutionProgram = (
+  authorityGenerationHash = generationHash,
+  strategy = fixtureStrategy.provenance.strategy,
+): ExecutionProgram => {
+  const brokerIdentity = Result.getOrThrow(
+    makeBrokerIdentity({
+      schemaVersion: 'bayn.broker-identity.v2',
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Sandbox,
+      accountId,
+    }),
+  )
+  const authority = Result.getOrThrow(
+    makeExecutionAuthority({
+      brokerIdentity,
+      brokerAccess: BrokerAccess.Mutation,
+      capitalAuthority: sandboxCapitalAuthority(authorityGenerationHash),
+      strategy,
+      observedAt: evaluatedAt,
+    }),
+  ) as ExecutionProgram['authority']
+  const unused = Effect.die(new Error('execution program operation must not run during startup validation'))
+  return {
+    _tag: 'ExecutionProgram',
+    schemaVersion: 'bayn.execution-program.v1',
+    authority,
+    dryRunSubmit: () => unused,
+    submit: () => unused,
+    cancel: () => unused,
+    recover: () => unused,
+  }
+}
+
 describe('OBSERVE runtime composition', () => {
   test('derives the autonomous cycle protocol identity from the current strategy provenance', () => {
     const prepared = prepareObserveStartup({
@@ -449,6 +492,42 @@ describe('OBSERVE runtime composition', () => {
       ],
       createdAt: evaluatedAt,
       expiresAt: cycle.window.submissionCutoffAt,
+    })
+  })
+
+  test('builds the durable non-dispatchable shadow plan from an exact PAPER authority without requiring OBSERVE', async () => {
+    const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, fixtureProtocol.universe))
+    const program = Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(evaluatedAt))
+      return yield* buildMutationShadowCycleDecision({
+        authorityGenerationHash: generationHash,
+        cycle,
+        executionModel: fixtureProtocol.executionModel,
+        policy,
+        reconcile: Effect.succeed(reconciliationResult(generationHash, Authority.Paper)),
+        strategy: { currentDecision: () => Result.succeed({ decision, priceMicros }) },
+      })
+    }).pipe(
+      (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
+      Effect.provide(TestClock.layer()),
+    )
+
+    const document = await Effect.runPromise(program)
+
+    expect(document).toMatchObject({
+      mode: 'OBSERVE',
+      dispatchable: false,
+      bindings: { accountId, cycleId: cycle.identity.cycleId },
+      deltaRisk: [
+        {
+          evaluation: {
+            decision: {
+              outcome: RiskOutcome.Blocked,
+              reasonCodes: [Reason.AuthorityNotPaper],
+            },
+          },
+        },
+      ],
     })
   })
 
@@ -773,6 +852,109 @@ describe('OBSERVE runtime composition', () => {
     )
   })
 
+  test('starts mutation mode without projecting or initializing OBSERVE authority', async () => {
+    const unused = Effect.die(new Error('missing-publication mutation loop must not use this capability'))
+    let authorityInitializations = 0
+    const executionStore = {
+      ingest: () => unused,
+      ingestPositions: () => unused,
+      account: () => unused,
+      value: () => unused,
+      hasAccountBaseline: () => unused,
+      bindings: () => unused,
+      reconcile: () => unused,
+      ensureAuthorityGeneration: () =>
+        Effect.sync(() => {
+          authorityInitializations += 1
+          throw new Error('mutation startup must not initialize OBSERVE authority')
+        }),
+      restrictAuthority: () => unused,
+    } satisfies BrokerEventStoreShape &
+      FillAccountingStoreShape &
+      ValuationStoreShape &
+      ReconciliationStoreShape &
+      AuthorityGenerationStoreShape &
+      AuthorityRestrictionStoreShape
+    const cycleStore: CycleStoreShape = {
+      acquire: () => unused,
+      read: () => unused,
+      readAuthoritySlot: () => unused,
+      readDecisionDocument: () => unused,
+      readOldestUnfinished: () => Effect.succeed(Option.none()),
+      bindSnapshot: () => unused,
+      activate: () => unused,
+      bindDecision: () => unused,
+      finish: () => unused,
+      block: () => unused,
+    }
+    const brokerRead: BrokerReadShape = {
+      account: unused,
+      accountConfiguration: unused,
+      assetBySymbol: unusedAssetBySymbol,
+      positions: unused,
+      orders: () => unused,
+      orderById: () => unused,
+      orderByClientId: () => unused,
+      fillActivities: () => unused,
+      marketCalendar: () => unused,
+    }
+    const marketDataService: MarketDataService = {
+      ...marketData([]),
+      inspectCyclePublications: Effect.succeed({
+        outcome: 'MISSING',
+        observedAt: '2026-01-30T21:20:00.000Z',
+      }),
+    }
+    const writerFence: WriterFenceService = {
+      backendPid: 1,
+      check: unused,
+      transaction: (effect) => effect,
+    }
+    const intentStore = {} as IntentStoreService
+    const mutationStore = {} as MutationStoreShape
+    const startup = makeMutationAutonomousCycleStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      pollIntervalMs: 30_000,
+      strategy: fixtureStrategy,
+      executionProgram: sandboxExecutionProgram(),
+    })
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const pass = yield* Deferred.make<Parameters<Parameters<typeof startup>[0]['recordPass']>[0]>()
+          const loop = yield* startup({
+            qualificationRunId: 'c'.repeat(64),
+            recordPass: (observation) => Deferred.succeed(pass, observation).pipe(Effect.asVoid),
+          })
+          const fiber = yield* loop.pipe(
+            Effect.provideService(BrokerRead, brokerRead),
+            Effect.provideService(CycleStore, cycleStore),
+            Effect.provideService(MarketData, marketDataService),
+            Effect.provideService(BrokerEventStore, executionStore),
+            Effect.provideService(FillAccountingStore, executionStore),
+            Effect.provideService(ValuationStore, executionStore),
+            Effect.provideService(ReconciliationStore, executionStore),
+            Effect.provideService(AuthorityGenerationStore, executionStore),
+            Effect.provideService(AuthorityRestrictionStore, executionStore),
+            Effect.provideService(WriterFence, writerFence),
+            Effect.provideService(IntentStore, intentStore),
+            Effect.provideService(MutationStore, mutationStore),
+            Effect.forkScoped,
+          )
+          const observation = yield* Deferred.await(pass).pipe(Effect.timeout('1 second'))
+          expect(observation).toMatchObject({
+            result: 'SUCCESS',
+            outcome: 'NO_PUBLICATION',
+          })
+          expect(authorityInitializations).toBe(0)
+          yield* Fiber.interrupt(fiber)
+        }),
+      ),
+    )
+  })
+
   test('keeps the observe startup interface read-only by construction', () => {
     const startup = makeObserveAutonomousCycleStartup({
       accountId,
@@ -782,5 +964,39 @@ describe('OBSERVE runtime composition', () => {
     })
 
     expect(typeof startup).toBe('function')
+  })
+
+  test('binds mutation startup to the exact guarded execution program authority and strategy identity', async () => {
+    for (const executionProgram of [
+      sandboxExecutionProgram('9'.repeat(64)),
+      sandboxExecutionProgram(generationHash, {
+        ...fixtureStrategy.provenance.strategy,
+        behaviorHash: '8'.repeat(64),
+      }),
+    ]) {
+      const startup = makeMutationAutonomousCycleStartup({
+        accountId,
+        authorityGenerationHash: generationHash,
+        pollIntervalMs: 30_000,
+        strategy: fixtureStrategy,
+        executionProgram,
+      })
+
+      const failure = await Effect.runPromise(
+        Effect.flip(
+          startup({
+            qualificationRunId: 'c'.repeat(64),
+            recordPass: () => Effect.void,
+          }),
+        ),
+      )
+
+      expect(failure).toMatchObject({
+        _tag: 'OperationalError',
+        component: 'config',
+        operation: 'cycle-loop',
+        message: 'mutation cycle execution program does not match its account, authority generation, and strategy',
+      })
+    }
   })
 })

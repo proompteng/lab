@@ -6,6 +6,7 @@ import { AuthorizationError, SqlError } from 'effect/unstable/sql/SqlError'
 import type { RuntimeConfig } from './config'
 import { BrokerAccess, noCapitalAuthority } from './execution/authority'
 import { EvidenceStore, type EvidenceStoreService } from './db/evidence-store'
+import { decodeFreshBrokerPrice, latestQuoteUrl } from './entrypoint'
 import { operationalError } from './errors'
 import { Journal, JournalLive, type JournalService, type TigerBeetleClient } from './ledger'
 import { MarketData, marketDataOperationError, type MarketDataService } from './market-data'
@@ -146,6 +147,39 @@ const resultFailure = <A>(decision: Result.Result<A, ReplicaAddressValidationErr
   if (Result.isSuccess(decision)) throw new Error('replica address decision unexpectedly succeeded')
   return decision.failure
 }
+
+describe('Alpaca latest quote boundary', () => {
+  test('uses the exact market-data host and SIP latest-quote route', () => {
+    expect(latestQuoteUrl('BRK.B').toString()).toBe(
+      'https://data.alpaca.markets/v2/stocks/BRK.B/quotes/latest?feed=sip',
+    )
+  })
+
+  test('rounds the fresh ask upward to micros and binds it to the requested symbol', () => {
+    expect(
+      decodeFreshBrokerPrice(
+        'AAPL',
+        { symbol: 'AAPL', quote: { ap: 100.0000001, t: '2026-07-28T08:00:00.000Z' } },
+        '2026-07-28T08:00:00.100Z',
+      ),
+    ).toEqual(
+      Result.succeed({
+        symbol: 'AAPL',
+        priceMicros: '100000001',
+        quotedAt: '2026-07-28T08:00:00.000Z',
+        observedAt: '2026-07-28T08:00:00.100Z',
+      }),
+    )
+
+    expect(
+      decodeFreshBrokerPrice(
+        'AAPL',
+        { symbol: 'MSFT', quote: { ap: 100, t: '2026-07-28T08:00:00.000Z' } },
+        '2026-07-28T08:00:00.100Z',
+      ),
+    ).toMatchObject(Result.fail({ _tag: 'LatestQuoteSymbolMismatch' }))
+  })
+})
 
 describe('TigerBeetle replica address decisions', () => {
   test('parses configured endpoints synchronously while preserving request order', () => {

@@ -46,6 +46,7 @@ const dependencies = (label: string): ExecutionProgramDependencies => ({
   liveCapitalGrants: {
     read: () => Effect.die(new Error(`${label} live grant read must not run during composition proof`)),
   },
+  freshBrokerPrice: () => Effect.die(new Error(`${label} fresh price read must not run during composition proof`)),
   currentUtcInstant: Effect.succeed(observedAt),
 })
 

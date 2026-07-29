@@ -109,6 +109,15 @@ const qualifiedProtocolHash = makeStrategyProtocolHash({
   parameterHash: qualifiedStrategyParameterHash,
   parameterSchemaVersion: fixtureProtocol.schemaVersion,
 })
+const sandboxBrokerIdentity = (brokerAccountId: string) =>
+  Result.getOrThrow(
+    makeBrokerIdentity({
+      schemaVersion: 'bayn.broker-identity.v2',
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Sandbox,
+      accountId: brokerAccountId,
+    }),
+  )
 
 const qualificationPolicy = (name: string) =>
   successOfResult(
@@ -235,7 +244,7 @@ const config: RuntimeConfig = {
   host: '127.0.0.1',
   port: 8080,
   execution: {
-    brokerIdentity: undefined,
+    brokerIdentity: sandboxBrokerIdentity(accountId),
     brokerAccess: BrokerAccess.ReadOnly,
     capitalAuthority: noCapitalAuthority,
   },
@@ -693,14 +702,7 @@ const paperRuntimeConfig = (
 ): RuntimeConfig => ({
   ...config,
   execution: {
-    brokerIdentity: Result.getOrThrow(
-      makeBrokerIdentity({
-        schemaVersion: 'bayn.broker-identity.v2',
-        provider: BrokerProvider.Alpaca,
-        environment: BrokerEnvironment.Sandbox,
-        accountId: activation.accountId,
-      }),
-    ),
+    brokerIdentity: sandboxBrokerIdentity(activation.accountId),
     brokerAccess: BrokerAccess.Mutation,
     capitalAuthority: sandboxCapitalAuthority(activation.generationHash),
   },
@@ -713,14 +715,7 @@ const paperRuntimeConfig = (
   alpaca: {
     provider: BrokerProvider.Alpaca,
     environment: BrokerEnvironment.Sandbox,
-    identity: Result.getOrThrow(
-      makeBrokerIdentity({
-        schemaVersion: 'bayn.broker-identity.v2',
-        provider: BrokerProvider.Alpaca,
-        environment: BrokerEnvironment.Sandbox,
-        accountId: activation.accountId,
-      }),
-    ),
+    identity: sandboxBrokerIdentity(activation.accountId),
     baseUrl: alpacaSandboxBaseUrl,
     expectedAccountId: activation.accountId,
     authorityGenerationHash: activation.generationHash,
@@ -1774,7 +1769,7 @@ describePostgres('paper accounting persistence', () => {
           maximum: Authority.Observe,
           authority_version: 1,
           qualification_result_hash: null,
-          account_id: null,
+          account_id: accountId,
           risk_policy_hash: null,
           proof_plan_hash: null,
           qualification_source_revision: null,

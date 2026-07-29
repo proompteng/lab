@@ -1,6 +1,7 @@
 import { NodeHttpClient, NodeServices } from '@effect/platform-node'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
-import { Effect, flow, Layer, Match, pipe, Redacted, Result, Schema, Stdio, Stream } from 'effect'
+import { Context, Effect, flow, Layer, Match, pipe, Redacted, Result, Schema, Stdio, Stream } from 'effect'
+import { Headers, HttpClient, HttpClientRequest } from 'effect/unstable/http'
 
 import {
   makeApplicationPlan,
@@ -11,7 +12,14 @@ import {
   type ApplicationPlanFor,
 } from './app'
 import { riskBalancedTrendBehaviorHash } from './behavior'
-import { BrokerSession, live as AlpacaBrokerLive, type BrokerReadShape } from './broker/alpaca'
+import {
+  BrokerSession,
+  alpacaHttpLayer,
+  live as AlpacaBrokerLive,
+  type BrokerConnection,
+  type BrokerReadShape,
+} from './broker/alpaca'
+import { redactedHeaders } from './broker/alpaca/model'
 import { BrokerMutationError, makeMutation } from './broker/alpaca-mutations'
 import { verifyBehaviorHash, verifyParameterHash } from './build'
 import { loadConfig, type LoadedRuntimeConfig } from './config'
@@ -29,15 +37,20 @@ import { LiveCapitalGrantStore, LiveCapitalGrantStoreLive } from './db/live-capi
 import { BrokerAccess } from './execution/authority'
 import { IntentStore, IntentStoreLive } from './execution/intents'
 import { MutationStore, MutationStoreLive } from './execution/mutations'
-import { makeExecutionProgram } from './execution/runtime-program'
+import { makeExecutionProgram, type ExecutionProgram } from './execution/runtime-program'
 import { renderRuntimeAuthorityFailure, resolveRuntimeAuthority } from './execution/runtime-authority'
+import type { FreshBrokerPrice } from './execution/mutation-authority'
 import { WriterFence, WriterFenceLive } from './execution/writer-fence'
 import { operationalError } from './errors'
 import { canonicalHashV1Result, type CanonicalJsonFailure } from './hash'
 import { HttpServerLive } from './http'
 import { Journal, JournalLive } from './ledger'
 import { MarketData, MarketDataLive } from './market-data'
-import { loadObserveRiskPolicy, makeObserveAutonomousCycleStartup } from './observe-composition'
+import {
+  loadObserveRiskPolicy,
+  makeMutationAutonomousCycleStartup,
+  makeObserveAutonomousCycleStartup,
+} from './observe-composition'
 import { sqlResource } from './operations'
 import {
   discoverPaperCandidates as discoverExecutionCandidatesHistoricalCodec,
@@ -298,12 +311,134 @@ const runtimeBroker = (
   executionDisabledReason: mutationEnabled ? null : ('BROKER_ACCESS_READ_ONLY' as const),
 })
 
+const LatestQuoteResponseSchema = Schema.Struct({
+  symbol: Schema.String,
+  quote: Schema.Struct({
+    ap: Schema.Finite,
+    t: Schema.String,
+  }),
+})
+
+export type LatestQuoteDecodeFailure =
+  | { readonly _tag: 'LatestQuoteResponseInvalid'; readonly cause: unknown }
+  | { readonly _tag: 'LatestQuoteSymbolMismatch'; readonly expected: string; readonly observed: string }
+  | { readonly _tag: 'LatestQuoteAskInvalid'; readonly symbol: string; readonly ask: number }
+
+export const decodeFreshBrokerPrice = (
+  requestedSymbol: string,
+  raw: unknown,
+  observedAt: string,
+): Result.Result<FreshBrokerPrice, LatestQuoteDecodeFailure> => {
+  const decoded = Schema.decodeUnknownResult(LatestQuoteResponseSchema, { onExcessProperty: 'ignore' })(raw)
+  if (Result.isFailure(decoded)) {
+    return Result.fail({ _tag: 'LatestQuoteResponseInvalid', cause: decoded.failure })
+  }
+  if (decoded.success.symbol !== requestedSymbol) {
+    return Result.fail({
+      _tag: 'LatestQuoteSymbolMismatch',
+      expected: requestedSymbol,
+      observed: decoded.success.symbol,
+    })
+  }
+  const askMicros = Math.ceil(decoded.success.quote.ap * 1_000_000)
+  if (!Number.isFinite(decoded.success.quote.ap) || decoded.success.quote.ap <= 0 || !Number.isSafeInteger(askMicros)) {
+    return Result.fail({
+      _tag: 'LatestQuoteAskInvalid',
+      symbol: requestedSymbol,
+      ask: decoded.success.quote.ap,
+    })
+  }
+  return Result.succeed({
+    symbol: requestedSymbol,
+    priceMicros: askMicros.toString(),
+    quotedAt: decoded.success.quote.t,
+    observedAt,
+  })
+}
+
+export const latestQuoteUrl = (symbol: string): URL => {
+  const url = new URL(`/v2/stocks/${encodeURIComponent(symbol)}/quotes/latest`, 'https://data.alpaca.markets')
+  url.searchParams.set('feed', 'sip')
+  return url
+}
+
+export const makeFreshBrokerPriceReader = (
+  connection: BrokerConnection,
+  client: HttpClient.HttpClient,
+): ((symbol: string) => Effect.Effect<FreshBrokerPrice, ReturnType<typeof operationalError>>) => {
+  const authenticated = client.pipe(HttpClient.retryTransient({ times: connection.retryAttempts }))
+  const key = Redacted.value(connection.key)
+  const secret = Redacted.value(connection.secret)
+  return (symbol) =>
+    Effect.gen(function* () {
+      const request = HttpClientRequest.get(latestQuoteUrl(symbol), {
+        acceptJson: true,
+        headers: {
+          'APCA-API-KEY-ID': key,
+          'APCA-API-SECRET-KEY': secret,
+        },
+      })
+      const response = yield* authenticated
+        .execute(request)
+        .pipe(
+          Effect.mapError((cause) =>
+            operationalError('http', 'alpaca-latest-quote', 'Alpaca latest quote request failed', cause),
+          ),
+        )
+      if (response.status < 200 || response.status >= 300) {
+        return yield* Effect.fail(
+          operationalError(
+            'http',
+            'alpaca-latest-quote',
+            `Alpaca latest quote returned HTTP ${response.status.toString()}`,
+          ),
+        )
+      }
+      const raw = yield* response.json.pipe(
+        Effect.mapError((cause) =>
+          operationalError('http', 'alpaca-latest-quote', 'Alpaca latest quote body is not valid JSON', cause),
+        ),
+      )
+      const observedAt = yield* currentUtcInstant
+      return yield* Effect.fromResult(decodeFreshBrokerPrice(symbol, raw, observedAt)).pipe(
+        Effect.mapError((cause) =>
+          operationalError('http', 'alpaca-latest-quote', 'Alpaca latest quote violates the price contract', cause),
+        ),
+      )
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: connection.operationTimeoutMs,
+        orElse: () =>
+          Effect.fail(
+            operationalError(
+              'http',
+              'alpaca-latest-quote',
+              `Alpaca latest quote timed out after ${connection.operationTimeoutMs.toString()}ms`,
+            ),
+          ),
+      }),
+      Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders),
+      Effect.withSpan('broker.latest-quote', {
+        attributes: { 'broker.system': 'alpaca', 'broker.symbol': symbol },
+      }),
+    )
+}
+
 const observeCycle = (plan: ApplicationPlanFor<'AutonomousService'>) =>
   makeObserveAutonomousCycleStartup({
     accountId: plan.config.alpaca.expectedAccountId,
     authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
     pollIntervalMs: plan.config.cyclePollIntervalMs,
     strategy: plan.strategy,
+  })
+
+const mutationCycle = (plan: ApplicationPlanFor<'AutonomousService'>, executionProgram: ExecutionProgram) =>
+  makeMutationAutonomousCycleStartup({
+    accountId: plan.config.alpaca.expectedAccountId,
+    authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
+    pollIntervalMs: plan.config.cyclePollIntervalMs,
+    strategy: plan.strategy,
+    executionProgram,
   })
 
 const authorityError = (cause: Effect.Error<ReturnType<typeof resolveRuntimeAuthority>>) =>
@@ -341,6 +476,11 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
       })
     }
 
+    const quoteHttpContext = yield* Layer.build(alpacaHttpLayer(session.connection)).pipe(
+      Effect.mapError((cause) =>
+        operationalError('http', 'alpaca-latest-quote-client', 'Alpaca latest quote client acquisition failed', cause),
+      ),
+    )
     const executionDependencies = yield* Effect.all({
       intentStore: IntentStore,
       mutationStore: MutationStore,
@@ -351,6 +491,10 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
       makeExecutionProgram(authority, {
         brokerRead: session.read,
         liveCapitalGrants,
+        freshBrokerPrice: makeFreshBrokerPriceReader(
+          session.connection,
+          Context.get(quoteHttpContext, HttpClient.HttpClient),
+        ),
         currentUtcInstant,
         ...executionDependencies,
       }),
@@ -359,7 +503,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
       _tag: 'AutonomousMutation',
       broker: runtimeBroker(plan, session.read, true),
       executionProgram,
-      startCycle: observeCycle(plan),
+      startCycle: mutationCycle(plan, executionProgram),
     })
   })
 

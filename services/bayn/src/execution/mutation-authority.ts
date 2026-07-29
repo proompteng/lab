@@ -11,6 +11,7 @@ import {
 } from '../broker/alpaca'
 import { MutationOperation, invalidRequest, type BrokerMutationShape } from '../broker/alpaca-mutations'
 import type { LiveCapitalGrantStoreShape } from '../db/live-capital-grant'
+import type { OperationalError } from '../errors'
 import { OrderSide as IntentOrderSide, type Intent } from '../paper'
 import {
   BrokerAccess,
@@ -109,6 +110,20 @@ export type LiveCapitalLimitFailure =
       readonly limit: number
       readonly observed: number
     }
+  | {
+      readonly _tag: 'FreshBrokerPriceInvalid'
+      readonly symbol: string
+      readonly priceMicros: string
+      readonly quotedAt: string
+      readonly observedAt: string
+    }
+  | {
+      readonly _tag: 'FreshBrokerPriceStale'
+      readonly symbol: string
+      readonly quotedAt: string
+      readonly observedAt: string
+      readonly maximumAgeMs: number
+    }
 
 export interface LiveCapitalSnapshot {
   readonly account: Account
@@ -116,14 +131,24 @@ export interface LiveCapitalSnapshot {
   readonly openOrders: readonly Order[]
 }
 
+export interface FreshBrokerPrice {
+  readonly symbol: string
+  readonly priceMicros: string
+  readonly quotedAt: string
+  readonly observedAt: string
+}
+
 export interface MutationAuthorityDependencies {
   readonly brokerRead: BrokerReadShape
   readonly brokerMutation: BrokerMutationShape
   readonly liveCapitalGrants: Pick<LiveCapitalGrantStoreShape, 'read'>
+  readonly freshBrokerPrice: (symbol: string) => Effect.Effect<FreshBrokerPrice, OperationalError>
   readonly currentUtcInstant: Effect.Effect<string>
 }
 
 const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
+const freshBrokerPriceMaximumAgeMs = 5_000
+const microsPerUnit = 1_000_000n
 
 const expectedAuthorityGeneration = (authority: MutationExecutionAuthority): string =>
   authority.capitalAuthority._tag === CapitalAuthorityKind.Sandbox
@@ -159,9 +184,51 @@ export const validateIntentAuthorityBinding = (
   return Result.succeed(undefined)
 }
 
-const signedIntentNotional = (intent: Intent): bigint => {
-  const notional = BigInt(intent.notionalLimitMicros)
+const signedIntentNotional = (intent: Intent, notional: bigint): bigint => {
   return intent.side === IntentOrderSide.Buy ? notional : -notional
+}
+
+const parseCanonicalPositiveMicros = (value: string): bigint | undefined =>
+  /^[1-9][0-9]*$/.test(value) ? BigInt(value) : undefined
+
+export const transmittedOrderNotional = (
+  intent: Intent,
+  price: FreshBrokerPrice,
+  observedAt: string,
+): Result.Result<bigint, LiveCapitalLimitFailure> => {
+  const priceMicros = parseCanonicalPositiveMicros(price.priceMicros)
+  const quantityMicros = parseCanonicalPositiveMicros(intent.quantityMicros)
+  const quotedAtMs = Date.parse(price.quotedAt)
+  const priceObservedAtMs = Date.parse(price.observedAt)
+  const observedAtMs = Date.parse(observedAt)
+  if (
+    price.symbol !== intent.symbol ||
+    priceMicros === undefined ||
+    quantityMicros === undefined ||
+    !Number.isFinite(quotedAtMs) ||
+    !Number.isFinite(priceObservedAtMs) ||
+    !Number.isFinite(observedAtMs) ||
+    quotedAtMs > priceObservedAtMs ||
+    priceObservedAtMs > observedAtMs
+  ) {
+    return Result.fail({
+      _tag: 'FreshBrokerPriceInvalid',
+      symbol: price.symbol,
+      priceMicros: price.priceMicros,
+      quotedAt: price.quotedAt,
+      observedAt: price.observedAt,
+    })
+  }
+  if (observedAtMs - quotedAtMs > freshBrokerPriceMaximumAgeMs) {
+    return Result.fail({
+      _tag: 'FreshBrokerPriceStale',
+      symbol: price.symbol,
+      quotedAt: price.quotedAt,
+      observedAt,
+      maximumAgeMs: freshBrokerPriceMaximumAgeMs,
+    })
+  }
+  return Result.succeed((quantityMicros * priceMicros + microsPerUnit - 1n) / microsPerUnit)
 }
 
 const signedOrderNotional = (
@@ -247,6 +314,7 @@ export const validateLiveCapitalLimits = (
   authority: LiveMutationExecutionAuthority,
   intent: Intent,
   snapshot: LiveCapitalSnapshot,
+  proposedNotional: bigint,
 ): Result.Result<void, LiveCapitalLimitFailure> => {
   const binding = validateIntentAuthorityBinding(authority, intent)
   if (Result.isFailure(binding)) return Result.fail(binding.failure)
@@ -254,11 +322,12 @@ export const validateLiveCapitalLimits = (
   if (Result.isFailure(snapshotBinding)) return Result.fail(snapshotBinding.failure)
 
   const limits = authority.capitalAuthority.grant.limits
-  const proposedNotional = absolute(BigInt(intent.notionalLimitMicros))
-  if (proposedNotional > BigInt(limits.maxOrderNotionalMicros)) {
+  const intentNotionalLimit = absolute(BigInt(intent.notionalLimitMicros))
+  const orderLimit = BigInt(limits.maxOrderNotionalMicros)
+  if (intentNotionalLimit > orderLimit || proposedNotional > intentNotionalLimit || proposedNotional > orderLimit) {
     return Result.fail({
       _tag: 'LiveOrderNotionalLimitExceeded',
-      limitMicros: limits.maxOrderNotionalMicros,
+      limitMicros: (intentNotionalLimit < orderLimit ? intentNotionalLimit : orderLimit).toString(),
       proposedMicros: proposedNotional.toString(),
     })
   }
@@ -286,7 +355,8 @@ export const validateLiveCapitalLimits = (
     currentGross += absolute(marketValue)
     if (position.symbol === intent.symbol) currentSymbol += marketValue
   }
-  const projectedSymbol = currentSymbol + (pendingBySymbol.get(intent.symbol) ?? 0n) + signedIntentNotional(intent)
+  const projectedSymbol =
+    currentSymbol + (pendingBySymbol.get(intent.symbol) ?? 0n) + signedIntentNotional(intent, proposedNotional)
   if (absolute(projectedSymbol) > BigInt(limits.maxPositionNotionalMicros)) {
     return Result.fail({
       _tag: 'LivePositionNotionalLimitExceeded',
@@ -403,6 +473,13 @@ export const makeAuthorityGuardedBrokerMutation = (
               : Effect.succeed(grant),
           ),
         )
+        const price = yield* dependencies
+          .freshBrokerPrice(intent.symbol)
+          .pipe(
+            Effect.mapError((cause) =>
+              mutationAuthorizationError('fresh broker price could not be refreshed before submit', cause),
+            ),
+          )
         const observedAt = yield* dependencies.currentUtcInstant
         const fresh = freshLiveAuthority(liveAuthority, persisted, observedAt)
         if (Result.isFailure(fresh)) {
@@ -410,11 +487,22 @@ export const makeAuthorityGuardedBrokerMutation = (
             mutationAuthorizationError('live capital grant is no longer valid before submit', fresh.failure),
           )
         }
-        const limits = validateLiveCapitalLimits(fresh.success, intent, {
-          account: snapshot.account.value,
-          positions: snapshot.positions.value,
-          openOrders: snapshot.openOrders.value,
-        })
+        const requestedNotional = transmittedOrderNotional(intent, price, observedAt)
+        if (Result.isFailure(requestedNotional)) {
+          return yield* Effect.fail(
+            mutationAuthorizationError('fresh broker price rejected the transmitted order', requestedNotional.failure),
+          )
+        }
+        const limits = validateLiveCapitalLimits(
+          fresh.success,
+          intent,
+          {
+            account: snapshot.account.value,
+            positions: snapshot.positions.value,
+            openOrders: snapshot.openOrders.value,
+          },
+          requestedNotional.success,
+        )
         if (Result.isFailure(limits)) {
           return yield* Effect.fail(
             mutationAuthorizationError('live capital limit rejected the broker submit', limits.failure),
