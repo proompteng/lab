@@ -100,11 +100,11 @@ session after `2022-12-30`.
 
 ## Frozen benchmark, statistics, and rejection thresholds
 
-The benchmark is the stronger realized Sharpe of:
+The benchmark is the stronger realized Sharpe of the two existing Bayn cross-asset controls:
 
-1. SPY buy-and-hold, aligned to Candidate 7's development observations; or
-2. direct SPY volatility timing using a 63-session realized-volatility estimate, a 10% annualized target, long-or-cash,
-   no leverage, and the same causal next-open execution and cost model.
+1. equal-weight buy-and-hold across `DBC,EFA,IEF,SPY,VNQ`, aligned to Candidate 7's development observations; or
+2. direct equal-weight cross-asset volatility timing using a 63-session realized-volatility estimate, a 10% annualized
+   target, long-or-cash, no leverage, and the same causal next-open execution and cost model.
 
 Candidate 7 advances only if every existing Bayn gate passes:
 
