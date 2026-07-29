@@ -46,10 +46,6 @@ export type QualificationStatisticsFailure =
       readonly maximum: number
     }
   | {
-      readonly _tag: 'QualificationSelectionMultiplicityInvalid'
-      readonly selectionMultiplicity: number
-    }
-  | {
       readonly _tag: 'QualificationSamplingBlockMissing'
       readonly index: number
       readonly blockCount: number
@@ -77,8 +73,6 @@ export const renderQualificationStatisticsFailure = (failure: QualificationStati
       return `prior qualification run IDs are not canonical: ${failure.priorTrialRunIds.join(',')}`
     case 'QualificationRandomIndexInvalid':
       return `bootstrap random index maximum must be positive: ${failure.maximum}`
-    case 'QualificationSelectionMultiplicityInvalid':
-      return `selection multiplicity must be a positive safe integer: ${failure.selectionMultiplicity}`
     case 'QualificationSamplingBlockMissing':
       return `bootstrap block ${failure.index} is outside ${failure.blockCount} blocks`
     case 'QualificationWalkForwardBoundaryMissing':

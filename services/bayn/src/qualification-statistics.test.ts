@@ -9,7 +9,6 @@ import {
   QualificationStatisticsPolicySchema,
   analyzeQualification,
   analyzeQualificationInput,
-  analyzeQualificationWithSelectionMultiplicity,
   calculateQualificationPower,
   defaultQualificationStatisticsPolicy,
   prepareQualificationSeries,
@@ -359,17 +358,11 @@ describe('deterministic paired block bootstrap', () => {
     const input = makeSeries()
     const baseline = successOf(analyzeQualification(input, policy(), []))
     const onePrior = successOf(analyzeQualification(input, policy(), ['1'.repeat(64)]))
-    const threeWaySelection = successOf(analyzeQualificationWithSelectionMultiplicity(input, policy(), [], 3))
     const insufficientTail = successOf(
       analyzeQualification(input, policy(), ['1'.repeat(64), '2'.repeat(64), '3'.repeat(64)]),
     )
 
     expect(onePrior.bootstrap.adjustedOneSidedAlpha).toBeLessThan(baseline.bootstrap.adjustedOneSidedAlpha)
-    expect(threeWaySelection.candidateOrdinal).toBe(baseline.candidateOrdinal)
-    expect(threeWaySelection.bootstrap.adjustedOneSidedAlpha).toBeCloseTo(
-      baseline.bootstrap.adjustedOneSidedAlpha / 3,
-      15,
-    )
     expect(onePrior.bootstrap.annualizedExcessReturnLowerBound).toBeLessThanOrEqual(
       baseline.bootstrap.annualizedExcessReturnLowerBound,
     )
@@ -379,12 +372,6 @@ describe('deterministic paired block bootstrap', () => {
       Result.fail({
         _tag: 'QualificationLineageInvalid',
         priorTrialRunIds: ['2'.repeat(64), '1'.repeat(64)],
-      }),
-    )
-    expect(analyzeQualificationWithSelectionMultiplicity(input, policy(), [], 0)).toEqual(
-      Result.fail({
-        _tag: 'QualificationSelectionMultiplicityInvalid',
-        selectionMultiplicity: 0,
       }),
     )
   })

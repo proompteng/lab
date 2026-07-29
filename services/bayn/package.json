@@ -5,7 +5,6 @@
   "type": "module",
   "scripts": {
     "audit:qualification": "bun src/qualification-audit-command.ts",
-    "candidate:10:development": "bun src/candidate-10-development-command.ts",
     "candidate:qualification": "bun src/qualification-candidate-command.ts",
     "build": "bun build src/index.ts --target=node --external tigerbeetle-node --outdir=dist",
     "dev": "BAYN_PROVENANCE_MODE=development bun --watch src/index.ts",
