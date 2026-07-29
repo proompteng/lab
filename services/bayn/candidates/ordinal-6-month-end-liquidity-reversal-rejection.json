@@ -4,7 +4,7 @@
   "strategyName": "month-end-liquidity-reversal",
   "disposition": "REJECTED_DEVELOPMENT_EVIDENCE_INSUFFICIENT",
   "evaluatedImplementation": {
-    "commit": "665b5034bf481f29f15e491a6f9367655d8ac222",
+    "commit": "8306797e1666c6a999899eb8ecebe4fdf2184600",
     "parameterHash": "59889076e9cff0b8c79c30f8c095b50ae9c4cd6044fe536004f3432a3287a645",
     "executableBehaviorHash": "ff5704048e04827e02631a462ebb49e11e637647c5578b8060b4633b9a3274e8",
     "strategyHash": "290d8bf4597ae27e15af6f6dd8f5e49bd925995ff6807387104579f6c2193456",
@@ -84,5 +84,5 @@
     "status": "UNTOUCHED",
     "statement": "No 2023-01-03 through 2025-12-31 holdout bar or session was queried, inspected, simulated, qualified, or used for this decision."
   },
-  "receiptHash": "86923571a093da1f439f81a33e78eb68ed202853bbd5c96f71728130d27a1e56"
+  "receiptHash": "0654fb53c341ccb6128933cdd2e4d47b04b28d087dab3e7cff4776e0a2decebc"
 }
