@@ -173,6 +173,14 @@ export type CandidateDevelopmentPreflightIssue =
       readonly signalDate: IsoDate
     }
   | {
+      readonly _tag: 'CandidateDevelopmentSignalScheduleMismatch'
+      readonly index: number
+      readonly expected: IsoDate | undefined
+      readonly observed: IsoDate | undefined
+      readonly expectedCount: number
+      readonly observedCount: number
+    }
+  | {
       readonly _tag: 'CandidateDevelopmentEligibleExecutionMissing'
       readonly featureLookbackSessions: number
     }
@@ -437,6 +445,23 @@ export const firstEligibleExecutionAfterLookback = (
     const signalIndex = sessionIndices.get(signalDate)
     if (signalIndex === undefined) {
       return Result.fail({ _tag: 'CandidateDevelopmentSignalOutsideCalendar', signalDate })
+    }
+  }
+
+  const expectedSignalSessionDates = officialMonthEndSignalDates(sessions)
+  const scheduleLength = Math.max(expectedSignalSessionDates.length, signalSessionDates.length)
+  for (let index = 0; index < scheduleLength; index += 1) {
+    const expected = expectedSignalSessionDates.at(index)
+    const observed = signalSessionDates.at(index)
+    if (expected !== observed) {
+      return Result.fail({
+        _tag: 'CandidateDevelopmentSignalScheduleMismatch',
+        index,
+        expected,
+        observed,
+        expectedCount: expectedSignalSessionDates.length,
+        observedCount: signalSessionDates.length,
+      })
     }
   }
 

@@ -367,6 +367,16 @@ describe('candidate development walk-forward protocol', () => {
         signalDate: '2015-12-31',
       }),
     )
+    expect(firstEligibleExecutionAfterLookback(sessions, signals.slice(1), 0)).toEqual(
+      Result.fail({
+        _tag: 'CandidateDevelopmentSignalScheduleMismatch',
+        index: 0,
+        expected: '2016-01-29',
+        observed: '2016-02-29',
+        expectedCount: signals.length,
+        observedCount: signals.length - 1,
+      }),
+    )
   })
 
   test('stops before preregistration, data loading, and evaluation when the schedule is infeasible', async () => {
