@@ -6,6 +6,7 @@ import { HttpClient } from 'effect/unstable/http'
 import { canonicalHashV1 } from '../hash'
 import {
   BrokerEnvironment,
+  CapitalAccessState,
   ExecutionAccess,
   disabledCapitalAccess,
   makeExecutionAuthority,
@@ -17,6 +18,7 @@ import {
   MutationFailure,
   MutationOperation,
   makeMutation,
+  submitBody,
   type BrokerMutationShape,
 } from './alpaca-mutations'
 import {
@@ -57,6 +59,9 @@ const workflowJobTimeoutMs = 15 * 60_000
 const overallProofDeadlineMs = 13 * 60_000
 const requiredSubmitBudgetMs = mutationPhaseDeadlineMs + cleanupDeadlineMs
 const protectedProxyUrl = 'http://127.0.0.1:18080'
+const protectedGithubEnvironment = 'bayn-alpaca-sandbox'
+const protectedRepository = 'proompteng/lab'
+const protectedEventName = 'workflow_dispatch'
 const mutationPhaseDeadline = Duration.millis(mutationPhaseDeadlineMs)
 const cleanupDeadline = Duration.millis(cleanupDeadlineMs)
 const maximumRetryReadMs = (lookupRetryCount + 1) * brokerOperationTimeoutMs + lookupRetryCount * retryDelayMs
@@ -92,6 +97,92 @@ const jsonSafeObject = (value: unknown): Record<string, unknown> => {
 }
 
 const hashIdentity = (value: string): string => canonicalHashV1({ value })
+
+interface ProtectedProofBinding {
+  readonly configuredOrigin: string
+  readonly exactHeadSha: string
+  readonly sourceSha: string
+  readonly repository: string
+  readonly eventName: string
+  readonly githubEnvironment: string
+  readonly mutationAuthorized: string
+  readonly actor: string
+  readonly triggeringActor: string
+  readonly runAttempt: string
+  readonly proxyUrl: string
+}
+
+const validateProtectedProofBinding = (binding: ProtectedProofBinding): void => {
+  if (binding.configuredOrigin !== alpacaSandboxBaseUrl) {
+    throw new Error('sandbox endpoint must be exactly https://paper-api.alpaca.markets')
+  }
+  if (!/^[0-9a-f]{40}$/.test(binding.sourceSha)) {
+    throw new Error('GITHUB_SHA must be an exact lowercase commit SHA')
+  }
+  if (binding.exactHeadSha !== binding.sourceSha) {
+    throw new Error('authorized exact head SHA does not match GITHUB_SHA')
+  }
+  if (binding.repository !== protectedRepository) {
+    throw new Error(`protected proof repository must be ${protectedRepository}`)
+  }
+  if (binding.eventName !== protectedEventName) {
+    throw new Error('protected proof may run only from workflow_dispatch')
+  }
+  if (binding.githubEnvironment !== protectedGithubEnvironment) {
+    throw new Error(`protected proof must use GitHub environment ${protectedGithubEnvironment}`)
+  }
+  if (binding.mutationAuthorized !== 'true') {
+    throw new Error('protected broker mutation was not explicitly authorized')
+  }
+  if (binding.actor !== binding.triggeringActor) {
+    throw new Error('broker-mutating reruns require a fresh dispatch by the authorizing actor')
+  }
+  if (binding.runAttempt !== '1') {
+    throw new Error('broker-mutating proof reruns are forbidden; create a fresh authorized dispatch')
+  }
+  if (binding.proxyUrl !== protectedProxyUrl) {
+    throw new Error('sandbox proof must use the restricted loopback CONNECT proxy')
+  }
+}
+
+interface ProofIdentityInput {
+  readonly runId: string
+  readonly runAttempt: string
+  readonly sourceSha: string
+  readonly releaseImageIdentity: string
+}
+
+const proofIdentity = (input: ProofIdentityInput): string => canonicalHashV1(input)
+const proofClientOrderId = (input: ProofIdentityInput): string => `b1_${proofIdentity(input).slice(0, 43)}`
+
+const makeSandboxProofAuthority = () =>
+  makeExecutionAuthority(BrokerEnvironment.Sandbox, ExecutionAccess.SubmitOrders, disabledCapitalAccess)
+
+const makeProofIntent = (
+  expectedAccountId: string,
+  clientOrderId: string,
+  identity: string,
+  createdAt: string,
+): Intent => ({
+  schemaVersion: 'bayn.paper-intent.v3',
+  intentId: canonicalHashV1({ identity, kind: 'intent' }),
+  authorityGenerationHash: canonicalHashV1({ identity, kind: 'authority' }),
+  riskDecisionId: canonicalHashV1({ identity, kind: 'risk' }),
+  strategyName: 'alpaca-sandbox-contract-proof',
+  cycleId: canonicalHashV1({ identity, kind: 'cycle' }),
+  decisionHash: canonicalHashV1({ identity, kind: 'decision' }),
+  policyHash: canonicalHashV1({ identity, kind: 'policy' }),
+  accountId: expectedAccountId,
+  clientOrderId,
+  symbol: proofSymbol,
+  side: OrderSide.Buy,
+  orderType: OrderType.Market,
+  timeInForce: TimeInForce.Day,
+  quantityMicros: proofQuantityMicros,
+  notionalLimitMicros: '5000000',
+  state: IntentState.IoStarted,
+  createdAt,
+})
 
 const addUtcDays = (date: string, days: number): string => {
   const value = new Date(`${date}T00:00:00.000Z`)
@@ -153,6 +244,7 @@ interface ProofState {
     readonly fractionable: true
     readonly observationHash: string
   }
+  submitAttempts: number
   submitOutcome: 'NOT_ATTEMPTED' | 'ACKNOWLEDGED' | 'REJECTED' | 'UNKNOWN'
   brokerOrderId?: string
   finalStatus?: OrderStatus
@@ -629,7 +721,27 @@ const recordSubmitFailure = (state: ProofState, error: BrokerMutationError): voi
   state.submitOutcome = error.failure === MutationFailure.Rejected ? 'REJECTED' : 'UNKNOWN'
 }
 
+const submitProofOrder = (mutation: BrokerMutationShape, intent: Intent, state: ProofState) =>
+  Effect.sync(() => {
+    state.submitAttempts += 1
+  }).pipe(
+    Effect.andThen(mutation.submit(intent)),
+    Effect.tapError((error) =>
+      Effect.sync(() => {
+        recordSubmitFailure(state, error)
+      }),
+    ),
+    Effect.tap((submit) =>
+      Effect.sync(() => {
+        state.submitOutcome = 'ACKNOWLEDGED'
+        state.brokerOrderId = submit.order.brokerOrderId
+        state.lifecycle.push(mutationEvidence('SUBMIT', submit.evidence))
+      }),
+    ),
+  )
+
 const testProofState = (): ProofState => ({
+  submitAttempts: 0,
   submitOutcome: 'NOT_ATTEMPTED',
   cancelAttempts: 0,
   cancelAcknowledged: false,
@@ -720,6 +832,115 @@ test('binds the real proof to the restricted production proxy transport', () => 
     port: '18080',
     pathname: '/',
   })
+})
+
+test('requires exact dispatch, environment, endpoint, actor, and mutation authorization binding', () => {
+  const binding: ProtectedProofBinding = {
+    configuredOrigin: alpacaSandboxBaseUrl,
+    exactHeadSha: 'a'.repeat(40),
+    sourceSha: 'a'.repeat(40),
+    repository: protectedRepository,
+    eventName: protectedEventName,
+    githubEnvironment: protectedGithubEnvironment,
+    mutationAuthorized: 'true',
+    actor: 'gregkonush',
+    triggeringActor: 'gregkonush',
+    runAttempt: '1',
+    proxyUrl: protectedProxyUrl,
+  }
+
+  expect(() => validateProtectedProofBinding(binding)).not.toThrow()
+  expect(() => validateProtectedProofBinding({ ...binding, configuredOrigin: 'https://api.alpaca.markets' })).toThrow(
+    'sandbox endpoint',
+  )
+  expect(() => validateProtectedProofBinding({ ...binding, githubEnvironment: 'production' })).toThrow(
+    protectedGithubEnvironment,
+  )
+  expect(() => validateProtectedProofBinding({ ...binding, mutationAuthorized: 'false' })).toThrow(
+    'not explicitly authorized',
+  )
+  expect(() => validateProtectedProofBinding({ ...binding, triggeringActor: 'other-actor' })).toThrow('fresh dispatch')
+  expect(() => validateProtectedProofBinding({ ...binding, runAttempt: '2' })).toThrow('reruns are forbidden')
+})
+
+test('uses sandbox submit authority with capital access disabled', () => {
+  const authority = makeSandboxProofAuthority()
+  expect(authority).toEqual({
+    brokerEnvironment: BrokerEnvironment.Sandbox,
+    executionAccess: ExecutionAccess.SubmitOrders,
+    capitalAccess: { _tag: CapitalAccessState.Disabled },
+  })
+})
+
+test('derives a deterministic per-attempt Alpaca client order ID', () => {
+  const input: ProofIdentityInput = {
+    runId: '12345',
+    runAttempt: '1',
+    sourceSha: 'a'.repeat(40),
+    releaseImageIdentity: `registry.ide-newton.ts.net/lab/bayn@sha256:${'b'.repeat(64)}`,
+  }
+  const clientOrderId = proofClientOrderId(input)
+
+  expect(clientOrderId).toBe(proofClientOrderId(input))
+  expect(clientOrderId).toMatch(/^b1_[0-9a-f]{43}$/)
+  expect(clientOrderId.length).toBeLessThanOrEqual(48)
+  expect(clientOrderId).not.toBe(proofClientOrderId({ ...input, runAttempt: '2' }))
+})
+
+test('constructs the exact non-extended fractional DAY market request', () => {
+  const identity = 'c'.repeat(64)
+  const clientOrderId = `b1_${identity.slice(0, 43)}`
+  const intent = makeProofIntent(
+    '00000000-0000-4000-8000-000000000001',
+    clientOrderId,
+    identity,
+    '2026-07-28T00:00:00.000Z',
+  )
+  const request = submitBody(intent)
+  expect(Result.isSuccess(request)).toBeTrue()
+  if (Result.isFailure(request)) throw request.failure
+  expect(request.success).toEqual({
+    symbol: proofSymbol,
+    qty: '0.01',
+    side: BrokerOrderSide.Buy,
+    type: BrokerOrderType.Market,
+    time_in_force: BrokerTimeInForce.Day,
+    client_order_id: clientOrderId,
+    extended_hours: false,
+  })
+})
+
+test('never retries an ambiguous submit mutation', async () => {
+  const state = testProofState()
+  const identity = 'd'.repeat(64)
+  const intent = makeProofIntent(
+    '00000000-0000-4000-8000-000000000001',
+    `b1_${identity.slice(0, 43)}`,
+    identity,
+    '2026-07-28T00:00:00.000Z',
+  )
+  let submitCalls = 0
+  const mutation: BrokerMutationShape = {
+    submit: () => {
+      submitCalls += 1
+      return Effect.fail(
+        new BrokerMutationError({
+          operation: MutationOperation.Submit,
+          failure: MutationFailure.Unknown,
+          outcome: MutationOutcome.Unknown,
+          message: 'submit acknowledgement was lost',
+        }),
+      )
+    },
+    cancel: () => Effect.die(new Error('cancel is not used by submit retry coverage')),
+  }
+
+  const exit = await Effect.runPromiseExit(submitProofOrder(mutation, intent, state))
+  expect(Exit.isFailure(exit)).toBeTrue()
+  expect(submitCalls).toBe(1)
+  expect(state.submitAttempts).toBe(1)
+  expect(state.submitOutcome).toBe('UNKNOWN')
+  expect(state.brokerOrderId).toBeUndefined()
 })
 
 test('requires a full pre-open safety window', () => {
@@ -946,7 +1167,14 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
   const key = required('BAYN_ALPACA_KEY_ID')
   const secret = required('BAYN_ALPACA_SECRET_KEY')
   const configuredOrigin = required('BAYN_ALPACA_BASE_URL')
+  const exactHeadSha = required('BAYN_ALPACA_SANDBOX_EXACT_HEAD_SHA')
   const sourceSha = required('GITHUB_SHA')
+  const repository = required('GITHUB_REPOSITORY')
+  const eventName = required('GITHUB_EVENT_NAME')
+  const githubEnvironment = required('BAYN_ALPACA_SANDBOX_GITHUB_ENVIRONMENT')
+  const mutationAuthorized = required('BAYN_ALPACA_SANDBOX_MUTATION_AUTHORIZED')
+  const actor = required('GITHUB_ACTOR')
+  const triggeringActor = required('GITHUB_TRIGGERING_ACTOR')
   const runId = required('GITHUB_RUN_ID')
   const runAttempt = required('GITHUB_RUN_ATTEMPT')
   const releaseImageIdentity = required('BAYN_ALPACA_SANDBOX_RELEASE_IMAGE_IDENTITY')
@@ -956,17 +1184,25 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
   const jobStartedEpochMs = requiredEpochMillis('BAYN_ALPACA_SANDBOX_JOB_STARTED_EPOCH_MS')
   const jobDeadlineEpochMs = requiredEpochMillis('BAYN_ALPACA_SANDBOX_JOB_DEADLINE_EPOCH_MS')
 
-  if (configuredOrigin !== alpacaSandboxBaseUrl) throw new Error('sandbox endpoint guard failed')
-  if (!/^[0-9a-f]{40}$/.test(sourceSha)) throw new Error('GITHUB_SHA must be an exact lowercase commit SHA')
+  validateProtectedProofBinding({
+    configuredOrigin,
+    exactHeadSha,
+    sourceSha,
+    repository,
+    eventName,
+    githubEnvironment,
+    mutationAuthorized,
+    actor,
+    triggeringActor,
+    runAttempt,
+    proxyUrl,
+  })
   if (!/^[0-9]+$/.test(releaseImageBuildRunId)) throw new Error('release image build run ID must be numeric')
   if (!/^registry\.ide-newton\.ts\.net\/lab\/bayn@sha256:[0-9a-f]{64}$/.test(releaseImageIdentity)) {
     throw new Error('release image identity must be the verified Bayn multi-architecture digest reference')
   }
   if (releaseImageTag !== `registry.ide-newton.ts.net/lab/bayn:sha-${sourceSha}`) {
     throw new Error('release image tag is not bound to the exact proof source SHA')
-  }
-  if (proxyUrl !== protectedProxyUrl) {
-    throw new Error('sandbox proof must use the restricted loopback CONNECT proxy')
   }
   if (jobDeadlineEpochMs - jobStartedEpochMs !== overallProofDeadlineMs) {
     throw new Error('overall protected proof deadline is not bound to the configured job budget')
@@ -996,29 +1232,12 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
       ),
     )
 
-  const identity = canonicalHashV1({ runId, runAttempt, sourceSha, releaseImageIdentity })
-  const clientOrderId = `b1_${identity.slice(0, 43)}`
-  const intent: Intent = {
-    schemaVersion: 'bayn.paper-intent.v3',
-    intentId: canonicalHashV1({ identity, kind: 'intent' }),
-    authorityGenerationHash: canonicalHashV1({ identity, kind: 'authority' }),
-    riskDecisionId: canonicalHashV1({ identity, kind: 'risk' }),
-    strategyName: 'alpaca-sandbox-contract-proof',
-    cycleId: canonicalHashV1({ identity, kind: 'cycle' }),
-    decisionHash: canonicalHashV1({ identity, kind: 'decision' }),
-    policyHash: canonicalHashV1({ identity, kind: 'policy' }),
-    accountId: expectedAccountId,
-    clientOrderId,
-    symbol: proofSymbol,
-    side: OrderSide.Buy,
-    orderType: OrderType.Market,
-    timeInForce: TimeInForce.Day,
-    quantityMicros: proofQuantityMicros,
-    notionalLimitMicros: '5000000',
-    state: IntentState.IoStarted,
-    createdAt: await run(currentUtcInstant),
-  }
+  const identityInput = { runId, runAttempt, sourceSha, releaseImageIdentity }
+  const identity = proofIdentity(identityInput)
+  const clientOrderId = proofClientOrderId(identityInput)
+  const intent = makeProofIntent(expectedAccountId, clientOrderId, identity, await run(currentUtcInstant))
   const state: ProofState = {
+    submitAttempts: 0,
     submitOutcome: 'NOT_ATTEMPTED',
     cancelAttempts: 0,
     cancelAcknowledged: false,
@@ -1050,11 +1269,14 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
       observationHash: asset.value.normalizedResponseHash,
     }
 
-    const authority = makeExecutionAuthority(
-      BrokerEnvironment.Sandbox,
-      ExecutionAccess.SubmitOrders,
-      disabledCapitalAccess,
-    )
+    const authority = makeSandboxProofAuthority()
+    if (
+      authority.brokerEnvironment !== BrokerEnvironment.Sandbox ||
+      authority.executionAccess !== ExecutionAccess.SubmitOrders ||
+      authority.capitalAccess._tag !== CapitalAccessState.Disabled
+    ) {
+      return yield* Effect.fail(proofFailure('CONFIGURATION', 'SANDBOX_ONLY_AUTHORITY_BINDING_MISMATCH'))
+    }
     const mutation = yield* makeMutation(session, authority)
     const orderByClientId = mutation.orderByClientId
     if (orderByClientId === undefined) {
@@ -1067,16 +1289,7 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
         Effect.gen(function* () {
           yield* verifySafeMarketWindow(session, state, 'SUBMIT_CLOCK_PREFLIGHT')
           yield* requireOverallSubmitBudget(jobDeadlineEpochMs, state)
-          const submit = yield* mutation.submit(intent).pipe(
-            Effect.tapError((error) =>
-              Effect.sync(() => {
-                recordSubmitFailure(state, error)
-              }),
-            ),
-          )
-          state.submitOutcome = 'ACKNOWLEDGED'
-          state.brokerOrderId = submit.order.brokerOrderId
-          state.lifecycle.push(mutationEvidence('SUBMIT', submit.evidence))
+          const submit = yield* submitProofOrder(mutation, intent, state)
 
           const recoveredSubmit = yield* retryRead(orderByClientId(clientOrderId), true)
           yield* requireOrderBinding(
@@ -1117,10 +1330,17 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
   const proofExit = await run(Effect.exit(proof))
   state.completedAt = await run(currentUtcInstant)
   const receiptBody = {
-    schemaVersion: 'bayn.alpaca-sandbox-contract-receipt.v3',
+    schemaVersion: 'bayn.alpaca-sandbox-contract-receipt.v4',
     proofStatus: Exit.isSuccess(proofExit) ? 'SUCCESS' : 'FAILURE',
     sourceSha,
-    repository: required('GITHUB_REPOSITORY'),
+    repository,
+    githubEnvironment,
+    authorization: {
+      eventName,
+      actor,
+      triggeringActor,
+      explicitBrokerMutation: true,
+    },
     workflow: {
       runId,
       runAttempt,
@@ -1156,14 +1376,11 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
     endpointClass: 'ALPACA_PAPER',
     endpoint: alpacaSandboxBaseUrl,
     accountIdentityHash: hashIdentity(expectedAccountId),
-    credentialBindingHash: canonicalHashV1({
-      identity,
-      endpoint: configuredOrigin,
-      proxyUrl,
-      accountId: expectedAccountId,
-      key,
-      secret,
-    }),
+    credentialBinding: {
+      source: 'GITHUB_ENVIRONMENT_SECRETS',
+      verifiedBy: 'BROKER_SESSION_PREFLIGHT',
+      secretDerivedEvidenceRecorded: false,
+    },
     preflight: {
       accountStatus: state.preflightCompletedAt === undefined ? undefined : 'ACTIVE',
       paperEnvironment: true,
@@ -1186,7 +1403,8 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
       cancelAttempts: state.cancelAttempts,
       cancelAcknowledged: state.cancelAcknowledged,
     },
-    duplicateSubmitCount: 0,
+    submitAttempts: state.submitAttempts,
+    duplicateSubmitCount: Math.max(0, state.submitAttempts - 1),
     liveEndpointUsed: false,
     failure: state.failure,
     cleanupFailure: state.cleanupFailure,
@@ -1204,5 +1422,8 @@ test.skipIf(!enabled)('proves the bounded Alpaca sandbox contract through the pr
   }
   if (state.cleanup.result !== 'VERIFIED_TERMINAL' || state.cleanup.residualOpenOrderCount !== 0) {
     throw new Error('Alpaca sandbox cleanup was not proven terminal and residual-free')
+  }
+  if (state.submitAttempts !== 1) {
+    throw new Error('Alpaca sandbox proof must perform exactly one submit attempt')
   }
 })
