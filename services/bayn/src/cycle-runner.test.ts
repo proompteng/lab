@@ -4,14 +4,18 @@ import { Cause, Deferred, Effect, Fiber, Logger, Option, References, Result } fr
 import { TestClock } from 'effect/testing'
 
 import {
+  AccountStatus,
   BrokerRead,
   BrokerReadError,
   BrokerReadErrorKind,
+  type Account,
   type BrokerReadShape,
   type MarketCalendarObservation,
   type MarketCalendarQuery,
   type MarketCalendarSession,
+  type ReadEvidence,
 } from './broker/alpaca'
+import { BrokerMutation, type BrokerMutationShape } from './broker/alpaca-mutations'
 import { unusedAssetBySymbol } from './broker/alpaca-test-support'
 import {
   CycleState,
@@ -42,6 +46,7 @@ import {
   type CycleRunContext,
   type CycleRunResult,
 } from './cycle-runner'
+import { runAutonomousCycleUntilSettled } from './cycle-runner/program'
 import { selectCycleRecovery, type CycleRecoveryState } from './cycle-recovery'
 import { CycleStore, type CycleAuthoritySlot, type CycleStoreShape } from './db/cycle-store'
 import { canonicalHashV1, sha256 } from './hash'
@@ -53,9 +58,10 @@ import {
 } from './market-data'
 import { makeObserveShadowDecisionDocument, type ObserveShadowDecisionDocument } from './shadow-decision-contract'
 import { TargetPlanReason, TargetPlanStatus } from './target-planner'
+import { currentUtcInstant } from './time'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputManifest, type IsoDate } from './types'
 
-const cycleLoop = <E, R>(options: AutonomousCycleLoopOptions<E, R>) =>
+const cycleLoop = <E, ContextR, DecisionR>(options: AutonomousCycleLoopOptions<E, ContextR, DecisionR>) =>
   Effect.fromResult(makeAutonomousCycleLoop(options))
 
 const signalCalendarVersion = 'signal-XNYS-2026-v1'
@@ -296,6 +302,7 @@ const makeDecision = (
   cycle: AutonomousCycle,
   createdAt: string,
   blockedReason?: Exclude<TargetPlanReason, TargetPlanReason.TargetsSatisfied>,
+  bindingOverrides: Partial<ObserveShadowDecisionDocument['bindings']> = {},
 ): ObserveShadowDecisionDocument => {
   const targetPlanMaterial = {
     schemaVersion: 'bayn.paper-reference-target-plan.v1' as const,
@@ -339,6 +346,7 @@ const makeDecision = (
       planningBrokerStateHash: '8'.repeat(64),
       reconciliationId: '9'.repeat(64),
       reconciliationHash: 'a'.repeat(64),
+      ...bindingOverrides,
     },
     targetPlan: {
       ...targetPlanMaterial,
@@ -362,10 +370,25 @@ interface StoreControl {
   binds: number
 }
 
-const cycleStore = (control: StoreControl): CycleStoreShape => {
-  const cycles = new Map<string, AutonomousCycle>()
-  const slots = new Map<string, string>()
-  const documents = new Map<string, ObserveShadowDecisionDocument>()
+interface CycleStorePersistence {
+  readonly cycles: Map<string, AutonomousCycle>
+  readonly slots: Map<string, string>
+  readonly documents: Map<string, ObserveShadowDecisionDocument>
+  readonly manifests: Map<string, InputManifest>
+}
+
+const makeCycleStorePersistence = (): CycleStorePersistence => ({
+  cycles: new Map(),
+  slots: new Map(),
+  documents: new Map(),
+  manifests: new Map(),
+})
+
+const cycleStore = (
+  control: StoreControl,
+  persistence: CycleStorePersistence = makeCycleStorePersistence(),
+): CycleStoreShape => {
+  const { cycles, documents, manifests, slots } = persistence
   const readCycle = (cycleId: string): AutonomousCycle | undefined => cycles.get(cycleId)
   return {
     acquire: (draft, observedAt) =>
@@ -435,6 +458,7 @@ const cycleStore = (control: StoreControl): CycleStoreShape => {
           stateVersion: cycle.stateVersion + 1,
           updatedAt: observedAt,
         }
+        manifests.set(cycleId, manifest)
         cycles.set(cycleId, updated)
         return { cycle: updated, changed: true }
       }),
@@ -1851,7 +1875,7 @@ describe('autonomous cycle runner', () => {
     expect(control.acquisitions).toEqual([])
   })
 
-  test('runs immediately, repeats on Schedule.spaced, and avoids duplicate work after acquisition', async () => {
+  test('settles durable progress before the scheduled wait and avoids duplicate work', async () => {
     const control: StoreControl = { acquisitions: [], binds: 0 }
     const store = cycleStore(control)
     const observations: CyclePassObservation[] = []
@@ -1890,25 +1914,347 @@ describe('autonomous cycle runner', () => {
     expect(calendarReads).toBe(1)
     expect(control.binds).toBe(1)
     expect(observations).toHaveLength(3)
-    expect(observations[0]).toMatchObject({
-      outcome: 'SUCCEEDED',
-      result: { outcome: 'ACQUIRED' },
+    for (const observation of observations) {
+      expect(observation).toMatchObject({
+        outcome: 'SUCCEEDED',
+        result: {
+          outcome: 'RECOVERED',
+          action: 'WAITING',
+          cycle: {
+            state: CycleState.Active,
+            bindings: { snapshotId },
+          },
+        },
+      })
+    }
+  })
+
+  test('fails typed when a store reports progress without a durable state transition', async () => {
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const persistence = makeCycleStorePersistence()
+    const store = cycleStore(control, persistence)
+    const stuckStore: CycleStoreShape = {
+      ...store,
+      activate: (cycleId) =>
+        Effect.sync(() => {
+          const cycle = persistence.cycles.get(cycleId)
+          if (cycle === undefined) throw new Error('stuck activation could not find the cycle')
+          return { cycle, changed: false }
+        }),
+    }
+    const program = Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
+      return yield* provide(
+        runAutonomousCycleUntilSettled(context()),
+        brokerRead(() => Effect.succeed({ value: monthEndCalendar, evidence })),
+        stuckStore,
+        marketDataService(Effect.succeed(finalizedPublication()), finalizedPublicationInspection()),
+      ).pipe(Effect.flip)
+    }).pipe(Effect.provide(TestClock.layer()))
+
+    const failure = await Effect.runPromise(program)
+    expect(failure).toMatchObject({
+      _tag: 'CycleRunnerError',
+      operation: 'recover-cycle',
+      failure: 'contract',
+      message: 'autonomous cycle pass repeated ACTIVATED without durable progress',
     })
-    expect(observations[1]).toMatchObject({
-      outcome: 'SUCCEEDED',
-      result: { outcome: 'RECOVERED', action: 'ACTIVATED' },
+    expect(control.acquisitions).toHaveLength(1)
+    expect(control.binds).toBe(1)
+  })
+
+  test('completes one deterministic due OBSERVE pass and restarts without duplicate evidence or orders', async () => {
+    const accountId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    const discoveryAt = '2026-01-30T21:20:00.000Z'
+    const submissionOpenAt = '2026-02-02T13:58:00.000Z'
+    const inspection = finalizedPublicationInspection()
+    const persistence = makeCycleStorePersistence()
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const observations: CyclePassObservation[] = []
+    let calendarReads = 0
+    let publicationDiscoveries = 0
+    let exactSnapshotReads = 0
+    let accountReads = 0
+    let positionReads = 0
+    let orderReads = 0
+    let mutationSubmits = 0
+    let mutationCancels = 0
+
+    interface DurableReconciliationEvidence {
+      readonly schemaVersion: 'bayn.test-observe-reconciliation.v1'
+      readonly reconciliationId: string
+      readonly cycleId: string
+      readonly snapshotId: string
+      readonly accountId: string
+      readonly observedAt: string
+      readonly authority: 'OBSERVE'
+      readonly accountHash: string
+      readonly positionsHash: string
+      readonly ordersHash: string
+      readonly brokerOrderCount: number
+      readonly contentHash: string
+    }
+
+    const reconciliations = new Map<string, DurableReconciliationEvidence>()
+    const readEvidence = (identity: string): ReadEvidence => ({
+      requestId: `request-${identity}`,
+      status: 200,
+      contentHash: canonicalHashV1(identity),
+      observedAt: submissionOpenAt,
     })
-    expect(observations[2]).toMatchObject({
-      outcome: 'SUCCEEDED',
-      result: {
-        outcome: 'RECOVERED',
-        action: 'WAITING',
-        cycle: {
-          state: CycleState.Active,
-          bindings: { snapshotId },
+    const account: Account = {
+      id: accountId,
+      status: AccountStatus.Active,
+      currency: 'USD',
+      cashMicros: '1000000000',
+      equityMicros: '1000000000',
+      buyingPowerMicros: '2000000000',
+      accountBlocked: false,
+      tradingBlocked: false,
+      tradeSuspendedByUser: false,
+      observedAt: submissionOpenAt,
+    }
+    const unexpectedRead = Effect.die(new Error('deterministic due-cycle proof performed an unexpected broker read'))
+    const read: BrokerReadShape = {
+      account: Effect.sync(() => {
+        accountReads += 1
+        return { value: account, evidence: readEvidence('account') }
+      }),
+      accountConfiguration: unexpectedRead,
+      assetBySymbol: unusedAssetBySymbol,
+      positions: Effect.sync(() => {
+        positionReads += 1
+        return { value: [], evidence: readEvidence('positions') }
+      }),
+      orders: () =>
+        Effect.sync(() => {
+          orderReads += 1
+          return { value: [], evidence: readEvidence('orders') }
+        }),
+      orderById: () => unexpectedRead,
+      orderByClientId: () => unexpectedRead,
+      fillActivities: () => unexpectedRead,
+      marketCalendar: (query) =>
+        Effect.sync(() => {
+          calendarReads += 1
+          expect(query).toEqual({ start: '2026-01-30', end: '2026-03-01' })
+          return { value: monthEndCalendar, evidence }
+        }),
+    }
+    const exactPublication = () =>
+      Effect.sync(() => {
+        exactSnapshotReads += 1
+        return {
+          outcome: 'FINALIZED' as const,
+          observedAt: inspection.manifest.finalizedSnapshot.finalizedAt,
+          inspection,
+        }
+      })
+    const marketData: MarketDataService = {
+      ...marketDataService(Effect.die(new Error('deterministic discovery override was not installed'))),
+      inspectCyclePublications: Effect.sync(() => {
+        publicationDiscoveries += 1
+        return finalizedPublications([inspection], discoveryAt)
+      }),
+      inspectPublication: exactPublication,
+      inspectSnapshotPublication: exactPublication,
+    }
+    const mutation: BrokerMutationShape = {
+      submit: () =>
+        Effect.sync(() => {
+          mutationSubmits += 1
+          throw new Error('OBSERVE cycle attempted to submit an order')
+        }),
+      cancel: () =>
+        Effect.sync(() => {
+          mutationCancels += 1
+          throw new Error('OBSERVE cycle attempted to cancel an order')
+        }),
+    }
+    const baseContext = context(accountId)
+    const dueContext: CycleRunContext<BrokerRead> = {
+      ...baseContext,
+      buildDecision: (cycle) =>
+        Effect.gen(function* () {
+          const broker = yield* BrokerRead
+          const [accountObservation, positionsObservation, ordersObservation, observedAt] = yield* Effect.all([
+            broker.account,
+            broker.positions,
+            broker.orders(),
+            currentUtcInstant,
+          ])
+          const boundSnapshotId = cycle.bindings.snapshotId
+          if (boundSnapshotId === undefined) {
+            return yield* Effect.die(new Error('same-pass reconciliation requires the immutable snapshot binding'))
+          }
+          const accountHash = canonicalHashV1(accountObservation.value)
+          const positionsHash = canonicalHashV1(positionsObservation.value)
+          const ordersHash = canonicalHashV1(ordersObservation.value)
+          const reconciliationMaterial = {
+            schemaVersion: 'bayn.test-observe-reconciliation.v1' as const,
+            cycleId: cycle.identity.cycleId,
+            snapshotId: boundSnapshotId,
+            accountId: accountObservation.value.id,
+            observedAt,
+            authority: 'OBSERVE' as const,
+            accountHash,
+            positionsHash,
+            ordersHash,
+            brokerOrderCount: ordersObservation.value.length,
+          }
+          const reconciliationId = canonicalHashV1({
+            schemaVersion: reconciliationMaterial.schemaVersion,
+            cycleId: reconciliationMaterial.cycleId,
+            observedAt,
+          })
+          const contentHash = canonicalHashV1(reconciliationMaterial)
+          yield* Effect.sync(() => {
+            if (reconciliations.has(cycle.identity.cycleId)) {
+              throw new Error('same-pass reconciliation evidence was duplicated')
+            }
+            reconciliations.set(cycle.identity.cycleId, {
+              ...reconciliationMaterial,
+              reconciliationId,
+              contentHash,
+            })
+          })
+          return makeDecision(cycle, observedAt, undefined, {
+            planningBrokerStateHash: canonicalHashV1({ accountHash, positionsHash, ordersHash }),
+            reconciliationId,
+            reconciliationHash: contentHash,
+          })
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new CycleDecisionBuildError({
+                failure: 'market-data',
+                message: 'deterministic same-pass broker reconciliation failed',
+                cause,
+              }),
+          ),
+        ),
+    }
+    const durableStore = cycleStore(control, persistence)
+    const dueStore: CycleStoreShape = {
+      ...durableStore,
+      bindSnapshot: (cycleId, manifest, observedAt) =>
+        durableStore
+          .bindSnapshot(cycleId, manifest, observedAt)
+          .pipe(Effect.tap((receipt) => TestClock.setTime(Date.parse(receipt.cycle.window.submissionOpenAt)))),
+    }
+    const runOnePass = (store: CycleStoreShape) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const observed = yield* Deferred.make<CyclePassObservation>()
+          const loop = yield* cycleLoop({
+            context: Effect.succeed(dueContext),
+            observePass: (observation) =>
+              Effect.sync(() => observations.push(observation)).pipe(
+                Effect.andThen(Deferred.succeed(observed, observation)),
+                Effect.asVoid,
+              ),
+            pollIntervalMs: 60_000,
+          })
+          const fiber = yield* provide(loop, read, store, marketData).pipe(
+            Effect.provideService(BrokerMutation, mutation),
+            Effect.forkScoped({ startImmediately: true }),
+          )
+          const observation = yield* Deferred.await(observed)
+          yield* Fiber.interrupt(fiber)
+          return observation
+        }),
+      )
+
+    const proof = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(discoveryAt))
+        const completed = yield* runOnePass(dueStore)
+        const restarted = yield* runOnePass(cycleStore(control, persistence))
+        return { completed, restarted }
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(isMonthEndCycleDue('2026-01-30', '2026-02-02')).toBe(true)
+    expect(control.acquisitions).toHaveLength(1)
+    expect(control.acquisitions[0]).toMatchObject({
+      observedAt: discoveryAt,
+      draft: {
+        identity: {
+          qualificationRunId: dueContext.qualificationRunId,
+          strategyProtocolHash: dueContext.strategyProtocolHash,
+          accountId,
+          signalSessionDate: '2026-01-30',
+          executionSessionDate: '2026-02-02',
         },
       },
     })
+    expect(proof.completed).toMatchObject({
+      outcome: 'SUCCEEDED',
+      observedAt: submissionOpenAt,
+      result: {
+        outcome: 'RECOVERED',
+        action: 'NO_TRADE',
+        cycle: {
+          state: CycleState.NoTrade,
+          bindings: { snapshotId, decisionHash: expect.any(String) },
+          terminalAt: submissionOpenAt,
+        },
+      },
+    })
+    expect(proof.restarted).toMatchObject({
+      outcome: 'SUCCEEDED',
+      observedAt: submissionOpenAt,
+      result: {
+        outcome: 'ALREADY_TERMINAL',
+        signalSessionDate: '2026-01-30',
+        cycle: { state: CycleState.NoTrade },
+      },
+    })
+    expect(observations).toEqual([proof.completed, proof.restarted])
+    expect(persistence.cycles).toHaveLength(1)
+    expect(persistence.manifests).toHaveLength(1)
+    expect(persistence.documents).toHaveLength(1)
+    expect(reconciliations).toHaveLength(1)
+    const durableCycle = [...persistence.cycles.values()][0]
+    if (durableCycle === undefined) throw new Error('due-cycle proof did not persist its cycle')
+    const durableManifest = persistence.manifests.get(durableCycle.identity.cycleId)
+    const durableDecision = persistence.documents.get(durableCycle.identity.cycleId)
+    const durableReconciliation = reconciliations.get(durableCycle.identity.cycleId)
+    expect(durableCycle).toMatchObject({
+      state: CycleState.NoTrade,
+      stateVersion: 5,
+      bindings: { snapshotId, decisionHash: durableDecision?.contentHash },
+    })
+    expect(durableManifest?.finalizedSnapshot.snapshotId).toBe(snapshotId)
+    expect(durableDecision).toMatchObject({
+      mode: 'OBSERVE',
+      dispatchable: false,
+      bindings: {
+        cycleId: durableCycle.identity.cycleId,
+        snapshotId,
+        reconciliationId: durableReconciliation?.reconciliationId,
+        reconciliationHash: durableReconciliation?.contentHash,
+      },
+      targetPlan: { status: TargetPlanStatus.NoTrade, intentTargets: [] },
+      createdAt: submissionOpenAt,
+    })
+    expect(durableReconciliation).toMatchObject({
+      cycleId: durableCycle.identity.cycleId,
+      snapshotId,
+      accountId,
+      observedAt: submissionOpenAt,
+      authority: 'OBSERVE',
+      brokerOrderCount: 0,
+    })
+    expect(calendarReads).toBe(1)
+    expect(publicationDiscoveries).toBe(2)
+    expect(exactSnapshotReads).toBe(1)
+    expect(accountReads).toBe(1)
+    expect(positionReads).toBe(1)
+    expect(orderReads).toBe(1)
+    expect(control.binds).toBe(1)
+    expect(mutationSubmits).toBe(0)
+    expect(mutationCancels).toBe(0)
   })
 
   test('scope closure interrupts in-flight publication discovery', async () => {
@@ -2152,6 +2498,7 @@ describe('autonomous cycle runner', () => {
     let contextLoads = 0
     const logs: Array<{ readonly message: unknown; readonly annotations: Record<string, unknown> }> = []
     const observations: CyclePassObservation[] = []
+    const secondPassObserved = await Effect.runPromise(Deferred.make<void>())
     const logger = Logger.make<unknown, void>((options) => {
       logs.push({
         message: options.message,
@@ -2166,19 +2513,25 @@ describe('autonomous cycle runner', () => {
             contextLoads += 1
             return contextLoads === 1 ? Effect.fail(contextFailure) : Effect.succeed(context())
           }),
-          observePass: (observation) => Effect.sync(() => observations.push(observation)),
+          observePass: (observation) =>
+            Effect.sync(() => observations.push(observation)).pipe(
+              Effect.flatMap((count) =>
+                count === 2 ? Deferred.succeed(secondPassObserved, undefined).pipe(Effect.asVoid) : Effect.void,
+              ),
+            ),
           pollIntervalMs: 100,
         })
         const fiber = yield* provide(
           loop,
           brokerRead(() => Effect.succeed({ value: monthEndCalendar, evidence })),
           cycleStore(control),
-          marketDataService(Effect.succeed(finalizedPublication())),
+          marketDataService(Effect.succeed(finalizedPublication()), finalizedPublicationInspection()),
         ).pipe(Effect.forkScoped({ startImmediately: true }))
         yield* Effect.yieldNow
         expect(contextLoads).toBe(1)
         expect(control.acquisitions).toEqual([])
         yield* TestClock.adjust(100)
+        yield* Deferred.await(secondPassObserved)
         expect(contextLoads).toBe(2)
         expect(control.acquisitions).toHaveLength(1)
         yield* Fiber.interrupt(fiber)
@@ -2209,7 +2562,7 @@ describe('autonomous cycle runner', () => {
     expect(observations[1]).toMatchObject({
       outcome: 'SUCCEEDED',
       observedAt: '2026-01-30T21:20:00.100Z',
-      result: { outcome: 'ACQUIRED' },
+      result: { outcome: 'RECOVERED', action: 'WAITING' },
     })
     expect(control.binds).toBe(1)
   })
@@ -2221,7 +2574,7 @@ describe('autonomous cycle runner', () => {
     const exit = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const loop = yield* cycleLoop({
+          const loop = yield* cycleLoop<never, never, never>({
             context: Effect.die(defect),
             observePass: (observation) => Effect.sync(() => observations.push(observation)),
             pollIntervalMs: 100,
@@ -2249,7 +2602,7 @@ describe('autonomous cycle runner', () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const loop = yield* cycleLoop({
+          const loop = yield* cycleLoop<Error, never, never>({
             context: Effect.fail(contextFailure),
             observePass: ignorePass,
             pollIntervalMs: 100,

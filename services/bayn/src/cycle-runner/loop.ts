@@ -13,7 +13,7 @@ import {
   type CycleRunnerError,
   type CycleRunResult,
 } from './model'
-import { runAutonomousCyclePass } from './program'
+import { runAutonomousCycleUntilSettled } from './program'
 
 const logCyclePass = (observation: CyclePassObservation): Effect.Effect<void> => {
   const facts = cyclePassLogFacts(observation)
@@ -28,7 +28,7 @@ const runLoopPass = <E, ContextR, DecisionR>(
     Effect.mapError((cause) =>
       runnerError('load-context', 'context', 'autonomous cycle context loading failed', cause),
     ),
-    Effect.flatMap(runAutonomousCyclePass),
+    Effect.flatMap(runAutonomousCycleUntilSettled),
     Effect.withLogSpan('autonomous-cycle'),
   )
 

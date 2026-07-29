@@ -22,11 +22,13 @@ import {
   readinessFailure,
   reduceCycleAuthoritySelection,
   selectCycleCalendarCandidate,
+  selectCyclePassContinuation,
   selectDiscoveredPublications,
   type CycleAcquireMaterial,
   type CycleAuthoritySelection,
   type CycleAuthoritySelectionState,
   type CycleAuthoritySlot,
+  type CyclePassProgress,
   type NonEmptyPublications,
 } from './decisions'
 import {
@@ -459,3 +461,43 @@ export const runAutonomousCyclePass = <R>(
       ),
     ),
   )
+
+const cycleProgressKey = (cycle: AutonomousCycle): string =>
+  `${cycle.identity.cycleId}:${cycle.state}:${cycle.stateVersion}`
+
+const continueAutonomousCyclePass = <R>(
+  context: CycleRunContext<R>,
+  completedProgress: ReadonlySet<CyclePassProgress>,
+  previousProgressKey?: string,
+): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData | R> =>
+  runAutonomousCyclePass(context).pipe(
+    Effect.flatMap((result) => {
+      const continuation = selectCyclePassContinuation(result)
+      if (continuation._tag === 'RETURN') return Effect.succeed(result)
+      const progressKey = cycleProgressKey(continuation.cycle)
+      if (progressKey === previousProgressKey) {
+        return Effect.fail(
+          runnerError(
+            'recover-cycle',
+            'contract',
+            `autonomous cycle pass repeated ${continuation.progress} without durable progress`,
+          ),
+        )
+      }
+      if (completedProgress.has(continuation.progress)) {
+        return Effect.fail(
+          runnerError(
+            'recover-cycle',
+            'contract',
+            `autonomous cycle pass repeated ${continuation.progress} after durable progress`,
+          ),
+        )
+      }
+      return continueAutonomousCyclePass(context, new Set([...completedProgress, continuation.progress]), progressKey)
+    }),
+  )
+
+export const runAutonomousCycleUntilSettled = <R>(
+  context: CycleRunContext<R>,
+): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData | R> =>
+  continueAutonomousCyclePass(context, new Set())
