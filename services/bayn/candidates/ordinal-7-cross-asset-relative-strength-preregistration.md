@@ -39,28 +39,28 @@ returns are evaluated.
 
 ## Frozen data and boundaries
 
-| Binding | Frozen value |
-| --- | --- |
-| Candidate ordinal | `7` |
-| Strategy identity | `bayn.cross-asset-relative-strength.v1` |
-| Source-controlled universe | `DBC,EFA,IEF,SPY,VNQ` |
-| Universe ID/hash | `cross-asset-taa-v1` / `c15a52d125073a20c3addee154974ef32b4ef009c40a46b05b54743f075c0fe8` |
-| Provider/feed/adjustment | Alpaca / SIP / all |
-| Publication schema | `signal.adjusted-daily-snapshot.v2` |
-| Calendar | `alpaca-us-equity-calendar-v1` |
-| History start | `2016-01-04` |
-| Development simulation start | `2017-01-03` |
-| Development end | `2022-12-30` |
-| Untouched holdout | `2023-01-03` through `2025-12-31` |
-| Development snapshot ID | `2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0` |
-| Publication as of | `2026-07-27` |
-| Manifest content hash | `7b1216c8d698da4b2e74a5a77584c9863608edab0ad1c7331f37d039ddb1a764` |
-| Raw manifest SHA-256 | `79400b64fcd981fc87874fbc0fd647033cfe8acadd1abb2f6a3f0af092699e43` |
-| Raw bars SHA-256 | `c71ba30f3bcdd373708636f7c799d6caf3e24e07fd7d428522c69167c11a0c9c` |
-| Raw sessions SHA-256 | `d0f182b5436c3ce374f4afaf2735c4b66247edfb78378aeff42af1efc889aabf` |
-| Bounded bars content hash | `9fac08a198bac2dea6530e12a4406c695c84da8829b9a198f26511c822164785` |
-| Bounded sessions content hash | `8fb5cf8accec311c6d34dd5d1074b9ac2cee38c51eaf906df26fd3479f48e358` |
-| Official development sessions | `1762` |
+| Binding                       | Frozen value                                                                              |
+| ----------------------------- | ----------------------------------------------------------------------------------------- |
+| Candidate ordinal             | `7`                                                                                       |
+| Strategy identity             | `bayn.cross-asset-relative-strength.v1`                                                   |
+| Source-controlled universe    | `DBC,EFA,IEF,SPY,VNQ`                                                                     |
+| Universe ID/hash              | `cross-asset-taa-v1` / `c15a52d125073a20c3addee154974ef32b4ef009c40a46b05b54743f075c0fe8` |
+| Provider/feed/adjustment      | Alpaca / SIP / all                                                                        |
+| Publication schema            | `signal.adjusted-daily-snapshot.v2`                                                       |
+| Calendar                      | `alpaca-us-equity-calendar-v1`                                                            |
+| History start                 | `2016-01-04`                                                                              |
+| Development simulation start  | `2017-01-03`                                                                              |
+| Development end               | `2022-12-30`                                                                              |
+| Untouched holdout             | `2023-01-03` through `2025-12-31`                                                         |
+| Development snapshot ID       | `2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0`                        |
+| Publication as of             | `2026-07-27`                                                                              |
+| Manifest content hash         | `7b1216c8d698da4b2e74a5a77584c9863608edab0ad1c7331f37d039ddb1a764`                        |
+| Raw manifest SHA-256          | `79400b64fcd981fc87874fbc0fd647033cfe8acadd1abb2f6a3f0af092699e43`                        |
+| Raw bars SHA-256              | `c71ba30f3bcdd373708636f7c799d6caf3e24e07fd7d428522c69167c11a0c9c`                        |
+| Raw sessions SHA-256          | `d0f182b5436c3ce374f4afaf2735c4b66247edfb78378aeff42af1efc889aabf`                        |
+| Bounded bars content hash     | `9fac08a198bac2dea6530e12a4406c695c84da8829b9a198f26511c822164785`                        |
+| Bounded sessions content hash | `8fb5cf8accec311c6d34dd5d1074b9ac2cee38c51eaf906df26fd3479f48e358`                        |
+| Official development sessions | `1762`                                                                                    |
 
 Every symbol must have exactly one valid adjusted daily bar for every official development session. Missing, duplicate,
 future-dated, wrong-universe, wrong-provenance, malformed, or hash-mismatched material fails closed. No imputation or
