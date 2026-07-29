@@ -5,8 +5,8 @@ Status: **INVALID_PROTOCOL_DEVIATION — attempt consumed; terminal qualificatio
 Candidate 12 consumed exactly one metric-bearing development attempt for the singleton
 `same-month-seasonal-excess-lag1` specification on the frozen development interval. A post-run exact-commit audit found
 that the evaluated double-cost path violated the immutable preregistration: it reran the simulation with doubled costs,
-allowing cost-dependent equity and affordability to change requested quantities and turnover instead of applying
-doubled costs to the ordinary-run quantities. The command's emitted `HOLD_REJECT` is therefore not a valid
+allowing cost-dependent equity and affordability to influence newly computed quantities instead of applying doubled
+costs to the ordinary-run quantities. The command's emitted `HOLD_REJECT` is therefore not a valid
 preregistered development verdict. The attempt is classified `INVALID_PROTOCOL_DEVIATION`, is consumed, and cannot be
 repaired or rerun after metrics were observed. The untouched `2023-01-03` through `2025-12-31` holdout was not inspected
 or queried.
@@ -60,17 +60,21 @@ The frozen preregistration required the double-cost simulation to double spread,
 signals or quantities**. Evaluated commit `81790d2e342bc97d4474f203bcdb4946e2b803b1` instead called the complete
 `runSimulation` function twice: once with the ordinary cost multiplier and once with the doubled multiplier. The shared
 simulator derives desired quantities from evolving planning equity and scales buys through a cost-dependent
-affordability calculation. Higher costs therefore changed later equity, requested quantities, fills, and turnover.
+affordability calculation. The doubled-cost run therefore did not bind itself to the ordinary run's requested and filled
+quantities; it recomputed a new cost-dependent path.
 
-The metric output confirms the changed trade path:
+The reported annual-turnover values were:
 
 - ordinary annual turnover: `10.641571549406327`;
 - doubled-cost annual turnover: `10.471096816847805`.
 
-Those values cannot differ when the same quantities are held fixed. The doubled-cost return and every claim that the
-candidate passed the preregistered double-cost gate are invalid. This defect cannot be corrected by rerunning because
-the sole metric-bearing attempt has already exposed development metrics, and the preregistration forbids a post-result
-protocol change or rerun.
+That difference is **not** evidence that quantities changed because the simulator accumulates turnover from
+cost-adjusted fill notional, which changes when spread and slippage change even with identical quantities. The
+source-level deviation is sufficient: the second full simulation recomputed quantities from cost-dependent state and
+never reused or verified the ordinary-run quantity sequence. The doubled-cost return and every claim that the candidate
+passed the preregistered double-cost gate are invalid. This defect cannot be corrected by rerunning because the sole
+metric-bearing attempt has already exposed development metrics, and the preregistration forbids a post-result protocol
+change or rerun.
 
 ## Frozen inputs and geometry used by the invalid attempt
 
