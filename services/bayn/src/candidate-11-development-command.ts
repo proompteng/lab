@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 
 import { createClient, type ClickHouseClient } from '@clickhouse/client'
 import { NodeRuntime } from '@effect/platform-node'
@@ -59,14 +60,15 @@ const ioFailure = (operation: string, cause: unknown): Candidate11Failure => ({
   cause,
 })
 
-const sha256 = (bytes: ArrayBuffer): string => createHash('sha256').update(new Uint8Array(bytes)).digest('hex')
+const sha256 = (bytes: ArrayBufferView): string =>
+  createHash('sha256')
+    .update(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength))
+    .digest('hex')
 
 const preregisterCandidate = (evaluatedCommit: string): Effect.Effect<Candidate11Registration, Candidate11Failure> =>
   Effect.tryPromise({
     try: () =>
-      Bun.file(
-        new URL('../candidates/ordinal-11-abnormal-volume-continuation-preregistration.md', import.meta.url),
-      ).arrayBuffer(),
+      readFile(new URL('../candidates/ordinal-11-abnormal-volume-continuation-preregistration.md', import.meta.url)),
     catch: (cause) => ioFailure('read-preregistration', cause),
   }).pipe(
     Effect.flatMap((bytes) => {
