@@ -2,11 +2,18 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Cause, Effect, Exit, Layer, ManagedRuntime, Option, Redacted, Result } from 'effect'
+import { Cause, Deferred, Effect, Exit, Layer, ManagedRuntime, Option, Redacted, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { BrokerRead, type BrokerReadShape, type MarketCalendarObservation } from '../../broker/alpaca'
+import {
+  AccountStatus as BrokerAccountStatus,
+  BrokerRead,
+  type BrokerReadShape,
+  type MarketCalendarObservation,
+  type ReadEvidence,
+} from '../../broker/alpaca'
 import { unusedAssetBySymbol } from '../../broker/alpaca-test-support'
+import type { RuntimeConfig } from '../../config'
 import {
   CycleState,
   CycleTerminalReason,
@@ -18,23 +25,46 @@ import {
   type CycleDraft,
 } from '../../cycle'
 import {
+  CycleDecisionBuildError,
   makeDueCycleDraft,
   runAutonomousCyclePass,
   selectNextExecutionSession,
   type CycleRunContext,
   type CycleRunResult,
 } from '../../cycle-runner'
+import { runAutonomousCycleUntilSettled } from '../../cycle-runner/program'
+import { AuthorityGenerationStore, ExecutionStoreLive } from '../execution-store'
+import { WriterFenceLive } from '../../execution/writer-fence'
 import { canonicalHashV1, sha256 } from '../../hash'
+import { Journal, type JournalService } from '../../ledger'
 import {
   MarketData,
   type FinalizedPublicationInspection,
   type MarketDataService,
   type SignalSessionRow,
 } from '../../market-data'
-import { ReconciliationStatus } from '../../execution/contracts'
+import {
+  buildObserveCycleDecision,
+  loadObserveRiskPolicy,
+  prepareObserveStartup,
+  type ObserveDecisionFailure,
+} from '../../observe-composition'
+import { Authority, ReconciliationStatus } from '../../execution/contracts'
+import { runOnce } from '../../reconciler'
 import { makeObserveShadowDecisionDocument } from '../../shadow-decision-contract'
+import { makeStrategy } from '../../strategy'
 import { TargetPlanReason, TargetPlanStatus } from '../../target-planner'
-import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputManifest, type IsoDate } from '../../types'
+import { fixtureProtocol, makeSnapshot, makeTestProvenance } from '../../test-fixtures'
+import {
+  DataFeed,
+  DataSource,
+  PriceAdjustment,
+  PublicationSchema,
+  type DailyBar,
+  type InputManifest,
+  type IsoDate,
+  type Protocol,
+} from '../../types'
 import { PostgresClientLive } from '../evidence-store'
 import { migrationLoader } from '../migrations'
 import { CycleStore, CycleStoreLive, type CycleStoreShape } from '.'
@@ -60,6 +90,588 @@ const makeRuntime = () =>
   ManagedRuntime.make(
     CycleStoreLive.pipe(Layer.provideMerge(PostgresClientLive(databaseConfig)), Layer.provideMerge(NodeServices.layer)),
   )
+
+const dueAccountId = '13354000-0000-4000-8000-000000000054'
+const dueAuthorityGenerationHash = '5'.repeat(64)
+const dueSignalDate = '2099-12-31' as const
+const dueExecutionDate = '2100-01-04' as const
+const dueHistoryStart = '2089-06-03' as const
+const dueEvaluationStart = '2090-06-05' as const
+const dueAcquisitionAt = '2099-12-31T21:01:02.000Z'
+const dueObservedAt = '2100-01-04T13:45:02.000Z'
+const dueSnapshotId = '4'.repeat(64)
+
+const dueProtocol: Protocol = {
+  ...fixtureProtocol,
+  historyStart: dueHistoryStart,
+  evaluationStart: dueEvaluationStart,
+}
+const dueStrategy = makeStrategy(dueProtocol, makeTestProvenance(dueProtocol))
+
+const autonomousRuntimeConfig: RuntimeConfig = {
+  host: '127.0.0.1',
+  port: 0,
+  maximumAuthority: Authority.Observe,
+  build: {
+    sourceRevision: '1'.repeat(40),
+    imageRepository: 'registry.example.test/lab/bayn',
+    imageDigest: `sha256:${'2'.repeat(64)}`,
+    strategyBehaviorHash: dueStrategy.provenance.strategy.behaviorHash,
+    strategyParameterHash: dueStrategy.provenance.strategy.parameterHash,
+    verification: 'embedded',
+  },
+  healthIntervalMs: 30_000,
+  operationTimeoutMs: databaseConfig.operationTimeoutMs,
+  cycleStallThresholdMs: 300_000,
+  reconciliationStaleThresholdMs: 120_000,
+  unknownMutationThresholdMs: 300_000,
+  clickhouse: {
+    url: 'http://clickhouse.invalid',
+    username: 'bayn',
+    password: Redacted.make('unused'),
+    snapshotId: dueSnapshotId,
+    publicationAsOf: dueSignalDate,
+    calendarVersion: 'fixture-calendar-v2',
+    bounds: {
+      schemaVersion: 'bayn.evaluation-bounds.v1',
+      dataStart: dueHistoryStart,
+      dataEnd: dueSignalDate,
+      lookbackStart: dueHistoryStart,
+      evaluationStart: dueEvaluationStart,
+      evaluationEnd: dueSignalDate,
+    },
+  },
+  postgres: databaseConfig.postgres,
+  tigerBeetle: { clusterId: 2_001n, replicaAddresses: ['127.0.0.1:3000'], ledger: 7_001 },
+}
+
+const autonomousJournal: JournalService = {
+  post: () => Effect.void,
+  verifyAccount: () => Effect.succeed(true),
+  journalAndReconcile: () => Effect.die(new Error('autonomous OBSERVE proof must not run simulation journaling')),
+  check: Effect.void,
+  checkRun: () => Effect.void,
+}
+
+const makeAutonomousRuntime = () =>
+  ManagedRuntime.make(
+    Layer.mergeAll(CycleStoreLive, ExecutionStoreLive(autonomousRuntimeConfig)).pipe(
+      Layer.provideMerge(WriterFenceLive),
+      Layer.provideMerge(Layer.succeed(Journal, autonomousJournal)),
+      Layer.provideMerge(PostgresClientLive(autonomousRuntimeConfig)),
+      Layer.provide(NodeServices.layer),
+    ),
+  )
+
+const weekdaySessions = (start: IsoDate, count: number): readonly IsoDate[] => {
+  const sessions: IsoDate[] = []
+  const cursor = new Date(`${start}T00:00:00.000Z`)
+  while (sessions.length < count) {
+    const day = cursor.getUTCDay()
+    if (day !== 0 && day !== 6) sessions.push(cursor.toISOString().slice(0, 10) as IsoDate)
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  }
+  return sessions
+}
+
+const dueBaseSnapshot = makeSnapshot(2_760)
+const dueBaseSessionDates = [...new Set(dueBaseSnapshot.bars.map((bar) => bar.sessionDate))].sort()
+const dueSessionDates = weekdaySessions(dueHistoryStart, dueBaseSessionDates.length)
+if (
+  dueSessionDates.at(-1) !== dueSignalDate ||
+  dueSessionDates[dueBaseSessionDates.indexOf(fixtureProtocol.evaluationStart)] !== dueEvaluationStart
+) {
+  throw new Error('autonomous due-cycle fixture calendar does not match its deterministic protocol dates')
+}
+const dueSessionByBaseSession = new Map(dueBaseSessionDates.map((session, index) => [session, dueSessionDates[index]]))
+const dueBars: readonly DailyBar[] = dueBaseSnapshot.bars.map((bar) => {
+  const sessionDate = dueSessionByBaseSession.get(bar.sessionDate)
+  if (sessionDate === undefined) throw new Error(`missing shifted session for ${bar.sessionDate}`)
+  return { ...bar, sessionDate }
+})
+const { hash: _dueSourceManifestHash, ...dueSourceManifestMaterial } = dueBaseSnapshot.manifest
+const dueManifestMaterial: Omit<InputManifest, 'hash'> = {
+  ...dueSourceManifestMaterial,
+  bounds: {
+    ...dueSourceManifestMaterial.bounds,
+    dataStart: dueHistoryStart,
+    dataEnd: dueSignalDate,
+    lookbackStart: dueHistoryStart,
+    evaluationStart: dueEvaluationStart,
+    evaluationEnd: dueSignalDate,
+  },
+  firstSession: dueHistoryStart,
+  lastSession: dueSignalDate,
+  symbols: dueSourceManifestMaterial.symbols.map((symbol) => ({
+    ...symbol,
+    firstSession: dueHistoryStart,
+    lastSession: dueSignalDate,
+  })),
+  finalizedSnapshot: {
+    ...dueSourceManifestMaterial.finalizedSnapshot,
+    snapshotId: dueSnapshotId,
+    publicationId: '3'.repeat(64),
+    finalizedAt: '2099-12-31T21:01:00.000Z',
+    requestedStart: dueHistoryStart,
+    firstSession: dueHistoryStart,
+    lastSession: dueSignalDate,
+    asOfSession: dueSignalDate,
+  },
+}
+const dueManifest: InputManifest = {
+  ...dueManifestMaterial,
+  hash: canonicalHashV1(dueManifestMaterial),
+}
+const duePublication = (): Extract<FinalizedPublicationInspection, { readonly outcome: 'FINALIZED' }> => ({
+  outcome: 'FINALIZED',
+  observedAt: '2099-12-31T21:01:00.000Z',
+  inspection: {
+    manifest: dueManifest,
+    sessionDates: dueSessionDates,
+    signalSession: {
+      calendar_version: dueManifest.finalizedSnapshot.calendarVersion,
+      session_date: dueSignalDate,
+      close_time: '16:00',
+      timezone: 'America/New_York',
+    },
+  },
+})
+
+const dueCalendarMaterial = {
+  schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+  source: 'alpaca-v2-calendar' as const,
+  requestedRange: { start: dueSignalDate, end: '2100-01-30' },
+  timeZone: 'UTC' as const,
+  sessions: [
+    {
+      date: dueSignalDate,
+      openAt: '2099-12-31T14:30:00.000Z',
+      closeAt: '2099-12-31T21:00:00.000Z',
+    },
+    {
+      date: dueExecutionDate,
+      openAt: '2100-01-04T14:30:00.000Z',
+      closeAt: '2100-01-04T21:00:00.000Z',
+    },
+  ],
+}
+const dueCalendar: MarketCalendarObservation = {
+  ...dueCalendarMaterial,
+  normalizedResponseHash: canonicalHashV1(dueCalendarMaterial),
+}
+
+interface DueIoControl {
+  accountReads: number
+  calendarReads: number
+  discoveryReads: number
+  fillReads: number
+  orderReads: number
+  positionReads: number
+  publicationReads: number
+  snapshotLoads: number
+}
+
+const makeDueIoControl = (): DueIoControl => ({
+  accountReads: 0,
+  calendarReads: 0,
+  discoveryReads: 0,
+  fillReads: 0,
+  orderReads: 0,
+  positionReads: 0,
+  publicationReads: 0,
+  snapshotLoads: 0,
+})
+
+const dueReadEvidence = (identity: string, observedAt = dueObservedAt): ReadEvidence => ({
+  requestId: `pr13354-${identity}`,
+  status: 200,
+  contentHash: canonicalHashV1({ identity }),
+  observedAt,
+})
+
+const dueBrokerRead = (control: DueIoControl): BrokerReadShape => {
+  const unused = Effect.die(new Error('autonomous durability proof used an unrelated broker capability'))
+  return {
+    account: Effect.sync(() => {
+      control.accountReads += 1
+      return {
+        value: {
+          id: dueAccountId,
+          status: BrokerAccountStatus.Active,
+          currency: 'USD',
+          cashMicros: '1000000000',
+          equityMicros: '1000000000',
+          buyingPowerMicros: '1000000000',
+          accountBlocked: false,
+          tradingBlocked: false,
+          tradeSuspendedByUser: false,
+          observedAt: dueObservedAt,
+        },
+        evidence: dueReadEvidence('account'),
+      }
+    }),
+    accountConfiguration: unused,
+    assetBySymbol: unusedAssetBySymbol,
+    positions: Effect.sync(() => {
+      control.positionReads += 1
+      return { value: [], evidence: dueReadEvidence('positions') }
+    }),
+    orders: () =>
+      Effect.sync(() => {
+        control.orderReads += 1
+        return { value: [], evidence: dueReadEvidence('orders') }
+      }),
+    orderById: () => unused,
+    orderByClientId: () => unused,
+    fillActivities: () =>
+      Effect.sync(() => {
+        control.fillReads += 1
+        return { value: { items: [] }, evidence: dueReadEvidence('fills') }
+      }),
+    marketCalendar: (query) =>
+      Effect.sync(() => {
+        control.calendarReads += 1
+        if (query.start !== dueSignalDate || query.end !== dueCalendar.requestedRange.end) {
+          throw new Error(`unexpected autonomous calendar query ${query.start}..${query.end}`)
+        }
+        return {
+          value: dueCalendar,
+          evidence: dueReadEvidence(
+            `calendar-${control.calendarReads}`,
+            control.calendarReads === 1 ? dueAcquisitionAt : dueObservedAt,
+          ),
+        }
+      }),
+  }
+}
+
+const dueMarketData = (control: DueIoControl, boundPublicationBoundary = Effect.void): MarketDataService => {
+  const unused = Effect.die(new Error('autonomous durability proof used an unrelated market-data capability'))
+  const inspectPublication = () =>
+    Effect.sync(() => {
+      control.publicationReads += 1
+      return duePublication()
+    })
+  const inspectSnapshotPublication = () =>
+    Effect.sync(() => {
+      control.publicationReads += 1
+    }).pipe(Effect.andThen(boundPublicationBoundary), Effect.as(duePublication()))
+  return {
+    check: unused,
+    inspect: unused,
+    inspectCyclePublications: Effect.sync(() => {
+      control.discoveryReads += 1
+      const publication = duePublication()
+      return {
+        outcome: 'FINALIZED' as const,
+        observedAt: publication.observedAt,
+        publications: [publication.inspection],
+      }
+    }),
+    inspectPublication,
+    inspectSnapshotPublication,
+    loadSnapshotPublication: (request) =>
+      Effect.sync(() => {
+        control.snapshotLoads += 1
+        if (
+          request.snapshotId !== dueSnapshotId ||
+          request.signalSessionDate !== dueSignalDate ||
+          request.signalCalendarVersion !== dueManifest.finalizedSnapshot.calendarVersion
+        ) {
+          throw new Error('autonomous snapshot reload did not use the immutable cycle binding')
+        }
+        return { bars: dueBars, manifest: dueManifest }
+      }),
+    load: unused,
+  }
+}
+
+const observeFailureToCycleDecision = (cause: ObserveDecisionFailure): CycleDecisionBuildError => {
+  const failure =
+    cause._tag === 'OperationalError'
+      ? cause.component === 'database'
+        ? 'database'
+        : cause.component === 'market-data'
+          ? 'market-data'
+          : 'operational'
+      : 'contract'
+  const message =
+    cause._tag === 'CycleCalendarQueryRangeOutOfRange'
+      ? 'cycle decision calendar query construction failed'
+      : cause.message
+  return new CycleDecisionBuildError({ failure, message, cause })
+}
+
+const makeProductionDueContext = Effect.gen(function* () {
+  const preparation = yield* Effect.fromResult(
+    prepareObserveStartup({
+      accountId: dueAccountId,
+      authorityGenerationHash: dueAuthorityGenerationHash,
+      maximumAuthority: Authority.Observe,
+      pollIntervalMs: 30_000,
+      strategy: dueStrategy,
+    }),
+  )
+  const policy = yield* loadObserveRiskPolicy(dueAccountId, dueProtocol.universe)
+  return {
+    qualificationRunId: '6'.repeat(64),
+    strategyProtocolHash: preparation.strategyProtocolHash,
+    accountId: dueAccountId,
+    executionPolicy: preparation.executionPolicy,
+    buildDecision: (cycle) =>
+      buildObserveCycleDecision({
+        authorityGenerationHash: dueAuthorityGenerationHash,
+        cycle,
+        executionModel: preparation.executionModel,
+        policy,
+        reconcile: runOnce,
+        strategy: dueStrategy,
+      }).pipe(Effect.mapError(observeFailureToCycleDecision)),
+  } satisfies CycleRunContext<
+    | BrokerRead
+    | MarketData
+    | import('../execution-store').BrokerEventStore
+    | import('../execution-store').FillAccountingStore
+    | import('../execution-store').ValuationStore
+    | import('../execution-store').ReconciliationStore
+    | import('../execution-store').AuthorityRestrictionStore
+    | import('../../execution/writer-fence').WriterFence
+  >
+})
+
+const ensureDueObserveAuthority = AuthorityGenerationStore.pipe(
+  Effect.flatMap((store) =>
+    store.ensureAuthorityGeneration({
+      generationHash: dueAuthorityGenerationHash,
+      maximum: Authority.Observe,
+    }),
+  ),
+)
+
+interface DueDurabilityRows {
+  readonly counts: {
+    readonly brokerEvents: number
+    readonly brokerOrderEvents: number
+    readonly brokerOrders: number
+    readonly cycles: number
+    readonly distinctBrokerEvents: number
+    readonly distinctReconciliations: number
+    readonly distinctShadowDecisions: number
+    readonly distinctSnapshots: number
+    readonly intents: number
+    readonly mutationEvents: number
+    readonly reconciliations: number
+    readonly riskDecisions: number
+    readonly shadowDecisions: number
+    readonly snapshots: number
+    readonly unfinishedCycles: number
+  }
+  readonly cycle:
+    | {
+        readonly cycle_id: string
+        readonly decision_hash: string | null
+        readonly snapshot_id: string | null
+        readonly state: string
+        readonly terminal_at: Date | null
+      }
+    | undefined
+  readonly reconciliation:
+    | {
+        readonly content_hash: string
+        readonly reconciliation_id: string
+        readonly status: string
+      }
+    | undefined
+  readonly shadow:
+    | {
+        readonly cycle_id: string
+        readonly decision_hash: string
+        readonly document: unknown
+      }
+    | undefined
+  readonly snapshot:
+    | {
+        readonly manifest: unknown
+        readonly snapshot_id: string
+      }
+    | undefined
+}
+
+const readDueDurabilityRows = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  const [counts] = yield* sql<DueDurabilityRows['counts']>`
+    SELECT
+      (SELECT count(*)::integer FROM autonomous_cycles WHERE account_id = ${dueAccountId}) AS "cycles",
+      (
+        SELECT count(*)::integer
+        FROM autonomous_cycles
+        WHERE account_id = ${dueAccountId}
+          AND state NOT IN (${CycleState.NoTrade}, ${CycleState.Completed}, ${CycleState.Blocked})
+      ) AS "unfinishedCycles",
+      (SELECT count(*)::integer FROM snapshot_references WHERE snapshot_id = ${dueSnapshotId}) AS "snapshots",
+      (
+        SELECT count(DISTINCT snapshot_id)::integer
+        FROM snapshot_references
+        WHERE snapshot_id = ${dueSnapshotId}
+      ) AS "distinctSnapshots",
+      (
+        SELECT count(*)::integer
+        FROM autonomous_cycle_shadow_decisions AS decision
+        JOIN autonomous_cycles AS cycle USING (cycle_id)
+        WHERE cycle.account_id = ${dueAccountId}
+      ) AS "shadowDecisions",
+      (
+        SELECT count(DISTINCT decision.decision_hash)::integer
+        FROM autonomous_cycle_shadow_decisions AS decision
+        JOIN autonomous_cycles AS cycle USING (cycle_id)
+        WHERE cycle.account_id = ${dueAccountId}
+      ) AS "distinctShadowDecisions",
+      (SELECT count(*)::integer FROM reconciliations WHERE account_id = ${dueAccountId}) AS "reconciliations",
+      (
+        SELECT count(DISTINCT content_hash)::integer
+        FROM reconciliations
+        WHERE account_id = ${dueAccountId}
+      ) AS "distinctReconciliations",
+      (SELECT count(*)::integer FROM intents WHERE account_id = ${dueAccountId}) AS "intents",
+      (
+        SELECT count(*)::integer
+        FROM risk_decisions AS decision
+        JOIN intents AS intent USING (intent_id)
+        WHERE intent.account_id = ${dueAccountId}
+      ) AS "riskDecisions",
+      (
+        SELECT count(*)::integer
+        FROM mutation_events AS mutation
+        JOIN intents AS intent USING (intent_id)
+        WHERE intent.account_id = ${dueAccountId}
+      ) AS "mutationEvents",
+      (SELECT count(*)::integer FROM orders WHERE account_id = ${dueAccountId}) AS "brokerOrders",
+      (
+        SELECT count(*)::integer
+        FROM broker_events
+        WHERE account_id = ${dueAccountId} AND event_kind = 'ORDER'
+      ) AS "brokerOrderEvents",
+      (SELECT count(*)::integer FROM broker_events WHERE account_id = ${dueAccountId}) AS "brokerEvents",
+      (
+        SELECT count(DISTINCT event_id)::integer
+        FROM broker_events
+        WHERE account_id = ${dueAccountId}
+      ) AS "distinctBrokerEvents"
+  `
+  if (counts === undefined) return yield* Effect.die(new Error('durability count query returned no row'))
+  const [cycle] = yield* sql<NonNullable<DueDurabilityRows['cycle']>>`
+    SELECT cycle_id, state, snapshot_id, decision_hash, terminal_at
+    FROM autonomous_cycles
+    WHERE account_id = ${dueAccountId}
+  `
+  const [snapshot] = yield* sql<NonNullable<DueDurabilityRows['snapshot']>>`
+    SELECT snapshot_id, manifest
+    FROM snapshot_references
+    WHERE snapshot_id = ${dueSnapshotId}
+  `
+  const [shadow] = yield* sql<NonNullable<DueDurabilityRows['shadow']>>`
+    SELECT decision.cycle_id, decision.decision_hash, decision.document
+    FROM autonomous_cycle_shadow_decisions AS decision
+    JOIN autonomous_cycles AS cycle USING (cycle_id)
+    WHERE cycle.account_id = ${dueAccountId}
+  `
+  const [reconciliation] = yield* sql<NonNullable<DueDurabilityRows['reconciliation']>>`
+    SELECT reconciliation_id, content_hash, status
+    FROM reconciliations
+    WHERE account_id = ${dueAccountId}
+  `
+  return { counts, cycle, reconciliation, shadow, snapshot }
+})
+
+const installShadowEvidenceFailure = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  yield* sql`
+    CREATE FUNCTION pr13354_reject_shadow_evidence()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $function$
+    BEGIN
+      RAISE EXCEPTION 'pr13354 injected shadow evidence failure';
+    END
+    $function$
+  `
+  yield* sql`
+    CREATE TRIGGER pr13354_reject_shadow_evidence
+    BEFORE INSERT ON autonomous_cycle_shadow_decisions
+    FOR EACH ROW EXECUTE FUNCTION pr13354_reject_shadow_evidence()
+  `
+})
+
+const removeShadowEvidenceFailure = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  yield* sql`DROP TRIGGER pr13354_reject_shadow_evidence ON autonomous_cycle_shadow_decisions`
+  yield* sql`DROP FUNCTION pr13354_reject_shadow_evidence()`
+})
+
+const installTerminalTransitionFailure = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  yield* sql`
+    CREATE FUNCTION pr13354_reject_terminal_transition()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $function$
+    BEGIN
+      IF OLD.state = 'ACTIVE' AND NEW.state IN ('NO_TRADE', 'COMPLETED') THEN
+        RAISE EXCEPTION 'pr13354 injected terminal transition failure';
+      END IF;
+      RETURN NEW;
+    END
+    $function$
+  `
+  yield* sql`
+    CREATE TRIGGER pr13354_reject_terminal_transition
+    BEFORE UPDATE OF state ON autonomous_cycles
+    FOR EACH ROW
+    EXECUTE FUNCTION pr13354_reject_terminal_transition()
+  `
+})
+
+const removeTerminalTransitionFailure = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  yield* sql`DROP TRIGGER pr13354_reject_terminal_transition ON autonomous_cycles`
+  yield* sql`DROP FUNCTION pr13354_reject_terminal_transition()`
+})
+
+const productionDuePass = (control: DueIoControl, phase: 'ACQUIRE_AND_DUE' | 'DUE' = 'DUE') =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(phase === 'ACQUIRE_AND_DUE' ? dueAcquisitionAt : dueObservedAt))
+      yield* ensureDueObserveAuthority
+      if (phase === 'DUE') {
+        const context = yield* makeProductionDueContext
+        return yield* runAutonomousCycleUntilSettled(context).pipe(
+          Effect.provideService(BrokerRead, dueBrokerRead(control)),
+          Effect.provideService(MarketData, dueMarketData(control)),
+        )
+      }
+      const advanceRequested = yield* Deferred.make<void>()
+      const advanceCompleted = yield* Deferred.make<void>()
+      yield* Deferred.await(advanceRequested).pipe(
+        Effect.andThen(TestClock.setTime(Date.parse(dueObservedAt))),
+        Effect.andThen(Deferred.succeed(advanceCompleted, undefined)),
+        Effect.forkScoped,
+      )
+      const context = yield* makeProductionDueContext
+      return yield* runAutonomousCycleUntilSettled(context).pipe(
+        Effect.provideService(BrokerRead, dueBrokerRead(control)),
+        Effect.provideService(
+          MarketData,
+          dueMarketData(
+            control,
+            Deferred.succeed(advanceRequested, undefined).pipe(Effect.andThen(Deferred.await(advanceCompleted))),
+          ),
+        ),
+      )
+    }),
+  ).pipe(Effect.provide(TestClock.layer()))
+
+const runProductionDuePass = (runtime: ReturnType<typeof makeAutonomousRuntime>, control: DueIoControl) =>
+  runtime.runPromise(productionDuePass(control))
 
 const signalSession = (
   sessionDate: IsoDate,
@@ -1426,4 +2038,174 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     expect(result.decisionAtCutoff.cycle.bindings.decisionHash).toBeUndefined()
     expect(decisionDraft.window.submissionCutoffAt < decisionDraft.window.executionOpenAt).toBe(true)
   })
+
+  test('persists and replays one production OBSERVE due cycle across PostgreSQL process restart', async () => {
+    const io = makeDueIoControl()
+    const firstRuntime = makeAutonomousRuntime()
+    let restartedRuntime: ReturnType<typeof makeAutonomousRuntime> | undefined
+
+    try {
+      await firstRuntime.runPromise(installShadowEvidenceFailure)
+      const shadowFailure = await firstRuntime.runPromiseExit(productionDuePass(io, 'ACQUIRE_AND_DUE'))
+      expect(Exit.isFailure(shadowFailure)).toBe(true)
+      if (Exit.isFailure(shadowFailure)) {
+        expect(Cause.pretty(shadowFailure.cause)).toContain('pr13354 injected shadow evidence failure')
+      }
+      const afterShadowFailure = await firstRuntime.runPromise(readDueDurabilityRows)
+      expect(afterShadowFailure.counts).toMatchObject({
+        cycles: 1,
+        snapshots: 1,
+        distinctSnapshots: 1,
+        shadowDecisions: 0,
+        distinctShadowDecisions: 0,
+        reconciliations: 1,
+        distinctReconciliations: 1,
+        unfinishedCycles: 1,
+        intents: 0,
+        riskDecisions: 0,
+        mutationEvents: 0,
+        brokerOrders: 0,
+        brokerOrderEvents: 0,
+        brokerEvents: 1,
+        distinctBrokerEvents: 1,
+      })
+      expect(afterShadowFailure.cycle).toMatchObject({
+        state: CycleState.Active,
+        snapshot_id: dueSnapshotId,
+        decision_hash: null,
+        terminal_at: null,
+      })
+
+      await firstRuntime.runPromise(removeShadowEvidenceFailure)
+      await firstRuntime.runPromise(installTerminalTransitionFailure)
+      const terminalFailure = await firstRuntime.runPromiseExit(productionDuePass(io))
+      expect(Exit.isFailure(terminalFailure)).toBe(true)
+      if (Exit.isFailure(terminalFailure)) {
+        expect(Cause.pretty(terminalFailure.cause)).toContain('pr13354 injected terminal transition failure')
+      }
+      const afterTerminalFailure = await firstRuntime.runPromise(readDueDurabilityRows)
+      expect(afterTerminalFailure.counts).toMatchObject({
+        cycles: 1,
+        snapshots: 1,
+        distinctSnapshots: 1,
+        shadowDecisions: 1,
+        distinctShadowDecisions: 1,
+        reconciliations: 1,
+        distinctReconciliations: 1,
+        unfinishedCycles: 1,
+        intents: 0,
+        riskDecisions: 0,
+        mutationEvents: 0,
+        brokerOrders: 0,
+        brokerOrderEvents: 0,
+        brokerEvents: 1,
+        distinctBrokerEvents: 1,
+      })
+      expect(afterTerminalFailure.cycle).toMatchObject({
+        state: CycleState.Active,
+        snapshot_id: dueSnapshotId,
+        decision_hash: afterTerminalFailure.shadow?.decision_hash,
+        terminal_at: null,
+      })
+
+      await firstRuntime.runPromise(removeTerminalTransitionFailure)
+      const settled = await runProductionDuePass(firstRuntime, io)
+      expect(settled.outcome).toBe('RECOVERED')
+      if (settled.outcome !== 'RECOVERED') return expect.unreachable(settled.outcome)
+      expect([CycleState.NoTrade, CycleState.Completed]).toContain(settled.cycle.state)
+      expect(settled.action).toBe(
+        settled.cycle.state === CycleState.NoTrade ? CycleState.NoTrade : CycleState.Completed,
+      )
+
+      const terminalRows = await firstRuntime.runPromise(readDueDurabilityRows)
+      expect(terminalRows.counts).toEqual({
+        cycles: 1,
+        unfinishedCycles: 0,
+        snapshots: 1,
+        distinctSnapshots: 1,
+        shadowDecisions: 1,
+        distinctShadowDecisions: 1,
+        reconciliations: 1,
+        distinctReconciliations: 1,
+        intents: 0,
+        riskDecisions: 0,
+        mutationEvents: 0,
+        brokerOrders: 0,
+        brokerOrderEvents: 0,
+        brokerEvents: 1,
+        distinctBrokerEvents: 1,
+      })
+      expect(terminalRows.cycle).toMatchObject({
+        cycle_id: settled.cycle.identity.cycleId,
+        state: settled.cycle.state,
+        snapshot_id: dueSnapshotId,
+        decision_hash: terminalRows.shadow?.decision_hash,
+      })
+      expect(terminalRows.cycle?.terminal_at).not.toBeNull()
+      expect(terminalRows.snapshot).toEqual({
+        snapshot_id: dueSnapshotId,
+        manifest: dueManifest.finalizedSnapshot,
+      })
+      expect(terminalRows.reconciliation).toMatchObject({ status: ReconciliationStatus.Exact })
+      expect(terminalRows.shadow?.cycle_id).toBe(settled.cycle.identity.cycleId)
+      const shadowDocument = terminalRows.shadow?.document as
+        | {
+            readonly bindings: {
+              readonly accountId: string
+              readonly cycleId: string
+              readonly reconciliationHash: string
+              readonly reconciliationId: string
+              readonly snapshotId: string
+            }
+            readonly contentHash: string
+            readonly dispatchable: boolean
+            readonly mode: string
+            readonly targetPlan: { readonly status: string }
+          }
+        | undefined
+      expect(shadowDocument).toMatchObject({
+        mode: 'OBSERVE',
+        dispatchable: false,
+        contentHash: terminalRows.shadow?.decision_hash,
+        bindings: {
+          accountId: dueAccountId,
+          cycleId: settled.cycle.identity.cycleId,
+          snapshotId: dueSnapshotId,
+          reconciliationId: terminalRows.reconciliation?.reconciliation_id,
+          reconciliationHash: terminalRows.reconciliation?.content_hash,
+        },
+      })
+      expect(shadowDocument?.targetPlan.status).toBe(
+        settled.cycle.state === CycleState.NoTrade ? TargetPlanStatus.NoTrade : TargetPlanStatus.Planned,
+      )
+
+      const ioBeforeRestart = { ...io }
+      await firstRuntime.dispose()
+
+      restartedRuntime = makeAutonomousRuntime()
+      const restarted = await runProductionDuePass(restartedRuntime, io)
+      expect(restarted).toMatchObject({
+        outcome: 'ALREADY_TERMINAL',
+        signalSessionDate: dueSignalDate,
+        cycle: {
+          identity: { cycleId: settled.cycle.identity.cycleId },
+          state: settled.cycle.state,
+          bindings: {
+            snapshotId: dueSnapshotId,
+            decisionHash: terminalRows.shadow?.decision_hash,
+          },
+        },
+      })
+      expect(io).toEqual({
+        ...ioBeforeRestart,
+        discoveryReads: ioBeforeRestart.discoveryReads + 1,
+      })
+
+      const restartedRows = await restartedRuntime.runPromise(readDueDurabilityRows)
+      expect(restartedRows).toEqual(terminalRows)
+    } finally {
+      await firstRuntime.dispose()
+      if (restartedRuntime !== undefined) await restartedRuntime.dispose()
+    }
+  }, 30_000)
 })
