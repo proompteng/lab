@@ -2994,6 +2994,12 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
             observed: preregistrationBlobOid,
           })
         }
+        if (preregistration.sourceRevision === sourceRevision) {
+          throw new CandidateDevelopmentSourceVerificationError('verify-preregistration-lineage', {
+            expected: 'proper ancestor of evaluated source revision',
+            observed: preregistration.sourceRevision,
+          })
+        }
         await sourceStep('verify-preregistration-lineage', () =>
           sourceGit.text(
             repositoryRoot,
