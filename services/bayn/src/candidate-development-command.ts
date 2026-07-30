@@ -602,17 +602,31 @@ export const bindCandidateDevelopmentVerifiedSource = (
       )
     }
   }
-  const expectedPriorTrialCount = completedCandidateOrdinals.length
-  const expectedCandidateOrdinal = expectedPriorTrialCount + 1
-  if (input.priorTrialCount !== expectedPriorTrialCount || input.candidateOrdinal !== expectedCandidateOrdinal) {
+  const latestTerminalEvidence = frozenCandidateDevelopmentTrialHistory.latestTerminalEvidence
+  if (
+    latestTerminalEvidence.candidateOrdinal !== completedCandidateOrdinals.length ||
+    latestTerminalEvidence.priorTrialCount !== latestTerminalEvidence.candidateOrdinal - 1
+  ) {
     return Result.fail(
       sourceVerificationFailure('verify-program-binding', {
-        field: 'trialHistory',
+        field: 'trialHistory.latestTerminalEvidence',
         expected: {
-          candidateOrdinal: expectedCandidateOrdinal,
-          priorTrialCount: expectedPriorTrialCount,
-          history: frozenCandidateDevelopmentTrialHistory,
+          candidateOrdinal: completedCandidateOrdinals.length,
+          priorTrialCount: completedCandidateOrdinals.length - 1,
         },
+        observed: latestTerminalEvidence,
+      }),
+    )
+  }
+  const candidatePreregistration = frozenCandidateDevelopmentTrialHistory.candidatePreregistration
+  if (
+    input.candidateOrdinal !== candidatePreregistration.candidateOrdinal ||
+    input.priorTrialCount !== candidatePreregistration.priorTrialCount
+  ) {
+    return Result.fail(
+      sourceVerificationFailure('verify-program-binding', {
+        field: 'trialHistory.candidatePreregistration',
+        expected: candidatePreregistration,
         observed: {
           candidateOrdinal: input.candidateOrdinal,
           priorTrialCount: input.priorTrialCount,
@@ -682,6 +696,23 @@ export const bindCandidateDevelopmentVerifiedSource = (
       ),
     ),
   )
+}
+
+const preregisterCandidateDevelopmentAttempt = (
+  verifiedSource: CandidateDevelopmentVerifiedSource,
+): Result.Result<string, CandidateDevelopmentCommandFailure> => {
+  const nextCandidatePreregistration = frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration
+  if (nextCandidatePreregistration === null) {
+    return Result.fail(
+      sourceVerificationFailure('verify-program-binding', {
+        field: 'trialHistory.nextCandidatePreregistration',
+        expected: 'separately reviewed preregistration after consumed Candidate 16',
+        observed: null,
+        latestTerminalEvidence: frozenCandidateDevelopmentTrialHistory.latestTerminalEvidence,
+      }),
+    )
+  }
+  return Result.succeed(verifiedSource.sourceManifestSha256)
 }
 
 const requireCanonicalEvidenceEqual = (
@@ -3275,7 +3306,7 @@ export const evaluateCandidateDevelopmentArtifact: CandidateDevelopmentModuleImp
       input,
       strategyProtocol: strategyProtocol as CandidateDevelopmentStrategyProtocol,
       effects: {
-        preregisterCandidate: () => Effect.succeed(verifiedSource.sourceManifestSha256),
+        preregisterCandidate: () => Effect.fromResult(preregisterCandidateDevelopmentAttempt(verifiedSource)),
         loadDevelopmentData: () => Effect.succeed(undefined),
         evaluateDevelopment: (_data, _preflight, observedVerifiedSource) =>
           pipe(

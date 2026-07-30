@@ -2340,9 +2340,54 @@ describe('candidate development command', () => {
         _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
         operation: 'verify-program-binding',
         cause: {
-          field: 'trialHistory',
+          field: 'trialHistory.candidatePreregistration',
           expected: { candidateOrdinal: 16, priorTrialCount: 15 },
           observed: { candidateOrdinal: 1, priorTrialCount: 0 },
+        },
+      },
+    })
+  })
+
+  test('rejects consumed Candidate 16 before development evaluation', async () => {
+    const officialSessions = frozenCandidateDevelopmentSessions()
+    const input = {
+      candidateOrdinal: 16,
+      priorTrialCount: 15,
+      expectedStrategyProtocolHash: fixtureStrategyProtocolHash,
+      officialSessions,
+      signalSessionDates: officialMonthEndSignalDates(officialSessions),
+      featureLookbackSessions: 126,
+    }
+    const source = `
+      export const candidateDevelopmentArtifact = {
+        schemaVersion: 'bayn.candidate-development-artifact.v1',
+        input: ${JSON.stringify(input)},
+        strategyProtocol: ${JSON.stringify(fixtureStrategyProtocol)},
+        buildEvaluation: () => { throw new Error('consumed Candidate 16 must not evaluate') },
+      }
+    `
+    const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
+    const loaded = await Effect.runPromise(evaluateCandidateDevelopmentArtifact(moduleUrl, fixtureVerifiedSourceFiles))
+    const program = successOf(
+      validateCandidateDevelopmentExecutableProgram(
+        (loaded as { readonly candidateDevelopmentProgram?: unknown }).candidateDevelopmentProgram,
+      ),
+    )
+    const verifiedSource = successOf(bindCandidateDevelopmentVerifiedSource(fixtureVerifiedSourceFiles, input))
+
+    expect(
+      await Effect.runPromise(Effect.flip(executeCandidateDevelopmentProgram(program, verifiedSource))),
+    ).toMatchObject({
+      _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+      operation: 'verify-program-binding',
+      cause: {
+        field: 'trialHistory.nextCandidatePreregistration',
+        observed: null,
+        latestTerminalEvidence: {
+          candidateOrdinal: 16,
+          priorTrialCount: 15,
+          terminalStatus: 'HOLD_REJECT',
+          sourceRevision: '60a48a2e52fbafdd67a404a33a3cb22e82a98493',
         },
       },
     })
