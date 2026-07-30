@@ -1943,6 +1943,11 @@ const resolveProvenance = async (
     readonly promotionCommittedAt: string
   },
 ): Promise<BaynPromotionProvenance> => {
+  const requestOptions: GitHubRequestOptions = {
+    token: options.token,
+    requestTimeoutMs: options.requestTimeoutMs,
+    fetchFn: options.fetchFn,
+  }
   const promotionCommittedAtMs = Date.parse(options.promotionCommittedAt)
   if (!Number.isFinite(promotionCommittedAtMs)) {
     throw new Error('promotion commit timestamp is invalid')
@@ -1951,14 +1956,16 @@ const resolveProvenance = async (
   const promotionSearchEnd = new Date(promotionCommittedAtMs).toISOString()
   const [successfulPushRuns, successfulDispatchRuns] = await Promise.all([
     fetchWorkflowRuns({
-      ...options,
+      ...requestOptions,
+      repository: options.repository,
       workflow: buildWorkflow,
       headSha: options.sourceSha,
       event: 'push',
       status: 'success',
     }),
     fetchWorkflowRuns({
-      ...options,
+      ...requestOptions,
+      repository: options.repository,
       workflow: buildWorkflow,
       event: 'workflow_dispatch',
       status: 'success',
@@ -2058,7 +2065,8 @@ const resolveProvenance = async (
   const releaseRunGroups = await Promise.all(
     selectedCandidates.map((candidate) =>
       fetchWorkflowRuns({
-        ...options,
+        ...requestOptions,
+        repository: options.repository,
         workflow: releaseWorkflow,
         event: 'workflow_run',
         ...baynReleaseSearchRange(candidate.run.updatedAt),

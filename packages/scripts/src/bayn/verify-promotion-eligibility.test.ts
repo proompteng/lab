@@ -1281,3 +1281,216 @@ describe('release promotion log parsing', () => {
     ).toThrow('exactly one Validate release contract step')
   })
 })
+
+describe('real release provenance discovery regression', () => {
+  test('discovers build 30551086384 through release 30551402124 for promotion #13406', async () => {
+    const realSourceSha = '0d12c15e04f165533d43b879c87ca931d3fce3b9'
+    const realPromotionHeadSha = '04026f41afb6965b243473573681a4bb2f11b735'
+    const realDigest = 'sha256:162b72a8b614de232b1aebb7e23b62070ccfa31f7f90cfb240e6e46159d9c471'
+    const realPullNumber = 13406
+    const realBuildRunId = 30551086384
+    const realReleaseRunId = 30551402124
+    const realContract = {
+      service: 'bayn',
+      image: 'registry.ide-newton.ts.net/lab/bayn',
+      tag: `sha-${realSourceSha}`,
+      digest: realDigest,
+      reference: `registry.ide-newton.ts.net/lab/bayn@${realDigest}`,
+      sourceSha: realSourceSha,
+      packageAttr: 'bayn-image',
+      platforms: ['linux/amd64', 'linux/arm64'],
+    }
+    const realHeadPins: ManifestPins = {
+      sourceSha: realSourceSha,
+      tag: realContract.tag,
+      digest: realDigest,
+      rolloutTimestamp: '2026-07-30T14:24:02Z',
+    }
+    const emptyConnection = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } }
+    const workflowQueries: URL[] = []
+
+    const fetchFn = (async (input, init) => {
+      const url = String(input)
+      if (url === 'https://api.github.com/graphql') {
+        const body = JSON.parse(String(init?.body)) as { readonly query: string }
+        if (body.query.includes('BaynPromotionHeadForcePushes')) {
+          return Response.json({
+            data: { repository: { pullRequest: { timelineItems: emptyConnection } } },
+          })
+        }
+        if (body.query.includes('BaynPromotionReviews')) {
+          return Response.json({ data: { repository: { pullRequest: { reviews: emptyConnection } } } })
+        }
+        if (body.query.includes('BaynPromotionThreads')) {
+          return Response.json({
+            data: { repository: { pullRequest: { reviewThreads: emptyConnection } } },
+          })
+        }
+        throw new Error('unexpected GraphQL query')
+      }
+      if (url.endsWith(`/pulls/${realPullNumber}`)) {
+        return Response.json({
+          number: realPullNumber,
+          title: `chore(bayn): promote image sha-${realSourceSha}`,
+          state: 'open',
+          created_at: '2026-07-30T14:24:02Z',
+          commits: 1,
+          base: { ref: 'main', sha: realSourceSha },
+          head: {
+            ref: 'codex/bayn-release-current',
+            sha: realPromotionHeadSha,
+            repo: { full_name: repository },
+          },
+        })
+      }
+      if (url.includes(`/pulls/${realPullNumber}/files?`)) {
+        return Response.json(baynPromotionManifestPaths.map((path) => ({ filename: path, status: 'modified' })))
+      }
+      if (url.endsWith(`/commits/${realPromotionHeadSha}`)) {
+        return Response.json({ commit: { committer: { date: '2026-07-30T14:24:02Z' } } })
+      }
+      if (url.includes('/contents/')) {
+        const parsed = new URL(url)
+        const path = decodeURIComponent(parsed.pathname.split('/contents/')[1] ?? '')
+        const ref = parsed.searchParams.get('ref')
+        const pins = ref === realPromotionHeadSha ? realHeadPins : basePins
+        const content =
+          manifests(pins)[
+            path.endsWith('deployment.yaml')
+              ? 'deployment'
+              : path.endsWith('kustomization.yaml')
+                ? 'kustomization'
+                : 'applicationSet'
+          ]
+        return Response.json({
+          type: 'file',
+          encoding: 'base64',
+          content: Buffer.from(content).toString('base64'),
+        })
+      }
+      if (url.includes(`/issues/${realPullNumber}/comments?`) || url.includes(`/issues/${realPullNumber}/reactions?`)) {
+        return Response.json([])
+      }
+      if (url.includes('/actions/workflows/')) {
+        const parsed = new URL(url)
+        workflowQueries.push(parsed)
+        if (parsed.pathname.endsWith('/bayn-build-push.yml/runs')) {
+          if (parsed.searchParams.get('event') === 'workflow_dispatch') {
+            return Response.json({ workflow_runs: [] })
+          }
+          return Response.json({
+            workflow_runs: [
+              {
+                id: realBuildRunId,
+                run_number: 503,
+                run_attempt: 1,
+                head_sha: realSourceSha,
+                head_branch: 'main',
+                event: 'push',
+                status: 'completed',
+                conclusion: 'success',
+                created_at: '2026-07-30T14:18:55Z',
+                updated_at: '2026-07-30T14:22:43Z',
+              },
+            ],
+          })
+        }
+        if (parsed.pathname.endsWith('/bayn-release.yml/runs')) {
+          return Response.json({
+            workflow_runs: [
+              {
+                id: realReleaseRunId,
+                run_number: 171,
+                run_attempt: 1,
+                head_sha: realSourceSha,
+                head_branch: 'main',
+                event: 'workflow_run',
+                status: 'completed',
+                conclusion: 'success',
+                created_at: '2026-07-30T14:22:48Z',
+                updated_at: '2026-07-30T14:24:23Z',
+              },
+            ],
+          })
+        }
+      }
+      if (url.endsWith(`/actions/runs/${realBuildRunId}/jobs?per_page=100&page=1`)) {
+        return Response.json({
+          jobs: [{ name: 'Verify exact-head Codex review', conclusion: 'success', steps: [] }],
+        })
+      }
+      if (url.endsWith(`/actions/runs/${realBuildRunId}/artifacts?per_page=100&page=1`)) {
+        return Response.json({
+          artifacts: [{ id: 9001, name: 'bayn-release-contract', expired: false }],
+        })
+      }
+      if (url.endsWith('/actions/artifacts/9001/zip')) {
+        return new Response(Uint8Array.from(storedZip('release-contract.json', JSON.stringify(realContract))).buffer)
+      }
+      if (url.endsWith(`/actions/runs/${realReleaseRunId}/jobs?per_page=100&page=1`)) {
+        return Response.json({
+          jobs: [
+            {
+              name: 'promote',
+              conclusion: 'success',
+              steps: [
+                { name: 'Create deploy pull request', conclusion: 'success' },
+                { name: 'Record held candidate', conclusion: 'skipped' },
+              ],
+            },
+          ],
+        })
+      }
+      if (url.endsWith(`/actions/runs/${realReleaseRunId}/logs`)) {
+        return new Response(
+          Uint8Array.from(
+            storedZipEntries([
+              {
+                name: 'promote/4_Validate release contract.txt',
+                content: `2026-07-30T14:23:25.0000000Z   WORKFLOW_SHA: ${realSourceSha}\n`,
+              },
+              {
+                name: 'promote/8_Create deploy pull request.txt',
+                content: `2026-07-30T14:24:00.0000000Z   branch: codex/bayn-release-current
+2026-07-30T14:24:00.0000000Z   base: main
+2026-07-30T14:24:06.0000000Z pull-request-branch = codex/bayn-release-current
+2026-07-30T14:24:06.0000000Z pull-request-operation = created
+2026-07-30T14:24:06.0000000Z pull-request-head-sha = ${realPromotionHeadSha}
+2026-07-30T14:24:06.0000000Z pull-request-number = ${realPullNumber}
+2026-07-30T14:24:06.0000000Z pull-request-url = https://github.com/proompteng/lab/pull/${realPullNumber}
+`,
+              },
+            ]),
+          ).buffer,
+        )
+      }
+      throw new Error(`unexpected URL ${url}`)
+    }) as typeof fetch
+
+    const snapshot = await createGitHubPromotionEligibilityLoader({
+      repository,
+      token: 'test-token',
+      pullNumber: realPullNumber,
+      headSha: realPromotionHeadSha,
+      requestTimeoutMs: 100,
+      fetchFn,
+    })()
+
+    expect(snapshot.provenance).toEqual({
+      status: 'resolved',
+      buildRunId: realBuildRunId,
+      releaseRunId: realReleaseRunId,
+      promotionPullNumber: realPullNumber,
+      promotionHeadSha: realPromotionHeadSha,
+      contract: realContract,
+    })
+    const dispatchQuery = workflowQueries.find(
+      (query) =>
+        query.pathname.endsWith('/bayn-build-push.yml/runs') && query.searchParams.get('event') === 'workflow_dispatch',
+    )
+    const releaseQuery = workflowQueries.find((query) => query.pathname.endsWith('/bayn-release.yml/runs'))
+    expect(dispatchQuery?.searchParams.has('head_sha')).toBeFalse()
+    expect(releaseQuery?.searchParams.has('head_sha')).toBeFalse()
+    expect(releaseQuery?.searchParams.get('created')).toBe('2026-07-30T14:17:43.000Z..2026-07-31T14:22:43.000Z')
+  })
+})
