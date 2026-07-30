@@ -754,6 +754,45 @@ describe('candidate development command', () => {
     })
   })
 
+  test('binds the reported doubled-cost daily series to stressed replay marks', () => {
+    const baseline = baselineFixture()
+    const points = baseline.benchmarkSeries.doubleCostStrategy
+    const index = points.findIndex(
+      (point, pointIndex) =>
+        points[pointIndex + 1] !== undefined && point.cashYieldMicros !== points[pointIndex + 1]?.cashYieldMicros,
+    )
+    if (index < 0) throw new Error('fixture requires adjacent differing cash-yield amounts')
+    const first = points[index]
+    const second = points[index + 1]
+    const priorCumulative = BigInt(first.cumulativeCashYieldMicros) - BigInt(first.cashYieldMicros)
+    const swappedFirst = {
+      ...first,
+      cashYieldMicros: second.cashYieldMicros,
+      cumulativeCashYieldMicros: (priorCumulative + BigInt(second.cashYieldMicros)).toString(),
+    }
+    const swappedSecond = {
+      ...second,
+      cashYieldMicros: first.cashYieldMicros,
+    }
+    const tampered = {
+      ...baseline,
+      benchmarkSeries: {
+        ...baseline.benchmarkSeries,
+        doubleCostStrategy: points.map((point, pointIndex) =>
+          pointIndex === index ? swappedFirst : pointIndex === index + 1 ? swappedSecond : point,
+        ),
+      },
+    }
+
+    expect(buildFixtureReport(reportFixture(0.01), tampered)).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'double-cost-series.replay',
+      },
+    })
+  })
+
   test('rejects an economic summary status that disagrees with its gates', () => {
     const baseline = baselineFixture()
     const inconsistent = {
@@ -2648,6 +2687,51 @@ describe('candidate development command', () => {
       })
     } finally {
       await rm(repository, { recursive: true, force: true })
+    }
+  })
+
+  test('ignores inherited Git repository-selection environment', async () => {
+    const repository = await mkdtemp(join(tmpdir(), 'bayn-candidate-source-environment-'))
+    const alternateRepository = await mkdtemp(join(tmpdir(), 'bayn-candidate-source-alternate-'))
+    const candidateDirectory = join(repository, 'candidate')
+    const alternateCandidateDirectory = join(alternateRepository, 'candidate')
+    const modulePath = join(candidateDirectory, 'program.mjs')
+    const sourceManifestPath = join(candidateDirectory, 'source-manifest.json')
+    const moduleBytes = 'export const candidateDevelopmentProgram = { source: "trusted" }\n'
+    const alternateModuleBytes = 'export const candidateDevelopmentProgram = { source: "alternate" }\n'
+    const sourceManifest = { ...fixtureSourceManifest, modulePath: 'candidate/program.mjs' }
+    const sourceManifestBytes = `${JSON.stringify(sourceManifest, null, 2)}\n`
+    const previousGitDir = process.env.GIT_DIR
+    const previousGitWorkTree = process.env.GIT_WORK_TREE
+    try {
+      for (const [root, directory, bytes] of [
+        [repository, candidateDirectory, moduleBytes],
+        [alternateRepository, alternateCandidateDirectory, alternateModuleBytes],
+      ] as const) {
+        await mkdir(directory, { recursive: true })
+        await writeFile(join(directory, 'program.mjs'), bytes)
+        await writeFile(join(directory, 'source-manifest.json'), sourceManifestBytes)
+        await execFilePromise('git', ['init', '-q'], root)
+        await execFilePromise('git', ['config', 'user.name', 'Candidate Test'], root)
+        await execFilePromise('git', ['config', 'user.email', 'candidate@example.test'], root)
+        await execFilePromise('git', ['add', 'candidate/program.mjs', 'candidate/source-manifest.json'], root)
+        await execFilePromise('git', ['commit', '-qm', 'test: bind source environment'], root)
+      }
+      const expectedRevision = await execFileTextPromise('git', ['rev-parse', 'HEAD'], repository)
+
+      process.env.GIT_DIR = join(alternateRepository, '.git')
+      process.env.GIT_WORK_TREE = repository
+      const verified = await Effect.runPromise(verifyCandidateDevelopmentSourceFiles(modulePath, sourceManifestPath))
+
+      expect(verified.files.sourceRevision).toBe(expectedRevision)
+      expect(Buffer.from(verified.moduleUrl.split(',')[1] ?? '', 'base64').toString('utf8')).toBe(moduleBytes)
+    } finally {
+      if (previousGitDir === undefined) delete process.env.GIT_DIR
+      else process.env.GIT_DIR = previousGitDir
+      if (previousGitWorkTree === undefined) delete process.env.GIT_WORK_TREE
+      else process.env.GIT_WORK_TREE = previousGitWorkTree
+      await rm(repository, { recursive: true, force: true })
+      await rm(alternateRepository, { recursive: true, force: true })
     }
   })
 

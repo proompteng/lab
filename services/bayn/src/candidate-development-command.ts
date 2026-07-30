@@ -2035,6 +2035,11 @@ interface CandidateDevelopmentRecomputedMetrics {
   readonly doubleCostStrategy: PerformanceMetrics
 }
 
+const projectDailyPerformanceSeries = (
+  marks: EvaluationResult['simulation']['dailyMarks'],
+): readonly DailyPerformancePoint[] =>
+  marks.map(({ cashMicros: _cashMicros, positions: _positions, ...performance }) => performance)
+
 const recomputeCandidateDevelopmentMetrics = (
   report: CandidateDevelopmentReport,
   evaluation: CandidateDevelopmentCommandEvaluation,
@@ -2044,6 +2049,7 @@ const recomputeCandidateDevelopmentMetrics = (
   const { baseline } = evaluation
   const strategyPoints = baseline.simulation.dailyMarks
   const stressedPoints = report.doubledCost.stressed.simulation.dailyMarks
+  const stressedPerformance = projectDailyPerformanceSeries(stressedPoints)
   return pipe(
     Result.all({
       buyBinding: requireCanonicalEvidenceEqual(
@@ -2056,10 +2062,15 @@ const recomputeCandidateDevelopmentMetrics = (
         benchmarks.directVolTiming,
         baseline.benchmarkSeries.directVolTiming,
       ),
+      doubleCostBinding: requireCanonicalEvidenceEqual(
+        'double-cost-series.replay',
+        stressedPerformance,
+        baseline.benchmarkSeries.doubleCostStrategy,
+      ),
       buySessions: validateSeriesSessions(strategyPoints, benchmarks.buyAndHold, 'buy-and-hold'),
       volSessions: validateSeriesSessions(strategyPoints, benchmarks.directVolTiming, 'direct-volatility-timing'),
       doubleSessions: validateSeriesSessions(
-        strategyPoints,
+        stressedPerformance,
         baseline.benchmarkSeries.doubleCostStrategy,
         'double-cost-series',
       ),
@@ -2852,7 +2863,12 @@ const gitText = (repositoryRoot: string, args: readonly string[], signal?: Abort
     execFile(
       'git',
       ['--no-replace-objects', '-C', repositoryRoot, ...args],
-      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, signal },
+      {
+        encoding: 'utf8',
+        env: Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_'))),
+        maxBuffer: 16 * 1024 * 1024,
+        signal,
+      },
       (error, stdout) => {
         if (error === null) resolveGit(stdout.trim())
         else rejectGit(error)
@@ -2865,7 +2881,12 @@ const gitBytes = (repositoryRoot: string, args: readonly string[], signal?: Abor
     execFile(
       'git',
       ['--no-replace-objects', '-C', repositoryRoot, ...args],
-      { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024, signal },
+      {
+        encoding: 'buffer',
+        env: Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_'))),
+        maxBuffer: 64 * 1024 * 1024,
+        signal,
+      },
       (error, stdout) => {
         if (error === null) resolveGit(stdout)
         else rejectGit(error)
