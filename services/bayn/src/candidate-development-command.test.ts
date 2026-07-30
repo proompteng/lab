@@ -3190,6 +3190,69 @@ describe('candidate development command', () => {
     }
   })
 
+  test('caches immutable subtrees across preregistration history', async () => {
+    const repository = await mkdtemp(join(tmpdir(), 'bayn-candidate-preregistration-tree-cache-'))
+    const stableDirectory = join(repository, 'stable')
+    const markerPath = join(repository, 'marker.txt')
+    const modulePath = join(repository, 'candidate', 'program.mjs')
+    try {
+      await mkdir(stableDirectory, { recursive: true })
+      await execFilePromise('git', ['init', '-q'], repository)
+      await execFilePromise('git', ['config', 'user.name', 'Candidate Test'], repository)
+      await execFilePromise('git', ['config', 'user.email', 'candidate@example.test'], repository)
+      await writeFile(join(stableDirectory, 'fixture.txt'), 'stable subtree\n')
+      await writeFile(markerPath, 'one\n')
+      await execFilePromise('git', ['add', 'stable/fixture.txt', 'marker.txt'], repository)
+      await execFilePromise('git', ['commit', '-qm', 'test: first preregistration ancestor'], repository)
+      for (const value of ['two', 'three']) {
+        await writeFile(markerPath, `${value}\n`)
+        await execFilePromise('git', ['add', 'marker.txt'], repository)
+        await execFilePromise('git', ['commit', '-qm', `test: ${value} preregistration ancestor`], repository)
+      }
+      const preregistrationRevision = await execFileTextPromise('git', ['rev-parse', 'HEAD'], repository)
+      const stableTreeOid = await execFileTextPromise(
+        'git',
+        ['rev-parse', `${preregistrationRevision}:stable`],
+        repository,
+      )
+
+      await mkdir(dirname(modulePath), { recursive: true })
+      await writeFile(modulePath, 'export const candidate = "implemented-after-preregistration"\n')
+      await execFilePromise('git', ['add', 'candidate/program.mjs'], repository)
+      await execFilePromise('git', ['commit', '-qm', 'test: implement candidate after preregistration'], repository)
+      const moduleBlobOid = await execFileTextPromise('git', ['rev-parse', 'HEAD:candidate/program.mjs'], repository)
+
+      const queriedTreeOids: string[] = []
+      const sourceGit: CandidateDevelopmentSourceGit = {
+        text: async (repositoryRoot, args) => {
+          if (args[0] === 'ls-tree') {
+            expect(args).not.toContain('-r')
+            queriedTreeOids.push(args.at(-1) ?? '')
+          }
+          return execFileTextPromise('git', ['--no-replace-objects', '-C', repositoryRoot, ...args], repositoryRoot)
+        },
+        bytes: (repositoryRoot, args) =>
+          execFileBytesPromise('git', ['--no-replace-objects', '-C', repositoryRoot, ...args], repositoryRoot),
+      }
+
+      expect(
+        await Effect.runPromise(
+          verifyCandidateDevelopmentPreregistrationModuleNovelty(
+            repository,
+            preregistrationRevision,
+            'candidate/program.mjs',
+            moduleBlobOid,
+            sourceGit,
+          ),
+        ),
+      ).toBeUndefined()
+      expect(queriedTreeOids.filter((treeOid) => treeOid === stableTreeOid)).toHaveLength(1)
+      expect(new Set(queriedTreeOids).size).toBe(queriedTreeOids.length)
+    } finally {
+      await rm(repository, { recursive: true, force: true })
+    }
+  })
+
   test('rejects shallow Git history before module novelty verification', async () => {
     const repository = await mkdtemp(join(tmpdir(), 'bayn-candidate-history-source-'))
     const shallowRepository = await mkdtemp(join(tmpdir(), 'bayn-candidate-history-shallow-'))

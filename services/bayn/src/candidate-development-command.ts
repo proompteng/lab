@@ -3016,6 +3016,7 @@ export const verifyCandidateDevelopmentRepositoryIntegrity = (
   })
 
 const candidateDevelopmentMaximumHistoryCommits = 50_000
+const candidateDevelopmentMaximumHistoryTrees = 500_000
 
 interface CandidateDevelopmentImmutableCommit {
   readonly treeOid: string
@@ -3140,6 +3141,40 @@ const verifyCandidateDevelopmentPreregistrationModuleNoveltyPromise = async (
   await verifyCandidateDevelopmentRepositoryIntegrityPromise(repositoryRoot, sourceGit, signal)
   const searchedTrees = new Set<string>()
   let matchingCommitOid: string | undefined
+  const treeContainsModuleBlob = async (rootTreeOid: string): Promise<boolean> => {
+    const pendingTrees = [rootTreeOid]
+    while (pendingTrees.length > 0) {
+      const treeOid = pendingTrees.pop()
+      if (treeOid === undefined || searchedTrees.has(treeOid)) continue
+      if (searchedTrees.size >= candidateDevelopmentMaximumHistoryTrees) {
+        throw new CandidateDevelopmentSourceVerificationError('verify-preregistration-module-novelty', {
+          field: 'immutableHistoryTreeCount',
+          expected: `<${candidateDevelopmentMaximumHistoryTrees}`,
+          observed: searchedTrees.size,
+        })
+      }
+      const objects = await sourceStep('verify-preregistration-module-novelty', () =>
+        sourceGit.text(repositoryRoot, ['ls-tree', '--format=%(objecttype) %(objectname)', treeOid], signal),
+      )
+      searchedTrees.add(treeOid)
+      for (const line of objects.split('\n')) {
+        if (line.length === 0) continue
+        const match = /^(blob|tree|commit) ([0-9a-f]{40})$/.exec(line)
+        if (match === null) {
+          throw new CandidateDevelopmentSourceVerificationError('verify-preregistration-module-novelty', {
+            field: 'immutableTreeEntry',
+            treeOid,
+            expected: '<blob|tree|commit> <lowercase 40-character object OID>',
+            observed: line,
+          })
+        }
+        const [, objectType, objectOid] = match
+        if (objectType === 'blob' && objectOid === moduleBlobOid) return true
+        if (objectType === 'tree') pendingTrees.push(objectOid)
+      }
+    }
+    return false
+  }
   await walkCandidateDevelopmentImmutableHistory(
     repositoryRoot,
     preregistrationRevision,
@@ -3147,16 +3182,7 @@ const verifyCandidateDevelopmentPreregistrationModuleNoveltyPromise = async (
     sourceGit,
     signal,
     async (commitOid, commit) => {
-      if (searchedTrees.has(commit.treeOid)) return false
-      searchedTrees.add(commit.treeOid)
-      const objects = await sourceStep('verify-preregistration-module-novelty', () =>
-        sourceGit.text(
-          repositoryRoot,
-          ['ls-tree', '-r', '--format=%(objecttype) %(objectname)', commit.treeOid],
-          signal,
-        ),
-      )
-      const found = objects.split('\n').some((line) => line === `blob ${moduleBlobOid}`)
+      const found = await treeContainsModuleBlob(commit.treeOid)
       if (found) matchingCommitOid = commitOid
       return found
     },
