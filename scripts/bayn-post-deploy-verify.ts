@@ -26,7 +26,6 @@ export type ExpectedPromotion = {
   readonly digest: string
   readonly repository: string
   readonly imageReference: string
-  readonly requiresReconciliation: boolean
 }
 
 export type VerificationSnapshot = {
@@ -35,6 +34,7 @@ export type VerificationSnapshot = {
   readonly pods: unknown
   readonly readiness: unknown
   readonly status: unknown
+  readonly metrics: unknown
 }
 
 export type VerificationFailureCode =
@@ -173,7 +173,6 @@ export const parseExpectedPromotion = (kustomizationSource: string, deploymentSo
     digest,
     repository,
     imageReference: `${repository}:${tag}@${digest}`,
-    requiresReconciliation: true,
   }
 }
 
@@ -409,6 +408,37 @@ const validateReadiness = (readinessValue: unknown): void => {
   string(readiness.checkedAt, 'readiness.checkedAt')
 }
 
+const reconciliationStaleThresholdMs = (metricsValue: unknown): number => {
+  if (typeof metricsValue !== 'string') {
+    return fail('ENDPOINT_UNAVAILABLE', 'Bayn metrics response must be text', true)
+  }
+  const samples = metricsValue
+    .split('\n')
+    .map((line: string) => line.trim())
+    .filter((line: string) => line.startsWith('bayn_reconciliation_stale_threshold_seconds '))
+  if (samples.length !== 1) {
+    return fail('ENDPOINT_UNAVAILABLE', 'Bayn reconciliation stale threshold metric must have exactly one sample', true)
+  }
+  const sample = samples[0]
+  if (sample === undefined) {
+    return fail('ENDPOINT_UNAVAILABLE', 'Bayn reconciliation stale threshold metric is missing', true)
+  }
+  const match = /^bayn_reconciliation_stale_threshold_seconds ([0-9]+(?:\.[0-9]+)?)$/.exec(sample)
+  if (match === null) {
+    return fail('ENDPOINT_UNAVAILABLE', 'Bayn reconciliation stale threshold metric is invalid', true)
+  }
+  const thresholdValue = match[1]
+  if (thresholdValue === undefined) {
+    return fail('ENDPOINT_UNAVAILABLE', 'Bayn reconciliation stale threshold metric has no value', true)
+  }
+  const thresholdSeconds = Number(thresholdValue)
+  const thresholdMs = thresholdSeconds * 1_000
+  if (!Number.isFinite(thresholdMs) || thresholdMs <= 0) {
+    fail('ENDPOINT_UNAVAILABLE', 'Bayn reconciliation stale threshold metric must be positive', true)
+  }
+  return thresholdMs
+}
+
 const assertNoSensitiveFields = (value: unknown, path = 'status'): void => {
   if (Array.isArray(value)) {
     value.forEach((item, index) => assertNoSensitiveFields(item, `${path}[${index}]`))
@@ -452,7 +482,11 @@ const validateAuthority = (authorityValue: unknown): void => {
   string(durable.updatedAt, 'authority.durable.updatedAt')
 }
 
-const validateStatus = (statusValue: unknown, expected: ExpectedPromotion): void => {
+const validateStatus = (
+  statusValue: unknown,
+  expected: ExpectedPromotion,
+  reconciliationStaleThresholdMs: number,
+): void => {
   assertNoSensitiveFields(statusValue)
   const status = record(statusValue, 'status')
   requireEqual(status.service, 'bayn', 'status.service', 'PRODUCTION_CONTRACT_VIOLATION', false)
@@ -549,37 +583,39 @@ const validateStatus = (statusValue: unknown, expected: ExpectedPromotion): void
   for (const [name, value] of Object.entries(alerts)) {
     requireEqual(value, false, `status.cycle.alerts.${name}`, 'PRODUCTION_CONTRACT_VIOLATION', false)
   }
-  if (expected.requiresReconciliation) {
-    if (cycle.reconciliation === null || cycle.reconciliation === undefined) {
-      fail('ENDPOINT_UNAVAILABLE', 'status.cycle.reconciliation is not available yet', true)
-    }
-    const reconciliation = record(cycle.reconciliation, 'status.cycle.reconciliation')
-    requireEqual(reconciliation.status, 'EXACT', 'status.cycle.reconciliation.status', 'ENDPOINT_UNAVAILABLE', true)
-    requireEqual(
-      reconciliation.discrepancyCount,
-      0,
-      'status.cycle.reconciliation.discrepancyCount',
-      'PRODUCTION_CONTRACT_VIOLATION',
-      false,
-    )
-    requireEqual(
-      reconciliation.coversLatestMutation,
-      true,
-      'status.cycle.reconciliation.coversLatestMutation',
-      'ENDPOINT_UNAVAILABLE',
-      true,
-    )
-    requireEqual(
-      cycle.reconciliationCoversLatestMutation,
-      true,
-      'status.cycle.reconciliationCoversLatestMutation',
-      'ENDPOINT_UNAVAILABLE',
-      true,
-    )
-    string(reconciliation.reconciledAt, 'status.cycle.reconciliation.reconciledAt')
-    const reconciliationAgeMs = integer(cycle.reconciliationAgeMs, 'status.cycle.reconciliationAgeMs')
-    if (reconciliationAgeMs < 0)
-      fail('ENDPOINT_UNAVAILABLE', 'status.cycle.reconciliationAgeMs cannot be negative', true)
+  if (cycle.reconciliation === null || cycle.reconciliation === undefined) {
+    fail('ENDPOINT_UNAVAILABLE', 'status.cycle.reconciliation is not available yet', true)
+  }
+  const reconciliation = record(cycle.reconciliation, 'status.cycle.reconciliation')
+  requireEqual(reconciliation.status, 'EXACT', 'status.cycle.reconciliation.status', 'ENDPOINT_UNAVAILABLE', true)
+  requireEqual(
+    reconciliation.discrepancyCount,
+    0,
+    'status.cycle.reconciliation.discrepancyCount',
+    'PRODUCTION_CONTRACT_VIOLATION',
+    false,
+  )
+  requireEqual(
+    reconciliation.coversLatestMutation,
+    true,
+    'status.cycle.reconciliation.coversLatestMutation',
+    'ENDPOINT_UNAVAILABLE',
+    true,
+  )
+  requireEqual(
+    cycle.reconciliationCoversLatestMutation,
+    true,
+    'status.cycle.reconciliationCoversLatestMutation',
+    'ENDPOINT_UNAVAILABLE',
+    true,
+  )
+  string(reconciliation.reconciledAt, 'status.cycle.reconciliation.reconciledAt')
+  const reconciliationAgeMs = integer(cycle.reconciliationAgeMs, 'status.cycle.reconciliationAgeMs')
+  if (reconciliationAgeMs < 0) {
+    fail('ENDPOINT_UNAVAILABLE', 'status.cycle.reconciliationAgeMs cannot be negative', true)
+  }
+  if (reconciliationAgeMs >= reconciliationStaleThresholdMs) {
+    fail('ENDPOINT_UNAVAILABLE', 'status.cycle.reconciliation is stale', true)
   }
 
   const build = record(status.build, 'status.build')
@@ -616,7 +652,7 @@ export const validateSnapshot = (
   validateDeployment(snapshot.deployment, expected)
   validatePod(snapshot.pods, expected)
   validateReadiness(snapshot.readiness)
-  validateStatus(snapshot.status, expected)
+  validateStatus(snapshot.status, expected, reconciliationStaleThresholdMs(snapshot.metrics))
 }
 
 export const redactSensitive = (message: string): string =>
@@ -677,6 +713,18 @@ const parseJsonOutput = (result: CommandResult, label: string, retryable: boolea
   }
 }
 
+const parseTextOutput = (result: CommandResult, label: string, retryable: boolean): string => {
+  if (result.exitCode !== 0) {
+    const stderr = redactSensitive(result.stderr)
+    if (/forbidden|unauthorized|cannot get resource/i.test(stderr)) {
+      fail('RBAC_DENIED', `${label} read was denied`, false)
+    }
+    fail('ENDPOINT_UNAVAILABLE', `${label} read failed`, retryable)
+  }
+  if (result.stdout.length === 0) fail('ENDPOINT_UNAVAILABLE', `${label} returned an empty response`, retryable)
+  return result.stdout
+}
+
 const checkReadPermission = async (
   run: RunCommand,
   signal: AbortSignal,
@@ -685,7 +733,11 @@ const checkReadPermission = async (
   namespace: string,
 ) => {
   const result = await run(['kubectl', 'auth', 'can-i', verb, resource, '-n', namespace], signal)
-  if (result.exitCode !== 0 || result.stdout.trim() !== 'yes') {
+  const decision = result.stdout.trim()
+  if (result.exitCode !== 0 || result.stderr.trim().length !== 0 || (decision !== 'yes' && decision !== 'no')) {
+    fail('RBAC_DENIED', `${verb} ${resource} in ${namespace} permission probe was indeterminate`, false)
+  }
+  if (decision !== 'yes') {
     fail('RBAC_DENIED', `missing ${verb} permission for ${resource} in ${namespace}`, false)
   }
 }
@@ -802,12 +854,13 @@ export const verifyArgoRevision = async (
 }
 
 const fetchSnapshot = async (run: RunCommand, signal: AbortSignal): Promise<VerificationSnapshot> => {
-  const [application, deployment, pods, readiness, status] = await Promise.all([
+  const [application, deployment, pods, readiness, status, metrics] = await Promise.all([
     run(['kubectl', 'get', 'application', 'bayn', '-n', 'argocd', '-o', 'json'], signal),
     run(['kubectl', 'get', 'deployment', 'bayn', '-n', 'bayn', '-o', 'json'], signal),
     run(['kubectl', 'get', 'pods', '-n', 'bayn', '-l', 'app.kubernetes.io/name=bayn', '-o', 'json'], signal),
     run(['kubectl', 'get', '--raw', '/api/v1/namespaces/bayn/services/http:bayn:80/proxy/readyz'], signal),
     run(['kubectl', 'get', '--raw', '/api/v1/namespaces/bayn/services/http:bayn:80/proxy/v1/status'], signal),
+    run(['kubectl', 'get', '--raw', '/api/v1/namespaces/bayn/services/http:bayn:80/proxy/metrics'], signal),
   ])
   return {
     application: parseJsonOutput(application, 'Argo application', true),
@@ -815,6 +868,7 @@ const fetchSnapshot = async (run: RunCommand, signal: AbortSignal): Promise<Veri
     pods: parseJsonOutput(pods, 'Bayn pods', true),
     readiness: parseJsonOutput(readiness, 'Bayn readiness endpoint', true),
     status: parseJsonOutput(status, 'Bayn status endpoint', true),
+    metrics: parseTextOutput(metrics, 'Bayn metrics endpoint', true),
   }
 }
 

@@ -165,6 +165,11 @@ const baseSnapshot = (): VerificationSnapshot => ({
     probeSequence: 6,
     failedDependencies: [],
   },
+  metrics: `
+# HELP bayn_reconciliation_stale_threshold_seconds Configured reconciliation staleness threshold.
+# TYPE bayn_reconciliation_stale_threshold_seconds gauge
+bayn_reconciliation_stale_threshold_seconds 120
+`,
   status: {
     service: 'bayn',
     operational: {
@@ -276,7 +281,6 @@ describe('manifest contract', () => {
       digest,
       repository,
       imageReference,
-      requiresReconciliation: true,
     })
   })
 
@@ -461,6 +465,31 @@ describe('production snapshot', () => {
     expect((snapshot.status as any).autonomousCycleLoop.lastPass.outcome).toBe('NOT_DUE')
   })
 
+  test('rejects reconciliation at or beyond the live stale threshold', () => {
+    const snapshot = clone()
+    ;(snapshot.status as any).cycle.reconciliationAgeMs = 120_000
+    expect(captureFailure(() => validateSnapshot(snapshot, expectedArgoRevision, expected)).code).toBe(
+      'ENDPOINT_UNAVAILABLE',
+    )
+  })
+
+  test('rejects missing or ambiguous reconciliation threshold metrics', () => {
+    const missing = clone()
+    ;(missing as any).metrics = '# no reconciliation threshold\n'
+    expect(captureFailure(() => validateSnapshot(missing, expectedArgoRevision, expected)).code).toBe(
+      'ENDPOINT_UNAVAILABLE',
+    )
+
+    const duplicate = clone()
+    ;(duplicate as any).metrics = [
+      'bayn_reconciliation_stale_threshold_seconds 120',
+      'bayn_reconciliation_stale_threshold_seconds 121',
+    ].join('\n')
+    expect(captureFailure(() => validateSnapshot(duplicate, expectedArgoRevision, expected)).code).toBe(
+      'ENDPOINT_UNAVAILABLE',
+    )
+  })
+
   test('rejects missing required status fields', () => {
     const snapshot = clone()
     delete (snapshot.status as any).cycle.alerts.killActive
@@ -632,6 +661,25 @@ describe('redaction and permissions', () => {
     })
   })
 
+  test('fails closed when a required read probe is indeterminate', async () => {
+    const controller = new AbortController()
+    let firstProbe = true
+    const run = async (command: readonly string[]) => {
+      if (firstProbe) {
+        firstProbe = false
+        return { stdout: 'yes\n', stderr: 'authorization warning\n', exitCode: 0 }
+      }
+      const verb = command[3] ?? ''
+      const resource = command[4] ?? ''
+      const requiredRead = ['get', 'list'].includes(verb) && resource !== 'secrets'
+      return { stdout: requiredRead ? 'yes\n' : 'no\n', stderr: '', exitCode: 0 }
+    }
+
+    await expect(validateReadOnlyPermissions(run, controller.signal)).rejects.toMatchObject({
+      code: 'RBAC_DENIED',
+    })
+  })
+
   test.each([
     ['API failure', { stdout: 'no\n', stderr: 'server unavailable\n', exitCode: 1 }],
     ['unexpected output', { stdout: 'unknown\n', stderr: '', exitCode: 0 }],
@@ -756,5 +804,15 @@ describe('redaction and permissions', () => {
     expect(workflow).not.toMatch(/pull-requests:\s*write/)
     expect(workflow).not.toMatch(/kubectl\s+(apply|create|delete|patch|replace|rollout|set)/)
     expect(workflow).toContain('bun scripts/bayn-post-deploy-verify.ts')
+  })
+
+  test('Bayn CI detects, formats, lints, typechecks, and executes the verifier suite', async () => {
+    const workflow = await readFile(join(import.meta.dir, '..', '.github/workflows/bayn-ci.yml'), 'utf8')
+    expect(workflow).toContain('scripts/bayn-post-deploy-verify.ts')
+    expect(workflow).toContain('scripts/bayn-post-deploy-verify.test.ts')
+    expect(workflow).toContain('bunx oxfmt --check')
+    expect(workflow).toContain('bunx oxlint --config .oxlintrc.json')
+    expect(workflow).toContain('bun node_modules/typescript/bin/tsc --ignoreConfig --noEmit')
+    expect(workflow).toContain('bun test packages/scripts/src/bayn scripts/bayn-post-deploy-verify.test.ts')
   })
 })
