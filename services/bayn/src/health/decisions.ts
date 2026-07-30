@@ -221,11 +221,7 @@ const deriveBrokerStatus = (
   const accountId = observed._tag === 'Available' ? observed.value : null
   const accountBound = observed._tag === 'Available' && accountId === broker.expectedAccountId
   const bindingError =
-    observed._tag === 'Unavailable'
-      ? observed.error
-      : accountBound
-        ? null
-        : `Alpaca account probe resolved ${accountId}, expected ${broker.expectedAccountId}`
+    observed._tag === 'Unavailable' ? observed.error : accountBound ? null : 'Alpaca account identity drift detected'
   return {
     configured: true,
     expectedAccountId: broker.expectedAccountId,

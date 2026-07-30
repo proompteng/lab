@@ -1,6 +1,12 @@
 import { Cause, Clock, Duration, Effect, Exit, Fiber, Option, Ref, Result, Schedule } from 'effect'
 
-import type { BrokerReadShape } from '../broker/alpaca'
+import {
+  OrderCollection,
+  SortDirection,
+  verifyBrokerAccountPermissions,
+  type BrokerAccountPreflightFailure,
+  type BrokerReadShape,
+} from '../broker/alpaca'
 import type { RuntimeConfig } from '../config'
 import type { FinalizedSnapshotProvenance } from '../contracts'
 import type { QualificationRecord, RecoveredEvaluationEvidence } from '../db/evidence-store'
@@ -40,28 +46,98 @@ const observe = <A, E, R>(
     return Effect.succeed({ _tag: 'Unavailable', error: probeFailureMessage(exit.cause, fallback) })
   })
 
-const observeBroker = (read: BrokerReadShape, timeoutMs: number): Effect.Effect<ProbeResult<string>> =>
-  Effect.map(
-    observe(
-      read.account.pipe(
-        Effect.map((value) => ({ _tag: 'AccountRead' as const, value })),
-        Effect.timeoutOrElse({
-          duration: timeoutMs,
-          orElse: () => Effect.succeed({ _tag: 'TimedOut' as const }),
-        }),
-      ),
-      'unknown broker probe failure',
+const renderBrokerPermissionFailure = (failure: BrokerAccountPreflightFailure): string => {
+  switch (failure._tag) {
+    case 'BrokerAccountNotActive':
+      return `account status is ${failure.status}, expected ACTIVE`
+    case 'BrokerAccountBlocked':
+      return 'account is blocked'
+    case 'BrokerTradingBlocked':
+      return 'trading is blocked'
+    case 'BrokerTradingSuspendedByUser':
+      return 'trading is suspended by the user'
+    case 'BrokerFractionalTradingDisabled':
+      return 'fractional trading is disabled'
+  }
+  const exhaustive: never = failure
+  return exhaustive
+}
+
+const namedBrokerRead = <A, E, R>(
+  behavior: string,
+  effect: Effect.Effect<A, E, R>,
+  timeoutMs: number,
+): Effect.Effect<ProbeResult<A>, never, R> =>
+  observe(effect, `unknown ${behavior} failure`).pipe(
+    Effect.map(
+      (result): ProbeResult<A> =>
+        result._tag === 'Available'
+          ? result
+          : {
+              _tag: 'Unavailable',
+              error: `Alpaca ${behavior} unavailable: ${result.error}`,
+            },
     ),
-    (result): ProbeResult<string> => {
-      if (result._tag === 'Unavailable') return result
-      if (result.value._tag === 'TimedOut') {
+    Effect.timeoutOrElse({
+      duration: timeoutMs,
+      orElse: () =>
+        Effect.succeed({
+          _tag: 'Unavailable' as const,
+          error: `Alpaca ${behavior} timed out after ${timeoutMs}ms`,
+        }),
+    }),
+  )
+
+const observeBroker = (
+  expectedAccountId: string,
+  read: BrokerReadShape,
+  timeoutMs: number,
+): Effect.Effect<ProbeResult<string>> =>
+  Effect.all(
+    {
+      account: namedBrokerRead('account read', read.account, timeoutMs),
+      accountConfiguration: namedBrokerRead('account configuration read', read.accountConfiguration, timeoutMs),
+      positions: namedBrokerRead('positions read', read.positions, timeoutMs),
+      openOrders: namedBrokerRead(
+        'open orders read',
+        read.orders({ status: OrderCollection.Open, limit: 1 }),
+        timeoutMs,
+      ),
+      recentOrders: namedBrokerRead(
+        'recent orders read',
+        read.orders({ status: OrderCollection.All, limit: 1, direction: SortDirection.Descending }),
+        timeoutMs,
+      ),
+      fills: namedBrokerRead(
+        'recent fills read',
+        read.fillActivities({ pageSize: 1, direction: SortDirection.Descending }),
+        timeoutMs,
+      ),
+    },
+    { concurrency: 6 },
+  ).pipe(
+    Effect.map((results): ProbeResult<string> => {
+      const failures = Object.values(results).flatMap((result) => (result._tag === 'Unavailable' ? [result.error] : []))
+      if (failures.length > 0) return { _tag: 'Unavailable', error: failures.join('; ') }
+
+      if (results.account._tag !== 'Available' || results.accountConfiguration._tag !== 'Available') {
+        return { _tag: 'Unavailable', error: 'Alpaca continuous broker-read health did not complete' }
+      }
+      if (results.account.value.value.id !== expectedAccountId) {
+        return { _tag: 'Unavailable', error: 'Alpaca account identity drift detected' }
+      }
+      const permissions = verifyBrokerAccountPermissions(
+        results.account.value.value,
+        results.accountConfiguration.value.value,
+      )
+      if (Result.isFailure(permissions)) {
         return {
           _tag: 'Unavailable',
-          error: `Alpaca account probe timed out after ${timeoutMs}ms`,
+          error: `Alpaca account permission drift detected: ${renderBrokerPermissionFailure(permissions.failure)}`,
         }
       }
-      return { _tag: 'Available', value: result.value.value.value.id }
-    },
+      return { _tag: 'Available', value: results.account.value.value.id }
+    }),
   )
 
 export const ensureSignalIdentity = (
@@ -196,7 +272,9 @@ const collectHealthProbeResults = (
                 'cycle-observability',
               ),
         ),
-        broker === undefined ? Effect.succeed(null) : observeBroker(broker.read, config.operationTimeoutMs),
+        broker === undefined
+          ? Effect.succeed(null)
+          : observeBroker(broker.expectedAccountId, broker.read, config.operationTimeoutMs),
       ],
       { concurrency: 'unbounded' },
     ),
