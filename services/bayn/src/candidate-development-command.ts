@@ -236,6 +236,7 @@ export type CandidateDevelopmentCommandFailure =
         | 'verify-module-format'
         | 'verify-preregistration-blob'
         | 'verify-preregistration-lineage'
+        | 'verify-preregistration-module-novelty'
         | 'verify-source-manifest-blob'
         | 'verify-program-binding'
         | 'derive-run-identity'
@@ -2823,6 +2824,58 @@ export const verifyCandidateDevelopmentPreregistrationLineage = (
         : sourceVerificationFailure('verify-preregistration-lineage', cause),
   })
 
+const verifyCandidateDevelopmentPreregistrationModuleNoveltyPromise = async (
+  repositoryRoot: string,
+  preregistrationRevision: string,
+  modulePath: string,
+  moduleBlobOid: string,
+  sourceGit: CandidateDevelopmentSourceGit,
+  signal: AbortSignal,
+): Promise<void> => {
+  const entry = await sourceStep('verify-preregistration-module-novelty', () =>
+    sourceGit.text(repositoryRoot, ['ls-tree', preregistrationRevision, '--', modulePath], signal),
+  )
+  if (entry.length === 0) return
+  const match = /^\d+\s+blob\s+([0-9a-f]{40})\t(.+)$/.exec(entry)
+  if (match === null || match[2] !== modulePath) {
+    throw new CandidateDevelopmentSourceVerificationError('verify-preregistration-module-novelty', {
+      expected: `one blob entry for ${modulePath}`,
+      observed: entry,
+    })
+  }
+  if (match[1] === moduleBlobOid) {
+    throw new CandidateDevelopmentSourceVerificationError('verify-preregistration-module-novelty', {
+      preregistrationRevision,
+      modulePath,
+      expected: 'evaluated module blob created after preregistration',
+      observed: moduleBlobOid,
+    })
+  }
+}
+
+export const verifyCandidateDevelopmentPreregistrationModuleNovelty = (
+  repositoryRoot: string,
+  preregistrationRevision: string,
+  modulePath: string,
+  moduleBlobOid: string,
+  sourceGit: CandidateDevelopmentSourceGit = candidateDevelopmentSourceGit,
+): Effect.Effect<void, CandidateDevelopmentCommandFailure> =>
+  Effect.tryPromise({
+    try: (signal) =>
+      verifyCandidateDevelopmentPreregistrationModuleNoveltyPromise(
+        repositoryRoot,
+        preregistrationRevision,
+        modulePath,
+        moduleBlobOid,
+        sourceGit,
+        signal,
+      ),
+    catch: (cause): CandidateDevelopmentCommandFailure =>
+      cause instanceof CandidateDevelopmentSourceVerificationError
+        ? sourceVerificationFailure(cause.operation, cause.sourceCause)
+        : sourceVerificationFailure('verify-preregistration-module-novelty', cause),
+  })
+
 const runCandidateDevelopmentSourcePair = async <Left, Right>(
   outerSignal: AbortSignal,
   left: (signal: AbortSignal) => Promise<Left>,
@@ -3083,6 +3136,16 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
             sourceGit.text(repositoryRoot, ['rev-parse', sourceManifestSpec], batchSignal),
           ),
       )
+      if (nextCandidatePreregistration !== null) {
+        await verifyCandidateDevelopmentPreregistrationModuleNoveltyPromise(
+          repositoryRoot,
+          nextCandidatePreregistration.preregistration.sourceRevision,
+          moduleRepositoryPath.success,
+          moduleBlobOid,
+          sourceGit,
+          signal,
+        )
+      }
       const files: CandidateDevelopmentVerifiedSourceFiles = {
         schemaVersion: 'bayn.candidate-development-verified-source-files.v1',
         sourceRevision,

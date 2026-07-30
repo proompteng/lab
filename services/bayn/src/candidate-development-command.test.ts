@@ -19,6 +19,7 @@ import {
   validateCandidateDevelopmentCommandEvaluation,
   validateCandidateDevelopmentExecutableProgram,
   verifyCandidateDevelopmentPreregistrationLineage,
+  verifyCandidateDevelopmentPreregistrationModuleNovelty,
   verifyCandidateDevelopmentSourceFiles,
   writeCandidateDevelopmentCommandReport,
   type CandidateDevelopmentCommandEvaluation,
@@ -2683,6 +2684,72 @@ describe('candidate development command', () => {
       }),
     )
     expect(aborted).toBe(true)
+  })
+
+  test('requires the evaluated module blob to postdate preregistration', async () => {
+    const repository = await mkdtemp(join(tmpdir(), 'bayn-candidate-preregistration-module-'))
+    const candidateDirectory = join(repository, 'candidate')
+    const modulePath = join(candidateDirectory, 'program.mjs')
+    const markerPath = join(repository, 'marker.txt')
+    try {
+      await mkdir(candidateDirectory, { recursive: true })
+      await writeFile(modulePath, 'export const candidate = "preregistered-with-implementation"\n')
+      await writeFile(markerPath, 'preregistered\n')
+      await execFilePromise('git', ['init', '-q'], repository)
+      await execFilePromise('git', ['config', 'user.name', 'Candidate Test'], repository)
+      await execFilePromise('git', ['config', 'user.email', 'candidate@example.test'], repository)
+      await execFilePromise('git', ['add', 'candidate/program.mjs', 'marker.txt'], repository)
+      await execFilePromise('git', ['commit', '-qm', 'test: preregister with implementation'], repository)
+      const preregistrationRevision = await execFileTextPromise('git', ['rev-parse', 'HEAD'], repository)
+      const preregistrationModuleOid = await execFileTextPromise(
+        'git',
+        ['rev-parse', `${preregistrationRevision}:candidate/program.mjs`],
+        repository,
+      )
+
+      await writeFile(markerPath, 'unrelated descendant\n')
+      await execFilePromise('git', ['add', 'marker.txt'], repository)
+      await execFilePromise('git', ['commit', '-qm', 'test: unrelated descendant'], repository)
+
+      expect(
+        await Effect.runPromise(
+          Effect.flip(
+            verifyCandidateDevelopmentPreregistrationModuleNovelty(
+              repository,
+              preregistrationRevision,
+              'candidate/program.mjs',
+              preregistrationModuleOid,
+            ),
+          ),
+        ),
+      ).toMatchObject({
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-preregistration-module-novelty',
+        cause: {
+          preregistrationRevision,
+          modulePath: 'candidate/program.mjs',
+          expected: 'evaluated module blob created after preregistration',
+          observed: preregistrationModuleOid,
+        },
+      })
+
+      await writeFile(modulePath, 'export const candidate = "implemented-after-preregistration"\n')
+      await execFilePromise('git', ['add', 'candidate/program.mjs'], repository)
+      await execFilePromise('git', ['commit', '-qm', 'test: implement after preregistration'], repository)
+      const laterModuleOid = await execFileTextPromise('git', ['rev-parse', 'HEAD:candidate/program.mjs'], repository)
+      expect(
+        await Effect.runPromise(
+          verifyCandidateDevelopmentPreregistrationModuleNovelty(
+            repository,
+            preregistrationRevision,
+            'candidate/program.mjs',
+            laterModuleOid,
+          ),
+        ),
+      ).toBeUndefined()
+    } finally {
+      await rm(repository, { recursive: true, force: true })
+    }
   })
 
   test('pins verification and execution to the captured revision when HEAD moves', async () => {
