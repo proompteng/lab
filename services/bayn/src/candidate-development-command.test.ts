@@ -22,6 +22,7 @@ import {
   type CandidateDevelopmentSourceManifest,
   type CandidateDevelopmentVerifiedSource,
   type CandidateDevelopmentVerifiedSourceFiles,
+  type CandidateDevelopmentVerifiedModuleSource,
 } from './candidate-development-command'
 import {
   candidateDevelopmentComparisonSemantics,
@@ -421,6 +422,7 @@ const fixtureSourceManifest: CandidateDevelopmentSourceManifest = {
   priorTrialCount: 15,
   strategyProtocolHash: fixtureStrategyProtocolHash,
   modulePath: 'services/bayn/src/candidates/fixture/program.ts',
+  moduleFormat: 'self-contained-esm-v1',
   marketData: {
     schemaVersion: 'bayn.candidate-development-market-data-source.v1',
     snapshotId: fixtureMarketData.snapshotId,
@@ -439,6 +441,10 @@ const fixtureVerifiedSourceFiles: CandidateDevelopmentVerifiedSourceFiles = {
   sourceManifestBlobOid: '5'.repeat(40),
   sourceManifestSha256: '6'.repeat(64),
   sourceManifest: fixtureSourceManifest,
+}
+const fixtureVerifiedModuleSource: CandidateDevelopmentVerifiedModuleSource = {
+  files: fixtureVerifiedSourceFiles,
+  moduleUrl: 'data:text/javascript;base64,ZXhwb3J0IGNvbnN0IGNhbmRpZGF0ZURldmVsb3BtZW50UHJvZ3JhbSA9IHt9Cg==',
 }
 const { schemaVersion: _fixtureSourceFilesSchemaVersion, ...fixtureVerifiedSourceMaterial } = fixtureVerifiedSourceFiles
 const fixtureVerifiedSource: CandidateDevelopmentVerifiedSource = {
@@ -1979,14 +1985,14 @@ describe('candidate development command', () => {
   test('verifies the source manifest and module as exact Git blobs', async () => {
     const repository = await mkdtemp(join(tmpdir(), 'bayn-candidate-source-'))
     const candidateDirectory = join(repository, 'candidate')
-    const modulePath = join(candidateDirectory, 'program.ts')
-    const dependencyPath = join(candidateDirectory, 'dependency.ts')
+    const modulePath = join(candidateDirectory, 'program.mjs')
+    const dependencyPath = join(candidateDirectory, 'dependency.mjs')
     const sourceManifestPath = join(candidateDirectory, 'source-manifest.json')
     const moduleBytes = 'export const candidateDevelopmentProgram = {}\n'
     const dependencyBytes = 'export const dependency = 1\n'
     const sourceManifest: CandidateDevelopmentSourceManifest = {
       ...fixtureSourceManifest,
-      modulePath: 'candidate/program.ts',
+      modulePath: 'candidate/program.mjs',
     }
     const sourceManifestBytes = `${JSON.stringify(sourceManifest, null, 2)}\n`
     try {
@@ -1999,41 +2005,41 @@ describe('candidate development command', () => {
       await execFilePromise('git', ['config', 'user.email', 'candidate@example.test'], repository)
       await execFilePromise(
         'git',
-        ['add', 'candidate/program.ts', 'candidate/dependency.ts', 'candidate/source-manifest.json'],
+        ['add', 'candidate/program.mjs', 'candidate/dependency.mjs', 'candidate/source-manifest.json'],
         repository,
       )
       await execFilePromise('git', ['commit', '-qm', 'test: bind candidate source'], repository)
 
       const verified = await Effect.runPromise(verifyCandidateDevelopmentSourceFiles(modulePath, sourceManifestPath))
-      expect(verified.modulePath).toBe('candidate/program.ts')
-      expect(verified.sourceManifestPath).toBe('candidate/source-manifest.json')
-      expect(verified.sourceRevision).toMatch(/^[0-9a-f]{40}$/)
-      expect(verified.moduleBlobOid).toMatch(/^[0-9a-f]{40}$/)
+      expect(verified.files.modulePath).toBe('candidate/program.mjs')
+      expect(verified.files.sourceManifestPath).toBe('candidate/source-manifest.json')
+      expect(verified.files.sourceRevision).toMatch(/^[0-9a-f]{40}$/)
+      expect(verified.files.moduleBlobOid).toMatch(/^[0-9a-f]{40}$/)
+      expect(Buffer.from(verified.moduleUrl.split(',')[1] ?? '', 'base64').toString('utf8')).toBe(moduleBytes)
 
       await writeFile(modulePath, `${moduleBytes}// tampered\n`)
-      expect(
-        await Effect.runPromise(Effect.flip(verifyCandidateDevelopmentSourceFiles(modulePath, sourceManifestPath))),
-      ).toMatchObject({
-        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
-        operation: 'verify-module-blob',
-      })
+      const moduleDiskDrift = await Effect.runPromise(
+        verifyCandidateDevelopmentSourceFiles(modulePath, sourceManifestPath),
+      )
+      expect(moduleDiskDrift.files.moduleSha256).toBe(verified.files.moduleSha256)
+      expect(moduleDiskDrift.moduleUrl).toBe(verified.moduleUrl)
 
       await writeFile(modulePath, moduleBytes)
       await writeFile(sourceManifestPath, `${sourceManifestBytes} `)
-      expect(
-        await Effect.runPromise(Effect.flip(verifyCandidateDevelopmentSourceFiles(modulePath, sourceManifestPath))),
-      ).toMatchObject({
-        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
-        operation: 'verify-source-manifest-blob',
-      })
+      const manifestDiskDrift = await Effect.runPromise(
+        verifyCandidateDevelopmentSourceFiles(modulePath, sourceManifestPath),
+      )
+      expect(manifestDiskDrift.files.sourceManifestSha256).toBe(verified.files.sourceManifestSha256)
 
       await writeFile(sourceManifestPath, sourceManifestBytes)
-      await writeFile(dependencyPath, `${dependencyBytes}// drifted\n`)
+      await writeFile(modulePath, 'import "./dependency.mjs"\nexport const candidateDevelopmentProgram = {}\n')
+      await execFilePromise('git', ['add', 'candidate/program.mjs'], repository)
+      await execFilePromise('git', ['commit', '-qm', 'test: add imported dependency'], repository)
       expect(
         await Effect.runPromise(Effect.flip(verifyCandidateDevelopmentSourceFiles(modulePath, sourceManifestPath))),
       ).toMatchObject({
         _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
-        operation: 'verify-working-tree',
+        operation: 'verify-module-format',
       })
     } finally {
       await rm(repository, { recursive: true, force: true })
@@ -2069,8 +2075,11 @@ describe('candidate development command', () => {
             verificationCount += 1
             return Effect.succeed(
               verificationCount === 1
-                ? fixtureVerifiedSourceFiles
-                : { ...fixtureVerifiedSourceFiles, moduleSha256: 'f'.repeat(64) },
+                ? fixtureVerifiedModuleSource
+                : {
+                    ...fixtureVerifiedModuleSource,
+                    files: { ...fixtureVerifiedSourceFiles, moduleSha256: 'f'.repeat(64) },
+                  },
             )
           },
         ),
@@ -2150,7 +2159,7 @@ describe('candidate development command', () => {
               ),
               Effect.as({ candidateDevelopmentProgram: program }),
             ),
-          () => Effect.succeed(fixtureVerifiedSourceFiles),
+          () => Effect.succeed(fixtureVerifiedModuleSource),
         ).pipe(Effect.forkChild)
 
         yield* Deferred.await(started)

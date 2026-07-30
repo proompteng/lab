@@ -1,8 +1,7 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFile, realpath } from 'node:fs/promises'
+import { realpath } from 'node:fs/promises'
 import { dirname, relative, resolve, sep } from 'node:path'
-import { pathToFileURL } from 'node:url'
 
 import { NodeRuntime } from '@effect/platform-node'
 import { Data, Effect, pipe, Result, Schema } from 'effect'
@@ -72,6 +71,7 @@ export interface CandidateDevelopmentSourceManifest {
   readonly priorTrialCount: number
   readonly strategyProtocolHash: string
   readonly modulePath: string
+  readonly moduleFormat: 'self-contained-esm-v1'
   readonly marketData: {
     readonly schemaVersion: 'bayn.candidate-development-market-data-source.v1'
     readonly snapshotId: string
@@ -229,8 +229,8 @@ export type CandidateDevelopmentCommandFailure =
         | 'decode-source-manifest'
         | 'verify-source-paths'
         | 'verify-head'
-        | 'verify-working-tree'
         | 'verify-module-blob'
+        | 'verify-module-format'
         | 'verify-source-manifest-blob'
         | 'verify-program-binding'
         | 'derive-run-identity'
@@ -2128,6 +2128,11 @@ export interface CandidateDevelopmentLoadedExecutableProgram {
   readonly verifiedSource: CandidateDevelopmentVerifiedSource
 }
 
+export interface CandidateDevelopmentVerifiedModuleSource {
+  readonly files: CandidateDevelopmentVerifiedSourceFiles
+  readonly moduleUrl: string
+}
+
 const CandidateDevelopmentPreflightInputSchema = Schema.Struct({
   candidateOrdinal: PositiveIntegerSchema,
   priorTrialCount: NonNegativeIntegerSchema,
@@ -2282,6 +2287,7 @@ const CandidateDevelopmentSourceManifestSchema = Schema.Struct({
   priorTrialCount: NonNegativeIntegerSchema,
   strategyProtocolHash: Sha256Schema,
   modulePath: Schema.String.check(Schema.isMinLength(1)),
+  moduleFormat: Schema.Literal('self-contained-esm-v1'),
   marketData: Schema.Struct({
     schemaVersion: Schema.Literal('bayn.candidate-development-market-data-source.v1'),
     snapshotId: Sha256Schema,
@@ -2437,7 +2443,7 @@ export type CandidateDevelopmentModuleImporter = (
 export type CandidateDevelopmentSourceVerifier = (
   modulePath: string,
   sourceManifestPath: string,
-) => Effect.Effect<CandidateDevelopmentVerifiedSourceFiles, CandidateDevelopmentCommandFailure>
+) => Effect.Effect<CandidateDevelopmentVerifiedModuleSource, CandidateDevelopmentCommandFailure>
 
 class CandidateDevelopmentSourceVerificationError extends Error {
   readonly operation: Extract<
@@ -2492,6 +2498,21 @@ const gitBytes = (repositoryRoot: string, args: readonly string[]): Promise<Buff
 
 const sha256Bytes = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
 
+const verifySelfContainedEsm = (
+  source: string,
+  modulePath: string,
+): Result.Result<void, CandidateDevelopmentCommandFailure> => {
+  try {
+    const imports = new Bun.Transpiler({ loader: 'js' }).scanImports(source)
+    const unsupported = imports.filter(({ kind, path }) => kind !== 'import-statement' || !path.startsWith('node:'))
+    return unsupported.length === 0
+      ? Result.succeed(undefined)
+      : Result.fail(sourceVerificationFailure('verify-module-format', { modulePath, imports: unsupported }))
+  } catch (cause) {
+    return Result.fail(sourceVerificationFailure('verify-module-format', { modulePath, cause }))
+  }
+}
+
 const repositoryRelativePath = (
   repositoryRoot: string,
   absolutePath: string,
@@ -2540,28 +2561,12 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
       }
       const moduleSpec = `HEAD:${moduleRepositoryPath.success}`
       const sourceManifestSpec = `HEAD:${sourceManifestRepositoryPath.success}`
-      const [moduleBytes, sourceManifestBytes, moduleGitBytes, sourceManifestGitBytes] = await Promise.all([
-        sourceStep('read-module', () => readFile(absoluteModulePath)),
-        sourceStep('read-source-manifest', () => readFile(absoluteSourceManifestPath)),
+      const [moduleGitBytes, sourceManifestGitBytes] = await Promise.all([
         sourceStep('verify-module-blob', () => gitBytes(repositoryRoot, ['cat-file', 'blob', moduleSpec])),
         sourceStep('verify-source-manifest-blob', () =>
           gitBytes(repositoryRoot, ['cat-file', 'blob', sourceManifestSpec]),
         ),
       ])
-      if (!moduleBytes.equals(moduleGitBytes)) {
-        throw new CandidateDevelopmentSourceVerificationError('verify-module-blob', {
-          path: moduleRepositoryPath.success,
-          expectedSha256: sha256Bytes(moduleGitBytes),
-          observedSha256: sha256Bytes(moduleBytes),
-        })
-      }
-      if (!sourceManifestBytes.equals(sourceManifestGitBytes)) {
-        throw new CandidateDevelopmentSourceVerificationError('verify-source-manifest-blob', {
-          path: sourceManifestRepositoryPath.success,
-          expectedSha256: sha256Bytes(sourceManifestGitBytes),
-          observedSha256: sha256Bytes(sourceManifestBytes),
-        })
-      }
       const sourceManifestJson = await sourceStep(
         'decode-source-manifest',
         async () => JSON.parse(sourceManifestGitBytes.toString('utf8')) as unknown,
@@ -2576,20 +2581,16 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
           observed: sourceManifest.success.modulePath,
         })
       }
-      const workingTreeStatus = await sourceStep('verify-working-tree', () =>
-        gitText(repositoryRoot, ['status', '--porcelain=v1', '--untracked-files=all']),
-      )
-      if (workingTreeStatus.length > 0) {
-        throw new CandidateDevelopmentSourceVerificationError('verify-working-tree', {
-          status: workingTreeStatus.split('\n'),
-        })
+      const moduleFormat = verifySelfContainedEsm(moduleGitBytes.toString('utf8'), moduleRepositoryPath.success)
+      if (Result.isFailure(moduleFormat)) {
+        throw new CandidateDevelopmentSourceVerificationError('verify-module-format', moduleFormat.failure)
       }
       const [moduleBlobOid, sourceManifestBlobOid] = await Promise.all([
         sourceStep('verify-module-blob', () => gitText(repositoryRoot, ['rev-parse', moduleSpec])),
         sourceStep('verify-source-manifest-blob', () => gitText(repositoryRoot, ['rev-parse', sourceManifestSpec])),
       ])
-      return {
-        schemaVersion: 'bayn.candidate-development-verified-source-files.v1' as const,
+      const files: CandidateDevelopmentVerifiedSourceFiles = {
+        schemaVersion: 'bayn.candidate-development-verified-source-files.v1',
         sourceRevision,
         modulePath: moduleRepositoryPath.success,
         moduleBlobOid,
@@ -2598,6 +2599,10 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
         sourceManifestBlobOid,
         sourceManifestSha256: sha256Bytes(sourceManifestGitBytes),
         sourceManifest: sourceManifest.success as CandidateDevelopmentSourceManifest,
+      }
+      return {
+        files,
+        moduleUrl: `data:text/javascript;base64,${moduleGitBytes.toString('base64')}`,
       }
     },
     catch: (cause): CandidateDevelopmentCommandFailure =>
@@ -2624,7 +2629,7 @@ export const loadCandidateDevelopmentExecutableProgram = (
 ): Effect.Effect<CandidateDevelopmentLoadedExecutableProgram, CandidateDevelopmentCommandFailure> =>
   Effect.gen(function* () {
     const before = yield* sourceVerifier(modulePath, sourceManifestPath)
-    const module = yield* importer(pathToFileURL(resolve(modulePath)).href)
+    const module = yield* importer(before.moduleUrl)
     const after = yield* sourceVerifier(modulePath, sourceManifestPath)
     const beforeHash = yield* Effect.fromResult(
       canonicalHashV1Result(before).pipe(
@@ -2647,7 +2652,7 @@ export const loadCandidateDevelopmentExecutableProgram = (
     const program = yield* Effect.fromResult(
       validateCandidateDevelopmentExecutableProgram(recordOf(module)?.candidateDevelopmentProgram),
     )
-    const verifiedSource = yield* Effect.fromResult(bindCandidateDevelopmentVerifiedSource(before, program.input))
+    const verifiedSource = yield* Effect.fromResult(bindCandidateDevelopmentVerifiedSource(before.files, program.input))
     return { program, verifiedSource }
   }).pipe(Effect.uninterruptible)
 
