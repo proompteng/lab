@@ -187,20 +187,72 @@ const inputManifestFixture = () => {
   return { ...material, hash: canonicalHashV1(material) }
 }
 
-const reportFixture = (
-  annualizedReturnDifferenceLowerBound: number,
-  stressedEndingEquityMicros = '1010000',
-): CandidateDevelopmentReport => {
-  const stressedSimulation = {
+const fixtureStressedRunId = 'c'.repeat(64)
+
+const stressedAccountingFixture = (endingEquityMicros: string) => {
+  const cashYieldMicros = BigInt(endingEquityMicros) - BigInt(fixtureInitialCapitalMicros)
+  if (cashYieldMicros < 0n) throw new Error('stressed fixture cannot have negative cash yield')
+  const eventPayload = {
+    kind: 'cash-yield' as const,
+    sessionDate: fixtureSessions[0],
+    elapsedDays: 365,
+    annualYieldBps: fixtureExecutionModel.cash.annualYieldBps,
+    amountMicros: cashYieldMicros.toString(),
+  }
+  const event = {
+    ...eventPayload,
+    id: canonicalHashV1({ runId: fixtureStressedRunId, ...eventPayload }),
+  }
+  const cashChangePayload = {
+    sourceKind: event.kind,
+    sourceId: event.id,
+    sessionDate: event.sessionDate,
+    amountMicros: cashYieldMicros.toString(),
+    cashAfterMicros: endingEquityMicros,
+  }
+  const cashChange = {
+    ...cashChangePayload,
+    id: canonicalHashV1({ runId: fixtureStressedRunId, kind: 'cash-change', ...cashChangePayload }),
+  }
+  const events = cashYieldMicros === 0n ? [] : [event]
+  const cashChanges = cashYieldMicros === 0n ? [] : [cashChange]
+  const simulation = {
     schemaVersion: 'bayn.simulation-trace.v3' as const,
     executionModel: fixtureExecutionModel,
     costMultiplierMicros: '2000000',
     orders: [],
-    cashChanges: [],
-    dailyMarks: performanceSeriesFixture(stressedEndingEquityMicros, {
-      cashYieldMicros: (BigInt(stressedEndingEquityMicros) - BigInt(fixtureInitialCapitalMicros)).toString(),
+    cashChanges,
+    dailyMarks: performanceSeriesFixture(endingEquityMicros, {
+      cashYieldMicros: cashYieldMicros.toString(),
     }).map((point) => ({ ...point, cashMicros: point.equityMicros, positions: [zeroPositionFixture] })),
   }
+  const proof = reconcileMarkedEquity({
+    runId: fixtureStressedRunId,
+    initialCapitalMicros: fixtureInitialCapitalMicros,
+    evaluatorTotalFeesMicros: '0',
+    evaluatorEndingEquityMicros: endingEquityMicros,
+    events,
+    simulation,
+  })
+  if (Result.isFailure(proof)) {
+    throw new Error(`stressed marked-equity fixture failed: ${JSON.stringify(proof.failure)}`)
+  }
+  return {
+    runId: fixtureStressedRunId,
+    evaluatorTotalFeesMicros: '0',
+    evaluatorEndingEquityMicros: endingEquityMicros,
+    events,
+    simulation,
+    equitySeries: proof.success.equitySeries,
+    markedEquityReconciliation: proof.success.reconciliation,
+  }
+}
+
+const reportFixture = (
+  annualizedReturnDifferenceLowerBound: number,
+  stressedEndingEquityMicros = '2000000',
+): CandidateDevelopmentReport => {
+  const stressed = stressedAccountingFixture(stressedEndingEquityMicros)
   return {
     schemaVersion: 'bayn.candidate-development-report.v2',
     protocolIdentity: {
@@ -239,7 +291,7 @@ const reportFixture = (
     doubledCost: {
       stressed: {
         signalDecisions: [signalDecisionFixture],
-        simulation: stressedSimulation,
+        simulation: stressed.simulation,
       },
     },
   } as unknown as CandidateDevelopmentReport
@@ -247,7 +299,7 @@ const reportFixture = (
 
 const baselineFixture = (
   status: 'PASS' | 'FAIL_CLOSED' = 'PASS',
-  stressedEndingEquityMicros = '1010000',
+  stressedEndingEquityMicros = '2000000',
 ): EvaluationResult => {
   const strategyEndingEquityMicros = status === 'PASS' ? '2000000' : fixtureInitialCapitalMicros
   const strategyPoints = performanceSeriesFixture(
@@ -345,23 +397,34 @@ const commandEvaluationFixture = (
   report: CandidateDevelopmentReport,
   baseline: EvaluationResult,
   accountingBaseline: EvaluationResult = baseline,
-): CandidateDevelopmentCommandEvaluation => ({
-  baseline,
-  comparisonSemantics: report.comparisonSemantics,
-  stressed: report.doubledCost.stressed,
-  accounting: {
-    schemaVersion: 'bayn.candidate-development-accounting-evidence.v1',
-    runId: accountingBaseline.runId,
-    initialCapitalMicros: accountingBaseline.initialCapitalMicros,
-    evaluatorTotalFeesMicros: accountingBaseline.strategy.totalFeesMicros,
-    evaluatorEndingEquityMicros: accountingBaseline.strategy.endingEquityMicros,
-    events: accountingBaseline.events,
-    baselineSimulation: accountingBaseline.simulation,
-    stressedSimulation: report.doubledCost.stressed.simulation,
-    equitySeries: accountingBaseline.equitySeries,
-    markedEquityReconciliation: accountingBaseline.markedEquityReconciliation,
-  },
-})
+): CandidateDevelopmentCommandEvaluation => {
+  const stressedEndingEquityMicros = report.doubledCost.stressed.simulation.dailyMarks.at(-1)?.equityMicros
+  if (stressedEndingEquityMicros === undefined) throw new Error('stressed fixture must be nonempty')
+  const stressed = stressedAccountingFixture(stressedEndingEquityMicros)
+  return {
+    baseline,
+    comparisonSemantics: report.comparisonSemantics,
+    stressed: report.doubledCost.stressed,
+    accounting: {
+      schemaVersion: 'bayn.candidate-development-accounting-evidence.v1',
+      runId: accountingBaseline.runId,
+      initialCapitalMicros: accountingBaseline.initialCapitalMicros,
+      evaluatorTotalFeesMicros: accountingBaseline.strategy.totalFeesMicros,
+      evaluatorEndingEquityMicros: accountingBaseline.strategy.endingEquityMicros,
+      events: accountingBaseline.events,
+      baselineSimulation: accountingBaseline.simulation,
+      equitySeries: accountingBaseline.equitySeries,
+      markedEquityReconciliation: accountingBaseline.markedEquityReconciliation,
+      stressedRunId: stressed.runId,
+      stressedEvaluatorTotalFeesMicros: stressed.evaluatorTotalFeesMicros,
+      stressedEvaluatorEndingEquityMicros: stressed.evaluatorEndingEquityMicros,
+      stressedEvents: stressed.events,
+      stressedSimulation: stressed.simulation,
+      stressedEquitySeries: stressed.equitySeries,
+      stressedMarkedEquityReconciliation: stressed.markedEquityReconciliation,
+    },
+  }
+}
 
 const buildFixtureReport = (report: CandidateDevelopmentReport, baseline: EvaluationResult) =>
   buildCandidateDevelopmentCommandReport(report, commandEvaluationFixture(report, baseline))
@@ -668,6 +731,43 @@ describe('candidate development command', () => {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
         reason: 'reconstruction-failed',
         field: 'accounting',
+      },
+    })
+  })
+
+  test('rebuilds stressed marked equity instead of trusting positive stressed summaries', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const evaluation = commandEvaluationFixture(report, baseline)
+    const stressedSimulation = {
+      ...report.doubledCost.stressed.simulation,
+      cashChanges: [],
+    }
+    const tamperedReport = {
+      ...report,
+      doubledCost: {
+        ...report.doubledCost,
+        stressed: {
+          ...report.doubledCost.stressed,
+          simulation: stressedSimulation,
+        },
+      },
+    }
+    const tamperedEvaluation = {
+      ...evaluation,
+      stressed: tamperedReport.doubledCost.stressed,
+      accounting: {
+        ...evaluation.accounting,
+        stressedEvents: [],
+        stressedSimulation,
+      },
+    }
+
+    expect(buildCandidateDevelopmentCommandReport(tamperedReport, tamperedEvaluation)).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'reconstruction-failed',
+        field: 'accounting.stressed',
       },
     })
   })

@@ -53,9 +53,15 @@ export interface CandidateDevelopmentAccountingEvidence {
   readonly evaluatorEndingEquityMicros: string
   readonly events: EvaluationResult['events']
   readonly baselineSimulation: EvaluationResult['simulation']
-  readonly stressedSimulation: EvaluationResult['simulation']
   readonly equitySeries: EvaluationResult['equitySeries']
   readonly markedEquityReconciliation: EvaluationResult['markedEquityReconciliation']
+  readonly stressedRunId: string
+  readonly stressedEvaluatorTotalFeesMicros: string
+  readonly stressedEvaluatorEndingEquityMicros: string
+  readonly stressedEvents: EvaluationResult['events']
+  readonly stressedSimulation: EvaluationResult['simulation']
+  readonly stressedEquitySeries: EvaluationResult['equitySeries']
+  readonly stressedMarkedEquityReconciliation: EvaluationResult['markedEquityReconciliation']
 }
 
 export interface CandidateDevelopmentCommandEvaluation extends CandidateDevelopmentEvaluation {
@@ -514,6 +520,16 @@ const validateCandidateDevelopmentAccounting = (
     ['initialCapitalMicros', baseline.initialCapitalMicros, accounting.initialCapitalMicros],
     ['evaluatorTotalFeesMicros', baseline.strategy.totalFeesMicros, accounting.evaluatorTotalFeesMicros],
     ['evaluatorEndingEquityMicros', baseline.strategy.endingEquityMicros, accounting.evaluatorEndingEquityMicros],
+    [
+      'stressedEvaluatorTotalFeesMicros',
+      baseline.doubleCostStrategy.totalFeesMicros,
+      accounting.stressedEvaluatorTotalFeesMicros,
+    ],
+    [
+      'stressedEvaluatorEndingEquityMicros',
+      baseline.doubleCostStrategy.endingEquityMicros,
+      accounting.stressedEvaluatorEndingEquityMicros,
+    ],
   ] as const
   for (const [field, expected, observed] of scalarBindings) {
     if (expected !== observed) {
@@ -580,6 +596,46 @@ const validateCandidateDevelopmentAccounting = (
         accounting.markedEquityReconciliation,
         proof.success.reconciliation,
         proofBinding.failure,
+      ),
+    )
+  }
+  const stressedProof = reconcileMarkedEquity({
+    runId: accounting.stressedRunId,
+    initialCapitalMicros: accounting.initialCapitalMicros,
+    evaluatorTotalFeesMicros: accounting.stressedEvaluatorTotalFeesMicros,
+    evaluatorEndingEquityMicros: accounting.stressedEvaluatorEndingEquityMicros,
+    events: accounting.stressedEvents,
+    simulation: accounting.stressedSimulation,
+  })
+  if (Result.isFailure(stressedProof)) {
+    return Result.fail(
+      markedEquityFailure(
+        'reconstruction-failed',
+        null,
+        'accounting.stressed',
+        'reconciled stressed marked equity',
+        null,
+        stressedProof.failure,
+      ),
+    )
+  }
+  const stressedProofBinding = requireCanonicalEvidenceEqual(
+    'accounting.stressedMarkedEquityProof',
+    {
+      reconciliation: accounting.stressedMarkedEquityReconciliation,
+      equitySeries: accounting.stressedEquitySeries,
+    },
+    stressedProof.success,
+  )
+  if (Result.isFailure(stressedProofBinding)) {
+    return Result.fail(
+      markedEquityFailure(
+        'proof-mismatch',
+        null,
+        'accounting.stressedMarkedEquityProof',
+        accounting.stressedMarkedEquityReconciliation,
+        stressedProof.success.reconciliation,
+        stressedProofBinding.failure,
       ),
     )
   }
@@ -1021,9 +1077,15 @@ const CandidateDevelopmentAccountingEvidenceSchema = Schema.Struct({
   evaluatorEndingEquityMicros: DigitsSchema,
   events: EvaluationEventsSchema,
   baselineSimulation: CandidateDevelopmentSimulationTraceSchema,
-  stressedSimulation: CandidateDevelopmentSimulationTraceSchema,
   equitySeries: EquitySeriesArtifactSchema.fields.items,
   markedEquityReconciliation: MarkedEquityReconciliationSchema,
+  stressedRunId: Sha256Schema,
+  stressedEvaluatorTotalFeesMicros: DigitsSchema,
+  stressedEvaluatorEndingEquityMicros: DigitsSchema,
+  stressedEvents: EvaluationEventsSchema,
+  stressedSimulation: CandidateDevelopmentSimulationTraceSchema,
+  stressedEquitySeries: EquitySeriesArtifactSchema.fields.items,
+  stressedMarkedEquityReconciliation: MarkedEquityReconciliationSchema,
 })
 
 const CandidateDevelopmentComparisonSemanticsEvidenceBoundarySchema = Schema.Struct({
