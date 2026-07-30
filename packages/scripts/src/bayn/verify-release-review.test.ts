@@ -17,6 +17,7 @@ import {
   type BaynReleaseReviewSnapshot,
   type PullRequestReview,
   type PullRequestReviewThread,
+  type PullRequestReviewThreadComment,
   type SuccessfulPublishRun,
 } from './verify-release-review'
 
@@ -60,6 +61,21 @@ const thread = (overrides: Partial<PullRequestReviewThread> = {}): PullRequestRe
   isOutdated: false,
   path: 'packages/scripts/src/bayn/verify-release-review.ts',
   url: 'https://github.com/proompteng/lab/pull/13390#discussion_r1',
+  comments: [],
+  ...overrides,
+})
+
+const threadComment = (overrides: Partial<PullRequestReviewThreadComment> = {}): PullRequestReviewThreadComment => ({
+  authorLogin: baynCodexReviewer,
+  authorAssociation: 'NONE',
+  body: 'Review finding',
+  createdAt: '2026-07-30T07:01:00Z',
+  commitSha: olderHeadSha,
+  reviewCommitSha: olderHeadSha,
+  reviewAuthorLogin: baynCodexReviewer,
+  reviewSubmittedAt: '2026-07-30T07:01:00Z',
+  reviewState: 'COMMENTED',
+  url: 'https://github.com/proompteng/lab/pull/13390#discussion_r1',
   ...overrides,
 })
 
@@ -69,6 +85,7 @@ const snapshot = (
     readonly reviews?: readonly PullRequestReview[]
     readonly threads?: readonly PullRequestReviewThread[]
     readonly mainCommitParents?: readonly string[]
+    readonly commitShas?: readonly string[]
   } = {},
 ): BaynReleaseReviewSnapshot => {
   const associated = options.associated ?? [associatedPull()]
@@ -87,6 +104,7 @@ const snapshot = (
             mergedAt: source.mergedAt,
             reviews: options.reviews ?? [review()],
             threads: options.threads ?? [],
+            commitShas: options.commitShas ?? [source.headSha],
           },
   }
 }
@@ -131,6 +149,7 @@ const reviewSnapshotFor = (options: {
         }),
       ],
       threads: options.threads ?? [],
+      commitShas: [options.headSha],
     },
   }
 }
@@ -419,6 +438,20 @@ describe('Bayn publication-range eligibility', () => {
           },
         })
       }
+      if (request.query.includes('BaynReleasePullRequestCommits')) {
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                commits: {
+                  nodes: [{ commit: { oid: finalHeadSha } }],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+        })
+      }
       throw new Error(`unexpected fixture request: ${url}`)
     }) as typeof fetch
 
@@ -479,6 +512,129 @@ describe('Bayn exact-head release review eligibility', () => {
       status: 'hold',
       code: 'exact-head-review-missing',
       retryable: true,
+    })
+  })
+
+  test('carries a reviewed head across an auditable feedback-fix commit', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: snapshot({
+          commitShas: [olderHeadSha, finalHeadSha],
+          reviews: [review({ commitSha: olderHeadSha })],
+          threads: [
+            thread({
+              comments: [
+                threadComment(),
+                threadComment({
+                  authorLogin: 'gregkonush',
+                  authorAssociation: 'MEMBER',
+                  body: 'Fixed in final head.',
+                  createdAt: '2026-07-30T07:01:30Z',
+                  reviewCommitSha: finalHeadSha,
+                  reviewAuthorLogin: 'gregkonush',
+                  reviewSubmittedAt: '2026-07-30T07:01:30Z',
+                }),
+              ],
+            }),
+          ],
+        }),
+        nowMs: evaluationNowMs,
+        pushBeforeSha: null,
+      }),
+    ).toEqual({
+      status: 'eligible',
+      prNumber: 13390,
+      headSha: finalHeadSha,
+      reviewSubmittedAt: '2026-07-30T07:01:00Z',
+    })
+  })
+
+  test('rejects an unreviewed post-review commit without a trusted feedback attestation', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: snapshot({
+          commitShas: [olderHeadSha, finalHeadSha],
+          reviews: [review({ commitSha: olderHeadSha })],
+          threads: [thread({ comments: [threadComment()] })],
+        }),
+        nowMs: evaluationNowMs,
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'feedback-fix-attestation-missing',
+      retryable: false,
+    })
+  })
+
+  test('rejects a feedback reply from an untrusted association', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: snapshot({
+          commitShas: [olderHeadSha, finalHeadSha],
+          reviews: [review({ commitSha: olderHeadSha })],
+          threads: [
+            thread({
+              comments: [
+                threadComment(),
+                threadComment({
+                  authorLogin: 'external-user',
+                  authorAssociation: 'NONE',
+                  reviewCommitSha: finalHeadSha,
+                  reviewAuthorLogin: 'external-user',
+                  reviewSubmittedAt: '2026-07-30T07:01:30Z',
+                }),
+              ],
+            }),
+          ],
+        }),
+        nowMs: evaluationNowMs,
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'feedback-fix-attestation-missing',
+      retryable: false,
+    })
+  })
+
+  test('requires an attestation for every commit after the reviewed head', () => {
+    const intermediateFixSha = '4'.repeat(40)
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: snapshot({
+          commitShas: [olderHeadSha, intermediateFixSha, finalHeadSha],
+          reviews: [review({ commitSha: olderHeadSha })],
+          threads: [
+            thread({
+              comments: [
+                threadComment(),
+                threadComment({
+                  authorLogin: 'gregkonush',
+                  authorAssociation: 'MEMBER',
+                  reviewCommitSha: finalHeadSha,
+                  reviewAuthorLogin: 'gregkonush',
+                  reviewSubmittedAt: '2026-07-30T07:01:30Z',
+                }),
+              ],
+            }),
+          ],
+        }),
+        nowMs: evaluationNowMs,
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'feedback-fix-attestation-missing',
+      retryable: false,
     })
   })
 
@@ -846,6 +1002,20 @@ describe('Bayn exact-head release review eligibility', () => {
               pullRequest: {
                 reviewThreads: {
                   nodes: [],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+        })
+      }
+      if (request.query.includes('BaynReleasePullRequestCommits')) {
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                commits: {
+                  nodes: [{ commit: { oid: finalHeadSha } }],
                   pageInfo: { hasNextPage: false, endCursor: null },
                 },
               },
