@@ -44,8 +44,8 @@ only after breadth has failed. It never ranks all assets or tunes allocations fr
 - The first eligible signal is the first official month-end with 126 prior close-to-close returns.
 - Every decision may use only bars through its finalized signal-session close.
 - Orders execute at the next official session open under the existing Bayn execution model.
-- The terminal decision liquidates every position at the final development session open so all simulation paths end in
-  cash.
+- The final governed signal is the official `2022-11-30` month-end and its `2022-12-01` next-session execution is a
+  mandatory all-cash liquidation. Every path remains in cash through `2022-12-30`.
 
 ## Frozen feature construction
 
