@@ -51,9 +51,8 @@ const validatePaperReconciliationTiming = (
   execution: ExecutionPolicy,
   alpaca: AlpacaRuntimeConfig | undefined,
 ): Result.Result<void, RuntimeConfigResolutionFailure> => {
-  const paper =
-    execution.brokerAccess === BrokerAccess.Mutation && execution.capitalAuthority._tag === CapitalAuthorityKind.Sandbox
-  if (!paper || alpaca === undefined) return Result.succeed(undefined)
+  const mutationCapable = execution.brokerAccess === BrokerAccess.Mutation
+  if (!mutationCapable || alpaca === undefined) return Result.succeed(undefined)
   const reconciliationPassTimeoutMs = parsed.operationTimeoutMs
   const priorReconciliationTailTimeoutMs = reconciliationPassTimeoutMs
   const requiredFreshnessWindowMs =

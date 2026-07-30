@@ -256,7 +256,7 @@ describe('pure runtime configuration resolution', () => {
     })
   })
 
-  test('reserves the prior post-timestamp tail and next full-pass deadline inside the PAPER stale threshold', () => {
+  test('reserves the prior post-timestamp tail and next full-pass deadline for every mutation capital mode', () => {
     const paper = {
       configuredAlpaca: {
         ...alpaca(BrokerEnvironment.Sandbox),
@@ -322,6 +322,41 @@ describe('pure runtime configuration resolution', () => {
         reconciliationIntervalMs: 1,
         priorReconciliationTailTimeoutMs: 120_000,
         reconciliationPassTimeoutMs: 120_000,
+        reconciliationStaleThresholdMs: 120_000,
+      },
+    )
+
+    const live = {
+      configuredAlpaca: {
+        ...alpaca(BrokerEnvironment.Live),
+        reconciliationIntervalMs: 59_999,
+      },
+      legacyMaximumAuthority: undefined,
+      brokerAccess: BrokerAccess.Mutation,
+      capitalAuthority: CapitalAuthoritySelection.LiveGrant,
+      liveCapitalGrantHash,
+    }
+    expect(Result.getOrThrow(resolveRuntimeConfig(resolutionInput(live)))).toMatchObject({
+      runtimeMode: 'AutonomousService',
+      alpaca: { reconciliationIntervalMs: 59_999 },
+      execution: {
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: { _tag: CapitalAuthorityKind.LiveGrant, grantHash: liveCapitalGrantHash },
+      },
+    })
+    expectFailure(
+      {
+        ...live,
+        configuredAlpaca: {
+          ...live.configuredAlpaca,
+          reconciliationIntervalMs: 60_000,
+        },
+      },
+      {
+        _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold',
+        reconciliationIntervalMs: 60_000,
+        priorReconciliationTailTimeoutMs: 30_000,
+        reconciliationPassTimeoutMs: 30_000,
         reconciliationStaleThresholdMs: 120_000,
       },
     )

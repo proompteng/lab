@@ -1131,6 +1131,7 @@ describe('OBSERVE runtime composition', () => {
     let mutationPhase = false
     let mutationCalendarReads = 0
     let mutationReconciliations = 0
+    let nextReconciliationFailure: ExecutionStoreError | undefined
     let secondMutationCalendarRead: Deferred.Deferred<void> | undefined
     const mutationEvents: string[] = []
     const unusedRead = Effect.die(new Error('NOT_DUE reconciliation used an unrelated broker read'))
@@ -1249,13 +1250,21 @@ describe('OBSERVE runtime composition', () => {
       hasAccountBaseline: () => Effect.succeed(true),
       bindings: () => Effect.succeed([]),
       reconcile: (brokerSnapshot: BrokerSnapshot) =>
-        Effect.sync(() => {
-          reconciledSnapshots.push(brokerSnapshot)
-          if (mutationPhase) {
-            mutationReconciliations += 1
-            mutationEvents.push(`reconcile:${mutationReconciliations.toString()}`)
+        Effect.suspend(() => {
+          if (nextReconciliationFailure !== undefined) {
+            const failure = nextReconciliationFailure
+            nextReconciliationFailure = undefined
+            mutationEvents.push('reconcile-failed')
+            return Effect.fail(failure)
           }
-          return persisted
+          return Effect.sync(() => {
+            reconciledSnapshots.push(brokerSnapshot)
+            if (mutationPhase) {
+              mutationReconciliations += 1
+              mutationEvents.push(`reconcile:${mutationReconciliations.toString()}`)
+            }
+            return persisted
+          })
         }),
       ensureAuthorityGeneration: () => {
         const authority = exact.riskContext.authority
@@ -1503,6 +1512,100 @@ describe('OBSERVE runtime composition', () => {
     expect(mutationReconciliations).toBe(2)
     expect(calendarReads).toBe(calendarReadsBeforeNonIdle)
     expect(authorityRestrictions).toBe(0)
+
+    mutationEvents.length = 0
+    mutationReconciliations = 0
+    publicationReads = 0
+    nextReconciliationFailure = new ExecutionStoreError({
+      operation: 'reconciliation',
+      failure: 'query',
+      message: 'mutation cadence reconciliation persistence failed',
+    })
+    const failureStartup = makeMutationAutonomousCycleStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      pollIntervalMs: 50,
+      reconciliationIntervalMs: 100,
+      reconciliationPassTimeoutMs: 30_000,
+      strategy: fixtureStrategy,
+      executionProgram: sandboxExecutionProgram(),
+    })
+    const failureObservations: Parameters<Parameters<typeof failureStartup>[0]['recordPass']>[0][] = []
+    mutationPhase = true
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(reconciledAt))
+          const first = yield* Deferred.make<void>()
+          const second = yield* Deferred.make<void>()
+          const third = yield* Deferred.make<void>()
+          const fourth = yield* Deferred.make<void>()
+          const fifth = yield* Deferred.make<void>()
+          const completions = [first, second, third, fourth, fifth]
+          const loop = yield* failureStartup({
+            qualificationRunId: 'c'.repeat(64),
+            recordPass: (observation) =>
+              Effect.sync(() => {
+                failureObservations.push(observation)
+                mutationEvents.push(`failure-observe:${failureObservations.length.toString()}`)
+                return completions[failureObservations.length - 1]
+              }).pipe(
+                Effect.flatMap((completion) =>
+                  completion === undefined ? Effect.void : Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
+                ),
+              ),
+          })
+          const fiber = yield* loop.pipe(
+            Effect.provideService(BrokerRead, brokerRead),
+            Effect.provideService(CycleStore, cycleStore),
+            Effect.provideService(MarketData, missingPublicationMarketData),
+            Effect.provideService(BrokerEventStore, executionStore),
+            Effect.provideService(FillAccountingStore, executionStore),
+            Effect.provideService(ValuationStore, executionStore),
+            Effect.provideService(ReconciliationStore, executionStore),
+            Effect.provideService(AuthorityGenerationStore, executionStore),
+            Effect.provideService(AuthorityRestrictionStore, executionStore),
+            Effect.provideService(WriterFence, writerFence),
+            Effect.provideService(IntentStore, intentStore),
+            Effect.provideService(MutationStore, mutationStore),
+            Effect.forkScoped({ startImmediately: true }),
+          )
+          yield* Deferred.await(first).pipe(Effect.timeout('1 second'))
+          yield* Deferred.await(second).pipe(Effect.timeout('1 second'))
+          yield* TestClock.adjust(50)
+          yield* Deferred.await(third).pipe(Effect.timeout('1 second'))
+          yield* TestClock.adjust(50)
+          yield* Deferred.await(fourth).pipe(Effect.timeout('1 second'))
+          yield* TestClock.adjust(50)
+          yield* Deferred.await(fifth).pipe(Effect.timeout('1 second'))
+          yield* Fiber.interrupt(fiber)
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+    mutationPhase = false
+
+    expect(failureObservations).toHaveLength(5)
+    expect(failureObservations[0]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
+    expect(failureObservations[1]).toMatchObject({
+      result: 'FAILURE',
+      operation: 'reconcile-not-due',
+      message: 'same-pass reconciliation store operation failed: mutation cadence reconciliation persistence failed',
+    })
+    expect(failureObservations[2]).toMatchObject({
+      result: 'FAILURE',
+      operation: 'reconcile-not-due',
+      message: 'same-pass reconciliation store operation failed: mutation cadence reconciliation persistence failed',
+    })
+    expect(failureObservations[3]).toMatchObject({
+      result: 'FAILURE',
+      operation: 'reconcile-not-due',
+      message: 'same-pass reconciliation store operation failed: mutation cadence reconciliation persistence failed',
+    })
+    expect(failureObservations[4]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
+    expect(publicationReads).toBe(4)
+    expect(mutationReconciliations).toBe(1)
+    expect(mutationEvents.indexOf('reconcile-failed')).toBeLessThan(mutationEvents.indexOf('failure-observe:2'))
+    expect(authorityRestrictions).toBe(1)
   })
 
   test('bounds the complete writer-fenced reconciliation pass and interrupts stalled persistence', async () => {

@@ -159,7 +159,13 @@ const observeCycleResult = <E, ContextR, DecisionR>(
 ): Effect.Effect<void, never, DecisionR> =>
   result.outcome === 'NOT_DUE'
     ? observeIdleReconciliation(options, cadence, result)
-    : observeSuccessfulPass(options, result)
+    : Ref.get(cadence).pipe(
+        Effect.flatMap((state) =>
+          state.lastFailure === undefined
+            ? observeSuccessfulPass(options, result)
+            : observeFailedPass(options, state.lastFailure),
+        ),
+      )
 
 const waitUntilNextCyclePoll = <E, ContextR, DecisionR>(
   options: AutonomousCycleLoopOptions<E, ContextR, DecisionR>,

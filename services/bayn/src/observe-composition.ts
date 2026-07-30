@@ -1401,6 +1401,27 @@ const waitAfterMutationPass = (
     }),
   )
 
+const observeMutationCycleResult = (
+  input: MutationAutonomousCycleInput,
+  startup: Parameters<AutonomousCycleStartup>[0],
+  cadence: Ref.Ref<ReconciliationCadenceState>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+  result: CycleRunResult,
+): Effect.Effect<void, never, ObserveDecisionRuntime> =>
+  result.outcome === 'NOT_DUE'
+    ? observeMutationIdleReconciliation(input, startup, cadence, reconcile, result)
+    : Ref.get(cadence).pipe(
+        Effect.flatMap((state) =>
+          currentUtcInstant.pipe(
+            Effect.flatMap((observedAt) =>
+              state.lastFailure === undefined
+                ? observeMutationPass(startup, { outcome: 'SUCCEEDED', observedAt, result })
+                : observeMutationPass(startup, { outcome: 'FAILED', observedAt, error: state.lastFailure }),
+            ),
+          ),
+        ),
+      )
+
 const mutationCycleLoop = (
   input: MutationAutonomousCycleInput,
   startup: Parameters<AutonomousCycleStartup>[0],
@@ -1433,14 +1454,7 @@ const mutationCycleLoop = (
                 Effect.andThen(run()),
               ),
             onSuccess: (result) =>
-              (result.outcome === 'NOT_DUE'
-                ? observeMutationIdleReconciliation(input, startup, cadence, reconcile, result)
-                : currentUtcInstant.pipe(
-                    Effect.flatMap((observedAt) =>
-                      observeMutationPass(startup, { outcome: 'SUCCEEDED', observedAt, result }),
-                    ),
-                  )
-              ).pipe(
+              observeMutationCycleResult(input, startup, cadence, reconcile, result).pipe(
                 Effect.andThen(waitAfterMutationPass(input, startup, cadence, reconcile, result)),
                 Effect.andThen(run()),
               ),

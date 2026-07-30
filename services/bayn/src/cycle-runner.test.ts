@@ -1632,7 +1632,8 @@ describe('autonomous cycle runner', () => {
           const second = yield* Deferred.make<void>()
           const third = yield* Deferred.make<void>()
           const fourth = yield* Deferred.make<void>()
-          const completions = [first, second, third, fourth]
+          const fifth = yield* Deferred.make<void>()
+          const completions = [first, second, third, fourth, fifth]
           const loop = yield* cycleLoop({
             context: Effect.succeed(context()),
             observePass: (observation) =>
@@ -1819,6 +1820,89 @@ describe('autonomous cycle runner', () => {
     expect(observations).toHaveLength(2)
     expect(observations[0]).toMatchObject({ outcome: 'FAILED' })
     expect(observations[1]).toMatchObject({ outcome: 'SUCCEEDED', result: { outcome: 'NOT_DUE' } })
+    expect(control).toEqual({ acquisitions: [], binds: 0 })
+  })
+
+  test('keeps a failed reconciliation authoritative across non-idle polls until retry succeeds', async () => {
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const observations: CyclePassObservation[] = []
+    const failure = new CycleNotDueReconciliationError({
+      failure: 'database',
+      message: 'non-idle reconciliation persistence failed',
+    })
+    let attempts = 0
+    let publicationReads = 0
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse('2026-01-29T21:20:00.000Z'))
+          const first = yield* Deferred.make<void>()
+          const second = yield* Deferred.make<void>()
+          const third = yield* Deferred.make<void>()
+          const fourth = yield* Deferred.make<void>()
+          const fifth = yield* Deferred.make<void>()
+          const completions = [first, second, third, fourth, fifth]
+          const loop = yield* cycleLoop({
+            context: Effect.succeed(context()),
+            observePass: (observation) =>
+              Effect.sync(() => {
+                observations.push(observation)
+                return completions[observations.length - 1]
+              }).pipe(
+                Effect.flatMap((completion) =>
+                  completion === undefined ? Effect.void : Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
+                ),
+              ),
+            pollIntervalMs: 50,
+            reconciliationIntervalMs: 100,
+            reconcileNotDue: Effect.suspend(() => {
+              attempts += 1
+              return attempts === 1 ? Effect.fail(failure) : Effect.void
+            }),
+          })
+          const fiber = yield* provide(
+            loop,
+            brokerRead(() => Effect.die(new Error('missing-publication loop must not read the broker calendar'))),
+            cycleStore(control),
+            marketDataService(
+              Effect.sync(() => {
+                publicationReads += 1
+                return { outcome: 'MISSING' as const, observedAt: '2026-01-29T21:20:00.000Z' }
+              }),
+            ),
+          ).pipe(Effect.forkScoped({ startImmediately: true }))
+
+          yield* Deferred.await(first)
+          yield* Deferred.await(second)
+          yield* TestClock.adjust(50)
+          yield* Deferred.await(third)
+          yield* TestClock.adjust(50)
+          yield* Deferred.await(fourth)
+          yield* TestClock.adjust(50)
+          yield* Deferred.await(fifth)
+          yield* Fiber.interrupt(fiber)
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(attempts).toBe(2)
+    expect(publicationReads).toBe(4)
+    expect(observations).toHaveLength(5)
+    expect(observations[0]).toMatchObject({ outcome: 'SUCCEEDED', result: { outcome: 'NO_PUBLICATION' } })
+    expect(observations[1]).toMatchObject({
+      outcome: 'FAILED',
+      error: { operation: 'reconcile-not-due', message: failure.message },
+    })
+    expect(observations[2]).toMatchObject({
+      outcome: 'FAILED',
+      error: { operation: 'reconcile-not-due', message: failure.message },
+    })
+    expect(observations[3]).toMatchObject({
+      outcome: 'FAILED',
+      error: { operation: 'reconcile-not-due', message: failure.message },
+    })
+    expect(observations[4]).toMatchObject({ outcome: 'SUCCEEDED', result: { outcome: 'NO_PUBLICATION' } })
     expect(control).toEqual({ acquisitions: [], binds: 0 })
   })
 
