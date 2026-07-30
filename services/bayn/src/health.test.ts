@@ -4,8 +4,21 @@ import { Deferred, Effect, Fiber, Ref, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { config, fixtureLock, successfulJournal, readyState, recoveringStore } from './app-test-support'
-import { AccountStatus, BrokerProvider, type BrokerReadShape, type ReadResult, type Account } from './broker/alpaca'
-import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
+import {
+  AccountStatus,
+  BrokerProvider,
+  BrokerReadError,
+  BrokerReadErrorKind,
+  OrderCollection,
+  SortDirection,
+  type Account,
+  type AccountConfigurationObservation,
+  type BrokerReadOperation,
+  type BrokerReadShape,
+  type FillActivitiesQuery,
+  type OrdersQuery,
+  type ReadResult,
+} from './broker/alpaca'
 import { BrokerEnvironment, makeBrokerIdentity } from './broker/identity'
 import { CycleOperationsCondition, CycleOperationsReason, type CycleOperationsProjection } from './cycle-observability'
 import { CycleState } from './cycle'
@@ -59,6 +72,7 @@ const monitor = (
   )
 
 const brokerAccountId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+const brokerObservedAt = '2026-07-20T00:00:00.000Z'
 const availableClock = (checkedAt: string) =>
   ({ _tag: 'Available', checkedAt, checkedAtMs: Date.parse(checkedAt) }) as const
 const unsafeClock = (observedAtMs: number) =>
@@ -69,42 +83,257 @@ const unsafeClock = (observedAtMs: number) =>
       ? ({ _tag: 'UtcEpochMillisOutOfRange', epochMillis: observedAtMs } as const)
       : ({ _tag: 'UtcEpochMillisNotSafeInteger', epochMillis: observedAtMs } as const),
   }) as const
-const accountResult = (id = brokerAccountId): ReadResult<Account> => ({
-  value: {
-    id,
-    status: AccountStatus.Active,
-    currency: 'USD',
-    cashMicros: '1000000',
-    equityMicros: '1000000',
-    lastEquityMicros: '1000000',
-    buyingPowerMicros: '1000000',
-    accountBlocked: false,
-    tradingBlocked: false,
-    tradeSuspendedByUser: false,
-    observedAt: '2026-07-20T00:00:00.000Z',
-  },
+const brokerReadResult = <A>(value: A, requestId: string): ReadResult<A> => ({
+  value,
   evidence: {
-    requestId: 'broker-health-request',
+    requestId,
     status: 200,
     contentHash: 'a'.repeat(64),
-    observedAt: '2026-07-20T00:00:00.000Z',
+    observedAt: brokerObservedAt,
   },
 })
 
-const brokerRead = (account: BrokerReadShape['account']): BrokerReadShape => {
-  const unused = Effect.die(new Error('continuous broker health must only read the account'))
+const accountResult = (
+  id = brokerAccountId,
+  overrides: Partial<Pick<Account, 'status' | 'accountBlocked' | 'tradingBlocked' | 'tradeSuspendedByUser'>> = {},
+): ReadResult<Account> =>
+  brokerReadResult(
+    {
+      id,
+      status: overrides.status ?? AccountStatus.Active,
+      currency: 'USD',
+      cashMicros: '1000000',
+      equityMicros: '1000000',
+      lastEquityMicros: '1000000',
+      buyingPowerMicros: '1000000',
+      accountBlocked: overrides.accountBlocked ?? false,
+      tradingBlocked: overrides.tradingBlocked ?? false,
+      tradeSuspendedByUser: overrides.tradeSuspendedByUser ?? false,
+      observedAt: brokerObservedAt,
+    },
+    'broker-health-account',
+  )
+
+const accountConfigurationResult = (fractionalTrading = true): ReadResult<AccountConfigurationObservation> =>
+  brokerReadResult(
+    {
+      schemaVersion: 'bayn.alpaca-account-configuration-observation.v1',
+      source: 'alpaca-v2-account-configurations',
+      requestHash: 'b'.repeat(64),
+      fractionalTrading,
+      observedAt: brokerObservedAt,
+      normalizedResponseHash: 'c'.repeat(64),
+    },
+    'broker-health-account-configuration',
+  )
+
+type BrokerHealthReadName =
+  | 'account'
+  | 'account-configuration'
+  | 'positions'
+  | 'open-orders'
+  | 'recent-orders'
+  | 'recent-fills'
+
+interface BrokerReadControl {
+  accountId: string
+  accountStatus: AccountStatus
+  accountBlocked: boolean
+  tradingBlocked: boolean
+  tradeSuspendedByUser: boolean
+  fractionalTrading: boolean
+  unavailable: BrokerHealthReadName | null
+  malformed: BrokerHealthReadName | null
+  readonly reads: BrokerHealthReadName[]
+  readonly orderQueries: OrdersQuery[]
+  readonly fillQueries: FillActivitiesQuery[]
+  readonly unexpectedReads: string[]
+}
+
+const brokerReadControl = (): BrokerReadControl => ({
+  accountId: brokerAccountId,
+  accountStatus: AccountStatus.Active,
+  accountBlocked: false,
+  tradingBlocked: false,
+  tradeSuspendedByUser: false,
+  fractionalTrading: true,
+  unavailable: null,
+  malformed: null,
+  reads: [],
+  orderQueries: [],
+  fillQueries: [],
+  unexpectedReads: [],
+})
+
+const brokerReadOperation = (name: BrokerHealthReadName): BrokerReadOperation => {
+  switch (name) {
+    case 'account':
+      return 'account'
+    case 'account-configuration':
+      return 'account-configuration'
+    case 'positions':
+      return 'positions'
+    case 'open-orders':
+    case 'recent-orders':
+      return 'orders'
+    case 'recent-fills':
+      return 'fill-activities'
+  }
+  const exhaustive: never = name
+  return exhaustive
+}
+
+const controlledBrokerRead = <A>(
+  control: BrokerReadControl,
+  name: BrokerHealthReadName,
+  value: () => ReadResult<A>,
+): Effect.Effect<ReadResult<A>, BrokerReadError> =>
+  Effect.suspend(() => {
+    control.reads.push(name)
+    if (control.unavailable === name) return Effect.die(new Error(`injected ${name} failure`))
+    if (control.malformed === name) {
+      return Effect.fail(
+        new BrokerReadError({
+          operation: brokerReadOperation(name),
+          kind: BrokerReadErrorKind.InvalidResponse,
+          message: `injected malformed ${name} response`,
+          retryable: false,
+        }),
+      )
+    }
+    return Effect.succeed(value())
+  })
+
+const brokerRead = (control: BrokerReadControl): BrokerReadShape => {
+  const unexpected = <A>(operation: string): Effect.Effect<A> =>
+    Effect.sync(() => control.unexpectedReads.push(operation)).pipe(
+      Effect.andThen(Effect.die(new Error(`continuous broker health must not call ${operation}`))),
+    )
   return {
-    account,
-    accountConfiguration: unused,
-    assetBySymbol: unusedAssetBySymbol,
-    positions: unused,
-    orders: () => unused,
-    orderById: () => unused,
-    orderByClientId: () => unused,
-    fillActivities: () => unused,
-    marketCalendar: unusedMarketCalendar,
+    account: controlledBrokerRead(control, 'account', () =>
+      accountResult(control.accountId, {
+        status: control.accountStatus,
+        accountBlocked: control.accountBlocked,
+        tradingBlocked: control.tradingBlocked,
+        tradeSuspendedByUser: control.tradeSuspendedByUser,
+      }),
+    ),
+    accountConfiguration: controlledBrokerRead(control, 'account-configuration', () =>
+      accountConfigurationResult(control.fractionalTrading),
+    ),
+    assetBySymbol: (symbol) => unexpected(`asset lookup for ${symbol}`),
+    positions: controlledBrokerRead(control, 'positions', () => brokerReadResult([], 'broker-health-positions')),
+    orders: (query = {}) => {
+      control.orderQueries.push(query)
+      if (query.status === OrderCollection.Open && query.limit === 1 && query.direction === undefined) {
+        return controlledBrokerRead(control, 'open-orders', () => brokerReadResult([], 'broker-health-open-orders'))
+      }
+      if (query.status === OrderCollection.All && query.limit === 1 && query.direction === SortDirection.Descending) {
+        return controlledBrokerRead(control, 'recent-orders', () => brokerReadResult([], 'broker-health-recent-orders'))
+      }
+      return unexpected(`orders query ${JSON.stringify(query)}`)
+    },
+    orderById: (orderId) => unexpected(`order lookup by id ${orderId}`),
+    orderByClientId: (clientOrderId) => unexpected(`order lookup by client id ${clientOrderId}`),
+    fillActivities: (query = {}) => {
+      control.fillQueries.push(query)
+      if (query.pageSize === 1 && query.direction === SortDirection.Descending) {
+        return controlledBrokerRead(control, 'recent-fills', () =>
+          brokerReadResult({ items: [] }, 'broker-health-recent-fills'),
+        )
+      }
+      return unexpected(`fill activities query ${JSON.stringify(query)}`)
+    },
+    marketCalendar: (query) => unexpected(`market calendar ${query.start}..${query.end}`),
   }
 }
+
+const brokerHealthReadNames = [
+  'account',
+  'account-configuration',
+  'positions',
+  'open-orders',
+  'recent-orders',
+  'recent-fills',
+] as const satisfies readonly BrokerHealthReadName[]
+
+const brokerHealthReadBehaviors: Record<BrokerHealthReadName, string> = {
+  account: 'account read',
+  'account-configuration': 'account configuration read',
+  positions: 'positions read',
+  'open-orders': 'open orders read',
+  'recent-orders': 'recent orders read',
+  'recent-fills': 'recent fills read',
+}
+
+const makePendingBrokerRead = (): Effect.Effect<{
+  readonly read: BrokerReadShape
+  readonly allStarted: Deferred.Deferred<void>
+  readonly finalizations: Record<BrokerHealthReadName, number>
+}> =>
+  Effect.gen(function* () {
+    const allStarted = yield* Deferred.make<void>()
+    const started = yield* Ref.make(0)
+    const finalizations: Record<BrokerHealthReadName, number> = {
+      account: 0,
+      'account-configuration': 0,
+      positions: 0,
+      'open-orders': 0,
+      'recent-orders': 0,
+      'recent-fills': 0,
+    }
+    const pending = <A>(name: BrokerHealthReadName): Effect.Effect<A> =>
+      Ref.updateAndGet(started, (count) => count + 1).pipe(
+        Effect.flatMap((count) =>
+          count === brokerHealthReadNames.length ? Deferred.succeed(allStarted, undefined) : Effect.void,
+        ),
+        Effect.andThen(Effect.never),
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            finalizations[name] += 1
+          }),
+        ),
+      )
+    const unexpected = <A>(operation: string): Effect.Effect<A> =>
+      Effect.die(new Error(`pending continuous broker health must not call ${operation}`))
+    const read: BrokerReadShape = {
+      account: pending('account'),
+      accountConfiguration: pending('account-configuration'),
+      assetBySymbol: (symbol) => unexpected(`asset lookup for ${symbol}`),
+      positions: pending('positions'),
+      orders: (query = {}) =>
+        query.status === OrderCollection.Open && query.limit === 1 && query.direction === undefined
+          ? pending('open-orders')
+          : query.status === OrderCollection.All && query.limit === 1 && query.direction === SortDirection.Descending
+            ? pending('recent-orders')
+            : unexpected(`orders query ${JSON.stringify(query)}`),
+      orderById: (orderId) => unexpected(`order lookup by id ${orderId}`),
+      orderByClientId: (clientOrderId) => unexpected(`order lookup by client id ${clientOrderId}`),
+      fillActivities: (query = {}) =>
+        query.pageSize === 1 && query.direction === SortDirection.Descending
+          ? pending('recent-fills')
+          : unexpected(`fill activities query ${JSON.stringify(query)}`),
+      marketCalendar: (query) => unexpected(`market calendar ${query.start}..${query.end}`),
+    }
+    return { read, allStarted, finalizations }
+  })
+
+const brokerProbe = (read: BrokerReadShape): BrokerProbe => ({
+  read,
+  expectedAccountId: brokerAccountId,
+  executionEligible: false,
+  executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
+})
+
+const brokerRuntimeState = (broker: BrokerProbe, startedAt = new Date().toISOString()): RuntimeState => ({
+  ...readyState(),
+  autonomousCycleLoop: {
+    configured: true,
+    startedAt,
+    lastPass: { result: 'SUCCESS', observedAt: startedAt, outcome: 'NO_PUBLICATION' },
+  },
+  broker: initialState(broker, true).broker,
+})
 
 const emptyCycleProjection = (): CycleOperationsProjection => ({
   current: null,
@@ -921,56 +1150,25 @@ describe('Bayn continuous health', () => {
     await Effect.runPromise(program)
   })
 
-  test('requires the configured broker account GET while keeping execution disabled under OBSERVE', async () => {
-    let observedAccountId = brokerAccountId
-    let brokerAvailable = true
-    const broker: BrokerProbe = {
-      read: brokerRead(
-        Effect.suspend(() =>
-          brokerAvailable
-            ? Effect.succeed(accountResult(observedAccountId))
-            : Effect.die(new Error('injected Alpaca GET failure')),
-        ),
-      ),
-      expectedAccountId: brokerAccountId,
-      executionEligible: false,
-      executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
-    }
-    const startedAt = new Date().toISOString()
-    const initial: RuntimeState = {
-      ...readyState(),
-      autonomousCycleLoop: {
-        configured: true,
-        startedAt,
-        lastPass: { result: 'SUCCESS' as const, observedAt: startedAt, outcome: 'NO_PUBLICATION' as const },
+  test('verifies the bounded continuous broker-read surface and never calls broker mutations', async () => {
+    const control = brokerReadControl()
+    let mutationCalls = 0
+    const brokerWithMutations = {
+      ...brokerProbe(brokerRead(control)),
+      submitOrder: () => {
+        mutationCalls += 1
       },
-      broker: initialState(broker, true).broker,
+      cancelOrder: () => {
+        mutationCalls += 1
+      },
     }
+    const broker: BrokerProbe = brokerWithMutations
+    const initial = brokerRuntimeState(broker)
     const state = await Effect.runPromise(Ref.make(initial))
     const cycleFiber = Effect.runFork(Effect.never)
-    const dependencies = (
-      effect: Effect.Effect<void, never, MarketData | Journal | EvidenceStore | CycleObservability>,
-    ) =>
-      effect.pipe(
-        Effect.provideService(MarketData, {
-          check: Effect.succeed(makeSnapshot().manifest.finalizedSnapshot),
-          inspect: Effect.die(new Error('health probes must not inspect sessions')),
-          inspectCyclePublications: Effect.die(
-            new Error('health probes must not inspect cycle publication candidates'),
-          ),
-          inspectPublication: () => Effect.die(new Error('health probes must not inspect cycle publications')),
-          inspectSnapshotPublication: () =>
-            Effect.die(new Error('health probes must not inspect bound cycle publications')),
-          loadSnapshotPublication: () => Effect.die(new Error('health probes must not load bound cycle bars')),
-          load: Effect.die(new Error('health probes must not load bars')),
-        }),
-        Effect.provideService(Journal, { ...successfulJournal, checkRun: () => Effect.void }),
-        Effect.provideService(EvidenceStore, recoveringStore(initial)),
-        Effect.provideService(CycleObservability, cycleObservability()),
-      )
 
     try {
-      await Effect.runPromise(dependencies(probe(config, state, broker, cycleFiber)))
+      await Effect.runPromise(provideHealthyDependencies(initial, probe(config, state, broker, cycleFiber)))
       expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
         status: 'READY',
         broker: {
@@ -983,128 +1181,254 @@ describe('Bayn continuous health', () => {
           executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
           error: null,
         },
-      })
-
-      observedAccountId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
-      await Effect.runPromise(dependencies(probe(config, state, broker, cycleFiber)))
-      expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
-        status: 'DEGRADED',
-        broker: {
-          accountId: observedAccountId,
-          accountBound: false,
-          readAvailable: true,
-          error: `Alpaca account probe resolved ${observedAccountId}, expected ${brokerAccountId}`,
-        },
-        error: expect.stringContaining('broker: Alpaca account probe resolved'),
-      })
-
-      observedAccountId = brokerAccountId
-      await Effect.runPromise(dependencies(probe(config, state, broker, cycleFiber)))
-      expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
-        status: 'READY',
-        broker: {
-          accountId: brokerAccountId,
-          accountBound: true,
-          readAvailable: true,
-          error: null,
-        },
         error: null,
       })
+      expect([...control.reads].sort()).toEqual([...brokerHealthReadNames].sort())
+      expect(control.orderQueries).toEqual([
+        { status: OrderCollection.Open, limit: 1 },
+        { status: OrderCollection.All, limit: 1, direction: SortDirection.Descending },
+      ])
+      expect(control.fillQueries).toEqual([{ pageSize: 1, direction: SortDirection.Descending }])
+      expect(control.unexpectedReads).toEqual([])
+      expect(mutationCalls).toBe(0)
+    } finally {
+      await Effect.runPromise(Fiber.interrupt(cycleFiber))
+    }
+  })
 
-      brokerAvailable = false
-      await Effect.runPromise(dependencies(probe(config, state, broker, cycleFiber)))
+  test('degrades for every unavailable broker read and recovers on the next complete pass', async () => {
+    const control = brokerReadControl()
+    const broker = brokerProbe(brokerRead(control))
+    const initial = brokerRuntimeState(broker)
+    const state = await Effect.runPromise(Ref.make(initial))
+    const cycleFiber = Effect.runFork(Effect.never)
+    try {
+      for (const name of brokerHealthReadNames) {
+        control.unavailable = name
+        await Effect.runPromise(provideHealthyDependencies(initial, probe(config, state, broker, cycleFiber)))
+        const expectedError = `Alpaca ${brokerHealthReadBehaviors[name]} unavailable: injected ${name} failure`
+        expect(await Effect.runPromise(Ref.get(state)), name).toMatchObject({
+          status: 'DEGRADED',
+          broker: {
+            accountId: null,
+            accountBound: false,
+            readAvailable: false,
+            error: expectedError,
+          },
+          error: `broker: ${expectedError}`,
+        })
+
+        control.unavailable = null
+        await Effect.runPromise(provideHealthyDependencies(initial, probe(config, state, broker, cycleFiber)))
+        expect(await Effect.runPromise(Ref.get(state)), `${name} recovery`).toMatchObject({
+          status: 'READY',
+          broker: {
+            accountId: brokerAccountId,
+            accountBound: true,
+            readAvailable: true,
+            error: null,
+          },
+          error: null,
+        })
+      }
+    } finally {
+      await Effect.runPromise(Fiber.interrupt(cycleFiber))
+    }
+  })
+
+  test('degrades on malformed broker data and recovers on the next complete pass', async () => {
+    const control = brokerReadControl()
+    const broker = brokerProbe(brokerRead(control))
+    const initial = brokerRuntimeState(broker)
+    const state = await Effect.runPromise(Ref.make(initial))
+    const cycleFiber = Effect.runFork(Effect.never)
+
+    try {
+      control.malformed = 'recent-orders'
+      await Effect.runPromise(provideHealthyDependencies(initial, probe(config, state, broker, cycleFiber)))
       expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
         status: 'DEGRADED',
         broker: {
           accountId: null,
           accountBound: false,
           readAvailable: false,
-          error: 'injected Alpaca GET failure',
+          error: 'Alpaca recent orders read unavailable: injected malformed recent-orders response',
         },
-        error: expect.stringContaining('broker: injected Alpaca GET failure'),
+        error: 'broker: Alpaca recent orders read unavailable: injected malformed recent-orders response',
       })
 
-      brokerAvailable = true
-      await Effect.runPromise(dependencies(probe(config, state, broker, cycleFiber)))
-      expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
-        status: 'READY',
-        broker: {
-          accountId: brokerAccountId,
-          accountBound: true,
-          readAvailable: true,
-          error: null,
-        },
-        error: null,
-      })
+      control.malformed = null
+      await Effect.runPromise(provideHealthyDependencies(initial, probe(config, state, broker, cycleFiber)))
+      expect(await Effect.runPromise(Ref.get(state))).toMatchObject({ status: 'READY', error: null })
     } finally {
       await Effect.runPromise(Fiber.interrupt(cycleFiber))
     }
   })
 
-  test('times out and interrupts the broker account probe exactly once', async () => {
+  test('degrades on account identity or permission drift and recovers after exact restoration', async () => {
+    const control = brokerReadControl()
+    const broker = brokerProbe(brokerRead(control))
+    const initial = brokerRuntimeState(broker)
+    const state = await Effect.runPromise(Ref.make(initial))
+    const cycleFiber = Effect.runFork(Effect.never)
+
+    const expectDriftAndRecovery = async (expectedError: string, restore: () => void) => {
+      await Effect.runPromise(provideHealthyDependencies(initial, probe(config, state, broker, cycleFiber)))
+      expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+        status: 'DEGRADED',
+        broker: {
+          accountId: null,
+          accountBound: false,
+          readAvailable: false,
+          error: expectedError,
+        },
+        error: `broker: ${expectedError}`,
+      })
+      restore()
+      await Effect.runPromise(provideHealthyDependencies(initial, probe(config, state, broker, cycleFiber)))
+      expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+        status: 'READY',
+        broker: { accountId: brokerAccountId, accountBound: true, readAvailable: true, error: null },
+        error: null,
+      })
+    }
+
+    try {
+      control.accountId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+      await expectDriftAndRecovery('Alpaca account identity drift detected', () => {
+        control.accountId = brokerAccountId
+      })
+
+      const permissionCases = [
+        {
+          expected: 'account status is DISABLED, expected ACTIVE',
+          drift: () => {
+            control.accountStatus = AccountStatus.Disabled
+          },
+          restore: () => {
+            control.accountStatus = AccountStatus.Active
+          },
+        },
+        {
+          expected: 'account is blocked',
+          drift: () => {
+            control.accountBlocked = true
+          },
+          restore: () => {
+            control.accountBlocked = false
+          },
+        },
+        {
+          expected: 'trading is blocked',
+          drift: () => {
+            control.tradingBlocked = true
+          },
+          restore: () => {
+            control.tradingBlocked = false
+          },
+        },
+        {
+          expected: 'trading is suspended by the user',
+          drift: () => {
+            control.tradeSuspendedByUser = true
+          },
+          restore: () => {
+            control.tradeSuspendedByUser = false
+          },
+        },
+        {
+          expected: 'fractional trading is disabled',
+          drift: () => {
+            control.fractionalTrading = false
+          },
+          restore: () => {
+            control.fractionalTrading = true
+          },
+        },
+      ] as const
+      for (const testCase of permissionCases) {
+        testCase.drift()
+        await expectDriftAndRecovery(`Alpaca account permission drift detected: ${testCase.expected}`, testCase.restore)
+      }
+    } finally {
+      await Effect.runPromise(Fiber.interrupt(cycleFiber))
+    }
+  })
+
+  test('times out and interrupts every in-flight continuous broker read exactly once', async () => {
     const startedAt = '2026-07-20T00:00:00.000Z'
-    let finalizations = 0
     const program = Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(startedAt))
-        const accountStarted = yield* Deferred.make<void>()
-        const broker: BrokerProbe = {
-          read: brokerRead(
-            Deferred.succeed(accountStarted, undefined).pipe(
-              Effect.andThen(Effect.never),
-              Effect.onInterrupt(() => Effect.sync(() => void (finalizations += 1))),
-            ),
-          ),
-          expectedAccountId: brokerAccountId,
-          executionEligible: false,
-          executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
-        }
-        const initial: RuntimeState = {
-          ...readyState(),
-          autonomousCycleLoop: {
-            configured: true,
-            startedAt,
-            lastPass: { result: 'SUCCESS', observedAt: startedAt, outcome: 'NO_PUBLICATION' },
-          },
-          broker: initialState(broker, true).broker,
-        }
+        const pending = yield* makePendingBrokerRead()
+        const broker = brokerProbe(pending.read)
+        const initial = brokerRuntimeState(broker, startedAt)
         const state = yield* Ref.make(initial)
         const cycleFiber = yield* Effect.never.pipe(Effect.forkScoped({ startImmediately: true }))
         const healthFiber = yield* provideHealthyDependencies(initial, probe(config, state, broker, cycleFiber)).pipe(
           Effect.forkScoped({ startImmediately: true }),
         )
 
-        yield* Deferred.await(accountStarted)
+        yield* Deferred.await(pending.allStarted)
         yield* TestClock.adjust(config.operationTimeoutMs - 1)
-        expect(finalizations).toBe(0)
+        expect(Object.values(pending.finalizations).every((count) => count === 0)).toBe(true)
         yield* TestClock.adjust(1)
         yield* Fiber.join(healthFiber)
 
-        expect(finalizations).toBe(1)
+        expect(pending.finalizations).toEqual({
+          account: 1,
+          'account-configuration': 1,
+          positions: 1,
+          'open-orders': 1,
+          'recent-orders': 1,
+          'recent-fills': 1,
+        })
+        const timeoutError = brokerHealthReadNames
+          .map((name) => `Alpaca ${brokerHealthReadBehaviors[name]} timed out after ${config.operationTimeoutMs}ms`)
+          .join('; ')
         expect(yield* Ref.get(state)).toMatchObject({
           status: 'DEGRADED',
           broker: {
             accountId: null,
             accountBound: false,
             readAvailable: false,
-            error: `Alpaca account probe timed out after ${config.operationTimeoutMs}ms`,
+            error: timeoutError,
           },
-          error: `broker: Alpaca account probe timed out after ${config.operationTimeoutMs}ms`,
+          error: `broker: ${timeoutError}`,
         })
       }),
     ).pipe(Effect.provide(TestClock.layer()))
 
     await Effect.runPromise(program)
-    expect(finalizations).toBe(1)
+  })
+
+  test('interrupts every in-flight broker read without publishing a partial health pass', async () => {
+    const pending = await Effect.runPromise(makePendingBrokerRead())
+    const broker = brokerProbe(pending.read)
+    const initial = brokerRuntimeState(broker)
+    const state = await Effect.runPromise(Ref.make(initial))
+    const cycleFiber = Effect.runFork(Effect.never)
+    const healthFiber = Effect.runFork(provideHealthyDependencies(initial, probe(config, state, broker, cycleFiber)))
+
+    try {
+      await Effect.runPromise(Deferred.await(pending.allStarted))
+      await Effect.runPromise(Fiber.interrupt(healthFiber))
+      expect(pending.finalizations).toEqual({
+        account: 1,
+        'account-configuration': 1,
+        positions: 1,
+        'open-orders': 1,
+        'recent-orders': 1,
+        'recent-fills': 1,
+      })
+      expect(await Effect.runPromise(Ref.get(state))).toEqual(initial)
+    } finally {
+      await Effect.runPromise(Fiber.interrupt(cycleFiber))
+    }
   })
 
   test('degrades when Alpaca is configured without the autonomous cycle runner', async () => {
-    const broker: BrokerProbe = {
-      read: brokerRead(Effect.succeed(accountResult())),
-      expectedAccountId: brokerAccountId,
-      executionEligible: false,
-      executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
-    }
+    const broker = brokerProbe(brokerRead(brokerReadControl()))
     const initial: RuntimeState = {
       ...readyState(),
       autonomousCycleLoop: {
