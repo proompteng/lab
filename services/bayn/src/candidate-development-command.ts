@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { dirname, relative, resolve, sep } from 'node:path'
+import * as vm from 'node:vm'
 
 import { NodeRuntime } from '@effect/platform-node'
 import { Data, Effect, pipe, Result, Schema } from 'effect'
@@ -2438,6 +2439,7 @@ export const validateCandidateDevelopmentExecutableProgram = (
 
 export type CandidateDevelopmentModuleImporter = (
   moduleUrl: string,
+  verifiedFiles: CandidateDevelopmentVerifiedSourceFiles,
 ) => Effect.Effect<unknown, CandidateDevelopmentCommandFailure>
 
 export type CandidateDevelopmentSourceVerifier = (
@@ -2498,16 +2500,92 @@ const gitBytes = (repositoryRoot: string, args: readonly string[]): Promise<Buff
 
 const sha256Bytes = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
 
+const forbiddenCandidateArtifactIdentifiers = new Set([
+  'Atomics',
+  'Bun',
+  'EventSource',
+  'FinalizationRegistry',
+  'Function',
+  'Promise',
+  'SharedArrayBuffer',
+  'SharedWorker',
+  'WebAssembly',
+  'WebSocket',
+  'WeakRef',
+  'Worker',
+  'XMLHttpRequest',
+  'async',
+  'await',
+  'console',
+  'eval',
+  'fetch',
+  'module',
+  'process',
+  'queueMicrotask',
+  'require',
+  'setImmediate',
+  'setInterval',
+  'setTimeout',
+])
+
+const candidateArtifactIdentifierIssues = (source: string): readonly string[] => {
+  const issues: string[] = []
+  let index = 0
+  while (index < source.length) {
+    const character = source[index]
+    const next = source[index + 1]
+    if (character === "'" || character === '"') {
+      const quote = character
+      index += 1
+      while (index < source.length) {
+        if (source[index] === '\\') index += 2
+        else if (source[index] === quote) {
+          index += 1
+          break
+        } else index += 1
+      }
+      continue
+    }
+    if (character === '`') {
+      issues.push('template-literal')
+      break
+    }
+    if (character === '/' && next === '/') {
+      index += 2
+      while (index < source.length && source[index] !== '\n') index += 1
+      continue
+    }
+    if (character === '/' && next === '*') {
+      index += 2
+      while (index + 1 < source.length && !(source[index] === '*' && source[index + 1] === '/')) index += 1
+      index += 2
+      continue
+    }
+    if (character !== undefined && /[A-Za-z_$]/.test(character)) {
+      let end = index + 1
+      while (end < source.length && /[A-Za-z0-9_$]/.test(source[end] ?? '')) end += 1
+      const identifier = source.slice(index, end)
+      if (forbiddenCandidateArtifactIdentifiers.has(identifier)) issues.push(identifier)
+      index = end
+      continue
+    }
+    index += 1
+  }
+  return [...new Set(issues)].sort()
+}
+
 const verifySelfContainedEsm = (
   source: string,
   modulePath: string,
 ): Result.Result<void, CandidateDevelopmentCommandFailure> => {
   try {
-    const imports = new Bun.Transpiler({ loader: 'js' }).scanImports(source)
-    const unsupported = imports.filter(({ kind, path }) => kind !== 'import-statement' || !path.startsWith('node:'))
-    return unsupported.length === 0
+    const transpiler = new Bun.Transpiler({ loader: 'js' })
+    const imports = transpiler.scanImports(source)
+    const normalized = transpiler.transformSync(source)
+    const identifiers = candidateArtifactIdentifierIssues(normalized)
+    return imports.length === 0 && identifiers.length === 0
       ? Result.succeed(undefined)
-      : Result.fail(sourceVerificationFailure('verify-module-format', { modulePath, imports: unsupported }))
+      : Result.fail(sourceVerificationFailure('verify-module-format', { modulePath, imports, identifiers }))
   } catch (cause) {
     return Result.fail(sourceVerificationFailure('verify-module-format', { modulePath, cause }))
   }
@@ -2611,15 +2689,228 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
         : sourceVerificationFailure('resolve-repository', cause),
   })
 
-const importCandidateDevelopmentModule: CandidateDevelopmentModuleImporter = (moduleUrl) =>
+const candidateDevelopmentArtifactSchemaVersion = 'bayn.candidate-development-artifact.v1' as const
+const candidateDevelopmentArtifactEvaluationTimeoutMs = 120_000
+const candidateDevelopmentArtifactInitializationTimeoutMs = 10_000
+
+const candidateDevelopmentArtifactSource = (moduleUrl: string): string => {
+  const prefix = 'data:text/javascript;base64,'
+  if (!moduleUrl.startsWith(prefix)) throw new Error('candidate artifact URL is not a base64 JavaScript data URL')
+  return Buffer.from(moduleUrl.slice(prefix.length), 'base64').toString('utf8')
+}
+
+const candidateDevelopmentArtifactContext = (): vm.Context => {
+  const context = vm.createContext(Object.create(null), {
+    codeGeneration: { strings: false, wasm: false },
+    microtaskMode: 'afterEvaluate',
+    name: 'bayn-candidate-development-artifact',
+  })
+  vm.runInContext(
+    `
+      Object.defineProperty(globalThis, 'constructor', {
+        value: null,
+        writable: false,
+        configurable: false,
+      })
+      Object.defineProperty(Error, 'prepareStackTrace', {
+        value: undefined,
+        writable: false,
+        configurable: false,
+      })
+      Object.defineProperty(Error, 'captureStackTrace', {
+        value: undefined,
+        writable: false,
+        configurable: false,
+      })
+      Error.stackTraceLimit = 0
+      for (const name of [
+        'process',
+        'Bun',
+        'console',
+        'fetch',
+        'require',
+        'module',
+        'exports',
+        'Promise',
+        'Atomics',
+        'SharedArrayBuffer',
+        'FinalizationRegistry',
+        'WeakRef',
+        'WebAssembly',
+        'Worker',
+        'SharedWorker',
+        'XMLHttpRequest',
+        'WebSocket',
+        'EventSource',
+        'setTimeout',
+        'setInterval',
+        'setImmediate',
+        'queueMicrotask',
+      ]) {
+        Object.defineProperty(globalThis, name, {
+          value: undefined,
+          writable: false,
+          configurable: false,
+        })
+      }
+    `,
+    context,
+    { timeout: candidateDevelopmentArtifactInitializationTimeoutMs },
+  )
+  return context
+}
+
+const runCandidateDevelopmentArtifactEvaluation = (
+  context: vm.Context,
+  verifiedSource: CandidateDevelopmentVerifiedSource,
+): CandidateDevelopmentCommandEvaluation => {
+  const verifiedSourceJson = JSON.stringify(verifiedSource)
+  Object.defineProperty(context, '__candidateDevelopmentVerifiedSourceJson', {
+    value: verifiedSourceJson,
+    writable: false,
+    configurable: true,
+  })
+  try {
+    const output = vm.runInContext(
+      `
+        (() => {
+          const evaluation = globalThis.__candidateDevelopmentArtifact.buildEvaluation(
+            JSON.parse(globalThis.__candidateDevelopmentVerifiedSourceJson),
+          )
+          if (
+            evaluation !== null &&
+            (typeof evaluation === 'object' || typeof evaluation === 'function') &&
+            typeof evaluation.then === 'function'
+          ) {
+            throw new TypeError('candidate artifact buildEvaluation must be synchronous')
+          }
+          const encoded = JSON.stringify(evaluation)
+          if (typeof encoded !== 'string') {
+            throw new TypeError('candidate artifact evaluation must be JSON serializable')
+          }
+          return encoded
+        })()
+      `,
+      context,
+      { timeout: candidateDevelopmentArtifactEvaluationTimeoutMs },
+    )
+    if (typeof output !== 'string') throw new TypeError('candidate artifact evaluation did not return JSON')
+    const decoded = validateCandidateDevelopmentCommandEvaluation(JSON.parse(output) as unknown)
+    if (Result.isFailure(decoded)) throw decoded.failure
+    return decoded.success
+  } finally {
+    Reflect.deleteProperty(context, '__candidateDevelopmentVerifiedSourceJson')
+  }
+}
+
+export const evaluateCandidateDevelopmentArtifact: CandidateDevelopmentModuleImporter = (moduleUrl, verifiedFiles) =>
   Effect.tryPromise({
-    try: () => import(moduleUrl),
+    try: async () => {
+      const source = candidateDevelopmentArtifactSource(moduleUrl)
+      const moduleFormat = verifySelfContainedEsm(source, verifiedFiles.modulePath)
+      if (Result.isFailure(moduleFormat)) throw moduleFormat.failure
+      const context = candidateDevelopmentArtifactContext()
+      const artifactModule = new vm.SourceTextModule(source, {
+        context,
+        identifier: `git:${verifiedFiles.sourceRevision}:${verifiedFiles.moduleBlobOid}`,
+        initializeImportMeta: (meta) => Object.freeze(meta),
+        importModuleDynamically: () => Promise.reject(new TypeError('candidate artifact imports are prohibited')),
+      })
+      await artifactModule.link(() => {
+        throw new TypeError('candidate artifact imports are prohibited')
+      })
+      await artifactModule.evaluate({ timeout: candidateDevelopmentArtifactInitializationTimeoutMs })
+      const artifact = Reflect.get(artifactModule.namespace, 'candidateDevelopmentArtifact') as unknown
+      Object.defineProperty(context, '__candidateDevelopmentArtifact', {
+        value: artifact,
+        writable: false,
+        configurable: false,
+      })
+      const definitionJson = vm.runInContext(
+        `
+          (() => {
+            if (
+              globalThis.__candidateDevelopmentArtifact === null ||
+              typeof globalThis.__candidateDevelopmentArtifact !== 'object'
+            ) {
+              throw new TypeError('candidateDevelopmentArtifact export is missing')
+            }
+            if (typeof globalThis.__candidateDevelopmentArtifact.buildEvaluation !== 'function') {
+              throw new TypeError('candidateDevelopmentArtifact.buildEvaluation is missing')
+            }
+            return JSON.stringify({
+              schemaVersion: globalThis.__candidateDevelopmentArtifact.schemaVersion,
+              input: globalThis.__candidateDevelopmentArtifact.input,
+              strategyProtocol: globalThis.__candidateDevelopmentArtifact.strategyProtocol,
+            })
+          })()
+        `,
+        context,
+        { timeout: candidateDevelopmentArtifactInitializationTimeoutMs },
+      )
+      if (typeof definitionJson !== 'string') throw new TypeError('candidate artifact definition is not JSON')
+      const definition = recordOf(JSON.parse(definitionJson) as unknown)
+      if (definition?.schemaVersion !== candidateDevelopmentArtifactSchemaVersion) {
+        throw new TypeError('candidate artifact schema version is invalid')
+      }
+      const input = decodeCandidateDevelopmentPreflightInput(definition.input)
+      if (Result.isFailure(input)) throw input.failure
+      const strategyProtocol = decodeCandidateDevelopmentStrategyProtocol(definition.strategyProtocol)
+      if (Result.isFailure(strategyProtocol)) throw strategyProtocol.failure
+      const verifiedSource = bindCandidateDevelopmentVerifiedSource(verifiedFiles, input.success)
+      if (Result.isFailure(verifiedSource)) throw verifiedSource.failure
+      const expectedProtocolHash = canonicalHashV1Result(strategyProtocol.success)
+      if (Result.isFailure(expectedProtocolHash)) throw expectedProtocolHash.failure
+      if (expectedProtocolHash.success !== input.success.expectedStrategyProtocolHash) {
+        throw new TypeError('candidate artifact strategy protocol hash differs from preflight')
+      }
+      const evaluation = (): Effect.Effect<CandidateDevelopmentCommandEvaluation, CandidateDevelopmentCommandFailure> =>
+        Effect.try({
+          try: () => runCandidateDevelopmentArtifactEvaluation(context, verifiedSource.success),
+          catch: (cause): CandidateDevelopmentCommandFailure => ({
+            _tag: 'CandidateDevelopmentCommandProgramExecutionFailed',
+            cause,
+          }),
+        })
+      const program: ExecutableProgram = {
+        schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
+        input: input.success,
+        strategyProtocol: strategyProtocol.success as CandidateDevelopmentStrategyProtocol,
+        effects: {
+          preregisterCandidate: () => Effect.succeed(verifiedSource.success.sourceManifestSha256),
+          loadDevelopmentData: () => Effect.succeed(undefined),
+          evaluateDevelopment: (_data, _preflight, observedVerifiedSource) =>
+            pipe(
+              Result.all({
+                expected: canonicalHashV1Result(verifiedSource.success),
+                observed: canonicalHashV1Result(observedVerifiedSource),
+              }),
+              Result.mapError(
+                (cause): CandidateDevelopmentCommandFailure => ({
+                  _tag: 'CandidateDevelopmentCommandHashFailed',
+                  cause,
+                }),
+              ),
+              Result.flatMap(({ expected, observed }) =>
+                expected === observed
+                  ? Result.succeed(undefined)
+                  : Result.fail(sourceVerificationFailure('verify-program-binding', { expected, observed })),
+              ),
+              Effect.fromResult,
+              Effect.flatMap(evaluation),
+            ),
+        },
+      }
+      return { candidateDevelopmentProgram: program }
+    },
     catch: (cause): CandidateDevelopmentCommandFailure => ({
       _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
-      modulePath: moduleUrl,
+      modulePath: verifiedFiles.modulePath,
       cause,
     }),
   })
+
+const importCandidateDevelopmentModule: CandidateDevelopmentModuleImporter = evaluateCandidateDevelopmentArtifact
 
 export const loadCandidateDevelopmentExecutableProgram = (
   modulePath: string,
@@ -2629,7 +2920,7 @@ export const loadCandidateDevelopmentExecutableProgram = (
 ): Effect.Effect<CandidateDevelopmentLoadedExecutableProgram, CandidateDevelopmentCommandFailure> =>
   Effect.gen(function* () {
     const before = yield* sourceVerifier(modulePath, sourceManifestPath)
-    const module = yield* importer(before.moduleUrl)
+    const module = yield* importer(before.moduleUrl, before.files)
     const after = yield* sourceVerifier(modulePath, sourceManifestPath)
     const beforeHash = yield* Effect.fromResult(
       canonicalHashV1Result(before).pipe(

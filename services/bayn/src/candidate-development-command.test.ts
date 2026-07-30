@@ -10,6 +10,7 @@ import {
   bindCandidateDevelopmentVerifiedSource,
   buildCandidateDevelopmentCommandReport as buildCandidateDevelopmentCommandReportPure,
   candidateDevelopmentExecutableProgramSchemaVersion,
+  evaluateCandidateDevelopmentArtifact,
   executeCandidateDevelopmentProgram,
   loadCandidateDevelopmentExecutableProgram,
   renderCandidateDevelopmentCommandReport,
@@ -2032,7 +2033,7 @@ describe('candidate development command', () => {
       expect(manifestDiskDrift.files.sourceManifestSha256).toBe(verified.files.sourceManifestSha256)
 
       await writeFile(sourceManifestPath, sourceManifestBytes)
-      await writeFile(modulePath, 'import "./dependency.mjs"\nexport const candidateDevelopmentProgram = {}\n')
+      await writeFile(modulePath, 'import "node:fs"\nexport const candidateDevelopmentProgram = {}\n')
       await execFilePromise('git', ['add', 'candidate/program.mjs'], repository)
       await execFilePromise('git', ['commit', '-qm', 'test: add imported dependency'], repository)
       expect(
@@ -2044,6 +2045,109 @@ describe('candidate development command', () => {
     } finally {
       await rm(repository, { recursive: true, force: true })
     }
+  })
+
+  test('evaluates the immutable artifact without host code-loading capabilities', async () => {
+    const input = {
+      candidateOrdinal: 16,
+      priorTrialCount: 15,
+      expectedStrategyProtocolHash: fixtureStrategyProtocolHash,
+      officialSessions: fixtureOfficialSessions,
+      signalSessionDates: officialMonthEndSignalDates(fixtureOfficialSessions),
+      featureLookbackSessions: 126,
+    }
+    const verifiedSource = successOf(bindCandidateDevelopmentVerifiedSource(fixtureVerifiedSourceFiles, input))
+    const report = reportFixture(0.01)
+    const baseEvaluation = commandEvaluationFixture(report, baselineFixture())
+    const evaluation = {
+      ...baseEvaluation,
+      baseline: {
+        ...baseEvaluation.baseline,
+        runId: verifiedSource.baselineRunId,
+        codeRevision: verifiedSource.sourceRevision,
+      },
+      accounting: {
+        ...baseEvaluation.accounting,
+        runId: verifiedSource.baselineRunId,
+        stressedRunId: verifiedSource.stressedRunId,
+      },
+    }
+    const source = `
+      export const candidateDevelopmentArtifact = {
+        schemaVersion: 'bayn.candidate-development-artifact.v1',
+        input: ${JSON.stringify(input)},
+        strategyProtocol: ${JSON.stringify(fixtureStrategyProtocol)},
+        buildEvaluation: (verifiedSource) => {
+          const unavailable = [
+            typeof globalThis['process'],
+            typeof globalThis['Bun'],
+            typeof globalThis['fetch'],
+            typeof globalThis['require'],
+            typeof globalThis['module'],
+            typeof globalThis['Promise'],
+            typeof globalThis['Atomics'],
+            typeof globalThis['SharedArrayBuffer'],
+            typeof globalThis['WebAssembly'],
+            typeof globalThis['Worker'],
+            typeof globalThis['setTimeout'],
+          ].every((value) => value === 'undefined')
+          let functionBlocked = false
+          let constructorBlocked = false
+          let evalBlocked = false
+          try { globalThis['Function']('return 1')() } catch { functionBlocked = true }
+          try { ({}).constructor.constructor('return 1')() } catch { constructorBlocked = true }
+          try { globalThis['eval']('1') } catch { evalBlocked = true }
+          if (
+            !unavailable ||
+            globalThis.constructor !== null ||
+            !functionBlocked ||
+            !constructorBlocked ||
+            !evalBlocked ||
+            verifiedSource.baselineRunId !== ${JSON.stringify(verifiedSource.baselineRunId)}
+          ) {
+            throw new Error('candidate artifact sandbox is not closed')
+          }
+          return ${JSON.stringify(evaluation)}
+        },
+      }
+    `
+    const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
+    const loaded = await Effect.runPromise(evaluateCandidateDevelopmentArtifact(moduleUrl, fixtureVerifiedSourceFiles))
+    const program = successOf(
+      validateCandidateDevelopmentExecutableProgram(
+        (loaded as { readonly candidateDevelopmentProgram?: unknown }).candidateDevelopmentProgram,
+      ),
+    )
+    const decoded = await Effect.runPromise(
+      program.effects.evaluateDevelopment(undefined, undefined as never, verifiedSource),
+    )
+
+    expect(decoded.baseline.codeRevision).toBe(verifiedSource.sourceRevision)
+    expect(decoded.baseline.runId).toBe(verifiedSource.baselineRunId)
+    expect(decoded.accounting.stressedRunId).toBe(verifiedSource.stressedRunId)
+  })
+
+  test('rejects async artifact execution before entering the sandbox', async () => {
+    const source = `
+      export const candidateDevelopmentArtifact = {
+        schemaVersion: 'bayn.candidate-development-artifact.v1',
+        input: {},
+        strategyProtocol: {},
+        buildEvaluation: async () => ({}),
+      }
+    `
+    const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
+
+    expect(
+      await Effect.runPromise(Effect.flip(evaluateCandidateDevelopmentArtifact(moduleUrl, fixtureVerifiedSourceFiles))),
+    ).toMatchObject({
+      _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
+      cause: {
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-module-format',
+        cause: { identifiers: ['async'] },
+      },
+    })
   })
 
   test('rejects source drift during import before returning an executable program', async () => {
