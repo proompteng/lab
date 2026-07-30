@@ -113,7 +113,7 @@ export interface BaynBuildWorkflowJob {
   readonly conclusion: string | null
 }
 
-export interface FailedUnresolvedThreadBlock {
+export interface FailedReviewThreadBlock {
   readonly commitShaPrefix: string
   readonly prNumber: number
 }
@@ -121,7 +121,7 @@ export interface FailedUnresolvedThreadBlock {
 export interface FailedBaynReleaseReviewRun {
   readonly run: BaynBuildWorkflowRun
   readonly jobs: readonly BaynBuildWorkflowJob[]
-  readonly unresolvedThreadBlock: FailedUnresolvedThreadBlock | null
+  readonly reviewThreadBlock: FailedReviewThreadBlock | null
 }
 
 export type LastPublishedRevisionResolution =
@@ -926,18 +926,18 @@ export const evaluateBaynReleaseRetry = (input: {
   }
 
   const affectingCommits = baynAffectingCommits(input.snapshot)
-  const unresolvedThreadBlock = failedReviewRun.unresolvedThreadBlock
+  const reviewThreadBlock = failedReviewRun.reviewThreadBlock
   let resolvedThreadCommitSha: string | null = null
-  if (unresolvedThreadBlock !== null) {
+  if (reviewThreadBlock !== null) {
     const blockedCommits = affectingCommits.filter(
       (commit) =>
-        commit.sha.startsWith(unresolvedThreadBlock.commitShaPrefix) &&
-        commit.reviewSnapshot?.pullRequest?.number === unresolvedThreadBlock.prNumber,
+        commit.sha.startsWith(reviewThreadBlock.commitShaPrefix) &&
+        commit.reviewSnapshot?.pullRequest?.number === reviewThreadBlock.prNumber,
     )
     if (blockedCommits.length !== 1) {
       return hold(
         'retry-failed-run-mismatch',
-        `failed run ${failedReviewRun.run.id} unresolved-thread evidence does not uniquely bind current range commit ${unresolvedThreadBlock.commitShaPrefix}/#${unresolvedThreadBlock.prNumber}`,
+        `failed run ${failedReviewRun.run.id} review-thread evidence does not uniquely bind current range commit ${reviewThreadBlock.commitShaPrefix}/#${reviewThreadBlock.prNumber}`,
         false,
       )
     }
@@ -1468,13 +1468,17 @@ const parseBaynBuildWorkflowJobs = (value: unknown): readonly BaynBuildWorkflowJ
   })
 }
 
-export const parseFailedUnresolvedThreadBlock = (log: string): FailedUnresolvedThreadBlock | null => {
-  const pattern =
-    /BAYN_RELEASE_REVIEW_HOLD active-unresolved-review-threads: Bayn-affecting commit ([0-9a-f]{12}) .*? source PR #(\d+) has \d+ unresolved review thread\(s\):/g
-  const matches = [...log.matchAll(pattern)].map((match) => ({
-    commitShaPrefix: match[1] as string,
-    prNumber: Number(match[2]),
-  }))
+export const parseFailedReviewThreadBlock = (log: string): FailedReviewThreadBlock | null => {
+  const patterns = [
+    /BAYN_RELEASE_REVIEW_HOLD active-unresolved-review-threads: Bayn-affecting commit ([0-9a-f]{12}) .*? source PR #(\d+) has \d+ unresolved review thread\(s\):/g,
+    /BAYN_RELEASE_REVIEW_HOLD feedback-fix-attestation-missing: Bayn-affecting commit ([0-9a-f]{12}) .*? source PR #(\d+) final head [0-9a-f]{12} carries review from [0-9a-f]{12}, but post-review commit [0-9a-f]{12} lacks a trusted member reply on a resolved Codex thread from that review/g,
+  ]
+  const matches = patterns.flatMap((pattern) =>
+    [...log.matchAll(pattern)].map((match) => ({
+      commitShaPrefix: match[1] as string,
+      prNumber: Number(match[2]),
+    })),
+  )
   if (matches.length === 0) return null
   const unique = new Map(matches.map((match) => [`${match.commitShaPrefix}/#${match.prNumber}`, match]))
   if (unique.size !== 1) {
@@ -2194,10 +2198,10 @@ const fetchBaynBuildWorkflowJobs = async (
   return parseBaynBuildWorkflowJobs(response.value)
 }
 
-const fetchFailedUnresolvedThreadBlock = async (
+const fetchFailedReviewThreadBlock = async (
   options: GitHubLoaderOptions,
   jobs: readonly BaynBuildWorkflowJob[],
-): Promise<FailedUnresolvedThreadBlock | null> => {
+): Promise<FailedReviewThreadBlock | null> => {
   const reviewJobs = jobs.filter((job) => job.name === 'Verify exact-head Codex review')
   if (reviewJobs.length !== 1) return null
   const reviewJob = reviewJobs[0]
@@ -2211,7 +2215,7 @@ const fetchFailedUnresolvedThreadBlock = async (
     maximumBytes: maximumReleaseReviewJobLogBytes,
     fetchFn: options.fetchFn,
   })
-  return parseFailedUnresolvedThreadBlock(log)
+  return parseFailedReviewThreadBlock(log)
 }
 
 const latestFailedSourcePush = (
@@ -2268,12 +2272,11 @@ export const createGitHubReleaseRetryLoader = (options: {
     ])
     const failedRun = latestFailedSourcePush(sourcePushRuns, options.mainCommitSha)
     const jobs = failedRun === undefined ? [] : await fetchBaynBuildWorkflowJobs(loaderOptions, failedRun.id)
-    const unresolvedThreadBlock =
-      failedRun === undefined ? null : await fetchFailedUnresolvedThreadBlock(loaderOptions, jobs)
+    const reviewThreadBlock = failedRun === undefined ? null : await fetchFailedReviewThreadBlock(loaderOptions, jobs)
     return {
       ...eligibility,
       defaultBranchSha,
-      failedReviewRun: failedRun === undefined ? null : { run: failedRun, jobs, unresolvedThreadBlock },
+      failedReviewRun: failedRun === undefined ? null : { run: failedRun, jobs, reviewThreadBlock },
       publicationSucceeded:
         sourcePushRuns.some((run) => run.status === 'completed' && run.conclusion === 'success') ||
         currentDispatchRuns.some((run) => run.status === 'completed' && run.conclusion === 'success'),
