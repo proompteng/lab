@@ -2,15 +2,22 @@ import { describe, expect, test } from 'bun:test'
 
 import {
   baynCodexReviewer,
+  createGitHubReleaseEligibilityLoader,
   createGitHubReleaseReviewLoader,
+  evaluateBaynReleaseEligibility,
   evaluateBaynReleaseReview,
   GitHubReleaseReviewError,
+  isBaynReleaseAffectingPath,
+  pollBaynReleaseEligibility,
   pollBaynReleaseReview,
+  resolveLastPublishedRevision,
   type AssociatedPullRequest,
+  type BaynReleaseEligibilitySnapshot,
   type BaynReleaseReviewPollResult,
   type BaynReleaseReviewSnapshot,
   type PullRequestReview,
   type PullRequestReviewThread,
+  type SuccessfulPublishRun,
 } from './verify-release-review'
 
 const requireHold = (
@@ -25,6 +32,9 @@ const mainCommitSha = 'a'.repeat(40)
 const finalHeadSha = 'b'.repeat(40)
 const olderHeadSha = 'c'.repeat(40)
 const pushBeforeSha = 'd'.repeat(40)
+const lastPublishedSha = 'e'.repeat(40)
+const heldCommitSha = 'f'.repeat(40)
+const heldHeadSha = '1'.repeat(40)
 const evaluationNowMs = Date.parse('2026-07-30T07:02:00Z')
 
 const associatedPull = (overrides: Partial<AssociatedPullRequest> = {}): AssociatedPullRequest => ({
@@ -80,6 +90,363 @@ const snapshot = (
           },
   }
 }
+
+const successfulPublishRun = (overrides: Partial<SuccessfulPublishRun> = {}): SuccessfulPublishRun => ({
+  id: 100,
+  runNumber: 10,
+  runAttempt: 1,
+  headSha: lastPublishedSha,
+  headBranch: 'main',
+  event: 'push',
+  status: 'completed',
+  conclusion: 'success',
+  ...overrides,
+})
+
+const reviewSnapshotFor = (options: {
+  readonly commitSha: string
+  readonly prNumber: number
+  readonly headSha: string
+  readonly parents: readonly string[]
+  readonly reviews?: readonly PullRequestReview[]
+  readonly threads?: readonly PullRequestReviewThread[]
+}): BaynReleaseReviewSnapshot => {
+  const associated = associatedPull({
+    number: options.prNumber,
+    headSha: options.headSha,
+    mergeCommitSha: options.commitSha,
+  })
+  return {
+    mainCommitParents: options.parents,
+    associatedPullRequests: [associated],
+    pullRequest: {
+      number: options.prNumber,
+      baseRefName: 'main',
+      headSha: options.headSha,
+      mergeCommitSha: options.commitSha,
+      mergedAt: associated.mergedAt,
+      reviews: options.reviews ?? [
+        review({
+          commitSha: options.headSha,
+        }),
+      ],
+      threads: options.threads ?? [],
+    },
+  }
+}
+
+const eligibilitySnapshot = (
+  overrides: Partial<BaynReleaseEligibilitySnapshot> = {},
+): BaynReleaseEligibilitySnapshot => ({
+  currentCommitParents: [pushBeforeSha],
+  lastPublishedRevision: {
+    status: 'resolved',
+    revision: lastPublishedSha,
+    runId: 100,
+    runNumber: 10,
+    runAttempt: 1,
+  },
+  comparison: {
+    status: 'ahead',
+    baseSha: lastPublishedSha,
+    headSha: mainCommitSha,
+    mergeBaseSha: lastPublishedSha,
+    aheadBy: 1,
+    totalCommits: 1,
+    commits: [
+      {
+        sha: mainCommitSha,
+        parents: [pushBeforeSha],
+        files: ['services/bayn/src/example.ts'],
+        reviewSnapshot: snapshot(),
+      },
+    ],
+    truncated: false,
+  },
+  ...overrides,
+})
+
+describe('Bayn publication-range eligibility', () => {
+  test('accepts every clean Bayn-affecting commit since the last published revision', () => {
+    expect(
+      evaluateBaynReleaseEligibility({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: eligibilitySnapshot(),
+        nowMs: evaluationNowMs,
+        pushBeforeSha,
+      }),
+    ).toMatchObject({
+      status: 'eligible',
+      lastPublishedRevision: lastPublishedSha,
+      checkedCommitCount: 1,
+      baynAffectingCommitCount: 1,
+      reviewedPullRequests: [{ commitSha: mainCommitSha, prNumber: 13390, headSha: finalHeadSha }],
+    })
+  })
+
+  test('holds a later clean separate push when an earlier held Bayn run was cancelled', () => {
+    const heldReview = reviewSnapshotFor({
+      commitSha: heldCommitSha,
+      prNumber: 13391,
+      headSha: heldHeadSha,
+      parents: [lastPublishedSha],
+      threads: [
+        thread({
+          id: 'held-thread',
+          isResolved: false,
+          url: 'https://github.com/proompteng/lab/pull/13391#discussion_held',
+        }),
+      ],
+    })
+    const cleanReview = reviewSnapshotFor({
+      commitSha: mainCommitSha,
+      prNumber: 13392,
+      headSha: finalHeadSha,
+      parents: [heldCommitSha],
+    })
+    const result = evaluateBaynReleaseEligibility({
+      mainCommitSha,
+      baseRefName: 'main',
+      snapshot: eligibilitySnapshot({
+        currentCommitParents: [heldCommitSha],
+        comparison: {
+          status: 'ahead',
+          baseSha: lastPublishedSha,
+          headSha: mainCommitSha,
+          mergeBaseSha: lastPublishedSha,
+          aheadBy: 2,
+          totalCommits: 2,
+          commits: [
+            {
+              sha: heldCommitSha,
+              parents: [lastPublishedSha],
+              files: ['services/bayn/src/held.ts'],
+              reviewSnapshot: heldReview,
+            },
+            {
+              sha: mainCommitSha,
+              parents: [heldCommitSha],
+              files: ['services/bayn/src/clean.ts'],
+              reviewSnapshot: cleanReview,
+            },
+          ],
+          truncated: false,
+        },
+      }),
+      nowMs: evaluationNowMs,
+      pushBeforeSha: heldCommitSha,
+    })
+
+    expect(result).toMatchObject({
+      status: 'hold',
+      code: 'active-unresolved-review-threads',
+      retryable: false,
+    })
+    if (result.status !== 'hold') throw new Error('expected held earlier Bayn commit')
+    expect(result.message).toContain(heldCommitSha.slice(0, 12))
+    expect(result.message).toContain(lastPublishedSha.slice(0, 12))
+  })
+
+  test('holds boundedly when no last successfully published revision exists', async () => {
+    const result = await pollBaynReleaseEligibility({
+      mainCommitSha,
+      baseRefName: 'main',
+      pushBeforeSha,
+      maxAttempts: 2,
+      pollIntervalMs: 1,
+      loadSnapshot: async () =>
+        eligibilitySnapshot({
+          lastPublishedRevision: { status: 'missing' },
+          comparison: null,
+        }),
+      sleep: async () => {},
+    })
+
+    expect(result).toMatchObject({
+      status: 'hold',
+      code: 'last-published-revision-missing',
+      attempts: 2,
+      timedOut: true,
+    })
+  })
+
+  test('holds an ambiguous latest successful publication revision', () => {
+    const firstRevision = '2'.repeat(40)
+    const secondRevision = '3'.repeat(40)
+    expect(
+      resolveLastPublishedRevision([
+        successfulPublishRun({ headSha: firstRevision }),
+        successfulPublishRun({ id: 101, headSha: secondRevision }),
+      ]),
+    ).toEqual({
+      status: 'ambiguous',
+      runNumber: 10,
+      revisions: [firstRevision, secondRevision],
+    })
+
+    expect(
+      evaluateBaynReleaseEligibility({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: eligibilitySnapshot({
+          lastPublishedRevision: {
+            status: 'ambiguous',
+            runNumber: 10,
+            revisions: [firstRevision, secondRevision],
+          },
+          comparison: null,
+        }),
+        nowMs: evaluationNowMs,
+        pushBeforeSha,
+      }),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'last-published-revision-ambiguous',
+      retryable: false,
+    })
+  })
+
+  test('matches only Bayn release inputs when filtering the publication range', () => {
+    expect(isBaynReleaseAffectingPath('services/bayn/src/app.ts')).toBe(true)
+    expect(isBaynReleaseAffectingPath('.github/workflows/bayn-build-push.yml')).toBe(true)
+    expect(isBaynReleaseAffectingPath('packages/other/package.json')).toBe(true)
+    expect(isBaynReleaseAffectingPath('services/other/src/app.ts')).toBe(false)
+    expect(isBaynReleaseAffectingPath('.github/workflows/torghut-release.yml')).toBe(false)
+  })
+
+  test('decodes successful publication, comparison, commit, and review evidence', async () => {
+    const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/actions/workflows/')) {
+        return Response.json({
+          workflow_runs: [
+            {
+              id: 100,
+              run_number: 10,
+              run_attempt: 1,
+              head_sha: lastPublishedSha,
+              head_branch: 'main',
+              event: 'push',
+              status: 'completed',
+              conclusion: 'success',
+            },
+          ],
+        })
+      }
+      if (url.includes('/compare/')) {
+        return Response.json({
+          status: 'ahead',
+          ahead_by: 1,
+          total_commits: 1,
+          base_commit: { sha: lastPublishedSha },
+          merge_base_commit: { sha: lastPublishedSha },
+          commits: [{ sha: mainCommitSha }],
+        })
+      }
+      if (url.includes(`/commits/${mainCommitSha}/pulls?`)) {
+        return Response.json([
+          {
+            number: 13390,
+            base: { ref: 'main' },
+            head: { sha: finalHeadSha },
+            merge_commit_sha: mainCommitSha,
+            merged_at: '2026-07-30T07:00:00Z',
+          },
+        ])
+      }
+      if (url.includes(`/commits/${mainCommitSha}?`)) {
+        return Response.json({
+          sha: mainCommitSha,
+          parents: [{ sha: pushBeforeSha }],
+          files: [
+            {
+              filename: 'services/other/src/example.ts',
+              previous_filename: 'services/bayn/src/example.ts',
+            },
+          ],
+        })
+      }
+
+      const request = JSON.parse(String(init?.body)) as { readonly query: string }
+      if (request.query.includes('BaynReleasePullRequestMetadata')) {
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                number: 13390,
+                baseRefName: 'main',
+                headRefOid: finalHeadSha,
+                mergedAt: '2026-07-30T07:00:00Z',
+                mergeCommit: { oid: mainCommitSha },
+              },
+            },
+          },
+        })
+      }
+      if (request.query.includes('BaynReleasePullRequestReviews')) {
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                reviews: {
+                  nodes: [
+                    {
+                      author: { login: baynCodexReviewer },
+                      commit: { oid: finalHeadSha },
+                      submittedAt: '2026-07-30T07:01:00Z',
+                      state: 'COMMENTED',
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+        })
+      }
+      if (request.query.includes('BaynReleasePullRequestThreads')) {
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+        })
+      }
+      throw new Error(`unexpected fixture request: ${url}`)
+    }) as typeof fetch
+
+    const loader = createGitHubReleaseEligibilityLoader({
+      repository: 'proompteng/lab',
+      token: 'fixture-token',
+      mainCommitSha,
+      baseRefName: 'main',
+      requestTimeoutMs: 1_000,
+      fetchFn,
+    })
+
+    expect(
+      evaluateBaynReleaseEligibility({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: await loader(),
+        nowMs: evaluationNowMs,
+        pushBeforeSha,
+      }),
+    ).toMatchObject({
+      status: 'eligible',
+      lastPublishedRevision: lastPublishedSha,
+      checkedCommitCount: 1,
+      baynAffectingCommitCount: 1,
+    })
+  })
+})
 
 describe('Bayn exact-head release review eligibility', () => {
   test('accepts a clean exact-head Codex review with only resolved threads', () => {
@@ -418,7 +785,11 @@ describe('Bayn exact-head release review eligibility', () => {
       const url = String(input)
       if (url.includes('/commits/')) {
         if (!url.includes('/pulls?')) {
-          return Response.json({ parents: [{ sha: pushBeforeSha }] })
+          return Response.json({
+            sha: mainCommitSha,
+            parents: [{ sha: pushBeforeSha }],
+            files: [{ filename: 'services/bayn/src/example.ts' }],
+          })
         }
         return Response.json([
           {

@@ -1,6 +1,7 @@
 name: bayn-build-push
 
 permissions:
+  actions: read
   contents: read
   pull-requests: read
 

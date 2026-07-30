@@ -2,6 +2,8 @@ const githubApiVersion = '2022-11-28'
 const githubGraphqlUrl = 'https://api.github.com/graphql'
 const maximumGraphqlPages = 20
 const minimumExactReviewAgeMs = 30_000
+const maximumReleaseRangeCommits = 100
+const githubWorkflowFile = 'bayn-build-push.yml'
 
 export const baynCodexReviewer = 'chatgpt-codex-connector'
 
@@ -44,7 +46,58 @@ export interface BaynReleaseReviewSnapshot {
   readonly pullRequest: PullRequestReviewState | null
 }
 
+export interface SuccessfulPublishRun {
+  readonly id: number
+  readonly runNumber: number
+  readonly runAttempt: number
+  readonly headSha: string
+  readonly headBranch: string
+  readonly event: string
+  readonly status: string
+  readonly conclusion: string
+}
+
+export type LastPublishedRevisionResolution =
+  | {
+      readonly status: 'resolved'
+      readonly revision: string
+      readonly runId: number
+      readonly runNumber: number
+      readonly runAttempt: number
+    }
+  | { readonly status: 'missing' }
+  | { readonly status: 'ambiguous'; readonly runNumber: number; readonly revisions: readonly string[] }
+
+export interface BaynReleaseRangeCommit {
+  readonly sha: string
+  readonly parents: readonly string[]
+  readonly files: readonly string[]
+  readonly reviewSnapshot: BaynReleaseReviewSnapshot | null
+}
+
+export interface BaynReleaseComparison {
+  readonly status: string
+  readonly baseSha: string
+  readonly headSha: string
+  readonly mergeBaseSha: string
+  readonly aheadBy: number
+  readonly totalCommits: number
+  readonly commits: readonly BaynReleaseRangeCommit[]
+  readonly truncated: boolean
+}
+
+export interface BaynReleaseEligibilitySnapshot {
+  readonly currentCommitParents: readonly string[]
+  readonly lastPublishedRevision: LastPublishedRevisionResolution
+  readonly comparison: BaynReleaseComparison | null
+}
+
 export type BaynReleaseReviewHoldCode =
+  | 'last-published-revision-missing'
+  | 'last-published-revision-ambiguous'
+  | 'last-published-revision-not-ancestor'
+  | 'release-range-too-large'
+  | 'release-range-metadata-mismatch'
   | 'no-associated-source-pr'
   | 'ambiguous-associated-source-prs'
   | 'non-single-commit-main-push'
@@ -68,6 +121,19 @@ export interface BaynReleaseReviewEligible {
   readonly reviewSubmittedAt: string
 }
 
+export interface BaynReleaseEligibilityEligible {
+  readonly status: 'eligible'
+  readonly lastPublishedRevision: string
+  readonly checkedCommitCount: number
+  readonly baynAffectingCommitCount: number
+  readonly reviewedPullRequests: readonly {
+    readonly commitSha: string
+    readonly prNumber: number
+    readonly headSha: string
+    readonly reviewSubmittedAt: string
+  }[]
+}
+
 export interface BaynReleaseReviewHold {
   readonly status: 'hold'
   readonly code: BaynReleaseReviewHoldCode
@@ -77,7 +143,14 @@ export interface BaynReleaseReviewHold {
 
 export type BaynReleaseReviewEvaluation = BaynReleaseReviewEligible | BaynReleaseReviewHold
 
+export type BaynReleaseEligibilityEvaluation = BaynReleaseEligibilityEligible | BaynReleaseReviewHold
+
 export type BaynReleaseReviewPollResult = BaynReleaseReviewEvaluation & {
+  readonly attempts: number
+  readonly timedOut: boolean
+}
+
+export type BaynReleaseEligibilityPollResult = BaynReleaseEligibilityEvaluation & {
   readonly attempts: number
   readonly timedOut: boolean
 }
@@ -118,6 +191,66 @@ const hold = (code: BaynReleaseReviewHoldCode, message: string, retryable: boole
   message,
   retryable,
 })
+
+export const resolveLastPublishedRevision = (
+  runs: readonly SuccessfulPublishRun[],
+): LastPublishedRevisionResolution => {
+  if (runs.length === 0) return { status: 'missing' }
+
+  const highestRunNumber = Math.max(...runs.map((run) => run.runNumber))
+  const latestRuns = runs.filter((run) => run.runNumber === highestRunNumber)
+  const revisions = [...new Set(latestRuns.map((run) => run.headSha))].toSorted()
+  if (revisions.length !== 1) {
+    return { status: 'ambiguous', runNumber: highestRunNumber, revisions }
+  }
+
+  const revision = revisions[0]
+  if (revision === undefined) return { status: 'missing' }
+  const selectedRun = latestRuns
+    .filter((run) => run.headSha === revision)
+    .toSorted((left, right) => right.runAttempt - left.runAttempt || right.id - left.id)[0]
+  if (selectedRun === undefined) return { status: 'missing' }
+  return {
+    status: 'resolved',
+    revision,
+    runId: selectedRun.id,
+    runNumber: selectedRun.runNumber,
+    runAttempt: selectedRun.runAttempt,
+  }
+}
+
+const exactBaynReleasePaths = new Set([
+  'packages/scripts/src/bayn/update-manifests.ts',
+  'packages/scripts/src/bayn/verify-release-review.ts',
+  'nix/images/bayn.nix',
+  'nix/images/bayn-runtime-root.nix',
+  'nix/images/bun-workspace-service.nix',
+  'nix/images/bun-workspace-deps-source.nix',
+  'nix/packages.nix',
+  'nix/cache-push.sh',
+  'nix/ci-nix-oci-summary.sh',
+  'nix/ci-run-timed.sh',
+  'nix/oci-inspect-archive.sh',
+  'nix/oci-push.sh',
+  'nix/oci-release-contract.sh',
+  'nix/verify-bayn-image-command.sh',
+  'flake.nix',
+  'flake.lock',
+  'bun.lock',
+  'package.json',
+  '.npmrc',
+  'bunfig.toml',
+  'tsconfig.base.json',
+  '.github/workflows/nix-oci-build-common.yml',
+])
+
+export const isBaynReleaseAffectingPath = (path: string): boolean =>
+  path.startsWith('services/bayn/') ||
+  path.startsWith('patches/') ||
+  path.startsWith('.github/actions/setup-nix-toolchain/') ||
+  /^\.github\/workflows\/bayn-[^/]+\.yml$/.test(path) ||
+  path.endsWith('/package.json') ||
+  exactBaynReleasePaths.has(path)
 
 const eligibleReviewStates = new Set(['APPROVED', 'COMMENTED'])
 
@@ -276,6 +409,153 @@ export const evaluateBaynReleaseReview = (input: {
   }
 }
 
+export const evaluateBaynReleaseEligibility = (input: {
+  readonly mainCommitSha: string
+  readonly baseRefName: string
+  readonly snapshot: BaynReleaseEligibilitySnapshot
+  readonly nowMs: number
+  readonly pushBeforeSha: string
+}): BaynReleaseEligibilityEvaluation => {
+  if (
+    input.snapshot.currentCommitParents.length !== 1 ||
+    input.snapshot.currentCommitParents[0] !== input.pushBeforeSha
+  ) {
+    const parents =
+      input.snapshot.currentCommitParents.length === 0
+        ? 'no parents'
+        : input.snapshot.currentCommitParents.map(shortSha).join(', ')
+    return hold(
+      'non-single-commit-main-push',
+      `main push ${shortSha(input.pushBeforeSha)}..${shortSha(input.mainCommitSha)} is not one direct-parent commit; observed parent(s): ${parents}`,
+      false,
+    )
+  }
+
+  const published = input.snapshot.lastPublishedRevision
+  if (published.status === 'missing') {
+    return hold(
+      'last-published-revision-missing',
+      `no successful ${githubWorkflowFile} main push identifies the last published Bayn revision`,
+      true,
+    )
+  }
+  if (published.status === 'ambiguous') {
+    return hold(
+      'last-published-revision-ambiguous',
+      `successful ${githubWorkflowFile} run number ${published.runNumber} identifies multiple published revisions: ${published.revisions.map(shortSha).join(', ')}`,
+      false,
+    )
+  }
+
+  const comparison = input.snapshot.comparison
+  if (comparison === null) {
+    return hold(
+      'release-range-metadata-mismatch',
+      `release range ${shortSha(published.revision)}..${shortSha(input.mainCommitSha)} was not loaded`,
+      false,
+    )
+  }
+  if (comparison.baseSha !== published.revision || comparison.headSha !== input.mainCommitSha) {
+    return hold(
+      'release-range-metadata-mismatch',
+      `release range metadata does not bind published ${shortSha(published.revision)} to current ${shortSha(input.mainCommitSha)}`,
+      false,
+    )
+  }
+  if (comparison.status !== 'ahead' && comparison.status !== 'identical') {
+    return hold(
+      'last-published-revision-not-ancestor',
+      `last published Bayn revision ${shortSha(published.revision)} is not an ancestor of current ${shortSha(input.mainCommitSha)}; GitHub comparison status is ${comparison.status}`,
+      false,
+    )
+  }
+  if (comparison.mergeBaseSha !== published.revision) {
+    return hold(
+      'last-published-revision-not-ancestor',
+      `last published Bayn revision ${shortSha(published.revision)} is not the exact merge base of current ${shortSha(input.mainCommitSha)}`,
+      false,
+    )
+  }
+  if (comparison.truncated || comparison.aheadBy > maximumReleaseRangeCommits) {
+    return hold(
+      'release-range-too-large',
+      `release range ${shortSha(published.revision)}..${shortSha(input.mainCommitSha)} contains ${comparison.aheadBy} commit(s), exceeding the bounded limit of ${maximumReleaseRangeCommits}`,
+      false,
+    )
+  }
+  if (
+    comparison.aheadBy !== comparison.totalCommits ||
+    comparison.aheadBy !== comparison.commits.length ||
+    (comparison.status === 'identical' && comparison.aheadBy !== 0) ||
+    (comparison.status === 'ahead' && comparison.aheadBy === 0)
+  ) {
+    return hold(
+      'release-range-metadata-mismatch',
+      `release range reports aheadBy=${comparison.aheadBy}, totalCommits=${comparison.totalCommits}, loadedCommits=${comparison.commits.length}, status=${comparison.status}`,
+      false,
+    )
+  }
+
+  const commitShas = comparison.commits.map((commit) => commit.sha)
+  if (new Set(commitShas).size !== commitShas.length) {
+    return hold('release-range-metadata-mismatch', 'release range contains duplicate commit identities', false)
+  }
+  if (comparison.commits.length > 0 && comparison.commits.at(-1)?.sha !== input.mainCommitSha) {
+    return hold(
+      'release-range-metadata-mismatch',
+      `release range does not end at current main commit ${shortSha(input.mainCommitSha)}`,
+      false,
+    )
+  }
+
+  const affectingCommits = comparison.commits.filter((commit) => commit.files.some(isBaynReleaseAffectingPath))
+  if (comparison.aheadBy > 0 && affectingCommits.length === 0) {
+    return hold(
+      'release-range-metadata-mismatch',
+      `triggered Bayn release range ${shortSha(published.revision)}..${shortSha(input.mainCommitSha)} contains no Bayn-affecting commit`,
+      false,
+    )
+  }
+
+  const reviewedPullRequests: BaynReleaseEligibilityEligible['reviewedPullRequests'][number][] = []
+  for (const commit of affectingCommits) {
+    if (commit.reviewSnapshot === null) {
+      return hold(
+        'release-range-metadata-mismatch',
+        `Bayn-affecting commit ${shortSha(commit.sha)} has no source review snapshot`,
+        false,
+      )
+    }
+    const review = evaluateBaynReleaseReview({
+      mainCommitSha: commit.sha,
+      baseRefName: input.baseRefName,
+      snapshot: commit.reviewSnapshot,
+      nowMs: input.nowMs,
+      pushBeforeSha: null,
+    })
+    if (review.status === 'hold') {
+      return {
+        ...review,
+        message: `Bayn-affecting commit ${shortSha(commit.sha)} after last published ${shortSha(published.revision)} is not release-eligible: ${review.message}`,
+      }
+    }
+    reviewedPullRequests.push({
+      commitSha: commit.sha,
+      prNumber: review.prNumber,
+      headSha: review.headSha,
+      reviewSubmittedAt: review.reviewSubmittedAt,
+    })
+  }
+
+  return {
+    status: 'eligible',
+    lastPublishedRevision: published.revision,
+    checkedCommitCount: comparison.commits.length,
+    baynAffectingCommitCount: affectingCommits.length,
+    reviewedPullRequests,
+  }
+}
+
 const defaultSleep = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, milliseconds)
@@ -333,6 +613,49 @@ export const pollBaynReleaseReview = async (options: {
   }
 }
 
+export const pollBaynReleaseEligibility = async (options: {
+  readonly mainCommitSha: string
+  readonly baseRefName: string
+  readonly pushBeforeSha: string
+  readonly maxAttempts: number
+  readonly pollIntervalMs: number
+  readonly loadSnapshot: () => Promise<BaynReleaseEligibilitySnapshot>
+  readonly sleep?: (milliseconds: number) => Promise<void>
+  readonly now?: () => number
+}): Promise<BaynReleaseEligibilityPollResult> => {
+  const sleep = options.sleep ?? defaultSleep
+  const now = options.now ?? Date.now
+  let lastHold: BaynReleaseReviewHold | null = null
+
+  for (let attempt = 1; attempt <= options.maxAttempts; attempt += 1) {
+    let evaluation: BaynReleaseEligibilityEvaluation
+    try {
+      evaluation = evaluateBaynReleaseEligibility({
+        mainCommitSha: options.mainCommitSha,
+        baseRefName: options.baseRefName,
+        snapshot: await options.loadSnapshot(),
+        nowMs: now(),
+        pushBeforeSha: options.pushBeforeSha,
+      })
+    } catch (error) {
+      evaluation = apiErrorHold(error)
+    }
+
+    if (evaluation.status === 'eligible') return { ...evaluation, attempts: attempt, timedOut: false }
+    lastHold = evaluation
+    if (!evaluation.retryable) return { ...evaluation, attempts: attempt, timedOut: false }
+    if (attempt < options.maxAttempts) await sleep(options.pollIntervalMs)
+  }
+
+  if (lastHold === null) throw new Error('release eligibility poll completed without an evaluation')
+  return {
+    ...lastHold,
+    message: `${lastHold.message}; bounded wait exhausted after ${options.maxAttempts} attempt(s)`,
+    attempts: options.maxAttempts,
+    timedOut: true,
+  }
+}
+
 const expectRecord = (value: unknown, context: string): Record<string, unknown> => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new GitHubReleaseReviewError('github-api-invalid-response', context)
@@ -345,6 +668,12 @@ const expectString = (value: unknown, context: string): string => {
     throw new GitHubReleaseReviewError('github-api-invalid-response', context)
   }
   return value
+}
+
+const expectSha = (value: unknown, context: string): string => {
+  const sha = expectString(value, context)
+  if (!/^[0-9a-f]{40}$/.test(sha)) throw new GitHubReleaseReviewError('github-api-invalid-response', context)
+  return sha
 }
 
 const expectNullableString = (value: unknown, context: string): string | null => {
@@ -457,15 +786,118 @@ const parseAssociatedPullRequests = (value: unknown): readonly AssociatedPullReq
   })
 }
 
-const parseMainCommitParents = (value: unknown): readonly string[] => {
-  const commit = expectRecord(value, 'read main commit parents')
-  if (!Array.isArray(commit.parents)) {
-    throw new GitHubReleaseReviewError('github-api-invalid-response', 'read main commit parents')
+const parseSuccessfulPublishRuns = (value: unknown): readonly SuccessfulPublishRun[] => {
+  const payload = expectRecord(value, 'list successful Bayn publish runs')
+  if (!Array.isArray(payload.workflow_runs)) {
+    throw new GitHubReleaseReviewError('github-api-invalid-response', 'list successful Bayn publish runs')
   }
-  return commit.parents.map((item, index) => {
-    const parent = expectRecord(item, `main commit parent ${index}`)
-    return expectString(parent.sha, `main commit parent ${index} SHA`)
+  return payload.workflow_runs.map((item, index) => {
+    const run = expectRecord(item, `successful Bayn publish run ${index}`)
+    const parsed: SuccessfulPublishRun = {
+      id: expectInteger(run.id, `successful Bayn publish run ${index} ID`),
+      runNumber: expectInteger(run.run_number, `successful Bayn publish run ${index} number`),
+      runAttempt: expectInteger(run.run_attempt, `successful Bayn publish run ${index} attempt`),
+      headSha: expectSha(run.head_sha, `successful Bayn publish run ${index} head SHA`),
+      headBranch: expectString(run.head_branch, `successful Bayn publish run ${index} head branch`),
+      event: expectString(run.event, `successful Bayn publish run ${index} event`),
+      status: expectString(run.status, `successful Bayn publish run ${index} status`),
+      conclusion: expectString(run.conclusion, `successful Bayn publish run ${index} conclusion`),
+    }
+    if (
+      parsed.headBranch !== 'main' ||
+      parsed.event !== 'push' ||
+      parsed.status !== 'completed' ||
+      parsed.conclusion !== 'success'
+    ) {
+      throw new GitHubReleaseReviewError('github-api-invalid-response', `successful Bayn publish run ${index} contract`)
+    }
+    return parsed
   })
+}
+
+interface ParsedComparison {
+  readonly status: string
+  readonly baseSha: string
+  readonly mergeBaseSha: string
+  readonly aheadBy: number
+  readonly totalCommits: number
+  readonly commitShas: readonly string[]
+}
+
+const parseComparison = (value: unknown): ParsedComparison => {
+  const comparison = expectRecord(value, 'compare last published Bayn revision to current main')
+  const baseCommit = expectRecord(comparison.base_commit, 'comparison base commit')
+  const mergeBaseCommit = expectRecord(comparison.merge_base_commit, 'comparison merge base commit')
+  if (!Array.isArray(comparison.commits)) {
+    throw new GitHubReleaseReviewError(
+      'github-api-invalid-response',
+      'compare last published Bayn revision to current main commits',
+    )
+  }
+  return {
+    status: expectString(comparison.status, 'comparison status'),
+    baseSha: expectSha(baseCommit.sha, 'comparison base commit SHA'),
+    mergeBaseSha: expectSha(mergeBaseCommit.sha, 'comparison merge base commit SHA'),
+    aheadBy: expectInteger(comparison.ahead_by, 'comparison ahead count'),
+    totalCommits: expectInteger(comparison.total_commits, 'comparison total commit count'),
+    commitShas: comparison.commits.map((item, index) => {
+      const commit = expectRecord(item, `comparison commit ${index}`)
+      return expectSha(commit.sha, `comparison commit ${index} SHA`)
+    }),
+  }
+}
+
+interface CommitDetail {
+  readonly sha: string
+  readonly parents: readonly string[]
+  readonly files: readonly string[]
+}
+
+const parseCommitDetail = (value: unknown, expectedSha: string): CommitDetail => {
+  const commit = expectRecord(value, `read commit ${shortSha(expectedSha)}`)
+  const sha = expectSha(commit.sha, `commit ${shortSha(expectedSha)} SHA`)
+  if (sha !== expectedSha) {
+    throw new GitHubReleaseReviewError('github-api-invalid-response', `read commit ${shortSha(expectedSha)} identity`)
+  }
+  if (!Array.isArray(commit.parents) || !Array.isArray(commit.files)) {
+    throw new GitHubReleaseReviewError('github-api-invalid-response', `read commit ${shortSha(expectedSha)} detail`)
+  }
+  return {
+    sha,
+    parents: commit.parents.map((item, index) => {
+      const parent = expectRecord(item, `commit ${shortSha(expectedSha)} parent ${index}`)
+      return expectSha(parent.sha, `commit ${shortSha(expectedSha)} parent ${index} SHA`)
+    }),
+    files: commit.files.flatMap((item, index) => {
+      const file = expectRecord(item, `commit ${shortSha(expectedSha)} file ${index}`)
+      const filename = expectString(file.filename, `commit ${shortSha(expectedSha)} file ${index} path`)
+      if (file.previous_filename === undefined) return [filename]
+      return [
+        filename,
+        expectString(file.previous_filename, `commit ${shortSha(expectedSha)} file ${index} previous path`),
+      ]
+    }),
+  }
+}
+
+const mapWithConcurrency = async <Input, Output>(
+  values: readonly Input[],
+  concurrency: number,
+  map: (value: Input, index: number) => Promise<Output>,
+): Promise<readonly Output[]> => {
+  const output: Output[] = Array.from({ length: values.length })
+  let nextIndex = 0
+  const workers = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+    while (nextIndex < values.length) {
+      const index = nextIndex
+      nextIndex += 1
+      const value = values[index]
+      if (value === undefined) throw new Error(`missing concurrency input ${index}`)
+      output[index] = await map(value, index)
+    }
+  })
+  await Promise.all(workers)
+  return output
 }
 
 const pullRequestMetadataQuery = `
@@ -645,6 +1077,58 @@ interface GitHubLoaderOptions {
   readonly fetchFn: typeof fetch
 }
 
+const fetchCommitDetail = async (options: GitHubLoaderOptions, commitSha: string): Promise<CommitDetail> => {
+  const operation = `read commit ${shortSha(commitSha)} detail`
+  const response = await requestGitHubJson({
+    url: `https://api.github.com/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.name)}/commits/${encodeURIComponent(commitSha)}?per_page=100&page=1`,
+    operation,
+    token: options.token,
+    requestTimeoutMs: options.requestTimeoutMs,
+    fetchFn: options.fetchFn,
+  })
+  if (response.headers.get('link')?.includes('rel="next"') === true) {
+    throw new GitHubReleaseReviewError('github-api-pagination-limit', `${operation} files`)
+  }
+  return parseCommitDetail(response.value, commitSha)
+}
+
+const loadCommitReviewSnapshot = async (
+  options: GitHubLoaderOptions,
+  commitSha: string,
+  knownCommit?: CommitDetail,
+): Promise<BaynReleaseReviewSnapshot> => {
+  const associationOperation = `list pull requests associated with ${shortSha(commitSha)}`
+  const [commit, associationResponse] = await Promise.all([
+    knownCommit === undefined ? fetchCommitDetail(options, commitSha) : Promise.resolve(knownCommit),
+    requestGitHubJson({
+      url: `https://api.github.com/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.name)}/commits/${encodeURIComponent(commitSha)}/pulls?per_page=100`,
+      operation: associationOperation,
+      token: options.token,
+      requestTimeoutMs: options.requestTimeoutMs,
+      fetchFn: options.fetchFn,
+    }),
+  ])
+  if (associationResponse.headers.get('link')?.includes('rel="next"') === true) {
+    throw new GitHubReleaseReviewError('github-api-pagination-limit', associationOperation)
+  }
+  const associatedPullRequests = parseAssociatedPullRequests(associationResponse.value)
+  const candidates = sourcePullCandidates(associatedPullRequests, options.baseRefName)
+  if (candidates.length !== 1) {
+    return { mainCommitParents: commit.parents, associatedPullRequests, pullRequest: null }
+  }
+
+  const candidate = candidates[0]
+  if (candidate === undefined) throw new Error('source pull selection was unexpectedly empty')
+  const metadata = await fetchPullRequestMetadata(options, candidate.number)
+  const reviews = await fetchPullRequestReviews(options, candidate.number)
+  const threads = await fetchPullRequestThreads(options, candidate.number)
+  return {
+    mainCommitParents: commit.parents,
+    associatedPullRequests,
+    pullRequest: { ...metadata, reviews, threads },
+  }
+}
+
 export const createGitHubReleaseReviewLoader = (options: {
   readonly repository: string
   readonly token: string
@@ -667,41 +1151,128 @@ export const createGitHubReleaseReviewLoader = (options: {
     fetchFn: options.fetchFn ?? fetch,
   }
 
-  return async () => {
-    const associationOperation = `list pull requests associated with ${shortSha(loaderOptions.mainCommitSha)}`
-    const [commitResponse, associationResponse] = await Promise.all([
-      requestGitHubJson({
-        url: `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits/${encodeURIComponent(loaderOptions.mainCommitSha)}`,
-        operation: 'read main commit parents',
-        token: loaderOptions.token,
-        requestTimeoutMs: loaderOptions.requestTimeoutMs,
-        fetchFn: loaderOptions.fetchFn,
-      }),
-      requestGitHubJson({
-        url: `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits/${encodeURIComponent(loaderOptions.mainCommitSha)}/pulls?per_page=100`,
-        operation: associationOperation,
-        token: loaderOptions.token,
-        requestTimeoutMs: loaderOptions.requestTimeoutMs,
-        fetchFn: loaderOptions.fetchFn,
-      }),
-    ])
-    if (associationResponse.headers.get('link')?.includes('rel="next"') === true) {
-      throw new GitHubReleaseReviewError('github-api-pagination-limit', associationOperation)
-    }
-    const mainCommitParents = parseMainCommitParents(commitResponse.value)
-    const associatedPullRequests = parseAssociatedPullRequests(associationResponse.value)
-    const candidates = sourcePullCandidates(associatedPullRequests, loaderOptions.baseRefName)
-    if (candidates.length !== 1) return { mainCommitParents, associatedPullRequests, pullRequest: null }
+  return () => loadCommitReviewSnapshot(loaderOptions, loaderOptions.mainCommitSha)
+}
 
-    const candidate = candidates[0]
-    if (candidate === undefined) throw new Error('source pull selection was unexpectedly empty')
-    const metadata = await fetchPullRequestMetadata(loaderOptions, candidate.number)
-    const reviews = await fetchPullRequestReviews(loaderOptions, candidate.number)
-    const threads = await fetchPullRequestThreads(loaderOptions, candidate.number)
+interface StaticReleaseEligibilityContext {
+  readonly currentCommit: CommitDetail
+  readonly lastPublishedRevision: LastPublishedRevisionResolution
+  readonly comparison:
+    | (Omit<BaynReleaseComparison, 'commits'> & {
+        readonly commits: readonly (CommitDetail & { readonly reviewSnapshot: null })[]
+      })
+    | null
+}
+
+const loadStaticReleaseEligibilityContext = async (
+  options: GitHubLoaderOptions,
+): Promise<StaticReleaseEligibilityContext> => {
+  const successfulRunsOperation = `list successful ${githubWorkflowFile} main push runs`
+  const [currentCommit, successfulRunsResponse] = await Promise.all([
+    fetchCommitDetail(options, options.mainCommitSha),
+    requestGitHubJson({
+      url: `https://api.github.com/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.name)}/actions/workflows/${encodeURIComponent(githubWorkflowFile)}/runs?branch=main&event=push&status=success&per_page=100&page=1`,
+      operation: successfulRunsOperation,
+      token: options.token,
+      requestTimeoutMs: options.requestTimeoutMs,
+      fetchFn: options.fetchFn,
+    }),
+  ])
+  const lastPublishedRevision = resolveLastPublishedRevision(parseSuccessfulPublishRuns(successfulRunsResponse.value))
+  if (lastPublishedRevision.status !== 'resolved') {
+    return { currentCommit, lastPublishedRevision, comparison: null }
+  }
+
+  const comparisonOperation = `compare published ${shortSha(lastPublishedRevision.revision)} to current ${shortSha(options.mainCommitSha)}`
+  const comparisonResponse = await requestGitHubJson({
+    url: `https://api.github.com/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.name)}/compare/${encodeURIComponent(lastPublishedRevision.revision)}...${encodeURIComponent(options.mainCommitSha)}?per_page=${maximumReleaseRangeCommits}&page=1`,
+    operation: comparisonOperation,
+    token: options.token,
+    requestTimeoutMs: options.requestTimeoutMs,
+    fetchFn: options.fetchFn,
+  })
+  const parsedComparison = parseComparison(comparisonResponse.value)
+  const truncated = comparisonResponse.headers.get('link')?.includes('rel="next"') === true
+  if (truncated || parsedComparison.commitShas.length > maximumReleaseRangeCommits) {
     return {
-      mainCommitParents,
-      associatedPullRequests,
-      pullRequest: { ...metadata, reviews, threads },
+      currentCommit,
+      lastPublishedRevision,
+      comparison: {
+        status: parsedComparison.status,
+        baseSha: parsedComparison.baseSha,
+        headSha: options.mainCommitSha,
+        mergeBaseSha: parsedComparison.mergeBaseSha,
+        aheadBy: parsedComparison.aheadBy,
+        totalCommits: parsedComparison.totalCommits,
+        commits: [],
+        truncated: true,
+      },
+    }
+  }
+
+  const commitDetails = await mapWithConcurrency(parsedComparison.commitShas, 4, async (commitSha) =>
+    commitSha === currentCommit.sha ? currentCommit : fetchCommitDetail(options, commitSha),
+  )
+  return {
+    currentCommit,
+    lastPublishedRevision,
+    comparison: {
+      status: parsedComparison.status,
+      baseSha: parsedComparison.baseSha,
+      headSha: options.mainCommitSha,
+      mergeBaseSha: parsedComparison.mergeBaseSha,
+      aheadBy: parsedComparison.aheadBy,
+      totalCommits: parsedComparison.totalCommits,
+      commits: commitDetails.map((commit) => ({ ...commit, reviewSnapshot: null })),
+      truncated: false,
+    },
+  }
+}
+
+export const createGitHubReleaseEligibilityLoader = (options: {
+  readonly repository: string
+  readonly token: string
+  readonly mainCommitSha: string
+  readonly baseRefName: string
+  readonly requestTimeoutMs: number
+  readonly fetchFn?: typeof fetch
+}): (() => Promise<BaynReleaseEligibilitySnapshot>) => {
+  const [owner, name, extra] = options.repository.split('/')
+  if (owner === undefined || owner.length === 0 || name === undefined || name.length === 0 || extra !== undefined) {
+    throw new Error('repository must be in owner/name form')
+  }
+  const loaderOptions: GitHubLoaderOptions = {
+    owner,
+    name,
+    token: options.token,
+    mainCommitSha: options.mainCommitSha,
+    baseRefName: options.baseRefName,
+    requestTimeoutMs: options.requestTimeoutMs,
+    fetchFn: options.fetchFn ?? fetch,
+  }
+  let staticContext: StaticReleaseEligibilityContext | null = null
+
+  return async () => {
+    const loadedContext = staticContext ?? (await loadStaticReleaseEligibilityContext(loaderOptions))
+    if (loadedContext.lastPublishedRevision.status !== 'missing') staticContext = loadedContext
+    if (loadedContext.comparison === null) {
+      return {
+        currentCommitParents: loadedContext.currentCommit.parents,
+        lastPublishedRevision: loadedContext.lastPublishedRevision,
+        comparison: null,
+      }
+    }
+
+    const commits = await mapWithConcurrency(loadedContext.comparison.commits, 3, async (commit) => ({
+      ...commit,
+      reviewSnapshot: commit.files.some(isBaynReleaseAffectingPath)
+        ? await loadCommitReviewSnapshot(loaderOptions, commit.sha, commit)
+        : null,
+    }))
+    return {
+      currentCommitParents: loadedContext.currentCommit.parents,
+      lastPublishedRevision: loadedContext.lastPublishedRevision,
+      comparison: { ...loadedContext.comparison, commits },
     }
   }
 }
@@ -772,13 +1343,14 @@ const run = async (): Promise<void> => {
   const options = parseVerifyReleaseReviewArguments(process.argv.slice(2))
   const token = process.env.GITHUB_TOKEN
   if (token === undefined || token.length === 0) throw new Error('GITHUB_TOKEN is required')
-  const result = await pollBaynReleaseReview({
+  if (options.pushBeforeSha === null) throw new Error('--push-before is required for Bayn publication eligibility')
+  const result = await pollBaynReleaseEligibility({
     mainCommitSha: options.mainCommitSha,
     baseRefName: 'main',
     maxAttempts: options.maxAttempts,
     pollIntervalMs: options.pollIntervalMs,
     pushBeforeSha: options.pushBeforeSha,
-    loadSnapshot: createGitHubReleaseReviewLoader({
+    loadSnapshot: createGitHubReleaseEligibilityLoader({
       repository: options.repository,
       token,
       mainCommitSha: options.mainCommitSha,
@@ -792,7 +1364,7 @@ const run = async (): Promise<void> => {
     return
   }
   console.log(
-    `BAYN_RELEASE_REVIEW_ELIGIBLE PR #${result.prNumber} final head ${shortSha(result.headSha)} reviewed at ${result.reviewSubmittedAt}; attempts=${result.attempts}`,
+    `BAYN_RELEASE_REVIEW_ELIGIBLE published=${shortSha(result.lastPublishedRevision)} current=${shortSha(options.mainCommitSha)} checked_commits=${result.checkedCommitCount} bayn_affecting_commits=${result.baynAffectingCommitCount} reviewed_prs=${result.reviewedPullRequests.map((review) => `#${review.prNumber}@${shortSha(review.headSha)}`).join(',')}; attempts=${result.attempts}`,
   )
 }
 
