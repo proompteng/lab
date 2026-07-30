@@ -41,6 +41,8 @@ statistics.
 - Executable-cleanup commit: `2431fe3ac343c95c4ac4110c62e875568ef3dc2d`.
 - Cleanup-evidence binding commit: `9308b6fecf098a1df498c5a50cb3419169f5c4a0`.
 - Corrective protocol-deviation classification commit: `ed7b15ba63bdb2502cd18007b4c9c0bf105c4463`.
+- Corrective-evidence binding commit: `275d0bcb22057f8602f90837c9bccc9b38a5f4b7`.
+- Invalid-attempt test-vector commit: `3ea3637a468fd44763df40c2c65566b50d8b6dad`.
 - Evaluated command SHA-256: `1ff3ee4b5fdf80ce1666f450cd89930c69e4e64c8ca26e873fdca833259d6097`.
 - Evaluated strategy SHA-256: `29540a392796e1f9ab9c8441f6ad120453c83f6be12c7dec4e00ddec074d8b35`.
 - Evaluated model SHA-256: `7708abd1ef2fcff2078a660387a31b269a997462e6774a26a7d48b8836bdcd85`.
@@ -71,6 +73,8 @@ Git ancestry was explicitly verified as:
   -> 2431fe3ac343c95c4ac4110c62e875568ef3dc2d
   -> 9308b6fecf098a1df498c5a50cb3419169f5c4a0
   -> ed7b15ba63bdb2502cd18007b4c9c0bf105c4463
+  -> 275d0bcb22057f8602f90837c9bccc9b38a5f4b7
+  -> 3ea3637a468fd44763df40c2c65566b50d8b6dad
 ```
 
 ## Raw emitted report identities and consumed-attempt identity
