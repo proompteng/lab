@@ -5,6 +5,7 @@ import { NodeRuntime } from '@effect/platform-node'
 import { Data, Effect, pipe, Result } from 'effect'
 
 import {
+  candidateDevelopmentComparisonSemantics,
   candidateDevelopmentStatisticsPolicy,
   runCandidateDevelopment,
   type CandidateDevelopmentEffects,
@@ -25,15 +26,12 @@ export interface CandidateDevelopmentExecutableProgram<Registration, Development
   readonly effects: CandidateDevelopmentEffects<Registration, DevelopmentData, Error, Requirements>
 }
 
+type CandidateDevelopmentComparisonGateName =
+  (typeof candidateDevelopmentComparisonSemantics.gates)[keyof typeof candidateDevelopmentComparisonSemantics.gates]['name']
+
 export interface CandidateDevelopmentCommandGate {
   readonly name:
-    | 'power'
-    | 'bootstrap_tail_resolution'
-    | 'annualized_return_difference_lower_bound'
-    | 'sharpe_difference_lower_bound'
-    | 'walk_forward_folds'
-    | 'walk_forward_positive_fraction'
-    | 'walk_forward_drawdown'
+    | CandidateDevelopmentComparisonGateName
     | 'economic_verdict'
     | 'baseline_terminal_cash'
     | 'stressed_terminal_cash'
@@ -107,45 +105,46 @@ const decideCandidateDevelopment = (
   baseline: EvaluationResult,
 ): CandidateDevelopmentCommandDecision => {
   const { bootstrap, power, walkForward } = report.comparisonSemantics.analysis
+  const protocolGates = candidateDevelopmentComparisonSemantics.gates
   const gates: readonly CandidateDevelopmentCommandGate[] = [
     {
-      name: 'power',
+      name: protocolGates.power.name,
       passed: power.sufficient,
       actual: power.sufficient,
       required: true,
     },
     {
-      name: 'bootstrap_tail_resolution',
+      name: protocolGates.bootstrapTailResolution.name,
       passed: bootstrap.tailResolutionSufficient,
       actual: bootstrap.tailSampleCount,
       required: bootstrap.minimumTailSamples,
     },
     {
-      name: 'annualized_return_difference_lower_bound',
+      name: protocolGates.annualizedExcessReturnLowerBound.name,
       passed: bootstrap.annualizedReturnDifferenceLowerBound > 0,
       actual: bootstrap.annualizedReturnDifferenceLowerBound,
       required: 0,
     },
     {
-      name: 'sharpe_difference_lower_bound',
+      name: protocolGates.sharpeDifferenceLowerBound.name,
       passed: bootstrap.sharpeDifferenceLowerBound > 0,
       actual: bootstrap.sharpeDifferenceLowerBound,
       required: 0,
     },
     {
-      name: 'walk_forward_folds',
+      name: protocolGates.walkForwardFolds.name,
       passed: walkForward.sufficient,
       actual: walkForward.folds.length,
       required: walkForward.requiredFolds,
     },
     {
-      name: 'walk_forward_positive_fraction',
+      name: protocolGates.walkForwardPositiveFraction.name,
       passed: walkForward.positiveFoldFraction >= walkForward.requiredPositiveFoldFraction,
       actual: walkForward.positiveFoldFraction,
       required: walkForward.requiredPositiveFoldFraction,
     },
     {
-      name: 'walk_forward_drawdown',
+      name: protocolGates.walkForwardDrawdown.name,
       passed: walkForward.allDrawdownsWithinLimit,
       actual: walkForward.maximumFoldDrawdown,
       required: candidateDevelopmentStatisticsPolicy.walkForward.maximumFoldDrawdown,
@@ -228,13 +227,15 @@ export const executeCandidateDevelopmentProgram = <Registration, DevelopmentData
 export const renderCandidateDevelopmentCommandReport = (report: CandidateDevelopmentCommandReport): string =>
   `${JSON.stringify(report)}\n`
 
-const writeCandidateDevelopmentCommandReport = (
-  report: CandidateDevelopmentCommandReport,
-): Effect.Effect<void, CandidateDevelopmentCommandFailure> =>
+export type CandidateDevelopmentCommandReportWriter = (
+  renderedReport: string,
+) => Effect.Effect<void, CandidateDevelopmentCommandFailure>
+
+const writeCandidateDevelopmentCommandReportToStdout: CandidateDevelopmentCommandReportWriter = (renderedReport) =>
   Effect.tryPromise({
     try: () =>
       new Promise<void>((resolveWrite, rejectWrite) => {
-        process.stdout.write(renderCandidateDevelopmentCommandReport(report), (error) => {
+        process.stdout.write(renderedReport, (error) => {
           if (error === null || error === undefined) resolveWrite()
           else rejectWrite(error)
         })
@@ -244,6 +245,12 @@ const writeCandidateDevelopmentCommandReport = (
       cause,
     }),
   })
+
+export const writeCandidateDevelopmentCommandReport = (
+  report: CandidateDevelopmentCommandReport,
+  writer: CandidateDevelopmentCommandReportWriter = writeCandidateDevelopmentCommandReportToStdout,
+): Effect.Effect<void, CandidateDevelopmentCommandFailure> =>
+  writer(renderCandidateDevelopmentCommandReport(report)).pipe(Effect.uninterruptible)
 
 export const runCandidateDevelopmentCommand = <Registration, DevelopmentData, Error, Requirements>(
   program: CandidateDevelopmentExecutableProgram<Registration, DevelopmentData, Error, Requirements>,

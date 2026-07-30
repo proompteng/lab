@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { Effect, Result } from 'effect'
+import { Deferred, Effect, Fiber, Result } from 'effect'
 
 import { frozenCandidateDevelopmentSessions } from './candidate-development-calendar'
 import {
@@ -8,6 +8,7 @@ import {
   executeCandidateDevelopmentProgram,
   renderCandidateDevelopmentCommandReport,
   validateCandidateDevelopmentExecutableProgram,
+  writeCandidateDevelopmentCommandReport,
   type CandidateDevelopmentExecutableProgram,
 } from './candidate-development-command'
 import { officialMonthEndSignalDates, type CandidateDevelopmentReport } from './candidate-development'
@@ -165,6 +166,8 @@ describe('candidate development command', () => {
     expect(passing.decision.status).toBe('PASS')
     expect(rejected.decision.status).toBe('HOLD_REJECT')
     expect(economicallyRejected.decision.status).toBe('HOLD_REJECT')
+    expect(passing.decision.gates.map(({ name }) => name)).toContain('annualized_excess_return_lower_bound')
+    expect(passing.decision.gates.map(({ name }) => name)).not.toContain('annualized_return_difference_lower_bound')
     expect(contentHash).toBe(successOf(canonicalHashV1Result(material)))
     expect(buildCandidateDevelopmentCommandReport(reportFixture(0.01), baselineFixture())).toEqual(
       Result.succeed(passing),
@@ -173,6 +176,40 @@ describe('candidate development command', () => {
     expect(rendered.endsWith('\n')).toBe(true)
     expect(rendered.slice(0, -1)).not.toContain('\n')
     expect(JSON.parse(rendered)).toEqual(passing)
+  })
+
+  test('keeps the sole report write attached through interruption', async () => {
+    const report = successOf(buildCandidateDevelopmentCommandReport(reportFixture(0.01), baselineFixture()))
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        let completed = false
+        const fiber = yield* writeCandidateDevelopmentCommandReport(report, () =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.tap(() =>
+              Effect.sync(() => {
+                completed = true
+              }),
+            ),
+          ),
+        ).pipe(Effect.forkChild)
+
+        yield* Deferred.await(started)
+        const interruption = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild)
+        yield* Effect.yieldNow
+
+        expect(interruption.pollUnsafe()).toBeUndefined()
+        expect(completed).toBe(false)
+
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(interruption)
+
+        expect(completed).toBe(true)
+      }),
+    )
   })
 
   test('requires the exact executable program shape before execution', () => {
