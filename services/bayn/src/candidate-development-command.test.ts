@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Deferred, Effect, Fiber, Result } from 'effect'
 
@@ -24,6 +24,7 @@ import {
   validateCandidateDevelopmentPreregistrationDocument,
   verifyCandidateDevelopmentPreregistrationLineage,
   verifyCandidateDevelopmentPreregistrationModuleNovelty,
+  verifyCandidateDevelopmentRepositoryIntegrity,
   verifyCandidateDevelopmentSourceFiles,
   writeCandidateDevelopmentCommandReport,
   type CandidateDevelopmentCommandEvaluation,
@@ -2702,12 +2703,13 @@ describe('candidate development command', () => {
         repository,
       )
       await execFilePromise('git', ['replace', verified.files.moduleBlobOid, replacementOid], repository)
-      const replacementIgnored = await Effect.runPromise(
-        verifyCandidateDevelopmentSourceFiles(modulePath, sourceManifestPath),
-      )
-      expect(replacementIgnored.files.moduleBlobOid).toBe(verified.files.moduleBlobOid)
-      expect(replacementIgnored.files.moduleSha256).toBe(verified.files.moduleSha256)
-      expect(Buffer.from(replacementIgnored.moduleUrl.split(',')[1] ?? '', 'base64').toString('utf8')).toBe(moduleBytes)
+      expect(
+        await Effect.runPromise(Effect.flip(verifyCandidateDevelopmentSourceFiles(modulePath, sourceManifestPath))),
+      ).toMatchObject({
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-repository-integrity',
+        cause: { field: 'replaceRefs' },
+      })
       await execFilePromise('git', ['replace', '-d', verified.files.moduleBlobOid], repository)
 
       await writeFile(modulePath, `${moduleBytes}// tampered\n`)
@@ -2782,6 +2784,145 @@ describe('candidate development command', () => {
       await rm(repository, { recursive: true, force: true })
       await rm(alternateRepository, { recursive: true, force: true })
     }
+  })
+
+  test('rejects grafts, replacement refs, and alternate object metadata before Git verification', async () => {
+    const repository = await mkdtemp(join(tmpdir(), 'bayn-candidate-repository-integrity-'))
+    const alternateRepository = await mkdtemp(join(tmpdir(), 'bayn-candidate-alternate-objects-'))
+    const candidateDirectory = join(repository, 'candidate')
+    const modulePath = join(candidateDirectory, 'program.mjs')
+    try {
+      await mkdir(candidateDirectory, { recursive: true })
+      await mkdir(join(alternateRepository, 'objects'), { recursive: true })
+      await execFilePromise('git', ['init', '-q'], repository)
+      await execFilePromise('git', ['config', 'user.name', 'Candidate Test'], repository)
+      await execFilePromise('git', ['config', 'user.email', 'candidate@example.test'], repository)
+
+      await writeFile(modulePath, 'export const candidate = "before-preregistration"\n')
+      await execFilePromise('git', ['add', 'candidate/program.mjs'], repository)
+      await execFilePromise('git', ['commit', '-qm', 'test: candidate before preregistration'], repository)
+      const priorRevision = await execFileTextPromise('git', ['rev-parse', 'HEAD'], repository)
+      const priorModuleOid = await execFileTextPromise('git', ['rev-parse', 'HEAD:candidate/program.mjs'], repository)
+
+      await writeFile(modulePath, 'export const candidate = "preregistration-placeholder"\n')
+      await execFilePromise('git', ['add', 'candidate/program.mjs'], repository)
+      await execFilePromise('git', ['commit', '-qm', 'test: preregistration placeholder'], repository)
+      const preregistrationRevision = await execFileTextPromise('git', ['rev-parse', 'HEAD'], repository)
+
+      expect(await execFileTextPromise('git', ['rev-parse', '--is-shallow-repository'], repository)).toBe('false')
+      expect(
+        await execFileTextPromise(
+          'git',
+          ['log', '--format=%H', `--find-object=${priorModuleOid}`, preregistrationRevision, '--'],
+          repository,
+        ),
+      ).not.toBe('')
+      expect(await Effect.runPromise(verifyCandidateDevelopmentRepositoryIntegrity(repository))).toBeUndefined()
+
+      const graftsPath = resolve(
+        repository,
+        await execFileTextPromise('git', ['rev-parse', '--git-path', 'info/grafts'], repository),
+      )
+      await mkdir(dirname(graftsPath), { recursive: true })
+      await writeFile(graftsPath, `${preregistrationRevision}\n`)
+      expect(await execFileTextPromise('git', ['rev-parse', '--is-shallow-repository'], repository)).toBe('false')
+      expect(
+        await execFileTextPromise(
+          'git',
+          ['log', '--format=%H', `--find-object=${priorModuleOid}`, preregistrationRevision, '--'],
+          repository,
+        ),
+      ).toBe('')
+      expect(
+        await Effect.runPromise(Effect.flip(verifyCandidateDevelopmentRepositoryIntegrity(repository))),
+      ).toMatchObject({
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-repository-integrity',
+        cause: { field: 'grafts', observed: [preregistrationRevision] },
+      })
+      await rm(graftsPath, { force: true })
+      expect(await Effect.runPromise(verifyCandidateDevelopmentRepositoryIntegrity(repository))).toBeUndefined()
+
+      await execFilePromise('git', ['replace', preregistrationRevision, priorRevision], repository)
+      expect(
+        await Effect.runPromise(Effect.flip(verifyCandidateDevelopmentRepositoryIntegrity(repository))),
+      ).toMatchObject({
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-repository-integrity',
+        cause: { field: 'replaceRefs' },
+      })
+      await execFilePromise('git', ['replace', '-d', preregistrationRevision], repository)
+
+      await execFilePromise('git', ['config', 'replace.refBase', 'refs/custom-replace'], repository)
+      expect(
+        await Effect.runPromise(Effect.flip(verifyCandidateDevelopmentRepositoryIntegrity(repository))),
+      ).toMatchObject({
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-repository-integrity',
+        cause: { field: 'replacementConfig', observed: ['replace.refbase'] },
+      })
+      await execFilePromise('git', ['config', '--unset-all', 'replace.refBase'], repository)
+
+      const alternatesPath = resolve(
+        repository,
+        await execFileTextPromise('git', ['rev-parse', '--git-path', 'objects/info/alternates'], repository),
+      )
+      await mkdir(dirname(alternatesPath), { recursive: true })
+      await writeFile(alternatesPath, `${join(alternateRepository, 'objects')}\n`)
+      expect(
+        await Effect.runPromise(Effect.flip(verifyCandidateDevelopmentRepositoryIntegrity(repository))),
+      ).toMatchObject({
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-repository-integrity',
+        cause: { field: 'alternates' },
+      })
+      await rm(alternatesPath, { force: true })
+
+      const httpAlternatesPath = resolve(
+        repository,
+        await execFileTextPromise('git', ['rev-parse', '--git-path', 'objects/info/http-alternates'], repository),
+      )
+      await writeFile(httpAlternatesPath, 'https://example.invalid/objects\n')
+      expect(
+        await Effect.runPromise(Effect.flip(verifyCandidateDevelopmentRepositoryIntegrity(repository))),
+      ).toMatchObject({
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-repository-integrity',
+        cause: { field: 'httpAlternates' },
+      })
+      await rm(httpAlternatesPath, { force: true })
+      expect(await Effect.runPromise(verifyCandidateDevelopmentRepositoryIntegrity(repository))).toBeUndefined()
+    } finally {
+      await rm(repository, { recursive: true, force: true })
+      await rm(alternateRepository, { recursive: true, force: true })
+    }
+  })
+
+  test('cancels repository-integrity Git verification on interruption', async () => {
+    let aborted = false
+    const sourceGit: CandidateDevelopmentSourceGit = {
+      text: (_repositoryRoot, _args, signal) =>
+        new Promise((_resolve, reject) => {
+          const abort = () => {
+            aborted = true
+            reject(signal?.reason ?? new Error('aborted'))
+          }
+          if (signal?.aborted === true) abort()
+          else signal?.addEventListener('abort', abort, { once: true })
+        }),
+      bytes: async () => Buffer.alloc(0),
+    }
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const fiber = yield* verifyCandidateDevelopmentRepositoryIntegrity('/tmp/repository', sourceGit).pipe(
+          Effect.forkChild,
+        )
+        yield* Effect.sleep('10 millis')
+        yield* Fiber.interrupt(fiber).pipe(Effect.timeout('1 second'))
+      }),
+    )
+    expect(aborted).toBe(true)
   })
 
   test('requires preregistration to be a proper Git ancestor without replacement objects', async () => {
@@ -2862,7 +3003,8 @@ describe('candidate development command', () => {
         ),
       ).toMatchObject({
         _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
-        operation: 'verify-preregistration-lineage',
+        operation: 'verify-repository-integrity',
+        cause: { field: 'replaceRefs' },
       })
     } finally {
       await rm(repository, { recursive: true, force: true })
@@ -2872,15 +3014,20 @@ describe('candidate development command', () => {
   test('cancels preregistration lineage Git verification on interruption', async () => {
     let aborted = false
     const sourceGit: CandidateDevelopmentSourceGit = {
-      text: (_repositoryRoot, _args, signal) =>
-        new Promise((_resolve, reject) => {
+      text: (_repositoryRoot, args, signal) => {
+        if (args[0] === 'rev-parse' && args[1] === '--is-shallow-repository') return Promise.resolve('false')
+        if (args[0] === 'for-each-ref') return Promise.resolve('')
+        if (args[0] === 'config' && args[1] === '--list') return Promise.resolve('')
+        if (args[0] === 'rev-parse' && args[1] === '--git-path') return Promise.resolve(args[2] ?? '')
+        return new Promise((_resolve, reject) => {
           const abort = () => {
             aborted = true
             reject(signal?.reason ?? new Error('aborted'))
           }
           if (signal?.aborted === true) abort()
           else signal?.addEventListener('abort', abort, { once: true })
-        }),
+        })
+      },
       bytes: async () => Buffer.alloc(0),
     }
 
@@ -3015,8 +3162,8 @@ describe('candidate development command', () => {
         ),
       ).toMatchObject({
         _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
-        operation: 'verify-complete-history',
-        cause: { expected: 'false', observed: 'true' },
+        operation: 'verify-repository-integrity',
+        cause: { field: 'shallowRepository', expected: 'false', observed: 'true' },
       })
     } finally {
       await rm(repository, { recursive: true, force: true })
@@ -3506,6 +3653,10 @@ describe('candidate development command', () => {
     const sourceGit: CandidateDevelopmentSourceGit = {
       text: (_repositoryRoot, args) => {
         if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return Promise.resolve(directory)
+        if (args[0] === 'rev-parse' && args[1] === '--is-shallow-repository') return Promise.resolve('false')
+        if (args[0] === 'for-each-ref') return Promise.resolve('')
+        if (args[0] === 'config' && args[1] === '--list') return Promise.resolve('')
+        if (args[0] === 'rev-parse' && args[1] === '--git-path') return Promise.resolve(args[2] ?? '')
         if (args[0] === 'rev-parse' && args[1] === 'HEAD') return Promise.resolve(sourceRevision)
         return Promise.reject(new Error(`unexpected Git text command: ${args.join(' ')}`))
       },

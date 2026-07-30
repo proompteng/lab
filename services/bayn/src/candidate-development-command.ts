@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { realpath } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
 import { dirname, relative, resolve, sep } from 'node:path'
 import * as vm from 'node:vm'
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads'
@@ -241,7 +241,7 @@ export type CandidateDevelopmentCommandFailure =
         | 'verify-preregistration-blob'
         | 'verify-preregistration-lineage'
         | 'verify-preregistration-module-novelty'
-        | 'verify-complete-history'
+        | 'verify-repository-integrity'
         | 'verify-source-manifest-blob'
         | 'verify-program-binding'
         | 'derive-run-identity'
@@ -2922,6 +2922,99 @@ const candidateDevelopmentSourceGit: CandidateDevelopmentSourceGit = {
   bytes: gitBytes,
 }
 
+const activeGitMetadataLines = (value: string, commentsAllowed: boolean): readonly string[] =>
+  value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && (!commentsAllowed || !line.startsWith('#')))
+
+const readOptionalGitMetadata = async (path: string, signal: AbortSignal): Promise<string> => {
+  try {
+    return await readFile(path, { encoding: 'utf8', signal })
+  } catch (cause) {
+    if (typeof cause === 'object' && cause !== null && 'code' in cause && cause.code === 'ENOENT') return ''
+    throw cause
+  }
+}
+
+const verifyCandidateDevelopmentRepositoryIntegrityPromise = async (
+  repositoryRoot: string,
+  sourceGit: CandidateDevelopmentSourceGit,
+  signal: AbortSignal,
+): Promise<void> => {
+  const shallow = await sourceStep('verify-repository-integrity', () =>
+    sourceGit.text(repositoryRoot, ['rev-parse', '--is-shallow-repository'], signal),
+  )
+  if (shallow !== 'false') {
+    throw new CandidateDevelopmentSourceVerificationError('verify-repository-integrity', {
+      field: 'shallowRepository',
+      expected: 'false',
+      observed: shallow,
+    })
+  }
+
+  const replaceRefs = await sourceStep('verify-repository-integrity', () =>
+    sourceGit.text(repositoryRoot, ['for-each-ref', '--format=%(refname)', 'refs/replace'], signal),
+  )
+  if (replaceRefs.length > 0) {
+    throw new CandidateDevelopmentSourceVerificationError('verify-repository-integrity', {
+      field: 'replaceRefs',
+      expected: [],
+      observed: replaceRefs.split('\n'),
+    })
+  }
+
+  const replacementConfig = await sourceStep('verify-repository-integrity', () =>
+    sourceGit.text(repositoryRoot, ['config', '--list'], signal),
+  )
+  const replacementConfigKeys = replacementConfig
+    .split('\n')
+    .map((line) => line.slice(0, line.indexOf('=')))
+    .filter((key) => key.startsWith('replace.'))
+  if (replacementConfigKeys.length > 0) {
+    throw new CandidateDevelopmentSourceVerificationError('verify-repository-integrity', {
+      field: 'replacementConfig',
+      expected: [],
+      observed: replacementConfigKeys,
+    })
+  }
+
+  for (const metadata of [
+    { field: 'grafts', path: 'info/grafts', commentsAllowed: true },
+    { field: 'alternates', path: 'objects/info/alternates', commentsAllowed: false },
+    { field: 'httpAlternates', path: 'objects/info/http-alternates', commentsAllowed: false },
+  ] as const) {
+    const gitPath = await sourceStep('verify-repository-integrity', () =>
+      sourceGit.text(repositoryRoot, ['rev-parse', '--git-path', metadata.path], signal),
+    )
+    const absolutePath = resolve(repositoryRoot, gitPath)
+    const contents = await sourceStep('verify-repository-integrity', () =>
+      readOptionalGitMetadata(absolutePath, signal),
+    )
+    const activeLines = activeGitMetadataLines(contents, metadata.commentsAllowed)
+    if (activeLines.length > 0) {
+      throw new CandidateDevelopmentSourceVerificationError('verify-repository-integrity', {
+        field: metadata.field,
+        path: absolutePath,
+        expected: [],
+        observed: activeLines,
+      })
+    }
+  }
+}
+
+export const verifyCandidateDevelopmentRepositoryIntegrity = (
+  repositoryRoot: string,
+  sourceGit: CandidateDevelopmentSourceGit = candidateDevelopmentSourceGit,
+): Effect.Effect<void, CandidateDevelopmentCommandFailure> =>
+  Effect.tryPromise({
+    try: (signal) => verifyCandidateDevelopmentRepositoryIntegrityPromise(repositoryRoot, sourceGit, signal),
+    catch: (cause): CandidateDevelopmentCommandFailure =>
+      cause instanceof CandidateDevelopmentSourceVerificationError
+        ? sourceVerificationFailure(cause.operation, cause.sourceCause)
+        : sourceVerificationFailure('verify-repository-integrity', cause),
+  })
+
 const verifyCandidateDevelopmentPreregistrationLineagePromise = async (
   repositoryRoot: string,
   preregistrationRevision: string,
@@ -2929,6 +3022,7 @@ const verifyCandidateDevelopmentPreregistrationLineagePromise = async (
   sourceGit: CandidateDevelopmentSourceGit,
   signal: AbortSignal,
 ): Promise<void> => {
+  await verifyCandidateDevelopmentRepositoryIntegrityPromise(repositoryRoot, sourceGit, signal)
   if (preregistrationRevision === sourceRevision) {
     throw new CandidateDevelopmentSourceVerificationError('verify-preregistration-lineage', {
       expected: 'proper ancestor of evaluated source revision',
@@ -2969,15 +3063,7 @@ const verifyCandidateDevelopmentPreregistrationModuleNoveltyPromise = async (
   sourceGit: CandidateDevelopmentSourceGit,
   signal: AbortSignal,
 ): Promise<void> => {
-  const shallow = await sourceStep('verify-complete-history', () =>
-    sourceGit.text(repositoryRoot, ['rev-parse', '--is-shallow-repository'], signal),
-  )
-  if (shallow !== 'false') {
-    throw new CandidateDevelopmentSourceVerificationError('verify-complete-history', {
-      expected: 'false',
-      observed: shallow,
-    })
-  }
+  await verifyCandidateDevelopmentRepositoryIntegrityPromise(repositoryRoot, sourceGit, signal)
   const history = await sourceStep('verify-preregistration-module-novelty', () =>
     sourceGit.text(
       repositoryRoot,
@@ -3172,6 +3258,7 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
       const repositoryRoot = await sourceStep('resolve-repository', () =>
         sourceGit.text(dirname(absoluteModulePath), ['rev-parse', '--show-toplevel'], signal),
       )
+      await verifyCandidateDevelopmentRepositoryIntegrityPromise(repositoryRoot, sourceGit, signal)
       const moduleRepositoryPath = repositoryRelativePath(repositoryRoot, absoluteModulePath)
       if (Result.isFailure(moduleRepositoryPath)) {
         throw new CandidateDevelopmentSourceVerificationError('verify-source-paths', moduleRepositoryPath.failure)
