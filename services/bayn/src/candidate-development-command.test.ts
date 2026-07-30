@@ -1033,17 +1033,14 @@ describe('candidate development command', () => {
     const accounting = { ...evaluation.accounting, baselineSimulation: fullSimulation }
 
     expect(
-      buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting }, fixtureStrategyProtocol, [
-        ...fixtureOfficialSessions,
-        suffixDate,
-      ]),
+      buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting }, fixtureStrategyProtocol),
     ).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
         reason: 'binding-mismatch',
-        field: 'baseline.dailyMarks.priceMicros',
-        expected: 'governed mark session',
-        observed: suffixDate,
+        field: 'baseline.calendar.start',
+        expected: 'contiguous slice of official sessions',
+        observed: fixtureAccountingStart,
       },
     })
   })
@@ -1278,17 +1275,14 @@ describe('candidate development command', () => {
     }
 
     expect(
-      buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting }, fixtureStrategyProtocol, [
-        skippedSession,
-        ...fixtureOfficialSessions,
-      ]),
+      buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting }, fixtureStrategyProtocol),
     ).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
         reason: 'binding-mismatch',
         field: 'baseline.calendar.sessionDate',
         index: 1,
-        expected: fixtureOfficialSessions[0],
+        expected: fixtureAccountingStart,
         observed: fixtureSessions[0],
       },
     })
@@ -1527,6 +1521,50 @@ describe('candidate development command', () => {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
         reason: 'binding-mismatch',
         field: 'benchmarks.directVolatilityTiming',
+      },
+    })
+  })
+
+  test('binds aligned market-data sessions to the frozen official calendar', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const mismatchedOfficialSessions = [...fixtureOfficialSessions]
+    mismatchedOfficialSessions[1] = fixtureOfficialSessions[2]
+
+    expect(
+      buildCandidateDevelopmentCommandReport(
+        report,
+        commandEvaluationFixture(report, baseline),
+        fixtureStrategyProtocol,
+        mismatchedOfficialSessions,
+      ),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'marketData.sessions.sessionDate',
+        index: 1,
+        expected: fixtureOfficialSessions[2],
+        observed: fixtureOfficialSessions[1],
+      },
+    })
+  })
+
+  test('runtime-decodes only valid OHLC market-data witnesses', () => {
+    const report = reportFixture(0.01)
+    const evaluation = commandEvaluationFixture(report, baselineFixture())
+    const first = evaluation.marketData.bars[0]
+    const invalidMarketData = {
+      ...evaluation.marketData,
+      bars: [{ ...first, low: first.high + 1 }, ...evaluation.marketData.bars.slice(1)],
+    }
+
+    expect(
+      validateCandidateDevelopmentCommandEvaluation({ ...evaluation, marketData: invalidMarketData }),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandProgramInvalid',
+        reason: 'evaluation-invalid',
       },
     })
   })

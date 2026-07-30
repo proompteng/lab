@@ -540,6 +540,7 @@ const compareMarketBars = (left: DailyBar, right: DailyBar): number =>
 const prepareCandidateDevelopmentMarketData = (
   evaluation: CandidateDevelopmentCommandEvaluation,
   strategyProtocol: CandidateDevelopmentStrategyProtocol,
+  officialSessions: CandidateDevelopmentPreflightInput['officialSessions'],
 ): Result.Result<PreparedCandidateDevelopmentMarketData, CandidateDevelopmentCommandFailure> => {
   const { baseline, marketData } = evaluation
   const { contentHash: observedContentHash, ...content } = marketData
@@ -600,11 +601,37 @@ const prepareCandidateDevelopmentMarketData = (
     Result.mapError((cause) =>
       markedEquityFailure('binding-mismatch', null, 'marketData.bars', 'manifest-bound aligned bars', null, cause),
     ),
-    Result.map((sessions) => ({
-      witness: marketData,
-      sessions,
-      sessionIndexByDate: new Map(sessions.map((session, index) => [session.date, index] as const)),
-    })),
+    Result.flatMap((sessions) => {
+      if (sessions.length !== officialSessions.length) {
+        return Result.fail(
+          markedEquityFailure(
+            'binding-mismatch',
+            null,
+            'marketData.sessions.length',
+            officialSessions.length,
+            sessions.length,
+          ),
+        )
+      }
+      for (let index = 0; index < officialSessions.length; index += 1) {
+        if (sessions[index]?.date !== officialSessions[index]) {
+          return Result.fail(
+            markedEquityFailure(
+              'binding-mismatch',
+              index,
+              'marketData.sessions.sessionDate',
+              officialSessions[index],
+              sessions[index]?.date ?? null,
+            ),
+          )
+        }
+      }
+      return Result.succeed({
+        witness: marketData,
+        sessions,
+        sessionIndexByDate: new Map(sessions.map((session, index) => [session.date, index] as const)),
+      })
+    }),
   )
 }
 
@@ -1790,7 +1817,7 @@ export const buildCandidateDevelopmentCommandReport = (
 ): Result.Result<CandidateDevelopmentCommandReport, CandidateDevelopmentCommandFailure> =>
   pipe(
     validateCandidateDevelopmentStrategyProtocol(report, evaluation, strategyProtocol),
-    Result.flatMap(() => prepareCandidateDevelopmentMarketData(evaluation, strategyProtocol)),
+    Result.flatMap(() => prepareCandidateDevelopmentMarketData(evaluation, strategyProtocol, officialSessions)),
     Result.flatMap((marketData) =>
       pipe(
         Result.all({
@@ -2003,7 +2030,7 @@ const CandidateDevelopmentAccountingEvidenceSchema = Schema.Struct({
   stressedMarkedEquityReconciliation: MarkedEquityReconciliationSchema,
 })
 
-const CandidateDevelopmentDailyBarSchema = Schema.Struct({
+const CandidateDevelopmentDailyBarBase = Schema.Struct({
   symbol: SymbolSchema,
   sessionDate: IsoDateSchema,
   open: PositiveFiniteSchema,
@@ -2016,6 +2043,19 @@ const CandidateDevelopmentDailyBarSchema = Schema.Struct({
   adjustment: Schema.Enum(PriceAdjustment),
   publicationSchemaVersion: Schema.Enum(PublicationSchema),
 })
+
+const CandidateDevelopmentDailyBarSchema = CandidateDevelopmentDailyBarBase.check(
+  Schema.makeFilter((bar): readonly Schema.FilterIssue[] =>
+    bar.low <= Math.min(bar.open, bar.close) && bar.high >= Math.max(bar.open, bar.close) && bar.low <= bar.high
+      ? []
+      : [
+          {
+            path: ['low'],
+            issue: 'must satisfy low <= min(open, close) <= max(open, close) <= high',
+          },
+        ],
+  ),
+)
 
 const CandidateDevelopmentMarketDataWitnessSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.candidate-development-market-data-witness.v1'),
