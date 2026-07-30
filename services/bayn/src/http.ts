@@ -70,10 +70,14 @@ const brokerPresentationReason = (broker: NonNullable<RuntimeState['broker']>): 
   const identityMismatch =
     broker.accountBound === false &&
     (broker.readAvailable === true ||
+      broker.error === 'Alpaca account identity drift detected' ||
       broker.error?.includes('Alpaca credential resolved account ') === true ||
       broker.error?.includes('Alpaca account probe resolved ') === true)
   if (identityMismatch) return 'BROKER_ACCOUNT_IDENTITY_MISMATCH'
   if (broker.accountBound === null || broker.readAvailable === null) return 'BROKER_STATUS_NOT_CHECKED'
+  if (broker.error?.startsWith('Alpaca account permission drift detected') === true) {
+    return 'BROKER_ACCOUNT_PERMISSION_DRIFT'
+  }
   if (broker.readAvailable === false) return 'BROKER_READ_UNAVAILABLE'
   if (broker.accountBound === false) return 'BROKER_ACCOUNT_BINDING_UNAVAILABLE'
   return broker.error === null ? null : 'BROKER_STATUS_UNAVAILABLE'
@@ -105,10 +109,98 @@ const publicBrokerState = (state: RuntimeState) => {
   } as const
 }
 
-const publicRuntimeError = (state: RuntimeState, broker: ReturnType<typeof publicBrokerState>): string | null => {
+const cyclePresentationReason = (error: string | null): string | null => {
+  if (error === null) return null
+  return error.includes('configured account ') && error.includes(' differs from the projected current or last cycle')
+    ? 'CYCLE_ACCOUNT_IDENTITY_MISMATCH'
+    : 'CYCLE_OBSERVATION_UNAVAILABLE'
+}
+
+const publicDependencies = (state: RuntimeState) => ({
+  ...state.health.dependencies,
+  cycle: {
+    ...state.health.dependencies.cycle,
+    error: cyclePresentationReason(state.health.dependencies.cycle.error),
+  },
+  cycleRunner: {
+    ...state.health.dependencies.cycleRunner,
+    error: state.health.dependencies.cycleRunner.error === null ? null : 'CYCLE_RUNNER_UNAVAILABLE',
+  },
+})
+
+const publicAutonomousCycleLoop = (state: RuntimeState) => {
+  const lastPass = state.autonomousCycleLoop.lastPass
+  return {
+    configured: state.autonomousCycleLoop.configured,
+    startedAt: state.autonomousCycleLoop.startedAt,
+    lastPass:
+      lastPass === null || lastPass.result === 'SUCCESS'
+        ? lastPass
+        : {
+            result: lastPass.result,
+            observedAt: lastPass.observedAt,
+            operation: lastPass.operation,
+            failure: lastPass.failure,
+            reasonCode: 'AUTONOMOUS_CYCLE_PASS_FAILED',
+          },
+  } as const
+}
+
+const healthFailurePrefixes = [
+  'postgresql: ',
+  'signal: ',
+  'tigerBeetle: ',
+  'evidence: ',
+  'cycle: ',
+  'cycleRunner: ',
+  'broker: ',
+  'cycle clock: ',
+] as const
+
+const publicCycleRunnerFailure = (error: string): string => {
+  const prefix = 'cycleRunner: '
+  const prefixedAt = error.startsWith(prefix) ? 0 : error.indexOf(`; ${prefix}`)
+  if (prefixedAt === -1) return error
+  const segmentStart = prefixedAt === 0 ? 0 : prefixedAt + 2
+  const contentStart = segmentStart + prefix.length
+  const nextSegment = healthFailurePrefixes.reduce((nearest, candidatePrefix) => {
+    const candidate = error.indexOf(`; ${candidatePrefix}`, contentStart)
+    return candidate === -1 || (nearest !== -1 && candidate >= nearest) ? nearest : candidate
+  }, -1)
+  return `${error.slice(0, segmentStart)}cycleRunner: CYCLE_RUNNER_UNAVAILABLE${
+    nextSegment === -1 ? '' : error.slice(nextSegment)
+  }`
+}
+
+const publicRuntimeError = (
+  state: RuntimeState,
+  broker: ReturnType<typeof publicBrokerState>,
+  dependencies: ReturnType<typeof publicDependencies>,
+): string | null => {
+  if (state.error === null) return null
+  let publicError = publicCycleRunnerFailure(state.error)
   const brokerError = state.broker?.error
-  if (state.error === null || brokerError === null || brokerError === undefined) return state.error
-  return state.error.replaceAll(brokerError, broker.error ?? 'BROKER_STATUS_UNAVAILABLE')
+  if (brokerError !== null && brokerError !== undefined) {
+    publicError = publicError.replaceAll(brokerError, broker.error ?? 'BROKER_STATUS_UNAVAILABLE')
+  }
+  if (state.cycle.error !== null) {
+    publicError = publicError.replaceAll(
+      state.cycle.error,
+      cyclePresentationReason(state.cycle.error) ?? 'CYCLE_OBSERVATION_UNAVAILABLE',
+    )
+  }
+  const cycleDependencyError = state.health.dependencies.cycle.error
+  if (cycleDependencyError !== null) {
+    publicError = publicError.replaceAll(
+      cycleDependencyError,
+      dependencies.cycle.error ?? 'CYCLE_OBSERVATION_UNAVAILABLE',
+    )
+  }
+  const cycleRunnerError = state.health.dependencies.cycleRunner.error
+  if (cycleRunnerError !== null) {
+    publicError = publicError.replaceAll(cycleRunnerError, dependencies.cycleRunner.error ?? 'CYCLE_RUNNER_UNAVAILABLE')
+  }
+  return publicError
 }
 
 const publicCycleSnapshot = (snapshot: RuntimeState['cycle']['current']) =>
@@ -151,7 +243,7 @@ const publicCycleState = (state: RuntimeState) =>
         reason: state.cycle.reason,
         checkedAt: state.cycle.checkedAt,
         zeroMutation: null,
-        error: state.cycle.error,
+        error: cyclePresentationReason(state.cycle.error),
       }
     : {
         ...state.cycle,
@@ -159,6 +251,7 @@ const publicCycleState = (state: RuntimeState) =>
         last: publicCycleSnapshot(state.cycle.last),
         reconciliation: publicCycleReconciliation(state.cycle.reconciliation),
         observationAvailable: true,
+        error: cyclePresentationReason(state.cycle.error),
       }
 
 export const statusFacts = (
@@ -168,6 +261,7 @@ export const statusFacts = (
   provenanceVerification: RuntimeBuildMetadata['verification'],
 ) => {
   const broker = publicBrokerState(state)
+  const dependencies = publicDependencies(state)
   return {
     service: 'bayn',
     operational: {
@@ -176,7 +270,7 @@ export const statusFacts = (
       probeSequence: state.health.sequence,
       checkedAt: state.health.checkedAt,
     },
-    dependencies: state.health.dependencies,
+    dependencies,
     data: {
       status: verifiedState(state, state.health.dependencies.signal),
       input: state.evidence?.evaluation.input ?? null,
@@ -208,7 +302,7 @@ export const statusFacts = (
       reconciliation: state.evidence?.reconciliation ?? null,
     },
     cycle: publicCycleState(state),
-    autonomousCycleLoop: state.autonomousCycleLoop,
+    autonomousCycleLoop: publicAutonomousCycleLoop(state),
     broker,
     authority: {
       brokerEnvironment: execution.brokerIdentity?.environment ?? null,
@@ -246,7 +340,7 @@ export const statusFacts = (
       image: provenance.image,
       verification: provenanceVerification,
     },
-    error: publicRuntimeError(state, broker),
+    error: publicRuntimeError(state, broker, dependencies),
   } as const
 }
 
