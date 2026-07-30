@@ -4,8 +4,10 @@ import {
   baynCodexBotLogin,
   baynCodexReviewer,
   createGitHubReleaseEligibilityLoader,
+  createGitHubReleaseRetryLoader,
   createGitHubReleaseReviewLoader,
   evaluateBaynReleaseEligibility,
+  evaluateBaynReleaseRetry,
   evaluateBaynReleaseReview,
   GitHubReleaseReviewError,
   isBaynReleaseAffectingPath,
@@ -13,7 +15,9 @@ import {
   pollBaynReleaseReview,
   resolveLastPublishedRevision,
   type AssociatedPullRequest,
+  type BaynBuildWorkflowRun,
   type BaynReleaseEligibilitySnapshot,
+  type BaynReleaseRetrySnapshot,
   type BaynReleaseReviewPollResult,
   type BaynReleaseReviewSnapshot,
   type PullRequestReview,
@@ -157,11 +161,16 @@ const reviewSnapshotFor = (options: {
   readonly parents: readonly string[]
   readonly reviews?: readonly PullRequestReview[]
   readonly threads?: readonly PullRequestReviewThread[]
+  readonly issueComments?: readonly PullRequestIssueComment[]
+  readonly reactions?: readonly PullRequestReaction[]
+  readonly headForcePushCount?: number
+  readonly mergedAt?: string
 }): BaynReleaseReviewSnapshot => {
   const associated = associatedPull({
     number: options.prNumber,
     headSha: options.headSha,
     mergeCommitSha: options.commitSha,
+    mergedAt: options.mergedAt ?? '2026-07-30T07:01:30Z',
   })
   const sourceCreatedAt =
     associated.mergedAt === null
@@ -184,9 +193,9 @@ const reviewSnapshotFor = (options: {
       ],
       threads: options.threads ?? [],
       commitShas: [options.headSha],
-      issueComments: [],
-      reactions: [],
-      headForcePushCount: 0,
+      issueComments: options.issueComments ?? [],
+      reactions: options.reactions ?? [],
+      headForcePushCount: options.headForcePushCount ?? 0,
     },
   }
 }
@@ -221,6 +230,84 @@ const eligibilitySnapshot = (
   },
   ...overrides,
 })
+
+const failedBuildRun = (overrides: Partial<BaynBuildWorkflowRun> = {}): BaynBuildWorkflowRun => ({
+  id: 30540000001,
+  runNumber: 900,
+  runAttempt: 1,
+  headSha: mainCommitSha,
+  headBranch: 'main',
+  event: 'push',
+  status: 'completed',
+  conclusion: 'failure',
+  createdAt: '2026-07-30T07:00:05Z',
+  updatedAt: '2026-07-30T07:02:30Z',
+  ...overrides,
+})
+
+const retrySnapshot = (
+  options: {
+    readonly reviewSnapshot?: BaynReleaseReviewSnapshot
+    readonly failedRun?: BaynBuildWorkflowRun | null
+    readonly retryInProgress?: boolean
+    readonly defaultBranchSha?: string
+    readonly eligibility?: BaynReleaseEligibilitySnapshot
+  } = {},
+): BaynReleaseRetrySnapshot => {
+  const eligibility =
+    options.eligibility ??
+    eligibilitySnapshot({
+      comparison: {
+        status: 'ahead',
+        baseSha: lastPublishedSha,
+        headSha: mainCommitSha,
+        mergeBaseSha: lastPublishedSha,
+        aheadBy: 1,
+        totalCommits: 1,
+        commits: [
+          {
+            sha: mainCommitSha,
+            parents: [lastPublishedSha],
+            files: ['packages/scripts/src/bayn/verify-release-review.ts'],
+            reviewSnapshot:
+              options.reviewSnapshot ??
+              reviewSnapshotFor({
+                commitSha: mainCommitSha,
+                prNumber: 13401,
+                headSha: finalHeadSha,
+                parents: [lastPublishedSha],
+                mergedAt: '2026-07-30T07:00:00Z',
+                reviews: [],
+                issueComments: [
+                  issueComment({
+                    createdAt: '2026-07-30T07:03:00Z',
+                    updatedAt: '2026-07-30T07:03:00Z',
+                  }),
+                ],
+              }),
+          },
+        ],
+        truncated: false,
+      },
+    })
+  const run = options.failedRun === undefined ? failedBuildRun() : options.failedRun
+  return {
+    ...eligibility,
+    defaultBranchSha: options.defaultBranchSha ?? mainCommitSha,
+    failedReviewRun:
+      run === null
+        ? null
+        : {
+            run,
+            jobs: [
+              { name: 'Verify exact-head Codex review', status: 'completed', conclusion: 'failure' },
+              { name: 'image', status: 'completed', conclusion: 'skipped' },
+            ],
+          },
+    publicationSucceeded: false,
+    retryInProgress: options.retryInProgress ?? false,
+  }
+}
 
 describe('Bayn publication-range eligibility', () => {
   test('accepts every clean Bayn-affecting commit since the last published revision', () => {
@@ -522,6 +609,439 @@ describe('Bayn publication-range eligibility', () => {
       lastPublishedRevision: lastPublishedSha,
       checkedCommitCount: 1,
       baynAffectingCommitCount: 1,
+    })
+  })
+})
+
+describe('Bayn delayed-attestation publication retry', () => {
+  const retryNowMs = Date.parse('2026-07-30T07:04:00Z')
+
+  test('dispatches after the original bounded push wait timed out and a clean exact-head comment arrived later', async () => {
+    const timedOut = await pollBaynReleaseEligibility({
+      mainCommitSha,
+      baseRefName: 'main',
+      pushBeforeSha,
+      maxAttempts: 10,
+      pollIntervalMs: 10_000,
+      loadSnapshot: async () =>
+        eligibilitySnapshot({
+          comparison: {
+            status: 'ahead',
+            baseSha: lastPublishedSha,
+            headSha: mainCommitSha,
+            mergeBaseSha: lastPublishedSha,
+            aheadBy: 1,
+            totalCommits: 1,
+            commits: [
+              {
+                sha: mainCommitSha,
+                parents: [lastPublishedSha],
+                files: ['packages/scripts/src/bayn/verify-release-review.ts'],
+                reviewSnapshot: reviewSnapshotFor({
+                  commitSha: mainCommitSha,
+                  prNumber: 13401,
+                  headSha: finalHeadSha,
+                  parents: [lastPublishedSha],
+                  mergedAt: '2026-07-30T07:00:00Z',
+                  reviews: [],
+                }),
+              },
+            ],
+            truncated: false,
+          },
+        }),
+      sleep: async () => {},
+      now: () => Date.parse('2026-07-30T07:02:20Z'),
+    })
+    expect(timedOut).toMatchObject({
+      status: 'hold',
+      code: 'exact-head-review-missing',
+      attempts: 10,
+      timedOut: true,
+    })
+
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot(),
+        trigger: { type: 'issue-comment', prNumber: 13401, actorLogin: baynCodexBotLogin },
+        nowMs: retryNowMs,
+      }),
+    ).toEqual({
+      status: 'dispatch',
+      currentMainSha: mainCommitSha,
+      sourceCommitSha: mainCommitSha,
+      prNumber: 13401,
+      headSha: finalHeadSha,
+      failedRunId: 30540000001,
+    })
+  })
+
+  test('revalidates the exact retry binding on the trusted workflow-dispatch run', () => {
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot(),
+        trigger: {
+          type: 'workflow-dispatch',
+          sourceCommitSha: mainCommitSha,
+          prNumber: 13401,
+          headSha: finalHeadSha,
+          failedRunId: 30540000001,
+        },
+        nowMs: retryNowMs,
+      }),
+    ).toMatchObject({
+      status: 'dispatch',
+      currentMainSha: mainCommitSha,
+      sourceCommitSha: mainCommitSha,
+    })
+  })
+
+  test('rejects spoofed and stale issue-comment retry triggers', () => {
+    for (const trigger of [
+      { type: 'issue-comment', prNumber: 13401, actorLogin: 'spoofed-codex[bot]' } as const,
+      { type: 'issue-comment', prNumber: 13399, actorLogin: baynCodexBotLogin } as const,
+    ]) {
+      expect(
+        evaluateBaynReleaseRetry({
+          mainCommitSha,
+          baseRefName: 'main',
+          snapshot: retrySnapshot(),
+          trigger,
+          nowMs: retryNowMs,
+        }),
+      ).toMatchObject({ status: 'hold', code: 'retry-trigger-mismatch', retryable: false })
+    }
+  })
+
+  test('rejects a delayed source whose final PR head was force-pushed', () => {
+    const forced = reviewSnapshotFor({
+      commitSha: mainCommitSha,
+      prNumber: 13401,
+      headSha: finalHeadSha,
+      parents: [lastPublishedSha],
+      mergedAt: '2026-07-30T07:00:00Z',
+      reviews: [review({ submittedAt: '2026-07-30T07:03:00Z' })],
+      headForcePushCount: 1,
+    })
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot({ reviewSnapshot: forced }),
+        trigger: { type: 'schedule' },
+        nowMs: retryNowMs,
+      }),
+    ).toMatchObject({ status: 'hold', code: 'retry-source-pr-force-pushed', retryable: false })
+  })
+
+  test('keeps actionable reviews and unresolved threads blocking delayed retry', () => {
+    const cases = [
+      {
+        reviewSnapshot: reviewSnapshotFor({
+          commitSha: mainCommitSha,
+          prNumber: 13401,
+          headSha: finalHeadSha,
+          parents: [lastPublishedSha],
+          mergedAt: '2026-07-30T07:00:00Z',
+          reviews: [review({ submittedAt: '2026-07-30T07:03:00Z', state: 'CHANGES_REQUESTED' })],
+          reactions: [reaction({ createdAt: '2026-07-30T07:03:00Z' })],
+        }),
+        code: 'exact-head-review-changes-requested',
+      },
+      {
+        reviewSnapshot: reviewSnapshotFor({
+          commitSha: mainCommitSha,
+          prNumber: 13401,
+          headSha: finalHeadSha,
+          parents: [lastPublishedSha],
+          mergedAt: '2026-07-30T07:00:00Z',
+          reviews: [],
+          reactions: [reaction({ createdAt: '2026-07-30T07:03:00Z' })],
+          threads: [thread({ isResolved: false })],
+        }),
+        code: 'active-unresolved-review-threads',
+      },
+    ] as const
+    for (const item of cases) {
+      expect(
+        evaluateBaynReleaseRetry({
+          mainCommitSha,
+          baseRefName: 'main',
+          snapshot: retrySnapshot({ reviewSnapshot: item.reviewSnapshot }),
+          trigger: { type: 'schedule' },
+          nowMs: retryNowMs,
+        }),
+      ).toMatchObject({ status: 'hold', code: item.code, retryable: false })
+    }
+  })
+
+  test('rejects ambiguous source association and already published or active retry states', () => {
+    const ambiguous = snapshot({
+      associated: [associatedPull({ number: 13401 }), associatedPull({ number: 13402, headSha: olderHeadSha })],
+      reviews: [],
+      issueComments: [issueComment({ createdAt: '2026-07-30T07:03:00Z', updatedAt: '2026-07-30T07:03:00Z' })],
+    })
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot({ reviewSnapshot: ambiguous }),
+        trigger: { type: 'schedule' },
+        nowMs: retryNowMs,
+      }),
+    ).toMatchObject({ status: 'hold', code: 'ambiguous-associated-source-prs', retryable: false })
+
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot({
+          eligibility: eligibilitySnapshot({
+            lastPublishedRevision: {
+              status: 'resolved',
+              revision: mainCommitSha,
+              runId: 101,
+              runNumber: 11,
+              runAttempt: 1,
+            },
+            comparison: {
+              status: 'identical',
+              baseSha: mainCommitSha,
+              headSha: mainCommitSha,
+              mergeBaseSha: mainCommitSha,
+              aheadBy: 0,
+              totalCommits: 0,
+              commits: [],
+              truncated: false,
+            },
+          }),
+        }),
+        trigger: { type: 'schedule' },
+        nowMs: retryNowMs,
+      }),
+    ).toMatchObject({ status: 'noop', code: 'retry-already-published' })
+
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot({ retryInProgress: true }),
+        trigger: { type: 'schedule' },
+        nowMs: retryNowMs,
+      }),
+    ).toMatchObject({ status: 'noop', code: 'retry-in-progress' })
+  })
+
+  test('counts a successful workflow-dispatch image run as the latest publication', () => {
+    expect(
+      resolveLastPublishedRevision([
+        successfulPublishRun(),
+        successfulPublishRun({
+          id: 102,
+          runNumber: 11,
+          headSha: mainCommitSha,
+          event: 'workflow_dispatch',
+        }),
+      ]),
+    ).toMatchObject({ status: 'resolved', revision: mainCommitSha, runId: 102 })
+  })
+
+  test('workflow uses trusted default-branch discovery and a separately rebound main dispatch', async () => {
+    const workflow = await Bun.file('.github/workflows/bayn-build-push.yml').text()
+    expect(workflow).toContain('issue_comment:')
+    expect(workflow).toContain("cron: '*/10 * * * *'")
+    expect(workflow).toContain('Checkout trusted default-branch verifier')
+    expect(workflow).toContain('--mode retry-discovery')
+    expect(workflow).toContain('chatgpt-codex-connector[bot]')
+    expect(workflow).toContain('actions/workflows/bayn-build-push.yml/dispatches')
+    expect(workflow).toContain('-f ref=main')
+    expect(workflow).toContain('--mode retry-publication')
+    expect(workflow).toContain('source_revision: ${{ needs.release-review-eligibility.outputs.source_sha }}')
+    expect(workflow).toContain('publish_on_dispatch: true')
+    expect(workflow).not.toContain('permissions:\n  actions: write')
+  })
+
+  test('decodes a bounded failed push and delayed clean reaction for retry discovery', async () => {
+    const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/actions/workflows/') && url.includes('status=success')) {
+        if (url.includes('event=workflow_dispatch')) return Response.json({ workflow_runs: [] })
+        return Response.json({
+          workflow_runs: [
+            {
+              id: 100,
+              run_number: 10,
+              run_attempt: 1,
+              head_sha: lastPublishedSha,
+              head_branch: 'main',
+              event: 'push',
+              status: 'completed',
+              conclusion: 'success',
+            },
+            {
+              id: 101,
+              run_number: 11,
+              run_attempt: 1,
+              head_sha: mainCommitSha,
+              head_branch: 'main',
+              event: 'schedule',
+              status: 'completed',
+              conclusion: 'success',
+            },
+          ],
+        })
+      }
+      if (url.includes('/actions/workflows/')) {
+        if (url.includes('event=workflow_dispatch')) return Response.json({ workflow_runs: [] })
+        return Response.json({
+          workflow_runs: [
+            {
+              id: 30540000001,
+              run_number: 900,
+              run_attempt: 1,
+              head_sha: mainCommitSha,
+              head_branch: 'main',
+              event: 'push',
+              status: 'completed',
+              conclusion: 'failure',
+              created_at: '2026-07-30T07:00:05Z',
+              updated_at: '2026-07-30T07:02:30Z',
+            },
+          ],
+        })
+      }
+      if (url.includes('/actions/runs/30540000001/jobs?')) {
+        return Response.json({
+          jobs: [
+            { name: 'Verify exact-head Codex review', status: 'completed', conclusion: 'failure' },
+            { name: 'image', status: 'completed', conclusion: 'skipped' },
+          ],
+        })
+      }
+      if (url.includes('/compare/')) {
+        return Response.json({
+          status: 'ahead',
+          ahead_by: 1,
+          total_commits: 1,
+          base_commit: { sha: lastPublishedSha },
+          merge_base_commit: { sha: lastPublishedSha },
+          commits: [{ sha: mainCommitSha }],
+        })
+      }
+      if (url.includes('/commits/main?')) {
+        return Response.json({ sha: mainCommitSha })
+      }
+      if (url.includes(`/commits/${mainCommitSha}/pulls?`)) {
+        return Response.json([
+          {
+            number: 13401,
+            base: { ref: 'main' },
+            head: { sha: finalHeadSha },
+            merge_commit_sha: mainCommitSha,
+            merged_at: '2026-07-30T07:00:00Z',
+          },
+        ])
+      }
+      if (url.includes(`/commits/${mainCommitSha}?`)) {
+        return Response.json({
+          sha: mainCommitSha,
+          parents: [{ sha: lastPublishedSha }],
+          files: [{ filename: 'packages/scripts/src/bayn/verify-release-review.ts' }],
+        })
+      }
+      if (url.includes('/issues/13401/comments?')) return Response.json([])
+      if (url.includes('/issues/13401/reactions?')) {
+        return Response.json([
+          {
+            user: { login: baynCodexBotLogin },
+            content: '+1',
+            created_at: '2026-07-30T07:03:00Z',
+          },
+        ])
+      }
+
+      const request = JSON.parse(String(init?.body)) as { readonly query: string }
+      if (request.query.includes('BaynReleasePullRequestMetadata')) {
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                number: 13401,
+                baseRefName: 'main',
+                headRefOid: finalHeadSha,
+                createdAt: '2026-07-30T06:59:00Z',
+                mergedAt: '2026-07-30T07:00:00Z',
+                mergeCommit: { oid: mainCommitSha },
+                timelineItems: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+              },
+            },
+          },
+        })
+      }
+      if (request.query.includes('BaynReleasePullRequestReviews')) {
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                reviews: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+              },
+            },
+          },
+        })
+      }
+      if (request.query.includes('BaynReleasePullRequestThreads')) {
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+              },
+            },
+          },
+        })
+      }
+      if (request.query.includes('BaynReleasePullRequestCommits')) {
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                commits: {
+                  nodes: [{ commit: { oid: finalHeadSha } }],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+        })
+      }
+      throw new Error(`unexpected retry fixture request: ${url}`)
+    }) as typeof fetch
+
+    const loaded = await createGitHubReleaseRetryLoader({
+      repository: 'proompteng/lab',
+      token: 'fixture-token',
+      mainCommitSha,
+      baseRefName: 'main',
+      requestTimeoutMs: 1_000,
+      fetchFn,
+    })()
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: loaded,
+        trigger: { type: 'schedule' },
+        nowMs: retryNowMs,
+      }),
+    ).toMatchObject({
+      status: 'dispatch',
+      sourceCommitSha: mainCommitSha,
+      prNumber: 13401,
+      failedRunId: 30540000001,
     })
   })
 })
