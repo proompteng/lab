@@ -2,14 +2,16 @@ import assert from 'node:assert/strict'
 
 import { describe, expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
-import type { Account, Transfer } from 'tigerbeetle-node'
+import { AccountFlags, type Account, type Transfer } from 'tigerbeetle-node'
 
 import { prepareAccounting } from '../accounting/domain'
 import type { RuntimeConfig } from '../config'
 import { OrderSide, type Fill } from '../execution/contracts'
+import { stableU128 } from '../hash'
 import { assembleAccountPlan } from '../ledger/decisions'
-import type { LedgerPlan } from '../ledger-plan'
+import { AccountCode, LEDGER_BATCH_MAX, LEDGER_SCHEMA_VERSION, TransferCode, type LedgerPlan } from '../ledger-plan'
 import type { JournalDependencies, TigerBeetleClient } from '../tigerbeetle-client'
+import type { ForwardPerformanceCashYieldEvidence } from './model'
 import { readForwardPerformanceLedger } from './tigerbeetle'
 
 const accountId = 'paper-account-forward-performance'
@@ -18,6 +20,7 @@ const config = {
   operationTimeoutMs: 1_000,
   tigerBeetle: { clusterId: 2_001n, replicaAddresses: ['3000'], ledger },
 } satisfies Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>
+const hash = (character: string): string => character.repeat(64)
 
 const success = <A, E>(result: Result.Result<A, E>): A => {
   assert(Result.isSuccess(result), 'forward-performance ledger fixture must succeed')
@@ -79,9 +82,83 @@ const materializeAccounts = (plan: LedgerPlan): readonly Account[] => {
 }
 
 const materializeTransfers = (plan: LedgerPlan): readonly Transfer[] =>
-  plan.transfers.map((transfer) => ({ ...transfer, timestamp: 1n }))
+  plan.transfers.map((transfer) => ({ ...transfer, timestamp: transfer.timestamp === 0n ? 1n : transfer.timestamp }))
 
-const dependencies = (accounts: readonly Account[], transfers: readonly Transfer[]): JournalDependencies => ({
+const cashYieldEvidence = (
+  amount: bigint,
+  accountedCashDelta = 0n,
+  openingCash = 1_000_000_000n,
+): ForwardPerformanceCashYieldEvidence => ({
+  schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v1',
+  reconciliationId: hash('c'),
+  reconciliationContentHash: hash('d'),
+  reconciledAt: '2026-07-21T21:01:00.000Z',
+  baselineAccountEventId: hash('a'),
+  baselineObservedAt: '2026-07-19T13:00:00.000Z',
+  baselineCashMicros: openingCash.toString(),
+  openingAccountEventId: hash('e'),
+  openingObservedAt: '2026-07-20T13:00:00.000Z',
+  openingCashMicros: openingCash.toString(),
+  preWindowAccountedCashDeltaMicros: '0',
+  preWindowCashResidualMicros: '0',
+  closingAccountEventId: hash('f'),
+  closingObservedAt: '2026-07-21T21:00:00.000Z',
+  closingCashMicros: (openingCash + accountedCashDelta + amount).toString(),
+  accountedCashDeltaMicros: accountedCashDelta.toString(),
+  cashYieldMicros: amount.toString(),
+})
+
+const observedCashYieldPlan = (plan: LedgerPlan, amount: bigint): LedgerPlan => {
+  const cashAccount = plan.accounts.find((account) => account.code === AccountCode.cash)
+  if (cashAccount === undefined) throw new Error('cash-yield fixture requires the persisted cash account')
+  const cashYieldAccountId = stableU128('bayn-paper-ledger-account-v1', accountId, 'cash-yield-income')
+  const cashYieldAccount: Account = {
+    id: cashYieldAccountId,
+    debits_pending: 0n,
+    debits_posted: 0n,
+    credits_pending: 0n,
+    credits_posted: 0n,
+    user_data_128: plan.runKey,
+    user_data_64: plan.runTag,
+    user_data_32: LEDGER_SCHEMA_VERSION,
+    reserved: 0,
+    ledger,
+    code: AccountCode.cashYieldIncome,
+    flags: AccountFlags.history,
+    timestamp: 0n,
+  }
+
+  const transfer: Transfer = {
+    id: stableU128('untrusted-observed-cash-yield-transfer', accountId),
+    debit_account_id: cashAccount.id,
+    credit_account_id: cashYieldAccountId,
+    amount,
+    pending_id: 0n,
+    user_data_128: stableU128('untrusted-observed-cash-yield-event', accountId),
+    user_data_64: plan.runTag,
+    user_data_32: LEDGER_SCHEMA_VERSION,
+    timeout: 0,
+    ledger,
+    code: TransferCode.cashYield,
+    flags: 0,
+    timestamp: 0n,
+  }
+  return {
+    ...plan,
+    accounts: [...plan.accounts, cashYieldAccount].toSorted((left, right) =>
+      left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
+    ),
+    transfers: [...plan.transfers, transfer].toSorted((left, right) =>
+      left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
+    ),
+  }
+}
+
+const dependencies = (
+  accounts: readonly Account[],
+  transfers: readonly Transfer[],
+  observedLimits?: { accounts?: number; transfers?: number },
+): JournalDependencies => ({
   resolveReplicaAddresses: () => Effect.succeed(['3000']),
   createClient: () =>
     ({
@@ -89,8 +166,14 @@ const dependencies = (accounts: readonly Account[], transfers: readonly Transfer
       createTransfers: async () => [],
       lookupAccounts: async () => [],
       lookupTransfers: async () => [],
-      queryAccounts: async () => [...accounts],
-      queryTransfers: async () => [...transfers],
+      queryAccounts: async (filter) => {
+        if (observedLimits !== undefined) observedLimits.accounts = filter.limit
+        return [...accounts]
+      },
+      queryTransfers: async (filter) => {
+        if (observedLimits !== undefined) observedLimits.transfers = filter.limit
+        return [...transfers]
+      },
       destroy: () => undefined,
     }) satisfies TigerBeetleClient,
 })
@@ -106,6 +189,7 @@ describe('forward performance TigerBeetle read', () => {
           config,
           accountId,
           accountingPlans,
+          undefined,
           dependencies(materializeAccounts(accountPlan), materializeTransfers(accountPlan)),
         ),
       ),
@@ -122,6 +206,147 @@ describe('forward performance TigerBeetle read', () => {
       ledgerExact: true,
       missingLedgerAccountCount: 0,
       openPositionCount: 0,
+      cashYieldEvidenceRequired: false,
+    })
+  })
+
+  test('leaves a genuine-yield residual insufficient until an authoritative event is persisted', async () => {
+    const accountingPlans = plans()
+    const accountPlan = success(assembleAccountPlan(accountId, accountingPlans))
+    const expectedYield = cashYieldEvidence(20_000_000n)
+    const observedLimits: { accounts?: number; transfers?: number } = {}
+
+    const evidence = await Effect.runPromise(
+      Effect.scoped(
+        readForwardPerformanceLedger(
+          config,
+          accountId,
+          accountingPlans,
+          expectedYield,
+          dependencies(materializeAccounts(accountPlan), materializeTransfers(accountPlan), observedLimits),
+        ),
+      ),
+    )
+
+    expect(observedLimits).toEqual({ accounts: LEDGER_BATCH_MAX, transfers: LEDGER_BATCH_MAX })
+    expect(evidence).toEqual({
+      totals: {
+        realizedGainMicros: '10000000',
+        realizedLossMicros: '0',
+        brokerExecutionFeesMicros: '300',
+        otherChargedCostsMicros: '0',
+        cashYieldMicros: '0',
+      },
+      ledgerExact: true,
+      missingLedgerAccountCount: 0,
+      openPositionCount: 0,
+      cashYieldEvidenceRequired: true,
+    })
+    expect(evidence.cashYieldEvidence).toBeUndefined()
+  })
+
+  test('keeps malformed durable cash-yield evidence fail closed', async () => {
+    const accountingPlans = plans()
+    const accountPlan = success(assembleAccountPlan(accountId, accountingPlans))
+    const expectedYield = cashYieldEvidence(20_000_000n)
+    const malformed = { ...expectedYield, preWindowCashResidualMicros: '1' }
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        Effect.scoped(
+          readForwardPerformanceLedger(
+            config,
+            accountId,
+            accountingPlans,
+            malformed,
+            dependencies(materializeAccounts(accountPlan), materializeTransfers(accountPlan)),
+          ),
+        ),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      operation: 'read',
+      cause: { operation: 'verify-account', reason: 'invalid-transaction' },
+    })
+  })
+
+  test('leaves an external deposit residual insufficient without a semantic yield event', async () => {
+    const accountingPlans = plans()
+    const accountPlan = success(assembleAccountPlan(accountId, accountingPlans))
+    const residual = cashYieldEvidence(20_000_000n)
+
+    const evidence = await Effect.runPromise(
+      Effect.scoped(
+        readForwardPerformanceLedger(
+          config,
+          accountId,
+          accountingPlans,
+          residual,
+          dependencies(materializeAccounts(accountPlan), materializeTransfers(accountPlan)),
+        ),
+      ),
+    )
+
+    expect(evidence).toMatchObject({
+      totals: { cashYieldMicros: '0' },
+      ledgerExact: true,
+      missingLedgerAccountCount: 0,
+      cashYieldEvidenceRequired: true,
+    })
+    expect(evidence.cashYieldEvidence).toBeUndefined()
+  })
+
+  test('rejects a broker correction or arbitrary yield-like ledger record', async () => {
+    const accountingPlans = plans()
+    const accountPlan = success(assembleAccountPlan(accountId, accountingPlans))
+    const expectedYield = cashYieldEvidence(20_000_000n)
+    const observed = observedCashYieldPlan(accountPlan, 1_000_000n)
+
+    const evidence = await Effect.runPromise(
+      Effect.scoped(
+        readForwardPerformanceLedger(
+          config,
+          accountId,
+          accountingPlans,
+          expectedYield,
+          dependencies(materializeAccounts(observed), materializeTransfers(observed)),
+        ),
+      ),
+    )
+
+    expect(evidence.totals.cashYieldMicros).toBe('0')
+    expect(evidence.ledgerExact).toBe(false)
+    expect(evidence.missingLedgerAccountCount).toBe(0)
+    expect(evidence.cashYieldEvidenceRequired).toBe(true)
+    expect(evidence.cashYieldEvidence).toBeUndefined()
+  })
+
+  test('fails closed when the bounded account query reaches its exact limit', async () => {
+    const accountingPlans = plans()
+    const accountPlan = success(assembleAccountPlan(accountId, accountingPlans))
+    const sample = materializeAccounts(accountPlan)[0]
+    if (sample === undefined) throw new Error('ledger fixture requires one account')
+    const saturated = Array.from({ length: LEDGER_BATCH_MAX }, (_, index) => ({
+      ...sample,
+      id: BigInt(index + 1),
+    }))
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        Effect.scoped(
+          readForwardPerformanceLedger(config, accountId, accountingPlans, undefined, dependencies(saturated, [])),
+        ),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      operation: 'read',
+      cause: {
+        operation: 'verify-account',
+        reason: 'batch-limit',
+        material: { accountCount: LEDGER_BATCH_MAX, transferCount: 0, limit: LEDGER_BATCH_MAX },
+      },
     })
   })
 })

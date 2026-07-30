@@ -18,7 +18,7 @@ import {
   type ForwardPerformanceLedgerError,
 } from './tigerbeetle'
 import type { LedgerPlan } from '../ledger-plan'
-import type { ForwardPerformanceReceipt } from './model'
+import type { ForwardPerformanceCashYieldEvidence, ForwardPerformanceReceipt } from './model'
 
 export type ForwardPerformanceProgramCause =
   | CanonicalJsonFailure
@@ -46,6 +46,7 @@ export interface ForwardPerformanceReaders {
     config: Pick<LoadedRuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
     accountId: string,
     plans: readonly LedgerPlan[],
+    cashYieldEvidence?: ForwardPerformanceCashYieldEvidence,
   ) => Effect.Effect<ForwardPerformanceLedgerEvidence, ForwardPerformanceLedgerError, Scope.Scope>
 }
 
@@ -92,8 +93,19 @@ export const runForwardPerformance = (
       [...accountingVerification.success.exactReceipts.values()].every(Boolean)
 
     const ledger = yield* readers
-      .ledger(config, identity.accountId, plans)
+      .ledger(config, identity.accountId, plans, postgres.cashYieldEvidence)
       .pipe(Effect.mapError((cause) => programError('ledger-read', cause.message, cause)))
+    const reconciliation =
+      postgres.reconciliation === undefined
+        ? undefined
+        : {
+            ...postgres.reconciliation,
+            performanceExact:
+              postgres.reconciliation.performanceExact &&
+              (!postgres.reconciliation.cashYieldAdjustedExact || ledger.cashYieldEvidence !== undefined),
+            cashYieldAdjustedExact:
+              postgres.reconciliation.cashYieldAdjustedExact && ledger.cashYieldEvidence !== undefined,
+          }
     const receipt = yield* Effect.fromResult(
       makeForwardPerformanceReceipt({
         runtime: {
@@ -110,12 +122,14 @@ export const runForwardPerformance = (
         durableExecutionBindings: postgres.durableExecutionBindings,
         cycles: postgres.cycles,
         ...(postgres.strategy === undefined ? {} : { strategy: postgres.strategy }),
-        ...(postgres.reconciliation === undefined ? {} : { reconciliation: postgres.reconciliation }),
+        ...(reconciliation === undefined ? {} : { reconciliation }),
         ...(postgres.startingCapitalMicros === undefined
           ? {}
           : { startingCapitalMicros: postgres.startingCapitalMicros }),
         transactions: postgres.transactionEvidence,
         ledgerTotals: ledger.totals,
+        cashYieldEvidenceRequired: ledger.cashYieldEvidenceRequired,
+        ...(ledger.cashYieldEvidence === undefined ? {} : { cashYieldEvidence: ledger.cashYieldEvidence }),
         accountingReceiptsExact,
         ledgerExact: ledger.ledgerExact,
         missingLedgerAccountCount: ledger.missingLedgerAccountCount,

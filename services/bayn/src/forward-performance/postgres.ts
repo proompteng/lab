@@ -2,7 +2,12 @@ import { PgClient } from '@effect/sql-pg'
 import { Data, Effect, Schema } from 'effect'
 
 import type { AccountingTransaction } from '../accounting/schema'
-import { decodeAccountingReceipt, type AccountingReceipt } from '../execution/contracts'
+import {
+  decodeAccountingReceipt,
+  DiscrepancyKind,
+  DiscrepancySchema,
+  type AccountingReceipt,
+} from '../execution/contracts'
 import {
   AccountingReceiptRowSchema,
   AccountingTransactionRowSchema,
@@ -16,6 +21,7 @@ import {
   strictParseOptions,
 } from '../schemas'
 import type {
+  ForwardPerformanceCashYieldEvidence,
   ForwardPerformanceCycleEvidence,
   ForwardPerformanceStrategyEvidence,
   ForwardPerformanceTransactionEvidence,
@@ -50,10 +56,29 @@ const ReconciliationRow = Schema.Struct({
   reconciliation_id: Sha256,
   content_hash: Sha256,
   status: Schema.Literals(['EXACT', 'DISCREPANCY']),
+  discrepancies: Schema.Array(DiscrepancySchema),
   reconciled_at: Schema.Date,
 })
 
 const StartingCapitalRow = Schema.Struct({ starting_capital_micros: Schema.String })
+const CashYieldEvidenceRow = Schema.Struct({
+  reconciliation_id: Sha256,
+  reconciliation_content_hash: Sha256,
+  reconciled_at: Schema.Date,
+  baseline_account_event_id: Sha256,
+  baseline_observed_at: Schema.Date,
+  baseline_cash_micros: Schema.String,
+  opening_account_event_id: Sha256,
+  opening_observed_at: Schema.Date,
+  opening_cash_micros: Schema.String,
+  pre_window_accounted_cash_delta_micros: Schema.String,
+  pre_window_cash_residual_micros: Schema.String,
+  closing_account_event_id: Sha256,
+  closing_observed_at: Schema.Date,
+  closing_cash_micros: Schema.String,
+  accounted_cash_delta_micros: Schema.String,
+  cash_yield_micros: Schema.String,
+})
 const CountRow = Schema.Struct({ count: Schema.Int })
 const DurableExecutionRow = Schema.Struct({
   account_id: Schema.NullOr(NonEmptyString),
@@ -89,6 +114,10 @@ const decodeStartingCapital = Schema.decodeUnknownEffect(
   Schema.Array(StartingCapitalRow).check(Schema.isMaxLength(1)),
   strictParseOptions,
 )
+const decodeCashYieldEvidence = Schema.decodeUnknownEffect(
+  Schema.Array(CashYieldEvidenceRow).check(Schema.isMaxLength(1)),
+  strictParseOptions,
+)
 const decodeTransactions = Schema.decodeUnknownEffect(Schema.Array(TransactionRow), strictParseOptions)
 const decodeReceipts = Schema.decodeUnknownEffect(Schema.Array(AccountingReceiptRowSchema), strictParseOptions)
 const decodeCount = Schema.decodeUnknownEffect(Schema.Tuple([CountRow]), strictParseOptions)
@@ -108,9 +137,12 @@ export interface ForwardPerformancePostgresEvidence {
     readonly reconciliationId: string
     readonly contentHash: string
     readonly status: 'EXACT' | 'DISCREPANCY'
+    readonly performanceExact: boolean
+    readonly cashYieldAdjustedExact: boolean
     readonly reconciledAt: string
   }
   readonly startingCapitalMicros?: string
+  readonly cashYieldEvidence?: ForwardPerformanceCashYieldEvidence
   readonly transactions: readonly AccountingTransaction[]
   readonly transactionEvidence: readonly ForwardPerformanceTransactionEvidence[]
   readonly receipts: readonly AccountingReceipt[]
@@ -145,12 +177,99 @@ const postgresError = (cause: unknown): ForwardPerformancePostgresError =>
     cause,
   })
 
+const SIGNED_I128_MIN = -(1n << 127n)
+const SIGNED_I128_MAX = (1n << 127n) - 1n
+const INTEGER_PATTERN = /^(?:0|-[1-9][0-9]*|[1-9][0-9]*)$/
+
+const signedI128 = (value: string): bigint | undefined => {
+  if (!INTEGER_PATTERN.test(value)) return undefined
+  const parsed = BigInt(value)
+  return parsed < SIGNED_I128_MIN || parsed > SIGNED_I128_MAX ? undefined : parsed
+}
+
+const reconciliationExactness = (
+  accountId: string,
+  reconciliation: typeof ReconciliationRow.Type,
+  cashYield: typeof CashYieldEvidenceRow.Type | undefined,
+): { readonly performanceExact: boolean; readonly cashYieldAdjustedExact: boolean } => {
+  if (reconciliation.status === 'EXACT') {
+    return {
+      performanceExact: reconciliation.discrepancies.length === 0,
+      cashYieldAdjustedExact: false,
+    }
+  }
+  const discrepancy = reconciliation.discrepancies[0]
+  if (
+    cashYield === undefined ||
+    reconciliation.discrepancies.length !== 1 ||
+    discrepancy === undefined ||
+    discrepancy.kind !== DiscrepancyKind.Cash ||
+    discrepancy.identity !== accountId ||
+    discrepancy.lastObservedAt !== reconciliation.reconciled_at.toISOString() ||
+    cashYield.reconciliation_id !== reconciliation.reconciliation_id ||
+    cashYield.reconciliation_content_hash !== reconciliation.content_hash ||
+    cashYield.reconciled_at.toISOString() !== reconciliation.reconciled_at.toISOString()
+  ) {
+    return { performanceExact: false, cashYieldAdjustedExact: false }
+  }
+
+  const baselineCash = signedI128(cashYield.baseline_cash_micros)
+  const openingCash = signedI128(cashYield.opening_cash_micros)
+  const preWindowCashDelta = signedI128(cashYield.pre_window_accounted_cash_delta_micros)
+  const preWindowResidual = signedI128(cashYield.pre_window_cash_residual_micros)
+  const closingCash = signedI128(cashYield.closing_cash_micros)
+  const accountedCashDelta = signedI128(cashYield.accounted_cash_delta_micros)
+  const yieldAmount = signedI128(cashYield.cash_yield_micros)
+  const expectedCash = signedI128(discrepancy.expected)
+  const observedCash = signedI128(discrepancy.observed)
+  if (
+    baselineCash === undefined ||
+    openingCash === undefined ||
+    preWindowCashDelta === undefined ||
+    preWindowResidual === undefined ||
+    closingCash === undefined ||
+    accountedCashDelta === undefined ||
+    yieldAmount === undefined ||
+    expectedCash === undefined ||
+    observedCash === undefined ||
+    yieldAmount <= 0n ||
+    preWindowResidual !== 0n ||
+    openingCash !== baselineCash + preWindowCashDelta ||
+    expectedCash !== openingCash + accountedCashDelta ||
+    observedCash !== closingCash ||
+    observedCash - expectedCash !== yieldAmount ||
+    closingCash - openingCash - accountedCashDelta !== yieldAmount
+  ) {
+    return { performanceExact: false, cashYieldAdjustedExact: false }
+  }
+
+  return { performanceExact: true, cashYieldAdjustedExact: true }
+}
+
 const transactionQuery = (sql: PgClient.PgClient, accountId: string) => sql<Record<string, unknown>>`
   WITH latest_reconciliation AS (
     SELECT reconciled_at
     FROM reconciliations
     WHERE account_id = ${accountId}
     ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+    LIMIT 1
+  ), first_cycle AS (
+    SELECT submission_open_at
+    FROM autonomous_cycles
+    WHERE account_id = ${accountId}
+      AND state IN ('COMPLETED', 'NO_TRADE')
+    ORDER BY submission_open_at, cycle_id COLLATE "C"
+    LIMIT 1
+  ), opening_snapshot AS (
+    SELECT event.observed_at
+    FROM account_snapshots AS snapshot
+    JOIN broker_events AS event ON event.event_id = snapshot.event_id
+    CROSS JOIN latest_reconciliation
+    CROSS JOIN first_cycle
+    WHERE snapshot.account_id = ${accountId}
+      AND event.observed_at <= first_cycle.submission_open_at
+      AND event.observed_at <= latest_reconciliation.reconciled_at
+    ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
     LIMIT 1
   )
   SELECT
@@ -176,8 +295,10 @@ const transactionQuery = (sql: PgClient.PgClient, accountId: string) => sql<Reco
     intent.cycle_id
   FROM accounting_transactions AS transaction
   CROSS JOIN latest_reconciliation
+  CROSS JOIN opening_snapshot
   LEFT JOIN intents AS intent ON intent.intent_id = transaction.intent_id
   WHERE transaction.account_id = ${accountId}
+    AND transaction.occurred_at >= opening_snapshot.observed_at
     AND transaction.occurred_at <= latest_reconciliation.reconciled_at
   ORDER BY transaction.occurred_at, transaction.transaction_id COLLATE "C"
 `
@@ -189,11 +310,31 @@ const receiptQuery = (sql: PgClient.PgClient, accountId: string) => sql<Record<s
     WHERE account_id = ${accountId}
     ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
     LIMIT 1
+  ), first_cycle AS (
+    SELECT submission_open_at
+    FROM autonomous_cycles
+    WHERE account_id = ${accountId}
+      AND state IN ('COMPLETED', 'NO_TRADE')
+    ORDER BY submission_open_at, cycle_id COLLATE "C"
+    LIMIT 1
+  ), opening_snapshot AS (
+    SELECT event.observed_at
+    FROM account_snapshots AS snapshot
+    JOIN broker_events AS event ON event.event_id = snapshot.event_id
+    CROSS JOIN latest_reconciliation
+    CROSS JOIN first_cycle
+    WHERE snapshot.account_id = ${accountId}
+      AND event.observed_at <= first_cycle.submission_open_at
+      AND event.observed_at <= latest_reconciliation.reconciled_at
+    ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
+    LIMIT 1
   ), selected_transactions AS (
     SELECT broker_event_id
     FROM accounting_transactions
     CROSS JOIN latest_reconciliation
+    CROSS JOIN opening_snapshot
     WHERE account_id = ${accountId}
+      AND occurred_at >= opening_snapshot.observed_at
       AND occurred_at <= latest_reconciliation.reconciled_at
   )
   SELECT
@@ -281,7 +422,7 @@ export const readForwardPerformancePostgres = (
         `.pipe(Effect.flatMap(decodeStrategy))
 
         const reconciliationRows = yield* sql<Record<string, unknown>>`
-          SELECT reconciliation_id, content_hash, status, reconciled_at
+          SELECT reconciliation_id, content_hash, status, discrepancies, reconciled_at
           FROM reconciliations
           WHERE account_id = ${accountId}
           ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
@@ -315,6 +456,104 @@ export const readForwardPerformancePostgres = (
           LIMIT 1
         `.pipe(Effect.flatMap(decodeStartingCapital))
 
+        const cashYieldRows = yield* sql<Record<string, unknown>>`
+          WITH latest_reconciliation AS (
+            SELECT reconciliation_id, content_hash, reconciled_at
+            FROM reconciliations
+            WHERE account_id = ${accountId}
+            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+            LIMIT 1
+          ), first_cycle AS (
+            SELECT submission_open_at
+            FROM autonomous_cycles
+            WHERE account_id = ${accountId}
+              AND state IN ('COMPLETED', 'NO_TRADE')
+            ORDER BY submission_open_at, cycle_id COLLATE "C"
+            LIMIT 1
+          ), baseline_snapshot AS (
+            SELECT
+              event.event_id,
+              event.observed_at,
+              snapshot.cash_micros
+            FROM account_snapshots AS snapshot
+            JOIN broker_events AS event ON event.event_id = snapshot.event_id
+            WHERE snapshot.account_id = ${accountId}
+            ORDER BY event.source_sequence, event.event_id COLLATE "C"
+            LIMIT 1
+          ), opening_snapshot AS (
+            SELECT
+              event.event_id,
+              event.observed_at,
+              snapshot.cash_micros
+            FROM account_snapshots AS snapshot
+            JOIN broker_events AS event ON event.event_id = snapshot.event_id
+            CROSS JOIN latest_reconciliation
+            CROSS JOIN first_cycle
+            WHERE snapshot.account_id = ${accountId}
+              AND event.observed_at <= first_cycle.submission_open_at
+              AND event.observed_at <= latest_reconciliation.reconciled_at
+            ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
+            LIMIT 1
+          ), pre_window_accounted_cash AS (
+            SELECT COALESCE(sum(transaction.cash_delta_micros), 0) AS cash_delta_micros
+            FROM accounting_transactions AS transaction
+            CROSS JOIN opening_snapshot
+            WHERE transaction.account_id = ${accountId}
+              AND transaction.occurred_at < opening_snapshot.observed_at
+          ), closing_snapshot AS (
+            SELECT
+              event.event_id,
+              event.observed_at,
+              snapshot.cash_micros
+            FROM account_snapshots AS snapshot
+            JOIN broker_events AS event ON event.event_id = snapshot.event_id
+            CROSS JOIN latest_reconciliation
+            WHERE snapshot.account_id = ${accountId}
+              AND event.observed_at <= latest_reconciliation.reconciled_at
+            ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
+            LIMIT 1
+          ), accounted_cash AS (
+            SELECT COALESCE(sum(transaction.cash_delta_micros), 0) AS cash_delta_micros
+            FROM accounting_transactions AS transaction
+            CROSS JOIN latest_reconciliation
+            CROSS JOIN opening_snapshot
+            WHERE transaction.account_id = ${accountId}
+              AND transaction.occurred_at >= opening_snapshot.observed_at
+              AND transaction.occurred_at <= latest_reconciliation.reconciled_at
+          )
+          SELECT
+            latest_reconciliation.reconciliation_id,
+            latest_reconciliation.content_hash AS reconciliation_content_hash,
+            latest_reconciliation.reconciled_at,
+            baseline_snapshot.event_id AS baseline_account_event_id,
+            baseline_snapshot.observed_at AS baseline_observed_at,
+            baseline_snapshot.cash_micros::text AS baseline_cash_micros,
+            opening_snapshot.event_id AS opening_account_event_id,
+            opening_snapshot.observed_at AS opening_observed_at,
+            opening_snapshot.cash_micros::text AS opening_cash_micros,
+            pre_window_accounted_cash.cash_delta_micros::text AS pre_window_accounted_cash_delta_micros,
+            (
+              opening_snapshot.cash_micros
+              - baseline_snapshot.cash_micros
+              - pre_window_accounted_cash.cash_delta_micros
+            )::text AS pre_window_cash_residual_micros,
+            closing_snapshot.event_id AS closing_account_event_id,
+            closing_snapshot.observed_at AS closing_observed_at,
+            closing_snapshot.cash_micros::text AS closing_cash_micros,
+            accounted_cash.cash_delta_micros::text AS accounted_cash_delta_micros,
+            (
+              closing_snapshot.cash_micros
+              - opening_snapshot.cash_micros
+              - accounted_cash.cash_delta_micros
+            )::text AS cash_yield_micros
+          FROM latest_reconciliation
+          CROSS JOIN baseline_snapshot
+          CROSS JOIN opening_snapshot
+          CROSS JOIN pre_window_accounted_cash
+          CROSS JOIN closing_snapshot
+          CROSS JOIN accounted_cash
+        `.pipe(Effect.flatMap(decodeCashYieldEvidence))
+
         const transactionRows = yield* transactionQuery(sql, accountId).pipe(Effect.flatMap(decodeTransactions))
         const receiptRows = yield* receiptQuery(sql, accountId).pipe(Effect.flatMap(decodeReceipts))
         const receipts = yield* Effect.forEach(receiptRows, (row) =>
@@ -326,6 +565,24 @@ export const readForwardPerformancePostgres = (
             FROM reconciliations
             WHERE account_id = ${accountId}
             ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+            LIMIT 1
+          ), first_cycle AS (
+            SELECT submission_open_at
+            FROM autonomous_cycles
+            WHERE account_id = ${accountId}
+              AND state IN ('COMPLETED', 'NO_TRADE')
+            ORDER BY submission_open_at, cycle_id COLLATE "C"
+            LIMIT 1
+          ), opening_snapshot AS (
+            SELECT event.observed_at
+            FROM account_snapshots AS snapshot
+            JOIN broker_events AS event ON event.event_id = snapshot.event_id
+            CROSS JOIN latest_reconciliation
+            CROSS JOIN first_cycle
+            WHERE snapshot.account_id = ${accountId}
+              AND event.observed_at <= first_cycle.submission_open_at
+              AND event.observed_at <= latest_reconciliation.reconciled_at
+            ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
             LIMIT 1
           )
           SELECT DISTINCT
@@ -345,10 +602,12 @@ export const readForwardPerformancePostgres = (
             generation.qualification_image_digest
           FROM accounting_transactions AS transaction
           CROSS JOIN latest_reconciliation
+          CROSS JOIN opening_snapshot
           JOIN intents AS intent ON intent.intent_id = transaction.intent_id
           JOIN authority_generations AS generation
             ON generation.generation_hash = intent.authority_generation_hash
           WHERE transaction.account_id = ${accountId}
+            AND transaction.occurred_at >= opening_snapshot.observed_at
             AND transaction.occurred_at <= latest_reconciliation.reconciled_at
           ORDER BY
             generation.account_id,
@@ -503,6 +762,11 @@ export const readForwardPerformancePostgres = (
                 imageDigest: strategyRow.image_digest,
               }
         const reconciliationRow = reconciliationRows[0]
+        const cashYieldRow = cashYieldRows[0]
+        const exactness =
+          reconciliationRow === undefined
+            ? { performanceExact: false, cashYieldAdjustedExact: false }
+            : reconciliationExactness(accountId, reconciliationRow, cashYieldRow)
         const reconciliation =
           reconciliationRow === undefined
             ? undefined
@@ -510,7 +774,30 @@ export const readForwardPerformancePostgres = (
                 reconciliationId: reconciliationRow.reconciliation_id,
                 contentHash: reconciliationRow.content_hash,
                 status: reconciliationRow.status,
+                ...exactness,
                 reconciledAt: reconciliationRow.reconciled_at.toISOString(),
+              }
+        const cashYieldEvidence: ForwardPerformanceCashYieldEvidence | undefined =
+          cashYieldRow === undefined
+            ? undefined
+            : {
+                schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v1',
+                reconciliationId: cashYieldRow.reconciliation_id,
+                reconciliationContentHash: cashYieldRow.reconciliation_content_hash,
+                reconciledAt: cashYieldRow.reconciled_at.toISOString(),
+                baselineAccountEventId: cashYieldRow.baseline_account_event_id,
+                baselineObservedAt: cashYieldRow.baseline_observed_at.toISOString(),
+                baselineCashMicros: cashYieldRow.baseline_cash_micros,
+                openingAccountEventId: cashYieldRow.opening_account_event_id,
+                openingObservedAt: cashYieldRow.opening_observed_at.toISOString(),
+                openingCashMicros: cashYieldRow.opening_cash_micros,
+                preWindowAccountedCashDeltaMicros: cashYieldRow.pre_window_accounted_cash_delta_micros,
+                preWindowCashResidualMicros: cashYieldRow.pre_window_cash_residual_micros,
+                closingAccountEventId: cashYieldRow.closing_account_event_id,
+                closingObservedAt: cashYieldRow.closing_observed_at.toISOString(),
+                closingCashMicros: cashYieldRow.closing_cash_micros,
+                accountedCashDeltaMicros: cashYieldRow.accounted_cash_delta_micros,
+                cashYieldMicros: cashYieldRow.cash_yield_micros,
               }
         const transactions = transactionRows.map(accountingTransactionFromRow)
         const transactionEvidence = transactionRows.map(
@@ -531,6 +818,7 @@ export const readForwardPerformancePostgres = (
           ...(startingCapitalRows[0] === undefined
             ? {}
             : { startingCapitalMicros: startingCapitalRows[0].starting_capital_micros }),
+          ...(cashYieldEvidence === undefined ? {} : { cashYieldEvidence }),
           transactions,
           transactionEvidence,
           receipts,
