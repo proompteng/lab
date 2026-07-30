@@ -350,8 +350,8 @@ describe('EXECUTION_PREPARE pure validation', () => {
     })
   })
 
-  test('rebinds the proof to a freshly verified receipt with identical durable candidate facts', () => {
-    const refreshedReceipt = makeExecutionPrepareDiscoveryReceiptFixture({
+  test('keeps the proof hash stable across fresh verified receipts with identical durable candidate facts', () => {
+    const firstRefreshedReceipt = makeExecutionPrepareDiscoveryReceiptFixture({
       sourceRevision,
       imageRepository,
       imageDigest,
@@ -365,15 +365,33 @@ describe('EXECUTION_PREPARE pure validation', () => {
       reconciliationContentHash,
       observedAt: '2099-07-24T12:00:01.000Z',
     })
+    const secondRefreshedReceipt = makeExecutionPrepareDiscoveryReceiptFixture({
+      sourceRevision,
+      imageRepository,
+      imageDigest,
+      strategy,
+      strategyProtocolHash,
+      qualificationRunId,
+      accountId,
+      authorityGenerationHash,
+      policyHash: riskPolicyHash,
+      reconciliationId,
+      reconciliationContentHash,
+      observedAt: '2099-07-24T12:00:02.000Z',
+    })
     const prevalidated = Result.getOrThrow(validateExecutionPrepareInput(request, runtime))
-    const authenticated = Result.getOrThrow(authenticateExecutionPrepareDiscovery(prevalidated, refreshedReceipt))
+    const first = Result.getOrThrow(authenticateExecutionPrepareDiscovery(prevalidated, firstRefreshedReceipt))
+    const second = Result.getOrThrow(authenticateExecutionPrepareDiscovery(prevalidated, secondRefreshedReceipt))
 
-    expect(refreshedReceipt.immutableBindingHash).toBe(discoveryReceipt.immutableBindingHash)
-    expect(refreshedReceipt.candidateFactsHash).toBe(discoveryReceipt.candidateFactsHash)
-    expect(refreshedReceipt.observationReceiptHash).not.toBe(discoveryReceipt.observationReceiptHash)
-    expect(authenticated.proofPlan.candidate.discoveryReceiptHash).toBe(refreshedReceipt.observationReceiptHash)
-    expect(authenticated.proofPlanHash).not.toBe(request.proofPlanHash)
-    expect(authenticated.proof.proofPlanHash).toBe(authenticated.proofPlanHash)
+    expect(firstRefreshedReceipt.immutableBindingHash).toBe(discoveryReceipt.immutableBindingHash)
+    expect(firstRefreshedReceipt.candidateFactsHash).toBe(discoveryReceipt.candidateFactsHash)
+    expect(firstRefreshedReceipt.observationReceiptHash).not.toBe(discoveryReceipt.observationReceiptHash)
+    expect(secondRefreshedReceipt.observationReceiptHash).not.toBe(firstRefreshedReceipt.observationReceiptHash)
+    expect(first.proofPlan).toEqual(request.proofPlan)
+    expect(second.proofPlan).toEqual(request.proofPlan)
+    expect(first.proofPlanHash).toBe(request.proofPlanHash)
+    expect(second.proofPlanHash).toBe(request.proofPlanHash)
+    expect(first.proof).toEqual(second.proof)
   })
 
   test('rejects ineligible assets and missing required fractional eligibility', () => {

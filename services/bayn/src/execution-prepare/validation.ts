@@ -260,30 +260,14 @@ export const authenticateExecutionPrepareDiscovery = (
   if (Result.isFailure(candidate)) return Result.fail(candidate.failure)
   const eligibility = validateCandidateEligibility(candidate.success)
   if (Result.isFailure(eligibility)) return Result.fail(eligibility.failure)
-  const proofPlan: ExecutionPrepareProofPlan = {
-    ...input.request.proofPlan,
-    candidate: {
-      discoveryReceiptHash: trustedReceipt.observationReceiptHash,
-      immutableBindingHash: trustedReceipt.immutableBindingHash,
-      candidateFactsHash: trustedReceipt.candidateFactsHash,
-      candidateOrdinal: candidate.success.ordinal,
-      observedPlanIntentId: candidate.success.observedPlanIntentId,
-      cycleId: trustedReceipt.binding.cycle.cycleId,
-      decisionHash: trustedReceipt.binding.cycle.decisionHash,
-    },
-  }
-  const proofPlanHash = canonicalHashV1Result(proofPlan)
-  if (Result.isFailure(proofPlanHash)) {
-    return fail({ _tag: 'ExecutionPrepareProofPlanHashFailed', cause: proofPlanHash.failure })
-  }
   return Result.succeed({
     ...input,
-    proofPlan,
-    proofPlanHash: proofPlanHash.success,
+    proofPlan: input.request.proofPlan,
+    proofPlanHash: input.request.proofPlanHash,
     proof: {
       schemaVersion: 'bayn.paper-authority-proof-binding.v1',
       riskPolicyHash: input.runtime.riskPolicyHash,
-      proofPlanHash: proofPlanHash.success,
+      proofPlanHash: input.request.proofPlanHash,
     },
   })
 }
