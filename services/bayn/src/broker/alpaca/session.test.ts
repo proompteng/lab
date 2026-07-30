@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Deferred, Effect, Fiber, Layer, Logger, Redacted, Ref, References, Result } from 'effect'
+import { Clock, Deferred, Effect, Fiber, Layer, Logger, Redacted, Ref, References, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 
 import { alpacaSandboxBaseUrl, decodeBrokerConnection } from '../connection'
 import { BrokerEnvironment, BrokerProvider } from '../identity'
-import { BrokerReadErrorKind } from './failures'
+import { BrokerReadError, BrokerReadErrorKind } from './failures'
 import { AccountStatus, BrokerRead } from './model'
 import {
   BrokerSession,
@@ -14,6 +14,7 @@ import {
   BrokerSessionAcquisitionStage,
   acquireBrokerSession,
   layer,
+  retryRecoverableBrokerSessionAcquisition,
 } from './session'
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
@@ -272,6 +273,50 @@ describe('Alpaca broker session acquisition retry', () => {
         requestId: 'req-3',
       },
     })
+  })
+
+  test('does not start a retry when delayed wake-up crosses the bounded startup retry deadline', async () => {
+    const options = connection(1)
+    let attempts = 0
+    let clockReads = 0
+    const clockTimes = [0, 0, 6_000] as const
+    const readTime = () => clockTimes[Math.min(clockReads++, clockTimes.length - 1)]
+    const currentTime = () => clockTimes[Math.min(clockReads, clockTimes.length - 1)]
+    const clock: Clock.Clock = {
+      currentTimeMillisUnsafe: readTime,
+      currentTimeMillis: Effect.sync(readTime),
+      currentTimeNanosUnsafe: () => BigInt(currentTime()) * 1_000_000n,
+      currentTimeNanos: Effect.sync(() => BigInt(currentTime()) * 1_000_000n),
+      sleep: () => Effect.succeed(undefined),
+    }
+    const cause = new BrokerReadError({
+      operation: 'account',
+      kind: BrokerReadErrorKind.Server,
+      message: 'temporary account failure',
+      retryable: true,
+      status: 500,
+      requestId: 'req-1',
+    })
+    const acquisitionFailure = new BrokerSessionAcquisitionError({
+      stage: BrokerSessionAcquisitionStage.Account,
+      provider: options.provider,
+      environment: options.environment,
+      baseUrl: options.baseUrl,
+      expectedAccountId: options.expectedAccountId,
+      cause,
+    })
+    const acquisition = Effect.sync(() => {
+      attempts += 1
+    }).pipe(Effect.andThen(Effect.fail(acquisitionFailure)))
+
+    const failure = await Effect.runPromise(
+      Effect.flip(retryRecoverableBrokerSessionAcquisition(options, acquisition)).pipe(
+        Effect.provideService(Clock.Clock, clock),
+      ),
+    )
+
+    expect(attempts).toBe(1)
+    expect(failure).toBe(acquisitionFailure)
   })
 
   test('propagates interruption and finalizes the in-flight read exactly once without retrying', async () => {

@@ -75,7 +75,7 @@ const acquisitionError = (
 const isRetryableBrokerSessionAcquisition = (error: BrokerSessionAcquisitionError): boolean =>
   error.cause instanceof BrokerReadError && error.cause.retryable
 
-const retryRecoverableBrokerSessionAcquisition = <A, R>(
+export const retryRecoverableBrokerSessionAcquisition = <A, R>(
   connection: BrokerConnection,
   effect: Effect.Effect<A, BrokerSessionAcquisitionError, R>,
 ): Effect.Effect<A, BrokerSessionAcquisitionError, R> =>
@@ -90,7 +90,12 @@ const retryRecoverableBrokerSessionAcquisition = <A, R>(
             Effect.flatMap((failedAtMs) =>
               failedAtMs + brokerSessionRetrySpacingMs >= retryDeadlineMs
                 ? Effect.fail(error)
-                : Effect.sleep(brokerSessionRetrySpacing).pipe(Effect.andThen(attempt(retriesRemaining - 1))),
+                : Effect.sleep(brokerSessionRetrySpacing).pipe(
+                    Effect.andThen(Clock.currentTimeMillis),
+                    Effect.flatMap((wokeAtMs) =>
+                      wokeAtMs >= retryDeadlineMs ? Effect.fail(error) : attempt(retriesRemaining - 1),
+                    ),
+                  ),
             ),
           )
         }),
