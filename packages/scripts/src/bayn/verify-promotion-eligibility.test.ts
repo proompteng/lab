@@ -168,7 +168,7 @@ const pullRequest = (overrides: Partial<BaynPromotionPullRequest> = {}): BaynPro
   createdAt: '2026-07-30T09:59:00Z',
   headCommittedAt: '2026-07-30T10:00:00Z',
   commitCount: 1,
-  headForcePushCount: 0,
+  headForcePushes: [],
   files: [
     {
       path: 'argocd/applications/bayn/deployment.yaml',
@@ -358,7 +358,7 @@ describe('Bayn promotion eligibility', () => {
     ).toMatchObject({ status: 'hold', code: 'exact-head-review-missing' })
   })
 
-  test('accepts a clean connector reaction only for a single never-force-pushed head', () => {
+  test('accepts a clean connector reaction for a single immutable head without force-push history', () => {
     const reactions = [
       {
         userLogin: baynPromotionCodexBotLogin,
@@ -367,12 +367,194 @@ describe('Bayn promotion eligibility', () => {
       },
     ]
     expect(evaluate(snapshot({ reviews: [], reactions }))).toMatchObject({ status: 'eligible' })
+  })
+
+  test('accepts the #13410 one-force-push-then-clean-reaction sequence for the exact current head', () => {
+    const realPullNumber = 13410
+    const priorHeadSha = 'caee18e8b951700d75161f00a9d88a4696c2c323'
+    const realHeadSha = '94ecab66c681e1044c7a7e9f62982892ddac81ae'
+    const result = evaluateBaynPromotionEligibility({
+      expectedRepository: repository,
+      expectedPullNumber: realPullNumber,
+      expectedHeadSha: realHeadSha,
+      nowMs: Date.parse('2026-07-30T23:00:00Z'),
+      snapshot: snapshot({
+        pullRequest: pullRequest({
+          number: realPullNumber,
+          baseSha: '7cb3d25454e39f3dea04f4f60f1ec068c5a79807',
+          headSha: realHeadSha,
+          createdAt: '2026-07-30T22:57:10Z',
+          headCommittedAt: '2026-07-30T22:57:06Z',
+          headForcePushes: [
+            {
+              beforeSha: priorHeadSha,
+              afterSha: realHeadSha,
+              createdAt: '2026-07-30T22:57:11Z',
+            },
+          ],
+        }),
+        reviews: [],
+        reactions: [
+          {
+            userLogin: baynPromotionCodexBotLogin,
+            content: '+1',
+            createdAt: '2026-07-30T22:58:50Z',
+          },
+        ],
+        provenance: provenance({
+          promotionPullNumber: realPullNumber,
+          promotionHeadSha: realHeadSha,
+        }),
+      }),
+    })
+
+    expect(result).toMatchObject({
+      status: 'eligible',
+      prNumber: realPullNumber,
+      headSha: realHeadSha,
+      reviewSubmittedAt: '2026-07-30T22:58:50Z',
+    })
+  })
+
+  test.each([
+    ['before the latest-head force-push', '2026-07-30T22:57:10Z', baynPromotionCodexBotLogin],
+    ['at the same second as the latest-head force-push', '2026-07-30T22:57:11Z', baynPromotionCodexBotLogin],
+    ['from a spoofed actor', '2026-07-30T22:58:50Z', 'spoofed-codex[bot]'],
+  ] as const)('rejects a connector reaction %s', (_name, reactionCreatedAt, userLogin) => {
     expect(
       evaluate(
         snapshot({
           reviews: [],
-          reactions,
-          pullRequest: pullRequest({ headForcePushCount: 1 }),
+          pullRequest: pullRequest({
+            createdAt: '2026-07-30T22:57:10Z',
+            headCommittedAt: '2026-07-30T22:57:06Z',
+            headForcePushes: [
+              {
+                beforeSha: staleHeadSha,
+                afterSha: headSha,
+                createdAt: '2026-07-30T22:57:11Z',
+              },
+            ],
+          }),
+          reactions: [{ userLogin, content: '+1', createdAt: reactionCreatedAt }],
+        }),
+      ),
+    ).toMatchObject({ status: 'hold', code: 'exact-head-review-missing' })
+  })
+
+  test('rejects a reaction invalidated by a later force-push to the current head', () => {
+    expect(
+      evaluate(
+        snapshot({
+          reviews: [],
+          pullRequest: pullRequest({
+            createdAt: '2026-07-30T22:57:10Z',
+            headCommittedAt: '2026-07-30T22:57:06Z',
+            headForcePushes: [
+              {
+                beforeSha: oldSourceSha,
+                afterSha: staleHeadSha,
+                createdAt: '2026-07-30T22:57:11Z',
+              },
+              {
+                beforeSha: staleHeadSha,
+                afterSha: headSha,
+                createdAt: '2026-07-30T22:59:00Z',
+              },
+            ],
+          }),
+          reactions: [
+            {
+              userLogin: baynPromotionCodexBotLogin,
+              content: '+1',
+              createdAt: '2026-07-30T22:58:50Z',
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({ status: 'hold', code: 'exact-head-review-missing' })
+  })
+
+  test('rejects stale or ambiguous force-push history instead of guessing a reaction binding', () => {
+    const reaction = {
+      userLogin: baynPromotionCodexBotLogin,
+      content: '+1',
+      createdAt: '2026-07-30T22:58:50Z',
+    }
+    expect(
+      evaluate(
+        snapshot({
+          reviews: [],
+          reactions: [reaction],
+          pullRequest: pullRequest({
+            createdAt: '2026-07-30T22:57:10Z',
+            headCommittedAt: '2026-07-30T22:57:06Z',
+            headForcePushes: [
+              {
+                beforeSha: oldSourceSha,
+                afterSha: staleHeadSha,
+                createdAt: '2026-07-30T22:57:11Z',
+              },
+            ],
+          }),
+        }),
+      ),
+    ).toMatchObject({ status: 'hold', code: 'exact-head-review-missing' })
+
+    expect(
+      evaluate(
+        snapshot({
+          reviews: [],
+          reactions: [reaction],
+          pullRequest: pullRequest({
+            createdAt: '2026-07-30T22:57:10Z',
+            headCommittedAt: '2026-07-30T22:57:06Z',
+            headForcePushes: [
+              {
+                beforeSha: oldSourceSha,
+                afterSha: staleHeadSha,
+                createdAt: '2026-07-30T22:57:11Z',
+              },
+              {
+                beforeSha: sourceSha,
+                afterSha: headSha,
+                createdAt: '2026-07-30T22:57:12Z',
+              },
+            ],
+          }),
+        }),
+      ),
+    ).toMatchObject({ status: 'hold', code: 'exact-head-review-missing' })
+  })
+
+  test('rejects multiple clean fallback attestations as ambiguous', () => {
+    const reaction = {
+      userLogin: baynPromotionCodexBotLogin,
+      content: '+1',
+      createdAt: '2026-07-30T10:01:00Z',
+    }
+    expect(
+      evaluate(
+        snapshot({
+          reviews: [],
+          reactions: [reaction, { ...reaction, createdAt: '2026-07-30T10:01:01Z' }],
+        }),
+      ),
+    ).toMatchObject({ status: 'hold', code: 'exact-head-review-missing' })
+
+    expect(
+      evaluate(
+        snapshot({
+          reviews: [],
+          reactions: [reaction],
+          issueComments: [
+            {
+              authorLogin: baynPromotionCodexBotLogin,
+              body: `Codex Review: Didn't find any issues.\n\n**Reviewed commit:** \`${headSha}\`\n`,
+              createdAt: '2026-07-30T10:01:02Z',
+              updatedAt: '2026-07-30T10:01:02Z',
+            },
+          ],
         }),
       ),
     ).toMatchObject({ status: 'hold', code: 'exact-head-review-missing' })
@@ -725,6 +907,17 @@ describe('bounded GitHub failure handling', () => {
       ['argocd/applicationsets/product.yaml', manifests(basePins).applicationSet],
     ])
     const emptyConnection = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } }
+    const forcePushConnection = {
+      nodes: [
+        {
+          __typename: 'HeadRefForcePushedEvent',
+          createdAt: '2026-07-30T10:00:01Z',
+          beforeCommit: { oid: staleHeadSha },
+          afterCommit: { oid: headSha },
+        },
+      ],
+      pageInfo: { hasNextPage: false, endCursor: 'force-push-cursor' },
+    }
 
     const fetchFn = (async (input, init) => {
       const url = String(input)
@@ -732,7 +925,7 @@ describe('bounded GitHub failure handling', () => {
         const body = JSON.parse(String(init?.body)) as { readonly query: string }
         if (body.query.includes('BaynPromotionHeadForcePushes')) {
           return Response.json({
-            data: { repository: { pullRequest: { timelineItems: emptyConnection } } },
+            data: { repository: { pullRequest: { timelineItems: forcePushConnection } } },
           })
         }
         if (body.query.includes('BaynPromotionReviews')) {
@@ -817,6 +1010,14 @@ describe('bounded GitHub failure handling', () => {
     expect(comparedBases).toEqual([baseSha, nextBaseSha])
     expect(headManifestReads).toEqual([...baynPromotionManifestPaths])
     expect(commitReadCount).toBe(1)
+    expect(first.pullRequest.headForcePushes).toEqual([
+      {
+        beforeSha: staleHeadSha,
+        afterSha: headSha,
+        createdAt: '2026-07-30T10:00:01Z',
+      },
+    ])
+    expect(second.pullRequest.headForcePushes).toEqual(first.pullRequest.headForcePushes)
   })
 
   test.each([

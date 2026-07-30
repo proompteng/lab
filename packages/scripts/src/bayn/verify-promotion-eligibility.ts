@@ -93,6 +93,12 @@ export interface BaynPromotionPullRequestFile {
   readonly previousPath: string | null
 }
 
+export interface BaynPromotionHeadForcePush {
+  readonly beforeSha: string
+  readonly afterSha: string
+  readonly createdAt: string
+}
+
 export interface BaynPromotionPullRequest {
   readonly number: number
   readonly title: string
@@ -105,7 +111,7 @@ export interface BaynPromotionPullRequest {
   readonly createdAt: string
   readonly headCommittedAt: string
   readonly commitCount: number
-  readonly headForcePushCount: number
+  readonly headForcePushes: readonly BaynPromotionHeadForcePush[]
   readonly files: readonly BaynPromotionPullRequestFile[]
 }
 
@@ -295,12 +301,42 @@ const timestampWithinOpenPullRequest = (timestamp: string, createdAt: string, no
   )
 }
 
+const exactHeadEstablishedAt = (pullRequest: BaynPromotionPullRequest, nowMs: number): number | null => {
+  const pullRequestCreatedAtMs = Date.parse(pullRequest.createdAt)
+  const headCommittedAtMs = Date.parse(pullRequest.headCommittedAt)
+  if (!Number.isFinite(pullRequestCreatedAtMs) || !Number.isFinite(headCommittedAtMs)) return null
+
+  const forcePushes = pullRequest.headForcePushes.toSorted((left, right) =>
+    left.createdAt.localeCompare(right.createdAt),
+  )
+  let previous: BaynPromotionHeadForcePush | undefined
+  let previousCreatedAtMs: number | undefined
+  for (const forcePush of forcePushes) {
+    const createdAtMs = Date.parse(forcePush.createdAt)
+    if (
+      !Number.isFinite(createdAtMs) ||
+      createdAtMs < pullRequestCreatedAtMs ||
+      createdAtMs > nowMs ||
+      forcePush.beforeSha === forcePush.afterSha ||
+      (previous !== undefined && previous.afterSha !== forcePush.beforeSha) ||
+      (previousCreatedAtMs !== undefined && createdAtMs <= previousCreatedAtMs)
+    ) {
+      return null
+    }
+    previous = forcePush
+    previousCreatedAtMs = createdAtMs
+  }
+
+  if (previous !== undefined && previous.afterSha !== pullRequest.headSha) return null
+  return Math.max(pullRequestCreatedAtMs, headCommittedAtMs, previousCreatedAtMs ?? Number.NEGATIVE_INFINITY)
+}
+
 const exactHeadCodexAttestation = (
   snapshot: BaynPromotionEligibilitySnapshot,
   nowMs: number,
 ): BaynPromotionReview | undefined => {
   const pullRequest = snapshot.pullRequest
-  const comment = snapshot.issueComments
+  const comments = snapshot.issueComments
     .filter((candidate) => {
       if (
         candidate.authorLogin !== baynPromotionCodexBotLogin ||
@@ -312,30 +348,32 @@ const exactHeadCodexAttestation = (
       const reviewedHead = cleanCodexCommentPattern.exec(candidate.body)?.[1]
       return reviewedHead !== undefined && pullRequest.headSha.startsWith(reviewedHead)
     })
-    .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))[0]
-  if (comment !== undefined) {
-    return {
-      authorLogin: baynPromotionCodexReviewer,
-      commitSha: pullRequest.headSha,
-      submittedAt: comment.createdAt,
-      state: 'COMMENTED',
-    }
-  }
+    .map((comment) => comment.createdAt)
 
-  if (pullRequest.commitCount !== 1 || pullRequest.headForcePushCount !== 0) return undefined
-  const reaction = snapshot.reactions
-    .filter(
-      (candidate) =>
-        candidate.userLogin === baynPromotionCodexBotLogin &&
-        candidate.content === '+1' &&
-        timestampWithinOpenPullRequest(candidate.createdAt, pullRequest.createdAt, nowMs),
-    )
-    .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))[0]
-  if (reaction === undefined) return undefined
+  const headEstablishedAtMs = pullRequest.commitCount === 1 ? exactHeadEstablishedAt(pullRequest, nowMs) : null
+  const reactions =
+    headEstablishedAtMs === null
+      ? []
+      : snapshot.reactions
+          .filter((candidate) => {
+            if (
+              candidate.userLogin !== baynPromotionCodexBotLogin ||
+              candidate.content !== '+1' ||
+              !timestampWithinOpenPullRequest(candidate.createdAt, pullRequest.createdAt, nowMs)
+            ) {
+              return false
+            }
+            const reactionCreatedAtMs = Date.parse(candidate.createdAt)
+            return Number.isFinite(reactionCreatedAtMs) && reactionCreatedAtMs > headEstablishedAtMs
+          })
+          .map((reaction) => reaction.createdAt)
+
+  const attestations = [...comments, ...reactions]
+  if (attestations.length !== 1) return undefined
   return {
     authorLogin: baynPromotionCodexReviewer,
     commitSha: pullRequest.headSha,
-    submittedAt: reaction.createdAt,
+    submittedAt: attestations[0] as string,
     state: 'COMMENTED',
   }
 }
@@ -954,7 +992,7 @@ const apiRepository = (repository: string): string => {
 
 const fetchPullRequest = async (
   options: GitHubRequestOptions & { readonly repository: string; readonly pullNumber: number },
-): Promise<Omit<BaynPromotionPullRequest, 'files' | 'headForcePushCount' | 'headCommittedAt'>> => {
+): Promise<Omit<BaynPromotionPullRequest, 'files' | 'headForcePushes' | 'headCommittedAt'>> => {
   const operation = `read promotion PR #${options.pullNumber}`
   const response = await requestJson({
     ...options,
@@ -1167,7 +1205,14 @@ const headForcePushQuery = `
     repository(owner: $owner, name: $name) {
       pullRequest(number: $number) {
         timelineItems(first: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
-          nodes { __typename }
+          nodes {
+            __typename
+            ... on HeadRefForcePushedEvent {
+              createdAt
+              beforeCommit { oid }
+              afterCommit { oid }
+            }
+          }
           pageInfo { hasNextPage endCursor }
         }
       }
@@ -1292,9 +1337,9 @@ const fetchThreads = async (
   )
 }
 
-const fetchHeadForcePushCount = async (
+const fetchHeadForcePushes = async (
   options: GitHubRequestOptions & { readonly repository: string; readonly pullNumber: number },
-): Promise<number> => {
+): Promise<readonly BaynPromotionHeadForcePush[]> => {
   const [owner, name] = repositoryParts(options.repository)
   const operation = `read promotion PR #${options.pullNumber} head-force-push history`
   const data = await requestGraphql({
@@ -1311,13 +1356,21 @@ const fetchHeadForcePushCount = async (
   if (pagination.hasNextPage) {
     throw new GitHubPromotionEligibilityError('github-api-pagination-limit', operation)
   }
+  const forcePushes: BaynPromotionHeadForcePush[] = []
   for (const [index, item] of connection.nodes.entries()) {
     const event = expectRecord(item, `${operation} event ${index}`)
     if (event.__typename !== 'HeadRefForcePushedEvent') {
       throw new GitHubPromotionEligibilityError('github-api-invalid-response', `${operation} event ${index}`)
     }
+    const beforeCommit = expectRecord(event.beforeCommit, `${operation} event ${index} before commit`)
+    const afterCommit = expectRecord(event.afterCommit, `${operation} event ${index} after commit`)
+    forcePushes.push({
+      beforeSha: expectSha(beforeCommit.oid, `${operation} event ${index} before SHA`),
+      afterSha: expectSha(afterCommit.oid, `${operation} event ${index} after SHA`),
+      createdAt: expectTimestamp(event.createdAt, `${operation} event ${index} created at`),
+    })
   }
-  return connection.nodes.length
+  return forcePushes
 }
 
 const fetchIssueComments = async (
@@ -2170,14 +2223,14 @@ export const createGitHubPromotionEligibilityLoader = (options: {
       fetchPullRequest({ ...requestOptions, repository: options.repository, pullNumber: options.pullNumber }),
       fetchPullRequestFiles({ ...requestOptions, repository: options.repository, pullNumber: options.pullNumber }),
     ])
-    const headForcePushCount =
+    const headForcePushes =
       pullRequestWithoutFiles.headRefName === promotionBranch
-        ? await fetchHeadForcePushCount({
+        ? await fetchHeadForcePushes({
             ...requestOptions,
             repository: options.repository,
             pullNumber: options.pullNumber,
           })
-        : 0
+        : []
     const headCommittedAt =
       pullRequestWithoutFiles.headRefName === promotionBranch && pullRequestWithoutFiles.headSha === options.headSha
         ? headCommittedAtCache?.headSha === pullRequestWithoutFiles.headSha
@@ -2189,7 +2242,7 @@ export const createGitHubPromotionEligibilityLoader = (options: {
             })
         : pullRequestWithoutFiles.createdAt
     headCommittedAtCache = { headSha: pullRequestWithoutFiles.headSha, committedAt: headCommittedAt }
-    const pullRequest = { ...pullRequestWithoutFiles, headCommittedAt, headForcePushCount, files }
+    const pullRequest = { ...pullRequestWithoutFiles, headCommittedAt, headForcePushes, files }
     if (pullRequest.headSha !== options.headSha) {
       return {
         repository: options.repository,
