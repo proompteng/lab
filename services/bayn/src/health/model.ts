@@ -13,13 +13,18 @@ export type ProbeResult<A> =
   | { readonly _tag: 'Available'; readonly value: A }
   | { readonly _tag: 'Unavailable'; readonly error: string }
 
+export interface BrokerHealthObservation {
+  readonly accountId: string
+  readonly permissionError: string | null
+}
+
 export interface HealthProbeResults {
   readonly postgresql: ProbeResult<void>
   readonly signal: ProbeResult<void>
   readonly tigerBeetle: ProbeResult<void>
   readonly durableEvidence: ProbeResult<void>
   readonly cycle: ProbeResult<CycleOperationsProjection>
-  readonly broker: ProbeResult<string> | null
+  readonly broker: ProbeResult<BrokerHealthObservation> | null
 }
 
 export interface HealthDependencies {

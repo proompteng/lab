@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { Deferred, Effect, Fiber, Ref, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { config, fixtureLock, successfulJournal, readyState, recoveringStore } from './app-test-support'
+import { config, fixtureLock, provenance, successfulJournal, readyState, recoveringStore } from './app-test-support'
 import {
   AccountStatus,
   BrokerProvider,
@@ -39,6 +39,7 @@ import {
   validateDurableEvidence,
   validateSignalIdentity,
 } from './health'
+import { readinessResponseDecision, statusFacts } from './http'
 import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
 import { initialState, type RuntimeState } from './runtime-state'
@@ -982,6 +983,70 @@ describe('Bayn continuous health', () => {
     })
   })
 
+  test('redacts cycle account identity drift from runtime health, status, and logs', () => {
+    const current = readyState()
+    const checkedAt = '2026-07-20T00:04:00.000Z'
+    const accountId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+    const rawError =
+      `PostgreSQL cycle-observability failed: configured account ${accountId} ` +
+      'differs from the projected current or last cycle'
+    const publicError = 'configured account binding differs from the projected current or last cycle'
+    const transition = deriveHealthTransition(current, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: { _tag: 'Unavailable', error: rawError },
+        broker: null,
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: availableClock(checkedAt),
+    })
+    const logDecisions = deriveHealthLogDecisions(transition)
+
+    expect(transition).toMatchObject({
+      next: {
+        status: 'DEGRADED',
+        error: `cycle: ${publicError}`,
+        health: {
+          dependencies: {
+            cycle: {
+              status: 'UNAVAILABLE',
+              checkedAt,
+              error: publicError,
+            },
+          },
+        },
+        cycle: {
+          condition: CycleOperationsCondition.Unknown,
+          reason: CycleOperationsReason.ObservationUnavailable,
+          checkedAt,
+          error: publicError,
+        },
+      },
+      failedDependencies: ['cycle'],
+    })
+    expect(logDecisions).toMatchObject([
+      {
+        _tag: 'RuntimeStatusChanged',
+        annotations: { failedDependencies: 'cycle' },
+      },
+      {
+        _tag: 'CycleOperationsChanged',
+        annotations: { cycleError: publicError },
+      },
+    ])
+    const publicStatus = statusFacts(transition.next, config.execution, provenance, 'embedded')
+    expect(publicStatus.dependencies.cycle.error).toBe('CYCLE_ACCOUNT_IDENTITY_MISMATCH')
+    expect(publicStatus.cycle.error).toBe('CYCLE_ACCOUNT_IDENTITY_MISMATCH')
+    expect(JSON.stringify({ transition, logDecisions })).not.toContain(accountId)
+    expect(JSON.stringify({ transition, logDecisions })).not.toContain(rawError)
+  })
+
   test('retains clock failure alongside an unavailable cycle projection and logs clock recovery', () => {
     const projectionError = 'cycle projection timed out'
     const clockError = 'cycle operations clock must be a safe integer epoch millisecond: observed=NaN'
@@ -1265,7 +1330,7 @@ describe('Bayn continuous health', () => {
     }
   })
 
-  test('degrades on account identity or permission drift and recovers after exact restoration', async () => {
+  test('preserves identity mismatch precedence and recovers from every permission drift', async () => {
     const control = brokerReadControl()
     const broker = brokerProbe(brokerRead(control))
     const initial = brokerRuntimeState(broker)
@@ -1274,16 +1339,26 @@ describe('Bayn continuous health', () => {
 
     const expectDriftAndRecovery = async (expectedError: string, restore: () => void) => {
       await Effect.runPromise(provideHealthyDependencies(initial, probe(config, state, broker, cycleFiber)))
-      expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      const drifted = await Effect.runPromise(Ref.get(state))
+      expect(drifted).toMatchObject({
         status: 'DEGRADED',
         broker: {
-          accountId: null,
-          accountBound: false,
+          accountId: brokerAccountId,
+          accountBound: true,
           readAvailable: false,
           error: expectedError,
         },
         error: `broker: ${expectedError}`,
       })
+      const readiness = readinessResponseDecision(drifted)
+      expect(readiness).toMatchObject({ _tag: 'Json', status: 503 })
+      if (readiness._tag !== 'Json') throw new Error('expected JSON readiness decision')
+      const readinessBody = readiness.body as {
+        readonly ready: boolean
+        readonly failedDependencies: readonly string[]
+      }
+      expect(readinessBody.ready).toBe(false)
+      expect(readinessBody.failedDependencies).toContain('broker')
       restore()
       await Effect.runPromise(provideHealthyDependencies(initial, probe(config, state, broker, cycleFiber)))
       expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
@@ -1294,9 +1369,59 @@ describe('Bayn continuous health', () => {
     }
 
     try {
-      control.accountId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
-      await expectDriftAndRecovery('Alpaca account identity drift detected', () => {
-        control.accountId = brokerAccountId
+      const observedAccountId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+      control.accountId = observedAccountId
+      await Effect.runPromise(provideHealthyDependencies(initial, probe(config, state, broker, cycleFiber)))
+      expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+        status: 'DEGRADED',
+        broker: {
+          accountId: observedAccountId,
+          accountBound: false,
+          readAvailable: true,
+          error: 'Alpaca account identity drift detected',
+        },
+        error: 'broker: Alpaca account identity drift detected',
+      })
+
+      control.accountId = brokerAccountId
+      await Effect.runPromise(provideHealthyDependencies(initial, probe(config, state, broker, cycleFiber)))
+      expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+        status: 'READY',
+        broker: {
+          accountId: brokerAccountId,
+          accountBound: true,
+          readAvailable: true,
+          error: null,
+        },
+        error: null,
+      })
+
+      control.accountId = observedAccountId
+      control.tradingBlocked = true
+      await Effect.runPromise(provideHealthyDependencies(initial, probe(config, state, broker, cycleFiber)))
+      expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+        status: 'DEGRADED',
+        broker: {
+          accountId: observedAccountId,
+          accountBound: false,
+          readAvailable: false,
+          error: 'Alpaca account identity drift detected',
+        },
+        error: 'broker: Alpaca account identity drift detected',
+      })
+
+      control.accountId = brokerAccountId
+      control.tradingBlocked = false
+      await Effect.runPromise(provideHealthyDependencies(initial, probe(config, state, broker, cycleFiber)))
+      expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+        status: 'READY',
+        broker: {
+          accountId: brokerAccountId,
+          accountBound: true,
+          readAvailable: true,
+          error: null,
+        },
+        error: null,
       })
 
       const permissionCases = [

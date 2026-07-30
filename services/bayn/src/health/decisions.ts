@@ -24,6 +24,7 @@ import type {
 } from '../runtime-state'
 import type {
   AutonomousCycleFiberObservation,
+  BrokerHealthObservation,
   DurableEvidenceFailure,
   HealthDependencyName,
   HealthFailureSummary,
@@ -177,6 +178,21 @@ const dependencyHealth = <A>(result: ProbeResult<A>, checkedAt: string | null): 
   error: result._tag === 'Available' ? null : result.error,
 })
 
+const redactCycleObservationError = (error: string): string =>
+  error.includes('configured account ') && error.includes(' differs from the projected current or last cycle')
+    ? 'configured account binding differs from the projected current or last cycle'
+    : error
+
+const publicCycleObservation = (
+  result: ProbeResult<CycleOperationsProjection>,
+): ProbeResult<CycleOperationsProjection> =>
+  result._tag === 'Available'
+    ? result
+    : {
+        _tag: 'Unavailable',
+        error: redactCycleObservationError(result.error),
+      }
+
 const cycleLoopHealth = (
   previous: DependencyHealth,
   loop: AutonomousCycleLoopStatus,
@@ -213,21 +229,25 @@ const cycleLoopHealth = (
 const deriveBrokerStatus = (
   current: BrokerStatus | null,
   broker: BrokerConfiguration | undefined,
-  result: ProbeResult<string> | null,
+  result: ProbeResult<BrokerHealthObservation> | null,
   checkedAt: string | null,
 ): BrokerStatus | null => {
   if (broker === undefined) return current
   const observed = result ?? { _tag: 'Unavailable', error: 'broker probe did not run' }
-  const accountId = observed._tag === 'Available' ? observed.value : null
+  const accountId = observed._tag === 'Available' ? observed.value.accountId : null
   const accountBound = observed._tag === 'Available' && accountId === broker.expectedAccountId
   const bindingError =
-    observed._tag === 'Unavailable' ? observed.error : accountBound ? null : 'Alpaca account identity drift detected'
+    observed._tag === 'Unavailable'
+      ? observed.error
+      : accountBound
+        ? observed.value.permissionError
+        : 'Alpaca account identity drift detected'
   return {
     configured: true,
     expectedAccountId: broker.expectedAccountId,
     accountId,
     accountBound,
-    readAvailable: observed._tag === 'Available',
+    readAvailable: observed._tag === 'Available' && observed.value.permissionError === null,
     checkedAt,
     error: bindingError,
     executionEligible: broker.executionEligible,
@@ -362,9 +382,10 @@ export const deriveHealthTransition = (current: RuntimeState, input: HealthTrans
     input.config.cycleStallThresholdMs,
     input.broker !== undefined,
   )
-  const cycle = deriveCycleStatus(input.results.cycle, input.config, input.clock)
+  const cycleObservation = publicCycleObservation(input.results.cycle)
+  const cycle = deriveCycleStatus(cycleObservation, input.config, input.clock)
   const broker = deriveBrokerStatus(current.broker, input.broker, input.results.broker, checkedAt)
-  const health = deriveRuntimeHealth(current, input.results, cycleRunner, checkedAt)
+  const health = deriveRuntimeHealth(current, { ...input.results, cycle: cycleObservation }, cycleRunner, checkedAt)
   const failures = summarizeHealthFailures(health, broker, cycle, clockError)
   const next = deriveNextRuntimeState(current, input.evidenceAvailable, health, cycle, broker, failures)
   return {
