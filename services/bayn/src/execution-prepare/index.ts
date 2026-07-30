@@ -12,7 +12,7 @@ export {
   type ExecutionPrepareRequest,
   type ExecutionPrepareRuntimeBinding,
 } from './model'
-export { prepareExecution } from './program'
+export { prepareExecution, prepareValidatedExecution } from './program'
 export {
   makeExecutionPrepareReceipt,
   validateExecutionPrepareInput,

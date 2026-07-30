@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Clock, Deferred, Effect, Fiber, pipe, Redacted, Result } from 'effect'
+import { Clock, Context, Deferred, Effect, Fiber, Layer, pipe, Redacted, Result } from 'effect'
 
 import {
   config,
@@ -28,11 +28,12 @@ import type { LoadedRuntimeConfig } from './config'
 import { makeStrategyProtocolHash } from './contracts'
 import { BrokerAccess, BrokerEnvironment, noCapitalAuthority } from './execution/authority'
 import type { ExecutionProgram } from './execution/runtime-program'
-import { executionPrepareBoundaryError } from './entrypoint'
+import { executionPrepareBoundaryError, validateExecutionPreparePlan } from './entrypoint'
 import type { ExecutionPrepareRequest } from './execution-prepare'
 import { canonicalHashV1OrThrow } from './hash'
 import type { BrokerProbe } from './health'
 import { HttpServerLive } from './http'
+import { loadObserveRiskPolicy } from './observe-composition'
 import { makeStrategy } from './strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
@@ -163,6 +164,9 @@ const prepareConfig = (
     ...fixtureStrategy.provenance.strategy,
     parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4' as const,
   }
+  const riskPolicyHash = canonicalHashV1OrThrow(
+    Effect.runSync(loadObserveRiskPolicy(autonomous.alpaca.expectedAccountId, fixtureStrategy.parameters.universe)),
+  )
   const proofPlan = {
     schemaVersion: 'bayn.execution-prepare-proof-plan.v1' as const,
     candidate: {
@@ -191,7 +195,7 @@ const prepareConfig = (
       accountId: autonomous.alpaca.expectedAccountId,
       brokerIdentityHash: autonomous.alpaca.identity.identityHash,
       authorityGenerationHash: autonomous.alpaca.authorityGenerationHash,
-      riskPolicyHash: 'c'.repeat(64),
+      riskPolicyHash,
       reconciliationId: 'd'.repeat(64),
       reconciliationContentHash: 'e'.repeat(64),
     },
@@ -261,6 +265,66 @@ describe('Bayn application composition', () => {
     })
     expect(JSON.stringify(failure)).not.toContain(accountNumber)
     expect(JSON.stringify(failure)).not.toContain('credential')
+  })
+
+  test('rejects semantic EXECUTION_PREPARE drift before resource acquisition', async () => {
+    const base = prepareConfig(pinnedRuntimeConfig)
+    const requestWithBinding = (binding: ExecutionPrepareRequest['proofPlan']['binding']): ExecutionPrepareRequest => {
+      const proofPlan = { ...base.executionPrepareRequest.proofPlan, binding }
+      return {
+        ...base.executionPrepareRequest,
+        proofPlan,
+        proofPlanHash: canonicalHashV1OrThrow(proofPlan),
+      }
+    }
+    const requests: readonly ExecutionPrepareRequest[] = [
+      requestWithBinding({ ...base.executionPrepareRequest.proofPlan.binding, accountId: 'drifted-account' }),
+      requestWithBinding({
+        ...base.executionPrepareRequest.proofPlan.binding,
+        authorityGenerationHash: '0'.repeat(64),
+      }),
+      requestWithBinding({
+        ...base.executionPrepareRequest.proofPlan.binding,
+        strategy: {
+          ...base.executionPrepareRequest.proofPlan.binding.strategy,
+          behaviorHash: '0'.repeat(64),
+        },
+      }),
+      requestWithBinding({ ...base.executionPrepareRequest.proofPlan.binding, riskPolicyHash: '0'.repeat(64) }),
+      { ...base.executionPrepareRequest, proofPlanHash: '0'.repeat(64) },
+    ]
+    const ExternalResource = Context.Service<'execution-prepare-test-resource', number>(
+      'execution-prepare-test-resource',
+    )
+
+    for (const executionPrepareRequest of requests) {
+      let acquisitions = 0
+      const resources = Layer.effect(
+        ExternalResource,
+        Effect.sync(() => {
+          acquisitions += 1
+          return acquisitions
+        }),
+      )
+      const plan = makeApplicationPlan(
+        applicationIdentity({
+          ...base,
+          executionPrepareRequest,
+        }),
+      )
+      if (plan._tag !== 'ExecutionPrepare') throw new Error('fixture must produce EXECUTION_PREPARE')
+
+      const failure = await Effect.runPromise(
+        Effect.flip(
+          validateExecutionPreparePlan(plan).pipe(
+            Effect.flatMap(() => ExternalResource.pipe(Effect.provide(resources))),
+          ),
+        ),
+      )
+
+      expect(failure).toMatchObject({ component: 'strategy', operation: 'execution-prepare' })
+      expect(acquisitions).toBe(0)
+    }
   })
 
   test('starts one scoped autonomous cycle after initialization and interrupts it with the application', async () => {

@@ -59,9 +59,11 @@ import {
 } from './execution-candidate-discovery'
 import {
   ExecutionPrepareStoreLive,
-  prepareExecution,
+  prepareValidatedExecution,
   renderExecutionPrepareFailure,
+  validateExecutionPrepareInput,
   type ExecutionPrepareReceipt,
+  type ValidatedExecutionPrepareInput,
 } from './execution-prepare'
 import { loadDefaultProtocol, type CausalProtocol } from './protocol'
 import { makeStrategy, type Strategy } from './strategy'
@@ -644,9 +646,8 @@ const executionPrepareRuntimeBinding = (plan: ApplicationPlanFor<'ExecutionPrepa
   riskPolicyHash,
 })
 
-const runExecutionPrepare = (plan: ApplicationPlanFor<'ExecutionPrepare'>) =>
+export const validateExecutionPreparePlan = (plan: ApplicationPlanFor<'ExecutionPrepare'>) =>
   Effect.gen(function* () {
-    yield* BrokerSession
     const riskPolicy = yield* loadObserveRiskPolicy(
       plan.config.alpaca.expectedAccountId,
       plan.strategy.parameters.universe,
@@ -656,10 +657,22 @@ const runExecutionPrepare = (plan: ApplicationPlanFor<'ExecutionPrepare'>) =>
       ),
     )
     const riskPolicyHash = yield* policyHash(riskPolicy, 'execution-prepare-policy')
-    const receipt = yield* prepareExecution(
-      plan.config.executionPrepareRequest,
-      executionPrepareRuntimeBinding(plan, riskPolicyHash),
+    return yield* Effect.fromResult(
+      validateExecutionPrepareInput(
+        plan.config.executionPrepareRequest,
+        executionPrepareRuntimeBinding(plan, riskPolicyHash),
+      ),
     ).pipe(
+      Effect.mapError((cause) =>
+        operationalError('strategy', 'execution-prepare', renderExecutionPrepareFailure(cause), { _tag: cause._tag }),
+      ),
+    )
+  })
+
+const runExecutionPrepare = (validated: ValidatedExecutionPrepareInput) =>
+  Effect.gen(function* () {
+    yield* BrokerSession
+    const receipt = yield* prepareValidatedExecution(validated).pipe(
       Effect.mapError((cause) =>
         operationalError('strategy', 'execution-prepare', renderExecutionPrepareFailure(cause), { _tag: cause._tag }),
       ),
@@ -693,8 +706,10 @@ export const runApplicationPlan = pipe(
     runExecutionCandidateDiscovery(plan).pipe(Effect.provide(ExecutionCandidateDiscoveryResourcesLive(plan))),
   ),
   Match.tag('ExecutionPrepare', (plan) =>
-    runExecutionPrepare(plan).pipe(
-      Effect.provide(ExecutionPrepareResourcesLive(plan)),
+    validateExecutionPreparePlan(plan).pipe(
+      Effect.flatMap((validated) =>
+        runExecutionPrepare(validated).pipe(Effect.provide(ExecutionPrepareResourcesLive(plan))),
+      ),
       Effect.mapError(executionPrepareBoundaryError),
     ),
   ),
