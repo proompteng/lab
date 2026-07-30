@@ -22,12 +22,26 @@ export interface PullRequestReview {
   readonly state: string
 }
 
+export interface PullRequestReviewThreadComment {
+  readonly authorLogin: string | null
+  readonly authorAssociation: string
+  readonly body: string
+  readonly createdAt: string
+  readonly commitSha: string | null
+  readonly reviewCommitSha: string | null
+  readonly reviewAuthorLogin: string | null
+  readonly reviewSubmittedAt: string | null
+  readonly reviewState: string | null
+  readonly url: string
+}
+
 export interface PullRequestReviewThread {
   readonly id: string
   readonly isResolved: boolean
   readonly isOutdated: boolean
   readonly path: string | null
   readonly url: string | null
+  readonly comments: readonly PullRequestReviewThreadComment[]
 }
 
 export interface PullRequestReviewState {
@@ -38,6 +52,7 @@ export interface PullRequestReviewState {
   readonly mergedAt: string | null
   readonly reviews: readonly PullRequestReview[]
   readonly threads: readonly PullRequestReviewThread[]
+  readonly commitShas: readonly string[]
 }
 
 export interface BaynReleaseReviewSnapshot {
@@ -103,10 +118,12 @@ export type BaynReleaseReviewHoldCode =
   | 'non-single-commit-main-push'
   | 'associated-source-pr-merge-mismatch'
   | 'source-pr-metadata-mismatch'
+  | 'source-pr-commit-history-mismatch'
   | 'exact-head-review-pending'
   | 'exact-head-review-missing'
   | 'exact-head-review-changes-requested'
   | 'exact-head-review-settling'
+  | 'feedback-fix-attestation-missing'
   | 'active-unresolved-review-threads'
   | 'github-api-error'
   | 'github-api-timeout'
@@ -253,6 +270,7 @@ export const isBaynReleaseAffectingPath = (path: string): boolean =>
   exactBaynReleasePaths.has(path)
 
 const eligibleReviewStates = new Set(['APPROVED', 'COMMENTED'])
+const trustedFeedbackAssociations = new Set(['MEMBER', 'OWNER', 'COLLABORATOR'])
 
 export const evaluateBaynReleaseReview = (input: {
   readonly mainCommitSha: string
@@ -319,9 +337,8 @@ export const evaluateBaynReleaseReview = (input: {
     )
   }
 
-  const exactHeadReviews = pullRequest.reviews.filter(
-    (review) => review.authorLogin === baynCodexReviewer && review.commitSha === pullRequest.headSha,
-  )
+  const codexReviews = pullRequest.reviews.filter((review) => review.authorLogin === baynCodexReviewer)
+  const exactHeadReviews = codexReviews.filter((review) => review.commitSha === pullRequest.headSha)
   const hasPendingExactHeadReview = exactHeadReviews.some(
     (review) => review.submittedAt === null || review.state === 'PENDING',
   )
@@ -335,47 +352,82 @@ export const evaluateBaynReleaseReview = (input: {
   const exactSubmittedReview = exactHeadReviews
     .filter((review) => review.submittedAt !== null)
     .toSorted((left, right) => (right.submittedAt as string).localeCompare(left.submittedAt as string))[0]
-  if (exactSubmittedReview === undefined) {
-    const olderReviewedHeads = [
-      ...new Set(
-        pullRequest.reviews
-          .filter(
-            (review) =>
-              review.authorLogin === baynCodexReviewer && review.commitSha !== null && review.submittedAt !== null,
-          )
-          .map((review) => shortSha(review.commitSha as string)),
-      ),
-    ]
-    const olderReviewDetail =
-      olderReviewedHeads.length === 0
-        ? 'no submitted Codex review exists'
-        : `reviewed older head(s): ${olderReviewedHeads.join(', ')}`
-    return hold(
-      'exact-head-review-missing',
-      `source PR #${pullRequest.number} final head ${shortSha(pullRequest.headSha)} lacks a submitted ${baynCodexReviewer} review; ${olderReviewDetail}`,
-      true,
-    )
+
+  let reviewEvidence = exactSubmittedReview
+  let feedbackFixCommitShas: readonly string[] = []
+  if (reviewEvidence === undefined) {
+    if (
+      pullRequest.commitShas.length === 0 ||
+      pullRequest.commitShas.at(-1) !== pullRequest.headSha ||
+      new Set(pullRequest.commitShas).size !== pullRequest.commitShas.length
+    ) {
+      return hold(
+        'source-pr-commit-history-mismatch',
+        `source PR #${pullRequest.number} commit history does not uniquely terminate at final head ${shortSha(pullRequest.headSha)}`,
+        false,
+      )
+    }
+
+    const priorSubmittedReviews = codexReviews
+      .filter(
+        (review) =>
+          review.commitSha !== null &&
+          review.commitSha !== pullRequest.headSha &&
+          review.submittedAt !== null &&
+          pullRequest.commitShas.includes(review.commitSha),
+      )
+      .toSorted((left, right) => (right.submittedAt as string).localeCompare(left.submittedAt as string))
+    reviewEvidence = priorSubmittedReviews[0]
+    if (reviewEvidence === undefined) {
+      const olderReviewedHeads = [
+        ...new Set(
+          codexReviews
+            .filter((review) => review.commitSha !== null && review.submittedAt !== null)
+            .map((review) => shortSha(review.commitSha as string)),
+        ),
+      ]
+      const olderReviewDetail =
+        olderReviewedHeads.length === 0
+          ? 'no submitted Codex review exists'
+          : `reviewed head(s) outside the final PR history: ${olderReviewedHeads.join(', ')}`
+      return hold(
+        'exact-head-review-missing',
+        `source PR #${pullRequest.number} final head ${shortSha(pullRequest.headSha)} lacks exact-head or auditable feedback-fix review evidence; ${olderReviewDetail}`,
+        true,
+      )
+    }
+
+    const reviewedCommitIndex = pullRequest.commitShas.indexOf(reviewEvidence.commitSha as string)
+    if (reviewedCommitIndex < 0 || reviewedCommitIndex >= pullRequest.commitShas.length - 1) {
+      return hold(
+        'source-pr-commit-history-mismatch',
+        `source PR #${pullRequest.number} reviewed head ${shortSha(reviewEvidence.commitSha as string)} does not precede final head ${shortSha(pullRequest.headSha)}`,
+        false,
+      )
+    }
+    feedbackFixCommitShas = pullRequest.commitShas.slice(reviewedCommitIndex + 1)
   }
-  if (exactSubmittedReview.state === 'CHANGES_REQUESTED') {
+
+  if (reviewEvidence.state === 'CHANGES_REQUESTED') {
     return hold(
       'exact-head-review-changes-requested',
-      `source PR #${pullRequest.number} latest exact-head ${baynCodexReviewer} review requests changes`,
+      `source PR #${pullRequest.number} latest applicable ${baynCodexReviewer} review requests changes`,
       false,
     )
   }
-  if (!eligibleReviewStates.has(exactSubmittedReview.state)) {
+  if (!eligibleReviewStates.has(reviewEvidence.state)) {
     return hold(
       'exact-head-review-missing',
-      `source PR #${pullRequest.number} latest exact-head ${baynCodexReviewer} review state ${exactSubmittedReview.state} is not release-eligible`,
+      `source PR #${pullRequest.number} latest applicable ${baynCodexReviewer} review state ${reviewEvidence.state} is not release-eligible`,
       false,
     )
   }
 
-  const reviewSubmittedAtMs = Date.parse(exactSubmittedReview.submittedAt as string)
+  const reviewSubmittedAtMs = Date.parse(reviewEvidence.submittedAt as string)
   if (!Number.isFinite(reviewSubmittedAtMs)) {
     return hold(
       'source-pr-metadata-mismatch',
-      `source PR #${pullRequest.number} exact-head review has an invalid submitted-at timestamp`,
+      `source PR #${pullRequest.number} applicable review has an invalid submitted-at timestamp`,
       false,
     )
   }
@@ -386,6 +438,42 @@ export const evaluateBaynReleaseReview = (input: {
       `source PR #${pullRequest.number} exact-head review is ${Math.max(0, Math.floor(reviewAgeMs / 1_000))}s old; waiting for review threads to settle`,
       true,
     )
+  }
+
+  if (feedbackFixCommitShas.length > 0) {
+    const reviewedHeadSha = reviewEvidence.commitSha as string
+    for (const fixCommitSha of feedbackFixCommitShas) {
+      const hasTrustedAttestation = pullRequest.threads.some((thread) => {
+        if (!thread.isResolved) return false
+        const belongsToReviewedHead = thread.comments.some(
+          (comment) =>
+            comment.reviewAuthorLogin === baynCodexReviewer &&
+            comment.reviewCommitSha === reviewedHeadSha &&
+            comment.reviewSubmittedAt === reviewEvidence.submittedAt,
+        )
+        if (!belongsToReviewedHead) return false
+        return thread.comments.some((comment) => {
+          if (
+            comment.authorLogin === null ||
+            comment.authorLogin === baynCodexReviewer ||
+            !trustedFeedbackAssociations.has(comment.authorAssociation) ||
+            comment.reviewCommitSha !== fixCommitSha ||
+            comment.reviewSubmittedAt === null
+          ) {
+            return false
+          }
+          const attestationTime = Date.parse(comment.reviewSubmittedAt)
+          return Number.isFinite(attestationTime) && attestationTime >= reviewSubmittedAtMs
+        })
+      })
+      if (!hasTrustedAttestation) {
+        return hold(
+          'feedback-fix-attestation-missing',
+          `source PR #${pullRequest.number} final head ${shortSha(pullRequest.headSha)} carries review from ${shortSha(reviewedHeadSha)}, but post-review commit ${shortSha(fixCommitSha)} lacks a trusted member reply on a resolved Codex thread from that review`,
+          true,
+        )
+      }
+    }
   }
 
   const unresolvedThreads = pullRequest.threads.filter((thread) => !thread.isResolved)
@@ -405,7 +493,7 @@ export const evaluateBaynReleaseReview = (input: {
     status: 'eligible',
     prNumber: pullRequest.number,
     headSha: pullRequest.headSha,
-    reviewSubmittedAt: exactSubmittedReview.submittedAt as string,
+    reviewSubmittedAt: reviewEvidence.submittedAt as string,
   }
 }
 
@@ -667,6 +755,11 @@ const expectString = (value: unknown, context: string): string => {
   if (typeof value !== 'string' || value.length === 0) {
     throw new GitHubReleaseReviewError('github-api-invalid-response', context)
   }
+  return value
+}
+
+const expectAnyString = (value: unknown, context: string): string => {
+  if (typeof value !== 'string') throw new GitHubReleaseReviewError('github-api-invalid-response', context)
   return value
 }
 
@@ -942,8 +1035,37 @@ const pullRequestThreadsQuery = `
             isResolved
             isOutdated
             path
-            comments(first: 1) { nodes { url } }
+            comments(first: 100) {
+              nodes {
+                author { login }
+                authorAssociation
+                body
+                createdAt
+                commit { oid }
+                pullRequestReview {
+                  author { login }
+                  commit { oid }
+                  submittedAt
+                  state
+                }
+                url
+              }
+              pageInfo { hasNextPage endCursor }
+            }
           }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+  }
+`
+
+const pullRequestCommitsQuery = `
+  query BaynReleasePullRequestCommits($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+    repository(owner: $owner, name: $name) {
+      pullRequest(number: $number) {
+        commits(first: 100, after: $cursor) {
+          nodes { commit { oid } }
           pageInfo { hasNextPage endCursor }
         }
       }
@@ -1048,15 +1170,79 @@ const fetchPullRequestThreads = async (
       if (!Array.isArray(comments.nodes)) {
         throw new GitHubReleaseReviewError('github-api-invalid-response', `${operation} thread comments ${index}`)
       }
-      const firstComment = comments.nodes[0]
-      const comment =
-        firstComment === undefined ? null : expectRecord(firstComment, `${operation} first comment ${index}`)
+      const commentPageInfo = parsePageInfo(comments, `${operation} thread comments ${index}`)
+      if (commentPageInfo.hasNextPage) {
+        throw new GitHubReleaseReviewError('github-api-pagination-limit', `${operation} thread comments ${index}`)
+      }
+      const parsedComments = comments.nodes.map((commentItem, commentIndex): PullRequestReviewThreadComment => {
+        const comment = expectRecord(commentItem, `${operation} thread ${index} comment ${commentIndex}`)
+        const author =
+          comment.author === null
+            ? null
+            : expectRecord(comment.author, `${operation} thread ${index} comment ${commentIndex} author`)
+        const commit =
+          comment.commit === null
+            ? null
+            : expectRecord(comment.commit, `${operation} thread ${index} comment ${commentIndex} commit`)
+        const review =
+          comment.pullRequestReview === null
+            ? null
+            : expectRecord(comment.pullRequestReview, `${operation} thread ${index} comment ${commentIndex} review`)
+        const reviewAuthor =
+          review === null || review.author === null
+            ? null
+            : expectRecord(review.author, `${operation} thread ${index} comment ${commentIndex} review author`)
+        const reviewCommit =
+          review === null || review.commit === null
+            ? null
+            : expectRecord(review.commit, `${operation} thread ${index} comment ${commentIndex} review commit`)
+        return {
+          authorLogin:
+            author === null
+              ? null
+              : expectString(author.login, `${operation} thread ${index} comment ${commentIndex} author login`),
+          authorAssociation: expectString(
+            comment.authorAssociation,
+            `${operation} thread ${index} comment ${commentIndex} author association`,
+          ),
+          body: expectAnyString(comment.body, `${operation} thread ${index} comment ${commentIndex} body`),
+          createdAt: expectString(comment.createdAt, `${operation} thread ${index} comment ${commentIndex} created at`),
+          commitSha:
+            commit === null
+              ? null
+              : expectSha(commit.oid, `${operation} thread ${index} comment ${commentIndex} commit SHA`),
+          reviewCommitSha:
+            reviewCommit === null
+              ? null
+              : expectSha(reviewCommit.oid, `${operation} thread ${index} comment ${commentIndex} review commit SHA`),
+          reviewAuthorLogin:
+            reviewAuthor === null
+              ? null
+              : expectString(
+                  reviewAuthor.login,
+                  `${operation} thread ${index} comment ${commentIndex} review author login`,
+                ),
+          reviewSubmittedAt:
+            review === null
+              ? null
+              : expectNullableString(
+                  review.submittedAt,
+                  `${operation} thread ${index} comment ${commentIndex} review submitted at`,
+                ),
+          reviewState:
+            review === null
+              ? null
+              : expectString(review.state, `${operation} thread ${index} comment ${commentIndex} review state`),
+          url: expectString(comment.url, `${operation} thread ${index} comment ${commentIndex} URL`),
+        }
+      })
       threads.push({
         id: expectString(thread.id, `${operation} thread ID ${index}`),
         isResolved: expectBoolean(thread.isResolved, `${operation} resolved ${index}`),
         isOutdated: expectBoolean(thread.isOutdated, `${operation} outdated ${index}`),
         path: expectNullableString(thread.path, `${operation} path ${index}`),
-        url: comment === null ? null : expectString(comment.url, `${operation} comment URL ${index}`),
+        url: parsedComments[0]?.url ?? null,
+        comments: parsedComments,
       })
     }
     const pageInfo = parsePageInfo(connection, operation)
@@ -1065,6 +1251,37 @@ const fetchPullRequestThreads = async (
     cursor = pageInfo.endCursor
   }
   throw new GitHubReleaseReviewError('github-api-pagination-limit', `read source PR #${pullNumber} review threads`)
+}
+
+const fetchPullRequestCommitShas = async (
+  options: GitHubLoaderOptions,
+  pullNumber: number,
+): Promise<readonly string[]> => {
+  const commitShas: string[] = []
+  let cursor: string | null = null
+  for (let page = 0; page < maximumGraphqlPages; page += 1) {
+    const operation = `read source PR #${pullNumber} commits page ${page + 1}`
+    const data = await requestGraphql({
+      query: pullRequestCommitsQuery,
+      variables: { owner: options.owner, name: options.name, number: pullNumber, cursor },
+      operation,
+      token: options.token,
+      requestTimeoutMs: options.requestTimeoutMs,
+      fetchFn: options.fetchFn,
+    })
+    const connection = expectRecord(graphqlPullRequest(data, operation).commits, operation)
+    if (!Array.isArray(connection.nodes)) throw new GitHubReleaseReviewError('github-api-invalid-response', operation)
+    for (const [index, item] of connection.nodes.entries()) {
+      const node = expectRecord(item, `${operation} node ${index}`)
+      const commit = expectRecord(node.commit, `${operation} commit ${index}`)
+      commitShas.push(expectSha(commit.oid, `${operation} commit ${index} SHA`))
+    }
+    const pageInfo = parsePageInfo(connection, operation)
+    if (!pageInfo.hasNextPage) return commitShas
+    if (pageInfo.endCursor === null) throw new GitHubReleaseReviewError('github-api-invalid-response', operation)
+    cursor = pageInfo.endCursor
+  }
+  throw new GitHubReleaseReviewError('github-api-pagination-limit', `read source PR #${pullNumber} commits`)
 }
 
 interface GitHubLoaderOptions {
@@ -1119,13 +1336,16 @@ const loadCommitReviewSnapshot = async (
 
   const candidate = candidates[0]
   if (candidate === undefined) throw new Error('source pull selection was unexpectedly empty')
-  const metadata = await fetchPullRequestMetadata(options, candidate.number)
-  const reviews = await fetchPullRequestReviews(options, candidate.number)
-  const threads = await fetchPullRequestThreads(options, candidate.number)
+  const [metadata, reviews, threads, commitShas] = await Promise.all([
+    fetchPullRequestMetadata(options, candidate.number),
+    fetchPullRequestReviews(options, candidate.number),
+    fetchPullRequestThreads(options, candidate.number),
+    fetchPullRequestCommitShas(options, candidate.number),
+  ])
   return {
     mainCommitParents: commit.parents,
     associatedPullRequests,
-    pullRequest: { ...metadata, reviews, threads },
+    pullRequest: { ...metadata, reviews, threads, commitShas },
   }
 }
 
