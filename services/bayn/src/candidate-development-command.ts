@@ -2784,6 +2784,45 @@ const candidateDevelopmentSourceGit: CandidateDevelopmentSourceGit = {
   bytes: gitBytes,
 }
 
+const verifyCandidateDevelopmentPreregistrationLineagePromise = async (
+  repositoryRoot: string,
+  preregistrationRevision: string,
+  sourceRevision: string,
+  sourceGit: CandidateDevelopmentSourceGit,
+  signal: AbortSignal,
+): Promise<void> => {
+  if (preregistrationRevision === sourceRevision) {
+    throw new CandidateDevelopmentSourceVerificationError('verify-preregistration-lineage', {
+      expected: 'proper ancestor of evaluated source revision',
+      observed: preregistrationRevision,
+    })
+  }
+  await sourceStep('verify-preregistration-lineage', () =>
+    sourceGit.text(repositoryRoot, ['merge-base', '--is-ancestor', preregistrationRevision, sourceRevision], signal),
+  )
+}
+
+export const verifyCandidateDevelopmentPreregistrationLineage = (
+  repositoryRoot: string,
+  preregistrationRevision: string,
+  sourceRevision: string,
+  sourceGit: CandidateDevelopmentSourceGit = candidateDevelopmentSourceGit,
+): Effect.Effect<void, CandidateDevelopmentCommandFailure> =>
+  Effect.tryPromise({
+    try: (signal) =>
+      verifyCandidateDevelopmentPreregistrationLineagePromise(
+        repositoryRoot,
+        preregistrationRevision,
+        sourceRevision,
+        sourceGit,
+        signal,
+      ),
+    catch: (cause): CandidateDevelopmentCommandFailure =>
+      cause instanceof CandidateDevelopmentSourceVerificationError
+        ? sourceVerificationFailure(cause.operation, cause.sourceCause)
+        : sourceVerificationFailure('verify-preregistration-lineage', cause),
+  })
+
 const runCandidateDevelopmentSourcePair = async <Left, Right>(
   outerSignal: AbortSignal,
   left: (signal: AbortSignal) => Promise<Left>,
@@ -2994,18 +3033,12 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
             observed: preregistrationBlobOid,
           })
         }
-        if (preregistration.sourceRevision === sourceRevision) {
-          throw new CandidateDevelopmentSourceVerificationError('verify-preregistration-lineage', {
-            expected: 'proper ancestor of evaluated source revision',
-            observed: preregistration.sourceRevision,
-          })
-        }
-        await sourceStep('verify-preregistration-lineage', () =>
-          sourceGit.text(
-            repositoryRoot,
-            ['merge-base', '--is-ancestor', preregistration.sourceRevision, sourceRevision],
-            signal,
-          ),
+        await verifyCandidateDevelopmentPreregistrationLineagePromise(
+          repositoryRoot,
+          preregistration.sourceRevision,
+          sourceRevision,
+          sourceGit,
+          signal,
         )
       }
       const moduleSpec = `${sourceRevision}:${moduleRepositoryPath.success}`

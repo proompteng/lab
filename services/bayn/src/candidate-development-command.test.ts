@@ -18,6 +18,7 @@ import {
   validateCandidateDevelopmentAccountingReplay,
   validateCandidateDevelopmentCommandEvaluation,
   validateCandidateDevelopmentExecutableProgram,
+  verifyCandidateDevelopmentPreregistrationLineage,
   verifyCandidateDevelopmentSourceFiles,
   writeCandidateDevelopmentCommandReport,
   type CandidateDevelopmentCommandEvaluation,
@@ -2567,6 +2568,121 @@ describe('candidate development command', () => {
     } finally {
       await rm(repository, { recursive: true, force: true })
     }
+  })
+
+  test('requires preregistration to be a proper Git ancestor without replacement objects', async () => {
+    const repository = await mkdtemp(join(tmpdir(), 'bayn-candidate-preregistration-lineage-'))
+    const markerPath = join(repository, 'marker.txt')
+    try {
+      await execFilePromise('git', ['init', '-q'], repository)
+      await execFilePromise('git', ['config', 'user.name', 'Candidate Test'], repository)
+      await execFilePromise('git', ['config', 'user.email', 'candidate@example.test'], repository)
+
+      await writeFile(markerPath, 'root\n')
+      await execFilePromise('git', ['add', 'marker.txt'], repository)
+      await execFilePromise('git', ['commit', '-qm', 'test: root'], repository)
+      const rootRevision = await execFileTextPromise('git', ['rev-parse', 'HEAD'], repository)
+
+      await writeFile(markerPath, 'preregistered\n')
+      await execFilePromise('git', ['add', 'marker.txt'], repository)
+      await execFilePromise('git', ['commit', '-qm', 'test: preregister candidate'], repository)
+      const preregistrationRevision = await execFileTextPromise('git', ['rev-parse', 'HEAD'], repository)
+
+      await writeFile(markerPath, 'implemented\n')
+      await execFilePromise('git', ['add', 'marker.txt'], repository)
+      await execFilePromise('git', ['commit', '-qm', 'test: implement candidate'], repository)
+      const properDescendantRevision = await execFileTextPromise('git', ['rev-parse', 'HEAD'], repository)
+
+      expect(
+        await Effect.runPromise(
+          verifyCandidateDevelopmentPreregistrationLineage(
+            repository,
+            preregistrationRevision,
+            properDescendantRevision,
+          ),
+        ),
+      ).toBeUndefined()
+
+      expect(
+        await Effect.runPromise(
+          Effect.flip(
+            verifyCandidateDevelopmentPreregistrationLineage(
+              repository,
+              preregistrationRevision,
+              preregistrationRevision,
+            ),
+          ),
+        ),
+      ).toMatchObject({
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-preregistration-lineage',
+        cause: {
+          expected: 'proper ancestor of evaluated source revision',
+          observed: preregistrationRevision,
+        },
+      })
+
+      await execFilePromise('git', ['checkout', '-qb', 'divergent', rootRevision], repository)
+      await writeFile(markerPath, 'divergent implementation\n')
+      await execFilePromise('git', ['add', 'marker.txt'], repository)
+      await execFilePromise('git', ['commit', '-qm', 'test: divergent implementation'], repository)
+      const divergentRevision = await execFileTextPromise('git', ['rev-parse', 'HEAD'], repository)
+      const divergentTree = await execFileTextPromise('git', ['rev-parse', `${divergentRevision}^{tree}`], repository)
+      const replacementCommit = await execFileTextPromise(
+        'git',
+        ['commit-tree', divergentTree, '-p', preregistrationRevision, '-m', 'test: forged ancestry'],
+        repository,
+      )
+      await execFilePromise('git', ['replace', divergentRevision, replacementCommit], repository)
+
+      await execFilePromise(
+        'git',
+        ['merge-base', '--is-ancestor', preregistrationRevision, divergentRevision],
+        repository,
+      )
+      expect(
+        await Effect.runPromise(
+          Effect.flip(
+            verifyCandidateDevelopmentPreregistrationLineage(repository, preregistrationRevision, divergentRevision),
+          ),
+        ),
+      ).toMatchObject({
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-preregistration-lineage',
+      })
+    } finally {
+      await rm(repository, { recursive: true, force: true })
+    }
+  })
+
+  test('cancels preregistration lineage Git verification on interruption', async () => {
+    let aborted = false
+    const sourceGit: CandidateDevelopmentSourceGit = {
+      text: (_repositoryRoot, _args, signal) =>
+        new Promise((_resolve, reject) => {
+          const abort = () => {
+            aborted = true
+            reject(signal?.reason ?? new Error('aborted'))
+          }
+          if (signal?.aborted === true) abort()
+          else signal?.addEventListener('abort', abort, { once: true })
+        }),
+      bytes: async () => Buffer.alloc(0),
+    }
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const fiber = yield* verifyCandidateDevelopmentPreregistrationLineage(
+          '/tmp/repository',
+          '1'.repeat(40),
+          '2'.repeat(40),
+          sourceGit,
+        ).pipe(Effect.forkChild)
+        yield* Effect.sleep('10 millis')
+        yield* Fiber.interrupt(fiber).pipe(Effect.timeout('1 second'))
+      }),
+    )
+    expect(aborted).toBe(true)
   })
 
   test('pins verification and execution to the captured revision when HEAD moves', async () => {
