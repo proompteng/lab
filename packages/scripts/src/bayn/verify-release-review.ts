@@ -470,7 +470,7 @@ export const evaluateBaynReleaseReview = (input: {
         return hold(
           'feedback-fix-attestation-missing',
           `source PR #${pullRequest.number} final head ${shortSha(pullRequest.headSha)} carries review from ${shortSha(reviewedHeadSha)}, but post-review commit ${shortSha(fixCommitSha)} lacks a trusted member reply on a resolved Codex thread from that review`,
-          false,
+          true,
         )
       }
     }

@@ -551,6 +551,49 @@ describe('Bayn exact-head release review eligibility', () => {
     })
   })
 
+  test('retries a stale feedback-attestation read and then accepts the indexed reply', async () => {
+    let calls = 0
+    const sleeps: number[] = []
+    const result = await pollBaynReleaseReview({
+      mainCommitSha,
+      baseRefName: 'main',
+      maxAttempts: 2,
+      pollIntervalMs: 10_000,
+      loadSnapshot: async () => {
+        calls += 1
+        return snapshot({
+          commitShas: [olderHeadSha, finalHeadSha],
+          reviews: [review({ commitSha: olderHeadSha })],
+          threads: [
+            thread({
+              comments: [
+                threadComment(),
+                ...(calls === 1
+                  ? []
+                  : [
+                      threadComment({
+                        authorLogin: 'gregkonush',
+                        authorAssociation: 'MEMBER',
+                        reviewCommitSha: finalHeadSha,
+                        reviewAuthorLogin: 'gregkonush',
+                        reviewSubmittedAt: '2026-07-30T07:01:30Z',
+                      }),
+                    ]),
+              ],
+            }),
+          ],
+        })
+      },
+      sleep: async (milliseconds) => {
+        sleeps.push(milliseconds)
+      },
+      now: () => evaluationNowMs,
+    })
+
+    expect(result).toMatchObject({ status: 'eligible', attempts: 2, timedOut: false })
+    expect(sleeps).toEqual([10_000])
+  })
+
   test('rejects an unreviewed post-review commit without a trusted feedback attestation', () => {
     expect(
       evaluateBaynReleaseReview({
@@ -567,7 +610,7 @@ describe('Bayn exact-head release review eligibility', () => {
     ).toMatchObject({
       status: 'hold',
       code: 'feedback-fix-attestation-missing',
-      retryable: false,
+      retryable: true,
     })
   })
 
@@ -600,7 +643,7 @@ describe('Bayn exact-head release review eligibility', () => {
     ).toMatchObject({
       status: 'hold',
       code: 'feedback-fix-attestation-missing',
-      retryable: false,
+      retryable: true,
     })
   })
 
@@ -634,7 +677,7 @@ describe('Bayn exact-head release review eligibility', () => {
     ).toMatchObject({
       status: 'hold',
       code: 'feedback-fix-attestation-missing',
-      retryable: false,
+      retryable: true,
     })
   })
 
