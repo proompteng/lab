@@ -3015,6 +3015,69 @@ export const verifyCandidateDevelopmentRepositoryIntegrity = (
         : sourceVerificationFailure('verify-repository-integrity', cause),
   })
 
+const candidateDevelopmentMaximumHistoryCommits = 50_000
+
+interface CandidateDevelopmentImmutableCommit {
+  readonly treeOid: string
+  readonly parentOids: readonly string[]
+}
+
+const decodeCandidateDevelopmentImmutableCommit = (
+  operation: CandidateDevelopmentSourceVerificationError['operation'],
+  commitOid: string,
+  content: string,
+): CandidateDevelopmentImmutableCommit => {
+  const header = content.includes('\n\n') ? content.slice(0, content.indexOf('\n\n')) : content
+  const lines = header.split('\n')
+  const treeLine = lines.find((line) => line.startsWith('tree '))
+  const treeOid = treeLine?.slice('tree '.length)
+  const parentOids = lines.filter((line) => line.startsWith('parent ')).map((line) => line.slice('parent '.length))
+  if (
+    treeOid === undefined ||
+    !/^[0-9a-f]{40}$/.test(treeOid) ||
+    parentOids.some((parentOid) => !/^[0-9a-f]{40}$/.test(parentOid))
+  ) {
+    throw new CandidateDevelopmentSourceVerificationError(operation, {
+      field: 'immutableCommit',
+      commitOid,
+      expected: 'raw commit with lowercase 40-character tree and parent OIDs',
+      observed: { treeOid, parentOids },
+    })
+  }
+  return { treeOid, parentOids }
+}
+
+const walkCandidateDevelopmentImmutableHistory = async (
+  repositoryRoot: string,
+  startRevision: string,
+  operation: CandidateDevelopmentSourceVerificationError['operation'],
+  sourceGit: CandidateDevelopmentSourceGit,
+  signal: AbortSignal,
+  visit: (commitOid: string, commit: CandidateDevelopmentImmutableCommit) => Promise<boolean>,
+): Promise<boolean> => {
+  const pending = [startRevision]
+  const visited = new Set<string>()
+  while (pending.length > 0) {
+    const commitOid = pending.pop()
+    if (commitOid === undefined || visited.has(commitOid)) continue
+    if (visited.size >= candidateDevelopmentMaximumHistoryCommits) {
+      throw new CandidateDevelopmentSourceVerificationError(operation, {
+        field: 'immutableHistoryCommitCount',
+        expected: `<${candidateDevelopmentMaximumHistoryCommits}`,
+        observed: visited.size,
+      })
+    }
+    const content = await sourceStep(operation, () =>
+      sourceGit.text(repositoryRoot, ['cat-file', 'commit', commitOid], signal),
+    )
+    const commit = decodeCandidateDevelopmentImmutableCommit(operation, commitOid, content)
+    visited.add(commitOid)
+    if (await visit(commitOid, commit)) return true
+    pending.push(...commit.parentOids)
+  }
+  return false
+}
+
 const verifyCandidateDevelopmentPreregistrationLineagePromise = async (
   repositoryRoot: string,
   preregistrationRevision: string,
@@ -3029,9 +3092,20 @@ const verifyCandidateDevelopmentPreregistrationLineagePromise = async (
       observed: preregistrationRevision,
     })
   }
-  await sourceStep('verify-preregistration-lineage', () =>
-    sourceGit.text(repositoryRoot, ['merge-base', '--is-ancestor', preregistrationRevision, sourceRevision], signal),
+  const found = await walkCandidateDevelopmentImmutableHistory(
+    repositoryRoot,
+    sourceRevision,
+    'verify-preregistration-lineage',
+    sourceGit,
+    signal,
+    async (commitOid) => commitOid === preregistrationRevision,
   )
+  if (!found) {
+    throw new CandidateDevelopmentSourceVerificationError('verify-preregistration-lineage', {
+      expected: `${preregistrationRevision} to be a proper ancestor of ${sourceRevision}`,
+      observed: 'not reachable through raw commit parents',
+    })
+  }
 }
 
 export const verifyCandidateDevelopmentPreregistrationLineage = (
@@ -3064,20 +3138,36 @@ const verifyCandidateDevelopmentPreregistrationModuleNoveltyPromise = async (
   signal: AbortSignal,
 ): Promise<void> => {
   await verifyCandidateDevelopmentRepositoryIntegrityPromise(repositoryRoot, sourceGit, signal)
-  const history = await sourceStep('verify-preregistration-module-novelty', () =>
-    sourceGit.text(
-      repositoryRoot,
-      ['log', '--format=%H', `--find-object=${moduleBlobOid}`, preregistrationRevision, '--'],
-      signal,
-    ),
+  const searchedTrees = new Set<string>()
+  let matchingCommitOid: string | undefined
+  await walkCandidateDevelopmentImmutableHistory(
+    repositoryRoot,
+    preregistrationRevision,
+    'verify-preregistration-module-novelty',
+    sourceGit,
+    signal,
+    async (commitOid, commit) => {
+      if (searchedTrees.has(commit.treeOid)) return false
+      searchedTrees.add(commit.treeOid)
+      const objects = await sourceStep('verify-preregistration-module-novelty', () =>
+        sourceGit.text(
+          repositoryRoot,
+          ['ls-tree', '-r', '--format=%(objecttype) %(objectname)', commit.treeOid],
+          signal,
+        ),
+      )
+      const found = objects.split('\n').some((line) => line === `blob ${moduleBlobOid}`)
+      if (found) matchingCommitOid = commitOid
+      return found
+    },
   )
-  if (history.length > 0) {
+  if (matchingCommitOid !== undefined) {
     throw new CandidateDevelopmentSourceVerificationError('verify-preregistration-module-novelty', {
       preregistrationRevision,
       modulePath,
       expected: 'evaluated module blob created after preregistration',
       observed: moduleBlobOid,
-      history: history.split('\n'),
+      history: [matchingCommitOid],
     })
   }
 }

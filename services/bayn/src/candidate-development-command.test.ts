@@ -2925,6 +2925,78 @@ describe('candidate development command', () => {
     expect(aborted).toBe(true)
   })
 
+  test('keeps module-history novelty independent from a graft inserted after preflight', async () => {
+    const repository = await mkdtemp(join(tmpdir(), 'bayn-candidate-graft-race-'))
+    const candidateDirectory = join(repository, 'candidate')
+    const modulePath = join(candidateDirectory, 'program.mjs')
+    try {
+      await mkdir(candidateDirectory, { recursive: true })
+      await execFilePromise('git', ['init', '-q'], repository)
+      await execFilePromise('git', ['config', 'user.name', 'Candidate Test'], repository)
+      await execFilePromise('git', ['config', 'user.email', 'candidate@example.test'], repository)
+
+      await writeFile(modulePath, 'export const candidate = "before-preregistration"\n')
+      await execFilePromise('git', ['add', 'candidate/program.mjs'], repository)
+      await execFilePromise('git', ['commit', '-qm', 'test: candidate before preregistration'], repository)
+      const priorModuleOid = await execFileTextPromise('git', ['rev-parse', 'HEAD:candidate/program.mjs'], repository)
+
+      await writeFile(modulePath, 'export const candidate = "preregistration-placeholder"\n')
+      await execFilePromise('git', ['add', 'candidate/program.mjs'], repository)
+      await execFilePromise('git', ['commit', '-qm', 'test: preregistration placeholder'], repository)
+      const preregistrationRevision = await execFileTextPromise('git', ['rev-parse', 'HEAD'], repository)
+      const graftsPath = resolve(
+        repository,
+        await execFileTextPromise('git', ['rev-parse', '--git-path', 'info/grafts'], repository),
+      )
+      await mkdir(dirname(graftsPath), { recursive: true })
+
+      let graftInserted = false
+      const sourceGit: CandidateDevelopmentSourceGit = {
+        text: async (repositoryRoot, args) => {
+          if (!graftInserted && args[0] === 'cat-file' && args[1] === 'commit') {
+            graftInserted = true
+            await writeFile(graftsPath, `${preregistrationRevision}\n`)
+          }
+          return execFileTextPromise('git', ['--no-replace-objects', '-C', repositoryRoot, ...args], repositoryRoot)
+        },
+        bytes: (repositoryRoot, args) =>
+          execFileBytesPromise('git', ['--no-replace-objects', '-C', repositoryRoot, ...args], repositoryRoot),
+      }
+
+      expect(
+        await Effect.runPromise(
+          Effect.flip(
+            verifyCandidateDevelopmentPreregistrationModuleNovelty(
+              repository,
+              preregistrationRevision,
+              'candidate/program.mjs',
+              priorModuleOid,
+              sourceGit,
+            ),
+          ),
+        ),
+      ).toMatchObject({
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-preregistration-module-novelty',
+        cause: {
+          preregistrationRevision,
+          observed: priorModuleOid,
+        },
+      })
+      expect(graftInserted).toBe(true)
+      expect(await execFileTextPromise('git', ['rev-parse', '--is-shallow-repository'], repository)).toBe('false')
+      expect(
+        await execFileTextPromise(
+          'git',
+          ['log', '--format=%H', `--find-object=${priorModuleOid}`, preregistrationRevision, '--'],
+          repository,
+        ),
+      ).toBe('')
+    } finally {
+      await rm(repository, { recursive: true, force: true })
+    }
+  })
+
   test('requires preregistration to be a proper Git ancestor without replacement objects', async () => {
     const repository = await mkdtemp(join(tmpdir(), 'bayn-candidate-preregistration-lineage-'))
     const markerPath = join(repository, 'marker.txt')
