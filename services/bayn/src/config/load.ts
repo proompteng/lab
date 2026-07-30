@@ -25,7 +25,7 @@ const presentRuntimeConfigFailure = (failure: RuntimeConfigResolutionFailure): R
     case 'PaperReconciliationCadenceNotWithinStaleThreshold':
       return {
         operation: 'cycle-loop',
-        message: `PAPER reconciliation interval ${failure.reconciliationIntervalMs.toString()}ms plus full-pass timeout ${failure.reconciliationPassTimeoutMs.toString()}ms must be shorter than the reconciliation stale threshold ${failure.reconciliationStaleThresholdMs.toString()}ms`,
+        message: `PAPER reconciliation interval ${failure.reconciliationIntervalMs.toString()}ms plus prior post-timestamp tail bound ${failure.priorReconciliationTailTimeoutMs.toString()}ms plus next full-pass timeout ${failure.reconciliationPassTimeoutMs.toString()}ms must be shorter than the reconciliation stale threshold ${failure.reconciliationStaleThresholdMs.toString()}ms`,
       }
     case 'IncompleteAlpacaCredentials':
       return {

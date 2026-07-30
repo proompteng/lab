@@ -256,11 +256,11 @@ describe('pure runtime configuration resolution', () => {
     })
   })
 
-  test('keeps PAPER reconciliation cadence plus the enforced full-pass deadline inside the stale threshold', () => {
+  test('reserves the prior post-timestamp tail and next full-pass deadline inside the PAPER stale threshold', () => {
     const paper = {
       configuredAlpaca: {
         ...alpaca(BrokerEnvironment.Sandbox),
-        reconciliationIntervalMs: 89_999,
+        reconciliationIntervalMs: 59_999,
       },
       legacyMaximumAuthority: 'PAPER' as const,
       brokerAccess: BrokerAccess.Mutation,
@@ -269,7 +269,7 @@ describe('pure runtime configuration resolution', () => {
     const accepted = Result.getOrThrow(resolveRuntimeConfig(resolutionInput(paper)))
     expect(accepted).toMatchObject({
       runtimeMode: 'AutonomousService',
-      alpaca: { reconciliationIntervalMs: 89_999 },
+      alpaca: { reconciliationIntervalMs: 59_999 },
       execution: {
         brokerAccess: BrokerAccess.Mutation,
         capitalAuthority: { _tag: CapitalAuthorityKind.Sandbox },
@@ -281,12 +281,29 @@ describe('pure runtime configuration resolution', () => {
         ...paper,
         configuredAlpaca: {
           ...paper.configuredAlpaca,
-          reconciliationIntervalMs: 90_000,
+          reconciliationIntervalMs: 60_000,
         },
       },
       {
         _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold',
-        reconciliationIntervalMs: 90_000,
+        reconciliationIntervalMs: 60_000,
+        priorReconciliationTailTimeoutMs: 30_000,
+        reconciliationPassTimeoutMs: 30_000,
+        reconciliationStaleThresholdMs: 120_000,
+      },
+    )
+    expectFailure(
+      {
+        ...paper,
+        configuredAlpaca: {
+          ...paper.configuredAlpaca,
+          reconciliationIntervalMs: 89_999,
+        },
+      },
+      {
+        _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold',
+        reconciliationIntervalMs: 89_999,
+        priorReconciliationTailTimeoutMs: 30_000,
         reconciliationPassTimeoutMs: 30_000,
         reconciliationStaleThresholdMs: 120_000,
       },
@@ -303,6 +320,7 @@ describe('pure runtime configuration resolution', () => {
       {
         _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold',
         reconciliationIntervalMs: 1,
+        priorReconciliationTailTimeoutMs: 120_000,
         reconciliationPassTimeoutMs: 120_000,
         reconciliationStaleThresholdMs: 120_000,
       },

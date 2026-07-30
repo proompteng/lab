@@ -55,13 +55,18 @@ const validatePaperReconciliationTiming = (
     execution.brokerAccess === BrokerAccess.Mutation && execution.capitalAuthority._tag === CapitalAuthorityKind.Sandbox
   if (!paper || alpaca === undefined) return Result.succeed(undefined)
   const reconciliationPassTimeoutMs = parsed.operationTimeoutMs
-  const requiredFreshnessWindowMs = BigInt(alpaca.reconciliationIntervalMs) + BigInt(reconciliationPassTimeoutMs)
+  const priorReconciliationTailTimeoutMs = reconciliationPassTimeoutMs
+  const requiredFreshnessWindowMs =
+    BigInt(alpaca.reconciliationIntervalMs) +
+    BigInt(priorReconciliationTailTimeoutMs) +
+    BigInt(reconciliationPassTimeoutMs)
   if (requiredFreshnessWindowMs < BigInt(parsed.reconciliationStaleThresholdMs)) {
     return Result.succeed(undefined)
   }
   return fail({
     _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold',
     reconciliationIntervalMs: alpaca.reconciliationIntervalMs,
+    priorReconciliationTailTimeoutMs,
     reconciliationPassTimeoutMs,
     reconciliationStaleThresholdMs: parsed.reconciliationStaleThresholdMs,
   })

@@ -48,6 +48,25 @@ const idleReconciliationError = (cause: CycleNotDueReconciliationError): CycleRu
 const markReconciliationCompleted = (cadence: Ref.Ref<ReconciliationCadenceState>): Effect.Effect<void> =>
   Clock.currentTimeNanos.pipe(Effect.flatMap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos })))
 
+const attemptIdleReconciliation = <DecisionR>(
+  reconcileNotDue: Effect.Effect<void, CycleNotDueReconciliationError, DecisionR>,
+  cadence: Ref.Ref<ReconciliationCadenceState>,
+): Effect.Effect<void, CycleRunnerError, DecisionR> =>
+  Clock.currentTimeNanos.pipe(
+    Effect.tap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos })),
+    Effect.andThen(
+      reconcileNotDue.pipe(
+        Effect.mapError(idleReconciliationError),
+        Effect.tapError((lastFailure) =>
+          Clock.currentTimeNanos.pipe(
+            Effect.flatMap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos, lastFailure })),
+          ),
+        ),
+        Effect.tap(() => markReconciliationCompleted(cadence)),
+      ),
+    ),
+  )
+
 const reconcileNotDuePass = <DecisionR>(
   reconcileNotDue: Effect.Effect<void, CycleNotDueReconciliationError, DecisionR>,
   cadence: Ref.Ref<ReconciliationCadenceState>,
@@ -63,16 +82,7 @@ const reconcileNotDuePass = <DecisionR>(
       if (state.lastFailure !== undefined) return yield* Effect.fail(state.lastFailure)
       return result
     }
-    yield* Ref.set(cadence, { lastAttemptAtNanos: nowNanos })
-    yield* reconcileNotDue.pipe(
-      Effect.mapError(idleReconciliationError),
-      Effect.tapError((lastFailure) =>
-        Clock.currentTimeNanos.pipe(
-          Effect.flatMap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos, lastFailure })),
-        ),
-      ),
-      Effect.tap(() => markReconciliationCompleted(cadence)),
-    )
+    yield* attemptIdleReconciliation(reconcileNotDue, cadence)
     return result
   })
 }
@@ -132,6 +142,16 @@ const observeIdleReconciliation = <E, ContextR, DecisionR>(
     Effect.catch((error) => observeFailedPass(options, error)),
   )
 
+const observeCadenceReconciliation = <E, ContextR, DecisionR>(
+  options: AutonomousCycleLoopOptions<E, ContextR, DecisionR>,
+  cadence: Ref.Ref<ReconciliationCadenceState>,
+  result: CycleRunResult,
+): Effect.Effect<void, never, DecisionR> =>
+  attemptIdleReconciliation(options.reconcileNotDue, cadence).pipe(
+    Effect.flatMap(() => (result.outcome === 'NOT_DUE' ? observeSuccessfulPass(options, result) : Effect.void)),
+    Effect.catch((error) => observeFailedPass(options, error)),
+  )
+
 const observeCycleResult = <E, ContextR, DecisionR>(
   options: AutonomousCycleLoopOptions<E, ContextR, DecisionR>,
   cadence: Ref.Ref<ReconciliationCadenceState>,
@@ -144,7 +164,7 @@ const observeCycleResult = <E, ContextR, DecisionR>(
 const waitUntilNextCyclePoll = <E, ContextR, DecisionR>(
   options: AutonomousCycleLoopOptions<E, ContextR, DecisionR>,
   cadence: Ref.Ref<ReconciliationCadenceState>,
-  result: Extract<CycleRunResult, { readonly outcome: 'NOT_DUE' }>,
+  result: CycleRunResult,
   nextPollAtNanos: bigint,
 ): Effect.Effect<void, never, DecisionR> =>
   Effect.suspend(() =>
@@ -153,7 +173,7 @@ const waitUntilNextCyclePoll = <E, ContextR, DecisionR>(
       const state = yield* Ref.get(cadence)
       const decision = decideIdleReconciliationCadence(state, nowNanos, options.reconciliationIntervalMs)
       if (decision._tag === 'RECONCILE') {
-        yield* observeIdleReconciliation(options, cadence, result)
+        yield* observeCadenceReconciliation(options, cadence, result)
         return yield* waitUntilNextCyclePoll(options, cadence, result, nextPollAtNanos)
       }
       if (nowNanos >= nextPollAtNanos) return
@@ -172,9 +192,7 @@ const waitAfterSuccessfulPass = <E, ContextR, DecisionR>(
   Clock.currentTimeNanos.pipe(
     Effect.flatMap((completedAtNanos) => {
       const nextPollAtNanos = completedAtNanos + intervalNanos(options.pollIntervalMs)
-      return result.outcome === 'NOT_DUE'
-        ? waitUntilNextCyclePoll(options, cadence, result, nextPollAtNanos)
-        : sleepUntil(nextPollAtNanos)
+      return waitUntilNextCyclePoll(options, cadence, result, nextPollAtNanos)
     }),
   )
 

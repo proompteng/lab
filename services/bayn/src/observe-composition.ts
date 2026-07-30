@@ -1280,6 +1280,25 @@ const mutationIdleReconciliationError = (cause: ReconciliationPassError): CycleR
 const markMutationReconciliationCompleted = (cadence: Ref.Ref<ReconciliationCadenceState>): Effect.Effect<void> =>
   Clock.currentTimeNanos.pipe(Effect.flatMap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos })))
 
+const attemptMutationIdleReconciliation = (
+  cadence: Ref.Ref<ReconciliationCadenceState>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+): Effect.Effect<void, CycleRunnerError, ObserveDecisionRuntime> =>
+  Clock.currentTimeNanos.pipe(
+    Effect.tap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos })),
+    Effect.andThen(
+      reconcile.pipe(
+        Effect.asVoid,
+        Effect.mapError(mutationIdleReconciliationError),
+        Effect.tapError((lastFailure) =>
+          Clock.currentTimeNanos.pipe(
+            Effect.flatMap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos, lastFailure })),
+          ),
+        ),
+      ),
+    ),
+  )
+
 const reconcileMutationNotDuePass = (
   input: MutationAutonomousCycleInput,
   cadence: Ref.Ref<ReconciliationCadenceState>,
@@ -1295,15 +1314,7 @@ const reconcileMutationNotDuePass = (
       if (state.lastFailure !== undefined) return yield* Effect.fail(state.lastFailure)
       return result
     }
-    yield* Ref.set(cadence, { lastAttemptAtNanos: nowNanos })
-    yield* reconcile.pipe(
-      Effect.mapError(mutationIdleReconciliationError),
-      Effect.tapError((lastFailure) =>
-        Clock.currentTimeNanos.pipe(
-          Effect.flatMap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos, lastFailure })),
-        ),
-      ),
-    )
+    yield* attemptMutationIdleReconciliation(cadence, reconcile)
     return result
   })
 }
@@ -1330,12 +1341,33 @@ const observeMutationIdleReconciliation = (
     ),
   )
 
+const observeMutationCadenceReconciliation = (
+  startup: Parameters<AutonomousCycleStartup>[0],
+  cadence: Ref.Ref<ReconciliationCadenceState>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+  result: CycleRunResult,
+): Effect.Effect<void, never, ObserveDecisionRuntime> =>
+  attemptMutationIdleReconciliation(cadence, reconcile).pipe(
+    Effect.flatMap(() =>
+      result.outcome === 'NOT_DUE'
+        ? currentUtcInstant.pipe(
+            Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'SUCCEEDED', observedAt, result })),
+          )
+        : Effect.void,
+    ),
+    Effect.catch((error) =>
+      currentUtcInstant.pipe(
+        Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
+      ),
+    ),
+  )
+
 const waitUntilNextMutationPoll = (
   input: MutationAutonomousCycleInput,
   startup: Parameters<AutonomousCycleStartup>[0],
   cadence: Ref.Ref<ReconciliationCadenceState>,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-  result: Extract<CycleRunResult, { readonly outcome: 'NOT_DUE' }>,
+  result: CycleRunResult,
   nextPollAtNanos: bigint,
 ): Effect.Effect<void, never, ObserveDecisionRuntime> =>
   Effect.suspend(() =>
@@ -1344,7 +1376,7 @@ const waitUntilNextMutationPoll = (
       const state = yield* Ref.get(cadence)
       const decision = decideIdleReconciliationCadence(state, nowNanos, input.reconciliationIntervalMs)
       if (decision._tag === 'RECONCILE') {
-        yield* observeMutationIdleReconciliation(input, startup, cadence, reconcile, result)
+        yield* observeMutationCadenceReconciliation(startup, cadence, reconcile, result)
         return yield* waitUntilNextMutationPoll(input, startup, cadence, reconcile, result, nextPollAtNanos)
       }
       if (nowNanos >= nextPollAtNanos) return
@@ -1365,9 +1397,7 @@ const waitAfterMutationPass = (
   Clock.currentTimeNanos.pipe(
     Effect.flatMap((completedAtNanos) => {
       const nextPollAtNanos = completedAtNanos + mutationIntervalNanos(input.pollIntervalMs)
-      return result.outcome === 'NOT_DUE'
-        ? waitUntilNextMutationPoll(input, startup, cadence, reconcile, result, nextPollAtNanos)
-        : mutationSleepUntil(nextPollAtNanos)
+      return waitUntilNextMutationPoll(input, startup, cadence, reconcile, result, nextPollAtNanos)
     }),
   )
 

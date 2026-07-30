@@ -1427,6 +1427,82 @@ describe('OBSERVE runtime composition', () => {
     })
     expect(fencedTransactions).toBe(3)
     expect(authorityRestrictions).toBe(0)
+
+    mutationEvents.length = 0
+    mutationReconciliations = 0
+    const nonIdleObservations: Parameters<Parameters<typeof mutationStartup>[0]['recordPass']>[0][] = []
+    const calendarReadsBeforeNonIdle = calendarReads
+    let publicationReads = 0
+    let secondPublicationRead: Deferred.Deferred<void> | undefined
+    const missingPublicationMarketData: MarketDataService = {
+      ...marketData([]),
+      inspectCyclePublications: Effect.suspend(() => {
+        publicationReads += 1
+        mutationEvents.push(`publication:${publicationReads.toString()}`)
+        const result = {
+          outcome: 'MISSING' as const,
+          observedAt: '2020-04-29T22:00:00.000Z',
+        }
+        return publicationReads === 2 && secondPublicationRead !== undefined
+          ? Deferred.succeed(secondPublicationRead, undefined).pipe(Effect.as(result))
+          : Effect.succeed(result)
+      }),
+    }
+    mutationPhase = true
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(reconciledAt))
+          const first = yield* Deferred.make<void>()
+          const second = yield* Deferred.make<void>()
+          secondPublicationRead = yield* Deferred.make<void>()
+          const loop = yield* mutationStartup({
+            qualificationRunId: 'c'.repeat(64),
+            recordPass: (observation) =>
+              Effect.sync(() => {
+                nonIdleObservations.push(observation)
+                mutationEvents.push(`observe:${nonIdleObservations.length.toString()}`)
+                return nonIdleObservations.length === 1 ? first : nonIdleObservations.length === 2 ? second : undefined
+              }).pipe(
+                Effect.flatMap((completion) =>
+                  completion === undefined ? Effect.void : Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
+                ),
+              ),
+          })
+          const fiber = yield* loop.pipe(
+            Effect.provideService(BrokerRead, brokerRead),
+            Effect.provideService(CycleStore, cycleStore),
+            Effect.provideService(MarketData, missingPublicationMarketData),
+            Effect.provideService(BrokerEventStore, executionStore),
+            Effect.provideService(FillAccountingStore, executionStore),
+            Effect.provideService(ValuationStore, executionStore),
+            Effect.provideService(ReconciliationStore, executionStore),
+            Effect.provideService(AuthorityGenerationStore, executionStore),
+            Effect.provideService(AuthorityRestrictionStore, executionStore),
+            Effect.provideService(WriterFence, writerFence),
+            Effect.provideService(IntentStore, intentStore),
+            Effect.provideService(MutationStore, mutationStore),
+            Effect.forkScoped({ startImmediately: true }),
+          )
+          yield* Deferred.await(first).pipe(Effect.timeout('1 second'))
+          yield* TestClock.adjust(100)
+          yield* Deferred.await(secondPublicationRead).pipe(Effect.timeout('1 second'))
+          yield* Deferred.await(second).pipe(Effect.timeout('1 second'))
+          yield* Fiber.interrupt(fiber)
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+    mutationPhase = false
+
+    expect(nonIdleObservations).toHaveLength(2)
+    expect(nonIdleObservations[0]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
+    expect(nonIdleObservations[1]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
+    expect(mutationEvents.indexOf('observe:1')).toBeLessThan(mutationEvents.indexOf('reconcile:1'))
+    expect(mutationEvents.indexOf('reconcile:2')).toBeLessThan(mutationEvents.indexOf('publication:2'))
+    expect(publicationReads).toBe(2)
+    expect(mutationReconciliations).toBe(2)
+    expect(calendarReads).toBe(calendarReadsBeforeNonIdle)
+    expect(authorityRestrictions).toBe(0)
   })
 
   test('bounds the complete writer-fenced reconciliation pass and interrupts stalled persistence', async () => {

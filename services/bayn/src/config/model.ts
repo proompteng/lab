@@ -161,6 +161,7 @@ export type RuntimeConfigResolutionFailure =
   | {
       readonly _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold'
       readonly reconciliationIntervalMs: number
+      readonly priorReconciliationTailTimeoutMs: number
       readonly reconciliationPassTimeoutMs: number
       readonly reconciliationStaleThresholdMs: number
     }

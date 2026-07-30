@@ -618,6 +618,8 @@ describe('autonomous cycle runner', () => {
     const empty = {}
     const lastAttemptAtNanos = 1_000_000_000n
     const state = { lastAttemptAtNanos }
+    const postPersistenceCompletionAtNanos = lastAttemptAtNanos + 30_000_000n
+    const postPersistenceState = { lastAttemptAtNanos: postPersistenceCompletionAtNanos }
 
     expect(decideIdleReconciliationCadence(empty, lastAttemptAtNanos, 100)).toEqual({ _tag: 'RECONCILE' })
     expect(decideIdleReconciliationCadence(state, lastAttemptAtNanos + 99_000_000n, 100)).toEqual({
@@ -630,7 +632,14 @@ describe('autonomous cycle runner', () => {
     expect(decideIdleReconciliationCadence(state, lastAttemptAtNanos - 1n, 100)).toEqual({
       _tag: 'RECONCILE',
     })
+    expect(
+      decideIdleReconciliationCadence(postPersistenceState, postPersistenceCompletionAtNanos + 99_000_000n, 100),
+    ).toEqual({ _tag: 'WAIT', remainingNanos: 1_000_000n })
+    expect(
+      decideIdleReconciliationCadence(postPersistenceState, postPersistenceCompletionAtNanos + 100_000_000n, 100),
+    ).toEqual({ _tag: 'RECONCILE' })
     expect(state).toEqual({ lastAttemptAtNanos })
+    expect(postPersistenceState).toEqual({ lastAttemptAtNanos: postPersistenceCompletionAtNanos })
   })
 
   test('selects recovery from durable cycle state and publication readiness without effects', () => {
@@ -2354,11 +2363,13 @@ describe('autonomous cycle runner', () => {
     expect(control.acquisitions).toEqual([])
   })
 
-  test('settles durable progress before the scheduled wait and avoids duplicate work', async () => {
+  test('honors a coincident reconciliation deadline after RECOVERED without duplicating durable work', async () => {
     const control: StoreControl = { acquisitions: [], binds: 0 }
     const store = cycleStore(control)
     const observations: CyclePassObservation[] = []
+    const events: string[] = []
     let calendarReads = 0
+    let reconciliations = 0
     const read = brokerRead(() => {
       calendarReads += 1
       return Effect.succeed({ value: monthEndCalendar, evidence })
@@ -2368,8 +2379,17 @@ describe('autonomous cycle runner', () => {
         yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
         const loop = yield* cycleLoop({
           context: Effect.succeed(context()),
-          observePass: (observation) => Effect.sync(() => observations.push(observation)),
+          observePass: (observation) =>
+            Effect.sync(() => {
+              observations.push(observation)
+              events.push(`observe:${observations.length.toString()}`)
+            }),
           pollIntervalMs: 100,
+          reconciliationIntervalMs: 100,
+          reconcileNotDue: Effect.sync(() => {
+            reconciliations += 1
+            events.push(`reconcile:${reconciliations.toString()}`)
+          }),
         })
         const fiber = yield* provide(
           loop.pipe(Effect.forkScoped({ startImmediately: true })),
@@ -2379,12 +2399,16 @@ describe('autonomous cycle runner', () => {
         ).pipe(Effect.forkScoped({ startImmediately: true }))
         yield* Effect.yieldNow
         expect(control.acquisitions).toHaveLength(1)
+        expect(reconciliations).toBe(1)
         yield* TestClock.adjust(99)
         expect(control.acquisitions).toHaveLength(1)
+        expect(reconciliations).toBe(1)
         yield* TestClock.adjust(1)
         expect(control.acquisitions).toHaveLength(1)
+        expect(reconciliations).toBe(2)
         yield* TestClock.adjust(100)
         expect(control.acquisitions).toHaveLength(1)
+        expect(reconciliations).toBe(3)
         yield* Fiber.interrupt(fiber)
       }),
     ).pipe(Effect.provide(TestClock.layer()))
@@ -2393,6 +2417,8 @@ describe('autonomous cycle runner', () => {
     expect(calendarReads).toBe(1)
     expect(control.binds).toBe(1)
     expect(observations).toHaveLength(3)
+    expect(events.indexOf('reconcile:2')).toBeLessThan(events.indexOf('observe:2'))
+    expect(events.indexOf('reconcile:3')).toBeLessThan(events.indexOf('observe:3'))
     for (const observation of observations) {
       expect(observation).toMatchObject({
         outcome: 'SUCCEEDED',
@@ -2736,7 +2762,7 @@ describe('autonomous cycle runner', () => {
     expect(accountReads).toBe(1)
     expect(positionReads).toBe(1)
     expect(orderReads).toBe(1)
-    expect(notDueReconciliations).toBe(0)
+    expect(notDueReconciliations).toBe(1)
     expect(control.binds).toBe(1)
     expect(mutationSubmits).toBe(0)
     expect(mutationCancels).toBe(0)
