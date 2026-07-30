@@ -1,0 +1,216 @@
+name: bayn-promotion-eligibility
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    paths:
+      - 'argocd/applications/bayn/deployment.yaml'
+      - 'argocd/applications/bayn/kustomization.yaml'
+      - 'argocd/applicationsets/product.yaml'
+  issue_comment:
+    types:
+      - created
+      - edited
+      - deleted
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+
+concurrency:
+  group: >-
+    bayn-promotion-eligibility-${{
+      github.event_name == 'pull_request_target' &&
+      format('gate-{0}', github.event.pull_request.number) ||
+      github.event_name == 'issue_comment' &&
+      format('refresh-comment-{0}', github.event.issue.number) ||
+      'refresh-schedule'
+    }}
+  cancel-in-progress: true
+
+jobs:
+  required:
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(github.event.pull_request != null && github.event.pull_request.head.ref == 'codex/bayn-release-current' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.ref == 'main' && '[{"checkName":"Bayn promotion exact-head gate","requireApplicable":"true"}]' || '[{"checkName":"Bayn promotion eligibility (not applicable)","requireApplicable":"false"}]') }}
+    # Matrix names are evaluated by the hosted runtime and isolate an exact
+    # promotion check from another manifest PR that shares the same head SHA.
+    name: ${{ matrix.checkName }}
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout trusted promotion verifier
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Require exact-head review and immutable promotion provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BAYN_PROMOTION_GITHUB_TOKEN: ${{ github.token }}
+          PROMOTION_PR_NUMBER: ${{ github.event.pull_request.number }}
+          PROMOTION_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          bun packages/scripts/src/bayn/verify-promotion-eligibility.ts \
+            --repository "${GITHUB_REPOSITORY}" \
+            --pull-number "${PROMOTION_PR_NUMBER}" \
+            --head-sha "${PROMOTION_HEAD_SHA}" \
+            --max-attempts 36 \
+            --poll-interval-ms 10000 \
+            --request-timeout-ms 10000 \
+            --require-applicable "${{ matrix.requireApplicable }}"
+
+  refresh:
+    name: Refresh eligible promotion gate
+    if: >-
+      github.event_name == 'schedule' ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request != null
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout trusted promotion verifier
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Refresh the exact-head gate when eligibility changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BAYN_PROMOTION_GITHUB_TOKEN: ${{ github.token }}
+          BAYN_PROMOTION_RERUN_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" == 'issue_comment' ]]; then
+            pull_number="${EVENT_PR_NUMBER}"
+          else
+            repository_owner="${GITHUB_REPOSITORY%%/*}"
+            pulls="$(
+              gh api \
+                "repos/${GITHUB_REPOSITORY}/pulls?state=open&base=main&head=${repository_owner}:codex/bayn-release-current&per_page=100"
+            )"
+            count="$(jq 'length' <<< "${pulls}")"
+            if [[ "${count}" == '0' ]]; then
+              echo 'No open Bayn promotion PR requires a refresh.'
+              exit 0
+            fi
+            if [[ "${count}" != '1' ]]; then
+              echo "Expected one open Bayn promotion PR, found ${count}." >&2
+              exit 1
+            fi
+            pull_number="$(jq -r '.[0].number' <<< "${pulls}")"
+          fi
+
+          pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pull_number}")"
+          if
+            [[ "$(jq -r '.state' <<< "${pull}")" != open ]] ||
+            [[ "$(jq -r '.base.ref' <<< "${pull}")" != main ]] ||
+            [[ "$(jq -r '.head.ref' <<< "${pull}")" != codex/bayn-release-current ]] ||
+            [[ "$(jq -r '.head.repo.full_name' <<< "${pull}")" != "${GITHUB_REPOSITORY}" ]]
+          then
+            echo "PR #${pull_number} is not the exact Bayn promotion shape; no refresh is required."
+            exit 0
+          fi
+          head_sha="$(jq -r '.head.sha' <<< "${pull}")"
+
+          set +e
+          verifier_output="$(bun packages/scripts/src/bayn/verify-promotion-eligibility.ts \
+            --repository "${GITHUB_REPOSITORY}" \
+            --pull-number "${pull_number}" \
+            --head-sha "${head_sha}" \
+            --max-attempts 1 \
+            --poll-interval-ms 1 \
+            --request-timeout-ms 10000 2>&1)"
+          verifier_status="$?"
+          set -e
+          printf '%s\n' "${verifier_output}"
+
+          if [[ -z "${BAYN_PROMOTION_RERUN_TOKEN}" ]]; then
+            echo 'AGENTS_SPLIT_TOKEN is required to refresh an exact promotion gate.' >&2
+            exit 1
+          fi
+          checks="$(
+            GH_TOKEN="${BAYN_PROMOTION_RERUN_TOKEN}" \
+              gh api \
+                -H 'Accept: application/vnd.github+json' \
+                "repos/${GITHUB_REPOSITORY}/commits/${head_sha}/check-runs?filter=latest&per_page=100"
+          )"
+          check="$(
+            jq -c '
+              [
+                .check_runs[]
+                | select(
+                    .name == "Bayn promotion exact-head gate" and
+                    .app.slug == "github-actions"
+                  )
+              ]
+              | sort_by(.started_at, .id)
+              | reverse
+              | .[0] // empty
+            ' <<< "${checks}"
+          )"
+          if [[ -z "${check}" ]]; then
+            echo "No exact-head promotion gate is indexed for PR #${pull_number} at ${head_sha}."
+            exit 0
+          fi
+          status="$(jq -r '.status' <<< "${check}")"
+          if [[ "${status}" != completed ]]; then
+            echo "The exact-head promotion gate for PR #${pull_number} is still ${status}."
+            exit 0
+          fi
+          conclusion="$(jq -r '.conclusion // ""' <<< "${check}")"
+
+          rerun='false'
+          if [[ "${verifier_status}" == '0' && "${conclusion}" != success ]]; then
+            rerun='true'
+          elif [[ "${verifier_status}" != '0' && "${conclusion}" == success ]]; then
+            rerun='true'
+          fi
+          if [[ "${rerun}" != true ]]; then
+            echo "Promotion PR #${pull_number} gate already reflects current eligibility."
+            exit 0
+          fi
+
+          case "${conclusion}" in
+            success | failure | timed_out | cancelled | action_required | stale | neutral | skipped)
+              ;;
+            *)
+              echo "Exact-head promotion gate conclusion ${conclusion:-pending} is not re-runnable." >&2
+              exit 1
+              ;;
+          esac
+          details_url="$(jq -r '.details_url' <<< "${check}")"
+          if [[ ! "${details_url}" =~ /actions/runs/([0-9]+)/job/ ]]; then
+            echo "Promotion gate details URL does not bind an Actions run: ${details_url}" >&2
+            exit 1
+          fi
+          run_id="${BASH_REMATCH[1]}"
+          GH_TOKEN="${BAYN_PROMOTION_RERUN_TOKEN}" \
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/rerun"
+          echo "Re-requested promotion gate run ${run_id} for PR #${pull_number} at ${head_sha} to reflect current eligibility."
