@@ -370,6 +370,16 @@ describe('production snapshot', () => {
     expect(() => validateSnapshot(snapshot, descendantArgoRevision, expected, expectedArgoRevision)).not.toThrow()
   })
 
+  test('accepts a verified descendant when Argo skipped the intermediate promotion history', () => {
+    const snapshot = clone()
+    const application = snapshot.application as any
+    application.status.sync.revision = descendantArgoRevision
+    application.status.operationState.syncResult.revision = descendantArgoRevision
+    delete application.status.history
+
+    expect(() => validateSnapshot(snapshot, descendantArgoRevision, expected, expectedArgoRevision)).not.toThrow()
+  })
+
   test('accepts a descendant selective sync that omits the unchanged Bayn Deployment', () => {
     const snapshot = clone()
     const application = snapshot.application as any
@@ -864,6 +874,9 @@ describe('redaction and permissions', () => {
   test.each([
     ['broad', 'secrets [] [] [get]'],
     ['resourceNames-scoped', 'secrets [] [operator-created-secret] [get]'],
+    ['wildcard resource', '* [] [operator-created-secret] [get]'],
+    ['API-group wildcard resource', '*.* [] [operator-created-secret] [get]'],
+    ['combined resource', 'configmaps,secrets [] [operator-created-secret] [get]'],
   ])('rejects %s Secret disclosure in the full rules audit', async (_name, secretRule) => {
     const controller = new AbortController()
     const run = async (command: readonly string[]) => {

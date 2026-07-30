@@ -289,32 +289,6 @@ const validateArgo = (
       true,
     )
   }
-  if (reconciledRevision !== promotionRevision) {
-    const promotionHistory = array(status.history, 'application.status.history').find((candidate) => {
-      const history = record(candidate, 'application.status.history[]')
-      return history.revision === promotionRevision
-    })
-    if (promotionHistory === undefined) {
-      fail('ARGO_NOT_CONVERGED', 'Argo history does not prove the promotion revision reconciled', true)
-    }
-    const history = record(promotionHistory, 'application.status.history.promotion')
-    string(history.deployedAt, 'application.status.history.promotion.deployedAt')
-    const historySource = record(history.source, 'application.status.history.promotion.source')
-    requireEqual(
-      historySource.path,
-      'argocd/applications/bayn',
-      'application.status.history.promotion.source.path',
-      'ARGO_NOT_CONVERGED',
-      true,
-    )
-    requireEqual(
-      historySource.repoURL,
-      'https://github.com/proompteng/lab.git',
-      'application.status.history.promotion.source.repoURL',
-      'ARGO_NOT_CONVERGED',
-      true,
-    )
-  }
   const images = array(record(status.summary, 'application.status.summary').images, 'application.status.summary.images')
   if (!images.includes(expected.imageReference)) {
     fail('ARGO_NOT_CONVERGED', 'Argo summary does not contain the exact promoted image', true)
@@ -853,6 +827,18 @@ const SELF_REVIEW_RESOURCES = new Set([
   'selfsubjectrulesreviews.authorization.k8s.io',
 ])
 
+const resourceCellCanExposeSecrets = (resourceCell: string): boolean =>
+  resourceCell.split(',').some((resource) => {
+    const normalized = resource.trim().toLowerCase()
+    return (
+      normalized === '*' ||
+      normalized.startsWith('*.') ||
+      normalized === 'secrets' ||
+      normalized.startsWith('secrets.') ||
+      normalized.startsWith('secrets/')
+    )
+  })
+
 const validateNoMutationRules = async (run: RunCommand, signal: AbortSignal, namespace: string): Promise<void> => {
   const result = await run(['kubectl', 'auth', 'can-i', '--list', '--no-headers', '-n', namespace], signal)
   if (result.exitCode !== 0 || result.stderr.trim().length !== 0 || result.stdout.trim().length === 0) {
@@ -866,7 +852,7 @@ const validateNoMutationRules = async (run: RunCommand, signal: AbortSignal, nam
     }
     const verbs = verbsSource.split(/\s+/).filter((verb) => verb.length > 0)
     const resource = line.trim().split(/\s+/)[0] ?? ''
-    if (resource === 'secrets') {
+    if (resourceCellCanExposeSecrets(resource)) {
       fail('RBAC_DENIED', `workflow identity has a Secret authorization rule in ${namespace}`, false)
     }
     if (verbs.every((verb) => READ_ONLY_RULE_VERBS.has(verb))) continue
