@@ -58,7 +58,7 @@ spec:
               value: OBSERVE
 `
 
-const expected = parseExpectedPromotion(kustomization, deploymentManifest, true)
+const expected = parseExpectedPromotion(kustomization, deploymentManifest)
 
 const dependency = () => ({ status: 'AVAILABLE', checkedAt: '2026-07-30T06:52:25.210Z', error: null })
 
@@ -282,15 +282,11 @@ describe('manifest contract', () => {
 
   test('rejects truncated or mutable tags', () => {
     const failure = captureFailure(() =>
-      parseExpectedPromotion(kustomization.replace(tag, 'latest'), deploymentManifest, true),
+      parseExpectedPromotion(kustomization.replace(tag, 'latest'), deploymentManifest),
     )
     expect(failure.code).toBe('INVALID_MANIFEST')
     const truncated = captureFailure(() =>
-      parseExpectedPromotion(
-        kustomization.replace(tag, `sha-${sourceRevision.slice(0, 12)}`),
-        deploymentManifest,
-        true,
-      ),
+      parseExpectedPromotion(kustomization.replace(tag, `sha-${sourceRevision.slice(0, 12)}`), deploymentManifest),
     )
     expect(truncated.code).toBe('INVALID_MANIFEST')
   })
@@ -689,6 +685,26 @@ describe('redaction and permissions', () => {
       code: 'RBAC_DENIED',
     })
   })
+
+  test.each(['create', 'update', 'patch', 'delete', 'deletecollection'])(
+    'rejects %s write access to Secrets',
+    async (grantedVerb) => {
+      const controller = new AbortController()
+      const run = async (command: readonly string[]) => {
+        const verb = command[3] ?? ''
+        const resource = command[4] ?? ''
+        if (resource === 'secrets') {
+          return { stdout: verb === grantedVerb ? 'yes\n' : 'no\n', stderr: '', exitCode: 0 }
+        }
+        const requiredRead = ['get', 'list'].includes(verb)
+        return { stdout: requiredRead ? 'yes\n' : 'no\n', stderr: '', exitCode: 0 }
+      }
+
+      await expect(validateReadOnlyPermissions(run, controller.signal)).rejects.toMatchObject({
+        code: 'RBAC_DENIED',
+      })
+    },
+  )
 
   test('rejects deletecollection authority independently of delete', async () => {
     const controller = new AbortController()

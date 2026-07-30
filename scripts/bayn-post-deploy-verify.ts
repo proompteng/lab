@@ -133,11 +133,7 @@ const namedContainer = (containers: unknown, name: string, path: string): JsonRe
   return record(matches[0], `${path}.${name}`)
 }
 
-export const parseExpectedPromotion = (
-  kustomizationSource: string,
-  deploymentSource: string,
-  requiresReconciliation: boolean,
-): ExpectedPromotion => {
+export const parseExpectedPromotion = (kustomizationSource: string, deploymentSource: string): ExpectedPromotion => {
   const kustomization = parseYaml(kustomizationSource, 'kustomization')
   const images = array(kustomization.images, 'kustomization.images')
   if (images.length !== 1) fail('INVALID_MANIFEST', 'kustomization.images must contain exactly one image', false)
@@ -177,7 +173,7 @@ export const parseExpectedPromotion = (
     digest,
     repository,
     imageReference: `${repository}:${tag}@${digest}`,
-    requiresReconciliation,
+    requiresReconciliation: true,
   }
 }
 
@@ -725,6 +721,7 @@ export const validateReadOnlyPermissions = async (run: RunCommand, signal: Abort
   await checkWriteDenied(run, signal, 'pods/eviction', 'bayn')
   await checkWriteDenied(run, signal, 'pods/exec', 'bayn')
   await checkWriteDenied(run, signal, 'pods/portforward', 'bayn')
+  await checkWriteDenied(run, signal, 'secrets', 'bayn')
   for (const verb of ['get', 'list', 'watch']) {
     const secretRead = await run(['kubectl', 'auth', 'can-i', verb, 'secrets', '-n', 'bayn'], signal)
     requireConclusiveDenial(
@@ -959,19 +956,6 @@ const parseCli = (args: readonly string[]): CliOptions => {
   }
 }
 
-const sourceRequiresReconciliation = async (
-  root: string,
-  sourceRevision: string,
-  signal: AbortSignal,
-): Promise<boolean> => {
-  const result = await runCommand(['git', '-C', root, 'show', `${sourceRevision}:services/bayn/src/http.ts`], signal)
-  if (result.exitCode !== 0)
-    fail('INVALID_MANIFEST', 'promoted source revision is unavailable in checkout history', false)
-  return (
-    result.stdout.includes('reconciliationCoversLatestMutation') && result.stdout.includes('publicCycleReconciliation')
-  )
-}
-
 const main = async (): Promise<void> => {
   const options = parseCli(process.argv.slice(2))
   const controller = new AbortController()
@@ -991,13 +975,7 @@ const main = async (): Promise<void> => {
       controller.signal,
       deadlineAt,
     )
-    const preliminary = parseExpectedPromotion(kustomizationSource, deploymentSource, false)
-    const requiresReconciliation = await runWithinDeadline(
-      (signal) => sourceRequiresReconciliation(options.root, preliminary.sourceRevision, signal),
-      controller.signal,
-      deadlineAt,
-    )
-    const expected = parseExpectedPromotion(kustomizationSource, deploymentSource, requiresReconciliation)
+    const expected = parseExpectedPromotion(kustomizationSource, deploymentSource)
     await runWithinDeadline((signal) => validateReadOnlyPermissions(runCommand, signal), controller.signal, deadlineAt)
     await retryVerification(
       async (signal) => {
