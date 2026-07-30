@@ -2445,6 +2445,7 @@ export type CandidateDevelopmentModuleImporter = (
 export type CandidateDevelopmentSourceVerifier = (
   modulePath: string,
   sourceManifestPath: string,
+  sourceGit?: CandidateDevelopmentSourceGit,
 ) => Effect.Effect<CandidateDevelopmentVerifiedModuleSource, CandidateDevelopmentCommandFailure>
 
 class CandidateDevelopmentSourceVerificationError extends Error {
@@ -2497,6 +2498,16 @@ const gitBytes = (repositoryRoot: string, args: readonly string[]): Promise<Buff
       },
     )
   })
+
+export interface CandidateDevelopmentSourceGit {
+  readonly text: (repositoryRoot: string, args: readonly string[]) => Promise<string>
+  readonly bytes: (repositoryRoot: string, args: readonly string[]) => Promise<Buffer>
+}
+
+const candidateDevelopmentSourceGit: CandidateDevelopmentSourceGit = {
+  text: gitText,
+  bytes: gitBytes,
+}
 
 const sha256Bytes = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
 
@@ -2620,6 +2631,7 @@ const repositoryRelativePath = (
 export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVerifier = (
   modulePath,
   sourceManifestPath,
+  sourceGit: CandidateDevelopmentSourceGit = candidateDevelopmentSourceGit,
 ) =>
   Effect.tryPromise({
     try: async () => {
@@ -2628,7 +2640,7 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
         realpath(resolve(sourceManifestPath)),
       )
       const repositoryRoot = await sourceStep('resolve-repository', () =>
-        gitText(dirname(absoluteModulePath), ['rev-parse', '--show-toplevel']),
+        sourceGit.text(dirname(absoluteModulePath), ['rev-parse', '--show-toplevel']),
       )
       const moduleRepositoryPath = repositoryRelativePath(repositoryRoot, absoluteModulePath)
       if (Result.isFailure(moduleRepositoryPath)) {
@@ -2641,19 +2653,21 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
           sourceManifestRepositoryPath.failure,
         )
       }
-      const sourceRevision = await sourceStep('verify-head', () => gitText(repositoryRoot, ['rev-parse', 'HEAD']))
+      const sourceRevision = await sourceStep('verify-head', () =>
+        sourceGit.text(repositoryRoot, ['rev-parse', 'HEAD']),
+      )
       if (!/^[0-9a-f]{40}$/.test(sourceRevision)) {
         throw new CandidateDevelopmentSourceVerificationError('verify-head', {
           expected: 'lowercase 40-character Git revision',
           observed: sourceRevision,
         })
       }
-      const moduleSpec = `HEAD:${moduleRepositoryPath.success}`
-      const sourceManifestSpec = `HEAD:${sourceManifestRepositoryPath.success}`
+      const moduleSpec = `${sourceRevision}:${moduleRepositoryPath.success}`
+      const sourceManifestSpec = `${sourceRevision}:${sourceManifestRepositoryPath.success}`
       const [moduleGitBytes, sourceManifestGitBytes] = await Promise.all([
-        sourceStep('verify-module-blob', () => gitBytes(repositoryRoot, ['cat-file', 'blob', moduleSpec])),
+        sourceStep('verify-module-blob', () => sourceGit.bytes(repositoryRoot, ['cat-file', 'blob', moduleSpec])),
         sourceStep('verify-source-manifest-blob', () =>
-          gitBytes(repositoryRoot, ['cat-file', 'blob', sourceManifestSpec]),
+          sourceGit.bytes(repositoryRoot, ['cat-file', 'blob', sourceManifestSpec]),
         ),
       ])
       const sourceManifestJson = await sourceStep(
@@ -2675,8 +2689,10 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
         throw new CandidateDevelopmentSourceVerificationError('verify-module-format', moduleFormat.failure)
       }
       const [moduleBlobOid, sourceManifestBlobOid] = await Promise.all([
-        sourceStep('verify-module-blob', () => gitText(repositoryRoot, ['rev-parse', moduleSpec])),
-        sourceStep('verify-source-manifest-blob', () => gitText(repositoryRoot, ['rev-parse', sourceManifestSpec])),
+        sourceStep('verify-module-blob', () => sourceGit.text(repositoryRoot, ['rev-parse', moduleSpec])),
+        sourceStep('verify-source-manifest-blob', () =>
+          sourceGit.text(repositoryRoot, ['rev-parse', sourceManifestSpec]),
+        ),
       ])
       const files: CandidateDevelopmentVerifiedSourceFiles = {
         schemaVersion: 'bayn.candidate-development-verified-source-files.v1',

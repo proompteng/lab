@@ -20,7 +20,9 @@ import {
   writeCandidateDevelopmentCommandReport,
   type CandidateDevelopmentCommandEvaluation,
   type CandidateDevelopmentExecutableProgram,
+  type CandidateDevelopmentSourceGit,
   type CandidateDevelopmentSourceManifest,
+  type CandidateDevelopmentSourceVerifier,
   type CandidateDevelopmentVerifiedSource,
   type CandidateDevelopmentVerifiedSourceFiles,
   type CandidateDevelopmentVerifiedModuleSource,
@@ -56,6 +58,22 @@ const execFilePromise = (file: string, args: readonly string[], cwd: string): Pr
   new Promise((resolveExecution, rejectExecution) => {
     execFile(file, [...args], { cwd }, (error) => {
       if (error === null) resolveExecution()
+      else rejectExecution(error)
+    })
+  })
+
+const execFileTextPromise = (file: string, args: readonly string[], cwd: string): Promise<string> =>
+  new Promise((resolveExecution, rejectExecution) => {
+    execFile(file, [...args], { cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => {
+      if (error === null) resolveExecution(stdout.trim())
+      else rejectExecution(error)
+    })
+  })
+
+const execFileBytesPromise = (file: string, args: readonly string[], cwd: string): Promise<Buffer> =>
+  new Promise((resolveExecution, rejectExecution) => {
+    execFile(file, [...args], { cwd, encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 }, (error, stdout) => {
+      if (error === null) resolveExecution(stdout)
       else rejectExecution(error)
     })
   })
@@ -2042,6 +2060,134 @@ describe('candidate development command', () => {
         _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
         operation: 'verify-module-format',
       })
+    } finally {
+      await rm(repository, { recursive: true, force: true })
+    }
+  })
+
+  test('pins verification and execution to the captured revision when HEAD moves', async () => {
+    const repository = await mkdtemp(join(tmpdir(), 'bayn-candidate-moving-head-'))
+    const candidateDirectory = join(repository, 'candidate')
+    const modulePath = join(candidateDirectory, 'program.mjs')
+    const sourceManifestPath = join(candidateDirectory, 'source-manifest.json')
+    const input = {
+      candidateOrdinal: 16,
+      priorTrialCount: 15,
+      expectedStrategyProtocolHash: fixtureStrategyProtocolHash,
+      officialSessions: fixtureOfficialSessions,
+      signalSessionDates: officialMonthEndSignalDates(fixtureOfficialSessions),
+      featureLookbackSessions: 126,
+    }
+    const report = reportFixture(0.01)
+    const evaluationTemplate = commandEvaluationFixture(report, baselineFixture())
+    const sourceManifest: CandidateDevelopmentSourceManifest = {
+      ...fixtureSourceManifest,
+      modulePath: 'candidate/program.mjs',
+    }
+    const sourceManifestBytes = `${JSON.stringify(sourceManifest, null, 2)}\n`
+    const sourceA = `
+      export const candidateDevelopmentArtifact = {
+        schemaVersion: 'bayn.candidate-development-artifact.v1',
+        input: ${JSON.stringify(input)},
+        strategyProtocol: ${JSON.stringify(fixtureStrategyProtocol)},
+        buildEvaluation: (verifiedSource) => {
+          const evaluation = ${JSON.stringify(evaluationTemplate)}
+          evaluation.baseline.runId = verifiedSource.baselineRunId
+          evaluation.baseline.codeRevision = verifiedSource.sourceRevision
+          evaluation.accounting.runId = verifiedSource.baselineRunId
+          evaluation.accounting.stressedRunId = verifiedSource.stressedRunId
+          return evaluation
+        },
+      }
+    `
+    const sourceB = `
+      export const candidateDevelopmentArtifact = {
+        schemaVersion: 'bayn.candidate-development-artifact.v1',
+        input: ${JSON.stringify(input)},
+        strategyProtocol: ${JSON.stringify(fixtureStrategyProtocol)},
+        buildEvaluation: () => { throw new Error('commit B executed') },
+      }
+    `
+
+    try {
+      await mkdir(candidateDirectory, { recursive: true })
+      await writeFile(modulePath, sourceA)
+      await writeFile(sourceManifestPath, sourceManifestBytes)
+      await execFilePromise('git', ['init', '-q'], repository)
+      await execFilePromise('git', ['config', 'user.name', 'Candidate Test'], repository)
+      await execFilePromise('git', ['config', 'user.email', 'candidate@example.test'], repository)
+      await execFilePromise('git', ['add', 'candidate/program.mjs', 'candidate/source-manifest.json'], repository)
+      await execFilePromise('git', ['commit', '-qm', 'test: add source A'], repository)
+      const sourceRevision = await execFileTextPromise('git', ['rev-parse', 'HEAD'], repository)
+
+      await writeFile(modulePath, sourceB)
+      await execFilePromise('git', ['add', 'candidate/program.mjs'], repository)
+      await execFilePromise('git', ['commit', '-qm', 'test: add source B'], repository)
+      const movedRevision = await execFileTextPromise('git', ['rev-parse', 'HEAD'], repository)
+
+      const capturedRevisions: string[] = []
+      const movingHeadGit: CandidateDevelopmentSourceGit = {
+        text: async (repositoryRoot, args) => {
+          const output = await execFileTextPromise('git', args, repositoryRoot)
+          if (args[0] === 'rev-parse' && args[1] === 'HEAD') {
+            capturedRevisions.push(output)
+            await execFilePromise('git', ['reset', '--hard', movedRevision], repositoryRoot)
+          }
+          return output
+        },
+        bytes: (repositoryRoot, args) => execFileBytesPromise('git', args, repositoryRoot),
+      }
+      let verificationPasses = 0
+      const sourceVerifier: CandidateDevelopmentSourceVerifier = (observedModulePath, observedManifestPath) =>
+        Effect.promise(async () => {
+          verificationPasses += 1
+          await execFilePromise('git', ['reset', '--hard', sourceRevision], repository)
+        }).pipe(
+          Effect.andThen(
+            verifyCandidateDevelopmentSourceFiles(observedModulePath, observedManifestPath, movingHeadGit),
+          ),
+        )
+      let importedSource = ''
+      const importer = (moduleUrl: string, verifiedFiles: CandidateDevelopmentVerifiedSourceFiles) => {
+        importedSource = Buffer.from(moduleUrl.split(',')[1] ?? '', 'base64').toString('utf8')
+        return evaluateCandidateDevelopmentArtifact(moduleUrl, verifiedFiles)
+      }
+
+      const loaded = await Effect.runPromise(
+        loadCandidateDevelopmentExecutableProgram(modulePath, sourceManifestPath, importer, sourceVerifier),
+      )
+      const expectedFiles: CandidateDevelopmentVerifiedSourceFiles = {
+        schemaVersion: 'bayn.candidate-development-verified-source-files.v1',
+        sourceRevision,
+        modulePath: 'candidate/program.mjs',
+        moduleBlobOid: await execFileTextPromise(
+          'git',
+          ['rev-parse', `${sourceRevision}:candidate/program.mjs`],
+          repository,
+        ),
+        moduleSha256: sha256(sourceA),
+        sourceManifestPath: 'candidate/source-manifest.json',
+        sourceManifestBlobOid: await execFileTextPromise(
+          'git',
+          ['rev-parse', `${sourceRevision}:candidate/source-manifest.json`],
+          repository,
+        ),
+        sourceManifestSha256: sha256(sourceManifestBytes),
+        sourceManifest,
+      }
+      const expectedVerifiedSource = successOf(bindCandidateDevelopmentVerifiedSource(expectedFiles, input))
+      const decoded = await Effect.runPromise(
+        loaded.program.effects.evaluateDevelopment(undefined, undefined as never, loaded.verifiedSource),
+      )
+
+      expect(verificationPasses).toBe(2)
+      expect(capturedRevisions).toEqual([sourceRevision, sourceRevision])
+      expect(importedSource).toBe(sourceA)
+      expect(loaded.verifiedSource).toEqual(expectedVerifiedSource)
+      expect(decoded.baseline.codeRevision).toBe(sourceRevision)
+      expect(decoded.baseline.runId).toBe(expectedVerifiedSource.baselineRunId)
+      expect(decoded.accounting.stressedRunId).toBe(expectedVerifiedSource.stressedRunId)
+      expect(await execFileTextPromise('git', ['rev-parse', 'HEAD'], repository)).toBe(movedRevision)
     } finally {
       await rm(repository, { recursive: true, force: true })
     }
