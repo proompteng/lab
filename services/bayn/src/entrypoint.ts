@@ -41,7 +41,7 @@ import { makeExecutionProgram, type ExecutionProgram } from './execution/runtime
 import { renderRuntimeAuthorityFailure, resolveRuntimeAuthority } from './execution/runtime-authority'
 import type { FreshBrokerQuote } from './execution/mutation-authority'
 import { WriterFence, WriterFenceLive } from './execution/writer-fence'
-import { operationalError } from './errors'
+import { OperationalError, operationalError } from './errors'
 import { canonicalHashV1Result, type CanonicalJsonFailure } from './hash'
 import { HttpServerLive } from './http'
 import { Journal, JournalLive } from './ledger'
@@ -57,6 +57,12 @@ import {
   renderExecutionCandidateDiscoveryError,
   type ExecutionCandidateDiscoveryReceipt,
 } from './execution-candidate-discovery'
+import {
+  ExecutionPrepareStoreLive,
+  prepareExecution,
+  renderExecutionPrepareFailure,
+  type ExecutionPrepareReceipt,
+} from './execution-prepare'
 import { loadDefaultProtocol, type CausalProtocol } from './protocol'
 import { makeStrategy, type Strategy } from './strategy'
 import { currentUtcInstant } from './time'
@@ -280,6 +286,15 @@ export const ExecutionCandidateDiscoveryResourcesLive = (plan: ApplicationPlanFo
     CycleStoreResourceLive.pipe(Layer.provide(postgres)),
     BrokerSessionResourceLive(plan.config),
   ).pipe(Layer.provideMerge(ApplicationPlatformLive))
+}
+
+export const ExecutionPrepareResourcesLive = (plan: ApplicationPlanFor<'ExecutionPrepare'>) => {
+  const postgres = PostgresAuthorityLive(plan.config)
+  const writerFence = WriterFenceResourceLive.pipe(Layer.provide(postgres))
+  const executionPrepareStore = ExecutionPrepareStoreLive(plan.config).pipe(Layer.provide(postgres))
+  return Layer.mergeAll(postgres, writerFence, executionPrepareStore, BrokerSessionResourceLive(plan.config)).pipe(
+    Layer.provideMerge(ApplicationPlatformLive),
+  )
 }
 
 const applicationDependencies: Effect.Effect<
@@ -541,16 +556,28 @@ const writeDiscoveryReceipt = (receipt: ExecutionCandidateDiscoveryReceipt) =>
     ),
   )
 
-const policyHash = (policy: unknown): Effect.Effect<string, ReturnType<typeof operationalError>> =>
+const writeExecutionPrepareReceipt = (receipt: ExecutionPrepareReceipt) =>
+  pipe(
+    encodeJson(receipt),
+    Effect.mapError((cause) =>
+      operationalError('strategy', 'execution-prepare-output', 'EXECUTION_PREPARE receipt encoding failed', cause),
+    ),
+    Effect.flatMap((output) =>
+      pipe(
+        Stdio.Stdio,
+        Effect.flatMap((stdio) => Stream.run(Stream.make(`${output}\n`), stdio.stdout())),
+      ),
+    ),
+  )
+
+const policyHash = (
+  policy: unknown,
+  operation: 'paper-candidate-policy' | 'execution-prepare-policy',
+): Effect.Effect<string, ReturnType<typeof operationalError>> =>
   pipe(
     canonicalHashV1Result(policy),
     Result.mapError((cause) =>
-      operationalError(
-        'strategy',
-        'paper-candidate-policy',
-        'source-controlled OBSERVE risk policy canonicalization failed',
-        cause,
-      ),
+      operationalError('strategy', operation, 'source-controlled OBSERVE risk policy content hashing failed', cause),
     ),
     Effect.fromResult,
   )
@@ -595,10 +622,64 @@ const runExecutionCandidateDiscovery = (plan: ApplicationPlanFor<'ExecutionCandi
         cause,
       ),
     ),
-    Effect.flatMap(policyHash),
+    Effect.flatMap((policy) => policyHash(policy, 'paper-candidate-policy')),
     Effect.flatMap((riskPolicyHash) => discoverExecutionCandidate(plan, riskPolicyHash)),
     Effect.flatMap(writeDiscoveryReceipt),
   )
+
+const executionPrepareRuntimeBinding = (plan: ApplicationPlanFor<'ExecutionPrepare'>, riskPolicyHash: string) => ({
+  sourceRevision: plan.config.build.sourceRevision,
+  imageRepository: plan.config.build.imageRepository,
+  imageDigest: plan.config.build.imageDigest,
+  strategy: plan.strategy.provenance.strategy,
+  strategyProtocolHash: plan.strategyProtocolHash,
+  qualificationRunId: plan.config.qualificationRunId,
+  accountId: plan.config.alpaca.expectedAccountId,
+  brokerIdentityHash: plan.config.alpaca.identity.identityHash,
+  brokerProvider: plan.config.alpaca.identity.provider,
+  brokerEnvironment: plan.config.alpaca.identity.environment,
+  brokerAccess: plan.config.execution.brokerAccess,
+  capitalAuthority: plan.config.execution.capitalAuthority._tag,
+  authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
+  riskPolicyHash,
+})
+
+const runExecutionPrepare = (plan: ApplicationPlanFor<'ExecutionPrepare'>) =>
+  Effect.gen(function* () {
+    yield* BrokerSession
+    const riskPolicy = yield* loadObserveRiskPolicy(
+      plan.config.alpaca.expectedAccountId,
+      plan.strategy.parameters.universe,
+    ).pipe(
+      Effect.mapError((cause) =>
+        operationalError('config', 'execution-prepare', 'source-controlled OBSERVE risk policy is invalid', cause),
+      ),
+    )
+    const riskPolicyHash = yield* policyHash(riskPolicy, 'execution-prepare-policy')
+    const receipt = yield* prepareExecution(
+      plan.config.executionPrepareRequest,
+      executionPrepareRuntimeBinding(plan, riskPolicyHash),
+    ).pipe(
+      Effect.mapError((cause) =>
+        operationalError('strategy', 'execution-prepare', renderExecutionPrepareFailure(cause), { _tag: cause._tag }),
+      ),
+    )
+    yield* writeExecutionPrepareReceipt(receipt)
+  })
+
+export const executionPrepareBoundaryError = (cause: unknown): OperationalError =>
+  cause instanceof OperationalError
+    ? cause
+    : new OperationalError({
+        component: 'strategy',
+        operation: 'execution-prepare-resource',
+        message: 'EXECUTION_PREPARE resource acquisition failed closed',
+        retryable: false,
+        cause:
+          typeof cause === 'object' && cause !== null && '_tag' in cause && typeof cause._tag === 'string'
+            ? { _tag: cause._tag }
+            : { _tag: 'UnknownResourceFailure' },
+      })
 
 export const runApplicationPlan = pipe(
   Match.type<ApplicationPlan>(),
@@ -610,6 +691,12 @@ export const runApplicationPlan = pipe(
   ),
   Match.tag('ExecutionCandidateDiscovery', (plan) =>
     runExecutionCandidateDiscovery(plan).pipe(Effect.provide(ExecutionCandidateDiscoveryResourcesLive(plan))),
+  ),
+  Match.tag('ExecutionPrepare', (plan) =>
+    runExecutionPrepare(plan).pipe(
+      Effect.provide(ExecutionPrepareResourcesLive(plan)),
+      Effect.mapError(executionPrepareBoundaryError),
+    ),
   ),
   Match.exhaustive,
 )

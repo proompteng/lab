@@ -266,6 +266,23 @@ const loadedConfig = (
       alpaca,
     })
   }
+  if (parsed.configuredOperation === 'ExecutionPrepare') {
+    const qualificationRunId = parsed.qualificationRunId
+    if (qualificationRunId === undefined) {
+      return fail({ _tag: 'ExecutionCandidateDiscoveryRequiresQualificationRun' })
+    }
+    if (alpaca === undefined) {
+      return fail({ _tag: 'ExecutionCandidateDiscoveryRequiresAlpacaBinding' })
+    }
+    return Result.succeed({
+      ...common,
+      runtimeMode: 'ExecutionPrepare',
+      qualificationRunId,
+      executionPrepareRequest: parsed.executionPrepareRequest,
+      execution: execution as Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'ExecutionPrepare' }>['execution'],
+      alpaca,
+    })
+  }
   if (alpaca === undefined) {
     return Result.succeed({
       ...common,

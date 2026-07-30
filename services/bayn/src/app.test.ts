@@ -28,6 +28,7 @@ import type { LoadedRuntimeConfig } from './config'
 import { makeStrategyProtocolHash } from './contracts'
 import { BrokerAccess, BrokerEnvironment, noCapitalAuthority } from './execution/authority'
 import type { ExecutionProgram } from './execution/runtime-program'
+import { executionPrepareBoundaryError } from './entrypoint'
 import type { BrokerProbe } from './health'
 import { HttpServerLive } from './http'
 import { makeStrategy } from './strategy'
@@ -152,6 +153,20 @@ const discoveryConfig = (
   },
 })
 
+const prepareConfig = (
+  runtime: typeof pinnedRuntimeConfig,
+): Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'ExecutionPrepare' }> => ({
+  ...autonomousConfig(runtime),
+  runtimeMode: 'ExecutionPrepare',
+  qualificationRunId: pinnedEvaluation.runId,
+  executionPrepareRequest: undefined,
+  execution: {
+    brokerIdentity: autonomousConfig(runtime).alpaca.identity,
+    brokerAccess: BrokerAccess.ReadOnly,
+    capitalAuthority: noCapitalAuthority,
+  },
+})
+
 const applicationIdentity = (loaded: LoadedRuntimeConfig): ApplicationIdentity => ({
   config: loaded,
   protocol: fixtureProtocol,
@@ -166,6 +181,7 @@ describe('Bayn application composition', () => {
       { config: brokerlessConfig(config), expectedTag: 'BrokerlessService' },
       { config: autonomousConfig(config), expectedTag: 'AutonomousService' },
       { config: discoveryConfig(pinnedRuntimeConfig), expectedTag: 'ExecutionCandidateDiscovery' },
+      { config: prepareConfig(pinnedRuntimeConfig), expectedTag: 'ExecutionPrepare' },
     ] as const
 
     for (const mode of modes) {
@@ -180,6 +196,24 @@ describe('Bayn application composition', () => {
       expect(plan.strategyProtocolHash).toBe(identity.strategyProtocolHash)
       expect(identity).not.toHaveProperty('_tag')
     }
+  })
+
+  test('redacts bounded-operation resource failures before stdout logging', () => {
+    const accountNumber = 'account-number-must-remain-redacted'
+    const failure = executionPrepareBoundaryError({
+      _tag: 'BrokerSessionAcquisitionError',
+      expectedAccountId: accountNumber,
+      cause: new Error(`credential and ${accountNumber}`),
+    })
+
+    expect(failure).toMatchObject({
+      component: 'strategy',
+      operation: 'execution-prepare-resource',
+      retryable: false,
+      cause: { _tag: 'BrokerSessionAcquisitionError' },
+    })
+    expect(JSON.stringify(failure)).not.toContain(accountNumber)
+    expect(JSON.stringify(failure)).not.toContain('credential')
   })
 
   test('starts one scoped autonomous cycle after initialization and interrupts it with the application', async () => {

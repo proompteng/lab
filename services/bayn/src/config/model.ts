@@ -10,6 +10,7 @@ import type {
   ExecutionPolicy,
   ExecutionPolicyResolutionFailure,
 } from '../execution/configuration'
+import type { ExecutionPrepareRequest } from '../execution-prepare/model'
 
 export interface RuntimeBuildMetadata extends EmbeddedBuildMetadata {
   readonly imageDigest: string
@@ -56,7 +57,7 @@ export interface AutonomousCycleRuntimeConfig {
   readonly cyclePollIntervalMs: number
 }
 
-export type RuntimeOperation = 'ExecutionCandidateDiscovery'
+export type RuntimeOperation = 'ExecutionCandidateDiscovery' | 'ExecutionPrepare'
 
 export type AlpacaRuntimeConfig = NonNullable<RuntimeConfig['alpaca']>
 
@@ -85,6 +86,16 @@ export type LoadedRuntimeConfig = LoadedRuntimeConfigBase &
         > & { readonly brokerIdentity: import('../broker/identity').BrokerIdentity }
         readonly alpaca: AlpacaRuntimeConfig
       }
+    | {
+        readonly runtimeMode: 'ExecutionPrepare'
+        readonly qualificationRunId: string
+        readonly executionPrepareRequest: ExecutionPrepareRequest | undefined
+        readonly execution: Extract<
+          ExecutionPolicy,
+          { readonly brokerAccess: import('../execution/authority').BrokerAccess.ReadOnly }
+        > & { readonly brokerIdentity: import('../broker/identity').BrokerIdentity }
+        readonly alpaca: AlpacaRuntimeConfig
+      }
   )
 
 export type LegacyAuthorityToken = 'OBSERVE' | 'PAPER'
@@ -94,6 +105,7 @@ export interface ParsedRuntimeConfig {
   readonly port: number
   readonly qualificationRunId: string | undefined
   readonly configuredOperation: RuntimeOperation | undefined
+  readonly executionPrepareRequest: ExecutionPrepareRequest | undefined
   readonly legacyMaximumAuthority: LegacyAuthorityToken | undefined
   readonly brokerAccess: BrokerAccess
   readonly capitalAuthority: CapitalAuthoritySelection
