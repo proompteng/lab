@@ -67,6 +67,9 @@ const accountingState = (state: RuntimeState) => {
 }
 
 const brokerPresentationReason = (broker: NonNullable<RuntimeState['broker']>): string | null => {
+  if (broker.error?.startsWith('Alpaca account permission drift detected') === true) {
+    return 'BROKER_ACCOUNT_PERMISSION_DRIFT'
+  }
   const identityMismatch =
     broker.accountBound === false &&
     (broker.readAvailable === true ||

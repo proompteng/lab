@@ -642,6 +642,19 @@ describe('Bayn HTTP pure decisions', () => {
       provenance,
       'embedded',
     )
+    const permissionDrift = statusFacts(
+      {
+        ...base,
+        error: 'broker: Alpaca account permission drift detected: ACCOUNT_BLOCKED',
+        broker: {
+          ...base.broker!,
+          error: 'Alpaca account permission drift detected: ACCOUNT_BLOCKED',
+        },
+      },
+      readOnlyExecution,
+      provenance,
+      'embedded',
+    )
 
     expect(configured.broker).toMatchObject({
       configured: true,
@@ -665,7 +678,15 @@ describe('Bayn HTTP pure decisions', () => {
       reasonCode: 'BROKER_READ_UNAVAILABLE',
       error: 'BROKER_READ_UNAVAILABLE',
     })
-    for (const facts of [configured, mismatch, readFailure]) {
+    expect(permissionDrift.broker).toMatchObject({
+      configured: true,
+      accountBound: false,
+      readAvailable: false,
+      reasonCode: 'BROKER_ACCOUNT_PERMISSION_DRIFT',
+      error: 'BROKER_ACCOUNT_PERMISSION_DRIFT',
+    })
+    expect(permissionDrift.error).toBe('broker: BROKER_ACCOUNT_PERMISSION_DRIFT')
+    for (const facts of [configured, mismatch, readFailure, permissionDrift]) {
       const rendered = JSON.stringify(facts)
       expect(rendered).not.toContain(expectedAccountId)
       expect(rendered).not.toContain(observedAccountId)
