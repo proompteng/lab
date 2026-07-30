@@ -36,8 +36,6 @@ on:
       - '.github/actions/setup-nix-toolchain/**'
       - '.github/workflows/bayn-*.yml'
       - '.github/workflows/nix-oci-build-common.yml'
-  workflow_dispatch:
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -64,17 +62,13 @@ jobs:
           PUSH_BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          args=(
-            --repository "${GITHUB_REPOSITORY}"
-            --commit "${GITHUB_SHA}"
-            --max-attempts 10
-            --poll-interval-ms 10000
+          bun packages/scripts/src/bayn/verify-release-review.ts \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${GITHUB_SHA}" \
+            --push-before "${PUSH_BEFORE}" \
+            --max-attempts 10 \
+            --poll-interval-ms 10000 \
             --request-timeout-ms 10000
-          )
-          if [[ "${GITHUB_EVENT_NAME}" == push ]]; then
-            args+=(--push-before "${PUSH_BEFORE}")
-          fi
-          bun packages/scripts/src/bayn/verify-release-review.ts "${args[@]}"
 
   image:
     needs: release-review-eligibility
@@ -86,6 +80,5 @@ jobs:
       # Keep OCI builds out of the repository-wide `ci-pr-*` concurrency group.
       pr_number: ''
       latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-      publish_on_dispatch: true
       release_artifact_name: bayn-release-contract
     secrets: inherit

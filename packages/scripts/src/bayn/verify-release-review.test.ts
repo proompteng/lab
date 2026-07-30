@@ -82,14 +82,12 @@ const snapshot = (
 }
 
 describe('Bayn exact-head release review eligibility', () => {
-  test('accepts a clean exact-head Codex review with only resolved or outdated threads', () => {
+  test('accepts a clean exact-head Codex review with only resolved threads', () => {
     expect(
       evaluateBaynReleaseReview({
         mainCommitSha,
         baseRefName: 'main',
-        snapshot: snapshot({
-          threads: [thread(), thread({ id: 'thread-2', isResolved: false, isOutdated: true })],
-        }),
+        snapshot: snapshot({ threads: [thread()] }),
         nowMs: evaluationNowMs,
         pushBeforeSha: null,
       }),
@@ -98,7 +96,6 @@ describe('Bayn exact-head release review eligibility', () => {
       prNumber: 13390,
       headSha: finalHeadSha,
       reviewSubmittedAt: '2026-07-30T07:01:00Z',
-      ignoredOutdatedThreads: 1,
     })
   })
 
@@ -131,6 +128,42 @@ describe('Bayn exact-head release review eligibility', () => {
       status: 'hold',
       code: 'exact-head-review-pending',
       retryable: true,
+    })
+  })
+
+  test('keeps a pending exact-head review blocking an older submitted review', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: snapshot({
+          reviews: [review(), review({ submittedAt: null, state: 'PENDING' })],
+        }),
+        nowMs: evaluationNowMs,
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'exact-head-review-pending',
+      retryable: true,
+    })
+  })
+
+  test('rejects a latest exact-head changes-requested review', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: snapshot({
+          reviews: [review(), review({ submittedAt: '2026-07-30T07:01:30Z', state: 'CHANGES_REQUESTED' })],
+        }),
+        nowMs: evaluationNowMs,
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'exact-head-review-changes-requested',
+      retryable: false,
     })
   })
 
@@ -214,6 +247,26 @@ describe('Bayn exact-head release review eligibility', () => {
       loadSnapshot: async () => snapshot({ threads: [thread({ isResolved: false })] }),
       sleep: async () => {
         throw new Error('terminal unresolved-thread state must not sleep')
+      },
+    })
+
+    expect(result).toMatchObject({
+      status: 'hold',
+      code: 'active-unresolved-review-threads',
+      attempts: 1,
+      timedOut: false,
+    })
+  })
+
+  test('keeps an outdated unresolved review thread blocking publication', async () => {
+    const result = await pollBaynReleaseReview({
+      mainCommitSha,
+      baseRefName: 'main',
+      maxAttempts: 10,
+      pollIntervalMs: 10_000,
+      loadSnapshot: async () => snapshot({ threads: [thread({ isResolved: false, isOutdated: true })] }),
+      sleep: async () => {
+        throw new Error('outdated unresolved-thread state must not sleep')
       },
     })
 

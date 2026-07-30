@@ -52,6 +52,7 @@ export type BaynReleaseReviewHoldCode =
   | 'source-pr-metadata-mismatch'
   | 'exact-head-review-pending'
   | 'exact-head-review-missing'
+  | 'exact-head-review-changes-requested'
   | 'exact-head-review-settling'
   | 'active-unresolved-review-threads'
   | 'github-api-error'
@@ -65,7 +66,6 @@ export interface BaynReleaseReviewEligible {
   readonly prNumber: number
   readonly headSha: string
   readonly reviewSubmittedAt: string
-  readonly ignoredOutdatedThreads: number
 }
 
 export interface BaynReleaseReviewHold {
@@ -119,7 +119,7 @@ const hold = (code: BaynReleaseReviewHoldCode, message: string, retryable: boole
   retryable,
 })
 
-const submittedReviewStates = new Set(['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED'])
+const eligibleReviewStates = new Set(['APPROVED', 'COMMENTED'])
 
 export const evaluateBaynReleaseReview = (input: {
   readonly mainCommitSha: string
@@ -189,30 +189,26 @@ export const evaluateBaynReleaseReview = (input: {
   const exactHeadReviews = pullRequest.reviews.filter(
     (review) => review.authorLogin === baynCodexReviewer && review.commitSha === pullRequest.headSha,
   )
+  const hasPendingExactHeadReview = exactHeadReviews.some(
+    (review) => review.submittedAt === null || review.state === 'PENDING',
+  )
+  if (hasPendingExactHeadReview) {
+    return hold(
+      'exact-head-review-pending',
+      `source PR #${pullRequest.number} has a pending ${baynCodexReviewer} review for final head ${shortSha(pullRequest.headSha)}`,
+      true,
+    )
+  }
   const exactSubmittedReview = exactHeadReviews
-    .filter((review) => review.submittedAt !== null && submittedReviewStates.has(review.state))
+    .filter((review) => review.submittedAt !== null)
     .toSorted((left, right) => (right.submittedAt as string).localeCompare(left.submittedAt as string))[0]
   if (exactSubmittedReview === undefined) {
-    const hasPendingExactHeadReview = exactHeadReviews.some(
-      (review) => review.submittedAt === null || review.state === 'PENDING',
-    )
-    if (hasPendingExactHeadReview) {
-      return hold(
-        'exact-head-review-pending',
-        `source PR #${pullRequest.number} has a pending ${baynCodexReviewer} review for final head ${shortSha(pullRequest.headSha)}`,
-        true,
-      )
-    }
-
     const olderReviewedHeads = [
       ...new Set(
         pullRequest.reviews
           .filter(
             (review) =>
-              review.authorLogin === baynCodexReviewer &&
-              review.commitSha !== null &&
-              review.submittedAt !== null &&
-              submittedReviewStates.has(review.state),
+              review.authorLogin === baynCodexReviewer && review.commitSha !== null && review.submittedAt !== null,
           )
           .map((review) => shortSha(review.commitSha as string)),
       ),
@@ -225,6 +221,20 @@ export const evaluateBaynReleaseReview = (input: {
       'exact-head-review-missing',
       `source PR #${pullRequest.number} final head ${shortSha(pullRequest.headSha)} lacks a submitted ${baynCodexReviewer} review; ${olderReviewDetail}`,
       true,
+    )
+  }
+  if (exactSubmittedReview.state === 'CHANGES_REQUESTED') {
+    return hold(
+      'exact-head-review-changes-requested',
+      `source PR #${pullRequest.number} latest exact-head ${baynCodexReviewer} review requests changes`,
+      false,
+    )
+  }
+  if (!eligibleReviewStates.has(exactSubmittedReview.state)) {
+    return hold(
+      'exact-head-review-missing',
+      `source PR #${pullRequest.number} latest exact-head ${baynCodexReviewer} review state ${exactSubmittedReview.state} is not release-eligible`,
+      false,
     )
   }
 
@@ -245,15 +255,15 @@ export const evaluateBaynReleaseReview = (input: {
     )
   }
 
-  const activeUnresolvedThreads = pullRequest.threads.filter((thread) => !thread.isResolved && !thread.isOutdated)
-  if (activeUnresolvedThreads.length > 0) {
-    const examples = activeUnresolvedThreads
+  const unresolvedThreads = pullRequest.threads.filter((thread) => !thread.isResolved)
+  if (unresolvedThreads.length > 0) {
+    const examples = unresolvedThreads
       .slice(0, 3)
       .map((thread) => thread.url ?? thread.path ?? thread.id)
       .join(', ')
     return hold(
       'active-unresolved-review-threads',
-      `source PR #${pullRequest.number} has ${activeUnresolvedThreads.length} active unresolved review thread(s): ${examples}`,
+      `source PR #${pullRequest.number} has ${unresolvedThreads.length} unresolved review thread(s): ${examples}`,
       false,
     )
   }
@@ -263,7 +273,6 @@ export const evaluateBaynReleaseReview = (input: {
     prNumber: pullRequest.number,
     headSha: pullRequest.headSha,
     reviewSubmittedAt: exactSubmittedReview.submittedAt as string,
-    ignoredOutdatedThreads: pullRequest.threads.filter((thread) => !thread.isResolved && thread.isOutdated).length,
   }
 }
 
@@ -783,7 +792,7 @@ const run = async (): Promise<void> => {
     return
   }
   console.log(
-    `BAYN_RELEASE_REVIEW_ELIGIBLE PR #${result.prNumber} final head ${shortSha(result.headSha)} reviewed at ${result.reviewSubmittedAt}; attempts=${result.attempts}; outdated_unresolved_ignored=${result.ignoredOutdatedThreads}`,
+    `BAYN_RELEASE_REVIEW_ELIGIBLE PR #${result.prNumber} final head ${shortSha(result.headSha)} reviewed at ${result.reviewSubmittedAt}; attempts=${result.attempts}`,
   )
 }
 
