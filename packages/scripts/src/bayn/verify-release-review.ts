@@ -1490,6 +1490,17 @@ export const parseFailedReviewThreadBlock = (log: string): FailedReviewThreadBlo
   return unique.values().next().value ?? null
 }
 
+export const loadOptionalFailedReviewThreadBlock = async (
+  loadLog: () => Promise<string>,
+): Promise<FailedReviewThreadBlock | null> => {
+  try {
+    return parseFailedReviewThreadBlock(await loadLog())
+  } catch (error) {
+    if (error instanceof GitHubReleaseReviewError && (error.status === 404 || error.status === 410)) return null
+    throw error
+  }
+}
+
 interface ParsedComparison {
   readonly status: string
   readonly baseSha: string
@@ -2210,15 +2221,16 @@ const fetchFailedReviewThreadBlock = async (
   const reviewJob = reviewJobs[0]
   if (reviewJob === undefined) return null
   const operation = `read failed Bayn review-gate job ${reviewJob.id} log`
-  const log = await requestGitHubText({
-    url: `https://api.github.com/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.name)}/actions/jobs/${reviewJob.id}/logs`,
-    operation,
-    token: options.token,
-    requestTimeoutMs: options.requestTimeoutMs,
-    maximumBytes: maximumReleaseReviewJobLogBytes,
-    fetchFn: options.fetchFn,
-  })
-  return parseFailedReviewThreadBlock(log)
+  return loadOptionalFailedReviewThreadBlock(() =>
+    requestGitHubText({
+      url: `https://api.github.com/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.name)}/actions/jobs/${reviewJob.id}/logs`,
+      operation,
+      token: options.token,
+      requestTimeoutMs: options.requestTimeoutMs,
+      maximumBytes: maximumReleaseReviewJobLogBytes,
+      fetchFn: options.fetchFn,
+    }),
+  )
 }
 
 const latestFailedSourcePush = (

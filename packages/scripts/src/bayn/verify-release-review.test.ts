@@ -11,6 +11,7 @@ import {
   evaluateBaynReleaseReview,
   GitHubReleaseReviewError,
   isBaynReleaseAffectingPath,
+  loadOptionalFailedReviewThreadBlock,
   parseFailedReviewThreadBlock,
   pollBaynReleaseEligibility,
   pollBaynReleaseReview,
@@ -1320,6 +1321,34 @@ describe('Bayn delayed-attestation publication retry', () => {
         `BAYN_RELEASE_REVIEW_HOLD active-unresolved-review-threads: Bayn-affecting commit ${mainCommitSha.slice(0, 12)} after last published ${lastPublishedSha.slice(0, 12)} is not release-eligible: source PR #13401 has 1 unresolved review thread(s): one\nBAYN_RELEASE_REVIEW_HOLD active-unresolved-review-threads: Bayn-affecting commit ${heldCommitSha.slice(0, 12)} after last published ${lastPublishedSha.slice(0, 12)} is not release-eligible: source PR #13402 has 1 unresolved review thread(s): two\n`,
       ),
     ).toThrow('github-api-invalid-response')
+  })
+
+  test('keeps timestamp-based retries available when failed job logs expired', async () => {
+    for (const status of [404, 410]) {
+      const reviewThreadBlock = await loadOptionalFailedReviewThreadBlock(() =>
+        Promise.reject(
+          new GitHubReleaseReviewError('github-api-error', 'read failed Bayn review-gate job log', { status }),
+        ),
+      )
+      expect(reviewThreadBlock).toBeNull()
+      expect(
+        evaluateBaynReleaseRetry({
+          mainCommitSha,
+          baseRefName: 'main',
+          snapshot: retrySnapshot({ reviewThreadBlock }),
+          trigger: { type: 'schedule' },
+          nowMs: retryNowMs,
+        }),
+      ).toMatchObject({ status: 'dispatch', sourceCommitSha: mainCommitSha })
+    }
+
+    await expect(
+      loadOptionalFailedReviewThreadBlock(() =>
+        Promise.reject(
+          new GitHubReleaseReviewError('github-api-error', 'read failed Bayn review-gate job log', { status: 503 }),
+        ),
+      ),
+    ).rejects.toMatchObject({ code: 'github-api-error', status: 503 })
   })
 
   test('decodes a bounded failed push and delayed clean reaction for retry discovery', async () => {
