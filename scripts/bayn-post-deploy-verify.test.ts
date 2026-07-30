@@ -321,6 +321,43 @@ describe('production snapshot', () => {
     expect(() => validateSnapshot(snapshot, descendantArgoRevision, expected, expectedArgoRevision)).not.toThrow()
   })
 
+  test('accepts a descendant selective sync that omits the unchanged Bayn Deployment', () => {
+    const snapshot = clone()
+    const application = snapshot.application as any
+    application.status.sync.revision = descendantArgoRevision
+    application.status.operationState.syncResult.revision = descendantArgoRevision
+    application.status.operationState.syncResult.resources = [
+      {
+        group: '',
+        kind: 'ConfigMap',
+        name: 'bayn-egress-proxy-selective-sync',
+        namespace: 'bayn',
+        status: 'Synced',
+      },
+    ]
+    application.status.history = [
+      {
+        revision: expectedArgoRevision,
+        deployedAt: '2026-07-30T06:49:31Z',
+        source: {
+          path: 'argocd/applications/bayn',
+          repoURL: 'https://github.com/proompteng/lab.git',
+          targetRevision: 'main',
+        },
+      },
+    ]
+
+    expect(() => validateSnapshot(snapshot, descendantArgoRevision, expected, expectedArgoRevision)).not.toThrow()
+  })
+
+  test('still requires the Bayn Deployment in the exact promotion operation', () => {
+    const snapshot = clone()
+    ;(snapshot.application as any).status.operationState.syncResult.resources = []
+    expect(captureFailure(() => validateSnapshot(snapshot, expectedArgoRevision, expected)).code).toBe(
+      'ARGO_NOT_CONVERGED',
+    )
+  })
+
   test('rejects the known Argo-new-revision old-image false positive', () => {
     const snapshot = clone()
     const deployment = snapshot.deployment as any
@@ -625,6 +662,23 @@ describe('redaction and permissions', () => {
       const requiredRead = ['get', 'list'].includes(verb)
       return { stdout: requiredRead ? 'yes\n' : 'no\n', stderr: '', exitCode: 0 }
     }
+    await expect(validateReadOnlyPermissions(run, controller.signal)).rejects.toMatchObject({
+      code: 'RBAC_DENIED',
+    })
+  })
+
+  test.each(['get', 'list', 'watch'])('rejects %s access to Secrets', async (grantedVerb) => {
+    const controller = new AbortController()
+    const run = async (command: readonly string[]) => {
+      const verb = command[3] ?? ''
+      const resource = command[4] ?? ''
+      if (resource === 'secrets') {
+        return { stdout: verb === grantedVerb ? 'yes\n' : 'no\n', stderr: '', exitCode: 0 }
+      }
+      const requiredRead = ['get', 'list'].includes(verb)
+      return { stdout: requiredRead ? 'yes\n' : 'no\n', stderr: '', exitCode: 0 }
+    }
+
     await expect(validateReadOnlyPermissions(run, controller.signal)).rejects.toMatchObject({
       code: 'RBAC_DENIED',
     })

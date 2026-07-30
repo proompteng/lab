@@ -243,20 +243,22 @@ const validateArgo = (
       resource.namespace === 'bayn'
     )
   })
-  if (operationDeployment === undefined) {
+  if (operationDeployment === undefined && reconciledRevision === promotionRevision) {
     fail('ARGO_NOT_CONVERGED', 'Argo operation does not contain the Bayn Deployment', true)
   }
-  const operationDeploymentRecord = record(
-    operationDeployment,
-    'application.status.operationState.syncResult.resources.bayn',
-  )
-  requireEqual(
-    operationDeploymentRecord.status,
-    'Synced',
-    'application.status.operationState.syncResult.resources.bayn.status',
-    'ARGO_NOT_CONVERGED',
-    true,
-  )
+  if (operationDeployment !== undefined) {
+    const operationDeploymentRecord = record(
+      operationDeployment,
+      'application.status.operationState.syncResult.resources.bayn',
+    )
+    requireEqual(
+      operationDeploymentRecord.status,
+      'Synced',
+      'application.status.operationState.syncResult.resources.bayn.status',
+      'ARGO_NOT_CONVERGED',
+      true,
+    )
+  }
   if (reconciledRevision !== promotionRevision) {
     const promotionHistory = array(status.history, 'application.status.history').find((candidate) => {
       const history = record(candidate, 'application.status.history[]')
@@ -724,12 +726,14 @@ export const validateReadOnlyPermissions = async (run: RunCommand, signal: Abort
   await checkWriteDenied(run, signal, 'pods', 'bayn')
   await checkWriteDenied(run, signal, 'pods/exec', 'bayn')
   await checkWriteDenied(run, signal, 'pods/portforward', 'bayn')
-  const secretRead = await run(['kubectl', 'auth', 'can-i', 'get', 'secrets', '-n', 'bayn'], signal)
-  requireConclusiveDenial(
-    secretRead,
-    'get secrets in bayn',
-    'workflow identity unexpectedly has secret read permission in bayn',
-  )
+  for (const verb of ['get', 'list', 'watch']) {
+    const secretRead = await run(['kubectl', 'auth', 'can-i', verb, 'secrets', '-n', 'bayn'], signal)
+    requireConclusiveDenial(
+      secretRead,
+      `${verb} secrets in bayn`,
+      `workflow identity unexpectedly has ${verb} secret permission in bayn`,
+    )
+  }
 }
 
 export const readArgoSyncRevision = (applicationValue: unknown): string => {
