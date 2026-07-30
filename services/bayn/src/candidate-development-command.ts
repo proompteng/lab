@@ -26,6 +26,7 @@ import {
   MarkedEquityReconciliationSchema,
   RiskBalancedTrendSignalDecisionsArtifactSchema,
 } from './evidence-contracts'
+import { elapsedCalendarDays } from './execution-model'
 import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
 import { ExecutionModelSchema } from './protocol'
 import {
@@ -587,6 +588,140 @@ const validateDecisionEventBinding = (
   return Result.succeed(undefined)
 }
 
+const validateCashYieldIntervals = (
+  field: 'baseline' | 'stressed',
+  events: EvaluationResult['events'],
+  simulation: EvaluationResult['simulation'],
+): Result.Result<void, CandidateDevelopmentCommandFailure> => {
+  const markIndexBySession = new Map(simulation.dailyMarks.map((mark, index) => [mark.sessionDate, index] as const))
+  if (markIndexBySession.size !== simulation.dailyMarks.length) {
+    return Result.fail(
+      markedEquityFailure(
+        'binding-mismatch',
+        null,
+        `${field}.cashYield.calendar`,
+        'unique accounting sessions',
+        simulation.dailyMarks.length - markIndexBySession.size,
+      ),
+    )
+  }
+  const seenSessions = new Set<string>()
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index]
+    if (event.kind !== 'cash-yield') continue
+    if (seenSessions.has(event.sessionDate)) {
+      return Result.fail(
+        markedEquityFailure(
+          'binding-mismatch',
+          index,
+          `${field}.cashYield.sessionDate`,
+          'one cash-yield event per accounting session',
+          event.sessionDate,
+        ),
+      )
+    }
+    seenSessions.add(event.sessionDate)
+    const markIndex = markIndexBySession.get(event.sessionDate)
+    const previous = markIndex === undefined ? undefined : simulation.dailyMarks[markIndex - 1]
+    if (markIndex === undefined || previous === undefined) {
+      return Result.fail(
+        markedEquityFailure(
+          'binding-mismatch',
+          index,
+          `${field}.cashYield.elapsedDays`,
+          'accounting session with a predecessor',
+          event.sessionDate,
+        ),
+      )
+    }
+    const elapsed = elapsedCalendarDays(previous.sessionDate, event.sessionDate)
+    if (Result.isFailure(elapsed)) {
+      return Result.fail(
+        markedEquityFailure(
+          'binding-mismatch',
+          index,
+          `${field}.cashYield.elapsedDays`,
+          `calendar interval after ${previous.sessionDate}`,
+          event.elapsedDays,
+          elapsed.failure,
+        ),
+      )
+    }
+    if (elapsed.success !== event.elapsedDays) {
+      return Result.fail(
+        markedEquityFailure(
+          'binding-mismatch',
+          index,
+          `${field}.cashYield.elapsedDays`,
+          elapsed.success,
+          event.elapsedDays,
+        ),
+      )
+    }
+  }
+  return Result.succeed(undefined)
+}
+
+const validateAccountingUniverse = (
+  field: 'baseline' | 'stressed',
+  universe: readonly string[],
+  signalDecisions: EvaluationResult['signalDecisions'],
+  events: EvaluationResult['events'],
+  simulation: EvaluationResult['simulation'],
+): Result.Result<void, CandidateDevelopmentCommandFailure> => {
+  const governed = new Set(universe)
+  const validateSymbol = (
+    evidenceField: string,
+    index: number,
+    symbol: string,
+  ): Result.Result<void, CandidateDevelopmentCommandFailure> =>
+    governed.has(symbol)
+      ? Result.succeed(undefined)
+      : Result.fail(markedEquityFailure('binding-mismatch', index, `${field}.${evidenceField}`, universe, symbol))
+  const validateWeights = (
+    evidenceField: string,
+    index: number,
+    weights: Readonly<Record<string, number>>,
+  ): Result.Result<void, CandidateDevelopmentCommandFailure> => {
+    for (const symbol of Object.keys(weights)) {
+      const valid = validateSymbol(evidenceField, index, symbol)
+      if (Result.isFailure(valid)) return Result.fail(valid.failure)
+    }
+    return Result.succeed(undefined)
+  }
+
+  for (let index = 0; index < signalDecisions.length; index += 1) {
+    const decision = signalDecisions[index]
+    const weights = validateWeights('signalDecisions.targetWeights', index, decision.targetWeights)
+    if (Result.isFailure(weights)) return Result.fail(weights.failure)
+    for (const signal of decision.signals) {
+      const valid = validateSymbol('signalDecisions.signals.symbol', index, signal.symbol)
+      if (Result.isFailure(valid)) return Result.fail(valid.failure)
+    }
+  }
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index]
+    if (event.kind === 'decision') {
+      const weights = validateWeights('events.targetWeights', index, event.targetWeights)
+      if (Result.isFailure(weights)) return Result.fail(weights.failure)
+    } else if (event.kind === 'fill') {
+      const valid = validateSymbol('events.symbol', index, event.symbol)
+      if (Result.isFailure(valid)) return Result.fail(valid.failure)
+    }
+  }
+  for (let index = 0; index < simulation.orders.length; index += 1) {
+    const valid = validateSymbol('orders.symbol', index, simulation.orders[index].symbol)
+    if (Result.isFailure(valid)) return Result.fail(valid.failure)
+  }
+  for (let markIndex = 0; markIndex < simulation.dailyMarks.length; markIndex += 1) {
+    for (const position of simulation.dailyMarks[markIndex].positions) {
+      const valid = validateSymbol('positions.symbol', markIndex, position.symbol)
+      if (Result.isFailure(valid)) return Result.fail(valid.failure)
+    }
+  }
+  return Result.succeed(undefined)
+}
+
 const selectedTracePreviousEquity = (
   field: 'baselineSimulation' | 'stressedSimulation',
   full: EvaluationResult['simulation'],
@@ -687,6 +822,7 @@ interface CandidateDevelopmentAccountingValidation {
 const validateCandidateDevelopmentAccounting = (
   report: CandidateDevelopmentReport,
   evaluation: CandidateDevelopmentCommandEvaluation,
+  strategyProtocol: CandidateDevelopmentStrategyProtocol,
 ): Result.Result<CandidateDevelopmentAccountingValidation, CandidateDevelopmentCommandFailure> => {
   const { accounting, baseline } = evaluation
   const scalarBindings = [
@@ -743,6 +879,25 @@ const validateCandidateDevelopmentAccounting = (
     const binding = requireCanonicalEvidenceEqual(field, expected, observed)
     if (Result.isFailure(binding)) return Result.fail(binding.failure)
   }
+  const domainBindings = Result.all({
+    baselineUniverse: validateAccountingUniverse(
+      'baseline',
+      strategyProtocol.universe,
+      baseline.signalDecisions,
+      accounting.events,
+      accounting.baselineSimulation,
+    ),
+    stressedUniverse: validateAccountingUniverse(
+      'stressed',
+      strategyProtocol.universe,
+      report.doubledCost.stressed.signalDecisions,
+      accounting.stressedEvents,
+      accounting.stressedSimulation,
+    ),
+    baselineCashYield: validateCashYieldIntervals('baseline', accounting.events, accounting.baselineSimulation),
+    stressedCashYield: validateCashYieldIntervals('stressed', accounting.stressedEvents, accounting.stressedSimulation),
+  })
+  if (Result.isFailure(domainBindings)) return Result.fail(domainBindings.failure)
   const decisionBindings = Result.all({
     baseline: validateDecisionEventBinding('baseline', baseline.signalDecisions, accounting.events),
     stressed: validateDecisionEventBinding(
@@ -1093,7 +1248,7 @@ export const buildCandidateDevelopmentCommandReport = (
   pipe(
     Result.all({
       protocol: validateCandidateDevelopmentStrategyProtocol(report, evaluation, strategyProtocol),
-      accounting: validateCandidateDevelopmentAccounting(report, evaluation),
+      accounting: validateCandidateDevelopmentAccounting(report, evaluation, strategyProtocol),
     }),
     Result.flatMap(({ accounting }) => recomputeCandidateDevelopmentMetrics(report, evaluation, accounting)),
     Result.flatMap((metrics) =>

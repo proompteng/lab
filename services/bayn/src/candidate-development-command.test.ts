@@ -105,6 +105,34 @@ const zeroPositionFixture = {
   marketValueMicros: '0',
 }
 
+const fixtureAccountingStart = '2019-01-01' as IsoDate
+const fullAccountingSimulationFixture = <A extends EvaluationResult['simulation']>(simulation: A): A =>
+  ({
+    ...simulation,
+    dailyMarks: [
+      {
+        sessionDate: fixtureAccountingStart,
+        equityMicros: fixtureInitialCapitalMicros,
+        netReturn: 0,
+        turnoverMicros: '0',
+        cumulativeTurnoverMicros: '0',
+        feeMicros: '0',
+        cumulativeFeesMicros: '0',
+        spreadCostMicros: '0',
+        cumulativeSpreadCostMicros: '0',
+        slippageCostMicros: '0',
+        cumulativeSlippageCostMicros: '0',
+        cashYieldMicros: '0',
+        cumulativeCashYieldMicros: '0',
+        peakEquityMicros: fixtureInitialCapitalMicros,
+        drawdown: 0,
+        cashMicros: fixtureInitialCapitalMicros,
+        positions: [zeroPositionFixture],
+      },
+      ...simulation.dailyMarks,
+    ],
+  }) as A
+
 const signalDecisionEventPayload = {
   signalDate: fixtureSessions[0],
   executionDate: fixtureSessions[1],
@@ -247,13 +275,14 @@ const stressedAccountingFixture = (endingEquityMicros: string) => {
       cashYieldMicros: cashYieldMicros.toString(),
     }).map((point) => ({ ...point, cashMicros: point.equityMicros, positions: [zeroPositionFixture] })),
   }
+  const fullSimulation = fullAccountingSimulationFixture(simulation)
   const proof = reconcileMarkedEquity({
     runId: fixtureStressedRunId,
     initialCapitalMicros: fixtureInitialCapitalMicros,
     evaluatorTotalFeesMicros: '0',
     evaluatorEndingEquityMicros: endingEquityMicros,
     events,
-    simulation,
+    simulation: fullSimulation,
   })
   if (Result.isFailure(proof)) {
     throw new Error(`stressed marked-equity fixture failed: ${JSON.stringify(proof.failure)}`)
@@ -264,6 +293,7 @@ const stressedAccountingFixture = (endingEquityMicros: string) => {
     evaluatorEndingEquityMicros: endingEquityMicros,
     events,
     simulation,
+    fullSimulation,
     equitySeries: proof.success.equitySeries,
     markedEquityReconciliation: proof.success.reconciliation,
   }
@@ -370,6 +400,7 @@ const baselineFixture = (
       positions: [zeroPositionFixture],
     })),
   }
+  const fullSimulation = fullAccountingSimulationFixture(simulation)
   const verdict = buildVerdict(strategy, buyAndHold, directVolTiming, doubleCostStrategy, fixtureStrategyProtocol)
   const markedEquityResult = reconcileMarkedEquity({
     runId: fixtureRunId,
@@ -377,7 +408,7 @@ const baselineFixture = (
     evaluatorTotalFeesMicros: strategy.totalFeesMicros,
     evaluatorEndingEquityMicros: strategy.endingEquityMicros,
     events,
-    simulation,
+    simulation: fullSimulation,
   })
   if (Result.isFailure(markedEquityResult)) {
     throw new Error(`marked-equity fixture failed: ${JSON.stringify(markedEquityResult.failure)}`)
@@ -427,14 +458,14 @@ const commandEvaluationFixture = (
       evaluatorTotalFeesMicros: accountingBaseline.strategy.totalFeesMicros,
       evaluatorEndingEquityMicros: accountingBaseline.strategy.endingEquityMicros,
       events: accountingBaseline.events,
-      baselineSimulation: accountingBaseline.simulation,
+      baselineSimulation: fullAccountingSimulationFixture(accountingBaseline.simulation),
       equitySeries: accountingBaseline.equitySeries,
       markedEquityReconciliation: accountingBaseline.markedEquityReconciliation,
       stressedRunId: stressed.runId,
       stressedEvaluatorTotalFeesMicros: stressed.evaluatorTotalFeesMicros,
       stressedEvaluatorEndingEquityMicros: stressed.evaluatorEndingEquityMicros,
       stressedEvents: stressed.events,
-      stressedSimulation: stressed.simulation,
+      stressedSimulation: stressed.fullSimulation,
       stressedEquitySeries: stressed.equitySeries,
       stressedMarkedEquityReconciliation: stressed.markedEquityReconciliation,
     },
@@ -713,7 +744,9 @@ describe('candidate development command', () => {
       ...evaluation.accounting,
       baselineSimulation: {
         ...evaluation.accounting.baselineSimulation,
-        dailyMarks: [tamperedMark, ...evaluation.accounting.baselineSimulation.dailyMarks.slice(1)],
+        dailyMarks: evaluation.accounting.baselineSimulation.dailyMarks.map((mark) =>
+          mark.sessionDate === tamperedMark.sessionDate ? tamperedMark : mark,
+        ),
       },
     }
 
@@ -746,7 +779,9 @@ describe('candidate development command', () => {
       ...evaluation.accounting,
       baselineSimulation: {
         ...evaluation.accounting.baselineSimulation,
-        dailyMarks: [tamperedMark, ...evaluation.accounting.baselineSimulation.dailyMarks.slice(1)],
+        dailyMarks: evaluation.accounting.baselineSimulation.dailyMarks.map((mark) =>
+          mark.sessionDate === tamperedMark.sessionDate ? tamperedMark : mark,
+        ),
       },
     }
 
@@ -808,9 +843,10 @@ describe('candidate development command', () => {
     const suffixDate = new Date(Date.parse(`${lastMark.sessionDate}T00:00:00.000Z`) + 86_400_000)
       .toISOString()
       .slice(0, 10) as IsoDate
+    const accountingSimulation = fullAccountingSimulationFixture(baseline.simulation)
     const fullSimulation = {
-      ...baseline.simulation,
-      dailyMarks: [...baseline.simulation.dailyMarks, { ...lastMark, sessionDate: suffixDate, netReturn: 0 }],
+      ...accountingSimulation,
+      dailyMarks: [...accountingSimulation.dailyMarks, { ...lastMark, sessionDate: suffixDate, netReturn: 0 }],
     }
     const proof = reconcileMarkedEquity({
       runId: baseline.runId,
@@ -1000,6 +1036,171 @@ describe('candidate development command', () => {
         field: 'strategyProtocol.baselineExecutionModel',
       },
     })
+  })
+
+  test('derives baseline and stressed cash-yield intervals from adjacent accounting sessions', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const baselineYield = baseline.events.find(
+      (event): event is Extract<EvaluationResult['events'][number], { readonly kind: 'cash-yield' }> =>
+        event.kind === 'cash-yield',
+    )
+    if (baselineYield === undefined) throw new Error('baseline fixture must contain cash yield')
+    const baselineWithWrongInterval = {
+      ...baseline,
+      events: baseline.events.map((event) =>
+        event.id === baselineYield.id ? { ...baselineYield, elapsedDays: 364 } : event,
+      ),
+    }
+    expect(
+      buildCandidateDevelopmentCommandReport(
+        report,
+        commandEvaluationFixture(report, baselineWithWrongInterval),
+        fixtureStrategyProtocol,
+      ),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'baseline.cashYield.elapsedDays',
+        expected: 365,
+        observed: 364,
+      },
+    })
+
+    const evaluation = commandEvaluationFixture(report, baseline)
+    const stressedYield = evaluation.accounting.stressedEvents.find(
+      (event): event is Extract<EvaluationResult['events'][number], { readonly kind: 'cash-yield' }> =>
+        event.kind === 'cash-yield',
+    )
+    if (stressedYield === undefined) throw new Error('stressed fixture must contain cash yield')
+    const accounting = {
+      ...evaluation.accounting,
+      stressedEvents: evaluation.accounting.stressedEvents.map((event) =>
+        event.id === stressedYield.id ? { ...stressedYield, elapsedDays: 1 } : event,
+      ),
+    }
+    expect(
+      buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting }, fixtureStrategyProtocol),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'stressed.cashYield.elapsedDays',
+        expected: 365,
+        observed: 1,
+      },
+    })
+  })
+
+  test('rejects every out-of-universe accounting symbol before reconciliation', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const qqqPosition = { ...zeroPositionFixture, symbol: 'QQQ' }
+    const qqqOrder: EvaluationResult['simulation']['orders'][number] = {
+      id: 'd'.repeat(64),
+      decisionId: fixtureDecisionId,
+      sessionDate: fixtureSessions[1],
+      symbol: 'QQQ',
+      side: 'buy',
+      requestedQuantityMicros: '1',
+      filledQuantityMicros: '0',
+      status: 'rejected',
+      rejectionReason: 'zero-after-rounding',
+      unfilledRemainder: 'none',
+    }
+    const qqqFill: Extract<EvaluationResult['events'][number], { readonly kind: 'fill' }> = {
+      kind: 'fill',
+      id: 'e'.repeat(64),
+      orderId: qqqOrder.id,
+      decisionId: fixtureDecisionId,
+      sessionDate: fixtureSessions[1],
+      symbol: 'QQQ',
+      side: 'buy',
+      quantityMicros: '1',
+      referencePriceMicros: '1000000',
+      priceMicros: '1000000',
+      notionalMicros: '1',
+      spreadCostMicros: '0',
+      slippageCostMicros: '0',
+      costBasisMicros: '1',
+    }
+
+    const decisionBaseline = {
+      ...baseline,
+      signalDecisions: baseline.signalDecisions.map((decision) => ({
+        ...decision,
+        targetWeights: { ...decision.targetWeights, QQQ: 0 },
+      })),
+      events: baseline.events.map((event) =>
+        event.kind === 'decision' ? { ...event, targetWeights: { ...event.targetWeights, QQQ: 0 } } : event,
+      ),
+    }
+    expect(
+      buildCandidateDevelopmentCommandReport(
+        report,
+        commandEvaluationFixture(report, decisionBaseline),
+        fixtureStrategyProtocol,
+      ),
+    ).toMatchObject({
+      failure: { field: 'baseline.signalDecisions.targetWeights', observed: 'QQQ' },
+    })
+
+    const orderBaseline = {
+      ...baseline,
+      simulation: { ...baseline.simulation, orders: [qqqOrder] },
+    }
+    expect(
+      buildCandidateDevelopmentCommandReport(
+        report,
+        commandEvaluationFixture(report, orderBaseline),
+        fixtureStrategyProtocol,
+      ),
+    ).toMatchObject({ failure: { field: 'baseline.orders.symbol', observed: 'QQQ' } })
+
+    const fillBaseline = { ...baseline, events: [...baseline.events, qqqFill] }
+    expect(
+      buildCandidateDevelopmentCommandReport(
+        report,
+        commandEvaluationFixture(report, fillBaseline),
+        fixtureStrategyProtocol,
+      ),
+    ).toMatchObject({ failure: { field: 'baseline.events.symbol', observed: 'QQQ' } })
+
+    const positionBaseline = {
+      ...baseline,
+      simulation: {
+        ...baseline.simulation,
+        dailyMarks: baseline.simulation.dailyMarks.map((mark, index) =>
+          index === 0 ? { ...mark, positions: [...mark.positions, qqqPosition] } : mark,
+        ),
+      },
+    }
+    expect(
+      buildCandidateDevelopmentCommandReport(
+        report,
+        commandEvaluationFixture(report, positionBaseline),
+        fixtureStrategyProtocol,
+      ),
+    ).toMatchObject({ failure: { field: 'baseline.positions.symbol', observed: 'QQQ' } })
+
+    const evaluation = commandEvaluationFixture(report, baseline)
+    const stressedAccounting = {
+      ...evaluation.accounting,
+      stressedSimulation: {
+        ...evaluation.accounting.stressedSimulation,
+        dailyMarks: evaluation.accounting.stressedSimulation.dailyMarks.map((mark, index) =>
+          index === 0 ? { ...mark, positions: [...mark.positions, qqqPosition] } : mark,
+        ),
+      },
+    }
+    expect(
+      buildCandidateDevelopmentCommandReport(
+        report,
+        { ...evaluation, accounting: stressedAccounting },
+        fixtureStrategyProtocol,
+      ),
+    ).toMatchObject({ failure: { field: 'stressed.positions.symbol', observed: 'QQQ' } })
   })
 
   test('keeps the sole report write attached through interruption', async () => {
@@ -1196,7 +1397,7 @@ describe('candidate development command', () => {
 
     expect(decoded.accounting.schemaVersion).toBe('bayn.candidate-development-accounting-evidence.v1')
     expect(decoded.accounting.runId).toBe(evaluation.baseline.runId)
-    expect(decoded.accounting.baselineSimulation.dailyMarks).toHaveLength(504)
+    expect(decoded.accounting.baselineSimulation.dailyMarks).toHaveLength(505)
   })
 
   test('keeps dynamic module evaluation attached through interruption', async () => {
