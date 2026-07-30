@@ -2,7 +2,7 @@ import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
 
 import { NodeRuntime } from '@effect/platform-node'
-import { Data, Effect, pipe, Result } from 'effect'
+import { Data, Effect, pipe, Result, Schema } from 'effect'
 
 import {
   candidateDevelopmentComparisonSemantics,
@@ -16,6 +16,13 @@ import {
 } from './candidate-development'
 import { microsToNumber } from './execution-model'
 import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
+import {
+  IsoDateSchema,
+  NonNegativeIntegerSchema,
+  PositiveIntegerSchema,
+  Sha256Schema,
+  strictParseOptions,
+} from './schemas'
 import { TRADING_DAYS } from './simulation/metrics'
 import type { EvaluationResult } from './types'
 
@@ -83,8 +90,10 @@ export type CandidateDevelopmentCommandFailure =
         | 'module-export-missing'
         | 'schema-version-mismatch'
         | 'input-missing'
+        | 'input-invalid'
         | 'effects-missing'
         | 'effect-function-missing'
+      readonly cause?: unknown
     }
   | {
       readonly _tag: 'CandidateDevelopmentCommandEvaluationMissing'
@@ -371,6 +380,20 @@ type ExecutableProgram = CandidateDevelopmentExecutableProgram<
   never
 >
 
+const CandidateDevelopmentPreflightInputSchema = Schema.Struct({
+  candidateOrdinal: PositiveIntegerSchema,
+  priorTrialCount: NonNegativeIntegerSchema,
+  expectedStrategyProtocolHash: Sha256Schema,
+  officialSessions: Schema.Array(IsoDateSchema),
+  signalSessionDates: Schema.Array(IsoDateSchema),
+  featureLookbackSessions: PositiveIntegerSchema,
+})
+
+const decodeCandidateDevelopmentPreflightInput = Schema.decodeUnknownResult(
+  CandidateDevelopmentPreflightInputSchema,
+  strictParseOptions,
+)
+
 const recordOf = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
 
@@ -398,24 +421,43 @@ export const validateCandidateDevelopmentExecutableProgram = (
   ) {
     return Result.fail({ _tag: 'CandidateDevelopmentCommandProgramInvalid', reason: 'effect-function-missing' })
   }
-  return Result.succeed(value as ExecutableProgram)
+  const input = decodeCandidateDevelopmentPreflightInput(program.input)
+  if (Result.isFailure(input)) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentCommandProgramInvalid',
+      reason: 'input-invalid',
+      cause: input.failure,
+    })
+  }
+  return Result.succeed({
+    schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
+    input: input.success,
+    effects: effects as unknown as ExecutableProgram['effects'],
+  })
 }
 
-const loadCandidateDevelopmentExecutableProgram = (
-  modulePath: string,
-): Effect.Effect<ExecutableProgram, CandidateDevelopmentCommandFailure> =>
+export type CandidateDevelopmentModuleImporter = (
+  moduleUrl: string,
+) => Effect.Effect<unknown, CandidateDevelopmentCommandFailure>
+
+const importCandidateDevelopmentModule: CandidateDevelopmentModuleImporter = (moduleUrl) =>
   Effect.tryPromise({
-    try: () => import(pathToFileURL(resolve(modulePath)).href),
+    try: () => import(moduleUrl),
     catch: (cause): CandidateDevelopmentCommandFailure => ({
       _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
-      modulePath,
+      modulePath: moduleUrl,
       cause,
     }),
-  }).pipe(
+  })
+
+export const loadCandidateDevelopmentExecutableProgram = (
+  modulePath: string,
+  importer: CandidateDevelopmentModuleImporter = importCandidateDevelopmentModule,
+): Effect.Effect<ExecutableProgram, CandidateDevelopmentCommandFailure> =>
+  importer(pathToFileURL(resolve(modulePath)).href).pipe(
+    Effect.uninterruptible,
     Effect.flatMap((module) =>
-      Effect.fromResult(
-        validateCandidateDevelopmentExecutableProgram(Reflect.get(module, 'candidateDevelopmentProgram')),
-      ),
+      Effect.fromResult(validateCandidateDevelopmentExecutableProgram(recordOf(module)?.candidateDevelopmentProgram)),
     ),
   )
 

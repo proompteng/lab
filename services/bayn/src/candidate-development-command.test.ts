@@ -6,6 +6,7 @@ import {
   buildCandidateDevelopmentCommandReport,
   candidateDevelopmentExecutableProgramSchemaVersion,
   executeCandidateDevelopmentProgram,
+  loadCandidateDevelopmentExecutableProgram,
   renderCandidateDevelopmentCommandReport,
   validateCandidateDevelopmentExecutableProgram,
   writeCandidateDevelopmentCommandReport,
@@ -266,5 +267,79 @@ describe('candidate development command', () => {
         effects: {},
       }),
     ).toEqual(Result.fail({ _tag: 'CandidateDevelopmentCommandProgramInvalid', reason: 'effect-function-missing' }))
+
+    expect(
+      validateCandidateDevelopmentExecutableProgram({
+        schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
+        input: {
+          candidateOrdinal: 16,
+          priorTrialCount: 15,
+          expectedStrategyProtocolHash: 'a'.repeat(64),
+          signalSessionDates: [],
+          featureLookbackSessions: 126,
+        },
+        effects: {
+          preregisterCandidate: () => Effect.succeed('registration'),
+          loadDevelopmentData: () => Effect.succeed('data'),
+          evaluateDevelopment: () => Effect.fail('not-executed'),
+        },
+      }),
+    ).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'CandidateDevelopmentCommandProgramInvalid',
+        reason: 'input-invalid',
+      },
+    })
+  })
+
+  test('keeps dynamic module evaluation attached through interruption', async () => {
+    const program = {
+      schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
+      input: {
+        candidateOrdinal: 16,
+        priorTrialCount: 15,
+        expectedStrategyProtocolHash: 'a'.repeat(64),
+        officialSessions: [],
+        signalSessionDates: [],
+        featureLookbackSessions: 126,
+      },
+      effects: {
+        preregisterCandidate: () => Effect.succeed('registration'),
+        loadDevelopmentData: () => Effect.succeed('data'),
+        evaluateDevelopment: () => Effect.fail('not-executed'),
+      },
+    }
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        let completed = false
+        const fiber = yield* loadCandidateDevelopmentExecutableProgram('/tmp/candidate-development-program.ts', () =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.tap(() =>
+              Effect.sync(() => {
+                completed = true
+              }),
+            ),
+            Effect.as({ candidateDevelopmentProgram: program }),
+          ),
+        ).pipe(Effect.forkChild)
+
+        yield* Deferred.await(started)
+        const interruption = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild)
+        yield* Effect.yieldNow
+
+        expect(interruption.pollUnsafe()).toBeUndefined()
+        expect(completed).toBe(false)
+
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(interruption)
+
+        expect(completed).toBe(true)
+      }),
+    )
   })
 })
