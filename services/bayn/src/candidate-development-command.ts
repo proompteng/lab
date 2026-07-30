@@ -661,6 +661,7 @@ export const bindCandidateDevelopmentVerifiedSource = (
       ['input.priorTrialCount', nextCandidatePreregistration.priorTrialCount, input.priorTrialCount],
       ['strategyProtocolHash', nextCandidatePreregistration.strategyProtocolHash, input.expectedStrategyProtocolHash],
       ['modulePath', nextCandidatePreregistration.modulePath, files.modulePath],
+      ['moduleSha256', nextCandidatePreregistration.moduleSha256, files.moduleSha256],
     ] as const
     for (const [field, expected, observed] of nextBindings) {
       if (expected !== observed) {
@@ -787,6 +788,7 @@ const preregisterCandidateDevelopmentAttempt = (
       sourceManifest.strategyProtocolHash,
     ],
     ['source.modulePath', nextCandidatePreregistration.modulePath, verifiedSource.modulePath],
+    ['source.moduleSha256', nextCandidatePreregistration.moduleSha256, verifiedSource.moduleSha256],
   ] as const
   for (const [field, expected, observed] of bindings) {
     if (expected !== observed) {
@@ -2630,6 +2632,7 @@ const CandidateDevelopmentPreregistrationDocumentSchema = Schema.Struct({
   priorTrialCount: NonNegativeIntegerSchema,
   strategyProtocolHash: Sha256Schema,
   modulePath: Schema.String,
+  moduleSha256: Sha256Schema,
   marketData: Schema.Struct({
     schemaVersion: Schema.Literal('bayn.candidate-development-market-data-source.v1'),
     snapshotId: Sha256Schema,
@@ -2700,6 +2703,7 @@ export const validateCandidateDevelopmentPreregistrationDocument = (
     ['priorTrialCount', expected.priorTrialCount, observed.priorTrialCount],
     ['strategyProtocolHash', expected.strategyProtocolHash, observed.strategyProtocolHash],
     ['modulePath', expected.modulePath, observed.modulePath],
+    ['moduleSha256', expected.moduleSha256, observed.moduleSha256],
     ['marketData.schemaVersion', expected.marketData.schemaVersion, observed.marketData.schemaVersion],
     ['marketData.snapshotId', expected.marketData.snapshotId, observed.marketData.snapshotId],
     [

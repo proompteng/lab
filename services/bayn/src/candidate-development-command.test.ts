@@ -2432,6 +2432,7 @@ describe('candidate development command', () => {
       priorTrialCount: 15,
       strategyProtocolHash: fixtureStrategyProtocolHash,
       modulePath: fixtureSourceManifest.modulePath,
+      moduleSha256: fixtureVerifiedSourceFiles.moduleSha256,
       marketData: fixtureSourceManifest.marketData,
       preregistration: {
         sourceRevision: '1'.repeat(40),
@@ -2445,6 +2446,7 @@ describe('candidate development command', () => {
       priorTrialCount: preregistration.priorTrialCount,
       strategyProtocolHash: preregistration.strategyProtocolHash,
       modulePath: preregistration.modulePath,
+      moduleSha256: preregistration.moduleSha256,
       marketData: preregistration.marketData,
     }
 
@@ -2464,6 +2466,23 @@ describe('candidate development command', () => {
           field: 'marketData.boundedContentHash',
           expected: preregistration.marketData.boundedContentHash,
           observed: 'f'.repeat(64),
+        },
+      },
+    })
+
+    expect(
+      validateCandidateDevelopmentPreregistrationDocument(preregistration, {
+        ...document,
+        moduleSha256: 'e'.repeat(64),
+      }),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-preregistration-blob',
+        cause: {
+          field: 'moduleSha256',
+          expected: preregistration.moduleSha256,
+          observed: 'e'.repeat(64),
         },
       },
     })
