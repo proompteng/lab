@@ -83,7 +83,6 @@ const logCompletedPass = (
 ): Effect.Effect<void> =>
   Effect.logInfo('Paper account reconciliation completed').pipe(
     Effect.annotateLogs({
-      accountId: result.report.reconciliation.accountId,
       status: result.report.reconciliation.status,
       reconciliationId: result.report.reconciliation.reconciliationId,
       orderCount: decision.orderCount,
