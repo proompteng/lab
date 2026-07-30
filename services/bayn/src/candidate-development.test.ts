@@ -3,9 +3,11 @@ import { Effect, Exit, Result } from 'effect'
 
 import {
   bindCandidateDevelopmentAttempt,
+  buildCandidateDevelopmentComparisonSemanticsEvidence,
   candidateDevelopmentAttemptHorizon,
   candidateDevelopmentBootstrapSamples,
   candidateDevelopmentCalendarContract,
+  candidateDevelopmentComparisonSemantics,
   candidateDevelopmentDoubledCostContract,
   candidateDevelopmentStatisticsPolicy,
   candidateDevelopmentWalkForwardProtocol,
@@ -16,13 +18,21 @@ import {
   preflightCandidateDevelopment,
   requiredObservationsForWalkForward,
   runCandidateDevelopment,
+  validateCandidateDevelopmentComparisonSemanticsEvidence,
+  validateCandidateDevelopmentComparisonSeriesBinding,
   validateCandidateDevelopmentDoubledCostCausalPath,
+  type CandidateDevelopmentComparisonSemanticsEvidence,
+  type CandidateDevelopmentPreflightPass,
 } from './candidate-development'
 import { defaultExecutionModel } from './execution-model'
 import { canonicalHashV1Result } from './hash'
-import { defaultQualificationStatisticsPolicy } from './qualification-statistics'
+import {
+  defaultQualificationStatisticsPolicy,
+  prepareQualificationSeries,
+  type QualificationSeries,
+} from './qualification-statistics'
 import type { IsoDate } from './schemas'
-import type { SignalDecision, SimulatedOrder, SimulationTrace } from './types'
+import type { EvaluationResult, SignalDecision, SimulatedOrder, SimulationTrace } from './types'
 
 const fullMarketClosures = new Set<IsoDate>([
   '2016-01-18',
@@ -234,32 +244,192 @@ const signalDecision = (overrides: Partial<SignalDecision> = {}): SignalDecision
   ...overrides,
 })
 
-const simulationTrace = (costMultiplierMicros: string, order: SimulatedOrder = simulatedOrder()): SimulationTrace => ({
+const simulationTrace = (
+  costMultiplierMicros: string,
+  order: SimulatedOrder = simulatedOrder(),
+  dailyMarks: SimulationTrace['dailyMarks'] = [],
+): SimulationTrace => ({
   schemaVersion: 'bayn.simulation-trace.v3',
   executionModel: defaultExecutionModel,
   costMultiplierMicros,
   orders: [order],
   cashChanges: [],
-  dailyMarks: [],
+  dailyMarks,
 })
 
-const candidateDevelopmentEvaluation = <Report>(
-  report: Report,
-  stressedOrder: SimulatedOrder = simulatedOrder(),
-  stressedSignalDecisions: readonly SignalDecision[] = [signalDecision()],
-) => ({
-  report,
-  doubledCost: {
-    baseline: {
-      signalDecisions: [signalDecision()],
-      simulation: simulationTrace(candidateDevelopmentDoubledCostContract.baselineCostMultiplierMicros),
-    },
-    stressed: {
-      signalDecisions: stressedSignalDecisions,
-      simulation: simulationTrace(candidateDevelopmentDoubledCostContract.stressedCostMultiplierMicros, stressedOrder),
-    },
-  },
+const performanceMetrics = () => ({
+  observations: 1,
+  totalReturn: 0,
+  annualizedReturn: 0,
+  annualizedVolatility: 0,
+  sharpe: 0,
+  maximumDrawdown: 0,
+  annualTurnover: 0,
+  totalFeesMicros: '0',
+  totalSpreadCostMicros: '0',
+  totalSlippageCostMicros: '0',
+  totalCashYieldMicros: '0',
+  endingEquityMicros: '1000000',
 })
+
+const evaluationSignalDecisions = (
+  preflight: CandidateDevelopmentPreflightPass,
+  sessions: readonly IsoDate[],
+): readonly SignalDecision[] => {
+  const officialSessions = developmentSessions()
+  return sessions
+    .map((executionDate, index) => ({ executionDate, index }))
+    .filter(({ index }) => index % 100 === 0)
+    .map(({ executionDate, index }, ordinal) =>
+      signalDecision({
+        decisionId: (ordinal + 1).toString(16).padStart(64, '0'),
+        signalDate:
+          officialSessions.at(preflight.selectedObservationStartIndex + index - 1) ??
+          preflight.selectedObservationStart,
+        executionDate,
+      }),
+    )
+}
+
+const baselineEvaluation = (
+  preflight: CandidateDevelopmentPreflightPass,
+  sessions: readonly IsoDate[] = preflight.selectedObservationSessions,
+): EvaluationResult => {
+  const signalDecisions = evaluationSignalDecisions(preflight, sessions)
+  const dailyMarks = sessions.map((sessionDate, index) => ({
+    sessionDate,
+    equityMicros: '1000000',
+    netReturn: index % 2 === 0 ? 0.0012 : 0.0008,
+    turnoverMicros: '0',
+    cumulativeTurnoverMicros: '0',
+    feeMicros: '0',
+    cumulativeFeesMicros: '0',
+    spreadCostMicros: '0',
+    cumulativeSpreadCostMicros: '0',
+    slippageCostMicros: '0',
+    cumulativeSlippageCostMicros: '0',
+    cashYieldMicros: '0',
+    cumulativeCashYieldMicros: '0',
+    peakEquityMicros: '1000000',
+    drawdown: 0,
+    cashMicros: '0',
+    positions: [
+      {
+        symbol: 'SPY',
+        quantityMicros: '1000000',
+        costBasisMicros: '1000000',
+        priceMicros: '1000000',
+        marketValueMicros: '1000000',
+      },
+    ],
+  }))
+  const performancePoint = (sessionDate: IsoDate, netReturn: number) => ({
+    sessionDate,
+    equityMicros: '1000000',
+    netReturn,
+    turnoverMicros: '0',
+    cumulativeTurnoverMicros: '0',
+    feeMicros: '0',
+    cumulativeFeesMicros: '0',
+    spreadCostMicros: '0',
+    cumulativeSpreadCostMicros: '0',
+    slippageCostMicros: '0',
+    cumulativeSlippageCostMicros: '0',
+    cashYieldMicros: '0',
+    cumulativeCashYieldMicros: '0',
+    peakEquityMicros: '1000000',
+    drawdown: 0,
+  })
+  const buyAndHold = sessions.map((sessionDate, index) =>
+    performancePoint(sessionDate, index % 2 === 0 ? 0.0009 : 0.0007),
+  )
+  const directVolTiming = sessions.map((sessionDate, index) =>
+    performancePoint(sessionDate, index % 2 === 0 ? 0.0007 : 0.0005),
+  )
+  return {
+    schemaVersion: 'bayn.evaluation.v6',
+    runId: 'a'.repeat(64),
+    codeRevision: 'b'.repeat(40),
+    protocolHash: preflight.protocolIdentity.protocolHash,
+    initialCapitalMicros: '1000000',
+    inputManifest: {} as EvaluationResult['inputManifest'],
+    strategy: performanceMetrics(),
+    buyAndHold: performanceMetrics(),
+    directVolTiming: performanceMetrics(),
+    doubleCostStrategy: performanceMetrics(),
+    verdict: { status: 'PASS', gates: [] },
+    events: [],
+    simulation: simulationTrace(
+      candidateDevelopmentDoubledCostContract.baselineCostMultiplierMicros,
+      simulatedOrder(),
+      dailyMarks,
+    ),
+    benchmarkSeries: {
+      buyAndHold,
+      directVolTiming,
+      doubleCostStrategy: buyAndHold,
+    },
+    equitySeries: [],
+    markedEquityReconciliation: {} as EvaluationResult['markedEquityReconciliation'],
+    signalDecisions,
+  }
+}
+
+const comparisonSeriesOf = (baseline: EvaluationResult): QualificationSeries =>
+  successOf(prepareQualificationSeries(baseline))
+
+let cachedComparisonEvidence:
+  | {
+      readonly protocolHash: string
+      readonly baseline: EvaluationResult
+      readonly series: QualificationSeries
+      readonly evidence: CandidateDevelopmentComparisonSemanticsEvidence
+    }
+  | undefined
+
+const exactComparisonFixture = (
+  preflight: CandidateDevelopmentPreflightPass,
+): {
+  readonly baseline: EvaluationResult
+  readonly series: QualificationSeries
+  readonly evidence: CandidateDevelopmentComparisonSemanticsEvidence
+} => {
+  if (cachedComparisonEvidence?.protocolHash === preflight.protocolIdentity.protocolHash) {
+    return cachedComparisonEvidence
+  }
+  const baseline = baselineEvaluation(preflight)
+  const series = comparisonSeriesOf(baseline)
+  const evidence = successOf(buildCandidateDevelopmentComparisonSemanticsEvidence(preflight, series))
+  cachedComparisonEvidence = { protocolHash: preflight.protocolIdentity.protocolHash, baseline, series, evidence }
+  return cachedComparisonEvidence
+}
+
+const candidateDevelopmentEvaluation = (
+  preflight: CandidateDevelopmentPreflightPass,
+  overrides: {
+    readonly baseline?: EvaluationResult
+    readonly stressedOrder?: SimulatedOrder
+    readonly stressedSignalDecisions?: readonly SignalDecision[]
+    readonly comparisonSemantics?: CandidateDevelopmentComparisonSemanticsEvidence
+  } = {},
+) => {
+  const fixture = exactComparisonFixture(preflight)
+  const baseline = overrides.baseline ?? fixture.baseline
+  const comparisonSemantics =
+    overrides.comparisonSemantics ??
+    successOf(buildCandidateDevelopmentComparisonSemanticsEvidence(preflight, comparisonSeriesOf(baseline)))
+  return {
+    baseline,
+    comparisonSemantics,
+    stressed: {
+      signalDecisions: overrides.stressedSignalDecisions ?? baseline.signalDecisions,
+      simulation: simulationTrace(
+        candidateDevelopmentDoubledCostContract.stressedCostMultiplierMicros,
+        overrides.stressedOrder ?? baseline.simulation.orders.at(0) ?? simulatedOrder(),
+      ),
+    },
+  }
+}
 
 describe('candidate development walk-forward protocol', () => {
   test('freezes the exact 1,762-session development calendar without touching the holdout', () => {
@@ -386,10 +556,10 @@ describe('candidate development walk-forward protocol', () => {
     expect(first.candidateOrdinal).toBe(13)
     expect(first.priorTrialCount).toBe(12)
     expect(first.featureLookbackSessions).toBe(252)
-    expect(first.protocolHash).toBe('e9cc365a8b1c2cffe2aa37b496387000695e2a78d1093ad36e142261eab88454')
+    expect(first.protocolHash).toBe('5930dfb8922201101ca4edc3c408f0a79a22de8e35bfec2b9fee6e4625aa441e')
     expect(preflight).toMatchObject({
       status: 'PASS',
-      schemaVersion: 'bayn.candidate-development-preflight.v2',
+      schemaVersion: 'bayn.candidate-development-preflight.v3',
       attempt: {
         candidateOrdinal: 13,
         priorTrialCount: 12,
@@ -397,6 +567,270 @@ describe('candidate development walk-forward protocol', () => {
       },
       protocolIdentity: first,
       doubledCostContract: candidateDevelopmentDoubledCostContract,
+      comparisonSemantics: candidateDevelopmentComparisonSemantics,
+    })
+    if (preflight.status === 'FAIL') throw new Error('expected passing preflight')
+    expect(preflight.selectedObservationSessions).toHaveLength(1_489)
+    expect(preflight.selectedObservationSessions.at(0)).toBe('2017-02-02')
+    expect(preflight.selectedObservationSessions.at(-1)).toBe('2022-12-30')
+  })
+
+  test('accepts exact benchmark-relative comparison semantics for every uncertainty and walk-forward gate', () => {
+    const preflight = successOf(preflightCandidateDevelopment(candidate13Input(developmentSessions())))
+    expect(preflight.status).toBe('PASS')
+    if (preflight.status === 'FAIL') throw new Error('expected passing preflight')
+    const { baseline, evidence, series } = exactComparisonFixture(preflight)
+
+    expect(successOf(validateCandidateDevelopmentComparisonSeriesBinding(preflight, baseline, series))).toEqual(series)
+    expect(successOf(validateCandidateDevelopmentComparisonSemanticsEvidence(preflight, series, evidence))).toEqual(
+      evidence,
+    )
+    expect(evidence.analysis.bootstrap.selectedBenchmark).toBe('buy-and-hold')
+    expect(evidence.analysis.walkForward.selectedBenchmark).toBe('buy-and-hold')
+    expect(evidence.comparisonSemantics.gates.annualizedExcessReturnLowerBound).toMatchObject({
+      baseline: 'selected-benchmark',
+    })
+    expect(evidence.comparisonSemantics.gates.sharpeDifferenceLowerBound).toMatchObject({
+      baseline: 'selected-benchmark',
+    })
+    expect(evidence.comparisonSemantics.gates.walkForwardPositiveFraction).toMatchObject({
+      baseline: 'selected-benchmark',
+    })
+    expect(evidence.comparisonSemantics.gates.walkForwardDrawdown).toMatchObject({
+      baseline: 'candidate',
+    })
+  })
+
+  test('binds the derived comparison series to the baseline run, exact preflight window, and rebalance schedule', () => {
+    const preflight = successOf(preflightCandidateDevelopment(candidate13Input(developmentSessions())))
+    expect(preflight.status).toBe('PASS')
+    if (preflight.status === 'FAIL') throw new Error('expected passing preflight')
+    const { baseline, series } = exactComparisonFixture(preflight)
+
+    expect(successOf(validateCandidateDevelopmentComparisonSeriesBinding(preflight, baseline, series))).toEqual(series)
+    expect(
+      validateCandidateDevelopmentComparisonSeriesBinding(
+        preflight,
+        { ...baseline, protocolHash: 'e'.repeat(64) },
+        series,
+      ),
+    ).toMatchObject(
+      Result.fail({
+        _tag: 'CandidateDevelopmentBaselineProtocolMismatch',
+        expected: preflight.protocolIdentity.protocolHash,
+        observed: 'e'.repeat(64),
+      }),
+    )
+    expect(
+      validateCandidateDevelopmentComparisonSeriesBinding(preflight, baseline, {
+        ...series,
+        runId: 'f'.repeat(64),
+      }),
+    ).toMatchObject(
+      Result.fail({
+        _tag: 'CandidateDevelopmentComparisonSeriesRunMismatch',
+        expected: baseline.runId,
+        observed: 'f'.repeat(64),
+      }),
+    )
+    expect(
+      validateCandidateDevelopmentComparisonSeriesBinding(preflight, baseline, {
+        ...series,
+        rebalanceExecutionDates: series.rebalanceExecutionDates.slice(1),
+      }),
+    ).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'CandidateDevelopmentComparisonRebalanceScheduleMismatch',
+        index: 0,
+      },
+    })
+  })
+
+  test('rejects an unrelated baseline window before returning a metric-bearing report', async () => {
+    const sessions = developmentSessions()
+    const preflight = successOf(preflightCandidateDevelopment(candidate13Input(sessions)))
+    expect(preflight.status).toBe('PASS')
+    if (preflight.status === 'FAIL') throw new Error('expected passing preflight')
+    const unrelatedBaseline = baselineEvaluation(preflight, preflight.selectedObservationSessions.slice(0, 800))
+    const unrelatedSeries = comparisonSeriesOf(unrelatedBaseline)
+    const unrelatedEvidence = successOf(
+      buildCandidateDevelopmentComparisonSemanticsEvidence(preflight, unrelatedSeries),
+    )
+
+    expect(
+      validateCandidateDevelopmentComparisonSeriesBinding(preflight, unrelatedBaseline, unrelatedSeries),
+    ).toMatchObject(
+      Result.fail({
+        _tag: 'CandidateDevelopmentComparisonSeriesWindowMismatch',
+        index: 800,
+        expected: preflight.selectedObservationSessions.at(800),
+        observed: undefined,
+        expectedCount: preflight.selectedObservationSessions.length,
+        observedCount: 800,
+      }),
+    )
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        runCandidateDevelopment(candidate13Input(sessions), {
+          preregisterCandidate: () => Effect.succeed('registration'),
+          loadDevelopmentData: () => Effect.succeed('data'),
+          evaluateDevelopment: () =>
+            Effect.succeed(
+              candidateDevelopmentEvaluation(preflight, {
+                baseline: unrelatedBaseline,
+                comparisonSemantics: unrelatedEvidence,
+              }),
+            ),
+        }),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      _tag: 'CandidateDevelopmentComparisonSemanticsInvalid',
+      cause: {
+        _tag: 'CandidateDevelopmentComparisonSeriesWindowMismatch',
+        index: 800,
+        expectedCount: preflight.selectedObservationSessions.length,
+        observedCount: 800,
+      },
+    })
+  })
+
+  test('rejects annualized-return evidence whose baseline is cash', () => {
+    const preflight = successOf(preflightCandidateDevelopment(candidate13Input(developmentSessions())))
+    expect(preflight.status).toBe('PASS')
+    if (preflight.status === 'FAIL') throw new Error('expected passing preflight')
+    const { evidence, series } = exactComparisonFixture(preflight)
+    const cashRelative = {
+      ...evidence,
+      comparisonSemantics: {
+        ...evidence.comparisonSemantics,
+        gates: {
+          ...evidence.comparisonSemantics.gates,
+          annualizedExcessReturnLowerBound: {
+            ...evidence.comparisonSemantics.gates.annualizedExcessReturnLowerBound,
+            baseline: 'cash',
+          },
+        },
+      },
+    }
+
+    expect(validateCandidateDevelopmentComparisonSemanticsEvidence(preflight, series, cashRelative)).toMatchObject(
+      Result.fail({
+        _tag: 'CandidateDevelopmentComparisonBaselineMismatch',
+        gate: 'annualizedExcessReturnLowerBound',
+        expected: 'selected-benchmark',
+        observed: 'cash',
+      }),
+    )
+  })
+
+  test('rejects walk-forward positive-fold evidence whose baseline is cash', () => {
+    const preflight = successOf(preflightCandidateDevelopment(candidate13Input(developmentSessions())))
+    expect(preflight.status).toBe('PASS')
+    if (preflight.status === 'FAIL') throw new Error('expected passing preflight')
+    const { evidence, series } = exactComparisonFixture(preflight)
+    const cashRelative = {
+      ...evidence,
+      comparisonSemantics: {
+        ...evidence.comparisonSemantics,
+        gates: {
+          ...evidence.comparisonSemantics.gates,
+          walkForwardPositiveFraction: {
+            ...evidence.comparisonSemantics.gates.walkForwardPositiveFraction,
+            baseline: 'cash',
+          },
+        },
+      },
+    }
+
+    expect(validateCandidateDevelopmentComparisonSemanticsEvidence(preflight, series, cashRelative)).toMatchObject(
+      Result.fail({
+        _tag: 'CandidateDevelopmentComparisonBaselineMismatch',
+        gate: 'walkForwardPositiveFraction',
+        expected: 'selected-benchmark',
+        observed: 'cash',
+      }),
+    )
+  })
+
+  test('rejects a selected benchmark that contradicts the bound cash-adjusted Sharpe rule', () => {
+    const preflight = successOf(preflightCandidateDevelopment(candidate13Input(developmentSessions())))
+    expect(preflight.status).toBe('PASS')
+    if (preflight.status === 'FAIL') throw new Error('expected passing preflight')
+    const { evidence, series } = exactComparisonFixture(preflight)
+    const mismatched = {
+      ...evidence,
+      analysis: {
+        ...evidence.analysis,
+        bootstrap: {
+          ...evidence.analysis.bootstrap,
+          selectedBenchmark: 'direct-volatility-timing',
+        },
+      },
+    }
+
+    expect(validateCandidateDevelopmentComparisonSemanticsEvidence(preflight, series, mismatched)).toMatchObject(
+      Result.fail({
+        _tag: 'CandidateDevelopmentSelectedBenchmarkComparisonMismatch',
+        expected: 'buy-and-hold',
+        observedBootstrap: 'direct-volatility-timing',
+        observedWalkForward: 'buy-and-hold',
+      }),
+    )
+  })
+
+  test('rejects a cash-relative annualized result even when its baseline label claims selected benchmark', () => {
+    const preflight = successOf(preflightCandidateDevelopment(candidate13Input(developmentSessions())))
+    expect(preflight.status).toBe('PASS')
+    if (preflight.status === 'FAIL') throw new Error('expected passing preflight')
+    const { evidence, series } = exactComparisonFixture(preflight)
+    const cashRelative = {
+      ...evidence,
+      analysis: {
+        ...evidence.analysis,
+        bootstrap: {
+          ...evidence.analysis.bootstrap,
+          annualizedReturnDifferenceLowerBound: 0.2268,
+        },
+      },
+    }
+
+    expect(validateCandidateDevelopmentComparisonSemanticsEvidence(preflight, series, cashRelative)).toMatchObject(
+      Result.fail({
+        _tag: 'CandidateDevelopmentAnnualizedReturnComparisonMismatch',
+        expected: evidence.analysis.bootstrap.annualizedReturnDifferenceLowerBound,
+        observed: 0.2268,
+      }),
+    )
+  })
+
+  test('rejects walk-forward results that were computed against cash rather than the selected benchmark', () => {
+    const preflight = successOf(preflightCandidateDevelopment(candidate13Input(developmentSessions())))
+    expect(preflight.status).toBe('PASS')
+    if (preflight.status === 'FAIL') throw new Error('expected passing preflight')
+    const { evidence, series } = exactComparisonFixture(preflight)
+    const firstFold = evidence.analysis.walkForward.folds.at(0)
+    if (firstFold === undefined) throw new Error('expected a walk-forward fold')
+    const cashRelative = {
+      ...evidence,
+      analysis: {
+        ...evidence.analysis,
+        walkForward: {
+          ...evidence.analysis.walkForward,
+          folds: [
+            { ...firstFold, returnDifference: firstFold.strategyReturn },
+            ...evidence.analysis.walkForward.folds.slice(1),
+          ],
+        },
+      },
+    }
+
+    expect(validateCandidateDevelopmentComparisonSemanticsEvidence(preflight, series, cashRelative)).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'CandidateDevelopmentComparisonEvidenceMismatch' },
     })
   })
 
@@ -629,9 +1063,9 @@ describe('candidate development walk-forward protocol', () => {
               loads += 1
               return Effect.succeed('data')
             },
-            evaluateDevelopment: () => {
+            evaluateDevelopment: (_data, preflight) => {
               evaluations += 1
-              return Effect.succeed(candidateDevelopmentEvaluation('report'))
+              return Effect.succeed(candidateDevelopmentEvaluation(preflight))
             },
           },
         ),
@@ -674,9 +1108,9 @@ describe('candidate development walk-forward protocol', () => {
             loads += 1
             return Effect.succeed('data')
           },
-          evaluateDevelopment: () => {
+          evaluateDevelopment: (_data, preflight) => {
             evaluations += 1
-            return Effect.succeed(candidateDevelopmentEvaluation('report'))
+            return Effect.succeed(candidateDevelopmentEvaluation(preflight))
           },
         },
       ),
@@ -704,17 +1138,16 @@ describe('candidate development walk-forward protocol', () => {
             loads += 1
             return Effect.succeed('data')
           },
-          evaluateDevelopment: () => {
+          evaluateDevelopment: (_data, preflight) => {
             evaluations += 1
             return Effect.succeed(
-              candidateDevelopmentEvaluation(
-                'invalid-report',
-                simulatedOrder({
+              candidateDevelopmentEvaluation(preflight, {
+                stressedOrder: simulatedOrder({
                   filledQuantityMicros: '900000',
                   status: 'partially-filled',
                   unfilledRemainder: 'canceled',
                 }),
-              ),
+              }),
             )
           },
         }),
@@ -749,14 +1182,88 @@ describe('candidate development walk-forward protocol', () => {
           loads += 1
           return Effect.succeed(`${registration}:${preflight.selectedObservationStart}`)
         },
-        evaluateDevelopment: (data, preflight) => {
+        evaluateDevelopment: (_data, preflight) => {
           evaluations += 1
-          return Effect.succeed(candidateDevelopmentEvaluation(`${data}:${preflight.selectedObservationEnd}`))
+          return Effect.succeed(candidateDevelopmentEvaluation(preflight))
         },
       }),
     )
 
-    expect(report).toBe('bayn.candidate-development-preflight.v2:2017-02-02:2022-12-30')
+    expect(report).toMatchObject({
+      schemaVersion: 'bayn.candidate-development-report.v1',
+      protocolIdentity: {
+        candidateOrdinal: 13,
+        priorTrialCount: 12,
+        protocolHash: '5930dfb8922201101ca4edc3c408f0a79a22de8e35bfec2b9fee6e4625aa441e',
+      },
+      comparisonSemantics: {
+        protocolHash: '5930dfb8922201101ca4edc3c408f0a79a22de8e35bfec2b9fee6e4625aa441e',
+        analysis: {
+          bootstrap: { selectedBenchmark: 'buy-and-hold' },
+          walkForward: { selectedBenchmark: 'buy-and-hold' },
+        },
+      },
+      doubledCostContract: candidateDevelopmentDoubledCostContract,
+      doubledCost: {
+        baseline: {
+          simulation: { costMultiplierMicros: candidateDevelopmentDoubledCostContract.baselineCostMultiplierMicros },
+        },
+        stressed: {
+          simulation: { costMultiplierMicros: candidateDevelopmentDoubledCostContract.stressedCostMultiplierMicros },
+        },
+      },
+    })
+    expect(preregistrations).toBe(1)
+    expect(loads).toBe(1)
+    expect(evaluations).toBe(1)
+  })
+
+  test('does not return an evaluated report when comparison semantics mismatch the preflight', async () => {
+    const sessions = developmentSessions()
+    let preregistrations = 0
+    let loads = 0
+    let evaluations = 0
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        runCandidateDevelopment(candidate13Input(sessions), {
+          preregisterCandidate: () => {
+            preregistrations += 1
+            return Effect.succeed('registration')
+          },
+          loadDevelopmentData: () => {
+            loads += 1
+            return Effect.succeed('data')
+          },
+          evaluateDevelopment: (_data, preflight) => {
+            evaluations += 1
+            const evidence = exactComparisonFixture(preflight).evidence
+            const cashRelative = {
+              ...evidence,
+              analysis: {
+                ...evidence.analysis,
+                bootstrap: {
+                  ...evidence.analysis.bootstrap,
+                  annualizedReturnDifferenceLowerBound: 0.2268,
+                },
+              },
+            } as unknown as CandidateDevelopmentComparisonSemanticsEvidence
+            return Effect.succeed(
+              candidateDevelopmentEvaluation(preflight, {
+                comparisonSemantics: cashRelative,
+              }),
+            )
+          },
+        }),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      _tag: 'CandidateDevelopmentComparisonSemanticsInvalid',
+      cause: {
+        _tag: 'CandidateDevelopmentAnnualizedReturnComparisonMismatch',
+        observed: 0.2268,
+      },
+    })
     expect(preregistrations).toBe(1)
     expect(loads).toBe(1)
     expect(evaluations).toBe(1)

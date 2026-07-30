@@ -11,7 +11,16 @@ export type QualificationStatisticsFailure =
     }
   | {
       readonly _tag: 'QualificationStatisticsCanonicalizationFailed'
-      readonly operation: 'analysis' | 'bootstrap-samples' | 'bootstrap-seed' | 'complete-block' | 'walk-forward-fold'
+      readonly operation:
+        | 'analysis'
+        | 'bootstrap-samples'
+        | 'bootstrap-seed'
+        | 'complete-block'
+        | 'selected-benchmark-bootstrap-samples'
+        | 'selected-benchmark-comparison-analysis'
+        | 'selected-benchmark-comparison-series'
+        | 'selected-benchmark-walk-forward-fold'
+        | 'walk-forward-fold'
       readonly cause: CanonicalJsonFailure
     }
   | {

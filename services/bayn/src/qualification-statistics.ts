@@ -1,4 +1,15 @@
 export { analyzeQualification, analyzeQualificationInput } from './qualification-statistics/analysis'
+export {
+  qualificationSelectedBenchmarkRule,
+  selectQualificationBenchmarkFromCashAdjustedSharpes,
+  type QualificationBenchmarkCashAdjustedSharpes,
+  type QualificationSelectedBenchmark,
+} from './qualification-statistics/bootstrap'
+export {
+  analyzeSelectedBenchmarkComparison,
+  analyzeSelectedBenchmarkComparisonInput,
+  type QualificationSelectedBenchmarkComparisonAnalysis,
+} from './qualification-statistics/comparison'
 export { calculateQualificationPower } from './qualification-statistics/power'
 export { prepareQualificationSeries } from './qualification-statistics/series'
 export {

@@ -9,9 +9,12 @@ import {
   QualificationStatisticsPolicySchema,
   analyzeQualification,
   analyzeQualificationInput,
+  analyzeSelectedBenchmarkComparison,
   calculateQualificationPower,
   defaultQualificationStatisticsPolicy,
   prepareQualificationSeries,
+  qualificationSelectedBenchmarkRule,
+  selectQualificationBenchmarkFromCashAdjustedSharpes,
   type QualificationSeries,
   type QualificationStatisticsPolicy,
 } from './qualification-statistics'
@@ -302,6 +305,28 @@ describe('pure numerical and decision kernels', () => {
 })
 
 describe('deterministic paired block bootstrap', () => {
+  test('uses one executable cash-adjusted Sharpe selection rule with buy-and-hold as the exact tie-break', () => {
+    expect(qualificationSelectedBenchmarkRule).toEqual({
+      schemaVersion: 'bayn.qualification-selected-benchmark-rule.v1',
+      eligibleBenchmarks: ['buy-and-hold', 'direct-volatility-timing'],
+      score: 'cash-adjusted-annualized-sharpe',
+      selection: 'maximum',
+      tieBreak: 'buy-and-hold',
+    })
+    expect(
+      selectQualificationBenchmarkFromCashAdjustedSharpes({
+        buyAndHold: 0.6,
+        directVolatilityTiming: 0.7,
+      }),
+    ).toEqual({ name: 'direct-volatility-timing', sharpe: 0.7 })
+    expect(
+      selectQualificationBenchmarkFromCashAdjustedSharpes({
+        buyAndHold: 0.7,
+        directVolatilityTiming: 0.7,
+      }),
+    ).toEqual({ name: 'buy-and-hold', sharpe: 0.7 })
+  })
+
   test('uses complete rebalance intervals, excludes the trailing interval, and reproduces a golden result', () => {
     const input = makeSeries()
     const first = successOf(analyzeQualification(input, policy(), []))
@@ -322,6 +347,31 @@ describe('deterministic paired block bootstrap', () => {
     expect(first.bootstrap.producedSamples).toBe(1_000)
     expect(first.bootstrap.samplesHash).toBe('e7e3f0e6947361137b7eb2376100fdb559fbcb268b3482474b3e311adf80109a')
     expect(second).toEqual(first)
+  })
+
+  test('recomputes annualized and walk-forward evidence against the selected benchmark without changing terminal cash-relative behavior', () => {
+    const base = makeSeries()
+    const input: QualificationSeries = {
+      ...base,
+      observations: base.observations.map((observation) => ({
+        ...observation,
+        strategyReturn: 0.0005,
+        cashReturn: 0,
+        buyAndHoldReturn: 0.0003,
+        directVolatilityReturn: 0.0002,
+      })),
+    }
+    const terminal = successOf(analyzeQualification(input, policy(), []))
+    const comparison = successOf(analyzeSelectedBenchmarkComparison(input, policy(), 0))
+
+    expect(terminal.bootstrap.selectedBenchmark).toBe('buy-and-hold')
+    expect(comparison.bootstrap.selectedBenchmark).toBe('buy-and-hold')
+    expect(comparison.bootstrap.seedHash).toBe(terminal.bootstrap.seedHash)
+    expect(terminal.bootstrap.annualizedExcessReturnLowerBound).toBe(0.126)
+    expect(comparison.bootstrap.annualizedReturnDifferenceLowerBound).toBe(0.0504)
+    expect(terminal.walkForward.folds.every((fold) => fold.excessReturn > 0)).toBe(true)
+    expect(comparison.walkForward.folds.every((fold) => fold.returnDifference > 0)).toBe(true)
+    expect(comparison.walkForward.folds.every((fold) => fold.selectedBenchmark === 'buy-and-hold')).toBe(true)
   })
 
   test('changes samples with the precommitted seed and preserves paired equality', () => {
