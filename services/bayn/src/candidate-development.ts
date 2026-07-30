@@ -1,9 +1,18 @@
 import { Effect, pipe, Result } from 'effect'
 
 import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
-import { defaultQualificationStatisticsPolicy, type QualificationStatisticsPolicy } from './qualification-statistics'
+import {
+  analyzeSelectedBenchmarkComparisonInput,
+  defaultQualificationStatisticsPolicy,
+  prepareQualificationSeries,
+  qualificationSelectedBenchmarkRule,
+  type QualificationSelectedBenchmarkComparisonAnalysis,
+  type QualificationSeries,
+  type QualificationStatisticsFailure,
+  type QualificationStatisticsPolicy,
+} from './qualification-statistics'
 import type { IsoDate } from './schemas'
-import type { SignalDecision, SimulatedOrder, SimulationTrace } from './types'
+import type { EvaluationResult, SignalDecision, SimulatedOrder, SimulationTrace } from './types'
 
 export const candidateDevelopmentCalendarContract = {
   schemaVersion: 'bayn.candidate-development-calendar.v1',
@@ -74,13 +83,69 @@ export const candidateDevelopmentStatisticsPolicy = {
   cashReturn: { ...defaultQualificationStatisticsPolicy.cashReturn },
 } as const satisfies QualificationStatisticsPolicy
 
+export const candidateDevelopmentComparisonSemantics = {
+  schemaVersion: 'bayn.candidate-development-comparison-semantics.v1',
+  selectedBenchmarkRule: qualificationSelectedBenchmarkRule,
+  evidence: {
+    schemaVersion: 'bayn.candidate-development-comparison-semantics-evidence.v2',
+    reportSchemaVersion: 'bayn.candidate-development-report.v1',
+    analysisSchemaVersion: 'bayn.selected-benchmark-comparison-analysis.v1',
+    source: 'baseline-evaluation-result',
+    seriesProjection: 'prepare-qualification-series',
+    windowBinding: 'exact-selected-preflight-sessions',
+    analysis: 'recomputed-selected-benchmark-comparison',
+    validation: 'exact-canonical-match',
+  },
+  gates: {
+    power: {
+      name: 'power',
+      metric: 'complete-rebalance-block-and-session-sufficiency',
+      baseline: 'not-applicable',
+      reason: 'sampling-sufficiency',
+    },
+    bootstrapTailResolution: {
+      name: 'bootstrap_tail_resolution',
+      metric: 'bootstrap-lower-tail-sample-count',
+      baseline: 'not-applicable',
+      reason: 'sampling-sufficiency',
+    },
+    annualizedExcessReturnLowerBound: {
+      name: 'annualized_excess_return_lower_bound',
+      metric: 'annualized-return-difference',
+      baseline: 'selected-benchmark',
+    },
+    sharpeDifferenceLowerBound: {
+      name: 'sharpe_difference_lower_bound',
+      metric: 'cash-adjusted-annualized-sharpe-difference',
+      baseline: 'selected-benchmark',
+    },
+    walkForwardFolds: {
+      name: 'walk_forward_folds',
+      metric: 'walk-forward-fold-count',
+      baseline: 'not-applicable',
+      reason: 'geometry',
+    },
+    walkForwardPositiveFraction: {
+      name: 'walk_forward_positive_fraction',
+      metric: 'walk-forward-compounded-return-difference',
+      baseline: 'selected-benchmark',
+    },
+    walkForwardDrawdown: {
+      name: 'walk_forward_drawdown',
+      metric: 'candidate-walk-forward-maximum-drawdown',
+      baseline: 'candidate',
+    },
+  },
+} as const
+
 export const candidateDevelopmentProtocol = {
-  schemaVersion: 'bayn.candidate-development-protocol.v2',
+  schemaVersion: 'bayn.candidate-development-protocol.v3',
   calendar: candidateDevelopmentCalendarContract,
   walkForward: candidateDevelopmentWalkForwardProtocol,
   attemptHorizon: candidateDevelopmentAttemptHorizon,
   doubledCost: candidateDevelopmentDoubledCostContract,
   statisticsPolicy: candidateDevelopmentStatisticsPolicy,
+  comparisonSemantics: candidateDevelopmentComparisonSemantics,
 } as const
 
 export interface CandidateDevelopmentProtocolIdentity {
@@ -493,16 +558,331 @@ export type CandidateDevelopmentPreflightIssue =
     }
 
 export interface CandidateDevelopmentPreflightPass extends CandidateDevelopmentGeometryPass {
-  readonly schemaVersion: 'bayn.candidate-development-preflight.v2'
+  readonly schemaVersion: 'bayn.candidate-development-preflight.v3'
   readonly attempt: CandidateDevelopmentBootstrapTailCapacity
   readonly featureLookbackSessions: number
   readonly firstEligibleExecution: CandidateDevelopmentExecutionBoundary
   readonly protocolIdentity: CandidateDevelopmentProtocolIdentity
   readonly doubledCostContract: typeof candidateDevelopmentDoubledCostContract
   readonly statisticsPolicy: typeof candidateDevelopmentStatisticsPolicy
+  readonly comparisonSemantics: typeof candidateDevelopmentComparisonSemantics
+  readonly selectedObservationSessions: readonly IsoDate[]
 }
 
 export type CandidateDevelopmentPreflightDecision = CandidateDevelopmentPreflightPass | CandidateDevelopmentGeometryFail
+
+type CandidateDevelopmentComparisonGateKey = keyof typeof candidateDevelopmentComparisonSemantics.gates
+
+export interface CandidateDevelopmentComparisonSemanticsEvidence {
+  readonly schemaVersion: typeof candidateDevelopmentComparisonSemantics.evidence.schemaVersion
+  readonly protocolHash: string
+  readonly comparisonSemantics: typeof candidateDevelopmentComparisonSemantics
+  readonly analysis: QualificationSelectedBenchmarkComparisonAnalysis
+}
+
+export type CandidateDevelopmentComparisonSemanticsIssue =
+  | {
+      readonly _tag: 'CandidateDevelopmentComparisonSemanticsShapeInvalid'
+      readonly path: string
+      readonly observed: unknown
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentComparisonSemanticsSchemaMismatch'
+      readonly expected: CandidateDevelopmentComparisonSemanticsEvidence['schemaVersion']
+      readonly observed: unknown
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentComparisonSemanticsProtocolMismatch'
+      readonly expected: string
+      readonly observed: unknown
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentComparisonAnalysisFailed'
+      readonly cause: QualificationStatisticsFailure
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentComparisonSeriesProjectionFailed'
+      readonly cause: QualificationStatisticsFailure
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentBaselineProtocolMismatch'
+      readonly expected: string
+      readonly observed: string
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentComparisonSeriesRunMismatch'
+      readonly expected: string
+      readonly observed: string
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentComparisonSeriesWindowMismatch'
+      readonly index: number
+      readonly expected: IsoDate | undefined
+      readonly observed: IsoDate | undefined
+      readonly expectedCount: number
+      readonly observedCount: number
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentComparisonRebalanceScheduleMismatch'
+      readonly index: number
+      readonly expected: IsoDate | undefined
+      readonly observed: IsoDate | undefined
+      readonly expectedCount: number
+      readonly observedCount: number
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentComparisonAnalysisSchemaMismatch'
+      readonly expected: typeof candidateDevelopmentComparisonSemantics.evidence.analysisSchemaVersion
+      readonly observed: string
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentComparisonSemanticsHashFailed'
+      readonly material: 'expected-evidence' | 'observed-evidence'
+      readonly cause: CanonicalHashFailure
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentComparisonBaselineMismatch'
+      readonly gate: CandidateDevelopmentComparisonGateKey
+      readonly expected: string
+      readonly observed: unknown
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentAnnualizedReturnComparisonMismatch'
+      readonly expected: number
+      readonly observed: unknown
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentSelectedBenchmarkComparisonMismatch'
+      readonly expected: string
+      readonly observedBootstrap: unknown
+      readonly observedWalkForward: unknown
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentComparisonEvidenceMismatch'
+      readonly expectedHash: string
+      readonly observedHash: string
+    }
+
+const comparisonEvidenceRecord = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
+
+export const validateCandidateDevelopmentComparisonSeriesBinding = (
+  preflight: CandidateDevelopmentPreflightPass,
+  baseline: EvaluationResult,
+  series: QualificationSeries,
+): Result.Result<QualificationSeries, CandidateDevelopmentComparisonSemanticsIssue> => {
+  if (baseline.protocolHash !== preflight.protocolIdentity.protocolHash) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentBaselineProtocolMismatch',
+      expected: preflight.protocolIdentity.protocolHash,
+      observed: baseline.protocolHash,
+    })
+  }
+  if (series.runId !== baseline.runId) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentComparisonSeriesRunMismatch',
+      expected: baseline.runId,
+      observed: series.runId,
+    })
+  }
+
+  const expectedSessions = preflight.selectedObservationSessions
+  const observedSessions = series.observations.map((observation) => observation.sessionDate)
+  const sessionCount = Math.max(expectedSessions.length, observedSessions.length)
+  for (let index = 0; index < sessionCount; index += 1) {
+    const expected = expectedSessions.at(index)
+    const observed = observedSessions.at(index)
+    if (expected !== observed) {
+      return Result.fail({
+        _tag: 'CandidateDevelopmentComparisonSeriesWindowMismatch',
+        index,
+        expected,
+        observed,
+        expectedCount: expectedSessions.length,
+        observedCount: observedSessions.length,
+      })
+    }
+  }
+
+  const expectedRebalanceExecutionDates = baseline.signalDecisions.map((decision) => decision.executionDate)
+  const observedRebalanceExecutionDates = series.rebalanceExecutionDates
+  const rebalanceCount = Math.max(expectedRebalanceExecutionDates.length, observedRebalanceExecutionDates.length)
+  for (let index = 0; index < rebalanceCount; index += 1) {
+    const expected = expectedRebalanceExecutionDates.at(index)
+    const observed = observedRebalanceExecutionDates.at(index)
+    if (expected !== observed) {
+      return Result.fail({
+        _tag: 'CandidateDevelopmentComparisonRebalanceScheduleMismatch',
+        index,
+        expected,
+        observed,
+        expectedCount: expectedRebalanceExecutionDates.length,
+        observedCount: observedRebalanceExecutionDates.length,
+      })
+    }
+  }
+
+  return Result.succeed(series)
+}
+
+export const buildCandidateDevelopmentComparisonSemanticsEvidence = (
+  preflight: CandidateDevelopmentPreflightPass,
+  series: unknown,
+): Result.Result<CandidateDevelopmentComparisonSemanticsEvidence, CandidateDevelopmentComparisonSemanticsIssue> =>
+  pipe(
+    analyzeSelectedBenchmarkComparisonInput(series, preflight.statisticsPolicy, preflight.attempt.priorTrialCount),
+    Result.mapError(
+      (cause): CandidateDevelopmentComparisonSemanticsIssue => ({
+        _tag: 'CandidateDevelopmentComparisonAnalysisFailed',
+        cause,
+      }),
+    ),
+    Result.flatMap((analysis) =>
+      analysis.schemaVersion === preflight.comparisonSemantics.evidence.analysisSchemaVersion
+        ? Result.succeed({
+            schemaVersion: candidateDevelopmentComparisonSemantics.evidence.schemaVersion,
+            protocolHash: preflight.protocolIdentity.protocolHash,
+            comparisonSemantics: preflight.comparisonSemantics,
+            analysis,
+          })
+        : Result.fail({
+            _tag: 'CandidateDevelopmentComparisonAnalysisSchemaMismatch' as const,
+            expected: preflight.comparisonSemantics.evidence.analysisSchemaVersion,
+            observed: analysis.schemaVersion,
+          }),
+    ),
+  )
+
+export const validateCandidateDevelopmentComparisonSemanticsEvidence = (
+  preflight: CandidateDevelopmentPreflightPass,
+  series: unknown,
+  evidence: unknown,
+): Result.Result<CandidateDevelopmentComparisonSemanticsEvidence, CandidateDevelopmentComparisonSemanticsIssue> => {
+  const root = comparisonEvidenceRecord(evidence)
+  if (root === undefined) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentComparisonSemanticsShapeInvalid',
+      path: 'comparisonSemantics',
+      observed: evidence,
+    })
+  }
+  if (root.schemaVersion !== preflight.comparisonSemantics.evidence.schemaVersion) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentComparisonSemanticsSchemaMismatch',
+      expected: preflight.comparisonSemantics.evidence.schemaVersion,
+      observed: root.schemaVersion,
+    })
+  }
+  if (root.protocolHash !== preflight.protocolIdentity.protocolHash) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentComparisonSemanticsProtocolMismatch',
+      expected: preflight.protocolIdentity.protocolHash,
+      observed: root.protocolHash,
+    })
+  }
+  const observedSemantics = comparisonEvidenceRecord(root.comparisonSemantics)
+  const observedGates = comparisonEvidenceRecord(observedSemantics?.gates)
+  if (observedSemantics === undefined || observedGates === undefined) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentComparisonSemanticsShapeInvalid',
+      path: 'comparisonSemantics.comparisonSemantics',
+      observed: root.comparisonSemantics,
+    })
+  }
+  const expectedGates = preflight.comparisonSemantics.gates
+  const gateKeys = Object.keys(expectedGates) as CandidateDevelopmentComparisonGateKey[]
+  for (const gate of gateKeys) {
+    const expectedGate = expectedGates[gate]
+    const observedGate = comparisonEvidenceRecord(observedGates[gate])
+    if (observedGate === undefined) {
+      return Result.fail({
+        _tag: 'CandidateDevelopmentComparisonSemanticsShapeInvalid',
+        path: `comparisonSemantics.gates.${gate}`,
+        observed: observedGates[gate],
+      })
+    }
+    if (observedGate.baseline !== expectedGate.baseline) {
+      return Result.fail({
+        _tag: 'CandidateDevelopmentComparisonBaselineMismatch',
+        gate,
+        expected: expectedGate.baseline,
+        observed: observedGate.baseline,
+      })
+    }
+  }
+
+  return pipe(
+    buildCandidateDevelopmentComparisonSemanticsEvidence(preflight, series),
+    Result.flatMap((expected) =>
+      (() => {
+        const observedAnalysis = comparisonEvidenceRecord(root.analysis)
+        const observedBootstrap = comparisonEvidenceRecord(observedAnalysis?.bootstrap)
+        const observedWalkForward = comparisonEvidenceRecord(observedAnalysis?.walkForward)
+        if (observedAnalysis === undefined || observedBootstrap === undefined || observedWalkForward === undefined) {
+          return Result.fail<CandidateDevelopmentComparisonSemanticsIssue>({
+            _tag: 'CandidateDevelopmentComparisonSemanticsShapeInvalid',
+            path: 'comparisonSemantics.analysis',
+            observed: root.analysis,
+          })
+        }
+        if (
+          observedBootstrap.annualizedReturnDifferenceLowerBound !==
+          expected.analysis.bootstrap.annualizedReturnDifferenceLowerBound
+        ) {
+          return Result.fail<CandidateDevelopmentComparisonSemanticsIssue>({
+            _tag: 'CandidateDevelopmentAnnualizedReturnComparisonMismatch',
+            expected: expected.analysis.bootstrap.annualizedReturnDifferenceLowerBound,
+            observed: observedBootstrap.annualizedReturnDifferenceLowerBound,
+          })
+        }
+        if (
+          observedBootstrap.selectedBenchmark !== expected.analysis.bootstrap.selectedBenchmark ||
+          observedWalkForward.selectedBenchmark !== expected.analysis.walkForward.selectedBenchmark
+        ) {
+          return Result.fail<CandidateDevelopmentComparisonSemanticsIssue>({
+            _tag: 'CandidateDevelopmentSelectedBenchmarkComparisonMismatch',
+            expected: expected.analysis.bootstrap.selectedBenchmark,
+            observedBootstrap: observedBootstrap.selectedBenchmark,
+            observedWalkForward: observedWalkForward.selectedBenchmark,
+          })
+        }
+        return pipe(
+          Result.all({
+            expectedHash: pipe(
+              canonicalHashV1Result(expected),
+              Result.mapError(
+                (cause): CandidateDevelopmentComparisonSemanticsIssue => ({
+                  _tag: 'CandidateDevelopmentComparisonSemanticsHashFailed',
+                  material: 'expected-evidence',
+                  cause,
+                }),
+              ),
+            ),
+            observedHash: pipe(
+              canonicalHashV1Result(evidence),
+              Result.mapError(
+                (cause): CandidateDevelopmentComparisonSemanticsIssue => ({
+                  _tag: 'CandidateDevelopmentComparisonSemanticsHashFailed',
+                  material: 'observed-evidence',
+                  cause,
+                }),
+              ),
+            ),
+          }),
+          Result.flatMap(({ expectedHash, observedHash }) =>
+            expectedHash === observedHash
+              ? Result.succeed(evidence as CandidateDevelopmentComparisonSemanticsEvidence)
+              : Result.fail<CandidateDevelopmentComparisonSemanticsIssue>({
+                  _tag: 'CandidateDevelopmentComparisonEvidenceMismatch',
+                  expectedHash,
+                  observedHash,
+                }),
+          ),
+        )
+      })(),
+    ),
+  )
+}
 
 export type CandidateDevelopmentRunFailure =
   | {
@@ -517,6 +897,10 @@ export type CandidateDevelopmentRunFailure =
       readonly _tag: 'CandidateDevelopmentDoubledCostInvalid'
       readonly cause: CandidateDevelopmentDoubledCostIssue
     }
+  | {
+      readonly _tag: 'CandidateDevelopmentComparisonSemanticsInvalid'
+      readonly cause: CandidateDevelopmentComparisonSemanticsIssue
+    }
 
 export interface CandidateDevelopmentPreflightInput {
   readonly candidateOrdinal: number
@@ -526,7 +910,7 @@ export interface CandidateDevelopmentPreflightInput {
   readonly featureLookbackSessions: number
 }
 
-export interface CandidateDevelopmentEffects<Registration, Data, Report, Error, Requirements> {
+export interface CandidateDevelopmentEffects<Registration, Data, Error, Requirements> {
   readonly preregisterCandidate: (
     preflight: CandidateDevelopmentPreflightPass,
   ) => Effect.Effect<Registration, Error, Requirements>
@@ -537,15 +921,26 @@ export interface CandidateDevelopmentEffects<Registration, Data, Report, Error, 
   readonly evaluateDevelopment: (
     data: Data,
     preflight: CandidateDevelopmentPreflightPass,
-  ) => Effect.Effect<CandidateDevelopmentEvaluation<Report>, Error, Requirements>
+  ) => Effect.Effect<CandidateDevelopmentEvaluation, Error, Requirements>
 }
 
-export interface CandidateDevelopmentEvaluation<Report> {
-  readonly report: Report
-  readonly doubledCost: {
-    readonly baseline: CandidateDevelopmentDoubledCostRun
-    readonly stressed: CandidateDevelopmentDoubledCostRun
-  }
+export interface CandidateDevelopmentEvaluation {
+  readonly baseline: EvaluationResult
+  readonly comparisonSemantics: CandidateDevelopmentComparisonSemanticsEvidence
+  readonly stressed: CandidateDevelopmentDoubledCostRun
+}
+
+export interface CandidateDevelopmentDoubledCostEvidence {
+  readonly baseline: CandidateDevelopmentDoubledCostRun
+  readonly stressed: CandidateDevelopmentDoubledCostRun
+}
+
+export interface CandidateDevelopmentReport {
+  readonly schemaVersion: typeof candidateDevelopmentComparisonSemantics.evidence.reportSchemaVersion
+  readonly protocolIdentity: CandidateDevelopmentProtocolIdentity
+  readonly comparisonSemantics: CandidateDevelopmentComparisonSemanticsEvidence
+  readonly doubledCostContract: typeof candidateDevelopmentDoubledCostContract
+  readonly doubledCost: CandidateDevelopmentDoubledCostEvidence
 }
 
 const validIsoDate = (value: string): value is IsoDate => {
@@ -904,29 +1299,34 @@ export const preflightCandidateDevelopment = (
               ? geometry
               : {
                   ...geometry,
-                  schemaVersion: 'bayn.candidate-development-preflight.v2',
+                  schemaVersion: 'bayn.candidate-development-preflight.v3',
                   attempt,
                   featureLookbackSessions: input.featureLookbackSessions,
                   firstEligibleExecution,
                   protocolIdentity,
                   doubledCostContract: candidateDevelopmentDoubledCostContract,
                   statisticsPolicy: candidateDevelopmentStatisticsPolicy,
+                  comparisonSemantics: candidateDevelopmentComparisonSemantics,
+                  selectedObservationSessions: input.officialSessions.slice(
+                    geometry.selectedObservationStartIndex,
+                    geometry.selectedObservationEndIndex + 1,
+                  ),
                 },
         ),
       ),
     ),
   )
 
-export const runCandidateDevelopment = <Registration, Data, Report, Error, Requirements>(
+export const runCandidateDevelopment = <Registration, Data, Error, Requirements>(
   input: CandidateDevelopmentPreflightInput,
-  effects: CandidateDevelopmentEffects<Registration, Data, Report, Error, Requirements>,
-): Effect.Effect<Report, CandidateDevelopmentRunFailure | Error, Requirements> =>
+  effects: CandidateDevelopmentEffects<Registration, Data, Error, Requirements>,
+): Effect.Effect<CandidateDevelopmentReport, CandidateDevelopmentRunFailure | Error, Requirements> =>
   Effect.fromResult(preflightCandidateDevelopment(input)).pipe(
     Effect.mapError(
       (cause): CandidateDevelopmentRunFailure => ({ _tag: 'CandidateDevelopmentPreflightInvalid', cause }),
     ),
     Effect.flatMap(
-      (preflight): Effect.Effect<Report, CandidateDevelopmentRunFailure | Error, Requirements> =>
+      (preflight): Effect.Effect<CandidateDevelopmentReport, CandidateDevelopmentRunFailure | Error, Requirements> =>
         preflight.status === 'FAIL'
           ? Effect.fail<CandidateDevelopmentRunFailure>({
               _tag: 'CandidateDevelopmentPreflightFailed',
@@ -937,18 +1337,65 @@ export const runCandidateDevelopment = <Registration, Data, Report, Error, Requi
               Effect.flatMap((data) => effects.evaluateDevelopment(data, preflight)),
               Effect.flatMap((evaluation) =>
                 Effect.fromResult(
-                  validateCandidateDevelopmentDoubledCostCausalPath(
-                    evaluation.doubledCost.baseline,
-                    evaluation.doubledCost.stressed,
+                  pipe(
+                    prepareQualificationSeries(evaluation.baseline),
+                    Result.mapError(
+                      (cause): CandidateDevelopmentComparisonSemanticsIssue => ({
+                        _tag: 'CandidateDevelopmentComparisonSeriesProjectionFailed',
+                        cause,
+                      }),
+                    ),
+                    Result.flatMap((series) =>
+                      validateCandidateDevelopmentComparisonSeriesBinding(preflight, evaluation.baseline, series),
+                    ),
                   ),
                 ).pipe(
                   Effect.mapError(
                     (cause): CandidateDevelopmentRunFailure => ({
-                      _tag: 'CandidateDevelopmentDoubledCostInvalid',
+                      _tag: 'CandidateDevelopmentComparisonSemanticsInvalid',
                       cause,
                     }),
                   ),
-                  Effect.map(() => evaluation.report),
+                  Effect.flatMap((comparisonSeries) =>
+                    Effect.fromResult(
+                      validateCandidateDevelopmentComparisonSemanticsEvidence(
+                        preflight,
+                        comparisonSeries,
+                        evaluation.comparisonSemantics,
+                      ),
+                    ).pipe(
+                      Effect.mapError(
+                        (cause): CandidateDevelopmentRunFailure => ({
+                          _tag: 'CandidateDevelopmentComparisonSemanticsInvalid',
+                          cause,
+                        }),
+                      ),
+                    ),
+                  ),
+                  Effect.flatMap((comparisonSemantics) => {
+                    const baseline = {
+                      signalDecisions: evaluation.baseline.signalDecisions,
+                      simulation: evaluation.baseline.simulation,
+                    }
+                    const doubledCost = { baseline, stressed: evaluation.stressed }
+                    return Effect.fromResult(
+                      validateCandidateDevelopmentDoubledCostCausalPath(baseline, evaluation.stressed),
+                    ).pipe(
+                      Effect.mapError(
+                        (cause): CandidateDevelopmentRunFailure => ({
+                          _tag: 'CandidateDevelopmentDoubledCostInvalid',
+                          cause,
+                        }),
+                      ),
+                      Effect.map(() => ({
+                        schemaVersion: preflight.comparisonSemantics.evidence.reportSchemaVersion,
+                        protocolIdentity: preflight.protocolIdentity,
+                        comparisonSemantics,
+                        doubledCostContract: preflight.doubledCostContract,
+                        doubledCost,
+                      })),
+                    )
+                  }),
                 ),
               ),
             ),

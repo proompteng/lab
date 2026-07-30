@@ -11,10 +11,37 @@ import type {
 import { annualizedSharpe, mean, nearestRankLowerQuantile, roundStatistic } from './numerical-methods'
 import type { CompleteBlockWork } from './series'
 
-const strongerBenchmark = (
+export const qualificationSelectedBenchmarkRule = {
+  schemaVersion: 'bayn.qualification-selected-benchmark-rule.v1',
+  eligibleBenchmarks: ['buy-and-hold', 'direct-volatility-timing'],
+  score: 'cash-adjusted-annualized-sharpe',
+  selection: 'maximum',
+  tieBreak: 'buy-and-hold',
+} as const
+
+export type QualificationSelectedBenchmark = (typeof qualificationSelectedBenchmarkRule.eligibleBenchmarks)[number]
+
+export interface QualificationBenchmarkCashAdjustedSharpes {
+  readonly buyAndHold: number
+  readonly directVolatilityTiming: number
+}
+
+interface QualificationSelectedBenchmarkDecision {
+  readonly name: QualificationSelectedBenchmark
+  readonly sharpe: number
+}
+
+export const selectQualificationBenchmarkFromCashAdjustedSharpes = (
+  sharpes: QualificationBenchmarkCashAdjustedSharpes,
+): QualificationSelectedBenchmarkDecision =>
+  sharpes.directVolatilityTiming > sharpes.buyAndHold
+    ? { name: 'direct-volatility-timing', sharpe: sharpes.directVolatilityTiming }
+    : { name: qualificationSelectedBenchmarkRule.tieBreak, sharpe: sharpes.buyAndHold }
+
+export const selectQualificationBenchmark = (
   observations: readonly QualificationObservation[],
   annualizationSessions: number,
-): { readonly name: 'buy-and-hold' | 'direct-volatility-timing'; readonly sharpe: number } => {
+): QualificationSelectedBenchmarkDecision => {
   const buyAndHold = annualizedSharpe(
     observations.map((observation) => observation.buyAndHoldReturn - observation.cashReturn),
     annualizationSessions,
@@ -23,9 +50,28 @@ const strongerBenchmark = (
     observations.map((observation) => observation.directVolatilityReturn - observation.cashReturn),
     annualizationSessions,
   )
-  return directVolatility > buyAndHold
-    ? { name: 'direct-volatility-timing', sharpe: directVolatility }
-    : { name: 'buy-and-hold', sharpe: buyAndHold }
+  return selectQualificationBenchmarkFromCashAdjustedSharpes({
+    buyAndHold,
+    directVolatilityTiming: directVolatility,
+  })
+}
+
+export interface QualificationSelectedBenchmarkBootstrapComparison {
+  readonly schemaVersion: 'bayn.selected-benchmark-bootstrap-comparison.v1'
+  readonly selectedBenchmark: QualificationSelectedBenchmark
+  readonly selectedBenchmarkSharpe: number
+  readonly seedHash: string
+  readonly requestedSamples: number
+  readonly producedSamples: number
+  readonly adjustedOneSidedAlpha: number
+  readonly tailSampleCount: number
+  readonly minimumTailSamples: number
+  readonly tailResolutionSufficient: boolean
+  readonly annualizedReturnDifferenceLowerBound: number
+  readonly sharpeDifferenceLowerBound: number
+  readonly annualizedReturnDifferenceSamples: readonly number[]
+  readonly sharpeDifferenceSamples: readonly number[]
+  readonly samplesHash: string
 }
 
 interface RandomState {
@@ -120,7 +166,7 @@ export const runQualificationBootstrap = (
   policy: QualificationStatisticsPolicy,
   priorTrialCount: number,
 ): Result.Result<BootstrapAnalysis, QualificationStatisticsFailure> => {
-  const benchmark = strongerBenchmark(series.observations, policy.annualizationSessions)
+  const benchmark = selectQualificationBenchmark(series.observations, policy.annualizationSessions)
   const adjustedOneSidedAlpha = policy.confidence.familyOneSidedAlpha / (priorTrialCount + 1)
   const tailSampleCount = Math.floor(policy.bootstrap.samples * adjustedOneSidedAlpha)
   return pipe(
@@ -220,6 +266,122 @@ export const runQualificationBootstrap = (
               annualizedExcessReturnLowerBound: values.annualizedExcessReturnLowerBound,
               sharpeDifferenceLowerBound: values.sharpeDifferenceLowerBound,
               annualizedExcessReturnSamples,
+              sharpeDifferenceSamples,
+              samplesHash: values.samplesHash,
+            })),
+          )
+        }),
+      )
+    }),
+  )
+}
+
+export const runSelectedBenchmarkBootstrapComparison = (
+  series: QualificationSeries,
+  blocks: readonly CompleteBlockWork[],
+  policy: QualificationStatisticsPolicy,
+  priorTrialCount: number,
+): Result.Result<QualificationSelectedBenchmarkBootstrapComparison, QualificationStatisticsFailure> => {
+  const benchmark = selectQualificationBenchmark(series.observations, policy.annualizationSessions)
+  const adjustedOneSidedAlpha = policy.confidence.familyOneSidedAlpha / (priorTrialCount + 1)
+  const tailSampleCount = Math.floor(policy.bootstrap.samples * adjustedOneSidedAlpha)
+  return pipe(
+    hashQualificationEvidence('bootstrap-seed', {
+      schemaVersion: 'bayn.qualification-bootstrap-seed.v1',
+      namespace: policy.bootstrap.seedNamespace,
+      runId: series.runId,
+    }),
+    Result.flatMap((seedHash) => {
+      const sampled =
+        blocks.length === 0
+          ? Result.succeed<BootstrapAccumulator>({
+              random: initialRandomState(seedHash),
+              annualizedExcessReturnSamples: Chunk.empty(),
+              sharpeDifferenceSamples: Chunk.empty(),
+            })
+          : Array.from({ length: policy.bootstrap.samples }).reduce<
+              Result.Result<BootstrapAccumulator, QualificationStatisticsFailure>
+            >(
+              (accumulated) =>
+                pipe(
+                  accumulated,
+                  Result.flatMap((state) =>
+                    pipe(
+                      sampleBlocks(state.random, blocks),
+                      Result.flatMap(({ random, observations }) => {
+                        const candidateReturns = observations.map(
+                          (observation) => observation.strategyReturn - observation.cashReturn,
+                        )
+                        const benchmarkReturns = observations.map(
+                          (observation) =>
+                            (benchmark.name === 'buy-and-hold'
+                              ? observation.buyAndHoldReturn
+                              : observation.directVolatilityReturn) - observation.cashReturn,
+                        )
+                        return pipe(
+                          Result.all({
+                            annualizedReturnDifference: roundStatistic(
+                              (mean(candidateReturns) - mean(benchmarkReturns)) * policy.annualizationSessions,
+                            ),
+                            sharpeDifference: roundStatistic(
+                              annualizedSharpe(candidateReturns, policy.annualizationSessions) -
+                                annualizedSharpe(benchmarkReturns, policy.annualizationSessions),
+                            ),
+                          }),
+                          Result.map(({ annualizedReturnDifference, sharpeDifference }) => ({
+                            random,
+                            annualizedExcessReturnSamples: Chunk.append(
+                              state.annualizedExcessReturnSamples,
+                              annualizedReturnDifference,
+                            ),
+                            sharpeDifferenceSamples: Chunk.append(state.sharpeDifferenceSamples, sharpeDifference),
+                          })),
+                        )
+                      }),
+                    ),
+                  ),
+                ),
+              Result.succeed({
+                random: initialRandomState(seedHash),
+                annualizedExcessReturnSamples: Chunk.empty(),
+                sharpeDifferenceSamples: Chunk.empty(),
+              }),
+            )
+      return pipe(
+        sampled,
+        Result.flatMap((samples) => {
+          const annualizedReturnDifferenceSamples = Chunk.toReadonlyArray(samples.annualizedExcessReturnSamples)
+          const sharpeDifferenceSamples = Chunk.toReadonlyArray(samples.sharpeDifferenceSamples)
+          return pipe(
+            Result.all({
+              selectedBenchmarkSharpe: roundStatistic(benchmark.sharpe),
+              annualizedReturnDifferenceLowerBound: roundStatistic(
+                nearestRankLowerQuantile(annualizedReturnDifferenceSamples, adjustedOneSidedAlpha),
+              ),
+              sharpeDifferenceLowerBound: roundStatistic(
+                nearestRankLowerQuantile(sharpeDifferenceSamples, adjustedOneSidedAlpha),
+              ),
+              samplesHash: hashQualificationEvidence('selected-benchmark-bootstrap-samples', {
+                schemaVersion: 'bayn.selected-benchmark-bootstrap-samples.v1',
+                selectedBenchmark: benchmark.name,
+                annualizedReturnDifferenceSamples,
+                sharpeDifferenceSamples,
+              }),
+            }),
+            Result.map((values) => ({
+              schemaVersion: 'bayn.selected-benchmark-bootstrap-comparison.v1' as const,
+              selectedBenchmark: benchmark.name,
+              selectedBenchmarkSharpe: values.selectedBenchmarkSharpe,
+              seedHash,
+              requestedSamples: policy.bootstrap.samples,
+              producedSamples: annualizedReturnDifferenceSamples.length,
+              adjustedOneSidedAlpha,
+              tailSampleCount,
+              minimumTailSamples: policy.confidence.minimumTailSamples,
+              tailResolutionSufficient: tailSampleCount >= policy.confidence.minimumTailSamples,
+              annualizedReturnDifferenceLowerBound: values.annualizedReturnDifferenceLowerBound,
+              sharpeDifferenceLowerBound: values.sharpeDifferenceLowerBound,
+              annualizedReturnDifferenceSamples,
               sharpeDifferenceSamples,
               samplesHash: values.samplesHash,
             })),
