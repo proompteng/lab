@@ -3,7 +3,7 @@ import { Deferred, Effect, Fiber, Result } from 'effect'
 
 import { frozenCandidateDevelopmentSessions } from './candidate-development-calendar'
 import {
-  buildCandidateDevelopmentCommandReport,
+  buildCandidateDevelopmentCommandReport as buildCandidateDevelopmentCommandReportPure,
   candidateDevelopmentExecutableProgramSchemaVersion,
   executeCandidateDevelopmentProgram,
   loadCandidateDevelopmentExecutableProgram,
@@ -86,6 +86,8 @@ const fixtureExecutionModel = {
   ...defaultProtocolDocument.executionModel,
   cash: { ...defaultProtocolDocument.executionModel.cash, annualYieldBps: 10_000 },
 }
+const fixtureCashYieldMicros = '2739'
+const fixtureYieldEndingEquityMicros = (BigInt(fixtureInitialCapitalMicros) + BigInt(fixtureCashYieldMicros)).toString()
 
 const fixtureStrategyProtocol = {
   schemaVersion: 'bayn.candidate-development-strategy-protocol.v1' as const,
@@ -105,7 +107,14 @@ const zeroPositionFixture = {
   marketValueMicros: '0',
 }
 
-const fixtureAccountingStart = '2019-01-01' as IsoDate
+const fixtureAccountingStart = '2019-12-31' as IsoDate
+const fixtureOfficialSessions = [fixtureAccountingStart, ...fixtureSessions]
+const buildCandidateDevelopmentCommandReport = (
+  report: CandidateDevelopmentReport,
+  evaluation: CandidateDevelopmentCommandEvaluation,
+  strategyProtocol = fixtureStrategyProtocol,
+  officialSessions = fixtureOfficialSessions,
+) => buildCandidateDevelopmentCommandReportPure(report, evaluation, strategyProtocol, officialSessions)
 const fullAccountingSimulationFixture = <A extends EvaluationResult['simulation']>(simulation: A): A =>
   ({
     ...simulation,
@@ -244,7 +253,7 @@ const stressedAccountingFixture = (endingEquityMicros: string) => {
   const eventPayload = {
     kind: 'cash-yield' as const,
     sessionDate: fixtureSessions[0],
-    elapsedDays: 365,
+    elapsedDays: 1,
     annualYieldBps: fixtureExecutionModel.cash.annualYieldBps,
     amountMicros: cashYieldMicros.toString(),
   }
@@ -301,7 +310,7 @@ const stressedAccountingFixture = (endingEquityMicros: string) => {
 
 const reportFixture = (
   annualizedReturnDifferenceLowerBound: number,
-  stressedEndingEquityMicros = '2000000',
+  stressedEndingEquityMicros = fixtureYieldEndingEquityMicros,
 ): CandidateDevelopmentReport => {
   const stressed = stressedAccountingFixture(stressedEndingEquityMicros)
   return {
@@ -350,12 +359,12 @@ const reportFixture = (
 
 const baselineFixture = (
   status: 'PASS' | 'FAIL_CLOSED' = 'PASS',
-  stressedEndingEquityMicros = '2000000',
+  stressedEndingEquityMicros = fixtureYieldEndingEquityMicros,
 ): EvaluationResult => {
-  const strategyEndingEquityMicros = status === 'PASS' ? '2000000' : fixtureInitialCapitalMicros
+  const strategyEndingEquityMicros = status === 'PASS' ? fixtureYieldEndingEquityMicros : fixtureInitialCapitalMicros
   const strategyPoints = performanceSeriesFixture(
     strategyEndingEquityMicros,
-    status === 'PASS' ? { cashYieldMicros: '1000000' } : {},
+    status === 'PASS' ? { cashYieldMicros: fixtureCashYieldMicros } : {},
   )
   const strategy = exactMetrics(strategyPoints)
   const buyAndHoldPoints = performanceSeriesFixture(fixtureInitialCapitalMicros)
@@ -369,9 +378,9 @@ const baselineFixture = (
   const eventPayload = {
     kind: 'cash-yield' as const,
     sessionDate: fixtureSessions[0],
-    elapsedDays: 365,
+    elapsedDays: 1,
     annualYieldBps: 10_000,
-    amountMicros: '1000000',
+    amountMicros: fixtureCashYieldMicros,
   }
 
   const event = { ...eventPayload, id: canonicalHashV1({ runId: fixtureRunId, ...eventPayload }) }
@@ -379,7 +388,7 @@ const baselineFixture = (
     sourceKind: event.kind,
     sourceId: event.id,
     sessionDate: event.sessionDate,
-    amountMicros: '1000000',
+    amountMicros: fixtureCashYieldMicros,
     cashAfterMicros: strategyEndingEquityMicros,
   }
   const cashChange = {
@@ -655,7 +664,7 @@ describe('candidate development command', () => {
         observed: {
           name: 'positive_net_return',
           passed: true,
-          actual: 0.41421356237309515,
+          actual: 0.0013685635169500276,
           required: '>0',
         },
       },
@@ -866,7 +875,10 @@ describe('candidate development command', () => {
     const accounting = { ...evaluation.accounting, baselineSimulation: fullSimulation }
 
     expect(
-      buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting }, fixtureStrategyProtocol),
+      buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting }, fixtureStrategyProtocol, [
+        ...fixtureOfficialSessions,
+        suffixDate,
+      ]),
     ).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
@@ -1049,7 +1061,7 @@ describe('candidate development command', () => {
     const baselineWithWrongInterval = {
       ...baseline,
       events: baseline.events.map((event) =>
-        event.id === baselineYield.id ? { ...baselineYield, elapsedDays: 364 } : event,
+        event.id === baselineYield.id ? { ...baselineYield, elapsedDays: 2 } : event,
       ),
     }
     expect(
@@ -1063,8 +1075,8 @@ describe('candidate development command', () => {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
         reason: 'binding-mismatch',
         field: 'baseline.cashYield.elapsedDays',
-        expected: 365,
-        observed: 364,
+        expected: 1,
+        observed: 2,
       },
     })
 
@@ -1077,7 +1089,7 @@ describe('candidate development command', () => {
     const accounting = {
       ...evaluation.accounting,
       stressedEvents: evaluation.accounting.stressedEvents.map((event) =>
-        event.id === stressedYield.id ? { ...stressedYield, elapsedDays: 1 } : event,
+        event.id === stressedYield.id ? { ...stressedYield, elapsedDays: 2 } : event,
       ),
     }
     expect(
@@ -1087,8 +1099,40 @@ describe('candidate development command', () => {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
         reason: 'binding-mismatch',
         field: 'stressed.cashYield.elapsedDays',
-        expected: 365,
-        observed: 1,
+        expected: 1,
+        observed: 2,
+      },
+    })
+  })
+
+  test('binds the accounting predecessor to the immediately preceding official session', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const evaluation = commandEvaluationFixture(report, baseline)
+    const skippedSession = '2019-12-30' as IsoDate
+    const accounting = {
+      ...evaluation.accounting,
+      baselineSimulation: {
+        ...evaluation.accounting.baselineSimulation,
+        dailyMarks: evaluation.accounting.baselineSimulation.dailyMarks.map((mark, index) =>
+          index === 0 ? { ...mark, sessionDate: skippedSession } : mark,
+        ),
+      },
+    }
+
+    expect(
+      buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting }, fixtureStrategyProtocol, [
+        skippedSession,
+        ...fixtureOfficialSessions,
+      ]),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'baseline.calendar.sessionDate',
+        index: 1,
+        expected: fixtureAccountingStart,
+        observed: fixtureSessions[0],
       },
     })
   })

@@ -116,11 +116,12 @@ export interface CandidateDevelopmentCommandDecision {
 }
 
 export interface CandidateDevelopmentCommandReportMaterial {
-  readonly schemaVersion: 'bayn.candidate-development-command-report.v3'
+  readonly schemaVersion: 'bayn.candidate-development-command-report.v4'
   readonly candidateOrdinal: number
   readonly priorTrialCount: number
   readonly strategyProtocolHash: string
   readonly strategyProtocol: CandidateDevelopmentStrategyProtocol
+  readonly officialSessions: CandidateDevelopmentPreflightInput['officialSessions']
   readonly decision: CandidateDevelopmentCommandDecision
   readonly baseline: EvaluationResult
   readonly accounting: CandidateDevelopmentAccountingEvidence
@@ -662,6 +663,41 @@ const validateCashYieldIntervals = (
   return Result.succeed(undefined)
 }
 
+const validateAccountingCalendar = (
+  field: 'baseline' | 'stressed',
+  officialSessions: CandidateDevelopmentPreflightInput['officialSessions'],
+  simulation: EvaluationResult['simulation'],
+): Result.Result<void, CandidateDevelopmentCommandFailure> => {
+  const first = simulation.dailyMarks.at(0)
+  if (first === undefined) {
+    return Result.fail(
+      markedEquityFailure('binding-mismatch', null, `${field}.calendar`, 'nonempty accounting marks', 0),
+    )
+  }
+  const startIndex = officialSessions.indexOf(first.sessionDate)
+  if (startIndex < 0 || startIndex + simulation.dailyMarks.length > officialSessions.length) {
+    return Result.fail(
+      markedEquityFailure(
+        'binding-mismatch',
+        null,
+        `${field}.calendar.start`,
+        'contiguous slice of official sessions',
+        first.sessionDate,
+      ),
+    )
+  }
+  for (let index = 0; index < simulation.dailyMarks.length; index += 1) {
+    const expected = officialSessions[startIndex + index]
+    const observed = simulation.dailyMarks[index].sessionDate
+    if (expected !== observed) {
+      return Result.fail(
+        markedEquityFailure('binding-mismatch', index, `${field}.calendar.sessionDate`, expected ?? null, observed),
+      )
+    }
+  }
+  return Result.succeed(undefined)
+}
+
 const validateAccountingUniverse = (
   field: 'baseline' | 'stressed',
   universe: readonly string[],
@@ -823,6 +859,7 @@ const validateCandidateDevelopmentAccounting = (
   report: CandidateDevelopmentReport,
   evaluation: CandidateDevelopmentCommandEvaluation,
   strategyProtocol: CandidateDevelopmentStrategyProtocol,
+  officialSessions: CandidateDevelopmentPreflightInput['officialSessions'],
 ): Result.Result<CandidateDevelopmentAccountingValidation, CandidateDevelopmentCommandFailure> => {
   const { accounting, baseline } = evaluation
   const scalarBindings = [
@@ -880,6 +917,8 @@ const validateCandidateDevelopmentAccounting = (
     if (Result.isFailure(binding)) return Result.fail(binding.failure)
   }
   const domainBindings = Result.all({
+    baselineCalendar: validateAccountingCalendar('baseline', officialSessions, accounting.baselineSimulation),
+    stressedCalendar: validateAccountingCalendar('stressed', officialSessions, accounting.stressedSimulation),
     baselineUniverse: validateAccountingUniverse(
       'baseline',
       strategyProtocol.universe,
@@ -1244,11 +1283,12 @@ export const buildCandidateDevelopmentCommandReport = (
   report: CandidateDevelopmentReport,
   evaluation: CandidateDevelopmentCommandEvaluation,
   strategyProtocol: CandidateDevelopmentStrategyProtocol,
+  officialSessions: CandidateDevelopmentPreflightInput['officialSessions'],
 ): Result.Result<CandidateDevelopmentCommandReport, CandidateDevelopmentCommandFailure> =>
   pipe(
     Result.all({
       protocol: validateCandidateDevelopmentStrategyProtocol(report, evaluation, strategyProtocol),
-      accounting: validateCandidateDevelopmentAccounting(report, evaluation, strategyProtocol),
+      accounting: validateCandidateDevelopmentAccounting(report, evaluation, strategyProtocol, officialSessions),
     }),
     Result.flatMap(({ accounting }) => recomputeCandidateDevelopmentMetrics(report, evaluation, accounting)),
     Result.flatMap((metrics) =>
@@ -1264,11 +1304,12 @@ export const buildCandidateDevelopmentCommandReport = (
     ),
     Result.flatMap(({ doubledCostAnnualizedReturn, economicPass }) => {
       const material: CandidateDevelopmentCommandReportMaterial = {
-        schemaVersion: 'bayn.candidate-development-command-report.v3',
+        schemaVersion: 'bayn.candidate-development-command-report.v4',
         candidateOrdinal: report.protocolIdentity.candidateOrdinal,
         priorTrialCount: report.protocolIdentity.priorTrialCount,
         strategyProtocolHash: report.comparisonSemantics.strategyProtocolHash,
         strategyProtocol,
+        officialSessions,
         decision: decideCandidateDevelopment(report, evaluation.baseline, doubledCostAnnualizedReturn, economicPass),
         baseline: evaluation.baseline,
         accounting: evaluation.accounting,
@@ -1306,7 +1347,14 @@ export const executeCandidateDevelopmentProgram = <Registration, DevelopmentData
     Effect.flatMap((report) =>
       evaluation === undefined
         ? Effect.fail<CandidateDevelopmentCommandFailure>({ _tag: 'CandidateDevelopmentCommandEvaluationMissing' })
-        : Effect.fromResult(buildCandidateDevelopmentCommandReport(report, evaluation, program.strategyProtocol)),
+        : Effect.fromResult(
+            buildCandidateDevelopmentCommandReport(
+              report,
+              evaluation,
+              program.strategyProtocol,
+              program.input.officialSessions,
+            ),
+          ),
     ),
   )
 }
