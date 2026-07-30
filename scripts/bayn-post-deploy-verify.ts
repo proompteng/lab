@@ -7,6 +7,7 @@ const SOURCE_PATTERN = /^[0-9a-f]{40}$/
 const TAG_PATTERN = /^sha-([0-9a-f]{40})$/
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
 const IMAGE_REPOSITORY = 'registry.ide-newton.ts.net/lab/bayn'
+const MAXIMUM_CLOCK_SKEW_MS = 5_000
 const REQUIRED_DEPENDENCIES = ['postgresql', 'signal', 'tigerBeetle', 'evidence', 'cycle', 'cycleRunner'] as const
 const REQUIRED_ALERTS = [
   'cycleStalled',
@@ -101,6 +102,21 @@ const requireEqual = (
   retryable: boolean,
 ): void => {
   if (actual !== expected) fail(code, `${path} did not match the required value`, retryable)
+}
+
+const requireFreshInstant = (value: unknown, path: string, nowMs: number, maximumAgeMs: number): number => {
+  const source = string(value, path)
+  const observedAtMs = Date.parse(source)
+  if (!Number.isFinite(observedAtMs)) {
+    fail('ENDPOINT_UNAVAILABLE', `${path} is not a valid instant`, true)
+  }
+  if (observedAtMs > nowMs + MAXIMUM_CLOCK_SKEW_MS) {
+    fail('ENDPOINT_UNAVAILABLE', `${path} is unexpectedly in the future`, true)
+  }
+  if (nowMs - observedAtMs >= maximumAgeMs) {
+    fail('ENDPOINT_UNAVAILABLE', `${path} is stale`, true)
+  }
+  return observedAtMs
 }
 
 const parseYaml = (source: string, path: string): JsonRecord => {
@@ -395,7 +411,7 @@ const validatePod = (podsValue: unknown, expected: ExpectedPromotion): void => {
   }
 }
 
-const validateReadiness = (readinessValue: unknown): void => {
+const validateReadiness = (readinessValue: unknown, nowMs: number, maximumEvidenceAgeMs: number): void => {
   const readiness = record(readinessValue, 'readiness')
   requireEqual(readiness.ready, true, 'readiness.ready', 'ENDPOINT_UNAVAILABLE', true)
   requireEqual(readiness.status, 'READY', 'readiness.status', 'ENDPOINT_UNAVAILABLE', true)
@@ -405,7 +421,7 @@ const validateReadiness = (readinessValue: unknown): void => {
   if (integer(readiness.probeSequence, 'readiness.probeSequence') < 1) {
     fail('ENDPOINT_UNAVAILABLE', 'readiness probe sequence has not advanced', true)
   }
-  string(readiness.checkedAt, 'readiness.checkedAt')
+  requireFreshInstant(readiness.checkedAt, 'readiness.checkedAt', nowMs, maximumEvidenceAgeMs)
 }
 
 const reconciliationStaleThresholdMs = (metricsValue: unknown): number => {
@@ -486,6 +502,7 @@ const validateStatus = (
   statusValue: unknown,
   expected: ExpectedPromotion,
   reconciliationStaleThresholdMs: number,
+  nowMs: number,
 ): void => {
   assertNoSensitiveFields(statusValue)
   const status = record(statusValue, 'status')
@@ -496,18 +513,29 @@ const validateStatus = (
   if (integer(operational.probeSequence, 'status.operational.probeSequence') < 1) {
     fail('ENDPOINT_UNAVAILABLE', 'status operational probe sequence has not advanced', true)
   }
-  string(operational.checkedAt, 'status.operational.checkedAt')
+  requireFreshInstant(operational.checkedAt, 'status.operational.checkedAt', nowMs, reconciliationStaleThresholdMs)
   const dependencies = record(status.dependencies, 'status.dependencies')
   for (const name of REQUIRED_DEPENDENCIES) {
     const dependency = record(dependencies[name], `status.dependencies.${name}`)
     requireEqual(dependency.status, 'AVAILABLE', `status.dependencies.${name}.status`, 'ENDPOINT_UNAVAILABLE', true)
     requireEqual(dependency.error, null, `status.dependencies.${name}.error`, 'ENDPOINT_UNAVAILABLE', true)
-    string(dependency.checkedAt, `status.dependencies.${name}.checkedAt`)
+    requireFreshInstant(
+      dependency.checkedAt,
+      `status.dependencies.${name}.checkedAt`,
+      nowMs,
+      reconciliationStaleThresholdMs,
+    )
   }
   for (const [name, value] of Object.entries(dependencies)) {
     const dependency = record(value, `status.dependencies.${name}`)
     requireEqual(dependency.status, 'AVAILABLE', `status.dependencies.${name}.status`, 'ENDPOINT_UNAVAILABLE', true)
     requireEqual(dependency.error, null, `status.dependencies.${name}.error`, 'ENDPOINT_UNAVAILABLE', true)
+    requireFreshInstant(
+      dependency.checkedAt,
+      `status.dependencies.${name}.checkedAt`,
+      nowMs,
+      reconciliationStaleThresholdMs,
+    )
   }
   const loop = record(status.autonomousCycleLoop, 'status.autonomousCycleLoop')
   requireEqual(loop.configured, true, 'status.autonomousCycleLoop.configured', 'PRODUCTION_CONTRACT_VIOLATION', false)
@@ -517,7 +545,12 @@ const validateStatus = (
   }
   const lastPass = record(loop.lastPass, 'status.autonomousCycleLoop.lastPass')
   requireEqual(lastPass.result, 'SUCCESS', 'status.autonomousCycleLoop.lastPass.result', 'ENDPOINT_UNAVAILABLE', true)
-  string(lastPass.observedAt, 'status.autonomousCycleLoop.lastPass.observedAt')
+  requireFreshInstant(
+    lastPass.observedAt,
+    'status.autonomousCycleLoop.lastPass.observedAt',
+    nowMs,
+    reconciliationStaleThresholdMs,
+  )
   string(lastPass.outcome, 'status.autonomousCycleLoop.lastPass.outcome')
   validateAuthority(status.authority)
 
@@ -525,7 +558,7 @@ const validateStatus = (
   requireEqual(broker.configured, true, 'status.broker.configured', 'PRODUCTION_CONTRACT_VIOLATION', false)
   requireEqual(broker.accountBound, true, 'status.broker.accountBound', 'ENDPOINT_UNAVAILABLE', true)
   requireEqual(broker.readAvailable, true, 'status.broker.readAvailable', 'ENDPOINT_UNAVAILABLE', true)
-  string(broker.checkedAt, 'status.broker.checkedAt')
+  requireFreshInstant(broker.checkedAt, 'status.broker.checkedAt', nowMs, reconciliationStaleThresholdMs)
   requireEqual(
     broker.executionEligible,
     false,
@@ -550,7 +583,7 @@ const validateStatus = (
     fail('ENDPOINT_UNAVAILABLE', 'status.cycle.condition is not operational', true)
   }
   string(cycle.reason, 'status.cycle.reason')
-  string(cycle.checkedAt, 'status.cycle.checkedAt')
+  requireFreshInstant(cycle.checkedAt, 'status.cycle.checkedAt', nowMs, reconciliationStaleThresholdMs)
   requireEqual(cycle.zeroMutation, true, 'status.cycle.zeroMutation', 'PRODUCTION_CONTRACT_VIOLATION', false)
   requireEqual(cycle.error, null, 'status.cycle.error', 'ENDPOINT_UNAVAILABLE', true)
   const mutations = record(cycle.mutations, 'status.cycle.mutations')
@@ -609,7 +642,12 @@ const validateStatus = (
     'ENDPOINT_UNAVAILABLE',
     true,
   )
-  string(reconciliation.reconciledAt, 'status.cycle.reconciliation.reconciledAt')
+  requireFreshInstant(
+    reconciliation.reconciledAt,
+    'status.cycle.reconciliation.reconciledAt',
+    nowMs,
+    reconciliationStaleThresholdMs,
+  )
   const reconciliationAgeMs = integer(cycle.reconciliationAgeMs, 'status.cycle.reconciliationAgeMs')
   if (reconciliationAgeMs < 0) {
     fail('ENDPOINT_UNAVAILABLE', 'status.cycle.reconciliationAgeMs cannot be negative', true)
@@ -644,6 +682,7 @@ export const validateSnapshot = (
   reconciledRevision: string,
   expected: ExpectedPromotion,
   promotionRevision = reconciledRevision,
+  nowMs = Date.now(),
 ): void => {
   if (!SOURCE_PATTERN.test(reconciledRevision) || !SOURCE_PATTERN.test(promotionRevision)) {
     fail('INVALID_MANIFEST', 'Argo revisions must be full commit SHAs', false)
@@ -651,8 +690,9 @@ export const validateSnapshot = (
   validateArgo(snapshot.application, reconciledRevision, promotionRevision, expected)
   validateDeployment(snapshot.deployment, expected)
   validatePod(snapshot.pods, expected)
-  validateReadiness(snapshot.readiness)
-  validateStatus(snapshot.status, expected, reconciliationStaleThresholdMs(snapshot.metrics))
+  const maximumEvidenceAgeMs = reconciliationStaleThresholdMs(snapshot.metrics)
+  validateReadiness(snapshot.readiness, nowMs, maximumEvidenceAgeMs)
+  validateStatus(snapshot.status, expected, maximumEvidenceAgeMs, nowMs)
 }
 
 export const redactSensitive = (message: string): string =>

@@ -11,8 +11,9 @@ import {
   retryVerification,
   verifyArgoRevision,
   validateReadOnlyPermissions,
-  validateSnapshot,
+  validateSnapshot as validateProductionSnapshot,
   VerificationFailure,
+  type ExpectedPromotion,
   type VerificationSnapshot,
 } from './bayn-post-deploy-verify'
 
@@ -25,6 +26,7 @@ const oldDigest = 'sha256:5b46c9b7ed1ca3f7617c9357f0fedca6226badd037ea4fbed2daf7
 const repository = 'registry.ide-newton.ts.net/lab/bayn'
 const tag = `sha-${sourceRevision}`
 const imageReference = `${repository}:${tag}@${digest}`
+const verificationNowMs = Date.parse('2026-07-30T06:52:30.000Z')
 
 const kustomization = `
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -59,6 +61,15 @@ spec:
 `
 
 const expected = parseExpectedPromotion(kustomization, deploymentManifest)
+
+const validateSnapshot = (
+  snapshot: VerificationSnapshot,
+  reconciledRevision: string,
+  expectedPromotion: ExpectedPromotion,
+  promotionRevision = reconciledRevision,
+): void => {
+  validateProductionSnapshot(snapshot, reconciledRevision, expectedPromotion, promotionRevision, verificationNowMs)
+}
 
 const dependency = () => ({ status: 'AVAILABLE', checkedAt: '2026-07-30T06:52:25.210Z', error: null })
 
@@ -486,6 +497,55 @@ describe('production snapshot', () => {
       'bayn_reconciliation_stale_threshold_seconds 121',
     ].join('\n')
     expect(captureFailure(() => validateSnapshot(duplicate, expectedArgoRevision, expected)).code).toBe(
+      'ENDPOINT_UNAVAILABLE',
+    )
+  })
+
+  test.each([
+    [
+      'readiness probe',
+      (snapshot: VerificationSnapshot, staleAt: string) => ((snapshot.readiness as any).checkedAt = staleAt),
+    ],
+    [
+      'operational health probe',
+      (snapshot: VerificationSnapshot, staleAt: string) => ((snapshot.status as any).operational.checkedAt = staleAt),
+    ],
+    [
+      'dependency health probe',
+      (snapshot: VerificationSnapshot, staleAt: string) =>
+        ((snapshot.status as any).dependencies.postgresql.checkedAt = staleAt),
+    ],
+    [
+      'autonomous loop pass',
+      (snapshot: VerificationSnapshot, staleAt: string) =>
+        ((snapshot.status as any).autonomousCycleLoop.lastPass.observedAt = staleAt),
+    ],
+    [
+      'broker probe',
+      (snapshot: VerificationSnapshot, staleAt: string) => ((snapshot.status as any).broker.checkedAt = staleAt),
+    ],
+    [
+      'cycle projection',
+      (snapshot: VerificationSnapshot, staleAt: string) => ((snapshot.status as any).cycle.checkedAt = staleAt),
+    ],
+    [
+      'reconciliation receipt',
+      (snapshot: VerificationSnapshot, staleAt: string) =>
+        ((snapshot.status as any).cycle.reconciliation.reconciledAt = staleAt),
+    ],
+  ])('rejects stale cached %s evidence', (_name, mutate) => {
+    const snapshot = clone()
+    mutate(snapshot, '2026-07-30T06:50:29.999Z')
+    ;(snapshot.status as any).cycle.reconciliationAgeMs = 1
+    expect(captureFailure(() => validateSnapshot(snapshot, expectedArgoRevision, expected)).code).toBe(
+      'ENDPOINT_UNAVAILABLE',
+    )
+  })
+
+  test('rejects timestamps beyond the bounded clock-skew allowance', () => {
+    const snapshot = clone()
+    ;(snapshot.status as any).operational.checkedAt = '2026-07-30T06:52:35.001Z'
+    expect(captureFailure(() => validateSnapshot(snapshot, expectedArgoRevision, expected)).code).toBe(
       'ENDPOINT_UNAVAILABLE',
     )
   })
