@@ -2610,6 +2610,24 @@ const candidateDevelopmentSourceGit: CandidateDevelopmentSourceGit = {
   bytes: gitBytes,
 }
 
+const runCandidateDevelopmentSourcePair = async <Left, Right>(
+  outerSignal: AbortSignal,
+  left: (signal: AbortSignal) => Promise<Left>,
+  right: (signal: AbortSignal) => Promise<Right>,
+): Promise<readonly [Left, Right]> => {
+  const controller = new AbortController()
+  const signal = AbortSignal.any([outerSignal, controller.signal])
+  const leftPromise = left(signal)
+  const rightPromise = right(signal)
+  try {
+    return await Promise.all([leftPromise, rightPromise])
+  } catch (cause) {
+    controller.abort(cause)
+    await Promise.allSettled([leftPromise, rightPromise])
+    throw cause
+  }
+}
+
 const sha256Bytes = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
 
 const forbiddenCandidateArtifactIdentifiers = new Set([
@@ -2766,14 +2784,17 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
       }
       const moduleSpec = `${sourceRevision}:${moduleRepositoryPath.success}`
       const sourceManifestSpec = `${sourceRevision}:${sourceManifestRepositoryPath.success}`
-      const [moduleGitBytes, sourceManifestGitBytes] = await Promise.all([
-        sourceStep('verify-module-blob', () =>
-          sourceGit.bytes(repositoryRoot, ['cat-file', 'blob', moduleSpec], signal),
-        ),
-        sourceStep('verify-source-manifest-blob', () =>
-          sourceGit.bytes(repositoryRoot, ['cat-file', 'blob', sourceManifestSpec], signal),
-        ),
-      ])
+      const [moduleGitBytes, sourceManifestGitBytes] = await runCandidateDevelopmentSourcePair(
+        signal,
+        (batchSignal) =>
+          sourceStep('verify-module-blob', () =>
+            sourceGit.bytes(repositoryRoot, ['cat-file', 'blob', moduleSpec], batchSignal),
+          ),
+        (batchSignal) =>
+          sourceStep('verify-source-manifest-blob', () =>
+            sourceGit.bytes(repositoryRoot, ['cat-file', 'blob', sourceManifestSpec], batchSignal),
+          ),
+      )
       const sourceManifestJson = await sourceStep(
         'decode-source-manifest',
         async () => JSON.parse(sourceManifestGitBytes.toString('utf8')) as unknown,
@@ -2792,12 +2813,17 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
       if (Result.isFailure(moduleFormat)) {
         throw new CandidateDevelopmentSourceVerificationError('verify-module-format', moduleFormat.failure)
       }
-      const [moduleBlobOid, sourceManifestBlobOid] = await Promise.all([
-        sourceStep('verify-module-blob', () => sourceGit.text(repositoryRoot, ['rev-parse', moduleSpec], signal)),
-        sourceStep('verify-source-manifest-blob', () =>
-          sourceGit.text(repositoryRoot, ['rev-parse', sourceManifestSpec], signal),
-        ),
-      ])
+      const [moduleBlobOid, sourceManifestBlobOid] = await runCandidateDevelopmentSourcePair(
+        signal,
+        (batchSignal) =>
+          sourceStep('verify-module-blob', () =>
+            sourceGit.text(repositoryRoot, ['rev-parse', moduleSpec], batchSignal),
+          ),
+        (batchSignal) =>
+          sourceStep('verify-source-manifest-blob', () =>
+            sourceGit.text(repositoryRoot, ['rev-parse', sourceManifestSpec], batchSignal),
+          ),
+      )
       const files: CandidateDevelopmentVerifiedSourceFiles = {
         schemaVersion: 'bayn.candidate-development-verified-source-files.v1',
         sourceRevision,

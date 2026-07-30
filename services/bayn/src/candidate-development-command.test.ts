@@ -2601,6 +2601,62 @@ describe('candidate development command', () => {
     }
   })
 
+  test('aborts and joins a sibling source Git read after batch failure', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'bayn-candidate-source-pair-abort-'))
+    const modulePath = join(directory, 'program.mjs')
+    const sourceManifestPath = join(directory, 'source-manifest.json')
+    const sourceRevision = 'a'.repeat(40)
+    let siblingStarted = false
+    let siblingAborted = false
+    let siblingSettled = false
+    const sourceGit: CandidateDevelopmentSourceGit = {
+      text: (_repositoryRoot, args) => {
+        if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return Promise.resolve(directory)
+        if (args[0] === 'rev-parse' && args[1] === 'HEAD') return Promise.resolve(sourceRevision)
+        return Promise.reject(new Error(`unexpected Git text command: ${args.join(' ')}`))
+      },
+      bytes: (_repositoryRoot, args, signal) => {
+        const spec = args.at(-1) ?? ''
+        if (spec.endsWith(':program.mjs')) return Promise.reject(new Error('module blob failed'))
+        return new Promise((_resolve, reject) => {
+          siblingStarted = true
+          if (signal === undefined) {
+            siblingSettled = true
+            reject(new Error('paired source read did not receive an abort signal'))
+            return
+          }
+          signal.addEventListener(
+            'abort',
+            () => {
+              siblingAborted = true
+              siblingSettled = true
+              reject(signal.reason ?? new Error('paired source read aborted'))
+            },
+            { once: true },
+          )
+        })
+      },
+    }
+
+    try {
+      await writeFile(modulePath, 'export const candidateDevelopmentArtifact = {}\n')
+      await writeFile(sourceManifestPath, '{}\n')
+      const failure = await Effect.runPromise(
+        Effect.flip(verifyCandidateDevelopmentSourceFiles(modulePath, sourceManifestPath, sourceGit)),
+      )
+
+      expect(failure).toMatchObject({
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-module-blob',
+      })
+      expect(siblingStarted).toBe(true)
+      expect(siblingAborted).toBe(true)
+      expect(siblingSettled).toBe(true)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('interrupts dynamic module evaluation without detaching it', async () => {
     const program = {
       schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
