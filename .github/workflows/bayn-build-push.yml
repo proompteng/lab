@@ -63,8 +63,10 @@ on:
 concurrency:
   group: >-
     ${{ github.workflow }}-${{
-      (github.event_name == 'issue_comment' || github.event_name == 'schedule') &&
-      'retry-trigger' ||
+      github.event_name == 'schedule' &&
+      'retry-schedule' ||
+      github.event_name == 'issue_comment' &&
+      format('retry-comment-{0}', github.event.issue.number) ||
       'main'
     }}
   cancel-in-progress: true
