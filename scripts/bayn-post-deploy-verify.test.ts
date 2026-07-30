@@ -771,6 +771,7 @@ describe('redaction and permissions', () => {
   })
 
   test.each([
+    ['create', 'services/proxy'],
     ['update', 'deployments.apps/scale'],
     ['create', 'pods/eviction'],
   ])('rejects %s authority on destructive subresource %s', async (grantedVerb, grantedResource) => {

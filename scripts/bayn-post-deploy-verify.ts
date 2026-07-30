@@ -766,6 +766,7 @@ export const validateReadOnlyPermissions = async (run: RunCommand, signal: Abort
   await checkReadPermission(run, signal, 'get', 'deployments.apps', 'bayn')
   await checkReadPermission(run, signal, 'list', 'pods', 'bayn')
   await checkReadPermission(run, signal, 'get', 'services/proxy', 'bayn')
+  await checkWriteDenied(run, signal, 'services/proxy', 'bayn')
   await checkWriteDenied(run, signal, 'applications.argoproj.io', 'argocd')
   await checkWriteDenied(run, signal, 'deployments.apps', 'bayn')
   await checkWriteDenied(run, signal, 'deployments.apps/scale', 'bayn')
