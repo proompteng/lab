@@ -20,6 +20,7 @@ import {
   type CandidateDevelopmentReport,
   type CandidateDevelopmentRunFailure,
 } from './candidate-development'
+import { frozenCandidateDevelopmentTrialHistory } from './candidate-development-calendar'
 import {
   type DailyPerformancePoint,
   DailyPerformanceSeriesArtifactSchema,
@@ -589,6 +590,36 @@ export const bindCandidateDevelopmentVerifiedSource = (
   files: CandidateDevelopmentVerifiedSourceFiles,
   input: CandidateDevelopmentPreflightInput,
 ): Result.Result<CandidateDevelopmentVerifiedSource, CandidateDevelopmentCommandFailure> => {
+  const completedCandidateOrdinals = frozenCandidateDevelopmentTrialHistory.completedCandidateOrdinals
+  for (let index = 0; index < completedCandidateOrdinals.length; index += 1) {
+    if (completedCandidateOrdinals[index] !== index + 1) {
+      return Result.fail(
+        sourceVerificationFailure('verify-program-binding', {
+          field: 'trialHistory.completedCandidateOrdinals',
+          expected: index + 1,
+          observed: completedCandidateOrdinals[index],
+        }),
+      )
+    }
+  }
+  const expectedPriorTrialCount = completedCandidateOrdinals.length
+  const expectedCandidateOrdinal = expectedPriorTrialCount + 1
+  if (input.priorTrialCount !== expectedPriorTrialCount || input.candidateOrdinal !== expectedCandidateOrdinal) {
+    return Result.fail(
+      sourceVerificationFailure('verify-program-binding', {
+        field: 'trialHistory',
+        expected: {
+          candidateOrdinal: expectedCandidateOrdinal,
+          priorTrialCount: expectedPriorTrialCount,
+          history: frozenCandidateDevelopmentTrialHistory,
+        },
+        observed: {
+          candidateOrdinal: input.candidateOrdinal,
+          priorTrialCount: input.priorTrialCount,
+        },
+      }),
+    )
+  }
   const manifest = files.sourceManifest
   const mismatches = [
     ['candidateOrdinal', input.candidateOrdinal, manifest.candidateOrdinal],
@@ -621,6 +652,7 @@ export const bindCandidateDevelopmentVerifiedSource = (
         blobOid: files.sourceManifestBlobOid,
         sha256: files.sourceManifestSha256,
       },
+      trialHistory: frozenCandidateDevelopmentTrialHistory,
       input,
     }),
     Result.mapError((cause) => sourceVerificationFailure('derive-run-identity', cause)),
@@ -1451,6 +1483,7 @@ export const validateCandidateDevelopmentAccountingReplay = (
     [`${field}.replay.monetaryEvents`, replayedMonetaryEvents, monetaryEvents],
     [`${field}.replay.orders`, replay.success.simulation.orders, simulation.orders],
     [`${field}.replay.cashChanges`, replay.success.simulation.cashChanges, simulation.cashChanges],
+    [`${field}.replay.dailyMarks`, replay.success.simulation.dailyMarks, simulation.dailyMarks],
   ] as const
   for (const [name, expected, observed] of bindings) {
     const binding = requireCanonicalEvidenceEqual(name, expected, observed)

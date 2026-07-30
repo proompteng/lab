@@ -143,11 +143,13 @@ const fixtureMarketBars = fixtureOfficialSessions.flatMap((sessionDate) =>
   }),
 )
 
-const zeroPositionFixture = (sessionDate: IsoDate) => ({
-  symbol: 'SPY',
+const zeroPositionFixture = (sessionDate: IsoDate, symbol = 'SPY') => ({
+  symbol,
   quantityMicros: '0',
   costBasisMicros: '0',
-  priceMicros: successOf(referencePriceMicros(fixtureSpyClose(sessionDate), fixtureExecutionModel)).toString(),
+  priceMicros: successOf(
+    referencePriceMicros(symbol === 'SPY' ? fixtureSpyClose(sessionDate) : 1, fixtureExecutionModel),
+  ).toString(),
   marketValueMicros: '0',
 })
 
@@ -179,7 +181,9 @@ const fullAccountingSimulationFixture = <A extends EvaluationResult['simulation'
         peakEquityMicros: fixtureInitialCapitalMicros,
         drawdown: 0,
         cashMicros: fixtureInitialCapitalMicros,
-        positions: [zeroPositionFixture(fixtureAccountingStart)],
+        positions: fixtureStrategyProtocol.universe.map((symbol) =>
+          zeroPositionFixture(fixtureAccountingStart, symbol),
+        ),
       },
       ...simulation.dailyMarks,
     ],
@@ -822,8 +826,8 @@ describe('candidate development command', () => {
     expect(buildFixtureReport(reportFixture(0.01), tampered)).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
-        reason: 'reconstruction-failed',
-        field: 'accounting',
+        reason: 'binding-mismatch',
+        field: 'baseline.replay.dailyMarks',
       },
     })
   })
@@ -895,10 +899,9 @@ describe('candidate development command', () => {
       buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting }, fixtureStrategyProtocol),
     ).toMatchObject({
       failure: {
-        _tag: 'CandidateDevelopmentCommandPerformanceEvidenceInvalid',
-        series: 'strategy',
-        reason: 'return-mismatch',
-        field: 'netReturn',
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'baseline.replay.dailyMarks',
       },
     })
   })
@@ -931,8 +934,8 @@ describe('candidate development command', () => {
     ).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
-        reason: 'reconstruction-failed',
-        field: 'accounting',
+        reason: 'binding-mismatch',
+        field: 'baseline.replay.dailyMarks',
       },
     })
   })
@@ -1347,7 +1350,7 @@ describe('candidate development command', () => {
           {
             ...predecessor,
             sessionDate: earlierSession,
-            positions: [zeroPositionFixture(earlierSession)],
+            positions: fixtureStrategyProtocol.universe.map((symbol) => zeroPositionFixture(earlierSession, symbol)),
           },
           ...simulation.dailyMarks,
         ],
@@ -1901,6 +1904,72 @@ describe('candidate development command', () => {
     })
   })
 
+  test('binds baseline and stressed daily position basis to deterministic replay', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const firstBaselineMark = baseline.simulation.dailyMarks[0]
+    const forgedBaseline = {
+      ...baseline,
+      simulation: {
+        ...baseline.simulation,
+        dailyMarks: [
+          {
+            ...firstBaselineMark,
+            positions: firstBaselineMark.positions.map((position) => ({ ...position, costBasisMicros: '1' })),
+          },
+          ...baseline.simulation.dailyMarks.slice(1),
+        ],
+      },
+    }
+    expect(buildFixtureReport(report, forgedBaseline)).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'baseline.replay.dailyMarks',
+      },
+    })
+
+    const evaluation = commandEvaluationFixture(report, baseline)
+    const firstStressedMark = report.doubledCost.stressed.simulation.dailyMarks[0]
+    const forgedStressedMark = {
+      ...firstStressedMark,
+      positions: firstStressedMark.positions.map((position) => ({ ...position, costBasisMicros: '1' })),
+    }
+    const stressedSimulation = {
+      ...report.doubledCost.stressed.simulation,
+      dailyMarks: [forgedStressedMark, ...report.doubledCost.stressed.simulation.dailyMarks.slice(1)],
+    }
+    const stressedReport = {
+      ...report,
+      doubledCost: {
+        ...report.doubledCost,
+        stressed: { ...report.doubledCost.stressed, simulation: stressedSimulation },
+      },
+    }
+    const stressedEvaluation = {
+      ...evaluation,
+      stressed: stressedReport.doubledCost.stressed,
+      accounting: {
+        ...evaluation.accounting,
+        stressedSimulation: {
+          ...evaluation.accounting.stressedSimulation,
+          dailyMarks: evaluation.accounting.stressedSimulation.dailyMarks.map((mark) =>
+            mark.sessionDate === forgedStressedMark.sessionDate ? forgedStressedMark : mark,
+          ),
+        },
+      },
+    }
+    expect(
+      buildCandidateDevelopmentCommandReport(stressedReport, stressedEvaluation, fixtureStrategyProtocol),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'stressed.replay.dailyMarks',
+      },
+    })
+  })
+
   test('rejects fabricated buy-and-hold and direct-volatility benchmarks', () => {
     const report = reportFixture(0.01)
     const baseline = baselineFixture()
@@ -2234,6 +2303,47 @@ describe('candidate development command', () => {
         _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
         operation: 'verify-program-binding',
         cause: { field: 'candidateOrdinal', expected: 16, observed: 17 },
+      },
+    })
+  })
+
+  test('rejects colluding trial counts before preregistration', async () => {
+    const input = {
+      candidateOrdinal: 1,
+      priorTrialCount: 0,
+      expectedStrategyProtocolHash: fixtureStrategyProtocolHash,
+      officialSessions: fixtureOfficialSessions,
+      signalSessionDates: fixtureSignalDecisions.map(({ signalDate }) => signalDate),
+      featureLookbackSessions: 126,
+    }
+    const sourceManifest = {
+      ...fixtureSourceManifest,
+      candidateOrdinal: input.candidateOrdinal,
+      priorTrialCount: input.priorTrialCount,
+    }
+    const verifiedFiles = { ...fixtureVerifiedSourceFiles, sourceManifest }
+    const source = `
+      export const candidateDevelopmentArtifact = {
+        schemaVersion: 'bayn.candidate-development-artifact.v1',
+        input: ${JSON.stringify(input)},
+        strategyProtocol: ${JSON.stringify(fixtureStrategyProtocol)},
+        buildEvaluation: () => { throw new Error('must not evaluate') },
+      }
+    `
+    const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
+
+    expect(
+      await Effect.runPromise(Effect.flip(evaluateCandidateDevelopmentArtifact(moduleUrl, verifiedFiles))),
+    ).toMatchObject({
+      _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
+      cause: {
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-program-binding',
+        cause: {
+          field: 'trialHistory',
+          expected: { candidateOrdinal: 16, priorTrialCount: 15 },
+          observed: { candidateOrdinal: 1, priorTrialCount: 0 },
+        },
       },
     })
   })

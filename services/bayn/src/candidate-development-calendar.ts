@@ -1,6 +1,17 @@
 import { candidateDevelopmentCalendarContract } from './candidate-development'
 import type { IsoDate } from './schemas'
 
+export const frozenCandidateDevelopmentTrialHistory = {
+  schemaVersion: 'bayn.candidate-development-trial-history.v1',
+  completedCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+  predecessorTerminalRevision: 'dc2c324b61c8357cffe339ead78371248c888725',
+  candidatePreregistration: {
+    sourceRevision: 'a0dadcd2f6346968bd9df582e4673608afc04592',
+    path: 'services/bayn/candidates/ordinal-16-macro-breadth-regime-preregistration.md',
+    blobOid: 'f602e3c8fd1b85768404d5fbc439775cdcd2570b',
+  },
+} as const
+
 const fullMarketClosures = new Set<IsoDate>([
   '2016-01-18',
   '2016-02-15',
