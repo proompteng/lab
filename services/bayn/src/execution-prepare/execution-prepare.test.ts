@@ -16,6 +16,7 @@ import { renderExecutionPrepareFailure } from './failure'
 import type { ExecutionPrepareGenerationField } from './failure'
 import type { ExecutionPrepareRequest, ExecutionPrepareRuntimeBinding } from './model'
 import { prepareExecution } from './program'
+import { makeExecutionPrepareDiscoveryReceiptFixture } from './test-fixture'
 import { makeExecutionPrepareReceipt, validateExecutionPrepareInput } from './validation'
 
 const hash = (label: string): string => sha256(`execution-prepare:${label}`)
@@ -32,17 +33,37 @@ const strategy = {
   parameterHash: hash('parameters'),
   parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4' as const,
 }
+const strategyProtocolHash = hash('strategy-protocol')
+const qualificationRunId = hash('qualification-run')
+const authorityGenerationHash = hash('observe-generation')
+const riskPolicyHash = hash('risk-policy')
+const reconciliationId = hash('reconciliation')
+const reconciliationContentHash = hash('reconciliation-content')
+const discoveryReceipt = makeExecutionPrepareDiscoveryReceiptFixture({
+  sourceRevision,
+  imageRepository,
+  imageDigest,
+  strategy,
+  strategyProtocolHash,
+  qualificationRunId,
+  accountId,
+  authorityGenerationHash,
+  policyHash: riskPolicyHash,
+  reconciliationId,
+  reconciliationContentHash,
+})
+const discoveredCandidate = discoveryReceipt.candidateFacts.candidates[0]!
 
 const proofPlan = {
   schemaVersion: 'bayn.execution-prepare-proof-plan.v1' as const,
   candidate: {
-    discoveryReceiptHash: hash('discovery-receipt'),
-    immutableBindingHash: hash('immutable-binding'),
-    candidateFactsHash: hash('candidate-facts'),
-    candidateOrdinal: 2,
-    observedPlanIntentId: hash('observed-plan-intent'),
-    cycleId: hash('cycle'),
-    decisionHash: hash('decision'),
+    discoveryReceiptHash: discoveryReceipt.observationReceiptHash,
+    immutableBindingHash: discoveryReceipt.immutableBindingHash,
+    candidateFactsHash: discoveryReceipt.candidateFactsHash,
+    candidateOrdinal: discoveredCandidate.ordinal,
+    observedPlanIntentId: discoveredCandidate.observedPlanIntentId,
+    cycleId: discoveryReceipt.binding.cycle.cycleId,
+    decisionHash: discoveryReceipt.binding.cycle.decisionHash,
   },
   binding: {
     activationSourceRevision: sourceRevision,
@@ -52,23 +73,24 @@ const proofPlan = {
     qualificationImageRepository: imageRepository,
     qualificationImageDigest,
     strategy,
-    strategyProtocolHash: hash('strategy-protocol'),
-    qualificationRunId: hash('qualification-run'),
+    strategyProtocolHash,
+    qualificationRunId,
     qualificationLockId: hash('qualification-lock'),
     qualificationResultHash: hash('qualification-result'),
     protocolHash: hash('protocol'),
     qualificationExecutionPolicyHash: hash('qualification-execution-policy'),
     accountId,
     brokerIdentityHash: hash('broker-identity'),
-    authorityGenerationHash: hash('observe-generation'),
-    riskPolicyHash: hash('risk-policy'),
-    reconciliationId: hash('reconciliation'),
-    reconciliationContentHash: hash('reconciliation-content'),
+    authorityGenerationHash,
+    riskPolicyHash,
+    reconciliationId,
+    reconciliationContentHash,
   },
 }
 
 const request: ExecutionPrepareRequest = {
   schemaVersion: 'bayn.execution-prepare-request.v1',
+  discoveryReceipt,
   proofPlan,
   proofPlanHash: canonicalHashV1OrThrow(proofPlan),
 }
@@ -166,6 +188,108 @@ describe('EXECUTION_PREPARE pure validation', () => {
     expect(drifted).toMatchObject({
       _tag: 'Failure',
       failure: { _tag: 'ExecutionPrepareProofPlanHashMismatch' },
+    })
+  })
+
+  test('rejects every discovery-derived proof field and tampered receipt material', () => {
+    const withCandidate = (candidate: ExecutionPrepareRequest['proofPlan']['candidate']): ExecutionPrepareRequest => {
+      const changedProofPlan = { ...proofPlan, candidate }
+      return { ...request, proofPlan: changedProofPlan, proofPlanHash: canonicalHashV1OrThrow(changedProofPlan) }
+    }
+    const withBinding = (binding: ExecutionPrepareRequest['proofPlan']['binding']): ExecutionPrepareRequest => {
+      const changedProofPlan = { ...proofPlan, binding }
+      return { ...request, proofPlan: changedProofPlan, proofPlanHash: canonicalHashV1OrThrow(changedProofPlan) }
+    }
+    const cases = [
+      {
+        request: withCandidate({ ...proofPlan.candidate, discoveryReceiptHash: hash('foreign-receipt') }),
+        field: 'observationReceiptHash',
+      },
+      {
+        request: withCandidate({ ...proofPlan.candidate, immutableBindingHash: hash('foreign-binding') }),
+        field: 'immutableBindingHash',
+      },
+      {
+        request: withCandidate({ ...proofPlan.candidate, candidateFactsHash: hash('foreign-candidate-facts') }),
+        field: 'candidateFactsHash',
+      },
+      { request: withCandidate({ ...proofPlan.candidate, candidateOrdinal: 1 }), field: 'candidateOrdinal' },
+      {
+        request: withCandidate({ ...proofPlan.candidate, observedPlanIntentId: hash('foreign-intent') }),
+        field: 'observedPlanIntentId',
+      },
+      { request: withCandidate({ ...proofPlan.candidate, cycleId: hash('foreign-cycle') }), field: 'cycleId' },
+      {
+        request: withCandidate({ ...proofPlan.candidate, decisionHash: hash('foreign-decision') }),
+        field: 'decisionHash',
+      },
+      {
+        request: withBinding({ ...proofPlan.binding, activationSourceRevision: '0'.repeat(40) }),
+        field: 'sourceRevision',
+      },
+      {
+        request: withBinding({ ...proofPlan.binding, activationImageRepository: 'registry.test/foreign/bayn' }),
+        field: 'imageRepository',
+      },
+      {
+        request: withBinding({ ...proofPlan.binding, activationImageDigest: `sha256:${'0'.repeat(64)}` }),
+        field: 'imageDigest',
+      },
+      {
+        request: withBinding({
+          ...proofPlan.binding,
+          strategy: { ...proofPlan.binding.strategy, behaviorHash: hash('foreign-strategy') },
+        }),
+        field: 'strategyBehaviorHash',
+      },
+      {
+        request: withBinding({ ...proofPlan.binding, strategyProtocolHash: hash('foreign-strategy-protocol') }),
+        field: 'strategyProtocolHash',
+      },
+      {
+        request: withBinding({ ...proofPlan.binding, qualificationRunId: hash('foreign-qualification') }),
+        field: 'qualificationRunId',
+      },
+      { request: withBinding({ ...proofPlan.binding, accountId: 'foreign-account' }), field: 'accountId' },
+      {
+        request: withBinding({ ...proofPlan.binding, authorityGenerationHash: hash('foreign-generation') }),
+        field: 'authorityGenerationHash',
+      },
+      {
+        request: withBinding({ ...proofPlan.binding, riskPolicyHash: hash('foreign-policy') }),
+        field: 'riskPolicyHash',
+      },
+      {
+        request: withBinding({ ...proofPlan.binding, reconciliationId: hash('foreign-reconciliation') }),
+        field: 'reconciliationId',
+      },
+      {
+        request: withBinding({
+          ...proofPlan.binding,
+          reconciliationContentHash: hash('foreign-reconciliation-content'),
+        }),
+        field: 'reconciliationContentHash',
+      },
+    ] as const
+
+    for (const testCase of cases) {
+      expect(validateExecutionPrepareInput(testCase.request, runtime)).toMatchObject({
+        _tag: 'Failure',
+        failure: { _tag: 'ExecutionPrepareDiscoveryMismatch', field: testCase.field },
+      })
+    }
+
+    const tamperedReceipt = {
+      ...discoveryReceipt,
+      candidateFacts: {
+        ...discoveryReceipt.candidateFacts,
+        candidates: [{ ...discoveredCandidate, observedPlanIntentId: hash('tampered-intent') }],
+      },
+    }
+    const tampered = validateExecutionPrepareInput({ ...request, discoveryReceipt: tamperedReceipt }, runtime)
+    expect(tampered).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExecutionPrepareDiscoveryMismatch', field: 'observationReceiptHash' },
     })
   })
 

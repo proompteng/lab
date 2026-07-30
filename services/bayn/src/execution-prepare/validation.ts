@@ -3,6 +3,7 @@ import { pipe, Result, Schema } from 'effect'
 import { BrokerEnvironment, BrokerProvider } from '../broker/identity'
 import type { CapitalGrantGeneration, CapitalGrantProofBinding } from '../execution/contracts'
 import { Authority } from '../execution/contracts'
+import type { ExecutionCandidateDiscoveryReceipt } from '../execution-candidate-discovery/model'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import { canonicalHashV1Result } from '../hash'
 import {
@@ -13,7 +14,12 @@ import {
   type ExecutionPrepareRequest,
   type ExecutionPrepareRuntimeBinding,
 } from './model'
-import type { ExecutionPrepareFailure, ExecutionPrepareGenerationField, ExecutionPrepareRuntimeField } from './failure'
+import type {
+  ExecutionPrepareDiscoveryField,
+  ExecutionPrepareFailure,
+  ExecutionPrepareGenerationField,
+  ExecutionPrepareRuntimeField,
+} from './failure'
 
 export interface ValidatedExecutionPrepareInput {
   readonly request: ExecutionPrepareRequest
@@ -28,6 +34,97 @@ const runtimeMismatch = <A>(field: ExecutionPrepareRuntimeField): Result.Result<
 
 const generationMismatch = <A>(field: ExecutionPrepareGenerationField): Result.Result<A, ExecutionPrepareFailure> =>
   fail({ _tag: 'ExecutionPrepareGenerationMismatch', field })
+
+const discoveryMismatch = <A>(field: ExecutionPrepareDiscoveryField): Result.Result<A, ExecutionPrepareFailure> =>
+  fail({ _tag: 'ExecutionPrepareDiscoveryMismatch', field })
+
+const discoveryReceiptMaterial = (receipt: ExecutionCandidateDiscoveryReceipt) => {
+  const { observationReceiptHash: _observationReceiptHash, ...material } = receipt
+  return material
+}
+
+const authenticateDiscoveryReceipt = (
+  request: ExecutionPrepareRequest,
+): Result.Result<void, ExecutionPrepareFailure> => {
+  const receipt = request.discoveryReceipt
+  const observationReceiptHash = canonicalHashV1Result(discoveryReceiptMaterial(receipt))
+  if (Result.isFailure(observationReceiptHash)) {
+    return fail({ _tag: 'ExecutionPrepareDiscoveryHashFailed', cause: observationReceiptHash.failure })
+  }
+  if (observationReceiptHash.success !== receipt.observationReceiptHash) {
+    return discoveryMismatch('observationReceiptHash')
+  }
+
+  const immutableBindingHash = canonicalHashV1Result(receipt.binding)
+  if (Result.isFailure(immutableBindingHash)) {
+    return fail({ _tag: 'ExecutionPrepareDiscoveryHashFailed', cause: immutableBindingHash.failure })
+  }
+  if (
+    immutableBindingHash.success !== receipt.immutableBindingHash ||
+    immutableBindingHash.success !== receipt.candidateFacts.immutableBindingHash
+  ) {
+    return discoveryMismatch('immutableBindingHash')
+  }
+
+  const candidateFactsHash = canonicalHashV1Result(receipt.candidateFacts)
+  if (Result.isFailure(candidateFactsHash)) {
+    return fail({ _tag: 'ExecutionPrepareDiscoveryHashFailed', cause: candidateFactsHash.failure })
+  }
+  if (candidateFactsHash.success !== receipt.candidateFactsHash) return discoveryMismatch('candidateFactsHash')
+
+  const candidateBinding = request.proofPlan.candidate
+  const binding = request.proofPlan.binding
+  const candidate = receipt.candidateFacts.candidates[candidateBinding.candidateOrdinal]
+  if (candidate === undefined || candidate.ordinal !== candidateBinding.candidateOrdinal) {
+    return discoveryMismatch('candidateOrdinal')
+  }
+  if (candidateBinding.discoveryReceiptHash !== receipt.observationReceiptHash) {
+    return discoveryMismatch('observationReceiptHash')
+  }
+  if (candidateBinding.immutableBindingHash !== receipt.immutableBindingHash) {
+    return discoveryMismatch('immutableBindingHash')
+  }
+  if (candidateBinding.candidateFactsHash !== receipt.candidateFactsHash) {
+    return discoveryMismatch('candidateFactsHash')
+  }
+  if (candidateBinding.observedPlanIntentId !== candidate.observedPlanIntentId) {
+    return discoveryMismatch('observedPlanIntentId')
+  }
+  if (candidateBinding.cycleId !== receipt.binding.cycle.cycleId) return discoveryMismatch('cycleId')
+  if (candidateBinding.decisionHash !== receipt.binding.cycle.decisionHash) return discoveryMismatch('decisionHash')
+
+  const runtime = receipt.binding.runtime
+  if (runtime.sourceRevision !== binding.activationSourceRevision) return discoveryMismatch('sourceRevision')
+  if (runtime.image.repository !== binding.activationImageRepository) return discoveryMismatch('imageRepository')
+  if (runtime.image.digest !== binding.activationImageDigest) return discoveryMismatch('imageDigest')
+  if (runtime.strategy.name !== binding.strategy.name) return discoveryMismatch('strategyName')
+  if (runtime.strategy.behaviorHash !== binding.strategy.behaviorHash) {
+    return discoveryMismatch('strategyBehaviorHash')
+  }
+  if (runtime.strategy.parameterHash !== binding.strategy.parameterHash) {
+    return discoveryMismatch('strategyParameterHash')
+  }
+  if (runtime.strategy.parameterSchemaVersion !== binding.strategy.parameterSchemaVersion) {
+    return discoveryMismatch('strategyParameterSchemaVersion')
+  }
+  if (runtime.strategyProtocolHash !== binding.strategyProtocolHash) return discoveryMismatch('strategyProtocolHash')
+  if (runtime.qualificationRunId !== binding.qualificationRunId) return discoveryMismatch('qualificationRunId')
+  if (runtime.accountId !== binding.accountId || receipt.candidateFacts.account.id !== binding.accountId) {
+    return discoveryMismatch('accountId')
+  }
+  if (runtime.authorityGenerationHash !== binding.authorityGenerationHash) {
+    return discoveryMismatch('authorityGenerationHash')
+  }
+  if (runtime.policyHash !== binding.riskPolicyHash || receipt.binding.document.policyHash !== binding.riskPolicyHash) {
+    return discoveryMismatch('riskPolicyHash')
+  }
+  if (receipt.binding.document.reconciliationId !== binding.reconciliationId) {
+    return discoveryMismatch('reconciliationId')
+  }
+  return receipt.binding.document.reconciliationHash === binding.reconciliationContentHash
+    ? Result.succeed(undefined)
+    : discoveryMismatch('reconciliationContentHash')
+}
 
 const validateRuntimeAgainstProof = (
   request: ExecutionPrepareRequest,
@@ -75,6 +172,8 @@ export const validateExecutionPrepareInput = (
   }
   const request = decodedRequest.success
   const runtime = decodedRuntime.success
+  const discoveryValidation = authenticateDiscoveryReceipt(request)
+  if (Result.isFailure(discoveryValidation)) return Result.fail(discoveryValidation.failure)
   const runtimeValidation = validateRuntimeAgainstProof(request, runtime)
   if (Result.isFailure(runtimeValidation)) return Result.fail(runtimeValidation.failure)
   const proofPlanHash = canonicalHashV1Result(request.proofPlan)

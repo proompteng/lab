@@ -2,6 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { BrokerEnvironment, BrokerProvider } from '../broker/identity'
 import { RuntimeProvenanceSchema } from '../contracts'
+import { DiscoveryReceiptSchema } from '../execution-candidate-discovery/model'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import { Authority } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
@@ -70,6 +71,7 @@ export type ExecutionPrepareProofPlan = typeof ExecutionPrepareProofPlanSchema.T
 
 export const ExecutionPrepareRequestSchema = Schema.Struct({
   schemaVersion: Schema.Literal(executionPrepareRequestSchemaVersion),
+  discoveryReceipt: DiscoveryReceiptSchema,
   proofPlan: ExecutionPrepareProofPlanSchema,
   proofPlanHash: Sha256Schema,
 })

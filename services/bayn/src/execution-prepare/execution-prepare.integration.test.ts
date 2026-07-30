@@ -34,6 +34,7 @@ import { fixtureProtocol } from '../test-fixtures'
 import type { ExecutionPrepareRequest, ExecutionPrepareRuntimeBinding } from './model'
 import { ExecutionPrepareStoreLive } from './live'
 import { prepareExecution } from './program'
+import { makeExecutionPrepareDiscoveryReceiptFixture } from './test-fixture'
 
 const postgresUrl = process.env.BAYN_TEST_POSTGRES_URL
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
@@ -465,42 +466,58 @@ const makeRequest = (
   reconciliation: ReconciliationFixture,
   overrides: Partial<ExecutionPrepareRequest['proofPlan']['binding']> = {},
 ): ExecutionPrepareRequest => {
+  const binding = {
+    activationSourceRevision: sourceRevision,
+    activationImageRepository: imageRepository,
+    activationImageDigest: imageDigest,
+    qualificationSourceRevision: fixture.lock.sourceRevision,
+    qualificationImageRepository: fixture.lock.image.repository,
+    qualificationImageDigest: fixture.lock.image.digest,
+    strategy,
+    strategyProtocolHash,
+    qualificationRunId: fixture.result.runId,
+    qualificationLockId: fixture.lock.lockId,
+    qualificationResultHash: fixture.result.resultHash,
+    protocolHash: fixture.lock.protocolHash,
+    qualificationExecutionPolicyHash: fixture.lock.policies.execution.contentHash,
+    accountId,
+    brokerIdentityHash: brokerIdentity.identityHash,
+    authorityGenerationHash: baseConfig.alpaca!.authorityGenerationHash,
+    riskPolicyHash: hash('risk-policy'),
+    reconciliationId: reconciliation.reconciliationId,
+    reconciliationContentHash: reconciliation.contentHash,
+    ...overrides,
+  }
+  const discoveryReceipt = makeExecutionPrepareDiscoveryReceiptFixture({
+    sourceRevision: binding.activationSourceRevision,
+    imageRepository: binding.activationImageRepository,
+    imageDigest: binding.activationImageDigest,
+    strategy: binding.strategy,
+    strategyProtocolHash: binding.strategyProtocolHash,
+    qualificationRunId: binding.qualificationRunId,
+    accountId: binding.accountId,
+    authorityGenerationHash: binding.authorityGenerationHash,
+    policyHash: binding.riskPolicyHash,
+    reconciliationId: binding.reconciliationId,
+    reconciliationContentHash: binding.reconciliationContentHash,
+  })
+  const discoveredCandidate = discoveryReceipt.candidateFacts.candidates[0]!
   const proofPlan = {
     schemaVersion: 'bayn.execution-prepare-proof-plan.v1' as const,
     candidate: {
-      discoveryReceiptHash: hash('discovery-receipt'),
-      immutableBindingHash: hash('immutable-binding'),
-      candidateFactsHash: hash('candidate-facts'),
-      candidateOrdinal: 0,
-      observedPlanIntentId: hash('observed-plan-intent'),
-      cycleId: hash('candidate-cycle'),
-      decisionHash: hash('candidate-decision'),
+      discoveryReceiptHash: discoveryReceipt.observationReceiptHash,
+      immutableBindingHash: discoveryReceipt.immutableBindingHash,
+      candidateFactsHash: discoveryReceipt.candidateFactsHash,
+      candidateOrdinal: discoveredCandidate.ordinal,
+      observedPlanIntentId: discoveredCandidate.observedPlanIntentId,
+      cycleId: discoveryReceipt.binding.cycle.cycleId,
+      decisionHash: discoveryReceipt.binding.cycle.decisionHash,
     },
-    binding: {
-      activationSourceRevision: sourceRevision,
-      activationImageRepository: imageRepository,
-      activationImageDigest: imageDigest,
-      qualificationSourceRevision: fixture.lock.sourceRevision,
-      qualificationImageRepository: fixture.lock.image.repository,
-      qualificationImageDigest: fixture.lock.image.digest,
-      strategy,
-      strategyProtocolHash,
-      qualificationRunId: fixture.result.runId,
-      qualificationLockId: fixture.lock.lockId,
-      qualificationResultHash: fixture.result.resultHash,
-      protocolHash: fixture.lock.protocolHash,
-      qualificationExecutionPolicyHash: fixture.lock.policies.execution.contentHash,
-      accountId,
-      brokerIdentityHash: brokerIdentity.identityHash,
-      authorityGenerationHash: baseConfig.alpaca!.authorityGenerationHash,
-      riskPolicyHash: hash('risk-policy'),
-      reconciliationId: reconciliation.reconciliationId,
-      reconciliationContentHash: reconciliation.contentHash,
-      ...overrides,
-    },
+    binding,
   }
   return {
     schemaVersion: 'bayn.execution-prepare-request.v1',
+    discoveryReceipt,
     proofPlan,
     proofPlanHash: canonicalHashV1OrThrow(proofPlan),
   }
@@ -731,6 +748,13 @@ describePostgres('EXECUTION_PREPARE PostgreSQL boundary', () => {
         Effect.gen(function* () {
           yield* prepareFixture(fixture, reconciliation)
           const before = yield* durableSnapshot
+          const mixedProofPlan = {
+            ...request.proofPlan,
+            candidate: {
+              ...request.proofPlan.candidate,
+              observedPlanIntentId: hash('foreign-observed-plan-intent'),
+            },
+          }
           const candidates: readonly [unknown, unknown][] = [
             [{ ...request, unexpected: true }, runtimeBinding(fixture, request)],
             [request, { ...runtimeBinding(fixture, request), accountId: 'drifted-account' }],
@@ -744,6 +768,21 @@ describePostgres('EXECUTION_PREPARE PostgreSQL boundary', () => {
             ],
             [request, { ...runtimeBinding(fixture, request), riskPolicyHash: hash('drifted-policy') }],
             [{ ...request, proofPlanHash: hash('drifted-proof') }, runtimeBinding(fixture, request)],
+            [
+              {
+                ...request,
+                proofPlan: mixedProofPlan,
+                proofPlanHash: canonicalHashV1OrThrow(mixedProofPlan),
+              },
+              runtimeBinding(fixture, request),
+            ],
+            [
+              {
+                ...request,
+                discoveryReceipt: { ...request.discoveryReceipt, observationReceiptHash: hash('tampered-receipt') },
+              },
+              runtimeBinding(fixture, request),
+            ],
           ]
           const failures = []
           for (const [candidateRequest, candidateRuntime] of candidates) {
@@ -760,6 +799,8 @@ describePostgres('EXECUTION_PREPARE PostgreSQL boundary', () => {
         'ExecutionPrepareRuntimeMismatch',
         'ExecutionPrepareRuntimeMismatch',
         'ExecutionPrepareProofPlanHashMismatch',
+        'ExecutionPrepareDiscoveryMismatch',
+        'ExecutionPrepareDiscoveryMismatch',
       ])
       expect(result.after).toEqual(result.before)
     } finally {

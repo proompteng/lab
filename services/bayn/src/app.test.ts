@@ -30,6 +30,7 @@ import { BrokerAccess, BrokerEnvironment, noCapitalAuthority } from './execution
 import type { ExecutionProgram } from './execution/runtime-program'
 import { executionPrepareBoundaryError, validateExecutionPreparePlan } from './entrypoint'
 import type { ExecutionPrepareRequest } from './execution-prepare'
+import { makeExecutionPrepareDiscoveryReceiptFixture } from './execution-prepare/test-fixture'
 import { canonicalHashV1OrThrow } from './hash'
 import type { BrokerProbe } from './health'
 import { HttpServerLive } from './http'
@@ -167,16 +168,33 @@ const prepareConfig = (
   const riskPolicyHash = canonicalHashV1OrThrow(
     Effect.runSync(loadObserveRiskPolicy(autonomous.alpaca.expectedAccountId, fixtureStrategy.parameters.universe)),
   )
+  const strategyProtocolHash = makeStrategyProtocolHash(prepareStrategy)
+  const reconciliationId = 'd'.repeat(64)
+  const reconciliationContentHash = 'e'.repeat(64)
+  const discoveryReceipt = makeExecutionPrepareDiscoveryReceiptFixture({
+    sourceRevision: runtime.build.sourceRevision,
+    imageRepository: runtime.build.imageRepository,
+    imageDigest: runtime.build.imageDigest,
+    strategy: prepareStrategy,
+    strategyProtocolHash,
+    qualificationRunId: pinnedEvaluation.runId,
+    accountId: autonomous.alpaca.expectedAccountId,
+    authorityGenerationHash: autonomous.alpaca.authorityGenerationHash,
+    policyHash: riskPolicyHash,
+    reconciliationId,
+    reconciliationContentHash,
+  })
+  const discoveredCandidate = discoveryReceipt.candidateFacts.candidates[0]!
   const proofPlan = {
     schemaVersion: 'bayn.execution-prepare-proof-plan.v1' as const,
     candidate: {
-      discoveryReceiptHash: '1'.repeat(64),
-      immutableBindingHash: '2'.repeat(64),
-      candidateFactsHash: '3'.repeat(64),
-      candidateOrdinal: 0,
-      observedPlanIntentId: '4'.repeat(64),
-      cycleId: '5'.repeat(64),
-      decisionHash: '6'.repeat(64),
+      discoveryReceiptHash: discoveryReceipt.observationReceiptHash,
+      immutableBindingHash: discoveryReceipt.immutableBindingHash,
+      candidateFactsHash: discoveryReceipt.candidateFactsHash,
+      candidateOrdinal: discoveredCandidate.ordinal,
+      observedPlanIntentId: discoveredCandidate.observedPlanIntentId,
+      cycleId: discoveryReceipt.binding.cycle.cycleId,
+      decisionHash: discoveryReceipt.binding.cycle.decisionHash,
     },
     binding: {
       activationSourceRevision: runtime.build.sourceRevision,
@@ -186,7 +204,7 @@ const prepareConfig = (
       qualificationImageRepository: runtime.build.imageRepository,
       qualificationImageDigest: `sha256:${'7'.repeat(64)}` as const,
       strategy: prepareStrategy,
-      strategyProtocolHash: makeStrategyProtocolHash(prepareStrategy),
+      strategyProtocolHash,
       qualificationRunId: pinnedEvaluation.runId,
       qualificationLockId: '8'.repeat(64),
       qualificationResultHash: '9'.repeat(64),
@@ -196,12 +214,13 @@ const prepareConfig = (
       brokerIdentityHash: autonomous.alpaca.identity.identityHash,
       authorityGenerationHash: autonomous.alpaca.authorityGenerationHash,
       riskPolicyHash,
-      reconciliationId: 'd'.repeat(64),
-      reconciliationContentHash: 'e'.repeat(64),
+      reconciliationId,
+      reconciliationContentHash,
     },
   }
   const executionPrepareRequest: ExecutionPrepareRequest = {
     schemaVersion: 'bayn.execution-prepare-request.v1',
+    discoveryReceipt,
     proofPlan,
     proofPlanHash: canonicalHashV1OrThrow(proofPlan),
   }
@@ -277,6 +296,16 @@ describe('Bayn application composition', () => {
         proofPlanHash: canonicalHashV1OrThrow(proofPlan),
       }
     }
+    const requestWithCandidate = (
+      candidate: ExecutionPrepareRequest['proofPlan']['candidate'],
+    ): ExecutionPrepareRequest => {
+      const proofPlan = { ...base.executionPrepareRequest.proofPlan, candidate }
+      return {
+        ...base.executionPrepareRequest,
+        proofPlan,
+        proofPlanHash: canonicalHashV1OrThrow(proofPlan),
+      }
+    }
     const requests: readonly ExecutionPrepareRequest[] = [
       requestWithBinding({ ...base.executionPrepareRequest.proofPlan.binding, accountId: 'drifted-account' }),
       requestWithBinding({
@@ -292,6 +321,40 @@ describe('Bayn application composition', () => {
       }),
       requestWithBinding({ ...base.executionPrepareRequest.proofPlan.binding, riskPolicyHash: '0'.repeat(64) }),
       { ...base.executionPrepareRequest, proofPlanHash: '0'.repeat(64) },
+      requestWithCandidate({
+        ...base.executionPrepareRequest.proofPlan.candidate,
+        observedPlanIntentId: '0'.repeat(64),
+      }),
+      requestWithCandidate({ ...base.executionPrepareRequest.proofPlan.candidate, candidateOrdinal: 1 }),
+      requestWithCandidate({
+        ...base.executionPrepareRequest.proofPlan.candidate,
+        immutableBindingHash: '0'.repeat(64),
+      }),
+      requestWithCandidate({
+        ...base.executionPrepareRequest.proofPlan.candidate,
+        candidateFactsHash: '0'.repeat(64),
+      }),
+      requestWithCandidate({ ...base.executionPrepareRequest.proofPlan.candidate, cycleId: '0'.repeat(64) }),
+      requestWithCandidate({ ...base.executionPrepareRequest.proofPlan.candidate, decisionHash: '0'.repeat(64) }),
+      requestWithBinding({
+        ...base.executionPrepareRequest.proofPlan.binding,
+        activationSourceRevision: '0'.repeat(40),
+      }),
+      requestWithBinding({
+        ...base.executionPrepareRequest.proofPlan.binding,
+        reconciliationId: '0'.repeat(64),
+      }),
+      requestWithBinding({
+        ...base.executionPrepareRequest.proofPlan.binding,
+        reconciliationContentHash: '0'.repeat(64),
+      }),
+      {
+        ...base.executionPrepareRequest,
+        discoveryReceipt: {
+          ...base.executionPrepareRequest.discoveryReceipt,
+          observationReceiptHash: '0'.repeat(64),
+        },
+      },
     ]
     const ExternalResource = Context.Service<'execution-prepare-test-resource', number>(
       'execution-prepare-test-resource',

@@ -47,12 +47,37 @@ export type ExecutionPrepareGenerationField =
   | 'reconciliationId'
   | 'reconciliationContentHash'
 
+export type ExecutionPrepareDiscoveryField =
+  | 'observationReceiptHash'
+  | 'immutableBindingHash'
+  | 'candidateFactsHash'
+  | 'candidateOrdinal'
+  | 'observedPlanIntentId'
+  | 'cycleId'
+  | 'decisionHash'
+  | 'sourceRevision'
+  | 'imageRepository'
+  | 'imageDigest'
+  | 'strategyName'
+  | 'strategyBehaviorHash'
+  | 'strategyParameterHash'
+  | 'strategyParameterSchemaVersion'
+  | 'strategyProtocolHash'
+  | 'qualificationRunId'
+  | 'accountId'
+  | 'authorityGenerationHash'
+  | 'riskPolicyHash'
+  | 'reconciliationId'
+  | 'reconciliationContentHash'
+
 export type ExecutionPrepareFailure =
   | { readonly _tag: 'ExecutionPrepareRequestInvalid'; readonly cause: Schema.SchemaError }
   | { readonly _tag: 'ExecutionPrepareRuntimeBindingInvalid'; readonly cause: Schema.SchemaError }
   | { readonly _tag: 'ExecutionPrepareRuntimeMismatch'; readonly field: ExecutionPrepareRuntimeField }
   | { readonly _tag: 'ExecutionPrepareProofPlanHashFailed'; readonly cause: CanonicalJsonFailure }
   | { readonly _tag: 'ExecutionPrepareProofPlanHashMismatch' }
+  | { readonly _tag: 'ExecutionPrepareDiscoveryHashFailed'; readonly cause: CanonicalJsonFailure }
+  | { readonly _tag: 'ExecutionPrepareDiscoveryMismatch'; readonly field: ExecutionPrepareDiscoveryField }
   | {
       readonly _tag: 'ExecutionPrepareStoreRejected'
       readonly operation: ExecutionStoreError['operation']
@@ -74,6 +99,10 @@ export const renderExecutionPrepareFailure = (failure: ExecutionPrepareFailure):
       return 'EXECUTION_PREPARE proof plan could not be content-hashed'
     case 'ExecutionPrepareProofPlanHashMismatch':
       return 'EXECUTION_PREPARE proof plan hash does not match its explicit material'
+    case 'ExecutionPrepareDiscoveryHashFailed':
+      return 'EXECUTION_PREPARE discovery evidence could not be content-hashed'
+    case 'ExecutionPrepareDiscoveryMismatch':
+      return `EXECUTION_PREPARE discovery evidence drifted at ${failure.field}`
     case 'ExecutionPrepareStoreRejected':
       return `EXECUTION_PREPARE durable validation failed closed (${failure.operation}/${failure.failure})`
     case 'ExecutionPrepareGenerationMismatch':

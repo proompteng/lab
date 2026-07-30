@@ -14,6 +14,7 @@ import {
 import { BrokerAccess, BrokerEnvironment, CapitalAuthorityKind } from './execution/authority'
 import { CapitalAuthoritySelection } from './execution/configuration'
 import type { ExecutionPrepareRequest } from './execution-prepare'
+import { makeExecutionPrepareDiscoveryReceiptFixture } from './execution-prepare/test-fixture'
 import { canonicalHashV1OrThrow } from './hash'
 
 const sourceRevision = 'a'.repeat(40)
@@ -31,17 +32,41 @@ const qualificationRunId = 'e'.repeat(64)
 const alpacaAccountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const clickhousePassword = 'clickhouse-password-must-remain-redacted'
 const postgresUrl = 'postgresql://bayn:postgres-secret-must-remain-redacted@postgres.test:5432/bayn'
+const executionPrepareStrategy = {
+  name: 'risk-balanced-trend' as const,
+  behaviorHash: buildMetadata.strategyBehaviorHash,
+  parameterHash: buildMetadata.strategyParameterHash,
+  parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4' as const,
+}
+const executionPrepareStrategyProtocolHash = '7'.repeat(64)
+const executionPrepareRiskPolicyHash = 'd'.repeat(64)
+const executionPrepareReconciliationId = 'e'.repeat(64)
+const executionPrepareReconciliationContentHash = 'f'.repeat(64)
+const executionPrepareDiscoveryReceipt = makeExecutionPrepareDiscoveryReceiptFixture({
+  sourceRevision,
+  imageRepository,
+  imageDigest,
+  strategy: executionPrepareStrategy,
+  strategyProtocolHash: executionPrepareStrategyProtocolHash,
+  qualificationRunId,
+  accountId: alpacaAccountId,
+  authorityGenerationHash,
+  policyHash: executionPrepareRiskPolicyHash,
+  reconciliationId: executionPrepareReconciliationId,
+  reconciliationContentHash: executionPrepareReconciliationContentHash,
+})
+const executionPrepareCandidate = executionPrepareDiscoveryReceipt.candidateFacts.candidates[0]!
 
 const executionPrepareProofPlan = {
   schemaVersion: 'bayn.execution-prepare-proof-plan.v1' as const,
   candidate: {
-    discoveryReceiptHash: '1'.repeat(64),
-    immutableBindingHash: '2'.repeat(64),
-    candidateFactsHash: '3'.repeat(64),
-    candidateOrdinal: 0,
-    observedPlanIntentId: '4'.repeat(64),
-    cycleId: '5'.repeat(64),
-    decisionHash: '6'.repeat(64),
+    discoveryReceiptHash: executionPrepareDiscoveryReceipt.observationReceiptHash,
+    immutableBindingHash: executionPrepareDiscoveryReceipt.immutableBindingHash,
+    candidateFactsHash: executionPrepareDiscoveryReceipt.candidateFactsHash,
+    candidateOrdinal: executionPrepareCandidate.ordinal,
+    observedPlanIntentId: executionPrepareCandidate.observedPlanIntentId,
+    cycleId: executionPrepareDiscoveryReceipt.binding.cycle.cycleId,
+    decisionHash: executionPrepareDiscoveryReceipt.binding.cycle.decisionHash,
   },
   binding: {
     activationSourceRevision: sourceRevision,
@@ -50,13 +75,8 @@ const executionPrepareProofPlan = {
     qualificationSourceRevision: 'f'.repeat(40),
     qualificationImageRepository: imageRepository,
     qualificationImageDigest: `sha256:${'1'.repeat(64)}` as const,
-    strategy: {
-      name: 'risk-balanced-trend' as const,
-      behaviorHash: buildMetadata.strategyBehaviorHash,
-      parameterHash: buildMetadata.strategyParameterHash,
-      parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4' as const,
-    },
-    strategyProtocolHash: '7'.repeat(64),
+    strategy: executionPrepareStrategy,
+    strategyProtocolHash: executionPrepareStrategyProtocolHash,
     qualificationRunId,
     qualificationLockId: '8'.repeat(64),
     qualificationResultHash: '9'.repeat(64),
@@ -65,14 +85,15 @@ const executionPrepareProofPlan = {
     accountId: alpacaAccountId,
     brokerIdentityHash: 'c'.repeat(64),
     authorityGenerationHash,
-    riskPolicyHash: 'd'.repeat(64),
-    reconciliationId: 'e'.repeat(64),
-    reconciliationContentHash: 'f'.repeat(64),
+    riskPolicyHash: executionPrepareRiskPolicyHash,
+    reconciliationId: executionPrepareReconciliationId,
+    reconciliationContentHash: executionPrepareReconciliationContentHash,
   },
 }
 
 const executionPrepareRequest: ExecutionPrepareRequest = {
   schemaVersion: 'bayn.execution-prepare-request.v1',
+  discoveryReceipt: executionPrepareDiscoveryReceipt,
   proofPlan: executionPrepareProofPlan,
   proofPlanHash: canonicalHashV1OrThrow(executionPrepareProofPlan),
 }
