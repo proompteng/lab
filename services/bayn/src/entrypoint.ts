@@ -58,12 +58,14 @@ import {
   type ExecutionCandidateDiscoveryReceipt,
 } from './execution-candidate-discovery'
 import {
+  authenticateValidatedExecutionPrepare,
   ExecutionPrepareStoreLive,
   prepareValidatedExecution,
   renderExecutionPrepareFailure,
   validateExecutionPrepareInput,
+  type ExecutionPrepareFailure,
   type ExecutionPrepareReceipt,
-  type ValidatedExecutionPrepareInput,
+  type PrevalidatedExecutionPrepareInput,
 } from './execution-prepare'
 import { loadDefaultProtocol, type CausalProtocol } from './protocol'
 import { makeStrategy, type Strategy } from './strategy'
@@ -294,9 +296,14 @@ export const ExecutionPrepareResourcesLive = (plan: ApplicationPlanFor<'Executio
   const postgres = sqlResource(PostgresClientResourceLive(plan.config))
   const writerFence = WriterFenceResourceLive.pipe(Layer.provide(postgres))
   const executionPrepareStore = ExecutionPrepareStoreLive(plan.config).pipe(Layer.provide(postgres))
-  return Layer.mergeAll(postgres, writerFence, executionPrepareStore, BrokerSessionResourceLive(plan.config)).pipe(
-    Layer.provideMerge(ApplicationPlatformLive),
-  )
+  return Layer.mergeAll(
+    postgres,
+    writerFence,
+    executionPrepareStore,
+    CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
+    CycleStoreResourceLive.pipe(Layer.provide(postgres)),
+    BrokerSessionResourceLive(plan.config),
+  ).pipe(Layer.provideMerge(ApplicationPlatformLive))
 }
 
 const applicationDependencies: Effect.Effect<
@@ -646,6 +653,43 @@ const executionPrepareRuntimeBinding = (plan: ApplicationPlanFor<'ExecutionPrepa
   riskPolicyHash,
 })
 
+const executionPrepareCandidateIdentity = (plan: ApplicationPlanFor<'ExecutionPrepare'>, riskPolicyHash: string) => ({
+  sourceRevision: plan.config.build.sourceRevision,
+  image: {
+    repository: plan.config.build.imageRepository,
+    digest: plan.config.build.imageDigest,
+  },
+  strategy: plan.strategy.provenance.strategy,
+  strategyProtocolHash: plan.strategyProtocolHash,
+  qualificationRunId: plan.config.qualificationRunId,
+  accountId: plan.config.alpaca.expectedAccountId,
+  authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
+  policyHash: riskPolicyHash,
+})
+
+const executionPrepareOperationalCause = (cause: ExecutionPrepareFailure) => {
+  if (cause._tag !== 'ExecutionPrepareStoreRejected') return { _tag: cause._tag }
+  const nested = cause.cause.cause
+  return {
+    _tag: cause._tag,
+    operation: cause.operation,
+    failure: cause.failure,
+    nested:
+      typeof nested === 'object' && nested !== null && '_tag' in nested && typeof nested._tag === 'string'
+        ? nested._tag
+        : null,
+  }
+}
+
+const executionPrepareOperationalError = (cause: ExecutionPrepareFailure) =>
+  new OperationalError({
+    component: 'strategy',
+    operation: 'execution-prepare',
+    message: renderExecutionPrepareFailure(cause),
+    retryable: false,
+    cause: executionPrepareOperationalCause(cause),
+  })
+
 export const validateExecutionPreparePlan = (plan: ApplicationPlanFor<'ExecutionPrepare'>) =>
   Effect.gen(function* () {
     const riskPolicy = yield* loadObserveRiskPolicy(
@@ -662,21 +706,33 @@ export const validateExecutionPreparePlan = (plan: ApplicationPlanFor<'Execution
         plan.config.executionPrepareRequest,
         executionPrepareRuntimeBinding(plan, riskPolicyHash),
       ),
-    ).pipe(
-      Effect.mapError((cause) =>
-        operationalError('strategy', 'execution-prepare', renderExecutionPrepareFailure(cause), { _tag: cause._tag }),
-      ),
-    )
+    ).pipe(Effect.mapError(executionPrepareOperationalError))
   })
 
-const runExecutionPrepare = (validated: ValidatedExecutionPrepareInput) =>
+const runExecutionPrepare = (
+  plan: ApplicationPlanFor<'ExecutionPrepare'>,
+  prevalidated: PrevalidatedExecutionPrepareInput,
+) =>
   Effect.gen(function* () {
     yield* BrokerSession
-    const receipt = yield* prepareValidatedExecution(validated).pipe(
-      Effect.mapError((cause) =>
-        operationalError('strategy', 'execution-prepare', renderExecutionPrepareFailure(cause), { _tag: cause._tag }),
+    const trustedReceipt = yield* discoverExecutionCandidatesHistoricalCodec(
+      executionPrepareCandidateIdentity(plan, prevalidated.runtime.riskPolicyHash),
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new OperationalError({
+            component: 'strategy',
+            operation: 'execution-prepare-discovery',
+            message: renderExecutionCandidateDiscoveryError(cause),
+            retryable: false,
+            cause: { _tag: cause._tag },
+          }),
       ),
     )
+    const validated = yield* authenticateValidatedExecutionPrepare(prevalidated, trustedReceipt).pipe(
+      Effect.mapError(executionPrepareOperationalError),
+    )
+    const receipt = yield* prepareValidatedExecution(validated).pipe(Effect.mapError(executionPrepareOperationalError))
     yield* writeExecutionPrepareReceipt(receipt)
   })
 
@@ -708,7 +764,7 @@ export const runApplicationPlan = pipe(
   Match.tag('ExecutionPrepare', (plan) =>
     validateExecutionPreparePlan(plan).pipe(
       Effect.flatMap((validated) =>
-        runExecutionPrepare(validated).pipe(Effect.provide(ExecutionPrepareResourcesLive(plan))),
+        runExecutionPrepare(plan, validated).pipe(Effect.provide(ExecutionPrepareResourcesLive(plan))),
       ),
       Effect.mapError(executionPrepareBoundaryError),
     ),

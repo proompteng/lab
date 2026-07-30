@@ -17,7 +17,11 @@ import type { ExecutionPrepareGenerationField } from './failure'
 import type { ExecutionPrepareRequest, ExecutionPrepareRuntimeBinding } from './model'
 import { prepareExecution } from './program'
 import { makeExecutionPrepareDiscoveryReceiptFixture } from './test-fixture'
-import { makeExecutionPrepareReceipt, validateExecutionPrepareInput } from './validation'
+import {
+  authenticateExecutionPrepareDiscovery,
+  makeExecutionPrepareReceipt,
+  validateExecutionPrepareInput,
+} from './validation'
 
 const hash = (label: string): string => sha256(`execution-prepare:${label}`)
 const sourceRevision = 'a'.repeat(40)
@@ -95,6 +99,29 @@ const request: ExecutionPrepareRequest = {
   proofPlanHash: canonicalHashV1OrThrow(proofPlan),
 }
 
+const requestForDiscoveryReceipt = (receipt: ExecutionPrepareRequest['discoveryReceipt']): ExecutionPrepareRequest => {
+  const candidate = receipt.candidateFacts.candidates[0]
+  if (candidate === undefined) throw new Error('execution prepare test fixture requires one candidate')
+  const changedProofPlan = {
+    ...proofPlan,
+    candidate: {
+      discoveryReceiptHash: receipt.observationReceiptHash,
+      immutableBindingHash: receipt.immutableBindingHash,
+      candidateFactsHash: receipt.candidateFactsHash,
+      candidateOrdinal: candidate.ordinal,
+      observedPlanIntentId: candidate.observedPlanIntentId,
+      cycleId: receipt.binding.cycle.cycleId,
+      decisionHash: receipt.binding.cycle.decisionHash,
+    },
+  }
+  return {
+    schemaVersion: 'bayn.execution-prepare-request.v1',
+    discoveryReceipt: receipt,
+    proofPlan: changedProofPlan,
+    proofPlanHash: canonicalHashV1OrThrow(changedProofPlan),
+  }
+}
+
 const runtime: ExecutionPrepareRuntimeBinding = {
   sourceRevision,
   imageRepository,
@@ -141,7 +168,13 @@ const generation = (): CapitalGrantGeneration =>
     }),
   )
 
-const validated = () => Result.getOrThrow(validateExecutionPrepareInput(request, runtime))
+const validated = () =>
+  Result.getOrThrow(
+    authenticateExecutionPrepareDiscovery(
+      Result.getOrThrow(validateExecutionPrepareInput(request, runtime)),
+      discoveryReceipt,
+    ),
+  )
 
 describe('EXECUTION_PREPARE pure validation', () => {
   test('derives the exact proof binding and deterministic redacted non-dispatchable receipt', () => {
@@ -293,6 +326,117 @@ describe('EXECUTION_PREPARE pure validation', () => {
     })
   })
 
+  test('requires a verified discovery anchor instead of accepting a self-hashed fabricated receipt', () => {
+    const fabricatedReceipt = makeExecutionPrepareDiscoveryReceiptFixture({
+      sourceRevision,
+      imageRepository,
+      imageDigest,
+      strategy,
+      strategyProtocolHash,
+      qualificationRunId,
+      accountId,
+      authorityGenerationHash,
+      policyHash: riskPolicyHash,
+      reconciliationId,
+      reconciliationContentHash,
+      observedPlanIntentId: hash('fabricated-intent'),
+    })
+    const fabricatedRequest = requestForDiscoveryReceipt(fabricatedReceipt)
+    const prevalidated = Result.getOrThrow(validateExecutionPrepareInput(fabricatedRequest, runtime))
+
+    expect(authenticateExecutionPrepareDiscovery(prevalidated, discoveryReceipt)).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExecutionPrepareDiscoveryMismatch', field: 'candidateFactsHash' },
+    })
+  })
+
+  test('rebinds the proof to a freshly verified receipt with identical durable candidate facts', () => {
+    const refreshedReceipt = makeExecutionPrepareDiscoveryReceiptFixture({
+      sourceRevision,
+      imageRepository,
+      imageDigest,
+      strategy,
+      strategyProtocolHash,
+      qualificationRunId,
+      accountId,
+      authorityGenerationHash,
+      policyHash: riskPolicyHash,
+      reconciliationId,
+      reconciliationContentHash,
+      observedAt: '2099-07-24T12:00:01.000Z',
+    })
+    const prevalidated = Result.getOrThrow(validateExecutionPrepareInput(request, runtime))
+    const authenticated = Result.getOrThrow(authenticateExecutionPrepareDiscovery(prevalidated, refreshedReceipt))
+
+    expect(refreshedReceipt.immutableBindingHash).toBe(discoveryReceipt.immutableBindingHash)
+    expect(refreshedReceipt.candidateFactsHash).toBe(discoveryReceipt.candidateFactsHash)
+    expect(refreshedReceipt.observationReceiptHash).not.toBe(discoveryReceipt.observationReceiptHash)
+    expect(authenticated.proofPlan.candidate.discoveryReceiptHash).toBe(refreshedReceipt.observationReceiptHash)
+    expect(authenticated.proofPlanHash).not.toBe(request.proofPlanHash)
+    expect(authenticated.proof.proofPlanHash).toBe(authenticated.proofPlanHash)
+  })
+
+  test('rejects ineligible assets and missing required fractional eligibility', () => {
+    const ineligibleReceipt = makeExecutionPrepareDiscoveryReceiptFixture({
+      sourceRevision,
+      imageRepository,
+      imageDigest,
+      strategy,
+      strategyProtocolHash,
+      qualificationRunId,
+      accountId,
+      authorityGenerationHash,
+      policyHash: riskPolicyHash,
+      reconciliationId,
+      reconciliationContentHash,
+      assetEligible: false,
+    })
+    const fractionalIneligibleReceipt = makeExecutionPrepareDiscoveryReceiptFixture({
+      sourceRevision,
+      imageRepository,
+      imageDigest,
+      strategy,
+      strategyProtocolHash,
+      qualificationRunId,
+      accountId,
+      authorityGenerationHash,
+      policyHash: riskPolicyHash,
+      reconciliationId,
+      reconciliationContentHash,
+      plannedQuantityMicros: '1250000',
+      fractionalTradingEligible: false,
+    })
+    const integerWithoutFractionalEligibility = makeExecutionPrepareDiscoveryReceiptFixture({
+      sourceRevision,
+      imageRepository,
+      imageDigest,
+      strategy,
+      strategyProtocolHash,
+      qualificationRunId,
+      accountId,
+      authorityGenerationHash,
+      policyHash: riskPolicyHash,
+      reconciliationId,
+      reconciliationContentHash,
+      plannedQuantityMicros: '1000000',
+      fractionalTradingEligible: false,
+    })
+
+    expect(validateExecutionPrepareInput(requestForDiscoveryReceipt(ineligibleReceipt), runtime)).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExecutionPrepareDiscoveryMismatch', field: 'assetEligibility' },
+    })
+    expect(
+      validateExecutionPrepareInput(requestForDiscoveryReceipt(fractionalIneligibleReceipt), runtime),
+    ).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExecutionPrepareDiscoveryMismatch', field: 'fractionalTradingEligibility' },
+    })
+    expect(
+      validateExecutionPrepareInput(requestForDiscoveryReceipt(integerWithoutFractionalEligibility), runtime),
+    ).toMatchObject({ _tag: 'Success' })
+  })
+
   test('rejects runtime account, generation, strategy, policy, and authority drift', () => {
     const cases: ReadonlyArray<{
       readonly runtime: unknown
@@ -356,8 +500,12 @@ const writerFence: WriterFenceService = {
   transaction: (effect) => effect,
 }
 
-const runProgram = (lifecycle: CapitalGrantLifecycleStoreShape) =>
-  prepareExecution(request, runtime).pipe(
+const runProgram = (
+  lifecycle: CapitalGrantLifecycleStoreShape,
+  candidateRequest: ExecutionPrepareRequest = request,
+  trustedReceipt: ExecutionPrepareRequest['discoveryReceipt'] = discoveryReceipt,
+) =>
+  prepareExecution(candidateRequest, runtime, trustedReceipt).pipe(
     Effect.provideService(CapitalGrantLifecycleStore, lifecycle),
     Effect.provideService(WriterFence, writerFence),
   )
@@ -385,25 +533,62 @@ describe('EXECUTION_PREPARE program boundary', () => {
     expect(activateCalls).toBe(0)
   })
 
-  test('sanitizes durable failures without account or store-message leakage', async () => {
+  test('does not call the store when self-hashed discovery material lacks the verified anchor', async () => {
+    let prepareCalls = 0
+    const fabricatedReceipt = makeExecutionPrepareDiscoveryReceiptFixture({
+      sourceRevision,
+      imageRepository,
+      imageDigest,
+      strategy,
+      strategyProtocolHash,
+      qualificationRunId,
+      accountId,
+      authorityGenerationHash,
+      policyHash: riskPolicyHash,
+      reconciliationId,
+      reconciliationContentHash,
+      observedPlanIntentId: hash('fabricated-program-intent'),
+    })
     const lifecycle: CapitalGrantLifecycleStoreShape = {
       prepareCapitalGrant: () =>
-        Effect.fail(
-          new ExecutionStoreError({
-            operation: 'authority',
-            failure: 'invariant',
-            message: `sensitive account ${accountId} failed`,
-          }),
-        ),
+        Effect.sync(() => {
+          prepareCalls += 1
+          return generation()
+        }),
+      activateCapitalGrant: () => Effect.die(new Error('activation must remain unreachable')),
+    }
+
+    const failure = await Effect.runPromise(
+      Effect.flip(runProgram(lifecycle, requestForDiscoveryReceipt(fabricatedReceipt), discoveryReceipt)),
+    )
+    expect(failure).toMatchObject({
+      _tag: 'ExecutionPrepareDiscoveryMismatch',
+      field: 'candidateFactsHash',
+    })
+    expect(prepareCalls).toBe(0)
+  })
+
+  test('sanitizes durable failures without account or store-message leakage', async () => {
+    const lifecycleFailure = new ExecutionStoreError({
+      operation: 'authority',
+      failure: 'invariant',
+      message: `sensitive account ${accountId} failed`,
+      cause: new Error('underlying schema failure'),
+    })
+    const lifecycle: CapitalGrantLifecycleStoreShape = {
+      prepareCapitalGrant: () => Effect.fail(lifecycleFailure),
       activateCapitalGrant: () => Effect.die(new Error('activation must remain unreachable')),
     }
 
     const failure = await Effect.runPromise(Effect.flip(runProgram(lifecycle)))
-    expect(failure).toEqual({
+    expect(failure).toMatchObject({
       _tag: 'ExecutionPrepareStoreRejected',
       operation: 'authority',
       failure: 'invariant',
+      cause: lifecycleFailure,
     })
+    if (failure._tag !== 'ExecutionPrepareStoreRejected') return expect.unreachable(failure._tag)
+    expect(failure.cause).toBe(lifecycleFailure)
     const rendered = renderExecutionPrepareFailure(failure)
     expect(rendered).not.toContain(accountId)
     expect(rendered).not.toContain('sensitive account')

@@ -5,10 +5,13 @@ import type { WriterFence } from '../execution/writer-fence'
 import type { ExecutionPrepareFailure } from './failure'
 import type { ExecutionPrepareReceipt } from './model'
 import {
+  authenticateExecutionPrepareDiscovery,
   makeExecutionPrepareReceipt,
   validateExecutionPrepareInput,
+  type PrevalidatedExecutionPrepareInput,
   type ValidatedExecutionPrepareInput,
 } from './validation'
+import type { ExecutionCandidateDiscoveryReceipt } from '../execution-candidate-discovery'
 
 export const prepareValidatedExecution = (
   validated: ValidatedExecutionPrepareInput,
@@ -21,6 +24,7 @@ export const prepareValidatedExecution = (
           _tag: 'ExecutionPrepareStoreRejected',
           operation: cause.operation,
           failure: cause.failure,
+          cause,
         }),
       ),
     )
@@ -32,8 +36,18 @@ export const prepareValidatedExecution = (
 export const prepareExecution = (
   request: unknown,
   runtime: unknown,
+  trustedDiscoveryReceipt: ExecutionCandidateDiscoveryReceipt,
 ): Effect.Effect<ExecutionPrepareReceipt, ExecutionPrepareFailure, CapitalGrantLifecycleStore | WriterFence> =>
   Effect.gen(function* () {
-    const validated = yield* Effect.fromResult(validateExecutionPrepareInput(request, runtime))
+    const prevalidated = yield* Effect.fromResult(validateExecutionPrepareInput(request, runtime))
+    const validated = yield* Effect.fromResult(
+      authenticateExecutionPrepareDiscovery(prevalidated, trustedDiscoveryReceipt),
+    )
     return yield* prepareValidatedExecution(validated)
   })
+
+export const authenticateValidatedExecutionPrepare = (
+  prevalidated: PrevalidatedExecutionPrepareInput,
+  trustedDiscoveryReceipt: ExecutionCandidateDiscoveryReceipt,
+): Effect.Effect<ValidatedExecutionPrepareInput, ExecutionPrepareFailure> =>
+  Effect.fromResult(authenticateExecutionPrepareDiscovery(prevalidated, trustedDiscoveryReceipt))

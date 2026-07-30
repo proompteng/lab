@@ -2,7 +2,11 @@ import { Result, Schema } from 'effect'
 
 import { AccountStatus, AssetClass, AssetExchange, AssetStatus } from '../broker/alpaca'
 import { Authority, OrderSide, OrderType, TimeInForce } from '../execution/contracts'
-import { DiscoveryReceiptSchema, type ExecutionCandidateDiscoveryReceipt } from '../execution-candidate-discovery/model'
+import {
+  DiscoveryReceiptSchema,
+  PaperCandidateIneligibility,
+  type ExecutionCandidateDiscoveryReceipt,
+} from '../execution-candidate-discovery/model'
 import { canonicalHashV1OrThrow } from '../hash'
 import { strictParseOptions } from '../schemas'
 
@@ -21,10 +25,13 @@ export interface ExecutionPrepareDiscoveryFixtureInput {
   readonly cycleId?: string
   readonly decisionHash?: string
   readonly observedPlanIntentId?: string
+  readonly plannedQuantityMicros?: string
+  readonly assetEligible?: boolean
+  readonly fractionalTradingEligible?: boolean
+  readonly observedAt?: string
 }
 
 const hash = (label: string): string => canonicalHashV1OrThrow({ executionPrepareFixture: label })
-const observedAt = '2099-07-24T12:00:00.000Z'
 
 export const makeExecutionPrepareDiscoveryReceiptFixture = (
   input: ExecutionPrepareDiscoveryFixtureInput,
@@ -32,6 +39,10 @@ export const makeExecutionPrepareDiscoveryReceiptFixture = (
   const cycleId = input.cycleId ?? hash('cycle')
   const decisionHash = input.decisionHash ?? hash('decision')
   const observedPlanIntentId = input.observedPlanIntentId ?? hash('observed-plan-intent')
+  const plannedQuantityMicros = input.plannedQuantityMicros ?? '1000000'
+  const assetEligible = input.assetEligible ?? true
+  const fractionalTradingEligible = input.fractionalTradingEligible ?? true
+  const observedAt = input.observedAt ?? '2099-07-24T12:00:00.000Z'
   const binding = {
     schemaVersion: 'bayn.paper-candidate-discovery-binding.v1' as const,
     runtime: {
@@ -100,7 +111,7 @@ export const makeExecutionPrepareDiscoveryReceiptFixture = (
         side: OrderSide.Buy,
         orderType: OrderType.Market,
         timeInForce: TimeInForce.Day,
-        observedPlannedQuantityMicros: '1000000',
+        observedPlannedQuantityMicros: plannedQuantityMicros,
         observedReferencePriceMicros: '500000000',
         observedNotionalLimitMicros: '500000000',
         observedEvaluatedOrderNotionalMicros: '500000000',
@@ -124,8 +135,11 @@ export const makeExecutionPrepareDiscoveryReceiptFixture = (
           attributes: [],
           normalizedResponseHash,
         },
-        assetEligibility: { eligible: true, reasons: [] },
-        fractionalTradingEligible: true,
+        assetEligibility: {
+          eligible: assetEligible,
+          reasons: assetEligible ? [] : [PaperCandidateIneligibility.NotTradable],
+        },
+        fractionalTradingEligible,
       },
     ],
     consistencyDelayMs: { status: 'REQUIRED_UNBOUND' as const },

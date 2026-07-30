@@ -594,7 +594,7 @@ describePostgres('EXECUTION_PREPARE PostgreSQL boundary', () => {
     try {
       let failedClosed = false
       try {
-        await runtime.runPromise(prepareExecution(request, runtimeBinding(fixture, request)))
+        await runtime.runPromise(prepareExecution(request, runtimeBinding(fixture, request), request.discoveryReceipt))
       } catch {
         failedClosed = true
       }
@@ -630,7 +630,7 @@ describePostgres('EXECUTION_PREPARE PostgreSQL boundary', () => {
         Effect.gen(function* () {
           yield* prepareFixture(fixture, reconciliation)
           const before = yield* durableSnapshot
-          const receipt = yield* prepareExecution(request, runtimeBinding(fixture, request))
+          const receipt = yield* prepareExecution(request, runtimeBinding(fixture, request), request.discoveryReceipt)
           const after = yield* durableSnapshot
           return { after, before, receipt }
         }),
@@ -664,7 +664,9 @@ describePostgres('EXECUTION_PREPARE PostgreSQL boundary', () => {
         Effect.gen(function* () {
           yield* prepareFixture(fixture, reconciliation)
           const before = yield* durableSnapshot
-          const failure = yield* Effect.flip(prepareExecution(request, runtimeBinding(fixture, request)))
+          const failure = yield* Effect.flip(
+            prepareExecution(request, runtimeBinding(fixture, request), request.discoveryReceipt),
+          )
           const after = yield* durableSnapshot
           return { after, before, failure }
         }),
@@ -693,7 +695,9 @@ describePostgres('EXECUTION_PREPARE PostgreSQL boundary', () => {
           Effect.gen(function* () {
             yield* prepareFixture(fixture, reconciliation)
             const before = yield* durableSnapshot
-            const failure = yield* Effect.flip(prepareExecution(request, runtimeBinding(fixture, request)))
+            const failure = yield* Effect.flip(
+              prepareExecution(request, runtimeBinding(fixture, request), request.discoveryReceipt),
+            )
             const after = yield* durableSnapshot
             return { after, before, failure }
           }),
@@ -721,7 +725,9 @@ describePostgres('EXECUTION_PREPARE PostgreSQL boundary', () => {
           yield* prepareFixture(fixture, reconciliation)
           yield* seedUnresolvedMutation(baseConfig.alpaca!.authorityGenerationHash)
           const before = yield* durableSnapshot
-          const failure = yield* Effect.flip(prepareExecution(request, runtimeBinding(fixture, request)))
+          const failure = yield* Effect.flip(
+            prepareExecution(request, runtimeBinding(fixture, request), request.discoveryReceipt),
+          )
           const after = yield* durableSnapshot
           return { after, before, failure }
         }),
@@ -786,7 +792,9 @@ describePostgres('EXECUTION_PREPARE PostgreSQL boundary', () => {
           ]
           const failures = []
           for (const [candidateRequest, candidateRuntime] of candidates) {
-            failures.push(yield* Effect.flip(prepareExecution(candidateRequest, candidateRuntime)))
+            failures.push(
+              yield* Effect.flip(prepareExecution(candidateRequest, candidateRuntime, request.discoveryReceipt)),
+            )
           }
           const after = yield* durableSnapshot
           return { after, before, failures }

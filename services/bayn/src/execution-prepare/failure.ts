@@ -69,6 +69,8 @@ export type ExecutionPrepareDiscoveryField =
   | 'riskPolicyHash'
   | 'reconciliationId'
   | 'reconciliationContentHash'
+  | 'assetEligibility'
+  | 'fractionalTradingEligibility'
 
 export type ExecutionPrepareFailure =
   | { readonly _tag: 'ExecutionPrepareRequestInvalid'; readonly cause: Schema.SchemaError }
@@ -82,6 +84,7 @@ export type ExecutionPrepareFailure =
       readonly _tag: 'ExecutionPrepareStoreRejected'
       readonly operation: ExecutionStoreError['operation']
       readonly failure: ExecutionStoreError['failure']
+      readonly cause: ExecutionStoreError
     }
   | { readonly _tag: 'ExecutionPrepareGenerationMismatch'; readonly field: ExecutionPrepareGenerationField }
   | { readonly _tag: 'ExecutionPrepareReceiptHashFailed'; readonly cause: CanonicalJsonFailure }
