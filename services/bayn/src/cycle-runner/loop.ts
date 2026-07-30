@@ -150,15 +150,15 @@ const waitUntilNextCyclePoll = <E, ContextR, DecisionR>(
   Effect.suspend(() =>
     Effect.gen(function* () {
       const nowNanos = yield* Clock.currentTimeNanos
-      if (nowNanos >= nextPollAtNanos) return
       const state = yield* Ref.get(cadence)
       const decision = decideIdleReconciliationCadence(state, nowNanos, options.reconciliationIntervalMs)
       if (decision._tag === 'RECONCILE') {
         yield* observeIdleReconciliation(options, cadence, result)
         return yield* waitUntilNextCyclePoll(options, cadence, result, nextPollAtNanos)
       }
+      if (nowNanos >= nextPollAtNanos) return
       const reconciliationAtNanos = nowNanos + decision.remainingNanos
-      if (nextPollAtNanos <= reconciliationAtNanos) return yield* sleepUntil(nextPollAtNanos)
+      if (nextPollAtNanos < reconciliationAtNanos) return yield* sleepUntil(nextPollAtNanos)
       yield* sleepUntil(reconciliationAtNanos)
       return yield* waitUntilNextCyclePoll(options, cadence, result, nextPollAtNanos)
     }),

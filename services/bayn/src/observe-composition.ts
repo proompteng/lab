@@ -1341,15 +1341,15 @@ const waitUntilNextMutationPoll = (
   Effect.suspend(() =>
     Effect.gen(function* () {
       const nowNanos = yield* Clock.currentTimeNanos
-      if (nowNanos >= nextPollAtNanos) return
       const state = yield* Ref.get(cadence)
       const decision = decideIdleReconciliationCadence(state, nowNanos, input.reconciliationIntervalMs)
       if (decision._tag === 'RECONCILE') {
         yield* observeMutationIdleReconciliation(input, startup, cadence, reconcile, result)
         return yield* waitUntilNextMutationPoll(input, startup, cadence, reconcile, result, nextPollAtNanos)
       }
+      if (nowNanos >= nextPollAtNanos) return
       const reconciliationAtNanos = nowNanos + decision.remainingNanos
-      if (nextPollAtNanos <= reconciliationAtNanos) return yield* mutationSleepUntil(nextPollAtNanos)
+      if (nextPollAtNanos < reconciliationAtNanos) return yield* mutationSleepUntil(nextPollAtNanos)
       yield* mutationSleepUntil(reconciliationAtNanos)
       return yield* waitUntilNextMutationPoll(input, startup, cadence, reconcile, result, nextPollAtNanos)
     }),

@@ -1128,6 +1128,11 @@ describe('OBSERVE runtime composition', () => {
     let orderReads = 0
     let fillReads = 0
     let calendarReads = 0
+    let mutationPhase = false
+    let mutationCalendarReads = 0
+    let mutationReconciliations = 0
+    let secondMutationCalendarRead: Deferred.Deferred<void> | undefined
+    const mutationEvents: string[] = []
     const unusedRead = Effect.die(new Error('NOT_DUE reconciliation used an unrelated broker read'))
     const brokerRead: BrokerReadShape = {
       account: Effect.sync(() => {
@@ -1155,7 +1160,15 @@ describe('OBSERVE runtime composition', () => {
       marketCalendar: (query) => {
         expect(query).toEqual(calendarMaterial.requestedRange)
         calendarReads += 1
-        return Effect.succeed({ value: ordinaryCalendar, evidence: readEvidence('calendar') })
+        if (!mutationPhase) {
+          return Effect.succeed({ value: ordinaryCalendar, evidence: readEvidence('calendar') })
+        }
+        mutationCalendarReads += 1
+        mutationEvents.push(`calendar:${mutationCalendarReads.toString()}`)
+        const result = { value: ordinaryCalendar, evidence: readEvidence('calendar') }
+        return mutationCalendarReads === 2 && secondMutationCalendarRead !== undefined
+          ? Deferred.succeed(secondMutationCalendarRead, undefined).pipe(Effect.as(result))
+          : Effect.succeed(result)
       },
     }
     const inspection = {
@@ -1238,6 +1251,10 @@ describe('OBSERVE runtime composition', () => {
       reconcile: (brokerSnapshot: BrokerSnapshot) =>
         Effect.sync(() => {
           reconciledSnapshots.push(brokerSnapshot)
+          if (mutationPhase) {
+            mutationReconciliations += 1
+            mutationEvents.push(`reconcile:${mutationReconciliations.toString()}`)
+          }
           return persisted
         }),
       ensureAuthorityGeneration: () => {
@@ -1326,7 +1343,7 @@ describe('OBSERVE runtime composition', () => {
     const mutationStartup = makeMutationAutonomousCycleStartup({
       accountId,
       authorityGenerationHash: generationHash,
-      pollIntervalMs: 350,
+      pollIntervalMs: 100,
       reconciliationIntervalMs: 100,
       reconciliationPassTimeoutMs: 30_000,
       strategy: fixtureStrategy,
@@ -1335,17 +1352,20 @@ describe('OBSERVE runtime composition', () => {
     const intentStore = {} as IntentStoreService
     const mutationStore = {} as MutationStoreShape
     const mutationObservations: Parameters<Parameters<typeof mutationStartup>[0]['recordPass']>[0][] = []
+    mutationPhase = true
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse(reconciledAt))
           const first = yield* Deferred.make<void>()
           const second = yield* Deferred.make<void>()
+          secondMutationCalendarRead = yield* Deferred.make<void>()
           const loop = yield* mutationStartup({
             qualificationRunId: 'c'.repeat(64),
             recordPass: (result) =>
               Effect.sync(() => {
                 mutationObservations.push(result)
+                mutationEvents.push(`observe:${mutationObservations.length.toString()}`)
                 return mutationObservations.length === 1
                   ? first
                   : mutationObservations.length === 2
@@ -1373,18 +1393,24 @@ describe('OBSERVE runtime composition', () => {
             Effect.forkScoped({ startImmediately: true }),
           )
           yield* Deferred.await(first).pipe(Effect.timeout('1 second'))
-          yield* TestClock.adjust(101)
+          yield* TestClock.adjust(100)
+          yield* Deferred.await(secondMutationCalendarRead).pipe(Effect.timeout('1 second'))
           yield* Deferred.await(second).pipe(Effect.timeout('1 second'))
           yield* Fiber.interrupt(fiber)
         }),
       ).pipe(Effect.provide(TestClock.layer())),
     )
+    mutationPhase = false
 
-    expect(mutationObservations).toHaveLength(2)
+    expect(mutationObservations.length).toBeGreaterThanOrEqual(2)
     expect(mutationObservations[0]).toMatchObject({ result: 'SUCCESS', outcome: 'NOT_DUE' })
     expect(mutationObservations[1]).toMatchObject({ result: 'SUCCESS', outcome: 'NOT_DUE' })
+    expect(mutationEvents.indexOf('reconcile:2')).toBeLessThan(mutationEvents.indexOf('calendar:2'))
+    expect(mutationEvents.indexOf('observe:2')).toBeLessThan(mutationEvents.indexOf('calendar:2'))
+    expect(mutationCalendarReads).toBe(2)
+    expect(mutationReconciliations).toBe(2)
     expect(acquisitions).toBe(0)
-    expect(calendarReads).toBe(2)
+    expect(calendarReads).toBe(3)
     expect(accountReads).toBe(3)
     expect(positionReads).toBe(3)
     expect(orderReads).toBe(6)

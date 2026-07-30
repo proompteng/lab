@@ -1543,6 +1543,72 @@ describe('autonomous cycle runner', () => {
     expect(control).toEqual({ acquisitions: [], binds: 0 })
   })
 
+  test('reconciles before polling when the idle and cycle deadlines coincide', async () => {
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const events: string[] = []
+    let observations = 0
+    let reconciliations = 0
+    let calendarReads = 0
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse('2026-01-29T21:20:00.000Z'))
+          const firstPass = yield* Deferred.make<void>()
+          const secondCalendarRead = yield* Deferred.make<void>()
+          const loop = yield* cycleLoop({
+            context: Effect.succeed(context()),
+            observePass: () =>
+              Effect.sync(() => {
+                observations += 1
+                events.push(`observe:${observations.toString()}`)
+                return observations
+              }).pipe(
+                Effect.flatMap((count) =>
+                  count === 1 ? Deferred.succeed(firstPass, undefined).pipe(Effect.asVoid) : Effect.void,
+                ),
+              ),
+            pollIntervalMs: 100,
+            reconciliationIntervalMs: 100,
+            reconcileNotDue: Effect.sync(() => {
+              reconciliations += 1
+              events.push(`reconcile:${reconciliations.toString()}`)
+            }),
+          })
+          const fiber = yield* provide(
+            loop,
+            brokerRead(() =>
+              Effect.sync(() => {
+                calendarReads += 1
+                events.push(`calendar:${calendarReads.toString()}`)
+                return calendarReads
+              }).pipe(
+                Effect.tap((count) =>
+                  count === 2 ? Deferred.succeed(secondCalendarRead, undefined).pipe(Effect.asVoid) : Effect.void,
+                ),
+                Effect.as({ value: ordinaryNotDueCalendar, evidence }),
+              ),
+            ),
+            cycleStore(control),
+            marketDataService(Effect.succeed(finalizedPublication('2026-01-29'))),
+          ).pipe(Effect.forkScoped({ startImmediately: true }))
+
+          yield* Deferred.await(firstPass)
+          yield* TestClock.adjust(100)
+          yield* Deferred.await(secondCalendarRead)
+          yield* Fiber.interrupt(fiber)
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(events.indexOf('reconcile:2')).toBeGreaterThan(events.indexOf('observe:1'))
+    expect(events.indexOf('reconcile:2')).toBeLessThan(events.indexOf('calendar:2'))
+    expect(events.indexOf('observe:2')).toBeLessThan(events.indexOf('calendar:2'))
+    expect(calendarReads).toBe(2)
+    expect(reconciliations).toBe(2)
+    expect(control).toEqual({ acquisitions: [], binds: 0 })
+  })
+
   test('keeps faster cycle polling from over-reading reconciliation before the exact cadence boundary', async () => {
     const control: StoreControl = { acquisitions: [], binds: 0 }
     const observations: CyclePassObservation[] = []
