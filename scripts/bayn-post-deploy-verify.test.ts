@@ -861,6 +861,32 @@ describe('redaction and permissions', () => {
     ).rejects.toMatchObject({ code: 'RBAC_DENIED' })
   })
 
+  test.each([
+    ['broad', 'secrets [] [] [get]'],
+    ['resourceNames-scoped', 'secrets [] [operator-created-secret] [get]'],
+  ])('rejects %s Secret disclosure in the full rules audit', async (_name, secretRule) => {
+    const controller = new AbortController()
+    const run = async (command: readonly string[]) => {
+      if (command.includes('--list')) {
+        return {
+          stdout: `${readOnlyAuthorizationRules}\n${secretRule}\n`,
+          stderr: '',
+          exitCode: 0,
+        }
+      }
+      const verb = command[3] ?? ''
+      const resource = command[4] ?? ''
+      const requiredRead =
+        (verb === 'get' && ['applications.argoproj.io', 'deployments.apps', 'services/proxy'].includes(resource)) ||
+        (verb === 'list' && resource === 'pods')
+      return { stdout: requiredRead ? 'yes\n' : 'no\n', stderr: '', exitCode: 0 }
+    }
+
+    await expect(
+      validateProductionReadOnlyPermissions(run, controller.signal, expected.secretNames),
+    ).rejects.toMatchObject({ code: 'RBAC_DENIED' })
+  })
+
   test('accepts only read-only namespace rule inventories plus self-review creation', async () => {
     const controller = new AbortController()
     const run = async (command: readonly string[]) => {

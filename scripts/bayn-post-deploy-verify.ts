@@ -866,6 +866,9 @@ const validateNoMutationRules = async (run: RunCommand, signal: AbortSignal, nam
     }
     const verbs = verbsSource.split(/\s+/).filter((verb) => verb.length > 0)
     const resource = line.trim().split(/\s+/)[0] ?? ''
+    if (resource === 'secrets') {
+      fail('RBAC_DENIED', `workflow identity has a Secret authorization rule in ${namespace}`, false)
+    }
     if (verbs.every((verb) => READ_ONLY_RULE_VERBS.has(verb))) continue
     if (SELF_REVIEW_RESOURCES.has(resource) && verbs.every((verb) => verb === 'create')) continue
     fail('RBAC_DENIED', `workflow identity has a non-read-only authorization rule in ${namespace}`, false)
