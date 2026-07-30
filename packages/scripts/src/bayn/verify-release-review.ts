@@ -6,6 +6,7 @@ const maximumReleaseRangeCommits = 100
 const githubWorkflowFile = 'bayn-build-push.yml'
 
 export const baynCodexReviewer = 'chatgpt-codex-connector'
+export const baynCodexBotLogin = 'chatgpt-codex-connector[bot]'
 
 export interface AssociatedPullRequest {
   readonly number: number
@@ -20,6 +21,19 @@ export interface PullRequestReview {
   readonly commitSha: string | null
   readonly submittedAt: string | null
   readonly state: string
+}
+
+export interface PullRequestIssueComment {
+  readonly authorLogin: string | null
+  readonly body: string
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+
+export interface PullRequestReaction {
+  readonly userLogin: string | null
+  readonly content: string
+  readonly createdAt: string
 }
 
 export interface PullRequestReviewThreadComment {
@@ -49,10 +63,14 @@ export interface PullRequestReviewState {
   readonly baseRefName: string
   readonly headSha: string
   readonly mergeCommitSha: string | null
+  readonly createdAt: string
   readonly mergedAt: string | null
   readonly reviews: readonly PullRequestReview[]
   readonly threads: readonly PullRequestReviewThread[]
   readonly commitShas: readonly string[]
+  readonly issueComments: readonly PullRequestIssueComment[]
+  readonly reactions: readonly PullRequestReaction[]
+  readonly headForcePushCount: number
 }
 
 export interface BaynReleaseReviewSnapshot {
@@ -271,6 +289,66 @@ export const isBaynReleaseAffectingPath = (path: string): boolean =>
 
 const eligibleReviewStates = new Set(['APPROVED', 'COMMENTED'])
 const trustedFeedbackAssociations = new Set(['MEMBER', 'OWNER', 'COLLABORATOR'])
+const cleanCodexCommentPattern =
+  /^Codex Review: Didn't find any (?:major )?issues\.[^\n]*\n\n\*\*Reviewed commit:\*\* `([0-9a-f]{10,40})`(?:\n|$)/
+
+const cleanCodexCommentHead = (body: string): string | null => cleanCodexCommentPattern.exec(body)?.[1] ?? null
+
+const timestampWithinPullRequest = (timestamp: string, createdAtMs: number, mergedAtMs: number): boolean => {
+  const timestampMs = Date.parse(timestamp)
+  return Number.isFinite(timestampMs) && timestampMs >= createdAtMs && timestampMs <= mergedAtMs
+}
+
+const exactHeadCodexAttestation = (
+  pullRequest: PullRequestReviewState,
+  createdAtMs: number,
+  mergedAtMs: number,
+): PullRequestReview | undefined => {
+  const comment = pullRequest.issueComments
+    .filter((candidate) => {
+      if (
+        candidate.authorLogin !== baynCodexBotLogin ||
+        candidate.createdAt !== candidate.updatedAt ||
+        !timestampWithinPullRequest(candidate.createdAt, createdAtMs, mergedAtMs)
+      ) {
+        return false
+      }
+      const reviewedHead = cleanCodexCommentHead(candidate.body)
+      return reviewedHead !== null && pullRequest.headSha.startsWith(reviewedHead)
+    })
+    .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))[0]
+  if (comment !== undefined) {
+    return {
+      authorLogin: baynCodexReviewer,
+      commitSha: pullRequest.headSha,
+      submittedAt: comment.createdAt,
+      state: 'COMMENTED',
+    }
+  }
+
+  if (
+    pullRequest.commitShas.length !== 1 ||
+    pullRequest.commitShas[0] !== pullRequest.headSha ||
+    pullRequest.headForcePushCount !== 0
+  ) {
+    return undefined
+  }
+  const reaction = pullRequest.reactions
+    .filter(
+      (candidate) =>
+        candidate.userLogin === baynCodexBotLogin &&
+        candidate.content === '+1' &&
+        timestampWithinPullRequest(candidate.createdAt, createdAtMs, mergedAtMs),
+    )
+    .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))[0]
+  if (reaction === undefined) return undefined
+  return {
+    authorLogin: baynCodexReviewer,
+    commitSha: pullRequest.headSha,
+    submittedAt: reaction.createdAt,
+    state: 'COMMENTED',
+  }
+}
 
 export const evaluateBaynReleaseReview = (input: {
   readonly mainCommitSha: string
@@ -337,6 +415,20 @@ export const evaluateBaynReleaseReview = (input: {
     )
   }
 
+  const pullRequestCreatedAtMs = Date.parse(pullRequest.createdAt)
+  const pullRequestMergedAtMs = Date.parse(pullRequest.mergedAt)
+  if (
+    !Number.isFinite(pullRequestCreatedAtMs) ||
+    !Number.isFinite(pullRequestMergedAtMs) ||
+    pullRequestCreatedAtMs > pullRequestMergedAtMs
+  ) {
+    return hold(
+      'source-pr-metadata-mismatch',
+      `source PR #${pullRequest.number} has invalid created/merged timestamps`,
+      false,
+    )
+  }
+
   const codexReviews = pullRequest.reviews.filter((review) => review.authorLogin === baynCodexReviewer)
   const exactHeadReviews = codexReviews.filter((review) => review.commitSha === pullRequest.headSha)
   const hasPendingExactHeadReview = exactHeadReviews.some(
@@ -353,7 +445,8 @@ export const evaluateBaynReleaseReview = (input: {
     .filter((review) => review.submittedAt !== null)
     .toSorted((left, right) => (right.submittedAt as string).localeCompare(left.submittedAt as string))[0]
 
-  let reviewEvidence = exactSubmittedReview
+  let reviewEvidence =
+    exactSubmittedReview ?? exactHeadCodexAttestation(pullRequest, pullRequestCreatedAtMs, pullRequestMergedAtMs)
   let feedbackFixCommitShas: readonly string[] = []
   if (reviewEvidence === undefined) {
     if (
@@ -879,6 +972,37 @@ const parseAssociatedPullRequests = (value: unknown): readonly AssociatedPullReq
   })
 }
 
+const parsePullRequestIssueComments = (value: unknown): readonly PullRequestIssueComment[] => {
+  if (!Array.isArray(value)) {
+    throw new GitHubReleaseReviewError('github-api-invalid-response', 'list source PR issue comments')
+  }
+  return value.map((item, index) => {
+    const comment = expectRecord(item, `source PR issue comment ${index}`)
+    const user = comment.user === null ? null : expectRecord(comment.user, `source PR issue comment ${index} user`)
+    return {
+      authorLogin: user === null ? null : expectString(user.login, `source PR issue comment ${index} user login`),
+      body: expectAnyString(comment.body, `source PR issue comment ${index} body`),
+      createdAt: expectString(comment.created_at, `source PR issue comment ${index} created at`),
+      updatedAt: expectString(comment.updated_at, `source PR issue comment ${index} updated at`),
+    }
+  })
+}
+
+const parsePullRequestReactions = (value: unknown): readonly PullRequestReaction[] => {
+  if (!Array.isArray(value)) {
+    throw new GitHubReleaseReviewError('github-api-invalid-response', 'list source PR reactions')
+  }
+  return value.map((item, index) => {
+    const reaction = expectRecord(item, `source PR reaction ${index}`)
+    const user = reaction.user === null ? null : expectRecord(reaction.user, `source PR reaction ${index} user`)
+    return {
+      userLogin: user === null ? null : expectString(user.login, `source PR reaction ${index} user login`),
+      content: expectString(reaction.content, `source PR reaction ${index} content`),
+      createdAt: expectString(reaction.created_at, `source PR reaction ${index} created at`),
+    }
+  })
+}
+
 const parseSuccessfulPublishRuns = (value: unknown): readonly SuccessfulPublishRun[] => {
   const payload = expectRecord(value, 'list successful Bayn publish runs')
   if (!Array.isArray(payload.workflow_runs)) {
@@ -1000,8 +1124,13 @@ const pullRequestMetadataQuery = `
         number
         baseRefName
         headRefOid
+        createdAt
         mergedAt
         mergeCommit { oid }
+        timelineItems(first: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
+          nodes { __typename }
+          pageInfo { hasNextPage endCursor }
+        }
       }
     }
   }
@@ -1100,13 +1229,65 @@ const fetchPullRequestMetadata = async (options: GitHubLoaderOptions, pullNumber
   })
   const pullRequest = graphqlPullRequest(data, `read source PR #${pullNumber} metadata`)
   const mergeCommit = pullRequest.mergeCommit === null ? null : expectRecord(pullRequest.mergeCommit, 'merge commit')
+  const timelineItems = expectRecord(pullRequest.timelineItems, 'source PR head-force-push history')
+  if (!Array.isArray(timelineItems.nodes)) {
+    throw new GitHubReleaseReviewError('github-api-invalid-response', 'source PR head-force-push history')
+  }
+  const timelinePageInfo = parsePageInfo(timelineItems, 'source PR head-force-push history')
+  if (timelinePageInfo.hasNextPage) {
+    throw new GitHubReleaseReviewError('github-api-pagination-limit', 'source PR head-force-push history')
+  }
+  for (const [index, item] of timelineItems.nodes.entries()) {
+    const event = expectRecord(item, `source PR head-force-push event ${index}`)
+    if (event.__typename !== 'HeadRefForcePushedEvent') {
+      throw new GitHubReleaseReviewError('github-api-invalid-response', `source PR head-force-push event ${index}`)
+    }
+  }
   return {
     number: expectInteger(pullRequest.number, 'source PR number'),
     baseRefName: expectString(pullRequest.baseRefName, 'source PR base ref'),
     headSha: expectString(pullRequest.headRefOid, 'source PR head SHA'),
+    createdAt: expectString(pullRequest.createdAt, 'source PR created at'),
     mergedAt: expectNullableString(pullRequest.mergedAt, 'source PR merged at'),
     mergeCommitSha: mergeCommit === null ? null : expectString(mergeCommit.oid, 'source PR merge commit SHA'),
+    headForcePushCount: timelineItems.nodes.length,
   }
+}
+
+const fetchPullRequestIssueComments = async (
+  options: GitHubLoaderOptions,
+  pullNumber: number,
+): Promise<readonly PullRequestIssueComment[]> => {
+  const operation = `list source PR #${pullNumber} issue comments`
+  const response = await requestGitHubJson({
+    url: `https://api.github.com/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.name)}/issues/${pullNumber}/comments?per_page=100&page=1`,
+    operation,
+    token: options.token,
+    requestTimeoutMs: options.requestTimeoutMs,
+    fetchFn: options.fetchFn,
+  })
+  if (response.headers.get('link')?.includes('rel="next"') === true) {
+    throw new GitHubReleaseReviewError('github-api-pagination-limit', operation)
+  }
+  return parsePullRequestIssueComments(response.value)
+}
+
+const fetchPullRequestReactions = async (
+  options: GitHubLoaderOptions,
+  pullNumber: number,
+): Promise<readonly PullRequestReaction[]> => {
+  const operation = `list source PR #${pullNumber} reactions`
+  const response = await requestGitHubJson({
+    url: `https://api.github.com/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.name)}/issues/${pullNumber}/reactions?per_page=100&page=1`,
+    operation,
+    token: options.token,
+    requestTimeoutMs: options.requestTimeoutMs,
+    fetchFn: options.fetchFn,
+  })
+  if (response.headers.get('link')?.includes('rel="next"') === true) {
+    throw new GitHubReleaseReviewError('github-api-pagination-limit', operation)
+  }
+  return parsePullRequestReactions(response.value)
 }
 
 const fetchPullRequestReviews = async (
@@ -1336,16 +1517,18 @@ const loadCommitReviewSnapshot = async (
 
   const candidate = candidates[0]
   if (candidate === undefined) throw new Error('source pull selection was unexpectedly empty')
-  const [metadata, reviews, threads, commitShas] = await Promise.all([
+  const [metadata, reviews, threads, commitShas, issueComments, reactions] = await Promise.all([
     fetchPullRequestMetadata(options, candidate.number),
     fetchPullRequestReviews(options, candidate.number),
     fetchPullRequestThreads(options, candidate.number),
     fetchPullRequestCommitShas(options, candidate.number),
+    fetchPullRequestIssueComments(options, candidate.number),
+    fetchPullRequestReactions(options, candidate.number),
   ])
   return {
     mainCommitParents: commit.parents,
     associatedPullRequests,
-    pullRequest: { ...metadata, reviews, threads, commitShas },
+    pullRequest: { ...metadata, reviews, threads, commitShas, issueComments, reactions },
   }
 }
 

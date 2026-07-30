@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
+  baynCodexBotLogin,
   baynCodexReviewer,
   createGitHubReleaseEligibilityLoader,
   createGitHubReleaseReviewLoader,
@@ -16,6 +17,8 @@ import {
   type BaynReleaseReviewPollResult,
   type BaynReleaseReviewSnapshot,
   type PullRequestReview,
+  type PullRequestIssueComment,
+  type PullRequestReaction,
   type PullRequestReviewThread,
   type PullRequestReviewThreadComment,
   type SuccessfulPublishRun,
@@ -43,7 +46,7 @@ const associatedPull = (overrides: Partial<AssociatedPullRequest> = {}): Associa
   baseRefName: 'main',
   headSha: finalHeadSha,
   mergeCommitSha: mainCommitSha,
-  mergedAt: '2026-07-30T07:00:00Z',
+  mergedAt: '2026-07-30T07:01:30Z',
   ...overrides,
 })
 
@@ -52,6 +55,21 @@ const review = (overrides: Partial<PullRequestReview> = {}): PullRequestReview =
   commitSha: finalHeadSha,
   submittedAt: '2026-07-30T07:01:00Z',
   state: 'COMMENTED',
+  ...overrides,
+})
+
+const issueComment = (overrides: Partial<PullRequestIssueComment> = {}): PullRequestIssueComment => ({
+  authorLogin: baynCodexBotLogin,
+  body: `Codex Review: Didn't find any major issues. Bravo.\n\n**Reviewed commit:** \`${finalHeadSha.slice(0, 10)}\`\n`,
+  createdAt: '2026-07-30T07:01:00Z',
+  updatedAt: '2026-07-30T07:01:00Z',
+  ...overrides,
+})
+
+const reaction = (overrides: Partial<PullRequestReaction> = {}): PullRequestReaction => ({
+  userLogin: baynCodexBotLogin,
+  content: '+1',
+  createdAt: '2026-07-30T07:01:00Z',
   ...overrides,
 })
 
@@ -86,10 +104,17 @@ const snapshot = (
     readonly threads?: readonly PullRequestReviewThread[]
     readonly mainCommitParents?: readonly string[]
     readonly commitShas?: readonly string[]
+    readonly issueComments?: readonly PullRequestIssueComment[]
+    readonly reactions?: readonly PullRequestReaction[]
+    readonly headForcePushCount?: number
   } = {},
 ): BaynReleaseReviewSnapshot => {
   const associated = options.associated ?? [associatedPull()]
   const source = associated[0]
+  const sourceCreatedAt =
+    source?.mergedAt === null || source?.mergedAt === undefined
+      ? '2026-07-30T06:59:00Z'
+      : new Date(Date.parse(source.mergedAt) - 60_000).toISOString()
   return {
     mainCommitParents: options.mainCommitParents ?? [pushBeforeSha],
     associatedPullRequests: associated,
@@ -101,10 +126,14 @@ const snapshot = (
             baseRefName: source.baseRefName,
             headSha: source.headSha,
             mergeCommitSha: source.mergeCommitSha,
+            createdAt: sourceCreatedAt,
             mergedAt: source.mergedAt,
             reviews: options.reviews ?? [review()],
             threads: options.threads ?? [],
             commitShas: options.commitShas ?? [source.headSha],
+            issueComments: options.issueComments ?? [],
+            reactions: options.reactions ?? [],
+            headForcePushCount: options.headForcePushCount ?? 0,
           },
   }
 }
@@ -134,6 +163,10 @@ const reviewSnapshotFor = (options: {
     headSha: options.headSha,
     mergeCommitSha: options.commitSha,
   })
+  const sourceCreatedAt =
+    associated.mergedAt === null
+      ? '2026-07-30T06:59:00Z'
+      : new Date(Date.parse(associated.mergedAt) - 60_000).toISOString()
   return {
     mainCommitParents: options.parents,
     associatedPullRequests: [associated],
@@ -142,6 +175,7 @@ const reviewSnapshotFor = (options: {
       baseRefName: 'main',
       headSha: options.headSha,
       mergeCommitSha: options.commitSha,
+      createdAt: sourceCreatedAt,
       mergedAt: associated.mergedAt,
       reviews: options.reviews ?? [
         review({
@@ -150,6 +184,9 @@ const reviewSnapshotFor = (options: {
       ],
       threads: options.threads ?? [],
       commitShas: [options.headSha],
+      issueComments: [],
+      reactions: [],
+      headForcePushCount: 0,
     },
   }
 }
@@ -370,7 +407,7 @@ describe('Bayn publication-range eligibility', () => {
             base: { ref: 'main' },
             head: { sha: finalHeadSha },
             merge_commit_sha: mainCommitSha,
-            merged_at: '2026-07-30T07:00:00Z',
+            merged_at: '2026-07-30T07:01:30Z',
           },
         ])
       }
@@ -386,6 +423,9 @@ describe('Bayn publication-range eligibility', () => {
           ],
         })
       }
+      if (url.includes('/issues/13390/comments?') || url.includes('/issues/13390/reactions?')) {
+        return Response.json([])
+      }
 
       const request = JSON.parse(String(init?.body)) as { readonly query: string }
       if (request.query.includes('BaynReleasePullRequestMetadata')) {
@@ -396,8 +436,13 @@ describe('Bayn publication-range eligibility', () => {
                 number: 13390,
                 baseRefName: 'main',
                 headRefOid: finalHeadSha,
-                mergedAt: '2026-07-30T07:00:00Z',
+                createdAt: '2026-07-30T06:59:00Z',
+                mergedAt: '2026-07-30T07:01:30Z',
                 mergeCommit: { oid: mainCommitSha },
+                timelineItems: {
+                  nodes: [],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
               },
             },
           },
@@ -512,6 +557,122 @@ describe('Bayn exact-head release review eligibility', () => {
       status: 'hold',
       code: 'exact-head-review-missing',
       retryable: true,
+    })
+  })
+
+  test('accepts the #13394 clean connector issue-comment attestation for the exact final head', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: snapshot({
+          reviews: [review({ commitSha: olderHeadSha })],
+          issueComments: [issueComment()],
+          headForcePushCount: 6,
+        }),
+        nowMs: evaluationNowMs,
+        pushBeforeSha: null,
+      }),
+    ).toEqual({
+      status: 'eligible',
+      prNumber: 13390,
+      headSha: finalHeadSha,
+      reviewSubmittedAt: '2026-07-30T07:01:00Z',
+    })
+  })
+
+  test('accepts the #13397 clean connector PR reaction only for an immutable single-head history', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: snapshot({ reviews: [], reactions: [reaction()] }),
+        nowMs: evaluationNowMs,
+        pushBeforeSha: null,
+      }),
+    ).toEqual({
+      status: 'eligible',
+      prNumber: 13390,
+      headSha: finalHeadSha,
+      reviewSubmittedAt: '2026-07-30T07:01:00Z',
+    })
+  })
+
+  test('rejects a clean-shaped PR reaction from a spoofed actor', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: snapshot({ reviews: [], reactions: [reaction({ userLogin: 'spoofed-codex[bot]' })] }),
+        nowMs: evaluationNowMs,
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'exact-head-review-missing',
+      retryable: true,
+    })
+  })
+
+  test('rejects a clean connector comment bound to a stale head', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: snapshot({
+          reviews: [],
+          issueComments: [
+            issueComment({
+              body: `Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** \`${olderHeadSha.slice(0, 10)}\`\n`,
+            }),
+          ],
+        }),
+        nowMs: evaluationNowMs,
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'exact-head-review-missing',
+      retryable: true,
+    })
+  })
+
+  test('keeps an actionable exact-head review blocking a clean reaction', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: snapshot({
+          reviews: [review({ state: 'CHANGES_REQUESTED' })],
+          reactions: [reaction()],
+        }),
+        nowMs: evaluationNowMs,
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'exact-head-review-changes-requested',
+      retryable: false,
+    })
+  })
+
+  test('keeps an unresolved thread blocking a clean exact-head attestation', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: snapshot({
+          reviews: [],
+          reactions: [reaction()],
+          threads: [thread({ isResolved: false })],
+        }),
+        nowMs: evaluationNowMs,
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'active-unresolved-review-threads',
+      retryable: false,
     })
   })
 
@@ -996,9 +1157,12 @@ describe('Bayn exact-head release review eligibility', () => {
             base: { ref: 'main' },
             head: { sha: finalHeadSha },
             merge_commit_sha: mainCommitSha,
-            merged_at: '2026-07-30T07:00:00Z',
+            merged_at: '2026-07-30T07:01:30Z',
           },
         ])
+      }
+      if (url.includes('/issues/13390/comments?') || url.includes('/issues/13390/reactions?')) {
+        return Response.json([])
       }
 
       const request = JSON.parse(String(init?.body)) as { readonly query: string }
@@ -1010,8 +1174,13 @@ describe('Bayn exact-head release review eligibility', () => {
                 number: 13390,
                 baseRefName: 'main',
                 headRefOid: finalHeadSha,
-                mergedAt: '2026-07-30T07:00:00Z',
+                createdAt: '2026-07-30T06:59:00Z',
+                mergedAt: '2026-07-30T07:01:30Z',
                 mergeCommit: { oid: mainCommitSha },
+                timelineItems: {
+                  nodes: [],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
               },
             },
           },
