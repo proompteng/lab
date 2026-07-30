@@ -35,6 +35,7 @@ export {
 } from './pass-decisions'
 export {
   decideIdleReconciliationCadence,
+  shouldDeferCyclePollForReconciliation,
   validateCyclePassTimeout,
   validateReconciliationInterval,
 } from './reconciliation-cadence'

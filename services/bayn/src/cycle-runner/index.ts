@@ -18,6 +18,7 @@ export {
   selectCycleCalendarCandidate,
   selectDiscoveredPublications,
   selectNextExecutionSession,
+  shouldDeferCyclePollForReconciliation,
   validateCyclePassTimeout,
   validateReconciliationInterval,
 } from './decisions'

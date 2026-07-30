@@ -30,6 +30,22 @@ export const validateCyclePassTimeout = (
         ),
       )
 
+export const shouldDeferCyclePollForReconciliation = (input: {
+  readonly lastAttemptAtNanos: bigint | undefined
+  readonly nextPollAtNanos: bigint
+  readonly pollStartAtNanos: bigint
+  readonly reconciliationAtNanos: bigint
+  readonly cyclePassTimeoutNanos: bigint
+}): boolean => {
+  const pollCoveredByLatestReconciliation =
+    input.lastAttemptAtNanos !== undefined && input.nextPollAtNanos <= input.lastAttemptAtNanos
+  return (
+    !pollCoveredByLatestReconciliation &&
+    input.pollStartAtNanos < input.reconciliationAtNanos &&
+    input.pollStartAtNanos + input.cyclePassTimeoutNanos > input.reconciliationAtNanos
+  )
+}
+
 export const decideIdleReconciliationCadence = (
   state: ReconciliationCadenceState,
   nowNanos: bigint,

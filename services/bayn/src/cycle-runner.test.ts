@@ -41,6 +41,7 @@ import {
   selectCycleCalendarCandidate,
   selectDiscoveredPublications,
   selectNextExecutionSession,
+  shouldDeferCyclePollForReconciliation,
   type AutonomousCycleLoopOptions,
   type CycleCandidate,
   type CyclePassObservation,
@@ -648,6 +649,24 @@ describe('autonomous cycle runner', () => {
     expect(
       decideIdleReconciliationCadence(postPersistenceState, postPersistenceCompletionAtNanos + 100_000_000n, 100),
     ).toEqual({ _tag: 'RECONCILE' })
+    expect(
+      shouldDeferCyclePollForReconciliation({
+        lastAttemptAtNanos: 0n,
+        nextPollAtNanos: 99n,
+        pollStartAtNanos: 99n,
+        reconciliationAtNanos: 100n,
+        cyclePassTimeoutNanos: 2n,
+      }),
+    ).toBe(true)
+    expect(
+      shouldDeferCyclePollForReconciliation({
+        lastAttemptAtNanos: 100n,
+        nextPollAtNanos: 99n,
+        pollStartAtNanos: 100n,
+        reconciliationAtNanos: 200n,
+        cyclePassTimeoutNanos: 100n,
+      }),
+    ).toBe(false)
     expect(state).toEqual({ lastAttemptAtNanos })
     expect(postPersistenceState).toEqual({ lastAttemptAtNanos: postPersistenceCompletionAtNanos })
   })
@@ -1588,6 +1607,7 @@ describe('autonomous cycle runner', () => {
                   count === 1 ? Deferred.succeed(firstPass, undefined).pipe(Effect.asVoid) : Effect.void,
                 ),
               ),
+            cyclePassTimeoutMs: 100,
             pollIntervalMs: 100,
             reconciliationIntervalMs: 100,
             reconcileNotDue: Effect.sync(() => {

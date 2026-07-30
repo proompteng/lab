@@ -11,6 +11,7 @@ import {
   makeAutonomousCycleLoop,
   marketCalendarQueryForSignal,
   runAutonomousCyclePass,
+  shouldDeferCyclePollForReconciliation,
   validateCyclePassTimeout,
   validateReconciliationInterval,
   type CycleRunContext,
@@ -1409,8 +1410,13 @@ const waitUntilNextMutationPoll = (
       const pollStartAtNanos = nowNanos > nextPollAtNanos ? nowNanos : nextPollAtNanos
       const cyclePassTimeoutMs = Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs)
       if (
-        pollStartAtNanos < reconciliationAtNanos &&
-        pollStartAtNanos + mutationIntervalNanos(cyclePassTimeoutMs) > reconciliationAtNanos
+        shouldDeferCyclePollForReconciliation({
+          lastAttemptAtNanos: state.lastAttemptAtNanos,
+          nextPollAtNanos,
+          pollStartAtNanos,
+          reconciliationAtNanos,
+          cyclePassTimeoutNanos: mutationIntervalNanos(cyclePassTimeoutMs),
+        })
       ) {
         yield* mutationSleepUntil(reconciliationAtNanos)
         return yield* waitUntilNextMutationPoll(input, startup, cadence, reconcile, result, nextPollAtNanos)

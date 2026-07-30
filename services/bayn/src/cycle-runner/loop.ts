@@ -7,6 +7,7 @@ import { currentUtcInstant } from '../time'
 import {
   cyclePassLogFacts,
   decideIdleReconciliationCadence,
+  shouldDeferCyclePollForReconciliation,
   validateCyclePassTimeout,
   validateCycleLoopInterval,
   validateReconciliationInterval,
@@ -212,8 +213,13 @@ const waitUntilNextCyclePoll = <E, ContextR, DecisionR>(
       const reconciliationAtNanos = nowNanos + decision.remainingNanos
       const pollStartAtNanos = nowNanos > nextPollAtNanos ? nowNanos : nextPollAtNanos
       if (
-        pollStartAtNanos < reconciliationAtNanos &&
-        pollStartAtNanos + intervalNanos(options.cyclePassTimeoutMs) > reconciliationAtNanos
+        shouldDeferCyclePollForReconciliation({
+          lastAttemptAtNanos: state.lastAttemptAtNanos,
+          nextPollAtNanos,
+          pollStartAtNanos,
+          reconciliationAtNanos,
+          cyclePassTimeoutNanos: intervalNanos(options.cyclePassTimeoutMs),
+        })
       ) {
         yield* sleepUntil(reconciliationAtNanos)
         return yield* waitUntilNextCyclePoll(options, cadence, result, nextPollAtNanos)

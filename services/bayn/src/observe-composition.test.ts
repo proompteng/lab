@@ -1685,7 +1685,7 @@ describe('OBSERVE runtime composition', () => {
       authorityGenerationHash: generationHash,
       pollIntervalMs: 99,
       reconciliationIntervalMs: 100,
-      reconciliationPassTimeoutMs: 2,
+      reconciliationPassTimeoutMs: 100,
       strategy: fixtureStrategy,
       executionProgram: sandboxExecutionProgram(),
     })
