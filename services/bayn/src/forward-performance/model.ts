@@ -1,4 +1,4 @@
-export const FORWARD_PERFORMANCE_SCHEMA_VERSION = 'bayn.forward-performance-receipt.v1' as const
+export const FORWARD_PERFORMANCE_SCHEMA_VERSION = 'bayn.forward-performance-receipt.v2' as const
 
 export type ForwardPerformanceEvidenceStatus = 'SUFFICIENT' | 'INSUFFICIENT_EVIDENCE'
 export type ForwardPerformanceProfitability = 'PROFITABLE' | 'NOT_PROFITABLE' | 'UNDETERMINED'
@@ -6,6 +6,7 @@ export type ForwardPerformanceProfitability = 'PROFITABLE' | 'NOT_PROFITABLE' | 
 export type ForwardPerformanceReasonCode =
   | 'ACCOUNT_IDENTITY_GAP'
   | 'ACCOUNTING_RECEIPT_MISMATCH'
+  | 'CASH_YIELD_EVIDENCE_GAP'
   | 'CYCLE_IDENTITY_DRIFT'
   | 'IDENTITY_GAP'
   | 'INVALID_MICROS'
@@ -83,6 +84,33 @@ export interface ForwardPerformanceLedgerTotals {
   readonly cashYieldMicros: string
 }
 
+export interface ForwardPerformanceCashYieldEvidence {
+  readonly schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v1'
+  readonly reconciliationId: string
+  readonly reconciliationContentHash: string
+  readonly reconciledAt: string
+  readonly baselineAccountEventId: string
+  readonly baselineObservedAt: string
+  readonly baselineCashMicros: string
+  readonly openingAccountEventId: string
+  readonly openingObservedAt: string
+  readonly openingCashMicros: string
+  readonly preWindowAccountedCashDeltaMicros: string
+  readonly preWindowCashResidualMicros: string
+  readonly closingAccountEventId: string
+  readonly closingObservedAt: string
+  readonly closingCashMicros: string
+  readonly accountedCashDeltaMicros: string
+  readonly cashYieldMicros: string
+}
+
+export interface ForwardPerformanceCashYieldBinding {
+  readonly source: 'TIGERBEETLE_CASH_YIELD_TRANSFER'
+  readonly transferId: string
+  readonly transferTimestampNs: string
+  readonly amountMicros: string
+}
+
 export interface ForwardPerformanceEvidenceInput {
   readonly runtime: ForwardPerformanceBuildBinding
   readonly account: {
@@ -113,11 +141,15 @@ export interface ForwardPerformanceEvidenceInput {
     readonly reconciliationId: string
     readonly contentHash: string
     readonly status: 'EXACT' | 'DISCREPANCY'
+    readonly performanceExact: boolean
+    readonly cashYieldAdjustedExact: boolean
     readonly reconciledAt: string
   }
   readonly startingCapitalMicros?: string
   readonly transactions: readonly ForwardPerformanceTransactionEvidence[]
   readonly ledgerTotals?: ForwardPerformanceLedgerTotals
+  readonly cashYieldEvidenceRequired: boolean
+  readonly cashYieldEvidence?: ForwardPerformanceCashYieldBinding
   readonly accountingReceiptsExact: boolean
   readonly ledgerExact: boolean
   readonly missingLedgerAccountCount: number
@@ -141,6 +173,8 @@ export interface ForwardPerformanceReceiptMaterial {
     readonly closedAt: string | null
     readonly reconciliationId: string | null
     readonly reconciliationContentHash: string | null
+    readonly reconciliationStatus: 'EXACT' | 'DISCREPANCY' | null
+    readonly cashYieldAdjustedExact: boolean | null
   }
   readonly totals: {
     readonly startingCapitalMicros: string | null
@@ -165,6 +199,7 @@ export interface ForwardPerformanceReceiptMaterial {
   readonly evidence: {
     readonly status: ForwardPerformanceEvidenceStatus
     readonly reasonCodes: readonly ForwardPerformanceReasonCode[]
+    readonly cashYield: ForwardPerformanceCashYieldBinding | null
   }
   readonly profitability: ForwardPerformanceProfitability
 }

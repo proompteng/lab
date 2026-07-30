@@ -37,6 +37,13 @@ const transaction = (
   ...overrides,
 })
 
+const cashYieldBinding = (amountMicros = '200') => ({
+  source: 'TIGERBEETLE_CASH_YIELD_TRANSFER' as const,
+  transferId: '123456789',
+  transferTimestampNs: '1784563200000000000',
+  amountMicros,
+})
+
 const input = (overrides: Partial<ForwardPerformanceEvidenceInput> = {}): ForwardPerformanceEvidenceInput => ({
   runtime: {
     sourceRevision: 'a'.repeat(40),
@@ -83,6 +90,8 @@ const input = (overrides: Partial<ForwardPerformanceEvidenceInput> = {}): Forwar
     reconciliationId: hash('8'),
     contentHash: hash('9'),
     status: 'EXACT',
+    performanceExact: true,
+    cashYieldAdjustedExact: false,
     reconciledAt: '2026-07-20T21:01:00.000Z',
   },
   startingCapitalMicros: '1000',
@@ -101,6 +110,7 @@ const input = (overrides: Partial<ForwardPerformanceEvidenceInput> = {}): Forwar
   unclosedCycleCount: 0,
   openPositionCount: 0,
   ...overrides,
+  cashYieldEvidenceRequired: overrides.cashYieldEvidenceRequired ?? false,
 })
 
 const success = (value: Result.Result<ForwardPerformanceReceipt, unknown>): ForwardPerformanceReceipt => {
@@ -112,7 +122,7 @@ describe('forward performance domain', () => {
   test('reports positive net realized returns after charged costs', () => {
     const receipt = success(makeForwardPerformanceReceipt(input()))
 
-    expect(receipt.evidence).toEqual({ status: 'SUFFICIENT', reasonCodes: [] })
+    expect(receipt.evidence).toEqual({ status: 'SUFFICIENT', reasonCodes: [], cashYield: null })
     expect(receipt.profitability).toBe('PROFITABLE')
     expect(receipt.totals).toMatchObject({
       grossRealizedPnlMicros: '100',
@@ -167,10 +177,94 @@ describe('forward performance domain', () => {
     expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('-50')
   })
 
+  test('cash yield can make total realized economic income profitable without changing gross trade PnL', () => {
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          reconciliation: {
+            reconciliationId: hash('8'),
+            contentHash: hash('9'),
+            status: 'DISCREPANCY',
+            performanceExact: true,
+            cashYieldAdjustedExact: true,
+            reconciledAt: '2026-07-20T21:01:00.000Z',
+          },
+          transactions: [transaction('e', '-100', '0')],
+          ledgerTotals: {
+            realizedGainMicros: '0',
+            realizedLossMicros: '100',
+            brokerExecutionFeesMicros: '0',
+            otherChargedCostsMicros: '0',
+            cashYieldMicros: '200',
+          },
+          cashYieldEvidenceRequired: true,
+          cashYieldEvidence: cashYieldBinding(),
+        }),
+      ),
+    )
+
+    expect(receipt.evidence).toEqual({
+      status: 'SUFFICIENT',
+      reasonCodes: [],
+      cashYield: cashYieldBinding(),
+    })
+    expect(receipt.profitability).toBe('PROFITABLE')
+    expect(receipt.window).toMatchObject({
+      reconciliationStatus: 'DISCREPANCY',
+      cashYieldAdjustedExact: true,
+    })
+    expect(receipt.totals).toMatchObject({
+      grossRealizedPnlMicros: '-100',
+      cashYieldMicros: '200',
+      netRealizedPnlAfterCostsMicros: '100',
+      netRealizedReturn: {
+        numeratorMicros: '100',
+        denominatorMicros: '1000',
+        decimal: '0.100000000000',
+      },
+    })
+  })
+
+  test('cash yield can reduce a realized loss without falsely crossing profitability', () => {
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          transactions: [transaction('e', '-200', '0')],
+          ledgerTotals: {
+            realizedGainMicros: '0',
+            realizedLossMicros: '200',
+            brokerExecutionFeesMicros: '0',
+            otherChargedCostsMicros: '0',
+            cashYieldMicros: '100',
+          },
+          cashYieldEvidenceRequired: true,
+          cashYieldEvidence: cashYieldBinding('100'),
+        }),
+      ),
+    )
+
+    expect(receipt.profitability).toBe('NOT_PROFITABLE')
+    expect(receipt.totals.grossRealizedPnlMicros).toBe('-200')
+    expect(receipt.totals.cashYieldMicros).toBe('100')
+    expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('-100')
+  })
+
+  test('zero cash yield preserves the checked trade net after costs', () => {
+    const receipt = success(makeForwardPerformanceReceipt(input()))
+
+    expect(receipt.totals.cashYieldMicros).toBe('0')
+    expect(receipt.totals.grossRealizedPnlMicros).toBe('100')
+    expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('80')
+  })
+
   test('an open or partial operating window is insufficient evidence', () => {
     const receipt = success(makeForwardPerformanceReceipt(input({ unclosedCycleCount: 1 })))
 
-    expect(receipt.evidence).toEqual({ status: 'INSUFFICIENT_EVIDENCE', reasonCodes: ['UNCLOSED_WINDOW'] })
+    expect(receipt.evidence).toEqual({
+      status: 'INSUFFICIENT_EVIDENCE',
+      reasonCodes: ['UNCLOSED_WINDOW'],
+      cashYield: null,
+    })
     expect(receipt.profitability).toBe('UNDETERMINED')
   })
 
@@ -226,17 +320,137 @@ describe('forward performance domain', () => {
     expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBeNull()
   })
 
+  test('invalid or overflowing cash yield arithmetic fails closed', () => {
+    const max = ((1n << 127n) - 1n).toString()
+    const overflow = success(
+      makeForwardPerformanceReceipt(
+        input({
+          transactions: [transaction('e', max, '0')],
+          ledgerTotals: {
+            realizedGainMicros: max,
+            realizedLossMicros: '0',
+            brokerExecutionFeesMicros: '0',
+            otherChargedCostsMicros: '0',
+            cashYieldMicros: '1',
+          },
+        }),
+      ),
+    )
+    const invalid = success(
+      makeForwardPerformanceReceipt(
+        input({
+          ledgerTotals: {
+            realizedGainMicros: '100',
+            realizedLossMicros: '0',
+            brokerExecutionFeesMicros: '20',
+            otherChargedCostsMicros: '0',
+            cashYieldMicros: '-1',
+          },
+        }),
+      ),
+    )
+
+    for (const receipt of [overflow, invalid]) {
+      expect(receipt.evidence.reasonCodes).toContain('INVALID_MICROS')
+      expect(receipt.profitability).toBe('UNDETERMINED')
+      expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBeNull()
+    }
+  })
+
   test('canonical ordering produces one deterministic content hash', () => {
     const secondCycle = cycle('f', {
       submissionOpenAt: '2026-07-21T13:00:00.000Z',
       terminalAt: '2026-07-21T21:00:00.000Z',
     })
-    const first = success(makeForwardPerformanceReceipt(input({ cycles: [secondCycle, cycle('a')] })))
-    const second = success(makeForwardPerformanceReceipt(input({ cycles: [cycle('a'), secondCycle] })))
+    const evidence = {
+      transactions: [transaction('e', '-100', '0')],
+      ledgerTotals: {
+        realizedGainMicros: '0',
+        realizedLossMicros: '100',
+        brokerExecutionFeesMicros: '0',
+        otherChargedCostsMicros: '0',
+        cashYieldMicros: '200',
+      },
+      cashYieldEvidenceRequired: true,
+      cashYieldEvidence: cashYieldBinding(),
+      reconciliation: {
+        reconciliationId: hash('8'),
+        contentHash: hash('9'),
+        status: 'DISCREPANCY' as const,
+        performanceExact: true,
+        cashYieldAdjustedExact: true,
+        reconciledAt: '2026-07-21T21:01:00.000Z',
+      },
+    } as const
+    const first = success(makeForwardPerformanceReceipt(input({ ...evidence, cycles: [secondCycle, cycle('a')] })))
+    const second = success(makeForwardPerformanceReceipt(input({ ...evidence, cycles: [cycle('a'), secondCycle] })))
 
     expect(first).toEqual(second)
-    expect(first.receiptHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(first.schemaVersion).toBe('bayn.forward-performance-receipt.v2')
+    expect(first.receiptHash).toBe('adc3d822eaec05fb862f67b4bb795fc4886260623642d6e0651eb1b80c4a9e1b')
+    expect(first.evidence).toEqual({
+      status: 'SUFFICIENT',
+      reasonCodes: [],
+      cashYield: cashYieldBinding(),
+    })
+    expect(first.profitability).toBe('PROFITABLE')
+    expect(first.totals.netRealizedPnlAfterCostsMicros).toBe('100')
     expect(JSON.stringify(first)).not.toContain('paper-account-1')
+  })
+
+  test('a ledger reconciliation failure remains insufficient even when cash yield crosses profitability', () => {
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          transactions: [transaction('e', '-100', '0')],
+          ledgerTotals: {
+            realizedGainMicros: '0',
+            realizedLossMicros: '100',
+            brokerExecutionFeesMicros: '0',
+            otherChargedCostsMicros: '0',
+            cashYieldMicros: '200',
+          },
+          ledgerExact: false,
+        }),
+      ),
+    )
+
+    expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('100')
+    expect(receipt.evidence.reasonCodes).toContain('LEDGER_MISMATCH')
+    expect(receipt.evidence.status).toBe('INSUFFICIENT_EVIDENCE')
+    expect(receipt.profitability).toBe('UNDETERMINED')
+  })
+
+  test('an unexplained cash discrepancy remains insufficient even when yield would cross profitability', () => {
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          reconciliation: {
+            reconciliationId: hash('8'),
+            contentHash: hash('9'),
+            status: 'DISCREPANCY',
+            performanceExact: false,
+            cashYieldAdjustedExact: false,
+            reconciledAt: '2026-07-20T21:01:00.000Z',
+          },
+          transactions: [transaction('e', '-100', '0')],
+          ledgerTotals: {
+            realizedGainMicros: '0',
+            realizedLossMicros: '100',
+            brokerExecutionFeesMicros: '0',
+            otherChargedCostsMicros: '0',
+            cashYieldMicros: '200',
+          },
+        }),
+      ),
+    )
+
+    expect(receipt.evidence.reasonCodes).toContain('NON_EXACT_RECONCILIATION')
+    expect(receipt.profitability).toBe('UNDETERMINED')
+    expect(receipt.window).toMatchObject({
+      reconciliationStatus: 'DISCREPANCY',
+      cashYieldAdjustedExact: false,
+    })
   })
 
   test('identity drift across completed cycles is insufficient', () => {

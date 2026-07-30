@@ -127,7 +127,8 @@ const parseTotals = (
   }
   const grossRealizedPnl = checkedAdd(realizedGains, -realizedLosses)
   const afterFees = grossRealizedPnl === undefined ? undefined : checkedAdd(grossRealizedPnl, -brokerExecutionFees)
-  const netRealizedPnlAfterCosts = afterFees === undefined ? undefined : checkedAdd(afterFees, -otherChargedCosts)
+  const afterOtherCosts = afterFees === undefined ? undefined : checkedAdd(afterFees, -otherChargedCosts)
+  const netRealizedPnlAfterCosts = afterOtherCosts === undefined ? undefined : checkedAdd(afterOtherCosts, cashYield)
   if (grossRealizedPnl === undefined || netRealizedPnlAfterCosts === undefined) {
     reasons.add('INVALID_MICROS')
     return undefined
@@ -238,7 +239,9 @@ const makeMaterial = (input: ForwardPerformanceEvidenceInput): ForwardPerformanc
       reasons.add('CYCLE_IDENTITY_DRIFT')
     }
   }
-  if (reconciliation === undefined || reconciliation.status !== 'EXACT') reasons.add('NON_EXACT_RECONCILIATION')
+  if (reconciliation === undefined || reconciliation.performanceExact !== true) {
+    reasons.add('NON_EXACT_RECONCILIATION')
+  }
   if (lastCycle !== undefined && reconciliation !== undefined && reconciliation.reconciledAt < lastCycle.terminalAt) {
     reasons.add('UNCLOSED_WINDOW')
   }
@@ -248,6 +251,9 @@ const makeMaterial = (input: ForwardPerformanceEvidenceInput): ForwardPerformanc
   if (!input.accountingReceiptsExact) reasons.add('ACCOUNTING_RECEIPT_MISMATCH')
   if (!input.ledgerExact) reasons.add('LEDGER_MISMATCH')
   if (input.missingLedgerAccountCount > 0) reasons.add('MISSING_LEDGER_ACCOUNT')
+  if (input.cashYieldEvidenceRequired && input.cashYieldEvidence === undefined) {
+    reasons.add('CASH_YIELD_EVIDENCE_GAP')
+  }
   if (input.transactions.length === 0) reasons.add('ZERO_COMPLETED_EXECUTIONS')
 
   const cycleIds = new Set(cycles.map((cycle) => cycle.cycleId))
@@ -255,6 +261,20 @@ const makeMaterial = (input: ForwardPerformanceEvidenceInput): ForwardPerformanc
 
   const totals = parseTotals(input, reasons)
   if (totals !== undefined) transactionTotalsMatch(input, totals, reasons)
+  if (input.cashYieldEvidence !== undefined) {
+    const evidenceAmount = parseSignedMicros(input.cashYieldEvidence.amountMicros)
+    if (
+      !input.cashYieldEvidenceRequired ||
+      evidenceAmount === undefined ||
+      evidenceAmount <= 0n ||
+      totals === undefined ||
+      totals.cashYield !== evidenceAmount
+    ) {
+      reasons.add('CASH_YIELD_EVIDENCE_GAP')
+    }
+  } else if (totals !== undefined && totals.cashYield > 0n) {
+    reasons.add('CASH_YIELD_EVIDENCE_GAP')
+  }
 
   const realizedCloseCount = input.transactions.filter((transaction) => transaction.side === 'SELL').length
   const reasonCodes = [...reasons].sort()
@@ -299,6 +319,8 @@ const makeMaterial = (input: ForwardPerformanceEvidenceInput): ForwardPerformanc
       closedAt: reconciliation?.reconciledAt ?? null,
       reconciliationId: reconciliation?.reconciliationId ?? null,
       reconciliationContentHash: reconciliation?.contentHash ?? null,
+      reconciliationStatus: reconciliation?.status ?? null,
+      cashYieldAdjustedExact: reconciliation?.cashYieldAdjustedExact ?? null,
     },
     totals: {
       startingCapitalMicros: totals?.startingCapital.toString() ?? null,
@@ -326,6 +348,7 @@ const makeMaterial = (input: ForwardPerformanceEvidenceInput): ForwardPerformanc
     evidence: {
       status: sufficient ? 'SUFFICIENT' : 'INSUFFICIENT_EVIDENCE',
       reasonCodes,
+      cashYield: input.cashYieldEvidence ?? null,
     },
     profitability:
       !sufficient || totals === undefined
