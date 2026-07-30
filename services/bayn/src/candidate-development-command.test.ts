@@ -87,6 +87,16 @@ const fixtureExecutionModel = {
   cash: { ...defaultProtocolDocument.executionModel.cash, annualYieldBps: 10_000 },
 }
 
+const fixtureStrategyProtocol = {
+  schemaVersion: 'bayn.candidate-development-strategy-protocol.v1' as const,
+  universe: [...defaultProtocolDocument.universe],
+  directVolatilityTarget: defaultProtocolDocument.directVolatilityTarget,
+  initialCapitalMicros: fixtureInitialCapitalMicros,
+  executionModel: fixtureExecutionModel,
+  thresholds: defaultProtocolDocument.thresholds,
+}
+const fixtureStrategyProtocolHash = canonicalHashV1(fixtureStrategyProtocol)
+
 const zeroPositionFixture = {
   symbol: 'SPY',
   quantityMicros: '0',
@@ -95,11 +105,17 @@ const zeroPositionFixture = {
   marketValueMicros: '0',
 }
 
-const signalDecisionFixture = {
-  schemaVersion: 'bayn.risk-balanced-trend-decision-plan.v1' as const,
-  decisionId: 'a'.repeat(64),
+const signalDecisionEventPayload = {
   signalDate: fixtureSessions[0],
   executionDate: fixtureSessions[1],
+  targetWeights: { SPY: 0 },
+}
+const fixtureDecisionId = canonicalHashV1({ runId: fixtureRunId, kind: 'decision', ...signalDecisionEventPayload })
+const signalDecisionFixture = {
+  schemaVersion: 'bayn.risk-balanced-trend-decision-plan.v1' as const,
+  decisionId: fixtureDecisionId,
+  signalDate: signalDecisionEventPayload.signalDate,
+  executionDate: signalDecisionEventPayload.executionDate,
   covarianceWindow: {
     returnCount: 1,
     firstSession: fixtureSessions[0],
@@ -108,7 +124,7 @@ const signalDecisionFixture = {
   },
   estimatedAnnualizedPortfolioVolatility: 0,
   exposureScale: 0,
-  targetWeights: { SPY: 0 },
+  targetWeights: signalDecisionEventPayload.targetWeights,
   signals: [
     {
       symbol: 'SPY',
@@ -123,6 +139,11 @@ const signalDecisionFixture = {
       targetWeight: 0,
     },
   ],
+}
+const decisionEventFixture = {
+  kind: 'decision' as const,
+  id: fixtureDecisionId,
+  ...signalDecisionEventPayload,
 }
 
 const inputManifestFixture = () => {
@@ -187,7 +208,7 @@ const inputManifestFixture = () => {
   return { ...material, hash: canonicalHashV1(material) }
 }
 
-const fixtureStressedRunId = 'c'.repeat(64)
+const fixtureStressedRunId = fixtureRunId
 
 const stressedAccountingFixture = (endingEquityMicros: string) => {
   const cashYieldMicros = BigInt(endingEquityMicros) - BigInt(fixtureInitialCapitalMicros)
@@ -214,7 +235,7 @@ const stressedAccountingFixture = (endingEquityMicros: string) => {
     ...cashChangePayload,
     id: canonicalHashV1({ runId: fixtureStressedRunId, kind: 'cash-change', ...cashChangePayload }),
   }
-  const events = cashYieldMicros === 0n ? [] : [event]
+  const events = cashYieldMicros === 0n ? [decisionEventFixture] : [decisionEventFixture, event]
   const cashChanges = cashYieldMicros === 0n ? [] : [cashChange]
   const simulation = {
     schemaVersion: 'bayn.simulation-trace.v3' as const,
@@ -265,7 +286,7 @@ const reportFixture = (
     comparisonSemantics: {
       schemaVersion: candidateDevelopmentComparisonSemantics.evidence.schemaVersion,
       candidateDevelopmentProtocolHash: 'a'.repeat(64),
-      strategyProtocolHash: 'b'.repeat(64),
+      strategyProtocolHash: fixtureStrategyProtocolHash,
       comparisonSemantics: candidateDevelopmentComparisonSemantics,
       analysis: {
         power: { sufficient: true },
@@ -335,7 +356,7 @@ const baselineFixture = (
     ...cashChangePayload,
     id: canonicalHashV1({ runId: fixtureRunId, kind: 'cash-change', ...cashChangePayload }),
   }
-  const events = status === 'PASS' ? [event] : []
+  const events = status === 'PASS' ? [decisionEventFixture, event] : [decisionEventFixture]
   const cashChanges = status === 'PASS' ? [cashChange] : []
   const simulation = {
     schemaVersion: 'bayn.simulation-trace.v3' as const,
@@ -349,13 +370,7 @@ const baselineFixture = (
       positions: [zeroPositionFixture],
     })),
   }
-  const verdict = buildVerdict(strategy, buyAndHold, directVolTiming, doubleCostStrategy, {
-    universe: defaultProtocolDocument.universe,
-    directVolatilityTarget: defaultProtocolDocument.directVolatilityTarget,
-    initialCapitalMicros: '1000000',
-    executionModel: fixtureExecutionModel,
-    thresholds: defaultProtocolDocument.thresholds,
-  })
+  const verdict = buildVerdict(strategy, buyAndHold, directVolTiming, doubleCostStrategy, fixtureStrategyProtocol)
   const markedEquityResult = reconcileMarkedEquity({
     runId: fixtureRunId,
     initialCapitalMicros: fixtureInitialCapitalMicros,
@@ -372,7 +387,7 @@ const baselineFixture = (
     schemaVersion: 'bayn.evaluation.v6',
     runId: fixtureRunId,
     codeRevision: '2'.repeat(40),
-    protocolHash: '3'.repeat(64),
+    protocolHash: fixtureStrategyProtocolHash,
     initialCapitalMicros: '1000000',
     inputManifest: inputManifestFixture(),
     strategy,
@@ -427,7 +442,7 @@ const commandEvaluationFixture = (
 }
 
 const buildFixtureReport = (report: CandidateDevelopmentReport, baseline: EvaluationResult) =>
-  buildCandidateDevelopmentCommandReport(report, commandEvaluationFixture(report, baseline))
+  buildCandidateDevelopmentCommandReport(report, commandEvaluationFixture(report, baseline), fixtureStrategyProtocol)
 
 describe('candidate development command', () => {
   test('calls no effects when preflight rejects the ordinal lineage', async () => {
@@ -436,10 +451,11 @@ describe('candidate development command', () => {
     let evaluations = 0
     const program: CandidateDevelopmentExecutableProgram<string, string, string, never> = {
       schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
+      strategyProtocol: fixtureStrategyProtocol,
       input: {
         candidateOrdinal: 16,
         priorTrialCount: 14,
-        expectedStrategyProtocolHash: 'a'.repeat(64),
+        expectedStrategyProtocolHash: fixtureStrategyProtocolHash,
         officialSessions: [],
         signalSessionDates: [],
         featureLookbackSessions: 126,
@@ -483,10 +499,11 @@ describe('candidate development command', () => {
     let evaluations = 0
     const program: CandidateDevelopmentExecutableProgram<string, string, string, never> = {
       schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
+      strategyProtocol: fixtureStrategyProtocol,
       input: {
         candidateOrdinal: 16,
         priorTrialCount: 15,
-        expectedStrategyProtocolHash: 'a'.repeat(64),
+        expectedStrategyProtocolHash: fixtureStrategyProtocolHash,
         officialSessions: sessions,
         signalSessionDates: officialMonthEndSignalDates(sessions),
         featureLookbackSessions: 126,
@@ -640,11 +657,16 @@ describe('candidate development command', () => {
 
   test('rejects strategy event totals that disagree with daily marks', () => {
     const baseline = baselineFixture()
-    const event = baseline.events[0]
-    if (event?.kind !== 'cash-yield') throw new Error('fixture must begin with cash yield')
+    const event = baseline.events.find(
+      (candidate): candidate is Extract<EvaluationResult['events'][number], { readonly kind: 'cash-yield' }> =>
+        candidate.kind === 'cash-yield',
+    )
+    if (event === undefined) throw new Error('fixture must contain cash yield')
     const tampered = {
       ...baseline,
-      events: [{ ...event, amountMicros: '999999' }, ...baseline.events.slice(1)],
+      events: baseline.events.map((candidate) =>
+        candidate.id === event.id ? { ...event, amountMicros: '999999' } : candidate,
+      ),
     }
 
     expect(buildFixtureReport(reportFixture(0.01), tampered)).toMatchObject({
@@ -695,7 +717,9 @@ describe('candidate development command', () => {
       },
     }
 
-    expect(buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting })).toMatchObject({
+    expect(
+      buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting }, fixtureStrategyProtocol),
+    ).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandPerformanceEvidenceInvalid',
         series: 'strategy',
@@ -726,7 +750,9 @@ describe('candidate development command', () => {
       },
     }
 
-    expect(buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting })).toMatchObject({
+    expect(
+      buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting }, fixtureStrategyProtocol),
+    ).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
         reason: 'reconstruction-failed',
@@ -758,12 +784,14 @@ describe('candidate development command', () => {
       stressed: tamperedReport.doubledCost.stressed,
       accounting: {
         ...evaluation.accounting,
-        stressedEvents: [],
+        stressedEvents: evaluation.accounting.stressedEvents.filter((event) => event.kind === 'decision'),
         stressedSimulation,
       },
     }
 
-    expect(buildCandidateDevelopmentCommandReport(tamperedReport, tamperedEvaluation)).toMatchObject({
+    expect(
+      buildCandidateDevelopmentCommandReport(tamperedReport, tamperedEvaluation, fixtureStrategyProtocol),
+    ).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
         reason: 'reconstruction-failed',
@@ -801,7 +829,9 @@ describe('candidate development command', () => {
     const evaluation = commandEvaluationFixture(report, baselineWithFullProof)
     const accounting = { ...evaluation.accounting, baselineSimulation: fullSimulation }
 
-    expect(buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting })).toMatchObject({
+    expect(
+      buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting }, fixtureStrategyProtocol),
+    ).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
         reason: 'selected-trace-mismatch',
@@ -830,16 +860,144 @@ describe('candidate development command', () => {
       ...decisionPayload,
       id: canonicalHashV1({ runId: baseline.runId, ...decisionPayload }),
     }
-    const baselineWithDecision = { ...baseline, events: [...baseline.events, decision] }
+    const signalDecision = {
+      ...signalDecisionFixture,
+      decisionId: decision.id,
+      signalDate: postWindowDate,
+      executionDate: postWindowDate,
+      covarianceWindow: {
+        ...signalDecisionFixture.covarianceWindow,
+        firstSession: postWindowDate,
+        lastSession: postWindowDate,
+      },
+    }
+    const baselineWithDecision = {
+      ...baseline,
+      events: [...baseline.events, decision],
+      signalDecisions: [...baseline.signalDecisions, signalDecision],
+    }
     const evaluation = commandEvaluationFixture(report, baselineWithDecision)
 
-    expect(buildCandidateDevelopmentCommandReport(report, evaluation)).toMatchObject({
+    expect(buildCandidateDevelopmentCommandReport(report, evaluation, fixtureStrategyProtocol)).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
         reason: 'selected-trace-mismatch',
         field: 'baselineSimulation.events.signalDate',
         expected: `<=${lastMark.sessionDate}`,
         observed: postWindowDate,
+      },
+    })
+  })
+
+  test('requires every selected baseline decision to have one matching accounting event', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const withoutDecision = {
+      ...baseline,
+      events: baseline.events.filter((event) => event.kind !== 'decision'),
+    }
+    const evaluation = commandEvaluationFixture(report, withoutDecision)
+
+    expect(buildCandidateDevelopmentCommandReport(report, evaluation, fixtureStrategyProtocol)).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'baseline.decisionCount',
+        expected: 1,
+        observed: 0,
+      },
+    })
+  })
+
+  test('requires stressed accounting decisions to preserve selected target weights', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const evaluation = commandEvaluationFixture(report, baseline)
+    const accounting = {
+      ...evaluation.accounting,
+      stressedEvents: evaluation.accounting.stressedEvents.map((event) =>
+        event.kind === 'decision' ? { ...event, targetWeights: { SPY: 0.5 } } : event,
+      ),
+    }
+
+    expect(
+      buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting }, fixtureStrategyProtocol),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'stressed.decision.targetWeights',
+      },
+    })
+  })
+
+  test('binds candidate economics to the hash-checked strategy protocol', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+
+    const capitalProtocol = { ...fixtureStrategyProtocol, initialCapitalMicros: '1000001' }
+    const capitalHash = canonicalHashV1(capitalProtocol)
+    const capitalReport = {
+      ...report,
+      comparisonSemantics: { ...report.comparisonSemantics, strategyProtocolHash: capitalHash },
+    }
+    const capitalBaseline = { ...baseline, protocolHash: capitalHash }
+    expect(
+      buildCandidateDevelopmentCommandReport(
+        capitalReport,
+        commandEvaluationFixture(capitalReport, capitalBaseline),
+        capitalProtocol,
+      ),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'strategyProtocol.initialCapitalMicros',
+        expected: '1000001',
+        observed: fixtureInitialCapitalMicros,
+      },
+    })
+
+    const universeProtocol = { ...fixtureStrategyProtocol, universe: [...fixtureStrategyProtocol.universe].reverse() }
+    const universeHash = canonicalHashV1(universeProtocol)
+    const universeReport = {
+      ...report,
+      comparisonSemantics: { ...report.comparisonSemantics, strategyProtocolHash: universeHash },
+    }
+    const universeBaseline = { ...baseline, protocolHash: universeHash }
+    expect(
+      buildCandidateDevelopmentCommandReport(
+        universeReport,
+        commandEvaluationFixture(universeReport, universeBaseline),
+        universeProtocol,
+      ),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'strategyProtocol.universe',
+      },
+    })
+
+    const executionModel = {
+      ...fixtureExecutionModel,
+      priceImpact: { ...fixtureExecutionModel.priceImpact, halfSpreadBps: 1 },
+    }
+    const executionBaseline = {
+      ...baseline,
+      simulation: { ...baseline.simulation, executionModel },
+    }
+    expect(
+      buildCandidateDevelopmentCommandReport(
+        report,
+        commandEvaluationFixture(report, executionBaseline),
+        fixtureStrategyProtocol,
+      ),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'strategyProtocol.baselineExecutionModel',
       },
     })
   })
@@ -885,6 +1043,7 @@ describe('candidate development command', () => {
     expect(
       validateCandidateDevelopmentExecutableProgram({
         schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
+        strategyProtocol: fixtureStrategyProtocol,
         input: {},
         effects: {},
       }),
@@ -893,10 +1052,11 @@ describe('candidate development command', () => {
     expect(
       validateCandidateDevelopmentExecutableProgram({
         schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
+        strategyProtocol: fixtureStrategyProtocol,
         input: {
           candidateOrdinal: 16,
           priorTrialCount: 15,
-          expectedStrategyProtocolHash: 'a'.repeat(64),
+          expectedStrategyProtocolHash: fixtureStrategyProtocolHash,
           signalSessionDates: [],
           featureLookbackSessions: 126,
         },
@@ -915,13 +1075,47 @@ describe('candidate development command', () => {
     })
   })
 
+  test('rejects strategy protocol bytes that disagree with the preregistered hash', () => {
+    const changedProtocol = { ...fixtureStrategyProtocol, initialCapitalMicros: '1000001' }
+
+    expect(
+      validateCandidateDevelopmentExecutableProgram({
+        schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
+        strategyProtocol: changedProtocol,
+        input: {
+          candidateOrdinal: 16,
+          priorTrialCount: 15,
+          expectedStrategyProtocolHash: fixtureStrategyProtocolHash,
+          officialSessions: [],
+          signalSessionDates: [],
+          featureLookbackSessions: 0,
+        },
+        effects: {
+          preregisterCandidate: () => Effect.succeed('registration'),
+          loadDevelopmentData: () => Effect.succeed('data'),
+          evaluateDevelopment: () => Effect.fail('not-executed'),
+        },
+      }),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandProgramInvalid',
+        reason: 'strategy-protocol-hash-mismatch',
+        cause: {
+          expected: fixtureStrategyProtocolHash,
+          observed: canonicalHashV1(changedProtocol),
+        },
+      },
+    })
+  })
+
   test('preserves the protocol-valid zero-session feature lookback', () => {
     const program = validateCandidateDevelopmentExecutableProgram({
       schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
+      strategyProtocol: fixtureStrategyProtocol,
       input: {
         candidateOrdinal: 16,
         priorTrialCount: 15,
-        expectedStrategyProtocolHash: 'a'.repeat(64),
+        expectedStrategyProtocolHash: fixtureStrategyProtocolHash,
         officialSessions: [],
         signalSessionDates: [],
         featureLookbackSessions: 0,
@@ -944,10 +1138,11 @@ describe('candidate development command', () => {
     const validated = successOf(
       validateCandidateDevelopmentExecutableProgram({
         schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
+        strategyProtocol: fixtureStrategyProtocol,
         input: {
           candidateOrdinal: 16,
           priorTrialCount: 15,
-          expectedStrategyProtocolHash: 'a'.repeat(64),
+          expectedStrategyProtocolHash: fixtureStrategyProtocolHash,
           officialSessions: sessions,
           signalSessionDates: officialMonthEndSignalDates(sessions),
           featureLookbackSessions: 126,
@@ -973,10 +1168,11 @@ describe('candidate development command', () => {
     const validated = successOf(
       validateCandidateDevelopmentExecutableProgram({
         schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
+        strategyProtocol: fixtureStrategyProtocol,
         input: {
           candidateOrdinal: 16,
           priorTrialCount: 15,
-          expectedStrategyProtocolHash: 'a'.repeat(64),
+          expectedStrategyProtocolHash: fixtureStrategyProtocolHash,
           officialSessions: sessions,
           signalSessionDates: officialMonthEndSignalDates(sessions),
           featureLookbackSessions: 126,
@@ -1006,10 +1202,11 @@ describe('candidate development command', () => {
   test('keeps dynamic module evaluation attached through interruption', async () => {
     const program = {
       schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
+      strategyProtocol: fixtureStrategyProtocol,
       input: {
         candidateOrdinal: 16,
         priorTrialCount: 15,
-        expectedStrategyProtocolHash: 'a'.repeat(64),
+        expectedStrategyProtocolHash: fixtureStrategyProtocolHash,
         officialSessions: [],
         signalSessionDates: [],
         featureLookbackSessions: 126,

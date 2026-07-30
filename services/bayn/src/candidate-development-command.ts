@@ -27,23 +27,31 @@ import {
   RiskBalancedTrendSignalDecisionsArtifactSchema,
 } from './evidence-contracts'
 import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
-import { defaultProtocolDocument, ExecutionModelSchema } from './protocol'
+import { ExecutionModelSchema } from './protocol'
 import {
   DigitsSchema,
   IsoDateSchema,
   NonNegativeIntegerSchema,
+  PositiveFiniteSchema,
   PositiveIntegerSchema,
+  PositiveMicrosSchema,
   Sha256Schema,
   SignedMicrosSchema,
   SourceRevisionSchema,
+  SymbolSchema,
+  UnitIntervalSchema,
   strictParseOptions,
 } from './schemas'
 import { calculateExactPerformanceMetrics, buildVerdict } from './simulation/metrics'
 import { reconcileMarkedEquity } from './simulation-reconciliation'
-import type { EvaluationResult, PerformanceMetrics } from './types'
+import type { EvaluationResult, PerformanceMetrics, SimulationProtocol } from './types'
 
 export const candidateDevelopmentExecutableProgramSchemaVersion =
-  'bayn.candidate-development-executable-program.v2' as const
+  'bayn.candidate-development-executable-program.v3' as const
+
+export interface CandidateDevelopmentStrategyProtocol extends SimulationProtocol {
+  readonly schemaVersion: 'bayn.candidate-development-strategy-protocol.v1'
+}
 
 export interface CandidateDevelopmentAccountingEvidence {
   readonly schemaVersion: 'bayn.candidate-development-accounting-evidence.v1'
@@ -81,6 +89,7 @@ export interface CandidateDevelopmentCommandEffects<Registration, DevelopmentDat
 export interface CandidateDevelopmentExecutableProgram<Registration, DevelopmentData, Error, Requirements> {
   readonly schemaVersion: typeof candidateDevelopmentExecutableProgramSchemaVersion
   readonly input: CandidateDevelopmentPreflightInput
+  readonly strategyProtocol: CandidateDevelopmentStrategyProtocol
   readonly effects: CandidateDevelopmentCommandEffects<Registration, DevelopmentData, Error, Requirements>
 }
 
@@ -106,10 +115,11 @@ export interface CandidateDevelopmentCommandDecision {
 }
 
 export interface CandidateDevelopmentCommandReportMaterial {
-  readonly schemaVersion: 'bayn.candidate-development-command-report.v2'
+  readonly schemaVersion: 'bayn.candidate-development-command-report.v3'
   readonly candidateOrdinal: number
   readonly priorTrialCount: number
   readonly strategyProtocolHash: string
+  readonly strategyProtocol: CandidateDevelopmentStrategyProtocol
   readonly decision: CandidateDevelopmentCommandDecision
   readonly baseline: EvaluationResult
   readonly accounting: CandidateDevelopmentAccountingEvidence
@@ -141,6 +151,9 @@ export type CandidateDevelopmentCommandFailure =
         | 'schema-version-mismatch'
         | 'input-missing'
         | 'input-invalid'
+        | 'strategy-protocol-missing'
+        | 'strategy-protocol-invalid'
+        | 'strategy-protocol-hash-mismatch'
         | 'effects-missing'
         | 'effect-function-missing'
         | 'evaluation-invalid'
@@ -477,6 +490,103 @@ const requireCanonicalEvidenceEqual = (
     ),
   )
 
+const validateCandidateDevelopmentStrategyProtocol = (
+  report: CandidateDevelopmentReport,
+  evaluation: CandidateDevelopmentCommandEvaluation,
+  strategyProtocol: CandidateDevelopmentStrategyProtocol,
+): Result.Result<void, CandidateDevelopmentCommandFailure> => {
+  const protocolHash = canonicalEvidenceHash('strategyProtocol', strategyProtocol)
+  if (Result.isFailure(protocolHash)) return Result.fail(protocolHash.failure)
+  const expectedHash = report.comparisonSemantics.strategyProtocolHash
+  if (protocolHash.success !== expectedHash || evaluation.baseline.protocolHash !== expectedHash) {
+    return Result.fail(
+      markedEquityFailure('binding-mismatch', null, 'strategyProtocolHash', expectedHash, {
+        document: protocolHash.success,
+        evaluation: evaluation.baseline.protocolHash,
+      }),
+    )
+  }
+  const scalarBindings = [
+    ['initialCapitalMicros', strategyProtocol.initialCapitalMicros, evaluation.baseline.initialCapitalMicros],
+  ] as const
+  for (const [field, expected, observed] of scalarBindings) {
+    if (expected !== observed) {
+      return Result.fail(markedEquityFailure('binding-mismatch', null, `strategyProtocol.${field}`, expected, observed))
+    }
+  }
+  const bindings = [
+    [
+      'strategyProtocol.universe',
+      strategyProtocol.universe,
+      evaluation.baseline.inputManifest.symbols.map(({ symbol }) => symbol),
+    ],
+    [
+      'strategyProtocol.baselineExecutionModel',
+      strategyProtocol.executionModel,
+      evaluation.baseline.simulation.executionModel,
+    ],
+    [
+      'strategyProtocol.stressedExecutionModel',
+      strategyProtocol.executionModel,
+      report.doubledCost.stressed.simulation.executionModel,
+    ],
+  ] as const
+  for (const [field, expected, observed] of bindings) {
+    const binding = requireCanonicalEvidenceEqual(field, expected, observed)
+    if (Result.isFailure(binding)) return Result.fail(binding.failure)
+  }
+  return Result.succeed(undefined)
+}
+
+const validateDecisionEventBinding = (
+  field: 'baseline' | 'stressed',
+  signalDecisions: EvaluationResult['signalDecisions'],
+  events: EvaluationResult['events'],
+): Result.Result<void, CandidateDevelopmentCommandFailure> => {
+  const first = signalDecisions.at(0)
+  if (first === undefined) {
+    return Result.fail(markedEquityFailure('binding-mismatch', null, `${field}.signalDecisions`, 'nonempty', 0))
+  }
+  const decisionEvents = events.filter(
+    (event): event is Extract<EvaluationResult['events'][number], { readonly kind: 'decision' }> =>
+      event.kind === 'decision' && event.executionDate >= first.executionDate,
+  )
+  if (decisionEvents.length !== signalDecisions.length) {
+    return Result.fail(
+      markedEquityFailure(
+        'binding-mismatch',
+        null,
+        `${field}.decisionCount`,
+        signalDecisions.length,
+        decisionEvents.length,
+      ),
+    )
+  }
+  for (let index = 0; index < signalDecisions.length; index += 1) {
+    const signal = signalDecisions[index]
+    const event = decisionEvents[index]
+    const scalars = [
+      ['decisionId', signal.decisionId, event?.id],
+      ['signalDate', signal.signalDate, event?.signalDate],
+      ['executionDate', signal.executionDate, event?.executionDate],
+    ] as const
+    for (const [name, expected, observed] of scalars) {
+      if (expected !== observed) {
+        return Result.fail(
+          markedEquityFailure('binding-mismatch', index, `${field}.decision.${name}`, expected, observed ?? null),
+        )
+      }
+    }
+    const weights = requireCanonicalEvidenceEqual(
+      `${field}.decision.targetWeights`,
+      signal.targetWeights,
+      event?.targetWeights ?? null,
+    )
+    if (Result.isFailure(weights)) return Result.fail(weights.failure)
+  }
+  return Result.succeed(undefined)
+}
+
 const selectedTracePreviousEquity = (
   field: 'baselineSimulation' | 'stressedSimulation',
   full: EvaluationResult['simulation'],
@@ -633,6 +743,15 @@ const validateCandidateDevelopmentAccounting = (
     const binding = requireCanonicalEvidenceEqual(field, expected, observed)
     if (Result.isFailure(binding)) return Result.fail(binding.failure)
   }
+  const decisionBindings = Result.all({
+    baseline: validateDecisionEventBinding('baseline', baseline.signalDecisions, accounting.events),
+    stressed: validateDecisionEventBinding(
+      'stressed',
+      report.doubledCost.stressed.signalDecisions,
+      accounting.stressedEvents,
+    ),
+  })
+  if (Result.isFailure(decisionBindings)) return Result.fail(decisionBindings.failure)
   const proof = reconcileMarkedEquity({
     runId: accounting.runId,
     initialCapitalMicros: accounting.initialCapitalMicros,
@@ -813,16 +932,16 @@ const recomputeCandidateDevelopmentMetrics = (
 }
 
 const rebuildCandidateDevelopmentEconomicVerdict = (
-  baseline: EvaluationResult,
   metrics: CandidateDevelopmentRecomputedMetrics,
+  strategyProtocol: CandidateDevelopmentStrategyProtocol,
 ): EvaluationResult['verdict'] =>
-  buildVerdict(metrics.strategy, metrics.buyAndHold, metrics.directVolTiming, metrics.doubleCostStrategy, {
-    universe: baseline.inputManifest.symbols.map(({ symbol }) => symbol),
-    directVolatilityTarget: defaultProtocolDocument.directVolatilityTarget,
-    initialCapitalMicros: baseline.initialCapitalMicros,
-    executionModel: baseline.simulation.executionModel,
-    thresholds: defaultProtocolDocument.thresholds,
-  })
+  buildVerdict(
+    metrics.strategy,
+    metrics.buyAndHold,
+    metrics.directVolTiming,
+    metrics.doubleCostStrategy,
+    strategyProtocol,
+  )
 
 const economicGateEqual = (
   expected: EvaluationResult['verdict']['gates'][number],
@@ -836,8 +955,9 @@ const economicGateEqual = (
 export const deriveCandidateDevelopmentEconomicPass = (
   baseline: EvaluationResult,
   metrics: CandidateDevelopmentRecomputedMetrics,
+  strategyProtocol: CandidateDevelopmentStrategyProtocol,
 ): Result.Result<boolean, CandidateDevelopmentCommandFailure> => {
-  const expectedVerdict = rebuildCandidateDevelopmentEconomicVerdict(baseline, metrics)
+  const expectedVerdict = rebuildCandidateDevelopmentEconomicVerdict(metrics, strategyProtocol)
   const expectedGateNames = expectedVerdict.gates.map((gate) => gate.name)
   const observedGateNames = baseline.verdict.gates.map((gate) => gate.name)
   if (
@@ -968,13 +1088,19 @@ const decideCandidateDevelopment = (
 export const buildCandidateDevelopmentCommandReport = (
   report: CandidateDevelopmentReport,
   evaluation: CandidateDevelopmentCommandEvaluation,
+  strategyProtocol: CandidateDevelopmentStrategyProtocol,
 ): Result.Result<CandidateDevelopmentCommandReport, CandidateDevelopmentCommandFailure> =>
   pipe(
-    validateCandidateDevelopmentAccounting(report, evaluation),
-    Result.flatMap((accounting) => recomputeCandidateDevelopmentMetrics(report, evaluation, accounting)),
+    Result.all({
+      protocol: validateCandidateDevelopmentStrategyProtocol(report, evaluation, strategyProtocol),
+      accounting: validateCandidateDevelopmentAccounting(report, evaluation),
+    }),
+    Result.flatMap(({ accounting }) => recomputeCandidateDevelopmentMetrics(report, evaluation, accounting)),
     Result.flatMap((metrics) =>
       pipe(
-        Result.all({ economicPass: deriveCandidateDevelopmentEconomicPass(evaluation.baseline, metrics) }),
+        Result.all({
+          economicPass: deriveCandidateDevelopmentEconomicPass(evaluation.baseline, metrics, strategyProtocol),
+        }),
         Result.map(({ economicPass }) => ({
           doubledCostAnnualizedReturn: metrics.doubleCostStrategy.annualizedReturn,
           economicPass,
@@ -983,10 +1109,11 @@ export const buildCandidateDevelopmentCommandReport = (
     ),
     Result.flatMap(({ doubledCostAnnualizedReturn, economicPass }) => {
       const material: CandidateDevelopmentCommandReportMaterial = {
-        schemaVersion: 'bayn.candidate-development-command-report.v2',
+        schemaVersion: 'bayn.candidate-development-command-report.v3',
         candidateOrdinal: report.protocolIdentity.candidateOrdinal,
         priorTrialCount: report.protocolIdentity.priorTrialCount,
         strategyProtocolHash: report.comparisonSemantics.strategyProtocolHash,
+        strategyProtocol,
         decision: decideCandidateDevelopment(report, evaluation.baseline, doubledCostAnnualizedReturn, economicPass),
         baseline: evaluation.baseline,
         accounting: evaluation.accounting,
@@ -1024,7 +1151,7 @@ export const executeCandidateDevelopmentProgram = <Registration, DevelopmentData
     Effect.flatMap((report) =>
       evaluation === undefined
         ? Effect.fail<CandidateDevelopmentCommandFailure>({ _tag: 'CandidateDevelopmentCommandEvaluationMissing' })
-        : Effect.fromResult(buildCandidateDevelopmentCommandReport(report, evaluation)),
+        : Effect.fromResult(buildCandidateDevelopmentCommandReport(report, evaluation, program.strategyProtocol)),
     ),
   )
 }
@@ -1154,6 +1281,22 @@ const CandidateDevelopmentAccountingEvidenceSchema = Schema.Struct({
   stressedMarkedEquityReconciliation: MarkedEquityReconciliationSchema,
 })
 
+const CandidateDevelopmentStrategyProtocolSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.candidate-development-strategy-protocol.v1'),
+  universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1)),
+  directVolatilityTarget: PositiveFiniteSchema,
+  initialCapitalMicros: PositiveMicrosSchema,
+  executionModel: ExecutionModelSchema,
+  thresholds: Schema.Struct({
+    minimumObservations: PositiveIntegerSchema,
+    minimumAnnualizedReturn: Schema.Finite.check(Schema.isGreaterThan(-1)),
+    minimumSharpeImprovement: Schema.Finite,
+    maximumDrawdown: UnitIntervalSchema,
+    maximumAnnualTurnover: PositiveFiniteSchema,
+    requirePositiveDoubleCostReturn: Schema.Boolean,
+  }),
+})
+
 const CandidateDevelopmentComparisonSemanticsEvidenceBoundarySchema = Schema.Struct({
   schemaVersion: Schema.Literal(candidateDevelopmentComparisonSemantics.evidence.schemaVersion),
   candidateDevelopmentProtocolHash: Sha256Schema,
@@ -1181,6 +1324,11 @@ const decodeCandidateDevelopmentPreflightInput = Schema.decodeUnknownResult(
 
 const decodeCandidateDevelopmentEvaluation = Schema.decodeUnknownResult(
   CandidateDevelopmentEvaluationSchema,
+  strictParseOptions,
+)
+
+const decodeCandidateDevelopmentStrategyProtocol = Schema.decodeUnknownResult(
+  CandidateDevelopmentStrategyProtocolSchema,
   strictParseOptions,
 )
 
@@ -1215,6 +1363,9 @@ export const validateCandidateDevelopmentExecutableProgram = (
   if (recordOf(program.input) === undefined) {
     return Result.fail({ _tag: 'CandidateDevelopmentCommandProgramInvalid', reason: 'input-missing' })
   }
+  if (recordOf(program.strategyProtocol) === undefined) {
+    return Result.fail({ _tag: 'CandidateDevelopmentCommandProgramInvalid', reason: 'strategy-protocol-missing' })
+  }
   const effects = recordOf(program.effects)
   if (effects === undefined) {
     return Result.fail({ _tag: 'CandidateDevelopmentCommandProgramInvalid', reason: 'effects-missing' })
@@ -1234,10 +1385,37 @@ export const validateCandidateDevelopmentExecutableProgram = (
       cause: input.failure,
     })
   }
+  const strategyProtocol = decodeCandidateDevelopmentStrategyProtocol(program.strategyProtocol)
+  if (Result.isFailure(strategyProtocol)) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentCommandProgramInvalid',
+      reason: 'strategy-protocol-invalid',
+      cause: strategyProtocol.failure,
+    })
+  }
+  const strategyProtocolHash = canonicalHashV1Result(strategyProtocol.success)
+  if (Result.isFailure(strategyProtocolHash)) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentCommandProgramInvalid',
+      reason: 'strategy-protocol-invalid',
+      cause: strategyProtocolHash.failure,
+    })
+  }
+  if (strategyProtocolHash.success !== input.success.expectedStrategyProtocolHash) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentCommandProgramInvalid',
+      reason: 'strategy-protocol-hash-mismatch',
+      cause: {
+        expected: input.success.expectedStrategyProtocolHash,
+        observed: strategyProtocolHash.success,
+      },
+    })
+  }
   const typedEffects = effects as unknown as ExecutableProgram['effects']
   return Result.succeed({
     schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
     input: input.success,
+    strategyProtocol: strategyProtocol.success as CandidateDevelopmentStrategyProtocol,
     effects: {
       ...typedEffects,
       evaluateDevelopment: (data, preflight) =>
