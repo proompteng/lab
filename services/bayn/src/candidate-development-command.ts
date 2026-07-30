@@ -134,6 +134,11 @@ export type CandidateDevelopmentCommandFailure =
       readonly observed: number | string | null
     }
   | {
+      readonly _tag: 'CandidateDevelopmentCommandEconomicGateSetInvalid'
+      readonly expectedGateNames: readonly string[]
+      readonly observedGateNames: readonly string[]
+    }
+  | {
       readonly _tag: 'CandidateDevelopmentCommandEconomicVerdictInvalid'
       readonly expectedStatus: EvaluationResult['verdict']['status']
       readonly observedStatus: EvaluationResult['verdict']['status']
@@ -145,9 +150,30 @@ const terminalCash = (marks: EvaluationResult['simulation']['dailyMarks']): bool
   return last !== undefined && last.positions.every((position) => position.quantityMicros === '0')
 }
 
+export const candidateDevelopmentEconomicGateNames = [
+  'finite_metrics',
+  'minimum_observations',
+  'positive_net_return',
+  'benchmark_sharpe_improvement',
+  'maximum_drawdown',
+  'maximum_turnover',
+  'double_cost_return',
+] as const
+
 export const deriveCandidateDevelopmentEconomicPass = (
   baseline: EvaluationResult,
 ): Result.Result<boolean, CandidateDevelopmentCommandFailure> => {
+  const observedGateNames = baseline.verdict.gates.map((gate) => gate.name)
+  if (
+    observedGateNames.length !== candidateDevelopmentEconomicGateNames.length ||
+    candidateDevelopmentEconomicGateNames.some((expected, index) => observedGateNames[index] !== expected)
+  ) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentCommandEconomicGateSetInvalid',
+      expectedGateNames: candidateDevelopmentEconomicGateNames,
+      observedGateNames,
+    })
+  }
   const economicPass = baseline.verdict.gates.every((gate) => gate.passed)
   const failedGateNames = baseline.verdict.gates.filter((gate) => !gate.passed).map((gate) => gate.name)
   const expectedStatus = economicPass ? 'PASS' : 'FAIL_CLOSED'

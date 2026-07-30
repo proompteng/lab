@@ -4,6 +4,7 @@ import { Deferred, Effect, Fiber, Result } from 'effect'
 import { frozenCandidateDevelopmentSessions } from './candidate-development-calendar'
 import {
   buildCandidateDevelopmentCommandReport,
+  candidateDevelopmentEconomicGateNames,
   candidateDevelopmentExecutableProgramSchemaVersion,
   executeCandidateDevelopmentProgram,
   loadCandidateDevelopmentExecutableProgram,
@@ -84,14 +85,12 @@ const baselineFixture = (
     },
     verdict: {
       status,
-      gates: [
-        {
-          name: 'economic-fixture',
-          passed: status === 'PASS',
-          actual: status === 'PASS',
-          required: true,
-        },
-      ],
+      gates: candidateDevelopmentEconomicGateNames.map((name, index) => ({
+        name,
+        passed: status === 'PASS' || index !== 0,
+        actual: status === 'PASS' || index !== 0,
+        required: true,
+      })),
     },
     simulation: {
       dailyMarks: [{ positions: [{ quantityMicros: '0' }] }],
@@ -238,7 +237,9 @@ describe('candidate development command', () => {
       ...baseline,
       verdict: {
         status: 'PASS' as const,
-        gates: [{ name: 'failed-economic-gate', passed: false, actual: false, required: true }],
+        gates: baseline.verdict.gates.map((gate, index) =>
+          index === 0 ? { ...gate, passed: false, actual: false } : gate,
+        ),
       },
     }
 
@@ -247,7 +248,23 @@ describe('candidate development command', () => {
         _tag: 'CandidateDevelopmentCommandEconomicVerdictInvalid',
         expectedStatus: 'FAIL_CLOSED',
         observedStatus: 'PASS',
-        failedGateNames: ['failed-economic-gate'],
+        failedGateNames: ['finite_metrics'],
+      }),
+    )
+  })
+
+  test('rejects an incomplete economic gate set before deriving success', () => {
+    const baseline = baselineFixture()
+    const incomplete = {
+      ...baseline,
+      verdict: { status: 'PASS' as const, gates: baseline.verdict.gates.slice(0, -1) },
+    }
+
+    expect(buildCandidateDevelopmentCommandReport(reportFixture(0.01), incomplete)).toEqual(
+      Result.fail({
+        _tag: 'CandidateDevelopmentCommandEconomicGateSetInvalid',
+        expectedGateNames: candidateDevelopmentEconomicGateNames,
+        observedGateNames: candidateDevelopmentEconomicGateNames.slice(0, -1),
       }),
     )
   })
