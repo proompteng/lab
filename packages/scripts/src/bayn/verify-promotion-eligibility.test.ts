@@ -1,0 +1,1283 @@
+import { readFileSync } from 'node:fs'
+
+import { describe, expect, test } from 'bun:test'
+import { parse } from 'yaml'
+
+import {
+  baynPromotionCodexBotLogin,
+  baynPromotionCodexReviewer,
+  baynPromotionManifestPaths,
+  baynReleaseSearchRange,
+  baynWorkflowRunsUrl,
+  createGitHubPromotionEligibilityLoader,
+  createRefreshableBaynPromotionProvenanceLoader,
+  evaluateBaynPromotionEligibility,
+  extractReleasePromotionEvidenceFromZip,
+  extractReleaseContractFromZip,
+  GitHubPromotionEligibilityError,
+  isBaynPromotionBuildRunCandidate,
+  isBaynPromotionCliFailure,
+  isBaynPromotionSourceAffectingPath,
+  parseVerifyPromotionArguments,
+  pollBaynPromotionEligibility,
+  resolveBaynPromotionReleaseRun,
+  type BaynPromotionEligibilitySnapshot,
+  type BaynPromotionManifestContents,
+  type BaynPromotionProvenance,
+  type BaynPromotionPullRequest,
+  type BaynPromotionReview,
+  type BaynReleasePromotionEvidence,
+} from './verify-promotion-eligibility'
+
+const oldSourceSha = 'a'.repeat(40)
+const sourceSha = 'b'.repeat(40)
+const headSha = 'c'.repeat(40)
+const staleHeadSha = 'd'.repeat(40)
+const baseSha = 'e'.repeat(40)
+const nextBaseSha = 'f'.repeat(40)
+const oldDigest = `sha256:${'1'.repeat(64)}`
+const digest = `sha256:${'2'.repeat(64)}`
+const repository = 'proompteng/lab'
+const pullNumber = 13400
+const evaluationNowMs = Date.parse('2026-07-30T10:02:00Z')
+
+const buildWorkflowPath = new URL('../../../../.github/workflows/bayn-build-push.yml', import.meta.url)
+const buildWorkflow = parse(readFileSync(buildWorkflowPath, 'utf8')) as {
+  readonly on: { readonly push: { readonly paths: readonly string[] } }
+}
+
+const representativeBuildTriggerPath = (pattern: string): string => {
+  if (pattern === '**/package.json') return 'packages/fixture/package.json'
+  if (pattern.endsWith('/**')) return `${pattern.slice(0, -3)}/fixture`
+  if (pattern.includes('*')) return pattern.replace('*', 'fixture')
+  return pattern
+}
+
+interface ManifestPins {
+  readonly sourceSha: string
+  readonly digest: string
+  readonly tag: string
+  readonly rolloutTimestamp: string
+}
+
+const deployment = (pins: ManifestPins): string => `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bayn
+spec:
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/restartedAt: ${JSON.stringify(pins.rolloutTimestamp)}
+    spec:
+      containers:
+        - name: bayn
+          image: registry.ide-newton.ts.net/lab/bayn
+          env:
+            - name: BAYN_CODE_REVISION
+              value: ${pins.sourceSha}
+            - name: BAYN_IMAGE_REPOSITORY
+              value: registry.ide-newton.ts.net/lab/bayn
+            - name: BAYN_IMAGE_DIGEST
+              value: ${pins.digest}
+            - name: BAYN_STRATEGY_BEHAVIOR_HASH
+              value: "${'3'.repeat(64)}"
+            - name: BAYN_STRATEGY_PARAMETER_HASH
+              value: "${'4'.repeat(64)}"
+            - name: BAYN_QUALIFICATION_RUN_ID
+              value: "${'5'.repeat(64)}"
+            - name: BAYN_SIGNAL_SNAPSHOT_ID
+              value: "${'6'.repeat(64)}"
+            - name: BAYN_SIGNAL_PUBLICATION_ASOF
+              value: "2026-07-27"
+            - name: BAYN_SIGNAL_CALENDAR_VERSION
+              value: "alpaca-us-equity-calendar-v1"
+            - name: BAYN_SIGNAL_DATA_START
+              value: "2016-01-04"
+            - name: BAYN_SIGNAL_DATA_END
+              value: "2026-07-27"
+            - name: BAYN_SIGNAL_LOOKBACK_START
+              value: "2016-01-04"
+            - name: BAYN_SIGNAL_EVALUATION_START
+              value: "2017-01-03"
+            - name: BAYN_SIGNAL_EVALUATION_END
+              value: "2026-07-27"
+            - name: BAYN_TIGERBEETLE_CLUSTER_ID
+              value: "122731676035874920802382025803517750735"
+            - name: BAYN_TIGERBEETLE_ADDRESSES
+              value: "ledger-0:3000,ledger-1:3000,ledger-2:3000"
+            - name: BAYN_TIGERBEETLE_LEDGER
+              value: "7001"
+`
+
+const kustomization = (pins: ManifestPins): string => `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: bayn
+resources:
+  - deployment.yaml
+images:
+  - name: registry.ide-newton.ts.net/lab/bayn
+    newName: registry.ide-newton.ts.net/lab/bayn
+    newTag: ${JSON.stringify(pins.tag)}
+    digest: ${pins.digest}
+`
+
+const applicationSet = (enabled = true): string => `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+spec:
+  generators:
+    - list:
+        elements:
+              - name: bayn
+                path: argocd/applications/bayn
+                namespace: bayn
+                enabled: ${JSON.stringify(String(enabled))}
+              - name: next-service
+                enabled: "true"
+`
+
+const manifests = (pins: ManifestPins, enabled = true): BaynPromotionManifestContents => ({
+  deployment: deployment(pins),
+  kustomization: kustomization(pins),
+  applicationSet: applicationSet(enabled),
+})
+
+const basePins: ManifestPins = {
+  sourceSha: oldSourceSha,
+  tag: `sha-${oldSourceSha}`,
+  digest: oldDigest,
+  rolloutTimestamp: '2026-07-30T09:00:00Z',
+}
+
+const headPins: ManifestPins = {
+  sourceSha,
+  tag: `sha-${sourceSha}`,
+  digest,
+  rolloutTimestamp: '2026-07-30T10:00:00Z',
+}
+
+const pullRequest = (overrides: Partial<BaynPromotionPullRequest> = {}): BaynPromotionPullRequest => ({
+  number: pullNumber,
+  title: `chore(bayn): promote image sha-${sourceSha}`,
+  state: 'open',
+  baseRefName: 'main',
+  headRefName: 'codex/bayn-release-current',
+  baseSha,
+  headSha,
+  headRepository: repository,
+  createdAt: '2026-07-30T09:59:00Z',
+  headCommittedAt: '2026-07-30T10:00:00Z',
+  commitCount: 1,
+  headForcePushCount: 0,
+  files: [
+    {
+      path: 'argocd/applications/bayn/deployment.yaml',
+      status: 'modified',
+      previousPath: null,
+    },
+    {
+      path: 'argocd/applications/bayn/kustomization.yaml',
+      status: 'modified',
+      previousPath: null,
+    },
+  ],
+  ...overrides,
+})
+
+const review = (overrides: Partial<BaynPromotionReview> = {}): BaynPromotionReview => ({
+  authorLogin: baynPromotionCodexReviewer,
+  commitSha: headSha,
+  submittedAt: '2026-07-30T10:01:00Z',
+  state: 'COMMENTED',
+  ...overrides,
+})
+
+const contract = () => ({
+  service: 'bayn',
+  image: 'registry.ide-newton.ts.net/lab/bayn',
+  tag: `sha-${sourceSha}`,
+  digest,
+  reference: `registry.ide-newton.ts.net/lab/bayn@${digest}`,
+  sourceSha,
+  packageAttr: 'bayn-image',
+  platforms: ['linux/amd64', 'linux/arm64'],
+})
+
+const provenance = (
+  overrides: Partial<Extract<BaynPromotionProvenance, { status: 'resolved' }>> = {},
+): BaynPromotionProvenance => ({
+  status: 'resolved',
+  buildRunId: 30532902039,
+  releaseRunId: 30533142309,
+  promotionPullNumber: pullNumber,
+  promotionHeadSha: headSha,
+  contract: contract(),
+  ...overrides,
+})
+
+const promotionEvidence = (overrides: Partial<BaynReleasePromotionEvidence> = {}): BaynReleasePromotionEvidence => ({
+  sourceSha,
+  pullNumber,
+  headSha,
+  branch: 'codex/bayn-release-current',
+  baseRefName: 'main',
+  repository,
+  operation: 'created',
+  ...overrides,
+})
+
+const snapshot = (overrides: Partial<BaynPromotionEligibilitySnapshot> = {}): BaynPromotionEligibilitySnapshot => ({
+  repository,
+  pullRequest: pullRequest(),
+  baseManifests: manifests(basePins),
+  headManifests: manifests(headPins),
+  reviews: [review()],
+  threads: [],
+  issueComments: [],
+  reactions: [],
+  sourceFreshness: { status: 'fresh' },
+  provenance: provenance(),
+  ...overrides,
+})
+
+const evaluate = (value: BaynPromotionEligibilitySnapshot) =>
+  evaluateBaynPromotionEligibility({
+    expectedRepository: repository,
+    expectedPullNumber: pullNumber,
+    expectedHeadSha: headSha,
+    snapshot: value,
+    nowMs: evaluationNowMs,
+  })
+
+describe('Bayn promotion eligibility', () => {
+  test('accepts a valid current promotion with exact-head review and immutable release provenance', () => {
+    expect(evaluate(snapshot())).toMatchObject({
+      status: 'eligible',
+      prNumber: pullNumber,
+      headSha,
+      sourceSha,
+      tag: `sha-${sourceSha}`,
+      digest,
+      buildRunId: 30532902039,
+      releaseRunId: 30533142309,
+    })
+  })
+
+  test('leaves non-promotion Bayn pull requests unchanged', () => {
+    expect(
+      evaluate(
+        snapshot({
+          pullRequest: pullRequest({ headRefName: 'codex/bayn-runtime-fix' }),
+          reviews: [],
+          provenance: { status: 'missing', reason: 'not loaded' },
+        }),
+      ),
+    ).toEqual({ status: 'not-applicable', prNumber: pullNumber, headSha })
+  })
+
+  test('makes non-applicable PRs fail only when the exact gate requires applicability', () => {
+    const notApplicable = evaluate(
+      snapshot({
+        pullRequest: pullRequest({ headRefName: 'codex/bayn-runtime-fix' }),
+        reviews: [],
+        provenance: { status: 'missing', reason: 'not loaded' },
+      }),
+    )
+    expect(isBaynPromotionCliFailure(notApplicable, false)).toBeFalse()
+    expect(isBaynPromotionCliFailure(notApplicable, true)).toBeTrue()
+    expect(isBaynPromotionCliFailure(evaluate(snapshot()), true)).toBeFalse()
+    expect(isBaynPromotionCliFailure(evaluate(snapshot({ reviews: [] })), true)).toBeTrue()
+  })
+
+  test('parses the exact-gate applicability requirement strictly', () => {
+    const arguments_ = [
+      '--repository',
+      repository,
+      '--pull-number',
+      String(pullNumber),
+      '--head-sha',
+      headSha,
+      '--require-applicable',
+      'true',
+    ]
+    expect(parseVerifyPromotionArguments(arguments_)).toMatchObject({ requireApplicable: true })
+    expect(() => parseVerifyPromotionArguments([...arguments_.slice(0, -1), 'yes'])).toThrow(
+      '--require-applicable must be true or false',
+    )
+  })
+
+  test('fails closed when the exact-head Codex review is missing', () => {
+    expect(evaluate(snapshot({ reviews: [] }))).toMatchObject({
+      status: 'hold',
+      code: 'exact-head-review-missing',
+      retryable: true,
+    })
+  })
+
+  test('fails closed when the Codex review belongs to a stale head', () => {
+    expect(evaluate(snapshot({ reviews: [review({ commitSha: staleHeadSha })] }))).toMatchObject({
+      status: 'hold',
+      code: 'exact-head-review-stale',
+      retryable: true,
+    })
+  })
+
+  test('accepts an immutable clean connector comment bound to the exact head', () => {
+    expect(
+      evaluate(
+        snapshot({
+          reviews: [],
+          issueComments: [
+            {
+              authorLogin: baynPromotionCodexBotLogin,
+              body: `Codex Review: Didn't find any issues.\n\n**Reviewed commit:** \`${headSha}\`\n`,
+              createdAt: '2026-07-30T10:01:00Z',
+              updatedAt: '2026-07-30T10:01:00Z',
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({ status: 'eligible', reviewSubmittedAt: '2026-07-30T10:01:00Z' })
+  })
+
+  test('rejects an edited or stale clean connector comment', () => {
+    expect(
+      evaluate(
+        snapshot({
+          reviews: [],
+          issueComments: [
+            {
+              authorLogin: baynPromotionCodexBotLogin,
+              body: `Codex Review: Didn't find any issues.\n\n**Reviewed commit:** \`${staleHeadSha}\`\n`,
+              createdAt: '2026-07-30T10:01:00Z',
+              updatedAt: '2026-07-30T10:01:01Z',
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({ status: 'hold', code: 'exact-head-review-missing' })
+  })
+
+  test('accepts a clean connector reaction only for a single never-force-pushed head', () => {
+    const reactions = [
+      {
+        userLogin: baynPromotionCodexBotLogin,
+        content: '+1',
+        createdAt: '2026-07-30T10:01:00Z',
+      },
+    ]
+    expect(evaluate(snapshot({ reviews: [], reactions }))).toMatchObject({ status: 'eligible' })
+    expect(
+      evaluate(
+        snapshot({
+          reviews: [],
+          reactions,
+          pullRequest: pullRequest({ headForcePushCount: 1 }),
+        }),
+      ),
+    ).toMatchObject({ status: 'hold', code: 'exact-head-review-missing' })
+  })
+
+  test('keeps an actionable exact-head review dominant over a clean reaction', () => {
+    expect(
+      evaluate(
+        snapshot({
+          reviews: [review({ state: 'CHANGES_REQUESTED' })],
+          reactions: [
+            {
+              userLogin: baynPromotionCodexBotLogin,
+              content: '+1',
+              createdAt: '2026-07-30T10:01:00Z',
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({ status: 'hold', code: 'exact-head-review-changes-requested' })
+  })
+
+  test('fails closed on an actionable unresolved review thread', () => {
+    expect(
+      evaluate(
+        snapshot({
+          threads: [
+            {
+              id: 'thread-1',
+              isResolved: false,
+              isOutdated: false,
+              path: 'argocd/applications/bayn/deployment.yaml',
+              url: 'https://github.com/proompteng/lab/pull/13400#discussion_r1',
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'active-unresolved-review-threads',
+    })
+  })
+
+  test('ignores an outdated unresolved thread because it is no longer actionable', () => {
+    expect(
+      evaluate(
+        snapshot({
+          threads: [
+            {
+              id: 'thread-1',
+              isResolved: false,
+              isOutdated: true,
+              path: 'argocd/applications/bayn/deployment.yaml',
+              url: 'https://github.com/proompteng/lab/pull/13400#discussion_r1',
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({ status: 'eligible' })
+  })
+
+  test.each([
+    ['source revision', { ...headPins, sourceSha: staleHeadSha }, 'promotion-pin-inconsistent'],
+    ['image tag', { ...headPins, tag: `sha-${staleHeadSha}` }, 'promotion-pin-inconsistent'],
+    ['image digest', { ...headPins, digest: `sha256:${'9'.repeat(64)}` }, 'release-contract-mismatch'],
+  ] as const)('rejects an altered %s', (_name, alteredPins, expectedCode) => {
+    const altered = manifests(alteredPins)
+    expect(evaluate(snapshot({ headManifests: altered }))).toMatchObject({
+      status: 'hold',
+      code: expectedCode,
+    })
+  })
+
+  test('rejects changes outside the generated promotion manifest shape', () => {
+    const valid = manifests(headPins)
+    expect(
+      evaluate(
+        snapshot({
+          headManifests: {
+            ...valid,
+            deployment: `${valid.deployment}          securityContext:\n            privileged: true\n`,
+          },
+        }),
+      ),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'promotion-manifest-shape-mismatch',
+    })
+  })
+
+  test('allows a release-owned transition from a disabled base to an enabled promotion', () => {
+    expect(
+      evaluate(
+        snapshot({
+          baseManifests: manifests(basePins, false),
+          headManifests: manifests(headPins, true),
+        }),
+      ),
+    ).toMatchObject({ status: 'eligible' })
+  })
+
+  test('rejects a promotion whose head leaves Bayn disabled', () => {
+    expect(
+      evaluate(
+        snapshot({
+          headManifests: manifests(headPins, false),
+        }),
+      ),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'promotion-pin-inconsistent',
+      message: 'head manifests are inconsistent: Bayn ApplicationSet entry must be enabled after promotion',
+    })
+  })
+
+  test('rejects a non-permitted promotion path', () => {
+    expect(
+      evaluate(
+        snapshot({
+          pullRequest: pullRequest({
+            files: [
+              ...pullRequest().files,
+              { path: 'services/bayn/src/runtime.ts', status: 'modified', previousPath: null },
+            ],
+          }),
+        }),
+      ),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'promotion-paths-not-permitted',
+    })
+  })
+
+  test('rejects a reviewed image when the promotion base contains newer Bayn build inputs', () => {
+    expect(
+      evaluate(
+        snapshot({
+          sourceFreshness: {
+            status: 'stale',
+            reason: `promotion base ${baseSha.slice(0, 12)} contains newer Bayn build input(s) after source ${sourceSha.slice(0, 12)}: services/bayn/src/forward-performance.ts`,
+          },
+        }),
+      ),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'promotion-source-stale',
+      retryable: false,
+    })
+  })
+
+  test('matches the release lane Bayn build-input freshness boundary', () => {
+    for (const pattern of buildWorkflow.on.push.paths) {
+      const path = representativeBuildTriggerPath(pattern)
+      expect(isBaynPromotionSourceAffectingPath(path)).toBeTrue()
+    }
+    for (const path of [
+      'packages/scripts/src/bayn/verify-promotion-eligibility.ts',
+      'argocd/applications/bayn/deployment.yaml',
+      'README.md',
+    ]) {
+      expect(isBaynPromotionSourceAffectingPath(path)).toBeFalse()
+    }
+  })
+
+  test('accepts exact-source pushes and main retry dispatches for later contract binding', () => {
+    const run = {
+      headSha: sourceSha,
+      headBranch: 'main',
+      status: 'completed',
+      conclusion: 'success',
+    } as const
+    expect(isBaynPromotionBuildRunCandidate({ ...run, event: 'push' }, sourceSha)).toBeTrue()
+    expect(isBaynPromotionBuildRunCandidate({ ...run, event: 'workflow_dispatch' }, sourceSha)).toBeTrue()
+    expect(isBaynPromotionBuildRunCandidate({ ...run, event: 'issue_comment' }, sourceSha)).toBeFalse()
+    expect(isBaynPromotionBuildRunCandidate({ ...run, event: 'push' }, staleHeadSha)).toBeFalse()
+    expect(isBaynPromotionBuildRunCandidate({ ...run, event: 'workflow_dispatch' }, staleHeadSha)).toBeTrue()
+    expect(
+      isBaynPromotionBuildRunCandidate(
+        { ...run, event: 'workflow_dispatch', headBranch: 'release-candidate' },
+        sourceSha,
+      ),
+    ).toBeFalse()
+  })
+
+  test('lists retry-dispatch and release runs without assuming the source SHA', () => {
+    const push = new URL(
+      baynWorkflowRunsUrl({
+        repository,
+        workflow: 'bayn-build-push.yml',
+        page: 1,
+        headSha: sourceSha,
+        event: 'push',
+        status: 'success',
+      }),
+    )
+    expect(push.searchParams.get('head_sha')).toBe(sourceSha)
+    expect(push.searchParams.get('event')).toBe('push')
+
+    const dispatch = new URL(
+      baynWorkflowRunsUrl({
+        repository,
+        workflow: 'bayn-build-push.yml',
+        page: 1,
+        event: 'workflow_dispatch',
+        status: 'success',
+        createdAfter: '2026-07-30T10:00:00.000Z',
+        createdBefore: '2026-07-30T11:00:00.000Z',
+      }),
+    )
+    expect(dispatch.searchParams.has('head_sha')).toBeFalse()
+    expect(dispatch.searchParams.get('event')).toBe('workflow_dispatch')
+    expect(dispatch.searchParams.get('created')).toBe('2026-07-30T10:00:00.000Z..2026-07-30T11:00:00.000Z')
+
+    const releaseRange = baynReleaseSearchRange('2026-07-29T10:00:00.000Z')
+    expect(releaseRange).toEqual({
+      createdAfter: '2026-07-29T09:55:00.000Z',
+      createdBefore: '2026-07-30T10:00:00.000Z',
+    })
+    const release = new URL(
+      baynWorkflowRunsUrl({
+        repository,
+        workflow: 'bayn-release.yml',
+        page: 1,
+        event: 'workflow_run',
+        ...releaseRange,
+      }),
+    )
+    expect(release.searchParams.has('head_sha')).toBeFalse()
+    expect(release.searchParams.get('event')).toBe('workflow_run')
+    expect(release.searchParams.get('created')).toBe('2026-07-29T09:55:00.000Z..2026-07-30T10:00:00.000Z')
+  })
+
+  test('keeps a delayed release rerun discoverable through its original causal build window', () => {
+    const range = baynReleaseSearchRange('2026-07-01T10:00:00.000Z')
+    const originalReleaseCreatedAt = Date.parse('2026-07-01T10:01:00.000Z')
+    const delayedRerunUpdatedAt = Date.parse('2026-07-30T10:00:00.000Z')
+
+    expect(Date.parse(range.createdAfter)).toBeLessThanOrEqual(originalReleaseCreatedAt)
+    expect(originalReleaseCreatedAt).toBeLessThanOrEqual(Date.parse(range.createdBefore))
+    expect(delayedRerunUpdatedAt).toBeGreaterThan(Date.parse(range.createdBefore))
+  })
+
+  test.each([
+    ['missing', { status: 'missing', reason: 'no matching reviewed build' }],
+    ['stale', { status: 'stale', reason: 'release contract artifact expired' }],
+    ['ambiguous', { status: 'ambiguous', reason: 'two matching release contracts' }],
+  ] as const)('fails closed on %s release provenance', (_name, value) => {
+    expect(evaluate(snapshot({ provenance: value }))).toMatchObject({
+      status: 'hold',
+      code: `release-provenance-${value.status}`,
+    })
+  })
+
+  test('rejects release contract source, tag, or digest drift', () => {
+    expect(
+      evaluate(
+        snapshot({
+          provenance: provenance({ contract: { ...contract(), digest: `sha256:${'8'.repeat(64)}` } }),
+        }),
+      ),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'release-contract-mismatch',
+    })
+  })
+
+  test('rejects provenance from a release run that generated a different exact head', () => {
+    expect(
+      evaluate(
+        snapshot({
+          provenance: provenance({ promotionHeadSha: staleHeadSha }),
+        }),
+      ),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'release-provenance-stale',
+      retryable: false,
+    })
+  })
+
+  test('rejects the historical rebased #13396 promotion despite its current exact-head review', () => {
+    const historicalPullNumber = 13396
+    const generatedHead = '24e4f5f4bf540ef56954916dadf948df29d7a643'
+    const rebasedHead = '469af423936357968b8d83340697675db61a72fd'
+    const historicalSource = '06c0aa285354e6c628f7a1e0936365b1057920e0'
+    const historicalDigest = `sha256:${'a'.repeat(64)}`
+    const result = evaluateBaynPromotionEligibility({
+      expectedRepository: repository,
+      expectedPullNumber: historicalPullNumber,
+      expectedHeadSha: rebasedHead,
+      nowMs: evaluationNowMs,
+      snapshot: {
+        repository,
+        pullRequest: pullRequest({
+          number: historicalPullNumber,
+          title: `chore(bayn): promote image sha-${historicalSource}`,
+          headSha: rebasedHead,
+        }),
+        baseManifests: manifests(basePins),
+        headManifests: manifests({
+          sourceSha: historicalSource,
+          tag: `sha-${historicalSource}`,
+          digest: historicalDigest,
+          rolloutTimestamp: '2026-07-30T10:03:59Z',
+        }),
+        reviews: [review({ commitSha: rebasedHead })],
+        threads: [],
+        issueComments: [],
+        reactions: [],
+        sourceFreshness: { status: 'fresh' },
+        provenance: {
+          status: 'resolved',
+          buildRunId: 30532902039,
+          releaseRunId: 30533142309,
+          promotionPullNumber: historicalPullNumber,
+          promotionHeadSha: generatedHead,
+          contract: {
+            ...contract(),
+            sourceSha: historicalSource,
+            tag: `sha-${historicalSource}`,
+            digest: historicalDigest,
+            reference: `registry.ide-newton.ts.net/lab/bayn@${historicalDigest}`,
+          },
+        },
+      },
+    })
+
+    expect(result).toMatchObject({
+      status: 'hold',
+      code: 'release-provenance-stale',
+      retryable: false,
+    })
+  })
+})
+
+describe('bounded GitHub failure handling', () => {
+  test('reloads the PR base and source freshness on every polling attempt', async () => {
+    let pullReadCount = 0
+    let commitReadCount = 0
+    const comparedBases: string[] = []
+    const headManifestReads: string[] = []
+    const manifestByPath = new Map([
+      ['argocd/applications/bayn/deployment.yaml', manifests(headPins).deployment],
+      ['argocd/applications/bayn/kustomization.yaml', manifests(headPins).kustomization],
+      ['argocd/applicationsets/product.yaml', manifests(headPins).applicationSet],
+    ])
+    const baseManifestByPath = new Map([
+      ['argocd/applications/bayn/deployment.yaml', manifests(basePins).deployment],
+      ['argocd/applications/bayn/kustomization.yaml', manifests(basePins).kustomization],
+      ['argocd/applicationsets/product.yaml', manifests(basePins).applicationSet],
+    ])
+    const emptyConnection = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } }
+
+    const fetchFn = (async (input, init) => {
+      const url = String(input)
+      if (url === 'https://api.github.com/graphql') {
+        const body = JSON.parse(String(init?.body)) as { readonly query: string }
+        if (body.query.includes('BaynPromotionHeadForcePushes')) {
+          return Response.json({
+            data: { repository: { pullRequest: { timelineItems: emptyConnection } } },
+          })
+        }
+        if (body.query.includes('BaynPromotionReviews')) {
+          return Response.json({ data: { repository: { pullRequest: { reviews: emptyConnection } } } })
+        }
+        if (body.query.includes('BaynPromotionThreads')) {
+          return Response.json({
+            data: { repository: { pullRequest: { reviewThreads: emptyConnection } } },
+          })
+        }
+        throw new Error('unexpected GraphQL query')
+      }
+      if (url.endsWith(`/pulls/${pullNumber}`)) {
+        const currentBaseSha = pullReadCount++ === 0 ? baseSha : nextBaseSha
+        return Response.json({
+          number: pullNumber,
+          title: `chore(bayn): promote image sha-${sourceSha}`,
+          state: 'open',
+          created_at: '2026-07-30T10:00:00Z',
+          commits: 1,
+          base: { ref: 'main', sha: currentBaseSha },
+          head: {
+            ref: 'codex/bayn-release-current',
+            sha: headSha,
+            repo: { full_name: repository },
+          },
+        })
+      }
+      if (url.includes(`/pulls/${pullNumber}/files?`)) {
+        return Response.json(baynPromotionManifestPaths.map((path) => ({ filename: path, status: 'modified' })))
+      }
+      if (url.endsWith(`/commits/${headSha}`)) {
+        commitReadCount += 1
+        return Response.json({ commit: { committer: { date: '2026-07-30T10:00:00Z' } } })
+      }
+      if (url.includes('/contents/')) {
+        const parsed = new URL(url)
+        const path = decodeURIComponent(parsed.pathname.split('/contents/')[1] ?? '')
+        const ref = parsed.searchParams.get('ref')
+        const content = ref === headSha ? manifestByPath.get(path) : baseManifestByPath.get(path)
+        if (content === undefined) throw new Error(`unexpected manifest ${path}`)
+        if (ref === headSha) headManifestReads.push(path)
+        return Response.json({
+          type: 'file',
+          encoding: 'base64',
+          content: Buffer.from(content).toString('base64'),
+        })
+      }
+      if (url.includes(`/compare/${sourceSha}...`)) {
+        const parsed = new URL(url)
+        const comparedBase = decodeURIComponent(parsed.pathname.split('...')[1] ?? '')
+        comparedBases.push(comparedBase)
+        return Response.json({
+          status: 'diverged',
+          base_commit: { sha: sourceSha },
+          merge_base_commit: { sha: oldSourceSha },
+          ahead_by: 0,
+          total_commits: 0,
+          commits: [],
+          files: [],
+        })
+      }
+      if (url.includes(`/issues/${pullNumber}/comments?`) || url.includes(`/issues/${pullNumber}/reactions?`)) {
+        return Response.json([])
+      }
+      throw new Error(`unexpected URL ${url}`)
+    }) as typeof fetch
+
+    const loader = createGitHubPromotionEligibilityLoader({
+      repository,
+      token: 'test-token',
+      pullNumber,
+      headSha,
+      requestTimeoutMs: 100,
+      fetchFn,
+    })
+    const first = await loader()
+    const second = await loader()
+
+    expect(first.pullRequest.baseSha).toBe(baseSha)
+    expect(second.pullRequest.baseSha).toBe(nextBaseSha)
+    expect(comparedBases).toEqual([baseSha, nextBaseSha])
+    expect(headManifestReads).toEqual([...baynPromotionManifestPaths])
+    expect(commitReadCount).toBe(1)
+  })
+
+  test.each([
+    ['not indexed', []],
+    [
+      'still running',
+      [{ runId: 10, status: 'in_progress', conclusion: null, promotionStatus: 'settling', evidence: null }],
+    ],
+    [
+      'completed before job and log indexing settles',
+      [{ runId: 10, status: 'completed', conclusion: 'success', promotionStatus: 'settling', evidence: null }],
+    ],
+  ] as const)('keeps creating release provenance retryable while the run is %s', (_name, runs) => {
+    expect(resolveBaynPromotionReleaseRun({ repository, sourceSha, pullNumber, headSha, runs })).toMatchObject({
+      status: 'missing',
+    })
+  })
+
+  test('resolves the exact promotion only after immutable successful release evidence appears', () => {
+    expect(
+      resolveBaynPromotionReleaseRun({
+        repository,
+        sourceSha,
+        pullNumber,
+        headSha,
+        runs: [
+          {
+            runId: 10,
+            status: 'completed',
+            conclusion: 'success',
+            promotionStatus: 'created',
+            evidence: promotionEvidence(),
+          },
+        ],
+      }),
+    ).toEqual({ status: 'resolved', runId: 10, evidence: promotionEvidence() })
+  })
+
+  test('resolves one exact release despite another unbound run still settling', () => {
+    expect(
+      resolveBaynPromotionReleaseRun({
+        repository,
+        sourceSha,
+        pullNumber,
+        headSha,
+        runs: [
+          {
+            runId: 10,
+            status: 'completed',
+            conclusion: 'success',
+            promotionStatus: 'created',
+            evidence: promotionEvidence(),
+          },
+          {
+            runId: 11,
+            status: 'in_progress',
+            conclusion: null,
+            promotionStatus: 'settling',
+            evidence: null,
+          },
+        ],
+      }),
+    ).toEqual({ status: 'resolved', runId: 10, evidence: promotionEvidence() })
+  })
+
+  test('rejects the exact promotion head when release logs bind a different triggering source', () => {
+    expect(
+      resolveBaynPromotionReleaseRun({
+        repository,
+        sourceSha,
+        pullNumber,
+        headSha,
+        runs: [
+          {
+            runId: 10,
+            status: 'completed',
+            conclusion: 'success',
+            promotionStatus: 'created',
+            evidence: promotionEvidence({ sourceSha: oldSourceSha }),
+          },
+        ],
+      }),
+    ).toMatchObject({ status: 'stale' })
+  })
+
+  test('classifies settled conflicting release evidence as stale and duplicate exact evidence as ambiguous', () => {
+    expect(
+      resolveBaynPromotionReleaseRun({
+        repository,
+        sourceSha,
+        pullNumber,
+        headSha,
+        runs: [
+          {
+            runId: 10,
+            status: 'completed',
+            conclusion: 'success',
+            promotionStatus: 'created',
+            evidence: promotionEvidence({ headSha: staleHeadSha }),
+          },
+        ],
+      }),
+    ).toMatchObject({ status: 'stale' })
+    expect(
+      resolveBaynPromotionReleaseRun({
+        repository,
+        sourceSha,
+        pullNumber,
+        headSha,
+        runs: [
+          {
+            runId: 10,
+            status: 'completed',
+            conclusion: 'success',
+            promotionStatus: 'created',
+            evidence: promotionEvidence(),
+          },
+          {
+            runId: 11,
+            status: 'completed',
+            conclusion: 'success',
+            promotionStatus: 'created',
+            evidence: promotionEvidence(),
+          },
+        ],
+      }),
+    ).toMatchObject({ status: 'ambiguous' })
+  })
+
+  test('ignores an earlier completed held release when a later run creates the exact promotion', () => {
+    expect(
+      resolveBaynPromotionReleaseRun({
+        repository,
+        sourceSha,
+        pullNumber,
+        headSha,
+        runs: [
+          {
+            runId: 9,
+            status: 'completed',
+            conclusion: 'success',
+            promotionStatus: 'held',
+            evidence: null,
+          },
+          {
+            runId: 10,
+            status: 'completed',
+            conclusion: 'success',
+            promotionStatus: 'created',
+            evidence: promotionEvidence(),
+          },
+        ],
+      }),
+    ).toEqual({ status: 'resolved', runId: 10, evidence: promotionEvidence() })
+  })
+
+  test('ignores a superseded created head when one unique run binds the current promotion head', () => {
+    expect(
+      resolveBaynPromotionReleaseRun({
+        repository,
+        sourceSha,
+        pullNumber,
+        headSha,
+        runs: [
+          {
+            runId: 9,
+            status: 'completed',
+            conclusion: 'success',
+            promotionStatus: 'created',
+            evidence: promotionEvidence({ headSha: staleHeadSha }),
+          },
+          {
+            runId: 10,
+            status: 'completed',
+            conclusion: 'success',
+            promotionStatus: 'created',
+            evidence: promotionEvidence(),
+          },
+        ],
+      }),
+    ).toEqual({ status: 'resolved', runId: 10, evidence: promotionEvidence() })
+  })
+
+  test('reloads retryable missing provenance and caches the first settled result', async () => {
+    let calls = 0
+    const load = createRefreshableBaynPromotionProvenanceLoader(async () => {
+      calls += 1
+      return calls === 1
+        ? { status: 'missing', reason: 'release run is still indexing' }
+        : provenance({ buildRunId: 200, releaseRunId: 201 })
+    })
+
+    expect(await load()).toEqual({ status: 'missing', reason: 'release run is still indexing' })
+    expect(await load()).toMatchObject({ status: 'resolved', buildRunId: 200, releaseRunId: 201 })
+    expect(await load()).toMatchObject({ status: 'resolved', buildRunId: 200, releaseRunId: 201 })
+    expect(calls).toBe(2)
+  })
+
+  test('does not cache a failed provenance request', async () => {
+    let calls = 0
+    const load = createRefreshableBaynPromotionProvenanceLoader(async () => {
+      calls += 1
+      if (calls === 1) throw new GitHubPromotionEligibilityError('github-api-timeout', 'load provenance')
+      return provenance()
+    })
+
+    await expect(load()).rejects.toMatchObject({ code: 'github-api-timeout' })
+    await expect(load()).resolves.toMatchObject({ status: 'resolved' })
+    expect(calls).toBe(2)
+  })
+
+  test.each([
+    ['github-api-timeout', 'read promotion PR'],
+    ['github-api-error', 'read promotion PR'],
+    ['github-api-pagination-limit', 'read promotion PR files'],
+  ] as const)('maps %s to a fail-closed retryable result', async (code, operation) => {
+    const result = await pollBaynPromotionEligibility({
+      expectedRepository: repository,
+      expectedPullNumber: pullNumber,
+      expectedHeadSha: headSha,
+      maxAttempts: 1,
+      pollIntervalMs: 1,
+      loadSnapshot: () => Promise.reject(new GitHubPromotionEligibilityError(code, operation)),
+    })
+    expect(result).toMatchObject({
+      status: 'hold',
+      code,
+      retryable: true,
+      attempts: 1,
+      timedOut: true,
+    })
+  })
+
+  test('bounds REST pagination instead of accepting an incomplete file list', async () => {
+    const fetchFn = (async (input) => {
+      const url = String(input)
+      if (url.endsWith(`/pulls/${pullNumber}`)) {
+        return Response.json({
+          number: pullNumber,
+          title: 'ordinary PR',
+          state: 'open',
+          created_at: '2026-07-30T10:00:00Z',
+          commits: 1,
+          base: { ref: 'main', sha: baseSha },
+          head: {
+            ref: 'codex/ordinary-pr',
+            sha: headSha,
+            repo: { full_name: repository },
+          },
+        })
+      }
+      if (url.includes(`/pulls/${pullNumber}/files?`)) {
+        return Response.json([], {
+          headers: { link: '<https://api.github.com/next>; rel="next"' },
+        })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    }) as typeof fetch
+    const loader = createGitHubPromotionEligibilityLoader({
+      repository,
+      token: 'test-token',
+      pullNumber,
+      headSha,
+      requestTimeoutMs: 100,
+      fetchFn,
+    })
+    await expect(loader()).rejects.toMatchObject({ code: 'github-api-pagination-limit' })
+  })
+
+  test('classifies a request timeout from the bounded loader', async () => {
+    const fetchFn = (async (_input, init) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+      })) as typeof fetch
+    const loader = createGitHubPromotionEligibilityLoader({
+      repository,
+      token: 'test-token',
+      pullNumber,
+      headSha,
+      requestTimeoutMs: 1,
+      fetchFn,
+    })
+    await expect(loader()).rejects.toMatchObject({ code: 'github-api-timeout' })
+  })
+
+  test('classifies a GitHub API failure from the bounded loader', async () => {
+    const loader = createGitHubPromotionEligibilityLoader({
+      repository,
+      token: 'test-token',
+      pullNumber,
+      headSha,
+      requestTimeoutMs: 100,
+      fetchFn: (async () => new Response('unavailable', { status: 503 })) as unknown as typeof fetch,
+    })
+    await expect(loader()).rejects.toMatchObject({ code: 'github-api-error', status: 503 })
+  })
+})
+
+const littleEndian16 = (value: number): Buffer => {
+  const buffer = Buffer.alloc(2)
+  buffer.writeUInt16LE(value)
+  return buffer
+}
+
+const littleEndian32 = (value: number): Buffer => {
+  const buffer = Buffer.alloc(4)
+  buffer.writeUInt32LE(value)
+  return buffer
+}
+
+const storedZipEntries = (entries: readonly { readonly name: string; readonly content: string }[]): Uint8Array => {
+  const localParts: Buffer[] = []
+  const centralParts: Buffer[] = []
+  let localOffset = 0
+  for (const entry of entries) {
+    const nameBytes = Buffer.from(entry.name)
+    const contentBytes = Buffer.from(entry.content)
+    const local = Buffer.concat([
+      littleEndian32(0x04034b50),
+      littleEndian16(20),
+      littleEndian16(0),
+      littleEndian16(0),
+      Buffer.alloc(4),
+      littleEndian32(0),
+      littleEndian32(contentBytes.length),
+      littleEndian32(contentBytes.length),
+      littleEndian16(nameBytes.length),
+      littleEndian16(0),
+      nameBytes,
+      contentBytes,
+    ])
+    localParts.push(local)
+    centralParts.push(
+      Buffer.concat([
+        littleEndian32(0x02014b50),
+        littleEndian16(20),
+        littleEndian16(20),
+        littleEndian16(0),
+        littleEndian16(0),
+        Buffer.alloc(4),
+        littleEndian32(0),
+        littleEndian32(contentBytes.length),
+        littleEndian32(contentBytes.length),
+        littleEndian16(nameBytes.length),
+        littleEndian16(0),
+        littleEndian16(0),
+        littleEndian16(0),
+        littleEndian16(0),
+        littleEndian32(0),
+        littleEndian32(localOffset),
+        nameBytes,
+      ]),
+    )
+    localOffset += local.length
+  }
+  const local = Buffer.concat(localParts)
+  const central = Buffer.concat(centralParts)
+  const end = Buffer.concat([
+    littleEndian32(0x06054b50),
+    littleEndian16(0),
+    littleEndian16(0),
+    littleEndian16(entries.length),
+    littleEndian16(entries.length),
+    littleEndian32(central.length),
+    littleEndian32(local.length),
+    littleEndian16(0),
+  ])
+  return new Uint8Array(Buffer.concat([local, central, end]))
+}
+
+const storedZip = (name: string, content: string): Uint8Array => storedZipEntries([{ name, content }])
+
+describe('release contract artifact parsing', () => {
+  test('extracts the bounded immutable release contract from its ZIP artifact', () => {
+    const content = JSON.stringify(contract())
+    expect(extractReleaseContractFromZip(storedZip('release-contract.json', content))).toBe(content)
+  })
+
+  test('rejects an artifact without the named release contract', () => {
+    expect(() => extractReleaseContractFromZip(storedZip('other.json', '{}'))).toThrow(
+      'release-contract.json is missing',
+    )
+  })
+})
+
+describe('release promotion log parsing', () => {
+  const validateContractLog = (exactSourceSha = sourceSha): string =>
+    `2026-07-30T10:03:25.0461388Z   WORKFLOW_SHA: ${exactSourceSha}\n`
+
+  const releaseLog = (overrides: { readonly headSha?: string; readonly pullNumber?: number } = {}): string => {
+    const exactHead = overrides.headSha ?? headSha
+    const exactPullNumber = overrides.pullNumber ?? pullNumber
+    return `2026-07-30T10:03:59.9370830Z   branch: codex/bayn-release-current
+2026-07-30T10:03:59.9371866Z   base: main
+2026-07-30T10:04:06.0334593Z pull-request-branch = codex/bayn-release-current
+2026-07-30T10:04:06.0337038Z pull-request-operation = created
+2026-07-30T10:04:06.0338486Z pull-request-head-sha = ${exactHead}
+2026-07-30T10:04:06.0340055Z pull-request-number = ${exactPullNumber}
+2026-07-30T10:04:06.0341475Z pull-request-url = https://github.com/proompteng/lab/pull/${exactPullNumber}
+`
+  }
+
+  test('binds the successful release run to the exact generated promotion PR head', () => {
+    expect(
+      extractReleasePromotionEvidenceFromZip(
+        storedZipEntries([
+          { name: 'promote/4_Validate release contract.txt', content: validateContractLog() },
+          { name: 'promote/8_Create deploy pull request.txt', content: releaseLog() },
+        ]),
+      ),
+    ).toEqual({
+      sourceSha,
+      pullNumber,
+      headSha,
+      branch: 'codex/bayn-release-current',
+      baseRefName: 'main',
+      repository,
+      operation: 'created',
+    })
+  })
+
+  test('rejects inconsistent release-run pull-request URL evidence', () => {
+    const inconsistent = releaseLog().replace(`/pull/${pullNumber}`, `/pull/${pullNumber + 1}`)
+    expect(() =>
+      extractReleasePromotionEvidenceFromZip(
+        storedZipEntries([
+          { name: 'promote/4_Validate release contract.txt', content: validateContractLog() },
+          { name: 'promote/8_Create deploy pull request.txt', content: inconsistent },
+        ]),
+      ),
+    ).toThrow('pull-request-url output is inconsistent')
+  })
+
+  test('rejects missing or duplicated exact-head output evidence', () => {
+    const duplicated = `${releaseLog()}2026-07-30T10:04:06.0345000Z pull-request-head-sha = ${headSha}\n`
+    expect(() =>
+      extractReleasePromotionEvidenceFromZip(
+        storedZipEntries([
+          { name: 'promote/4_Validate release contract.txt', content: validateContractLog() },
+          { name: 'promote/8_Create deploy pull request.txt', content: duplicated },
+        ]),
+      ),
+    ).toThrow('exactly one pull-request-head-sha output')
+  })
+
+  test('binds the triggering workflow SHA independently of the release run head', () => {
+    expect(
+      extractReleasePromotionEvidenceFromZip(
+        storedZipEntries([
+          { name: 'promote/4_Validate release contract.txt', content: validateContractLog(oldSourceSha) },
+          { name: 'promote/8_Create deploy pull request.txt', content: releaseLog() },
+        ]),
+      ),
+    ).toMatchObject({ sourceSha: oldSourceSha, headSha })
+  })
+
+  test('rejects release logs without one trusted triggering workflow SHA', () => {
+    expect(() =>
+      extractReleasePromotionEvidenceFromZip(
+        storedZipEntries([{ name: 'promote/8_Create deploy pull request.txt', content: releaseLog() }]),
+      ),
+    ).toThrow('exactly one Validate release contract step')
+  })
+})
