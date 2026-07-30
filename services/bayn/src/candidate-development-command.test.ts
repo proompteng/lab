@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { Deferred, Effect, Fiber, Result } from 'effect'
 
 import { frozenCandidateDevelopmentSessions } from './candidate-development-calendar'
@@ -2967,6 +2968,59 @@ describe('candidate development command', () => {
       ).toBeUndefined()
     } finally {
       await rm(repository, { recursive: true, force: true })
+    }
+  })
+
+  test('rejects shallow Git history before module novelty verification', async () => {
+    const repository = await mkdtemp(join(tmpdir(), 'bayn-candidate-history-source-'))
+    const shallowRepository = await mkdtemp(join(tmpdir(), 'bayn-candidate-history-shallow-'))
+    const candidateDirectory = join(repository, 'candidate')
+    const modulePath = join(candidateDirectory, 'program.mjs')
+    try {
+      await mkdir(candidateDirectory, { recursive: true })
+      await writeFile(modulePath, 'export const candidate = "old"\n')
+      await execFilePromise('git', ['init', '-q'], repository)
+      await execFilePromise('git', ['config', 'user.name', 'Candidate Test'], repository)
+      await execFilePromise('git', ['config', 'user.email', 'candidate@example.test'], repository)
+      await execFilePromise('git', ['add', 'candidate/program.mjs'], repository)
+      await execFilePromise('git', ['commit', '-qm', 'test: old candidate'], repository)
+      await writeFile(modulePath, 'export const candidate = "new"\n')
+      await execFilePromise('git', ['add', 'candidate/program.mjs'], repository)
+      await execFilePromise('git', ['commit', '-qm', 'test: new candidate'], repository)
+
+      await rm(shallowRepository, { recursive: true, force: true })
+      await execFilePromise(
+        'git',
+        ['clone', '-q', '--depth', '1', pathToFileURL(repository).href, shallowRepository],
+        tmpdir(),
+      )
+      const preregistrationRevision = await execFileTextPromise('git', ['rev-parse', 'HEAD'], shallowRepository)
+      const moduleBlobOid = await execFileTextPromise(
+        'git',
+        ['rev-parse', 'HEAD:candidate/program.mjs'],
+        shallowRepository,
+      )
+      expect(await execFileTextPromise('git', ['rev-parse', '--is-shallow-repository'], shallowRepository)).toBe('true')
+
+      expect(
+        await Effect.runPromise(
+          Effect.flip(
+            verifyCandidateDevelopmentPreregistrationModuleNovelty(
+              shallowRepository,
+              preregistrationRevision,
+              'candidate/program.mjs',
+              moduleBlobOid,
+            ),
+          ),
+        ),
+      ).toMatchObject({
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-complete-history',
+        cause: { expected: 'false', observed: 'true' },
+      })
+    } finally {
+      await rm(repository, { recursive: true, force: true })
+      await rm(shallowRepository, { recursive: true, force: true })
     }
   })
 

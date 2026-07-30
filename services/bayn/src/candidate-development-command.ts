@@ -241,6 +241,7 @@ export type CandidateDevelopmentCommandFailure =
         | 'verify-preregistration-blob'
         | 'verify-preregistration-lineage'
         | 'verify-preregistration-module-novelty'
+        | 'verify-complete-history'
         | 'verify-source-manifest-blob'
         | 'verify-program-binding'
         | 'derive-run-identity'
@@ -2968,6 +2969,15 @@ const verifyCandidateDevelopmentPreregistrationModuleNoveltyPromise = async (
   sourceGit: CandidateDevelopmentSourceGit,
   signal: AbortSignal,
 ): Promise<void> => {
+  const shallow = await sourceStep('verify-complete-history', () =>
+    sourceGit.text(repositoryRoot, ['rev-parse', '--is-shallow-repository'], signal),
+  )
+  if (shallow !== 'false') {
+    throw new CandidateDevelopmentSourceVerificationError('verify-complete-history', {
+      expected: 'false',
+      observed: shallow,
+    })
+  }
   const history = await sourceStep('verify-preregistration-module-novelty', () =>
     sourceGit.text(
       repositoryRoot,
