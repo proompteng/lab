@@ -2503,12 +2503,15 @@ const sha256Bytes = (bytes: Uint8Array): string => createHash('sha256').update(b
 const forbiddenCandidateArtifactIdentifiers = new Set([
   'Atomics',
   'Bun',
+  'Date',
   'EventSource',
   'FinalizationRegistry',
   'Function',
+  'Intl',
   'Promise',
   'SharedArrayBuffer',
   'SharedWorker',
+  'Temporal',
   'WebAssembly',
   'WebSocket',
   'WeakRef',
@@ -2517,15 +2520,23 @@ const forbiddenCandidateArtifactIdentifiers = new Set([
   'async',
   'await',
   'console',
+  'crypto',
   'eval',
   'fetch',
+  'import',
+  'localeCompare',
   'module',
+  'navigator',
+  'performance',
   'process',
   'queueMicrotask',
   'require',
   'setImmediate',
   'setInterval',
   'setTimeout',
+  'toLocaleLowerCase',
+  'toLocaleString',
+  'toLocaleUpperCase',
 ])
 
 const candidateArtifactIdentifierIssues = (source: string): readonly string[] => {
@@ -2727,6 +2738,12 @@ const candidateDevelopmentArtifactContext = (): vm.Context => {
         'process',
         'Bun',
         'console',
+        'Date',
+        'Intl',
+        'Temporal',
+        'performance',
+        'crypto',
+        'navigator',
         'fetch',
         'require',
         'module',
@@ -2752,6 +2769,24 @@ const candidateDevelopmentArtifactContext = (): vm.Context => {
           writable: false,
           configurable: false,
         })
+      }
+      Object.defineProperty(Math, 'random', {
+        value: undefined,
+        writable: false,
+        configurable: false,
+      })
+      for (const [prototype, names] of [
+        [String.prototype, ['localeCompare', 'toLocaleLowerCase', 'toLocaleUpperCase']],
+        [Number.prototype, ['toLocaleString']],
+        [BigInt.prototype, ['toLocaleString']],
+      ]) {
+        for (const name of names) {
+          Object.defineProperty(prototype, name, {
+            value: undefined,
+            writable: false,
+            configurable: false,
+          })
+        }
       }
     `,
     context,
@@ -2814,7 +2849,6 @@ export const evaluateCandidateDevelopmentArtifact: CandidateDevelopmentModuleImp
         context,
         identifier: `git:${verifiedFiles.sourceRevision}:${verifiedFiles.moduleBlobOid}`,
         initializeImportMeta: (meta) => Object.freeze(meta),
-        importModuleDynamically: () => Promise.reject(new TypeError('candidate artifact imports are prohibited')),
       })
       await artifactModule.link(() => {
         throw new TypeError('candidate artifact imports are prohibited')

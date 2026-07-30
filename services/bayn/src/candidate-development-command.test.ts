@@ -2087,9 +2087,18 @@ describe('candidate development command', () => {
             typeof globalThis['Promise'],
             typeof globalThis['Atomics'],
             typeof globalThis['SharedArrayBuffer'],
+            typeof globalThis['Date'],
+            typeof globalThis['Intl'],
+            typeof globalThis['Temporal'],
+            typeof globalThis['performance'],
+            typeof globalThis['crypto'],
+            typeof globalThis['navigator'],
             typeof globalThis['WebAssembly'],
             typeof globalThis['Worker'],
             typeof globalThis['setTimeout'],
+            typeof Math['random'],
+            typeof String.prototype['localeCompare'],
+            typeof Number.prototype['toLocaleString'],
           ].every((value) => value === 'undefined')
           let functionBlocked = false
           let constructorBlocked = false
@@ -2146,6 +2155,29 @@ describe('candidate development command', () => {
         _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
         operation: 'verify-module-format',
         cause: { identifiers: ['async'] },
+      },
+    })
+  })
+
+  test('rejects nonliteral dynamic imports before sandbox execution', async () => {
+    const source = `
+      export const candidateDevelopmentArtifact = {
+        schemaVersion: 'bayn.candidate-development-artifact.v1',
+        input: {},
+        strategyProtocol: {},
+        buildEvaluation: () => import('node:' + 'fs').catch(() => ({})),
+      }
+    `
+    const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
+
+    expect(
+      await Effect.runPromise(Effect.flip(evaluateCandidateDevelopmentArtifact(moduleUrl, fixtureVerifiedSourceFiles))),
+    ).toMatchObject({
+      _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
+      cause: {
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-module-format',
+        cause: { identifiers: ['import'] },
       },
     })
   })
