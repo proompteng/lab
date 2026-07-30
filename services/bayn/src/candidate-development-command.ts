@@ -14,7 +14,9 @@ import {
   type CandidateDevelopmentReport,
   type CandidateDevelopmentRunFailure,
 } from './candidate-development'
+import { microsToNumber } from './execution-model'
 import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
+import { TRADING_DAYS } from './simulation/metrics'
 import type { EvaluationResult } from './types'
 
 export const candidateDevelopmentExecutableProgramSchemaVersion =
@@ -32,6 +34,7 @@ type CandidateDevelopmentComparisonGateName =
 export interface CandidateDevelopmentCommandGate {
   readonly name:
     | CandidateDevelopmentComparisonGateName
+    | 'double_cost_return'
     | 'economic_verdict'
     | 'baseline_terminal_cash'
     | 'stressed_terminal_cash'
@@ -94,15 +97,109 @@ export type CandidateDevelopmentCommandFailure =
       readonly _tag: 'CandidateDevelopmentCommandOutputFailed'
       readonly cause: unknown
     }
+  | {
+      readonly _tag: 'CandidateDevelopmentCommandDoubledCostSeriesInvalid'
+      readonly reason:
+        | 'initial-capital-invalid'
+        | 'observations-insufficient'
+        | 'equity-invalid'
+        | 'annualized-return-invalid'
+        | 'baseline-summary-mismatch'
+      readonly index: number | null
+      readonly expected: number | string | null
+      readonly observed: number | string | null
+    }
 
 const terminalCash = (marks: EvaluationResult['simulation']['dailyMarks']): boolean => {
   const last = marks.at(-1)
   return last !== undefined && last.positions.every((position) => position.quantityMicros === '0')
 }
 
+const positiveMicros = (
+  value: string,
+  reason: 'initial-capital-invalid' | 'equity-invalid',
+  index: number | null,
+): Result.Result<bigint, CandidateDevelopmentCommandFailure> => {
+  if (!/^[0-9]+$/.test(value)) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentCommandDoubledCostSeriesInvalid',
+      reason,
+      index,
+      expected: 'positive unsigned integer micros',
+      observed: value,
+    })
+  }
+  const parsed = BigInt(value)
+  return parsed > 0n
+    ? Result.succeed(parsed)
+    : Result.fail({
+        _tag: 'CandidateDevelopmentCommandDoubledCostSeriesInvalid',
+        reason,
+        index,
+        expected: 'positive unsigned integer micros',
+        observed: value,
+      })
+}
+
+export const deriveCandidateDevelopmentDoubledCostAnnualizedReturn = (
+  report: CandidateDevelopmentReport,
+  baseline: EvaluationResult,
+): Result.Result<number, CandidateDevelopmentCommandFailure> => {
+  const marks = report.doubledCost.stressed.simulation.dailyMarks
+  if (marks.length < 2) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentCommandDoubledCostSeriesInvalid',
+      reason: 'observations-insufficient',
+      index: null,
+      expected: 2,
+      observed: marks.length,
+    })
+  }
+  return pipe(
+    Result.all({
+      initialCapital: positiveMicros(baseline.initialCapitalMicros, 'initial-capital-invalid', null),
+      equity: Result.all(marks.map((mark, index) => positiveMicros(mark.equityMicros, 'equity-invalid', index))),
+    }),
+    Result.flatMap(({ equity, initialCapital }) => {
+      const endingEquity = equity.at(-1)
+      if (endingEquity === undefined) {
+        return Result.fail<CandidateDevelopmentCommandFailure>({
+          _tag: 'CandidateDevelopmentCommandDoubledCostSeriesInvalid',
+          reason: 'observations-insufficient',
+          index: null,
+          expected: 2,
+          observed: equity.length,
+        })
+      }
+      const initialCapitalValue = microsToNumber(initialCapital)
+      const endingEquityValue = microsToNumber(endingEquity)
+      const annualizedReturn = Math.pow(endingEquityValue / initialCapitalValue, TRADING_DAYS / equity.length) - 1
+      if (!Number.isFinite(annualizedReturn)) {
+        return Result.fail<CandidateDevelopmentCommandFailure>({
+          _tag: 'CandidateDevelopmentCommandDoubledCostSeriesInvalid',
+          reason: 'annualized-return-invalid',
+          index: null,
+          expected: 'finite annualized return',
+          observed: annualizedReturn,
+        })
+      }
+      return baseline.doubleCostStrategy.annualizedReturn === annualizedReturn
+        ? Result.succeed(annualizedReturn)
+        : Result.fail<CandidateDevelopmentCommandFailure>({
+            _tag: 'CandidateDevelopmentCommandDoubledCostSeriesInvalid',
+            reason: 'baseline-summary-mismatch',
+            index: null,
+            expected: annualizedReturn,
+            observed: baseline.doubleCostStrategy.annualizedReturn,
+          })
+    }),
+  )
+}
+
 const decideCandidateDevelopment = (
   report: CandidateDevelopmentReport,
   baseline: EvaluationResult,
+  doubledCostAnnualizedReturn: number,
 ): CandidateDevelopmentCommandDecision => {
   const { bootstrap, power, walkForward } = report.comparisonSemantics.analysis
   const protocolGates = candidateDevelopmentComparisonSemantics.gates
@@ -150,6 +247,12 @@ const decideCandidateDevelopment = (
       required: candidateDevelopmentStatisticsPolicy.walkForward.maximumFoldDrawdown,
     },
     {
+      name: 'double_cost_return',
+      passed: doubledCostAnnualizedReturn > 0,
+      actual: doubledCostAnnualizedReturn,
+      required: 0,
+    },
+    {
       name: 'economic_verdict',
       passed: baseline.verdict.status === 'PASS',
       actual: baseline.verdict.status === 'PASS',
@@ -178,27 +281,31 @@ const decideCandidateDevelopment = (
 export const buildCandidateDevelopmentCommandReport = (
   report: CandidateDevelopmentReport,
   baseline: EvaluationResult,
-): Result.Result<CandidateDevelopmentCommandReport, CandidateDevelopmentCommandFailure> => {
-  const material: CandidateDevelopmentCommandReportMaterial = {
-    schemaVersion: 'bayn.candidate-development-command-report.v1',
-    candidateOrdinal: report.protocolIdentity.candidateOrdinal,
-    priorTrialCount: report.protocolIdentity.priorTrialCount,
-    strategyProtocolHash: report.comparisonSemantics.strategyProtocolHash,
-    decision: decideCandidateDevelopment(report, baseline),
-    baseline,
-    development: report,
-  }
-  return pipe(
-    canonicalHashV1Result(material),
-    Result.mapError(
-      (cause): CandidateDevelopmentCommandFailure => ({
-        _tag: 'CandidateDevelopmentCommandHashFailed',
-        cause,
-      }),
-    ),
-    Result.map((contentHash) => ({ ...material, contentHash })),
+): Result.Result<CandidateDevelopmentCommandReport, CandidateDevelopmentCommandFailure> =>
+  pipe(
+    deriveCandidateDevelopmentDoubledCostAnnualizedReturn(report, baseline),
+    Result.flatMap((doubledCostAnnualizedReturn) => {
+      const material: CandidateDevelopmentCommandReportMaterial = {
+        schemaVersion: 'bayn.candidate-development-command-report.v1',
+        candidateOrdinal: report.protocolIdentity.candidateOrdinal,
+        priorTrialCount: report.protocolIdentity.priorTrialCount,
+        strategyProtocolHash: report.comparisonSemantics.strategyProtocolHash,
+        decision: decideCandidateDevelopment(report, baseline, doubledCostAnnualizedReturn),
+        baseline,
+        development: report,
+      }
+      return pipe(
+        canonicalHashV1Result(material),
+        Result.mapError(
+          (cause): CandidateDevelopmentCommandFailure => ({
+            _tag: 'CandidateDevelopmentCommandHashFailed',
+            cause,
+          }),
+        ),
+        Result.map((contentHash) => ({ ...material, contentHash })),
+      )
+    }),
   )
-}
 
 export const executeCandidateDevelopmentProgram = <Registration, DevelopmentData, Error, Requirements>(
   program: CandidateDevelopmentExecutableProgram<Registration, DevelopmentData, Error, Requirements>,

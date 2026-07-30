@@ -21,7 +21,13 @@ const successOf = <A, E>(result: Result.Result<A, E>): A => {
   return result.success
 }
 
-const reportFixture = (annualizedReturnDifferenceLowerBound: number): CandidateDevelopmentReport =>
+const doubledCostAnnualizedReturn = (endingEquityMicros: string): number =>
+  Math.pow(Number(endingEquityMicros) / 1_000_000, 252 / 2) - 1
+
+const reportFixture = (
+  annualizedReturnDifferenceLowerBound: number,
+  stressedEndingEquityMicros = '1010000',
+): CandidateDevelopmentReport =>
   ({
     schemaVersion: 'bayn.candidate-development-report.v2',
     protocolIdentity: {
@@ -57,14 +63,24 @@ const reportFixture = (annualizedReturnDifferenceLowerBound: number): CandidateD
     doubledCost: {
       stressed: {
         simulation: {
-          dailyMarks: [{ positions: [{ quantityMicros: '0' }] }],
+          dailyMarks: [
+            { equityMicros: '1000000', positions: [{ quantityMicros: '0' }] },
+            { equityMicros: stressedEndingEquityMicros, positions: [{ quantityMicros: '0' }] },
+          ],
         },
       },
     },
   }) as unknown as CandidateDevelopmentReport
 
-const baselineFixture = (status: 'PASS' | 'FAIL_CLOSED' = 'PASS'): EvaluationResult =>
+const baselineFixture = (
+  status: 'PASS' | 'FAIL_CLOSED' = 'PASS',
+  stressedEndingEquityMicros = '1010000',
+): EvaluationResult =>
   ({
+    initialCapitalMicros: '1000000',
+    doubleCostStrategy: {
+      annualizedReturn: doubledCostAnnualizedReturn(stressedEndingEquityMicros),
+    },
     verdict: { status },
     simulation: {
       dailyMarks: [{ positions: [{ quantityMicros: '0' }] }],
@@ -161,11 +177,21 @@ describe('candidate development command', () => {
     const economicallyRejected = successOf(
       buildCandidateDevelopmentCommandReport(reportFixture(0.01), baselineFixture('FAIL_CLOSED')),
     )
+    const doubledCostRejected = successOf(
+      buildCandidateDevelopmentCommandReport(reportFixture(0.01, '1000000'), baselineFixture('PASS', '1000000')),
+    )
     const { contentHash, ...material } = passing
 
     expect(passing.decision.status).toBe('PASS')
     expect(rejected.decision.status).toBe('HOLD_REJECT')
     expect(economicallyRejected.decision.status).toBe('HOLD_REJECT')
+    expect(doubledCostRejected.decision.status).toBe('HOLD_REJECT')
+    expect(doubledCostRejected.decision.gates).toContainEqual({
+      name: 'double_cost_return',
+      passed: false,
+      actual: 0,
+      required: 0,
+    })
     expect(passing.decision.gates.map(({ name }) => name)).toContain('annualized_excess_return_lower_bound')
     expect(passing.decision.gates.map(({ name }) => name)).not.toContain('annualized_return_difference_lower_bound')
     expect(contentHash).toBe(successOf(canonicalHashV1Result(material)))
@@ -176,6 +202,23 @@ describe('candidate development command', () => {
     expect(rendered.endsWith('\n')).toBe(true)
     expect(rendered.slice(0, -1)).not.toContain('\n')
     expect(JSON.parse(rendered)).toEqual(passing)
+  })
+
+  test('rejects detached doubled-cost summary metrics', () => {
+    const baseline = baselineFixture()
+    const detached = {
+      ...baseline,
+      doubleCostStrategy: { ...baseline.doubleCostStrategy, annualizedReturn: 0.5 },
+    }
+
+    expect(buildCandidateDevelopmentCommandReport(reportFixture(0.01), detached)).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'CandidateDevelopmentCommandDoubledCostSeriesInvalid',
+        reason: 'baseline-summary-mismatch',
+        observed: 0.5,
+      },
+    })
   })
 
   test('keeps the sole report write attached through interruption', async () => {
