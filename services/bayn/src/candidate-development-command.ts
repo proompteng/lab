@@ -2574,12 +2574,12 @@ const sourceStep = async <A>(
   }
 }
 
-const gitText = (repositoryRoot: string, args: readonly string[]): Promise<string> =>
+const gitText = (repositoryRoot: string, args: readonly string[], signal?: AbortSignal): Promise<string> =>
   new Promise((resolveGit, rejectGit) => {
     execFile(
       'git',
       ['-C', repositoryRoot, ...args],
-      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
+      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, signal },
       (error, stdout) => {
         if (error === null) resolveGit(stdout.trim())
         else rejectGit(error)
@@ -2587,12 +2587,12 @@ const gitText = (repositoryRoot: string, args: readonly string[]): Promise<strin
     )
   })
 
-const gitBytes = (repositoryRoot: string, args: readonly string[]): Promise<Buffer> =>
+const gitBytes = (repositoryRoot: string, args: readonly string[], signal?: AbortSignal): Promise<Buffer> =>
   new Promise((resolveGit, rejectGit) => {
     execFile(
       'git',
       ['-C', repositoryRoot, ...args],
-      { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 },
+      { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024, signal },
       (error, stdout) => {
         if (error === null) resolveGit(stdout)
         else rejectGit(error)
@@ -2601,8 +2601,8 @@ const gitBytes = (repositoryRoot: string, args: readonly string[]): Promise<Buff
   })
 
 export interface CandidateDevelopmentSourceGit {
-  readonly text: (repositoryRoot: string, args: readonly string[]) => Promise<string>
-  readonly bytes: (repositoryRoot: string, args: readonly string[]) => Promise<Buffer>
+  readonly text: (repositoryRoot: string, args: readonly string[], signal?: AbortSignal) => Promise<string>
+  readonly bytes: (repositoryRoot: string, args: readonly string[], signal?: AbortSignal) => Promise<Buffer>
 }
 
 const candidateDevelopmentSourceGit: CandidateDevelopmentSourceGit = {
@@ -2735,13 +2735,13 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
   sourceGit: CandidateDevelopmentSourceGit = candidateDevelopmentSourceGit,
 ) =>
   Effect.tryPromise({
-    try: async () => {
+    try: async (signal) => {
       const absoluteModulePath = await sourceStep('read-module', () => realpath(resolve(modulePath)))
       const absoluteSourceManifestPath = await sourceStep('read-source-manifest', () =>
         realpath(resolve(sourceManifestPath)),
       )
       const repositoryRoot = await sourceStep('resolve-repository', () =>
-        sourceGit.text(dirname(absoluteModulePath), ['rev-parse', '--show-toplevel']),
+        sourceGit.text(dirname(absoluteModulePath), ['rev-parse', '--show-toplevel'], signal),
       )
       const moduleRepositoryPath = repositoryRelativePath(repositoryRoot, absoluteModulePath)
       if (Result.isFailure(moduleRepositoryPath)) {
@@ -2755,7 +2755,7 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
         )
       }
       const sourceRevision = await sourceStep('verify-head', () =>
-        sourceGit.text(repositoryRoot, ['rev-parse', 'HEAD']),
+        sourceGit.text(repositoryRoot, ['rev-parse', 'HEAD'], signal),
       )
       if (!/^[0-9a-f]{40}$/.test(sourceRevision)) {
         throw new CandidateDevelopmentSourceVerificationError('verify-head', {
@@ -2766,9 +2766,11 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
       const moduleSpec = `${sourceRevision}:${moduleRepositoryPath.success}`
       const sourceManifestSpec = `${sourceRevision}:${sourceManifestRepositoryPath.success}`
       const [moduleGitBytes, sourceManifestGitBytes] = await Promise.all([
-        sourceStep('verify-module-blob', () => sourceGit.bytes(repositoryRoot, ['cat-file', 'blob', moduleSpec])),
+        sourceStep('verify-module-blob', () =>
+          sourceGit.bytes(repositoryRoot, ['cat-file', 'blob', moduleSpec], signal),
+        ),
         sourceStep('verify-source-manifest-blob', () =>
-          sourceGit.bytes(repositoryRoot, ['cat-file', 'blob', sourceManifestSpec]),
+          sourceGit.bytes(repositoryRoot, ['cat-file', 'blob', sourceManifestSpec], signal),
         ),
       ])
       const sourceManifestJson = await sourceStep(
@@ -2790,9 +2792,9 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
         throw new CandidateDevelopmentSourceVerificationError('verify-module-format', moduleFormat.failure)
       }
       const [moduleBlobOid, sourceManifestBlobOid] = await Promise.all([
-        sourceStep('verify-module-blob', () => sourceGit.text(repositoryRoot, ['rev-parse', moduleSpec])),
+        sourceStep('verify-module-blob', () => sourceGit.text(repositoryRoot, ['rev-parse', moduleSpec], signal)),
         sourceStep('verify-source-manifest-blob', () =>
-          sourceGit.text(repositoryRoot, ['rev-parse', sourceManifestSpec]),
+          sourceGit.text(repositoryRoot, ['rev-parse', sourceManifestSpec], signal),
         ),
       ])
       const files: CandidateDevelopmentVerifiedSourceFiles = {
@@ -3096,7 +3098,7 @@ export const loadCandidateDevelopmentExecutableProgram = (
     )
     const verifiedSource = yield* Effect.fromResult(bindCandidateDevelopmentVerifiedSource(before.files, program.input))
     return { program, verifiedSource }
-  }).pipe(Effect.uninterruptible)
+  })
 
 const modulePath = process.argv.at(2)
 const sourceManifestPath = process.argv.at(3)

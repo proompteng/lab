@@ -2530,7 +2530,54 @@ describe('candidate development command', () => {
     })
   })
 
-  test('keeps dynamic module evaluation attached through interruption', async () => {
+  test('aborts a stalled source Git subprocess when verification is interrupted', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'bayn-candidate-source-abort-'))
+    const modulePath = join(directory, 'program.mjs')
+    const sourceManifestPath = join(directory, 'source-manifest.json')
+    let resolveStarted: (() => void) | undefined
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve
+    })
+    let aborted = false
+    const sourceGit: CandidateDevelopmentSourceGit = {
+      text: (_repositoryRoot, _args, signal) =>
+        new Promise((_resolve, reject) => {
+          if (signal === undefined) {
+            reject(new Error('source verification did not provide an abort signal'))
+            return
+          }
+          resolveStarted?.()
+          signal.addEventListener(
+            'abort',
+            () => {
+              aborted = true
+              reject(signal.reason ?? new Error('source verification aborted'))
+            },
+            { once: true },
+          )
+        }),
+      bytes: () => Promise.reject(new Error('source byte read must not start')),
+    }
+
+    try {
+      await writeFile(modulePath, 'export const candidateDevelopmentArtifact = {}\n')
+      await writeFile(sourceManifestPath, '{}\n')
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const fiber = yield* verifyCandidateDevelopmentSourceFiles(modulePath, sourceManifestPath, sourceGit).pipe(
+            Effect.forkChild,
+          )
+          yield* Effect.promise(() => started)
+          yield* Fiber.interrupt(fiber)
+        }),
+      )
+      expect(aborted).toBe(true)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('interrupts dynamic module evaluation without detaching it', async () => {
     const program = {
       schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
       strategyProtocol: fixtureStrategyProtocol,
@@ -2571,16 +2618,13 @@ describe('candidate development command', () => {
         ).pipe(Effect.forkChild)
 
         yield* Deferred.await(started)
-        const interruption = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild)
-        yield* Effect.yieldNow
-
-        expect(interruption.pollUnsafe()).toBeUndefined()
+        yield* Fiber.interrupt(fiber)
         expect(completed).toBe(false)
 
         yield* Deferred.succeed(release, undefined)
-        yield* Fiber.join(interruption)
+        yield* Effect.yieldNow
 
-        expect(completed).toBe(true)
+        expect(completed).toBe(false)
       }),
     )
   })
