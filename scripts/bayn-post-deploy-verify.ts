@@ -635,18 +635,35 @@ export const redactSensitive = (message: string): string =>
 type CommandResult = { readonly stdout: string; readonly stderr: string; readonly exitCode: number }
 export type RunCommand = (command: readonly string[], signal: AbortSignal) => Promise<CommandResult>
 
-const runCommand: RunCommand = async (command, signal) => {
+const failureFromAbortSignal = (signal: AbortSignal): VerificationFailure =>
+  signal.reason instanceof VerificationFailure
+    ? signal.reason
+    : new VerificationFailure('VERIFICATION_INTERRUPTED', 'verification was interrupted', false)
+
+export const runCommand: RunCommand = async (command, signal) => {
+  if (signal.aborted) throw failureFromAbortSignal(signal)
+  const process = Bun.spawn([...command], { stdout: 'pipe', stderr: 'pipe', signal })
+  const terminate = () => {
+    try {
+      process.kill()
+    } catch {
+      // The process may already have exited. The abort reason still controls the verifier result.
+    }
+  }
   try {
-    const process = Bun.spawn([...command], { stdout: 'pipe', stderr: 'pipe', signal })
+    signal.addEventListener('abort', terminate, { once: true })
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(process.stdout).text(),
       new Response(process.stderr).text(),
       process.exited,
     ])
+    if (signal.aborted) throw failureFromAbortSignal(signal)
     return { stdout, stderr, exitCode }
   } catch {
-    if (signal.aborted) return fail('VERIFICATION_INTERRUPTED', 'verification was interrupted', false)
+    if (signal.aborted) throw failureFromAbortSignal(signal)
     return fail('ENDPOINT_UNAVAILABLE', 'read command could not be executed', true)
+  } finally {
+    signal.removeEventListener('abort', terminate)
   }
 }
 
@@ -678,16 +695,22 @@ const checkReadPermission = async (
   }
 }
 
+const requireConclusiveDenial = (result: CommandResult, permission: string, grantedMessage: string): void => {
+  const decision = result.stdout.trim()
+  if (result.exitCode !== 0 || result.stderr.trim().length !== 0 || (decision !== 'yes' && decision !== 'no')) {
+    fail('RBAC_DENIED', `${permission} permission probe was indeterminate`, false)
+  }
+  if (decision === 'yes') fail('RBAC_DENIED', grantedMessage, false)
+}
+
 const checkWriteDenied = async (run: RunCommand, signal: AbortSignal, resource: string, namespace: string) => {
   for (const verb of ['create', 'update', 'patch', 'delete']) {
     const result = await run(['kubectl', 'auth', 'can-i', verb, resource, '-n', namespace], signal)
-    if (result.exitCode === 0 && result.stdout.trim() === 'yes') {
-      fail(
-        'RBAC_DENIED',
-        `workflow identity unexpectedly has ${verb} permission for ${resource} in ${namespace}`,
-        false,
-      )
-    }
+    requireConclusiveDenial(
+      result,
+      `${verb} ${resource} in ${namespace}`,
+      `workflow identity unexpectedly has ${verb} permission for ${resource} in ${namespace}`,
+    )
   }
 }
 
@@ -702,9 +725,11 @@ export const validateReadOnlyPermissions = async (run: RunCommand, signal: Abort
   await checkWriteDenied(run, signal, 'pods/exec', 'bayn')
   await checkWriteDenied(run, signal, 'pods/portforward', 'bayn')
   const secretRead = await run(['kubectl', 'auth', 'can-i', 'get', 'secrets', '-n', 'bayn'], signal)
-  if (secretRead.exitCode === 0 && secretRead.stdout.trim() === 'yes') {
-    fail('RBAC_DENIED', 'workflow identity unexpectedly has secret read permission in bayn', false)
-  }
+  requireConclusiveDenial(
+    secretRead,
+    'get secrets in bayn',
+    'workflow identity unexpectedly has secret read permission in bayn',
+  )
 }
 
 export const readArgoSyncRevision = (applicationValue: unknown): string => {
@@ -795,6 +820,7 @@ const fetchSnapshot = async (run: RunCommand, signal: AbortSignal): Promise<Veri
 
 export type RetryOptions = {
   readonly deadlineMs: number
+  readonly deadlineAt?: number
   readonly intervalMs: number
   readonly now?: () => number
   readonly sleep?: (milliseconds: number, signal: AbortSignal) => Promise<void>
@@ -815,19 +841,66 @@ const sleep = (milliseconds: number, signal: AbortSignal): Promise<void> =>
     signal.addEventListener('abort', abort, { once: true })
   })
 
+export const runWithinDeadline = async <Value>(
+  operation: (signal: AbortSignal) => Promise<Value>,
+  parentSignal: AbortSignal,
+  deadlineAt: number,
+  now: () => number = Date.now,
+): Promise<Value> => {
+  if (parentSignal.aborted) throw failureFromAbortSignal(parentSignal)
+  const remainingMs = deadlineAt - now()
+  if (remainingMs <= 0) {
+    fail('VERIFICATION_TIMEOUT', 'configured verification deadline expired before the next operation', false)
+  }
+
+  const controller = new AbortController()
+  const interrupted = () => controller.abort(failureFromAbortSignal(parentSignal))
+  parentSignal.addEventListener('abort', interrupted, { once: true })
+  const timeoutFailure = new VerificationFailure(
+    'VERIFICATION_TIMEOUT',
+    'configured verification deadline expired during an operation',
+    false,
+  )
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort(timeoutFailure)
+      reject(timeoutFailure)
+    }, remainingMs)
+  })
+
+  try {
+    const value = await Promise.race([operation(controller.signal), timeoutPromise])
+    if (parentSignal.aborted) throw failureFromAbortSignal(parentSignal)
+    if (controller.signal.aborted) throw failureFromAbortSignal(controller.signal)
+    if (now() > deadlineAt) {
+      controller.abort(timeoutFailure)
+      throw timeoutFailure
+    }
+    return value
+  } catch (error) {
+    if (parentSignal.aborted) throw failureFromAbortSignal(parentSignal)
+    if (controller.signal.aborted) throw failureFromAbortSignal(controller.signal)
+    throw error
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout)
+    parentSignal.removeEventListener('abort', interrupted)
+  }
+}
+
 export const retryVerification = async (
-  operation: () => Promise<void>,
+  operation: (signal: AbortSignal) => Promise<void>,
   signal: AbortSignal,
   options: RetryOptions,
 ): Promise<void> => {
   const now = options.now ?? Date.now
   const wait = options.sleep ?? sleep
-  const deadline = now() + options.deadlineMs
+  const deadline = options.deadlineAt ?? now() + options.deadlineMs
   let lastFailure: VerificationFailure | undefined
   while (now() <= deadline) {
     if (signal.aborted) fail('VERIFICATION_INTERRUPTED', 'verification was interrupted', false)
     try {
-      await operation()
+      await runWithinDeadline(operation, signal, deadline, now)
       return
     } catch (error) {
       const failure =
@@ -899,39 +972,43 @@ const sourceRequiresReconciliation = async (
 const main = async (): Promise<void> => {
   const options = parseCli(process.argv.slice(2))
   const controller = new AbortController()
+  const deadlineAt = Date.now() + options.deadlineSeconds * 1_000
   const interrupt = () => controller.abort()
   process.once('SIGINT', interrupt)
   process.once('SIGTERM', interrupt)
   try {
     const kustomizationPath = join(options.root, 'argocd/applications/bayn/kustomization.yaml')
     const deploymentPath = join(options.root, 'argocd/applications/bayn/deployment.yaml')
-    const [kustomizationSource, deploymentSource] = await Promise.all([
-      readFile(kustomizationPath, 'utf8'),
-      readFile(deploymentPath, 'utf8'),
-    ])
-    const preliminary = parseExpectedPromotion(kustomizationSource, deploymentSource, false)
-    const requiresReconciliation = await sourceRequiresReconciliation(
-      options.root,
-      preliminary.sourceRevision,
+    const [kustomizationSource, deploymentSource] = await runWithinDeadline(
+      (signal) =>
+        Promise.all([
+          readFile(kustomizationPath, { encoding: 'utf8', signal }),
+          readFile(deploymentPath, { encoding: 'utf8', signal }),
+        ]),
       controller.signal,
+      deadlineAt,
+    )
+    const preliminary = parseExpectedPromotion(kustomizationSource, deploymentSource, false)
+    const requiresReconciliation = await runWithinDeadline(
+      (signal) => sourceRequiresReconciliation(options.root, preliminary.sourceRevision, signal),
+      controller.signal,
+      deadlineAt,
     )
     const expected = parseExpectedPromotion(kustomizationSource, deploymentSource, requiresReconciliation)
-    await validateReadOnlyPermissions(runCommand, controller.signal)
+    await runWithinDeadline((signal) => validateReadOnlyPermissions(runCommand, signal), controller.signal, deadlineAt)
     await retryVerification(
-      async () => {
-        const snapshot = await fetchSnapshot(runCommand, controller.signal)
+      async (signal) => {
+        const snapshot = await fetchSnapshot(runCommand, signal)
         const reconciledRevision = readArgoSyncRevision(snapshot.application)
-        await verifyArgoRevision(
-          runCommand,
-          controller.signal,
-          options.root,
-          options.expectedRevision,
-          reconciledRevision,
-        )
+        await verifyArgoRevision(runCommand, signal, options.root, options.expectedRevision, reconciledRevision)
         validateSnapshot(snapshot, reconciledRevision, expected, options.expectedRevision)
       },
       controller.signal,
-      { deadlineMs: options.deadlineSeconds * 1_000, intervalMs: options.intervalSeconds * 1_000 },
+      {
+        deadlineMs: options.deadlineSeconds * 1_000,
+        deadlineAt,
+        intervalMs: options.intervalSeconds * 1_000,
+      },
     )
     console.log(
       `Bayn post-deploy verification passed for Argo revision ${options.expectedRevision}, source ${expected.sourceRevision}, digest ${expected.digest}`,

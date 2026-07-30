@@ -6,6 +6,8 @@ import {
   parseExpectedPromotion,
   readArgoSyncRevision,
   redactSensitive,
+  runCommand,
+  runWithinDeadline,
   retryVerification,
   verifyArgoRevision,
   validateReadOnlyPermissions,
@@ -477,6 +479,39 @@ describe('bounded execution', () => {
       retryVerification(async () => undefined, controller.signal, { deadlineMs: 100, intervalMs: 10 }),
     ).rejects.toMatchObject({ code: 'VERIFICATION_INTERRUPTED' })
   })
+
+  test('rejects an operation that reports success after the configured deadline', async () => {
+    let now = 0
+    const controller = new AbortController()
+    await expect(
+      runWithinDeadline(
+        async () => {
+          now = 11
+        },
+        controller.signal,
+        10,
+        () => now,
+      ),
+    ).rejects.toMatchObject({ code: 'VERIFICATION_TIMEOUT' })
+  })
+
+  test('cancels a stalled subprocess when the remaining deadline expires', async () => {
+    const controller = new AbortController()
+    const startedAt = Date.now()
+    await expect(
+      retryVerification(
+        async (signal) => {
+          await runCommand(
+            ['bun', '-e', "process.on('SIGTERM', () => process.exit(0)); setInterval(() => undefined, 1_000)"],
+            signal,
+          )
+        },
+        controller.signal,
+        { deadlineMs: 50, intervalMs: 10 },
+      ),
+    ).rejects.toMatchObject({ code: 'VERIFICATION_TIMEOUT' })
+    expect(Date.now() - startedAt).toBeLessThan(1_000)
+  }, 2_000)
 })
 
 describe('Argo revision lineage', () => {
@@ -554,6 +589,43 @@ describe('redaction and permissions', () => {
 
     const writable = async () => ({ stdout: 'yes\n', stderr: '', exitCode: 0 })
     await expect(validateReadOnlyPermissions(writable, controller.signal)).rejects.toMatchObject({
+      code: 'RBAC_DENIED',
+    })
+  })
+
+  test.each([
+    ['API failure', { stdout: 'no\n', stderr: 'server unavailable\n', exitCode: 1 }],
+    ['unexpected output', { stdout: 'unknown\n', stderr: '', exitCode: 0 }],
+    ['stderr with no decision', { stdout: 'no\n', stderr: 'warning\n', exitCode: 0 }],
+  ])('fails closed when a forbidden write probe is indeterminate: %s', async (_name, indeterminate) => {
+    const controller = new AbortController()
+    let forbiddenProbeSeen = false
+    const run = async (command: readonly string[]) => {
+      const verb = command[3] ?? ''
+      const resource = command[4] ?? ''
+      const requiredRead = ['get', 'list'].includes(verb) && resource !== 'secrets'
+      if (requiredRead) return { stdout: 'yes\n', stderr: '', exitCode: 0 }
+      if (!forbiddenProbeSeen) {
+        forbiddenProbeSeen = true
+        return indeterminate
+      }
+      return { stdout: 'no\n', stderr: '', exitCode: 0 }
+    }
+    await expect(validateReadOnlyPermissions(run, controller.signal)).rejects.toMatchObject({
+      code: 'RBAC_DENIED',
+    })
+  })
+
+  test('fails closed when the forbidden secret-read probe is indeterminate', async () => {
+    const controller = new AbortController()
+    const run = async (command: readonly string[]) => {
+      const verb = command[3] ?? ''
+      const resource = command[4] ?? ''
+      if (resource === 'secrets') return { stdout: '', stderr: 'authorization API unavailable\n', exitCode: 1 }
+      const requiredRead = ['get', 'list'].includes(verb)
+      return { stdout: requiredRead ? 'yes\n' : 'no\n', stderr: '', exitCode: 0 }
+    }
+    await expect(validateReadOnlyPermissions(run, controller.signal)).rejects.toMatchObject({
       code: 'RBAC_DENIED',
     })
   })
