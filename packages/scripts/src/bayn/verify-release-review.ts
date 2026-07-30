@@ -194,6 +194,7 @@ export interface BaynReleaseReviewEligible {
   readonly prNumber: number
   readonly headSha: string
   readonly reviewSubmittedAt: string
+  readonly eligibleAt: string
 }
 
 export interface BaynReleaseEligibilityEligible {
@@ -206,6 +207,7 @@ export interface BaynReleaseEligibilityEligible {
     readonly prNumber: number
     readonly headSha: string
     readonly reviewSubmittedAt: string
+    readonly eligibleAt: string
   }[]
 }
 
@@ -604,20 +606,21 @@ export const evaluateBaynReleaseReview = (input: {
       true,
     )
   }
+  let eligibleAtMs = reviewSubmittedAtMs + minimumExactReviewAgeMs
 
   if (feedbackFixCommitShas.length > 0) {
     const reviewedHeadSha = reviewEvidence.commitSha as string
     for (const fixCommitSha of feedbackFixCommitShas) {
-      const hasTrustedAttestation = pullRequest.threads.some((thread) => {
-        if (!thread.isResolved) return false
+      const trustedAttestationTimes = pullRequest.threads.flatMap((thread) => {
+        if (!thread.isResolved) return []
         const belongsToReviewedHead = thread.comments.some(
           (comment) =>
             comment.reviewAuthorLogin === baynCodexReviewer &&
             comment.reviewCommitSha === reviewedHeadSha &&
             comment.reviewSubmittedAt === reviewEvidence.submittedAt,
         )
-        if (!belongsToReviewedHead) return false
-        return thread.comments.some((comment) => {
+        if (!belongsToReviewedHead) return []
+        return thread.comments.flatMap((comment) => {
           if (
             comment.authorLogin === null ||
             comment.authorLogin === baynCodexReviewer ||
@@ -625,19 +628,20 @@ export const evaluateBaynReleaseReview = (input: {
             comment.reviewCommitSha !== fixCommitSha ||
             comment.reviewSubmittedAt === null
           ) {
-            return false
+            return []
           }
           const attestationTime = Date.parse(comment.reviewSubmittedAt)
-          return Number.isFinite(attestationTime) && attestationTime >= reviewSubmittedAtMs
+          return Number.isFinite(attestationTime) && attestationTime >= reviewSubmittedAtMs ? [attestationTime] : []
         })
       })
-      if (!hasTrustedAttestation) {
+      if (trustedAttestationTimes.length === 0) {
         return hold(
           'feedback-fix-attestation-missing',
           `source PR #${pullRequest.number} final head ${shortSha(pullRequest.headSha)} carries review from ${shortSha(reviewedHeadSha)}, but post-review commit ${shortSha(fixCommitSha)} lacks a trusted member reply on a resolved Codex thread from that review`,
           true,
         )
       }
+      eligibleAtMs = Math.max(eligibleAtMs, Math.min(...trustedAttestationTimes))
     }
   }
 
@@ -659,6 +663,7 @@ export const evaluateBaynReleaseReview = (input: {
     prNumber: pullRequest.number,
     headSha: pullRequest.headSha,
     reviewSubmittedAt: reviewEvidence.submittedAt as string,
+    eligibleAt: new Date(eligibleAtMs).toISOString(),
   }
 }
 
@@ -797,6 +802,7 @@ export const evaluateBaynReleaseEligibility = (input: {
       prNumber: review.prNumber,
       headSha: review.headSha,
       reviewSubmittedAt: review.reviewSubmittedAt,
+      eligibleAt: review.eligibleAt,
     })
   }
 
@@ -913,8 +919,8 @@ export const evaluateBaynReleaseRetry = (input: {
 
   const affectingCommits = baynAffectingCommits(input.snapshot)
   const delayedCandidates = eligibility.reviewedPullRequests.flatMap((reviewed) => {
-    const attestedAtMs = Date.parse(reviewed.reviewSubmittedAt)
-    if (!Number.isFinite(attestedAtMs) || attestedAtMs <= failedAtMs) return []
+    const eligibleAtMs = Date.parse(reviewed.eligibleAt)
+    if (!Number.isFinite(eligibleAtMs) || eligibleAtMs <= failedAtMs) return []
     const commit = affectingCommits.find((candidate) => candidate.sha === reviewed.commitSha)
     const pullRequest = commit?.reviewSnapshot?.pullRequest
     if (

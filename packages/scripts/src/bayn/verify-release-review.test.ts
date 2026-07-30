@@ -679,6 +679,88 @@ describe('Bayn delayed-attestation publication retry', () => {
     })
   })
 
+  test('dispatches when an exact-head review finishes settling after the failed push', () => {
+    const settlingReview = reviewSnapshotFor({
+      commitSha: mainCommitSha,
+      prNumber: 13401,
+      headSha: finalHeadSha,
+      parents: [lastPublishedSha],
+      mergedAt: '2026-07-30T07:00:00Z',
+      reviews: [review({ submittedAt: '2026-07-30T07:01:00Z' })],
+    })
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot({
+          reviewSnapshot: settlingReview,
+          failedRun: failedBuildRun({ updatedAt: '2026-07-30T07:01:20Z' }),
+        }),
+        trigger: { type: 'schedule' },
+        nowMs: Date.parse('2026-07-30T07:02:00Z'),
+      }),
+    ).toMatchObject({
+      status: 'dispatch',
+      sourceCommitSha: mainCommitSha,
+      prNumber: 13401,
+      headSha: finalHeadSha,
+    })
+  })
+
+  test('dispatches when the final required feedback attestation arrives after the failed push', () => {
+    const feedbackReview = snapshot({
+      commitShas: [olderHeadSha, finalHeadSha],
+      reviews: [review({ commitSha: olderHeadSha, submittedAt: '2026-07-30T07:00:00Z' })],
+      threads: [
+        thread({
+          comments: [
+            threadComment({
+              createdAt: '2026-07-30T07:00:00Z',
+              reviewSubmittedAt: '2026-07-30T07:00:00Z',
+            }),
+            threadComment({
+              authorLogin: 'gregkonush',
+              authorAssociation: 'MEMBER',
+              body: 'Fixed in the final head.',
+              createdAt: '2026-07-30T07:03:00Z',
+              commitSha: finalHeadSha,
+              reviewCommitSha: finalHeadSha,
+              reviewAuthorLogin: 'gregkonush',
+              reviewSubmittedAt: '2026-07-30T07:03:00Z',
+            }),
+          ],
+        }),
+      ],
+    })
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: feedbackReview,
+        nowMs: retryNowMs,
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({
+      status: 'eligible',
+      reviewSubmittedAt: '2026-07-30T07:00:00Z',
+      eligibleAt: '2026-07-30T07:03:00.000Z',
+    })
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot({ reviewSnapshot: feedbackReview }),
+        trigger: { type: 'schedule' },
+        nowMs: retryNowMs,
+      }),
+    ).toMatchObject({
+      status: 'dispatch',
+      sourceCommitSha: mainCommitSha,
+      prNumber: 13390,
+      headSha: finalHeadSha,
+    })
+  })
+
   test('binds a retry to the earlier range commit whose attestation arrived after the failed current-main push', () => {
     const earlierCommitSha = heldCommitSha
     const earlierHeadSha = heldHeadSha
@@ -1191,6 +1273,7 @@ describe('Bayn exact-head release review eligibility', () => {
       prNumber: 13390,
       headSha: finalHeadSha,
       reviewSubmittedAt: '2026-07-30T07:01:00Z',
+      eligibleAt: '2026-07-30T07:01:30.000Z',
     })
   })
 
@@ -1228,6 +1311,7 @@ describe('Bayn exact-head release review eligibility', () => {
       prNumber: 13390,
       headSha: finalHeadSha,
       reviewSubmittedAt: '2026-07-30T07:01:00Z',
+      eligibleAt: '2026-07-30T07:01:30.000Z',
     })
   })
 
@@ -1245,6 +1329,7 @@ describe('Bayn exact-head release review eligibility', () => {
       prNumber: 13390,
       headSha: finalHeadSha,
       reviewSubmittedAt: '2026-07-30T07:01:00Z',
+      eligibleAt: '2026-07-30T07:01:30.000Z',
     })
   })
 
@@ -1359,6 +1444,7 @@ describe('Bayn exact-head release review eligibility', () => {
       prNumber: 13390,
       headSha: finalHeadSha,
       reviewSubmittedAt: '2026-07-30T07:01:00Z',
+      eligibleAt: '2026-07-30T07:01:30.000Z',
     })
   })
 
