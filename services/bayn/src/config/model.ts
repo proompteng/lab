@@ -89,7 +89,7 @@ export type LoadedRuntimeConfig = LoadedRuntimeConfigBase &
     | {
         readonly runtimeMode: 'ExecutionPrepare'
         readonly qualificationRunId: string
-        readonly executionPrepareRequest: ExecutionPrepareRequest | undefined
+        readonly executionPrepareRequest: ExecutionPrepareRequest
         readonly execution: Extract<
           ExecutionPolicy,
           { readonly brokerAccess: import('../execution/authority').BrokerAccess.ReadOnly }
@@ -189,6 +189,13 @@ export type RuntimeConfigResolutionFailure =
     }
   | {
       readonly _tag: 'ExecutionCandidateDiscoveryRequiresAlpacaBinding'
+    }
+  | {
+      readonly _tag: 'ExecutionPrepareRequiresRequest'
+    }
+  | {
+      readonly _tag: 'ExecutionPrepareRequiresSandboxBroker'
+      readonly brokerEnvironment: BrokerEnvironment
     }
   | {
       readonly _tag: 'ProductionProvenanceRequiresEmbeddedMetadata'

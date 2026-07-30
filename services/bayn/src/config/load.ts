@@ -56,6 +56,16 @@ const presentRuntimeConfigFailure = (failure: RuntimeConfigResolutionFailure): R
         operation: 'operation',
         message: 'execution candidate discovery requires a complete Alpaca read binding',
       }
+    case 'ExecutionPrepareRequiresRequest':
+      return {
+        operation: 'operation',
+        message: 'EXECUTION_PREPARE requires an explicit content-hashed request',
+      }
+    case 'ExecutionPrepareRequiresSandboxBroker':
+      return {
+        operation: 'operation',
+        message: 'EXECUTION_PREPARE requires the Alpaca sandbox broker environment',
+      }
     case 'ProductionProvenanceRequiresEmbeddedMetadata':
       return {
         operation: 'provenance',

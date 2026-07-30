@@ -289,7 +289,7 @@ export const ExecutionCandidateDiscoveryResourcesLive = (plan: ApplicationPlanFo
 }
 
 export const ExecutionPrepareResourcesLive = (plan: ApplicationPlanFor<'ExecutionPrepare'>) => {
-  const postgres = PostgresAuthorityLive(plan.config)
+  const postgres = sqlResource(PostgresClientResourceLive(plan.config))
   const writerFence = WriterFenceResourceLive.pipe(Layer.provide(postgres))
   const executionPrepareStore = ExecutionPrepareStoreLive(plan.config).pipe(Layer.provide(postgres))
   return Layer.mergeAll(postgres, writerFence, executionPrepareStore, BrokerSessionResourceLive(plan.config)).pipe(

@@ -29,6 +29,8 @@ import { makeStrategyProtocolHash } from './contracts'
 import { BrokerAccess, BrokerEnvironment, noCapitalAuthority } from './execution/authority'
 import type { ExecutionProgram } from './execution/runtime-program'
 import { executionPrepareBoundaryError } from './entrypoint'
+import type { ExecutionPrepareRequest } from './execution-prepare'
+import { canonicalHashV1OrThrow } from './hash'
 import type { BrokerProbe } from './health'
 import { HttpServerLive } from './http'
 import { makeStrategy } from './strategy'
@@ -155,17 +157,62 @@ const discoveryConfig = (
 
 const prepareConfig = (
   runtime: typeof pinnedRuntimeConfig,
-): Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'ExecutionPrepare' }> => ({
-  ...autonomousConfig(runtime),
-  runtimeMode: 'ExecutionPrepare',
-  qualificationRunId: pinnedEvaluation.runId,
-  executionPrepareRequest: undefined,
-  execution: {
-    brokerIdentity: autonomousConfig(runtime).alpaca.identity,
-    brokerAccess: BrokerAccess.ReadOnly,
-    capitalAuthority: noCapitalAuthority,
-  },
-})
+): Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'ExecutionPrepare' }> => {
+  const autonomous = autonomousConfig(runtime)
+  const prepareStrategy = {
+    ...fixtureStrategy.provenance.strategy,
+    parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4' as const,
+  }
+  const proofPlan = {
+    schemaVersion: 'bayn.execution-prepare-proof-plan.v1' as const,
+    candidate: {
+      discoveryReceiptHash: '1'.repeat(64),
+      immutableBindingHash: '2'.repeat(64),
+      candidateFactsHash: '3'.repeat(64),
+      candidateOrdinal: 0,
+      observedPlanIntentId: '4'.repeat(64),
+      cycleId: '5'.repeat(64),
+      decisionHash: '6'.repeat(64),
+    },
+    binding: {
+      activationSourceRevision: runtime.build.sourceRevision,
+      activationImageRepository: runtime.build.imageRepository,
+      activationImageDigest: runtime.build.imageDigest,
+      qualificationSourceRevision: 'a'.repeat(40),
+      qualificationImageRepository: runtime.build.imageRepository,
+      qualificationImageDigest: `sha256:${'7'.repeat(64)}` as const,
+      strategy: prepareStrategy,
+      strategyProtocolHash: makeStrategyProtocolHash(prepareStrategy),
+      qualificationRunId: pinnedEvaluation.runId,
+      qualificationLockId: '8'.repeat(64),
+      qualificationResultHash: '9'.repeat(64),
+      protocolHash: 'a'.repeat(64),
+      qualificationExecutionPolicyHash: 'b'.repeat(64),
+      accountId: autonomous.alpaca.expectedAccountId,
+      brokerIdentityHash: autonomous.alpaca.identity.identityHash,
+      authorityGenerationHash: autonomous.alpaca.authorityGenerationHash,
+      riskPolicyHash: 'c'.repeat(64),
+      reconciliationId: 'd'.repeat(64),
+      reconciliationContentHash: 'e'.repeat(64),
+    },
+  }
+  const executionPrepareRequest: ExecutionPrepareRequest = {
+    schemaVersion: 'bayn.execution-prepare-request.v1',
+    proofPlan,
+    proofPlanHash: canonicalHashV1OrThrow(proofPlan),
+  }
+  return {
+    ...autonomous,
+    runtimeMode: 'ExecutionPrepare',
+    qualificationRunId: pinnedEvaluation.runId,
+    executionPrepareRequest,
+    execution: {
+      brokerIdentity: autonomous.alpaca.identity,
+      brokerAccess: BrokerAccess.ReadOnly,
+      capitalAuthority: noCapitalAuthority,
+    },
+  }
+}
 
 const applicationIdentity = (loaded: LoadedRuntimeConfig): ApplicationIdentity => ({
   config: loaded,

@@ -397,6 +397,14 @@ describe('pure runtime configuration resolution', () => {
     expectFailure(
       {
         configuredOperation: 'ExecutionPrepare',
+        qualificationRunId,
+        configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
+      },
+      { _tag: 'ExecutionPrepareRequiresRequest' },
+    )
+    expectFailure(
+      {
+        configuredOperation: 'ExecutionPrepare',
         executionPrepareRequest,
         configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
       },
@@ -425,6 +433,18 @@ describe('pure runtime configuration resolution', () => {
         _tag: 'ExecutionCandidateDiscoveryRequiresReadOnlyNoCapital',
         brokerAccess: BrokerAccess.Mutation,
         capitalAuthority: CapitalAuthoritySelection.Sandbox,
+      },
+    )
+    expectFailure(
+      {
+        configuredOperation: 'ExecutionPrepare',
+        executionPrepareRequest,
+        qualificationRunId,
+        configuredAlpaca: alpaca(BrokerEnvironment.Live),
+      },
+      {
+        _tag: 'ExecutionPrepareRequiresSandboxBroker',
+        brokerEnvironment: BrokerEnvironment.Live,
       },
     )
   })

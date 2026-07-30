@@ -561,6 +561,47 @@ describePostgres('EXECUTION_PREPARE PostgreSQL boundary', () => {
     await migrations.dispose()
   }, 15_000)
 
+  test('does not create or migrate schema before durable PREPARE validation', async () => {
+    const fixture = qualificationFixture('no-migrations', true)
+    const reconciliation = reconciliationFixture('no-migrations')
+    const request = makeRequest(fixture, reconciliation)
+    const client = makeClientRuntime()
+    await client.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+      }),
+    )
+    const runtime = makeRuntime(fixture.result.runId)
+    try {
+      let failedClosed = false
+      try {
+        await runtime.runPromise(prepareExecution(request, runtimeBinding(fixture, request)))
+      } catch {
+        failedClosed = true
+      }
+      expect(failedClosed).toBe(true)
+      const [presence] = await client.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          return yield* sql<{
+            readonly schemaMigrations: boolean
+            readonly authorityState: boolean
+          }>`
+            SELECT
+              to_regclass('public.schema_migrations') IS NOT NULL AS "schemaMigrations",
+              to_regclass('public.authority_state') IS NOT NULL AS "authorityState"
+          `
+        }),
+      )
+      expect(presence).toEqual({ schemaMigrations: false, authorityState: false })
+    } finally {
+      await runtime.dispose()
+      await client.dispose()
+    }
+  }, 15_000)
+
   test('returns proof while authority/history, intents, mutations, and broker mutation count remain unchanged', async () => {
     const fixture = qualificationFixture('success', true)
     const reconciliation = reconciliationFixture('success')
