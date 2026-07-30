@@ -234,6 +234,7 @@ export type CandidateDevelopmentCommandFailure =
         | 'verify-head'
         | 'verify-module-blob'
         | 'verify-module-format'
+        | 'verify-preregistration-blob'
         | 'verify-source-manifest-blob'
         | 'verify-program-binding'
         | 'derive-run-identity'
@@ -2954,6 +2955,44 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
           expected: 'lowercase 40-character Git revision',
           observed: sourceRevision,
         })
+      }
+      const nextCandidatePreregistration = frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration
+      if (nextCandidatePreregistration !== null) {
+        const preregistration = nextCandidatePreregistration.preregistration
+        if (
+          !/^[0-9a-f]{40}$/.test(preregistration.sourceRevision) ||
+          !/^[0-9a-f]{40}$/.test(preregistration.blobOid) ||
+          preregistration.path.length === 0 ||
+          preregistration.path.startsWith('/') ||
+          preregistration.path === '..' ||
+          preregistration.path.startsWith('../') ||
+          preregistration.path.includes('/../')
+        ) {
+          throw new CandidateDevelopmentSourceVerificationError('verify-preregistration-blob', {
+            expected: 'lowercase Git revision/blob OID and repository-relative preregistration path',
+            observed: preregistration,
+          })
+        }
+        const preregistrationSpec = `${preregistration.sourceRevision}:${preregistration.path}`
+        const [, preregistrationBlobOid] = await runCandidateDevelopmentSourcePair(
+          signal,
+          (batchSignal) =>
+            sourceStep('verify-preregistration-blob', () =>
+              sourceGit.bytes(repositoryRoot, ['cat-file', 'blob', preregistrationSpec], batchSignal),
+            ),
+          (batchSignal) =>
+            sourceStep('verify-preregistration-blob', () =>
+              sourceGit.text(repositoryRoot, ['rev-parse', preregistrationSpec], batchSignal),
+            ),
+        )
+        if (preregistrationBlobOid !== preregistration.blobOid) {
+          throw new CandidateDevelopmentSourceVerificationError('verify-preregistration-blob', {
+            revision: preregistration.sourceRevision,
+            path: preregistration.path,
+            expected: preregistration.blobOid,
+            observed: preregistrationBlobOid,
+          })
+        }
       }
       const moduleSpec = `${sourceRevision}:${moduleRepositoryPath.success}`
       const sourceManifestSpec = `${sourceRevision}:${sourceManifestRepositoryPath.success}`
