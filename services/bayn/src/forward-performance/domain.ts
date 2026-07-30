@@ -127,7 +127,8 @@ const parseTotals = (
   }
   const grossRealizedPnl = checkedAdd(realizedGains, -realizedLosses)
   const afterFees = grossRealizedPnl === undefined ? undefined : checkedAdd(grossRealizedPnl, -brokerExecutionFees)
-  const netRealizedPnlAfterCosts = afterFees === undefined ? undefined : checkedAdd(afterFees, -otherChargedCosts)
+  const afterOtherCosts = afterFees === undefined ? undefined : checkedAdd(afterFees, -otherChargedCosts)
+  const netRealizedPnlAfterCosts = afterOtherCosts === undefined ? undefined : checkedAdd(afterOtherCosts, cashYield)
   if (grossRealizedPnl === undefined || netRealizedPnlAfterCosts === undefined) {
     reasons.add('INVALID_MICROS')
     return undefined
