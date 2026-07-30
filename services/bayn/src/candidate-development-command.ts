@@ -14,13 +14,27 @@ import {
   type CandidateDevelopmentReport,
   type CandidateDevelopmentRunFailure,
 } from './candidate-development'
+import {
+  DailyPerformanceSeriesArtifactSchema,
+  DailyPositionMarksArtifactSchema,
+  EquitySeriesArtifactSchema,
+  EvaluationEventsSchema,
+  EvaluationSummarySchema,
+  InputManifestArtifactSchema,
+  MarkedEquityReconciliationSchema,
+  RiskBalancedTrendSignalDecisionsArtifactSchema,
+} from './evidence-contracts'
 import { microsToNumber } from './execution-model'
 import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
+import { ExecutionModelSchema } from './protocol'
 import {
+  DigitsSchema,
   IsoDateSchema,
   NonNegativeIntegerSchema,
   PositiveIntegerSchema,
   Sha256Schema,
+  SignedMicrosSchema,
+  SourceRevisionSchema,
   strictParseOptions,
 } from './schemas'
 import { TRADING_DAYS } from './simulation/metrics'
@@ -93,6 +107,7 @@ export type CandidateDevelopmentCommandFailure =
         | 'input-invalid'
         | 'effects-missing'
         | 'effect-function-missing'
+        | 'evaluation-invalid'
       readonly cause?: unknown
     }
   | {
@@ -118,10 +133,32 @@ export type CandidateDevelopmentCommandFailure =
       readonly expected: number | string | null
       readonly observed: number | string | null
     }
+  | {
+      readonly _tag: 'CandidateDevelopmentCommandEconomicVerdictInvalid'
+      readonly expectedStatus: EvaluationResult['verdict']['status']
+      readonly observedStatus: EvaluationResult['verdict']['status']
+      readonly failedGateNames: readonly string[]
+    }
 
 const terminalCash = (marks: EvaluationResult['simulation']['dailyMarks']): boolean => {
   const last = marks.at(-1)
   return last !== undefined && last.positions.every((position) => position.quantityMicros === '0')
+}
+
+export const deriveCandidateDevelopmentEconomicPass = (
+  baseline: EvaluationResult,
+): Result.Result<boolean, CandidateDevelopmentCommandFailure> => {
+  const economicPass = baseline.verdict.gates.every((gate) => gate.passed)
+  const failedGateNames = baseline.verdict.gates.filter((gate) => !gate.passed).map((gate) => gate.name)
+  const expectedStatus = economicPass ? 'PASS' : 'FAIL_CLOSED'
+  return baseline.verdict.status === expectedStatus
+    ? Result.succeed(economicPass)
+    : Result.fail({
+        _tag: 'CandidateDevelopmentCommandEconomicVerdictInvalid',
+        expectedStatus,
+        observedStatus: baseline.verdict.status,
+        failedGateNames,
+      })
 }
 
 const positiveMicros = (
@@ -209,6 +246,7 @@ const decideCandidateDevelopment = (
   report: CandidateDevelopmentReport,
   baseline: EvaluationResult,
   doubledCostAnnualizedReturn: number,
+  economicPass: boolean,
 ): CandidateDevelopmentCommandDecision => {
   const { bootstrap, power, walkForward } = report.comparisonSemantics.analysis
   const protocolGates = candidateDevelopmentComparisonSemantics.gates
@@ -263,8 +301,8 @@ const decideCandidateDevelopment = (
     },
     {
       name: 'economic_verdict',
-      passed: baseline.verdict.status === 'PASS',
-      actual: baseline.verdict.status === 'PASS',
+      passed: economicPass,
+      actual: economicPass,
       required: true,
     },
     {
@@ -292,14 +330,17 @@ export const buildCandidateDevelopmentCommandReport = (
   baseline: EvaluationResult,
 ): Result.Result<CandidateDevelopmentCommandReport, CandidateDevelopmentCommandFailure> =>
   pipe(
-    deriveCandidateDevelopmentDoubledCostAnnualizedReturn(report, baseline),
-    Result.flatMap((doubledCostAnnualizedReturn) => {
+    Result.all({
+      doubledCostAnnualizedReturn: deriveCandidateDevelopmentDoubledCostAnnualizedReturn(report, baseline),
+      economicPass: deriveCandidateDevelopmentEconomicPass(baseline),
+    }),
+    Result.flatMap(({ doubledCostAnnualizedReturn, economicPass }) => {
       const material: CandidateDevelopmentCommandReportMaterial = {
         schemaVersion: 'bayn.candidate-development-command-report.v1',
         candidateOrdinal: report.protocolIdentity.candidateOrdinal,
         priorTrialCount: report.protocolIdentity.priorTrialCount,
         strategyProtocolHash: report.comparisonSemantics.strategyProtocolHash,
-        decision: decideCandidateDevelopment(report, baseline, doubledCostAnnualizedReturn),
+        decision: decideCandidateDevelopment(report, baseline, doubledCostAnnualizedReturn, economicPass),
         baseline,
         development: report,
       }
@@ -389,8 +430,89 @@ const CandidateDevelopmentPreflightInputSchema = Schema.Struct({
   featureLookbackSessions: NonNegativeIntegerSchema,
 })
 
+const CandidateDevelopmentSimulatedOrderSchema = Schema.Struct({
+  id: Sha256Schema,
+  decisionId: Sha256Schema,
+  sessionDate: IsoDateSchema,
+  symbol: Schema.String,
+  side: Schema.Literals(['buy', 'sell']),
+  requestedQuantityMicros: DigitsSchema,
+  filledQuantityMicros: DigitsSchema,
+  status: Schema.Literals(['filled', 'partially-filled', 'rejected']),
+  rejectionReason: Schema.NullOr(
+    Schema.Literals(['below-minimum-buy-notional', 'zero-after-rounding', 'insufficient-buying-power']),
+  ),
+  unfilledRemainder: Schema.Literals(['none', 'canceled']),
+})
+
+const CandidateDevelopmentCashChangeSchema = Schema.Struct({
+  id: Sha256Schema,
+  sourceKind: Schema.Literals(['fill', 'fee', 'cash-yield']),
+  sourceId: Sha256Schema,
+  sessionDate: IsoDateSchema,
+  amountMicros: SignedMicrosSchema,
+  cashAfterMicros: SignedMicrosSchema,
+})
+
+const CandidateDevelopmentSimulationTraceSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.simulation-trace.v3'),
+  executionModel: ExecutionModelSchema,
+  costMultiplierMicros: DigitsSchema,
+  orders: Schema.Array(CandidateDevelopmentSimulatedOrderSchema),
+  cashChanges: Schema.Array(CandidateDevelopmentCashChangeSchema),
+  dailyMarks: DailyPositionMarksArtifactSchema.fields.items,
+})
+
+const CandidateDevelopmentEvaluationResultSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.evaluation.v6'),
+  runId: Sha256Schema,
+  codeRevision: SourceRevisionSchema,
+  protocolHash: Sha256Schema,
+  initialCapitalMicros: DigitsSchema,
+  inputManifest: InputManifestArtifactSchema,
+  strategy: EvaluationSummarySchema.fields.strategy,
+  buyAndHold: EvaluationSummarySchema.fields.buyAndHold,
+  directVolTiming: EvaluationSummarySchema.fields.directVolTiming,
+  doubleCostStrategy: EvaluationSummarySchema.fields.doubleCostStrategy,
+  verdict: EvaluationSummarySchema.fields.verdict,
+  events: EvaluationEventsSchema,
+  simulation: CandidateDevelopmentSimulationTraceSchema,
+  benchmarkSeries: Schema.Struct({
+    buyAndHold: DailyPerformanceSeriesArtifactSchema.fields.items,
+    directVolTiming: DailyPerformanceSeriesArtifactSchema.fields.items,
+    doubleCostStrategy: DailyPerformanceSeriesArtifactSchema.fields.items,
+  }),
+  equitySeries: EquitySeriesArtifactSchema.fields.items,
+  markedEquityReconciliation: MarkedEquityReconciliationSchema,
+  signalDecisions: RiskBalancedTrendSignalDecisionsArtifactSchema.fields.items,
+})
+
+const CandidateDevelopmentComparisonSemanticsEvidenceBoundarySchema = Schema.Struct({
+  schemaVersion: Schema.Literal(candidateDevelopmentComparisonSemantics.evidence.schemaVersion),
+  candidateDevelopmentProtocolHash: Sha256Schema,
+  strategyProtocolHash: Sha256Schema,
+  comparisonSemantics: Schema.Unknown,
+  analysis: Schema.Unknown,
+})
+
+const CandidateDevelopmentDoubledCostRunSchema = Schema.Struct({
+  signalDecisions: RiskBalancedTrendSignalDecisionsArtifactSchema.fields.items,
+  simulation: CandidateDevelopmentSimulationTraceSchema,
+})
+
+const CandidateDevelopmentEvaluationSchema = Schema.Struct({
+  baseline: CandidateDevelopmentEvaluationResultSchema,
+  comparisonSemantics: CandidateDevelopmentComparisonSemanticsEvidenceBoundarySchema,
+  stressed: CandidateDevelopmentDoubledCostRunSchema,
+})
+
 const decodeCandidateDevelopmentPreflightInput = Schema.decodeUnknownResult(
   CandidateDevelopmentPreflightInputSchema,
+  strictParseOptions,
+)
+
+const decodeCandidateDevelopmentEvaluation = Schema.decodeUnknownResult(
+  CandidateDevelopmentEvaluationSchema,
   strictParseOptions,
 )
 
@@ -429,10 +551,26 @@ export const validateCandidateDevelopmentExecutableProgram = (
       cause: input.failure,
     })
   }
+  const typedEffects = effects as unknown as ExecutableProgram['effects']
   return Result.succeed({
     schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
     input: input.success,
-    effects: effects as unknown as ExecutableProgram['effects'],
+    effects: {
+      ...typedEffects,
+      evaluateDevelopment: (data, preflight) =>
+        typedEffects.evaluateDevelopment(data, preflight).pipe(
+          Effect.flatMap((evaluation) => {
+            const decoded = decodeCandidateDevelopmentEvaluation(evaluation)
+            return Result.isSuccess(decoded)
+              ? Effect.succeed(decoded.success as CandidateDevelopmentEvaluation)
+              : Effect.fail<CandidateDevelopmentCommandFailure>({
+                  _tag: 'CandidateDevelopmentCommandProgramInvalid',
+                  reason: 'evaluation-invalid',
+                  cause: decoded.failure,
+                })
+          }),
+        ),
+    },
   })
 }
 

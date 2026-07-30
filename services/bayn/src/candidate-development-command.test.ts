@@ -82,7 +82,17 @@ const baselineFixture = (
     doubleCostStrategy: {
       annualizedReturn: doubledCostAnnualizedReturn(stressedEndingEquityMicros),
     },
-    verdict: { status },
+    verdict: {
+      status,
+      gates: [
+        {
+          name: 'economic-fixture',
+          passed: status === 'PASS',
+          actual: status === 'PASS',
+          required: true,
+        },
+      ],
+    },
     simulation: {
       dailyMarks: [{ positions: [{ quantityMicros: '0' }] }],
     },
@@ -222,6 +232,26 @@ describe('candidate development command', () => {
     })
   })
 
+  test('rejects an economic summary status that disagrees with its gates', () => {
+    const baseline = baselineFixture()
+    const inconsistent = {
+      ...baseline,
+      verdict: {
+        status: 'PASS' as const,
+        gates: [{ name: 'failed-economic-gate', passed: false, actual: false, required: true }],
+      },
+    }
+
+    expect(buildCandidateDevelopmentCommandReport(reportFixture(0.01), inconsistent)).toEqual(
+      Result.fail({
+        _tag: 'CandidateDevelopmentCommandEconomicVerdictInvalid',
+        expectedStatus: 'FAIL_CLOSED',
+        observedStatus: 'PASS',
+        failedGateNames: ['failed-economic-gate'],
+      }),
+    )
+  })
+
   test('keeps the sole report write attached through interruption', async () => {
     const report = successOf(buildCandidateDevelopmentCommandReport(reportFixture(0.01), baselineFixture()))
 
@@ -314,6 +344,33 @@ describe('candidate development command', () => {
     expect(program).toMatchObject({
       _tag: 'Success',
       success: { input: { featureLookbackSessions: 0 } },
+    })
+  })
+
+  test('rejects malformed loaded evaluation output through the typed command channel', async () => {
+    const sessions = frozenCandidateDevelopmentSessions()
+    const validated = successOf(
+      validateCandidateDevelopmentExecutableProgram({
+        schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
+        input: {
+          candidateOrdinal: 16,
+          priorTrialCount: 15,
+          expectedStrategyProtocolHash: 'a'.repeat(64),
+          officialSessions: sessions,
+          signalSessionDates: officialMonthEndSignalDates(sessions),
+          featureLookbackSessions: 126,
+        },
+        effects: {
+          preregisterCandidate: () => Effect.succeed('registration'),
+          loadDevelopmentData: () => Effect.succeed('data'),
+          evaluateDevelopment: () => Effect.succeed({ baseline: {} }),
+        },
+      }),
+    )
+
+    expect(await Effect.runPromise(Effect.flip(executeCandidateDevelopmentProgram(validated)))).toMatchObject({
+      _tag: 'CandidateDevelopmentCommandProgramInvalid',
+      reason: 'evaluation-invalid',
     })
   })
 
