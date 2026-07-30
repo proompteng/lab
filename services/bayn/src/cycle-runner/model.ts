@@ -136,10 +136,20 @@ export type CyclePassObservation =
       readonly error: CycleRunnerError
     }
 
+export interface ReconciliationCadenceState {
+  readonly lastAttemptAtNanos?: bigint
+  readonly lastFailure?: CycleRunnerError
+}
+
+export type IdleReconciliationCadenceDecision =
+  | { readonly _tag: 'RECONCILE' }
+  | { readonly _tag: 'WAIT'; readonly remainingNanos: bigint }
+
 export interface AutonomousCycleLoopOptions<E = never, ContextR = never, DecisionR = never> {
   readonly context: Effect.Effect<CycleRunContext<DecisionR>, E, ContextR>
   readonly observePass: (observation: CyclePassObservation) => Effect.Effect<void>
   readonly pollIntervalMs: number
+  readonly reconciliationIntervalMs: number
   readonly reconcileNotDue: Effect.Effect<void, CycleNotDueReconciliationError, DecisionR>
 }
 

@@ -159,6 +159,12 @@ export type RuntimeConfigResolutionFailure =
       readonly cycleStallThresholdMs: number
     }
   | {
+      readonly _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold'
+      readonly reconciliationIntervalMs: number
+      readonly operationTimeoutMs: number
+      readonly reconciliationStaleThresholdMs: number
+    }
+  | {
       readonly _tag: 'IncompleteAlpacaCredentials'
       readonly configured: AlpacaCredentialPresence
     }

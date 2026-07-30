@@ -473,6 +473,7 @@ const observeCycle = (plan: ApplicationPlanFor<'AutonomousService'>) =>
     accountId: plan.config.alpaca.expectedAccountId,
     authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
     pollIntervalMs: plan.config.cyclePollIntervalMs,
+    reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
     strategy: plan.strategy,
   })
 
@@ -481,6 +482,7 @@ const mutationCycle = (plan: ApplicationPlanFor<'AutonomousService'>, executionP
     accountId: plan.config.alpaca.expectedAccountId,
     authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
     pollIntervalMs: plan.config.cyclePollIntervalMs,
+    reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
     strategy: plan.strategy,
     executionProgram,
   })

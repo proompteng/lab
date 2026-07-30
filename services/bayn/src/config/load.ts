@@ -22,6 +22,11 @@ const presentRuntimeConfigFailure = (failure: RuntimeConfigResolutionFailure): R
         operation: 'cycle-loop',
         message: 'cycle poll interval must be shorter than the cycle stall threshold',
       }
+    case 'PaperReconciliationCadenceNotWithinStaleThreshold':
+      return {
+        operation: 'cycle-loop',
+        message: `PAPER reconciliation interval ${failure.reconciliationIntervalMs.toString()}ms plus operation timeout ${failure.operationTimeoutMs.toString()}ms must be shorter than the reconciliation stale threshold ${failure.reconciliationStaleThresholdMs.toString()}ms`,
+      }
     case 'IncompleteAlpacaCredentials':
       return {
         operation: 'broker-connection',

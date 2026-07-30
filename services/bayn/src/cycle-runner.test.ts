@@ -30,6 +30,7 @@ import {
   CycleDecisionBuildError,
   CycleRunnerError,
   cyclePassLogFacts,
+  decideIdleReconciliationCadence,
   isMonthEndCycleDue,
   makeAutonomousCycleLoop,
   makeDueCycleDraft,
@@ -64,12 +65,14 @@ import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputMan
 
 type CycleLoopTestOptions<E, ContextR, DecisionR> = Omit<
   AutonomousCycleLoopOptions<E, ContextR, DecisionR>,
-  'reconcileNotDue'
+  'reconcileNotDue' | 'reconciliationIntervalMs'
 > &
-  Partial<Pick<AutonomousCycleLoopOptions<E, ContextR, DecisionR>, 'reconcileNotDue'>>
+  Partial<Pick<AutonomousCycleLoopOptions<E, ContextR, DecisionR>, 'reconcileNotDue' | 'reconciliationIntervalMs'>>
 
 const cycleLoop = <E, ContextR, DecisionR>(options: CycleLoopTestOptions<E, ContextR, DecisionR>) =>
-  Effect.fromResult(makeAutonomousCycleLoop({ reconcileNotDue: Effect.void, ...options }))
+  Effect.fromResult(
+    makeAutonomousCycleLoop({ reconcileNotDue: Effect.void, reconciliationIntervalMs: 30_000, ...options }),
+  )
 
 const signalCalendarVersion = 'signal-XNYS-2026-v1'
 const snapshotId = 'd'.repeat(64)
@@ -152,6 +155,22 @@ const monthEndCalendar = calendar([
     closeAt: '2026-02-02T20:00:00.000Z',
   },
 ])
+
+const ordinaryNotDueCalendar = calendar(
+  [
+    {
+      date: '2026-01-29',
+      openAt: '2026-01-29T14:30:00.000Z',
+      closeAt: '2026-01-29T21:00:00.000Z',
+    },
+    {
+      date: '2026-01-30',
+      openAt: '2026-01-30T14:30:00.000Z',
+      closeAt: '2026-01-30T21:00:00.000Z',
+    },
+  ],
+  { start: '2026-01-29', end: '2026-02-28' },
+)
 
 const dueCycleDraftFixture = (
   cycleCandidate: CycleCandidate,
@@ -595,6 +614,25 @@ const recoveryState = (
 })
 
 describe('autonomous cycle runner', () => {
+  test('decides first-pass, boundary, wait, and monotonic-regression reconciliation cadence purely', () => {
+    const empty = {}
+    const lastAttemptAtNanos = 1_000_000_000n
+    const state = { lastAttemptAtNanos }
+
+    expect(decideIdleReconciliationCadence(empty, lastAttemptAtNanos, 100)).toEqual({ _tag: 'RECONCILE' })
+    expect(decideIdleReconciliationCadence(state, lastAttemptAtNanos + 99_000_000n, 100)).toEqual({
+      _tag: 'WAIT',
+      remainingNanos: 1_000_000n,
+    })
+    expect(decideIdleReconciliationCadence(state, lastAttemptAtNanos + 100_000_000n, 100)).toEqual({
+      _tag: 'RECONCILE',
+    })
+    expect(decideIdleReconciliationCadence(state, lastAttemptAtNanos - 1n, 100)).toEqual({
+      _tag: 'RECONCILE',
+    })
+    expect(state).toEqual({ lastAttemptAtNanos })
+  })
+
   test('selects recovery from durable cycle state and publication readiness without effects', () => {
     const executionSession = selectNextExecutionSession('2026-01-30', monthEndCalendar)
     if (executionSession === undefined) throw new Error('recovery fixture requires an execution session')
@@ -1502,6 +1540,210 @@ describe('autonomous cycle runner', () => {
     expect(events).toEqual(['reconcile', 'observe'])
     expect(observations).toHaveLength(1)
     expect(observations[0]).toMatchObject({ outcome: 'SUCCEEDED', result: { outcome: 'NOT_DUE' } })
+    expect(control).toEqual({ acquisitions: [], binds: 0 })
+  })
+
+  test('keeps faster cycle polling from over-reading reconciliation before the exact cadence boundary', async () => {
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const observations: CyclePassObservation[] = []
+    let reconciliations = 0
+    let calendarReads = 0
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse('2026-01-29T21:20:00.000Z'))
+          const first = yield* Deferred.make<void>()
+          const second = yield* Deferred.make<void>()
+          const third = yield* Deferred.make<void>()
+          const fourth = yield* Deferred.make<void>()
+          const completions = [first, second, third, fourth]
+          const loop = yield* cycleLoop({
+            context: Effect.succeed(context()),
+            observePass: (observation) =>
+              Effect.sync(() => {
+                observations.push(observation)
+                return completions[observations.length - 1]
+              }).pipe(
+                Effect.flatMap((completion) =>
+                  completion === undefined ? Effect.void : Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
+                ),
+              ),
+            pollIntervalMs: 100,
+            reconciliationIntervalMs: 250,
+            reconcileNotDue: Effect.sync(() => {
+              reconciliations += 1
+            }),
+          })
+          const fiber = yield* provide(
+            loop,
+            brokerRead(() =>
+              Effect.sync(() => {
+                calendarReads += 1
+                return { value: ordinaryNotDueCalendar, evidence }
+              }),
+            ),
+            cycleStore(control),
+            marketDataService(Effect.succeed(finalizedPublication('2026-01-29'))),
+          ).pipe(Effect.forkScoped({ startImmediately: true }))
+
+          yield* Deferred.await(first)
+          yield* TestClock.adjust(100)
+          yield* Deferred.await(second)
+          yield* TestClock.adjust(100)
+          yield* Deferred.await(third)
+          yield* TestClock.adjust(49)
+          expect(reconciliations).toBe(1)
+          expect(observations).toHaveLength(3)
+          yield* TestClock.adjust(2)
+          yield* Deferred.await(fourth)
+          yield* Fiber.interrupt(fiber)
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(reconciliations).toBe(2)
+    expect(calendarReads).toBe(3)
+    expect(observations).toHaveLength(4)
+    expect(observations.every((observation) => observation.outcome === 'SUCCEEDED')).toBe(true)
+    expect(control).toEqual({ acquisitions: [], binds: 0 })
+  })
+
+  test('runs idle reconciliation independently when cycle polling is slower than its configured cadence', async () => {
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const observations: CyclePassObservation[] = []
+    let reconciliations = 0
+    let calendarReads = 0
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse('2026-01-29T21:20:00.000Z'))
+          const first = yield* Deferred.make<void>()
+          const second = yield* Deferred.make<void>()
+          const third = yield* Deferred.make<void>()
+          const fourth = yield* Deferred.make<void>()
+          const fifth = yield* Deferred.make<void>()
+          const completions = [first, second, third, fourth, fifth]
+          const loop = yield* cycleLoop({
+            context: Effect.succeed(context()),
+            observePass: (observation) =>
+              Effect.sync(() => {
+                observations.push(observation)
+                return completions[observations.length - 1]
+              }).pipe(
+                Effect.flatMap((completion) =>
+                  completion === undefined ? Effect.void : Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
+                ),
+              ),
+            pollIntervalMs: 350,
+            reconciliationIntervalMs: 100,
+            reconcileNotDue: Effect.sync(() => {
+              reconciliations += 1
+            }),
+          })
+          const fiber = yield* provide(
+            loop,
+            brokerRead(() =>
+              Effect.sync(() => {
+                calendarReads += 1
+                return { value: ordinaryNotDueCalendar, evidence }
+              }),
+            ),
+            cycleStore(control),
+            marketDataService(Effect.succeed(finalizedPublication('2026-01-29'))),
+          ).pipe(Effect.forkScoped({ startImmediately: true }))
+
+          yield* Deferred.await(first)
+          yield* TestClock.adjust(100)
+          yield* Deferred.await(second)
+          yield* TestClock.adjust(100)
+          yield* Deferred.await(third)
+          yield* TestClock.adjust(100)
+          yield* Deferred.await(fourth)
+          expect(calendarReads).toBe(1)
+          expect(reconciliations).toBe(4)
+          yield* TestClock.adjust(49)
+          expect(observations).toHaveLength(4)
+          yield* TestClock.adjust(1)
+          yield* Deferred.await(fifth)
+          yield* Fiber.interrupt(fiber)
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(calendarReads).toBe(2)
+    expect(reconciliations).toBe(4)
+    expect(observations).toHaveLength(5)
+    expect(observations.every((observation) => observation.outcome === 'SUCCEEDED')).toBe(true)
+    expect(control).toEqual({ acquisitions: [], binds: 0 })
+  })
+
+  test('retries a failed idle reconciliation on cadence without recording false success or waiting for a slower poll', async () => {
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const observations: CyclePassObservation[] = []
+    const failure = new CycleNotDueReconciliationError({
+      failure: 'database',
+      message: 'NOT_DUE reconciliation persistence failed',
+    })
+    let attempts = 0
+    let calendarReads = 0
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse('2026-01-29T21:20:00.000Z'))
+          const first = yield* Deferred.make<void>()
+          const second = yield* Deferred.make<void>()
+          const completions = [first, second]
+          const loop = yield* cycleLoop({
+            context: Effect.succeed(context()),
+            observePass: (observation) =>
+              Effect.sync(() => {
+                observations.push(observation)
+                return completions[observations.length - 1]
+              }).pipe(
+                Effect.flatMap((completion) =>
+                  completion === undefined ? Effect.void : Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
+                ),
+              ),
+            pollIntervalMs: 1_000,
+            reconciliationIntervalMs: 100,
+            reconcileNotDue: Effect.suspend(() => {
+              attempts += 1
+              return attempts === 1 ? Effect.fail(failure) : Effect.void
+            }),
+          })
+          const fiber = yield* provide(
+            loop,
+            brokerRead(() =>
+              Effect.sync(() => {
+                calendarReads += 1
+                return { value: ordinaryNotDueCalendar, evidence }
+              }),
+            ),
+            cycleStore(control),
+            marketDataService(Effect.succeed(finalizedPublication('2026-01-29'))),
+          ).pipe(Effect.forkScoped({ startImmediately: true }))
+
+          yield* Deferred.await(first)
+          expect(observations).toHaveLength(1)
+          expect(observations[0]).toMatchObject({ outcome: 'FAILED' })
+          yield* TestClock.adjust(99)
+          expect(attempts).toBe(1)
+          expect(observations).toHaveLength(1)
+          yield* TestClock.adjust(1)
+          yield* Deferred.await(second)
+          yield* Fiber.interrupt(fiber)
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(attempts).toBe(2)
+    expect(calendarReads).toBe(1)
+    expect(observations).toHaveLength(2)
+    expect(observations[0]).toMatchObject({ outcome: 'FAILED' })
+    expect(observations[1]).toMatchObject({ outcome: 'SUCCEEDED', result: { outcome: 'NOT_DUE' } })
     expect(control).toEqual({ acquisitions: [], binds: 0 })
   })
 
@@ -2805,6 +3047,7 @@ describe('autonomous cycle runner', () => {
         context: Effect.succeed(context()),
         observePass: ignorePass,
         pollIntervalMs,
+        reconciliationIntervalMs: 30_000,
         reconcileNotDue: Effect.void,
       })
       expect(Result.isFailure(result)).toBe(true)
@@ -2812,6 +3055,22 @@ describe('autonomous cycle runner', () => {
         _tag: 'CycleRunnerError',
         operation: 'configure',
         failure: 'invalid-config',
+      })
+    }
+    for (const reconciliationIntervalMs of [0, -1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+      const result = makeAutonomousCycleLoop({
+        context: Effect.succeed(context()),
+        observePass: ignorePass,
+        pollIntervalMs: 100,
+        reconciliationIntervalMs,
+        reconcileNotDue: Effect.void,
+      })
+      expect(Result.isFailure(result)).toBe(true)
+      expect(Result.isFailure(result) ? result.failure : undefined).toMatchObject({
+        _tag: 'CycleRunnerError',
+        operation: 'configure',
+        failure: 'invalid-config',
+        message: 'reconciliation interval must be a positive safe integer',
       })
     }
     expect(control).toEqual({ acquisitions: [], binds: 0 })

@@ -33,4 +33,5 @@ export {
   validateCycleLoopInterval,
   type CyclePassLogFacts,
 } from './pass-decisions'
+export { decideIdleReconciliationCadence, validateReconciliationInterval } from './reconciliation-cadence'
 export { selectCyclePassContinuation, type CyclePassContinuation, type CyclePassProgress } from './pass-continuation'

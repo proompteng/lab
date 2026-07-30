@@ -632,6 +632,7 @@ describe('OBSERVE runtime composition', () => {
       accountId,
       authorityGenerationHash: generationHash,
       pollIntervalMs: 30_000,
+      reconciliationIntervalMs: 30_000,
       strategy: fixtureStrategy,
     })
 
@@ -1025,6 +1026,7 @@ describe('OBSERVE runtime composition', () => {
       accountId,
       authorityGenerationHash: generationHash,
       pollIntervalMs: 30_000,
+      reconciliationIntervalMs: 30_000,
       strategy: fixtureStrategy,
     })
 
@@ -1076,7 +1078,7 @@ describe('OBSERVE runtime composition', () => {
     )
   })
 
-  test('persists one writer-fenced reconciliation before reporting a NOT_DUE OBSERVE pass', async () => {
+  test('persists writer-fenced NOT_DUE reconciliation in OBSERVE and mutation/PAPER without broker mutations', async () => {
     const signalSessionDate: IsoDate = '2020-04-29'
     const calendarMaterial = {
       schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
@@ -1123,6 +1125,7 @@ describe('OBSERVE runtime composition', () => {
     let positionReads = 0
     let orderReads = 0
     let fillReads = 0
+    let calendarReads = 0
     const unusedRead = Effect.die(new Error('NOT_DUE reconciliation used an unrelated broker read'))
     const brokerRead: BrokerReadShape = {
       account: Effect.sync(() => {
@@ -1149,6 +1152,7 @@ describe('OBSERVE runtime composition', () => {
         }),
       marketCalendar: (query) => {
         expect(query).toEqual(calendarMaterial.requestedRange)
+        calendarReads += 1
         return Effect.succeed({ value: ordinaryCalendar, evidence: readEvidence('calendar') })
       },
     }
@@ -1263,6 +1267,7 @@ describe('OBSERVE runtime composition', () => {
       accountId,
       authorityGenerationHash: generationHash,
       pollIntervalMs: 30_000,
+      reconciliationIntervalMs: 30_000,
       strategy: fixtureStrategy,
     })
 
@@ -1313,6 +1318,84 @@ describe('OBSERVE runtime composition', () => {
       reconciledAt,
     })
     expect(fencedTransactions).toBe(1)
+    expect(authorityRestrictions).toBe(0)
+
+    const mutationStartup = makeMutationAutonomousCycleStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      pollIntervalMs: 350,
+      reconciliationIntervalMs: 100,
+      strategy: fixtureStrategy,
+      executionProgram: sandboxExecutionProgram(),
+    })
+    const intentStore = {} as IntentStoreService
+    const mutationStore = {} as MutationStoreShape
+    const mutationObservations: Parameters<Parameters<typeof mutationStartup>[0]['recordPass']>[0][] = []
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(reconciledAt))
+          const first = yield* Deferred.make<void>()
+          const second = yield* Deferred.make<void>()
+          const loop = yield* mutationStartup({
+            qualificationRunId: 'c'.repeat(64),
+            recordPass: (result) =>
+              Effect.sync(() => {
+                mutationObservations.push(result)
+                return mutationObservations.length === 1
+                  ? first
+                  : mutationObservations.length === 2
+                    ? second
+                    : undefined
+              }).pipe(
+                Effect.flatMap((completion) =>
+                  completion === undefined ? Effect.void : Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
+                ),
+              ),
+          })
+          const fiber = yield* loop.pipe(
+            Effect.provideService(BrokerRead, brokerRead),
+            Effect.provideService(CycleStore, cycleStore),
+            Effect.provideService(MarketData, marketDataService),
+            Effect.provideService(BrokerEventStore, executionStore),
+            Effect.provideService(FillAccountingStore, executionStore),
+            Effect.provideService(ValuationStore, executionStore),
+            Effect.provideService(ReconciliationStore, executionStore),
+            Effect.provideService(AuthorityGenerationStore, executionStore),
+            Effect.provideService(AuthorityRestrictionStore, executionStore),
+            Effect.provideService(WriterFence, writerFence),
+            Effect.provideService(IntentStore, intentStore),
+            Effect.provideService(MutationStore, mutationStore),
+            Effect.forkScoped({ startImmediately: true }),
+          )
+          yield* Deferred.await(first).pipe(Effect.timeout('1 second'))
+          yield* TestClock.adjust(101)
+          yield* Deferred.await(second).pipe(Effect.timeout('1 second'))
+          yield* Fiber.interrupt(fiber)
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(mutationObservations).toHaveLength(2)
+    expect(mutationObservations[0]).toMatchObject({ result: 'SUCCESS', outcome: 'NOT_DUE' })
+    expect(mutationObservations[1]).toMatchObject({ result: 'SUCCESS', outcome: 'NOT_DUE' })
+    expect(acquisitions).toBe(0)
+    expect(calendarReads).toBe(2)
+    expect(accountReads).toBe(3)
+    expect(positionReads).toBe(3)
+    expect(orderReads).toBe(6)
+    expect(fillReads).toBe(6)
+    expect(brokerEventWrites).toBe(3)
+    expect(positionWrites).toBe(3)
+    expect(valuationWrites).toBe(3)
+    expect(reconciledSnapshots).toHaveLength(3)
+    expect(reconciledSnapshots[2]).toMatchObject({
+      account,
+      positions: [],
+      orders: [],
+      fills: [],
+    })
+    expect(fencedTransactions).toBe(3)
     expect(authorityRestrictions).toBe(0)
   })
 
@@ -1380,6 +1463,7 @@ describe('OBSERVE runtime composition', () => {
       accountId,
       authorityGenerationHash: generationHash,
       pollIntervalMs: 30_000,
+      reconciliationIntervalMs: 30_000,
       strategy: fixtureStrategy,
       executionProgram: sandboxExecutionProgram(),
     })
@@ -1424,6 +1508,7 @@ describe('OBSERVE runtime composition', () => {
       accountId,
       authorityGenerationHash: generationHash,
       pollIntervalMs: 30_000,
+      reconciliationIntervalMs: 30_000,
       strategy: fixtureStrategy,
     })
 
@@ -1442,6 +1527,7 @@ describe('OBSERVE runtime composition', () => {
         accountId,
         authorityGenerationHash: generationHash,
         pollIntervalMs: 30_000,
+        reconciliationIntervalMs: 30_000,
         strategy: fixtureStrategy,
         executionProgram,
       })

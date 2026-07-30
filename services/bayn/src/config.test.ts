@@ -256,6 +256,74 @@ describe('pure runtime configuration resolution', () => {
     })
   })
 
+  test('keeps PAPER reconciliation cadence plus operation margin strictly inside the stale threshold', () => {
+    const paper = {
+      configuredAlpaca: {
+        ...alpaca(BrokerEnvironment.Sandbox),
+        reconciliationIntervalMs: 89_999,
+      },
+      legacyMaximumAuthority: 'PAPER' as const,
+      brokerAccess: BrokerAccess.Mutation,
+      capitalAuthority: CapitalAuthoritySelection.Sandbox,
+    }
+    const accepted = Result.getOrThrow(resolveRuntimeConfig(resolutionInput(paper)))
+    expect(accepted).toMatchObject({
+      runtimeMode: 'AutonomousService',
+      alpaca: { reconciliationIntervalMs: 89_999 },
+      execution: {
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: { _tag: CapitalAuthorityKind.Sandbox },
+      },
+    })
+
+    expectFailure(
+      {
+        ...paper,
+        configuredAlpaca: {
+          ...paper.configuredAlpaca,
+          reconciliationIntervalMs: 90_000,
+        },
+      },
+      {
+        _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold',
+        reconciliationIntervalMs: 90_000,
+        operationTimeoutMs: 30_000,
+        reconciliationStaleThresholdMs: 120_000,
+      },
+    )
+    expectFailure(
+      {
+        ...paper,
+        operationTimeoutMs: 120_000,
+        configuredAlpaca: {
+          ...paper.configuredAlpaca,
+          reconciliationIntervalMs: 1,
+        },
+      },
+      {
+        _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold',
+        reconciliationIntervalMs: 1,
+        operationTimeoutMs: 120_000,
+        reconciliationStaleThresholdMs: 120_000,
+      },
+    )
+
+    const observe = Result.getOrThrow(
+      resolveRuntimeConfig(
+        resolutionInput({
+          configuredAlpaca: {
+            ...alpaca(BrokerEnvironment.Sandbox),
+            reconciliationIntervalMs: 120_000,
+          },
+        }),
+      ),
+    )
+    expect(observe).toMatchObject({
+      execution: { brokerAccess: BrokerAccess.ReadOnly, capitalAuthority: { _tag: CapitalAuthorityKind.None } },
+      alpaca: { reconciliationIntervalMs: 120_000 },
+    })
+  })
+
   test('translates the historical discovery token into a read-only candidate operation', () => {
     const config = Result.getOrThrow(
       resolveRuntimeConfig(
