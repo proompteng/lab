@@ -876,6 +876,7 @@ describe('redaction and permissions', () => {
     ['resourceNames-scoped', 'secrets [] [operator-created-secret] [get]'],
     ['wildcard resource', '* [] [operator-created-secret] [get]'],
     ['API-group wildcard resource', '*.* [] [operator-created-secret] [get]'],
+    ['Secret resource in wildcard group', 'secrets.* [] [operator-created-secret] [get]'],
     ['combined resource', 'configmaps,secrets [] [operator-created-secret] [get]'],
   ])('rejects %s Secret disclosure in the full rules audit', async (_name, secretRule) => {
     const controller = new AbortController()
@@ -910,6 +911,8 @@ describe('redaction and permissions', () => {
             'selfsubjectaccessreviews.authorization.k8s.io [] [] [create]',
             'selfsubjectrulesreviews.authorization.k8s.io [] [] [create]',
             'deployments.apps [] [] [get list watch]',
+            '*.apps [] [] [get list watch]',
+            'secrets.apps [] [] [get]',
             '                                                              [/healthz] [] [get]',
           ].join('\n'),
           stderr: '',

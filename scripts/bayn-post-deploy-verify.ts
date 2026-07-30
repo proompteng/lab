@@ -830,13 +830,12 @@ const SELF_REVIEW_RESOURCES = new Set([
 const resourceCellCanExposeSecrets = (resourceCell: string): boolean =>
   resourceCell.split(',').some((resource) => {
     const normalized = resource.trim().toLowerCase()
-    return (
-      normalized === '*' ||
-      normalized.startsWith('*.') ||
-      normalized === 'secrets' ||
-      normalized.startsWith('secrets.') ||
-      normalized.startsWith('secrets/')
-    )
+    if (normalized === '*' || normalized === '*.*') return true
+    const groupSeparator = normalized.indexOf('.')
+    const typeWithSubresource = groupSeparator === -1 ? normalized : normalized.slice(0, groupSeparator)
+    const apiGroup = groupSeparator === -1 ? '' : normalized.slice(groupSeparator + 1)
+    const resourceType = typeWithSubresource.split('/')[0] ?? ''
+    return resourceType === 'secrets' && (apiGroup === '' || apiGroup === '*')
   })
 
 const validateNoMutationRules = async (run: RunCommand, signal: AbortSignal, namespace: string): Promise<void> => {
