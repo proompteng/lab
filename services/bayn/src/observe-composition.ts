@@ -1,4 +1,4 @@
-import { Clock, Duration, Effect, Option, pipe, Ref, Result } from 'effect'
+import { Clock, Data, Duration, Effect, Option, pipe, Ref, Result } from 'effect'
 
 import type { AutonomousCycleLoop, AutonomousCycleStartup } from './app'
 import { BrokerRead, type BrokerReadShape, type MarketCalendarQuery } from './broker/alpaca'
@@ -40,7 +40,7 @@ import {
 } from './execution-session'
 import { makeFillTerms, MICROS } from './execution-model'
 import { makeStrategyProtocolHash } from './contracts'
-import { operationalError, type OperationalError } from './errors'
+import { OperationalError, operationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
 import { MarketData, type MarketDataService } from './market-data'
 import {
@@ -103,7 +103,28 @@ export const loadObserveRiskPolicy = (accountId: string, allowedSymbols: readonl
 
 type ObserveStrategy = Pick<Strategy, 'currentDecision'>
 
-type ReconciliationPassError = Effect.Error<typeof runOnce>
+class ReconciliationPassTimeoutError extends Data.TaggedError('ReconciliationPassTimeoutError')<{
+  readonly timeoutMs: number
+  readonly message: string
+}> {}
+
+type ReconciliationPassError = Effect.Error<typeof runOnce> | ReconciliationPassTimeoutError
+
+const boundedReconciliationPass = (
+  timeoutMs: number,
+): Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime> =>
+  runOnce.pipe(
+    Effect.timeoutOrElse({
+      duration: timeoutMs,
+      orElse: () =>
+        Effect.fail(
+          new ReconciliationPassTimeoutError({
+            timeoutMs,
+            message: `same-pass broker reconciliation timed out after ${timeoutMs.toString()}ms`,
+          }),
+        ),
+    }),
+  )
 
 export type ObserveDecisionInput<R = never> = {
   readonly authorityGenerationHash: string
@@ -183,6 +204,14 @@ const reconciliationOperationalError = (cause: ReconciliationPassError): Operati
       return operationalError('strategy', 'reconciliation', 'same-pass reconciliation failed', cause)
     case 'WriterFenceError':
       return operationalError('database', 'reconciliation', 'same-pass reconciliation fence operation failed', cause)
+    case 'ReconciliationPassTimeoutError':
+      return new OperationalError({
+        component: 'market-data',
+        operation: 'reconciliation',
+        message: cause.message,
+        retryable: false,
+        cause,
+      })
   }
 }
 
@@ -556,6 +585,7 @@ export type ObserveAutonomousCycleInput = {
   readonly authorityGenerationHash: string
   readonly pollIntervalMs: number
   readonly reconciliationIntervalMs: number
+  readonly reconciliationPassTimeoutMs: number
   readonly strategy: Pick<Strategy, 'currentDecision' | 'parameters' | 'provenance'>
 }
 
@@ -632,6 +662,7 @@ const makeObserveAutonomousLoop = (
   preparation: ObserveStartupPreparation,
   policy: Policy,
 ): Result.Result<AutonomousCycleLoop<ObserveRuntime>, OperationalError> => {
+  const reconcile = boundedReconciliationPass(input.reconciliationPassTimeoutMs)
   const context: CycleRunContext<ObserveDecisionRuntime> = {
     qualificationRunId: startup.qualificationRunId,
     strategyProtocolHash: preparation.strategyProtocolHash,
@@ -643,7 +674,7 @@ const makeObserveAutonomousLoop = (
         cycle,
         executionModel: preparation.executionModel,
         policy,
-        reconcile: runOnce,
+        reconcile,
         strategy: input.strategy,
       }).pipe(Effect.mapError(decisionBuildError)),
   }
@@ -653,7 +684,7 @@ const makeObserveAutonomousLoop = (
       observePass: (observation) => observePass(startup.recordPass, observation),
       pollIntervalMs: input.pollIntervalMs,
       reconciliationIntervalMs: input.reconciliationIntervalMs,
-      reconcileNotDue: runOnce.pipe(Effect.mapError(notDueReconciliationError), Effect.asVoid),
+      reconcileNotDue: reconcile.pipe(Effect.mapError(notDueReconciliationError), Effect.asVoid),
     }),
     Result.mapError((cause) =>
       operationalError('strategy', 'cycle-loop', 'autonomous cycle loop failed to start', cause),
@@ -1348,7 +1379,9 @@ const mutationCycleLoop = (
 ): Effect.Effect<void, never, MutationRuntime> =>
   Effect.gen(function* () {
     const cadence = yield* Ref.make<ReconciliationCadenceState>({})
-    const reconcile = runOnce.pipe(Effect.tap(() => markMutationReconciliationCompleted(cadence)))
+    const reconcile = boundedReconciliationPass(input.reconciliationPassTimeoutMs).pipe(
+      Effect.tap(() => markMutationReconciliationCompleted(cadence)),
+    )
     const context: CycleRunContext<ObserveDecisionRuntime> = {
       qualificationRunId: startup.qualificationRunId,
       strategyProtocolHash: preparation.strategyProtocolHash,

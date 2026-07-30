@@ -474,6 +474,7 @@ const observeCycle = (plan: ApplicationPlanFor<'AutonomousService'>) =>
     authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
     pollIntervalMs: plan.config.cyclePollIntervalMs,
     reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
+    reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
     strategy: plan.strategy,
   })
 
@@ -483,6 +484,7 @@ const mutationCycle = (plan: ApplicationPlanFor<'AutonomousService'>, executionP
     authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
     pollIntervalMs: plan.config.cyclePollIntervalMs,
     reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
+    reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
     strategy: plan.strategy,
     executionProgram,
   })

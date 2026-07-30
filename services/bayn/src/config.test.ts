@@ -256,7 +256,7 @@ describe('pure runtime configuration resolution', () => {
     })
   })
 
-  test('keeps PAPER reconciliation cadence plus operation margin strictly inside the stale threshold', () => {
+  test('keeps PAPER reconciliation cadence plus the enforced full-pass deadline inside the stale threshold', () => {
     const paper = {
       configuredAlpaca: {
         ...alpaca(BrokerEnvironment.Sandbox),
@@ -287,7 +287,7 @@ describe('pure runtime configuration resolution', () => {
       {
         _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold',
         reconciliationIntervalMs: 90_000,
-        operationTimeoutMs: 30_000,
+        reconciliationPassTimeoutMs: 30_000,
         reconciliationStaleThresholdMs: 120_000,
       },
     )
@@ -303,7 +303,7 @@ describe('pure runtime configuration resolution', () => {
       {
         _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold',
         reconciliationIntervalMs: 1,
-        operationTimeoutMs: 120_000,
+        reconciliationPassTimeoutMs: 120_000,
         reconciliationStaleThresholdMs: 120_000,
       },
     )

@@ -633,6 +633,7 @@ describe('OBSERVE runtime composition', () => {
       authorityGenerationHash: generationHash,
       pollIntervalMs: 30_000,
       reconciliationIntervalMs: 30_000,
+      reconciliationPassTimeoutMs: 30_000,
       strategy: fixtureStrategy,
     })
 
@@ -1027,6 +1028,7 @@ describe('OBSERVE runtime composition', () => {
       authorityGenerationHash: generationHash,
       pollIntervalMs: 30_000,
       reconciliationIntervalMs: 30_000,
+      reconciliationPassTimeoutMs: 30_000,
       strategy: fixtureStrategy,
     })
 
@@ -1268,6 +1270,7 @@ describe('OBSERVE runtime composition', () => {
       authorityGenerationHash: generationHash,
       pollIntervalMs: 30_000,
       reconciliationIntervalMs: 30_000,
+      reconciliationPassTimeoutMs: 30_000,
       strategy: fixtureStrategy,
     })
 
@@ -1325,6 +1328,7 @@ describe('OBSERVE runtime composition', () => {
       authorityGenerationHash: generationHash,
       pollIntervalMs: 350,
       reconciliationIntervalMs: 100,
+      reconciliationPassTimeoutMs: 30_000,
       strategy: fixtureStrategy,
       executionProgram: sandboxExecutionProgram(),
     })
@@ -1399,6 +1403,200 @@ describe('OBSERVE runtime composition', () => {
     expect(authorityRestrictions).toBe(0)
   })
 
+  test('bounds the complete writer-fenced reconciliation pass and interrupts stalled persistence', async () => {
+    const signalSessionDate: IsoDate = '2020-04-29'
+    const calendarMaterial = {
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+      source: 'alpaca-v2-calendar' as const,
+      requestedRange: { start: signalSessionDate, end: '2020-05-29' },
+      timeZone: 'UTC' as const,
+      sessions: [
+        {
+          date: signalSessionDate,
+          openAt: '2020-04-29T13:30:00.000Z',
+          closeAt: '2020-04-29T20:00:00.000Z',
+        },
+        {
+          date: signalDate,
+          openAt: '2020-04-30T13:30:00.000Z',
+          closeAt: '2020-04-30T20:00:00.000Z',
+        },
+      ],
+    }
+    const ordinaryCalendar: MarketCalendarObservation = {
+      ...calendarMaterial,
+      normalizedResponseHash: canonicalHashV1(calendarMaterial),
+    }
+    const readEvidence = (identity: string): ReadEvidence => ({
+      requestId: `bounded-pass-${identity}`,
+      status: 200,
+      contentHash: canonicalHashV1({ identity }),
+      observedAt: reconciledAt,
+    })
+    const brokerAccount: BrokerAccount = {
+      id: accountId,
+      status: BrokerAccountStatus.Active,
+      currency: 'USD',
+      cashMicros: account.cashMicros,
+      equityMicros: account.equityMicros,
+      lastEquityMicros: account.equityMicros,
+      buyingPowerMicros: account.buyingPowerMicros,
+      accountBlocked: false,
+      tradingBlocked: false,
+      tradeSuspendedByUser: false,
+      observedAt: reconciledAt,
+    }
+    const brokerRead: BrokerReadShape = {
+      account: Effect.succeed({ value: brokerAccount, evidence: readEvidence('account') }),
+      accountConfiguration: Effect.die(new Error('bounded reconciliation used account configuration')),
+      assetBySymbol: unusedAssetBySymbol,
+      positions: Effect.succeed({ value: [], evidence: readEvidence('positions') }),
+      orders: () => Effect.succeed({ value: [], evidence: readEvidence('orders') }),
+      orderById: () => Effect.die(new Error('bounded reconciliation used order lookup')),
+      orderByClientId: () => Effect.die(new Error('bounded reconciliation used client-order lookup')),
+      fillActivities: () => Effect.succeed({ value: { items: [] }, evidence: readEvidence('fills') }),
+      marketCalendar: (query) => {
+        expect(query).toEqual(calendarMaterial.requestedRange)
+        return Effect.succeed({ value: ordinaryCalendar, evidence: readEvidence('calendar') })
+      },
+    }
+    const marketDataService: MarketDataService = {
+      ...marketData([]),
+      inspectCyclePublications: Effect.succeed({
+        outcome: 'FINALIZED',
+        observedAt: '2020-04-29T22:00:00.000Z',
+        publications: [
+          {
+            manifest: snapshot.manifest,
+            sessionDates: [signalSessionDate],
+            signalSession: {
+              calendar_version: 'fixture-calendar-v2',
+              session_date: signalSessionDate,
+              close_time: '16:00',
+              timezone: 'America/New_York' as const,
+            },
+          },
+        ],
+      }),
+    }
+    const unusedCycleStore = Effect.die(new Error('bounded NOT_DUE pass attempted to mutate cycle state'))
+    const cycleStore: CycleStoreShape = {
+      acquire: () => unusedCycleStore,
+      read: () => unusedCycleStore,
+      readAuthoritySlot: () => Effect.succeed(Option.none()),
+      readDecisionDocument: () => unusedCycleStore,
+      readOldestUnfinished: () => Effect.succeed(Option.none()),
+      bindSnapshot: () => unusedCycleStore,
+      activate: () => unusedCycleStore,
+      bindDecision: () => unusedCycleStore,
+      finish: () => unusedCycleStore,
+      block: () => unusedCycleStore,
+    }
+    const exact = reconciliationResult()
+    const authority = exact.riskContext.authority
+    expect(authority).not.toBeNull()
+    if (authority === null) expect.unreachable('bounded reconciliation fixture requires authority')
+    const unusedAccounting = Effect.die(new Error('empty reconciliation must not account a fill'))
+    let authorityRestrictions = 0
+    let fencedTransactions = 0
+
+    const observation = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(reconciledAt))
+          const persistenceStarted = yield* Deferred.make<void>()
+          const persistenceInterrupted = yield* Deferred.make<void>()
+          const pass =
+            yield* Deferred.make<
+              Parameters<Parameters<ReturnType<typeof makeObserveAutonomousCycleStartup>>[0]['recordPass']>[0]
+            >()
+          const executionStore = {
+            ingest: () => Effect.succeed({ eventId: '1'.repeat(64), sourceSequence: '1', deduplicated: false }),
+            ingestPositions: () => Effect.succeed({ snapshotId: '2'.repeat(64), eventIds: [], deduplicated: false }),
+            account: () => unusedAccounting,
+            value: () =>
+              Effect.succeed({
+                schemaVersion: 'bayn.paper-valuation.v1' as const,
+                valuationId: '3'.repeat(64),
+                accountId,
+                sourceHash: '4'.repeat(64),
+                cashMicros: account.cashMicros,
+                longMarketValueMicros: '0',
+                shortMarketValueMicros: '0',
+                equityMicros: account.equityMicros,
+                asOf: reconciledAt,
+              }),
+            hasAccountBaseline: () => Effect.succeed(true),
+            bindings: () => Effect.succeed([]),
+            reconcile: () =>
+              Deferred.succeed(persistenceStarted, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.onInterrupt(() => Deferred.succeed(persistenceInterrupted, undefined).pipe(Effect.asVoid)),
+              ),
+            ensureAuthorityGeneration: () => Effect.succeed(authority),
+            restrictAuthority: () =>
+              Effect.sync(() => {
+                authorityRestrictions += 1
+              }),
+          } satisfies BrokerEventStoreShape &
+            FillAccountingStoreShape &
+            ValuationStoreShape &
+            ReconciliationStoreShape &
+            AuthorityGenerationStoreShape &
+            AuthorityRestrictionStoreShape
+          const writerFence: WriterFenceService = {
+            backendPid: 1,
+            check: Effect.void,
+            transaction: (effect) =>
+              Effect.sync(() => {
+                fencedTransactions += 1
+              }).pipe(Effect.andThen(effect)),
+          }
+          const startup = makeObserveAutonomousCycleStartup({
+            accountId,
+            authorityGenerationHash: generationHash,
+            pollIntervalMs: 1_000,
+            reconciliationIntervalMs: 100,
+            reconciliationPassTimeoutMs: 50,
+            strategy: fixtureStrategy,
+          })
+          const loop = yield* startup({
+            qualificationRunId: 'c'.repeat(64),
+            recordPass: (result) => Deferred.succeed(pass, result).pipe(Effect.asVoid),
+          }).pipe(Effect.provideService(AuthorityGenerationStore, executionStore))
+          const fiber = yield* loop.pipe(
+            Effect.provideService(BrokerRead, brokerRead),
+            Effect.provideService(CycleStore, cycleStore),
+            Effect.provideService(MarketData, marketDataService),
+            Effect.provideService(BrokerEventStore, executionStore),
+            Effect.provideService(FillAccountingStore, executionStore),
+            Effect.provideService(ValuationStore, executionStore),
+            Effect.provideService(ReconciliationStore, executionStore),
+            Effect.provideService(AuthorityGenerationStore, executionStore),
+            Effect.provideService(AuthorityRestrictionStore, executionStore),
+            Effect.provideService(WriterFence, writerFence),
+            Effect.forkScoped({ startImmediately: true }),
+          )
+          yield* Deferred.await(persistenceStarted)
+          yield* TestClock.adjust(51)
+          const result = yield* Deferred.await(pass).pipe(Effect.timeout('1 second'))
+          yield* Deferred.await(persistenceInterrupted).pipe(Effect.timeout('1 second'))
+          yield* Fiber.interrupt(fiber)
+          return result
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(observation).toMatchObject({
+      result: 'FAILURE',
+      operation: 'reconcile-not-due',
+      failure: 'market-data',
+      message: 'same-pass broker reconciliation timed out after 50ms',
+    })
+    expect(fencedTransactions).toBe(1)
+    expect(authorityRestrictions).toBe(0)
+  })
+
   test('starts mutation mode without projecting or initializing OBSERVE authority', async () => {
     const unused = Effect.die(new Error('missing-publication mutation loop must not use this capability'))
     let authorityInitializations = 0
@@ -1464,6 +1662,7 @@ describe('OBSERVE runtime composition', () => {
       authorityGenerationHash: generationHash,
       pollIntervalMs: 30_000,
       reconciliationIntervalMs: 30_000,
+      reconciliationPassTimeoutMs: 30_000,
       strategy: fixtureStrategy,
       executionProgram: sandboxExecutionProgram(),
     })
@@ -1509,6 +1708,7 @@ describe('OBSERVE runtime composition', () => {
       authorityGenerationHash: generationHash,
       pollIntervalMs: 30_000,
       reconciliationIntervalMs: 30_000,
+      reconciliationPassTimeoutMs: 30_000,
       strategy: fixtureStrategy,
     })
 
@@ -1528,6 +1728,7 @@ describe('OBSERVE runtime composition', () => {
         authorityGenerationHash: generationHash,
         pollIntervalMs: 30_000,
         reconciliationIntervalMs: 30_000,
+        reconciliationPassTimeoutMs: 30_000,
         strategy: fixtureStrategy,
         executionProgram,
       })
