@@ -66,20 +66,81 @@ const accountingState = (state: RuntimeState) => {
   return state.health.dependencies.tigerBeetle.status === 'AVAILABLE' ? 'EXACT' : 'UNAVAILABLE'
 }
 
-const publicBrokerState = (state: RuntimeState) =>
-  state.broker === null
-    ? {
-        configured: false,
-        expectedAccountId: null,
-        accountId: null,
-        accountBound: false,
-        readAvailable: false,
-        checkedAt: null,
-        executionEligible: false,
-        executionDisabledReason: 'ALPACA_NOT_CONFIGURED',
-        error: null,
+const brokerPresentationReason = (broker: NonNullable<RuntimeState['broker']>): string | null => {
+  const identityMismatch =
+    broker.accountBound === false &&
+    (broker.readAvailable === true ||
+      broker.error?.includes('Alpaca credential resolved account ') === true ||
+      broker.error?.includes('Alpaca account probe resolved ') === true)
+  if (identityMismatch) return 'BROKER_ACCOUNT_IDENTITY_MISMATCH'
+  if (broker.accountBound === null || broker.readAvailable === null) return 'BROKER_STATUS_NOT_CHECKED'
+  if (broker.readAvailable === false) return 'BROKER_READ_UNAVAILABLE'
+  if (broker.accountBound === false) return 'BROKER_ACCOUNT_BINDING_UNAVAILABLE'
+  return broker.error === null ? null : 'BROKER_STATUS_UNAVAILABLE'
+}
+
+const publicBrokerState = (state: RuntimeState) => {
+  if (state.broker === null) {
+    return {
+      configured: false,
+      accountBound: false,
+      readAvailable: false,
+      checkedAt: null,
+      executionEligible: false,
+      executionDisabledReason: 'ALPACA_NOT_CONFIGURED',
+      reasonCode: 'ALPACA_NOT_CONFIGURED',
+      error: null,
+    } as const
+  }
+  const reasonCode = brokerPresentationReason(state.broker)
+  return {
+    configured: true,
+    accountBound: state.broker.accountBound,
+    readAvailable: state.broker.readAvailable,
+    checkedAt: state.broker.checkedAt,
+    executionEligible: state.broker.executionEligible,
+    executionDisabledReason: state.broker.executionDisabledReason,
+    reasonCode,
+    error: state.broker.error === null ? null : reasonCode,
+  } as const
+}
+
+const publicRuntimeError = (state: RuntimeState, broker: ReturnType<typeof publicBrokerState>): string | null => {
+  const brokerError = state.broker?.error
+  if (state.error === null || brokerError === null || brokerError === undefined) return state.error
+  return state.error.replaceAll(brokerError, broker.error ?? 'BROKER_STATUS_UNAVAILABLE')
+}
+
+const publicCycleSnapshot = (snapshot: RuntimeState['cycle']['current']) =>
+  snapshot === null
+    ? null
+    : {
+        cycleId: snapshot.cycleId,
+        signalSessionDate: snapshot.signalSessionDate,
+        executionSessionDate: snapshot.executionSessionDate,
+        phase: snapshot.phase,
+        snapshotId: snapshot.snapshotId,
+        decisionHash: snapshot.decisionHash,
+        terminalReason: snapshot.terminalReason,
+        submissionOpenAt: snapshot.submissionOpenAt,
+        submissionCutoffAt: snapshot.submissionCutoffAt,
+        executionOpenAt: snapshot.executionOpenAt,
+        executionCloseAt: snapshot.executionCloseAt,
+        createdAt: snapshot.createdAt,
+        updatedAt: snapshot.updatedAt,
+        terminalAt: snapshot.terminalAt,
       }
-    : state.broker
+
+const publicCycleReconciliation = (reconciliation: RuntimeState['cycle']['reconciliation']) =>
+  reconciliation === null
+    ? null
+    : {
+        reconciliationId: reconciliation.reconciliationId,
+        status: reconciliation.status,
+        discrepancyCount: reconciliation.discrepancyCount,
+        reconciledAt: reconciliation.reconciledAt,
+        coversLatestMutation: reconciliation.coversLatestMutation,
+      }
 
 const publicCycleState = (state: RuntimeState) =>
   state.cycle.condition === CycleOperationsCondition.Unknown
@@ -94,6 +155,9 @@ const publicCycleState = (state: RuntimeState) =>
       }
     : {
         ...state.cycle,
+        current: publicCycleSnapshot(state.cycle.current),
+        last: publicCycleSnapshot(state.cycle.last),
+        reconciliation: publicCycleReconciliation(state.cycle.reconciliation),
         observationAvailable: true,
       }
 
@@ -103,6 +167,7 @@ export const statusFacts = (
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
 ) => {
+  const broker = publicBrokerState(state)
   return {
     service: 'bayn',
     operational: {
@@ -144,7 +209,7 @@ export const statusFacts = (
     },
     cycle: publicCycleState(state),
     autonomousCycleLoop: state.autonomousCycleLoop,
-    broker: publicBrokerState(state),
+    broker,
     authority: {
       brokerEnvironment: execution.brokerIdentity?.environment ?? null,
       brokerAccess: execution.brokerAccess,
@@ -181,7 +246,7 @@ export const statusFacts = (
       image: provenance.image,
       verification: provenanceVerification,
     },
-    error: state.error,
+    error: publicRuntimeError(state, broker),
   } as const
 }
 
