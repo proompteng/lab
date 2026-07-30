@@ -1,3 +1,5 @@
+import { appendFile } from 'node:fs/promises'
+
 const githubApiVersion = '2022-11-28'
 const githubGraphqlUrl = 'https://api.github.com/graphql'
 const maximumGraphqlPages = 20
@@ -90,6 +92,30 @@ export interface SuccessfulPublishRun {
   readonly conclusion: string
 }
 
+export interface BaynBuildWorkflowRun {
+  readonly id: number
+  readonly runNumber: number
+  readonly runAttempt: number
+  readonly headSha: string
+  readonly headBranch: string
+  readonly event: string
+  readonly status: string
+  readonly conclusion: string | null
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+
+export interface BaynBuildWorkflowJob {
+  readonly name: string
+  readonly status: string
+  readonly conclusion: string | null
+}
+
+export interface FailedBaynReleaseReviewRun {
+  readonly run: BaynBuildWorkflowRun
+  readonly jobs: readonly BaynBuildWorkflowJob[]
+}
+
 export type LastPublishedRevisionResolution =
   | {
       readonly status: 'resolved'
@@ -125,6 +151,13 @@ export interface BaynReleaseEligibilitySnapshot {
   readonly comparison: BaynReleaseComparison | null
 }
 
+export interface BaynReleaseRetrySnapshot extends BaynReleaseEligibilitySnapshot {
+  readonly defaultBranchSha: string
+  readonly failedReviewRun: FailedBaynReleaseReviewRun | null
+  readonly publicationSucceeded: boolean
+  readonly retryInProgress: boolean
+}
+
 export type BaynReleaseReviewHoldCode =
   | 'last-published-revision-missing'
   | 'last-published-revision-ambiguous'
@@ -143,6 +176,13 @@ export type BaynReleaseReviewHoldCode =
   | 'exact-head-review-settling'
   | 'feedback-fix-attestation-missing'
   | 'active-unresolved-review-threads'
+  | 'retry-default-branch-mismatch'
+  | 'retry-source-pr-force-pushed'
+  | 'retry-failed-run-missing'
+  | 'retry-failed-run-mismatch'
+  | 'retry-attestation-not-delayed'
+  | 'retry-delayed-source-ambiguous'
+  | 'retry-trigger-mismatch'
   | 'github-api-error'
   | 'github-api-timeout'
   | 'github-api-invalid-response'
@@ -179,6 +219,33 @@ export interface BaynReleaseReviewHold {
 export type BaynReleaseReviewEvaluation = BaynReleaseReviewEligible | BaynReleaseReviewHold
 
 export type BaynReleaseEligibilityEvaluation = BaynReleaseEligibilityEligible | BaynReleaseReviewHold
+
+export type BaynReleaseRetryTrigger =
+  | { readonly type: 'schedule' }
+  | { readonly type: 'issue-comment'; readonly prNumber: number; readonly actorLogin: string }
+  | {
+      readonly type: 'workflow-dispatch'
+      readonly sourceCommitSha: string
+      readonly prNumber: number
+      readonly headSha: string
+      readonly failedRunId: number
+    }
+
+export type BaynReleaseRetryEvaluation =
+  | {
+      readonly status: 'dispatch'
+      readonly currentMainSha: string
+      readonly sourceCommitSha: string
+      readonly prNumber: number
+      readonly headSha: string
+      readonly failedRunId: number
+    }
+  | {
+      readonly status: 'noop'
+      readonly code: 'retry-already-published' | 'retry-attestation-not-ready' | 'retry-in-progress'
+      readonly message: string
+    }
+  | BaynReleaseReviewHold
 
 export type BaynReleaseReviewPollResult = BaynReleaseReviewEvaluation & {
   readonly attempts: number
@@ -294,9 +361,14 @@ const cleanCodexCommentPattern =
 
 const cleanCodexCommentHead = (body: string): string | null => cleanCodexCommentPattern.exec(body)?.[1] ?? null
 
-const timestampWithinPullRequest = (timestamp: string, createdAtMs: number, mergedAtMs: number): boolean => {
+const timestampWithinPullRequest = (
+  timestamp: string,
+  createdAtMs: number,
+  mergedAtMs: number,
+  allowAfterMerge: boolean,
+): boolean => {
   const timestampMs = Date.parse(timestamp)
-  return Number.isFinite(timestampMs) && timestampMs >= createdAtMs && timestampMs <= mergedAtMs
+  return Number.isFinite(timestampMs) && timestampMs >= createdAtMs && (timestampMs <= mergedAtMs || allowAfterMerge)
 }
 
 const exactHeadCodexAttestation = (
@@ -309,7 +381,7 @@ const exactHeadCodexAttestation = (
       if (
         candidate.authorLogin !== baynCodexBotLogin ||
         candidate.createdAt !== candidate.updatedAt ||
-        !timestampWithinPullRequest(candidate.createdAt, createdAtMs, mergedAtMs)
+        !timestampWithinPullRequest(candidate.createdAt, createdAtMs, mergedAtMs, pullRequest.headForcePushCount === 0)
       ) {
         return false
       }
@@ -338,7 +410,7 @@ const exactHeadCodexAttestation = (
       (candidate) =>
         candidate.userLogin === baynCodexBotLogin &&
         candidate.content === '+1' &&
-        timestampWithinPullRequest(candidate.createdAt, createdAtMs, mergedAtMs),
+        timestampWithinPullRequest(candidate.createdAt, createdAtMs, mergedAtMs, true),
     )
     .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))[0]
   if (reaction === undefined) return undefined
@@ -595,11 +667,11 @@ export const evaluateBaynReleaseEligibility = (input: {
   readonly baseRefName: string
   readonly snapshot: BaynReleaseEligibilitySnapshot
   readonly nowMs: number
-  readonly pushBeforeSha: string
+  readonly pushBeforeSha: string | null
 }): BaynReleaseEligibilityEvaluation => {
   if (
-    input.snapshot.currentCommitParents.length !== 1 ||
-    input.snapshot.currentCommitParents[0] !== input.pushBeforeSha
+    input.pushBeforeSha !== null &&
+    (input.snapshot.currentCommitParents.length !== 1 || input.snapshot.currentCommitParents[0] !== input.pushBeforeSha)
   ) {
     const parents =
       input.snapshot.currentCommitParents.length === 0
@@ -734,6 +806,206 @@ export const evaluateBaynReleaseEligibility = (input: {
     checkedCommitCount: comparison.commits.length,
     baynAffectingCommitCount: affectingCommits.length,
     reviewedPullRequests,
+  }
+}
+
+const baynAffectingCommits = (snapshot: BaynReleaseEligibilitySnapshot): readonly BaynReleaseRangeCommit[] =>
+  snapshot.comparison?.commits.filter((commit) => commit.files.some(isBaynReleaseAffectingPath)) ?? []
+
+const failedReviewRunMatches = (evidence: FailedBaynReleaseReviewRun, sourceCommitSha: string): boolean => {
+  const { run, jobs } = evidence
+  const reviewJobs = jobs.filter((job) => job.name === 'Verify exact-head Codex review')
+  const imageJobs = jobs.filter((job) => job.name === 'image')
+  return (
+    run.headSha === sourceCommitSha &&
+    run.headBranch === 'main' &&
+    run.event === 'push' &&
+    run.status === 'completed' &&
+    run.conclusion === 'failure' &&
+    reviewJobs.length === 1 &&
+    reviewJobs[0]?.status === 'completed' &&
+    reviewJobs[0]?.conclusion === 'failure' &&
+    imageJobs.length === 1 &&
+    imageJobs[0]?.status === 'completed' &&
+    imageJobs[0]?.conclusion === 'skipped'
+  )
+}
+
+export const evaluateBaynReleaseRetry = (input: {
+  readonly mainCommitSha: string
+  readonly baseRefName: string
+  readonly snapshot: BaynReleaseRetrySnapshot
+  readonly trigger: BaynReleaseRetryTrigger
+  readonly nowMs: number
+}): BaynReleaseRetryEvaluation => {
+  if (input.snapshot.defaultBranchSha !== input.mainCommitSha) {
+    return hold(
+      'retry-default-branch-mismatch',
+      `trusted default branch is ${shortSha(input.snapshot.defaultBranchSha)}, not requested retry main ${shortSha(input.mainCommitSha)}`,
+      true,
+    )
+  }
+
+  if (
+    input.snapshot.publicationSucceeded ||
+    (input.snapshot.lastPublishedRevision.status === 'resolved' &&
+      input.snapshot.lastPublishedRevision.revision === input.mainCommitSha)
+  ) {
+    return {
+      status: 'noop',
+      code: 'retry-already-published',
+      message: `current main ${shortSha(input.mainCommitSha)} already has a successful Bayn publication`,
+    }
+  }
+  if (
+    input.snapshot.lastPublishedRevision.status === 'resolved' &&
+    input.snapshot.comparison !== null &&
+    (input.snapshot.comparison.status === 'ahead' || input.snapshot.comparison.status === 'identical') &&
+    input.snapshot.comparison.commits.every((commit) => !commit.files.some(isBaynReleaseAffectingPath))
+  ) {
+    return {
+      status: 'noop',
+      code: 'retry-already-published',
+      message: `no Bayn-affecting commit exists after successful publication ${shortSha(input.snapshot.lastPublishedRevision.revision)}`,
+    }
+  }
+
+  const eligibility = evaluateBaynReleaseEligibility({
+    mainCommitSha: input.mainCommitSha,
+    baseRefName: input.baseRefName,
+    snapshot: input.snapshot,
+    nowMs: input.nowMs,
+    pushBeforeSha: null,
+  })
+  if (eligibility.status === 'hold') {
+    return eligibility.retryable
+      ? {
+          status: 'noop',
+          code: 'retry-attestation-not-ready',
+          message: eligibility.message,
+        }
+      : eligibility
+  }
+
+  const failedReviewRun = input.snapshot.failedReviewRun
+  if (failedReviewRun === null) {
+    return hold(
+      'retry-failed-run-missing',
+      `current main ${shortSha(input.mainCommitSha)} has no completed failed Bayn push run to retry`,
+      true,
+    )
+  }
+  if (!failedReviewRunMatches(failedReviewRun, input.mainCommitSha)) {
+    return hold(
+      'retry-failed-run-mismatch',
+      `Bayn run ${failedReviewRun.run.id} does not prove an exact failed review gate with a skipped image for current main ${shortSha(input.mainCommitSha)}`,
+      false,
+    )
+  }
+  const failedAtMs = Date.parse(failedReviewRun.run.updatedAt)
+  if (!Number.isFinite(failedAtMs)) {
+    return hold(
+      'retry-failed-run-mismatch',
+      `Bayn run ${failedReviewRun.run.id} has an invalid completion timestamp`,
+      false,
+    )
+  }
+
+  const affectingCommits = baynAffectingCommits(input.snapshot)
+  const delayedCandidates = eligibility.reviewedPullRequests.flatMap((reviewed) => {
+    const attestedAtMs = Date.parse(reviewed.reviewSubmittedAt)
+    if (!Number.isFinite(attestedAtMs) || attestedAtMs <= failedAtMs) return []
+    const commit = affectingCommits.find((candidate) => candidate.sha === reviewed.commitSha)
+    const pullRequest = commit?.reviewSnapshot?.pullRequest
+    if (
+      commit === undefined ||
+      pullRequest === null ||
+      pullRequest === undefined ||
+      pullRequest.number !== reviewed.prNumber ||
+      pullRequest.headSha !== reviewed.headSha
+    ) {
+      return []
+    }
+    return [{ commit, pullRequest, reviewed }]
+  })
+
+  let triggerCandidates = delayedCandidates
+  if (input.trigger.type === 'issue-comment') {
+    const triggerPrNumber = input.trigger.prNumber
+    triggerCandidates = delayedCandidates.filter((candidate) => candidate.pullRequest.number === triggerPrNumber)
+  } else if (input.trigger.type === 'workflow-dispatch') {
+    const trigger = input.trigger
+    triggerCandidates = delayedCandidates.filter(
+      (candidate) =>
+        candidate.commit.sha === trigger.sourceCommitSha &&
+        candidate.pullRequest.number === trigger.prNumber &&
+        candidate.pullRequest.headSha === trigger.headSha,
+    )
+  }
+  if (triggerCandidates.length === 0) {
+    return hold(
+      'retry-attestation-not-delayed',
+      `no exact Bayn source attestation matching the retry trigger is newer than failed run ${failedReviewRun.run.id}`,
+      true,
+    )
+  }
+  if (triggerCandidates.length > 1) {
+    return hold(
+      'retry-delayed-source-ambiguous',
+      `failed run ${failedReviewRun.run.id} has multiple delayed Bayn source attestations matching the retry trigger: ${triggerCandidates.map(({ commit, pullRequest }) => `${shortSha(commit.sha)}/#${pullRequest.number}`).join(', ')}`,
+      false,
+    )
+  }
+  const selected = triggerCandidates[0]
+  if (selected === undefined) throw new Error('delayed retry candidate selection was unexpectedly empty')
+  const sourceCommit = selected.commit
+  const sourcePull = selected.pullRequest
+  if (sourcePull.headForcePushCount !== 0) {
+    return hold(
+      'retry-source-pr-force-pushed',
+      `source PR #${sourcePull.number} final head ${shortSha(sourcePull.headSha)} has ${sourcePull.headForcePushCount} force-push event(s) and is ineligible for unattended retry`,
+      false,
+    )
+  }
+
+  if (input.trigger.type === 'issue-comment') {
+    if (input.trigger.actorLogin !== baynCodexBotLogin) {
+      return hold(
+        'retry-trigger-mismatch',
+        `issue-comment retry trigger does not match connector identity and source PR #${sourcePull.number}`,
+        false,
+      )
+    }
+  } else if (input.trigger.type === 'workflow-dispatch') {
+    if (
+      input.trigger.sourceCommitSha !== sourceCommit.sha ||
+      input.trigger.prNumber !== sourcePull.number ||
+      input.trigger.headSha !== sourcePull.headSha ||
+      input.trigger.failedRunId !== failedReviewRun.run.id
+    ) {
+      return hold(
+        'retry-trigger-mismatch',
+        `workflow dispatch binding does not match source ${shortSha(sourceCommit.sha)}, PR #${sourcePull.number}, head ${shortSha(sourcePull.headSha)}, and failed run ${failedReviewRun.run.id}`,
+        false,
+      )
+    }
+  }
+
+  if (input.trigger.type !== 'workflow-dispatch' && input.snapshot.retryInProgress) {
+    return {
+      status: 'noop',
+      code: 'retry-in-progress',
+      message: `a Bayn workflow-dispatch retry is already queued or running for current main ${shortSha(input.mainCommitSha)}`,
+    }
+  }
+
+  return {
+    status: 'dispatch',
+    currentMainSha: input.mainCommitSha,
+    sourceCommitSha: sourceCommit.sha,
+    prNumber: sourcePull.number,
+    headSha: sourcePull.headSha,
+    failedRunId: failedReviewRun.run.id,
   }
 }
 
@@ -1008,7 +1280,7 @@ const parseSuccessfulPublishRuns = (value: unknown): readonly SuccessfulPublishR
   if (!Array.isArray(payload.workflow_runs)) {
     throw new GitHubReleaseReviewError('github-api-invalid-response', 'list successful Bayn publish runs')
   }
-  return payload.workflow_runs.map((item, index) => {
+  return payload.workflow_runs.flatMap((item, index) => {
     const run = expectRecord(item, `successful Bayn publish run ${index}`)
     const parsed: SuccessfulPublishRun = {
       id: expectInteger(run.id, `successful Bayn publish run ${index} ID`),
@@ -1020,15 +1292,49 @@ const parseSuccessfulPublishRuns = (value: unknown): readonly SuccessfulPublishR
       status: expectString(run.status, `successful Bayn publish run ${index} status`),
       conclusion: expectString(run.conclusion, `successful Bayn publish run ${index} conclusion`),
     }
-    if (
-      parsed.headBranch !== 'main' ||
-      parsed.event !== 'push' ||
-      parsed.status !== 'completed' ||
-      parsed.conclusion !== 'success'
-    ) {
-      throw new GitHubReleaseReviewError('github-api-invalid-response', `successful Bayn publish run ${index} contract`)
+    return parsed.headBranch === 'main' &&
+      (parsed.event === 'push' || parsed.event === 'workflow_dispatch') &&
+      parsed.status === 'completed' &&
+      parsed.conclusion === 'success'
+      ? [parsed]
+      : []
+  })
+}
+
+const parseBaynBuildWorkflowRuns = (value: unknown): readonly BaynBuildWorkflowRun[] => {
+  const payload = expectRecord(value, 'list Bayn build workflow runs')
+  if (!Array.isArray(payload.workflow_runs)) {
+    throw new GitHubReleaseReviewError('github-api-invalid-response', 'list Bayn build workflow runs')
+  }
+  return payload.workflow_runs.map((item, index) => {
+    const run = expectRecord(item, `Bayn build workflow run ${index}`)
+    return {
+      id: expectInteger(run.id, `Bayn build workflow run ${index} ID`),
+      runNumber: expectInteger(run.run_number, `Bayn build workflow run ${index} number`),
+      runAttempt: expectInteger(run.run_attempt, `Bayn build workflow run ${index} attempt`),
+      headSha: expectSha(run.head_sha, `Bayn build workflow run ${index} head SHA`),
+      headBranch: expectString(run.head_branch, `Bayn build workflow run ${index} head branch`),
+      event: expectString(run.event, `Bayn build workflow run ${index} event`),
+      status: expectString(run.status, `Bayn build workflow run ${index} status`),
+      conclusion: expectNullableString(run.conclusion, `Bayn build workflow run ${index} conclusion`),
+      createdAt: expectString(run.created_at, `Bayn build workflow run ${index} created at`),
+      updatedAt: expectString(run.updated_at, `Bayn build workflow run ${index} updated at`),
     }
-    return parsed
+  })
+}
+
+const parseBaynBuildWorkflowJobs = (value: unknown): readonly BaynBuildWorkflowJob[] => {
+  const payload = expectRecord(value, 'list Bayn build workflow jobs')
+  if (!Array.isArray(payload.jobs)) {
+    throw new GitHubReleaseReviewError('github-api-invalid-response', 'list Bayn build workflow jobs')
+  }
+  return payload.jobs.map((item, index) => {
+    const job = expectRecord(item, `Bayn build workflow job ${index}`)
+    return {
+      name: expectString(job.name, `Bayn build workflow job ${index} name`),
+      status: expectString(job.status, `Bayn build workflow job ${index} status`),
+      conclusion: expectNullableString(job.conclusion, `Bayn build workflow job ${index} conclusion`),
+    }
   })
 }
 
@@ -1570,18 +1876,29 @@ interface StaticReleaseEligibilityContext {
 const loadStaticReleaseEligibilityContext = async (
   options: GitHubLoaderOptions,
 ): Promise<StaticReleaseEligibilityContext> => {
-  const successfulRunsOperation = `list successful ${githubWorkflowFile} main push runs`
-  const [currentCommit, successfulRunsResponse] = await Promise.all([
+  const successfulPushRunsOperation = `read latest successful ${githubWorkflowFile} main push`
+  const successfulDispatchRunsOperation = `read latest successful ${githubWorkflowFile} main workflow dispatch`
+  const [currentCommit, successfulPushRunsResponse, successfulDispatchRunsResponse] = await Promise.all([
     fetchCommitDetail(options, options.mainCommitSha),
     requestGitHubJson({
-      url: `https://api.github.com/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.name)}/actions/workflows/${encodeURIComponent(githubWorkflowFile)}/runs?branch=main&event=push&status=success&per_page=100&page=1`,
-      operation: successfulRunsOperation,
+      url: `https://api.github.com/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.name)}/actions/workflows/${encodeURIComponent(githubWorkflowFile)}/runs?branch=main&event=push&status=success&per_page=1&page=1`,
+      operation: successfulPushRunsOperation,
+      token: options.token,
+      requestTimeoutMs: options.requestTimeoutMs,
+      fetchFn: options.fetchFn,
+    }),
+    requestGitHubJson({
+      url: `https://api.github.com/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.name)}/actions/workflows/${encodeURIComponent(githubWorkflowFile)}/runs?branch=main&event=workflow_dispatch&status=success&per_page=1&page=1`,
+      operation: successfulDispatchRunsOperation,
       token: options.token,
       requestTimeoutMs: options.requestTimeoutMs,
       fetchFn: options.fetchFn,
     }),
   ])
-  const lastPublishedRevision = resolveLastPublishedRevision(parseSuccessfulPublishRuns(successfulRunsResponse.value))
+  const lastPublishedRevision = resolveLastPublishedRevision([
+    ...parseSuccessfulPublishRuns(successfulPushRunsResponse.value),
+    ...parseSuccessfulPublishRuns(successfulDispatchRunsResponse.value),
+  ])
   if (lastPublishedRevision.status !== 'resolved') {
     return { currentCommit, lastPublishedRevision, comparison: null }
   }
@@ -1680,13 +1997,146 @@ export const createGitHubReleaseEligibilityLoader = (options: {
   }
 }
 
+const fetchDefaultBranchSha = async (options: GitHubLoaderOptions): Promise<string> => {
+  const operation = `read trusted default branch ${options.baseRefName}`
+  const response = await requestGitHubJson({
+    url: `https://api.github.com/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.name)}/commits/${encodeURIComponent(options.baseRefName)}?per_page=1`,
+    operation,
+    token: options.token,
+    requestTimeoutMs: options.requestTimeoutMs,
+    fetchFn: options.fetchFn,
+  })
+  return expectSha(expectRecord(response.value, operation).sha, `${operation} SHA`)
+}
+
+const fetchBaynBuildWorkflowRuns = async (
+  options: GitHubLoaderOptions,
+  input: { readonly headSha: string; readonly event: 'push' | 'workflow_dispatch' },
+): Promise<readonly BaynBuildWorkflowRun[]> => {
+  const operation = `list ${githubWorkflowFile} ${input.event} runs for ${shortSha(input.headSha)}`
+  const response = await requestGitHubJson({
+    url: `https://api.github.com/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.name)}/actions/workflows/${encodeURIComponent(githubWorkflowFile)}/runs?branch=main&head_sha=${encodeURIComponent(input.headSha)}&event=${input.event}&per_page=100&page=1`,
+    operation,
+    token: options.token,
+    requestTimeoutMs: options.requestTimeoutMs,
+    fetchFn: options.fetchFn,
+  })
+  if (response.headers.get('link')?.includes('rel="next"') === true) {
+    throw new GitHubReleaseReviewError('github-api-pagination-limit', operation)
+  }
+  const runs = parseBaynBuildWorkflowRuns(response.value)
+  if (runs.some((run) => run.headSha !== input.headSha || run.headBranch !== 'main' || run.event !== input.event)) {
+    throw new GitHubReleaseReviewError('github-api-invalid-response', operation)
+  }
+  return runs
+}
+
+const fetchBaynBuildWorkflowJobs = async (
+  options: GitHubLoaderOptions,
+  runId: number,
+): Promise<readonly BaynBuildWorkflowJob[]> => {
+  const operation = `list ${githubWorkflowFile} run ${runId} jobs`
+  const response = await requestGitHubJson({
+    url: `https://api.github.com/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.name)}/actions/runs/${runId}/jobs?per_page=100&page=1`,
+    operation,
+    token: options.token,
+    requestTimeoutMs: options.requestTimeoutMs,
+    fetchFn: options.fetchFn,
+  })
+  if (response.headers.get('link')?.includes('rel="next"') === true) {
+    throw new GitHubReleaseReviewError('github-api-pagination-limit', operation)
+  }
+  return parseBaynBuildWorkflowJobs(response.value)
+}
+
+const latestFailedSourcePush = (
+  runs: readonly BaynBuildWorkflowRun[],
+  sourceCommitSha: string,
+): BaynBuildWorkflowRun | undefined =>
+  runs
+    .filter(
+      (run) =>
+        run.headSha === sourceCommitSha &&
+        run.headBranch === 'main' &&
+        run.event === 'push' &&
+        run.status === 'completed' &&
+        run.conclusion === 'failure',
+    )
+    .toSorted(
+      (left, right) => right.runNumber - left.runNumber || right.runAttempt - left.runAttempt || right.id - left.id,
+    )[0]
+
+export const createGitHubReleaseRetryLoader = (options: {
+  readonly repository: string
+  readonly token: string
+  readonly mainCommitSha: string
+  readonly baseRefName: string
+  readonly requestTimeoutMs: number
+  readonly fetchFn?: typeof fetch
+}): (() => Promise<BaynReleaseRetrySnapshot>) => {
+  const [owner, name, extra] = options.repository.split('/')
+  if (owner === undefined || owner.length === 0 || name === undefined || name.length === 0 || extra !== undefined) {
+    throw new Error('repository must be in owner/name form')
+  }
+  const loaderOptions: GitHubLoaderOptions = {
+    owner,
+    name,
+    token: options.token,
+    mainCommitSha: options.mainCommitSha,
+    baseRefName: options.baseRefName,
+    requestTimeoutMs: options.requestTimeoutMs,
+    fetchFn: options.fetchFn ?? fetch,
+  }
+  const loadEligibility = createGitHubReleaseEligibilityLoader(options)
+
+  return async () => {
+    const [eligibility, defaultBranchSha] = await Promise.all([loadEligibility(), fetchDefaultBranchSha(loaderOptions)])
+    const [sourcePushRuns, currentDispatchRuns] = await Promise.all([
+      fetchBaynBuildWorkflowRuns(loaderOptions, {
+        headSha: options.mainCommitSha,
+        event: 'push',
+      }),
+      fetchBaynBuildWorkflowRuns(loaderOptions, {
+        headSha: options.mainCommitSha,
+        event: 'workflow_dispatch',
+      }),
+    ])
+    const failedRun = latestFailedSourcePush(sourcePushRuns, options.mainCommitSha)
+    const jobs = failedRun === undefined ? [] : await fetchBaynBuildWorkflowJobs(loaderOptions, failedRun.id)
+    return {
+      ...eligibility,
+      defaultBranchSha,
+      failedReviewRun: failedRun === undefined ? null : { run: failedRun, jobs },
+      publicationSucceeded:
+        sourcePushRuns.some((run) => run.status === 'completed' && run.conclusion === 'success') ||
+        currentDispatchRuns.some((run) => run.status === 'completed' && run.conclusion === 'success'),
+      retryInProgress: currentDispatchRuns.some(
+        (run) =>
+          run.headSha === options.mainCommitSha &&
+          run.headBranch === 'main' &&
+          run.event === 'workflow_dispatch' &&
+          (run.status === 'queued' || run.status === 'in_progress'),
+      ),
+    }
+  }
+}
+
 interface CliOptions {
+  readonly mode: 'push' | 'retry-discovery' | 'retry-publication'
   readonly repository: string
   readonly mainCommitSha: string
   readonly maxAttempts: number
   readonly pollIntervalMs: number
   readonly requestTimeoutMs: number
   readonly pushBeforeSha: string | null
+  readonly githubOutputPath: string | null
+  readonly triggerKind: 'issue-comment' | 'schedule' | null
+  readonly triggerPrNumber: number | null
+  readonly triggerActorLogin: string | null
+  readonly retrySourceCommitSha: string | null
+  readonly retryPrNumber: number | null
+  readonly retryHeadSha: string | null
+  readonly retryFailedRunId: number | null
 }
 
 const parsePositiveInteger = (value: string, name: string): number => {
@@ -1694,6 +2144,9 @@ const parsePositiveInteger = (value: string, name: string): number => {
   if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error(`${name} must be a positive integer`)
   return parsed
 }
+
+const parseOptionalPositiveInteger = (value: string | undefined, name: string): number | null =>
+  value === undefined ? null : parsePositiveInteger(value, name)
 
 export const parseVerifyReleaseReviewArguments = (
   arguments_: readonly string[],
@@ -1710,12 +2163,21 @@ export const parseVerifyReleaseReviewArguments = (
     values.set(name, value)
   }
   const allowed = new Set([
+    '--mode',
     '--repository',
     '--commit',
     '--push-before',
     '--max-attempts',
     '--poll-interval-ms',
     '--request-timeout-ms',
+    '--github-output',
+    '--trigger-kind',
+    '--trigger-pr-number',
+    '--trigger-actor-login',
+    '--retry-source-commit',
+    '--retry-pr-number',
+    '--retry-head',
+    '--retry-failed-run-id',
   ])
   for (const name of values.keys()) {
     if (!allowed.has(name)) throw new Error(`unknown argument ${name}`)
@@ -1724,6 +2186,14 @@ export const parseVerifyReleaseReviewArguments = (
   const repository = values.get('--repository') ?? environment.GITHUB_REPOSITORY
   const mainCommitSha = values.get('--commit') ?? environment.GITHUB_SHA
   const pushBeforeSha = values.get('--push-before') ?? null
+  const modeValue = values.get('--mode') ?? 'push'
+  if (modeValue !== 'push' && modeValue !== 'retry-discovery' && modeValue !== 'retry-publication') {
+    throw new Error('--mode must be push, retry-discovery, or retry-publication')
+  }
+  const triggerKindValue = values.get('--trigger-kind') ?? null
+  if (triggerKindValue !== null && triggerKindValue !== 'issue-comment' && triggerKindValue !== 'schedule') {
+    throw new Error('--trigger-kind must be issue-comment or schedule')
+  }
   if (repository === undefined || repository.length === 0)
     throw new Error('--repository or GITHUB_REPOSITORY is required')
   if (mainCommitSha === undefined || !/^[0-9a-f]{40}$/.test(mainCommitSha)) {
@@ -1733,12 +2203,67 @@ export const parseVerifyReleaseReviewArguments = (
     throw new Error('--push-before must be a lowercase 40-character commit SHA')
   }
   return {
+    mode: modeValue,
     repository,
     mainCommitSha,
     pushBeforeSha,
     maxAttempts: parsePositiveInteger(values.get('--max-attempts') ?? '10', '--max-attempts'),
     pollIntervalMs: parsePositiveInteger(values.get('--poll-interval-ms') ?? '10000', '--poll-interval-ms'),
     requestTimeoutMs: parsePositiveInteger(values.get('--request-timeout-ms') ?? '10000', '--request-timeout-ms'),
+    githubOutputPath: values.get('--github-output') ?? environment.GITHUB_OUTPUT ?? null,
+    triggerKind: triggerKindValue,
+    triggerPrNumber: parseOptionalPositiveInteger(values.get('--trigger-pr-number'), '--trigger-pr-number'),
+    triggerActorLogin: values.get('--trigger-actor-login') ?? null,
+    retrySourceCommitSha: values.get('--retry-source-commit') ?? null,
+    retryPrNumber: parseOptionalPositiveInteger(values.get('--retry-pr-number'), '--retry-pr-number'),
+    retryHeadSha: values.get('--retry-head') ?? null,
+    retryFailedRunId: parseOptionalPositiveInteger(values.get('--retry-failed-run-id'), '--retry-failed-run-id'),
+  }
+}
+
+const appendGitHubOutputs = async (
+  path: string | null,
+  values: Readonly<Record<string, string | number | boolean>>,
+) => {
+  if (path === null) return
+  const output = Object.entries(values)
+    .map(([name, value]) => `${name}=${String(value)}\n`)
+    .join('')
+  await appendFile(path, output, 'utf8')
+}
+
+const retryTriggerFromOptions = (options: CliOptions): BaynReleaseRetryTrigger => {
+  if (options.mode === 'retry-discovery') {
+    if (options.triggerKind === 'schedule') return { type: 'schedule' }
+    if (
+      options.triggerKind === 'issue-comment' &&
+      options.triggerPrNumber !== null &&
+      options.triggerActorLogin !== null
+    ) {
+      return {
+        type: 'issue-comment',
+        prNumber: options.triggerPrNumber,
+        actorLogin: options.triggerActorLogin,
+      }
+    }
+    throw new Error('retry-discovery requires a complete --trigger-kind binding')
+  }
+  if (
+    options.retrySourceCommitSha === null ||
+    !/^[0-9a-f]{40}$/.test(options.retrySourceCommitSha) ||
+    options.retryPrNumber === null ||
+    options.retryHeadSha === null ||
+    !/^[0-9a-f]{40}$/.test(options.retryHeadSha) ||
+    options.retryFailedRunId === null
+  ) {
+    throw new Error('retry-publication requires exact source, PR, head, and failed-run bindings')
+  }
+  return {
+    type: 'workflow-dispatch',
+    sourceCommitSha: options.retrySourceCommitSha,
+    prNumber: options.retryPrNumber,
+    headSha: options.retryHeadSha,
+    failedRunId: options.retryFailedRunId,
   }
 }
 
@@ -1746,28 +2271,93 @@ const run = async (): Promise<void> => {
   const options = parseVerifyReleaseReviewArguments(process.argv.slice(2))
   const token = process.env.GITHUB_TOKEN
   if (token === undefined || token.length === 0) throw new Error('GITHUB_TOKEN is required')
-  if (options.pushBeforeSha === null) throw new Error('--push-before is required for Bayn publication eligibility')
-  const result = await pollBaynReleaseEligibility({
+  if (options.mode === 'push') {
+    if (options.pushBeforeSha === null)
+      throw new Error('--push-before is required for Bayn push publication eligibility')
+    const result = await pollBaynReleaseEligibility({
+      mainCommitSha: options.mainCommitSha,
+      baseRefName: 'main',
+      maxAttempts: options.maxAttempts,
+      pollIntervalMs: options.pollIntervalMs,
+      pushBeforeSha: options.pushBeforeSha,
+      loadSnapshot: createGitHubReleaseEligibilityLoader({
+        repository: options.repository,
+        token,
+        mainCommitSha: options.mainCommitSha,
+        baseRefName: 'main',
+        requestTimeoutMs: options.requestTimeoutMs,
+      }),
+    })
+    if (result.status === 'hold') {
+      console.error(`BAYN_RELEASE_REVIEW_HOLD ${result.code}: ${result.message}`)
+      process.exitCode = 1
+      return
+    }
+    await appendGitHubOutputs(options.githubOutputPath, { publish: true, source_sha: options.mainCommitSha })
+    console.log(
+      `BAYN_RELEASE_REVIEW_ELIGIBLE published=${shortSha(result.lastPublishedRevision)} current=${shortSha(options.mainCommitSha)} checked_commits=${result.checkedCommitCount} bayn_affecting_commits=${result.baynAffectingCommitCount} reviewed_prs=${result.reviewedPullRequests.map((review) => `#${review.prNumber}@${shortSha(review.headSha)}`).join(',')}; attempts=${result.attempts}`,
+    )
+    return
+  }
+
+  const retry = evaluateBaynReleaseRetry({
     mainCommitSha: options.mainCommitSha,
     baseRefName: 'main',
-    maxAttempts: options.maxAttempts,
-    pollIntervalMs: options.pollIntervalMs,
-    pushBeforeSha: options.pushBeforeSha,
-    loadSnapshot: createGitHubReleaseEligibilityLoader({
+    snapshot: await createGitHubReleaseRetryLoader({
       repository: options.repository,
       token,
       mainCommitSha: options.mainCommitSha,
       baseRefName: 'main',
       requestTimeoutMs: options.requestTimeoutMs,
-    }),
+    })(),
+    trigger: retryTriggerFromOptions(options),
+    nowMs: Date.now(),
   })
-  if (result.status === 'hold') {
-    console.error(`BAYN_RELEASE_REVIEW_HOLD ${result.code}: ${result.message}`)
+  if (retry.status === 'hold') {
+    if (options.mode === 'retry-discovery' && retry.retryable) {
+      await appendGitHubOutputs(options.githubOutputPath, {
+        dispatch: false,
+        publish: false,
+        retry_code: retry.code,
+      })
+      console.log(`BAYN_RELEASE_RETRY_NOOP ${retry.code}: ${retry.message}`)
+      return
+    }
+    console.error(`BAYN_RELEASE_RETRY_HOLD ${retry.code}: ${retry.message}`)
     process.exitCode = 1
     return
   }
+  if (retry.status === 'noop') {
+    await appendGitHubOutputs(options.githubOutputPath, {
+      dispatch: false,
+      publish: false,
+      retry_code: retry.code,
+    })
+    console.log(`BAYN_RELEASE_RETRY_NOOP ${retry.code}: ${retry.message}`)
+    if (options.mode === 'retry-publication') process.exitCode = 1
+    return
+  }
+
+  const retryOutputs = {
+    retry_source_sha: retry.sourceCommitSha,
+    retry_pr_number: retry.prNumber,
+    retry_pr_head: retry.headSha,
+    retry_failed_run_id: retry.failedRunId,
+  }
+  if (options.mode === 'retry-discovery') {
+    await appendGitHubOutputs(options.githubOutputPath, { dispatch: true, ...retryOutputs })
+    console.log(
+      `BAYN_RELEASE_RETRY_DISPATCH current=${shortSha(retry.currentMainSha)} source=${shortSha(retry.sourceCommitSha)} pr=#${retry.prNumber}@${shortSha(retry.headSha)} failed_run=${retry.failedRunId}`,
+    )
+    return
+  }
+  await appendGitHubOutputs(options.githubOutputPath, {
+    publish: true,
+    source_sha: retry.currentMainSha,
+    ...retryOutputs,
+  })
   console.log(
-    `BAYN_RELEASE_REVIEW_ELIGIBLE published=${shortSha(result.lastPublishedRevision)} current=${shortSha(options.mainCommitSha)} checked_commits=${result.checkedCommitCount} bayn_affecting_commits=${result.baynAffectingCommitCount} reviewed_prs=${result.reviewedPullRequests.map((review) => `#${review.prNumber}@${shortSha(review.headSha)}`).join(',')}; attempts=${result.attempts}`,
+    `BAYN_RELEASE_RETRY_ELIGIBLE current=${shortSha(retry.currentMainSha)} source=${shortSha(retry.sourceCommitSha)} pr=#${retry.prNumber}@${shortSha(retry.headSha)} failed_run=${retry.failedRunId}`,
   )
 }
 
