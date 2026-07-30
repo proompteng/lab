@@ -243,9 +243,6 @@ const validateArgo = (
       resource.namespace === 'bayn'
     )
   })
-  if (operationDeployment === undefined && reconciledRevision === promotionRevision) {
-    fail('ARGO_NOT_CONVERGED', 'Argo operation does not contain the Bayn Deployment', true)
-  }
   if (operationDeployment !== undefined) {
     const operationDeploymentRecord = record(
       operationDeployment,
@@ -706,7 +703,7 @@ const requireConclusiveDenial = (result: CommandResult, permission: string, gran
 }
 
 const checkWriteDenied = async (run: RunCommand, signal: AbortSignal, resource: string, namespace: string) => {
-  for (const verb of ['create', 'update', 'patch', 'delete']) {
+  for (const verb of ['create', 'update', 'patch', 'delete', 'deletecollection']) {
     const result = await run(['kubectl', 'auth', 'can-i', verb, resource, '-n', namespace], signal)
     requireConclusiveDenial(
       result,

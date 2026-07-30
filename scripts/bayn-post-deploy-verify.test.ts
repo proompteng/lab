@@ -350,9 +350,15 @@ describe('production snapshot', () => {
     expect(() => validateSnapshot(snapshot, descendantArgoRevision, expected, expectedArgoRevision)).not.toThrow()
   })
 
-  test('still requires the Bayn Deployment in the exact promotion operation', () => {
+  test('accepts an exact selective sync that omits an unchanged Bayn Deployment', () => {
     const snapshot = clone()
     ;(snapshot.application as any).status.operationState.syncResult.resources = []
+    expect(() => validateSnapshot(snapshot, expectedArgoRevision, expected)).not.toThrow()
+  })
+
+  test('rejects a Bayn Deployment entry that is present but not Synced', () => {
+    const snapshot = clone()
+    ;(snapshot.application as any).status.operationState.syncResult.resources[0].status = 'OutOfSync'
     expect(captureFailure(() => validateSnapshot(snapshot, expectedArgoRevision, expected)).code).toBe(
       'ARGO_NOT_CONVERGED',
     )
@@ -675,6 +681,22 @@ describe('redaction and permissions', () => {
       if (resource === 'secrets') {
         return { stdout: verb === grantedVerb ? 'yes\n' : 'no\n', stderr: '', exitCode: 0 }
       }
+      const requiredRead = ['get', 'list'].includes(verb)
+      return { stdout: requiredRead ? 'yes\n' : 'no\n', stderr: '', exitCode: 0 }
+    }
+
+    await expect(validateReadOnlyPermissions(run, controller.signal)).rejects.toMatchObject({
+      code: 'RBAC_DENIED',
+    })
+  })
+
+  test('rejects deletecollection authority independently of delete', async () => {
+    const controller = new AbortController()
+    const run = async (command: readonly string[]) => {
+      const verb = command[3] ?? ''
+      const resource = command[4] ?? ''
+      if (resource === 'secrets') return { stdout: 'no\n', stderr: '', exitCode: 0 }
+      if (verb === 'deletecollection') return { stdout: 'yes\n', stderr: '', exitCode: 0 }
       const requiredRead = ['get', 'list'].includes(verb)
       return { stdout: requiredRead ? 'yes\n' : 'no\n', stderr: '', exitCode: 0 }
     }
