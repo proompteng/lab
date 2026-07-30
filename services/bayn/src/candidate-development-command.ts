@@ -2237,26 +2237,44 @@ export type CandidateDevelopmentCommandReportWriter = (
   renderedReport: string,
 ) => Effect.Effect<void, CandidateDevelopmentCommandFailure>
 
-const writeCandidateDevelopmentCommandReportToStdout: CandidateDevelopmentCommandReportWriter = (renderedReport) =>
-  Effect.tryPromise({
-    try: () =>
-      new Promise<void>((resolveWrite, rejectWrite) => {
-        process.stdout.write(renderedReport, (error) => {
-          if (error === null || error === undefined) resolveWrite()
-          else rejectWrite(error)
-        })
-      }),
-    catch: (cause): CandidateDevelopmentCommandFailure => ({
-      _tag: 'CandidateDevelopmentCommandOutputFailed',
-      cause,
-    }),
-  })
+export interface CandidateDevelopmentCommandOutput {
+  readonly write: (renderedReport: string, callback: (error?: Error | null) => void) => unknown
+  readonly destroy: (error?: Error) => void
+}
+
+export const makeCandidateDevelopmentCommandReportWriter =
+  (output: CandidateDevelopmentCommandOutput): CandidateDevelopmentCommandReportWriter =>
+  (renderedReport) =>
+    Effect.callback<void, CandidateDevelopmentCommandFailure>((resume) => {
+      let pending = true
+      const complete = (error?: Error | null) => {
+        if (!pending) return
+        pending = false
+        resume(
+          error === null || error === undefined
+            ? Effect.succeed(undefined)
+            : Effect.fail({ _tag: 'CandidateDevelopmentCommandOutputFailed', cause: error }),
+        )
+      }
+      try {
+        output.write(renderedReport, complete)
+      } catch (cause) {
+        pending = false
+        resume(Effect.fail({ _tag: 'CandidateDevelopmentCommandOutputFailed', cause }))
+      }
+      return Effect.sync(() => {
+        if (!pending) return
+        pending = false
+        output.destroy(new Error('candidate development report output interrupted'))
+      })
+    })
+
+const writeCandidateDevelopmentCommandReportToStdout = makeCandidateDevelopmentCommandReportWriter(process.stdout)
 
 export const writeCandidateDevelopmentCommandReport = (
   report: CandidateDevelopmentCommandReport,
   writer: CandidateDevelopmentCommandReportWriter = writeCandidateDevelopmentCommandReportToStdout,
-): Effect.Effect<void, CandidateDevelopmentCommandFailure> =>
-  writer(renderCandidateDevelopmentCommandReport(report)).pipe(Effect.uninterruptible)
+): Effect.Effect<void, CandidateDevelopmentCommandFailure> => writer(renderCandidateDevelopmentCommandReport(report))
 
 export const runCandidateDevelopmentCommand = <Registration, DevelopmentData, Error, Requirements>(
   program: CandidateDevelopmentExecutableProgram<Registration, DevelopmentData, Error, Requirements>,

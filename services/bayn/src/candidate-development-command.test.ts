@@ -13,6 +13,7 @@ import {
   evaluateCandidateDevelopmentArtifact,
   executeCandidateDevelopmentProgram,
   loadCandidateDevelopmentExecutableProgram,
+  makeCandidateDevelopmentCommandReportWriter,
   renderCandidateDevelopmentCommandReport,
   validateCandidateDevelopmentAccountingReplay,
   validateCandidateDevelopmentCommandEvaluation,
@@ -2117,38 +2118,34 @@ describe('candidate development command', () => {
     })
   })
 
-  test('keeps the sole report write attached through interruption', async () => {
+  test('cancels a blocked report output write on interruption', async () => {
     const report = successOf(buildFixtureReport(reportFixture(0.01), baselineFixture()))
+    let resolveStarted: (() => void) | undefined
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve
+    })
+    let completion: ((error?: Error | null) => void) | undefined
+    let destroyed = false
+    const writer = makeCandidateDevelopmentCommandReportWriter({
+      write: (_renderedReport, callback) => {
+        completion = callback
+        resolveStarted?.()
+        return false
+      },
+      destroy: (error) => {
+        destroyed = true
+        completion?.(error)
+      },
+    })
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const started = yield* Deferred.make<void>()
-        const release = yield* Deferred.make<void>()
-        let completed = false
-        const fiber = yield* writeCandidateDevelopmentCommandReport(report, () =>
-          Deferred.succeed(started, undefined).pipe(
-            Effect.andThen(Deferred.await(release)),
-            Effect.tap(() =>
-              Effect.sync(() => {
-                completed = true
-              }),
-            ),
-          ),
-        ).pipe(Effect.forkChild)
-
-        yield* Deferred.await(started)
-        const interruption = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild)
-        yield* Effect.yieldNow
-
-        expect(interruption.pollUnsafe()).toBeUndefined()
-        expect(completed).toBe(false)
-
-        yield* Deferred.succeed(release, undefined)
-        yield* Fiber.join(interruption)
-
-        expect(completed).toBe(true)
+        const fiber = yield* writeCandidateDevelopmentCommandReport(report, writer).pipe(Effect.forkChild)
+        yield* Effect.promise(() => started)
+        yield* Fiber.interrupt(fiber).pipe(Effect.timeout('1 second'))
       }),
     )
+    expect(destroyed).toBe(true)
   })
 
   test('requires the exact executable program shape before execution', () => {
