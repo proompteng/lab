@@ -1338,6 +1338,66 @@ describe('candidate development command', () => {
     })
   })
 
+  test('requires cash yield before same-session fill and fee evidence', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const insertFeeBeforeYield = (events: EvaluationResult['events'], runId: string): EvaluationResult['events'] => {
+      const yieldIndex = events.findIndex((event) => event.kind === 'cash-yield')
+      const cashYield = events[yieldIndex]
+      if (yieldIndex < 0 || cashYield?.kind !== 'cash-yield') {
+        throw new Error('cash-yield fixture must be present')
+      }
+      const payload = {
+        kind: 'fee' as const,
+        sessionDate: cashYield.sessionDate,
+        commissionMicros: '0',
+        secMicros: '0',
+        tafMicros: '0',
+        catMicros: '0',
+        totalMicros: '0',
+      }
+      const fee = { ...payload, id: canonicalHashV1({ runId, ...payload }) }
+      return [...events.slice(0, yieldIndex), fee, ...events.slice(yieldIndex)]
+    }
+
+    const baselineWithLateYield = {
+      ...baseline,
+      events: insertFeeBeforeYield(baseline.events, baseline.runId),
+    }
+    expect(
+      buildCandidateDevelopmentCommandReport(
+        report,
+        commandEvaluationFixture(report, baselineWithLateYield),
+        fixtureStrategyProtocol,
+      ),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'baseline.cashYield.order',
+        expected: 'before every same-session fill and fee',
+        observed: { kind: 'fee' },
+      },
+    })
+
+    const evaluation = commandEvaluationFixture(report, baseline)
+    const accounting = {
+      ...evaluation.accounting,
+      stressedEvents: insertFeeBeforeYield(evaluation.accounting.stressedEvents, evaluation.accounting.stressedRunId),
+    }
+    expect(
+      buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting }, fixtureStrategyProtocol),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'stressed.cashYield.order',
+        expected: 'before every same-session fill and fee',
+        observed: { kind: 'fee' },
+      },
+    })
+  })
+
   test('binds the accounting predecessor to the immediately preceding official session', () => {
     const report = reportFixture(0.01)
     const baseline = baselineFixture()

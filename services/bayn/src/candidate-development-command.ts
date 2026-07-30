@@ -1022,9 +1022,28 @@ const validateCashYieldIntervals = (
     )
   }
   const seenSessions = new Set<string>()
+  const firstRebalanceEventBySession = new Map<string, { readonly index: number; readonly kind: 'fill' | 'fee' }>()
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index]
+    if (event.kind === 'fill' || event.kind === 'fee') {
+      if (!firstRebalanceEventBySession.has(event.sessionDate)) {
+        firstRebalanceEventBySession.set(event.sessionDate, { index, kind: event.kind })
+      }
+      continue
+    }
     if (event.kind !== 'cash-yield') continue
+    const priorRebalanceEvent = firstRebalanceEventBySession.get(event.sessionDate)
+    if (priorRebalanceEvent !== undefined) {
+      return Result.fail(
+        markedEquityFailure(
+          'binding-mismatch',
+          index,
+          `${field}.cashYield.order`,
+          'before every same-session fill and fee',
+          priorRebalanceEvent,
+        ),
+      )
+    }
     if (seenSessions.has(event.sessionDate)) {
       return Result.fail(
         markedEquityFailure(
