@@ -235,6 +235,7 @@ export type CandidateDevelopmentCommandFailure =
         | 'verify-module-blob'
         | 'verify-module-format'
         | 'verify-preregistration-blob'
+        | 'verify-preregistration-lineage'
         | 'verify-source-manifest-blob'
         | 'verify-program-binding'
         | 'derive-run-identity'
@@ -2993,6 +2994,13 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
             observed: preregistrationBlobOid,
           })
         }
+        await sourceStep('verify-preregistration-lineage', () =>
+          sourceGit.text(
+            repositoryRoot,
+            ['merge-base', '--is-ancestor', preregistration.sourceRevision, sourceRevision],
+            signal,
+          ),
+        )
       }
       const moduleSpec = `${sourceRevision}:${moduleRepositoryPath.success}`
       const sourceManifestSpec = `${sourceRevision}:${sourceManifestRepositoryPath.success}`
