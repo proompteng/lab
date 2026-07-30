@@ -10,6 +10,7 @@ import {
   runCandidateDevelopment,
   type CandidateDevelopmentEffects,
   type CandidateDevelopmentEvaluation,
+  type CandidateDevelopmentPreflightPass,
   type CandidateDevelopmentPreflightInput,
   type CandidateDevelopmentReport,
   type CandidateDevelopmentRunFailure,
@@ -38,15 +39,43 @@ import {
   strictParseOptions,
 } from './schemas'
 import { calculateExactPerformanceMetrics, buildVerdict } from './simulation/metrics'
+import { reconcileMarkedEquity } from './simulation-reconciliation'
 import type { EvaluationResult, PerformanceMetrics } from './types'
 
 export const candidateDevelopmentExecutableProgramSchemaVersion =
-  'bayn.candidate-development-executable-program.v1' as const
+  'bayn.candidate-development-executable-program.v2' as const
+
+export interface CandidateDevelopmentAccountingEvidence {
+  readonly schemaVersion: 'bayn.candidate-development-accounting-evidence.v1'
+  readonly runId: string
+  readonly initialCapitalMicros: string
+  readonly evaluatorTotalFeesMicros: string
+  readonly evaluatorEndingEquityMicros: string
+  readonly events: EvaluationResult['events']
+  readonly baselineSimulation: EvaluationResult['simulation']
+  readonly stressedSimulation: EvaluationResult['simulation']
+  readonly equitySeries: EvaluationResult['equitySeries']
+  readonly markedEquityReconciliation: EvaluationResult['markedEquityReconciliation']
+}
+
+export interface CandidateDevelopmentCommandEvaluation extends CandidateDevelopmentEvaluation {
+  readonly accounting: CandidateDevelopmentAccountingEvidence
+}
+
+export interface CandidateDevelopmentCommandEffects<Registration, DevelopmentData, Error, Requirements> extends Omit<
+  CandidateDevelopmentEffects<Registration, DevelopmentData, Error, Requirements>,
+  'evaluateDevelopment'
+> {
+  readonly evaluateDevelopment: (
+    data: DevelopmentData,
+    preflight: CandidateDevelopmentPreflightPass,
+  ) => Effect.Effect<CandidateDevelopmentCommandEvaluation, Error, Requirements>
+}
 
 export interface CandidateDevelopmentExecutableProgram<Registration, DevelopmentData, Error, Requirements> {
   readonly schemaVersion: typeof candidateDevelopmentExecutableProgramSchemaVersion
   readonly input: CandidateDevelopmentPreflightInput
-  readonly effects: CandidateDevelopmentEffects<Registration, DevelopmentData, Error, Requirements>
+  readonly effects: CandidateDevelopmentCommandEffects<Registration, DevelopmentData, Error, Requirements>
 }
 
 type CandidateDevelopmentComparisonGateName =
@@ -71,12 +100,13 @@ export interface CandidateDevelopmentCommandDecision {
 }
 
 export interface CandidateDevelopmentCommandReportMaterial {
-  readonly schemaVersion: 'bayn.candidate-development-command-report.v1'
+  readonly schemaVersion: 'bayn.candidate-development-command-report.v2'
   readonly candidateOrdinal: number
   readonly priorTrialCount: number
   readonly strategyProtocolHash: string
   readonly decision: CandidateDevelopmentCommandDecision
   readonly baseline: EvaluationResult
+  readonly accounting: CandidateDevelopmentAccountingEvidence
   readonly development: CandidateDevelopmentReport
 }
 
@@ -133,7 +163,7 @@ export type CandidateDevelopmentCommandFailure =
         | 'observations-insufficient'
         | 'micros-invalid'
         | 'cumulative-mismatch'
-        | 'event-mismatch'
+        | 'return-mismatch'
         | 'session-mismatch'
         | 'metrics-failed'
         | 'metrics-mismatch'
@@ -145,11 +175,12 @@ export type CandidateDevelopmentCommandFailure =
     }
   | {
       readonly _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid'
-      readonly reason: 'summary-mismatch' | 'series-mismatch'
+      readonly reason: 'binding-mismatch' | 'reconstruction-failed' | 'proof-mismatch' | 'selected-trace-mismatch'
       readonly index: number | null
       readonly field: string
       readonly expected: unknown
       readonly observed: unknown
+      readonly cause?: unknown
     }
   | {
       readonly _tag: 'CandidateDevelopmentCommandEconomicGateSetInvalid'
@@ -242,6 +273,7 @@ const recomputePerformanceMetrics = (
   seriesName: CandidateDevelopmentPerformanceSeriesName,
   points: CandidateDevelopmentPerformanceSeries,
   initialCapitalMicros: string,
+  firstPreviousEquityMicros: string = initialCapitalMicros,
 ): Result.Result<PerformanceMetrics, CandidateDevelopmentCommandFailure> => {
   if (points.length < 2) {
     return Result.fail(
@@ -261,6 +293,19 @@ const recomputePerformanceMetrics = (
         ),
       )
   if (Result.isFailure(initialCapital)) return Result.fail(initialCapital.failure)
+  const firstPreviousEquity = /^(?:[1-9][0-9]*)$/.test(firstPreviousEquityMicros)
+    ? Result.succeed(BigInt(firstPreviousEquityMicros))
+    : Result.fail(
+        performanceEvidenceFailure(
+          seriesName,
+          'micros-invalid',
+          null,
+          'firstPreviousEquityMicros',
+          'positive micros',
+          firstPreviousEquityMicros,
+        ),
+      )
+  if (Result.isFailure(firstPreviousEquity)) return Result.fail(firstPreviousEquity.failure)
 
   const equityMicros: bigint[] = []
   const cumulative = Object.fromEntries(cumulativeMicrosFields.map(([, field]) => [field, 0n])) as Record<
@@ -290,6 +335,20 @@ const recomputePerformanceMetrics = (
       )
     }
     equityMicros.push(equity.success)
+    const previousEquity = index === 0 ? firstPreviousEquity.success : equityMicros[index - 1]
+    const expectedReturn = Number(equity.success) / Number(previousEquity) - 1
+    if (!Number.isFinite(expectedReturn) || !Object.is(point.netReturn, expectedReturn)) {
+      return Result.fail(
+        performanceEvidenceFailure(
+          seriesName,
+          'return-mismatch',
+          index,
+          'netReturn',
+          Number.isFinite(expectedReturn) ? expectedReturn : 'finite return',
+          point.netReturn,
+        ),
+      )
+    }
 
     for (const [dailyField, cumulativeField] of cumulativeMicrosFields) {
       const daily = unsignedMicros(seriesName, index, dailyField, point[dailyField])
@@ -366,166 +425,178 @@ const validateSeriesSessions = (
   return Result.succeed(undefined)
 }
 
-const validateSelectedStrategyEvents = (
-  baseline: EvaluationResult,
-): Result.Result<void, CandidateDevelopmentCommandFailure> => {
-  const marks = baseline.simulation.dailyMarks
-  const firstSession = marks.at(0)?.sessionDate
-  const lastSession = marks.at(-1)?.sessionDate
-  if (firstSession === undefined || lastSession === undefined) {
+const markedEquityFailure = (
+  reason: Extract<
+    CandidateDevelopmentCommandFailure,
+    { readonly _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid' }
+  >['reason'],
+  index: number | null,
+  field: string,
+  expected: unknown,
+  observed: unknown,
+  cause?: unknown,
+): CandidateDevelopmentCommandFailure => ({
+  _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+  reason,
+  index,
+  field,
+  expected,
+  observed,
+  ...(cause === undefined ? {} : { cause }),
+})
+
+const canonicalEvidenceHash = (
+  field: string,
+  value: unknown,
+): Result.Result<string, CandidateDevelopmentCommandFailure> =>
+  pipe(
+    canonicalHashV1Result(value),
+    Result.mapError((cause) => markedEquityFailure('binding-mismatch', null, field, 'canonical evidence', null, cause)),
+  )
+
+const requireCanonicalEvidenceEqual = (
+  field: string,
+  expected: unknown,
+  observed: unknown,
+): Result.Result<void, CandidateDevelopmentCommandFailure> =>
+  pipe(
+    Result.all({
+      expected: canonicalEvidenceHash(`${field}.expected`, expected),
+      observed: canonicalEvidenceHash(field, observed),
+    }),
+    Result.flatMap(({ expected: expectedHash, observed: observedHash }) =>
+      expectedHash === observedHash
+        ? Result.succeed(undefined)
+        : Result.fail(markedEquityFailure('binding-mismatch', null, field, expectedHash, observedHash)),
+    ),
+  )
+
+const selectedTracePreviousEquity = (
+  field: 'baselineSimulation' | 'stressedSimulation',
+  full: EvaluationResult['simulation'],
+  selected: EvaluationResult['simulation'],
+  initialCapitalMicros: string,
+): Result.Result<string, CandidateDevelopmentCommandFailure> => {
+  const first = selected.dailyMarks.at(0)
+  if (first === undefined) {
+    return Result.fail(markedEquityFailure('selected-trace-mismatch', null, field, 'nonempty selected trace', 0))
+  }
+  const startIndex = full.dailyMarks.findIndex((mark) => mark.sessionDate === first.sessionDate)
+  if (startIndex < 0) {
     return Result.fail(
-      performanceEvidenceFailure('strategy', 'observations-insufficient', null, null, 'nonempty marks', marks.length),
+      markedEquityFailure('selected-trace-mismatch', null, `${field}.firstSession`, first.sessionDate, null),
     )
   }
-  const markBySession = new Map(marks.map((mark) => [mark.sessionDate, mark] as const))
-  const totals = new Map<
-    string,
-    { turnover: bigint; fees: bigint; spread: bigint; slippage: bigint; cashYield: bigint }
-  >()
-  const selectedFills = baseline.events.filter(
-    (event): event is Extract<EvaluationResult['events'][number], { readonly kind: 'fill' }> =>
-      event.kind === 'fill' && event.sessionDate >= firstSession && event.sessionDate <= lastSession,
-  )
-  for (let eventIndex = 0; eventIndex < baseline.events.length; eventIndex += 1) {
-    const event = baseline.events[eventIndex]
-    if (event.kind === 'decision' || event.sessionDate < firstSession || event.sessionDate > lastSession) continue
-    if (!markBySession.has(event.sessionDate)) {
-      return Result.fail(
-        performanceEvidenceFailure(
-          'strategy',
-          'event-mismatch',
-          null,
-          'event.sessionDate',
-          'selected mark session',
-          event.sessionDate,
-        ),
-      )
+  for (let index = 0; index < selected.dailyMarks.length; index += 1) {
+    const expected = selected.dailyMarks[index]
+    const observed = full.dailyMarks[startIndex + index]
+    if (observed === undefined) {
+      return Result.fail(markedEquityFailure('selected-trace-mismatch', index, field, expected.sessionDate, null))
     }
-    const total = totals.get(event.sessionDate) ?? {
-      turnover: 0n,
-      fees: 0n,
-      spread: 0n,
-      slippage: 0n,
-      cashYield: 0n,
-    }
-    if (event.kind === 'fill') {
-      const values = Result.all({
-        turnover: unsignedMicros('strategy', eventIndex, 'fill.notionalMicros', event.notionalMicros),
-        spread: unsignedMicros('strategy', eventIndex, 'fill.spreadCostMicros', event.spreadCostMicros),
-        slippage: unsignedMicros('strategy', eventIndex, 'fill.slippageCostMicros', event.slippageCostMicros),
-      })
-      if (Result.isFailure(values)) return Result.fail(values.failure)
-      total.turnover += values.success.turnover
-      total.spread += values.success.spread
-      total.slippage += values.success.slippage
-    } else if (event.kind === 'fee') {
-      const fees = unsignedMicros('strategy', eventIndex, 'fee.totalMicros', event.totalMicros)
-      if (Result.isFailure(fees)) return Result.fail(fees.failure)
-      total.fees += fees.success
-    } else {
-      const cashYield = unsignedMicros('strategy', eventIndex, 'cash-yield.amountMicros', event.amountMicros)
-      if (Result.isFailure(cashYield)) return Result.fail(cashYield.failure)
-      total.cashYield += cashYield.success
-    }
-    totals.set(event.sessionDate, total)
+    const equality = requireCanonicalEvidenceEqual(`${field}.dailyMarks[${index}]`, expected, observed)
+    if (Result.isFailure(equality)) return Result.fail(equality.failure)
   }
-  const dailyBindings = [
-    ['turnover', 'turnoverMicros'],
-    ['fees', 'feeMicros'],
-    ['spread', 'spreadCostMicros'],
-    ['slippage', 'slippageCostMicros'],
-    ['cashYield', 'cashYieldMicros'],
-  ] as const
-  for (let index = 0; index < marks.length; index += 1) {
-    const mark = marks[index]
-    const total = totals.get(mark.sessionDate) ?? {
-      turnover: 0n,
-      fees: 0n,
-      spread: 0n,
-      slippage: 0n,
-      cashYield: 0n,
-    }
-    for (const [totalField, markField] of dailyBindings) {
-      if (total[totalField].toString() !== mark[markField]) {
-        return Result.fail(
-          performanceEvidenceFailure(
-            'strategy',
-            'event-mismatch',
-            index,
-            markField,
-            total[totalField].toString(),
-            mark[markField],
-          ),
-        )
-      }
-    }
-  }
+  return Result.succeed(full.dailyMarks[startIndex - 1]?.equityMicros ?? initialCapitalMicros)
+}
 
-  const orderById = new Map(baseline.simulation.orders.map((order) => [order.id, order] as const))
-  if (orderById.size !== baseline.simulation.orders.length) {
+interface CandidateDevelopmentAccountingValidation {
+  readonly strategyPreviousEquityMicros: string
+  readonly stressedPreviousEquityMicros: string
+}
+
+const validateCandidateDevelopmentAccounting = (
+  report: CandidateDevelopmentReport,
+  evaluation: CandidateDevelopmentCommandEvaluation,
+): Result.Result<CandidateDevelopmentAccountingValidation, CandidateDevelopmentCommandFailure> => {
+  const { accounting, baseline } = evaluation
+  const scalarBindings = [
+    ['runId', baseline.runId, accounting.runId],
+    ['initialCapitalMicros', baseline.initialCapitalMicros, accounting.initialCapitalMicros],
+    ['evaluatorTotalFeesMicros', baseline.strategy.totalFeesMicros, accounting.evaluatorTotalFeesMicros],
+    ['evaluatorEndingEquityMicros', baseline.strategy.endingEquityMicros, accounting.evaluatorEndingEquityMicros],
+  ] as const
+  for (const [field, expected, observed] of scalarBindings) {
+    if (expected !== observed) {
+      return Result.fail(markedEquityFailure('binding-mismatch', null, field, expected, observed))
+    }
+  }
+  const bindings = [
+    ['events', baseline.events, accounting.events],
+    ['baseline.orders', baseline.simulation.orders, accounting.baselineSimulation.orders],
+    ['baseline.cashChanges', baseline.simulation.cashChanges, accounting.baselineSimulation.cashChanges],
+    ['baseline.executionModel', baseline.simulation.executionModel, accounting.baselineSimulation.executionModel],
+    [
+      'baseline.costMultiplierMicros',
+      baseline.simulation.costMultiplierMicros,
+      accounting.baselineSimulation.costMultiplierMicros,
+    ],
+    ['stressed.orders', report.doubledCost.stressed.simulation.orders, accounting.stressedSimulation.orders],
+    [
+      'stressed.cashChanges',
+      report.doubledCost.stressed.simulation.cashChanges,
+      accounting.stressedSimulation.cashChanges,
+    ],
+    [
+      'stressed.executionModel',
+      report.doubledCost.stressed.simulation.executionModel,
+      accounting.stressedSimulation.executionModel,
+    ],
+    [
+      'stressed.costMultiplierMicros',
+      report.doubledCost.stressed.simulation.costMultiplierMicros,
+      accounting.stressedSimulation.costMultiplierMicros,
+    ],
+    ['equitySeries', baseline.equitySeries, accounting.equitySeries],
+    ['markedEquityReconciliation', baseline.markedEquityReconciliation, accounting.markedEquityReconciliation],
+  ] as const
+  for (const [field, expected, observed] of bindings) {
+    const binding = requireCanonicalEvidenceEqual(field, expected, observed)
+    if (Result.isFailure(binding)) return Result.fail(binding.failure)
+  }
+  const proof = reconcileMarkedEquity({
+    runId: accounting.runId,
+    initialCapitalMicros: accounting.initialCapitalMicros,
+    evaluatorTotalFeesMicros: accounting.evaluatorTotalFeesMicros,
+    evaluatorEndingEquityMicros: accounting.evaluatorEndingEquityMicros,
+    events: accounting.events,
+    simulation: accounting.baselineSimulation,
+  })
+  if (Result.isFailure(proof)) {
     return Result.fail(
-      performanceEvidenceFailure(
-        'strategy',
-        'event-mismatch',
+      markedEquityFailure('reconstruction-failed', null, 'accounting', 'reconciled marked equity', null, proof.failure),
+    )
+  }
+  const proofBinding = requireCanonicalEvidenceEqual(
+    'accounting.markedEquityProof',
+    { reconciliation: accounting.markedEquityReconciliation, equitySeries: accounting.equitySeries },
+    proof.success,
+  )
+  if (Result.isFailure(proofBinding)) {
+    return Result.fail(
+      markedEquityFailure(
+        'proof-mismatch',
         null,
-        'order.id',
-        'unique simulation order ids',
-        baseline.simulation.orders.length - orderById.size,
+        'accounting.markedEquityProof',
+        accounting.markedEquityReconciliation,
+        proof.success.reconciliation,
+        proofBinding.failure,
       ),
     )
   }
-  const filledByOrder = new Map<string, bigint>()
-  for (let fillIndex = 0; fillIndex < selectedFills.length; fillIndex += 1) {
-    const fill = selectedFills[fillIndex]
-    const order = orderById.get(fill.orderId)
-    if (
-      order === undefined ||
-      order.decisionId !== fill.decisionId ||
-      order.sessionDate !== fill.sessionDate ||
-      order.symbol !== fill.symbol ||
-      order.side !== fill.side
-    ) {
-      return Result.fail(
-        performanceEvidenceFailure(
-          'strategy',
-          'event-mismatch',
-          null,
-          'fill.orderBinding',
-          fill.orderId,
-          order ?? null,
-        ),
-      )
-    }
-    const quantity = unsignedMicros('strategy', fillIndex, 'fill.quantityMicros', fill.quantityMicros)
-    if (Result.isFailure(quantity)) return Result.fail(quantity.failure)
-    filledByOrder.set(fill.orderId, (filledByOrder.get(fill.orderId) ?? 0n) + quantity.success)
-  }
-  for (let orderIndex = 0; orderIndex < baseline.simulation.orders.length; orderIndex += 1) {
-    const order = baseline.simulation.orders[orderIndex]
-    if (order.sessionDate < firstSession || order.sessionDate > lastSession) continue
-    const expectedFilledResult = unsignedMicros(
-      'strategy',
-      orderIndex,
-      'order.filledQuantityMicros',
-      order.filledQuantityMicros,
-    )
-    if (Result.isFailure(expectedFilledResult)) return Result.fail(expectedFilledResult.failure)
-    const expectedFilled = expectedFilledResult.success
-    const observedFilled = filledByOrder.get(order.id) ?? 0n
-    if (expectedFilled !== observedFilled) {
-      return Result.fail(
-        performanceEvidenceFailure(
-          'strategy',
-          'event-mismatch',
-          null,
-          'order.filledQuantityMicros',
-          expectedFilled.toString(),
-          observedFilled.toString(),
-        ),
-      )
-    }
-  }
-  return Result.succeed(undefined)
+  return Result.all({
+    strategyPreviousEquityMicros: selectedTracePreviousEquity(
+      'baselineSimulation',
+      accounting.baselineSimulation,
+      baseline.simulation,
+      baseline.initialCapitalMicros,
+    ),
+    stressedPreviousEquityMicros: selectedTracePreviousEquity(
+      'stressedSimulation',
+      accounting.stressedSimulation,
+      report.doubledCost.stressed.simulation,
+      baseline.initialCapitalMicros,
+    ),
+  })
 }
 
 interface CandidateDevelopmentRecomputedMetrics {
@@ -537,13 +608,14 @@ interface CandidateDevelopmentRecomputedMetrics {
 
 const recomputeCandidateDevelopmentMetrics = (
   report: CandidateDevelopmentReport,
-  baseline: EvaluationResult,
+  evaluation: CandidateDevelopmentCommandEvaluation,
+  accounting: CandidateDevelopmentAccountingValidation,
 ): Result.Result<CandidateDevelopmentRecomputedMetrics, CandidateDevelopmentCommandFailure> => {
+  const { baseline } = evaluation
   const strategyPoints = baseline.simulation.dailyMarks
   const stressedPoints = report.doubledCost.stressed.simulation.dailyMarks
   return pipe(
     Result.all({
-      strategyEvents: validateSelectedStrategyEvents(baseline),
       buySessions: validateSeriesSessions(strategyPoints, baseline.benchmarkSeries.buyAndHold, 'buy-and-hold'),
       volSessions: validateSeriesSessions(
         strategyPoints,
@@ -556,7 +628,12 @@ const recomputeCandidateDevelopmentMetrics = (
         'double-cost-series',
       ),
       stressedSessions: validateSeriesSessions(strategyPoints, stressedPoints, 'double-cost-stressed'),
-      strategy: recomputePerformanceMetrics('strategy', strategyPoints, baseline.initialCapitalMicros),
+      strategy: recomputePerformanceMetrics(
+        'strategy',
+        strategyPoints,
+        baseline.initialCapitalMicros,
+        accounting.strategyPreviousEquityMicros,
+      ),
       buyAndHold: recomputePerformanceMetrics(
         'buy-and-hold',
         baseline.benchmarkSeries.buyAndHold,
@@ -576,6 +653,7 @@ const recomputeCandidateDevelopmentMetrics = (
         'double-cost-stressed',
         stressedPoints,
         baseline.initialCapitalMicros,
+        accounting.stressedPreviousEquityMicros,
       ),
     }),
     Result.flatMap(({ buyAndHold, directVolTiming, doubleCostSeries, doubleCostStressed, strategy }) =>
@@ -610,127 +688,6 @@ const recomputeCandidateDevelopmentMetrics = (
       ),
     ),
   )
-}
-
-const markedEquityFailure = (
-  reason: Extract<
-    CandidateDevelopmentCommandFailure,
-    { readonly _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid' }
-  >['reason'],
-  index: number | null,
-  field: string,
-  expected: unknown,
-  observed: unknown,
-): CandidateDevelopmentCommandFailure => ({
-  _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
-  reason,
-  index,
-  field,
-  expected,
-  observed,
-})
-
-const validateMarkedEquity = (
-  baseline: EvaluationResult,
-  strategy: PerformanceMetrics,
-): Result.Result<void, CandidateDevelopmentCommandFailure> => {
-  const reconciliation = baseline.markedEquityReconciliation
-  const summaryFields = [
-    ['runId', baseline.runId, reconciliation.runId],
-    ['toleranceMicros', '0', reconciliation.toleranceMicros],
-    ['maximumDailyDifferenceMicros', '0', reconciliation.maximumDailyDifferenceMicros],
-    ['evaluatorTotalFeesMicros', strategy.totalFeesMicros, reconciliation.evaluatorTotalFeesMicros],
-    ['reconstructedTotalFeesMicros', strategy.totalFeesMicros, reconciliation.reconstructedTotalFeesMicros],
-    ['feeDifferenceMicros', '0', reconciliation.feeDifferenceMicros],
-    ['evaluatorEndingEquityMicros', strategy.endingEquityMicros, reconciliation.evaluatorEndingEquityMicros],
-    ['reconstructedEndingEquityMicros', strategy.endingEquityMicros, reconciliation.reconstructedEndingEquityMicros],
-    ['differenceMicros', '0', reconciliation.differenceMicros],
-    ['exact', true, reconciliation.exact],
-    ['withinTolerance', true, reconciliation.withinTolerance],
-  ] as const
-  for (const [field, expected, observed] of summaryFields) {
-    if (!Object.is(expected, observed)) {
-      return Result.fail(markedEquityFailure('summary-mismatch', null, field, expected, observed))
-    }
-  }
-  const reconstructedCash = unsignedMicros(
-    'strategy',
-    baseline.equitySeries.length,
-    'reconstructedCashMicros',
-    reconciliation.reconstructedCashMicros,
-  )
-  if (Result.isFailure(reconstructedCash)) return Result.fail(reconstructedCash.failure)
-  const reconstructedPositionValue = unsignedMicros(
-    'strategy',
-    baseline.equitySeries.length,
-    'reconstructedPositionValueMicros',
-    reconciliation.reconstructedPositionValueMicros,
-  )
-  if (Result.isFailure(reconstructedPositionValue)) return Result.fail(reconstructedPositionValue.failure)
-  if (reconstructedCash.success + reconstructedPositionValue.success !== BigInt(strategy.endingEquityMicros)) {
-    return Result.fail(
-      markedEquityFailure(
-        'summary-mismatch',
-        null,
-        'reconstructedCashPlusPositionValueMicros',
-        strategy.endingEquityMicros,
-        (reconstructedCash.success + reconstructedPositionValue.success).toString(),
-      ),
-    )
-  }
-
-  const equityBySession = new Map(baseline.equitySeries.map((point) => [point.sessionDate, point] as const))
-  if (equityBySession.size !== baseline.equitySeries.length) {
-    return Result.fail(
-      markedEquityFailure(
-        'series-mismatch',
-        null,
-        'sessionDate',
-        'strictly unique equity-series sessions',
-        baseline.equitySeries.length - equityBySession.size,
-      ),
-    )
-  }
-  for (let index = 0; index < baseline.equitySeries.length; index += 1) {
-    const point = baseline.equitySeries[index]
-    const previous = baseline.equitySeries[index - 1]
-    if (previous !== undefined && previous.sessionDate >= point.sessionDate) {
-      return Result.fail(
-        markedEquityFailure('series-mismatch', index, 'sessionDate', `>${previous.sessionDate}`, point.sessionDate),
-      )
-    }
-    const exact = point.differenceMicros === '0' && point.evaluatorEquityMicros === point.reconstructedEquityMicros
-    if (!exact) {
-      return Result.fail(
-        markedEquityFailure(
-          'series-mismatch',
-          index,
-          'equity',
-          { differenceMicros: '0', evaluatorEqualsReconstructed: true },
-          {
-            differenceMicros: point.differenceMicros,
-            evaluatorEqualsReconstructed: point.evaluatorEquityMicros === point.reconstructedEquityMicros,
-          },
-        ),
-      )
-    }
-  }
-  for (let index = 0; index < baseline.simulation.dailyMarks.length; index += 1) {
-    const mark = baseline.simulation.dailyMarks[index]
-    const point = equityBySession.get(mark.sessionDate)
-    if (point?.evaluatorEquityMicros !== mark.equityMicros) {
-      return Result.fail(
-        markedEquityFailure(
-          'series-mismatch',
-          index,
-          'selectedMarkEquityMicros',
-          mark.equityMicros,
-          point?.evaluatorEquityMicros ?? null,
-        ),
-      )
-    }
-  }
-  return Result.succeed(undefined)
 }
 
 const rebuildCandidateDevelopmentEconomicVerdict = (
@@ -888,16 +845,14 @@ const decideCandidateDevelopment = (
 
 export const buildCandidateDevelopmentCommandReport = (
   report: CandidateDevelopmentReport,
-  baseline: EvaluationResult,
+  evaluation: CandidateDevelopmentCommandEvaluation,
 ): Result.Result<CandidateDevelopmentCommandReport, CandidateDevelopmentCommandFailure> =>
   pipe(
-    recomputeCandidateDevelopmentMetrics(report, baseline),
+    validateCandidateDevelopmentAccounting(report, evaluation),
+    Result.flatMap((accounting) => recomputeCandidateDevelopmentMetrics(report, evaluation, accounting)),
     Result.flatMap((metrics) =>
       pipe(
-        Result.all({
-          markedEquity: validateMarkedEquity(baseline, metrics.strategy),
-          economicPass: deriveCandidateDevelopmentEconomicPass(baseline, metrics),
-        }),
+        Result.all({ economicPass: deriveCandidateDevelopmentEconomicPass(evaluation.baseline, metrics) }),
         Result.map(({ economicPass }) => ({
           doubledCostAnnualizedReturn: metrics.doubleCostStrategy.annualizedReturn,
           economicPass,
@@ -906,12 +861,13 @@ export const buildCandidateDevelopmentCommandReport = (
     ),
     Result.flatMap(({ doubledCostAnnualizedReturn, economicPass }) => {
       const material: CandidateDevelopmentCommandReportMaterial = {
-        schemaVersion: 'bayn.candidate-development-command-report.v1',
+        schemaVersion: 'bayn.candidate-development-command-report.v2',
         candidateOrdinal: report.protocolIdentity.candidateOrdinal,
         priorTrialCount: report.protocolIdentity.priorTrialCount,
         strategyProtocolHash: report.comparisonSemantics.strategyProtocolHash,
-        decision: decideCandidateDevelopment(report, baseline, doubledCostAnnualizedReturn, economicPass),
-        baseline,
+        decision: decideCandidateDevelopment(report, evaluation.baseline, doubledCostAnnualizedReturn, economicPass),
+        baseline: evaluation.baseline,
+        accounting: evaluation.accounting,
         development: report,
       }
       return pipe(
@@ -930,7 +886,7 @@ export const buildCandidateDevelopmentCommandReport = (
 export const executeCandidateDevelopmentProgram = <Registration, DevelopmentData, Error, Requirements>(
   program: CandidateDevelopmentExecutableProgram<Registration, DevelopmentData, Error, Requirements>,
 ): Effect.Effect<CandidateDevelopmentCommandReport, CandidateDevelopmentCommandFailure | Error, Requirements> => {
-  let evaluation: CandidateDevelopmentEvaluation | undefined
+  let evaluation: CandidateDevelopmentCommandEvaluation | undefined
   const effects: CandidateDevelopmentEffects<Registration, DevelopmentData, Error, Requirements> = {
     ...program.effects,
     evaluateDevelopment: (data, preflight) =>
@@ -946,7 +902,7 @@ export const executeCandidateDevelopmentProgram = <Registration, DevelopmentData
     Effect.flatMap((report) =>
       evaluation === undefined
         ? Effect.fail<CandidateDevelopmentCommandFailure>({ _tag: 'CandidateDevelopmentCommandEvaluationMissing' })
-        : Effect.fromResult(buildCandidateDevelopmentCommandReport(report, evaluation.baseline)),
+        : Effect.fromResult(buildCandidateDevelopmentCommandReport(report, evaluation)),
     ),
   )
 }
@@ -1057,6 +1013,19 @@ const CandidateDevelopmentEvaluationResultSchema = Schema.Struct({
   signalDecisions: RiskBalancedTrendSignalDecisionsArtifactSchema.fields.items,
 })
 
+const CandidateDevelopmentAccountingEvidenceSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.candidate-development-accounting-evidence.v1'),
+  runId: Sha256Schema,
+  initialCapitalMicros: DigitsSchema,
+  evaluatorTotalFeesMicros: DigitsSchema,
+  evaluatorEndingEquityMicros: DigitsSchema,
+  events: EvaluationEventsSchema,
+  baselineSimulation: CandidateDevelopmentSimulationTraceSchema,
+  stressedSimulation: CandidateDevelopmentSimulationTraceSchema,
+  equitySeries: EquitySeriesArtifactSchema.fields.items,
+  markedEquityReconciliation: MarkedEquityReconciliationSchema,
+})
+
 const CandidateDevelopmentComparisonSemanticsEvidenceBoundarySchema = Schema.Struct({
   schemaVersion: Schema.Literal(candidateDevelopmentComparisonSemantics.evidence.schemaVersion),
   candidateDevelopmentProtocolHash: Sha256Schema,
@@ -1074,6 +1043,7 @@ const CandidateDevelopmentEvaluationSchema = Schema.Struct({
   baseline: CandidateDevelopmentEvaluationResultSchema,
   comparisonSemantics: CandidateDevelopmentComparisonSemanticsEvidenceBoundarySchema,
   stressed: CandidateDevelopmentDoubledCostRunSchema,
+  accounting: CandidateDevelopmentAccountingEvidenceSchema,
 })
 
 const decodeCandidateDevelopmentPreflightInput = Schema.decodeUnknownResult(
@@ -1085,6 +1055,21 @@ const decodeCandidateDevelopmentEvaluation = Schema.decodeUnknownResult(
   CandidateDevelopmentEvaluationSchema,
   strictParseOptions,
 )
+
+export const validateCandidateDevelopmentCommandEvaluation = (
+  value: unknown,
+): Result.Result<CandidateDevelopmentCommandEvaluation, CandidateDevelopmentCommandFailure> =>
+  pipe(
+    decodeCandidateDevelopmentEvaluation(value),
+    Result.map((evaluation) => evaluation as CandidateDevelopmentCommandEvaluation),
+    Result.mapError(
+      (cause): CandidateDevelopmentCommandFailure => ({
+        _tag: 'CandidateDevelopmentCommandProgramInvalid',
+        reason: 'evaluation-invalid',
+        cause,
+      }),
+    ),
+  )
 
 const recordOf = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
@@ -1128,18 +1113,13 @@ export const validateCandidateDevelopmentExecutableProgram = (
     effects: {
       ...typedEffects,
       evaluateDevelopment: (data, preflight) =>
-        typedEffects.evaluateDevelopment(data, preflight).pipe(
-          Effect.flatMap((evaluation) => {
-            const decoded = decodeCandidateDevelopmentEvaluation(evaluation)
-            return Result.isSuccess(decoded)
-              ? Effect.succeed(decoded.success as CandidateDevelopmentEvaluation)
-              : Effect.fail<CandidateDevelopmentCommandFailure>({
-                  _tag: 'CandidateDevelopmentCommandProgramInvalid',
-                  reason: 'evaluation-invalid',
-                  cause: decoded.failure,
-                })
-          }),
-        ),
+        typedEffects
+          .evaluateDevelopment(data, preflight)
+          .pipe(
+            Effect.flatMap((evaluation) =>
+              Effect.fromResult(validateCandidateDevelopmentCommandEvaluation(evaluation)),
+            ),
+          ),
     },
   })
 }

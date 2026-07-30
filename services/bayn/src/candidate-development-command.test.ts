@@ -8,12 +8,18 @@ import {
   executeCandidateDevelopmentProgram,
   loadCandidateDevelopmentExecutableProgram,
   renderCandidateDevelopmentCommandReport,
+  validateCandidateDevelopmentCommandEvaluation,
   validateCandidateDevelopmentExecutableProgram,
   writeCandidateDevelopmentCommandReport,
+  type CandidateDevelopmentCommandEvaluation,
   type CandidateDevelopmentExecutableProgram,
 } from './candidate-development-command'
-import { officialMonthEndSignalDates, type CandidateDevelopmentReport } from './candidate-development'
-import { canonicalHashV1, canonicalHashV1Result } from './hash'
+import {
+  candidateDevelopmentComparisonSemantics,
+  officialMonthEndSignalDates,
+  type CandidateDevelopmentReport,
+} from './candidate-development'
+import { canonicalHashV1, canonicalHashV1Result, sha256 } from './hash'
 import { defaultProtocolDocument } from './protocol'
 import { calculateExactPerformanceMetrics, buildVerdict } from './simulation/metrics'
 import { reconcileMarkedEquity } from './simulation-reconciliation'
@@ -81,11 +87,121 @@ const fixtureExecutionModel = {
   cash: { ...defaultProtocolDocument.executionModel.cash, annualYieldBps: 10_000 },
 }
 
+const zeroPositionFixture = {
+  symbol: 'SPY',
+  quantityMicros: '0',
+  costBasisMicros: '0',
+  priceMicros: '1000000',
+  marketValueMicros: '0',
+}
+
+const signalDecisionFixture = {
+  schemaVersion: 'bayn.risk-balanced-trend-decision-plan.v1' as const,
+  decisionId: 'a'.repeat(64),
+  signalDate: fixtureSessions[0],
+  executionDate: fixtureSessions[1],
+  covarianceWindow: {
+    returnCount: 1,
+    firstSession: fixtureSessions[0],
+    lastSession: fixtureSessions[0],
+    sessionsHash: 'b'.repeat(64),
+  },
+  estimatedAnnualizedPortfolioVolatility: 0,
+  exposureScale: 0,
+  targetWeights: { SPY: 0 },
+  signals: [
+    {
+      symbol: 'SPY',
+      horizons: [{ horizonSessions: 1, return: 0, normalizedTrend: 0 }],
+      dailyVolatility: 0,
+      annualizedVolatility: 0,
+      compositeScore: 0,
+      positiveScore: 0,
+      eligible: false,
+      uncappedWeight: 0,
+      cappedWeight: 0,
+      targetWeight: 0,
+    },
+  ],
+}
+
+const inputManifestFixture = () => {
+  const firstSession = fixtureSessions[0]
+  const lastSession = fixtureSessions.at(-1)
+  if (firstSession === undefined || lastSession === undefined) throw new Error('fixture sessions must be nonempty')
+  const symbols = defaultProtocolDocument.universe.map((symbol) => ({
+    symbol,
+    rows: fixtureSessions.length,
+    firstSession,
+    lastSession,
+  }))
+  const material = {
+    schemaVersion: 'bayn.input-manifest.v3' as const,
+    database: 'signal' as const,
+    bounds: {
+      schemaVersion: 'bayn.evaluation-bounds.v1' as const,
+      dataStart: firstSession,
+      dataEnd: lastSession,
+      lookbackStart: firstSession,
+      evaluationStart: firstSession,
+      evaluationEnd: lastSession,
+    },
+    rowCount: fixtureSessions.length * symbols.length,
+    sessionCount: fixtureSessions.length,
+    firstSession,
+    lastSession,
+    symbols,
+    tables: {
+      bars: 'adjusted_daily_bars_v2' as const,
+      sessions: 'exchange_sessions_v1' as const,
+      manifests: 'snapshot_manifests_v2' as const,
+    },
+    finalizedSnapshot: {
+      schemaVersion: 'bayn.finalized-snapshot.v3' as const,
+      publicationSchemaVersion: 'signal.adjusted-daily-snapshot.v2' as const,
+      universeId: 'cross-asset-taa-v1' as const,
+      universeSymbolHash: sha256(defaultProtocolDocument.universe.join(',')),
+      snapshotId: '4'.repeat(64),
+      publicationId: '5'.repeat(64),
+      source: 'alpaca' as const,
+      sourceFeed: 'sip' as const,
+      adjustment: 'all' as const,
+      calendarVersion: 'fixture-calendar-v1',
+      publisherSourceRevision: '6'.repeat(40),
+      publisherImage: {
+        repository: 'registry.example.test/bayn-fixture',
+        digest: `sha256:${'7'.repeat(64)}` as const,
+      },
+      finalizedAt: '2026-07-29T00:00:00.000Z',
+      requestedStart: firstSession,
+      firstSession,
+      lastSession,
+      asOfSession: lastSession,
+      symbols: [...defaultProtocolDocument.universe],
+      rowCount: fixtureSessions.length * symbols.length,
+      sessionCount: fixtureSessions.length,
+      contentHash: '8'.repeat(64),
+      sessionsContentHash: '9'.repeat(64),
+    },
+  }
+  return { ...material, hash: canonicalHashV1(material) }
+}
+
 const reportFixture = (
   annualizedReturnDifferenceLowerBound: number,
   stressedEndingEquityMicros = '1010000',
-): CandidateDevelopmentReport =>
-  ({
+): CandidateDevelopmentReport => {
+  const stressedSimulation = {
+    schemaVersion: 'bayn.simulation-trace.v3' as const,
+    executionModel: fixtureExecutionModel,
+    costMultiplierMicros: '2000000',
+    orders: [],
+    cashChanges: [],
+    dailyMarks: performanceSeriesFixture(stressedEndingEquityMicros, {
+      cashYieldMicros: (BigInt(stressedEndingEquityMicros) - BigInt(fixtureInitialCapitalMicros)).toString(),
+    }).map((point) => ({ ...point, cashMicros: point.equityMicros, positions: [zeroPositionFixture] })),
+  }
+  return {
     schemaVersion: 'bayn.candidate-development-report.v2',
     protocolIdentity: {
       schemaVersion: 'bayn.candidate-development-protocol-identity.v2',
@@ -95,7 +211,10 @@ const reportFixture = (
       candidateDevelopmentProtocolHash: 'a'.repeat(64),
     },
     comparisonSemantics: {
+      schemaVersion: candidateDevelopmentComparisonSemantics.evidence.schemaVersion,
+      candidateDevelopmentProtocolHash: 'a'.repeat(64),
       strategyProtocolHash: 'b'.repeat(64),
+      comparisonSemantics: candidateDevelopmentComparisonSemantics,
       analysis: {
         power: { sufficient: true },
         bootstrap: {
@@ -119,14 +238,12 @@ const reportFixture = (
     },
     doubledCost: {
       stressed: {
-        simulation: {
-          dailyMarks: performanceSeriesFixture(stressedEndingEquityMicros, {
-            cashYieldMicros: (BigInt(stressedEndingEquityMicros) - BigInt(fixtureInitialCapitalMicros)).toString(),
-          }).map((point) => ({ ...point, cashMicros: point.equityMicros, positions: [] })),
-        },
+        signalDecisions: [signalDecisionFixture],
+        simulation: stressedSimulation,
       },
     },
-  }) as unknown as CandidateDevelopmentReport
+  } as unknown as CandidateDevelopmentReport
+}
 
 const baselineFixture = (
   status: 'PASS' | 'FAIL_CLOSED' = 'PASS',
@@ -153,6 +270,7 @@ const baselineFixture = (
     annualYieldBps: 10_000,
     amountMicros: '1000000',
   }
+
   const event = { ...eventPayload, id: canonicalHashV1({ runId: fixtureRunId, ...eventPayload }) }
   const cashChangePayload = {
     sourceKind: event.kind,
@@ -176,7 +294,7 @@ const baselineFixture = (
     dailyMarks: strategyPoints.map((point) => ({
       ...point,
       cashMicros: point.equityMicros,
-      positions: [],
+      positions: [zeroPositionFixture],
     })),
   }
   const verdict = buildVerdict(strategy, buyAndHold, directVolTiming, doubleCostStrategy, {
@@ -204,14 +322,7 @@ const baselineFixture = (
     codeRevision: '2'.repeat(40),
     protocolHash: '3'.repeat(64),
     initialCapitalMicros: '1000000',
-    inputManifest: {
-      symbols: defaultProtocolDocument.universe.map((symbol) => ({
-        symbol,
-        rows: 1,
-        firstSession: '2016-01-04',
-        lastSession: '2016-01-04',
-      })),
-    },
+    inputManifest: inputManifestFixture(),
     strategy,
     buyAndHold,
     directVolTiming,
@@ -226,9 +337,34 @@ const baselineFixture = (
     },
     equitySeries: markedEquity.equitySeries,
     markedEquityReconciliation: markedEquity.reconciliation,
-    signalDecisions: [],
+    signalDecisions: [signalDecisionFixture],
   } as unknown as EvaluationResult
 }
+
+const commandEvaluationFixture = (
+  report: CandidateDevelopmentReport,
+  baseline: EvaluationResult,
+  accountingBaseline: EvaluationResult = baseline,
+): CandidateDevelopmentCommandEvaluation => ({
+  baseline,
+  comparisonSemantics: report.comparisonSemantics,
+  stressed: report.doubledCost.stressed,
+  accounting: {
+    schemaVersion: 'bayn.candidate-development-accounting-evidence.v1',
+    runId: accountingBaseline.runId,
+    initialCapitalMicros: accountingBaseline.initialCapitalMicros,
+    evaluatorTotalFeesMicros: accountingBaseline.strategy.totalFeesMicros,
+    evaluatorEndingEquityMicros: accountingBaseline.strategy.endingEquityMicros,
+    events: accountingBaseline.events,
+    baselineSimulation: accountingBaseline.simulation,
+    stressedSimulation: report.doubledCost.stressed.simulation,
+    equitySeries: accountingBaseline.equitySeries,
+    markedEquityReconciliation: accountingBaseline.markedEquityReconciliation,
+  },
+})
+
+const buildFixtureReport = (report: CandidateDevelopmentReport, baseline: EvaluationResult) =>
+  buildCandidateDevelopmentCommandReport(report, commandEvaluationFixture(report, baseline))
 
 describe('candidate development command', () => {
   test('calls no effects when preflight rejects the ordinal lineage', async () => {
@@ -315,13 +451,11 @@ describe('candidate development command', () => {
   })
 
   test('derives the disposition and hashes the complete governed report', () => {
-    const passing = successOf(buildCandidateDevelopmentCommandReport(reportFixture(0.01), baselineFixture()))
-    const rejected = successOf(buildCandidateDevelopmentCommandReport(reportFixture(-0.01), baselineFixture()))
-    const economicallyRejected = successOf(
-      buildCandidateDevelopmentCommandReport(reportFixture(0.01), baselineFixture('FAIL_CLOSED')),
-    )
+    const passing = successOf(buildFixtureReport(reportFixture(0.01), baselineFixture()))
+    const rejected = successOf(buildFixtureReport(reportFixture(-0.01), baselineFixture()))
+    const economicallyRejected = successOf(buildFixtureReport(reportFixture(0.01), baselineFixture('FAIL_CLOSED')))
     const doubledCostRejected = successOf(
-      buildCandidateDevelopmentCommandReport(reportFixture(0.01, '1000000'), baselineFixture('PASS', '1000000')),
+      buildFixtureReport(reportFixture(0.01, '1000000'), baselineFixture('PASS', '1000000')),
     )
     const { contentHash, ...material } = passing
 
@@ -338,9 +472,7 @@ describe('candidate development command', () => {
     expect(passing.decision.gates.map(({ name }) => name)).toContain('annualized_excess_return_lower_bound')
     expect(passing.decision.gates.map(({ name }) => name)).not.toContain('annualized_return_difference_lower_bound')
     expect(contentHash).toBe(successOf(canonicalHashV1Result(material)))
-    expect(buildCandidateDevelopmentCommandReport(reportFixture(0.01), baselineFixture())).toEqual(
-      Result.succeed(passing),
-    )
+    expect(buildFixtureReport(reportFixture(0.01), baselineFixture())).toEqual(Result.succeed(passing))
     const rendered = renderCandidateDevelopmentCommandReport(passing)
     expect(rendered.endsWith('\n')).toBe(true)
     expect(rendered.slice(0, -1)).not.toContain('\n')
@@ -354,7 +486,7 @@ describe('candidate development command', () => {
       doubleCostStrategy: { ...baseline.doubleCostStrategy, annualizedReturn: 0.5 },
     }
 
-    expect(buildCandidateDevelopmentCommandReport(reportFixture(0.01), detached)).toMatchObject({
+    expect(buildFixtureReport(reportFixture(0.01), detached)).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandPerformanceEvidenceInvalid',
         series: 'double-cost-series',
@@ -372,7 +504,7 @@ describe('candidate development command', () => {
       verdict: { ...baseline.verdict, status: 'FAIL_CLOSED' as const },
     }
 
-    expect(buildCandidateDevelopmentCommandReport(reportFixture(0.01), inconsistent)).toEqual(
+    expect(buildFixtureReport(reportFixture(0.01), inconsistent)).toEqual(
       Result.fail({
         _tag: 'CandidateDevelopmentCommandEconomicVerdictInvalid',
         expectedStatus: 'PASS',
@@ -390,7 +522,7 @@ describe('candidate development command', () => {
     }
     const expectedGateNames = baseline.verdict.gates.map((gate) => gate.name)
 
-    expect(buildCandidateDevelopmentCommandReport(reportFixture(0.01), incomplete)).toEqual(
+    expect(buildFixtureReport(reportFixture(0.01), incomplete)).toEqual(
       Result.fail({
         _tag: 'CandidateDevelopmentCommandEconomicGateSetInvalid',
         expectedGateNames,
@@ -403,7 +535,7 @@ describe('candidate development command', () => {
     const failing = baselineFixture('FAIL_CLOSED')
     const forged = { ...failing, verdict: baselineFixture().verdict }
 
-    expect(buildCandidateDevelopmentCommandReport(reportFixture(0.01), forged)).toMatchObject({
+    expect(buildFixtureReport(reportFixture(0.01), forged)).toMatchObject({
       _tag: 'Failure',
       failure: {
         _tag: 'CandidateDevelopmentCommandEconomicGateInvalid',
@@ -434,14 +566,11 @@ describe('candidate development command', () => {
       },
     }
 
-    expect(buildCandidateDevelopmentCommandReport(reportFixture(0.01), tampered)).toMatchObject({
+    expect(buildFixtureReport(reportFixture(0.01), tampered)).toMatchObject({
       failure: {
-        _tag: 'CandidateDevelopmentCommandPerformanceEvidenceInvalid',
-        series: 'strategy',
-        reason: 'metrics-mismatch',
-        field: 'totalReturn',
-        expected: 0,
-        observed: 1,
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'reconstruction-failed',
+        field: 'accounting',
       },
     })
   })
@@ -455,14 +584,12 @@ describe('candidate development command', () => {
       events: [{ ...event, amountMicros: '999999' }, ...baseline.events.slice(1)],
     }
 
-    expect(buildCandidateDevelopmentCommandReport(reportFixture(0.01), tampered)).toMatchObject({
+    expect(buildFixtureReport(reportFixture(0.01), tampered)).toMatchObject({
       failure: {
-        _tag: 'CandidateDevelopmentCommandPerformanceEvidenceInvalid',
-        series: 'strategy',
-        reason: 'event-mismatch',
-        field: 'cashYieldMicros',
-        expected: '999999',
-        observed: '1000000',
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'reconstruction-failed',
+        field: 'accounting',
+        cause: [{ _tag: 'EvidenceMismatch', problem: { _tag: 'CashYield' } }],
       },
     })
   })
@@ -475,17 +602,78 @@ describe('candidate development command', () => {
       equitySeries: [{ ...first, evaluatorEquityMicros: '1999999' }, ...baseline.equitySeries.slice(1)],
     }
 
-    expect(buildCandidateDevelopmentCommandReport(reportFixture(0.01), tampered)).toMatchObject({
+    expect(buildFixtureReport(reportFixture(0.01), tampered)).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
-        reason: 'series-mismatch',
-        field: 'equity',
+        reason: 'proof-mismatch',
+        field: 'accounting.markedEquityProof',
+      },
+    })
+  })
+
+  test('rejects a forged selected net return after full accounting reconciliation', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const first = baseline.simulation.dailyMarks[0]
+    const tamperedMark = { ...first, netReturn: first.netReturn + 0.01 }
+    const tamperedBaseline = {
+      ...baseline,
+      simulation: {
+        ...baseline.simulation,
+        dailyMarks: [tamperedMark, ...baseline.simulation.dailyMarks.slice(1)],
+      },
+    }
+    const evaluation = commandEvaluationFixture(report, tamperedBaseline, baseline)
+    const accounting = {
+      ...evaluation.accounting,
+      baselineSimulation: {
+        ...evaluation.accounting.baselineSimulation,
+        dailyMarks: [tamperedMark, ...evaluation.accounting.baselineSimulation.dailyMarks.slice(1)],
+      },
+    }
+
+    expect(buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting })).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandPerformanceEvidenceInvalid',
+        series: 'strategy',
+        reason: 'return-mismatch',
+        field: 'netReturn',
+      },
+    })
+  })
+
+  test('rebuilds marked equity instead of trusting a supplied proof', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const first = baseline.simulation.dailyMarks[0]
+    const tamperedMark = { ...first, cashMicros: fixtureInitialCapitalMicros }
+    const tamperedBaseline = {
+      ...baseline,
+      simulation: {
+        ...baseline.simulation,
+        dailyMarks: [tamperedMark, ...baseline.simulation.dailyMarks.slice(1)],
+      },
+    }
+    const evaluation = commandEvaluationFixture(report, tamperedBaseline, baseline)
+    const accounting = {
+      ...evaluation.accounting,
+      baselineSimulation: {
+        ...evaluation.accounting.baselineSimulation,
+        dailyMarks: [tamperedMark, ...evaluation.accounting.baselineSimulation.dailyMarks.slice(1)],
+      },
+    }
+
+    expect(buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting })).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'reconstruction-failed',
+        field: 'accounting',
       },
     })
   })
 
   test('keeps the sole report write attached through interruption', async () => {
-    const report = successOf(buildCandidateDevelopmentCommandReport(reportFixture(0.01), baselineFixture()))
+    const report = successOf(buildFixtureReport(reportFixture(0.01), baselineFixture()))
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -604,6 +792,43 @@ describe('candidate development command', () => {
       _tag: 'CandidateDevelopmentCommandProgramInvalid',
       reason: 'evaluation-invalid',
     })
+  })
+
+  test('runtime-decodes the complete command evaluation witness', async () => {
+    const sessions = frozenCandidateDevelopmentSessions()
+    const report = reportFixture(0.01)
+    const evaluation = commandEvaluationFixture(report, baselineFixture())
+    const validated = successOf(
+      validateCandidateDevelopmentExecutableProgram({
+        schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
+        input: {
+          candidateOrdinal: 16,
+          priorTrialCount: 15,
+          expectedStrategyProtocolHash: 'a'.repeat(64),
+          officialSessions: sessions,
+          signalSessionDates: officialMonthEndSignalDates(sessions),
+          featureLookbackSessions: 126,
+        },
+        effects: {
+          preregisterCandidate: () => Effect.succeed('registration'),
+          loadDevelopmentData: () => Effect.succeed('data'),
+          evaluateDevelopment: () => Effect.succeed(evaluation),
+        },
+      }),
+    )
+
+    const direct = validateCandidateDevelopmentCommandEvaluation(evaluation)
+    if (Result.isFailure(direct)) {
+      const cause =
+        direct.failure._tag === 'CandidateDevelopmentCommandProgramInvalid' ? direct.failure.cause : direct.failure
+      throw new Error(`complete evaluation decode failed: ${String(cause)}`)
+    }
+
+    const decoded = await Effect.runPromise(validated.effects.evaluateDevelopment(undefined, undefined as never))
+
+    expect(decoded.accounting.schemaVersion).toBe('bayn.candidate-development-accounting-evidence.v1')
+    expect(decoded.accounting.runId).toBe(evaluation.baseline.runId)
+    expect(decoded.accounting.baselineSimulation.dailyMarks).toHaveLength(504)
   })
 
   test('keeps dynamic module evaluation attached through interruption', async () => {
