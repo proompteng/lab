@@ -2368,6 +2368,23 @@ describe('candidate development command', () => {
       expect(verified.files.moduleBlobOid).toMatch(/^[0-9a-f]{40}$/)
       expect(Buffer.from(verified.moduleUrl.split(',')[1] ?? '', 'base64').toString('utf8')).toBe(moduleBytes)
 
+      const replacementPath = join(candidateDirectory, 'replacement.mjs')
+      const replacementBytes = "throw new Error('replacement blob executed')\n"
+      await writeFile(replacementPath, replacementBytes)
+      const replacementOid = await execFileTextPromise(
+        'git',
+        ['hash-object', '-w', 'candidate/replacement.mjs'],
+        repository,
+      )
+      await execFilePromise('git', ['replace', verified.files.moduleBlobOid, replacementOid], repository)
+      const replacementIgnored = await Effect.runPromise(
+        verifyCandidateDevelopmentSourceFiles(modulePath, sourceManifestPath),
+      )
+      expect(replacementIgnored.files.moduleBlobOid).toBe(verified.files.moduleBlobOid)
+      expect(replacementIgnored.files.moduleSha256).toBe(verified.files.moduleSha256)
+      expect(Buffer.from(replacementIgnored.moduleUrl.split(',')[1] ?? '', 'base64').toString('utf8')).toBe(moduleBytes)
+      await execFilePromise('git', ['replace', '-d', verified.files.moduleBlobOid], repository)
+
       await writeFile(modulePath, `${moduleBytes}// tampered\n`)
       const moduleDiskDrift = await Effect.runPromise(
         verifyCandidateDevelopmentSourceFiles(modulePath, sourceManifestPath),

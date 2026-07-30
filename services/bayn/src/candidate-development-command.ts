@@ -2636,7 +2636,7 @@ const gitText = (repositoryRoot: string, args: readonly string[], signal?: Abort
   new Promise((resolveGit, rejectGit) => {
     execFile(
       'git',
-      ['-C', repositoryRoot, ...args],
+      ['--no-replace-objects', '-C', repositoryRoot, ...args],
       { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, signal },
       (error, stdout) => {
         if (error === null) resolveGit(stdout.trim())
@@ -2649,7 +2649,7 @@ const gitBytes = (repositoryRoot: string, args: readonly string[], signal?: Abor
   new Promise((resolveGit, rejectGit) => {
     execFile(
       'git',
-      ['-C', repositoryRoot, ...args],
+      ['--no-replace-objects', '-C', repositoryRoot, ...args],
       { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024, signal },
       (error, stdout) => {
         if (error === null) resolveGit(stdout)
