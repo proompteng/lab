@@ -26,7 +26,7 @@ import {
 } from './evidence-contracts'
 import { microsToNumber } from './execution-model'
 import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
-import { ExecutionModelSchema } from './protocol'
+import { defaultProtocolDocument, ExecutionModelSchema } from './protocol'
 import {
   DigitsSchema,
   IsoDateSchema,
@@ -37,7 +37,7 @@ import {
   SourceRevisionSchema,
   strictParseOptions,
 } from './schemas'
-import { TRADING_DAYS } from './simulation/metrics'
+import { buildVerdict, TRADING_DAYS } from './simulation/metrics'
 import type { EvaluationResult } from './types'
 
 export const candidateDevelopmentExecutableProgramSchemaVersion =
@@ -139,6 +139,12 @@ export type CandidateDevelopmentCommandFailure =
       readonly observedGateNames: readonly string[]
     }
   | {
+      readonly _tag: 'CandidateDevelopmentCommandEconomicGateInvalid'
+      readonly index: number
+      readonly expected: EvaluationResult['verdict']['gates'][number]
+      readonly observed: EvaluationResult['verdict']['gates'][number]
+    }
+  | {
       readonly _tag: 'CandidateDevelopmentCommandEconomicVerdictInvalid'
       readonly expectedStatus: EvaluationResult['verdict']['status']
       readonly observedStatus: EvaluationResult['verdict']['status']
@@ -150,32 +156,61 @@ const terminalCash = (marks: EvaluationResult['simulation']['dailyMarks']): bool
   return last !== undefined && last.positions.every((position) => position.quantityMicros === '0')
 }
 
-export const candidateDevelopmentEconomicGateNames = [
-  'finite_metrics',
-  'minimum_observations',
-  'positive_net_return',
-  'benchmark_sharpe_improvement',
-  'maximum_drawdown',
-  'maximum_turnover',
-  'double_cost_return',
-] as const
+const rebuildCandidateDevelopmentEconomicVerdict = (baseline: EvaluationResult): EvaluationResult['verdict'] =>
+  buildVerdict(baseline.strategy, baseline.buyAndHold, baseline.directVolTiming, baseline.doubleCostStrategy, {
+    universe: baseline.inputManifest.symbols.map(({ symbol }) => symbol),
+    directVolatilityTarget: defaultProtocolDocument.directVolatilityTarget,
+    initialCapitalMicros: baseline.initialCapitalMicros,
+    executionModel: baseline.simulation.executionModel,
+    thresholds: defaultProtocolDocument.thresholds,
+  })
+
+const economicGateEqual = (
+  expected: EvaluationResult['verdict']['gates'][number],
+  observed: EvaluationResult['verdict']['gates'][number],
+): boolean =>
+  expected.name === observed.name &&
+  expected.passed === observed.passed &&
+  Object.is(expected.actual, observed.actual) &&
+  Object.is(expected.required, observed.required)
 
 export const deriveCandidateDevelopmentEconomicPass = (
   baseline: EvaluationResult,
 ): Result.Result<boolean, CandidateDevelopmentCommandFailure> => {
+  const expectedVerdict = rebuildCandidateDevelopmentEconomicVerdict(baseline)
+  const expectedGateNames = expectedVerdict.gates.map((gate) => gate.name)
   const observedGateNames = baseline.verdict.gates.map((gate) => gate.name)
   if (
-    observedGateNames.length !== candidateDevelopmentEconomicGateNames.length ||
-    candidateDevelopmentEconomicGateNames.some((expected, index) => observedGateNames[index] !== expected)
+    observedGateNames.length !== expectedGateNames.length ||
+    expectedGateNames.some((expected, index) => observedGateNames[index] !== expected)
   ) {
     return Result.fail({
       _tag: 'CandidateDevelopmentCommandEconomicGateSetInvalid',
-      expectedGateNames: candidateDevelopmentEconomicGateNames,
+      expectedGateNames,
       observedGateNames,
     })
   }
-  const economicPass = baseline.verdict.gates.every((gate) => gate.passed)
-  const failedGateNames = baseline.verdict.gates.filter((gate) => !gate.passed).map((gate) => gate.name)
+  for (let index = 0; index < expectedVerdict.gates.length; index += 1) {
+    const expected = expectedVerdict.gates[index]
+    const observed = baseline.verdict.gates[index]
+    if (expected === undefined || observed === undefined || !economicGateEqual(expected, observed)) {
+      if (expected !== undefined && observed !== undefined) {
+        return Result.fail({
+          _tag: 'CandidateDevelopmentCommandEconomicGateInvalid',
+          index,
+          expected,
+          observed,
+        })
+      }
+      return Result.fail({
+        _tag: 'CandidateDevelopmentCommandEconomicGateSetInvalid',
+        expectedGateNames,
+        observedGateNames,
+      })
+    }
+  }
+  const economicPass = expectedVerdict.gates.every((gate) => gate.passed)
+  const failedGateNames = expectedVerdict.gates.filter((gate) => !gate.passed).map((gate) => gate.name)
   const expectedStatus = economicPass ? 'PASS' : 'FAIL_CLOSED'
   return baseline.verdict.status === expectedStatus
     ? Result.succeed(economicPass)

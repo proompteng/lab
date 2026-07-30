@@ -4,7 +4,6 @@ import { Deferred, Effect, Fiber, Result } from 'effect'
 import { frozenCandidateDevelopmentSessions } from './candidate-development-calendar'
 import {
   buildCandidateDevelopmentCommandReport,
-  candidateDevelopmentEconomicGateNames,
   candidateDevelopmentExecutableProgramSchemaVersion,
   executeCandidateDevelopmentProgram,
   loadCandidateDevelopmentExecutableProgram,
@@ -15,6 +14,8 @@ import {
 } from './candidate-development-command'
 import { officialMonthEndSignalDates, type CandidateDevelopmentReport } from './candidate-development'
 import { canonicalHashV1Result } from './hash'
+import { defaultProtocolDocument } from './protocol'
+import { buildVerdict } from './simulation/metrics'
 import type { EvaluationResult } from './types'
 
 const successOf = <A, E>(result: Result.Result<A, E>): A => {
@@ -25,6 +26,22 @@ const successOf = <A, E>(result: Result.Result<A, E>): A => {
 
 const doubledCostAnnualizedReturn = (endingEquityMicros: string): number =>
   Math.pow(Number(endingEquityMicros) / 1_000_000, 252 / 2) - 1
+
+const performanceMetricsFixture = (overrides: Readonly<Record<string, number | string>> = {}) => ({
+  observations: 504,
+  totalReturn: 0.1,
+  annualizedReturn: 0.1,
+  annualizedVolatility: 0.1,
+  sharpe: 1,
+  maximumDrawdown: 0.1,
+  annualTurnover: 1,
+  totalFeesMicros: '0',
+  totalSpreadCostMicros: '0',
+  totalSlippageCostMicros: '0',
+  totalCashYieldMicros: '0',
+  endingEquityMicros: '1100000',
+  ...overrides,
+})
 
 const reportFixture = (
   annualizedReturnDifferenceLowerBound: number,
@@ -77,25 +94,47 @@ const reportFixture = (
 const baselineFixture = (
   status: 'PASS' | 'FAIL_CLOSED' = 'PASS',
   stressedEndingEquityMicros = '1010000',
-): EvaluationResult =>
-  ({
+): EvaluationResult => {
+  const strategy = performanceMetricsFixture({
+    totalReturn: status === 'PASS' ? 0.1 : -0.1,
+    annualizedReturn: status === 'PASS' ? 0.1 : -0.1,
+    endingEquityMicros: status === 'PASS' ? '1100000' : '900000',
+  })
+  const buyAndHold = performanceMetricsFixture({ annualizedReturn: 0.05, sharpe: 0.5 })
+  const directVolTiming = performanceMetricsFixture({ annualizedReturn: 0.04, sharpe: 0.4 })
+  const doubleCostStrategy = performanceMetricsFixture({
+    annualizedReturn: doubledCostAnnualizedReturn(stressedEndingEquityMicros),
+    endingEquityMicros: stressedEndingEquityMicros,
+  })
+  const simulation = {
+    executionModel: defaultProtocolDocument.executionModel,
+    dailyMarks: [{ positions: [{ quantityMicros: '0' }] }],
+  }
+  const verdict = buildVerdict(strategy, buyAndHold, directVolTiming, doubleCostStrategy, {
+    universe: defaultProtocolDocument.universe,
+    directVolatilityTarget: defaultProtocolDocument.directVolatilityTarget,
     initialCapitalMicros: '1000000',
-    doubleCostStrategy: {
-      annualizedReturn: doubledCostAnnualizedReturn(stressedEndingEquityMicros),
-    },
-    verdict: {
-      status,
-      gates: candidateDevelopmentEconomicGateNames.map((name, index) => ({
-        name,
-        passed: status === 'PASS' || index !== 0,
-        actual: status === 'PASS' || index !== 0,
-        required: true,
+    executionModel: defaultProtocolDocument.executionModel,
+    thresholds: defaultProtocolDocument.thresholds,
+  })
+  return {
+    initialCapitalMicros: '1000000',
+    inputManifest: {
+      symbols: defaultProtocolDocument.universe.map((symbol) => ({
+        symbol,
+        rows: 1,
+        firstSession: '2016-01-04',
+        lastSession: '2016-01-04',
       })),
     },
-    simulation: {
-      dailyMarks: [{ positions: [{ quantityMicros: '0' }] }],
-    },
-  }) as unknown as EvaluationResult
+    strategy,
+    buyAndHold,
+    directVolTiming,
+    doubleCostStrategy,
+    verdict,
+    simulation,
+  } as unknown as EvaluationResult
+}
 
 describe('candidate development command', () => {
   test('calls no effects when preflight rejects the ordinal lineage', async () => {
@@ -235,20 +274,15 @@ describe('candidate development command', () => {
     const baseline = baselineFixture()
     const inconsistent = {
       ...baseline,
-      verdict: {
-        status: 'PASS' as const,
-        gates: baseline.verdict.gates.map((gate, index) =>
-          index === 0 ? { ...gate, passed: false, actual: false } : gate,
-        ),
-      },
+      verdict: { ...baseline.verdict, status: 'FAIL_CLOSED' as const },
     }
 
     expect(buildCandidateDevelopmentCommandReport(reportFixture(0.01), inconsistent)).toEqual(
       Result.fail({
         _tag: 'CandidateDevelopmentCommandEconomicVerdictInvalid',
-        expectedStatus: 'FAIL_CLOSED',
-        observedStatus: 'PASS',
-        failedGateNames: ['finite_metrics'],
+        expectedStatus: 'PASS',
+        observedStatus: 'FAIL_CLOSED',
+        failedGateNames: [],
       }),
     )
   })
@@ -259,14 +293,30 @@ describe('candidate development command', () => {
       ...baseline,
       verdict: { status: 'PASS' as const, gates: baseline.verdict.gates.slice(0, -1) },
     }
+    const expectedGateNames = baseline.verdict.gates.map((gate) => gate.name)
 
     expect(buildCandidateDevelopmentCommandReport(reportFixture(0.01), incomplete)).toEqual(
       Result.fail({
         _tag: 'CandidateDevelopmentCommandEconomicGateSetInvalid',
-        expectedGateNames: candidateDevelopmentEconomicGateNames,
-        observedGateNames: candidateDevelopmentEconomicGateNames.slice(0, -1),
+        expectedGateNames,
+        observedGateNames: expectedGateNames.slice(0, -1),
       }),
     )
+  })
+
+  test('rejects forged passing gates that disagree with decoded metrics', () => {
+    const failing = baselineFixture('FAIL_CLOSED')
+    const forged = { ...failing, verdict: baselineFixture().verdict }
+
+    expect(buildCandidateDevelopmentCommandReport(reportFixture(0.01), forged)).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'CandidateDevelopmentCommandEconomicGateInvalid',
+        index: 2,
+        expected: { name: 'positive_net_return', passed: false, actual: -0.1, required: '>0' },
+        observed: { name: 'positive_net_return', passed: true, actual: 0.1, required: '>0' },
+      },
+    })
   })
 
   test('keeps the sole report write attached through interruption', async () => {
