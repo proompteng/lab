@@ -2867,23 +2867,20 @@ const verifyCandidateDevelopmentPreregistrationModuleNoveltyPromise = async (
   sourceGit: CandidateDevelopmentSourceGit,
   signal: AbortSignal,
 ): Promise<void> => {
-  const entry = await sourceStep('verify-preregistration-module-novelty', () =>
-    sourceGit.text(repositoryRoot, ['ls-tree', preregistrationRevision, '--', modulePath], signal),
+  const history = await sourceStep('verify-preregistration-module-novelty', () =>
+    sourceGit.text(
+      repositoryRoot,
+      ['log', '--format=%H', `--find-object=${moduleBlobOid}`, preregistrationRevision, '--'],
+      signal,
+    ),
   )
-  if (entry.length === 0) return
-  const match = /^\d+\s+blob\s+([0-9a-f]{40})\t(.+)$/.exec(entry)
-  if (match === null || match[2] !== modulePath) {
-    throw new CandidateDevelopmentSourceVerificationError('verify-preregistration-module-novelty', {
-      expected: `one blob entry for ${modulePath}`,
-      observed: entry,
-    })
-  }
-  if (match[1] === moduleBlobOid) {
+  if (history.length > 0) {
     throw new CandidateDevelopmentSourceVerificationError('verify-preregistration-module-novelty', {
       preregistrationRevision,
       modulePath,
       expected: 'evaluated module blob created after preregistration',
       observed: moduleBlobOid,
+      history: history.split('\n'),
     })
   }
 }
