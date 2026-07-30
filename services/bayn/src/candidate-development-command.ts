@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFile, realpath } from 'node:fs/promises'
 import { dirname, relative, resolve, sep } from 'node:path'
@@ -2876,6 +2876,9 @@ const sourceStep = async <A>(
   }
 }
 
+const candidateDevelopmentGitEnvironment = (): NodeJS.ProcessEnv =>
+  Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')))
+
 const gitText = (repositoryRoot: string, args: readonly string[], signal?: AbortSignal): Promise<string> =>
   new Promise((resolveGit, rejectGit) => {
     execFile(
@@ -2883,7 +2886,7 @@ const gitText = (repositoryRoot: string, args: readonly string[], signal?: Abort
       ['--no-replace-objects', '-C', repositoryRoot, ...args],
       {
         encoding: 'utf8',
-        env: Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_'))),
+        env: candidateDevelopmentGitEnvironment(),
         maxBuffer: 16 * 1024 * 1024,
         signal,
       },
@@ -2901,7 +2904,7 @@ const gitBytes = (repositoryRoot: string, args: readonly string[], signal?: Abor
       ['--no-replace-objects', '-C', repositoryRoot, ...args],
       {
         encoding: 'buffer',
-        env: Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_'))),
+        env: candidateDevelopmentGitEnvironment(),
         maxBuffer: 64 * 1024 * 1024,
         signal,
       },
@@ -2915,11 +2918,188 @@ const gitBytes = (repositoryRoot: string, args: readonly string[], signal?: Abor
 export interface CandidateDevelopmentSourceGit {
   readonly text: (repositoryRoot: string, args: readonly string[], signal?: AbortSignal) => Promise<string>
   readonly bytes: (repositoryRoot: string, args: readonly string[], signal?: AbortSignal) => Promise<Buffer>
+  readonly openObjectReader?: (
+    repositoryRoot: string,
+    signal: AbortSignal,
+  ) => Promise<CandidateDevelopmentGitObjectReader>
+}
+
+type CandidateDevelopmentGitObjectType = 'blob' | 'commit' | 'tag' | 'tree'
+
+export interface CandidateDevelopmentGitObjectReader {
+  readonly read: (
+    oid: string,
+    expectedType: Extract<CandidateDevelopmentGitObjectType, 'commit' | 'tree'>,
+  ) => Promise<Buffer>
+  readonly close: () => Promise<void>
+}
+
+const candidateDevelopmentMaximumGitObjectBytes = 64 * 1024 * 1024
+const candidateDevelopmentMaximumGitBatchHeaderBytes = 512
+const candidateDevelopmentMaximumGitStderrBytes = 1024 * 1024
+
+class CandidateDevelopmentGitBatchOutput {
+  private buffer: Buffer<ArrayBufferLike> = Buffer.alloc(0)
+  private ended = false
+  private failure: unknown
+  private waiter: (() => void) | undefined
+
+  constructor(stream: NodeJS.ReadableStream) {
+    stream.on('data', (chunk: Buffer | string) => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      this.buffer = this.buffer.length === 0 ? bytes : Buffer.concat([this.buffer, bytes])
+      this.wake()
+    })
+    stream.on('end', () => {
+      this.ended = true
+      this.wake()
+    })
+    stream.on('error', (cause) => {
+      this.failure = cause
+      this.wake()
+    })
+  }
+
+  private wake(): void {
+    const waiter = this.waiter
+    this.waiter = undefined
+    waiter?.()
+  }
+
+  fail(cause: unknown): void {
+    if (this.failure === undefined) this.failure = cause
+    this.wake()
+  }
+
+  private async waitForData(): Promise<void> {
+    if (this.failure !== undefined) throw this.failure
+    if (this.ended) throw new Error('candidate Git batch output ended unexpectedly')
+    await new Promise<void>((resolveWait) => {
+      this.waiter = resolveWait
+    })
+    if (this.failure !== undefined) throw this.failure
+  }
+
+  async readLine(): Promise<string> {
+    while (true) {
+      const newline = this.buffer.indexOf(0x0a)
+      if (newline >= 0) {
+        const line = this.buffer.subarray(0, newline).toString('utf8')
+        this.buffer = this.buffer.subarray(newline + 1)
+        return line
+      }
+      if (this.buffer.length > candidateDevelopmentMaximumGitBatchHeaderBytes) {
+        throw new Error('candidate Git batch header exceeds the configured bound')
+      }
+      await this.waitForData()
+    }
+  }
+
+  async readBytes(size: number): Promise<Buffer> {
+    while (this.buffer.length < size) await this.waitForData()
+    const value = Buffer.from(this.buffer.subarray(0, size))
+    this.buffer = this.buffer.subarray(size)
+    return value
+  }
+}
+
+const terminateCandidateDevelopmentGitBatch = async (
+  child: ChildProcessWithoutNullStreams,
+  exit: Promise<void>,
+): Promise<void> => {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    await exit.catch(() => undefined)
+    return
+  }
+  child.stdin.end()
+  const completed = await Promise.race([
+    exit.then(
+      () => true,
+      () => true,
+    ),
+    new Promise<false>((resolveTimeout) => setTimeout(() => resolveTimeout(false), 1_000)),
+  ])
+  if (!completed && child.exitCode === null && child.signalCode === null) {
+    child.kill('SIGKILL')
+    await exit.catch(() => undefined)
+  }
+}
+
+export const openCandidateDevelopmentGitBatchObjectReader = async (
+  repositoryRoot: string,
+  signal: AbortSignal,
+): Promise<CandidateDevelopmentGitObjectReader> => {
+  const child = spawn('git', ['--no-replace-objects', '-C', repositoryRoot, 'cat-file', '--batch'], {
+    env: candidateDevelopmentGitEnvironment(),
+    signal,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  const output = new CandidateDevelopmentGitBatchOutput(child.stdout)
+  let stderr = ''
+  child.stderr.on('data', (chunk: Buffer | string) => {
+    if (stderr.length >= candidateDevelopmentMaximumGitStderrBytes) return
+    stderr += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk
+    if (stderr.length > candidateDevelopmentMaximumGitStderrBytes) {
+      stderr = stderr.slice(0, candidateDevelopmentMaximumGitStderrBytes)
+    }
+  })
+  const exit = new Promise<void>((resolveExit) => {
+    child.once('error', (cause) => {
+      output.fail(cause)
+      resolveExit()
+    })
+    child.once('exit', (code, exitSignal) => {
+      if (code !== 0 && !(signal.aborted && exitSignal !== null)) {
+        output.fail(new Error(`candidate Git batch exited ${code ?? exitSignal}: ${stderr}`))
+      }
+      resolveExit()
+    })
+  })
+  let closed = false
+  return {
+    read: async (oid, expectedType) => {
+      if (closed) throw new Error('candidate Git batch reader is closed')
+      if (!/^[0-9a-f]{40}$/.test(oid)) throw new TypeError(`candidate Git object OID is invalid: ${oid}`)
+      await new Promise<void>((resolveWrite, rejectWrite) => {
+        child.stdin.write(`${oid}\n`, (cause) => {
+          if (cause === null || cause === undefined) resolveWrite()
+          else rejectWrite(cause)
+        })
+      })
+      const header = await output.readLine()
+      if (header === `${oid} missing`) throw new Error(`candidate Git object is missing: ${oid}`)
+      const match = /^([0-9a-f]{40}) (blob|commit|tag|tree) ([0-9]+)$/.exec(header)
+      if (match === null) throw new Error(`candidate Git batch header is invalid: ${header}`)
+      const [, observedOid, observedType, encodedSize] = match
+      const size = Number(encodedSize)
+      if (
+        observedOid !== oid ||
+        observedType !== expectedType ||
+        !Number.isSafeInteger(size) ||
+        size < 0 ||
+        size > candidateDevelopmentMaximumGitObjectBytes
+      ) {
+        throw new Error(
+          `candidate Git batch object mismatch: ${JSON.stringify({ oid, expectedType, observedOid, observedType, size })}`,
+        )
+      }
+      const content = await output.readBytes(size)
+      const delimiter = await output.readBytes(1)
+      if (delimiter[0] !== 0x0a) throw new Error('candidate Git batch object delimiter is invalid')
+      return content
+    },
+    close: async () => {
+      if (closed) return
+      closed = true
+      await terminateCandidateDevelopmentGitBatch(child, exit)
+    },
+  }
 }
 
 const candidateDevelopmentSourceGit: CandidateDevelopmentSourceGit = {
   text: gitText,
   bytes: gitBytes,
+  openObjectReader: openCandidateDevelopmentGitBatchObjectReader,
 }
 
 const activeGitMetadataLines = (value: string, commentsAllowed: boolean): readonly string[] =>
@@ -3023,6 +3203,25 @@ interface CandidateDevelopmentImmutableCommit {
   readonly parentOids: readonly string[]
 }
 
+interface CandidateDevelopmentImmutableTreeEntry {
+  readonly objectType: 'blob' | 'commit' | 'tree'
+  readonly objectOid: string
+}
+
+const openCandidateDevelopmentGitObjectReader = async (
+  repositoryRoot: string,
+  sourceGit: CandidateDevelopmentSourceGit,
+  signal: AbortSignal,
+): Promise<CandidateDevelopmentGitObjectReader> =>
+  sourceGit.openObjectReader?.(repositoryRoot, signal) ??
+  Promise.resolve({
+    read: async (oid, expectedType) =>
+      expectedType === 'commit'
+        ? Buffer.from(await sourceGit.text(repositoryRoot, ['cat-file', 'commit', oid], signal), 'utf8')
+        : sourceGit.bytes(repositoryRoot, ['cat-file', 'tree', oid], signal),
+    close: async () => undefined,
+  })
+
 const decodeCandidateDevelopmentImmutableCommit = (
   operation: CandidateDevelopmentSourceVerificationError['operation'],
   commitOid: string,
@@ -3048,12 +3247,45 @@ const decodeCandidateDevelopmentImmutableCommit = (
   return { treeOid, parentOids }
 }
 
+const decodeCandidateDevelopmentImmutableTree = (
+  treeOid: string,
+  content: Buffer,
+): readonly CandidateDevelopmentImmutableTreeEntry[] => {
+  const entries: CandidateDevelopmentImmutableTreeEntry[] = []
+  let offset = 0
+  while (offset < content.length) {
+    const space = content.indexOf(0x20, offset)
+    const nul = space < 0 ? -1 : content.indexOf(0x00, space + 1)
+    if (space <= offset || nul <= space + 1 || nul + 21 > content.length) {
+      throw new CandidateDevelopmentSourceVerificationError('verify-preregistration-module-novelty', {
+        field: 'immutableTreeEntry',
+        treeOid,
+        offset,
+        expected: 'raw Git tree entry with mode, name, NUL, and 20-byte object ID',
+      })
+    }
+    const mode = content.subarray(offset, space).toString('ascii')
+    const objectOid = content.subarray(nul + 1, nul + 21).toString('hex')
+    const objectType: CandidateDevelopmentImmutableTreeEntry['objectType'] =
+      mode === '40000' || mode === '040000' ? 'tree' : mode === '160000' ? 'commit' : 'blob'
+    if (!/^[0-9a-f]{40}$/.test(objectOid)) {
+      throw new CandidateDevelopmentSourceVerificationError('verify-preregistration-module-novelty', {
+        field: 'immutableTreeObjectOid',
+        treeOid,
+        offset,
+        observed: objectOid,
+      })
+    }
+    entries.push({ objectType, objectOid })
+    offset = nul + 21
+  }
+  return entries
+}
+
 const walkCandidateDevelopmentImmutableHistory = async (
-  repositoryRoot: string,
   startRevision: string,
   operation: CandidateDevelopmentSourceVerificationError['operation'],
-  sourceGit: CandidateDevelopmentSourceGit,
-  signal: AbortSignal,
+  objectReader: CandidateDevelopmentGitObjectReader,
   visit: (commitOid: string, commit: CandidateDevelopmentImmutableCommit) => Promise<boolean>,
 ): Promise<boolean> => {
   const pending = [startRevision]
@@ -3068,10 +3300,8 @@ const walkCandidateDevelopmentImmutableHistory = async (
         observed: visited.size,
       })
     }
-    const content = await sourceStep(operation, () =>
-      sourceGit.text(repositoryRoot, ['cat-file', 'commit', commitOid], signal),
-    )
-    const commit = decodeCandidateDevelopmentImmutableCommit(operation, commitOid, content)
+    const content = await sourceStep(operation, () => objectReader.read(commitOid, 'commit'))
+    const commit = decodeCandidateDevelopmentImmutableCommit(operation, commitOid, content.toString('utf8'))
     visited.add(commitOid)
     if (await visit(commitOid, commit)) return true
     pending.push(...commit.parentOids)
@@ -3093,14 +3323,20 @@ const verifyCandidateDevelopmentPreregistrationLineagePromise = async (
       observed: preregistrationRevision,
     })
   }
-  const found = await walkCandidateDevelopmentImmutableHistory(
-    repositoryRoot,
-    sourceRevision,
-    'verify-preregistration-lineage',
-    sourceGit,
-    signal,
-    async (commitOid) => commitOid === preregistrationRevision,
+  const objectReader = await sourceStep('verify-preregistration-lineage', () =>
+    openCandidateDevelopmentGitObjectReader(repositoryRoot, sourceGit, signal),
   )
+  let found: boolean
+  try {
+    found = await walkCandidateDevelopmentImmutableHistory(
+      sourceRevision,
+      'verify-preregistration-lineage',
+      objectReader,
+      async (commitOid) => commitOid === preregistrationRevision,
+    )
+  } finally {
+    await objectReader.close()
+  }
   if (!found) {
     throw new CandidateDevelopmentSourceVerificationError('verify-preregistration-lineage', {
       expected: `${preregistrationRevision} to be a proper ancestor of ${sourceRevision}`,
@@ -3139,6 +3375,9 @@ const verifyCandidateDevelopmentPreregistrationModuleNoveltyPromise = async (
   signal: AbortSignal,
 ): Promise<void> => {
   await verifyCandidateDevelopmentRepositoryIntegrityPromise(repositoryRoot, sourceGit, signal)
+  const objectReader = await sourceStep('verify-preregistration-module-novelty', () =>
+    openCandidateDevelopmentGitObjectReader(repositoryRoot, sourceGit, signal),
+  )
   const searchedTrees = new Set<string>()
   let matchingCommitOid: string | undefined
   const treeContainsModuleBlob = async (rootTreeOid: string): Promise<boolean> => {
@@ -3153,40 +3392,31 @@ const verifyCandidateDevelopmentPreregistrationModuleNoveltyPromise = async (
           observed: searchedTrees.size,
         })
       }
-      const objects = await sourceStep('verify-preregistration-module-novelty', () =>
-        sourceGit.text(repositoryRoot, ['ls-tree', '--format=%(objecttype) %(objectname)', treeOid], signal),
+      const contents = await sourceStep('verify-preregistration-module-novelty', () =>
+        objectReader.read(treeOid, 'tree'),
       )
       searchedTrees.add(treeOid)
-      for (const line of objects.split('\n')) {
-        if (line.length === 0) continue
-        const match = /^(blob|tree|commit) ([0-9a-f]{40})$/.exec(line)
-        if (match === null) {
-          throw new CandidateDevelopmentSourceVerificationError('verify-preregistration-module-novelty', {
-            field: 'immutableTreeEntry',
-            treeOid,
-            expected: '<blob|tree|commit> <lowercase 40-character object OID>',
-            observed: line,
-          })
-        }
-        const [, objectType, objectOid] = match
+      for (const { objectType, objectOid } of decodeCandidateDevelopmentImmutableTree(treeOid, contents)) {
         if (objectType === 'blob' && objectOid === moduleBlobOid) return true
         if (objectType === 'tree') pendingTrees.push(objectOid)
       }
     }
     return false
   }
-  await walkCandidateDevelopmentImmutableHistory(
-    repositoryRoot,
-    preregistrationRevision,
-    'verify-preregistration-module-novelty',
-    sourceGit,
-    signal,
-    async (commitOid, commit) => {
-      const found = await treeContainsModuleBlob(commit.treeOid)
-      if (found) matchingCommitOid = commitOid
-      return found
-    },
-  )
+  try {
+    await walkCandidateDevelopmentImmutableHistory(
+      preregistrationRevision,
+      'verify-preregistration-module-novelty',
+      objectReader,
+      async (commitOid, commit) => {
+        const found = await treeContainsModuleBlob(commit.treeOid)
+        if (found) matchingCommitOid = commitOid
+        return found
+      },
+    )
+  } finally {
+    await objectReader.close()
+  }
   if (matchingCommitOid !== undefined) {
     throw new CandidateDevelopmentSourceVerificationError('verify-preregistration-module-novelty', {
       preregistrationRevision,

@@ -16,6 +16,7 @@ import {
   executeCandidateDevelopmentProgram,
   loadCandidateDevelopmentExecutableProgram,
   makeCandidateDevelopmentCommandReportWriter,
+  openCandidateDevelopmentGitBatchObjectReader,
   renderCandidateDevelopmentCommandReport,
   validateCandidateDevelopmentAccountingReplay,
   validateCandidateDevelopmentCommandEvaluation,
@@ -3223,16 +3224,26 @@ describe('candidate development command', () => {
       const moduleBlobOid = await execFileTextPromise('git', ['rev-parse', 'HEAD:candidate/program.mjs'], repository)
 
       const queriedTreeOids: string[] = []
+      let objectReaderOpenCount = 0
       const sourceGit: CandidateDevelopmentSourceGit = {
-        text: async (repositoryRoot, args) => {
-          if (args[0] === 'ls-tree') {
-            expect(args).not.toContain('-r')
-            queriedTreeOids.push(args.at(-1) ?? '')
-          }
-          return execFileTextPromise('git', ['--no-replace-objects', '-C', repositoryRoot, ...args], repositoryRoot)
-        },
+        text: (repositoryRoot, args) =>
+          execFileTextPromise('git', ['--no-replace-objects', '-C', repositoryRoot, ...args], repositoryRoot),
         bytes: (repositoryRoot, args) =>
           execFileBytesPromise('git', ['--no-replace-objects', '-C', repositoryRoot, ...args], repositoryRoot),
+        openObjectReader: async (repositoryRoot) => {
+          objectReaderOpenCount += 1
+          return {
+            read: async (oid, expectedType) => {
+              if (expectedType === 'tree') queriedTreeOids.push(oid)
+              return execFileBytesPromise(
+                'git',
+                ['--no-replace-objects', '-C', repositoryRoot, 'cat-file', expectedType, oid],
+                repositoryRoot,
+              )
+            },
+            close: async () => undefined,
+          }
+        },
       }
 
       expect(
@@ -3246,8 +3257,37 @@ describe('candidate development command', () => {
           ),
         ),
       ).toBeUndefined()
+      expect(objectReaderOpenCount).toBe(1)
       expect(queriedTreeOids.filter((treeOid) => treeOid === stableTreeOid)).toHaveLength(1)
       expect(new Set(queriedTreeOids).size).toBe(queriedTreeOids.length)
+    } finally {
+      await rm(repository, { recursive: true, force: true })
+    }
+  })
+
+  test('terminates the production Git batch reader on cancellation', async () => {
+    const repository = await mkdtemp(join(tmpdir(), 'bayn-candidate-batch-cancellation-'))
+    try {
+      await execFilePromise('git', ['init', '-q'], repository)
+      await execFilePromise('git', ['config', 'user.name', 'Candidate Test'], repository)
+      await execFilePromise('git', ['config', 'user.email', 'candidate@example.test'], repository)
+      await writeFile(join(repository, 'marker.txt'), 'marker\n')
+      await execFilePromise('git', ['add', 'marker.txt'], repository)
+      await execFilePromise('git', ['commit', '-qm', 'test: batch reader cancellation'], repository)
+      const revision = await execFileTextPromise('git', ['rev-parse', 'HEAD'], repository)
+      const controller = new AbortController()
+      const reader = await openCandidateDevelopmentGitBatchObjectReader(repository, controller.signal)
+      const commit = await reader.read(revision, 'commit')
+      expect(commit.toString('utf8')).toContain('test: batch reader cancellation')
+      controller.abort(new Error('test cancellation'))
+      let rejected = false
+      try {
+        await reader.read(revision, 'commit')
+      } catch {
+        rejected = true
+      }
+      expect(rejected).toBe(true)
+      await reader.close()
     } finally {
       await rm(repository, { recursive: true, force: true })
     }
