@@ -1684,15 +1684,28 @@ const rebuildCandidateDevelopmentBenchmarks = (
     )
   }
   const startIndex = marketData.sessionIndexByDate.get(firstMark.sessionDate)
+  const selectedFirstMark = baseline.simulation.dailyMarks.at(0)
+  const selectedStartIndex =
+    selectedFirstMark === undefined ? undefined : marketData.sessionIndexByDate.get(selectedFirstMark.sessionDate)
   const endIndex = marketData.sessionIndexByDate.get(lastMark.sessionDate)
-  if (startIndex === undefined || endIndex === undefined || startIndex <= 0 || endIndex < startIndex) {
+  if (
+    startIndex === undefined ||
+    selectedStartIndex === undefined ||
+    endIndex === undefined ||
+    selectedStartIndex !== startIndex + 1 ||
+    endIndex < selectedStartIndex
+  ) {
     return Result.fail(
       markedEquityFailure(
         'binding-mismatch',
         null,
         'benchmarks.window',
-        'bounded accounting window with a prior signal session',
-        { first: firstMark.sessionDate, last: lastMark.sessionDate },
+        'one accounting predecessor followed by the selected benchmark window',
+        {
+          accountingFirst: firstMark.sessionDate,
+          selectedFirst: selectedFirstMark?.sessionDate ?? null,
+          last: lastMark.sessionDate,
+        },
       ),
     )
   }
@@ -1742,8 +1755,8 @@ const rebuildCandidateDevelopmentBenchmarks = (
     sessions,
     [
       {
-        signalIndex: startIndex - 1,
-        executionIndex: startIndex,
+        signalIndex: startIndex,
+        executionIndex: selectedStartIndex,
         weights: { [benchmarkSymbol]: 1 },
       },
       terminalTarget.success,

@@ -239,7 +239,9 @@ const terminalDecisionFixture = makeSignalDecisionFixture(
 const signalDecisionFixture = firstDecisionFixture.signal
 const fixtureSignalDecisions = [firstDecisionFixture.signal, terminalDecisionFixture.signal]
 
-const fixtureBenchmarkSeries = (): {
+const fixtureBenchmarkSeries = (
+  buyAtAccountingPredecessor = false,
+): {
   readonly buyAndHold: readonly DailyPerformancePoint[]
   readonly directVolTiming: readonly DailyPerformancePoint[]
 } => {
@@ -275,7 +277,14 @@ const fixtureBenchmarkSeries = (): {
   const buyAndHold = successOf(
     simulate(
       sessions,
-      [{ signalIndex: startIndex - 1, executionIndex: startIndex, weights: { SPY: 1 } }, terminalTarget],
+      [
+        {
+          signalIndex: buyAtAccountingPredecessor ? startIndex - 1 : startIndex,
+          executionIndex: buyAtAccountingPredecessor ? startIndex : startIndex + 1,
+          weights: { SPY: 1 },
+        },
+        terminalTarget,
+      ],
       startIndex,
       protocol,
       MICROS,
@@ -2049,6 +2058,26 @@ describe('candidate development command', () => {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
         reason: 'binding-mismatch',
         field: 'benchmarks.directVolatilityTiming',
+      },
+    })
+  })
+
+  test('rejects buy-and-hold entry on the accounting predecessor', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const legacyBuyAndHold = fixtureBenchmarkSeries(true).buyAndHold
+    expect(legacyBuyAndHold).not.toEqual(baseline.benchmarkSeries.buyAndHold)
+
+    expect(
+      buildFixtureReport(report, {
+        ...baseline,
+        benchmarkSeries: { ...baseline.benchmarkSeries, buyAndHold: legacyBuyAndHold },
+      }),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'benchmarks.buyAndHold',
       },
     })
   })
