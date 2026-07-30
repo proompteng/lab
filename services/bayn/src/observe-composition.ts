@@ -1347,13 +1347,19 @@ const observeMutationCadenceReconciliation = (
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
   result: CycleRunResult,
 ): Effect.Effect<void, never, ObserveDecisionRuntime> =>
-  attemptMutationIdleReconciliation(cadence, reconcile).pipe(
-    Effect.flatMap(() =>
-      result.outcome === 'NOT_DUE'
-        ? currentUtcInstant.pipe(
-            Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'SUCCEEDED', observedAt, result })),
-          )
-        : Effect.void,
+  Ref.get(cadence).pipe(
+    Effect.flatMap((state) =>
+      attemptMutationIdleReconciliation(cadence, reconcile).pipe(
+        Effect.flatMap(() =>
+          result.outcome === 'NOT_DUE' || state.lastFailure !== undefined
+            ? currentUtcInstant.pipe(
+                Effect.flatMap((observedAt) =>
+                  observeMutationPass(startup, { outcome: 'SUCCEEDED', observedAt, result }),
+                ),
+              )
+            : Effect.void,
+        ),
+      ),
     ),
     Effect.catch((error) =>
       currentUtcInstant.pipe(

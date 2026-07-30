@@ -147,8 +147,16 @@ const observeCadenceReconciliation = <E, ContextR, DecisionR>(
   cadence: Ref.Ref<ReconciliationCadenceState>,
   result: CycleRunResult,
 ): Effect.Effect<void, never, DecisionR> =>
-  attemptIdleReconciliation(options.reconcileNotDue, cadence).pipe(
-    Effect.flatMap(() => (result.outcome === 'NOT_DUE' ? observeSuccessfulPass(options, result) : Effect.void)),
+  Ref.get(cadence).pipe(
+    Effect.flatMap((state) =>
+      attemptIdleReconciliation(options.reconcileNotDue, cadence).pipe(
+        Effect.flatMap(() =>
+          result.outcome === 'NOT_DUE' || state.lastFailure !== undefined
+            ? observeSuccessfulPass(options, result)
+            : Effect.void,
+        ),
+      ),
+    ),
     Effect.catch((error) => observeFailedPass(options, error)),
   )
 

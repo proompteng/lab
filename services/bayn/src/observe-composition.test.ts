@@ -1541,7 +1541,8 @@ describe('OBSERVE runtime composition', () => {
           const third = yield* Deferred.make<void>()
           const fourth = yield* Deferred.make<void>()
           const fifth = yield* Deferred.make<void>()
-          const completions = [first, second, third, fourth, fifth]
+          const sixth = yield* Deferred.make<void>()
+          const completions = [first, second, third, fourth, fifth, sixth]
           const loop = yield* failureStartup({
             qualificationRunId: 'c'.repeat(64),
             recordPass: (observation) =>
@@ -1576,15 +1577,16 @@ describe('OBSERVE runtime composition', () => {
           yield* Deferred.await(third).pipe(Effect.timeout('1 second'))
           yield* TestClock.adjust(50)
           yield* Deferred.await(fourth).pipe(Effect.timeout('1 second'))
-          yield* TestClock.adjust(50)
           yield* Deferred.await(fifth).pipe(Effect.timeout('1 second'))
+          yield* TestClock.adjust(50)
+          yield* Deferred.await(sixth).pipe(Effect.timeout('1 second'))
           yield* Fiber.interrupt(fiber)
         }),
       ).pipe(Effect.provide(TestClock.layer())),
     )
     mutationPhase = false
 
-    expect(failureObservations).toHaveLength(5)
+    expect(failureObservations).toHaveLength(6)
     expect(failureObservations[0]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
     expect(failureObservations[1]).toMatchObject({
       result: 'FAILURE',
@@ -1602,10 +1604,90 @@ describe('OBSERVE runtime composition', () => {
       message: 'same-pass reconciliation store operation failed: mutation cadence reconciliation persistence failed',
     })
     expect(failureObservations[4]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
+    expect(failureObservations[5]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
     expect(publicationReads).toBe(4)
     expect(mutationReconciliations).toBe(1)
     expect(mutationEvents.indexOf('reconcile-failed')).toBeLessThan(mutationEvents.indexOf('failure-observe:2'))
     expect(authorityRestrictions).toBe(1)
+
+    mutationEvents.length = 0
+    mutationReconciliations = 0
+    publicationReads = 0
+    nextReconciliationFailure = new ExecutionStoreError({
+      operation: 'reconciliation',
+      failure: 'query',
+      message: 'slow-poll mutation reconciliation persistence failed',
+    })
+    const recoveryStartup = makeMutationAutonomousCycleStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      pollIntervalMs: 250,
+      reconciliationIntervalMs: 100,
+      reconciliationPassTimeoutMs: 30_000,
+      strategy: fixtureStrategy,
+      executionProgram: sandboxExecutionProgram(),
+    })
+    const recoveryObservations: Parameters<Parameters<typeof recoveryStartup>[0]['recordPass']>[0][] = []
+    mutationPhase = true
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(reconciledAt))
+          const initial = yield* Deferred.make<void>()
+          const failed = yield* Deferred.make<void>()
+          const recovered = yield* Deferred.make<void>()
+          const completions = [initial, failed, recovered]
+          const loop = yield* recoveryStartup({
+            qualificationRunId: 'c'.repeat(64),
+            recordPass: (observation) =>
+              Effect.sync(() => {
+                recoveryObservations.push(observation)
+                mutationEvents.push(`recovery-observe:${recoveryObservations.length.toString()}`)
+                return completions[recoveryObservations.length - 1]
+              }).pipe(
+                Effect.flatMap((completion) =>
+                  completion === undefined ? Effect.void : Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
+                ),
+              ),
+          })
+          const fiber = yield* loop.pipe(
+            Effect.provideService(BrokerRead, brokerRead),
+            Effect.provideService(CycleStore, cycleStore),
+            Effect.provideService(MarketData, missingPublicationMarketData),
+            Effect.provideService(BrokerEventStore, executionStore),
+            Effect.provideService(FillAccountingStore, executionStore),
+            Effect.provideService(ValuationStore, executionStore),
+            Effect.provideService(ReconciliationStore, executionStore),
+            Effect.provideService(AuthorityGenerationStore, executionStore),
+            Effect.provideService(AuthorityRestrictionStore, executionStore),
+            Effect.provideService(WriterFence, writerFence),
+            Effect.provideService(IntentStore, intentStore),
+            Effect.provideService(MutationStore, mutationStore),
+            Effect.forkScoped({ startImmediately: true }),
+          )
+          yield* Deferred.await(initial).pipe(Effect.timeout('1 second'))
+          yield* Deferred.await(failed).pipe(Effect.timeout('1 second'))
+          yield* TestClock.adjust(100)
+          yield* Deferred.await(recovered).pipe(Effect.timeout('1 second'))
+          yield* Fiber.interrupt(fiber)
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+    mutationPhase = false
+
+    expect(recoveryObservations).toHaveLength(3)
+    expect(recoveryObservations[0]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
+    expect(recoveryObservations[1]).toMatchObject({
+      result: 'FAILURE',
+      operation: 'reconcile-not-due',
+      message: 'same-pass reconciliation store operation failed: slow-poll mutation reconciliation persistence failed',
+    })
+    expect(recoveryObservations[2]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
+    expect(publicationReads).toBe(1)
+    expect(mutationReconciliations).toBe(1)
+    expect(mutationEvents.indexOf('reconcile-failed')).toBeLessThan(mutationEvents.indexOf('recovery-observe:2'))
+    expect(mutationEvents.indexOf('reconcile:1')).toBeLessThan(mutationEvents.indexOf('recovery-observe:3'))
+    expect(authorityRestrictions).toBe(2)
   })
 
   test('bounds the complete writer-fenced reconciliation pass and interrupts stalled persistence', async () => {

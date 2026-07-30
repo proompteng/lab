@@ -1633,7 +1633,8 @@ describe('autonomous cycle runner', () => {
           const third = yield* Deferred.make<void>()
           const fourth = yield* Deferred.make<void>()
           const fifth = yield* Deferred.make<void>()
-          const completions = [first, second, third, fourth, fifth]
+          const sixth = yield* Deferred.make<void>()
+          const completions = [first, second, third, fourth, fifth, sixth]
           const loop = yield* cycleLoop({
             context: Effect.succeed(context()),
             observePass: (observation) =>
@@ -1700,7 +1701,8 @@ describe('autonomous cycle runner', () => {
           const third = yield* Deferred.make<void>()
           const fourth = yield* Deferred.make<void>()
           const fifth = yield* Deferred.make<void>()
-          const completions = [first, second, third, fourth, fifth]
+          const sixth = yield* Deferred.make<void>()
+          const completions = [first, second, third, fourth, fifth, sixth]
           const loop = yield* cycleLoop({
             context: Effect.succeed(context()),
             observePass: (observation) =>
@@ -1842,7 +1844,8 @@ describe('autonomous cycle runner', () => {
           const third = yield* Deferred.make<void>()
           const fourth = yield* Deferred.make<void>()
           const fifth = yield* Deferred.make<void>()
-          const completions = [first, second, third, fourth, fifth]
+          const sixth = yield* Deferred.make<void>()
+          const completions = [first, second, third, fourth, fifth, sixth]
           const loop = yield* cycleLoop({
             context: Effect.succeed(context()),
             observePass: (observation) =>
@@ -1879,8 +1882,9 @@ describe('autonomous cycle runner', () => {
           yield* Deferred.await(third)
           yield* TestClock.adjust(50)
           yield* Deferred.await(fourth)
-          yield* TestClock.adjust(50)
           yield* Deferred.await(fifth)
+          yield* TestClock.adjust(50)
+          yield* Deferred.await(sixth)
           yield* Fiber.interrupt(fiber)
         }),
       ).pipe(Effect.provide(TestClock.layer())),
@@ -1888,7 +1892,7 @@ describe('autonomous cycle runner', () => {
 
     expect(attempts).toBe(2)
     expect(publicationReads).toBe(4)
-    expect(observations).toHaveLength(5)
+    expect(observations).toHaveLength(6)
     expect(observations[0]).toMatchObject({ outcome: 'SUCCEEDED', result: { outcome: 'NO_PUBLICATION' } })
     expect(observations[1]).toMatchObject({
       outcome: 'FAILED',
@@ -1903,6 +1907,76 @@ describe('autonomous cycle runner', () => {
       error: { operation: 'reconcile-not-due', message: failure.message },
     })
     expect(observations[4]).toMatchObject({ outcome: 'SUCCEEDED', result: { outcome: 'NO_PUBLICATION' } })
+    expect(observations[5]).toMatchObject({ outcome: 'SUCCEEDED', result: { outcome: 'NO_PUBLICATION' } })
+    expect(control).toEqual({ acquisitions: [], binds: 0 })
+  })
+
+  test('records non-idle recovery immediately when cadence retry succeeds before the next poll', async () => {
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const observations: CyclePassObservation[] = []
+    const failure = new CycleNotDueReconciliationError({
+      failure: 'database',
+      message: 'slow-poll reconciliation persistence failed',
+    })
+    let attempts = 0
+    let publicationReads = 0
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse('2026-01-29T21:20:00.000Z'))
+          const initial = yield* Deferred.make<void>()
+          const failed = yield* Deferred.make<void>()
+          const recovered = yield* Deferred.make<void>()
+          const completions = [initial, failed, recovered]
+          const loop = yield* cycleLoop({
+            context: Effect.succeed(context()),
+            observePass: (observation) =>
+              Effect.sync(() => {
+                observations.push(observation)
+                return completions[observations.length - 1]
+              }).pipe(
+                Effect.flatMap((completion) =>
+                  completion === undefined ? Effect.void : Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
+                ),
+              ),
+            pollIntervalMs: 250,
+            reconciliationIntervalMs: 100,
+            reconcileNotDue: Effect.suspend(() => {
+              attempts += 1
+              return attempts === 1 ? Effect.fail(failure) : Effect.void
+            }),
+          })
+          const fiber = yield* provide(
+            loop,
+            brokerRead(() => Effect.die(new Error('missing-publication loop must not read the broker calendar'))),
+            cycleStore(control),
+            marketDataService(
+              Effect.sync(() => {
+                publicationReads += 1
+                return { outcome: 'MISSING' as const, observedAt: '2026-01-29T21:20:00.000Z' }
+              }),
+            ),
+          ).pipe(Effect.forkScoped({ startImmediately: true }))
+
+          yield* Deferred.await(initial)
+          yield* Deferred.await(failed)
+          yield* TestClock.adjust(100)
+          yield* Deferred.await(recovered)
+          yield* Fiber.interrupt(fiber)
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(attempts).toBe(2)
+    expect(publicationReads).toBe(1)
+    expect(observations).toHaveLength(3)
+    expect(observations[0]).toMatchObject({ outcome: 'SUCCEEDED', result: { outcome: 'NO_PUBLICATION' } })
+    expect(observations[1]).toMatchObject({
+      outcome: 'FAILED',
+      error: { operation: 'reconcile-not-due', message: failure.message },
+    })
+    expect(observations[2]).toMatchObject({ outcome: 'SUCCEEDED', result: { outcome: 'NO_PUBLICATION' } })
     expect(control).toEqual({ acquisitions: [], binds: 0 })
   })
 
