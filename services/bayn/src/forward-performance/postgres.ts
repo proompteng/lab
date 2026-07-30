@@ -423,6 +423,13 @@ export const readForwardPerformancePostgres = (
                 FROM accounting_transactions AS transaction
                 WHERE transaction.broker_event_id = fill.event_id
               )
+            UNION ALL
+            SELECT event.event_id AS activity_id
+            FROM mutation_events AS event
+            JOIN intents AS intent ON intent.intent_id = event.intent_id
+            CROSS JOIN latest_reconciliation
+            WHERE intent.account_id = ${accountId}
+              AND event.occurred_at >= latest_reconciliation.reconciled_at
           ) AS activity
         `.pipe(Effect.flatMap(decodeCount))
 
