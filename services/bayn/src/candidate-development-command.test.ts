@@ -2169,6 +2169,31 @@ describe('candidate development command', () => {
     })
   })
 
+  test('uses deterministic code-unit market-bar ordering when locale-aware comparison disagrees', () => {
+    const originalLocaleCompare = Object.getOwnPropertyDescriptor(String.prototype, 'localeCompare')
+    if (originalLocaleCompare === undefined) throw new Error('String.prototype.localeCompare descriptor is missing')
+    const result = (() => {
+      Object.defineProperty(String.prototype, 'localeCompare', {
+        configurable: true,
+        writable: true,
+        value(this: string, other: string): number {
+          const left = String(this)
+          return left === other ? 0 : left < other ? 1 : -1
+        },
+      })
+      try {
+        expect('DBC'.localeCompare('EFA')).toBeGreaterThan(0)
+        expect(fixtureOfficialSessions[0].localeCompare(fixtureOfficialSessions[1])).toBeGreaterThan(0)
+        const report = reportFixture(0.01)
+        return buildFixtureReport(report, baselineFixture())
+      } finally {
+        Object.defineProperty(String.prototype, 'localeCompare', originalLocaleCompare)
+      }
+    })()
+
+    expect(Result.isSuccess(result)).toBe(true)
+  })
+
   test('rejects self-reported source revisions and run identities', () => {
     const report = reportFixture(0.01)
     const revisionDrift = { ...baselineFixture(), codeRevision: 'f'.repeat(40) }

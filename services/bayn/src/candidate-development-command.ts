@@ -834,10 +834,12 @@ interface PreparedCandidateDevelopmentMarketData {
   readonly sessionIndexByDate: ReadonlyMap<string, number>
 }
 
+const compareCodeUnitStrings = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
+
 const compareMarketBars = (left: DailyBar, right: DailyBar): number =>
   left.sessionDate === right.sessionDate
-    ? left.symbol.localeCompare(right.symbol)
-    : left.sessionDate.localeCompare(right.sessionDate)
+    ? compareCodeUnitStrings(left.symbol, right.symbol)
+    : compareCodeUnitStrings(left.sessionDate, right.sessionDate)
 
 const prepareCandidateDevelopmentMarketData = (
   evaluation: CandidateDevelopmentCommandEvaluation,
