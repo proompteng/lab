@@ -15,6 +15,7 @@ import {
   type CycleRunResult,
 } from './cycle-runner'
 import { validateCycleLoopInterval } from './cycle-runner/decisions'
+import { CycleNotDueReconciliationError } from './cycle-runner/model'
 import { CycleStore } from './db/cycle-store'
 import {
   BrokerEventStore,
@@ -217,6 +218,15 @@ const decisionBuildError = (cause: ObserveDecisionFailure): CycleDecisionBuildEr
     case 'TargetPlannerFailure':
       return new CycleDecisionBuildError({ failure: 'contract', message: cause.message, cause })
   }
+}
+
+const notDueReconciliationError = (cause: ReconciliationPassError): CycleNotDueReconciliationError => {
+  const operational = reconciliationOperationalError(cause)
+  return new CycleNotDueReconciliationError({
+    failure: operationalDecisionFailure(operational.component),
+    message: operational.message,
+    cause: operational,
+  })
 }
 
 const hashObserveMaterial = (
@@ -639,6 +649,7 @@ const makeObserveAutonomousLoop = (
       context: Effect.succeed(context),
       observePass: (observation) => observePass(startup.recordPass, observation),
       pollIntervalMs: input.pollIntervalMs,
+      reconcileNotDue: runOnce.pipe(Effect.mapError(notDueReconciliationError), Effect.asVoid),
     }),
     Result.mapError((cause) =>
       operationalError('strategy', 'cycle-loop', 'autonomous cycle loop failed to start', cause),

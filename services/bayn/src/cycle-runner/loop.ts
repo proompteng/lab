@@ -8,8 +8,8 @@ import { cyclePassLogFacts, validateCycleLoopInterval } from './decisions'
 import {
   runnerError,
   type AutonomousCycleLoopOptions,
+  type CycleNotDueReconciliationError,
   type CyclePassObservation,
-  type CycleRunContext,
   type CycleRunnerError,
   type CycleRunResult,
 } from './model'
@@ -21,14 +21,26 @@ const logCyclePass = (observation: CyclePassObservation): Effect.Effect<void> =>
   return log.pipe(Effect.annotateLogs(facts.annotations))
 }
 
+const reconcileNotDuePass = <DecisionR>(
+  reconcileNotDue: Effect.Effect<void, CycleNotDueReconciliationError, DecisionR>,
+  result: CycleRunResult,
+): Effect.Effect<CycleRunResult, CycleRunnerError, DecisionR> => {
+  if (result.outcome !== 'NOT_DUE') return Effect.succeed(result)
+  return reconcileNotDue.pipe(
+    Effect.mapError((cause) => runnerError('reconcile-not-due', cause.failure, cause.message, cause)),
+    Effect.map((): CycleRunResult => result),
+  )
+}
+
 const runLoopPass = <E, ContextR, DecisionR>(
-  context: Effect.Effect<CycleRunContext<DecisionR>, E, ContextR>,
+  options: AutonomousCycleLoopOptions<E, ContextR, DecisionR>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData | ContextR | DecisionR> =>
-  context.pipe(
+  options.context.pipe(
     Effect.mapError((cause) =>
       runnerError('load-context', 'context', 'autonomous cycle context loading failed', cause),
     ),
     Effect.flatMap(runAutonomousCycleUntilSettled),
+    Effect.flatMap((result) => reconcileNotDuePass(options.reconcileNotDue, result)),
     Effect.withLogSpan('autonomous-cycle'),
   )
 
@@ -60,7 +72,7 @@ const cycleLoopProgram = <E, ContextR, DecisionR>(
   options: AutonomousCycleLoopOptions<E, ContextR, DecisionR>,
 ): Effect.Effect<void, never, BrokerRead | CycleStore | MarketData | ContextR | DecisionR> =>
   pipe(
-    runLoopPass(options.context),
+    runLoopPass(options),
     Effect.flatMap((result) => observeSuccessfulPass(options, result)),
     Effect.catch((error) => observeFailedPass(options, error)),
     Effect.repeat(Schedule.spaced(Duration.millis(options.pollIntervalMs))),
