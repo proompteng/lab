@@ -2809,7 +2809,7 @@ describe('autonomous cycle runner', () => {
     const baseContext = context(accountId)
     const dueContext: CycleRunContext<BrokerRead> = {
       ...baseContext,
-      buildDecision: (cycle) =>
+      buildDecision: (cycle, reconciliationCompleted = Effect.void) =>
         Effect.gen(function* () {
           const broker = yield* BrokerRead
           const [accountObservation, positionsObservation, ordersObservation, observedAt] = yield* Effect.all([
@@ -2853,6 +2853,7 @@ describe('autonomous cycle runner', () => {
               contentHash,
             })
           })
+          yield* reconciliationCompleted
           return makeDecision(cycle, observedAt, undefined, {
             planningBrokerStateHash: canonicalHashV1({ accountHash, positionsHash, ordersHash }),
             reconciliationId,
@@ -2992,7 +2993,7 @@ describe('autonomous cycle runner', () => {
     expect(accountReads).toBe(1)
     expect(positionReads).toBe(1)
     expect(orderReads).toBe(1)
-    expect(notDueReconciliations).toBe(0)
+    expect(notDueReconciliations).toBe(1)
     expect(control.binds).toBe(1)
     expect(mutationSubmits).toBe(0)
     expect(mutationCancels).toBe(0)

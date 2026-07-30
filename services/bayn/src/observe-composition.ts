@@ -1,4 +1,4 @@
-import { Clock, Data, Deferred, Duration, Effect, Fiber, Option, pipe, Ref, Result } from 'effect'
+import { Clock, Data, Duration, Effect, Option, pipe, Ref, Result } from 'effect'
 
 import type { AutonomousCycleLoop, AutonomousCycleStartup } from './app'
 import { BrokerRead, type BrokerReadShape, type MarketCalendarQuery } from './broker/alpaca'
@@ -136,23 +136,12 @@ const mutationCyclePassTimeoutError = (timeoutMs: number): CycleRunnerError =>
 
 const runMutationPassWithinTimeout = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
-  reconciliationCompleted: Deferred.Deferred<void>,
   timeoutMs: number,
 ): Effect.Effect<A, E | CycleRunnerError, R> =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const fiber = yield* effect.pipe(Effect.forkScoped)
-      const outcome = yield* Effect.raceFirst(
-        Fiber.await(fiber).pipe(Effect.map((exit) => ({ _tag: 'PassCompleted' as const, exit }))),
-        Effect.raceFirst(
-          Deferred.await(reconciliationCompleted).pipe(Effect.as({ _tag: 'Reconciled' as const })),
-          Effect.sleep(Duration.millis(timeoutMs)).pipe(Effect.as({ _tag: 'TimedOut' as const })),
-        ),
-      )
-      if (outcome._tag === 'PassCompleted') return yield* outcome.exit
-      if (outcome._tag === 'Reconciled') return yield* Fiber.join(fiber)
-      yield* Fiber.interrupt(fiber)
-      return yield* Effect.fail(mutationCyclePassTimeoutError(timeoutMs))
+  effect.pipe(
+    Effect.timeoutOrElse({
+      duration: Duration.millis(timeoutMs),
+      orElse: () => Effect.fail(mutationCyclePassTimeoutError(timeoutMs)),
     }),
   )
 
@@ -1502,8 +1491,6 @@ const mutationCycleLoop = (
     const run = (): Effect.Effect<void, never, MutationRuntime> =>
       Effect.suspend(() =>
         Effect.gen(function* () {
-          const reconciliationCompleted = yield* Deferred.make<void>()
-          const passReconcile = reconcile.pipe(Effect.tap(() => Deferred.succeed(reconciliationCompleted, undefined)))
           const context: CycleRunContext<ObserveDecisionRuntime> = {
             qualificationRunId: startup.qualificationRunId,
             strategyProtocolHash: preparation.strategyProtocolHash,
@@ -1511,12 +1498,11 @@ const mutationCycleLoop = (
             executionPolicy: preparation.executionPolicy,
             buildDecision: (cycle) =>
               buildMutationShadowCycleDecision(
-                mutationDecisionInput(input, preparation, policy, cycle, passReconcile),
+                mutationDecisionInput(input, preparation, policy, cycle, reconcile),
               ).pipe(Effect.mapError(decisionBuildError)),
           }
           return yield* runMutationPassWithinTimeout(
-            runMutationCyclePass(input, preparation, policy, context, passReconcile),
-            reconciliationCompleted,
+            runMutationCyclePass(input, preparation, policy, context, reconcile),
             cyclePassTimeoutMs,
           )
         }).pipe(

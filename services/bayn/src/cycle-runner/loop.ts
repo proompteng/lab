@@ -1,4 +1,4 @@
-import { Clock, Deferred, Duration, Effect, Fiber, pipe, Ref, Result } from 'effect'
+import { Clock, Duration, Effect, pipe, Ref, Result } from 'effect'
 
 import type { BrokerRead } from '../broker/alpaca'
 import type { CycleStore } from '../db/cycle-store'
@@ -90,30 +90,21 @@ const reconcileNotDuePass = <DecisionR>(
 
 const trackDecisionReconciliation = <DecisionR>(
   cadence: Ref.Ref<ReconciliationCadenceState>,
-  reconciliationCompleted: Deferred.Deferred<void>,
   context: CycleRunContext<DecisionR>,
 ): CycleRunContext<DecisionR> => ({
   ...context,
-  buildDecision: (cycle) =>
-    context.buildDecision(
-      cycle,
-      markReconciliationCompleted(cadence).pipe(
-        Effect.andThen(Deferred.succeed(reconciliationCompleted, undefined)),
-        Effect.asVoid,
-      ),
-    ),
+  buildDecision: (cycle) => context.buildDecision(cycle, markReconciliationCompleted(cadence)),
 })
 
 const runLoopPass = <E, ContextR, DecisionR>(
   options: AutonomousCycleLoopOptions<E, ContextR, DecisionR>,
   cadence: Ref.Ref<ReconciliationCadenceState>,
-  reconciliationCompleted: Deferred.Deferred<void>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData | ContextR | DecisionR> =>
   options.context.pipe(
     Effect.mapError((cause) =>
       runnerError('load-context', 'context', 'autonomous cycle context loading failed', cause),
     ),
-    Effect.map((context) => trackDecisionReconciliation(cadence, reconciliationCompleted, context)),
+    Effect.map((context) => trackDecisionReconciliation(cadence, context)),
     Effect.flatMap(runAutonomousCycleUntilSettled),
     Effect.withLogSpan('autonomous-cycle'),
   )
@@ -129,21 +120,10 @@ const runBoundedLoopPass = <E, ContextR, DecisionR>(
   options: AutonomousCycleLoopOptions<E, ContextR, DecisionR>,
   cadence: Ref.Ref<ReconciliationCadenceState>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData | ContextR | DecisionR> =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const reconciliationCompleted = yield* Deferred.make<void>()
-      const fiber = yield* runLoopPass(options, cadence, reconciliationCompleted).pipe(Effect.forkScoped)
-      const outcome = yield* Effect.raceFirst(
-        Fiber.await(fiber).pipe(Effect.map((exit) => ({ _tag: 'PassCompleted' as const, exit }))),
-        Effect.raceFirst(
-          Deferred.await(reconciliationCompleted).pipe(Effect.as({ _tag: 'Reconciled' as const })),
-          Effect.sleep(Duration.millis(options.cyclePassTimeoutMs)).pipe(Effect.as({ _tag: 'TimedOut' as const })),
-        ),
-      )
-      if (outcome._tag === 'PassCompleted') return yield* outcome.exit
-      if (outcome._tag === 'Reconciled') return yield* Fiber.join(fiber)
-      yield* Fiber.interrupt(fiber)
-      return yield* Effect.fail(cyclePassTimeoutError(options.cyclePassTimeoutMs))
+  runLoopPass(options, cadence).pipe(
+    Effect.timeoutOrElse({
+      duration: Duration.millis(options.cyclePassTimeoutMs),
+      orElse: () => Effect.fail(cyclePassTimeoutError(options.cyclePassTimeoutMs)),
     }),
   )
 
