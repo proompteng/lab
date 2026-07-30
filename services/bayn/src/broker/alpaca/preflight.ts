@@ -226,7 +226,6 @@ export const verifyReadAccess = (
     )
     yield* Effect.logInfo('Alpaca observe-only read preflight passed').pipe(
       Effect.annotateLogs({
-        accountId: proof.accountId,
         provider: proof.provider,
         environment: proof.environment,
         baseUrl: proof.baseUrl,

@@ -156,8 +156,18 @@ describe('Alpaca broker session acquisition retry', () => {
     })
     expect(accountRequests).toBe(3)
     expect(requests).toBe(11)
-    expect(JSON.stringify(logs)).not.toContain(key)
-    expect(JSON.stringify(logs)).not.toContain(secret)
+    const renderedLogs = JSON.stringify(logs)
+    expect(renderedLogs).not.toContain(key)
+    expect(renderedLogs).not.toContain(secret)
+    expect(renderedLogs).not.toContain(accountId)
+    expect(renderedLogs).not.toContain(accountResponse.account_number)
+    expect(logs).toContainEqual(
+      expect.objectContaining({
+        annotations: expect.objectContaining({
+          accountHash: services.session.preflight.accountHash,
+        }),
+      }),
+    )
   })
 
   test('attempts a deterministic account mismatch once and preserves its typed stage without credentials', async () => {

@@ -36,7 +36,7 @@ import {
   statusResponseDecision,
   validateHistoricalRunRequest,
 } from './http'
-import { Authority, KillState } from './paper'
+import { Authority, KillState, ReconciliationStatus } from './paper'
 import { initialState, type RuntimeState } from './runtime-state'
 
 const metricValue = (metrics: string, name: string): number => {
@@ -581,6 +581,140 @@ describe('Bayn HTTP pure decisions', () => {
         testCase.name,
       ).toEqual(testCase.expected)
     }
+  })
+
+  test('omits raw broker account identity while preserving safe configured, mismatch, and read-failure facts', () => {
+    const expectedAccountId = 'paper-account-expected'
+    const observedAccountId = 'paper-account-observed'
+    const checkedAt = '2026-07-20T00:00:00.000Z'
+    const base: RuntimeState = {
+      ...readyState(),
+      status: 'DEGRADED',
+      broker: {
+        configured: true,
+        expectedAccountId,
+        accountId: null,
+        accountBound: false,
+        readAvailable: false,
+        checkedAt,
+        error: null,
+        executionEligible: false,
+        executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
+      },
+    }
+    const configured = statusFacts(
+      {
+        ...base,
+        broker: {
+          ...base.broker!,
+          accountBound: null,
+          readAvailable: null,
+        },
+      },
+      readOnlyExecution,
+      provenance,
+      'embedded',
+    )
+    const mismatchMessage = `Alpaca credential resolved account ${observedAccountId}, expected ${expectedAccountId}`
+    const mismatch = statusFacts(
+      {
+        ...base,
+        error: `broker: ${mismatchMessage}`,
+        broker: {
+          ...base.broker!,
+          error: mismatchMessage,
+        },
+      },
+      readOnlyExecution,
+      provenance,
+      'embedded',
+    )
+    const readFailure = statusFacts(
+      {
+        ...base,
+        error: 'broker: Alpaca account unavailable',
+        broker: {
+          ...base.broker!,
+          error: 'Alpaca account unavailable',
+        },
+      },
+      readOnlyExecution,
+      provenance,
+      'embedded',
+    )
+
+    expect(configured.broker).toMatchObject({
+      configured: true,
+      accountBound: null,
+      readAvailable: null,
+      reasonCode: 'BROKER_STATUS_NOT_CHECKED',
+      error: null,
+    })
+    expect(mismatch.broker).toMatchObject({
+      configured: true,
+      accountBound: false,
+      readAvailable: false,
+      reasonCode: 'BROKER_ACCOUNT_IDENTITY_MISMATCH',
+      error: 'BROKER_ACCOUNT_IDENTITY_MISMATCH',
+    })
+    expect(mismatch.error).toBe('broker: BROKER_ACCOUNT_IDENTITY_MISMATCH')
+    expect(readFailure.broker).toMatchObject({
+      configured: true,
+      accountBound: false,
+      readAvailable: false,
+      reasonCode: 'BROKER_READ_UNAVAILABLE',
+      error: 'BROKER_READ_UNAVAILABLE',
+    })
+    for (const facts of [configured, mismatch, readFailure]) {
+      const rendered = JSON.stringify(facts)
+      expect(rendered).not.toContain(expectedAccountId)
+      expect(rendered).not.toContain(observedAccountId)
+      expect(facts.broker).not.toHaveProperty('expectedAccountId')
+      expect(facts.broker).not.toHaveProperty('accountId')
+    }
+  })
+
+  test('omits broker account identity from public cycle observations', () => {
+    const accountId = 'paper-account-cycle-observation'
+    const observedAt = '2026-07-20T12:00:00.000Z'
+    const state: RuntimeState = {
+      ...readyState(),
+      cycle: {
+        ...readyState().cycle,
+        current: {
+          cycleId: '1'.repeat(64),
+          accountId,
+          signalSessionDate: '2026-07-17',
+          executionSessionDate: '2026-07-20',
+          phase: CycleState.Pending,
+          snapshotId: '2'.repeat(64),
+          decisionHash: null,
+          terminalReason: null,
+          submissionOpenAt: '2026-07-20T11:30:00.000Z',
+          submissionCutoffAt: '2026-07-20T12:30:00.000Z',
+          executionOpenAt: '2026-07-20T12:32:00.000Z',
+          executionCloseAt: '2026-07-20T20:00:00.000Z',
+          createdAt: '2026-07-20T11:29:00.000Z',
+          updatedAt: observedAt,
+          terminalAt: null,
+        },
+        reconciliation: {
+          accountId,
+          reconciliationId: '3'.repeat(64),
+          status: ReconciliationStatus.Exact,
+          discrepancyCount: 0,
+          reconciledAt: observedAt,
+          coversLatestMutation: true,
+        },
+      },
+    }
+
+    const facts = statusFacts(state, readOnlyExecution, provenance, 'embedded')
+    expect(JSON.stringify(facts)).not.toContain(accountId)
+    expect('current' in facts.cycle).toBe(true)
+    if (!('current' in facts.cycle)) return
+    expect(facts.cycle.current).not.toHaveProperty('accountId')
+    expect(facts.cycle.reconciliation).not.toHaveProperty('accountId')
   })
 
   test('maps database and timeout failures to the typed operational boundary with the cause intact', async () => {
@@ -1178,7 +1312,7 @@ describe('Bayn HTTP probes', () => {
     )
   })
 
-  test('keeps broker read capability out of runtime state and public status', async () => {
+  test('keeps broker read capability and raw account identity out of runtime state and public status', async () => {
     const unused = Effect.die('status must not invoke broker reads')
     const read: BrokerReadShape = {
       account: unused,
@@ -1208,13 +1342,18 @@ describe('Bayn HTTP probes', () => {
             expect(response.body).toMatchObject({
               broker: {
                 configured: true,
-                expectedAccountId: 'paper-account-1',
+                accountBound: null,
+                readAvailable: null,
                 executionEligible: false,
                 executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
+                reasonCode: 'BROKER_STATUS_NOT_CHECKED',
               },
             })
             const body = response.body as { readonly broker: Record<string, unknown> }
             expect(body.broker).not.toHaveProperty('read')
+            expect(body.broker).not.toHaveProperty('expectedAccountId')
+            expect(body.broker).not.toHaveProperty('accountId')
+            expect(JSON.stringify(response.body)).not.toContain('paper-account-1')
             expect(Object.values(body.broker).some((value) => typeof value === 'function')).toBe(false)
           }),
         ),
