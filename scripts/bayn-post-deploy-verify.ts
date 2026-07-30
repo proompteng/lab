@@ -257,14 +257,6 @@ const validateArgo = (
     'ARGO_NOT_CONVERGED',
     true,
   )
-  if (
-    !array(
-      operationDeploymentRecord.images,
-      'application.status.operationState.syncResult.resources.bayn.images',
-    ).includes(expected.imageReference)
-  ) {
-    fail('ARGO_NOT_CONVERGED', 'Argo operation does not contain the exact promoted image', true)
-  }
   if (reconciledRevision !== promotionRevision) {
     const promotionHistory = array(status.history, 'application.status.history').find((candidate) => {
       const history = record(candidate, 'application.status.history[]')

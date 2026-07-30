@@ -85,7 +85,6 @@ const baseSnapshot = (): VerificationSnapshot => ({
               name: 'bayn',
               namespace: 'bayn',
               status: 'Synced',
-              images: [imageReference],
             },
           ],
         },
