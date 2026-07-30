@@ -6,6 +6,7 @@ import {
   buildCandidateDevelopmentCommandReport,
   candidateDevelopmentExecutableProgramSchemaVersion,
   executeCandidateDevelopmentProgram,
+  renderCandidateDevelopmentCommandReport,
   validateCandidateDevelopmentExecutableProgram,
   type CandidateDevelopmentExecutableProgram,
 } from './candidate-development-command'
@@ -168,6 +169,10 @@ describe('candidate development command', () => {
     expect(buildCandidateDevelopmentCommandReport(reportFixture(0.01), baselineFixture())).toEqual(
       Result.succeed(passing),
     )
+    const rendered = renderCandidateDevelopmentCommandReport(passing)
+    expect(rendered.endsWith('\n')).toBe(true)
+    expect(rendered.slice(0, -1)).not.toContain('\n')
+    expect(JSON.parse(rendered)).toEqual(passing)
   })
 
   test('requires the exact executable program shape before execution', () => {

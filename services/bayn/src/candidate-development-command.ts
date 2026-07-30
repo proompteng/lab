@@ -92,6 +92,10 @@ export type CandidateDevelopmentCommandFailure =
       readonly _tag: 'CandidateDevelopmentCommandProgramExecutionFailed'
       readonly cause: unknown
     }
+  | {
+      readonly _tag: 'CandidateDevelopmentCommandOutputFailed'
+      readonly cause: unknown
+    }
 
 const terminalCash = (marks: EvaluationResult['simulation']['dailyMarks']): boolean => {
   const last = marks.at(-1)
@@ -221,12 +225,30 @@ export const executeCandidateDevelopmentProgram = <Registration, DevelopmentData
   )
 }
 
+export const renderCandidateDevelopmentCommandReport = (report: CandidateDevelopmentCommandReport): string =>
+  `${JSON.stringify(report)}\n`
+
+const writeCandidateDevelopmentCommandReport = (
+  report: CandidateDevelopmentCommandReport,
+): Effect.Effect<void, CandidateDevelopmentCommandFailure> =>
+  Effect.tryPromise({
+    try: () =>
+      new Promise<void>((resolveWrite, rejectWrite) => {
+        process.stdout.write(renderCandidateDevelopmentCommandReport(report), (error) => {
+          if (error === null || error === undefined) resolveWrite()
+          else rejectWrite(error)
+        })
+      }),
+    catch: (cause): CandidateDevelopmentCommandFailure => ({
+      _tag: 'CandidateDevelopmentCommandOutputFailed',
+      cause,
+    }),
+  })
+
 export const runCandidateDevelopmentCommand = <Registration, DevelopmentData, Error, Requirements>(
   program: CandidateDevelopmentExecutableProgram<Registration, DevelopmentData, Error, Requirements>,
 ): Effect.Effect<CandidateDevelopmentCommandReport, CandidateDevelopmentCommandFailure | Error, Requirements> =>
-  executeCandidateDevelopmentProgram(program).pipe(
-    Effect.tap((report) => Effect.sync(() => process.stdout.write(`${JSON.stringify(report)}\n`))),
-  )
+  executeCandidateDevelopmentProgram(program).pipe(Effect.tap(writeCandidateDevelopmentCommandReport))
 
 type ExecutableProgram = CandidateDevelopmentExecutableProgram<
   unknown,
