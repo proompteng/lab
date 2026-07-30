@@ -20,7 +20,10 @@ import {
   type CandidateDevelopmentReport,
   type CandidateDevelopmentRunFailure,
 } from './candidate-development'
-import { frozenCandidateDevelopmentTrialHistory } from './candidate-development-calendar'
+import {
+  frozenCandidateDevelopmentTrialHistory,
+  type CandidateDevelopmentNextPreregistration,
+} from './candidate-development-calendar'
 import {
   type DailyPerformancePoint,
   DailyPerformanceSeriesArtifactSchema,
@@ -229,6 +232,7 @@ export type CandidateDevelopmentCommandFailure =
         | 'resolve-repository'
         | 'read-module'
         | 'read-source-manifest'
+        | 'decode-preregistration'
         | 'decode-source-manifest'
         | 'verify-source-paths'
         | 'verify-head'
@@ -2609,6 +2613,21 @@ const CandidateDevelopmentSourceManifestSchema = Schema.Struct({
   }),
 })
 
+const CandidateDevelopmentPreregistrationDocumentSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.candidate-development-next-preregistration.v1'),
+  candidateOrdinal: PositiveIntegerSchema,
+  priorTrialCount: NonNegativeIntegerSchema,
+  strategyProtocolHash: Sha256Schema,
+  modulePath: Schema.String,
+  marketData: Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.candidate-development-market-data-source.v1'),
+    snapshotId: Sha256Schema,
+    finalizedSnapshotContentHash: Sha256Schema,
+    inputManifestHash: Sha256Schema,
+    boundedContentHash: Sha256Schema,
+  }),
+})
+
 const CandidateDevelopmentComparisonSemanticsEvidenceBoundarySchema = Schema.Struct({
   schemaVersion: Schema.Literal(candidateDevelopmentComparisonSemantics.evidence.schemaVersion),
   candidateDevelopmentProtocolHash: Sha256Schema,
@@ -2649,6 +2668,50 @@ const decodeCandidateDevelopmentSourceManifest = Schema.decodeUnknownResult(
   CandidateDevelopmentSourceManifestSchema,
   strictParseOptions,
 )
+
+const decodeCandidateDevelopmentPreregistrationDocument = Schema.decodeUnknownResult(
+  CandidateDevelopmentPreregistrationDocumentSchema,
+  strictParseOptions,
+)
+
+export const validateCandidateDevelopmentPreregistrationDocument = (
+  expected: CandidateDevelopmentNextPreregistration,
+  value: unknown,
+): Result.Result<void, CandidateDevelopmentCommandFailure> => {
+  const decoded = decodeCandidateDevelopmentPreregistrationDocument(value)
+  if (Result.isFailure(decoded)) {
+    return Result.fail(sourceVerificationFailure('decode-preregistration', decoded.failure))
+  }
+  const observed = decoded.success
+  const bindings = [
+    ['schemaVersion', expected.schemaVersion, observed.schemaVersion],
+    ['candidateOrdinal', expected.candidateOrdinal, observed.candidateOrdinal],
+    ['priorTrialCount', expected.priorTrialCount, observed.priorTrialCount],
+    ['strategyProtocolHash', expected.strategyProtocolHash, observed.strategyProtocolHash],
+    ['modulePath', expected.modulePath, observed.modulePath],
+    ['marketData.schemaVersion', expected.marketData.schemaVersion, observed.marketData.schemaVersion],
+    ['marketData.snapshotId', expected.marketData.snapshotId, observed.marketData.snapshotId],
+    [
+      'marketData.finalizedSnapshotContentHash',
+      expected.marketData.finalizedSnapshotContentHash,
+      observed.marketData.finalizedSnapshotContentHash,
+    ],
+    ['marketData.inputManifestHash', expected.marketData.inputManifestHash, observed.marketData.inputManifestHash],
+    ['marketData.boundedContentHash', expected.marketData.boundedContentHash, observed.marketData.boundedContentHash],
+  ] as const
+  for (const [field, expectedValue, observedValue] of bindings) {
+    if (expectedValue !== observedValue) {
+      return Result.fail(
+        sourceVerificationFailure('verify-preregistration-blob', {
+          field,
+          expected: expectedValue,
+          observed: observedValue,
+        }),
+      )
+    }
+  }
+  return Result.succeed(undefined)
+}
 
 export const validateCandidateDevelopmentCommandEvaluation = (
   value: unknown,
@@ -3099,7 +3162,7 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
           })
         }
         const preregistrationSpec = `${preregistration.sourceRevision}:${preregistration.path}`
-        const [, preregistrationBlobOid] = await runCandidateDevelopmentSourcePair(
+        const [preregistrationBytes, preregistrationBlobOid] = await runCandidateDevelopmentSourcePair(
           signal,
           (batchSignal) =>
             sourceStep('verify-preregistration-blob', () =>
@@ -3117,6 +3180,23 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
             expected: preregistration.blobOid,
             observed: preregistrationBlobOid,
           })
+        }
+        const preregistrationJson = await sourceStep(
+          'decode-preregistration',
+          async () => JSON.parse(preregistrationBytes.toString('utf8')) as unknown,
+        )
+        const preregistrationDocument = validateCandidateDevelopmentPreregistrationDocument(
+          nextCandidatePreregistration,
+          preregistrationJson,
+        )
+        if (Result.isFailure(preregistrationDocument)) {
+          const failure = preregistrationDocument.failure
+          throw new CandidateDevelopmentSourceVerificationError(
+            failure._tag === 'CandidateDevelopmentCommandSourceVerificationFailed'
+              ? failure.operation
+              : 'verify-preregistration-blob',
+            failure._tag === 'CandidateDevelopmentCommandSourceVerificationFailed' ? failure.cause : failure,
+          )
         }
         await verifyCandidateDevelopmentPreregistrationLineagePromise(
           repositoryRoot,

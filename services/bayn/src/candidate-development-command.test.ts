@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { Deferred, Effect, Fiber, Result } from 'effect'
 
 import { frozenCandidateDevelopmentSessions } from './candidate-development-calendar'
+import type { CandidateDevelopmentNextPreregistration } from './candidate-development-calendar'
 import {
   bindCandidateDevelopmentVerifiedSource,
   buildCandidateDevelopmentCommandReport as buildCandidateDevelopmentCommandReportPure,
@@ -19,6 +20,7 @@ import {
   validateCandidateDevelopmentCommandEvaluation,
   validateCandidateDevelopmentExecutableProgram,
   validateCandidateDevelopmentPreregisteredMarketData,
+  validateCandidateDevelopmentPreregistrationDocument,
   verifyCandidateDevelopmentPreregistrationLineage,
   verifyCandidateDevelopmentPreregistrationModuleNovelty,
   verifyCandidateDevelopmentSourceFiles,
@@ -2382,6 +2384,50 @@ describe('candidate development command', () => {
         },
       })
     }
+  })
+
+  test('binds authorization to the exact preregistration document bytes', () => {
+    const preregistration: CandidateDevelopmentNextPreregistration = {
+      schemaVersion: 'bayn.candidate-development-next-preregistration.v1',
+      candidateOrdinal: 16,
+      priorTrialCount: 15,
+      strategyProtocolHash: fixtureStrategyProtocolHash,
+      modulePath: fixtureSourceManifest.modulePath,
+      marketData: fixtureSourceManifest.marketData,
+      preregistration: {
+        sourceRevision: '1'.repeat(40),
+        path: 'candidate/preregistration.json',
+        blobOid: '2'.repeat(40),
+      },
+    }
+    const document = {
+      schemaVersion: preregistration.schemaVersion,
+      candidateOrdinal: preregistration.candidateOrdinal,
+      priorTrialCount: preregistration.priorTrialCount,
+      strategyProtocolHash: preregistration.strategyProtocolHash,
+      modulePath: preregistration.modulePath,
+      marketData: preregistration.marketData,
+    }
+
+    expect(validateCandidateDevelopmentPreregistrationDocument(preregistration, document)).toEqual(
+      Result.succeed(undefined),
+    )
+    expect(
+      validateCandidateDevelopmentPreregistrationDocument(preregistration, {
+        ...document,
+        marketData: { ...document.marketData, boundedContentHash: 'f'.repeat(64) },
+      }),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-preregistration-blob',
+        cause: {
+          field: 'marketData.boundedContentHash',
+          expected: preregistration.marketData.boundedContentHash,
+          observed: 'f'.repeat(64),
+        },
+      },
+    })
   })
 
   test('rejects consumed Candidate 16 before development evaluation', async () => {
