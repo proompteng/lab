@@ -181,6 +181,7 @@ export type BaynReleaseReviewHoldCode =
   | 'retry-failed-run-missing'
   | 'retry-failed-run-mismatch'
   | 'retry-attestation-not-delayed'
+  | 'retry-delayed-source-ambiguous'
   | 'retry-trigger-mismatch'
   | 'github-api-error'
   | 'github-api-timeout'
@@ -808,8 +809,8 @@ export const evaluateBaynReleaseEligibility = (input: {
   }
 }
 
-const latestBaynAffectingCommit = (snapshot: BaynReleaseEligibilitySnapshot): BaynReleaseRangeCommit | undefined =>
-  snapshot.comparison?.commits.filter((commit) => commit.files.some(isBaynReleaseAffectingPath)).at(-1)
+const baynAffectingCommits = (snapshot: BaynReleaseEligibilitySnapshot): readonly BaynReleaseRangeCommit[] =>
+  snapshot.comparison?.commits.filter((commit) => commit.files.some(isBaynReleaseAffectingPath)) ?? []
 
 const failedReviewRunMatches = (evidence: FailedBaynReleaseReviewRun, sourceCommitSha: string): boolean => {
   const { run, jobs } = evidence
@@ -886,24 +887,79 @@ export const evaluateBaynReleaseRetry = (input: {
       : eligibility
   }
 
-  const sourceCommit = latestBaynAffectingCommit(input.snapshot)
-  const sourcePull = sourceCommit?.reviewSnapshot?.pullRequest
-  const reviewedSource = eligibility.reviewedPullRequests.at(-1)
-  if (
-    sourceCommit === undefined ||
-    sourcePull === null ||
-    sourcePull === undefined ||
-    reviewedSource === undefined ||
-    reviewedSource.commitSha !== sourceCommit.sha ||
-    reviewedSource.prNumber !== sourcePull.number ||
-    reviewedSource.headSha !== sourcePull.headSha
-  ) {
+  const failedReviewRun = input.snapshot.failedReviewRun
+  if (failedReviewRun === null) {
     return hold(
-      'retry-trigger-mismatch',
-      `retry source metadata does not uniquely bind the latest Bayn-affecting commit on ${shortSha(input.mainCommitSha)}`,
+      'retry-failed-run-missing',
+      `current main ${shortSha(input.mainCommitSha)} has no completed failed Bayn push run to retry`,
+      true,
+    )
+  }
+  if (!failedReviewRunMatches(failedReviewRun, input.mainCommitSha)) {
+    return hold(
+      'retry-failed-run-mismatch',
+      `Bayn run ${failedReviewRun.run.id} does not prove an exact failed review gate with a skipped image for current main ${shortSha(input.mainCommitSha)}`,
       false,
     )
   }
+  const failedAtMs = Date.parse(failedReviewRun.run.updatedAt)
+  if (!Number.isFinite(failedAtMs)) {
+    return hold(
+      'retry-failed-run-mismatch',
+      `Bayn run ${failedReviewRun.run.id} has an invalid completion timestamp`,
+      false,
+    )
+  }
+
+  const affectingCommits = baynAffectingCommits(input.snapshot)
+  const delayedCandidates = eligibility.reviewedPullRequests.flatMap((reviewed) => {
+    const attestedAtMs = Date.parse(reviewed.reviewSubmittedAt)
+    if (!Number.isFinite(attestedAtMs) || attestedAtMs <= failedAtMs) return []
+    const commit = affectingCommits.find((candidate) => candidate.sha === reviewed.commitSha)
+    const pullRequest = commit?.reviewSnapshot?.pullRequest
+    if (
+      commit === undefined ||
+      pullRequest === null ||
+      pullRequest === undefined ||
+      pullRequest.number !== reviewed.prNumber ||
+      pullRequest.headSha !== reviewed.headSha
+    ) {
+      return []
+    }
+    return [{ commit, pullRequest, reviewed }]
+  })
+
+  let triggerCandidates = delayedCandidates
+  if (input.trigger.type === 'issue-comment') {
+    const triggerPrNumber = input.trigger.prNumber
+    triggerCandidates = delayedCandidates.filter((candidate) => candidate.pullRequest.number === triggerPrNumber)
+  } else if (input.trigger.type === 'workflow-dispatch') {
+    const trigger = input.trigger
+    triggerCandidates = delayedCandidates.filter(
+      (candidate) =>
+        candidate.commit.sha === trigger.sourceCommitSha &&
+        candidate.pullRequest.number === trigger.prNumber &&
+        candidate.pullRequest.headSha === trigger.headSha,
+    )
+  }
+  if (triggerCandidates.length === 0) {
+    return hold(
+      'retry-attestation-not-delayed',
+      `no exact Bayn source attestation matching the retry trigger is newer than failed run ${failedReviewRun.run.id}`,
+      true,
+    )
+  }
+  if (triggerCandidates.length > 1) {
+    return hold(
+      'retry-delayed-source-ambiguous',
+      `failed run ${failedReviewRun.run.id} has multiple delayed Bayn source attestations matching the retry trigger: ${triggerCandidates.map(({ commit, pullRequest }) => `${shortSha(commit.sha)}/#${pullRequest.number}`).join(', ')}`,
+      false,
+    )
+  }
+  const selected = triggerCandidates[0]
+  if (selected === undefined) throw new Error('delayed retry candidate selection was unexpectedly empty')
+  const sourceCommit = selected.commit
+  const sourcePull = selected.pullRequest
   if (sourcePull.headForcePushCount !== 0) {
     return hold(
       'retry-source-pr-force-pushed',
@@ -912,33 +968,8 @@ export const evaluateBaynReleaseRetry = (input: {
     )
   }
 
-  const failedReviewRun = input.snapshot.failedReviewRun
-  if (failedReviewRun === null) {
-    return hold(
-      'retry-failed-run-missing',
-      `source commit ${shortSha(sourceCommit.sha)} has no completed failed Bayn push run to retry`,
-      true,
-    )
-  }
-  if (!failedReviewRunMatches(failedReviewRun, sourceCommit.sha)) {
-    return hold(
-      'retry-failed-run-mismatch',
-      `Bayn run ${failedReviewRun.run.id} does not prove an exact failed review gate with a skipped image for source ${shortSha(sourceCommit.sha)}`,
-      false,
-    )
-  }
-  const failedAtMs = Date.parse(failedReviewRun.run.updatedAt)
-  const attestedAtMs = Date.parse(reviewedSource.reviewSubmittedAt)
-  if (!Number.isFinite(failedAtMs) || !Number.isFinite(attestedAtMs) || attestedAtMs <= failedAtMs) {
-    return hold(
-      'retry-attestation-not-delayed',
-      `source PR #${sourcePull.number} has no clean exact-head attestation newer than failed run ${failedReviewRun.run.id}`,
-      true,
-    )
-  }
-
   if (input.trigger.type === 'issue-comment') {
-    if (input.trigger.actorLogin !== baynCodexBotLogin || input.trigger.prNumber !== sourcePull.number) {
+    if (input.trigger.actorLogin !== baynCodexBotLogin) {
       return hold(
         'retry-trigger-mismatch',
         `issue-comment retry trigger does not match connector identity and source PR #${sourcePull.number}`,
@@ -2060,17 +2091,17 @@ export const createGitHubReleaseRetryLoader = (options: {
 
   return async () => {
     const [eligibility, defaultBranchSha] = await Promise.all([loadEligibility(), fetchDefaultBranchSha(loaderOptions)])
-    const sourceCommit = latestBaynAffectingCommit(eligibility)
     const [sourcePushRuns, currentDispatchRuns] = await Promise.all([
-      sourceCommit === undefined
-        ? Promise.resolve([])
-        : fetchBaynBuildWorkflowRuns(loaderOptions, { headSha: sourceCommit.sha, event: 'push' }),
+      fetchBaynBuildWorkflowRuns(loaderOptions, {
+        headSha: options.mainCommitSha,
+        event: 'push',
+      }),
       fetchBaynBuildWorkflowRuns(loaderOptions, {
         headSha: options.mainCommitSha,
         event: 'workflow_dispatch',
       }),
     ])
-    const failedRun = sourceCommit === undefined ? undefined : latestFailedSourcePush(sourcePushRuns, sourceCommit.sha)
+    const failedRun = latestFailedSourcePush(sourcePushRuns, options.mainCommitSha)
     const jobs = failedRun === undefined ? [] : await fetchBaynBuildWorkflowJobs(loaderOptions, failedRun.id)
     return {
       ...eligibility,

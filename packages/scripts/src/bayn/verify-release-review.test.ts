@@ -653,6 +653,7 @@ describe('Bayn delayed-attestation publication retry', () => {
       sleep: async () => {},
       now: () => Date.parse('2026-07-30T07:02:20Z'),
     })
+
     expect(timedOut).toMatchObject({
       status: 'hold',
       code: 'exact-head-review-missing',
@@ -674,6 +675,76 @@ describe('Bayn delayed-attestation publication retry', () => {
       sourceCommitSha: mainCommitSha,
       prNumber: 13401,
       headSha: finalHeadSha,
+      failedRunId: 30540000001,
+    })
+  })
+
+  test('binds a retry to the earlier range commit whose attestation arrived after the failed current-main push', () => {
+    const earlierCommitSha = heldCommitSha
+    const earlierHeadSha = heldHeadSha
+    const earlierReview = reviewSnapshotFor({
+      commitSha: earlierCommitSha,
+      prNumber: 13401,
+      headSha: earlierHeadSha,
+      parents: [lastPublishedSha],
+      mergedAt: '2026-07-30T07:00:00Z',
+      reviews: [],
+      issueComments: [
+        issueComment({
+          body: `Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** \`${earlierHeadSha.slice(0, 10)}\`\n`,
+          createdAt: '2026-07-30T07:03:00Z',
+          updatedAt: '2026-07-30T07:03:00Z',
+        }),
+      ],
+    })
+    const laterReview = reviewSnapshotFor({
+      commitSha: mainCommitSha,
+      prNumber: 13402,
+      headSha: finalHeadSha,
+      parents: [earlierCommitSha],
+      mergedAt: '2026-07-30T07:01:00Z',
+      reviews: [review({ submittedAt: '2026-07-30T07:00:30Z' })],
+    })
+    const range = eligibilitySnapshot({
+      comparison: {
+        status: 'ahead',
+        baseSha: lastPublishedSha,
+        headSha: mainCommitSha,
+        mergeBaseSha: lastPublishedSha,
+        aheadBy: 2,
+        totalCommits: 2,
+        commits: [
+          {
+            sha: earlierCommitSha,
+            parents: [lastPublishedSha],
+            files: ['services/bayn/src/earlier.ts'],
+            reviewSnapshot: earlierReview,
+          },
+          {
+            sha: mainCommitSha,
+            parents: [earlierCommitSha],
+            files: ['services/bayn/src/later.ts'],
+            reviewSnapshot: laterReview,
+          },
+        ],
+        truncated: false,
+      },
+    })
+
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot({ eligibility: range }),
+        trigger: { type: 'issue-comment', prNumber: 13401, actorLogin: baynCodexBotLogin },
+        nowMs: retryNowMs,
+      }),
+    ).toEqual({
+      status: 'dispatch',
+      currentMainSha: mainCommitSha,
+      sourceCommitSha: earlierCommitSha,
+      prNumber: 13401,
+      headSha: earlierHeadSha,
       failedRunId: 30540000001,
     })
   })
@@ -701,20 +772,79 @@ describe('Bayn delayed-attestation publication retry', () => {
   })
 
   test('rejects spoofed and stale issue-comment retry triggers', () => {
-    for (const trigger of [
-      { type: 'issue-comment', prNumber: 13401, actorLogin: 'spoofed-codex[bot]' } as const,
-      { type: 'issue-comment', prNumber: 13399, actorLogin: baynCodexBotLogin } as const,
-    ]) {
-      expect(
-        evaluateBaynReleaseRetry({
-          mainCommitSha,
-          baseRefName: 'main',
-          snapshot: retrySnapshot(),
-          trigger,
-          nowMs: retryNowMs,
-        }),
-      ).toMatchObject({ status: 'hold', code: 'retry-trigger-mismatch', retryable: false })
-    }
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot(),
+        trigger: { type: 'issue-comment', prNumber: 13401, actorLogin: 'spoofed-codex[bot]' },
+        nowMs: retryNowMs,
+      }),
+    ).toMatchObject({ status: 'hold', code: 'retry-trigger-mismatch', retryable: false })
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot(),
+        trigger: { type: 'issue-comment', prNumber: 13399, actorLogin: baynCodexBotLogin },
+        nowMs: retryNowMs,
+      }),
+    ).toMatchObject({ status: 'hold', code: 'retry-attestation-not-delayed', retryable: true })
+  })
+
+  test('fails closed when a scheduled scan sees multiple delayed source attestations', () => {
+    const secondCommitSha = '2'.repeat(40)
+    const secondHeadSha = '3'.repeat(40)
+    const first = reviewSnapshotFor({
+      commitSha: secondCommitSha,
+      prNumber: 13401,
+      headSha: secondHeadSha,
+      parents: [lastPublishedSha],
+      mergedAt: '2026-07-30T07:00:00Z',
+      reviews: [review({ commitSha: secondHeadSha, submittedAt: '2026-07-30T07:03:00Z' })],
+    })
+    const second = reviewSnapshotFor({
+      commitSha: mainCommitSha,
+      prNumber: 13402,
+      headSha: finalHeadSha,
+      parents: [secondCommitSha],
+      mergedAt: '2026-07-30T07:01:00Z',
+      reviews: [review({ submittedAt: '2026-07-30T07:03:10Z' })],
+    })
+    const range = eligibilitySnapshot({
+      comparison: {
+        status: 'ahead',
+        baseSha: lastPublishedSha,
+        headSha: mainCommitSha,
+        mergeBaseSha: lastPublishedSha,
+        aheadBy: 2,
+        totalCommits: 2,
+        commits: [
+          {
+            sha: secondCommitSha,
+            parents: [lastPublishedSha],
+            files: ['services/bayn/src/first.ts'],
+            reviewSnapshot: first,
+          },
+          {
+            sha: mainCommitSha,
+            parents: [secondCommitSha],
+            files: ['services/bayn/src/second.ts'],
+            reviewSnapshot: second,
+          },
+        ],
+        truncated: false,
+      },
+    })
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot({ eligibility: range }),
+        trigger: { type: 'schedule' },
+        nowMs: retryNowMs,
+      }),
+    ).toMatchObject({ status: 'hold', code: 'retry-delayed-source-ambiguous', retryable: false })
   })
 
   test('rejects a delayed source whose final PR head was force-pushed', () => {
