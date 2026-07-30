@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { dirname, relative, resolve, sep } from 'node:path'
 import * as vm from 'node:vm'
+import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads'
 
 import { NodeRuntime } from '@effect/platform-node'
 import { Data, Effect, pipe, Result, Schema } from 'effect'
@@ -864,7 +865,7 @@ const validateDecisionEventBinding = (
   }
   const decisionEvents = events.filter(
     (event): event is Extract<EvaluationResult['events'][number], { readonly kind: 'decision' }> =>
-      event.kind === 'decision' && event.executionDate >= first.executionDate,
+      event.kind === 'decision',
   )
   if (decisionEvents.length !== signalDecisions.length) {
     return Result.fail(
@@ -1396,13 +1397,17 @@ const decisionTarget = (
   return Result.succeed({ signalIndex, executionIndex, weights, decision: plan })
 }
 
-const validateBaselineOrderReplay = (
-  accounting: CandidateDevelopmentAccountingEvidence,
+export const validateCandidateDevelopmentAccountingReplay = (
+  field: 'baseline' | 'stressed',
+  runId: string,
+  signalDecisions: EvaluationResult['signalDecisions'],
+  events: EvaluationResult['events'],
+  simulation: EvaluationResult['simulation'],
   marketData: PreparedCandidateDevelopmentMarketData,
   strategyProtocol: CandidateDevelopmentStrategyProtocol,
 ): Result.Result<void, CandidateDevelopmentCommandFailure> => {
-  const firstMark = accounting.baselineSimulation.dailyMarks.at(0)
-  const lastMark = accounting.baselineSimulation.dailyMarks.at(-1)
+  const firstMark = simulation.dailyMarks.at(0)
+  const lastMark = simulation.dailyMarks.at(-1)
   const startIndex = firstMark === undefined ? undefined : marketData.sessionIndexByDate.get(firstMark.sessionDate)
   const endIndex = lastMark === undefined ? undefined : marketData.sessionIndexByDate.get(lastMark.sessionDate)
   if (startIndex === undefined || endIndex === undefined || endIndex < startIndex) {
@@ -1410,21 +1415,21 @@ const validateBaselineOrderReplay = (
       markedEquityFailure(
         'binding-mismatch',
         null,
-        'baseline.orders.window',
+        `${field}.replay.window`,
         'bounded accounting window in market-data witness',
         { first: firstMark?.sessionDate ?? null, last: lastMark?.sessionDate ?? null },
       ),
     )
   }
-  const targets = Result.all(accounting.signalDecisions.map((decision) => decisionTarget(decision, marketData)))
+  const targets = Result.all(signalDecisions.map((decision) => decisionTarget(decision, marketData)))
   if (Result.isFailure(targets)) return Result.fail(targets.failure)
   const replay = simulate(
     marketData.sessions.slice(0, endIndex + 1),
     targets.success,
     startIndex,
     strategyProtocol,
-    BigInt(accounting.baselineSimulation.costMultiplierMicros),
-    accounting.runId,
+    BigInt(simulation.costMultiplierMicros),
+    runId,
     true,
   )
   if (Result.isFailure(replay) || replay.success.simulation === null) {
@@ -1432,18 +1437,32 @@ const validateBaselineOrderReplay = (
       markedEquityFailure(
         'reconstruction-failed',
         null,
-        'baseline.orders',
+        `${field}.replay`,
         'deterministic simulation replay from bound decisions and market data',
         null,
         Result.isFailure(replay) ? replay.failure : undefined,
       ),
     )
   }
-  return requireCanonicalEvidenceEqual(
-    'baseline.orders',
-    replay.success.simulation.orders,
-    accounting.baselineSimulation.orders,
+  const tradeEvents = events.filter((event) => event.kind === 'fill' || event.kind === 'fee')
+  const replayedTradeEvents = replay.success.events.filter((event) => event.kind === 'fill' || event.kind === 'fee')
+  const tradeCashChanges = simulation.cashChanges.filter(
+    (cashChange) => cashChange.sourceKind === 'fill' || cashChange.sourceKind === 'fee',
   )
+  const replayedTradeCashChanges = replay.success.simulation.cashChanges.filter(
+    (cashChange) => cashChange.sourceKind === 'fill' || cashChange.sourceKind === 'fee',
+  )
+  const bindings = [
+    [`${field}.replay.signalDecisions`, replay.success.signalDecisions, signalDecisions],
+    [`${field}.replay.tradeEvents`, replayedTradeEvents, tradeEvents],
+    [`${field}.replay.orders`, replay.success.simulation.orders, simulation.orders],
+    [`${field}.replay.tradeCashChanges`, replayedTradeCashChanges, tradeCashChanges],
+  ] as const
+  for (const [name, expected, observed] of bindings) {
+    const binding = requireCanonicalEvidenceEqual(name, expected, observed)
+    if (Result.isFailure(binding)) return Result.fail(binding.failure)
+  }
+  return Result.succeed(undefined)
 }
 
 const selectRebuiltBenchmarkSeries = (
@@ -1728,10 +1747,37 @@ const validateCandidateDevelopmentAccounting = (
       marketData,
       strategyProtocol,
     ),
-    requestedOrders: validateBaselineOrderReplay(accounting, marketData, strategyProtocol),
+    baselineReplay: validateCandidateDevelopmentAccountingReplay(
+      'baseline',
+      accounting.runId,
+      baseline.signalDecisions,
+      accounting.events,
+      accounting.baselineSimulation,
+      marketData,
+      strategyProtocol,
+    ),
+    stressedReplay: validateCandidateDevelopmentAccountingReplay(
+      'stressed',
+      accounting.stressedRunId,
+      report.doubledCost.stressed.signalDecisions,
+      accounting.stressedEvents,
+      accounting.stressedSimulation,
+      marketData,
+      strategyProtocol,
+    ),
   })
   if (Result.isFailure(domainBindings)) return Result.fail(domainBindings.failure)
   const decisionBindings = Result.all({
+    baselinePlans: requireCanonicalEvidenceEqual(
+      'baseline.signalDecisions',
+      baseline.signalDecisions,
+      accounting.signalDecisions,
+    ),
+    stressedPlans: requireCanonicalEvidenceEqual(
+      'stressed.signalDecisions',
+      report.doubledCost.stressed.signalDecisions,
+      accounting.signalDecisions,
+    ),
     baselineFull: validateDecisionEventBinding('baseline', accounting.signalDecisions, accounting.events),
     baselineSelected: validateDecisionEventBinding('baseline', baseline.signalDecisions, accounting.events),
     stressed: validateDecisionEventBinding('stressed', accounting.signalDecisions, accounting.stressedEvents),
@@ -2985,110 +3031,228 @@ const runCandidateDevelopmentArtifactEvaluation = (
   }
 }
 
-export const evaluateCandidateDevelopmentArtifact: CandidateDevelopmentModuleImporter = (moduleUrl, verifiedFiles) =>
-  Effect.tryPromise({
-    try: async () => {
-      const source = candidateDevelopmentArtifactSource(moduleUrl)
-      const moduleFormat = verifySelfContainedEsm(source, verifiedFiles.modulePath)
-      if (Result.isFailure(moduleFormat)) throw moduleFormat.failure
-      const context = candidateDevelopmentArtifactContext()
-      const artifactModule = new vm.SourceTextModule(source, {
-        context,
-        identifier: `git:${verifiedFiles.sourceRevision}:${verifiedFiles.moduleBlobOid}`,
-        initializeImportMeta: (meta) => Object.freeze(meta),
-      })
-      await artifactModule.link(() => {
-        throw new TypeError('candidate artifact imports are prohibited')
-      })
-      await artifactModule.evaluate({ timeout: candidateDevelopmentArtifactInitializationTimeoutMs })
-      const artifact = Reflect.get(artifactModule.namespace, 'candidateDevelopmentArtifact') as unknown
-      Object.defineProperty(context, '__candidateDevelopmentArtifact', {
-        value: artifact,
-        writable: false,
-        configurable: false,
-      })
-      const definitionJson = vm.runInContext(
-        `
-          (() => {
-            if (
-              globalThis.__candidateDevelopmentArtifact === null ||
-              typeof globalThis.__candidateDevelopmentArtifact !== 'object'
-            ) {
-              throw new TypeError('candidateDevelopmentArtifact export is missing')
-            }
-            if (typeof globalThis.__candidateDevelopmentArtifact.buildEvaluation !== 'function') {
-              throw new TypeError('candidateDevelopmentArtifact.buildEvaluation is missing')
-            }
-            return JSON.stringify({
-              schemaVersion: globalThis.__candidateDevelopmentArtifact.schemaVersion,
-              input: globalThis.__candidateDevelopmentArtifact.input,
-              strategyProtocol: globalThis.__candidateDevelopmentArtifact.strategyProtocol,
-            })
-          })()
-        `,
-        context,
-        { timeout: candidateDevelopmentArtifactInitializationTimeoutMs },
-      )
-      if (typeof definitionJson !== 'string') throw new TypeError('candidate artifact definition is not JSON')
-      const definition = recordOf(JSON.parse(definitionJson) as unknown)
-      if (definition?.schemaVersion !== candidateDevelopmentArtifactSchemaVersion) {
-        throw new TypeError('candidate artifact schema version is invalid')
-      }
-      const input = decodeCandidateDevelopmentPreflightInput(definition.input)
-      if (Result.isFailure(input)) throw input.failure
-      const strategyProtocol = decodeCandidateDevelopmentStrategyProtocol(definition.strategyProtocol)
-      if (Result.isFailure(strategyProtocol)) throw strategyProtocol.failure
-      const verifiedSource = bindCandidateDevelopmentVerifiedSource(verifiedFiles, input.success)
-      if (Result.isFailure(verifiedSource)) throw verifiedSource.failure
-      const expectedProtocolHash = canonicalHashV1Result(strategyProtocol.success)
-      if (Result.isFailure(expectedProtocolHash)) throw expectedProtocolHash.failure
-      if (expectedProtocolHash.success !== input.success.expectedStrategyProtocolHash) {
-        throw new TypeError('candidate artifact strategy protocol hash differs from preflight')
-      }
-      const evaluation = (): Effect.Effect<CandidateDevelopmentCommandEvaluation, CandidateDevelopmentCommandFailure> =>
-        Effect.try({
-          try: () => runCandidateDevelopmentArtifactEvaluation(context, verifiedSource.success),
-          catch: (cause): CandidateDevelopmentCommandFailure => ({
-            _tag: 'CandidateDevelopmentCommandProgramExecutionFailed',
-            cause,
-          }),
+interface CandidateDevelopmentArtifactWorkerRequest {
+  readonly _tag: 'CandidateDevelopmentArtifactWorkerRequest'
+  readonly mode: 'definition' | 'evaluation'
+  readonly moduleUrl: string
+  readonly verifiedFiles: CandidateDevelopmentVerifiedSourceFiles
+  readonly verifiedSource?: CandidateDevelopmentVerifiedSource
+}
+
+type CandidateDevelopmentArtifactWorkerResponse =
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false; readonly error: unknown }
+
+const candidateDevelopmentArtifactWorkerRequest = (
+  value: unknown,
+): value is CandidateDevelopmentArtifactWorkerRequest => {
+  const request = recordOf(value)
+  return (
+    request?._tag === 'CandidateDevelopmentArtifactWorkerRequest' &&
+    (request.mode === 'definition' || request.mode === 'evaluation') &&
+    typeof request.moduleUrl === 'string' &&
+    recordOf(request.verifiedFiles) !== undefined
+  )
+}
+
+const cloneableWorkerError = (cause: unknown): unknown => {
+  if (!(cause instanceof Error)) return cause
+  return { name: cause.name, message: cause.message, stack: cause.stack }
+}
+
+const loadCandidateDevelopmentArtifactContext = async (
+  moduleUrl: string,
+  verifiedFiles: CandidateDevelopmentVerifiedSourceFiles,
+): Promise<{ readonly context: vm.Context; readonly definition: unknown }> => {
+  const source = candidateDevelopmentArtifactSource(moduleUrl)
+  const moduleFormat = verifySelfContainedEsm(source, verifiedFiles.modulePath)
+  if (Result.isFailure(moduleFormat)) throw moduleFormat.failure
+  const context = candidateDevelopmentArtifactContext()
+  const artifactModule = new vm.SourceTextModule(source, {
+    context,
+    identifier: `git:${verifiedFiles.sourceRevision}:${verifiedFiles.moduleBlobOid}`,
+    initializeImportMeta: (meta) => Object.freeze(meta),
+  })
+  await artifactModule.link(() => {
+    throw new TypeError('candidate artifact imports are prohibited')
+  })
+  await artifactModule.evaluate({ timeout: candidateDevelopmentArtifactInitializationTimeoutMs })
+  const artifact = Reflect.get(artifactModule.namespace, 'candidateDevelopmentArtifact') as unknown
+  Object.defineProperty(context, '__candidateDevelopmentArtifact', {
+    value: artifact,
+    writable: false,
+    configurable: false,
+  })
+  const definitionJson = vm.runInContext(
+    `
+      (() => {
+        if (
+          globalThis.__candidateDevelopmentArtifact === null ||
+          typeof globalThis.__candidateDevelopmentArtifact !== 'object'
+        ) {
+          throw new TypeError('candidateDevelopmentArtifact export is missing')
+        }
+        if (typeof globalThis.__candidateDevelopmentArtifact.buildEvaluation !== 'function') {
+          throw new TypeError('candidateDevelopmentArtifact.buildEvaluation is missing')
+        }
+        return JSON.stringify({
+          schemaVersion: globalThis.__candidateDevelopmentArtifact.schemaVersion,
+          input: globalThis.__candidateDevelopmentArtifact.input,
+          strategyProtocol: globalThis.__candidateDevelopmentArtifact.strategyProtocol,
         })
-      const program: ExecutableProgram = {
-        schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
-        input: input.success,
-        strategyProtocol: strategyProtocol.success as CandidateDevelopmentStrategyProtocol,
-        effects: {
-          preregisterCandidate: () => Effect.succeed(verifiedSource.success.sourceManifestSha256),
-          loadDevelopmentData: () => Effect.succeed(undefined),
-          evaluateDevelopment: (_data, _preflight, observedVerifiedSource) =>
-            pipe(
-              Result.all({
-                expected: canonicalHashV1Result(verifiedSource.success),
-                observed: canonicalHashV1Result(observedVerifiedSource),
-              }),
-              Result.mapError(
-                (cause): CandidateDevelopmentCommandFailure => ({
-                  _tag: 'CandidateDevelopmentCommandHashFailed',
-                  cause,
-                }),
-              ),
-              Result.flatMap(({ expected, observed }) =>
-                expected === observed
-                  ? Result.succeed(undefined)
-                  : Result.fail(sourceVerificationFailure('verify-program-binding', { expected, observed })),
-              ),
-              Effect.fromResult,
-              Effect.flatMap(evaluation),
-            ),
-        },
-      }
-      return { candidateDevelopmentProgram: program }
-    },
-    catch: (cause): CandidateDevelopmentCommandFailure => ({
+      })()
+    `,
+    context,
+    { timeout: candidateDevelopmentArtifactInitializationTimeoutMs },
+  )
+  if (typeof definitionJson !== 'string') throw new TypeError('candidate artifact definition is not JSON')
+  return { context, definition: JSON.parse(definitionJson) as unknown }
+}
+
+const runCandidateDevelopmentArtifactWorkerTask = async (
+  request: CandidateDevelopmentArtifactWorkerRequest,
+): Promise<unknown> => {
+  const loaded = await loadCandidateDevelopmentArtifactContext(request.moduleUrl, request.verifiedFiles)
+  if (request.mode === 'definition') return loaded.definition
+  if (request.verifiedSource === undefined) throw new TypeError('candidate artifact verified source is missing')
+  return runCandidateDevelopmentArtifactEvaluation(loaded.context, request.verifiedSource)
+}
+
+class CandidateDevelopmentArtifactWorkerError extends Data.TaggedError('CandidateDevelopmentArtifactWorkerError')<{
+  readonly cause: unknown
+}> {}
+
+const candidateDevelopmentArtifactWorkerCause = (cause: unknown): unknown =>
+  cause instanceof CandidateDevelopmentArtifactWorkerError ? cause.cause : cause
+
+const runCandidateDevelopmentArtifactWorker = <A>(
+  request: CandidateDevelopmentArtifactWorkerRequest,
+): Effect.Effect<A, CandidateDevelopmentArtifactWorkerError> =>
+  Effect.tryPromise({
+    try: (signal) =>
+      new Promise<A>((resolveWorker, rejectWorker) => {
+        const worker = new Worker(new URL(import.meta.url), { workerData: request })
+        let settled = false
+        const cleanup = () => {
+          signal.removeEventListener('abort', abort)
+          worker.removeAllListeners()
+        }
+        const settle = async (response: CandidateDevelopmentArtifactWorkerResponse) => {
+          if (settled) return
+          settled = true
+          cleanup()
+          try {
+            await worker.terminate()
+            if (response.ok) resolveWorker(response.value as A)
+            else rejectWorker(response.error)
+          } catch (cause) {
+            rejectWorker(cause)
+          }
+        }
+        const abort = () => {
+          void settle({ ok: false, error: signal.reason ?? new Error('candidate artifact worker aborted') })
+        }
+        if (signal.aborted) abort()
+        else signal.addEventListener('abort', abort, { once: true })
+        worker.once('message', (response: CandidateDevelopmentArtifactWorkerResponse) => {
+          void settle(response)
+        })
+        worker.once('error', (error) => {
+          void settle({ ok: false, error })
+        })
+        worker.once('exit', (code) => {
+          if (!settled) void settle({ ok: false, error: new Error(`candidate artifact worker exited ${code}`) })
+        })
+      }),
+    catch: (cause) => new CandidateDevelopmentArtifactWorkerError({ cause }),
+  })
+
+export const evaluateCandidateDevelopmentArtifact: CandidateDevelopmentModuleImporter = (moduleUrl, verifiedFiles) =>
+  Effect.gen(function* () {
+    const moduleLoadFailure = (cause: unknown): CandidateDevelopmentCommandFailure => ({
       _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
       modulePath: verifiedFiles.modulePath,
-      cause,
-    }),
+      cause: candidateDevelopmentArtifactWorkerCause(cause),
+    })
+    const definitionValue = yield* runCandidateDevelopmentArtifactWorker<unknown>({
+      _tag: 'CandidateDevelopmentArtifactWorkerRequest',
+      mode: 'definition',
+      moduleUrl,
+      verifiedFiles,
+    }).pipe(Effect.mapError(moduleLoadFailure))
+    const definition = recordOf(definitionValue)
+    if (definition?.schemaVersion !== candidateDevelopmentArtifactSchemaVersion) {
+      return yield* Effect.fail<CandidateDevelopmentCommandFailure>({
+        _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
+        modulePath: verifiedFiles.modulePath,
+        cause: new TypeError('candidate artifact schema version is invalid'),
+      })
+    }
+    const input = yield* Effect.fromResult(decodeCandidateDevelopmentPreflightInput(definition.input)).pipe(
+      Effect.mapError(moduleLoadFailure),
+    )
+    const strategyProtocol = yield* Effect.fromResult(
+      decodeCandidateDevelopmentStrategyProtocol(definition.strategyProtocol),
+    ).pipe(Effect.mapError(moduleLoadFailure))
+    const verifiedSource = yield* Effect.fromResult(bindCandidateDevelopmentVerifiedSource(verifiedFiles, input)).pipe(
+      Effect.mapError(moduleLoadFailure),
+    )
+    const expectedProtocolHash = yield* Effect.fromResult(canonicalHashV1Result(strategyProtocol)).pipe(
+      Effect.mapError(moduleLoadFailure),
+    )
+    if (expectedProtocolHash !== input.expectedStrategyProtocolHash) {
+      return yield* Effect.fail<CandidateDevelopmentCommandFailure>({
+        _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
+        modulePath: verifiedFiles.modulePath,
+        cause: new TypeError('candidate artifact strategy protocol hash differs from preflight'),
+      })
+    }
+    const evaluation = (): Effect.Effect<CandidateDevelopmentCommandEvaluation, CandidateDevelopmentCommandFailure> =>
+      runCandidateDevelopmentArtifactWorker<unknown>({
+        _tag: 'CandidateDevelopmentArtifactWorkerRequest',
+        mode: 'evaluation',
+        moduleUrl,
+        verifiedFiles,
+        verifiedSource,
+      }).pipe(
+        Effect.flatMap((value) => Effect.fromResult(validateCandidateDevelopmentCommandEvaluation(value))),
+        Effect.mapError(
+          (cause): CandidateDevelopmentCommandFailure => ({
+            _tag: 'CandidateDevelopmentCommandProgramExecutionFailed',
+            cause: candidateDevelopmentArtifactWorkerCause(cause),
+          }),
+        ),
+      )
+    const program: ExecutableProgram = {
+      schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
+      input,
+      strategyProtocol: strategyProtocol as CandidateDevelopmentStrategyProtocol,
+      effects: {
+        preregisterCandidate: () => Effect.succeed(verifiedSource.sourceManifestSha256),
+        loadDevelopmentData: () => Effect.succeed(undefined),
+        evaluateDevelopment: (_data, _preflight, observedVerifiedSource) =>
+          pipe(
+            Result.all({
+              expected: canonicalHashV1Result(verifiedSource),
+              observed: canonicalHashV1Result(observedVerifiedSource),
+            }),
+            Result.mapError(
+              (cause): CandidateDevelopmentCommandFailure => ({
+                _tag: 'CandidateDevelopmentCommandHashFailed',
+                cause,
+              }),
+            ),
+            Result.flatMap(({ expected, observed }) =>
+              expected === observed
+                ? Result.succeed(undefined)
+                : Result.fail(sourceVerificationFailure('verify-program-binding', { expected, observed })),
+            ),
+            Effect.fromResult,
+            Effect.flatMap(evaluation),
+          ),
+      },
+    }
+    return { candidateDevelopmentProgram: program }
   })
 
 const importCandidateDevelopmentModule: CandidateDevelopmentModuleImporter = evaluateCandidateDevelopmentArtifact
@@ -3128,6 +3292,17 @@ export const loadCandidateDevelopmentExecutableProgram = (
     return { program, verifiedSource }
   })
 
+if (!isMainThread && candidateDevelopmentArtifactWorkerRequest(workerData)) {
+  void runCandidateDevelopmentArtifactWorkerTask(workerData).then(
+    (value) => parentPort?.postMessage({ ok: true, value } satisfies CandidateDevelopmentArtifactWorkerResponse),
+    (error) =>
+      parentPort?.postMessage({
+        ok: false,
+        error: cloneableWorkerError(error),
+      } satisfies CandidateDevelopmentArtifactWorkerResponse),
+  )
+}
+
 const modulePath = process.argv.at(2)
 const sourceManifestPath = process.argv.at(3)
 
@@ -3159,7 +3334,7 @@ class CandidateDevelopmentCommandError extends Data.TaggedError('CandidateDevelo
   readonly failure: CandidateDevelopmentCommandFailure
 }> {}
 
-if (import.meta.main) {
+if (import.meta.main && isMainThread) {
   NodeRuntime.runMain(main.pipe(Effect.mapError((failure) => new CandidateDevelopmentCommandError({ failure }))), {
     disableErrorReporting: false,
   })

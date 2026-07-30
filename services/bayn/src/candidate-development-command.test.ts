@@ -14,6 +14,7 @@ import {
   executeCandidateDevelopmentProgram,
   loadCandidateDevelopmentExecutableProgram,
   renderCandidateDevelopmentCommandReport,
+  validateCandidateDevelopmentAccountingReplay,
   validateCandidateDevelopmentCommandEvaluation,
   validateCandidateDevelopmentExecutableProgram,
   verifyCandidateDevelopmentSourceFiles,
@@ -1630,9 +1631,236 @@ describe('candidate development command', () => {
       failure: {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
         reason: 'binding-mismatch',
-        field: 'baseline.orders',
+        field: 'baseline.replay.orders',
       },
     })
+  })
+
+  test('requires canonical fill fee and cash evidence in baseline and stressed replay', () => {
+    const sessions = successOf(alignBars(fixtureMarketBars, fixtureStrategyProtocol.universe, fixtureInputManifest))
+    const sessionIndexByDate = new Map(sessions.map((session, index) => [session.date, index] as const))
+    const startIndex = sessionIndexByDate.get(fixtureSessions[0])
+    if (startIndex === undefined) throw new Error('fixture replay start is missing')
+    const feeProtocol = {
+      ...fixtureStrategyProtocol,
+      executionModel: {
+        ...fixtureExecutionModel,
+        fees: { ...fixtureExecutionModel.fees, commissionBps: 100 },
+        cash: { ...fixtureExecutionModel.cash, annualYieldBps: 0 },
+      },
+    }
+    const marketData = {
+      witness: fixtureMarketData,
+      sessions,
+      sessionIndexByDate,
+    }
+    const decisionFor = (
+      runId: string,
+      base: typeof firstDecisionFixture.signal,
+      weight: number,
+    ): EvaluationResult['signalDecisions'][number] => {
+      const targetWeights = { SPY: weight }
+      const payload = {
+        signalDate: base.signalDate,
+        executionDate: base.executionDate,
+        targetWeights,
+      }
+      return {
+        ...base,
+        decisionId: canonicalHashV1({ runId, kind: 'decision', ...payload }),
+        exposureScale: weight,
+        targetWeights,
+        signals: base.signals.map((signal) => ({
+          ...signal,
+          eligible: weight > 0,
+          uncappedWeight: weight,
+          cappedWeight: weight,
+          targetWeight: weight,
+        })),
+      }
+    }
+    const targetFor = (decision: EvaluationResult['signalDecisions'][number]): SimulationTarget => {
+      const signalIndex = sessionIndexByDate.get(decision.signalDate)
+      const executionIndex = sessionIndexByDate.get(decision.executionDate)
+      if (signalIndex === undefined || executionIndex === undefined) {
+        throw new Error('fixture replay decision schedule is missing')
+      }
+      const { decisionId: _, executionDate: __, ...plan } = decision
+      return { signalIndex, executionIndex, weights: decision.targetWeights, decision: plan }
+    }
+
+    for (const [field, runId, costMultiplierMicros] of [
+      ['baseline', fixtureRunId, MICROS],
+      ['stressed', fixtureStressedRunId, MICROS * 2n],
+    ] as const) {
+      const signalDecisions = [
+        decisionFor(runId, firstDecisionFixture.signal, 1),
+        decisionFor(runId, terminalDecisionFixture.signal, 0),
+      ]
+      const replay = successOf(
+        simulate(sessions, signalDecisions.map(targetFor), startIndex, feeProtocol, costMultiplierMicros, runId, true),
+      )
+      if (replay.simulation === null) throw new Error('fixture replay simulation is missing')
+      expect(replay.events.some((event) => event.kind === 'fill')).toBe(true)
+      expect(replay.events.some((event) => event.kind === 'fee' && event.totalMicros !== '0')).toBe(true)
+      expect(
+        replay.simulation.cashChanges.some(
+          (cashChange) => cashChange.sourceKind === 'fee' && cashChange.amountMicros.startsWith('-'),
+        ),
+      ).toBe(true)
+      expect(
+        Result.isSuccess(
+          validateCandidateDevelopmentAccountingReplay(
+            field,
+            runId,
+            signalDecisions,
+            replay.events,
+            replay.simulation,
+            marketData,
+            feeProtocol,
+          ),
+        ),
+      ).toBe(true)
+
+      const withoutFeeEvents = replay.events.filter((event) => event.kind !== 'fee')
+      expect(
+        validateCandidateDevelopmentAccountingReplay(
+          field,
+          runId,
+          signalDecisions,
+          withoutFeeEvents,
+          replay.simulation,
+          marketData,
+          feeProtocol,
+        ),
+      ).toMatchObject({ failure: { field: `${field}.replay.tradeEvents` } })
+
+      const withoutFeeCash = {
+        ...replay.simulation,
+        cashChanges: replay.simulation.cashChanges.filter((cashChange) => cashChange.sourceKind !== 'fee'),
+      }
+      expect(
+        validateCandidateDevelopmentAccountingReplay(
+          field,
+          runId,
+          signalDecisions,
+          replay.events,
+          withoutFeeCash,
+          marketData,
+          feeProtocol,
+        ),
+      ).toMatchObject({ failure: { field: `${field}.replay.tradeCashChanges` } })
+    }
+  })
+
+  test('rejects every accounting decision and order before the first selected rebalance', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const preRebalance = makeSignalDecisionFixture(fixtureAccountingStart, fixtureSessions[0])
+    const baselineWithPreRebalanceEvent = {
+      ...baseline,
+      events: [preRebalance.event, ...baseline.events],
+    }
+    const evaluation = commandEvaluationFixture(report, baselineWithPreRebalanceEvent)
+    const extraPlanAccounting = {
+      ...evaluation.accounting,
+      signalDecisions: [preRebalance.signal, ...evaluation.accounting.signalDecisions],
+    }
+    expect(
+      buildCandidateDevelopmentCommandReport(
+        report,
+        { ...evaluation, accounting: extraPlanAccounting },
+        fixtureStrategyProtocol,
+      ),
+    ).toMatchObject({ failure: { field: 'baseline.signalDecisions' } })
+
+    const orderPayload = {
+      decisionId: preRebalance.signal.decisionId,
+      sessionDate: fixtureSessions[0],
+      symbol: 'SPY',
+      side: 'buy' as const,
+      requestedQuantityMicros: '1',
+      filledQuantityMicros: '0',
+      status: 'rejected' as const,
+      rejectionReason: 'zero-after-rounding' as const,
+      unfilledRemainder: 'none' as const,
+    }
+    const preRebalanceOrder = {
+      ...orderPayload,
+      id: canonicalHashV1({ runId: baseline.runId, kind: 'order', ...orderPayload }),
+    }
+    const baselineWithOrder = {
+      ...baseline,
+      simulation: { ...baseline.simulation, orders: [preRebalanceOrder] },
+    }
+    expect(buildFixtureReport(report, baselineWithOrder)).toMatchObject({
+      failure: { field: 'baseline.replay.orders' },
+    })
+
+    const preRebalancePriceMicros = successOf(
+      referencePriceMicros(fixtureSpyClose(fixtureAccountingStart), fixtureExecutionModel),
+    ).toString()
+    const fillPayload = {
+      orderId: preRebalanceOrder.id,
+      decisionId: preRebalance.signal.decisionId,
+      sessionDate: fixtureAccountingStart,
+      symbol: 'SPY',
+      side: 'buy' as const,
+      quantityMicros: '1',
+      referencePriceMicros: preRebalancePriceMicros,
+      priceMicros: preRebalancePriceMicros,
+      notionalMicros: '1',
+      spreadCostMicros: '0',
+      slippageCostMicros: '0',
+      costBasisMicros: '1',
+    }
+    const preRebalanceFill = {
+      kind: 'fill' as const,
+      ...fillPayload,
+      id: canonicalHashV1({ runId: baseline.runId, kind: 'fill', ...fillPayload }),
+    }
+    const baselineWithFill = {
+      ...baseline,
+      events: [preRebalanceFill, ...baseline.events],
+    }
+    expect(buildFixtureReport(report, baselineWithFill)).toMatchObject({
+      failure: { field: 'baseline.replay.tradeEvents' },
+    })
+
+    const stressedSimulation = {
+      ...report.doubledCost.stressed.simulation,
+      orders: [
+        {
+          ...preRebalanceOrder,
+          id: canonicalHashV1({
+            runId: fixtureStressedRunId,
+            kind: 'order',
+            ...orderPayload,
+          }),
+        },
+      ],
+    }
+    const stressedReport = {
+      ...report,
+      doubledCost: {
+        ...report.doubledCost,
+        stressed: { ...report.doubledCost.stressed, simulation: stressedSimulation },
+      },
+    }
+    const stressedEvaluationFixture = commandEvaluationFixture(stressedReport, baseline)
+    const stressedEvaluation = {
+      ...stressedEvaluationFixture,
+      accounting: {
+        ...stressedEvaluationFixture.accounting,
+        stressedSimulation: {
+          ...stressedEvaluationFixture.accounting.stressedSimulation,
+          orders: stressedSimulation.orders,
+        },
+      },
+    }
+    expect(
+      buildCandidateDevelopmentCommandReport(stressedReport, stressedEvaluation, fixtureStrategyProtocol),
+    ).toMatchObject({ failure: { field: 'stressed.replay.orders' } })
   })
 
   test('rejects forged fill reference prices and daily mark prices', () => {
@@ -2407,6 +2635,43 @@ describe('candidate development command', () => {
     expect(decoded.baseline.codeRevision).toBe(verifiedSource.sourceRevision)
     expect(decoded.baseline.runId).toBe(verifiedSource.baselineRunId)
     expect(decoded.accounting.stressedRunId).toBe(verifiedSource.stressedRunId)
+  })
+
+  test('interrupts a real infinite-loop artifact worker promptly', async () => {
+    const input = {
+      candidateOrdinal: 16,
+      priorTrialCount: 15,
+      expectedStrategyProtocolHash: fixtureStrategyProtocolHash,
+      officialSessions: fixtureOfficialSessions,
+      signalSessionDates: officialMonthEndSignalDates(fixtureOfficialSessions),
+      featureLookbackSessions: 126,
+    }
+    const source = `
+      export const candidateDevelopmentArtifact = {
+        schemaVersion: 'bayn.candidate-development-artifact.v1',
+        input: ${JSON.stringify(input)},
+        strategyProtocol: ${JSON.stringify(fixtureStrategyProtocol)},
+        buildEvaluation: () => { while (true) {} },
+      }
+    `
+    const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
+    const loaded = await Effect.runPromise(evaluateCandidateDevelopmentArtifact(moduleUrl, fixtureVerifiedSourceFiles))
+    const program = successOf(
+      validateCandidateDevelopmentExecutableProgram(
+        (loaded as { readonly candidateDevelopmentProgram?: unknown }).candidateDevelopmentProgram,
+      ),
+    )
+    const verifiedSource = successOf(bindCandidateDevelopmentVerifiedSource(fixtureVerifiedSourceFiles, input))
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const fiber = yield* program.effects
+          .evaluateDevelopment(undefined, undefined as never, verifiedSource)
+          .pipe(Effect.forkChild)
+        yield* Effect.sleep('50 millis')
+        yield* Fiber.interrupt(fiber).pipe(Effect.timeout('1 second'))
+      }),
+    )
   })
 
   test('rejects async artifact execution before entering the sandbox', async () => {
