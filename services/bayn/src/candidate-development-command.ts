@@ -1444,19 +1444,13 @@ export const validateCandidateDevelopmentAccountingReplay = (
       ),
     )
   }
-  const tradeEvents = events.filter((event) => event.kind === 'fill' || event.kind === 'fee')
-  const replayedTradeEvents = replay.success.events.filter((event) => event.kind === 'fill' || event.kind === 'fee')
-  const tradeCashChanges = simulation.cashChanges.filter(
-    (cashChange) => cashChange.sourceKind === 'fill' || cashChange.sourceKind === 'fee',
-  )
-  const replayedTradeCashChanges = replay.success.simulation.cashChanges.filter(
-    (cashChange) => cashChange.sourceKind === 'fill' || cashChange.sourceKind === 'fee',
-  )
+  const monetaryEvents = events.filter((event) => event.kind !== 'decision')
+  const replayedMonetaryEvents = replay.success.events.filter((event) => event.kind !== 'decision')
   const bindings = [
     [`${field}.replay.signalDecisions`, replay.success.signalDecisions, signalDecisions],
-    [`${field}.replay.tradeEvents`, replayedTradeEvents, tradeEvents],
+    [`${field}.replay.monetaryEvents`, replayedMonetaryEvents, monetaryEvents],
     [`${field}.replay.orders`, replay.success.simulation.orders, simulation.orders],
-    [`${field}.replay.tradeCashChanges`, replayedTradeCashChanges, tradeCashChanges],
+    [`${field}.replay.cashChanges`, replay.success.simulation.cashChanges, simulation.cashChanges],
   ] as const
   for (const [name, expected, observed] of bindings) {
     const binding = requireCanonicalEvidenceEqual(name, expected, observed)
@@ -1714,6 +1708,23 @@ const validateCandidateDevelopmentAccounting = (
     const binding = requireCanonicalEvidenceEqual(field, expected, observed)
     if (Result.isFailure(binding)) return Result.fail(binding.failure)
   }
+  const selectedTraceBindings = Result.all({
+    strategyPreviousEquityMicros: selectedTracePreviousEquity(
+      'baselineSimulation',
+      accounting.baselineSimulation,
+      baseline.simulation,
+      accounting.events,
+      baseline.initialCapitalMicros,
+    ),
+    stressedPreviousEquityMicros: selectedTracePreviousEquity(
+      'stressedSimulation',
+      accounting.stressedSimulation,
+      report.doubledCost.stressed.simulation,
+      accounting.stressedEvents,
+      baseline.initialCapitalMicros,
+    ),
+  })
+  if (Result.isFailure(selectedTraceBindings)) return Result.fail(selectedTraceBindings.failure)
   const domainBindings = Result.all({
     baselineCalendar: validateAccountingCalendar('baseline', officialSessions, accounting.baselineSimulation),
     stressedCalendar: validateAccountingCalendar('stressed', officialSessions, accounting.stressedSimulation),
@@ -1788,23 +1799,6 @@ const validateCandidateDevelopmentAccounting = (
     ),
   })
   if (Result.isFailure(decisionBindings)) return Result.fail(decisionBindings.failure)
-  const selectedTraceBindings = Result.all({
-    strategyPreviousEquityMicros: selectedTracePreviousEquity(
-      'baselineSimulation',
-      accounting.baselineSimulation,
-      baseline.simulation,
-      accounting.events,
-      baseline.initialCapitalMicros,
-    ),
-    stressedPreviousEquityMicros: selectedTracePreviousEquity(
-      'stressedSimulation',
-      accounting.stressedSimulation,
-      report.doubledCost.stressed.simulation,
-      accounting.stressedEvents,
-      baseline.initialCapitalMicros,
-    ),
-  })
-  if (Result.isFailure(selectedTraceBindings)) return Result.fail(selectedTraceBindings.failure)
   const proof = reconcileMarkedEquity({
     runId: accounting.runId,
     initialCapitalMicros: accounting.initialCapitalMicros,

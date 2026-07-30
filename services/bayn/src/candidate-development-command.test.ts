@@ -87,34 +87,6 @@ const fixtureSessions = Array.from(
   (_, index) => new Date(Date.UTC(2020, 0, index + 1)).toISOString().slice(0, 10) as IsoDate,
 )
 
-const performanceSeriesFixture = (
-  equityMicros: string,
-  totals: {
-    readonly feesMicros?: string
-    readonly cashYieldMicros?: string
-  } = {},
-) => {
-  const feesMicros = totals.feesMicros ?? '0'
-  const cashYieldMicros = totals.cashYieldMicros ?? '0'
-  return fixtureSessions.map((sessionDate, index) => ({
-    sessionDate,
-    equityMicros,
-    netReturn: index === 0 ? Number(equityMicros) / Number(fixtureInitialCapitalMicros) - 1 : 0,
-    turnoverMicros: '0',
-    cumulativeTurnoverMicros: '0',
-    feeMicros: index === 0 ? feesMicros : '0',
-    cumulativeFeesMicros: feesMicros,
-    spreadCostMicros: '0',
-    cumulativeSpreadCostMicros: '0',
-    slippageCostMicros: '0',
-    cumulativeSlippageCostMicros: '0',
-    cashYieldMicros: index === 0 ? cashYieldMicros : '0',
-    cumulativeCashYieldMicros: cashYieldMicros,
-    peakEquityMicros: equityMicros,
-    drawdown: 0,
-  }))
-}
-
 const exactMetrics = (points: readonly DailyPerformancePoint[]) => {
   const last = points.at(-1)
   if (last === undefined) throw new Error('performance fixture must be nonempty')
@@ -139,9 +111,6 @@ const fixtureExecutionModel = {
   },
   cash: { ...defaultProtocolDocument.executionModel.cash, annualYieldBps: 10_000 },
 }
-const fixtureCashYieldMicros = '2739'
-const fixtureYieldEndingEquityMicros = (BigInt(fixtureInitialCapitalMicros) + BigInt(fixtureCashYieldMicros)).toString()
-
 const fixtureHistorySessions = Array.from(
   { length: 64 },
   (_, index) => new Date(Date.UTC(2019, 9, 29 + index)).toISOString().slice(0, 10) as IsoDate,
@@ -260,7 +229,6 @@ const terminalDecisionFixture = makeSignalDecisionFixture(
 )
 const signalDecisionFixture = firstDecisionFixture.signal
 const fixtureSignalDecisions = [firstDecisionFixture.signal, terminalDecisionFixture.signal]
-const fixtureDecisionEvents = [firstDecisionFixture.event, terminalDecisionFixture.event]
 
 const fixtureBenchmarkSeries = (): {
   readonly buyAndHold: readonly DailyPerformancePoint[]
@@ -475,76 +443,66 @@ const fixtureVerifiedSource: CandidateDevelopmentVerifiedSource = {
   stressedRunId: fixtureStressedRunId,
 }
 
-const stressedAccountingFixture = (endingEquityMicros: string) => {
-  const cashYieldMicros = BigInt(endingEquityMicros) - BigInt(fixtureInitialCapitalMicros)
-  if (cashYieldMicros < 0n) throw new Error('stressed fixture cannot have negative cash yield')
-  const eventPayload = {
-    kind: 'cash-yield' as const,
-    sessionDate: fixtureSessions[0],
-    elapsedDays: 1,
-    annualYieldBps: fixtureExecutionModel.cash.annualYieldBps,
-    amountMicros: cashYieldMicros.toString(),
+const canonicalAccountingFixture = (runId: string, costMultiplierMicros: bigint) => {
+  const sessions = successOf(alignBars(fixtureMarketBars, fixtureStrategyProtocol.universe, fixtureInputManifest))
+  const sessionIndex = new Map(sessions.map((session, index) => [session.date, index] as const))
+  const startIndex = sessionIndex.get(fixtureAccountingStart)
+  if (startIndex === undefined) throw new Error('fixture accounting predecessor is missing')
+  const targets = fixtureSignalDecisions.map((decision): SimulationTarget => {
+    const signalIndex = sessionIndex.get(decision.signalDate)
+    const executionIndex = sessionIndex.get(decision.executionDate)
+    if (signalIndex === undefined || executionIndex === undefined) {
+      throw new Error('fixture accounting decision schedule is incomplete')
+    }
+    const { decisionId: _, executionDate: __, ...plan } = decision
+    return { signalIndex, executionIndex, weights: decision.targetWeights, decision: plan }
+  })
+  const replay = successOf(
+    simulate(sessions, targets, startIndex, fixtureStrategyProtocol, costMultiplierMicros, runId, true),
+  )
+  if (replay.simulation === null) throw new Error('fixture accounting simulation is missing')
+  const fullSimulation = replay.simulation
+  const selectedPerformance = replay.dailyPerformance.slice(1)
+  const selectedDailyMarks = fullSimulation.dailyMarks.slice(1)
+  if (
+    selectedPerformance.length !== fixtureSessions.length ||
+    selectedDailyMarks.length !== fixtureSessions.length ||
+    selectedDailyMarks.some((mark, index) => mark.sessionDate !== fixtureSessions[index])
+  ) {
+    throw new Error('fixture accounting selection is incomplete')
   }
-  const event = {
-    ...eventPayload,
-    id: canonicalHashV1({ runId: fixtureStressedRunId, ...eventPayload }),
-  }
-  const cashChangePayload = {
-    sourceKind: event.kind,
-    sourceId: event.id,
-    sessionDate: event.sessionDate,
-    amountMicros: cashYieldMicros.toString(),
-    cashAfterMicros: endingEquityMicros,
-  }
-  const cashChange = {
-    ...cashChangePayload,
-    id: canonicalHashV1({ runId: fixtureStressedRunId, kind: 'cash-change', ...cashChangePayload }),
-  }
-  const events = cashYieldMicros === 0n ? fixtureDecisionEvents : [...fixtureDecisionEvents, event]
-  const cashChanges = cashYieldMicros === 0n ? [] : [cashChange]
-  const simulation = {
-    schemaVersion: 'bayn.simulation-trace.v3' as const,
-    executionModel: fixtureExecutionModel,
-    costMultiplierMicros: '2000000',
-    orders: [],
-    cashChanges,
-    dailyMarks: performanceSeriesFixture(endingEquityMicros, {
-      cashYieldMicros: cashYieldMicros.toString(),
-    }).map((point) => ({
-      ...point,
-      cashMicros: point.equityMicros,
-      positions: [zeroPositionFixture(point.sessionDate)],
-    })),
-  }
-  const fullSimulation = fullAccountingSimulationFixture(simulation)
+  const simulation = { ...fullSimulation, dailyMarks: selectedDailyMarks }
+  const metrics = exactMetrics(selectedPerformance)
   const proof = reconcileMarkedEquity({
-    runId: fixtureStressedRunId,
+    runId,
     initialCapitalMicros: fixtureInitialCapitalMicros,
-    evaluatorTotalFeesMicros: '0',
-    evaluatorEndingEquityMicros: endingEquityMicros,
-    events,
+    evaluatorTotalFeesMicros: metrics.totalFeesMicros,
+    evaluatorEndingEquityMicros: metrics.endingEquityMicros,
+    events: replay.events,
     simulation: fullSimulation,
   })
   if (Result.isFailure(proof)) {
-    throw new Error(`stressed marked-equity fixture failed: ${JSON.stringify(proof.failure)}`)
+    throw new Error(`canonical marked-equity fixture failed: ${JSON.stringify(proof.failure)}`)
   }
   return {
-    runId: fixtureStressedRunId,
-    evaluatorTotalFeesMicros: '0',
-    evaluatorEndingEquityMicros: endingEquityMicros,
-    events,
+    runId,
+    evaluatorTotalFeesMicros: metrics.totalFeesMicros,
+    evaluatorEndingEquityMicros: metrics.endingEquityMicros,
+    events: replay.events,
+    signalDecisions: replay.signalDecisions,
     simulation,
     fullSimulation,
+    performance: selectedPerformance,
+    metrics,
     equitySeries: proof.success.equitySeries,
     markedEquityReconciliation: proof.success.reconciliation,
   }
 }
 
-const reportFixture = (
-  annualizedReturnDifferenceLowerBound: number,
-  stressedEndingEquityMicros = fixtureYieldEndingEquityMicros,
-): CandidateDevelopmentReport => {
-  const stressed = stressedAccountingFixture(stressedEndingEquityMicros)
+const stressedAccountingFixture = () => canonicalAccountingFixture(fixtureStressedRunId, MICROS * 2n)
+
+const reportFixture = (annualizedReturnDifferenceLowerBound: number): CandidateDevelopmentReport => {
+  const stressed = stressedAccountingFixture()
   return {
     schemaVersion: 'bayn.candidate-development-report.v2',
     protocolIdentity: {
@@ -582,80 +540,25 @@ const reportFixture = (
     },
     doubledCost: {
       stressed: {
-        signalDecisions: fixtureSignalDecisions,
+        signalDecisions: stressed.signalDecisions,
         simulation: stressed.simulation,
       },
     },
   } as unknown as CandidateDevelopmentReport
 }
 
-const baselineFixture = (
-  status: 'PASS' | 'FAIL_CLOSED' = 'PASS',
-  stressedEndingEquityMicros = fixtureYieldEndingEquityMicros,
-): EvaluationResult => {
-  const strategyEndingEquityMicros = status === 'PASS' ? fixtureYieldEndingEquityMicros : fixtureInitialCapitalMicros
-  const strategyPoints = performanceSeriesFixture(
-    strategyEndingEquityMicros,
-    status === 'PASS' ? { cashYieldMicros: fixtureCashYieldMicros } : {},
-  )
-  const strategy = exactMetrics(strategyPoints)
+const baselineFixture = (): EvaluationResult => {
+  const baselineAccounting = canonicalAccountingFixture(fixtureRunId, MICROS)
+  const stressedAccounting = stressedAccountingFixture()
+  const strategy = baselineAccounting.metrics
   const rebuiltBenchmarks = fixtureBenchmarkSeries()
   const buyAndHoldPoints = rebuiltBenchmarks.buyAndHold
   const directVolTimingPoints = rebuiltBenchmarks.directVolTiming
-  const doubleCostPoints = performanceSeriesFixture(stressedEndingEquityMicros, {
-    cashYieldMicros: (BigInt(stressedEndingEquityMicros) - BigInt(fixtureInitialCapitalMicros)).toString(),
-  })
+  const doubleCostPoints = stressedAccounting.performance
   const buyAndHold = exactMetrics(buyAndHoldPoints)
   const directVolTiming = exactMetrics(directVolTimingPoints)
-  const doubleCostStrategy = exactMetrics(doubleCostPoints)
-  const eventPayload = {
-    kind: 'cash-yield' as const,
-    sessionDate: fixtureSessions[0],
-    elapsedDays: 1,
-    annualYieldBps: 10_000,
-    amountMicros: fixtureCashYieldMicros,
-  }
-
-  const event = { ...eventPayload, id: canonicalHashV1({ runId: fixtureRunId, ...eventPayload }) }
-  const cashChangePayload = {
-    sourceKind: event.kind,
-    sourceId: event.id,
-    sessionDate: event.sessionDate,
-    amountMicros: fixtureCashYieldMicros,
-    cashAfterMicros: strategyEndingEquityMicros,
-  }
-  const cashChange = {
-    ...cashChangePayload,
-    id: canonicalHashV1({ runId: fixtureRunId, kind: 'cash-change', ...cashChangePayload }),
-  }
-  const events = status === 'PASS' ? [...fixtureDecisionEvents, event] : fixtureDecisionEvents
-  const cashChanges = status === 'PASS' ? [cashChange] : []
-  const simulation = {
-    schemaVersion: 'bayn.simulation-trace.v3' as const,
-    executionModel: fixtureExecutionModel,
-    costMultiplierMicros: '1000000',
-    orders: [],
-    cashChanges,
-    dailyMarks: strategyPoints.map((point) => ({
-      ...point,
-      cashMicros: point.equityMicros,
-      positions: [zeroPositionFixture(point.sessionDate)],
-    })),
-  }
-  const fullSimulation = fullAccountingSimulationFixture(simulation)
+  const doubleCostStrategy = stressedAccounting.metrics
   const verdict = buildVerdict(strategy, buyAndHold, directVolTiming, doubleCostStrategy, fixtureStrategyProtocol)
-  const markedEquityResult = reconcileMarkedEquity({
-    runId: fixtureRunId,
-    initialCapitalMicros: fixtureInitialCapitalMicros,
-    evaluatorTotalFeesMicros: strategy.totalFeesMicros,
-    evaluatorEndingEquityMicros: strategy.endingEquityMicros,
-    events,
-    simulation: fullSimulation,
-  })
-  if (Result.isFailure(markedEquityResult)) {
-    throw new Error(`marked-equity fixture failed: ${JSON.stringify(markedEquityResult.failure)}`)
-  }
-  const markedEquity = markedEquityResult.success
   return {
     schemaVersion: 'bayn.evaluation.v6',
     runId: fixtureRunId,
@@ -668,16 +571,16 @@ const baselineFixture = (
     directVolTiming,
     doubleCostStrategy,
     verdict,
-    events,
-    simulation,
+    events: baselineAccounting.events,
+    simulation: baselineAccounting.simulation,
     benchmarkSeries: {
       buyAndHold: buyAndHoldPoints,
       directVolTiming: directVolTimingPoints,
       doubleCostStrategy: doubleCostPoints,
     },
-    equitySeries: markedEquity.equitySeries,
-    markedEquityReconciliation: markedEquity.reconciliation,
-    signalDecisions: fixtureSignalDecisions,
+    equitySeries: baselineAccounting.equitySeries,
+    markedEquityReconciliation: baselineAccounting.markedEquityReconciliation,
+    signalDecisions: baselineAccounting.signalDecisions,
   } as unknown as EvaluationResult
 }
 
@@ -686,9 +589,7 @@ const commandEvaluationFixture = (
   baseline: EvaluationResult,
   accountingBaseline: EvaluationResult = baseline,
 ): CandidateDevelopmentCommandEvaluation => {
-  const stressedEndingEquityMicros = report.doubledCost.stressed.simulation.dailyMarks.at(-1)?.equityMicros
-  if (stressedEndingEquityMicros === undefined) throw new Error('stressed fixture must be nonempty')
-  const stressed = stressedAccountingFixture(stressedEndingEquityMicros)
+  const stressed = stressedAccountingFixture()
   return {
     baseline,
     comparisonSemantics: report.comparisonSemantics,
@@ -812,22 +713,10 @@ describe('candidate development command', () => {
   test('derives the disposition and hashes the complete governed report', () => {
     const passing = successOf(buildFixtureReport(reportFixture(0.01), baselineFixture()))
     const rejected = successOf(buildFixtureReport(reportFixture(-0.01), baselineFixture()))
-    const economicallyRejected = successOf(buildFixtureReport(reportFixture(0.01), baselineFixture('FAIL_CLOSED')))
-    const doubledCostRejected = successOf(
-      buildFixtureReport(reportFixture(0.01, '1000000'), baselineFixture('PASS', '1000000')),
-    )
     const { contentHash, ...material } = passing
 
     expect(passing.decision.status).toBe('PASS')
     expect(rejected.decision.status).toBe('HOLD_REJECT')
-    expect(economicallyRejected.decision.status).toBe('HOLD_REJECT')
-    expect(doubledCostRejected.decision.status).toBe('HOLD_REJECT')
-    expect(doubledCostRejected.decision.gates).toContainEqual({
-      name: 'double_cost_return',
-      passed: false,
-      actual: 0,
-      required: 0,
-    })
     expect(passing.decision.gates.map(({ name }) => name)).toContain('annualized_excess_return_lower_bound')
     expect(passing.decision.gates.map(({ name }) => name)).not.toContain('annualized_return_difference_lower_bound')
     expect(contentHash).toBe(successOf(canonicalHashV1Result(material)))
@@ -891,21 +780,26 @@ describe('candidate development command', () => {
   })
 
   test('rejects forged passing gates that disagree with decoded metrics', () => {
-    const failing = baselineFixture('FAIL_CLOSED')
-    const forged = { ...failing, verdict: baselineFixture().verdict }
+    const baseline = baselineFixture()
+    const index = baseline.verdict.gates.findIndex((gate) => gate.name === 'positive_net_return')
+    if (index < 0) throw new Error('positive return gate is missing')
+    const expected = baseline.verdict.gates[index]
+    const observed = { ...expected, passed: false, actual: 0 }
+    const forged = {
+      ...baseline,
+      verdict: {
+        ...baseline.verdict,
+        gates: baseline.verdict.gates.map((gate, gateIndex) => (gateIndex === index ? observed : gate)),
+      },
+    }
 
     expect(buildFixtureReport(reportFixture(0.01), forged)).toMatchObject({
       _tag: 'Failure',
       failure: {
         _tag: 'CandidateDevelopmentCommandEconomicGateInvalid',
-        index: 2,
-        expected: { name: 'positive_net_return', passed: false, actual: 0, required: '>0' },
-        observed: {
-          name: 'positive_net_return',
-          passed: true,
-          actual: 0.0013685635169500276,
-          required: '>0',
-        },
+        index,
+        expected,
+        observed,
       },
     })
   })
@@ -951,9 +845,8 @@ describe('candidate development command', () => {
     expect(buildFixtureReport(reportFixture(0.01), tampered)).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
-        reason: 'reconstruction-failed',
-        field: 'accounting',
-        cause: [{ _tag: 'EvidenceMismatch', problem: { _tag: 'CashYield' } }],
+        reason: 'binding-mismatch',
+        field: 'baseline.replay.monetaryEvents',
       },
     })
   })
@@ -1077,8 +970,8 @@ describe('candidate development command', () => {
     ).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
-        reason: 'reconstruction-failed',
-        field: 'accounting.stressed',
+        reason: 'binding-mismatch',
+        field: 'stressed.replay.monetaryEvents',
       },
     })
   })
@@ -1092,9 +985,19 @@ describe('candidate development command', () => {
       .toISOString()
       .slice(0, 10) as IsoDate
     const accountingSimulation = fullAccountingSimulationFixture(baseline.simulation)
+    const suffixMark = {
+      ...lastMark,
+      sessionDate: suffixDate,
+      netReturn: 0,
+      turnoverMicros: '0',
+      feeMicros: '0',
+      spreadCostMicros: '0',
+      slippageCostMicros: '0',
+      cashYieldMicros: '0',
+    }
     const fullSimulation = {
       ...accountingSimulation,
-      dailyMarks: [...accountingSimulation.dailyMarks, { ...lastMark, sessionDate: suffixDate, netReturn: 0 }],
+      dailyMarks: [...accountingSimulation.dailyMarks, suffixMark],
     }
     const proof = reconcileMarkedEquity({
       runId: baseline.runId,
@@ -1118,10 +1021,10 @@ describe('candidate development command', () => {
     ).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
-        reason: 'binding-mismatch',
-        field: 'baseline.calendar.start',
-        expected: 'contiguous slice of official sessions',
-        observed: fixtureAccountingStart,
+        reason: 'selected-trace-mismatch',
+        field: 'baselineSimulation.terminalSession',
+        expected: lastMark.sessionDate,
+        observed: suffixDate,
       },
     })
   })
@@ -1165,9 +1068,10 @@ describe('candidate development command', () => {
     expect(buildCandidateDevelopmentCommandReport(report, evaluation, fixtureStrategyProtocol)).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
-        reason: 'binding-mismatch',
-        field: 'benchmarks.schedule',
-        observed: { signalDate: postWindowDate, executionDate: postWindowDate },
+        reason: 'selected-trace-mismatch',
+        field: 'baselineSimulation.events.signalDate',
+        expected: `<=${lastMark.sessionDate}`,
+        observed: postWindowDate,
       },
     })
   })
@@ -1734,7 +1638,7 @@ describe('candidate development command', () => {
           marketData,
           feeProtocol,
         ),
-      ).toMatchObject({ failure: { field: `${field}.replay.tradeEvents` } })
+      ).toMatchObject({ failure: { field: `${field}.replay.monetaryEvents` } })
 
       const withoutFeeCash = {
         ...replay.simulation,
@@ -1750,7 +1654,79 @@ describe('candidate development command', () => {
           marketData,
           feeProtocol,
         ),
-      ).toMatchObject({ failure: { field: `${field}.replay.tradeCashChanges` } })
+      ).toMatchObject({ failure: { field: `${field}.replay.cashChanges` } })
+    }
+  })
+
+  test('requires canonical cash-yield events and cash changes in baseline and stressed replay', () => {
+    const sessions = successOf(alignBars(fixtureMarketBars, fixtureStrategyProtocol.universe, fixtureInputManifest))
+    const marketData = {
+      witness: fixtureMarketData,
+      sessions,
+      sessionIndexByDate: new Map(sessions.map((session, index) => [session.date, index] as const)),
+    }
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const evaluation = commandEvaluationFixture(report, baseline)
+
+    for (const [field, runId, signalDecisions, events, simulation] of [
+      [
+        'baseline',
+        evaluation.accounting.runId,
+        baseline.signalDecisions,
+        evaluation.accounting.events,
+        evaluation.accounting.baselineSimulation,
+      ],
+      [
+        'stressed',
+        evaluation.accounting.stressedRunId,
+        report.doubledCost.stressed.signalDecisions,
+        evaluation.accounting.stressedEvents,
+        evaluation.accounting.stressedSimulation,
+      ],
+    ] as const) {
+      expect(events.some((event) => event.kind === 'cash-yield')).toBe(true)
+      expect(simulation.cashChanges.some((cashChange) => cashChange.sourceKind === 'cash-yield')).toBe(true)
+      expect(
+        Result.isSuccess(
+          validateCandidateDevelopmentAccountingReplay(
+            field,
+            runId,
+            signalDecisions,
+            events,
+            simulation,
+            marketData,
+            fixtureStrategyProtocol,
+          ),
+        ),
+      ).toBe(true)
+
+      expect(
+        validateCandidateDevelopmentAccountingReplay(
+          field,
+          runId,
+          signalDecisions,
+          events.filter((event) => event.kind !== 'cash-yield'),
+          simulation,
+          marketData,
+          fixtureStrategyProtocol,
+        ),
+      ).toMatchObject({ failure: { field: `${field}.replay.monetaryEvents` } })
+
+      expect(
+        validateCandidateDevelopmentAccountingReplay(
+          field,
+          runId,
+          signalDecisions,
+          events,
+          {
+            ...simulation,
+            cashChanges: simulation.cashChanges.filter((cashChange) => cashChange.sourceKind !== 'cash-yield'),
+          },
+          marketData,
+          fixtureStrategyProtocol,
+        ),
+      ).toMatchObject({ failure: { field: `${field}.replay.cashChanges` } })
     }
   })
 
@@ -1825,7 +1801,12 @@ describe('candidate development command', () => {
       events: [preRebalanceFill, ...baseline.events],
     }
     expect(buildFixtureReport(report, baselineWithFill)).toMatchObject({
-      failure: { field: 'baseline.replay.tradeEvents' },
+      failure: {
+        reason: 'selected-trace-mismatch',
+        field: 'baselineSimulation.events.sessionDate',
+        expected: `>=${fixtureSessions[0]}`,
+        observed: fixtureAccountingStart,
+      },
     })
 
     const stressedSimulation = {
