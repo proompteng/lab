@@ -1066,7 +1066,7 @@ describe('candidate development command', () => {
       accounting: {
         ...evaluation.accounting,
         stressedEvents: evaluation.accounting.stressedEvents.filter((event) => event.kind === 'decision'),
-        stressedSimulation,
+        stressedSimulation: fullAccountingSimulationFixture(stressedSimulation),
       },
     }
 
@@ -1363,6 +1363,72 @@ describe('candidate development command', () => {
         index: 1,
         expected: fixtureAccountingStart,
         observed: fixtureSessions[0],
+      },
+    })
+  })
+
+  test('rejects multiple accounting predecessors before the selected window', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const evaluation = commandEvaluationFixture(report, baseline)
+    const earlierSession = fixtureHistorySessions.at(-2)
+    if (earlierSession === undefined) throw new Error('fixture history requires two predecessor sessions')
+    const addEarlierPredecessor = (simulation: EvaluationResult['simulation']) => {
+      const predecessor = simulation.dailyMarks[0]
+      return {
+        ...simulation,
+        dailyMarks: [
+          {
+            ...predecessor,
+            sessionDate: earlierSession,
+            positions: [zeroPositionFixture(earlierSession)],
+          },
+          ...simulation.dailyMarks,
+        ],
+      }
+    }
+
+    expect(
+      buildCandidateDevelopmentCommandReport(
+        report,
+        {
+          ...evaluation,
+          accounting: {
+            ...evaluation.accounting,
+            baselineSimulation: addEarlierPredecessor(evaluation.accounting.baselineSimulation),
+          },
+        },
+        fixtureStrategyProtocol,
+      ),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'selected-trace-mismatch',
+        field: 'baselineSimulation.predecessorCount',
+        expected: 1,
+        observed: 2,
+      },
+    })
+
+    expect(
+      buildCandidateDevelopmentCommandReport(
+        report,
+        {
+          ...evaluation,
+          accounting: {
+            ...evaluation.accounting,
+            stressedSimulation: addEarlierPredecessor(evaluation.accounting.stressedSimulation),
+          },
+        },
+        fixtureStrategyProtocol,
+      ),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'selected-trace-mismatch',
+        field: 'stressedSimulation.predecessorCount',
+        expected: 1,
+        observed: 2,
       },
     })
   })

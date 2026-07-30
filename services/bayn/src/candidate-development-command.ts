@@ -1190,6 +1190,49 @@ const selectedTracePreviousEquity = (
       markedEquityFailure('selected-trace-mismatch', null, `${field}.firstSession`, first.sessionDate, null),
     )
   }
+  if (startIndex !== 1) {
+    return Result.fail(markedEquityFailure('selected-trace-mismatch', null, `${field}.predecessorCount`, 1, startIndex))
+  }
+  const predecessor = full.dailyMarks[0]
+  const predecessorBindings = [
+    ['equityMicros', initialCapitalMicros, predecessor.equityMicros],
+    ['netReturn', 0, predecessor.netReturn],
+    ['turnoverMicros', '0', predecessor.turnoverMicros],
+    ['cumulativeTurnoverMicros', '0', predecessor.cumulativeTurnoverMicros],
+    ['feeMicros', '0', predecessor.feeMicros],
+    ['cumulativeFeesMicros', '0', predecessor.cumulativeFeesMicros],
+    ['spreadCostMicros', '0', predecessor.spreadCostMicros],
+    ['cumulativeSpreadCostMicros', '0', predecessor.cumulativeSpreadCostMicros],
+    ['slippageCostMicros', '0', predecessor.slippageCostMicros],
+    ['cumulativeSlippageCostMicros', '0', predecessor.cumulativeSlippageCostMicros],
+    ['cashYieldMicros', '0', predecessor.cashYieldMicros],
+    ['cumulativeCashYieldMicros', '0', predecessor.cumulativeCashYieldMicros],
+    ['peakEquityMicros', initialCapitalMicros, predecessor.peakEquityMicros],
+    ['drawdown', 0, predecessor.drawdown],
+    ['cashMicros', initialCapitalMicros, predecessor.cashMicros],
+  ] as const
+  for (const [name, expected, observed] of predecessorBindings) {
+    if (expected !== observed) {
+      return Result.fail(
+        markedEquityFailure('selected-trace-mismatch', 0, `${field}.predecessor.${name}`, expected, observed),
+      )
+    }
+  }
+  const nonzeroPosition = predecessor.positions.findIndex(
+    ({ quantityMicros, costBasisMicros, marketValueMicros }) =>
+      quantityMicros !== '0' || costBasisMicros !== '0' || marketValueMicros !== '0',
+  )
+  if (nonzeroPosition >= 0) {
+    return Result.fail(
+      markedEquityFailure(
+        'selected-trace-mismatch',
+        nonzeroPosition,
+        `${field}.predecessor.positions`,
+        'all-zero positions',
+        predecessor.positions[nonzeroPosition],
+      ),
+    )
+  }
   const last = selected.dailyMarks.at(-1)
   if (last === undefined || startIndex + selected.dailyMarks.length !== full.dailyMarks.length) {
     return Result.fail(
@@ -1221,6 +1264,21 @@ const selectedTracePreviousEquity = (
           ] as const)
         : ([['sessionDate', event.sessionDate]] as const)
     for (const [dateField, observed] of evidenceDates) {
+      const isEconomicBeforeWindow =
+        event.kind === 'decision'
+          ? dateField === 'executionDate' && observed < first.sessionDate
+          : observed < first.sessionDate
+      if (isEconomicBeforeWindow) {
+        return Result.fail(
+          markedEquityFailure(
+            'selected-trace-mismatch',
+            index,
+            `${field}.events.${dateField}`,
+            `>=${first.sessionDate}`,
+            observed,
+          ),
+        )
+      }
       if (observed > last.sessionDate) {
         return Result.fail(
           markedEquityFailure(
@@ -1236,6 +1294,17 @@ const selectedTracePreviousEquity = (
   }
   for (let index = 0; index < full.orders.length; index += 1) {
     const observed = full.orders[index].sessionDate
+    if (observed < first.sessionDate) {
+      return Result.fail(
+        markedEquityFailure(
+          'selected-trace-mismatch',
+          index,
+          `${field}.orders.sessionDate`,
+          `>=${first.sessionDate}`,
+          observed,
+        ),
+      )
+    }
     if (observed > last.sessionDate) {
       return Result.fail(
         markedEquityFailure(
@@ -1250,6 +1319,17 @@ const selectedTracePreviousEquity = (
   }
   for (let index = 0; index < full.cashChanges.length; index += 1) {
     const observed = full.cashChanges[index].sessionDate
+    if (observed < first.sessionDate) {
+      return Result.fail(
+        markedEquityFailure(
+          'selected-trace-mismatch',
+          index,
+          `${field}.cashChanges.sessionDate`,
+          `>=${first.sessionDate}`,
+          observed,
+        ),
+      )
+    }
     if (observed > last.sessionDate) {
       return Result.fail(
         markedEquityFailure(
@@ -1262,7 +1342,7 @@ const selectedTracePreviousEquity = (
       )
     }
   }
-  return Result.succeed(full.dailyMarks[startIndex - 1]?.equityMicros ?? initialCapitalMicros)
+  return Result.succeed(initialCapitalMicros)
 }
 
 interface CandidateDevelopmentAccountingValidation {
@@ -1643,6 +1723,23 @@ const validateCandidateDevelopmentAccounting = (
     ),
   })
   if (Result.isFailure(decisionBindings)) return Result.fail(decisionBindings.failure)
+  const selectedTraceBindings = Result.all({
+    strategyPreviousEquityMicros: selectedTracePreviousEquity(
+      'baselineSimulation',
+      accounting.baselineSimulation,
+      baseline.simulation,
+      accounting.events,
+      baseline.initialCapitalMicros,
+    ),
+    stressedPreviousEquityMicros: selectedTracePreviousEquity(
+      'stressedSimulation',
+      accounting.stressedSimulation,
+      report.doubledCost.stressed.simulation,
+      accounting.stressedEvents,
+      baseline.initialCapitalMicros,
+    ),
+  })
+  if (Result.isFailure(selectedTraceBindings)) return Result.fail(selectedTraceBindings.failure)
   const proof = reconcileMarkedEquity({
     runId: accounting.runId,
     initialCapitalMicros: accounting.initialCapitalMicros,
@@ -1713,22 +1810,7 @@ const validateCandidateDevelopmentAccounting = (
       ),
     )
   }
-  return Result.all({
-    strategyPreviousEquityMicros: selectedTracePreviousEquity(
-      'baselineSimulation',
-      accounting.baselineSimulation,
-      baseline.simulation,
-      accounting.events,
-      baseline.initialCapitalMicros,
-    ),
-    stressedPreviousEquityMicros: selectedTracePreviousEquity(
-      'stressedSimulation',
-      accounting.stressedSimulation,
-      report.doubledCost.stressed.simulation,
-      accounting.stressedEvents,
-      baseline.initialCapitalMicros,
-    ),
-  })
+  return Result.succeed(selectedTraceBindings.success)
 }
 
 interface CandidateDevelopmentRecomputedMetrics {
