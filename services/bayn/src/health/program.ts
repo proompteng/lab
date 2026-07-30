@@ -24,6 +24,7 @@ import {
 } from './decisions'
 import type {
   AutonomousCycleFiberObservation,
+  BrokerHealthObservation,
   BrokerProbe,
   HealthDependencies,
   HealthLogDecision,
@@ -88,11 +89,7 @@ const namedBrokerRead = <A, E, R>(
     }),
   )
 
-const observeBroker = (
-  expectedAccountId: string,
-  read: BrokerReadShape,
-  timeoutMs: number,
-): Effect.Effect<ProbeResult<string>> =>
+const observeBroker = (read: BrokerReadShape, timeoutMs: number): Effect.Effect<ProbeResult<BrokerHealthObservation>> =>
   Effect.all(
     {
       account: namedBrokerRead('account read', read.account, timeoutMs),
@@ -116,27 +113,26 @@ const observeBroker = (
     },
     { concurrency: 6 },
   ).pipe(
-    Effect.map((results): ProbeResult<string> => {
+    Effect.map((results): ProbeResult<BrokerHealthObservation> => {
       const failures = Object.values(results).flatMap((result) => (result._tag === 'Unavailable' ? [result.error] : []))
       if (failures.length > 0) return { _tag: 'Unavailable', error: failures.join('; ') }
 
       if (results.account._tag !== 'Available' || results.accountConfiguration._tag !== 'Available') {
         return { _tag: 'Unavailable', error: 'Alpaca continuous broker-read health did not complete' }
       }
-      if (results.account.value.value.id !== expectedAccountId) {
-        return { _tag: 'Unavailable', error: 'Alpaca account identity drift detected' }
-      }
       const permissions = verifyBrokerAccountPermissions(
         results.account.value.value,
         results.accountConfiguration.value.value,
       )
-      if (Result.isFailure(permissions)) {
-        return {
-          _tag: 'Unavailable',
-          error: `Alpaca account permission drift detected: ${renderBrokerPermissionFailure(permissions.failure)}`,
-        }
+      return {
+        _tag: 'Available',
+        value: {
+          accountId: results.account.value.value.id,
+          permissionError: Result.isFailure(permissions)
+            ? `Alpaca account permission drift detected: ${renderBrokerPermissionFailure(permissions.failure)}`
+            : null,
+        },
       }
-      return { _tag: 'Available', value: results.account.value.value.id }
     }),
   )
 
@@ -272,9 +268,7 @@ const collectHealthProbeResults = (
                 'cycle-observability',
               ),
         ),
-        broker === undefined
-          ? Effect.succeed(null)
-          : observeBroker(broker.expectedAccountId, broker.read, config.operationTimeoutMs),
+        broker === undefined ? Effect.succeed(null) : observeBroker(broker.read, config.operationTimeoutMs),
       ],
       { concurrency: 'unbounded' },
     ),
