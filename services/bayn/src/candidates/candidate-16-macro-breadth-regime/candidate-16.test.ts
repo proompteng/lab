@@ -5,7 +5,8 @@ import { Effect, Result } from 'effect'
 import { officialMonthEndSignalDates, preflightCandidateDevelopment } from '../../candidate-development'
 import { frozenCandidateDevelopmentSessions } from '../../candidate-development-calendar'
 import { makeOrderOutcome } from '../../execution-model'
-import { canonicalHashV1Result } from '../../hash'
+import { canonicalHashV1Result, sha256 } from '../../hash'
+import type { SignalManifestRow } from '../../market-data/rows'
 import type { AlignedSession } from '../../simulation'
 import { ContractVersion, DataFeed, DataSource, PriceAdjustment, PublicationSchema, type IsoDate } from '../../types'
 import {
@@ -15,9 +16,15 @@ import {
   candidate16SimulationProtocol,
   candidate16StrategyProtocolMaterial,
   candidate16Universe,
+  type Candidate16Dataset,
   type Candidate16Symbol,
 } from './model'
-import { queryCandidate16DevelopmentBars, queryCandidate16FinalizedSnapshot } from './program'
+import { candidate16FinalizedSnapshotCoversDevelopment } from './development'
+import {
+  candidate16ManifestVerificationRequest,
+  queryCandidate16DevelopmentBars,
+  queryCandidate16FinalizedSnapshot,
+} from './program'
 import { buildCandidate16Plan, candidate16FeatureAtSignal } from './strategy'
 
 const successOf = <A, E>(result: Result.Result<A, E>): A => {
@@ -71,6 +78,63 @@ const candidate16Preflight = () => {
   if (preflight.status !== 'PASS') throw new Error('expected passing preflight')
   return preflight
 }
+
+const manifestFixture = (overrides: Partial<SignalManifestRow> = {}): SignalManifestRow => ({
+  snapshot_id: '2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0',
+  schema_version: PublicationSchema.AdjustedDailySnapshotV2,
+  publisher_source_revision: 'a'.repeat(40),
+  publisher_image_repository: 'registry.example.test/bayn-signal',
+  publisher_image_digest: `sha256:${'b'.repeat(64)}`,
+  universe_id: 'cross-asset-taa-v1',
+  universe_symbol_hash: sha256(candidate16Universe.join(',')),
+  provider: DataSource.Alpaca,
+  source_feed: DataFeed.Sip,
+  adjustment: PriceAdjustment.All,
+  calendar_version: 'alpaca-us-equity-calendar-v1',
+  requested_start: '2016-01-04',
+  publication_asof: '2026-07-27',
+  first_session: '2016-01-04',
+  last_session: '2026-07-27',
+  symbol_count: candidate16Universe.length,
+  session_count: 2660,
+  bar_count: 2660 * candidate16Universe.length,
+  bars_content_hash: 'c'.repeat(64),
+  sessions_content_hash: 'd'.repeat(64),
+  manifest_content_hash: 'e'.repeat(64),
+  finalized_at: '2026-07-28 00:00:00.000',
+  ...overrides,
+})
+
+const finalizedSnapshotFixture = (
+  overrides: Partial<Candidate16Dataset['finalizedSnapshot']> = {},
+): Candidate16Dataset['finalizedSnapshot'] => ({
+  schemaVersion: 'bayn.finalized-snapshot.v3',
+  publicationSchemaVersion: PublicationSchema.AdjustedDailySnapshotV2,
+  universeId: 'cross-asset-taa-v1',
+  universeSymbolHash: sha256(candidate16Universe.join(',')),
+  snapshotId: '2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0',
+  publicationId: 'e'.repeat(64),
+  source: DataSource.Alpaca,
+  sourceFeed: DataFeed.Sip,
+  adjustment: PriceAdjustment.All,
+  calendarVersion: 'alpaca-us-equity-calendar-v1',
+  publisherSourceRevision: 'a'.repeat(40),
+  publisherImage: {
+    repository: 'registry.example.test/bayn-signal',
+    digest: `sha256:${'b'.repeat(64)}`,
+  },
+  finalizedAt: '2026-07-28T00:00:00.000Z',
+  requestedStart: '2016-01-04',
+  firstSession: '2016-01-04',
+  lastSession: '2026-07-27',
+  asOfSession: '2026-07-27',
+  symbols: candidate16Universe,
+  rowCount: 2660 * candidate16Universe.length,
+  sessionCount: 2660,
+  contentHash: 'c'.repeat(64),
+  sessionsContentHash: 'd'.repeat(64),
+  ...overrides,
+})
 
 describe('Candidate 16 macro breadth regime', () => {
   test('binds the exact source-controlled strategy protocol hash', () => {
@@ -176,6 +240,39 @@ describe('Candidate 16 macro breadth regime', () => {
     expect(String(observed?.query)).toContain('FROM signal.adjusted_daily_bars_v2')
     expect(String(observed?.query)).not.toContain('2023-')
     expect(observed?.query_id).toBe('bayn-candidate-16-development-bars-one-shot')
+  })
+
+  test('verifies the complete snapshot identity while loading only its frozen development subset', () => {
+    const preflight = candidate16Preflight()
+    const request = successOf(
+      candidate16ManifestVerificationRequest(manifestFixture(), preflight, '2026-07-30T04:08:27.000Z'),
+    )
+
+    expect(request).toMatchObject({
+      snapshotId: '2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0',
+      publicationAsOf: '2026-07-27',
+      historyStart: '2016-01-04',
+      evaluationStart: preflight.selectedObservationStart,
+      bounds: {
+        dataStart: '2016-01-04',
+        dataEnd: '2026-07-27',
+        lookbackStart: '2016-01-04',
+        evaluationStart: preflight.selectedObservationStart,
+        evaluationEnd: '2026-07-27',
+      },
+    })
+    expect(candidate16FinalizedSnapshotCoversDevelopment(finalizedSnapshotFixture())).toEqual(Result.succeed(undefined))
+    expect(
+      candidate16FinalizedSnapshotCoversDevelopment(
+        finalizedSnapshotFixture({ firstSession: '2023-01-03', requestedStart: '2023-01-03' }),
+      ),
+    ).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'Candidate16InvalidInput',
+        operation: 'dataset',
+      },
+    })
   })
 
   test('verifies the frozen manifest before any bar query can run', async () => {

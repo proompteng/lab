@@ -15,7 +15,8 @@ import {
   type CandidateDevelopmentExecutableProgram,
 } from '../../candidate-development-command'
 import { sha256 } from '../../hash'
-import { decodeManifests } from '../../market-data/rows'
+import type { SnapshotRequest } from '../../market-data/model'
+import { decodeManifests, type SignalManifestRow } from '../../market-data/rows'
 import { verifyManifest } from '../../market-data/verification/manifest'
 import { strictParseOptions } from '../../schemas'
 import { candidate16DatasetHashes, evaluateCandidate16Development } from './development'
@@ -211,6 +212,45 @@ export const queryCandidate16DevelopmentBars = (
     Effect.flatMap((rows) => Effect.fromResult(Result.all(rows.map(candidate16Bar)))),
   )
 
+export const candidate16ManifestVerificationRequest = (
+  manifest: SignalManifestRow,
+  preflight: CandidateDevelopmentPreflightPass,
+  observedAt: string,
+): Result.Result<SnapshotRequest, Candidate16Failure> => {
+  if (
+    manifest.requested_start > CANDIDATE_16_DEVELOPMENT_START ||
+    manifest.first_session > CANDIDATE_16_DEVELOPMENT_START ||
+    manifest.last_session < CANDIDATE_16_DEVELOPMENT_END ||
+    manifest.publication_asof < CANDIDATE_16_DEVELOPMENT_END
+  ) {
+    return Result.fail(
+      invalidInput(
+        'verify-development-manifest',
+        `snapshot ${manifest.first_session}..${manifest.last_session} as-of ${manifest.publication_asof} does not cover the frozen development subset`,
+      ),
+    )
+  }
+  return Result.succeed({
+    snapshotId: CANDIDATE_16_SNAPSHOT_ID,
+    publicationAsOf: manifest.publication_asof,
+    calendarVersion: candidateDevelopmentCalendarContract.calendarVersion,
+    universe: candidate16Universe,
+    bounds: {
+      schemaVersion: 'bayn.evaluation-bounds.v1',
+      dataStart: manifest.requested_start,
+      dataEnd: manifest.publication_asof,
+      lookbackStart: manifest.requested_start,
+      evaluationStart: preflight.selectedObservationStart,
+      evaluationEnd: manifest.publication_asof,
+    },
+    observedAt,
+    universeId: manifest.universe_id,
+    universeSymbolHash: sha256(candidate16Universe.join(',')),
+    historyStart: manifest.requested_start,
+    evaluationStart: preflight.selectedObservationStart,
+  })
+}
+
 export const queryCandidate16FinalizedSnapshot = (
   client: ClickHouseClient,
   preflight: CandidateDevelopmentPreflightPass,
@@ -262,27 +302,13 @@ export const queryCandidate16FinalizedSnapshot = (
             const manifest = manifests.at(0)
             if (manifest === undefined)
               return Result.fail(invalidInput('verify-development-manifest', 'manifest missing'))
-            return verifyManifest(manifests, {
-              snapshotId: CANDIDATE_16_SNAPSHOT_ID,
-              publicationAsOf: CANDIDATE_16_DEVELOPMENT_END,
-              calendarVersion: candidateDevelopmentCalendarContract.calendarVersion,
-              universe: candidate16Universe,
-              bounds: {
-                schemaVersion: 'bayn.evaluation-bounds.v1',
-                dataStart: CANDIDATE_16_DEVELOPMENT_START,
-                dataEnd: CANDIDATE_16_DEVELOPMENT_END,
-                lookbackStart: CANDIDATE_16_DEVELOPMENT_START,
-                evaluationStart: preflight.selectedObservationStart,
-                evaluationEnd: CANDIDATE_16_DEVELOPMENT_END,
-              },
-              observedAt: new Date().toISOString(),
-              universeId: manifest.universe_id,
-              universeSymbolHash: sha256(candidate16Universe.join(',')),
-              historyStart: CANDIDATE_16_DEVELOPMENT_START,
-              evaluationStart: preflight.selectedObservationStart,
-            }).pipe(
-              Result.mapError((cause): Candidate16Failure => ({ _tag: 'Candidate16QualificationFailure', cause })),
-              Result.map(({ finalizedSnapshot }) => finalizedSnapshot),
+            return candidate16ManifestVerificationRequest(manifest, preflight, new Date().toISOString()).pipe(
+              Result.flatMap((request) =>
+                verifyManifest(manifests, request).pipe(
+                  Result.mapError((cause): Candidate16Failure => ({ _tag: 'Candidate16QualificationFailure', cause })),
+                  Result.map(({ finalizedSnapshot }) => finalizedSnapshot),
+                ),
+              ),
             )
           }),
         ),

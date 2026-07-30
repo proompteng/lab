@@ -88,6 +88,32 @@ const exactStrings = (left: readonly string[], right: readonly string[]): boolea
 
 const exactDates = (left: readonly IsoDate[], right: readonly IsoDate[]): boolean => exactStrings(left, right)
 
+export const candidate16FinalizedSnapshotCoversDevelopment = (
+  snapshot: Candidate16Dataset['finalizedSnapshot'],
+): Result.Result<void, Candidate16Failure> => {
+  if (snapshot.snapshotId !== CANDIDATE_16_SNAPSHOT_ID) {
+    return fail('dataset', `finalized snapshot ${snapshot.snapshotId} differs from Candidate 16`)
+  }
+  if (
+    snapshot.requestedStart > CANDIDATE_16_DEVELOPMENT_START ||
+    snapshot.firstSession > CANDIDATE_16_DEVELOPMENT_START ||
+    snapshot.lastSession < CANDIDATE_16_DEVELOPMENT_END ||
+    snapshot.asOfSession < CANDIDATE_16_DEVELOPMENT_END
+  ) {
+    return fail(
+      'dataset',
+      `finalized snapshot ${snapshot.firstSession}..${snapshot.lastSession} as-of ${snapshot.asOfSession} does not cover the frozen development subset`,
+    )
+  }
+  if (
+    snapshot.calendarVersion !== candidateDevelopmentCalendarContract.calendarVersion ||
+    !exactStrings(snapshot.symbols, candidate16Universe)
+  ) {
+    return fail('dataset', 'finalized snapshot calendar or universe differs from Candidate 16')
+  }
+  return Result.succeed(undefined)
+}
+
 export const candidate16DatasetHashes = (
   sessions: readonly IsoDate[],
   bars: Candidate16Dataset['bars'],
@@ -121,19 +147,8 @@ export const prepareCandidate16DevelopmentData = (
     return fail('dataset', `snapshot ${dataset.snapshotId} differs from ${CANDIDATE_16_SNAPSHOT_ID}`)
   }
   const snapshot = dataset.finalizedSnapshot
-  if (
-    snapshot.snapshotId !== CANDIDATE_16_SNAPSHOT_ID ||
-    snapshot.requestedStart !== CANDIDATE_16_DEVELOPMENT_START ||
-    snapshot.firstSession !== CANDIDATE_16_DEVELOPMENT_START ||
-    snapshot.lastSession !== CANDIDATE_16_DEVELOPMENT_END ||
-    snapshot.asOfSession !== CANDIDATE_16_DEVELOPMENT_END ||
-    snapshot.calendarVersion !== candidateDevelopmentCalendarContract.calendarVersion ||
-    snapshot.sessionCount !== expectedSessions.length ||
-    snapshot.rowCount !== expectedSessions.length * candidate16Universe.length ||
-    !exactStrings(snapshot.symbols, candidate16Universe)
-  ) {
-    return fail('dataset', 'finalized snapshot provenance differs from the frozen development-only contract')
-  }
+  const snapshotCoverage = candidate16FinalizedSnapshotCoversDevelopment(snapshot)
+  if (Result.isFailure(snapshotCoverage)) return Result.fail(snapshotCoverage.failure)
   if (!exactDates(dataset.sessions, expectedSessions)) return fail('dataset', 'official development sessions differ')
   const expectedBarCount = expectedSessions.length * candidate16Universe.length
   if (dataset.bars.length !== expectedBarCount) {
