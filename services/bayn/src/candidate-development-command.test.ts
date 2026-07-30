@@ -1,8 +1,13 @@
 import { describe, expect, test } from 'bun:test'
+import { execFile } from 'node:child_process'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Deferred, Effect, Fiber, Result } from 'effect'
 
 import { frozenCandidateDevelopmentSessions } from './candidate-development-calendar'
 import {
+  bindCandidateDevelopmentVerifiedSource,
   buildCandidateDevelopmentCommandReport as buildCandidateDevelopmentCommandReportPure,
   candidateDevelopmentExecutableProgramSchemaVersion,
   executeCandidateDevelopmentProgram,
@@ -10,9 +15,13 @@ import {
   renderCandidateDevelopmentCommandReport,
   validateCandidateDevelopmentCommandEvaluation,
   validateCandidateDevelopmentExecutableProgram,
+  verifyCandidateDevelopmentSourceFiles,
   writeCandidateDevelopmentCommandReport,
   type CandidateDevelopmentCommandEvaluation,
   type CandidateDevelopmentExecutableProgram,
+  type CandidateDevelopmentSourceManifest,
+  type CandidateDevelopmentVerifiedSource,
+  type CandidateDevelopmentVerifiedSourceFiles,
 } from './candidate-development-command'
 import {
   candidateDevelopmentComparisonSemantics,
@@ -40,6 +49,14 @@ const successOf = <A, E>(result: Result.Result<A, E>): A => {
   if (Result.isFailure(result)) throw new Error('expected Result success')
   return result.success
 }
+
+const execFilePromise = (file: string, args: readonly string[], cwd: string): Promise<void> =>
+  new Promise((resolveExecution, rejectExecution) => {
+    execFile(file, [...args], { cwd }, (error) => {
+      if (error === null) resolveExecution()
+      else rejectExecution(error)
+    })
+  })
 
 const fixtureInitialCapitalMicros = '1000000'
 const fixtureRunId = '1'.repeat(64)
@@ -148,7 +165,8 @@ const buildCandidateDevelopmentCommandReport = (
   evaluation: CandidateDevelopmentCommandEvaluation,
   strategyProtocol = fixtureStrategyProtocol,
   officialSessions = fixtureOfficialSessions,
-) => buildCandidateDevelopmentCommandReportPure(report, evaluation, strategyProtocol, officialSessions)
+  verifiedSource = fixtureVerifiedSource,
+) => buildCandidateDevelopmentCommandReportPure(report, evaluation, strategyProtocol, officialSessions, verifiedSource)
 const fullAccountingSimulationFixture = <A extends EvaluationResult['simulation']>(simulation: A): A =>
   ({
     ...simulation,
@@ -397,6 +415,38 @@ const fixtureStrategyProtocol = {
 const fixtureStrategyProtocolHash = canonicalHashV1(fixtureStrategyProtocol)
 
 const fixtureStressedRunId = fixtureRunId
+const fixtureSourceManifest: CandidateDevelopmentSourceManifest = {
+  schemaVersion: 'bayn.candidate-development-source-manifest.v1',
+  candidateOrdinal: 16,
+  priorTrialCount: 15,
+  strategyProtocolHash: fixtureStrategyProtocolHash,
+  modulePath: 'services/bayn/src/candidates/fixture/program.ts',
+  marketData: {
+    schemaVersion: 'bayn.candidate-development-market-data-source.v1',
+    snapshotId: fixtureMarketData.snapshotId,
+    finalizedSnapshotContentHash: fixtureInputManifest.finalizedSnapshot.contentHash,
+    inputManifestHash: fixtureInputManifest.hash,
+    boundedContentHash: fixtureMarketData.contentHash,
+  },
+}
+const fixtureVerifiedSourceFiles: CandidateDevelopmentVerifiedSourceFiles = {
+  schemaVersion: 'bayn.candidate-development-verified-source-files.v1',
+  sourceRevision: '2'.repeat(40),
+  modulePath: fixtureSourceManifest.modulePath,
+  moduleBlobOid: '3'.repeat(40),
+  moduleSha256: '4'.repeat(64),
+  sourceManifestPath: 'services/bayn/candidates/fixture-source-manifest.json',
+  sourceManifestBlobOid: '5'.repeat(40),
+  sourceManifestSha256: '6'.repeat(64),
+  sourceManifest: fixtureSourceManifest,
+}
+const { schemaVersion: _fixtureSourceFilesSchemaVersion, ...fixtureVerifiedSourceMaterial } = fixtureVerifiedSourceFiles
+const fixtureVerifiedSource: CandidateDevelopmentVerifiedSource = {
+  schemaVersion: 'bayn.candidate-development-verified-source.v1',
+  ...fixtureVerifiedSourceMaterial,
+  baselineRunId: fixtureRunId,
+  stressedRunId: fixtureStressedRunId,
+}
 
 const stressedAccountingFixture = (endingEquityMicros: string) => {
   const cashYieldMicros = BigInt(endingEquityMicros) - BigInt(fixtureInitialCapitalMicros)
@@ -674,7 +724,9 @@ describe('candidate development command', () => {
       },
     }
 
-    const failure = await Effect.runPromise(Effect.flip(executeCandidateDevelopmentProgram(program)))
+    const failure = await Effect.runPromise(
+      Effect.flip(executeCandidateDevelopmentProgram(program, fixtureVerifiedSource)),
+    )
 
     expect(failure).toMatchObject({
       _tag: 'CandidateDevelopmentPreflightInvalid',
@@ -722,7 +774,9 @@ describe('candidate development command', () => {
       },
     }
 
-    expect(await Effect.runPromise(Effect.flip(executeCandidateDevelopmentProgram(program)))).toBe('evaluation-stop')
+    expect(
+      await Effect.runPromise(Effect.flip(executeCandidateDevelopmentProgram(program, fixtureVerifiedSource))),
+    ).toBe('evaluation-stop')
     expect(preregistrations).toBe(1)
     expect(loads).toBe(1)
     expect(evaluations).toBe(1)
@@ -1525,6 +1579,121 @@ describe('candidate development command', () => {
     })
   })
 
+  test('rejects self-consistent bounded bars that differ from the Git-verified source manifest', () => {
+    const first = fixtureMarketData.bars[0]
+    const forgedFirst = {
+      ...first,
+      open: first.open * 2,
+      high: first.high * 2,
+      low: first.low * 2,
+      close: first.close * 2,
+    }
+    const forgedMarketDataMaterial = {
+      ...fixtureMarketDataMaterial,
+      bars: [forgedFirst, ...fixtureMarketData.bars.slice(1)],
+    }
+    const forgedMarketData = {
+      ...forgedMarketDataMaterial,
+      contentHash: canonicalHashV1(forgedMarketDataMaterial),
+    }
+    const forgedProtocol = {
+      ...fixtureStrategyProtocol,
+      marketData: { ...fixtureStrategyProtocol.marketData, contentHash: forgedMarketData.contentHash },
+    }
+    const forgedProtocolHash = canonicalHashV1(forgedProtocol)
+    const report = reportFixture(0.01)
+    const forgedReport = {
+      ...report,
+      comparisonSemantics: { ...report.comparisonSemantics, strategyProtocolHash: forgedProtocolHash },
+    }
+    const baseline = { ...baselineFixture(), protocolHash: forgedProtocolHash }
+    const evaluation = {
+      ...commandEvaluationFixture(forgedReport, baseline),
+      marketData: forgedMarketData,
+    }
+
+    expect(
+      buildCandidateDevelopmentCommandReport(
+        forgedReport,
+        evaluation,
+        forgedProtocol,
+        fixtureOfficialSessions,
+        fixtureVerifiedSource,
+      ),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'marketData.committedContentHash',
+        expected: fixtureMarketData.contentHash,
+        observed: forgedMarketData.contentHash,
+      },
+    })
+  })
+
+  test('binds bounded bars to the publisher finalized snapshot content hash', () => {
+    const report = reportFixture(0.01)
+    const driftedSource: CandidateDevelopmentVerifiedSource = {
+      ...fixtureVerifiedSource,
+      sourceManifest: {
+        ...fixtureVerifiedSource.sourceManifest,
+        marketData: {
+          ...fixtureVerifiedSource.sourceManifest.marketData,
+          finalizedSnapshotContentHash: 'f'.repeat(64),
+        },
+      },
+    }
+
+    expect(
+      buildCandidateDevelopmentCommandReport(
+        report,
+        commandEvaluationFixture(report, baselineFixture()),
+        fixtureStrategyProtocol,
+        fixtureOfficialSessions,
+        driftedSource,
+      ),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'marketData.finalizedSnapshotContentHash',
+        expected: 'f'.repeat(64),
+        observed: fixtureInputManifest.finalizedSnapshot.contentHash,
+      },
+    })
+  })
+
+  test('rejects self-reported source revisions and run identities', () => {
+    const report = reportFixture(0.01)
+    const revisionDrift = { ...baselineFixture(), codeRevision: 'f'.repeat(40) }
+    expect(buildFixtureReport(report, revisionDrift)).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        field: 'verifiedSource.codeRevision',
+        expected: fixtureVerifiedSource.sourceRevision,
+        observed: 'f'.repeat(40),
+      },
+    })
+
+    const runDrift = { ...baselineFixture(), runId: 'e'.repeat(64) }
+    expect(
+      buildCandidateDevelopmentCommandReport(
+        report,
+        commandEvaluationFixture(report, runDrift),
+        fixtureStrategyProtocol,
+        fixtureOfficialSessions,
+        fixtureVerifiedSource,
+      ),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        field: 'verifiedSource.baselineRunId',
+        expected: fixtureVerifiedSource.baselineRunId,
+        observed: 'e'.repeat(64),
+      },
+    })
+  })
+
   test('binds aligned market-data sessions to the frozen official calendar', () => {
     const report = reportFixture(0.01)
     const baseline = baselineFixture()
@@ -1675,6 +1844,43 @@ describe('candidate development command', () => {
     })
   })
 
+  test('derives baseline and stressed run identities from verified Git provenance', () => {
+    const input = {
+      candidateOrdinal: 16,
+      priorTrialCount: 15,
+      expectedStrategyProtocolHash: fixtureStrategyProtocolHash,
+      officialSessions: fixtureOfficialSessions,
+      signalSessionDates: fixtureSignalDecisions.map(({ signalDate }) => signalDate),
+      featureLookbackSessions: 126,
+    }
+    const verified = successOf(bindCandidateDevelopmentVerifiedSource(fixtureVerifiedSourceFiles, input))
+    const moduleDrift = successOf(
+      bindCandidateDevelopmentVerifiedSource({ ...fixtureVerifiedSourceFiles, moduleSha256: 'f'.repeat(64) }, input),
+    )
+    const revisionDrift = successOf(
+      bindCandidateDevelopmentVerifiedSource({ ...fixtureVerifiedSourceFiles, sourceRevision: 'e'.repeat(40) }, input),
+    )
+
+    expect(verified.baselineRunId).not.toBe(verified.stressedRunId)
+    expect(moduleDrift.baselineRunId).not.toBe(verified.baselineRunId)
+    expect(revisionDrift.baselineRunId).not.toBe(verified.baselineRunId)
+    expect(
+      bindCandidateDevelopmentVerifiedSource(
+        {
+          ...fixtureVerifiedSourceFiles,
+          sourceManifest: { ...fixtureSourceManifest, candidateOrdinal: 17 },
+        },
+        input,
+      ),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-program-binding',
+        cause: { field: 'candidateOrdinal', expected: 16, observed: 17 },
+      },
+    })
+  })
+
   test('preserves the protocol-valid zero-session feature lookback', () => {
     const program = validateCandidateDevelopmentExecutableProgram({
       schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
@@ -1722,7 +1928,9 @@ describe('candidate development command', () => {
       }),
     )
 
-    expect(await Effect.runPromise(Effect.flip(executeCandidateDevelopmentProgram(validated)))).toMatchObject({
+    expect(
+      await Effect.runPromise(Effect.flip(executeCandidateDevelopmentProgram(validated, fixtureVerifiedSource))),
+    ).toMatchObject({
       _tag: 'CandidateDevelopmentCommandProgramInvalid',
       reason: 'evaluation-invalid',
     })
@@ -1759,11 +1967,150 @@ describe('candidate development command', () => {
       throw new Error(`complete evaluation decode failed: ${String(cause)}`)
     }
 
-    const decoded = await Effect.runPromise(validated.effects.evaluateDevelopment(undefined, undefined as never))
+    const decoded = await Effect.runPromise(
+      validated.effects.evaluateDevelopment(undefined, undefined as never, fixtureVerifiedSource),
+    )
 
     expect(decoded.accounting.schemaVersion).toBe('bayn.candidate-development-accounting-evidence.v2')
     expect(decoded.accounting.runId).toBe(evaluation.baseline.runId)
     expect(decoded.accounting.baselineSimulation.dailyMarks).toHaveLength(505)
+  })
+
+  test('verifies the source manifest and module as exact Git blobs', async () => {
+    const repository = await mkdtemp(join(tmpdir(), 'bayn-candidate-source-'))
+    const candidateDirectory = join(repository, 'candidate')
+    const modulePath = join(candidateDirectory, 'program.ts')
+    const dependencyPath = join(candidateDirectory, 'dependency.ts')
+    const sourceManifestPath = join(candidateDirectory, 'source-manifest.json')
+    const moduleBytes = 'export const candidateDevelopmentProgram = {}\n'
+    const dependencyBytes = 'export const dependency = 1\n'
+    const sourceManifest: CandidateDevelopmentSourceManifest = {
+      ...fixtureSourceManifest,
+      modulePath: 'candidate/program.ts',
+    }
+    const sourceManifestBytes = `${JSON.stringify(sourceManifest, null, 2)}\n`
+    try {
+      await mkdir(candidateDirectory, { recursive: true })
+      await writeFile(modulePath, moduleBytes)
+      await writeFile(dependencyPath, dependencyBytes)
+      await writeFile(sourceManifestPath, sourceManifestBytes)
+      await execFilePromise('git', ['init', '-q'], repository)
+      await execFilePromise('git', ['config', 'user.name', 'Candidate Test'], repository)
+      await execFilePromise('git', ['config', 'user.email', 'candidate@example.test'], repository)
+      await execFilePromise(
+        'git',
+        ['add', 'candidate/program.ts', 'candidate/dependency.ts', 'candidate/source-manifest.json'],
+        repository,
+      )
+      await execFilePromise('git', ['commit', '-qm', 'test: bind candidate source'], repository)
+
+      const verified = await Effect.runPromise(verifyCandidateDevelopmentSourceFiles(modulePath, sourceManifestPath))
+      expect(verified.modulePath).toBe('candidate/program.ts')
+      expect(verified.sourceManifestPath).toBe('candidate/source-manifest.json')
+      expect(verified.sourceRevision).toMatch(/^[0-9a-f]{40}$/)
+      expect(verified.moduleBlobOid).toMatch(/^[0-9a-f]{40}$/)
+
+      await writeFile(modulePath, `${moduleBytes}// tampered\n`)
+      expect(
+        await Effect.runPromise(Effect.flip(verifyCandidateDevelopmentSourceFiles(modulePath, sourceManifestPath))),
+      ).toMatchObject({
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-module-blob',
+      })
+
+      await writeFile(modulePath, moduleBytes)
+      await writeFile(sourceManifestPath, `${sourceManifestBytes} `)
+      expect(
+        await Effect.runPromise(Effect.flip(verifyCandidateDevelopmentSourceFiles(modulePath, sourceManifestPath))),
+      ).toMatchObject({
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-source-manifest-blob',
+      })
+
+      await writeFile(sourceManifestPath, sourceManifestBytes)
+      await writeFile(dependencyPath, `${dependencyBytes}// drifted\n`)
+      expect(
+        await Effect.runPromise(Effect.flip(verifyCandidateDevelopmentSourceFiles(modulePath, sourceManifestPath))),
+      ).toMatchObject({
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-working-tree',
+      })
+    } finally {
+      await rm(repository, { recursive: true, force: true })
+    }
+  })
+
+  test('rejects source drift during import before returning an executable program', async () => {
+    const program = {
+      schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
+      strategyProtocol: fixtureStrategyProtocol,
+      input: {
+        candidateOrdinal: 16,
+        priorTrialCount: 15,
+        expectedStrategyProtocolHash: fixtureStrategyProtocolHash,
+        officialSessions: [],
+        signalSessionDates: [],
+        featureLookbackSessions: 126,
+      },
+      effects: {
+        preregisterCandidate: () => Effect.succeed('registration'),
+        loadDevelopmentData: () => Effect.succeed('data'),
+        evaluateDevelopment: () => Effect.fail('not-executed'),
+      },
+    }
+    let verificationCount = 0
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        loadCandidateDevelopmentExecutableProgram(
+          '/tmp/candidate-development-program.ts',
+          '/tmp/candidate-development-source-manifest.json',
+          () => Effect.succeed({ candidateDevelopmentProgram: program }),
+          () => {
+            verificationCount += 1
+            return Effect.succeed(
+              verificationCount === 1
+                ? fixtureVerifiedSourceFiles
+                : { ...fixtureVerifiedSourceFiles, moduleSha256: 'f'.repeat(64) },
+            )
+          },
+        ),
+      ),
+    )
+
+    expect(verificationCount).toBe(2)
+    expect(failure).toMatchObject({
+      _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+      operation: 'verify-post-import',
+    })
+  })
+
+  test('does not import a module when Git source verification fails', async () => {
+    let imports = 0
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        loadCandidateDevelopmentExecutableProgram(
+          '/tmp/candidate-development-program.ts',
+          '/tmp/candidate-development-source-manifest.json',
+          () => {
+            imports += 1
+            return Effect.succeed({})
+          },
+          () =>
+            Effect.fail({
+              _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+              operation: 'verify-module-blob',
+              cause: 'tampered',
+            }),
+        ),
+      ),
+    )
+
+    expect(imports).toBe(0)
+    expect(failure).toEqual({
+      _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+      operation: 'verify-module-blob',
+      cause: 'tampered',
+    })
   })
 
   test('keeps dynamic module evaluation attached through interruption', async () => {
@@ -1790,16 +2137,20 @@ describe('candidate development command', () => {
         const started = yield* Deferred.make<void>()
         const release = yield* Deferred.make<void>()
         let completed = false
-        const fiber = yield* loadCandidateDevelopmentExecutableProgram('/tmp/candidate-development-program.ts', () =>
-          Deferred.succeed(started, undefined).pipe(
-            Effect.andThen(Deferred.await(release)),
-            Effect.tap(() =>
-              Effect.sync(() => {
-                completed = true
-              }),
+        const fiber = yield* loadCandidateDevelopmentExecutableProgram(
+          '/tmp/candidate-development-program.ts',
+          '/tmp/candidate-development-source-manifest.json',
+          () =>
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  completed = true
+                }),
+              ),
+              Effect.as({ candidateDevelopmentProgram: program }),
             ),
-            Effect.as({ candidateDevelopmentProgram: program }),
-          ),
+          () => Effect.succeed(fixtureVerifiedSourceFiles),
         ).pipe(Effect.forkChild)
 
         yield* Deferred.await(started)

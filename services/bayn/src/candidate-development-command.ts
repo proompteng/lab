@@ -1,11 +1,15 @@
+import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { readFile, realpath } from 'node:fs/promises'
+import { dirname, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { resolve } from 'node:path'
 
 import { NodeRuntime } from '@effect/platform-node'
 import { Data, Effect, pipe, Result, Schema } from 'effect'
 
 import {
   candidateDevelopmentComparisonSemantics,
+  candidateDevelopmentDoubledCostContract,
   candidateDevelopmentStatisticsPolicy,
   runCandidateDevelopment,
   type CandidateDevelopmentEffects,
@@ -60,7 +64,43 @@ import {
 } from './types'
 
 export const candidateDevelopmentExecutableProgramSchemaVersion =
-  'bayn.candidate-development-executable-program.v4' as const
+  'bayn.candidate-development-executable-program.v5' as const
+
+export interface CandidateDevelopmentSourceManifest {
+  readonly schemaVersion: 'bayn.candidate-development-source-manifest.v1'
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly strategyProtocolHash: string
+  readonly modulePath: string
+  readonly marketData: {
+    readonly schemaVersion: 'bayn.candidate-development-market-data-source.v1'
+    readonly snapshotId: string
+    readonly finalizedSnapshotContentHash: string
+    readonly inputManifestHash: string
+    readonly boundedContentHash: string
+  }
+}
+
+export interface CandidateDevelopmentVerifiedSource {
+  readonly schemaVersion: 'bayn.candidate-development-verified-source.v1'
+  readonly sourceRevision: string
+  readonly modulePath: string
+  readonly moduleBlobOid: string
+  readonly moduleSha256: string
+  readonly sourceManifestPath: string
+  readonly sourceManifestBlobOid: string
+  readonly sourceManifestSha256: string
+  readonly sourceManifest: CandidateDevelopmentSourceManifest
+  readonly baselineRunId: string
+  readonly stressedRunId: string
+}
+
+export interface CandidateDevelopmentVerifiedSourceFiles extends Omit<
+  CandidateDevelopmentVerifiedSource,
+  'schemaVersion' | 'baselineRunId' | 'stressedRunId'
+> {
+  readonly schemaVersion: 'bayn.candidate-development-verified-source-files.v1'
+}
 
 export interface CandidateDevelopmentMarketDataWitness {
   readonly schemaVersion: 'bayn.candidate-development-market-data-witness.v1'
@@ -117,6 +157,7 @@ export interface CandidateDevelopmentCommandEffects<Registration, DevelopmentDat
   readonly evaluateDevelopment: (
     data: DevelopmentData,
     preflight: CandidateDevelopmentPreflightPass,
+    verifiedSource: CandidateDevelopmentVerifiedSource,
   ) => Effect.Effect<CandidateDevelopmentCommandEvaluation, Error, Requirements>
 }
 
@@ -149,13 +190,14 @@ export interface CandidateDevelopmentCommandDecision {
 }
 
 export interface CandidateDevelopmentCommandReportMaterial {
-  readonly schemaVersion: 'bayn.candidate-development-command-report.v5'
+  readonly schemaVersion: 'bayn.candidate-development-command-report.v6'
   readonly candidateOrdinal: number
   readonly priorTrialCount: number
   readonly strategyProtocolHash: string
   readonly strategyProtocol: CandidateDevelopmentStrategyProtocol
   readonly officialSessions: CandidateDevelopmentPreflightInput['officialSessions']
   readonly marketData: CandidateDevelopmentMarketDataWitness
+  readonly verifiedSource: CandidateDevelopmentVerifiedSource
   readonly decision: CandidateDevelopmentCommandDecision
   readonly baseline: EvaluationResult
   readonly accounting: CandidateDevelopmentAccountingEvidence
@@ -174,6 +216,26 @@ export type CandidateDevelopmentCommandFailure =
     }
   | {
       readonly _tag: 'CandidateDevelopmentCommandModulePathMissing'
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentCommandSourceManifestPathMissing'
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentCommandSourceVerificationFailed'
+      readonly operation:
+        | 'resolve-repository'
+        | 'read-module'
+        | 'read-source-manifest'
+        | 'decode-source-manifest'
+        | 'verify-source-paths'
+        | 'verify-head'
+        | 'verify-working-tree'
+        | 'verify-module-blob'
+        | 'verify-source-manifest-blob'
+        | 'verify-program-binding'
+        | 'derive-run-identity'
+        | 'verify-post-import'
+      readonly cause: unknown
     }
   | {
       readonly _tag: 'CandidateDevelopmentCommandModuleLoadFailed'
@@ -509,6 +571,85 @@ const canonicalEvidenceHash = (
     Result.mapError((cause) => markedEquityFailure('binding-mismatch', null, field, 'canonical evidence', null, cause)),
   )
 
+const sourceVerificationFailure = (
+  operation: Extract<
+    CandidateDevelopmentCommandFailure,
+    { readonly _tag: 'CandidateDevelopmentCommandSourceVerificationFailed' }
+  >['operation'],
+  cause: unknown,
+): CandidateDevelopmentCommandFailure => ({
+  _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+  operation,
+  cause,
+})
+
+export const bindCandidateDevelopmentVerifiedSource = (
+  files: CandidateDevelopmentVerifiedSourceFiles,
+  input: CandidateDevelopmentPreflightInput,
+): Result.Result<CandidateDevelopmentVerifiedSource, CandidateDevelopmentCommandFailure> => {
+  const manifest = files.sourceManifest
+  const mismatches = [
+    ['candidateOrdinal', input.candidateOrdinal, manifest.candidateOrdinal],
+    ['priorTrialCount', input.priorTrialCount, manifest.priorTrialCount],
+    ['strategyProtocolHash', input.expectedStrategyProtocolHash, manifest.strategyProtocolHash],
+    ['modulePath', files.modulePath, manifest.modulePath],
+  ] as const
+  for (const [field, expected, observed] of mismatches) {
+    if (expected !== observed) {
+      return Result.fail(
+        sourceVerificationFailure('verify-program-binding', {
+          field,
+          expected,
+          observed,
+        }),
+      )
+    }
+  }
+  return pipe(
+    canonicalHashV1Result({
+      schemaVersion: 'bayn.candidate-development-verified-run.v1',
+      sourceRevision: files.sourceRevision,
+      module: {
+        path: files.modulePath,
+        blobOid: files.moduleBlobOid,
+        sha256: files.moduleSha256,
+      },
+      sourceManifest: {
+        path: files.sourceManifestPath,
+        blobOid: files.sourceManifestBlobOid,
+        sha256: files.sourceManifestSha256,
+      },
+      input,
+    }),
+    Result.mapError((cause) => sourceVerificationFailure('derive-run-identity', cause)),
+    Result.flatMap((baselineRunId) =>
+      pipe(
+        canonicalHashV1Result({
+          schemaVersion: 'bayn.candidate-development-verified-stressed-run.v1',
+          baselineRunId,
+          costMultiplierMicros: candidateDevelopmentDoubledCostContract.stressedCostMultiplierMicros,
+        }),
+        Result.mapError((cause) => sourceVerificationFailure('derive-run-identity', cause)),
+        Result.map(
+          (stressedRunId): CandidateDevelopmentVerifiedSource => ({
+            schemaVersion: 'bayn.candidate-development-verified-source.v1',
+            sourceRevision: files.sourceRevision,
+            modulePath: files.modulePath,
+            moduleBlobOid: files.moduleBlobOid,
+            moduleSha256: files.moduleSha256,
+            sourceManifestPath: files.sourceManifestPath,
+            sourceManifestBlobOid: files.sourceManifestBlobOid,
+            sourceManifestSha256: files.sourceManifestSha256,
+            sourceManifest: files.sourceManifest,
+            baselineRunId,
+            stressedRunId,
+          }),
+        ),
+      ),
+    ),
+  )
+}
+
 const requireCanonicalEvidenceEqual = (
   field: string,
   expected: unknown,
@@ -541,16 +682,26 @@ const prepareCandidateDevelopmentMarketData = (
   evaluation: CandidateDevelopmentCommandEvaluation,
   strategyProtocol: CandidateDevelopmentStrategyProtocol,
   officialSessions: CandidateDevelopmentPreflightInput['officialSessions'],
+  verifiedSource: CandidateDevelopmentVerifiedSource,
 ): Result.Result<PreparedCandidateDevelopmentMarketData, CandidateDevelopmentCommandFailure> => {
   const { baseline, marketData } = evaluation
+  const committed = verifiedSource.sourceManifest.marketData
   const { contentHash: observedContentHash, ...content } = marketData
   const expectedContentHash = canonicalEvidenceHash('marketData.content', content)
   if (Result.isFailure(expectedContentHash)) return Result.fail(expectedContentHash.failure)
   const scalarBindings = [
-    ['marketData.contentHash', strategyProtocol.marketData.contentHash, observedContentHash],
+    ['marketData.committedContentHash', committed.boundedContentHash, observedContentHash],
+    ['marketData.protocolContentHash', committed.boundedContentHash, strategyProtocol.marketData.contentHash],
     ['marketData.recomputedContentHash', expectedContentHash.success, observedContentHash],
-    ['marketData.snapshotId', strategyProtocol.marketData.snapshotId, marketData.snapshotId],
+    ['marketData.committedSnapshotId', committed.snapshotId, marketData.snapshotId],
+    ['marketData.protocolSnapshotId', committed.snapshotId, strategyProtocol.marketData.snapshotId],
     ['marketData.manifestSnapshotId', baseline.inputManifest.finalizedSnapshot.snapshotId, marketData.snapshotId],
+    [
+      'marketData.finalizedSnapshotContentHash',
+      committed.finalizedSnapshotContentHash,
+      baseline.inputManifest.finalizedSnapshot.contentHash,
+    ],
+    ['marketData.committedInputManifestHash', committed.inputManifestHash, marketData.inputManifestHash],
     ['marketData.inputManifestHash', baseline.inputManifest.hash, marketData.inputManifestHash],
   ] as const
   for (const [field, expected, observed] of scalarBindings) {
@@ -679,6 +830,24 @@ const validateCandidateDevelopmentStrategyProtocol = (
   for (const [field, expected, observed] of bindings) {
     const binding = requireCanonicalEvidenceEqual(field, expected, observed)
     if (Result.isFailure(binding)) return Result.fail(binding.failure)
+  }
+  return Result.succeed(undefined)
+}
+
+const validateCandidateDevelopmentVerifiedSource = (
+  evaluation: CandidateDevelopmentCommandEvaluation,
+  verifiedSource: CandidateDevelopmentVerifiedSource,
+): Result.Result<void, CandidateDevelopmentCommandFailure> => {
+  const bindings = [
+    ['verifiedSource.codeRevision', verifiedSource.sourceRevision, evaluation.baseline.codeRevision],
+    ['verifiedSource.baselineRunId', verifiedSource.baselineRunId, evaluation.baseline.runId],
+    ['verifiedSource.accountingRunId', verifiedSource.baselineRunId, evaluation.accounting.runId],
+    ['verifiedSource.stressedRunId', verifiedSource.stressedRunId, evaluation.accounting.stressedRunId],
+  ] as const
+  for (const [field, expected, observed] of bindings) {
+    if (expected !== observed) {
+      return Result.fail(markedEquityFailure('binding-mismatch', null, field, expected, observed))
+    }
   }
   return Result.succeed(undefined)
 }
@@ -1814,10 +1983,16 @@ export const buildCandidateDevelopmentCommandReport = (
   evaluation: CandidateDevelopmentCommandEvaluation,
   strategyProtocol: CandidateDevelopmentStrategyProtocol,
   officialSessions: CandidateDevelopmentPreflightInput['officialSessions'],
+  verifiedSource: CandidateDevelopmentVerifiedSource,
 ): Result.Result<CandidateDevelopmentCommandReport, CandidateDevelopmentCommandFailure> =>
   pipe(
-    validateCandidateDevelopmentStrategyProtocol(report, evaluation, strategyProtocol),
-    Result.flatMap(() => prepareCandidateDevelopmentMarketData(evaluation, strategyProtocol, officialSessions)),
+    Result.all({
+      protocol: validateCandidateDevelopmentStrategyProtocol(report, evaluation, strategyProtocol),
+      source: validateCandidateDevelopmentVerifiedSource(evaluation, verifiedSource),
+    }),
+    Result.flatMap(() =>
+      prepareCandidateDevelopmentMarketData(evaluation, strategyProtocol, officialSessions, verifiedSource),
+    ),
     Result.flatMap((marketData) =>
       pipe(
         Result.all({
@@ -1848,13 +2023,14 @@ export const buildCandidateDevelopmentCommandReport = (
     ),
     Result.flatMap(({ doubledCostAnnualizedReturn, economicPass }) => {
       const material: CandidateDevelopmentCommandReportMaterial = {
-        schemaVersion: 'bayn.candidate-development-command-report.v5',
+        schemaVersion: 'bayn.candidate-development-command-report.v6',
         candidateOrdinal: report.protocolIdentity.candidateOrdinal,
         priorTrialCount: report.protocolIdentity.priorTrialCount,
         strategyProtocolHash: report.comparisonSemantics.strategyProtocolHash,
         strategyProtocol,
         officialSessions,
         marketData: evaluation.marketData,
+        verifiedSource,
         decision: decideCandidateDevelopment(report, evaluation.baseline, doubledCostAnnualizedReturn, economicPass),
         baseline: evaluation.baseline,
         accounting: evaluation.accounting,
@@ -1875,12 +2051,13 @@ export const buildCandidateDevelopmentCommandReport = (
 
 export const executeCandidateDevelopmentProgram = <Registration, DevelopmentData, Error, Requirements>(
   program: CandidateDevelopmentExecutableProgram<Registration, DevelopmentData, Error, Requirements>,
+  verifiedSource: CandidateDevelopmentVerifiedSource,
 ): Effect.Effect<CandidateDevelopmentCommandReport, CandidateDevelopmentCommandFailure | Error, Requirements> => {
   let evaluation: CandidateDevelopmentCommandEvaluation | undefined
   const effects: CandidateDevelopmentEffects<Registration, DevelopmentData, Error, Requirements> = {
     ...program.effects,
     evaluateDevelopment: (data, preflight) =>
-      program.effects.evaluateDevelopment(data, preflight).pipe(
+      program.effects.evaluateDevelopment(data, preflight, verifiedSource).pipe(
         Effect.tap((value) =>
           Effect.sync(() => {
             evaluation = value
@@ -1898,6 +2075,7 @@ export const executeCandidateDevelopmentProgram = <Registration, DevelopmentData
               evaluation,
               program.strategyProtocol,
               program.input.officialSessions,
+              verifiedSource,
             ),
           ),
     ),
@@ -1934,8 +2112,9 @@ export const writeCandidateDevelopmentCommandReport = (
 
 export const runCandidateDevelopmentCommand = <Registration, DevelopmentData, Error, Requirements>(
   program: CandidateDevelopmentExecutableProgram<Registration, DevelopmentData, Error, Requirements>,
+  verifiedSource: CandidateDevelopmentVerifiedSource,
 ): Effect.Effect<CandidateDevelopmentCommandReport, CandidateDevelopmentCommandFailure | Error, Requirements> =>
-  executeCandidateDevelopmentProgram(program).pipe(Effect.tap(writeCandidateDevelopmentCommandReport))
+  executeCandidateDevelopmentProgram(program, verifiedSource).pipe(Effect.tap(writeCandidateDevelopmentCommandReport))
 
 type ExecutableProgram = CandidateDevelopmentExecutableProgram<
   unknown,
@@ -1943,6 +2122,11 @@ type ExecutableProgram = CandidateDevelopmentExecutableProgram<
   CandidateDevelopmentCommandFailure,
   never
 >
+
+export interface CandidateDevelopmentLoadedExecutableProgram {
+  readonly program: ExecutableProgram
+  readonly verifiedSource: CandidateDevelopmentVerifiedSource
+}
 
 const CandidateDevelopmentPreflightInputSchema = Schema.Struct({
   candidateOrdinal: PositiveIntegerSchema,
@@ -2092,6 +2276,21 @@ const CandidateDevelopmentStrategyProtocolSchema = Schema.Struct({
   }),
 })
 
+const CandidateDevelopmentSourceManifestSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.candidate-development-source-manifest.v1'),
+  candidateOrdinal: PositiveIntegerSchema,
+  priorTrialCount: NonNegativeIntegerSchema,
+  strategyProtocolHash: Sha256Schema,
+  modulePath: Schema.String.check(Schema.isMinLength(1)),
+  marketData: Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.candidate-development-market-data-source.v1'),
+    snapshotId: Sha256Schema,
+    finalizedSnapshotContentHash: Sha256Schema,
+    inputManifestHash: Sha256Schema,
+    boundedContentHash: Sha256Schema,
+  }),
+})
+
 const CandidateDevelopmentComparisonSemanticsEvidenceBoundarySchema = Schema.Struct({
   schemaVersion: Schema.Literal(candidateDevelopmentComparisonSemantics.evidence.schemaVersion),
   candidateDevelopmentProtocolHash: Sha256Schema,
@@ -2125,6 +2324,11 @@ const decodeCandidateDevelopmentEvaluation = Schema.decodeUnknownResult(
 
 const decodeCandidateDevelopmentStrategyProtocol = Schema.decodeUnknownResult(
   CandidateDevelopmentStrategyProtocolSchema,
+  strictParseOptions,
+)
+
+const decodeCandidateDevelopmentSourceManifest = Schema.decodeUnknownResult(
+  CandidateDevelopmentSourceManifestSchema,
   strictParseOptions,
 )
 
@@ -2214,9 +2418,9 @@ export const validateCandidateDevelopmentExecutableProgram = (
     strategyProtocol: strategyProtocol.success as CandidateDevelopmentStrategyProtocol,
     effects: {
       ...typedEffects,
-      evaluateDevelopment: (data, preflight) =>
+      evaluateDevelopment: (data, preflight, verifiedSource) =>
         typedEffects
-          .evaluateDevelopment(data, preflight)
+          .evaluateDevelopment(data, preflight, verifiedSource)
           .pipe(
             Effect.flatMap((evaluation) =>
               Effect.fromResult(validateCandidateDevelopmentCommandEvaluation(evaluation)),
@@ -2230,6 +2434,178 @@ export type CandidateDevelopmentModuleImporter = (
   moduleUrl: string,
 ) => Effect.Effect<unknown, CandidateDevelopmentCommandFailure>
 
+export type CandidateDevelopmentSourceVerifier = (
+  modulePath: string,
+  sourceManifestPath: string,
+) => Effect.Effect<CandidateDevelopmentVerifiedSourceFiles, CandidateDevelopmentCommandFailure>
+
+class CandidateDevelopmentSourceVerificationError extends Error {
+  readonly operation: Extract<
+    CandidateDevelopmentCommandFailure,
+    { readonly _tag: 'CandidateDevelopmentCommandSourceVerificationFailed' }
+  >['operation']
+  readonly sourceCause: unknown
+
+  constructor(operation: CandidateDevelopmentSourceVerificationError['operation'], sourceCause: unknown) {
+    super(`candidate development source verification failed during ${operation}`)
+    this.operation = operation
+    this.sourceCause = sourceCause
+  }
+}
+
+const sourceStep = async <A>(
+  operation: CandidateDevelopmentSourceVerificationError['operation'],
+  step: () => Promise<A>,
+): Promise<A> => {
+  try {
+    return await step()
+  } catch (cause) {
+    throw new CandidateDevelopmentSourceVerificationError(operation, cause)
+  }
+}
+
+const gitText = (repositoryRoot: string, args: readonly string[]): Promise<string> =>
+  new Promise((resolveGit, rejectGit) => {
+    execFile(
+      'git',
+      ['-C', repositoryRoot, ...args],
+      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
+      (error, stdout) => {
+        if (error === null) resolveGit(stdout.trim())
+        else rejectGit(error)
+      },
+    )
+  })
+
+const gitBytes = (repositoryRoot: string, args: readonly string[]): Promise<Buffer> =>
+  new Promise((resolveGit, rejectGit) => {
+    execFile(
+      'git',
+      ['-C', repositoryRoot, ...args],
+      { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 },
+      (error, stdout) => {
+        if (error === null) resolveGit(stdout)
+        else rejectGit(error)
+      },
+    )
+  })
+
+const sha256Bytes = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
+
+const repositoryRelativePath = (
+  repositoryRoot: string,
+  absolutePath: string,
+): Result.Result<string, CandidateDevelopmentCommandFailure> => {
+  const path = relative(repositoryRoot, absolutePath)
+  return path.length > 0 && path !== '..' && !path.startsWith(`..${sep}`)
+    ? Result.succeed(path.split(sep).join('/'))
+    : Result.fail(
+        sourceVerificationFailure('verify-source-paths', {
+          repositoryRoot,
+          absolutePath,
+        }),
+      )
+}
+
+export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVerifier = (
+  modulePath,
+  sourceManifestPath,
+) =>
+  Effect.tryPromise({
+    try: async () => {
+      const absoluteModulePath = await sourceStep('read-module', () => realpath(resolve(modulePath)))
+      const absoluteSourceManifestPath = await sourceStep('read-source-manifest', () =>
+        realpath(resolve(sourceManifestPath)),
+      )
+      const repositoryRoot = await sourceStep('resolve-repository', () =>
+        gitText(dirname(absoluteModulePath), ['rev-parse', '--show-toplevel']),
+      )
+      const moduleRepositoryPath = repositoryRelativePath(repositoryRoot, absoluteModulePath)
+      if (Result.isFailure(moduleRepositoryPath)) {
+        throw new CandidateDevelopmentSourceVerificationError('verify-source-paths', moduleRepositoryPath.failure)
+      }
+      const sourceManifestRepositoryPath = repositoryRelativePath(repositoryRoot, absoluteSourceManifestPath)
+      if (Result.isFailure(sourceManifestRepositoryPath)) {
+        throw new CandidateDevelopmentSourceVerificationError(
+          'verify-source-paths',
+          sourceManifestRepositoryPath.failure,
+        )
+      }
+      const sourceRevision = await sourceStep('verify-head', () => gitText(repositoryRoot, ['rev-parse', 'HEAD']))
+      if (!/^[0-9a-f]{40}$/.test(sourceRevision)) {
+        throw new CandidateDevelopmentSourceVerificationError('verify-head', {
+          expected: 'lowercase 40-character Git revision',
+          observed: sourceRevision,
+        })
+      }
+      const moduleSpec = `HEAD:${moduleRepositoryPath.success}`
+      const sourceManifestSpec = `HEAD:${sourceManifestRepositoryPath.success}`
+      const [moduleBytes, sourceManifestBytes, moduleGitBytes, sourceManifestGitBytes] = await Promise.all([
+        sourceStep('read-module', () => readFile(absoluteModulePath)),
+        sourceStep('read-source-manifest', () => readFile(absoluteSourceManifestPath)),
+        sourceStep('verify-module-blob', () => gitBytes(repositoryRoot, ['cat-file', 'blob', moduleSpec])),
+        sourceStep('verify-source-manifest-blob', () =>
+          gitBytes(repositoryRoot, ['cat-file', 'blob', sourceManifestSpec]),
+        ),
+      ])
+      if (!moduleBytes.equals(moduleGitBytes)) {
+        throw new CandidateDevelopmentSourceVerificationError('verify-module-blob', {
+          path: moduleRepositoryPath.success,
+          expectedSha256: sha256Bytes(moduleGitBytes),
+          observedSha256: sha256Bytes(moduleBytes),
+        })
+      }
+      if (!sourceManifestBytes.equals(sourceManifestGitBytes)) {
+        throw new CandidateDevelopmentSourceVerificationError('verify-source-manifest-blob', {
+          path: sourceManifestRepositoryPath.success,
+          expectedSha256: sha256Bytes(sourceManifestGitBytes),
+          observedSha256: sha256Bytes(sourceManifestBytes),
+        })
+      }
+      const sourceManifestJson = await sourceStep(
+        'decode-source-manifest',
+        async () => JSON.parse(sourceManifestGitBytes.toString('utf8')) as unknown,
+      )
+      const sourceManifest = decodeCandidateDevelopmentSourceManifest(sourceManifestJson)
+      if (Result.isFailure(sourceManifest)) {
+        throw new CandidateDevelopmentSourceVerificationError('decode-source-manifest', sourceManifest.failure)
+      }
+      if (sourceManifest.success.modulePath !== moduleRepositoryPath.success) {
+        throw new CandidateDevelopmentSourceVerificationError('verify-source-paths', {
+          expected: moduleRepositoryPath.success,
+          observed: sourceManifest.success.modulePath,
+        })
+      }
+      const workingTreeStatus = await sourceStep('verify-working-tree', () =>
+        gitText(repositoryRoot, ['status', '--porcelain=v1', '--untracked-files=all']),
+      )
+      if (workingTreeStatus.length > 0) {
+        throw new CandidateDevelopmentSourceVerificationError('verify-working-tree', {
+          status: workingTreeStatus.split('\n'),
+        })
+      }
+      const [moduleBlobOid, sourceManifestBlobOid] = await Promise.all([
+        sourceStep('verify-module-blob', () => gitText(repositoryRoot, ['rev-parse', moduleSpec])),
+        sourceStep('verify-source-manifest-blob', () => gitText(repositoryRoot, ['rev-parse', sourceManifestSpec])),
+      ])
+      return {
+        schemaVersion: 'bayn.candidate-development-verified-source-files.v1' as const,
+        sourceRevision,
+        modulePath: moduleRepositoryPath.success,
+        moduleBlobOid,
+        moduleSha256: sha256Bytes(moduleGitBytes),
+        sourceManifestPath: sourceManifestRepositoryPath.success,
+        sourceManifestBlobOid,
+        sourceManifestSha256: sha256Bytes(sourceManifestGitBytes),
+        sourceManifest: sourceManifest.success as CandidateDevelopmentSourceManifest,
+      }
+    },
+    catch: (cause): CandidateDevelopmentCommandFailure =>
+      cause instanceof CandidateDevelopmentSourceVerificationError
+        ? sourceVerificationFailure(cause.operation, cause.sourceCause)
+        : sourceVerificationFailure('resolve-repository', cause),
+  })
+
 const importCandidateDevelopmentModule: CandidateDevelopmentModuleImporter = (moduleUrl) =>
   Effect.tryPromise({
     try: () => import(moduleUrl),
@@ -2242,21 +2618,46 @@ const importCandidateDevelopmentModule: CandidateDevelopmentModuleImporter = (mo
 
 export const loadCandidateDevelopmentExecutableProgram = (
   modulePath: string,
+  sourceManifestPath: string,
   importer: CandidateDevelopmentModuleImporter = importCandidateDevelopmentModule,
-): Effect.Effect<ExecutableProgram, CandidateDevelopmentCommandFailure> =>
-  importer(pathToFileURL(resolve(modulePath)).href).pipe(
-    Effect.uninterruptible,
-    Effect.flatMap((module) =>
-      Effect.fromResult(validateCandidateDevelopmentExecutableProgram(recordOf(module)?.candidateDevelopmentProgram)),
-    ),
-  )
+  sourceVerifier: CandidateDevelopmentSourceVerifier = verifyCandidateDevelopmentSourceFiles,
+): Effect.Effect<CandidateDevelopmentLoadedExecutableProgram, CandidateDevelopmentCommandFailure> =>
+  Effect.gen(function* () {
+    const before = yield* sourceVerifier(modulePath, sourceManifestPath)
+    const module = yield* importer(pathToFileURL(resolve(modulePath)).href)
+    const after = yield* sourceVerifier(modulePath, sourceManifestPath)
+    const beforeHash = yield* Effect.fromResult(
+      canonicalHashV1Result(before).pipe(
+        Result.mapError((cause) => sourceVerificationFailure('verify-post-import', cause)),
+      ),
+    )
+    const afterHash = yield* Effect.fromResult(
+      canonicalHashV1Result(after).pipe(
+        Result.mapError((cause) => sourceVerificationFailure('verify-post-import', cause)),
+      ),
+    )
+    if (beforeHash !== afterHash) {
+      return yield* Effect.fail(
+        sourceVerificationFailure('verify-post-import', {
+          expected: beforeHash,
+          observed: afterHash,
+        }),
+      )
+    }
+    const program = yield* Effect.fromResult(
+      validateCandidateDevelopmentExecutableProgram(recordOf(module)?.candidateDevelopmentProgram),
+    )
+    const verifiedSource = yield* Effect.fromResult(bindCandidateDevelopmentVerifiedSource(before, program.input))
+    return { program, verifiedSource }
+  }).pipe(Effect.uninterruptible)
 
 const modulePath = process.argv.at(2)
+const sourceManifestPath = process.argv.at(3)
 
 const executeLoadedCandidateDevelopmentProgram = (
-  program: ExecutableProgram,
+  loaded: CandidateDevelopmentLoadedExecutableProgram,
 ): Effect.Effect<CandidateDevelopmentCommandReport, CandidateDevelopmentCommandFailure> =>
-  runCandidateDevelopmentCommand(program).pipe(
+  runCandidateDevelopmentCommand(loaded.program, loaded.verifiedSource).pipe(
     Effect.mapError(
       (cause): CandidateDevelopmentCommandFailure => ({
         _tag: 'CandidateDevelopmentCommandProgramExecutionFailed',
@@ -2268,9 +2669,13 @@ const executeLoadedCandidateDevelopmentProgram = (
 const main = (
   modulePath === undefined
     ? Effect.fail<CandidateDevelopmentCommandFailure>({ _tag: 'CandidateDevelopmentCommandModulePathMissing' })
-    : loadCandidateDevelopmentExecutableProgram(modulePath).pipe(
-        Effect.flatMap(executeLoadedCandidateDevelopmentProgram),
-      )
+    : sourceManifestPath === undefined
+      ? Effect.fail<CandidateDevelopmentCommandFailure>({
+          _tag: 'CandidateDevelopmentCommandSourceManifestPathMissing',
+        })
+      : loadCandidateDevelopmentExecutableProgram(modulePath, sourceManifestPath).pipe(
+          Effect.flatMap(executeLoadedCandidateDevelopmentProgram),
+        )
 ).pipe(Effect.annotateLogs({ operation: 'candidate-development-command' }))
 
 class CandidateDevelopmentCommandError extends Data.TaggedError('CandidateDevelopmentCommandError')<{
