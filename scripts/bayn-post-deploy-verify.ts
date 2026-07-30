@@ -27,6 +27,7 @@ export type ExpectedPromotion = {
   readonly digest: string
   readonly repository: string
   readonly imageReference: string
+  readonly secretNames: readonly string[]
 }
 
 export type VerificationSnapshot = {
@@ -139,6 +140,24 @@ const envValues = (container: JsonRecord, path: string): ReadonlyMap<string, str
   return values
 }
 
+const collectSecretNames = (value: unknown, names = new Set<string>()): ReadonlySet<string> => {
+  if (Array.isArray(value)) {
+    for (const item of value) collectSecretNames(item, names)
+    return names
+  }
+  if (typeof value !== 'object' || value === null) return names
+  for (const [key, child] of Object.entries(value)) {
+    if ((key === 'secretKeyRef' || key === 'secretRef') && typeof child === 'object' && child !== null) {
+      const name = (child as JsonRecord).name
+      if (typeof name === 'string' && name.length > 0) names.add(name)
+    } else if (key === 'secretName' && typeof child === 'string' && child.length > 0) {
+      names.add(child)
+    }
+    collectSecretNames(child, names)
+  }
+  return names
+}
+
 const namedContainer = (containers: unknown, name: string, path: string): JsonRecord => {
   const matches = array(containers, path).filter((candidate) => {
     const item = record(candidate, path)
@@ -182,6 +201,8 @@ export const parseExpectedPromotion = (kustomizationSource: string, deploymentSo
   requireEqual(env.get('BAYN_IMAGE_DIGEST'), digest, 'BAYN_IMAGE_DIGEST', 'INVALID_MANIFEST', false)
   requireEqual(env.get('BAYN_BROKER_ENVIRONMENT'), 'sandbox', 'BAYN_BROKER_ENVIRONMENT', 'INVALID_MANIFEST', false)
   requireEqual(env.get('BAYN_MAXIMUM_AUTHORITY'), 'OBSERVE', 'BAYN_MAXIMUM_AUTHORITY', 'INVALID_MANIFEST', false)
+  const secretNames = [...collectSecretNames(podSpec)].sort()
+  if (secretNames.length === 0) fail('INVALID_MANIFEST', 'Bayn deployment must reference its production Secrets', false)
 
   return {
     sourceRevision,
@@ -189,6 +210,7 @@ export const parseExpectedPromotion = (kustomizationSource: string, deploymentSo
     digest,
     repository,
     imageReference: `${repository}:${tag}@${digest}`,
+    secretNames,
   }
 }
 
@@ -771,14 +793,18 @@ const checkReadPermission = async (
   verb: string,
   resource: string,
   namespace: string,
+  resourceName?: string,
 ) => {
-  const result = await run(['kubectl', 'auth', 'can-i', verb, resource, '-n', namespace], signal)
+  const command = ['kubectl', 'auth', 'can-i', verb, resource, '-n', namespace]
+  if (resourceName !== undefined) command.push('--resource-name', resourceName)
+  const result = await run(command, signal)
   const decision = result.stdout.trim()
+  const permission = `${verb} ${resource}${resourceName === undefined ? '' : `/${resourceName}`} in ${namespace}`
   if (result.exitCode !== 0 || result.stderr.trim().length !== 0 || (decision !== 'yes' && decision !== 'no')) {
-    fail('RBAC_DENIED', `${verb} ${resource} in ${namespace} permission probe was indeterminate`, false)
+    fail('RBAC_DENIED', `${permission} permission probe was indeterminate`, false)
   }
   if (decision !== 'yes') {
-    fail('RBAC_DENIED', `missing ${verb} permission for ${resource} in ${namespace}`, false)
+    fail('RBAC_DENIED', `missing ${permission} permission`, false)
   }
 }
 
@@ -790,7 +816,13 @@ const requireConclusiveDenial = (result: CommandResult, permission: string, gran
   if (decision === 'yes') fail('RBAC_DENIED', grantedMessage, false)
 }
 
-const checkWriteDenied = async (run: RunCommand, signal: AbortSignal, resource: string, namespace: string) => {
+const checkWriteDenied = async (
+  run: RunCommand,
+  signal: AbortSignal,
+  resource: string,
+  namespace: string,
+  resourceNames: readonly string[] = [],
+) => {
   for (const verb of ['create', 'update', 'patch', 'delete', 'deletecollection']) {
     const result = await run(['kubectl', 'auth', 'can-i', verb, resource, '-n', namespace], signal)
     requireConclusiveDenial(
@@ -799,22 +831,75 @@ const checkWriteDenied = async (run: RunCommand, signal: AbortSignal, resource: 
       `workflow identity unexpectedly has ${verb} permission for ${resource} in ${namespace}`,
     )
   }
+  for (const resourceName of resourceNames) {
+    for (const verb of ['update', 'patch', 'delete']) {
+      const result = await run(
+        ['kubectl', 'auth', 'can-i', verb, resource, '-n', namespace, '--resource-name', resourceName],
+        signal,
+      )
+      requireConclusiveDenial(
+        result,
+        `${verb} ${resource}/${resourceName} in ${namespace}`,
+        `workflow identity unexpectedly has ${verb} permission for ${resource}/${resourceName} in ${namespace}`,
+      )
+    }
+  }
 }
 
-export const validateReadOnlyPermissions = async (run: RunCommand, signal: AbortSignal): Promise<void> => {
-  await checkReadPermission(run, signal, 'get', 'applications.argoproj.io', 'argocd')
-  await checkReadPermission(run, signal, 'get', 'deployments.apps', 'bayn')
+const READ_ONLY_RULE_VERBS = new Set(['get', 'list', 'watch'])
+const SELF_REVIEW_RESOURCES = new Set([
+  'selfsubjectreviews.authentication.k8s.io',
+  'selfsubjectaccessreviews.authorization.k8s.io',
+  'selfsubjectrulesreviews.authorization.k8s.io',
+])
+
+const validateNoMutationRules = async (run: RunCommand, signal: AbortSignal, namespace: string): Promise<void> => {
+  const result = await run(['kubectl', 'auth', 'can-i', '--list', '--no-headers', '-n', namespace], signal)
+  if (result.exitCode !== 0 || result.stderr.trim().length !== 0 || result.stdout.trim().length === 0) {
+    fail('RBAC_DENIED', `authorization rules audit in ${namespace} was indeterminate`, false)
+  }
+  for (const [index, line] of result.stdout.trimEnd().split('\n').entries()) {
+    const matches = [...line.matchAll(/\[([^\]]*)\]/g)]
+    const verbsSource = matches.at(-1)?.[1]
+    if (verbsSource === undefined) {
+      return fail('RBAC_DENIED', `authorization rules audit in ${namespace} returned an invalid row ${index}`, false)
+    }
+    const verbs = verbsSource.split(/\s+/).filter((verb) => verb.length > 0)
+    const resource = line.trim().split(/\s+/)[0] ?? ''
+    if (verbs.every((verb) => READ_ONLY_RULE_VERBS.has(verb))) continue
+    if (SELF_REVIEW_RESOURCES.has(resource) && verbs.every((verb) => verb === 'create')) continue
+    fail('RBAC_DENIED', `workflow identity has a non-read-only authorization rule in ${namespace}`, false)
+  }
+}
+
+export const validateReadOnlyPermissions = async (
+  run: RunCommand,
+  signal: AbortSignal,
+  secretNames: readonly string[] = [],
+): Promise<void> => {
+  await checkReadPermission(run, signal, 'get', 'applications.argoproj.io', 'argocd', 'bayn')
+  await checkReadPermission(run, signal, 'get', 'deployments.apps', 'bayn', 'bayn')
   await checkReadPermission(run, signal, 'list', 'pods', 'bayn')
-  await checkReadPermission(run, signal, 'get', 'services/proxy', 'bayn')
-  await checkWriteDenied(run, signal, 'services/proxy', 'bayn')
-  await checkWriteDenied(run, signal, 'applications.argoproj.io', 'argocd')
-  await checkWriteDenied(run, signal, 'deployments.apps', 'bayn')
-  await checkWriteDenied(run, signal, 'deployments.apps/scale', 'bayn')
+  await checkReadPermission(run, signal, 'get', 'services/proxy', 'bayn', 'bayn')
+  await checkWriteDenied(run, signal, 'services/proxy', 'bayn', ['bayn'])
+  await checkWriteDenied(run, signal, 'services', 'bayn', ['bayn'])
+  await checkWriteDenied(run, signal, 'services/status', 'bayn', ['bayn'])
+  await checkWriteDenied(run, signal, 'endpoints', 'bayn', ['bayn'])
+  await checkWriteDenied(run, signal, 'endpointslices.discovery.k8s.io', 'bayn')
+  await checkWriteDenied(run, signal, 'applications.argoproj.io', 'argocd', ['bayn'])
+  await checkWriteDenied(run, signal, 'applications.argoproj.io/status', 'argocd', ['bayn'])
+  await checkWriteDenied(run, signal, 'deployments.apps', 'bayn', ['bayn'])
+  await checkWriteDenied(run, signal, 'deployments.apps/status', 'bayn', ['bayn'])
+  await checkWriteDenied(run, signal, 'deployments.apps/scale', 'bayn', ['bayn'])
   await checkWriteDenied(run, signal, 'pods', 'bayn')
+  await checkWriteDenied(run, signal, 'pods/status', 'bayn')
   await checkWriteDenied(run, signal, 'pods/eviction', 'bayn')
+  await checkWriteDenied(run, signal, 'pods/attach', 'bayn')
   await checkWriteDenied(run, signal, 'pods/exec', 'bayn')
+  await checkWriteDenied(run, signal, 'pods/ephemeralcontainers', 'bayn')
   await checkWriteDenied(run, signal, 'pods/portforward', 'bayn')
-  await checkWriteDenied(run, signal, 'secrets', 'bayn')
+  await checkWriteDenied(run, signal, 'pods/proxy', 'bayn')
+  await checkWriteDenied(run, signal, 'secrets', 'bayn', secretNames)
   for (const verb of ['get', 'list', 'watch']) {
     const secretRead = await run(['kubectl', 'auth', 'can-i', verb, 'secrets', '-n', 'bayn'], signal)
     requireConclusiveDenial(
@@ -822,7 +907,20 @@ export const validateReadOnlyPermissions = async (run: RunCommand, signal: Abort
       `${verb} secrets in bayn`,
       `workflow identity unexpectedly has ${verb} secret permission in bayn`,
     )
+    for (const secretName of secretNames) {
+      const namedSecretRead = await run(
+        ['kubectl', 'auth', 'can-i', verb, 'secrets', '-n', 'bayn', '--resource-name', secretName],
+        signal,
+      )
+      requireConclusiveDenial(
+        namedSecretRead,
+        `${verb} secrets/${secretName} in bayn`,
+        `workflow identity unexpectedly has ${verb} permission for secrets/${secretName} in bayn`,
+      )
+    }
   }
+  await validateNoMutationRules(run, signal, 'argocd')
+  await validateNoMutationRules(run, signal, 'bayn')
 }
 
 export const readArgoSyncRevision = (applicationValue: unknown): string => {
@@ -1071,7 +1169,11 @@ const main = async (): Promise<void> => {
       deadlineAt,
     )
     const expected = parseExpectedPromotion(kustomizationSource, deploymentSource)
-    await runWithinDeadline((signal) => validateReadOnlyPermissions(runCommand, signal), controller.signal, deadlineAt)
+    await runWithinDeadline(
+      (signal) => validateReadOnlyPermissions(runCommand, signal, expected.secretNames),
+      controller.signal,
+      deadlineAt,
+    )
     await retryVerification(
       async (signal) => {
         const snapshot = await fetchSnapshot(runCommand, signal)

@@ -10,10 +10,11 @@ import {
   runWithinDeadline,
   retryVerification,
   verifyArgoRevision,
-  validateReadOnlyPermissions,
+  validateReadOnlyPermissions as validateProductionReadOnlyPermissions,
   validateSnapshot as validateProductionSnapshot,
   VerificationFailure,
   type ExpectedPromotion,
+  type RunCommand,
   type VerificationSnapshot,
 } from './bayn-post-deploy-verify'
 
@@ -58,9 +59,38 @@ spec:
               value: sandbox
             - name: BAYN_MAXIMUM_AUTHORITY
               value: OBSERVE
+            - name: BAYN_ALPACA_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: account-id
+      volumes:
+        - name: postgres-ca
+          secret:
+            secretName: bayn-db-ca
 `
 
 const expected = parseExpectedPromotion(kustomization, deploymentManifest)
+const readOnlyAuthorizationRules = [
+  'selfsubjectreviews.authentication.k8s.io [] [] [create]',
+  'selfsubjectaccessreviews.authorization.k8s.io [] [] [create]',
+  'selfsubjectrulesreviews.authorization.k8s.io [] [] [create]',
+  'deployments.apps [] [] [get list watch]',
+].join('\n')
+
+const validateReadOnlyPermissions = (
+  run: RunCommand,
+  signal: AbortSignal,
+  secretNames: readonly string[] = [],
+): Promise<void> =>
+  validateProductionReadOnlyPermissions(
+    async (command, commandSignal) =>
+      command.includes('--list')
+        ? { stdout: readOnlyAuthorizationRules, stderr: '', exitCode: 0 }
+        : run(command, commandSignal),
+    signal,
+    secretNames,
+  )
 
 const validateSnapshot = (
   snapshot: VerificationSnapshot,
@@ -292,7 +322,15 @@ describe('manifest contract', () => {
       digest,
       repository,
       imageReference,
+      secretNames: ['bayn-alpaca-auth', 'bayn-db-ca'],
     })
+  })
+
+  test('rejects a deployment without production Secret references', () => {
+    const withoutSecrets = deploymentManifest
+      .replace(/\n            - name: BAYN_ALPACA_ACCOUNT_ID[\s\S]*?                  key: account-id/, '')
+      .replace(/\n      volumes:[\s\S]*?            secretName: bayn-db-ca/, '')
+    expect(captureFailure(() => parseExpectedPromotion(kustomization, withoutSecrets)).code).toBe('INVALID_MANIFEST')
   })
 
   test('rejects truncated or mutable tags', () => {
@@ -738,6 +776,118 @@ describe('redaction and permissions', () => {
     await expect(validateReadOnlyPermissions(run, controller.signal)).rejects.toMatchObject({
       code: 'RBAC_DENIED',
     })
+  })
+
+  test.each([
+    ['update', 'applications.argoproj.io', 'bayn'],
+    ['patch', 'deployments.apps', 'bayn'],
+    ['delete', 'services', 'bayn'],
+    ['patch', 'endpoints', 'bayn'],
+    ['get', 'secrets', 'bayn-alpaca-auth'],
+    ['update', 'secrets', 'bayn-db-ca'],
+  ])('rejects resourceNames-scoped %s authority for %s/%s', async (grantedVerb, grantedResource, grantedName) => {
+    const controller = new AbortController()
+    const run = async (command: readonly string[]) => {
+      const verb = command[3] ?? ''
+      const resource = command[4] ?? ''
+      const resourceNameAt = command.indexOf('--resource-name')
+      const resourceName = resourceNameAt === -1 ? undefined : command[resourceNameAt + 1]
+      if (verb === grantedVerb && resource === grantedResource && resourceName === grantedName) {
+        return { stdout: 'yes\n', stderr: '', exitCode: 0 }
+      }
+      const requiredRead =
+        (verb === 'get' && ['applications.argoproj.io', 'deployments.apps', 'services/proxy'].includes(resource)) ||
+        (verb === 'list' && resource === 'pods')
+      return { stdout: requiredRead ? 'yes\n' : 'no\n', stderr: '', exitCode: 0 }
+    }
+
+    await expect(validateReadOnlyPermissions(run, controller.signal, expected.secretNames)).rejects.toMatchObject({
+      code: 'RBAC_DENIED',
+    })
+  })
+
+  test('probes parent Service and endpoint-routing resources', async () => {
+    const controller = new AbortController()
+    const commands: string[][] = []
+    const run = async (command: readonly string[]) => {
+      commands.push([...command])
+      const verb = command[3] ?? ''
+      const resource = command[4] ?? ''
+      const requiredRead =
+        (verb === 'get' && ['applications.argoproj.io', 'deployments.apps', 'services/proxy'].includes(resource)) ||
+        (verb === 'list' && resource === 'pods')
+      return { stdout: requiredRead ? 'yes\n' : 'no\n', stderr: '', exitCode: 0 }
+    }
+
+    await expect(validateReadOnlyPermissions(run, controller.signal, expected.secretNames)).resolves.toBeUndefined()
+    for (const resource of ['services', 'services/status', 'endpoints', 'endpointslices.discovery.k8s.io']) {
+      expect(commands.some((command) => command[4] === resource)).toBe(true)
+    }
+    expect(
+      commands.some(
+        (command) => command[4] === 'services' && command.includes('--resource-name') && command.includes('bayn'),
+      ),
+    ).toBe(true)
+  })
+
+  test('fails closed on resourceNames-scoped mutation exposed by the full rules audit', async () => {
+    const controller = new AbortController()
+    const readOnlyRules = [
+      'selfsubjectaccessreviews.authorization.k8s.io [] [] [create]',
+      'deployments.apps [] [] [get list watch]',
+    ].join('\n')
+    const run = async (command: readonly string[]) => {
+      if (command.includes('--list')) {
+        const namespace = command[command.indexOf('-n') + 1]
+        return {
+          stdout:
+            namespace === 'bayn'
+              ? `${readOnlyRules}\nendpointslices.discovery.k8s.io [] [bayn-abcde] [patch]\n`
+              : `${readOnlyRules}\n`,
+          stderr: '',
+          exitCode: 0,
+        }
+      }
+      const verb = command[3] ?? ''
+      const resource = command[4] ?? ''
+      const requiredRead =
+        (verb === 'get' && ['applications.argoproj.io', 'deployments.apps', 'services/proxy'].includes(resource)) ||
+        (verb === 'list' && resource === 'pods')
+      return { stdout: requiredRead ? 'yes\n' : 'no\n', stderr: '', exitCode: 0 }
+    }
+
+    await expect(
+      validateProductionReadOnlyPermissions(run, controller.signal, expected.secretNames),
+    ).rejects.toMatchObject({ code: 'RBAC_DENIED' })
+  })
+
+  test('accepts only read-only namespace rule inventories plus self-review creation', async () => {
+    const controller = new AbortController()
+    const run = async (command: readonly string[]) => {
+      if (command.includes('--list')) {
+        return {
+          stdout: [
+            'selfsubjectreviews.authentication.k8s.io [] [] [create]',
+            'selfsubjectaccessreviews.authorization.k8s.io [] [] [create]',
+            'selfsubjectrulesreviews.authorization.k8s.io [] [] [create]',
+            'deployments.apps [] [] [get list watch]',
+            '                                                              [/healthz] [] [get]',
+          ].join('\n'),
+          stderr: '',
+          exitCode: 0,
+        }
+      }
+      const verb = command[3] ?? ''
+      const resource = command[4] ?? ''
+      const requiredRead =
+        (verb === 'get' && ['applications.argoproj.io', 'deployments.apps', 'services/proxy'].includes(resource)) ||
+        (verb === 'list' && resource === 'pods')
+      return { stdout: requiredRead ? 'yes\n' : 'no\n', stderr: '', exitCode: 0 }
+    }
+
+    await expect(
+      validateProductionReadOnlyPermissions(run, controller.signal, expected.secretNames),
+    ).resolves.toBeUndefined()
   })
 
   test.each([
