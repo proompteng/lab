@@ -2,6 +2,7 @@ name: bayn-build-push
 
 permissions:
   contents: read
+  pull-requests: read
 
 on:
   push:
@@ -10,6 +11,7 @@ on:
     paths:
       - 'services/bayn/**'
       - 'packages/scripts/src/bayn/update-manifests.ts'
+      - 'packages/scripts/src/bayn/verify-release-review.ts'
       - 'nix/images/bayn.nix'
       - 'nix/images/bayn-runtime-root.nix'
       - 'nix/images/bun-workspace-service.nix'
@@ -41,7 +43,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  release-review-eligibility:
+    name: Verify exact-head Codex review
+    runs-on: arc-arm64
+    timeout-minutes: 6
+    steps:
+      - name: Checkout exact main commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Hold until source PR review is release-eligible
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          args=(
+            --repository "${GITHUB_REPOSITORY}"
+            --commit "${GITHUB_SHA}"
+            --max-attempts 10
+            --poll-interval-ms 10000
+            --request-timeout-ms 10000
+          )
+          if [[ "${GITHUB_EVENT_NAME}" == push ]]; then
+            args+=(--push-before "${PUSH_BEFORE}")
+          fi
+          bun packages/scripts/src/bayn/verify-release-review.ts "${args[@]}"
+
   image:
+    needs: release-review-eligibility
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: bayn
