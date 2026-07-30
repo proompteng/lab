@@ -91,18 +91,37 @@ Git ancestry was explicitly verified as:
 The remote evidence branch preserves this complete commit chain and the pull request is required to close unmerged, so
 the immutable preregistration, evaluated implementation, raw report record, cleanup, and corrective classification remain
 reachable without squash. The raw family-run identity above came from a report whose benchmark-relative gates were not
-implemented as frozen and is retained for byte-level audit only and is **not** valid family-run evidence. Candidate 15's canonical consumed
-protocol-deviation attempt identity is:
+implemented as frozen. It is retained for byte-level audit only and is **not** valid family-run evidence. Candidate 15's
+canonical consumed protocol-deviation attempt identity is:
 
 ```text
 a673b246253836ab95a1836e10efeb8315c0978cebda8dbf00d8767c60d399eb
 ```
 
-That identity is the repository canonical hash of schema
-`bayn.candidate-development-invalid-attempt.v1` over Candidate ordinal `15`, the immutable preregistration commit and
-SHA-256, evaluated commit, sole report SHA-256, and deviation code
-`benchmark-relative-uncertainty-gates-implemented-as-cash-relative`. Future prior-attempt lineage must use this consumed
-protocol-deviation identity, not the raw family-run identity.
+The exact plain-object hash material is:
+
+```json
+{
+  "schemaVersion": "bayn.candidate-development-invalid-attempt.v1",
+  "candidateOrdinal": 15,
+  "preregistrationCommit": "9aac01753a332aeeeac2bc20d7536eeb45d74a51",
+  "preregistrationSha256": "e11ad74f8f4d8ab8e9c57528fe021b809190a9b0e56c5c01c55e25cf3f527828",
+  "evaluatedCommit": "4c511bdad0593e23cb07de2dbf9be8360c56a337",
+  "soleReportSha256": "d52d8d267a3742a56e7586beed56130bf40cbffbf26e37bb5c1f414d05ccc424",
+  "deviation": "benchmark-relative-uncertainty-gates-implemented-as-cash-relative"
+}
+```
+
+`canonicalJsonV1Result` sorts object keys by UTF-16 code-unit order and emits compact JSON. The exact canonical preimage
+is:
+
+```text
+{"candidateOrdinal":15,"deviation":"benchmark-relative-uncertainty-gates-implemented-as-cash-relative","evaluatedCommit":"4c511bdad0593e23cb07de2dbf9be8360c56a337","preregistrationCommit":"9aac01753a332aeeeac2bc20d7536eeb45d74a51","preregistrationSha256":"e11ad74f8f4d8ab8e9c57528fe021b809190a9b0e56c5c01c55e25cf3f527828","schemaVersion":"bayn.candidate-development-invalid-attempt.v1","soleReportSha256":"d52d8d267a3742a56e7586beed56130bf40cbffbf26e37bb5c1f414d05ccc424"}
+```
+
+Both `canonicalHashV1Result(material)` and raw SHA-256 of that exact UTF-8 preimage produce the fixed test vector
+`a673b246253836ab95a1836e10efeb8315c0978cebda8dbf00d8767c60d399eb`. Future prior-attempt lineage must reconstruct
+this exact object and verify that hash; it must not use the raw family-run identity.
 
 ## Bounded development data identity
 
