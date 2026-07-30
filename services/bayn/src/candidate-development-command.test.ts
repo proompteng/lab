@@ -2585,6 +2585,7 @@ describe('candidate development command', () => {
             typeof globalThis['SharedArrayBuffer'],
             typeof globalThis['Date'],
             typeof globalThis['Intl'],
+            typeof globalThis['Loader'],
             typeof globalThis['Temporal'],
             typeof globalThis['performance'],
             typeof globalThis['crypto'],
@@ -2734,6 +2735,29 @@ describe('candidate development command', () => {
         _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
         operation: 'verify-module-format',
         cause: { identifiers: ['ShadowRealm'] },
+      },
+    })
+  })
+
+  test('rejects Bun Loader before sandbox execution', async () => {
+    const source = `
+      export const candidateDevelopmentArtifact = {
+        schemaVersion: 'bayn.candidate-development-artifact.v1',
+        input: {},
+        strategyProtocol: {},
+        buildEvaluation: () => Loader,
+      }
+    `
+    const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
+
+    expect(
+      await Effect.runPromise(Effect.flip(evaluateCandidateDevelopmentArtifact(moduleUrl, fixtureVerifiedSourceFiles))),
+    ).toMatchObject({
+      _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
+      cause: {
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-module-format',
+        cause: { identifiers: ['Loader'] },
       },
     })
   })
