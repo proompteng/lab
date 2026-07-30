@@ -18,6 +18,7 @@ export {
   selectCycleCalendarCandidate,
   selectDiscoveredPublications,
   selectNextExecutionSession,
+  validateCyclePassTimeout,
   validateReconciliationInterval,
 } from './decisions'
 export { makeAutonomousCycleLoop } from './loop'

@@ -27,6 +27,7 @@ export interface CycleRunContext<R = never> {
   readonly executionPolicy: CycleExecutionPolicy
   readonly buildDecision: (
     cycle: AutonomousCycle,
+    reconciliationCompleted?: Effect.Effect<void>,
   ) => Effect.Effect<ObserveShadowDecisionDocument, CycleDecisionBuildError, R>
 }
 
@@ -109,6 +110,7 @@ export class CycleRunnerError extends Data.TaggedError('CycleRunnerError')<{
     | 'read-authority-slot'
     | 'reconcile-not-due'
     | 'recover-cycle'
+    | 'run-cycle-pass'
     | 'select-session'
   readonly failure:
     | 'calendar-read'
@@ -148,6 +150,7 @@ export type IdleReconciliationCadenceDecision =
 export interface AutonomousCycleLoopOptions<E = never, ContextR = never, DecisionR = never> {
   readonly context: Effect.Effect<CycleRunContext<DecisionR>, E, ContextR>
   readonly observePass: (observation: CyclePassObservation) => Effect.Effect<void>
+  readonly cyclePassTimeoutMs: number
   readonly pollIntervalMs: number
   readonly reconciliationIntervalMs: number
   readonly reconcileNotDue: Effect.Effect<void, CycleNotDueReconciliationError, DecisionR>

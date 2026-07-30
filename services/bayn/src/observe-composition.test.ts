@@ -1524,9 +1524,9 @@ describe('OBSERVE runtime composition', () => {
     const failureStartup = makeMutationAutonomousCycleStartup({
       accountId,
       authorityGenerationHash: generationHash,
-      pollIntervalMs: 50,
-      reconciliationIntervalMs: 100,
-      reconciliationPassTimeoutMs: 30_000,
+      pollIntervalMs: 5,
+      reconciliationIntervalMs: 10,
+      reconciliationPassTimeoutMs: 2,
       strategy: fixtureStrategy,
       executionProgram: sandboxExecutionProgram(),
     })
@@ -1538,11 +1538,7 @@ describe('OBSERVE runtime composition', () => {
           yield* TestClock.setTime(Date.parse(reconciledAt))
           const first = yield* Deferred.make<void>()
           const second = yield* Deferred.make<void>()
-          const third = yield* Deferred.make<void>()
-          const fourth = yield* Deferred.make<void>()
-          const fifth = yield* Deferred.make<void>()
-          const sixth = yield* Deferred.make<void>()
-          const completions = [first, second, third, fourth, fifth, sixth]
+          const completions = [first, second]
           const loop = yield* failureStartup({
             qualificationRunId: 'c'.repeat(64),
             recordPass: (observation) =>
@@ -1573,20 +1569,17 @@ describe('OBSERVE runtime composition', () => {
           )
           yield* Deferred.await(first).pipe(Effect.timeout('1 second'))
           yield* Deferred.await(second).pipe(Effect.timeout('1 second'))
-          yield* TestClock.adjust(50)
-          yield* Deferred.await(third).pipe(Effect.timeout('1 second'))
-          yield* TestClock.adjust(50)
-          yield* Deferred.await(fourth).pipe(Effect.timeout('1 second'))
-          yield* Deferred.await(fifth).pipe(Effect.timeout('1 second'))
-          yield* TestClock.adjust(50)
-          yield* Deferred.await(sixth).pipe(Effect.timeout('1 second'))
+          for (let elapsed = 0; elapsed < 15; elapsed += 1) {
+            yield* TestClock.withLive(Effect.sleep(1))
+            yield* TestClock.adjust(1)
+          }
           yield* Fiber.interrupt(fiber)
         }),
       ).pipe(Effect.provide(TestClock.layer())),
     )
     mutationPhase = false
 
-    expect(failureObservations).toHaveLength(6)
+    expect(failureObservations).toHaveLength(5)
     expect(failureObservations[0]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
     expect(failureObservations[1]).toMatchObject({
       result: 'FAILURE',
@@ -1598,14 +1591,9 @@ describe('OBSERVE runtime composition', () => {
       operation: 'reconcile-not-due',
       message: 'same-pass reconciliation store operation failed: mutation cadence reconciliation persistence failed',
     })
-    expect(failureObservations[3]).toMatchObject({
-      result: 'FAILURE',
-      operation: 'reconcile-not-due',
-      message: 'same-pass reconciliation store operation failed: mutation cadence reconciliation persistence failed',
-    })
+    expect(failureObservations[3]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
     expect(failureObservations[4]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
-    expect(failureObservations[5]).toMatchObject({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })
-    expect(publicationReads).toBe(4)
+    expect(publicationReads).toBe(3)
     expect(mutationReconciliations).toBe(1)
     expect(mutationEvents.indexOf('reconcile-failed')).toBeLessThan(mutationEvents.indexOf('failure-observe:2'))
     expect(authorityRestrictions).toBe(1)
@@ -1687,6 +1675,72 @@ describe('OBSERVE runtime composition', () => {
     expect(mutationReconciliations).toBe(1)
     expect(mutationEvents.indexOf('reconcile-failed')).toBeLessThan(mutationEvents.indexOf('recovery-observe:2'))
     expect(mutationEvents.indexOf('reconcile:1')).toBeLessThan(mutationEvents.indexOf('recovery-observe:3'))
+    expect(authorityRestrictions).toBe(2)
+
+    mutationEvents.length = 0
+    mutationReconciliations = 0
+    publicationReads = 0
+    const nearBoundaryStartup = makeMutationAutonomousCycleStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      pollIntervalMs: 99,
+      reconciliationIntervalMs: 100,
+      reconciliationPassTimeoutMs: 2,
+      strategy: fixtureStrategy,
+      executionProgram: sandboxExecutionProgram(),
+    })
+    mutationPhase = true
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(reconciledAt))
+          const firstPass = yield* Deferred.make<void>()
+          secondPublicationRead = yield* Deferred.make<void>()
+          let observations = 0
+          const loop = yield* nearBoundaryStartup({
+            qualificationRunId: 'c'.repeat(64),
+            recordPass: () =>
+              Effect.sync(() => {
+                observations += 1
+                mutationEvents.push(`near-observe:${observations.toString()}`)
+                return observations
+              }).pipe(
+                Effect.flatMap((count) =>
+                  count === 1 ? Deferred.succeed(firstPass, undefined).pipe(Effect.asVoid) : Effect.void,
+                ),
+              ),
+          })
+          const fiber = yield* loop.pipe(
+            Effect.provideService(BrokerRead, brokerRead),
+            Effect.provideService(CycleStore, cycleStore),
+            Effect.provideService(MarketData, missingPublicationMarketData),
+            Effect.provideService(BrokerEventStore, executionStore),
+            Effect.provideService(FillAccountingStore, executionStore),
+            Effect.provideService(ValuationStore, executionStore),
+            Effect.provideService(ReconciliationStore, executionStore),
+            Effect.provideService(AuthorityGenerationStore, executionStore),
+            Effect.provideService(AuthorityRestrictionStore, executionStore),
+            Effect.provideService(WriterFence, writerFence),
+            Effect.provideService(IntentStore, intentStore),
+            Effect.provideService(MutationStore, mutationStore),
+            Effect.forkScoped({ startImmediately: true }),
+          )
+          yield* Deferred.await(firstPass).pipe(Effect.timeout('1 second'))
+          yield* TestClock.withLive(Effect.sleep(5))
+          yield* TestClock.adjust(99)
+          expect(publicationReads).toBe(1)
+          expect(mutationReconciliations).toBe(1)
+          yield* TestClock.adjust(1)
+          yield* Deferred.await(secondPublicationRead).pipe(Effect.timeout('1 second'))
+          yield* Fiber.interrupt(fiber)
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+    mutationPhase = false
+
+    expect(mutationEvents.indexOf('reconcile:2')).toBeLessThan(mutationEvents.indexOf('publication:2'))
+    expect(publicationReads).toBe(2)
+    expect(mutationReconciliations).toBe(2)
     expect(authorityRestrictions).toBe(2)
   })
 

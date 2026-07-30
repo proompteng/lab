@@ -65,13 +65,23 @@ import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputMan
 
 type CycleLoopTestOptions<E, ContextR, DecisionR> = Omit<
   AutonomousCycleLoopOptions<E, ContextR, DecisionR>,
-  'reconcileNotDue' | 'reconciliationIntervalMs'
+  'cyclePassTimeoutMs' | 'reconcileNotDue' | 'reconciliationIntervalMs'
 > &
-  Partial<Pick<AutonomousCycleLoopOptions<E, ContextR, DecisionR>, 'reconcileNotDue' | 'reconciliationIntervalMs'>>
+  Partial<
+    Pick<
+      AutonomousCycleLoopOptions<E, ContextR, DecisionR>,
+      'cyclePassTimeoutMs' | 'reconcileNotDue' | 'reconciliationIntervalMs'
+    >
+  >
 
 const cycleLoop = <E, ContextR, DecisionR>(options: CycleLoopTestOptions<E, ContextR, DecisionR>) =>
   Effect.fromResult(
-    makeAutonomousCycleLoop({ reconcileNotDue: Effect.void, reconciliationIntervalMs: 30_000, ...options }),
+    makeAutonomousCycleLoop({
+      cyclePassTimeoutMs: 50,
+      reconcileNotDue: Effect.void,
+      reconciliationIntervalMs: 30_000,
+      ...options,
+    }),
   )
 
 const signalCalendarVersion = 'signal-XNYS-2026-v1'
@@ -1522,6 +1532,7 @@ describe('autonomous cycle runner', () => {
           const completed = yield* Deferred.make<CyclePassObservation>()
           const loop = yield* cycleLoop({
             context: Effect.succeed(context()),
+            cyclePassTimeoutMs: 25,
             observePass: (observation) =>
               Effect.sync(() => {
                 events.push('observe')
@@ -1614,6 +1625,75 @@ describe('autonomous cycle runner', () => {
     expect(events.indexOf('reconcile:2')).toBeLessThan(events.indexOf('calendar:2'))
     expect(events.indexOf('observe:2')).toBeLessThan(events.indexOf('calendar:2'))
     expect(calendarReads).toBe(2)
+    expect(reconciliations).toBe(2)
+    expect(control).toEqual({ acquisitions: [], binds: 0 })
+  })
+
+  test('defers a near-deadline poll whose bounded pass would cross reconciliation cadence', async () => {
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const events: string[] = []
+    let observations = 0
+    let reconciliations = 0
+    let publicationReads = 0
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse('2026-01-29T21:20:00.000Z'))
+          const firstPass = yield* Deferred.make<void>()
+          const secondPublicationRead = yield* Deferred.make<void>()
+          const loop = yield* cycleLoop({
+            context: Effect.succeed(context()),
+            cyclePassTimeoutMs: 2,
+            observePass: () =>
+              Effect.sync(() => {
+                observations += 1
+                events.push(`observe:${observations.toString()}`)
+                return observations
+              }).pipe(
+                Effect.flatMap((count) =>
+                  count === 1 ? Deferred.succeed(firstPass, undefined).pipe(Effect.asVoid) : Effect.void,
+                ),
+              ),
+            pollIntervalMs: 99,
+            reconciliationIntervalMs: 100,
+            reconcileNotDue: Effect.sync(() => {
+              reconciliations += 1
+              events.push(`reconcile:${reconciliations.toString()}`)
+            }),
+          })
+          const fiber = yield* provide(
+            loop,
+            brokerRead(() => Effect.die(new Error('missing-publication loop must not read the broker calendar'))),
+            cycleStore(control),
+            marketDataService(
+              Effect.sync(() => {
+                publicationReads += 1
+                events.push(`publication:${publicationReads.toString()}`)
+                return publicationReads
+              }).pipe(
+                Effect.tap((count) =>
+                  count === 2 ? Deferred.succeed(secondPublicationRead, undefined).pipe(Effect.asVoid) : Effect.void,
+                ),
+                Effect.as({ outcome: 'MISSING' as const, observedAt: '2026-01-29T21:20:00.000Z' }),
+              ),
+            ),
+          ).pipe(Effect.forkScoped({ startImmediately: true }))
+
+          yield* Deferred.await(firstPass)
+          yield* TestClock.withLive(Effect.sleep(5))
+          yield* TestClock.adjust(99)
+          expect(publicationReads).toBe(1)
+          expect(reconciliations).toBe(1)
+          yield* TestClock.adjust(1)
+          yield* Deferred.await(secondPublicationRead)
+          yield* Fiber.interrupt(fiber)
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(events.indexOf('reconcile:2')).toBeLessThan(events.indexOf('publication:2'))
+    expect(publicationReads).toBe(2)
     expect(reconciliations).toBe(2)
     expect(control).toEqual({ acquisitions: [], binds: 0 })
   })
@@ -1841,13 +1921,10 @@ describe('autonomous cycle runner', () => {
           yield* TestClock.setTime(Date.parse('2026-01-29T21:20:00.000Z'))
           const first = yield* Deferred.make<void>()
           const second = yield* Deferred.make<void>()
-          const third = yield* Deferred.make<void>()
-          const fourth = yield* Deferred.make<void>()
-          const fifth = yield* Deferred.make<void>()
-          const sixth = yield* Deferred.make<void>()
-          const completions = [first, second, third, fourth, fifth, sixth]
+          const completions = [first, second]
           const loop = yield* cycleLoop({
             context: Effect.succeed(context()),
+            cyclePassTimeoutMs: 2,
             observePass: (observation) =>
               Effect.sync(() => {
                 observations.push(observation)
@@ -1857,8 +1934,8 @@ describe('autonomous cycle runner', () => {
                   completion === undefined ? Effect.void : Deferred.succeed(completion, undefined).pipe(Effect.asVoid),
                 ),
               ),
-            pollIntervalMs: 50,
-            reconciliationIntervalMs: 100,
+            pollIntervalMs: 5,
+            reconciliationIntervalMs: 10,
             reconcileNotDue: Effect.suspend(() => {
               attempts += 1
               return attempts === 1 ? Effect.fail(failure) : Effect.void
@@ -1878,21 +1955,18 @@ describe('autonomous cycle runner', () => {
 
           yield* Deferred.await(first)
           yield* Deferred.await(second)
-          yield* TestClock.adjust(50)
-          yield* Deferred.await(third)
-          yield* TestClock.adjust(50)
-          yield* Deferred.await(fourth)
-          yield* Deferred.await(fifth)
-          yield* TestClock.adjust(50)
-          yield* Deferred.await(sixth)
+          for (let elapsed = 0; elapsed < 15; elapsed += 1) {
+            yield* TestClock.withLive(Effect.sleep(1))
+            yield* TestClock.adjust(1)
+          }
           yield* Fiber.interrupt(fiber)
         }),
       ).pipe(Effect.provide(TestClock.layer())),
     )
 
     expect(attempts).toBe(2)
-    expect(publicationReads).toBe(4)
-    expect(observations).toHaveLength(6)
+    expect(publicationReads).toBe(3)
+    expect(observations).toHaveLength(5)
     expect(observations[0]).toMatchObject({ outcome: 'SUCCEEDED', result: { outcome: 'NO_PUBLICATION' } })
     expect(observations[1]).toMatchObject({
       outcome: 'FAILED',
@@ -1902,12 +1976,8 @@ describe('autonomous cycle runner', () => {
       outcome: 'FAILED',
       error: { operation: 'reconcile-not-due', message: failure.message },
     })
-    expect(observations[3]).toMatchObject({
-      outcome: 'FAILED',
-      error: { operation: 'reconcile-not-due', message: failure.message },
-    })
+    expect(observations[3]).toMatchObject({ outcome: 'SUCCEEDED', result: { outcome: 'NO_PUBLICATION' } })
     expect(observations[4]).toMatchObject({ outcome: 'SUCCEEDED', result: { outcome: 'NO_PUBLICATION' } })
-    expect(observations[5]).toMatchObject({ outcome: 'SUCCEEDED', result: { outcome: 'NO_PUBLICATION' } })
     expect(control).toEqual({ acquisitions: [], binds: 0 })
   })
 
@@ -2813,12 +2883,14 @@ describe('autonomous cycle runner', () => {
           const observed = yield* Deferred.make<CyclePassObservation>()
           const loop = yield* cycleLoop({
             context: Effect.succeed(dueContext),
+            cyclePassTimeoutMs: 604_800_000,
             observePass: (observation) =>
               Effect.sync(() => observations.push(observation)).pipe(
                 Effect.andThen(Deferred.succeed(observed, observation)),
                 Effect.asVoid,
               ),
             pollIntervalMs: 60_000,
+            reconciliationIntervalMs: 604_800_000,
             reconcileNotDue: Effect.sync(() => {
               notDueReconciliations += 1
             }),
@@ -2920,7 +2992,7 @@ describe('autonomous cycle runner', () => {
     expect(accountReads).toBe(1)
     expect(positionReads).toBe(1)
     expect(orderReads).toBe(1)
-    expect(notDueReconciliations).toBe(1)
+    expect(notDueReconciliations).toBe(0)
     expect(control.binds).toBe(1)
     expect(mutationSubmits).toBe(0)
     expect(mutationCancels).toBe(0)
@@ -2954,6 +3026,54 @@ describe('autonomous cycle runner', () => {
       ),
     )
     expect(interrupted).toBe(true)
+    expect(control).toEqual({ acquisitions: [], binds: 0 })
+  })
+
+  test('interrupts a cycle pass that cannot complete before its admission deadline', async () => {
+    const started = await Effect.runPromise(Deferred.make<void>())
+    let interrupted = false
+    const discovery = Deferred.succeed(started, undefined).pipe(
+      Effect.andThen(Effect.never),
+      Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true))),
+    )
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const observation = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
+          const observed = yield* Deferred.make<CyclePassObservation>()
+          const loop = yield* cycleLoop({
+            context: Effect.succeed(context()),
+            cyclePassTimeoutMs: 10,
+            observePass: (pass) => Deferred.succeed(observed, pass).pipe(Effect.asVoid),
+            pollIntervalMs: 100,
+            reconciliationIntervalMs: 100,
+            reconcileNotDue: Effect.void,
+          })
+          const fiber = yield* provide(
+            loop,
+            brokerRead(() => Effect.die(new Error('timed-out publication read must not reach the broker'))),
+            cycleStore(control),
+            marketDataService(discovery),
+          ).pipe(Effect.forkScoped({ startImmediately: true }))
+          yield* Deferred.await(started)
+          yield* TestClock.adjust(10)
+          const result = yield* Deferred.await(observed)
+          yield* Fiber.interrupt(fiber)
+          return result
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(interrupted).toBe(true)
+    expect(observation).toMatchObject({
+      outcome: 'FAILED',
+      error: {
+        operation: 'run-cycle-pass',
+        failure: 'operational',
+        message: 'autonomous cycle pass did not complete or reconcile within 10ms',
+      },
+    })
     expect(control).toEqual({ acquisitions: [], binds: 0 })
   })
 
@@ -3295,6 +3415,7 @@ describe('autonomous cycle runner', () => {
     for (const pollIntervalMs of [0, -1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
       const result = makeAutonomousCycleLoop({
         context: Effect.succeed(context()),
+        cyclePassTimeoutMs: 50,
         observePass: ignorePass,
         pollIntervalMs,
         reconciliationIntervalMs: 30_000,
@@ -3310,6 +3431,7 @@ describe('autonomous cycle runner', () => {
     for (const reconciliationIntervalMs of [0, -1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
       const result = makeAutonomousCycleLoop({
         context: Effect.succeed(context()),
+        cyclePassTimeoutMs: 50,
         observePass: ignorePass,
         pollIntervalMs: 100,
         reconciliationIntervalMs,

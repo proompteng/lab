@@ -16,6 +16,20 @@ export const validateReconciliationInterval = (
     ? Result.succeed(reconciliationIntervalMs)
     : Result.fail(runnerError('configure', 'invalid-config', 'reconciliation interval must be a positive safe integer'))
 
+export const validateCyclePassTimeout = (
+  cyclePassTimeoutMs: number,
+  reconciliationIntervalMs: number,
+): Result.Result<number, CycleRunnerError> =>
+  Number.isSafeInteger(cyclePassTimeoutMs) && cyclePassTimeoutMs > 0 && cyclePassTimeoutMs <= reconciliationIntervalMs
+    ? Result.succeed(cyclePassTimeoutMs)
+    : Result.fail(
+        runnerError(
+          'configure',
+          'invalid-config',
+          'cycle pass timeout must be a positive safe integer no longer than the reconciliation interval',
+        ),
+      )
+
 export const decideIdleReconciliationCadence = (
   state: ReconciliationCadenceState,
   nowNanos: bigint,
