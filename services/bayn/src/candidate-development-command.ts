@@ -386,7 +386,7 @@ const CandidateDevelopmentPreflightInputSchema = Schema.Struct({
   expectedStrategyProtocolHash: Sha256Schema,
   officialSessions: Schema.Array(IsoDateSchema),
   signalSessionDates: Schema.Array(IsoDateSchema),
-  featureLookbackSessions: PositiveIntegerSchema,
+  featureLookbackSessions: NonNegativeIntegerSchema,
 })
 
 const decodeCandidateDevelopmentPreflightInput = Schema.decodeUnknownResult(

@@ -293,6 +293,30 @@ describe('candidate development command', () => {
     })
   })
 
+  test('preserves the protocol-valid zero-session feature lookback', () => {
+    const program = validateCandidateDevelopmentExecutableProgram({
+      schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
+      input: {
+        candidateOrdinal: 16,
+        priorTrialCount: 15,
+        expectedStrategyProtocolHash: 'a'.repeat(64),
+        officialSessions: [],
+        signalSessionDates: [],
+        featureLookbackSessions: 0,
+      },
+      effects: {
+        preregisterCandidate: () => Effect.succeed('registration'),
+        loadDevelopmentData: () => Effect.succeed('data'),
+        evaluateDevelopment: () => Effect.fail('not-executed'),
+      },
+    })
+
+    expect(program).toMatchObject({
+      _tag: 'Success',
+      success: { input: { featureLookbackSessions: 0 } },
+    })
+  })
+
   test('keeps dynamic module evaluation attached through interruption', async () => {
     const program = {
       schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
