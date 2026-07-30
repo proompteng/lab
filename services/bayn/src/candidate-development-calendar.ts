@@ -1,7 +1,39 @@
 import { candidateDevelopmentCalendarContract } from './candidate-development'
 import type { IsoDate } from './schemas'
 
-export const frozenCandidateDevelopmentTrialHistory = {
+export interface CandidateDevelopmentNextPreregistration {
+  readonly schemaVersion: 'bayn.candidate-development-next-preregistration.v1'
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly strategyProtocolHash: string
+  readonly modulePath: string
+  readonly preregistration: {
+    readonly sourceRevision: string
+    readonly path: string
+    readonly blobOid: string
+  }
+}
+
+interface CandidateDevelopmentTrialHistory {
+  readonly schemaVersion: 'bayn.candidate-development-trial-history.v1'
+  readonly completedCandidateOrdinals: readonly number[]
+  readonly latestTerminalEvidence: {
+    readonly candidateOrdinal: number
+    readonly priorTrialCount: number
+    readonly terminalStatus: 'HOLD_REJECT'
+    readonly sourceRevision: string
+  }
+  readonly candidatePreregistration: {
+    readonly candidateOrdinal: number
+    readonly priorTrialCount: number
+    readonly sourceRevision: string
+    readonly path: string
+    readonly blobOid: string
+  }
+  readonly nextCandidatePreregistration: CandidateDevelopmentNextPreregistration | null
+}
+
+export const frozenCandidateDevelopmentTrialHistory: CandidateDevelopmentTrialHistory = {
   schemaVersion: 'bayn.candidate-development-trial-history.v1',
   completedCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
   latestTerminalEvidence: {
@@ -18,7 +50,7 @@ export const frozenCandidateDevelopmentTrialHistory = {
     blobOid: 'f602e3c8fd1b85768404d5fbc439775cdcd2570b',
   },
   nextCandidatePreregistration: null,
-} as const
+}
 
 const fullMarketClosures = new Set<IsoDate>([
   '2016-01-18',

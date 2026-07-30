@@ -618,7 +618,32 @@ export const bindCandidateDevelopmentVerifiedSource = (
       }),
     )
   }
-  const candidatePreregistration = frozenCandidateDevelopmentTrialHistory.candidatePreregistration
+  const nextCandidatePreregistration = frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration
+  if (nextCandidatePreregistration !== null) {
+    const expectedNextCandidateOrdinal = completedCandidateOrdinals.length + 1
+    const expectedPriorTrialCount = completedCandidateOrdinals.length
+    const nextBindings = [
+      ['candidateOrdinal', expectedNextCandidateOrdinal, nextCandidatePreregistration.candidateOrdinal],
+      ['priorTrialCount', expectedPriorTrialCount, nextCandidatePreregistration.priorTrialCount],
+      ['input.candidateOrdinal', nextCandidatePreregistration.candidateOrdinal, input.candidateOrdinal],
+      ['input.priorTrialCount', nextCandidatePreregistration.priorTrialCount, input.priorTrialCount],
+      ['strategyProtocolHash', nextCandidatePreregistration.strategyProtocolHash, input.expectedStrategyProtocolHash],
+      ['modulePath', nextCandidatePreregistration.modulePath, files.modulePath],
+    ] as const
+    for (const [field, expected, observed] of nextBindings) {
+      if (expected !== observed) {
+        return Result.fail(
+          sourceVerificationFailure('verify-program-binding', {
+            field: `trialHistory.nextCandidatePreregistration.${field}`,
+            expected,
+            observed,
+          }),
+        )
+      }
+    }
+  }
+  const candidatePreregistration =
+    nextCandidatePreregistration ?? frozenCandidateDevelopmentTrialHistory.candidatePreregistration
   if (
     input.candidateOrdinal !== candidatePreregistration.candidateOrdinal ||
     input.priorTrialCount !== candidatePreregistration.priorTrialCount
@@ -711,6 +736,31 @@ const preregisterCandidateDevelopmentAttempt = (
         latestTerminalEvidence: frozenCandidateDevelopmentTrialHistory.latestTerminalEvidence,
       }),
     )
+  }
+  const completedCandidateOrdinals = frozenCandidateDevelopmentTrialHistory.completedCandidateOrdinals
+  const sourceManifest = verifiedSource.sourceManifest
+  const bindings = [
+    ['candidateOrdinal', completedCandidateOrdinals.length + 1, nextCandidatePreregistration.candidateOrdinal],
+    ['priorTrialCount', completedCandidateOrdinals.length, nextCandidatePreregistration.priorTrialCount],
+    ['source.candidateOrdinal', nextCandidatePreregistration.candidateOrdinal, sourceManifest.candidateOrdinal],
+    ['source.priorTrialCount', nextCandidatePreregistration.priorTrialCount, sourceManifest.priorTrialCount],
+    [
+      'source.strategyProtocolHash',
+      nextCandidatePreregistration.strategyProtocolHash,
+      sourceManifest.strategyProtocolHash,
+    ],
+    ['source.modulePath', nextCandidatePreregistration.modulePath, verifiedSource.modulePath],
+  ] as const
+  for (const [field, expected, observed] of bindings) {
+    if (expected !== observed) {
+      return Result.fail(
+        sourceVerificationFailure('verify-program-binding', {
+          field: `trialHistory.nextCandidatePreregistration.${field}`,
+          expected,
+          observed,
+        }),
+      )
+    }
   }
   return Result.succeed(verifiedSource.sourceManifestSha256)
 }
