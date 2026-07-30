@@ -46,6 +46,31 @@ const validateCycleTiming = (
         cycleStallThresholdMs: parsed.cycleStallThresholdMs,
       })
 
+const validatePaperReconciliationTiming = (
+  parsed: ParsedRuntimeConfig,
+  execution: ExecutionPolicy,
+  alpaca: AlpacaRuntimeConfig | undefined,
+): Result.Result<void, RuntimeConfigResolutionFailure> => {
+  const mutationCapable = execution.brokerAccess === BrokerAccess.Mutation
+  if (!mutationCapable || alpaca === undefined) return Result.succeed(undefined)
+  const reconciliationPassTimeoutMs = parsed.operationTimeoutMs
+  const priorReconciliationTailTimeoutMs = reconciliationPassTimeoutMs
+  const requiredFreshnessWindowMs =
+    BigInt(alpaca.reconciliationIntervalMs) +
+    BigInt(priorReconciliationTailTimeoutMs) +
+    BigInt(reconciliationPassTimeoutMs)
+  if (requiredFreshnessWindowMs < BigInt(parsed.reconciliationStaleThresholdMs)) {
+    return Result.succeed(undefined)
+  }
+  return fail({
+    _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold',
+    reconciliationIntervalMs: alpaca.reconciliationIntervalMs,
+    priorReconciliationTailTimeoutMs,
+    reconciliationPassTimeoutMs,
+    reconciliationStaleThresholdMs: parsed.reconciliationStaleThresholdMs,
+  })
+}
+
 const credentialPresence = (parsed: ParsedRuntimeConfig): AlpacaCredentialPresence => ({
   accountId: parsed.configuredAlpaca.accountId !== undefined,
   keyId: parsed.configuredAlpaca.key !== undefined,
@@ -330,6 +355,8 @@ export const resolveRuntimeConfig = (
   if (Result.isFailure(alpaca)) return Result.fail(alpaca.failure)
   const execution = resolvePolicy(parsed, alpaca.success)
   if (Result.isFailure(execution)) return Result.fail(execution.failure)
+  const reconciliationTiming = validatePaperReconciliationTiming(parsed, execution.success, alpaca.success)
+  if (Result.isFailure(reconciliationTiming)) return Result.fail(reconciliationTiming.failure)
   const legacy = validateLegacyAuthority(parsed, execution.success)
   if (Result.isFailure(legacy)) return Result.fail(legacy.failure)
   const operation = validateOperation(parsed, execution.success, alpaca.success)

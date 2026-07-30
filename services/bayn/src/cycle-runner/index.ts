@@ -9,6 +9,7 @@ export type {
 export {
   boundedCyclePublications,
   cyclePassLogFacts,
+  decideIdleReconciliationCadence,
   isMonthEndCycleDue,
   makeDueCycleDraft,
   marketCalendarQueryForPublications,
@@ -17,6 +18,9 @@ export {
   selectCycleCalendarCandidate,
   selectDiscoveredPublications,
   selectNextExecutionSession,
+  shouldDeferCyclePollForReconciliation,
+  validateCyclePassTimeout,
+  validateReconciliationInterval,
 } from './decisions'
 export { makeAutonomousCycleLoop } from './loop'
 export { discoverAutonomousCyclePass, runAutonomousCyclePass } from './program'

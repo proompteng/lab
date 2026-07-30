@@ -256,6 +256,127 @@ describe('pure runtime configuration resolution', () => {
     })
   })
 
+  test('reserves the prior post-timestamp tail and next full-pass deadline for every mutation capital mode', () => {
+    const paper = {
+      configuredAlpaca: {
+        ...alpaca(BrokerEnvironment.Sandbox),
+        reconciliationIntervalMs: 59_999,
+      },
+      legacyMaximumAuthority: 'PAPER' as const,
+      brokerAccess: BrokerAccess.Mutation,
+      capitalAuthority: CapitalAuthoritySelection.Sandbox,
+    }
+    const accepted = Result.getOrThrow(resolveRuntimeConfig(resolutionInput(paper)))
+    expect(accepted).toMatchObject({
+      runtimeMode: 'AutonomousService',
+      alpaca: { reconciliationIntervalMs: 59_999 },
+      execution: {
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: { _tag: CapitalAuthorityKind.Sandbox },
+      },
+    })
+
+    expectFailure(
+      {
+        ...paper,
+        configuredAlpaca: {
+          ...paper.configuredAlpaca,
+          reconciliationIntervalMs: 60_000,
+        },
+      },
+      {
+        _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold',
+        reconciliationIntervalMs: 60_000,
+        priorReconciliationTailTimeoutMs: 30_000,
+        reconciliationPassTimeoutMs: 30_000,
+        reconciliationStaleThresholdMs: 120_000,
+      },
+    )
+    expectFailure(
+      {
+        ...paper,
+        configuredAlpaca: {
+          ...paper.configuredAlpaca,
+          reconciliationIntervalMs: 89_999,
+        },
+      },
+      {
+        _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold',
+        reconciliationIntervalMs: 89_999,
+        priorReconciliationTailTimeoutMs: 30_000,
+        reconciliationPassTimeoutMs: 30_000,
+        reconciliationStaleThresholdMs: 120_000,
+      },
+    )
+    expectFailure(
+      {
+        ...paper,
+        operationTimeoutMs: 120_000,
+        configuredAlpaca: {
+          ...paper.configuredAlpaca,
+          reconciliationIntervalMs: 1,
+        },
+      },
+      {
+        _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold',
+        reconciliationIntervalMs: 1,
+        priorReconciliationTailTimeoutMs: 120_000,
+        reconciliationPassTimeoutMs: 120_000,
+        reconciliationStaleThresholdMs: 120_000,
+      },
+    )
+
+    const live = {
+      configuredAlpaca: {
+        ...alpaca(BrokerEnvironment.Live),
+        reconciliationIntervalMs: 59_999,
+      },
+      legacyMaximumAuthority: undefined,
+      brokerAccess: BrokerAccess.Mutation,
+      capitalAuthority: CapitalAuthoritySelection.LiveGrant,
+      liveCapitalGrantHash,
+    }
+    expect(Result.getOrThrow(resolveRuntimeConfig(resolutionInput(live)))).toMatchObject({
+      runtimeMode: 'AutonomousService',
+      alpaca: { reconciliationIntervalMs: 59_999 },
+      execution: {
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: { _tag: CapitalAuthorityKind.LiveGrant, grantHash: liveCapitalGrantHash },
+      },
+    })
+    expectFailure(
+      {
+        ...live,
+        configuredAlpaca: {
+          ...live.configuredAlpaca,
+          reconciliationIntervalMs: 60_000,
+        },
+      },
+      {
+        _tag: 'PaperReconciliationCadenceNotWithinStaleThreshold',
+        reconciliationIntervalMs: 60_000,
+        priorReconciliationTailTimeoutMs: 30_000,
+        reconciliationPassTimeoutMs: 30_000,
+        reconciliationStaleThresholdMs: 120_000,
+      },
+    )
+
+    const observe = Result.getOrThrow(
+      resolveRuntimeConfig(
+        resolutionInput({
+          configuredAlpaca: {
+            ...alpaca(BrokerEnvironment.Sandbox),
+            reconciliationIntervalMs: 120_000,
+          },
+        }),
+      ),
+    )
+    expect(observe).toMatchObject({
+      execution: { brokerAccess: BrokerAccess.ReadOnly, capitalAuthority: { _tag: CapitalAuthorityKind.None } },
+      alpaca: { reconciliationIntervalMs: 120_000 },
+    })
+  })
+
   test('translates the historical discovery token into a read-only candidate operation', () => {
     const config = Result.getOrThrow(
       resolveRuntimeConfig(

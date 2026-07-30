@@ -1,4 +1,4 @@
-import { Duration, Effect, Option, pipe, Result, Schedule } from 'effect'
+import { Clock, Data, Duration, Effect, Option, pipe, Ref, Result } from 'effect'
 
 import type { AutonomousCycleLoop, AutonomousCycleStartup } from './app'
 import { BrokerRead, type BrokerReadShape, type MarketCalendarQuery } from './broker/alpaca'
@@ -7,15 +7,19 @@ import {
   CycleDecisionBuildError,
   CycleRunnerError,
   cyclePassLogFacts,
+  decideIdleReconciliationCadence,
   makeAutonomousCycleLoop,
   marketCalendarQueryForSignal,
   runAutonomousCyclePass,
+  shouldDeferCyclePollForReconciliation,
+  validateCyclePassTimeout,
+  validateReconciliationInterval,
   type CycleRunContext,
   type CyclePassObservation,
   type CycleRunResult,
 } from './cycle-runner'
 import { validateCycleLoopInterval } from './cycle-runner/decisions'
-import { CycleNotDueReconciliationError } from './cycle-runner/model'
+import { CycleNotDueReconciliationError, type ReconciliationCadenceState } from './cycle-runner/model'
 import { CycleStore } from './db/cycle-store'
 import {
   BrokerEventStore,
@@ -38,7 +42,7 @@ import {
 } from './execution-session'
 import { makeFillTerms, MICROS } from './execution-model'
 import { makeStrategyProtocolHash } from './contracts'
-import { operationalError, type OperationalError } from './errors'
+import { OperationalError, operationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
 import { MarketData, type MarketDataService } from './market-data'
 import {
@@ -101,7 +105,46 @@ export const loadObserveRiskPolicy = (accountId: string, allowedSymbols: readonl
 
 type ObserveStrategy = Pick<Strategy, 'currentDecision'>
 
-type ReconciliationPassError = Effect.Error<typeof runOnce>
+class ReconciliationPassTimeoutError extends Data.TaggedError('ReconciliationPassTimeoutError')<{
+  readonly timeoutMs: number
+  readonly message: string
+}> {}
+
+type ReconciliationPassError = Effect.Error<typeof runOnce> | ReconciliationPassTimeoutError
+
+const boundedReconciliationPass = (
+  timeoutMs: number,
+): Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime> =>
+  runOnce.pipe(
+    Effect.timeoutOrElse({
+      duration: timeoutMs,
+      orElse: () =>
+        Effect.fail(
+          new ReconciliationPassTimeoutError({
+            timeoutMs,
+            message: `same-pass broker reconciliation timed out after ${timeoutMs.toString()}ms`,
+          }),
+        ),
+    }),
+  )
+
+const mutationCyclePassTimeoutError = (timeoutMs: number): CycleRunnerError =>
+  new CycleRunnerError({
+    operation: 'run-cycle-pass',
+    failure: 'operational',
+    message: `mutation autonomous cycle pass did not complete or reconcile within ${timeoutMs.toString()}ms`,
+  })
+
+const runMutationPassWithinTimeout = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  timeoutMs: number,
+): Effect.Effect<A, E | CycleRunnerError, R> =>
+  effect.pipe(
+    Effect.timeoutOrElse({
+      duration: Duration.millis(timeoutMs),
+      orElse: () => Effect.fail(mutationCyclePassTimeoutError(timeoutMs)),
+    }),
+  )
 
 export type ObserveDecisionInput<R = never> = {
   readonly authorityGenerationHash: string
@@ -181,6 +224,14 @@ const reconciliationOperationalError = (cause: ReconciliationPassError): Operati
       return operationalError('strategy', 'reconciliation', 'same-pass reconciliation failed', cause)
     case 'WriterFenceError':
       return operationalError('database', 'reconciliation', 'same-pass reconciliation fence operation failed', cause)
+    case 'ReconciliationPassTimeoutError':
+      return new OperationalError({
+        component: 'market-data',
+        operation: 'reconciliation',
+        message: cause.message,
+        retryable: false,
+        cause,
+      })
   }
 }
 
@@ -553,6 +604,8 @@ export type ObserveAutonomousCycleInput = {
   readonly accountId: string
   readonly authorityGenerationHash: string
   readonly pollIntervalMs: number
+  readonly reconciliationIntervalMs: number
+  readonly reconciliationPassTimeoutMs: number
   readonly strategy: Pick<Strategy, 'currentDecision' | 'parameters' | 'provenance'>
 }
 
@@ -629,18 +682,19 @@ const makeObserveAutonomousLoop = (
   preparation: ObserveStartupPreparation,
   policy: Policy,
 ): Result.Result<AutonomousCycleLoop<ObserveRuntime>, OperationalError> => {
+  const reconcile = boundedReconciliationPass(input.reconciliationPassTimeoutMs)
   const context: CycleRunContext<ObserveDecisionRuntime> = {
     qualificationRunId: startup.qualificationRunId,
     strategyProtocolHash: preparation.strategyProtocolHash,
     accountId: input.accountId,
     executionPolicy: preparation.executionPolicy,
-    buildDecision: (cycle) =>
+    buildDecision: (cycle, reconciliationCompleted = Effect.void) =>
       buildObserveCycleDecision({
         authorityGenerationHash: input.authorityGenerationHash,
         cycle,
         executionModel: preparation.executionModel,
         policy,
-        reconcile: runOnce,
+        reconcile: reconcile.pipe(Effect.tap(() => reconciliationCompleted)),
         strategy: input.strategy,
       }).pipe(Effect.mapError(decisionBuildError)),
   }
@@ -648,8 +702,10 @@ const makeObserveAutonomousLoop = (
     makeAutonomousCycleLoop({
       context: Effect.succeed(context),
       observePass: (observation) => observePass(startup.recordPass, observation),
+      cyclePassTimeoutMs: Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs),
       pollIntervalMs: input.pollIntervalMs,
-      reconcileNotDue: runOnce.pipe(Effect.mapError(notDueReconciliationError), Effect.asVoid),
+      reconciliationIntervalMs: input.reconciliationIntervalMs,
+      reconcileNotDue: reconcile.pipe(Effect.mapError(notDueReconciliationError), Effect.asVoid),
     }),
     Result.mapError((cause) =>
       operationalError('strategy', 'cycle-loop', 'autonomous cycle loop failed to start', cause),
@@ -825,12 +881,13 @@ const mutationDecisionInput = (
   preparation: ObserveStartupPreparation,
   policy: Policy,
   cycle: AutonomousCycle,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
 ): ObserveDecisionInput<ObserveDecisionRuntime> => ({
   authorityGenerationHash: input.authorityGenerationHash,
   cycle,
   executionModel: preparation.executionModel,
   policy,
-  reconcile: runOnce,
+  reconcile,
   strategy: input.strategy,
 })
 
@@ -910,12 +967,13 @@ const prepareNextMutationIntent = (
   policy: Policy,
   cycle: AutonomousCycle,
   document: ObserveShadowDecisionDocument,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
 ): Effect.Effect<string | undefined, CycleRunnerError, ObserveDecisionRuntime | IntentStore | MutationStore> =>
   Effect.gen(function* () {
     yield* Effect.fromResult(validateBoundMutationDocument(input, cycle, policy, document))
     if (document.targetPlan.status !== TargetPlanStatus.Planned) return undefined
 
-    const decisionInput = mutationDecisionInput(input, preparation, policy, cycle)
+    const decisionInput = mutationDecisionInput(input, preparation, policy, cycle, reconcile)
     const reads = yield* Effect.fromResult(prepareObserveDecisionReads(decisionInput)).pipe(
       Effect.mapError((cause) => mutationRunnerError('mutation cycle decision reads are invalid', cause, 'contract')),
     )
@@ -1142,6 +1200,7 @@ const executeBoundMutationCycle = (
   preparation: ObserveStartupPreparation,
   policy: Policy,
   cycle: AutonomousCycle,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
 ): Effect.Effect<void, CycleRunnerError, MutationRuntime> =>
   readBoundMutationDocument(cycle).pipe(
     Effect.flatMap((document) =>
@@ -1149,7 +1208,7 @@ const executeBoundMutationCycle = (
         const maximumPasses =
           document.targetPlan.status === TargetPlanStatus.Planned ? document.targetPlan.intentTargets.length + 1 : 1
         for (let pass = 0; pass < maximumPasses; pass += 1) {
-          const intentId = yield* prepareNextMutationIntent(input, preparation, policy, cycle, document)
+          const intentId = yield* prepareNextMutationIntent(input, preparation, policy, cycle, document, reconcile)
           if (intentId === undefined) return
           const executed = yield* executeMutationIntent(input.executionProgram, intentId)
           const delayMs = mutationIntentReconciliationDelayMs(executed)
@@ -1184,17 +1243,18 @@ const runMutationCyclePass = (
   preparation: ObserveStartupPreparation,
   policy: Policy,
   context: CycleRunContext<ObserveDecisionRuntime>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, MutationRuntime> =>
   readUnfinishedMutationCycle(context).pipe(
     Effect.flatMap((unfinished) =>
       mutationBound(unfinished)
-        ? executeBoundMutationCycle(input, preparation, policy, unfinished).pipe(
+        ? executeBoundMutationCycle(input, preparation, policy, unfinished, reconcile).pipe(
             Effect.andThen(runAutonomousCyclePass(context)),
           )
         : runAutonomousCyclePass(context).pipe(
             Effect.flatMap((result) =>
               result.outcome === 'RECOVERED' && result.action === 'BOUND_DECISION'
-                ? executeBoundMutationCycle(input, preparation, policy, result.cycle).pipe(
+                ? executeBoundMutationCycle(input, preparation, policy, result.cycle, reconcile).pipe(
                     Effect.andThen(runAutonomousCyclePass(context)),
                   )
                 : Effect.succeed(result),
@@ -1214,27 +1274,261 @@ const observeMutationPass = (
   )
 }
 
+const mutationNanosPerMillisecond = 1_000_000n
+
+const mutationIntervalNanos = (intervalMs: number): bigint => BigInt(intervalMs) * mutationNanosPerMillisecond
+
+const mutationSleepUntil = (deadlineNanos: bigint): Effect.Effect<void> =>
+  Clock.currentTimeNanos.pipe(
+    Effect.flatMap((nowNanos) => {
+      const remainingNanos = deadlineNanos - nowNanos
+      if (remainingNanos <= 0n) return Effect.void
+      const remainingMs = Number((remainingNanos + mutationNanosPerMillisecond - 1n) / mutationNanosPerMillisecond)
+      return Effect.sleep(Duration.millis(remainingMs))
+    }),
+  )
+
+const mutationIdleReconciliationError = (cause: ReconciliationPassError): CycleRunnerError => {
+  const converted = notDueReconciliationError(cause)
+  return new CycleRunnerError({
+    operation: 'reconcile-not-due',
+    failure: converted.failure,
+    message: converted.message,
+    cause: converted,
+  })
+}
+
+const markMutationReconciliationCompleted = (cadence: Ref.Ref<ReconciliationCadenceState>): Effect.Effect<void> =>
+  Clock.currentTimeNanos.pipe(Effect.flatMap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos })))
+
+const attemptMutationIdleReconciliation = (
+  cadence: Ref.Ref<ReconciliationCadenceState>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+): Effect.Effect<void, CycleRunnerError, ObserveDecisionRuntime> =>
+  Clock.currentTimeNanos.pipe(
+    Effect.tap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos })),
+    Effect.andThen(
+      reconcile.pipe(
+        Effect.asVoid,
+        Effect.mapError(mutationIdleReconciliationError),
+        Effect.tapError((lastFailure) =>
+          Clock.currentTimeNanos.pipe(
+            Effect.flatMap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos, lastFailure })),
+          ),
+        ),
+      ),
+    ),
+  )
+
+const reconcileMutationNotDuePass = (
+  input: MutationAutonomousCycleInput,
+  cadence: Ref.Ref<ReconciliationCadenceState>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+  result: CycleRunResult,
+): Effect.Effect<CycleRunResult, CycleRunnerError, ObserveDecisionRuntime> => {
+  if (result.outcome !== 'NOT_DUE') return Effect.succeed(result)
+  return Effect.gen(function* () {
+    const nowNanos = yield* Clock.currentTimeNanos
+    const state = yield* Ref.get(cadence)
+    const decision = decideIdleReconciliationCadence(state, nowNanos, input.reconciliationIntervalMs)
+    if (decision._tag === 'WAIT') {
+      if (state.lastFailure !== undefined) return yield* Effect.fail(state.lastFailure)
+      return result
+    }
+    yield* attemptMutationIdleReconciliation(cadence, reconcile)
+    return result
+  })
+}
+
+const observeMutationIdleReconciliation = (
+  input: MutationAutonomousCycleInput,
+  startup: Parameters<AutonomousCycleStartup>[0],
+  cadence: Ref.Ref<ReconciliationCadenceState>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+  result: Extract<CycleRunResult, { readonly outcome: 'NOT_DUE' }>,
+): Effect.Effect<void, never, ObserveDecisionRuntime> =>
+  reconcileMutationNotDuePass(input, cadence, reconcile, result).pipe(
+    Effect.flatMap((reconciled) =>
+      currentUtcInstant.pipe(
+        Effect.flatMap((observedAt) =>
+          observeMutationPass(startup, { outcome: 'SUCCEEDED', observedAt, result: reconciled }),
+        ),
+      ),
+    ),
+    Effect.catch((error) =>
+      currentUtcInstant.pipe(
+        Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
+      ),
+    ),
+  )
+
+const observeMutationCadenceReconciliation = (
+  startup: Parameters<AutonomousCycleStartup>[0],
+  cadence: Ref.Ref<ReconciliationCadenceState>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+  result: CycleRunResult | undefined,
+): Effect.Effect<void, never, ObserveDecisionRuntime> =>
+  Ref.get(cadence).pipe(
+    Effect.flatMap((state) =>
+      attemptMutationIdleReconciliation(cadence, reconcile).pipe(
+        Effect.flatMap(() =>
+          result !== undefined && (result.outcome === 'NOT_DUE' || state.lastFailure !== undefined)
+            ? currentUtcInstant.pipe(
+                Effect.flatMap((observedAt) =>
+                  observeMutationPass(startup, { outcome: 'SUCCEEDED', observedAt, result }),
+                ),
+              )
+            : Effect.void,
+        ),
+      ),
+    ),
+    Effect.catch((error) =>
+      currentUtcInstant.pipe(
+        Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
+      ),
+    ),
+  )
+
+const waitUntilNextMutationPoll = (
+  input: MutationAutonomousCycleInput,
+  startup: Parameters<AutonomousCycleStartup>[0],
+  cadence: Ref.Ref<ReconciliationCadenceState>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+  result: CycleRunResult | undefined,
+  nextPollAtNanos: bigint,
+): Effect.Effect<void, never, ObserveDecisionRuntime> =>
+  Effect.suspend(() =>
+    Effect.gen(function* () {
+      const nowNanos = yield* Clock.currentTimeNanos
+      const state = yield* Ref.get(cadence)
+      const decision = decideIdleReconciliationCadence(state, nowNanos, input.reconciliationIntervalMs)
+      if (decision._tag === 'RECONCILE') {
+        yield* observeMutationCadenceReconciliation(startup, cadence, reconcile, result)
+        return yield* waitUntilNextMutationPoll(input, startup, cadence, reconcile, result, nextPollAtNanos)
+      }
+      const reconciliationAtNanos = nowNanos + decision.remainingNanos
+      const pollStartAtNanos = nowNanos > nextPollAtNanos ? nowNanos : nextPollAtNanos
+      const cyclePassTimeoutMs = Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs)
+      if (
+        shouldDeferCyclePollForReconciliation({
+          lastAttemptAtNanos: state.lastAttemptAtNanos,
+          nextPollAtNanos,
+          pollStartAtNanos,
+          reconciliationAtNanos,
+          cyclePassTimeoutNanos: mutationIntervalNanos(cyclePassTimeoutMs),
+        })
+      ) {
+        yield* mutationSleepUntil(reconciliationAtNanos)
+        return yield* waitUntilNextMutationPoll(input, startup, cadence, reconcile, result, nextPollAtNanos)
+      }
+      if (nowNanos >= nextPollAtNanos) return
+      if (nextPollAtNanos < reconciliationAtNanos) return yield* mutationSleepUntil(nextPollAtNanos)
+      yield* mutationSleepUntil(reconciliationAtNanos)
+      return yield* waitUntilNextMutationPoll(input, startup, cadence, reconcile, result, nextPollAtNanos)
+    }),
+  )
+
+const waitAfterMutationPass = (
+  input: MutationAutonomousCycleInput,
+  startup: Parameters<AutonomousCycleStartup>[0],
+  cadence: Ref.Ref<ReconciliationCadenceState>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+  result: CycleRunResult,
+): Effect.Effect<void, never, ObserveDecisionRuntime> =>
+  Clock.currentTimeNanos.pipe(
+    Effect.flatMap((completedAtNanos) => {
+      const nextPollAtNanos = completedAtNanos + mutationIntervalNanos(input.pollIntervalMs)
+      return waitUntilNextMutationPoll(input, startup, cadence, reconcile, result, nextPollAtNanos)
+    }),
+  )
+
+const waitAfterMutationFailure = (
+  input: MutationAutonomousCycleInput,
+  startup: Parameters<AutonomousCycleStartup>[0],
+  cadence: Ref.Ref<ReconciliationCadenceState>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+): Effect.Effect<void, never, ObserveDecisionRuntime> =>
+  Clock.currentTimeNanos.pipe(
+    Effect.flatMap((completedAtNanos) =>
+      waitUntilNextMutationPoll(
+        input,
+        startup,
+        cadence,
+        reconcile,
+        undefined,
+        completedAtNanos + mutationIntervalNanos(input.pollIntervalMs),
+      ),
+    ),
+  )
+
+const observeMutationCycleResult = (
+  input: MutationAutonomousCycleInput,
+  startup: Parameters<AutonomousCycleStartup>[0],
+  cadence: Ref.Ref<ReconciliationCadenceState>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+  result: CycleRunResult,
+): Effect.Effect<void, never, ObserveDecisionRuntime> =>
+  result.outcome === 'NOT_DUE'
+    ? observeMutationIdleReconciliation(input, startup, cadence, reconcile, result)
+    : Ref.get(cadence).pipe(
+        Effect.flatMap((state) =>
+          currentUtcInstant.pipe(
+            Effect.flatMap((observedAt) =>
+              state.lastFailure === undefined
+                ? observeMutationPass(startup, { outcome: 'SUCCEEDED', observedAt, result })
+                : observeMutationPass(startup, { outcome: 'FAILED', observedAt, error: state.lastFailure }),
+            ),
+          ),
+        ),
+      )
+
 const mutationCycleLoop = (
   input: MutationAutonomousCycleInput,
   startup: Parameters<AutonomousCycleStartup>[0],
   preparation: ObserveStartupPreparation,
   policy: Policy,
-  context: CycleRunContext<ObserveDecisionRuntime>,
 ): Effect.Effect<void, never, MutationRuntime> =>
-  runMutationCyclePass(input, preparation, policy, context).pipe(
-    Effect.matchEffect({
-      onFailure: (error) =>
-        currentUtcInstant.pipe(
-          Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
+  Effect.gen(function* () {
+    const cadence = yield* Ref.make<ReconciliationCadenceState>({})
+    const cyclePassTimeoutMs = Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs)
+    const reconcile = boundedReconciliationPass(input.reconciliationPassTimeoutMs).pipe(
+      Effect.tap(() => markMutationReconciliationCompleted(cadence)),
+    )
+    const run = (): Effect.Effect<void, never, MutationRuntime> =>
+      Effect.suspend(() =>
+        Effect.gen(function* () {
+          const context: CycleRunContext<ObserveDecisionRuntime> = {
+            qualificationRunId: startup.qualificationRunId,
+            strategyProtocolHash: preparation.strategyProtocolHash,
+            accountId: input.accountId,
+            executionPolicy: preparation.executionPolicy,
+            buildDecision: (cycle) =>
+              buildMutationShadowCycleDecision(
+                mutationDecisionInput(input, preparation, policy, cycle, reconcile),
+              ).pipe(Effect.mapError(decisionBuildError)),
+          }
+          return yield* runMutationPassWithinTimeout(
+            runMutationCyclePass(input, preparation, policy, context, reconcile),
+            cyclePassTimeoutMs,
+          )
+        }).pipe(
+          Effect.matchEffect({
+            onFailure: (error) =>
+              currentUtcInstant.pipe(
+                Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
+                Effect.andThen(waitAfterMutationFailure(input, startup, cadence, reconcile)),
+                Effect.andThen(run()),
+              ),
+            onSuccess: (result) =>
+              observeMutationCycleResult(input, startup, cadence, reconcile, result).pipe(
+                Effect.andThen(waitAfterMutationPass(input, startup, cadence, reconcile, result)),
+                Effect.andThen(run()),
+              ),
+          }),
         ),
-      onSuccess: (result) =>
-        currentUtcInstant.pipe(
-          Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'SUCCEEDED', observedAt, result })),
-        ),
-    }),
-    Effect.repeat(Schedule.spaced(Duration.millis(input.pollIntervalMs))),
-    Effect.asVoid,
-  )
+      )
+    yield* run()
+  })
 
 const makeMutationAutonomousLoop = (
   input: MutationAutonomousCycleInput,
@@ -1242,19 +1536,12 @@ const makeMutationAutonomousLoop = (
   preparation: ObserveStartupPreparation,
   policy: Policy,
 ): Result.Result<AutonomousCycleLoop<MutationRuntime>, OperationalError> => {
-  const context: CycleRunContext<ObserveDecisionRuntime> = {
-    qualificationRunId: startup.qualificationRunId,
-    strategyProtocolHash: preparation.strategyProtocolHash,
-    accountId: input.accountId,
-    executionPolicy: preparation.executionPolicy,
-    buildDecision: (cycle) =>
-      buildMutationShadowCycleDecision(mutationDecisionInput(input, preparation, policy, cycle)).pipe(
-        Effect.mapError(decisionBuildError),
-      ),
-  }
+  const cyclePassTimeoutMs = Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs)
   return Result.mapError(
-    Result.map(validateCycleLoopInterval(input.pollIntervalMs), () =>
-      mutationCycleLoop(input, startup, preparation, policy, context),
+    Result.map(validateCycleLoopInterval(input.pollIntervalMs), () => input.reconciliationIntervalMs).pipe(
+      Result.flatMap(validateReconciliationInterval),
+      Result.flatMap(() => validateCyclePassTimeout(cyclePassTimeoutMs, input.reconciliationIntervalMs)),
+      Result.map(() => mutationCycleLoop(input, startup, preparation, policy)),
     ),
     (cause) => operationalError('strategy', 'cycle-loop', 'mutation autonomous cycle loop failed to start', cause),
   )

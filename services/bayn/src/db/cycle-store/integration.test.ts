@@ -512,6 +512,8 @@ const makeProductionDueContext = Effect.gen(function* () {
       accountId: dueAccountId,
       authorityGenerationHash: dueAuthorityGenerationHash,
       pollIntervalMs: 30_000,
+      reconciliationIntervalMs: 30_000,
+      reconciliationPassTimeoutMs: 30_000,
       strategy: dueStrategy,
     }),
   )
