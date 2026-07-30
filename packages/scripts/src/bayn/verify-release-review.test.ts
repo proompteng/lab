@@ -707,6 +707,34 @@ describe('Bayn delayed-attestation publication retry', () => {
     })
   })
 
+  test('dispatches when review readiness and failed-run completion share the same GitHub timestamp second', () => {
+    const settlingReview = reviewSnapshotFor({
+      commitSha: mainCommitSha,
+      prNumber: 13401,
+      headSha: finalHeadSha,
+      parents: [lastPublishedSha],
+      mergedAt: '2026-07-30T07:00:00Z',
+      reviews: [review({ submittedAt: '2026-07-30T07:01:00Z' })],
+    })
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot({
+          reviewSnapshot: settlingReview,
+          failedRun: failedBuildRun({ updatedAt: '2026-07-30T07:01:30Z' }),
+        }),
+        trigger: { type: 'schedule' },
+        nowMs: Date.parse('2026-07-30T07:02:00Z'),
+      }),
+    ).toMatchObject({
+      status: 'dispatch',
+      sourceCommitSha: mainCommitSha,
+      prNumber: 13401,
+      headSha: finalHeadSha,
+    })
+  })
+
   test('dispatches when the final required feedback attestation arrives after the failed push', () => {
     const feedbackReview = snapshot({
       commitShas: [olderHeadSha, finalHeadSha],

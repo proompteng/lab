@@ -920,7 +920,7 @@ export const evaluateBaynReleaseRetry = (input: {
   const affectingCommits = baynAffectingCommits(input.snapshot)
   const delayedCandidates = eligibility.reviewedPullRequests.flatMap((reviewed) => {
     const eligibleAtMs = Date.parse(reviewed.eligibleAt)
-    if (!Number.isFinite(eligibleAtMs) || eligibleAtMs <= failedAtMs) return []
+    if (!Number.isFinite(eligibleAtMs) || eligibleAtMs < failedAtMs) return []
     const commit = affectingCommits.find((candidate) => candidate.sha === reviewed.commitSha)
     const pullRequest = commit?.reviewSnapshot?.pullRequest
     if (
