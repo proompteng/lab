@@ -6,11 +6,14 @@ import { TestClock } from 'effect/testing'
 import type { AutonomousCycleLoop } from './app'
 import { fixtureStrategy } from './app-test-support'
 import {
+  AccountStatus as BrokerAccountStatus,
   BrokerRead,
   BrokerReadError,
   BrokerReadErrorKind,
+  type Account as BrokerAccount,
   type BrokerReadShape,
   type MarketCalendarObservation,
+  type ReadEvidence,
   type ReadResult,
 } from './broker/alpaca'
 import { unusedAssetBySymbol } from './broker/alpaca-test-support'
@@ -27,6 +30,7 @@ import {
 } from './cycle'
 import { makeStrategyProtocolHash } from './contracts'
 import { CycleStore, type CycleStoreShape } from './db/cycle-store'
+import type { BrokerSnapshot, ReconciliationWriteResult } from './db/reconciliation'
 import {
   BrokerEventStore,
   AuthorityGenerationStore,
@@ -1070,6 +1074,246 @@ describe('OBSERVE runtime composition', () => {
         }),
       ),
     )
+  })
+
+  test('persists one writer-fenced reconciliation before reporting a NOT_DUE OBSERVE pass', async () => {
+    const signalSessionDate: IsoDate = '2020-04-29'
+    const calendarMaterial = {
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+      source: 'alpaca-v2-calendar' as const,
+      requestedRange: { start: signalSessionDate, end: '2020-05-29' },
+      timeZone: 'UTC' as const,
+      sessions: [
+        {
+          date: signalSessionDate,
+          openAt: '2020-04-29T13:30:00.000Z',
+          closeAt: '2020-04-29T20:00:00.000Z',
+        },
+        {
+          date: signalDate,
+          openAt: '2020-04-30T13:30:00.000Z',
+          closeAt: '2020-04-30T20:00:00.000Z',
+        },
+      ],
+    }
+    const ordinaryCalendar: MarketCalendarObservation = {
+      ...calendarMaterial,
+      normalizedResponseHash: canonicalHashV1(calendarMaterial),
+    }
+    const readEvidence = (identity: string): ReadEvidence => ({
+      requestId: `not-due-${identity}`,
+      status: 200,
+      contentHash: canonicalHashV1({ identity }),
+      observedAt: reconciledAt,
+    })
+    const brokerAccount: BrokerAccount = {
+      id: accountId,
+      status: BrokerAccountStatus.Active,
+      currency: 'USD',
+      cashMicros: account.cashMicros,
+      equityMicros: account.equityMicros,
+      lastEquityMicros: account.equityMicros,
+      buyingPowerMicros: account.buyingPowerMicros,
+      accountBlocked: false,
+      tradingBlocked: false,
+      tradeSuspendedByUser: false,
+      observedAt: reconciledAt,
+    }
+    let accountReads = 0
+    let positionReads = 0
+    let orderReads = 0
+    let fillReads = 0
+    const unusedRead = Effect.die(new Error('NOT_DUE reconciliation used an unrelated broker read'))
+    const brokerRead: BrokerReadShape = {
+      account: Effect.sync(() => {
+        accountReads += 1
+        return { value: brokerAccount, evidence: readEvidence('account') }
+      }),
+      accountConfiguration: unusedRead,
+      assetBySymbol: unusedAssetBySymbol,
+      positions: Effect.sync(() => {
+        positionReads += 1
+        return { value: [], evidence: readEvidence('positions') }
+      }),
+      orders: () =>
+        Effect.sync(() => {
+          orderReads += 1
+          return { value: [], evidence: readEvidence(`orders-${orderReads}`) }
+        }),
+      orderById: () => unusedRead,
+      orderByClientId: () => unusedRead,
+      fillActivities: () =>
+        Effect.sync(() => {
+          fillReads += 1
+          return { value: { items: [] }, evidence: readEvidence(`fills-${fillReads}`) }
+        }),
+      marketCalendar: (query) => {
+        expect(query).toEqual(calendarMaterial.requestedRange)
+        return Effect.succeed({ value: ordinaryCalendar, evidence: readEvidence('calendar') })
+      },
+    }
+    const inspection = {
+      manifest: snapshot.manifest,
+      sessionDates: [signalSessionDate],
+      signalSession: {
+        calendar_version: 'fixture-calendar-v2',
+        session_date: signalSessionDate,
+        close_time: '16:00',
+        timezone: 'America/New_York' as const,
+      },
+    }
+    const marketDataService: MarketDataService = {
+      ...marketData([]),
+      inspectCyclePublications: Effect.succeed({
+        outcome: 'FINALIZED',
+        observedAt: '2020-04-29T22:00:00.000Z',
+        publications: [inspection],
+      }),
+    }
+    let acquisitions = 0
+    const unusedCycleStore = Effect.die(new Error('NOT_DUE pass attempted to mutate cycle state'))
+    const cycleStore: CycleStoreShape = {
+      acquire: () => {
+        acquisitions += 1
+        return unusedCycleStore
+      },
+      read: () => unusedCycleStore,
+      readAuthoritySlot: () => Effect.succeed(Option.none()),
+      readDecisionDocument: () => unusedCycleStore,
+      readOldestUnfinished: () => Effect.succeed(Option.none()),
+      bindSnapshot: () => unusedCycleStore,
+      activate: () => unusedCycleStore,
+      bindDecision: () => unusedCycleStore,
+      finish: () => unusedCycleStore,
+      block: () => unusedCycleStore,
+    }
+    const exact = reconciliationResult()
+    const persisted: ReconciliationWriteResult = {
+      reconciliation: exact.report.reconciliation,
+      metrics: exact.report.metrics,
+      accountingHash: exact.brokerState.accountingHash,
+      riskContext: exact.riskContext,
+    }
+    const reconciledSnapshots: BrokerSnapshot[] = []
+    let brokerEventWrites = 0
+    let positionWrites = 0
+    let valuationWrites = 0
+    let authorityRestrictions = 0
+    const unusedAccounting = Effect.die(new Error('empty NOT_DUE reconciliation must not account a fill'))
+    const executionStore = {
+      ingest: () =>
+        Effect.sync(() => {
+          brokerEventWrites += 1
+          return { eventId: '1'.repeat(64), sourceSequence: '1', deduplicated: false }
+        }),
+      ingestPositions: () =>
+        Effect.sync(() => {
+          positionWrites += 1
+          return { snapshotId: '2'.repeat(64), eventIds: [], deduplicated: false }
+        }),
+      account: () => unusedAccounting,
+      value: () =>
+        Effect.sync(() => {
+          valuationWrites += 1
+          return {
+            schemaVersion: 'bayn.paper-valuation.v1' as const,
+            valuationId: '3'.repeat(64),
+            accountId,
+            sourceHash: '4'.repeat(64),
+            cashMicros: account.cashMicros,
+            longMarketValueMicros: '0',
+            shortMarketValueMicros: '0',
+            equityMicros: account.equityMicros,
+            asOf: reconciledAt,
+          }
+        }),
+      hasAccountBaseline: () => Effect.succeed(true),
+      bindings: () => Effect.succeed([]),
+      reconcile: (brokerSnapshot: BrokerSnapshot) =>
+        Effect.sync(() => {
+          reconciledSnapshots.push(brokerSnapshot)
+          return persisted
+        }),
+      ensureAuthorityGeneration: () => {
+        const authority = exact.riskContext.authority
+        return authority === null
+          ? Effect.die(new Error('NOT_DUE fixture requires OBSERVE authority'))
+          : Effect.succeed(authority)
+      },
+      restrictAuthority: () =>
+        Effect.sync(() => {
+          authorityRestrictions += 1
+        }),
+    } satisfies BrokerEventStoreShape &
+      FillAccountingStoreShape &
+      ValuationStoreShape &
+      ReconciliationStoreShape &
+      AuthorityGenerationStoreShape &
+      AuthorityRestrictionStoreShape
+    let fencedTransactions = 0
+    const writerFence: WriterFenceService = {
+      backendPid: 1,
+      check: Effect.void,
+      transaction: (effect) =>
+        Effect.sync(() => {
+          fencedTransactions += 1
+        }).pipe(Effect.andThen(effect)),
+    }
+    const startup = makeObserveAutonomousCycleStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      pollIntervalMs: 30_000,
+      strategy: fixtureStrategy,
+    })
+
+    const observation = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(reconciledAt))
+          const pass = yield* Deferred.make<Parameters<Parameters<typeof startup>[0]['recordPass']>[0]>()
+          const loop = yield* startup({
+            qualificationRunId: 'c'.repeat(64),
+            recordPass: (result) => Deferred.succeed(pass, result).pipe(Effect.asVoid),
+          }).pipe(Effect.provideService(AuthorityGenerationStore, executionStore))
+          const fiber = yield* loop.pipe(
+            Effect.provideService(BrokerRead, brokerRead),
+            Effect.provideService(CycleStore, cycleStore),
+            Effect.provideService(MarketData, marketDataService),
+            Effect.provideService(BrokerEventStore, executionStore),
+            Effect.provideService(FillAccountingStore, executionStore),
+            Effect.provideService(ValuationStore, executionStore),
+            Effect.provideService(ReconciliationStore, executionStore),
+            Effect.provideService(AuthorityGenerationStore, executionStore),
+            Effect.provideService(AuthorityRestrictionStore, executionStore),
+            Effect.provideService(WriterFence, writerFence),
+            Effect.forkScoped({ startImmediately: true }),
+          )
+          const result = yield* Deferred.await(pass).pipe(Effect.timeout('1 second'))
+          yield* Fiber.interrupt(fiber)
+          return result
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(observation).toMatchObject({ result: 'SUCCESS', outcome: 'NOT_DUE' })
+    expect(acquisitions).toBe(0)
+    expect(accountReads).toBe(1)
+    expect(positionReads).toBe(1)
+    expect(orderReads).toBe(2)
+    expect(fillReads).toBe(2)
+    expect(brokerEventWrites).toBe(1)
+    expect(positionWrites).toBe(1)
+    expect(valuationWrites).toBe(1)
+    expect(reconciledSnapshots).toHaveLength(1)
+    expect(reconciledSnapshots[0]).toMatchObject({
+      account,
+      positions: [],
+      orders: [],
+      fills: [],
+      reconciledAt,
+    })
+    expect(fencedTransactions).toBe(1)
+    expect(authorityRestrictions).toBe(0)
   })
 
   test('starts mutation mode without projecting or initializing OBSERVE authority', async () => {

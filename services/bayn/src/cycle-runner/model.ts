@@ -14,6 +14,12 @@ export class CycleDecisionBuildError extends Data.TaggedError('CycleDecisionBuil
   readonly cause?: unknown
 }> {}
 
+export class CycleNotDueReconciliationError extends Data.TaggedError('CycleNotDueReconciliationError')<{
+  readonly failure: 'contract' | 'database' | 'market-data' | 'operational' | 'store'
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
 export interface CycleRunContext<R = never> {
   readonly qualificationRunId: string
   readonly strategyProtocolHash: string
@@ -101,6 +107,7 @@ export class CycleRunnerError extends Data.TaggedError('CycleRunnerError')<{
     | 'market-calendar'
     | 'read-oldest-unfinished'
     | 'read-authority-slot'
+    | 'reconcile-not-due'
     | 'recover-cycle'
     | 'select-session'
   readonly failure:
@@ -133,6 +140,7 @@ export interface AutonomousCycleLoopOptions<E = never, ContextR = never, Decisio
   readonly context: Effect.Effect<CycleRunContext<DecisionR>, E, ContextR>
   readonly observePass: (observation: CyclePassObservation) => Effect.Effect<void>
   readonly pollIntervalMs: number
+  readonly reconcileNotDue: Effect.Effect<void, CycleNotDueReconciliationError, DecisionR>
 }
 
 export const runnerError = (
