@@ -111,6 +111,7 @@ export interface BaynBuildWorkflowJob {
   readonly name: string
   readonly status: string
   readonly conclusion: string | null
+  readonly completedAt: string | null
 }
 
 export interface FailedReviewThreadBlock {
@@ -916,11 +917,12 @@ export const evaluateBaynReleaseRetry = (input: {
       false,
     )
   }
-  const failedAtMs = Date.parse(failedReviewRun.run.updatedAt)
+  const failedReviewJob = failedReviewRun.jobs.find((job) => job.name === 'Verify exact-head Codex review')
+  const failedAtMs = Date.parse(failedReviewJob?.completedAt ?? '')
   if (!Number.isFinite(failedAtMs)) {
     return hold(
       'retry-failed-run-mismatch',
-      `Bayn run ${failedReviewRun.run.id} has an invalid completion timestamp`,
+      `Bayn run ${failedReviewRun.run.id} review gate has an invalid completion timestamp`,
       false,
     )
   }
@@ -1464,6 +1466,7 @@ const parseBaynBuildWorkflowJobs = (value: unknown): readonly BaynBuildWorkflowJ
       name: expectString(job.name, `Bayn build workflow job ${index} name`),
       status: expectString(job.status, `Bayn build workflow job ${index} status`),
       conclusion: expectNullableString(job.conclusion, `Bayn build workflow job ${index} conclusion`),
+      completedAt: expectNullableString(job.completed_at, `Bayn build workflow job ${index} completed at`),
     }
   })
 }

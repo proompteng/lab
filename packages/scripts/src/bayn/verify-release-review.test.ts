@@ -254,6 +254,7 @@ const retrySnapshot = (
     readonly defaultBranchSha?: string
     readonly eligibility?: BaynReleaseEligibilitySnapshot
     readonly reviewThreadBlock?: { readonly commitShaPrefix: string; readonly prNumber: number } | null
+    readonly failedReviewJobCompletedAt?: string | null
   } = {},
 ): BaynReleaseRetrySnapshot => {
   const eligibility =
@@ -293,6 +294,8 @@ const retrySnapshot = (
       },
     })
   const run = options.failedRun === undefined ? failedBuildRun() : options.failedRun
+  const failedReviewJobCompletedAt =
+    options.failedReviewJobCompletedAt === undefined ? (run?.updatedAt ?? null) : options.failedReviewJobCompletedAt
   return {
     ...eligibility,
     defaultBranchSha: options.defaultBranchSha ?? mainCommitSha,
@@ -302,8 +305,20 @@ const retrySnapshot = (
         : {
             run,
             jobs: [
-              { id: 90860000001, name: 'Verify exact-head Codex review', status: 'completed', conclusion: 'failure' },
-              { id: 90860000002, name: 'image', status: 'completed', conclusion: 'skipped' },
+              {
+                id: 90860000001,
+                name: 'Verify exact-head Codex review',
+                status: 'completed',
+                conclusion: 'failure',
+                completedAt: failedReviewJobCompletedAt,
+              },
+              {
+                id: 90860000002,
+                name: 'image',
+                status: 'completed',
+                conclusion: 'skipped',
+                completedAt: run.updatedAt,
+              },
             ],
             reviewThreadBlock: options.reviewThreadBlock ?? null,
           },
@@ -729,6 +744,35 @@ describe('Bayn delayed-attestation publication retry', () => {
         }),
         trigger: { type: 'schedule' },
         nowMs: Date.parse('2026-07-30T07:02:00Z'),
+      }),
+    ).toMatchObject({
+      status: 'dispatch',
+      sourceCommitSha: mainCommitSha,
+      prNumber: 13401,
+      headSha: finalHeadSha,
+    })
+  })
+
+  test('uses the failed review job completion before later workflow-run finalization', () => {
+    const settlingReview = reviewSnapshotFor({
+      commitSha: mainCommitSha,
+      prNumber: 13401,
+      headSha: finalHeadSha,
+      parents: [lastPublishedSha],
+      mergedAt: '2026-07-30T07:00:00Z',
+      reviews: [review({ submittedAt: '2026-07-30T07:02:01Z' })],
+    })
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot({
+          reviewSnapshot: settlingReview,
+          failedRun: failedBuildRun({ updatedAt: '2026-07-30T07:02:35Z' }),
+          failedReviewJobCompletedAt: '2026-07-30T07:02:30Z',
+        }),
+        trigger: { type: 'schedule' },
+        nowMs: Date.parse('2026-07-30T07:03:00Z'),
       }),
     ).toMatchObject({
       status: 'dispatch',
@@ -1336,8 +1380,15 @@ describe('Bayn delayed-attestation publication retry', () => {
               name: 'Verify exact-head Codex review',
               status: 'completed',
               conclusion: 'failure',
+              completed_at: '2026-07-30T07:02:30Z',
             },
-            { id: 90860000002, name: 'image', status: 'completed', conclusion: 'skipped' },
+            {
+              id: 90860000002,
+              name: 'image',
+              status: 'completed',
+              conclusion: 'skipped',
+              completed_at: '2026-07-30T07:02:31Z',
+            },
           ],
         })
       }
