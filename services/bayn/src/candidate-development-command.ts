@@ -2,6 +2,7 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child
 import { createHash } from 'node:crypto'
 import { readFile, realpath } from 'node:fs/promises'
 import { dirname, relative, resolve, sep } from 'node:path'
+import type { Readable } from 'node:stream'
 import * as vm from 'node:vm'
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads'
 
@@ -2927,10 +2928,7 @@ export interface CandidateDevelopmentSourceGit {
 type CandidateDevelopmentGitObjectType = 'blob' | 'commit' | 'tag' | 'tree'
 
 export interface CandidateDevelopmentGitObjectReader {
-  readonly read: (
-    oid: string,
-    expectedType: Extract<CandidateDevelopmentGitObjectType, 'commit' | 'tree'>,
-  ) => Promise<Buffer>
+  readonly read: (oid: string, expectedType: CandidateDevelopmentGitObjectType) => Promise<Buffer>
   readonly close: () => Promise<void>
 }
 
@@ -2939,17 +2937,15 @@ const candidateDevelopmentMaximumGitBatchHeaderBytes = 512
 const candidateDevelopmentMaximumGitStderrBytes = 1024 * 1024
 
 class CandidateDevelopmentGitBatchOutput {
-  private buffer: Buffer<ArrayBufferLike> = Buffer.alloc(0)
+  private readonly chunks: Buffer<ArrayBufferLike>[] = []
+  private bufferedBytes = 0
   private ended = false
   private failure: unknown
   private waiter: (() => void) | undefined
 
-  constructor(stream: NodeJS.ReadableStream) {
-    stream.on('data', (chunk: Buffer | string) => {
-      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-      this.buffer = this.buffer.length === 0 ? bytes : Buffer.concat([this.buffer, bytes])
-      this.wake()
-    })
+  constructor(private readonly stream: Readable) {
+    stream.pause()
+    stream.on('readable', () => this.wake())
     stream.on('end', () => {
       this.ended = true
       this.wake()
@@ -2980,15 +2976,52 @@ class CandidateDevelopmentGitBatchOutput {
     if (this.failure !== undefined) throw this.failure
   }
 
+  private pullAvailable(): void {
+    const chunk = this.stream.read() as Buffer | string | null
+    if (chunk === null) return
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    this.chunks.push(bytes)
+    this.bufferedBytes += bytes.length
+  }
+
+  private indexOf(value: number): number {
+    let offset = 0
+    for (const chunk of this.chunks) {
+      const index = chunk.indexOf(value)
+      if (index >= 0) return offset + index
+      offset += chunk.length
+    }
+    return -1
+  }
+
+  private consume(size: number): Buffer {
+    if (size === 0) return Buffer.alloc(0)
+    const value = Buffer.allocUnsafe(size)
+    let written = 0
+    while (written < size) {
+      const chunk = this.chunks[0]
+      if (chunk === undefined) throw new Error('candidate Git batch output is incomplete')
+      const remaining = size - written
+      const consumed = Math.min(remaining, chunk.length)
+      chunk.copy(value, written, 0, consumed)
+      written += consumed
+      this.bufferedBytes -= consumed
+      if (consumed === chunk.length) this.chunks.shift()
+      else this.chunks[0] = chunk.subarray(consumed)
+    }
+    return value
+  }
+
   async readLine(): Promise<string> {
     while (true) {
-      const newline = this.buffer.indexOf(0x0a)
+      this.pullAvailable()
+      const newline = this.indexOf(0x0a)
       if (newline >= 0) {
-        const line = this.buffer.subarray(0, newline).toString('utf8')
-        this.buffer = this.buffer.subarray(newline + 1)
+        const line = this.consume(newline).toString('utf8')
+        this.consume(1)
         return line
       }
-      if (this.buffer.length > candidateDevelopmentMaximumGitBatchHeaderBytes) {
+      if (this.bufferedBytes > candidateDevelopmentMaximumGitBatchHeaderBytes) {
         throw new Error('candidate Git batch header exceeds the configured bound')
       }
       await this.waitForData()
@@ -2996,10 +3029,12 @@ class CandidateDevelopmentGitBatchOutput {
   }
 
   async readBytes(size: number): Promise<Buffer> {
-    while (this.buffer.length < size) await this.waitForData()
-    const value = Buffer.from(this.buffer.subarray(0, size))
-    this.buffer = this.buffer.subarray(size)
-    return value
+    while (this.bufferedBytes < size) {
+      this.pullAvailable()
+      if (this.bufferedBytes >= size) break
+      await this.waitForData()
+    }
+    return this.consume(size)
   }
 }
 
@@ -3028,6 +3063,7 @@ const terminateCandidateDevelopmentGitBatch = async (
 export const openCandidateDevelopmentGitBatchObjectReader = async (
   repositoryRoot: string,
   signal: AbortSignal,
+  maximumObjectBytes = candidateDevelopmentMaximumGitObjectBytes,
 ): Promise<CandidateDevelopmentGitObjectReader> => {
   const child = spawn('git', ['--no-replace-objects', '-C', repositoryRoot, 'cat-file', '--batch'], {
     env: candidateDevelopmentGitEnvironment(),
@@ -3056,6 +3092,13 @@ export const openCandidateDevelopmentGitBatchObjectReader = async (
     })
   })
   let closed = false
+  const failAndTerminate = (cause: Error): never => {
+    output.fail(cause)
+    child.stdin.destroy()
+    child.stdout.destroy()
+    child.kill('SIGKILL')
+    throw cause
+  }
   return {
     read: async (oid, expectedType) => {
       if (closed) throw new Error('candidate Git batch reader is closed')
@@ -3067,9 +3110,10 @@ export const openCandidateDevelopmentGitBatchObjectReader = async (
         })
       })
       const header = await output.readLine()
-      if (header === `${oid} missing`) throw new Error(`candidate Git object is missing: ${oid}`)
-      const match = /^([0-9a-f]{40}) (blob|commit|tag|tree) ([0-9]+)$/.exec(header)
-      if (match === null) throw new Error(`candidate Git batch header is invalid: ${header}`)
+      if (header === `${oid} missing`) failAndTerminate(new Error(`candidate Git object is missing: ${oid}`))
+      const parsed = /^([0-9a-f]{40}) (blob|commit|tag|tree) ([0-9]+)$/.exec(header)
+      const match =
+        parsed === null ? failAndTerminate(new Error(`candidate Git batch header is invalid: ${header}`)) : parsed
       const [, observedOid, observedType, encodedSize] = match
       const size = Number(encodedSize)
       if (
@@ -3077,15 +3121,17 @@ export const openCandidateDevelopmentGitBatchObjectReader = async (
         observedType !== expectedType ||
         !Number.isSafeInteger(size) ||
         size < 0 ||
-        size > candidateDevelopmentMaximumGitObjectBytes
+        size > maximumObjectBytes
       ) {
-        throw new Error(
-          `candidate Git batch object mismatch: ${JSON.stringify({ oid, expectedType, observedOid, observedType, size })}`,
+        failAndTerminate(
+          new Error(
+            `candidate Git batch object mismatch: ${JSON.stringify({ oid, expectedType, observedOid, observedType, size, maximumObjectBytes })}`,
+          ),
         )
       }
       const content = await output.readBytes(size)
       const delimiter = await output.readBytes(1)
-      if (delimiter[0] !== 0x0a) throw new Error('candidate Git batch object delimiter is invalid')
+      if (delimiter[0] !== 0x0a) failAndTerminate(new Error('candidate Git batch object delimiter is invalid'))
       return content
     },
     close: async () => {

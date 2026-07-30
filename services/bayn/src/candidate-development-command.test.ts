@@ -3293,6 +3293,33 @@ describe('candidate development command', () => {
     }
   })
 
+  test('terminates the Git batch reader before buffering an oversized object', async () => {
+    const repository = await mkdtemp(join(tmpdir(), 'bayn-candidate-batch-oversized-'))
+    try {
+      await execFilePromise('git', ['init', '-q'], repository)
+      const oversizedPath = join(repository, 'oversized.bin')
+      await writeFile(oversizedPath, Buffer.alloc(4096, 0x61))
+      const blobOid = await execFileTextPromise('git', ['hash-object', '-w', 'oversized.bin'], repository)
+      const reader = await openCandidateDevelopmentGitBatchObjectReader(repository, new AbortController().signal, 128)
+      let rejected = false
+      try {
+        await reader.read(blobOid, 'blob')
+      } catch (cause) {
+        rejected = true
+        expect(String(cause)).toContain('maximumObjectBytes')
+      }
+      expect(rejected).toBe(true)
+      await Promise.race([
+        reader.close(),
+        new Promise<never>((_resolve, reject) =>
+          setTimeout(() => reject(new Error('oversized Git batch reader did not terminate')), 1_000),
+        ),
+      ])
+    } finally {
+      await rm(repository, { recursive: true, force: true })
+    }
+  })
+
   test('rejects shallow Git history before module novelty verification', async () => {
     const repository = await mkdtemp(join(tmpdir(), 'bayn-candidate-history-source-'))
     const shallowRepository = await mkdtemp(join(tmpdir(), 'bayn-candidate-history-shallow-'))
