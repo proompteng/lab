@@ -720,7 +720,9 @@ export const validateReadOnlyPermissions = async (run: RunCommand, signal: Abort
   await checkReadPermission(run, signal, 'get', 'services/proxy', 'bayn')
   await checkWriteDenied(run, signal, 'applications.argoproj.io', 'argocd')
   await checkWriteDenied(run, signal, 'deployments.apps', 'bayn')
+  await checkWriteDenied(run, signal, 'deployments.apps/scale', 'bayn')
   await checkWriteDenied(run, signal, 'pods', 'bayn')
+  await checkWriteDenied(run, signal, 'pods/eviction', 'bayn')
   await checkWriteDenied(run, signal, 'pods/exec', 'bayn')
   await checkWriteDenied(run, signal, 'pods/portforward', 'bayn')
   for (const verb of ['get', 'list', 'watch']) {

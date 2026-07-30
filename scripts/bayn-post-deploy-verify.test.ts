@@ -706,6 +706,27 @@ describe('redaction and permissions', () => {
     })
   })
 
+  test.each([
+    ['update', 'deployments.apps/scale'],
+    ['create', 'pods/eviction'],
+  ])('rejects %s authority on destructive subresource %s', async (grantedVerb, grantedResource) => {
+    const controller = new AbortController()
+    const run = async (command: readonly string[]) => {
+      const verb = command[3] ?? ''
+      const resource = command[4] ?? ''
+      if (resource === 'secrets') return { stdout: 'no\n', stderr: '', exitCode: 0 }
+      if (verb === grantedVerb && resource === grantedResource) {
+        return { stdout: 'yes\n', stderr: '', exitCode: 0 }
+      }
+      const requiredRead = ['get', 'list'].includes(verb)
+      return { stdout: requiredRead ? 'yes\n' : 'no\n', stderr: '', exitCode: 0 }
+    }
+
+    await expect(validateReadOnlyPermissions(run, controller.signal)).rejects.toMatchObject({
+      code: 'RBAC_DENIED',
+    })
+  })
+
   test('workflow is main-only, path-scoped, and GitHub read-only', async () => {
     const workflow = await readFile(
       join(import.meta.dir, '..', '.github/workflows/bayn-post-deploy-verify.yml'),
