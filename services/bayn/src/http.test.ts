@@ -629,6 +629,32 @@ describe('Bayn HTTP pure decisions', () => {
       provenance,
       'embedded',
     )
+    const continuousMismatch = statusFacts(
+      {
+        ...base,
+        error: 'broker: Alpaca account identity drift detected',
+        broker: {
+          ...base.broker!,
+          error: 'Alpaca account identity drift detected',
+        },
+      },
+      readOnlyExecution,
+      provenance,
+      'embedded',
+    )
+    const permissionDrift = statusFacts(
+      {
+        ...base,
+        error: 'broker: Alpaca account permission drift detected: trading is blocked',
+        broker: {
+          ...base.broker!,
+          error: 'Alpaca account permission drift detected: trading is blocked',
+        },
+      },
+      readOnlyExecution,
+      provenance,
+      'embedded',
+    )
     const readFailure = statusFacts(
       {
         ...base,
@@ -658,6 +684,22 @@ describe('Bayn HTTP pure decisions', () => {
       error: 'BROKER_ACCOUNT_IDENTITY_MISMATCH',
     })
     expect(mismatch.error).toBe('broker: BROKER_ACCOUNT_IDENTITY_MISMATCH')
+    expect(continuousMismatch.broker).toMatchObject({
+      configured: true,
+      accountBound: false,
+      readAvailable: false,
+      reasonCode: 'BROKER_ACCOUNT_IDENTITY_MISMATCH',
+      error: 'BROKER_ACCOUNT_IDENTITY_MISMATCH',
+    })
+    expect(continuousMismatch.error).toBe('broker: BROKER_ACCOUNT_IDENTITY_MISMATCH')
+    expect(permissionDrift.broker).toMatchObject({
+      configured: true,
+      accountBound: false,
+      readAvailable: false,
+      reasonCode: 'BROKER_ACCOUNT_PERMISSION_DRIFT',
+      error: 'BROKER_ACCOUNT_PERMISSION_DRIFT',
+    })
+    expect(permissionDrift.error).toBe('broker: BROKER_ACCOUNT_PERMISSION_DRIFT')
     expect(readFailure.broker).toMatchObject({
       configured: true,
       accountBound: false,
@@ -665,7 +707,7 @@ describe('Bayn HTTP pure decisions', () => {
       reasonCode: 'BROKER_READ_UNAVAILABLE',
       error: 'BROKER_READ_UNAVAILABLE',
     })
-    for (const facts of [configured, mismatch, readFailure]) {
+    for (const facts of [configured, mismatch, continuousMismatch, permissionDrift, readFailure]) {
       const rendered = JSON.stringify(facts)
       expect(rendered).not.toContain(expectedAccountId)
       expect(rendered).not.toContain(observedAccountId)
@@ -715,6 +757,89 @@ describe('Bayn HTTP pure decisions', () => {
     if (!('current' in facts.cycle)) return
     expect(facts.cycle.current).not.toHaveProperty('accountId')
     expect(facts.cycle.reconciliation).not.toHaveProperty('accountId')
+  })
+
+  test('replaces account-bearing cycle and runner errors with bounded public reason codes', () => {
+    const accountId = 'paper-account-cycle-error'
+    const observedAt = '2026-07-20T12:00:00.000Z'
+    const cycleError =
+      `PostgreSQL cycle-observability failed: configured account ${accountId} ` +
+      'differs from the projected current or last cycle'
+    const passMessage = `cycle context resolved configured account ${accountId}`
+    const runnerError = `load-context/context: ${passMessage}`
+    const state: RuntimeState = {
+      ...readyState(),
+      status: 'DEGRADED',
+      health: {
+        ...readyState().health,
+        dependencies: {
+          ...readyState().health.dependencies,
+          cycle: { status: 'UNAVAILABLE', checkedAt: observedAt, error: cycleError },
+          cycleRunner: { status: 'UNAVAILABLE', checkedAt: observedAt, error: runnerError },
+        },
+      },
+      cycle: {
+        ...readyState().cycle,
+        condition: CycleOperationsCondition.Unknown,
+        reason: CycleOperationsReason.ObservationUnavailable,
+        checkedAt: observedAt,
+        error: cycleError,
+      },
+      autonomousCycleLoop: {
+        configured: true,
+        startedAt: observedAt,
+        lastPass: {
+          result: 'FAILURE',
+          observedAt,
+          operation: 'load-context',
+          failure: 'context',
+          message: passMessage,
+        },
+      },
+      error: `cycle: ${cycleError}; cycleRunner: ${runnerError}`,
+    }
+
+    const facts = statusFacts(state, readOnlyExecution, provenance, 'embedded')
+    expect(facts.cycle.error).toBe('CYCLE_ACCOUNT_IDENTITY_MISMATCH')
+    expect(facts.dependencies.cycle.error).toBe('CYCLE_ACCOUNT_IDENTITY_MISMATCH')
+    expect(facts.dependencies.cycleRunner.error).toBe('CYCLE_RUNNER_UNAVAILABLE')
+    expect(facts.autonomousCycleLoop.lastPass).toEqual({
+      result: 'FAILURE',
+      observedAt,
+      operation: 'load-context',
+      failure: 'context',
+      reasonCode: 'AUTONOMOUS_CYCLE_PASS_FAILED',
+    })
+    expect(facts.error).toBe('cycle: CYCLE_ACCOUNT_IDENTITY_MISMATCH; cycleRunner: CYCLE_RUNNER_UNAVAILABLE')
+    expect(JSON.stringify(facts)).not.toContain(accountId)
+    expect(JSON.stringify(readinessResponseDecision(state))).not.toContain(accountId)
+    expect(renderPrometheusMetrics(state, config, provenance, 'embedded')).not.toContain(accountId)
+  })
+
+  test('redacts a stale top-level runner failure after the current cycle pass recovers', () => {
+    const accountId = 'paper-account-stale-runner-error'
+    const observedAt = '2026-07-20T12:01:00.000Z'
+    const state: RuntimeState = {
+      ...readyState(),
+      status: 'DEGRADED',
+      autonomousCycleLoop: {
+        configured: true,
+        startedAt: observedAt,
+        lastPass: { result: 'SUCCESS', observedAt, outcome: 'NO_PUBLICATION' },
+      },
+      error:
+        `cycle: prior observation unavailable; ` +
+        `cycleRunner: load-context/context: configured account ${accountId} is unavailable; ` +
+        'broker: account binding unavailable',
+    }
+
+    const facts = statusFacts(state, readOnlyExecution, provenance, 'embedded')
+    expect(facts.dependencies.cycleRunner.error).toBeNull()
+    expect(facts.autonomousCycleLoop.lastPass).toEqual({ result: 'SUCCESS', observedAt, outcome: 'NO_PUBLICATION' })
+    expect(facts.error).toBe(
+      'cycle: prior observation unavailable; cycleRunner: CYCLE_RUNNER_UNAVAILABLE; broker: account binding unavailable',
+    )
+    expect(JSON.stringify(facts)).not.toContain(accountId)
   })
 
   test('maps database and timeout failures to the typed operational boundary with the cause intact', async () => {
@@ -1016,7 +1141,7 @@ describe('Bayn HTTP probes', () => {
                     observedAt: failedAt,
                     operation: 'market-calendar',
                     failure: 'calendar-read',
-                    message: 'authoritative calendar unavailable',
+                    reasonCode: 'AUTONOMOUS_CYCLE_PASS_FAILED',
                   },
                 },
               },
