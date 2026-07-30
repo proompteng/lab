@@ -5,6 +5,7 @@ const githubGraphqlUrl = 'https://api.github.com/graphql'
 const maximumGraphqlPages = 20
 const minimumExactReviewAgeMs = 30_000
 const maximumReleaseRangeCommits = 100
+const maximumReleaseReviewJobLogBytes = 1_048_576
 const githubWorkflowFile = 'bayn-build-push.yml'
 
 export const baynCodexReviewer = 'chatgpt-codex-connector'
@@ -106,14 +107,22 @@ export interface BaynBuildWorkflowRun {
 }
 
 export interface BaynBuildWorkflowJob {
+  readonly id: number
   readonly name: string
   readonly status: string
   readonly conclusion: string | null
+  readonly completedAt: string | null
+}
+
+export interface FailedReviewThreadBlock {
+  readonly commitShaPrefix: string
+  readonly prNumber: number
 }
 
 export interface FailedBaynReleaseReviewRun {
   readonly run: BaynBuildWorkflowRun
   readonly jobs: readonly BaynBuildWorkflowJob[]
+  readonly reviewThreadBlock: FailedReviewThreadBlock | null
 }
 
 export type LastPublishedRevisionResolution =
@@ -194,6 +203,7 @@ export interface BaynReleaseReviewEligible {
   readonly prNumber: number
   readonly headSha: string
   readonly reviewSubmittedAt: string
+  readonly eligibleAt: string
 }
 
 export interface BaynReleaseEligibilityEligible {
@@ -206,6 +216,7 @@ export interface BaynReleaseEligibilityEligible {
     readonly prNumber: number
     readonly headSha: string
     readonly reviewSubmittedAt: string
+    readonly eligibleAt: string
   }[]
 }
 
@@ -604,20 +615,21 @@ export const evaluateBaynReleaseReview = (input: {
       true,
     )
   }
+  let eligibleAtMs = reviewSubmittedAtMs + minimumExactReviewAgeMs
 
   if (feedbackFixCommitShas.length > 0) {
     const reviewedHeadSha = reviewEvidence.commitSha as string
     for (const fixCommitSha of feedbackFixCommitShas) {
-      const hasTrustedAttestation = pullRequest.threads.some((thread) => {
-        if (!thread.isResolved) return false
+      const trustedAttestationTimes = pullRequest.threads.flatMap((thread) => {
+        if (!thread.isResolved) return []
         const belongsToReviewedHead = thread.comments.some(
           (comment) =>
             comment.reviewAuthorLogin === baynCodexReviewer &&
             comment.reviewCommitSha === reviewedHeadSha &&
             comment.reviewSubmittedAt === reviewEvidence.submittedAt,
         )
-        if (!belongsToReviewedHead) return false
-        return thread.comments.some((comment) => {
+        if (!belongsToReviewedHead) return []
+        return thread.comments.flatMap((comment) => {
           if (
             comment.authorLogin === null ||
             comment.authorLogin === baynCodexReviewer ||
@@ -625,19 +637,20 @@ export const evaluateBaynReleaseReview = (input: {
             comment.reviewCommitSha !== fixCommitSha ||
             comment.reviewSubmittedAt === null
           ) {
-            return false
+            return []
           }
           const attestationTime = Date.parse(comment.reviewSubmittedAt)
-          return Number.isFinite(attestationTime) && attestationTime >= reviewSubmittedAtMs
+          return Number.isFinite(attestationTime) && attestationTime >= reviewSubmittedAtMs ? [attestationTime] : []
         })
       })
-      if (!hasTrustedAttestation) {
+      if (trustedAttestationTimes.length === 0) {
         return hold(
           'feedback-fix-attestation-missing',
           `source PR #${pullRequest.number} final head ${shortSha(pullRequest.headSha)} carries review from ${shortSha(reviewedHeadSha)}, but post-review commit ${shortSha(fixCommitSha)} lacks a trusted member reply on a resolved Codex thread from that review`,
           true,
         )
       }
+      eligibleAtMs = Math.max(eligibleAtMs, Math.min(...trustedAttestationTimes))
     }
   }
 
@@ -659,6 +672,7 @@ export const evaluateBaynReleaseReview = (input: {
     prNumber: pullRequest.number,
     headSha: pullRequest.headSha,
     reviewSubmittedAt: reviewEvidence.submittedAt as string,
+    eligibleAt: new Date(eligibleAtMs).toISOString(),
   }
 }
 
@@ -797,6 +811,7 @@ export const evaluateBaynReleaseEligibility = (input: {
       prNumber: review.prNumber,
       headSha: review.headSha,
       reviewSubmittedAt: review.reviewSubmittedAt,
+      eligibleAt: review.eligibleAt,
     })
   }
 
@@ -902,19 +917,40 @@ export const evaluateBaynReleaseRetry = (input: {
       false,
     )
   }
-  const failedAtMs = Date.parse(failedReviewRun.run.updatedAt)
+  const failedReviewJob = failedReviewRun.jobs.find((job) => job.name === 'Verify exact-head Codex review')
+  const failedAtMs = Date.parse(failedReviewJob?.completedAt ?? '')
   if (!Number.isFinite(failedAtMs)) {
     return hold(
       'retry-failed-run-mismatch',
-      `Bayn run ${failedReviewRun.run.id} has an invalid completion timestamp`,
+      `Bayn run ${failedReviewRun.run.id} review gate has an invalid completion timestamp`,
       false,
     )
   }
 
   const affectingCommits = baynAffectingCommits(input.snapshot)
+  const reviewThreadBlock = failedReviewRun.reviewThreadBlock
+  let resolvedThreadCommitSha: string | null = null
+  if (reviewThreadBlock !== null) {
+    const blockedCommits = affectingCommits.filter(
+      (commit) =>
+        commit.sha.startsWith(reviewThreadBlock.commitShaPrefix) &&
+        commit.reviewSnapshot?.pullRequest?.number === reviewThreadBlock.prNumber,
+    )
+    if (blockedCommits.length !== 1) {
+      return hold(
+        'retry-failed-run-mismatch',
+        `failed run ${failedReviewRun.run.id} review-thread evidence does not uniquely bind current range commit ${reviewThreadBlock.commitShaPrefix}/#${reviewThreadBlock.prNumber}`,
+        false,
+      )
+    }
+    resolvedThreadCommitSha = blockedCommits[0]?.sha ?? null
+  }
   const delayedCandidates = eligibility.reviewedPullRequests.flatMap((reviewed) => {
-    const attestedAtMs = Date.parse(reviewed.reviewSubmittedAt)
-    if (!Number.isFinite(attestedAtMs) || attestedAtMs <= failedAtMs) return []
+    const eligibleAtMs = Date.parse(reviewed.eligibleAt)
+    const delayedByEligibilityTime = Number.isFinite(eligibleAtMs) && eligibleAtMs >= failedAtMs
+    const delayedByResolvedThread =
+      reviewed.commitSha === resolvedThreadCommitSha && Number.isFinite(input.nowMs) && input.nowMs >= failedAtMs
+    if (!delayedByEligibilityTime && !delayedByResolvedThread) return []
     const commit = affectingCommits.find((candidate) => candidate.sha === reviewed.commitSha)
     const pullRequest = commit?.reviewSnapshot?.pullRequest
     if (
@@ -1199,6 +1235,101 @@ const requestGitHubJson = async (options: {
   }
 }
 
+const requestGitHubText = async (options: {
+  readonly url: string
+  readonly operation: string
+  readonly token: string
+  readonly requestTimeoutMs: number
+  readonly maximumBytes: number
+  readonly fetchFn: typeof fetch
+}): Promise<string> => {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), options.requestTimeoutMs)
+  const readBoundedText = async (response: Response): Promise<string> => {
+    const declaredLength = response.headers.get('content-length')
+    const parsedLength = declaredLength === null ? null : Number(declaredLength)
+    if (parsedLength !== null && (!Number.isFinite(parsedLength) || parsedLength > options.maximumBytes)) {
+      throw new GitHubReleaseReviewError('github-api-invalid-response', `${options.operation} size`)
+    }
+    if (response.body === null) {
+      throw new GitHubReleaseReviewError('github-api-invalid-response', `${options.operation} body`)
+    }
+    const reader = response.body.getReader()
+    const chunks: Uint8Array[] = []
+    let totalBytes = 0
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      totalBytes += value.byteLength
+      if (totalBytes > options.maximumBytes) {
+        await reader.cancel()
+        throw new GitHubReleaseReviewError('github-api-invalid-response', `${options.operation} size`)
+      }
+      chunks.push(value)
+    }
+    const bytes = new Uint8Array(totalBytes)
+    let offset = 0
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.byteLength
+    }
+    return new TextDecoder().decode(bytes)
+  }
+  try {
+    const response = await options.fetchFn(options.url, {
+      signal: controller.signal,
+      redirect: 'manual',
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${options.token}`,
+        'User-Agent': 'bayn-release-review-gate',
+        'X-GitHub-Api-Version': githubApiVersion,
+      },
+    })
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location')
+      if (location === null) {
+        throw new GitHubReleaseReviewError('github-api-invalid-response', `${options.operation} redirect`)
+      }
+      let downloadUrl: URL
+      try {
+        downloadUrl = new URL(location)
+      } catch (error) {
+        throw new GitHubReleaseReviewError('github-api-invalid-response', `${options.operation} redirect`, {
+          cause: error,
+        })
+      }
+      if (
+        downloadUrl.protocol !== 'https:' ||
+        (!downloadUrl.hostname.endsWith('.blob.core.windows.net') &&
+          downloadUrl.hostname !== 'pipelines.actions.githubusercontent.com')
+      ) {
+        throw new GitHubReleaseReviewError('github-api-invalid-response', `${options.operation} redirect host`)
+      }
+      const download = await options.fetchFn(downloadUrl, {
+        signal: controller.signal,
+        redirect: 'error',
+      })
+      if (!download.ok) {
+        throw new GitHubReleaseReviewError('github-api-error', options.operation, { status: download.status })
+      }
+      return await readBoundedText(download)
+    }
+    if (!response.ok) {
+      throw new GitHubReleaseReviewError('github-api-error', options.operation, { status: response.status })
+    }
+    return await readBoundedText(response)
+  } catch (error) {
+    if (error instanceof GitHubReleaseReviewError) throw error
+    if (controller.signal.aborted) {
+      throw new GitHubReleaseReviewError('github-api-timeout', options.operation, { cause: error })
+    }
+    throw new GitHubReleaseReviewError('github-api-error', options.operation, { cause: error })
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 const requestGraphql = async (options: {
   readonly query: string
   readonly variables: Record<string, unknown>
@@ -1331,11 +1462,43 @@ const parseBaynBuildWorkflowJobs = (value: unknown): readonly BaynBuildWorkflowJ
   return payload.jobs.map((item, index) => {
     const job = expectRecord(item, `Bayn build workflow job ${index}`)
     return {
+      id: expectInteger(job.id, `Bayn build workflow job ${index} ID`),
       name: expectString(job.name, `Bayn build workflow job ${index} name`),
       status: expectString(job.status, `Bayn build workflow job ${index} status`),
       conclusion: expectNullableString(job.conclusion, `Bayn build workflow job ${index} conclusion`),
+      completedAt: expectNullableString(job.completed_at, `Bayn build workflow job ${index} completed at`),
     }
   })
+}
+
+export const parseFailedReviewThreadBlock = (log: string): FailedReviewThreadBlock | null => {
+  const patterns = [
+    /BAYN_RELEASE_REVIEW_HOLD active-unresolved-review-threads: Bayn-affecting commit ([0-9a-f]{12}) .*? source PR #(\d+) has \d+ unresolved review thread\(s\):/g,
+    /BAYN_RELEASE_REVIEW_HOLD feedback-fix-attestation-missing: Bayn-affecting commit ([0-9a-f]{12}) .*? source PR #(\d+) final head [0-9a-f]{12} carries review from [0-9a-f]{12}, but post-review commit [0-9a-f]{12} lacks a trusted member reply on a resolved Codex thread from that review/g,
+  ]
+  const matches = patterns.flatMap((pattern) =>
+    [...log.matchAll(pattern)].map((match) => ({
+      commitShaPrefix: match[1] as string,
+      prNumber: Number(match[2]),
+    })),
+  )
+  if (matches.length === 0) return null
+  const unique = new Map(matches.map((match) => [`${match.commitShaPrefix}/#${match.prNumber}`, match]))
+  if (unique.size !== 1) {
+    throw new GitHubReleaseReviewError('github-api-invalid-response', 'parse failed Bayn review-gate log')
+  }
+  return unique.values().next().value ?? null
+}
+
+export const loadOptionalFailedReviewThreadBlock = async (
+  loadLog: () => Promise<string>,
+): Promise<FailedReviewThreadBlock | null> => {
+  try {
+    return parseFailedReviewThreadBlock(await loadLog())
+  } catch (error) {
+    if (error instanceof GitHubReleaseReviewError && (error.status === 404 || error.status === 410)) return null
+    throw error
+  }
 }
 
 interface ParsedComparison {
@@ -2049,6 +2212,27 @@ const fetchBaynBuildWorkflowJobs = async (
   return parseBaynBuildWorkflowJobs(response.value)
 }
 
+const fetchFailedReviewThreadBlock = async (
+  options: GitHubLoaderOptions,
+  jobs: readonly BaynBuildWorkflowJob[],
+): Promise<FailedReviewThreadBlock | null> => {
+  const reviewJobs = jobs.filter((job) => job.name === 'Verify exact-head Codex review')
+  if (reviewJobs.length !== 1) return null
+  const reviewJob = reviewJobs[0]
+  if (reviewJob === undefined) return null
+  const operation = `read failed Bayn review-gate job ${reviewJob.id} log`
+  return loadOptionalFailedReviewThreadBlock(() =>
+    requestGitHubText({
+      url: `https://api.github.com/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.name)}/actions/jobs/${reviewJob.id}/logs`,
+      operation,
+      token: options.token,
+      requestTimeoutMs: options.requestTimeoutMs,
+      maximumBytes: maximumReleaseReviewJobLogBytes,
+      fetchFn: options.fetchFn,
+    }),
+  )
+}
+
 const latestFailedSourcePush = (
   runs: readonly BaynBuildWorkflowRun[],
   sourceCommitSha: string,
@@ -2103,10 +2287,11 @@ export const createGitHubReleaseRetryLoader = (options: {
     ])
     const failedRun = latestFailedSourcePush(sourcePushRuns, options.mainCommitSha)
     const jobs = failedRun === undefined ? [] : await fetchBaynBuildWorkflowJobs(loaderOptions, failedRun.id)
+    const reviewThreadBlock = failedRun === undefined ? null : await fetchFailedReviewThreadBlock(loaderOptions, jobs)
     return {
       ...eligibility,
       defaultBranchSha,
-      failedReviewRun: failedRun === undefined ? null : { run: failedRun, jobs },
+      failedReviewRun: failedRun === undefined ? null : { run: failedRun, jobs, reviewThreadBlock },
       publicationSucceeded:
         sourcePushRuns.some((run) => run.status === 'completed' && run.conclusion === 'success') ||
         currentDispatchRuns.some((run) => run.status === 'completed' && run.conclusion === 'success'),

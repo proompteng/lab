@@ -11,6 +11,8 @@ import {
   evaluateBaynReleaseReview,
   GitHubReleaseReviewError,
   isBaynReleaseAffectingPath,
+  loadOptionalFailedReviewThreadBlock,
+  parseFailedReviewThreadBlock,
   pollBaynReleaseEligibility,
   pollBaynReleaseReview,
   resolveLastPublishedRevision,
@@ -252,6 +254,8 @@ const retrySnapshot = (
     readonly retryInProgress?: boolean
     readonly defaultBranchSha?: string
     readonly eligibility?: BaynReleaseEligibilitySnapshot
+    readonly reviewThreadBlock?: { readonly commitShaPrefix: string; readonly prNumber: number } | null
+    readonly failedReviewJobCompletedAt?: string | null
   } = {},
 ): BaynReleaseRetrySnapshot => {
   const eligibility =
@@ -291,6 +295,8 @@ const retrySnapshot = (
       },
     })
   const run = options.failedRun === undefined ? failedBuildRun() : options.failedRun
+  const failedReviewJobCompletedAt =
+    options.failedReviewJobCompletedAt === undefined ? (run?.updatedAt ?? null) : options.failedReviewJobCompletedAt
   return {
     ...eligibility,
     defaultBranchSha: options.defaultBranchSha ?? mainCommitSha,
@@ -300,9 +306,22 @@ const retrySnapshot = (
         : {
             run,
             jobs: [
-              { name: 'Verify exact-head Codex review', status: 'completed', conclusion: 'failure' },
-              { name: 'image', status: 'completed', conclusion: 'skipped' },
+              {
+                id: 90860000001,
+                name: 'Verify exact-head Codex review',
+                status: 'completed',
+                conclusion: 'failure',
+                completedAt: failedReviewJobCompletedAt,
+              },
+              {
+                id: 90860000002,
+                name: 'image',
+                status: 'completed',
+                conclusion: 'skipped',
+                completedAt: run.updatedAt,
+              },
             ],
+            reviewThreadBlock: options.reviewThreadBlock ?? null,
           },
     publicationSucceeded: false,
     retryInProgress: options.retryInProgress ?? false,
@@ -679,6 +698,292 @@ describe('Bayn delayed-attestation publication retry', () => {
     })
   })
 
+  test('dispatches when an exact-head review finishes settling after the failed push', () => {
+    const settlingReview = reviewSnapshotFor({
+      commitSha: mainCommitSha,
+      prNumber: 13401,
+      headSha: finalHeadSha,
+      parents: [lastPublishedSha],
+      mergedAt: '2026-07-30T07:00:00Z',
+      reviews: [review({ submittedAt: '2026-07-30T07:01:00Z' })],
+    })
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot({
+          reviewSnapshot: settlingReview,
+          failedRun: failedBuildRun({ updatedAt: '2026-07-30T07:01:20Z' }),
+        }),
+        trigger: { type: 'schedule' },
+        nowMs: Date.parse('2026-07-30T07:02:00Z'),
+      }),
+    ).toMatchObject({
+      status: 'dispatch',
+      sourceCommitSha: mainCommitSha,
+      prNumber: 13401,
+      headSha: finalHeadSha,
+    })
+  })
+
+  test('dispatches when review readiness and failed-run completion share the same GitHub timestamp second', () => {
+    const settlingReview = reviewSnapshotFor({
+      commitSha: mainCommitSha,
+      prNumber: 13401,
+      headSha: finalHeadSha,
+      parents: [lastPublishedSha],
+      mergedAt: '2026-07-30T07:00:00Z',
+      reviews: [review({ submittedAt: '2026-07-30T07:01:00Z' })],
+    })
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot({
+          reviewSnapshot: settlingReview,
+          failedRun: failedBuildRun({ updatedAt: '2026-07-30T07:01:30Z' }),
+        }),
+        trigger: { type: 'schedule' },
+        nowMs: Date.parse('2026-07-30T07:02:00Z'),
+      }),
+    ).toMatchObject({
+      status: 'dispatch',
+      sourceCommitSha: mainCommitSha,
+      prNumber: 13401,
+      headSha: finalHeadSha,
+    })
+  })
+
+  test('uses the failed review job completion before later workflow-run finalization', () => {
+    const settlingReview = reviewSnapshotFor({
+      commitSha: mainCommitSha,
+      prNumber: 13401,
+      headSha: finalHeadSha,
+      parents: [lastPublishedSha],
+      mergedAt: '2026-07-30T07:00:00Z',
+      reviews: [review({ submittedAt: '2026-07-30T07:02:01Z' })],
+    })
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot({
+          reviewSnapshot: settlingReview,
+          failedRun: failedBuildRun({ updatedAt: '2026-07-30T07:02:35Z' }),
+          failedReviewJobCompletedAt: '2026-07-30T07:02:30Z',
+        }),
+        trigger: { type: 'schedule' },
+        nowMs: Date.parse('2026-07-30T07:03:00Z'),
+      }),
+    ).toMatchObject({
+      status: 'dispatch',
+      sourceCommitSha: mainCommitSha,
+      prNumber: 13401,
+      headSha: finalHeadSha,
+    })
+  })
+
+  test('dispatches when the failed gate proves a matching unresolved thread that is resolved later', () => {
+    const resolvedReview = reviewSnapshotFor({
+      commitSha: mainCommitSha,
+      prNumber: 13401,
+      headSha: finalHeadSha,
+      parents: [lastPublishedSha],
+      mergedAt: '2026-07-30T07:00:00Z',
+      reviews: [review({ submittedAt: '2026-07-30T07:00:00Z' })],
+      threads: [thread({ isResolved: true })],
+    })
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot({
+          reviewSnapshot: resolvedReview,
+          failedRun: failedBuildRun({ updatedAt: '2026-07-30T07:02:30Z' }),
+          reviewThreadBlock: { commitShaPrefix: mainCommitSha.slice(0, 12), prNumber: 13401 },
+        }),
+        trigger: { type: 'schedule' },
+        nowMs: Date.parse('2026-07-30T07:04:00Z'),
+      }),
+    ).toMatchObject({
+      status: 'dispatch',
+      sourceCommitSha: mainCommitSha,
+      prNumber: 13401,
+      headSha: finalHeadSha,
+    })
+  })
+
+  test('keeps unresolved-thread retry evidence exact, trusted, and non-actionable', () => {
+    const resolvedReview = reviewSnapshotFor({
+      commitSha: mainCommitSha,
+      prNumber: 13401,
+      headSha: finalHeadSha,
+      parents: [lastPublishedSha],
+      mergedAt: '2026-07-30T07:00:00Z',
+      reviews: [review({ submittedAt: '2026-07-30T07:00:00Z' })],
+      threads: [thread({ isResolved: true })],
+    })
+    const exactSnapshot = retrySnapshot({
+      reviewSnapshot: resolvedReview,
+      reviewThreadBlock: { commitShaPrefix: mainCommitSha.slice(0, 12), prNumber: 13401 },
+    })
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: exactSnapshot,
+        trigger: { type: 'issue-comment', prNumber: 13401, actorLogin: 'spoofed-codex[bot]' },
+        nowMs: retryNowMs,
+      }),
+    ).toMatchObject({ status: 'hold', code: 'retry-trigger-mismatch', retryable: false })
+
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot({
+          reviewSnapshot: resolvedReview,
+          reviewThreadBlock: { commitShaPrefix: olderHeadSha.slice(0, 12), prNumber: 13401 },
+        }),
+        trigger: { type: 'schedule' },
+        nowMs: retryNowMs,
+      }),
+    ).toMatchObject({ status: 'hold', code: 'retry-failed-run-mismatch', retryable: false })
+
+    const stillActionable = reviewSnapshotFor({
+      commitSha: mainCommitSha,
+      prNumber: 13401,
+      headSha: finalHeadSha,
+      parents: [lastPublishedSha],
+      mergedAt: '2026-07-30T07:00:00Z',
+      reviews: [review({ submittedAt: '2026-07-30T07:00:00Z' })],
+      threads: [thread({ isResolved: false })],
+    })
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot({
+          reviewSnapshot: stillActionable,
+          reviewThreadBlock: { commitShaPrefix: mainCommitSha.slice(0, 12), prNumber: 13401 },
+        }),
+        trigger: { type: 'schedule' },
+        nowMs: retryNowMs,
+      }),
+    ).toMatchObject({ status: 'hold', code: 'active-unresolved-review-threads', retryable: false })
+  })
+
+  test('dispatches after a trusted feedback reply thread is resolved following the failed gate', () => {
+    const feedbackComments = [
+      threadComment({
+        createdAt: '2026-07-30T07:00:00Z',
+        reviewSubmittedAt: '2026-07-30T07:00:00Z',
+      }),
+      threadComment({
+        authorLogin: 'gregkonush',
+        authorAssociation: 'MEMBER',
+        body: 'Fixed in the final head.',
+        createdAt: '2026-07-30T07:01:00Z',
+        commitSha: finalHeadSha,
+        reviewCommitSha: finalHeadSha,
+        reviewAuthorLogin: 'gregkonush',
+        reviewSubmittedAt: '2026-07-30T07:01:00Z',
+      }),
+    ]
+    const unresolvedFeedback = snapshot({
+      commitShas: [olderHeadSha, finalHeadSha],
+      reviews: [review({ commitSha: olderHeadSha, submittedAt: '2026-07-30T07:00:00Z' })],
+      threads: [thread({ isResolved: false, comments: feedbackComments })],
+    })
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: unresolvedFeedback,
+        nowMs: retryNowMs,
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({ status: 'hold', code: 'feedback-fix-attestation-missing', retryable: true })
+
+    const resolvedFeedback = snapshot({
+      commitShas: [olderHeadSha, finalHeadSha],
+      reviews: [review({ commitSha: olderHeadSha, submittedAt: '2026-07-30T07:00:00Z' })],
+      threads: [thread({ isResolved: true, comments: feedbackComments })],
+    })
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot({
+          reviewSnapshot: resolvedFeedback,
+          failedRun: failedBuildRun({ updatedAt: '2026-07-30T07:02:30Z' }),
+          reviewThreadBlock: { commitShaPrefix: mainCommitSha.slice(0, 12), prNumber: 13390 },
+        }),
+        trigger: { type: 'schedule' },
+        nowMs: retryNowMs,
+      }),
+    ).toMatchObject({
+      status: 'dispatch',
+      sourceCommitSha: mainCommitSha,
+      prNumber: 13390,
+      headSha: finalHeadSha,
+    })
+  })
+
+  test('dispatches when the final required feedback attestation arrives after the failed push', () => {
+    const feedbackReview = snapshot({
+      commitShas: [olderHeadSha, finalHeadSha],
+      reviews: [review({ commitSha: olderHeadSha, submittedAt: '2026-07-30T07:00:00Z' })],
+      threads: [
+        thread({
+          comments: [
+            threadComment({
+              createdAt: '2026-07-30T07:00:00Z',
+              reviewSubmittedAt: '2026-07-30T07:00:00Z',
+            }),
+            threadComment({
+              authorLogin: 'gregkonush',
+              authorAssociation: 'MEMBER',
+              body: 'Fixed in the final head.',
+              createdAt: '2026-07-30T07:03:00Z',
+              commitSha: finalHeadSha,
+              reviewCommitSha: finalHeadSha,
+              reviewAuthorLogin: 'gregkonush',
+              reviewSubmittedAt: '2026-07-30T07:03:00Z',
+            }),
+          ],
+        }),
+      ],
+    })
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: feedbackReview,
+        nowMs: retryNowMs,
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({
+      status: 'eligible',
+      reviewSubmittedAt: '2026-07-30T07:00:00Z',
+      eligibleAt: '2026-07-30T07:03:00.000Z',
+    })
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot({ reviewSnapshot: feedbackReview }),
+        trigger: { type: 'schedule' },
+        nowMs: retryNowMs,
+      }),
+    ).toMatchObject({
+      status: 'dispatch',
+      sourceCommitSha: mainCommitSha,
+      prNumber: 13390,
+      headSha: finalHeadSha,
+    })
+  })
+
   test('binds a retry to the earlier range commit whose attestation arrived after the failed current-main push', () => {
     const earlierCommitSha = heldCommitSha
     const earlierHeadSha = heldHeadSha
@@ -995,7 +1300,59 @@ describe('Bayn delayed-attestation publication retry', () => {
     expect(workflow).not.toContain('permissions:\n  actions: write')
   })
 
+  test('parses only exact unresolved-thread failure evidence from the bounded gate log', () => {
+    expect(
+      parseFailedReviewThreadBlock(
+        `2026-07-30T07:02:30Z BAYN_RELEASE_REVIEW_HOLD active-unresolved-review-threads: Bayn-affecting commit ${mainCommitSha.slice(0, 12)} after last published ${lastPublishedSha.slice(0, 12)} is not release-eligible: source PR #13401 has 1 unresolved review thread(s): https://github.com/proompteng/lab/pull/13401#discussion_r1\n`,
+      ),
+    ).toEqual({ commitShaPrefix: mainCommitSha.slice(0, 12), prNumber: 13401 })
+    expect(
+      parseFailedReviewThreadBlock(
+        `2026-07-30T07:02:30Z BAYN_RELEASE_REVIEW_HOLD feedback-fix-attestation-missing: Bayn-affecting commit ${mainCommitSha.slice(0, 12)} after last published ${lastPublishedSha.slice(0, 12)} is not release-eligible: source PR #13401 final head ${finalHeadSha.slice(0, 12)} carries review from ${olderHeadSha.slice(0, 12)}, but post-review commit ${finalHeadSha.slice(0, 12)} lacks a trusted member reply on a resolved Codex thread from that review\n`,
+      ),
+    ).toEqual({ commitShaPrefix: mainCommitSha.slice(0, 12), prNumber: 13401 })
+    expect(
+      parseFailedReviewThreadBlock(
+        `BAYN_RELEASE_REVIEW_HOLD active-unresolved-review-threads: source PR #13401 has unresolved threads\n`,
+      ),
+    ).toBeNull()
+    expect(() =>
+      parseFailedReviewThreadBlock(
+        `BAYN_RELEASE_REVIEW_HOLD active-unresolved-review-threads: Bayn-affecting commit ${mainCommitSha.slice(0, 12)} after last published ${lastPublishedSha.slice(0, 12)} is not release-eligible: source PR #13401 has 1 unresolved review thread(s): one\nBAYN_RELEASE_REVIEW_HOLD active-unresolved-review-threads: Bayn-affecting commit ${heldCommitSha.slice(0, 12)} after last published ${lastPublishedSha.slice(0, 12)} is not release-eligible: source PR #13402 has 1 unresolved review thread(s): two\n`,
+      ),
+    ).toThrow('github-api-invalid-response')
+  })
+
+  test('keeps timestamp-based retries available when failed job logs expired', async () => {
+    for (const status of [404, 410]) {
+      const reviewThreadBlock = await loadOptionalFailedReviewThreadBlock(() =>
+        Promise.reject(
+          new GitHubReleaseReviewError('github-api-error', 'read failed Bayn review-gate job log', { status }),
+        ),
+      )
+      expect(reviewThreadBlock).toBeNull()
+      expect(
+        evaluateBaynReleaseRetry({
+          mainCommitSha,
+          baseRefName: 'main',
+          snapshot: retrySnapshot({ reviewThreadBlock }),
+          trigger: { type: 'schedule' },
+          nowMs: retryNowMs,
+        }),
+      ).toMatchObject({ status: 'dispatch', sourceCommitSha: mainCommitSha })
+    }
+
+    await expect(
+      loadOptionalFailedReviewThreadBlock(() =>
+        Promise.reject(
+          new GitHubReleaseReviewError('github-api-error', 'read failed Bayn review-gate job log', { status: 503 }),
+        ),
+      ),
+    ).rejects.toMatchObject({ code: 'github-api-error', status: 503 })
+  })
+
   test('decodes a bounded failed push and delayed clean reaction for retry discovery', async () => {
+    let redirectedLogAuthorization: string | null = 'not-requested'
     const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.includes('/actions/workflows/') && url.includes('status=success')) {
@@ -1047,10 +1404,36 @@ describe('Bayn delayed-attestation publication retry', () => {
       if (url.includes('/actions/runs/30540000001/jobs?')) {
         return Response.json({
           jobs: [
-            { name: 'Verify exact-head Codex review', status: 'completed', conclusion: 'failure' },
-            { name: 'image', status: 'completed', conclusion: 'skipped' },
+            {
+              id: 90860000001,
+              name: 'Verify exact-head Codex review',
+              status: 'completed',
+              conclusion: 'failure',
+              completed_at: '2026-07-30T07:02:30Z',
+            },
+            {
+              id: 90860000002,
+              name: 'image',
+              status: 'completed',
+              conclusion: 'skipped',
+              completed_at: '2026-07-30T07:02:31Z',
+            },
           ],
         })
+      }
+      if (url.includes('/actions/jobs/90860000001/logs')) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            location: 'https://productionresultssa17.blob.core.windows.net/actions-results/test/job-logs.txt',
+          },
+        })
+      }
+      if (url === 'https://productionresultssa17.blob.core.windows.net/actions-results/test/job-logs.txt') {
+        redirectedLogAuthorization = new Headers(init?.headers).get('authorization')
+        return new Response(
+          'BAYN_RELEASE_REVIEW_HOLD exact-head-review-missing: source PR final head lacks review evidence\n',
+        )
       }
       if (url.includes('/compare/')) {
         return Response.json({
@@ -1173,6 +1556,7 @@ describe('Bayn delayed-attestation publication retry', () => {
       prNumber: 13401,
       failedRunId: 30540000001,
     })
+    expect(redirectedLogAuthorization).toBeNull()
   })
 })
 
@@ -1191,6 +1575,7 @@ describe('Bayn exact-head release review eligibility', () => {
       prNumber: 13390,
       headSha: finalHeadSha,
       reviewSubmittedAt: '2026-07-30T07:01:00Z',
+      eligibleAt: '2026-07-30T07:01:30.000Z',
     })
   })
 
@@ -1228,6 +1613,7 @@ describe('Bayn exact-head release review eligibility', () => {
       prNumber: 13390,
       headSha: finalHeadSha,
       reviewSubmittedAt: '2026-07-30T07:01:00Z',
+      eligibleAt: '2026-07-30T07:01:30.000Z',
     })
   })
 
@@ -1245,6 +1631,7 @@ describe('Bayn exact-head release review eligibility', () => {
       prNumber: 13390,
       headSha: finalHeadSha,
       reviewSubmittedAt: '2026-07-30T07:01:00Z',
+      eligibleAt: '2026-07-30T07:01:30.000Z',
     })
   })
 
@@ -1359,6 +1746,7 @@ describe('Bayn exact-head release review eligibility', () => {
       prNumber: 13390,
       headSha: finalHeadSha,
       reviewSubmittedAt: '2026-07-30T07:01:00Z',
+      eligibleAt: '2026-07-30T07:01:30.000Z',
     })
   })
 
