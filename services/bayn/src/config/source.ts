@@ -5,6 +5,7 @@ import { BrokerEnvironment, BrokerEnvironmentSchema } from '../broker/identity'
 import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema } from '../contracts'
 import { BrokerAccess, BrokerAccessSchema } from '../execution/authority'
 import { CapitalAuthoritySelection } from '../execution/configuration'
+import { ExecutionPrepareRequestSchema } from '../execution-prepare/model'
 import {
   GitSourceRevisionSchema as SourceRevision,
   ImageDigestSchema as ImageDigest,
@@ -18,7 +19,11 @@ const ProvenanceMode = Schema.Literals(['production', 'development'])
 const RetryAttempts = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 }))
 const OperationalThresholdMs = Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 86_400_000 }))
 const LegacyAuthorityTokenSchema = Schema.Literals(['OBSERVE', 'PAPER'])
-const RuntimeOperationTokenSchema = Schema.Literals(['EXECUTION_CANDIDATE_DISCOVERY', 'PAPER_CANDIDATE_DISCOVERY'])
+const RuntimeOperationTokenSchema = Schema.Literals([
+  'EXECUTION_CANDIDATE_DISCOVERY',
+  'PAPER_CANDIDATE_DISCOVERY',
+  'EXECUTION_PREPARE',
+])
 const CapitalAuthoritySelectionSchema = Schema.Enum(CapitalAuthoritySelection)
 
 const ReplicaAddresses = Schema.Trim.pipe(
@@ -43,7 +48,10 @@ const operationalThreshold = (name: string, fallback: number) =>
   Config.schema(OperationalThresholdMs, name).pipe(Config.withDefault(fallback))
 
 const runtimeOperation = Config.schema(RuntimeOperationTokenSchema, 'BAYN_OPERATION').pipe(
-  Config.map((): RuntimeOperation => 'ExecutionCandidateDiscovery'),
+  Config.map(
+    (operation): RuntimeOperation =>
+      operation === 'EXECUTION_PREPARE' ? 'ExecutionPrepare' : 'ExecutionCandidateDiscovery',
+  ),
 )
 
 export const runtimeConfigSource = Config.all({
@@ -57,6 +65,9 @@ export const runtimeConfigSource = Config.all({
   provenanceMode: Config.schema(ProvenanceMode, 'BAYN_PROVENANCE_MODE').pipe(Config.withDefault('production')),
   qualificationRunId: Config.option(Config.schema(Sha256Schema, 'BAYN_QUALIFICATION_RUN_ID')),
   operation: Config.option(runtimeOperation),
+  executionPrepareRequest: Config.option(
+    Config.schema(Schema.fromJsonString(ExecutionPrepareRequestSchema), 'BAYN_EXECUTION_PREPARE_REQUEST'),
+  ),
   legacyMaximumAuthority: Config.option(Config.schema(LegacyAuthorityTokenSchema, 'BAYN_MAXIMUM_AUTHORITY')),
   brokerAccess: Config.schema(BrokerAccessSchema, 'BAYN_BROKER_ACCESS').pipe(Config.withDefault(BrokerAccess.ReadOnly)),
   capitalAuthority: Config.schema(CapitalAuthoritySelectionSchema, 'BAYN_CAPITAL_AUTHORITY').pipe(
@@ -111,6 +122,7 @@ export const runtimeConfigSource = Config.all({
       port: config.port,
       qualificationRunId: Option.getOrUndefined(config.qualificationRunId),
       configuredOperation: Option.getOrUndefined(config.operation),
+      executionPrepareRequest: Option.getOrUndefined(config.executionPrepareRequest),
       legacyMaximumAuthority: Option.getOrUndefined(config.legacyMaximumAuthority),
       brokerAccess: config.brokerAccess,
       capitalAuthority: config.capitalAuthority,

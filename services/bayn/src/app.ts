@@ -68,6 +68,11 @@ export const makeApplicationPlan = (identity: ApplicationIdentity): ApplicationP
       _tag: 'ExecutionCandidateDiscovery' as const,
       config,
     })),
+    Match.when({ runtimeMode: 'ExecutionPrepare' }, (config) => ({
+      ...identity,
+      _tag: 'ExecutionPrepare' as const,
+      config,
+    })),
     Match.exhaustive,
   )
 

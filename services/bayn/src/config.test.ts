@@ -13,6 +13,9 @@ import {
 } from './config'
 import { BrokerAccess, BrokerEnvironment, CapitalAuthorityKind } from './execution/authority'
 import { CapitalAuthoritySelection } from './execution/configuration'
+import type { ExecutionPrepareRequest } from './execution-prepare'
+import { makeExecutionPrepareDiscoveryReceiptFixture } from './execution-prepare/test-fixture'
+import { canonicalHashV1OrThrow } from './hash'
 
 const sourceRevision = 'a'.repeat(40)
 const imageRepository = 'registry.ide-newton.ts.net/lab/bayn'
@@ -29,12 +32,78 @@ const qualificationRunId = 'e'.repeat(64)
 const alpacaAccountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const clickhousePassword = 'clickhouse-password-must-remain-redacted'
 const postgresUrl = 'postgresql://bayn:postgres-secret-must-remain-redacted@postgres.test:5432/bayn'
+const executionPrepareStrategy = {
+  name: 'risk-balanced-trend' as const,
+  behaviorHash: buildMetadata.strategyBehaviorHash,
+  parameterHash: buildMetadata.strategyParameterHash,
+  parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4' as const,
+}
+const executionPrepareStrategyProtocolHash = '7'.repeat(64)
+const executionPrepareRiskPolicyHash = 'd'.repeat(64)
+const executionPrepareReconciliationId = 'e'.repeat(64)
+const executionPrepareReconciliationContentHash = 'f'.repeat(64)
+const executionPrepareDiscoveryReceipt = makeExecutionPrepareDiscoveryReceiptFixture({
+  sourceRevision,
+  imageRepository,
+  imageDigest,
+  strategy: executionPrepareStrategy,
+  strategyProtocolHash: executionPrepareStrategyProtocolHash,
+  qualificationRunId,
+  accountId: alpacaAccountId,
+  authorityGenerationHash,
+  policyHash: executionPrepareRiskPolicyHash,
+  reconciliationId: executionPrepareReconciliationId,
+  reconciliationContentHash: executionPrepareReconciliationContentHash,
+})
+const executionPrepareCandidate = executionPrepareDiscoveryReceipt.candidateFacts.candidates[0]!
+
+const executionPrepareProofPlan = {
+  schemaVersion: 'bayn.execution-prepare-proof-plan.v1' as const,
+  candidate: {
+    discoveryReceiptHash: executionPrepareDiscoveryReceipt.observationReceiptHash,
+    immutableBindingHash: executionPrepareDiscoveryReceipt.immutableBindingHash,
+    candidateFactsHash: executionPrepareDiscoveryReceipt.candidateFactsHash,
+    candidateOrdinal: executionPrepareCandidate.ordinal,
+    observedPlanIntentId: executionPrepareCandidate.observedPlanIntentId,
+    cycleId: executionPrepareDiscoveryReceipt.binding.cycle.cycleId,
+    decisionHash: executionPrepareDiscoveryReceipt.binding.cycle.decisionHash,
+  },
+  binding: {
+    activationSourceRevision: sourceRevision,
+    activationImageRepository: imageRepository,
+    activationImageDigest: imageDigest,
+    qualificationSourceRevision: 'f'.repeat(40),
+    qualificationImageRepository: imageRepository,
+    qualificationImageDigest: `sha256:${'1'.repeat(64)}` as const,
+    strategy: executionPrepareStrategy,
+    strategyProtocolHash: executionPrepareStrategyProtocolHash,
+    qualificationRunId,
+    qualificationLockId: '8'.repeat(64),
+    qualificationResultHash: '9'.repeat(64),
+    protocolHash: 'a'.repeat(64),
+    qualificationExecutionPolicyHash: 'b'.repeat(64),
+    accountId: alpacaAccountId,
+    brokerIdentityHash: 'c'.repeat(64),
+    authorityGenerationHash,
+    riskPolicyHash: executionPrepareRiskPolicyHash,
+    reconciliationId: executionPrepareReconciliationId,
+    reconciliationContentHash: executionPrepareReconciliationContentHash,
+  },
+}
+
+const executionPrepareRequest: ExecutionPrepareRequest = {
+  schemaVersion: 'bayn.execution-prepare-request.v1',
+  discoveryReceipt: executionPrepareDiscoveryReceipt,
+  proofPlan: executionPrepareProofPlan,
+  proofPlanHash: canonicalHashV1OrThrow(executionPrepareProofPlan),
+}
 
 const baseParsedConfig: ParsedRuntimeConfig = {
   host: '0.0.0.0',
   port: 8080,
   qualificationRunId: undefined,
   configuredOperation: undefined,
+  executionPrepareRequest: undefined,
   legacyMaximumAuthority: 'OBSERVE',
   brokerAccess: BrokerAccess.ReadOnly,
   capitalAuthority: CapitalAuthoritySelection.None,
@@ -205,6 +274,27 @@ describe('pure runtime configuration resolution', () => {
     })
   })
 
+  test('resolves EXECUTION_PREPARE as an explicit read-only bounded operation', () => {
+    const config = Result.getOrThrow(
+      resolveRuntimeConfig(
+        resolutionInput({
+          qualificationRunId,
+          configuredOperation: 'ExecutionPrepare',
+          executionPrepareRequest,
+          configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
+        }),
+      ),
+    )
+
+    expect(config).toMatchObject({
+      runtimeMode: 'ExecutionPrepare',
+      qualificationRunId,
+      executionPrepareRequest,
+      execution: { brokerAccess: BrokerAccess.ReadOnly, capitalAuthority: { _tag: CapitalAuthorityKind.None } },
+      alpaca: { environment: BrokerEnvironment.Sandbox, expectedAccountId: alpacaAccountId },
+    })
+  })
+
   test('rejects partial credentials and connection binding failures before composition', () => {
     expectFailure(
       {
@@ -324,6 +414,62 @@ describe('pure runtime configuration resolution', () => {
     )
   })
 
+  test('requires EXECUTION_PREPARE to remain read-only, pinned, and broker-bound', () => {
+    expectFailure(
+      {
+        configuredOperation: 'ExecutionPrepare',
+        qualificationRunId,
+        configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
+      },
+      { _tag: 'ExecutionPrepareRequiresRequest' },
+    )
+    expectFailure(
+      {
+        configuredOperation: 'ExecutionPrepare',
+        executionPrepareRequest,
+        configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
+      },
+      { _tag: 'ExecutionCandidateDiscoveryRequiresQualificationRun' },
+    )
+    expectFailure(
+      {
+        configuredOperation: 'ExecutionPrepare',
+        executionPrepareRequest,
+        qualificationRunId,
+        authorityGenerationHash: undefined,
+      },
+      { _tag: 'ExecutionCandidateDiscoveryRequiresAlpacaBinding' },
+    )
+    expectFailure(
+      {
+        configuredOperation: 'ExecutionPrepare',
+        executionPrepareRequest,
+        qualificationRunId,
+        configuredAlpaca: alpaca(BrokerEnvironment.Sandbox),
+        legacyMaximumAuthority: undefined,
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: CapitalAuthoritySelection.Sandbox,
+      },
+      {
+        _tag: 'ExecutionCandidateDiscoveryRequiresReadOnlyNoCapital',
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: CapitalAuthoritySelection.Sandbox,
+      },
+    )
+    expectFailure(
+      {
+        configuredOperation: 'ExecutionPrepare',
+        executionPrepareRequest,
+        qualificationRunId,
+        configuredAlpaca: alpaca(BrokerEnvironment.Live),
+      },
+      {
+        _tag: 'ExecutionPrepareRequiresSandboxBroker',
+        brokerEnvironment: BrokerEnvironment.Live,
+      },
+    )
+  })
+
   test('validates provenance, PostgreSQL TLS, bounds, and cycle timing before runtime startup', () => {
     expectFailure(
       { cyclePollIntervalMs: 300_000 },
@@ -425,5 +571,30 @@ describe('runtime configuration loading', () => {
         cause: { _tag: 'SandboxBrokerRequiresSandboxCapital' },
       },
     })
+  })
+
+  test('loads the public EXECUTION_PREPARE token and strict JSON request without exposing credentials', async () => {
+    const environment = new Map(runtimeEnvironment)
+    environment.set('BAYN_OPERATION', 'EXECUTION_PREPARE')
+    environment.set('BAYN_EXECUTION_PREPARE_REQUEST', JSON.stringify(executionPrepareRequest))
+
+    const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), environment))
+    expect(config).toMatchObject({
+      runtimeMode: 'ExecutionPrepare',
+      executionPrepareRequest,
+      execution: { brokerAccess: BrokerAccess.ReadOnly, capitalAuthority: { _tag: CapitalAuthorityKind.None } },
+    })
+    const serialized = JSON.stringify(config, (_key, value) => (typeof value === 'bigint' ? value.toString() : value))
+    expect(serialized).not.toContain('sandbox-secret')
+    expect(serialized).not.toContain('sandbox-key')
+  })
+
+  test('rejects malformed EXECUTION_PREPARE JSON at the config boundary', async () => {
+    const environment = new Map(runtimeEnvironment)
+    environment.set('BAYN_OPERATION', 'EXECUTION_PREPARE')
+    environment.set('BAYN_EXECUTION_PREPARE_REQUEST', '{"schemaVersion":"wrong"}')
+
+    const failure = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), environment)))
+    expect(failure).toMatchObject({ component: 'config', operation: 'load', retryable: false })
   })
 })

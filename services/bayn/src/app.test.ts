@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Clock, Deferred, Effect, Fiber, pipe, Redacted, Result } from 'effect'
+import { Clock, Context, Deferred, Effect, Fiber, Layer, pipe, Redacted, Result } from 'effect'
 
 import {
   config,
@@ -28,8 +28,13 @@ import type { LoadedRuntimeConfig } from './config'
 import { makeStrategyProtocolHash } from './contracts'
 import { BrokerAccess, BrokerEnvironment, noCapitalAuthority } from './execution/authority'
 import type { ExecutionProgram } from './execution/runtime-program'
+import { executionPrepareBoundaryError, validateExecutionPreparePlan } from './entrypoint'
+import type { ExecutionPrepareRequest } from './execution-prepare'
+import { makeExecutionPrepareDiscoveryReceiptFixture } from './execution-prepare/test-fixture'
+import { canonicalHashV1OrThrow } from './hash'
 import type { BrokerProbe } from './health'
 import { HttpServerLive } from './http'
+import { loadObserveRiskPolicy } from './observe-composition'
 import { makeStrategy } from './strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
@@ -152,6 +157,86 @@ const discoveryConfig = (
   },
 })
 
+const prepareConfig = (
+  runtime: typeof pinnedRuntimeConfig,
+): Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'ExecutionPrepare' }> => {
+  const autonomous = autonomousConfig(runtime)
+  const prepareStrategy = {
+    ...fixtureStrategy.provenance.strategy,
+    parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4' as const,
+  }
+  const riskPolicyHash = canonicalHashV1OrThrow(
+    Effect.runSync(loadObserveRiskPolicy(autonomous.alpaca.expectedAccountId, fixtureStrategy.parameters.universe)),
+  )
+  const strategyProtocolHash = makeStrategyProtocolHash(prepareStrategy)
+  const reconciliationId = 'd'.repeat(64)
+  const reconciliationContentHash = 'e'.repeat(64)
+  const discoveryReceipt = makeExecutionPrepareDiscoveryReceiptFixture({
+    sourceRevision: runtime.build.sourceRevision,
+    imageRepository: runtime.build.imageRepository,
+    imageDigest: runtime.build.imageDigest,
+    strategy: prepareStrategy,
+    strategyProtocolHash,
+    qualificationRunId: pinnedEvaluation.runId,
+    accountId: autonomous.alpaca.expectedAccountId,
+    authorityGenerationHash: autonomous.alpaca.authorityGenerationHash,
+    policyHash: riskPolicyHash,
+    reconciliationId,
+    reconciliationContentHash,
+  })
+  const discoveredCandidate = discoveryReceipt.candidateFacts.candidates[0]!
+  const proofPlan = {
+    schemaVersion: 'bayn.execution-prepare-proof-plan.v1' as const,
+    candidate: {
+      discoveryReceiptHash: discoveryReceipt.observationReceiptHash,
+      immutableBindingHash: discoveryReceipt.immutableBindingHash,
+      candidateFactsHash: discoveryReceipt.candidateFactsHash,
+      candidateOrdinal: discoveredCandidate.ordinal,
+      observedPlanIntentId: discoveredCandidate.observedPlanIntentId,
+      cycleId: discoveryReceipt.binding.cycle.cycleId,
+      decisionHash: discoveryReceipt.binding.cycle.decisionHash,
+    },
+    binding: {
+      activationSourceRevision: runtime.build.sourceRevision,
+      activationImageRepository: runtime.build.imageRepository,
+      activationImageDigest: runtime.build.imageDigest,
+      qualificationSourceRevision: 'a'.repeat(40),
+      qualificationImageRepository: runtime.build.imageRepository,
+      qualificationImageDigest: `sha256:${'7'.repeat(64)}` as const,
+      strategy: prepareStrategy,
+      strategyProtocolHash,
+      qualificationRunId: pinnedEvaluation.runId,
+      qualificationLockId: '8'.repeat(64),
+      qualificationResultHash: '9'.repeat(64),
+      protocolHash: 'a'.repeat(64),
+      qualificationExecutionPolicyHash: 'b'.repeat(64),
+      accountId: autonomous.alpaca.expectedAccountId,
+      brokerIdentityHash: autonomous.alpaca.identity.identityHash,
+      authorityGenerationHash: autonomous.alpaca.authorityGenerationHash,
+      riskPolicyHash,
+      reconciliationId,
+      reconciliationContentHash,
+    },
+  }
+  const executionPrepareRequest: ExecutionPrepareRequest = {
+    schemaVersion: 'bayn.execution-prepare-request.v1',
+    discoveryReceipt,
+    proofPlan,
+    proofPlanHash: canonicalHashV1OrThrow(proofPlan),
+  }
+  return {
+    ...autonomous,
+    runtimeMode: 'ExecutionPrepare',
+    qualificationRunId: pinnedEvaluation.runId,
+    executionPrepareRequest,
+    execution: {
+      brokerIdentity: autonomous.alpaca.identity,
+      brokerAccess: BrokerAccess.ReadOnly,
+      capitalAuthority: noCapitalAuthority,
+    },
+  }
+}
+
 const applicationIdentity = (loaded: LoadedRuntimeConfig): ApplicationIdentity => ({
   config: loaded,
   protocol: fixtureProtocol,
@@ -166,6 +251,7 @@ describe('Bayn application composition', () => {
       { config: brokerlessConfig(config), expectedTag: 'BrokerlessService' },
       { config: autonomousConfig(config), expectedTag: 'AutonomousService' },
       { config: discoveryConfig(pinnedRuntimeConfig), expectedTag: 'ExecutionCandidateDiscovery' },
+      { config: prepareConfig(pinnedRuntimeConfig), expectedTag: 'ExecutionPrepare' },
     ] as const
 
     for (const mode of modes) {
@@ -179,6 +265,128 @@ describe('Bayn application composition', () => {
       expect(plan.parameterHash).toBe(identity.parameterHash)
       expect(plan.strategyProtocolHash).toBe(identity.strategyProtocolHash)
       expect(identity).not.toHaveProperty('_tag')
+    }
+  })
+
+  test('redacts bounded-operation resource failures before stdout logging', () => {
+    const accountNumber = 'account-number-must-remain-redacted'
+    const failure = executionPrepareBoundaryError({
+      _tag: 'BrokerSessionAcquisitionError',
+      expectedAccountId: accountNumber,
+      cause: new Error(`credential and ${accountNumber}`),
+    })
+
+    expect(failure).toMatchObject({
+      component: 'strategy',
+      operation: 'execution-prepare-resource',
+      retryable: false,
+      cause: { _tag: 'BrokerSessionAcquisitionError' },
+    })
+    expect(JSON.stringify(failure)).not.toContain(accountNumber)
+    expect(JSON.stringify(failure)).not.toContain('credential')
+  })
+
+  test('rejects semantic EXECUTION_PREPARE drift before resource acquisition', async () => {
+    const base = prepareConfig(pinnedRuntimeConfig)
+    const requestWithBinding = (binding: ExecutionPrepareRequest['proofPlan']['binding']): ExecutionPrepareRequest => {
+      const proofPlan = { ...base.executionPrepareRequest.proofPlan, binding }
+      return {
+        ...base.executionPrepareRequest,
+        proofPlan,
+        proofPlanHash: canonicalHashV1OrThrow(proofPlan),
+      }
+    }
+    const requestWithCandidate = (
+      candidate: ExecutionPrepareRequest['proofPlan']['candidate'],
+    ): ExecutionPrepareRequest => {
+      const proofPlan = { ...base.executionPrepareRequest.proofPlan, candidate }
+      return {
+        ...base.executionPrepareRequest,
+        proofPlan,
+        proofPlanHash: canonicalHashV1OrThrow(proofPlan),
+      }
+    }
+    const requests: readonly ExecutionPrepareRequest[] = [
+      requestWithBinding({ ...base.executionPrepareRequest.proofPlan.binding, accountId: 'drifted-account' }),
+      requestWithBinding({
+        ...base.executionPrepareRequest.proofPlan.binding,
+        authorityGenerationHash: '0'.repeat(64),
+      }),
+      requestWithBinding({
+        ...base.executionPrepareRequest.proofPlan.binding,
+        strategy: {
+          ...base.executionPrepareRequest.proofPlan.binding.strategy,
+          behaviorHash: '0'.repeat(64),
+        },
+      }),
+      requestWithBinding({ ...base.executionPrepareRequest.proofPlan.binding, riskPolicyHash: '0'.repeat(64) }),
+      { ...base.executionPrepareRequest, proofPlanHash: '0'.repeat(64) },
+      requestWithCandidate({
+        ...base.executionPrepareRequest.proofPlan.candidate,
+        observedPlanIntentId: '0'.repeat(64),
+      }),
+      requestWithCandidate({ ...base.executionPrepareRequest.proofPlan.candidate, candidateOrdinal: 1 }),
+      requestWithCandidate({
+        ...base.executionPrepareRequest.proofPlan.candidate,
+        immutableBindingHash: '0'.repeat(64),
+      }),
+      requestWithCandidate({
+        ...base.executionPrepareRequest.proofPlan.candidate,
+        candidateFactsHash: '0'.repeat(64),
+      }),
+      requestWithCandidate({ ...base.executionPrepareRequest.proofPlan.candidate, cycleId: '0'.repeat(64) }),
+      requestWithCandidate({ ...base.executionPrepareRequest.proofPlan.candidate, decisionHash: '0'.repeat(64) }),
+      requestWithBinding({
+        ...base.executionPrepareRequest.proofPlan.binding,
+        activationSourceRevision: '0'.repeat(40),
+      }),
+      requestWithBinding({
+        ...base.executionPrepareRequest.proofPlan.binding,
+        reconciliationId: '0'.repeat(64),
+      }),
+      requestWithBinding({
+        ...base.executionPrepareRequest.proofPlan.binding,
+        reconciliationContentHash: '0'.repeat(64),
+      }),
+      {
+        ...base.executionPrepareRequest,
+        discoveryReceipt: {
+          ...base.executionPrepareRequest.discoveryReceipt,
+          observationReceiptHash: '0'.repeat(64),
+        },
+      },
+    ]
+    const ExternalResource = Context.Service<'execution-prepare-test-resource', number>(
+      'execution-prepare-test-resource',
+    )
+
+    for (const executionPrepareRequest of requests) {
+      let acquisitions = 0
+      const resources = Layer.effect(
+        ExternalResource,
+        Effect.sync(() => {
+          acquisitions += 1
+          return acquisitions
+        }),
+      )
+      const plan = makeApplicationPlan(
+        applicationIdentity({
+          ...base,
+          executionPrepareRequest,
+        }),
+      )
+      if (plan._tag !== 'ExecutionPrepare') throw new Error('fixture must produce EXECUTION_PREPARE')
+
+      const failure = await Effect.runPromise(
+        Effect.flip(
+          validateExecutionPreparePlan(plan).pipe(
+            Effect.flatMap(() => ExternalResource.pipe(Effect.provide(resources))),
+          ),
+        ),
+      )
+
+      expect(failure).toMatchObject({ component: 'strategy', operation: 'execution-prepare' })
+      expect(acquisitions).toBe(0)
     }
   })
 

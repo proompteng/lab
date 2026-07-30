@@ -1,6 +1,7 @@
 import { Redacted, Result, Schema } from 'effect'
 
 import { decodeBrokerConnection, type BrokerConnection } from '../broker/connection'
+import { BrokerEnvironment } from '../broker/identity'
 import { EmbeddedBuildMetadataSchema, type EmbeddedBuildMetadata } from '../build'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import { CapitalAuthoritySelection, resolveExecutionPolicy, type ExecutionPolicy } from '../execution/configuration'
@@ -146,9 +147,17 @@ const validateOperation = (
   if (parsed.qualificationRunId === undefined) {
     return fail({ _tag: 'ExecutionCandidateDiscoveryRequiresQualificationRun' })
   }
-  return alpaca === undefined
-    ? fail({ _tag: 'ExecutionCandidateDiscoveryRequiresAlpacaBinding' })
-    : Result.succeed(undefined)
+  if (alpaca === undefined) return fail({ _tag: 'ExecutionCandidateDiscoveryRequiresAlpacaBinding' })
+  if (parsed.configuredOperation === 'ExecutionPrepare') {
+    if (parsed.executionPrepareRequest === undefined) return fail({ _tag: 'ExecutionPrepareRequiresRequest' })
+    if (alpaca.environment !== BrokerEnvironment.Sandbox) {
+      return fail({
+        _tag: 'ExecutionPrepareRequiresSandboxBroker',
+        brokerEnvironment: alpaca.environment,
+      })
+    }
+  }
+  return Result.succeed(undefined)
 }
 
 const validateProvenanceMode = (
@@ -263,6 +272,33 @@ const loadedConfig = (
         LoadedRuntimeConfig,
         { readonly runtimeMode: 'ExecutionCandidateDiscovery' }
       >['execution'],
+      alpaca,
+    })
+  }
+  if (parsed.configuredOperation === 'ExecutionPrepare') {
+    const qualificationRunId = parsed.qualificationRunId
+    if (qualificationRunId === undefined) {
+      return fail({ _tag: 'ExecutionCandidateDiscoveryRequiresQualificationRun' })
+    }
+    if (alpaca === undefined) {
+      return fail({ _tag: 'ExecutionCandidateDiscoveryRequiresAlpacaBinding' })
+    }
+    const executionPrepareRequest = parsed.executionPrepareRequest
+    if (executionPrepareRequest === undefined) {
+      return fail({ _tag: 'ExecutionPrepareRequiresRequest' })
+    }
+    if (alpaca.environment !== BrokerEnvironment.Sandbox) {
+      return fail({
+        _tag: 'ExecutionPrepareRequiresSandboxBroker',
+        brokerEnvironment: alpaca.environment,
+      })
+    }
+    return Result.succeed({
+      ...common,
+      runtimeMode: 'ExecutionPrepare',
+      qualificationRunId,
+      executionPrepareRequest,
+      execution: execution as Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'ExecutionPrepare' }>['execution'],
       alpaca,
     })
   }
