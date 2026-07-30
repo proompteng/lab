@@ -18,6 +18,7 @@ import {
   validateCandidateDevelopmentAccountingReplay,
   validateCandidateDevelopmentCommandEvaluation,
   validateCandidateDevelopmentExecutableProgram,
+  validateCandidateDevelopmentPreregisteredMarketData,
   verifyCandidateDevelopmentPreregistrationLineage,
   verifyCandidateDevelopmentPreregistrationModuleNovelty,
   verifyCandidateDevelopmentSourceFiles,
@@ -2348,6 +2349,39 @@ describe('candidate development command', () => {
         },
       },
     })
+  })
+
+  test('binds every preregistered market-data commitment to the source manifest', () => {
+    expect(
+      validateCandidateDevelopmentPreregisteredMarketData(
+        fixtureSourceManifest.marketData,
+        fixtureSourceManifest.marketData,
+      ),
+    ).toEqual(Result.succeed(undefined))
+
+    for (const [field, observed] of [
+      ['snapshotId', 'a'.repeat(64)],
+      ['finalizedSnapshotContentHash', 'b'.repeat(64)],
+      ['inputManifestHash', 'c'.repeat(64)],
+      ['boundedContentHash', 'd'.repeat(64)],
+    ] as const) {
+      expect(
+        validateCandidateDevelopmentPreregisteredMarketData(fixtureSourceManifest.marketData, {
+          ...fixtureSourceManifest.marketData,
+          [field]: observed,
+        }),
+      ).toMatchObject({
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-program-binding',
+          cause: {
+            field: `trialHistory.nextCandidatePreregistration.marketData.${field}`,
+            expected: fixtureSourceManifest.marketData[field],
+            observed,
+          },
+        },
+      })
+    }
   })
 
   test('rejects consumed Candidate 16 before development evaluation', async () => {

@@ -589,6 +589,31 @@ const sourceVerificationFailure = (
   cause,
 })
 
+export const validateCandidateDevelopmentPreregisteredMarketData = (
+  expected: CandidateDevelopmentSourceManifest['marketData'],
+  observed: CandidateDevelopmentSourceManifest['marketData'],
+): Result.Result<void, CandidateDevelopmentCommandFailure> => {
+  const bindings = [
+    ['schemaVersion', expected.schemaVersion, observed.schemaVersion],
+    ['snapshotId', expected.snapshotId, observed.snapshotId],
+    ['finalizedSnapshotContentHash', expected.finalizedSnapshotContentHash, observed.finalizedSnapshotContentHash],
+    ['inputManifestHash', expected.inputManifestHash, observed.inputManifestHash],
+    ['boundedContentHash', expected.boundedContentHash, observed.boundedContentHash],
+  ] as const
+  for (const [field, expectedValue, observedValue] of bindings) {
+    if (expectedValue !== observedValue) {
+      return Result.fail(
+        sourceVerificationFailure('verify-program-binding', {
+          field: `trialHistory.nextCandidatePreregistration.marketData.${field}`,
+          expected: expectedValue,
+          observed: observedValue,
+        }),
+      )
+    }
+  }
+  return Result.succeed(undefined)
+}
+
 export const bindCandidateDevelopmentVerifiedSource = (
   files: CandidateDevelopmentVerifiedSourceFiles,
   input: CandidateDevelopmentPreflightInput,
@@ -644,6 +669,11 @@ export const bindCandidateDevelopmentVerifiedSource = (
         )
       }
     }
+    const marketDataBinding = validateCandidateDevelopmentPreregisteredMarketData(
+      nextCandidatePreregistration.marketData,
+      files.sourceManifest.marketData,
+    )
+    if (Result.isFailure(marketDataBinding)) return Result.fail(marketDataBinding.failure)
   }
   const candidatePreregistration =
     nextCandidatePreregistration ?? frozenCandidateDevelopmentTrialHistory.candidatePreregistration
@@ -765,6 +795,11 @@ const preregisterCandidateDevelopmentAttempt = (
       )
     }
   }
+  const marketDataBinding = validateCandidateDevelopmentPreregisteredMarketData(
+    nextCandidatePreregistration.marketData,
+    sourceManifest.marketData,
+  )
+  if (Result.isFailure(marketDataBinding)) return Result.fail(marketDataBinding.failure)
   return Result.succeed(verifiedSource.sourceManifestSha256)
 }
 

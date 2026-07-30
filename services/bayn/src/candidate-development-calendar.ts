@@ -7,6 +7,13 @@ export interface CandidateDevelopmentNextPreregistration {
   readonly priorTrialCount: number
   readonly strategyProtocolHash: string
   readonly modulePath: string
+  readonly marketData: {
+    readonly schemaVersion: 'bayn.candidate-development-market-data-source.v1'
+    readonly snapshotId: string
+    readonly finalizedSnapshotContentHash: string
+    readonly inputManifestHash: string
+    readonly boundedContentHash: string
+  }
   readonly preregistration: {
     readonly sourceRevision: string
     readonly path: string
