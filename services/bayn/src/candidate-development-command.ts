@@ -26,12 +26,13 @@ import {
   MarkedEquityReconciliationSchema,
   RiskBalancedTrendSignalDecisionsArtifactSchema,
 } from './evidence-contracts'
-import { elapsedCalendarDays } from './execution-model'
+import { elapsedCalendarDays, MICROS, referencePriceMicros } from './execution-model'
 import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
-import { ExecutionModelSchema } from './protocol'
+import { DIRECT_VOLATILITY_WINDOW, ExecutionModelSchema } from './protocol'
 import {
   DigitsSchema,
   IsoDateSchema,
+  NonNegativeFiniteSchema,
   NonNegativeIntegerSchema,
   PositiveFiniteSchema,
   PositiveIntegerSchema,
@@ -44,18 +45,48 @@ import {
   strictParseOptions,
 } from './schemas'
 import { calculateExactPerformanceMetrics, buildVerdict } from './simulation/metrics'
+import { alignBars, directVolatilityWeights, simulate, type AlignedSession, type SimulationTarget } from './simulation'
 import { reconcileMarkedEquity } from './simulation-reconciliation'
-import type { EvaluationResult, PerformanceMetrics, SimulationProtocol } from './types'
+import {
+  DataFeed,
+  DataSource,
+  PriceAdjustment,
+  PublicationSchema,
+  type DailyBar,
+  type EvaluationResult,
+  type IsoDate,
+  type PerformanceMetrics,
+  type SimulationProtocol,
+} from './types'
 
 export const candidateDevelopmentExecutableProgramSchemaVersion =
-  'bayn.candidate-development-executable-program.v3' as const
+  'bayn.candidate-development-executable-program.v4' as const
+
+export interface CandidateDevelopmentMarketDataWitness {
+  readonly schemaVersion: 'bayn.candidate-development-market-data-witness.v1'
+  readonly snapshotId: string
+  readonly inputManifestHash: string
+  readonly contentHash: string
+  readonly bars: readonly DailyBar[]
+}
 
 export interface CandidateDevelopmentStrategyProtocol extends SimulationProtocol {
-  readonly schemaVersion: 'bayn.candidate-development-strategy-protocol.v1'
+  readonly schemaVersion: 'bayn.candidate-development-strategy-protocol.v2'
+  readonly marketData: {
+    readonly schemaVersion: 'bayn.candidate-development-market-data-contract.v1'
+    readonly snapshotId: string
+    readonly contentHash: string
+  }
+  readonly benchmarks: {
+    readonly schemaVersion: 'bayn.candidate-development-benchmark-policy.v1'
+    readonly symbol: string
+    readonly directVolatilityWindow: typeof DIRECT_VOLATILITY_WINDOW
+    readonly terminalPolicy: 'last-all-cash-strategy-decision'
+  }
 }
 
 export interface CandidateDevelopmentAccountingEvidence {
-  readonly schemaVersion: 'bayn.candidate-development-accounting-evidence.v1'
+  readonly schemaVersion: 'bayn.candidate-development-accounting-evidence.v2'
   readonly runId: string
   readonly initialCapitalMicros: string
   readonly evaluatorTotalFeesMicros: string
@@ -64,6 +95,7 @@ export interface CandidateDevelopmentAccountingEvidence {
   readonly baselineSimulation: EvaluationResult['simulation']
   readonly equitySeries: EvaluationResult['equitySeries']
   readonly markedEquityReconciliation: EvaluationResult['markedEquityReconciliation']
+  readonly signalDecisions: EvaluationResult['signalDecisions']
   readonly stressedRunId: string
   readonly stressedEvaluatorTotalFeesMicros: string
   readonly stressedEvaluatorEndingEquityMicros: string
@@ -75,6 +107,7 @@ export interface CandidateDevelopmentAccountingEvidence {
 
 export interface CandidateDevelopmentCommandEvaluation extends CandidateDevelopmentEvaluation {
   readonly accounting: CandidateDevelopmentAccountingEvidence
+  readonly marketData: CandidateDevelopmentMarketDataWitness
 }
 
 export interface CandidateDevelopmentCommandEffects<Registration, DevelopmentData, Error, Requirements> extends Omit<
@@ -116,12 +149,13 @@ export interface CandidateDevelopmentCommandDecision {
 }
 
 export interface CandidateDevelopmentCommandReportMaterial {
-  readonly schemaVersion: 'bayn.candidate-development-command-report.v4'
+  readonly schemaVersion: 'bayn.candidate-development-command-report.v5'
   readonly candidateOrdinal: number
   readonly priorTrialCount: number
   readonly strategyProtocolHash: string
   readonly strategyProtocol: CandidateDevelopmentStrategyProtocol
   readonly officialSessions: CandidateDevelopmentPreflightInput['officialSessions']
+  readonly marketData: CandidateDevelopmentMarketDataWitness
   readonly decision: CandidateDevelopmentCommandDecision
   readonly baseline: EvaluationResult
   readonly accounting: CandidateDevelopmentAccountingEvidence
@@ -492,6 +526,88 @@ const requireCanonicalEvidenceEqual = (
     ),
   )
 
+interface PreparedCandidateDevelopmentMarketData {
+  readonly witness: CandidateDevelopmentMarketDataWitness
+  readonly sessions: readonly AlignedSession[]
+  readonly sessionIndexByDate: ReadonlyMap<string, number>
+}
+
+const compareMarketBars = (left: DailyBar, right: DailyBar): number =>
+  left.sessionDate === right.sessionDate
+    ? left.symbol.localeCompare(right.symbol)
+    : left.sessionDate.localeCompare(right.sessionDate)
+
+const prepareCandidateDevelopmentMarketData = (
+  evaluation: CandidateDevelopmentCommandEvaluation,
+  strategyProtocol: CandidateDevelopmentStrategyProtocol,
+): Result.Result<PreparedCandidateDevelopmentMarketData, CandidateDevelopmentCommandFailure> => {
+  const { baseline, marketData } = evaluation
+  const { contentHash: observedContentHash, ...content } = marketData
+  const expectedContentHash = canonicalEvidenceHash('marketData.content', content)
+  if (Result.isFailure(expectedContentHash)) return Result.fail(expectedContentHash.failure)
+  const scalarBindings = [
+    ['marketData.contentHash', strategyProtocol.marketData.contentHash, observedContentHash],
+    ['marketData.recomputedContentHash', expectedContentHash.success, observedContentHash],
+    ['marketData.snapshotId', strategyProtocol.marketData.snapshotId, marketData.snapshotId],
+    ['marketData.manifestSnapshotId', baseline.inputManifest.finalizedSnapshot.snapshotId, marketData.snapshotId],
+    ['marketData.inputManifestHash', baseline.inputManifest.hash, marketData.inputManifestHash],
+  ] as const
+  for (const [field, expected, observed] of scalarBindings) {
+    if (expected !== observed) {
+      return Result.fail(markedEquityFailure('binding-mismatch', null, field, expected, observed))
+    }
+  }
+  for (let index = 1; index < marketData.bars.length; index += 1) {
+    const previous = marketData.bars[index - 1]
+    const current = marketData.bars[index]
+    if (compareMarketBars(previous, current) >= 0) {
+      return Result.fail(
+        markedEquityFailure('binding-mismatch', index, 'marketData.bars.order', 'strict session-date/symbol order', {
+          previous: [previous.sessionDate, previous.symbol],
+          current: [current.sessionDate, current.symbol],
+        }),
+      )
+    }
+  }
+  const snapshot = baseline.inputManifest.finalizedSnapshot
+  for (let index = 0; index < marketData.bars.length; index += 1) {
+    const bar = marketData.bars[index]
+    const expected = {
+      source: snapshot.source,
+      sourceFeed: snapshot.sourceFeed,
+      adjustment: snapshot.adjustment,
+      publicationSchemaVersion: snapshot.publicationSchemaVersion,
+    }
+    const observed = {
+      source: bar.source,
+      sourceFeed: bar.sourceFeed,
+      adjustment: bar.adjustment,
+      publicationSchemaVersion: bar.publicationSchemaVersion,
+    }
+    if (
+      expected.source !== observed.source ||
+      expected.sourceFeed !== observed.sourceFeed ||
+      expected.adjustment !== observed.adjustment ||
+      expected.publicationSchemaVersion !== observed.publicationSchemaVersion
+    ) {
+      return Result.fail(
+        markedEquityFailure('binding-mismatch', index, 'marketData.bars.provenance', expected, observed),
+      )
+    }
+  }
+  return pipe(
+    alignBars(marketData.bars, strategyProtocol.universe, baseline.inputManifest),
+    Result.mapError((cause) =>
+      markedEquityFailure('binding-mismatch', null, 'marketData.bars', 'manifest-bound aligned bars', null, cause),
+    ),
+    Result.map((sessions) => ({
+      witness: marketData,
+      sessions,
+      sessionIndexByDate: new Map(sessions.map((session, index) => [session.date, index] as const)),
+    })),
+  )
+}
+
 const validateCandidateDevelopmentStrategyProtocol = (
   report: CandidateDevelopmentReport,
   evaluation: CandidateDevelopmentCommandEvaluation,
@@ -585,6 +701,108 @@ const validateDecisionEventBinding = (
       event?.targetWeights ?? null,
     )
     if (Result.isFailure(weights)) return Result.fail(weights.failure)
+  }
+  return Result.succeed(undefined)
+}
+
+const governedPriceMicros = (
+  field: string,
+  index: number,
+  price: number,
+  protocol: CandidateDevelopmentStrategyProtocol,
+): Result.Result<string, CandidateDevelopmentCommandFailure> =>
+  pipe(
+    referencePriceMicros(price, protocol.executionModel),
+    Result.map((value) => value.toString()),
+    Result.mapError((cause) =>
+      markedEquityFailure('binding-mismatch', index, field, 'quantized governed market-data price', price, cause),
+    ),
+  )
+
+const validateAccountingPrices = (
+  field: 'baseline' | 'stressed',
+  events: EvaluationResult['events'],
+  simulation: EvaluationResult['simulation'],
+  marketData: PreparedCandidateDevelopmentMarketData,
+  protocol: CandidateDevelopmentStrategyProtocol,
+): Result.Result<void, CandidateDevelopmentCommandFailure> => {
+  const sessionFor = (sessionDate: string): AlignedSession | undefined => {
+    const index = marketData.sessionIndexByDate.get(sessionDate)
+    return index === undefined ? undefined : marketData.sessions[index]
+  }
+  const fills = events.filter(
+    (event): event is Extract<EvaluationResult['events'][number], { readonly kind: 'fill' }> => event.kind === 'fill',
+  )
+  for (let index = 0; index < fills.length; index += 1) {
+    const fill = fills[index]
+    const bar = sessionFor(fill.sessionDate)?.bars[fill.symbol]
+    if (bar === undefined) {
+      return Result.fail(
+        markedEquityFailure(
+          'binding-mismatch',
+          index,
+          `${field}.fills.referencePriceMicros`,
+          'governed execution-session bar',
+          { symbol: fill.symbol, sessionDate: fill.sessionDate },
+        ),
+      )
+    }
+    const expected = governedPriceMicros(`${field}.fills.referencePriceMicros`, index, bar.open, protocol)
+    if (Result.isFailure(expected)) return Result.fail(expected.failure)
+    if (expected.success !== fill.referencePriceMicros) {
+      return Result.fail(
+        markedEquityFailure(
+          'binding-mismatch',
+          index,
+          `${field}.fills.referencePriceMicros`,
+          expected.success,
+          fill.referencePriceMicros,
+        ),
+      )
+    }
+  }
+  for (let markIndex = 0; markIndex < simulation.dailyMarks.length; markIndex += 1) {
+    const mark = simulation.dailyMarks[markIndex]
+    const session = sessionFor(mark.sessionDate)
+    if (session === undefined) {
+      return Result.fail(
+        markedEquityFailure(
+          'binding-mismatch',
+          markIndex,
+          `${field}.dailyMarks.priceMicros`,
+          'governed mark session',
+          mark.sessionDate,
+        ),
+      )
+    }
+    for (let positionIndex = 0; positionIndex < mark.positions.length; positionIndex += 1) {
+      const position = mark.positions[positionIndex]
+      const bar = session.bars[position.symbol]
+      if (bar === undefined) {
+        return Result.fail(
+          markedEquityFailure(
+            'binding-mismatch',
+            markIndex,
+            `${field}.dailyMarks.priceMicros`,
+            'governed symbol bar',
+            position.symbol,
+          ),
+        )
+      }
+      const expected = governedPriceMicros(`${field}.dailyMarks.priceMicros`, positionIndex, bar.close, protocol)
+      if (Result.isFailure(expected)) return Result.fail(expected.failure)
+      if (expected.success !== position.priceMicros) {
+        return Result.fail(
+          markedEquityFailure(
+            'binding-mismatch',
+            markIndex,
+            `${field}.dailyMarks.priceMicros`,
+            expected.success,
+            position.priceMicros,
+          ),
+        )
+      }
+    }
   }
   return Result.succeed(undefined)
 }
@@ -855,11 +1073,276 @@ interface CandidateDevelopmentAccountingValidation {
   readonly stressedPreviousEquityMicros: string
 }
 
+interface CandidateDevelopmentRebuiltBenchmarks {
+  readonly buyAndHold: readonly DailyPerformancePoint[]
+  readonly directVolTiming: readonly DailyPerformancePoint[]
+}
+
+const decisionTarget = (
+  decision: EvaluationResult['signalDecisions'][number],
+  marketData: PreparedCandidateDevelopmentMarketData,
+  weights: Readonly<Record<string, number>> = decision.targetWeights,
+): Result.Result<SimulationTarget, CandidateDevelopmentCommandFailure> => {
+  const signalIndex = marketData.sessionIndexByDate.get(decision.signalDate)
+  const executionIndex = marketData.sessionIndexByDate.get(decision.executionDate)
+  if (signalIndex === undefined || executionIndex === undefined) {
+    return Result.fail(
+      markedEquityFailure(
+        'binding-mismatch',
+        null,
+        'benchmarks.schedule',
+        'signal and execution dates in market-data witness',
+        { signalDate: decision.signalDate, executionDate: decision.executionDate },
+      ),
+    )
+  }
+  const { decisionId: _, executionDate: __, ...plan } = decision
+  return Result.succeed({ signalIndex, executionIndex, weights, decision: plan })
+}
+
+const validateBaselineOrderReplay = (
+  accounting: CandidateDevelopmentAccountingEvidence,
+  marketData: PreparedCandidateDevelopmentMarketData,
+  strategyProtocol: CandidateDevelopmentStrategyProtocol,
+): Result.Result<void, CandidateDevelopmentCommandFailure> => {
+  const firstMark = accounting.baselineSimulation.dailyMarks.at(0)
+  const lastMark = accounting.baselineSimulation.dailyMarks.at(-1)
+  const startIndex = firstMark === undefined ? undefined : marketData.sessionIndexByDate.get(firstMark.sessionDate)
+  const endIndex = lastMark === undefined ? undefined : marketData.sessionIndexByDate.get(lastMark.sessionDate)
+  if (startIndex === undefined || endIndex === undefined || endIndex < startIndex) {
+    return Result.fail(
+      markedEquityFailure(
+        'binding-mismatch',
+        null,
+        'baseline.orders.window',
+        'bounded accounting window in market-data witness',
+        { first: firstMark?.sessionDate ?? null, last: lastMark?.sessionDate ?? null },
+      ),
+    )
+  }
+  const targets = Result.all(accounting.signalDecisions.map((decision) => decisionTarget(decision, marketData)))
+  if (Result.isFailure(targets)) return Result.fail(targets.failure)
+  const replay = simulate(
+    marketData.sessions.slice(0, endIndex + 1),
+    targets.success,
+    startIndex,
+    strategyProtocol,
+    BigInt(accounting.baselineSimulation.costMultiplierMicros),
+    accounting.runId,
+    true,
+  )
+  if (Result.isFailure(replay) || replay.success.simulation === null) {
+    return Result.fail(
+      markedEquityFailure(
+        'reconstruction-failed',
+        null,
+        'baseline.orders',
+        'deterministic simulation replay from bound decisions and market data',
+        null,
+        Result.isFailure(replay) ? replay.failure : undefined,
+      ),
+    )
+  }
+  return requireCanonicalEvidenceEqual(
+    'baseline.orders',
+    replay.success.simulation.orders,
+    accounting.baselineSimulation.orders,
+  )
+}
+
+const selectRebuiltBenchmarkSeries = (
+  series: readonly DailyPerformancePoint[],
+  selectedSessions: readonly IsoDate[],
+  initialCapitalMicros: string,
+  name: 'buy-and-hold' | 'direct-volatility-timing',
+): Result.Result<readonly DailyPerformancePoint[], CandidateDevelopmentCommandFailure> => {
+  const bySession = new Map(series.map((point) => [point.sessionDate, point] as const))
+  const selected = selectedSessions.map((sessionDate) => bySession.get(sessionDate))
+  const missing = selected.findIndex((point) => point === undefined)
+  if (missing >= 0) {
+    return Result.fail(
+      performanceEvidenceFailure(name, 'session-mismatch', missing, 'sessionDate', selectedSessions[missing], null),
+    )
+  }
+  const complete = selected as readonly DailyPerformancePoint[]
+  const first = complete.at(0)
+  if (first === undefined) {
+    return Result.fail(performanceEvidenceFailure(name, 'observations-insufficient', null, null, '>=2', 0))
+  }
+  const normalizedReturn = Number(first.equityMicros) / Number(initialCapitalMicros) - 1
+  if (!Number.isFinite(normalizedReturn)) {
+    return Result.fail(
+      performanceEvidenceFailure(name, 'return-mismatch', 0, 'netReturn', 'finite normalized return', normalizedReturn),
+    )
+  }
+  return Result.succeed([{ ...first, netReturn: normalizedReturn }, ...complete.slice(1)])
+}
+
+const rebuildCandidateDevelopmentBenchmarks = (
+  evaluation: CandidateDevelopmentCommandEvaluation,
+  marketData: PreparedCandidateDevelopmentMarketData,
+  strategyProtocol: CandidateDevelopmentStrategyProtocol,
+): Result.Result<CandidateDevelopmentRebuiltBenchmarks, CandidateDevelopmentCommandFailure> => {
+  const { accounting, baseline } = evaluation
+  const decisions = accounting.signalDecisions
+  const terminal = decisions.at(-1)
+  const firstMark = accounting.baselineSimulation.dailyMarks.at(0)
+  const lastMark = accounting.baselineSimulation.dailyMarks.at(-1)
+  if (terminal === undefined || firstMark === undefined || lastMark === undefined) {
+    return Result.fail(
+      markedEquityFailure(
+        'binding-mismatch',
+        null,
+        'benchmarks.inputs',
+        'nonempty decisions and accounting marks',
+        null,
+      ),
+    )
+  }
+  if (Object.values(terminal.targetWeights).some((weight) => weight !== 0)) {
+    return Result.fail(
+      markedEquityFailure(
+        'binding-mismatch',
+        decisions.length - 1,
+        'benchmarks.terminalDecision',
+        'all-cash target weights',
+        terminal.targetWeights,
+      ),
+    )
+  }
+  const benchmarkSymbol = strategyProtocol.benchmarks.symbol
+  if (!strategyProtocol.universe.includes(benchmarkSymbol)) {
+    return Result.fail(
+      markedEquityFailure('binding-mismatch', null, 'benchmarks.symbol', strategyProtocol.universe, benchmarkSymbol),
+    )
+  }
+  const startIndex = marketData.sessionIndexByDate.get(firstMark.sessionDate)
+  const endIndex = marketData.sessionIndexByDate.get(lastMark.sessionDate)
+  if (startIndex === undefined || endIndex === undefined || startIndex <= 0 || endIndex < startIndex) {
+    return Result.fail(
+      markedEquityFailure(
+        'binding-mismatch',
+        null,
+        'benchmarks.window',
+        'bounded accounting window with a prior signal session',
+        { first: firstMark.sessionDate, last: lastMark.sessionDate },
+      ),
+    )
+  }
+  const benchmarkProtocol: SimulationProtocol = { ...strategyProtocol, universe: [benchmarkSymbol] }
+  const terminalTarget = decisionTarget(terminal, marketData, { [benchmarkSymbol]: 0 })
+  if (Result.isFailure(terminalTarget)) return Result.fail(terminalTarget.failure)
+  const directTargets = Result.all(
+    decisions.slice(0, -1).map((decision, index) => {
+      const signalIndex = marketData.sessionIndexByDate.get(decision.signalDate)
+      if (signalIndex === undefined) {
+        return Result.fail(
+          markedEquityFailure(
+            'binding-mismatch',
+            index,
+            'benchmarks.directVolatility.signalDate',
+            'market session',
+            decision.signalDate,
+          ),
+        )
+      }
+      return pipe(
+        directVolatilityWeights(marketData.sessions, signalIndex, benchmarkProtocol),
+        Result.mapError((cause) =>
+          markedEquityFailure(
+            'reconstruction-failed',
+            index,
+            'benchmarks.directVolatility',
+            'governed direct-volatility weights',
+            null,
+            cause,
+          ),
+        ),
+        Result.flatMap((weights) => decisionTarget(decision, marketData, weights)),
+      )
+    }),
+  )
+  if (Result.isFailure(directTargets)) return Result.fail(directTargets.failure)
+  const benchmarkRunId = canonicalEvidenceHash('benchmarks.runId', {
+    schemaVersion: 'bayn.candidate-development-benchmark-run.v1',
+    candidateRunId: baseline.runId,
+    marketDataContentHash: marketData.witness.contentHash,
+    policy: strategyProtocol.benchmarks,
+  })
+  if (Result.isFailure(benchmarkRunId)) return Result.fail(benchmarkRunId.failure)
+  const sessions = marketData.sessions.slice(0, endIndex + 1)
+  const buyAndHold = simulate(
+    sessions,
+    [
+      {
+        signalIndex: startIndex - 1,
+        executionIndex: startIndex,
+        weights: { [benchmarkSymbol]: 1 },
+      },
+      terminalTarget.success,
+    ],
+    startIndex,
+    benchmarkProtocol,
+    MICROS,
+    benchmarkRunId.success,
+    false,
+  )
+  if (Result.isFailure(buyAndHold)) {
+    return Result.fail(
+      markedEquityFailure(
+        'reconstruction-failed',
+        null,
+        'benchmarks.buyAndHold',
+        'governed benchmark replay',
+        null,
+        buyAndHold.failure,
+      ),
+    )
+  }
+  const directVolTiming = simulate(
+    sessions,
+    [...directTargets.success, terminalTarget.success],
+    startIndex,
+    benchmarkProtocol,
+    MICROS,
+    benchmarkRunId.success,
+    false,
+  )
+  if (Result.isFailure(directVolTiming)) {
+    return Result.fail(
+      markedEquityFailure(
+        'reconstruction-failed',
+        null,
+        'benchmarks.directVolatility',
+        'governed benchmark replay',
+        null,
+        directVolTiming.failure,
+      ),
+    )
+  }
+  const selectedSessions = baseline.simulation.dailyMarks.map((mark) => mark.sessionDate)
+  return Result.all({
+    buyAndHold: selectRebuiltBenchmarkSeries(
+      buyAndHold.success.dailyPerformance,
+      selectedSessions,
+      baseline.initialCapitalMicros,
+      'buy-and-hold',
+    ),
+    directVolTiming: selectRebuiltBenchmarkSeries(
+      directVolTiming.success.dailyPerformance,
+      selectedSessions,
+      baseline.initialCapitalMicros,
+      'direct-volatility-timing',
+    ),
+  })
+}
+
 const validateCandidateDevelopmentAccounting = (
   report: CandidateDevelopmentReport,
   evaluation: CandidateDevelopmentCommandEvaluation,
   strategyProtocol: CandidateDevelopmentStrategyProtocol,
   officialSessions: CandidateDevelopmentPreflightInput['officialSessions'],
+  marketData: PreparedCandidateDevelopmentMarketData,
 ): Result.Result<CandidateDevelopmentAccountingValidation, CandidateDevelopmentCommandFailure> => {
   const { accounting, baseline } = evaluation
   const scalarBindings = [
@@ -935,11 +1418,28 @@ const validateCandidateDevelopmentAccounting = (
     ),
     baselineCashYield: validateCashYieldIntervals('baseline', accounting.events, accounting.baselineSimulation),
     stressedCashYield: validateCashYieldIntervals('stressed', accounting.stressedEvents, accounting.stressedSimulation),
+    baselinePrices: validateAccountingPrices(
+      'baseline',
+      accounting.events,
+      accounting.baselineSimulation,
+      marketData,
+      strategyProtocol,
+    ),
+    stressedPrices: validateAccountingPrices(
+      'stressed',
+      accounting.stressedEvents,
+      accounting.stressedSimulation,
+      marketData,
+      strategyProtocol,
+    ),
+    requestedOrders: validateBaselineOrderReplay(accounting, marketData, strategyProtocol),
   })
   if (Result.isFailure(domainBindings)) return Result.fail(domainBindings.failure)
   const decisionBindings = Result.all({
-    baseline: validateDecisionEventBinding('baseline', baseline.signalDecisions, accounting.events),
-    stressed: validateDecisionEventBinding(
+    baselineFull: validateDecisionEventBinding('baseline', accounting.signalDecisions, accounting.events),
+    baselineSelected: validateDecisionEventBinding('baseline', baseline.signalDecisions, accounting.events),
+    stressed: validateDecisionEventBinding('stressed', accounting.signalDecisions, accounting.stressedEvents),
+    stressedSelected: validateDecisionEventBinding(
       'stressed',
       report.doubledCost.stressed.signalDecisions,
       accounting.stressedEvents,
@@ -1045,18 +1545,25 @@ const recomputeCandidateDevelopmentMetrics = (
   report: CandidateDevelopmentReport,
   evaluation: CandidateDevelopmentCommandEvaluation,
   accounting: CandidateDevelopmentAccountingValidation,
+  benchmarks: CandidateDevelopmentRebuiltBenchmarks,
 ): Result.Result<CandidateDevelopmentRecomputedMetrics, CandidateDevelopmentCommandFailure> => {
   const { baseline } = evaluation
   const strategyPoints = baseline.simulation.dailyMarks
   const stressedPoints = report.doubledCost.stressed.simulation.dailyMarks
   return pipe(
     Result.all({
-      buySessions: validateSeriesSessions(strategyPoints, baseline.benchmarkSeries.buyAndHold, 'buy-and-hold'),
-      volSessions: validateSeriesSessions(
-        strategyPoints,
-        baseline.benchmarkSeries.directVolTiming,
-        'direct-volatility-timing',
+      buyBinding: requireCanonicalEvidenceEqual(
+        'benchmarks.buyAndHold',
+        benchmarks.buyAndHold,
+        baseline.benchmarkSeries.buyAndHold,
       ),
+      directVolBinding: requireCanonicalEvidenceEqual(
+        'benchmarks.directVolatilityTiming',
+        benchmarks.directVolTiming,
+        baseline.benchmarkSeries.directVolTiming,
+      ),
+      buySessions: validateSeriesSessions(strategyPoints, benchmarks.buyAndHold, 'buy-and-hold'),
+      volSessions: validateSeriesSessions(strategyPoints, benchmarks.directVolTiming, 'direct-volatility-timing'),
       doubleSessions: validateSeriesSessions(
         strategyPoints,
         baseline.benchmarkSeries.doubleCostStrategy,
@@ -1069,14 +1576,10 @@ const recomputeCandidateDevelopmentMetrics = (
         baseline.initialCapitalMicros,
         accounting.strategyPreviousEquityMicros,
       ),
-      buyAndHold: recomputePerformanceMetrics(
-        'buy-and-hold',
-        baseline.benchmarkSeries.buyAndHold,
-        baseline.initialCapitalMicros,
-      ),
+      buyAndHold: recomputePerformanceMetrics('buy-and-hold', benchmarks.buyAndHold, baseline.initialCapitalMicros),
       directVolTiming: recomputePerformanceMetrics(
         'direct-volatility-timing',
-        baseline.benchmarkSeries.directVolTiming,
+        benchmarks.directVolTiming,
         baseline.initialCapitalMicros,
       ),
       doubleCostSeries: recomputePerformanceMetrics(
@@ -1286,11 +1789,25 @@ export const buildCandidateDevelopmentCommandReport = (
   officialSessions: CandidateDevelopmentPreflightInput['officialSessions'],
 ): Result.Result<CandidateDevelopmentCommandReport, CandidateDevelopmentCommandFailure> =>
   pipe(
-    Result.all({
-      protocol: validateCandidateDevelopmentStrategyProtocol(report, evaluation, strategyProtocol),
-      accounting: validateCandidateDevelopmentAccounting(report, evaluation, strategyProtocol, officialSessions),
-    }),
-    Result.flatMap(({ accounting }) => recomputeCandidateDevelopmentMetrics(report, evaluation, accounting)),
+    validateCandidateDevelopmentStrategyProtocol(report, evaluation, strategyProtocol),
+    Result.flatMap(() => prepareCandidateDevelopmentMarketData(evaluation, strategyProtocol)),
+    Result.flatMap((marketData) =>
+      pipe(
+        Result.all({
+          accounting: validateCandidateDevelopmentAccounting(
+            report,
+            evaluation,
+            strategyProtocol,
+            officialSessions,
+            marketData,
+          ),
+          benchmarks: rebuildCandidateDevelopmentBenchmarks(evaluation, marketData, strategyProtocol),
+        }),
+        Result.flatMap(({ accounting, benchmarks }) =>
+          recomputeCandidateDevelopmentMetrics(report, evaluation, accounting, benchmarks),
+        ),
+      ),
+    ),
     Result.flatMap((metrics) =>
       pipe(
         Result.all({
@@ -1304,12 +1821,13 @@ export const buildCandidateDevelopmentCommandReport = (
     ),
     Result.flatMap(({ doubledCostAnnualizedReturn, economicPass }) => {
       const material: CandidateDevelopmentCommandReportMaterial = {
-        schemaVersion: 'bayn.candidate-development-command-report.v4',
+        schemaVersion: 'bayn.candidate-development-command-report.v5',
         candidateOrdinal: report.protocolIdentity.candidateOrdinal,
         priorTrialCount: report.protocolIdentity.priorTrialCount,
         strategyProtocolHash: report.comparisonSemantics.strategyProtocolHash,
         strategyProtocol,
         officialSessions,
+        marketData: evaluation.marketData,
         decision: decideCandidateDevelopment(report, evaluation.baseline, doubledCostAnnualizedReturn, economicPass),
         baseline: evaluation.baseline,
         accounting: evaluation.accounting,
@@ -1466,7 +1984,7 @@ const CandidateDevelopmentEvaluationResultSchema = Schema.Struct({
 })
 
 const CandidateDevelopmentAccountingEvidenceSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.candidate-development-accounting-evidence.v1'),
+  schemaVersion: Schema.Literal('bayn.candidate-development-accounting-evidence.v2'),
   runId: Sha256Schema,
   initialCapitalMicros: DigitsSchema,
   evaluatorTotalFeesMicros: DigitsSchema,
@@ -1475,6 +1993,7 @@ const CandidateDevelopmentAccountingEvidenceSchema = Schema.Struct({
   baselineSimulation: CandidateDevelopmentSimulationTraceSchema,
   equitySeries: EquitySeriesArtifactSchema.fields.items,
   markedEquityReconciliation: MarkedEquityReconciliationSchema,
+  signalDecisions: RiskBalancedTrendSignalDecisionsArtifactSchema.fields.items,
   stressedRunId: Sha256Schema,
   stressedEvaluatorTotalFeesMicros: DigitsSchema,
   stressedEvaluatorEndingEquityMicros: DigitsSchema,
@@ -1484,8 +2003,30 @@ const CandidateDevelopmentAccountingEvidenceSchema = Schema.Struct({
   stressedMarkedEquityReconciliation: MarkedEquityReconciliationSchema,
 })
 
+const CandidateDevelopmentDailyBarSchema = Schema.Struct({
+  symbol: SymbolSchema,
+  sessionDate: IsoDateSchema,
+  open: PositiveFiniteSchema,
+  high: PositiveFiniteSchema,
+  low: PositiveFiniteSchema,
+  close: PositiveFiniteSchema,
+  volume: NonNegativeFiniteSchema,
+  source: Schema.Enum(DataSource),
+  sourceFeed: Schema.Enum(DataFeed),
+  adjustment: Schema.Enum(PriceAdjustment),
+  publicationSchemaVersion: Schema.Enum(PublicationSchema),
+})
+
+const CandidateDevelopmentMarketDataWitnessSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.candidate-development-market-data-witness.v1'),
+  snapshotId: Sha256Schema,
+  inputManifestHash: Sha256Schema,
+  contentHash: Sha256Schema,
+  bars: Schema.Array(CandidateDevelopmentDailyBarSchema).check(Schema.isMinLength(1)),
+})
+
 const CandidateDevelopmentStrategyProtocolSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.candidate-development-strategy-protocol.v1'),
+  schemaVersion: Schema.Literal('bayn.candidate-development-strategy-protocol.v2'),
   universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1)),
   directVolatilityTarget: PositiveFiniteSchema,
   initialCapitalMicros: PositiveMicrosSchema,
@@ -1497,6 +2038,17 @@ const CandidateDevelopmentStrategyProtocolSchema = Schema.Struct({
     maximumDrawdown: UnitIntervalSchema,
     maximumAnnualTurnover: PositiveFiniteSchema,
     requirePositiveDoubleCostReturn: Schema.Boolean,
+  }),
+  marketData: Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.candidate-development-market-data-contract.v1'),
+    snapshotId: Sha256Schema,
+    contentHash: Sha256Schema,
+  }),
+  benchmarks: Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.candidate-development-benchmark-policy.v1'),
+    symbol: SymbolSchema,
+    directVolatilityWindow: Schema.Literal(DIRECT_VOLATILITY_WINDOW),
+    terminalPolicy: Schema.Literal('last-all-cash-strategy-decision'),
   }),
 })
 
@@ -1518,6 +2070,7 @@ const CandidateDevelopmentEvaluationSchema = Schema.Struct({
   comparisonSemantics: CandidateDevelopmentComparisonSemanticsEvidenceBoundarySchema,
   stressed: CandidateDevelopmentDoubledCostRunSchema,
   accounting: CandidateDevelopmentAccountingEvidenceSchema,
+  marketData: CandidateDevelopmentMarketDataWitnessSchema,
 })
 
 const decodeCandidateDevelopmentPreflightInput = Schema.decodeUnknownResult(

@@ -21,9 +21,19 @@ import {
 } from './candidate-development'
 import { canonicalHashV1, canonicalHashV1Result, sha256 } from './hash'
 import { defaultProtocolDocument } from './protocol'
+import { MICROS, referencePriceMicros } from './execution-model'
+import { alignBars, directVolatilityWeights, simulate, type SimulationTarget } from './simulation'
 import { calculateExactPerformanceMetrics, buildVerdict } from './simulation/metrics'
 import { reconcileMarkedEquity } from './simulation-reconciliation'
-import type { EvaluationResult, IsoDate } from './types'
+import {
+  DataFeed,
+  DataSource,
+  PriceAdjustment,
+  PublicationSchema,
+  type DailyPerformancePoint,
+  type EvaluationResult,
+  type IsoDate,
+} from './types'
 
 const successOf = <A, E>(result: Result.Result<A, E>): A => {
   expect(Result.isSuccess(result)).toBe(true)
@@ -66,7 +76,7 @@ const performanceSeriesFixture = (
   }))
 }
 
-const exactMetrics = (points: ReturnType<typeof performanceSeriesFixture>) => {
+const exactMetrics = (points: readonly DailyPerformancePoint[]) => {
   const last = points.at(-1)
   if (last === undefined) throw new Error('performance fixture must be nonempty')
   return successOf(
@@ -84,31 +94,55 @@ const exactMetrics = (points: ReturnType<typeof performanceSeriesFixture>) => {
 
 const fixtureExecutionModel = {
   ...defaultProtocolDocument.executionModel,
+  precision: {
+    ...defaultProtocolDocument.executionModel.precision,
+    minimumBuyNotionalMicros: '1',
+  },
   cash: { ...defaultProtocolDocument.executionModel.cash, annualYieldBps: 10_000 },
 }
 const fixtureCashYieldMicros = '2739'
 const fixtureYieldEndingEquityMicros = (BigInt(fixtureInitialCapitalMicros) + BigInt(fixtureCashYieldMicros)).toString()
 
-const fixtureStrategyProtocol = {
-  schemaVersion: 'bayn.candidate-development-strategy-protocol.v1' as const,
-  universe: [...defaultProtocolDocument.universe],
-  directVolatilityTarget: defaultProtocolDocument.directVolatilityTarget,
-  initialCapitalMicros: fixtureInitialCapitalMicros,
-  executionModel: fixtureExecutionModel,
-  thresholds: defaultProtocolDocument.thresholds,
-}
-const fixtureStrategyProtocolHash = canonicalHashV1(fixtureStrategyProtocol)
+const fixtureHistorySessions = Array.from(
+  { length: 64 },
+  (_, index) => new Date(Date.UTC(2019, 9, 29 + index)).toISOString().slice(0, 10) as IsoDate,
+)
+const fixtureAccountingStart = fixtureHistorySessions.at(-1) as IsoDate
+const fixtureOfficialSessions = [...fixtureHistorySessions, ...fixtureSessions]
 
-const zeroPositionFixture = {
+const fixtureSpyClose = (sessionDate: IsoDate): number => {
+  const index = fixtureOfficialSessions.indexOf(sessionDate)
+  if (index < 0) throw new Error(`fixture market session ${sessionDate} is missing`)
+  return Number.parseFloat((0.012 - index * 0.000007 + (index % 2 === 0 ? 0.000001 : -0.000001)).toFixed(8))
+}
+
+const fixtureMarketBars = fixtureOfficialSessions.flatMap((sessionDate) =>
+  defaultProtocolDocument.universe.map((symbol) => {
+    const close = symbol === 'SPY' ? fixtureSpyClose(sessionDate) : 1
+    return {
+      symbol,
+      sessionDate,
+      open: close,
+      high: Number.parseFloat((close * 1.01).toFixed(8)),
+      low: Number.parseFloat((close * 0.99).toFixed(8)),
+      close,
+      volume: 1_000_000,
+      source: DataSource.Alpaca,
+      sourceFeed: DataFeed.Sip,
+      adjustment: PriceAdjustment.All,
+      publicationSchemaVersion: PublicationSchema.AdjustedDailySnapshotV2,
+    }
+  }),
+)
+
+const zeroPositionFixture = (sessionDate: IsoDate) => ({
   symbol: 'SPY',
   quantityMicros: '0',
   costBasisMicros: '0',
-  priceMicros: '1000000',
+  priceMicros: successOf(referencePriceMicros(fixtureSpyClose(sessionDate), fixtureExecutionModel)).toString(),
   marketValueMicros: '0',
-}
+})
 
-const fixtureAccountingStart = '2019-12-31' as IsoDate
-const fixtureOfficialSessions = [fixtureAccountingStart, ...fixtureSessions]
 const buildCandidateDevelopmentCommandReport = (
   report: CandidateDevelopmentReport,
   evaluation: CandidateDevelopmentCommandEvaluation,
@@ -136,60 +170,144 @@ const fullAccountingSimulationFixture = <A extends EvaluationResult['simulation'
         peakEquityMicros: fixtureInitialCapitalMicros,
         drawdown: 0,
         cashMicros: fixtureInitialCapitalMicros,
-        positions: [zeroPositionFixture],
+        positions: [zeroPositionFixture(fixtureAccountingStart)],
       },
       ...simulation.dailyMarks,
     ],
   }) as A
 
-const signalDecisionEventPayload = {
-  signalDate: fixtureSessions[0],
-  executionDate: fixtureSessions[1],
-  targetWeights: { SPY: 0 },
-}
-const fixtureDecisionId = canonicalHashV1({ runId: fixtureRunId, kind: 'decision', ...signalDecisionEventPayload })
-const signalDecisionFixture = {
-  schemaVersion: 'bayn.risk-balanced-trend-decision-plan.v1' as const,
-  decisionId: fixtureDecisionId,
-  signalDate: signalDecisionEventPayload.signalDate,
-  executionDate: signalDecisionEventPayload.executionDate,
-  covarianceWindow: {
-    returnCount: 1,
-    firstSession: fixtureSessions[0],
-    lastSession: fixtureSessions[0],
-    sessionsHash: 'b'.repeat(64),
-  },
-  estimatedAnnualizedPortfolioVolatility: 0,
-  exposureScale: 0,
-  targetWeights: signalDecisionEventPayload.targetWeights,
-  signals: [
-    {
-      symbol: 'SPY',
-      horizons: [{ horizonSessions: 1, return: 0, normalizedTrend: 0 }],
-      dailyVolatility: 0,
-      annualizedVolatility: 0,
-      compositeScore: 0,
-      positiveScore: 0,
-      eligible: false,
-      uncappedWeight: 0,
-      cappedWeight: 0,
-      targetWeight: 0,
+const makeSignalDecisionFixture = (signalDate: IsoDate, executionDate: IsoDate) => {
+  const eventPayload = { signalDate, executionDate, targetWeights: { SPY: 0 } }
+  const decisionId = canonicalHashV1({ runId: fixtureRunId, kind: 'decision', ...eventPayload })
+  return {
+    signal: {
+      schemaVersion: 'bayn.risk-balanced-trend-decision-plan.v1' as const,
+      decisionId,
+      signalDate,
+      executionDate,
+      covarianceWindow: {
+        returnCount: 1,
+        firstSession: signalDate,
+        lastSession: signalDate,
+        sessionsHash: canonicalHashV1({ signalDate }),
+      },
+      estimatedAnnualizedPortfolioVolatility: 0,
+      exposureScale: 0,
+      targetWeights: eventPayload.targetWeights,
+      signals: [
+        {
+          symbol: 'SPY',
+          horizons: [{ horizonSessions: 1, return: 0, normalizedTrend: 0 }],
+          dailyVolatility: 0,
+          annualizedVolatility: 0,
+          compositeScore: 0,
+          positiveScore: 0,
+          eligible: false,
+          uncappedWeight: 0,
+          cappedWeight: 0,
+          targetWeight: 0,
+        },
+      ],
     },
-  ],
+    event: { kind: 'decision' as const, id: decisionId, ...eventPayload },
+  }
 }
-const decisionEventFixture = {
-  kind: 'decision' as const,
-  id: fixtureDecisionId,
-  ...signalDecisionEventPayload,
+
+const firstDecisionFixture = makeSignalDecisionFixture(fixtureSessions[0], fixtureSessions[1])
+const terminalDecisionFixture = makeSignalDecisionFixture(
+  fixtureSessions.at(-2) as IsoDate,
+  fixtureSessions.at(-1) as IsoDate,
+)
+const signalDecisionFixture = firstDecisionFixture.signal
+const fixtureSignalDecisions = [firstDecisionFixture.signal, terminalDecisionFixture.signal]
+const fixtureDecisionEvents = [firstDecisionFixture.event, terminalDecisionFixture.event]
+
+const fixtureBenchmarkSeries = (): {
+  readonly buyAndHold: readonly DailyPerformancePoint[]
+  readonly directVolTiming: readonly DailyPerformancePoint[]
+} => {
+  const sessions = successOf(alignBars(fixtureMarketBars, fixtureStrategyProtocol.universe, fixtureInputManifest))
+  const sessionIndex = new Map(sessions.map((session, index) => [session.date, index] as const))
+  const startIndex = sessionIndex.get(fixtureAccountingStart)
+  const firstSignalIndex = sessionIndex.get(firstDecisionFixture.signal.signalDate)
+  const firstExecutionIndex = sessionIndex.get(firstDecisionFixture.signal.executionDate)
+  const terminalSignalIndex = sessionIndex.get(terminalDecisionFixture.signal.signalDate)
+  const terminalExecutionIndex = sessionIndex.get(terminalDecisionFixture.signal.executionDate)
+  if (
+    startIndex === undefined ||
+    firstSignalIndex === undefined ||
+    firstExecutionIndex === undefined ||
+    terminalSignalIndex === undefined ||
+    terminalExecutionIndex === undefined
+  ) {
+    throw new Error('fixture benchmark schedule is incomplete')
+  }
+  const protocol = { ...fixtureStrategyProtocol, universe: ['SPY'] }
+  const directWeights = successOf(directVolatilityWeights(sessions, firstSignalIndex, protocol))
+  const terminalTarget: SimulationTarget = {
+    signalIndex: terminalSignalIndex,
+    executionIndex: terminalExecutionIndex,
+    weights: { SPY: 0 },
+  }
+  const benchmarkRunId = canonicalHashV1({
+    schemaVersion: 'bayn.candidate-development-benchmark-run.v1',
+    candidateRunId: fixtureRunId,
+    marketDataContentHash: fixtureMarketData.contentHash,
+    policy: fixtureStrategyProtocol.benchmarks,
+  })
+  const buyAndHold = successOf(
+    simulate(
+      sessions,
+      [{ signalIndex: startIndex - 1, executionIndex: startIndex, weights: { SPY: 1 } }, terminalTarget],
+      startIndex,
+      protocol,
+      MICROS,
+      benchmarkRunId,
+      false,
+    ),
+  )
+  const directVolTiming = successOf(
+    simulate(
+      sessions,
+      [
+        {
+          signalIndex: firstSignalIndex,
+          executionIndex: firstExecutionIndex,
+          weights: directWeights,
+        },
+        terminalTarget,
+      ],
+      startIndex,
+      protocol,
+      MICROS,
+      benchmarkRunId,
+      false,
+    ),
+  )
+  const select = (series: readonly DailyPerformancePoint[]): readonly DailyPerformancePoint[] => {
+    const bySession = new Map(series.map((point) => [point.sessionDate, point] as const))
+    const selected = fixtureSessions.map((sessionDate) => bySession.get(sessionDate))
+    if (selected.some((point) => point === undefined)) throw new Error('fixture benchmark selection is incomplete')
+    const complete = selected as readonly DailyPerformancePoint[]
+    const first = complete[0]
+    return [
+      {
+        ...first,
+        netReturn: Number(first.equityMicros) / Number(fixtureInitialCapitalMicros) - 1,
+      },
+      ...complete.slice(1),
+    ]
+  }
+  return { buyAndHold: select(buyAndHold.dailyPerformance), directVolTiming: select(directVolTiming.dailyPerformance) }
 }
 
 const inputManifestFixture = () => {
-  const firstSession = fixtureSessions[0]
-  const lastSession = fixtureSessions.at(-1)
+  const firstSession = fixtureOfficialSessions[0]
+  const lastSession = fixtureOfficialSessions.at(-1)
   if (firstSession === undefined || lastSession === undefined) throw new Error('fixture sessions must be nonempty')
   const symbols = defaultProtocolDocument.universe.map((symbol) => ({
     symbol,
-    rows: fixtureSessions.length,
+    rows: fixtureOfficialSessions.length,
     firstSession,
     lastSession,
   }))
@@ -204,8 +322,8 @@ const inputManifestFixture = () => {
       evaluationStart: firstSession,
       evaluationEnd: lastSession,
     },
-    rowCount: fixtureSessions.length * symbols.length,
-    sessionCount: fixtureSessions.length,
+    rowCount: fixtureOfficialSessions.length * symbols.length,
+    sessionCount: fixtureOfficialSessions.length,
     firstSession,
     lastSession,
     symbols,
@@ -216,14 +334,14 @@ const inputManifestFixture = () => {
     },
     finalizedSnapshot: {
       schemaVersion: 'bayn.finalized-snapshot.v3' as const,
-      publicationSchemaVersion: 'signal.adjusted-daily-snapshot.v2' as const,
+      publicationSchemaVersion: PublicationSchema.AdjustedDailySnapshotV2,
       universeId: 'cross-asset-taa-v1' as const,
       universeSymbolHash: sha256(defaultProtocolDocument.universe.join(',')),
       snapshotId: '4'.repeat(64),
       publicationId: '5'.repeat(64),
-      source: 'alpaca' as const,
-      sourceFeed: 'sip' as const,
-      adjustment: 'all' as const,
+      source: DataSource.Alpaca,
+      sourceFeed: DataFeed.Sip,
+      adjustment: PriceAdjustment.All,
       calendarVersion: 'fixture-calendar-v1',
       publisherSourceRevision: '6'.repeat(40),
       publisherImage: {
@@ -236,14 +354,47 @@ const inputManifestFixture = () => {
       lastSession,
       asOfSession: lastSession,
       symbols: [...defaultProtocolDocument.universe],
-      rowCount: fixtureSessions.length * symbols.length,
-      sessionCount: fixtureSessions.length,
+      rowCount: fixtureOfficialSessions.length * symbols.length,
+      sessionCount: fixtureOfficialSessions.length,
       contentHash: '8'.repeat(64),
       sessionsContentHash: '9'.repeat(64),
     },
   }
   return { ...material, hash: canonicalHashV1(material) }
 }
+
+const fixtureInputManifest = inputManifestFixture()
+const fixtureMarketDataMaterial = {
+  schemaVersion: 'bayn.candidate-development-market-data-witness.v1' as const,
+  snapshotId: fixtureInputManifest.finalizedSnapshot.snapshotId,
+  inputManifestHash: fixtureInputManifest.hash,
+  bars: fixtureMarketBars,
+}
+const fixtureMarketData = {
+  ...fixtureMarketDataMaterial,
+  contentHash: canonicalHashV1(fixtureMarketDataMaterial),
+}
+
+const fixtureStrategyProtocol = {
+  schemaVersion: 'bayn.candidate-development-strategy-protocol.v2' as const,
+  universe: [...defaultProtocolDocument.universe],
+  directVolatilityTarget: defaultProtocolDocument.directVolatilityTarget,
+  initialCapitalMicros: fixtureInitialCapitalMicros,
+  executionModel: fixtureExecutionModel,
+  thresholds: defaultProtocolDocument.thresholds,
+  marketData: {
+    schemaVersion: 'bayn.candidate-development-market-data-contract.v1' as const,
+    snapshotId: fixtureMarketData.snapshotId,
+    contentHash: fixtureMarketData.contentHash,
+  },
+  benchmarks: {
+    schemaVersion: 'bayn.candidate-development-benchmark-policy.v1' as const,
+    symbol: 'SPY',
+    directVolatilityWindow: 63 as const,
+    terminalPolicy: 'last-all-cash-strategy-decision' as const,
+  },
+}
+const fixtureStrategyProtocolHash = canonicalHashV1(fixtureStrategyProtocol)
 
 const fixtureStressedRunId = fixtureRunId
 
@@ -272,7 +423,7 @@ const stressedAccountingFixture = (endingEquityMicros: string) => {
     ...cashChangePayload,
     id: canonicalHashV1({ runId: fixtureStressedRunId, kind: 'cash-change', ...cashChangePayload }),
   }
-  const events = cashYieldMicros === 0n ? [decisionEventFixture] : [decisionEventFixture, event]
+  const events = cashYieldMicros === 0n ? fixtureDecisionEvents : [...fixtureDecisionEvents, event]
   const cashChanges = cashYieldMicros === 0n ? [] : [cashChange]
   const simulation = {
     schemaVersion: 'bayn.simulation-trace.v3' as const,
@@ -282,7 +433,11 @@ const stressedAccountingFixture = (endingEquityMicros: string) => {
     cashChanges,
     dailyMarks: performanceSeriesFixture(endingEquityMicros, {
       cashYieldMicros: cashYieldMicros.toString(),
-    }).map((point) => ({ ...point, cashMicros: point.equityMicros, positions: [zeroPositionFixture] })),
+    }).map((point) => ({
+      ...point,
+      cashMicros: point.equityMicros,
+      positions: [zeroPositionFixture(point.sessionDate)],
+    })),
   }
   const fullSimulation = fullAccountingSimulationFixture(simulation)
   const proof = reconcileMarkedEquity({
@@ -350,7 +505,7 @@ const reportFixture = (
     },
     doubledCost: {
       stressed: {
-        signalDecisions: [signalDecisionFixture],
+        signalDecisions: fixtureSignalDecisions,
         simulation: stressed.simulation,
       },
     },
@@ -367,8 +522,9 @@ const baselineFixture = (
     status === 'PASS' ? { cashYieldMicros: fixtureCashYieldMicros } : {},
   )
   const strategy = exactMetrics(strategyPoints)
-  const buyAndHoldPoints = performanceSeriesFixture(fixtureInitialCapitalMicros)
-  const directVolTimingPoints = performanceSeriesFixture(fixtureInitialCapitalMicros)
+  const rebuiltBenchmarks = fixtureBenchmarkSeries()
+  const buyAndHoldPoints = rebuiltBenchmarks.buyAndHold
+  const directVolTimingPoints = rebuiltBenchmarks.directVolTiming
   const doubleCostPoints = performanceSeriesFixture(stressedEndingEquityMicros, {
     cashYieldMicros: (BigInt(stressedEndingEquityMicros) - BigInt(fixtureInitialCapitalMicros)).toString(),
   })
@@ -395,7 +551,7 @@ const baselineFixture = (
     ...cashChangePayload,
     id: canonicalHashV1({ runId: fixtureRunId, kind: 'cash-change', ...cashChangePayload }),
   }
-  const events = status === 'PASS' ? [decisionEventFixture, event] : [decisionEventFixture]
+  const events = status === 'PASS' ? [...fixtureDecisionEvents, event] : fixtureDecisionEvents
   const cashChanges = status === 'PASS' ? [cashChange] : []
   const simulation = {
     schemaVersion: 'bayn.simulation-trace.v3' as const,
@@ -406,7 +562,7 @@ const baselineFixture = (
     dailyMarks: strategyPoints.map((point) => ({
       ...point,
       cashMicros: point.equityMicros,
-      positions: [zeroPositionFixture],
+      positions: [zeroPositionFixture(point.sessionDate)],
     })),
   }
   const fullSimulation = fullAccountingSimulationFixture(simulation)
@@ -429,7 +585,7 @@ const baselineFixture = (
     codeRevision: '2'.repeat(40),
     protocolHash: fixtureStrategyProtocolHash,
     initialCapitalMicros: '1000000',
-    inputManifest: inputManifestFixture(),
+    inputManifest: fixtureInputManifest,
     strategy,
     buyAndHold,
     directVolTiming,
@@ -444,7 +600,7 @@ const baselineFixture = (
     },
     equitySeries: markedEquity.equitySeries,
     markedEquityReconciliation: markedEquity.reconciliation,
-    signalDecisions: [signalDecisionFixture],
+    signalDecisions: fixtureSignalDecisions,
   } as unknown as EvaluationResult
 }
 
@@ -461,7 +617,7 @@ const commandEvaluationFixture = (
     comparisonSemantics: report.comparisonSemantics,
     stressed: report.doubledCost.stressed,
     accounting: {
-      schemaVersion: 'bayn.candidate-development-accounting-evidence.v1',
+      schemaVersion: 'bayn.candidate-development-accounting-evidence.v2',
       runId: accountingBaseline.runId,
       initialCapitalMicros: accountingBaseline.initialCapitalMicros,
       evaluatorTotalFeesMicros: accountingBaseline.strategy.totalFeesMicros,
@@ -470,6 +626,7 @@ const commandEvaluationFixture = (
       baselineSimulation: fullAccountingSimulationFixture(accountingBaseline.simulation),
       equitySeries: accountingBaseline.equitySeries,
       markedEquityReconciliation: accountingBaseline.markedEquityReconciliation,
+      signalDecisions: accountingBaseline.signalDecisions,
       stressedRunId: stressed.runId,
       stressedEvaluatorTotalFeesMicros: stressed.evaluatorTotalFeesMicros,
       stressedEvaluatorEndingEquityMicros: stressed.evaluatorEndingEquityMicros,
@@ -478,6 +635,7 @@ const commandEvaluationFixture = (
       stressedEquitySeries: stressed.equitySeries,
       stressedMarkedEquityReconciliation: stressed.markedEquityReconciliation,
     },
+    marketData: fixtureMarketData,
   }
 }
 
@@ -882,9 +1040,9 @@ describe('candidate development command', () => {
     ).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
-        reason: 'selected-trace-mismatch',
-        field: 'baselineSimulation.terminalSession',
-        expected: lastMark.sessionDate,
+        reason: 'binding-mismatch',
+        field: 'baseline.dailyMarks.priceMicros',
+        expected: 'governed mark session',
         observed: suffixDate,
       },
     })
@@ -929,10 +1087,9 @@ describe('candidate development command', () => {
     expect(buildCandidateDevelopmentCommandReport(report, evaluation, fixtureStrategyProtocol)).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
-        reason: 'selected-trace-mismatch',
-        field: 'baselineSimulation.events.signalDate',
-        expected: `<=${lastMark.sessionDate}`,
-        observed: postWindowDate,
+        reason: 'binding-mismatch',
+        field: 'benchmarks.schedule',
+        observed: { signalDate: postWindowDate, executionDate: postWindowDate },
       },
     })
   })
@@ -951,7 +1108,7 @@ describe('candidate development command', () => {
         _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
         reason: 'binding-mismatch',
         field: 'baseline.decisionCount',
-        expected: 1,
+        expected: 2,
         observed: 0,
       },
     })
@@ -1131,7 +1288,7 @@ describe('candidate development command', () => {
         reason: 'binding-mismatch',
         field: 'baseline.calendar.sessionDate',
         index: 1,
-        expected: fixtureAccountingStart,
+        expected: fixtureOfficialSessions[0],
         observed: fixtureSessions[0],
       },
     })
@@ -1140,10 +1297,10 @@ describe('candidate development command', () => {
   test('rejects every out-of-universe accounting symbol before reconciliation', () => {
     const report = reportFixture(0.01)
     const baseline = baselineFixture()
-    const qqqPosition = { ...zeroPositionFixture, symbol: 'QQQ' }
+    const qqqPosition = { ...zeroPositionFixture(fixtureSessions[0]), symbol: 'QQQ' }
     const qqqOrder: EvaluationResult['simulation']['orders'][number] = {
       id: 'd'.repeat(64),
-      decisionId: fixtureDecisionId,
+      decisionId: firstDecisionFixture.signal.decisionId,
       sessionDate: fixtureSessions[1],
       symbol: 'QQQ',
       side: 'buy',
@@ -1157,7 +1314,7 @@ describe('candidate development command', () => {
       kind: 'fill',
       id: 'e'.repeat(64),
       orderId: qqqOrder.id,
-      decisionId: fixtureDecisionId,
+      decisionId: firstDecisionFixture.signal.decisionId,
       sessionDate: fixtureSessions[1],
       symbol: 'QQQ',
       side: 'buy',
@@ -1245,6 +1402,133 @@ describe('candidate development command', () => {
         fixtureStrategyProtocol,
       ),
     ).toMatchObject({ failure: { field: 'stressed.positions.symbol', observed: 'QQQ' } })
+  })
+
+  test('rejects a requested order that a zero-weight decision cannot derive', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const orderPayload = {
+      decisionId: firstDecisionFixture.signal.decisionId,
+      sessionDate: firstDecisionFixture.signal.executionDate,
+      symbol: 'SPY',
+      side: 'buy' as const,
+      requestedQuantityMicros: '1000000',
+      filledQuantityMicros: '0',
+      status: 'rejected' as const,
+      rejectionReason: 'zero-after-rounding' as const,
+      unfilledRemainder: 'canceled' as const,
+    }
+    const impossibleOrder = {
+      ...orderPayload,
+      id: canonicalHashV1({ runId: baseline.runId, kind: 'order', ...orderPayload }),
+    }
+    const baselineWithOrder = {
+      ...baseline,
+      simulation: { ...baseline.simulation, orders: [impossibleOrder] },
+    }
+
+    expect(buildFixtureReport(report, baselineWithOrder)).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'baseline.orders',
+      },
+    })
+  })
+
+  test('rejects forged fill reference prices and daily mark prices', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const forgedFillPayload = {
+      orderId: 'd'.repeat(64),
+      decisionId: firstDecisionFixture.signal.decisionId,
+      sessionDate: firstDecisionFixture.signal.executionDate,
+      symbol: 'SPY',
+      side: 'buy' as const,
+      quantityMicros: '1000000',
+      referencePriceMicros: '1',
+      priceMicros: '1',
+      notionalMicros: '1',
+      spreadCostMicros: '0',
+      slippageCostMicros: '0',
+      costBasisMicros: '1',
+    }
+    const forgedFill = {
+      kind: 'fill' as const,
+      ...forgedFillPayload,
+      id: canonicalHashV1({ runId: baseline.runId, kind: 'fill', ...forgedFillPayload }),
+    }
+    const baselineWithFill = { ...baseline, events: [...baseline.events, forgedFill] }
+    expect(buildFixtureReport(report, baselineWithFill)).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'baseline.fills.referencePriceMicros',
+        observed: '1',
+      },
+    })
+
+    const firstMark = baseline.simulation.dailyMarks[0]
+    const baselineWithMark = {
+      ...baseline,
+      simulation: {
+        ...baseline.simulation,
+        dailyMarks: [
+          {
+            ...firstMark,
+            positions: firstMark.positions.map((position) => ({ ...position, priceMicros: '1' })),
+          },
+          ...baseline.simulation.dailyMarks.slice(1),
+        ],
+      },
+    }
+    expect(buildFixtureReport(report, baselineWithMark)).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'baseline.dailyMarks.priceMicros',
+        observed: '1',
+      },
+    })
+  })
+
+  test('rejects fabricated buy-and-hold and direct-volatility benchmarks', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const buyFirst = baseline.benchmarkSeries.buyAndHold[0]
+    const fabricatedBuy = {
+      ...baseline,
+      benchmarkSeries: {
+        ...baseline.benchmarkSeries,
+        buyAndHold: [{ ...buyFirst, equityMicros: '999999999' }, ...baseline.benchmarkSeries.buyAndHold.slice(1)],
+      },
+    }
+    expect(buildFixtureReport(report, fabricatedBuy)).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'benchmarks.buyAndHold',
+      },
+    })
+
+    const directFirst = baseline.benchmarkSeries.directVolTiming[0]
+    const fabricatedDirect = {
+      ...baseline,
+      benchmarkSeries: {
+        ...baseline.benchmarkSeries,
+        directVolTiming: [
+          { ...directFirst, equityMicros: '999999999' },
+          ...baseline.benchmarkSeries.directVolTiming.slice(1),
+        ],
+      },
+    }
+    expect(buildFixtureReport(report, fabricatedDirect)).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'benchmarks.directVolatilityTiming',
+      },
+    })
   })
 
   test('keeps the sole report write attached through interruption', async () => {
@@ -1439,7 +1723,7 @@ describe('candidate development command', () => {
 
     const decoded = await Effect.runPromise(validated.effects.evaluateDevelopment(undefined, undefined as never))
 
-    expect(decoded.accounting.schemaVersion).toBe('bayn.candidate-development-accounting-evidence.v1')
+    expect(decoded.accounting.schemaVersion).toBe('bayn.candidate-development-accounting-evidence.v2')
     expect(decoded.accounting.runId).toBe(evaluation.baseline.runId)
     expect(decoded.accounting.baselineSimulation.dailyMarks).toHaveLength(505)
   })
