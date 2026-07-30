@@ -81,6 +81,7 @@ jobs:
             nix/ci-run-timed.sh \
             nix/oci-inspect-archive.sh \
             nix/oci-push.sh \
+            nix/verify-bayn-image-command.sh \
             flake.nix \
             flake.lock \
             package.json \

@@ -51,6 +51,7 @@ jobs:
               nix/oci-inspect-archive.sh | \
               nix/oci-push.sh | \
               nix/oci-release-contract.sh | \
+              nix/verify-bayn-image-command.sh | \
               flake.nix | flake.lock | bun.lock | package.json | */package.json | \
               .npmrc | bunfig.toml | patches/* | tsconfig.base.json | \
               .github/actions/setup-nix-toolchain/* | \
@@ -73,6 +74,7 @@ jobs:
               nix/ci-run-timed.sh | \
               nix/oci-inspect-archive.sh | \
               nix/oci-push.sh | \
+              nix/verify-bayn-image-command.sh | \
               flake.nix | flake.lock | bun.lock | package.json | */package.json | \
               .npmrc | bunfig.toml | patches/* | tsconfig.base.json)
                 image=true

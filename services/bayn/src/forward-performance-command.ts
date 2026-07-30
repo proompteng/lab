@@ -8,7 +8,14 @@ import { runForwardPerformance, ForwardPerformanceProgramError } from './forward
 
 export { runForwardPerformance } from './forward-performance'
 
-const main = Effect.scoped(
+export const FORWARD_PERFORMANCE_COMMAND_USAGE = 'Usage: bayn-forward-performance [--help]'
+
+const printUsage = Effect.gen(function* () {
+  const stdio = yield* Stdio.Stdio
+  yield* Stream.run(Stream.make(`${FORWARD_PERFORMANCE_COMMAND_USAGE}\n`), stdio.stdout())
+})
+
+const runProof = Effect.scoped(
   Effect.gen(function* () {
     const config = yield* loadConfig()
     const receipt = yield* runForwardPerformance(config).pipe(Effect.provide(PostgresClientLive(config)))
@@ -28,6 +35,7 @@ const main = Effect.scoped(
 )
 
 const runtime = Layer.mergeAll(Logger.layer([Logger.consoleJson]), NodeServices.layer)
+const main = process.argv.slice(2).includes('--help') ? printUsage : runProof
 const program = main.pipe(Effect.annotateLogs({ service: 'bayn-forward-performance' }), Effect.provide(runtime))
 
 if (import.meta.main) NodeRuntime.runMain(program)

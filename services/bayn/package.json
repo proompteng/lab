@@ -6,8 +6,9 @@
   "scripts": {
     "audit:qualification": "bun src/qualification-audit-command.ts",
     "candidate:qualification": "bun src/qualification-candidate-command.ts",
-    "build": "bun build src/index.ts --target=node --external tigerbeetle-node --outdir=dist",
+    "build": "bun build src/index.ts src/forward-performance-command.ts --target=node --external tigerbeetle-node --outdir=dist",
     "dev": "BAYN_PROVENANCE_MODE=development bun --watch src/index.ts",
+    "forward:performance": "BAYN_PROVENANCE_MODE=development node dist/forward-performance-command.js",
     "start": "BAYN_PROVENANCE_MODE=development node dist/index.js",
     "lint": "bun ../../node_modules/oxfmt/bin/oxfmt --check src",
     "lint:effect": "find ../../node_modules/.bun -path '*/@effect/tsgo-*/lib/tsc*' -type f ! -name '*.json' -exec chmod +x {} + 2>/dev/null || true; bun node_modules/@effect/tsgo/dist/effect-tsgo.js diagnostics --project tsconfig.json --format text --severity error",

@@ -409,7 +409,7 @@ const makeCycleObservability = Effect.gen(function* () {
             CASE
               WHEN reconciliation.reconciliation_id IS NULL THEN NULL
               WHEN NOT EXISTS (SELECT 1 FROM account_mutation_events) THEN true
-              ELSE reconciliation.reconciled_at >= (SELECT max(occurred_at) FROM account_mutation_events)
+              ELSE reconciliation.reconciled_at > (SELECT max(occurred_at) FROM account_mutation_events)
             END AS reconciliation_covers_latest_mutation,
             (SELECT count(*)::integer FROM account_mutation_events) AS mutation_event_count,
             (SELECT count(*)::integer FROM unresolved_mutations) AS unresolved_mutation_count,

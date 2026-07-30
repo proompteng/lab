@@ -21,6 +21,7 @@ import { CycleObservability, CycleObservabilityLive } from './cycle-observabilit
 import { CycleStore, CycleStoreLive } from './cycle-store'
 import { PostgresClientLive } from './evidence-store'
 import { migrationLoader } from './migrations'
+import { readForwardPerformancePostgres } from '../forward-performance/postgres'
 
 const postgresUrl = process.env.BAYN_TEST_POSTGRES_URL
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
@@ -376,6 +377,80 @@ const seedTerminalCanceledMutation = Effect.gen(function* () {
   )
 })
 
+const seedTerminalRejectedMutation = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  const intentId = '4'.repeat(64)
+  const mutationId = '5'.repeat(64)
+  const requestHash = '6'.repeat(64)
+  yield* sql`
+    INSERT INTO intents (
+      intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
+      decision_hash, policy_hash, account_id, client_order_id,
+      symbol, side, order_type, time_in_force, quantity_micros, notional_limit_micros,
+      state, terminal_outcome, state_version, created_at, updated_at
+    ) VALUES (
+      ${intentId}, 'bayn.paper-intent.v3', ${'f'.repeat(64)}, NULL,
+      'risk-balanced-trend', ${'7'.repeat(64)}, ${'8'.repeat(64)}, ${'9'.repeat(64)},
+      ${accountId}, 'bayn-observability-rejected-order', 'SPY', 'BUY', 'MARKET', 'DAY',
+      1000000, 1000000, 'PLANNED', NULL, 1,
+      '2026-03-06T21:01:00.000Z', '2026-03-06T21:01:00.000Z'
+    )
+  `
+  yield* sql.withTransaction(
+    Effect.gen(function* () {
+      yield* sql`
+        INSERT INTO risk_decisions (
+          decision_id, schema_version, input_hash, intent_id, policy_hash,
+          outcome, reason_codes, decided_at, expires_at
+        ) VALUES (
+          ${'a'.repeat(64)}, 'bayn.paper-risk-decision.v1', ${'b'.repeat(64)}, ${intentId},
+          ${'9'.repeat(64)}, 'APPROVED', ARRAY[]::text[],
+          '2026-03-06T21:01:00.001Z', '2099-01-01T00:00:00.000Z'
+        )
+      `
+      yield* sql`
+        UPDATE intents
+        SET risk_decision_id = ${'a'.repeat(64)}, state = 'APPROVED', state_version = 2,
+          updated_at = '2026-03-06T21:01:00.002Z'
+        WHERE intent_id = ${intentId}
+      `
+      yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation,
+          event_type, request_hash, consistency_delay_ms, broker_order_id,
+          request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${'c'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${mutationId}, ${intentId}, 1,
+          'SUBMIT', 'SUBMIT_STARTED', ${requestHash}, 1000, NULL,
+          NULL, NULL, NULL, '2026-03-06T21:02:00.000Z'
+        )
+      `
+      yield* sql`
+        UPDATE intents
+        SET state = 'IO_STARTED', state_version = 3, updated_at = '2026-03-06T21:02:00.000Z'
+        WHERE intent_id = ${intentId}
+      `
+      yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation,
+          event_type, request_hash, consistency_delay_ms, broker_order_id,
+          request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${'d'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${mutationId}, ${intentId}, 2,
+          'SUBMIT', 'SUBMIT_REJECTED', ${requestHash}, 1000, NULL,
+          'rejected-submit', 422, ${'e'.repeat(64)}, '2026-03-06T21:03:00.000Z'
+        )
+      `
+      yield* sql`
+        UPDATE intents
+        SET state = 'TERMINAL', terminal_outcome = 'REJECTED', state_version = 4,
+          updated_at = '2026-03-06T21:03:00.000001Z'
+        WHERE intent_id = ${intentId}
+      `
+    }),
+  )
+})
+
 describePostgres('PostgreSQL cycle observability projection', () => {
   let runtime: ReturnType<typeof makeRuntime>
 
@@ -646,6 +721,99 @@ describePostgres('PostgreSQL cycle observability projection', () => {
         eventCount: 6,
         unresolvedCount: 0,
         oldestUnresolvedAt: null,
+        latestOccurredAt: '2026-03-06T21:07:00.000Z',
+      },
+    })
+  })
+
+  test('forward performance rejects a reconciliation predating a terminal no-fill rejection', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState('2026-03-06T21:00:00.000Z')
+        yield* seedTerminalRejectedMutation
+        const evidence = yield* readForwardPerformancePostgres(sql, accountId)
+        const projection = yield* observability.read(qualificationRunId, accountId)
+        const [activity] = yield* sql<{ fills: number; accounting: number }>`
+          SELECT
+            (SELECT count(*)::integer FROM fills WHERE account_id = ${accountId}) AS fills,
+            (SELECT count(*)::integer FROM accounting_transactions WHERE account_id = ${accountId}) AS accounting
+        `
+        return { activity, evidence, projection }
+      }),
+    )
+
+    expect(result.activity).toEqual({ fills: 0, accounting: 0 })
+    expect(result.evidence).toMatchObject({
+      transactions: [],
+      unresolvedMutationCount: 0,
+      unaccountedFillCount: 0,
+      postReconciliationActivityCount: 2,
+    })
+    expect(result.projection).toMatchObject({
+      reconciliation: { coversLatestMutation: false },
+      mutations: {
+        eventCount: 2,
+        unresolvedCount: 0,
+        latestOccurredAt: '2026-03-06T21:03:00.000Z',
+      },
+    })
+  })
+
+  test('forward performance and cycle observability fail closed on a same-timestamp terminal mutation', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState('2026-03-06T21:03:00.000Z')
+        yield* seedTerminalRejectedMutation
+        const evidence = yield* readForwardPerformancePostgres(sql, accountId)
+        const projection = yield* observability.read(qualificationRunId, accountId)
+        return { evidence, projection }
+      }),
+    )
+
+    expect(result.evidence).toMatchObject({
+      transactions: [],
+      unresolvedMutationCount: 0,
+      unaccountedFillCount: 0,
+      postReconciliationActivityCount: 1,
+    })
+    expect(result.projection).toMatchObject({
+      reconciliation: { coversLatestMutation: false },
+      mutations: {
+        eventCount: 2,
+        unresolvedCount: 0,
+        latestOccurredAt: '2026-03-06T21:03:00.000Z',
+      },
+    })
+  })
+
+  test('forward performance rejects a reconciliation predating terminal no-fill cancellation history', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState('2026-03-06T21:00:00.000Z')
+        yield* seedTerminalCanceledMutation
+        const evidence = yield* readForwardPerformancePostgres(sql, accountId)
+        const projection = yield* observability.read(qualificationRunId, accountId)
+        return { evidence, projection }
+      }),
+    )
+
+    expect(result.evidence).toMatchObject({
+      transactions: [],
+      unresolvedMutationCount: 0,
+      unaccountedFillCount: 0,
+      postReconciliationActivityCount: 6,
+    })
+    expect(result.projection).toMatchObject({
+      reconciliation: { coversLatestMutation: false },
+      mutations: {
+        eventCount: 6,
+        unresolvedCount: 0,
         latestOccurredAt: '2026-03-06T21:07:00.000Z',
       },
     })
