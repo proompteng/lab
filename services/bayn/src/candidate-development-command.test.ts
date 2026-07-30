@@ -772,6 +772,78 @@ describe('candidate development command', () => {
     })
   })
 
+  test('rejects a reconciled accounting suffix after the selected qualification window', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const lastMark = baseline.simulation.dailyMarks.at(-1)
+    if (lastMark === undefined) throw new Error('baseline fixture must be nonempty')
+    const suffixDate = new Date(Date.parse(`${lastMark.sessionDate}T00:00:00.000Z`) + 86_400_000)
+      .toISOString()
+      .slice(0, 10) as IsoDate
+    const fullSimulation = {
+      ...baseline.simulation,
+      dailyMarks: [...baseline.simulation.dailyMarks, { ...lastMark, sessionDate: suffixDate, netReturn: 0 }],
+    }
+    const proof = reconcileMarkedEquity({
+      runId: baseline.runId,
+      initialCapitalMicros: baseline.initialCapitalMicros,
+      evaluatorTotalFeesMicros: baseline.strategy.totalFeesMicros,
+      evaluatorEndingEquityMicros: baseline.strategy.endingEquityMicros,
+      events: baseline.events,
+      simulation: fullSimulation,
+    })
+    if (Result.isFailure(proof)) throw new Error(`suffix proof failed: ${JSON.stringify(proof.failure)}`)
+    const baselineWithFullProof = {
+      ...baseline,
+      equitySeries: proof.success.equitySeries,
+      markedEquityReconciliation: proof.success.reconciliation,
+    }
+    const evaluation = commandEvaluationFixture(report, baselineWithFullProof)
+    const accounting = { ...evaluation.accounting, baselineSimulation: fullSimulation }
+
+    expect(buildCandidateDevelopmentCommandReport(report, { ...evaluation, accounting })).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'selected-trace-mismatch',
+        field: 'baselineSimulation.terminalSession',
+        expected: lastMark.sessionDate,
+        observed: suffixDate,
+      },
+    })
+  })
+
+  test('rejects decision evidence after the governed qualification window', () => {
+    const report = reportFixture(0.01)
+    const baseline = baselineFixture()
+    const lastMark = baseline.simulation.dailyMarks.at(-1)
+    if (lastMark === undefined) throw new Error('baseline fixture must be nonempty')
+    const postWindowDate = new Date(Date.parse(`${lastMark.sessionDate}T00:00:00.000Z`) + 86_400_000)
+      .toISOString()
+      .slice(0, 10) as IsoDate
+    const decisionPayload = {
+      kind: 'decision' as const,
+      signalDate: postWindowDate,
+      executionDate: postWindowDate,
+      targetWeights: { SPY: 0 },
+    }
+    const decision = {
+      ...decisionPayload,
+      id: canonicalHashV1({ runId: baseline.runId, ...decisionPayload }),
+    }
+    const baselineWithDecision = { ...baseline, events: [...baseline.events, decision] }
+    const evaluation = commandEvaluationFixture(report, baselineWithDecision)
+
+    expect(buildCandidateDevelopmentCommandReport(report, evaluation)).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'selected-trace-mismatch',
+        field: 'baselineSimulation.events.signalDate',
+        expected: `<=${lastMark.sessionDate}`,
+        observed: postWindowDate,
+      },
+    })
+  })
+
   test('keeps the sole report write attached through interruption', async () => {
     const report = successOf(buildFixtureReport(reportFixture(0.01), baselineFixture()))
 

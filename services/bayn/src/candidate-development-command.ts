@@ -481,6 +481,7 @@ const selectedTracePreviousEquity = (
   field: 'baselineSimulation' | 'stressedSimulation',
   full: EvaluationResult['simulation'],
   selected: EvaluationResult['simulation'],
+  events: EvaluationResult['events'],
   initialCapitalMicros: string,
 ): Result.Result<string, CandidateDevelopmentCommandFailure> => {
   const first = selected.dailyMarks.at(0)
@@ -493,6 +494,18 @@ const selectedTracePreviousEquity = (
       markedEquityFailure('selected-trace-mismatch', null, `${field}.firstSession`, first.sessionDate, null),
     )
   }
+  const last = selected.dailyMarks.at(-1)
+  if (last === undefined || startIndex + selected.dailyMarks.length !== full.dailyMarks.length) {
+    return Result.fail(
+      markedEquityFailure(
+        'selected-trace-mismatch',
+        null,
+        `${field}.terminalSession`,
+        last?.sessionDate ?? null,
+        full.dailyMarks.at(-1)?.sessionDate ?? null,
+      ),
+    )
+  }
   for (let index = 0; index < selected.dailyMarks.length; index += 1) {
     const expected = selected.dailyMarks[index]
     const observed = full.dailyMarks[startIndex + index]
@@ -501,6 +514,57 @@ const selectedTracePreviousEquity = (
     }
     const equality = requireCanonicalEvidenceEqual(`${field}.dailyMarks[${index}]`, expected, observed)
     if (Result.isFailure(equality)) return Result.fail(equality.failure)
+  }
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index]
+    const evidenceDates =
+      event.kind === 'decision'
+        ? ([
+            ['signalDate', event.signalDate],
+            ['executionDate', event.executionDate],
+          ] as const)
+        : ([['sessionDate', event.sessionDate]] as const)
+    for (const [dateField, observed] of evidenceDates) {
+      if (observed > last.sessionDate) {
+        return Result.fail(
+          markedEquityFailure(
+            'selected-trace-mismatch',
+            index,
+            `${field}.events.${dateField}`,
+            `<=${last.sessionDate}`,
+            observed,
+          ),
+        )
+      }
+    }
+  }
+  for (let index = 0; index < full.orders.length; index += 1) {
+    const observed = full.orders[index].sessionDate
+    if (observed > last.sessionDate) {
+      return Result.fail(
+        markedEquityFailure(
+          'selected-trace-mismatch',
+          index,
+          `${field}.orders.sessionDate`,
+          `<=${last.sessionDate}`,
+          observed,
+        ),
+      )
+    }
+  }
+  for (let index = 0; index < full.cashChanges.length; index += 1) {
+    const observed = full.cashChanges[index].sessionDate
+    if (observed > last.sessionDate) {
+      return Result.fail(
+        markedEquityFailure(
+          'selected-trace-mismatch',
+          index,
+          `${field}.cashChanges.sessionDate`,
+          `<=${last.sessionDate}`,
+          observed,
+        ),
+      )
+    }
   }
   return Result.succeed(full.dailyMarks[startIndex - 1]?.equityMicros ?? initialCapitalMicros)
 }
@@ -644,12 +708,14 @@ const validateCandidateDevelopmentAccounting = (
       'baselineSimulation',
       accounting.baselineSimulation,
       baseline.simulation,
+      accounting.events,
       baseline.initialCapitalMicros,
     ),
     stressedPreviousEquityMicros: selectedTracePreviousEquity(
       'stressedSimulation',
       accounting.stressedSimulation,
       report.doubledCost.stressed.simulation,
+      accounting.stressedEvents,
       baseline.initialCapitalMicros,
     ),
   })
