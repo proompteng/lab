@@ -50,6 +50,13 @@ export const candidateDevelopmentAttemptHorizon = {
   ordinalBinding: 'candidate-ordinal-equals-prior-trial-count-plus-one',
 } as const
 
+export const candidateDevelopmentRebalanceScheduleContract = {
+  schemaVersion: 'bayn.candidate-development-rebalance-schedule.v1',
+  signalSchedule: 'official-month-end-sessions',
+  executionSchedule: 'next-official-session',
+  comparisonWindow: 'selected-observation-window-inclusive',
+} as const
+
 /**
  * Doubled-cost development evidence is a second causal simulator run at exactly 2x modeled execution costs. The run is
  * admissible only when the complete signal decisions and ordered requested/filled quantity path exactly match the 1x
@@ -84,15 +91,17 @@ export const candidateDevelopmentStatisticsPolicy = {
 } as const satisfies QualificationStatisticsPolicy
 
 export const candidateDevelopmentComparisonSemantics = {
-  schemaVersion: 'bayn.candidate-development-comparison-semantics.v1',
+  schemaVersion: 'bayn.candidate-development-comparison-semantics.v2',
   selectedBenchmarkRule: qualificationSelectedBenchmarkRule,
   evidence: {
-    schemaVersion: 'bayn.candidate-development-comparison-semantics-evidence.v2',
-    reportSchemaVersion: 'bayn.candidate-development-report.v1',
+    schemaVersion: 'bayn.candidate-development-comparison-semantics-evidence.v3',
+    reportSchemaVersion: 'bayn.candidate-development-report.v2',
     analysisSchemaVersion: 'bayn.selected-benchmark-comparison-analysis.v1',
     source: 'baseline-evaluation-result',
     seriesProjection: 'prepare-qualification-series',
     windowBinding: 'exact-selected-preflight-sessions',
+    rebalanceBinding: 'official-signal-next-session-executions',
+    strategyProtocolBinding: 'explicit-expected-strategy-protocol-hash',
     analysis: 'recomputed-selected-benchmark-comparison',
     validation: 'exact-canonical-match',
   },
@@ -139,40 +148,43 @@ export const candidateDevelopmentComparisonSemantics = {
 } as const
 
 export const candidateDevelopmentProtocol = {
-  schemaVersion: 'bayn.candidate-development-protocol.v3',
+  schemaVersion: 'bayn.candidate-development-protocol.v4',
   calendar: candidateDevelopmentCalendarContract,
   walkForward: candidateDevelopmentWalkForwardProtocol,
   attemptHorizon: candidateDevelopmentAttemptHorizon,
+  rebalanceSchedule: candidateDevelopmentRebalanceScheduleContract,
   doubledCost: candidateDevelopmentDoubledCostContract,
   statisticsPolicy: candidateDevelopmentStatisticsPolicy,
   comparisonSemantics: candidateDevelopmentComparisonSemantics,
 } as const
 
 export interface CandidateDevelopmentProtocolIdentity {
-  readonly schemaVersion: 'bayn.candidate-development-protocol-identity.v1'
+  readonly schemaVersion: 'bayn.candidate-development-protocol-identity.v2'
   readonly candidateOrdinal: number
   readonly priorTrialCount: number
   readonly featureLookbackSessions: number
-  readonly protocolHash: string
+  readonly candidateDevelopmentProtocolHash: string
 }
 
 export const identifyCandidateDevelopmentProtocol = (
   attempt: CandidateDevelopmentBootstrapTailCapacity,
   featureLookbackSessions: number,
+  expectedStrategyProtocolHash: string,
 ): Result.Result<CandidateDevelopmentProtocolIdentity, CanonicalHashFailure> =>
   pipe(
     canonicalHashV1Result({
-      schemaVersion: 'bayn.candidate-development-protocol-binding.v1',
+      schemaVersion: 'bayn.candidate-development-protocol-binding.v2',
       protocol: candidateDevelopmentProtocol,
       attempt,
       featureLookbackSessions,
+      expectedStrategyProtocolHash,
     }),
-    Result.map((protocolHash) => ({
-      schemaVersion: 'bayn.candidate-development-protocol-identity.v1' as const,
+    Result.map((candidateDevelopmentProtocolHash) => ({
+      schemaVersion: 'bayn.candidate-development-protocol-identity.v2' as const,
       candidateOrdinal: attempt.candidateOrdinal,
       priorTrialCount: attempt.priorTrialCount,
       featureLookbackSessions,
-      protocolHash,
+      candidateDevelopmentProtocolHash,
     })),
   )
 
@@ -427,6 +439,11 @@ export interface CandidateDevelopmentExecutionBoundary {
   readonly executionDate: IsoDate
 }
 
+export interface CandidateDevelopmentRebalanceBoundary {
+  readonly signalDate: IsoDate
+  readonly executionDate: IsoDate
+}
+
 export interface CandidateDevelopmentFoldBoundary {
   readonly ordinal: number
   readonly trainingStartIndex: number
@@ -556,17 +573,23 @@ export type CandidateDevelopmentPreflightIssue =
       readonly _tag: 'CandidateDevelopmentProtocolHashFailed'
       readonly cause: CanonicalHashFailure
     }
+  | {
+      readonly _tag: 'CandidateDevelopmentStrategyProtocolHashInvalid'
+      readonly observed: string
+    }
 
 export interface CandidateDevelopmentPreflightPass extends CandidateDevelopmentGeometryPass {
-  readonly schemaVersion: 'bayn.candidate-development-preflight.v3'
+  readonly schemaVersion: 'bayn.candidate-development-preflight.v4'
   readonly attempt: CandidateDevelopmentBootstrapTailCapacity
   readonly featureLookbackSessions: number
   readonly firstEligibleExecution: CandidateDevelopmentExecutionBoundary
   readonly protocolIdentity: CandidateDevelopmentProtocolIdentity
+  readonly expectedStrategyProtocolHash: string
   readonly doubledCostContract: typeof candidateDevelopmentDoubledCostContract
   readonly statisticsPolicy: typeof candidateDevelopmentStatisticsPolicy
   readonly comparisonSemantics: typeof candidateDevelopmentComparisonSemantics
   readonly selectedObservationSessions: readonly IsoDate[]
+  readonly expectedRebalanceSchedule: readonly CandidateDevelopmentRebalanceBoundary[]
 }
 
 export type CandidateDevelopmentPreflightDecision = CandidateDevelopmentPreflightPass | CandidateDevelopmentGeometryFail
@@ -575,7 +598,8 @@ type CandidateDevelopmentComparisonGateKey = keyof typeof candidateDevelopmentCo
 
 export interface CandidateDevelopmentComparisonSemanticsEvidence {
   readonly schemaVersion: typeof candidateDevelopmentComparisonSemantics.evidence.schemaVersion
-  readonly protocolHash: string
+  readonly candidateDevelopmentProtocolHash: string
+  readonly strategyProtocolHash: string
   readonly comparisonSemantics: typeof candidateDevelopmentComparisonSemantics
   readonly analysis: QualificationSelectedBenchmarkComparisonAnalysis
 }
@@ -592,7 +616,12 @@ export type CandidateDevelopmentComparisonSemanticsIssue =
       readonly observed: unknown
     }
   | {
-      readonly _tag: 'CandidateDevelopmentComparisonSemanticsProtocolMismatch'
+      readonly _tag: 'CandidateDevelopmentComparisonDevelopmentProtocolMismatch'
+      readonly expected: string
+      readonly observed: unknown
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentComparisonStrategyProtocolMismatch'
       readonly expected: string
       readonly observed: unknown
     }
@@ -605,7 +634,7 @@ export type CandidateDevelopmentComparisonSemanticsIssue =
       readonly cause: QualificationStatisticsFailure
     }
   | {
-      readonly _tag: 'CandidateDevelopmentBaselineProtocolMismatch'
+      readonly _tag: 'CandidateDevelopmentBaselineStrategyProtocolMismatch'
       readonly expected: string
       readonly observed: string
     }
@@ -627,6 +656,14 @@ export type CandidateDevelopmentComparisonSemanticsIssue =
       readonly index: number
       readonly expected: IsoDate | undefined
       readonly observed: IsoDate | undefined
+      readonly expectedCount: number
+      readonly observedCount: number
+    }
+  | {
+      readonly _tag: 'CandidateDevelopmentComparisonSignalExecutionMismatch'
+      readonly index: number
+      readonly expected: CandidateDevelopmentRebalanceBoundary | undefined
+      readonly observed: CandidateDevelopmentRebalanceBoundary | undefined
       readonly expectedCount: number
       readonly observedCount: number
     }
@@ -671,10 +708,10 @@ export const validateCandidateDevelopmentComparisonSeriesBinding = (
   baseline: EvaluationResult,
   series: QualificationSeries,
 ): Result.Result<QualificationSeries, CandidateDevelopmentComparisonSemanticsIssue> => {
-  if (baseline.protocolHash !== preflight.protocolIdentity.protocolHash) {
+  if (baseline.protocolHash !== preflight.expectedStrategyProtocolHash) {
     return Result.fail({
-      _tag: 'CandidateDevelopmentBaselineProtocolMismatch',
-      expected: preflight.protocolIdentity.protocolHash,
+      _tag: 'CandidateDevelopmentBaselineStrategyProtocolMismatch',
+      expected: preflight.expectedStrategyProtocolHash,
       observed: baseline.protocolHash,
     })
   }
@@ -704,7 +741,28 @@ export const validateCandidateDevelopmentComparisonSeriesBinding = (
     }
   }
 
-  const expectedRebalanceExecutionDates = baseline.signalDecisions.map((decision) => decision.executionDate)
+  const expectedRebalanceSchedule = preflight.expectedRebalanceSchedule
+  const observedRebalanceSchedule = baseline.signalDecisions.map(({ signalDate, executionDate }) => ({
+    signalDate,
+    executionDate,
+  }))
+  const decisionCount = Math.max(expectedRebalanceSchedule.length, observedRebalanceSchedule.length)
+  for (let index = 0; index < decisionCount; index += 1) {
+    const expected = expectedRebalanceSchedule.at(index)
+    const observed = observedRebalanceSchedule.at(index)
+    if (expected?.signalDate !== observed?.signalDate || expected?.executionDate !== observed?.executionDate) {
+      return Result.fail({
+        _tag: 'CandidateDevelopmentComparisonSignalExecutionMismatch',
+        index,
+        expected,
+        observed,
+        expectedCount: expectedRebalanceSchedule.length,
+        observedCount: observedRebalanceSchedule.length,
+      })
+    }
+  }
+
+  const expectedRebalanceExecutionDates = expectedRebalanceSchedule.map(({ executionDate }) => executionDate)
   const observedRebalanceExecutionDates = series.rebalanceExecutionDates
   const rebalanceCount = Math.max(expectedRebalanceExecutionDates.length, observedRebalanceExecutionDates.length)
   for (let index = 0; index < rebalanceCount; index += 1) {
@@ -741,7 +799,8 @@ export const buildCandidateDevelopmentComparisonSemanticsEvidence = (
       analysis.schemaVersion === preflight.comparisonSemantics.evidence.analysisSchemaVersion
         ? Result.succeed({
             schemaVersion: candidateDevelopmentComparisonSemantics.evidence.schemaVersion,
-            protocolHash: preflight.protocolIdentity.protocolHash,
+            candidateDevelopmentProtocolHash: preflight.protocolIdentity.candidateDevelopmentProtocolHash,
+            strategyProtocolHash: preflight.expectedStrategyProtocolHash,
             comparisonSemantics: preflight.comparisonSemantics,
             analysis,
           })
@@ -773,11 +832,18 @@ export const validateCandidateDevelopmentComparisonSemanticsEvidence = (
       observed: root.schemaVersion,
     })
   }
-  if (root.protocolHash !== preflight.protocolIdentity.protocolHash) {
+  if (root.candidateDevelopmentProtocolHash !== preflight.protocolIdentity.candidateDevelopmentProtocolHash) {
     return Result.fail({
-      _tag: 'CandidateDevelopmentComparisonSemanticsProtocolMismatch',
-      expected: preflight.protocolIdentity.protocolHash,
-      observed: root.protocolHash,
+      _tag: 'CandidateDevelopmentComparisonDevelopmentProtocolMismatch',
+      expected: preflight.protocolIdentity.candidateDevelopmentProtocolHash,
+      observed: root.candidateDevelopmentProtocolHash,
+    })
+  }
+  if (root.strategyProtocolHash !== preflight.expectedStrategyProtocolHash) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentComparisonStrategyProtocolMismatch',
+      expected: preflight.expectedStrategyProtocolHash,
+      observed: root.strategyProtocolHash,
     })
   }
   const observedSemantics = comparisonEvidenceRecord(root.comparisonSemantics)
@@ -905,6 +971,7 @@ export type CandidateDevelopmentRunFailure =
 export interface CandidateDevelopmentPreflightInput {
   readonly candidateOrdinal: number
   readonly priorTrialCount: number
+  readonly expectedStrategyProtocolHash: string
   readonly officialSessions: readonly IsoDate[]
   readonly signalSessionDates: readonly IsoDate[]
   readonly featureLookbackSessions: number
@@ -948,6 +1015,8 @@ const validIsoDate = (value: string): value is IsoDate => {
   const parsed = new Date(`${value}T00:00:00.000Z`)
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
 }
+
+const validStrategyProtocolHash = (value: string): boolean => /^[0-9a-f]{64}$/.test(value)
 
 const positiveInteger = (
   field: Extract<
@@ -1129,6 +1198,25 @@ export const officialMonthEndSignalDates = (sessions: readonly IsoDate[]): reado
     return next !== undefined && session.slice(0, 7) !== next.slice(0, 7)
   })
 
+export const expectedCandidateDevelopmentRebalanceSchedule = (
+  sessions: readonly IsoDate[],
+  signalSessionDates: readonly IsoDate[],
+  selectedObservationStart: IsoDate,
+  selectedObservationEnd: IsoDate,
+): readonly CandidateDevelopmentRebalanceBoundary[] => {
+  const sessionIndices = new Map(sessions.map((session, index) => [session, index] as const))
+  return signalSessionDates.flatMap((signalDate) => {
+    const signalIndex = sessionIndices.get(signalDate)
+    if (signalIndex === undefined) return []
+    const executionDate = sessions.at(signalIndex + candidateDevelopmentWalkForwardProtocol.executionLagSessions)
+    return executionDate !== undefined &&
+      executionDate >= selectedObservationStart &&
+      executionDate <= selectedObservationEnd
+      ? [{ signalDate, executionDate }]
+      : []
+  })
+}
+
 export const firstEligibleExecutionAfterLookback = (
   sessions: readonly IsoDate[],
   signalSessionDates: readonly IsoDate[],
@@ -1261,8 +1349,16 @@ export const preflightCandidateDevelopment = (
   input: CandidateDevelopmentPreflightInput,
 ): Result.Result<CandidateDevelopmentPreflightDecision, CandidateDevelopmentPreflightIssue> =>
   pipe(
-    bindCandidateDevelopmentAttempt(input.candidateOrdinal, input.priorTrialCount),
-    Result.flatMap((attempt) =>
+    Result.all({
+      attempt: bindCandidateDevelopmentAttempt(input.candidateOrdinal, input.priorTrialCount),
+      expectedStrategyProtocolHash: validStrategyProtocolHash(input.expectedStrategyProtocolHash)
+        ? Result.succeed(input.expectedStrategyProtocolHash)
+        : Result.fail<CandidateDevelopmentPreflightIssue>({
+            _tag: 'CandidateDevelopmentStrategyProtocolHashInvalid',
+            observed: input.expectedStrategyProtocolHash,
+          }),
+    }),
+    Result.flatMap(({ attempt, expectedStrategyProtocolHash }) =>
       pipe(
         validateFrozenDevelopmentCalendar(input.officialSessions),
         Result.flatMap(() =>
@@ -1272,10 +1368,10 @@ export const preflightCandidateDevelopment = (
             input.featureLookbackSessions,
           ),
         ),
-        Result.map((firstEligibleExecution) => ({ attempt, firstEligibleExecution })),
+        Result.map((firstEligibleExecution) => ({ attempt, expectedStrategyProtocolHash, firstEligibleExecution })),
       ),
     ),
-    Result.flatMap(({ attempt, firstEligibleExecution }) =>
+    Result.flatMap(({ attempt, expectedStrategyProtocolHash, firstEligibleExecution }) =>
       pipe(
         Result.all({
           geometry: computeEndAnchoredWalkForwardBoundaries(
@@ -1284,7 +1380,7 @@ export const preflightCandidateDevelopment = (
             candidateDevelopmentWalkForwardProtocol,
           ),
           protocolIdentity: pipe(
-            identifyCandidateDevelopmentProtocol(attempt, input.featureLookbackSessions),
+            identifyCandidateDevelopmentProtocol(attempt, input.featureLookbackSessions, expectedStrategyProtocolHash),
             Result.mapError(
               (cause): CandidateDevelopmentPreflightIssue => ({
                 _tag: 'CandidateDevelopmentProtocolHashFailed',
@@ -1297,21 +1393,31 @@ export const preflightCandidateDevelopment = (
           ({ geometry, protocolIdentity }): CandidateDevelopmentPreflightDecision =>
             geometry.status === 'FAIL'
               ? geometry
-              : {
-                  ...geometry,
-                  schemaVersion: 'bayn.candidate-development-preflight.v3',
-                  attempt,
-                  featureLookbackSessions: input.featureLookbackSessions,
-                  firstEligibleExecution,
-                  protocolIdentity,
-                  doubledCostContract: candidateDevelopmentDoubledCostContract,
-                  statisticsPolicy: candidateDevelopmentStatisticsPolicy,
-                  comparisonSemantics: candidateDevelopmentComparisonSemantics,
-                  selectedObservationSessions: input.officialSessions.slice(
+              : (() => {
+                  const selectedObservationSessions = input.officialSessions.slice(
                     geometry.selectedObservationStartIndex,
                     geometry.selectedObservationEndIndex + 1,
-                  ),
-                },
+                  )
+                  return {
+                    ...geometry,
+                    schemaVersion: 'bayn.candidate-development-preflight.v4' as const,
+                    attempt,
+                    featureLookbackSessions: input.featureLookbackSessions,
+                    firstEligibleExecution,
+                    protocolIdentity,
+                    expectedStrategyProtocolHash,
+                    doubledCostContract: candidateDevelopmentDoubledCostContract,
+                    statisticsPolicy: candidateDevelopmentStatisticsPolicy,
+                    comparisonSemantics: candidateDevelopmentComparisonSemantics,
+                    selectedObservationSessions,
+                    expectedRebalanceSchedule: expectedCandidateDevelopmentRebalanceSchedule(
+                      input.officialSessions,
+                      input.signalSessionDates,
+                      geometry.selectedObservationStart,
+                      geometry.selectedObservationEnd,
+                    ),
+                  }
+                })(),
         ),
       ),
     ),

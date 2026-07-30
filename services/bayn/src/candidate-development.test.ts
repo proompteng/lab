@@ -24,14 +24,17 @@ import {
   type CandidateDevelopmentComparisonSemanticsEvidence,
   type CandidateDevelopmentPreflightPass,
 } from './candidate-development'
+import { makeStrategyProtocolHashResult } from './contracts'
 import { defaultExecutionModel } from './execution-model'
 import { canonicalHashV1Result } from './hash'
+import { makeEvaluationIdentity } from './simulation'
 import {
   defaultQualificationStatisticsPolicy,
   prepareQualificationSeries,
   type QualificationSeries,
 } from './qualification-statistics'
 import type { IsoDate } from './schemas'
+import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 import type { EvaluationResult, SignalDecision, SimulatedOrder, SimulationTrace } from './types'
 
 const fullMarketClosures = new Set<IsoDate>([
@@ -191,9 +194,17 @@ const successOf = <A, E>(result: Result.Result<A, E>): A => {
   return result.success
 }
 
+const genuineProvenance = makeTestProvenance()
+const genuineInputManifest = makeSnapshot().manifest
+const genuineEvaluationIdentity = successOf(
+  makeEvaluationIdentity(genuineInputManifest, fixtureProtocol, genuineProvenance),
+)
+const genuineStrategyProtocolHash = successOf(makeStrategyProtocolHashResult(genuineProvenance.strategy))
+
 const candidate13Input = (sessions: readonly IsoDate[]) => ({
   candidateOrdinal: 13,
   priorTrialCount: 12,
+  expectedStrategyProtocolHash: genuineStrategyProtocolHash,
   officialSessions: sessions,
   signalSessionDates: officialMonthEndSignalDates(sessions),
   featureLookbackSessions: 252,
@@ -277,6 +288,30 @@ const evaluationSignalDecisions = (
   sessions: readonly IsoDate[],
 ): readonly SignalDecision[] => {
   const officialSessions = developmentSessions()
+  const includedSessions = new Set(sessions)
+  return preflight.expectedRebalanceSchedule
+    .filter(({ executionDate }) => includedSessions.has(executionDate))
+    .map(({ executionDate, signalDate }, ordinal) => {
+      const executionIndex = officialSessions.indexOf(executionDate)
+      if (
+        officialSessions.at(executionIndex - candidateDevelopmentWalkForwardProtocol.executionLagSessions) !==
+        signalDate
+      ) {
+        throw new Error(`invalid official signal session for ${executionDate}`)
+      }
+      return signalDecision({
+        decisionId: (ordinal + 1).toString(16).padStart(64, '0'),
+        signalDate,
+        executionDate,
+      })
+    })
+}
+
+const everyHundredthSignalDecisions = (
+  preflight: CandidateDevelopmentPreflightPass,
+  sessions: readonly IsoDate[],
+): readonly SignalDecision[] => {
+  const officialSessions = developmentSessions()
   return sessions
     .map((executionDate, index) => ({ executionDate, index }))
     .filter(({ index }) => index % 100 === 0)
@@ -294,8 +329,12 @@ const evaluationSignalDecisions = (
 const baselineEvaluation = (
   preflight: CandidateDevelopmentPreflightPass,
   sessions: readonly IsoDate[] = preflight.selectedObservationSessions,
+  overrides: {
+    readonly protocolHash?: string
+    readonly signalDecisions?: readonly SignalDecision[]
+  } = {},
 ): EvaluationResult => {
-  const signalDecisions = evaluationSignalDecisions(preflight, sessions)
+  const signalDecisions = overrides.signalDecisions ?? evaluationSignalDecisions(preflight, sessions)
   const dailyMarks = sessions.map((sessionDate, index) => ({
     sessionDate,
     equityMicros: '1000000',
@@ -348,11 +387,11 @@ const baselineEvaluation = (
   )
   return {
     schemaVersion: 'bayn.evaluation.v6',
-    runId: 'a'.repeat(64),
-    codeRevision: 'b'.repeat(40),
-    protocolHash: preflight.protocolIdentity.protocolHash,
+    runId: genuineEvaluationIdentity.runId,
+    codeRevision: genuineProvenance.sourceRevision,
+    protocolHash: overrides.protocolHash ?? genuineEvaluationIdentity.protocolHash,
     initialCapitalMicros: '1000000',
-    inputManifest: {} as EvaluationResult['inputManifest'],
+    inputManifest: genuineInputManifest,
     strategy: performanceMetrics(),
     buyAndHold: performanceMetrics(),
     directVolTiming: performanceMetrics(),
@@ -380,7 +419,8 @@ const comparisonSeriesOf = (baseline: EvaluationResult): QualificationSeries =>
 
 let cachedComparisonEvidence:
   | {
-      readonly protocolHash: string
+      readonly candidateDevelopmentProtocolHash: string
+      readonly strategyProtocolHash: string
       readonly baseline: EvaluationResult
       readonly series: QualificationSeries
       readonly evidence: CandidateDevelopmentComparisonSemanticsEvidence
@@ -394,13 +434,23 @@ const exactComparisonFixture = (
   readonly series: QualificationSeries
   readonly evidence: CandidateDevelopmentComparisonSemanticsEvidence
 } => {
-  if (cachedComparisonEvidence?.protocolHash === preflight.protocolIdentity.protocolHash) {
+  if (
+    cachedComparisonEvidence?.candidateDevelopmentProtocolHash ===
+      preflight.protocolIdentity.candidateDevelopmentProtocolHash &&
+    cachedComparisonEvidence.strategyProtocolHash === preflight.expectedStrategyProtocolHash
+  ) {
     return cachedComparisonEvidence
   }
   const baseline = baselineEvaluation(preflight)
   const series = comparisonSeriesOf(baseline)
   const evidence = successOf(buildCandidateDevelopmentComparisonSemanticsEvidence(preflight, series))
-  cachedComparisonEvidence = { protocolHash: preflight.protocolIdentity.protocolHash, baseline, series, evidence }
+  cachedComparisonEvidence = {
+    candidateDevelopmentProtocolHash: preflight.protocolIdentity.candidateDevelopmentProtocolHash,
+    strategyProtocolHash: preflight.expectedStrategyProtocolHash,
+    baseline,
+    series,
+    evidence,
+  }
   return cachedComparisonEvidence
 }
 
@@ -480,6 +530,7 @@ describe('candidate development walk-forward protocol', () => {
         preflightCandidateDevelopment({
           candidateOrdinal: 13,
           priorTrialCount: 12,
+          expectedStrategyProtocolHash: genuineStrategyProtocolHash,
           officialSessions: sessions,
           signalSessionDates: signals,
           featureLookbackSessions,
@@ -541,31 +592,40 @@ describe('candidate development walk-forward protocol', () => {
 
   test('binds one deterministic versioned protocol identity into preflight', () => {
     const candidate13 = successOf(bindCandidateDevelopmentAttempt(13, 12))
-    const first = successOf(identifyCandidateDevelopmentProtocol(candidate13, 252))
-    const second = successOf(identifyCandidateDevelopmentProtocol(candidate13, 252))
-    const differentLookback = successOf(identifyCandidateDevelopmentProtocol(candidate13, 63))
+    const first = successOf(identifyCandidateDevelopmentProtocol(candidate13, 252, genuineStrategyProtocolHash))
+    const second = successOf(identifyCandidateDevelopmentProtocol(candidate13, 252, genuineStrategyProtocolHash))
+    const differentLookback = successOf(
+      identifyCandidateDevelopmentProtocol(candidate13, 63, genuineStrategyProtocolHash),
+    )
+    const differentStrategy = successOf(identifyCandidateDevelopmentProtocol(candidate13, 252, 'e'.repeat(64)))
     const next = successOf(
-      identifyCandidateDevelopmentProtocol(successOf(bindCandidateDevelopmentAttempt(14, 13)), 252),
+      identifyCandidateDevelopmentProtocol(
+        successOf(bindCandidateDevelopmentAttempt(14, 13)),
+        252,
+        genuineStrategyProtocolHash,
+      ),
     )
     const preflight = successOf(preflightCandidateDevelopment(candidate13Input(developmentSessions())))
 
     expect(first).toEqual(second)
     expect(first).not.toEqual(differentLookback)
+    expect(first).not.toEqual(differentStrategy)
     expect(first).not.toEqual(next)
-    expect(first.schemaVersion).toBe('bayn.candidate-development-protocol-identity.v1')
+    expect(first.schemaVersion).toBe('bayn.candidate-development-protocol-identity.v2')
     expect(first.candidateOrdinal).toBe(13)
     expect(first.priorTrialCount).toBe(12)
     expect(first.featureLookbackSessions).toBe(252)
-    expect(first.protocolHash).toBe('5930dfb8922201101ca4edc3c408f0a79a22de8e35bfec2b9fee6e4625aa441e')
+    expect(first.candidateDevelopmentProtocolHash).toMatch(/^[0-9a-f]{64}$/)
     expect(preflight).toMatchObject({
       status: 'PASS',
-      schemaVersion: 'bayn.candidate-development-preflight.v3',
+      schemaVersion: 'bayn.candidate-development-preflight.v4',
       attempt: {
         candidateOrdinal: 13,
         priorTrialCount: 12,
         tailSampleCount: 38,
       },
       protocolIdentity: first,
+      expectedStrategyProtocolHash: genuineStrategyProtocolHash,
       doubledCostContract: candidateDevelopmentDoubledCostContract,
       comparisonSemantics: candidateDevelopmentComparisonSemantics,
     })
@@ -573,6 +633,15 @@ describe('candidate development walk-forward protocol', () => {
     expect(preflight.selectedObservationSessions).toHaveLength(1_489)
     expect(preflight.selectedObservationSessions.at(0)).toBe('2017-02-02')
     expect(preflight.selectedObservationSessions.at(-1)).toBe('2022-12-30')
+    expect(preflight.expectedRebalanceSchedule).toHaveLength(70)
+    expect(preflight.expectedRebalanceSchedule.at(0)).toEqual({
+      signalDate: '2017-02-28',
+      executionDate: '2017-03-01',
+    })
+    expect(preflight.expectedRebalanceSchedule.at(-1)).toEqual({
+      signalDate: '2022-11-30',
+      executionDate: '2022-12-01',
+    })
   })
 
   test('accepts exact benchmark-relative comparison semantics for every uncertainty and walk-forward gate', () => {
@@ -616,8 +685,8 @@ describe('candidate development walk-forward protocol', () => {
       ),
     ).toMatchObject(
       Result.fail({
-        _tag: 'CandidateDevelopmentBaselineProtocolMismatch',
-        expected: preflight.protocolIdentity.protocolHash,
+        _tag: 'CandidateDevelopmentBaselineStrategyProtocolMismatch',
+        expected: preflight.expectedStrategyProtocolHash,
         observed: 'e'.repeat(64),
       }),
     )
@@ -723,6 +792,180 @@ describe('candidate development walk-forward protocol', () => {
         gate: 'annualizedExcessReturnLowerBound',
         expected: 'selected-benchmark',
         observed: 'cash',
+      }),
+    )
+  })
+
+  test('rejects the previously accepted every-100th-session rebalance schedule', () => {
+    const preflight = successOf(preflightCandidateDevelopment(candidate13Input(developmentSessions())))
+    expect(preflight.status).toBe('PASS')
+    if (preflight.status === 'FAIL') throw new Error('expected passing preflight')
+    const baseline = baselineEvaluation(preflight, preflight.selectedObservationSessions, {
+      signalDecisions: everyHundredthSignalDecisions(preflight, preflight.selectedObservationSessions),
+    })
+    const series = comparisonSeriesOf(baseline)
+
+    expect(series.rebalanceExecutionDates).toEqual(baseline.signalDecisions.map((decision) => decision.executionDate))
+    expect(series.rebalanceExecutionDates).not.toEqual(
+      preflight.expectedRebalanceSchedule.map(({ executionDate }) => executionDate),
+    )
+    expect(validateCandidateDevelopmentComparisonSeriesBinding(preflight, baseline, series)).toMatchObject({
+      _tag: 'Failure',
+      failure: {
+        _tag: 'CandidateDevelopmentComparisonSignalExecutionMismatch',
+      },
+    })
+  })
+
+  test('rejects shifted, missing, and extra rebalance executions against the preregistered schedule', () => {
+    const preflight = successOf(preflightCandidateDevelopment(candidate13Input(developmentSessions())))
+    expect(preflight.status).toBe('PASS')
+    if (preflight.status === 'FAIL') throw new Error('expected passing preflight')
+    const { baseline, series } = exactComparisonFixture(preflight)
+    const expected = preflight.expectedRebalanceSchedule.map(({ executionDate }) => executionDate)
+    const first = expected.at(0)
+    const firstIndex = first === undefined ? -1 : preflight.selectedObservationSessions.indexOf(first)
+    const shiftedFirst = preflight.selectedObservationSessions.at(firstIndex + 1)
+    const last = expected.at(-1)
+    if (first === undefined || shiftedFirst === undefined || last === undefined) {
+      throw new Error('expected complete preregistered rebalance schedule')
+    }
+
+    const cases = [
+      {
+        name: 'shifted',
+        dates: [shiftedFirst, ...expected.slice(1)],
+        index: 0,
+        expected: first,
+        observed: shiftedFirst,
+      },
+      {
+        name: 'missing',
+        dates: expected.slice(0, -1),
+        index: expected.length - 1,
+        expected: last,
+        observed: undefined,
+      },
+      {
+        name: 'extra',
+        dates: [...expected, preflight.selectedObservationEnd],
+        index: expected.length,
+        expected: undefined,
+        observed: preflight.selectedObservationEnd,
+      },
+    ] as const
+
+    for (const mismatch of cases) {
+      expect(
+        validateCandidateDevelopmentComparisonSeriesBinding(preflight, baseline, {
+          ...series,
+          rebalanceExecutionDates: mismatch.dates,
+        }),
+        mismatch.name,
+      ).toMatchObject(
+        Result.fail({
+          _tag: 'CandidateDevelopmentComparisonRebalanceScheduleMismatch',
+          index: mismatch.index,
+          expected: mismatch.expected,
+          observed: mismatch.observed,
+          expectedCount: expected.length,
+          observedCount: mismatch.dates.length,
+        }),
+      )
+    }
+  })
+
+  test('rejects a shifted signal date even when every execution date is preregistered', () => {
+    const preflight = successOf(preflightCandidateDevelopment(candidate13Input(developmentSessions())))
+    expect(preflight.status).toBe('PASS')
+    if (preflight.status === 'FAIL') throw new Error('expected passing preflight')
+    const { baseline } = exactComparisonFixture(preflight)
+    const first = baseline.signalDecisions.at(0)
+    const shiftedSignalDate = preflight.selectedObservationSessions.at(16)
+    if (first === undefined || shiftedSignalDate === undefined) {
+      throw new Error('expected a baseline decision and shifted signal session')
+    }
+    expect(shiftedSignalDate).not.toBe(preflight.expectedRebalanceSchedule.at(0)?.signalDate)
+    const shiftedBaseline = {
+      ...baseline,
+      signalDecisions: [{ ...first, signalDate: shiftedSignalDate }, ...baseline.signalDecisions.slice(1)],
+    }
+    const shiftedSeries = comparisonSeriesOf(shiftedBaseline)
+
+    expect(shiftedSeries.rebalanceExecutionDates).toEqual(
+      preflight.expectedRebalanceSchedule.map(({ executionDate }) => executionDate),
+    )
+    expect(
+      validateCandidateDevelopmentComparisonSeriesBinding(preflight, shiftedBaseline, shiftedSeries),
+    ).toMatchObject(
+      Result.fail({
+        _tag: 'CandidateDevelopmentComparisonSignalExecutionMismatch',
+        index: 0,
+        expected: preflight.expectedRebalanceSchedule.at(0),
+        observed: {
+          signalDate: shiftedSignalDate,
+          executionDate: first.executionDate,
+        },
+      }),
+    )
+  })
+
+  test('accepts a genuine strategy protocol identity independently of the development protocol identity', () => {
+    const preflight = successOf(preflightCandidateDevelopment(candidate13Input(developmentSessions())))
+    expect(preflight.status).toBe('PASS')
+    if (preflight.status === 'FAIL') throw new Error('expected passing preflight')
+    const { baseline } = exactComparisonFixture(preflight)
+    const genuineBaseline = { ...baseline, protocolHash: genuineStrategyProtocolHash }
+    const genuineSeries = comparisonSeriesOf(genuineBaseline)
+
+    expect(genuineEvaluationIdentity.protocolHash).toBe(genuineStrategyProtocolHash)
+    expect(genuineStrategyProtocolHash).not.toBe(preflight.protocolIdentity.candidateDevelopmentProtocolHash)
+    expect(
+      successOf(validateCandidateDevelopmentComparisonSeriesBinding(preflight, genuineBaseline, genuineSeries)),
+    ).toEqual(genuineSeries)
+  })
+
+  test('rejects independent strategy and candidate-development identity drift', () => {
+    const preflight = successOf(preflightCandidateDevelopment(candidate13Input(developmentSessions())))
+    expect(preflight.status).toBe('PASS')
+    if (preflight.status === 'FAIL') throw new Error('expected passing preflight')
+    const { baseline, evidence, series } = exactComparisonFixture(preflight)
+
+    expect(
+      validateCandidateDevelopmentComparisonSeriesBinding(
+        preflight,
+        { ...baseline, protocolHash: 'e'.repeat(64) },
+        series,
+      ),
+    ).toMatchObject(
+      Result.fail({
+        _tag: 'CandidateDevelopmentBaselineStrategyProtocolMismatch',
+        expected: genuineStrategyProtocolHash,
+        observed: 'e'.repeat(64),
+      }),
+    )
+    expect(
+      validateCandidateDevelopmentComparisonSemanticsEvidence(preflight, series, {
+        ...evidence,
+        candidateDevelopmentProtocolHash: 'e'.repeat(64),
+      }),
+    ).toMatchObject(
+      Result.fail({
+        _tag: 'CandidateDevelopmentComparisonDevelopmentProtocolMismatch',
+        expected: preflight.protocolIdentity.candidateDevelopmentProtocolHash,
+        observed: 'e'.repeat(64),
+      }),
+    )
+    expect(
+      validateCandidateDevelopmentComparisonSemanticsEvidence(preflight, series, {
+        ...evidence,
+        strategyProtocolHash: 'e'.repeat(64),
+      }),
+    ).toMatchObject(
+      Result.fail({
+        _tag: 'CandidateDevelopmentComparisonStrategyProtocolMismatch',
+        expected: genuineStrategyProtocolHash,
+        observed: 'e'.repeat(64),
       }),
     )
   })
@@ -986,6 +1229,7 @@ describe('candidate development walk-forward protocol', () => {
       preflightCandidateDevelopment({
         candidateOrdinal: 13,
         priorTrialCount: 12,
+        expectedStrategyProtocolHash: genuineStrategyProtocolHash,
         officialSessions: sessions,
         signalSessionDates: officialMonthEndSignalDates(sessions),
         featureLookbackSessions: 63,
@@ -1050,6 +1294,7 @@ describe('candidate development walk-forward protocol', () => {
           {
             candidateOrdinal: candidateDevelopmentAttemptHorizon.maximumCandidateOrdinal + 1,
             priorTrialCount: candidateDevelopmentAttemptHorizon.maximumCandidateOrdinal,
+            expectedStrategyProtocolHash: genuineStrategyProtocolHash,
             officialSessions: [],
             signalSessionDates: [],
             featureLookbackSessions: 0,
@@ -1085,6 +1330,45 @@ describe('candidate development walk-forward protocol', () => {
     expect(evaluations).toBe(0)
   })
 
+  test('rejects an invalid expected strategy protocol hash before preregistration or data I/O', async () => {
+    const sessions = developmentSessions()
+    let preregistrations = 0
+    let loads = 0
+    let evaluations = 0
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        runCandidateDevelopment(
+          { ...candidate13Input(sessions), expectedStrategyProtocolHash: 'not-a-sha256' },
+          {
+            preregisterCandidate: () => {
+              preregistrations += 1
+              return Effect.succeed('registration')
+            },
+            loadDevelopmentData: () => {
+              loads += 1
+              return Effect.succeed('data')
+            },
+            evaluateDevelopment: (_data, preflight) => {
+              evaluations += 1
+              return Effect.succeed(candidateDevelopmentEvaluation(preflight))
+            },
+          },
+        ),
+      ),
+    )
+
+    expect(failure).toEqual({
+      _tag: 'CandidateDevelopmentPreflightInvalid',
+      cause: {
+        _tag: 'CandidateDevelopmentStrategyProtocolHashInvalid',
+        observed: 'not-a-sha256',
+      },
+    })
+    expect(preregistrations).toBe(0)
+    expect(loads).toBe(0)
+    expect(evaluations).toBe(0)
+  })
+
   test('stops before preregistration, data loading, and evaluation when the schedule is infeasible', async () => {
     const sessions = developmentSessions()
     let preregistrations = 0
@@ -1095,6 +1379,7 @@ describe('candidate development walk-forward protocol', () => {
         {
           candidateOrdinal: 13,
           priorTrialCount: 12,
+          expectedStrategyProtocolHash: genuineStrategyProtocolHash,
           officialSessions: sessions,
           signalSessionDates: [sessions[273]],
           featureLookbackSessions: 0,
@@ -1190,14 +1475,15 @@ describe('candidate development walk-forward protocol', () => {
     )
 
     expect(report).toMatchObject({
-      schemaVersion: 'bayn.candidate-development-report.v1',
+      schemaVersion: 'bayn.candidate-development-report.v2',
       protocolIdentity: {
         candidateOrdinal: 13,
         priorTrialCount: 12,
-        protocolHash: '5930dfb8922201101ca4edc3c408f0a79a22de8e35bfec2b9fee6e4625aa441e',
+        candidateDevelopmentProtocolHash: expect.stringMatching(/^[0-9a-f]{64}$/),
       },
       comparisonSemantics: {
-        protocolHash: '5930dfb8922201101ca4edc3c408f0a79a22de8e35bfec2b9fee6e4625aa441e',
+        candidateDevelopmentProtocolHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+        strategyProtocolHash: genuineStrategyProtocolHash,
         analysis: {
           bootstrap: { selectedBenchmark: 'buy-and-hold' },
           walkForward: { selectedBenchmark: 'buy-and-hold' },
