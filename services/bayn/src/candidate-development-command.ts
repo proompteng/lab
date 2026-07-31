@@ -1,13 +1,14 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { writeSync } from 'node:fs'
 import { readFile, realpath } from 'node:fs/promises'
-import { dirname, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import type { Readable } from 'node:stream'
 import * as vm from 'node:vm'
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads'
 
 import { NodeRuntime } from '@effect/platform-node'
-import { Data, Effect, pipe, Result, Schema } from 'effect'
+import { Cause, Data, Effect, pipe, Result, Schema, SchemaAST, SchemaIssue } from 'effect'
 
 import {
   candidateDevelopmentCalendarContract,
@@ -15,8 +16,13 @@ import {
   candidateDevelopmentDoubledCostContract,
   preflightCandidateDevelopment,
   runCandidateDevelopment,
+  type CandidateDevelopmentAttemptIssue,
+  type CandidateDevelopmentComparisonSemanticsIssue,
+  type CandidateDevelopmentDoubledCostIssue,
   type CandidateDevelopmentEffects,
   type CandidateDevelopmentEvaluation,
+  type CandidateDevelopmentGeometryFail,
+  type CandidateDevelopmentPreflightIssue,
   type CandidateDevelopmentPreflightPass,
   type CandidateDevelopmentPreflightInput,
   type CandidateDevelopmentReport,
@@ -43,9 +49,10 @@ import {
   MarkedEquityReconciliationSchema,
   RiskBalancedTrendSignalDecisionsArtifactSchema,
 } from './evidence-contracts'
-import { elapsedCalendarDays, MICROS, referencePriceMicros } from './execution-model'
+import { elapsedCalendarDays, MICROS, referencePriceMicros, type ExecutionModelFailure } from './execution-model'
 import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
 import { DIRECT_VOLATILITY_WINDOW, ExecutionModelSchema } from './protocol'
+import type { QualificationStatisticsFailure } from './qualification-statistics'
 import {
   DigitsSchema,
   IsoDateSchema,
@@ -63,8 +70,15 @@ import {
   strictParseOptions,
 } from './schemas'
 import { calculateExactPerformanceMetrics, buildVerdict } from './simulation/metrics'
-import { alignBars, directVolatilityWeights, simulate, type AlignedSession, type SimulationTarget } from './simulation'
-import { reconcileMarkedEquity } from './simulation-reconciliation'
+import {
+  alignBars,
+  directVolatilityWeights,
+  simulate,
+  type AlignedSession,
+  type SimulationDomainFailure,
+  type SimulationTarget,
+} from './simulation'
+import { reconcileMarkedEquity, type SimulationReconciliationIssue } from './simulation-reconciliation'
 import {
   DataFeed,
   DataSource,
@@ -389,6 +403,3659 @@ export type CandidateDevelopmentCommandFailure =
       readonly observedStatus: EvaluationResult['verdict']['status']
       readonly failedGateNames: readonly string[]
     }
+
+export const candidateDevelopmentCommandFailureOutputSchemaVersion =
+  'bayn.candidate-development-command-failure.v1' as const
+export const candidateDevelopmentCommandFailureOutputMaxBytes = 16 * 1024
+
+const candidateDevelopmentCommandFailureProjectionMaxDepth = 6
+const candidateDevelopmentCommandFailureProjectionMaxNodes = 24
+const candidateDevelopmentCommandFailureProjectionMaxScalars = 48
+const candidateDevelopmentCommandFailureProjectionListPrefixLength = 8
+const candidateDevelopmentCommandFailureProjectionMaxObjectEntries = 8
+const candidateDevelopmentCommandFailureProjectionMaxTokenLength = 96
+const candidateDevelopmentCommandSchemaProjectionMaxDepth = 10
+
+const candidateDevelopmentCommandFailureScalarFields = [
+  'stage',
+  'phase',
+  'step',
+  'operation',
+  'reason',
+  'series',
+  'material',
+  'field',
+  'index',
+  'status',
+  'expectedStatus',
+  'observedStatus',
+  'actualType',
+  'source',
+  'target',
+  'kind',
+  'side',
+  'metric',
+  'gate',
+  'disposition',
+  'candidateOrdinal',
+  'priorTrialCount',
+  'expectedCandidateOrdinal',
+  'foldIndex',
+  'gateIndex',
+  'observationIndex',
+] as const
+
+const candidateDevelopmentCommandFailureListFields = [
+  'failedGateNames',
+  'expectedGateNames',
+  'observedGateNames',
+] as const
+
+const candidateDevelopmentCommandFailureNestedFields = ['cause', 'preflight', 'failure', 'issue'] as const
+
+type CandidateDevelopmentCommandFailureProjectionRejection =
+  | 'cycle'
+  | 'depth-limit'
+  | 'detail-limit'
+  | 'invalid-mismatch'
+  | 'invalid-preflight'
+  | 'introspection-failed'
+  | 'invalid-tag'
+  | 'non-plain-object'
+  | 'output-limit'
+  | 'untyped-object'
+  | 'unsupported-value'
+
+interface CandidateDevelopmentCommandFailureProjectionBudget {
+  nodes: number
+  scalars: number
+}
+
+interface CandidateDevelopmentCommandFailureListWindow {
+  readonly prefixLength: number
+  readonly omittedCount: number
+}
+
+type CandidateDevelopmentCommandProjectedList<T> =
+  | readonly T[]
+  | {
+      readonly items: readonly T[]
+      readonly omittedCount: number
+    }
+
+type CandidateDevelopmentCommandFailureProperty =
+  | { readonly _tag: 'Absent' }
+  | { readonly _tag: 'Rejected' }
+  | { readonly _tag: 'Value'; readonly value: unknown }
+
+const candidateDevelopmentCommandSchemaTags = new Set([
+  'SchemaError',
+  'Filter',
+  'Encoding',
+  'Pointer',
+  'Composite',
+  'AnyOf',
+  'InvalidType',
+  'InvalidValue',
+  'MissingKey',
+  'UnexpectedKey',
+  'Forbidden',
+  'OneOf',
+])
+
+const candidateDevelopmentCommandIsSchemaError = (value: unknown): boolean => {
+  try {
+    return Schema.isSchemaError(value)
+  } catch {
+    return false
+  }
+}
+
+const candidateDevelopmentCommandIsSchemaIssue = (value: unknown): value is SchemaIssue.Issue => {
+  try {
+    return SchemaIssue.isIssue(value)
+  } catch {
+    return false
+  }
+}
+
+const candidateDevelopmentCommandIsSchemaAst = (value: unknown): value is SchemaAST.AST => {
+  try {
+    return SchemaAST.isAST(value)
+  } catch {
+    return false
+  }
+}
+
+const rejectedCandidateDevelopmentCommandFailureDetail = (
+  reason: CandidateDevelopmentCommandFailureProjectionRejection,
+): Readonly<Record<string, unknown>> => ({
+  _tag: 'CandidateDevelopmentCommandFailureDetailRejected',
+  reason,
+})
+
+const readCandidateDevelopmentCommandFailureProperty = (
+  value: object,
+  key: string,
+): CandidateDevelopmentCommandFailureProperty => {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (descriptor === undefined) return { _tag: 'Absent' }
+    return 'value' in descriptor ? { _tag: 'Value', value: descriptor.value } : { _tag: 'Rejected' }
+  } catch {
+    return { _tag: 'Rejected' }
+  }
+}
+
+const safeCandidateDevelopmentCommandFailureToken = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  value.length > 0 &&
+  value.length <= candidateDevelopmentCommandFailureProjectionMaxTokenLength &&
+  /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)
+
+const safeCandidateDevelopmentCommandFailureFieldPath = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  value.length > 0 &&
+  value.length <= candidateDevelopmentCommandFailureProjectionMaxTokenLength &&
+  /^[A-Za-z0-9][A-Za-z0-9_-]*(?:(?:\.[A-Za-z0-9][A-Za-z0-9_-]*)|(?:\[(?:0|[1-9][0-9]{0,5})\]))*$/.test(value)
+
+const safeCandidateDevelopmentCommandFailureScalar = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): string | number | boolean | null | undefined => {
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) return undefined
+  if (safeCandidateDevelopmentCommandFailureToken(value)) {
+    budget.scalars += 1
+    return value
+  }
+  if (typeof value === 'number' && Number.isSafeInteger(value)) {
+    budget.scalars += 1
+    return value
+  }
+  if (typeof value === 'boolean' || value === null) {
+    budget.scalars += 1
+    return value
+  }
+  return undefined
+}
+
+const safeCandidateDevelopmentCommandFailureFieldPathScalar = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): string | undefined => {
+  if (
+    budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars ||
+    !safeCandidateDevelopmentCommandFailureFieldPath(value)
+  ) {
+    return undefined
+  }
+  budget.scalars += 1
+  return value
+}
+
+const prepareCandidateDevelopmentCommandFailureListWindow = (
+  length: number,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+  scalarItems: boolean,
+): CandidateDevelopmentCommandFailureListWindow | undefined => {
+  if (!Number.isSafeInteger(length) || length < 0) return undefined
+  let prefixLength = Math.min(length, candidateDevelopmentCommandFailureProjectionListPrefixLength)
+  if (scalarItems && budget.scalars + prefixLength > candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    prefixLength = Math.max(0, candidateDevelopmentCommandFailureProjectionMaxScalars - budget.scalars - 1)
+  }
+  const omittedCount = length - prefixLength
+  if (omittedCount > 0) {
+    if (
+      budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes ||
+      budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars
+    ) {
+      return undefined
+    }
+    budget.nodes += 1
+    budget.scalars += 1
+  }
+  return { prefixLength, omittedCount }
+}
+
+const finishCandidateDevelopmentCommandFailureList = <T>(
+  items: readonly T[],
+  window: CandidateDevelopmentCommandFailureListWindow,
+): CandidateDevelopmentCommandProjectedList<T> =>
+  window.omittedCount === 0 ? items : { items, omittedCount: window.omittedCount }
+
+const safeCandidateDevelopmentCommandFailureTokenList = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): CandidateDevelopmentCommandProjectedList<string> | undefined => {
+  let isArray = false
+  try {
+    isArray = Array.isArray(value)
+  } catch {
+    return undefined
+  }
+  if (!isArray) return undefined
+
+  const array = value as readonly unknown[]
+  let length: number
+  try {
+    length = array.length
+  } catch {
+    return undefined
+  }
+  const window = prepareCandidateDevelopmentCommandFailureListWindow(length, budget, true)
+  if (window === undefined) return undefined
+
+  const output: string[] = []
+  for (let index = 0; index < window.prefixLength; index += 1) {
+    const item = readCandidateDevelopmentCommandFailureProperty(array, String(index))
+    if (item._tag !== 'Value' || !safeCandidateDevelopmentCommandFailureToken(item.value)) return undefined
+    output.push(item.value)
+  }
+  budget.scalars += output.length
+  return finishCandidateDevelopmentCommandFailureList(output, window)
+}
+
+const candidateDevelopmentCommandFailureObjectSupported = (value: object): boolean => {
+  try {
+    const prototype = Object.getPrototypeOf(value)
+    return prototype === null || prototype === Object.prototype || value instanceof Error
+  } catch {
+    return false
+  }
+}
+
+const projectCandidateDevelopmentCommandSchemaPath = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  let isArray: boolean
+  try {
+    isArray = Array.isArray(value)
+  } catch {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (!isArray) return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  const path = value as readonly unknown[]
+  const length = readCandidateDevelopmentCommandFailureProperty(path, 'length')
+  if (length._tag !== 'Value' || typeof length.value !== 'number') {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  const window = prepareCandidateDevelopmentCommandFailureListWindow(length.value, budget, true)
+  if (window === undefined) return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  const output: unknown[] = []
+  for (let index = 0; index < window.prefixLength; index += 1) {
+    const segment = readCandidateDevelopmentCommandFailureProperty(path, String(index))
+    if (segment._tag === 'Rejected') {
+      output.push(rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed'))
+      continue
+    }
+    if (segment._tag !== 'Value') {
+      output.push(rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'))
+      continue
+    }
+    if (
+      (typeof segment.value === 'string' &&
+        safeCandidateDevelopmentCommandFailureToken(segment.value) &&
+        !/(?:credential|password|secret|token|api[-_]?key)/i.test(segment.value)) ||
+      (typeof segment.value === 'number' &&
+        Number.isSafeInteger(segment.value) &&
+        segment.value >= 0 &&
+        segment.value <= 999_999)
+    ) {
+      budget.scalars += 1
+      output.push(segment.value)
+    } else {
+      output.push(rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'))
+    }
+  }
+  return finishCandidateDevelopmentCommandFailureList(output, window)
+}
+
+const projectCandidateDevelopmentCommandSchemaLiteral = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  if (typeof value === 'string') return projectCandidateDevelopmentCommandValidationScalar(value, budget)
+  if (typeof value === 'number') return projectCandidateDevelopmentCommandDomainNumber(value, budget)
+  if (typeof value === 'boolean') return projectCandidateDevelopmentCommandValidationScalar(value, budget)
+  if (typeof value === 'bigint') {
+    const decimal = value.toString(10)
+    if (!/^-?[0-9]{1,96}$/.test(decimal)) {
+      return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+    }
+    if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+      return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+    }
+    budget.scalars += 1
+    return decimal
+  }
+  return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+}
+
+const projectCandidateDevelopmentCommandSchemaAst = (
+  value: unknown,
+  depth: number,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  if (!candidateDevelopmentCommandIsSchemaAst(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (depth > candidateDevelopmentCommandSchemaProjectionMaxDepth) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('depth-limit')
+  }
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (
+    budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes ||
+    budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.nodes += 1
+  budget.scalars += 1
+  const output: Record<string, unknown> = { _tag: value._tag }
+  if (value._tag === 'Literal') {
+    output.literal = projectCandidateDevelopmentCommandSchemaLiteral(value.literal, budget)
+  } else if (value._tag === 'Union') {
+    if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+      output.mode = rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+    } else {
+      budget.scalars += 1
+      output.mode = value.mode
+    }
+    const window = prepareCandidateDevelopmentCommandFailureListWindow(value.types.length, budget, false)
+    if (window === undefined) {
+      output.types = rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+    } else {
+      const nextAncestors = new Set(ancestors)
+      nextAncestors.add(value)
+      const types = value.types
+        .slice(0, window.prefixLength)
+        .map((ast) => projectCandidateDevelopmentCommandSchemaAst(ast, depth + 1, nextAncestors, budget))
+      output.types = finishCandidateDevelopmentCommandFailureList(types, window)
+    }
+  } else if (value._tag === 'Enum') {
+    const window = prepareCandidateDevelopmentCommandFailureListWindow(value.enums.length, budget, true)
+    if (window === undefined) {
+      output.values = rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+    } else {
+      const values = value.enums
+        .slice(0, window.prefixLength)
+        .map(([, enumValue]) => projectCandidateDevelopmentCommandSchemaLiteral(enumValue, budget))
+      output.values = finishCandidateDevelopmentCommandFailureList(values, window)
+    }
+  }
+  return output
+}
+
+const projectCandidateDevelopmentCommandSchemaIssueList = (
+  value: unknown,
+  depth: number,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  let isArray: boolean
+  try {
+    isArray = Array.isArray(value)
+  } catch {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (!isArray) return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  const issues = value as readonly unknown[]
+  const length = readCandidateDevelopmentCommandFailureProperty(issues, 'length')
+  if (length._tag !== 'Value' || typeof length.value !== 'number') {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  const window = prepareCandidateDevelopmentCommandFailureListWindow(length.value, budget, false)
+  if (window === undefined) return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  const output = issues
+    .slice(0, window.prefixLength)
+    .map((issue) => projectCandidateDevelopmentCommandSchemaIssue(issue, depth, ancestors, budget))
+  return finishCandidateDevelopmentCommandFailureList(output, window)
+}
+
+const projectCandidateDevelopmentCommandSchemaIssue = (
+  value: unknown,
+  depth: number,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  if (!candidateDevelopmentCommandIsSchemaIssue(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (depth > candidateDevelopmentCommandSchemaProjectionMaxDepth) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('depth-limit')
+  }
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (
+    budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes ||
+    budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.nodes += 1
+  budget.scalars += 1
+  const output: Record<string, unknown> = { _tag: value._tag }
+  const nextAncestors = new Set(ancestors)
+  nextAncestors.add(value)
+  switch (value._tag) {
+    case 'Pointer':
+      output.path = projectCandidateDevelopmentCommandSchemaPath(value.path, budget)
+      output.issue = projectCandidateDevelopmentCommandSchemaIssue(value.issue, depth + 1, nextAncestors, budget)
+      break
+    case 'Composite':
+      output.issues = projectCandidateDevelopmentCommandSchemaIssueList(value.issues, depth + 1, nextAncestors, budget)
+      break
+    case 'AnyOf':
+      output.expected = projectCandidateDevelopmentCommandSchemaAst(value.ast, depth + 1, nextAncestors, budget)
+      output.issues = projectCandidateDevelopmentCommandSchemaIssueList(value.issues, depth + 1, nextAncestors, budget)
+      break
+    case 'Filter':
+      output.issue = projectCandidateDevelopmentCommandSchemaIssue(value.issue, depth + 1, nextAncestors, budget)
+      break
+    case 'Encoding':
+      output.expected = projectCandidateDevelopmentCommandSchemaAst(value.ast, depth + 1, nextAncestors, budget)
+      output.issue = projectCandidateDevelopmentCommandSchemaIssue(value.issue, depth + 1, nextAncestors, budget)
+      break
+    case 'InvalidType':
+    case 'UnexpectedKey':
+    case 'OneOf':
+      output.expected = projectCandidateDevelopmentCommandSchemaAst(value.ast, depth + 1, nextAncestors, budget)
+      break
+    case 'InvalidValue':
+    case 'MissingKey':
+    case 'Forbidden':
+      break
+  }
+  return output
+}
+
+const projectCandidateDevelopmentCommandSchemaError = (
+  value: unknown,
+  depth: number,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  if (typeof value !== 'object' || value === null || !candidateDevelopmentCommandIsSchemaError(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (depth > candidateDevelopmentCommandSchemaProjectionMaxDepth) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('depth-limit')
+  }
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (
+    budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes ||
+    budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  const issue = readCandidateDevelopmentCommandFailureProperty(value, 'issue')
+  budget.nodes += 1
+  budget.scalars += 1
+  const nextAncestors = new Set(ancestors)
+  nextAncestors.add(value)
+  return {
+    _tag: 'SchemaError',
+    issue:
+      issue._tag === 'Rejected'
+        ? rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+        : issue._tag === 'Value'
+          ? projectCandidateDevelopmentCommandSchemaIssue(issue.value, depth + 1, nextAncestors, budget)
+          : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'),
+  }
+}
+
+const candidateDevelopmentCommandOperationalErrorCategories = new Map<string, string>([
+  ['candidate development report output interrupted', 'report-output-interrupted'],
+  ['candidate Git batch output ended unexpectedly', 'git-batch-output-ended'],
+  ['candidate Git batch output is incomplete', 'git-batch-output-incomplete'],
+  ['candidate Git batch header exceeds the configured bound', 'git-batch-header-limit'],
+  ['candidate Git batch object delimiter is invalid', 'git-batch-object-delimiter-invalid'],
+  ['candidate Git batch reader is closed', 'git-batch-reader-closed'],
+  ['candidate artifact URL is not a base64 JavaScript data URL', 'artifact-url-invalid'],
+  ['candidate artifact worker aborted', 'artifact-worker-aborted'],
+  ['candidate artifact buildEvaluation must be synchronous', 'artifact-evaluation-async'],
+  ['candidate artifact evaluation must be JSON serializable', 'artifact-evaluation-not-json-serializable'],
+  ['candidate artifact evaluation did not return JSON', 'artifact-evaluation-not-json'],
+  ['candidate artifact imports are prohibited', 'artifact-imports-prohibited'],
+  ['candidateDevelopmentArtifact export is missing', 'artifact-export-missing'],
+  ['candidateDevelopmentArtifact.buildEvaluation is missing', 'artifact-build-evaluation-missing'],
+  ['candidate artifact definition is not JSON', 'artifact-definition-not-json'],
+  ['candidate artifact verified source is missing', 'artifact-verified-source-missing'],
+  ['candidate artifact schema version is invalid', 'artifact-schema-version-invalid'],
+  ['candidate artifact strategy protocol hash differs from preflight', 'artifact-strategy-protocol-hash-mismatch'],
+])
+
+const candidateDevelopmentCommandOperationalErrorCategory = (message: string): string | undefined =>
+  candidateDevelopmentCommandOperationalErrorCategories.get(message) ??
+  (message.startsWith('candidate Git object OID is invalid: ')
+    ? 'git-object-oid-invalid'
+    : message.startsWith('candidate Git object is missing: ')
+      ? 'git-object-missing'
+      : message.startsWith('candidate Git batch header is invalid: ')
+        ? 'git-batch-header-invalid'
+        : message.startsWith('candidate Git batch object mismatch: ')
+          ? 'git-batch-object-mismatch'
+          : message.startsWith('candidate Git batch exited ')
+            ? 'git-batch-exit'
+            : /^candidate artifact worker exited [0-9]+$/.test(message)
+              ? 'artifact-worker-exit'
+              : undefined)
+
+const candidateDevelopmentCommandOperationalErrorSyscalls = new Map<string, string>([
+  ['lstat', 'lstat'],
+  ['open', 'open'],
+  ['read', 'read'],
+  ['readlink', 'readlink'],
+  ['realpath', 'realpath'],
+  ['spawn git', 'spawn-git'],
+  ['stat', 'stat'],
+])
+
+const projectCandidateDevelopmentCommandOperationalErrorCode = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  if (
+    !(
+      (typeof value === 'number' && Number.isSafeInteger(value)) ||
+      (typeof value === 'string' && /^[A-Z][A-Z0-9_]{0,31}$/.test(value))
+    )
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.scalars += 1
+  return value
+}
+
+const projectCandidateDevelopmentCommandOperationalErrorSyscall = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  const projected =
+    typeof value === 'string' ? candidateDevelopmentCommandOperationalErrorSyscalls.get(value) : undefined
+  if (projected === undefined) return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.scalars += 1
+  return projected
+}
+
+const projectCandidateDevelopmentCommandOperationalErrorSignal = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  if (value !== null && (typeof value !== 'string' || !/^SIG[A-Z0-9]{1,16}$/.test(value))) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.scalars += 1
+  return value
+}
+
+const candidateDevelopmentCommandOperationalErrorNames = new Set(['Error', 'RangeError', 'SyntaxError', 'TypeError'])
+
+const readCandidateDevelopmentCommandSerializedOperationalError = (
+  value: object,
+): { readonly name: string; readonly message: string } | undefined => {
+  if (!candidateDevelopmentCommandFailureObjectSupported(value)) return undefined
+  let keys: readonly PropertyKey[]
+  try {
+    keys = Reflect.ownKeys(value)
+  } catch {
+    return undefined
+  }
+  if (
+    keys.some((key) => typeof key !== 'string' || (key !== 'name' && key !== 'message' && key !== 'stack')) ||
+    !keys.includes('name') ||
+    !keys.includes('message')
+  ) {
+    return undefined
+  }
+  const name = readCandidateDevelopmentCommandFailureProperty(value, 'name')
+  const message = readCandidateDevelopmentCommandFailureProperty(value, 'message')
+  const stack = readCandidateDevelopmentCommandFailureProperty(value, 'stack')
+  if (
+    name._tag !== 'Value' ||
+    typeof name.value !== 'string' ||
+    !candidateDevelopmentCommandOperationalErrorNames.has(name.value) ||
+    message._tag !== 'Value' ||
+    typeof message.value !== 'string' ||
+    stack._tag === 'Rejected' ||
+    (stack._tag === 'Value' && stack.value !== undefined && typeof stack.value !== 'string')
+  ) {
+    return undefined
+  }
+  return { name: name.value, message: message.value }
+}
+
+const projectCandidateDevelopmentCommandOperationalError = (
+  value: unknown,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> | undefined => {
+  if (typeof value !== 'object' || value === null) return undefined
+  const tag = readCandidateDevelopmentCommandFailureProperty(value, '_tag')
+  if (tag._tag === 'Rejected') {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (tag._tag === 'Value') return undefined
+  const serialized =
+    value instanceof Error ? undefined : readCandidateDevelopmentCommandSerializedOperationalError(value)
+  if (!(value instanceof Error) && serialized === undefined) return undefined
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+
+  const name =
+    serialized?.name ??
+    (value instanceof TypeError
+      ? 'TypeError'
+      : value instanceof RangeError
+        ? 'RangeError'
+        : value instanceof SyntaxError
+          ? 'SyntaxError'
+          : 'Error')
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.nodes += 1
+  budget.scalars += 1
+  const output: Record<string, unknown> = { name }
+
+  const message =
+    serialized === undefined
+      ? readCandidateDevelopmentCommandFailureProperty(value, 'message')
+      : ({ _tag: 'Value', value: serialized.message } as const)
+  if (message._tag === 'Rejected') {
+    output.category = rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  } else if (message._tag === 'Value' && typeof message.value === 'string') {
+    const category = candidateDevelopmentCommandOperationalErrorCategory(message.value)
+    if (category !== undefined) {
+      output.category =
+        safeCandidateDevelopmentCommandFailureScalar(category, budget) ??
+        rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+    }
+  }
+
+  for (const field of ['code', 'errno', 'syscall', 'signal', 'killed'] as const) {
+    const property = readCandidateDevelopmentCommandFailureProperty(value, field)
+    if (property._tag === 'Absent') continue
+    if (property._tag === 'Rejected') {
+      output[field] = rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+      continue
+    }
+    output[field] =
+      field === 'code' || field === 'errno'
+        ? projectCandidateDevelopmentCommandOperationalErrorCode(property.value, budget)
+        : field === 'syscall'
+          ? projectCandidateDevelopmentCommandOperationalErrorSyscall(property.value, budget)
+          : field === 'signal'
+            ? projectCandidateDevelopmentCommandOperationalErrorSignal(property.value, budget)
+            : typeof property.value === 'boolean'
+              ? projectCandidateDevelopmentCommandValidationScalar(property.value, budget)
+              : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  return output
+}
+
+const candidateDevelopmentCommandFailureDetailIsUntagged = (value: unknown): boolean =>
+  typeof value === 'object' &&
+  value !== null &&
+  readCandidateDevelopmentCommandFailureProperty(value, '_tag')._tag === 'Absent'
+
+const candidateDevelopmentCommandFailureDetailIsKnownMismatch = (value: unknown): boolean =>
+  typeof value === 'object' &&
+  value !== null &&
+  readCandidateDevelopmentCommandFailureProperty(value, '_tag')._tag === 'Absent' &&
+  readCandidateDevelopmentCommandFailureProperty(value, 'expected')._tag === 'Value' &&
+  readCandidateDevelopmentCommandFailureProperty(value, 'observed')._tag === 'Value'
+
+const candidateDevelopmentGeometryFailIntegerFields = [
+  'requiredObservations',
+  'availableObservations',
+  'availableFoldCount',
+  'requiredFoldCount',
+  'observationDeficit',
+] as const satisfies readonly (keyof CandidateDevelopmentGeometryFail)[]
+
+const projectCandidateDevelopmentGeometryFail = (
+  value: unknown,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  if (typeof value !== 'object' || value === null) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  if (!candidateDevelopmentCommandFailureObjectSupported(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('non-plain-object')
+  }
+
+  const status = readCandidateDevelopmentCommandFailureProperty(value, 'status')
+  const reason = readCandidateDevelopmentCommandFailureProperty(value, 'reason')
+  if (status._tag === 'Rejected' || reason._tag === 'Rejected') {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (
+    status._tag !== 'Value' ||
+    status.value !== 'FAIL' ||
+    reason._tag !== 'Value' ||
+    reason.value !== 'INSUFFICIENT_WALK_FORWARD_OBSERVATIONS'
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('invalid-preflight')
+  }
+
+  const integers: Partial<Record<(typeof candidateDevelopmentGeometryFailIntegerFields)[number], number>> = {}
+  for (const field of candidateDevelopmentGeometryFailIntegerFields) {
+    const property = readCandidateDevelopmentCommandFailureProperty(value, field)
+    if (property._tag === 'Rejected') {
+      return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+    }
+    if (
+      property._tag !== 'Value' ||
+      typeof property.value !== 'number' ||
+      !Number.isSafeInteger(property.value) ||
+      property.value < 0
+    ) {
+      return rejectedCandidateDevelopmentCommandFailureDetail('invalid-preflight')
+    }
+    integers[field] = property.value
+  }
+
+  const requiredObservations = integers.requiredObservations
+  const availableObservations = integers.availableObservations
+  const availableFoldCount = integers.availableFoldCount
+  const requiredFoldCount = integers.requiredFoldCount
+  const observationDeficit = integers.observationDeficit
+  if (
+    requiredObservations === undefined ||
+    availableObservations === undefined ||
+    availableFoldCount === undefined ||
+    requiredFoldCount === undefined ||
+    observationDeficit === undefined ||
+    requiredObservations <= availableObservations ||
+    requiredFoldCount <= availableFoldCount ||
+    observationDeficit !== requiredObservations - availableObservations
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('invalid-preflight')
+  }
+  if (budget.scalars + 7 > candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+
+  budget.nodes += 1
+  budget.scalars += 7
+  return {
+    status: 'FAIL',
+    reason: 'INSUFFICIENT_WALK_FORWARD_OBSERVATIONS',
+    requiredObservations,
+    availableObservations,
+    availableFoldCount,
+    requiredFoldCount,
+    observationDeficit,
+  }
+}
+
+const candidateDevelopmentCommandKnownMismatchFields = new Set([
+  'boundedContentHash',
+  'calendarHash',
+  'candidateDevelopmentProtocolHash',
+  'candidateOrdinal',
+  'finalizedSnapshotContentHash',
+  'inputManifestHash',
+  'immutableCommit',
+  'immutableHistoryCommitCount',
+  'immutableHistoryTreeCount',
+  'immutableTreeEntry',
+  'immutableTreeObjectOid',
+  'moduleFormat',
+  'modulePath',
+  'moduleSha256',
+  'priorTrialCount',
+  'priorTrialsHash',
+  'shallowRepository',
+  'schemaVersion',
+  'snapshotId',
+  'strategyIdentityHash',
+  'strategyProtocolHash',
+  'replaceRefs',
+  'replacementConfig',
+  'grafts',
+  'alternates',
+  'httpAlternates',
+])
+
+const safeCandidateDevelopmentCommandMismatchField = (value: unknown): value is string =>
+  safeCandidateDevelopmentCommandFailureToken(value) &&
+  (candidateDevelopmentCommandKnownMismatchFields.has(value) ||
+    value.startsWith('artifact.') ||
+    value.startsWith('marketData.') ||
+    value.startsWith('source.') ||
+    value.startsWith('trialHistory.'))
+
+const safeCandidateDevelopmentCommandMismatchString = (value: string): boolean =>
+  /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value) ||
+  /^<[1-9][0-9]{0,8}$/.test(value) ||
+  /^bayn\.[a-z0-9.-]+\.v[0-9]+$/.test(value) ||
+  /^services\/bayn\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/.test(value) ||
+  value === 'PASS' ||
+  value === 'FAIL' ||
+  value === 'false' ||
+  value === 'true' ||
+  value === 'self-contained-esm-v1'
+
+type CandidateDevelopmentCommandTrialHistoryEvidenceMode = 'latest-development' | 'latest-terminal'
+
+const candidateDevelopmentCommandNextPreregistrationField = 'trialHistory.nextCandidatePreregistration' as const
+const candidateDevelopmentCommandNextPreregistrationExpectation =
+  'a separately reviewed preregistration after the latest terminal development attempt' as const
+
+const projectCandidateDevelopmentCommandTrialHistoryEvidence = (
+  value: unknown,
+  mode: CandidateDevelopmentCommandTrialHistoryEvidenceMode,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  if (typeof value !== 'object' || value === null) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  if (!candidateDevelopmentCommandFailureObjectSupported(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('non-plain-object')
+  }
+
+  budget.nodes += 1
+  const output: Record<string, unknown> = {}
+  for (const field of ['candidateOrdinal', 'priorTrialCount'] as const) {
+    const property = readCandidateDevelopmentCommandFailureProperty(value, field)
+    output[field] =
+      property._tag === 'Rejected'
+        ? rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+        : property._tag !== 'Value'
+          ? rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+          : property.value === undefined && mode === 'latest-development'
+            ? projectCandidateDevelopmentCommandValidationScalar(null, budget)
+            : typeof property.value === 'number' && Number.isSafeInteger(property.value) && property.value >= 0
+              ? projectCandidateDevelopmentCommandDomainNumber(property.value, budget)
+              : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+
+  const qualificationAttemptConsumed = readCandidateDevelopmentCommandFailureProperty(
+    value,
+    'qualificationAttemptConsumed',
+  )
+  if (mode === 'latest-development' || qualificationAttemptConsumed._tag !== 'Absent') {
+    output.qualificationAttemptConsumed =
+      qualificationAttemptConsumed._tag === 'Rejected'
+        ? rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+        : qualificationAttemptConsumed._tag === 'Value' && typeof qualificationAttemptConsumed.value === 'boolean'
+          ? projectCandidateDevelopmentCommandValidationScalar(qualificationAttemptConsumed.value, budget)
+          : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  return output
+}
+
+const candidateDevelopmentCommandFailureDetailIsMissingPreregistrationCause = (value: unknown): boolean => {
+  if (typeof value !== 'object' || value === null) return false
+  const tag = readCandidateDevelopmentCommandFailureProperty(value, '_tag')
+  const field = readCandidateDevelopmentCommandFailureProperty(value, 'field')
+  const expected = readCandidateDevelopmentCommandFailureProperty(value, 'expected')
+  const observed = readCandidateDevelopmentCommandFailureProperty(value, 'observed')
+  const latestTerminalEvidence = readCandidateDevelopmentCommandFailureProperty(value, 'latestTerminalEvidence')
+  return (
+    tag._tag === 'Absent' &&
+    field._tag === 'Value' &&
+    field.value === candidateDevelopmentCommandNextPreregistrationField &&
+    expected._tag === 'Value' &&
+    expected.value === candidateDevelopmentCommandNextPreregistrationExpectation &&
+    observed._tag === 'Value' &&
+    observed.value === null &&
+    latestTerminalEvidence._tag === 'Value'
+  )
+}
+
+const projectCandidateDevelopmentCommandMissingPreregistrationCause = (
+  value: unknown,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  if (typeof value !== 'object' || value === null) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  if (!candidateDevelopmentCommandFailureObjectSupported(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('non-plain-object')
+  }
+
+  const latestTerminalEvidence = readCandidateDevelopmentCommandFailureProperty(value, 'latestTerminalEvidence')
+  if (latestTerminalEvidence._tag === 'Rejected') {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (latestTerminalEvidence._tag !== 'Value') {
+    return rejectedCandidateDevelopmentCommandFailureDetail('invalid-mismatch')
+  }
+  if (budget.scalars + 3 > candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+
+  budget.nodes += 1
+  budget.scalars += 3
+  const nextAncestors = new Set(ancestors)
+  nextAncestors.add(value)
+  return {
+    field: candidateDevelopmentCommandNextPreregistrationField,
+    expected: candidateDevelopmentCommandNextPreregistrationExpectation,
+    observed: null,
+    latestTerminalEvidence: projectCandidateDevelopmentCommandTrialHistoryEvidence(
+      latestTerminalEvidence.value,
+      'latest-terminal',
+      nextAncestors,
+      budget,
+    ),
+  }
+}
+
+const projectCandidateDevelopmentCommandImmutableGitOid = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  if (typeof value !== 'string' || !/^[0-9a-f]{40}$/.test(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.scalars += 1
+  return value
+}
+
+const projectCandidateDevelopmentCommandImmutableGitOidList = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  let isArray: boolean
+  try {
+    isArray = Array.isArray(value)
+  } catch {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (!isArray) return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  const values = value as readonly unknown[]
+  const length = readCandidateDevelopmentCommandFailureProperty(values, 'length')
+  if (
+    length._tag !== 'Value' ||
+    typeof length.value !== 'number' ||
+    !Number.isSafeInteger(length.value) ||
+    length.value < 0
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  const window = prepareCandidateDevelopmentCommandFailureListWindow(length.value, budget, true)
+  if (window === undefined) return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  const output: unknown[] = []
+  for (let index = 0; index < window.prefixLength; index += 1) {
+    const item = readCandidateDevelopmentCommandFailureProperty(values, String(index))
+    output.push(
+      item._tag === 'Rejected'
+        ? rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+        : item._tag === 'Value'
+          ? projectCandidateDevelopmentCommandImmutableGitOid(item.value, budget)
+          : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'),
+    )
+  }
+  return finishCandidateDevelopmentCommandFailureList(output, window)
+}
+
+const projectCandidateDevelopmentCommandRedactedMetadataList = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  let isArray: boolean
+  try {
+    isArray = Array.isArray(value)
+  } catch {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (!isArray) return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  const values = value as readonly unknown[]
+  const length = readCandidateDevelopmentCommandFailureProperty(values, 'length')
+  if (
+    length._tag !== 'Value' ||
+    typeof length.value !== 'number' ||
+    !Number.isSafeInteger(length.value) ||
+    length.value < 0
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  const window = prepareCandidateDevelopmentCommandFailureListWindow(length.value, budget, false)
+  if (window === undefined || budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.nodes += 1
+  const output = Array.from({ length: window.prefixLength }, () =>
+    rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'),
+  )
+  return finishCandidateDevelopmentCommandFailureList(output, window)
+}
+
+const projectCandidateDevelopmentCommandRepositoryRelativePath = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > 256 ||
+    isAbsolute(value) ||
+    value.includes('\\')
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  const segments = value.split('/')
+  if (
+    segments.some(
+      (segment) => segment.length === 0 || segment === '.' || segment === '..' || !/^[A-Za-z0-9._-]+$/.test(segment),
+    )
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.scalars += 1
+  return value
+}
+
+const candidateDevelopmentCommandImmutableCommitExpectation =
+  'raw commit with lowercase 40-character tree and parent OIDs' as const
+const candidateDevelopmentCommandImmutableTreeEntryExpectation =
+  'raw Git tree entry with mode, name, NUL, and 20-byte object ID' as const
+const candidateDevelopmentCommandModuleNoveltyExpectation =
+  'evaluated module blob created after preregistration' as const
+const candidateDevelopmentCommandPreregistrationBindingExpectation =
+  'lowercase Git revision/blob OID and repository-relative preregistration path' as const
+const candidateDevelopmentCommandLineageExpectation = 'proper ancestor of evaluated source revision' as const
+const candidateDevelopmentCommandLineageUnreachable = 'not reachable through raw commit parents' as const
+
+const projectCandidateDevelopmentCommandExactText = (
+  value: unknown,
+  expected: string,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  if (value !== expected) return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.scalars += 1
+  return expected
+}
+
+const candidateDevelopmentCommandFailureDetailIsImmutableGitCause = (value: unknown): boolean => {
+  if (typeof value !== 'object' || value === null) return false
+  const field = readCandidateDevelopmentCommandFailureProperty(value, 'field')
+  return (
+    field._tag === 'Value' &&
+    (field.value === 'immutableCommit' ||
+      field.value === 'immutableTreeEntry' ||
+      field.value === 'immutableTreeObjectOid')
+  )
+}
+
+const candidateDevelopmentCommandFailureDetailIsModuleNoveltyCause = (value: unknown): boolean =>
+  typeof value === 'object' &&
+  value !== null &&
+  readCandidateDevelopmentCommandFailureProperty(value, '_tag')._tag === 'Absent' &&
+  readCandidateDevelopmentCommandFailureProperty(value, 'field')._tag === 'Absent' &&
+  readCandidateDevelopmentCommandFailureProperty(value, 'preregistrationRevision')._tag === 'Value' &&
+  readCandidateDevelopmentCommandFailureProperty(value, 'modulePath')._tag === 'Value' &&
+  readCandidateDevelopmentCommandFailureProperty(value, 'expected')._tag === 'Value' &&
+  readCandidateDevelopmentCommandFailureProperty(value, 'observed')._tag === 'Value' &&
+  readCandidateDevelopmentCommandFailureProperty(value, 'history')._tag === 'Value'
+
+const candidateDevelopmentCommandFailureDetailIsLineageCause = (value: unknown): boolean =>
+  typeof value === 'object' &&
+  value !== null &&
+  readCandidateDevelopmentCommandFailureProperty(value, '_tag')._tag === 'Absent' &&
+  readCandidateDevelopmentCommandFailureProperty(value, 'field')._tag === 'Absent' &&
+  readCandidateDevelopmentCommandFailureProperty(value, 'expected')._tag === 'Value' &&
+  readCandidateDevelopmentCommandFailureProperty(value, 'observed')._tag === 'Value'
+
+const projectCandidateDevelopmentCommandLineageCause = (
+  value: unknown,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  if (typeof value !== 'object' || value === null) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  if (!candidateDevelopmentCommandFailureObjectSupported(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('non-plain-object')
+  }
+
+  const expected = readCandidateDevelopmentCommandFailureProperty(value, 'expected')
+  const observed = readCandidateDevelopmentCommandFailureProperty(value, 'observed')
+  if (expected._tag === 'Rejected' || observed._tag === 'Rejected') {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (expected._tag !== 'Value' || observed._tag !== 'Value') {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+
+  const sameRevision =
+    expected.value === candidateDevelopmentCommandLineageExpectation &&
+    typeof observed.value === 'string' &&
+    /^[0-9a-f]{40}$/.test(observed.value)
+  const unreachable =
+    typeof expected.value === 'string' &&
+    /^[0-9a-f]{40} to be a proper ancestor of [0-9a-f]{40}$/.test(expected.value) &&
+    observed.value === candidateDevelopmentCommandLineageUnreachable
+  if (!sameRevision && !unreachable) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (budget.scalars + 2 > candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.nodes += 1
+  budget.scalars += 2
+  return {
+    expected: expected.value,
+    observed: observed.value,
+  }
+}
+
+const projectCandidateDevelopmentCommandModuleNoveltyCause = (
+  value: unknown,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  if (typeof value !== 'object' || value === null) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (
+    budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes ||
+    !candidateDevelopmentCommandFailureObjectSupported(value)
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail(
+      budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes ? 'detail-limit' : 'non-plain-object',
+    )
+  }
+  const preregistrationRevision = readCandidateDevelopmentCommandFailureProperty(value, 'preregistrationRevision')
+  const modulePath = readCandidateDevelopmentCommandFailureProperty(value, 'modulePath')
+  const expected = readCandidateDevelopmentCommandFailureProperty(value, 'expected')
+  const observed = readCandidateDevelopmentCommandFailureProperty(value, 'observed')
+  const history = readCandidateDevelopmentCommandFailureProperty(value, 'history')
+  if (
+    preregistrationRevision._tag === 'Rejected' ||
+    modulePath._tag === 'Rejected' ||
+    expected._tag === 'Rejected' ||
+    observed._tag === 'Rejected' ||
+    history._tag === 'Rejected'
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (
+    preregistrationRevision._tag !== 'Value' ||
+    modulePath._tag !== 'Value' ||
+    expected._tag !== 'Value' ||
+    observed._tag !== 'Value' ||
+    history._tag !== 'Value'
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  let historyIsArray: boolean
+  try {
+    historyIsArray = Array.isArray(history.value)
+  } catch {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (!historyIsArray) return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  const historyLength = readCandidateDevelopmentCommandFailureProperty(history.value as object, 'length')
+  if (historyLength._tag !== 'Value' || historyLength.value !== 1) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+
+  budget.nodes += 1
+  return {
+    preregistrationRevision: projectCandidateDevelopmentCommandImmutableGitOid(preregistrationRevision.value, budget),
+    modulePath: projectCandidateDevelopmentCommandRepositoryRelativePath(modulePath.value, budget),
+    expected: projectCandidateDevelopmentCommandExactText(
+      expected.value,
+      candidateDevelopmentCommandModuleNoveltyExpectation,
+      budget,
+    ),
+    observed: projectCandidateDevelopmentCommandImmutableGitOid(observed.value, budget),
+    history: projectCandidateDevelopmentCommandImmutableGitOidList(history.value, budget),
+  }
+}
+
+const projectCandidateDevelopmentCommandImmutableGitCause = (
+  value: unknown,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> | undefined => {
+  if (typeof value !== 'object' || value === null) return undefined
+  const field = readCandidateDevelopmentCommandFailureProperty(value, 'field')
+  if (
+    field._tag !== 'Value' ||
+    (field.value !== 'immutableCommit' &&
+      field.value !== 'immutableTreeEntry' &&
+      field.value !== 'immutableTreeObjectOid')
+  ) {
+    return undefined
+  }
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  if (!candidateDevelopmentCommandFailureObjectSupported(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('non-plain-object')
+  }
+
+  budget.nodes += 1
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.scalars += 1
+  const output: Record<string, unknown> = { field: field.value }
+  if (field.value === 'immutableCommit') {
+    const commitOid = readCandidateDevelopmentCommandFailureProperty(value, 'commitOid')
+    const expected = readCandidateDevelopmentCommandFailureProperty(value, 'expected')
+    const observed = readCandidateDevelopmentCommandFailureProperty(value, 'observed')
+    if (commitOid._tag === 'Rejected' || expected._tag === 'Rejected' || observed._tag === 'Rejected') {
+      return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+    }
+    output.commitOid =
+      commitOid._tag === 'Value'
+        ? projectCandidateDevelopmentCommandImmutableGitOid(commitOid.value, budget)
+        : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+    output.expected =
+      expected._tag === 'Value'
+        ? projectCandidateDevelopmentCommandExactText(
+            expected.value,
+            candidateDevelopmentCommandImmutableCommitExpectation,
+            budget,
+          )
+        : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+    if (
+      observed._tag !== 'Value' ||
+      typeof observed.value !== 'object' ||
+      observed.value === null ||
+      !candidateDevelopmentCommandFailureObjectSupported(observed.value)
+    ) {
+      output.observed = rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+      return output
+    }
+    if (budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes) {
+      output.observed = rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+      return output
+    }
+    budget.nodes += 1
+    const treeOid = readCandidateDevelopmentCommandFailureProperty(observed.value, 'treeOid')
+    const parentOids = readCandidateDevelopmentCommandFailureProperty(observed.value, 'parentOids')
+    output.observed = {
+      treeOid:
+        treeOid._tag === 'Rejected'
+          ? rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+          : treeOid._tag === 'Absent' || treeOid.value === undefined
+            ? projectCandidateDevelopmentCommandValidationScalar(null, budget)
+            : projectCandidateDevelopmentCommandImmutableGitOid(treeOid.value, budget),
+      parentOids:
+        parentOids._tag === 'Rejected'
+          ? rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+          : parentOids._tag === 'Value'
+            ? projectCandidateDevelopmentCommandImmutableGitOidList(parentOids.value, budget)
+            : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'),
+    }
+    return output
+  }
+
+  const treeOid = readCandidateDevelopmentCommandFailureProperty(value, 'treeOid')
+  const offset = readCandidateDevelopmentCommandFailureProperty(value, 'offset')
+  if (treeOid._tag === 'Rejected' || offset._tag === 'Rejected') {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  output.treeOid =
+    treeOid._tag === 'Value'
+      ? projectCandidateDevelopmentCommandImmutableGitOid(treeOid.value, budget)
+      : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  output.offset =
+    offset._tag === 'Value' &&
+    typeof offset.value === 'number' &&
+    Number.isSafeInteger(offset.value) &&
+    offset.value >= 0
+      ? projectCandidateDevelopmentCommandDomainNumber(offset.value, budget)
+      : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  if (field.value === 'immutableTreeEntry') {
+    const expected = readCandidateDevelopmentCommandFailureProperty(value, 'expected')
+    output.expected =
+      expected._tag === 'Rejected'
+        ? rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+        : expected._tag === 'Value'
+          ? projectCandidateDevelopmentCommandExactText(
+              expected.value,
+              candidateDevelopmentCommandImmutableTreeEntryExpectation,
+              budget,
+            )
+          : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  } else {
+    const observed = readCandidateDevelopmentCommandFailureProperty(value, 'observed')
+    output.observed =
+      observed._tag === 'Rejected'
+        ? rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+        : observed._tag === 'Value'
+          ? projectCandidateDevelopmentCommandImmutableGitOid(observed.value, budget)
+          : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  return output
+}
+
+const projectCandidateDevelopmentCommandMismatchValue = (
+  value: unknown,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  if (typeof value === 'string' && safeCandidateDevelopmentCommandMismatchString(value)) {
+    if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+      return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+    }
+    budget.scalars += 1
+    return value
+  }
+  if (typeof value === 'number' && Number.isSafeInteger(value)) {
+    if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+      return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+    }
+    budget.scalars += 1
+    return value
+  }
+  if (typeof value === 'boolean' || value === null) {
+    if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+      return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+    }
+    budget.scalars += 1
+    return value
+  }
+  if (typeof value !== 'object' || value === null) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+
+  const tag = readCandidateDevelopmentCommandFailureProperty(value, '_tag')
+  if (tag._tag === 'Rejected') {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (tag._tag === 'Value') {
+    return projectCandidateDevelopmentCommandFailureDetail(value, 1, ancestors, budget)
+  }
+
+  const status = readCandidateDevelopmentCommandFailureProperty(value, 'status')
+  const reason = readCandidateDevelopmentCommandFailureProperty(value, 'reason')
+  if (
+    status._tag === 'Value' &&
+    status.value === 'FAIL' &&
+    reason._tag === 'Value' &&
+    reason.value === 'INSUFFICIENT_WALK_FORWARD_OBSERVATIONS'
+  ) {
+    return projectCandidateDevelopmentGeometryFail(value, ancestors, budget)
+  }
+
+  return projectCandidateDevelopmentCommandValidationValue(value, ancestors, budget)
+}
+
+const projectCandidateDevelopmentCommandKnownMismatch = (
+  value: unknown,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+  mode: 'program-strategy-protocol-hash' | 'verified-program-binding',
+): Readonly<Record<string, unknown>> => {
+  if (typeof value !== 'object' || value === null) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  if (!candidateDevelopmentCommandFailureObjectSupported(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('non-plain-object')
+  }
+
+  const expected = readCandidateDevelopmentCommandFailureProperty(value, 'expected')
+  const observed = readCandidateDevelopmentCommandFailureProperty(value, 'observed')
+  const field = readCandidateDevelopmentCommandFailureProperty(value, 'field')
+  if (expected._tag === 'Rejected' || observed._tag === 'Rejected' || field._tag === 'Rejected') {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (expected._tag !== 'Value' || observed._tag !== 'Value') {
+    return rejectedCandidateDevelopmentCommandFailureDetail('invalid-mismatch')
+  }
+
+  if (mode === 'program-strategy-protocol-hash') {
+    if (
+      typeof expected.value !== 'string' ||
+      typeof observed.value !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(expected.value) ||
+      !/^[0-9a-f]{64}$/.test(observed.value) ||
+      field._tag !== 'Absent' ||
+      budget.scalars + 2 > candidateDevelopmentCommandFailureProjectionMaxScalars
+    ) {
+      return rejectedCandidateDevelopmentCommandFailureDetail('invalid-mismatch')
+    }
+    budget.nodes += 1
+    budget.scalars += 2
+    return { expected: expected.value, observed: observed.value }
+  }
+
+  if (field._tag === 'Value' && !safeCandidateDevelopmentCommandMismatchField(field.value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('invalid-mismatch')
+  }
+  if (field._tag === 'Value') {
+    if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+      return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+    }
+    budget.scalars += 1
+  }
+  budget.nodes += 1
+  const mismatchAncestors = new Set(ancestors)
+  mismatchAncestors.add(value)
+  const mismatchField = field._tag === 'Value' ? field.value : undefined
+  const projectMismatchValue = (mismatchValue: unknown): unknown =>
+    mismatchField === 'alternates' || mismatchField === 'httpAlternates'
+      ? projectCandidateDevelopmentCommandRedactedMetadataList(mismatchValue, budget)
+      : mismatchField === 'trialHistory.latestTerminalEvidence'
+        ? projectCandidateDevelopmentCommandTrialHistoryEvidence(
+            mismatchValue,
+            'latest-terminal',
+            mismatchAncestors,
+            budget,
+          )
+        : mismatchField === 'trialHistory.latestDevelopmentEvidence'
+          ? projectCandidateDevelopmentCommandTrialHistoryEvidence(
+              mismatchValue,
+              'latest-development',
+              mismatchAncestors,
+              budget,
+            )
+          : projectCandidateDevelopmentCommandMismatchValue(mismatchValue, mismatchAncestors, budget)
+  return {
+    ...(field._tag === 'Value' ? { field: field.value } : {}),
+    expected: projectMismatchValue(expected.value),
+    observed: projectMismatchValue(observed.value),
+  }
+}
+
+const candidateDevelopmentCommandValidationObjectFields = [
+  'accountingFirst',
+  'actual',
+  'adjustment',
+  'costBasisMicros',
+  'current',
+  'differenceMicros',
+  'document',
+  'evaluation',
+  'exact',
+  'executionDate',
+  'first',
+  'kind',
+  'last',
+  'marketValueMicros',
+  'name',
+  'passed',
+  'priceMicros',
+  'previous',
+  'publicationSchemaVersion',
+  'quantityMicros',
+  'required',
+  'runId',
+  'schemaVersion',
+  'selectedFirst',
+  'sessionDate',
+  'signalDate',
+  'source',
+  'sourceFeed',
+  'status',
+  'symbol',
+  'withinTolerance',
+] as const
+
+const projectCandidateDevelopmentCommandRepositoryModulePath = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > 256 ||
+    !/^services\/bayn\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/.test(value)
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.scalars += 1
+  return value
+}
+
+const projectCandidateDevelopmentCommandRepositoryPath = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > 256 ||
+    value.startsWith('/') ||
+    value === '..' ||
+    value.startsWith('../') ||
+    value.includes('/../') ||
+    value.includes('\\') ||
+    !/^(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/.test(value)
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.scalars += 1
+  return value
+}
+
+const candidateDevelopmentCommandFailureDetailIsMalformedPreregistrationCause = (value: unknown): boolean => {
+  if (typeof value !== 'object' || value === null) return false
+  const expected = readCandidateDevelopmentCommandFailureProperty(value, 'expected')
+  const observed = readCandidateDevelopmentCommandFailureProperty(value, 'observed')
+  if (
+    readCandidateDevelopmentCommandFailureProperty(value, '_tag')._tag !== 'Absent' ||
+    readCandidateDevelopmentCommandFailureProperty(value, 'field')._tag !== 'Absent' ||
+    expected._tag !== 'Value' ||
+    expected.value !== candidateDevelopmentCommandPreregistrationBindingExpectation ||
+    observed._tag !== 'Value' ||
+    typeof observed.value !== 'object' ||
+    observed.value === null
+  ) {
+    return false
+  }
+  return (
+    readCandidateDevelopmentCommandFailureProperty(observed.value, 'sourceRevision')._tag !== 'Absent' &&
+    readCandidateDevelopmentCommandFailureProperty(observed.value, 'blobOid')._tag !== 'Absent' &&
+    readCandidateDevelopmentCommandFailureProperty(observed.value, 'path')._tag !== 'Absent'
+  )
+}
+
+const projectCandidateDevelopmentCommandMalformedPreregistrationCause = (
+  value: unknown,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  if (typeof value !== 'object' || value === null) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (budget.nodes + 1 >= candidateDevelopmentCommandFailureProjectionMaxNodes) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  if (!candidateDevelopmentCommandFailureObjectSupported(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('non-plain-object')
+  }
+  const expected = readCandidateDevelopmentCommandFailureProperty(value, 'expected')
+  const observed = readCandidateDevelopmentCommandFailureProperty(value, 'observed')
+  if (expected._tag === 'Rejected' || observed._tag === 'Rejected') {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (
+    expected._tag !== 'Value' ||
+    expected.value !== candidateDevelopmentCommandPreregistrationBindingExpectation ||
+    observed._tag !== 'Value' ||
+    typeof observed.value !== 'object' ||
+    observed.value === null ||
+    !candidateDevelopmentCommandFailureObjectSupported(observed.value)
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.nodes += 2
+  budget.scalars += 1
+  const sourceRevision = readCandidateDevelopmentCommandFailureProperty(observed.value, 'sourceRevision')
+  const blobOid = readCandidateDevelopmentCommandFailureProperty(observed.value, 'blobOid')
+  const path = readCandidateDevelopmentCommandFailureProperty(observed.value, 'path')
+  return {
+    expected: candidateDevelopmentCommandPreregistrationBindingExpectation,
+    observed: {
+      sourceRevision:
+        sourceRevision._tag === 'Rejected'
+          ? rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+          : sourceRevision._tag === 'Value'
+            ? projectCandidateDevelopmentCommandImmutableGitOid(sourceRevision.value, budget)
+            : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'),
+      blobOid:
+        blobOid._tag === 'Rejected'
+          ? rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+          : blobOid._tag === 'Value'
+            ? projectCandidateDevelopmentCommandImmutableGitOid(blobOid.value, budget)
+            : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'),
+      path:
+        path._tag === 'Rejected'
+          ? rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+          : path._tag === 'Value'
+            ? projectCandidateDevelopmentCommandRepositoryPath(path.value, budget)
+            : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'),
+    },
+  }
+}
+
+const projectCandidateDevelopmentCommandModulePath = (
+  value: object,
+  tag: string,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  if (tag !== 'CandidateDevelopmentCommandModuleLoadFailed') return {}
+  const modulePath = readCandidateDevelopmentCommandFailureProperty(value, 'modulePath')
+  if (modulePath._tag === 'Rejected') {
+    return { modulePath: rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed') }
+  }
+  if (modulePath._tag !== 'Value') {
+    return { modulePath: rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value') }
+  }
+  return { modulePath: projectCandidateDevelopmentCommandRepositoryModulePath(modulePath.value, budget) }
+}
+
+const safeCandidateDevelopmentCommandValidationText = (value: string): boolean =>
+  value.length > 0 &&
+  value.length <= candidateDevelopmentCommandFailureProjectionMaxTokenLength &&
+  !isAbsolute(value) &&
+  !/(?:credential|password|secret|token|api[-_]?key|\/workspace\/|\\|@|:)/i.test(value) &&
+  /^[A-Za-z0-9 ._/%<>=+-]+$/.test(value)
+
+const projectCandidateDevelopmentCommandValidationScalar = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  if (typeof value === 'number') return projectCandidateDevelopmentCommandDomainNumber(value, budget)
+  if (typeof value === 'boolean' || value === null) {
+    if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+      return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+    }
+    budget.scalars += 1
+    return value
+  }
+  if (typeof value !== 'string' || !safeCandidateDevelopmentCommandValidationText(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.scalars += 1
+  return value
+}
+
+const candidateDevelopmentCommandModuleImportKinds = new Set<Bun.ImportKind>([
+  'import-statement',
+  'require-call',
+  'require-resolve',
+  'dynamic-import',
+  'import-rule',
+  'url-token',
+  'internal',
+  'entry-point-run',
+  'entry-point-build',
+])
+
+const projectCandidateDevelopmentCommandModuleSpecifier = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > candidateDevelopmentCommandFailureProjectionMaxTokenLength ||
+    !/^(?:node:[A-Za-z0-9][A-Za-z0-9._/-]*|@?[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*|\.\.?\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*)$/.test(
+      value,
+    )
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.scalars += 1
+  return value
+}
+
+const projectCandidateDevelopmentCommandModuleImports = (
+  value: unknown,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  let isArray: boolean
+  try {
+    isArray = Array.isArray(value)
+  } catch {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (!isArray || ancestors.has(value as object)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail(isArray ? 'cycle' : 'unsupported-value')
+  }
+  const imports = value as readonly unknown[]
+  const length = readCandidateDevelopmentCommandFailureProperty(imports, 'length')
+  if (
+    length._tag !== 'Value' ||
+    typeof length.value !== 'number' ||
+    !Number.isSafeInteger(length.value) ||
+    length.value < 0
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  const window = prepareCandidateDevelopmentCommandFailureListWindow(length.value, budget, false)
+  if (
+    window === undefined ||
+    budget.nodes + window.prefixLength + 1 > candidateDevelopmentCommandFailureProjectionMaxNodes
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+
+  budget.nodes += 1
+  const output: unknown[] = []
+  for (let index = 0; index < window.prefixLength; index += 1) {
+    const item = readCandidateDevelopmentCommandFailureProperty(imports, String(index))
+    if (
+      item._tag !== 'Value' ||
+      typeof item.value !== 'object' ||
+      item.value === null ||
+      !candidateDevelopmentCommandFailureObjectSupported(item.value)
+    ) {
+      output.push(rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'))
+      continue
+    }
+    const kind = readCandidateDevelopmentCommandFailureProperty(item.value, 'kind')
+    const path = readCandidateDevelopmentCommandFailureProperty(item.value, 'path')
+    if (kind._tag === 'Rejected' || path._tag === 'Rejected') {
+      output.push(rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed'))
+      continue
+    }
+    budget.nodes += 1
+    output.push({
+      kind:
+        kind._tag === 'Value' &&
+        typeof kind.value === 'string' &&
+        candidateDevelopmentCommandModuleImportKinds.has(kind.value as Bun.ImportKind)
+          ? projectCandidateDevelopmentCommandValidationScalar(kind.value, budget)
+          : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'),
+      path:
+        path._tag === 'Value'
+          ? projectCandidateDevelopmentCommandModuleSpecifier(path.value, budget)
+          : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'),
+    })
+  }
+  return finishCandidateDevelopmentCommandFailureList(output, window)
+}
+
+const projectCandidateDevelopmentCommandModuleIdentifiers = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  let isArray: boolean
+  try {
+    isArray = Array.isArray(value)
+  } catch {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (!isArray) return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  const identifiers = value as readonly unknown[]
+  const length = readCandidateDevelopmentCommandFailureProperty(identifiers, 'length')
+  if (
+    length._tag !== 'Value' ||
+    typeof length.value !== 'number' ||
+    !Number.isSafeInteger(length.value) ||
+    length.value < 0
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  const window = prepareCandidateDevelopmentCommandFailureListWindow(length.value, budget, true)
+  if (window === undefined) return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  const output: string[] = []
+  for (let index = 0; index < window.prefixLength; index += 1) {
+    const identifier = readCandidateDevelopmentCommandFailureProperty(identifiers, String(index))
+    if (
+      identifier._tag !== 'Value' ||
+      typeof identifier.value !== 'string' ||
+      (identifier.value !== 'template-literal' && !forbiddenCandidateArtifactIdentifiers.has(identifier.value))
+    ) {
+      return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+    }
+    output.push(identifier.value)
+  }
+  budget.scalars += output.length
+  return finishCandidateDevelopmentCommandFailureList(output, window)
+}
+
+const projectCandidateDevelopmentCommandModuleFormatCause = (
+  value: unknown,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  if (typeof value !== 'object' || value === null) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (
+    budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes ||
+    !candidateDevelopmentCommandFailureObjectSupported(value)
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail(
+      budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes ? 'detail-limit' : 'non-plain-object',
+    )
+  }
+
+  const modulePath = readCandidateDevelopmentCommandFailureProperty(value, 'modulePath')
+  const imports = readCandidateDevelopmentCommandFailureProperty(value, 'imports')
+  const identifiers = readCandidateDevelopmentCommandFailureProperty(value, 'identifiers')
+  const cause = readCandidateDevelopmentCommandFailureProperty(value, 'cause')
+  if (
+    modulePath._tag === 'Rejected' ||
+    imports._tag === 'Rejected' ||
+    identifiers._tag === 'Rejected' ||
+    cause._tag === 'Rejected'
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  budget.nodes += 1
+  const nextAncestors = new Set(ancestors)
+  nextAncestors.add(value)
+  if (imports._tag === 'Absent' && identifiers._tag === 'Absent' && cause._tag === 'Value') {
+    return {
+      modulePath:
+        modulePath._tag === 'Value'
+          ? projectCandidateDevelopmentCommandRepositoryModulePath(modulePath.value, budget)
+          : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'),
+      cause:
+        projectCandidateDevelopmentCommandOperationalError(cause.value, nextAncestors, budget) ??
+        rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'),
+    }
+  }
+  return {
+    modulePath:
+      modulePath._tag === 'Value'
+        ? projectCandidateDevelopmentCommandRepositoryModulePath(modulePath.value, budget)
+        : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'),
+    imports:
+      imports._tag === 'Value'
+        ? projectCandidateDevelopmentCommandModuleImports(imports.value, nextAncestors, budget)
+        : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'),
+    identifiers:
+      identifiers._tag === 'Value'
+        ? projectCandidateDevelopmentCommandModuleIdentifiers(identifiers.value, budget)
+        : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'),
+  }
+}
+
+const projectCandidateDevelopmentCommandValidationValue = (
+  value: unknown,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+  depth: number = 0,
+): unknown => {
+  if (value === null || typeof value !== 'object') {
+    return projectCandidateDevelopmentCommandValidationScalar(value, budget)
+  }
+  if (depth >= 2) return rejectedCandidateDevelopmentCommandFailureDetail('depth-limit')
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+
+  let isArray: boolean
+  try {
+    isArray = Array.isArray(value)
+  } catch {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (!isArray && !candidateDevelopmentCommandFailureObjectSupported(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('non-plain-object')
+  }
+  const nextAncestors = new Set(ancestors)
+  nextAncestors.add(value)
+  budget.nodes += 1
+
+  if (isArray) {
+    const length = readCandidateDevelopmentCommandFailureProperty(value, 'length')
+    if (
+      length._tag !== 'Value' ||
+      typeof length.value !== 'number' ||
+      !Number.isSafeInteger(length.value) ||
+      length.value < 0
+    ) {
+      return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+    }
+    const window = prepareCandidateDevelopmentCommandFailureListWindow(length.value, budget, false)
+    if (window === undefined) return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+    const output: unknown[] = []
+    for (let index = 0; index < window.prefixLength; index += 1) {
+      const item = readCandidateDevelopmentCommandFailureProperty(value, String(index))
+      if (item._tag === 'Rejected') {
+        output.push(rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed'))
+      } else if (item._tag === 'Value') {
+        output.push(projectCandidateDevelopmentCommandValidationValue(item.value, nextAncestors, budget, depth + 1))
+      } else {
+        output.push(rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'))
+      }
+    }
+    return finishCandidateDevelopmentCommandFailureList(output, window)
+  }
+
+  const output: Record<string, unknown> = {}
+  for (const field of candidateDevelopmentCommandValidationObjectFields) {
+    const property = readCandidateDevelopmentCommandFailureProperty(value, field)
+    if (property._tag === 'Absent') continue
+    output[field] =
+      property._tag === 'Rejected'
+        ? rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+        : projectCandidateDevelopmentCommandValidationValue(property.value, nextAncestors, budget, depth + 1)
+  }
+  return Object.keys(output).length > 0 ? output : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+}
+
+const projectCandidateDevelopmentCommandTargetWeights = (
+  value: unknown,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  if (typeof value !== 'object' || value === null) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  if (!candidateDevelopmentCommandFailureObjectSupported(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('non-plain-object')
+  }
+
+  let keys: readonly PropertyKey[]
+  try {
+    keys = Reflect.ownKeys(value)
+  } catch {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (
+    keys.length > candidateDevelopmentCommandFailureProjectionMaxObjectEntries ||
+    keys.some((key) => typeof key !== 'string' || !/^[A-Z][A-Z0-9.-]{0,15}$/.test(key))
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+
+  budget.nodes += 1
+  const output: Record<string, unknown> = {}
+  for (const symbol of (keys as readonly string[]).toSorted()) {
+    const property = readCandidateDevelopmentCommandFailureProperty(value, symbol)
+    if (property._tag === 'Rejected') {
+      return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+    }
+    if (property._tag !== 'Value' || typeof property.value !== 'number' || !Number.isFinite(property.value)) {
+      return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+    }
+    output[symbol] = projectCandidateDevelopmentCommandDomainNumber(property.value, budget)
+  }
+  return output
+}
+
+const projectCandidateDevelopmentCommandCashYieldOrder = (
+  value: unknown,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  if (typeof value !== 'object' || value === null) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  if (!candidateDevelopmentCommandFailureObjectSupported(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('non-plain-object')
+  }
+  const index = readCandidateDevelopmentCommandFailureProperty(value, 'index')
+  const kind = readCandidateDevelopmentCommandFailureProperty(value, 'kind')
+  if (index._tag === 'Rejected' || kind._tag === 'Rejected') {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (
+    index._tag !== 'Value' ||
+    typeof index.value !== 'number' ||
+    !Number.isSafeInteger(index.value) ||
+    index.value < 0 ||
+    kind._tag !== 'Value' ||
+    (kind.value !== 'fill' && kind.value !== 'fee') ||
+    budget.scalars + 2 > candidateDevelopmentCommandFailureProjectionMaxScalars
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  budget.nodes += 1
+  budget.scalars += 2
+  return { index: index.value, kind: kind.value }
+}
+
+const projectCandidateDevelopmentCommandValidationMismatchFields = (
+  value: object,
+  tag: string,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  if (
+    tag !== 'CandidateDevelopmentCommandPerformanceEvidenceInvalid' &&
+    tag !== 'CandidateDevelopmentCommandMarkedEquityInvalid' &&
+    tag !== 'CandidateDevelopmentCommandEconomicGateInvalid'
+  ) {
+    return {}
+  }
+  const mismatchField = readCandidateDevelopmentCommandFailureProperty(value, 'field')
+  const output: Record<string, unknown> = {}
+  for (const field of ['expected', 'observed'] as const) {
+    const property = readCandidateDevelopmentCommandFailureProperty(value, field)
+    output[field] =
+      property._tag === 'Rejected'
+        ? rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+        : property._tag === 'Value'
+          ? tag === 'CandidateDevelopmentCommandMarkedEquityInvalid' &&
+            field === 'observed' &&
+            mismatchField._tag === 'Value' &&
+            mismatchField.value === 'benchmarks.terminalDecision'
+            ? projectCandidateDevelopmentCommandTargetWeights(property.value, ancestors, budget)
+            : tag === 'CandidateDevelopmentCommandMarkedEquityInvalid' &&
+                field === 'observed' &&
+                mismatchField._tag === 'Value' &&
+                (mismatchField.value === 'baseline.cashYield.order' ||
+                  mismatchField.value === 'stressed.cashYield.order')
+              ? projectCandidateDevelopmentCommandCashYieldOrder(property.value, ancestors, budget)
+              : projectCandidateDevelopmentCommandValidationValue(property.value, ancestors, budget)
+          : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  return output
+}
+
+const projectCandidateDevelopmentCommandCanonicalJsonPath = (
+  value: object,
+  tag: string,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  if (tag !== 'CanonicalJsonFailure') return {}
+  const path = readCandidateDevelopmentCommandFailureProperty(value, 'path')
+  if (path._tag === 'Rejected') {
+    return { path: rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed') }
+  }
+  if (
+    path._tag !== 'Value' ||
+    typeof path.value !== 'string' ||
+    path.value.length === 0 ||
+    path.value.length > 256 ||
+    !/^\$(?:(?:\.[A-Za-z0-9_-]+)|(?:\[(?:0|[1-9][0-9]*)\]))*$/.test(path.value)
+  ) {
+    return { path: rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value') }
+  }
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return { path: rejectedCandidateDevelopmentCommandFailureDetail('detail-limit') }
+  }
+  budget.scalars += 1
+  return { path: path.value }
+}
+
+type CandidateDevelopmentCommandDomainFieldKind =
+  | 'boundary'
+  | 'calendar-mismatch-value'
+  | 'date-text'
+  | 'decimal'
+  | 'doubled-cost-run'
+  | 'finite-number'
+  | 'hash'
+  | 'hash-list'
+  | 'internal-path'
+  | 'invalid-hash-token'
+  | 'integer'
+  | 'iso-date'
+  | 'optional-iso-date'
+  | 'safe-domain-scalar'
+  | 'schema-version'
+  | 'selected-benchmark'
+
+type CandidateDevelopmentCommandTaggedDomainIssue =
+  | CandidateDevelopmentAttemptIssue
+  | CandidateDevelopmentDoubledCostIssue
+  | CandidateDevelopmentPreflightIssue
+  | CandidateDevelopmentComparisonSemanticsIssue
+  | QualificationStatisticsFailure
+
+const candidateDevelopmentCommandSelectedBenchmarks = new Set([
+  'buy-and-hold',
+  'candidate',
+  'cash',
+  'direct-volatility-timing',
+  'not-applicable',
+  'selected-benchmark',
+])
+
+const candidateDevelopmentCommandDoubledCostRuns = new Set(['baseline', 'stressed'])
+
+const projectCandidateDevelopmentCommandDomainNumber = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  if (typeof value !== 'number') return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.scalars += 1
+  if (Object.is(value, -0)) return '-0'
+  if (Number.isFinite(value)) return value
+  if (Number.isNaN(value)) return 'NaN'
+  return value > 0 ? 'Infinity' : '-Infinity'
+}
+
+type CandidateDevelopmentCommandSimulationDomainFieldKind =
+  | 'bigint-decimal'
+  | 'hash'
+  | 'integer'
+  | 'iso-date'
+  | 'number'
+  | 'number-list'
+  | 'optional-integer'
+  | 'optional-iso-date'
+  | 'optional-number'
+  | 'safe-text'
+  | 'scalar'
+  | 'symbol'
+  | 'symbol-list'
+
+const candidateDevelopmentCommandSimulationDomainFields = {
+  InvalidMonetaryValue: [
+    ['operation', 'scalar'],
+    ['value', 'number'],
+    ['reason', 'scalar'],
+  ],
+  InvalidMicrosString: [
+    ['field', 'scalar'],
+    ['value', 'safe-text'],
+  ],
+  ManifestRowCountMismatch: [
+    ['expected', 'integer'],
+    ['observed', 'integer'],
+  ],
+  UnexpectedBarSymbol: [
+    ['symbol', 'symbol'],
+    ['universe', 'symbol-list'],
+  ],
+  DuplicateBar: [
+    ['symbol', 'symbol'],
+    ['sessionDate', 'iso-date'],
+  ],
+  ManifestSessionCountMismatch: [
+    ['expected', 'integer'],
+    ['observed', 'integer'],
+  ],
+  IncompleteSession: [
+    ['sessionDate', 'iso-date'],
+    ['expectedSymbols', 'symbol-list'],
+    ['observedSymbols', 'symbol-list'],
+  ],
+  ManifestSessionBoundsMismatch: [
+    ['expectedFirst', 'iso-date'],
+    ['observedFirst', 'optional-iso-date'],
+    ['expectedLast', 'iso-date'],
+    ['observedLast', 'optional-iso-date'],
+  ],
+  MissingSession: [
+    ['operation', 'scalar'],
+    ['index', 'integer'],
+    ['sessionCount', 'integer'],
+  ],
+  MissingRecordValue: [
+    ['operation', 'scalar'],
+    ['key', 'safe-text'],
+    ['context', 'safe-text'],
+  ],
+  RecordAccessFailed: [
+    ['operation', 'scalar'],
+    ['key', 'safe-text'],
+    ['context', 'safe-text'],
+    ['reason', 'scalar'],
+  ],
+  InvalidStatisticInput: [
+    ['statistic', 'scalar'],
+    ['reason', 'scalar'],
+    ['values', 'number-list'],
+  ],
+  InvalidWeight: [
+    ['operation', 'scalar'],
+    ['value', 'number'],
+    ['reason', 'scalar'],
+  ],
+  InvalidPerformanceInput: [
+    ['reason', 'scalar'],
+    ['index', 'optional-integer'],
+    ['value', 'optional-number'],
+  ],
+  InvalidFillAdjustment: [
+    ['modeledFilledQuantityMicros', 'bigint-decimal'],
+    ['adjustedFilledQuantityMicros', 'bigint-decimal'],
+  ],
+  CandidateDecisionMissing: [
+    ['signalIndex', 'integer'],
+    ['executionIndex', 'integer'],
+  ],
+  InvalidSimulationRange: [
+    ['startIndex', 'integer'],
+    ['sessionCount', 'integer'],
+  ],
+  DuplicateExecutionTarget: [['executionIndex', 'integer']],
+  DecisionTargetMismatch: [
+    ['signalDate', 'iso-date'],
+    ['executionDate', 'iso-date'],
+    ['decisionWeightsHash', 'hash'],
+    ['targetWeightsHash', 'hash'],
+  ],
+  NegativeSimulationCash: [
+    ['sessionDate', 'iso-date'],
+    ['cashMicros', 'bigint-decimal'],
+  ],
+  UnsupportedSimulationExecutionModel: [
+    ['actual', 'safe-text'],
+    ['required', 'safe-text'],
+  ],
+  CanonicalizationFailed: [['operation', 'scalar']],
+  ContractConstructionFailed: [['operation', 'scalar']],
+  RuntimeStrategyMismatch: [
+    ['observed', 'safe-text'],
+    ['expected', 'safe-text'],
+  ],
+  RuntimeParameterSchemaMismatch: [
+    ['observed', 'safe-text'],
+    ['expected', 'safe-text'],
+  ],
+  RuntimeParameterHashMismatch: [
+    ['observed', 'hash'],
+    ['expected', 'hash'],
+  ],
+  InputManifestHashMismatch: [
+    ['observed', 'hash'],
+    ['expected', 'hash'],
+  ],
+  QualificationCalendarMismatch: [
+    ['expectedCount', 'integer'],
+    ['observedCount', 'integer'],
+    ['expectedFirst', 'iso-date'],
+    ['observedFirst', 'optional-iso-date'],
+    ['expectedLast', 'iso-date'],
+    ['observedLast', 'optional-iso-date'],
+  ],
+  NoEligibleMonthEndSignal: [],
+  InsufficientComparableObservations: [
+    ['observed', 'integer'],
+    ['required', 'integer'],
+  ],
+  InvalidWindowRequirement: [
+    ['field', 'scalar'],
+    ['value', 'number'],
+  ],
+} as const satisfies Readonly<
+  Record<
+    SimulationDomainFailure['_tag'],
+    readonly (readonly [string, CandidateDevelopmentCommandSimulationDomainFieldKind])[]
+  >
+>
+
+const projectCandidateDevelopmentCommandSymbol = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  if (typeof value !== 'string' || !/^[A-Z][A-Z0-9.-]{0,15}$/.test(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.scalars += 1
+  return value
+}
+
+const projectCandidateDevelopmentCommandNumberList = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  let isArray: boolean
+  try {
+    isArray = Array.isArray(value)
+  } catch {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (!isArray) return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  const values = value as readonly unknown[]
+  const length = readCandidateDevelopmentCommandFailureProperty(values, 'length')
+  if (
+    length._tag !== 'Value' ||
+    typeof length.value !== 'number' ||
+    !Number.isSafeInteger(length.value) ||
+    length.value < 0
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  const window = prepareCandidateDevelopmentCommandFailureListWindow(length.value, budget, true)
+  if (window === undefined) return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  const output: unknown[] = []
+  for (let index = 0; index < window.prefixLength; index += 1) {
+    const item = readCandidateDevelopmentCommandFailureProperty(values, String(index))
+    output.push(
+      item._tag === 'Rejected'
+        ? rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+        : item._tag === 'Value'
+          ? projectCandidateDevelopmentCommandDomainNumber(item.value, budget)
+          : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'),
+    )
+  }
+  return finishCandidateDevelopmentCommandFailureList(output, window)
+}
+
+const projectCandidateDevelopmentCommandSimulationDomainFields = (
+  value: object,
+  tag: string,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  if (!Object.hasOwn(candidateDevelopmentCommandSimulationDomainFields, tag)) return {}
+  const fields =
+    candidateDevelopmentCommandSimulationDomainFields[
+      tag as keyof typeof candidateDevelopmentCommandSimulationDomainFields
+    ]
+  const output: Record<string, unknown> = {}
+  for (const [field, kind] of fields) {
+    const property = readCandidateDevelopmentCommandFailureProperty(value, field)
+    if (property._tag === 'Absent') continue
+    if (property._tag === 'Rejected') {
+      output[field] = rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+      continue
+    }
+    output[field] =
+      kind === 'bigint-decimal'
+        ? projectCandidateDevelopmentCommandBigintDecimal(property.value, budget)
+        : kind === 'hash'
+          ? projectCandidateDevelopmentCommandDomainValue(property.value, 'hash', new Set(), budget)
+          : kind === 'integer'
+            ? projectCandidateDevelopmentCommandDomainValue(property.value, 'integer', new Set(), budget)
+            : kind === 'iso-date'
+              ? projectCandidateDevelopmentCommandDomainValue(property.value, 'iso-date', new Set(), budget)
+              : kind === 'number'
+                ? projectCandidateDevelopmentCommandDomainNumber(property.value, budget)
+                : kind === 'number-list'
+                  ? projectCandidateDevelopmentCommandNumberList(property.value, budget)
+                  : kind === 'optional-integer'
+                    ? property.value === null
+                      ? projectCandidateDevelopmentCommandValidationScalar(null, budget)
+                      : projectCandidateDevelopmentCommandDomainValue(property.value, 'integer', new Set(), budget)
+                    : kind === 'optional-iso-date'
+                      ? property.value === null
+                        ? projectCandidateDevelopmentCommandValidationScalar(null, budget)
+                        : projectCandidateDevelopmentCommandDomainValue(property.value, 'iso-date', new Set(), budget)
+                      : kind === 'optional-number'
+                        ? property.value === null
+                          ? projectCandidateDevelopmentCommandValidationScalar(null, budget)
+                          : projectCandidateDevelopmentCommandDomainNumber(property.value, budget)
+                        : kind === 'safe-text'
+                          ? projectCandidateDevelopmentCommandValidationScalar(property.value, budget)
+                          : kind === 'symbol'
+                            ? projectCandidateDevelopmentCommandSymbol(property.value, budget)
+                            : kind === 'symbol-list'
+                              ? projectCandidateDevelopmentCommandSymbolList(property.value, budget)
+                              : (safeCandidateDevelopmentCommandFailureScalar(property.value, budget) ??
+                                rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'))
+  }
+  return output
+}
+
+type CandidateDevelopmentCommandSimulationReconciliationProblem = Extract<
+  SimulationReconciliationIssue,
+  { readonly problem: unknown }
+>['problem']
+
+type CandidateDevelopmentCommandSimulationReconciliationProblemFieldKind = 'failure' | 'scalar' | 'symbol-list'
+
+const candidateDevelopmentCommandSimulationReconciliationProblemFields = {
+  InvalidFormat: [['expected', 'scalar']],
+  HashMismatch: [['expected', 'scalar']],
+  CanonicalizationFailed: [['cause', 'failure']],
+  OrderDecision: [
+    ['orderId', 'scalar'],
+    ['decisionId', 'scalar'],
+  ],
+  FillOrder: [
+    ['fillId', 'scalar'],
+    ['orderId', 'scalar'],
+  ],
+  MonetaryEventCashChange: [
+    ['eventId', 'scalar'],
+    ['eventKind', 'scalar'],
+  ],
+  OrderExecutionSession: [
+    ['orderId', 'scalar'],
+    ['decisionId', 'scalar'],
+    ['actualSessionDate', 'scalar'],
+    ['expectedSessionDate', 'scalar'],
+  ],
+  FillBinding: [
+    ['fillId', 'scalar'],
+    ['orderId', 'scalar'],
+    ['field', 'scalar'],
+    ['actual', 'scalar'],
+    ['expected', 'scalar'],
+  ],
+  FillQuantity: [
+    ['fillId', 'scalar'],
+    ['orderId', 'scalar'],
+    ['actualQuantityMicros', 'scalar'],
+    ['expectedQuantityMicros', 'scalar'],
+  ],
+  FillTerms: [
+    ['fillId', 'scalar'],
+    ['field', 'scalar'],
+    ['actualMicros', 'scalar'],
+    ['expectedMicros', 'scalar'],
+  ],
+  FeeComponents: [
+    ['feeId', 'scalar'],
+    ['actualTotalMicros', 'scalar'],
+    ['expectedTotalMicros', 'scalar'],
+  ],
+  FeeSchedule: [
+    ['feeId', 'scalar'],
+    ['field', 'scalar'],
+    ['actualMicros', 'scalar'],
+    ['expectedMicros', 'scalar'],
+  ],
+  CashChange: [
+    ['cashChangeId', 'scalar'],
+    ['sourceId', 'scalar'],
+    ['field', 'scalar'],
+    ['actual', 'scalar'],
+    ['expected', 'scalar'],
+  ],
+  CashYield: [
+    ['cashYieldId', 'scalar'],
+    ['field', 'scalar'],
+    ['actual', 'scalar'],
+    ['expected', 'scalar'],
+  ],
+  DailyMark: [
+    ['sessionDate', 'scalar'],
+    ['field', 'scalar'],
+    ['actualMicros', 'scalar'],
+    ['expectedMicros', 'scalar'],
+  ],
+  PositionMark: [
+    ['sessionDate', 'scalar'],
+    ['symbol', 'scalar'],
+    ['field', 'scalar'],
+    ['actualMicros', 'scalar'],
+    ['expectedMicros', 'scalar'],
+  ],
+  DuplicateIdentity: [
+    ['entity', 'scalar'],
+    ['id', 'scalar'],
+  ],
+  DuplicateFillForOrder: [
+    ['orderId', 'scalar'],
+    ['secondFillId', 'scalar'],
+  ],
+  DuplicateCashChangeForEvent: [
+    ['eventId', 'scalar'],
+    ['secondCashChangeId', 'scalar'],
+  ],
+  InvalidOrder: [
+    ['rule', 'scalar'],
+    ['orderId', 'scalar'],
+    ['status', 'scalar'],
+    ['requestedQuantityMicros', 'scalar'],
+    ['filledQuantityMicros', 'scalar'],
+    ['rejectionReason', 'scalar'],
+    ['unfilledRemainder', 'scalar'],
+    ['fillPresent', 'scalar'],
+  ],
+  InvalidMarkOrder: [
+    ['previousSessionDate', 'scalar'],
+    ['sessionDate', 'scalar'],
+  ],
+  DuplicateMarkedPosition: [
+    ['sessionDate', 'scalar'],
+    ['symbols', 'symbol-list'],
+  ],
+  UnsortedMarkedPositions: [
+    ['sessionDate', 'scalar'],
+    ['symbols', 'symbol-list'],
+  ],
+  NegativeCash: [
+    ['eventId', 'scalar'],
+    ['actualMicros', 'scalar'],
+    ['minimumMicros', 'scalar'],
+  ],
+  NegativeLongPosition: [
+    ['fillId', 'scalar'],
+    ['symbol', 'scalar'],
+    ['actualQuantityMicros', 'scalar'],
+  ],
+  DailyOutsideTolerance: [
+    ['measure', 'scalar'],
+    ['sessionDate', 'scalar'],
+    ['differenceMicros', 'scalar'],
+    ['toleranceMicros', 'scalar'],
+  ],
+  FinalOutsideTolerance: [
+    ['measure', 'scalar'],
+    ['differenceMicros', 'scalar'],
+    ['toleranceMicros', 'scalar'],
+  ],
+  NegativeTolerance: [['toleranceMicros', 'scalar']],
+  UnsupportedSimulationSchema: [
+    ['actual', 'scalar'],
+    ['expected', 'scalar'],
+  ],
+  EmptyDailyMarks: [],
+  CashChangeCountMismatch: [
+    ['cashChangeCount', 'scalar'],
+    ['monetaryEventCount', 'scalar'],
+  ],
+  MissingSessionMark: [
+    ['eventId', 'scalar'],
+    ['eventSessionDate', 'scalar'],
+    ['nextMarkSessionDate', 'scalar'],
+  ],
+  MissingOpenPositionMark: [
+    ['sessionDate', 'scalar'],
+    ['symbol', 'scalar'],
+    ['quantityMicros', 'scalar'],
+  ],
+  MonetaryEventsAfterFinalMark: [
+    ['firstEventId', 'scalar'],
+    ['firstEventSessionDate', 'scalar'],
+  ],
+} as const satisfies Readonly<
+  Record<
+    CandidateDevelopmentCommandSimulationReconciliationProblem['_tag'],
+    readonly (readonly [string, CandidateDevelopmentCommandSimulationReconciliationProblemFieldKind])[]
+  >
+>
+
+type CandidateDevelopmentCommandSimulationReconciliationEvidence = Extract<
+  SimulationReconciliationIssue,
+  { readonly evidence: unknown }
+>['evidence']
+
+type CandidateDevelopmentCommandSimulationReconciliationComputation = Extract<
+  SimulationReconciliationIssue,
+  { readonly _tag: 'ComputationFailed' }
+>['computation']
+
+type CandidateDevelopmentCommandSimulationReconciliationIssueFieldKind =
+  | 'computation'
+  | 'evidence'
+  | 'problem'
+  | 'scalar'
+
+const candidateDevelopmentCommandSimulationReconciliationIssueFields = {
+  InvalidInteger: [
+    ['expected', 'scalar'],
+    ['evidence', 'evidence'],
+  ],
+  InvalidIdentity: [
+    ['evidence', 'evidence'],
+    ['problem', 'problem'],
+  ],
+  MissingReference: [['problem', 'problem']],
+  EvidenceMismatch: [['problem', 'problem']],
+  InvalidEvidenceState: [['problem', 'problem']],
+  IncompleteEvidence: [['problem', 'problem']],
+  ComputationFailed: [['computation', 'computation']],
+} as const satisfies Readonly<
+  Record<
+    SimulationReconciliationIssue['_tag'],
+    readonly (readonly [string, CandidateDevelopmentCommandSimulationReconciliationIssueFieldKind])[]
+  >
+>
+
+const candidateDevelopmentCommandSimulationReconciliationComputationFields = {
+  FillTerms: ['fillId', 'side', 'quantityMicros', 'referencePriceMicros', 'costMultiplierMicros'],
+  FeeSchedule: ['feeId', 'fillCount', 'costMultiplierMicros'],
+  CashYield: ['cashYieldId', 'cashMicros', 'elapsedDays', 'annualYieldBps'],
+  PositionNotional: ['sessionDate', 'symbol', 'quantityMicros', 'priceMicros'],
+} as const satisfies Readonly<
+  Record<CandidateDevelopmentCommandSimulationReconciliationComputation['_tag'], readonly string[]>
+>
+
+const projectCandidateDevelopmentCommandSymbolList = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  let isArray: boolean
+  try {
+    isArray = Array.isArray(value)
+  } catch {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (!isArray) return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  const array = value as readonly unknown[]
+  const length = readCandidateDevelopmentCommandFailureProperty(array, 'length')
+  if (
+    length._tag !== 'Value' ||
+    typeof length.value !== 'number' ||
+    !Number.isSafeInteger(length.value) ||
+    length.value < 0
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  const window = prepareCandidateDevelopmentCommandFailureListWindow(length.value, budget, true)
+  if (window === undefined) return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  const output: string[] = []
+  for (let index = 0; index < window.prefixLength; index += 1) {
+    const item = readCandidateDevelopmentCommandFailureProperty(array, String(index))
+    if (item._tag !== 'Value' || typeof item.value !== 'string' || !/^[A-Z][A-Z0-9.-]{0,15}$/.test(item.value)) {
+      return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+    }
+    output.push(item.value)
+  }
+  budget.scalars += output.length
+  return finishCandidateDevelopmentCommandFailureList(output, window)
+}
+
+const projectCandidateDevelopmentCommandSimulationReconciliationEvidence = (
+  value: unknown,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  if (typeof value !== 'object' || value === null) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  if (!candidateDevelopmentCommandFailureObjectSupported(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('non-plain-object')
+  }
+
+  const kind = readCandidateDevelopmentCommandFailureProperty(value, 'kind')
+  if (kind._tag === 'Rejected') return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  if (
+    kind._tag !== 'Value' ||
+    typeof kind.value !== 'string' ||
+    !safeCandidateDevelopmentCommandFailureToken(kind.value)
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('invalid-tag')
+  }
+  const id = readCandidateDevelopmentCommandFailureProperty(value, 'id')
+  if (id._tag === 'Rejected') return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+
+  let fields: readonly string[]
+  switch (kind.value as CandidateDevelopmentCommandSimulationReconciliationEvidence['kind']) {
+    case 'input':
+    case 'simulation':
+      fields = ['field', 'value']
+      break
+    case 'run':
+      fields = ['id']
+      break
+    case 'decision':
+      fields = ['id', 'signalDate']
+      break
+    case 'order':
+      fields = id._tag === 'Value' ? ['id', 'sessionDate'] : ['orderId', 'field', 'value']
+      break
+    case 'fill':
+      fields = id._tag === 'Value' ? ['id', 'sessionDate'] : ['fillId', 'field', 'value']
+      break
+    case 'fee':
+      fields = id._tag === 'Value' ? ['id', 'sessionDate'] : ['feeId', 'field', 'value']
+      break
+    case 'cash-yield':
+      fields = id._tag === 'Value' ? ['id', 'sessionDate'] : ['cashYieldId', 'field', 'value']
+      break
+    case 'cash-change':
+      fields = id._tag === 'Value' ? ['id', 'sourceId', 'sessionDate'] : ['cashChangeId', 'field', 'value']
+      break
+    case 'daily-mark':
+      fields = ['sessionDate', 'field', 'value']
+      break
+    case 'position':
+      fields = ['sessionDate', 'symbol', 'field', 'value']
+      break
+    default:
+      return rejectedCandidateDevelopmentCommandFailureDetail('invalid-tag')
+  }
+
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.nodes += 1
+  budget.scalars += 1
+  const output: Record<string, unknown> = { kind: kind.value }
+  for (const field of fields) {
+    const property = readCandidateDevelopmentCommandFailureProperty(value, field)
+    output[field] =
+      property._tag === 'Rejected'
+        ? rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+        : property._tag === 'Value'
+          ? projectCandidateDevelopmentCommandValidationScalar(property.value, budget)
+          : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  return output
+}
+
+const projectCandidateDevelopmentCommandSimulationReconciliationComputation = (
+  value: unknown,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  if (typeof value !== 'object' || value === null) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  if (!candidateDevelopmentCommandFailureObjectSupported(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('non-plain-object')
+  }
+
+  const tag = readCandidateDevelopmentCommandFailureProperty(value, '_tag')
+  if (tag._tag === 'Rejected') return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  if (
+    tag._tag !== 'Value' ||
+    typeof tag.value !== 'string' ||
+    !Object.hasOwn(candidateDevelopmentCommandSimulationReconciliationComputationFields, tag.value)
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('invalid-tag')
+  }
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+
+  budget.nodes += 1
+  budget.scalars += 1
+  const output: Record<string, unknown> = { _tag: tag.value }
+  const fields =
+    candidateDevelopmentCommandSimulationReconciliationComputationFields[
+      tag.value as keyof typeof candidateDevelopmentCommandSimulationReconciliationComputationFields
+    ]
+  for (const field of fields) {
+    const property = readCandidateDevelopmentCommandFailureProperty(value, field)
+    output[field] =
+      property._tag === 'Rejected'
+        ? rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+        : property._tag === 'Value'
+          ? projectCandidateDevelopmentCommandValidationScalar(property.value, budget)
+          : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  return output
+}
+
+const projectCandidateDevelopmentCommandSimulationReconciliationProblem = (
+  value: unknown,
+  depth: number,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  if (typeof value !== 'object' || value === null) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  if (!candidateDevelopmentCommandFailureObjectSupported(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('non-plain-object')
+  }
+  const tag = readCandidateDevelopmentCommandFailureProperty(value, '_tag')
+  if (tag._tag === 'Rejected') return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  if (
+    tag._tag !== 'Value' ||
+    !safeCandidateDevelopmentCommandFailureToken(tag.value) ||
+    !Object.hasOwn(candidateDevelopmentCommandSimulationReconciliationProblemFields, tag.value)
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('invalid-tag')
+  }
+
+  budget.nodes += 1
+  budget.scalars += 1
+  const output: Record<string, unknown> = { _tag: tag.value }
+  const nextAncestors = new Set(ancestors)
+  nextAncestors.add(value)
+  const fields =
+    candidateDevelopmentCommandSimulationReconciliationProblemFields[
+      tag.value as keyof typeof candidateDevelopmentCommandSimulationReconciliationProblemFields
+    ]
+  for (const [field, kind] of fields) {
+    const property = readCandidateDevelopmentCommandFailureProperty(value, field)
+    if (property._tag === 'Rejected') {
+      output[field] = rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+      continue
+    }
+    if (property._tag !== 'Value') {
+      output[field] = rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+      continue
+    }
+    output[field] =
+      kind === 'failure'
+        ? projectCandidateDevelopmentCommandFailureDetail(property.value, depth + 1, nextAncestors, budget)
+        : kind === 'symbol-list'
+          ? projectCandidateDevelopmentCommandSymbolList(property.value, budget)
+          : projectCandidateDevelopmentCommandValidationScalar(property.value, budget)
+  }
+  return output
+}
+
+const projectCandidateDevelopmentCommandSimulationReconciliationIssueFields = (
+  value: object,
+  tag: string,
+  depth: number,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  if (!Object.hasOwn(candidateDevelopmentCommandSimulationReconciliationIssueFields, tag)) return {}
+  const output: Record<string, unknown> = {}
+  const fields =
+    candidateDevelopmentCommandSimulationReconciliationIssueFields[
+      tag as keyof typeof candidateDevelopmentCommandSimulationReconciliationIssueFields
+    ]
+  for (const [field, kind] of fields) {
+    const property = readCandidateDevelopmentCommandFailureProperty(value, field)
+    output[field] =
+      property._tag === 'Rejected'
+        ? rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+        : property._tag !== 'Value'
+          ? rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+          : kind === 'evidence'
+            ? projectCandidateDevelopmentCommandSimulationReconciliationEvidence(property.value, ancestors, budget)
+            : kind === 'problem'
+              ? projectCandidateDevelopmentCommandSimulationReconciliationProblem(
+                  property.value,
+                  depth,
+                  ancestors,
+                  budget,
+                )
+              : kind === 'computation'
+                ? projectCandidateDevelopmentCommandSimulationReconciliationComputation(
+                    property.value,
+                    ancestors,
+                    budget,
+                  )
+                : projectCandidateDevelopmentCommandValidationScalar(property.value, budget)
+  }
+  return output
+}
+
+const projectCandidateDevelopmentCommandMarkedEquityCause = (
+  value: unknown,
+  depth: number,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  let isArray: boolean
+  try {
+    isArray = Array.isArray(value)
+  } catch {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (!isArray) return projectCandidateDevelopmentCommandFailureDetail(value, depth, ancestors, budget)
+  const array = value as readonly unknown[]
+  if (ancestors.has(array)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  const length = readCandidateDevelopmentCommandFailureProperty(array, 'length')
+  if (
+    length._tag !== 'Value' ||
+    typeof length.value !== 'number' ||
+    !Number.isSafeInteger(length.value) ||
+    length.value <= 0
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  const window = prepareCandidateDevelopmentCommandFailureListWindow(length.value, budget, false)
+  if (window === undefined) return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+
+  budget.nodes += 1
+  const nextAncestors = new Set(ancestors)
+  nextAncestors.add(array)
+  const output: unknown[] = []
+  for (let index = 0; index < window.prefixLength; index += 1) {
+    const item = readCandidateDevelopmentCommandFailureProperty(array, String(index))
+    if (item._tag === 'Rejected') {
+      output.push(rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed'))
+      continue
+    }
+    if (item._tag !== 'Value' || typeof item.value !== 'object' || item.value === null) {
+      output.push(rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'))
+      continue
+    }
+    const tag = readCandidateDevelopmentCommandFailureProperty(item.value, '_tag')
+    output.push(
+      tag._tag === 'Value' &&
+        typeof tag.value === 'string' &&
+        Object.hasOwn(candidateDevelopmentCommandSimulationReconciliationIssueFields, tag.value)
+        ? projectCandidateDevelopmentCommandFailureDetail(item.value, depth, nextAncestors, budget)
+        : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'),
+    )
+  }
+  return finishCandidateDevelopmentCommandFailureList(output, window)
+}
+
+const projectCandidateDevelopmentCommandHashList = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  let isArray: boolean
+  try {
+    isArray = Array.isArray(value)
+  } catch {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (!isArray) return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  const array = value as readonly unknown[]
+  const length = readCandidateDevelopmentCommandFailureProperty(array, 'length')
+  if (
+    length._tag !== 'Value' ||
+    typeof length.value !== 'number' ||
+    !Number.isSafeInteger(length.value) ||
+    length.value < 0
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  const window = prepareCandidateDevelopmentCommandFailureListWindow(length.value, budget, true)
+  if (window === undefined) return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  const output: string[] = []
+  for (let index = 0; index < window.prefixLength; index += 1) {
+    const item = readCandidateDevelopmentCommandFailureProperty(array, String(index))
+    if (item._tag !== 'Value' || typeof item.value !== 'string' || !/^[0-9a-f]{64}$/.test(item.value)) {
+      return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+    }
+    output.push(item.value)
+  }
+  budget.scalars += output.length
+  return finishCandidateDevelopmentCommandFailureList(output, window)
+}
+
+const projectCandidateDevelopmentCommandBoundary = (
+  value: unknown,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  if (value === undefined) {
+    if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+      return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+    }
+    budget.scalars += 1
+    return null
+  }
+  if (typeof value !== 'object' || value === null) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (!candidateDevelopmentCommandFailureObjectSupported(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('non-plain-object')
+  }
+  if (
+    budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes ||
+    budget.scalars + 2 > candidateDevelopmentCommandFailureProjectionMaxScalars
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  const signalDate = readCandidateDevelopmentCommandFailureProperty(value, 'signalDate')
+  const executionDate = readCandidateDevelopmentCommandFailureProperty(value, 'executionDate')
+  if (signalDate._tag === 'Rejected' || executionDate._tag === 'Rejected') {
+    return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  }
+  if (
+    signalDate._tag !== 'Value' ||
+    executionDate._tag !== 'Value' ||
+    typeof signalDate.value !== 'string' ||
+    typeof executionDate.value !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(signalDate.value) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(executionDate.value)
+  ) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  budget.nodes += 1
+  budget.scalars += 2
+  return { signalDate: signalDate.value, executionDate: executionDate.value }
+}
+
+const projectCandidateDevelopmentCommandDomainValue = (
+  value: unknown,
+  kind: CandidateDevelopmentCommandDomainFieldKind,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  if (kind === 'boundary') return projectCandidateDevelopmentCommandBoundary(value, ancestors, budget)
+  if (kind === 'finite-number') return projectCandidateDevelopmentCommandDomainNumber(value, budget)
+  if (kind === 'hash-list') return projectCandidateDevelopmentCommandHashList(value, budget)
+  if (kind === 'calendar-mismatch-value') {
+    if (typeof value === 'number' && Number.isSafeInteger(value)) {
+      return projectCandidateDevelopmentCommandDomainNumber(value, budget)
+    }
+    if (typeof value !== 'string') return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value) && !/^[0-9a-f]{64}$/.test(value)) {
+      return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+    }
+    if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+      return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+    }
+    budget.scalars += 1
+    return value
+  }
+  if (kind === 'integer') {
+    return typeof value === 'number' && Number.isSafeInteger(value)
+      ? projectCandidateDevelopmentCommandDomainNumber(value, budget)
+      : rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (kind === 'safe-domain-scalar' && typeof value === 'number' && Number.isSafeInteger(value)) {
+    return projectCandidateDevelopmentCommandDomainNumber(value, budget)
+  }
+  if (kind === 'safe-domain-scalar' && (typeof value === 'boolean' || value === null)) {
+    if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+      return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+    }
+    budget.scalars += 1
+    return value
+  }
+  if (kind === 'optional-iso-date' && value === undefined) {
+    if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+      return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+    }
+    budget.scalars += 1
+    return null
+  }
+  if (typeof value !== 'string') return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  const accepted =
+    (kind === 'hash' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value)) ||
+    (kind === 'iso-date' && /^\d{4}-\d{2}-\d{2}$/.test(value)) ||
+    (kind === 'optional-iso-date' && /^\d{4}-\d{2}-\d{2}$/.test(value)) ||
+    (kind === 'date-text' && (/^[0-9-]{1,32}$/.test(value) || /^not-[a-z0-9-]{1,88}$/.test(value))) ||
+    (kind === 'decimal' && /^-?[0-9]{1,96}$/.test(value)) ||
+    (kind === 'doubled-cost-run' && candidateDevelopmentCommandDoubledCostRuns.has(value)) ||
+    (kind === 'internal-path' && /^comparisonSemantics(?:\.[A-Za-z0-9_-]+)*$/.test(value)) ||
+    (kind === 'invalid-hash-token' && (/^[0-9A-Fa-f-]{1,96}$/.test(value) || /^not-[a-z0-9-]{1,88}$/.test(value))) ||
+    (kind === 'schema-version' && /^bayn\.[a-z0-9.-]+\.v[0-9]+$/.test(value)) ||
+    (kind === 'selected-benchmark' && candidateDevelopmentCommandSelectedBenchmarks.has(value)) ||
+    (kind === 'safe-domain-scalar' &&
+      (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value) ||
+        /^\d{4}-\d{2}-\d{2}$/.test(value) ||
+        /^bayn\.[a-z0-9.-]+\.v[0-9]+$/.test(value) ||
+        candidateDevelopmentCommandSelectedBenchmarks.has(value)))
+  if (!accepted) return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  budget.scalars += 1
+  return value
+}
+
+type CandidateDevelopmentCommandExecutionModelFieldKind =
+  | 'bigint-decimal'
+  | 'decimal-text'
+  | 'field-path'
+  | 'iso-date'
+  | 'number'
+  | 'scalar'
+
+const candidateDevelopmentCommandExecutionModelFields = {
+  InvalidUnsignedInteger: [
+    ['field', 'field-path'],
+    ['value', 'decimal-text'],
+    ['minimum', 'bigint-decimal'],
+  ],
+  InvalidFixedPointNumber: [
+    ['field', 'field-path'],
+    ['value', 'number'],
+    ['scale', 'number'],
+    ['reason', 'scalar'],
+  ],
+  InvalidIntegerNumber: [
+    ['field', 'field-path'],
+    ['value', 'number'],
+    ['minimum', 'number'],
+    ['maximum', 'number'],
+  ],
+  InvalidCeilingDivision: [
+    ['numerator', 'bigint-decimal'],
+    ['denominator', 'bigint-decimal'],
+    ['minimumNumerator', 'bigint-decimal'],
+    ['minimumDenominator', 'bigint-decimal'],
+  ],
+  NegativeUnsignedRoundHalfUpNumerator: [
+    ['numerator', 'bigint-decimal'],
+    ['denominator', 'bigint-decimal'],
+    ['minimumNumerator', 'bigint-decimal'],
+  ],
+  NonPositiveUnsignedRoundHalfUpDenominator: [
+    ['numerator', 'bigint-decimal'],
+    ['denominator', 'bigint-decimal'],
+    ['minimumDenominator', 'bigint-decimal'],
+  ],
+  InvalidQuantization: [
+    ['operation', 'scalar'],
+    ['value', 'bigint-decimal'],
+    ['increment', 'bigint-decimal'],
+    ['minimumValue', 'bigint-decimal'],
+    ['minimumIncrement', 'bigint-decimal'],
+  ],
+  InvalidReferencePrice: [
+    ['price', 'number'],
+    ['reason', 'scalar'],
+  ],
+  InvalidDesiredQuantity: [
+    ['equityMicros', 'bigint-decimal'],
+    ['weight', 'number'],
+    ['priceMicros', 'bigint-decimal'],
+    ['reason', 'scalar'],
+  ],
+  InvalidFillTerms: [
+    ['side', 'scalar'],
+    ['quantityMicros', 'bigint-decimal'],
+    ['referencePriceMicros', 'bigint-decimal'],
+    ['costMultiplierMicros', 'bigint-decimal'],
+    ['reason', 'scalar'],
+  ],
+  OrderOutcomeCanonicalizationFailed: [],
+  InvalidFeeCostMultiplier: [
+    ['costMultiplierMicros', 'bigint-decimal'],
+    ['minimum', 'bigint-decimal'],
+  ],
+  InvalidCashYield: [
+    ['cashMicros', 'bigint-decimal'],
+    ['elapsedDays', 'number'],
+    ['reason', 'scalar'],
+  ],
+  InvalidCashAccrualPeriod: [
+    ['from', 'iso-date'],
+    ['to', 'iso-date'],
+  ],
+  InvalidSaleCostBasis: [
+    ['positionCostBasisMicros', 'bigint-decimal'],
+    ['soldQuantityMicros', 'bigint-decimal'],
+    ['positionQuantityMicros', 'bigint-decimal'],
+    ['reason', 'scalar'],
+  ],
+  InvalidQuantityScale: [
+    ['quantityMicros', 'bigint-decimal'],
+    ['scalePpm', 'bigint-decimal'],
+    ['minimumScalePpm', 'bigint-decimal'],
+    ['maximumScalePpm', 'bigint-decimal'],
+  ],
+} as const satisfies Readonly<
+  Record<
+    ExecutionModelFailure['_tag'],
+    readonly (readonly [string, CandidateDevelopmentCommandExecutionModelFieldKind])[]
+  >
+>
+
+const projectCandidateDevelopmentCommandBigintDecimal = (
+  value: unknown,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): unknown => {
+  if (typeof value !== 'bigint') return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  const decimal = value.toString(10)
+  if (!/^-?[0-9]{1,96}$/.test(decimal)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (budget.scalars >= candidateDevelopmentCommandFailureProjectionMaxScalars) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  budget.scalars += 1
+  return decimal
+}
+
+const projectCandidateDevelopmentCommandExecutionModelFields = (
+  value: object,
+  tag: string,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  if (!Object.hasOwn(candidateDevelopmentCommandExecutionModelFields, tag)) return {}
+  const fields =
+    candidateDevelopmentCommandExecutionModelFields[tag as keyof typeof candidateDevelopmentCommandExecutionModelFields]
+  const output: Record<string, unknown> = {}
+  for (const [field, kind] of fields) {
+    const property = readCandidateDevelopmentCommandFailureProperty(value, field)
+    if (property._tag === 'Absent') continue
+    if (property._tag === 'Rejected') {
+      output[field] = rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+      continue
+    }
+    output[field] =
+      kind === 'bigint-decimal'
+        ? projectCandidateDevelopmentCommandBigintDecimal(property.value, budget)
+        : kind === 'number'
+          ? projectCandidateDevelopmentCommandDomainNumber(property.value, budget)
+          : kind === 'field-path'
+            ? (safeCandidateDevelopmentCommandFailureFieldPathScalar(property.value, budget) ??
+              rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'))
+            : kind === 'iso-date'
+              ? projectCandidateDevelopmentCommandDomainValue(property.value, 'iso-date', new Set(), budget)
+              : kind === 'decimal-text'
+                ? projectCandidateDevelopmentCommandDomainValue(property.value, 'decimal', new Set(), budget)
+                : (safeCandidateDevelopmentCommandFailureScalar(property.value, budget) ??
+                  rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'))
+  }
+  return output
+}
+
+const candidateDevelopmentCommandFailureScalarIsSpecialized = (tag: string, field: string): boolean => {
+  const executionFields = Object.hasOwn(candidateDevelopmentCommandExecutionModelFields, tag)
+    ? candidateDevelopmentCommandExecutionModelFields[
+        tag as keyof typeof candidateDevelopmentCommandExecutionModelFields
+      ]
+    : undefined
+  if (executionFields?.some(([specializedField]) => specializedField === field) === true) return true
+  const simulationFields = Object.hasOwn(candidateDevelopmentCommandSimulationDomainFields, tag)
+    ? candidateDevelopmentCommandSimulationDomainFields[
+        tag as keyof typeof candidateDevelopmentCommandSimulationDomainFields
+      ]
+    : undefined
+  return simulationFields?.some(([specializedField]) => specializedField === field) === true
+}
+
+const candidateDevelopmentCommandTaggedDomainFields = {
+  CandidateDevelopmentCandidateOrdinalInvalid: [],
+  CandidateDevelopmentPriorTrialCountInvalid: [],
+  CandidateDevelopmentAttemptLineageMismatch: [],
+  CandidateDevelopmentBootstrapTailInfeasible: [
+    ['bootstrapSamples', 'integer'],
+    ['adjustedOneSidedAlpha', 'finite-number'],
+    ['tailSampleCount', 'integer'],
+    ['minimumTailSamples', 'integer'],
+    ['maximumCandidateOrdinal', 'integer'],
+  ],
+  CandidateDevelopmentDoubledCostMultiplierMismatch: [
+    ['run', 'doubled-cost-run'],
+    ['expected', 'decimal'],
+    ['observed', 'decimal'],
+  ],
+  CandidateDevelopmentDoubledCostProtocolDeviation: [
+    ['baselineHash', 'hash'],
+    ['stressedHash', 'hash'],
+  ],
+  CandidateDevelopmentDoubledCostHashFailed: [],
+  CandidateDevelopmentGeometryIntegerInvalid: [['value', 'finite-number']],
+  CandidateDevelopmentGeometryPositiveIntegerRequired: [['value', 'finite-number']],
+  CandidateDevelopmentExecutionOutsideCalendar: [
+    ['firstExecutionIndex', 'integer'],
+    ['availableSessions', 'integer'],
+  ],
+  CandidateDevelopmentGeometryOverflow: [],
+  CandidateDevelopmentFoldBoundaryMissing: [],
+  CandidateDevelopmentCalendarDateInvalid: [['value', 'date-text']],
+  CandidateDevelopmentCalendarNotStrictlyOrdered: [
+    ['previous', 'iso-date'],
+    ['current', 'iso-date'],
+  ],
+  CandidateDevelopmentCalendarMismatch: [
+    ['expected', 'calendar-mismatch-value'],
+    ['observed', 'calendar-mismatch-value'],
+  ],
+  CandidateDevelopmentCalendarHashFailed: [],
+  CandidateDevelopmentLookbackInvalid: [
+    ['featureLookbackSessions', 'integer'],
+    ['maximumFeatureLookbackSessions', 'integer'],
+  ],
+  CandidateDevelopmentSignalScheduleNotStrictlyOrdered: [
+    ['previous', 'iso-date'],
+    ['current', 'iso-date'],
+  ],
+  CandidateDevelopmentSignalScheduleEmpty: [],
+  CandidateDevelopmentSignalOutsideCalendar: [['signalDate', 'iso-date']],
+  CandidateDevelopmentSignalScheduleMismatch: [
+    ['expected', 'optional-iso-date'],
+    ['observed', 'optional-iso-date'],
+    ['expectedCount', 'integer'],
+    ['observedCount', 'integer'],
+  ],
+  CandidateDevelopmentEligibleExecutionMissing: [['featureLookbackSessions', 'integer']],
+  CandidateDevelopmentProtocolHashFailed: [],
+  CandidateDevelopmentStrategyProtocolHashInvalid: [['observed', 'invalid-hash-token']],
+  CandidateDevelopmentComparisonSemanticsShapeInvalid: [
+    ['path', 'internal-path'],
+    ['observed', 'safe-domain-scalar'],
+  ],
+  CandidateDevelopmentComparisonSemanticsSchemaMismatch: [
+    ['expected', 'schema-version'],
+    ['observed', 'safe-domain-scalar'],
+  ],
+  CandidateDevelopmentComparisonDevelopmentProtocolMismatch: [
+    ['expected', 'hash'],
+    ['observed', 'safe-domain-scalar'],
+  ],
+  CandidateDevelopmentComparisonStrategyProtocolMismatch: [
+    ['expected', 'hash'],
+    ['observed', 'safe-domain-scalar'],
+  ],
+  CandidateDevelopmentComparisonAnalysisFailed: [],
+  CandidateDevelopmentComparisonSeriesProjectionFailed: [],
+  CandidateDevelopmentBaselineStrategyProtocolMismatch: [
+    ['expected', 'hash'],
+    ['observed', 'hash'],
+  ],
+  CandidateDevelopmentComparisonSeriesRunMismatch: [
+    ['expected', 'hash'],
+    ['observed', 'hash'],
+  ],
+  CandidateDevelopmentComparisonSeriesWindowMismatch: [
+    ['expected', 'optional-iso-date'],
+    ['observed', 'optional-iso-date'],
+    ['expectedCount', 'integer'],
+    ['observedCount', 'integer'],
+  ],
+  CandidateDevelopmentComparisonRebalanceScheduleMismatch: [
+    ['expected', 'optional-iso-date'],
+    ['observed', 'optional-iso-date'],
+    ['expectedCount', 'integer'],
+    ['observedCount', 'integer'],
+  ],
+  CandidateDevelopmentComparisonSignalExecutionMismatch: [
+    ['expected', 'boundary'],
+    ['observed', 'boundary'],
+    ['expectedCount', 'integer'],
+    ['observedCount', 'integer'],
+  ],
+  CandidateDevelopmentComparisonAnalysisSchemaMismatch: [
+    ['expected', 'schema-version'],
+    ['observed', 'schema-version'],
+  ],
+  CandidateDevelopmentComparisonSemanticsHashFailed: [],
+  CandidateDevelopmentComparisonBaselineMismatch: [
+    ['expected', 'selected-benchmark'],
+    ['observed', 'safe-domain-scalar'],
+  ],
+  CandidateDevelopmentAnnualizedReturnComparisonMismatch: [
+    ['expected', 'finite-number'],
+    ['observed', 'finite-number'],
+  ],
+  CandidateDevelopmentSelectedBenchmarkComparisonMismatch: [
+    ['expected', 'selected-benchmark'],
+    ['observedBootstrap', 'selected-benchmark'],
+    ['observedWalkForward', 'selected-benchmark'],
+  ],
+  CandidateDevelopmentComparisonEvidenceMismatch: [
+    ['expectedHash', 'hash'],
+    ['observedHash', 'hash'],
+  ],
+  QualificationStatisticsSchemaInvalid: [],
+  QualificationStatisticsCanonicalizationFailed: [],
+  QualificationStatisticNotFinite: [['value', 'finite-number']],
+  QualificationDateOrderInvalid: [
+    ['previous', 'iso-date'],
+    ['current', 'iso-date'],
+  ],
+  QualificationSeriesAlignmentFailed: [
+    ['sessionDate', 'optional-iso-date'],
+    ['strategyCount', 'integer'],
+    ['buyAndHoldCount', 'integer'],
+    ['directVolatilityCount', 'integer'],
+  ],
+  QualificationLineageInvalid: [['priorTrialRunIds', 'hash-list']],
+  QualificationRandomIndexInvalid: [['maximum', 'integer']],
+  QualificationSamplingBlockMissing: [['blockCount', 'integer']],
+  QualificationWalkForwardBoundaryMissing: [
+    ['testStart', 'integer'],
+    ['testSessions', 'integer'],
+    ['observationCount', 'integer'],
+  ],
+} as const satisfies Readonly<
+  Record<
+    CandidateDevelopmentCommandTaggedDomainIssue['_tag'],
+    readonly (readonly [string, CandidateDevelopmentCommandDomainFieldKind])[]
+  >
+>
+
+const projectCandidateDevelopmentCommandTaggedDomainFields = (
+  value: object,
+  tag: string,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  const fields = Object.hasOwn(candidateDevelopmentCommandTaggedDomainFields, tag)
+    ? candidateDevelopmentCommandTaggedDomainFields[tag as keyof typeof candidateDevelopmentCommandTaggedDomainFields]
+    : undefined
+  if (fields === undefined) return {}
+  const output: Record<string, unknown> = {}
+  for (const [field, kind] of fields) {
+    const property = readCandidateDevelopmentCommandFailureProperty(value, field)
+    if (property._tag === 'Absent') continue
+    output[field] =
+      property._tag === 'Rejected'
+        ? rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+        : projectCandidateDevelopmentCommandDomainValue(property.value, kind, ancestors, budget)
+  }
+  return output
+}
+
+const projectCandidateDevelopmentCommandFailureDetail = (
+  value: unknown,
+  depth: number,
+  ancestors: ReadonlySet<object>,
+  budget: CandidateDevelopmentCommandFailureProjectionBudget,
+): Readonly<Record<string, unknown>> => {
+  if (typeof value !== 'object' || value === null) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value')
+  }
+  if (candidateDevelopmentCommandIsSchemaError(value)) {
+    return projectCandidateDevelopmentCommandSchemaError(value, depth, ancestors, budget)
+  }
+  if (candidateDevelopmentCommandIsSchemaIssue(value)) {
+    return projectCandidateDevelopmentCommandSchemaIssue(value, depth, ancestors, budget)
+  }
+  if (depth > candidateDevelopmentCommandFailureProjectionMaxDepth) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('depth-limit')
+  }
+  if (ancestors.has(value)) return rejectedCandidateDevelopmentCommandFailureDetail('cycle')
+  if (budget.nodes >= candidateDevelopmentCommandFailureProjectionMaxNodes) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('detail-limit')
+  }
+  if (!candidateDevelopmentCommandFailureObjectSupported(value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('non-plain-object')
+  }
+
+  const operationalError = projectCandidateDevelopmentCommandOperationalError(value, ancestors, budget)
+  if (operationalError !== undefined) return operationalError
+
+  const tag = readCandidateDevelopmentCommandFailureProperty(value, '_tag')
+  if (tag._tag === 'Rejected') return rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+  if (tag._tag === 'Absent') return rejectedCandidateDevelopmentCommandFailureDetail('untyped-object')
+  if (!safeCandidateDevelopmentCommandFailureToken(tag.value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('invalid-tag')
+  }
+  if (candidateDevelopmentCommandSchemaTags.has(tag.value)) {
+    return rejectedCandidateDevelopmentCommandFailureDetail('invalid-tag')
+  }
+
+  budget.nodes += 1
+  budget.scalars += 1
+  const projected: Record<string, unknown> = { _tag: tag.value }
+  const rejectedFields: string[] = []
+
+  for (const field of candidateDevelopmentCommandFailureScalarFields) {
+    if (candidateDevelopmentCommandFailureScalarIsSpecialized(tag.value, field)) continue
+    const property = readCandidateDevelopmentCommandFailureProperty(value, field)
+    if (property._tag === 'Absent') continue
+    if (property._tag === 'Rejected') {
+      rejectedFields.push(field)
+      continue
+    }
+    const scalar =
+      field === 'field'
+        ? safeCandidateDevelopmentCommandFailureFieldPathScalar(property.value, budget)
+        : safeCandidateDevelopmentCommandFailureScalar(property.value, budget)
+    if (scalar === undefined) rejectedFields.push(field)
+    else projected[field] = scalar
+  }
+
+  for (const field of candidateDevelopmentCommandFailureListFields) {
+    const property = readCandidateDevelopmentCommandFailureProperty(value, field)
+    if (property._tag === 'Absent') continue
+    if (property._tag === 'Rejected') {
+      rejectedFields.push(field)
+      continue
+    }
+    const list = safeCandidateDevelopmentCommandFailureTokenList(property.value, budget)
+    if (list === undefined) rejectedFields.push(field)
+    else projected[field] = list
+  }
+
+  const nextAncestors = new Set(ancestors)
+  nextAncestors.add(value)
+  Object.assign(
+    projected,
+    projectCandidateDevelopmentCommandExecutionModelFields(value, tag.value, budget),
+    projectCandidateDevelopmentCommandSimulationDomainFields(value, tag.value, budget),
+    projectCandidateDevelopmentCommandTaggedDomainFields(value, tag.value, nextAncestors, budget),
+    projectCandidateDevelopmentCommandValidationMismatchFields(value, tag.value, nextAncestors, budget),
+    projectCandidateDevelopmentCommandCanonicalJsonPath(value, tag.value, budget),
+    projectCandidateDevelopmentCommandModulePath(value, tag.value, budget),
+    projectCandidateDevelopmentCommandSimulationReconciliationIssueFields(
+      value,
+      tag.value,
+      depth,
+      nextAncestors,
+      budget,
+    ),
+  )
+  for (const field of candidateDevelopmentCommandFailureNestedFields) {
+    const property = readCandidateDevelopmentCommandFailureProperty(value, field)
+    if (property._tag === 'Absent') continue
+    projected[field] =
+      property._tag === 'Rejected'
+        ? rejectedCandidateDevelopmentCommandFailureDetail('introspection-failed')
+        : field === 'preflight' && tag.value === 'CandidateDevelopmentPreflightFailed'
+          ? projectCandidateDevelopmentGeometryFail(property.value, nextAncestors, budget)
+          : field === 'cause' && tag.value === 'CandidateDevelopmentCommandMarkedEquityInvalid'
+            ? projectCandidateDevelopmentCommandMarkedEquityCause(property.value, depth + 1, nextAncestors, budget)
+            : field === 'cause' &&
+                tag.value === 'CandidateDevelopmentCommandProgramInvalid' &&
+                projected.reason === 'strategy-protocol-hash-mismatch' &&
+                candidateDevelopmentCommandFailureDetailIsUntagged(property.value)
+              ? projectCandidateDevelopmentCommandKnownMismatch(
+                  property.value,
+                  nextAncestors,
+                  budget,
+                  'program-strategy-protocol-hash',
+                )
+              : field === 'cause' &&
+                  tag.value === 'CandidateDevelopmentCommandSourceVerificationFailed' &&
+                  projected.operation === 'verify-module-format' &&
+                  candidateDevelopmentCommandFailureDetailIsUntagged(property.value)
+                ? projectCandidateDevelopmentCommandModuleFormatCause(property.value, nextAncestors, budget)
+                : field === 'cause' &&
+                    tag.value === 'CandidateDevelopmentCommandSourceVerificationFailed' &&
+                    projected.operation === 'verify-preregistration-blob' &&
+                    candidateDevelopmentCommandFailureDetailIsMalformedPreregistrationCause(property.value)
+                  ? projectCandidateDevelopmentCommandMalformedPreregistrationCause(
+                      property.value,
+                      nextAncestors,
+                      budget,
+                    )
+                  : field === 'cause' &&
+                      tag.value === 'CandidateDevelopmentCommandSourceVerificationFailed' &&
+                      projected.operation === 'verify-preregistration-lineage' &&
+                      candidateDevelopmentCommandFailureDetailIsLineageCause(property.value)
+                    ? projectCandidateDevelopmentCommandLineageCause(property.value, nextAncestors, budget)
+                    : field === 'cause' &&
+                        tag.value === 'CandidateDevelopmentCommandSourceVerificationFailed' &&
+                        projected.operation === 'verify-preregistration-module-novelty' &&
+                        candidateDevelopmentCommandFailureDetailIsModuleNoveltyCause(property.value)
+                      ? projectCandidateDevelopmentCommandModuleNoveltyCause(property.value, nextAncestors, budget)
+                      : field === 'cause' &&
+                          tag.value === 'CandidateDevelopmentCommandSourceVerificationFailed' &&
+                          candidateDevelopmentCommandFailureDetailIsImmutableGitCause(property.value)
+                        ? (projectCandidateDevelopmentCommandImmutableGitCause(property.value, nextAncestors, budget) ??
+                          rejectedCandidateDevelopmentCommandFailureDetail('unsupported-value'))
+                        : field === 'cause' &&
+                            tag.value === 'CandidateDevelopmentCommandSourceVerificationFailed' &&
+                            projected.operation === 'verify-program-binding' &&
+                            candidateDevelopmentCommandFailureDetailIsMissingPreregistrationCause(property.value)
+                          ? projectCandidateDevelopmentCommandMissingPreregistrationCause(
+                              property.value,
+                              nextAncestors,
+                              budget,
+                            )
+                          : field === 'cause' &&
+                              tag.value === 'CandidateDevelopmentCommandSourceVerificationFailed' &&
+                              candidateDevelopmentCommandFailureDetailIsKnownMismatch(property.value)
+                            ? projectCandidateDevelopmentCommandKnownMismatch(
+                                property.value,
+                                nextAncestors,
+                                budget,
+                                'verified-program-binding',
+                              )
+                            : projectCandidateDevelopmentCommandFailureDetail(
+                                property.value,
+                                depth + 1,
+                                nextAncestors,
+                                budget,
+                              )
+  }
+
+  if (rejectedFields.length > 0) projected.rejectedFields = rejectedFields
+  return projected
+}
+
+export const renderCandidateDevelopmentCommandFailure = (failure: CandidateDevelopmentCommandFailure): string => {
+  const projectedFailure = projectCandidateDevelopmentCommandFailureDetail(failure, 0, new Set(), {
+    nodes: 0,
+    scalars: 0,
+  })
+  const rendered = `${JSON.stringify({
+    schemaVersion: candidateDevelopmentCommandFailureOutputSchemaVersion,
+    error: {
+      _tag: 'CandidateDevelopmentCommandError',
+      failure: projectedFailure,
+    },
+  })}\n`
+  if (Buffer.byteLength(rendered, 'utf8') <= candidateDevelopmentCommandFailureOutputMaxBytes) return rendered
+
+  const topLevelTag = projectedFailure._tag
+  return `${JSON.stringify({
+    schemaVersion: candidateDevelopmentCommandFailureOutputSchemaVersion,
+    error: {
+      _tag: 'CandidateDevelopmentCommandError',
+      failure: {
+        ...(safeCandidateDevelopmentCommandFailureToken(topLevelTag) ? { _tag: topLevelTag } : {}),
+        detail: rejectedCandidateDevelopmentCommandFailureDetail('output-limit'),
+      },
+    },
+  })}\n`
+}
+
+const renderCandidateDevelopmentCommandDefect = (): string =>
+  `${JSON.stringify({
+    schemaVersion: candidateDevelopmentCommandFailureOutputSchemaVersion,
+    error: {
+      _tag: 'CandidateDevelopmentCommandDefect',
+      reason: 'unhandled-defect',
+    },
+  })}\n`
 
 const terminalCash = (marks: EvaluationResult['simulation']['dailyMarks']): boolean => {
   const last = marks.at(-1)
@@ -4623,12 +8290,59 @@ const main = (
         )
 ).pipe(Effect.annotateLogs({ operation: 'candidate-development-command' }))
 
-class CandidateDevelopmentCommandError extends Data.TaggedError('CandidateDevelopmentCommandError')<{
+export class CandidateDevelopmentCommandError extends Data.TaggedError('CandidateDevelopmentCommandError')<{
   readonly failure: CandidateDevelopmentCommandFailure
 }> {}
 
-if (import.meta.main && isMainThread) {
-  NodeRuntime.runMain(main.pipe(Effect.mapError((failure) => new CandidateDevelopmentCommandError({ failure }))), {
-    disableErrorReporting: false,
+export type CandidateDevelopmentCommandFailureWriter = (renderedFailure: string) => Effect.Effect<void, never>
+
+const writeCandidateDevelopmentCommandFailureToStderr: CandidateDevelopmentCommandFailureWriter = (renderedFailure) =>
+  Effect.sync(() => {
+    writeSync(process.stderr.fd, renderedFailure)
   })
+
+export const writeCandidateDevelopmentCommandFailure = (
+  failure: CandidateDevelopmentCommandFailure,
+  writer: CandidateDevelopmentCommandFailureWriter = writeCandidateDevelopmentCommandFailureToStderr,
+): Effect.Effect<void, never> => Effect.suspend(() => writer(renderCandidateDevelopmentCommandFailure(failure)))
+
+const renderCandidateDevelopmentCommandCause = (
+  cause: Cause.Cause<CandidateDevelopmentCommandFailure>,
+): string | undefined => {
+  if (Cause.hasInterruptsOnly(cause)) return undefined
+  const [reason] = cause.reasons
+  return cause.reasons.length === 1 && reason !== undefined && Cause.isFailReason(reason)
+    ? renderCandidateDevelopmentCommandFailure(reason.error)
+    : renderCandidateDevelopmentCommandDefect()
+}
+
+const reportCandidateDevelopmentCommandCause = (
+  cause: Cause.Cause<CandidateDevelopmentCommandFailure>,
+  writer: CandidateDevelopmentCommandFailureWriter,
+): Effect.Effect<void, never> => {
+  const rendered = renderCandidateDevelopmentCommandCause(cause)
+  if (rendered === undefined) return Effect.void
+  return Effect.suspend(() => writer(rendered)).pipe(
+    Effect.catchCause(() =>
+      writeCandidateDevelopmentCommandFailureToStderr(renderCandidateDevelopmentCommandDefect()).pipe(
+        Effect.catchCause(() => Effect.void),
+      ),
+    ),
+  )
+}
+
+export const runCandidateDevelopmentCommandMain = <A>(
+  command: Effect.Effect<A, CandidateDevelopmentCommandFailure>,
+  writer: CandidateDevelopmentCommandFailureWriter = writeCandidateDevelopmentCommandFailureToStderr,
+): void =>
+  NodeRuntime.runMain(
+    command.pipe(
+      Effect.tapCause((cause) => reportCandidateDevelopmentCommandCause(cause, writer)),
+      Effect.mapError((failure) => new CandidateDevelopmentCommandError({ failure })),
+    ),
+    { disableErrorReporting: true },
+  )
+
+if (import.meta.main && isMainThread) {
+  runCandidateDevelopmentCommandMain(main)
 }

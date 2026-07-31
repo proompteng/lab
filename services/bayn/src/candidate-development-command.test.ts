@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -11,12 +11,14 @@ import type { CandidateDevelopmentNextPreregistration } from './candidate-develo
 import {
   bindCandidateDevelopmentVerifiedSource,
   buildCandidateDevelopmentCommandReport as buildCandidateDevelopmentCommandReportPure,
+  candidateDevelopmentCommandFailureOutputMaxBytes,
   candidateDevelopmentExecutableProgramSchemaVersion,
   evaluateCandidateDevelopmentArtifact,
   executeCandidateDevelopmentProgram,
   loadCandidateDevelopmentExecutableProgram,
   makeCandidateDevelopmentCommandReportWriter,
   openCandidateDevelopmentGitBatchObjectReader,
+  renderCandidateDevelopmentCommandFailure,
   renderCandidateDevelopmentCommandReport,
   validateCandidateDevelopmentAccountingReplay,
   validateCandidateDevelopmentCommandEvaluation,
@@ -88,6 +90,21 @@ const execFileBytesPromise = (file: string, args: readonly string[], cwd: string
     execFile(file, [...args], { cwd, encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 }, (error, stdout) => {
       if (error === null) resolveExecution(stdout)
       else rejectExecution(error)
+    })
+  })
+
+const execFileResultPromise = (
+  file: string,
+  args: readonly string[],
+  cwd: string,
+): Promise<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }> =>
+  new Promise((resolveExecution) => {
+    execFile(file, [...args], { cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+      resolveExecution({
+        exitCode: error === null ? 0 : typeof error.code === 'number' ? error.code : 1,
+        stdout,
+        stderr,
+      })
     })
   })
 
@@ -919,6 +936,2676 @@ describe('candidate development command', () => {
     expect(preregistrations).toBe(1)
     expect(loads).toBe(1)
     expect(evaluations).toBe(1)
+  })
+
+  test('renders the exact typed command failure to stderr before a nonzero exit', async () => {
+    const directory = await mkdtemp(join(import.meta.dir, '.candidate-development-cli-failure-'))
+    const scriptPath = join(directory, 'reproduce.ts')
+    const commandUrl = pathToFileURL(join(import.meta.dir, 'candidate-development-command.ts')).href
+    const script = `
+import { Data, Effect } from 'effect'
+import { runCandidateDevelopmentCommandMain } from ${JSON.stringify(commandUrl)}
+
+class CandidateDevelopmentEvaluationStageError extends Data.TaggedError('CandidateDevelopmentEvaluationStageError') {}
+
+runCandidateDevelopmentCommandMain(
+  Effect.fail({
+    _tag: 'CandidateDevelopmentCommandProgramExecutionFailed',
+    cause: new CandidateDevelopmentEvaluationStageError({
+      stage: 'development-metrics',
+      cause: {
+        _tag: 'CandidateDevelopmentMetricsFailed',
+        reason: 'metric-boundary-crossed',
+        token: 'must-not-render',
+        stack: '/workspace/private/stack.ts:1:1',
+      },
+      secret: 'must-not-render',
+    }),
+  }),
+)
+`
+
+    try {
+      await writeFile(scriptPath, script)
+      const result = await execFileResultPromise(process.execPath, [scriptPath], import.meta.dir)
+      const expected = `${JSON.stringify({
+        schemaVersion: 'bayn.candidate-development-command-failure.v1',
+        error: {
+          _tag: 'CandidateDevelopmentCommandError',
+          failure: {
+            _tag: 'CandidateDevelopmentCommandProgramExecutionFailed',
+            cause: {
+              _tag: 'CandidateDevelopmentEvaluationStageError',
+              stage: 'development-metrics',
+              cause: {
+                _tag: 'CandidateDevelopmentMetricsFailed',
+                reason: 'metric-boundary-crossed',
+              },
+            },
+          },
+        },
+      })}\n`
+
+      expect(result.exitCode).toBe(1)
+      expect(result.stdout).toBe('')
+      expect(result.stderr).toBe(expected)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('preserves exact insufficient walk-forward preflight details without arbitrary data', async () => {
+    const directory = await mkdtemp(join(import.meta.dir, '.candidate-development-cli-preflight-failure-'))
+    const scriptPath = join(directory, 'preflight-failure.ts')
+    const commandUrl = pathToFileURL(join(import.meta.dir, 'candidate-development-command.ts')).href
+    const developmentUrl = pathToFileURL(join(import.meta.dir, 'candidate-development.ts')).href
+    const script = `
+import { Effect, Result } from 'effect'
+import { runCandidateDevelopmentCommandMain } from ${JSON.stringify(commandUrl)}
+import { computeEndAnchoredWalkForwardBoundaries } from ${JSON.stringify(developmentUrl)}
+
+const decision = computeEndAnchoredWalkForwardBoundaries(
+  ['2020-01-02', '2020-01-03', '2020-01-06'],
+  1,
+  { minimumTrainingSessions: 4, testSessions: 2, requiredFolds: 2 },
+)
+const preflight = Result.getOrThrow(decision)
+if (preflight.status !== 'FAIL') {
+  throw new Error('expected insufficient walk-forward geometry')
+}
+
+runCandidateDevelopmentCommandMain(
+  Effect.fail({
+    _tag: 'CandidateDevelopmentPreflightFailed',
+    preflight: {
+      ...preflight,
+      secret: 'must-not-render',
+      stack: '/workspace/private/preflight.ts:1:1',
+      timestamp: '2026-07-31T18:00:00.000Z',
+    },
+  }),
+)
+`
+
+    try {
+      await writeFile(scriptPath, script)
+      const result = await execFileResultPromise(process.execPath, [scriptPath], import.meta.dir)
+      const expected = `${JSON.stringify({
+        schemaVersion: 'bayn.candidate-development-command-failure.v1',
+        error: {
+          _tag: 'CandidateDevelopmentCommandError',
+          failure: {
+            _tag: 'CandidateDevelopmentPreflightFailed',
+            preflight: {
+              status: 'FAIL',
+              reason: 'INSUFFICIENT_WALK_FORWARD_OBSERVATIONS',
+              requiredObservations: 8,
+              availableObservations: 2,
+              availableFoldCount: 0,
+              requiredFoldCount: 2,
+              observationDeficit: 6,
+            },
+          },
+        },
+      })}\n`
+
+      expect(result.exitCode).toBe(1)
+      expect(result.stdout).toBe('')
+      expect(result.stderr).toBe(expected)
+      expect(result.stderr).not.toContain('must-not-render')
+      expect(result.stderr).not.toContain('/workspace/')
+      expect(result.stderr).not.toContain('2026-07-31')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('preserves known untagged binding mismatch details without arbitrary data', async () => {
+    const directory = await mkdtemp(join(import.meta.dir, '.candidate-development-cli-binding-mismatch-'))
+    const commandUrl = pathToFileURL(join(import.meta.dir, 'candidate-development-command.ts')).href
+    const cases = [
+      {
+        name: 'strategy-protocol-hash',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandProgramInvalid',
+          reason: 'strategy-protocol-hash-mismatch',
+          cause: {
+            expected: 'a'.repeat(64),
+            observed: 'b'.repeat(64),
+            secret: 'must-not-render',
+            stack: '/workspace/private/program.ts:1:1',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandProgramInvalid',
+          reason: 'strategy-protocol-hash-mismatch',
+          cause: {
+            expected: 'a'.repeat(64),
+            observed: 'b'.repeat(64),
+          },
+        },
+      },
+      {
+        name: 'verified-program-binding',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-program-binding',
+          cause: {
+            field: 'artifact.structuralBindings.strategyProtocolHash',
+            expected: 'c'.repeat(64),
+            observed: 'd'.repeat(64),
+            secret: 'must-not-render',
+            path: '/workspace/private/manifest.json',
+            timestamp: '2026-07-31T18:00:00.000Z',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-program-binding',
+          cause: {
+            field: 'artifact.structuralBindings.strategyProtocolHash',
+            expected: 'c'.repeat(64),
+            observed: 'd'.repeat(64),
+          },
+        },
+      },
+      {
+        name: 'source-path-binding',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-source-paths',
+          cause: {
+            field: 'modulePath',
+            expected: 'services/bayn/src/expected.ts',
+            observed: 'services/bayn/src/observed.ts',
+            secret: 'must-not-render',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-source-paths',
+          cause: {
+            field: 'modulePath',
+            expected: 'services/bayn/src/expected.ts',
+            observed: 'services/bayn/src/observed.ts',
+          },
+        },
+      },
+      {
+        name: 'preregistration-blob-binding',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-blob',
+          cause: {
+            field: 'marketData.snapshotId',
+            expected: 'e'.repeat(64),
+            observed: 'f'.repeat(64),
+            secret: 'must-not-render',
+            path: '/workspace/private/preregistration.json',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-blob',
+          cause: {
+            field: 'marketData.snapshotId',
+            expected: 'e'.repeat(64),
+            observed: 'f'.repeat(64),
+          },
+        },
+      },
+      {
+        name: 'malformed-preregistration-binding',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-blob',
+          cause: {
+            expected: 'lowercase Git revision/blob OID and repository-relative preregistration path',
+            observed: {
+              sourceRevision: 'not-a-revision',
+              blobOid: 'e'.repeat(40),
+              path: '../../../home/alice/private-preregistration.json',
+              secret: 'must-not-render',
+            },
+            secret: 'must-not-render',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-blob',
+          cause: {
+            expected: 'lowercase Git revision/blob OID and repository-relative preregistration path',
+            observed: {
+              sourceRevision: {
+                _tag: 'CandidateDevelopmentCommandFailureDetailRejected',
+                reason: 'unsupported-value',
+              },
+              blobOid: 'e'.repeat(40),
+              path: {
+                _tag: 'CandidateDevelopmentCommandFailureDetailRejected',
+                reason: 'unsupported-value',
+              },
+            },
+          },
+        },
+      },
+      {
+        name: 'preregistration-blob-oid-mismatch',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-blob',
+          cause: {
+            revision: 'a'.repeat(40),
+            path: 'candidate/preregistration.json',
+            expected: 'b'.repeat(40),
+            observed: 'c'.repeat(40),
+            secret: 'must-not-render',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-blob',
+          cause: {
+            expected: 'b'.repeat(40),
+            observed: 'c'.repeat(40),
+          },
+        },
+      },
+      {
+        name: 'post-import-binding',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-post-import',
+          cause: {
+            expected: '1'.repeat(64),
+            observed: '2'.repeat(64),
+            secret: 'must-not-render',
+            stack: '/workspace/private/post-import.ts:1:1',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-post-import',
+          cause: {
+            expected: '1'.repeat(64),
+            observed: '2'.repeat(64),
+          },
+        },
+      },
+      {
+        name: 'artifact-preflight-failure',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-program-binding',
+          cause: {
+            field: 'artifact.preflight',
+            expected: 'PASS',
+            observed: {
+              _tag: 'CandidateDevelopmentGeometryIntegerInvalid',
+              field: 'testSessions',
+              value: 1.5,
+              secret: 'must-not-render',
+            },
+            token: 'must-not-render',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-program-binding',
+          cause: {
+            field: 'artifact.preflight',
+            expected: 'PASS',
+            observed: {
+              _tag: 'CandidateDevelopmentGeometryIntegerInvalid',
+              field: 'testSessions',
+              value: 1.5,
+            },
+          },
+        },
+      },
+      {
+        name: 'artifact-preflight-decision',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-program-binding',
+          cause: {
+            field: 'artifact.preflight',
+            expected: 'PASS',
+            observed: {
+              status: 'FAIL',
+              reason: 'INSUFFICIENT_WALK_FORWARD_OBSERVATIONS',
+              requiredObservations: 8,
+              availableObservations: 2,
+              availableFoldCount: 0,
+              requiredFoldCount: 2,
+              observationDeficit: 6,
+              secret: 'must-not-render',
+            },
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-program-binding',
+          cause: {
+            field: 'artifact.preflight',
+            expected: 'PASS',
+            observed: {
+              status: 'FAIL',
+              reason: 'INSUFFICIENT_WALK_FORWARD_OBSERVATIONS',
+              requiredObservations: 8,
+              availableObservations: 2,
+              availableFoldCount: 0,
+              requiredFoldCount: 2,
+              observationDeficit: 6,
+            },
+          },
+        },
+      },
+      {
+        name: 'repository-shallow-state',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-repository-integrity',
+          cause: {
+            field: 'shallowRepository',
+            expected: 'false',
+            observed: 'true',
+            secret: 'must-not-render',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-repository-integrity',
+          cause: {
+            field: 'shallowRepository',
+            expected: 'false',
+            observed: 'true',
+          },
+        },
+      },
+      {
+        name: 'repository-replace-refs',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-repository-integrity',
+          cause: {
+            field: 'replaceRefs',
+            expected: [],
+            observed: [`refs/replace/${'a'.repeat(40)}`],
+            secret: 'must-not-render',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-repository-integrity',
+          cause: {
+            field: 'replaceRefs',
+            expected: [],
+            observed: [`refs/replace/${'a'.repeat(40)}`],
+          },
+        },
+      },
+      {
+        name: 'repository-replacement-config',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-repository-integrity',
+          cause: {
+            field: 'replacementConfig',
+            expected: [],
+            observed: [`replace.${'b'.repeat(40)}.name`],
+            secret: 'must-not-render',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-repository-integrity',
+          cause: {
+            field: 'replacementConfig',
+            expected: [],
+            observed: [`replace.${'b'.repeat(40)}.name`],
+          },
+        },
+      },
+      {
+        name: 'repository-alternate-path-redaction',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-repository-integrity',
+          cause: {
+            field: 'alternates',
+            expected: [],
+            observed: ['/home/alice/private-repo/objects', '../../../home/alice/private-repo/objects'],
+            secret: 'must-not-render',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-repository-integrity',
+          cause: {
+            field: 'alternates',
+            expected: [],
+            observed: [
+              {
+                _tag: 'CandidateDevelopmentCommandFailureDetailRejected',
+                reason: 'unsupported-value',
+              },
+              {
+                _tag: 'CandidateDevelopmentCommandFailureDetailRejected',
+                reason: 'unsupported-value',
+              },
+            ],
+          },
+        },
+      },
+      {
+        name: 'immutable-history-commit-limit',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-lineage',
+          cause: {
+            field: 'immutableHistoryCommitCount',
+            expected: '<50000',
+            observed: 50000,
+            secret: 'must-not-render',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-lineage',
+          cause: {
+            field: 'immutableHistoryCommitCount',
+            expected: '<50000',
+            observed: 50000,
+          },
+        },
+      },
+      {
+        name: 'preregistration-lineage-unreachable',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-lineage',
+          cause: {
+            expected: `${'a'.repeat(40)} to be a proper ancestor of ${'b'.repeat(40)}`,
+            observed: 'not reachable through raw commit parents',
+            secret: 'must-not-render',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-lineage',
+          cause: {
+            expected: `${'a'.repeat(40)} to be a proper ancestor of ${'b'.repeat(40)}`,
+            observed: 'not reachable through raw commit parents',
+          },
+        },
+      },
+      {
+        name: 'preregistration-lineage-same-revision',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-lineage',
+          cause: {
+            expected: 'proper ancestor of evaluated source revision',
+            observed: 'a'.repeat(40),
+            secret: 'must-not-render',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-lineage',
+          cause: {
+            expected: 'proper ancestor of evaluated source revision',
+            observed: 'a'.repeat(40),
+          },
+        },
+      },
+      {
+        name: 'immutable-history-tree-limit',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-module-novelty',
+          cause: {
+            field: 'immutableHistoryTreeCount',
+            expected: '<500000',
+            observed: 500000,
+            secret: 'must-not-render',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-module-novelty',
+          cause: {
+            field: 'immutableHistoryTreeCount',
+            expected: '<500000',
+            observed: 500000,
+          },
+        },
+      },
+      {
+        name: 'module-novelty-provenance',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-module-novelty',
+          cause: {
+            preregistrationRevision: 'a'.repeat(40),
+            modulePath: 'candidate/program.mjs',
+            expected: 'evaluated module blob created after preregistration',
+            observed: 'b'.repeat(40),
+            history: ['c'.repeat(40)],
+            secret: 'must-not-render',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-module-novelty',
+          cause: {
+            preregistrationRevision: 'a'.repeat(40),
+            modulePath: 'candidate/program.mjs',
+            expected: 'evaluated module blob created after preregistration',
+            observed: 'b'.repeat(40),
+            history: ['c'.repeat(40)],
+          },
+        },
+      },
+      {
+        name: 'immutable-commit-diagnostic',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-lineage',
+          cause: {
+            field: 'immutableCommit',
+            commitOid: 'a'.repeat(40),
+            expected: 'raw commit with lowercase 40-character tree and parent OIDs',
+            observed: {
+              treeOid: 'malformed-tree-oid',
+              parentOids: ['b'.repeat(40), 'private-parent-value'],
+              secret: 'must-not-render',
+            },
+            secret: 'must-not-render',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-lineage',
+          cause: {
+            field: 'immutableCommit',
+            commitOid: 'a'.repeat(40),
+            expected: 'raw commit with lowercase 40-character tree and parent OIDs',
+            observed: {
+              treeOid: {
+                _tag: 'CandidateDevelopmentCommandFailureDetailRejected',
+                reason: 'unsupported-value',
+              },
+              parentOids: [
+                'b'.repeat(40),
+                {
+                  _tag: 'CandidateDevelopmentCommandFailureDetailRejected',
+                  reason: 'unsupported-value',
+                },
+              ],
+            },
+          },
+        },
+      },
+      {
+        name: 'immutable-tree-entry-diagnostic',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-module-novelty',
+          cause: {
+            field: 'immutableTreeEntry',
+            treeOid: 'c'.repeat(40),
+            offset: 128,
+            expected: 'raw Git tree entry with mode, name, NUL, and 20-byte object ID',
+            secret: 'must-not-render',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-module-novelty',
+          cause: {
+            field: 'immutableTreeEntry',
+            treeOid: 'c'.repeat(40),
+            offset: 128,
+            expected: 'raw Git tree entry with mode, name, NUL, and 20-byte object ID',
+          },
+        },
+      },
+      {
+        name: 'immutable-tree-object-oid-diagnostic',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-module-novelty',
+          cause: {
+            field: 'immutableTreeObjectOid',
+            treeOid: 'd'.repeat(40),
+            offset: 256,
+            observed: 'private-object-value',
+            secret: 'must-not-render',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-module-novelty',
+          cause: {
+            field: 'immutableTreeObjectOid',
+            treeOid: 'd'.repeat(40),
+            offset: 256,
+            observed: {
+              _tag: 'CandidateDevelopmentCommandFailureDetailRejected',
+              reason: 'unsupported-value',
+            },
+          },
+        },
+      },
+      {
+        name: 'module-format-rejection',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-module-format',
+          cause: {
+            modulePath: 'services/bayn/src/candidate.mjs',
+            imports: [
+              { kind: 'import-statement', path: 'node:fs' },
+              { kind: 'dynamic-import', path: './helper.mjs', secret: 'must-not-render' },
+            ],
+            identifiers: ['process', 'template-literal'],
+            secret: 'must-not-render',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-module-format',
+          cause: {
+            modulePath: 'services/bayn/src/candidate.mjs',
+            imports: [
+              { kind: 'import-statement', path: 'node:fs' },
+              { kind: 'dynamic-import', path: './helper.mjs' },
+            ],
+            identifiers: ['process', 'template-literal'],
+          },
+        },
+      },
+      {
+        name: 'trial-history-terminal-evidence',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-program-binding',
+          cause: {
+            field: 'trialHistory.latestTerminalEvidence',
+            expected: { candidateOrdinal: 6, priorTrialCount: 5 },
+            observed: {
+              candidateOrdinal: 7,
+              priorTrialCount: 5,
+              qualificationAttemptConsumed: true,
+              status: 'DEVELOPMENT_REJECTED',
+              secret: 'must-not-render',
+            },
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-program-binding',
+          cause: {
+            field: 'trialHistory.latestTerminalEvidence',
+            expected: { candidateOrdinal: 6, priorTrialCount: 5 },
+            observed: {
+              candidateOrdinal: 7,
+              priorTrialCount: 5,
+              qualificationAttemptConsumed: true,
+            },
+          },
+        },
+      },
+      {
+        name: 'missing-next-preregistration-terminal-evidence',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-program-binding',
+          cause: {
+            field: 'trialHistory.nextCandidatePreregistration',
+            expected: 'a separately reviewed preregistration after the latest terminal development attempt',
+            observed: null,
+            latestTerminalEvidence: {
+              candidateOrdinal: 18,
+              priorTrialCount: 17,
+              qualificationAttemptConsumed: false,
+              status: 'DEVELOPMENT_REJECTED',
+              secret: 'must-not-render',
+            },
+            secret: 'must-not-render',
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-program-binding',
+          cause: {
+            field: 'trialHistory.nextCandidatePreregistration',
+            expected: 'a separately reviewed preregistration after the latest terminal development attempt',
+            observed: null,
+            latestTerminalEvidence: {
+              candidateOrdinal: 18,
+              priorTrialCount: 17,
+              qualificationAttemptConsumed: false,
+            },
+          },
+        },
+      },
+      {
+        name: 'trial-history-development-evidence',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-program-binding',
+          cause: {
+            field: 'trialHistory.latestDevelopmentEvidence',
+            expected: { candidateOrdinal: 7, priorTrialCount: 6, qualificationAttemptConsumed: false },
+            observed: {
+              candidateOrdinal: 8,
+              priorTrialCount: 7,
+              qualificationAttemptConsumed: true,
+              status: 'DEVELOPMENT_REJECTED',
+              secret: 'must-not-render',
+            },
+          },
+        },
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-program-binding',
+          cause: {
+            field: 'trialHistory.latestDevelopmentEvidence',
+            expected: { candidateOrdinal: 7, priorTrialCount: 6, qualificationAttemptConsumed: false },
+            observed: { candidateOrdinal: 8, priorTrialCount: 7, qualificationAttemptConsumed: true },
+          },
+        },
+      },
+    ] as const
+
+    try {
+      for (const testCase of cases) {
+        const scriptPath = join(directory, `${testCase.name}.ts`)
+        const script = `
+import { Effect } from 'effect'
+import { runCandidateDevelopmentCommandMain } from ${JSON.stringify(commandUrl)}
+
+runCandidateDevelopmentCommandMain(Effect.fail(${JSON.stringify(testCase.failure)}))
+`
+        await writeFile(scriptPath, script)
+        const result = await execFileResultPromise(process.execPath, [scriptPath], import.meta.dir)
+        const expected = `${JSON.stringify({
+          schemaVersion: 'bayn.candidate-development-command-failure.v1',
+          error: {
+            _tag: 'CandidateDevelopmentCommandError',
+            failure: testCase.expectedFailure,
+          },
+        })}\n`
+
+        expect(result.exitCode).toBe(1)
+        expect(result.stdout).toBe('')
+        expect(result.stderr).toBe(expected)
+        expect(result.stderr).not.toContain('must-not-render')
+        expect(result.stderr).not.toContain('/workspace/')
+        expect(result.stderr).not.toContain('2026-07-31')
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 30_000)
+
+  test('preserves bounded schema issue paths and children without raw inputs', async () => {
+    const directory = await mkdtemp(join(import.meta.dir, '.candidate-development-cli-schema-errors-'))
+    const commandUrl = pathToFileURL(join(import.meta.dir, 'candidate-development-command.ts')).href
+    const cases = [
+      {
+        name: 'invalid-source-manifest',
+        imports: 'Effect, Result, Schema',
+        body: `
+const SourceManifest = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.candidate-development-source-manifest.v1'),
+  modulePath: Schema.String,
+  marketData: Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.candidate-development-market-data-source.v1'),
+    snapshotId: Schema.String,
+  }),
+})
+const decoded = Schema.decodeUnknownResult(SourceManifest, { errors: 'all', onExcessProperty: 'error' })({
+  schemaVersion: 'wrong-version-must-not-render',
+  modulePath: 'private/module-path-must-not-render.mjs',
+  marketData: {
+    schemaVersion: 'bayn.candidate-development-market-data-source.v1',
+    snapshotId: 99,
+  },
+})
+if (Result.isSuccess(decoded)) throw new Error('expected schema failure')
+runCandidateDevelopmentCommandMain(Effect.fail({
+  _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+  operation: 'decode-source-manifest',
+  cause: decoded.failure,
+}))
+`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'decode-source-manifest',
+          cause: {
+            _tag: 'SchemaError',
+            issue: {
+              _tag: 'Composite',
+              issues: [
+                {
+                  _tag: 'Pointer',
+                  path: ['schemaVersion'],
+                  issue: {
+                    _tag: 'InvalidType',
+                    expected: {
+                      _tag: 'Literal',
+                      literal: 'bayn.candidate-development-source-manifest.v1',
+                    },
+                  },
+                },
+                {
+                  _tag: 'Pointer',
+                  path: ['marketData'],
+                  issue: {
+                    _tag: 'Composite',
+                    issues: [
+                      {
+                        _tag: 'Pointer',
+                        path: ['snapshotId'],
+                        issue: { _tag: 'InvalidType', expected: { _tag: 'String' } },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+      {
+        name: 'nested-composite',
+        imports: 'Effect, Result, Schema',
+        body: `
+const Nested = Schema.Struct({
+  payload: Schema.Struct({ name: Schema.String, count: Schema.Number }),
+})
+const decoded = Schema.decodeUnknownResult(Nested, { errors: 'all', onExcessProperty: 'error' })({
+  payload: { name: 7, count: 'must-not-render' },
+})
+if (Result.isSuccess(decoded)) throw new Error('expected schema failure')
+runCandidateDevelopmentCommandMain(Effect.fail({
+  _tag: 'CandidateDevelopmentCommandProgramInvalid',
+  reason: 'input-invalid',
+  cause: decoded.failure,
+}))
+`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandProgramInvalid',
+          reason: 'input-invalid',
+          cause: {
+            _tag: 'SchemaError',
+            issue: {
+              _tag: 'Composite',
+              issues: [
+                {
+                  _tag: 'Pointer',
+                  path: ['payload'],
+                  issue: {
+                    _tag: 'Composite',
+                    issues: [
+                      {
+                        _tag: 'Pointer',
+                        path: ['name'],
+                        issue: { _tag: 'InvalidType', expected: { _tag: 'String' } },
+                      },
+                      {
+                        _tag: 'Pointer',
+                        path: ['count'],
+                        issue: { _tag: 'InvalidType', expected: { _tag: 'Number' } },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+      {
+        name: 'hostile-pointer-metadata',
+        imports: 'Effect, Option, SchemaError, SchemaIssue',
+        body: `
+const cause = new SchemaError.SchemaError(
+  new SchemaIssue.Pointer(
+    ['/workspace/private', 'GITHUB_TOKEN'],
+    new SchemaIssue.InvalidValue(Option.some('credential-value'), { message: 'must-not-render' }),
+  ),
+)
+runCandidateDevelopmentCommandMain(Effect.fail({
+  _tag: 'CandidateDevelopmentCommandProgramInvalid',
+  reason: 'input-invalid',
+  cause,
+}))
+`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandProgramInvalid',
+          reason: 'input-invalid',
+          cause: {
+            _tag: 'SchemaError',
+            issue: {
+              _tag: 'Pointer',
+              path: [
+                { _tag: 'CandidateDevelopmentCommandFailureDetailRejected', reason: 'unsupported-value' },
+                { _tag: 'CandidateDevelopmentCommandFailureDetailRejected', reason: 'unsupported-value' },
+              ],
+              issue: { _tag: 'InvalidValue' },
+            },
+          },
+        },
+      },
+      {
+        name: 'unbranded-schema-lookalike',
+        imports: 'Effect',
+        body: `
+runCandidateDevelopmentCommandMain(Effect.fail({
+  _tag: 'CandidateDevelopmentCommandProgramInvalid',
+  reason: 'input-invalid',
+  cause: {
+    _tag: 'SchemaError',
+    issue: { _tag: 'Pointer', path: ['private'], issue: { _tag: 'InvalidType' } },
+    secret: 'must-not-render',
+  },
+}))
+`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandProgramInvalid',
+          reason: 'input-invalid',
+          cause: { _tag: 'CandidateDevelopmentCommandFailureDetailRejected', reason: 'invalid-tag' },
+        },
+      },
+    ] as const
+
+    try {
+      for (const testCase of cases) {
+        const scriptPath = join(directory, `${testCase.name}.ts`)
+        await writeFile(
+          scriptPath,
+          `
+import { ${testCase.imports} } from 'effect'
+import { runCandidateDevelopmentCommandMain } from ${JSON.stringify(commandUrl)}
+${testCase.body}
+`,
+        )
+        const result = await execFileResultPromise(process.execPath, [scriptPath], import.meta.dir)
+        const expected = `${JSON.stringify({
+          schemaVersion: 'bayn.candidate-development-command-failure.v1',
+          error: {
+            _tag: 'CandidateDevelopmentCommandError',
+            failure: testCase.expectedFailure,
+          },
+        })}\n`
+
+        expect(result.exitCode).toBe(1)
+        expect(result.stdout).toBe('')
+        expect(result.stderr).toBe(expected)
+        expect(result.stderr).not.toContain('must-not-render')
+        expect(result.stderr).not.toContain('credential-value')
+        expect(result.stderr).not.toContain('/workspace/private')
+        expect(result.stderr).not.toContain('GITHUB_TOKEN')
+        expect(result.stderr).not.toContain('private/module-path')
+        expect(result.stderr).not.toContain('wrong-version')
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 30_000)
+
+  test('preserves declared tagged domain failure payloads without arbitrary data', async () => {
+    const directory = await mkdtemp(join(import.meta.dir, '.candidate-development-cli-domain-failures-'))
+    const commandUrl = pathToFileURL(join(import.meta.dir, 'candidate-development-command.ts')).href
+    const cases = [
+      {
+        name: 'geometry-integer-invalid',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentPreflightInvalid',
+          cause: {
+            _tag: 'CandidateDevelopmentGeometryIntegerInvalid',
+            field: 'testSessions',
+            value: Number.NaN,
+            secret: 'must-not-render',
+          },
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentPreflightInvalid',
+          cause: {
+            _tag: 'CandidateDevelopmentGeometryIntegerInvalid',
+            field: 'testSessions',
+            value: 'NaN',
+          },
+        },
+      },
+      {
+        name: 'calendar-mismatch',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentPreflightInvalid',
+          cause: {
+            _tag: 'CandidateDevelopmentCalendarMismatch',
+            field: 'sessionCount',
+            expected: 1762,
+            observed: 1761,
+            token: 'must-not-render',
+          },
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentPreflightInvalid',
+          cause: {
+            _tag: 'CandidateDevelopmentCalendarMismatch',
+            field: 'sessionCount',
+            expected: 1762,
+            observed: 1761,
+          },
+        },
+      },
+      {
+        name: 'doubled-cost-protocol-deviation',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentDoubledCostInvalid',
+          cause: {
+            _tag: 'CandidateDevelopmentDoubledCostProtocolDeviation',
+            disposition: 'INVALID_PROTOCOL_DEVIATION',
+            reason: 'SIGNAL_DECISIONS_CHANGED',
+            baselineHash: '${'a'.repeat(64)}',
+            stressedHash: '${'b'.repeat(64)}',
+            path: '/workspace/private/stressed.json',
+          },
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentDoubledCostInvalid',
+          cause: {
+            _tag: 'CandidateDevelopmentDoubledCostProtocolDeviation',
+            reason: 'SIGNAL_DECISIONS_CHANGED',
+            disposition: 'INVALID_PROTOCOL_DEVIATION',
+            baselineHash: 'a'.repeat(64),
+            stressedHash: 'b'.repeat(64),
+          },
+        },
+      },
+      {
+        name: 'comparison-signal-execution-mismatch',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentComparisonSemanticsInvalid',
+          cause: {
+            _tag: 'CandidateDevelopmentComparisonSignalExecutionMismatch',
+            index: 3,
+            expected: { signalDate: '2020-01-30', executionDate: '2020-01-31' },
+            observed: { signalDate: '2020-01-30', executionDate: '2020-02-03' },
+            expectedCount: 4,
+            observedCount: 4,
+            timestamp: '2026-07-31T18:00:00.000Z',
+          },
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentComparisonSemanticsInvalid',
+          cause: {
+            _tag: 'CandidateDevelopmentComparisonSignalExecutionMismatch',
+            index: 3,
+            expected: { signalDate: '2020-01-30', executionDate: '2020-01-31' },
+            observed: { signalDate: '2020-01-30', executionDate: '2020-02-03' },
+            expectedCount: 4,
+            observedCount: 4,
+          },
+        },
+      },
+    ] as const
+
+    try {
+      for (const testCase of cases) {
+        const scriptPath = join(directory, `${testCase.name}.ts`)
+        const script = `
+import { Effect } from 'effect'
+import { runCandidateDevelopmentCommandMain } from ${JSON.stringify(commandUrl)}
+
+runCandidateDevelopmentCommandMain(Effect.fail(${testCase.failureExpression}))
+`
+        await writeFile(scriptPath, script)
+        const result = await execFileResultPromise(process.execPath, [scriptPath], import.meta.dir)
+        const expected = `${JSON.stringify({
+          schemaVersion: 'bayn.candidate-development-command-failure.v1',
+          error: {
+            _tag: 'CandidateDevelopmentCommandError',
+            failure: testCase.expectedFailure,
+          },
+        })}\n`
+
+        expect(result.exitCode).toBe(1)
+        expect(result.stdout).toBe('')
+        expect(result.stderr).toBe(expected)
+        expect(result.stderr).not.toContain('must-not-render')
+        expect(result.stderr).not.toContain('/workspace/')
+        expect(result.stderr).not.toContain('2026-07-31')
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('preserves command validation payloads and canonical failure paths without arbitrary data', async () => {
+    const directory = await mkdtemp(join(import.meta.dir, '.candidate-development-cli-command-validation-'))
+    const commandUrl = pathToFileURL(join(import.meta.dir, 'candidate-development-command.ts')).href
+    const cases = [
+      {
+        name: 'performance-mismatch',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandPerformanceEvidenceInvalid',
+          series: 'strategy',
+          reason: 'return-mismatch',
+          index: 2,
+          field: 'netReturn',
+          expected: 0.125,
+          observed: 0.25,
+          secret: 'must-not-render',
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandPerformanceEvidenceInvalid',
+          reason: 'return-mismatch',
+          series: 'strategy',
+          field: 'netReturn',
+          index: 2,
+          expected: 0.125,
+          observed: 0.25,
+        },
+      },
+      {
+        name: 'performance-signed-zero-mismatch',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandPerformanceEvidenceInvalid',
+          series: 'strategy',
+          reason: 'metrics-mismatch',
+          index: null,
+          field: 'annualizedReturn',
+          expected: 0,
+          observed: -0,
+          secret: 'must-not-render',
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandPerformanceEvidenceInvalid',
+          reason: 'metrics-mismatch',
+          series: 'strategy',
+          field: 'annualizedReturn',
+          index: null,
+          expected: 0,
+          observed: '-0',
+        },
+      },
+      {
+        name: 'performance-calculation-operand',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandPerformanceEvidenceInvalid',
+          series: 'strategy',
+          reason: 'metrics-failed',
+          index: 3,
+          field: 'equityMicros',
+          expected: null,
+          observed: null,
+          cause: {
+            _tag: 'InvalidPerformanceInput',
+            reason: 'invalid-equity',
+            index: 3,
+            value: Number.POSITIVE_INFINITY,
+            secret: 'must-not-render',
+          },
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandPerformanceEvidenceInvalid',
+          reason: 'metrics-failed',
+          series: 'strategy',
+          field: 'equityMicros',
+          index: 3,
+          expected: null,
+          observed: null,
+          cause: {
+            _tag: 'InvalidPerformanceInput',
+            reason: 'invalid-equity',
+            index: 3,
+            value: 'Infinity',
+          },
+        },
+      },
+      {
+        name: 'simulation-unexpected-bar-symbol',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'reconstruction-failed',
+          index: null,
+          field: 'marketData.bars',
+          expected: 'governed universe',
+          observed: null,
+          cause: {
+            _tag: 'UnexpectedBarSymbol',
+            symbol: 'QQQ',
+            universe: ['IEF', 'SPY'],
+            secret: 'must-not-render',
+          },
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'reconstruction-failed',
+          field: 'marketData.bars',
+          index: null,
+          expected: 'governed universe',
+          observed: null,
+          cause: {
+            _tag: 'UnexpectedBarSymbol',
+            symbol: 'QQQ',
+            universe: ['IEF', 'SPY'],
+          },
+        },
+      },
+      {
+        name: 'simulation-incomplete-session',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'reconstruction-failed',
+          index: 7,
+          field: 'marketData.sessions',
+          expected: 'complete governed session',
+          observed: null,
+          cause: {
+            _tag: 'IncompleteSession',
+            sessionDate: '2020-01-31',
+            expectedSymbols: ['IEF', 'SPY'],
+            observedSymbols: ['SPY'],
+            secret: 'must-not-render',
+          },
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'reconstruction-failed',
+          field: 'marketData.sessions',
+          index: 7,
+          expected: 'complete governed session',
+          observed: null,
+          cause: {
+            _tag: 'IncompleteSession',
+            sessionDate: '2020-01-31',
+            expectedSymbols: ['IEF', 'SPY'],
+            observedSymbols: ['SPY'],
+          },
+        },
+      },
+      {
+        name: 'marked-equity-mismatch',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'binding-mismatch',
+          index: 4,
+          field: 'baseline.dailyMarks.priceMicros',
+          expected: 'governed mark session',
+          observed: '2020-01-31',
+          token: 'must-not-render',
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'binding-mismatch',
+          field: 'baseline.dailyMarks.priceMicros',
+          index: 4,
+          expected: 'governed mark session',
+          observed: '2020-01-31',
+        },
+      },
+      {
+        name: 'cash-yield-order-mismatch',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'binding-mismatch',
+          index: 5,
+          field: 'baseline.cashYield.order',
+          expected: 'before every same-session fill and fee',
+          observed: { index: 2, kind: 'fee', secret: 'must-not-render' },
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'binding-mismatch',
+          field: 'baseline.cashYield.order',
+          index: 5,
+          expected: 'before every same-session fill and fee',
+          observed: { index: 2, kind: 'fee' },
+        },
+      },
+      {
+        name: 'marked-equity-indexed-mismatch',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'selected-trace-mismatch',
+          index: null,
+          field: 'baselineSimulation.dailyMarks[3]',
+          expected: '${'a'.repeat(64)}',
+          observed: '${'b'.repeat(64)}',
+          token: 'must-not-render',
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'selected-trace-mismatch',
+          field: 'baselineSimulation.dailyMarks[3]',
+          index: null,
+          expected: 'a'.repeat(64),
+          observed: 'b'.repeat(64),
+        },
+      },
+      {
+        name: 'marked-equity-symbol-mismatch',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'binding-mismatch',
+          index: null,
+          field: 'benchmarks.symbol',
+          expected: ['IEF', 'SPY'],
+          observed: 'QQQ',
+          secret: 'must-not-render',
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'binding-mismatch',
+          field: 'benchmarks.symbol',
+          index: null,
+          expected: ['IEF', 'SPY'],
+          observed: 'QQQ',
+        },
+      },
+      {
+        name: 'marked-equity-terminal-target-weights',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'binding-mismatch',
+          index: 7,
+          field: 'benchmarks.terminalDecision',
+          expected: 'all-cash target weights',
+          observed: { SPY: 0.5 },
+          secret: 'must-not-render',
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'binding-mismatch',
+          field: 'benchmarks.terminalDecision',
+          index: 7,
+          expected: 'all-cash target weights',
+          observed: { SPY: 0.5 },
+        },
+      },
+      {
+        name: 'marked-equity-order-mismatch',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'binding-mismatch',
+          index: 3,
+          field: 'marketData.bars.order',
+          expected: 'strict session-date/symbol order',
+          observed: {
+            previous: { sessionDate: '2020-01-31', symbol: 'SPY' },
+            current: { sessionDate: '2020-01-30', symbol: 'IEF' },
+          },
+          secret: 'must-not-render',
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'binding-mismatch',
+          field: 'marketData.bars.order',
+          index: 3,
+          expected: 'strict session-date/symbol order',
+          observed: {
+            current: { sessionDate: '2020-01-30', symbol: 'IEF' },
+            previous: { sessionDate: '2020-01-31', symbol: 'SPY' },
+          },
+        },
+      },
+      {
+        name: 'marked-equity-position-mismatch',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'selected-trace-mismatch',
+          index: 0,
+          field: 'baseline.predecessor.positions',
+          expected: 'all-zero positions',
+          observed: {
+            symbol: 'SPY',
+            quantityMicros: '0',
+            costBasisMicros: '1000000',
+            priceMicros: '500000000',
+            marketValueMicros: '0',
+            secret: 'must-not-render',
+          },
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'selected-trace-mismatch',
+          field: 'baseline.predecessor.positions',
+          index: 0,
+          expected: 'all-zero positions',
+          observed: {
+            costBasisMicros: '1000000',
+            marketValueMicros: '0',
+            priceMicros: '500000000',
+            quantityMicros: '0',
+            symbol: 'SPY',
+          },
+        },
+      },
+      {
+        name: 'marked-equity-reconciliation-problem',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'reconstruction-failed',
+          index: null,
+          field: 'accounting',
+          expected: 'reconciled marked equity',
+          observed: null,
+          cause: [{
+            _tag: 'EvidenceMismatch',
+            problem: {
+              _tag: 'FillTerms',
+              fillId: '${'c'.repeat(64)}',
+              field: 'notionalMicros',
+              actualMicros: '1000001',
+              expectedMicros: '1000000',
+              secret: 'must-not-render',
+            },
+          }, {
+            _tag: 'InvalidInteger',
+            expected: 'unsigned-integer',
+            evidence: {
+              kind: 'order',
+              orderId: '${'d'.repeat(64)}',
+              field: 'requestedQuantityMicros',
+              value: 'not-integer',
+              secret: 'must-not-render',
+            },
+          }, {
+            _tag: 'InvalidIdentity',
+            evidence: {
+              kind: 'decision',
+              id: '${'e'.repeat(64)}',
+              signalDate: '2020-01-31',
+              secret: 'must-not-render',
+            },
+            problem: {
+              _tag: 'HashMismatch',
+              expected: '${'f'.repeat(64)}',
+              secret: 'must-not-render',
+            },
+          }, {
+            _tag: 'ComputationFailed',
+            computation: {
+              _tag: 'FillTerms',
+              fillId: '${'1'.repeat(64)}',
+              side: 'buy',
+              quantityMicros: '1000000',
+              referencePriceMicros: '500000000',
+              costMultiplierMicros: '2000000',
+              secret: 'must-not-render',
+            },
+            cause: {
+              _tag: 'InvalidFillTerms',
+              side: 'buy',
+              quantityMicros: 1000000n,
+              referencePriceMicros: 500000000n,
+              costMultiplierMicros: 2000000n,
+              reason: 'costs-consume-reference-price',
+              secret: 'must-not-render',
+            },
+          }, {
+            _tag: 'ComputationFailed',
+            computation: {
+              _tag: 'CashYield',
+              cashYieldId: '${'2'.repeat(64)}',
+              cashMicros: '1000000',
+              elapsedDays: 1,
+              annualYieldBps: 500,
+              secret: 'must-not-render',
+            },
+            cause: {
+              _tag: 'InvalidCashAccrualPeriod',
+              from: '2020-02-01',
+              to: '2020-01-31',
+              secret: 'must-not-render',
+            },
+          }],
+          token: 'must-not-render',
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'reconstruction-failed',
+          field: 'accounting',
+          index: null,
+          expected: 'reconciled marked equity',
+          observed: null,
+          cause: [
+            {
+              _tag: 'EvidenceMismatch',
+              problem: {
+                _tag: 'FillTerms',
+                fillId: 'c'.repeat(64),
+                field: 'notionalMicros',
+                actualMicros: '1000001',
+                expectedMicros: '1000000',
+              },
+            },
+            {
+              _tag: 'InvalidInteger',
+              expected: 'unsigned-integer',
+              evidence: {
+                kind: 'order',
+                orderId: 'd'.repeat(64),
+                field: 'requestedQuantityMicros',
+                value: 'not-integer',
+              },
+            },
+            {
+              _tag: 'InvalidIdentity',
+              evidence: {
+                kind: 'decision',
+                id: 'e'.repeat(64),
+                signalDate: '2020-01-31',
+              },
+              problem: {
+                _tag: 'HashMismatch',
+                expected: 'f'.repeat(64),
+              },
+            },
+            {
+              _tag: 'ComputationFailed',
+              computation: {
+                _tag: 'FillTerms',
+                fillId: '1'.repeat(64),
+                side: 'buy',
+                quantityMicros: '1000000',
+                referencePriceMicros: '500000000',
+                costMultiplierMicros: '2000000',
+              },
+              cause: {
+                _tag: 'InvalidFillTerms',
+                side: 'buy',
+                quantityMicros: '1000000',
+                referencePriceMicros: '500000000',
+                costMultiplierMicros: '2000000',
+                reason: 'costs-consume-reference-price',
+              },
+            },
+            {
+              _tag: 'ComputationFailed',
+              computation: {
+                _tag: 'CashYield',
+                cashYieldId: '2'.repeat(64),
+                cashMicros: '1000000',
+                elapsedDays: 1,
+                annualYieldBps: 500,
+              },
+              cause: {
+                _tag: 'InvalidCashAccrualPeriod',
+                from: '2020-02-01',
+                to: '2020-01-31',
+              },
+            },
+          ],
+        },
+      },
+      {
+        name: 'marked-equity-reconciliation-prefix',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'reconstruction-failed',
+          index: null,
+          field: 'accounting',
+          expected: 'reconciled marked equity',
+          observed: null,
+          cause: Array.from({ length: 10 }, () => ({
+            _tag: 'IncompleteEvidence',
+            problem: {
+              _tag: 'EmptyDailyMarks',
+              secret: 'must-not-render',
+            },
+            secret: 'must-not-render',
+          })),
+          token: 'must-not-render',
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+          reason: 'reconstruction-failed',
+          field: 'accounting',
+          index: null,
+          expected: 'reconciled marked equity',
+          observed: null,
+          cause: {
+            items: Array.from({ length: 8 }, () => ({
+              _tag: 'IncompleteEvidence',
+              problem: { _tag: 'EmptyDailyMarks' },
+            })),
+            omittedCount: 2,
+          },
+        },
+      },
+      {
+        name: 'economic-gate-mismatch',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandEconomicGateInvalid',
+          index: 1,
+          expected: { name: 'annualized_return', passed: true, actual: '0.10', required: '>=0.05' },
+          observed: { name: 'annualized_return', passed: false, actual: '0.01', required: '>=0.05' },
+          timestamp: '2026-07-31T18:00:00.000Z',
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandEconomicGateInvalid',
+          index: 1,
+          expected: { actual: '0.10', name: 'annualized_return', passed: true, required: '>=0.05' },
+          observed: { actual: '0.01', name: 'annualized_return', passed: false, required: '>=0.05' },
+        },
+      },
+      {
+        name: 'canonical-json-path',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandHashFailed',
+          cause: {
+            _tag: 'CanonicalJsonFailure',
+            path: '$.report.metrics.sharpe',
+            reason: 'non-finite-number',
+            actualType: 'number',
+            secret: 'must-not-render',
+          },
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandHashFailed',
+          cause: {
+            _tag: 'CanonicalJsonFailure',
+            reason: 'non-finite-number',
+            actualType: 'number',
+            path: '$.report.metrics.sharpe',
+          },
+        },
+      },
+    ] as const
+
+    try {
+      for (const testCase of cases) {
+        const scriptPath = join(directory, `${testCase.name}.ts`)
+        const script = `
+import { Effect } from 'effect'
+import { runCandidateDevelopmentCommandMain } from ${JSON.stringify(commandUrl)}
+
+runCandidateDevelopmentCommandMain(Effect.fail(${testCase.failureExpression}))
+`
+        await writeFile(scriptPath, script)
+        const result = await execFileResultPromise(process.execPath, [scriptPath], import.meta.dir)
+        const expected = `${JSON.stringify({
+          schemaVersion: 'bayn.candidate-development-command-failure.v1',
+          error: {
+            _tag: 'CandidateDevelopmentCommandError',
+            failure: testCase.expectedFailure,
+          },
+        })}\n`
+
+        expect(result.exitCode).toBe(1)
+        expect(result.stdout).toBe('')
+        expect(result.stderr).toBe(expected)
+        expect(result.stderr).not.toContain('must-not-render')
+        expect(result.stderr).not.toContain('/workspace/')
+        expect(result.stderr).not.toContain('2026-07-31')
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('preserves module and nested qualification diagnostics without arbitrary data', async () => {
+    const directory = await mkdtemp(join(import.meta.dir, '.candidate-development-cli-nested-diagnostics-'))
+    const commandUrl = pathToFileURL(join(import.meta.dir, 'candidate-development-command.ts')).href
+    const cases = [
+      {
+        name: 'module-load-path',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
+          modulePath: 'services/bayn/src/strategy/example/candidate.ts',
+          cause: {
+            _tag: 'CandidateDevelopmentModuleDecodeFailed',
+            reason: 'invalid-shape',
+            secret: 'must-not-render',
+          },
+          path: '/workspace/private/candidate.ts',
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
+          modulePath: 'services/bayn/src/strategy/example/candidate.ts',
+          cause: {
+            _tag: 'CandidateDevelopmentModuleDecodeFailed',
+            reason: 'invalid-shape',
+          },
+        },
+      },
+      {
+        name: 'qualification-series-alignment',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentComparisonSemanticsInvalid',
+          cause: {
+            _tag: 'CandidateDevelopmentComparisonSeriesProjectionFailed',
+            cause: {
+              _tag: 'QualificationSeriesAlignmentFailed',
+              reason: 'missing-buy-and-hold-observation',
+              sessionDate: '2020-01-31',
+              strategyCount: 12,
+              buyAndHoldCount: 11,
+              directVolatilityCount: 12,
+              token: 'must-not-render',
+            },
+          },
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentComparisonSemanticsInvalid',
+          cause: {
+            _tag: 'CandidateDevelopmentComparisonSeriesProjectionFailed',
+            cause: {
+              _tag: 'QualificationSeriesAlignmentFailed',
+              reason: 'missing-buy-and-hold-observation',
+              sessionDate: '2020-01-31',
+              strategyCount: 12,
+              buyAndHoldCount: 11,
+              directVolatilityCount: 12,
+            },
+          },
+        },
+      },
+      {
+        name: 'qualification-lineage',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentComparisonSemanticsInvalid',
+          cause: {
+            _tag: 'CandidateDevelopmentComparisonAnalysisFailed',
+            cause: {
+              _tag: 'QualificationLineageInvalid',
+              priorTrialRunIds: [
+                '${'0'.repeat(64)}',
+                '${'1'.repeat(64)}',
+                '${'2'.repeat(64)}',
+                '${'3'.repeat(64)}',
+                '${'4'.repeat(64)}',
+                '${'5'.repeat(64)}',
+                '${'6'.repeat(64)}',
+                '${'7'.repeat(64)}',
+                '${'8'.repeat(64)}',
+                '${'9'.repeat(64)}',
+              ],
+              secret: 'must-not-render',
+            },
+          },
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentComparisonSemanticsInvalid',
+          cause: {
+            _tag: 'CandidateDevelopmentComparisonAnalysisFailed',
+            cause: {
+              _tag: 'QualificationLineageInvalid',
+              priorTrialRunIds: {
+                items: [
+                  '0'.repeat(64),
+                  '1'.repeat(64),
+                  '2'.repeat(64),
+                  '3'.repeat(64),
+                  '4'.repeat(64),
+                  '5'.repeat(64),
+                  '6'.repeat(64),
+                  '7'.repeat(64),
+                ],
+                omittedCount: 2,
+              },
+            },
+          },
+        },
+      },
+      {
+        name: 'qualification-walk-forward-boundary',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentComparisonSemanticsInvalid',
+          cause: {
+            _tag: 'CandidateDevelopmentComparisonAnalysisFailed',
+            cause: {
+              _tag: 'QualificationWalkForwardBoundaryMissing',
+              testStart: 10,
+              testSessions: 5,
+              observationCount: 12,
+              timestamp: '2026-07-31T18:00:00.000Z',
+            },
+          },
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentComparisonSemanticsInvalid',
+          cause: {
+            _tag: 'CandidateDevelopmentComparisonAnalysisFailed',
+            cause: {
+              _tag: 'QualificationWalkForwardBoundaryMissing',
+              testStart: 10,
+              testSessions: 5,
+              observationCount: 12,
+            },
+          },
+        },
+      },
+      {
+        name: 'qualification-date-order',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentComparisonSemanticsInvalid',
+          cause: {
+            _tag: 'CandidateDevelopmentComparisonSeriesProjectionFailed',
+            cause: {
+              _tag: 'QualificationDateOrderInvalid',
+              previous: '2020-02-03',
+              current: '2020-01-31',
+              secret: 'must-not-render',
+            },
+          },
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentComparisonSemanticsInvalid',
+          cause: {
+            _tag: 'CandidateDevelopmentComparisonSeriesProjectionFailed',
+            cause: {
+              _tag: 'QualificationDateOrderInvalid',
+              previous: '2020-02-03',
+              current: '2020-01-31',
+            },
+          },
+        },
+      },
+      {
+        name: 'qualification-statistic-not-finite',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentComparisonSemanticsInvalid',
+          cause: {
+            _tag: 'CandidateDevelopmentComparisonAnalysisFailed',
+            cause: {
+              _tag: 'QualificationStatisticNotFinite',
+              operation: 'power',
+              value: Number.NaN,
+              secret: 'must-not-render',
+            },
+          },
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentComparisonSemanticsInvalid',
+          cause: {
+            _tag: 'CandidateDevelopmentComparisonAnalysisFailed',
+            cause: {
+              _tag: 'QualificationStatisticNotFinite',
+              operation: 'power',
+              value: 'NaN',
+            },
+          },
+        },
+      },
+    ] as const
+
+    try {
+      for (const testCase of cases) {
+        const scriptPath = join(directory, `${testCase.name}.ts`)
+        const script = `
+import { Effect } from 'effect'
+import { runCandidateDevelopmentCommandMain } from ${JSON.stringify(commandUrl)}
+
+runCandidateDevelopmentCommandMain(Effect.fail(${testCase.failureExpression}))
+`
+        await writeFile(scriptPath, script)
+        const result = await execFileResultPromise(process.execPath, [scriptPath], import.meta.dir)
+        const expected = `${JSON.stringify({
+          schemaVersion: 'bayn.candidate-development-command-failure.v1',
+          error: {
+            _tag: 'CandidateDevelopmentCommandError',
+            failure: testCase.expectedFailure,
+          },
+        })}\n`
+
+        expect(result.exitCode).toBe(1)
+        expect(result.stdout).toBe('')
+        expect(result.stderr).toBe(expected)
+        expect(result.stderr).not.toContain('must-not-render')
+        expect(result.stderr).not.toContain('/workspace/')
+        expect(result.stderr).not.toContain('2026-07-31')
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('distinguishes operational errors without rendering raw operational metadata', async () => {
+    const directory = await mkdtemp(join(import.meta.dir, '.candidate-development-cli-operational-errors-'))
+    const nonRepository = await mkdtemp(join(tmpdir(), 'bayn-candidate-source-not-repository-'))
+    const commandUrl = pathToFileURL(join(import.meta.dir, 'candidate-development-command.ts')).href
+    const cases = [
+      {
+        name: 'artifact-schema-version',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
+          modulePath: 'services/bayn/src/candidate.mjs',
+          cause: new TypeError('candidate artifact schema version is invalid'),
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
+          modulePath: 'services/bayn/src/candidate.mjs',
+          cause: {
+            name: 'TypeError',
+            category: 'artifact-schema-version-invalid',
+          },
+        },
+      },
+      {
+        name: 'artifact-strategy-protocol-hash',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
+          modulePath: 'services/bayn/src/candidate.mjs',
+          cause: new TypeError('candidate artifact strategy protocol hash differs from preflight'),
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
+          modulePath: 'services/bayn/src/candidate.mjs',
+          cause: {
+            name: 'TypeError',
+            category: 'artifact-strategy-protocol-hash-mismatch',
+          },
+        },
+      },
+      {
+        name: 'worker-serialized-artifact-schema-version',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
+          modulePath: 'services/bayn/src/candidate.mjs',
+          cause: {
+            name: 'TypeError',
+            message: 'candidate artifact schema version is invalid',
+            stack: 'TypeError: candidate artifact schema version is invalid at /home/alice/private-worker.ts',
+          },
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
+          modulePath: 'services/bayn/src/candidate.mjs',
+          cause: {
+            name: 'TypeError',
+            category: 'artifact-schema-version-invalid',
+          },
+        },
+      },
+      {
+        name: 'worker-serialized-program-error',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandProgramExecutionFailed',
+          cause: {
+            name: 'RangeError',
+            message: 'private runtime detail must-not-render',
+            stack: 'RangeError: private runtime detail at /home/alice/private-worker.ts',
+          },
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandProgramExecutionFailed',
+          cause: {
+            name: 'RangeError',
+          },
+        },
+      },
+      {
+        name: 'module-format-parser-error',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-module-format',
+          cause: {
+            modulePath: 'services/bayn/src/candidate.mjs',
+            cause: new SyntaxError('Unexpected token near /home/alice/private-source.mjs'),
+          },
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-module-format',
+          cause: {
+            modulePath: 'services/bayn/src/candidate.mjs',
+            cause: {
+              name: 'SyntaxError',
+            },
+          },
+        },
+      },
+      {
+        name: 'git-batch-object-missing',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-lineage',
+          cause: new Error('candidate Git object is missing: ${'a'.repeat(40)}'),
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-lineage',
+          cause: {
+            name: 'Error',
+            category: 'git-object-missing',
+          },
+        },
+      },
+      {
+        name: 'git-batch-header-invalid',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-lineage',
+          cause: new Error('candidate Git batch header is invalid: private-header-must-not-render'),
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-lineage',
+          cause: {
+            name: 'Error',
+            category: 'git-batch-header-invalid',
+          },
+        },
+      },
+      {
+        name: 'git-batch-object-mismatch',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-lineage',
+          cause: new Error('candidate Git batch object mismatch: private-object-must-not-render'),
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-lineage',
+          cause: {
+            name: 'Error',
+            category: 'git-batch-object-mismatch',
+          },
+        },
+      },
+      {
+        name: 'git-batch-exit',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-lineage',
+          cause: new Error('candidate Git batch exited 128: fatal private-stderr-must-not-render'),
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-preregistration-lineage',
+          cause: {
+            name: 'Error',
+            category: 'git-batch-exit',
+          },
+        },
+      },
+      {
+        name: 'artifact-worker-exit',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
+          modulePath: 'services/bayn/src/candidate.mjs',
+          cause: new Error('candidate artifact worker exited 7'),
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
+          modulePath: 'services/bayn/src/candidate.mjs',
+          cause: {
+            name: 'Error',
+            category: 'artifact-worker-exit',
+          },
+        },
+      },
+      {
+        name: 'realpath-failure',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'read-module',
+          cause: Object.assign(new Error('ENOENT: no such file or directory, realpath /home/alice/private/candidate.mjs'), {
+            code: 'ENOENT',
+            errno: -2,
+            syscall: 'realpath',
+            path: '/home/alice/private/candidate.mjs',
+            environment: { GITHUB_TOKEN: 'must-not-render' },
+            credential: 'must-not-render',
+          }),
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'read-module',
+          cause: {
+            name: 'Error',
+            code: 'ENOENT',
+            errno: -2,
+            syscall: 'realpath',
+          },
+        },
+      },
+      {
+        name: 'git-failure',
+        failureExpression: `{
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'resolve-repository',
+          cause: Object.assign(new Error('Command failed: git --no-replace-objects -C /home/alice/private rev-parse --show-toplevel'), {
+            code: 128,
+            killed: false,
+            signal: null,
+            cmd: 'git --no-replace-objects -C /home/alice/private rev-parse --show-toplevel',
+            stdout: 'must-not-render',
+            stderr: 'fatal: credential must-not-render',
+            path: '/home/alice/private',
+          }),
+        }`,
+        expectedFailure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'resolve-repository',
+          cause: {
+            name: 'Error',
+            code: 128,
+            signal: null,
+            killed: false,
+          },
+        },
+      },
+    ] as const
+
+    try {
+      for (const testCase of cases) {
+        const scriptPath = join(directory, `${testCase.name}.ts`)
+        const script = `
+import { Effect } from 'effect'
+import { runCandidateDevelopmentCommandMain } from ${JSON.stringify(commandUrl)}
+
+runCandidateDevelopmentCommandMain(Effect.fail(${testCase.failureExpression}))
+`
+        await writeFile(scriptPath, script)
+        const result = await execFileResultPromise(process.execPath, [scriptPath], import.meta.dir)
+        const expected = `${JSON.stringify({
+          schemaVersion: 'bayn.candidate-development-command-failure.v1',
+          error: {
+            _tag: 'CandidateDevelopmentCommandError',
+            failure: testCase.expectedFailure,
+          },
+        })}\n`
+
+        expect(result.exitCode).toBe(1)
+        expect(result.stdout).toBe('')
+        expect(result.stderr).toBe(expected)
+        expect(result.stderr).not.toContain('must-not-render')
+        expect(result.stderr).not.toContain('/home/alice')
+        expect(result.stderr).not.toContain('git --no-replace-objects')
+        expect(result.stderr).not.toContain('GITHUB_TOKEN')
+        expect(result.stderr).not.toContain('candidate artifact schema version is invalid')
+        expect(result.stderr).not.toContain('candidate artifact strategy protocol hash differs from preflight')
+        expect(result.stderr).not.toContain('private-header-must-not-render')
+        expect(result.stderr).not.toContain('private-object-must-not-render')
+        expect(result.stderr).not.toContain('private-stderr-must-not-render')
+      }
+
+      const missingModulePath = join(directory, 'missing', 'private-candidate.mjs')
+      const missingManifestPath = join(directory, 'missing', 'private-manifest.json')
+      const realpathScriptPath = join(directory, 'realpath-failure.ts')
+      await writeFile(
+        realpathScriptPath,
+        `
+import {
+  runCandidateDevelopmentCommandMain,
+  verifyCandidateDevelopmentSourceFiles,
+} from ${JSON.stringify(commandUrl)}
+
+runCandidateDevelopmentCommandMain(
+  verifyCandidateDevelopmentSourceFiles(
+    ${JSON.stringify(missingModulePath)},
+    ${JSON.stringify(missingManifestPath)},
+  ),
+)
+`,
+      )
+      const realpathResult = await execFileResultPromise(process.execPath, [realpathScriptPath], import.meta.dir)
+      const realpathFailure = JSON.parse(realpathResult.stderr)
+      expect(realpathResult.exitCode).toBe(1)
+      expect(realpathResult.stdout).toBe('')
+      expect(realpathFailure).toMatchObject({
+        error: {
+          failure: {
+            _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+            operation: 'read-module',
+            cause: {
+              name: 'Error',
+              code: 'ENOENT',
+              errno: -2,
+            },
+          },
+        },
+      })
+      expect(['lstat', 'realpath']).toContain(realpathFailure.error.failure.cause.syscall)
+      expect(Object.keys(realpathFailure.error.failure.cause).toSorted()).toEqual(['code', 'errno', 'name', 'syscall'])
+      expect(realpathResult.stderr).not.toContain(directory)
+      expect(realpathResult.stderr).not.toContain('private-candidate')
+      expect(realpathResult.stderr).not.toContain('ENOENT:')
+
+      const modulePath = join(nonRepository, 'program.mjs')
+      const manifestPath = join(nonRepository, 'source-manifest.json')
+      await writeFile(modulePath, 'export const safe = true\n')
+      await writeFile(manifestPath, '{}\n')
+      const gitScriptPath = join(directory, 'git-failure.ts')
+      await writeFile(
+        gitScriptPath,
+        `
+import {
+  runCandidateDevelopmentCommandMain,
+  verifyCandidateDevelopmentSourceFiles,
+} from ${JSON.stringify(commandUrl)}
+
+runCandidateDevelopmentCommandMain(
+  verifyCandidateDevelopmentSourceFiles(
+    ${JSON.stringify(modulePath)},
+    ${JSON.stringify(manifestPath)},
+  ),
+)
+`,
+      )
+      const gitResult = await execFileResultPromise(process.execPath, [gitScriptPath], import.meta.dir)
+      const gitFailure = JSON.parse(gitResult.stderr)
+      expect(gitResult.exitCode).toBe(1)
+      expect(gitResult.stdout).toBe('')
+      expect(gitFailure).toMatchObject({
+        error: {
+          failure: {
+            _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+            operation: 'resolve-repository',
+            cause: {
+              name: 'Error',
+              code: 128,
+              signal: null,
+              killed: false,
+            },
+          },
+        },
+      })
+      expect(Object.keys(gitFailure.error.failure.cause).toSorted()).toEqual(['code', 'killed', 'name', 'signal'])
+      expect(gitResult.stderr).not.toContain(directory)
+      expect(gitResult.stderr).not.toContain('not-a-repository')
+      expect(gitResult.stderr).not.toContain('rev-parse')
+      expect(gitResult.stderr).not.toContain('fatal:')
+      expect(gitResult.stderr).not.toContain('git --no-replace-objects')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+      await rm(nonRepository, { recursive: true, force: true })
+    }
+  }, 15_000)
+
+  test('keeps interruption-only shutdown silent and unwinds the command scope', async () => {
+    const directory = await mkdtemp(join(import.meta.dir, '.candidate-development-cli-interruption-'))
+    const scriptPath = join(directory, 'interruption.ts')
+    const commandUrl = pathToFileURL(join(import.meta.dir, 'candidate-development-command.ts')).href
+    const script = `
+import { Effect } from 'effect'
+import { runCandidateDevelopmentCommandMain } from ${JSON.stringify(commandUrl)}
+
+const initialSigtermListenerCount = process.listenerCount('SIGTERM')
+
+runCandidateDevelopmentCommandMain(
+  Effect.scoped(
+    Effect.acquireRelease(
+      Effect.promise(
+        () =>
+          new Promise<void>((resolveReady) => {
+            const inspect = () => {
+              if (process.listenerCount('SIGTERM') > initialSigtermListenerCount) resolveReady()
+              else setImmediate(inspect)
+            }
+            inspect()
+          }),
+      ).pipe(Effect.tap(() => Effect.sync(() => process.stdout.write('ready\\n')))),
+      () => Effect.sync(() => process.stdout.write('finalized\\n')),
+    ).pipe(Effect.flatMap(() => Effect.never)),
+  ),
+)
+`
+
+    try {
+      await writeFile(scriptPath, script)
+      const result = await new Promise<{
+        readonly exitCode: number | null
+        readonly signal: NodeJS.Signals | null
+        readonly stdout: string
+        readonly stderr: string
+      }>((resolveExecution, rejectExecution) => {
+        const child = spawn(process.execPath, [scriptPath], {
+          cwd: import.meta.dir,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
+        let stdout = ''
+        let stderr = ''
+        let interrupted = false
+        const timeout = setTimeout(() => {
+          child.kill('SIGKILL')
+          rejectExecution(new Error('candidate development interruption process did not terminate'))
+        }, 5_000)
+        child.stdout.setEncoding('utf8')
+        child.stderr.setEncoding('utf8')
+        child.stdout.on('data', (chunk: string) => {
+          stdout += chunk
+          if (!interrupted && stdout.includes('ready\n')) {
+            interrupted = true
+            if (!child.kill('SIGTERM')) rejectExecution(new Error('failed to interrupt candidate development process'))
+          }
+        })
+        child.stderr.on('data', (chunk: string) => {
+          stderr += chunk
+        })
+        child.once('error', (error) => {
+          clearTimeout(timeout)
+          rejectExecution(error)
+        })
+        child.once('close', (exitCode, signal) => {
+          clearTimeout(timeout)
+          resolveExecution({ exitCode, signal, stdout, stderr })
+        })
+      })
+
+      expect(result.exitCode).toBe(130)
+      expect(result.signal).toBeNull()
+      expect(result.stdout).toBe('ready\nfinalized\n')
+      expect(result.stderr).toBe('')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('renders one bounded generic record for an unhandled command defect', async () => {
+    const directory = await mkdtemp(join(import.meta.dir, '.candidate-development-cli-defect-'))
+    const scriptPath = join(directory, 'defect.ts')
+    const commandUrl = pathToFileURL(join(import.meta.dir, 'candidate-development-command.ts')).href
+    const script = `
+import { Effect } from 'effect'
+import { runCandidateDevelopmentCommandMain } from ${JSON.stringify(commandUrl)}
+
+runCandidateDevelopmentCommandMain(
+  Effect.sync(() => {
+    throw new Error('credential-value at /workspace/private/defect.ts:1:1')
+  }),
+)
+`
+
+    try {
+      await writeFile(scriptPath, script)
+      const result = await execFileResultPromise(process.execPath, [scriptPath], import.meta.dir)
+      const expected = `${JSON.stringify({
+        schemaVersion: 'bayn.candidate-development-command-failure.v1',
+        error: {
+          _tag: 'CandidateDevelopmentCommandDefect',
+          reason: 'unhandled-defect',
+        },
+      })}\n`
+
+      expect(result.exitCode).toBe(1)
+      expect(result.stdout).toBe('')
+      expect(result.stderr).toBe(expected)
+      expect(result.stderr).not.toContain('credential-value')
+      expect(result.stderr).not.toContain('/workspace/')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('falls back to a generic record when the configured failure writer defects', async () => {
+    const directory = await mkdtemp(join(import.meta.dir, '.candidate-development-cli-writer-defect-'))
+    const commandUrl = pathToFileURL(join(import.meta.dir, 'candidate-development-command.ts')).href
+    const cases = [
+      {
+        name: 'returned-effect-defect',
+        writer: `() => Effect.die(new Error('credential-value at /workspace/private/stderr.ts:1:1'))`,
+      },
+      {
+        name: 'synchronous-throw',
+        writer: `() => { throw new Error('credential-value at /workspace/private/stderr.ts:1:1') }`,
+      },
+    ] as const
+    const expected = `${JSON.stringify({
+      schemaVersion: 'bayn.candidate-development-command-failure.v1',
+      error: {
+        _tag: 'CandidateDevelopmentCommandDefect',
+        reason: 'unhandled-defect',
+      },
+    })}\n`
+
+    try {
+      for (const testCase of cases) {
+        const scriptPath = join(directory, `${testCase.name}.ts`)
+        const script = `
+import { Effect } from 'effect'
+import { runCandidateDevelopmentCommandMain } from ${JSON.stringify(commandUrl)}
+
+runCandidateDevelopmentCommandMain(
+  Effect.fail({ _tag: 'CandidateDevelopmentCommandModulePathMissing' }),
+  ${testCase.writer},
+)
+`
+        await writeFile(scriptPath, script)
+        const result = await execFileResultPromise(process.execPath, [scriptPath], import.meta.dir)
+
+        expect(result.exitCode).toBe(1)
+        expect(result.stdout).toBe('')
+        expect(result.stderr).toBe(expected)
+        expect(result.stderr).not.toContain('credential-value')
+        expect(result.stderr).not.toContain('/workspace/')
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('preserves success output without emitting a failure record', async () => {
+    const directory = await mkdtemp(join(import.meta.dir, '.candidate-development-cli-success-'))
+    const scriptPath = join(directory, 'success.ts')
+    const commandUrl = pathToFileURL(join(import.meta.dir, 'candidate-development-command.ts')).href
+    const script = `
+import { Effect } from 'effect'
+import { runCandidateDevelopmentCommandMain } from ${JSON.stringify(commandUrl)}
+
+runCandidateDevelopmentCommandMain(
+  Effect.sync(() => {
+    process.stdout.write('candidate-development-success\\n')
+  }),
+)
+`
+
+    try {
+      await writeFile(scriptPath, script)
+      const result = await execFileResultPromise(process.execPath, [scriptPath], import.meta.dir)
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toBe('candidate-development-success\n')
+      expect(result.stderr).toBe('')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('bounds and rejects arbitrary, cyclic, deep, secret, path, stack, and nondeterministic details', () => {
+    const arbitrary = renderCandidateDevelopmentCommandFailure({
+      _tag: 'CandidateDevelopmentCommandProgramExecutionFailed',
+      cause: {
+        token: 'credential-value',
+        path: '/workspace/private/module.ts',
+        stack: 'Error at /workspace/private/module.ts:1:1',
+      },
+    })
+    expect(JSON.parse(arbitrary)).toEqual({
+      schemaVersion: 'bayn.candidate-development-command-failure.v1',
+      error: {
+        _tag: 'CandidateDevelopmentCommandError',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandProgramExecutionFailed',
+          cause: {
+            _tag: 'CandidateDevelopmentCommandFailureDetailRejected',
+            reason: 'untyped-object',
+          },
+        },
+      },
+    })
+
+    const cyclicCause: { _tag: string; stage: string; cause?: unknown } = {
+      _tag: 'CandidateDevelopmentCyclicFailure',
+      stage: 'development-metrics',
+    }
+    cyclicCause.cause = cyclicCause
+    const cyclic = renderCandidateDevelopmentCommandFailure({
+      _tag: 'CandidateDevelopmentCommandProgramExecutionFailed',
+      cause: cyclicCause,
+    })
+    expect(JSON.parse(cyclic)).toEqual({
+      schemaVersion: 'bayn.candidate-development-command-failure.v1',
+      error: {
+        _tag: 'CandidateDevelopmentCommandError',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandProgramExecutionFailed',
+          cause: {
+            _tag: 'CandidateDevelopmentCyclicFailure',
+            stage: 'development-metrics',
+            cause: {
+              _tag: 'CandidateDevelopmentCommandFailureDetailRejected',
+              reason: 'cycle',
+            },
+          },
+        },
+      },
+    })
+
+    let deepCause: unknown = { _tag: 'CandidateDevelopmentTerminalFailure', reason: 'bounded' }
+    for (let index = 0; index < 10; index += 1) {
+      deepCause = { _tag: `CandidateDevelopmentNestedFailure${index}`, cause: deepCause }
+    }
+    const deep = renderCandidateDevelopmentCommandFailure({
+      _tag: 'CandidateDevelopmentCommandProgramExecutionFailed',
+      cause: deepCause,
+    })
+    expect(deep).toContain('"reason":"depth-limit"')
+    expect(Buffer.byteLength(deep, 'utf8')).toBeLessThanOrEqual(candidateDevelopmentCommandFailureOutputMaxBytes)
+
+    const tagged = renderCandidateDevelopmentCommandFailure({
+      _tag: 'CandidateDevelopmentCommandProgramExecutionFailed',
+      cause: {
+        _tag: 'CandidateDevelopmentTaggedFailure',
+        stage: 'development-metrics',
+        reason: 'typed-cause',
+        secret: 'credential-value',
+        token: 'credential-value',
+        path: '/workspace/private/module.ts',
+        stack: 'Error at /workspace/private/module.ts:1:1',
+        sourceURL: '/workspace/private/module.ts',
+        timestamp: '2026-07-31T18:00:00.000Z',
+        requestId: 'nondeterministic-request-id',
+      },
+    })
+    expect(JSON.parse(tagged)).toEqual({
+      schemaVersion: 'bayn.candidate-development-command-failure.v1',
+      error: {
+        _tag: 'CandidateDevelopmentCommandError',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandProgramExecutionFailed',
+          cause: {
+            _tag: 'CandidateDevelopmentTaggedFailure',
+            stage: 'development-metrics',
+            reason: 'typed-cause',
+          },
+        },
+      },
+    })
+    expect(tagged).not.toContain('credential-value')
+    expect(tagged).not.toContain('/workspace/')
+    expect(tagged).not.toContain('2026-07-31')
+    expect(tagged).not.toContain('nondeterministic-request-id')
+
+    const taggedBinding = renderCandidateDevelopmentCommandFailure({
+      _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+      operation: 'verify-program-binding',
+      cause: {
+        _tag: 'CandidateDevelopmentSourceBindingFailure',
+        stage: 'verify-program-binding',
+        reason: 'mismatch',
+        secret: 'credential-value',
+      },
+    })
+    expect(JSON.parse(taggedBinding)).toEqual({
+      schemaVersion: 'bayn.candidate-development-command-failure.v1',
+      error: {
+        _tag: 'CandidateDevelopmentCommandError',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-program-binding',
+          cause: {
+            _tag: 'CandidateDevelopmentSourceBindingFailure',
+            stage: 'verify-program-binding',
+            reason: 'mismatch',
+          },
+        },
+      },
+    })
+    expect(taggedBinding).not.toContain('credential-value')
+
+    const unsafeMismatch = renderCandidateDevelopmentCommandFailure({
+      _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+      operation: 'verify-program-binding',
+      cause: {
+        field: 'artifact.structuralBindings.modulePath',
+        expected: 'credential-value',
+        observed: '/workspace/private/module.ts',
+      },
+    })
+    expect(JSON.parse(unsafeMismatch)).toEqual({
+      schemaVersion: 'bayn.candidate-development-command-failure.v1',
+      error: {
+        _tag: 'CandidateDevelopmentCommandError',
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-program-binding',
+          cause: {
+            field: 'artifact.structuralBindings.modulePath',
+            expected: {
+              _tag: 'CandidateDevelopmentCommandFailureDetailRejected',
+              reason: 'unsupported-value',
+            },
+            observed: {
+              _tag: 'CandidateDevelopmentCommandFailureDetailRejected',
+              reason: 'unsupported-value',
+            },
+          },
+        },
+      },
+    })
+    expect(unsafeMismatch).not.toContain('credential-value')
+    expect(unsafeMismatch).not.toContain('/workspace/')
+
+    const oversizedIndexedField = renderCandidateDevelopmentCommandFailure({
+      _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+      reason: 'selected-trace-mismatch',
+      index: null,
+      field: 'baseline.dailyMarks[1234567]',
+      expected: 'a'.repeat(64),
+      observed: 'b'.repeat(64),
+    })
+    expect(JSON.parse(oversizedIndexedField)).toMatchObject({
+      error: {
+        failure: {
+          rejectedFields: ['field'],
+          expected: 'a'.repeat(64),
+          observed: 'b'.repeat(64),
+        },
+      },
+    })
+    expect(oversizedIndexedField).not.toContain('baseline.dailyMarks[1234567]')
+
+    const unsafeTargetWeights = renderCandidateDevelopmentCommandFailure({
+      _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+      reason: 'binding-mismatch',
+      index: 1,
+      field: 'benchmarks.terminalDecision',
+      expected: 'all-cash target weights',
+      observed: { SPY: 0.5, 'credential-value': 1 },
+    })
+    expect(JSON.parse(unsafeTargetWeights)).toMatchObject({
+      error: {
+        failure: {
+          observed: {
+            _tag: 'CandidateDevelopmentCommandFailureDetailRejected',
+            reason: 'unsupported-value',
+          },
+        },
+      },
+    })
+    expect(unsafeTargetWeights).not.toContain('credential-value')
   })
 
   test('derives the disposition and hashes the complete governed report', () => {
