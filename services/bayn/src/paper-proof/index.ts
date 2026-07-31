@@ -20,3 +20,12 @@ export {
   type PreparedPaperProofIntent,
 } from './model'
 export { runPaperProof, type PaperProofDependencies } from './program'
+export {
+  makePaperProofRecoveryStore,
+  PaperProofRecoveryStore,
+  PaperProofRecoveryStoreError,
+  PaperProofRecoveryStoreLive,
+  type PaperProofRecoveryRequired,
+  type PaperProofRecoveryResolution,
+  type PaperProofRecoveryStoreService,
+} from './recovery-store'
