@@ -10,6 +10,7 @@ import { NodeRuntime } from '@effect/platform-node'
 import { Data, Effect, pipe, Result, Schema } from 'effect'
 
 import {
+  candidateDevelopmentCalendarContract,
   candidateDevelopmentComparisonSemantics,
   candidateDevelopmentDoubledCostContract,
   runCandidateDevelopment,
@@ -20,7 +21,11 @@ import {
   type CandidateDevelopmentReport,
   type CandidateDevelopmentRunFailure,
 } from './candidate-development'
-import { frozenCandidateDevelopmentTrialHistory } from './candidate-development-trial-history'
+import {
+  deriveCandidateDevelopmentLegacyPriorTrialsHash,
+  deriveCandidateDevelopmentPriorTrialsHash,
+  frozenCandidateDevelopmentTrialHistory,
+} from './candidate-development-trial-history'
 import {
   deriveCandidateDevelopmentDecision,
   type CandidateDevelopmentDecision as CandidateDevelopmentCommandDecision,
@@ -51,6 +56,7 @@ import {
   Sha256Schema,
   SignedMicrosSchema,
   SourceRevisionSchema,
+  StrictNonEmptyStringSchema,
   SymbolSchema,
   UnitIntervalSchema,
   strictParseOptions,
@@ -78,6 +84,10 @@ export interface CandidateDevelopmentSourceManifest {
   readonly candidateOrdinal: number
   readonly priorTrialCount: number
   readonly strategyProtocolHash: string
+  readonly strategyIdentityHash?: string
+  readonly candidateDevelopmentProtocolHash?: string
+  readonly calendarHash?: string
+  readonly priorTrialsHash?: string
   readonly modulePath: string
   readonly moduleFormat: 'self-contained-esm-v1'
   readonly marketData: {
@@ -87,6 +97,33 @@ export interface CandidateDevelopmentSourceManifest {
     readonly inputManifestHash: string
     readonly boundedContentHash: string
   }
+}
+
+export interface CandidateDevelopmentStrategyIdentity {
+  readonly schemaVersion: 'bayn.candidate-development-strategy-identity.v1'
+  readonly family: string
+  readonly identifier: string
+  readonly researchSources: readonly [string, string, string]
+  readonly parameters: {
+    readonly id: string
+    readonly lookbackSessions: number
+    readonly volatilityWindowSessions: number
+    readonly annualizationSessions: number
+    readonly riskAssets: readonly [string, string]
+    readonly defensiveAsset: string
+    readonly absoluteMomentumThreshold: number
+    readonly selectedAssetWeight: number
+    readonly relativeMomentumTieBreak: string
+  }
+  readonly input: string
+  readonly relativeMomentum: string
+  readonly absoluteMomentum: string
+  readonly defensive: string
+  readonly allocation: string
+  readonly schedule: string
+  readonly terminal: string
+  readonly missingData: string
+  readonly doubledCost: string
 }
 
 export interface CandidateDevelopmentVerifiedSource {
@@ -131,6 +168,7 @@ export interface CandidateDevelopmentStrategyProtocol extends SimulationProtocol
     readonly directVolatilityWindow: typeof DIRECT_VOLATILITY_WINDOW
     readonly terminalPolicy: 'last-all-cash-strategy-decision'
   }
+  readonly strategyIdentity?: CandidateDevelopmentStrategyIdentity
 }
 
 export interface CandidateDevelopmentAccountingEvidence {
@@ -632,15 +670,61 @@ export const bindCandidateDevelopmentVerifiedSource = (
       }),
     )
   }
+  const developmentCandidateOrdinals = frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals
+  for (let index = 0; index < developmentCandidateOrdinals.length; index += 1) {
+    const expected = completedCandidateOrdinals.length + index + 1
+    if (developmentCandidateOrdinals[index] !== expected) {
+      return Result.fail(
+        sourceVerificationFailure('verify-program-binding', {
+          field: 'trialHistory.developmentCandidateOrdinals',
+          expected,
+          observed: developmentCandidateOrdinals[index],
+        }),
+      )
+    }
+  }
+  const latestDevelopmentEvidence = frozenCandidateDevelopmentTrialHistory.latestDevelopmentEvidence
+  const latestDevelopmentOrdinal = developmentCandidateOrdinals.at(-1)
+  if (
+    latestDevelopmentOrdinal === undefined ||
+    latestDevelopmentEvidence.candidateOrdinal !== latestDevelopmentOrdinal ||
+    latestDevelopmentEvidence.priorTrialCount !== latestDevelopmentOrdinal - 1 ||
+    latestDevelopmentEvidence.qualificationAttemptConsumed !== false
+  ) {
+    return Result.fail(
+      sourceVerificationFailure('verify-program-binding', {
+        field: 'trialHistory.latestDevelopmentEvidence',
+        expected: {
+          candidateOrdinal: latestDevelopmentOrdinal,
+          priorTrialCount: latestDevelopmentOrdinal === undefined ? undefined : latestDevelopmentOrdinal - 1,
+          qualificationAttemptConsumed: false,
+        },
+        observed: latestDevelopmentEvidence,
+      }),
+    )
+  }
   const candidatePreregistration = frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration
-  const expectedNextCandidateOrdinal = completedCandidateOrdinals.length + 1
-  const expectedPriorTrialCount = completedCandidateOrdinals.length
+  const priorTrialsHash = deriveCandidateDevelopmentLegacyPriorTrialsHash(
+    frozenCandidateDevelopmentTrialHistory.latestReviewedCandidateLegacyPriorTrials,
+  )
+  if (Result.isFailure(priorTrialsHash)) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentCommandHashFailed',
+      cause: priorTrialsHash.failure,
+    })
+  }
+  const expectedReviewedCandidateOrdinal =
+    frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration === null
+      ? latestDevelopmentOrdinal
+      : latestDevelopmentOrdinal + 1
+  const expectedPriorTrialCount = expectedReviewedCandidateOrdinal - 1
   const reviewedBindings = [
-    ['candidateOrdinal', expectedNextCandidateOrdinal, candidatePreregistration.candidateOrdinal],
+    ['candidateOrdinal', expectedReviewedCandidateOrdinal, candidatePreregistration.candidateOrdinal],
     ['priorTrialCount', expectedPriorTrialCount, candidatePreregistration.priorTrialCount],
     ['input.candidateOrdinal', candidatePreregistration.candidateOrdinal, input.candidateOrdinal],
     ['input.priorTrialCount', candidatePreregistration.priorTrialCount, input.priorTrialCount],
     ['strategyProtocolHash', candidatePreregistration.strategyProtocolHash, input.expectedStrategyProtocolHash],
+    ['priorTrialsHash', priorTrialsHash.success, candidatePreregistration.priorTrialsHash],
     ['modulePath', candidatePreregistration.modulePath, files.modulePath],
     ['moduleSha256', candidatePreregistration.moduleSha256, files.moduleSha256],
   ] as const
@@ -680,6 +764,14 @@ export const bindCandidateDevelopmentVerifiedSource = (
     ['candidateOrdinal', input.candidateOrdinal, manifest.candidateOrdinal],
     ['priorTrialCount', input.priorTrialCount, manifest.priorTrialCount],
     ['strategyProtocolHash', input.expectedStrategyProtocolHash, manifest.strategyProtocolHash],
+    ['strategyIdentityHash', candidatePreregistration.strategyIdentityHash, manifest.strategyIdentityHash],
+    [
+      'candidateDevelopmentProtocolHash',
+      candidatePreregistration.candidateDevelopmentProtocolHash,
+      manifest.candidateDevelopmentProtocolHash,
+    ],
+    ['calendarHash', candidatePreregistration.calendarHash, manifest.calendarHash],
+    ['priorTrialsHash', candidatePreregistration.priorTrialsHash, manifest.priorTrialsHash],
     ['modulePath', files.modulePath, manifest.modulePath],
   ] as const
   for (const [field, expected, observed] of mismatches) {
@@ -739,7 +831,7 @@ export const bindCandidateDevelopmentVerifiedSource = (
   )
 }
 
-const preregisterCandidateDevelopmentAttempt = (
+export const preregisterCandidateDevelopmentAttempt = (
   verifiedSource: CandidateDevelopmentVerifiedSource,
 ): Result.Result<string, CandidateDevelopmentCommandFailure> => {
   const nextCandidatePreregistration = frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration
@@ -747,17 +839,36 @@ const preregisterCandidateDevelopmentAttempt = (
     return Result.fail(
       sourceVerificationFailure('verify-program-binding', {
         field: 'trialHistory.nextCandidatePreregistration',
-        expected: 'separately reviewed preregistration after consumed Candidate 16',
+        expected: 'a separately reviewed preregistration after the latest terminal development attempt',
         observed: null,
         latestTerminalEvidence: frozenCandidateDevelopmentTrialHistory.latestTerminalEvidence,
       }),
     )
   }
-  const completedCandidateOrdinals = frozenCandidateDevelopmentTrialHistory.completedCandidateOrdinals
+  const latestDevelopmentOrdinal = frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals.at(-1)
+  if (latestDevelopmentOrdinal === undefined) {
+    return Result.fail(
+      sourceVerificationFailure('verify-program-binding', {
+        field: 'trialHistory.developmentCandidateOrdinals',
+        expected: 'at least one completed development-only candidate after qualification ordinal 16',
+        observed: frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals,
+      }),
+    )
+  }
+  const priorTrialsHash = deriveCandidateDevelopmentPriorTrialsHash(
+    frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePriorTrials,
+  )
+  if (Result.isFailure(priorTrialsHash)) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentCommandHashFailed',
+      cause: priorTrialsHash.failure,
+    })
+  }
   const sourceManifest = verifiedSource.sourceManifest
   const bindings = [
-    ['candidateOrdinal', completedCandidateOrdinals.length + 1, nextCandidatePreregistration.candidateOrdinal],
-    ['priorTrialCount', completedCandidateOrdinals.length, nextCandidatePreregistration.priorTrialCount],
+    ['candidateOrdinal', latestDevelopmentOrdinal + 1, nextCandidatePreregistration.candidateOrdinal],
+    ['priorTrialCount', latestDevelopmentOrdinal, nextCandidatePreregistration.priorTrialCount],
+    ['priorTrialsHash', priorTrialsHash.success, nextCandidatePreregistration.priorTrialsHash],
     ['source.candidateOrdinal', nextCandidatePreregistration.candidateOrdinal, sourceManifest.candidateOrdinal],
     ['source.priorTrialCount', nextCandidatePreregistration.priorTrialCount, sourceManifest.priorTrialCount],
     [
@@ -765,6 +876,18 @@ const preregisterCandidateDevelopmentAttempt = (
       nextCandidatePreregistration.strategyProtocolHash,
       sourceManifest.strategyProtocolHash,
     ],
+    [
+      'source.strategyIdentityHash',
+      nextCandidatePreregistration.strategyIdentityHash,
+      sourceManifest.strategyIdentityHash,
+    ],
+    [
+      'source.candidateDevelopmentProtocolHash',
+      nextCandidatePreregistration.candidateDevelopmentProtocolHash,
+      sourceManifest.candidateDevelopmentProtocolHash,
+    ],
+    ['source.calendarHash', nextCandidatePreregistration.calendarHash, sourceManifest.calendarHash],
+    ['source.priorTrialsHash', nextCandidatePreregistration.priorTrialsHash, sourceManifest.priorTrialsHash],
     ['source.modulePath', nextCandidatePreregistration.modulePath, verifiedSource.modulePath],
     ['source.moduleSha256', nextCandidatePreregistration.moduleSha256, verifiedSource.moduleSha256],
   ] as const
@@ -2284,13 +2407,109 @@ export const buildCandidateDevelopmentCommandReport = (
     }),
   )
 
+const validateCandidateDevelopmentPreregisteredProtocol = (
+  program: CandidateDevelopmentExecutableProgram<unknown, unknown, unknown, unknown>,
+  preflight: CandidateDevelopmentPreflightPass,
+  verifiedSource: CandidateDevelopmentVerifiedSource,
+): Result.Result<void, CandidateDevelopmentCommandFailure> => {
+  if (program.strategyProtocol.strategyIdentity === undefined) return Result.succeed(undefined)
+  const preregistration = frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration
+  const priorTrialsHash = pipe(
+    deriveCandidateDevelopmentPriorTrialsHash(
+      frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePriorTrials,
+    ),
+    Result.mapError(
+      (cause): CandidateDevelopmentCommandFailure => ({
+        _tag: 'CandidateDevelopmentCommandHashFailed',
+        cause,
+      }),
+    ),
+  )
+  const strategyIdentityHash = pipe(
+    canonicalHashV1Result(program.strategyProtocol.strategyIdentity),
+    Result.mapError(
+      (cause): CandidateDevelopmentCommandFailure => ({
+        _tag: 'CandidateDevelopmentCommandHashFailed',
+        cause,
+      }),
+    ),
+  )
+  const calendarHash = pipe(
+    canonicalHashV1Result(candidateDevelopmentCalendarContract),
+    Result.mapError(
+      (cause): CandidateDevelopmentCommandFailure => ({
+        _tag: 'CandidateDevelopmentCommandHashFailed',
+        cause,
+      }),
+    ),
+  )
+  return pipe(
+    Result.all({ strategyIdentityHash, calendarHash, priorTrialsHash }),
+    Result.flatMap(
+      ({
+        strategyIdentityHash: observedStrategyIdentityHash,
+        calendarHash: observedCalendarHash,
+        priorTrialsHash: observedPriorTrialsHash,
+      }) => {
+        const bindings = [
+          ['strategyIdentityHash', preregistration.strategyIdentityHash, observedStrategyIdentityHash],
+          [
+            'candidateDevelopmentProtocolHash',
+            preregistration.candidateDevelopmentProtocolHash,
+            preflight.protocolIdentity.candidateDevelopmentProtocolHash,
+          ],
+          ['calendarHash', preregistration.calendarHash, observedCalendarHash],
+          ['priorTrialsHash', preregistration.priorTrialsHash, observedPriorTrialsHash],
+          [
+            'source.strategyIdentityHash',
+            preregistration.strategyIdentityHash,
+            verifiedSource.sourceManifest.strategyIdentityHash,
+          ],
+          [
+            'source.candidateDevelopmentProtocolHash',
+            preregistration.candidateDevelopmentProtocolHash,
+            verifiedSource.sourceManifest.candidateDevelopmentProtocolHash,
+          ],
+          ['source.calendarHash', preregistration.calendarHash, verifiedSource.sourceManifest.calendarHash],
+          ['source.priorTrialsHash', preregistration.priorTrialsHash, verifiedSource.sourceManifest.priorTrialsHash],
+        ] as const
+        for (const [field, expected, observed] of bindings) {
+          if (expected !== observed) {
+            return Result.fail(
+              sourceVerificationFailure('verify-program-binding', {
+                field: `trialHistory.latestReviewedCandidatePreregistration.${field}`,
+                expected,
+                observed,
+              }),
+            )
+          }
+        }
+        return Result.succeed(undefined)
+      },
+    ),
+  )
+}
+
 export const executeCandidateDevelopmentProgram = <Registration, DevelopmentData, Error, Requirements>(
   program: CandidateDevelopmentExecutableProgram<Registration, DevelopmentData, Error, Requirements>,
   verifiedSource: CandidateDevelopmentVerifiedSource,
 ): Effect.Effect<CandidateDevelopmentCommandReport, CandidateDevelopmentCommandFailure | Error, Requirements> => {
   let evaluation: CandidateDevelopmentCommandEvaluation | undefined
-  const effects: CandidateDevelopmentEffects<Registration, DevelopmentData, Error, Requirements> = {
+  const effects: CandidateDevelopmentEffects<
+    Registration,
+    DevelopmentData,
+    CandidateDevelopmentCommandFailure | Error,
+    Requirements
+  > = {
     ...program.effects,
+    preregisterCandidate: (preflight) =>
+      Effect.fromResult(
+        validateCandidateDevelopmentPreregisteredProtocol(
+          program as CandidateDevelopmentExecutableProgram<unknown, unknown, unknown, unknown>,
+          preflight,
+          verifiedSource,
+        ),
+      ).pipe(Effect.flatMap(() => program.effects.preregisterCandidate(preflight))),
     evaluateDevelopment: (data, preflight) =>
       program.effects.evaluateDevelopment(data, preflight, verifiedSource).pipe(
         Effect.tap((value) =>
@@ -2507,6 +2726,33 @@ const CandidateDevelopmentMarketDataWitnessSchema = Schema.Struct({
   bars: Schema.Array(CandidateDevelopmentDailyBarSchema).check(Schema.isMinLength(1)),
 })
 
+const CandidateDevelopmentStrategyIdentitySchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.candidate-development-strategy-identity.v1'),
+  family: Schema.String.check(Schema.isMinLength(1)),
+  identifier: Schema.String.check(Schema.isMinLength(1)),
+  researchSources: Schema.Tuple([StrictNonEmptyStringSchema, StrictNonEmptyStringSchema, StrictNonEmptyStringSchema]),
+  parameters: Schema.Struct({
+    id: StrictNonEmptyStringSchema,
+    lookbackSessions: PositiveIntegerSchema,
+    volatilityWindowSessions: PositiveIntegerSchema,
+    annualizationSessions: PositiveIntegerSchema,
+    riskAssets: Schema.Tuple([SymbolSchema, SymbolSchema]),
+    defensiveAsset: SymbolSchema,
+    absoluteMomentumThreshold: Schema.Finite,
+    selectedAssetWeight: UnitIntervalSchema,
+    relativeMomentumTieBreak: SymbolSchema,
+  }),
+  input: StrictNonEmptyStringSchema,
+  relativeMomentum: StrictNonEmptyStringSchema,
+  absoluteMomentum: StrictNonEmptyStringSchema,
+  defensive: StrictNonEmptyStringSchema,
+  allocation: StrictNonEmptyStringSchema,
+  schedule: StrictNonEmptyStringSchema,
+  terminal: StrictNonEmptyStringSchema,
+  missingData: StrictNonEmptyStringSchema,
+  doubledCost: StrictNonEmptyStringSchema,
+})
+
 export const CandidateDevelopmentStrategyProtocolSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.candidate-development-strategy-protocol.v2'),
   universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1)),
@@ -2532,6 +2778,7 @@ export const CandidateDevelopmentStrategyProtocolSchema = Schema.Struct({
     directVolatilityWindow: Schema.Literal(DIRECT_VOLATILITY_WINDOW),
     terminalPolicy: Schema.Literal('last-all-cash-strategy-decision'),
   }),
+  strategyIdentity: Schema.optionalKey(CandidateDevelopmentStrategyIdentitySchema),
 })
 
 export const CandidateDevelopmentSourceManifestSchema = Schema.Struct({
@@ -2539,6 +2786,10 @@ export const CandidateDevelopmentSourceManifestSchema = Schema.Struct({
   candidateOrdinal: PositiveIntegerSchema,
   priorTrialCount: NonNegativeIntegerSchema,
   strategyProtocolHash: Sha256Schema,
+  strategyIdentityHash: Schema.optionalKey(Sha256Schema),
+  candidateDevelopmentProtocolHash: Schema.optionalKey(Sha256Schema),
+  calendarHash: Schema.optionalKey(Sha256Schema),
+  priorTrialsHash: Schema.optionalKey(Sha256Schema),
   modulePath: Schema.String.check(Schema.isMinLength(1)),
   moduleFormat: Schema.Literal('self-contained-esm-v1'),
   marketData: Schema.Struct({
@@ -2555,6 +2806,10 @@ const CandidateDevelopmentPreregistrationDocumentSchema = Schema.Struct({
   candidateOrdinal: PositiveIntegerSchema,
   priorTrialCount: NonNegativeIntegerSchema,
   strategyProtocolHash: Sha256Schema,
+  strategyIdentityHash: Schema.optionalKey(Sha256Schema),
+  candidateDevelopmentProtocolHash: Schema.optionalKey(Sha256Schema),
+  calendarHash: Schema.optionalKey(Sha256Schema),
+  priorTrialsHash: Schema.optionalKey(Sha256Schema),
   modulePath: Schema.String,
   moduleSha256: Sha256Schema,
   marketData: Schema.Struct({
@@ -2626,6 +2881,14 @@ export const validateCandidateDevelopmentPreregistrationDocument = (
     ['candidateOrdinal', expected.candidateOrdinal, observed.candidateOrdinal],
     ['priorTrialCount', expected.priorTrialCount, observed.priorTrialCount],
     ['strategyProtocolHash', expected.strategyProtocolHash, observed.strategyProtocolHash],
+    ['strategyIdentityHash', expected.strategyIdentityHash, observed.strategyIdentityHash],
+    [
+      'candidateDevelopmentProtocolHash',
+      expected.candidateDevelopmentProtocolHash,
+      observed.candidateDevelopmentProtocolHash,
+    ],
+    ['calendarHash', expected.calendarHash, observed.calendarHash],
+    ['priorTrialsHash', expected.priorTrialsHash, observed.priorTrialsHash],
     ['modulePath', expected.modulePath, observed.modulePath],
     ['moduleSha256', expected.moduleSha256, observed.moduleSha256],
     ['marketData.schemaVersion', expected.marketData.schemaVersion, observed.marketData.schemaVersion],

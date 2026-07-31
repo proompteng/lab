@@ -1,33 +1,85 @@
 import { candidateDevelopmentCalendarContract } from './candidate-development'
 import type { CandidateDevelopmentNextPreregistration } from './candidate-development-decision'
+import { canonicalHashV1Result } from './hash'
+
+interface CandidateDevelopmentQualificationEvidence {
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly terminalStatus: 'HOLD_REJECT'
+  readonly sourceRevision: string
+}
+
+interface CandidateDevelopmentQualificationPreregistration {
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly sourceRevision: string
+  readonly path: string
+  readonly blobOid: string
+}
+
+interface CandidateDevelopmentPriorDevelopmentEvidence {
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly status: 'DEVELOPMENT_REJECTED'
+  readonly evidenceContentHash: string
+  readonly qualificationAttemptConsumed: false
+}
+
+export interface CandidateDevelopmentLegacyPriorTrialsMaterial {
+  readonly schemaVersion: 'bayn.candidate-development-prior-trials.v1'
+  readonly qualificationCandidateOrdinals: readonly number[]
+  readonly developmentCandidateOrdinals: readonly number[]
+  readonly latestDevelopmentEvidence: CandidateDevelopmentPriorDevelopmentEvidence
+  readonly latestReviewedPreregistration: CandidateDevelopmentNextPreregistration
+}
+
+export interface CandidateDevelopmentPriorTrialsMaterial {
+  readonly schemaVersion: 'bayn.candidate-development-prior-trials.v2'
+  readonly qualificationCandidateOrdinals: readonly number[]
+  readonly latestQualificationEvidence: CandidateDevelopmentQualificationEvidence
+  readonly latestQualificationPreregistration: CandidateDevelopmentQualificationPreregistration
+  readonly developmentCandidateOrdinals: readonly number[]
+  readonly latestDevelopmentEvidence: CandidateDevelopmentPriorDevelopmentEvidence
+  readonly latestReviewedPreregistration: CandidateDevelopmentNextPreregistration
+}
 
 export interface CandidateDevelopmentTrialHistory {
   readonly schemaVersion: 'bayn.candidate-development-trial-history.v1'
   readonly completedCandidateOrdinals: readonly number[]
-  readonly latestTerminalEvidence: {
-    readonly candidateOrdinal: number
-    readonly priorTrialCount: number
-    readonly terminalStatus: 'HOLD_REJECT'
-    readonly sourceRevision: string
-  }
-  readonly candidatePreregistration: {
-    readonly candidateOrdinal: number
-    readonly priorTrialCount: number
-    readonly sourceRevision: string
-    readonly path: string
-    readonly blobOid: string
-  }
+  readonly developmentCandidateOrdinals: readonly number[]
+  readonly latestReviewedCandidateLegacyPriorTrials: CandidateDevelopmentLegacyPriorTrialsMaterial
+  readonly latestReviewedCandidatePriorTrials: CandidateDevelopmentPriorTrialsMaterial
+  readonly latestTerminalEvidence: CandidateDevelopmentQualificationEvidence
+  readonly candidatePreregistration: CandidateDevelopmentQualificationPreregistration
   readonly latestReviewedCandidatePreregistration: CandidateDevelopmentNextPreregistration
   readonly latestDevelopmentEvidence: {
-    readonly candidateOrdinal: 17
-    readonly priorTrialCount: 16
+    readonly candidateOrdinal: number
+    readonly priorTrialCount: number
     readonly status: 'DEVELOPMENT_REJECTED'
     readonly evidenceContentHash: string
-    readonly reviewedSourceRevision: string
-    readonly mergedSourceRevision: string
+    readonly evaluatedSourceRevision: string
+    readonly reviewedSourceRevision?: string
+    readonly mergedSourceRevision?: string
+    readonly failureStage?: 'buildEvaluation-preflight'
+    readonly developmentMetricsObserved?: false
     readonly qualificationAttemptConsumed: false
   }
   readonly nextCandidatePreregistration: CandidateDevelopmentNextPreregistration | null
+}
+
+export const candidate16TerminalEvidence: CandidateDevelopmentQualificationEvidence = {
+  candidateOrdinal: 16,
+  priorTrialCount: 15,
+  terminalStatus: 'HOLD_REJECT',
+  sourceRevision: '60a48a2e52fbafdd67a404a33a3cb22e82a98493',
+}
+
+export const candidate16Preregistration: CandidateDevelopmentQualificationPreregistration = {
+  candidateOrdinal: 16,
+  priorTrialCount: 15,
+  sourceRevision: 'a0dadcd2f6346968bd9df582e4673608afc04592',
+  path: 'services/bayn/candidates/ordinal-16-macro-breadth-regime-preregistration.md',
+  blobOid: 'f602e3c8fd1b85768404d5fbc439775cdcd2570b',
 }
 
 export const candidate17Preregistration: CandidateDevelopmentNextPreregistration = {
@@ -85,30 +137,86 @@ export const candidate17DevelopmentEligibility = {
   nextCandidatePreregistration: null,
 } as const
 
-export const frozenCandidateDevelopmentTrialHistory: CandidateDevelopmentTrialHistory = {
-  schemaVersion: 'bayn.candidate-development-trial-history.v1',
-  completedCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-  latestTerminalEvidence: {
-    candidateOrdinal: 16,
-    priorTrialCount: 15,
-    terminalStatus: 'HOLD_REJECT',
-    sourceRevision: '60a48a2e52fbafdd67a404a33a3cb22e82a98493',
+export const candidate18DevelopmentFailureEvidenceExpectation = {
+  evidenceContentHash: '65d6f044f3f323aa87ff26a3dca011053aa3172c8a4ce422841497ccf370a5b6',
+  evaluatedSourceRevision: '24465ada2b5e1e04c5058ad812b1eedd9f58b0dd',
+  failureStage: 'buildEvaluation-preflight',
+  developmentMetricsObserved: false,
+} as const
+
+export const candidate18DevelopmentEligibility = {
+  status: 'DEVELOPMENT_REJECTED',
+  evidenceContentHash: candidate18DevelopmentFailureEvidenceExpectation.evidenceContentHash,
+  nextCandidatePreregistration: null,
+} as const
+
+export const candidate18Preregistration: CandidateDevelopmentNextPreregistration = {
+  schemaVersion: 'bayn.candidate-development-next-preregistration.v1',
+  candidateOrdinal: 18,
+  priorTrialCount: 17,
+  strategyProtocolHash: '7e27320b47cd170c1bc9c60ec3692593f2182af44bb48cef4d4a403b09601d75',
+  strategyIdentityHash: 'ff762a985c129055670224dca5827a65c689f6f50e1e3765e7b521a05417b1f0',
+  candidateDevelopmentProtocolHash: '46657425873b4f766b5f49d0ebbe2ac3aa9cf53682a8508635be708406271877',
+  calendarHash: '4b2f519f336e4e730c1f0d69e860f25a8d4d0cfbd8e93c6b333ea83623d87237',
+  priorTrialsHash: '58f4e801380f35f483f998e00c82889e0cb6257e85542764e2dc8eaa4f3fd419',
+  modulePath: 'services/bayn/src/strategy/dual-momentum-global-equity/candidate-18.ts',
+  moduleSha256: '27466a8c9a9acba475db9cd0d2916532208540a53bd1f0ece307df299e5e34e8',
+  marketData: candidate17Preregistration.marketData,
+  preregistration: {
+    sourceRevision: '30614640c5dfa7a7d50bf053df153062ff0bbca4',
+    path: 'services/bayn/candidates/ordinal-18-global-equity-dual-momentum-preregistration.json',
+    blobOid: '920a4afb8a7e5c1f6ef0875683ddc96a91008079',
   },
-  candidatePreregistration: {
-    candidateOrdinal: 16,
-    priorTrialCount: 15,
-    sourceRevision: 'a0dadcd2f6346968bd9df582e4673608afc04592',
-    path: 'services/bayn/candidates/ordinal-16-macro-breadth-regime-preregistration.md',
-    blobOid: 'f602e3c8fd1b85768404d5fbc439775cdcd2570b',
-  },
-  latestReviewedCandidatePreregistration: candidate17Preregistration,
+}
+
+export const candidate18LegacyPriorTrialsMaterial: CandidateDevelopmentLegacyPriorTrialsMaterial = {
+  schemaVersion: 'bayn.candidate-development-prior-trials.v1',
+  qualificationCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+  developmentCandidateOrdinals: [17],
   latestDevelopmentEvidence: {
     candidateOrdinal: 17,
     priorTrialCount: 16,
     status: 'DEVELOPMENT_REJECTED',
     evidenceContentHash: candidate17DevelopmentEvidenceExpectation.evidenceContentHash,
-    reviewedSourceRevision: candidate17DevelopmentEvidenceExpectation.bindings.reviewedSourceRevision,
-    mergedSourceRevision: candidate17DevelopmentEvidenceExpectation.bindings.mergedSourceRevision,
+    qualificationAttemptConsumed: false,
+  },
+  latestReviewedPreregistration: candidate17Preregistration,
+}
+
+export const candidate18PriorTrialsMaterial: CandidateDevelopmentPriorTrialsMaterial = {
+  schemaVersion: 'bayn.candidate-development-prior-trials.v2',
+  qualificationCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+  latestQualificationEvidence: candidate16TerminalEvidence,
+  latestQualificationPreregistration: candidate16Preregistration,
+  developmentCandidateOrdinals: candidate18LegacyPriorTrialsMaterial.developmentCandidateOrdinals,
+  latestDevelopmentEvidence: candidate18LegacyPriorTrialsMaterial.latestDevelopmentEvidence,
+  latestReviewedPreregistration: candidate18LegacyPriorTrialsMaterial.latestReviewedPreregistration,
+}
+
+export const deriveCandidateDevelopmentLegacyPriorTrialsHash = (
+  material: CandidateDevelopmentLegacyPriorTrialsMaterial,
+) => canonicalHashV1Result(material)
+
+export const deriveCandidateDevelopmentPriorTrialsHash = (material: CandidateDevelopmentPriorTrialsMaterial) =>
+  canonicalHashV1Result(material)
+
+export const frozenCandidateDevelopmentTrialHistory: CandidateDevelopmentTrialHistory = {
+  schemaVersion: 'bayn.candidate-development-trial-history.v1',
+  completedCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+  developmentCandidateOrdinals: [17, 18],
+  latestReviewedCandidateLegacyPriorTrials: candidate18LegacyPriorTrialsMaterial,
+  latestReviewedCandidatePriorTrials: candidate18PriorTrialsMaterial,
+  latestTerminalEvidence: candidate16TerminalEvidence,
+  candidatePreregistration: candidate16Preregistration,
+  latestReviewedCandidatePreregistration: candidate18Preregistration,
+  latestDevelopmentEvidence: {
+    candidateOrdinal: 18,
+    priorTrialCount: 17,
+    status: 'DEVELOPMENT_REJECTED',
+    evidenceContentHash: candidate18DevelopmentFailureEvidenceExpectation.evidenceContentHash,
+    evaluatedSourceRevision: candidate18DevelopmentFailureEvidenceExpectation.evaluatedSourceRevision,
+    failureStage: candidate18DevelopmentFailureEvidenceExpectation.failureStage,
+    developmentMetricsObserved: candidate18DevelopmentFailureEvidenceExpectation.developmentMetricsObserved,
     qualificationAttemptConsumed: false,
   },
   nextCandidatePreregistration: null,

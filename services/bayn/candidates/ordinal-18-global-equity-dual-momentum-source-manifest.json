@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "bayn.candidate-development-source-manifest.v1",
+  "candidateOrdinal": 18,
+  "priorTrialCount": 17,
+  "strategyProtocolHash": "7e27320b47cd170c1bc9c60ec3692593f2182af44bb48cef4d4a403b09601d75",
+  "strategyIdentityHash": "ff762a985c129055670224dca5827a65c689f6f50e1e3765e7b521a05417b1f0",
+  "candidateDevelopmentProtocolHash": "46657425873b4f766b5f49d0ebbe2ac3aa9cf53682a8508635be708406271877",
+  "calendarHash": "4b2f519f336e4e730c1f0d69e860f25a8d4d0cfbd8e93c6b333ea83623d87237",
+  "priorTrialsHash": "58f4e801380f35f483f998e00c82889e0cb6257e85542764e2dc8eaa4f3fd419",
+  "modulePath": "services/bayn/src/strategy/dual-momentum-global-equity/candidate-18.ts",
+  "moduleFormat": "self-contained-esm-v1",
+  "marketData": {
+    "schemaVersion": "bayn.candidate-development-market-data-source.v1",
+    "snapshotId": "2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0",
+    "finalizedSnapshotContentHash": "8e376546f6a6cc1dbe2e910db3d68f584fc0bd9c4858166042ce32aa077eed0d",
+    "inputManifestHash": "b606cf57fb076f5bd2875206973e7c512817430d5cfbbeac8a99396f9983cab4",
+    "boundedContentHash": "e0e7b283de187d8ccaf8a449dacc538f00049cfe446dcf153b558e92bf0e17ed"
+  }
+}
