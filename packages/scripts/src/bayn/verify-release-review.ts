@@ -1072,6 +1072,14 @@ const validateRemediationFeedback = (
   ) {
     return remediationInvalid(`remediation ${record.remediationId} force-push transformation is not exact`)
   }
+  const blockingReviews = pullRequest.reviews.filter(
+    (review) =>
+      review.authorLogin === baynCodexReviewer &&
+      (review.submittedAt === null || review.state === 'PENDING' || review.state === 'CHANGES_REQUESTED'),
+  )
+  if (blockingReviews.length > 0) {
+    return remediationInvalid(`remediation ${record.remediationId} contains a blocking Codex review`)
+  }
   const reviewMatches = pullRequest.reviews.filter(
     (review) =>
       review.authorLogin === baynCodexReviewer &&
@@ -1115,7 +1123,7 @@ const validateRemediationFeedback = (
   const reactions = pullRequest.reactions.filter(
     (reaction) => reaction.userLogin === baynCodexBotLogin && reaction.content === '+1',
   )
-  if (reactions.length !== 1) {
+  if (reactions.length !== 1 || reactions[0] === undefined || reactions[0].createdAt <= forcePush.createdAt) {
     return remediationInvalid(`remediation ${record.remediationId} exact final-head reaction evidence is missing`)
   }
   return null

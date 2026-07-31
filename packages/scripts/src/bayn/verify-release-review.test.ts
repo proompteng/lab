@@ -789,6 +789,48 @@ describe('Bayn publication-range eligibility', () => {
         const pull = fixture.snapshot.comparison!.commits[0]!.reviewSnapshot!.pullRequest!
         ;(pull.reactions as { userLogin: string | null; content: string; createdAt: string }[])[0]!.userLogin =
           'spoofed-codex[bot]'
+        ;(
+          fixture.evidence.record as unknown as { blocked: { sourcePullRequestEvidenceSha256: string } }
+        ).blocked.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pull)
+      },
+    ],
+    [
+      'stale source reaction before force push',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        const pull = fixture.snapshot.comparison!.commits[0]!.reviewSnapshot!.pullRequest!
+        ;(pull.reactions as { userLogin: string | null; content: string; createdAt: string }[])[0]!.createdAt =
+          '2026-07-31T11:09:00Z'
+        ;(
+          fixture.evidence.record as unknown as { blocked: { sourcePullRequestEvidenceSha256: string } }
+        ).blocked.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pull)
+      },
+    ],
+    [
+      'changes-requested review on a dropped source head',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        const pull = fixture.snapshot.comparison!.commits[0]!.reviewSnapshot!.pullRequest!
+        ;(pull.reviews as PullRequestReview[]).push(
+          review({
+            commitSha: 'a'.repeat(40),
+            submittedAt: '2026-07-31T11:05:00Z',
+            state: 'CHANGES_REQUESTED',
+          }),
+        )
+        ;(
+          fixture.evidence.record as unknown as { blocked: { sourcePullRequestEvidenceSha256: string } }
+        ).blocked.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pull)
+      },
+    ],
+    [
+      'pending review on a dropped source head',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        const pull = fixture.snapshot.comparison!.commits[0]!.reviewSnapshot!.pullRequest!
+        ;(pull.reviews as PullRequestReview[]).push(
+          review({ commitSha: 'b'.repeat(40), submittedAt: null, state: 'PENDING' }),
+        )
+        ;(
+          fixture.evidence.record as unknown as { blocked: { sourcePullRequestEvidenceSha256: string } }
+        ).blocked.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pull)
       },
     ],
     [
@@ -796,6 +838,11 @@ describe('Bayn publication-range eligibility', () => {
       (fixture: ReturnType<typeof remediationHistoryFixture>) => {
         const pull = fixture.snapshot.comparison!.commits[1]!.reviewSnapshot!.pullRequest!
         ;(pull.reactions as unknown as unknown[]) = []
+        ;(
+          fixture.evidence.record as unknown as {
+            requiredDescendants: { sourcePullRequestEvidenceSha256: string }[]
+          }
+        ).requiredDescendants[0]!.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pull)
       },
     ],
     [
