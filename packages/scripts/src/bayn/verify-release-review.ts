@@ -1064,6 +1064,9 @@ const validateRemediationFeedback = (
   ) {
     return remediationInvalid(`remediation ${record.remediationId} source PR metadata is not exact`)
   }
+  if (pullRequest.threads.some((thread) => !thread.isResolved)) {
+    return remediationInvalid(`remediation ${record.remediationId} source PR contains an unresolved review thread`)
+  }
   const forcePush = pullRequest.headForcePushes[0]
   if (
     forcePush === undefined ||

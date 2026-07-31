@@ -923,6 +923,34 @@ describe('Bayn publication-range eligibility', () => {
       },
     ],
     [
+      'additional unresolved source review thread',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        const pull = fixture.snapshot.comparison!.commits[0]!.reviewSnapshot!.pullRequest!
+        ;(pull.threads as PullRequestReviewThread[]).push(
+          thread({
+            id: 'PRRT_unresolved_source_finding',
+            isResolved: false,
+            isOutdated: false,
+            path: 'services/bayn/candidates/ordinal-17-volatility-managed-trend-overlay-preregistration.md',
+            url: 'https://github.com/proompteng/lab/pull/13428#discussion_r_unresolved',
+            comments: [
+              threadComment({
+                body: 'P1 unresolved source finding',
+                commitSha: realHistory.reviewed,
+                reviewCommitSha: realHistory.reviewed,
+                reviewSubmittedAt: '2026-07-31T11:02:00Z',
+                createdAt: '2026-07-31T11:02:00Z',
+                url: 'https://github.com/proompteng/lab/pull/13428#discussion_r_unresolved',
+              }),
+            ],
+          }),
+        )
+        ;(
+          fixture.evidence.record as unknown as { blocked: { sourcePullRequestEvidenceSha256: string } }
+        ).blocked.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pull)
+      },
+    ],
+    [
       'changes-requested review on a dropped descendant head',
       (fixture: ReturnType<typeof remediationHistoryFixture>) => {
         const pull = fixture.snapshot.comparison!.commits[1]!.reviewSnapshot!.pullRequest!
