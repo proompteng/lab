@@ -1,0 +1,359 @@
+import { describe, expect, test } from 'bun:test'
+import { Effect, Result } from 'effect'
+
+import rawPreregistration from '../candidates/ordinal-19-inverse-volatility-risk-diversification-preregistration.json' with { type: 'json' }
+import rawSourceManifest from '../candidates/ordinal-19-inverse-volatility-risk-diversification-source-manifest.json' with { type: 'json' }
+import {
+  candidate18DevelopmentFailureEvidenceExpectation,
+  candidate19Preregistration,
+  candidate19PriorTrialsMaterial,
+  deriveCandidateDevelopmentPriorTrialsHash,
+  frozenCandidateDevelopmentSessions,
+  frozenCandidateDevelopmentTrialHistory,
+} from './candidate-development-calendar'
+import type { CandidateDevelopmentPreflightInput } from './candidate-development'
+import {
+  evaluateCandidateDevelopmentArtifact,
+  validateCandidateDevelopmentArtifactStructure,
+  type CandidateDevelopmentArtifactStructuralBindings,
+  type CandidateDevelopmentSourceManifest,
+  type CandidateDevelopmentStrategyProtocol,
+  type CandidateDevelopmentVerifiedSource,
+  type CandidateDevelopmentVerifiedSourceFiles,
+} from './candidate-development-command'
+import { canonicalHashV1 } from './hash'
+import {
+  candidate19Planner as untypedCandidate19Planner,
+  candidateDevelopmentArtifact as untypedCandidateDevelopmentArtifact,
+} from './strategy/inverse-volatility-risk-diversification/candidate-19'
+
+type Candidate19Symbol = 'DBC' | 'EFA' | 'IEF' | 'SPY' | 'VNQ'
+
+interface Candidate19Bar {
+  readonly symbol: Candidate19Symbol
+  readonly sessionDate: string
+  readonly open: number
+  readonly high: number
+  readonly low: number
+  readonly close: number
+  readonly volume: number
+  readonly source: 'alpaca'
+  readonly sourceFeed: 'sip'
+  readonly adjustment: 'all'
+  readonly publicationSchemaVersion: 'signal.adjusted-daily-snapshot.v2'
+}
+
+interface Candidate19Session {
+  readonly date: string
+  readonly bars: Readonly<Record<Candidate19Symbol, Candidate19Bar>>
+}
+
+type Candidate19Result<A> =
+  | { readonly _tag: 'Success'; readonly success: A }
+  | { readonly _tag: 'Failure'; readonly failure: unknown }
+
+interface Candidate19Decision {
+  readonly feature: {
+    readonly totalReturns: Readonly<Record<Candidate19Symbol, number>>
+    readonly annualizedVolatilities: Readonly<Record<Candidate19Symbol, number>>
+    readonly normalizedInverseVolatilityWeights: Readonly<Record<'SPY' | 'DBC', number>>
+    readonly unscaledAnnualizedPortfolioVolatility: number
+    readonly exposureScale: number
+  }
+  readonly weights: Readonly<Record<Candidate19Symbol, number>>
+}
+
+interface Candidate19PlannerContract {
+  readonly specification: {
+    readonly id: 'inverse-volatility-63-spy-dbc-ten-percent-target-risk-cash'
+    readonly lookbackSessions: 63
+    readonly annualizationSessions: 252
+    readonly riskAssets: readonly ['SPY', 'DBC']
+    readonly covarianceEstimator: 'sample'
+    readonly targetAnnualizedVolatility: 0.1
+    readonly maximumGrossExposure: 1
+  }
+  readonly decisionAtSignal: (
+    sessions: readonly Candidate19Session[],
+    signalIndex: number,
+    terminal: boolean,
+  ) => Candidate19Result<Candidate19Decision>
+}
+
+interface Candidate19ArtifactContract {
+  readonly schemaVersion: 'bayn.candidate-development-artifact.v1'
+  readonly input: {
+    readonly candidateOrdinal: 19
+    readonly priorTrialCount: 18
+    readonly expectedStrategyProtocolHash: string
+    readonly officialSessions: readonly string[]
+    readonly signalSessionDates: readonly string[]
+    readonly featureLookbackSessions: 63
+  }
+  readonly strategyProtocol: CandidateDevelopmentStrategyProtocol
+  readonly structuralBindings: CandidateDevelopmentArtifactStructuralBindings
+  readonly buildEvaluation: (source: unknown) => unknown
+}
+
+const candidate19Planner = untypedCandidate19Planner as unknown as Candidate19PlannerContract
+const candidateDevelopmentArtifact = untypedCandidateDevelopmentArtifact as unknown as Candidate19ArtifactContract
+const candidate19Input = candidateDevelopmentArtifact.input as unknown as CandidateDevelopmentPreflightInput
+const candidate19SourceManifest = rawSourceManifest as CandidateDevelopmentSourceManifest
+const symbols = ['DBC', 'EFA', 'IEF', 'SPY', 'VNQ'] as const satisfies readonly Candidate19Symbol[]
+const sourceManifestPath =
+  'services/bayn/candidates/ordinal-19-inverse-volatility-risk-diversification-source-manifest.json'
+
+const successOf = <A>(result: Candidate19Result<A>): A => {
+  expect(result._tag).toBe('Success')
+  if (result._tag === 'Failure') throw new Error('expected Candidate 19 planner success')
+  return result.success
+}
+
+const syntheticSessions = (): readonly Candidate19Session[] =>
+  frozenCandidateDevelopmentSessions()
+    .slice(0, 65)
+    .map((date, index) => {
+      const bars = {} as Record<Candidate19Symbol, Candidate19Bar>
+      for (const symbol of symbols) {
+        const [drift, amplitude, frequency] =
+          symbol === 'SPY'
+            ? [-0.0002, 0.001, 0.71]
+            : symbol === 'DBC'
+              ? [0.0005, 0.01, 0.83]
+              : symbol === 'EFA'
+                ? [0.0001, 0.004, 0.59]
+                : symbol === 'IEF'
+                  ? [0.00005, 0.002, 0.47]
+                  : [0.00015, 0.006, 0.67]
+        const close = 100 * Math.exp(drift * index + amplitude * Math.sin(frequency * index))
+        bars[symbol] = {
+          symbol,
+          sessionDate: date,
+          open: close,
+          high: close * 1.001,
+          low: close * 0.999,
+          close,
+          volume: 1_000_000 + index,
+          source: 'alpaca',
+          sourceFeed: 'sip',
+          adjustment: 'all',
+          publicationSchemaVersion: 'signal.adjusted-daily-snapshot.v2',
+        }
+      }
+      return { date, bars }
+    })
+
+const verifiedSource = (
+  sourceManifest: CandidateDevelopmentSourceManifest = candidate19SourceManifest,
+): CandidateDevelopmentVerifiedSource => ({
+  schemaVersion: 'bayn.candidate-development-verified-source.v1',
+  sourceRevision: 'a'.repeat(40),
+  modulePath: candidate19Preregistration.modulePath,
+  moduleBlobOid: 'b'.repeat(40),
+  moduleSha256: candidate19Preregistration.moduleSha256,
+  sourceManifestPath,
+  sourceManifestBlobOid: 'c'.repeat(40),
+  sourceManifestSha256: 'd'.repeat(64),
+  sourceManifest,
+  baselineRunId: 'e'.repeat(64),
+  stressedRunId: 'f'.repeat(64),
+})
+
+const verifiedSourceFiles: CandidateDevelopmentVerifiedSourceFiles = {
+  schemaVersion: 'bayn.candidate-development-verified-source-files.v1',
+  sourceRevision: 'a'.repeat(40),
+  modulePath: candidate19Preregistration.modulePath,
+  moduleBlobOid: 'b'.repeat(40),
+  moduleSha256: candidate19Preregistration.moduleSha256,
+  sourceManifestPath,
+  sourceManifestBlobOid: 'c'.repeat(40),
+  sourceManifestSha256: 'd'.repeat(64),
+  sourceManifest: candidate19SourceManifest,
+}
+
+describe('Candidate 19 inverse-volatility preregistration', () => {
+  test('binds the immutable result-blind artifact, complete lineage, and source identities', () => {
+    expect(candidateDevelopmentArtifact.schemaVersion).toBe('bayn.candidate-development-artifact.v1')
+    expect(candidateDevelopmentArtifact.input).toMatchObject({
+      candidateOrdinal: 19,
+      priorTrialCount: 18,
+      expectedStrategyProtocolHash: candidate19Preregistration.strategyProtocolHash,
+      featureLookbackSessions: 63,
+    })
+    expect(candidateDevelopmentArtifact.input.officialSessions).toHaveLength(1_762)
+    expect(canonicalHashV1(candidateDevelopmentArtifact.strategyProtocol)).toBe(
+      candidate19Preregistration.strategyProtocolHash,
+    )
+    expect(canonicalHashV1(candidateDevelopmentArtifact.strategyProtocol.strategyIdentity)).toBe(
+      candidate19Preregistration.strategyIdentityHash!,
+    )
+    expect(candidateDevelopmentArtifact.structuralBindings).toEqual({
+      schemaVersion: 'bayn.candidate-development-artifact-structural-bindings.v1',
+      candidateOrdinal: 19,
+      priorTrialCount: 18,
+      strategyProtocolHash: candidate19Preregistration.strategyProtocolHash,
+      strategyIdentityHash: candidate19Preregistration.strategyIdentityHash!,
+      candidateDevelopmentProtocolHash: candidate19Preregistration.candidateDevelopmentProtocolHash!,
+      calendarHash: candidate19Preregistration.calendarHash!,
+      priorTrialsHash: candidate19Preregistration.priorTrialsHash!,
+      modulePath: candidate19Preregistration.modulePath,
+      sourceManifestPath,
+    })
+    const { preregistration: _gitPreregistration, ...preregistrationDocument } = candidate19Preregistration
+    expect(rawPreregistration).toEqual(preregistrationDocument as typeof rawPreregistration)
+    expect(candidate19SourceManifest).toMatchObject({
+      candidateOrdinal: 19,
+      priorTrialCount: 18,
+      modulePath: candidate19Preregistration.modulePath,
+      moduleSha256: candidate19Preregistration.moduleSha256,
+    })
+    expect(frozenCandidateDevelopmentTrialHistory.completedCandidateOrdinals).toEqual(
+      Array.from({ length: 16 }, (_, index) => index + 1),
+    )
+    expect(frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals).toEqual([17, 18])
+    expect(frozenCandidateDevelopmentTrialHistory.latestDevelopmentEvidence).toMatchObject({
+      candidateOrdinal: 18,
+      priorTrialCount: 17,
+      evidenceContentHash: candidate18DevelopmentFailureEvidenceExpectation.evidenceContentHash,
+      developmentMetricsObserved: false,
+      qualificationAttemptConsumed: false,
+    })
+    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toEqual(candidate19Preregistration)
+    expect(candidate19Planner.specification).toEqual({
+      id: 'inverse-volatility-63-spy-dbc-ten-percent-target-risk-cash',
+      lookbackSessions: 63,
+      annualizationSessions: 252,
+      riskAssets: ['SPY', 'DBC'],
+      covarianceEstimator: 'sample',
+      targetAnnualizedVolatility: 0.1,
+      maximumGrossExposure: 1,
+    })
+    expect(typeof candidateDevelopmentArtifact.buildEvaluation).toBe('function')
+  })
+
+  test('allocates only by causal inverse volatility and covariance risk without momentum filtering', () => {
+    const sessions = syntheticSessions()
+    const decision = successOf(candidate19Planner.decisionAtSignal(sessions, 63, false))
+    const grossExposure = Object.values(decision.weights).reduce((sum, weight) => sum + weight, 0)
+
+    expect(decision.feature.totalReturns.SPY).toBeLessThan(0)
+    expect(decision.feature.totalReturns.DBC).toBeGreaterThan(0)
+    expect(decision.feature.annualizedVolatilities.SPY).toBeLessThan(decision.feature.annualizedVolatilities.DBC)
+    expect(decision.feature.normalizedInverseVolatilityWeights.SPY).toBeGreaterThan(
+      decision.feature.normalizedInverseVolatilityWeights.DBC,
+    )
+    expect(decision.weights.SPY).toBeGreaterThan(0)
+    expect(decision.weights.DBC).toBeGreaterThan(0)
+    expect(decision.weights.EFA).toBe(0)
+    expect(decision.weights.IEF).toBe(0)
+    expect(decision.weights.VNQ).toBe(0)
+    expect(grossExposure).toBeGreaterThan(0)
+    expect(grossExposure).toBeLessThanOrEqual(1)
+    expect(decision.feature.exposureScale).toBeLessThanOrEqual(1)
+    expect(decision.feature.unscaledAnnualizedPortfolioVolatility).toBeGreaterThan(0)
+
+    const terminal = successOf(candidate19Planner.decisionAtSignal(sessions, 63, true))
+    expect(Object.values(terminal.weights).every((weight) => weight === 0)).toBe(true)
+  })
+
+  test('derives the exact complete v2 prior-trials hash and binds both qualification and development history', () => {
+    expect(deriveCandidateDevelopmentPriorTrialsHash(candidate19PriorTrialsMaterial)).toEqual(
+      Result.succeed(candidate19Preregistration.priorTrialsHash!),
+    )
+    expect(
+      deriveCandidateDevelopmentPriorTrialsHash({
+        ...candidate19PriorTrialsMaterial,
+        latestDevelopmentEvidence: {
+          ...candidate19PriorTrialsMaterial.latestDevelopmentEvidence,
+          evidenceContentHash: '0'.repeat(64),
+        },
+      }),
+    ).not.toEqual(Result.succeed(candidate19Preregistration.priorTrialsHash!))
+    expect(
+      deriveCandidateDevelopmentPriorTrialsHash({
+        ...candidate19PriorTrialsMaterial,
+        latestQualificationEvidence: {
+          ...candidate19PriorTrialsMaterial.latestQualificationEvidence,
+          sourceRevision: '0'.repeat(40),
+        },
+      }),
+    ).not.toEqual(Result.succeed(candidate19Preregistration.priorTrialsHash!))
+  })
+
+  test('rejects every immutable structural mismatch before metric evaluation', async () => {
+    const exact = validateCandidateDevelopmentArtifactStructure(
+      candidateDevelopmentArtifact.structuralBindings,
+      candidate19Input,
+      candidateDevelopmentArtifact.strategyProtocol,
+      verifiedSource(),
+    )
+    expect(Result.isSuccess(exact)).toBe(true)
+
+    const bindingDrifts: readonly [keyof CandidateDevelopmentArtifactStructuralBindings, unknown][] = [
+      ['candidateOrdinal', 18],
+      ['priorTrialCount', 17],
+      ['strategyProtocolHash', '0'.repeat(64)],
+      ['strategyIdentityHash', '1'.repeat(64)],
+      ['candidateDevelopmentProtocolHash', '2'.repeat(64)],
+      ['calendarHash', '3'.repeat(64)],
+      ['priorTrialsHash', '4'.repeat(64)],
+      ['modulePath', 'services/bayn/src/strategy/stale/candidate-19.ts'],
+      ['sourceManifestPath', 'services/bayn/candidates/stale-source-manifest.json'],
+    ]
+    for (const [field, observed] of bindingDrifts) {
+      const result = validateCandidateDevelopmentArtifactStructure(
+        { ...candidateDevelopmentArtifact.structuralBindings, [field]: observed },
+        candidate19Input,
+        candidateDevelopmentArtifact.strategyProtocol,
+        verifiedSource(),
+      )
+      expect(result).toMatchObject({
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-program-binding',
+        },
+      })
+    }
+
+    expect(
+      validateCandidateDevelopmentArtifactStructure(
+        candidateDevelopmentArtifact.structuralBindings,
+        candidate19Input,
+        candidateDevelopmentArtifact.strategyProtocol,
+        verifiedSource({ ...candidate19SourceManifest, moduleSha256: '5'.repeat(64) }),
+      ),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-program-binding',
+        cause: { field: 'artifact.structuralBindings.manifest.moduleSha256' },
+      },
+    })
+
+    const staleStructuralBindings = {
+      ...candidateDevelopmentArtifact.structuralBindings,
+      candidateDevelopmentProtocolHash: '6'.repeat(64),
+    }
+    const source = `
+      export const candidateDevelopmentArtifact = {
+        schemaVersion: 'bayn.candidate-development-artifact.v1',
+        input: ${JSON.stringify(candidateDevelopmentArtifact.input)},
+        strategyProtocol: ${JSON.stringify(candidateDevelopmentArtifact.strategyProtocol)},
+        structuralBindings: ${JSON.stringify(staleStructuralBindings)},
+        buildEvaluation: () => { throw new Error('metric-attempt-entered') },
+      }
+    `
+    const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
+    const failure = await Effect.runPromise(
+      Effect.flip(evaluateCandidateDevelopmentArtifact(moduleUrl, verifiedSourceFiles)),
+    )
+    expect(failure).toMatchObject({
+      _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
+      cause: {
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-program-binding',
+      },
+    })
+    expect(JSON.stringify(failure)).not.toContain('metric-attempt-entered')
+  })
+})

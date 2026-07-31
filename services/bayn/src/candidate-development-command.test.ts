@@ -50,7 +50,7 @@ import { MICROS, referencePriceMicros } from './execution-model'
 import { alignBars, directVolatilityWeights, simulate, type SimulationTarget } from './simulation'
 import { calculateExactPerformanceMetrics, buildVerdict } from './simulation/metrics'
 import { reconcileMarkedEquity } from './simulation-reconciliation'
-import { candidateDevelopmentArtifact as candidate18Artifact } from './strategy/dual-momentum-global-equity/candidate-18'
+import { candidateDevelopmentArtifact as candidate19Artifact } from './strategy/inverse-volatility-risk-diversification/candidate-19'
 import {
   DataFeed,
   DataSource,
@@ -91,79 +91,82 @@ const execFileBytesPromise = (file: string, args: readonly string[], cwd: string
     })
   })
 
-const candidate18PreregistrationRevision = '30614640c5dfa7a7d50bf053df153062ff0bbca4'
-const candidate18PreregistrationPath =
-  'services/bayn/candidates/ordinal-18-global-equity-dual-momentum-preregistration.json'
-const candidate18PreregistrationBlobOid = '920a4afb8a7e5c1f6ef0875683ddc96a91008079'
-const candidate18ModuleRepositoryPath = 'services/bayn/src/strategy/dual-momentum-global-equity/candidate-18.ts'
-const candidate18ModuleSha256 = '27466a8c9a9acba475db9cd0d2916532208540a53bd1f0ece307df299e5e34e8'
-const candidate18ModuleBlobOid = '44357f3d98315e7d241e4f0184f7812f5a27e930'
-const candidate18SourceManifestRepositoryPath =
-  'services/bayn/candidates/ordinal-18-global-equity-dual-momentum-source-manifest.json'
-const candidate18SourceManifestBlobOid = '3007c3e088f1a83228d5be672c232645fa2effa4'
-const candidate18SourceManifestSha256 = '636ca2e6280523eb18c06dea84f3c0d738f6995ba2eaa8bb97ca0b922e7d1f73'
-const candidate18MarketData = {
+const candidate19PreregistrationRevision = 'd48dd6f6e316ccb5f2f00d65941d24a88abcd8d2'
+const candidate19PreregistrationPath =
+  'services/bayn/candidates/ordinal-19-inverse-volatility-risk-diversification-preregistration.json'
+const candidate19PreregistrationBlobOid = '02d9150a1f0007a644a084b3fca4cd543131374e'
+const candidate19ModuleRepositoryPath =
+  'services/bayn/src/strategy/inverse-volatility-risk-diversification/candidate-19.ts'
+const candidate19ModuleSha256 = '90813ab3a3d3cb000bb894309694f94588f98730a6f78b8e1418a5c38d8cb45f'
+const candidate19ModuleBlobOid = '4'.repeat(40)
+const candidate19SourceManifestRepositoryPath =
+  'services/bayn/candidates/ordinal-19-inverse-volatility-risk-diversification-source-manifest.json'
+const candidate19SourceManifestBlobOid = '5'.repeat(40)
+const candidate19SourceManifestSha256 = '6'.repeat(64)
+const candidate19MarketData = {
   schemaVersion: 'bayn.candidate-development-market-data-source.v1' as const,
   snapshotId: '2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0',
   finalizedSnapshotContentHash: '8e376546f6a6cc1dbe2e910db3d68f584fc0bd9c4858166042ce32aa077eed0d',
   inputManifestHash: 'b606cf57fb076f5bd2875206973e7c512817430d5cfbbeac8a99396f9983cab4',
   boundedContentHash: 'e0e7b283de187d8ccaf8a449dacc538f00049cfe446dcf153b558e92bf0e17ed',
 }
-const candidate18PreregistrationDocument = {
+const candidate19PreregistrationDocument = {
   schemaVersion: 'bayn.candidate-development-next-preregistration.v1' as const,
-  candidateOrdinal: 18,
-  priorTrialCount: 17,
-  strategyProtocolHash: '7e27320b47cd170c1bc9c60ec3692593f2182af44bb48cef4d4a403b09601d75',
-  strategyIdentityHash: 'ff762a985c129055670224dca5827a65c689f6f50e1e3765e7b521a05417b1f0',
-  candidateDevelopmentProtocolHash: '46657425873b4f766b5f49d0ebbe2ac3aa9cf53682a8508635be708406271877',
+  candidateOrdinal: 19,
+  priorTrialCount: 18,
+  strategyProtocolHash: 'b4a2a6c65a7fa5973f7cbc1fd5031e77d529f4884562e5cc8a105fc870ced78f',
+  strategyIdentityHash: 'ccf8f03db1f0f9eb54f7ad42194c938e5a53e11573488fd31e7af871967af25a',
+  candidateDevelopmentProtocolHash: '663b59d6c570bbe3373d6e160609e0ad6294a687f435416f2a0956888d960738',
   calendarHash: '4b2f519f336e4e730c1f0d69e860f25a8d4d0cfbd8e93c6b333ea83623d87237',
-  priorTrialsHash: '58f4e801380f35f483f998e00c82889e0cb6257e85542764e2dc8eaa4f3fd419',
-  modulePath: candidate18ModuleRepositoryPath,
-  moduleSha256: candidate18ModuleSha256,
-  marketData: candidate18MarketData,
+  priorTrialsHash: '1dfc9b6832d4841093becd2c276141110afdfce28a0a88b301cfe9959b900d62',
+  modulePath: candidate19ModuleRepositoryPath,
+  moduleSha256: candidate19ModuleSha256,
+  marketData: candidate19MarketData,
 }
-const candidate18PreregistrationBytes = Buffer.from(`${JSON.stringify(candidate18PreregistrationDocument, null, 2)}\n`)
-const candidate18SourceManifest: CandidateDevelopmentSourceManifest = {
+const candidate19PreregistrationBytes = Buffer.from(`${JSON.stringify(candidate19PreregistrationDocument, null, 2)}\n`)
+const candidate19SourceManifest: CandidateDevelopmentSourceManifest = {
   schemaVersion: 'bayn.candidate-development-source-manifest.v1',
-  candidateOrdinal: 18,
-  priorTrialCount: 17,
-  strategyProtocolHash: candidate18PreregistrationDocument.strategyProtocolHash,
-  strategyIdentityHash: candidate18PreregistrationDocument.strategyIdentityHash,
-  candidateDevelopmentProtocolHash: candidate18PreregistrationDocument.candidateDevelopmentProtocolHash,
-  calendarHash: candidate18PreregistrationDocument.calendarHash,
-  priorTrialsHash: candidate18PreregistrationDocument.priorTrialsHash,
-  modulePath: candidate18ModuleRepositoryPath,
+  candidateOrdinal: 19,
+  priorTrialCount: 18,
+  strategyProtocolHash: candidate19PreregistrationDocument.strategyProtocolHash,
+  strategyIdentityHash: candidate19PreregistrationDocument.strategyIdentityHash,
+  candidateDevelopmentProtocolHash: candidate19PreregistrationDocument.candidateDevelopmentProtocolHash,
+  calendarHash: candidate19PreregistrationDocument.calendarHash,
+  priorTrialsHash: candidate19PreregistrationDocument.priorTrialsHash,
+  modulePath: candidate19ModuleRepositoryPath,
+  moduleSha256: candidate19ModuleSha256,
   moduleFormat: 'self-contained-esm-v1',
-  marketData: candidate18MarketData,
+  marketData: candidate19MarketData,
 }
-const candidate18SourceManifestBytes = `${JSON.stringify(candidate18SourceManifest, null, 2)}\n`
-const candidate18OfficialSessions = frozenCandidateDevelopmentSessions()
-const candidate18Input: CandidateDevelopmentPreflightInput = {
-  candidateOrdinal: 18,
-  priorTrialCount: 17,
-  expectedStrategyProtocolHash: candidate18PreregistrationDocument.strategyProtocolHash,
-  officialSessions: candidate18OfficialSessions,
-  signalSessionDates: officialMonthEndSignalDates(candidate18OfficialSessions),
-  featureLookbackSessions: 252,
+const candidate19SourceManifestBytes = `${JSON.stringify(candidate19SourceManifest, null, 2)}\n`
+const candidate19OfficialSessions = frozenCandidateDevelopmentSessions()
+const candidate19Input: CandidateDevelopmentPreflightInput = {
+  candidateOrdinal: 19,
+  priorTrialCount: 18,
+  expectedStrategyProtocolHash: candidate19PreregistrationDocument.strategyProtocolHash,
+  officialSessions: candidate19OfficialSessions,
+  signalSessionDates: officialMonthEndSignalDates(candidate19OfficialSessions),
+  featureLookbackSessions: 63,
 }
-const candidate18StrategyProtocol =
-  candidate18Artifact.strategyProtocol as unknown as CandidateDevelopmentStrategyProtocol
+const candidate19StrategyProtocol =
+  candidate19Artifact.strategyProtocol as unknown as CandidateDevelopmentStrategyProtocol
+const candidate19StructuralBindings = candidate19Artifact.structuralBindings
 
-const candidate18VerifiedSourceFiles: CandidateDevelopmentVerifiedSourceFiles = {
+const candidate19VerifiedSourceFiles: CandidateDevelopmentVerifiedSourceFiles = {
   schemaVersion: 'bayn.candidate-development-verified-source-files.v1',
   sourceRevision: '2'.repeat(40),
-  modulePath: candidate18ModuleRepositoryPath,
-  moduleBlobOid: candidate18ModuleBlobOid,
-  moduleSha256: candidate18ModuleSha256,
-  sourceManifestPath: candidate18SourceManifestRepositoryPath,
-  sourceManifestBlobOid: candidate18SourceManifestBlobOid,
-  sourceManifestSha256: candidate18SourceManifestSha256,
-  sourceManifest: candidate18SourceManifest,
+  modulePath: candidate19ModuleRepositoryPath,
+  moduleBlobOid: candidate19ModuleBlobOid,
+  moduleSha256: candidate19ModuleSha256,
+  sourceManifestPath: candidate19SourceManifestRepositoryPath,
+  sourceManifestBlobOid: candidate19SourceManifestBlobOid,
+  sourceManifestSha256: candidate19SourceManifestSha256,
+  sourceManifest: candidate19SourceManifest,
 }
 
-const candidate18VirtualPreregistrationTreeOid = '0'.repeat(40)
-const candidate18VirtualPreregistrationCommit = Buffer.from(
-  `tree ${candidate18VirtualPreregistrationTreeOid}\n\nCandidate 18 preregistration fixture\n`,
+const candidate19VirtualPreregistrationTreeOid = '0'.repeat(40)
+const candidate19VirtualPreregistrationCommit = Buffer.from(
+  `tree ${candidate19VirtualPreregistrationTreeOid}\n\nCandidate 19 preregistration fixture\n`,
 )
 
 const candidateTestGitEnvironment = (): NodeJS.ProcessEnv =>
@@ -215,7 +218,7 @@ const candidateTestSourceGit: CandidateDevelopmentSourceGit = {
   openObjectReader: openCandidateDevelopmentGitBatchObjectReader,
 }
 
-const bindCandidate18VirtualPreregistrationParent = (content: Buffer): Buffer => {
+const bindCandidate19VirtualPreregistrationParent = (content: Buffer): Buffer => {
   const encoded = content.toString('utf8')
   const separator = encoded.indexOf('\n\n')
   if (separator < 0) throw new Error('candidate test commit is missing its message separator')
@@ -226,27 +229,27 @@ const bindCandidate18VirtualPreregistrationParent = (content: Buffer): Buffer =>
   const [tree, ...remainingHeaders] = headers
   if (tree === undefined || !tree.startsWith('tree ')) throw new Error('candidate test commit is missing its tree')
   return Buffer.from(
-    [tree, `parent ${candidate18PreregistrationRevision}`, ...remainingHeaders, '', encoded.slice(separator + 2)].join(
+    [tree, `parent ${candidate19PreregistrationRevision}`, ...remainingHeaders, '', encoded.slice(separator + 2)].join(
       '\n',
     ),
   )
 }
 
-const candidate18VirtualPreregistrationSourceGit = (
+const candidate19VirtualPreregistrationSourceGit = (
   base: CandidateDevelopmentSourceGit = candidateTestSourceGit,
 ): CandidateDevelopmentSourceGit => {
   let capturedSourceRevision: string | undefined
-  const preregistrationSpec = `${candidate18PreregistrationRevision}:${candidate18PreregistrationPath}`
+  const preregistrationSpec = `${candidate19PreregistrationRevision}:${candidate19PreregistrationPath}`
   return {
     text: async (repositoryRoot, args, signal) => {
-      if (args[0] === 'rev-parse' && args[1] === preregistrationSpec) return candidate18PreregistrationBlobOid
+      if (args[0] === 'rev-parse' && args[1] === preregistrationSpec) return candidate19PreregistrationBlobOid
       const output = await base.text(repositoryRoot, args, signal)
       if (args[0] === 'rev-parse' && args[1] === 'HEAD') capturedSourceRevision = output
       return output
     },
     bytes: (repositoryRoot, args, signal) =>
       args[0] === 'cat-file' && args[1] === 'blob' && args[2] === preregistrationSpec
-        ? Promise.resolve(candidate18PreregistrationBytes)
+        ? Promise.resolve(candidate19PreregistrationBytes)
         : base.bytes(repositoryRoot, args, signal),
     openObjectReader: async (repositoryRoot, signal) => {
       const delegate = await (base.openObjectReader ?? openCandidateDevelopmentGitBatchObjectReader)(
@@ -255,13 +258,13 @@ const candidate18VirtualPreregistrationSourceGit = (
       )
       return {
         read: async (oid, expectedType) => {
-          if (oid === candidate18PreregistrationRevision && expectedType === 'commit') {
-            return candidate18VirtualPreregistrationCommit
+          if (oid === candidate19PreregistrationRevision && expectedType === 'commit') {
+            return candidate19VirtualPreregistrationCommit
           }
-          if (oid === candidate18VirtualPreregistrationTreeOid && expectedType === 'tree') return Buffer.alloc(0)
+          if (oid === candidate19VirtualPreregistrationTreeOid && expectedType === 'tree') return Buffer.alloc(0)
           const content = await delegate.read(oid, expectedType)
           return oid === capturedSourceRevision && expectedType === 'commit'
-            ? bindCandidate18VirtualPreregistrationParent(content)
+            ? bindCandidate19VirtualPreregistrationParent(content)
             : content
         },
         close: () => delegate.close(),
@@ -270,7 +273,7 @@ const candidate18VirtualPreregistrationSourceGit = (
   }
 }
 
-const initializeCandidate18DescendantRepository = async (repository: string): Promise<void> => {
+const initializeCandidate19DescendantRepository = async (repository: string): Promise<void> => {
   await execFilePromise('git', ['init', '-q'], repository)
   await execFilePromise('git', ['config', 'user.name', 'Candidate Test'], repository)
   await execFilePromise('git', ['config', 'user.email', 'candidate@example.test'], repository)
@@ -2560,11 +2563,11 @@ describe('candidate development command', () => {
   })
 
   test('derives baseline and stressed run identities from verified Git provenance', () => {
-    const verified = successOf(bindCandidateDevelopmentVerifiedSource(candidate18VerifiedSourceFiles, candidate18Input))
+    const verified = successOf(bindCandidateDevelopmentVerifiedSource(candidate19VerifiedSourceFiles, candidate19Input))
     const revisionDrift = successOf(
       bindCandidateDevelopmentVerifiedSource(
-        { ...candidate18VerifiedSourceFiles, sourceRevision: 'e'.repeat(40) },
-        candidate18Input,
+        { ...candidate19VerifiedSourceFiles, sourceRevision: 'e'.repeat(40) },
+        candidate19Input,
       ),
     )
 
@@ -2572,8 +2575,8 @@ describe('candidate development command', () => {
     expect(revisionDrift.baselineRunId).not.toBe(verified.baselineRunId)
     expect(
       bindCandidateDevelopmentVerifiedSource(
-        { ...candidate18VerifiedSourceFiles, moduleSha256: 'f'.repeat(64) },
-        candidate18Input,
+        { ...candidate19VerifiedSourceFiles, moduleSha256: 'f'.repeat(64) },
+        candidate19Input,
       ),
     ).toMatchObject({
       failure: {
@@ -2581,7 +2584,7 @@ describe('candidate development command', () => {
         operation: 'verify-program-binding',
         cause: {
           field: 'trialHistory.latestReviewedCandidatePreregistration.moduleSha256',
-          expected: candidate18ModuleSha256,
+          expected: candidate19ModuleSha256,
           observed: 'f'.repeat(64),
         },
       },
@@ -2589,16 +2592,16 @@ describe('candidate development command', () => {
     expect(
       bindCandidateDevelopmentVerifiedSource(
         {
-          ...candidate18VerifiedSourceFiles,
-          sourceManifest: { ...candidate18SourceManifest, candidateOrdinal: 19 },
+          ...candidate19VerifiedSourceFiles,
+          sourceManifest: { ...candidate19SourceManifest, candidateOrdinal: 20 },
         },
-        candidate18Input,
+        candidate19Input,
       ),
     ).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
         operation: 'verify-program-binding',
-        cause: { field: 'candidateOrdinal', expected: 18, observed: 19 },
+        cause: { field: 'candidateOrdinal', expected: 19, observed: 20 },
       },
     })
   })
@@ -2637,7 +2640,7 @@ describe('candidate development command', () => {
         operation: 'verify-program-binding',
         cause: {
           field: 'trialHistory.latestReviewedCandidatePreregistration.input.candidateOrdinal',
-          expected: 18,
+          expected: 19,
           observed: 1,
         },
       },
@@ -2769,7 +2772,7 @@ describe('candidate development command', () => {
         operation: 'verify-program-binding',
         cause: {
           field: 'trialHistory.latestReviewedCandidatePreregistration.input.candidateOrdinal',
-          expected: 18,
+          expected: 19,
           observed: 16,
         },
       },
@@ -2889,14 +2892,14 @@ describe('candidate development command', () => {
       await writeFile(modulePath, moduleBytes)
       await writeFile(dependencyPath, dependencyBytes)
       await writeFile(sourceManifestPath, sourceManifestBytes)
-      await initializeCandidate18DescendantRepository(repository)
+      await initializeCandidate19DescendantRepository(repository)
       await execFilePromise(
         'git',
         ['add', 'candidate/program.mjs', 'candidate/dependency.mjs', 'candidate/source-manifest.json'],
         repository,
       )
       await execFilePromise('git', ['commit', '-qm', 'test: bind candidate source'], repository)
-      const sourceGit = candidate18VirtualPreregistrationSourceGit()
+      const sourceGit = candidate19VirtualPreregistrationSourceGit()
 
       const verified = await Effect.runPromise(
         verifyCandidateDevelopmentSourceFiles(modulePath, sourceManifestPath, sourceGit),
@@ -2979,12 +2982,12 @@ describe('candidate development command', () => {
         await mkdir(directory, { recursive: true })
         await writeFile(join(directory, 'program.mjs'), bytes)
         await writeFile(join(directory, 'source-manifest.json'), sourceManifestBytes)
-        await initializeCandidate18DescendantRepository(root)
+        await initializeCandidate19DescendantRepository(root)
         await execFilePromise('git', ['add', 'candidate/program.mjs', 'candidate/source-manifest.json'], root)
         await execFilePromise('git', ['commit', '-qm', 'test: bind source environment'], root)
       }
       const expectedRevision = await execFileTextPromise('git', ['rev-parse', 'HEAD'], repository)
-      const sourceGit = candidate18VirtualPreregistrationSourceGit()
+      const sourceGit = candidate19VirtualPreregistrationSourceGit()
 
       process.env.GIT_DIR = join(alternateRepository, '.git')
       process.env.GIT_WORK_TREE = repository
@@ -3602,8 +3605,9 @@ describe('candidate development command', () => {
       const evaluation = ${JSON.stringify(baseEvaluation)}
       export const candidateDevelopmentArtifact = {
         schemaVersion: 'bayn.candidate-development-artifact.v1',
-        input: ${JSON.stringify(candidate18Input)},
-        strategyProtocol: ${JSON.stringify(candidate18StrategyProtocol)},
+        input: ${JSON.stringify(candidate19Input)},
+        strategyProtocol: ${JSON.stringify(candidate19StrategyProtocol)},
+        structuralBindings: ${JSON.stringify(candidate19StructuralBindings)},
         buildEvaluation: (verifiedSource) => ({
           ...evaluation,
           baseline: {
@@ -3622,10 +3626,10 @@ describe('candidate development command', () => {
     const sourceB = `${sourceA}\n// moved HEAD must not execute\n`
 
     try {
-      await initializeCandidate18DescendantRepository(repository)
+      await initializeCandidate19DescendantRepository(repository)
       await mkdir(dirname(modulePath), { recursive: true })
       await writeFile(modulePath, sourceA)
-      await writeFile(sourceManifestPath, candidate18SourceManifestBytes)
+      await writeFile(sourceManifestPath, candidate19SourceManifestBytes)
       await execFilePromise('git', ['add', moduleRepositoryPath, sourceManifestRepositoryPath], repository)
       await execFilePromise('git', ['commit', '-qm', 'test: add trusted source A'], repository)
       const sourceRevision = await execFileTextPromise('git', ['rev-parse', 'HEAD'], repository)
@@ -3664,7 +3668,7 @@ describe('candidate development command', () => {
             new AbortController().signal,
           )
           return {
-            files: { ...candidate18VerifiedSourceFiles, sourceRevision: capturedRevision },
+            files: { ...candidate19VerifiedSourceFiles, sourceRevision: capturedRevision },
             moduleUrl: `data:text/javascript;base64,${moduleBytes.toString('base64')}`,
           }
         })
@@ -3678,10 +3682,10 @@ describe('candidate development command', () => {
         loadCandidateDevelopmentExecutableProgram(modulePath, sourceManifestPath, importer, sourceVerifier),
       )
       const expectedFiles: CandidateDevelopmentVerifiedSourceFiles = {
-        ...candidate18VerifiedSourceFiles,
+        ...candidate19VerifiedSourceFiles,
         sourceRevision,
       }
-      const expectedVerifiedSource = successOf(bindCandidateDevelopmentVerifiedSource(expectedFiles, candidate18Input))
+      const expectedVerifiedSource = successOf(bindCandidateDevelopmentVerifiedSource(expectedFiles, candidate19Input))
       const decoded = await Effect.runPromise(
         loaded.program.effects.evaluateDevelopment(undefined, undefined as never, loaded.verifiedSource),
       )
@@ -3700,8 +3704,8 @@ describe('candidate development command', () => {
   }, 60_000)
 
   test('evaluates the immutable artifact without host code-loading capabilities', async () => {
-    const input = candidate18Input
-    const verifiedSource = successOf(bindCandidateDevelopmentVerifiedSource(candidate18VerifiedSourceFiles, input))
+    const input = candidate19Input
+    const verifiedSource = successOf(bindCandidateDevelopmentVerifiedSource(candidate19VerifiedSourceFiles, input))
     const report = reportFixture(0.01)
     const baseEvaluation = commandEvaluationFixture(report, baselineFixture())
     const evaluation = {
@@ -3721,7 +3725,8 @@ describe('candidate development command', () => {
       export const candidateDevelopmentArtifact = {
         schemaVersion: 'bayn.candidate-development-artifact.v1',
         input: ${JSON.stringify(input)},
-        strategyProtocol: ${JSON.stringify(candidate18StrategyProtocol)},
+        strategyProtocol: ${JSON.stringify(candidate19StrategyProtocol)},
+        structuralBindings: ${JSON.stringify(candidate19StructuralBindings)},
         buildEvaluation: (verifiedSource) => {
           const unavailable = [
             typeof globalThis['process'],
@@ -3769,7 +3774,7 @@ describe('candidate development command', () => {
     `
     const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
     const loaded = await Effect.runPromise(
-      evaluateCandidateDevelopmentArtifact(moduleUrl, candidate18VerifiedSourceFiles),
+      evaluateCandidateDevelopmentArtifact(moduleUrl, candidate19VerifiedSourceFiles),
     )
     const program = successOf(
       validateCandidateDevelopmentExecutableProgram(
@@ -3786,25 +3791,26 @@ describe('candidate development command', () => {
   })
 
   test('interrupts a real infinite-loop artifact worker promptly', async () => {
-    const input = candidate18Input
+    const input = candidate19Input
     const source = `
       export const candidateDevelopmentArtifact = {
         schemaVersion: 'bayn.candidate-development-artifact.v1',
         input: ${JSON.stringify(input)},
-        strategyProtocol: ${JSON.stringify(candidate18StrategyProtocol)},
+        strategyProtocol: ${JSON.stringify(candidate19StrategyProtocol)},
+        structuralBindings: ${JSON.stringify(candidate19StructuralBindings)},
         buildEvaluation: () => { while (true) {} },
       }
     `
     const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
     const loaded = await Effect.runPromise(
-      evaluateCandidateDevelopmentArtifact(moduleUrl, candidate18VerifiedSourceFiles),
+      evaluateCandidateDevelopmentArtifact(moduleUrl, candidate19VerifiedSourceFiles),
     )
     const program = successOf(
       validateCandidateDevelopmentExecutableProgram(
         (loaded as { readonly candidateDevelopmentProgram?: unknown }).candidateDevelopmentProgram,
       ),
     )
-    const verifiedSource = successOf(bindCandidateDevelopmentVerifiedSource(candidate18VerifiedSourceFiles, input))
+    const verifiedSource = successOf(bindCandidateDevelopmentVerifiedSource(candidate19VerifiedSourceFiles, input))
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -4039,7 +4045,7 @@ describe('candidate development command', () => {
     const sourceRevision = 'a'.repeat(40)
     const sourceTreeOid = 'b'.repeat(40)
     const preregistrationTreeOid = 'c'.repeat(40)
-    const preregistrationSpec = `${candidate18PreregistrationRevision}:${candidate18PreregistrationPath}`
+    const preregistrationSpec = `${candidate19PreregistrationRevision}:${candidate19PreregistrationPath}`
     let siblingStarted = false
     let siblingAborted = false
     let siblingSettled = false
@@ -4052,13 +4058,13 @@ describe('candidate development command', () => {
         if (args[0] === 'rev-parse' && args[1] === '--git-path') return Promise.resolve(args[2] ?? '')
         if (args[0] === 'rev-parse' && args[1] === 'HEAD') return Promise.resolve(sourceRevision)
         if (args[0] === 'rev-parse' && args[1] === preregistrationSpec) {
-          return Promise.resolve(candidate18PreregistrationBlobOid)
+          return Promise.resolve(candidate19PreregistrationBlobOid)
         }
         return Promise.reject(new Error(`unexpected Git text command: ${args.join(' ')}`))
       },
       bytes: (_repositoryRoot, args, signal) => {
         const spec = args.at(-1) ?? ''
-        if (spec === preregistrationSpec) return Promise.resolve(candidate18PreregistrationBytes)
+        if (spec === preregistrationSpec) return Promise.resolve(candidate19PreregistrationBytes)
         if (spec.endsWith(':program.mjs')) return Promise.reject(new Error('module blob failed'))
         return new Promise((_resolve, reject) => {
           siblingStarted = true
@@ -4083,10 +4089,10 @@ describe('candidate development command', () => {
           if (expectedType !== 'commit') throw new Error(`unexpected object type: ${expectedType}`)
           if (oid === sourceRevision) {
             return Buffer.from(
-              `tree ${sourceTreeOid}\nparent ${candidate18PreregistrationRevision}\n\nsource revision\n`,
+              `tree ${sourceTreeOid}\nparent ${candidate19PreregistrationRevision}\n\nsource revision\n`,
             )
           }
-          if (oid === candidate18PreregistrationRevision) {
+          if (oid === candidate19PreregistrationRevision) {
             return Buffer.from(`tree ${preregistrationTreeOid}\n\npreregistration revision\n`)
           }
           throw new Error(`unexpected commit object: ${oid}`)

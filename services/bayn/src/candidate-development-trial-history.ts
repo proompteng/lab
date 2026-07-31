@@ -169,6 +169,25 @@ export const candidate18Preregistration: CandidateDevelopmentNextPreregistration
   },
 }
 
+export const candidate19Preregistration: CandidateDevelopmentNextPreregistration = {
+  schemaVersion: 'bayn.candidate-development-next-preregistration.v1',
+  candidateOrdinal: 19,
+  priorTrialCount: 18,
+  strategyProtocolHash: 'b4a2a6c65a7fa5973f7cbc1fd5031e77d529f4884562e5cc8a105fc870ced78f',
+  strategyIdentityHash: 'ccf8f03db1f0f9eb54f7ad42194c938e5a53e11573488fd31e7af871967af25a',
+  candidateDevelopmentProtocolHash: '663b59d6c570bbe3373d6e160609e0ad6294a687f435416f2a0956888d960738',
+  calendarHash: '4b2f519f336e4e730c1f0d69e860f25a8d4d0cfbd8e93c6b333ea83623d87237',
+  priorTrialsHash: '1dfc9b6832d4841093becd2c276141110afdfce28a0a88b301cfe9959b900d62',
+  modulePath: 'services/bayn/src/strategy/inverse-volatility-risk-diversification/candidate-19.ts',
+  moduleSha256: '90813ab3a3d3cb000bb894309694f94588f98730a6f78b8e1418a5c38d8cb45f',
+  marketData: candidate18Preregistration.marketData,
+  preregistration: {
+    sourceRevision: 'd48dd6f6e316ccb5f2f00d65941d24a88abcd8d2',
+    path: 'services/bayn/candidates/ordinal-19-inverse-volatility-risk-diversification-preregistration.json',
+    blobOid: '02d9150a1f0007a644a084b3fca4cd543131374e',
+  },
+}
+
 export const candidate18LegacyPriorTrialsMaterial: CandidateDevelopmentLegacyPriorTrialsMaterial = {
   schemaVersion: 'bayn.candidate-development-prior-trials.v1',
   qualificationCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
@@ -193,6 +212,22 @@ export const candidate18PriorTrialsMaterial: CandidateDevelopmentPriorTrialsMate
   latestReviewedPreregistration: candidate18LegacyPriorTrialsMaterial.latestReviewedPreregistration,
 }
 
+export const candidate19PriorTrialsMaterial: CandidateDevelopmentPriorTrialsMaterial = {
+  schemaVersion: 'bayn.candidate-development-prior-trials.v2',
+  qualificationCandidateOrdinals: candidate18PriorTrialsMaterial.qualificationCandidateOrdinals,
+  latestQualificationEvidence: candidate16TerminalEvidence,
+  latestQualificationPreregistration: candidate16Preregistration,
+  developmentCandidateOrdinals: [17, 18],
+  latestDevelopmentEvidence: {
+    candidateOrdinal: 18,
+    priorTrialCount: 17,
+    status: 'DEVELOPMENT_REJECTED',
+    evidenceContentHash: candidate18DevelopmentFailureEvidenceExpectation.evidenceContentHash,
+    qualificationAttemptConsumed: false,
+  },
+  latestReviewedPreregistration: candidate18Preregistration,
+}
+
 export const deriveCandidateDevelopmentLegacyPriorTrialsHash = (
   material: CandidateDevelopmentLegacyPriorTrialsMaterial,
 ) => canonicalHashV1Result(material)
@@ -205,10 +240,10 @@ export const frozenCandidateDevelopmentTrialHistory: CandidateDevelopmentTrialHi
   completedCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
   developmentCandidateOrdinals: [17, 18],
   latestReviewedCandidateLegacyPriorTrials: candidate18LegacyPriorTrialsMaterial,
-  latestReviewedCandidatePriorTrials: candidate18PriorTrialsMaterial,
+  latestReviewedCandidatePriorTrials: candidate19PriorTrialsMaterial,
   latestTerminalEvidence: candidate16TerminalEvidence,
   candidatePreregistration: candidate16Preregistration,
-  latestReviewedCandidatePreregistration: candidate18Preregistration,
+  latestReviewedCandidatePreregistration: candidate19Preregistration,
   latestDevelopmentEvidence: {
     candidateOrdinal: 18,
     priorTrialCount: 17,
@@ -219,5 +254,5 @@ export const frozenCandidateDevelopmentTrialHistory: CandidateDevelopmentTrialHi
     developmentMetricsObserved: candidate18DevelopmentFailureEvidenceExpectation.developmentMetricsObserved,
     qualificationAttemptConsumed: false,
   },
-  nextCandidatePreregistration: null,
+  nextCandidatePreregistration: candidate19Preregistration,
 }
