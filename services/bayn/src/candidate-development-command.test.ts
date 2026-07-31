@@ -2635,7 +2635,7 @@ describe('candidate development command', () => {
         _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
         operation: 'verify-program-binding',
         cause: {
-          field: 'trialHistory.nextCandidatePreregistration.moduleSha256',
+          field: 'trialHistory.latestReviewedCandidatePreregistration.moduleSha256',
           expected: candidate17ModuleSha256,
           observed: 'f'.repeat(64),
         },
@@ -2691,7 +2691,7 @@ describe('candidate development command', () => {
         _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
         operation: 'verify-program-binding',
         cause: {
-          field: 'trialHistory.nextCandidatePreregistration.input.candidateOrdinal',
+          field: 'trialHistory.latestReviewedCandidatePreregistration.input.candidateOrdinal',
           expected: 17,
           observed: 1,
         },
@@ -2823,7 +2823,7 @@ describe('candidate development command', () => {
         _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
         operation: 'verify-program-binding',
         cause: {
-          field: 'trialHistory.nextCandidatePreregistration.input.candidateOrdinal',
+          field: 'trialHistory.latestReviewedCandidatePreregistration.input.candidateOrdinal',
           expected: 17,
           observed: 16,
         },

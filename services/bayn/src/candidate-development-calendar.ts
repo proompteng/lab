@@ -1,83 +1,13 @@
 import { candidateDevelopmentCalendarContract } from './candidate-development'
 import type { IsoDate } from './schemas'
 
-export interface CandidateDevelopmentNextPreregistration {
-  readonly schemaVersion: 'bayn.candidate-development-next-preregistration.v1'
-  readonly candidateOrdinal: number
-  readonly priorTrialCount: number
-  readonly strategyProtocolHash: string
-  readonly modulePath: string
-  readonly moduleSha256: string
-  readonly marketData: {
-    readonly schemaVersion: 'bayn.candidate-development-market-data-source.v1'
-    readonly snapshotId: string
-    readonly finalizedSnapshotContentHash: string
-    readonly inputManifestHash: string
-    readonly boundedContentHash: string
-  }
-  readonly preregistration: {
-    readonly sourceRevision: string
-    readonly path: string
-    readonly blobOid: string
-  }
-}
-
-interface CandidateDevelopmentTrialHistory {
-  readonly schemaVersion: 'bayn.candidate-development-trial-history.v1'
-  readonly completedCandidateOrdinals: readonly number[]
-  readonly latestTerminalEvidence: {
-    readonly candidateOrdinal: number
-    readonly priorTrialCount: number
-    readonly terminalStatus: 'HOLD_REJECT'
-    readonly sourceRevision: string
-  }
-  readonly candidatePreregistration: {
-    readonly candidateOrdinal: number
-    readonly priorTrialCount: number
-    readonly sourceRevision: string
-    readonly path: string
-    readonly blobOid: string
-  }
-  readonly nextCandidatePreregistration: CandidateDevelopmentNextPreregistration | null
-}
-
-export const frozenCandidateDevelopmentTrialHistory: CandidateDevelopmentTrialHistory = {
-  schemaVersion: 'bayn.candidate-development-trial-history.v1',
-  completedCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-  latestTerminalEvidence: {
-    candidateOrdinal: 16,
-    priorTrialCount: 15,
-    terminalStatus: 'HOLD_REJECT',
-    sourceRevision: '60a48a2e52fbafdd67a404a33a3cb22e82a98493',
-  },
-  candidatePreregistration: {
-    candidateOrdinal: 16,
-    priorTrialCount: 15,
-    sourceRevision: 'a0dadcd2f6346968bd9df582e4673608afc04592',
-    path: 'services/bayn/candidates/ordinal-16-macro-breadth-regime-preregistration.md',
-    blobOid: 'f602e3c8fd1b85768404d5fbc439775cdcd2570b',
-  },
-  nextCandidatePreregistration: {
-    schemaVersion: 'bayn.candidate-development-next-preregistration.v1',
-    candidateOrdinal: 17,
-    priorTrialCount: 16,
-    strategyProtocolHash: 'fa25d8c16bc4f4fde3bab99409ae60a6fd23332d295b3557231796cebb911390',
-    modulePath: 'services/bayn/src/strategy/volatility-managed-trend-overlay/candidate-17.ts',
-    moduleSha256: '2e98bc55eae1901ccdde41978b7b32d746dc2ef6afcebbff1de0ed54574065da',
-    marketData: {
-      schemaVersion: 'bayn.candidate-development-market-data-source.v1',
-      snapshotId: '2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0',
-      finalizedSnapshotContentHash: '8e376546f6a6cc1dbe2e910db3d68f584fc0bd9c4858166042ce32aa077eed0d',
-      inputManifestHash: 'b606cf57fb076f5bd2875206973e7c512817430d5cfbbeac8a99396f9983cab4',
-      boundedContentHash: 'e0e7b283de187d8ccaf8a449dacc538f00049cfe446dcf153b558e92bf0e17ed',
-    },
-    preregistration: {
-      sourceRevision: '890d8f5801cf7c7576ed7a0cee387a4e79b98877',
-      path: 'services/bayn/candidates/ordinal-17-volatility-managed-trend-overlay-preregistration.json',
-      blobOid: 'c1d07233df53cc0379b1dfae9f1caffbd6b7abd6',
-    },
-  },
-}
+export type { CandidateDevelopmentNextPreregistration } from './candidate-development-decision'
+export {
+  candidate17DevelopmentEligibility,
+  candidate17DevelopmentEvidenceExpectation,
+  candidate17Preregistration,
+  frozenCandidateDevelopmentTrialHistory,
+} from './candidate-development-trial-history'
 
 const fullMarketClosures = new Set<IsoDate>([
   '2016-01-18',

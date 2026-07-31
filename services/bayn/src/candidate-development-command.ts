@@ -12,7 +12,6 @@ import { Data, Effect, pipe, Result, Schema } from 'effect'
 import {
   candidateDevelopmentComparisonSemantics,
   candidateDevelopmentDoubledCostContract,
-  candidateDevelopmentStatisticsPolicy,
   runCandidateDevelopment,
   type CandidateDevelopmentEffects,
   type CandidateDevelopmentEvaluation,
@@ -21,10 +20,12 @@ import {
   type CandidateDevelopmentReport,
   type CandidateDevelopmentRunFailure,
 } from './candidate-development'
+import { frozenCandidateDevelopmentTrialHistory } from './candidate-development-trial-history'
 import {
-  frozenCandidateDevelopmentTrialHistory,
+  deriveCandidateDevelopmentDecision,
+  type CandidateDevelopmentDecision as CandidateDevelopmentCommandDecision,
   type CandidateDevelopmentNextPreregistration,
-} from './candidate-development-calendar'
+} from './candidate-development-decision'
 import {
   type DailyPerformancePoint,
   DailyPerformanceSeriesArtifactSchema,
@@ -173,27 +174,6 @@ export interface CandidateDevelopmentExecutableProgram<Registration, Development
   readonly input: CandidateDevelopmentPreflightInput
   readonly strategyProtocol: CandidateDevelopmentStrategyProtocol
   readonly effects: CandidateDevelopmentCommandEffects<Registration, DevelopmentData, Error, Requirements>
-}
-
-type CandidateDevelopmentComparisonGateName =
-  (typeof candidateDevelopmentComparisonSemantics.gates)[keyof typeof candidateDevelopmentComparisonSemantics.gates]['name']
-
-export interface CandidateDevelopmentCommandGate {
-  readonly name:
-    | CandidateDevelopmentComparisonGateName
-    | 'double_cost_return'
-    | 'economic_verdict'
-    | 'baseline_terminal_cash'
-    | 'stressed_terminal_cash'
-  readonly passed: boolean
-  readonly actual: number | boolean
-  readonly required: number | boolean
-}
-
-export interface CandidateDevelopmentCommandDecision {
-  readonly status: 'PASS' | 'HOLD_REJECT'
-  readonly selectedBenchmark: 'buy-and-hold' | 'direct-volatility-timing'
-  readonly gates: readonly CandidateDevelopmentCommandGate[]
 }
 
 export interface CandidateDevelopmentCommandReportMaterial {
@@ -652,38 +632,34 @@ export const bindCandidateDevelopmentVerifiedSource = (
       }),
     )
   }
-  const nextCandidatePreregistration = frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration
-  if (nextCandidatePreregistration !== null) {
-    const expectedNextCandidateOrdinal = completedCandidateOrdinals.length + 1
-    const expectedPriorTrialCount = completedCandidateOrdinals.length
-    const nextBindings = [
-      ['candidateOrdinal', expectedNextCandidateOrdinal, nextCandidatePreregistration.candidateOrdinal],
-      ['priorTrialCount', expectedPriorTrialCount, nextCandidatePreregistration.priorTrialCount],
-      ['input.candidateOrdinal', nextCandidatePreregistration.candidateOrdinal, input.candidateOrdinal],
-      ['input.priorTrialCount', nextCandidatePreregistration.priorTrialCount, input.priorTrialCount],
-      ['strategyProtocolHash', nextCandidatePreregistration.strategyProtocolHash, input.expectedStrategyProtocolHash],
-      ['modulePath', nextCandidatePreregistration.modulePath, files.modulePath],
-      ['moduleSha256', nextCandidatePreregistration.moduleSha256, files.moduleSha256],
-    ] as const
-    for (const [field, expected, observed] of nextBindings) {
-      if (expected !== observed) {
-        return Result.fail(
-          sourceVerificationFailure('verify-program-binding', {
-            field: `trialHistory.nextCandidatePreregistration.${field}`,
-            expected,
-            observed,
-          }),
-        )
-      }
+  const candidatePreregistration = frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration
+  const expectedNextCandidateOrdinal = completedCandidateOrdinals.length + 1
+  const expectedPriorTrialCount = completedCandidateOrdinals.length
+  const reviewedBindings = [
+    ['candidateOrdinal', expectedNextCandidateOrdinal, candidatePreregistration.candidateOrdinal],
+    ['priorTrialCount', expectedPriorTrialCount, candidatePreregistration.priorTrialCount],
+    ['input.candidateOrdinal', candidatePreregistration.candidateOrdinal, input.candidateOrdinal],
+    ['input.priorTrialCount', candidatePreregistration.priorTrialCount, input.priorTrialCount],
+    ['strategyProtocolHash', candidatePreregistration.strategyProtocolHash, input.expectedStrategyProtocolHash],
+    ['modulePath', candidatePreregistration.modulePath, files.modulePath],
+    ['moduleSha256', candidatePreregistration.moduleSha256, files.moduleSha256],
+  ] as const
+  for (const [field, expected, observed] of reviewedBindings) {
+    if (expected !== observed) {
+      return Result.fail(
+        sourceVerificationFailure('verify-program-binding', {
+          field: `trialHistory.latestReviewedCandidatePreregistration.${field}`,
+          expected,
+          observed,
+        }),
+      )
     }
-    const marketDataBinding = validateCandidateDevelopmentPreregisteredMarketData(
-      nextCandidatePreregistration.marketData,
-      files.sourceManifest.marketData,
-    )
-    if (Result.isFailure(marketDataBinding)) return Result.fail(marketDataBinding.failure)
   }
-  const candidatePreregistration =
-    nextCandidatePreregistration ?? frozenCandidateDevelopmentTrialHistory.candidatePreregistration
+  const marketDataBinding = validateCandidateDevelopmentPreregisteredMarketData(
+    candidatePreregistration.marketData,
+    files.sourceManifest.marketData,
+  )
+  if (Result.isFailure(marketDataBinding)) return Result.fail(marketDataBinding.failure)
   if (
     input.candidateOrdinal !== candidatePreregistration.candidateOrdinal ||
     input.priorTrialCount !== candidatePreregistration.priorTrialCount
@@ -2228,83 +2204,14 @@ const decideCandidateDevelopment = (
   baseline: EvaluationResult,
   doubledCostAnnualizedReturn: number,
   economicPass: boolean,
-): CandidateDevelopmentCommandDecision => {
-  const { bootstrap, power, walkForward } = report.comparisonSemantics.analysis
-  const protocolGates = candidateDevelopmentComparisonSemantics.gates
-  const gates: readonly CandidateDevelopmentCommandGate[] = [
-    {
-      name: protocolGates.power.name,
-      passed: power.sufficient,
-      actual: power.sufficient,
-      required: true,
-    },
-    {
-      name: protocolGates.bootstrapTailResolution.name,
-      passed: bootstrap.tailResolutionSufficient,
-      actual: bootstrap.tailSampleCount,
-      required: bootstrap.minimumTailSamples,
-    },
-    {
-      name: protocolGates.annualizedExcessReturnLowerBound.name,
-      passed: bootstrap.annualizedReturnDifferenceLowerBound > 0,
-      actual: bootstrap.annualizedReturnDifferenceLowerBound,
-      required: 0,
-    },
-    {
-      name: protocolGates.sharpeDifferenceLowerBound.name,
-      passed: bootstrap.sharpeDifferenceLowerBound > 0,
-      actual: bootstrap.sharpeDifferenceLowerBound,
-      required: 0,
-    },
-    {
-      name: protocolGates.walkForwardFolds.name,
-      passed: walkForward.sufficient,
-      actual: walkForward.folds.length,
-      required: walkForward.requiredFolds,
-    },
-    {
-      name: protocolGates.walkForwardPositiveFraction.name,
-      passed: walkForward.positiveFoldFraction >= walkForward.requiredPositiveFoldFraction,
-      actual: walkForward.positiveFoldFraction,
-      required: walkForward.requiredPositiveFoldFraction,
-    },
-    {
-      name: protocolGates.walkForwardDrawdown.name,
-      passed: walkForward.allDrawdownsWithinLimit,
-      actual: walkForward.maximumFoldDrawdown,
-      required: candidateDevelopmentStatisticsPolicy.walkForward.maximumFoldDrawdown,
-    },
-    {
-      name: 'double_cost_return',
-      passed: doubledCostAnnualizedReturn > 0,
-      actual: doubledCostAnnualizedReturn,
-      required: 0,
-    },
-    {
-      name: 'economic_verdict',
-      passed: economicPass,
-      actual: economicPass,
-      required: true,
-    },
-    {
-      name: 'baseline_terminal_cash',
-      passed: terminalCash(baseline.simulation.dailyMarks),
-      actual: terminalCash(baseline.simulation.dailyMarks),
-      required: true,
-    },
-    {
-      name: 'stressed_terminal_cash',
-      passed: terminalCash(report.doubledCost.stressed.simulation.dailyMarks),
-      actual: terminalCash(report.doubledCost.stressed.simulation.dailyMarks),
-      required: true,
-    },
-  ]
-  return {
-    status: gates.every((gate) => gate.passed) ? 'PASS' : 'HOLD_REJECT',
-    selectedBenchmark: bootstrap.selectedBenchmark,
-    gates,
-  }
-}
+): CandidateDevelopmentCommandDecision =>
+  deriveCandidateDevelopmentDecision({
+    comparison: report.comparisonSemantics.analysis,
+    doubledCostAnnualizedReturn,
+    economicPass,
+    baselineTerminalCash: terminalCash(baseline.simulation.dailyMarks),
+    stressedTerminalCash: terminalCash(report.doubledCost.stressed.simulation.dailyMarks),
+  })
 
 export const buildCandidateDevelopmentCommandReport = (
   report: CandidateDevelopmentReport,
@@ -2479,7 +2386,7 @@ export interface CandidateDevelopmentVerifiedModuleSource {
   readonly moduleUrl: string
 }
 
-const CandidateDevelopmentPreflightInputSchema = Schema.Struct({
+export const CandidateDevelopmentPreflightInputSchema = Schema.Struct({
   candidateOrdinal: PositiveIntegerSchema,
   priorTrialCount: NonNegativeIntegerSchema,
   expectedStrategyProtocolHash: Sha256Schema,
@@ -2600,7 +2507,7 @@ const CandidateDevelopmentMarketDataWitnessSchema = Schema.Struct({
   bars: Schema.Array(CandidateDevelopmentDailyBarSchema).check(Schema.isMinLength(1)),
 })
 
-const CandidateDevelopmentStrategyProtocolSchema = Schema.Struct({
+export const CandidateDevelopmentStrategyProtocolSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.candidate-development-strategy-protocol.v2'),
   universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1)),
   directVolatilityTarget: PositiveFiniteSchema,
@@ -2627,7 +2534,7 @@ const CandidateDevelopmentStrategyProtocolSchema = Schema.Struct({
   }),
 })
 
-const CandidateDevelopmentSourceManifestSchema = Schema.Struct({
+export const CandidateDevelopmentSourceManifestSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.candidate-development-source-manifest.v1'),
   candidateOrdinal: PositiveIntegerSchema,
   priorTrialCount: NonNegativeIntegerSchema,
@@ -2672,7 +2579,7 @@ const CandidateDevelopmentDoubledCostRunSchema = Schema.Struct({
   simulation: CandidateDevelopmentSimulationTraceSchema,
 })
 
-const CandidateDevelopmentEvaluationSchema = Schema.Struct({
+export const CandidateDevelopmentEvaluationSchema = Schema.Struct({
   baseline: CandidateDevelopmentEvaluationResultSchema,
   comparisonSemantics: CandidateDevelopmentComparisonSemanticsEvidenceBoundarySchema,
   stressed: CandidateDevelopmentDoubledCostRunSchema,
@@ -3673,9 +3580,10 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
           observed: sourceRevision,
         })
       }
-      const nextCandidatePreregistration = frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration
-      if (nextCandidatePreregistration !== null) {
-        const preregistration = nextCandidatePreregistration.preregistration
+      const reviewedCandidatePreregistration =
+        frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration
+      {
+        const preregistration = reviewedCandidatePreregistration.preregistration
         if (
           !/^[0-9a-f]{40}$/.test(preregistration.sourceRevision) ||
           !/^[0-9a-f]{40}$/.test(preregistration.blobOid) ||
@@ -3715,7 +3623,7 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
           async () => JSON.parse(preregistrationBytes.toString('utf8')) as unknown,
         )
         const preregistrationDocument = validateCandidateDevelopmentPreregistrationDocument(
-          nextCandidatePreregistration,
+          reviewedCandidatePreregistration,
           preregistrationJson,
         )
         if (Result.isFailure(preregistrationDocument)) {
@@ -3777,10 +3685,10 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
             sourceGit.text(repositoryRoot, ['rev-parse', sourceManifestSpec], batchSignal),
           ),
       )
-      if (nextCandidatePreregistration !== null) {
+      {
         await verifyCandidateDevelopmentPreregistrationModuleNoveltyPromise(
           repositoryRoot,
-          nextCandidatePreregistration.preregistration.sourceRevision,
+          reviewedCandidatePreregistration.preregistration.sourceRevision,
           moduleRepositoryPath.success,
           moduleBlobOid,
           sourceGit,
