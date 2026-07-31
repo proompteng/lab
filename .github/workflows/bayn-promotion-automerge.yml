@@ -1,0 +1,213 @@
+name: bayn-promotion-automerge
+
+on:
+  schedule:
+    - cron: '12,27,42,57 * * * *'
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: bayn-promotion-automerge
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    name: Merge verified Bayn promotion
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout trusted current-main merge policy
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Squash merge the exact verified promotion
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN }}
+          BAYN_PROMOTION_GITHUB_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN }}
+          TRUSTED_MAIN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${GH_TOKEN}" ]]; then
+            echo 'AGENTS_SPLIT_TOKEN is required so the merge triggers the normal push and GitOps workflows.' >&2
+            exit 1
+          fi
+
+          live_main_sha="$(
+            gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha'
+          )"
+          if [[ "${live_main_sha}" != "${TRUSTED_MAIN_SHA}" ]]; then
+            echo "Main advanced from trusted workflow revision ${TRUSTED_MAIN_SHA} to ${live_main_sha}; next schedule will retry."
+            exit 0
+          fi
+
+          repository_owner="${GITHUB_REPOSITORY%%/*}"
+          pulls="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/pulls?state=open&base=main&head=${repository_owner}:codex/bayn-release-current&per_page=100"
+          )"
+          pull_count="$(jq 'length' <<< "${pulls}")"
+          if [[ "${pull_count}" == '0' ]]; then
+            echo 'No open Bayn promotion PR is ready for automatic merge.'
+            exit 0
+          fi
+          if [[ "${pull_count}" != '1' ]]; then
+            echo "Expected exactly one preserved Bayn promotion PR, found ${pull_count}." >&2
+            exit 1
+          fi
+
+          pull_number="$(jq -r '.[0].number' <<< "${pulls}")"
+          expected_head_sha="$(jq -r '.[0].head.sha' <<< "${pulls}")"
+          if [[ ! "${expected_head_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "PR #${pull_number} returned an invalid head SHA." >&2
+            exit 1
+          fi
+
+          write_snapshot() {
+            local destination="$1"
+            local pull files checks checks_status checks_error
+            pull="$(
+              gh api "repos/${GITHUB_REPOSITORY}/pulls/${pull_number}"
+            )"
+            files="$(
+              gh api \
+                "repos/${GITHUB_REPOSITORY}/pulls/${pull_number}/files?per_page=100" \
+                --paginate \
+                --jq '.[] | {path: .filename, status: (.status | ascii_upcase)}' |
+                jq -s '.'
+            )"
+
+            checks_error="${RUNNER_TEMP}/bayn-promotion-automerge-checks-error"
+            set +e
+            checks="$(
+              gh pr checks "${pull_number}" \
+                -R "${GITHUB_REPOSITORY}" \
+                --json name,state,workflow,link \
+                2>"${checks_error}"
+            )"
+            checks_status="$?"
+            set -e
+            if [[ "${checks_status}" != '0' && "${checks_status}" != '1' && "${checks_status}" != '8' ]]; then
+              cat "${checks_error}" >&2
+              echo "Unable to read exact-head checks for PR #${pull_number}." >&2
+              exit 1
+            fi
+            if ! jq -e 'type == "array"' <<< "${checks}" >/dev/null; then
+              cat "${checks_error}" >&2
+              echo "Invalid exact-head check response for PR #${pull_number}." >&2
+              exit 1
+            fi
+
+            jq -n \
+              --arg repository "${GITHUB_REPOSITORY}" \
+              --arg default_branch_sha "${TRUSTED_MAIN_SHA}" \
+              --argjson pull "${pull}" \
+              --argjson files "${files}" \
+              --argjson checks "${checks}" \
+              '{
+                repository: $repository,
+                defaultBranchSha: $default_branch_sha,
+                pullRequest: {
+                  number: $pull.number,
+                  state: ($pull.state | ascii_upcase),
+                  isDraft: $pull.draft,
+                  mergeable: (
+                    if $pull.mergeable == true then "MERGEABLE"
+                    elif $pull.mergeable == false then "CONFLICTING"
+                    else "UNKNOWN"
+                    end
+                  ),
+                  mergeStateStatus: ($pull.mergeable_state | ascii_upcase),
+                  headRefName: $pull.head.ref,
+                  headRefOid: $pull.head.sha,
+                  headRepository: ($pull.head.repo.full_name // ""),
+                  baseRefName: $pull.base.ref,
+                  baseRefOid: $pull.base.sha,
+                  autoMergeEnabled: ($pull.auto_merge != null),
+                  labels: [$pull.labels[]?.name],
+                  files: $files
+                },
+                checks: [$checks[] | {workflow, name, state, link}]
+              }' > "${destination}"
+          }
+
+          verify_snapshot() {
+            local snapshot_path="$1"
+            bun packages/scripts/src/bayn/verify-promotion-automerge.ts \
+              --repository "${GITHUB_REPOSITORY}" \
+              --pull-number "${pull_number}" \
+              --head-sha "${expected_head_sha}" \
+              --default-branch-sha "${TRUSTED_MAIN_SHA}" \
+              --snapshot-path "${snapshot_path}"
+          }
+
+          initial_snapshot="${RUNNER_TEMP}/bayn-promotion-automerge-initial.json"
+          final_snapshot="${RUNNER_TEMP}/bayn-promotion-automerge-final.json"
+          write_snapshot "${initial_snapshot}"
+          verify_snapshot "${initial_snapshot}"
+
+          bun packages/scripts/src/bayn/verify-promotion-eligibility.ts \
+            --repository "${GITHUB_REPOSITORY}" \
+            --pull-number "${pull_number}" \
+            --head-sha "${expected_head_sha}" \
+            --max-attempts 1 \
+            --poll-interval-ms 1 \
+            --request-timeout-ms 10000 \
+            --require-applicable true
+
+          bun packages/scripts/src/bayn/verify-promotion-eligibility.ts \
+            --repository "${GITHUB_REPOSITORY}" \
+            --pull-number "${pull_number}" \
+            --head-sha "${expected_head_sha}" \
+            --max-attempts 1 \
+            --poll-interval-ms 1 \
+            --request-timeout-ms 10000 \
+            --require-applicable true
+
+          live_main_sha="$(
+            gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha'
+          )"
+          if [[ "${live_main_sha}" != "${TRUSTED_MAIN_SHA}" ]]; then
+            echo "Main advanced after final eligibility verification; refusing a stale merge."
+            exit 0
+          fi
+          write_snapshot "${final_snapshot}"
+          verify_snapshot "${final_snapshot}"
+
+          live_main_sha="$(
+            gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha'
+          )"
+          if [[ "${live_main_sha}" != "${TRUSTED_MAIN_SHA}" ]]; then
+            echo "Main advanced after final snapshot verification; refusing a stale merge."
+            exit 0
+          fi
+
+          gh pr merge "${pull_number}" \
+            -R "${GITHUB_REPOSITORY}" \
+            --squash \
+            --match-head-commit "${expected_head_sha}"
+
+          merged="$(
+            gh pr view "${pull_number}" \
+              -R "${GITHUB_REPOSITORY}" \
+              --json state,headRefOid,mergedAt \
+              --jq '[.state, .headRefOid, (.mergedAt // "")] | @tsv'
+          )"
+          IFS=$'\t' read -r merged_state merged_head_sha merged_at <<< "${merged}"
+          if [[ "${merged_state}" != 'MERGED' || "${merged_head_sha}" != "${expected_head_sha}" || -z "${merged_at}" ]]; then
+            echo "PR #${pull_number} did not report an exact-head merged state." >&2
+            exit 1
+          fi
+          echo "BAYN_PROMOTION_AUTOMERGED pr=#${pull_number} head=${merged_head_sha} merged_at=${merged_at}"
