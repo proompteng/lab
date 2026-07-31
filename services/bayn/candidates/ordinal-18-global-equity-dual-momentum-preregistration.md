@@ -15,9 +15,9 @@ This document immutably preregisters exactly one Candidate 18 development attemp
 
 The family combines relative and absolute momentum without fitting any parameter to Bayn development results:
 
-1. Gary Antonacci, *Risk Premia Harvesting Through Dual Momentum*, SSRN 2042750, DOI `10.2139/ssrn.2042750`.
-2. Tobias J. Moskowitz, Yao Hua Ooi, and Lasse Heje Pedersen, *Time Series Momentum*, DOI `10.1016/j.jfineco.2011.11.003`.
-3. Clifford S. Asness, Tobias J. Moskowitz, and Lasse Heje Pedersen, *Value and Momentum Everywhere*, DOI `10.1111/jofi.12021`.
+1. Gary Antonacci, _Risk Premia Harvesting Through Dual Momentum_, SSRN 2042750, DOI `10.2139/ssrn.2042750`.
+2. Tobias J. Moskowitz, Yao Hua Ooi, and Lasse Heje Pedersen, _Time Series Momentum_, DOI `10.1016/j.jfineco.2011.11.003`.
+3. Clifford S. Asness, Tobias J. Moskowitz, and Lasse Heje Pedersen, _Value and Momentum Everywhere_, DOI `10.1111/jofi.12021`.
 
 The fixed 252-session horizon represents one trading year and the literature-standard 12-month momentum horizon. No alternate horizon, skip month, threshold, universe, rank rule, weight, volatility target, or fallback may be tried after development metrics are observed.
 
