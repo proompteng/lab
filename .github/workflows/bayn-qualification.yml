@@ -32,26 +32,25 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify dormant calendar before any privileged access
-        id: calendar
+      - name: Verify typed candidate dormancy before any privileged access
+        id: dormancy
+        timeout-minutes: 2
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
-          if rg -n 'nextCandidatePreregistration: null' services/bayn/src/candidate-development-calendar.ts >/dev/null; then
-            echo 'PROOMPT-407 has not installed a reviewed non-null preregistration; qualification remains dormant.'
-            echo 'dormant=true' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo 'dormant=false' >> "$GITHUB_OUTPUT"
+          test "$(git rev-parse refs/remotes/origin/main)" = "${GITHUB_SHA}"
+          bun packages/scripts/src/bayn/verify-qualification-dormancy.ts \
+            --repository-root "$GITHUB_WORKSPACE" \
+            --github-output "$GITHUB_OUTPUT"
 
-      - name: Stop safely while preregistration is absent
-        if: steps.calendar.outputs.dormant == 'true'
+      - name: Stop safely while qualification is dormant
+        if: steps.dormancy.outputs.dormant == 'true'
         run: echo 'No credentials, Signal data, PostgreSQL state, holdout, image, or qualification command were accessed.'
 
       - name: Bind the exact promoted unpinned qualification image
         id: image
-        if: steps.calendar.outputs.dormant != 'true'
+        if: steps.dormancy.outputs.dormant == 'false'
         shell: bash
         run: |
           set -euo pipefail
@@ -92,7 +91,7 @@ jobs:
           echo "reference=${image_reference}" >> "$GITHUB_OUTPUT"
 
       - name: Pull and verify the exact qualification image
-        if: steps.calendar.outputs.dormant != 'true'
+        if: steps.dormancy.outputs.dormant == 'false'
         shell: bash
         env:
           IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
@@ -103,7 +102,7 @@ jobs:
             jq -e --arg expected "$IMAGE_REFERENCE" 'index($expected) != null' >/dev/null
 
       - name: Preflight immutable qualification evidence without credentials
-        if: steps.calendar.outputs.dormant != 'true'
+        if: steps.dormancy.outputs.dormant == 'false'
         shell: bash
         env:
           IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
@@ -143,7 +142,7 @@ jobs:
 
       - name: Collect, lock, execute once, and independently audit
         id: qualify
-        if: steps.calendar.outputs.dormant != 'true'
+        if: steps.dormancy.outputs.dormant == 'false'
         shell: bash
         env:
           IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
@@ -213,7 +212,7 @@ jobs:
           echo "terminal=${terminal}" >> "$GITHUB_OUTPUT"
 
       - name: Upload immutable terminal qualification evidence
-        if: steps.calendar.outputs.dormant != 'true' && steps.qualify.outcome == 'success'
+        if: steps.dormancy.outputs.dormant == 'false' && steps.qualify.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: bayn-qualification-terminal-${{ github.sha }}-${{ github.run_id }}
@@ -222,7 +221,7 @@ jobs:
           retention-days: 90
 
       - name: Summarize terminal qualification evidence
-        if: steps.calendar.outputs.dormant != 'true' && steps.qualify.outcome == 'success'
+        if: steps.dormancy.outputs.dormant == 'false' && steps.qualify.outcome == 'success'
         shell: bash
         env:
           TERMINAL: ${{ steps.qualify.outputs.terminal }}

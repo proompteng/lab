@@ -9,20 +9,31 @@ const auditCommand = readFileSync('services/bayn/src/qualification-audit-command
 
 describe('Bayn qualification workflow collector/executor contract', () => {
   test('stays dormant before any credential, image, database, Signal, or qualification access', () => {
-    const dormant = workflow.indexOf('Verify dormant calendar before any privileged access')
+    const dormant = workflow.indexOf('Verify typed candidate dormancy before any privileged access')
+    const safeNoop = workflow.indexOf('Stop safely while qualification is dormant')
     const imageBinding = workflow.indexOf('Bind the exact promoted unpinned qualification image')
     const secretReference = workflow.indexOf('secrets.BAYN_QUALIFICATION_CLICKHOUSE_USERNAME')
     const imagePull = workflow.indexOf('docker pull "$IMAGE_REFERENCE"')
 
     expect(dormant).toBeGreaterThan(0)
+    expect(safeNoop).toBeGreaterThan(dormant)
+    expect(imageBinding).toBeGreaterThan(safeNoop)
     expect(imageBinding).toBeGreaterThan(dormant)
     expect(secretReference).toBeGreaterThan(imageBinding)
     expect(imagePull).toBeGreaterThan(imageBinding)
-    expect(workflow).toContain('nextCandidatePreregistration: null')
+    expect(workflow).toContain('bun packages/scripts/src/bayn/verify-qualification-dormancy.ts')
+    expect(workflow).toContain('--repository-root "$GITHUB_WORKSPACE"')
+    expect(workflow).toContain('--github-output "$GITHUB_OUTPUT"')
+    expect(workflow).not.toContain("rg -n 'nextCandidatePreregistration: null'")
+    expect(workflow).not.toContain('services/bayn/src/candidate-development-calendar.ts')
     expect(workflow).toContain(
       'No credentials, Signal data, PostgreSQL state, holdout, image, or qualification command were accessed.',
     )
-    expect(workflow).toContain("if: steps.calendar.outputs.dormant != 'true'")
+    expect(workflow).toContain('id: dormancy')
+    expect(workflow).not.toContain('steps.calendar')
+    expect(workflow).toContain("if: steps.dormancy.outputs.dormant == 'true'")
+    expect(workflow).not.toContain("steps.dormancy.outputs.dormant != 'true'")
+    expect(workflow).toContain("if: steps.dormancy.outputs.dormant == 'false'")
   })
 
   test('binds and executes only the exact promoted unpinned source image', () => {
