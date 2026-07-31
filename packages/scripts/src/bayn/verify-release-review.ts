@@ -1145,6 +1145,12 @@ const validateRemediationCommitPaths = (input: {
   if (input.finalHead.sha !== input.finalHeadSha || input.mergeTreeSha !== input.finalHeadTreeSha) {
     return remediationInvalid(`remediation ${input.remediationId} merge/head tree binding is invalid`)
   }
+  if (
+    input.mergeCommit.parents.length !== input.finalHead.parents.length ||
+    input.mergeCommit.parents.some((parent, index) => parent !== input.finalHead.parents[index])
+  ) {
+    return remediationInvalid(`remediation ${input.remediationId} merge/head parent binding is invalid`)
+  }
   const changes = commitFileMap(input.mergeCommit.fileChanges)
   const finalBlobs = pathBlobMap(input.finalHead.pathBlobs)
   if (changes === null || finalBlobs === null) {
@@ -1289,15 +1295,26 @@ const validateReleaseReviewRemediation = (input: {
   }
 
   let expectedParent = blockedCommit.sha
-  let expectedIndex = blockedIndex + 1
+  let cursor = blockedIndex + 1
+  const nextBaynCommit = (): BaynReleaseRangeCommit | BaynReleaseReviewHold | null => {
+    while (cursor < comparison.commits.length) {
+      const commit = comparison.commits[cursor]
+      if (commit === undefined || commit.parents.length !== 1 || commit.parents[0] !== expectedParent) {
+        return remediationInvalid(`remediation ${record.remediationId} source ancestry is not a direct-parent chain`)
+      }
+      expectedParent = commit.sha
+      cursor += 1
+      if (commit.files.some(isBaynReleaseAffectingPath)) return commit
+    }
+    return null
+  }
   for (const descendant of record.requiredDescendants) {
-    const mergeCommit = comparison.commits[expectedIndex]
-    if (
-      mergeCommit === undefined ||
-      mergeCommit.sha !== descendant.mergeCommitSha ||
-      mergeCommit.parents.length !== 1 ||
-      mergeCommit.parents[0] !== expectedParent
-    ) {
+    const next = nextBaynCommit()
+    if (next === null || 'status' in next) {
+      return next ?? remediationInvalid(`remediation ${record.remediationId} descendant chain is incomplete`)
+    }
+    const mergeCommit = next
+    if (mergeCommit.sha !== descendant.mergeCommitSha) {
       return remediationInvalid(`remediation ${record.remediationId} descendant ancestry is incomplete or downgraded`)
     }
     const normalDescendantReview = input.normalReviews.get(mergeCommit.sha)
@@ -1357,15 +1374,29 @@ const validateReleaseReviewRemediation = (input: {
       })),
     })
     if (pathsHold !== null) return pathsHold
-    expectedParent = mergeCommit.sha
-    expectedIndex += 1
   }
-  if (
-    introductionIndex !== expectedIndex ||
-    introduction.parents.length !== 1 ||
-    introduction.parents[0] !== expectedParent
-  ) {
+  const next = nextBaynCommit()
+  if (next === null || 'status' in next) {
+    return (
+      next ?? remediationInvalid(`remediation ${record.remediationId} introduction is missing from source ancestry`)
+    )
+  }
+  if (next.sha !== introduction.sha || comparison.commits[cursor - 1]?.sha !== introduction.sha) {
     return remediationInvalid(`remediation ${record.remediationId} is stale or omits a newer source commit`)
+  }
+  while (cursor < comparison.commits.length) {
+    const commit = comparison.commits[cursor]
+    if (commit === undefined || commit.parents.length !== 1 || commit.parents[0] !== expectedParent) {
+      return remediationInvalid(`remediation ${record.remediationId} source ancestry is not a direct-parent chain`)
+    }
+    if (commit.files.some(isBaynReleaseAffectingPath)) {
+      return remediationInvalid(`remediation ${record.remediationId} omits a newer Bayn source commit`)
+    }
+    expectedParent = commit.sha
+    cursor += 1
+  }
+  if (expectedParent !== comparison.headSha) {
+    return remediationInvalid(`remediation ${record.remediationId} does not reach the current source head`)
   }
   return null
 }

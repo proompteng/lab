@@ -706,6 +706,95 @@ describe('Bayn publication-range eligibility', () => {
     })
   })
 
+  test('accepts exact remediation descendants across an interleaved direct-parent chain of non-Bayn commits', () => {
+    const fixture = remediationHistoryFixture()
+    const comparison = fixture.snapshot.comparison!
+    const [blocked, candidate, qualification, introduction] = comparison.commits
+    if (blocked === undefined || candidate === undefined || qualification === undefined || introduction === undefined) {
+      throw new Error('remediation fixture commit chain is incomplete')
+    }
+    const nonBaynCommit = (sha: string, parent: string, path: string) => ({
+      sha,
+      parents: [parent],
+      treeSha: sha,
+      files: [path],
+      fileChanges: [{ path, previousPath: null, status: 'modified', blobSha: sha }],
+      reviewSnapshot: null,
+    })
+    const beforeCandidate = nonBaynCommit('1'.repeat(40), blocked.sha, 'docs/bayn-release-review.md')
+    const beforeQualification = nonBaynCommit('2'.repeat(40), candidate.sha, 'docs/bayn-qualification.md')
+    const beforeIntroduction = nonBaynCommit('3'.repeat(40), qualification.sha, 'README.md')
+    const afterIntroduction = nonBaynCommit('4'.repeat(40), introduction.sha, 'docs/operations.md')
+    ;(candidate.parents as string[])[0] = beforeCandidate.sha
+    ;(qualification.parents as string[])[0] = beforeQualification.sha
+    ;(introduction.parents as string[])[0] = beforeIntroduction.sha
+    const candidateHead = fixture.evidence.referencedCommits.find((commit) => commit.sha === realHistory.candidateHead)
+    const qualificationHead = fixture.evidence.referencedCommits.find(
+      (commit) => commit.sha === realHistory.qualificationHead,
+    )
+    if (candidateHead === undefined || qualificationHead === undefined) {
+      throw new Error('remediation fixture descendant head evidence is incomplete')
+    }
+    ;(candidateHead.parents as string[])[0] = beforeCandidate.sha
+    ;(qualificationHead.parents as string[])[0] = beforeQualification.sha
+    ;(
+      comparison as unknown as {
+        headSha: string
+        aheadBy: number
+        totalCommits: number
+        commits: unknown[]
+      }
+    ).headSha = afterIntroduction.sha
+    ;(
+      comparison as unknown as {
+        headSha: string
+        aheadBy: number
+        totalCommits: number
+        commits: unknown[]
+      }
+    ).aheadBy = 8
+    ;(
+      comparison as unknown as {
+        headSha: string
+        aheadBy: number
+        totalCommits: number
+        commits: unknown[]
+      }
+    ).totalCommits = 8
+    ;(
+      comparison as unknown as {
+        headSha: string
+        aheadBy: number
+        totalCommits: number
+        commits: unknown[]
+      }
+    ).commits = [
+      blocked,
+      beforeCandidate,
+      candidate,
+      beforeQualification,
+      qualification,
+      beforeIntroduction,
+      introduction,
+      afterIntroduction,
+    ]
+    ;(fixture.snapshot.currentCommitParents as string[])[0] = introduction.sha
+
+    expect(
+      evaluateBaynReleaseEligibility({
+        mainCommitSha: afterIntroduction.sha,
+        baseRefName: 'main',
+        snapshot: fixture.snapshot,
+        nowMs: Date.parse('2026-07-31T12:30:00Z'),
+        pushBeforeSha: introduction.sha,
+      }),
+    ).toMatchObject({
+      status: 'eligible',
+      checkedCommitCount: 8,
+      baynAffectingCommitCount: 4,
+    })
+  })
+
   test('keeps the dropped reviewed ancestor blocked without the exact receipt', () => {
     const fixture = remediationHistoryFixture()
     expect(
