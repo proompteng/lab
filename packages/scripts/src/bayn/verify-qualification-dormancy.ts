@@ -510,7 +510,6 @@ const decodePriorTrials = (
   development: readonly number[],
   latestQualificationEvidence: QualificationEvidence,
   latestQualificationPreregistration: QualificationPreregistration,
-  latestDevelopmentEvidence: LatestDevelopmentEvidence,
 ): PriorTrialsMaterial => {
   const label = 'trialHistory.latestReviewedCandidatePriorTrials'
   const record = dataRecord(value, label)
@@ -553,25 +552,28 @@ const decodePriorTrials = (
     record.developmentCandidateOrdinals,
     `${label}.developmentCandidateOrdinals`,
   )
-  assertSameCanonical(developmentCandidateOrdinals, development, `${label}.developmentCandidateOrdinals`)
+  assertOrdinalRange(developmentCandidateOrdinals, completed.length + 1, `${label}.developmentCandidateOrdinals`)
+  if (
+    developmentCandidateOrdinals.length > development.length ||
+    developmentCandidateOrdinals.some((ordinal, index) => ordinal !== development[index])
+  ) {
+    throw new Error(`${label}.developmentCandidateOrdinals is not a current-history prefix`)
+  }
   const decodedLatestDevelopmentEvidence = decodePriorDevelopmentEvidence(
     record.latestDevelopmentEvidence,
     `${label}.latestDevelopmentEvidence`,
   )
-  const latestDevelopmentPrior: PriorDevelopmentEvidence = {
-    candidateOrdinal: latestDevelopmentEvidence.candidateOrdinal,
-    priorTrialCount: latestDevelopmentEvidence.priorTrialCount,
-    status: latestDevelopmentEvidence.status,
-    evidenceContentHash: latestDevelopmentEvidence.evidenceContentHash,
-    qualificationAttemptConsumed: false,
-  }
-  assertSameCanonical(decodedLatestDevelopmentEvidence, latestDevelopmentPrior, `${label}.latestDevelopmentEvidence`)
   const latestReviewedPreregistration = decodePreregistration(
     record.latestReviewedPreregistration,
     `${label}.latestReviewedPreregistration`,
   )
-  if (latestReviewedPreregistration.candidateOrdinal !== latestDevelopmentEvidence.candidateOrdinal) {
-    throw new Error(`${label}.latestReviewedPreregistration does not bind the latest development ordinal`)
+  const latestOrdinal = developmentCandidateOrdinals.at(-1)
+  if (
+    latestOrdinal === undefined ||
+    decodedLatestDevelopmentEvidence.candidateOrdinal !== latestOrdinal ||
+    latestReviewedPreregistration.candidateOrdinal !== latestOrdinal
+  ) {
+    throw new Error(`${label} does not bind its latest development ordinal`)
   }
   return {
     schemaVersion: 'bayn.candidate-development-prior-trials.v2',
@@ -795,14 +797,17 @@ export const evaluateQualificationDormancy = (value: unknown): QualificationDorm
     throw new Error('trialHistory.latestDevelopmentEvidence does not bind the latest development ordinal')
   }
 
-  decodeLegacyPriorTrials(history.latestReviewedCandidateLegacyPriorTrials, completed, development)
+  const legacyPriorTrials = decodeLegacyPriorTrials(
+    history.latestReviewedCandidateLegacyPriorTrials,
+    completed,
+    development,
+  )
   const latestPriorTrials = decodePriorTrials(
     history.latestReviewedCandidatePriorTrials,
     completed,
     development,
     latestQualificationEvidence,
     latestQualificationPreregistration,
-    latestDevelopment,
   )
 
   const reviewed = decodePreregistration(
@@ -810,20 +815,44 @@ export const evaluateQualificationDormancy = (value: unknown): QualificationDorm
     'trialHistory.latestReviewedCandidatePreregistration',
     true,
   )
+  const hasInvalidPrecommit =
+    schemaVersion === 'bayn.candidate-development-trial-history.v2' && history.latestInvalidPrecommit !== null
+  const expectedReviewedOrdinal =
+    history.nextCandidatePreregistration === null && !hasInvalidPrecommit
+      ? latestDevelopmentOrdinal
+      : latestDevelopmentOrdinal + 1
   if (
-    reviewed.candidateOrdinal !== latestDevelopmentOrdinal + 1 ||
-    reviewed.priorTrialCount !== latestDevelopmentOrdinal
+    reviewed.candidateOrdinal !== expectedReviewedOrdinal ||
+    reviewed.priorTrialCount !== expectedReviewedOrdinal - 1
   ) {
-    throw new Error('trialHistory.latestReviewedCandidatePreregistration is not the next reviewed ordinal')
+    throw new Error('trialHistory.latestReviewedCandidatePreregistration does not bind the reviewed ordinal')
   }
-  if (reviewed.priorTrialsHash !== canonicalHash(latestPriorTrials)) {
+  const selectedPriorTrials = reviewed.candidateOrdinal >= 19 ? latestPriorTrials : legacyPriorTrials
+  const expectedPriorDevelopmentOrdinals = development.filter((ordinal) => ordinal < reviewed.candidateOrdinal)
+  assertSameCanonical(
+    selectedPriorTrials.developmentCandidateOrdinals,
+    expectedPriorDevelopmentOrdinals,
+    'trialHistory reviewed prior-trials development ordinals',
+  )
+  if (reviewed.priorTrialsHash !== canonicalHash(selectedPriorTrials)) {
     throw new Error('trialHistory.latestReviewedCandidatePreregistration does not bind the decoded prior trials')
   }
+  if (reviewed.candidateOrdinal === latestDevelopmentOrdinal + 1) {
+    const latestDevelopmentPrior: PriorDevelopmentEvidence = {
+      candidateOrdinal: latestDevelopment.candidateOrdinal,
+      priorTrialCount: latestDevelopment.priorTrialCount,
+      status: latestDevelopment.status,
+      evidenceContentHash: latestDevelopment.evidenceContentHash,
+      qualificationAttemptConsumed: false,
+    }
+    assertSameCanonical(
+      selectedPriorTrials.latestDevelopmentEvidence,
+      latestDevelopmentPrior,
+      'trialHistory reviewed prior-trials latest development evidence',
+    )
+  }
 
-  const invalidOrdinal =
-    schemaVersion === 'bayn.candidate-development-trial-history.v2' && history.latestInvalidPrecommit !== null
-      ? decodeInvalidPrecommit(history.latestInvalidPrecommit, reviewed)
-      : null
+  const invalidOrdinal = hasInvalidPrecommit ? decodeInvalidPrecommit(history.latestInvalidPrecommit, reviewed) : null
 
   if (history.nextCandidatePreregistration === null) {
     return invalidOrdinal === null

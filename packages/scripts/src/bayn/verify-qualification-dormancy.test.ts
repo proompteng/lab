@@ -51,6 +51,21 @@ const exactCandidate20ContainmentHistoryV2: Record<string, unknown> = {
   nextCandidatePreregistration: null,
 }
 
+const exactCandidate19PriorTrials = JSON.parse(
+  '{"schemaVersion":"bayn.candidate-development-prior-trials.v2","qualificationCandidateOrdinals":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],"latestQualificationEvidence":{"candidateOrdinal":16,"priorTrialCount":15,"terminalStatus":"HOLD_REJECT","sourceRevision":"60a48a2e52fbafdd67a404a33a3cb22e82a98493"},"latestQualificationPreregistration":{"candidateOrdinal":16,"priorTrialCount":15,"sourceRevision":"a0dadcd2f6346968bd9df582e4673608afc04592","path":"services/bayn/candidates/ordinal-16-macro-breadth-regime-preregistration.md","blobOid":"f602e3c8fd1b85768404d5fbc439775cdcd2570b"},"developmentCandidateOrdinals":[17,18],"latestDevelopmentEvidence":{"candidateOrdinal":18,"priorTrialCount":17,"status":"DEVELOPMENT_REJECTED","evidenceContentHash":"65d6f044f3f323aa87ff26a3dca011053aa3172c8a4ce422841497ccf370a5b6","qualificationAttemptConsumed":false},"latestReviewedPreregistration":{"schemaVersion":"bayn.candidate-development-next-preregistration.v1","candidateOrdinal":18,"priorTrialCount":17,"strategyProtocolHash":"7e27320b47cd170c1bc9c60ec3692593f2182af44bb48cef4d4a403b09601d75","strategyIdentityHash":"ff762a985c129055670224dca5827a65c689f6f50e1e3765e7b521a05417b1f0","candidateDevelopmentProtocolHash":"46657425873b4f766b5f49d0ebbe2ac3aa9cf53682a8508635be708406271877","calendarHash":"4b2f519f336e4e730c1f0d69e860f25a8d4d0cfbd8e93c6b333ea83623d87237","priorTrialsHash":"58f4e801380f35f483f998e00c82889e0cb6257e85542764e2dc8eaa4f3fd419","modulePath":"services/bayn/src/strategy/dual-momentum-global-equity/candidate-18.ts","moduleSha256":"27466a8c9a9acba475db9cd0d2916532208540a53bd1f0ece307df299e5e34e8","marketData":{"schemaVersion":"bayn.candidate-development-market-data-source.v1","snapshotId":"2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0","finalizedSnapshotContentHash":"8e376546f6a6cc1dbe2e910db3d68f584fc0bd9c4858166042ce32aa077eed0d","inputManifestHash":"b606cf57fb076f5bd2875206973e7c512817430d5cfbbeac8a99396f9983cab4","boundedContentHash":"e0e7b283de187d8ccaf8a449dacc538f00049cfe446dcf153b558e92bf0e17ed"},"preregistration":{"sourceRevision":"30614640c5dfa7a7d50bf053df153062ff0bbca4","path":"services/bayn/candidates/ordinal-18-global-equity-dual-momentum-preregistration.json","blobOid":"920a4afb8a7e5c1f6ef0875683ddc96a91008079"}}}',
+) as Record<string, unknown>
+
+const exactCandidate19Preregistration = JSON.parse(
+  '{"schemaVersion":"bayn.candidate-development-next-preregistration.v1","candidateOrdinal":19,"priorTrialCount":18,"strategyProtocolHash":"b4a2a6c65a7fa5973f7cbc1fd5031e77d529f4884562e5cc8a105fc870ced78f","strategyIdentityHash":"ccf8f03db1f0f9eb54f7ad42194c938e5a53e11573488fd31e7af871967af25a","candidateDevelopmentProtocolHash":"663b59d6c570bbe3373d6e160609e0ad6294a687f435416f2a0956888d960738","calendarHash":"4b2f519f336e4e730c1f0d69e860f25a8d4d0cfbd8e93c6b333ea83623d87237","priorTrialsHash":"1dfc9b6832d4841093becd2c276141110afdfce28a0a88b301cfe9959b900d62","modulePath":"services/bayn/src/strategy/inverse-volatility-risk-diversification/candidate-19.ts","moduleSha256":"90813ab3a3d3cb000bb894309694f94588f98730a6f78b8e1418a5c38d8cb45f","marketData":{"schemaVersion":"bayn.candidate-development-market-data-source.v1","snapshotId":"2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0","finalizedSnapshotContentHash":"8e376546f6a6cc1dbe2e910db3d68f584fc0bd9c4858166042ce32aa077eed0d","inputManifestHash":"b606cf57fb076f5bd2875206973e7c512817430d5cfbbeac8a99396f9983cab4","boundedContentHash":"e0e7b283de187d8ccaf8a449dacc538f00049cfe446dcf153b558e92bf0e17ed"},"preregistration":{"sourceRevision":"bb24ec2ab4225b13920a2b50fb137c4134d2d75f","path":"services/bayn/candidates/ordinal-19-inverse-volatility-risk-diversification-preregistration.json","blobOid":"02d9150a1f0007a644a084b3fca4cd543131374e"}}',
+) as Record<string, unknown>
+
+const exactCandidate19DormantHistoryV1: Record<string, unknown> = {
+  ...exactMainTrialHistoryV1,
+  latestReviewedCandidatePriorTrials: exactCandidate19PriorTrials,
+  latestReviewedCandidatePreregistration: exactCandidate19Preregistration,
+  nextCandidatePreregistration: null,
+}
+
 const candidatePreregistration = (
   candidateOrdinal: number,
   completeIdentity: boolean,
@@ -124,7 +139,7 @@ const historyRecords = () => {
     latestDevelopmentEvidence: priorDevelopmentEvidence,
     latestReviewedPreregistration: latestHistoricalPreregistration,
   } as const
-  const reviewed = candidatePreregistration(3, true, canonicalHash(latestReviewedCandidatePriorTrials))
+  const reviewed = candidatePreregistration(3, true, canonicalHash(latestReviewedCandidateLegacyPriorTrials))
   return {
     completedCandidateOrdinals,
     developmentCandidateOrdinals,
@@ -237,6 +252,15 @@ describe('qualification dormancy verifier', () => {
       preregistrationBlobOid: '066a4d44cd41b871cad95474eb00e411af532c76',
     })
 
+    expect(canonicalHash(exactCandidate19DormantHistoryV1)).toBe(
+      '081ae8072bd3f05acf9f29554ca2ad74ea51ad5a271d7dfa42847c148ff2c2e5',
+    )
+    expect(evaluateQualificationDormancy(exactCandidate19DormantHistoryV1)).toEqual({
+      status: 'dormant',
+      reason: 'preregistration-missing',
+      candidateOrdinal: null,
+    })
+
     expect(canonicalHash(exactCandidate20ContainmentHistoryV2)).toBe(
       '097c8164f2ec3add5e23189039957d76a954a5576705090f75d6614e7f42ea00',
     )
@@ -248,7 +272,7 @@ describe('qualification dormancy verifier', () => {
   })
 
   test('returns a clean no-op when no preregistration is authorized', () => {
-    expect(evaluateQualificationDormancy(trialHistory({ next: null }))).toEqual({
+    expect(evaluateQualificationDormancy(exactCandidate19DormantHistoryV1)).toEqual({
       status: 'dormant',
       reason: 'preregistration-missing',
       candidateOrdinal: null,
@@ -283,7 +307,7 @@ describe('qualification dormancy verifier', () => {
 
   test('accepts exactly one closed authenticated IPC result', () => {
     const nonce = hash('f')
-    const payload = JSON.stringify(trialHistory({ next: null }))
+    const payload = JSON.stringify(exactCandidate19DormantHistoryV1)
     const message = { type: 'result', nonce, payload }
 
     expect(validateQualificationDormancyLoaderMessage(message, nonce, null)).toBe(payload)
@@ -367,7 +391,7 @@ describe('qualification dormancy verifier', () => {
   test('runs against the fixed authoritative path and writes output only after a valid decision', () => {
     const cases = [
       {
-        history: trialHistory({ next: null }),
+        history: exactCandidate19DormantHistoryV1,
         expected: ['dormant=true', 'reason=preregistration-missing', 'candidate_ordinal='],
       },
       {
@@ -476,7 +500,7 @@ export const frozenCandidateDevelopmentTrialHistory = history
     const cases = [
       {
         label: 'null preregistration',
-        source: moduleSource(trialHistory({ next: null })),
+        source: moduleSource(exactCandidate19DormantHistoryV1),
         exitCode: 0,
         access: false,
       },
