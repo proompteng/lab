@@ -8,7 +8,7 @@ import { Effect } from 'effect'
 import {
   candidate17DevelopmentEligibility,
   candidate17Preregistration,
-  candidate18Preregistration,
+  candidate19Preregistration,
   frozenCandidateDevelopmentSessions,
   frozenCandidateDevelopmentTrialHistory,
 } from './candidate-development-calendar'
@@ -239,13 +239,13 @@ describe('Candidate 17 preregistration', () => {
       },
     })
     expect(frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration).toEqual(
-      candidate18Preregistration,
+      candidate19Preregistration,
     )
     expect(candidate17DevelopmentEligibility).toMatchObject({
       status: 'DEVELOPMENT_REJECTED',
       nextCandidatePreregistration: null,
     })
-    expect(frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals).toEqual([17, 18])
+    expect(frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals).toEqual([17, 18, 19])
     expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toBeNull()
   })
 

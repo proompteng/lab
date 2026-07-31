@@ -8,6 +8,8 @@ import {
   candidate18LegacyPriorTrialsMaterial,
   candidate18PriorTrialsMaterial,
   candidate18Preregistration,
+  candidate19DevelopmentFailureEvidenceExpectation,
+  candidate19Preregistration,
   deriveCandidateDevelopmentLegacyPriorTrialsHash,
   deriveCandidateDevelopmentPriorTrialsHash,
   frozenCandidateDevelopmentSessions,
@@ -163,15 +165,15 @@ describe('Candidate 18 dual momentum preregistration', () => {
     expect(frozenCandidateDevelopmentTrialHistory.completedCandidateOrdinals).toEqual(
       Array.from({ length: 16 }, (_, index) => index + 1),
     )
-    expect(frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals).toEqual([17, 18])
+    expect(frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals).toEqual([17, 18, 19])
     expect(frozenCandidateDevelopmentTrialHistory.latestDevelopmentEvidence).toMatchObject({
-      candidateOrdinal: 18,
-      priorTrialCount: 17,
+      candidateOrdinal: 19,
+      priorTrialCount: 18,
       status: 'DEVELOPMENT_REJECTED',
-      evidenceContentHash: candidate18DevelopmentFailureEvidenceExpectation.evidenceContentHash,
-      evaluatedSourceRevision: candidate18DevelopmentFailureEvidenceExpectation.evaluatedSourceRevision,
-      failureStage: 'buildEvaluation-preflight',
-      developmentMetricsObserved: false,
+      evidenceContentHash: candidate19DevelopmentFailureEvidenceExpectation.evidenceContentHash,
+      evaluatedSourceRevision: candidate19DevelopmentFailureEvidenceExpectation.evaluatedSourceRevision,
+      failureStage: 'development-evaluation',
+      developmentMetricsObserved: true,
       qualificationAttemptConsumed: false,
     })
     expect(candidate17DevelopmentEligibility.nextCandidatePreregistration).toBeNull()
@@ -180,6 +182,9 @@ describe('Candidate 18 dual momentum preregistration', () => {
       evidenceContentHash: candidate18DevelopmentFailureEvidenceExpectation.evidenceContentHash,
       nextCandidatePreregistration: null,
     })
+    expect(frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration).toEqual(
+      candidate19Preregistration,
+    )
     expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toBeNull()
     expect(typeof candidateDevelopmentArtifact.buildEvaluation).toBe('function')
   })

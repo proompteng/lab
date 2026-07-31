@@ -13,6 +13,7 @@ import {
   candidateDevelopmentCalendarContract,
   candidateDevelopmentComparisonSemantics,
   candidateDevelopmentDoubledCostContract,
+  preflightCandidateDevelopment,
   runCandidateDevelopment,
   type CandidateDevelopmentEffects,
   type CandidateDevelopmentEvaluation,
@@ -89,6 +90,7 @@ export interface CandidateDevelopmentSourceManifest {
   readonly calendarHash?: string
   readonly priorTrialsHash?: string
   readonly modulePath: string
+  readonly moduleSha256?: string
   readonly moduleFormat: 'self-contained-esm-v1'
   readonly marketData: {
     readonly schemaVersion: 'bayn.candidate-development-market-data-source.v1'
@@ -99,7 +101,20 @@ export interface CandidateDevelopmentSourceManifest {
   }
 }
 
-export interface CandidateDevelopmentStrategyIdentity {
+export interface CandidateDevelopmentArtifactStructuralBindings {
+  readonly schemaVersion: 'bayn.candidate-development-artifact-structural-bindings.v1'
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly strategyProtocolHash: string
+  readonly strategyIdentityHash: string
+  readonly candidateDevelopmentProtocolHash: string
+  readonly calendarHash: string
+  readonly priorTrialsHash: string
+  readonly modulePath: string
+  readonly sourceManifestPath: string
+}
+
+export interface CandidateDevelopmentMomentumStrategyIdentity {
   readonly schemaVersion: 'bayn.candidate-development-strategy-identity.v1'
   readonly family: string
   readonly identifier: string
@@ -125,6 +140,34 @@ export interface CandidateDevelopmentStrategyIdentity {
   readonly missingData: string
   readonly doubledCost: string
 }
+
+export interface CandidateDevelopmentInverseVolatilityStrategyIdentity {
+  readonly schemaVersion: 'bayn.candidate-development-strategy-identity.v2'
+  readonly family: 'inverse-volatility-risk-diversification'
+  readonly identifier: string
+  readonly researchSources: readonly [string, string, string]
+  readonly parameters: {
+    readonly id: string
+    readonly lookbackSessions: number
+    readonly annualizationSessions: number
+    readonly riskAssets: readonly [string, string]
+    readonly covarianceEstimator: 'sample'
+    readonly targetAnnualizedVolatility: number
+    readonly maximumGrossExposure: number
+  }
+  readonly input: string
+  readonly weighting: string
+  readonly riskScaling: string
+  readonly allocation: string
+  readonly schedule: string
+  readonly terminal: string
+  readonly missingData: string
+  readonly doubledCost: string
+}
+
+export type CandidateDevelopmentStrategyIdentity =
+  | CandidateDevelopmentMomentumStrategyIdentity
+  | CandidateDevelopmentInverseVolatilityStrategyIdentity
 
 export interface CandidateDevelopmentVerifiedSource {
   readonly schemaVersion: 'bayn.candidate-development-verified-source.v1'
@@ -704,9 +747,14 @@ export const bindCandidateDevelopmentVerifiedSource = (
     )
   }
   const candidatePreregistration = frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration
-  const priorTrialsHash = deriveCandidateDevelopmentLegacyPriorTrialsHash(
-    frozenCandidateDevelopmentTrialHistory.latestReviewedCandidateLegacyPriorTrials,
-  )
+  const priorTrialsHash =
+    candidatePreregistration.candidateOrdinal >= 19
+      ? deriveCandidateDevelopmentPriorTrialsHash(
+          frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePriorTrials,
+        )
+      : deriveCandidateDevelopmentLegacyPriorTrialsHash(
+          frozenCandidateDevelopmentTrialHistory.latestReviewedCandidateLegacyPriorTrials,
+        )
   if (Result.isFailure(priorTrialsHash)) {
     return Result.fail({
       _tag: 'CandidateDevelopmentCommandHashFailed',
@@ -2726,7 +2774,7 @@ const CandidateDevelopmentMarketDataWitnessSchema = Schema.Struct({
   bars: Schema.Array(CandidateDevelopmentDailyBarSchema).check(Schema.isMinLength(1)),
 })
 
-const CandidateDevelopmentStrategyIdentitySchema = Schema.Struct({
+const CandidateDevelopmentMomentumStrategyIdentitySchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.candidate-development-strategy-identity.v1'),
   family: Schema.String.check(Schema.isMinLength(1)),
   identifier: Schema.String.check(Schema.isMinLength(1)),
@@ -2752,6 +2800,35 @@ const CandidateDevelopmentStrategyIdentitySchema = Schema.Struct({
   missingData: StrictNonEmptyStringSchema,
   doubledCost: StrictNonEmptyStringSchema,
 })
+
+const CandidateDevelopmentInverseVolatilityStrategyIdentitySchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.candidate-development-strategy-identity.v2'),
+  family: Schema.Literal('inverse-volatility-risk-diversification'),
+  identifier: StrictNonEmptyStringSchema,
+  researchSources: Schema.Tuple([StrictNonEmptyStringSchema, StrictNonEmptyStringSchema, StrictNonEmptyStringSchema]),
+  parameters: Schema.Struct({
+    id: StrictNonEmptyStringSchema,
+    lookbackSessions: PositiveIntegerSchema,
+    annualizationSessions: PositiveIntegerSchema,
+    riskAssets: Schema.Tuple([SymbolSchema, SymbolSchema]),
+    covarianceEstimator: Schema.Literal('sample'),
+    targetAnnualizedVolatility: PositiveFiniteSchema,
+    maximumGrossExposure: UnitIntervalSchema,
+  }),
+  input: StrictNonEmptyStringSchema,
+  weighting: StrictNonEmptyStringSchema,
+  riskScaling: StrictNonEmptyStringSchema,
+  allocation: StrictNonEmptyStringSchema,
+  schedule: StrictNonEmptyStringSchema,
+  terminal: StrictNonEmptyStringSchema,
+  missingData: StrictNonEmptyStringSchema,
+  doubledCost: StrictNonEmptyStringSchema,
+})
+
+const CandidateDevelopmentStrategyIdentitySchema = Schema.Union([
+  CandidateDevelopmentMomentumStrategyIdentitySchema,
+  CandidateDevelopmentInverseVolatilityStrategyIdentitySchema,
+])
 
 export const CandidateDevelopmentStrategyProtocolSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.candidate-development-strategy-protocol.v2'),
@@ -2791,6 +2868,7 @@ export const CandidateDevelopmentSourceManifestSchema = Schema.Struct({
   calendarHash: Schema.optionalKey(Sha256Schema),
   priorTrialsHash: Schema.optionalKey(Sha256Schema),
   modulePath: Schema.String.check(Schema.isMinLength(1)),
+  moduleSha256: Schema.optionalKey(Sha256Schema),
   moduleFormat: Schema.Literal('self-contained-esm-v1'),
   marketData: Schema.Struct({
     schemaVersion: Schema.Literal('bayn.candidate-development-market-data-source.v1'),
@@ -2799,6 +2877,19 @@ export const CandidateDevelopmentSourceManifestSchema = Schema.Struct({
     inputManifestHash: Sha256Schema,
     boundedContentHash: Sha256Schema,
   }),
+})
+
+export const CandidateDevelopmentArtifactStructuralBindingsSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.candidate-development-artifact-structural-bindings.v1'),
+  candidateOrdinal: PositiveIntegerSchema,
+  priorTrialCount: NonNegativeIntegerSchema,
+  strategyProtocolHash: Sha256Schema,
+  strategyIdentityHash: Sha256Schema,
+  candidateDevelopmentProtocolHash: Sha256Schema,
+  calendarHash: Sha256Schema,
+  priorTrialsHash: Sha256Schema,
+  modulePath: StrictNonEmptyStringSchema,
+  sourceManifestPath: StrictNonEmptyStringSchema,
 })
 
 const CandidateDevelopmentPreregistrationDocumentSchema = Schema.Struct({
@@ -2862,6 +2953,11 @@ const decodeCandidateDevelopmentSourceManifest = Schema.decodeUnknownResult(
   strictParseOptions,
 )
 
+const decodeCandidateDevelopmentArtifactStructuralBindings = Schema.decodeUnknownResult(
+  CandidateDevelopmentArtifactStructuralBindingsSchema,
+  strictParseOptions,
+)
+
 const decodeCandidateDevelopmentPreregistrationDocument = Schema.decodeUnknownResult(
   CandidateDevelopmentPreregistrationDocumentSchema,
   strictParseOptions,
@@ -2913,6 +3009,105 @@ export const validateCandidateDevelopmentPreregistrationDocument = (
     }
   }
   return Result.succeed(undefined)
+}
+
+export const validateCandidateDevelopmentArtifactStructure = (
+  value: unknown,
+  input: CandidateDevelopmentPreflightInput,
+  strategyProtocol: CandidateDevelopmentStrategyProtocol,
+  verifiedSource: CandidateDevelopmentVerifiedSource,
+): Result.Result<CandidateDevelopmentArtifactStructuralBindings | undefined, CandidateDevelopmentCommandFailure> => {
+  if (input.candidateOrdinal < 19 && value === undefined) return Result.succeed(undefined)
+  const decoded = decodeCandidateDevelopmentArtifactStructuralBindings(value)
+  if (Result.isFailure(decoded)) {
+    return Result.fail(sourceVerificationFailure('verify-program-binding', decoded.failure))
+  }
+  const bindings = decoded.success
+  const preregistration = frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration
+  const preflight = preflightCandidateDevelopment(input)
+  if (Result.isFailure(preflight) || preflight.success.status !== 'PASS') {
+    return Result.fail(
+      sourceVerificationFailure('verify-program-binding', {
+        field: 'artifact.preflight',
+        expected: 'PASS',
+        observed: Result.isFailure(preflight) ? preflight.failure : preflight.success,
+      }),
+    )
+  }
+  if (strategyProtocol.strategyIdentity === undefined) {
+    return Result.fail(
+      sourceVerificationFailure('verify-program-binding', {
+        field: 'artifact.strategyProtocol.strategyIdentity',
+        expected: 'immutable strategy identity',
+        observed: undefined,
+      }),
+    )
+  }
+  const hashes = Result.all({
+    strategyProtocolHash: canonicalHashV1Result(strategyProtocol),
+    strategyIdentityHash: canonicalHashV1Result(strategyProtocol.strategyIdentity),
+    calendarHash: canonicalHashV1Result(candidateDevelopmentCalendarContract),
+    priorTrialsHash: deriveCandidateDevelopmentPriorTrialsHash(
+      frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePriorTrials,
+    ),
+  })
+  if (Result.isFailure(hashes)) {
+    return Result.fail({ _tag: 'CandidateDevelopmentCommandHashFailed', cause: hashes.failure })
+  }
+  const manifest = verifiedSource.sourceManifest
+  const expectedBindings = [
+    ['candidateOrdinal', input.candidateOrdinal, bindings.candidateOrdinal],
+    ['priorTrialCount', input.priorTrialCount, bindings.priorTrialCount],
+    ['strategyProtocolHash', hashes.success.strategyProtocolHash, bindings.strategyProtocolHash],
+    ['strategyIdentityHash', hashes.success.strategyIdentityHash, bindings.strategyIdentityHash],
+    [
+      'candidateDevelopmentProtocolHash',
+      preflight.success.protocolIdentity.candidateDevelopmentProtocolHash,
+      bindings.candidateDevelopmentProtocolHash,
+    ],
+    ['calendarHash', hashes.success.calendarHash, bindings.calendarHash],
+    ['priorTrialsHash', hashes.success.priorTrialsHash, bindings.priorTrialsHash],
+    ['modulePath', verifiedSource.modulePath, bindings.modulePath],
+    ['sourceManifestPath', verifiedSource.sourceManifestPath, bindings.sourceManifestPath],
+    ['preregistration.candidateOrdinal', preregistration.candidateOrdinal, bindings.candidateOrdinal],
+    ['preregistration.priorTrialCount', preregistration.priorTrialCount, bindings.priorTrialCount],
+    ['preregistration.strategyProtocolHash', preregistration.strategyProtocolHash, bindings.strategyProtocolHash],
+    ['preregistration.strategyIdentityHash', preregistration.strategyIdentityHash, bindings.strategyIdentityHash],
+    [
+      'preregistration.candidateDevelopmentProtocolHash',
+      preregistration.candidateDevelopmentProtocolHash,
+      bindings.candidateDevelopmentProtocolHash,
+    ],
+    ['preregistration.calendarHash', preregistration.calendarHash, bindings.calendarHash],
+    ['preregistration.priorTrialsHash', preregistration.priorTrialsHash, bindings.priorTrialsHash],
+    ['preregistration.modulePath', preregistration.modulePath, bindings.modulePath],
+    ['preregistration.moduleSha256', preregistration.moduleSha256, verifiedSource.moduleSha256],
+    ['manifest.candidateOrdinal', bindings.candidateOrdinal, manifest.candidateOrdinal],
+    ['manifest.priorTrialCount', bindings.priorTrialCount, manifest.priorTrialCount],
+    ['manifest.strategyProtocolHash', bindings.strategyProtocolHash, manifest.strategyProtocolHash],
+    ['manifest.strategyIdentityHash', bindings.strategyIdentityHash, manifest.strategyIdentityHash],
+    [
+      'manifest.candidateDevelopmentProtocolHash',
+      bindings.candidateDevelopmentProtocolHash,
+      manifest.candidateDevelopmentProtocolHash,
+    ],
+    ['manifest.calendarHash', bindings.calendarHash, manifest.calendarHash],
+    ['manifest.priorTrialsHash', bindings.priorTrialsHash, manifest.priorTrialsHash],
+    ['manifest.modulePath', bindings.modulePath, manifest.modulePath],
+    ['manifest.moduleSha256', verifiedSource.moduleSha256, manifest.moduleSha256],
+  ] as const
+  for (const [field, expected, observed] of expectedBindings) {
+    if (expected !== observed) {
+      return Result.fail(
+        sourceVerificationFailure('verify-program-binding', {
+          field: `artifact.structuralBindings.${field}`,
+          expected,
+          observed,
+        }),
+      )
+    }
+  }
+  return Result.succeed(bindings)
 }
 
 export const validateCandidateDevelopmentCommandEvaluation = (
@@ -4188,6 +4383,7 @@ const loadCandidateDevelopmentArtifactContext = async (
           schemaVersion: globalThis.__candidateDevelopmentArtifact.schemaVersion,
           input: globalThis.__candidateDevelopmentArtifact.input,
           strategyProtocol: globalThis.__candidateDevelopmentArtifact.strategyProtocol,
+          structuralBindings: globalThis.__candidateDevelopmentArtifact.structuralBindings,
         })
       })()
     `,
@@ -4296,6 +4492,14 @@ export const evaluateCandidateDevelopmentArtifact: CandidateDevelopmentModuleImp
         cause: new TypeError('candidate artifact strategy protocol hash differs from preflight'),
       })
     }
+    yield* Effect.fromResult(
+      validateCandidateDevelopmentArtifactStructure(
+        definition.structuralBindings,
+        input,
+        strategyProtocol as CandidateDevelopmentStrategyProtocol,
+        verifiedSource,
+      ),
+    ).pipe(Effect.mapError(moduleLoadFailure))
     const evaluation = (): Effect.Effect<CandidateDevelopmentCommandEvaluation, CandidateDevelopmentCommandFailure> =>
       runCandidateDevelopmentArtifactWorker<unknown>({
         _tag: 'CandidateDevelopmentArtifactWorkerRequest',
