@@ -9,6 +9,7 @@ import {
   candidate19DevelopmentEligibility,
   candidate19Preregistration,
   candidate19PriorTrialsMaterial,
+  candidate20Preregistration,
   deriveCandidateDevelopmentPriorTrialsHash,
   frozenCandidateDevelopmentSessions,
   frozenCandidateDevelopmentTrialHistory,
@@ -23,7 +24,6 @@ import {
   evaluateCandidateDevelopmentArtifact,
   preregisterCandidateDevelopmentAttempt,
   validateCandidateDevelopmentArtifactStructure,
-  type CandidateDevelopmentArtifactStructuralBindings,
   type CandidateDevelopmentSourceManifest,
   type CandidateDevelopmentStrategyProtocol,
   type CandidateDevelopmentVerifiedSource,
@@ -227,9 +227,9 @@ describe('Candidate 19 inverse-volatility preregistration', () => {
       qualificationAttemptConsumed: false,
     })
     expect(frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration).toEqual(
-      candidate19Preregistration,
+      candidate20Preregistration,
     )
-    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toBeNull()
+    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toEqual(candidate20Preregistration)
     expect(candidate19Planner.specification).toEqual({
       id: 'inverse-volatility-63-spy-dbc-ten-percent-target-risk-cash',
       lookbackSessions: 63,
@@ -327,8 +327,9 @@ describe('Candidate 19 inverse-volatility preregistration', () => {
         _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
         operation: 'verify-program-binding',
         cause: {
-          field: 'trialHistory.nextCandidatePreregistration',
-          observed: null,
+          field: 'trialHistory.nextCandidatePreregistration.source.candidateOrdinal',
+          expected: 20,
+          observed: 19,
         },
       },
     })
@@ -356,66 +357,32 @@ describe('Candidate 19 inverse-volatility preregistration', () => {
     ).toMatchObject({ failure: { _tag: 'Candidate19DevelopmentFailureEvidenceContentHashMismatch' } })
   })
 
-  test('rejects every immutable structural mismatch before metric evaluation', async () => {
-    const exact = validateCandidateDevelopmentArtifactStructure(
-      candidateDevelopmentArtifact.structuralBindings,
-      candidate19Input,
-      candidateDevelopmentArtifact.strategyProtocol,
-      verifiedSource(),
-    )
-    expect(Result.isSuccess(exact)).toBe(true)
-
-    const bindingDrifts: readonly [keyof CandidateDevelopmentArtifactStructuralBindings, unknown][] = [
-      ['candidateOrdinal', 18],
-      ['priorTrialCount', 17],
-      ['strategyProtocolHash', '0'.repeat(64)],
-      ['strategyIdentityHash', '1'.repeat(64)],
-      ['candidateDevelopmentProtocolHash', '2'.repeat(64)],
-      ['calendarHash', '3'.repeat(64)],
-      ['priorTrialsHash', '4'.repeat(64)],
-      ['modulePath', 'services/bayn/src/strategy/stale/candidate-19.ts'],
-      ['sourceManifestPath', 'services/bayn/candidates/stale-source-manifest.json'],
-    ]
-    for (const [field, observed] of bindingDrifts) {
-      const result = validateCandidateDevelopmentArtifactStructure(
-        { ...candidateDevelopmentArtifact.structuralBindings, [field]: observed },
-        candidate19Input,
-        candidateDevelopmentArtifact.strategyProtocol,
-        verifiedSource(),
-      )
-      expect(result).toMatchObject({
-        failure: {
-          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
-          operation: 'verify-program-binding',
-        },
-      })
-    }
-
+  test('rejects the terminal Candidate 19 artifact before metric evaluation after Candidate 20 precommit', async () => {
     expect(
       validateCandidateDevelopmentArtifactStructure(
         candidateDevelopmentArtifact.structuralBindings,
         candidate19Input,
         candidateDevelopmentArtifact.strategyProtocol,
-        verifiedSource({ ...candidate19SourceManifest, moduleSha256: '5'.repeat(64) }),
+        verifiedSource(),
       ),
     ).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
         operation: 'verify-program-binding',
-        cause: { field: 'artifact.structuralBindings.manifest.moduleSha256' },
+        cause: {
+          field: 'artifact.structuralBindings.priorTrialsHash',
+          expected: candidate20Preregistration.priorTrialsHash,
+          observed: candidate19Preregistration.priorTrialsHash,
+        },
       },
     })
 
-    const staleStructuralBindings = {
-      ...candidateDevelopmentArtifact.structuralBindings,
-      candidateDevelopmentProtocolHash: '6'.repeat(64),
-    }
     const source = `
       export const candidateDevelopmentArtifact = {
         schemaVersion: 'bayn.candidate-development-artifact.v1',
         input: ${JSON.stringify(candidateDevelopmentArtifact.input)},
         strategyProtocol: ${JSON.stringify(candidateDevelopmentArtifact.strategyProtocol)},
-        structuralBindings: ${JSON.stringify(staleStructuralBindings)},
+        structuralBindings: ${JSON.stringify(candidateDevelopmentArtifact.structuralBindings)},
         buildEvaluation: () => { throw new Error('metric-attempt-entered') },
       }
     `
@@ -428,6 +395,11 @@ describe('Candidate 19 inverse-volatility preregistration', () => {
       cause: {
         _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
         operation: 'verify-program-binding',
+        cause: {
+          field: 'trialHistory.latestReviewedCandidatePreregistration.input.candidateOrdinal',
+          expected: 20,
+          observed: 19,
+        },
       },
     })
     expect(JSON.stringify(failure)).not.toContain('metric-attempt-entered')

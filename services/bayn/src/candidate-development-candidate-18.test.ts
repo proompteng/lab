@@ -9,7 +9,7 @@ import {
   candidate18PriorTrialsMaterial,
   candidate18Preregistration,
   candidate19DevelopmentFailureEvidenceExpectation,
-  candidate19Preregistration,
+  candidate20Preregistration,
   deriveCandidateDevelopmentLegacyPriorTrialsHash,
   deriveCandidateDevelopmentPriorTrialsHash,
   frozenCandidateDevelopmentSessions,
@@ -183,9 +183,9 @@ describe('Candidate 18 dual momentum preregistration', () => {
       nextCandidatePreregistration: null,
     })
     expect(frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration).toEqual(
-      candidate19Preregistration,
+      candidate20Preregistration,
     )
-    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toBeNull()
+    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toEqual(candidate20Preregistration)
     expect(typeof candidateDevelopmentArtifact.buildEvaluation).toBe('function')
   })
 
@@ -260,8 +260,9 @@ describe('Candidate 18 dual momentum preregistration', () => {
         _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
         operation: 'verify-program-binding',
         cause: {
-          field: 'trialHistory.nextCandidatePreregistration',
-          observed: null,
+          field: 'trialHistory.nextCandidatePreregistration.source.candidateOrdinal',
+          expected: 20,
+          observed: 18,
         },
       },
     })

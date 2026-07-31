@@ -6,7 +6,7 @@ import {
   candidate17DevelopmentEvidenceExpectation,
   candidate17Preregistration,
   candidate19DevelopmentFailureEvidenceExpectation,
-  candidate19Preregistration,
+  candidate20Preregistration,
   frozenCandidateDevelopmentTrialHistory,
 } from './candidate-development-calendar'
 import {
@@ -369,9 +369,9 @@ describe('candidate development immutable evidence gate', () => {
     })
     expect(frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals).toEqual([17, 18, 19])
     expect(frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration).toEqual(
-      candidate19Preregistration,
+      candidate20Preregistration,
     )
-    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toBeNull()
+    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toEqual(candidate20Preregistration)
     expect(Math.max(...frozenCandidateDevelopmentTrialHistory.completedCandidateOrdinals)).toBe(16)
   })
 
