@@ -216,9 +216,15 @@ describe('Candidate 18 dual momentum preregistration', () => {
       failure: { _tag: 'Candidate18DevelopmentFailureEvidenceContentHashMismatch' },
     })
 
-    const source = await Bun.file(`${import.meta.dir}/strategy/dual-momentum-global-equity/candidate-18.ts`).text()
-    expect(source).toContain(candidate18Preregistration.strategyProtocolHash)
-    expect(source).toContain(evidence.protocolBindings.embeddedEvaluationProtocolHash)
+    expect(candidateDevelopmentArtifact.input.expectedStrategyProtocolHash).toBe(
+      evidence.protocolBindings.strategyProtocolHash,
+    )
+    expect(canonicalHashV1(candidateDevelopmentArtifact.strategyProtocol)).toBe(
+      evidence.protocolBindings.strategyProtocolHash,
+    )
+    expect(evidence.attempt.failure.cause.reason).toBe(
+      'strategy protocol hash fa25d8c16bc4f4fde3bab99409ae60a6fd23332d295b3557231796cebb911390 differs from Candidate 18',
+    )
     expect(evidence.protocolBindings.embeddedEvaluationProtocolHash).not.toBe(
       evidence.protocolBindings.strategyProtocolHash,
     )
