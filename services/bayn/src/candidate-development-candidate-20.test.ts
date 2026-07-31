@@ -1,480 +1,896 @@
 import { describe, expect, test } from 'bun:test'
-import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { Effect, Result } from 'effect'
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
-import { Effect, Result } from 'effect'
+import * as vm from 'node:vm'
 
+import rawInvalidation from '../candidates/ordinal-20-cross-sectional-short-term-reversal-invalidation.json' with { type: 'json' }
 import rawPreregistration from '../candidates/ordinal-20-cross-sectional-short-term-reversal-preregistration.json' with { type: 'json' }
 import rawSourceManifest from '../candidates/ordinal-20-cross-sectional-short-term-reversal-source-manifest.json' with { type: 'json' }
-import type { CandidateDevelopmentPreflightInput } from './candidate-development'
 import {
-  candidate19DevelopmentFailureEvidenceExpectation,
+  candidate20PrecommitInvalidation,
   candidate20Preregistration,
-  candidate20PriorTrialsMaterial,
-  deriveCandidateDevelopmentPriorTrialsHash,
-  frozenCandidateDevelopmentSessions,
   frozenCandidateDevelopmentTrialHistory,
+  type CandidateDevelopmentNextPreregistration,
 } from './candidate-development-calendar'
 import {
+  authorizeCandidateDevelopmentAttempt,
+  loadAuthorizedCandidateDevelopmentExecutableProgram,
   preregisterCandidateDevelopmentAttempt,
-  validateCandidateDevelopmentArtifactStructure,
-  verifyCandidateDevelopmentPreregistrationLineage,
-  verifyCandidateDevelopmentPreregistrationModuleNovelty,
-  verifyCandidateDevelopmentRepositoryIntegrity,
-  type CandidateDevelopmentArtifactStructuralBindings,
-  type CandidateDevelopmentSourceManifest,
+  validateCandidateDevelopmentModuleSource,
+  validateCandidateDevelopmentTrialHistoryClosure,
   type CandidateDevelopmentStrategyProtocol,
+  type CandidateDevelopmentSourceManifest,
   type CandidateDevelopmentVerifiedSource,
 } from './candidate-development-command'
-import { canonicalHashV1 } from './hash'
-import {
-  candidate20Planner as untypedCandidate20Planner,
-  candidateDevelopmentArtifact as untypedCandidateDevelopmentArtifact,
-} from './strategy/cross-sectional-short-term-reversal/candidate-20'
+import type { CandidateDevelopmentTrialHistory } from './candidate-development-trial-history'
+import { defaultProtocolDocument } from './protocol'
+import { candidate20InvalidPrecommit } from './strategy/cross-sectional-short-term-reversal/candidate-20'
 
-type Candidate20Symbol = 'DBC' | 'EFA' | 'IEF' | 'SPY' | 'VNQ'
-
-interface Candidate20Bar {
-  readonly symbol: Candidate20Symbol
-  readonly sessionDate: string
-  readonly open: number
-  readonly high: number
-  readonly low: number
-  readonly close: number
-  readonly volume: number
-  readonly source: 'alpaca'
-  readonly sourceFeed: 'sip'
-  readonly adjustment: 'all'
-  readonly publicationSchemaVersion: 'signal.adjusted-daily-snapshot.v2'
-}
-
-interface Candidate20Session {
-  readonly date: string
-  readonly bars: Readonly<Record<Candidate20Symbol, Candidate20Bar>>
-}
-
-type Candidate20Result<A> =
-  | { readonly _tag: 'Success'; readonly success: A }
-  | { readonly _tag: 'Failure'; readonly failure: unknown }
-
-interface Candidate20Feature {
-  readonly totalReturns: Readonly<Record<Candidate20Symbol, number>>
-  readonly annualizedVolatilities: Readonly<Record<Candidate20Symbol, number>>
-  readonly rankedSymbols: readonly Candidate20Symbol[]
-  readonly selectedSymbols: readonly Candidate20Symbol[]
-}
-
-interface Candidate20Decision {
-  readonly feature: Candidate20Feature
-  readonly weights: Readonly<Record<Candidate20Symbol, number>>
-}
-
-interface Candidate20PlannerContract {
-  readonly specification: {
-    readonly id: 'cross-sectional-short-term-reversal-21-two-losers-half-weight-cash'
-    readonly lookbackSessions: 21
-    readonly annualizationSessions: 252
-    readonly rankedAssets: readonly ['DBC', 'EFA', 'IEF', 'SPY', 'VNQ']
-    readonly maximumSelections: 2
-    readonly weightPerSelection: 0.5
-    readonly requireNegativeReturn: true
-    readonly tieBreak: 'symbol-ascending'
-    readonly maximumGrossExposure: 1
-  }
-  readonly decisionAtSignal: (
-    sessions: readonly Candidate20Session[],
-    signalIndex: number,
-    terminal: boolean,
-  ) => Candidate20Result<Candidate20Decision>
-}
-
-interface Candidate20ArtifactContract {
-  readonly schemaVersion: 'bayn.candidate-development-artifact.v1'
-  readonly input: {
-    readonly candidateOrdinal: 20
-    readonly priorTrialCount: 19
-    readonly expectedStrategyProtocolHash: string
-    readonly officialSessions: readonly string[]
-    readonly signalSessionDates: readonly string[]
-    readonly featureLookbackSessions: 21
-  }
-  readonly strategyProtocol: CandidateDevelopmentStrategyProtocol
-  readonly structuralBindings: CandidateDevelopmentArtifactStructuralBindings
-  readonly buildEvaluation: (source: unknown) => unknown
-}
-
-const candidate20Planner = untypedCandidate20Planner as unknown as Candidate20PlannerContract
-const candidateDevelopmentArtifact = untypedCandidateDevelopmentArtifact as unknown as Candidate20ArtifactContract
-const candidate20Input = candidateDevelopmentArtifact.input as unknown as CandidateDevelopmentPreflightInput
-const candidate20SourceManifest = rawSourceManifest as CandidateDevelopmentSourceManifest
-const symbols = ['DBC', 'EFA', 'IEF', 'SPY', 'VNQ'] as const satisfies readonly Candidate20Symbol[]
 const modulePath = 'services/bayn/src/strategy/cross-sectional-short-term-reversal/candidate-20.ts'
 const sourceManifestPath =
   'services/bayn/candidates/ordinal-20-cross-sectional-short-term-reversal-source-manifest.json'
-const sourceManifestSha256 = createHash('sha256')
-  .update(
-    readFileSync(
-      new URL(`../candidates/ordinal-20-cross-sectional-short-term-reversal-source-manifest.json`, import.meta.url),
-    ),
-  )
-  .digest('hex')
 
-const successOf = <A>(result: Candidate20Result<A>): A => {
-  expect(result._tag).toBe('Success')
-  if (result._tag === 'Failure') throw new Error('expected Candidate 20 planner success')
-  return result.success
-}
-
-const syntheticSessions = (
-  terminalRatios: Readonly<Record<Candidate20Symbol, number>>,
-  amplitudes: Readonly<Record<Candidate20Symbol, number>> = {
-    DBC: 0.004,
-    EFA: 0.006,
-    IEF: 0.003,
-    SPY: 0.005,
-    VNQ: 0.007,
-  },
-): readonly Candidate20Session[] =>
-  frozenCandidateDevelopmentSessions()
-    .slice(0, 23)
-    .map((date, index) => {
-      const bars = {} as Record<Candidate20Symbol, Candidate20Bar>
-      for (const symbol of symbols) {
-        const close =
-          100 *
-          Math.exp(
-            Math.log(terminalRatios[symbol]) * (index / 21) + amplitudes[symbol] * Math.sin((2 * Math.PI * index) / 21),
-          )
-        bars[symbol] = {
-          symbol,
-          sessionDate: date,
-          open: close,
-          high: close * 1.001,
-          low: close * 0.999,
-          close,
-          volume: 1_000_000 + index,
-          source: 'alpaca',
-          sourceFeed: 'sip',
-          adjustment: 'all',
-          publicationSchemaVersion: 'signal.adjusted-daily-snapshot.v2',
-        }
-      }
-      return { date, bars }
-    })
-
-const verifiedSource = (
-  sourceManifest: CandidateDevelopmentSourceManifest = candidate20SourceManifest,
-): CandidateDevelopmentVerifiedSource => ({
+const invalidAttemptSource: CandidateDevelopmentVerifiedSource = {
   schemaVersion: 'bayn.candidate-development-verified-source.v1',
   sourceRevision: 'a'.repeat(40),
   modulePath,
   moduleBlobOid: 'b'.repeat(40),
   moduleSha256: candidate20Preregistration.moduleSha256,
   sourceManifestPath,
-  sourceManifestBlobOid: 'c'.repeat(40),
-  sourceManifestSha256,
-  sourceManifest,
-  baselineRunId: 'd'.repeat(64),
-  stressedRunId: 'e'.repeat(64),
-})
+  sourceManifestBlobOid: candidate20PrecommitInvalidation.sourceManifest.blobOid,
+  sourceManifestSha256: candidate20PrecommitInvalidation.sourceManifest.sha256,
+  sourceManifest: rawSourceManifest as CandidateDevelopmentSourceManifest,
+  baselineRunId: 'c'.repeat(64),
+  stressedRunId: 'd'.repeat(64),
+}
 
-const execFilePromise = promisify(execFile)
-const cleanGitEnvironment = (): NodeJS.ProcessEnv =>
-  Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')))
+const expectAuthorizationFailure = (result: Result.Result<unknown, unknown>) => {
+  expect(result).toMatchObject({
+    failure: {
+      _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+      operation: 'verify-attempt-authorization',
+    },
+  })
+}
 
-describe('Candidate 20 cross-sectional short-term reversal preregistration', () => {
-  test('binds one immutable result-blind next candidate while preserving Candidate 19 terminal state', () => {
-    expect(candidateDevelopmentArtifact.schemaVersion).toBe('bayn.candidate-development-artifact.v1')
-    expect(candidateDevelopmentArtifact.input).toMatchObject({
+const mutatedHistory = (mutation: (history: Record<string, unknown>) => void): CandidateDevelopmentTrialHistory => {
+  const history = structuredClone(frozenCandidateDevelopmentTrialHistory) as unknown as Record<string, unknown>
+  mutation(history)
+  return history as unknown as CandidateDevelopmentTrialHistory
+}
+
+describe('Candidate 20 invalid precommit containment', () => {
+  test('preserves the sealed precommit while recording an explicit unattempted invalidation', () => {
+    expect(rawInvalidation as unknown).toEqual(candidate20PrecommitInvalidation as unknown)
+    expect(rawPreregistration).toMatchObject({
       candidateOrdinal: 20,
       priorTrialCount: 19,
-      expectedStrategyProtocolHash: candidate20Preregistration.strategyProtocolHash,
-      featureLookbackSessions: 21,
+      modulePath,
+      moduleSha256: candidate20PrecommitInvalidation.invalidatedModule.sha256,
     })
-    expect(candidateDevelopmentArtifact.input.officialSessions).toHaveLength(1_762)
-    expect(canonicalHashV1(candidateDevelopmentArtifact.strategyProtocol)).toBe(
-      candidate20Preregistration.strategyProtocolHash,
-    )
-    expect(canonicalHashV1(candidateDevelopmentArtifact.strategyProtocol.strategyIdentity)).toBe(
-      candidate20Preregistration.strategyIdentityHash!,
-    )
-    expect(candidateDevelopmentArtifact.strategyProtocol.strategyIdentity).toEqual({
-      schemaVersion: 'bayn.candidate-development-strategy-identity.v2',
-      family: 'inverse-volatility-risk-diversification',
-      identifier: 'candidate-20-cross-sectional-short-term-reversal-21-session-etf-losers',
-      researchSources: [
-        'https://doi.org/10.1111/j.1540-6261.1990.tb05110.x',
-        'https://doi.org/10.2307/2937816',
-        'https://doi.org/10.1093/rfs/3.2.175',
-      ],
-      parameters: {
-        id: 'cross-sectional-short-term-reversal-21-two-losers-half-weight-cash',
-        lookbackSessions: 21,
-        annualizationSessions: 252,
-        riskAssets: ['DBC', 'SPY'],
-        covarianceEstimator: 'sample',
-        targetAnnualizedVolatility: 0.1,
-        maximumGrossExposure: 1,
+    expect(rawSourceManifest).toMatchObject({
+      candidateOrdinal: 20,
+      priorTrialCount: 19,
+      modulePath,
+      moduleSha256: candidate20PrecommitInvalidation.invalidatedModule.sha256,
+    })
+    expect(candidate20Preregistration.preregistration).toEqual({
+      sourceRevision: candidate20PrecommitInvalidation.preregistration.sourceRevision,
+      path: candidate20PrecommitInvalidation.preregistration.path,
+      blobOid: candidate20PrecommitInvalidation.preregistration.blobOid,
+    })
+    expect(candidate20PrecommitInvalidation).toMatchObject({
+      status: 'PRECOMMIT_INVALID',
+      attemptStatus: 'UNATTEMPTED',
+      metricBearingAttemptsConsumed: 0,
+      qualificationAttemptConsumed: false,
+      naturalBuild: {
+        runId: '30657379582',
+        imagePublished: true,
+        imageDigest: 'sha256:28f59fb44bdb3008eecd17cf3c053098f214f3d982f26673a44a98d53f767fba',
+        deploymentAllowed: false,
       },
-      input: '22-adjusted-closes-ending-at-each-finalized-month-end-for-dbc-efa-ief-spy-vnq',
-      weighting:
-        'rank-all-five-etfs-by-ascending-21-session-return-select-at-most-two-strictly-negative-losers-at-fixed-half-weight',
-      riskScaling:
-        'none-covariance-and-target-volatility-fields-are-v2-schema-compatibility-metadata-and-do-not-affect-strategy-weights',
-      allocation: 'long-only-up-to-two-assets-with-unallocated-capital-held-as-cash-no-leverage-no-shorting',
-      schedule: 'official-month-end-finalized-close-to-next-session-open',
-      terminal: '2022-11-30-signal-liquidates-at-2022-12-01-open-and-remains-cash',
-      missingData: 'fail-closed-no-imputation-and-no-nonfinite-return-or-volatility',
-      doubledCost: 'fixed-baseline-signal-and-ordered-requested-filled-quantity-path-repriced-at-two-times-cost',
+      release: {
+        runId: '30657658256',
+        conclusion: 'CANCELLED',
+        promotionCompleted: false,
+        rerunAllowed: false,
+      },
+      nextCandidatePreregistration: null,
     })
-    expect(candidateDevelopmentArtifact.structuralBindings).toEqual({
-      schemaVersion: 'bayn.candidate-development-artifact-structural-bindings.v1',
-      candidateOrdinal: 20,
-      priorTrialCount: 19,
-      strategyProtocolHash: candidate20Preregistration.strategyProtocolHash,
-      strategyIdentityHash: candidate20Preregistration.strategyIdentityHash!,
-      candidateDevelopmentProtocolHash: candidate20Preregistration.candidateDevelopmentProtocolHash!,
-      calendarHash: candidate20Preregistration.calendarHash!,
-      priorTrialsHash: candidate20Preregistration.priorTrialsHash!,
-      modulePath,
-      sourceManifestPath,
-    })
-
-    const { preregistration: _gitPreregistration, ...preregistrationDocument } = candidate20Preregistration
-    expect(rawPreregistration).toEqual(preregistrationDocument as typeof rawPreregistration)
-    expect(candidate20SourceManifest).toMatchObject({
-      candidateOrdinal: 20,
-      priorTrialCount: 19,
-      modulePath,
-      moduleSha256: candidate20Preregistration.moduleSha256,
-      moduleFormat: 'self-contained-esm-v1',
-    })
-    const moduleSha256 = createHash('sha256')
-      .update(readFileSync(new URL('./strategy/cross-sectional-short-term-reversal/candidate-20.ts', import.meta.url)))
-      .digest('hex')
-    expect(moduleSha256).toBe(candidate20Preregistration.moduleSha256)
-
-    expect(frozenCandidateDevelopmentTrialHistory.completedCandidateOrdinals).toEqual(
-      Array.from({ length: 16 }, (_, index) => index + 1),
-    )
+    expect(frozenCandidateDevelopmentTrialHistory.latestInvalidPrecommit).toEqual(candidate20PrecommitInvalidation)
     expect(frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals).toEqual([17, 18, 19])
     expect(frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals).not.toContain(20)
     expect(frozenCandidateDevelopmentTrialHistory.latestDevelopmentEvidence).toMatchObject({
       candidateOrdinal: 19,
       priorTrialCount: 18,
       status: 'DEVELOPMENT_REJECTED',
-      evidenceContentHash: candidate19DevelopmentFailureEvidenceExpectation.evidenceContentHash,
-      developmentMetricsObserved: true,
       qualificationAttemptConsumed: false,
     })
-    expect(frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration).toEqual(
-      candidate20Preregistration,
-    )
-    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toEqual(candidate20Preregistration)
-    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration?.candidateOrdinal).toBe(20)
-    expect(typeof candidateDevelopmentArtifact.buildEvaluation).toBe('function')
+    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toBeNull()
+    expect(validateCandidateDevelopmentTrialHistoryClosure()).toEqual(Result.succeed(undefined))
   })
 
-  test('selects only the two lowest negative returns with fixed weights and no risk-estimate weighting', () => {
-    const sessions = syntheticSessions({ DBC: 0.9, EFA: 1.03, IEF: 0.97, SPY: 0.84, VNQ: 1.08 })
-    const decision = successOf(candidate20Planner.decisionAtSignal(sessions, 21, false))
-
-    expect(decision.feature.rankedSymbols).toEqual(['SPY', 'DBC', 'IEF', 'EFA', 'VNQ'])
-    expect(decision.feature.selectedSymbols).toEqual(['SPY', 'DBC'])
-    expect(decision.weights).toEqual({ DBC: 0.5, EFA: 0, IEF: 0, SPY: 0.5, VNQ: 0 })
-
-    const changedRisk = syntheticSessions(
-      { DBC: 0.9, EFA: 1.03, IEF: 0.97, SPY: 0.84, VNQ: 1.08 },
-      { DBC: 0.001, EFA: 0.08, IEF: 0.12, SPY: 0.16, VNQ: 0.2 },
-    )
-    const changedRiskDecision = successOf(candidate20Planner.decisionAtSignal(changedRisk, 21, false))
-    expect(changedRiskDecision.feature.selectedSymbols).toEqual(decision.feature.selectedSymbols)
-    expect(changedRiskDecision.weights).toEqual(decision.weights)
-    expect(changedRiskDecision.feature.annualizedVolatilities.SPY).not.toBe(decision.feature.annualizedVolatilities.SPY)
-  })
-
-  test('uses deterministic symbol ties, leaves residual cash, ignores future bars, and fails closed', () => {
-    const tied = syntheticSessions({ DBC: 0.9, EFA: 0.9, IEF: 1.02, SPY: 0.9, VNQ: 1.04 })
-    const tiedDecision = successOf(candidate20Planner.decisionAtSignal(tied, 21, false))
-    expect(tiedDecision.feature.rankedSymbols.slice(0, 3)).toEqual(['DBC', 'EFA', 'SPY'])
-    expect(tiedDecision.feature.selectedSymbols).toEqual(['DBC', 'EFA'])
-
-    const oneLoser = syntheticSessions({ DBC: 1.02, EFA: 1.03, IEF: 1.01, SPY: 0.92, VNQ: 1.04 })
-    const oneLoserDecision = successOf(candidate20Planner.decisionAtSignal(oneLoser, 21, false))
-    expect(oneLoserDecision.feature.selectedSymbols).toEqual(['SPY'])
-    expect(oneLoserDecision.weights).toEqual({ DBC: 0, EFA: 0, IEF: 0, SPY: 0.5, VNQ: 0 })
-
-    const allPositive = syntheticSessions({ DBC: 1.02, EFA: 1.03, IEF: 1.01, SPY: 1.04, VNQ: 1.05 })
-    const cashDecision = successOf(candidate20Planner.decisionAtSignal(allPositive, 21, false))
-    expect(Object.values(cashDecision.weights).every((weight) => weight === 0)).toBe(true)
-
-    const futureMutated = structuredClone(tied) as Array<{
-      date: string
-      bars: Record<Candidate20Symbol, Candidate20Bar>
-    }>
-    const futureBar = futureMutated[22]!.bars.SPY
-    futureMutated[22]!.bars.SPY = { ...futureBar, close: futureBar.close * 10 }
-    expect(JSON.stringify(candidate20Planner.decisionAtSignal(futureMutated, 21, false))).toBe(
-      JSON.stringify(candidate20Planner.decisionAtSignal(tied, 21, false)),
-    )
-
-    const malformed = structuredClone(tied) as Array<{
-      date: string
-      bars: Record<Candidate20Symbol, Candidate20Bar>
-    }>
-    malformed[21]!.bars.SPY = { ...malformed[21]!.bars.SPY, close: Number.NaN }
-    expect(candidate20Planner.decisionAtSignal(malformed, 21, false)).toMatchObject({
-      _tag: 'Failure',
-      failure: { _tag: 'Candidate20InvalidInput', operation: 'feature-window' },
+  test('exports only the explicit non-runnable tombstone contract', () => {
+    expect(candidate20InvalidPrecommit).toMatchObject({
+      schemaVersion: 'bayn.candidate-development-precommit-tombstone.v1',
+      candidateOrdinal: 20,
+      status: 'PRECOMMIT_INVALID',
+      attemptStatus: 'UNATTEMPTED',
+      nextCandidatePreregistration: null,
     })
-
-    const terminal = successOf(candidate20Planner.decisionAtSignal(tied, 21, true))
-    expect(Object.values(terminal.weights).every((weight) => weight === 0)).toBe(true)
+    expect(
+      candidate20InvalidPrecommit.invalidatedModuleSha256 === candidate20PrecommitInvalidation.invalidatedModule.sha256,
+    ).toBe(true)
   })
 
-  test('binds the complete Candidate 19 terminal prior-trials hash and rejects structural drift', () => {
-    expect(deriveCandidateDevelopmentPriorTrialsHash(candidate20PriorTrialsMaterial)).toEqual(
-      Result.succeed(candidate20Preregistration.priorTrialsHash!),
-    )
-    expect(
-      deriveCandidateDevelopmentPriorTrialsHash({
-        ...candidate20PriorTrialsMaterial,
-        latestDevelopmentEvidence: {
-          ...candidate20PriorTrialsMaterial.latestDevelopmentEvidence,
-          evidenceContentHash: '0'.repeat(64),
-        },
-      }),
-    ).not.toEqual(Result.succeed(candidate20Preregistration.priorTrialsHash!))
+  test('rejects authorization and preregistration before any metric-bearing attempt can begin', () => {
+    expectAuthorizationFailure(authorizeCandidateDevelopmentAttempt())
+    expectAuthorizationFailure(preregisterCandidateDevelopmentAttempt(invalidAttemptSource))
+    expect(candidate20PrecommitInvalidation.metricBearingAttemptsConsumed).toBe(0)
+    expect(candidate20PrecommitInvalidation.qualificationAttemptConsumed).toBe(false)
+  })
 
-    const exactSource = verifiedSource()
-    expect(
-      validateCandidateDevelopmentArtifactStructure(
-        candidateDevelopmentArtifact.structuralBindings,
-        candidate20Input,
-        candidateDevelopmentArtifact.strategyProtocol,
-        exactSource,
+  test('rejects the invalidated state before source verification or module import', async () => {
+    let loaderCalls = 0
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        loadAuthorizedCandidateDevelopmentExecutableProgram(modulePath, sourceManifestPath, () => {
+          loaderCalls += 1
+          return Effect.die(new Error('invalidated Candidate 20 must not reach source verification or import'))
+        }),
       ),
-    ).toEqual(Result.succeed(candidateDevelopmentArtifact.structuralBindings))
-    expect(preregisterCandidateDevelopmentAttempt(exactSource)).toEqual(Result.succeed(sourceManifestSha256))
+    )
 
-    const drifts: readonly [keyof CandidateDevelopmentArtifactStructuralBindings, unknown][] = [
-      ['candidateOrdinal', 19],
-      ['priorTrialCount', 18],
-      ['strategyProtocolHash', '0'.repeat(64)],
-      ['strategyIdentityHash', '1'.repeat(64)],
-      ['candidateDevelopmentProtocolHash', '2'.repeat(64)],
-      ['calendarHash', '3'.repeat(64)],
-      ['priorTrialsHash', '4'.repeat(64)],
-      ['modulePath', 'services/bayn/src/strategy/stale/candidate-20.ts'],
-      ['sourceManifestPath', 'services/bayn/candidates/stale-source-manifest.json'],
+    expect(loaderCalls).toBe(0)
+    expectAuthorizationFailure(Result.fail(failure))
+  })
+
+  test('fails closed when any sealed invalidation or trial-history binding is mutated', () => {
+    const mutations: readonly ((history: Record<string, unknown>) => void)[] = [
+      (history) => {
+        const invalidation = history.latestInvalidPrecommit as Record<string, unknown>
+        const module = invalidation.invalidatedModule as Record<string, unknown>
+        module.sha256 = '0'.repeat(64)
+      },
+      (history) => {
+        const invalidation = history.latestInvalidPrecommit as Record<string, unknown>
+        invalidation.metricBearingAttemptsConsumed = 1
+      },
+      (history) => {
+        history.nextCandidatePreregistration = candidate20Preregistration as CandidateDevelopmentNextPreregistration
+      },
+      (history) => {
+        const reviewed = history.latestReviewedCandidatePreregistration as Record<string, unknown>
+        reviewed.moduleSha256 = '1'.repeat(64)
+      },
+      (history) => {
+        history.developmentCandidateOrdinals = [17, 18, 19, 20]
+      },
     ]
-    for (const [field, observed] of drifts) {
-      expect(
-        validateCandidateDevelopmentArtifactStructure(
-          { ...candidateDevelopmentArtifact.structuralBindings, [field]: observed },
-          candidate20Input,
-          candidateDevelopmentArtifact.strategyProtocol,
-          exactSource,
-        ),
-      ).toMatchObject({
+    for (const mutate of mutations) {
+      expectAuthorizationFailure(validateCandidateDevelopmentTrialHistoryClosure(mutatedHistory(mutate)))
+    }
+  })
+
+  test('rejects generated bundles, frozen inputs, alternate embedded bars, and disabled type checking', async () => {
+    const governedSerializedBars = JSON.stringify(
+      Array.from({ length: 8 }, (_, index) => ({
+        sessionDate: `2026-01-${String(index + 2).padStart(2, '0')}`,
+        open: 100 + index,
+        high: 101 + index,
+        low: 99 + index,
+        close: 100.5 + index,
+        volume: 1_000 + index,
+      })),
+    )
+    const governedPayloadProtocol: CandidateDevelopmentStrategyProtocol = {
+      schemaVersion: 'bayn.candidate-development-strategy-protocol.v2',
+      universe: ['DBC', 'EFA', 'IEF', 'SPY', 'VNQ'],
+      directVolatilityTarget: 0.1,
+      initialCapitalMicros: '1000000000000',
+      executionModel: defaultProtocolDocument.executionModel,
+      thresholds: {
+        minimumObservations: 504,
+        minimumAnnualizedReturn: 0,
+        minimumSharpeImprovement: 0,
+        maximumDrawdown: 0.35,
+        maximumAnnualTurnover: 12,
+        requirePositiveDoubleCostReturn: true,
+      },
+      marketData: {
+        schemaVersion: 'bayn.candidate-development-market-data-contract.v1',
+        snapshotId: rawPreregistration.marketData.snapshotId,
+        contentHash: rawPreregistration.marketData.boundedContentHash,
+      },
+      benchmarks: {
+        schemaVersion: 'bayn.candidate-development-benchmark-policy.v1',
+        symbol: 'SPY',
+        directVolatilityWindow: 63,
+        terminalPolicy: 'last-all-cash-strategy-decision',
+      },
+      strategyIdentity: {
+        schemaVersion: 'bayn.candidate-development-strategy-identity.v2',
+        family: 'inverse-volatility-risk-diversification',
+        identifier: 'governed-payload-regression',
+        researchSources: ['source-a', 'source-b', 'source-c'],
+        parameters: {
+          id: 'governed-payload-regression',
+          lookbackSessions: 21,
+          annualizationSessions: 252,
+          riskAssets: ['DBC', 'SPY'],
+          covarianceEstimator: 'sample',
+          targetAnnualizedVolatility: 0.1,
+          maximumGrossExposure: 1,
+        },
+        input: governedSerializedBars,
+        weighting: 'runtime-only',
+        riskScaling: 'runtime-only',
+        allocation: 'runtime-only',
+        schedule: 'runtime-only',
+        terminal: 'runtime-only',
+        missingData: 'fail-closed',
+        doubledCost: 'runtime-only',
+      },
+    }
+    const governedStructuralBindings = {
+      schemaVersion: 'bayn.candidate-development-artifact-structural-bindings.v1',
+      candidateOrdinal: rawPreregistration.candidateOrdinal,
+      priorTrialCount: rawPreregistration.priorTrialCount,
+      strategyProtocolHash: rawPreregistration.strategyProtocolHash,
+      strategyIdentityHash: rawPreregistration.strategyIdentityHash,
+      candidateDevelopmentProtocolHash: rawPreregistration.candidateDevelopmentProtocolHash,
+      calendarHash: rawPreregistration.calendarHash,
+      priorTrialsHash: rawPreregistration.priorTrialsHash,
+      modulePath,
+      sourceManifestPath,
+    }
+    const governedPayloadIdentity = governedPayloadProtocol.strategyIdentity
+    if (governedPayloadIdentity === undefined) throw new Error('governed payload fixture requires strategy identity')
+    const governedBaselineProtocol: CandidateDevelopmentStrategyProtocol = {
+      ...governedPayloadProtocol,
+      strategyIdentity: { ...governedPayloadIdentity, input: 'runtime-only' },
+    }
+    const strategyProtocolPayloadSource = `export const candidateDevelopmentArtifact = {
+      schemaVersion: 'bayn.candidate-development-artifact.v1',
+      input: {},
+      strategyProtocol: ${JSON.stringify(governedPayloadProtocol)},
+      structuralBindings: ${JSON.stringify(governedStructuralBindings)},
+      buildEvaluation: () => JSON.parse(candidateDevelopmentArtifact.strategyProtocol.strategyIdentity.input),
+    }\n`
+    const structuralBindingsPayloadSource = `export const candidateDevelopmentArtifact = {
+      schemaVersion: 'bayn.candidate-development-artifact.v1',
+      input: {},
+      strategyProtocol: ${JSON.stringify(governedBaselineProtocol)},
+      structuralBindings: ${JSON.stringify({ ...governedStructuralBindings, payload: governedSerializedBars })},
+      buildEvaluation: () => JSON.parse(candidateDevelopmentArtifact.structuralBindings.payload),
+    }\n`
+    const regexEncodedBars = Buffer.from(governedSerializedBars, 'utf8').toString('hex')
+    const regexPayloadProtocol = JSON.stringify(governedBaselineProtocol).replace(
+      '"input":"runtime-only"',
+      `"input": /${regexEncodedBars}/.source`,
+    )
+    const regexPayloadSource = `const decodeHex = (value) => {
+      let decoded = ''
+      for (let index = 0; index < value.length; index += 2) {
+        decoded += String.fromCharCode(Number.parseInt(value.slice(index, index + 2), 16))
+      }
+      return JSON.parse(decoded)
+    }
+    export const candidateDevelopmentArtifact = {
+      schemaVersion: 'bayn.candidate-development-artifact.v1',
+      input: {},
+      strategyProtocol: ${regexPayloadProtocol},
+      structuralBindings: ${JSON.stringify(governedStructuralBindings)},
+      buildEvaluation: (runtimeInput) => ({
+        embeddedBars: decodeHex(candidateDevelopmentArtifact.strategyProtocol.strategyIdentity.input),
+        sourceRevision: runtimeInput.sourceRevision,
+        baselineRunId: runtimeInput.baselineRunId,
+        stressedRunId: runtimeInput.stressedRunId,
+      }),
+    }\n`
+    const regexBudgetSource = `export const payload = /${regexEncodedBars}/.source\n`
+    const templateSplit = Math.floor(regexEncodedBars.length / 2)
+    const interpolatedTemplateExpression = `\`${regexEncodedBars.slice(0, templateSplit)}\${''}${regexEncodedBars.slice(templateSplit)}\${''}\``
+    const interpolatedTemplatePayloadProtocol = JSON.stringify(governedBaselineProtocol).replace(
+      '"input":"runtime-only"',
+      `"input": ${interpolatedTemplateExpression}`,
+    )
+    const interpolatedTemplatePayloadSource = `const decodeHex = (value) => {
+      let decoded = ''
+      for (let index = 0; index < value.length; index += 2) {
+        decoded += String.fromCharCode(Number.parseInt(value.slice(index, index + 2), 16))
+      }
+      return JSON.parse(decoded)
+    }
+    export const candidateDevelopmentArtifact = {
+      schemaVersion: 'bayn.candidate-development-artifact.v1',
+      input: {},
+      strategyProtocol: ${interpolatedTemplatePayloadProtocol},
+      structuralBindings: ${JSON.stringify(governedStructuralBindings)},
+      buildEvaluation: (runtimeInput) => ({
+        embeddedBars: decodeHex(candidateDevelopmentArtifact.strategyProtocol.strategyIdentity.input),
+        sourceRevision: runtimeInput.sourceRevision,
+        baselineRunId: runtimeInput.baselineRunId,
+        stressedRunId: runtimeInput.stressedRunId,
+      }),
+    }\n`
+    const interpolatedTemplateBudgetSource = `export const payload = ${interpolatedTemplateExpression}\n`
+    const identifierChunks = Array.from({ length: 3 }, (_, index) => {
+      const start = Math.ceil((regexEncodedBars.length * index) / 3)
+      const end = Math.ceil((regexEncodedBars.length * (index + 1)) / 3)
+      return regexEncodedBars.slice(start, end)
+    })
+    if (identifierChunks.some((chunk) => chunk.length < 96)) {
+      throw new Error('identifier payload regression requires three encoded chunks')
+    }
+    const identifierNames = identifierChunks.map((chunk, index) => `payload${index}_${chunk}`)
+    const identifierObjectMethods = identifierNames
+      .slice(0, -1)
+      .map((name) => `${name}() {}`)
+      .join(',\n')
+    const identifierFunctionName = identifierNames.at(-1)
+    if (identifierFunctionName === undefined) throw new Error('identifier payload regression requires a function name')
+    const identifierPayloadProtocol = JSON.stringify(governedBaselineProtocol).replace(
+      '"input":"runtime-only"',
+      '"input": identifierEncodedBars',
+    )
+    const identifierPayloadSource = `const decodeHex = (value) => {
+      let decoded = ''
+      for (let index = 0; index < value.length; index += 2) {
+        decoded += String.fromCharCode(Number.parseInt(value.slice(index, index + 2), 16))
+      }
+      return JSON.parse(decoded)
+    }
+    const identifierPayload = {
+      ${identifierObjectMethods}
+    }
+    function ${identifierFunctionName}() {}
+    const identifierEncodedBars = [...Object.keys(identifierPayload), ${identifierFunctionName}.name]
+      .map((name) => name.slice(name.indexOf('_') + 1))
+      .join('')
+    export const candidateDevelopmentArtifact = {
+      schemaVersion: 'bayn.candidate-development-artifact.v1',
+      input: {},
+      strategyProtocol: ${identifierPayloadProtocol},
+      structuralBindings: ${JSON.stringify(governedStructuralBindings)},
+      buildEvaluation: (runtimeInput) => ({
+        embeddedBars: decodeHex(candidateDevelopmentArtifact.strategyProtocol.strategyIdentity.input),
+        sourceRevision: runtimeInput.sourceRevision,
+        baselineRunId: runtimeInput.baselineRunId,
+        stressedRunId: runtimeInput.stressedRunId,
+      }),
+    }\n`
+    const identifierPayloadBudgetSource = `export const payload = {
+      ${identifierObjectMethods}
+    }
+    export function ${identifierFunctionName}() {}\n`
+    const privateIdentifierNames = identifierChunks.map((chunk, index) => `#payload${index}_${chunk}`)
+    const privateIdentifierMethods = privateIdentifierNames.map((name) => `${name}() {}`).join('\n')
+    const privateIdentifierReferences = privateIdentifierNames.map((name) => `this.${name}.name`).join(', ')
+    const privateIdentifierPayloadProtocol = JSON.stringify(governedBaselineProtocol).replace(
+      '"input":"runtime-only"',
+      '"input": privateIdentifierEncodedBars',
+    )
+    const privateIdentifierPayloadSource = `const decodeHex = (value) => {
+      let decoded = ''
+      for (let index = 0; index < value.length; index += 2) {
+        decoded += String.fromCharCode(Number.parseInt(value.slice(index, index + 2), 16))
+      }
+      return JSON.parse(decoded)
+    }
+    class PrivateIdentifierPayload {
+      ${privateIdentifierMethods}
+      encoded() {
+        return [${privateIdentifierReferences}]
+          .map((name) => name.slice(name.indexOf('_') + 1))
+          .join('')
+      }
+    }
+    const privateIdentifierEncodedBars = new PrivateIdentifierPayload().encoded()
+    export const candidateDevelopmentArtifact = {
+      schemaVersion: 'bayn.candidate-development-artifact.v1',
+      input: {},
+      strategyProtocol: ${privateIdentifierPayloadProtocol},
+      structuralBindings: ${JSON.stringify(governedStructuralBindings)},
+      buildEvaluation: (runtimeInput) => ({
+        embeddedBars: decodeHex(candidateDevelopmentArtifact.strategyProtocol.strategyIdentity.input),
+        sourceRevision: runtimeInput.sourceRevision,
+        baselineRunId: runtimeInput.baselineRunId,
+        stressedRunId: runtimeInput.stressedRunId,
+      }),
+    }\n`
+    const privateIdentifierPayloadBudgetSource = `export class PrivatePayload {
+      ${privateIdentifierMethods}
+      names() { return [${privateIdentifierReferences}] }
+    }\n`
+    const commentPayloadSource = `const decodeHex = (value) => {
+      let decoded = ''
+      for (let index = 0; index < value.length; index += 2) {
+        decoded += String.fromCharCode(Number.parseInt(value.slice(index, index + 2), 16))
+      }
+      return JSON.parse(decoded)
+    }
+    export const candidateDevelopmentArtifact = {
+      schemaVersion: 'bayn.candidate-development-artifact.v1',
+      input: {},
+      strategyProtocol: ${JSON.stringify(governedBaselineProtocol)},
+      structuralBindings: ${JSON.stringify(governedStructuralBindings)},
+      buildEvaluation: function buildEvaluation(runtimeInput) {
+        const functionSource = candidateDevelopmentArtifact.buildEvaluation.toString()
+        const commentStart = functionSource.lastIndexOf('/*') + 2
+        const commentEnd = functionSource.lastIndexOf('*/')
+        return {
+          embeddedBars: decodeHex(functionSource.slice(commentStart, commentEnd)),
+          sourceRevision: runtimeInput.sourceRevision,
+          baselineRunId: runtimeInput.baselineRunId,
+          stressedRunId: runtimeInput.stressedRunId,
+        }
+        /*${regexEncodedBars}*/
+      },
+    }\n`
+    const commentPayloadBudgetSource = `export function payload() {
+      /*${regexEncodedBars}*/
+      return 1
+    }\n`
+    const keywordPropertyNames = [
+      'break',
+      'case',
+      'catch',
+      'class',
+      'const',
+      'continue',
+      'debugger',
+      'default',
+      'delete',
+      'do',
+      'else',
+      'export',
+      'extends',
+      'finally',
+      'for',
+      'function',
+    ] as const
+    const keywordPropertySequence = Array.from(regexEncodedBars, (digit) => {
+      const name = keywordPropertyNames[Number.parseInt(digit, 16)]
+      if (name === undefined) throw new Error('keyword property payload requires hexadecimal input')
+      return name
+    })
+    const keywordPropertyObjects = keywordPropertySequence.map((name) => `{${name}:{}}`).join(',\n')
+    const keywordPropertyPayloadProtocol = JSON.stringify(governedBaselineProtocol).replace(
+      '"input":"runtime-only"',
+      '"input": keywordEncodedBars',
+    )
+    const keywordPropertyPayloadSource = `const decodeHex = (value) => {
+      let decoded = ''
+      for (let index = 0; index < value.length; index += 2) {
+        decoded += String.fromCharCode(Number.parseInt(value.slice(index, index + 2), 16))
+      }
+      return JSON.parse(decoded)
+    }
+    const keywordAlphabet = '${keywordPropertyNames.join(' ')}'
+    const keywordPayload = [${keywordPropertyObjects}]
+    const keywordEncodedBars = keywordPayload
+      .map((value) => keywordAlphabet.split(' ').indexOf(Object.keys(value)[0]).toString(16))
+      .join('')
+    export const candidateDevelopmentArtifact = {
+      schemaVersion: 'bayn.candidate-development-artifact.v1',
+      input: {},
+      strategyProtocol: ${keywordPropertyPayloadProtocol},
+      structuralBindings: ${JSON.stringify(governedStructuralBindings)},
+      buildEvaluation: (runtimeInput) => ({
+        embeddedBars: decodeHex(candidateDevelopmentArtifact.strategyProtocol.strategyIdentity.input),
+        sourceRevision: runtimeInput.sourceRevision,
+        baselineRunId: runtimeInput.baselineRunId,
+        stressedRunId: runtimeInput.stressedRunId,
+      }),
+    }\n`
+    const keywordPropertyPayloadBudgetSource = `export const payload = [${keywordPropertyObjects}]\n`
+    const punctuationPayloadBits = Array.from(Buffer.from(governedSerializedBars, 'utf8'), (byte) =>
+      byte.toString(2).padStart(8, '0'),
+    ).join('')
+    const punctuationPayloadElements = Array.from(punctuationPayloadBits, (bit) => (bit === '1' ? '!![]' : '![]')).join(
+      ',',
+    )
+    const punctuationPayloadProtocol = JSON.stringify(governedBaselineProtocol).replace(
+      '"input":"runtime-only"',
+      '"input": punctuationEncodedBars',
+    )
+    const punctuationPayloadSource = `const decodeBinary = (value) => {
+      let decoded = ''
+      for (let index = 0; index < value.length; index += 8) {
+        decoded += String.fromCharCode(Number.parseInt(value.slice(index, index + 8), 2))
+      }
+      return JSON.parse(decoded)
+    }
+    const punctuationBits = [${punctuationPayloadElements}]
+    const punctuationEncodedBars = punctuationBits.map((value) => value ? 1 : 0).join('')
+    export const candidateDevelopmentArtifact = {
+      schemaVersion: 'bayn.candidate-development-artifact.v1',
+      input: {},
+      strategyProtocol: ${punctuationPayloadProtocol},
+      structuralBindings: ${JSON.stringify(governedStructuralBindings)},
+      buildEvaluation: (runtimeInput) => ({
+        embeddedBars: decodeBinary(candidateDevelopmentArtifact.strategyProtocol.strategyIdentity.input),
+        sourceRevision: runtimeInput.sourceRevision,
+        baselineRunId: runtimeInput.baselineRunId,
+        stressedRunId: runtimeInput.stressedRunId,
+      }),
+    }\n`
+    const punctuationPayloadBudgetSource = `export const payload = [${punctuationPayloadElements}]\n`
+    const adversaries = [
+      '// @ts-nocheck\nexport const candidateDevelopmentArtifact = {}\n',
+      'var __assign = Object.assign\nexport const candidateDevelopmentArtifact = {}\n',
+      `export const sessions = [${Array.from({ length: 9 }, (_, index) => `'2026-01-${String(index + 1).padStart(2, '0')}'`).join(',')}]\n`,
+      "export const bars = [{sessionDate:'2026-01-02',open:1,high:1,low:1,close:1,volume:1}]\n",
+      `export const bars = [{
+        'volume': 10,
+        'close': 1,
+        'low': 0,
+        'sessionDate': 20260102,
+        'high': 2,
+        'open': 1,
+      }]\n`,
+      `export const bars = [{
+        volume: 10,
+        close: 1,
+        low: 0,
+        high: 2,
+        open: 1,
+        sessionDate: 20260102,
+      }]\n`,
+      `export const bars = [{
+        ['volume']: 10,
+        ['close']: 1,
+        ['low']: 0,
+        ['sessionDate']: 20260102,
+        ['high']: 2,
+        ['open']: 1,
+      }]\n`,
+      `export const bars = {
+        dates: [20260102],
+        opens: [1],
+        highs: [2],
+        lows: [0],
+        closes: [1],
+        volumes: [10],
+      }\n`,
+      `const sessionDate = 20260102
+       const open = 1
+       const high = 2
+       const low = 0
+       const close = 1
+       const volume = 10
+       export const bars = { sessionDate, open, high, low, close, volume }\n`,
+      "export const bars = '20260102,1,2,0,1,10|20260103,1,2,0,1,11'\n",
+      strategyProtocolPayloadSource,
+      structuralBindingsPayloadSource,
+      regexPayloadSource,
+      interpolatedTemplatePayloadSource,
+      identifierPayloadSource,
+      privateIdentifierPayloadSource,
+      commentPayloadSource,
+      keywordPropertyPayloadSource,
+      punctuationPayloadSource,
+      `export const oversized = '${'x'.repeat(262_145)}'\n`,
+    ]
+    for (const source of adversaries) {
+      expect(validateCandidateDevelopmentModuleSource(source, 'candidate/adversary.ts')).toMatchObject({
         failure: {
           _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
-          operation: 'verify-program-binding',
+          operation: 'verify-module-format',
         },
       })
     }
-
-    expect(
-      preregisterCandidateDevelopmentAttempt(verifiedSource({ ...candidate20SourceManifest, candidateOrdinal: 21 })),
-    ).toMatchObject({
+    expect(validateCandidateDevelopmentModuleSource(regexBudgetSource, 'candidate/regex-budget.ts')).toMatchObject({
       failure: {
-        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
-        operation: 'verify-program-binding',
         cause: {
-          field: 'trialHistory.nextCandidatePreregistration.source.candidateOrdinal',
-          expected: 20,
-          observed: 21,
+          literalPayload: {
+            regularExpressionLiteralLengths: [regexEncodedBars.length],
+            encodedBinaryStringLengths: [regexEncodedBars.length],
+            executableIdentifierCount: 2,
+            executableIdentifierBytes: 'payload'.length + 'source'.length,
+            executableLiteralCount: 3,
+            executableLiteralBytes: regexEncodedBars.length + 'payload'.length + 'source'.length,
+          },
         },
       },
     })
-  })
+    expect(
+      validateCandidateDevelopmentModuleSource(
+        interpolatedTemplateBudgetSource,
+        'candidate/interpolated-template-budget.ts',
+      ),
+    ).toMatchObject({
+      failure: {
+        cause: {
+          literalPayload: {
+            interpolatedTemplateSegmentLengths: [templateSplit, regexEncodedBars.length - templateSplit, 0],
+            encodedBinaryStringLengths: [templateSplit, regexEncodedBars.length - templateSplit],
+            executableIdentifierCount: 1,
+            executableIdentifierBytes: 'payload'.length,
+            executableLiteralCount: 6,
+            executableLiteralBytes: regexEncodedBars.length + 'payload'.length,
+          },
+        },
+      },
+    })
+    const identifierPayloadBytes =
+      'payload'.length + identifierNames.reduce((total, name) => total + Buffer.byteLength(name, 'utf8'), 0)
+    expect(
+      validateCandidateDevelopmentModuleSource(identifierPayloadBudgetSource, 'candidate/identifier-budget.ts'),
+    ).toMatchObject({
+      failure: {
+        cause: {
+          literalPayload: {
+            longIdentifierLengths: identifierNames.map((name) => name.length),
+            encodedIdentifierLengths: identifierNames.map((name) => name.length),
+            executableIdentifierCount: identifierNames.length + 1,
+            executableIdentifierBytes: identifierPayloadBytes,
+            executableLiteralCount: identifierNames.length + 1,
+            executableLiteralBytes: identifierPayloadBytes,
+          },
+        },
+      },
+    })
+    const privateIdentifierPayloadBytes =
+      'PrivatePayload'.length +
+      'names'.length +
+      'name'.length * privateIdentifierNames.length +
+      privateIdentifierNames.reduce((total, name) => total + Buffer.byteLength(name, 'utf8') * 2, 0)
+    expect(
+      validateCandidateDevelopmentModuleSource(
+        privateIdentifierPayloadBudgetSource,
+        'candidate/private-identifier-budget.ts',
+      ),
+    ).toMatchObject({
+      failure: {
+        cause: {
+          literalPayload: {
+            longIdentifierLengths: [...privateIdentifierNames, ...privateIdentifierNames].map((name) => name.length),
+            encodedIdentifierLengths: [...privateIdentifierNames, ...privateIdentifierNames].map((name) => name.length),
+            executableIdentifierCount: 2 + privateIdentifierNames.length * 3,
+            executableIdentifierBytes: privateIdentifierPayloadBytes,
+            executableLiteralCount: 2 + privateIdentifierNames.length * 3,
+            executableLiteralBytes: privateIdentifierPayloadBytes,
+          },
+        },
+      },
+    })
+    expect(
+      validateCandidateDevelopmentModuleSource(commentPayloadBudgetSource, 'candidate/comment-budget.ts'),
+    ).toMatchObject({
+      failure: {
+        cause: {
+          literalPayload: {
+            commentLengths: [regexEncodedBars.length],
+            executableCommentCount: 1,
+            executableCommentBytes: regexEncodedBars.length,
+            encodedBinaryStringLengths: [regexEncodedBars.length],
+          },
+        },
+      },
+    })
+    const keywordPropertyBytes = keywordPropertySequence.reduce(
+      (total, name) => total + Buffer.byteLength(name, 'utf8'),
+      0,
+    )
+    expect(
+      validateCandidateDevelopmentModuleSource(
+        keywordPropertyPayloadBudgetSource,
+        'candidate/keyword-property-budget.ts',
+      ),
+    ).toMatchObject({
+      failure: {
+        cause: {
+          literalPayload: {
+            keywordPropertyNameCount: keywordPropertySequence.length,
+            keywordPropertyNameBytes: keywordPropertyBytes,
+            executableIdentifierCount: keywordPropertySequence.length + 1,
+            executableIdentifierBytes: keywordPropertyBytes + 'payload'.length,
+            executableLiteralCount: keywordPropertySequence.length + 1,
+            executableLiteralBytes: keywordPropertyBytes + 'payload'.length,
+          },
+        },
+      },
+    })
+    expect(
+      validateCandidateDevelopmentModuleSource(punctuationPayloadBudgetSource, 'candidate/punctuation-array-budget.ts'),
+    ).toMatchObject({
+      failure: {
+        cause: {
+          literalPayload: {
+            executableArrayCount: 1,
+            largestExecutableArray: punctuationPayloadBits.length,
+          },
+        },
+      },
+    })
 
-  test('requires raw proper ancestry, novel module bytes, and replacement-disabled repositories', async () => {
-    const repository = await mkdtemp(join(tmpdir(), 'bayn-candidate-20-source-'))
-    const git = async (...args: readonly string[]): Promise<string> => {
-      const result = await execFilePromise('git', args, {
-        cwd: repository,
-        encoding: 'utf8',
-        env: cleanGitEnvironment(),
-      })
-      return result.stdout.trim()
+    const governedBaseline = `export const candidateDevelopmentArtifact = {
+      schemaVersion: 'bayn.candidate-development-artifact.v1',
+      input: {},
+      strategyProtocol: ${JSON.stringify(governedBaselineProtocol)},
+      structuralBindings: ${JSON.stringify(governedStructuralBindings)},
+      buildEvaluation: (runtimeInput) => runtimeInput,
+    }\n`
+    expect(validateCandidateDevelopmentModuleSource(governedBaseline, 'candidate/governed-baseline.ts')).toEqual(
+      Result.succeed(undefined),
+    )
+
+    const runtimeProvenance = {
+      sourceRevision: '1'.repeat(40),
+      baselineRunId: '2'.repeat(64),
+      stressedRunId: '3'.repeat(64),
     }
-    try {
-      await git('init', '-q')
-      await git('config', 'user.name', 'Candidate Test')
-      await git('config', 'user.email', 'candidate@example.test')
-      await writeFile(join(repository, 'preregistration.json'), '{"candidateOrdinal":20}\n')
-      await git('add', 'preregistration.json')
-      await git('commit', '-q', '-m', 'preregister')
-      const preregistrationRevision = await git('rev-parse', 'HEAD')
-      const preregistrationBlob = await git('rev-parse', 'HEAD:preregistration.json')
-
-      await writeFile(join(repository, 'candidate-20.ts'), 'export const candidate = 20\n')
-      await git('add', 'candidate-20.ts')
-      await git('commit', '-q', '-m', 'source')
-      const sourceRevision = await git('rev-parse', 'HEAD')
-      const moduleBlob = await git('rev-parse', 'HEAD:candidate-20.ts')
-
-      await Effect.runPromise(
-        verifyCandidateDevelopmentPreregistrationLineage(repository, preregistrationRevision, sourceRevision),
-      )
-      await Effect.runPromise(
-        verifyCandidateDevelopmentPreregistrationModuleNovelty(
-          repository,
-          preregistrationRevision,
-          'candidate-20.ts',
-          moduleBlob,
-        ),
-      )
-
-      expect(
-        await Effect.runPromise(
-          Effect.flip(verifyCandidateDevelopmentPreregistrationLineage(repository, sourceRevision, sourceRevision)),
-        ),
-      ).toMatchObject({
-        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
-        operation: 'verify-preregistration-lineage',
-      })
-      expect(
-        await Effect.runPromise(
-          Effect.flip(
-            verifyCandidateDevelopmentPreregistrationModuleNovelty(
-              repository,
-              preregistrationRevision,
-              'candidate-20.ts',
-              preregistrationBlob,
-            ),
-          ),
-        ),
-      ).toMatchObject({
-        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
-        operation: 'verify-preregistration-module-novelty',
-      })
-
-      await git('replace', preregistrationRevision, sourceRevision)
-      expect(
-        await Effect.runPromise(Effect.flip(verifyCandidateDevelopmentRepositoryIntegrity(repository))),
-      ).toMatchObject({
-        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
-        operation: 'verify-repository-integrity',
-        cause: { field: 'replaceRefs' },
-      })
-    } finally {
-      await rm(repository, { recursive: true, force: true })
+    const executeSource = async (source: string): Promise<{ readonly directory: string; readonly output: unknown }> => {
+      const directory = await mkdtemp(join(tmpdir(), 'bayn-candidate-executable-regression-'))
+      const executablePath = join(directory, 'candidate.mjs')
+      try {
+        await writeFile(executablePath, source)
+        const context = vm.createContext(Object.create(null))
+        const candidateModule = new vm.SourceTextModule(await readFile(executablePath, 'utf8'), {
+          context,
+          identifier: executablePath,
+        })
+        await candidateModule.link(() => {
+          throw new Error('executable regression imports are prohibited')
+        })
+        await candidateModule.evaluate()
+        const candidateDevelopmentArtifact = Reflect.get(candidateModule.namespace, 'candidateDevelopmentArtifact') as {
+          readonly buildEvaluation: (runtimeInput: typeof runtimeProvenance) => unknown
+        }
+        const output = candidateDevelopmentArtifact.buildEvaluation(runtimeProvenance)
+        return { directory, output: JSON.parse(JSON.stringify(output)) as unknown }
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
     }
+    const removed = async (path: string): Promise<boolean> => {
+      try {
+        await access(path)
+        return false
+      } catch {
+        return true
+      }
+    }
+    const executeValidatedSource = async (source: string): Promise<unknown> => {
+      const validation = validateCandidateDevelopmentModuleSource(source, 'candidate/executable-regression.ts')
+      if (Result.isFailure(validation)) throw validation.failure
+      return (await executeSource(source)).output
+    }
+
+    const captureRejectedSource = async (source: string): Promise<unknown> => {
+      try {
+        await executeValidatedSource(source)
+      } catch (cause) {
+        return cause
+      }
+      throw new Error('embedded governed payload unexpectedly executed')
+    }
+    expect(await captureRejectedSource(strategyProtocolPayloadSource)).toMatchObject({
+      _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+      operation: 'verify-module-format',
+    })
+    expect(await captureRejectedSource(structuralBindingsPayloadSource)).toMatchObject({
+      _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+      operation: 'verify-module-format',
+    })
+    const regexExecution = await executeSource(regexPayloadSource)
+    expect(regexExecution.output).toEqual({
+      embeddedBars: JSON.parse(governedSerializedBars) as unknown,
+      ...runtimeProvenance,
+    })
+    expect(await removed(regexExecution.directory)).toBe(true)
+    expect(await captureRejectedSource(regexPayloadSource)).toMatchObject({
+      _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+      operation: 'verify-module-format',
+    })
+    const interpolatedTemplateExecution = await executeSource(interpolatedTemplatePayloadSource)
+    expect(interpolatedTemplateExecution.output).toEqual({
+      embeddedBars: JSON.parse(governedSerializedBars) as unknown,
+      ...runtimeProvenance,
+    })
+    expect(await removed(interpolatedTemplateExecution.directory)).toBe(true)
+    expect(await captureRejectedSource(interpolatedTemplatePayloadSource)).toMatchObject({
+      _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+      operation: 'verify-module-format',
+    })
+    const identifierExecution = await executeSource(identifierPayloadSource)
+    expect(identifierExecution.output).toEqual({
+      embeddedBars: JSON.parse(governedSerializedBars) as unknown,
+      ...runtimeProvenance,
+    })
+    expect(await removed(identifierExecution.directory)).toBe(true)
+    expect(await captureRejectedSource(identifierPayloadSource)).toMatchObject({
+      _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+      operation: 'verify-module-format',
+    })
+    const privateIdentifierExecution = await executeSource(privateIdentifierPayloadSource)
+    expect(privateIdentifierExecution.output).toEqual({
+      embeddedBars: JSON.parse(governedSerializedBars) as unknown,
+      ...runtimeProvenance,
+    })
+    expect(await removed(privateIdentifierExecution.directory)).toBe(true)
+    expect(await captureRejectedSource(privateIdentifierPayloadSource)).toMatchObject({
+      _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+      operation: 'verify-module-format',
+    })
+    const commentExecution = await executeSource(commentPayloadSource)
+    expect(commentExecution.output).toEqual({
+      embeddedBars: JSON.parse(governedSerializedBars) as unknown,
+      ...runtimeProvenance,
+    })
+    expect(await removed(commentExecution.directory)).toBe(true)
+    expect(await captureRejectedSource(commentPayloadSource)).toMatchObject({
+      _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+      operation: 'verify-module-format',
+    })
+    const keywordPropertyExecution = await executeSource(keywordPropertyPayloadSource)
+    expect(keywordPropertyExecution.output).toEqual({
+      embeddedBars: JSON.parse(governedSerializedBars) as unknown,
+      ...runtimeProvenance,
+    })
+    expect(await removed(keywordPropertyExecution.directory)).toBe(true)
+    expect(await captureRejectedSource(keywordPropertyPayloadSource)).toMatchObject({
+      _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+      operation: 'verify-module-format',
+    })
+    const punctuationExecution = await executeSource(punctuationPayloadSource)
+    expect(punctuationExecution.output).toEqual({
+      embeddedBars: JSON.parse(governedSerializedBars) as unknown,
+      ...runtimeProvenance,
+    })
+    expect(await removed(punctuationExecution.directory)).toBe(true)
+    expect(await captureRejectedSource(punctuationPayloadSource)).toMatchObject({
+      _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+      operation: 'verify-module-format',
+    })
+    expect(await executeValidatedSource(governedBaseline)).toEqual(runtimeProvenance)
+
+    const runtimeSyntaxControl =
+      "const ratio = ({ valueOf: () => 10 }) / 2\nconst label = `SPY${{ value: `-${'D'}` }.value}BC${''}`\nconst ordinaryMethods = { normalize() {}, render() {} }\nfunction ordinaryHelper() { /* ordinary implementation note */ }\nclass OrdinaryPrivate { #normalize() {} name() { return this.#normalize.name } }\nconst ordinaryPrivateName = new OrdinaryPrivate().name()\nexport const smallRuntimePattern = /SPY|DBC/.test('SPY') && ratio === 5 && label === 'SPY-DBC' && Object.keys(ordinaryMethods).join('-') === 'normalize-render' && ordinaryHelper.name === 'ordinaryHelper' && ordinaryPrivateName === '#normalize'\n"
+    expect(
+      validateCandidateDevelopmentModuleSource(runtimeSyntaxControl, 'candidate/runtime-syntax-control.ts'),
+    ).toEqual(Result.succeed(undefined))
+    const keywordSyntaxControl =
+      "const ordinaryKeywords = { if: 1, else() { return 2 } }\nif (ordinaryKeywords.if !== 1) throw new Error('unexpected keyword value')\nexport const keywordControl = Object.keys(ordinaryKeywords).join('-') === 'if-else' && ordinaryKeywords.else() === 2\n"
+    expect(
+      validateCandidateDevelopmentModuleSource(keywordSyntaxControl, 'candidate/keyword-syntax-control.ts'),
+    ).toEqual(Result.succeed(undefined))
+    const punctuationSyntaxControl =
+      "const punctuation = [!![], ![]]\nexport const punctuationControl = punctuation.map((value) => value ? 1 : 0).join('') === '10'\n"
+    expect(
+      validateCandidateDevelopmentModuleSource(punctuationSyntaxControl, 'candidate/punctuation-syntax-control.ts'),
+    ).toEqual(Result.succeed(undefined))
+
+    const concise = `
+      export const candidateDevelopmentArtifact = {
+        schemaVersion: 'bayn.candidate-development-artifact.v1',
+        input: {
+          candidateOrdinal: 21,
+          priorTrialCount: 20,
+          expectedStrategyProtocolHash: '${'a'.repeat(64)}',
+          officialSessions: [],
+          signalSessionDates: [],
+          featureLookbackSessions: 126,
+        },
+        strategyProtocol: {
+          universe: ['SPY', 'DBC', 'IEF', 'EFA', 'VNQ'],
+          executionModel: { spreadBps: 2, slippageBps: 3 },
+        },
+        structuralBindings: {
+          hashes: ['${'b'.repeat(64)}', '${'c'.repeat(64)}', '${'d'.repeat(64)}'],
+        },
+        buildEvaluation: (runtimeInput) => ({
+          sourceRevision: runtimeInput.sourceRevision,
+          baselineRunId: runtimeInput.baselineRunId,
+          stressedRunId: runtimeInput.stressedRunId,
+        }),
+      }
+    `
+    expect(validateCandidateDevelopmentModuleSource(concise, 'candidate/concise.ts')).toEqual(Result.succeed(undefined))
   })
 })

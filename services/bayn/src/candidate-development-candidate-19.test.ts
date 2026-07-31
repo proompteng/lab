@@ -230,7 +230,7 @@ describe('Candidate 19 inverse-volatility preregistration', () => {
     expect(frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration).toEqual(
       candidate20Preregistration,
     )
-    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toEqual(candidate20Preregistration)
+    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toBeNull()
     expect(candidate19Planner.specification).toEqual({
       id: 'inverse-volatility-63-spy-dbc-ten-percent-target-risk-cash',
       lookbackSessions: 63,
@@ -326,11 +326,11 @@ describe('Candidate 19 inverse-volatility preregistration', () => {
     expect(preregisterCandidateDevelopmentAttempt(evidence.verifiedSource)).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
-        operation: 'verify-program-binding',
+        operation: 'verify-attempt-authorization',
         cause: {
-          field: 'trialHistory.nextCandidatePreregistration.source.candidateOrdinal',
-          expected: 20,
-          observed: 19,
+          candidateOrdinal: 20,
+          status: 'PRECOMMIT_INVALID',
+          attemptStatus: 'UNATTEMPTED',
         },
       },
     })
@@ -384,7 +384,14 @@ describe('Candidate 19 inverse-volatility preregistration', () => {
         input: ${JSON.stringify(candidateDevelopmentArtifact.input)},
         strategyProtocol: ${JSON.stringify(candidateDevelopmentArtifact.strategyProtocol)},
         structuralBindings: ${JSON.stringify(candidateDevelopmentArtifact.structuralBindings)},
-        buildEvaluation: () => { throw new Error('metric-attempt-entered') },
+        buildEvaluation: (verifiedSource) => {
+          if (
+            verifiedSource.sourceRevision === '' ||
+            verifiedSource.baselineRunId === '' ||
+            verifiedSource.stressedRunId === ''
+          ) return {}
+          throw new Error('metric-attempt-entered')
+        },
       }
     `
     const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`

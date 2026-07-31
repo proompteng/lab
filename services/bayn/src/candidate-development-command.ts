@@ -9,11 +9,13 @@ import { isMainThread, parentPort, Worker, workerData } from 'node:worker_thread
 
 import { NodeRuntime } from '@effect/platform-node'
 import { Cause, Data, Effect, pipe, Result, Schema, SchemaAST, SchemaIssue } from 'effect'
+import { createScanner, LanguageVariant, SyntaxKind } from 'typescript/unstable/ast'
 
 import {
   candidateDevelopmentCalendarContract,
   candidateDevelopmentComparisonSemantics,
   candidateDevelopmentDoubledCostContract,
+  officialMonthEndSignalDates,
   preflightCandidateDevelopment,
   runCandidateDevelopment,
   type CandidateDevelopmentAttemptIssue,
@@ -28,10 +30,13 @@ import {
   type CandidateDevelopmentReport,
   type CandidateDevelopmentRunFailure,
 } from './candidate-development'
+import { frozenCandidateDevelopmentSessions } from './candidate-development-calendar'
 import {
+  candidate20PrecommitInvalidation,
   deriveCandidateDevelopmentLegacyPriorTrialsHash,
   deriveCandidateDevelopmentPriorTrialsHash,
   frozenCandidateDevelopmentTrialHistory,
+  type CandidateDevelopmentTrialHistory,
 } from './candidate-development-trial-history'
 import {
   deriveCandidateDevelopmentDecision,
@@ -212,6 +217,12 @@ export interface CandidateDevelopmentMarketDataWitness {
   readonly bars: readonly DailyBar[]
 }
 
+export interface CandidateDevelopmentArtifactRuntimeInput extends CandidateDevelopmentVerifiedSource {
+  readonly runtimeDataSchemaVersion: 'bayn.candidate-development-artifact-runtime-input.v1'
+  readonly preflightInput: CandidateDevelopmentPreflightInput
+  readonly marketData: CandidateDevelopmentMarketDataWitness
+}
+
 export interface CandidateDevelopmentStrategyProtocol extends SimulationProtocol {
   readonly schemaVersion: 'bayn.candidate-development-strategy-protocol.v2'
   readonly marketData: {
@@ -320,6 +331,8 @@ export type CandidateDevelopmentCommandFailure =
         | 'verify-repository-integrity'
         | 'verify-source-manifest-blob'
         | 'verify-program-binding'
+        | 'verify-runtime-market-data'
+        | 'verify-attempt-authorization'
         | 'derive-run-identity'
         | 'verify-post-import'
       readonly cause: unknown
@@ -4323,6 +4336,211 @@ const sourceVerificationFailure = (
   cause,
 })
 
+const expectedCandidateDevelopmentOrdinals = (
+  completedCandidateCount: number,
+  developmentCandidateCount: number,
+  invalidPrecommitOrdinal: number | null,
+): readonly number[] => {
+  const ordinals: number[] = []
+  let candidateOrdinal = completedCandidateCount + 1
+  for (let index = 0; index < developmentCandidateCount; index += 1) {
+    if (candidateOrdinal === invalidPrecommitOrdinal) candidateOrdinal += 1
+    ordinals.push(candidateOrdinal)
+    candidateOrdinal += 1
+  }
+  return ordinals
+}
+
+export const validateCandidateDevelopmentTrialHistoryClosure = (
+  history: CandidateDevelopmentTrialHistory = frozenCandidateDevelopmentTrialHistory,
+): Result.Result<void, CandidateDevelopmentCommandFailure> => {
+  const invalidPrecommit = history.latestInvalidPrecommit
+  if (invalidPrecommit === null) return Result.succeed(undefined)
+
+  const expectedInvalidationHash = canonicalHashV1Result(candidate20PrecommitInvalidation)
+  if (Result.isFailure(expectedInvalidationHash)) {
+    return Result.fail({ _tag: 'CandidateDevelopmentCommandHashFailed', cause: expectedInvalidationHash.failure })
+  }
+  const observedInvalidationHash = canonicalHashV1Result(invalidPrecommit)
+  if (Result.isFailure(observedInvalidationHash)) {
+    return Result.fail({ _tag: 'CandidateDevelopmentCommandHashFailed', cause: observedInvalidationHash.failure })
+  }
+  if (expectedInvalidationHash.success !== observedInvalidationHash.success) {
+    return Result.fail(
+      sourceVerificationFailure('verify-attempt-authorization', {
+        field: 'trialHistory.latestInvalidPrecommit',
+        expected: expectedInvalidationHash.success,
+        observed: observedInvalidationHash.success,
+      }),
+    )
+  }
+  const expectedDevelopmentOrdinals = expectedCandidateDevelopmentOrdinals(
+    history.completedCandidateOrdinals.length,
+    history.developmentCandidateOrdinals.length,
+    invalidPrecommit.candidateOrdinal,
+  )
+  for (let index = 0; index < expectedDevelopmentOrdinals.length; index += 1) {
+    if (history.developmentCandidateOrdinals[index] !== expectedDevelopmentOrdinals[index]) {
+      return Result.fail(
+        sourceVerificationFailure('verify-attempt-authorization', {
+          field: 'trialHistory.developmentCandidateOrdinals',
+          index,
+          expected: expectedDevelopmentOrdinals[index],
+          observed: history.developmentCandidateOrdinals[index],
+        }),
+      )
+    }
+  }
+  const latestDevelopmentOrdinal = history.developmentCandidateOrdinals.at(-1)
+  if (latestDevelopmentOrdinal === undefined) {
+    return Result.fail(
+      sourceVerificationFailure('verify-attempt-authorization', {
+        field: 'trialHistory.developmentCandidateOrdinals',
+        expected: 'at least one completed development-only candidate',
+        observed: history.developmentCandidateOrdinals,
+      }),
+    )
+  }
+  if (
+    history.latestDevelopmentEvidence.candidateOrdinal !== latestDevelopmentOrdinal ||
+    history.latestDevelopmentEvidence.priorTrialCount !== latestDevelopmentOrdinal - 1 ||
+    history.latestDevelopmentEvidence.qualificationAttemptConsumed
+  ) {
+    return Result.fail(
+      sourceVerificationFailure('verify-attempt-authorization', {
+        field: 'trialHistory.latestDevelopmentEvidence',
+        expected: {
+          candidateOrdinal: latestDevelopmentOrdinal,
+          priorTrialCount: latestDevelopmentOrdinal - 1,
+          qualificationAttemptConsumed: false,
+        },
+        observed: history.latestDevelopmentEvidence,
+      }),
+    )
+  }
+  const reviewed = history.latestReviewedCandidatePreregistration
+  const next = history.nextCandidatePreregistration
+  const latestClosedOrdinal = Math.max(latestDevelopmentOrdinal, invalidPrecommit.candidateOrdinal)
+  if (next === null) {
+    if (latestClosedOrdinal !== invalidPrecommit.candidateOrdinal) {
+      if (reviewed.candidateOrdinal !== latestClosedOrdinal || reviewed.priorTrialCount !== latestClosedOrdinal - 1) {
+        return Result.fail(
+          sourceVerificationFailure('verify-attempt-authorization', {
+            field: 'trialHistory.latestReviewedCandidatePreregistration.lineage',
+            expected: {
+              candidateOrdinal: latestClosedOrdinal,
+              priorTrialCount: latestClosedOrdinal - 1,
+            },
+            observed: {
+              candidateOrdinal: reviewed.candidateOrdinal,
+              priorTrialCount: reviewed.priorTrialCount,
+            },
+          }),
+        )
+      }
+      return Result.succeed(undefined)
+    }
+    const bindings = [
+      ['candidateOrdinal', invalidPrecommit.candidateOrdinal, reviewed.candidateOrdinal],
+      ['priorTrialCount', invalidPrecommit.priorTrialCount, reviewed.priorTrialCount],
+      ['modulePath', invalidPrecommit.invalidatedModule.path, reviewed.modulePath],
+      ['moduleSha256', invalidPrecommit.invalidatedModule.sha256, reviewed.moduleSha256],
+      [
+        'preregistration.sourceRevision',
+        invalidPrecommit.preregistration.sourceRevision,
+        reviewed.preregistration.sourceRevision,
+      ],
+      ['preregistration.path', invalidPrecommit.preregistration.path, reviewed.preregistration.path],
+      ['preregistration.blobOid', invalidPrecommit.preregistration.blobOid, reviewed.preregistration.blobOid],
+    ] as const
+    for (const [field, expected, observed] of bindings) {
+      if (expected !== observed) {
+        return Result.fail(
+          sourceVerificationFailure('verify-attempt-authorization', {
+            field: `trialHistory.latestReviewedCandidatePreregistration.${field}`,
+            expected,
+            observed,
+          }),
+        )
+      }
+    }
+    return Result.succeed(undefined)
+  }
+  const expectedNextOrdinal = latestClosedOrdinal + 1
+  if (next.candidateOrdinal !== expectedNextOrdinal || next.priorTrialCount !== latestClosedOrdinal) {
+    return Result.fail(
+      sourceVerificationFailure('verify-attempt-authorization', {
+        field: 'trialHistory.nextCandidatePreregistration.lineage',
+        expected: {
+          candidateOrdinal: expectedNextOrdinal,
+          priorTrialCount: latestClosedOrdinal,
+        },
+        observed: {
+          candidateOrdinal: next.candidateOrdinal,
+          priorTrialCount: next.priorTrialCount,
+        },
+      }),
+    )
+  }
+  const reviewedHash = canonicalHashV1Result(reviewed)
+  if (Result.isFailure(reviewedHash)) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentCommandHashFailed',
+      cause: reviewedHash.failure,
+    })
+  }
+  const nextHash = canonicalHashV1Result(next)
+  if (Result.isFailure(nextHash)) {
+    return Result.fail({ _tag: 'CandidateDevelopmentCommandHashFailed', cause: nextHash.failure })
+  }
+  if (reviewedHash.success !== nextHash.success) {
+    return Result.fail(
+      sourceVerificationFailure('verify-attempt-authorization', {
+        field: 'trialHistory.latestReviewedCandidatePreregistration',
+        expected: nextHash.success,
+        observed: reviewedHash.success,
+      }),
+    )
+  }
+  return Result.succeed(undefined)
+}
+
+export const authorizeCandidateDevelopmentAttempt = (
+  history: CandidateDevelopmentTrialHistory = frozenCandidateDevelopmentTrialHistory,
+): Result.Result<CandidateDevelopmentNextPreregistration, CandidateDevelopmentCommandFailure> => {
+  const closure = validateCandidateDevelopmentTrialHistoryClosure(history)
+  if (Result.isFailure(closure)) return Result.fail(closure.failure)
+  if (history.nextCandidatePreregistration === null) {
+    const invalid = history.latestInvalidPrecommit
+    const latestDevelopmentOrdinal = history.developmentCandidateOrdinals.at(-1)
+    if (
+      invalid === null ||
+      latestDevelopmentOrdinal === undefined ||
+      latestDevelopmentOrdinal > invalid.candidateOrdinal
+    ) {
+      return Result.fail(
+        sourceVerificationFailure('verify-attempt-authorization', {
+          field: 'trialHistory.nextCandidatePreregistration',
+          expected: 'a separately reviewed valid preregistration',
+          observed: null,
+          latestDevelopmentEvidence: history.latestDevelopmentEvidence,
+        }),
+      )
+    }
+    return Result.fail(
+      sourceVerificationFailure('verify-attempt-authorization', {
+        candidateOrdinal: invalid.candidateOrdinal,
+        status: invalid.status,
+        attemptStatus: invalid.attemptStatus,
+        metricBearingAttemptsConsumed: invalid.metricBearingAttemptsConsumed,
+        qualificationAttemptConsumed: invalid.qualificationAttemptConsumed,
+        nextCandidatePreregistration: null,
+      }),
+    )
+  }
+  return Result.succeed(history.nextCandidatePreregistration)
+}
+
 export const validateCandidateDevelopmentPreregisteredMarketData = (
   expected: CandidateDevelopmentSourceManifest['marketData'],
   observed: CandidateDevelopmentSourceManifest['marketData'],
@@ -4351,8 +4569,9 @@ export const validateCandidateDevelopmentPreregisteredMarketData = (
 export const bindCandidateDevelopmentVerifiedSource = (
   files: CandidateDevelopmentVerifiedSourceFiles,
   input: CandidateDevelopmentPreflightInput,
+  history: CandidateDevelopmentTrialHistory = frozenCandidateDevelopmentTrialHistory,
 ): Result.Result<CandidateDevelopmentVerifiedSource, CandidateDevelopmentCommandFailure> => {
-  const completedCandidateOrdinals = frozenCandidateDevelopmentTrialHistory.completedCandidateOrdinals
+  const completedCandidateOrdinals = history.completedCandidateOrdinals
   for (let index = 0; index < completedCandidateOrdinals.length; index += 1) {
     if (completedCandidateOrdinals[index] !== index + 1) {
       return Result.fail(
@@ -4364,7 +4583,7 @@ export const bindCandidateDevelopmentVerifiedSource = (
       )
     }
   }
-  const latestTerminalEvidence = frozenCandidateDevelopmentTrialHistory.latestTerminalEvidence
+  const latestTerminalEvidence = history.latestTerminalEvidence
   if (
     latestTerminalEvidence.candidateOrdinal !== completedCandidateOrdinals.length ||
     latestTerminalEvidence.priorTrialCount !== latestTerminalEvidence.candidateOrdinal - 1
@@ -4380,9 +4599,14 @@ export const bindCandidateDevelopmentVerifiedSource = (
       }),
     )
   }
-  const developmentCandidateOrdinals = frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals
+  const developmentCandidateOrdinals = history.developmentCandidateOrdinals
+  const expectedDevelopmentOrdinals = expectedCandidateDevelopmentOrdinals(
+    completedCandidateOrdinals.length,
+    developmentCandidateOrdinals.length,
+    history.latestInvalidPrecommit?.candidateOrdinal ?? null,
+  )
   for (let index = 0; index < developmentCandidateOrdinals.length; index += 1) {
-    const expected = completedCandidateOrdinals.length + index + 1
+    const expected = expectedDevelopmentOrdinals[index]
     if (developmentCandidateOrdinals[index] !== expected) {
       return Result.fail(
         sourceVerificationFailure('verify-program-binding', {
@@ -4393,7 +4617,7 @@ export const bindCandidateDevelopmentVerifiedSource = (
       )
     }
   }
-  const latestDevelopmentEvidence = frozenCandidateDevelopmentTrialHistory.latestDevelopmentEvidence
+  const latestDevelopmentEvidence = history.latestDevelopmentEvidence
   const latestDevelopmentOrdinal = developmentCandidateOrdinals.at(-1)
   if (
     latestDevelopmentOrdinal === undefined ||
@@ -4413,15 +4637,13 @@ export const bindCandidateDevelopmentVerifiedSource = (
       }),
     )
   }
-  const candidatePreregistration = frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration
+  const closure = validateCandidateDevelopmentTrialHistoryClosure(history)
+  if (Result.isFailure(closure)) return Result.fail(closure.failure)
+  const candidatePreregistration = history.latestReviewedCandidatePreregistration
   const priorTrialsHash =
     candidatePreregistration.candidateOrdinal >= 19
-      ? deriveCandidateDevelopmentPriorTrialsHash(
-          frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePriorTrials,
-        )
-      : deriveCandidateDevelopmentLegacyPriorTrialsHash(
-          frozenCandidateDevelopmentTrialHistory.latestReviewedCandidateLegacyPriorTrials,
-        )
+      ? deriveCandidateDevelopmentPriorTrialsHash(history.latestReviewedCandidatePriorTrials)
+      : deriveCandidateDevelopmentLegacyPriorTrialsHash(history.latestReviewedCandidateLegacyPriorTrials)
   if (Result.isFailure(priorTrialsHash)) {
     return Result.fail({
       _tag: 'CandidateDevelopmentCommandHashFailed',
@@ -4429,9 +4651,10 @@ export const bindCandidateDevelopmentVerifiedSource = (
     })
   }
   const expectedReviewedCandidateOrdinal =
-    frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration === null
-      ? latestDevelopmentOrdinal
-      : latestDevelopmentOrdinal + 1
+    history.nextCandidatePreregistration?.candidateOrdinal ??
+    (history.latestInvalidPrecommit === null
+      ? latestDevelopmentOrdinal + 1
+      : Math.max(latestDevelopmentOrdinal, history.latestInvalidPrecommit.candidateOrdinal))
   const expectedPriorTrialCount = expectedReviewedCandidateOrdinal - 1
   const reviewedBindings = [
     ['candidateOrdinal', expectedReviewedCandidateOrdinal, candidatePreregistration.candidateOrdinal],
@@ -4548,31 +4771,22 @@ export const bindCandidateDevelopmentVerifiedSource = (
 
 export const preregisterCandidateDevelopmentAttempt = (
   verifiedSource: CandidateDevelopmentVerifiedSource,
+  history: CandidateDevelopmentTrialHistory = frozenCandidateDevelopmentTrialHistory,
 ): Result.Result<string, CandidateDevelopmentCommandFailure> => {
-  const nextCandidatePreregistration = frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration
-  if (nextCandidatePreregistration === null) {
-    return Result.fail(
-      sourceVerificationFailure('verify-program-binding', {
-        field: 'trialHistory.nextCandidatePreregistration',
-        expected: 'a separately reviewed preregistration after the latest terminal development attempt',
-        observed: null,
-        latestTerminalEvidence: frozenCandidateDevelopmentTrialHistory.latestTerminalEvidence,
-      }),
-    )
-  }
-  const latestDevelopmentOrdinal = frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals.at(-1)
+  const authorization = authorizeCandidateDevelopmentAttempt(history)
+  if (Result.isFailure(authorization)) return Result.fail(authorization.failure)
+  const nextCandidatePreregistration = authorization.success
+  const latestDevelopmentOrdinal = history.developmentCandidateOrdinals.at(-1)
   if (latestDevelopmentOrdinal === undefined) {
     return Result.fail(
       sourceVerificationFailure('verify-program-binding', {
         field: 'trialHistory.developmentCandidateOrdinals',
         expected: 'at least one completed development-only candidate after qualification ordinal 16',
-        observed: frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals,
+        observed: history.developmentCandidateOrdinals,
       }),
     )
   }
-  const priorTrialsHash = deriveCandidateDevelopmentPriorTrialsHash(
-    frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePriorTrials,
-  )
+  const priorTrialsHash = deriveCandidateDevelopmentPriorTrialsHash(history.latestReviewedCandidatePriorTrials)
   if (Result.isFailure(priorTrialsHash)) {
     return Result.fail({
       _tag: 'CandidateDevelopmentCommandHashFailed',
@@ -4580,9 +4794,11 @@ export const preregisterCandidateDevelopmentAttempt = (
     })
   }
   const sourceManifest = verifiedSource.sourceManifest
+  const expectedCandidateOrdinal =
+    Math.max(latestDevelopmentOrdinal, history.latestInvalidPrecommit?.candidateOrdinal ?? latestDevelopmentOrdinal) + 1
   const bindings = [
-    ['candidateOrdinal', latestDevelopmentOrdinal + 1, nextCandidatePreregistration.candidateOrdinal],
-    ['priorTrialCount', latestDevelopmentOrdinal, nextCandidatePreregistration.priorTrialCount],
+    ['candidateOrdinal', expectedCandidateOrdinal, nextCandidatePreregistration.candidateOrdinal],
+    ['priorTrialCount', expectedCandidateOrdinal - 1, nextCandidatePreregistration.priorTrialCount],
     ['priorTrialsHash', priorTrialsHash.success, nextCandidatePreregistration.priorTrialsHash],
     ['source.candidateOrdinal', nextCandidatePreregistration.candidateOrdinal, sourceManifest.candidateOrdinal],
     ['source.priorTrialCount', nextCandidatePreregistration.priorTrialCount, sourceManifest.priorTrialCount],
@@ -6610,6 +6826,11 @@ const decodeCandidateDevelopmentEvaluation = Schema.decodeUnknownResult(
   strictParseOptions,
 )
 
+const decodeCandidateDevelopmentMarketDataWitness = Schema.decodeUnknownResult(
+  CandidateDevelopmentMarketDataWitnessSchema,
+  strictParseOptions,
+)
+
 const decodeCandidateDevelopmentStrategyProtocol = Schema.decodeUnknownResult(
   CandidateDevelopmentStrategyProtocolSchema,
   strictParseOptions,
@@ -6629,6 +6850,214 @@ const decodeCandidateDevelopmentPreregistrationDocument = Schema.decodeUnknownRe
   CandidateDevelopmentPreregistrationDocumentSchema,
   strictParseOptions,
 )
+
+export const validateCandidateDevelopmentRuntimeMarketData = (
+  value: unknown,
+  verifiedSource: CandidateDevelopmentVerifiedSource,
+  strategyProtocol: CandidateDevelopmentStrategyProtocol,
+  preflightInput: CandidateDevelopmentPreflightInput,
+): Result.Result<CandidateDevelopmentMarketDataWitness, CandidateDevelopmentCommandFailure> => {
+  const expectedBarCount = preflightInput.officialSessions.length * strategyProtocol.universe.length
+  if (!Number.isSafeInteger(expectedBarCount) || expectedBarCount <= 0) {
+    return Result.fail(
+      sourceVerificationFailure('verify-runtime-market-data', {
+        field: 'runtimeMarketData.expectedBarCount',
+        expected: 'a positive safe integer derived from official sessions and the governed universe',
+        observed: expectedBarCount,
+      }),
+    )
+  }
+  const rawBars =
+    typeof value === 'object' && value !== null && !Array.isArray(value)
+      ? (value as { readonly bars?: unknown }).bars
+      : undefined
+  if (Array.isArray(rawBars) && rawBars.length !== expectedBarCount) {
+    return Result.fail(
+      sourceVerificationFailure('verify-runtime-market-data', {
+        field: 'runtimeMarketData.bars.length',
+        expected: expectedBarCount,
+        observed: rawBars.length,
+      }),
+    )
+  }
+  const decoded = decodeCandidateDevelopmentMarketDataWitness(value)
+  if (Result.isFailure(decoded)) {
+    return Result.fail(sourceVerificationFailure('verify-runtime-market-data', decoded.failure))
+  }
+  const witness = decoded.success as CandidateDevelopmentMarketDataWitness
+  const { contentHash: observedContentHash, ...content } = witness
+  const recomputedContentHash = canonicalHashV1Result(content)
+  if (Result.isFailure(recomputedContentHash)) {
+    return Result.fail(sourceVerificationFailure('verify-runtime-market-data', recomputedContentHash.failure))
+  }
+  const committed = verifiedSource.sourceManifest.marketData
+  const bindings = [
+    ['contentHash', committed.boundedContentHash, observedContentHash],
+    ['recomputedContentHash', recomputedContentHash.success, observedContentHash],
+    ['strategyProtocol.contentHash', strategyProtocol.marketData.contentHash, observedContentHash],
+    ['snapshotId', committed.snapshotId, witness.snapshotId],
+    ['strategyProtocol.snapshotId', strategyProtocol.marketData.snapshotId, witness.snapshotId],
+    ['inputManifestHash', committed.inputManifestHash, witness.inputManifestHash],
+  ] as const
+  for (const [field, expected, observed] of bindings) {
+    if (expected !== observed) {
+      return Result.fail(
+        sourceVerificationFailure('verify-runtime-market-data', {
+          field: `runtimeMarketData.${field}`,
+          expected,
+          observed,
+        }),
+      )
+    }
+  }
+  if (witness.bars.length !== expectedBarCount) {
+    return Result.fail(
+      sourceVerificationFailure('verify-runtime-market-data', {
+        field: 'runtimeMarketData.bars.length',
+        expected: expectedBarCount,
+        observed: witness.bars.length,
+      }),
+    )
+  }
+  const firstBar = witness.bars[0]
+  const expectedProvenance =
+    firstBar === undefined
+      ? undefined
+      : {
+          source: firstBar.source,
+          sourceFeed: firstBar.sourceFeed,
+          adjustment: firstBar.adjustment,
+          publicationSchemaVersion: firstBar.publicationSchemaVersion,
+        }
+  for (let index = 0; index < witness.bars.length; index += 1) {
+    const bar = witness.bars[index]
+    if (bar === undefined) continue
+    const sessionIndex = Math.floor(index / strategyProtocol.universe.length)
+    const symbolIndex = index % strategyProtocol.universe.length
+    const expectedSessionDate = preflightInput.officialSessions[sessionIndex]
+    const expectedSymbol = strategyProtocol.universe[symbolIndex]
+    if (bar.sessionDate !== expectedSessionDate) {
+      return Result.fail(
+        sourceVerificationFailure('verify-runtime-market-data', {
+          field: `runtimeMarketData.bars[${index}].sessionDate`,
+          expected: expectedSessionDate,
+          observed: bar.sessionDate,
+        }),
+      )
+    }
+    if (bar.symbol !== expectedSymbol) {
+      return Result.fail(
+        sourceVerificationFailure('verify-runtime-market-data', {
+          field: `runtimeMarketData.bars[${index}].symbol`,
+          expected: expectedSymbol,
+          observed: bar.symbol,
+        }),
+      )
+    }
+    if (index > 0) {
+      const previous = witness.bars[index - 1]
+      if (previous !== undefined && compareMarketBars(previous, bar) >= 0) {
+        return Result.fail(
+          sourceVerificationFailure('verify-runtime-market-data', {
+            field: `runtimeMarketData.bars[${index}].order`,
+            expected: 'strict session-date/symbol order',
+            observed: {
+              previous: [previous.sessionDate, previous.symbol],
+              current: [bar.sessionDate, bar.symbol],
+            },
+          }),
+        )
+      }
+    }
+    const observedProvenance = {
+      source: bar.source,
+      sourceFeed: bar.sourceFeed,
+      adjustment: bar.adjustment,
+      publicationSchemaVersion: bar.publicationSchemaVersion,
+    }
+    if (
+      expectedProvenance === undefined ||
+      expectedProvenance.source !== observedProvenance.source ||
+      expectedProvenance.sourceFeed !== observedProvenance.sourceFeed ||
+      expectedProvenance.adjustment !== observedProvenance.adjustment ||
+      expectedProvenance.publicationSchemaVersion !== observedProvenance.publicationSchemaVersion
+    ) {
+      return Result.fail(
+        sourceVerificationFailure('verify-runtime-market-data', {
+          field: `runtimeMarketData.bars[${index}].provenance`,
+          expected: expectedProvenance,
+          observed: observedProvenance,
+        }),
+      )
+    }
+  }
+  return Result.succeed(witness)
+}
+
+const deriveCandidateDevelopmentArtifactPreflightInput = (
+  declaredInput: unknown,
+  verifiedFiles: CandidateDevelopmentVerifiedSourceFiles,
+  strategyProtocol: CandidateDevelopmentStrategyProtocol,
+): Result.Result<CandidateDevelopmentPreflightInput, CandidateDevelopmentCommandFailure> => {
+  const declared = declaredInput === undefined ? undefined : decodeCandidateDevelopmentPreflightInput(declaredInput)
+  if (declared !== undefined && Result.isFailure(declared)) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentCommandProgramInvalid',
+      reason: 'input-invalid',
+      cause: declared.failure,
+    })
+  }
+  if (verifiedFiles.sourceManifest.candidateOrdinal < 19) {
+    return declared === undefined
+      ? Result.fail({ _tag: 'CandidateDevelopmentCommandProgramInvalid', reason: 'input-missing' })
+      : Result.succeed(declared.success)
+  }
+  const strategyIdentity = strategyProtocol.strategyIdentity
+  if (strategyIdentity === undefined) {
+    return Result.fail(
+      sourceVerificationFailure('verify-program-binding', {
+        field: 'artifact.strategyProtocol.strategyIdentity',
+        expected: 'strategy identity with a causal lookback',
+        observed: undefined,
+      }),
+    )
+  }
+  const officialSessions = frozenCandidateDevelopmentSessions()
+  const derived = decodeCandidateDevelopmentPreflightInput({
+    candidateOrdinal: verifiedFiles.sourceManifest.candidateOrdinal,
+    priorTrialCount: verifiedFiles.sourceManifest.priorTrialCount,
+    expectedStrategyProtocolHash: verifiedFiles.sourceManifest.strategyProtocolHash,
+    officialSessions,
+    signalSessionDates: officialMonthEndSignalDates(officialSessions),
+    featureLookbackSessions: strategyIdentity.parameters.lookbackSessions,
+  })
+  if (Result.isFailure(derived)) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentCommandProgramInvalid',
+      reason: 'input-invalid',
+      cause: derived.failure,
+    })
+  }
+  if (declared !== undefined) {
+    const hashes = Result.all({
+      expected: canonicalHashV1Result(derived.success),
+      observed: canonicalHashV1Result(declared.success),
+    })
+    if (Result.isFailure(hashes)) {
+      return Result.fail({ _tag: 'CandidateDevelopmentCommandHashFailed', cause: hashes.failure })
+    }
+    if (hashes.success.expected !== hashes.success.observed) {
+      return Result.fail(
+        sourceVerificationFailure('verify-program-binding', {
+          field: 'artifact.input',
+          expected: hashes.success.expected,
+          observed: hashes.success.observed,
+        }),
+      )
+    }
+  }
+  return Result.succeed(derived.success)
+}
 
 export const validateCandidateDevelopmentPreregistrationDocument = (
   expected: CandidateDevelopmentNextPreregistration,
@@ -6878,7 +7307,14 @@ export const validateCandidateDevelopmentExecutableProgram = (
 export type CandidateDevelopmentModuleImporter = (
   moduleUrl: string,
   verifiedFiles: CandidateDevelopmentVerifiedSourceFiles,
+  runtimeMarketDataLoader?: CandidateDevelopmentRuntimeMarketDataLoader,
 ) => Effect.Effect<unknown, CandidateDevelopmentCommandFailure>
+
+export type CandidateDevelopmentRuntimeMarketDataLoader = (
+  verifiedSource: CandidateDevelopmentVerifiedSource,
+  strategyProtocol: CandidateDevelopmentStrategyProtocol,
+  preflightInput: CandidateDevelopmentPreflightInput,
+) => Effect.Effect<CandidateDevelopmentMarketDataWitness, CandidateDevelopmentCommandFailure>
 
 export type CandidateDevelopmentSourceVerifier = (
   modulePath: string,
@@ -7638,6 +8074,1190 @@ const candidateArtifactIdentifierIssues = (source: string): readonly string[] =>
   return [...new Set(issues)].sort()
 }
 
+const candidateArtifactDowncompiledHelpers = [
+  '__assign',
+  '__awaiter',
+  '__extends',
+  '__generator',
+  '__read',
+  '__spreadArray',
+  '__values',
+] as const
+
+const candidateMarketPayloadField = (name: string): string | undefined => {
+  const normalized = name.replaceAll(/[-_\s]/gu, '').toLowerCase()
+  if (normalized === 'sessiondate' || normalized === 'sessiondates' || normalized === 'date' || normalized === 'dates')
+    return 'sessionDate'
+  if (normalized === 'open' || normalized === 'opens') return 'open'
+  if (normalized === 'high' || normalized === 'highs') return 'high'
+  if (normalized === 'low' || normalized === 'lows') return 'low'
+  if (normalized === 'close' || normalized === 'closes') return 'close'
+  if (normalized === 'volume' || normalized === 'volumes') return 'volume'
+  return undefined
+}
+
+interface CandidateDevelopmentSourceToken {
+  readonly kind: SyntaxKind
+  readonly text: string
+  readonly value: string
+}
+
+interface CandidateDevelopmentSourceScan {
+  readonly tokens: readonly CandidateDevelopmentSourceToken[]
+  readonly comments: readonly string[]
+}
+
+const candidateRegexLiteralKeywordPreceders = new Set([
+  SyntaxKind.AwaitKeyword,
+  SyntaxKind.CaseKeyword,
+  SyntaxKind.DeleteKeyword,
+  SyntaxKind.DoKeyword,
+  SyntaxKind.ElseKeyword,
+  SyntaxKind.InKeyword,
+  SyntaxKind.InstanceOfKeyword,
+  SyntaxKind.NewKeyword,
+  SyntaxKind.OfKeyword,
+  SyntaxKind.ReturnKeyword,
+  SyntaxKind.ThrowKeyword,
+  SyntaxKind.TypeOfKeyword,
+  SyntaxKind.VoidKeyword,
+  SyntaxKind.YieldKeyword,
+])
+
+const candidateRegexLiteralPunctuationPreceders = new Set([
+  SyntaxKind.ColonToken,
+  SyntaxKind.CommaToken,
+  SyntaxKind.EqualsGreaterThanToken,
+  SyntaxKind.OpenBraceToken,
+  SyntaxKind.OpenBracketToken,
+  SyntaxKind.OpenParenToken,
+  SyntaxKind.QuestionToken,
+  SyntaxKind.SemicolonToken,
+])
+
+const candidateRegexLiteralControlFlowHeaders = new Set([
+  SyntaxKind.CatchKeyword,
+  SyntaxKind.ForKeyword,
+  SyntaxKind.IfKeyword,
+  SyntaxKind.SwitchKeyword,
+  SyntaxKind.WhileKeyword,
+  SyntaxKind.WithKeyword,
+])
+
+const candidateRegexLiteralControlFlowHeaderBeforeOpenParen = (
+  tokens: readonly CandidateDevelopmentSourceToken[],
+): boolean => {
+  const previousToken = tokens.at(-1)
+  const precedingToken = tokens.at(-2)
+  const propertyAccess =
+    precedingToken?.kind === SyntaxKind.DotToken || precedingToken?.kind === SyntaxKind.QuestionDotToken
+  if (candidateRegexLiteralControlFlowHeaders.has(previousToken?.kind ?? SyntaxKind.Unknown)) return !propertyAccess
+  return (
+    previousToken?.kind === SyntaxKind.AwaitKeyword &&
+    precedingToken?.kind === SyntaxKind.ForKeyword &&
+    tokens.at(-3)?.kind !== SyntaxKind.DotToken &&
+    tokens.at(-3)?.kind !== SyntaxKind.QuestionDotToken
+  )
+}
+
+const candidateRegexLiteralCanStartAfter = (kind: SyntaxKind | undefined): boolean =>
+  kind === undefined ||
+  candidateRegexLiteralKeywordPreceders.has(kind) ||
+  candidateRegexLiteralPunctuationPreceders.has(kind) ||
+  (kind >= SyntaxKind.FirstAssignment && kind <= SyntaxKind.LastAssignment) ||
+  (kind >= SyntaxKind.FirstBinaryOperator &&
+    kind <= SyntaxKind.QuestionQuestionToken &&
+    kind !== SyntaxKind.PlusPlusToken &&
+    kind !== SyntaxKind.MinusMinusToken)
+
+const candidateCommentBody = (kind: SyntaxKind, text: string): string =>
+  kind === SyntaxKind.SingleLineCommentTrivia ? text.slice(2) : text.slice(2, -2)
+
+const scanCandidateDevelopmentSource = (source: string): CandidateDevelopmentSourceScan => {
+  const scanner = createScanner(false, LanguageVariant.Standard, source)
+  const tokens: CandidateDevelopmentSourceToken[] = []
+  const comments: string[] = []
+  const templateSubstitutionBraceDepths: number[] = []
+  const controlFlowHeaderParens: boolean[] = []
+  let controlFlowHeaderClosed = false
+  let previousKind: SyntaxKind | undefined
+  for (let kind = scanner.scan(); kind !== SyntaxKind.EndOfFile; kind = scanner.scan()) {
+    if (kind === SyntaxKind.SingleLineCommentTrivia || kind === SyntaxKind.MultiLineCommentTrivia) {
+      comments.push(candidateCommentBody(kind, scanner.getTokenText()))
+      continue
+    }
+    if (
+      kind === SyntaxKind.WhitespaceTrivia ||
+      kind === SyntaxKind.NewLineTrivia ||
+      kind === SyntaxKind.NonTextFileMarkerTrivia ||
+      kind === SyntaxKind.ConflictMarkerTrivia
+    )
+      continue
+    const regexCanStartAfterControlFlowHeader = controlFlowHeaderClosed
+    controlFlowHeaderClosed = false
+    if (
+      kind === SyntaxKind.SlashToken &&
+      (candidateRegexLiteralCanStartAfter(previousKind) || regexCanStartAfterControlFlowHeader)
+    ) {
+      kind = scanner.reScanSlashToken()
+    }
+    const templateBraceDepth = templateSubstitutionBraceDepths.at(-1)
+    if (kind === SyntaxKind.CloseBraceToken && templateBraceDepth === 0) {
+      kind = scanner.reScanTemplateToken(false)
+      if (kind === SyntaxKind.TemplateTail) templateSubstitutionBraceDepths.pop()
+    } else {
+      if (templateBraceDepth !== undefined) {
+        if (kind === SyntaxKind.OpenBraceToken) {
+          templateSubstitutionBraceDepths[templateSubstitutionBraceDepths.length - 1] = templateBraceDepth + 1
+        } else if (kind === SyntaxKind.CloseBraceToken) {
+          templateSubstitutionBraceDepths[templateSubstitutionBraceDepths.length - 1] = templateBraceDepth - 1
+        }
+      }
+      if (kind === SyntaxKind.TemplateHead) templateSubstitutionBraceDepths.push(0)
+    }
+    if (kind === SyntaxKind.OpenParenToken) {
+      controlFlowHeaderParens.push(candidateRegexLiteralControlFlowHeaderBeforeOpenParen(tokens))
+    } else if (kind === SyntaxKind.CloseParenToken) {
+      controlFlowHeaderClosed = controlFlowHeaderParens.pop() === true
+    }
+    tokens.push({ kind, text: scanner.getTokenText(), value: scanner.getTokenValue() })
+    previousKind = kind
+  }
+  return { tokens, comments }
+}
+
+const candidateDevelopmentParserRegularExpressions = (source: string): readonly string[] => {
+  let normalized: string
+  try {
+    normalized = new Bun.Transpiler({ loader: 'js' }).transformSync(source)
+  } catch {
+    return []
+  }
+  const scanner = createScanner(false, LanguageVariant.Standard, normalized)
+  const expressions: string[] = []
+  let previousKind: SyntaxKind | undefined
+  let lineStart = true
+  for (let kind = scanner.scan(); kind !== SyntaxKind.EndOfFile; kind = scanner.scan()) {
+    if (kind === SyntaxKind.NewLineTrivia) {
+      lineStart = true
+      continue
+    }
+    if (
+      kind === SyntaxKind.WhitespaceTrivia ||
+      kind === SyntaxKind.SingleLineCommentTrivia ||
+      kind === SyntaxKind.MultiLineCommentTrivia ||
+      kind === SyntaxKind.NonTextFileMarkerTrivia ||
+      kind === SyntaxKind.ConflictMarkerTrivia
+    ) {
+      if (scanner.getTokenText().includes('\n')) lineStart = true
+      continue
+    }
+    if (kind === SyntaxKind.SlashToken && (lineStart || candidateRegexLiteralCanStartAfter(previousKind))) {
+      kind = scanner.reScanSlashToken()
+    }
+    if (kind === SyntaxKind.RegularExpressionLiteral) {
+      expressions.push(candidateRegularExpressionBody(scanner.getTokenText()))
+    }
+    lineStart = false
+    previousKind = kind
+  }
+  return expressions
+}
+
+const candidateIdentifierNameToken = (token: CandidateDevelopmentSourceToken | undefined): string | undefined =>
+  token !== undefined &&
+  (token.kind === SyntaxKind.Identifier ||
+    (token.kind >= SyntaxKind.FirstKeyword && token.kind <= SyntaxKind.LastKeyword))
+    ? token.value
+    : undefined
+
+const candidateTokenName = (token: CandidateDevelopmentSourceToken | undefined): string | undefined =>
+  token?.kind === SyntaxKind.StringLiteral ? token.value : candidateIdentifierNameToken(token)
+
+const candidatePropertyNameAt = (
+  tokens: readonly CandidateDevelopmentSourceToken[],
+  index: number,
+): { readonly name: string; readonly end: number } | undefined => {
+  const direct = candidateTokenName(tokens[index])
+  if (direct !== undefined) return { name: direct, end: index }
+  if (
+    tokens[index]?.kind === SyntaxKind.OpenBracketToken &&
+    tokens[index + 1]?.kind === SyntaxKind.StringLiteral &&
+    tokens[index + 2]?.kind === SyntaxKind.CloseBracketToken
+  )
+    return { name: tokens[index + 1]?.value ?? '', end: index + 2 }
+  return undefined
+}
+
+const candidatePropertyNameBefore = (
+  tokens: readonly CandidateDevelopmentSourceToken[],
+  separatorIndex: number,
+): string | undefined => {
+  const direct = candidateTokenName(tokens[separatorIndex - 1])
+  if (direct !== undefined) return direct
+  if (
+    tokens[separatorIndex - 1]?.kind === SyntaxKind.CloseBracketToken &&
+    tokens[separatorIndex - 2]?.kind === SyntaxKind.StringLiteral &&
+    tokens[separatorIndex - 3]?.kind === SyntaxKind.OpenBracketToken
+  )
+    return tokens[separatorIndex - 2]?.value
+  return undefined
+}
+
+const candidateRegularExpressionBody = (text: string): string => {
+  let escaped = false
+  let characterClass = false
+  for (let index = 1; index < text.length; index += 1) {
+    const character = text[index]
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (character === '\\') {
+      escaped = true
+      continue
+    }
+    if (character === '[') characterClass = true
+    else if (character === ']') characterClass = false
+    else if (character === '/' && !characterClass) return text.slice(1, index)
+  }
+  return text
+}
+
+const candidateExecutableStringToken = (token: CandidateDevelopmentSourceToken): string | undefined => {
+  if (
+    token.kind === SyntaxKind.StringLiteral ||
+    token.kind === SyntaxKind.NoSubstitutionTemplateLiteral ||
+    token.kind === SyntaxKind.TemplateHead ||
+    token.kind === SyntaxKind.TemplateMiddle ||
+    token.kind === SyntaxKind.TemplateTail
+  )
+    return token.value
+  if (token.kind === SyntaxKind.RegularExpressionLiteral) return candidateRegularExpressionBody(token.text)
+  return undefined
+}
+
+const candidateScalarToken = (token: CandidateDevelopmentSourceToken): string | undefined => {
+  const executableString = candidateExecutableStringToken(token)
+  if (executableString !== undefined) return executableString
+  if (token.kind === SyntaxKind.NumericLiteral || token.kind === SyntaxKind.BigIntLiteral) return token.value
+  if (token.kind === SyntaxKind.TrueKeyword) return 'true'
+  if (token.kind === SyntaxKind.FalseKeyword) return 'false'
+  if (token.kind === SyntaxKind.NullKeyword) return 'null'
+  return undefined
+}
+
+const candidateExecutableIdentifierToken = (token: CandidateDevelopmentSourceToken): string | undefined =>
+  token.kind === SyntaxKind.Identifier || token.kind === SyntaxKind.PrivateIdentifier ? token.value : undefined
+
+const candidateExecutableKeywordPropertyToken = (
+  tokens: readonly CandidateDevelopmentSourceToken[],
+  index: number,
+): string | undefined => {
+  const token = tokens[index]
+  if (token === undefined || token.kind < SyntaxKind.FirstKeyword || token.kind > SyntaxKind.LastKeyword)
+    return undefined
+  const previousKind = tokens[index - 1]?.kind
+  const nextKind = tokens[index + 1]?.kind
+  if (
+    nextKind === SyntaxKind.ColonToken ||
+    nextKind === SyntaxKind.OpenParenToken ||
+    nextKind === SyntaxKind.EqualsToken ||
+    previousKind === SyntaxKind.DotToken ||
+    previousKind === SyntaxKind.QuestionDotToken ||
+    ((previousKind === SyntaxKind.OpenBraceToken ||
+      previousKind === SyntaxKind.CommaToken ||
+      previousKind === SyntaxKind.SemicolonToken) &&
+      (nextKind === SyntaxKind.CommaToken ||
+        nextKind === SyntaxKind.CloseBraceToken ||
+        nextKind === SyntaxKind.SemicolonToken))
+  )
+    return token.value
+  return undefined
+}
+
+interface CandidateDevelopmentTokenRange {
+  readonly name: 'strategyProtocol' | 'structuralBindings'
+  readonly start: number
+  readonly end: number
+}
+
+interface CandidateDevelopmentGovernedScalar {
+  readonly metadata: CandidateDevelopmentTokenRange['name']
+  readonly path: readonly string[]
+}
+
+const candidateDevelopmentGovernedMetadataRanges = (
+  tokens: readonly CandidateDevelopmentSourceToken[],
+): readonly CandidateDevelopmentTokenRange[] => {
+  const artifactName = tokens.findIndex(
+    (token, index) =>
+      candidateTokenName(token) === 'candidateDevelopmentArtifact' &&
+      tokens[index + 1]?.kind === SyntaxKind.EqualsToken &&
+      tokens[index + 2]?.kind === SyntaxKind.OpenBraceToken,
+  )
+  if (artifactName < 0) return []
+  const objectStart = artifactName + 2
+  const ranges: CandidateDevelopmentTokenRange[] = []
+  let curlyDepth = 1
+  let squareDepth = 0
+  let parenDepth = 0
+  for (let index = objectStart + 1; index < tokens.length && curlyDepth > 0; index += 1) {
+    const token = tokens[index]
+    if (token === undefined) break
+    if (curlyDepth === 1 && squareDepth === 0 && parenDepth === 0) {
+      const property = candidatePropertyNameAt(tokens, index)
+      const name = property?.name
+      if (
+        (name === 'strategyProtocol' || name === 'structuralBindings') &&
+        tokens[(property?.end ?? index) + 1]?.kind === SyntaxKind.ColonToken
+      ) {
+        const valueStart = (property?.end ?? index) + 2
+        let valueCurly = 0
+        let valueSquare = 0
+        let valueParen = 0
+        let valueEnd = valueStart
+        for (; valueEnd < tokens.length; valueEnd += 1) {
+          const valueToken = tokens[valueEnd]
+          if (valueToken === undefined) break
+          if (
+            valueCurly === 0 &&
+            valueSquare === 0 &&
+            valueParen === 0 &&
+            (valueToken.kind === SyntaxKind.CommaToken || valueToken.kind === SyntaxKind.CloseBraceToken)
+          )
+            break
+          if (valueToken.kind === SyntaxKind.OpenBraceToken) valueCurly += 1
+          else if (valueToken.kind === SyntaxKind.CloseBraceToken) valueCurly -= 1
+          else if (valueToken.kind === SyntaxKind.OpenBracketToken) valueSquare += 1
+          else if (valueToken.kind === SyntaxKind.CloseBracketToken) valueSquare -= 1
+          else if (valueToken.kind === SyntaxKind.OpenParenToken) valueParen += 1
+          else if (valueToken.kind === SyntaxKind.CloseParenToken) valueParen -= 1
+        }
+        ranges.push({ name, start: valueStart, end: valueEnd })
+        index = valueEnd - 1
+        continue
+      }
+    }
+    if (token.kind === SyntaxKind.OpenBraceToken) curlyDepth += 1
+    else if (token.kind === SyntaxKind.CloseBraceToken) curlyDepth -= 1
+    else if (token.kind === SyntaxKind.OpenBracketToken) squareDepth += 1
+    else if (token.kind === SyntaxKind.CloseBracketToken) squareDepth -= 1
+    else if (token.kind === SyntaxKind.OpenParenToken) parenDepth += 1
+    else if (token.kind === SyntaxKind.CloseParenToken) parenDepth -= 1
+  }
+  return ranges
+}
+
+const candidateDevelopmentGovernedScalars = (
+  tokens: readonly CandidateDevelopmentSourceToken[],
+  ranges: readonly CandidateDevelopmentTokenRange[],
+): ReadonlyMap<number, CandidateDevelopmentGovernedScalar> => {
+  const scalars = new Map<number, CandidateDevelopmentGovernedScalar>()
+  const parseValue = (
+    initialIndex: number,
+    end: number,
+    metadata: CandidateDevelopmentTokenRange['name'],
+    path: readonly string[],
+  ): number => {
+    let index = initialIndex
+    if (tokens[index]?.kind === SyntaxKind.PlusToken || tokens[index]?.kind === SyntaxKind.MinusToken) index += 1
+    const token = tokens[index]
+    if (token === undefined || index >= end) return initialIndex + 1
+    if (token.kind === SyntaxKind.OpenBraceToken) {
+      let cursor = index + 1
+      while (cursor < end && tokens[cursor]?.kind !== SyntaxKind.CloseBraceToken) {
+        const property = candidatePropertyNameAt(tokens, cursor)
+        const separator = property === undefined ? undefined : tokens[property.end + 1]
+        if (property !== undefined && separator?.kind === SyntaxKind.ColonToken) {
+          cursor = parseValue(property.end + 2, end, metadata, [...path, property.name])
+        } else cursor += 1
+        if (tokens[cursor]?.kind === SyntaxKind.CommaToken) cursor += 1
+      }
+      return tokens[cursor]?.kind === SyntaxKind.CloseBraceToken ? cursor + 1 : cursor
+    }
+    if (token.kind === SyntaxKind.OpenBracketToken) {
+      let cursor = index + 1
+      while (cursor < end && tokens[cursor]?.kind !== SyntaxKind.CloseBracketToken) {
+        cursor = parseValue(cursor, end, metadata, [...path, '[]'])
+        if (tokens[cursor]?.kind === SyntaxKind.CommaToken) cursor += 1
+      }
+      return tokens[cursor]?.kind === SyntaxKind.CloseBracketToken ? cursor + 1 : cursor
+    }
+    if (candidateScalarToken(token) !== undefined) {
+      scalars.set(index, { metadata, path })
+      return index + 1
+    }
+    return initialIndex + 1
+  }
+
+  for (const range of ranges) parseValue(range.start, range.end, range.name, [range.name])
+  return scalars
+}
+
+const candidateDevelopmentImmutableStructuralBindingPaths = new Set([
+  'structuralBindings.schemaVersion',
+  'structuralBindings.candidateOrdinal',
+  'structuralBindings.priorTrialCount',
+  'structuralBindings.strategyProtocolHash',
+  'structuralBindings.strategyIdentityHash',
+  'structuralBindings.candidateDevelopmentProtocolHash',
+  'structuralBindings.calendarHash',
+  'structuralBindings.priorTrialsHash',
+  'structuralBindings.modulePath',
+  'structuralBindings.sourceManifestPath',
+])
+
+const candidateDevelopmentImmutableStrategyProtocolPaths = new Set([
+  'strategyProtocol.schemaVersion',
+  'strategyProtocol.universe.[]',
+  'strategyProtocol.directVolatilityTarget',
+  'strategyProtocol.initialCapitalMicros',
+  'strategyProtocol.executionModel.schemaVersion',
+  'strategyProtocol.executionModel.venue',
+  'strategyProtocol.executionModel.assetClass',
+  'strategyProtocol.executionModel.precision.quantityIncrementMicros',
+  'strategyProtocol.executionModel.precision.priceIncrementMicros',
+  'strategyProtocol.executionModel.precision.minimumBuyNotionalMicros',
+  'strategyProtocol.executionModel.priceImpact.halfSpreadBps',
+  'strategyProtocol.executionModel.priceImpact.slippageBps',
+  'strategyProtocol.executionModel.fees.scheduleVersion',
+  'strategyProtocol.executionModel.fees.commissionBps',
+  'strategyProtocol.executionModel.fees.secSellBps',
+  'strategyProtocol.executionModel.fees.tafSellPerShareMicros',
+  'strategyProtocol.executionModel.fees.tafMaximumPerOrderMicros',
+  'strategyProtocol.executionModel.fees.catPerShareMicros',
+  'strategyProtocol.executionModel.fees.aggregation',
+  'strategyProtocol.executionModel.fees.roundingIncrementMicros',
+  'strategyProtocol.executionModel.cash.annualYieldBps',
+  'strategyProtocol.executionModel.cash.dayCount',
+  'strategyProtocol.executionModel.cash.accrual',
+  'strategyProtocol.executionModel.partialFills.policy',
+  'strategyProtocol.executionModel.partialFills.probabilityPpm',
+  'strategyProtocol.executionModel.partialFills.filledFractionPpm',
+  'strategyProtocol.executionModel.partialFills.remainder',
+  'strategyProtocol.executionModel.doubleCostMultiplier',
+  'strategyProtocol.executionModel.order.type',
+  'strategyProtocol.executionModel.order.timeInForce',
+  'strategyProtocol.executionModel.order.extendedHours',
+  'strategyProtocol.executionModel.order.submitAfter',
+  'strategyProtocol.executionModel.order.submitBefore',
+  'strategyProtocol.executionModel.order.priceReference',
+  'strategyProtocol.executionModel.order.planAfter',
+  'strategyProtocol.executionModel.order.planningPriceReference',
+  'strategyProtocol.executionModel.order.planningBrokerStateReference',
+  'strategyProtocol.executionModel.order.fillPriceReference',
+  'strategyProtocol.executionModel.order.buyingPowerPolicy',
+  'strategyProtocol.executionModel.order.submissionCutoffLeadMinutes',
+  'strategyProtocol.thresholds.minimumObservations',
+  'strategyProtocol.thresholds.minimumAnnualizedReturn',
+  'strategyProtocol.thresholds.minimumSharpeImprovement',
+  'strategyProtocol.thresholds.maximumDrawdown',
+  'strategyProtocol.thresholds.maximumAnnualTurnover',
+  'strategyProtocol.thresholds.requirePositiveDoubleCostReturn',
+  'strategyProtocol.marketData.schemaVersion',
+  'strategyProtocol.marketData.snapshotId',
+  'strategyProtocol.marketData.contentHash',
+  'strategyProtocol.benchmarks.schemaVersion',
+  'strategyProtocol.benchmarks.symbol',
+  'strategyProtocol.benchmarks.directVolatilityWindow',
+  'strategyProtocol.benchmarks.terminalPolicy',
+  'strategyProtocol.strategyIdentity.schemaVersion',
+  'strategyProtocol.strategyIdentity.parameters.lookbackSessions',
+  'strategyProtocol.strategyIdentity.parameters.volatilityWindowSessions',
+  'strategyProtocol.strategyIdentity.parameters.annualizationSessions',
+  'strategyProtocol.strategyIdentity.parameters.riskAssets.[]',
+  'strategyProtocol.strategyIdentity.parameters.defensiveAsset',
+  'strategyProtocol.strategyIdentity.parameters.absoluteMomentumThreshold',
+  'strategyProtocol.strategyIdentity.parameters.selectedAssetWeight',
+  'strategyProtocol.strategyIdentity.parameters.relativeMomentumTieBreak',
+  'strategyProtocol.strategyIdentity.parameters.covarianceEstimator',
+  'strategyProtocol.strategyIdentity.parameters.targetAnnualizedVolatility',
+  'strategyProtocol.strategyIdentity.parameters.maximumGrossExposure',
+])
+
+const candidateDevelopmentPayloadBearingStrategyProtocolPaths = new Set([
+  'strategyProtocol.strategyIdentity.family',
+  'strategyProtocol.strategyIdentity.identifier',
+  'strategyProtocol.strategyIdentity.researchSources.[]',
+  'strategyProtocol.strategyIdentity.parameters.id',
+  'strategyProtocol.strategyIdentity.input',
+  'strategyProtocol.strategyIdentity.relativeMomentum',
+  'strategyProtocol.strategyIdentity.absoluteMomentum',
+  'strategyProtocol.strategyIdentity.defensive',
+  'strategyProtocol.strategyIdentity.weighting',
+  'strategyProtocol.strategyIdentity.riskScaling',
+  'strategyProtocol.strategyIdentity.allocation',
+  'strategyProtocol.strategyIdentity.schedule',
+  'strategyProtocol.strategyIdentity.terminal',
+  'strategyProtocol.strategyIdentity.missingData',
+  'strategyProtocol.strategyIdentity.doubledCost',
+])
+
+const candidateDevelopmentGovernedScalarPath = (scalar: CandidateDevelopmentGovernedScalar): string =>
+  scalar.path.join('.')
+
+const candidateDevelopmentImmutableGovernedScalar = (scalar: CandidateDevelopmentGovernedScalar): boolean => {
+  const path = candidateDevelopmentGovernedScalarPath(scalar)
+  return scalar.metadata === 'structuralBindings'
+    ? candidateDevelopmentImmutableStructuralBindingPaths.has(path)
+    : candidateDevelopmentImmutableStrategyProtocolPaths.has(path)
+}
+
+const candidateDevelopmentPayloadBearingGovernedString = (scalar: CandidateDevelopmentGovernedScalar): boolean =>
+  scalar.metadata === 'strategyProtocol' &&
+  candidateDevelopmentPayloadBearingStrategyProtocolPaths.has(candidateDevelopmentGovernedScalarPath(scalar))
+
+const candidateDevelopmentJavaScriptKeywordOperators = new Set([
+  SyntaxKind.AwaitKeyword,
+  SyntaxKind.DeleteKeyword,
+  SyntaxKind.InKeyword,
+  SyntaxKind.InstanceOfKeyword,
+  SyntaxKind.NewKeyword,
+  SyntaxKind.TypeOfKeyword,
+  SyntaxKind.VoidKeyword,
+  SyntaxKind.YieldKeyword,
+])
+
+interface CandidateDevelopmentExecutableSyntaxInspection {
+  readonly executablePunctuationCount: number
+  readonly executablePunctuationBytes: number
+  readonly executableKeywordOperatorCount: number
+  readonly executableKeywordOperatorBytes: number
+}
+
+const candidatePunctuationIsImmutableGovernedScalarSign = (
+  tokens: readonly CandidateDevelopmentSourceToken[],
+  index: number,
+  governedScalars: ReadonlyMap<number, CandidateDevelopmentGovernedScalar>,
+): boolean => {
+  const token = tokens[index]
+  if (token?.kind !== SyntaxKind.PlusToken && token?.kind !== SyntaxKind.MinusToken) return false
+  const scalarToken = tokens[index + 1]
+  const scalar = governedScalars.get(index + 1)
+  return (
+    scalarToken !== undefined &&
+    (scalarToken.kind === SyntaxKind.NumericLiteral || scalarToken.kind === SyntaxKind.BigIntLiteral) &&
+    scalar !== undefined &&
+    candidateDevelopmentImmutableGovernedScalar(scalar)
+  )
+}
+
+const inspectCandidateDevelopmentExecutableSyntax = (
+  tokens: readonly CandidateDevelopmentSourceToken[],
+  governedScalars: ReadonlyMap<number, CandidateDevelopmentGovernedScalar>,
+): CandidateDevelopmentExecutableSyntaxInspection => {
+  let executablePunctuationCount = 0
+  let executablePunctuationBytes = 0
+  let executableKeywordOperatorCount = 0
+  let executableKeywordOperatorBytes = 0
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]
+    if (token === undefined) continue
+    if (
+      token.kind >= SyntaxKind.FirstPunctuation &&
+      token.kind <= SyntaxKind.LastPunctuation &&
+      !candidatePunctuationIsImmutableGovernedScalarSign(tokens, index, governedScalars)
+    ) {
+      executablePunctuationCount += 1
+      executablePunctuationBytes += Buffer.byteLength(token.text, 'utf8')
+    }
+    if (
+      candidateDevelopmentJavaScriptKeywordOperators.has(token.kind) &&
+      candidateExecutableKeywordPropertyToken(tokens, index) === undefined
+    ) {
+      executableKeywordOperatorCount += 1
+      executableKeywordOperatorBytes += Buffer.byteLength(token.text, 'utf8')
+    }
+  }
+  return {
+    executablePunctuationCount,
+    executablePunctuationBytes,
+    executableKeywordOperatorCount,
+    executableKeywordOperatorBytes,
+  }
+}
+
+interface CandidateDevelopmentExecutableArrayInspection {
+  readonly executableArrayCount: number
+  readonly largestExecutableArray: number
+}
+
+interface CandidateDevelopmentExecutableArrayFrame {
+  readonly openIndex: number
+  readonly literalCandidate: boolean
+  elementStart: number
+  curlyDepth: number
+  parenDepth: number
+  executableElementCount: number
+}
+
+const candidateArrayElementIsImmutableGovernedScalar = (
+  tokens: readonly CandidateDevelopmentSourceToken[],
+  start: number,
+  end: number,
+  governedScalars: ReadonlyMap<number, CandidateDevelopmentGovernedScalar>,
+): boolean => {
+  if (end - start !== 1) return false
+  const token = tokens[start]
+  const scalar = governedScalars.get(start)
+  return (
+    token !== undefined &&
+    candidateScalarToken(token) !== undefined &&
+    scalar !== undefined &&
+    candidateDevelopmentImmutableGovernedScalar(scalar)
+  )
+}
+
+const inspectCandidateDevelopmentExecutableArrays = (
+  tokens: readonly CandidateDevelopmentSourceToken[],
+  governedScalars: ReadonlyMap<number, CandidateDevelopmentGovernedScalar>,
+): CandidateDevelopmentExecutableArrayInspection => {
+  const frames: CandidateDevelopmentExecutableArrayFrame[] = []
+  let executableArrayCount = 0
+  let largestExecutableArray = 0
+  const countElement = (frame: CandidateDevelopmentExecutableArrayFrame, end: number, commaTerminated: boolean) => {
+    if (frame.elementStart === end) {
+      if (commaTerminated) frame.executableElementCount += 1
+      return
+    }
+    if (!candidateArrayElementIsImmutableGovernedScalar(tokens, frame.elementStart, end, governedScalars))
+      frame.executableElementCount += 1
+  }
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]
+    if (token === undefined) continue
+    if (token.kind === SyntaxKind.OpenBracketToken) {
+      frames.push({
+        openIndex: index,
+        literalCandidate: candidateRegexLiteralCanStartAfter(tokens[index - 1]?.kind),
+        elementStart: index + 1,
+        curlyDepth: 0,
+        parenDepth: 0,
+        executableElementCount: 0,
+      })
+      continue
+    }
+    if (token.kind === SyntaxKind.CloseBracketToken) {
+      const frame = frames.pop()
+      if (frame === undefined) continue
+      const computedProperty =
+        tokens[index + 1]?.kind === SyntaxKind.ColonToken &&
+        (tokens[frame.openIndex - 1]?.kind === SyntaxKind.OpenBraceToken ||
+          tokens[frame.openIndex - 1]?.kind === SyntaxKind.CommaToken)
+      if (frame.literalCandidate && !computedProperty) {
+        countElement(frame, index, false)
+        if (frame.executableElementCount > 0) {
+          executableArrayCount += 1
+          largestExecutableArray = Math.max(largestExecutableArray, frame.executableElementCount)
+        }
+      }
+      continue
+    }
+    const frame = frames.at(-1)
+    if (frame === undefined) continue
+    if (token.kind === SyntaxKind.OpenBraceToken) frame.curlyDepth += 1
+    else if (token.kind === SyntaxKind.CloseBraceToken) frame.curlyDepth -= 1
+    else if (token.kind === SyntaxKind.OpenParenToken) frame.parenDepth += 1
+    else if (token.kind === SyntaxKind.CloseParenToken) frame.parenDepth -= 1
+    else if (token.kind === SyntaxKind.CommaToken && frame.curlyDepth === 0 && frame.parenDepth === 0) {
+      countElement(frame, index, true)
+      frame.elementStart = index + 1
+    }
+  }
+  return { executableArrayCount, largestExecutableArray }
+}
+
+interface CandidateDevelopmentParenthesizedArgumentInspection {
+  readonly parenthesizedArgumentListCount: number
+  readonly parenthesizedArgumentCount: number
+  readonly largestParenthesizedArgumentList: number
+}
+
+interface CandidateDevelopmentParenthesizedArgumentFrame {
+  readonly argumentListCandidate: boolean
+  argumentStart: number
+  curlyDepth: number
+  squareDepth: number
+  argumentCount: number
+}
+
+const candidateParenthesizedArgumentListCanStartAfter = (
+  token: CandidateDevelopmentSourceToken | undefined,
+): boolean => {
+  if (token === undefined) return false
+  if (
+    token.kind === SyntaxKind.Identifier ||
+    token.kind === SyntaxKind.PrivateIdentifier ||
+    token.kind === SyntaxKind.CloseParenToken ||
+    token.kind === SyntaxKind.CloseBracketToken ||
+    token.kind === SyntaxKind.CloseBraceToken ||
+    token.kind === SyntaxKind.QuestionDotToken ||
+    token.kind === SyntaxKind.ThisKeyword ||
+    token.kind === SyntaxKind.SuperKeyword ||
+    token.kind === SyntaxKind.ImportKeyword ||
+    token.kind === SyntaxKind.NewKeyword ||
+    token.kind === SyntaxKind.StringLiteral ||
+    token.kind === SyntaxKind.NumericLiteral ||
+    token.kind === SyntaxKind.BigIntLiteral ||
+    token.kind === SyntaxKind.TrueKeyword ||
+    token.kind === SyntaxKind.FalseKeyword ||
+    token.kind === SyntaxKind.NullKeyword ||
+    token.kind === SyntaxKind.NoSubstitutionTemplateLiteral ||
+    token.kind === SyntaxKind.TemplateTail ||
+    token.kind === SyntaxKind.RegularExpressionLiteral
+  )
+    return true
+  return false
+}
+
+const inspectCandidateDevelopmentParenthesizedArguments = (
+  tokens: readonly CandidateDevelopmentSourceToken[],
+): CandidateDevelopmentParenthesizedArgumentInspection => {
+  const frames: CandidateDevelopmentParenthesizedArgumentFrame[] = []
+  let parenthesizedArgumentListCount = 0
+  let parenthesizedArgumentCount = 0
+  let largestParenthesizedArgumentList = 0
+  const countArgument = (frame: CandidateDevelopmentParenthesizedArgumentFrame, end: number) => {
+    if (frame.argumentStart < end) frame.argumentCount += 1
+  }
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]
+    if (token === undefined) continue
+    if (token.kind === SyntaxKind.OpenParenToken) {
+      frames.push({
+        argumentListCandidate: candidateParenthesizedArgumentListCanStartAfter(tokens[index - 1]),
+        argumentStart: index + 1,
+        curlyDepth: 0,
+        squareDepth: 0,
+        argumentCount: 0,
+      })
+      continue
+    }
+    if (token.kind === SyntaxKind.CloseParenToken) {
+      const frame = frames.pop()
+      if (frame === undefined) continue
+      const declarationOrArrow =
+        tokens[index + 1]?.kind === SyntaxKind.OpenBraceToken ||
+        tokens[index + 1]?.kind === SyntaxKind.EqualsGreaterThanToken
+      if (frame.argumentListCandidate && !declarationOrArrow) {
+        countArgument(frame, index)
+        parenthesizedArgumentListCount += 1
+        parenthesizedArgumentCount += frame.argumentCount
+        largestParenthesizedArgumentList = Math.max(largestParenthesizedArgumentList, frame.argumentCount)
+      }
+      continue
+    }
+    const frame = frames.at(-1)
+    if (frame === undefined) continue
+    if (token.kind === SyntaxKind.OpenBraceToken) frame.curlyDepth += 1
+    else if (token.kind === SyntaxKind.CloseBraceToken) frame.curlyDepth -= 1
+    else if (token.kind === SyntaxKind.OpenBracketToken) frame.squareDepth += 1
+    else if (token.kind === SyntaxKind.CloseBracketToken) frame.squareDepth -= 1
+    else if (token.kind === SyntaxKind.CommaToken && frame.curlyDepth === 0 && frame.squareDepth === 0) {
+      countArgument(frame, index)
+      frame.argumentStart = index + 1
+    }
+  }
+  return {
+    parenthesizedArgumentListCount,
+    parenthesizedArgumentCount,
+    largestParenthesizedArgumentList,
+  }
+}
+
+interface CandidateDevelopmentLiteralPayloadInspection {
+  readonly frozenDateLiterals: readonly string[]
+  readonly governedPayloadDateLiterals: readonly string[]
+  readonly regularExpressionLiteralLengths: readonly number[]
+  readonly interpolatedTemplateSegmentLengths: readonly number[]
+  readonly commentLengths: readonly number[]
+  readonly executableCommentCount: number
+  readonly executableCommentBytes: number
+  readonly longIdentifierLengths: readonly number[]
+  readonly encodedIdentifierLengths: readonly number[]
+  readonly executableIdentifierCount: number
+  readonly executableIdentifierBytes: number
+  readonly keywordPropertyNameCount: number
+  readonly keywordPropertyNameBytes: number
+  readonly executablePunctuationCount: number
+  readonly executablePunctuationBytes: number
+  readonly executableKeywordOperatorCount: number
+  readonly executableKeywordOperatorBytes: number
+  readonly executableArrayCount: number
+  readonly largestExecutableArray: number
+  readonly parenthesizedArgumentListCount: number
+  readonly parenthesizedArgumentCount: number
+  readonly largestParenthesizedArgumentList: number
+  readonly marketObjectFields: readonly (readonly string[])[]
+  readonly parallelMarketFields: readonly string[]
+  readonly literalArrayCount: number
+  readonly largestLiteralArray: number
+  readonly largestLiteralObject: number
+  readonly longStringLiteralLengths: readonly number[]
+  readonly encodedNumericStringLengths: readonly number[]
+  readonly encodedBinaryStringLengths: readonly number[]
+  readonly outOfRangeImmutableDecimalScalars: readonly {
+    readonly path: string
+    readonly length: number
+    readonly maximumLength: number
+    readonly exceedsMaximumValue: boolean
+  }[]
+  readonly governedPayloadStringCount: number
+  readonly governedPayloadStringBytes: number
+  readonly executableLiteralCount: number
+  readonly executableLiteralBytes: number
+}
+
+const candidateDevelopmentMaximumImmutableDecimal = '340282366920938463463374607431768211455'
+
+const inspectCandidateDevelopmentLiteralPayload = (
+  source: string,
+  _modulePath: string,
+): CandidateDevelopmentLiteralPayloadInspection => {
+  const { comments, tokens } = scanCandidateDevelopmentSource(source)
+  const rawRegularExpressionCounts = new Map<string, number>()
+  for (const token of tokens) {
+    if (token.kind !== SyntaxKind.RegularExpressionLiteral) continue
+    const body = candidateRegularExpressionBody(token.text)
+    rawRegularExpressionCounts.set(body, (rawRegularExpressionCounts.get(body) ?? 0) + 1)
+  }
+  const parserOnlyRegularExpressions: string[] = []
+  for (const body of candidateDevelopmentParserRegularExpressions(source)) {
+    const rawCount = rawRegularExpressionCounts.get(body) ?? 0
+    if (rawCount > 0) rawRegularExpressionCounts.set(body, rawCount - 1)
+    else parserOnlyRegularExpressions.push(body)
+  }
+  const governedRanges = candidateDevelopmentGovernedMetadataRanges(tokens)
+  const governedScalars = candidateDevelopmentGovernedScalars(tokens, governedRanges)
+  const executableSyntax = inspectCandidateDevelopmentExecutableSyntax(tokens, governedScalars)
+  const executableArrays = inspectCandidateDevelopmentExecutableArrays(tokens, governedScalars)
+  const parenthesizedArguments = inspectCandidateDevelopmentParenthesizedArguments(tokens)
+  const frozenDateLiterals: string[] = []
+  const governedPayloadDateLiterals: string[] = []
+  const regularExpressionLiteralLengths: number[] = []
+  const interpolatedTemplateSegmentLengths: number[] = []
+  const commentLengths: number[] = []
+  const longIdentifierLengths: number[] = []
+  const encodedIdentifierLengths: number[] = []
+  const marketObjectFields: string[][] = []
+  const parallelMarketFields = new Set<string>()
+  const longStringLiteralLengths: number[] = []
+  const encodedNumericStringLengths: number[] = []
+  const encodedBinaryStringLengths: number[] = []
+  const outOfRangeImmutableDecimalScalars: {
+    readonly path: string
+    readonly length: number
+    readonly maximumLength: number
+    readonly exceedsMaximumValue: boolean
+  }[] = []
+  let literalArrayCount = 0
+  let largestLiteralArray = 0
+  let largestLiteralObject = 0
+  let governedPayloadStringCount = 0
+  let governedPayloadStringBytes = 0
+  let executableCommentCount = 0
+  let executableCommentBytes = 0
+  let executableIdentifierCount = 0
+  let executableIdentifierBytes = 0
+  let keywordPropertyNameCount = 0
+  let keywordPropertyNameBytes = 0
+  let executableLiteralCount = 0
+  let executableLiteralBytes = 0
+  const objects: { readonly fields: Set<string>; numericLiteralCount: number }[] = []
+  const arrays: { literalCount: number }[] = []
+  const governedRangeAt = (index: number): CandidateDevelopmentTokenRange | undefined =>
+    governedRanges.find((range) => index >= range.start && index < range.end)
+
+  for (const comment of comments) {
+    const commentBytes = Buffer.byteLength(comment, 'utf8')
+    commentLengths.push(comment.length)
+    executableCommentCount += 1
+    executableCommentBytes += commentBytes
+    executableLiteralCount += 1
+    executableLiteralBytes += commentBytes
+    frozenDateLiterals.push(...(comment.match(/\b\d{4}-\d{2}-\d{2}\b/gu) ?? []))
+    if (comment.length > 128) longStringLiteralLengths.push(comment.length)
+    const numericTokens = comment.match(/-?(?:\d+(?:\.\d+)?|\.\d+)/gu) ?? []
+    const delimiters = comment.match(/[,|;\t\n]/gu) ?? []
+    if (comment.length >= 24 && numericTokens.length >= 6 && delimiters.length >= 5)
+      encodedNumericStringLengths.push(comment.length)
+    if (
+      comment.length >= 96 &&
+      (/^(?:[A-Za-z0-9+/]{4})+(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(comment) ||
+        /^[a-f0-9]+$/u.test(comment))
+    )
+      encodedBinaryStringLengths.push(comment.length)
+  }
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]
+    if (token === undefined) continue
+    const governedRange = governedRangeAt(index)
+    const governedScalar = governedScalars.get(index)
+    const regularExpressionLiteral = token.kind === SyntaxKind.RegularExpressionLiteral
+    const interpolatedTemplateSegment =
+      token.kind === SyntaxKind.TemplateHead ||
+      token.kind === SyntaxKind.TemplateMiddle ||
+      token.kind === SyntaxKind.TemplateTail
+    const dynamicExecutableString = regularExpressionLiteral || interpolatedTemplateSegment
+    const immutableGovernedScalar =
+      !dynamicExecutableString &&
+      governedScalar !== undefined &&
+      candidateDevelopmentImmutableGovernedScalar(governedScalar)
+    const payloadBearingGovernedString =
+      governedScalar !== undefined && candidateDevelopmentPayloadBearingGovernedString(governedScalar)
+    const executableString = candidateExecutableStringToken(token)
+
+    const keywordPropertyName = candidateExecutableKeywordPropertyToken(tokens, index)
+    const executableIdentifier = candidateExecutableIdentifierToken(token) ?? keywordPropertyName
+    if (executableIdentifier !== undefined) {
+      const identifier = executableIdentifier
+      const identifierBytes = Buffer.byteLength(identifier, 'utf8')
+      if (keywordPropertyName !== undefined) {
+        keywordPropertyNameCount += 1
+        keywordPropertyNameBytes += identifierBytes
+      }
+      if (identifier.length > 128) longIdentifierLengths.push(identifier.length)
+      if (identifier.length >= 96) encodedIdentifierLengths.push(identifier.length)
+      executableIdentifierCount += 1
+      executableIdentifierBytes += identifierBytes
+      executableLiteralCount += 1
+      executableLiteralBytes += identifierBytes
+    }
+
+    if (
+      executableString !== undefined &&
+      (dynamicExecutableString || governedRange === undefined || governedScalar !== undefined)
+    ) {
+      const value = executableString
+      if (
+        immutableGovernedScalar &&
+        governedScalar !== undefined &&
+        /^\d+$/u.test(value) &&
+        (value.length > candidateDevelopmentMaximumImmutableDecimal.length ||
+          (value.length === candidateDevelopmentMaximumImmutableDecimal.length &&
+            value > candidateDevelopmentMaximumImmutableDecimal))
+      ) {
+        outOfRangeImmutableDecimalScalars.push({
+          path: candidateDevelopmentGovernedScalarPath(governedScalar),
+          length: value.length,
+          maximumLength: candidateDevelopmentMaximumImmutableDecimal.length,
+          exceedsMaximumValue: true,
+        })
+      }
+      if (regularExpressionLiteral) regularExpressionLiteralLengths.push(value.length)
+      if (interpolatedTemplateSegment) interpolatedTemplateSegmentLengths.push(value.length)
+      if (payloadBearingGovernedString) {
+        const dates = value.match(/\b\d{4}-\d{2}-\d{2}\b/gu) ?? []
+        governedPayloadDateLiterals.push(...dates)
+        governedPayloadStringCount += 1
+        governedPayloadStringBytes += Buffer.byteLength(value, 'utf8')
+      } else if (!immutableGovernedScalar) {
+        const dates = value.match(/\b\d{4}-\d{2}-\d{2}\b/gu) ?? []
+        frozenDateLiterals.push(...dates)
+      }
+      if (!immutableGovernedScalar) {
+        if (value.length > 128) longStringLiteralLengths.push(value.length)
+        const numericTokens = value.match(/-?(?:\d+(?:\.\d+)?|\.\d+)/gu) ?? []
+        const delimiters = value.match(/[,|;\t\n]/gu) ?? []
+        if (value.length >= 24 && numericTokens.length >= 6 && delimiters.length >= 5)
+          encodedNumericStringLengths.push(value.length)
+        if (
+          value.length >= 96 &&
+          (/^(?:[A-Za-z0-9+/]{4})+(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value) ||
+            /^[a-f0-9]+$/u.test(value))
+        )
+          encodedBinaryStringLengths.push(value.length)
+      }
+      if (
+        dynamicExecutableString ||
+        governedRange === undefined ||
+        (!immutableGovernedScalar && !payloadBearingGovernedString)
+      ) {
+        executableLiteralCount += 1
+        executableLiteralBytes += Buffer.byteLength(value, 'utf8')
+      }
+    } else if (executableString === undefined && (governedRange === undefined || !immutableGovernedScalar)) {
+      const literal = candidateScalarToken(token)
+      if (literal !== undefined) {
+        executableLiteralCount += 1
+        executableLiteralBytes += Buffer.byteLength(literal, 'utf8')
+      }
+    }
+
+    if (token.kind === SyntaxKind.OpenBraceToken) objects.push({ fields: new Set(), numericLiteralCount: 0 })
+    else if (token.kind === SyntaxKind.CloseBraceToken) {
+      const object = objects.pop()
+      if (object !== undefined) {
+        const priceFieldCount = ['open', 'high', 'low', 'close', 'volume'].filter((field) =>
+          object.fields.has(field),
+        ).length
+        if ((object.fields.has('sessionDate') && priceFieldCount >= 3) || priceFieldCount === 5)
+          marketObjectFields.push([...object.fields].sort())
+        largestLiteralObject = Math.max(largestLiteralObject, object.numericLiteralCount)
+      }
+    }
+
+    const property = candidatePropertyNameAt(tokens, index)
+    if (property !== undefined && tokens[property.end + 1]?.kind === SyntaxKind.ColonToken) {
+      const field = candidateMarketPayloadField(property.name)
+      if (field !== undefined) objects.at(-1)?.fields.add(field)
+    }
+    if (token.kind === SyntaxKind.ColonToken || token.kind === SyntaxKind.EqualsToken) {
+      const name = candidatePropertyNameBefore(tokens, index)
+      const field = name === undefined ? undefined : candidateMarketPayloadField(name)
+      if (field !== undefined) parallelMarketFields.add(field)
+    }
+    if (
+      (token.kind === SyntaxKind.NumericLiteral || token.kind === SyntaxKind.BigIntLiteral) &&
+      tokens[index + 1]?.kind !== SyntaxKind.ColonToken &&
+      !immutableGovernedScalar
+    ) {
+      const object = objects.at(-1)
+      if (object !== undefined) object.numericLiteralCount += 1
+    }
+
+    if (token.kind === SyntaxKind.OpenBracketToken) {
+      arrays.push({ literalCount: 0 })
+    } else if (token.kind === SyntaxKind.CloseBracketToken) {
+      const array = arrays.pop()
+      if (array !== undefined && array.literalCount > 0) {
+        literalArrayCount += 1
+        largestLiteralArray = Math.max(largestLiteralArray, array.literalCount)
+      }
+    } else if (
+      arrays.length > 0 &&
+      candidateScalarToken(token) !== undefined &&
+      (governedRange === undefined || governedScalar !== undefined) &&
+      !immutableGovernedScalar
+    ) {
+      const array = arrays.at(-1)
+      if (array !== undefined) array.literalCount += 1
+    }
+  }
+
+  for (const value of parserOnlyRegularExpressions) {
+    regularExpressionLiteralLengths.push(value.length)
+    frozenDateLiterals.push(...(value.match(/\b\d{4}-\d{2}-\d{2}\b/gu) ?? []))
+    if (value.length > 128) longStringLiteralLengths.push(value.length)
+    const numericTokens = value.match(/-?(?:\d+(?:\.\d+)?|\.\d+)/gu) ?? []
+    const delimiters = value.match(/[,|;\t\n]/gu) ?? []
+    if (value.length >= 24 && numericTokens.length >= 6 && delimiters.length >= 5)
+      encodedNumericStringLengths.push(value.length)
+    if (
+      value.length >= 96 &&
+      (/^(?:[A-Za-z0-9+/]{4})+(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value) || /^[a-f0-9]+$/u.test(value))
+    )
+      encodedBinaryStringLengths.push(value.length)
+    executableLiteralCount += 1
+    executableLiteralBytes += Buffer.byteLength(value, 'utf8')
+  }
+
+  return {
+    frozenDateLiterals,
+    governedPayloadDateLiterals,
+    regularExpressionLiteralLengths,
+    interpolatedTemplateSegmentLengths,
+    commentLengths,
+    executableCommentCount,
+    executableCommentBytes,
+    longIdentifierLengths,
+    encodedIdentifierLengths,
+    executableIdentifierCount,
+    executableIdentifierBytes,
+    keywordPropertyNameCount,
+    keywordPropertyNameBytes,
+    executablePunctuationCount: executableSyntax.executablePunctuationCount,
+    executablePunctuationBytes: executableSyntax.executablePunctuationBytes,
+    executableKeywordOperatorCount: executableSyntax.executableKeywordOperatorCount,
+    executableKeywordOperatorBytes: executableSyntax.executableKeywordOperatorBytes,
+    executableArrayCount: executableArrays.executableArrayCount,
+    largestExecutableArray: executableArrays.largestExecutableArray,
+    parenthesizedArgumentListCount: parenthesizedArguments.parenthesizedArgumentListCount,
+    parenthesizedArgumentCount: parenthesizedArguments.parenthesizedArgumentCount,
+    largestParenthesizedArgumentList: parenthesizedArguments.largestParenthesizedArgumentList,
+    marketObjectFields,
+    parallelMarketFields: [...parallelMarketFields].sort(),
+    literalArrayCount,
+    largestLiteralArray,
+    largestLiteralObject,
+    longStringLiteralLengths,
+    encodedNumericStringLengths,
+    encodedBinaryStringLengths,
+    outOfRangeImmutableDecimalScalars,
+    governedPayloadStringCount,
+    governedPayloadStringBytes,
+    executableLiteralCount,
+    executableLiteralBytes,
+  }
+}
+
+export const validateCandidateDevelopmentModuleSource = (
+  source: string,
+  modulePath: string,
+): Result.Result<void, CandidateDevelopmentCommandFailure> => {
+  const byteCount = Buffer.byteLength(source, 'utf8')
+  const lineCount = source.length === 0 ? 0 : source.split('\n').length
+  const generatedHelpers = candidateArtifactDowncompiledHelpers.filter((helper) =>
+    new RegExp(`(?:\\b(?:const|function|let|var)\\s+${helper}\\b|\\b${helper}\\s*=)`, 'u').test(source),
+  )
+  const literalPayload = inspectCandidateDevelopmentLiteralPayload(source, modulePath)
+  const parallelPriceFieldCount = ['open', 'high', 'low', 'close', 'volume'].filter((field) =>
+    literalPayload.parallelMarketFields.includes(field),
+  ).length
+  const issues = {
+    typeCheckDisabled: /^\s*\/\/\s*@ts-nocheck\b/mu.test(source),
+    oversized: byteCount > 262_144 || lineCount > 4_096,
+    generatedHelpers,
+    embeddedFrozenSessions: literalPayload.frozenDateLiterals.length > 0,
+    embeddedMarketBars:
+      literalPayload.marketObjectFields.length > 0 ||
+      (literalPayload.parallelMarketFields.includes('sessionDate') && parallelPriceFieldCount >= 3) ||
+      parallelPriceFieldCount === 5 ||
+      literalPayload.literalArrayCount >= 3 ||
+      literalPayload.largestLiteralArray >= 4 ||
+      literalPayload.executableArrayCount >= 3 ||
+      literalPayload.largestExecutableArray >= 4 ||
+      literalPayload.largestLiteralObject >= 5 ||
+      literalPayload.longStringLiteralLengths.length > 0 ||
+      literalPayload.longIdentifierLengths.length > 0 ||
+      literalPayload.encodedIdentifierLengths.length > 0 ||
+      literalPayload.executablePunctuationCount > 512 ||
+      literalPayload.executablePunctuationBytes > 1_024 ||
+      literalPayload.executableKeywordOperatorCount > 32 ||
+      literalPayload.executableKeywordOperatorBytes > 192 ||
+      literalPayload.parenthesizedArgumentCount > 64 ||
+      literalPayload.largestParenthesizedArgumentList > 32 ||
+      literalPayload.encodedNumericStringLengths.length > 0 ||
+      literalPayload.encodedBinaryStringLengths.length > 0 ||
+      literalPayload.outOfRangeImmutableDecimalScalars.length > 0 ||
+      literalPayload.governedPayloadDateLiterals.length >= 4 ||
+      literalPayload.governedPayloadStringBytes > 1_024 ||
+      literalPayload.executableLiteralCount > 64 ||
+      literalPayload.executableLiteralBytes > 1_024,
+  }
+  return !issues.typeCheckDisabled &&
+    !issues.oversized &&
+    issues.generatedHelpers.length === 0 &&
+    !issues.embeddedFrozenSessions &&
+    !issues.embeddedMarketBars
+    ? Result.succeed(undefined)
+    : Result.fail(
+        sourceVerificationFailure('verify-module-format', {
+          modulePath,
+          byteCount,
+          lineCount,
+          maximumByteCount: 262_144,
+          maximumLineCount: 4_096,
+          literalPayload,
+          ...issues,
+        }),
+      )
+}
+
 const verifySelfContainedEsm = (
   source: string,
   modulePath: string,
@@ -7795,9 +9415,14 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
           observed: sourceManifest.success.modulePath,
         })
       }
-      const moduleFormat = verifySelfContainedEsm(moduleGitBytes.toString('utf8'), moduleRepositoryPath.success)
+      const moduleSource = moduleGitBytes.toString('utf8')
+      const moduleFormat = verifySelfContainedEsm(moduleSource, moduleRepositoryPath.success)
       if (Result.isFailure(moduleFormat)) {
         throw new CandidateDevelopmentSourceVerificationError('verify-module-format', moduleFormat.failure)
+      }
+      const moduleSourcePolicy = validateCandidateDevelopmentModuleSource(moduleSource, moduleRepositoryPath.success)
+      if (Result.isFailure(moduleSourcePolicy)) {
+        throw new CandidateDevelopmentSourceVerificationError('verify-module-format', moduleSourcePolicy.failure)
       }
       const [moduleBlobOid, sourceManifestBlobOid] = await runCandidateDevelopmentSourcePair(
         signal,
@@ -7875,6 +9500,13 @@ const candidateDevelopmentArtifactContext = (): vm.Context => {
         writable: false,
         configurable: false,
       })
+      Object.defineProperty(Function.prototype, 'toString', {
+        value: function () {
+          return 'function () { [source unavailable] }'
+        },
+        writable: false,
+        configurable: false,
+      })
       Error.stackTraceLimit = 0
       for (const name of [
         'process',
@@ -7941,11 +9573,11 @@ const candidateDevelopmentArtifactContext = (): vm.Context => {
 
 const runCandidateDevelopmentArtifactEvaluation = (
   context: vm.Context,
-  verifiedSource: CandidateDevelopmentVerifiedSource,
+  runtimeInput: CandidateDevelopmentArtifactRuntimeInput,
 ): CandidateDevelopmentCommandEvaluation => {
-  const verifiedSourceJson = JSON.stringify(verifiedSource)
-  Object.defineProperty(context, '__candidateDevelopmentVerifiedSourceJson', {
-    value: verifiedSourceJson,
+  const runtimeInputJson = JSON.stringify(runtimeInput)
+  Object.defineProperty(context, '__candidateDevelopmentRuntimeInputJson', {
+    value: runtimeInputJson,
     writable: false,
     configurable: true,
   })
@@ -7953,8 +9585,14 @@ const runCandidateDevelopmentArtifactEvaluation = (
     const output = vm.runInContext(
       `
         (() => {
+          const deepFreeze = (value) => {
+            if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return value
+            for (const key of Object.keys(value)) deepFreeze(value[key])
+            return Object.freeze(value)
+          }
+          const runtimeInput = deepFreeze(JSON.parse(globalThis.__candidateDevelopmentRuntimeInputJson))
           const evaluation = globalThis.__candidateDevelopmentArtifact.buildEvaluation(
-            JSON.parse(globalThis.__candidateDevelopmentVerifiedSourceJson),
+            runtimeInput,
           )
           if (
             evaluation !== null &&
@@ -7976,9 +9614,11 @@ const runCandidateDevelopmentArtifactEvaluation = (
     if (typeof output !== 'string') throw new TypeError('candidate artifact evaluation did not return JSON')
     const decoded = validateCandidateDevelopmentCommandEvaluation(JSON.parse(output) as unknown)
     if (Result.isFailure(decoded)) throw decoded.failure
+    const sourceBinding = validateCandidateDevelopmentVerifiedSource(decoded.success, runtimeInput)
+    if (Result.isFailure(sourceBinding)) throw sourceBinding.failure
     return decoded.success
   } finally {
-    Reflect.deleteProperty(context, '__candidateDevelopmentVerifiedSourceJson')
+    Reflect.deleteProperty(context, '__candidateDevelopmentRuntimeInputJson')
   }
 }
 
@@ -7987,7 +9627,7 @@ interface CandidateDevelopmentArtifactWorkerRequest {
   readonly mode: 'definition' | 'evaluation'
   readonly moduleUrl: string
   readonly verifiedFiles: CandidateDevelopmentVerifiedSourceFiles
-  readonly verifiedSource?: CandidateDevelopmentVerifiedSource
+  readonly runtimeInput?: CandidateDevelopmentArtifactRuntimeInput
 }
 
 type CandidateDevelopmentArtifactWorkerResponse =
@@ -8066,8 +9706,8 @@ const runCandidateDevelopmentArtifactWorkerTask = async (
 ): Promise<unknown> => {
   const loaded = await loadCandidateDevelopmentArtifactContext(request.moduleUrl, request.verifiedFiles)
   if (request.mode === 'definition') return loaded.definition
-  if (request.verifiedSource === undefined) throw new TypeError('candidate artifact verified source is missing')
-  return runCandidateDevelopmentArtifactEvaluation(loaded.context, request.verifiedSource)
+  if (request.runtimeInput === undefined) throw new TypeError('candidate artifact runtime input is missing')
+  return runCandidateDevelopmentArtifactEvaluation(loaded.context, request.runtimeInput)
 }
 
 class CandidateDevelopmentArtifactWorkerError extends Data.TaggedError('CandidateDevelopmentArtifactWorkerError')<{
@@ -8076,6 +9716,29 @@ class CandidateDevelopmentArtifactWorkerError extends Data.TaggedError('Candidat
 
 const candidateDevelopmentArtifactWorkerCause = (cause: unknown): unknown =>
   cause instanceof CandidateDevelopmentArtifactWorkerError ? cause.cause : cause
+
+const missingCandidateDevelopmentRuntimeMarketData: CandidateDevelopmentRuntimeMarketDataLoader = () =>
+  Effect.fail(
+    sourceVerificationFailure('verify-runtime-market-data', {
+      field: 'runtimeMarketData',
+      expected: 'a typed content-verified runtime market-data witness',
+      observed: null,
+    }),
+  )
+
+export const loadCandidateDevelopmentRuntimeMarketDataFile =
+  (marketDataPath: string): CandidateDevelopmentRuntimeMarketDataLoader =>
+  (verifiedSource, strategyProtocol, preflightInput) =>
+    Effect.tryPromise({
+      try: async (signal) => JSON.parse(await readFile(marketDataPath, { encoding: 'utf8', signal })) as unknown,
+      catch: (cause) => sourceVerificationFailure('verify-runtime-market-data', cause),
+    }).pipe(
+      Effect.flatMap((value) =>
+        Effect.fromResult(
+          validateCandidateDevelopmentRuntimeMarketData(value, verifiedSource, strategyProtocol, preflightInput),
+        ),
+      ),
+    )
 
 const runCandidateDevelopmentArtifactWorker = <A>(
   request: CandidateDevelopmentArtifactWorkerRequest,
@@ -8119,7 +9782,46 @@ const runCandidateDevelopmentArtifactWorker = <A>(
     catch: (cause) => new CandidateDevelopmentArtifactWorkerError({ cause }),
   })
 
-export const evaluateCandidateDevelopmentArtifact: CandidateDevelopmentModuleImporter = (moduleUrl, verifiedFiles) =>
+export const executeCandidateDevelopmentArtifactRuntime = (
+  moduleUrl: string,
+  verifiedFiles: CandidateDevelopmentVerifiedSourceFiles,
+  strategyProtocol: CandidateDevelopmentStrategyProtocol,
+  runtimeInput: CandidateDevelopmentArtifactRuntimeInput,
+): Effect.Effect<CandidateDevelopmentCommandEvaluation, CandidateDevelopmentCommandFailure> =>
+  Effect.fromResult(
+    validateCandidateDevelopmentRuntimeMarketData(
+      runtimeInput.marketData,
+      runtimeInput,
+      strategyProtocol,
+      runtimeInput.preflightInput,
+    ),
+  ).pipe(
+    Effect.flatMap((marketData) =>
+      runCandidateDevelopmentArtifactWorker<unknown>({
+        _tag: 'CandidateDevelopmentArtifactWorkerRequest',
+        mode: 'evaluation',
+        moduleUrl,
+        verifiedFiles,
+        runtimeInput: { ...runtimeInput, marketData },
+      }),
+    ),
+    Effect.flatMap((value) => Effect.fromResult(validateCandidateDevelopmentCommandEvaluation(value))),
+    Effect.mapError(
+      (cause): CandidateDevelopmentCommandFailure =>
+        cause instanceof CandidateDevelopmentArtifactWorkerError
+          ? {
+              _tag: 'CandidateDevelopmentCommandProgramExecutionFailed',
+              cause: candidateDevelopmentArtifactWorkerCause(cause),
+            }
+          : cause,
+    ),
+  )
+
+export const evaluateCandidateDevelopmentArtifact: CandidateDevelopmentModuleImporter = (
+  moduleUrl,
+  verifiedFiles,
+  runtimeMarketDataLoader = missingCandidateDevelopmentRuntimeMarketData,
+) =>
   Effect.gen(function* () {
     const moduleLoadFailure = (cause: unknown): CandidateDevelopmentCommandFailure => ({
       _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
@@ -8140,11 +9842,15 @@ export const evaluateCandidateDevelopmentArtifact: CandidateDevelopmentModuleImp
         cause: new TypeError('candidate artifact schema version is invalid'),
       })
     }
-    const input = yield* Effect.fromResult(decodeCandidateDevelopmentPreflightInput(definition.input)).pipe(
-      Effect.mapError(moduleLoadFailure),
-    )
     const strategyProtocol = yield* Effect.fromResult(
       decodeCandidateDevelopmentStrategyProtocol(definition.strategyProtocol),
+    ).pipe(Effect.mapError(moduleLoadFailure))
+    const input = yield* Effect.fromResult(
+      deriveCandidateDevelopmentArtifactPreflightInput(
+        definition.input,
+        verifiedFiles,
+        strategyProtocol as CandidateDevelopmentStrategyProtocol,
+      ),
     ).pipe(Effect.mapError(moduleLoadFailure))
     const verifiedSource = yield* Effect.fromResult(bindCandidateDevelopmentVerifiedSource(verifiedFiles, input)).pipe(
       Effect.mapError(moduleLoadFailure),
@@ -8167,30 +9873,36 @@ export const evaluateCandidateDevelopmentArtifact: CandidateDevelopmentModuleImp
         verifiedSource,
       ),
     ).pipe(Effect.mapError(moduleLoadFailure))
-    const evaluation = (): Effect.Effect<CandidateDevelopmentCommandEvaluation, CandidateDevelopmentCommandFailure> =>
-      runCandidateDevelopmentArtifactWorker<unknown>({
-        _tag: 'CandidateDevelopmentArtifactWorkerRequest',
-        mode: 'evaluation',
-        moduleUrl,
-        verifiedFiles,
-        verifiedSource,
-      }).pipe(
-        Effect.flatMap((value) => Effect.fromResult(validateCandidateDevelopmentCommandEvaluation(value))),
-        Effect.mapError(
-          (cause): CandidateDevelopmentCommandFailure => ({
-            _tag: 'CandidateDevelopmentCommandProgramExecutionFailed',
-            cause: candidateDevelopmentArtifactWorkerCause(cause),
-          }),
+    const typedStrategyProtocol = strategyProtocol as CandidateDevelopmentStrategyProtocol
+    const loadRuntimeMarketData = (): Effect.Effect<
+      CandidateDevelopmentMarketDataWitness,
+      CandidateDevelopmentCommandFailure
+    > =>
+      runtimeMarketDataLoader(verifiedSource, typedStrategyProtocol, input).pipe(
+        Effect.flatMap((value) =>
+          Effect.fromResult(
+            validateCandidateDevelopmentRuntimeMarketData(value, verifiedSource, typedStrategyProtocol, input),
+          ),
         ),
       )
+    const evaluation = (
+      marketData: CandidateDevelopmentMarketDataWitness,
+      observedVerifiedSource: CandidateDevelopmentVerifiedSource,
+    ): Effect.Effect<CandidateDevelopmentCommandEvaluation, CandidateDevelopmentCommandFailure> =>
+      executeCandidateDevelopmentArtifactRuntime(moduleUrl, verifiedFiles, typedStrategyProtocol, {
+        ...observedVerifiedSource,
+        runtimeDataSchemaVersion: 'bayn.candidate-development-artifact-runtime-input.v1',
+        preflightInput: input,
+        marketData,
+      })
     const program: ExecutableProgram = {
       schemaVersion: candidateDevelopmentExecutableProgramSchemaVersion,
       input,
-      strategyProtocol: strategyProtocol as CandidateDevelopmentStrategyProtocol,
+      strategyProtocol: typedStrategyProtocol,
       effects: {
         preregisterCandidate: () => Effect.fromResult(preregisterCandidateDevelopmentAttempt(verifiedSource)),
-        loadDevelopmentData: () => Effect.succeed(undefined),
-        evaluateDevelopment: (_data, _preflight, observedVerifiedSource) =>
+        loadDevelopmentData: loadRuntimeMarketData,
+        evaluateDevelopment: (data, _preflight, observedVerifiedSource) =>
           pipe(
             Result.all({
               expected: canonicalHashV1Result(verifiedSource),
@@ -8208,7 +9920,17 @@ export const evaluateCandidateDevelopmentArtifact: CandidateDevelopmentModuleImp
                 : Result.fail(sourceVerificationFailure('verify-program-binding', { expected, observed })),
             ),
             Effect.fromResult,
-            Effect.flatMap(evaluation),
+            Effect.flatMap(() =>
+              Effect.fromResult(
+                validateCandidateDevelopmentRuntimeMarketData(
+                  data,
+                  observedVerifiedSource,
+                  typedStrategyProtocol,
+                  input,
+                ),
+              ),
+            ),
+            Effect.flatMap((marketData) => evaluation(marketData, observedVerifiedSource)),
           ),
       },
     }
@@ -8222,10 +9944,11 @@ export const loadCandidateDevelopmentExecutableProgram = (
   sourceManifestPath: string,
   importer: CandidateDevelopmentModuleImporter = importCandidateDevelopmentModule,
   sourceVerifier: CandidateDevelopmentSourceVerifier = verifyCandidateDevelopmentSourceFiles,
+  runtimeMarketDataLoader: CandidateDevelopmentRuntimeMarketDataLoader = missingCandidateDevelopmentRuntimeMarketData,
 ): Effect.Effect<CandidateDevelopmentLoadedExecutableProgram, CandidateDevelopmentCommandFailure> =>
   Effect.gen(function* () {
     const before = yield* sourceVerifier(modulePath, sourceManifestPath)
-    const module = yield* importer(before.moduleUrl, before.files)
+    const module = yield* importer(before.moduleUrl, before.files, runtimeMarketDataLoader)
     const after = yield* sourceVerifier(modulePath, sourceManifestPath)
     const beforeHash = yield* Effect.fromResult(
       canonicalHashV1Result(before).pipe(
@@ -8252,6 +9975,20 @@ export const loadCandidateDevelopmentExecutableProgram = (
     return { program, verifiedSource }
   })
 
+type CandidateDevelopmentProgramLoader = (
+  modulePath: string,
+  sourceManifestPath: string,
+) => Effect.Effect<CandidateDevelopmentLoadedExecutableProgram, CandidateDevelopmentCommandFailure>
+
+export const loadAuthorizedCandidateDevelopmentExecutableProgram = (
+  modulePath: string,
+  sourceManifestPath: string,
+  loader: CandidateDevelopmentProgramLoader = loadCandidateDevelopmentExecutableProgram,
+): Effect.Effect<CandidateDevelopmentLoadedExecutableProgram, CandidateDevelopmentCommandFailure> =>
+  Effect.fromResult(authorizeCandidateDevelopmentAttempt()).pipe(
+    Effect.flatMap(() => loader(modulePath, sourceManifestPath)),
+  )
+
 if (!isMainThread && candidateDevelopmentArtifactWorkerRequest(workerData)) {
   void runCandidateDevelopmentArtifactWorkerTask(workerData).then(
     (value) => parentPort?.postMessage({ ok: true, value } satisfies CandidateDevelopmentArtifactWorkerResponse),
@@ -8265,6 +10002,7 @@ if (!isMainThread && candidateDevelopmentArtifactWorkerRequest(workerData)) {
 
 const modulePath = process.argv.at(2)
 const sourceManifestPath = process.argv.at(3)
+const runtimeMarketDataPath = process.argv.at(4)
 
 const executeLoadedCandidateDevelopmentProgram = (
   loaded: CandidateDevelopmentLoadedExecutableProgram,
@@ -8285,9 +10023,23 @@ const main = (
       ? Effect.fail<CandidateDevelopmentCommandFailure>({
           _tag: 'CandidateDevelopmentCommandSourceManifestPathMissing',
         })
-      : loadCandidateDevelopmentExecutableProgram(modulePath, sourceManifestPath).pipe(
-          Effect.flatMap(executeLoadedCandidateDevelopmentProgram),
-        )
+      : runtimeMarketDataPath === undefined
+        ? Effect.fail<CandidateDevelopmentCommandFailure>(
+            sourceVerificationFailure('verify-runtime-market-data', {
+              field: 'runtimeMarketDataPath',
+              expected: 'path to a typed content-verified runtime market-data witness',
+              observed: null,
+            }),
+          )
+        : loadAuthorizedCandidateDevelopmentExecutableProgram(modulePath, sourceManifestPath, (module, manifest) =>
+            loadCandidateDevelopmentExecutableProgram(
+              module,
+              manifest,
+              importCandidateDevelopmentModule,
+              verifyCandidateDevelopmentSourceFiles,
+              loadCandidateDevelopmentRuntimeMarketDataFile(runtimeMarketDataPath),
+            ),
+          ).pipe(Effect.flatMap(executeLoadedCandidateDevelopmentProgram))
 ).pipe(Effect.annotateLogs({ operation: 'candidate-development-command' }))
 
 export class CandidateDevelopmentCommandError extends Data.TaggedError('CandidateDevelopmentCommandError')<{

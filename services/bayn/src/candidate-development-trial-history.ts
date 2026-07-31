@@ -25,6 +25,56 @@ interface CandidateDevelopmentPriorDevelopmentEvidence {
   readonly qualificationAttemptConsumed: false
 }
 
+export interface CandidateDevelopmentInvalidPrecommit {
+  readonly schemaVersion: 'bayn.candidate-development-precommit-invalidation.v1'
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly status: 'PRECOMMIT_INVALID'
+  readonly attemptStatus: 'UNATTEMPTED'
+  readonly metricBearingAttemptsConsumed: 0
+  readonly qualificationAttemptConsumed: false
+  readonly reviewedHeadRevision: string
+  readonly mergedSourceRevision: string
+  readonly preregistration: {
+    readonly sourceRevision: string
+    readonly path: string
+    readonly blobOid: string
+    readonly sha256: string
+  }
+  readonly sourceManifest: {
+    readonly path: string
+    readonly blobOid: string
+    readonly sha256: string
+  }
+  readonly invalidatedModule: {
+    readonly path: string
+    readonly blobOid: string
+    readonly sha256: string
+    readonly lineCount: number
+    readonly byteCount: number
+    readonly findings: readonly [
+      'TYPE_CHECK_DISABLED',
+      'DOWNCOMPILED_BUNDLE',
+      'EMBEDDED_OFFICIAL_SESSIONS',
+      'EMBEDDED_MARKET_BARS',
+      'RUNTIME_INPUT_IGNORED',
+    ]
+  }
+  readonly naturalBuild: {
+    readonly runId: string
+    readonly imagePublished: true
+    readonly imageDigest: `sha256:${string}`
+    readonly deploymentAllowed: false
+  }
+  readonly release: {
+    readonly runId: string
+    readonly conclusion: 'CANCELLED'
+    readonly promotionCompleted: false
+    readonly rerunAllowed: false
+  }
+  readonly nextCandidatePreregistration: null
+}
+
 export interface CandidateDevelopmentLegacyPriorTrialsMaterial {
   readonly schemaVersion: 'bayn.candidate-development-prior-trials.v1'
   readonly qualificationCandidateOrdinals: readonly number[]
@@ -44,7 +94,7 @@ export interface CandidateDevelopmentPriorTrialsMaterial {
 }
 
 export interface CandidateDevelopmentTrialHistory {
-  readonly schemaVersion: 'bayn.candidate-development-trial-history.v1'
+  readonly schemaVersion: 'bayn.candidate-development-trial-history.v2'
   readonly completedCandidateOrdinals: readonly number[]
   readonly developmentCandidateOrdinals: readonly number[]
   readonly latestReviewedCandidateLegacyPriorTrials: CandidateDevelopmentLegacyPriorTrialsMaterial
@@ -64,6 +114,7 @@ export interface CandidateDevelopmentTrialHistory {
     readonly developmentMetricsObserved?: boolean
     readonly qualificationAttemptConsumed: false
   }
+  readonly latestInvalidPrecommit: CandidateDevelopmentInvalidPrecommit | null
   readonly nextCandidatePreregistration: CandidateDevelopmentNextPreregistration | null
 }
 
@@ -220,6 +271,56 @@ export const candidate20Preregistration: CandidateDevelopmentNextPreregistration
   },
 }
 
+export const candidate20PrecommitInvalidation: CandidateDevelopmentInvalidPrecommit = {
+  schemaVersion: 'bayn.candidate-development-precommit-invalidation.v1',
+  candidateOrdinal: 20,
+  priorTrialCount: 19,
+  status: 'PRECOMMIT_INVALID',
+  attemptStatus: 'UNATTEMPTED',
+  metricBearingAttemptsConsumed: 0,
+  qualificationAttemptConsumed: false,
+  reviewedHeadRevision: '82f58dd6bd6fc9849e779665873f934841b47ea7',
+  mergedSourceRevision: '69d803040c8866e7703df50a645a096c54e7eca5',
+  preregistration: {
+    sourceRevision: candidate20Preregistration.preregistration.sourceRevision,
+    path: candidate20Preregistration.preregistration.path,
+    blobOid: candidate20Preregistration.preregistration.blobOid,
+    sha256: 'e392888970d3c510e3ad20d6e982b81bf6234cd17260c8c5203013b5ce979409',
+  },
+  sourceManifest: {
+    path: 'services/bayn/candidates/ordinal-20-cross-sectional-short-term-reversal-source-manifest.json',
+    blobOid: 'def5faba5a301b8fe4daa8f0557e8d53efb4b697',
+    sha256: 'b5d9c4da95f59d4d4483fa80665de5327f4ed0b04c3afa8a94a3316b91f9e1fe',
+  },
+  invalidatedModule: {
+    path: candidate20Preregistration.modulePath,
+    blobOid: '71ae99e9303e7b79a640f185e70faa68a3048910',
+    sha256: candidate20Preregistration.moduleSha256,
+    lineCount: 123_194,
+    byteCount: 2_963_738,
+    findings: [
+      'TYPE_CHECK_DISABLED',
+      'DOWNCOMPILED_BUNDLE',
+      'EMBEDDED_OFFICIAL_SESSIONS',
+      'EMBEDDED_MARKET_BARS',
+      'RUNTIME_INPUT_IGNORED',
+    ],
+  },
+  naturalBuild: {
+    runId: '30657379582',
+    imagePublished: true,
+    imageDigest: 'sha256:28f59fb44bdb3008eecd17cf3c053098f214f3d982f26673a44a98d53f767fba',
+    deploymentAllowed: false,
+  },
+  release: {
+    runId: '30657658256',
+    conclusion: 'CANCELLED',
+    promotionCompleted: false,
+    rerunAllowed: false,
+  },
+  nextCandidatePreregistration: null,
+}
+
 export const candidate18LegacyPriorTrialsMaterial: CandidateDevelopmentLegacyPriorTrialsMaterial = {
   schemaVersion: 'bayn.candidate-development-prior-trials.v1',
   qualificationCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
@@ -284,7 +385,7 @@ export const deriveCandidateDevelopmentPriorTrialsHash = (material: CandidateDev
   canonicalHashV1Result(material)
 
 export const frozenCandidateDevelopmentTrialHistory: CandidateDevelopmentTrialHistory = {
-  schemaVersion: 'bayn.candidate-development-trial-history.v1',
+  schemaVersion: 'bayn.candidate-development-trial-history.v2',
   completedCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
   developmentCandidateOrdinals: [17, 18, 19],
   latestReviewedCandidateLegacyPriorTrials: candidate18LegacyPriorTrialsMaterial,
@@ -302,5 +403,6 @@ export const frozenCandidateDevelopmentTrialHistory: CandidateDevelopmentTrialHi
     developmentMetricsObserved: candidate19DevelopmentFailureEvidenceExpectation.developmentMetricsObserved,
     qualificationAttemptConsumed: false,
   },
-  nextCandidatePreregistration: candidate20Preregistration,
+  latestInvalidPrecommit: candidate20PrecommitInvalidation,
+  nextCandidatePreregistration: null,
 }

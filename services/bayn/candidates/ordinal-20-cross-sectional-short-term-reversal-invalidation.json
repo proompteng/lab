@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "bayn.candidate-development-precommit-invalidation.v1",
+  "candidateOrdinal": 20,
+  "priorTrialCount": 19,
+  "status": "PRECOMMIT_INVALID",
+  "attemptStatus": "UNATTEMPTED",
+  "metricBearingAttemptsConsumed": 0,
+  "qualificationAttemptConsumed": false,
+  "reviewedHeadRevision": "82f58dd6bd6fc9849e779665873f934841b47ea7",
+  "mergedSourceRevision": "69d803040c8866e7703df50a645a096c54e7eca5",
+  "preregistration": {
+    "sourceRevision": "0b0a951465e1c4644bc3fd04b7b448b8701dc609",
+    "path": "services/bayn/candidates/ordinal-20-cross-sectional-short-term-reversal-preregistration.json",
+    "blobOid": "066a4d44cd41b871cad95474eb00e411af532c76",
+    "sha256": "e392888970d3c510e3ad20d6e982b81bf6234cd17260c8c5203013b5ce979409"
+  },
+  "sourceManifest": {
+    "path": "services/bayn/candidates/ordinal-20-cross-sectional-short-term-reversal-source-manifest.json",
+    "blobOid": "def5faba5a301b8fe4daa8f0557e8d53efb4b697",
+    "sha256": "b5d9c4da95f59d4d4483fa80665de5327f4ed0b04c3afa8a94a3316b91f9e1fe"
+  },
+  "invalidatedModule": {
+    "path": "services/bayn/src/strategy/cross-sectional-short-term-reversal/candidate-20.ts",
+    "blobOid": "71ae99e9303e7b79a640f185e70faa68a3048910",
+    "sha256": "15570022245f8bba1c121c6657369d66085d6c3659aa326b50048be1ab050441",
+    "lineCount": 123194,
+    "byteCount": 2963738,
+    "findings": [
+      "TYPE_CHECK_DISABLED",
+      "DOWNCOMPILED_BUNDLE",
+      "EMBEDDED_OFFICIAL_SESSIONS",
+      "EMBEDDED_MARKET_BARS",
+      "RUNTIME_INPUT_IGNORED"
+    ]
+  },
+  "naturalBuild": {
+    "runId": "30657379582",
+    "imagePublished": true,
+    "imageDigest": "sha256:28f59fb44bdb3008eecd17cf3c053098f214f3d982f26673a44a98d53f767fba",
+    "deploymentAllowed": false
+  },
+  "release": {
+    "runId": "30657658256",
+    "conclusion": "CANCELLED",
+    "promotionCompleted": false,
+    "rerunAllowed": false
+  },
+  "nextCandidatePreregistration": null
+}

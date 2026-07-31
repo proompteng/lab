@@ -185,7 +185,7 @@ describe('Candidate 18 dual momentum preregistration', () => {
     expect(frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration).toEqual(
       candidate20Preregistration,
     )
-    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toEqual(candidate20Preregistration)
+    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toBeNull()
     expect(typeof candidateDevelopmentArtifact.buildEvaluation).toBe('function')
   })
 
@@ -258,11 +258,11 @@ describe('Candidate 18 dual momentum preregistration', () => {
     expect(preregisterCandidateDevelopmentAttempt(evidence.verifiedSource)).toMatchObject({
       failure: {
         _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
-        operation: 'verify-program-binding',
+        operation: 'verify-attempt-authorization',
         cause: {
-          field: 'trialHistory.nextCandidatePreregistration.source.candidateOrdinal',
-          expected: 20,
-          observed: 18,
+          candidateOrdinal: 20,
+          status: 'PRECOMMIT_INVALID',
+          attemptStatus: 'UNATTEMPTED',
         },
       },
     })
