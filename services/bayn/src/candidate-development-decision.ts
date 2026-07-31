@@ -6,6 +6,10 @@ export interface CandidateDevelopmentNextPreregistration {
   readonly candidateOrdinal: number
   readonly priorTrialCount: number
   readonly strategyProtocolHash: string
+  readonly strategyIdentityHash?: string
+  readonly candidateDevelopmentProtocolHash?: string
+  readonly calendarHash?: string
+  readonly priorTrialsHash?: string
   readonly modulePath: string
   readonly moduleSha256: string
   readonly marketData: {

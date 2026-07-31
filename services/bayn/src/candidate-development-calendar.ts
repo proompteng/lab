@@ -6,6 +6,7 @@ export {
   candidate17DevelopmentEligibility,
   candidate17DevelopmentEvidenceExpectation,
   candidate17Preregistration,
+  candidate18Preregistration,
   frozenCandidateDevelopmentTrialHistory,
 } from './candidate-development-trial-history'
 
