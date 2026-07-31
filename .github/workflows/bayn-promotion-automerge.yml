@@ -77,11 +77,16 @@ jobs:
 
           write_snapshot() {
             local destination="$1"
-            local pull checks checks_status checks_error
+            local pull files checks checks_status checks_error
             pull="$(
-              gh pr view "${pull_number}" \
-                -R "${GITHUB_REPOSITORY}" \
-                --json number,state,isDraft,mergeable,mergeStateStatus,headRefName,headRefOid,headRepository,baseRefName,baseRefOid,autoMergeRequest,labels,files
+              gh api "repos/${GITHUB_REPOSITORY}/pulls/${pull_number}"
+            )"
+            files="$(
+              gh api \
+                "repos/${GITHUB_REPOSITORY}/pulls/${pull_number}/files?per_page=100" \
+                --paginate \
+                --jq '.[] | {path: .filename, status: (.status | ascii_upcase)}' |
+                jq -s '.'
             )"
 
             checks_error="${RUNNER_TEMP}/bayn-promotion-automerge-checks-error"
@@ -109,24 +114,30 @@ jobs:
               --arg repository "${GITHUB_REPOSITORY}" \
               --arg default_branch_sha "${TRUSTED_MAIN_SHA}" \
               --argjson pull "${pull}" \
+              --argjson files "${files}" \
               --argjson checks "${checks}" \
               '{
                 repository: $repository,
                 defaultBranchSha: $default_branch_sha,
                 pullRequest: {
                   number: $pull.number,
-                  state: $pull.state,
-                  isDraft: $pull.isDraft,
-                  mergeable: $pull.mergeable,
-                  mergeStateStatus: $pull.mergeStateStatus,
-                  headRefName: $pull.headRefName,
-                  headRefOid: $pull.headRefOid,
-                  headRepository: ($pull.headRepository.nameWithOwner // ""),
-                  baseRefName: $pull.baseRefName,
-                  baseRefOid: $pull.baseRefOid,
-                  autoMergeEnabled: ($pull.autoMergeRequest != null),
+                  state: ($pull.state | ascii_upcase),
+                  isDraft: $pull.draft,
+                  mergeable: (
+                    if $pull.mergeable == true then "MERGEABLE"
+                    elif $pull.mergeable == false then "CONFLICTING"
+                    else "UNKNOWN"
+                    end
+                  ),
+                  mergeStateStatus: ($pull.mergeable_state | ascii_upcase),
+                  headRefName: $pull.head.ref,
+                  headRefOid: $pull.head.sha,
+                  headRepository: ($pull.head.repo.full_name // ""),
+                  baseRefName: $pull.base.ref,
+                  baseRefOid: $pull.base.sha,
+                  autoMergeEnabled: ($pull.auto_merge != null),
                   labels: [$pull.labels[]?.name],
-                  files: [$pull.files[] | {path, status: .changeType}]
+                  files: $files
                 },
                 checks: [$checks[] | {workflow, name, state, link}]
               }' > "${destination}"
