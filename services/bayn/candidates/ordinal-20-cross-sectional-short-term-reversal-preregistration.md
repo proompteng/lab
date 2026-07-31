@@ -22,8 +22,6 @@ The family is a precommitted, falsifiable extrapolation of documented short-hori
 1. Narasimhan Jegadeesh, _Evidence of Predictable Behavior of Security Returns_, DOI `10.1111/j.1540-6261.1990.tb05110.x`, https://doi.org/10.1111/j.1540-6261.1990.tb05110.x
 2. Bruce N. Lehmann, _Fads, Martingales, and Market Efficiency_, DOI `10.2307/2937816`, https://doi.org/10.2307/2937816
 3. Andrew W. Lo and A. Craig MacKinlay, _When Are Contrarian Profits Due to Stock Market Overreaction?_, DOI `10.1093/rfs/3.2.175`, https://doi.org/10.1093/rfs/3.2.175
-4. Don R. Cox and David R. Peterson, _Stock Returns Following Large One-Day Declines: Evidence on Short-Term Reversals and Longer-Term Performance_, DOI `10.1111/j.1540-6261.1994.tb04428.x`, https://doi.org/10.1111/j.1540-6261.1994.tb04428.x
-
 The classic evidence concerns individual securities and shorter horizons. Applying a fixed 21-session loser rule to the frozen cross-asset ETF witness is therefore explicitly an unvalidated hypothesis, not a claimed replication. The 21-session horizon is one trading month; the fixed two-selection limit and 50% per-selection weight bound gross exposure without fitting covariance or volatility. No alternate horizon, rank rule, sign gate, selection count, weight, universe, fallback, or tie-break may be tried after any development metric is observed.
 
 ## Result-blind strategy specification
@@ -40,12 +38,14 @@ At each finalized official month-end close:
 
 This behavior is not reachable from prior executable candidate history. Candidate 17 applies positive trend with volatility management; Candidate 18 selects relative and absolute momentum winners; Candidate 19 ignores return ranking and allocates by inverse volatility. Candidate 20 instead selects strictly negative-return losers with fixed weights and no risk-estimate weighting.
 
-Canonical strategy-identity hash: `be3040409761f0a8a8d6ba7477f258ac88a5f6c1e3bcc14ae82ef8fadf7f35c9`.
+The closed command schema is not broadened. Candidate 20 uses only the established `bayn.candidate-development-strategy-identity.v2` fields. Its historical `family` discriminator and the structured covariance/target-volatility compatibility fields are non-operative wire metadata; the candidate-specific identifier, weighting, risk-scaling description, protocol hash, and executable planner bind the materially distinct reversal behavior.
+
+Canonical strategy-identity hash: `8c99589120d8f3ed36c5286ce119d20490d42becd014e7fc2cc97b1420600278`.
 
 ## Frozen development protocol
 
-- Strategy protocol hash: `3e6348f0e5740d1aa13edbfdb12ff2099c76dd9b54c15df5107c23fac69b2084`.
-- Candidate-development protocol hash: `9bea8348dd06dd60a171eb371e50f42f524c009c0ef0778a117aa3061e953b51`.
+- Strategy protocol hash: `18b61d027e2235c7fc8ba718313ae8863650c2cb7c497dc4a7a5028829d19e0f`.
+- Candidate-development protocol hash: `f7d4d78e70401c01c141fc7b63c4c1cfe9e7350b973c40ffbd7d8fe9832b332f`.
 - Calendar: Alpaca US-equity calendar v1, `2016-01-04..2022-12-30`, exactly 1,762 sessions, canonical hash `4b2f519f336e4e730c1f0d69e860f25a8d4d0cfbd8e93c6b333ea83623d87237`.
 - First causal execution after the 21-session feature window: signal `2016-02-29`, execution `2016-03-01`.
 - Selected governed observation window: `2017-02-02..2022-12-30`, 1,489 sessions, five unchanged expanding-origin folds.
@@ -60,7 +60,7 @@ Canonical strategy-identity hash: `be3040409761f0a8a8d6ba7477f258ac88a5f6c1e3bcc
 ## Executable and source-manifest binding
 
 - Module path: `services/bayn/src/strategy/cross-sectional-short-term-reversal/candidate-20.ts`.
-- Precommitted module SHA-256: `9b217b3086094e52119a357b0de6b4cfe504b523fc3577f7109680b21d25132a`.
+- Precommitted module SHA-256: `15570022245f8bba1c121c6657369d66085d6c3659aa326b50048be1ab050441`.
 - Source-manifest path: `services/bayn/candidates/ordinal-20-cross-sectional-short-term-reversal-source-manifest.json`.
 - Module format: self-contained ESM with no imports.
 
