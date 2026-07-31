@@ -214,7 +214,7 @@ export const candidate20Preregistration: CandidateDevelopmentNextPreregistration
   moduleSha256: '15570022245f8bba1c121c6657369d66085d6c3659aa326b50048be1ab050441',
   marketData: candidate19Preregistration.marketData,
   preregistration: {
-    sourceRevision: 'ed336db4dfbd6b7e502294beb936eabb55152f25',
+    sourceRevision: '0b0a951465e1c4644bc3fd04b7b448b8701dc609',
     path: 'services/bayn/candidates/ordinal-20-cross-sectional-short-term-reversal-preregistration.json',
     blobOid: '066a4d44cd41b871cad95474eb00e411af532c76',
   },

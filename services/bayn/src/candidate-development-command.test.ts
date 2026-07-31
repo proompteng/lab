@@ -91,7 +91,7 @@ const execFileBytesPromise = (file: string, args: readonly string[], cwd: string
     })
   })
 
-const candidate20PreregistrationRevision = 'ed336db4dfbd6b7e502294beb936eabb55152f25'
+const candidate20PreregistrationRevision = '0b0a951465e1c4644bc3fd04b7b448b8701dc609'
 const candidate20PreregistrationPath =
   'services/bayn/candidates/ordinal-20-cross-sectional-short-term-reversal-preregistration.json'
 const candidate20PreregistrationBlobOid = '066a4d44cd41b871cad95474eb00e411af532c76'
