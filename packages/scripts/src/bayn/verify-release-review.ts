@@ -1998,7 +1998,11 @@ const validateReleaseReviewRemediation = (input: {
       return remediationInvalid(`remediation ${record.remediationId} completion record mutation is not exact`)
     }
     const completionReview = input.normalReviews.get(completion.sha)
-    if (completionReview?.status !== 'eligible') {
+    if (completionReview === undefined) {
+      return remediationInvalid(`remediation ${record.remediationId} completion commit lacks exact-head review`)
+    }
+    if (completionReview.status === 'hold') {
+      if (completionReview.retryable) return completionReview
       return remediationInvalid(`remediation ${record.remediationId} completion commit lacks exact-head review`)
     }
     const introductionNormalReview = input.normalReviews.get(introduction.sha)

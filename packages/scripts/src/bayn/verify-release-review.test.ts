@@ -1563,7 +1563,13 @@ const multiStageRemediationFixture = (): {
     prNumber: 13437,
     headSha: multiStageHistory.completionHead,
     parents: [multiStageHistory.candidate19],
-    mergedAt: '2026-07-31T18:05:00Z',
+    mergedAt: '2026-07-31T18:01:30Z',
+    reviews: [
+      review({
+        commitSha: multiStageHistory.completionHead,
+        submittedAt: '2026-07-31T18:01:00Z',
+      }),
+    ],
   })
   const successorRecord = record.requiredSuccessors?.[0]
   const successorPull = successorPulls.get(multiStageHistory.successor)
@@ -1899,13 +1905,93 @@ describe('Bayn publication-range eligibility', () => {
     ).toMatchObject({ code: 'release-review-remediation-invalid', retryable: false })
   })
 
-  test('rejects v3 remediation when the completion commit is not exact-head reviewed', () => {
+  test('keeps a missing completion exact-head review retryable', () => {
     const fixture = multiStageRemediationFixture()
     const pull = fixture.snapshot.comparison?.commits.find((commit) => commit.sha === multiStageHistory.completionMerge)
       ?.reviewSnapshot?.pullRequest
     if (pull === undefined || pull === null) throw new Error('missing completion pull')
     ;(pull.reviews as PullRequestReview[]).splice(0)
     ;(pull.reactions as PullRequestReaction[]).splice(0)
+    expect(
+      requireEligibilityHold(
+        evaluateBaynReleaseEligibility({
+          mainCommitSha: multiStageHistory.completionMerge,
+          baseRefName: 'main',
+          snapshot: fixture.snapshot,
+          nowMs: Date.parse('2026-07-31T18:02:00Z'),
+          pushBeforeSha: multiStageHistory.candidate19,
+        }),
+      ),
+    ).toMatchObject({ code: 'exact-head-review-missing', retryable: true })
+  })
+
+  test('keeps a pending completion exact-head review retryable', () => {
+    const fixture = multiStageRemediationFixture()
+    const pull = fixture.snapshot.comparison?.commits.find((commit) => commit.sha === multiStageHistory.completionMerge)
+      ?.reviewSnapshot?.pullRequest
+    if (pull === undefined || pull === null) throw new Error('missing completion pull')
+    ;(pull.reviews as PullRequestReview[]).splice(
+      0,
+      pull.reviews.length,
+      review({
+        commitSha: multiStageHistory.completionHead,
+        submittedAt: null,
+        state: 'PENDING',
+      }),
+    )
+    expect(
+      requireEligibilityHold(
+        evaluateBaynReleaseEligibility({
+          mainCommitSha: multiStageHistory.completionMerge,
+          baseRefName: 'main',
+          snapshot: fixture.snapshot,
+          nowMs: Date.parse('2026-07-31T18:02:00Z'),
+          pushBeforeSha: multiStageHistory.candidate19,
+        }),
+      ),
+    ).toMatchObject({ code: 'exact-head-review-pending', retryable: true })
+  })
+
+  test('keeps a settling completion exact-head review retryable', () => {
+    const fixture = multiStageRemediationFixture()
+    const pull = fixture.snapshot.comparison?.commits.find((commit) => commit.sha === multiStageHistory.completionMerge)
+      ?.reviewSnapshot?.pullRequest
+    if (pull === undefined || pull === null) throw new Error('missing completion pull')
+    ;(pull.reviews as PullRequestReview[]).splice(
+      0,
+      pull.reviews.length,
+      review({
+        commitSha: multiStageHistory.completionHead,
+        submittedAt: '2026-07-31T18:01:50Z',
+      }),
+    )
+    expect(
+      requireEligibilityHold(
+        evaluateBaynReleaseEligibility({
+          mainCommitSha: multiStageHistory.completionMerge,
+          baseRefName: 'main',
+          snapshot: fixture.snapshot,
+          nowMs: Date.parse('2026-07-31T18:02:00Z'),
+          pushBeforeSha: multiStageHistory.candidate19,
+        }),
+      ),
+    ).toMatchObject({ code: 'exact-head-review-settling', retryable: true })
+  })
+
+  test('keeps a changes-requested completion review terminal', () => {
+    const fixture = multiStageRemediationFixture()
+    const pull = fixture.snapshot.comparison?.commits.find((commit) => commit.sha === multiStageHistory.completionMerge)
+      ?.reviewSnapshot?.pullRequest
+    if (pull === undefined || pull === null) throw new Error('missing completion pull')
+    ;(pull.reviews as PullRequestReview[]).splice(
+      0,
+      pull.reviews.length,
+      review({
+        commitSha: multiStageHistory.completionHead,
+        submittedAt: '2026-07-31T18:01:00Z',
+        state: 'CHANGES_REQUESTED',
+      }),
+    )
     expect(
       requireEligibilityHold(
         evaluateBaynReleaseEligibility({
