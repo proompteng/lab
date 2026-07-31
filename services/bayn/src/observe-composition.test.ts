@@ -21,6 +21,7 @@ import { MutationOperation } from './broker/alpaca-mutations'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from './broker/identity'
 import {
   CycleState,
+  CycleTerminalReason,
   decodeAutonomousCycle,
   makeCycleDraft,
   makeCycleExecutionPolicyFromModel,
@@ -30,6 +31,8 @@ import {
 } from './cycle'
 import { makeStrategyProtocolHash } from './contracts'
 import { CycleStore, type CycleStoreShape } from './db/cycle-store'
+import { decideCompletion, validateCompletionDocument } from './db/cycle-store/decisions'
+import { attachCycleDecisionStoreEvidence, cycleDecisionStoreEvidence } from './db/cycle-store/model'
 import type { BrokerSnapshot, ReconciliationWriteResult } from './db/reconciliation'
 import {
   BrokerEventStore,
@@ -48,7 +51,7 @@ import {
 } from './db/execution-store'
 import { operationalError, type OperationalError } from './errors'
 import { BrokerAccess, makeExecutionAuthority, sandboxCapitalAuthority } from './execution/authority'
-import { IntentStore, type IntentStoreService } from './execution/intents'
+import { IntentStore, planPaperIntent, type IntentStoreService, type StoredIntent } from './execution/intents'
 import { MutationEventType, MutationStore, type MutationEvent, type MutationStoreShape } from './execution/mutations'
 import type { ExecutionProgram } from './execution/runtime-program'
 import { WriterFence, WriterFenceError, type WriterFenceService } from './execution/writer-fence'
@@ -58,10 +61,17 @@ import {
   buildMutationShadowCycleDecision,
   buildObserveCycleDecision,
   appendPendingMutationOrder,
+  decidePaperCycleCompletion,
   decidePreparedMutationIntent,
+  decidePreparedMutationIntentAdmission,
+  decidePreparedMutationRecovery,
   decideMutationIntentSettlement,
   executeMutationIntent,
+  expiredPaperPlanTerminalReason,
+  mutationRecoveryIsDue,
   mutationIntentReconciliationDelayMs,
+  paperSubmitExpiresAt,
+  prepareNextMutationIntent,
   projectWorstCasePendingMutationPosition,
   loadObserveRiskPolicy,
   makeMutationAutonomousCycleStartup,
@@ -87,7 +97,9 @@ import {
 } from './paper'
 import { ReconciliationError, type ReconciliationPassResult } from './reconciler'
 import { reconciledStateHash } from './reconciliation'
-import { Reason } from './risk'
+import { Reason, type Policy } from './risk'
+import { decodePaperDecisionDocument, makePaperDecisionDocument } from './shadow-decision-contract'
+import { TargetPlanStatus } from './target-planner'
 import { fixtureProtocol, makeSnapshot } from './test-fixtures'
 import type { DecisionPlan, IsoDate } from './types'
 
@@ -421,6 +433,177 @@ const sandboxExecutionProgram = (
   }
 }
 
+const paperLifecycleFixture = async (transformPolicy: (policy: Policy) => Policy = (policy) => policy) => {
+  const input = {
+    accountId,
+    authorityGenerationHash: generationHash,
+    pollIntervalMs: 30_000,
+    reconciliationIntervalMs: 30_000,
+    reconciliationPassTimeoutMs: 30_000,
+    strategy: fixtureStrategy,
+    executionProgram: sandboxExecutionProgram(),
+  } as const
+  const preparation = Result.getOrThrow(prepareObserveStartup(input))
+  const policy = transformPolicy(await Effect.runPromise(loadObserveRiskPolicy(accountId, fixtureProtocol.universe)))
+  const document = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(evaluatedAt))
+      return yield* buildMutationShadowCycleDecision({
+        authorityGenerationHash: generationHash,
+        cycle,
+        executionModel: fixtureProtocol.executionModel,
+        policy,
+        reconcile: Effect.succeed(reconciliationResult(generationHash, Authority.Paper)),
+        strategy: { currentDecision: () => Result.succeed({ decision, priceMicros }) },
+      })
+    }).pipe(
+      (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
+      Effect.provide(TestClock.layer()),
+    ),
+  )
+  const boundCycle = Effect.runSync(
+    decodeAutonomousCycle({
+      ...cycle,
+      bindings: { ...cycle.bindings, decisionHash: document.contentHash },
+      stateVersion: cycle.stateVersion + 1,
+      updatedAt: document.createdAt,
+    }),
+  )
+  const target = document.targetPlan.intentTargets[0]
+  const risk = document.deltaRisk[0]
+  if (target === undefined || risk === undefined) {
+    throw new Error('PAPER lifecycle fixture requires one planned intent')
+  }
+  const intent = await Effect.runPromise(
+    planPaperIntent(
+      {
+        schemaVersion: 'bayn.paper-intent-plan.v1',
+        ...target,
+        notionalLimitMicros: risk.notionalLimitMicros,
+        createdAt: document.createdAt,
+      },
+      {
+        authority: {
+          schemaVersion: 'bayn.paper-authority.v1',
+          generationHash,
+          maximum: Authority.Paper,
+          effective: Authority.Paper,
+          kill: KillState.Clear,
+          version: 1,
+          updatedAt: document.createdAt,
+        },
+      },
+    ),
+  )
+  return { boundCycle, document, input, intent, policy, preparation, risk }
+}
+
+const reconciliationResultAt = (
+  observedAt: string,
+  unknownMutationCount = 0,
+  unknownOrderCount = 0,
+): ReconciliationPassResult => {
+  const result = reconciliationResult(generationHash, Authority.Paper)
+  const authority = result.riskContext.authority
+  if (authority === null) throw new Error('post-cutoff reconciliation fixture requires PAPER authority')
+  const exact = { ...result.report.reconciliation, reconciledAt: observedAt }
+  return {
+    report: {
+      ...result.report,
+      reconciliation: exact,
+    },
+    brokerState: {
+      ...result.brokerState,
+      positionsObservedAt: observedAt,
+      ordersObservedAt: observedAt,
+      reconciliation: exact,
+      unknownOrderCount,
+    },
+    riskContext: {
+      tradingDate: result.riskContext.tradingDate,
+      dailyTradedNotionalMicros: result.riskContext.dailyTradedNotionalMicros,
+      dayStartEquityMicros: result.riskContext.dayStartEquityMicros,
+      peakEquityMicros: result.riskContext.peakEquityMicros,
+      authority,
+      authorityObservedAt: observedAt,
+      unknownMutationCount,
+    },
+  }
+}
+
+const storedIntent = (
+  intent: Intent,
+  state: IntentState,
+  updatedAt: string,
+  terminalOutcome?: TerminalOutcome,
+): StoredIntent => ({
+  intent: {
+    ...intent,
+    state,
+    ...(terminalOutcome === undefined ? {} : { terminalOutcome }),
+  },
+  stateVersion: 2,
+  updatedAt,
+})
+
+const prepareStoredPaperStep = async (
+  fixture: Awaited<ReturnType<typeof paperLifecycleFixture>>,
+  record: StoredIntent,
+  latest: MutationEvent | undefined,
+  observedAt: string,
+  unknownMutationCount = 0,
+  onRestriction: (reason: string, updatedAt: string) => void = () => undefined,
+  input: typeof fixture.input = fixture.input,
+  latestCancel?: MutationEvent,
+  allowSubmit = true,
+  policy: Policy = fixture.policy,
+  preparation = fixture.preparation,
+) => {
+  const intentStore: IntentStoreService = {
+    commit: () => Effect.succeed({ record, deduplicated: true }),
+    read: () => Effect.succeed(Option.some(record)),
+  }
+  const mutationStore = {
+    latest: (_intentId: string, operation: MutationOperation) =>
+      Effect.succeed(operation === MutationOperation.Submit ? latest : latestCancel),
+  } as unknown as MutationStoreShape
+  const authorityRestrictionStore: AuthorityRestrictionStoreShape = {
+    restrictAuthority: (reason, updatedAt) => Effect.sync(() => onRestriction(reason, updatedAt)),
+  }
+  const writerFence: WriterFenceService = {
+    backendPid: 1,
+    check: Effect.void,
+    transaction: (effect) => effect,
+  }
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(observedAt))
+      return yield* prepareNextMutationIntent(
+        input,
+        preparation,
+        policy,
+        fixture.boundCycle,
+        fixture.document,
+        Effect.succeed(reconciliationResultAt(observedAt, unknownMutationCount)),
+        allowSubmit,
+      )
+    }).pipe(
+      Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+      Effect.provideService(MarketData, marketData([])),
+      Effect.provideService(IntentStore, intentStore),
+      Effect.provideService(MutationStore, mutationStore),
+      Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
+      Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
+      Effect.provideService(ValuationStore, {} as ValuationStoreShape),
+      Effect.provideService(ReconciliationStore, {} as ReconciliationStoreShape),
+      Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
+      Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
+      Effect.provideService(WriterFence, writerFence),
+      Effect.provide(TestClock.layer()),
+    ),
+  )
+}
+
 describe('OBSERVE runtime composition', () => {
   test('projects accepted nonterminal intents as one unresolved order for the next risk pass', () => {
     const intent: Intent = {
@@ -456,7 +639,6 @@ describe('OBSERVE runtime composition', () => {
       brokerOrderId: 'accepted-broker-order',
       occurredAt: evaluatedAt,
     }
-
     const decision = Result.getOrThrow(decidePreparedMutationIntent(intent, accepted))
     expect(decision._tag).toBe('Pending')
     if (decision._tag !== 'Pending') return expect.unreachable(decision._tag)
@@ -493,7 +675,7 @@ describe('OBSERVE runtime composition', () => {
       createdAt: evaluatedAt,
     }
 
-    expect(Result.getOrThrow(decidePreparedMutationIntent(base, undefined))).toEqual({ _tag: 'Execute' })
+    expect(Result.getOrThrow(decidePreparedMutationIntent(base, undefined))).toEqual({ _tag: 'Submit' })
     expect(
       Result.getOrThrow(
         decidePreparedMutationIntent(
@@ -502,6 +684,242 @@ describe('OBSERVE runtime composition', () => {
         ),
       ),
     ).toEqual({ _tag: 'SkipTerminal' })
+  })
+
+  test('allows lookup recovery after authority restriction and cutoff while forbidding every fresh submit', () => {
+    const recover = {
+      _tag: 'Recover' as const,
+      eventType: MutationEventType.SubmitUnknown,
+    }
+    expect(
+      Result.isSuccess(
+        decidePreparedMutationIntentAdmission(
+          recover,
+          Authority.Observe,
+          cycle.window.submissionCutoffAt,
+          cycle.window.submissionCutoffAt,
+          1,
+        ),
+      ),
+    ).toBe(true)
+
+    const submit = { _tag: 'Submit' as const }
+    expect(
+      Option.getOrUndefined(
+        Result.getFailure(
+          decidePreparedMutationIntentAdmission(
+            submit,
+            Authority.Observe,
+            evaluatedAt,
+            cycle.window.submissionCutoffAt,
+            0,
+          ),
+        ),
+      )?.reason,
+    ).toBe('authority')
+    expect(
+      Option.getOrUndefined(
+        Result.getFailure(
+          decidePreparedMutationIntentAdmission(
+            submit,
+            Authority.Paper,
+            cycle.window.submissionCutoffAt,
+            cycle.window.submissionCutoffAt,
+            0,
+          ),
+        ),
+      )?.reason,
+    ).toBe('expiry')
+    expect(
+      Option.getOrUndefined(
+        Result.getFailure(
+          decidePreparedMutationIntentAdmission(
+            submit,
+            Authority.Paper,
+            evaluatedAt,
+            cycle.window.submissionCutoffAt,
+            1,
+          ),
+        ),
+      )?.reason,
+    ).toBe('unknown-mutation')
+    expect(
+      Option.getOrUndefined(
+        Result.getFailure(
+          decidePreparedMutationIntentAdmission(
+            submit,
+            Authority.Paper,
+            evaluatedAt,
+            cycle.window.submissionCutoffAt,
+            0,
+            ReconciliationStatus.Discrepancy,
+          ),
+        ),
+      )?.reason,
+    ).toBe('reconciliation-not-exact')
+    expect(
+      Option.getOrUndefined(
+        Result.getFailure(
+          decidePreparedMutationIntentAdmission(
+            submit,
+            Authority.Paper,
+            evaluatedAt,
+            cycle.window.submissionCutoffAt,
+            0,
+            ReconciliationStatus.Exact,
+            false,
+          ),
+        ),
+      )?.reason,
+    ).toBe('accounting-inexact')
+    expect(
+      Option.getOrUndefined(
+        Result.getFailure(
+          decidePreparedMutationIntentAdmission(
+            submit,
+            Authority.Paper,
+            evaluatedAt,
+            cycle.window.submissionCutoffAt,
+            0,
+            ReconciliationStatus.Exact,
+            true,
+            1,
+          ),
+        ),
+      )?.reason,
+    ).toBe('unknown-order')
+  })
+
+  test('keeps OBSERVE recovery-only execution lookup-capable while fresh submit remains structurally unavailable', async () => {
+    const fixture = await paperLifecycleFixture()
+    const occurredAt = fixture.document.createdAt
+    const observedAt = new Date(Date.parse(occurredAt) + 1_000).toISOString()
+    const submitUnknown: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '1'.repeat(64),
+      mutationId: '2'.repeat(64),
+      intentId: fixture.intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitUnknown,
+      requestHash: '3'.repeat(64),
+      consistencyDelayMs: 1_000,
+      occurredAt,
+    }
+    const cancelUnknown: MutationEvent = {
+      ...submitUnknown,
+      eventId: '4'.repeat(64),
+      mutationId: '5'.repeat(64),
+      operation: MutationOperation.Cancel,
+      eventType: MutationEventType.CancelUnknown,
+      requestHash: '6'.repeat(64),
+      brokerOrderId: 'recovery-only-order',
+    }
+
+    const recovery = await prepareStoredPaperStep(
+      fixture,
+      storedIntent(fixture.intent, IntentState.Unknown, occurredAt),
+      submitUnknown,
+      observedAt,
+      1,
+      () => undefined,
+      fixture.input,
+      cancelUnknown,
+      false,
+    )
+    expect(recovery).toEqual({
+      _tag: 'Execute',
+      action: 'RECOVER_CANCEL',
+      intentId: fixture.intent.intentId,
+      observedAt,
+    })
+
+    let commits = 0
+    const intentStore: IntentStoreService = {
+      commit: () =>
+        Effect.sync(() => {
+          commits += 1
+          throw new Error('OBSERVE recovery-only execution must not commit a fresh PAPER intent')
+        }),
+      read: () => Effect.succeed(Option.none()),
+    }
+    const mutationStore = {
+      latest: () => Effect.succeed(undefined),
+    } as unknown as MutationStoreShape
+    const waiting = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(observedAt))
+        return yield* prepareNextMutationIntent(
+          fixture.input,
+          fixture.preparation,
+          fixture.policy,
+          fixture.boundCycle,
+          fixture.document,
+          Effect.die(new Error('OBSERVE recovery-only execution must not reconcile before refusing fresh submit')),
+          false,
+        )
+      }).pipe(
+        Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+        Effect.provideService(MarketData, marketData([])),
+        Effect.provideService(IntentStore, intentStore),
+        Effect.provideService(MutationStore, mutationStore),
+        Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
+        Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
+        Effect.provideService(ValuationStore, {} as ValuationStoreShape),
+        Effect.provideService(ReconciliationStore, {} as ReconciliationStoreShape),
+        Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
+        Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
+        Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+    expect(waiting).toEqual({ _tag: 'Wait', observedAt })
+    expect(commits).toBe(0)
+  })
+
+  test('completes PAPER only after every intent is filled and a later exact reconciliation closes unknowns', () => {
+    const intentUpdatedAt = '2020-05-01T12:45:03.000Z'
+    const laterReconciliation = {
+      status: ReconciliationStatus.Exact,
+      reconciledAt: '2020-05-01T12:45:04.000Z',
+      accountingExact: true,
+      unknownMutationCount: 0,
+      unknownOrderCount: 0,
+    } as const
+    const filled = {
+      state: IntentState.Terminal,
+      terminalOutcome: TerminalOutcome.Filled,
+      updatedAt: intentUpdatedAt,
+      latestMutationAt: intentUpdatedAt,
+    } as const
+
+    expect(
+      decidePaperCycleCompletion(
+        evaluatedAt,
+        [{ ...filled, state: IntentState.Acknowledged, terminalOutcome: undefined }],
+        laterReconciliation,
+      ),
+    ).toEqual({ _tag: 'Wait', reason: 'intent-nonterminal' })
+    expect(
+      decidePaperCycleCompletion(
+        evaluatedAt,
+        [{ ...filled, terminalOutcome: TerminalOutcome.Rejected }],
+        laterReconciliation,
+      ),
+    ).toEqual({ _tag: 'Wait', reason: 'intent-unsuccessful' })
+    expect(
+      decidePaperCycleCompletion(evaluatedAt, [filled], {
+        ...laterReconciliation,
+        reconciledAt: intentUpdatedAt,
+      }),
+    ).toEqual({ _tag: 'Wait', reason: 'reconciliation-not-later' })
+    expect(
+      decidePaperCycleCompletion(evaluatedAt, [filled], {
+        ...laterReconciliation,
+        unknownMutationCount: 1,
+      }),
+    ).toEqual({ _tag: 'Wait', reason: 'unknown-mutation' })
+    expect(decidePaperCycleCompletion(evaluatedAt, [filled], laterReconciliation)).toEqual({ _tag: 'Complete' })
   })
 
   test('retains an unfilled sell while reserving a later buy in projected risk positions', () => {
@@ -570,12 +988,14 @@ describe('OBSERVE runtime composition', () => {
       mutationIntentReconciliationDelayMs({
         settlement: { _tag: 'Settled', outcome: 'accepted' },
         consistencyDelayMs: 1_250,
+        operation: MutationOperation.Submit,
       }),
     ).toBe(1_250)
     expect(
       mutationIntentReconciliationDelayMs({
         settlement: { _tag: 'Settled', outcome: 'rejected' },
         consistencyDelayMs: 1_250,
+        operation: MutationOperation.Submit,
       }),
     ).toBe(0)
   })
@@ -617,14 +1037,885 @@ describe('OBSERVE runtime composition', () => {
     } as unknown as MutationStoreShape
 
     await Effect.runPromise(
-      Effect.forEach([rejectedIntentId, laterIntentId], (intentId) => executeMutationIntent(program, intentId), {
-        concurrency: 1,
-        discard: true,
-      }).pipe(Effect.provideService(MutationStore, store)),
+      Effect.forEach(
+        [rejectedIntentId, laterIntentId],
+        (intentId) => executeMutationIntent(program, intentId, 'SUBMIT', '9999-12-31T23:59:59.999Z'),
+        {
+          concurrency: 1,
+          discard: true,
+        },
+      ).pipe(Effect.provideService(MutationStore, store)),
     )
 
     expect(submitted).toEqual([laterIntentId])
     expect(recoveries).toBe(0)
+  })
+
+  test('recovers accepted and unknown submits and cancellations by lookup only without mutation dispatch', async () => {
+    const intentId = 'd'.repeat(64)
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: 'e'.repeat(64),
+      mutationId: 'f'.repeat(64),
+      intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: '1'.repeat(64),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'accepted-broker-order',
+      occurredAt: evaluatedAt,
+    }
+    const unknownEvent: MutationEvent = {
+      ...accepted,
+      eventId: '2'.repeat(64),
+      eventType: MutationEventType.SubmitUnknown,
+      brokerOrderId: undefined,
+    }
+    const cancelAccepted: MutationEvent = {
+      ...accepted,
+      eventId: '3'.repeat(64),
+      mutationId: '4'.repeat(64),
+      operation: MutationOperation.Cancel,
+      eventType: MutationEventType.CancelAccepted,
+      requestHash: '5'.repeat(64),
+    }
+    const cancelUnknown: MutationEvent = {
+      ...cancelAccepted,
+      eventId: '6'.repeat(64),
+      eventType: MutationEventType.CancelUnknown,
+    }
+    const dueAt = new Date(Date.parse(evaluatedAt) + accepted.consistencyDelayMs).toISOString()
+    expect(mutationRecoveryIsDue(accepted, new Date(Date.parse(dueAt) - 1).toISOString())).toBe(false)
+    expect(mutationRecoveryIsDue(accepted, dueAt)).toBe(true)
+    expect(paperSubmitExpiresAt(cycle.window.submissionCutoffAt, evaluatedAt)).toBe(evaluatedAt)
+    expect(paperSubmitExpiresAt(evaluatedAt, cycle.window.submissionCutoffAt)).toBe(evaluatedAt)
+
+    let submits = 0
+    let cancels = 0
+    const recoveries: MutationOperation[] = []
+    const program: ExecutionProgram = {
+      ...sandboxExecutionProgram(),
+      submit: () =>
+        Effect.sync(() => {
+          submits += 1
+          return accepted
+        }),
+      cancel: () =>
+        Effect.sync(() => {
+          cancels += 1
+          return cancelAccepted
+        }),
+      recover: (_intentId, operation) =>
+        Effect.sync(() => {
+          recoveries.push(operation)
+          return {
+            ...(operation === MutationOperation.Submit ? accepted : cancelAccepted),
+            eventId: canonicalHashV1({ intentId, operation, eventType: MutationEventType.RecoveryFound }),
+            eventType: MutationEventType.RecoveryFound,
+          }
+        }),
+    }
+    let latestSubmit: MutationEvent | undefined = accepted
+    let latestCancel: MutationEvent | undefined
+    const store = {
+      latest: (_intentId: string, operation: MutationOperation) =>
+        Effect.succeed(operation === MutationOperation.Submit ? latestSubmit : latestCancel),
+    } as unknown as MutationStoreShape
+
+    await Effect.runPromise(
+      executeMutationIntent(program, intentId, 'RECOVER_SUBMIT').pipe(Effect.provideService(MutationStore, store)),
+    )
+    latestSubmit = unknownEvent
+    await Effect.runPromise(
+      executeMutationIntent(program, intentId, 'RECOVER_SUBMIT').pipe(Effect.provideService(MutationStore, store)),
+    )
+    latestCancel = cancelAccepted
+    await Effect.runPromise(
+      executeMutationIntent(program, intentId, 'RECOVER_CANCEL').pipe(Effect.provideService(MutationStore, store)),
+    )
+    latestCancel = cancelUnknown
+    await Effect.runPromise(
+      executeMutationIntent(program, intentId, 'RECOVER_CANCEL').pipe(Effect.provideService(MutationStore, store)),
+    )
+
+    expect(submits).toBe(0)
+    expect(cancels).toBe(0)
+    expect(recoveries).toEqual([
+      MutationOperation.Submit,
+      MutationOperation.Submit,
+      MutationOperation.Cancel,
+      MutationOperation.Cancel,
+    ])
+
+    const missingStore = {
+      latest: () => Effect.succeed(undefined),
+    } as unknown as MutationStoreShape
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        executeMutationIntent(program, intentId, 'RECOVER_SUBMIT').pipe(
+          Effect.provideService(MutationStore, missingStore),
+        ),
+      ),
+    )
+    expect(failure).toMatchObject({
+      failure: 'contract',
+      message: 'lookup-only PAPER recovery lost its durable submit evidence',
+    })
+    const cancelFailure = await Effect.runPromise(
+      Effect.flip(
+        executeMutationIntent(program, intentId, 'RECOVER_CANCEL').pipe(
+          Effect.provideService(MutationStore, missingStore),
+        ),
+      ),
+    )
+    expect(cancelFailure).toMatchObject({
+      failure: 'contract',
+      message: 'lookup-only PAPER recovery lost its durable cancel evidence',
+    })
+    expect(submits).toBe(0)
+    expect(cancels).toBe(0)
+  })
+
+  test('keeps an accepted pending intent lookup-recoverable after its immutable submission cutoff', async () => {
+    const fixture = await paperLifecycleFixture()
+    const afterCutoff = new Date(Date.parse(fixture.document.submissionCutoffAt) + 1_000).toISOString()
+    const record = storedIntent(fixture.intent, IntentState.Acknowledged, fixture.document.createdAt)
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '1'.repeat(64),
+      mutationId: '2'.repeat(64),
+      intentId: fixture.intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: '3'.repeat(64),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'accepted-past-cutoff',
+      occurredAt: fixture.document.createdAt,
+    }
+
+    const step = await prepareStoredPaperStep(fixture, record, accepted, afterCutoff)
+
+    expect(step).toEqual({
+      _tag: 'Execute',
+      action: 'RECOVER_SUBMIT',
+      intentId: fixture.intent.intentId,
+      observedAt: afterCutoff,
+    })
+  })
+
+  test('keeps an unknown submit lookup-recoverable after its immutable submission cutoff', async () => {
+    const fixture = await paperLifecycleFixture()
+    const afterCutoff = new Date(Date.parse(fixture.document.submissionCutoffAt) + 1_000).toISOString()
+    const record = storedIntent(fixture.intent, IntentState.Unknown, fixture.document.createdAt)
+    const unknown: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '4'.repeat(64),
+      mutationId: '5'.repeat(64),
+      intentId: fixture.intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitUnknown,
+      requestHash: '6'.repeat(64),
+      consistencyDelayMs: 1_000,
+      occurredAt: fixture.document.createdAt,
+    }
+
+    const step = await prepareStoredPaperStep(fixture, record, unknown, afterCutoff, 1)
+
+    expect(step).toEqual({
+      _tag: 'Execute',
+      action: 'RECOVER_SUBMIT',
+      intentId: fixture.intent.intentId,
+      observedAt: afterCutoff,
+    })
+  })
+
+  test('never creates a fresh submit POST once the immutable cutoff is reached', async () => {
+    const fixture = await paperLifecycleFixture()
+    let submits = 0
+    const program: ExecutionProgram = {
+      ...sandboxExecutionProgram(),
+      submit: () =>
+        Effect.sync(() => {
+          submits += 1
+          throw new Error('fresh submit must not reach broker I/O after cutoff')
+        }),
+    }
+    const store = {
+      latest: () => Effect.succeed(undefined),
+    } as unknown as MutationStoreShape
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(fixture.document.submissionCutoffAt))
+          return yield* executeMutationIntent(
+            program,
+            fixture.intent.intentId,
+            'SUBMIT',
+            fixture.document.submissionCutoffAt,
+          )
+        }).pipe(Effect.provideService(MutationStore, store), Effect.provide(TestClock.layer())),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      failure: 'contract',
+      message: 'fresh PAPER submit crossed its immutable submission cutoff before broker I/O',
+    })
+    expect(submits).toBe(0)
+  })
+
+  test('binds a real PAPER risk rejection and terminalizes it without intent or broker work', async () => {
+    const fixture = await paperLifecycleFixture((policy) => ({
+      ...policy,
+      maxOrderNotionalMicros: '1',
+    }))
+    const observedAt = new Date(Date.parse(fixture.document.createdAt) + 1).toISOString()
+
+    expect(fixture.document).toMatchObject({
+      mode: 'PAPER',
+      dispatchable: false,
+      targetPlan: { status: TargetPlanStatus.Planned },
+      riskBlock: {
+        intentId: fixture.intent.intentId,
+        decisionId: fixture.risk.evaluation.decision.decisionId,
+      },
+    })
+    expect(fixture.document.riskBlock?.reasonCodes).toContain(Reason.OrderNotionalExceeded)
+    expect(fixture.document.riskBlock?.reasonCodes).not.toContain(Reason.AuthorityNotPaper)
+    expect(fixture.document.deltaRisk).toHaveLength(1)
+    expect(fixture.document.deltaRisk[0]?.evaluation.decision.outcome).toBe(RiskOutcome.Blocked)
+    const attached = attachCycleDecisionStoreEvidence(fixture.document, {
+      paperCompletionEvidenceMatches: false,
+      paperGenerationIsSuperseded: true,
+    })
+    expect(Reflect.ownKeys(attached)).toEqual(Reflect.ownKeys(fixture.document))
+    expect(Result.isSuccess(decodePaperDecisionDocument(attached))).toBe(true)
+    expect(cycleDecisionStoreEvidence(attached)).toEqual({
+      paperCompletionEvidenceMatches: false,
+      paperGenerationIsSuperseded: true,
+    })
+
+    const step = await prepareStoredPaperStep(
+      fixture,
+      storedIntent(fixture.intent, IntentState.Planned, fixture.document.createdAt),
+      undefined,
+      observedAt,
+    )
+
+    expect(step).toEqual({
+      _tag: 'Block',
+      reason: CycleTerminalReason.Risk,
+      observedAt,
+    })
+
+    const completion = Result.getOrThrow(decideCompletion(fixture.boundCycle, CycleState.Completed, observedAt))
+    if (completion._tag !== 'VerifyDecision') return expect.unreachable('risk-blocked PAPER completion must verify')
+    expect(Result.isFailure(validateCompletionDocument(completion, [fixture.document]))).toBe(true)
+  })
+
+  test('terminalizes an untouched PAPER remainder when its durable approval expires', async () => {
+    const fixture = await paperLifecycleFixture()
+    const riskExpiresAt = fixture.risk.evaluation.decision.expiresAt
+    expect(riskExpiresAt < fixture.document.submissionCutoffAt).toBe(true)
+    expect(expiredPaperPlanTerminalReason(riskExpiresAt, riskExpiresAt, fixture.document.submissionCutoffAt)).toBe(
+      CycleTerminalReason.Risk,
+    )
+    expect(
+      expiredPaperPlanTerminalReason(
+        fixture.document.submissionCutoffAt,
+        fixture.document.submissionCutoffAt,
+        fixture.document.submissionCutoffAt,
+      ),
+    ).toBe(CycleTerminalReason.MissedSubmission)
+
+    const record = storedIntent(fixture.intent, IntentState.Approved, fixture.document.createdAt)
+    const step = await prepareStoredPaperStep(fixture, record, undefined, riskExpiresAt)
+
+    expect(step).toEqual({
+      _tag: 'Block',
+      reason: CycleTerminalReason.Risk,
+      observedAt: riskExpiresAt,
+    })
+  })
+
+  test('terminalizes an uncommitted PAPER intent at approval expiry before any durable commit', async () => {
+    const fixture = await paperLifecycleFixture()
+    const riskExpiresAt = fixture.risk.evaluation.decision.expiresAt
+    let reads = 0
+    let commits = 0
+    const intentStore: IntentStoreService = {
+      commit: () =>
+        Effect.sync(() => {
+          commits += 1
+          throw new Error('expired uncommitted PAPER intent must not reach durable commit')
+        }),
+      read: () =>
+        Effect.sync(() => {
+          reads += 1
+          return Option.none()
+        }),
+    }
+    const mutationStore = {
+      latest: () => Effect.succeed(undefined),
+    } as unknown as MutationStoreShape
+    const authorityRestrictionStore: AuthorityRestrictionStoreShape = {
+      restrictAuthority: () =>
+        Effect.die(new Error('pre-commit expiry must not restrict authority before cycle block')),
+    }
+    const writerFence: WriterFenceService = {
+      backendPid: 1,
+      check: Effect.die(new Error('pre-commit expiry must not enter the writer fence')),
+      transaction: () => Effect.die(new Error('pre-commit expiry must not open a writer-fenced transaction')),
+    }
+
+    const step = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(riskExpiresAt))
+        return yield* prepareNextMutationIntent(
+          fixture.input,
+          fixture.preparation,
+          fixture.policy,
+          fixture.boundCycle,
+          fixture.document,
+          Effect.die(new Error('pre-commit expiry must not reconcile or read the broker')),
+        )
+      }).pipe(
+        Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+        Effect.provideService(MarketData, marketData([])),
+        Effect.provideService(IntentStore, intentStore),
+        Effect.provideService(MutationStore, mutationStore),
+        Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
+        Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
+        Effect.provideService(ValuationStore, {} as ValuationStoreShape),
+        Effect.provideService(ReconciliationStore, {} as ReconciliationStoreShape),
+        Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
+        Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
+        Effect.provideService(WriterFence, writerFence),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+
+    expect(step).toEqual({
+      _tag: 'Block',
+      reason: CycleTerminalReason.Risk,
+      observedAt: riskExpiresAt,
+    })
+    expect(reads).toBe(1)
+    expect(commits).toBe(0)
+  })
+
+  test('terminalizes a superseded PAPER generation after proving no mutation exists', async () => {
+    const fixture = await paperLifecycleFixture()
+    const observedAt = new Date(Date.parse(fixture.document.createdAt) + 1).toISOString()
+    let intentReads = 0
+    let mutationReads = 0
+    let commits = 0
+    const intentStore: IntentStoreService = {
+      commit: () =>
+        Effect.sync(() => {
+          commits += 1
+          throw new Error('superseded PAPER generation must not commit an intent')
+        }),
+      read: () =>
+        Effect.sync(() => {
+          intentReads += 1
+          return Option.none()
+        }),
+    }
+    const mutationStore = {
+      latest: () =>
+        Effect.sync(() => {
+          mutationReads += 1
+          return undefined
+        }),
+    } as unknown as MutationStoreShape
+
+    const step = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(observedAt))
+        return yield* prepareNextMutationIntent(
+          { ...fixture.input, authorityGenerationHash: 'f'.repeat(64) },
+          fixture.preparation,
+          fixture.policy,
+          fixture.boundCycle,
+          fixture.document,
+          Effect.die(new Error('superseded PAPER generation must not reconcile or read the broker')),
+        )
+      }).pipe(
+        Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+        Effect.provideService(MarketData, marketData([])),
+        Effect.provideService(IntentStore, intentStore),
+        Effect.provideService(MutationStore, mutationStore),
+        Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
+        Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
+        Effect.provideService(ValuationStore, {} as ValuationStoreShape),
+        Effect.provideService(ReconciliationStore, {} as ReconciliationStoreShape),
+        Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
+        Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
+        Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+
+    expect(step).toEqual({
+      _tag: 'Block',
+      reason: CycleTerminalReason.ProvenanceMismatch,
+      observedAt,
+    })
+    expect(intentReads).toBe(1)
+    expect(mutationReads).toBe(2)
+    expect(commits).toBe(0)
+  })
+
+  test('recovers superseded accepted and unknown submits and cancellations before provenance blocking', async () => {
+    const fixture = await paperLifecycleFixture()
+    const occurredAt = fixture.document.createdAt
+    const observedAt = new Date(Date.parse(occurredAt) + 1_000).toISOString()
+    const supersededInput = { ...fixture.input, authorityGenerationHash: 'f'.repeat(64) }
+    const driftedPolicy: Policy = {
+      ...fixture.policy,
+      maxOrderNotionalMicros: (BigInt(fixture.policy.maxOrderNotionalMicros) - 1n).toString(),
+    }
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '1'.repeat(64),
+      mutationId: '2'.repeat(64),
+      intentId: fixture.intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: '3'.repeat(64),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'superseded-accepted-order',
+      occurredAt,
+    }
+    const unknown: MutationEvent = {
+      ...accepted,
+      eventId: '4'.repeat(64),
+      mutationId: '5'.repeat(64),
+      eventType: MutationEventType.SubmitUnknown,
+      brokerOrderId: undefined,
+    }
+    const cancelAccepted: MutationEvent = {
+      ...accepted,
+      eventId: '6'.repeat(64),
+      mutationId: '7'.repeat(64),
+      operation: MutationOperation.Cancel,
+      eventType: MutationEventType.CancelAccepted,
+      requestHash: '8'.repeat(64),
+    }
+    const cancelUnknown: MutationEvent = {
+      ...cancelAccepted,
+      eventId: '9'.repeat(64),
+      mutationId: 'a'.repeat(64),
+      eventType: MutationEventType.CancelUnknown,
+    }
+    const cancelRecovered: MutationEvent = {
+      ...cancelAccepted,
+      eventId: 'b'.repeat(64),
+      mutationId: 'c'.repeat(64),
+      sequence: 3,
+      eventType: MutationEventType.RecoveryFound,
+    }
+
+    const acceptedStep = await prepareStoredPaperStep(
+      fixture,
+      storedIntent(fixture.intent, IntentState.Acknowledged, occurredAt),
+      accepted,
+      observedAt,
+      0,
+      () => undefined,
+      supersededInput,
+      undefined,
+      true,
+      driftedPolicy,
+    )
+    const unknownStep = await prepareStoredPaperStep(
+      fixture,
+      storedIntent(fixture.intent, IntentState.Unknown, occurredAt),
+      unknown,
+      observedAt,
+      1,
+      () => undefined,
+      supersededInput,
+      undefined,
+      true,
+      driftedPolicy,
+    )
+    const cancelAcceptedStep = await prepareStoredPaperStep(
+      fixture,
+      storedIntent(fixture.intent, IntentState.Acknowledged, occurredAt),
+      accepted,
+      observedAt,
+      0,
+      () => undefined,
+      supersededInput,
+      cancelAccepted,
+      true,
+      driftedPolicy,
+    )
+    const cancelUnknownStep = await prepareStoredPaperStep(
+      fixture,
+      storedIntent(fixture.intent, IntentState.Unknown, occurredAt),
+      unknown,
+      observedAt,
+      1,
+      () => undefined,
+      supersededInput,
+      cancelUnknown,
+      true,
+      driftedPolicy,
+    )
+    const settledSubmitStep = await prepareStoredPaperStep(
+      fixture,
+      storedIntent(fixture.intent, IntentState.Terminal, observedAt, TerminalOutcome.Filled),
+      accepted,
+      observedAt,
+      0,
+      () => undefined,
+      supersededInput,
+      undefined,
+      true,
+      driftedPolicy,
+    )
+    const settledCancelStep = await prepareStoredPaperStep(
+      fixture,
+      storedIntent(fixture.intent, IntentState.Terminal, observedAt, TerminalOutcome.Canceled),
+      accepted,
+      observedAt,
+      0,
+      () => undefined,
+      supersededInput,
+      cancelRecovered,
+      true,
+      driftedPolicy,
+    )
+
+    expect(acceptedStep).toEqual({
+      _tag: 'Execute',
+      action: 'RECOVER_SUBMIT',
+      intentId: fixture.intent.intentId,
+      observedAt,
+    })
+    expect(unknownStep).toEqual({
+      _tag: 'Execute',
+      action: 'RECOVER_SUBMIT',
+      intentId: fixture.intent.intentId,
+      observedAt,
+    })
+    expect(cancelAcceptedStep).toEqual({
+      _tag: 'Execute',
+      action: 'RECOVER_CANCEL',
+      intentId: fixture.intent.intentId,
+      observedAt,
+    })
+    expect(cancelUnknownStep).toEqual({
+      _tag: 'Execute',
+      action: 'RECOVER_CANCEL',
+      intentId: fixture.intent.intentId,
+      observedAt,
+    })
+    expect(settledSubmitStep).toEqual({
+      _tag: 'Block',
+      reason: CycleTerminalReason.ProvenanceMismatch,
+      observedAt,
+    })
+    expect(settledCancelStep).toEqual({
+      _tag: 'Block',
+      reason: CycleTerminalReason.ProvenanceMismatch,
+      observedAt,
+    })
+    expect(
+      Result.getOrThrow(
+        decidePreparedMutationRecovery(
+          storedIntent(fixture.intent, IntentState.Terminal, observedAt, TerminalOutcome.Canceled).intent,
+          accepted,
+          cancelRecovered,
+        ),
+      ),
+    ).toEqual({ _tag: 'NoRecovery' })
+  })
+
+  test('recovers old-policy mutation work before rejecting fresh work under the current policy', async () => {
+    const fixture = await paperLifecycleFixture()
+    const occurredAt = fixture.document.createdAt
+    const observedAt = new Date(Date.parse(occurredAt) + 1_000).toISOString()
+    const driftedPolicy: Policy = {
+      ...fixture.policy,
+      maxOrderNotionalMicros: (BigInt(fixture.policy.maxOrderNotionalMicros) - 1n).toString(),
+    }
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: 'd'.repeat(64),
+      mutationId: 'e'.repeat(64),
+      intentId: fixture.intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: 'f'.repeat(64),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'old-policy-accepted-order',
+      occurredAt,
+    }
+
+    const recovery = await prepareStoredPaperStep(
+      fixture,
+      storedIntent(fixture.intent, IntentState.Acknowledged, occurredAt),
+      accepted,
+      observedAt,
+      0,
+      () => undefined,
+      fixture.input,
+      undefined,
+      true,
+      driftedPolicy,
+    )
+
+    const plannedRecord = storedIntent(fixture.intent, IntentState.Planned, occurredAt)
+    let commits = 0
+    const intentStore: IntentStoreService = {
+      commit: () =>
+        Effect.sync(() => {
+          commits += 1
+          throw new Error('policy drift must fail before a fresh intent re-commit')
+        }),
+      read: () => Effect.succeed(Option.some(plannedRecord)),
+    }
+    const mutationStore = {
+      latest: () => Effect.succeed(undefined),
+    } as unknown as MutationStoreShape
+    const freshFailure = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(observedAt))
+        return yield* Effect.flip(
+          prepareNextMutationIntent(
+            fixture.input,
+            fixture.preparation,
+            driftedPolicy,
+            fixture.boundCycle,
+            fixture.document,
+            Effect.die(new Error('policy drift must fail before reconciliation, broker reads, or fresh submission')),
+          ),
+        )
+      }).pipe(
+        Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+        Effect.provideService(MarketData, marketData([])),
+        Effect.provideService(IntentStore, intentStore),
+        Effect.provideService(MutationStore, mutationStore),
+        Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
+        Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
+        Effect.provideService(ValuationStore, {} as ValuationStoreShape),
+        Effect.provideService(ReconciliationStore, {} as ReconciliationStoreShape),
+        Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
+        Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
+        Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+
+    expect(recovery).toEqual({
+      _tag: 'Execute',
+      action: 'RECOVER_SUBMIT',
+      intentId: fixture.intent.intentId,
+      observedAt,
+    })
+    expect(freshFailure).toMatchObject({
+      _tag: 'CycleRunnerError',
+      failure: 'contract',
+      message: 'current source-controlled PAPER risk policy changed from the durable decision binding',
+    })
+    expect(commits).toBe(0)
+  })
+
+  test('recovers old execution-model mutations before gating fresh submission on the current model', async () => {
+    const fixture = await paperLifecycleFixture()
+    const occurredAt = fixture.document.createdAt
+    const observedAt = new Date(Date.parse(occurredAt) + 1_000).toISOString()
+    const supersededInput = { ...fixture.input, authorityGenerationHash: 'f'.repeat(64) }
+    const driftedPreparation = {
+      ...fixture.preparation,
+      executionModel: {
+        ...fixture.preparation.executionModel,
+        priceImpact: {
+          halfSpreadBps: fixture.preparation.executionModel.priceImpact.halfSpreadBps + 100,
+          slippageBps: fixture.preparation.executionModel.priceImpact.slippageBps + 100,
+        },
+      },
+    }
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '1'.repeat(64),
+      mutationId: '2'.repeat(64),
+      intentId: fixture.intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: '3'.repeat(64),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'old-model-accepted-order',
+      occurredAt,
+    }
+
+    const recovery = await prepareStoredPaperStep(
+      fixture,
+      storedIntent(fixture.intent, IntentState.Acknowledged, occurredAt),
+      accepted,
+      observedAt,
+      0,
+      () => undefined,
+      supersededInput,
+      undefined,
+      true,
+      fixture.policy,
+      driftedPreparation,
+    )
+    const terminalization = await prepareStoredPaperStep(
+      fixture,
+      storedIntent(fixture.intent, IntentState.Terminal, observedAt, TerminalOutcome.Filled),
+      accepted,
+      observedAt,
+      0,
+      () => undefined,
+      supersededInput,
+      undefined,
+      true,
+      fixture.policy,
+      driftedPreparation,
+    )
+
+    const plannedRecord = storedIntent(fixture.intent, IntentState.Planned, occurredAt)
+    let commits = 0
+    let reconciliations = 0
+    const intentStore: IntentStoreService = {
+      commit: () =>
+        Effect.sync(() => {
+          commits += 1
+          throw new Error('execution-model drift must fail before a fresh intent re-commit')
+        }),
+      read: () => Effect.succeed(Option.some(plannedRecord)),
+    }
+    const mutationStore = {
+      latest: () => Effect.succeed(undefined),
+    } as unknown as MutationStoreShape
+    const freshFailure = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(observedAt))
+        return yield* Effect.flip(
+          prepareNextMutationIntent(
+            fixture.input,
+            driftedPreparation,
+            fixture.policy,
+            fixture.boundCycle,
+            fixture.document,
+            Effect.sync(() => {
+              reconciliations += 1
+              return reconciliationResultAt(observedAt)
+            }),
+          ),
+        )
+      }).pipe(
+        Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+        Effect.provideService(MarketData, marketData([])),
+        Effect.provideService(IntentStore, intentStore),
+        Effect.provideService(MutationStore, mutationStore),
+        Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
+        Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
+        Effect.provideService(ValuationStore, {} as ValuationStoreShape),
+        Effect.provideService(ReconciliationStore, {} as ReconciliationStoreShape),
+        Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
+        Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
+        Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+
+    expect(recovery).toEqual({
+      _tag: 'Execute',
+      action: 'RECOVER_SUBMIT',
+      intentId: fixture.intent.intentId,
+      observedAt,
+    })
+    expect(terminalization).toEqual({
+      _tag: 'Block',
+      reason: CycleTerminalReason.ProvenanceMismatch,
+      observedAt,
+    })
+    expect(freshFailure).toMatchObject({
+      _tag: 'CycleRunnerError',
+      failure: 'contract',
+      message: 'durable mutation notional changed from the current execution model',
+    })
+    expect(commits).toBe(0)
+    expect(reconciliations).toBe(0)
+  })
+
+  test('terminalizes a known rejected PAPER intent without waiting for cutoff', async () => {
+    const fixture = await paperLifecycleFixture()
+    const rejectedAt = new Date(Date.parse(fixture.document.createdAt) + 1_000).toISOString()
+    expect(rejectedAt < fixture.risk.evaluation.decision.expiresAt).toBe(true)
+    const record = storedIntent(fixture.intent, IntentState.Terminal, rejectedAt, TerminalOutcome.Rejected)
+    const rejected: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: 'a'.repeat(64),
+      mutationId: 'b'.repeat(64),
+      intentId: fixture.intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitRejected,
+      requestHash: 'c'.repeat(64),
+      consistencyDelayMs: 1_000,
+      requestId: 'paper-rejected-request',
+      responseStatus: 422,
+      responseContentHash: 'd'.repeat(64),
+      occurredAt: rejectedAt,
+    }
+    const restrictions: { readonly reason: string; readonly updatedAt: string }[] = []
+
+    const step = await prepareStoredPaperStep(fixture, record, rejected, rejectedAt, 0, (reason, updatedAt) =>
+      restrictions.push({ reason, updatedAt }),
+    )
+
+    expect(step).toEqual({
+      _tag: 'Block',
+      reason: CycleTerminalReason.Risk,
+      observedAt: rejectedAt,
+    })
+    expect(restrictions).toHaveLength(1)
+    expect(restrictions[0]).toMatchObject({
+      updatedAt: rejectedAt,
+    })
+    expect(restrictions[0]?.reason).toContain(`intent ${fixture.intent.intentId} ended REJECTED`)
+  })
+
+  test('completes a filled PAPER cycle after a later exact post-cutoff reconciliation', async () => {
+    const fixture = await paperLifecycleFixture()
+    const terminalAt = new Date(Date.parse(fixture.document.submissionCutoffAt) + 1_000).toISOString()
+    const reconciledLaterAt = new Date(Date.parse(terminalAt) + 1_000).toISOString()
+    const record = storedIntent(fixture.intent, IntentState.Terminal, terminalAt, TerminalOutcome.Filled)
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '7'.repeat(64),
+      mutationId: '8'.repeat(64),
+      intentId: fixture.intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: '9'.repeat(64),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'filled-past-cutoff',
+      occurredAt: terminalAt,
+    }
+
+    const step = await prepareStoredPaperStep(fixture, record, accepted, reconciledLaterAt)
+
+    expect(step).toEqual({ _tag: 'Complete', observedAt: reconciledLaterAt })
+    const completion = Result.getOrThrow(decideCompletion(fixture.boundCycle, CycleState.Completed, reconciledLaterAt))
+    if (completion._tag !== 'VerifyDecision') return expect.unreachable('PAPER completion must verify')
+    expect(Result.isFailure(validateCompletionDocument(completion, [fixture.document]))).toBe(true)
+    expect(Result.isSuccess(validateCompletionDocument(completion, [fixture.document], true))).toBe(true)
   })
 
   test('derives the autonomous cycle protocol identity from the current strategy provenance', () => {
@@ -721,7 +2012,7 @@ describe('OBSERVE runtime composition', () => {
     })
   })
 
-  test('builds the durable non-dispatchable shadow plan from an exact PAPER authority without requiring OBSERVE', async () => {
+  test('builds a truthful immutable PAPER decision from the exact authority generation', async () => {
     const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, fixtureProtocol.universe))
     const program = Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(evaluatedAt))
@@ -741,20 +2032,73 @@ describe('OBSERVE runtime composition', () => {
     const document = await Effect.runPromise(program)
 
     expect(document).toMatchObject({
-      mode: 'OBSERVE',
-      dispatchable: false,
-      bindings: { accountId, cycleId: cycle.identity.cycleId },
+      schemaVersion: 'bayn.paper-cycle-decision.v1',
+      mode: 'PAPER',
+      dispatchable: true,
+      bindings: {
+        accountId,
+        cycleId: cycle.identity.cycleId,
+        qualificationRunId: cycle.identity.qualificationRunId,
+        authorityGenerationHash: generationHash,
+      },
       deltaRisk: [
         {
           evaluation: {
             decision: {
-              outcome: RiskOutcome.Blocked,
-              reasonCodes: [Reason.AuthorityNotPaper],
+              outcome: RiskOutcome.Approved,
+              reasonCodes: [],
             },
           },
         },
       ],
     })
+    expect(document.orderedIntentIds).toEqual([document.deltaRisk[0]?.evaluation.input.intentId])
+
+    const { contentHash: _contentHash, ...material } = document
+    const target = material.targetPlan.intentTargets[0]
+    const risk = material.deltaRisk[0]
+    expect(target).toBeDefined()
+    expect(risk).toBeDefined()
+    if (target === undefined || risk === undefined) return expect.unreachable('PAPER decision target evidence missing')
+
+    const alteredGeneration = makePaperDecisionDocument({
+      ...material,
+      bindings: { ...material.bindings, authorityGenerationHash: '9'.repeat(64) },
+    })
+    const alteredTarget = makePaperDecisionDocument({
+      ...material,
+      targetPlan: {
+        ...material.targetPlan,
+        intentTargets: [{ ...target, accountId: 'different-paper-account' }],
+      },
+    })
+    const alteredOrder = makePaperDecisionDocument({
+      ...material,
+      orderedIntentIds: ['8'.repeat(64)],
+    })
+    const alteredCumulativeRisk = makePaperDecisionDocument({
+      ...material,
+      deltaRisk: [
+        {
+          ...risk,
+          evaluation: {
+            ...risk.evaluation,
+            metrics: {
+              ...risk.evaluation.metrics,
+              aggregateBuyingPowerMicros: (BigInt(risk.evaluation.metrics.aggregateBuyingPowerMicros) + 1n).toString(),
+            },
+          },
+        },
+      ],
+    })
+    const alteredExpiry = makePaperDecisionDocument({
+      ...material,
+      expiresAt: new Date(Date.parse(material.expiresAt) - 1).toISOString(),
+    })
+
+    for (const altered of [alteredGeneration, alteredTarget, alteredOrder, alteredCumulativeRisk, alteredExpiry]) {
+      expect(Result.isFailure(altered)).toBe(true)
+    }
   })
 
   test('fails closed when same-pass reconciliation observes another authority generation', async () => {
@@ -1047,6 +2391,8 @@ describe('OBSERVE runtime composition', () => {
               | ReconciliationStore
               | AuthorityGenerationStore
               | AuthorityRestrictionStore
+              | IntentStore
+              | MutationStore
               | WriterFence
             >,
             OperationalError,
@@ -1066,6 +2412,8 @@ describe('OBSERVE runtime composition', () => {
             Effect.provideService(ReconciliationStore, executionStore),
             Effect.provideService(AuthorityGenerationStore, executionStore),
             Effect.provideService(AuthorityRestrictionStore, executionStore),
+            Effect.provideService(IntentStore, {} as IntentStoreService),
+            Effect.provideService(MutationStore, {} as MutationStoreShape),
             Effect.provideService(WriterFence, writerFence),
             Effect.forkScoped,
           )
@@ -1319,6 +2667,8 @@ describe('OBSERVE runtime composition', () => {
             Effect.provideService(ReconciliationStore, executionStore),
             Effect.provideService(AuthorityGenerationStore, executionStore),
             Effect.provideService(AuthorityRestrictionStore, executionStore),
+            Effect.provideService(IntentStore, {} as IntentStoreService),
+            Effect.provideService(MutationStore, {} as MutationStoreShape),
             Effect.provideService(WriterFence, writerFence),
             Effect.forkScoped({ startImmediately: true }),
           )
@@ -1811,7 +3161,7 @@ describe('OBSERVE runtime composition', () => {
                 return postReconcilePasses
               }).pipe(
                 Effect.flatMap((count) =>
-                  count === 2
+                  count === 1
                     ? Deferred.succeed(cadenceContinued, undefined).pipe(Effect.as(paperPersisted))
                     : Effect.succeed(paperPersisted),
                 ),
@@ -1872,7 +3222,7 @@ describe('OBSERVE runtime composition', () => {
             Effect.forkScoped({ startImmediately: true }),
           )
           yield* Deferred.await(storeReadStarted).pipe(Effect.timeout('1 second'))
-          expect(postReconcilePasses).toBe(1)
+          expect(postReconcilePasses).toBe(0)
           postReconcileEvents.push('store-read-started')
           yield* TestClock.adjust(50)
           yield* Deferred.await(passFailed).pipe(Effect.timeout('1 second'))
@@ -1891,10 +3241,10 @@ describe('OBSERVE runtime composition', () => {
       failure: 'operational',
       message: 'mutation autonomous cycle pass did not complete or reconcile within 50ms',
     })
-    expect(postReconcilePasses).toBe(2)
-    expect(postReconcileEvents.indexOf('reconcile:1')).toBeLessThan(postReconcileEvents.indexOf('store-read-started'))
+    expect(postReconcilePasses).toBe(1)
+    expect(authorityRestrictions).toBe(3)
     expect(postReconcileEvents.indexOf('store-read-interrupted')).toBeLessThan(
-      postReconcileEvents.indexOf('reconcile:2'),
+      postReconcileEvents.indexOf('reconcile:1'),
     )
   })
 
@@ -2069,6 +3419,8 @@ describe('OBSERVE runtime composition', () => {
             Effect.provideService(ReconciliationStore, executionStore),
             Effect.provideService(AuthorityGenerationStore, executionStore),
             Effect.provideService(AuthorityRestrictionStore, executionStore),
+            Effect.provideService(IntentStore, {} as IntentStoreService),
+            Effect.provideService(MutationStore, {} as MutationStoreShape),
             Effect.provideService(WriterFence, writerFence),
             Effect.forkScoped({ startImmediately: true }),
           )
@@ -2090,6 +3442,165 @@ describe('OBSERVE runtime composition', () => {
     })
     expect(fencedTransactions).toBe(1)
     expect(authorityRestrictions).toBe(0)
+  })
+
+  test('recovers a bound OBSERVE decision before entering PAPER intent or broker execution', async () => {
+    const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, fixtureProtocol.universe))
+    const document = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(evaluatedAt))
+        return yield* buildObserveCycleDecision({
+          authorityGenerationHash: generationHash,
+          cycle,
+          executionModel: fixtureProtocol.executionModel,
+          policy,
+          reconcile: Effect.succeed(reconciliationResult()),
+          strategy: { currentDecision: () => Result.succeed({ decision, priceMicros }) },
+        })
+      }).pipe(
+        (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+    const boundCycle = Effect.runSync(
+      decodeAutonomousCycle({
+        ...cycle,
+        bindings: { ...cycle.bindings, decisionHash: document.contentHash },
+        stateVersion: cycle.stateVersion + 1,
+        updatedAt: document.createdAt,
+      }),
+    )
+    const recoveredAt = new Date(Date.parse(document.createdAt) + 1).toISOString()
+    const completedCycle = Effect.runSync(
+      decodeAutonomousCycle({
+        ...boundCycle,
+        state: CycleState.Completed,
+        stateVersion: boundCycle.stateVersion + 1,
+        updatedAt: recoveredAt,
+        terminalAt: recoveredAt,
+      }),
+    )
+    let unfinishedReads = 0
+    let documentReads = 0
+    let finishes = 0
+    let terminal = false
+    const forbidden = (capability: string) => Effect.die(new Error(`OBSERVE recovery must not use ${capability}`))
+    const cycleStore: CycleStoreShape = {
+      acquire: () => forbidden('cycle acquisition'),
+      read: () => forbidden('cycle read by ID'),
+      readAuthoritySlot: () => forbidden('authority-slot read'),
+      readOldestUnfinished: () =>
+        Effect.sync(() => {
+          unfinishedReads += 1
+          return terminal ? Option.none() : Option.some(boundCycle)
+        }),
+      readDecisionDocument: (cycleId) =>
+        Effect.sync(() => {
+          documentReads += 1
+          expect(cycleId).toBe(boundCycle.identity.cycleId)
+          return Option.some(document)
+        }),
+      bindSnapshot: () => forbidden('snapshot binding'),
+      activate: () => forbidden('cycle activation'),
+      bindDecision: () => forbidden('decision binding'),
+      finish: (cycleId, state, observedAt) =>
+        Effect.sync(() => {
+          finishes += 1
+          expect(cycleId).toBe(boundCycle.identity.cycleId)
+          expect(state).toBe(CycleState.Completed)
+          expect(observedAt).toBe(recoveredAt)
+          terminal = true
+          return { cycle: completedCycle, changed: true }
+        }),
+      block: () => forbidden('cycle blocking'),
+    }
+    const brokerRead = {
+      account: forbidden('broker account read'),
+      accountConfiguration: forbidden('broker account-configuration read'),
+      assetBySymbol: () => forbidden('broker asset read'),
+      positions: forbidden('broker positions read'),
+      orders: () => forbidden('broker orders read'),
+      orderById: () => forbidden('broker order lookup'),
+      orderByClientId: () => forbidden('broker client-order lookup'),
+      fillActivities: () => forbidden('broker fill read'),
+      marketCalendar: () => forbidden('broker calendar read'),
+    } satisfies BrokerReadShape
+    const executionStore = {
+      ingest: () => forbidden('broker-event persistence'),
+      ingestPositions: () => forbidden('position persistence'),
+      account: () => forbidden('accounting read'),
+      value: () => forbidden('valuation persistence'),
+      hasAccountBaseline: () => forbidden('account baseline read'),
+      bindings: () => forbidden('accounting binding read'),
+      reconcile: () => forbidden('reconciliation persistence'),
+      ensureAuthorityGeneration: () => forbidden('authority initialization'),
+      restrictAuthority: () => forbidden('authority restriction'),
+    } satisfies BrokerEventStoreShape &
+      FillAccountingStoreShape &
+      ValuationStoreShape &
+      ReconciliationStoreShape &
+      AuthorityGenerationStoreShape &
+      AuthorityRestrictionStoreShape
+    const marketDataService: MarketDataService = {
+      check: forbidden('market-data health check'),
+      inspect: forbidden('market-data inspection'),
+      inspectCyclePublications: forbidden('cycle publication inspection'),
+      inspectPublication: () => forbidden('publication inspection'),
+      inspectSnapshotPublication: () => forbidden('snapshot publication inspection'),
+      loadSnapshotPublication: () => forbidden('snapshot publication load'),
+      load: forbidden('market-data load'),
+    }
+    const writerFence: WriterFenceService = {
+      backendPid: 1,
+      check: forbidden('writer-fence check'),
+      transaction: () => forbidden('writer-fence transaction'),
+    }
+    const startup = makeMutationAutonomousCycleStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      pollIntervalMs: 30_000,
+      reconciliationIntervalMs: 30_000,
+      reconciliationPassTimeoutMs: 30_000,
+      strategy: fixtureStrategy,
+      executionProgram: sandboxExecutionProgram(),
+    })
+
+    const observation = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(recoveredAt))
+          const pass = yield* Deferred.make<Parameters<Parameters<typeof startup>[0]['recordPass']>[0]>()
+          const loop = yield* startup({
+            qualificationRunId: boundCycle.identity.qualificationRunId,
+            recordPass: (result) => Deferred.succeed(pass, result).pipe(Effect.asVoid),
+          })
+          const fiber = yield* loop.pipe(
+            Effect.provideService(BrokerRead, brokerRead),
+            Effect.provideService(CycleStore, cycleStore),
+            Effect.provideService(MarketData, marketDataService),
+            Effect.provideService(BrokerEventStore, executionStore),
+            Effect.provideService(FillAccountingStore, executionStore),
+            Effect.provideService(ValuationStore, executionStore),
+            Effect.provideService(ReconciliationStore, executionStore),
+            Effect.provideService(AuthorityGenerationStore, executionStore),
+            Effect.provideService(AuthorityRestrictionStore, executionStore),
+            Effect.provideService(WriterFence, writerFence),
+            Effect.provideService(IntentStore, {} as IntentStoreService),
+            Effect.provideService(MutationStore, {} as MutationStoreShape),
+            Effect.forkScoped({ startImmediately: true }),
+          )
+          const result = yield* Deferred.await(pass).pipe(Effect.timeout('1 second'))
+          yield* Fiber.interrupt(fiber)
+          return result
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(observation).toMatchObject({ result: 'SUCCESS', outcome: 'RECOVERED' })
+    expect(unfinishedReads).toBe(2)
+    expect(documentReads).toBe(2)
+    expect(finishes).toBe(1)
+    expect(terminal).toBe(true)
   })
 
   test('starts mutation mode without projecting or initializing OBSERVE authority', async () => {
