@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { gunzipSync } from 'node:zlib'
 
 import {
   baynCodexBotLogin,
@@ -43,6 +44,14 @@ const requireHold = (
 ): Extract<BaynReleaseReviewPollResult, { readonly status: 'hold' }> => {
   expect(result.status).toBe('hold')
   if (result.status !== 'hold') throw new Error('expected release review HOLD')
+  return result
+}
+
+const requireEligibilityHold = (
+  result: ReturnType<typeof evaluateBaynReleaseEligibility>,
+): Extract<ReturnType<typeof evaluateBaynReleaseEligibility>, { readonly status: 'hold' }> => {
+  expect(result.status).toBe('hold')
+  if (result.status !== 'hold') throw new Error('expected release eligibility HOLD')
   return result
 }
 
@@ -669,7 +678,475 @@ const remediationHistoryFixture = (): {
   }
 }
 
+const multiStageRemediationRecordPath =
+  'services/bayn/release-review-remediations/9bea355c17fb9320fc692bb214f76af105650a02.json'
+const realMultiStageRemediationRecord = parseBaynReleaseReviewRemediationRecord(
+  JSON.parse(readFileSync(multiStageRemediationRecordPath, 'utf8')) as unknown,
+)
+const multiStageHistory = {
+  published: '319291bebe22b0c1dc928f13d0ff3655c4b22284',
+  promotion: 'bbef7b18804cf9e30c11eac326e90281d1774b80',
+  blocked: '9bea355c17fb9320fc692bb214f76af105650a02',
+  descendant: 'c778df23b22620fd12764e3bca06d0a58211b0de',
+  descendantHead: '944bc86112380f0484b892389b7864e26018bca9',
+  remediationHead: '6'.repeat(40),
+  remediationMerge: '7'.repeat(40),
+} as const
+
+const decodeCapturedPullRequestReviewState = (chunks: readonly string[]): PullRequestReviewState =>
+  JSON.parse(gunzipSync(Buffer.from(chunks.join(''), 'base64')).toString('utf8')) as PullRequestReviewState
+
+const capturedPr13429ReviewState = decodeCapturedPullRequestReviewState([
+  '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',
+])
+
+const capturedPr13434ReviewState = decodeCapturedPullRequestReviewState([
+  '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',
+  '+Lm5swHuslbvfffe/wBpfD7kIzEAAA==',
+])
+
+const captureMultiStageReceiptEvidence = (
+  record: BaynReleaseReviewRemediationRecord,
+): { readonly sourcePull: PullRequestReviewState; readonly descendantPull: PullRequestReviewState } => {
+  if (record.schemaVersion !== 'bayn.release-review-remediation.v2' || record.blocked.reconstruction === undefined) {
+    throw new Error('expected a v2 multi-stage remediation record')
+  }
+  const sourcePull = structuredClone(capturedPr13429ReviewState)
+  const descendantPull = structuredClone(capturedPr13434ReviewState)
+  if (pullRequestReviewEvidenceSha256(sourcePull) !== record.blocked.sourcePullRequestEvidenceSha256) {
+    throw new Error('captured PR #13429 evidence does not match the committed receipt')
+  }
+  const descendant = record.requiredDescendants[0]
+  if (
+    descendant === undefined ||
+    pullRequestReviewEvidenceSha256(descendantPull) !== descendant.sourcePullRequestEvidenceSha256
+  ) {
+    throw new Error('captured PR #13434 evidence does not match the committed receipt')
+  }
+  for (const feedback of record.blocked.reconstruction.feedback) {
+    const thread = sourcePull.threads.find((candidate) => candidate.id === feedback.threadId)
+    const finding = thread?.comments.find((comment) => comment.url === feedback.findingUrl)
+    const reply = thread?.comments.find((comment) => comment.url === feedback.fixReplyUrl)
+    if (
+      thread === undefined ||
+      finding === undefined ||
+      reply === undefined ||
+      sha256Text(finding.body) !== feedback.findingBodySha256 ||
+      sha256Text(reply.body) !== feedback.fixReplyBodySha256
+    ) {
+      throw new Error(`captured feedback ${feedback.threadId} does not match the committed receipt`)
+    }
+  }
+  return { sourcePull, descendantPull }
+}
+
+const multiStageRemediationFixture = (): {
+  readonly snapshot: BaynReleaseEligibilitySnapshot
+  readonly evidence: BaynReleaseReviewRemediationEvidence
+} => {
+  const record = structuredClone(realMultiStageRemediationRecord) as BaynReleaseReviewRemediationRecord
+  if (record.schemaVersion !== 'bayn.release-review-remediation.v2' || record.blocked.reconstruction === undefined) {
+    throw new Error('expected a v2 multi-stage remediation record')
+  }
+  const reconstruction = record.blocked.reconstruction
+  const { sourcePull, descendantPull } = captureMultiStageReceiptEvidence(record)
+  const descendantRecord = record.requiredDescendants[0]
+  if (descendantRecord === undefined) throw new Error('expected Candidate 18 descendant evidence')
+
+  const sourceSnapshot: BaynReleaseReviewSnapshot = {
+    mainCommitParents: [multiStageHistory.promotion],
+    associatedPullRequests: [
+      associatedPull({
+        number: sourcePull.number,
+        headSha: sourcePull.headSha,
+        mergeCommitSha: multiStageHistory.blocked,
+        mergedAt: sourcePull.mergedAt,
+      }),
+    ],
+    pullRequest: sourcePull,
+  }
+  const descendantSnapshot: BaynReleaseReviewSnapshot = {
+    mainCommitParents: [multiStageHistory.blocked],
+    associatedPullRequests: [
+      associatedPull({
+        number: descendantPull.number,
+        headSha: descendantPull.headSha,
+        mergeCommitSha: multiStageHistory.descendant,
+        mergedAt: descendantPull.mergedAt,
+      }),
+    ],
+    pullRequest: descendantPull,
+  }
+  const remediationSnapshot = reviewSnapshotFor({
+    commitSha: multiStageHistory.remediationMerge,
+    prNumber: 13435,
+    headSha: multiStageHistory.remediationHead,
+    parents: [multiStageHistory.descendant],
+    mergedAt: '2026-07-31T16:30:00Z',
+  })
+  const change = (path: string, blobSha: string, status = 'modified') => ({
+    path,
+    previousPath: null,
+    status,
+    blobSha,
+  })
+  const finalHead = reconstruction.heads.at(-1)
+  if (finalHead === undefined) throw new Error('expected final reconstructed head')
+  const recordBlobSha = '9'.repeat(40)
+  const promotionCommit = {
+    sha: multiStageHistory.promotion,
+    parents: [multiStageHistory.published],
+    treeSha: '8'.repeat(40),
+    files: ['argocd/applications/bayn/deployment.yaml', 'argocd/applications/bayn/kustomization.yaml'],
+    fileChanges: [
+      change('argocd/applications/bayn/deployment.yaml', '1'.repeat(40)),
+      change('argocd/applications/bayn/kustomization.yaml', '2'.repeat(40)),
+    ],
+    reviewSnapshot: null,
+  } as const
+  const blockedCommit = {
+    sha: multiStageHistory.blocked,
+    parents: [multiStageHistory.promotion],
+    treeSha: record.blocked.mergeTreeSha,
+    files: finalHead.affectedPaths.map((path) => path.path),
+    fileChanges: finalHead.affectedPaths.map((path) => ({
+      path: path.path,
+      previousPath: path.previousPath,
+      status: path.status,
+      blobSha: path.blobSha,
+    })),
+    reviewSnapshot: sourceSnapshot,
+  } as const
+  const descendantCommit = {
+    sha: multiStageHistory.descendant,
+    parents: [multiStageHistory.blocked],
+    treeSha: descendantRecord.mergeTreeSha,
+    files: descendantRecord.affectedPaths.map((path) => path.path),
+    fileChanges: descendantRecord.affectedPaths.map((path) => change(path.path, path.mergeBlobSha)),
+    reviewSnapshot: descendantSnapshot,
+  } as const
+  const introductionCommit = {
+    sha: multiStageHistory.remediationMerge,
+    parents: [multiStageHistory.descendant],
+    treeSha: '3'.repeat(40),
+    files: [
+      'packages/scripts/src/bayn/verify-release-review.ts',
+      'packages/scripts/src/bayn/verify-release-review.test.ts',
+      multiStageRemediationRecordPath,
+    ],
+    fileChanges: [
+      change('packages/scripts/src/bayn/verify-release-review.ts', '4'.repeat(40)),
+      change('packages/scripts/src/bayn/verify-release-review.test.ts', '5'.repeat(40)),
+      change(multiStageRemediationRecordPath, recordBlobSha, 'added'),
+    ],
+    reviewSnapshot: remediationSnapshot,
+  } as const
+  const expectedCurrent = new Map(finalHead.affectedPaths.map((path) => [path.path, path.blobSha] as const))
+  for (const path of descendantRecord.affectedPaths) {
+    if (expectedCurrent.has(path.path)) expectedCurrent.set(path.path, path.mergeBlobSha)
+  }
+  const evidence: BaynReleaseReviewRemediationEvidence = {
+    recordPath: multiStageRemediationRecordPath,
+    recordBlobSha,
+    record,
+    referencedCommits: [
+      ...reconstruction.heads.map((head) => ({
+        sha: head.headSha,
+        parents: [head.parentSha],
+        treeSha: head.treeSha,
+        files: head.affectedPaths.map((path) => path.path),
+        fileChanges: head.affectedPaths.map((path) => ({
+          path: path.path,
+          previousPath: path.previousPath,
+          status: path.status,
+          blobSha: path.blobSha,
+        })),
+        pathBlobs: head.affectedPaths.map((path) => ({ path: path.path, blobSha: path.blobSha })),
+      })),
+      {
+        sha: descendantRecord.finalHeadSha,
+        parents: ['0'.repeat(40)],
+        treeSha: descendantRecord.finalHeadTreeSha,
+        files: descendantRecord.affectedPaths.map((path) => path.path),
+        fileChanges: [],
+        pathBlobs: descendantRecord.affectedPaths.map((path) => ({
+          path: path.path,
+          blobSha: path.finalHeadBlobSha,
+        })),
+      },
+    ],
+    currentPathBlobs: [...expectedCurrent].map(([path, blobSha]) => ({ path, blobSha })),
+  }
+  return {
+    evidence,
+    snapshot: {
+      currentCommitParents: [multiStageHistory.descendant],
+      lastPublishedRevision: {
+        status: 'resolved',
+        revision: multiStageHistory.published,
+        runId: 30632855271,
+        runNumber: 910,
+        runAttempt: 1,
+      },
+      comparison: {
+        status: 'ahead',
+        baseSha: multiStageHistory.published,
+        headSha: multiStageHistory.remediationMerge,
+        mergeBaseSha: multiStageHistory.published,
+        aheadBy: 4,
+        totalCommits: 4,
+        commits: [promotionCommit, blockedCommit, descendantCommit, introductionCommit],
+        truncated: false,
+      },
+      remediations: [evidence],
+    },
+  }
+}
+
 describe('Bayn publication-range eligibility', () => {
+  test('accepts the complete #13429 reconstruction only through its reviewed v2 receipt', () => {
+    expect(realMultiStageRemediationRecord).toMatchObject({
+      schemaVersion: 'bayn.release-review-remediation.v2',
+      blocked: {
+        mergeCommitSha: multiStageHistory.blocked,
+        sourcePullRequestNumber: 13429,
+        finalHeadSha: 'bc32db2e9eeb7140f422fc1b6621427a8f7dabfc',
+        reconstruction: { heads: { length: 5 }, forcePushes: { length: 4 }, feedback: { length: 9 } },
+      },
+      requiredDescendants: [{ mergeCommitSha: multiStageHistory.descendant, sourcePullRequestNumber: 13434 }],
+    })
+    const captured = captureMultiStageReceiptEvidence(realMultiStageRemediationRecord)
+    expect(pullRequestReviewEvidenceSha256(captured.sourcePull)).toBe(
+      realMultiStageRemediationRecord.blocked.sourcePullRequestEvidenceSha256,
+    )
+    expect(pullRequestReviewEvidenceSha256(captured.descendantPull)).toBe(
+      realMultiStageRemediationRecord.requiredDescendants[0]?.sourcePullRequestEvidenceSha256,
+    )
+    const fixture = multiStageRemediationFixture()
+    expect(
+      evaluateBaynReleaseEligibility({
+        mainCommitSha: multiStageHistory.remediationMerge,
+        baseRefName: 'main',
+        snapshot: fixture.snapshot,
+        nowMs: Date.parse('2026-07-31T16:31:00Z'),
+        pushBeforeSha: multiStageHistory.descendant,
+      }),
+    ).toMatchObject({ status: 'eligible', checkedCommitCount: 4, baynAffectingCommitCount: 3 })
+  })
+
+  test.each([
+    [
+      'changed force-push chain',
+      (fixture: ReturnType<typeof multiStageRemediationFixture>) => {
+        const pull = fixture.snapshot.comparison?.commits.find((commit) => commit.sha === multiStageHistory.blocked)
+          ?.reviewSnapshot?.pullRequest
+        if (pull === undefined || pull === null) throw new Error('missing source pull')
+        ;(pull.headForcePushes[0] as { afterCommitSha: string }).afterCommitSha = 'f'.repeat(40)
+      },
+    ],
+    [
+      'missing feedback thread',
+      (fixture: ReturnType<typeof multiStageRemediationFixture>) => {
+        const pull = fixture.snapshot.comparison?.commits.find((commit) => commit.sha === multiStageHistory.blocked)
+          ?.reviewSnapshot?.pullRequest
+        if (pull === undefined || pull === null) throw new Error('missing source pull')
+        ;(pull.threads as PullRequestReviewThread[]).pop()
+      },
+    ],
+    [
+      'changed reconstructed blob',
+      (fixture: ReturnType<typeof multiStageRemediationFixture>) => {
+        const head = fixture.evidence.referencedCommits.find(
+          (commit) => commit.sha === fixture.evidence.record.blocked.finalHeadSha,
+        )
+        if (head === undefined) throw new Error('missing final head')
+        ;(head.pathBlobs[0] as { blobSha: string }).blobSha = 'f'.repeat(40)
+      },
+    ],
+    [
+      'spoofed descendant head',
+      (fixture: ReturnType<typeof multiStageRemediationFixture>) => {
+        ;(fixture.evidence.record.requiredDescendants[0] as { finalHeadSha: string }).finalHeadSha = 'f'.repeat(40)
+      },
+    ],
+    [
+      'stale current source blob',
+      (fixture: ReturnType<typeof multiStageRemediationFixture>) => {
+        ;(fixture.evidence.currentPathBlobs[0] as { blobSha: string }).blobSha = 'f'.repeat(40)
+      },
+    ],
+  ] as const)('rejects v2 remediation with %s', (_name, mutate) => {
+    const fixture = multiStageRemediationFixture()
+    mutate(fixture)
+    expect(
+      requireEligibilityHold(
+        evaluateBaynReleaseEligibility({
+          mainCommitSha: multiStageHistory.remediationMerge,
+          baseRefName: 'main',
+          snapshot: fixture.snapshot,
+          nowMs: Date.parse('2026-07-31T16:31:00Z'),
+          pushBeforeSha: multiStageHistory.descendant,
+        }),
+      ),
+    ).toMatchObject({ code: 'release-review-remediation-invalid', retryable: false })
+  })
+
+  test('rejects v2 remediation that omits an unrelated newer Bayn source commit', () => {
+    const fixture = multiStageRemediationFixture()
+    const comparison = fixture.snapshot.comparison
+    if (comparison === null) throw new Error('missing comparison')
+    const introduction = comparison.commits.at(-1)
+    if (introduction === undefined) throw new Error('missing introduction')
+    const extraSha = 'd'.repeat(40)
+    ;(introduction.parents as string[])[0] = extraSha
+    const mutableCommits = comparison.commits as unknown as Array<(typeof comparison.commits)[number]>
+    mutableCommits.splice(-1, 0, {
+      sha: extraSha,
+      parents: [multiStageHistory.descendant],
+      treeSha: 'e'.repeat(40),
+      files: ['services/bayn/src/unrelated-new-source.ts'],
+      fileChanges: [
+        {
+          path: 'services/bayn/src/unrelated-new-source.ts',
+          previousPath: null,
+          status: 'added',
+          blobSha: 'f'.repeat(40),
+        },
+      ],
+      reviewSnapshot: reviewSnapshotFor({
+        commitSha: extraSha,
+        prNumber: 13436,
+        headSha: 'c'.repeat(40),
+        parents: [multiStageHistory.descendant],
+      }),
+    })
+    ;(comparison as { aheadBy: number; totalCommits: number }).aheadBy = 5
+    ;(comparison as { aheadBy: number; totalCommits: number }).totalCommits = 5
+    expect(
+      requireEligibilityHold(
+        evaluateBaynReleaseEligibility({
+          mainCommitSha: multiStageHistory.remediationMerge,
+          baseRefName: 'main',
+          snapshot: fixture.snapshot,
+          nowMs: Date.parse('2026-07-31T16:31:00Z'),
+          pushBeforeSha: multiStageHistory.descendant,
+        }),
+      ),
+    ).toMatchObject({ code: 'release-review-remediation-invalid', retryable: false })
+  })
+
   test('accepts the real #13428 -> #13422 -> #13427 history only through its reviewed exact receipt', () => {
     expect(realRemediationRecord).toMatchObject({
       blocked: {

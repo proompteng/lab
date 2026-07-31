@@ -1,0 +1,527 @@
+{
+  "schemaVersion": "bayn.release-review-remediation.v2",
+  "remediationId": "pr-13429-complete-reviewed-reconstruction",
+  "blocked": {
+    "mergeCommitSha": "9bea355c17fb9320fc692bb214f76af105650a02",
+    "mergeParentSha": "bbef7b18804cf9e30c11eac326e90281d1774b80",
+    "mergeTreeSha": "798c8d853452bf6598e46c2da3d6accd30770976",
+    "sourcePullRequestNumber": 13429,
+    "reviewedHeadSha": "34c16da9de7a72bb7d8d37056048269103a4d896",
+    "reviewedHeadTreeSha": "6fced3a2fa4d2b716fc84d4c3bf178b07c1b8d9f",
+    "finalHeadSha": "bc32db2e9eeb7140f422fc1b6621427a8f7dabfc",
+    "finalHeadTreeSha": "798c8d853452bf6598e46c2da3d6accd30770976",
+    "sourcePullRequestEvidenceSha256": "76c0ded3097b2d8457b0b5663653d04d3968276f2e76a2a41258e3193a7b35a4",
+    "feedback": {
+      "threadId": "PRRT_kwDOLkRLus6VbNnO",
+      "path": "services/bayn/src/candidate-development-candidate-17-evidence.ts",
+      "findingUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3690666881",
+      "findingBodySha256": "2e0981a3e7402d209bf1e982cf85396c892d16133ecf9da69cb70284853622fe",
+      "fixReplyUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3691014612",
+      "fixReplyBodySha256": "93f2a43d9fd5d3dc7cebf14e1831c6ccf2fe36732033215034322a27826a3125"
+    },
+    "affectedPaths": [],
+    "reconstruction": {
+      "heads": [
+        {
+          "headSha": "34c16da9de7a72bb7d8d37056048269103a4d896",
+          "parentSha": "9f4ea79b12dcd32c794a9701160587d9a12e8c4d",
+          "treeSha": "6fced3a2fa4d2b716fc84d4c3bf178b07c1b8d9f",
+          "affectedPaths": [
+            {
+              "path": "services/bayn/src/candidate-development-calendar.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "073aa6d0c1bb0789faf4ab47b4165e5bd2a3b703"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-candidate-17-evidence.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "38bd9102b0fad0a38785544cf791f5fb5a157aeb"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-candidate-17.test.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "15522163dc618dd41da41e1a2050348e5f3ea529"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-command.test.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "91c643844a36a1dc767915a922f94942b8a3bbf8"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-command.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "6a41cde36a78e201bfacc34066d94498e0ec19cf"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-evidence.test.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "d5de8f1cdc71b6647917c5bf9abf85941cd673bb"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-evidence.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "5837f52e0a0dde40d2fc3589805343750bb28bc5"
+            }
+          ]
+        },
+        {
+          "headSha": "ba08cfb3d3834c61dcaffadc9354d9ad48de3e8b",
+          "parentSha": "9f4ea79b12dcd32c794a9701160587d9a12e8c4d",
+          "treeSha": "fa02ec6cd87e94fed04d220c549008214458c4ba",
+          "affectedPaths": [
+            {
+              "path": "services/bayn/src/candidate-development-calendar.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "073aa6d0c1bb0789faf4ab47b4165e5bd2a3b703"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-candidate-17-evidence.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "38bd9102b0fad0a38785544cf791f5fb5a157aeb"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-candidate-17.test.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "15522163dc618dd41da41e1a2050348e5f3ea529"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-command.test.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "91c643844a36a1dc767915a922f94942b8a3bbf8"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-command.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "6a41cde36a78e201bfacc34066d94498e0ec19cf"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-evidence.test.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "f907d9a756f400b75d020f3e97adc0c005d8fb42"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-evidence.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "d597c71912ec3495b2f9eec4c39feef2635f16ef"
+            }
+          ]
+        },
+        {
+          "headSha": "186ba05662b61e6610c8939fddd54247ca364542",
+          "parentSha": "319291bebe22b0c1dc928f13d0ff3655c4b22284",
+          "treeSha": "fa35e4153ce083da05ec9c1b4eaacb3f20e71c75",
+          "affectedPaths": [
+            {
+              "path": "services/bayn/candidates/ordinal-17-volatility-managed-trend-overlay-development-evidence.json",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "54a0bf6067a5e42d26dc1a24a96429d89332342b"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-calendar.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "a8af61e791b7d1868319575e43bb846c75e6c1f9"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-candidate-17-evidence.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "4a3c40ace3d6c03ace4a5f6321a5b01ef23025cc"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-candidate-17.test.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "15522163dc618dd41da41e1a2050348e5f3ea529"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-command.test.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "91c643844a36a1dc767915a922f94942b8a3bbf8"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-command.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "815645bea35a800e74fc3a851f262d4808d63949"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-decision.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "c0b8b4ca910318950d00f267146b85e1aadddce8"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-evidence.test.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "79313d78786a7b5a3638b3e75016f59cc577d0b9"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-evidence.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "d0b784e5bf49218950d078eae71eb72c258bf442"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-trial-history.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "34e334dff988276f9ba20d1f2cd742b910ec9e4b"
+            }
+          ]
+        },
+        {
+          "headSha": "7570e37e328f69d36030b8f01f2b0f7b94c5a1d7",
+          "parentSha": "319291bebe22b0c1dc928f13d0ff3655c4b22284",
+          "treeSha": "0e1f41536eaa0a187eaaa878b24f1b12b8296394",
+          "affectedPaths": [
+            {
+              "path": "services/bayn/candidates/ordinal-17-volatility-managed-trend-overlay-development-evidence.json",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "222890183c2db10cb8af81c6967901a12f4c1b7b"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-calendar.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "a8af61e791b7d1868319575e43bb846c75e6c1f9"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-candidate-17-evidence.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "4a3c40ace3d6c03ace4a5f6321a5b01ef23025cc"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-candidate-17.test.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "15522163dc618dd41da41e1a2050348e5f3ea529"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-command.test.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "91c643844a36a1dc767915a922f94942b8a3bbf8"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-command.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "815645bea35a800e74fc3a851f262d4808d63949"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-decision.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "c0b8b4ca910318950d00f267146b85e1aadddce8"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-evidence.test.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "79313d78786a7b5a3638b3e75016f59cc577d0b9"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-evidence.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "d0b784e5bf49218950d078eae71eb72c258bf442"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-trial-history.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "34e334dff988276f9ba20d1f2cd742b910ec9e4b"
+            }
+          ]
+        },
+        {
+          "headSha": "bc32db2e9eeb7140f422fc1b6621427a8f7dabfc",
+          "parentSha": "bbef7b18804cf9e30c11eac326e90281d1774b80",
+          "treeSha": "798c8d853452bf6598e46c2da3d6accd30770976",
+          "affectedPaths": [
+            {
+              "path": "services/bayn/candidates/ordinal-17-volatility-managed-trend-overlay-development-evidence.json",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "222890183c2db10cb8af81c6967901a12f4c1b7b"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-calendar.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "a8af61e791b7d1868319575e43bb846c75e6c1f9"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-candidate-17-evidence.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "39b8d1143eb75243cca67c9e22ffb9ed9635c2b6"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-candidate-17.test.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "15522163dc618dd41da41e1a2050348e5f3ea529"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-command.test.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "91c643844a36a1dc767915a922f94942b8a3bbf8"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-command.ts",
+              "previousPath": null,
+              "status": "modified",
+              "blobSha": "00816329683478486f51f88c40b0568ca2dc70b9"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-decision.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "c0b8b4ca910318950d00f267146b85e1aadddce8"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-evidence.test.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "cc5e4ea511e3f8cec6641c9350925f5a005c8425"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-evidence.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "2906c41e74c006725f56db57efe2ffb3a773db01"
+            },
+            {
+              "path": "services/bayn/src/candidate-development-trial-history.ts",
+              "previousPath": null,
+              "status": "added",
+              "blobSha": "b1520bbd86772969c7a9910bf9f0aa36b7366bf0"
+            }
+          ]
+        }
+      ],
+      "forcePushes": [
+        {
+          "beforeHeadSha": "34c16da9de7a72bb7d8d37056048269103a4d896",
+          "afterHeadSha": "ba08cfb3d3834c61dcaffadc9354d9ad48de3e8b",
+          "actorLogin": "gregkonush",
+          "createdAt": "2026-07-31T12:33:21Z"
+        },
+        {
+          "beforeHeadSha": "ba08cfb3d3834c61dcaffadc9354d9ad48de3e8b",
+          "afterHeadSha": "186ba05662b61e6610c8939fddd54247ca364542",
+          "actorLogin": "gregkonush",
+          "createdAt": "2026-07-31T13:10:45Z"
+        },
+        {
+          "beforeHeadSha": "186ba05662b61e6610c8939fddd54247ca364542",
+          "afterHeadSha": "7570e37e328f69d36030b8f01f2b0f7b94c5a1d7",
+          "actorLogin": "gregkonush",
+          "createdAt": "2026-07-31T13:15:59Z"
+        },
+        {
+          "beforeHeadSha": "7570e37e328f69d36030b8f01f2b0f7b94c5a1d7",
+          "afterHeadSha": "bc32db2e9eeb7140f422fc1b6621427a8f7dabfc",
+          "actorLogin": "gregkonush",
+          "createdAt": "2026-07-31T14:10:00Z"
+        }
+      ],
+      "feedback": [
+        {
+          "reviewedHeadSha": "34c16da9de7a72bb7d8d37056048269103a4d896",
+          "fixedHeadSha": "ba08cfb3d3834c61dcaffadc9354d9ad48de3e8b",
+          "threadId": "PRRT_kwDOLkRLus6VadAL",
+          "path": "services/bayn/src/candidate-development-evidence.ts",
+          "findingUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3690384067",
+          "findingBodySha256": "72e679731552920a3de8bc839db2aef5ff9649b26d437be7f639c6ca781eefb7",
+          "fixReplyUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3690443087",
+          "fixReplyBodySha256": "d4b98364af37bbec3127d7c654e6c95bb19979cdb84ab1554a937d5801543493"
+        },
+        {
+          "reviewedHeadSha": "34c16da9de7a72bb7d8d37056048269103a4d896",
+          "fixedHeadSha": "ba08cfb3d3834c61dcaffadc9354d9ad48de3e8b",
+          "threadId": "PRRT_kwDOLkRLus6VadAR",
+          "path": "services/bayn/src/candidate-development-evidence.ts",
+          "findingUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3690384073",
+          "findingBodySha256": "270a58090789b1b8c1ab1ec3924bf0c2ad8f3063e049913fafce1a61724c672a",
+          "fixReplyUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3690443161",
+          "fixReplyBodySha256": "b83aa2a835a23422b21ad7c1135ad76f78ce795b50d4f0808f8a8fcd59217a46"
+        },
+        {
+          "reviewedHeadSha": "ba08cfb3d3834c61dcaffadc9354d9ad48de3e8b",
+          "fixedHeadSha": "186ba05662b61e6610c8939fddd54247ca364542",
+          "threadId": "PRRT_kwDOLkRLus6VaqIe",
+          "path": "services/bayn/src/candidate-development-evidence.ts",
+          "findingUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3690460608",
+          "findingBodySha256": "0454889f9b6c01f50e6bf7fc57643d9e63b7b0636675e01c0459b8c2af99aaea",
+          "fixReplyUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3690648400",
+          "fixReplyBodySha256": "8560763843427a47fecac3f62413acf8eeaacc997bfb197b072a0be970db30f2"
+        },
+        {
+          "reviewedHeadSha": "ba08cfb3d3834c61dcaffadc9354d9ad48de3e8b",
+          "fixedHeadSha": "186ba05662b61e6610c8939fddd54247ca364542",
+          "threadId": "PRRT_kwDOLkRLus6VaqIi",
+          "path": "services/bayn/src/candidate-development-evidence.ts",
+          "findingUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3690460613",
+          "findingBodySha256": "d94cf02995c1dc17a6bd195e6ec4501b61d1e045973b7243c4a8138cf1b54af4",
+          "fixReplyUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3690648537",
+          "fixReplyBodySha256": "81ee622e913c54df5f9c72aaaeaa8611afca68c97a498b49b5858bb1ae152bfe"
+        },
+        {
+          "reviewedHeadSha": "ba08cfb3d3834c61dcaffadc9354d9ad48de3e8b",
+          "fixedHeadSha": "186ba05662b61e6610c8939fddd54247ca364542",
+          "threadId": "PRRT_kwDOLkRLus6VaqIk",
+          "path": "services/bayn/src/candidate-development-evidence.ts",
+          "findingUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3690460617",
+          "findingBodySha256": "0b423873b60dc2c099625bb190ce9fc568575645f96066535f32eb4f6fa28e40",
+          "fixReplyUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3690648680",
+          "fixReplyBodySha256": "840ecbfe355a2b0a255a8caccb1f6435fbf0ae307f3f1344b9ece33fc3632227"
+        },
+        {
+          "reviewedHeadSha": "ba08cfb3d3834c61dcaffadc9354d9ad48de3e8b",
+          "fixedHeadSha": "186ba05662b61e6610c8939fddd54247ca364542",
+          "threadId": "PRRT_kwDOLkRLus6VaqIm",
+          "path": "services/bayn/src/candidate-development-evidence.ts",
+          "findingUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3690460620",
+          "findingBodySha256": "9e989f24b6a721e0cd652daf8b15fde7cbc4c98b285ecd137440c354ed8b9323",
+          "fixReplyUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3690648802",
+          "fixReplyBodySha256": "5dae787633c5953eb9f4ee98d2ba37f090b0007d67226691a29bd8d278d66750"
+        },
+        {
+          "reviewedHeadSha": "ba08cfb3d3834c61dcaffadc9354d9ad48de3e8b",
+          "fixedHeadSha": "186ba05662b61e6610c8939fddd54247ca364542",
+          "threadId": "PRRT_kwDOLkRLus6VaqIo",
+          "path": "services/bayn/src/candidate-development-evidence.ts",
+          "findingUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3690460623",
+          "findingBodySha256": "c4a8337ac586e501a7997ce18bf2001ed5622f31b054830d1b128dd085d091cd",
+          "fixReplyUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3690648950",
+          "fixReplyBodySha256": "f3c24d09ea2799336be9379bd912d9a2489c776a5dc997af5a4c9d5ba939ac3a"
+        },
+        {
+          "reviewedHeadSha": "186ba05662b61e6610c8939fddd54247ca364542",
+          "fixedHeadSha": "bc32db2e9eeb7140f422fc1b6621427a8f7dabfc",
+          "threadId": "PRRT_kwDOLkRLus6VbNnJ",
+          "path": "services/bayn/src/candidate-development-evidence.ts",
+          "findingUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3690666874",
+          "findingBodySha256": "535a6b8a4eb19d34dcbcaa0e8adfb01027838ebf43ee9c615bb9e54f23f70fb3",
+          "fixReplyUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3691014441",
+          "fixReplyBodySha256": "f708fa67b8fca4314726b39fc73bc59f30a43b543793141618647e2c0d3c3cbc"
+        },
+        {
+          "reviewedHeadSha": "186ba05662b61e6610c8939fddd54247ca364542",
+          "fixedHeadSha": "bc32db2e9eeb7140f422fc1b6621427a8f7dabfc",
+          "threadId": "PRRT_kwDOLkRLus6VbNnO",
+          "path": "services/bayn/src/candidate-development-candidate-17-evidence.ts",
+          "findingUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3690666881",
+          "findingBodySha256": "2e0981a3e7402d209bf1e982cf85396c892d16133ecf9da69cb70284853622fe",
+          "fixReplyUrl": "https://github.com/proompteng/lab/pull/13429#discussion_r3691014612",
+          "fixReplyBodySha256": "93f2a43d9fd5d3dc7cebf14e1831c6ccf2fe36732033215034322a27826a3125"
+        }
+      ]
+    }
+  },
+  "requiredDescendants": [
+    {
+      "mergeCommitSha": "c778df23b22620fd12764e3bca06d0a58211b0de",
+      "sourcePullRequestNumber": 13434,
+      "finalHeadSha": "944bc86112380f0484b892389b7864e26018bca9",
+      "sourcePullRequestEvidenceSha256": "e30e12746743f5361253edff754a088f47c6b644b3a0a8e9003aaf09bc56c67a",
+      "mergeTreeSha": "385588f9943148e28ce968322b96056d99ddcd1b",
+      "finalHeadTreeSha": "385588f9943148e28ce968322b96056d99ddcd1b",
+      "affectedPaths": [
+        {
+          "path": "services/bayn/candidates/ordinal-18-global-equity-dual-momentum-development-evidence.json",
+          "mergeBlobSha": "1b7b07ca6e611d2b602686f537fe8e0f762f43d3",
+          "finalHeadBlobSha": "1b7b07ca6e611d2b602686f537fe8e0f762f43d3"
+        },
+        {
+          "path": "services/bayn/candidates/ordinal-18-global-equity-dual-momentum-preregistration.json",
+          "mergeBlobSha": "920a4afb8a7e5c1f6ef0875683ddc96a91008079",
+          "finalHeadBlobSha": "920a4afb8a7e5c1f6ef0875683ddc96a91008079"
+        },
+        {
+          "path": "services/bayn/candidates/ordinal-18-global-equity-dual-momentum-preregistration.md",
+          "mergeBlobSha": "a8448f473aa3eb525fe0a1081443ce18f7724559",
+          "finalHeadBlobSha": "a8448f473aa3eb525fe0a1081443ce18f7724559"
+        },
+        {
+          "path": "services/bayn/candidates/ordinal-18-global-equity-dual-momentum-source-manifest.json",
+          "mergeBlobSha": "3007c3e088f1a83228d5be672c232645fa2effa4",
+          "finalHeadBlobSha": "3007c3e088f1a83228d5be672c232645fa2effa4"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-calendar.ts",
+          "mergeBlobSha": "b16681a88e70ec9c0c848f9ad207cf16007b32f7",
+          "finalHeadBlobSha": "b16681a88e70ec9c0c848f9ad207cf16007b32f7"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-candidate-17.test.ts",
+          "mergeBlobSha": "eb244401569cdac1fd5bc840e9952be574fc1d64",
+          "finalHeadBlobSha": "eb244401569cdac1fd5bc840e9952be574fc1d64"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-candidate-18-evidence.ts",
+          "mergeBlobSha": "ec90aca52b2d05df3bdcc3ea518fc3b2e4992904",
+          "finalHeadBlobSha": "ec90aca52b2d05df3bdcc3ea518fc3b2e4992904"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-candidate-18.test.ts",
+          "mergeBlobSha": "34d46d0861a6f695f3c8aa07452498168a8bbd73",
+          "finalHeadBlobSha": "34d46d0861a6f695f3c8aa07452498168a8bbd73"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-command.test.ts",
+          "mergeBlobSha": "4bd587bf077acb1b286719b620af66468d169a77",
+          "finalHeadBlobSha": "4bd587bf077acb1b286719b620af66468d169a77"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-command.ts",
+          "mergeBlobSha": "9b9a48381731e2725b9838c6f1fae9caa959a696",
+          "finalHeadBlobSha": "9b9a48381731e2725b9838c6f1fae9caa959a696"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-decision.ts",
+          "mergeBlobSha": "c49977aec8aa3a574968a4d0699d9801a385d519",
+          "finalHeadBlobSha": "c49977aec8aa3a574968a4d0699d9801a385d519"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-evidence.test.ts",
+          "mergeBlobSha": "1fb65106d8f69e01cef8fb9a868480152f01602b",
+          "finalHeadBlobSha": "1fb65106d8f69e01cef8fb9a868480152f01602b"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-trial-history.ts",
+          "mergeBlobSha": "f953d770c92951ed03dcc03b84a80cdf5e1306a4",
+          "finalHeadBlobSha": "f953d770c92951ed03dcc03b84a80cdf5e1306a4"
+        },
+        {
+          "path": "services/bayn/src/strategy/dual-momentum-global-equity/candidate-18.ts",
+          "mergeBlobSha": "44357f3d98315e7d241e4f0184f7812f5a27e930",
+          "finalHeadBlobSha": "44357f3d98315e7d241e4f0184f7812f5a27e930"
+        }
+      ]
+    }
+  ]
+}
