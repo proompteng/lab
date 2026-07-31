@@ -1,6 +1,5 @@
 import { Data, Schema } from 'effect'
 
-import { MutationOperation } from '../broker/alpaca-mutations'
 import { BrokerProvider } from '../broker/connection'
 import { BrokerEnvironment } from '../broker/identity'
 import { BrokerAccess, CapitalAuthorityKind, type ExecutionStrategyIdentity } from '../execution/authority'
@@ -119,17 +118,6 @@ export const proofBinding = (command: PaperProofCommand): CapitalGrantProofBindi
   proofPlanHash: command.proofPlanHash,
   riskPolicyHash: command.riskPolicyHash,
 })
-
-export const recoveryOperation = (operation: PaperProofOperation): MutationOperation | undefined => {
-  switch (operation) {
-    case 'RECOVER':
-      return MutationOperation.Submit
-    case 'PREPARE':
-    case 'SUBMIT':
-    case 'CANCEL':
-      return undefined
-  }
-}
 
 export const protectedEntryToken = (plan: PaperProofSourcePlan): string =>
   [plan.proofPlanHash, plan.qualificationRunId, plan.authorityGenerationHash, plan.intentId].join(':')
