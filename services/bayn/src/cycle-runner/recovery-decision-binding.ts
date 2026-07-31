@@ -1,7 +1,7 @@
 import { Result } from 'effect'
 
 import { CycleState, CycleTerminalReason, type AutonomousCycle, type CycleCompletionState } from '../cycle'
-import type { ObserveShadowDecisionDocument } from '../shadow-decision-contract'
+import type { CycleDecisionDocument } from '../shadow-decision-contract'
 import { TargetPlanReason, TargetPlanStatus, type BlockedTargetPlanReason } from '../target-planner'
 import {
   selectRecoveryFailure,
@@ -12,13 +12,15 @@ import {
 
 const validateDecisionBinding = (
   cycle: AutonomousCycle,
-  document: ObserveShadowDecisionDocument,
+  document: CycleDecisionDocument,
 ): Result.Result<void, CycleRecoveryFailure> => {
   const facts = {
     expectedAccountId: cycle.identity.accountId,
     actualAccountId: document.bindings.accountId,
     expectedCycleId: cycle.identity.cycleId,
     actualCycleId: document.bindings.cycleId,
+    expectedQualificationRunId: cycle.identity.qualificationRunId,
+    actualQualificationRunId: document.mode === 'PAPER' ? document.bindings.qualificationRunId : undefined,
     expectedCycleStateVersion: cycle.stateVersion,
     actualDocumentCreatedAt: document.createdAt,
     expectedDecisionHash: cycle.bindings.decisionHash,
@@ -38,6 +40,7 @@ const validateDecisionBinding = (
   return cycle.bindings.decisionHash !== document.contentHash ||
     cycle.bindings.snapshotId !== document.bindings.snapshotId ||
     cycle.identity.cycleId !== document.bindings.cycleId ||
+    (document.mode === 'PAPER' && document.bindings.qualificationRunId !== cycle.identity.qualificationRunId) ||
     cycle.identity.strategyName !== document.bindings.strategyName ||
     cycle.identity.strategyProtocolHash !== document.bindings.strategyProtocolHash ||
     cycle.identity.accountId !== document.bindings.accountId ||
@@ -93,7 +96,7 @@ export const cycleCompletionStateForTargetPlan = (
 
 export const selectBoundDecision = (
   cycle: AutonomousCycle,
-  document: ObserveShadowDecisionDocument | null | undefined,
+  document: CycleDecisionDocument | null | undefined,
   observedAt: string,
 ): Result.Result<CycleRecoverySelection, CycleRecoveryFailure> => {
   if (document === undefined) return Result.succeed({ action: 'READ_DECISION', cycle })
@@ -109,6 +112,14 @@ export const selectBoundDecision = (
     (): Result.Result<CycleRecoverySelection, CycleRecoveryFailure> => {
       switch (document.targetPlan.status) {
         case TargetPlanStatus.Planned:
+          return document.mode === 'PAPER'
+            ? Result.succeed({ action: 'WAIT', cycle, observedAt })
+            : Result.succeed({
+                action: 'FINISH',
+                cycleId: cycle.identity.cycleId,
+                observedAt,
+                state: cycleCompletionStateForTargetPlan(document.targetPlan.status),
+              })
         case TargetPlanStatus.NoTrade:
           return Result.succeed({
             action: 'FINISH',

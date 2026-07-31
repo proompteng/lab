@@ -58,6 +58,17 @@ const readDecisionDocument = (
         pipe(Option.getOrNull(document), (value) =>
           requireValue(value, { _tag: 'DocumentMissing', failure: 'document-missing', cycleId }),
         ),
+      ).pipe(
+        Effect.flatMap((stored) =>
+          stored.mode === 'OBSERVE'
+            ? Effect.succeed(stored)
+            : Effect.fail({
+                _tag: 'TargetPlanUnavailable' as const,
+                failure: 'document-mismatch' as const,
+                status: stored.mode,
+                intentTargetCount: stored.targetPlan.intentTargets.length,
+              }),
+        ),
       ),
     ),
   )

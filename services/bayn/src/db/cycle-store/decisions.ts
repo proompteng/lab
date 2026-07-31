@@ -11,9 +11,10 @@ import {
   type CycleDraft,
 } from '../../cycle'
 import { cycleTerminalReasonForBlockedTargetPlan } from '../../cycle-recovery'
-import { ObserveShadowDecisionDocumentSchema, type ObserveShadowDecisionDocument } from '../../shadow-decision-contract'
+import { CycleDecisionDocumentSchema, type CycleDecisionDocument } from '../../shadow-decision-contract'
 import { TargetPlanStatus } from '../../target-planner'
 import type { InputManifest } from '../../types'
+import { cycleDecisionStoreEvidence } from './model'
 
 export interface CycleStoreDecisionFailure {
   readonly failure: 'conflict' | 'invariant' | 'not-found'
@@ -72,7 +73,7 @@ export type DecisionBindingDecision =
   | {
       readonly _tag: 'Persist'
       readonly cycle: AutonomousCycle
-      readonly document: ObserveShadowDecisionDocument
+      readonly document: CycleDecisionDocument
     }
   | {
       readonly _tag: 'Block'
@@ -107,6 +108,7 @@ export type BlockDecision =
       readonly cycle: AutonomousCycle
       readonly reason: CycleTerminalReason
       readonly decisionHash: string
+      readonly observedAt: string
     }
 
 const fail = (
@@ -114,7 +116,7 @@ const fail = (
   message: string,
 ): Result.Result<never, CycleStoreDecisionFailure> => Result.fail({ failure, message })
 
-const shadowDecisionEquivalent = Schema.toEquivalence(ObserveShadowDecisionDocumentSchema)
+const shadowDecisionEquivalent = Schema.toEquivalence(CycleDecisionDocumentSchema)
 
 export const makeInitialCycle = (draft: CycleDraft, observedAt: string): AutonomousCycle => {
   const missedPublication = observedAt >= draft.window.publicationDeadlineAt
@@ -215,9 +217,9 @@ export const decideActivation = (
 
 export const decideDecisionBinding = (
   cycle: AutonomousCycle,
-  document: ObserveShadowDecisionDocument,
+  document: CycleDecisionDocument,
   observedAt: string,
-  storedDocuments: readonly ObserveShadowDecisionDocument[],
+  storedDocuments: readonly CycleDecisionDocument[],
 ): Result.Result<DecisionBindingDecision, CycleStoreDecisionFailure> => {
   if (cycle.bindings.decisionHash !== undefined) {
     const storedDocument = storedDocuments[0]
@@ -242,6 +244,7 @@ export const decideDecisionBinding = (
     document.bindings.cycleId !== cycle.identity.cycleId ||
     document.bindings.strategyName !== cycle.identity.strategyName ||
     document.bindings.strategyProtocolHash !== cycle.identity.strategyProtocolHash ||
+    (document.mode === 'PAPER' && document.bindings.qualificationRunId !== cycle.identity.qualificationRunId) ||
     document.bindings.snapshotId !== cycle.bindings.snapshotId ||
     document.bindings.accountId !== cycle.identity.accountId ||
     document.submissionCutoffAt !== cycle.window.submissionCutoffAt ||
@@ -273,14 +276,22 @@ export const decideCompletion = (
 
 export const validateCompletionDocument = (
   decision: Extract<CompletionDecision, { readonly _tag: 'VerifyDecision' }>,
-  storedDocuments: readonly ObserveShadowDecisionDocument[],
+  storedDocuments: readonly CycleDecisionDocument[],
+  paperCompletionEvidenceMatches?: boolean,
 ): Result.Result<void, CycleStoreDecisionFailure> => {
   const storedDocument = storedDocuments[0]
+  const completionEvidenceMatches =
+    paperCompletionEvidenceMatches ??
+    (storedDocument === undefined
+      ? false
+      : cycleDecisionStoreEvidence(storedDocument)?.paperCompletionEvidenceMatches === true)
   const expectedStatus = decision.state === CycleState.Completed ? TargetPlanStatus.Planned : TargetPlanStatus.NoTrade
   return storedDocuments.length === 1 &&
     storedDocument !== undefined &&
     storedDocument.contentHash === decision.decisionHash &&
-    storedDocument.targetPlan.status === expectedStatus
+    storedDocument.targetPlan.status === expectedStatus &&
+    !(storedDocument.mode === 'PAPER' && storedDocument.riskBlock !== undefined) &&
+    !(storedDocument.mode === 'PAPER' && decision.state === CycleState.Completed && !completionEvidenceMatches)
     ? Result.succeed(undefined)
     : fail('invariant', 'cycle terminal state must match its exact durable shadow decision')
 }
@@ -313,24 +324,50 @@ export const decideBlock = (
   if (observedAt < cycle.updatedAt) return fail('conflict', 'cycle update time cannot move backward')
   const decisionHash = cycle.bindings.decisionHash
   return cycle.state === CycleState.Active && decisionHash !== undefined
-    ? Result.succeed({ _tag: 'VerifyDecision', cycle, reason, decisionHash })
+    ? Result.succeed({ _tag: 'VerifyDecision', cycle, reason, decisionHash, observedAt })
     : Result.succeed({ _tag: 'Persist', cycle, reason })
 }
 
 export const validateBlockedDecision = (
   decision: Extract<BlockDecision, { readonly _tag: 'VerifyDecision' }>,
-  storedDocuments: readonly ObserveShadowDecisionDocument[],
+  storedDocuments: readonly CycleDecisionDocument[],
+  paperGenerationIsSuperseded?: boolean,
 ): Result.Result<void, CycleStoreDecisionFailure> => {
   const storedDocument = storedDocuments[0]
+  const generationIsSuperseded =
+    paperGenerationIsSuperseded ??
+    (storedDocument === undefined
+      ? false
+      : cycleDecisionStoreEvidence(storedDocument)?.paperGenerationIsSuperseded === true)
   if (
     storedDocuments.length !== 1 ||
     storedDocument === undefined ||
-    storedDocument.contentHash !== decision.decisionHash ||
-    storedDocument.targetPlan.status !== TargetPlanStatus.Blocked
+    storedDocument.contentHash !== decision.decisionHash
   ) {
-    return fail('invariant', 'decision-bound cycle may block only from its exact blocked shadow decision')
+    return fail('invariant', 'decision-bound cycle may block only from its exact durable decision')
   }
-  return decision.reason === cycleTerminalReasonForBlockedTargetPlan(storedDocument.targetPlan.reason)
-    ? Result.succeed(undefined)
-    : fail('invariant', 'cycle blocked reason must match its exact durable shadow decision')
+  if (storedDocument.targetPlan.status === TargetPlanStatus.Blocked) {
+    return decision.reason === cycleTerminalReasonForBlockedTargetPlan(storedDocument.targetPlan.reason)
+      ? Result.succeed(undefined)
+      : fail('invariant', 'cycle blocked reason must match its exact durable shadow decision')
+  }
+  if (storedDocument.mode === 'PAPER' && storedDocument.targetPlan.status === TargetPlanStatus.Planned) {
+    if (decision.reason === CycleTerminalReason.ProvenanceMismatch && generationIsSuperseded) {
+      return Result.succeed(undefined)
+    }
+    if (
+      decision.reason === CycleTerminalReason.MissedSubmission &&
+      decision.observedAt >= storedDocument.submissionCutoffAt
+    ) {
+      return Result.succeed(undefined)
+    }
+    if (decision.reason === CycleTerminalReason.Risk) {
+      return Result.succeed(undefined)
+    }
+    return fail(
+      'invariant',
+      'planned PAPER cycle may block only from exact durable risk failure or submission expiry evidence',
+    )
+  }
+  return fail('invariant', 'decision-bound cycle may block only from its exact blocked or expired PAPER decision')
 }

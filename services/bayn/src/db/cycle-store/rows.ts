@@ -15,7 +15,7 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from '../../schemas'
-import { ObserveShadowDecisionDocumentSchema } from '../../shadow-decision-contract'
+import { CycleDecisionDocumentSchema } from '../../shadow-decision-contract'
 
 const StoredCycleRowSchema = Schema.Struct({
   cycle_id: Sha256Schema,
@@ -66,7 +66,7 @@ const CycleRecoveryScopeSchema = Schema.Struct({
 const SnapshotInputSchema = Schema.Struct({ cycleId: Sha256Schema, observedAt: UtcInstantSchema })
 const DecisionInputSchema = Schema.Struct({
   cycleId: Sha256Schema,
-  document: ObserveShadowDecisionDocumentSchema,
+  document: CycleDecisionDocumentSchema,
   observedAt: UtcInstantSchema,
 })
 const BlockInputSchema = Schema.Struct({
@@ -81,7 +81,13 @@ const FinishInputSchema = Schema.Struct({
 })
 const MutationRowsSchema = Schema.Array(Schema.Struct({ cycle_id: Sha256Schema })).check(Schema.isMaxLength(1))
 const DecisionEvidenceMatchSchema = Schema.Tuple([Schema.Struct({ matches: Schema.Boolean })])
-const StoredDecisionDocumentRowsSchema = Schema.Array(Schema.Struct({ document: ObserveShadowDecisionDocumentSchema }))
+const StoredDecisionDocumentRowsSchema = Schema.Array(
+  Schema.Struct({
+    document: CycleDecisionDocumentSchema,
+    paper_completion_evidence_matches: Schema.Boolean,
+    paper_generation_is_superseded: Schema.Boolean,
+  }),
+)
 
 export const decodeCycleId = Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)
 export const decodeCycleIdInput = Schema.decodeUnknownEffect(CycleIdInputSchema, strictParseOptions)

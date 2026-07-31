@@ -3,7 +3,7 @@ import { Effect, Match } from 'effect'
 
 import { CycleState } from '../../cycle'
 import { decodeInputManifestArtifact } from '../../evidence-contracts'
-import type { ObserveShadowDecisionDocument } from '../../shadow-decision-contract'
+import type { CycleDecisionDocument } from '../../shadow-decision-contract'
 import type { InputManifest } from '../../types'
 import {
   ensureSnapshotReference,
@@ -33,6 +33,76 @@ export interface CycleBindingPrograms {
   readonly bindSnapshot: CycleStoreShape['bindSnapshot']
   readonly bindDecision: CycleStoreShape['bindDecision']
 }
+
+const upgradeDecisionDocumentConstraints = (sql: PgClient.PgClient): Effect.Effect<void, CycleStoreInternalError> =>
+  sql`
+    DO $migration$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'autonomous_cycle_shadow_decisions'::regclass
+          AND conname IN (
+            'autonomous_cycle_shadow_decisions_schema_version_check',
+            'autonomous_cycle_shadow_decisions_check'
+          )
+      ) THEN
+        LOCK TABLE autonomous_cycle_shadow_decisions IN ACCESS EXCLUSIVE MODE;
+
+        ALTER TABLE autonomous_cycle_shadow_decisions
+        DROP CONSTRAINT IF EXISTS autonomous_cycle_shadow_decisions_schema_version_check;
+
+        ALTER TABLE autonomous_cycle_shadow_decisions
+        DROP CONSTRAINT IF EXISTS autonomous_cycle_shadow_decisions_check;
+
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conrelid = 'autonomous_cycle_shadow_decisions'::regclass
+            AND conname = 'autonomous_cycle_decisions_schema_version_check'
+        ) THEN
+          ALTER TABLE autonomous_cycle_shadow_decisions
+          ADD CONSTRAINT autonomous_cycle_decisions_schema_version_check
+          CHECK (schema_version IN ('bayn.observe-shadow-decision.v1', 'bayn.paper-cycle-decision.v1'));
+        END IF;
+
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conrelid = 'autonomous_cycle_shadow_decisions'::regclass
+            AND conname = 'autonomous_cycle_decisions_document_check'
+        ) THEN
+          ALTER TABLE autonomous_cycle_shadow_decisions
+          ADD CONSTRAINT autonomous_cycle_decisions_document_check
+          CHECK (
+            document ->> 'schemaVersion' = schema_version
+            AND (
+              (
+                schema_version = 'bayn.observe-shadow-decision.v1'
+                AND document ->> 'mode' = 'OBSERVE'
+                AND document ->> 'dispatchable' = 'false'
+              )
+              OR
+              (
+                schema_version = 'bayn.paper-cycle-decision.v1'
+                AND document ->> 'mode' = 'PAPER'
+                AND (
+                  document ->> 'dispatchable' = 'true'
+                  OR (
+                    document ->> 'dispatchable' = 'false'
+                    AND jsonb_typeof(document -> 'riskBlock') = 'object'
+                  )
+                )
+              )
+            )
+            AND document #>> '{bindings,cycleId}' = cycle_id
+            AND (document ->> 'createdAt')::timestamptz = created_at
+          );
+        END IF;
+      END IF;
+    END
+    $migration$
+  `.pipe(Effect.asVoid)
 
 export const makeCycleBindingPrograms = (
   sql: PgClient.PgClient,
@@ -169,12 +239,13 @@ export const makeCycleBindingPrograms = (
 
   const bindDecision: CycleStoreShape['bindDecision'] = (
     cycleId: string,
-    document: ObserveShadowDecisionDocument,
+    document: CycleDecisionDocument,
     observedAt: string,
   ) =>
     runCycleStore(
       'bind-decision',
-      decodeDecisionInput({ cycleId, document, observedAt }).pipe(
+      upgradeDecisionDocumentConstraints(sql).pipe(
+        Effect.andThen(decodeDecisionInput({ cycleId, document, observedAt })),
         Effect.flatMap((input) =>
           sql.withTransaction(
             mutations.readLocked('bind-decision', input.cycleId).pipe(

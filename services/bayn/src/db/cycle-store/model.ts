@@ -2,9 +2,28 @@ import { Context, Data, Effect, Option, Result, Schema } from 'effect'
 import { isSqlError, type SqlError } from 'effect/unstable/sql/SqlError'
 
 import type { AutonomousCycle, CycleCompletionState, CycleDraft, CycleTerminalReason } from '../../cycle'
-import type { ObserveShadowDecisionDocument } from '../../shadow-decision-contract'
+import type { CycleDecisionDocument } from '../../shadow-decision-contract'
 import type { InputManifest, IsoDate } from '../../types'
 import type { CycleStoreDecisionFailure } from './decisions'
+
+export interface CycleDecisionStoreEvidence {
+  readonly paperCompletionEvidenceMatches: boolean
+  readonly paperGenerationIsSuperseded: boolean
+}
+
+const decisionStoreEvidence = new WeakMap<object, CycleDecisionStoreEvidence>()
+
+export const attachCycleDecisionStoreEvidence = (
+  document: CycleDecisionDocument,
+  evidence: CycleDecisionStoreEvidence,
+): CycleDecisionDocument => {
+  const attached = { ...document } satisfies CycleDecisionDocument
+  decisionStoreEvidence.set(attached, evidence)
+  return attached
+}
+
+export const cycleDecisionStoreEvidence = (document: CycleDecisionDocument): CycleDecisionStoreEvidence | undefined =>
+  decisionStoreEvidence.get(document)
 
 export interface CycleAcquireReceipt {
   readonly cycle: AutonomousCycle
@@ -53,7 +72,7 @@ export interface CycleStoreShape {
   ) => Effect.Effect<Option.Option<AutonomousCycle>, CycleStoreError>
   readonly readDecisionDocument: (
     cycleId: string,
-  ) => Effect.Effect<Option.Option<ObserveShadowDecisionDocument>, CycleStoreError>
+  ) => Effect.Effect<Option.Option<CycleDecisionDocument>, CycleStoreError>
   readonly readOldestUnfinished: (
     scope: CycleRecoveryScope,
   ) => Effect.Effect<Option.Option<AutonomousCycle>, CycleStoreError>
@@ -65,7 +84,7 @@ export interface CycleStoreShape {
   readonly activate: (cycleId: string, observedAt: string) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
   readonly bindDecision: (
     cycleId: string,
-    document: ObserveShadowDecisionDocument,
+    document: CycleDecisionDocument,
     observedAt: string,
   ) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
   readonly finish: (

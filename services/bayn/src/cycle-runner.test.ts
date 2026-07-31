@@ -50,6 +50,7 @@ import {
 } from './cycle-runner'
 import { CycleNotDueReconciliationError } from './cycle-runner/model'
 import { runAutonomousCycleUntilSettled } from './cycle-runner/program'
+import { selectBoundDecision } from './cycle-runner/recovery-decision-binding'
 import { selectCycleRecovery, type CycleRecoveryState } from './cycle-recovery'
 import { CycleStore, type CycleAuthoritySlot, type CycleStoreShape } from './db/cycle-store'
 import { canonicalHashV1, sha256 } from './hash'
@@ -59,7 +60,11 @@ import {
   type MarketDataInspection,
   type MarketDataService,
 } from './market-data'
-import { makeObserveShadowDecisionDocument, type ObserveShadowDecisionDocument } from './shadow-decision-contract'
+import {
+  makeObserveShadowDecisionDocument,
+  type CycleDecisionDocument,
+  type ObserveShadowDecisionDocument,
+} from './shadow-decision-contract'
 import { TargetPlanReason, TargetPlanStatus } from './target-planner'
 import { currentUtcInstant } from './time'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputManifest, type IsoDate } from './types'
@@ -410,7 +415,7 @@ interface StoreControl {
 interface CycleStorePersistence {
   readonly cycles: Map<string, AutonomousCycle>
   readonly slots: Map<string, string>
-  readonly documents: Map<string, ObserveShadowDecisionDocument>
+  readonly documents: Map<string, CycleDecisionDocument>
   readonly manifests: Map<string, InputManifest>
 }
 
@@ -682,6 +687,10 @@ describe('autonomous cycle runner', () => {
       stateVersion: pending.stateVersion + 1,
       updatedAt: '2026-01-30T21:21:00.000Z',
     }
+    const sameInstantBound: AutonomousCycle = {
+      ...bound,
+      updatedAt: pending.updatedAt,
+    }
     const active: AutonomousCycle = {
       ...bound,
       state: CycleState.Active,
@@ -738,6 +747,26 @@ describe('autonomous cycle runner', () => {
         }),
       ),
     ).toEqual(Result.succeed({ action: 'ACTIVATE', cycleId: bound.identity.cycleId, observedAt: bound.updatedAt }))
+    expect(
+      selectCycleRecovery(
+        recoveryState(pending, {
+          observedAt: pending.updatedAt,
+          readiness: {
+            outcome: 'ALREADY_BOUND',
+            observedAt: pending.updatedAt,
+            cycle: sameInstantBound,
+            snapshotId,
+          },
+        }),
+      ),
+    ).toMatchObject({
+      _tag: 'Success',
+      success: {
+        action: 'RETURN_READINESS',
+        recoveryAction: 'BOUND_SNAPSHOT',
+        result: { outcome: 'BOUND', cycle: { stateVersion: pending.stateVersion + 1 } },
+      },
+    })
     expect(selectCycleRecovery(recoveryState(active))).toEqual(
       Result.succeed({
         action: 'WAIT',
@@ -830,6 +859,44 @@ describe('autonomous cycle runner', () => {
         state: CycleState.NoTrade,
       }),
     )
+
+    const paperDecision = {
+      ...decision,
+      schemaVersion: 'bayn.paper-cycle-decision.v1',
+      mode: 'PAPER',
+      dispatchable: true,
+      bindings: {
+        ...decision.bindings,
+        qualificationRunId: decisionBound.identity.qualificationRunId,
+        authorityGenerationHash: 'b'.repeat(64),
+      },
+      targetPlan: { ...decision.targetPlan, status: TargetPlanStatus.Planned, reason: null },
+      orderedIntentIds: [],
+      contentHash: 'c'.repeat(64),
+    } as unknown as CycleDecisionDocument
+    const paperDecisionBound = {
+      ...decisionBound,
+      bindings: { ...decisionBound.bindings, decisionHash: paperDecision.contentHash },
+    }
+    expect(selectBoundDecision(paperDecisionBound, paperDecision, afterCutoff)).toEqual(
+      Result.succeed({ action: 'WAIT', cycle: paperDecisionBound, observedAt: afterCutoff }),
+    )
+    expect(
+      Result.isFailure(
+        selectBoundDecision(
+          paperDecisionBound,
+          {
+            ...paperDecision,
+            bindings: {
+              ...paperDecision.bindings,
+              qualificationRunId: 'd'.repeat(64),
+              authorityGenerationHash: 'b'.repeat(64),
+            },
+          } as CycleDecisionDocument,
+          afterCutoff,
+        ),
+      ),
+    ).toBe(true)
 
     const blockedDecision = makeDecision(active, decision.createdAt, TargetPlanReason.InputStale)
     const blockedDecisionBound: AutonomousCycle = {

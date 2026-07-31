@@ -1173,6 +1173,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 18, name: 'robust_trend_protocol' },
       { migration_id: 19, name: 'explicit_execution_authority' },
       { migration_id: 20, name: 'pretransmit_submit_denial' },
+      { migration_id: 21, name: 'expired_paper_cycle_terminalization' },
     ])
   })
 

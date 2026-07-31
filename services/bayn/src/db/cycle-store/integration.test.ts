@@ -20,10 +20,13 @@ import {
   CycleTerminalReason,
   makeCycleDraft,
   makeCycleExecutionPolicy,
+  makeCycleExecutionPolicyFromModel,
   makeCycleIdentity,
   makeCycleWindow,
   makeExecutionCalendarObservation,
+  type AutonomousCycle,
   type CycleDraft,
+  type CycleExecutionPolicy,
 } from '../../cycle'
 import {
   CycleDecisionBuildError,
@@ -42,18 +45,34 @@ import {
   MarketData,
   type FinalizedPublicationInspection,
   type MarketDataService,
+  type MarketDataSnapshot,
   type SignalSessionRow,
 } from '../../market-data'
 import {
+  buildMutationShadowCycleDecision,
   buildObserveCycleDecision,
   loadObserveRiskPolicy,
   prepareObserveStartup,
   type ObserveDecisionFailure,
 } from '../../observe-composition'
-import { Authority, ReconciliationStatus } from '../../execution/contracts'
+import {
+  AccountStatus,
+  Authority,
+  IntentState,
+  KillState,
+  ReconciliationStatus,
+  RiskOutcome,
+} from '../../execution/contracts'
 import { BrokerAccess, noCapitalAuthority } from '../../execution/authority'
-import { runOnce } from '../../reconciler'
-import { makeObserveShadowDecisionDocument } from '../../shadow-decision-contract'
+import { planPaperIntent } from '../../execution/intents'
+import { runOnce, type ReconciliationPassResult } from '../../reconciler'
+import { reconciledStateHash } from '../../reconciliation'
+import { Reason, type Policy } from '../../risk'
+import {
+  makeObserveShadowDecisionDocument,
+  makePaperDecisionDocument,
+  type PaperDecisionDocument,
+} from '../../shadow-decision-contract'
 import { makeStrategy } from '../../strategy'
 import { TargetPlanReason, TargetPlanStatus } from '../../target-planner'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from '../../test-fixtures'
@@ -62,6 +81,7 @@ import {
   DataSource,
   PriceAdjustment,
   PublicationSchema,
+  type DecisionPlan,
   type DailyBar,
   type InputManifest,
   type IsoDate,
@@ -790,24 +810,29 @@ const signalSession = (
 const makeDraft = (
   accountId = 'paper-account-1',
   options: {
+    readonly executionPolicy?: CycleExecutionPolicy
     readonly executionCloseAt?: string
     readonly executionOpenAt?: string
     readonly executionSessionDate?: IsoDate
+    readonly qualificationRunId?: string
     readonly signalSessionDate?: IsoDate
     readonly submissionWindowMs?: number
   } = {},
 ): CycleDraft => {
   const signalSessionDate = options.signalSessionDate ?? '2026-03-06'
   const executionSessionDate = options.executionSessionDate ?? '2026-03-09'
-  const executionPolicyResult = makeCycleExecutionPolicy({
-    schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
-    strategyExecutionModelHash: 'c'.repeat(64),
-    submissionWindowMs: options.submissionWindowMs ?? 30 * 60 * 1_000,
-    submissionCutoffBeforeOpenMs: 2 * 60 * 1_000,
-  })
-  expect(Result.isSuccess(executionPolicyResult)).toBe(true)
-  if (Result.isFailure(executionPolicyResult)) return expect.unreachable(executionPolicyResult.failure.message)
-  const executionPolicy = executionPolicyResult.success
+  const executionPolicy = (() => {
+    if (options.executionPolicy !== undefined) return options.executionPolicy
+    const executionPolicyResult = makeCycleExecutionPolicy({
+      schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
+      strategyExecutionModelHash: 'c'.repeat(64),
+      submissionWindowMs: options.submissionWindowMs ?? 30 * 60 * 1_000,
+      submissionCutoffBeforeOpenMs: 2 * 60 * 1_000,
+    })
+    expect(Result.isSuccess(executionPolicyResult)).toBe(true)
+    if (Result.isFailure(executionPolicyResult)) return expect.unreachable(executionPolicyResult.failure.message)
+    return executionPolicyResult.success
+  })()
 
   const executionCalendarResult = makeExecutionCalendarObservation({
     schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
@@ -823,7 +848,7 @@ const makeDraft = (
   const identityResult = makeCycleIdentity({
     schemaVersion: 'bayn.autonomous-cycle-identity.v1',
     strategyName: 'risk-balanced-trend',
-    qualificationRunId: 'a'.repeat(64),
+    qualificationRunId: options.qualificationRunId ?? 'a'.repeat(64),
     strategyProtocolHash: 'b'.repeat(64),
     accountId,
     signalSessionDate,
@@ -1034,6 +1059,1125 @@ const makeShadowDecision = (
   if (Result.isFailure(result)) return expect.unreachable(result.failure.message)
   return result.success
 }
+
+const makePaperNoTradeDecision = (draft: CycleDraft, boundSnapshotId: string) => {
+  const observe = makeShadowDecision(draft, boundSnapshotId)
+  const result = makePaperDecisionDocument({
+    schemaVersion: 'bayn.paper-cycle-decision.v1',
+    mode: 'PAPER',
+    dispatchable: true,
+    bindings: {
+      ...observe.bindings,
+      qualificationRunId: draft.identity.qualificationRunId,
+      authorityGenerationHash: 'a'.repeat(64),
+    },
+    targetPlan: observe.targetPlan,
+    deltaRisk: [],
+    orderedIntentIds: [],
+    createdAt: observe.createdAt,
+    submissionCutoffAt: observe.submissionCutoffAt,
+    expiresAt: observe.expiresAt,
+  })
+  expect(Result.isSuccess(result)).toBe(true)
+  if (Result.isFailure(result)) return expect.unreachable(result.failure.message)
+  return result.success
+}
+
+const plannedPaperGenerationHash = 'a'.repeat(64)
+const plannedPaperAccountingHash = '8'.repeat(64)
+
+const plannedPaperReconciliation = (draft: CycleDraft, observedAt = decisionAt): ReconciliationPassResult => {
+  const account = {
+    schemaVersion: 'bayn.paper-account-snapshot.v1' as const,
+    accountId: draft.identity.accountId,
+    status: AccountStatus.Active,
+    currency: 'USD' as const,
+    cashMicros: '1000000000',
+    equityMicros: '1000000000',
+    buyingPowerMicros: '1000000000',
+    observedAt,
+  }
+  const stateHash = Result.getOrThrow(
+    reconciledStateHash({
+      account,
+      positions: [],
+      positionsObservedAt: observedAt,
+      orders: [],
+      ordersObservedAt: observedAt,
+      accountingHash: plannedPaperAccountingHash,
+    }),
+  )
+  const material = {
+    schemaVersion: 'bayn.paper-reconciliation.v1' as const,
+    accountId: draft.identity.accountId,
+    expectedHash: stateHash,
+    observedHash: stateHash,
+    status: ReconciliationStatus.Exact,
+    discrepancies: [],
+    reconciledAt: observedAt,
+  }
+  const reconciliationId = canonicalHashV1({
+    schemaVersion: 'bayn.paper-reconciliation-id.v1',
+    material,
+  })
+  const reconciliation = {
+    ...material,
+    reconciliationId,
+    contentHash: canonicalHashV1({ ...material, reconciliationId }),
+  }
+  return {
+    report: {
+      reconciliation,
+      metrics: {
+        brokerPollAgeMs: 0,
+        oldestUnknownMutationAgeMs: 0,
+        cashDifferenceMicros: '0',
+        positionDifferenceMicros: '0',
+        equityDifferenceMicros: '0',
+        accountingExact: true,
+        discrepancyCount: 0,
+      },
+    },
+    brokerState: {
+      account,
+      positions: [],
+      positionsObservedAt: observedAt,
+      orders: [],
+      ordersObservedAt: observedAt,
+      accountingHash: plannedPaperAccountingHash,
+      reconciliation,
+      unknownOrderCount: 0,
+    },
+    riskContext: {
+      tradingDate: draft.identity.executionSessionDate,
+      authority: {
+        schemaVersion: 'bayn.paper-authority.v1',
+        generationHash: plannedPaperGenerationHash,
+        maximum: Authority.Paper,
+        effective: Authority.Paper,
+        kill: KillState.Clear,
+        version: 1,
+        updatedAt: draft.window.submissionOpenAt,
+      },
+      authorityObservedAt: observedAt,
+      unknownMutationCount: 0,
+      dailyTradedNotionalMicros: '0',
+      dayStartEquityMicros: account.equityMicros,
+      peakEquityMicros: account.equityMicros,
+    },
+  }
+}
+
+const plannedPaperDecisionPlan = (draft: CycleDraft): DecisionPlan => {
+  const targetWeights = Object.fromEntries(
+    fixtureProtocol.universe.map((symbol, index) => [symbol, index === 0 ? 0.5 : 0]),
+  )
+  return {
+    schemaVersion: 'bayn.risk-balanced-trend-decision-plan.v1',
+    signalDate: draft.identity.signalSessionDate,
+    covarianceWindow: {
+      returnCount: 1,
+      firstSession: draft.identity.signalSessionDate,
+      lastSession: draft.identity.signalSessionDate,
+      sessionsHash: '7'.repeat(64),
+    },
+    estimatedAnnualizedPortfolioVolatility: 0.1,
+    exposureScale: 1,
+    targetWeights,
+    signals: fixtureProtocol.universe.map((symbol, index) => ({
+      symbol,
+      horizons: [{ horizonSessions: 1, return: index === 0 ? 0.1 : 0, normalizedTrend: index === 0 ? 1 : 0 }],
+      dailyVolatility: 0.1,
+      annualizedVolatility: 0.1,
+      compositeScore: index === 0 ? 1 : 0,
+      positiveScore: index === 0 ? 1 : 0,
+      eligible: true,
+      uncappedWeight: index === 0 ? 0.5 : 0,
+      cappedWeight: index === 0 ? 0.5 : 0,
+      targetWeight: index === 0 ? 0.5 : 0,
+    })),
+  }
+}
+
+const plannedPaperMarketData = (
+  draft: CycleDraft,
+  boundSnapshotId: string,
+  snapshotFinalizedAt = acquireAt,
+): MarketDataService => {
+  const unused = Effect.die(new Error('planned PAPER persistence fixture used an unrelated market-data capability'))
+  const snapshot: MarketDataSnapshot = {
+    bars: makeSnapshot(1_129).bars,
+    manifest: makeInputManifest(boundSnapshotId, {
+      asOfSession: draft.identity.signalSessionDate,
+      finalizedAt: snapshotFinalizedAt,
+      lastSession: draft.identity.signalSessionDate,
+    }),
+  }
+  return {
+    check: unused,
+    inspect: unused,
+    inspectCyclePublications: unused,
+    inspectPublication: () => unused,
+    inspectSnapshotPublication: () => unused,
+    loadSnapshotPublication: (request) => {
+      expect(request).toEqual({
+        snapshotId: boundSnapshotId,
+        signalSessionDate: draft.identity.signalSessionDate,
+        signalCalendarVersion: draft.identity.signalCalendarVersion,
+      })
+      return Effect.succeed(snapshot)
+    },
+    load: unused,
+  }
+}
+
+const plannedPaperBrokerRead = (draft: CycleDraft, observedAt = decisionAt): BrokerReadShape => {
+  const unused = Effect.die(new Error('planned PAPER persistence fixture used an unrelated broker capability'))
+  return {
+    account: unused,
+    accountConfiguration: unused,
+    assetBySymbol: unusedAssetBySymbol,
+    positions: unused,
+    orders: () => unused,
+    orderById: () => unused,
+    orderByClientId: () => unused,
+    fillActivities: () => unused,
+    marketCalendar: (query) => {
+      const signalOpenAt = new Date(Date.parse(draft.window.signalCloseAt) - 6.5 * 60 * 60 * 1_000).toISOString()
+      const material = {
+        schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+        source: 'alpaca-v2-calendar' as const,
+        requestedRange: query,
+        timeZone: 'UTC' as const,
+        sessions: [
+          {
+            date: draft.identity.signalSessionDate,
+            openAt: signalOpenAt,
+            closeAt: draft.window.signalCloseAt,
+          },
+          {
+            date: draft.identity.executionSessionDate,
+            openAt: draft.window.executionOpenAt,
+            closeAt: draft.window.executionCloseAt,
+          },
+        ],
+      }
+      return Effect.succeed({
+        value: { ...material, normalizedResponseHash: canonicalHashV1(material) },
+        evidence: {
+          requestId: 'planned-paper-calendar',
+          status: 200,
+          contentHash: '6'.repeat(64),
+          observedAt,
+        },
+      })
+    },
+  }
+}
+
+const buildPlannedPaperDecision = (
+  cycle: AutonomousCycle,
+  boundSnapshotId: string,
+  options: {
+    readonly evaluatedAt?: string
+    readonly snapshotFinalizedAt?: string
+    readonly transformPolicy?: (policy: Policy) => Policy
+  } = {},
+) =>
+  Effect.gen(function* () {
+    const evaluatedAt = options.evaluatedAt ?? decisionAt
+    const sourcePolicy = yield* loadObserveRiskPolicy(cycle.identity.accountId, fixtureProtocol.universe)
+    const policy = options.transformPolicy?.(sourcePolicy) ?? sourcePolicy
+    const reconciliation = plannedPaperReconciliation(cycle, evaluatedAt)
+    const decision = plannedPaperDecisionPlan(cycle)
+    const priceMicros = Object.fromEntries(fixtureProtocol.universe.map((symbol) => [symbol, '100000000']))
+    yield* TestClock.setTime(Date.parse(evaluatedAt))
+    const document = yield* buildMutationShadowCycleDecision({
+      authorityGenerationHash: plannedPaperGenerationHash,
+      cycle,
+      executionModel: fixtureProtocol.executionModel,
+      policy,
+      reconcile: Effect.succeed(reconciliation),
+      strategy: { currentDecision: () => Result.succeed({ decision, priceMicros }) },
+    }).pipe(
+      Effect.provideService(BrokerRead, plannedPaperBrokerRead(cycle, evaluatedAt)),
+      Effect.provideService(MarketData, plannedPaperMarketData(cycle, boundSnapshotId, options.snapshotFinalizedAt)),
+    )
+    return { document, reconciliation }
+  })
+
+const insertReconciliation = (result: ReconciliationPassResult) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const reconciliation = result.report.reconciliation
+    yield* sql`
+      INSERT INTO reconciliations (
+        reconciliation_id,
+        schema_version,
+        account_id,
+        expected_hash,
+        observed_hash,
+        content_hash,
+        status,
+        discrepancies,
+        reconciled_at
+      ) VALUES (
+        ${reconciliation.reconciliationId},
+        ${reconciliation.schemaVersion},
+        ${reconciliation.accountId},
+        ${reconciliation.expectedHash},
+        ${reconciliation.observedHash},
+        ${reconciliation.contentHash},
+        ${reconciliation.status},
+        ${sql.json(JSON.stringify(reconciliation.discrepancies))},
+        ${reconciliation.reconciledAt}
+      )
+    `
+    const [stored] = yield* sql<{ discrepancy_type: string }>`
+      SELECT jsonb_typeof(discrepancies) AS discrepancy_type
+      FROM reconciliations
+      WHERE reconciliation_id = ${reconciliation.reconciliationId}
+    `
+    if (stored?.discrepancy_type !== 'array') {
+      return yield* Effect.die(
+        new Error('PAPER lifecycle reconciliation fixture must persist discrepancies as JSON array'),
+      )
+    }
+  })
+
+const insertQualifiedPaperLineage = (
+  document: PaperDecisionDocument,
+  options: { readonly deniedIntent?: boolean } = {},
+) =>
+  Effect.gen(function* () {
+    const target = document.targetPlan.intentTargets[0]
+    const risk = document.deltaRisk[0]
+    if (target === undefined || risk === undefined) {
+      return yield* Effect.die(new Error('terminal PAPER failure fixture requires one ordered intent'))
+    }
+    const intent = yield* planPaperIntent(
+      {
+        schemaVersion: 'bayn.paper-intent-plan.v1',
+        ...target,
+        notionalLimitMicros: risk.notionalLimitMicros,
+        createdAt: document.createdAt,
+      },
+      {
+        authority: {
+          schemaVersion: 'bayn.paper-authority.v1',
+          generationHash: document.bindings.authorityGenerationHash,
+          maximum: Authority.Paper,
+          effective: Authority.Paper,
+          kill: KillState.Clear,
+          version: 1,
+          updatedAt: document.createdAt,
+        },
+      },
+    )
+    const sql = yield* PgClient.PgClient
+    const brokerIdentity = Result.getOrThrow(
+      makeBrokerIdentity({
+        schemaVersion: 'bayn.broker-identity.v2',
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Sandbox,
+        accountId: document.bindings.accountId,
+      }),
+    )
+    const observeGenerationHash = '9'.repeat(64)
+    const qualificationLockId = '1'.repeat(64)
+    const qualificationResultHash = '2'.repeat(64)
+    const qualificationAnalysisHash = '3'.repeat(64)
+    const qualificationExecutionPolicyHash = '4'.repeat(64)
+    const strategyBehaviorHash = '5'.repeat(64)
+    const strategyParameterHash = '6'.repeat(64)
+    const sourceRevision = '7'.repeat(40)
+    const imageRepository = 'registry.example.test/lab/bayn'
+    const imageDigest = `sha256:${'8'.repeat(64)}`
+    const proofPlanHash = canonicalHashV1({
+      schemaVersion: 'bayn.paper-terminalization-proof-plan.v1',
+      cycleId: document.bindings.cycleId,
+      decisionHash: document.contentHash,
+    })
+    const intentCreatedAt = new Date(Date.parse(document.createdAt) - 1_000).toISOString()
+    const submitStartedAt = new Date(Date.parse(document.createdAt) + 1).toISOString()
+    const deniedAt = new Date(Date.parse(document.createdAt) + 2).toISOString()
+    const mutationId = canonicalHashV1({ intentId: intent.intentId, operation: 'SUBMIT' })
+    const requestHash = canonicalHashV1({ intentId: intent.intentId, request: 'pretransmit-denied' })
+
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`
+          INSERT INTO protocol_locks (
+            protocol_hash,
+            schema_version,
+            strategy_name,
+            behavior_hash,
+            parameter_hash,
+            parameters,
+            created_at
+          ) VALUES (
+            ${document.bindings.strategyProtocolHash},
+            'bayn.risk-balanced-trend.protocol.v4',
+            ${document.bindings.strategyName},
+            ${strategyBehaviorHash},
+            ${strategyParameterHash},
+            ${sql.json({ fixture: 'terminal-paper-cycle' })},
+            ${intentCreatedAt}
+          )
+        `
+        yield* sql`
+          INSERT INTO evaluation_runs (
+            run_id,
+            protocol_hash,
+            snapshot_id,
+            evaluation_schema_version,
+            source_revision,
+            image_repository,
+            image_digest,
+            strategy_name,
+            initial_capital_micros,
+            expected_artifact_count,
+            expected_event_count,
+            expected_gate_count,
+            status,
+            created_at,
+            completed_at
+          ) VALUES (
+            ${document.bindings.qualificationRunId},
+            ${document.bindings.strategyProtocolHash},
+            ${document.bindings.snapshotId},
+            'bayn.evaluation.v6',
+            ${sourceRevision},
+            ${imageRepository},
+            ${imageDigest},
+            ${document.bindings.strategyName},
+            1000000000,
+            1,
+            0,
+            1,
+            'COMPLETE',
+            ${intentCreatedAt},
+            ${document.createdAt}
+          )
+        `
+        yield* sql`
+          INSERT INTO qualification_locks (
+            lock_id,
+            schema_version,
+            candidate_run_id,
+            protocol_hash,
+            snapshot_id,
+            source_revision,
+            image_repository,
+            image_digest,
+            payload,
+            created_at
+          ) VALUES (
+            ${qualificationLockId},
+            'bayn.qualification-lock.v3',
+            ${document.bindings.qualificationRunId},
+            ${document.bindings.strategyProtocolHash},
+            ${document.bindings.snapshotId},
+            ${sourceRevision},
+            ${imageRepository},
+            ${imageDigest},
+            ${sql.json({
+              schemaVersion: 'bayn.qualification-lock.v3',
+              lockId: qualificationLockId,
+              candidateRunId: document.bindings.qualificationRunId,
+              protocolHash: document.bindings.strategyProtocolHash,
+              sourceRevision,
+              image: { repository: imageRepository, digest: imageDigest },
+              data: { snapshotId: document.bindings.snapshotId },
+            })},
+            ${intentCreatedAt}
+          )
+        `
+        yield* sql`
+          INSERT INTO qualification_results (
+            lock_id,
+            schema_version,
+            run_id,
+            verdict,
+            committed_at,
+            analysis_hash,
+            result_hash,
+            payload
+          ) VALUES (
+            ${qualificationLockId},
+            'bayn.qualification-result.v2',
+            ${document.bindings.qualificationRunId},
+            'QUALIFIED',
+            ${document.createdAt},
+            ${qualificationAnalysisHash},
+            ${qualificationResultHash},
+            ${sql.json({
+              schemaVersion: 'bayn.qualification-result.v2',
+              lockId: qualificationLockId,
+              runId: document.bindings.qualificationRunId,
+              verdict: 'QUALIFIED',
+              analysis: { analysisHash: qualificationAnalysisHash },
+              resultHash: qualificationResultHash,
+            })}
+          )
+        `
+        yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash,
+            schema_version,
+            previous_generation_hash,
+            maximum,
+            authority_version,
+            account_id,
+            broker_identity_schema_version,
+            broker_identity_hash,
+            broker_provider,
+            broker_environment,
+            activated_at
+          ) VALUES (
+            ${observeGenerationHash},
+            'bayn.authority-generation-history.v1',
+            NULL,
+            'OBSERVE',
+            1,
+            ${document.bindings.accountId},
+            ${brokerIdentity.schemaVersion},
+            ${brokerIdentity.identityHash},
+            ${brokerIdentity.provider},
+            ${brokerIdentity.environment},
+            ${intentCreatedAt}
+          )
+        `
+        yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash,
+            schema_version,
+            activation_schema_version,
+            previous_generation_hash,
+            maximum,
+            authority_version,
+            qualification_run_id,
+            qualification_lock_id,
+            qualification_result_hash,
+            protocol_hash,
+            qualification_execution_policy_hash,
+            qualification_source_revision,
+            qualification_image_repository,
+            qualification_image_digest,
+            activation_source_revision,
+            activation_image_repository,
+            activation_image_digest,
+            strategy_name,
+            strategy_behavior_hash,
+            strategy_parameter_hash,
+            strategy_parameter_schema_version,
+            account_id,
+            broker_identity_schema_version,
+            broker_identity_hash,
+            broker_provider,
+            broker_environment,
+            risk_policy_hash,
+            proof_plan_hash,
+            reconciliation_id,
+            reconciliation_content_hash,
+            activated_at
+          ) VALUES (
+            ${document.bindings.authorityGenerationHash},
+            'bayn.authority-generation-history.v1',
+            'bayn.paper-authority-generation.v2',
+            ${observeGenerationHash},
+            'PAPER',
+            2,
+            ${document.bindings.qualificationRunId},
+            ${qualificationLockId},
+            ${qualificationResultHash},
+            ${document.bindings.strategyProtocolHash},
+            ${qualificationExecutionPolicyHash},
+            ${sourceRevision},
+            ${imageRepository},
+            ${imageDigest},
+            ${sourceRevision},
+            ${imageRepository},
+            ${imageDigest},
+            ${document.bindings.strategyName},
+            ${strategyBehaviorHash},
+            ${strategyParameterHash},
+            'bayn.risk-balanced-trend.protocol.v4',
+            ${document.bindings.accountId},
+            ${brokerIdentity.schemaVersion},
+            ${brokerIdentity.identityHash},
+            ${brokerIdentity.provider},
+            ${brokerIdentity.environment},
+            ${document.bindings.policyHash},
+            ${proofPlanHash},
+            ${document.bindings.reconciliationId},
+            ${document.bindings.reconciliationHash},
+            ${document.createdAt}
+          )
+        `
+        if (options.deniedIntent === true) {
+          yield* sql`
+            INSERT INTO intents (
+            intent_id,
+            schema_version,
+            authority_generation_hash,
+            strategy_name,
+            cycle_id,
+            decision_hash,
+            policy_hash,
+            account_id,
+            client_order_id,
+            symbol,
+            side,
+            order_type,
+            time_in_force,
+            quantity_micros,
+            notional_limit_micros,
+            state,
+            created_at,
+            updated_at
+            ) VALUES (
+            ${intent.intentId},
+            ${intent.schemaVersion},
+            ${intent.authorityGenerationHash},
+            ${intent.strategyName},
+            ${intent.cycleId},
+            ${intent.decisionHash},
+            ${intent.policyHash},
+            ${intent.accountId},
+            ${intent.clientOrderId},
+            ${intent.symbol},
+            ${intent.side},
+            ${intent.orderType},
+            ${intent.timeInForce},
+            ${intent.quantityMicros},
+            ${intent.notionalLimitMicros},
+            'PLANNED',
+            ${intentCreatedAt},
+            ${intentCreatedAt}
+            )
+          `
+          yield* sql`
+            INSERT INTO risk_decisions (
+            decision_id,
+            schema_version,
+            input_hash,
+            intent_id,
+            policy_hash,
+            outcome,
+            reason_codes,
+            decided_at,
+            expires_at
+            ) VALUES (
+            ${risk.evaluation.decision.decisionId},
+            ${risk.evaluation.decision.schemaVersion},
+            ${risk.evaluation.decision.inputHash},
+            ${risk.evaluation.decision.intentId},
+            ${risk.evaluation.decision.policyHash},
+            ${risk.evaluation.decision.outcome},
+            ${risk.evaluation.decision.reasonCodes},
+            ${risk.evaluation.decision.decidedAt},
+            ${risk.evaluation.decision.expiresAt}
+            )
+          `
+          yield* sql`
+            UPDATE intents
+            SET
+              risk_decision_id = ${risk.evaluation.decision.decisionId},
+              state = 'APPROVED',
+              state_version = state_version + 1,
+              updated_at = ${risk.evaluation.decision.decidedAt}
+            WHERE intent_id = ${intent.intentId}
+          `
+          yield* sql`
+            INSERT INTO mutation_events (
+            event_id,
+            schema_version,
+            mutation_id,
+            intent_id,
+            sequence,
+            operation,
+            event_type,
+            request_hash,
+            consistency_delay_ms,
+            occurred_at
+            ) VALUES (
+            ${canonicalHashV1({ mutationId, sequence: 1, eventType: 'SUBMIT_STARTED' })},
+            'bayn.paper-mutation-event.v1',
+            ${mutationId},
+            ${intent.intentId},
+            1,
+            'SUBMIT',
+            'SUBMIT_STARTED',
+            ${requestHash},
+            1000,
+            ${submitStartedAt}
+            )
+          `
+          yield* sql`
+            UPDATE intents
+            SET
+              state = 'IO_STARTED',
+              state_version = state_version + 1,
+              updated_at = ${submitStartedAt}
+            WHERE intent_id = ${intent.intentId}
+          `
+          yield* sql`
+            INSERT INTO mutation_events (
+            event_id,
+            schema_version,
+            mutation_id,
+            intent_id,
+            sequence,
+            operation,
+            event_type,
+            request_hash,
+            consistency_delay_ms,
+            occurred_at
+            ) VALUES (
+            ${canonicalHashV1({ mutationId, sequence: 2, eventType: 'SUBMIT_DENIED' })},
+            'bayn.paper-mutation-event.v1',
+            ${mutationId},
+            ${intent.intentId},
+            2,
+            'SUBMIT',
+            'SUBMIT_DENIED',
+            ${requestHash},
+            1000,
+            ${deniedAt}
+            )
+          `
+          yield* sql`
+            UPDATE intents
+            SET
+              state = 'TERMINAL',
+              terminal_outcome = 'REJECTED',
+              state_version = state_version + 1,
+              updated_at = ${deniedAt}
+            WHERE intent_id = ${intent.intentId}
+          `
+        }
+      }),
+    )
+
+    return { deniedAt, intent }
+  })
+
+const insertSupersedingObserveGeneration = (document: PaperDecisionDocument) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const generationHash = canonicalHashV1({
+      schemaVersion: 'bayn.superseding-observe-generation-fixture.v1',
+      previousGenerationHash: document.bindings.authorityGenerationHash,
+      cycleId: document.bindings.cycleId,
+    })
+    const brokerIdentity = Result.getOrThrow(
+      makeBrokerIdentity({
+        schemaVersion: 'bayn.broker-identity.v2',
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Sandbox,
+        accountId: document.bindings.accountId,
+      }),
+    )
+    const activatedAt = new Date(Date.parse(document.createdAt) + 10_000).toISOString()
+    yield* sql`
+      INSERT INTO authority_generations (
+        generation_hash,
+        schema_version,
+        previous_generation_hash,
+        maximum,
+        authority_version,
+        account_id,
+        broker_identity_schema_version,
+        broker_identity_hash,
+        broker_provider,
+        broker_environment,
+        activated_at
+      ) VALUES (
+        ${generationHash},
+        'bayn.authority-generation-history.v1',
+        ${document.bindings.authorityGenerationHash},
+        'OBSERVE',
+        3,
+        ${document.bindings.accountId},
+        ${brokerIdentity.schemaVersion},
+        ${brokerIdentity.identityHash},
+        ${brokerIdentity.provider},
+        ${brokerIdentity.environment},
+        ${activatedAt}
+      )
+    `
+    return { activatedAt, generationHash }
+  })
+
+const insertFilledPlannedPaperIntent = (
+  document: PaperDecisionDocument,
+  latestMutation: 'accepted' | 'started' = 'accepted',
+) =>
+  Effect.gen(function* () {
+    const target = document.targetPlan.intentTargets[0]
+    const risk = document.deltaRisk[0]
+    if (target === undefined || risk === undefined) {
+      return yield* Effect.die(new Error('filled PAPER completion fixture requires one ordered intent'))
+    }
+    const intent = yield* planPaperIntent(
+      {
+        schemaVersion: 'bayn.paper-intent-plan.v1',
+        ...target,
+        notionalLimitMicros: risk.notionalLimitMicros,
+        createdAt: document.createdAt,
+      },
+      {
+        authority: {
+          schemaVersion: 'bayn.paper-authority.v1',
+          generationHash: document.bindings.authorityGenerationHash,
+          maximum: Authority.Paper,
+          effective: Authority.Paper,
+          kill: KillState.Clear,
+          version: 1,
+          updatedAt: document.createdAt,
+        },
+      },
+    )
+    const sql = yield* PgClient.PgClient
+    const intentCreatedAt = new Date(Date.parse(document.createdAt) - 1).toISOString()
+    const submitStartedAt = new Date(Date.parse(document.createdAt) + 1).toISOString()
+    const acceptedAt = new Date(Date.parse(document.createdAt) + 2).toISOString()
+    const filledAt = new Date(Date.parse(document.createdAt) + 3).toISOString()
+    const mutationId = canonicalHashV1({ intentId: intent.intentId, operation: 'SUBMIT' })
+    const requestHash = canonicalHashV1({ intentId: intent.intentId, request: 'filled-completion' })
+    const brokerOrderId = `filled-${intent.intentId.slice(0, 24)}`
+
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`
+          INSERT INTO intents (
+            intent_id, schema_version, authority_generation_hash, strategy_name,
+            cycle_id, decision_hash, policy_hash, account_id, client_order_id,
+            symbol, side, order_type, time_in_force, quantity_micros,
+            notional_limit_micros, state, created_at, updated_at
+          ) VALUES (
+            ${intent.intentId}, ${intent.schemaVersion}, ${intent.authorityGenerationHash},
+            ${intent.strategyName}, ${intent.cycleId}, ${intent.decisionHash},
+            ${intent.policyHash}, ${intent.accountId}, ${intent.clientOrderId},
+            ${intent.symbol}, ${intent.side}, ${intent.orderType}, ${intent.timeInForce},
+            ${intent.quantityMicros}, ${intent.notionalLimitMicros}, 'PLANNED',
+            ${intentCreatedAt}, ${intentCreatedAt}
+          )
+        `
+        yield* sql`
+          INSERT INTO risk_decisions (
+            decision_id, schema_version, input_hash, intent_id, policy_hash,
+            outcome, reason_codes, decided_at, expires_at
+          ) VALUES (
+            ${risk.evaluation.decision.decisionId}, ${risk.evaluation.decision.schemaVersion},
+            ${risk.evaluation.decision.inputHash}, ${risk.evaluation.decision.intentId},
+            ${risk.evaluation.decision.policyHash}, ${risk.evaluation.decision.outcome},
+            ${risk.evaluation.decision.reasonCodes}, ${risk.evaluation.decision.decidedAt},
+            ${risk.evaluation.decision.expiresAt}
+          )
+        `
+        yield* sql`
+          UPDATE intents
+          SET
+            risk_decision_id = ${risk.evaluation.decision.decisionId},
+            state = 'APPROVED',
+            state_version = state_version + 1,
+            updated_at = ${risk.evaluation.decision.decidedAt}
+          WHERE intent_id = ${intent.intentId}
+        `
+        yield* sql`
+          INSERT INTO mutation_events (
+            event_id, schema_version, mutation_id, intent_id, sequence,
+            operation, event_type, request_hash, consistency_delay_ms, occurred_at
+          ) VALUES (
+            ${canonicalHashV1({ mutationId, sequence: 1, eventType: 'SUBMIT_STARTED' })},
+            'bayn.paper-mutation-event.v1', ${mutationId}, ${intent.intentId}, 1,
+            'SUBMIT', 'SUBMIT_STARTED', ${requestHash}, 1000, ${submitStartedAt}
+          )
+        `
+        yield* sql`
+          UPDATE intents
+          SET state = 'IO_STARTED', state_version = state_version + 1, updated_at = ${submitStartedAt}
+          WHERE intent_id = ${intent.intentId}
+        `
+        if (latestMutation === 'accepted') {
+          yield* sql`
+            INSERT INTO mutation_events (
+              event_id, schema_version, mutation_id, intent_id, sequence,
+              operation, event_type, request_hash, consistency_delay_ms,
+              broker_order_id, request_id, response_status, response_content_hash, occurred_at
+            ) VALUES (
+              ${canonicalHashV1({ mutationId, sequence: 2, eventType: 'SUBMIT_ACCEPTED' })},
+              'bayn.paper-mutation-event.v1', ${mutationId}, ${intent.intentId}, 2,
+              'SUBMIT', 'SUBMIT_ACCEPTED', ${requestHash}, 1000,
+              ${brokerOrderId}, 'filled-completion-request', 200, ${'a'.repeat(64)}, ${acceptedAt}
+            )
+          `
+          yield* sql`
+            UPDATE intents
+            SET state = 'ACKNOWLEDGED', state_version = state_version + 1, updated_at = ${acceptedAt}
+            WHERE intent_id = ${intent.intentId}
+          `
+        }
+        yield* sql`
+          UPDATE intents
+          SET
+            state = 'TERMINAL',
+            terminal_outcome = 'FILLED',
+            state_version = state_version + 1,
+            updated_at = ${filledAt}
+          WHERE intent_id = ${intent.intentId}
+        `
+      }),
+    )
+    return { acceptedAt, brokerOrderId, filledAt, intent, mutationId, requestHash }
+  })
+
+const settleStartedPaperSubmit = (
+  filled: Effect.Success<ReturnType<typeof insertFilledPlannedPaperIntent>>,
+  occurredAt: string,
+) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    yield* sql`
+      INSERT INTO mutation_events (
+        event_id, schema_version, mutation_id, intent_id, sequence,
+        operation, event_type, request_hash, consistency_delay_ms,
+        broker_order_id, request_id, response_status, response_content_hash, occurred_at
+      ) VALUES (
+        ${canonicalHashV1({ mutationId: filled.mutationId, sequence: 2, eventType: 'SUBMIT_ACCEPTED' })},
+        'bayn.paper-mutation-event.v1', ${filled.mutationId}, ${filled.intent.intentId}, 2,
+        'SUBMIT', 'SUBMIT_ACCEPTED', ${filled.requestHash}, 1000,
+        ${filled.brokerOrderId}, 'filled-completion-recovery', 200, ${'b'.repeat(64)}, ${occurredAt}
+      )
+    `
+  })
+
+type SupersededMutationFixture = 'submit-accepted' | 'submit-unknown' | 'cancel-accepted' | 'cancel-unknown'
+
+const insertUnfinishedPlannedPaperMutation = (document: PaperDecisionDocument, fixture: SupersededMutationFixture) =>
+  Effect.gen(function* () {
+    const target = document.targetPlan.intentTargets[0]
+    const risk = document.deltaRisk[0]
+    if (target === undefined || risk === undefined) {
+      return yield* Effect.die(new Error('superseded mutation fixture requires one ordered intent'))
+    }
+    const intent = yield* planPaperIntent(
+      {
+        schemaVersion: 'bayn.paper-intent-plan.v1',
+        ...target,
+        notionalLimitMicros: risk.notionalLimitMicros,
+        createdAt: document.createdAt,
+      },
+      {
+        authority: {
+          schemaVersion: 'bayn.paper-authority.v1',
+          generationHash: document.bindings.authorityGenerationHash,
+          maximum: Authority.Paper,
+          effective: Authority.Paper,
+          kill: KillState.Clear,
+          version: 1,
+          updatedAt: document.createdAt,
+        },
+      },
+    )
+    const sql = yield* PgClient.PgClient
+    const intentCreatedAt = new Date(Date.parse(document.createdAt) - 1).toISOString()
+    const submitStartedAt = new Date(Date.parse(document.createdAt) + 1).toISOString()
+    const submitOutcomeAt = new Date(Date.parse(document.createdAt) + 2).toISOString()
+    const cancelStartedAt = new Date(Date.parse(document.createdAt) + 3).toISOString()
+    const cancelOutcomeAt = new Date(Date.parse(document.createdAt) + 4).toISOString()
+    const submitMutationId = canonicalHashV1({ intentId: intent.intentId, operation: 'SUBMIT' })
+    const cancelMutationId = canonicalHashV1({ intentId: intent.intentId, operation: 'CANCEL' })
+    const submitRequestHash = canonicalHashV1({ intentId: intent.intentId, fixture, operation: 'SUBMIT' })
+    const cancelRequestHash = canonicalHashV1({ intentId: intent.intentId, fixture, operation: 'CANCEL' })
+    const brokerOrderId = `superseded-${intent.intentId.slice(0, 24)}`
+    const submitAccepted = fixture === 'submit-accepted' || fixture.startsWith('cancel-')
+    const cancelFixture = fixture.startsWith('cancel-')
+
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`
+          INSERT INTO intents (
+            intent_id, schema_version, authority_generation_hash, strategy_name,
+            cycle_id, decision_hash, policy_hash, account_id, client_order_id,
+            symbol, side, order_type, time_in_force, quantity_micros,
+            notional_limit_micros, state, created_at, updated_at
+          ) VALUES (
+            ${intent.intentId}, ${intent.schemaVersion}, ${intent.authorityGenerationHash},
+            ${intent.strategyName}, ${intent.cycleId}, ${intent.decisionHash},
+            ${intent.policyHash}, ${intent.accountId}, ${intent.clientOrderId},
+            ${intent.symbol}, ${intent.side}, ${intent.orderType}, ${intent.timeInForce},
+            ${intent.quantityMicros}, ${intent.notionalLimitMicros}, 'PLANNED',
+            ${intentCreatedAt}, ${intentCreatedAt}
+          )
+        `
+        yield* sql`
+          INSERT INTO risk_decisions (
+            decision_id, schema_version, input_hash, intent_id, policy_hash,
+            outcome, reason_codes, decided_at, expires_at
+          ) VALUES (
+            ${risk.evaluation.decision.decisionId}, ${risk.evaluation.decision.schemaVersion},
+            ${risk.evaluation.decision.inputHash}, ${risk.evaluation.decision.intentId},
+            ${risk.evaluation.decision.policyHash}, ${risk.evaluation.decision.outcome},
+            ${risk.evaluation.decision.reasonCodes}, ${risk.evaluation.decision.decidedAt},
+            ${risk.evaluation.decision.expiresAt}
+          )
+        `
+        yield* sql`
+          UPDATE intents
+          SET
+            risk_decision_id = ${risk.evaluation.decision.decisionId},
+            state = 'APPROVED',
+            state_version = state_version + 1,
+            updated_at = ${risk.evaluation.decision.decidedAt}
+          WHERE intent_id = ${intent.intentId}
+        `
+        yield* sql`
+          INSERT INTO mutation_events (
+            event_id, schema_version, mutation_id, intent_id, sequence,
+            operation, event_type, request_hash, consistency_delay_ms, occurred_at
+          ) VALUES (
+            ${canonicalHashV1({ submitMutationId, sequence: 1, eventType: 'SUBMIT_STARTED' })},
+            'bayn.paper-mutation-event.v1', ${submitMutationId}, ${intent.intentId}, 1,
+            'SUBMIT', 'SUBMIT_STARTED', ${submitRequestHash}, 1000, ${submitStartedAt}
+          )
+        `
+        yield* sql`
+          UPDATE intents
+          SET state = 'IO_STARTED', state_version = state_version + 1, updated_at = ${submitStartedAt}
+          WHERE intent_id = ${intent.intentId}
+        `
+        if (submitAccepted) {
+          yield* sql`
+            INSERT INTO mutation_events (
+              event_id, schema_version, mutation_id, intent_id, sequence,
+              operation, event_type, request_hash, consistency_delay_ms,
+              broker_order_id, request_id, response_status, response_content_hash, occurred_at
+            ) VALUES (
+              ${canonicalHashV1({ submitMutationId, sequence: 2, eventType: 'SUBMIT_ACCEPTED' })},
+              'bayn.paper-mutation-event.v1', ${submitMutationId}, ${intent.intentId}, 2,
+              'SUBMIT', 'SUBMIT_ACCEPTED', ${submitRequestHash}, 1000, ${brokerOrderId},
+              ${`${fixture}-submit`}, 200, ${canonicalHashV1({ fixture, response: 'submit' })}, ${submitOutcomeAt}
+            )
+          `
+          yield* sql`
+            UPDATE intents
+            SET state = 'ACKNOWLEDGED', state_version = state_version + 1, updated_at = ${submitOutcomeAt}
+            WHERE intent_id = ${intent.intentId}
+          `
+        } else {
+          yield* sql`
+            INSERT INTO mutation_events (
+              event_id, schema_version, mutation_id, intent_id, sequence,
+              operation, event_type, request_hash, consistency_delay_ms, occurred_at
+            ) VALUES (
+              ${canonicalHashV1({ submitMutationId, sequence: 2, eventType: 'SUBMIT_UNKNOWN' })},
+              'bayn.paper-mutation-event.v1', ${submitMutationId}, ${intent.intentId}, 2,
+              'SUBMIT', 'SUBMIT_UNKNOWN', ${submitRequestHash}, 1000, ${submitOutcomeAt}
+            )
+          `
+          yield* sql`
+            UPDATE intents
+            SET state = 'UNKNOWN', state_version = state_version + 1, updated_at = ${submitOutcomeAt}
+            WHERE intent_id = ${intent.intentId}
+          `
+        }
+        if (cancelFixture) {
+          yield* sql`
+            INSERT INTO mutation_events (
+              event_id, schema_version, mutation_id, intent_id, sequence,
+              operation, event_type, request_hash, consistency_delay_ms, broker_order_id, occurred_at
+            ) VALUES (
+              ${canonicalHashV1({ cancelMutationId, sequence: 1, eventType: 'CANCEL_STARTED' })},
+              'bayn.paper-mutation-event.v1', ${cancelMutationId}, ${intent.intentId}, 1,
+              'CANCEL', 'CANCEL_STARTED', ${cancelRequestHash}, 1000, ${brokerOrderId}, ${cancelStartedAt}
+            )
+          `
+          if (fixture === 'cancel-accepted') {
+            yield* sql`
+              INSERT INTO mutation_events (
+                event_id, schema_version, mutation_id, intent_id, sequence,
+                operation, event_type, request_hash, consistency_delay_ms,
+                broker_order_id, request_id, response_status, response_content_hash, occurred_at
+              ) VALUES (
+                ${canonicalHashV1({ cancelMutationId, sequence: 2, eventType: 'CANCEL_ACCEPTED' })},
+                'bayn.paper-mutation-event.v1', ${cancelMutationId}, ${intent.intentId}, 2,
+                'CANCEL', 'CANCEL_ACCEPTED', ${cancelRequestHash}, 1000, ${brokerOrderId},
+                ${`${fixture}-cancel`}, 204, ${canonicalHashV1({ fixture, response: 'cancel' })}, ${cancelOutcomeAt}
+              )
+            `
+          } else {
+            yield* sql`
+              INSERT INTO mutation_events (
+                event_id, schema_version, mutation_id, intent_id, sequence,
+                operation, event_type, request_hash, consistency_delay_ms, broker_order_id, occurred_at
+              ) VALUES (
+                ${canonicalHashV1({ cancelMutationId, sequence: 2, eventType: 'CANCEL_UNKNOWN' })},
+                'bayn.paper-mutation-event.v1', ${cancelMutationId}, ${intent.intentId}, 2,
+                'CANCEL', 'CANCEL_UNKNOWN', ${cancelRequestHash}, 1000, ${brokerOrderId}, ${cancelOutcomeAt}
+              )
+            `
+          }
+        }
+      }),
+    )
+    return { intent, mutationCount: cancelFixture ? 4 : 2 }
+  })
+
+const settleSupersededMutation = (
+  document: PaperDecisionDocument,
+  intentId: string,
+  fixture: SupersededMutationFixture,
+) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const operation = fixture.startsWith('cancel-') ? 'CANCEL' : 'SUBMIT'
+    const mutationId = canonicalHashV1({ intentId, operation })
+    const requestHash = canonicalHashV1({ intentId, fixture, operation })
+    const brokerOrderId = `superseded-${intentId.slice(0, 24)}`
+    const recoveredAt = new Date(Date.parse(document.createdAt) + 11_000).toISOString()
+    const terminalAt = fixture === 'submit-unknown' ? new Date(Date.parse(recoveredAt) + 1).toISOString() : recoveredAt
+    const terminalOutcome = operation === 'CANCEL' ? 'CANCELED' : 'FILLED'
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`
+          INSERT INTO mutation_events (
+            event_id, schema_version, mutation_id, intent_id, sequence,
+            operation, event_type, request_hash, consistency_delay_ms,
+            broker_order_id, request_id, response_status, response_content_hash, occurred_at
+          ) VALUES (
+            ${canonicalHashV1({ mutationId, sequence: 3, eventType: 'RECOVERY_FOUND' })},
+            'bayn.paper-mutation-event.v1', ${mutationId}, ${intentId}, 3,
+            ${operation}, 'RECOVERY_FOUND', ${requestHash}, 1000, ${brokerOrderId},
+            ${`${fixture}-recovery`}, 200, ${canonicalHashV1({ fixture, response: 'recovery' })}, ${recoveredAt}
+          )
+        `
+        if (fixture === 'submit-unknown') {
+          yield* sql`
+            UPDATE intents
+            SET
+              state = 'RECOVERED',
+              state_version = state_version + 1,
+              updated_at = ${recoveredAt}
+            WHERE intent_id = ${intentId}
+              AND state = 'UNKNOWN'
+          `
+        }
+        yield* sql`
+          UPDATE intents
+          SET
+            state = 'TERMINAL',
+            terminal_outcome = ${terminalOutcome},
+            state_version = state_version + 1,
+            updated_at = ${terminalAt}
+          WHERE intent_id = ${intentId}
+        `
+      }),
+    )
+    return { recoveredAt: terminalAt }
+  })
 
 const insertShadowReconciliation = (draft: CycleDraft) =>
   Effect.gen(function* () {
@@ -1714,6 +2858,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           accountId: draft.identity.accountId,
           signalSessionDate: draft.identity.signalSessionDate,
         })
+
         const conflict = yield* Effect.exit(store.bindDecision(draft.identity.cycleId, divergent, decisionAt))
 
         yield* store.acquire(missingDocumentDraft, acquireAt)
@@ -1839,6 +2984,933 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       intents: 0,
       risk_decisions: 0,
       mutation_events: 0,
+    })
+  })
+
+  test('persists and recovers one immutable PAPER no-trade decision across store restart', async () => {
+    const draft = makeDraft('paper-account-paper-decision-restart')
+    const document = makePaperNoTradeDecision(draft, snapshotA)
+
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        yield* store.acquire(draft, acquireAt)
+        yield* store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt)
+        yield* store.activate(draft.identity.cycleId, activeAt)
+        yield* insertShadowReconciliation(draft)
+        yield* store.bindDecision(draft.identity.cycleId, document, decisionAt)
+      }),
+    )
+
+    await runtime.dispose()
+    runtime = makeRuntime()
+
+    const recovered = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        return yield* store.readDecisionDocument(draft.identity.cycleId)
+      }),
+    )
+
+    expect(Option.isSome(recovered)).toBe(true)
+    if (Option.isNone(recovered)) return expect.unreachable('PAPER decision must survive store restart')
+    expect(recovered.value).toEqual(document)
+    expect(recovered.value).toMatchObject({
+      mode: 'PAPER',
+      dispatchable: true,
+      bindings: { authorityGenerationHash: 'a'.repeat(64) },
+      orderedIntentIds: [],
+    })
+  })
+
+  test('terminalizes an expired untouched PAPER plan and releases oldest-unfinished selection', async () => {
+    const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
+    const draft = makeDraft('paper-account-expired-planned', { executionPolicy })
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        yield* store.acquire(draft, acquireAt)
+        yield* store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt)
+        const activated = yield* store.activate(draft.identity.cycleId, activeAt)
+        const planned = yield* buildPlannedPaperDecision(activated.cycle, snapshotA)
+        if (
+          planned.document.targetPlan.status !== TargetPlanStatus.Planned ||
+          planned.document.deltaRisk.length === 0
+        ) {
+          return yield* Effect.die(new Error('PAPER expiry fixture requires a planned mutation'))
+        }
+        yield* insertReconciliation(planned.reconciliation)
+        yield* insertQualifiedPaperLineage(planned.document)
+        yield* store.bindDecision(draft.identity.cycleId, planned.document, decisionAt)
+
+        const riskExpiresAt = planned.document.deltaRisk[0]?.evaluation.decision.expiresAt
+        if (riskExpiresAt === undefined) return yield* Effect.die(new Error('PAPER risk expiry is missing'))
+        const beforeRiskExpiry = new Date(Date.parse(riskExpiresAt) - 1).toISOString()
+        const beforeSubmissionCutoff = new Date(Date.parse(draft.window.submissionCutoffAt) - 1).toISOString()
+        const sql = yield* PgClient.PgClient
+        const directEarlyRisk = yield* Effect.exit(sql`
+          UPDATE autonomous_cycles
+          SET
+            state = ${CycleState.Blocked},
+            terminal_reason = ${CycleTerminalReason.Risk},
+            state_version = state_version + 1,
+            updated_at = ${beforeRiskExpiry},
+            terminal_at = ${beforeRiskExpiry}
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `)
+        const directEarlyCutoff = yield* Effect.exit(sql`
+          UPDATE autonomous_cycles
+          SET
+            state = ${CycleState.Blocked},
+            terminal_reason = ${CycleTerminalReason.MissedSubmission},
+            state_version = state_version + 1,
+            updated_at = ${beforeSubmissionCutoff},
+            terminal_at = ${beforeSubmissionCutoff}
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `)
+        const directWrongReason = yield* Effect.exit(sql`
+          UPDATE autonomous_cycles
+          SET
+            state = ${CycleState.Blocked},
+            terminal_reason = ${CycleTerminalReason.Reconciliation},
+            state_version = state_version + 1,
+            updated_at = ${riskExpiresAt},
+            terminal_at = ${riskExpiresAt}
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `)
+
+        const blocked = yield* store.block(draft.identity.cycleId, CycleTerminalReason.Risk, riskExpiresAt)
+        const replayed = yield* store.block(draft.identity.cycleId, CycleTerminalReason.Risk, riskExpiresAt)
+        const unfinished = yield* store.readOldestUnfinished({
+          qualificationRunId: draft.identity.qualificationRunId,
+          accountId: draft.identity.accountId,
+        })
+        const [counts] = yield* sql<{
+          authorityGenerations: number
+          authorityStates: number
+          intents: number
+          mutations: number
+          orders: number
+        }>`
+          SELECT
+            (
+              SELECT count(*)::integer
+              FROM authority_generations
+              WHERE account_id = ${draft.identity.accountId}
+            ) AS "authorityGenerations",
+            (SELECT count(*)::integer FROM authority_state) AS "authorityStates",
+            (SELECT count(*)::integer FROM intents WHERE account_id = ${draft.identity.accountId}) AS intents,
+            (
+              SELECT count(*)::integer
+              FROM mutation_events AS event
+              JOIN intents AS intent USING (intent_id)
+              WHERE intent.account_id = ${draft.identity.accountId}
+            ) AS mutations,
+            (SELECT count(*)::integer FROM orders WHERE account_id = ${draft.identity.accountId}) AS orders
+        `
+        const [migration] = yield* sql<{ migration_id: number; name: string }>`
+          SELECT migration_id, name
+          FROM schema_migrations
+          WHERE migration_id = 21
+        `
+        return {
+          blocked,
+          counts,
+          directEarlyCutoff,
+          directEarlyRisk,
+          directWrongReason,
+          document: planned.document,
+          migration,
+          replayed,
+          unfinished,
+        }
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(result.document).toMatchObject({
+      mode: 'PAPER',
+      dispatchable: true,
+      targetPlan: { status: TargetPlanStatus.Planned },
+    })
+    expect(Exit.isFailure(result.directEarlyRisk)).toBe(true)
+    expect(Exit.isFailure(result.directEarlyCutoff)).toBe(true)
+    expect(Exit.isFailure(result.directWrongReason)).toBe(true)
+    expect(result.blocked.changed).toBe(true)
+    expect(result.blocked.cycle).toMatchObject({
+      state: CycleState.Blocked,
+      terminalReason: CycleTerminalReason.Risk,
+    })
+    expect(result.replayed.changed).toBe(false)
+    expect(result.replayed.cycle).toEqual(result.blocked.cycle)
+    expect(Option.isNone(result.unfinished)).toBe(true)
+    expect(result.counts).toEqual({
+      authorityGenerations: 2,
+      authorityStates: 0,
+      intents: 0,
+      mutations: 0,
+      orders: 0,
+    })
+    expect(result.migration).toEqual({ migration_id: 21, name: 'expired_paper_cycle_terminalization' })
+  })
+
+  test('terminalizes a PAPER cycle whose immutable authority generation has a durable descendant', async () => {
+    const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
+    const draft = makeDraft('paper-account-superseded-generation', { executionPolicy })
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        yield* store.acquire(draft, acquireAt)
+        yield* store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt)
+        const activated = yield* store.activate(draft.identity.cycleId, activeAt)
+        const planned = yield* buildPlannedPaperDecision(activated.cycle, snapshotA)
+        if (planned.document.targetPlan.status !== TargetPlanStatus.Planned) {
+          return yield* Effect.die(new Error('superseded PAPER fixture requires a planned decision'))
+        }
+        yield* insertReconciliation(planned.reconciliation)
+        yield* insertQualifiedPaperLineage(planned.document)
+        yield* store.bindDecision(draft.identity.cycleId, planned.document, decisionAt)
+        const successor = yield* insertSupersedingObserveGeneration(planned.document)
+        const directWrongReason = yield* Effect.exit(
+          store.block(draft.identity.cycleId, CycleTerminalReason.Risk, successor.activatedAt),
+        )
+        const blocked = yield* store.block(
+          draft.identity.cycleId,
+          CycleTerminalReason.ProvenanceMismatch,
+          successor.activatedAt,
+        )
+        const replayed = yield* store.block(
+          draft.identity.cycleId,
+          CycleTerminalReason.ProvenanceMismatch,
+          successor.activatedAt,
+        )
+        const unfinished = yield* store.readOldestUnfinished({
+          qualificationRunId: draft.identity.qualificationRunId,
+          accountId: draft.identity.accountId,
+        })
+        const sql = yield* PgClient.PgClient
+        const [counts] = yield* sql<{
+          authorityGenerations: number
+          authorityStates: number
+          intents: number
+          mutations: number
+          orders: number
+        }>`
+          SELECT
+            (
+              SELECT count(*)::integer
+              FROM authority_generations
+              WHERE account_id = ${draft.identity.accountId}
+            ) AS "authorityGenerations",
+            (SELECT count(*)::integer FROM authority_state) AS "authorityStates",
+            (SELECT count(*)::integer FROM intents WHERE account_id = ${draft.identity.accountId}) AS intents,
+            (
+              SELECT count(*)::integer
+              FROM mutation_events AS event
+              JOIN intents AS intent USING (intent_id)
+              WHERE intent.account_id = ${draft.identity.accountId}
+            ) AS mutations,
+            (SELECT count(*)::integer FROM orders WHERE account_id = ${draft.identity.accountId}) AS orders
+        `
+        return { blocked, counts, directWrongReason, replayed, successor, unfinished }
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(Exit.isFailure(result.directWrongReason)).toBe(true)
+    expect(result.blocked.changed).toBe(true)
+    expect(result.blocked.cycle).toMatchObject({
+      state: CycleState.Blocked,
+      terminalReason: CycleTerminalReason.ProvenanceMismatch,
+      terminalAt: result.successor.activatedAt,
+    })
+    expect(result.replayed.changed).toBe(false)
+    expect(result.replayed.cycle).toEqual(result.blocked.cycle)
+    expect(Option.isNone(result.unfinished)).toBe(true)
+    expect(result.counts).toEqual({
+      authorityGenerations: 3,
+      authorityStates: 0,
+      intents: 0,
+      mutations: 0,
+      orders: 0,
+    })
+  })
+
+  test.each(['submit-accepted', 'submit-unknown', 'cancel-accepted', 'cancel-unknown'] as const)(
+    'keeps superseded %s mutation history recoverable before an exact idempotent provenance block',
+    async (fixture) => {
+      const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const [clock] = yield* sql<{ evaluated_at: string }>`
+            SELECT to_char(
+              (clock_timestamp() - interval '1 second') AT TIME ZONE 'UTC',
+              'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+            ) AS evaluated_at
+          `
+          if (clock === undefined) return yield* Effect.die(new Error('database Clock returned no row'))
+          const evaluatedAt = clock.evaluated_at
+          const executionOpen = new Date(Date.parse(evaluatedAt) + 20 * 60_000)
+          const executionSessionDate = executionOpen.toISOString().slice(0, 10) as IsoDate
+          const signalDateValue = new Date(`${executionSessionDate}T00:00:00.000Z`)
+          signalDateValue.setUTCDate(signalDateValue.getUTCDate() - 1)
+          const signalSessionDate = signalDateValue.toISOString().slice(0, 10) as IsoDate
+          const draft = makeDraft(`paper-account-superseded-${fixture}`, {
+            executionPolicy,
+            executionCloseAt: `${executionSessionDate}T23:59:59.999Z`,
+            executionOpenAt: executionOpen.toISOString(),
+            executionSessionDate,
+            signalSessionDate,
+          })
+          const acquisitionAt = new Date(Date.parse(draft.window.signalCloseAt) + 60_000).toISOString()
+          const snapshotBoundAt = new Date(Date.parse(draft.window.signalCloseAt) + 120_000).toISOString()
+          const activatedAt = new Date(Date.parse(draft.window.signalCloseAt) + 180_000).toISOString()
+          const manifest = makeInputManifest(snapshotA, {
+            asOfSession: signalSessionDate,
+            finalizedAt: snapshotBoundAt,
+            lastSession: signalSessionDate,
+          })
+          const store = yield* CycleStore
+          yield* store.acquire(draft, acquisitionAt)
+          yield* store.bindSnapshot(draft.identity.cycleId, manifest, snapshotBoundAt)
+          const activated = yield* store.activate(draft.identity.cycleId, activatedAt)
+          const planned = yield* buildPlannedPaperDecision(activated.cycle, snapshotA, {
+            evaluatedAt,
+            snapshotFinalizedAt: snapshotBoundAt,
+          })
+          if (planned.document.targetPlan.status !== TargetPlanStatus.Planned) {
+            return yield* Effect.die(new Error('superseded mutation fixture requires a planned PAPER decision'))
+          }
+          yield* insertReconciliation(planned.reconciliation)
+          yield* insertQualifiedPaperLineage(planned.document)
+          const unfinishedMutation = yield* insertUnfinishedPlannedPaperMutation(planned.document, fixture)
+          yield* store.bindDecision(draft.identity.cycleId, planned.document, evaluatedAt)
+          const successor = yield* insertSupersedingObserveGeneration(planned.document)
+          const rotatedQualificationRunId = 'e'.repeat(64)
+          const earlierSignalDateValue = new Date(`${signalSessionDate}T00:00:00.000Z`)
+          earlierSignalDateValue.setUTCDate(earlierSignalDateValue.getUTCDate() - 1)
+          const earlierSignalSessionDate = earlierSignalDateValue.toISOString().slice(0, 10) as IsoDate
+          const currentDraft = makeDraft(draft.identity.accountId, {
+            executionCloseAt: `${signalSessionDate}T23:59:59.999Z`,
+            executionOpenAt: `${signalSessionDate}T20:00:00.000Z`,
+            executionPolicy,
+            executionSessionDate: signalSessionDate,
+            qualificationRunId: rotatedQualificationRunId,
+            signalSessionDate: earlierSignalSessionDate,
+          })
+          yield* store.acquire(
+            currentDraft,
+            new Date(Date.parse(currentDraft.window.signalCloseAt) + 60_000).toISOString(),
+          )
+          const recoveryScope = {
+            qualificationRunId: rotatedQualificationRunId,
+            accountId: draft.identity.accountId,
+          }
+          const premature = yield* Effect.exit(
+            store.block(draft.identity.cycleId, CycleTerminalReason.ProvenanceMismatch, successor.activatedAt),
+          )
+          const unfinishedBeforeRecovery = yield* store.readOldestUnfinished(recoveryScope)
+          const settled = yield* settleSupersededMutation(planned.document, unfinishedMutation.intent.intentId, fixture)
+          const unfinishedReadyToTerminalize = yield* store.readOldestUnfinished(recoveryScope)
+          const blocked = yield* store.block(
+            draft.identity.cycleId,
+            CycleTerminalReason.ProvenanceMismatch,
+            settled.recoveredAt,
+          )
+          const replayed = yield* store.block(
+            draft.identity.cycleId,
+            CycleTerminalReason.ProvenanceMismatch,
+            settled.recoveredAt,
+          )
+          const unfinishedAfterRecovery = yield* store.readOldestUnfinished(recoveryScope)
+          const [counts] = yield* sql<{
+            authorityGenerations: number
+            authorityStates: number
+            intents: number
+            mutations: number
+            orders: number
+          }>`
+            SELECT
+              (
+                SELECT count(*)::integer
+                FROM authority_generations
+                WHERE account_id = ${draft.identity.accountId}
+              ) AS "authorityGenerations",
+              (SELECT count(*)::integer FROM authority_state) AS "authorityStates",
+              (SELECT count(*)::integer FROM intents WHERE account_id = ${draft.identity.accountId}) AS intents,
+              (
+                SELECT count(*)::integer
+                FROM mutation_events AS event
+                JOIN intents AS intent USING (intent_id)
+                WHERE intent.account_id = ${draft.identity.accountId}
+              ) AS mutations,
+              (SELECT count(*)::integer FROM orders WHERE account_id = ${draft.identity.accountId}) AS orders
+          `
+          return {
+            blocked,
+            counts,
+            premature,
+            replayed,
+            unfinishedAfterRecovery,
+            unfinishedBeforeRecovery,
+            unfinishedReadyToTerminalize,
+            unfinishedMutation,
+            currentDraft,
+            rotatedQualificationRunId,
+          }
+        }).pipe(Effect.provide(TestClock.layer())),
+      )
+
+      expect(Exit.isFailure(result.premature)).toBe(true)
+      expect(Option.isSome(result.unfinishedBeforeRecovery)).toBe(true)
+      if (Option.isSome(result.unfinishedBeforeRecovery)) {
+        expect(result.unfinishedBeforeRecovery.value.identity.cycleId).toBe(result.blocked.cycle.identity.cycleId)
+        expect(result.unfinishedBeforeRecovery.value.identity.qualificationRunId).not.toBe(
+          result.rotatedQualificationRunId,
+        )
+      }
+      expect(Option.isSome(result.unfinishedReadyToTerminalize)).toBe(true)
+      if (Option.isSome(result.unfinishedReadyToTerminalize)) {
+        expect(result.unfinishedReadyToTerminalize.value.identity.cycleId).toBe(result.blocked.cycle.identity.cycleId)
+      }
+      expect(result.blocked.changed).toBe(true)
+      expect(result.blocked.cycle).toMatchObject({
+        state: CycleState.Blocked,
+        terminalReason: CycleTerminalReason.ProvenanceMismatch,
+      })
+      expect(result.replayed.changed).toBe(false)
+      expect(result.replayed.cycle).toEqual(result.blocked.cycle)
+      expect(Option.isSome(result.unfinishedAfterRecovery)).toBe(true)
+      if (Option.isSome(result.unfinishedAfterRecovery)) {
+        expect(result.unfinishedAfterRecovery.value.identity.cycleId).toBe(result.currentDraft.identity.cycleId)
+      }
+      expect(result.counts).toEqual({
+        authorityGenerations: 3,
+        authorityStates: 0,
+        intents: 1,
+        mutations: result.unfinishedMutation.mutationCount + 1,
+        orders: 0,
+      })
+    },
+    15_000,
+  )
+
+  test('rejects PAPER risk terminalization until a durable cancel outcome is recovered', async () => {
+    const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const [clock] = yield* sql<{ evaluated_at: string }>`
+          SELECT to_char(
+            (clock_timestamp() - interval '1 second') AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+          ) AS evaluated_at
+        `
+        if (clock === undefined) return yield* Effect.die(new Error('database Clock returned no row'))
+        const evaluatedAt = clock.evaluated_at
+        const executionOpen = new Date(Date.parse(evaluatedAt) + 20 * 60_000)
+        const executionSessionDate = executionOpen.toISOString().slice(0, 10) as IsoDate
+        const signalDateValue = new Date(`${executionSessionDate}T00:00:00.000Z`)
+        signalDateValue.setUTCDate(signalDateValue.getUTCDate() - 1)
+        const signalSessionDate = signalDateValue.toISOString().slice(0, 10) as IsoDate
+        const draft = makeDraft('paper-account-unresolved-cancel-terminalization', {
+          executionPolicy,
+          executionCloseAt: `${executionSessionDate}T23:59:59.999Z`,
+          executionOpenAt: executionOpen.toISOString(),
+          executionSessionDate,
+          signalSessionDate,
+        })
+        const acquisitionAt = new Date(Date.parse(draft.window.signalCloseAt) + 60_000).toISOString()
+        const snapshotBoundAt = new Date(Date.parse(draft.window.signalCloseAt) + 120_000).toISOString()
+        const activatedAt = new Date(Date.parse(draft.window.signalCloseAt) + 180_000).toISOString()
+        const manifest = makeInputManifest(snapshotA, {
+          asOfSession: signalSessionDate,
+          finalizedAt: snapshotBoundAt,
+          lastSession: signalSessionDate,
+        })
+        const store = yield* CycleStore
+        yield* store.acquire(draft, acquisitionAt)
+        yield* store.bindSnapshot(draft.identity.cycleId, manifest, snapshotBoundAt)
+        const activated = yield* store.activate(draft.identity.cycleId, activatedAt)
+        const planned = yield* buildPlannedPaperDecision(activated.cycle, snapshotA, {
+          evaluatedAt,
+          snapshotFinalizedAt: snapshotBoundAt,
+        })
+        if (planned.document.targetPlan.status !== TargetPlanStatus.Planned) {
+          return yield* Effect.die(new Error('unresolved cancel fixture requires a planned PAPER decision'))
+        }
+        yield* insertReconciliation(planned.reconciliation)
+        yield* insertQualifiedPaperLineage(planned.document)
+        const unfinished = yield* insertUnfinishedPlannedPaperMutation(planned.document, 'submit-accepted')
+        yield* store.bindDecision(draft.identity.cycleId, planned.document, evaluatedAt)
+
+        const cancelMutationId = canonicalHashV1({
+          intentId: unfinished.intent.intentId,
+          operation: 'CANCEL',
+        })
+        const cancelRequestHash = canonicalHashV1({
+          intentId: unfinished.intent.intentId,
+          fixture: 'cancel-terminalization',
+          operation: 'CANCEL',
+        })
+        const brokerOrderId = `superseded-${unfinished.intent.intentId.slice(0, 24)}`
+        const cancelStartedAt = new Date(Date.parse(planned.document.createdAt) + 3).toISOString()
+        const cancelUnknownAt = new Date(Date.parse(planned.document.createdAt) + 4).toISOString()
+        yield* sql`
+          INSERT INTO mutation_events (
+            event_id, schema_version, mutation_id, intent_id, sequence,
+            operation, event_type, request_hash, consistency_delay_ms, broker_order_id, occurred_at
+          ) VALUES
+          (
+            ${canonicalHashV1({ mutationId: cancelMutationId, sequence: 1, eventType: 'CANCEL_STARTED' })},
+            'bayn.paper-mutation-event.v1', ${cancelMutationId}, ${unfinished.intent.intentId}, 1,
+            'CANCEL', 'CANCEL_STARTED', ${cancelRequestHash}, 1000, ${brokerOrderId}, ${cancelStartedAt}
+          ),
+          (
+            ${canonicalHashV1({ mutationId: cancelMutationId, sequence: 2, eventType: 'CANCEL_UNKNOWN' })},
+            'bayn.paper-mutation-event.v1', ${cancelMutationId}, ${unfinished.intent.intentId}, 2,
+            'CANCEL', 'CANCEL_UNKNOWN', ${cancelRequestHash}, 1000, ${brokerOrderId}, ${cancelUnknownAt}
+          )
+        `
+        const terminalAt = new Date(Date.parse(planned.document.createdAt) + 5).toISOString()
+        yield* sql`
+          UPDATE intents
+          SET
+            state = 'TERMINAL',
+            terminal_outcome = 'EXPIRED',
+            state_version = state_version + 1,
+            updated_at = ${terminalAt}
+          WHERE intent_id = ${unfinished.intent.intentId}
+        `
+        const unresolvedBlock = yield* Effect.exit(
+          store.block(draft.identity.cycleId, CycleTerminalReason.Risk, terminalAt),
+        )
+
+        const recoveryAt = new Date(Date.parse(planned.document.createdAt) + 11_000).toISOString()
+        yield* sql`
+          INSERT INTO mutation_events (
+            event_id, schema_version, mutation_id, intent_id, sequence,
+            operation, event_type, request_hash, consistency_delay_ms,
+            broker_order_id, request_id, response_status, response_content_hash, occurred_at
+          ) VALUES (
+            ${canonicalHashV1({ mutationId: cancelMutationId, sequence: 3, eventType: 'RECOVERY_FOUND' })},
+            'bayn.paper-mutation-event.v1', ${cancelMutationId}, ${unfinished.intent.intentId}, 3,
+            'CANCEL', 'RECOVERY_FOUND', ${cancelRequestHash}, 1000, ${brokerOrderId},
+            'cancel-terminalization-recovery', 200, ${canonicalHashV1({ response: 'cancel-recovered' })}, ${recoveryAt}
+          )
+        `
+        const blocked = yield* store.block(draft.identity.cycleId, CycleTerminalReason.Risk, recoveryAt)
+        return { blocked, unresolvedBlock }
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(Exit.isFailure(result.unresolvedBlock)).toBe(true)
+    expect(result.blocked.cycle).toMatchObject({
+      state: CycleState.Blocked,
+      terminalReason: CycleTerminalReason.Risk,
+    })
+  }, 15_000)
+
+  test('binds and terminalizes a real PAPER risk block without intent or broker mutation state', async () => {
+    const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
+    const draft = makeDraft('paper-account-risk-blocked', { executionPolicy })
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        yield* store.acquire(draft, acquireAt)
+        yield* store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt)
+        const activated = yield* store.activate(draft.identity.cycleId, activeAt)
+        const planned = yield* buildPlannedPaperDecision(activated.cycle, snapshotA, {
+          transformPolicy: (policy) => ({ ...policy, maxOrderNotionalMicros: '1' }),
+        })
+        if (
+          planned.document.targetPlan.status !== TargetPlanStatus.Planned ||
+          planned.document.riskBlock === undefined ||
+          planned.document.deltaRisk.length === 0
+        ) {
+          return yield* Effect.die(new Error('PAPER risk-block fixture requires exact blocked cumulative evidence'))
+        }
+        yield* insertReconciliation(planned.reconciliation)
+        yield* insertQualifiedPaperLineage(planned.document)
+        const bound = yield* store.bindDecision(draft.identity.cycleId, planned.document, decisionAt)
+        const bindingReplay = yield* store.bindDecision(draft.identity.cycleId, planned.document, decisionAt)
+
+        const sql = yield* PgClient.PgClient
+        const directCompleted = yield* Effect.exit(sql`
+          UPDATE autonomous_cycles
+          SET
+            state = ${CycleState.Completed},
+            state_version = state_version + 1,
+            updated_at = ${decisionAt},
+            terminal_at = ${decisionAt}
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `)
+        const storeCompleted = yield* Effect.exit(
+          store.finish(draft.identity.cycleId, CycleState.Completed, decisionAt),
+        )
+        const directWrongReason = yield* Effect.exit(sql`
+          UPDATE autonomous_cycles
+          SET
+            state = ${CycleState.Blocked},
+            terminal_reason = ${CycleTerminalReason.Reconciliation},
+            state_version = state_version + 1,
+            updated_at = ${decisionAt},
+            terminal_at = ${decisionAt}
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `)
+
+        const blocked = yield* store.block(draft.identity.cycleId, CycleTerminalReason.Risk, decisionAt)
+        const blockReplay = yield* store.block(draft.identity.cycleId, CycleTerminalReason.Risk, decisionAt)
+        const unfinished = yield* store.readOldestUnfinished({
+          qualificationRunId: draft.identity.qualificationRunId,
+          accountId: draft.identity.accountId,
+        })
+        const [counts] = yield* sql<{
+          authorityGenerations: number
+          authorityStates: number
+          intents: number
+          mutations: number
+          orders: number
+        }>`
+          SELECT
+            (
+              SELECT count(*)::integer
+              FROM authority_generations
+              WHERE account_id = ${draft.identity.accountId}
+            ) AS "authorityGenerations",
+            (SELECT count(*)::integer FROM authority_state) AS "authorityStates",
+            (SELECT count(*)::integer FROM intents WHERE account_id = ${draft.identity.accountId}) AS intents,
+            (
+              SELECT count(*)::integer
+              FROM mutation_events AS event
+              JOIN intents AS intent USING (intent_id)
+              WHERE intent.account_id = ${draft.identity.accountId}
+            ) AS mutations,
+            (SELECT count(*)::integer FROM orders WHERE account_id = ${draft.identity.accountId}) AS orders
+        `
+        return {
+          bindingReplay,
+          blockReplay,
+          blocked,
+          bound,
+          counts,
+          directCompleted,
+          directWrongReason,
+          document: planned.document,
+          storeCompleted,
+          unfinished,
+        }
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(result.document).toMatchObject({
+      mode: 'PAPER',
+      dispatchable: false,
+      targetPlan: { status: TargetPlanStatus.Planned },
+      riskBlock: {
+        intentId: result.document.orderedIntentIds.at(-1),
+        decisionId: result.document.deltaRisk.at(-1)?.evaluation.decision.decisionId,
+      },
+    })
+    expect(result.document.riskBlock?.reasonCodes).toContain(Reason.OrderNotionalExceeded)
+    expect(result.document.riskBlock?.reasonCodes).not.toContain(Reason.AuthorityNotPaper)
+    expect(result.document.deltaRisk.at(-1)?.evaluation.decision.outcome).toBe(RiskOutcome.Blocked)
+    expect(result.bound.changed).toBe(true)
+    expect(result.bindingReplay.changed).toBe(false)
+    expect(result.bindingReplay.cycle).toEqual(result.bound.cycle)
+    expect(Exit.isFailure(result.directCompleted)).toBe(true)
+    expect(Exit.isFailure(result.storeCompleted)).toBe(true)
+    expect(Exit.isFailure(result.directWrongReason)).toBe(true)
+    expect(result.blocked.changed).toBe(true)
+    expect(result.blocked.cycle).toMatchObject({
+      state: CycleState.Blocked,
+      terminalReason: CycleTerminalReason.Risk,
+      terminalAt: decisionAt,
+    })
+    expect(result.blockReplay.changed).toBe(false)
+    expect(result.blockReplay.cycle).toEqual(result.blocked.cycle)
+    expect(Option.isNone(result.unfinished)).toBe(true)
+    expect(result.counts).toEqual({
+      authorityGenerations: 2,
+      authorityStates: 0,
+      intents: 0,
+      mutations: 0,
+      orders: 0,
+    })
+  })
+
+  test('terminalizes a known denied PAPER intent and releases oldest-unfinished selection immediately', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const [clock] = yield* sql<{ evaluated_at: string }>`
+          SELECT to_char(
+            (clock_timestamp() - interval '1 second') AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+          ) AS evaluated_at
+        `
+        if (clock === undefined) return yield* Effect.die(new Error('database Clock returned no row'))
+        const evaluatedAt = clock.evaluated_at
+        const executionOpen = new Date(Date.parse(evaluatedAt) + 20 * 60_000)
+        const executionSessionDate = executionOpen.toISOString().slice(0, 10) as IsoDate
+        const signalDateValue = new Date(`${executionSessionDate}T00:00:00.000Z`)
+        signalDateValue.setUTCDate(signalDateValue.getUTCDate() - 1)
+        const signalSessionDate = signalDateValue.toISOString().slice(0, 10) as IsoDate
+        const executionCloseAt = `${executionSessionDate}T23:59:59.999Z`
+        const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
+        const draft = makeDraft('paper-account-terminal-denied', {
+          executionPolicy,
+          executionCloseAt,
+          executionOpenAt: executionOpen.toISOString(),
+          executionSessionDate,
+          signalSessionDate,
+        })
+        const acquisitionAt = new Date(Date.parse(draft.window.signalCloseAt) + 60_000).toISOString()
+        const snapshotBoundAt = new Date(Date.parse(draft.window.signalCloseAt) + 120_000).toISOString()
+        const activatedAt = new Date(Date.parse(draft.window.signalCloseAt) + 180_000).toISOString()
+        const manifest = makeInputManifest(snapshotB, {
+          asOfSession: signalSessionDate,
+          finalizedAt: snapshotBoundAt,
+          lastSession: signalSessionDate,
+        })
+
+        const store = yield* CycleStore
+        yield* store.acquire(draft, acquisitionAt)
+        yield* store.bindSnapshot(draft.identity.cycleId, manifest, snapshotBoundAt)
+        const activated = yield* store.activate(draft.identity.cycleId, activatedAt)
+        const planned = yield* buildPlannedPaperDecision(activated.cycle, snapshotB, {
+          evaluatedAt,
+          snapshotFinalizedAt: snapshotBoundAt,
+        })
+        if (
+          planned.document.targetPlan.status !== TargetPlanStatus.Planned ||
+          planned.document.deltaRisk.length === 0
+        ) {
+          return yield* Effect.die(new Error('terminal PAPER failure fixture requires a planned mutation'))
+        }
+        yield* insertReconciliation(planned.reconciliation)
+        yield* store.bindDecision(draft.identity.cycleId, planned.document, evaluatedAt)
+        const denied = yield* insertQualifiedPaperLineage(planned.document, { deniedIntent: true })
+        const prematureAt = new Date(Date.parse(denied.deniedAt) - 1).toISOString()
+
+        const directPremature = yield* Effect.exit(sql`
+          UPDATE autonomous_cycles
+          SET
+            state = ${CycleState.Blocked},
+            terminal_reason = ${CycleTerminalReason.Risk},
+            state_version = state_version + 1,
+            updated_at = ${prematureAt},
+            terminal_at = ${prematureAt}
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `)
+        const directWrongReason = yield* Effect.exit(sql`
+          UPDATE autonomous_cycles
+          SET
+            state = ${CycleState.Blocked},
+            terminal_reason = ${CycleTerminalReason.Reconciliation},
+            state_version = state_version + 1,
+            updated_at = ${denied.deniedAt},
+            terminal_at = ${denied.deniedAt}
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `)
+
+        const blocked = yield* store.block(draft.identity.cycleId, CycleTerminalReason.Risk, denied.deniedAt)
+        const replayed = yield* store.block(draft.identity.cycleId, CycleTerminalReason.Risk, denied.deniedAt)
+        const unfinished = yield* store.readOldestUnfinished({
+          qualificationRunId: draft.identity.qualificationRunId,
+          accountId: draft.identity.accountId,
+        })
+        const [counts] = yield* sql<{
+          authorityGenerations: number
+          authorityStates: number
+          intents: number
+          mutations: number
+          orders: number
+        }>`
+          SELECT
+            (
+              SELECT count(*)::integer
+              FROM authority_generations
+              WHERE account_id = ${draft.identity.accountId}
+            ) AS "authorityGenerations",
+            (SELECT count(*)::integer FROM authority_state) AS "authorityStates",
+            (SELECT count(*)::integer FROM intents WHERE account_id = ${draft.identity.accountId}) AS intents,
+            (
+              SELECT count(*)::integer
+              FROM mutation_events AS event
+              JOIN intents AS intent USING (intent_id)
+              WHERE intent.account_id = ${draft.identity.accountId}
+            ) AS mutations,
+            (SELECT count(*)::integer FROM orders WHERE account_id = ${draft.identity.accountId}) AS orders
+        `
+        return {
+          blocked,
+          counts,
+          denied,
+          directPremature,
+          directWrongReason,
+          replayed,
+          unfinished,
+        }
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(Exit.isFailure(result.directPremature)).toBe(true)
+    expect(Exit.isFailure(result.directWrongReason)).toBe(true)
+    expect(result.denied.intent.state).toBe(IntentState.Planned)
+    expect(result.blocked.changed).toBe(true)
+    expect(result.blocked.cycle).toMatchObject({
+      state: CycleState.Blocked,
+      terminalReason: CycleTerminalReason.Risk,
+      terminalAt: result.denied.deniedAt,
+    })
+    expect(result.replayed.changed).toBe(false)
+    expect(result.replayed.cycle).toEqual(result.blocked.cycle)
+    expect(Option.isNone(result.unfinished)).toBe(true)
+    expect(result.counts).toEqual({
+      authorityGenerations: 2,
+      authorityStates: 0,
+      intents: 1,
+      mutations: 2,
+      orders: 0,
+    })
+  })
+
+  test('requires terminal-filled PAPER intents and later exact reconciliation before completion', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const [clock] = yield* sql<{ evaluated_at: string }>`
+          SELECT to_char(
+            (clock_timestamp() - interval '1 second') AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+          ) AS evaluated_at
+        `
+        if (clock === undefined) return yield* Effect.die(new Error('database Clock returned no row'))
+        const evaluatedAt = clock.evaluated_at
+        const executionOpen = new Date(Date.parse(evaluatedAt) + 20 * 60_000)
+        const executionSessionDate = executionOpen.toISOString().slice(0, 10) as IsoDate
+        const signalDateValue = new Date(`${executionSessionDate}T00:00:00.000Z`)
+        signalDateValue.setUTCDate(signalDateValue.getUTCDate() - 1)
+        const signalSessionDate = signalDateValue.toISOString().slice(0, 10) as IsoDate
+        const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
+        const draft = makeDraft('paper-account-completion-proof', {
+          executionPolicy,
+          executionCloseAt: `${executionSessionDate}T23:59:59.999Z`,
+          executionOpenAt: executionOpen.toISOString(),
+          executionSessionDate,
+          signalSessionDate,
+        })
+        const acquisitionAt = new Date(Date.parse(draft.window.signalCloseAt) + 60_000).toISOString()
+        const snapshotBoundAt = new Date(Date.parse(draft.window.signalCloseAt) + 120_000).toISOString()
+        const activatedAt = new Date(Date.parse(draft.window.signalCloseAt) + 180_000).toISOString()
+        const manifest = makeInputManifest(snapshotB, {
+          asOfSession: signalSessionDate,
+          finalizedAt: snapshotBoundAt,
+          lastSession: signalSessionDate,
+        })
+
+        const store = yield* CycleStore
+        yield* store.acquire(draft, acquisitionAt)
+        yield* store.bindSnapshot(draft.identity.cycleId, manifest, snapshotBoundAt)
+        const activated = yield* store.activate(draft.identity.cycleId, activatedAt)
+        const planned = yield* buildPlannedPaperDecision(activated.cycle, snapshotB, {
+          evaluatedAt,
+          snapshotFinalizedAt: snapshotBoundAt,
+        })
+        if (
+          planned.document.targetPlan.status !== TargetPlanStatus.Planned ||
+          planned.document.riskBlock !== undefined
+        ) {
+          return yield* Effect.die(new Error('PAPER completion fixture requires a dispatchable planned decision'))
+        }
+        yield* insertReconciliation(planned.reconciliation)
+        yield* insertQualifiedPaperLineage(planned.document)
+        yield* store.bindDecision(draft.identity.cycleId, planned.document, evaluatedAt)
+
+        const directPremature = yield* Effect.exit(sql`
+          UPDATE autonomous_cycles
+          SET
+            state = ${CycleState.Completed},
+            state_version = state_version + 1,
+            updated_at = ${evaluatedAt},
+            terminal_at = ${evaluatedAt}
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `)
+        const storePremature = yield* Effect.exit(
+          store.finish(draft.identity.cycleId, CycleState.Completed, evaluatedAt),
+        )
+
+        const filled = yield* insertFilledPlannedPaperIntent(planned.document, 'started')
+        const unresolvedReconciledAt = new Date(Date.parse(filled.filledAt) + 1).toISOString()
+        yield* insertReconciliation(plannedPaperReconciliation(activated.cycle, unresolvedReconciledAt))
+        const unresolvedStarted = yield* Effect.exit(
+          store.finish(draft.identity.cycleId, CycleState.Completed, unresolvedReconciledAt),
+        )
+        const settledAt = new Date(Date.parse(unresolvedReconciledAt) + 1).toISOString()
+        yield* settleStartedPaperSubmit(filled, settledAt)
+        const reconciledAt = new Date(Date.parse(settledAt) + 1).toISOString()
+        yield* insertReconciliation(plannedPaperReconciliation(activated.cycle, reconciledAt))
+        const completed = yield* store.finish(draft.identity.cycleId, CycleState.Completed, reconciledAt)
+        const replayed = yield* store.finish(draft.identity.cycleId, CycleState.Completed, reconciledAt)
+        const unfinished = yield* store.readOldestUnfinished({
+          qualificationRunId: draft.identity.qualificationRunId,
+          accountId: draft.identity.accountId,
+        })
+        const [counts] = yield* sql<{
+          authorityGenerations: number
+          authorityStates: number
+          intents: number
+          mutations: number
+          orders: number
+        }>`
+          SELECT
+            (
+              SELECT count(*)::integer
+              FROM authority_generations
+              WHERE account_id = ${draft.identity.accountId}
+            ) AS "authorityGenerations",
+            (SELECT count(*)::integer FROM authority_state) AS "authorityStates",
+            (SELECT count(*)::integer FROM intents WHERE account_id = ${draft.identity.accountId}) AS intents,
+            (
+              SELECT count(*)::integer
+              FROM mutation_events AS event
+              JOIN intents AS intent USING (intent_id)
+              WHERE intent.account_id = ${draft.identity.accountId}
+            ) AS mutations,
+            (SELECT count(*)::integer FROM orders WHERE account_id = ${draft.identity.accountId}) AS orders
+        `
+        return {
+          completed,
+          counts,
+          directPremature,
+          filled,
+          reconciledAt,
+          replayed,
+          storePremature,
+          unfinished,
+          unresolvedStarted,
+        }
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(Exit.isFailure(result.directPremature)).toBe(true)
+    expect(Exit.isFailure(result.storePremature)).toBe(true)
+    expect(Exit.isFailure(result.unresolvedStarted)).toBe(true)
+    expect(result.completed.changed).toBe(true)
+    expect(result.completed.cycle).toMatchObject({
+      state: CycleState.Completed,
+      terminalAt: result.reconciledAt,
+    })
+    expect(result.replayed.changed).toBe(false)
+    expect(result.replayed.cycle).toEqual(result.completed.cycle)
+    expect(Option.isNone(result.unfinished)).toBe(true)
+    expect(result.filled.intent.state).toBe(IntentState.Planned)
+    expect(result.counts).toEqual({
+      authorityGenerations: 2,
+      authorityStates: 0,
+      intents: 1,
+      mutations: 2,
+      orders: 0,
     })
   })
 
