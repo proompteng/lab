@@ -22,7 +22,7 @@ The family is a precommitted, falsifiable extrapolation of documented short-hori
 1. Narasimhan Jegadeesh, _Evidence of Predictable Behavior of Security Returns_, DOI `10.1111/j.1540-6261.1990.tb05110.x`, https://doi.org/10.1111/j.1540-6261.1990.tb05110.x
 2. Bruce N. Lehmann, _Fads, Martingales, and Market Efficiency_, DOI `10.2307/2937816`, https://doi.org/10.2307/2937816
 3. Andrew W. Lo and A. Craig MacKinlay, _When Are Contrarian Profits Due to Stock Market Overreaction?_, DOI `10.1093/rfs/3.2.175`, https://doi.org/10.1093/rfs/3.2.175
-The classic evidence concerns individual securities and shorter horizons. Applying a fixed 21-session loser rule to the frozen cross-asset ETF witness is therefore explicitly an unvalidated hypothesis, not a claimed replication. The 21-session horizon is one trading month; the fixed two-selection limit and 50% per-selection weight bound gross exposure without fitting covariance or volatility. No alternate horizon, rank rule, sign gate, selection count, weight, universe, fallback, or tie-break may be tried after any development metric is observed.
+   The classic evidence concerns individual securities and shorter horizons. Applying a fixed 21-session loser rule to the frozen cross-asset ETF witness is therefore explicitly an unvalidated hypothesis, not a claimed replication. The 21-session horizon is one trading month; the fixed two-selection limit and 50% per-selection weight bound gross exposure without fitting covariance or volatility. No alternate horizon, rank rule, sign gate, selection count, weight, universe, fallback, or tie-break may be tried after any development metric is observed.
 
 ## Result-blind strategy specification
 
