@@ -62,5 +62,8 @@ jobs:
           echo 'A non-null preregistration exists, but execution stays fail-closed until the reviewed evidence collector writes /run/bayn-qualification/eligibility-input.json.' >&2
           test -s /run/bayn-qualification/eligibility-input.json
           bun packages/scripts/src/bayn/verify-qualification-eligibility.ts \
-            --input /run/bayn-qualification/eligibility-input.json
+            --input /run/bayn-qualification/eligibility-input.json \
+            --repository-root "${GITHUB_WORKSPACE}" \
+            --trusted-repository "${GITHUB_REPOSITORY}" \
+            --git-timeout-ms 10000
           echo 'Eligibility verified. The existing governed qualification command must be invoked by the same reviewed collector only after its durable attempt lock is committed.'
