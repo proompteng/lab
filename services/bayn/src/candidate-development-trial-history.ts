@@ -201,6 +201,25 @@ export const candidate19Preregistration: CandidateDevelopmentNextPreregistration
   },
 }
 
+export const candidate20Preregistration: CandidateDevelopmentNextPreregistration = {
+  schemaVersion: 'bayn.candidate-development-next-preregistration.v1',
+  candidateOrdinal: 20,
+  priorTrialCount: 19,
+  strategyProtocolHash: '18b61d027e2235c7fc8ba718313ae8863650c2cb7c497dc4a7a5028829d19e0f',
+  strategyIdentityHash: '8c99589120d8f3ed36c5286ce119d20490d42becd014e7fc2cc97b1420600278',
+  candidateDevelopmentProtocolHash: 'f7d4d78e70401c01c141fc7b63c4c1cfe9e7350b973c40ffbd7d8fe9832b332f',
+  calendarHash: '4b2f519f336e4e730c1f0d69e860f25a8d4d0cfbd8e93c6b333ea83623d87237',
+  priorTrialsHash: 'dfda4c7706cdd7b2999a863ac63714c5d46894027442253f031b69bcdeaefde0',
+  modulePath: 'services/bayn/src/strategy/cross-sectional-short-term-reversal/candidate-20.ts',
+  moduleSha256: '15570022245f8bba1c121c6657369d66085d6c3659aa326b50048be1ab050441',
+  marketData: candidate19Preregistration.marketData,
+  preregistration: {
+    sourceRevision: '0b0a951465e1c4644bc3fd04b7b448b8701dc609',
+    path: 'services/bayn/candidates/ordinal-20-cross-sectional-short-term-reversal-preregistration.json',
+    blobOid: '066a4d44cd41b871cad95474eb00e411af532c76',
+  },
+}
+
 export const candidate18LegacyPriorTrialsMaterial: CandidateDevelopmentLegacyPriorTrialsMaterial = {
   schemaVersion: 'bayn.candidate-development-prior-trials.v1',
   qualificationCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
@@ -241,6 +260,22 @@ export const candidate19PriorTrialsMaterial: CandidateDevelopmentPriorTrialsMate
   latestReviewedPreregistration: candidate18Preregistration,
 }
 
+export const candidate20PriorTrialsMaterial: CandidateDevelopmentPriorTrialsMaterial = {
+  schemaVersion: 'bayn.candidate-development-prior-trials.v2',
+  qualificationCandidateOrdinals: candidate19PriorTrialsMaterial.qualificationCandidateOrdinals,
+  latestQualificationEvidence: candidate16TerminalEvidence,
+  latestQualificationPreregistration: candidate16Preregistration,
+  developmentCandidateOrdinals: [17, 18, 19],
+  latestDevelopmentEvidence: {
+    candidateOrdinal: 19,
+    priorTrialCount: 18,
+    status: 'DEVELOPMENT_REJECTED',
+    evidenceContentHash: candidate19DevelopmentFailureEvidenceExpectation.evidenceContentHash,
+    qualificationAttemptConsumed: false,
+  },
+  latestReviewedPreregistration: candidate19Preregistration,
+}
+
 export const deriveCandidateDevelopmentLegacyPriorTrialsHash = (
   material: CandidateDevelopmentLegacyPriorTrialsMaterial,
 ) => canonicalHashV1Result(material)
@@ -253,10 +288,10 @@ export const frozenCandidateDevelopmentTrialHistory: CandidateDevelopmentTrialHi
   completedCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
   developmentCandidateOrdinals: [17, 18, 19],
   latestReviewedCandidateLegacyPriorTrials: candidate18LegacyPriorTrialsMaterial,
-  latestReviewedCandidatePriorTrials: candidate19PriorTrialsMaterial,
+  latestReviewedCandidatePriorTrials: candidate20PriorTrialsMaterial,
   latestTerminalEvidence: candidate16TerminalEvidence,
   candidatePreregistration: candidate16Preregistration,
-  latestReviewedCandidatePreregistration: candidate19Preregistration,
+  latestReviewedCandidatePreregistration: candidate20Preregistration,
   latestDevelopmentEvidence: {
     candidateOrdinal: 19,
     priorTrialCount: 18,
@@ -267,5 +302,5 @@ export const frozenCandidateDevelopmentTrialHistory: CandidateDevelopmentTrialHi
     developmentMetricsObserved: candidate19DevelopmentFailureEvidenceExpectation.developmentMetricsObserved,
     qualificationAttemptConsumed: false,
   },
-  nextCandidatePreregistration: null,
+  nextCandidatePreregistration: candidate20Preregistration,
 }
