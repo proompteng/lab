@@ -2,6 +2,10 @@ import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import {
+  makeForwardPerformanceExecutionMeasurements,
+  type ForwardPerformanceExecutionMeasurements,
+} from './execution-quality'
+import {
   FORWARD_PERFORMANCE_SCHEMA_VERSION,
   type ForwardPerformanceCycleEvidence,
   type ForwardPerformanceEvidenceInput,
@@ -17,7 +21,7 @@ const RETURN_SCALE = 10n ** BigInt(RETURN_DECIMAL_PLACES)
 
 export interface ForwardPerformanceDomainFailure {
   readonly _tag: 'ForwardPerformanceDomainFailure'
-  readonly operation: 'hash-receipt'
+  readonly operation: 'hash-execution-evidence' | 'hash-receipt'
   readonly cause: unknown
 }
 
@@ -176,7 +180,10 @@ const transactionTotalsMatch = (
   }
 }
 
-const makeMaterial = (input: ForwardPerformanceEvidenceInput): ForwardPerformanceReceiptMaterial => {
+const makeMaterial = (
+  input: ForwardPerformanceEvidenceInput,
+  measurements: ForwardPerformanceExecutionMeasurements,
+): ForwardPerformanceReceiptMaterial => {
   const reasons = new Set<ForwardPerformanceReasonCode>()
   const cycles = [...input.cycles].sort(compareCycles)
   const firstCycle = cycles[0]
@@ -350,6 +357,8 @@ const makeMaterial = (input: ForwardPerformanceEvidenceInput): ForwardPerformanc
       reasonCodes,
       cashYield: input.cashYieldEvidence ?? null,
     },
+    executionQuality: measurements.executionQuality,
+    observedCapacity: measurements.observedCapacity,
     profitability:
       !sufficient || totals === undefined
         ? 'UNDETERMINED'
@@ -361,14 +370,25 @@ const makeMaterial = (input: ForwardPerformanceEvidenceInput): ForwardPerformanc
 
 export const makeForwardPerformanceReceipt = (
   input: ForwardPerformanceEvidenceInput,
-): Result.Result<ForwardPerformanceReceipt, ForwardPerformanceDomainFailure> => {
-  const material = makeMaterial(input)
-  return Result.mapError(
-    Result.map(canonicalHashV1Result(material), (receiptHash) => ({ ...material, receiptHash })),
-    (cause): ForwardPerformanceDomainFailure => ({
-      _tag: 'ForwardPerformanceDomainFailure',
-      operation: 'hash-receipt',
-      cause,
-    }),
+): Result.Result<ForwardPerformanceReceipt, ForwardPerformanceDomainFailure> =>
+  Result.flatMap(
+    Result.mapError(
+      makeForwardPerformanceExecutionMeasurements(input),
+      (cause): ForwardPerformanceDomainFailure => ({
+        _tag: 'ForwardPerformanceDomainFailure',
+        operation: 'hash-execution-evidence',
+        cause,
+      }),
+    ),
+    (measurements) => {
+      const material = makeMaterial(input, measurements)
+      return Result.mapError(
+        Result.map(canonicalHashV1Result(material), (receiptHash) => ({ ...material, receiptHash })),
+        (cause): ForwardPerformanceDomainFailure => ({
+          _tag: 'ForwardPerformanceDomainFailure',
+          operation: 'hash-receipt',
+          cause,
+        }),
+      )
+    },
   )
-}
