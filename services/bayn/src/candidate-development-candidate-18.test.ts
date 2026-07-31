@@ -216,7 +216,7 @@ describe('Candidate 18 dual momentum preregistration', () => {
       failure: { _tag: 'Candidate18DevelopmentFailureEvidenceContentHashMismatch' },
     })
 
-    const source = await Bun.file('services/bayn/src/strategy/dual-momentum-global-equity/candidate-18.ts').text()
+    const source = await Bun.file(`${import.meta.dir}/strategy/dual-momentum-global-equity/candidate-18.ts`).text()
     expect(source).toContain(candidate18Preregistration.strategyProtocolHash)
     expect(source).toContain(evidence.protocolBindings.embeddedEvaluationProtocolHash)
     expect(evidence.protocolBindings.embeddedEvaluationProtocolHash).not.toBe(
