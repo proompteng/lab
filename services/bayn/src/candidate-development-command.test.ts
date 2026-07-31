@@ -91,7 +91,7 @@ const execFileBytesPromise = (file: string, args: readonly string[], cwd: string
     })
   })
 
-const candidate19PreregistrationRevision = 'd48dd6f6e316ccb5f2f00d65941d24a88abcd8d2'
+const candidate19PreregistrationRevision = 'bb24ec2ab4225b13920a2b50fb137c4134d2d75f'
 const candidate19PreregistrationPath =
   'services/bayn/candidates/ordinal-19-inverse-volatility-risk-diversification-preregistration.json'
 const candidate19PreregistrationBlobOid = '02d9150a1f0007a644a084b3fca4cd543131374e'

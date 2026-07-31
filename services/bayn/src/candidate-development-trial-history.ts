@@ -182,7 +182,7 @@ export const candidate19Preregistration: CandidateDevelopmentNextPreregistration
   moduleSha256: '90813ab3a3d3cb000bb894309694f94588f98730a6f78b8e1418a5c38d8cb45f',
   marketData: candidate18Preregistration.marketData,
   preregistration: {
-    sourceRevision: 'd48dd6f6e316ccb5f2f00d65941d24a88abcd8d2',
+    sourceRevision: 'bb24ec2ab4225b13920a2b50fb137c4134d2d75f',
     path: 'services/bayn/candidates/ordinal-19-inverse-volatility-risk-diversification-preregistration.json',
     blobOid: '02d9150a1f0007a644a084b3fca4cd543131374e',
   },
