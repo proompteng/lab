@@ -8,7 +8,7 @@
   "calendarHash": "4b2f519f336e4e730c1f0d69e860f25a8d4d0cfbd8e93c6b333ea83623d87237",
   "priorTrialsHash": "1dfc9b6832d4841093becd2c276141110afdfce28a0a88b301cfe9959b900d62",
   "modulePath": "services/bayn/src/strategy/inverse-volatility-risk-diversification/candidate-19.ts",
-  "moduleSha256": "2cee5f2be84f924818a1328390c93b54fca6646d1b6d99499c35c86dc82a1c23",
+  "moduleSha256": "90813ab3a3d3cb000bb894309694f94588f98730a6f78b8e1418a5c38d8cb45f",
   "marketData": {
     "schemaVersion": "bayn.candidate-development-market-data-source.v1",
     "snapshotId": "2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0",

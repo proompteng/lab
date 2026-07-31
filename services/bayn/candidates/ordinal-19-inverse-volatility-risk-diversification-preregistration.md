@@ -57,7 +57,7 @@ Canonical strategy-identity hash: `ccf8f03db1f0f9eb54f7ad42194c938e5a53e11573488
 ## Executable and source-manifest binding
 
 - Module path: `services/bayn/src/strategy/inverse-volatility-risk-diversification/candidate-19.ts`.
-- Precommitted module SHA-256: `2cee5f2be84f924818a1328390c93b54fca6646d1b6d99499c35c86dc82a1c23`.
+- Precommitted module SHA-256: `90813ab3a3d3cb000bb894309694f94588f98730a6f78b8e1418a5c38d8cb45f`.
 - Source-manifest path: `services/bayn/candidates/ordinal-19-inverse-volatility-risk-diversification-source-manifest.json`.
 - Module format: self-contained ESM with no imports.
 
