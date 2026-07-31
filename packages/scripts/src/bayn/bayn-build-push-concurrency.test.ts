@@ -34,6 +34,11 @@ const cancelsRunningEvent = (running: RetryEvent, incoming: RetryEvent): boolean
   parsed.concurrency['cancel-in-progress'] && concurrencyGroupFor(running) === concurrencyGroupFor(incoming)
 
 describe('Bayn build-push workflow concurrency', () => {
+  test('binds release-review remediations to the exact checked-out repository', () => {
+    expect(workflow).toContain("'services/bayn/release-review-remediations/**'")
+    expect(workflow.match(/--repository-root "\$\{GITHUB_WORKSPACE\}"/g)).toHaveLength(3)
+  })
+
   test('does not let an unrelated issue comment cancel scheduled retry discovery', () => {
     expect(normalizedConcurrencyGroup).toBe(expectedConcurrencyGroup)
 
