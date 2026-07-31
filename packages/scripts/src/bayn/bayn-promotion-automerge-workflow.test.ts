@@ -15,7 +15,7 @@ describe('Bayn promotion auto-merge workflow', () => {
   test('owns serialized eligibility-completion and repair-schedule triggers with explicit merge authority', () => {
     expect(parsed.name).toBe('bayn-promotion-automerge')
     expect(events.workflow_run).toEqual({
-      workflows: ['bayn-promotion-eligibility'],
+      workflows: ['bayn-promotion-eligibility', 'bayn'],
       types: ['completed'],
     })
     expect(events.schedule).toEqual([{ cron: '12,27,42,57 * * * *' }])
