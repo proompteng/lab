@@ -145,7 +145,7 @@ describe('Candidate 18 dual momentum preregistration', () => {
       candidate18Preregistration.strategyProtocolHash,
     )
     expect(canonicalHashV1(candidateDevelopmentArtifact.strategyProtocol.strategyIdentity)).toBe(
-      candidate18Preregistration.strategyIdentityHash,
+      candidate18Preregistration.strategyIdentityHash!,
     )
     expect(candidate18Planner.specification).toMatchObject({
       id: 'global-equity-dual-momentum-252-spy-efa-ief-cash',

@@ -146,7 +146,8 @@ const candidate18Input: CandidateDevelopmentPreflightInput = {
   signalSessionDates: officialMonthEndSignalDates(candidate18OfficialSessions),
   featureLookbackSessions: 252,
 }
-const candidate18StrategyProtocol = candidate18Artifact.strategyProtocol as CandidateDevelopmentStrategyProtocol
+const candidate18StrategyProtocol =
+  candidate18Artifact.strategyProtocol as unknown as CandidateDevelopmentStrategyProtocol
 
 const candidate18VerifiedSourceFiles: CandidateDevelopmentVerifiedSourceFiles = {
   schemaVersion: 'bayn.candidate-development-verified-source-files.v1',

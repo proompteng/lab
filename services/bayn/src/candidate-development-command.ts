@@ -2459,7 +2459,12 @@ export const executeCandidateDevelopmentProgram = <Registration, DevelopmentData
   verifiedSource: CandidateDevelopmentVerifiedSource,
 ): Effect.Effect<CandidateDevelopmentCommandReport, CandidateDevelopmentCommandFailure | Error, Requirements> => {
   let evaluation: CandidateDevelopmentCommandEvaluation | undefined
-  const effects: CandidateDevelopmentEffects<Registration, DevelopmentData, Error, Requirements> = {
+  const effects: CandidateDevelopmentEffects<
+    Registration,
+    DevelopmentData,
+    CandidateDevelopmentCommandFailure | Error,
+    Requirements
+  > = {
     ...program.effects,
     preregisterCandidate: (preflight) =>
       Effect.fromResult(
