@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { fork } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { appendFile, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -18,16 +18,17 @@ const sha64 = /^[0-9a-f]{64}$/
 const imageDigest = /^sha256:[0-9a-f]{64}$/
 const candidateModulePath = /^services\/bayn\/src\/strategy\/[A-Za-z0-9._/-]+\.ts$/
 const candidatePreregistrationPath = /^services\/bayn\/candidates\/[A-Za-z0-9._/-]+\.json$/
+const qualificationPreregistrationPath = /^services\/bayn\/candidates\/[A-Za-z0-9._/-]+\.(?:json|md)$/
 
 export interface QualificationCandidatePreregistration {
   readonly schemaVersion: 'bayn.candidate-development-next-preregistration.v1'
   readonly candidateOrdinal: number
   readonly priorTrialCount: number
   readonly strategyProtocolHash: string
-  readonly strategyIdentityHash: string
-  readonly candidateDevelopmentProtocolHash: string
-  readonly calendarHash: string
-  readonly priorTrialsHash: string
+  readonly strategyIdentityHash?: string
+  readonly candidateDevelopmentProtocolHash?: string
+  readonly calendarHash?: string
+  readonly priorTrialsHash?: string
   readonly modulePath: string
   readonly moduleSha256: string
   readonly marketData: {
@@ -67,6 +68,19 @@ const exactKeys = (record: Record<string, unknown>, expected: readonly string[],
   const observed = Object.keys(record).sort()
   const required = [...expected].sort()
   if (observed.length !== required.length || observed.some((key, index) => key !== required[index])) {
+    throw new Error(`${label} has an unsupported or incomplete schema`)
+  }
+}
+
+const exactOptionalKeys = (
+  record: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[],
+  label: string,
+): void => {
+  const observed = Object.keys(record)
+  const allowed = new Set([...required, ...optional])
+  if (required.some((key) => !Object.hasOwn(record, key)) || observed.some((key) => !allowed.has(key))) {
     throw new Error(`${label} has an unsupported or incomplete schema`)
   }
 }
@@ -141,26 +155,36 @@ const ordinalList = (value: unknown, label: string): readonly number[] => {
   return output
 }
 
-const decodePreregistration = (value: unknown, label: string): QualificationCandidatePreregistration => {
+const decodePreregistration = (
+  value: unknown,
+  label: string,
+  requireCompleteIdentity = false,
+): QualificationCandidatePreregistration => {
   const record = dataRecord(value, label)
-  exactKeys(
+  const identityKeys = [
+    'strategyIdentityHash',
+    'candidateDevelopmentProtocolHash',
+    'calendarHash',
+    'priorTrialsHash',
+  ] as const
+  exactOptionalKeys(
     record,
     [
       'schemaVersion',
       'candidateOrdinal',
       'priorTrialCount',
       'strategyProtocolHash',
-      'strategyIdentityHash',
-      'candidateDevelopmentProtocolHash',
-      'calendarHash',
-      'priorTrialsHash',
       'modulePath',
       'moduleSha256',
       'marketData',
       'preregistration',
     ],
+    identityKeys,
     label,
   )
+  if (requireCompleteIdentity && identityKeys.some((key) => !Object.hasOwn(record, key))) {
+    throw new Error(`${label} is missing the complete reviewed identity`)
+  }
   if (record.schemaVersion !== 'bayn.candidate-development-next-preregistration.v1') {
     throw new Error(`${label}.schemaVersion is unsupported`)
   }
@@ -189,19 +213,28 @@ const decodePreregistration = (value: unknown, label: string): QualificationCand
     throw new Error(`${label}.preregistration.path is invalid`)
   }
 
+  const strategyIdentityHash = Object.hasOwn(record, 'strategyIdentityHash')
+    ? hash(record.strategyIdentityHash, sha64, `${label}.strategyIdentityHash`)
+    : undefined
+  const candidateDevelopmentProtocolHash = Object.hasOwn(record, 'candidateDevelopmentProtocolHash')
+    ? hash(record.candidateDevelopmentProtocolHash, sha64, `${label}.candidateDevelopmentProtocolHash`)
+    : undefined
+  const calendarHash = Object.hasOwn(record, 'calendarHash')
+    ? hash(record.calendarHash, sha64, `${label}.calendarHash`)
+    : undefined
+  const priorTrialsHash = Object.hasOwn(record, 'priorTrialsHash')
+    ? hash(record.priorTrialsHash, sha64, `${label}.priorTrialsHash`)
+    : undefined
+
   return {
     schemaVersion: 'bayn.candidate-development-next-preregistration.v1',
     candidateOrdinal,
     priorTrialCount,
     strategyProtocolHash: hash(record.strategyProtocolHash, sha64, `${label}.strategyProtocolHash`),
-    strategyIdentityHash: hash(record.strategyIdentityHash, sha64, `${label}.strategyIdentityHash`),
-    candidateDevelopmentProtocolHash: hash(
-      record.candidateDevelopmentProtocolHash,
-      sha64,
-      `${label}.candidateDevelopmentProtocolHash`,
-    ),
-    calendarHash: hash(record.calendarHash, sha64, `${label}.calendarHash`),
-    priorTrialsHash: hash(record.priorTrialsHash, sha64, `${label}.priorTrialsHash`),
+    ...(strategyIdentityHash === undefined ? {} : { strategyIdentityHash }),
+    ...(candidateDevelopmentProtocolHash === undefined ? {} : { candidateDevelopmentProtocolHash }),
+    ...(calendarHash === undefined ? {} : { calendarHash }),
+    ...(priorTrialsHash === undefined ? {} : { priorTrialsHash }),
     modulePath,
     moduleSha256: hash(record.moduleSha256, sha64, `${label}.moduleSha256`),
     marketData: {
@@ -233,6 +266,322 @@ const canonicalJson = (value: unknown): string => {
       .join(',')}}`
   }
   return JSON.stringify(value)
+}
+
+const canonicalHash = (value: unknown): string => createHash('sha256').update(canonicalJson(value)).digest('hex')
+
+interface QualificationEvidence {
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly terminalStatus: 'HOLD_REJECT'
+  readonly sourceRevision: string
+}
+
+interface QualificationPreregistration {
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly sourceRevision: string
+  readonly path: string
+  readonly blobOid: string
+}
+
+interface PriorDevelopmentEvidence {
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly status: 'DEVELOPMENT_REJECTED'
+  readonly evidenceContentHash: string
+  readonly qualificationAttemptConsumed: false
+}
+
+interface LatestDevelopmentEvidence extends PriorDevelopmentEvidence {
+  readonly evaluatedSourceRevision: string
+  readonly reviewedSourceRevision?: string
+  readonly mergedSourceRevision?: string
+  readonly failureStage?: 'buildEvaluation-preflight' | 'development-evaluation'
+  readonly developmentMetricsObserved?: boolean
+}
+
+interface LegacyPriorTrialsMaterial {
+  readonly schemaVersion: 'bayn.candidate-development-prior-trials.v1'
+  readonly qualificationCandidateOrdinals: readonly number[]
+  readonly developmentCandidateOrdinals: readonly number[]
+  readonly latestDevelopmentEvidence: PriorDevelopmentEvidence
+  readonly latestReviewedPreregistration: QualificationCandidatePreregistration
+}
+
+interface PriorTrialsMaterial {
+  readonly schemaVersion: 'bayn.candidate-development-prior-trials.v2'
+  readonly qualificationCandidateOrdinals: readonly number[]
+  readonly latestQualificationEvidence: QualificationEvidence
+  readonly latestQualificationPreregistration: QualificationPreregistration
+  readonly developmentCandidateOrdinals: readonly number[]
+  readonly latestDevelopmentEvidence: PriorDevelopmentEvidence
+  readonly latestReviewedPreregistration: QualificationCandidatePreregistration
+}
+
+const assertSameCanonical = (left: unknown, right: unknown, label: string): void => {
+  if (canonicalJson(left) !== canonicalJson(right)) throw new Error(`${label} is inconsistent`)
+}
+
+const assertOrdinalRange = (ordinals: readonly number[], start: number, label: string): void => {
+  if (ordinals.length === 0 || ordinals.some((ordinal, index) => ordinal !== start + index)) {
+    throw new Error(`${label} is not a contiguous ordinal range`)
+  }
+}
+
+const decodeQualificationEvidence = (value: unknown, label: string): QualificationEvidence => {
+  const record = dataRecord(value, label)
+  exactKeys(record, ['candidateOrdinal', 'priorTrialCount', 'terminalStatus', 'sourceRevision'], label)
+  const candidateOrdinal = positiveInteger(record.candidateOrdinal, `${label}.candidateOrdinal`)
+  const priorTrialCount = nonNegativeInteger(record.priorTrialCount, `${label}.priorTrialCount`)
+  if (candidateOrdinal !== priorTrialCount + 1 || record.terminalStatus !== 'HOLD_REJECT') {
+    throw new Error(`${label} has invalid qualification lineage`)
+  }
+  return {
+    candidateOrdinal,
+    priorTrialCount,
+    terminalStatus: 'HOLD_REJECT',
+    sourceRevision: hash(record.sourceRevision, sha40, `${label}.sourceRevision`),
+  }
+}
+
+const decodeQualificationPreregistration = (value: unknown, label: string): QualificationPreregistration => {
+  const record = dataRecord(value, label)
+  exactKeys(record, ['candidateOrdinal', 'priorTrialCount', 'sourceRevision', 'path', 'blobOid'], label)
+  const candidateOrdinal = positiveInteger(record.candidateOrdinal, `${label}.candidateOrdinal`)
+  const priorTrialCount = nonNegativeInteger(record.priorTrialCount, `${label}.priorTrialCount`)
+  if (candidateOrdinal !== priorTrialCount + 1) throw new Error(`${label} has invalid qualification lineage`)
+  const path = nonEmptyString(record.path, `${label}.path`)
+  if (!qualificationPreregistrationPath.test(path) || path.includes('..')) throw new Error(`${label}.path is invalid`)
+  return {
+    candidateOrdinal,
+    priorTrialCount,
+    sourceRevision: hash(record.sourceRevision, sha40, `${label}.sourceRevision`),
+    path,
+    blobOid: hash(record.blobOid, sha40, `${label}.blobOid`),
+  }
+}
+
+const decodePriorDevelopmentEvidence = (value: unknown, label: string): PriorDevelopmentEvidence => {
+  const record = dataRecord(value, label)
+  exactKeys(
+    record,
+    ['candidateOrdinal', 'priorTrialCount', 'status', 'evidenceContentHash', 'qualificationAttemptConsumed'],
+    label,
+  )
+  const candidateOrdinal = positiveInteger(record.candidateOrdinal, `${label}.candidateOrdinal`)
+  const priorTrialCount = nonNegativeInteger(record.priorTrialCount, `${label}.priorTrialCount`)
+  if (
+    candidateOrdinal !== priorTrialCount + 1 ||
+    record.status !== 'DEVELOPMENT_REJECTED' ||
+    record.qualificationAttemptConsumed !== false
+  ) {
+    throw new Error(`${label} has invalid development lineage`)
+  }
+  return {
+    candidateOrdinal,
+    priorTrialCount,
+    status: 'DEVELOPMENT_REJECTED',
+    evidenceContentHash: hash(record.evidenceContentHash, sha64, `${label}.evidenceContentHash`),
+    qualificationAttemptConsumed: false,
+  }
+}
+
+const decodeLatestDevelopmentEvidence = (value: unknown, label: string): LatestDevelopmentEvidence => {
+  const record = dataRecord(value, label)
+  exactOptionalKeys(
+    record,
+    [
+      'candidateOrdinal',
+      'priorTrialCount',
+      'status',
+      'evidenceContentHash',
+      'evaluatedSourceRevision',
+      'qualificationAttemptConsumed',
+    ],
+    ['reviewedSourceRevision', 'mergedSourceRevision', 'failureStage', 'developmentMetricsObserved'],
+    label,
+  )
+  const prior = decodePriorDevelopmentEvidence(
+    {
+      candidateOrdinal: record.candidateOrdinal,
+      priorTrialCount: record.priorTrialCount,
+      status: record.status,
+      evidenceContentHash: record.evidenceContentHash,
+      qualificationAttemptConsumed: record.qualificationAttemptConsumed,
+    },
+    label,
+  )
+  const reviewedSourceRevision = Object.hasOwn(record, 'reviewedSourceRevision')
+    ? hash(record.reviewedSourceRevision, sha40, `${label}.reviewedSourceRevision`)
+    : undefined
+  const mergedSourceRevision = Object.hasOwn(record, 'mergedSourceRevision')
+    ? hash(record.mergedSourceRevision, sha40, `${label}.mergedSourceRevision`)
+    : undefined
+  const failureStage = Object.hasOwn(record, 'failureStage')
+    ? record.failureStage === 'buildEvaluation-preflight' || record.failureStage === 'development-evaluation'
+      ? record.failureStage
+      : (() => {
+          throw new Error(`${label}.failureStage is unsupported`)
+        })()
+    : undefined
+  const developmentMetricsObserved = Object.hasOwn(record, 'developmentMetricsObserved')
+    ? typeof record.developmentMetricsObserved === 'boolean'
+      ? record.developmentMetricsObserved
+      : (() => {
+          throw new Error(`${label}.developmentMetricsObserved must be boolean`)
+        })()
+    : undefined
+  return {
+    ...prior,
+    evaluatedSourceRevision: hash(record.evaluatedSourceRevision, sha40, `${label}.evaluatedSourceRevision`),
+    ...(reviewedSourceRevision === undefined ? {} : { reviewedSourceRevision }),
+    ...(mergedSourceRevision === undefined ? {} : { mergedSourceRevision }),
+    ...(failureStage === undefined ? {} : { failureStage }),
+    ...(developmentMetricsObserved === undefined ? {} : { developmentMetricsObserved }),
+  }
+}
+
+const decodeLegacyPriorTrials = (
+  value: unknown,
+  completed: readonly number[],
+  development: readonly number[],
+): LegacyPriorTrialsMaterial => {
+  const label = 'trialHistory.latestReviewedCandidateLegacyPriorTrials'
+  const record = dataRecord(value, label)
+  exactKeys(
+    record,
+    [
+      'schemaVersion',
+      'qualificationCandidateOrdinals',
+      'developmentCandidateOrdinals',
+      'latestDevelopmentEvidence',
+      'latestReviewedPreregistration',
+    ],
+    label,
+  )
+  if (record.schemaVersion !== 'bayn.candidate-development-prior-trials.v1') {
+    throw new Error(`${label}.schemaVersion is unsupported`)
+  }
+  const qualificationCandidateOrdinals = ordinalList(
+    record.qualificationCandidateOrdinals,
+    `${label}.qualificationCandidateOrdinals`,
+  )
+  assertSameCanonical(qualificationCandidateOrdinals, completed, `${label}.qualificationCandidateOrdinals`)
+  const developmentCandidateOrdinals = ordinalList(
+    record.developmentCandidateOrdinals,
+    `${label}.developmentCandidateOrdinals`,
+  )
+  assertOrdinalRange(developmentCandidateOrdinals, completed.length + 1, `${label}.developmentCandidateOrdinals`)
+  if (
+    developmentCandidateOrdinals.length > development.length ||
+    developmentCandidateOrdinals.some((ordinal, index) => ordinal !== development[index])
+  ) {
+    throw new Error(`${label}.developmentCandidateOrdinals is not a current-history prefix`)
+  }
+  const latestDevelopmentEvidence = decodePriorDevelopmentEvidence(
+    record.latestDevelopmentEvidence,
+    `${label}.latestDevelopmentEvidence`,
+  )
+  const latestReviewedPreregistration = decodePreregistration(
+    record.latestReviewedPreregistration,
+    `${label}.latestReviewedPreregistration`,
+  )
+  const latestOrdinal = developmentCandidateOrdinals.at(-1)
+  if (
+    latestOrdinal === undefined ||
+    latestDevelopmentEvidence.candidateOrdinal !== latestOrdinal ||
+    latestReviewedPreregistration.candidateOrdinal !== latestOrdinal
+  ) {
+    throw new Error(`${label} does not bind its latest development ordinal`)
+  }
+  return {
+    schemaVersion: 'bayn.candidate-development-prior-trials.v1',
+    qualificationCandidateOrdinals,
+    developmentCandidateOrdinals,
+    latestDevelopmentEvidence,
+    latestReviewedPreregistration,
+  }
+}
+
+const decodePriorTrials = (
+  value: unknown,
+  completed: readonly number[],
+  development: readonly number[],
+  latestQualificationEvidence: QualificationEvidence,
+  latestQualificationPreregistration: QualificationPreregistration,
+  latestDevelopmentEvidence: LatestDevelopmentEvidence,
+): PriorTrialsMaterial => {
+  const label = 'trialHistory.latestReviewedCandidatePriorTrials'
+  const record = dataRecord(value, label)
+  exactKeys(
+    record,
+    [
+      'schemaVersion',
+      'qualificationCandidateOrdinals',
+      'latestQualificationEvidence',
+      'latestQualificationPreregistration',
+      'developmentCandidateOrdinals',
+      'latestDevelopmentEvidence',
+      'latestReviewedPreregistration',
+    ],
+    label,
+  )
+  if (record.schemaVersion !== 'bayn.candidate-development-prior-trials.v2') {
+    throw new Error(`${label}.schemaVersion is unsupported`)
+  }
+  const qualificationCandidateOrdinals = ordinalList(
+    record.qualificationCandidateOrdinals,
+    `${label}.qualificationCandidateOrdinals`,
+  )
+  assertSameCanonical(qualificationCandidateOrdinals, completed, `${label}.qualificationCandidateOrdinals`)
+  const decodedQualificationEvidence = decodeQualificationEvidence(
+    record.latestQualificationEvidence,
+    `${label}.latestQualificationEvidence`,
+  )
+  const decodedQualificationPreregistration = decodeQualificationPreregistration(
+    record.latestQualificationPreregistration,
+    `${label}.latestQualificationPreregistration`,
+  )
+  assertSameCanonical(decodedQualificationEvidence, latestQualificationEvidence, `${label}.latestQualificationEvidence`)
+  assertSameCanonical(
+    decodedQualificationPreregistration,
+    latestQualificationPreregistration,
+    `${label}.latestQualificationPreregistration`,
+  )
+  const developmentCandidateOrdinals = ordinalList(
+    record.developmentCandidateOrdinals,
+    `${label}.developmentCandidateOrdinals`,
+  )
+  assertSameCanonical(developmentCandidateOrdinals, development, `${label}.developmentCandidateOrdinals`)
+  const decodedLatestDevelopmentEvidence = decodePriorDevelopmentEvidence(
+    record.latestDevelopmentEvidence,
+    `${label}.latestDevelopmentEvidence`,
+  )
+  const latestDevelopmentPrior: PriorDevelopmentEvidence = {
+    candidateOrdinal: latestDevelopmentEvidence.candidateOrdinal,
+    priorTrialCount: latestDevelopmentEvidence.priorTrialCount,
+    status: latestDevelopmentEvidence.status,
+    evidenceContentHash: latestDevelopmentEvidence.evidenceContentHash,
+    qualificationAttemptConsumed: false,
+  }
+  assertSameCanonical(decodedLatestDevelopmentEvidence, latestDevelopmentPrior, `${label}.latestDevelopmentEvidence`)
+  const latestReviewedPreregistration = decodePreregistration(
+    record.latestReviewedPreregistration,
+    `${label}.latestReviewedPreregistration`,
+  )
+  if (latestReviewedPreregistration.candidateOrdinal !== latestDevelopmentEvidence.candidateOrdinal) {
+    throw new Error(`${label}.latestReviewedPreregistration does not bind the latest development ordinal`)
+  }
+  return {
+    schemaVersion: 'bayn.candidate-development-prior-trials.v2',
+    qualificationCandidateOrdinals,
+    latestQualificationEvidence: decodedQualificationEvidence,
+    latestQualificationPreregistration: decodedQualificationPreregistration,
+    developmentCandidateOrdinals,
+    latestDevelopmentEvidence: decodedLatestDevelopmentEvidence,
+    latestReviewedPreregistration,
+  }
 }
 
 const decodeInvalidPrecommit = (value: unknown, reviewed: QualificationCandidatePreregistration): number => {
@@ -417,61 +766,58 @@ export const evaluateQualificationDormancy = (value: unknown): QualificationDorm
 
   const completed = ordinalList(history.completedCandidateOrdinals, 'trialHistory.completedCandidateOrdinals')
   const development = ordinalList(history.developmentCandidateOrdinals, 'trialHistory.developmentCandidateOrdinals')
-  const combined = [...completed, ...development]
-  if (combined.some((ordinal, index) => ordinal !== index + 1) || development.length === 0) {
-    throw new Error('trialHistory candidate ordinals are incomplete or overlapping')
-  }
-  dataRecord(history.latestReviewedCandidateLegacyPriorTrials, 'trialHistory.latestReviewedCandidateLegacyPriorTrials')
-  dataRecord(history.latestReviewedCandidatePriorTrials, 'trialHistory.latestReviewedCandidatePriorTrials')
-  dataRecord(history.latestTerminalEvidence, 'trialHistory.latestTerminalEvidence')
-  dataRecord(history.candidatePreregistration, 'trialHistory.candidatePreregistration')
+  assertOrdinalRange(completed, 1, 'trialHistory.completedCandidateOrdinals')
+  assertOrdinalRange(development, completed.length + 1, 'trialHistory.developmentCandidateOrdinals')
 
-  const latestDevelopment = dataRecord(history.latestDevelopmentEvidence, 'trialHistory.latestDevelopmentEvidence')
-  exactKeys(
-    latestDevelopment,
-    [
-      'candidateOrdinal',
-      'priorTrialCount',
-      'status',
-      'evidenceContentHash',
-      'evaluatedSourceRevision',
-      'failureStage',
-      'developmentMetricsObserved',
-      'qualificationAttemptConsumed',
-    ],
+  const latestQualificationEvidence = decodeQualificationEvidence(
+    history.latestTerminalEvidence,
+    'trialHistory.latestTerminalEvidence',
+  )
+  const latestQualificationPreregistration = decodeQualificationPreregistration(
+    history.candidatePreregistration,
+    'trialHistory.candidatePreregistration',
+  )
+  const latestCompletedOrdinal = completed.at(-1)
+  if (
+    latestCompletedOrdinal === undefined ||
+    latestQualificationEvidence.candidateOrdinal !== latestCompletedOrdinal ||
+    latestQualificationPreregistration.candidateOrdinal !== latestCompletedOrdinal
+  ) {
+    throw new Error('trialHistory qualification records do not bind the latest completed ordinal')
+  }
+
+  const latestDevelopment = decodeLatestDevelopmentEvidence(
+    history.latestDevelopmentEvidence,
     'trialHistory.latestDevelopmentEvidence',
   )
-  const latestDevelopmentOrdinal = positiveInteger(
-    latestDevelopment.candidateOrdinal,
-    'trialHistory.latestDevelopmentEvidence.candidateOrdinal',
-  )
-  if (
-    latestDevelopmentOrdinal !== development.at(-1) ||
-    latestDevelopment.priorTrialCount !== latestDevelopmentOrdinal - 1 ||
-    latestDevelopment.status !== 'DEVELOPMENT_REJECTED' ||
-    latestDevelopment.qualificationAttemptConsumed !== false ||
-    typeof latestDevelopment.developmentMetricsObserved !== 'boolean' ||
-    (latestDevelopment.failureStage !== 'buildEvaluation-preflight' &&
-      latestDevelopment.failureStage !== 'development-evaluation')
-  ) {
-    throw new Error('trialHistory.latestDevelopmentEvidence is inconsistent')
+  const latestDevelopmentOrdinal = development.at(-1)
+  if (latestDevelopmentOrdinal === undefined || latestDevelopment.candidateOrdinal !== latestDevelopmentOrdinal) {
+    throw new Error('trialHistory.latestDevelopmentEvidence does not bind the latest development ordinal')
   }
-  hash(latestDevelopment.evidenceContentHash, sha64, 'trialHistory.latestDevelopmentEvidence.evidenceContentHash')
-  hash(
-    latestDevelopment.evaluatedSourceRevision,
-    sha40,
-    'trialHistory.latestDevelopmentEvidence.evaluatedSourceRevision',
+
+  decodeLegacyPriorTrials(history.latestReviewedCandidateLegacyPriorTrials, completed, development)
+  const latestPriorTrials = decodePriorTrials(
+    history.latestReviewedCandidatePriorTrials,
+    completed,
+    development,
+    latestQualificationEvidence,
+    latestQualificationPreregistration,
+    latestDevelopment,
   )
 
   const reviewed = decodePreregistration(
     history.latestReviewedCandidatePreregistration,
     'trialHistory.latestReviewedCandidatePreregistration',
+    true,
   )
   if (
     reviewed.candidateOrdinal !== latestDevelopmentOrdinal + 1 ||
     reviewed.priorTrialCount !== latestDevelopmentOrdinal
   ) {
     throw new Error('trialHistory.latestReviewedCandidatePreregistration is not the next reviewed ordinal')
+  }
+  if (reviewed.priorTrialsHash !== canonicalHash(latestPriorTrials)) {
+    throw new Error('trialHistory.latestReviewedCandidatePreregistration does not bind the decoded prior trials')
   }
 
   const invalidOrdinal =
@@ -485,7 +831,11 @@ export const evaluateQualificationDormancy = (value: unknown): QualificationDorm
       : { status: 'dormant', reason: 'precommit-invalid-unattempted', candidateOrdinal: invalidOrdinal }
   }
 
-  const next = decodePreregistration(history.nextCandidatePreregistration, 'trialHistory.nextCandidatePreregistration')
+  const next = decodePreregistration(
+    history.nextCandidatePreregistration,
+    'trialHistory.nextCandidatePreregistration',
+    true,
+  )
   if (canonicalJson(next) !== canonicalJson(reviewed)) {
     throw new Error('trialHistory.nextCandidatePreregistration is not the separately reviewed preregistration')
   }

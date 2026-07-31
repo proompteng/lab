@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -21,16 +22,53 @@ const authoritativeImports = [
 const moduleSource = (history: unknown, prefix = ''): string =>
   `${authoritativeImports}\n${prefix}export const frozenCandidateDevelopmentTrialHistory = ${JSON.stringify(history)} as const\n`
 
-const reviewedPreregistration = (): QualificationCandidatePreregistration => ({
+const canonicalJson = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+const canonicalHash = (value: unknown): string => createHash('sha256').update(canonicalJson(value)).digest('hex')
+
+const exactMainTrialHistoryV1 = JSON.parse(
+  '{"schemaVersion":"bayn.candidate-development-trial-history.v1","completedCandidateOrdinals":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],"developmentCandidateOrdinals":[17,18,19],"latestReviewedCandidateLegacyPriorTrials":{"schemaVersion":"bayn.candidate-development-prior-trials.v1","qualificationCandidateOrdinals":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],"developmentCandidateOrdinals":[17],"latestDevelopmentEvidence":{"candidateOrdinal":17,"priorTrialCount":16,"status":"DEVELOPMENT_REJECTED","evidenceContentHash":"97b9c2d6dc1d59d9b60686065bc4d595b8d1f22cdff9930b6131427b90e13f26","qualificationAttemptConsumed":false},"latestReviewedPreregistration":{"schemaVersion":"bayn.candidate-development-next-preregistration.v1","candidateOrdinal":17,"priorTrialCount":16,"strategyProtocolHash":"fa25d8c16bc4f4fde3bab99409ae60a6fd23332d295b3557231796cebb911390","modulePath":"services/bayn/src/strategy/volatility-managed-trend-overlay/candidate-17.ts","moduleSha256":"2e98bc55eae1901ccdde41978b7b32d746dc2ef6afcebbff1de0ed54574065da","marketData":{"schemaVersion":"bayn.candidate-development-market-data-source.v1","snapshotId":"2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0","finalizedSnapshotContentHash":"8e376546f6a6cc1dbe2e910db3d68f584fc0bd9c4858166042ce32aa077eed0d","inputManifestHash":"b606cf57fb076f5bd2875206973e7c512817430d5cfbbeac8a99396f9983cab4","boundedContentHash":"e0e7b283de187d8ccaf8a449dacc538f00049cfe446dcf153b558e92bf0e17ed"},"preregistration":{"sourceRevision":"890d8f5801cf7c7576ed7a0cee387a4e79b98877","path":"services/bayn/candidates/ordinal-17-volatility-managed-trend-overlay-preregistration.json","blobOid":"c1d07233df53cc0379b1dfae9f1caffbd6b7abd6"}}},"latestReviewedCandidatePriorTrials":{"schemaVersion":"bayn.candidate-development-prior-trials.v2","qualificationCandidateOrdinals":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],"latestQualificationEvidence":{"candidateOrdinal":16,"priorTrialCount":15,"terminalStatus":"HOLD_REJECT","sourceRevision":"60a48a2e52fbafdd67a404a33a3cb22e82a98493"},"latestQualificationPreregistration":{"candidateOrdinal":16,"priorTrialCount":15,"sourceRevision":"a0dadcd2f6346968bd9df582e4673608afc04592","path":"services/bayn/candidates/ordinal-16-macro-breadth-regime-preregistration.md","blobOid":"f602e3c8fd1b85768404d5fbc439775cdcd2570b"},"developmentCandidateOrdinals":[17,18,19],"latestDevelopmentEvidence":{"candidateOrdinal":19,"priorTrialCount":18,"status":"DEVELOPMENT_REJECTED","evidenceContentHash":"6170af41ddc14c04412a1929a60c88f35062ec2440f6e4b3beb0539bd411f364","qualificationAttemptConsumed":false},"latestReviewedPreregistration":{"schemaVersion":"bayn.candidate-development-next-preregistration.v1","candidateOrdinal":19,"priorTrialCount":18,"strategyProtocolHash":"b4a2a6c65a7fa5973f7cbc1fd5031e77d529f4884562e5cc8a105fc870ced78f","strategyIdentityHash":"ccf8f03db1f0f9eb54f7ad42194c938e5a53e11573488fd31e7af871967af25a","candidateDevelopmentProtocolHash":"663b59d6c570bbe3373d6e160609e0ad6294a687f435416f2a0956888d960738","calendarHash":"4b2f519f336e4e730c1f0d69e860f25a8d4d0cfbd8e93c6b333ea83623d87237","priorTrialsHash":"1dfc9b6832d4841093becd2c276141110afdfce28a0a88b301cfe9959b900d62","modulePath":"services/bayn/src/strategy/inverse-volatility-risk-diversification/candidate-19.ts","moduleSha256":"90813ab3a3d3cb000bb894309694f94588f98730a6f78b8e1418a5c38d8cb45f","marketData":{"schemaVersion":"bayn.candidate-development-market-data-source.v1","snapshotId":"2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0","finalizedSnapshotContentHash":"8e376546f6a6cc1dbe2e910db3d68f584fc0bd9c4858166042ce32aa077eed0d","inputManifestHash":"b606cf57fb076f5bd2875206973e7c512817430d5cfbbeac8a99396f9983cab4","boundedContentHash":"e0e7b283de187d8ccaf8a449dacc538f00049cfe446dcf153b558e92bf0e17ed"},"preregistration":{"sourceRevision":"bb24ec2ab4225b13920a2b50fb137c4134d2d75f","path":"services/bayn/candidates/ordinal-19-inverse-volatility-risk-diversification-preregistration.json","blobOid":"02d9150a1f0007a644a084b3fca4cd543131374e"}}},"latestTerminalEvidence":{"candidateOrdinal":16,"priorTrialCount":15,"terminalStatus":"HOLD_REJECT","sourceRevision":"60a48a2e52fbafdd67a404a33a3cb22e82a98493"},"candidatePreregistration":{"candidateOrdinal":16,"priorTrialCount":15,"sourceRevision":"a0dadcd2f6346968bd9df582e4673608afc04592","path":"services/bayn/candidates/ordinal-16-macro-breadth-regime-preregistration.md","blobOid":"f602e3c8fd1b85768404d5fbc439775cdcd2570b"},"latestReviewedCandidatePreregistration":{"schemaVersion":"bayn.candidate-development-next-preregistration.v1","candidateOrdinal":20,"priorTrialCount":19,"strategyProtocolHash":"18b61d027e2235c7fc8ba718313ae8863650c2cb7c497dc4a7a5028829d19e0f","strategyIdentityHash":"8c99589120d8f3ed36c5286ce119d20490d42becd014e7fc2cc97b1420600278","candidateDevelopmentProtocolHash":"f7d4d78e70401c01c141fc7b63c4c1cfe9e7350b973c40ffbd7d8fe9832b332f","calendarHash":"4b2f519f336e4e730c1f0d69e860f25a8d4d0cfbd8e93c6b333ea83623d87237","priorTrialsHash":"dfda4c7706cdd7b2999a863ac63714c5d46894027442253f031b69bcdeaefde0","modulePath":"services/bayn/src/strategy/cross-sectional-short-term-reversal/candidate-20.ts","moduleSha256":"15570022245f8bba1c121c6657369d66085d6c3659aa326b50048be1ab050441","marketData":{"schemaVersion":"bayn.candidate-development-market-data-source.v1","snapshotId":"2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0","finalizedSnapshotContentHash":"8e376546f6a6cc1dbe2e910db3d68f584fc0bd9c4858166042ce32aa077eed0d","inputManifestHash":"b606cf57fb076f5bd2875206973e7c512817430d5cfbbeac8a99396f9983cab4","boundedContentHash":"e0e7b283de187d8ccaf8a449dacc538f00049cfe446dcf153b558e92bf0e17ed"},"preregistration":{"sourceRevision":"0b0a951465e1c4644bc3fd04b7b448b8701dc609","path":"services/bayn/candidates/ordinal-20-cross-sectional-short-term-reversal-preregistration.json","blobOid":"066a4d44cd41b871cad95474eb00e411af532c76"}},"latestDevelopmentEvidence":{"candidateOrdinal":19,"priorTrialCount":18,"status":"DEVELOPMENT_REJECTED","evidenceContentHash":"6170af41ddc14c04412a1929a60c88f35062ec2440f6e4b3beb0539bd411f364","evaluatedSourceRevision":"276805b77d783db907dcb86cba934d7a4f6a0147","failureStage":"development-evaluation","developmentMetricsObserved":true,"qualificationAttemptConsumed":false},"nextCandidatePreregistration":{"schemaVersion":"bayn.candidate-development-next-preregistration.v1","candidateOrdinal":20,"priorTrialCount":19,"strategyProtocolHash":"18b61d027e2235c7fc8ba718313ae8863650c2cb7c497dc4a7a5028829d19e0f","strategyIdentityHash":"8c99589120d8f3ed36c5286ce119d20490d42becd014e7fc2cc97b1420600278","candidateDevelopmentProtocolHash":"f7d4d78e70401c01c141fc7b63c4c1cfe9e7350b973c40ffbd7d8fe9832b332f","calendarHash":"4b2f519f336e4e730c1f0d69e860f25a8d4d0cfbd8e93c6b333ea83623d87237","priorTrialsHash":"dfda4c7706cdd7b2999a863ac63714c5d46894027442253f031b69bcdeaefde0","modulePath":"services/bayn/src/strategy/cross-sectional-short-term-reversal/candidate-20.ts","moduleSha256":"15570022245f8bba1c121c6657369d66085d6c3659aa326b50048be1ab050441","marketData":{"schemaVersion":"bayn.candidate-development-market-data-source.v1","snapshotId":"2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0","finalizedSnapshotContentHash":"8e376546f6a6cc1dbe2e910db3d68f584fc0bd9c4858166042ce32aa077eed0d","inputManifestHash":"b606cf57fb076f5bd2875206973e7c512817430d5cfbbeac8a99396f9983cab4","boundedContentHash":"e0e7b283de187d8ccaf8a449dacc538f00049cfe446dcf153b558e92bf0e17ed"},"preregistration":{"sourceRevision":"0b0a951465e1c4644bc3fd04b7b448b8701dc609","path":"services/bayn/candidates/ordinal-20-cross-sectional-short-term-reversal-preregistration.json","blobOid":"066a4d44cd41b871cad95474eb00e411af532c76"}}}',
+) as Record<string, unknown>
+
+const exactCandidate20Invalidation = JSON.parse(
+  '{"schemaVersion":"bayn.candidate-development-precommit-invalidation.v1","candidateOrdinal":20,"priorTrialCount":19,"status":"PRECOMMIT_INVALID","attemptStatus":"UNATTEMPTED","metricBearingAttemptsConsumed":0,"qualificationAttemptConsumed":false,"reviewedHeadRevision":"82f58dd6bd6fc9849e779665873f934841b47ea7","mergedSourceRevision":"69d803040c8866e7703df50a645a096c54e7eca5","preregistration":{"sourceRevision":"0b0a951465e1c4644bc3fd04b7b448b8701dc609","path":"services/bayn/candidates/ordinal-20-cross-sectional-short-term-reversal-preregistration.json","blobOid":"066a4d44cd41b871cad95474eb00e411af532c76","sha256":"e392888970d3c510e3ad20d6e982b81bf6234cd17260c8c5203013b5ce979409"},"sourceManifest":{"path":"services/bayn/candidates/ordinal-20-cross-sectional-short-term-reversal-source-manifest.json","blobOid":"def5faba5a301b8fe4daa8f0557e8d53efb4b697","sha256":"b5d9c4da95f59d4d4483fa80665de5327f4ed0b04c3afa8a94a3316b91f9e1fe"},"invalidatedModule":{"path":"services/bayn/src/strategy/cross-sectional-short-term-reversal/candidate-20.ts","blobOid":"71ae99e9303e7b79a640f185e70faa68a3048910","sha256":"15570022245f8bba1c121c6657369d66085d6c3659aa326b50048be1ab050441","lineCount":123194,"byteCount":2963738,"findings":["TYPE_CHECK_DISABLED","DOWNCOMPILED_BUNDLE","EMBEDDED_OFFICIAL_SESSIONS","EMBEDDED_MARKET_BARS","RUNTIME_INPUT_IGNORED"]},"naturalBuild":{"runId":"30657379582","imagePublished":true,"imageDigest":"sha256:28f59fb44bdb3008eecd17cf3c053098f214f3d982f26673a44a98d53f767fba","deploymentAllowed":false},"release":{"runId":"30657658256","conclusion":"CANCELLED","promotionCompleted":false,"rerunAllowed":false},"nextCandidatePreregistration":null}',
+) as Record<string, unknown>
+
+const exactCandidate20ContainmentHistoryV2: Record<string, unknown> = {
+  ...exactMainTrialHistoryV1,
+  schemaVersion: 'bayn.candidate-development-trial-history.v2',
+  latestInvalidPrecommit: exactCandidate20Invalidation,
+  nextCandidatePreregistration: null,
+}
+
+const candidatePreregistration = (
+  candidateOrdinal: number,
+  completeIdentity: boolean,
+  priorTrialsHash?: string,
+): QualificationCandidatePreregistration => ({
   schemaVersion: 'bayn.candidate-development-next-preregistration.v1',
-  candidateOrdinal: 3,
-  priorTrialCount: 2,
+  candidateOrdinal,
+  priorTrialCount: candidateOrdinal - 1,
   strategyProtocolHash: hash('1'),
-  strategyIdentityHash: hash('2'),
-  candidateDevelopmentProtocolHash: hash('3'),
-  calendarHash: hash('4'),
-  priorTrialsHash: hash('5'),
-  modulePath: 'services/bayn/src/strategy/example/candidate-3.ts',
+  ...(completeIdentity
+    ? {
+        strategyIdentityHash: hash('2'),
+        candidateDevelopmentProtocolHash: hash('3'),
+        calendarHash: hash('4'),
+        priorTrialsHash: priorTrialsHash ?? hash('5'),
+      }
+    : {}),
+  modulePath: `services/bayn/src/strategy/example/candidate-${candidateOrdinal}.ts`,
   moduleSha256: hash('6'),
   marketData: {
     schemaVersion: 'bayn.candidate-development-market-data-source.v1',
@@ -41,37 +79,89 @@ const reviewedPreregistration = (): QualificationCandidatePreregistration => ({
   },
   preregistration: {
     sourceRevision: revision('b'),
-    path: 'services/bayn/candidates/ordinal-3-example-preregistration.json',
+    path: `services/bayn/candidates/ordinal-${candidateOrdinal}-example-preregistration.json`,
     blobOid: revision('c'),
   },
 })
+
+const historyRecords = () => {
+  const completedCandidateOrdinals = [1]
+  const developmentCandidateOrdinals = [2]
+  const latestTerminalEvidence = {
+    candidateOrdinal: 1,
+    priorTrialCount: 0,
+    terminalStatus: 'HOLD_REJECT',
+    sourceRevision: revision('1'),
+  } as const
+  const candidateQualificationPreregistration = {
+    candidateOrdinal: 1,
+    priorTrialCount: 0,
+    sourceRevision: revision('2'),
+    path: 'services/bayn/candidates/ordinal-1-example-preregistration.md',
+    blobOid: revision('3'),
+  } as const
+  const priorDevelopmentEvidence = {
+    candidateOrdinal: 2,
+    priorTrialCount: 1,
+    status: 'DEVELOPMENT_REJECTED',
+    evidenceContentHash: hash('d'),
+    qualificationAttemptConsumed: false,
+  } as const
+  const latestHistoricalPreregistration = candidatePreregistration(2, false)
+  const latestReviewedCandidateLegacyPriorTrials = {
+    schemaVersion: 'bayn.candidate-development-prior-trials.v1',
+    qualificationCandidateOrdinals: completedCandidateOrdinals,
+    developmentCandidateOrdinals,
+    latestDevelopmentEvidence: priorDevelopmentEvidence,
+    latestReviewedPreregistration: latestHistoricalPreregistration,
+  } as const
+  const latestReviewedCandidatePriorTrials = {
+    schemaVersion: 'bayn.candidate-development-prior-trials.v2',
+    qualificationCandidateOrdinals: completedCandidateOrdinals,
+    latestQualificationEvidence: latestTerminalEvidence,
+    latestQualificationPreregistration: candidateQualificationPreregistration,
+    developmentCandidateOrdinals,
+    latestDevelopmentEvidence: priorDevelopmentEvidence,
+    latestReviewedPreregistration: latestHistoricalPreregistration,
+  } as const
+  const reviewed = candidatePreregistration(3, true, canonicalHash(latestReviewedCandidatePriorTrials))
+  return {
+    completedCandidateOrdinals,
+    developmentCandidateOrdinals,
+    latestReviewedCandidateLegacyPriorTrials,
+    latestReviewedCandidatePriorTrials,
+    latestTerminalEvidence,
+    candidateQualificationPreregistration,
+    reviewed,
+    latestDevelopmentEvidence: {
+      ...priorDevelopmentEvidence,
+      evaluatedSourceRevision: revision('e'),
+      failureStage: 'development-evaluation',
+      developmentMetricsObserved: true,
+    } as const,
+  }
+}
+
+const reviewedPreregistration = (): QualificationCandidatePreregistration => historyRecords().reviewed
 
 const trialHistory = (input?: {
   readonly schemaVersion?: 'bayn.candidate-development-trial-history.v1' | 'bayn.candidate-development-trial-history.v2'
   readonly next?: QualificationCandidatePreregistration | null
   readonly invalidation?: unknown
 }): Record<string, unknown> => {
-  const reviewed = reviewedPreregistration()
+  const records = historyRecords()
+  const reviewed = records.reviewed
   const schemaVersion = input?.schemaVersion ?? 'bayn.candidate-development-trial-history.v1'
   return {
     schemaVersion,
-    completedCandidateOrdinals: [1],
-    developmentCandidateOrdinals: [2],
-    latestReviewedCandidateLegacyPriorTrials: {},
-    latestReviewedCandidatePriorTrials: {},
-    latestTerminalEvidence: {},
-    candidatePreregistration: {},
+    completedCandidateOrdinals: records.completedCandidateOrdinals,
+    developmentCandidateOrdinals: records.developmentCandidateOrdinals,
+    latestReviewedCandidateLegacyPriorTrials: records.latestReviewedCandidateLegacyPriorTrials,
+    latestReviewedCandidatePriorTrials: records.latestReviewedCandidatePriorTrials,
+    latestTerminalEvidence: records.latestTerminalEvidence,
+    candidatePreregistration: records.candidateQualificationPreregistration,
     latestReviewedCandidatePreregistration: reviewed,
-    latestDevelopmentEvidence: {
-      candidateOrdinal: 2,
-      priorTrialCount: 1,
-      status: 'DEVELOPMENT_REJECTED',
-      evidenceContentHash: hash('d'),
-      evaluatedSourceRevision: revision('e'),
-      failureStage: 'development-evaluation',
-      developmentMetricsObserved: true,
-      qualificationAttemptConsumed: false,
-    },
+    latestDevelopmentEvidence: records.latestDevelopmentEvidence,
     nextCandidatePreregistration: input?.next === undefined ? reviewed : input.next,
     ...(schemaVersion === 'bayn.candidate-development-trial-history.v2'
       ? { latestInvalidPrecommit: input?.invalidation ?? null }
@@ -135,6 +225,28 @@ afterEach(() => {
 })
 
 describe('qualification dormancy verifier', () => {
+  test('decodes the exact main v1 and #13442 v2 authoritative histories', () => {
+    expect(canonicalHash(exactMainTrialHistoryV1)).toBe(
+      '9d78af3efcc888f07973ec88298ac6c76338edef7139942e573af5d338b4e58c',
+    )
+    expect(evaluateQualificationDormancy(exactMainTrialHistoryV1)).toEqual({
+      status: 'ready',
+      reason: 'reviewed-preregistration-present',
+      candidateOrdinal: 20,
+      preregistrationSourceRevision: '0b0a951465e1c4644bc3fd04b7b448b8701dc609',
+      preregistrationBlobOid: '066a4d44cd41b871cad95474eb00e411af532c76',
+    })
+
+    expect(canonicalHash(exactCandidate20ContainmentHistoryV2)).toBe(
+      '097c8164f2ec3add5e23189039957d76a954a5576705090f75d6614e7f42ea00',
+    )
+    expect(evaluateQualificationDormancy(exactCandidate20ContainmentHistoryV2)).toEqual({
+      status: 'dormant',
+      reason: 'precommit-invalid-unattempted',
+      candidateOrdinal: 20,
+    })
+  })
+
   test('returns a clean no-op when no preregistration is authorized', () => {
     expect(evaluateQualificationDormancy(trialHistory({ next: null }))).toEqual({
       status: 'dormant',
@@ -196,10 +308,15 @@ describe('qualification dormancy verifier', () => {
   })
 
   test('fails closed on malformed, mismatched, and ambiguous evidence', () => {
+    const records = historyRecords()
     const reviewed = reviewedPreregistration()
     const mismatched: QualificationCandidatePreregistration = {
       ...reviewed,
       preregistration: { ...reviewed.preregistration, sourceRevision: revision('a') },
+    }
+    const mismatchedPriorTrialsHash: QualificationCandidatePreregistration = {
+      ...reviewed,
+      priorTrialsHash: hash('0'),
     }
     const invalidation = invalidPrecommit()
     invalidation.attemptStatus = 'ATTEMPTED'
@@ -209,6 +326,28 @@ describe('qualification dormancy verifier', () => {
       {},
       { ...trialHistory(), schemaVersion: 'bayn.candidate-development-trial-history.v3' },
       { ...trialHistory(), developmentCandidateOrdinals: [3] },
+      { ...trialHistory(), latestTerminalEvidence: {} },
+      { ...trialHistory(), candidatePreregistration: {} },
+      { ...trialHistory(), latestReviewedCandidateLegacyPriorTrials: {} },
+      { ...trialHistory(), latestReviewedCandidatePriorTrials: {} },
+      {
+        ...trialHistory(),
+        latestReviewedCandidatePriorTrials: {
+          ...records.latestReviewedCandidatePriorTrials,
+          latestQualificationEvidence: {
+            ...records.latestTerminalEvidence,
+            sourceRevision: revision('f'),
+          },
+        },
+      },
+      {
+        ...trialHistory(),
+        latestDevelopmentEvidence: {
+          ...records.latestDevelopmentEvidence,
+          evidenceContentHash: hash('f'),
+        },
+      },
+      { ...trialHistory(), latestReviewedCandidatePreregistration: mismatchedPriorTrialsHash },
       { ...trialHistory(), nextCandidatePreregistration: mismatched },
       trialHistory({
         schemaVersion: 'bayn.candidate-development-trial-history.v2',
@@ -355,7 +494,7 @@ export const frozenCandidateDevelopmentTrialHistory = history
       },
       {
         label: 'malformed evidence',
-        source: moduleSource({ ...trialHistory(), schemaVersion: 'bayn.candidate-development-trial-history.v3' }),
+        source: moduleSource({ ...trialHistory(), latestReviewedCandidatePriorTrials: {} }),
         exitCode: 1,
         access: false,
       },
