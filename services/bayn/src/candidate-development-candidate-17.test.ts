@@ -6,6 +6,8 @@ import { join } from 'node:path'
 import { Effect } from 'effect'
 
 import {
+  candidate17DevelopmentEligibility,
+  candidate17Preregistration,
   frozenCandidateDevelopmentSessions,
   frozenCandidateDevelopmentTrialHistory,
 } from './candidate-development-calendar'
@@ -215,7 +217,7 @@ describe('Candidate 17 preregistration', () => {
       minimumCashReserveWeight: 0.005,
       targetActiveAnnualizedVolatility: 0.1,
     })
-    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toEqual({
+    expect(candidate17Preregistration).toEqual({
       schemaVersion: 'bayn.candidate-development-next-preregistration.v1',
       candidateOrdinal: 17,
       priorTrialCount: 16,
@@ -235,6 +237,14 @@ describe('Candidate 17 preregistration', () => {
         blobOid: preregistrationBlobOid,
       },
     })
+    expect(frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration).toEqual(
+      candidate17Preregistration,
+    )
+    expect(candidate17DevelopmentEligibility).toMatchObject({
+      status: 'DEVELOPMENT_REJECTED',
+      nextCandidatePreregistration: null,
+    })
+    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toBeNull()
   })
 
   test('keeps future observations out of the causal signal and preserves the financing reserve', () => {
