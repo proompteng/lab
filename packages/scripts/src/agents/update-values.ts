@@ -138,6 +138,8 @@ export const updateAgentsValuesFromCliOptions = (options: Options) => {
       manifestImageDigest: controlPlaneDigest,
       servingBuildCommit: sourceSha,
       servingImageDigest: controlPlaneDigest,
+      agentsShellSeedReadOnly: true,
+      agentsShellLeaseIsolation: true,
     },
   )
 }

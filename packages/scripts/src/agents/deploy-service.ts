@@ -44,6 +44,41 @@ type ReleaseMetadata = {
   manifestImageDigest?: string
   servingBuildCommit?: string
   servingImageDigest?: string
+  agentsShellSeedReadOnly?: boolean
+  agentsShellLeaseIsolation?: boolean
+}
+
+const agentsShellLegacySecurityContext = {
+  runAsNonRoot: true,
+  runAsUser: 1000,
+  runAsGroup: 1000,
+  fsGroup: 1000,
+  fsGroupChangePolicy: 'OnRootMismatch',
+  seccompProfile: { type: 'RuntimeDefault' },
+}
+
+const agentsShellLeaseSecurityContext = {
+  runAsNonRoot: false,
+  runAsUser: 0,
+  runAsGroup: 0,
+  fsGroup: 0,
+  fsGroupChangePolicy: 'OnRootMismatch',
+  seccompProfile: { type: 'RuntimeDefault' },
+}
+
+const agentsShellLegacyContainerSecurityContext = {
+  allowPrivilegeEscalation: false,
+  readOnlyRootFilesystem: false,
+  capabilities: { drop: ['ALL'] },
+}
+
+const agentsShellLeaseContainerSecurityContext = {
+  allowPrivilegeEscalation: false,
+  readOnlyRootFilesystem: false,
+  capabilities: {
+    drop: ['ALL'],
+    add: ['CHOWN', 'DAC_OVERRIDE', 'KILL', 'SETGID', 'SETUID'],
+  },
 }
 
 type DatabaseSecretRequirement = {
@@ -395,6 +430,18 @@ const updateValuesFile = (
   doc.agentsShell.image.repository = agentsShellImageRepository
   doc.agentsShell.image.tag = agentsShellTag
   doc.agentsShell.image.digest = agentsShellDigest
+  if (releaseMetadata?.agentsShellSeedReadOnly != null) {
+    doc.agentsShell.workspace ??= {}
+    doc.agentsShell.workspace.seedReadOnly = releaseMetadata.agentsShellSeedReadOnly
+  }
+  if (releaseMetadata?.agentsShellLeaseIsolation != null) {
+    doc.agentsShell.securityContext = releaseMetadata.agentsShellLeaseIsolation
+      ? agentsShellLeaseSecurityContext
+      : agentsShellLegacySecurityContext
+    doc.agentsShell.containerSecurityContext = releaseMetadata.agentsShellLeaseIsolation
+      ? agentsShellLeaseContainerSecurityContext
+      : agentsShellLegacyContainerSecurityContext
+  }
 
   doc.runner ??= {}
   doc.runner.image ??= {}
@@ -573,6 +620,8 @@ const main = async () => {
       manifestImageDigest: servicePins.controlPlane.digest,
       servingBuildCommit: execGit(['rev-parse', 'HEAD']),
       servingImageDigest: servicePins.controlPlane.digest,
+      agentsShellSeedReadOnly: true,
+      agentsShellLeaseIsolation: true,
     },
   )
 

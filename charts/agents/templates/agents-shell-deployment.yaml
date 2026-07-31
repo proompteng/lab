@@ -3,6 +3,18 @@
 {{- $image := .Values.agentsShell.image | default dict -}}
 {{- $workspaceBootstrap := .Values.agentsShell.workspace.bootstrap | default dict -}}
 {{- $workspaceVolumeMode := .Values.agentsShell.workspace.volumeMode | default "persistentVolumeClaim" -}}
+{{- $workspaceSeedReadOnly := .Values.agentsShell.workspace.seedReadOnly | default false -}}
+{{- $workspaceSeedSubPath := "" -}}
+{{- if and $workspaceBootstrap.enabled $workspaceSeedReadOnly -}}
+{{- $workspaceSeedTarget := required "agentsShell.workspace.bootstrap.targetPath is required when seedReadOnly is enabled" $workspaceBootstrap.targetPath -}}
+{{- if not (hasPrefix "/workspace/" $workspaceSeedTarget) -}}
+{{- fail "agentsShell.workspace.bootstrap.targetPath must be a child of /workspace" -}}
+{{- end -}}
+{{- $workspaceSeedSubPath = trimPrefix "/workspace/" $workspaceSeedTarget -}}
+{{- if or (eq $workspaceSeedSubPath "") (contains ".." $workspaceSeedSubPath) -}}
+{{- fail "agentsShell.workspace.bootstrap.targetPath must be a contained child without traversal" -}}
+{{- end -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -95,13 +107,68 @@ spec:
               set -euo pipefail
 
               export HOME=/tmp/git-home
-              mkdir -p "${HOME}" "$(dirname "${GIT_TARGET_PATH}")" /workspace/.agents-shell
+              export GIT_CONFIG_GLOBAL="${HOME}/gitconfig"
+              export GIT_CONFIG_NOSYSTEM=1
+              export GIT_CONFIG_SYSTEM=/dev/null
+              export GIT_TERMINAL_PROMPT=0
+              if [[ -L /workspace/.agents-shell ]]; then
+                echo 'agents-shell control root must not be a symlink' >&2
+                exit 1
+              fi
+              preserved_root=/workspace/.agents-shell-preserved-checkouts
+              if [[ -L "${preserved_root}" ]]; then
+                echo 'agents-shell preserved checkout root must not be a symlink' >&2
+                exit 1
+              fi
+              mkdir -p "${HOME}" "$(dirname "${GIT_TARGET_PATH}")" /workspace/.agents-shell "${preserved_root}"
+              if [[ ! -d "${preserved_root}" || -L "${preserved_root}" ]]; then
+                echo 'agents-shell preserved checkout root must be a non-symlink directory' >&2
+                exit 1
+              fi
+              chown -h 0:0 "${preserved_root}"
+              chmod 0700 "${preserved_root}"
+              if [[ "$(stat -c '%u:%g:%a' "${preserved_root}")" != '0:0:700' ]]; then
+                echo 'agents-shell preserved checkout root metadata is invalid' >&2
+                exit 1
+              fi
+              legacy_preserved=/workspace/.agents-shell/checkouts
+              if [[ -L "${legacy_preserved}" ]]; then
+                echo 'discarding legacy preserved checkout symlink' >&2
+                rm -f -- "${legacy_preserved}"
+              elif [[ -d "${legacy_preserved}" ]]; then
+                legacy_destination="${preserved_root}/legacy-checkouts-$(date -u +%Y%m%dT%H%M%SZ)-${RANDOM}"
+                echo "migrating legacy preserved checkouts to ${legacy_destination}" >&2
+                mv "${legacy_preserved}" "${legacy_destination}"
+              elif [[ -e "${legacy_preserved}" ]]; then
+                echo 'legacy preserved checkout path must be a directory or symlink' >&2
+                exit 1
+              fi
+              if [[ -n "$(find /workspace/.agents-shell -type l -print -quit)" ]]; then
+                echo 'agents-shell control tree must not contain symlinks' >&2
+                exit 1
+              fi
+              if [[ -n "$(find /workspace/.agents-shell -type f -links +1 -print -quit)" ]]; then
+                echo 'agents-shell control tree must not contain hard-linked files' >&2
+                exit 1
+              fi
+              lease_state=/workspace/.agents-shell/leases.json
+              if [[ -e "${lease_state}" && ! -f "${lease_state}" ]]; then
+                echo 'agents-shell lease state must be a regular file' >&2
+                exit 1
+              fi
+              if [[ -f "${lease_state}" && "$(stat -c '%u:%g' "${lease_state}")" != '0:0' ]]; then
+                echo 'discarding untrusted legacy agents-shell lease state' >&2
+                rm -f "${lease_state}"
+              fi
+              chown -hR 0:0 /workspace/.agents-shell
+              chmod 0711 /workspace/.agents-shell
 
               if [[ -n "${GIT_TOKEN:-}" ]]; then
                 umask 077
                 printf 'https://x-access-token:%s@github.com\n' "${GIT_TOKEN}" > /tmp/git-credentials
-                git config --global credential.helper 'store --file=/tmp/git-credentials'
+                git config --file "${GIT_CONFIG_GLOBAL}" credential.helper 'store --file=/tmp/git-credentials'
               fi
+              umask 022
 
               fetch_args=()
               clone_args=()
@@ -112,12 +179,35 @@ spec:
 
               clone_checkout() {
                 rm -rf "${GIT_TARGET_PATH}"
-                git clone "${clone_args[@]}" --branch="${GIT_BRANCH}" "${GIT_REPOSITORY}" "${GIT_TARGET_PATH}"
+                git clone --no-hardlinks "${clone_args[@]}" --branch="${GIT_BRANCH}" "${GIT_REPOSITORY}" "${GIT_TARGET_PATH}"
+                migrate_checkout
+              }
+
+              migrate_checkout() {
+                local git_dir="${GIT_TARGET_PATH}/.git"
+                local config="${git_dir}/config"
+                local temporary="${config}.bootstrap.$$"
+
+                chown -hR 0:0 "${GIT_TARGET_PATH}"
+                rm -f "${temporary}"
+                git config --file "${temporary}" core.repositoryFormatVersion 0
+                git config --file "${temporary}" core.fileMode true
+                git config --file "${temporary}" core.bare false
+                git config --file "${temporary}" core.logAllRefUpdates true
+                git config --file "${temporary}" core.hooksPath /dev/null
+                git config --file "${temporary}" core.fsmonitor false
+                git config --file "${temporary}" diff.external ''
+                git config --file "${temporary}" interactive.diffFilter ''
+                git config --file "${temporary}" submodule.recurse false
+                git config --file "${temporary}" remote.origin.url "${GIT_REPOSITORY}"
+                git config --file "${temporary}" --add remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+                chmod 0600 "${temporary}"
+                mv -f "${temporary}" "${config}"
               }
 
               preserve_checkout() {
                 local reason="$1"
-                local backup_root="/workspace/.agents-shell/checkouts"
+                local backup_root="${preserved_root}"
                 local backup_path="${backup_root}/$(basename "${GIT_TARGET_PATH}")-$(date -u +%Y%m%dT%H%M%SZ)"
 
                 mkdir -p "${backup_root}"
@@ -129,7 +219,39 @@ spec:
                 mv "${GIT_TARGET_PATH}" "${backup_path}"
               }
 
-              if [[ -d "${GIT_TARGET_PATH}/.git" ]]; then
+              discard_rejected_link() {
+                local rejected_path="$1"
+                local reason="$2"
+
+                if [[ ! -L "${rejected_path}" ]]; then
+                  echo "rejected checkout path is not a symlink: ${rejected_path}" >&2
+                  exit 1
+                fi
+                echo "discarding rejected checkout link ${rejected_path}: ${reason}" >&2
+                rm -f -- "${rejected_path}"
+                if [[ -e "${rejected_path}" || -L "${rejected_path}" ]]; then
+                  echo "failed to discard rejected checkout link: ${rejected_path}" >&2
+                  exit 1
+                fi
+              }
+
+              if [[ -L "${GIT_TARGET_PATH}" ]]; then
+                discard_rejected_link "${GIT_TARGET_PATH}" "target path is a symlink"
+                clone_checkout
+              elif [[ -L "${GIT_TARGET_PATH}/.git" ]]; then
+                discard_rejected_link "${GIT_TARGET_PATH}/.git" "git metadata is a symlink"
+                preserve_checkout "git metadata symlink was discarded"
+                clone_checkout
+              elif [[ -d "${GIT_TARGET_PATH}/.git" ]]; then
+                if [[ -n "$(find "${GIT_TARGET_PATH}/.git" -type l -print -quit)" ]]; then
+                  echo 'git metadata must not contain nested symlinks' >&2
+                  exit 1
+                fi
+                if [[ -n "$(find "${GIT_TARGET_PATH}/.git" -type f -links +1 -print -quit)" ]]; then
+                  echo 'git metadata must not contain hard-linked files' >&2
+                  exit 1
+                fi
+                migrate_checkout
                 git -C "${GIT_TARGET_PATH}" remote set-url origin "${GIT_REPOSITORY}"
                 if [[ "${GIT_DEPTH}" == "0" ]] && [[ "$(git -C "${GIT_TARGET_PATH}" rev-parse --is-shallow-repository 2>/dev/null)" == "true" ]]; then
                   git -C "${GIT_TARGET_PATH}" fetch --unshallow origin "${GIT_BRANCH}" || git -C "${GIT_TARGET_PATH}" fetch origin "${GIT_BRANCH}"
@@ -153,6 +275,8 @@ spec:
               git -C "${GIT_TARGET_PATH}" remote set-url origin "${GIT_REPOSITORY}"
               git -C "${GIT_TARGET_PATH}" config user.name "Greg Konush"
               git -C "${GIT_TARGET_PATH}" config user.email "greg@proompteng.ai"
+              chown -hR 0:0 "${GIT_TARGET_PATH}"
+              chmod -R a+rX "${GIT_TARGET_PATH}"
               rm -f /tmp/git-credentials
           volumeMounts:
             - name: workspace
@@ -222,6 +346,12 @@ spec:
           volumeMounts:
             - name: workspace
               mountPath: /workspace
+            {{- if and $workspaceBootstrap.enabled $workspaceSeedReadOnly }}
+            - name: workspace
+              mountPath: {{ $workspaceBootstrap.targetPath | quote }}
+              subPath: {{ $workspaceSeedSubPath | quote }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: workspace
           {{- if eq $workspaceVolumeMode "emptyDir" }}

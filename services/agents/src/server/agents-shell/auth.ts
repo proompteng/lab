@@ -158,7 +158,7 @@ export class AuthVerifier {
     if (!oauthIdentityAllowed(this.config, { subject, email, username })) throw new Error('identity is not allowed')
 
     const scopes = new Set(
-      String(payload.scope ?? '')
+      (typeof payload.scope === 'string' ? payload.scope : '')
         .split(/\s+/)
         .map((scope) => scope.trim())
         .filter(Boolean),

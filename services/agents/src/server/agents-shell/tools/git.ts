@@ -1,7 +1,12 @@
 import { Effect } from 'effect'
 
 import { READ_SCOPES, WRITE_SCOPES, destructiveAnnotations, readOnlyAnnotations } from '../constants'
-import { normalizeCliArgs, requireReadOnlyGitArgs } from '../cli-policy'
+import {
+  normalizeCliArgs,
+  prepareReadOnlyGitArgs,
+  prepareReadOnlyGitRefreshArgs,
+  requireContainedGitArgs,
+} from '../cli-policy'
 import { agentsShellErrorFromUnknown } from '../errors'
 import { toolSecurityMeta, type EffectTool } from '../mcp-adapter'
 import { jsonTextResult } from '../results'
@@ -11,28 +16,48 @@ export const createGitTools = (): EffectTool[] => [
   {
     name: 'git',
     title: 'Inspect git repository',
-    description: 'Run read-only git commands under /workspace. Pass argv after git.',
+    description: 'Run confined read-only Git inspection in the seed or current leased workspace.',
     inputSchema: CliInputSchema,
     outputSchema: CommandResultSchema,
     annotations: readOnlyAnnotations,
     scopes: READ_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: CliInput, { runner, auth }) =>
+    handler: (args: CliInput, { runner, auth, sessionId }) =>
       Effect.tryPromise({
         try: async () => {
-          const gitArgs = normalizeCliArgs('git', args.args)
-          requireReadOnlyGitArgs(gitArgs)
-          return jsonTextResult(
-            await runner.runProcess({
+          const normalized = normalizeCliArgs('git', args.args)
+          return runner.withReadOnlyGitInspection(sessionId, auth, args.cwd, async (inspection) => {
+            const refresh = await runner.runProcess({
               command: 'git',
-              args: gitArgs,
-              cwd: args.cwd,
+              args: prepareReadOnlyGitRefreshArgs(inspection.gitHooksPath, inspection.configOverrides),
+              cwd: inspection.cwd,
               timeoutSeconds: args.timeoutSeconds,
               maxOutputBytes: args.maxOutputBytes,
+              okExitCodes: [0, 1],
               auth,
-              auditEvent: 'git',
-            }),
-          )
+              auditEvent: 'git_index_refresh',
+              sessionId,
+              readOnlyGitConfigPath: inspection.gitConfigPath,
+              readOnlyGitIndexPath: inspection.gitIndexPath,
+              readOnlyScratchRoot: inspection.scratchRoot,
+            })
+            if (!refresh.ok) throw new Error(`read-only Git index refresh failed: ${refresh.stderr || refresh.stdout}`)
+            return jsonTextResult(
+              await runner.runProcess({
+                command: 'git',
+                args: prepareReadOnlyGitArgs(normalized, inspection.gitHooksPath, inspection.configOverrides),
+                cwd: inspection.cwd,
+                timeoutSeconds: args.timeoutSeconds,
+                maxOutputBytes: args.maxOutputBytes,
+                auth,
+                auditEvent: 'git',
+                sessionId,
+                readOnlyGitConfigPath: inspection.gitConfigPath,
+                readOnlyGitIndexPath: inspection.gitIndexPath,
+                readOnlyScratchRoot: inspection.scratchRoot,
+              }),
+            )
+          })
         },
         catch: agentsShellErrorFromUnknown,
       }),
@@ -40,16 +65,17 @@ export const createGitTools = (): EffectTool[] => [
   {
     name: 'git_write',
     title: 'Run mutating git',
-    description: 'Run repository-changing git commands under /workspace. Pass argv after git.',
+    description: 'Run confined repository-changing Git in the current leased workspace.',
     inputSchema: CliInputSchema,
     outputSchema: CommandResultSchema,
     annotations: destructiveAnnotations,
     scopes: WRITE_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: CliInput, { runner, auth }) =>
+    handler: (args: CliInput, { runner, auth, sessionId }) =>
       Effect.tryPromise({
         try: async () => {
           const gitArgs = normalizeCliArgs('git_write', args.args)
+          requireContainedGitArgs(gitArgs)
           return jsonTextResult(
             await runner.runProcess({
               command: 'git',
@@ -59,6 +85,8 @@ export const createGitTools = (): EffectTool[] => [
               maxOutputBytes: args.maxOutputBytes,
               auth,
               auditEvent: 'git_write',
+              sessionId,
+              mutation: true,
             }),
           )
         },

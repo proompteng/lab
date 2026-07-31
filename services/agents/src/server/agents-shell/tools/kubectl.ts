@@ -17,7 +17,7 @@ export const createKubectlTools = (): EffectTool[] => [
     annotations: openReadOnlyAnnotations,
     scopes: READ_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: CliInput, { runner, auth }) =>
+    handler: (args: CliInput, { runner, auth, sessionId }) =>
       Effect.tryPromise({
         try: async () => {
           const kubectlArgs = normalizeCliArgs('kubectl', args.args)
@@ -32,6 +32,7 @@ export const createKubectlTools = (): EffectTool[] => [
               okExitCodes: kubectlArgs[0] === 'diff' ? [0, 1] : [0],
               auth,
               auditEvent: 'kubectl',
+              sessionId,
             }),
           )
         },
@@ -47,7 +48,7 @@ export const createKubectlTools = (): EffectTool[] => [
     annotations: destructiveAnnotations,
     scopes: WRITE_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: CliInput, { runner, auth }) =>
+    handler: (args: CliInput, { runner, auth, sessionId }) =>
       Effect.tryPromise({
         try: async () => {
           const kubectlArgs = normalizeCliArgs('kubectl_admin', args.args)
@@ -61,6 +62,8 @@ export const createKubectlTools = (): EffectTool[] => [
               okExitCodes: kubectlArgs[0] === 'diff' ? [0, 1] : [0],
               auth,
               auditEvent: 'kubectl_admin',
+              sessionId,
+              mutation: true,
             }),
           )
         },

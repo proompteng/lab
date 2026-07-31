@@ -53,7 +53,7 @@ export const ShellInputSchema = Schema.Struct({
       'User-requested terminal command line executed inside the private agents-shell workspace container. The tool returns output only.',
   }),
   cwd: Schema.optional(
-    Schema.String.annotations({ description: 'Working directory under /workspace. Defaults to /workspace.' }),
+    Schema.String.annotations({ description: 'Working directory inside the current leased workspace.' }),
   ),
   timeoutSeconds: Schema.optional(TimeoutSeconds),
   maxOutputBytes: Schema.optional(OutputBytes),
@@ -82,7 +82,7 @@ export const ReadFileOutputSchema = Schema.Struct({
 export const ApplyPatchInputSchema = Schema.Struct({
   patch: NonEmptyString,
   cwd: Schema.optional(
-    Schema.String.annotations({ description: 'Working directory under /workspace. Defaults to /workspace/lab.' }),
+    Schema.String.annotations({ description: 'Working directory inside the current leased workspace.' }),
   ),
   timeoutSeconds: Schema.optional(TimeoutSeconds),
   maxOutputBytes: Schema.optional(OutputBytes),
@@ -97,6 +97,38 @@ export const ApplyPatchOutputSchema = Schema.extend(
 
 export const AgentGuideOutputSchema = Schema.Struct({
   guide: Schema.String,
+})
+
+export const WorkspaceAcquireInputSchema = Schema.Struct({
+  task: NonEmptyString.annotations({ description: 'Short task identifier used in the unique workspace name.' }),
+  baseRef: Schema.optional(
+    NonEmptyString.annotations({
+      description: 'Exact Git object ID or origin/<branch> remote-tracking ref. Defaults to origin/main.',
+    }),
+  ),
+  expectedCommit: Schema.optional(
+    NonEmptyString.annotations({ description: 'Optional exact commit required for the selected base ref.' }),
+  ),
+  existingPath: Schema.optional(
+    NonEmptyString.annotations({
+      description: 'Optional clean repository root under the managed workspace lease root.',
+    }),
+  ),
+})
+
+export const WorkspaceLeaseSchema = Schema.Struct({
+  leaseId: Schema.String,
+  workspacePath: Schema.String,
+  branch: Schema.String,
+  head: Schema.String,
+  issuedAt: Schema.String,
+  renewedAt: Schema.String,
+  expiresAt: Schema.String,
+  status: Schema.Literal('active', 'expired', 'orphaned', 'quarantined', 'released', 'revoked'),
+})
+
+export const WorkspaceStatusOutputSchema = Schema.Struct({
+  lease: Schema.NullOr(WorkspaceLeaseSchema),
 })
 
 export const ShellReadInputSchema = Schema.Struct({
@@ -186,6 +218,7 @@ export const AgentReadInputSchema = Schema.Struct({
 export type SearchInput = typeof SearchInputSchema.Type
 export type ReadFileInput = typeof ReadFileInputSchema.Type
 export type ApplyPatchInput = typeof ApplyPatchInputSchema.Type
+export type WorkspaceAcquireInput = typeof WorkspaceAcquireInputSchema.Type
 export type ShellInput = typeof ShellInputSchema.Type
 export type ShellReadInput = typeof ShellReadInputSchema.Type
 export type ShellKillInput = typeof ShellKillInputSchema.Type

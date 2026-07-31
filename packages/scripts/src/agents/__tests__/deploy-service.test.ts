@@ -196,6 +196,17 @@ agentsShell:
     repository: old/shell
     tag: old
     digest: sha256:old-shell
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+  workspace:
+    seedReadOnly: false
 `,
     )
 
@@ -221,6 +232,8 @@ agentsShell:
         manifestImageDigest: 'sha256:control-plane',
         servingBuildCommit: 'abcdef1234567890',
         servingImageDigest: 'sha256:control-plane',
+        agentsShellSeedReadOnly: true,
+        agentsShellLeaseIsolation: true,
       },
     )
 
@@ -233,6 +246,12 @@ agentsShell:
     expect(updated).toContain('digest: sha256:controller')
     expect(updated).toContain('digest: sha256:shell')
     expect(updated).toContain('digest: sha256:runner')
+    expect(updated).toContain('seedReadOnly: true')
+    expect(updated).toContain('runAsNonRoot: false')
+    expect(updated).toContain('runAsUser: 0')
+    for (const capability of ['CHOWN', 'DAC_OVERRIDE', 'KILL', 'SETGID', 'SETUID']) {
+      expect(updated).toContain(`- ${capability}`)
+    }
     expect(updated).toContain('AGENTS_SOURCE_HEAD_SHA: abcdef1234567890')
     expect(updated).toContain('AGENTS_SOURCE_CI_RUN_ID: "12345"')
     expect(updated).toContain('AGENTS_SERVING_IMAGE_DIGEST: sha256:control-plane')

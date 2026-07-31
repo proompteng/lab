@@ -522,6 +522,82 @@ jobs:
           done
           echo "BUILT_AGENTS_IMAGE_SOURCE_SHA=${GITHUB_SHA}" >> "${GITHUB_ENV}"
 
+      - name: Verify agents-shell production UID isolation
+        if: env.NEEDS_LOCAL_AGENTS_IMAGE == 'true'
+        env:
+          AGENTS_SHELL_IMAGE_REPOSITORY: ${{ env.BUILT_AGENTS_SHELL_IMAGE_REPOSITORY }}
+          AGENTS_SHELL_IMAGE_TAG: ${{ env.BUILT_AGENTS_SHELL_IMAGE_TAG }}
+        run: |
+          set -euo pipefail
+          if ! jq -e 'index("agents-shell") != null' <<< "${IMAGE_TARGETS}" >/dev/null; then
+            echo 'agents-shell is not an image target for this run; production UID proof is not required.'
+            exit 0
+          fi
+          test -n "${AGENTS_SHELL_IMAGE_REPOSITORY}"
+          test -n "${AGENTS_SHELL_IMAGE_TAG}"
+
+          namespace=agents-shell-isolation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}
+          pod=agents-shell-production-isolation
+          cleanup() {
+            kubectl -n "${namespace}" logs "${pod}" --all-containers=true 2>/dev/null || true
+            kubectl -n "${namespace}" delete namespace "${namespace}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          kubectl -n "${namespace}" create namespace "${namespace}"
+          cat <<YAML | kubectl -n "${namespace}" apply -f -
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: ${pod}
+            namespace: ${namespace}
+          spec:
+            restartPolicy: Never
+            securityContext:
+              runAsNonRoot: false
+              runAsUser: 0
+              runAsGroup: 0
+              seccompProfile:
+                type: RuntimeDefault
+            containers:
+              - name: proof
+                image: ${AGENTS_SHELL_IMAGE_REPOSITORY}:${AGENTS_SHELL_IMAGE_TAG}
+                imagePullPolicy: Never
+                command: ['/bin/bash', '-lc']
+                args:
+                  - cd /app/services/agents && bun scripts/verify-agents-shell-production-isolation.ts
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: false
+                  capabilities:
+                    drop: ['ALL']
+                    add: ['CHOWN', 'DAC_OVERRIDE', 'KILL', 'SETGID', 'SETUID']
+                volumeMounts:
+                  - name: workspace
+                    mountPath: /workspace
+            volumes:
+              - name: workspace
+                emptyDir: {}
+          YAML
+
+          for attempt in $(seq 1 180); do
+            phase="$(kubectl -n "${namespace}" get pod "${pod}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+            case "${phase}" in
+              Succeeded)
+                kubectl -n "${namespace}" logs "${pod}"
+                exit 0
+                ;;
+              Failed)
+                kubectl -n "${namespace}" describe pod "${pod}" || true
+                kubectl -n "${namespace}" logs "${pod}" --all-containers=true || true
+                exit 1
+                ;;
+            esac
+            sleep 2
+          done
+          kubectl -n "${namespace}" describe pod "${pod}" || true
+          exit 1
+
       - name: Run Agents integration smoke test
         env:
           AGENTS_NAMESPACE: agents-ci
