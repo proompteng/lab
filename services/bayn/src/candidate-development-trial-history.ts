@@ -25,8 +25,11 @@ export interface CandidateDevelopmentTrialHistory {
     readonly priorTrialCount: number
     readonly status: 'DEVELOPMENT_REJECTED'
     readonly evidenceContentHash: string
-    readonly reviewedSourceRevision: string
-    readonly mergedSourceRevision: string
+    readonly evaluatedSourceRevision: string
+    readonly reviewedSourceRevision?: string
+    readonly mergedSourceRevision?: string
+    readonly failureStage?: 'buildEvaluation-preflight'
+    readonly developmentMetricsObserved?: false
     readonly qualificationAttemptConsumed: false
   }
   readonly nextCandidatePreregistration: CandidateDevelopmentNextPreregistration | null
@@ -87,6 +90,19 @@ export const candidate17DevelopmentEligibility = {
   nextCandidatePreregistration: null,
 } as const
 
+export const candidate18DevelopmentFailureEvidenceExpectation = {
+  evidenceContentHash: '65d6f044f3f323aa87ff26a3dca011053aa3172c8a4ce422841497ccf370a5b6',
+  evaluatedSourceRevision: '24465ada2b5e1e04c5058ad812b1eedd9f58b0dd',
+  failureStage: 'buildEvaluation-preflight',
+  developmentMetricsObserved: false,
+} as const
+
+export const candidate18DevelopmentEligibility = {
+  status: 'DEVELOPMENT_REJECTED',
+  evidenceContentHash: candidate18DevelopmentFailureEvidenceExpectation.evidenceContentHash,
+  nextCandidatePreregistration: null,
+} as const
+
 export const candidate18Preregistration: CandidateDevelopmentNextPreregistration = {
   schemaVersion: 'bayn.candidate-development-next-preregistration.v1',
   candidateOrdinal: 18,
@@ -109,7 +125,7 @@ export const candidate18Preregistration: CandidateDevelopmentNextPreregistration
 export const frozenCandidateDevelopmentTrialHistory: CandidateDevelopmentTrialHistory = {
   schemaVersion: 'bayn.candidate-development-trial-history.v1',
   completedCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-  developmentCandidateOrdinals: [17],
+  developmentCandidateOrdinals: [17, 18],
   priorTrialsHash: candidate18Preregistration.priorTrialsHash!,
   latestTerminalEvidence: {
     candidateOrdinal: 16,
@@ -126,13 +142,14 @@ export const frozenCandidateDevelopmentTrialHistory: CandidateDevelopmentTrialHi
   },
   latestReviewedCandidatePreregistration: candidate18Preregistration,
   latestDevelopmentEvidence: {
-    candidateOrdinal: 17,
-    priorTrialCount: 16,
+    candidateOrdinal: 18,
+    priorTrialCount: 17,
     status: 'DEVELOPMENT_REJECTED',
-    evidenceContentHash: candidate17DevelopmentEvidenceExpectation.evidenceContentHash,
-    reviewedSourceRevision: candidate17DevelopmentEvidenceExpectation.bindings.reviewedSourceRevision,
-    mergedSourceRevision: candidate17DevelopmentEvidenceExpectation.bindings.mergedSourceRevision,
+    evidenceContentHash: candidate18DevelopmentFailureEvidenceExpectation.evidenceContentHash,
+    evaluatedSourceRevision: candidate18DevelopmentFailureEvidenceExpectation.evaluatedSourceRevision,
+    failureStage: candidate18DevelopmentFailureEvidenceExpectation.failureStage,
+    developmentMetricsObserved: candidate18DevelopmentFailureEvidenceExpectation.developmentMetricsObserved,
     qualificationAttemptConsumed: false,
   },
-  nextCandidatePreregistration: candidate18Preregistration,
+  nextCandidatePreregistration: null,
 }

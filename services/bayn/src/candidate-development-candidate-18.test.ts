@@ -1,11 +1,19 @@
 import { describe, expect, test } from 'bun:test'
+import { Result } from 'effect'
 
 import {
   candidate17DevelopmentEligibility,
+  candidate18DevelopmentEligibility,
+  candidate18DevelopmentFailureEvidenceExpectation,
   candidate18Preregistration,
   frozenCandidateDevelopmentSessions,
   frozenCandidateDevelopmentTrialHistory,
 } from './candidate-development-calendar'
+import {
+  candidate18DevelopmentFailureEvidenceResult,
+  validateCandidate18DevelopmentFailureEvidence,
+} from './candidate-development-candidate-18-evidence'
+import { preregisterCandidateDevelopmentAttempt } from './candidate-development-command'
 import { canonicalHashV1 } from './hash'
 import {
   candidate18Planner as untypedCandidate18Planner,
@@ -151,16 +159,69 @@ describe('Candidate 18 dual momentum preregistration', () => {
     expect(frozenCandidateDevelopmentTrialHistory.completedCandidateOrdinals).toEqual(
       Array.from({ length: 16 }, (_, index) => index + 1),
     )
-    expect(frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals).toEqual([17])
+    expect(frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals).toEqual([17, 18])
     expect(frozenCandidateDevelopmentTrialHistory.latestDevelopmentEvidence).toMatchObject({
-      candidateOrdinal: 17,
-      priorTrialCount: 16,
+      candidateOrdinal: 18,
+      priorTrialCount: 17,
       status: 'DEVELOPMENT_REJECTED',
+      evidenceContentHash: candidate18DevelopmentFailureEvidenceExpectation.evidenceContentHash,
+      evaluatedSourceRevision: candidate18DevelopmentFailureEvidenceExpectation.evaluatedSourceRevision,
+      failureStage: 'buildEvaluation-preflight',
+      developmentMetricsObserved: false,
       qualificationAttemptConsumed: false,
     })
     expect(candidate17DevelopmentEligibility.nextCandidatePreregistration).toBeNull()
-    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toEqual(candidate18Preregistration)
+    expect(candidate18DevelopmentEligibility).toMatchObject({
+      status: 'DEVELOPMENT_REJECTED',
+      evidenceContentHash: candidate18DevelopmentFailureEvidenceExpectation.evidenceContentHash,
+      nextCandidatePreregistration: null,
+    })
+    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toBeNull()
     expect(typeof candidateDevelopmentArtifact.buildEvaluation).toBe('function')
+  })
+
+  test('records the sole fail-closed attempt and blocks every rerun before evaluation', async () => {
+    expect(Result.isSuccess(candidate18DevelopmentFailureEvidenceResult)).toBe(true)
+    if (Result.isFailure(candidate18DevelopmentFailureEvidenceResult)) {
+      throw new Error('expected Candidate 18 failure evidence to be valid')
+    }
+    const evidence = candidate18DevelopmentFailureEvidenceResult.success
+    expect(evidence).toMatchObject({
+      candidateOrdinal: 18,
+      priorTrialCount: 17,
+      status: 'DEVELOPMENT_REJECTED',
+      qualificationAttemptConsumed: false,
+      nextCandidatePreregistration: null,
+      attempt: {
+        stage: 'buildEvaluation-preflight',
+        developmentMetricsObserved: false,
+        developmentReportWritten: false,
+        evaluationRerunAuthorized: false,
+      },
+    })
+    expect(preregisterCandidateDevelopmentAttempt(evidence.verifiedSource)).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-program-binding',
+        cause: {
+          field: 'trialHistory.nextCandidatePreregistration',
+          observed: null,
+        },
+      },
+    })
+
+    const tampered = structuredClone(evidence) as Record<string, unknown>
+    tampered.contentHash = '0'.repeat(64)
+    expect(validateCandidate18DevelopmentFailureEvidence(tampered)).toMatchObject({
+      failure: { _tag: 'Candidate18DevelopmentFailureEvidenceContentHashMismatch' },
+    })
+
+    const source = await Bun.file('services/bayn/src/strategy/dual-momentum-global-equity/candidate-18.ts').text()
+    expect(source).toContain(candidate18Preregistration.strategyProtocolHash)
+    expect(source).toContain(evidence.protocolBindings.embeddedEvaluationProtocolHash)
+    expect(evidence.protocolBindings.embeddedEvaluationProtocolHash).not.toBe(
+      evidence.protocolBindings.strategyProtocolHash,
+    )
   })
 
   test('uses relative momentum, then absolute momentum, then defensive momentum or cash', () => {

@@ -700,10 +700,13 @@ export const bindCandidateDevelopmentVerifiedSource = (
     )
   }
   const candidatePreregistration = frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration
-  const expectedNextCandidateOrdinal = latestDevelopmentOrdinal + 1
-  const expectedPriorTrialCount = latestDevelopmentOrdinal
+  const expectedReviewedCandidateOrdinal =
+    frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration === null
+      ? latestDevelopmentOrdinal
+      : latestDevelopmentOrdinal + 1
+  const expectedPriorTrialCount = expectedReviewedCandidateOrdinal - 1
   const reviewedBindings = [
-    ['candidateOrdinal', expectedNextCandidateOrdinal, candidatePreregistration.candidateOrdinal],
+    ['candidateOrdinal', expectedReviewedCandidateOrdinal, candidatePreregistration.candidateOrdinal],
     ['priorTrialCount', expectedPriorTrialCount, candidatePreregistration.priorTrialCount],
     ['input.candidateOrdinal', candidatePreregistration.candidateOrdinal, input.candidateOrdinal],
     ['input.priorTrialCount', candidatePreregistration.priorTrialCount, input.priorTrialCount],
@@ -819,7 +822,7 @@ export const bindCandidateDevelopmentVerifiedSource = (
   )
 }
 
-const preregisterCandidateDevelopmentAttempt = (
+export const preregisterCandidateDevelopmentAttempt = (
   verifiedSource: CandidateDevelopmentVerifiedSource,
 ): Result.Result<string, CandidateDevelopmentCommandFailure> => {
   const nextCandidatePreregistration = frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration
@@ -827,7 +830,7 @@ const preregisterCandidateDevelopmentAttempt = (
     return Result.fail(
       sourceVerificationFailure('verify-program-binding', {
         field: 'trialHistory.nextCandidatePreregistration',
-        expected: 'separately reviewed preregistration after consumed Candidate 16',
+        expected: 'a separately reviewed preregistration after the latest terminal development attempt',
         observed: null,
         latestTerminalEvidence: frozenCandidateDevelopmentTrialHistory.latestTerminalEvidence,
       }),
