@@ -21,7 +21,10 @@ import {
   type CandidateDevelopmentReport,
   type CandidateDevelopmentRunFailure,
 } from './candidate-development'
-import { frozenCandidateDevelopmentTrialHistory } from './candidate-development-trial-history'
+import {
+  deriveCandidateDevelopmentPriorTrialsHash,
+  frozenCandidateDevelopmentTrialHistory,
+} from './candidate-development-trial-history'
 import {
   deriveCandidateDevelopmentDecision,
   type CandidateDevelopmentDecision as CandidateDevelopmentCommandDecision,
@@ -700,6 +703,15 @@ export const bindCandidateDevelopmentVerifiedSource = (
     )
   }
   const candidatePreregistration = frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration
+  const priorTrialsHash = deriveCandidateDevelopmentPriorTrialsHash(
+    frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePriorTrials,
+  )
+  if (Result.isFailure(priorTrialsHash)) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentCommandHashFailed',
+      cause: priorTrialsHash.failure,
+    })
+  }
   const expectedReviewedCandidateOrdinal =
     frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration === null
       ? latestDevelopmentOrdinal
@@ -711,11 +723,7 @@ export const bindCandidateDevelopmentVerifiedSource = (
     ['input.candidateOrdinal', candidatePreregistration.candidateOrdinal, input.candidateOrdinal],
     ['input.priorTrialCount', candidatePreregistration.priorTrialCount, input.priorTrialCount],
     ['strategyProtocolHash', candidatePreregistration.strategyProtocolHash, input.expectedStrategyProtocolHash],
-    [
-      'priorTrialsHash',
-      frozenCandidateDevelopmentTrialHistory.priorTrialsHash,
-      candidatePreregistration.priorTrialsHash,
-    ],
+    ['priorTrialsHash', priorTrialsHash.success, candidatePreregistration.priorTrialsHash],
     ['modulePath', candidatePreregistration.modulePath, files.modulePath],
     ['moduleSha256', candidatePreregistration.moduleSha256, files.moduleSha256],
   ] as const
@@ -2395,6 +2403,17 @@ const validateCandidateDevelopmentPreregisteredProtocol = (
 ): Result.Result<void, CandidateDevelopmentCommandFailure> => {
   if (program.strategyProtocol.strategyIdentity === undefined) return Result.succeed(undefined)
   const preregistration = frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration
+  const priorTrialsHash = pipe(
+    deriveCandidateDevelopmentPriorTrialsHash(
+      frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePriorTrials,
+    ),
+    Result.mapError(
+      (cause): CandidateDevelopmentCommandFailure => ({
+        _tag: 'CandidateDevelopmentCommandHashFailed',
+        cause,
+      }),
+    ),
+  )
   const strategyIdentityHash = pipe(
     canonicalHashV1Result(program.strategyProtocol.strategyIdentity),
     Result.mapError(
@@ -2414,43 +2433,49 @@ const validateCandidateDevelopmentPreregisteredProtocol = (
     ),
   )
   return pipe(
-    Result.all({ strategyIdentityHash, calendarHash }),
-    Result.flatMap(({ strategyIdentityHash: observedStrategyIdentityHash, calendarHash: observedCalendarHash }) => {
-      const bindings = [
-        ['strategyIdentityHash', preregistration.strategyIdentityHash, observedStrategyIdentityHash],
-        [
-          'candidateDevelopmentProtocolHash',
-          preregistration.candidateDevelopmentProtocolHash,
-          preflight.protocolIdentity.candidateDevelopmentProtocolHash,
-        ],
-        ['calendarHash', preregistration.calendarHash, observedCalendarHash],
-        ['priorTrialsHash', preregistration.priorTrialsHash, frozenCandidateDevelopmentTrialHistory.priorTrialsHash],
-        [
-          'source.strategyIdentityHash',
-          preregistration.strategyIdentityHash,
-          verifiedSource.sourceManifest.strategyIdentityHash,
-        ],
-        [
-          'source.candidateDevelopmentProtocolHash',
-          preregistration.candidateDevelopmentProtocolHash,
-          verifiedSource.sourceManifest.candidateDevelopmentProtocolHash,
-        ],
-        ['source.calendarHash', preregistration.calendarHash, verifiedSource.sourceManifest.calendarHash],
-        ['source.priorTrialsHash', preregistration.priorTrialsHash, verifiedSource.sourceManifest.priorTrialsHash],
-      ] as const
-      for (const [field, expected, observed] of bindings) {
-        if (expected !== observed) {
-          return Result.fail(
-            sourceVerificationFailure('verify-program-binding', {
-              field: `trialHistory.latestReviewedCandidatePreregistration.${field}`,
-              expected,
-              observed,
-            }),
-          )
+    Result.all({ strategyIdentityHash, calendarHash, priorTrialsHash }),
+    Result.flatMap(
+      ({
+        strategyIdentityHash: observedStrategyIdentityHash,
+        calendarHash: observedCalendarHash,
+        priorTrialsHash: observedPriorTrialsHash,
+      }) => {
+        const bindings = [
+          ['strategyIdentityHash', preregistration.strategyIdentityHash, observedStrategyIdentityHash],
+          [
+            'candidateDevelopmentProtocolHash',
+            preregistration.candidateDevelopmentProtocolHash,
+            preflight.protocolIdentity.candidateDevelopmentProtocolHash,
+          ],
+          ['calendarHash', preregistration.calendarHash, observedCalendarHash],
+          ['priorTrialsHash', preregistration.priorTrialsHash, observedPriorTrialsHash],
+          [
+            'source.strategyIdentityHash',
+            preregistration.strategyIdentityHash,
+            verifiedSource.sourceManifest.strategyIdentityHash,
+          ],
+          [
+            'source.candidateDevelopmentProtocolHash',
+            preregistration.candidateDevelopmentProtocolHash,
+            verifiedSource.sourceManifest.candidateDevelopmentProtocolHash,
+          ],
+          ['source.calendarHash', preregistration.calendarHash, verifiedSource.sourceManifest.calendarHash],
+          ['source.priorTrialsHash', preregistration.priorTrialsHash, verifiedSource.sourceManifest.priorTrialsHash],
+        ] as const
+        for (const [field, expected, observed] of bindings) {
+          if (expected !== observed) {
+            return Result.fail(
+              sourceVerificationFailure('verify-program-binding', {
+                field: `trialHistory.latestReviewedCandidatePreregistration.${field}`,
+                expected,
+                observed,
+              }),
+            )
+          }
         }
-      }
-      return Result.succeed(undefined)
-    }),
+        return Result.succeed(undefined)
+      },
+    ),
   )
 }
 

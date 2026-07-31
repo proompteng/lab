@@ -5,7 +5,9 @@ import {
   candidate17DevelopmentEligibility,
   candidate18DevelopmentEligibility,
   candidate18DevelopmentFailureEvidenceExpectation,
+  candidate18PriorTrialsMaterial,
   candidate18Preregistration,
+  deriveCandidateDevelopmentPriorTrialsHash,
   frozenCandidateDevelopmentSessions,
   frozenCandidateDevelopmentTrialHistory,
 } from './candidate-development-calendar'
@@ -178,6 +180,36 @@ describe('Candidate 18 dual momentum preregistration', () => {
     })
     expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toBeNull()
     expect(typeof candidateDevelopmentArtifact.buildEvaluation).toBe('function')
+  })
+
+  test('derives the preregistered prior-trials hash from protected Candidate 17 history', () => {
+    const derived = deriveCandidateDevelopmentPriorTrialsHash(candidate18PriorTrialsMaterial)
+    expect(derived).toEqual(Result.succeed(candidate18Preregistration.priorTrialsHash!))
+
+    const alteredEvidence = deriveCandidateDevelopmentPriorTrialsHash({
+      ...candidate18PriorTrialsMaterial,
+      latestDevelopmentEvidence: {
+        ...candidate18PriorTrialsMaterial.latestDevelopmentEvidence,
+        evidenceContentHash: '0'.repeat(64),
+      },
+    })
+    expect(Result.isSuccess(alteredEvidence)).toBe(true)
+    if (Result.isFailure(alteredEvidence)) throw new Error('expected altered prior-trial material to hash')
+    expect(alteredEvidence.success).not.toBe(candidate18Preregistration.priorTrialsHash)
+
+    const alteredSource = deriveCandidateDevelopmentPriorTrialsHash({
+      ...candidate18PriorTrialsMaterial,
+      latestReviewedPreregistration: {
+        ...candidate18PriorTrialsMaterial.latestReviewedPreregistration,
+        preregistration: {
+          ...candidate18PriorTrialsMaterial.latestReviewedPreregistration.preregistration,
+          sourceRevision: '0'.repeat(40),
+        },
+      },
+    })
+    expect(Result.isSuccess(alteredSource)).toBe(true)
+    if (Result.isFailure(alteredSource)) throw new Error('expected altered prior-trial source to hash')
+    expect(alteredSource.success).not.toBe(candidate18Preregistration.priorTrialsHash)
   })
 
   test('records the sole fail-closed attempt and blocks every rerun before evaluation', async () => {

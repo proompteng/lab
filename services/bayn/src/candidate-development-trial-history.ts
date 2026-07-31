@@ -1,11 +1,26 @@
 import { candidateDevelopmentCalendarContract } from './candidate-development'
 import type { CandidateDevelopmentNextPreregistration } from './candidate-development-decision'
+import { canonicalHashV1Result } from './hash'
+
+export interface CandidateDevelopmentPriorTrialsMaterial {
+  readonly schemaVersion: 'bayn.candidate-development-prior-trials.v1'
+  readonly qualificationCandidateOrdinals: readonly number[]
+  readonly developmentCandidateOrdinals: readonly number[]
+  readonly latestDevelopmentEvidence: {
+    readonly candidateOrdinal: number
+    readonly priorTrialCount: number
+    readonly status: 'DEVELOPMENT_REJECTED'
+    readonly evidenceContentHash: string
+    readonly qualificationAttemptConsumed: false
+  }
+  readonly latestReviewedPreregistration: CandidateDevelopmentNextPreregistration
+}
 
 export interface CandidateDevelopmentTrialHistory {
   readonly schemaVersion: 'bayn.candidate-development-trial-history.v1'
   readonly completedCandidateOrdinals: readonly number[]
   readonly developmentCandidateOrdinals: readonly number[]
-  readonly priorTrialsHash: string
+  readonly latestReviewedCandidatePriorTrials: CandidateDevelopmentPriorTrialsMaterial
   readonly latestTerminalEvidence: {
     readonly candidateOrdinal: number
     readonly priorTrialCount: number
@@ -122,11 +137,28 @@ export const candidate18Preregistration: CandidateDevelopmentNextPreregistration
   },
 }
 
+export const candidate18PriorTrialsMaterial: CandidateDevelopmentPriorTrialsMaterial = {
+  schemaVersion: 'bayn.candidate-development-prior-trials.v1',
+  qualificationCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+  developmentCandidateOrdinals: [17],
+  latestDevelopmentEvidence: {
+    candidateOrdinal: 17,
+    priorTrialCount: 16,
+    status: 'DEVELOPMENT_REJECTED',
+    evidenceContentHash: candidate17DevelopmentEvidenceExpectation.evidenceContentHash,
+    qualificationAttemptConsumed: false,
+  },
+  latestReviewedPreregistration: candidate17Preregistration,
+}
+
+export const deriveCandidateDevelopmentPriorTrialsHash = (material: CandidateDevelopmentPriorTrialsMaterial) =>
+  canonicalHashV1Result(material)
+
 export const frozenCandidateDevelopmentTrialHistory: CandidateDevelopmentTrialHistory = {
   schemaVersion: 'bayn.candidate-development-trial-history.v1',
   completedCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
   developmentCandidateOrdinals: [17, 18],
-  priorTrialsHash: candidate18Preregistration.priorTrialsHash!,
+  latestReviewedCandidatePriorTrials: candidate18PriorTrialsMaterial,
   latestTerminalEvidence: {
     candidateOrdinal: 16,
     priorTrialCount: 15,

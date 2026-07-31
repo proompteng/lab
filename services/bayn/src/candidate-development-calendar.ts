@@ -9,6 +9,8 @@ export {
   candidate18Preregistration,
   candidate18DevelopmentEligibility,
   candidate18DevelopmentFailureEvidenceExpectation,
+  candidate18PriorTrialsMaterial,
+  deriveCandidateDevelopmentPriorTrialsHash,
   frozenCandidateDevelopmentTrialHistory,
 } from './candidate-development-trial-history'
 
