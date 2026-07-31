@@ -12,12 +12,19 @@ const permissions = parsed.permissions as Record<string, string>
 const count = (value: string): number => workflow.split(value).length - 1
 
 describe('Bayn promotion auto-merge workflow', () => {
-  test('owns one serialized unattended schedule with explicit merge authority', () => {
+  test('owns serialized eligibility-completion and repair-schedule triggers with explicit merge authority', () => {
     expect(parsed.name).toBe('bayn-promotion-automerge')
+    expect(events.workflow_run).toEqual({
+      workflows: ['bayn-promotion-eligibility'],
+      types: ['completed'],
+    })
     expect(events.schedule).toEqual([{ cron: '12,27,42,57 * * * *' }])
     expect(workflow).not.toContain('workflow_dispatch:')
     expect(workflow).not.toContain('pull_request_target:')
     expect(workflow).not.toContain('\n  push:')
+    expect(workflow).toContain("github.event_name == 'schedule'")
+    expect(workflow).toContain("github.event_name == 'workflow_run'")
+    expect(workflow).toContain("github.event.workflow_run.conclusion == 'success'")
     expect(workflow).toContain('group: bayn-promotion-automerge')
     expect(workflow).toContain('cancel-in-progress: false')
     expect(permissions).toEqual({
@@ -28,7 +35,7 @@ describe('Bayn promotion auto-merge workflow', () => {
     })
   })
 
-  test('checks out only the trusted schedule revision and refuses a stale main policy', () => {
+  test('checks out only the trusted default-branch revision and refuses a stale main policy', () => {
     expect(workflow).toContain('name: Checkout trusted current-main merge policy')
     expect(workflow).toContain('ref: ${{ github.sha }}')
     expect(workflow).toContain('persist-credentials: false')
