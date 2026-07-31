@@ -492,7 +492,10 @@ const remediationHistoryFixture = (): {
       },
     ],
   })
-  const record = structuredClone(realRemediationRecord) as BaynReleaseReviewRemediationRecord
+  const record = structuredClone(realRemediationRecord)
+  if (record.schemaVersion === 'bayn.release-review-remediation.v4') {
+    throw new Error('expected a legacy remediation record')
+  }
   const mutableRecord = record as unknown as {
     blocked: {
       sourcePullRequestEvidenceSha256: string
@@ -1690,7 +1693,366 @@ const multiStageRemediationFixture = (): {
   }
 }
 
+const continuousRemediationRecordPath =
+  'services/bayn/release-review-remediations/6737d29cda608c79714046d420ab7396d8e80f70.json'
+const realContinuousRemediationRecord = parseBaynReleaseReviewRemediationRecord(
+  JSON.parse(readFileSync(continuousRemediationRecordPath, 'utf8')) as unknown,
+)
+const continuousHistory = {
+  published: '69d803040c8866e7703df50a645a096c54e7eca5',
+  blocked: '6737d29cda608c79714046d420ab7396d8e80f70',
+  finalHead: 'adc96644904d1f1c2640cc6a597d1cfc108caf91',
+  priorHead: 'ab989db8b42f9814f7aa22f7460becdee847a492',
+  introductionHead: '6'.repeat(40),
+  introductionMerge: '7'.repeat(40),
+} as const
+const continuousNowMs = Date.parse('2026-07-31T20:42:00Z')
+
+const continuousRemediationFixture = (): {
+  readonly snapshot: BaynReleaseEligibilitySnapshot
+  readonly evidence: BaynReleaseReviewRemediationEvidence
+} => {
+  const record = structuredClone(realContinuousRemediationRecord)
+  if (record.schemaVersion !== 'bayn.release-review-remediation.v4') {
+    throw new Error('expected a v4 continuous-source remediation record')
+  }
+  const blockedPull: PullRequestReviewState = {
+    number: 13426,
+    baseRefName: 'main',
+    headSha: continuousHistory.finalHead,
+    mergeCommitSha: continuousHistory.blocked,
+    createdAt: '2026-07-31T09:38:15Z',
+    mergedAt: '2026-07-31T20:36:05Z',
+    reviews: [
+      review({
+        commitSha: continuousHistory.priorHead,
+        submittedAt: '2026-07-31T20:14:12Z',
+      }),
+    ],
+    threads: [],
+    commitShas: [continuousHistory.finalHead],
+    issueComments: [],
+    reactions: [reaction({ createdAt: '2026-07-31T20:35:28Z' })],
+    headForcePushes: [
+      {
+        actorLogin: 'gregkonush',
+        beforeCommitSha: continuousHistory.priorHead,
+        afterCommitSha: continuousHistory.finalHead,
+        createdAt: '2026-07-31T20:29:25Z',
+      },
+    ],
+    headForcePushCount: 1,
+  }
+  ;(
+    record as unknown as { blocked: { sourcePullRequestEvidenceSha256: string } }
+  ).blocked.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(blockedPull)
+
+  const changes = record.blocked.affectedPaths.map((path) => ({ ...path }))
+  const pathBlobs = changes.map((path) => ({ path: path.path, blobSha: path.blobSha }))
+  const blockedCommit = {
+    sha: continuousHistory.blocked,
+    parents: [continuousHistory.published],
+    treeSha: record.blocked.mergeTreeSha,
+    files: changes.map((path) => path.path),
+    fileChanges: changes,
+    reviewSnapshot: {
+      mainCommitParents: [continuousHistory.published],
+      associatedPullRequests: [
+        associatedPull({
+          number: 13426,
+          headSha: continuousHistory.finalHead,
+          mergeCommitSha: continuousHistory.blocked,
+          mergedAt: blockedPull.mergedAt,
+        }),
+      ],
+      pullRequest: blockedPull,
+    },
+  }
+  const introductionSnapshot = reviewSnapshotFor({
+    commitSha: continuousHistory.introductionMerge,
+    prNumber: 13443,
+    headSha: continuousHistory.introductionHead,
+    parents: [continuousHistory.blocked],
+    mergedAt: '2026-07-31T20:41:00Z',
+    reviews: [
+      review({
+        commitSha: continuousHistory.introductionHead,
+        submittedAt: '2026-07-31T20:40:00Z',
+      }),
+    ],
+  })
+  const recordBlobSha = '8'.repeat(40)
+  const introductionCommit = {
+    sha: continuousHistory.introductionMerge,
+    parents: [continuousHistory.blocked],
+    treeSha: '9'.repeat(40),
+    files: [
+      'packages/scripts/src/bayn/verify-release-review.ts',
+      'packages/scripts/src/bayn/verify-release-review.test.ts',
+      continuousRemediationRecordPath,
+    ],
+    fileChanges: [
+      {
+        path: 'packages/scripts/src/bayn/verify-release-review.ts',
+        previousPath: null,
+        status: 'modified',
+        blobSha: '1'.repeat(40),
+      },
+      {
+        path: 'packages/scripts/src/bayn/verify-release-review.test.ts',
+        previousPath: null,
+        status: 'modified',
+        blobSha: '2'.repeat(40),
+      },
+      {
+        path: continuousRemediationRecordPath,
+        previousPath: null,
+        status: 'added',
+        blobSha: recordBlobSha,
+      },
+    ],
+    reviewSnapshot: introductionSnapshot,
+  }
+  const evidence: BaynReleaseReviewRemediationEvidence = {
+    recordPath: continuousRemediationRecordPath,
+    recordBlobSha,
+    record,
+    referencedCommits: [
+      {
+        sha: continuousHistory.finalHead,
+        parents: [continuousHistory.published],
+        treeSha: record.blocked.finalHeadTreeSha,
+        files: changes.map((path) => path.path),
+        fileChanges: changes,
+        pathBlobs,
+      },
+    ],
+    currentPathBlobs: pathBlobs,
+  }
+  return {
+    evidence,
+    snapshot: {
+      currentCommitParents: [continuousHistory.blocked],
+      lastPublishedRevision: {
+        status: 'resolved',
+        revision: continuousHistory.published,
+        runId: 30663490856,
+        runNumber: 930,
+        runAttempt: 1,
+      },
+      comparison: {
+        status: 'ahead',
+        baseSha: continuousHistory.published,
+        headSha: continuousHistory.introductionMerge,
+        mergeBaseSha: continuousHistory.published,
+        aheadBy: 2,
+        totalCommits: 2,
+        commits: [blockedCommit, introductionCommit],
+        truncated: false,
+      },
+      remediations: [evidence],
+    },
+  }
+}
+
 describe('Bayn publication-range eligibility', () => {
+  test('parses the exact immutable #13426 continuous-source v4 receipt', () => {
+    expect(realContinuousRemediationRecord).toMatchObject({
+      schemaVersion: 'bayn.release-review-remediation.v4',
+      remediationId: 'pr-13426-continuous-reviewed-source',
+      blocked: {
+        mergeCommitSha: continuousHistory.blocked,
+        mergeParentSha: continuousHistory.published,
+        mergeTreeSha: 'b8f61426c9e182125208356d1bb50c14e83b1e65',
+        sourcePullRequestNumber: 13426,
+        finalHeadSha: continuousHistory.finalHead,
+        finalHeadParentSha: continuousHistory.published,
+        finalHeadTreeSha: 'b8f61426c9e182125208356d1bb50c14e83b1e65',
+        sourcePullRequestEvidenceSha256: '2d7c74531595b8b889b39e5ebe7281cb5f397cbe2cf832300a80a62e293fbd0f',
+        affectedPaths: { length: 18 },
+      },
+      requiredDescendants: [],
+    })
+  })
+
+  test('accepts #13426 only through its exact continuous reviewed source binding', () => {
+    const fixture = continuousRemediationFixture()
+    expect(
+      evaluateBaynReleaseEligibility({
+        mainCommitSha: continuousHistory.introductionMerge,
+        baseRefName: 'main',
+        snapshot: fixture.snapshot,
+        nowMs: continuousNowMs,
+        pushBeforeSha: continuousHistory.blocked,
+      }),
+    ).toEqual({
+      status: 'eligible',
+      lastPublishedRevision: continuousHistory.published,
+      checkedCommitCount: 2,
+      baynAffectingCommitCount: 2,
+      reviewedPullRequests: [
+        {
+          commitSha: continuousHistory.blocked,
+          prNumber: 13426,
+          headSha: continuousHistory.finalHead,
+          reviewSubmittedAt: '2026-07-31T20:35:28Z',
+          eligibleAt: '2026-07-31T20:35:58.000Z',
+        },
+        {
+          commitSha: continuousHistory.introductionMerge,
+          prNumber: 13443,
+          headSha: continuousHistory.introductionHead,
+          reviewSubmittedAt: '2026-07-31T20:40:00Z',
+          eligibleAt: '2026-07-31T20:40:30.000Z',
+        },
+      ],
+    })
+  })
+
+  test('keeps #13426 blocked without the exact v4 receipt', () => {
+    const fixture = continuousRemediationFixture()
+    expect(
+      evaluateBaynReleaseEligibility({
+        mainCommitSha: continuousHistory.introductionMerge,
+        baseRefName: 'main',
+        snapshot: { ...fixture.snapshot, remediations: [] },
+        nowMs: continuousNowMs,
+        pushBeforeSha: continuousHistory.blocked,
+      }),
+    ).toMatchObject({ status: 'hold', code: 'release-review-remediation-missing', retryable: false })
+  })
+
+  ;(
+    [
+      [
+        'edited immutable PR evidence',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const pullRequest = fixture.snapshot.comparison?.commits[0]?.reviewSnapshot?.pullRequest
+          if (pullRequest === null || pullRequest === undefined) throw new Error('missing blocked pull request')
+          ;(pullRequest as unknown as { issueComments: PullRequestIssueComment[] }).issueComments = [
+            issueComment({ createdAt: '2026-07-31T20:34:00Z', updatedAt: '2026-07-31T20:34:01Z' }),
+          ]
+        },
+      ],
+      [
+        'pre-head reaction',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const pullRequest = fixture.snapshot.comparison?.commits[0]?.reviewSnapshot?.pullRequest
+          if (pullRequest === null || pullRequest === undefined) throw new Error('missing blocked pull request')
+          ;(pullRequest.reactions[0] as unknown as { createdAt: string }).createdAt = '2026-07-31T20:29:25Z'
+          ;(
+            fixture.evidence.record as unknown as { blocked: { sourcePullRequestEvidenceSha256: string } }
+          ).blocked.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pullRequest)
+        },
+      ],
+      [
+        'spoofed reaction actor',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const pullRequest = fixture.snapshot.comparison?.commits[0]?.reviewSnapshot?.pullRequest
+          if (pullRequest === null || pullRequest === undefined) throw new Error('missing blocked pull request')
+          ;(pullRequest.reactions[0] as unknown as { userLogin: string }).userLogin = 'codex-lookalike[bot]'
+          ;(
+            fixture.evidence.record as unknown as { blocked: { sourcePullRequestEvidenceSha256: string } }
+          ).blocked.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pullRequest)
+        },
+      ],
+      [
+        'ambiguous trusted reactions',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const pullRequest = fixture.snapshot.comparison?.commits[0]?.reviewSnapshot?.pullRequest
+          if (pullRequest === null || pullRequest === undefined) throw new Error('missing blocked pull request')
+          ;(pullRequest as unknown as { reactions: PullRequestReaction[] }).reactions = [
+            ...pullRequest.reactions,
+            reaction({ createdAt: '2026-07-31T20:35:29Z' }),
+          ]
+          ;(
+            fixture.evidence.record as unknown as { blocked: { sourcePullRequestEvidenceSha256: string } }
+          ).blocked.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pullRequest)
+        },
+      ],
+      [
+        'unrelated source PR identity',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          ;(
+            fixture.evidence.record as unknown as { blocked: { sourcePullRequestNumber: number } }
+          ).blocked.sourcePullRequestNumber = 13425
+        },
+      ],
+      [
+        'mismatched final source head',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          ;(fixture.evidence.record as unknown as { blocked: { finalHeadSha: string } }).blocked.finalHeadSha =
+            'f'.repeat(40)
+        },
+      ],
+      [
+        'discontinuous final source parent',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const finalHead = fixture.evidence.referencedCommits[0]
+          if (finalHead === undefined) throw new Error('missing final source head')
+          ;(finalHead as unknown as { parents: string[] }).parents = ['0'.repeat(40)]
+        },
+      ],
+      [
+        'mismatched final source tree',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const finalHead = fixture.evidence.referencedCommits[0]
+          if (finalHead === undefined) throw new Error('missing final source head')
+          ;(finalHead as unknown as { treeSha: string }).treeSha = '0'.repeat(40)
+        },
+      ],
+      [
+        'source-dropping path evidence',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const finalHead = fixture.evidence.referencedCommits[0]
+          if (finalHead === undefined) throw new Error('missing final source head')
+          ;(finalHead as unknown as { files: string[] }).files = finalHead.files.slice(1)
+          ;(finalHead as unknown as { fileChanges: unknown[] }).fileChanges = finalHead.fileChanges.slice(1)
+          ;(finalHead as unknown as { pathBlobs: unknown[] }).pathBlobs = finalHead.pathBlobs.slice(1)
+        },
+      ],
+      [
+        'mismatched source blob',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const finalHead = fixture.evidence.referencedCommits[0]
+          const pathBlob = finalHead?.pathBlobs[0]
+          if (pathBlob === undefined) throw new Error('missing final source blob')
+          ;(pathBlob as unknown as { blobSha: string }).blobSha = '0'.repeat(40)
+        },
+      ],
+      [
+        'discontinuous release ancestry',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const introduction = fixture.snapshot.comparison?.commits[1]
+          if (introduction === undefined) throw new Error('missing introduction commit')
+          ;(introduction as unknown as { parents: string[] }).parents = ['0'.repeat(40)]
+        },
+      ],
+      [
+        'stale current source blob',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const pathBlob = fixture.evidence.currentPathBlobs[0]
+          if (pathBlob === undefined) throw new Error('missing current source blob')
+          ;(pathBlob as unknown as { blobSha: string }).blobSha = '0'.repeat(40)
+        },
+      ],
+    ] as const
+  ).forEach(([name, mutate]) => {
+    test(`rejects v4 continuous-source remediation with ${name}`, () => {
+      const fixture = continuousRemediationFixture()
+      mutate(fixture)
+      expect(
+        evaluateBaynReleaseEligibility({
+          mainCommitSha: continuousHistory.introductionMerge,
+          baseRefName: 'main',
+          snapshot: fixture.snapshot,
+          nowMs: continuousNowMs,
+          pushBeforeSha: continuousHistory.blocked,
+        }),
+      ).toMatchObject({ status: 'hold', code: 'release-review-remediation-invalid', retryable: false })
+    })
+  })
+
   test('accepts the exact #13429 through #13435 chain only through its reviewed v3 receipt completion', () => {
     expect(realMultiStageRemediationRecord).toMatchObject({
       schemaVersion: 'bayn.release-review-remediation.v3',
