@@ -5,8 +5,10 @@ import {
   candidate17DevelopmentEligibility,
   candidate18DevelopmentEligibility,
   candidate18DevelopmentFailureEvidenceExpectation,
+  candidate18LegacyPriorTrialsMaterial,
   candidate18PriorTrialsMaterial,
   candidate18Preregistration,
+  deriveCandidateDevelopmentLegacyPriorTrialsHash,
   deriveCandidateDevelopmentPriorTrialsHash,
   frozenCandidateDevelopmentSessions,
   frozenCandidateDevelopmentTrialHistory,
@@ -182,9 +184,14 @@ describe('Candidate 18 dual momentum preregistration', () => {
     expect(typeof candidateDevelopmentArtifact.buildEvaluation).toBe('function')
   })
 
-  test('derives the preregistered prior-trials hash from protected Candidate 17 history', () => {
-    const derived = deriveCandidateDevelopmentPriorTrialsHash(candidate18PriorTrialsMaterial)
-    expect(derived).toEqual(Result.succeed(candidate18Preregistration.priorTrialsHash!))
+  test('fails closed because the immutable prior-trials hash omitted Candidate 16 qualification lineage', () => {
+    const legacy = deriveCandidateDevelopmentLegacyPriorTrialsHash(candidate18LegacyPriorTrialsMaterial)
+    expect(legacy).toEqual(Result.succeed(candidate18Preregistration.priorTrialsHash!))
+
+    const complete = deriveCandidateDevelopmentPriorTrialsHash(candidate18PriorTrialsMaterial)
+    expect(Result.isSuccess(complete)).toBe(true)
+    if (Result.isFailure(complete)) throw new Error('expected complete prior-trial material to hash')
+    expect(complete.success).not.toBe(candidate18Preregistration.priorTrialsHash)
 
     const alteredEvidence = deriveCandidateDevelopmentPriorTrialsHash({
       ...candidate18PriorTrialsMaterial,
@@ -195,21 +202,33 @@ describe('Candidate 18 dual momentum preregistration', () => {
     })
     expect(Result.isSuccess(alteredEvidence)).toBe(true)
     if (Result.isFailure(alteredEvidence)) throw new Error('expected altered prior-trial material to hash')
-    expect(alteredEvidence.success).not.toBe(candidate18Preregistration.priorTrialsHash)
+    expect(alteredEvidence.success).not.toBe(complete.success)
 
-    const alteredSource = deriveCandidateDevelopmentPriorTrialsHash({
+    const alteredQualificationEvidence = deriveCandidateDevelopmentPriorTrialsHash({
       ...candidate18PriorTrialsMaterial,
-      latestReviewedPreregistration: {
-        ...candidate18PriorTrialsMaterial.latestReviewedPreregistration,
-        preregistration: {
-          ...candidate18PriorTrialsMaterial.latestReviewedPreregistration.preregistration,
-          sourceRevision: '0'.repeat(40),
-        },
+      latestQualificationEvidence: {
+        ...candidate18PriorTrialsMaterial.latestQualificationEvidence,
+        sourceRevision: '0'.repeat(40),
       },
     })
-    expect(Result.isSuccess(alteredSource)).toBe(true)
-    if (Result.isFailure(alteredSource)) throw new Error('expected altered prior-trial source to hash')
-    expect(alteredSource.success).not.toBe(candidate18Preregistration.priorTrialsHash)
+    expect(Result.isSuccess(alteredQualificationEvidence)).toBe(true)
+    if (Result.isFailure(alteredQualificationEvidence)) {
+      throw new Error('expected altered qualification evidence to hash')
+    }
+    expect(alteredQualificationEvidence.success).not.toBe(complete.success)
+
+    const alteredQualificationPreregistration = deriveCandidateDevelopmentPriorTrialsHash({
+      ...candidate18PriorTrialsMaterial,
+      latestQualificationPreregistration: {
+        ...candidate18PriorTrialsMaterial.latestQualificationPreregistration,
+        blobOid: '0'.repeat(40),
+      },
+    })
+    expect(Result.isSuccess(alteredQualificationPreregistration)).toBe(true)
+    if (Result.isFailure(alteredQualificationPreregistration)) {
+      throw new Error('expected altered qualification preregistration to hash')
+    }
+    expect(alteredQualificationPreregistration.success).not.toBe(complete.success)
   })
 
   test('records the sole fail-closed attempt and blocks every rerun before evaluation', async () => {

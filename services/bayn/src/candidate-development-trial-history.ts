@@ -2,17 +2,44 @@ import { candidateDevelopmentCalendarContract } from './candidate-development'
 import type { CandidateDevelopmentNextPreregistration } from './candidate-development-decision'
 import { canonicalHashV1Result } from './hash'
 
-export interface CandidateDevelopmentPriorTrialsMaterial {
+interface CandidateDevelopmentQualificationEvidence {
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly terminalStatus: 'HOLD_REJECT'
+  readonly sourceRevision: string
+}
+
+interface CandidateDevelopmentQualificationPreregistration {
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly sourceRevision: string
+  readonly path: string
+  readonly blobOid: string
+}
+
+interface CandidateDevelopmentPriorDevelopmentEvidence {
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly status: 'DEVELOPMENT_REJECTED'
+  readonly evidenceContentHash: string
+  readonly qualificationAttemptConsumed: false
+}
+
+export interface CandidateDevelopmentLegacyPriorTrialsMaterial {
   readonly schemaVersion: 'bayn.candidate-development-prior-trials.v1'
   readonly qualificationCandidateOrdinals: readonly number[]
   readonly developmentCandidateOrdinals: readonly number[]
-  readonly latestDevelopmentEvidence: {
-    readonly candidateOrdinal: number
-    readonly priorTrialCount: number
-    readonly status: 'DEVELOPMENT_REJECTED'
-    readonly evidenceContentHash: string
-    readonly qualificationAttemptConsumed: false
-  }
+  readonly latestDevelopmentEvidence: CandidateDevelopmentPriorDevelopmentEvidence
+  readonly latestReviewedPreregistration: CandidateDevelopmentNextPreregistration
+}
+
+export interface CandidateDevelopmentPriorTrialsMaterial {
+  readonly schemaVersion: 'bayn.candidate-development-prior-trials.v2'
+  readonly qualificationCandidateOrdinals: readonly number[]
+  readonly latestQualificationEvidence: CandidateDevelopmentQualificationEvidence
+  readonly latestQualificationPreregistration: CandidateDevelopmentQualificationPreregistration
+  readonly developmentCandidateOrdinals: readonly number[]
+  readonly latestDevelopmentEvidence: CandidateDevelopmentPriorDevelopmentEvidence
   readonly latestReviewedPreregistration: CandidateDevelopmentNextPreregistration
 }
 
@@ -20,20 +47,10 @@ export interface CandidateDevelopmentTrialHistory {
   readonly schemaVersion: 'bayn.candidate-development-trial-history.v1'
   readonly completedCandidateOrdinals: readonly number[]
   readonly developmentCandidateOrdinals: readonly number[]
+  readonly latestReviewedCandidateLegacyPriorTrials: CandidateDevelopmentLegacyPriorTrialsMaterial
   readonly latestReviewedCandidatePriorTrials: CandidateDevelopmentPriorTrialsMaterial
-  readonly latestTerminalEvidence: {
-    readonly candidateOrdinal: number
-    readonly priorTrialCount: number
-    readonly terminalStatus: 'HOLD_REJECT'
-    readonly sourceRevision: string
-  }
-  readonly candidatePreregistration: {
-    readonly candidateOrdinal: number
-    readonly priorTrialCount: number
-    readonly sourceRevision: string
-    readonly path: string
-    readonly blobOid: string
-  }
+  readonly latestTerminalEvidence: CandidateDevelopmentQualificationEvidence
+  readonly candidatePreregistration: CandidateDevelopmentQualificationPreregistration
   readonly latestReviewedCandidatePreregistration: CandidateDevelopmentNextPreregistration
   readonly latestDevelopmentEvidence: {
     readonly candidateOrdinal: number
@@ -48,6 +65,21 @@ export interface CandidateDevelopmentTrialHistory {
     readonly qualificationAttemptConsumed: false
   }
   readonly nextCandidatePreregistration: CandidateDevelopmentNextPreregistration | null
+}
+
+export const candidate16TerminalEvidence: CandidateDevelopmentQualificationEvidence = {
+  candidateOrdinal: 16,
+  priorTrialCount: 15,
+  terminalStatus: 'HOLD_REJECT',
+  sourceRevision: '60a48a2e52fbafdd67a404a33a3cb22e82a98493',
+}
+
+export const candidate16Preregistration: CandidateDevelopmentQualificationPreregistration = {
+  candidateOrdinal: 16,
+  priorTrialCount: 15,
+  sourceRevision: 'a0dadcd2f6346968bd9df582e4673608afc04592',
+  path: 'services/bayn/candidates/ordinal-16-macro-breadth-regime-preregistration.md',
+  blobOid: 'f602e3c8fd1b85768404d5fbc439775cdcd2570b',
 }
 
 export const candidate17Preregistration: CandidateDevelopmentNextPreregistration = {
@@ -137,7 +169,7 @@ export const candidate18Preregistration: CandidateDevelopmentNextPreregistration
   },
 }
 
-export const candidate18PriorTrialsMaterial: CandidateDevelopmentPriorTrialsMaterial = {
+export const candidate18LegacyPriorTrialsMaterial: CandidateDevelopmentLegacyPriorTrialsMaterial = {
   schemaVersion: 'bayn.candidate-development-prior-trials.v1',
   qualificationCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
   developmentCandidateOrdinals: [17],
@@ -151,6 +183,20 @@ export const candidate18PriorTrialsMaterial: CandidateDevelopmentPriorTrialsMate
   latestReviewedPreregistration: candidate17Preregistration,
 }
 
+export const candidate18PriorTrialsMaterial: CandidateDevelopmentPriorTrialsMaterial = {
+  schemaVersion: 'bayn.candidate-development-prior-trials.v2',
+  qualificationCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+  latestQualificationEvidence: candidate16TerminalEvidence,
+  latestQualificationPreregistration: candidate16Preregistration,
+  developmentCandidateOrdinals: candidate18LegacyPriorTrialsMaterial.developmentCandidateOrdinals,
+  latestDevelopmentEvidence: candidate18LegacyPriorTrialsMaterial.latestDevelopmentEvidence,
+  latestReviewedPreregistration: candidate18LegacyPriorTrialsMaterial.latestReviewedPreregistration,
+}
+
+export const deriveCandidateDevelopmentLegacyPriorTrialsHash = (
+  material: CandidateDevelopmentLegacyPriorTrialsMaterial,
+) => canonicalHashV1Result(material)
+
 export const deriveCandidateDevelopmentPriorTrialsHash = (material: CandidateDevelopmentPriorTrialsMaterial) =>
   canonicalHashV1Result(material)
 
@@ -158,20 +204,10 @@ export const frozenCandidateDevelopmentTrialHistory: CandidateDevelopmentTrialHi
   schemaVersion: 'bayn.candidate-development-trial-history.v1',
   completedCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
   developmentCandidateOrdinals: [17, 18],
+  latestReviewedCandidateLegacyPriorTrials: candidate18LegacyPriorTrialsMaterial,
   latestReviewedCandidatePriorTrials: candidate18PriorTrialsMaterial,
-  latestTerminalEvidence: {
-    candidateOrdinal: 16,
-    priorTrialCount: 15,
-    terminalStatus: 'HOLD_REJECT',
-    sourceRevision: '60a48a2e52fbafdd67a404a33a3cb22e82a98493',
-  },
-  candidatePreregistration: {
-    candidateOrdinal: 16,
-    priorTrialCount: 15,
-    sourceRevision: 'a0dadcd2f6346968bd9df582e4673608afc04592',
-    path: 'services/bayn/candidates/ordinal-16-macro-breadth-regime-preregistration.md',
-    blobOid: 'f602e3c8fd1b85768404d5fbc439775cdcd2570b',
-  },
+  latestTerminalEvidence: candidate16TerminalEvidence,
+  candidatePreregistration: candidate16Preregistration,
   latestReviewedCandidatePreregistration: candidate18Preregistration,
   latestDevelopmentEvidence: {
     candidateOrdinal: 18,

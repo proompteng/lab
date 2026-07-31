@@ -22,6 +22,7 @@ import {
   type CandidateDevelopmentRunFailure,
 } from './candidate-development'
 import {
+  deriveCandidateDevelopmentLegacyPriorTrialsHash,
   deriveCandidateDevelopmentPriorTrialsHash,
   frozenCandidateDevelopmentTrialHistory,
 } from './candidate-development-trial-history'
@@ -703,8 +704,8 @@ export const bindCandidateDevelopmentVerifiedSource = (
     )
   }
   const candidatePreregistration = frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration
-  const priorTrialsHash = deriveCandidateDevelopmentPriorTrialsHash(
-    frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePriorTrials,
+  const priorTrialsHash = deriveCandidateDevelopmentLegacyPriorTrialsHash(
+    frozenCandidateDevelopmentTrialHistory.latestReviewedCandidateLegacyPriorTrials,
   )
   if (Result.isFailure(priorTrialsHash)) {
     return Result.fail({
@@ -854,10 +855,20 @@ export const preregisterCandidateDevelopmentAttempt = (
       }),
     )
   }
+  const priorTrialsHash = deriveCandidateDevelopmentPriorTrialsHash(
+    frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePriorTrials,
+  )
+  if (Result.isFailure(priorTrialsHash)) {
+    return Result.fail({
+      _tag: 'CandidateDevelopmentCommandHashFailed',
+      cause: priorTrialsHash.failure,
+    })
+  }
   const sourceManifest = verifiedSource.sourceManifest
   const bindings = [
     ['candidateOrdinal', latestDevelopmentOrdinal + 1, nextCandidatePreregistration.candidateOrdinal],
     ['priorTrialCount', latestDevelopmentOrdinal, nextCandidatePreregistration.priorTrialCount],
+    ['priorTrialsHash', priorTrialsHash.success, nextCandidatePreregistration.priorTrialsHash],
     ['source.candidateOrdinal', nextCandidatePreregistration.candidateOrdinal, sourceManifest.candidateOrdinal],
     ['source.priorTrialCount', nextCandidatePreregistration.priorTrialCount, sourceManifest.priorTrialCount],
     [
