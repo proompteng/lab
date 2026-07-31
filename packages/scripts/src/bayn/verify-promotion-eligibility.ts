@@ -248,6 +248,53 @@ export type BaynPromotionPollResult = BaynPromotionEvaluation & {
   readonly timedOut: boolean
 }
 
+export interface BaynPromotionBaseAdvance {
+  readonly status: string
+  readonly baseSha: string
+  readonly headSha: string
+  readonly mergeBaseSha: string
+  readonly aheadBy: number
+  readonly totalCommits: number
+  readonly commitShas: readonly string[]
+  readonly changedPaths: readonly string[]
+}
+
+export interface BaynPromotionReleaseRunState {
+  readonly id: number
+  readonly runAttempt: number
+  readonly headSha: string
+  readonly headBranch: string
+  readonly event: string
+  readonly status: string
+  readonly conclusion: string | null
+}
+
+export interface BaynPromotionCurrentBaseRefreshSnapshot {
+  readonly promotion: BaynPromotionEligibilitySnapshot
+  readonly repositoryDefaultBranch: string
+  readonly currentDefaultBranchSha: string
+  readonly currentSourceFreshness: BaynPromotionSourceFreshness
+  readonly baseAdvance: BaynPromotionBaseAdvance | null
+  readonly currentManifests: BaynPromotionManifestContents
+  readonly releaseRun: BaynPromotionReleaseRunState | null
+}
+
+export type BaynPromotionCurrentBaseRefreshDecision =
+  | {
+      readonly status: 'refresh'
+      readonly prNumber: number
+      readonly headSha: string
+      readonly sourceSha: string
+      readonly digest: string
+      readonly buildRunId: number
+      readonly releaseRunId: number
+      readonly releaseRunAttempt: number
+      readonly currentBaseSha: string
+      readonly targetBaseSha: string
+    }
+  | { readonly status: 'noop'; readonly code: 'already-current' | 'refresh-in-flight'; readonly message: string }
+  | { readonly status: 'hold'; readonly code: string; readonly message: string }
+
 export class GitHubPromotionEligibilityError extends Error {
   readonly code:
     | 'github-api-error'
@@ -806,6 +853,146 @@ export const evaluateBaynPromotionEligibility = (input: {
   }
 }
 
+const manifestsEqual = (left: BaynPromotionManifestContents, right: BaynPromotionManifestContents): boolean =>
+  left.deployment === right.deployment &&
+  left.kustomization === right.kustomization &&
+  left.applicationSet === right.applicationSet
+
+export const evaluateBaynPromotionCurrentBaseRefresh = (input: {
+  readonly expectedRepository: string
+  readonly expectedPullNumber: number
+  readonly expectedHeadSha: string
+  readonly expectedDefaultBranchSha: string
+  readonly snapshot: BaynPromotionCurrentBaseRefreshSnapshot
+  readonly nowMs: number
+}): BaynPromotionCurrentBaseRefreshDecision => {
+  const eligibility = evaluateBaynPromotionEligibility({
+    expectedRepository: input.expectedRepository,
+    expectedPullNumber: input.expectedPullNumber,
+    expectedHeadSha: input.expectedHeadSha,
+    snapshot: input.snapshot.promotion,
+    nowMs: input.nowMs,
+  })
+  if (eligibility.status !== 'eligible') {
+    return {
+      status: 'hold',
+      code: eligibility.status === 'hold' ? eligibility.code : 'promotion-not-applicable',
+      message:
+        eligibility.status === 'hold'
+          ? eligibility.message
+          : `PR #${eligibility.prNumber} is not an applicable Bayn promotion`,
+    }
+  }
+
+  if (
+    input.snapshot.repositoryDefaultBranch !== 'main' ||
+    input.snapshot.currentDefaultBranchSha !== input.expectedDefaultBranchSha
+  ) {
+    return {
+      status: 'hold',
+      code: 'default-branch-identity-mismatch',
+      message: `repository default branch ${input.snapshot.repositoryDefaultBranch} at ${shortSha(input.snapshot.currentDefaultBranchSha)} does not bind expected main ${shortSha(input.expectedDefaultBranchSha)}`,
+    }
+  }
+
+  const pullRequest = input.snapshot.promotion.pullRequest
+  if (pullRequest.baseSha === input.snapshot.currentDefaultBranchSha) {
+    return {
+      status: 'noop',
+      code: 'already-current',
+      message: `promotion PR #${pullRequest.number} already targets current main ${shortSha(pullRequest.baseSha)}`,
+    }
+  }
+
+  const advance = input.snapshot.baseAdvance
+  if (
+    advance === null ||
+    advance.status !== 'ahead' ||
+    advance.baseSha !== pullRequest.baseSha ||
+    advance.headSha !== input.snapshot.currentDefaultBranchSha ||
+    advance.mergeBaseSha !== pullRequest.baseSha ||
+    advance.aheadBy <= 0 ||
+    advance.aheadBy !== advance.totalCommits ||
+    advance.commitShas.length !== advance.aheadBy ||
+    advance.commitShas.at(-1) !== input.snapshot.currentDefaultBranchSha ||
+    new Set(advance.commitShas).size !== advance.commitShas.length
+  ) {
+    return {
+      status: 'hold',
+      code: 'promotion-base-history-mismatch',
+      message: `promotion PR #${pullRequest.number} base ${shortSha(pullRequest.baseSha)} does not advance linearly to current main ${shortSha(input.snapshot.currentDefaultBranchSha)}`,
+    }
+  }
+
+  const sourceAffectingPaths = [...new Set(advance.changedPaths.filter(isBaynPromotionSourceAffectingPath))].toSorted()
+  if (sourceAffectingPaths.length > 0 || input.snapshot.currentSourceFreshness.status !== 'fresh') {
+    return {
+      status: 'hold',
+      code: 'newer-bayn-source-exists',
+      message:
+        input.snapshot.currentSourceFreshness.status === 'stale'
+          ? input.snapshot.currentSourceFreshness.reason
+          : `current main contains newer Bayn source input(s): ${sourceAffectingPaths.slice(0, 5).join(', ')}`,
+    }
+  }
+
+  if (!manifestsEqual(input.snapshot.promotion.baseManifests, input.snapshot.currentManifests)) {
+    return {
+      status: 'hold',
+      code: 'promotion-would-downgrade-current-manifests',
+      message: `current main manifests differ from promotion PR #${pullRequest.number} base manifests`,
+    }
+  }
+
+  const releaseRun = input.snapshot.releaseRun
+  if (releaseRun === null) {
+    return {
+      status: 'hold',
+      code: 'release-run-missing',
+      message: `verified release run ${eligibility.releaseRunId} could not be loaded`,
+    }
+  }
+  if (
+    releaseRun.id !== eligibility.releaseRunId ||
+    releaseRun.event !== 'workflow_run' ||
+    releaseRun.headBranch !== 'main' ||
+    releaseRun.headSha !== eligibility.sourceSha
+  ) {
+    return {
+      status: 'hold',
+      code: 'release-run-identity-mismatch',
+      message: `release run ${releaseRun.id} does not bind verified source ${shortSha(eligibility.sourceSha)} on main`,
+    }
+  }
+  if (releaseRun.status !== 'completed') {
+    return {
+      status: 'noop',
+      code: 'refresh-in-flight',
+      message: `release run ${releaseRun.id} attempt ${releaseRun.runAttempt} is ${releaseRun.status}`,
+    }
+  }
+  if (releaseRun.conclusion !== 'success') {
+    return {
+      status: 'hold',
+      code: 'release-run-not-successful',
+      message: `release run ${releaseRun.id} attempt ${releaseRun.runAttempt} concluded ${releaseRun.conclusion ?? 'without a conclusion'}`,
+    }
+  }
+
+  return {
+    status: 'refresh',
+    prNumber: eligibility.prNumber,
+    headSha: eligibility.headSha,
+    sourceSha: eligibility.sourceSha,
+    digest: eligibility.digest,
+    buildRunId: eligibility.buildRunId,
+    releaseRunId: eligibility.releaseRunId,
+    releaseRunAttempt: releaseRun.runAttempt,
+    currentBaseSha: pullRequest.baseSha,
+    targetBaseSha: input.snapshot.currentDefaultBranchSha,
+  }
+}
+
 const defaultSleep = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, milliseconds)
@@ -1168,6 +1355,78 @@ const fetchSourceFreshness = async (
   return { status: 'fresh' }
 }
 
+const fetchBaseAdvance = async (
+  options: GitHubRequestOptions & {
+    readonly repository: string
+    readonly baseSha: string
+    readonly headSha: string
+  },
+): Promise<BaynPromotionBaseAdvance | null> => {
+  if (options.baseSha === options.headSha) return null
+  const operation = `compare promotion base ${shortSha(options.baseSha)} to current main ${shortSha(options.headSha)}`
+  const response = await requestJson({
+    ...options,
+    url: `https://api.github.com/repos/${apiRepository(options.repository)}/compare/${encodeURIComponent(options.baseSha)}...${encodeURIComponent(options.headSha)}?per_page=100&page=1`,
+    operation,
+  })
+  if (hasNextPage(response.headers)) {
+    throw new GitHubPromotionEligibilityError('github-api-pagination-limit', operation)
+  }
+  const comparison = expectRecord(response.value, operation)
+  const baseCommit = expectRecord(comparison.base_commit, `${operation} base commit`)
+  const mergeBaseCommit = expectRecord(comparison.merge_base_commit, `${operation} merge base commit`)
+  if (!Array.isArray(comparison.commits) || !Array.isArray(comparison.files)) {
+    throw new GitHubPromotionEligibilityError('github-api-invalid-response', operation)
+  }
+  const aheadBy = expectInteger(comparison.ahead_by, `${operation} ahead count`)
+  const totalCommits = expectInteger(comparison.total_commits, `${operation} total commits`)
+  if (aheadBy > 100 || comparison.commits.length > 100 || comparison.files.length >= 300) {
+    throw new GitHubPromotionEligibilityError('github-api-pagination-limit', operation)
+  }
+  const commitShas = comparison.commits.map((item, index) =>
+    expectSha(expectRecord(item, `${operation} commit ${index}`).sha, `${operation} commit ${index} SHA`),
+  )
+  const changedPaths = comparison.files.flatMap((item, index) => {
+    const file = expectRecord(item, `${operation} file ${index}`)
+    const filename = expectString(file.filename, `${operation} file ${index} path`)
+    return file.previous_filename === undefined
+      ? [filename]
+      : [filename, expectString(file.previous_filename, `${operation} file ${index} previous path`)]
+  })
+  return {
+    status: expectString(comparison.status, `${operation} status`),
+    baseSha: expectSha(baseCommit.sha, `${operation} base commit SHA`),
+    headSha: options.headSha,
+    mergeBaseSha: expectSha(mergeBaseCommit.sha, `${operation} merge base SHA`),
+    aheadBy,
+    totalCommits,
+    commitShas,
+    changedPaths,
+  }
+}
+
+const fetchDefaultBranchIdentity = async (
+  options: GitHubRequestOptions & { readonly repository: string },
+): Promise<{ readonly defaultBranch: string; readonly sha: string }> => {
+  const repositoryOperation = `read ${options.repository} default branch`
+  const repositoryResponse = await requestJson({
+    ...options,
+    url: `https://api.github.com/repos/${apiRepository(options.repository)}`,
+    operation: repositoryOperation,
+  })
+  const repository = expectRecord(repositoryResponse.value, repositoryOperation)
+  const defaultBranch = expectString(repository.default_branch, `${repositoryOperation} name`)
+  const branchOperation = `read ${options.repository} ${defaultBranch} branch`
+  const branchResponse = await requestJson({
+    ...options,
+    url: `https://api.github.com/repos/${apiRepository(options.repository)}/branches/${encodeURIComponent(defaultBranch)}`,
+    operation: branchOperation,
+  })
+  const branch = expectRecord(branchResponse.value, branchOperation)
+  const commit = expectRecord(branch.commit, `${branchOperation} commit`)
+  return { defaultBranch, sha: expectSha(commit.sha, `${branchOperation} SHA`) }
+}
+
 const reviewsQuery = `
   query BaynPromotionReviews($owner: String!, $name: String!, $number: Int!, $cursor: String) {
     repository(owner: $owner, name: $name) {
@@ -1447,6 +1706,27 @@ interface WorkflowRun {
   readonly conclusion: string | null
   readonly createdAt: string
   readonly updatedAt: string
+}
+
+const fetchReleaseRunState = async (
+  options: GitHubRequestOptions & { readonly repository: string; readonly runId: number },
+): Promise<BaynPromotionReleaseRunState> => {
+  const operation = `read verified Bayn release run ${options.runId}`
+  const response = await requestJson({
+    ...options,
+    url: `https://api.github.com/repos/${apiRepository(options.repository)}/actions/runs/${options.runId}`,
+    operation,
+  })
+  const run = expectRecord(response.value, operation)
+  return {
+    id: expectInteger(run.id, `${operation} ID`),
+    runAttempt: expectInteger(run.run_attempt, `${operation} attempt`),
+    headSha: expectSha(run.head_sha, `${operation} head SHA`),
+    headBranch: expectString(run.head_branch, `${operation} head branch`),
+    event: expectString(run.event, `${operation} event`),
+    status: expectString(run.status, `${operation} status`),
+    conclusion: expectNullableString(run.conclusion, `${operation} conclusion`),
+  }
 }
 
 export const isBaynPromotionBuildRunCandidate = (
@@ -1747,16 +2027,21 @@ export const extractReleasePromotionEvidenceFromZip = (bytes: Uint8Array): BaynR
     maximumEntryBytes: maximumRunLogEntryBytes,
   })
   const createPullRequestLogs = entries.filter((entry) => entry.name.endsWith('_Create deploy pull request.txt'))
-  if (createPullRequestLogs.length !== 1) {
-    throw new Error('release run logs must contain exactly one Create deploy pull request step')
-  }
-  const content = createPullRequestLogs[0]!.content
   const validateContractLogs = entries.filter((entry) => entry.name.endsWith('_Validate release contract.txt'))
-  if (validateContractLogs.length !== 1) {
+  const combinedPromoteLogs = entries.filter((entry) => /^\d+_promote\.txt$/.test(entry.name))
+  const usesStepLogs = createPullRequestLogs.length === 1 && validateContractLogs.length === 1
+  const usesCombinedLog =
+    createPullRequestLogs.length === 0 && validateContractLogs.length === 0 && combinedPromoteLogs.length === 1
+  if (!usesStepLogs && !usesCombinedLog) {
+    if (createPullRequestLogs.length !== 1) {
+      throw new Error('release run logs must contain exactly one Create deploy pull request step')
+    }
     throw new Error('release run logs must contain exactly one Validate release contract step')
   }
+  const content = usesStepLogs ? createPullRequestLogs[0]!.content : combinedPromoteLogs[0]!.content
+  const validationContent = usesStepLogs ? validateContractLogs[0]!.content : combinedPromoteLogs[0]!.content
   const sourceSha = uniqueLogValue(
-    validateContractLogs[0]!.content,
+    validationContent,
     'WORKFLOW_SHA environment binding',
     /^.*WORKFLOW_SHA: ([0-9a-f]{40})\r?$/gm,
   )
@@ -1802,12 +2087,12 @@ export const extractReleasePromotionEvidenceFromZip = (bytes: Uint8Array): BaynR
 }
 
 const downloadReleasePromotionEvidence = async (
-  options: GitHubRequestOptions & { readonly repository: string; readonly runId: number },
+  options: GitHubRequestOptions & { readonly repository: string; readonly runId: number; readonly runAttempt: number },
 ): Promise<BaynReleasePromotionEvidence> => {
-  const operation = `download Bayn release run ${options.runId} logs`
+  const operation = `download Bayn release run ${options.runId} attempt ${options.runAttempt} logs`
   const response = await requestBytes({
     ...options,
-    url: `https://api.github.com/repos/${apiRepository(options.repository)}/actions/runs/${options.runId}/logs`,
+    url: `https://api.github.com/repos/${apiRepository(options.repository)}/actions/runs/${options.runId}/attempts/${options.runAttempt}/logs`,
     operation,
   })
   try {
@@ -1829,14 +2114,23 @@ interface WorkflowJob {
 }
 
 const fetchWorkflowJobs = async (
-  options: GitHubRequestOptions & { readonly repository: string; readonly runId: number },
+  options: GitHubRequestOptions & {
+    readonly repository: string
+    readonly runId: number
+    readonly runAttempt?: number
+  },
 ): Promise<readonly WorkflowJob[]> => {
   const jobs: WorkflowJob[] = []
   for (let page = 1; page <= maximumRestPages; page += 1) {
-    const operation = `read workflow run ${options.runId} jobs page ${page}`
+    const attempt = options.runAttempt === undefined ? '' : ` attempt ${options.runAttempt}`
+    const operation = `read workflow run ${options.runId}${attempt} jobs page ${page}`
+    const runPath =
+      options.runAttempt === undefined
+        ? `actions/runs/${options.runId}`
+        : `actions/runs/${options.runId}/attempts/${options.runAttempt}`
     const response = await requestJson({
       ...options,
-      url: `https://api.github.com/repos/${apiRepository(options.repository)}/actions/runs/${options.runId}/jobs?per_page=100&page=${page}`,
+      url: `https://api.github.com/repos/${apiRepository(options.repository)}/${runPath}/jobs?per_page=100&page=${page}`,
       operation,
     })
     const payload = expectRecord(response.value, operation)
@@ -1878,7 +2172,11 @@ type BaynReleaseRunPromotionInspection =
   | { readonly status: 'held' | 'failed' | 'settling' | 'invalid'; readonly evidence: null }
 
 const inspectReleaseRunPromotion = async (
-  options: GitHubRequestOptions & { readonly repository: string; readonly runId: number },
+  options: GitHubRequestOptions & {
+    readonly repository: string
+    readonly runId: number
+    readonly runAttempt: number
+  },
 ): Promise<BaynReleaseRunPromotionInspection> => {
   const promote = (await fetchWorkflowJobs(options)).find((job) => job.name === 'promote')
   if (promote === undefined) return { status: 'settling', evidence: null }
@@ -2140,7 +2438,7 @@ const resolveProvenance = async (
   for (const run of causalReleaseRuns) {
     const inspection: BaynReleaseRunPromotionInspection =
       run.status === 'completed' && run.conclusion === 'success'
-        ? await inspectReleaseRunPromotion({ ...options, runId: run.id })
+        ? await inspectReleaseRunPromotion({ ...options, runId: run.id, runAttempt: run.runAttempt })
         : run.status === 'completed'
           ? { status: 'failed', evidence: null }
           : { status: 'settling', evidence: null }
@@ -2344,10 +2642,80 @@ export const createGitHubPromotionEligibilityLoader = (options: {
   }
 }
 
+export const createGitHubPromotionCurrentBaseRefreshLoader = (options: {
+  readonly repository: string
+  readonly token: string
+  readonly pullNumber: number
+  readonly headSha: string
+  readonly requestTimeoutMs: number
+  readonly fetchFn?: typeof fetch
+}): (() => Promise<BaynPromotionCurrentBaseRefreshSnapshot>) => {
+  const requestOptions: GitHubRequestOptions = {
+    token: options.token,
+    requestTimeoutMs: options.requestTimeoutMs,
+    fetchFn: options.fetchFn ?? fetch,
+  }
+  const loadPromotion = createGitHubPromotionEligibilityLoader(options)
+  return async () => {
+    const [promotion, defaultBranchIdentity] = await Promise.all([
+      loadPromotion(),
+      fetchDefaultBranchIdentity({ ...requestOptions, repository: options.repository }),
+    ])
+    let sourceSha: string | null = null
+    try {
+      sourceSha = parseBaynPromotionPins(promotion.headManifests).sourceSha
+    } catch {
+      // The eligibility evaluator will retain the precise manifest failure.
+    }
+    const [currentManifests, baseAdvance, currentSourceFreshness, releaseRun] = await Promise.all([
+      fetchManifests({
+        ...requestOptions,
+        repository: options.repository,
+        ref: defaultBranchIdentity.sha,
+      }),
+      fetchBaseAdvance({
+        ...requestOptions,
+        repository: options.repository,
+        baseSha: promotion.pullRequest.baseSha,
+        headSha: defaultBranchIdentity.sha,
+      }),
+      sourceSha === null
+        ? Promise.resolve<BaynPromotionSourceFreshness>({
+            status: 'stale',
+            reason: 'promotion source could not be parsed for current-main refresh',
+          })
+        : fetchSourceFreshness({
+            ...requestOptions,
+            repository: options.repository,
+            sourceSha,
+            baseSha: defaultBranchIdentity.sha,
+          }),
+      promotion.provenance.status === 'resolved'
+        ? fetchReleaseRunState({
+            ...requestOptions,
+            repository: options.repository,
+            runId: promotion.provenance.releaseRunId,
+          })
+        : Promise.resolve(null),
+    ])
+    return {
+      promotion,
+      repositoryDefaultBranch: defaultBranchIdentity.defaultBranch,
+      currentDefaultBranchSha: defaultBranchIdentity.sha,
+      currentSourceFreshness,
+      baseAdvance,
+      currentManifests,
+      releaseRun,
+    }
+  }
+}
+
 interface CliOptions {
+  readonly mode: 'verify' | 'current-base-refresh'
   readonly repository: string
   readonly pullNumber: number
   readonly headSha: string
+  readonly defaultBranchSha: string | null
   readonly maxAttempts: number
   readonly pollIntervalMs: number
   readonly requestTimeoutMs: number
@@ -2375,9 +2743,11 @@ export const parseVerifyPromotionArguments = (
     values.set(name, value)
   }
   const allowed = new Set([
+    '--mode',
     '--repository',
     '--pull-number',
     '--head-sha',
+    '--default-branch-sha',
     '--max-attempts',
     '--poll-interval-ms',
     '--request-timeout-ms',
@@ -2388,6 +2758,10 @@ export const parseVerifyPromotionArguments = (
   }
   const repository = values.get('--repository') ?? environment.GITHUB_REPOSITORY
   const headSha = values.get('--head-sha')
+  const modeValue = values.get('--mode') ?? 'verify'
+  if (modeValue !== 'verify' && modeValue !== 'current-base-refresh') {
+    throw new Error('--mode must be verify or current-base-refresh')
+  }
   if (repository === undefined || repository.length === 0) {
     throw new Error('--repository or GITHUB_REPOSITORY is required')
   }
@@ -2395,14 +2769,23 @@ export const parseVerifyPromotionArguments = (
   if (headSha === undefined || !/^[0-9a-f]{40}$/.test(headSha)) {
     throw new Error('--head-sha must be a lowercase 40-character commit SHA')
   }
+  const defaultBranchSha = values.get('--default-branch-sha') ?? null
+  if (
+    (modeValue === 'current-base-refresh' && (defaultBranchSha === null || !/^[0-9a-f]{40}$/.test(defaultBranchSha))) ||
+    (defaultBranchSha !== null && !/^[0-9a-f]{40}$/.test(defaultBranchSha))
+  ) {
+    throw new Error('--default-branch-sha must be a lowercase 40-character commit SHA in current-base-refresh mode')
+  }
   const requireApplicableValue = values.get('--require-applicable') ?? 'false'
   if (requireApplicableValue !== 'true' && requireApplicableValue !== 'false') {
     throw new Error('--require-applicable must be true or false')
   }
   return {
+    mode: modeValue,
     repository,
     pullNumber: parsePositiveInteger(values.get('--pull-number') ?? '', '--pull-number'),
     headSha,
+    defaultBranchSha,
     maxAttempts: parsePositiveInteger(values.get('--max-attempts') ?? '10', '--max-attempts'),
     pollIntervalMs: parsePositiveInteger(values.get('--poll-interval-ms') ?? '10000', '--poll-interval-ms'),
     requestTimeoutMs: parsePositiveInteger(values.get('--request-timeout-ms') ?? '10000', '--request-timeout-ms'),
@@ -2414,6 +2797,36 @@ const run = async (): Promise<void> => {
   const options = parseVerifyPromotionArguments(process.argv.slice(2))
   const token = process.env.BAYN_PROMOTION_GITHUB_TOKEN
   if (token === undefined || token.length === 0) throw new Error('BAYN_PROMOTION_GITHUB_TOKEN is required')
+  if (options.mode === 'current-base-refresh') {
+    const snapshot = await createGitHubPromotionCurrentBaseRefreshLoader({
+      repository: options.repository,
+      token,
+      pullNumber: options.pullNumber,
+      headSha: options.headSha,
+      requestTimeoutMs: options.requestTimeoutMs,
+    })()
+    const decision = evaluateBaynPromotionCurrentBaseRefresh({
+      expectedRepository: options.repository,
+      expectedPullNumber: options.pullNumber,
+      expectedHeadSha: options.headSha,
+      expectedDefaultBranchSha: options.defaultBranchSha as string,
+      snapshot,
+      nowMs: Date.now(),
+    })
+    if (decision.status === 'hold') {
+      console.error(`BAYN_PROMOTION_BASE_REFRESH_HOLD ${decision.code}: ${decision.message}`)
+      process.exitCode = 1
+      return
+    }
+    if (decision.status === 'noop') {
+      console.log(`BAYN_PROMOTION_BASE_REFRESH_NOOP ${decision.code}: ${decision.message}`)
+      return
+    }
+    console.log(
+      `BAYN_PROMOTION_BASE_REFRESH pr=#${decision.prNumber} head=${decision.headSha} source=${decision.sourceSha} digest=${decision.digest} build_run=${decision.buildRunId} release_run=${decision.releaseRunId} release_attempt=${decision.releaseRunAttempt} current_base=${decision.currentBaseSha} target_base=${decision.targetBaseSha}`,
+    )
+    return
+  }
   const result = await pollBaynPromotionEligibility({
     expectedRepository: options.repository,
     expectedPullNumber: options.pullNumber,
