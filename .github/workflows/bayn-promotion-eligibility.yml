@@ -86,11 +86,14 @@ jobs:
       )
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    concurrency:
+      group: bayn-promotion-eligibility-current-base-refresh
+      cancel-in-progress: false
     steps:
       - name: Checkout trusted promotion verifier
         uses: actions/checkout@v5
         with:
-          ref: main
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Set up Bun
@@ -214,3 +217,102 @@ jobs:
           GH_TOKEN="${BAYN_PROMOTION_RERUN_TOKEN}" \
             gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/rerun"
           echo "Re-requested promotion gate run ${run_id} for PR #${pull_number} at ${head_sha} to reflect current eligibility."
+
+      - name: Refresh a verified behind promotion through its causal release
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BAYN_PROMOTION_GITHUB_TOKEN: ${{ github.token }}
+          BAYN_PROMOTION_RERUN_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN }}
+          EXPECTED_DEFAULT_BRANCH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          repository_owner="${GITHUB_REPOSITORY%%/*}"
+          pulls="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/pulls?state=open&base=main&head=${repository_owner}:codex/bayn-release-current&per_page=100"
+          )"
+          count="$(jq 'length' <<< "${pulls}")"
+          if [[ "${count}" == '0' ]]; then
+            echo 'No open Bayn promotion PR requires a current-base refresh.'
+            exit 0
+          fi
+          if [[ "${count}" != '1' ]]; then
+            echo "Expected one open Bayn promotion PR, found ${count}; refusing a release rerun." >&2
+            exit 1
+          fi
+          pull_number="$(jq -r '.[0].number' <<< "${pulls}")"
+          head_sha="$(jq -r '.[0].head.sha' <<< "${pulls}")"
+
+          decision="$(
+            bun packages/scripts/src/bayn/verify-promotion-eligibility.ts \
+              --mode current-base-refresh \
+              --repository "${GITHUB_REPOSITORY}" \
+              --pull-number "${pull_number}" \
+              --head-sha "${head_sha}" \
+              --default-branch-sha "${EXPECTED_DEFAULT_BRANCH_SHA}" \
+              --request-timeout-ms 10000
+          )"
+          printf '%s\n' "${decision}"
+          if [[ ! "${decision}" =~ BAYN_PROMOTION_BASE_REFRESH\ pr=#([0-9]+)\ head=([0-9a-f]{40})\ source=([0-9a-f]{40})\ digest=(sha256:[0-9a-f]{64})\ build_run=([0-9]+)\ release_run=([0-9]+)\ release_attempt=([0-9]+)\ current_base=([0-9a-f]{40})\ target_base=([0-9a-f]{40}) ]]; then
+            exit 0
+          fi
+          decision_pull_number="${BASH_REMATCH[1]}"
+          decision_head_sha="${BASH_REMATCH[2]}"
+          source_sha="${BASH_REMATCH[3]}"
+          release_run_id="${BASH_REMATCH[6]}"
+          release_attempt="${BASH_REMATCH[7]}"
+          current_base_sha="${BASH_REMATCH[8]}"
+          target_base_sha="${BASH_REMATCH[9]}"
+
+          if [[ -z "${BAYN_PROMOTION_RERUN_TOKEN}" ]]; then
+            echo 'AGENTS_SPLIT_TOKEN is required for a causal release rerun.' >&2
+            exit 1
+          fi
+          repository="$(GH_TOKEN="${BAYN_PROMOTION_RERUN_TOKEN}" gh api "repos/${GITHUB_REPOSITORY}")"
+          if [[ "$(jq -r '.default_branch' <<< "${repository}")" != main ]]; then
+            echo 'Repository default branch is no longer main; refusing a release rerun.' >&2
+            exit 1
+          fi
+          branch="$(GH_TOKEN="${BAYN_PROMOTION_RERUN_TOKEN}" gh api "repos/${GITHUB_REPOSITORY}/branches/main")"
+          if
+            [[ "$(jq -r '.commit.sha' <<< "${branch}")" != "${target_base_sha}" ]] ||
+            [[ "${target_base_sha}" != "${EXPECTED_DEFAULT_BRANCH_SHA}" ]]
+          then
+            echo 'Current main changed after the bounded refresh decision; deferring to a later schedule.'
+            exit 0
+          fi
+          pull="$(
+            GH_TOKEN="${BAYN_PROMOTION_RERUN_TOKEN}" \
+              gh api "repos/${GITHUB_REPOSITORY}/pulls/${decision_pull_number}"
+          )"
+          if
+            [[ "$(jq -r '.state' <<< "${pull}")" != open ]] ||
+            [[ "$(jq -r '.base.ref' <<< "${pull}")" != main ]] ||
+            [[ "$(jq -r '.base.sha' <<< "${pull}")" != "${current_base_sha}" ]] ||
+            [[ "$(jq -r '.head.ref' <<< "${pull}")" != codex/bayn-release-current ]] ||
+            [[ "$(jq -r '.head.repo.full_name' <<< "${pull}")" != "${GITHUB_REPOSITORY}" ]] ||
+            [[ "$(jq -r '.head.sha' <<< "${pull}")" != "${decision_head_sha}" ]]
+          then
+            echo 'Promotion PR changed after the bounded refresh decision; deferring to a later schedule.'
+            exit 0
+          fi
+          release_run="$(
+            GH_TOKEN="${BAYN_PROMOTION_RERUN_TOKEN}" \
+              gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${release_run_id}"
+          )"
+          if
+            [[ "$(jq -r '.id' <<< "${release_run}")" != "${release_run_id}" ]] ||
+            [[ "$(jq -r '.run_attempt' <<< "${release_run}")" != "${release_attempt}" ]] ||
+            [[ "$(jq -r '.status' <<< "${release_run}")" != completed ]] ||
+            [[ "$(jq -r '.conclusion' <<< "${release_run}")" != success ]] ||
+            [[ "$(jq -r '.event' <<< "${release_run}")" != workflow_run ]] ||
+            [[ "$(jq -r '.head_branch' <<< "${release_run}")" != main ]] ||
+            [[ "$(jq -r '.head_sha' <<< "${release_run}")" != "${source_sha}" ]]
+          then
+            echo 'Verified release run changed or is already refreshing; no duplicate rerun requested.'
+            exit 0
+          fi
+          GH_TOKEN="${BAYN_PROMOTION_RERUN_TOKEN}" \
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${release_run_id}/rerun"
+          echo "Re-requested causal release run ${release_run_id} attempt ${release_attempt} for promotion PR #${decision_pull_number}; bayn-release will revalidate current main ${target_base_sha}."

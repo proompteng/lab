@@ -11,6 +11,7 @@ import {
   baynWorkflowRunsUrl,
   createGitHubPromotionEligibilityLoader,
   createRefreshableBaynPromotionProvenanceLoader,
+  evaluateBaynPromotionCurrentBaseRefresh,
   evaluateBaynPromotionEligibility,
   extractReleasePromotionEvidenceFromZip,
   extractReleaseContractFromZip,
@@ -22,6 +23,7 @@ import {
   pollBaynPromotionEligibility,
   resolveBaynPromotionReleaseRun,
   type BaynPromotionEligibilitySnapshot,
+  type BaynPromotionCurrentBaseRefreshSnapshot,
   type BaynPromotionManifestContents,
   type BaynPromotionProvenance,
   type BaynPromotionPullRequest,
@@ -40,6 +42,7 @@ const digest = `sha256:${'2'.repeat(64)}`
 const repository = 'proompteng/lab'
 const pullNumber = 13400
 const evaluationNowMs = Date.parse('2026-07-30T10:02:00Z')
+const currentMainSha = '1'.repeat(40)
 
 const buildWorkflowPath = new URL('../../../../.github/workflows/bayn-build-push.yml', import.meta.url)
 const buildWorkflow = parse(readFileSync(buildWorkflowPath, 'utf8')) as {
@@ -245,6 +248,46 @@ const evaluate = (value: BaynPromotionEligibilitySnapshot) =>
     expectedRepository: repository,
     expectedPullNumber: pullNumber,
     expectedHeadSha: headSha,
+    snapshot: value,
+    nowMs: evaluationNowMs,
+  })
+
+const currentBaseRefreshSnapshot = (
+  overrides: Partial<BaynPromotionCurrentBaseRefreshSnapshot> = {},
+): BaynPromotionCurrentBaseRefreshSnapshot => ({
+  promotion: snapshot(),
+  repositoryDefaultBranch: 'main',
+  currentDefaultBranchSha: currentMainSha,
+  currentSourceFreshness: { status: 'fresh' },
+  baseAdvance: {
+    status: 'ahead',
+    baseSha,
+    headSha: currentMainSha,
+    mergeBaseSha: baseSha,
+    aheadBy: 1,
+    totalCommits: 1,
+    commitShas: [currentMainSha],
+    changedPaths: ['packages/scripts/src/bayn/verify-promotion-eligibility.ts'],
+  },
+  currentManifests: manifests(basePins),
+  releaseRun: {
+    id: 30533142309,
+    runAttempt: 2,
+    headSha: sourceSha,
+    headBranch: 'main',
+    event: 'workflow_run',
+    status: 'completed',
+    conclusion: 'success',
+  },
+  ...overrides,
+})
+
+const evaluateCurrentBaseRefresh = (value: BaynPromotionCurrentBaseRefreshSnapshot) =>
+  evaluateBaynPromotionCurrentBaseRefresh({
+    expectedRepository: repository,
+    expectedPullNumber: pullNumber,
+    expectedHeadSha: headSha,
+    expectedDefaultBranchSha: currentMainSha,
     snapshot: value,
     nowMs: evaluationNowMs,
   })
@@ -890,6 +933,200 @@ describe('Bayn promotion eligibility', () => {
   })
 })
 
+describe('Bayn promotion current-base refresh', () => {
+  test('refreshes the #13411 causal release when main 20180624 is only a non-source verifier advance', () => {
+    const realPullNumber = 13411
+    const realSourceSha = '7cb3d25454e39f3dea04f4f60f1ec068c5a79807'
+    const realHeadSha = 'f48a42ec4c5b9a791167ded543690d47f16ae5d9'
+    const realMainSha = '20180624f495df3a025cacef846a250952fb45ef'
+    const realDigest = 'sha256:1620f4667bddf517704e5fa83f22bd2315f39e215a592aec0dd20d142672ad48'
+    const realHeadPins: ManifestPins = {
+      sourceSha: realSourceSha,
+      tag: `sha-${realSourceSha}`,
+      digest: realDigest,
+      rolloutTimestamp: '2026-07-30T23:07:30Z',
+    }
+    const realPromotion = snapshot({
+      pullRequest: pullRequest({
+        number: realPullNumber,
+        title: `chore(bayn): promote image sha-${realSourceSha}`,
+        baseSha: realSourceSha,
+        headSha: realHeadSha,
+        createdAt: '2026-07-30T23:07:30Z',
+        headCommittedAt: '2026-07-30T23:07:27Z',
+        headForcePushes: [],
+      }),
+      baseManifests: manifests(basePins),
+      headManifests: manifests(realHeadPins),
+      reviews: [],
+      reactions: [
+        {
+          userLogin: baynPromotionCodexBotLogin,
+          content: '+1',
+          createdAt: '2026-07-30T23:09:20Z',
+        },
+      ],
+      provenance: {
+        status: 'resolved',
+        buildRunId: 30588630482,
+        releaseRunId: 30588836007,
+        promotionPullNumber: realPullNumber,
+        promotionHeadSha: realHeadSha,
+        contract: {
+          ...contract(),
+          sourceSha: realSourceSha,
+          tag: `sha-${realSourceSha}`,
+          digest: realDigest,
+          reference: `registry.ide-newton.ts.net/lab/bayn@${realDigest}`,
+        },
+      },
+    })
+
+    expect(
+      evaluateBaynPromotionCurrentBaseRefresh({
+        expectedRepository: repository,
+        expectedPullNumber: realPullNumber,
+        expectedHeadSha: realHeadSha,
+        expectedDefaultBranchSha: realMainSha,
+        nowMs: Date.parse('2026-07-31T00:00:00Z'),
+        snapshot: {
+          promotion: realPromotion,
+          repositoryDefaultBranch: 'main',
+          currentDefaultBranchSha: realMainSha,
+          currentSourceFreshness: { status: 'fresh' },
+          baseAdvance: {
+            status: 'ahead',
+            baseSha: realSourceSha,
+            headSha: realMainSha,
+            mergeBaseSha: realSourceSha,
+            aheadBy: 1,
+            totalCommits: 1,
+            commitShas: [realMainSha],
+            changedPaths: [
+              'packages/scripts/src/bayn/verify-promotion-eligibility.ts',
+              'packages/scripts/src/bayn/verify-promotion-eligibility.test.ts',
+            ],
+          },
+          currentManifests: manifests(basePins),
+          releaseRun: {
+            id: 30588836007,
+            runAttempt: 2,
+            headSha: realSourceSha,
+            headBranch: 'main',
+            event: 'workflow_run',
+            status: 'completed',
+            conclusion: 'success',
+          },
+        },
+      }),
+    ).toEqual({
+      status: 'refresh',
+      prNumber: realPullNumber,
+      headSha: realHeadSha,
+      sourceSha: realSourceSha,
+      digest: realDigest,
+      buildRunId: 30588630482,
+      releaseRunId: 30588836007,
+      releaseRunAttempt: 2,
+      currentBaseSha: realSourceSha,
+      targetBaseSha: realMainSha,
+    })
+  })
+
+  test('rejects a source-affecting main advance', () => {
+    expect(
+      evaluateCurrentBaseRefresh(
+        currentBaseRefreshSnapshot({
+          baseAdvance: {
+            ...currentBaseRefreshSnapshot().baseAdvance!,
+            changedPaths: ['services/bayn/src/runtime.ts'],
+          },
+        }),
+      ),
+    ).toMatchObject({ status: 'hold', code: 'newer-bayn-source-exists' })
+  })
+
+  test('rejects a newer source or a current-manifest downgrade', () => {
+    expect(
+      evaluateCurrentBaseRefresh(
+        currentBaseRefreshSnapshot({
+          currentSourceFreshness: {
+            status: 'stale',
+            reason: `promotion base ${currentMainSha.slice(0, 12)} contains newer Bayn build input(s)`,
+          },
+        }),
+      ),
+    ).toMatchObject({ status: 'hold', code: 'newer-bayn-source-exists' })
+
+    expect(
+      evaluateCurrentBaseRefresh(currentBaseRefreshSnapshot({ currentManifests: manifests(headPins) })),
+    ).toMatchObject({ status: 'hold', code: 'promotion-would-downgrade-current-manifests' })
+  })
+
+  test('rejects a newer or mismatched causal release identity', () => {
+    expect(
+      evaluateCurrentBaseRefresh(
+        currentBaseRefreshSnapshot({
+          releaseRun: {
+            ...currentBaseRefreshSnapshot().releaseRun!,
+            headSha: staleHeadSha,
+          },
+        }),
+      ),
+    ).toMatchObject({ status: 'hold', code: 'release-run-identity-mismatch' })
+  })
+
+  test('suppresses a duplicate while the causal release refresh is queued or running', () => {
+    for (const status of ['queued', 'in_progress']) {
+      expect(
+        evaluateCurrentBaseRefresh(
+          currentBaseRefreshSnapshot({
+            releaseRun: { ...currentBaseRefreshSnapshot().releaseRun!, status, conclusion: null },
+          }),
+        ),
+      ).toMatchObject({ status: 'noop', code: 'refresh-in-flight' })
+    }
+  })
+
+  test('rejects a stale promotion head and missing or ambiguous provenance', () => {
+    expect(
+      evaluateCurrentBaseRefresh(
+        currentBaseRefreshSnapshot({
+          promotion: snapshot({ pullRequest: pullRequest({ headSha: staleHeadSha }) }),
+        }),
+      ),
+    ).toMatchObject({ status: 'hold', code: 'promotion-pr-metadata-mismatch' })
+
+    for (const provenance of [
+      { status: 'missing' as const, reason: 'release evidence has not settled' },
+      { status: 'ambiguous' as const, reason: 'two release contracts match' },
+    ]) {
+      expect(
+        evaluateCurrentBaseRefresh(currentBaseRefreshSnapshot({ promotion: snapshot({ provenance }) })),
+      ).toMatchObject({
+        status: 'hold',
+        code: provenance.status === 'missing' ? 'release-provenance-missing' : 'release-provenance-ambiguous',
+      })
+    }
+  })
+
+  test('does nothing when the promotion already targets current main', () => {
+    expect(
+      evaluateBaynPromotionCurrentBaseRefresh({
+        expectedRepository: repository,
+        expectedPullNumber: pullNumber,
+        expectedHeadSha: headSha,
+        expectedDefaultBranchSha: baseSha,
+        nowMs: evaluationNowMs,
+        snapshot: currentBaseRefreshSnapshot({
+          currentDefaultBranchSha: baseSha,
+          baseAdvance: null,
+        }),
+      }),
+    ).toMatchObject({ status: 'noop', code: 'already-current' })
+  })
+})
+
 describe('bounded GitHub failure handling', () => {
   test('reloads the PR base and source freshness on every polling attempt', async () => {
     let pullReadCount = 0
@@ -1439,6 +1676,17 @@ describe('release promotion log parsing', () => {
     })
   })
 
+  test('binds rerun evidence from one attempt-specific combined promote log', () => {
+    expect(
+      extractReleasePromotionEvidenceFromZip(
+        storedZipEntries([
+          { name: '0_promote.txt', content: `${validateContractLog()}${releaseLog()}` },
+          { name: 'promote/system.txt', content: 'runner metadata only\n' },
+        ]),
+      ),
+    ).toMatchObject({ sourceSha, pullNumber, headSha, operation: 'created' })
+  })
+
   test('rejects inconsistent release-run pull-request URL evidence', () => {
     const inconsistent = releaseLog().replace(`/pull/${pullNumber}`, `/pull/${pullNumber + 1}`)
     expect(() =>
@@ -1628,7 +1876,7 @@ describe('real release provenance discovery regression', () => {
       if (url.endsWith('/actions/artifacts/9001/zip')) {
         return new Response(Uint8Array.from(storedZip('release-contract.json', JSON.stringify(realContract))).buffer)
       }
-      if (url.endsWith(`/actions/runs/${realReleaseRunId}/jobs?per_page=100&page=1`)) {
+      if (url.endsWith(`/actions/runs/${realReleaseRunId}/attempts/1/jobs?per_page=100&page=1`)) {
         return Response.json({
           jobs: [
             {
@@ -1642,7 +1890,7 @@ describe('real release provenance discovery regression', () => {
           ],
         })
       }
-      if (url.endsWith(`/actions/runs/${realReleaseRunId}/logs`)) {
+      if (url.endsWith(`/actions/runs/${realReleaseRunId}/attempts/1/logs`)) {
         return new Response(
           Uint8Array.from(
             storedZipEntries([
