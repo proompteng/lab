@@ -834,6 +834,38 @@ describe('Bayn publication-range eligibility', () => {
       },
     ],
     [
+      'changes-requested review on a dropped descendant head',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        const pull = fixture.snapshot.comparison!.commits[1]!.reviewSnapshot!.pullRequest!
+        ;(pull.reviews as PullRequestReview[]).push(
+          review({
+            commitSha: 'c'.repeat(40),
+            submittedAt: '2026-07-31T11:21:00Z',
+            state: 'CHANGES_REQUESTED',
+          }),
+        )
+        ;(
+          fixture.evidence.record as unknown as {
+            requiredDescendants: { sourcePullRequestEvidenceSha256: string }[]
+          }
+        ).requiredDescendants[0]!.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pull)
+      },
+    ],
+    [
+      'pending review on a dropped descendant head',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        const pull = fixture.snapshot.comparison!.commits[1]!.reviewSnapshot!.pullRequest!
+        ;(pull.reviews as PullRequestReview[]).push(
+          review({ commitSha: 'd'.repeat(40), submittedAt: null, state: 'PENDING' }),
+        )
+        ;(
+          fixture.evidence.record as unknown as {
+            requiredDescendants: { sourcePullRequestEvidenceSha256: string }[]
+          }
+        ).requiredDescendants[0]!.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pull)
+      },
+    ],
+    [
       'incomplete descendant review chain',
       (fixture: ReturnType<typeof remediationHistoryFixture>) => {
         const pull = fixture.snapshot.comparison!.commits[1]!.reviewSnapshot!.pullRequest!

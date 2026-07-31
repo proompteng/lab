@@ -1308,6 +1308,11 @@ const validateReleaseReviewRemediation = (input: {
     const descendantReactions = descendantPull?.reactions.filter(
       (reaction) => reaction.userLogin === baynCodexBotLogin && reaction.content === '+1',
     )
+    const descendantBlockingReviews = descendantPull?.reviews.filter(
+      (review) =>
+        review.authorLogin === baynCodexReviewer &&
+        (review.submittedAt === null || review.state === 'PENDING' || review.state === 'CHANGES_REQUESTED'),
+    )
     const latestForcePush = descendantPull?.headForcePushes.toSorted((left, right) =>
       right.createdAt.localeCompare(left.createdAt),
     )[0]
@@ -1319,6 +1324,7 @@ const validateReleaseReviewRemediation = (input: {
       descendantPull.mergeCommitSha !== descendant.mergeCommitSha ||
       pullRequestReviewEvidenceSha256(descendantPull) !== descendant.sourcePullRequestEvidenceSha256 ||
       descendantPull.threads.some((thread) => !thread.isResolved) ||
+      descendantBlockingReviews?.length !== 0 ||
       !descendantPull.reviews.some(
         (review) =>
           review.authorLogin === baynCodexReviewer &&
