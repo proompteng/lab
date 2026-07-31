@@ -1,4 +1,6 @@
-import { appendFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { appendFile, lstat, readdir, readFile, realpath } from 'node:fs/promises'
+import { resolve } from 'node:path'
 
 const githubApiVersion = '2022-11-28'
 const githubGraphqlUrl = 'https://api.github.com/graphql'
@@ -6,7 +8,10 @@ const maximumGraphqlPages = 20
 const minimumExactReviewAgeMs = 30_000
 const maximumReleaseRangeCommits = 100
 const maximumReleaseReviewJobLogBytes = 1_048_576
+const maximumRemediationRecordBytes = 1_048_576
+const maximumRemediationRecords = 20
 const githubWorkflowFile = 'bayn-build-push.yml'
+const remediationDirectory = 'services/bayn/release-review-remediations'
 
 export const baynCodexReviewer = 'chatgpt-codex-connector'
 export const baynCodexBotLogin = 'chatgpt-codex-connector[bot]'
@@ -36,6 +41,13 @@ export interface PullRequestIssueComment {
 export interface PullRequestReaction {
   readonly userLogin: string | null
   readonly content: string
+  readonly createdAt: string
+}
+
+export interface PullRequestForcePush {
+  readonly actorLogin: string | null
+  readonly beforeCommitSha: string
+  readonly afterCommitSha: string
   readonly createdAt: string
 }
 
@@ -73,6 +85,7 @@ export interface PullRequestReviewState {
   readonly commitShas: readonly string[]
   readonly issueComments: readonly PullRequestIssueComment[]
   readonly reactions: readonly PullRequestReaction[]
+  readonly headForcePushes: readonly PullRequestForcePush[]
   readonly headForcePushCount: number
 }
 
@@ -140,7 +153,80 @@ export interface BaynReleaseRangeCommit {
   readonly sha: string
   readonly parents: readonly string[]
   readonly files: readonly string[]
+  readonly treeSha?: string
+  readonly fileChanges?: readonly BaynReleaseCommitFileChange[]
   readonly reviewSnapshot: BaynReleaseReviewSnapshot | null
+}
+
+export interface BaynReleaseCommitFileChange {
+  readonly path: string
+  readonly previousPath: string | null
+  readonly status: string
+  readonly blobSha: string | null
+}
+
+export interface BaynReleaseReviewRemediationPath {
+  readonly path: string
+  readonly reviewedBlobSha: string
+  readonly finalBlobSha: string
+  readonly blockedBlobSha: string
+}
+
+export interface BaynReleaseReviewRemediationDescendant {
+  readonly mergeCommitSha: string
+  readonly sourcePullRequestNumber: number
+  readonly finalHeadSha: string
+  readonly sourcePullRequestEvidenceSha256: string
+  readonly mergeTreeSha: string
+  readonly finalHeadTreeSha: string
+  readonly affectedPaths: readonly {
+    readonly path: string
+    readonly mergeBlobSha: string
+    readonly finalHeadBlobSha: string
+  }[]
+}
+
+export interface BaynReleaseReviewRemediationRecord {
+  readonly schemaVersion: 'bayn.release-review-remediation.v1'
+  readonly remediationId: string
+  readonly blocked: {
+    readonly mergeCommitSha: string
+    readonly mergeParentSha: string
+    readonly mergeTreeSha: string
+    readonly sourcePullRequestNumber: number
+    readonly reviewedHeadSha: string
+    readonly reviewedHeadTreeSha: string
+    readonly finalHeadSha: string
+    readonly finalHeadTreeSha: string
+    readonly sourcePullRequestEvidenceSha256: string
+    readonly feedback: {
+      readonly threadId: string
+      readonly path: string
+      readonly findingUrl: string
+      readonly findingBodySha256: string
+      readonly fixReplyUrl: string
+      readonly fixReplyBodySha256: string
+    }
+    readonly affectedPaths: readonly BaynReleaseReviewRemediationPath[]
+  }
+  readonly requiredDescendants: readonly BaynReleaseReviewRemediationDescendant[]
+}
+
+interface RemediationCommitObject {
+  readonly sha: string
+  readonly parents: readonly string[]
+  readonly treeSha: string
+  readonly files: readonly string[]
+  readonly fileChanges: readonly BaynReleaseCommitFileChange[]
+  readonly pathBlobs: readonly { readonly path: string; readonly blobSha: string }[]
+}
+
+export interface BaynReleaseReviewRemediationEvidence {
+  readonly recordPath: string
+  readonly recordBlobSha: string
+  readonly record: BaynReleaseReviewRemediationRecord
+  readonly referencedCommits: readonly RemediationCommitObject[]
+  readonly currentPathBlobs: readonly { readonly path: string; readonly blobSha: string }[]
 }
 
 export interface BaynReleaseComparison {
@@ -158,6 +244,7 @@ export interface BaynReleaseEligibilitySnapshot {
   readonly currentCommitParents: readonly string[]
   readonly lastPublishedRevision: LastPublishedRevisionResolution
   readonly comparison: BaynReleaseComparison | null
+  readonly remediations?: readonly BaynReleaseReviewRemediationEvidence[]
 }
 
 export interface BaynReleaseRetrySnapshot extends BaynReleaseEligibilitySnapshot {
@@ -185,6 +272,8 @@ export type BaynReleaseReviewHoldCode =
   | 'exact-head-review-settling'
   | 'feedback-fix-attestation-missing'
   | 'active-unresolved-review-threads'
+  | 'release-review-remediation-invalid'
+  | 'release-review-remediation-missing'
   | 'retry-default-branch-mismatch'
   | 'retry-source-pr-force-pushed'
   | 'retry-failed-run-missing'
@@ -292,6 +381,239 @@ export class GitHubReleaseReviewError extends Error {
 
 const shortSha = (sha: string): string => sha.slice(0, 12)
 
+const sha256Text = (value: string): string => createHash('sha256').update(value).digest('hex')
+
+const gitBlobSha = (bytes: Uint8Array): string =>
+  createHash('sha1').update(`blob ${bytes.byteLength}\0`).update(bytes).digest('hex')
+
+const canonicalJson = (value: unknown): string => {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return JSON.stringify(value)
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new TypeError('canonical JSON numbers must be finite')
+    return JSON.stringify(value)
+  }
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (typeof value !== 'object') throw new TypeError('canonical JSON values must be JSON-compatible')
+  const record = value as Record<string, unknown>
+  return `{${Object.keys(record)
+    .toSorted()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+    .join(',')}}`
+}
+
+const normalizePullRequestReviewEvidence = (pullRequest: PullRequestReviewState) => ({
+  number: pullRequest.number,
+  baseRefName: pullRequest.baseRefName,
+  headSha: pullRequest.headSha,
+  mergeCommitSha: pullRequest.mergeCommitSha,
+  createdAt: pullRequest.createdAt,
+  mergedAt: pullRequest.mergedAt,
+  commitShas: [...pullRequest.commitShas],
+  reviews: [...pullRequest.reviews]
+    .map((review) => ({ ...review }))
+    .toSorted((left, right) =>
+      `${left.submittedAt ?? ''}/${left.authorLogin ?? ''}/${left.commitSha ?? ''}/${left.state}`.localeCompare(
+        `${right.submittedAt ?? ''}/${right.authorLogin ?? ''}/${right.commitSha ?? ''}/${right.state}`,
+      ),
+    ),
+  issueComments: [...pullRequest.issueComments]
+    .map((comment) => ({
+      authorLogin: comment.authorLogin,
+      bodySha256: sha256Text(comment.body),
+      createdAt: comment.createdAt,
+      updatedAt: comment.updatedAt,
+    }))
+    .toSorted((left, right) =>
+      `${left.createdAt}/${left.authorLogin ?? ''}/${left.bodySha256}`.localeCompare(
+        `${right.createdAt}/${right.authorLogin ?? ''}/${right.bodySha256}`,
+      ),
+    ),
+  reactions: [...pullRequest.reactions]
+    .map((reaction) => ({ ...reaction }))
+    .toSorted((left, right) =>
+      `${left.createdAt}/${left.userLogin ?? ''}/${left.content}`.localeCompare(
+        `${right.createdAt}/${right.userLogin ?? ''}/${right.content}`,
+      ),
+    ),
+  headForcePushes: [...pullRequest.headForcePushes]
+    .map((forcePush) => ({ ...forcePush }))
+    .toSorted((left, right) =>
+      `${left.createdAt}/${left.beforeCommitSha}/${left.afterCommitSha}/${left.actorLogin ?? ''}`.localeCompare(
+        `${right.createdAt}/${right.beforeCommitSha}/${right.afterCommitSha}/${right.actorLogin ?? ''}`,
+      ),
+    ),
+  threads: [...pullRequest.threads]
+    .map((thread) => ({
+      id: thread.id,
+      isResolved: thread.isResolved,
+      isOutdated: thread.isOutdated,
+      path: thread.path,
+      url: thread.url,
+      comments: [...thread.comments]
+        .map((comment) => ({
+          authorLogin: comment.authorLogin,
+          authorAssociation: comment.authorAssociation,
+          bodySha256: sha256Text(comment.body),
+          createdAt: comment.createdAt,
+          commitSha: comment.commitSha,
+          reviewCommitSha: comment.reviewCommitSha,
+          reviewAuthorLogin: comment.reviewAuthorLogin,
+          reviewSubmittedAt: comment.reviewSubmittedAt,
+          reviewState: comment.reviewState,
+          url: comment.url,
+        }))
+        .toSorted((left, right) => `${left.createdAt}/${left.url}`.localeCompare(`${right.createdAt}/${right.url}`)),
+    }))
+    .toSorted((left, right) => left.id.localeCompare(right.id)),
+})
+
+export const pullRequestReviewEvidenceSha256 = (pullRequest: PullRequestReviewState): string =>
+  sha256Text(canonicalJson(normalizePullRequestReviewEvidence(pullRequest)))
+
+const strictRecord = (value: unknown, keys: readonly string[], context: string): Record<string, unknown> => {
+  const record = expectRecord(value, context)
+  const observed = Object.keys(record).toSorted()
+  const expected = [...keys].toSorted()
+  if (observed.length !== expected.length || observed.some((key, index) => key !== expected[index])) {
+    throw new Error(`${context} must contain exactly: ${expected.join(', ')}`)
+  }
+  return record
+}
+
+const expectSha256 = (value: unknown, context: string): string => {
+  const sha = expectString(value, context)
+  if (!/^[0-9a-f]{64}$/.test(sha)) throw new Error(`${context} must be a lowercase SHA-256`)
+  return sha
+}
+
+const expectPositiveIntegerRecord = (value: unknown, context: string): number => {
+  const parsed = expectInteger(value, context)
+  if (parsed < 1) throw new Error(`${context} must be positive`)
+  return parsed
+}
+
+const parseRemediationPath = (value: unknown, context: string): BaynReleaseReviewRemediationPath => {
+  const record = strictRecord(value, ['path', 'reviewedBlobSha', 'finalBlobSha', 'blockedBlobSha'], context)
+  return {
+    path: expectString(record.path, `${context} path`),
+    reviewedBlobSha: expectSha(record.reviewedBlobSha, `${context} reviewed blob SHA`),
+    finalBlobSha: expectSha(record.finalBlobSha, `${context} final blob SHA`),
+    blockedBlobSha: expectSha(record.blockedBlobSha, `${context} blocked blob SHA`),
+  }
+}
+
+const parseRemediationDescendant = (value: unknown, context: string): BaynReleaseReviewRemediationDescendant => {
+  const record = strictRecord(
+    value,
+    [
+      'mergeCommitSha',
+      'sourcePullRequestNumber',
+      'finalHeadSha',
+      'sourcePullRequestEvidenceSha256',
+      'mergeTreeSha',
+      'finalHeadTreeSha',
+      'affectedPaths',
+    ],
+    context,
+  )
+  if (!Array.isArray(record.affectedPaths)) throw new Error(`${context} affectedPaths must be an array`)
+  const affectedPaths = record.affectedPaths.map((item, index) => {
+    const path = strictRecord(item, ['path', 'mergeBlobSha', 'finalHeadBlobSha'], `${context} affected path ${index}`)
+    return {
+      path: expectString(path.path, `${context} affected path ${index} path`),
+      mergeBlobSha: expectSha(path.mergeBlobSha, `${context} affected path ${index} merge blob SHA`),
+      finalHeadBlobSha: expectSha(path.finalHeadBlobSha, `${context} affected path ${index} final blob SHA`),
+    }
+  })
+  return {
+    mergeCommitSha: expectSha(record.mergeCommitSha, `${context} merge commit SHA`),
+    sourcePullRequestNumber: expectPositiveIntegerRecord(
+      record.sourcePullRequestNumber,
+      `${context} source pull request number`,
+    ),
+    finalHeadSha: expectSha(record.finalHeadSha, `${context} final head SHA`),
+    sourcePullRequestEvidenceSha256: expectSha256(
+      record.sourcePullRequestEvidenceSha256,
+      `${context} source pull request evidence hash`,
+    ),
+    mergeTreeSha: expectSha(record.mergeTreeSha, `${context} merge tree SHA`),
+    finalHeadTreeSha: expectSha(record.finalHeadTreeSha, `${context} final head tree SHA`),
+    affectedPaths,
+  }
+}
+
+export const parseBaynReleaseReviewRemediationRecord = (value: unknown): BaynReleaseReviewRemediationRecord => {
+  const record = strictRecord(
+    value,
+    ['schemaVersion', 'remediationId', 'blocked', 'requiredDescendants'],
+    'remediation',
+  )
+  if (record.schemaVersion !== 'bayn.release-review-remediation.v1') {
+    throw new Error('remediation schemaVersion is invalid')
+  }
+  const remediationId = expectString(record.remediationId, 'remediation ID')
+  if (!/^[a-z0-9][a-z0-9-]{2,127}$/.test(remediationId)) throw new Error('remediation ID is invalid')
+  const blocked = strictRecord(
+    record.blocked,
+    [
+      'mergeCommitSha',
+      'mergeParentSha',
+      'mergeTreeSha',
+      'sourcePullRequestNumber',
+      'reviewedHeadSha',
+      'reviewedHeadTreeSha',
+      'finalHeadSha',
+      'finalHeadTreeSha',
+      'sourcePullRequestEvidenceSha256',
+      'feedback',
+      'affectedPaths',
+    ],
+    'remediation blocked source',
+  )
+  const feedback = strictRecord(
+    blocked.feedback,
+    ['threadId', 'path', 'findingUrl', 'findingBodySha256', 'fixReplyUrl', 'fixReplyBodySha256'],
+    'remediation feedback',
+  )
+  if (!Array.isArray(blocked.affectedPaths)) throw new Error('remediation blocked affectedPaths must be an array')
+  if (!Array.isArray(record.requiredDescendants)) throw new Error('remediation requiredDescendants must be an array')
+  return {
+    schemaVersion: 'bayn.release-review-remediation.v1',
+    remediationId,
+    blocked: {
+      mergeCommitSha: expectSha(blocked.mergeCommitSha, 'remediation blocked merge commit SHA'),
+      mergeParentSha: expectSha(blocked.mergeParentSha, 'remediation blocked merge parent SHA'),
+      mergeTreeSha: expectSha(blocked.mergeTreeSha, 'remediation blocked merge tree SHA'),
+      sourcePullRequestNumber: expectPositiveIntegerRecord(
+        blocked.sourcePullRequestNumber,
+        'remediation blocked source pull request number',
+      ),
+      reviewedHeadSha: expectSha(blocked.reviewedHeadSha, 'remediation reviewed head SHA'),
+      reviewedHeadTreeSha: expectSha(blocked.reviewedHeadTreeSha, 'remediation reviewed head tree SHA'),
+      finalHeadSha: expectSha(blocked.finalHeadSha, 'remediation final head SHA'),
+      finalHeadTreeSha: expectSha(blocked.finalHeadTreeSha, 'remediation final head tree SHA'),
+      sourcePullRequestEvidenceSha256: expectSha256(
+        blocked.sourcePullRequestEvidenceSha256,
+        'remediation source pull request evidence hash',
+      ),
+      feedback: {
+        threadId: expectString(feedback.threadId, 'remediation feedback thread ID'),
+        path: expectString(feedback.path, 'remediation feedback path'),
+        findingUrl: expectString(feedback.findingUrl, 'remediation feedback finding URL'),
+        findingBodySha256: expectSha256(feedback.findingBodySha256, 'remediation feedback finding body hash'),
+        fixReplyUrl: expectString(feedback.fixReplyUrl, 'remediation feedback fix reply URL'),
+        fixReplyBodySha256: expectSha256(feedback.fixReplyBodySha256, 'remediation feedback fix reply body hash'),
+      },
+      affectedPaths: blocked.affectedPaths.map((item, index) =>
+        parseRemediationPath(item, `remediation blocked affected path ${index}`),
+      ),
+    },
+    requiredDescendants: record.requiredDescendants.map((item, index) =>
+      parseRemediationDescendant(item, `remediation descendant ${index}`),
+    ),
+  }
+}
+
 const sourcePullCandidates = (
   pullRequests: readonly AssociatedPullRequest[],
   baseRefName: string,
@@ -359,6 +681,7 @@ const exactBaynReleasePaths = new Set([
 
 export const isBaynReleaseAffectingPath = (path: string): boolean =>
   path.startsWith('services/bayn/') ||
+  path.startsWith(`${remediationDirectory}/`) ||
   path.startsWith('patches/') ||
   path.startsWith('.github/actions/setup-nix-toolchain/') ||
   /^\.github\/workflows\/bayn-[^/]+\.yml$/.test(path) ||
@@ -676,6 +999,411 @@ export const evaluateBaynReleaseReview = (input: {
   }
 }
 
+const sortedUnique = (values: readonly string[]): readonly string[] => [...new Set(values)].toSorted()
+
+const exactStringSet = (left: readonly string[], right: readonly string[]): boolean => {
+  const normalizedLeft = sortedUnique(left)
+  const normalizedRight = sortedUnique(right)
+  return (
+    normalizedLeft.length === left.length &&
+    normalizedRight.length === right.length &&
+    normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((value, index) => value === normalizedRight[index])
+  )
+}
+
+const commitFileMap = (
+  changes: readonly BaynReleaseCommitFileChange[] | undefined,
+): ReadonlyMap<string, BaynReleaseCommitFileChange> | null => {
+  if (changes === undefined) return null
+  const map = new Map<string, BaynReleaseCommitFileChange>()
+  for (const change of changes) {
+    if (map.has(change.path)) return null
+    map.set(change.path, change)
+  }
+  return map
+}
+
+const pathBlobMap = (
+  values: readonly { readonly path: string; readonly blobSha: string }[],
+): ReadonlyMap<string, string> | null => {
+  const map = new Map<string, string>()
+  for (const value of values) {
+    if (map.has(value.path)) return null
+    map.set(value.path, value.blobSha)
+  }
+  return map
+}
+
+const remediationInvalid = (message: string): BaynReleaseReviewHold =>
+  hold('release-review-remediation-invalid', message, false)
+
+const findReferencedCommit = (
+  evidence: BaynReleaseReviewRemediationEvidence,
+  sha: string,
+): RemediationCommitObject | null => {
+  const matches = evidence.referencedCommits.filter((commit) => commit.sha === sha)
+  return matches.length === 1 ? (matches[0] ?? null) : null
+}
+
+const validateRemediationFeedback = (
+  record: BaynReleaseReviewRemediationRecord,
+  pullRequest: PullRequestReviewState,
+): BaynReleaseReviewHold | null => {
+  if (pullRequestReviewEvidenceSha256(pullRequest) !== record.blocked.sourcePullRequestEvidenceSha256) {
+    return remediationInvalid(
+      `remediation ${record.remediationId} source PR #${pullRequest.number} review/reaction/thread evidence changed`,
+    )
+  }
+  if (
+    pullRequest.number !== record.blocked.sourcePullRequestNumber ||
+    pullRequest.headSha !== record.blocked.finalHeadSha ||
+    pullRequest.mergeCommitSha !== record.blocked.mergeCommitSha ||
+    pullRequest.headForcePushCount !== 1 ||
+    pullRequest.headForcePushes.length !== 1
+  ) {
+    return remediationInvalid(`remediation ${record.remediationId} source PR metadata is not exact`)
+  }
+  if (pullRequest.threads.some((thread) => !thread.isResolved)) {
+    return remediationInvalid(`remediation ${record.remediationId} source PR contains an unresolved review thread`)
+  }
+  const forcePush = pullRequest.headForcePushes[0]
+  if (
+    forcePush === undefined ||
+    forcePush.beforeCommitSha !== record.blocked.reviewedHeadSha ||
+    forcePush.afterCommitSha !== record.blocked.finalHeadSha
+  ) {
+    return remediationInvalid(`remediation ${record.remediationId} force-push transformation is not exact`)
+  }
+  const blockingReviews = pullRequest.reviews.filter(
+    (review) =>
+      review.authorLogin === baynCodexReviewer &&
+      (review.submittedAt === null || review.state === 'PENDING' || review.state === 'CHANGES_REQUESTED'),
+  )
+  if (blockingReviews.length > 0) {
+    return remediationInvalid(`remediation ${record.remediationId} contains a blocking Codex review`)
+  }
+  const reviewMatches = pullRequest.reviews.filter(
+    (review) =>
+      review.authorLogin === baynCodexReviewer &&
+      review.commitSha === record.blocked.reviewedHeadSha &&
+      review.submittedAt !== null &&
+      eligibleReviewStates.has(review.state),
+  )
+  if (reviewMatches.length !== 1) {
+    return remediationInvalid(`remediation ${record.remediationId} reviewed ancestor evidence is incomplete`)
+  }
+  const thread = pullRequest.threads.find((candidate) => candidate.id === record.blocked.feedback.threadId)
+  if (
+    thread === undefined ||
+    !thread.isResolved ||
+    !thread.isOutdated ||
+    thread.path !== record.blocked.feedback.path
+  ) {
+    return remediationInvalid(`remediation ${record.remediationId} feedback thread is missing or actionable`)
+  }
+  const finding = thread.comments.filter(
+    (comment) =>
+      comment.url === record.blocked.feedback.findingUrl &&
+      sha256Text(comment.body) === record.blocked.feedback.findingBodySha256 &&
+      comment.authorLogin === baynCodexReviewer &&
+      comment.reviewAuthorLogin === baynCodexReviewer &&
+      comment.reviewCommitSha === record.blocked.reviewedHeadSha,
+  )
+  const reply = thread.comments.filter(
+    (comment) =>
+      comment.url === record.blocked.feedback.fixReplyUrl &&
+      sha256Text(comment.body) === record.blocked.feedback.fixReplyBodySha256 &&
+      comment.authorLogin !== null &&
+      comment.authorLogin !== baynCodexReviewer &&
+      trustedFeedbackAssociations.has(comment.authorAssociation) &&
+      comment.commitSha === record.blocked.reviewedHeadSha &&
+      comment.reviewCommitSha === record.blocked.finalHeadSha,
+  )
+  if (finding.length !== 1 || reply.length !== 1) {
+    return remediationInvalid(`remediation ${record.remediationId} exact feedback/fix reply evidence is missing`)
+  }
+  const reactions = pullRequest.reactions.filter(
+    (reaction) => reaction.userLogin === baynCodexBotLogin && reaction.content === '+1',
+  )
+  if (reactions.length !== 1 || reactions[0] === undefined || reactions[0].createdAt <= forcePush.createdAt) {
+    return remediationInvalid(`remediation ${record.remediationId} exact final-head reaction evidence is missing`)
+  }
+  return null
+}
+
+const validateRemediationCommitPaths = (input: {
+  readonly remediationId: string
+  readonly mergeCommit: BaynReleaseRangeCommit
+  readonly mergeTreeSha: string
+  readonly mergePathBlobs: readonly { readonly path: string; readonly blobSha: string }[]
+  readonly finalHead: RemediationCommitObject
+  readonly finalHeadSha: string
+  readonly finalHeadTreeSha: string
+  readonly finalHeadPathBlobs: readonly { readonly path: string; readonly blobSha: string }[]
+}): BaynReleaseReviewHold | null => {
+  if (input.mergeCommit.treeSha !== input.mergeTreeSha || input.finalHead.treeSha !== input.finalHeadTreeSha) {
+    return remediationInvalid(`remediation ${input.remediationId} commit tree identity changed`)
+  }
+  if (input.finalHead.sha !== input.finalHeadSha || input.mergeTreeSha !== input.finalHeadTreeSha) {
+    return remediationInvalid(`remediation ${input.remediationId} merge/head tree binding is invalid`)
+  }
+  if (
+    input.mergeCommit.parents.length !== input.finalHead.parents.length ||
+    input.mergeCommit.parents.some((parent, index) => parent !== input.finalHead.parents[index])
+  ) {
+    return remediationInvalid(`remediation ${input.remediationId} merge/head parent binding is invalid`)
+  }
+  const changes = commitFileMap(input.mergeCommit.fileChanges)
+  const finalBlobs = pathBlobMap(input.finalHead.pathBlobs)
+  if (changes === null || finalBlobs === null) {
+    return remediationInvalid(`remediation ${input.remediationId} path/blob evidence is ambiguous`)
+  }
+  const expectedPaths = input.mergePathBlobs.map((path) => path.path)
+  if (!exactStringSet([...changes.keys()], expectedPaths)) {
+    return remediationInvalid(`remediation ${input.remediationId} affected path set changed`)
+  }
+  if (
+    !exactStringSet(
+      input.finalHeadPathBlobs.map((path) => path.path),
+      expectedPaths,
+    )
+  ) {
+    return remediationInvalid(`remediation ${input.remediationId} final-head path set is incomplete`)
+  }
+  for (const expected of input.mergePathBlobs) {
+    const change = changes.get(expected.path)
+    const expectedFinal = input.finalHeadPathBlobs.find((path) => path.path === expected.path)
+    if (
+      change === undefined ||
+      change.blobSha !== expected.blobSha ||
+      expectedFinal === undefined ||
+      finalBlobs.get(expected.path) !== expectedFinal.blobSha
+    ) {
+      return remediationInvalid(`remediation ${input.remediationId} blob identity changed at ${expected.path}`)
+    }
+  }
+  return null
+}
+
+const validateReleaseReviewRemediation = (input: {
+  readonly evidence: BaynReleaseReviewRemediationEvidence
+  readonly blockedCommit: BaynReleaseRangeCommit
+  readonly comparison: BaynReleaseComparison
+  readonly normalReviews: ReadonlyMap<string, BaynReleaseReviewEvaluation>
+}): BaynReleaseReviewHold | null => {
+  const { evidence, blockedCommit, comparison } = input
+  const record = evidence.record
+  const expectedRecordPath = `${remediationDirectory}/${record.blocked.mergeCommitSha}.json`
+  if (evidence.recordPath !== expectedRecordPath) {
+    return remediationInvalid(`remediation ${record.remediationId} record path is not canonical`)
+  }
+  const matchingIntroductionCommits = comparison.commits.filter((commit) =>
+    commit.fileChanges?.some((change) => change.path === evidence.recordPath),
+  )
+  if (matchingIntroductionCommits.length !== 1) {
+    return remediationInvalid(`remediation ${record.remediationId} record was not added exactly once`)
+  }
+  const introduction = matchingIntroductionCommits[0]
+  if (introduction === undefined)
+    return remediationInvalid(`remediation ${record.remediationId} introduction is missing`)
+  const introductionChange = introduction.fileChanges?.find((change) => change.path === evidence.recordPath)
+  if (
+    introductionChange === undefined ||
+    introductionChange.status !== 'added' ||
+    introductionChange.blobSha !== evidence.recordBlobSha
+  ) {
+    return remediationInvalid(`remediation ${record.remediationId} record blob/introduction changed`)
+  }
+  const introductionReview = input.normalReviews.get(introduction.sha)
+  if (introductionReview?.status !== 'eligible') {
+    return remediationInvalid(`remediation ${record.remediationId} introducing commit lacks exact-head review`)
+  }
+  const blockedIndex = comparison.commits.findIndex((commit) => commit.sha === blockedCommit.sha)
+  const introductionIndex = comparison.commits.findIndex((commit) => commit.sha === introduction.sha)
+  if (
+    blockedIndex < 0 ||
+    introductionIndex <= blockedIndex ||
+    record.blocked.mergeCommitSha !== blockedCommit.sha ||
+    record.blocked.mergeParentSha !== blockedCommit.parents[0] ||
+    blockedCommit.parents.length !== 1 ||
+    blockedCommit.treeSha !== record.blocked.mergeTreeSha
+  ) {
+    return remediationInvalid(`remediation ${record.remediationId} blocked merge ancestry is invalid`)
+  }
+  const blockedPull = blockedCommit.reviewSnapshot?.pullRequest
+  if (blockedPull === null || blockedPull === undefined) {
+    return remediationInvalid(`remediation ${record.remediationId} blocked source PR snapshot is missing`)
+  }
+  const feedbackHold = validateRemediationFeedback(record, blockedPull)
+  if (feedbackHold !== null) return feedbackHold
+
+  const reviewedHead = findReferencedCommit(evidence, record.blocked.reviewedHeadSha)
+  const finalHead = findReferencedCommit(evidence, record.blocked.finalHeadSha)
+  if (reviewedHead === null || finalHead === null) {
+    return remediationInvalid(`remediation ${record.remediationId} reviewed/final commit evidence is incomplete`)
+  }
+  if (
+    reviewedHead.parents.length !== 1 ||
+    finalHead.parents.length !== 1 ||
+    reviewedHead.parents[0] !== record.blocked.mergeParentSha ||
+    finalHead.parents[0] !== record.blocked.mergeParentSha ||
+    reviewedHead.treeSha !== record.blocked.reviewedHeadTreeSha ||
+    finalHead.treeSha !== record.blocked.finalHeadTreeSha ||
+    blockedCommit.treeSha !== finalHead.treeSha
+  ) {
+    return remediationInvalid(`remediation ${record.remediationId} reconstructed head/tree ancestry changed`)
+  }
+  const reviewedChanges = commitFileMap(reviewedHead.fileChanges)
+  const finalChanges = commitFileMap(finalHead.fileChanges)
+  const reviewedBlobs = pathBlobMap(reviewedHead.pathBlobs)
+  const finalBlobs = pathBlobMap(finalHead.pathBlobs)
+  const currentBlobs = pathBlobMap(evidence.currentPathBlobs)
+  const affectedPaths = record.blocked.affectedPaths.map((path) => path.path)
+  if (
+    reviewedChanges === null ||
+    finalChanges === null ||
+    reviewedBlobs === null ||
+    finalBlobs === null ||
+    currentBlobs === null ||
+    !exactStringSet([...reviewedChanges.keys()], affectedPaths) ||
+    !exactStringSet([...finalChanges.keys()], affectedPaths) ||
+    !exactStringSet([...currentBlobs.keys()], affectedPaths) ||
+    !exactStringSet(blockedCommit.files, affectedPaths)
+  ) {
+    return remediationInvalid(`remediation ${record.remediationId} transformation path set changed`)
+  }
+  const blockedChanges = commitFileMap(blockedCommit.fileChanges)
+  if (blockedChanges === null)
+    return remediationInvalid(`remediation ${record.remediationId} blocked blobs are missing`)
+  for (const path of record.blocked.affectedPaths) {
+    if (
+      reviewedBlobs.get(path.path) !== path.reviewedBlobSha ||
+      finalBlobs.get(path.path) !== path.finalBlobSha ||
+      blockedChanges.get(path.path)?.blobSha !== path.blockedBlobSha ||
+      path.finalBlobSha !== path.blockedBlobSha ||
+      currentBlobs.get(path.path) !== path.finalBlobSha
+    ) {
+      return remediationInvalid(`remediation ${record.remediationId} transformation blob changed at ${path.path}`)
+    }
+  }
+  const laterMutations = comparison.commits
+    .slice(blockedIndex + 1)
+    .filter((commit) => commit.sha !== introduction.sha)
+    .flatMap((commit) => commit.files.filter((path) => affectedPaths.includes(path)))
+  if (laterMutations.length > 0) {
+    return remediationInvalid(
+      `remediation ${record.remediationId} affected source paths changed after the blocked merge`,
+    )
+  }
+
+  let expectedParent = blockedCommit.sha
+  let cursor = blockedIndex + 1
+  const nextBaynCommit = (): BaynReleaseRangeCommit | BaynReleaseReviewHold | null => {
+    while (cursor < comparison.commits.length) {
+      const commit = comparison.commits[cursor]
+      if (commit === undefined || commit.parents.length !== 1 || commit.parents[0] !== expectedParent) {
+        return remediationInvalid(`remediation ${record.remediationId} source ancestry is not a direct-parent chain`)
+      }
+      expectedParent = commit.sha
+      cursor += 1
+      if (commit.files.some(isBaynReleaseAffectingPath)) return commit
+    }
+    return null
+  }
+  for (const descendant of record.requiredDescendants) {
+    const next = nextBaynCommit()
+    if (next === null || 'status' in next) {
+      return next ?? remediationInvalid(`remediation ${record.remediationId} descendant chain is incomplete`)
+    }
+    const mergeCommit = next
+    if (mergeCommit.sha !== descendant.mergeCommitSha) {
+      return remediationInvalid(`remediation ${record.remediationId} descendant ancestry is incomplete or downgraded`)
+    }
+    const normalDescendantReview = input.normalReviews.get(mergeCommit.sha)
+    if (normalDescendantReview?.status === 'hold' && normalDescendantReview.code !== 'exact-head-review-missing') {
+      return normalDescendantReview
+    }
+    const descendantPull = mergeCommit.reviewSnapshot?.pullRequest
+    const descendantReactions = descendantPull?.reactions.filter(
+      (reaction) => reaction.userLogin === baynCodexBotLogin && reaction.content === '+1',
+    )
+    const descendantBlockingReviews = descendantPull?.reviews.filter(
+      (review) =>
+        review.authorLogin === baynCodexReviewer &&
+        (review.submittedAt === null || review.state === 'PENDING' || review.state === 'CHANGES_REQUESTED'),
+    )
+    const latestForcePush = descendantPull?.headForcePushes.toSorted((left, right) =>
+      right.createdAt.localeCompare(left.createdAt),
+    )[0]
+    if (
+      descendantPull === null ||
+      descendantPull === undefined ||
+      descendantPull.number !== descendant.sourcePullRequestNumber ||
+      descendantPull.headSha !== descendant.finalHeadSha ||
+      descendantPull.mergeCommitSha !== descendant.mergeCommitSha ||
+      pullRequestReviewEvidenceSha256(descendantPull) !== descendant.sourcePullRequestEvidenceSha256 ||
+      descendantPull.threads.some((thread) => !thread.isResolved) ||
+      descendantBlockingReviews?.length !== 0 ||
+      !descendantPull.reviews.some(
+        (review) =>
+          review.authorLogin === baynCodexReviewer &&
+          review.commitSha !== null &&
+          review.submittedAt !== null &&
+          eligibleReviewStates.has(review.state),
+      ) ||
+      descendantPull.headForcePushCount !== descendantPull.headForcePushes.length ||
+      (latestForcePush !== undefined && latestForcePush.afterCommitSha !== descendantPull.headSha) ||
+      descendantReactions?.length !== 1 ||
+      (latestForcePush !== undefined && (descendantReactions[0]?.createdAt ?? '') <= latestForcePush.createdAt)
+    ) {
+      return remediationInvalid(`remediation ${record.remediationId} descendant review chain is incomplete`)
+    }
+    const finalDescendantHead = findReferencedCommit(evidence, descendant.finalHeadSha)
+    if (finalDescendantHead === null) {
+      return remediationInvalid(`remediation ${record.remediationId} descendant head evidence is missing`)
+    }
+    const pathsHold = validateRemediationCommitPaths({
+      remediationId: record.remediationId,
+      mergeCommit,
+      mergeTreeSha: descendant.mergeTreeSha,
+      mergePathBlobs: descendant.affectedPaths.map((path) => ({ path: path.path, blobSha: path.mergeBlobSha })),
+      finalHead: finalDescendantHead,
+      finalHeadSha: descendant.finalHeadSha,
+      finalHeadTreeSha: descendant.finalHeadTreeSha,
+      finalHeadPathBlobs: descendant.affectedPaths.map((path) => ({
+        path: path.path,
+        blobSha: path.finalHeadBlobSha,
+      })),
+    })
+    if (pathsHold !== null) return pathsHold
+  }
+  const next = nextBaynCommit()
+  if (next === null || 'status' in next) {
+    return (
+      next ?? remediationInvalid(`remediation ${record.remediationId} introduction is missing from source ancestry`)
+    )
+  }
+  if (next.sha !== introduction.sha || comparison.commits[cursor - 1]?.sha !== introduction.sha) {
+    return remediationInvalid(`remediation ${record.remediationId} is stale or omits a newer source commit`)
+  }
+  while (cursor < comparison.commits.length) {
+    const commit = comparison.commits[cursor]
+    if (commit === undefined || commit.parents.length !== 1 || commit.parents[0] !== expectedParent) {
+      return remediationInvalid(`remediation ${record.remediationId} source ancestry is not a direct-parent chain`)
+    }
+    if (commit.files.some(isBaynReleaseAffectingPath)) {
+      return remediationInvalid(`remediation ${record.remediationId} omits a newer Bayn source commit`)
+    }
+    expectedParent = commit.sha
+    cursor += 1
+  }
+  if (expectedParent !== comparison.headSha) {
+    return remediationInvalid(`remediation ${record.remediationId} does not reach the current source head`)
+  }
+  return null
+}
+
 export const evaluateBaynReleaseEligibility = (input: {
   readonly mainCommitSha: string
   readonly baseRefName: string
@@ -784,7 +1512,7 @@ export const evaluateBaynReleaseEligibility = (input: {
     )
   }
 
-  const reviewedPullRequests: BaynReleaseEligibilityEligible['reviewedPullRequests'][number][] = []
+  const normalReviews = new Map<string, BaynReleaseReviewEvaluation>()
   for (const commit of affectingCommits) {
     if (commit.reviewSnapshot === null) {
       return hold(
@@ -800,11 +1528,122 @@ export const evaluateBaynReleaseEligibility = (input: {
       nowMs: input.nowMs,
       pushBeforeSha: null,
     })
+    normalReviews.set(commit.sha, review)
+  }
+
+  const remediations = input.snapshot.remediations ?? []
+  const remediationIds = remediations.map((remediation) => remediation.record.remediationId)
+  const blockedRemediationShas = remediations.map((remediation) => remediation.record.blocked.mergeCommitSha)
+  const recordPaths = remediations.map((remediation) => remediation.recordPath)
+  if (
+    new Set(remediationIds).size !== remediationIds.length ||
+    new Set(blockedRemediationShas).size !== blockedRemediationShas.length ||
+    new Set(recordPaths).size !== recordPaths.length
+  ) {
+    return remediationInvalid('release review remediations contain duplicate identities or blocked commits')
+  }
+
+  const usedRemediationIds = new Set<string>()
+  const coveredDescendantShas = new Set<string>()
+  const reviewedPullRequests: BaynReleaseEligibilityEligible['reviewedPullRequests'][number][] = []
+  for (const commit of affectingCommits) {
+    const review = normalReviews.get(commit.sha)
+    if (review === undefined) throw new Error(`missing normal review evaluation for ${commit.sha}`)
     if (review.status === 'hold') {
-      return {
-        ...review,
-        message: `Bayn-affecting commit ${shortSha(commit.sha)} after last published ${shortSha(published.revision)} is not release-eligible: ${review.message}`,
+      if (coveredDescendantShas.has(commit.sha) && review.code === 'exact-head-review-missing') {
+        const sourcePull = commit.reviewSnapshot?.pullRequest
+        const reviewedAncestor = sourcePull?.reviews
+          .filter(
+            (candidate) =>
+              candidate.authorLogin === baynCodexReviewer &&
+              candidate.commitSha !== null &&
+              candidate.submittedAt !== null &&
+              eligibleReviewStates.has(candidate.state),
+          )
+          .toSorted((left, right) => (right.submittedAt as string).localeCompare(left.submittedAt as string))[0]
+        if (
+          sourcePull === null ||
+          sourcePull === undefined ||
+          reviewedAncestor?.submittedAt === null ||
+          reviewedAncestor?.submittedAt === undefined
+        ) {
+          return remediationInvalid(`covered descendant ${shortSha(commit.sha)} review evidence is incomplete`)
+        }
+        reviewedPullRequests.push({
+          commitSha: commit.sha,
+          prNumber: sourcePull.number,
+          headSha: sourcePull.headSha,
+          reviewSubmittedAt: reviewedAncestor.submittedAt,
+          eligibleAt: reviewedAncestor.submittedAt,
+        })
+        continue
       }
+      if (review.code !== 'exact-head-review-missing') {
+        return {
+          ...review,
+          message: `Bayn-affecting commit ${shortSha(commit.sha)} after last published ${shortSha(published.revision)} is not release-eligible: ${review.message}`,
+        }
+      }
+      const remediation = remediations.filter((candidate) => candidate.record.blocked.mergeCommitSha === commit.sha)
+      if (remediation.length === 0) {
+        const sourcePull = commit.reviewSnapshot?.pullRequest
+        const reviewedAncestorDropped =
+          sourcePull !== null &&
+          sourcePull !== undefined &&
+          sourcePull.headForcePushCount > 0 &&
+          sourcePull.reviews.some(
+            (candidate) =>
+              candidate.authorLogin === baynCodexReviewer &&
+              candidate.commitSha !== null &&
+              !sourcePull.commitShas.includes(candidate.commitSha),
+          )
+        if (reviewedAncestorDropped) {
+          return hold(
+            'release-review-remediation-missing',
+            `Bayn-affecting commit ${shortSha(commit.sha)} after last published ${shortSha(published.revision)} dropped its reviewed ancestor and has no reviewed remediation receipt`,
+            false,
+          )
+        }
+        return {
+          ...review,
+          message: `Bayn-affecting commit ${shortSha(commit.sha)} after last published ${shortSha(published.revision)} is not release-eligible: ${review.message}`,
+        }
+      }
+      if (remediation.length !== 1 || remediation[0] === undefined) {
+        return remediationInvalid(`Bayn-affecting commit ${shortSha(commit.sha)} has ambiguous remediation receipts`)
+      }
+      const remediationHold = validateReleaseReviewRemediation({
+        evidence: remediation[0],
+        blockedCommit: commit,
+        comparison,
+        normalReviews,
+      })
+      if (remediationHold !== null) return remediationHold
+      usedRemediationIds.add(remediation[0].record.remediationId)
+      for (const descendant of remediation[0].record.requiredDescendants) {
+        coveredDescendantShas.add(descendant.mergeCommitSha)
+      }
+      const sourcePull = commit.reviewSnapshot?.pullRequest
+      if (sourcePull === null || sourcePull === undefined) {
+        return remediationInvalid(`remediated commit ${shortSha(commit.sha)} source PR metadata is missing`)
+      }
+      const reviewedAncestor = sourcePull.reviews.find(
+        (candidate) =>
+          candidate.authorLogin === baynCodexReviewer &&
+          candidate.commitSha === remediation[0]?.record.blocked.reviewedHeadSha &&
+          candidate.submittedAt !== null,
+      )
+      if (reviewedAncestor?.submittedAt === null || reviewedAncestor?.submittedAt === undefined) {
+        return remediationInvalid(`remediated commit ${shortSha(commit.sha)} reviewed ancestor timestamp is missing`)
+      }
+      reviewedPullRequests.push({
+        commitSha: commit.sha,
+        prNumber: sourcePull.number,
+        headSha: sourcePull.headSha,
+        reviewSubmittedAt: reviewedAncestor.submittedAt,
+        eligibleAt: reviewedAncestor.submittedAt,
+      })
+      continue
     }
     reviewedPullRequests.push({
       commitSha: commit.sha,
@@ -813,6 +1652,9 @@ export const evaluateBaynReleaseEligibility = (input: {
       reviewSubmittedAt: review.reviewSubmittedAt,
       eligibleAt: review.eligibleAt,
     })
+  }
+  if (usedRemediationIds.size !== remediations.length) {
+    return remediationInvalid('release review range contains unused, stale, or cyclic remediation receipts')
   }
 
   return {
@@ -1536,7 +2378,9 @@ const parseComparison = (value: unknown): ParsedComparison => {
 interface CommitDetail {
   readonly sha: string
   readonly parents: readonly string[]
+  readonly treeSha: string
   readonly files: readonly string[]
+  readonly fileChanges: readonly BaynReleaseCommitFileChange[]
 }
 
 const parseCommitDetail = (value: unknown, expectedSha: string): CommitDetail => {
@@ -1548,21 +2392,39 @@ const parseCommitDetail = (value: unknown, expectedSha: string): CommitDetail =>
   if (!Array.isArray(commit.parents) || !Array.isArray(commit.files)) {
     throw new GitHubReleaseReviewError('github-api-invalid-response', `read commit ${shortSha(expectedSha)} detail`)
   }
+  const commitMetadata =
+    commit.commit === undefined ? null : expectRecord(commit.commit, `commit ${shortSha(expectedSha)} metadata`)
+  const tree =
+    commitMetadata === null || commitMetadata.tree === undefined
+      ? null
+      : expectRecord(commitMetadata.tree, `commit ${shortSha(expectedSha)} tree`)
+  const fileChanges = commit.files.map((item, index): BaynReleaseCommitFileChange => {
+    const file = expectRecord(item, `commit ${shortSha(expectedSha)} file ${index}`)
+    return {
+      path: expectString(file.filename, `commit ${shortSha(expectedSha)} file ${index} path`),
+      previousPath:
+        file.previous_filename === undefined
+          ? null
+          : expectString(file.previous_filename, `commit ${shortSha(expectedSha)} file ${index} previous path`),
+      status:
+        file.status === undefined
+          ? 'unknown'
+          : expectString(file.status, `commit ${shortSha(expectedSha)} file ${index} status`),
+      blobSha:
+        file.sha === undefined || file.sha === null
+          ? null
+          : expectSha(file.sha, `commit ${shortSha(expectedSha)} file ${index} blob SHA`),
+    }
+  })
   return {
     sha,
+    treeSha: tree === null ? '' : expectSha(tree.sha, `commit ${shortSha(expectedSha)} tree SHA`),
     parents: commit.parents.map((item, index) => {
       const parent = expectRecord(item, `commit ${shortSha(expectedSha)} parent ${index}`)
       return expectSha(parent.sha, `commit ${shortSha(expectedSha)} parent ${index} SHA`)
     }),
-    files: commit.files.flatMap((item, index) => {
-      const file = expectRecord(item, `commit ${shortSha(expectedSha)} file ${index}`)
-      const filename = expectString(file.filename, `commit ${shortSha(expectedSha)} file ${index} path`)
-      if (file.previous_filename === undefined) return [filename]
-      return [
-        filename,
-        expectString(file.previous_filename, `commit ${shortSha(expectedSha)} file ${index} previous path`),
-      ]
-    }),
+    files: fileChanges.flatMap((file) => (file.previousPath === null ? [file.path] : [file.path, file.previousPath])),
+    fileChanges,
   }
 }
 
@@ -1597,7 +2459,15 @@ const pullRequestMetadataQuery = `
         mergedAt
         mergeCommit { oid }
         timelineItems(first: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
-          nodes { __typename }
+          nodes {
+            __typename
+            ... on HeadRefForcePushedEvent {
+              createdAt
+              actor { login }
+              beforeCommit { oid }
+              afterCommit { oid }
+            }
+          }
           pageInfo { hasNextPage endCursor }
         }
       }
@@ -1706,12 +2576,21 @@ const fetchPullRequestMetadata = async (options: GitHubLoaderOptions, pullNumber
   if (timelinePageInfo.hasNextPage) {
     throw new GitHubReleaseReviewError('github-api-pagination-limit', 'source PR head-force-push history')
   }
-  for (const [index, item] of timelineItems.nodes.entries()) {
+  const headForcePushes = timelineItems.nodes.map((item, index): PullRequestForcePush => {
     const event = expectRecord(item, `source PR head-force-push event ${index}`)
     if (event.__typename !== 'HeadRefForcePushedEvent') {
       throw new GitHubReleaseReviewError('github-api-invalid-response', `source PR head-force-push event ${index}`)
     }
-  }
+    const actor = event.actor === null ? null : expectRecord(event.actor, `source PR force-push actor ${index}`)
+    const beforeCommit = expectRecord(event.beforeCommit, `source PR force-push before commit ${index}`)
+    const afterCommit = expectRecord(event.afterCommit, `source PR force-push after commit ${index}`)
+    return {
+      actorLogin: actor === null ? null : expectString(actor.login, `source PR force-push actor login ${index}`),
+      beforeCommitSha: expectSha(beforeCommit.oid, `source PR force-push before SHA ${index}`),
+      afterCommitSha: expectSha(afterCommit.oid, `source PR force-push after SHA ${index}`),
+      createdAt: expectString(event.createdAt, `source PR force-push created at ${index}`),
+    }
+  })
   return {
     number: expectInteger(pullRequest.number, 'source PR number'),
     baseRefName: expectString(pullRequest.baseRefName, 'source PR base ref'),
@@ -1719,7 +2598,8 @@ const fetchPullRequestMetadata = async (options: GitHubLoaderOptions, pullNumber
     createdAt: expectString(pullRequest.createdAt, 'source PR created at'),
     mergedAt: expectNullableString(pullRequest.mergedAt, 'source PR merged at'),
     mergeCommitSha: mergeCommit === null ? null : expectString(mergeCommit.oid, 'source PR merge commit SHA'),
-    headForcePushCount: timelineItems.nodes.length,
+    headForcePushes,
+    headForcePushCount: headForcePushes.length,
   }
 }
 
@@ -1942,6 +2822,7 @@ interface GitHubLoaderOptions {
   readonly baseRefName: string
   readonly requestTimeoutMs: number
   readonly fetchFn: typeof fetch
+  readonly repositoryRoot: string
 }
 
 const fetchCommitDetail = async (options: GitHubLoaderOptions, commitSha: string): Promise<CommitDetail> => {
@@ -1957,6 +2838,118 @@ const fetchCommitDetail = async (options: GitHubLoaderOptions, commitSha: string
     throw new GitHubReleaseReviewError('github-api-pagination-limit', `${operation} files`)
   }
   return parseCommitDetail(response.value, commitSha)
+}
+
+const fetchPathBlobSha = async (options: GitHubLoaderOptions, commitSha: string, path: string): Promise<string> => {
+  const operation = `read ${path} blob at ${shortSha(commitSha)}`
+  const response = await requestGitHubJson({
+    url: `https://api.github.com/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.name)}/contents/${path
+      .split('/')
+      .map(encodeURIComponent)
+      .join('/')}?ref=${encodeURIComponent(commitSha)}`,
+    operation,
+    token: options.token,
+    requestTimeoutMs: options.requestTimeoutMs,
+    fetchFn: options.fetchFn,
+  })
+  const content = expectRecord(response.value, operation)
+  if (content.type !== 'file' || expectString(content.path, `${operation} path`) !== path) {
+    throw new GitHubReleaseReviewError('github-api-invalid-response', operation)
+  }
+  return expectSha(content.sha, `${operation} SHA`)
+}
+
+const loadLocalRemediationRecords = async (
+  repositoryRoot: string,
+): Promise<
+  readonly { readonly path: string; readonly blobSha: string; readonly record: BaynReleaseReviewRemediationRecord }[]
+> => {
+  const root = await realpath(repositoryRoot)
+  const directory = resolve(root, remediationDirectory)
+  let entries
+  try {
+    entries = await readdir(directory, { withFileTypes: true })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+  if (entries.length > maximumRemediationRecords) {
+    throw new Error(`release review remediation count exceeds ${maximumRemediationRecords}`)
+  }
+  const records = []
+  for (const entry of entries.toSorted((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isFile() || !/^[0-9a-f]{40}\.json$/.test(entry.name)) {
+      throw new Error(`unexpected release review remediation entry ${entry.name}`)
+    }
+    const path = `${remediationDirectory}/${entry.name}`
+    const absolutePath = resolve(root, path)
+    const metadata = await lstat(absolutePath)
+    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > maximumRemediationRecordBytes) {
+      throw new Error(`release review remediation ${path} is not a bounded regular file`)
+    }
+    const bytes = await readFile(absolutePath)
+    const record = parseBaynReleaseReviewRemediationRecord(JSON.parse(bytes.toString('utf8')) as unknown)
+    if (entry.name !== `${record.blocked.mergeCommitSha}.json`) {
+      throw new Error(`release review remediation ${path} does not match its blocked commit`)
+    }
+    records.push({ path, blobSha: gitBlobSha(bytes), record })
+  }
+  return records
+}
+
+const loadReleaseReviewRemediations = async (
+  options: GitHubLoaderOptions,
+  rangeCommitShas: ReadonlySet<string>,
+): Promise<readonly BaynReleaseReviewRemediationEvidence[]> => {
+  const records = (await loadLocalRemediationRecords(options.repositoryRoot)).filter((loaded) =>
+    rangeCommitShas.has(loaded.record.blocked.mergeCommitSha),
+  )
+  return mapWithConcurrency(records, 2, async (loaded) => {
+    const currentRecordBlob = await fetchPathBlobSha(options, options.mainCommitSha, loaded.path)
+    if (currentRecordBlob !== loaded.blobSha) {
+      throw new GitHubReleaseReviewError(
+        'github-api-invalid-response',
+        `bind remediation ${loaded.path} to current main`,
+      )
+    }
+    const references = new Map<string, readonly string[]>()
+    references.set(
+      loaded.record.blocked.reviewedHeadSha,
+      loaded.record.blocked.affectedPaths.map((path) => path.path),
+    )
+    references.set(
+      loaded.record.blocked.finalHeadSha,
+      loaded.record.blocked.affectedPaths.map((path) => path.path),
+    )
+    for (const descendant of loaded.record.requiredDescendants) {
+      references.set(
+        descendant.finalHeadSha,
+        descendant.affectedPaths.map((path) => path.path),
+      )
+    }
+    const referencedCommits = await mapWithConcurrency([...references.entries()], 3, async ([sha, paths]) => {
+      const [commit, pathBlobs] = await Promise.all([
+        fetchCommitDetail(options, sha),
+        mapWithConcurrency(paths, 4, async (path) => ({
+          path,
+          blobSha: await fetchPathBlobSha(options, sha, path),
+        })),
+      ])
+      return { ...commit, pathBlobs }
+    })
+    const currentPathBlobs = await mapWithConcurrency(
+      loaded.record.blocked.affectedPaths.map((path) => path.path),
+      4,
+      async (path) => ({ path, blobSha: await fetchPathBlobSha(options, options.mainCommitSha, path) }),
+    )
+    return {
+      recordPath: loaded.path,
+      recordBlobSha: loaded.blobSha,
+      record: loaded.record,
+      referencedCommits,
+      currentPathBlobs,
+    }
+  })
 }
 
 const loadCommitReviewSnapshot = async (
@@ -2007,6 +3000,7 @@ export const createGitHubReleaseReviewLoader = (options: {
   readonly mainCommitSha: string
   readonly baseRefName: string
   readonly requestTimeoutMs: number
+  readonly repositoryRoot?: string
   readonly fetchFn?: typeof fetch
 }): (() => Promise<BaynReleaseReviewSnapshot>) => {
   const [owner, name, extra] = options.repository.split('/')
@@ -2021,6 +3015,7 @@ export const createGitHubReleaseReviewLoader = (options: {
     baseRefName: options.baseRefName,
     requestTimeoutMs: options.requestTimeoutMs,
     fetchFn: options.fetchFn ?? fetch,
+    repositoryRoot: options.repositoryRoot ?? process.cwd(),
   }
 
   return () => loadCommitReviewSnapshot(loaderOptions, loaderOptions.mainCommitSha)
@@ -2118,6 +3113,7 @@ export const createGitHubReleaseEligibilityLoader = (options: {
   readonly mainCommitSha: string
   readonly baseRefName: string
   readonly requestTimeoutMs: number
+  readonly repositoryRoot?: string
   readonly fetchFn?: typeof fetch
 }): (() => Promise<BaynReleaseEligibilitySnapshot>) => {
   const [owner, name, extra] = options.repository.split('/')
@@ -2132,6 +3128,7 @@ export const createGitHubReleaseEligibilityLoader = (options: {
     baseRefName: options.baseRefName,
     requestTimeoutMs: options.requestTimeoutMs,
     fetchFn: options.fetchFn ?? fetch,
+    repositoryRoot: options.repositoryRoot ?? process.cwd(),
   }
   let staticContext: StaticReleaseEligibilityContext | null = null
 
@@ -2146,16 +3143,23 @@ export const createGitHubReleaseEligibilityLoader = (options: {
       }
     }
 
-    const commits = await mapWithConcurrency(loadedContext.comparison.commits, 3, async (commit) => ({
-      ...commit,
-      reviewSnapshot: commit.files.some(isBaynReleaseAffectingPath)
-        ? await loadCommitReviewSnapshot(loaderOptions, commit.sha, commit)
-        : null,
-    }))
+    const [commits, remediations] = await Promise.all([
+      mapWithConcurrency(loadedContext.comparison.commits, 3, async (commit) => ({
+        ...commit,
+        reviewSnapshot: commit.files.some(isBaynReleaseAffectingPath)
+          ? await loadCommitReviewSnapshot(loaderOptions, commit.sha, commit)
+          : null,
+      })),
+      loadReleaseReviewRemediations(
+        loaderOptions,
+        new Set(loadedContext.comparison.commits.map((commit) => commit.sha)),
+      ),
+    ])
     return {
       currentCommitParents: loadedContext.currentCommit.parents,
       lastPublishedRevision: loadedContext.lastPublishedRevision,
       comparison: { ...loadedContext.comparison, commits },
+      remediations,
     }
   }
 }
@@ -2256,6 +3260,7 @@ export const createGitHubReleaseRetryLoader = (options: {
   readonly mainCommitSha: string
   readonly baseRefName: string
   readonly requestTimeoutMs: number
+  readonly repositoryRoot?: string
   readonly fetchFn?: typeof fetch
 }): (() => Promise<BaynReleaseRetrySnapshot>) => {
   const [owner, name, extra] = options.repository.split('/')
@@ -2270,6 +3275,7 @@ export const createGitHubReleaseRetryLoader = (options: {
     baseRefName: options.baseRefName,
     requestTimeoutMs: options.requestTimeoutMs,
     fetchFn: options.fetchFn ?? fetch,
+    repositoryRoot: options.repositoryRoot ?? process.cwd(),
   }
   const loadEligibility = createGitHubReleaseEligibilityLoader(options)
 
@@ -2309,6 +3315,7 @@ export const createGitHubReleaseRetryLoader = (options: {
 interface CliOptions {
   readonly mode: 'push' | 'retry-discovery' | 'retry-publication'
   readonly repository: string
+  readonly repositoryRoot: string
   readonly mainCommitSha: string
   readonly maxAttempts: number
   readonly pollIntervalMs: number
@@ -2350,6 +3357,7 @@ export const parseVerifyReleaseReviewArguments = (
   const allowed = new Set([
     '--mode',
     '--repository',
+    '--repository-root',
     '--commit',
     '--push-before',
     '--max-attempts',
@@ -2369,6 +3377,7 @@ export const parseVerifyReleaseReviewArguments = (
   }
 
   const repository = values.get('--repository') ?? environment.GITHUB_REPOSITORY
+  const repositoryRoot = values.get('--repository-root') ?? environment.GITHUB_WORKSPACE ?? process.cwd()
   const mainCommitSha = values.get('--commit') ?? environment.GITHUB_SHA
   const pushBeforeSha = values.get('--push-before') ?? null
   const modeValue = values.get('--mode') ?? 'push'
@@ -2390,6 +3399,7 @@ export const parseVerifyReleaseReviewArguments = (
   return {
     mode: modeValue,
     repository,
+    repositoryRoot,
     mainCommitSha,
     pushBeforeSha,
     maxAttempts: parsePositiveInteger(values.get('--max-attempts') ?? '10', '--max-attempts'),
@@ -2471,6 +3481,7 @@ const run = async (): Promise<void> => {
         mainCommitSha: options.mainCommitSha,
         baseRefName: 'main',
         requestTimeoutMs: options.requestTimeoutMs,
+        repositoryRoot: options.repositoryRoot,
       }),
     })
     if (result.status === 'hold') {
@@ -2494,6 +3505,7 @@ const run = async (): Promise<void> => {
       mainCommitSha: options.mainCommitSha,
       baseRefName: 'main',
       requestTimeoutMs: options.requestTimeoutMs,
+      repositoryRoot: options.repositoryRoot,
     })(),
     trigger: retryTriggerFromOptions(options),
     nowMs: Date.now(),

@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 
 import {
   baynCodexBotLogin,
@@ -13,17 +15,23 @@ import {
   isBaynReleaseAffectingPath,
   loadOptionalFailedReviewThreadBlock,
   parseFailedReviewThreadBlock,
+  parseBaynReleaseReviewRemediationRecord,
   pollBaynReleaseEligibility,
   pollBaynReleaseReview,
   resolveLastPublishedRevision,
+  pullRequestReviewEvidenceSha256,
   type AssociatedPullRequest,
   type BaynBuildWorkflowRun,
   type BaynReleaseEligibilitySnapshot,
   type BaynReleaseRetrySnapshot,
   type BaynReleaseReviewPollResult,
   type BaynReleaseReviewSnapshot,
+  type BaynReleaseReviewRemediationEvidence,
+  type BaynReleaseReviewRemediationRecord,
   type PullRequestReview,
+  type PullRequestReviewState,
   type PullRequestIssueComment,
+  type PullRequestForcePush,
   type PullRequestReaction,
   type PullRequestReviewThread,
   type PullRequestReviewThreadComment,
@@ -112,6 +120,7 @@ const snapshot = (
     readonly commitShas?: readonly string[]
     readonly issueComments?: readonly PullRequestIssueComment[]
     readonly reactions?: readonly PullRequestReaction[]
+    readonly headForcePushes?: readonly PullRequestForcePush[]
     readonly headForcePushCount?: number
   } = {},
 ): BaynReleaseReviewSnapshot => {
@@ -139,7 +148,8 @@ const snapshot = (
             commitShas: options.commitShas ?? [source.headSha],
             issueComments: options.issueComments ?? [],
             reactions: options.reactions ?? [],
-            headForcePushCount: options.headForcePushCount ?? 0,
+            headForcePushes: options.headForcePushes ?? [],
+            headForcePushCount: options.headForcePushCount ?? options.headForcePushes?.length ?? 0,
           },
   }
 }
@@ -165,6 +175,7 @@ const reviewSnapshotFor = (options: {
   readonly threads?: readonly PullRequestReviewThread[]
   readonly issueComments?: readonly PullRequestIssueComment[]
   readonly reactions?: readonly PullRequestReaction[]
+  readonly headForcePushes?: readonly PullRequestForcePush[]
   readonly headForcePushCount?: number
   readonly mergedAt?: string
 }): BaynReleaseReviewSnapshot => {
@@ -197,7 +208,8 @@ const reviewSnapshotFor = (options: {
       commitShas: [options.headSha],
       issueComments: options.issueComments ?? [],
       reactions: options.reactions ?? [],
-      headForcePushCount: options.headForcePushCount ?? 0,
+      headForcePushes: options.headForcePushes ?? [],
+      headForcePushCount: options.headForcePushCount ?? options.headForcePushes?.length ?? 0,
     },
   }
 }
@@ -328,7 +340,732 @@ const retrySnapshot = (
   }
 }
 
+const remediationRecordPath = 'services/bayn/release-review-remediations/890d8f5801cf7c7576ed7a0cee387a4e79b98877.json'
+const realRemediationRecord = parseBaynReleaseReviewRemediationRecord(
+  JSON.parse(readFileSync(remediationRecordPath, 'utf8')) as unknown,
+)
+const sha256Text = (value: string): string => createHash('sha256').update(value).digest('hex')
+
+const realHistory = {
+  base: 'e0a38e65e7ba65fb7d00585b02d9fc2cdbeee826',
+  reviewed: '8ef6b67fe799c0dddd70bc70f4648a3b23a7ca5b',
+  final: 'd9903bf860ede2622ab77a9eac8e3a9454586955',
+  blocked: '890d8f5801cf7c7576ed7a0cee387a4e79b98877',
+  candidateHead: '9a293a7a8f7cb4ed5c8ddf41d7dbf9abecb12510',
+  candidateMerge: '4f39bb8ad168c3a459afdfdb30feccd49aba22d8',
+  qualificationHead: '20043b151015acf77e5e1ecd8f7e2e1daa3da090',
+  qualificationMerge: '9f4ea79b12dcd32c794a9701160587d9a12e8c4d',
+  remediationHead: '6'.repeat(40),
+  remediationMerge: '7'.repeat(40),
+} as const
+
+const exactReviewState = (input: {
+  readonly number: number
+  readonly mergeCommitSha: string
+  readonly headSha: string
+  readonly createdAt: string
+  readonly mergedAt: string
+  readonly reviewedHeadSha: string
+  readonly forcePushes?: readonly PullRequestForcePush[]
+  readonly threads?: readonly PullRequestReviewThread[]
+}): PullRequestReviewState => ({
+  number: input.number,
+  baseRefName: 'main',
+  headSha: input.headSha,
+  mergeCommitSha: input.mergeCommitSha,
+  createdAt: input.createdAt,
+  mergedAt: input.mergedAt,
+  reviews: [
+    review({
+      commitSha: input.reviewedHeadSha,
+      submittedAt: new Date(Date.parse(input.mergedAt) - 120_000).toISOString(),
+    }),
+  ],
+  threads: input.threads ?? [],
+  commitShas: [input.headSha],
+  issueComments: [],
+  reactions: [reaction({ createdAt: new Date(Date.parse(input.mergedAt) - 30_000).toISOString() })],
+  headForcePushes: input.forcePushes ?? [],
+  headForcePushCount: input.forcePushes?.length ?? 0,
+})
+
+const remediationHistoryFixture = (): {
+  readonly snapshot: BaynReleaseEligibilitySnapshot
+  readonly evidence: BaynReleaseReviewRemediationEvidence
+} => {
+  const findingBody = 'P1: preregister the TypeScript candidate artifact.'
+  const replyBody = `Fixed at exact head ${realHistory.final}.`
+  const blockedPull: PullRequestReviewState = {
+    number: 13428,
+    baseRefName: 'main',
+    headSha: realHistory.final,
+    mergeCommitSha: realHistory.blocked,
+    createdAt: '2026-07-31T10:58:04Z',
+    mergedAt: '2026-07-31T11:15:17Z',
+    reviews: [
+      review({
+        commitSha: realHistory.reviewed,
+        submittedAt: '2026-07-31T11:01:07Z',
+      }),
+    ],
+    threads: [
+      thread({
+        id: 'PRRT_kwDOLkRLus6VZVPy',
+        isResolved: true,
+        isOutdated: true,
+        path: 'services/bayn/candidates/ordinal-17-volatility-managed-trend-overlay-preregistration.json',
+        url: 'https://github.com/proompteng/lab/pull/13428#discussion_r3689961132',
+        comments: [
+          threadComment({
+            body: findingBody,
+            commitSha: realHistory.reviewed,
+            reviewCommitSha: realHistory.reviewed,
+            reviewSubmittedAt: '2026-07-31T11:01:07Z',
+            createdAt: '2026-07-31T11:01:07Z',
+            url: 'https://github.com/proompteng/lab/pull/13428#discussion_r3689961132',
+          }),
+          threadComment({
+            authorLogin: 'gregkonush',
+            authorAssociation: 'MEMBER',
+            body: replyBody,
+            commitSha: realHistory.reviewed,
+            reviewCommitSha: realHistory.final,
+            reviewAuthorLogin: 'gregkonush',
+            reviewSubmittedAt: '2026-07-31T11:11:10Z',
+            createdAt: '2026-07-31T11:11:10Z',
+            url: 'https://github.com/proompteng/lab/pull/13428#discussion_r3690008122',
+          }),
+        ],
+      }),
+    ],
+    commitShas: [realHistory.final],
+    issueComments: [],
+    reactions: [reaction({ createdAt: '2026-07-31T11:13:26Z' })],
+    headForcePushes: [
+      {
+        actorLogin: 'gregkonush',
+        beforeCommitSha: realHistory.reviewed,
+        afterCommitSha: realHistory.final,
+        createdAt: '2026-07-31T11:10:46Z',
+      },
+    ],
+    headForcePushCount: 1,
+  }
+  const candidatePull = exactReviewState({
+    number: 13422,
+    mergeCommitSha: realHistory.candidateMerge,
+    headSha: realHistory.candidateHead,
+    reviewedHeadSha: '5c5e9f5e0a53b7b0a61b21bb36388d6f8a93195a',
+    createdAt: '2026-07-31T08:32:58Z',
+    mergedAt: '2026-07-31T11:23:15Z',
+    forcePushes: [
+      {
+        actorLogin: 'gregkonush',
+        beforeCommitSha: '5c5e9f5e0a53b7b0a61b21bb36388d6f8a93195a',
+        afterCommitSha: realHistory.candidateHead,
+        createdAt: '2026-07-31T11:18:00Z',
+      },
+    ],
+  })
+  const qualificationPull = exactReviewState({
+    number: 13427,
+    mergeCommitSha: realHistory.qualificationMerge,
+    headSha: realHistory.qualificationHead,
+    reviewedHeadSha: '508f0dd5a600ed26de66a2bf6c231c96055ea664',
+    createdAt: '2026-07-31T10:08:26Z',
+    mergedAt: '2026-07-31T11:37:39Z',
+    forcePushes: [
+      {
+        actorLogin: 'gregkonush',
+        beforeCommitSha: '508f0dd5a600ed26de66a2bf6c231c96055ea664',
+        afterCommitSha: realHistory.qualificationHead,
+        createdAt: '2026-07-31T11:25:00Z',
+      },
+    ],
+  })
+  const record = structuredClone(realRemediationRecord) as BaynReleaseReviewRemediationRecord
+  const mutableRecord = record as unknown as {
+    blocked: {
+      sourcePullRequestEvidenceSha256: string
+      feedback: { findingBodySha256: string; fixReplyBodySha256: string }
+    }
+    requiredDescendants: { sourcePullRequestEvidenceSha256: string }[]
+  }
+  mutableRecord.blocked.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(blockedPull)
+  mutableRecord.blocked.feedback.findingBodySha256 = sha256Text(findingBody)
+  mutableRecord.blocked.feedback.fixReplyBodySha256 = sha256Text(replyBody)
+  mutableRecord.requiredDescendants[0]!.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(candidatePull)
+  mutableRecord.requiredDescendants[1]!.sourcePullRequestEvidenceSha256 =
+    pullRequestReviewEvidenceSha256(qualificationPull)
+
+  const reviewedPaths = record.blocked.affectedPaths.map((path) => ({
+    path: path.path,
+    blobSha: path.reviewedBlobSha,
+  }))
+  const finalPaths = record.blocked.affectedPaths.map((path) => ({ path: path.path, blobSha: path.finalBlobSha }))
+  const candidatePaths = record.requiredDescendants[0]!.affectedPaths.map((path) => ({
+    path: path.path,
+    blobSha: path.finalHeadBlobSha,
+  }))
+  const qualificationPaths = record.requiredDescendants[1]!.affectedPaths.map((path) => ({
+    path: path.path,
+    blobSha: path.finalHeadBlobSha,
+  }))
+  const change = (path: string, blobSha: string, status = 'modified') => ({
+    path,
+    previousPath: null,
+    status,
+    blobSha,
+  })
+  const blockedSnapshot: BaynReleaseReviewSnapshot = {
+    mainCommitParents: [realHistory.base],
+    associatedPullRequests: [
+      associatedPull({
+        number: 13428,
+        headSha: realHistory.final,
+        mergeCommitSha: realHistory.blocked,
+        mergedAt: blockedPull.mergedAt,
+      }),
+    ],
+    pullRequest: blockedPull,
+  }
+  const candidateSnapshot: BaynReleaseReviewSnapshot = {
+    mainCommitParents: [realHistory.blocked],
+    associatedPullRequests: [
+      associatedPull({
+        number: 13422,
+        headSha: realHistory.candidateHead,
+        mergeCommitSha: realHistory.candidateMerge,
+        mergedAt: candidatePull.mergedAt,
+      }),
+    ],
+    pullRequest: candidatePull,
+  }
+  const qualificationSnapshot: BaynReleaseReviewSnapshot = {
+    mainCommitParents: [realHistory.candidateMerge],
+    associatedPullRequests: [
+      associatedPull({
+        number: 13427,
+        headSha: realHistory.qualificationHead,
+        mergeCommitSha: realHistory.qualificationMerge,
+        mergedAt: qualificationPull.mergedAt,
+      }),
+    ],
+    pullRequest: qualificationPull,
+  }
+  const remediationSnapshot = reviewSnapshotFor({
+    commitSha: realHistory.remediationMerge,
+    prNumber: 13430,
+    headSha: realHistory.remediationHead,
+    parents: [realHistory.qualificationMerge],
+    mergedAt: '2026-07-31T12:20:00Z',
+  })
+  const recordBlobSha = '9'.repeat(40)
+  const commits: NonNullable<BaynReleaseEligibilitySnapshot['comparison']>['commits'] = [
+    {
+      sha: realHistory.blocked,
+      parents: [realHistory.base],
+      treeSha: record.blocked.mergeTreeSha,
+      files: record.blocked.affectedPaths.map((path) => path.path),
+      fileChanges: record.blocked.affectedPaths.map((path) => change(path.path, path.blockedBlobSha, 'added')),
+      reviewSnapshot: blockedSnapshot,
+    },
+    {
+      sha: realHistory.candidateMerge,
+      parents: [realHistory.blocked],
+      treeSha: record.requiredDescendants[0]!.mergeTreeSha,
+      files: candidatePaths.map((path) => path.path),
+      fileChanges: candidatePaths.map((path) => change(path.path, path.blobSha)),
+      reviewSnapshot: candidateSnapshot,
+    },
+    {
+      sha: realHistory.qualificationMerge,
+      parents: [realHistory.candidateMerge],
+      treeSha: record.requiredDescendants[1]!.mergeTreeSha,
+      files: qualificationPaths.map((path) => path.path),
+      fileChanges: qualificationPaths.map((path) => change(path.path, path.blobSha)),
+      reviewSnapshot: qualificationSnapshot,
+    },
+    {
+      sha: realHistory.remediationMerge,
+      parents: [realHistory.qualificationMerge],
+      treeSha: '8'.repeat(40),
+      files: [
+        'packages/scripts/src/bayn/verify-release-review.ts',
+        'packages/scripts/src/bayn/verify-release-review.test.ts',
+        remediationRecordPath,
+      ],
+      fileChanges: [
+        change('packages/scripts/src/bayn/verify-release-review.ts', '1'.repeat(40)),
+        change('packages/scripts/src/bayn/verify-release-review.test.ts', '2'.repeat(40)),
+        change(remediationRecordPath, recordBlobSha, 'added'),
+      ],
+      reviewSnapshot: remediationSnapshot,
+    },
+  ]
+  const evidence: BaynReleaseReviewRemediationEvidence = {
+    recordPath: remediationRecordPath,
+    recordBlobSha,
+    record,
+    referencedCommits: [
+      {
+        sha: realHistory.reviewed,
+        parents: [realHistory.base],
+        treeSha: record.blocked.reviewedHeadTreeSha,
+        files: reviewedPaths.map((path) => path.path),
+        fileChanges: reviewedPaths.map((path) => change(path.path, path.blobSha, 'added')),
+        pathBlobs: reviewedPaths,
+      },
+      {
+        sha: realHistory.final,
+        parents: [realHistory.base],
+        treeSha: record.blocked.finalHeadTreeSha,
+        files: finalPaths.map((path) => path.path),
+        fileChanges: finalPaths.map((path) => change(path.path, path.blobSha, 'added')),
+        pathBlobs: finalPaths,
+      },
+      {
+        sha: realHistory.candidateHead,
+        parents: [realHistory.blocked],
+        treeSha: record.requiredDescendants[0]!.finalHeadTreeSha,
+        files: candidatePaths.map((path) => path.path),
+        fileChanges: candidatePaths.map((path) => change(path.path, path.blobSha)),
+        pathBlobs: candidatePaths,
+      },
+      {
+        sha: realHistory.qualificationHead,
+        parents: [realHistory.candidateMerge],
+        treeSha: record.requiredDescendants[1]!.finalHeadTreeSha,
+        files: qualificationPaths.map((path) => path.path),
+        fileChanges: qualificationPaths.map((path) => change(path.path, path.blobSha)),
+        pathBlobs: qualificationPaths,
+      },
+    ],
+    currentPathBlobs: finalPaths,
+  }
+  return {
+    evidence,
+    snapshot: {
+      currentCommitParents: [realHistory.qualificationMerge],
+      lastPublishedRevision: {
+        status: 'resolved',
+        revision: realHistory.base,
+        runId: 1,
+        runNumber: 1,
+        runAttempt: 1,
+      },
+      comparison: {
+        status: 'ahead',
+        baseSha: realHistory.base,
+        headSha: realHistory.remediationMerge,
+        mergeBaseSha: realHistory.base,
+        aheadBy: 4,
+        totalCommits: 4,
+        commits,
+        truncated: false,
+      },
+      remediations: [evidence],
+    },
+  }
+}
+
 describe('Bayn publication-range eligibility', () => {
+  test('accepts the real #13428 -> #13422 -> #13427 history only through its reviewed exact receipt', () => {
+    expect(realRemediationRecord).toMatchObject({
+      blocked: {
+        mergeCommitSha: realHistory.blocked,
+        reviewedHeadSha: realHistory.reviewed,
+        finalHeadSha: realHistory.final,
+        sourcePullRequestNumber: 13428,
+      },
+      requiredDescendants: [
+        { mergeCommitSha: realHistory.candidateMerge, sourcePullRequestNumber: 13422 },
+        { mergeCommitSha: realHistory.qualificationMerge, sourcePullRequestNumber: 13427 },
+      ],
+    })
+    const fixture = remediationHistoryFixture()
+    expect(
+      evaluateBaynReleaseEligibility({
+        mainCommitSha: realHistory.remediationMerge,
+        baseRefName: 'main',
+        snapshot: fixture.snapshot,
+        nowMs: Date.parse('2026-07-31T12:30:00Z'),
+        pushBeforeSha: realHistory.qualificationMerge,
+      }),
+    ).toMatchObject({
+      status: 'eligible',
+      lastPublishedRevision: realHistory.base,
+      checkedCommitCount: 4,
+      baynAffectingCommitCount: 4,
+      reviewedPullRequests: [
+        { commitSha: realHistory.blocked, prNumber: 13428, headSha: realHistory.final },
+        { commitSha: realHistory.candidateMerge, prNumber: 13422, headSha: realHistory.candidateHead },
+        { commitSha: realHistory.qualificationMerge, prNumber: 13427, headSha: realHistory.qualificationHead },
+        { commitSha: realHistory.remediationMerge, prNumber: 13430, headSha: realHistory.remediationHead },
+      ],
+    })
+  })
+
+  test('accepts exact remediation descendants across an interleaved direct-parent chain of non-Bayn commits', () => {
+    const fixture = remediationHistoryFixture()
+    const comparison = fixture.snapshot.comparison!
+    const [blocked, candidate, qualification, introduction] = comparison.commits
+    if (blocked === undefined || candidate === undefined || qualification === undefined || introduction === undefined) {
+      throw new Error('remediation fixture commit chain is incomplete')
+    }
+    const nonBaynCommit = (sha: string, parent: string, path: string) => ({
+      sha,
+      parents: [parent],
+      treeSha: sha,
+      files: [path],
+      fileChanges: [{ path, previousPath: null, status: 'modified', blobSha: sha }],
+      reviewSnapshot: null,
+    })
+    const beforeCandidate = nonBaynCommit('1'.repeat(40), blocked.sha, 'docs/bayn-release-review.md')
+    const beforeQualification = nonBaynCommit('2'.repeat(40), candidate.sha, 'docs/bayn-qualification.md')
+    const beforeIntroduction = nonBaynCommit('3'.repeat(40), qualification.sha, 'README.md')
+    const afterIntroduction = nonBaynCommit('4'.repeat(40), introduction.sha, 'docs/operations.md')
+    ;(candidate.parents as string[])[0] = beforeCandidate.sha
+    ;(qualification.parents as string[])[0] = beforeQualification.sha
+    ;(introduction.parents as string[])[0] = beforeIntroduction.sha
+    const candidateHead = fixture.evidence.referencedCommits.find((commit) => commit.sha === realHistory.candidateHead)
+    const qualificationHead = fixture.evidence.referencedCommits.find(
+      (commit) => commit.sha === realHistory.qualificationHead,
+    )
+    if (candidateHead === undefined || qualificationHead === undefined) {
+      throw new Error('remediation fixture descendant head evidence is incomplete')
+    }
+    ;(candidateHead.parents as string[])[0] = beforeCandidate.sha
+    ;(qualificationHead.parents as string[])[0] = beforeQualification.sha
+    ;(
+      comparison as unknown as {
+        headSha: string
+        aheadBy: number
+        totalCommits: number
+        commits: unknown[]
+      }
+    ).headSha = afterIntroduction.sha
+    ;(
+      comparison as unknown as {
+        headSha: string
+        aheadBy: number
+        totalCommits: number
+        commits: unknown[]
+      }
+    ).aheadBy = 8
+    ;(
+      comparison as unknown as {
+        headSha: string
+        aheadBy: number
+        totalCommits: number
+        commits: unknown[]
+      }
+    ).totalCommits = 8
+    ;(
+      comparison as unknown as {
+        headSha: string
+        aheadBy: number
+        totalCommits: number
+        commits: unknown[]
+      }
+    ).commits = [
+      blocked,
+      beforeCandidate,
+      candidate,
+      beforeQualification,
+      qualification,
+      beforeIntroduction,
+      introduction,
+      afterIntroduction,
+    ]
+    ;(fixture.snapshot.currentCommitParents as string[])[0] = introduction.sha
+
+    expect(
+      evaluateBaynReleaseEligibility({
+        mainCommitSha: afterIntroduction.sha,
+        baseRefName: 'main',
+        snapshot: fixture.snapshot,
+        nowMs: Date.parse('2026-07-31T12:30:00Z'),
+        pushBeforeSha: introduction.sha,
+      }),
+    ).toMatchObject({
+      status: 'eligible',
+      checkedCommitCount: 8,
+      baynAffectingCommitCount: 4,
+    })
+  })
+
+  test('keeps the dropped reviewed ancestor blocked without the exact receipt', () => {
+    const fixture = remediationHistoryFixture()
+    expect(
+      evaluateBaynReleaseEligibility({
+        mainCommitSha: realHistory.remediationMerge,
+        baseRefName: 'main',
+        snapshot: { ...fixture.snapshot, remediations: [] },
+        nowMs: Date.parse('2026-07-31T12:30:00Z'),
+        pushBeforeSha: realHistory.qualificationMerge,
+      }),
+    ).toMatchObject({ status: 'hold', code: 'release-review-remediation-missing', retryable: false })
+  })
+
+  test.each([
+    [
+      'pending',
+      review({ commitSha: realHistory.candidateHead, submittedAt: null, state: 'PENDING' }),
+      'exact-head-review-pending',
+    ],
+    [
+      'changes-requested',
+      review({
+        commitSha: realHistory.candidateHead,
+        submittedAt: '2026-07-31T11:22:50Z',
+        state: 'CHANGES_REQUESTED',
+      }),
+      'exact-head-review-changes-requested',
+    ],
+  ])('keeps a newer %s exact-head descendant review blocking remediation coverage', (_name, blockingReview, code) => {
+    const fixture = remediationHistoryFixture()
+    const pullRequest = fixture.snapshot.comparison!.commits[1]!.reviewSnapshot!.pullRequest!
+    ;(pullRequest.reviews as PullRequestReview[]).push(blockingReview)
+
+    expect(
+      evaluateBaynReleaseEligibility({
+        mainCommitSha: realHistory.remediationMerge,
+        baseRefName: 'main',
+        snapshot: fixture.snapshot,
+        nowMs: Date.parse('2026-07-31T12:30:00Z'),
+        pushBeforeSha: realHistory.qualificationMerge,
+      }),
+    ).toMatchObject({ status: 'hold', code })
+  })
+
+  test.each([
+    [
+      'changed current blob',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        ;(fixture.evidence.currentPathBlobs as { path: string; blobSha: string }[])[0]!.blobSha = '0'.repeat(40)
+      },
+    ],
+    [
+      'extra affected path',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        ;(
+          fixture.evidence.record.blocked
+            .affectedPaths as BaynReleaseReviewRemediationRecord['blocked']['affectedPaths'] as unknown as {
+            path: string
+            reviewedBlobSha: string
+            finalBlobSha: string
+            blockedBlobSha: string
+          }[]
+        ).push({
+          path: 'services/bayn/src/extra.ts',
+          reviewedBlobSha: '1'.repeat(40),
+          finalBlobSha: '1'.repeat(40),
+          blockedBlobSha: '1'.repeat(40),
+        })
+      },
+    ],
+    [
+      'non-ancestor descendant',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        const comparison = fixture.snapshot.comparison!
+        ;(comparison.commits[1]!.parents as string[])[0] = '0'.repeat(40)
+      },
+    ],
+    [
+      'spoofed source reaction',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        const pull = fixture.snapshot.comparison!.commits[0]!.reviewSnapshot!.pullRequest!
+        ;(pull.reactions as { userLogin: string | null; content: string; createdAt: string }[])[0]!.userLogin =
+          'spoofed-codex[bot]'
+        ;(
+          fixture.evidence.record as unknown as { blocked: { sourcePullRequestEvidenceSha256: string } }
+        ).blocked.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pull)
+      },
+    ],
+    [
+      'stale source reaction before force push',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        const pull = fixture.snapshot.comparison!.commits[0]!.reviewSnapshot!.pullRequest!
+        ;(pull.reactions as { userLogin: string | null; content: string; createdAt: string }[])[0]!.createdAt =
+          '2026-07-31T11:09:00Z'
+        ;(
+          fixture.evidence.record as unknown as { blocked: { sourcePullRequestEvidenceSha256: string } }
+        ).blocked.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pull)
+      },
+    ],
+    [
+      'changes-requested review on a dropped source head',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        const pull = fixture.snapshot.comparison!.commits[0]!.reviewSnapshot!.pullRequest!
+        ;(pull.reviews as PullRequestReview[]).push(
+          review({
+            commitSha: 'a'.repeat(40),
+            submittedAt: '2026-07-31T11:05:00Z',
+            state: 'CHANGES_REQUESTED',
+          }),
+        )
+        ;(
+          fixture.evidence.record as unknown as { blocked: { sourcePullRequestEvidenceSha256: string } }
+        ).blocked.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pull)
+      },
+    ],
+    [
+      'pending review on a dropped source head',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        const pull = fixture.snapshot.comparison!.commits[0]!.reviewSnapshot!.pullRequest!
+        ;(pull.reviews as PullRequestReview[]).push(
+          review({ commitSha: 'b'.repeat(40), submittedAt: null, state: 'PENDING' }),
+        )
+        ;(
+          fixture.evidence.record as unknown as { blocked: { sourcePullRequestEvidenceSha256: string } }
+        ).blocked.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pull)
+      },
+    ],
+    [
+      'additional unresolved source review thread',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        const pull = fixture.snapshot.comparison!.commits[0]!.reviewSnapshot!.pullRequest!
+        ;(pull.threads as PullRequestReviewThread[]).push(
+          thread({
+            id: 'PRRT_unresolved_source_finding',
+            isResolved: false,
+            isOutdated: false,
+            path: 'services/bayn/candidates/ordinal-17-volatility-managed-trend-overlay-preregistration.md',
+            url: 'https://github.com/proompteng/lab/pull/13428#discussion_r_unresolved',
+            comments: [
+              threadComment({
+                body: 'P1 unresolved source finding',
+                commitSha: realHistory.reviewed,
+                reviewCommitSha: realHistory.reviewed,
+                reviewSubmittedAt: '2026-07-31T11:02:00Z',
+                createdAt: '2026-07-31T11:02:00Z',
+                url: 'https://github.com/proompteng/lab/pull/13428#discussion_r_unresolved',
+              }),
+            ],
+          }),
+        )
+        ;(
+          fixture.evidence.record as unknown as { blocked: { sourcePullRequestEvidenceSha256: string } }
+        ).blocked.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pull)
+      },
+    ],
+    [
+      'changes-requested review on a dropped descendant head',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        const pull = fixture.snapshot.comparison!.commits[1]!.reviewSnapshot!.pullRequest!
+        ;(pull.reviews as PullRequestReview[]).push(
+          review({
+            commitSha: 'c'.repeat(40),
+            submittedAt: '2026-07-31T11:21:00Z',
+            state: 'CHANGES_REQUESTED',
+          }),
+        )
+        ;(
+          fixture.evidence.record as unknown as {
+            requiredDescendants: { sourcePullRequestEvidenceSha256: string }[]
+          }
+        ).requiredDescendants[0]!.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pull)
+      },
+    ],
+    [
+      'pending review on a dropped descendant head',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        const pull = fixture.snapshot.comparison!.commits[1]!.reviewSnapshot!.pullRequest!
+        ;(pull.reviews as PullRequestReview[]).push(
+          review({ commitSha: 'd'.repeat(40), submittedAt: null, state: 'PENDING' }),
+        )
+        ;(
+          fixture.evidence.record as unknown as {
+            requiredDescendants: { sourcePullRequestEvidenceSha256: string }[]
+          }
+        ).requiredDescendants[0]!.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pull)
+      },
+    ],
+    [
+      'incomplete descendant review chain',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        const pull = fixture.snapshot.comparison!.commits[1]!.reviewSnapshot!.pullRequest!
+        ;(pull.reactions as unknown as unknown[]) = []
+        ;(
+          fixture.evidence.record as unknown as {
+            requiredDescendants: { sourcePullRequestEvidenceSha256: string }[]
+          }
+        ).requiredDescendants[0]!.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pull)
+      },
+    ],
+    [
+      'duplicate receipt',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        ;(fixture.snapshot.remediations as BaynReleaseReviewRemediationEvidence[]) = [
+          fixture.evidence,
+          structuredClone(fixture.evidence),
+        ]
+      },
+    ],
+    [
+      'later blocked-path mutation',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        const commit = fixture.snapshot.comparison!.commits[2]!
+        const path = fixture.evidence.record.blocked.affectedPaths[0]!.path
+        ;(commit.files as string[]).push(path)
+        ;(
+          commit.fileChanges as { path: string; previousPath: string | null; status: string; blobSha: string | null }[]
+        ).push({
+          path,
+          previousPath: null,
+          status: 'modified',
+          blobSha: '2'.repeat(40),
+        })
+      },
+    ],
+    [
+      'newer unreviewed source downgrade',
+      (fixture: ReturnType<typeof remediationHistoryFixture>) => {
+        const comparison = fixture.snapshot.comparison!
+        const introduction = comparison.commits.at(-1)!
+        const unreviewedSha = '3'.repeat(40)
+        const unreviewed = {
+          sha: unreviewedSha,
+          parents: [realHistory.qualificationMerge],
+          treeSha: '4'.repeat(40),
+          files: ['services/bayn/src/unreviewed.ts'],
+          fileChanges: [
+            {
+              path: 'services/bayn/src/unreviewed.ts',
+              previousPath: null,
+              status: 'added',
+              blobSha: '5'.repeat(40),
+            },
+          ],
+          reviewSnapshot: null,
+        }
+        ;(introduction.parents as string[])[0] = unreviewedSha
+        ;(comparison.commits as unknown as typeof comparison.commits as unknown as unknown[]).splice(3, 0, unreviewed)
+        ;(comparison as { aheadBy: number; totalCommits: number }).aheadBy = 5
+        ;(comparison as { aheadBy: number; totalCommits: number }).totalCommits = 5
+      },
+    ],
+  ])('rejects remediation evidence with %s', (name, mutate) => {
+    const fixture = remediationHistoryFixture()
+    mutate(fixture)
+    const result = evaluateBaynReleaseEligibility({
+      mainCommitSha: realHistory.remediationMerge,
+      baseRefName: 'main',
+      snapshot: fixture.snapshot,
+      nowMs: Date.parse('2026-07-31T12:30:00Z'),
+      pushBeforeSha: realHistory.qualificationMerge,
+    })
+    expect(result).toMatchObject({
+      status: 'hold',
+      code:
+        name === 'newer unreviewed source downgrade'
+          ? 'release-range-metadata-mismatch'
+          : 'release-review-remediation-invalid',
+      retryable: false,
+    })
+  })
+
   test('accepts every clean Bayn-affecting commit since the last published revision', () => {
     expect(
       evaluateBaynReleaseEligibility({

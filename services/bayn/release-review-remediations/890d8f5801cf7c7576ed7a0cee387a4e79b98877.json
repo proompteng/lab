@@ -1,0 +1,129 @@
+{
+  "schemaVersion": "bayn.release-review-remediation.v1",
+  "remediationId": "pr-13428-reviewed-ancestor-reconstruction",
+  "blocked": {
+    "mergeCommitSha": "890d8f5801cf7c7576ed7a0cee387a4e79b98877",
+    "mergeParentSha": "e0a38e65e7ba65fb7d00585b02d9fc2cdbeee826",
+    "mergeTreeSha": "f952421bcffb499d62fd9f4c436d04ac68fbd398",
+    "sourcePullRequestNumber": 13428,
+    "reviewedHeadSha": "8ef6b67fe799c0dddd70bc70f4648a3b23a7ca5b",
+    "reviewedHeadTreeSha": "9bf02129bb8b4b896b3b86c7c79892ef90a37f16",
+    "finalHeadSha": "d9903bf860ede2622ab77a9eac8e3a9454586955",
+    "finalHeadTreeSha": "f952421bcffb499d62fd9f4c436d04ac68fbd398",
+    "sourcePullRequestEvidenceSha256": "a99e94c869ee29df706221d21abfe734b20c9ae460705c7c4c3a58680a92f584",
+    "feedback": {
+      "threadId": "PRRT_kwDOLkRLus6VZVPy",
+      "path": "services/bayn/candidates/ordinal-17-volatility-managed-trend-overlay-preregistration.json",
+      "findingUrl": "https://github.com/proompteng/lab/pull/13428#discussion_r3689961132",
+      "findingBodySha256": "01b8065d9c0e4c2e98519b1d9e6568e1d9eb15cbd7370fedf72bae717996d655",
+      "fixReplyUrl": "https://github.com/proompteng/lab/pull/13428#discussion_r3690008122",
+      "fixReplyBodySha256": "f640af6adb0d7b3b48ec6d06e40579536863534ab66382c7732afa3fb39bac40"
+    },
+    "affectedPaths": [
+      {
+        "path": "services/bayn/candidates/ordinal-17-volatility-managed-trend-overlay-preregistration.json",
+        "reviewedBlobSha": "466b8007fe2fffcff15497597877841089d9eaf2",
+        "finalBlobSha": "c1d07233df53cc0379b1dfae9f1caffbd6b7abd6",
+        "blockedBlobSha": "c1d07233df53cc0379b1dfae9f1caffbd6b7abd6"
+      },
+      {
+        "path": "services/bayn/candidates/ordinal-17-volatility-managed-trend-overlay-preregistration.md",
+        "reviewedBlobSha": "7ddcb5a224d3118cca48841935f34b4b476bf4aa",
+        "finalBlobSha": "38f22acecda596dc42ef651ce852a78869d5c333",
+        "blockedBlobSha": "38f22acecda596dc42ef651ce852a78869d5c333"
+      }
+    ]
+  },
+  "requiredDescendants": [
+    {
+      "mergeCommitSha": "4f39bb8ad168c3a459afdfdb30feccd49aba22d8",
+      "sourcePullRequestNumber": 13422,
+      "finalHeadSha": "9a293a7a8f7cb4ed5c8ddf41d7dbf9abecb12510",
+      "sourcePullRequestEvidenceSha256": "05a851a72a62ea4e2f40e878206e55db5491b57029dddb2dfab723b5a8f93c3c",
+      "mergeTreeSha": "63bd2cd7449f19839227d8a01d1f0839f63a31ec",
+      "finalHeadTreeSha": "63bd2cd7449f19839227d8a01d1f0839f63a31ec",
+      "affectedPaths": [
+        {
+          "path": "services/bayn/candidates/ordinal-17-volatility-managed-trend-overlay-source-manifest.json",
+          "mergeBlobSha": "23521cd435a97045adf18d1f075599fe5d22d750",
+          "finalHeadBlobSha": "23521cd435a97045adf18d1f075599fe5d22d750"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-calendar.ts",
+          "mergeBlobSha": "6fc8363cd2b22f8c183a5898ceee3c45d0449c00",
+          "finalHeadBlobSha": "6fc8363cd2b22f8c183a5898ceee3c45d0449c00"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-candidate-17.test.ts",
+          "mergeBlobSha": "059ea94b92fb0de3305d09a75cce8017a717163a",
+          "finalHeadBlobSha": "059ea94b92fb0de3305d09a75cce8017a717163a"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-command.test.ts",
+          "mergeBlobSha": "8b9add1c6dcdeea4d33de3e1bf51a6b32677e904",
+          "finalHeadBlobSha": "8b9add1c6dcdeea4d33de3e1bf51a6b32677e904"
+        },
+        {
+          "path": "services/bayn/src/strategy/volatility-managed-trend-overlay/candidate-17.ts",
+          "mergeBlobSha": "8d1ccbfc6bef2c1707ac85f51d1647a7a8bfd98b",
+          "finalHeadBlobSha": "8d1ccbfc6bef2c1707ac85f51d1647a7a8bfd98b"
+        }
+      ]
+    },
+    {
+      "mergeCommitSha": "9f4ea79b12dcd32c794a9701160587d9a12e8c4d",
+      "sourcePullRequestNumber": 13427,
+      "finalHeadSha": "20043b151015acf77e5e1ecd8f7e2e1daa3da090",
+      "sourcePullRequestEvidenceSha256": "3ec2c9ffbc0ad305058e4051c48b22e88994650b26b6dfda7b796794645b1f85",
+      "mergeTreeSha": "502d494e3c66f4a82fa9c62c4615b537eb6dee00",
+      "finalHeadTreeSha": "502d494e3c66f4a82fa9c62c4615b537eb6dee00",
+      "affectedPaths": [
+        {
+          "path": ".github/workflows/bayn-qualification.yml",
+          "mergeBlobSha": "baf93e5ef1a814b1bc4ac9ef109fc980890ec959",
+          "finalHeadBlobSha": "baf93e5ef1a814b1bc4ac9ef109fc980890ec959"
+        },
+        {
+          "path": "nix/images/bayn.nix",
+          "mergeBlobSha": "f066365b17b89fdb6c25bd610444a74759fc3862",
+          "finalHeadBlobSha": "f066365b17b89fdb6c25bd610444a74759fc3862"
+        },
+        {
+          "path": "packages/scripts/src/bayn/bayn-qualification-workflow.test.ts",
+          "mergeBlobSha": "d06d3fd5fbb59d7520a595cdcf2558596362ef9b",
+          "finalHeadBlobSha": "d06d3fd5fbb59d7520a595cdcf2558596362ef9b"
+        },
+        {
+          "path": "services/bayn/package.json",
+          "mergeBlobSha": "b5f0b8d1a3c8672cea57a1aa306232186506501e",
+          "finalHeadBlobSha": "b5f0b8d1a3c8672cea57a1aa306232186506501e"
+        },
+        {
+          "path": "services/bayn/src/qualification-audit-command.ts",
+          "mergeBlobSha": "0d799c144df41c6bcebe927b7197581bb83eee86",
+          "finalHeadBlobSha": "0d799c144df41c6bcebe927b7197581bb83eee86"
+        },
+        {
+          "path": "services/bayn/src/qualification-candidate-command.test.ts",
+          "mergeBlobSha": "e479cad34c0d913a97dae39dd5d025f9cac512e9",
+          "finalHeadBlobSha": "e479cad34c0d913a97dae39dd5d025f9cac512e9"
+        },
+        {
+          "path": "services/bayn/src/qualification-candidate-command.ts",
+          "mergeBlobSha": "b88d927de6d3112dfef58bc966f66138cd873069",
+          "finalHeadBlobSha": "b88d927de6d3112dfef58bc966f66138cd873069"
+        },
+        {
+          "path": "services/bayn/src/qualification-collector-command.test.ts",
+          "mergeBlobSha": "470bdf9f87a70ca05856028668233a8910dd94bc",
+          "finalHeadBlobSha": "470bdf9f87a70ca05856028668233a8910dd94bc"
+        },
+        {
+          "path": "services/bayn/src/qualification-collector-command.ts",
+          "mergeBlobSha": "2475549f37d1e51ab0ef2f397e20baacaef8588b",
+          "finalHeadBlobSha": "2475549f37d1e51ab0ef2f397e20baacaef8588b"
+        }
+      ]
+    }
+  ]
+}

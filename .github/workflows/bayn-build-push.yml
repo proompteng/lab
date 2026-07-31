@@ -13,6 +13,7 @@ on:
       - 'services/bayn/**'
       - 'packages/scripts/src/bayn/update-manifests.ts'
       - 'packages/scripts/src/bayn/verify-release-review.ts'
+      - 'services/bayn/release-review-remediations/**'
       - 'nix/images/bayn.nix'
       - 'nix/images/bayn-runtime-root.nix'
       - 'nix/images/bun-workspace-service.nix'
@@ -115,6 +116,7 @@ jobs:
             bun packages/scripts/src/bayn/verify-release-review.ts
             --mode retry-discovery
             --repository "${GITHUB_REPOSITORY}"
+            --repository-root "${GITHUB_WORKSPACE}"
             --commit "${GITHUB_SHA}"
             --github-output "${GITHUB_OUTPUT}"
             --request-timeout-ms 10000
@@ -185,6 +187,7 @@ jobs:
             bun packages/scripts/src/bayn/verify-release-review.ts \
               --mode push \
               --repository "${GITHUB_REPOSITORY}" \
+              --repository-root "${GITHUB_WORKSPACE}" \
               --commit "${GITHUB_SHA}" \
               --push-before "${PUSH_BEFORE}" \
               --max-attempts 10 \
@@ -195,6 +198,7 @@ jobs:
             bun packages/scripts/src/bayn/verify-release-review.ts \
               --mode retry-publication \
               --repository "${GITHUB_REPOSITORY}" \
+              --repository-root "${GITHUB_WORKSPACE}" \
               --commit "${GITHUB_SHA}" \
               --retry-source-commit "${RETRY_SOURCE_SHA}" \
               --retry-pr-number "${RETRY_PR_NUMBER}" \
