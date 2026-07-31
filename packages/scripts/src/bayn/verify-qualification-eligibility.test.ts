@@ -258,6 +258,26 @@ describe('qualification eligibility immutable Git verification', () => {
     })
   })
 
+  test('rejects a foreign raw origin hidden by repository-local URL rewrite configuration', async () => {
+    const repository = await makeGitFixture('https://github.com/foreign/lab.git')
+    try {
+      await git(repository.repository, [
+        'config',
+        'url.https://github.com/proompteng/lab.git.insteadOf',
+        'https://github.com/foreign/lab.git',
+      ])
+      expect(await git(repository.repository, ['remote', 'get-url', 'origin'])).toBe(
+        'https://github.com/proompteng/lab.git',
+      )
+      expect(await verifyQualificationEligibility(fixture(repository), options(repository))).toMatchObject({
+        status: 'hold',
+        code: 'repository-integrity-invalid',
+      })
+    } finally {
+      await rm(repository.repository, { recursive: true, force: true })
+    }
+  })
+
   test('rejects a checked-out HEAD or origin/main that differs from declared current main', async () => {
     await withRepository(async (repository) => {
       const changed = r('8')

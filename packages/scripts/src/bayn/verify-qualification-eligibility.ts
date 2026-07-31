@@ -192,6 +192,31 @@ const readOptionalMetadata = async (path: string, signal: AbortSignal): Promise<
   }
 }
 
+const readRawOriginUrl = async (
+  repositoryRoot: string,
+  git: QualificationGit,
+  signal: AbortSignal,
+): Promise<string> => {
+  let configured: string
+  try {
+    configured = await git.text(repositoryRoot, ['config', '--get-all', 'remote.origin.url'], signal)
+  } catch (error) {
+    throw new QualificationGitVerificationError(
+      'repository-identity-invalid',
+      'checked-out repository has no readable raw origin URL',
+      error,
+    )
+  }
+  const origins = activeMetadataLines(configured, false)
+  if (origins.length !== 1 || origins[0] === undefined) {
+    throw new QualificationGitVerificationError(
+      'repository-identity-invalid',
+      'checked-out repository must have exactly one raw origin URL',
+    )
+  }
+  return origins[0]
+}
+
 const verifyRepositoryIntegrity = async (
   repositoryRoot: string,
   git: QualificationGit,
@@ -218,14 +243,24 @@ const verifyRepositoryIntegrity = async (
   }
 
   const configuration = await git.text(repositoryRoot, ['config', '--list'], signal)
-  const replacementConfiguration = configuration
-    .split('\n')
-    .map((line) => line.slice(0, line.indexOf('=')))
-    .filter((key) => key.toLowerCase().startsWith('replace.'))
+  const configurationKeys = configuration.split('\n').map((line) => {
+    const separator = line.indexOf('=')
+    return (separator < 0 ? line : line.slice(0, separator)).trim().toLowerCase()
+  })
+  const replacementConfiguration = configurationKeys.filter((key) => key.startsWith('replace.'))
   if (replacementConfiguration.length > 0) {
     throw new QualificationGitVerificationError(
       'repository-integrity-invalid',
       'replacement configuration is forbidden during qualification history verification',
+    )
+  }
+  const urlRewriteConfiguration = configurationKeys.filter(
+    (key) => key.startsWith('url.') && (key.endsWith('.insteadof') || key.endsWith('.pushinsteadof')),
+  )
+  if (urlRewriteConfiguration.length > 0) {
+    throw new QualificationGitVerificationError(
+      'repository-integrity-invalid',
+      'Git URL rewrite configuration is forbidden during qualification repository verification',
     )
   }
 
@@ -364,7 +399,7 @@ const verifyRepositoryAndLineage = async (
   const [headSha, originMainSha, originUrl] = await Promise.all([
     git.text(root, ['rev-parse', 'HEAD'], signal),
     git.text(root, ['rev-parse', 'refs/remotes/origin/main'], signal),
-    git.text(root, ['remote', 'get-url', 'origin'], signal),
+    readRawOriginUrl(root, git, signal),
   ])
   if (headSha !== input.currentMainSha || originMainSha !== input.currentMainSha) {
     throw new QualificationGitVerificationError(
@@ -398,7 +433,7 @@ const verifyRepositoryAndLineage = async (
   const [finalHeadSha, finalOriginMainSha, finalOriginUrl] = await Promise.all([
     git.text(root, ['rev-parse', 'HEAD'], signal),
     git.text(root, ['rev-parse', 'refs/remotes/origin/main'], signal),
-    git.text(root, ['remote', 'get-url', 'origin'], signal),
+    readRawOriginUrl(root, git, signal),
   ])
   if (
     finalHeadSha !== input.currentMainSha ||
