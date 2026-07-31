@@ -1,5 +1,6 @@
 import { Result } from 'effect'
 
+import { decideMonthEndCadenceEligibility, type MonthEndCadenceDecision } from '../cycle-observability'
 import { CycleState, type AutonomousCycle } from '../cycle'
 import type { CycleReadinessError } from '../cycle-readiness'
 import type { CycleRecoverySelection } from '../cycle-recovery'
@@ -42,6 +43,82 @@ export interface CyclePassLogFacts {
   readonly annotations: Readonly<Partial<Record<string, string | boolean>>>
 }
 
+const cadenceDecisionFromCycle = (cycle: AutonomousCycle): MonthEndCadenceDecision =>
+  decideMonthEndCadenceEligibility({
+    signalSessionDate: cycle.identity.signalSessionDate,
+    executionSessionDate: cycle.identity.executionSessionDate,
+  })
+
+export const cycleRunResultCadenceDecision = (result: CycleRunResult): MonthEndCadenceDecision | undefined => {
+  switch (result.outcome) {
+    case 'NO_PUBLICATION':
+      return undefined
+    case 'NOT_DUE':
+    case 'ACQUIRED':
+    case 'REACQUIRED':
+      return decideMonthEndCadenceEligibility({
+        signalSessionDate: result.signalSessionDate,
+        executionSessionDate: result.executionSessionDate,
+      })
+    case 'ALREADY_ACQUIRED':
+    case 'ALREADY_TERMINAL':
+    case 'RECOVERED':
+      return cadenceDecisionFromCycle(result.cycle)
+    case 'RESUMED':
+      return cadenceDecisionFromCycle(result.readiness.cycle)
+  }
+}
+
+export type RetainedAutonomousCyclePassObservation =
+  | {
+      readonly result: 'SUCCESS'
+      readonly observedAt: string
+      readonly outcome: CycleRunResult['outcome']
+      readonly cadenceDecision?: MonthEndCadenceDecision
+    }
+  | {
+      readonly result: 'FAILURE'
+      readonly observedAt: string
+      readonly operation: CycleRunnerError['operation']
+      readonly failure: CycleRunnerError['failure']
+      readonly message: string
+    }
+
+export const retainAutonomousCyclePassObservation = (
+  observation: CyclePassObservation,
+): RetainedAutonomousCyclePassObservation => {
+  if (observation.outcome === 'FAILED') {
+    return {
+      result: 'FAILURE',
+      observedAt: observation.observedAt,
+      operation: observation.error.operation,
+      failure: observation.error.failure,
+      message: observation.error.message,
+    }
+  }
+  const cadenceDecision = cycleRunResultCadenceDecision(observation.result)
+  return {
+    result: 'SUCCESS',
+    observedAt: observation.observedAt,
+    outcome: observation.result.outcome,
+    ...(cadenceDecision === undefined ? {} : { cadenceDecision }),
+  }
+}
+
+const cadenceLogAnnotations = (
+  decision: MonthEndCadenceDecision,
+): Readonly<Partial<Record<string, string | boolean>>> => ({
+  cadenceCondition: decision.condition,
+  cadenceReason: decision.reason,
+  nextEligibilityStatus: decision.nextEligibility.status,
+  ...(decision.nextEligibility.status === 'PROVEN'
+    ? {
+        nextEligibleSessionDate: decision.nextEligibility.sessionDate,
+        nextEligibilityBasis: decision.nextEligibility.basis,
+      }
+    : { nextEligibilityReason: decision.nextEligibility.reason }),
+})
+
 export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassLogFacts => {
   if (observation.outcome === 'FAILED') {
     return {
@@ -55,6 +132,8 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
     }
   }
   const result = observation.result
+  const cadenceDecision = cycleRunResultCadenceDecision(result)
+  const cadenceAnnotations = cadenceDecision === undefined ? {} : cadenceLogAnnotations(cadenceDecision)
   switch (result.outcome) {
     case 'NO_PUBLICATION':
       return {
@@ -70,9 +149,11 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
         annotations: {
           outcome: result.outcome,
           signalSessionDate: result.signalSessionDate,
+          executionSessionDate: result.cycle.identity.executionSessionDate,
           observedAt: result.observedAt,
           cycleId: result.cycle.identity.cycleId,
           cycleState: result.cycle.state,
+          ...cadenceAnnotations,
         },
       }
     case 'RESUMED':
@@ -82,10 +163,12 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
         annotations: {
           outcome: result.outcome,
           signalSessionDate: result.signalSessionDate,
+          executionSessionDate: result.readiness.cycle.identity.executionSessionDate,
           observedAt: result.observedAt,
           cycleId: result.readiness.cycle.identity.cycleId,
           cycleState: result.readiness.cycle.state,
           publicationReadiness: result.readiness.outcome,
+          ...cadenceAnnotations,
         },
       }
     case 'RECOVERED':
@@ -95,9 +178,12 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
         annotations: {
           outcome: result.outcome,
           recoveryAction: result.action,
+          signalSessionDate: result.cycle.identity.signalSessionDate,
+          executionSessionDate: result.cycle.identity.executionSessionDate,
           observedAt: result.observedAt,
           cycleId: result.cycle.identity.cycleId,
           cycleState: result.cycle.state,
+          ...cadenceAnnotations,
         },
       }
     case 'NOT_DUE':
@@ -111,6 +197,7 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
           observedAt: result.observedAt,
           calendarResponseHash: result.calendarResponseHash,
           calendarReadContentHash: result.calendarReadContentHash,
+          ...cadenceAnnotations,
         },
       }
     case 'ACQUIRED':
@@ -129,6 +216,7 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
           cycleState: result.readiness.cycle.state,
           publicationReadiness: result.readiness.outcome,
           persistenceDeduplicated: !result.receipt.created,
+          ...cadenceAnnotations,
         },
       }
   }
