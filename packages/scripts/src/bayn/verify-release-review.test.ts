@@ -721,6 +721,37 @@ describe('Bayn publication-range eligibility', () => {
 
   test.each([
     [
+      'pending',
+      review({ commitSha: realHistory.candidateHead, submittedAt: null, state: 'PENDING' }),
+      'exact-head-review-pending',
+    ],
+    [
+      'changes-requested',
+      review({
+        commitSha: realHistory.candidateHead,
+        submittedAt: '2026-07-31T11:22:50Z',
+        state: 'CHANGES_REQUESTED',
+      }),
+      'exact-head-review-changes-requested',
+    ],
+  ])('keeps a newer %s exact-head descendant review blocking remediation coverage', (_name, blockingReview, code) => {
+    const fixture = remediationHistoryFixture()
+    const pullRequest = fixture.snapshot.comparison!.commits[1]!.reviewSnapshot!.pullRequest!
+    ;(pullRequest.reviews as PullRequestReview[]).push(blockingReview)
+
+    expect(
+      evaluateBaynReleaseEligibility({
+        mainCommitSha: realHistory.remediationMerge,
+        baseRefName: 'main',
+        snapshot: fixture.snapshot,
+        nowMs: Date.parse('2026-07-31T12:30:00Z'),
+        pushBeforeSha: realHistory.qualificationMerge,
+      }),
+    ).toMatchObject({ status: 'hold', code })
+  })
+
+  test.each([
+    [
       'changed current blob',
       (fixture: ReturnType<typeof remediationHistoryFixture>) => {
         ;(fixture.evidence.currentPathBlobs as { path: string; blobSha: string }[])[0]!.blobSha = '0'.repeat(40)

@@ -1292,6 +1292,10 @@ const validateReleaseReviewRemediation = (input: {
     ) {
       return remediationInvalid(`remediation ${record.remediationId} descendant ancestry is incomplete or downgraded`)
     }
+    const normalDescendantReview = input.normalReviews.get(mergeCommit.sha)
+    if (normalDescendantReview?.status === 'hold' && normalDescendantReview.code !== 'exact-head-review-missing') {
+      return normalDescendantReview
+    }
     const descendantPull = mergeCommit.reviewSnapshot?.pullRequest
     const descendantReactions = descendantPull?.reactions.filter(
       (reaction) => reaction.userLogin === baynCodexBotLogin && reaction.content === '+1',
@@ -1498,7 +1502,7 @@ export const evaluateBaynReleaseEligibility = (input: {
     const review = normalReviews.get(commit.sha)
     if (review === undefined) throw new Error(`missing normal review evaluation for ${commit.sha}`)
     if (review.status === 'hold') {
-      if (coveredDescendantShas.has(commit.sha)) {
+      if (coveredDescendantShas.has(commit.sha) && review.code === 'exact-head-review-missing') {
         const sourcePull = commit.reviewSnapshot?.pullRequest
         const reviewedAncestor = sourcePull?.reviews
           .filter(
