@@ -271,6 +271,39 @@ describe('qualification dormancy verifier', () => {
     })
   })
 
+  test('rejects contradictory failure metadata in every exact authoritative history shape', () => {
+    const exactHistories = [
+      ['Candidate 19 dormant v1', exactCandidate19DormantHistoryV1],
+      ['current Candidate 20 ready v1', exactMainTrialHistoryV1],
+      ['#13442 Candidate 20 invalidated v2', exactCandidate20ContainmentHistoryV2],
+    ] as const
+
+    for (const [label, history] of exactHistories) {
+      for (const [failureStage, developmentMetricsObserved] of [
+        ['buildEvaluation-preflight', true],
+        ['development-evaluation', false],
+      ] as const) {
+        const contradictory = structuredClone(history)
+        contradictory.latestDevelopmentEvidence = {
+          ...(contradictory.latestDevelopmentEvidence as Record<string, unknown>),
+          failureStage,
+          developmentMetricsObserved,
+        }
+        expect(() => evaluateQualificationDormancy(contradictory), label).toThrow()
+      }
+
+      for (const missingField of ['failureStage', 'developmentMetricsObserved'] as const) {
+        const incomplete = structuredClone(history)
+        const latestDevelopmentEvidence = {
+          ...(incomplete.latestDevelopmentEvidence as Record<string, unknown>),
+        }
+        delete latestDevelopmentEvidence[missingField]
+        incomplete.latestDevelopmentEvidence = latestDevelopmentEvidence
+        expect(() => evaluateQualificationDormancy(incomplete), label).toThrow()
+      }
+    }
+  })
+
   test('returns a clean no-op when no preregistration is authorized', () => {
     expect(evaluateQualificationDormancy(exactCandidate19DormantHistoryV1)).toEqual({
       status: 'dormant',
@@ -369,6 +402,36 @@ describe('qualification dormancy verifier', () => {
         latestDevelopmentEvidence: {
           ...records.latestDevelopmentEvidence,
           evidenceContentHash: hash('f'),
+        },
+      },
+      {
+        ...trialHistory(),
+        latestDevelopmentEvidence: {
+          ...records.latestDevelopmentEvidence,
+          failureStage: 'buildEvaluation-preflight',
+          developmentMetricsObserved: true,
+        },
+      },
+      {
+        ...trialHistory(),
+        latestDevelopmentEvidence: {
+          ...records.latestDevelopmentEvidence,
+          failureStage: 'development-evaluation',
+          developmentMetricsObserved: false,
+        },
+      },
+      {
+        ...trialHistory(),
+        latestDevelopmentEvidence: {
+          ...records.latestDevelopmentEvidence,
+          developmentMetricsObserved: undefined,
+        },
+      },
+      {
+        ...trialHistory(),
+        latestDevelopmentEvidence: {
+          ...records.latestDevelopmentEvidence,
+          failureStage: undefined,
         },
       },
       { ...trialHistory(), latestReviewedCandidatePreregistration: mismatchedPriorTrialsHash },
@@ -497,6 +560,12 @@ export const frozenCandidateDevelopmentTrialHistory = history
   })
 
   test('stops null, invalid, and malformed run shapes before fake image or privileged input access', () => {
+    const contradictoryFailureHistory = trialHistory()
+    contradictoryFailureHistory.latestDevelopmentEvidence = {
+      ...(contradictoryFailureHistory.latestDevelopmentEvidence as Record<string, unknown>),
+      failureStage: 'buildEvaluation-preflight',
+      developmentMetricsObserved: true,
+    }
     const cases = [
       {
         label: 'null preregistration',
@@ -519,6 +588,12 @@ export const frozenCandidateDevelopmentTrialHistory = history
       {
         label: 'malformed evidence',
         source: moduleSource({ ...trialHistory(), latestReviewedCandidatePriorTrials: {} }),
+        exitCode: 1,
+        access: false,
+      },
+      {
+        label: 'contradictory failure metadata',
+        source: moduleSource(contradictoryFailureHistory),
         exitCode: 1,
         access: false,
       },

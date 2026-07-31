@@ -418,20 +418,31 @@ const decodeLatestDevelopmentEvidence = (value: unknown, label: string): LatestD
   const mergedSourceRevision = Object.hasOwn(record, 'mergedSourceRevision')
     ? hash(record.mergedSourceRevision, sha40, `${label}.mergedSourceRevision`)
     : undefined
-  const failureStage = Object.hasOwn(record, 'failureStage')
+  const hasFailureStage = Object.hasOwn(record, 'failureStage')
+  const hasDevelopmentMetricsObserved = Object.hasOwn(record, 'developmentMetricsObserved')
+  if (hasFailureStage !== hasDevelopmentMetricsObserved) {
+    throw new Error(`${label} failure stage and metric observation must be recorded together`)
+  }
+  const failureStage = hasFailureStage
     ? record.failureStage === 'buildEvaluation-preflight' || record.failureStage === 'development-evaluation'
       ? record.failureStage
       : (() => {
           throw new Error(`${label}.failureStage is unsupported`)
         })()
     : undefined
-  const developmentMetricsObserved = Object.hasOwn(record, 'developmentMetricsObserved')
+  const developmentMetricsObserved = hasDevelopmentMetricsObserved
     ? typeof record.developmentMetricsObserved === 'boolean'
       ? record.developmentMetricsObserved
       : (() => {
           throw new Error(`${label}.developmentMetricsObserved must be boolean`)
         })()
     : undefined
+  if (
+    (failureStage === 'buildEvaluation-preflight' && developmentMetricsObserved !== false) ||
+    (failureStage === 'development-evaluation' && developmentMetricsObserved !== true)
+  ) {
+    throw new Error(`${label} failure stage contradicts metric observation`)
+  }
   return {
     ...prior,
     evaluatedSourceRevision: hash(record.evaluatedSourceRevision, sha40, `${label}.evaluatedSourceRevision`),
