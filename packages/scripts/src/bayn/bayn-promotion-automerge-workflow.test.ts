@@ -48,9 +48,9 @@ describe('Bayn promotion auto-merge workflow', () => {
   })
 
   test('discovers exactly one same-repository preserved release branch', () => {
-    expect(workflow).toContain(
-      'pulls?state=open&base=main&head=${repository_owner}:codex/bayn-release-current&per_page=100',
-    )
+    expect(workflow).toContain("release_branch='codex/bayn-release-current'")
+    expect(workflow).toContain('release_ref="refs/heads/${release_branch}"')
+    expect(workflow).toContain('pulls?state=open&base=main&head=${repository_owner}:${release_branch}&per_page=100')
     expect(workflow).toContain('Expected exactly one preserved Bayn promotion PR')
     expect(workflow).toContain('No open Bayn promotion PR is ready for automatic merge.')
     expect(workflow).toContain('[[ ! "${expected_head_sha}" =~ ^[0-9a-f]{40}$ ]]')
@@ -114,7 +114,21 @@ describe('Bayn promotion auto-merge workflow', () => {
     expect(workflow).not.toContain('--delete-branch')
     expect(workflow).not.toContain('git push')
     expect(workflow).toContain("merged_state}\" != 'MERGED'")
+    expect(workflow).toContain('"repos/${GITHUB_REPOSITORY}/git/ref/heads/${release_branch}"')
+    expect(workflow).toContain('--method POST')
+    expect(workflow).toContain('"repos/${GITHUB_REPOSITORY}/git/refs"')
+    expect(workflow).toContain('-f ref="${release_ref}"')
+    expect(workflow).toContain('-f sha="${expected_head_sha}"')
+    expect(workflow).toContain('preserved_head_sha}" != "${expected_head_sha}')
+    expect(workflow).not.toContain('--method DELETE')
     expect(workflow).toContain('BAYN_PROMOTION_AUTOMERGED')
+    expect(workflow).toContain('BAYN_PROMOTION_BRANCH_PRESERVED')
+
+    const mergeIndex = workflow.indexOf('gh pr merge "${pull_number}"')
+    const restoreIndex = workflow.indexOf('--method POST')
+    const preservedIndex = workflow.indexOf('BAYN_PROMOTION_BRANCH_PRESERVED')
+    expect(mergeIndex).toBeLessThan(restoreIndex)
+    expect(restoreIndex).toBeLessThan(preservedIndex)
   })
 
   test('does not mutate repository or cluster security policy', () => {

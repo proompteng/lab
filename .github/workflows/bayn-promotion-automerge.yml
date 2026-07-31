@@ -68,9 +68,11 @@ jobs:
           fi
 
           repository_owner="${GITHUB_REPOSITORY%%/*}"
+          release_branch='codex/bayn-release-current'
+          release_ref="refs/heads/${release_branch}"
           pulls="$(
             gh api \
-              "repos/${GITHUB_REPOSITORY}/pulls?state=open&base=main&head=${repository_owner}:codex/bayn-release-current&per_page=100"
+              "repos/${GITHUB_REPOSITORY}/pulls?state=open&base=main&head=${repository_owner}:${release_branch}&per_page=100"
           )"
           pull_count="$(jq 'length' <<< "${pulls}")"
           if [[ "${pull_count}" == '0' ]]; then
@@ -224,4 +226,39 @@ jobs:
             echo "PR #${pull_number} did not report an exact-head merged state." >&2
             exit 1
           fi
+
+          branch_error="${RUNNER_TEMP}/bayn-promotion-automerge-branch-error"
+          set +e
+          preserved_head_sha="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/heads/${release_branch}" \
+              --jq '.object.sha' \
+              2>"${branch_error}"
+          )"
+          branch_status="$?"
+          set -e
+          if [[ "${branch_status}" != '0' ]]; then
+            if ! grep -Fq '(HTTP 404)' "${branch_error}"; then
+              cat "${branch_error}" >&2
+              echo "Unable to read preserved Bayn release branch after merging PR #${pull_number}." >&2
+              exit 1
+            fi
+            gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="${release_ref}" \
+              -f sha="${expected_head_sha}" \
+              >/dev/null
+          fi
+
+          preserved_head_sha="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/heads/${release_branch}" \
+              --jq '.object.sha'
+          )"
+          if [[ "${preserved_head_sha}" != "${expected_head_sha}" ]]; then
+            echo "Preserved Bayn release branch is not bound to merged head ${expected_head_sha}." >&2
+            exit 1
+          fi
           echo "BAYN_PROMOTION_AUTOMERGED pr=#${pull_number} head=${merged_head_sha} merged_at=${merged_at}"
+          echo "BAYN_PROMOTION_BRANCH_PRESERVED ref=${release_ref} head=${preserved_head_sha}"
