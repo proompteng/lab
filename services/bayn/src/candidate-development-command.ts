@@ -3023,16 +3023,7 @@ export const validateCandidateDevelopmentArtifactStructure = (
     return Result.fail(sourceVerificationFailure('verify-program-binding', decoded.failure))
   }
   const bindings = decoded.success
-  const preregistration = frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration
-  if (preregistration === null) {
-    return Result.fail(
-      sourceVerificationFailure('verify-program-binding', {
-        field: 'trialHistory.nextCandidatePreregistration',
-        expected: `reviewed Candidate ${input.candidateOrdinal} preregistration`,
-        observed: null,
-      }),
-    )
-  }
+  const preregistration = frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration
   const preflight = preflightCandidateDevelopment(input)
   if (Result.isFailure(preflight) || preflight.success.status !== 'PASS') {
     return Result.fail(

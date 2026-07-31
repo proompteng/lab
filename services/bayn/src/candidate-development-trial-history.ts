@@ -60,8 +60,8 @@ export interface CandidateDevelopmentTrialHistory {
     readonly evaluatedSourceRevision: string
     readonly reviewedSourceRevision?: string
     readonly mergedSourceRevision?: string
-    readonly failureStage?: 'buildEvaluation-preflight'
-    readonly developmentMetricsObserved?: false
+    readonly failureStage?: 'buildEvaluation-preflight' | 'development-evaluation'
+    readonly developmentMetricsObserved?: boolean
     readonly qualificationAttemptConsumed: false
   }
   readonly nextCandidatePreregistration: CandidateDevelopmentNextPreregistration | null
@@ -147,6 +147,19 @@ export const candidate18DevelopmentFailureEvidenceExpectation = {
 export const candidate18DevelopmentEligibility = {
   status: 'DEVELOPMENT_REJECTED',
   evidenceContentHash: candidate18DevelopmentFailureEvidenceExpectation.evidenceContentHash,
+  nextCandidatePreregistration: null,
+} as const
+
+export const candidate19DevelopmentFailureEvidenceExpectation = {
+  evidenceContentHash: '6170af41ddc14c04412a1929a60c88f35062ec2440f6e4b3beb0539bd411f364',
+  evaluatedSourceRevision: '276805b77d783db907dcb86cba934d7a4f6a0147',
+  failureStage: 'development-evaluation',
+  developmentMetricsObserved: true,
+} as const
+
+export const candidate19DevelopmentEligibility = {
+  status: 'DEVELOPMENT_REJECTED',
+  evidenceContentHash: candidate19DevelopmentFailureEvidenceExpectation.evidenceContentHash,
   nextCandidatePreregistration: null,
 } as const
 
@@ -238,21 +251,21 @@ export const deriveCandidateDevelopmentPriorTrialsHash = (material: CandidateDev
 export const frozenCandidateDevelopmentTrialHistory: CandidateDevelopmentTrialHistory = {
   schemaVersion: 'bayn.candidate-development-trial-history.v1',
   completedCandidateOrdinals: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-  developmentCandidateOrdinals: [17, 18],
+  developmentCandidateOrdinals: [17, 18, 19],
   latestReviewedCandidateLegacyPriorTrials: candidate18LegacyPriorTrialsMaterial,
   latestReviewedCandidatePriorTrials: candidate19PriorTrialsMaterial,
   latestTerminalEvidence: candidate16TerminalEvidence,
   candidatePreregistration: candidate16Preregistration,
   latestReviewedCandidatePreregistration: candidate19Preregistration,
   latestDevelopmentEvidence: {
-    candidateOrdinal: 18,
-    priorTrialCount: 17,
+    candidateOrdinal: 19,
+    priorTrialCount: 18,
     status: 'DEVELOPMENT_REJECTED',
-    evidenceContentHash: candidate18DevelopmentFailureEvidenceExpectation.evidenceContentHash,
-    evaluatedSourceRevision: candidate18DevelopmentFailureEvidenceExpectation.evaluatedSourceRevision,
-    failureStage: candidate18DevelopmentFailureEvidenceExpectation.failureStage,
-    developmentMetricsObserved: candidate18DevelopmentFailureEvidenceExpectation.developmentMetricsObserved,
+    evidenceContentHash: candidate19DevelopmentFailureEvidenceExpectation.evidenceContentHash,
+    evaluatedSourceRevision: candidate19DevelopmentFailureEvidenceExpectation.evaluatedSourceRevision,
+    failureStage: candidate19DevelopmentFailureEvidenceExpectation.failureStage,
+    developmentMetricsObserved: candidate19DevelopmentFailureEvidenceExpectation.developmentMetricsObserved,
     qualificationAttemptConsumed: false,
   },
-  nextCandidatePreregistration: candidate19Preregistration,
+  nextCandidatePreregistration: null,
 }

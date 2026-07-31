@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
 import { Effect, Result } from 'effect'
 
+import rawDevelopmentEvidence from '../candidates/ordinal-19-inverse-volatility-risk-diversification-development-evidence.json' with { type: 'json' }
 import rawPreregistration from '../candidates/ordinal-19-inverse-volatility-risk-diversification-preregistration.json' with { type: 'json' }
 import rawSourceManifest from '../candidates/ordinal-19-inverse-volatility-risk-diversification-source-manifest.json' with { type: 'json' }
 import {
-  candidate18DevelopmentFailureEvidenceExpectation,
+  candidate19DevelopmentEligibility,
   candidate19Preregistration,
   candidate19PriorTrialsMaterial,
   deriveCandidateDevelopmentPriorTrialsHash,
@@ -13,7 +15,13 @@ import {
 } from './candidate-development-calendar'
 import type { CandidateDevelopmentPreflightInput } from './candidate-development'
 import {
+  candidate19DevelopmentFailureEvidenceExpectation,
+  candidate19DevelopmentFailureEvidenceResult,
+  validateCandidate19DevelopmentFailureEvidence,
+} from './candidate-development-candidate-19-evidence'
+import {
   evaluateCandidateDevelopmentArtifact,
+  preregisterCandidateDevelopmentAttempt,
   validateCandidateDevelopmentArtifactStructure,
   type CandidateDevelopmentArtifactStructuralBindings,
   type CandidateDevelopmentSourceManifest,
@@ -210,15 +218,18 @@ describe('Candidate 19 inverse-volatility preregistration', () => {
     expect(frozenCandidateDevelopmentTrialHistory.completedCandidateOrdinals).toEqual(
       Array.from({ length: 16 }, (_, index) => index + 1),
     )
-    expect(frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals).toEqual([17, 18])
+    expect(frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals).toEqual([17, 18, 19])
     expect(frozenCandidateDevelopmentTrialHistory.latestDevelopmentEvidence).toMatchObject({
-      candidateOrdinal: 18,
-      priorTrialCount: 17,
-      evidenceContentHash: candidate18DevelopmentFailureEvidenceExpectation.evidenceContentHash,
-      developmentMetricsObserved: false,
+      candidateOrdinal: 19,
+      priorTrialCount: 18,
+      evidenceContentHash: candidate19DevelopmentFailureEvidenceExpectation.contentHash,
+      developmentMetricsObserved: true,
       qualificationAttemptConsumed: false,
     })
-    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toEqual(candidate19Preregistration)
+    expect(frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration).toEqual(
+      candidate19Preregistration,
+    )
+    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toBeNull()
     expect(candidate19Planner.specification).toEqual({
       id: 'inverse-volatility-63-spy-dbc-ten-percent-target-risk-cash',
       lookbackSessions: 63,
@@ -278,6 +289,71 @@ describe('Candidate 19 inverse-volatility preregistration', () => {
         },
       }),
     ).not.toEqual(Result.succeed(candidate19Preregistration.priorTrialsHash!))
+  })
+
+  test('records the sole terminal attempt and blocks registration before any rerun', () => {
+    expect(Result.isSuccess(candidate19DevelopmentFailureEvidenceResult)).toBe(true)
+    if (Result.isFailure(candidate19DevelopmentFailureEvidenceResult)) {
+      throw new Error('expected Candidate 19 failure evidence to be valid')
+    }
+    const evidence = candidate19DevelopmentFailureEvidenceResult.success
+    expect(evidence).toMatchObject({
+      candidateOrdinal: 19,
+      priorTrialCount: 18,
+      status: 'DEVELOPMENT_REJECTED',
+      qualificationAttemptConsumed: false,
+      nextCandidatePreregistration: null,
+      verifiedSource: {
+        sourceRevision: candidate19DevelopmentFailureEvidenceExpectation.sourceRevision,
+        moduleBlobOid: 'cc06d8506ba408aa8e24436a6b60faeadfb96d23',
+        sourceManifestBlobOid: '4c34e00d3b9e695cf5b7977ddc635b522fc14e31',
+      },
+      attempt: {
+        stage: 'development-evaluation',
+        developmentMetricsObserved: true,
+        developmentReportWritten: false,
+        evaluationRerunAuthorized: false,
+        exitCode: 1,
+      },
+      contentHash: candidate19DevelopmentFailureEvidenceExpectation.contentHash,
+    })
+    expect(candidate19DevelopmentEligibility).toEqual({
+      status: 'DEVELOPMENT_REJECTED',
+      evidenceContentHash: candidate19DevelopmentFailureEvidenceExpectation.contentHash,
+      nextCandidatePreregistration: null,
+    })
+    expect(preregisterCandidateDevelopmentAttempt(evidence.verifiedSource)).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-program-binding',
+        cause: {
+          field: 'trialHistory.nextCandidatePreregistration',
+          observed: null,
+        },
+      },
+    })
+
+    const attemptOutput = readFileSync(
+      new URL(
+        '../candidates/ordinal-19-inverse-volatility-risk-diversification-development-attempt.log',
+        import.meta.url,
+      ),
+      'utf8',
+    )
+    expect(
+      validateCandidate19DevelopmentFailureEvidence(rawDevelopmentEvidence, `${attemptOutput}tampered`),
+    ).toMatchObject({
+      failure: {
+        _tag: 'Candidate19DevelopmentFailureEvidenceBindingMismatch',
+        field: 'attempt.failure.capturedOutputSha256',
+      },
+    })
+    expect(
+      validateCandidate19DevelopmentFailureEvidence(
+        { ...rawDevelopmentEvidence, contentHash: '0'.repeat(64) },
+        attemptOutput,
+      ),
+    ).toMatchObject({ failure: { _tag: 'Candidate19DevelopmentFailureEvidenceContentHashMismatch' } })
   })
 
   test('rejects every immutable structural mismatch before metric evaluation', async () => {

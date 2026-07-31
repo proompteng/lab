@@ -245,8 +245,8 @@ describe('Candidate 17 preregistration', () => {
       status: 'DEVELOPMENT_REJECTED',
       nextCandidatePreregistration: null,
     })
-    expect(frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals).toEqual([17, 18])
-    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toEqual(candidate19Preregistration)
+    expect(frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals).toEqual([17, 18, 19])
+    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toBeNull()
   })
 
   test('keeps future observations out of the causal signal and preserves the financing reserve', () => {

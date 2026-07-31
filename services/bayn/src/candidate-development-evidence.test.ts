@@ -5,7 +5,7 @@ import {
   candidate17DevelopmentEligibility,
   candidate17DevelopmentEvidenceExpectation,
   candidate17Preregistration,
-  candidate18DevelopmentFailureEvidenceExpectation,
+  candidate19DevelopmentFailureEvidenceExpectation,
   candidate19Preregistration,
   frozenCandidateDevelopmentTrialHistory,
 } from './candidate-development-calendar'
@@ -343,7 +343,7 @@ describe('candidate development immutable evidence gate', () => {
     ).toMatchObject({ status: 'DEVELOPMENT_EVIDENCE_INVALID', nextCandidatePreregistration: null })
   }, 30_000)
 
-  test('preserves Candidate 17 rejection and terminalizes Candidate 18 without consuming qualification', () => {
+  test('preserves Candidate 17 and 18 rejection and terminalizes Candidate 19 without consuming qualification', () => {
     expect(candidate17ValidatedEligibility).toMatchObject({
       status: 'DEVELOPMENT_REJECTED',
       evidenceContentHash: candidate17DevelopmentEligibility.evidenceContentHash,
@@ -358,17 +358,20 @@ describe('candidate development immutable evidence gate', () => {
       1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
     ])
     expect(frozenCandidateDevelopmentTrialHistory.latestDevelopmentEvidence).toMatchObject({
-      candidateOrdinal: 18,
-      priorTrialCount: 17,
+      candidateOrdinal: 19,
+      priorTrialCount: 18,
       status: 'DEVELOPMENT_REJECTED',
-      evidenceContentHash: candidate18DevelopmentFailureEvidenceExpectation.evidenceContentHash,
-      evaluatedSourceRevision: candidate18DevelopmentFailureEvidenceExpectation.evaluatedSourceRevision,
-      failureStage: 'buildEvaluation-preflight',
-      developmentMetricsObserved: false,
+      evidenceContentHash: candidate19DevelopmentFailureEvidenceExpectation.evidenceContentHash,
+      evaluatedSourceRevision: candidate19DevelopmentFailureEvidenceExpectation.evaluatedSourceRevision,
+      failureStage: 'development-evaluation',
+      developmentMetricsObserved: true,
       qualificationAttemptConsumed: false,
     })
-    expect(frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals).toEqual([17, 18])
-    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toEqual(candidate19Preregistration)
+    expect(frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals).toEqual([17, 18, 19])
+    expect(frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration).toEqual(
+      candidate19Preregistration,
+    )
+    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toBeNull()
     expect(Math.max(...frozenCandidateDevelopmentTrialHistory.completedCandidateOrdinals)).toBe(16)
   })
 
