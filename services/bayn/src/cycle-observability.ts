@@ -10,6 +10,247 @@ export interface CycleOperationsThresholds {
   readonly unknownMutationThresholdMs: number
 }
 
+export enum MonthEndCadenceCondition {
+  Due = 'DUE',
+  ExpectedWait = 'EXPECTED_WAIT',
+  NotApplicable = 'NOT_APPLICABLE',
+  Stalled = 'STALLED',
+  Unknown = 'UNKNOWN',
+}
+
+export enum MonthEndCadenceReason {
+  CyclePassStale = 'CYCLE_PASS_STALE',
+  FutureCalendarEvidenceUnavailable = 'FUTURE_CALENDAR_EVIDENCE_UNAVAILABLE',
+  InvalidOrInsufficientCalendarEvidence = 'INVALID_OR_INSUFFICIENT_CALENDAR_EVIDENCE',
+  LatestPassFailed = 'LATEST_PASS_FAILED',
+  MonthEndCadenceNotDue = 'MONTH_END_CADENCE_NOT_DUE',
+  NoPassRecorded = 'NO_PASS_RECORDED',
+  PassOutcomeNotApplicable = 'PASS_OUTCOME_NOT_APPLICABLE',
+  RunnerUnavailable = 'RUNNER_UNAVAILABLE',
+  SignalAndExecutionSessionSameMonth = 'SIGNAL_AND_EXECUTION_SESSION_SAME_MONTH',
+  SignalToExecutionMonthTransition = 'SIGNAL_TO_EXECUTION_MONTH_TRANSITION',
+}
+
+export type MonthEndCadenceNextEligibility =
+  | {
+      readonly status: 'PROVEN'
+      readonly sessionDate: string
+      readonly basis: 'EXECUTION_SESSION_MONTH_TRANSITION'
+    }
+  | {
+      readonly status: 'UNKNOWN'
+      readonly reason:
+        | MonthEndCadenceReason.FutureCalendarEvidenceUnavailable
+        | MonthEndCadenceReason.InvalidOrInsufficientCalendarEvidence
+    }
+
+export interface MonthEndCadenceDecision {
+  readonly schemaVersion: 'bayn.month-end-cadence-decision.v1'
+  readonly condition:
+    | MonthEndCadenceCondition.Due
+    | MonthEndCadenceCondition.ExpectedWait
+    | MonthEndCadenceCondition.Unknown
+  readonly reason:
+    | MonthEndCadenceReason.SignalAndExecutionSessionSameMonth
+    | MonthEndCadenceReason.SignalToExecutionMonthTransition
+    | MonthEndCadenceReason.InvalidOrInsufficientCalendarEvidence
+  readonly signalSessionDate: string | null
+  readonly executionSessionDate: string | null
+  readonly nextEligibility: MonthEndCadenceNextEligibility
+}
+
+export type AutonomousCycleCadenceObservation = {
+  readonly schemaVersion: 'bayn.autonomous-cycle-cadence-observation.v1'
+  readonly condition: MonthEndCadenceCondition
+  readonly reason: MonthEndCadenceReason
+  readonly signalSessionDate: string | null
+  readonly executionSessionDate: string | null
+  readonly nextEligibility: MonthEndCadenceNextEligibility
+}
+
+export type AutonomousCycleCadenceFreshness = 'AVAILABLE' | 'STALE' | 'UNAVAILABLE'
+
+const isIsoDate = (value: string | undefined): value is string => {
+  if (value === undefined || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const date = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+}
+
+const unknownNextEligibility = (
+  reason:
+    | MonthEndCadenceReason.FutureCalendarEvidenceUnavailable
+    | MonthEndCadenceReason.InvalidOrInsufficientCalendarEvidence,
+): MonthEndCadenceNextEligibility => ({ status: 'UNKNOWN', reason })
+
+export const decideMonthEndCadenceEligibility = (facts: {
+  readonly signalSessionDate?: string
+  readonly executionSessionDate?: string
+}): MonthEndCadenceDecision => {
+  if (
+    !isIsoDate(facts.signalSessionDate) ||
+    !isIsoDate(facts.executionSessionDate) ||
+    facts.signalSessionDate >= facts.executionSessionDate
+  ) {
+    return {
+      schemaVersion: 'bayn.month-end-cadence-decision.v1',
+      condition: MonthEndCadenceCondition.Unknown,
+      reason: MonthEndCadenceReason.InvalidOrInsufficientCalendarEvidence,
+      signalSessionDate: isIsoDate(facts.signalSessionDate) ? facts.signalSessionDate : null,
+      executionSessionDate: isIsoDate(facts.executionSessionDate) ? facts.executionSessionDate : null,
+      nextEligibility: unknownNextEligibility(MonthEndCadenceReason.InvalidOrInsufficientCalendarEvidence),
+    }
+  }
+
+  if (facts.signalSessionDate.slice(0, 7) !== facts.executionSessionDate.slice(0, 7)) {
+    return {
+      schemaVersion: 'bayn.month-end-cadence-decision.v1',
+      condition: MonthEndCadenceCondition.Due,
+      reason: MonthEndCadenceReason.SignalToExecutionMonthTransition,
+      signalSessionDate: facts.signalSessionDate,
+      executionSessionDate: facts.executionSessionDate,
+      nextEligibility: {
+        status: 'PROVEN',
+        sessionDate: facts.executionSessionDate,
+        basis: 'EXECUTION_SESSION_MONTH_TRANSITION',
+      },
+    }
+  }
+
+  return {
+    schemaVersion: 'bayn.month-end-cadence-decision.v1',
+    condition: MonthEndCadenceCondition.ExpectedWait,
+    reason: MonthEndCadenceReason.SignalAndExecutionSessionSameMonth,
+    signalSessionDate: facts.signalSessionDate,
+    executionSessionDate: facts.executionSessionDate,
+    nextEligibility: unknownNextEligibility(MonthEndCadenceReason.FutureCalendarEvidenceUnavailable),
+  }
+}
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === 'object' && value !== null
+
+export const retainedAutonomousCycleCadenceDecision = (observation: unknown): MonthEndCadenceDecision | undefined => {
+  if (!isRecord(observation) || !Object.hasOwn(observation, 'cadenceDecision')) return undefined
+  const retained = observation.cadenceDecision
+  if (!isRecord(retained)) return decideMonthEndCadenceEligibility({})
+  return decideMonthEndCadenceEligibility({
+    ...(typeof retained.signalSessionDate === 'string' ? { signalSessionDate: retained.signalSessionDate } : {}),
+    ...(typeof retained.executionSessionDate === 'string'
+      ? { executionSessionDate: retained.executionSessionDate }
+      : {}),
+  })
+}
+
+export const projectAutonomousCycleCadenceObservation = (input: {
+  readonly configured: boolean
+  readonly lastPassResult: 'SUCCESS' | 'FAILURE' | null
+  readonly lastPassOutcome: string | null
+  readonly freshness: AutonomousCycleCadenceFreshness
+  readonly cadenceDecision?: MonthEndCadenceDecision
+}): AutonomousCycleCadenceObservation => {
+  const common = { schemaVersion: 'bayn.autonomous-cycle-cadence-observation.v1' } as const
+  const unavailable = unknownNextEligibility(MonthEndCadenceReason.FutureCalendarEvidenceUnavailable)
+  const retainedEvidence = {
+    signalSessionDate: input.cadenceDecision?.signalSessionDate ?? null,
+    executionSessionDate: input.cadenceDecision?.executionSessionDate ?? null,
+    nextEligibility: input.cadenceDecision?.nextEligibility ?? unavailable,
+  }
+  if (!input.configured) {
+    return {
+      ...common,
+      condition: MonthEndCadenceCondition.Unknown,
+      reason: MonthEndCadenceReason.NoPassRecorded,
+      signalSessionDate: null,
+      executionSessionDate: null,
+      nextEligibility: unavailable,
+    }
+  }
+  if (input.lastPassResult === null && input.freshness === 'STALE') {
+    return {
+      ...common,
+      condition: MonthEndCadenceCondition.Stalled,
+      reason: MonthEndCadenceReason.CyclePassStale,
+      signalSessionDate: null,
+      executionSessionDate: null,
+      nextEligibility: unavailable,
+    }
+  }
+  if (input.lastPassResult === null && input.freshness === 'UNAVAILABLE') {
+    return {
+      ...common,
+      condition: MonthEndCadenceCondition.Unknown,
+      reason: MonthEndCadenceReason.RunnerUnavailable,
+      signalSessionDate: null,
+      executionSessionDate: null,
+      nextEligibility: unavailable,
+    }
+  }
+  if (input.lastPassResult === null) {
+    return {
+      ...common,
+      condition: MonthEndCadenceCondition.Unknown,
+      reason: MonthEndCadenceReason.NoPassRecorded,
+      signalSessionDate: null,
+      executionSessionDate: null,
+      nextEligibility: unavailable,
+    }
+  }
+  if (input.lastPassResult === 'FAILURE') {
+    return {
+      ...common,
+      condition: MonthEndCadenceCondition.Unknown,
+      reason: MonthEndCadenceReason.LatestPassFailed,
+      signalSessionDate: null,
+      executionSessionDate: null,
+      nextEligibility: unavailable,
+    }
+  }
+  if (input.freshness === 'STALE') {
+    return {
+      ...common,
+      condition: MonthEndCadenceCondition.Stalled,
+      reason: MonthEndCadenceReason.CyclePassStale,
+      ...retainedEvidence,
+    }
+  }
+  if (input.freshness === 'UNAVAILABLE') {
+    return {
+      ...common,
+      condition: MonthEndCadenceCondition.Unknown,
+      reason: MonthEndCadenceReason.RunnerUnavailable,
+      ...retainedEvidence,
+    }
+  }
+  if (input.cadenceDecision !== undefined) {
+    return {
+      ...common,
+      condition: input.cadenceDecision.condition,
+      reason: input.cadenceDecision.reason,
+      signalSessionDate: input.cadenceDecision.signalSessionDate,
+      executionSessionDate: input.cadenceDecision.executionSessionDate,
+      nextEligibility: input.cadenceDecision.nextEligibility,
+    }
+  }
+  if (input.lastPassOutcome !== 'NOT_DUE') {
+    return {
+      ...common,
+      condition: MonthEndCadenceCondition.NotApplicable,
+      reason: MonthEndCadenceReason.PassOutcomeNotApplicable,
+      signalSessionDate: null,
+      executionSessionDate: null,
+      nextEligibility: unavailable,
+    }
+  }
+  return {
+    ...common,
+    condition: MonthEndCadenceCondition.ExpectedWait,
+    reason: MonthEndCadenceReason.MonthEndCadenceNotDue,
+    signalSessionDate: null,
+    executionSessionDate: null,
+    nextEligibility: unavailable,
+  }
+}
+
 export interface CycleOperationsSnapshot {
   readonly cycleId: string
   readonly accountId: string

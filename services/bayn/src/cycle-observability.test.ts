@@ -5,8 +5,13 @@ import { Result } from 'effect'
 import {
   CycleOperationsCondition,
   CycleOperationsReason,
+  MonthEndCadenceCondition,
+  MonthEndCadenceReason,
+  decideMonthEndCadenceEligibility,
   deriveCycleOperationsStatus,
   deriveCycleOperationsStatusResult,
+  projectAutonomousCycleCadenceObservation,
+  retainedAutonomousCycleCadenceDecision,
   renderCycleOperationsStatusFailure,
   type CycleOperationsProjection,
   type CycleOperationsSnapshot,
@@ -51,6 +56,201 @@ const projection = (overrides: Partial<CycleOperationsProjection> = {}): CycleOp
   reconciliation: null,
   mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null, latestOccurredAt: null },
   ...overrides,
+})
+
+describe('month-end cadence observability decisions', () => {
+  test('classifies a same-month execution session as an exact expected wait', () => {
+    expect(
+      decideMonthEndCadenceEligibility({
+        signalSessionDate: '2026-07-30',
+        executionSessionDate: '2026-07-31',
+      }),
+    ).toEqual({
+      schemaVersion: 'bayn.month-end-cadence-decision.v1',
+      condition: MonthEndCadenceCondition.ExpectedWait,
+      reason: MonthEndCadenceReason.SignalAndExecutionSessionSameMonth,
+      signalSessionDate: '2026-07-30',
+      executionSessionDate: '2026-07-31',
+      nextEligibility: {
+        status: 'UNKNOWN',
+        reason: MonthEndCadenceReason.FutureCalendarEvidenceUnavailable,
+      },
+    })
+  })
+
+  test('classifies a month transition as due and proves the execution session', () => {
+    expect(
+      decideMonthEndCadenceEligibility({
+        signalSessionDate: '2026-07-31',
+        executionSessionDate: '2026-08-03',
+      }),
+    ).toEqual({
+      schemaVersion: 'bayn.month-end-cadence-decision.v1',
+      condition: MonthEndCadenceCondition.Due,
+      reason: MonthEndCadenceReason.SignalToExecutionMonthTransition,
+      signalSessionDate: '2026-07-31',
+      executionSessionDate: '2026-08-03',
+      nextEligibility: {
+        status: 'PROVEN',
+        sessionDate: '2026-08-03',
+        basis: 'EXECUTION_SESSION_MONTH_TRANSITION',
+      },
+    })
+  })
+
+  test('uses authoritative session dates without guessing across holiday and weekend gaps', () => {
+    const holidayGap = decideMonthEndCadenceEligibility({
+      signalSessionDate: '2026-11-25',
+      executionSessionDate: '2026-11-27',
+    })
+    const weekendTransition = decideMonthEndCadenceEligibility({
+      signalSessionDate: '2026-01-30',
+      executionSessionDate: '2026-02-02',
+    })
+
+    expect(holidayGap).toMatchObject({
+      condition: MonthEndCadenceCondition.ExpectedWait,
+      reason: MonthEndCadenceReason.SignalAndExecutionSessionSameMonth,
+      nextEligibility: { status: 'UNKNOWN' },
+    })
+    expect(weekendTransition).toMatchObject({
+      condition: MonthEndCadenceCondition.Due,
+      reason: MonthEndCadenceReason.SignalToExecutionMonthTransition,
+      nextEligibility: { status: 'PROVEN', sessionDate: '2026-02-02' },
+    })
+  })
+
+  test('reports bounded unknown for malformed, incomplete, or non-forward calendar evidence', () => {
+    for (const facts of [
+      { signalSessionDate: '2026-07-30' },
+      { signalSessionDate: '2026-02-30', executionSessionDate: '2026-03-02' },
+      { signalSessionDate: '2026-07-31', executionSessionDate: '2026-07-30' },
+    ]) {
+      expect(decideMonthEndCadenceEligibility(facts)).toMatchObject({
+        condition: MonthEndCadenceCondition.Unknown,
+        reason: MonthEndCadenceReason.InvalidOrInsufficientCalendarEvidence,
+        nextEligibility: {
+          status: 'UNKNOWN',
+          reason: MonthEndCadenceReason.InvalidOrInsufficientCalendarEvidence,
+        },
+      })
+    }
+  })
+
+  test('distinguishes a fresh expected wait from a missed or stalled loop', () => {
+    const common = {
+      configured: true,
+      lastPassResult: 'SUCCESS' as const,
+      lastPassOutcome: 'NOT_DUE',
+    }
+    const fresh = projectAutonomousCycleCadenceObservation({ ...common, freshness: 'AVAILABLE' })
+    const stalled = projectAutonomousCycleCadenceObservation({ ...common, freshness: 'STALE' })
+
+    expect(fresh).toMatchObject({
+      condition: MonthEndCadenceCondition.ExpectedWait,
+      reason: MonthEndCadenceReason.MonthEndCadenceNotDue,
+      nextEligibility: {
+        status: 'UNKNOWN',
+        reason: MonthEndCadenceReason.FutureCalendarEvidenceUnavailable,
+      },
+    })
+    expect(stalled).toMatchObject({
+      condition: MonthEndCadenceCondition.Stalled,
+      reason: MonthEndCadenceReason.CyclePassStale,
+      nextEligibility: { status: 'UNKNOWN' },
+    })
+  })
+
+  test('reports a configured first-pass startup hang as stalled after runner classification', () => {
+    expect(
+      projectAutonomousCycleCadenceObservation({
+        configured: true,
+        lastPassResult: null,
+        lastPassOutcome: null,
+        freshness: 'STALE',
+      }),
+    ).toEqual({
+      schemaVersion: 'bayn.autonomous-cycle-cadence-observation.v1',
+      condition: MonthEndCadenceCondition.Stalled,
+      reason: MonthEndCadenceReason.CyclePassStale,
+      signalSessionDate: null,
+      executionSessionDate: null,
+      nextEligibility: {
+        status: 'UNKNOWN',
+        reason: MonthEndCadenceReason.FutureCalendarEvidenceUnavailable,
+      },
+    })
+    expect(
+      projectAutonomousCycleCadenceObservation({
+        configured: true,
+        lastPassResult: null,
+        lastPassOutcome: null,
+        freshness: 'UNAVAILABLE',
+      }),
+    ).toMatchObject({
+      condition: MonthEndCadenceCondition.Unknown,
+      reason: MonthEndCadenceReason.RunnerUnavailable,
+    })
+  })
+
+  test('preserves a proven month-transition eligibility from retained durable cycle facts', () => {
+    const cadenceDecision = decideMonthEndCadenceEligibility({
+      signalSessionDate: '2026-07-31',
+      executionSessionDate: '2026-08-03',
+    })
+
+    expect(
+      projectAutonomousCycleCadenceObservation({
+        configured: true,
+        lastPassResult: 'SUCCESS',
+        lastPassOutcome: 'ACQUIRED',
+        freshness: 'AVAILABLE',
+        cadenceDecision,
+      }),
+    ).toEqual({
+      schemaVersion: 'bayn.autonomous-cycle-cadence-observation.v1',
+      condition: MonthEndCadenceCondition.Due,
+      reason: MonthEndCadenceReason.SignalToExecutionMonthTransition,
+      signalSessionDate: '2026-07-31',
+      executionSessionDate: '2026-08-03',
+      nextEligibility: {
+        status: 'PROVEN',
+        sessionDate: '2026-08-03',
+        basis: 'EXECUTION_SESSION_MONTH_TRANSITION',
+      },
+    })
+  })
+
+  test('recomputes retained latest-pass evidence instead of trusting projected condition fields', () => {
+    expect(
+      retainedAutonomousCycleCadenceDecision({
+        result: 'SUCCESS',
+        outcome: 'RECOVERED',
+        cadenceDecision: {
+          condition: MonthEndCadenceCondition.ExpectedWait,
+          reason: MonthEndCadenceReason.SignalAndExecutionSessionSameMonth,
+          signalSessionDate: '2026-07-31',
+          executionSessionDate: '2026-08-03',
+        },
+      }),
+    ).toEqual({
+      schemaVersion: 'bayn.month-end-cadence-decision.v1',
+      condition: MonthEndCadenceCondition.Due,
+      reason: MonthEndCadenceReason.SignalToExecutionMonthTransition,
+      signalSessionDate: '2026-07-31',
+      executionSessionDate: '2026-08-03',
+      nextEligibility: {
+        status: 'PROVEN',
+        sessionDate: '2026-08-03',
+        basis: 'EXECUTION_SESSION_MONTH_TRANSITION',
+      },
+    })
+    expect(retainedAutonomousCycleCadenceDecision({ result: 'SUCCESS', outcome: 'NO_PUBLICATION' })).toBeUndefined()
+    expect(retainedAutonomousCycleCadenceDecision({ cadenceDecision: 'malformed' })).toMatchObject({
+      condition: MonthEndCadenceCondition.Unknown,
+      reason: MonthEndCadenceReason.InvalidOrInsufficientCalendarEvidence,
+    })
+  })
 })
 
 describe('autonomous cycle operations classification', () => {

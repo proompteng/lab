@@ -24,6 +24,7 @@ import {
   type CycleRunResult,
 } from './cycle-runner'
 import { validateCycleLoopInterval } from './cycle-runner/decisions'
+import { retainAutonomousCyclePassObservation } from './cycle-runner/pass-decisions'
 import { CycleNotDueReconciliationError, type ReconciliationCadenceState } from './cycle-runner/model'
 import { CycleStore } from './db/cycle-store'
 import {
@@ -630,20 +631,7 @@ export const buildMutationShadowCycleDecision = <R>(
 const observePass = (
   recordPass: Parameters<AutonomousCycleStartup>[0]['recordPass'],
   observation: CyclePassObservation,
-) =>
-  observation.outcome === 'SUCCEEDED'
-    ? recordPass({
-        result: 'SUCCESS',
-        observedAt: observation.observedAt,
-        outcome: observation.result.outcome,
-      })
-    : recordPass({
-        result: 'FAILURE',
-        observedAt: observation.observedAt,
-        operation: observation.error.operation,
-        failure: observation.error.failure,
-        message: observation.error.message,
-      })
+) => recordPass(retainAutonomousCyclePassObservation(observation))
 
 export type ObserveAutonomousCycleInput = {
   readonly accountId: string

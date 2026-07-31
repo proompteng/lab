@@ -19,8 +19,15 @@ import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from './broker/identity'
 import type { ExecutionPolicy } from './execution/configuration'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
-import { CycleOperationsCondition, CycleOperationsReason } from './cycle-observability'
-import { CycleState, CycleTerminalReason } from './cycle'
+import {
+  CycleOperationsCondition,
+  CycleOperationsReason,
+  MonthEndCadenceCondition,
+  MonthEndCadenceReason,
+} from './cycle-observability'
+import { CycleState, CycleTerminalReason, type AutonomousCycle } from './cycle'
+import type { CyclePassObservation, CycleRunResult } from './cycle-runner/model'
+import { retainAutonomousCyclePassObservation } from './cycle-runner/pass-decisions'
 import { DatabaseError, type EvidenceStoreService } from './db/evidence-store'
 import type { BrokerProbe } from './health'
 import {
@@ -68,6 +75,49 @@ const sandboxMutationExecution: ExecutionPolicy = {
     authorityGenerationHash: 'a'.repeat(64),
   },
 }
+
+const retainedPass = (result: CycleRunResult): RuntimeState['autonomousCycleLoop']['lastPass'] =>
+  retainAutonomousCyclePassObservation({
+    outcome: 'SUCCEEDED',
+    observedAt: result.observedAt,
+    result,
+  } satisfies CyclePassObservation)
+
+const cadenceCycle = (
+  signalSessionDate: string,
+  executionSessionDate: string,
+  state: CycleState = CycleState.Completed,
+): AutonomousCycle =>
+  ({
+    identity: {
+      cycleId: 'c'.repeat(64),
+      signalSessionDate,
+      executionSessionDate,
+    },
+    state,
+  }) as AutonomousCycle
+
+const acquiredCadenceResult = (
+  outcome: 'ACQUIRED' | 'REACQUIRED',
+  observedAt: string,
+  signalSessionDate: string,
+  executionSessionDate: string,
+): CycleRunResult =>
+  ({
+    outcome,
+    signalSessionDate,
+    executionSessionDate,
+    observedAt,
+    calendarResponseHash: 'a'.repeat(64),
+    calendarReadContentHash: 'b'.repeat(64),
+    receipt: { created: outcome === 'ACQUIRED' },
+    readiness: {
+      outcome: 'BOUND',
+      observedAt,
+      cycle: cadenceCycle(signalSessionDate, executionSessionDate, CycleState.Pending),
+      snapshotId: 'd'.repeat(64),
+    },
+  }) as CycleRunResult
 
 interface TestServer {
   readonly port: number
@@ -1485,6 +1535,168 @@ describe('Bayn HTTP probes', () => {
         Effect.asVoid,
       ),
     )
+  })
+
+  test('exposes fresh NOT_DUE expected waiting and distinguishes a stalled autonomous loop', () => {
+    const observedAt = '2026-07-31T13:00:00.000Z'
+    const notDue: CycleRunResult = {
+      outcome: 'NOT_DUE',
+      signalSessionDate: '2026-07-30',
+      executionSessionDate: '2026-07-31',
+      observedAt,
+      calendarResponseHash: 'a'.repeat(64),
+      calendarReadContentHash: 'b'.repeat(64),
+    }
+    const expectedWait: RuntimeState = {
+      ...readyState(),
+      autonomousCycleLoop: {
+        configured: true,
+        startedAt: observedAt,
+        lastPass: retainedPass(notDue),
+      },
+    }
+    const stalled: RuntimeState = {
+      ...expectedWait,
+      status: 'DEGRADED',
+      health: {
+        ...expectedWait.health,
+        dependencies: {
+          ...expectedWait.health.dependencies,
+          cycleRunner: {
+            status: 'UNAVAILABLE',
+            checkedAt: observedAt,
+            error: `autonomous cycle loop has not completed a successful pass for ${config.cycleStallThresholdMs}ms`,
+          },
+        },
+      },
+    }
+
+    const expectedFacts = statusFacts(expectedWait, readOnlyExecution, provenance, 'embedded')
+    expect(expectedFacts.autonomousCycleLoop.cadence).toEqual({
+      schemaVersion: 'bayn.autonomous-cycle-cadence-observation.v1',
+      condition: MonthEndCadenceCondition.ExpectedWait,
+      reason: MonthEndCadenceReason.SignalAndExecutionSessionSameMonth,
+      signalSessionDate: '2026-07-30',
+      executionSessionDate: '2026-07-31',
+      nextEligibility: {
+        status: 'UNKNOWN',
+        reason: MonthEndCadenceReason.FutureCalendarEvidenceUnavailable,
+      },
+    })
+    expect(expectedFacts.autonomousCycleLoop.lastPass).toEqual({ result: 'SUCCESS', observedAt, outcome: 'NOT_DUE' })
+    expect(expectedFacts.autonomousCycleLoop.lastPass).not.toHaveProperty('cadenceDecision')
+    const expectedMetrics = renderPrometheusMetrics(expectedWait, config, provenance, 'embedded')
+    expect(expectedMetrics).toContain('bayn_autonomous_cycle_cadence_condition{condition="expected_wait"} 1')
+    expect(expectedMetrics).toContain(
+      'bayn_autonomous_cycle_cadence_reason{reason="signal_and_execution_session_same_month"} 1',
+    )
+    expect(expectedMetrics).toContain('bayn_autonomous_cycle_next_eligibility{status="unknown"} 1')
+    expect(expectedMetrics).toContain('bayn_broker_orders_enabled 0')
+
+    const stalledFacts = statusFacts(stalled, readOnlyExecution, provenance, 'embedded')
+    expect(stalledFacts.autonomousCycleLoop.cadence).toMatchObject({
+      condition: MonthEndCadenceCondition.Stalled,
+      reason: MonthEndCadenceReason.CyclePassStale,
+      signalSessionDate: '2026-07-30',
+      executionSessionDate: '2026-07-31',
+      nextEligibility: { status: 'UNKNOWN' },
+    })
+    const stalledMetrics = renderPrometheusMetrics(stalled, config, provenance, 'embedded')
+    expect(stalledMetrics).toContain('bayn_autonomous_cycle_cadence_condition{condition="stalled"} 1')
+    expect(stalledMetrics).toContain('bayn_autonomous_cycle_cadence_reason{reason="cycle_pass_stale"} 1')
+  })
+
+  test('exposes a configured first-pass startup hang as stalled in status and metrics', () => {
+    const startedAt = '2026-07-31T13:00:00.000Z'
+    const startupHang: RuntimeState = {
+      ...readyState(),
+      status: 'DEGRADED',
+      health: {
+        ...readyState().health,
+        checkedAt: '2026-07-31T13:05:00.000Z',
+        dependencies: {
+          ...readyState().health.dependencies,
+          cycleRunner: {
+            status: 'UNAVAILABLE',
+            checkedAt: '2026-07-31T13:05:00.000Z',
+            error: `autonomous cycle loop has not completed a successful pass for ${config.cycleStallThresholdMs}ms`,
+          },
+        },
+      },
+      autonomousCycleLoop: {
+        configured: true,
+        startedAt,
+        lastPass: null,
+      },
+    }
+
+    const facts = statusFacts(startupHang, readOnlyExecution, provenance, 'embedded')
+    expect(facts.autonomousCycleLoop.lastPass).toBeNull()
+    expect(facts.autonomousCycleLoop.cadence).toEqual({
+      schemaVersion: 'bayn.autonomous-cycle-cadence-observation.v1',
+      condition: MonthEndCadenceCondition.Stalled,
+      reason: MonthEndCadenceReason.CyclePassStale,
+      signalSessionDate: null,
+      executionSessionDate: null,
+      nextEligibility: {
+        status: 'UNKNOWN',
+        reason: MonthEndCadenceReason.FutureCalendarEvidenceUnavailable,
+      },
+    })
+
+    const metrics = renderPrometheusMetrics(startupHang, config, provenance, 'embedded')
+    expect(metrics).toContain('bayn_autonomous_cycle_cadence_condition{condition="stalled"} 1')
+    expect(metrics).toContain('bayn_autonomous_cycle_cadence_reason{reason="cycle_pass_stale"} 1')
+    expect(metrics).toContain('bayn_autonomous_cycle_loop_last_pass{result="unknown"} 1')
+    expect(metrics).toContain('bayn_broker_orders_enabled 0')
+  })
+
+  test('preserves retained cadence for acquired, reacquired, recovered, and terminal outcomes', () => {
+    const observedAt = '2026-08-03T13:30:00.000Z'
+    const signalSessionDate = '2026-07-31'
+    const executionSessionDate = '2026-08-03'
+    const terminal = cadenceCycle(signalSessionDate, executionSessionDate)
+    const results: readonly CycleRunResult[] = [
+      acquiredCadenceResult('ACQUIRED', observedAt, signalSessionDate, executionSessionDate),
+      acquiredCadenceResult('REACQUIRED', observedAt, signalSessionDate, executionSessionDate),
+      { outcome: 'RECOVERED', action: 'COMPLETED', observedAt, cycle: terminal },
+      { outcome: 'ALREADY_TERMINAL', signalSessionDate, observedAt, cycle: terminal },
+    ]
+
+    for (const result of results) {
+      const state: RuntimeState = {
+        ...readyState(),
+        autonomousCycleLoop: {
+          configured: true,
+          startedAt: observedAt,
+          lastPass: retainedPass(result),
+        },
+      }
+      expect(state.cycle.current).toBeNull()
+      expect(state.cycle.last).toBeNull()
+
+      const facts = statusFacts(state, readOnlyExecution, provenance, 'embedded')
+      expect(facts.autonomousCycleLoop.cadence).toEqual({
+        schemaVersion: 'bayn.autonomous-cycle-cadence-observation.v1',
+        condition: MonthEndCadenceCondition.Due,
+        reason: MonthEndCadenceReason.SignalToExecutionMonthTransition,
+        signalSessionDate,
+        executionSessionDate,
+        nextEligibility: {
+          status: 'PROVEN',
+          sessionDate: executionSessionDate,
+          basis: 'EXECUTION_SESSION_MONTH_TRANSITION',
+        },
+      })
+      expect(facts.autonomousCycleLoop.lastPass).toEqual({ result: 'SUCCESS', observedAt, outcome: result.outcome })
+      expect(facts.autonomousCycleLoop.lastPass).not.toHaveProperty('cadenceDecision')
+
+      const metrics = renderPrometheusMetrics(state, config, provenance, 'embedded')
+      expect(metrics).toContain('bayn_autonomous_cycle_cadence_condition{condition="due"} 1')
+      expect(metrics).toContain('bayn_autonomous_cycle_cadence_reason{reason="signal_to_execution_month_transition"} 1')
+      expect(metrics).toContain('bayn_autonomous_cycle_next_eligibility{status="proven"} 1')
+      expect(metrics).toContain('bayn_broker_orders_enabled 0')
+    }
   })
 
   test('does not synthesize durable cycle, mutation, reconciliation, or authority observations', () => {

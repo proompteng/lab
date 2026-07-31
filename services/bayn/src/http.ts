@@ -6,7 +6,15 @@ import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'e
 
 import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
 import type { RuntimeProvenance } from './contracts'
-import { CycleOperationsCondition, CycleOperationsReason } from './cycle-observability'
+import {
+  CycleOperationsCondition,
+  CycleOperationsReason,
+  MonthEndCadenceCondition,
+  MonthEndCadenceReason,
+  projectAutonomousCycleCadenceObservation,
+  retainedAutonomousCycleCadenceDecision,
+  type AutonomousCycleCadenceFreshness,
+} from './cycle-observability'
 import { CycleState, CycleTerminalReason } from './cycle'
 import type { DatabaseError, EvidenceStoreService } from './db/evidence-store'
 import type { OperationalError } from './errors'
@@ -128,21 +136,48 @@ const publicDependencies = (state: RuntimeState) => ({
   },
 })
 
+const autonomousCycleCadenceFreshness = (state: RuntimeState): AutonomousCycleCadenceFreshness => {
+  const dependency = state.health.dependencies.cycleRunner
+  if (dependency.status === 'AVAILABLE') return 'AVAILABLE'
+  return dependency.error?.startsWith('autonomous cycle loop has not completed a successful pass for ') === true
+    ? 'STALE'
+    : 'UNAVAILABLE'
+}
+
+const autonomousCycleCadenceObservation = (state: RuntimeState) => {
+  const lastPass = state.autonomousCycleLoop.lastPass
+  const cadenceDecision = retainedAutonomousCycleCadenceDecision(lastPass)
+  return projectAutonomousCycleCadenceObservation({
+    configured: state.autonomousCycleLoop.configured,
+    lastPassResult: lastPass?.result ?? null,
+    lastPassOutcome: lastPass?.result === 'SUCCESS' ? lastPass.outcome : null,
+    freshness: autonomousCycleCadenceFreshness(state),
+    ...(cadenceDecision === undefined ? {} : { cadenceDecision }),
+  })
+}
+
 const publicAutonomousCycleLoop = (state: RuntimeState) => {
   const lastPass = state.autonomousCycleLoop.lastPass
   return {
     configured: state.autonomousCycleLoop.configured,
     startedAt: state.autonomousCycleLoop.startedAt,
+    cadence: autonomousCycleCadenceObservation(state),
     lastPass:
-      lastPass === null || lastPass.result === 'SUCCESS'
-        ? lastPass
-        : {
-            result: lastPass.result,
-            observedAt: lastPass.observedAt,
-            operation: lastPass.operation,
-            failure: lastPass.failure,
-            reasonCode: 'AUTONOMOUS_CYCLE_PASS_FAILED',
-          },
+      lastPass === null
+        ? null
+        : lastPass.result === 'SUCCESS'
+          ? {
+              result: lastPass.result,
+              observedAt: lastPass.observedAt,
+              outcome: lastPass.outcome,
+            }
+          : {
+              result: lastPass.result,
+              observedAt: lastPass.observedAt,
+              operation: lastPass.operation,
+              failure: lastPass.failure,
+              reasonCode: 'AUTONOMOUS_CYCLE_PASS_FAILED',
+            },
   } as const
 }
 
@@ -465,6 +500,10 @@ export const renderPrometheusMetrics = (
     cycleObservationAvailable === false ? 'unknown' : (state.cycle.last?.terminalReason?.toLowerCase() ?? 'none')
   const loopResults = ['unknown', 'success', 'failure'] as const
   const loopResult = state.autonomousCycleLoop.lastPass?.result.toLowerCase() ?? 'unknown'
+  const cadence = autonomousCycleCadenceObservation(state)
+  const cadenceConditions = Object.values(MonthEndCadenceCondition)
+  const cadenceReasons = Object.values(MonthEndCadenceReason)
+  const nextEligibilityStatuses = ['proven', 'unknown'] as const
   const loopHealthy =
     state.autonomousCycleLoop.configured &&
     state.health.dependencies.cycleRunner.status === 'AVAILABLE' &&
@@ -548,6 +587,24 @@ export const renderPrometheusMetrics = (
           '# TYPE bayn_autonomous_cycle_loop_last_pass_age_seconds gauge',
           `bayn_autonomous_cycle_loop_last_pass_age_seconds ${prometheusNumber((loopLastPassAgeMs ?? 0) / 1_000)}`,
         ]),
+    '# HELP bayn_autonomous_cycle_cadence_condition Exact bounded month-end cadence interpretation of the latest pass.',
+    '# TYPE bayn_autonomous_cycle_cadence_condition gauge',
+    ...cadenceConditions.map(
+      (condition) =>
+        `bayn_autonomous_cycle_cadence_condition{condition="${condition.toLowerCase()}"} ${cadence.condition === condition ? 1 : 0}`,
+    ),
+    '# HELP bayn_autonomous_cycle_cadence_reason Stable bounded reason for the latest cadence interpretation.',
+    '# TYPE bayn_autonomous_cycle_cadence_reason gauge',
+    ...cadenceReasons.map(
+      (reason) =>
+        `bayn_autonomous_cycle_cadence_reason{reason="${reason.toLowerCase()}"} ${cadence.reason === reason ? 1 : 0}`,
+    ),
+    '# HELP bayn_autonomous_cycle_next_eligibility Whether current retained evidence proves the next eligible session.',
+    '# TYPE bayn_autonomous_cycle_next_eligibility gauge',
+    ...nextEligibilityStatuses.map(
+      (status) =>
+        `bayn_autonomous_cycle_next_eligibility{status="${status}"} ${cadence.nextEligibility.status.toLowerCase() === status ? 1 : 0}`,
+    ),
     ...(cycleObservationAvailable
       ? [
           '# HELP bayn_mutation_events_total Durable broker mutation event count.',
