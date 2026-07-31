@@ -16,6 +16,10 @@ import {
   type PaperProofSourcePlan,
   type PreparedPaperProofIntent,
 } from './model'
+import type {
+  PaperProofRecoveryRequired,
+  PaperProofRecoveryStoreService,
+} from './recovery-store'
 
 export interface PaperProofDependencies {
   readonly sourcePlan: PaperProofSourcePlan
@@ -26,6 +30,7 @@ export interface PaperProofDependencies {
   readonly restrictAuthority: (reason: string, updatedAt: string) => Effect.Effect<void, unknown>
   readonly mutations: Pick<MutationStoreShape, 'latest'>
   readonly execution: Pick<ExecutionProgram, 'submit' | 'cancel' | 'recover'>
+  readonly recovery: PaperProofRecoveryStoreService
   readonly prepareIntent: () => Effect.Effect<PreparedPaperProofIntent, unknown>
   readonly reconcile: () => Effect.Effect<PaperProofReconciliation, unknown>
   readonly currentUtcInstant: Effect.Effect<string, unknown>
@@ -44,6 +49,30 @@ const lift = <A>(
   effect: Effect.Effect<A, unknown>,
 ): Effect.Effect<A, PaperProofError> =>
   effect.pipe(Effect.mapError((cause) => paperProofFailure(operation, message, cause)))
+
+const containmentTimeoutMs = (command: PaperProofCommand): number =>
+  Math.max(1, Math.min(1_000, Math.floor(command.timeoutMs / 4)))
+
+const boundedLift = <A>(
+  command: PaperProofCommand,
+  operation: PaperProofError['operation'],
+  message: string,
+  effect: Effect.Effect<A, unknown>,
+): Effect.Effect<A, PaperProofError> =>
+  lift(operation, message, effect).pipe(
+    Effect.timeoutOrElse({
+      duration: Duration.millis(containmentTimeoutMs(command)),
+      orElse: () =>
+        Effect.fail(
+          paperProofFailure(
+            operation,
+            `${message} exceeded its containment bound`,
+            undefined,
+            'timeout',
+          ),
+        ),
+    }),
+  )
 
 const requireSameAccountReconciliation = (
   expectedAccountId: string,
@@ -83,18 +112,47 @@ const observeReconciliation = (
     Effect.flatMap((result) => requireSameAccountReconciliation(dependencies.sourcePlan.accountId, result)),
   )
 
+const observeReconciliationBounded = (
+  command: PaperProofCommand,
+  dependencies: PaperProofDependencies,
+): Effect.Effect<PaperProofReconciliation, PaperProofError> =>
+  boundedLift(
+    command,
+    'RECONCILE',
+    'paper proof containment reconciliation failed',
+    dependencies.reconcile(),
+  ).pipe(
+    Effect.flatMap((result) => requireSameAccountReconciliation(dependencies.sourcePlan.accountId, result)),
+  )
+
 const reconcileExact = (
   dependencies: PaperProofDependencies,
 ): Effect.Effect<PaperProofReconciliation, PaperProofError> =>
   observeReconciliation(dependencies).pipe(Effect.flatMap(requireExactReconciliation))
 
-const restrict = (
+const reconcileExactBounded = (
+  command: PaperProofCommand,
+  dependencies: PaperProofDependencies,
+): Effect.Effect<PaperProofReconciliation, PaperProofError> =>
+  observeReconciliationBounded(command, dependencies).pipe(Effect.flatMap(requireExactReconciliation))
+
+const currentInstantBounded = (
+  command: PaperProofCommand,
+  dependencies: PaperProofDependencies,
+  operation: PaperProofError['operation'],
+  message: string,
+): Effect.Effect<string, PaperProofError> =>
+  boundedLift(command, operation, message, dependencies.currentUtcInstant)
+
+const restrictBounded = (
+  command: PaperProofCommand,
   dependencies: PaperProofDependencies,
   reason: string,
 ): Effect.Effect<void, PaperProofError> =>
-  lift('RESTRICT', 'paper proof failed to read the restriction clock', dependencies.currentUtcInstant).pipe(
+  currentInstantBounded(command, dependencies, 'RESTRICT', 'paper proof restriction clock failed').pipe(
     Effect.flatMap((updatedAt) =>
-      lift(
+      boundedLift(
+        command,
         'RESTRICT',
         'paper proof failed to restrict mutation authority',
         dependencies.restrictAuthority(reason.slice(0, 240), updatedAt),
@@ -102,68 +160,119 @@ const restrict = (
     ),
   )
 
-const finalizeMutationFailure = (
+const recoveryIdentity = (dependencies: PaperProofDependencies) => ({
+  proofPlanHash: dependencies.sourcePlan.proofPlanHash,
+  intentId: dependencies.sourcePlan.intentId,
+})
+
+const readRecoveryRequired = (
+  command: PaperProofCommand,
   dependencies: PaperProofDependencies,
+): Effect.Effect<PaperProofRecoveryRequired | undefined, PaperProofError> =>
+  boundedLift(
+    command,
+    command.operation,
+    'paper proof durable recovery read failed',
+    dependencies.recovery.readRequired(recoveryIdentity(dependencies)),
+  )
+
+const armRecovery = (
+  command: PaperProofCommand,
+  dependencies: PaperProofDependencies,
+  operation: MutationOperation,
   reason: string,
-): Effect.Effect<void, PaperProofError> =>
+): Effect.Effect<PaperProofRecoveryRequired, PaperProofError> =>
   Effect.gen(function* () {
-    const restrictionExit = yield* Effect.exit(restrict(dependencies, reason))
-    const reconciliationExit = yield* Effect.exit(observeReconciliation(dependencies))
-    if (Exit.isFailure(restrictionExit)) return yield* restrictionExit
-    if (Exit.isFailure(reconciliationExit)) return yield* reconciliationExit
+    const requiredAt = yield* currentInstantBounded(
+      command,
+      dependencies,
+      command.operation,
+      'paper proof recovery requirement clock failed',
+    )
+    const requirement: PaperProofRecoveryRequired = {
+      schemaVersion: 'bayn.paper-proof-recovery-required.v1',
+      proofPlanHash: dependencies.sourcePlan.proofPlanHash,
+      qualificationRunId: dependencies.sourcePlan.qualificationRunId,
+      intentId: dependencies.sourcePlan.intentId,
+      operation,
+      reason: reason.slice(0, 240),
+      requiredAt,
+    }
+    yield* boundedLift(
+      command,
+      command.operation,
+      'paper proof failed to persist recovery-required evidence',
+      dependencies.recovery.require(requirement),
+    )
+    return requirement
   })
 
-const withMutationFailureFinalizer = <A>(
+const resolveRecovery = (
+  command: PaperProofCommand,
   dependencies: PaperProofDependencies,
-  reason: string,
-  effect: Effect.Effect<A, PaperProofError>,
-): Effect.Effect<A, PaperProofError> =>
-  Effect.uninterruptibleMask((restore) =>
-    restore(effect).pipe(
-      Effect.onExit((exit) =>
-        Exit.isFailure(exit) ? finalizeMutationFailure(dependencies, reason) : Effect.void,
+  reconciliation: PaperProofReconciliation,
+): Effect.Effect<void, PaperProofError> =>
+  currentInstantBounded(
+    command,
+    dependencies,
+    command.operation,
+    'paper proof recovery resolution clock failed',
+  ).pipe(
+    Effect.flatMap((resolvedAt) =>
+      boundedLift(
+        command,
+        command.operation,
+        'paper proof failed to resolve recovery-required evidence',
+        dependencies.recovery.resolve({
+          proofPlanHash: dependencies.sourcePlan.proofPlanHash,
+          qualificationRunId: dependencies.sourcePlan.qualificationRunId,
+          intentId: dependencies.sourcePlan.intentId,
+          resolvedAt,
+          reconciliationId: reconciliation.reconciliationId,
+          reconciliationContentHash: reconciliation.contentHash,
+        }),
       ),
     ),
   )
 
-const activateAndRun = <A>(
+const attemptTypedFailureContainment = (
   command: PaperProofCommand,
   dependencies: PaperProofDependencies,
+  reason: string,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    yield* Effect.exit(restrictBounded(command, dependencies, reason))
+    yield* Effect.exit(observeReconciliationBounded(command, dependencies))
+  })
+
+const withTypedFailureContainment = <A>(
+  command: PaperProofCommand,
+  dependencies: PaperProofDependencies,
+  reason: string,
   effect: Effect.Effect<A, PaperProofError>,
 ): Effect.Effect<A, PaperProofError> =>
-  Effect.uninterruptibleMask((restore) =>
-    Effect.gen(function* () {
-      const activationExit = yield* Effect.exit(
-        restore(
-          lift(
-            'SUBMIT',
-            'paper proof generation activation failed',
-            dependencies.activateCapitalGrant(proofBinding(command)),
-          ),
-        ),
-      )
-      if (Exit.isFailure(activationExit)) {
-        yield* finalizeMutationFailure(dependencies, 'paper-proof-submit-activation-failure')
-        return yield* activationExit
-      }
-      return yield* restore(effect).pipe(
-        Effect.onExit((exit) =>
-          Exit.isFailure(exit)
-            ? finalizeMutationFailure(dependencies, 'paper-proof-submit-post-activation-failure')
-            : Effect.void,
-        ),
-      )
-    }),
+  effect.pipe(
+    Effect.catch((cause) =>
+      attemptTypedFailureContainment(command, dependencies, reason).pipe(
+        Effect.andThen(Effect.fail(cause)),
+      ),
+    ),
   )
 
 const successfulSubmit = (event: MutationEvent): boolean =>
   event.operation === MutationOperation.Submit &&
-  (event.eventType === MutationEventType.SubmitAccepted || event.eventType === MutationEventType.RecoveryFound)
+  (event.eventType === MutationEventType.SubmitAccepted ||
+    event.eventType === MutationEventType.RecoveryFound)
 
 const terminalSubmit = (event: MutationEvent): boolean =>
   successfulSubmit(event) ||
   event.eventType === MutationEventType.SubmitRejected ||
   event.eventType === MutationEventType.SubmitDenied
+
+const neutralizedSubmit = (event: MutationEvent): boolean =>
+  event.operation === MutationOperation.Submit &&
+  (event.eventType === MutationEventType.SubmitRejected ||
+    event.eventType === MutationEventType.SubmitDenied)
 
 const recoveredCancellation = (event: MutationEvent): boolean =>
   event.operation === MutationOperation.Cancel && event.eventType === MutationEventType.RecoveryFound
@@ -186,28 +295,31 @@ const prepareSubmitIntent = (
     ),
   )
 
-const readSubmit = (
+const readMutation = (
+  operation: MutationOperation,
+  label: PaperProofError['operation'],
   dependencies: PaperProofDependencies,
 ): Effect.Effect<MutationEvent | undefined, PaperProofError> =>
   lift(
-    'SUBMIT',
-    'paper proof durable submit read failed',
-    dependencies.mutations.latest(dependencies.sourcePlan.intentId, MutationOperation.Submit),
+    label,
+    `paper proof durable ${operation} read failed`,
+    dependencies.mutations.latest(dependencies.sourcePlan.intentId, operation),
   )
 
 const waitForRecovery = (command: PaperProofCommand): Effect.Effect<void> =>
   Effect.sleep(Duration.millis(command.consistencyDelayMs))
 
-const recoverSubmit = (
+const recoverMutation = (
   command: PaperProofCommand,
   dependencies: PaperProofDependencies,
+  operation: MutationOperation,
 ): Effect.Effect<MutationEvent, PaperProofError> =>
   waitForRecovery(command).pipe(
     Effect.andThen(
       lift(
         'RECOVER',
-        'paper proof lookup-only submit recovery failed',
-        dependencies.execution.recover(dependencies.sourcePlan.intentId, MutationOperation.Submit),
+        `paper proof lookup-only ${operation} recovery failed`,
+        dependencies.execution.recover(dependencies.sourcePlan.intentId, operation),
       ),
     ),
   )
@@ -217,26 +329,17 @@ const cancelOrRecover = (
   dependencies: PaperProofDependencies,
 ): Effect.Effect<MutationEvent, PaperProofError> =>
   Effect.gen(function* () {
-    const intentId = dependencies.sourcePlan.intentId
-    const existing = yield* lift(
-      'CANCEL',
-      'paper proof durable cancellation read failed',
-      dependencies.mutations.latest(intentId, MutationOperation.Cancel),
-    )
+    const existing = yield* readMutation(MutationOperation.Cancel, 'CANCEL', dependencies)
     const event =
       existing ??
       (yield* lift(
         'CANCEL',
         'paper proof identified cancellation failed',
-        dependencies.execution.cancel(intentId, command.consistencyDelayMs),
+        dependencies.execution.cancel(dependencies.sourcePlan.intentId, command.consistencyDelayMs),
       ))
-    if (recoveredCancellation(event)) return event
-    yield* waitForRecovery(command)
-    return yield* lift(
-      'CANCEL',
-      'paper proof lookup-only cancellation recovery failed',
-      dependencies.execution.recover(intentId, MutationOperation.Cancel),
-    )
+    return recoveredCancellation(event)
+      ? event
+      : yield* recoverMutation(command, dependencies, MutationOperation.Cancel)
   })
 
 const completeReceipt = (
@@ -277,33 +380,6 @@ const runPrepare = (
     })
   })
 
-const runExistingSubmit = (
-  command: PaperProofCommand,
-  dependencies: PaperProofDependencies,
-  prepared: PreparedPaperProofIntent,
-  before: PaperProofReconciliation,
-  existing: MutationEvent,
-): Effect.Effect<PaperProofReceipt, PaperProofError> =>
-  withMutationFailureFinalizer(
-    dependencies,
-    'paper-proof-existing-submit-failure',
-    Effect.gen(function* () {
-      const event = terminalSubmit(existing) ? existing : yield* recoverSubmit(command, dependencies)
-      let restricted = false
-      if (!successfulSubmit(event)) {
-        yield* restrict(dependencies, `paper-proof-submit-${event.eventType.toLowerCase()}`)
-        restricted = true
-      }
-      const finalReconciliation = yield* reconcileExact(dependencies)
-      return yield* completeReceipt(command, dependencies, {
-        clientOrderId: prepared.clientOrderId,
-        mutation: event,
-        reconciliations: [before, finalReconciliation],
-        restricted,
-      })
-    }),
-  )
-
 const runNewSubmit = (
   command: PaperProofCommand,
   dependencies: PaperProofDependencies,
@@ -312,32 +388,104 @@ const runNewSubmit = (
 ): Effect.Effect<PaperProofReceipt, PaperProofError> =>
   requireExactReconciliation(before).pipe(
     Effect.andThen(
-      activateAndRun(
+      armRecovery(
         command,
         dependencies,
+        MutationOperation.Submit,
+        'paper-proof-submit-recovery-required',
+      ),
+    ),
+    Effect.andThen(
+      withTypedFailureContainment(
+        command,
+        dependencies,
+        'paper-proof-submit-post-activation-failure',
         Effect.gen(function* () {
+          yield* lift(
+            'SUBMIT',
+            'paper proof generation activation failed',
+            dependencies.activateCapitalGrant(proofBinding(command)),
+          )
           const afterActivation = yield* reconcileExact(dependencies)
           const event = yield* lift(
             'SUBMIT',
             'paper proof guarded submit failed',
             dependencies.execution.submit(prepared.intentId, command.consistencyDelayMs),
           )
-          let restricted = false
-          if (!successfulSubmit(event)) {
-            yield* restrict(dependencies, `paper-proof-submit-${event.eventType.toLowerCase()}`)
-            restricted = true
+          if (successfulSubmit(event)) {
+            const finalReconciliation = yield* reconcileExact(dependencies)
+            return yield* completeReceipt(command, dependencies, {
+              clientOrderId: prepared.clientOrderId,
+              mutation: event,
+              reconciliations: [before, afterActivation, finalReconciliation],
+              restricted: false,
+            })
           }
-          const finalReconciliation = yield* reconcileExact(dependencies)
+          yield* restrictBounded(
+            command,
+            dependencies,
+            `paper-proof-submit-${event.eventType.toLowerCase()}`,
+          )
+          const finalReconciliation = yield* reconcileExactBounded(command, dependencies)
+          if (neutralizedSubmit(event)) {
+            yield* resolveRecovery(command, dependencies, finalReconciliation)
+          }
           return yield* completeReceipt(command, dependencies, {
             clientOrderId: prepared.clientOrderId,
             mutation: event,
             reconciliations: [before, afterActivation, finalReconciliation],
-            restricted,
+            restricted: true,
           })
         }),
       ),
     ),
   )
+
+const runExistingSubmit = (
+  command: PaperProofCommand,
+  dependencies: PaperProofDependencies,
+  prepared: PreparedPaperProofIntent,
+  before: PaperProofReconciliation,
+  existing: MutationEvent,
+): Effect.Effect<PaperProofReceipt, PaperProofError> =>
+  Effect.gen(function* () {
+    const currentRequirement = yield* readRecoveryRequired(command, dependencies)
+    const requirement =
+      currentRequirement ??
+      (terminalSubmit(existing)
+        ? undefined
+        : yield* armRecovery(
+            command,
+            dependencies,
+            MutationOperation.Submit,
+            'paper-proof-existing-submit-recovery-required',
+          ))
+    const event = terminalSubmit(existing)
+      ? existing
+      : yield* recoverMutation(command, dependencies, MutationOperation.Submit)
+    let restricted = false
+    let finalReconciliation: PaperProofReconciliation
+    if (requirement !== undefined || !successfulSubmit(event)) {
+      yield* restrictBounded(
+        command,
+        dependencies,
+        `paper-proof-submit-${event.eventType.toLowerCase()}`,
+      )
+      restricted = true
+      finalReconciliation = yield* reconcileExactBounded(command, dependencies)
+      if (requirement !== undefined && neutralizedSubmit(event)) {
+        yield* resolveRecovery(command, dependencies, finalReconciliation)
+      }
+    } else {
+      finalReconciliation = yield* reconcileExact(dependencies)
+    }
+    return yield* completeReceipt(command, dependencies, {
+      clientOrderId: prepared.clientOrderId,
+      mutation: event,
+      reconciliations: [before, finalReconciliation],
+      restricted,
+    })
+  })
 
 const runSubmit = (
   command: PaperProofCommand,
@@ -346,7 +494,7 @@ const runSubmit = (
   Effect.gen(function* () {
     const before = yield* observeReconciliation(dependencies)
     const prepared = yield* prepareSubmitIntent(dependencies)
-    const existing = yield* readSubmit(dependencies)
+    const existing = yield* readMutation(MutationOperation.Submit, 'SUBMIT', dependencies)
     return yield* (existing === undefined
       ? runNewSubmit(command, dependencies, prepared, before)
       : runExistingSubmit(command, dependencies, prepared, before, existing))
@@ -356,49 +504,104 @@ const runCancel = (
   command: PaperProofCommand,
   dependencies: PaperProofDependencies,
 ): Effect.Effect<PaperProofReceipt, PaperProofError> =>
-  withMutationFailureFinalizer(
-    dependencies,
-    'paper-proof-cancel-failure',
-    Effect.gen(function* () {
-      const before = yield* observeReconciliation(dependencies)
-      const event = yield* cancelOrRecover(command, dependencies)
-      let restricted = false
-      if (!recoveredCancellation(event)) {
-        yield* restrict(dependencies, `paper-proof-cancel-${event.eventType.toLowerCase()}`)
-        restricted = true
-      }
-      const after = yield* reconcileExact(dependencies)
-      return yield* completeReceipt(command, dependencies, {
-        mutation: event,
-        reconciliations: [before, after],
-        restricted,
-      })
-    }),
-  )
+  Effect.gen(function* () {
+    const before = yield* observeReconciliation(dependencies)
+    yield* armRecovery(
+      command,
+      dependencies,
+      MutationOperation.Cancel,
+      'paper-proof-cancel-recovery-required',
+    )
+    return yield* withTypedFailureContainment(
+      command,
+      dependencies,
+      'paper-proof-cancel-failure',
+      Effect.gen(function* () {
+        const event = yield* cancelOrRecover(command, dependencies)
+        yield* restrictBounded(
+          command,
+          dependencies,
+          `paper-proof-cancel-${event.eventType.toLowerCase()}`,
+        )
+        const after = yield* reconcileExactBounded(command, dependencies)
+        if (recoveredCancellation(event)) {
+          yield* resolveRecovery(command, dependencies, after)
+        }
+        return yield* completeReceipt(command, dependencies, {
+          mutation: event,
+          reconciliations: [before, after],
+          restricted: true,
+        })
+      }),
+    )
+  })
+
+const deriveRecoveryRequirement = (
+  command: PaperProofCommand,
+  dependencies: PaperProofDependencies,
+): Effect.Effect<PaperProofRecoveryRequired, PaperProofError> =>
+  Effect.gen(function* () {
+    const cancellation = yield* readMutation(MutationOperation.Cancel, 'RECOVER', dependencies)
+    if (cancellation !== undefined) {
+      return yield* armRecovery(
+        command,
+        dependencies,
+        MutationOperation.Cancel,
+        'paper-proof-cancel-recovery-reconstructed',
+      )
+    }
+    return yield* armRecovery(
+      command,
+      dependencies,
+      MutationOperation.Submit,
+      'paper-proof-submit-recovery-reconstructed',
+    )
+  })
+
+const recoverRequiredMutation = (
+  command: PaperProofCommand,
+  dependencies: PaperProofDependencies,
+  requirement: PaperProofRecoveryRequired,
+): Effect.Effect<MutationEvent | undefined, PaperProofError> =>
+  Effect.gen(function* () {
+    const existing = yield* readMutation(requirement.operation, 'RECOVER', dependencies)
+    if (existing === undefined) return undefined
+    if (requirement.operation === MutationOperation.Cancel && recoveredCancellation(existing)) {
+      return existing
+    }
+    if (requirement.operation === MutationOperation.Submit && terminalSubmit(existing)) {
+      return existing
+    }
+    return yield* recoverMutation(command, dependencies, requirement.operation)
+  })
+
+const recoveryIsNeutralized = (
+  requirement: PaperProofRecoveryRequired,
+  event: MutationEvent | undefined,
+): boolean =>
+  event === undefined ||
+  (requirement.operation === MutationOperation.Cancel && recoveredCancellation(event)) ||
+  (requirement.operation === MutationOperation.Submit && neutralizedSubmit(event))
 
 const runRecover = (
   command: PaperProofCommand,
   dependencies: PaperProofDependencies,
 ): Effect.Effect<PaperProofReceipt, PaperProofError> =>
-  withMutationFailureFinalizer(
-    dependencies,
-    'paper-proof-recover-failure',
-    Effect.gen(function* () {
-      const before = yield* observeReconciliation(dependencies)
-      const event = yield* recoverSubmit(command, dependencies)
-      let restricted = false
-      if (!successfulSubmit(event)) {
-        yield* restrict(dependencies, `paper-proof-recover-${event.eventType.toLowerCase()}`)
-        restricted = true
-      }
-      const after = yield* reconcileExact(dependencies)
-      return yield* completeReceipt(command, dependencies, {
-        mutation: event,
-        reconciliations: [before, after],
-        restricted,
-      })
-    }),
-  )
+  Effect.gen(function* () {
+    const currentRequirement = yield* readRecoveryRequired(command, dependencies)
+    const requirement = currentRequirement ?? (yield* deriveRecoveryRequirement(command, dependencies))
+    yield* restrictBounded(command, dependencies, 'paper-proof-recover-authority-restriction')
+    const event = yield* recoverRequiredMutation(command, dependencies, requirement)
+    const reconciliation = yield* reconcileExactBounded(command, dependencies)
+    if (recoveryIsNeutralized(requirement, event)) {
+      yield* resolveRecovery(command, dependencies, reconciliation)
+    }
+    return yield* completeReceipt(command, dependencies, {
+      ...(event === undefined ? {} : { mutation: event }),
+      reconciliations: [reconciliation],
+      restricted: true,
+    })
+  })
 
 const runValidatedPaperProof = (
   command: PaperProofCommand,
