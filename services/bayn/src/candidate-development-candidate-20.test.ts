@@ -312,14 +312,20 @@ describe('Candidate 20 cross-sectional short-term reversal preregistration', () 
     const cashDecision = successOf(candidate20Planner.decisionAtSignal(allPositive, 21, false))
     expect(Object.values(cashDecision.weights).every((weight) => weight === 0)).toBe(true)
 
-    const futureMutated = structuredClone(tied)
+    const futureMutated = structuredClone(tied) as Array<{
+      date: string
+      bars: Record<Candidate20Symbol, Candidate20Bar>
+    }>
     const futureBar = futureMutated[22]!.bars.SPY
     futureMutated[22]!.bars.SPY = { ...futureBar, close: futureBar.close * 10 }
     expect(JSON.stringify(candidate20Planner.decisionAtSignal(futureMutated, 21, false))).toBe(
       JSON.stringify(candidate20Planner.decisionAtSignal(tied, 21, false)),
     )
 
-    const malformed = structuredClone(tied)
+    const malformed = structuredClone(tied) as Array<{
+      date: string
+      bars: Record<Candidate20Symbol, Candidate20Bar>
+    }>
     malformed[21]!.bars.SPY = { ...malformed[21]!.bars.SPY, close: Number.NaN }
     expect(candidate20Planner.decisionAtSignal(malformed, 21, false)).toMatchObject({
       _tag: 'Failure',

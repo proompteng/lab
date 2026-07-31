@@ -24,6 +24,7 @@ import {
   evaluateCandidateDevelopmentArtifact,
   preregisterCandidateDevelopmentAttempt,
   validateCandidateDevelopmentArtifactStructure,
+  type CandidateDevelopmentArtifactStructuralBindings,
   type CandidateDevelopmentSourceManifest,
   type CandidateDevelopmentStrategyProtocol,
   type CandidateDevelopmentVerifiedSource,
