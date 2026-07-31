@@ -3,8 +3,14 @@ import assert from 'node:assert/strict'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
+import { canonicalHashV1 } from '../hash'
 import { makeForwardPerformanceReceipt } from './domain'
-import type { ForwardPerformanceEvidenceInput, ForwardPerformanceReceipt } from './model'
+import type {
+  ForwardPerformanceEvidenceInput,
+  ForwardPerformanceExecutionEvidence,
+  ForwardPerformanceMarketVolumeEvidence,
+  ForwardPerformanceReceipt,
+} from './model'
 
 const hash = (character: string): string => character.repeat(64)
 
@@ -29,8 +35,14 @@ const transaction = (
   overrides: Partial<ForwardPerformanceEvidenceInput['transactions'][number]> = {},
 ) => ({
   transactionId: hash(name),
+  brokerEventId: hash('b'),
+  intentId: hash('c'),
   cycleId: hash('a'),
+  symbol: 'NVDA',
   side: 'SELL' as const,
+  quantityMicros: '1000000',
+  priceMicros: '109000000',
+  notionalMicros: '109000000',
   feeMicros,
   realizedPnlMicros,
   occurredAt: '2026-07-20T20:00:00.000Z',
@@ -113,6 +125,146 @@ const input = (overrides: Partial<ForwardPerformanceEvidenceInput> = {}): Forwar
   cashYieldEvidenceRequired: overrides.cashYieldEvidenceRequired ?? false,
 })
 
+const exactExecutionEvidence = (reverse = false) => {
+  const fills = [
+    {
+      brokerEventId: hash('b'),
+      fillId: 'fill-1',
+      brokerOrderId: 'broker-order-1',
+      clientOrderId: 'client-order-1',
+      intentId: hash('c'),
+      accountId: 'paper-account-1',
+      symbol: 'NVDA',
+      side: 'SELL' as const,
+      quantityMicros: '400000',
+      priceMicros: '109000000',
+      feeMicros: '10',
+      sourceTimestamp: '2026-07-20T20:00:00.000000000Z',
+      occurredAt: '2026-07-20T20:00:00.000Z',
+      observedAt: '2026-07-20T20:00:00.100Z',
+    },
+    {
+      brokerEventId: hash('d'),
+      fillId: 'fill-2',
+      brokerOrderId: 'broker-order-1',
+      clientOrderId: 'client-order-1',
+      intentId: hash('c'),
+      accountId: 'paper-account-1',
+      symbol: 'NVDA',
+      side: 'SELL' as const,
+      quantityMicros: '600000',
+      priceMicros: '108000000',
+      feeMicros: '10',
+      sourceTimestamp: '2026-07-20T20:00:01.000000000Z',
+      occurredAt: '2026-07-20T20:00:01.000Z',
+      observedAt: '2026-07-20T20:00:01.100Z',
+    },
+  ]
+  return [
+    {
+      cycleId: hash('a'),
+      decisionDocumentHash: hash('8'),
+      decisionHash: hash('e'),
+      decisionCreatedAt: '2026-07-20T13:00:00.000Z',
+      intentId: hash('c'),
+      accountId: 'paper-account-1',
+      symbol: 'NVDA',
+      side: 'SELL' as const,
+      plannedQuantityMicros: '1000000',
+      referencePriceMicros: '110000000',
+      intent: {
+        intentId: hash('c'),
+        accountId: 'paper-account-1',
+        clientOrderId: 'client-order-1',
+        cycleId: hash('a'),
+        decisionHash: hash('e'),
+        symbol: 'NVDA',
+        side: 'SELL' as const,
+        quantityMicros: '1000000',
+        terminalOutcome: 'FILLED' as const,
+        createdAt: '2026-07-20T13:00:00.000Z',
+        updatedAt: '2026-07-20T20:00:02.000Z',
+      },
+      terminalOrder: {
+        eventId: hash('f'),
+        brokerOrderId: 'broker-order-1',
+        clientOrderId: 'client-order-1',
+        intentId: hash('c'),
+        accountId: 'paper-account-1',
+        symbol: 'NVDA',
+        side: 'SELL' as const,
+        quantityMicros: '1000000',
+        filledQuantityMicros: '1000000',
+        status: 'FILLED' as const,
+        occurredAt: '2026-07-20T20:00:02.000Z',
+        observedAt: '2026-07-20T20:00:02.100Z',
+      },
+      fills: reverse ? fills.toReversed() : fills,
+    },
+  ]
+}
+
+const exactMarketVolumeEvidence = (): readonly ForwardPerformanceMarketVolumeEvidence[] => {
+  const material: Omit<ForwardPerformanceMarketVolumeEvidence, 'contentHash'> = {
+    schemaVersion: 'bayn.forward-performance-market-volume-evidence.v1' as const,
+    cycleId: hash('a'),
+    decisionSnapshotId: hash('5'),
+    decisionSnapshotAsOfSession: '2026-07-19',
+    symbol: 'NVDA',
+    executionSessionDate: '2026-07-20',
+    windowOpenedAt: '2026-07-20T13:30:00.000Z',
+    windowClosedAt: '2026-07-20T21:00:00.000Z',
+    evidenceCutoffAt: '2026-07-20T21:10:00.000Z',
+    quantityMicros: '100000000',
+    closePriceMicros: '103000000',
+    snapshotId: hash('1'),
+    manifestContentHash: hash('2'),
+    barsContentHash: hash('3'),
+    finalizedAt: '2026-07-20T21:05:00.000Z',
+    universeId: 'cross-asset-taa-v1' as const,
+    universeSymbolHash: hash('4'),
+    requestedStart: '2018-01-02',
+    evaluationStart: '2019-01-02',
+    calendarVersion: 'fixture-calendar-v1',
+    source: 'alpaca' as const,
+    sourceFeed: 'sip' as const,
+    adjustment: 'all' as const,
+  }
+  return [{ ...material, contentHash: canonicalHashV1(material) }]
+}
+
+const terminalReferencePriceFor = (
+  volume: ForwardPerformanceMarketVolumeEvidence,
+): NonNullable<ForwardPerformanceExecutionEvidence['terminalReferencePrice']> => {
+  const material = {
+    schemaVersion: 'bayn.forward-performance-terminal-reference-price.v1' as const,
+    cycleId: volume.cycleId,
+    symbol: volume.symbol,
+    executionSessionDate: volume.executionSessionDate,
+    priceMicros: volume.closePriceMicros,
+    observedAt: volume.finalizedAt,
+    sourceEvidenceHash: volume.contentHash,
+  }
+  return { ...material, contentHash: canonicalHashV1(material) }
+}
+
+const exactTransactions = () => [
+  transaction('1', '40', '10', {
+    brokerEventId: hash('b'),
+    quantityMicros: '400000',
+    priceMicros: '109000000',
+    notionalMicros: '43600000',
+    occurredAt: '2026-07-20T20:00:00.000Z',
+  }),
+  transaction('2', '60', '10', {
+    brokerEventId: hash('d'),
+    quantityMicros: '600000',
+    priceMicros: '108000000',
+    notionalMicros: '64800000',
+    occurredAt: '2026-07-20T20:00:01.000Z',
+  }),
+]
+
 const success = (value: Result.Result<ForwardPerformanceReceipt, unknown>): ForwardPerformanceReceipt => {
   assert(Result.isSuccess(value), 'forward-performance fixture must produce a receipt')
   return value.success
@@ -133,6 +285,632 @@ describe('forward performance domain', () => {
         decimal: '0.080000000000',
       },
     })
+  })
+
+  test('keeps profitability independent while execution quality and capacity lack immutable source evidence', () => {
+    const receipt = success(makeForwardPerformanceReceipt(input()))
+
+    expect(receipt.profitability).toBe('PROFITABLE')
+    expect(receipt.executionQuality).toEqual({
+      status: 'UNDETERMINED',
+      reasonCodes: ['PLANNED_DECISION_EVIDENCE_GAP'],
+      evidenceHash: null,
+      implementationShortfall: null,
+    })
+    expect(receipt.observedCapacity).toEqual({
+      status: 'UNDETERMINED',
+      reasonCodes: ['EXECUTION_QUALITY_UNDETERMINED', 'MARKET_VOLUME_EVIDENCE_GAP'],
+      evidenceHash: null,
+      observations: [],
+      boundedObservedReferenceNotionalMicros: null,
+      boundedObservedExecutedNotionalMicros: null,
+      maximumParticipationRate: null,
+    })
+  })
+
+  test('measures Perold implementation shortfall and bounded observed participation from exact immutable evidence', () => {
+    const transactions = exactTransactions()
+    const evidence = {
+      transactions,
+      executionEvidence: exactExecutionEvidence(),
+      marketVolumeEvidence: exactMarketVolumeEvidence(),
+    }
+    const first = success(makeForwardPerformanceReceipt(input(evidence)))
+    const second = success(
+      makeForwardPerformanceReceipt(
+        input({
+          ...evidence,
+          transactions: transactions.toReversed(),
+          executionEvidence: exactExecutionEvidence(true),
+        }),
+      ),
+    )
+
+    expect(first).toEqual(second)
+    expect(first.profitability).toBe('PROFITABLE')
+    expect(first.executionQuality).toMatchObject({
+      status: 'MEASURED',
+      reasonCodes: [],
+      implementationShortfall: {
+        plannedOrderCount: 1,
+        fillCount: 2,
+        plannedQuantityMicros: '1000000',
+        filledQuantityMicros: '1000000',
+        unfilledQuantityMicros: '0',
+        plannedReferenceNotionalMicros: '110000000',
+        executedNotionalMicros: '108400000',
+        executionPriceShortfallMicros: '1600000',
+        opportunityShortfallMicros: '0',
+        explicitCostsMicros: '20',
+        totalImplementationShortfallMicros: '1600020',
+        implementationShortfallRate: {
+          numeratorMicros: '1600020',
+          denominatorMicros: '110000000',
+          decimal: '0.014545636364',
+        },
+        firstDecisionAt: '2026-07-20T13:00:00.000Z',
+        firstFillAt: '2026-07-20T20:00:00.000Z',
+        lastFillAt: '2026-07-20T20:00:01.000Z',
+        lastTerminalOrderObservedAt: '2026-07-20T20:00:02.100Z',
+      },
+    })
+    expect(first.executionQuality.evidenceHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(first.observedCapacity).toMatchObject({
+      status: 'MEASURED',
+      reasonCodes: [],
+      boundedObservedReferenceNotionalMicros: '110000000',
+      boundedObservedExecutedNotionalMicros: '108400000',
+      maximumParticipationRate: {
+        numeratorQuantityMicros: '1000000',
+        denominatorQuantityMicros: '100000000',
+        decimal: '0.010000000000',
+      },
+      observations: [
+        {
+          cycleId: hash('a'),
+          symbol: 'NVDA',
+          windowOpenedAt: '2026-07-20T13:30:00.000Z',
+          windowClosedAt: '2026-07-20T21:00:00.000Z',
+          filledQuantityMicros: '1000000',
+          marketVolumeQuantityMicros: '100000000',
+          participationRate: {
+            numeratorQuantityMicros: '1000000',
+            denominatorQuantityMicros: '100000000',
+            decimal: '0.010000000000',
+          },
+        },
+      ],
+    })
+    expect(first.observedCapacity.evidenceHash).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  test('orders terminal fills by broker occurrence even when fill observation completes after order observation', () => {
+    const [execution] = exactExecutionEvidence()
+    if (execution === undefined) throw new Error('execution fixture missing')
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          transactions: exactTransactions(),
+          executionEvidence: [
+            {
+              ...execution,
+              fills: execution.fills.map((fill, index) => ({
+                ...fill,
+                observedAt: `2026-07-20T20:00:0${index + 3}.100Z`,
+              })),
+            },
+          ],
+          marketVolumeEvidence: exactMarketVolumeEvidence(),
+        }),
+      ),
+    )
+
+    expect(receipt.executionQuality.status).toBe('MEASURED')
+    expect(receipt.executionQuality.reasonCodes).toEqual([])
+    expect(receipt.observedCapacity.status).toBe('MEASURED')
+  })
+
+  test('keeps implementation shortfall undetermined when the immutable decision reference price is absent', () => {
+    const execution = exactExecutionEvidence().map(
+      ({ referencePriceMicros: _referencePriceMicros, ...evidence }) => evidence,
+    )
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          transactions: exactTransactions(),
+          executionEvidence: execution,
+          marketVolumeEvidence: exactMarketVolumeEvidence(),
+        }),
+      ),
+    )
+
+    expect(receipt.profitability).toBe('PROFITABLE')
+    expect(receipt.executionQuality.status).toBe('UNDETERMINED')
+    expect(receipt.executionQuality.reasonCodes).toContain('REFERENCE_PRICE_EVIDENCE_GAP')
+    expect(receipt.executionQuality.implementationShortfall).toBeNull()
+    expect(receipt.observedCapacity).toMatchObject({
+      status: 'UNDETERMINED',
+      reasonCodes: ['EXECUTION_QUALITY_UNDETERMINED'],
+      observations: [],
+    })
+  })
+
+  test('fails execution measurement closed when a terminal fill lacks accounting and quantity binding', () => {
+    const [execution] = exactExecutionEvidence()
+    if (execution === undefined) throw new Error('execution fixture missing')
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          transactions: exactTransactions(),
+          executionEvidence: [{ ...execution, fills: execution.fills.slice(0, 1) }],
+        }),
+      ),
+    )
+
+    expect(receipt.executionQuality.status).toBe('UNDETERMINED')
+    expect(receipt.executionQuality.reasonCodes).toEqual(
+      expect.arrayContaining(['ACCOUNTING_FILL_BINDING_GAP', 'FILL_QUANTITY_MISMATCH']),
+    )
+    expect(receipt.executionQuality.implementationShortfall).toBeNull()
+  })
+
+  test('measures shortfall but leaves observed capacity undetermined without market volume', () => {
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({ transactions: exactTransactions(), executionEvidence: exactExecutionEvidence() }),
+      ),
+    )
+
+    expect(receipt.executionQuality.status).toBe('MEASURED')
+    expect(receipt.observedCapacity).toEqual({
+      status: 'UNDETERMINED',
+      reasonCodes: ['MARKET_VOLUME_EVIDENCE_GAP'],
+      evidenceHash: null,
+      observations: [],
+      boundedObservedReferenceNotionalMicros: null,
+      boundedObservedExecutedNotionalMicros: null,
+      maximumParticipationRate: null,
+    })
+  })
+
+  test('includes adverse unfilled opportunity cost only with an immutable terminal reference price', () => {
+    const [marketVolume] = exactMarketVolumeEvidence()
+    if (marketVolume === undefined) throw new Error('market-volume fixture missing')
+    const executionEvidence = [
+      {
+        cycleId: hash('a'),
+        decisionDocumentHash: hash('8'),
+        decisionHash: hash('e'),
+        decisionCreatedAt: '2026-07-20T13:00:00.000Z',
+        intentId: hash('c'),
+        accountId: 'paper-account-1',
+        symbol: 'NVDA',
+        side: 'BUY' as const,
+        plannedQuantityMicros: '1000000',
+        referencePriceMicros: '100000000',
+        intent: {
+          intentId: hash('c'),
+          accountId: 'paper-account-1',
+          clientOrderId: 'client-order-1',
+          cycleId: hash('a'),
+          decisionHash: hash('e'),
+          symbol: 'NVDA',
+          side: 'BUY' as const,
+          quantityMicros: '1000000',
+          terminalOutcome: 'CANCELED' as const,
+          createdAt: '2026-07-20T13:00:00.000Z',
+          updatedAt: '2026-07-20T20:00:02.000Z',
+        },
+        terminalOrder: {
+          eventId: hash('f'),
+          brokerOrderId: 'broker-order-1',
+          clientOrderId: 'client-order-1',
+          intentId: hash('c'),
+          accountId: 'paper-account-1',
+          symbol: 'NVDA',
+          side: 'BUY' as const,
+          quantityMicros: '1000000',
+          filledQuantityMicros: '400000',
+          status: 'CANCELED' as const,
+          occurredAt: '2026-07-20T20:00:02.000Z',
+          observedAt: '2026-07-20T21:06:00.000Z',
+        },
+        fills: [
+          {
+            brokerEventId: hash('b'),
+            fillId: 'fill-1',
+            brokerOrderId: 'broker-order-1',
+            clientOrderId: 'client-order-1',
+            intentId: hash('c'),
+            accountId: 'paper-account-1',
+            symbol: 'NVDA',
+            side: 'BUY' as const,
+            quantityMicros: '400000',
+            priceMicros: '101000000',
+            feeMicros: '10',
+            sourceTimestamp: '2026-07-20T20:00:00.000000000Z',
+            occurredAt: '2026-07-20T20:00:00.000Z',
+            observedAt: '2026-07-20T20:00:00.100Z',
+          },
+        ],
+        terminalReferencePrice: terminalReferencePriceFor(marketVolume),
+      },
+    ]
+    const transactions = [
+      transaction('1', '0', '10', {
+        brokerEventId: hash('b'),
+        side: 'BUY',
+        quantityMicros: '400000',
+        priceMicros: '101000000',
+        notionalMicros: '40400000',
+        occurredAt: '2026-07-20T20:00:00.000Z',
+      }),
+    ]
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          transactions,
+          executionEvidence,
+          marketVolumeEvidence: [marketVolume],
+          ledgerTotals: {
+            realizedGainMicros: '0',
+            realizedLossMicros: '0',
+            brokerExecutionFeesMicros: '10',
+            otherChargedCostsMicros: '0',
+            cashYieldMicros: '0',
+          },
+        }),
+      ),
+    )
+
+    expect(receipt.executionQuality).toMatchObject({
+      status: 'MEASURED',
+      implementationShortfall: {
+        filledQuantityMicros: '400000',
+        unfilledQuantityMicros: '600000',
+        executionPriceShortfallMicros: '400000',
+        opportunityShortfallMicros: '1800000',
+        explicitCostsMicros: '10',
+        totalImplementationShortfallMicros: '2200010',
+      },
+    })
+  })
+
+  test('measures terminal zero-fill opportunity shortfall without requiring fabricated fills', () => {
+    const [marketVolume] = exactMarketVolumeEvidence()
+    const [filledExecution] = exactExecutionEvidence()
+    if (marketVolume === undefined || filledExecution === undefined) throw new Error('execution fixture missing')
+    const zeroFillIntentId = hash('0')
+    const zeroFillExecution: ForwardPerformanceExecutionEvidence = {
+      cycleId: hash('a'),
+      decisionDocumentHash: hash('8'),
+      decisionHash: hash('e'),
+      decisionCreatedAt: '2026-07-20T13:00:00.000Z',
+      intentId: zeroFillIntentId,
+      accountId: 'paper-account-1',
+      symbol: 'NVDA',
+      side: 'BUY',
+      plannedQuantityMicros: '1000000',
+      referencePriceMicros: '100000000',
+      intent: {
+        intentId: zeroFillIntentId,
+        accountId: 'paper-account-1',
+        clientOrderId: 'zero-fill-client-order',
+        cycleId: hash('a'),
+        decisionHash: hash('e'),
+        symbol: 'NVDA',
+        side: 'BUY',
+        quantityMicros: '1000000',
+        terminalOutcome: 'CANCELED',
+        createdAt: '2026-07-20T13:00:00.000Z',
+        updatedAt: '2026-07-20T20:00:03.000Z',
+      },
+      terminalOrder: {
+        eventId: hash('9'),
+        brokerOrderId: 'zero-fill-broker-order',
+        clientOrderId: 'zero-fill-client-order',
+        intentId: zeroFillIntentId,
+        accountId: 'paper-account-1',
+        symbol: 'NVDA',
+        side: 'BUY',
+        quantityMicros: '1000000',
+        filledQuantityMicros: '0',
+        status: 'CANCELED',
+        occurredAt: '2026-07-20T20:00:03.000Z',
+        observedAt: '2026-07-20T20:00:03.100Z',
+      },
+      fills: [],
+      terminalReferencePrice: terminalReferencePriceFor(marketVolume),
+    }
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          transactions: exactTransactions(),
+          executionEvidence: [filledExecution, zeroFillExecution],
+          marketVolumeEvidence: [marketVolume],
+        }),
+      ),
+    )
+
+    expect(receipt.executionQuality.reasonCodes).not.toContain('FILL_EVIDENCE_GAP')
+    expect(receipt.executionQuality).toMatchObject({
+      status: 'MEASURED',
+      implementationShortfall: {
+        plannedOrderCount: 2,
+        fillCount: 2,
+        plannedQuantityMicros: '2000000',
+        filledQuantityMicros: '1000000',
+        unfilledQuantityMicros: '1000000',
+        opportunityShortfallMicros: '3000000',
+      },
+    })
+    expect(receipt.observedCapacity).toMatchObject({
+      status: 'MEASURED',
+      observations: [
+        {
+          cycleId: hash('a'),
+          symbol: 'NVDA',
+          filledQuantityMicros: '1000000',
+          marketVolumeQuantityMicros: '100000000',
+        },
+      ],
+    })
+  })
+
+  test('measures an all-zero terminal plan while profitability remains unproven', () => {
+    const [marketVolume] = exactMarketVolumeEvidence()
+    if (marketVolume === undefined) throw new Error('market-volume fixture missing')
+    const intentId = hash('0')
+    const zeroFillExecution: ForwardPerformanceExecutionEvidence = {
+      cycleId: hash('a'),
+      decisionDocumentHash: hash('8'),
+      decisionHash: hash('e'),
+      decisionCreatedAt: '2026-07-20T13:00:00.000Z',
+      intentId,
+      accountId: 'paper-account-1',
+      symbol: 'NVDA',
+      side: 'BUY',
+      plannedQuantityMicros: '1000000',
+      referencePriceMicros: '100000000',
+      intent: {
+        intentId,
+        accountId: 'paper-account-1',
+        clientOrderId: 'all-zero-client-order',
+        cycleId: hash('a'),
+        decisionHash: hash('e'),
+        symbol: 'NVDA',
+        side: 'BUY',
+        quantityMicros: '1000000',
+        terminalOutcome: 'CANCELED',
+        createdAt: '2026-07-20T13:00:00.000Z',
+        updatedAt: '2026-07-20T20:00:03.000Z',
+      },
+      terminalOrder: {
+        eventId: hash('9'),
+        brokerOrderId: 'all-zero-broker-order',
+        clientOrderId: 'all-zero-client-order',
+        intentId,
+        accountId: 'paper-account-1',
+        symbol: 'NVDA',
+        side: 'BUY',
+        quantityMicros: '1000000',
+        filledQuantityMicros: '0',
+        status: 'CANCELED',
+        occurredAt: '2026-07-20T20:00:03.000Z',
+        observedAt: '2026-07-20T20:00:03.100Z',
+      },
+      fills: [],
+      terminalReferencePrice: terminalReferencePriceFor(marketVolume),
+    }
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          transactions: [],
+          executionEvidence: [zeroFillExecution],
+          marketVolumeEvidence: [marketVolume],
+          ledgerTotals: {
+            realizedGainMicros: '0',
+            realizedLossMicros: '0',
+            brokerExecutionFeesMicros: '0',
+            otherChargedCostsMicros: '0',
+            cashYieldMicros: '0',
+          },
+        }),
+      ),
+    )
+
+    expect(receipt.evidence.reasonCodes).toContain('ZERO_COMPLETED_EXECUTIONS')
+    expect(receipt.profitability).toBe('UNDETERMINED')
+    expect(receipt.executionQuality).toMatchObject({
+      status: 'MEASURED',
+      reasonCodes: [],
+      implementationShortfall: {
+        plannedOrderCount: 1,
+        fillCount: 0,
+        plannedQuantityMicros: '1000000',
+        filledQuantityMicros: '0',
+        unfilledQuantityMicros: '1000000',
+        opportunityShortfallMicros: '3000000',
+        totalImplementationShortfallMicros: '3000000',
+        firstFillAt: null,
+        lastFillAt: null,
+      },
+    })
+    expect(receipt.observedCapacity).toMatchObject({
+      status: 'MEASURED',
+      observations: [
+        {
+          cycleId: hash('a'),
+          symbol: 'NVDA',
+          filledQuantityMicros: '0',
+          marketVolumeQuantityMicros: '100000000',
+          participationRate: {
+            numeratorQuantityMicros: '0',
+            denominatorQuantityMicros: '100000000',
+            decimal: '0.000000000000',
+          },
+        },
+      ],
+      maximumParticipationRate: {
+        numeratorQuantityMicros: '0',
+        denominatorQuantityMicros: '100000000',
+        decimal: '0.000000000000',
+      },
+    })
+  })
+
+  test('measures a risk-blocked plan without requiring broker-order evidence', () => {
+    const [marketVolume] = exactMarketVolumeEvidence()
+    if (marketVolume === undefined) throw new Error('market-volume fixture missing')
+    const intentId = hash('0')
+    const blockedExecution: ForwardPerformanceExecutionEvidence = {
+      cycleId: hash('a'),
+      decisionDocumentHash: hash('8'),
+      decisionHash: hash('e'),
+      decisionCreatedAt: '2026-07-20T13:00:00.000Z',
+      intentId,
+      accountId: 'paper-account-1',
+      symbol: 'NVDA',
+      side: 'BUY',
+      plannedQuantityMicros: '1000000',
+      referencePriceMicros: '100000000',
+      intent: {
+        intentId,
+        accountId: 'paper-account-1',
+        clientOrderId: 'blocked-client-order',
+        cycleId: hash('a'),
+        decisionHash: hash('e'),
+        symbol: 'NVDA',
+        side: 'BUY',
+        quantityMicros: '1000000',
+        terminalOutcome: 'BLOCKED',
+        createdAt: '2026-07-20T13:00:00.000Z',
+        updatedAt: '2026-07-20T13:05:00.000Z',
+      },
+      fills: [],
+      terminalReferencePrice: terminalReferencePriceFor(marketVolume),
+    }
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          transactions: [],
+          executionEvidence: [blockedExecution],
+          marketVolumeEvidence: [marketVolume],
+          ledgerTotals: {
+            realizedGainMicros: '0',
+            realizedLossMicros: '0',
+            brokerExecutionFeesMicros: '0',
+            otherChargedCostsMicros: '0',
+            cashYieldMicros: '0',
+          },
+        }),
+      ),
+    )
+
+    expect(receipt.profitability).toBe('UNDETERMINED')
+    expect(receipt.executionQuality.reasonCodes).not.toEqual(
+      expect.arrayContaining(['TERMINAL_ORDER_EVIDENCE_GAP', 'FILL_TIMESTAMP_GAP', 'TERMINAL_PRICE_EVIDENCE_GAP']),
+    )
+    expect(receipt.executionQuality).toMatchObject({
+      status: 'MEASURED',
+      implementationShortfall: {
+        fillCount: 0,
+        filledQuantityMicros: '0',
+        unfilledQuantityMicros: '1000000',
+        opportunityShortfallMicros: '3000000',
+        firstFillAt: null,
+        lastFillAt: null,
+        lastTerminalOrderObservedAt: '2026-07-20T13:05:00.000Z',
+      },
+    })
+    expect(receipt.observedCapacity).toMatchObject({
+      status: 'MEASURED',
+      observations: [
+        {
+          cycleId: hash('a'),
+          symbol: 'NVDA',
+          filledQuantityMicros: '0',
+          participationRate: { decimal: '0.000000000000' },
+        },
+      ],
+    })
+  })
+
+  test('does not estimate opportunity cost when the terminal reference price is absent', () => {
+    const [execution] = exactExecutionEvidence()
+    if (execution === undefined || execution.terminalOrder === undefined || execution.intent === undefined) {
+      throw new Error('execution fixture missing')
+    }
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          transactions: [exactTransactions()[0]!],
+          executionEvidence: [
+            {
+              ...execution,
+              intent: { ...execution.intent, terminalOutcome: 'CANCELED' },
+              terminalOrder: {
+                ...execution.terminalOrder,
+                status: 'CANCELED',
+                filledQuantityMicros: '400000',
+              },
+              fills: execution.fills.slice(0, 1),
+            },
+          ],
+          ledgerTotals: {
+            realizedGainMicros: '40',
+            realizedLossMicros: '0',
+            brokerExecutionFeesMicros: '10',
+            otherChargedCostsMicros: '0',
+            cashYieldMicros: '0',
+          },
+        }),
+      ),
+    )
+
+    expect(receipt.executionQuality.status).toBe('UNDETERMINED')
+    expect(receipt.executionQuality.reasonCodes).toContain('TERMINAL_PRICE_EVIDENCE_GAP')
+    expect(receipt.executionQuality.implementationShortfall).toBeNull()
+  })
+
+  test('rejects market-volume evidence that does not cover the fill-to-terminal interval', () => {
+    const [volume] = exactMarketVolumeEvidence()
+    if (volume === undefined) throw new Error('volume fixture missing')
+    const { contentHash: _contentHash, ...volumeMaterial } = volume
+    const driftedMaterial = { ...volumeMaterial, windowOpenedAt: '2026-07-20T20:00:00.500Z' }
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          transactions: exactTransactions(),
+          executionEvidence: exactExecutionEvidence(),
+          marketVolumeEvidence: [{ ...driftedMaterial, contentHash: canonicalHashV1(driftedMaterial) }],
+        }),
+      ),
+    )
+
+    expect(receipt.executionQuality.status).toBe('MEASURED')
+    expect(receipt.observedCapacity.status).toBe('UNDETERMINED')
+    expect(receipt.observedCapacity.reasonCodes).toEqual(['MARKET_VOLUME_IDENTITY_DRIFT'])
+    expect(receipt.observedCapacity.observations).toEqual([])
+  })
+
+  test('rejects self-inconsistent immutable market-volume evidence', () => {
+    const [volume] = exactMarketVolumeEvidence()
+    if (volume === undefined) throw new Error('volume fixture missing')
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          transactions: exactTransactions(),
+          executionEvidence: exactExecutionEvidence(),
+          marketVolumeEvidence: [{ ...volume, quantityMicros: '100000001' }],
+        }),
+      ),
+    )
+
+    expect(receipt.executionQuality.status).toBe('MEASURED')
+    expect(receipt.observedCapacity.status).toBe('UNDETERMINED')
+    expect(receipt.observedCapacity.reasonCodes).toEqual(['INVALID_MARKET_VOLUME_EVIDENCE'])
+    expect(receipt.observedCapacity.observations).toEqual([])
   })
 
   test('reports realized losses without using mark-to-market equity', () => {
@@ -288,6 +1066,21 @@ describe('forward performance domain', () => {
     expect(receipt.evidence.reasonCodes).toContain('ZERO_COMPLETED_EXECUTIONS')
     expect(receipt.profitability).toBe('UNDETERMINED')
     expect(receipt.counts.completedExecutionCount).toBe(0)
+    expect(receipt.executionQuality).toEqual({
+      status: 'NOT_ELIGIBLE',
+      reasonCodes: ['ZERO_COMPLETED_EXECUTIONS'],
+      evidenceHash: null,
+      implementationShortfall: null,
+    })
+    expect(receipt.observedCapacity).toEqual({
+      status: 'NOT_ELIGIBLE',
+      reasonCodes: ['ZERO_COMPLETED_EXECUTIONS'],
+      evidenceHash: null,
+      observations: [],
+      boundedObservedReferenceNotionalMicros: null,
+      boundedObservedExecutedNotionalMicros: null,
+      maximumParticipationRate: null,
+    })
   })
 
   test('missing starting capital is an evidence gap rather than malformed micros', () => {
@@ -386,8 +1179,8 @@ describe('forward performance domain', () => {
     const second = success(makeForwardPerformanceReceipt(input({ ...evidence, cycles: [cycle('a'), secondCycle] })))
 
     expect(first).toEqual(second)
-    expect(first.schemaVersion).toBe('bayn.forward-performance-receipt.v2')
-    expect(first.receiptHash).toBe('adc3d822eaec05fb862f67b4bb795fc4886260623642d6e0651eb1b80c4a9e1b')
+    expect(first.schemaVersion).toBe('bayn.forward-performance-receipt.v3')
+    expect(first.receiptHash).toBe('4c3ca795ead141e908c3d7b397937408f5b4f75b723c983a22081b05197f9c88')
     expect(first.evidence).toEqual({
       status: 'SUFFICIENT',
       reasonCodes: [],

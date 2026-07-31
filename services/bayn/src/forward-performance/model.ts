@@ -1,7 +1,11 @@
-export const FORWARD_PERFORMANCE_SCHEMA_VERSION = 'bayn.forward-performance-receipt.v2' as const
+import type { FinalizedSnapshotProvenance } from '../contracts'
+import type { IsoDate } from '../schemas'
+
+export const FORWARD_PERFORMANCE_SCHEMA_VERSION = 'bayn.forward-performance-receipt.v3' as const
 
 export type ForwardPerformanceEvidenceStatus = 'SUFFICIENT' | 'INSUFFICIENT_EVIDENCE'
 export type ForwardPerformanceProfitability = 'PROFITABLE' | 'NOT_PROFITABLE' | 'UNDETERMINED'
+export type ForwardPerformanceMeasurementStatus = 'MEASURED' | 'NOT_ELIGIBLE' | 'UNDETERMINED'
 
 export type ForwardPerformanceReasonCode =
   | 'ACCOUNT_IDENTITY_GAP'
@@ -17,6 +21,29 @@ export type ForwardPerformanceReasonCode =
   | 'STARTING_CAPITAL_GAP'
   | 'UNCLOSED_WINDOW'
   | 'UNRESOLVED_MUTATION'
+  | 'ZERO_COMPLETED_EXECUTIONS'
+
+export type ForwardPerformanceExecutionQualityReasonCode =
+  | 'ACCOUNT_LEDGER_RECONCILIATION_GAP'
+  | 'ACCOUNTING_FILL_BINDING_GAP'
+  | 'DUPLICATE_EXECUTION_EVIDENCE'
+  | 'EXPLICIT_COST_EVIDENCE_GAP'
+  | 'FILL_EVIDENCE_GAP'
+  | 'FILL_IDENTITY_DRIFT'
+  | 'FILL_QUANTITY_MISMATCH'
+  | 'FILL_TIMESTAMP_GAP'
+  | 'INVALID_EXECUTION_MICROS'
+  | 'PLANNED_DECISION_EVIDENCE_GAP'
+  | 'REFERENCE_PRICE_EVIDENCE_GAP'
+  | 'TERMINAL_ORDER_EVIDENCE_GAP'
+  | 'TERMINAL_PRICE_EVIDENCE_GAP'
+  | 'ZERO_COMPLETED_EXECUTIONS'
+
+export type ForwardPerformanceObservedCapacityReasonCode =
+  | 'EXECUTION_QUALITY_UNDETERMINED'
+  | 'INVALID_MARKET_VOLUME_EVIDENCE'
+  | 'MARKET_VOLUME_EVIDENCE_GAP'
+  | 'MARKET_VOLUME_IDENTITY_DRIFT'
   | 'ZERO_COMPLETED_EXECUTIONS'
 
 export interface ForwardPerformanceBuildBinding {
@@ -69,11 +96,131 @@ export interface ForwardPerformanceStrategyEvidence {
 
 export interface ForwardPerformanceTransactionEvidence {
   readonly transactionId: string
+  readonly brokerEventId?: string
+  readonly intentId?: string
   readonly cycleId: string
+  readonly symbol?: string
   readonly side: 'BUY' | 'SELL'
+  readonly quantityMicros?: string
+  readonly priceMicros?: string
+  readonly notionalMicros?: string
   readonly feeMicros: string
   readonly realizedPnlMicros: string
   readonly occurredAt: string
+}
+
+export interface ForwardPerformanceExecutionFillEvidence {
+  readonly brokerEventId: string
+  readonly fillId: string
+  readonly brokerOrderId: string
+  readonly clientOrderId: string
+  readonly intentId: string
+  readonly accountId: string
+  readonly symbol: string
+  readonly side: 'BUY' | 'SELL'
+  readonly quantityMicros: string
+  readonly priceMicros: string
+  readonly feeMicros: string
+  readonly sourceTimestamp: string
+  readonly occurredAt: string
+  readonly observedAt: string
+}
+
+export interface ForwardPerformanceExecutionEvidence {
+  readonly cycleId: string
+  readonly decisionDocumentHash: string
+  readonly decisionHash: string
+  readonly decisionCreatedAt: string
+  readonly intentId: string
+  readonly accountId: string
+  readonly symbol: string
+  readonly side: 'BUY' | 'SELL'
+  readonly plannedQuantityMicros?: string
+  readonly referencePriceMicros?: string
+  readonly intent?: {
+    readonly intentId: string
+    readonly accountId: string
+    readonly clientOrderId: string
+    readonly cycleId: string
+    readonly decisionHash: string
+    readonly symbol: string
+    readonly side: 'BUY' | 'SELL'
+    readonly quantityMicros: string
+    readonly terminalOutcome: 'FILLED' | 'CANCELED' | 'EXPIRED' | 'REJECTED' | 'BLOCKED'
+    readonly createdAt: string
+    readonly updatedAt: string
+  }
+  readonly terminalOrder?: {
+    readonly eventId: string
+    readonly brokerOrderId: string
+    readonly clientOrderId: string
+    readonly intentId: string
+    readonly accountId: string
+    readonly symbol: string
+    readonly side: 'BUY' | 'SELL'
+    readonly quantityMicros: string
+    readonly filledQuantityMicros: string
+    readonly status: 'NEW' | 'PARTIALLY_FILLED' | 'FILLED' | 'CANCELED' | 'EXPIRED' | 'REJECTED' | 'PENDING'
+    readonly occurredAt: string
+    readonly observedAt: string
+  }
+  readonly fills: readonly ForwardPerformanceExecutionFillEvidence[]
+  readonly terminalReferencePrice?: {
+    readonly schemaVersion: 'bayn.forward-performance-terminal-reference-price.v1'
+    readonly cycleId: string
+    readonly symbol: string
+    readonly executionSessionDate: IsoDate
+    readonly priceMicros: string
+    readonly observedAt: string
+    readonly sourceEvidenceHash: string
+    readonly contentHash: string
+  }
+}
+
+export interface ForwardPerformanceMarketVolumeEvidence {
+  readonly schemaVersion: 'bayn.forward-performance-market-volume-evidence.v1'
+  readonly cycleId: string
+  readonly decisionSnapshotId: string
+  readonly decisionSnapshotAsOfSession: IsoDate
+  readonly symbol: string
+  readonly executionSessionDate: IsoDate
+  readonly windowOpenedAt: string
+  readonly windowClosedAt: string
+  readonly evidenceCutoffAt: string
+  readonly quantityMicros: string
+  readonly closePriceMicros: string
+  readonly snapshotId: string
+  readonly manifestContentHash: string
+  readonly barsContentHash: string
+  readonly finalizedAt: string
+  readonly universeId: FinalizedSnapshotProvenance['universeId']
+  readonly universeSymbolHash: string
+  readonly requestedStart: IsoDate
+  readonly evaluationStart: IsoDate
+  readonly calendarVersion: string
+  readonly source: 'alpaca'
+  readonly sourceFeed: 'sip'
+  readonly adjustment: 'all'
+  readonly contentHash: string
+}
+
+export interface ForwardPerformanceMarketVolumeRequest {
+  readonly cycleId: string
+  readonly decisionSnapshotId: string
+  readonly decisionSnapshotAsOfSession: IsoDate
+  readonly symbol: string
+  readonly executionSessionDate: IsoDate
+  readonly windowOpenedAt: string
+  readonly windowClosedAt: string
+  readonly evidenceCutoffAt: string
+  readonly universeId: FinalizedSnapshotProvenance['universeId']
+  readonly universeSymbolHash: string
+  readonly symbols: FinalizedSnapshotProvenance['symbols']
+  readonly requestedStart: IsoDate
+  readonly calendarVersion: string
+  readonly source: 'alpaca'
+  readonly sourceFeed: 'sip'
+  readonly adjustment: 'all'
 }
 
 export interface ForwardPerformanceLedgerTotals {
@@ -147,6 +294,8 @@ export interface ForwardPerformanceEvidenceInput {
   }
   readonly startingCapitalMicros?: string
   readonly transactions: readonly ForwardPerformanceTransactionEvidence[]
+  readonly executionEvidence?: readonly ForwardPerformanceExecutionEvidence[]
+  readonly marketVolumeEvidence?: readonly ForwardPerformanceMarketVolumeEvidence[]
   readonly ledgerTotals?: ForwardPerformanceLedgerTotals
   readonly cashYieldEvidenceRequired: boolean
   readonly cashYieldEvidence?: ForwardPerformanceCashYieldBinding
@@ -200,6 +349,58 @@ export interface ForwardPerformanceReceiptMaterial {
     readonly status: ForwardPerformanceEvidenceStatus
     readonly reasonCodes: readonly ForwardPerformanceReasonCode[]
     readonly cashYield: ForwardPerformanceCashYieldBinding | null
+  }
+  readonly executionQuality: {
+    readonly status: ForwardPerformanceMeasurementStatus
+    readonly reasonCodes: readonly ForwardPerformanceExecutionQualityReasonCode[]
+    readonly evidenceHash: string | null
+    readonly implementationShortfall: {
+      readonly plannedOrderCount: number
+      readonly fillCount: number
+      readonly plannedQuantityMicros: string
+      readonly filledQuantityMicros: string
+      readonly unfilledQuantityMicros: string
+      readonly plannedReferenceNotionalMicros: string
+      readonly executedNotionalMicros: string
+      readonly executionPriceShortfallMicros: string
+      readonly opportunityShortfallMicros: string
+      readonly explicitCostsMicros: string
+      readonly totalImplementationShortfallMicros: string
+      readonly implementationShortfallRate: {
+        readonly numeratorMicros: string
+        readonly denominatorMicros: string
+        readonly decimal: string
+      }
+      readonly firstDecisionAt: string
+      readonly firstFillAt: string | null
+      readonly lastFillAt: string | null
+      readonly lastTerminalOrderObservedAt: string
+    } | null
+  }
+  readonly observedCapacity: {
+    readonly status: ForwardPerformanceMeasurementStatus
+    readonly reasonCodes: readonly ForwardPerformanceObservedCapacityReasonCode[]
+    readonly evidenceHash: string | null
+    readonly observations: readonly {
+      readonly cycleId: string
+      readonly symbol: string
+      readonly windowOpenedAt: string
+      readonly windowClosedAt: string
+      readonly filledQuantityMicros: string
+      readonly marketVolumeQuantityMicros: string
+      readonly participationRate: {
+        readonly numeratorQuantityMicros: string
+        readonly denominatorQuantityMicros: string
+        readonly decimal: string
+      }
+    }[]
+    readonly boundedObservedReferenceNotionalMicros: string | null
+    readonly boundedObservedExecutedNotionalMicros: string | null
+    readonly maximumParticipationRate: {
+      readonly numeratorQuantityMicros: string
+      readonly denominatorQuantityMicros: string
+      readonly decimal: string
+    } | null
   }
   readonly profitability: ForwardPerformanceProfitability
 }

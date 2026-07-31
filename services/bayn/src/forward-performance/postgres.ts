@@ -2,6 +2,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Data, Effect, Schema } from 'effect'
 
 import type { AccountingTransaction } from '../accounting/schema'
+import { FinalizedSnapshotProvenanceSchema } from '../contracts'
 import {
   decodeAccountingReceipt,
   DiscrepancyKind,
@@ -16,13 +17,17 @@ import {
 } from '../db/accounting-rows'
 import {
   ImageDigestSchema,
+  IsoDateSchema,
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
   strictParseOptions,
 } from '../schemas'
+import { ObserveShadowDecisionDocumentSchema } from '../shadow-decision-contract'
 import type {
   ForwardPerformanceCashYieldEvidence,
   ForwardPerformanceCycleEvidence,
+  ForwardPerformanceExecutionEvidence,
+  ForwardPerformanceMarketVolumeRequest,
   ForwardPerformanceStrategyEvidence,
   ForwardPerformanceTransactionEvidence,
 } from './model'
@@ -101,6 +106,64 @@ const TransactionRow = Schema.Struct({
   cycle_id: Schema.NullOr(Sha256),
 })
 
+const ObserveDecisionRow = Schema.Struct({
+  cycle_id: Sha256,
+  decision_hash: Sha256,
+  document: ObserveShadowDecisionDocumentSchema,
+  created_at: Schema.Date,
+})
+const MarketVolumeBindingRow = Schema.Struct({
+  cycle_id: Sha256,
+  snapshot_id: Sha256,
+  execution_session_date: IsoDateSchema,
+  execution_open_at: Schema.Date,
+  execution_close_at: Schema.Date,
+  manifest: FinalizedSnapshotProvenanceSchema,
+})
+const IntentExecutionRow = Schema.Struct({
+  intent_id: Sha256,
+  account_id: NonEmptyString,
+  client_order_id: NonEmptyString,
+  cycle_id: Sha256,
+  decision_hash: Sha256,
+  symbol: NonEmptyString,
+  side: Schema.Literals(['BUY', 'SELL']),
+  quantity_micros: Schema.String,
+  terminal_outcome: Schema.NullOr(Schema.Literals(['FILLED', 'CANCELED', 'EXPIRED', 'REJECTED', 'BLOCKED'])),
+  created_at: Schema.Date,
+  updated_at: Schema.Date,
+})
+const OrderExecutionRow = Schema.Struct({
+  event_id: Sha256,
+  broker_order_id: NonEmptyString,
+  client_order_id: NonEmptyString,
+  intent_id: Sha256,
+  account_id: NonEmptyString,
+  symbol: NonEmptyString,
+  side: Schema.Literals(['BUY', 'SELL']),
+  quantity_micros: Schema.String,
+  filled_quantity_micros: Schema.String,
+  status: Schema.Literals(['NEW', 'PARTIALLY_FILLED', 'FILLED', 'CANCELED', 'EXPIRED', 'REJECTED', 'PENDING']),
+  occurred_at: Schema.Date,
+  observed_at: Schema.Date,
+})
+const FillExecutionRow = Schema.Struct({
+  event_id: Sha256,
+  fill_id: NonEmptyString,
+  broker_order_id: NonEmptyString,
+  client_order_id: NonEmptyString,
+  intent_id: Sha256,
+  account_id: NonEmptyString,
+  symbol: NonEmptyString,
+  side: Schema.Literals(['BUY', 'SELL']),
+  quantity_micros: Schema.String,
+  price_micros: Schema.String,
+  fee_micros: Schema.String,
+  source_timestamp: Schema.String,
+  occurred_at: Schema.Date,
+  observed_at: Schema.Date,
+})
+
 const decodeCycles = Schema.decodeUnknownEffect(Schema.Array(TerminalCycleRow), strictParseOptions)
 const decodeStrategy = Schema.decodeUnknownEffect(
   Schema.Array(StrategyRow).check(Schema.isMaxLength(1)),
@@ -122,6 +185,11 @@ const decodeTransactions = Schema.decodeUnknownEffect(Schema.Array(TransactionRo
 const decodeReceipts = Schema.decodeUnknownEffect(Schema.Array(AccountingReceiptRowSchema), strictParseOptions)
 const decodeCount = Schema.decodeUnknownEffect(Schema.Tuple([CountRow]), strictParseOptions)
 const decodeDurableExecutions = Schema.decodeUnknownEffect(Schema.Array(DurableExecutionRow), strictParseOptions)
+const decodeObserveDecisions = Schema.decodeUnknownEffect(Schema.Array(ObserveDecisionRow), strictParseOptions)
+const decodeMarketVolumeBindings = Schema.decodeUnknownEffect(Schema.Array(MarketVolumeBindingRow), strictParseOptions)
+const decodeExecutionIntents = Schema.decodeUnknownEffect(Schema.Array(IntentExecutionRow), strictParseOptions)
+const decodeExecutionOrders = Schema.decodeUnknownEffect(Schema.Array(OrderExecutionRow), strictParseOptions)
+const decodeExecutionFills = Schema.decodeUnknownEffect(Schema.Array(FillExecutionRow), strictParseOptions)
 
 export class ForwardPerformancePostgresError extends Data.TaggedError('ForwardPerformancePostgresError')<{
   readonly operation: 'read'
@@ -145,6 +213,8 @@ export interface ForwardPerformancePostgresEvidence {
   readonly cashYieldEvidence?: ForwardPerformanceCashYieldEvidence
   readonly transactions: readonly AccountingTransaction[]
   readonly transactionEvidence: readonly ForwardPerformanceTransactionEvidence[]
+  readonly executionEvidence: readonly ForwardPerformanceExecutionEvidence[]
+  readonly marketVolumeRequests: readonly ForwardPerformanceMarketVolumeRequest[]
   readonly receipts: readonly AccountingReceipt[]
   readonly durableExecutionBindings: readonly {
     readonly accountId: string
@@ -359,6 +429,198 @@ const receiptQuery = (sql: PgClient.PgClient, accountId: string) => sql<Record<s
   ORDER BY receipt.broker_event_id COLLATE "C"
 `
 
+const uniqueRows = <Row>(rows: readonly Row[], key: (row: Row) => string): ReadonlyMap<string, Row | null> => {
+  const byKey = new Map<string, Row | null>()
+  for (const row of rows) {
+    const identity = key(row)
+    byKey.set(identity, byKey.has(identity) ? null : row)
+  }
+  return byKey
+}
+
+const intentExecutionKey = (input: {
+  readonly cycleId: string
+  readonly decisionHash: string
+  readonly accountId: string
+  readonly symbol: string
+  readonly side: 'BUY' | 'SELL'
+  readonly quantityMicros: string
+  readonly createdAt: string
+}): string =>
+  JSON.stringify([
+    input.cycleId,
+    input.decisionHash,
+    input.accountId,
+    input.symbol,
+    input.side,
+    input.quantityMicros,
+    input.createdAt,
+  ])
+
+const executionEvidenceFromRows = (
+  decisionRows: readonly (typeof ObserveDecisionRow.Type)[],
+  intentRows: readonly (typeof IntentExecutionRow.Type)[],
+  orderRows: readonly (typeof OrderExecutionRow.Type)[],
+  fillRows: readonly (typeof FillExecutionRow.Type)[],
+): readonly ForwardPerformanceExecutionEvidence[] => {
+  const intents = uniqueRows(intentRows, (row) =>
+    intentExecutionKey({
+      cycleId: row.cycle_id,
+      decisionHash: row.decision_hash,
+      accountId: row.account_id,
+      symbol: row.symbol,
+      side: row.side,
+      quantityMicros: row.quantity_micros,
+      createdAt: row.created_at.toISOString(),
+    }),
+  )
+  const orders = uniqueRows(orderRows, (row) => row.intent_id)
+  const fills = new Map<string, (typeof FillExecutionRow.Type)[]>()
+  for (const row of fillRows) {
+    const found = fills.get(row.intent_id)
+    if (found === undefined) fills.set(row.intent_id, [row])
+    else found.push(row)
+  }
+
+  const evidence: ForwardPerformanceExecutionEvidence[] = []
+  for (const row of decisionRows) {
+    const document = row.document
+    if (document.targetPlan.status !== 'PLANNED') continue
+    for (const target of document.targetPlan.intentTargets) {
+      const matchingReferences = document.targetPlan.targets.filter((candidate) => candidate.symbol === target.symbol)
+      const reference = matchingReferences.length === 1 ? matchingReferences[0] : undefined
+      const intentRow = intents.get(
+        intentExecutionKey({
+          cycleId: row.cycle_id,
+          decisionHash: document.bindings.strategyDecisionHash,
+          accountId: document.bindings.accountId,
+          symbol: target.symbol,
+          side: target.side,
+          quantityMicros: target.quantityMicros,
+          createdAt: document.createdAt,
+        }),
+      )
+      const intentId = intentRow === undefined || intentRow === null ? '' : intentRow.intent_id
+      const orderRow = orders.get(intentId)
+      const fillEvidence = (fills.get(intentId) ?? []).map((fill) => ({
+        brokerEventId: fill.event_id,
+        fillId: fill.fill_id,
+        brokerOrderId: fill.broker_order_id,
+        clientOrderId: fill.client_order_id,
+        intentId: fill.intent_id,
+        accountId: fill.account_id,
+        symbol: fill.symbol,
+        side: fill.side,
+        quantityMicros: fill.quantity_micros,
+        priceMicros: fill.price_micros,
+        feeMicros: fill.fee_micros,
+        sourceTimestamp: fill.source_timestamp,
+        occurredAt: fill.occurred_at.toISOString(),
+        observedAt: fill.observed_at.toISOString(),
+      }))
+      evidence.push({
+        cycleId: row.cycle_id,
+        decisionDocumentHash:
+          row.decision_hash === document.contentHash &&
+          document.bindings.cycleId === row.cycle_id &&
+          document.createdAt === row.created_at.toISOString()
+            ? document.contentHash
+            : '',
+        decisionHash: document.bindings.strategyDecisionHash,
+        decisionCreatedAt: document.createdAt,
+        intentId,
+        accountId: document.bindings.accountId,
+        symbol: target.symbol,
+        side: target.side,
+        plannedQuantityMicros: target.quantityMicros,
+        ...(reference === undefined ? {} : { referencePriceMicros: reference.referencePriceMicros }),
+        ...(intentRow === undefined || intentRow === null || intentRow.terminal_outcome === null
+          ? {}
+          : {
+              intent: {
+                intentId: intentRow.intent_id,
+                accountId: intentRow.account_id,
+                clientOrderId: intentRow.client_order_id,
+                cycleId: intentRow.cycle_id,
+                decisionHash: intentRow.decision_hash,
+                symbol: intentRow.symbol,
+                side: intentRow.side,
+                quantityMicros: intentRow.quantity_micros,
+                terminalOutcome: intentRow.terminal_outcome,
+                createdAt: intentRow.created_at.toISOString(),
+                updatedAt: intentRow.updated_at.toISOString(),
+              },
+            }),
+        ...(orderRow === undefined || orderRow === null
+          ? {}
+          : {
+              terminalOrder: {
+                eventId: orderRow.event_id,
+                brokerOrderId: orderRow.broker_order_id,
+                clientOrderId: orderRow.client_order_id,
+                intentId: orderRow.intent_id,
+                accountId: orderRow.account_id,
+                symbol: orderRow.symbol,
+                side: orderRow.side,
+                quantityMicros: orderRow.quantity_micros,
+                filledQuantityMicros: orderRow.filled_quantity_micros,
+                status: orderRow.status,
+                occurredAt: orderRow.occurred_at.toISOString(),
+                observedAt: orderRow.observed_at.toISOString(),
+              },
+            }),
+        fills: fillEvidence,
+      })
+    }
+  }
+  return evidence
+}
+
+const marketVolumeRequestsFromRows = (
+  executionEvidence: readonly ForwardPerformanceExecutionEvidence[],
+  bindingRows: readonly (typeof MarketVolumeBindingRow.Type)[],
+  evidenceCutoffAt: string | undefined,
+): readonly ForwardPerformanceMarketVolumeRequest[] => {
+  if (evidenceCutoffAt === undefined) return []
+  const bindings = uniqueRows(bindingRows, (row) => row.cycle_id)
+  const requests = new Map<string, ForwardPerformanceMarketVolumeRequest>()
+  for (const execution of executionEvidence) {
+    const binding = bindings.get(execution.cycleId)
+    if (
+      binding === undefined ||
+      binding === null ||
+      binding.snapshot_id !== binding.manifest.snapshotId ||
+      !binding.manifest.symbols.includes(execution.symbol)
+    ) {
+      continue
+    }
+    const request: ForwardPerformanceMarketVolumeRequest = {
+      cycleId: execution.cycleId,
+      decisionSnapshotId: binding.snapshot_id,
+      decisionSnapshotAsOfSession: binding.manifest.asOfSession,
+      symbol: execution.symbol,
+      executionSessionDate: binding.execution_session_date,
+      windowOpenedAt: binding.execution_open_at.toISOString(),
+      windowClosedAt: binding.execution_close_at.toISOString(),
+      evidenceCutoffAt,
+      universeId: binding.manifest.universeId,
+      universeSymbolHash: binding.manifest.universeSymbolHash,
+      symbols: binding.manifest.symbols,
+      requestedStart: binding.manifest.requestedStart,
+      calendarVersion: binding.manifest.calendarVersion,
+      source: binding.manifest.source,
+      sourceFeed: binding.manifest.sourceFeed,
+      adjustment: binding.manifest.adjustment,
+    }
+    requests.set(JSON.stringify([request.cycleId, request.symbol]), request)
+  }
+  return [...requests.values()].sort((left, right) => {
+    const leftKey = JSON.stringify([left.executionSessionDate, left.cycleId, left.symbol])
+    const rightKey = JSON.stringify([right.executionSessionDate, right.cycleId, right.symbol])
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0
+  })
+}
+
 export const readForwardPerformancePostgres = (
   sql: PgClient.PgClient,
   accountId: string,
@@ -559,6 +821,158 @@ export const readForwardPerformancePostgres = (
         const receipts = yield* Effect.forEach(receiptRows, (row) =>
           decodeAccountingReceipt(accountingReceiptFromRow(row)),
         )
+        const observeDecisionRows = yield* sql<Record<string, unknown>>`
+          WITH latest_reconciliation AS (
+            SELECT reconciled_at
+            FROM reconciliations
+            WHERE account_id = ${accountId}
+            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+            LIMIT 1
+          )
+          SELECT
+            cycle.cycle_id,
+            decision.decision_hash,
+            decision.document,
+            decision.created_at
+          FROM autonomous_cycles AS cycle
+          JOIN autonomous_cycle_shadow_decisions AS decision
+            ON decision.cycle_id = cycle.cycle_id
+            AND decision.decision_hash = cycle.decision_hash
+          CROSS JOIN latest_reconciliation
+          WHERE cycle.account_id = ${accountId}
+            AND cycle.state = 'COMPLETED'
+            AND cycle.terminal_at <= latest_reconciliation.reconciled_at
+            AND decision.schema_version = 'bayn.observe-shadow-decision.v1'
+            AND decision.document ->> 'mode' = 'OBSERVE'
+          ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
+        `.pipe(Effect.flatMap(decodeObserveDecisions))
+        const marketVolumeBindingRows = yield* sql<Record<string, unknown>>`
+          WITH latest_reconciliation AS (
+            SELECT reconciled_at
+            FROM reconciliations
+            WHERE account_id = ${accountId}
+            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+            LIMIT 1
+          )
+          SELECT
+            cycle.cycle_id,
+            cycle.snapshot_id,
+            cycle.execution_session_date::text AS execution_session_date,
+            cycle.execution_open_at,
+            cycle.execution_close_at,
+            reference.manifest
+          FROM autonomous_cycles AS cycle
+          JOIN snapshot_references AS reference ON reference.snapshot_id = cycle.snapshot_id
+          CROSS JOIN latest_reconciliation
+          WHERE cycle.account_id = ${accountId}
+            AND cycle.state = 'COMPLETED'
+            AND cycle.terminal_at <= latest_reconciliation.reconciled_at
+          ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
+        `.pipe(Effect.flatMap(decodeMarketVolumeBindings))
+        const executionIntentRows = yield* sql<Record<string, unknown>>`
+          WITH latest_reconciliation AS (
+            SELECT reconciled_at
+            FROM reconciliations
+            WHERE account_id = ${accountId}
+            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+            LIMIT 1
+          )
+          SELECT
+            intent.intent_id,
+            intent.account_id,
+            intent.client_order_id,
+            intent.cycle_id,
+            intent.decision_hash,
+            intent.symbol,
+            intent.side,
+            intent.quantity_micros::text AS quantity_micros,
+            intent.terminal_outcome,
+            intent.created_at,
+            intent.updated_at
+          FROM intents AS intent
+          JOIN autonomous_cycles AS cycle ON cycle.cycle_id = intent.cycle_id
+          CROSS JOIN latest_reconciliation
+          WHERE intent.account_id = ${accountId}
+            AND cycle.account_id = ${accountId}
+            AND cycle.state = 'COMPLETED'
+            AND cycle.terminal_at <= latest_reconciliation.reconciled_at
+          ORDER BY intent.cycle_id COLLATE "C", intent.intent_id COLLATE "C"
+        `.pipe(Effect.flatMap(decodeExecutionIntents))
+        const executionOrderRows = yield* sql<Record<string, unknown>>`
+          WITH latest_reconciliation AS (
+            SELECT reconciled_at
+            FROM reconciliations
+            WHERE account_id = ${accountId}
+            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+            LIMIT 1
+          )
+          SELECT DISTINCT ON (observed_order.intent_id)
+            event.event_id,
+            observed_order.broker_order_id,
+            observed_order.client_order_id,
+            observed_order.intent_id,
+            observed_order.account_id,
+            observed_order.symbol,
+            observed_order.side,
+            observed_order.quantity_micros::text AS quantity_micros,
+            observed_order.filled_quantity_micros::text AS filled_quantity_micros,
+            observed_order.status,
+            event.occurred_at,
+            event.observed_at
+          FROM orders AS observed_order
+          JOIN broker_events AS event ON event.event_id = observed_order.event_id
+          JOIN intents AS intent ON intent.intent_id = observed_order.intent_id
+          JOIN autonomous_cycles AS cycle ON cycle.cycle_id = intent.cycle_id
+          CROSS JOIN latest_reconciliation
+          WHERE observed_order.account_id = ${accountId}
+            AND cycle.account_id = ${accountId}
+            AND cycle.state = 'COMPLETED'
+            AND cycle.terminal_at <= latest_reconciliation.reconciled_at
+            AND event.observed_at <= latest_reconciliation.reconciled_at
+          ORDER BY
+            observed_order.intent_id,
+            event.source_sequence DESC,
+            event.event_id COLLATE "C" DESC
+        `.pipe(Effect.flatMap(decodeExecutionOrders))
+        const executionFillRows = yield* sql<Record<string, unknown>>`
+          WITH latest_reconciliation AS (
+            SELECT reconciled_at
+            FROM reconciliations
+            WHERE account_id = ${accountId}
+            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+            LIMIT 1
+          )
+          SELECT
+            event.event_id,
+            fill.fill_id,
+            fill.broker_order_id,
+            fill.client_order_id,
+            fill.intent_id,
+            fill.account_id,
+            fill.symbol,
+            fill.side,
+            fill.quantity_micros::text AS quantity_micros,
+            fill.price_micros::text AS price_micros,
+            fill.fee_micros::text AS fee_micros,
+            fill.source_timestamp,
+            event.occurred_at,
+            event.observed_at
+          FROM fills AS fill
+          JOIN broker_events AS event ON event.event_id = fill.event_id
+          JOIN intents AS intent ON intent.intent_id = fill.intent_id
+          JOIN autonomous_cycles AS cycle ON cycle.cycle_id = intent.cycle_id
+          CROSS JOIN latest_reconciliation
+          WHERE fill.account_id = ${accountId}
+            AND cycle.account_id = ${accountId}
+            AND cycle.state = 'COMPLETED'
+            AND cycle.terminal_at <= latest_reconciliation.reconciled_at
+            AND event.observed_at <= latest_reconciliation.reconciled_at
+          ORDER BY
+            intent.cycle_id COLLATE "C",
+            fill.intent_id COLLATE "C",
+            fill.source_timestamp COLLATE "C",
+            fill.fill_id COLLATE "C"
+        `.pipe(Effect.flatMap(decodeExecutionFills))
         const durableExecutionRows = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (
             SELECT reconciled_at
@@ -803,12 +1217,29 @@ export const readForwardPerformancePostgres = (
         const transactionEvidence = transactionRows.map(
           (row): ForwardPerformanceTransactionEvidence => ({
             transactionId: row.transaction_id,
+            brokerEventId: row.broker_event_id,
+            ...(row.intent_id === null ? {} : { intentId: row.intent_id }),
             cycleId: row.cycle_id ?? '',
+            symbol: row.symbol,
             side: row.side,
+            quantityMicros: row.quantity_micros,
+            priceMicros: row.price_micros,
+            notionalMicros: row.notional_micros,
             feeMicros: row.fee_micros,
             realizedPnlMicros: row.realized_pnl_micros,
             occurredAt: row.occurred_at.toISOString(),
           }),
+        )
+        const executionEvidence = executionEvidenceFromRows(
+          observeDecisionRows,
+          executionIntentRows,
+          executionOrderRows,
+          executionFillRows,
+        )
+        const marketVolumeRequests = marketVolumeRequestsFromRows(
+          executionEvidence,
+          marketVolumeBindingRows,
+          reconciliation?.reconciledAt,
         )
 
         return {
@@ -821,6 +1252,8 @@ export const readForwardPerformancePostgres = (
           ...(cashYieldEvidence === undefined ? {} : { cashYieldEvidence }),
           transactions,
           transactionEvidence,
+          executionEvidence,
+          marketVolumeRequests,
           receipts,
           durableExecutionBindings: durableExecutionRows.map((row) => ({
             accountId: row.account_id ?? '',
