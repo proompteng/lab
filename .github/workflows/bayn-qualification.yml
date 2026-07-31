@@ -15,9 +15,9 @@ concurrency:
 
 jobs:
   eligibility:
-    name: Verify governed qualification eligibility
+    name: Run governed qualification once
     runs-on: arc-arm64
-    timeout-minutes: 10
+    timeout-minutes: 180
     steps:
       - name: Reject manual invocation
         if: github.event_name == 'workflow_dispatch'
@@ -31,11 +31,6 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
 
       - name: Verify dormant calendar before any privileged access
         id: calendar
@@ -52,18 +47,198 @@ jobs:
 
       - name: Stop safely while preregistration is absent
         if: steps.calendar.outputs.dormant == 'true'
-        run: echo 'No credentials, Signal data, PostgreSQL state, holdout, or qualification command were accessed.'
+        run: echo 'No credentials, Signal data, PostgreSQL state, holdout, image, or qualification command were accessed.'
 
-      - name: Require separately installed immutable evidence collector
+      - name: Bind the exact promoted unpinned qualification image
+        id: image
         if: steps.calendar.outputs.dormant != 'true'
         shell: bash
         run: |
           set -euo pipefail
-          echo 'A non-null preregistration exists, but execution stays fail-closed until the reviewed evidence collector writes /run/bayn-qualification/eligibility-input.json.' >&2
-          test -s /run/bayn-qualification/eligibility-input.json
-          bun packages/scripts/src/bayn/verify-qualification-eligibility.ts \
-            --input /run/bayn-qualification/eligibility-input.json \
-            --repository-root "${GITHUB_WORKSPACE}" \
-            --trusted-repository "${GITHUB_REPOSITORY}" \
-            --git-timeout-ms 10000
-          echo 'Eligibility verified. The existing governed qualification command must be invoked by the same reviewed collector only after its durable attempt lock is committed.'
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "$(git rev-parse refs/remotes/origin/main)" = "${GITHUB_SHA}"
+
+          deployment='argocd/applications/bayn/deployment.yaml'
+          read_bayn_env() {
+            local name="$1"
+            NAME="$name" yq -er '
+              [.spec.template.spec.containers[]
+                | select(.name == "bayn")
+                | .env[]
+                | select(.name == strenv(NAME) and has("value"))
+                | .value]
+              | select(length == 1)
+              | .[0]
+            ' "$deployment"
+          }
+
+          qualification_pin_count="$(NAME=BAYN_QUALIFICATION_RUN_ID yq -r '
+            [.spec.template.spec.containers[]
+              | select(.name == "bayn")
+              | .env[]
+              | select(.name == strenv(NAME))]
+            | length
+          ' "$deployment")"
+          test "$qualification_pin_count" = 0
+
+          source_sha="$(read_bayn_env BAYN_CODE_REVISION)"
+          image_repository="$(read_bayn_env BAYN_IMAGE_REPOSITORY)"
+          image_digest="$(read_bayn_env BAYN_IMAGE_DIGEST)"
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$image_repository" =~ ^[A-Za-z0-9._:/-]+$ ]]
+          [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+
+          image_reference="${image_repository}@${image_digest}"
+          echo "reference=${image_reference}" >> "$GITHUB_OUTPUT"
+
+      - name: Pull and verify the exact qualification image
+        if: steps.calendar.outputs.dormant != 'true'
+        shell: bash
+        env:
+          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE_REFERENCE"
+          docker image inspect "$IMAGE_REFERENCE" --format '{{json .RepoDigests}}' |
+            jq -e --arg expected "$IMAGE_REFERENCE" 'index($expected) != null' >/dev/null
+
+      - name: Preflight immutable qualification evidence without credentials
+        if: steps.calendar.outputs.dormant != 'true'
+        shell: bash
+        env:
+          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+        run: |
+          set -euo pipefail
+          preflight="${RUNNER_TEMP}/bayn-qualification-preflight.log"
+          rm -f -- "$preflight"
+
+          docker run --rm \
+            --read-only \
+            --user "$(id -u):$(id -g)" \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+            --mount "type=bind,src=${GITHUB_WORKSPACE},dst=/workspace,readonly" \
+            -e GITHUB_EVENT_NAME \
+            -e GITHUB_REPOSITORY \
+            -e GITHUB_RUN_ATTEMPT \
+            -e GITHUB_RUN_ID \
+            -e GITHUB_SHA \
+            -e BAYN_QUALIFICATION_REPOSITORY_PATH=/workspace \
+            -e BAYN_QUALIFICATION_TRUSTED_REPOSITORY="${GITHUB_REPOSITORY}" \
+            -e BAYN_QUALIFICATION_IMAGE_REFERENCE="$IMAGE_REFERENCE" \
+            -e BAYN_QUALIFICATION_MODE=preflight \
+            --entrypoint bayn-qualification-collector \
+            "$IMAGE_REFERENCE" | tee "$preflight"
+
+          mapfile -t preflight_lines < <(grep '^BAYN_QUALIFICATION_TERMINAL=' "$preflight")
+          test "${#preflight_lines[@]}" -eq 1
+          jq -e '
+            .schemaVersion == "bayn.qualification-collector-preflight.v1"
+            and .status == "READY"
+            and (.currentMainSha | test("^[0-9a-f]{40}$"))
+            and (.sourceSha | test("^[0-9a-f]{40}$"))
+            and (.image.digest | test("^sha256:[0-9a-f]{64}$"))
+            and (.candidateOrdinal | type == "number")
+            and (.preregistrationHash | test("^[0-9a-f]{64}$"))
+          ' <<< "${preflight_lines[0]#BAYN_QUALIFICATION_TERMINAL=}" >/dev/null
+
+      - name: Collect, lock, execute once, and independently audit
+        id: qualify
+        if: steps.calendar.outputs.dormant != 'true'
+        shell: bash
+        env:
+          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+          GITHUB_TOKEN: ${{ github.token }}
+          BAYN_CLICKHOUSE_USERNAME: ${{ secrets.BAYN_QUALIFICATION_CLICKHOUSE_USERNAME }}
+          BAYN_CLICKHOUSE_PASSWORD: ${{ secrets.BAYN_QUALIFICATION_CLICKHOUSE_PASSWORD }}
+          BAYN_POSTGRES_URL: ${{ secrets.BAYN_QUALIFICATION_POSTGRES_URL }}
+          BAYN_QUALIFICATION_POSTGRES_CA_PEM: ${{ secrets.BAYN_QUALIFICATION_POSTGRES_CA_PEM }}
+          BAYN_AUDIT_SIGNAL_PUBLISHER_USERNAME: ${{ secrets.BAYN_QUALIFICATION_SIGNAL_PUBLISHER_USERNAME }}
+          BAYN_AUDIT_CLICKHOUSE_USERNAME: ${{ secrets.BAYN_QUALIFICATION_AUDIT_CLICKHOUSE_USERNAME }}
+          BAYN_AUDIT_CLICKHOUSE_PASSWORD: ${{ secrets.BAYN_QUALIFICATION_AUDIT_CLICKHOUSE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+
+          log="${RUNNER_TEMP}/bayn-qualification.log"
+          terminal="${RUNNER_TEMP}/bayn-qualification-terminal.json"
+          rm -f -- "$log" "$terminal"
+
+          docker run --rm \
+            --network host \
+            --read-only \
+            --user "$(id -u):$(id -g)" \
+            --tmpfs /tmp:rw,noexec,nosuid,size=128m \
+            --mount "type=bind,src=${GITHUB_WORKSPACE},dst=/workspace,readonly" \
+            -e GITHUB_API_URL \
+            -e GITHUB_EVENT_NAME \
+            -e GITHUB_REPOSITORY \
+            -e GITHUB_RUN_ATTEMPT \
+            -e GITHUB_RUN_ID \
+            -e GITHUB_SHA \
+            -e GITHUB_TOKEN \
+            -e BAYN_CLICKHOUSE_USERNAME \
+            -e BAYN_CLICKHOUSE_PASSWORD \
+            -e BAYN_POSTGRES_URL \
+            -e BAYN_QUALIFICATION_POSTGRES_CA_PEM \
+            -e BAYN_AUDIT_SIGNAL_PUBLISHER_USERNAME \
+            -e BAYN_AUDIT_CLICKHOUSE_USERNAME \
+            -e BAYN_AUDIT_CLICKHOUSE_PASSWORD \
+            -e BAYN_QUALIFICATION_REPOSITORY_PATH=/workspace \
+            -e BAYN_QUALIFICATION_TRUSTED_REPOSITORY="${GITHUB_REPOSITORY}" \
+            -e BAYN_QUALIFICATION_IMAGE_REFERENCE="$IMAGE_REFERENCE" \
+            -e BAYN_QUALIFICATION_MODE=execute \
+            --entrypoint bayn-qualification-collector \
+            "$IMAGE_REFERENCE" | tee "$log"
+
+          mapfile -t terminal_lines < <(grep '^BAYN_QUALIFICATION_TERMINAL=' "$log")
+          test "${#terminal_lines[@]}" -eq 1
+          printf '%s\n' "${terminal_lines[0]#BAYN_QUALIFICATION_TERMINAL=}" > "$terminal"
+          jq -e '
+            .schemaVersion == "bayn.qualification-collector-terminal.v1"
+            and (.sourceSha | test("^[0-9a-f]{40}$"))
+            and (.eligibilityHash | test("^[0-9a-f]{64}$"))
+            and (.candidateBindingHash | test("^[0-9a-f]{64}$"))
+            and (.terminal.schemaVersion == "bayn.qualification-execution.v1")
+            and (.terminal.runId | test("^[0-9a-f]{64}$"))
+            and (.terminal.lockId | test("^[0-9a-f]{64}$"))
+            and (.terminal.resultHash | test("^[0-9a-f]{64}$"))
+            and (.audit.schemaVersion == "bayn.qualification-audit.v2")
+            and (.audit.status == "PASS")
+            and (.audit.runId == .terminal.runId)
+            and (.audit.evidence.lockId == .terminal.lockId)
+            and (.audit.evidence.resultHash == .terminal.resultHash)
+            and (.evidenceHash | test("^[0-9a-f]{64}$"))
+          ' "$terminal" >/dev/null
+          echo "terminal=${terminal}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload immutable terminal qualification evidence
+        if: steps.calendar.outputs.dormant != 'true' && steps.qualify.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bayn-qualification-terminal-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ steps.qualify.outputs.terminal }}
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summarize terminal qualification evidence
+        if: steps.calendar.outputs.dormant != 'true' && steps.qualify.outcome == 'success'
+        shell: bash
+        env:
+          TERMINAL: ${{ steps.qualify.outputs.terminal }}
+        run: |
+          set -euo pipefail
+          {
+            echo '## Bayn governed qualification'
+            jq -r '
+              "- Source: `\(.sourceSha)`\n" +
+              "- Image: `\(.image.repository)@\(.image.digest)`\n" +
+              "- Candidate ordinal: `\(.candidateOrdinal)`\n" +
+              "- Run: `\(.terminal.runId)`\n" +
+              "- Lock: `\(.terminal.lockId)`\n" +
+              "- Result: `\(.terminal.resultHash)`\n" +
+              "- Verdict: `\(.terminal.verdict)`\n" +
+              "- Audit: `\(.audit.auditHash)`\n" +
+              "- Terminal evidence: `\(.evidenceHash)`"
+            ' "$TERMINAL"
+          } >> "$GITHUB_STEP_SUMMARY"

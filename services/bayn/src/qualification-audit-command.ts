@@ -2,7 +2,14 @@ import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Effect, Layer, Logger, Schema, Stdio, Stream } from 'effect'
 import * as Reactivity from 'effect/unstable/reactivity/Reactivity'
 
-import { qualificationAuditConfig, qualificationAuditCommandError } from './qualification/audit-command/model'
+import type { QualificationAuditReport } from './audit/audit'
+import type { QualificationDossier } from './audit/dossier'
+import {
+  qualificationAuditConfig,
+  qualificationAuditCommandError,
+  type AuditConfig,
+  type QualificationAuditCommandError,
+} from './qualification/audit-command/model'
 import {
   liveQualificationAuditAcquirers,
   makeQualificationAuditReaders,
@@ -30,23 +37,52 @@ export {
 export { makeQualificationAuditReaders, runQualificationAudit } from './qualification/audit-command/program'
 
 const encodeJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Json))
+type QualificationAuditOutput = QualificationAuditReport | QualificationDossier
 
-const main = Effect.gen(function* () {
+export const requireQualificationAuditReport = (
+  report: QualificationAuditOutput,
+): Effect.Effect<QualificationAuditReport, QualificationAuditCommandError> =>
+  'status' in report
+    ? Effect.succeed(report)
+    : Effect.fail(qualificationAuditCommandError('audit', 'qualification audit command produced a dossier'))
+
+export const renderQualificationAuditCommandOutput = (
+  report: QualificationAuditOutput,
+): Effect.Effect<string, QualificationAuditCommandError> =>
+  encodeJson(report).pipe(
+    Effect.mapError((cause) =>
+      qualificationAuditCommandError('audit', 'qualification audit output encoding failed', cause),
+    ),
+    Effect.map((output) => `${output}\n`),
+  )
+
+export const completeQualificationAuditCommand = (
+  input: Pick<AuditConfig, 'output'>,
+  report: QualificationAuditOutput,
+): Effect.Effect<void, QualificationAuditCommandError> =>
+  input.output === 'audit' && 'status' in report && report.status !== 'PASS'
+    ? Effect.fail(qualificationAuditCommandError('audit', 'qualification audit failed'))
+    : Effect.void
+
+const collectQualificationAuditOutput = Effect.gen(function* () {
   const input = yield* qualificationAuditConfig
   const report = yield* runQualificationAudit(
     input,
     makeQualificationAuditReaders(input, liveQualificationAuditAcquirers),
   )
-  const output = yield* encodeJson(report).pipe(
-    Effect.mapError((cause) =>
-      qualificationAuditCommandError('audit', 'qualification audit output encoding failed', cause),
-    ),
-  )
+  return { input, report }
+})
+
+export const collectQualificationAuditReport = collectQualificationAuditOutput.pipe(
+  Effect.flatMap(({ report }) => requireQualificationAuditReport(report)),
+)
+
+const main = Effect.gen(function* () {
+  const { input, report } = yield* collectQualificationAuditOutput
+  const output = yield* renderQualificationAuditCommandOutput(report)
   const stdio = yield* Stdio.Stdio
-  yield* Stream.run(Stream.make(`${output}\n`), stdio.stdout())
-  if (input.output === 'audit' && 'status' in report && report.status !== 'PASS') {
-    return yield* qualificationAuditCommandError('audit', 'qualification audit failed')
-  }
+  yield* Stream.run(Stream.make(output), stdio.stdout())
+  yield* completeQualificationAuditCommand(input, report)
 })
 
 const runtime = Layer.mergeAll(Logger.layer([Logger.consoleJson]), NodeServices.layer, Reactivity.layer)
