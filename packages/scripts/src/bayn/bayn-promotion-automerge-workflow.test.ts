@@ -34,9 +34,10 @@ describe('Bayn promotion auto-merge workflow', () => {
     expect(workflow).toContain('persist-credentials: false')
     expect(workflow).not.toContain('ref: ${{ github.event.pull_request.head.sha }}')
     expect(workflow).toContain('TRUSTED_MAIN_SHA: ${{ github.sha }}')
-    expect(count('git/ref/heads/main')).toBe(2)
+    expect(count('git/ref/heads/main')).toBe(3)
     expect(workflow).toContain('Main advanced from trusted workflow revision')
-    expect(workflow).toContain('Main advanced during verification; refusing a stale merge.')
+    expect(workflow).toContain('Main advanced after final eligibility verification; refusing a stale merge.')
+    expect(workflow).toContain('Main advanced after final snapshot verification; refusing a stale merge.')
   })
 
   test('discovers exactly one same-repository preserved release branch', () => {
@@ -78,13 +79,23 @@ describe('Bayn promotion auto-merge workflow', () => {
     expect(workflow).toContain("checks_status}\" != '8'")
   })
 
-  test('reproves immutable promotion eligibility before and immediately after the final snapshot', () => {
+  test('reproves immutable eligibility before the final base and merge-state snapshot', () => {
     expect(count('bun packages/scripts/src/bayn/verify-promotion-eligibility.ts')).toBe(2)
     expect(workflow).toContain('--head-sha "${expected_head_sha}"')
     expect(workflow).toContain('--max-attempts 1')
     expect(workflow).toContain('--poll-interval-ms 1')
     expect(workflow).toContain('--request-timeout-ms 10000')
     expect(workflow).toContain('--require-applicable true')
+
+    const eligibilityIndex = workflow.lastIndexOf('bun packages/scripts/src/bayn/verify-promotion-eligibility.ts')
+    const eligibilityBaseIndex = workflow.indexOf('Main advanced after final eligibility verification')
+    const finalSnapshotIndex = workflow.indexOf('write_snapshot "${final_snapshot}"')
+    const snapshotBaseIndex = workflow.indexOf('Main advanced after final snapshot verification')
+    const mergeIndex = workflow.indexOf('gh pr merge "${pull_number}"')
+    expect(eligibilityIndex).toBeLessThan(eligibilityBaseIndex)
+    expect(eligibilityBaseIndex).toBeLessThan(finalSnapshotIndex)
+    expect(finalSnapshotIndex).toBeLessThan(snapshotBaseIndex)
+    expect(snapshotBaseIndex).toBeLessThan(mergeIndex)
   })
 
   test('squash-merges only the unchanged exact head and preserves its branch', () => {

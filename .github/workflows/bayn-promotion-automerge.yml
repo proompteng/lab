@@ -167,16 +167,6 @@ jobs:
             --request-timeout-ms 10000 \
             --require-applicable true
 
-          live_main_sha="$(
-            gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha'
-          )"
-          if [[ "${live_main_sha}" != "${TRUSTED_MAIN_SHA}" ]]; then
-            echo "Main advanced during verification; refusing a stale merge."
-            exit 0
-          fi
-          write_snapshot "${final_snapshot}"
-          verify_snapshot "${final_snapshot}"
-
           bun packages/scripts/src/bayn/verify-promotion-eligibility.ts \
             --repository "${GITHUB_REPOSITORY}" \
             --pull-number "${pull_number}" \
@@ -185,6 +175,24 @@ jobs:
             --poll-interval-ms 1 \
             --request-timeout-ms 10000 \
             --require-applicable true
+
+          live_main_sha="$(
+            gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha'
+          )"
+          if [[ "${live_main_sha}" != "${TRUSTED_MAIN_SHA}" ]]; then
+            echo "Main advanced after final eligibility verification; refusing a stale merge."
+            exit 0
+          fi
+          write_snapshot "${final_snapshot}"
+          verify_snapshot "${final_snapshot}"
+
+          live_main_sha="$(
+            gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha'
+          )"
+          if [[ "${live_main_sha}" != "${TRUSTED_MAIN_SHA}" ]]; then
+            echo "Main advanced after final snapshot verification; refusing a stale merge."
+            exit 0
+          fi
 
           gh pr merge "${pull_number}" \
             -R "${GITHUB_REPOSITORY}" \
