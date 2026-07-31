@@ -9,15 +9,15 @@ import {
 } from './verify-promotion-automerge'
 
 const repository = 'proompteng/lab'
-const headSha = '6ef7fd4d86e27a3ddf805b535f72200f744bce0f'
-const baseSha = '8908acdfbda84e4b35d6ce8c918d87efbca6b8db'
+const headSha = 'a'.repeat(40)
+const baseSha = 'b'.repeat(40)
 const pullNumber = 13_411
 
 const check = (workflow: string, name: string, state = 'SUCCESS') => ({
   workflow,
   name,
   state,
-  link: `https://github.com/${repository}/actions/runs/30593833143/job/91042241936`,
+  link: `https://github.com/${repository}/actions/runs/123456/job/789012`,
 })
 
 const snapshot = (): BaynPromotionAutomergeSnapshot => ({
