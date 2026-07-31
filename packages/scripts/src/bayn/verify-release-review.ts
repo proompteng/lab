@@ -222,8 +222,19 @@ export interface BaynReleaseReviewRemediationDescendant {
   }[]
 }
 
+export interface BaynReleaseReviewRemediationIntroduction {
+  readonly mergeCommitSha: string
+  readonly sourcePullRequestNumber: number
+  readonly finalHeadSha: string
+  readonly sourcePullRequestEvidenceSha256: string
+  readonly introducedRecordBlobSha: string
+}
+
 export interface BaynReleaseReviewRemediationRecord {
-  readonly schemaVersion: 'bayn.release-review-remediation.v1' | 'bayn.release-review-remediation.v2'
+  readonly schemaVersion:
+    | 'bayn.release-review-remediation.v1'
+    | 'bayn.release-review-remediation.v2'
+    | 'bayn.release-review-remediation.v3'
   readonly remediationId: string
   readonly blocked: {
     readonly mergeCommitSha: string
@@ -247,6 +258,8 @@ export interface BaynReleaseReviewRemediationRecord {
     readonly reconstruction?: BaynReleaseReviewRemediationReconstruction
   }
   readonly requiredDescendants: readonly BaynReleaseReviewRemediationDescendant[]
+  readonly requiredSuccessors?: readonly BaynReleaseReviewRemediationDescendant[]
+  readonly introduction?: BaynReleaseReviewRemediationIntroduction
 }
 
 interface RemediationCommitObject {
@@ -672,23 +685,28 @@ const parseRemediationReconstruction = (value: unknown): BaynReleaseReviewRemedi
 }
 
 export const parseBaynReleaseReviewRemediationRecord = (value: unknown): BaynReleaseReviewRemediationRecord => {
-  const record = strictRecord(
-    value,
-    ['schemaVersion', 'remediationId', 'blocked', 'requiredDescendants'],
-    'remediation',
-  )
+  const rawRecord = expectRecord(value, 'remediation')
+  const rawSchemaVersion = rawRecord.schemaVersion
   if (
-    record.schemaVersion !== 'bayn.release-review-remediation.v1' &&
-    record.schemaVersion !== 'bayn.release-review-remediation.v2'
+    rawSchemaVersion !== 'bayn.release-review-remediation.v1' &&
+    rawSchemaVersion !== 'bayn.release-review-remediation.v2' &&
+    rawSchemaVersion !== 'bayn.release-review-remediation.v3'
   ) {
     throw new Error('remediation schemaVersion is invalid')
   }
-  const schemaVersion = record.schemaVersion
+  const schemaVersion = rawSchemaVersion
+  const record = strictRecord(
+    value,
+    schemaVersion === 'bayn.release-review-remediation.v3'
+      ? ['schemaVersion', 'remediationId', 'blocked', 'requiredDescendants', 'requiredSuccessors', 'introduction']
+      : ['schemaVersion', 'remediationId', 'blocked', 'requiredDescendants'],
+    'remediation',
+  )
   const remediationId = expectString(record.remediationId, 'remediation ID')
   if (!/^[a-z0-9][a-z0-9-]{2,127}$/.test(remediationId)) throw new Error('remediation ID is invalid')
   const blocked = strictRecord(
     record.blocked,
-    schemaVersion === 'bayn.release-review-remediation.v2'
+    schemaVersion === 'bayn.release-review-remediation.v2' || schemaVersion === 'bayn.release-review-remediation.v3'
       ? [
           'mergeCommitSha',
           'mergeParentSha',
@@ -725,6 +743,9 @@ export const parseBaynReleaseReviewRemediationRecord = (value: unknown): BaynRel
   )
   if (!Array.isArray(blocked.affectedPaths)) throw new Error('remediation blocked affectedPaths must be an array')
   if (!Array.isArray(record.requiredDescendants)) throw new Error('remediation requiredDescendants must be an array')
+  if (schemaVersion === 'bayn.release-review-remediation.v3' && !Array.isArray(record.requiredSuccessors)) {
+    throw new Error('remediation requiredSuccessors must be an array')
+  }
   return {
     schemaVersion,
     remediationId,
@@ -755,13 +776,54 @@ export const parseBaynReleaseReviewRemediationRecord = (value: unknown): BaynRel
       affectedPaths: blocked.affectedPaths.map((item, index) =>
         parseRemediationPath(item, `remediation blocked affected path ${index}`),
       ),
-      ...(schemaVersion === 'bayn.release-review-remediation.v2'
+      ...(schemaVersion === 'bayn.release-review-remediation.v2' ||
+      schemaVersion === 'bayn.release-review-remediation.v3'
         ? { reconstruction: parseRemediationReconstruction(blocked.reconstruction) }
         : {}),
     },
     requiredDescendants: record.requiredDescendants.map((item, index) =>
       parseRemediationDescendant(item, `remediation descendant ${index}`),
     ),
+    ...(schemaVersion === 'bayn.release-review-remediation.v3'
+      ? {
+          requiredSuccessors: (record.requiredSuccessors as unknown[]).map((item, index) =>
+            parseRemediationDescendant(item, `remediation successor ${index}`),
+          ),
+        }
+      : {}),
+    ...(schemaVersion === 'bayn.release-review-remediation.v3'
+      ? {
+          introduction: (() => {
+            const introduction = strictRecord(
+              record.introduction,
+              [
+                'mergeCommitSha',
+                'sourcePullRequestNumber',
+                'finalHeadSha',
+                'sourcePullRequestEvidenceSha256',
+                'introducedRecordBlobSha',
+              ],
+              'remediation introduction',
+            )
+            return {
+              mergeCommitSha: expectSha(introduction.mergeCommitSha, 'remediation introduction merge commit SHA'),
+              sourcePullRequestNumber: expectPositiveIntegerRecord(
+                introduction.sourcePullRequestNumber,
+                'remediation introduction source pull request number',
+              ),
+              finalHeadSha: expectSha(introduction.finalHeadSha, 'remediation introduction final head SHA'),
+              sourcePullRequestEvidenceSha256: expectSha256(
+                introduction.sourcePullRequestEvidenceSha256,
+                'remediation introduction source pull request evidence hash',
+              ),
+              introducedRecordBlobSha: expectSha(
+                introduction.introducedRecordBlobSha,
+                'remediation introduction record blob SHA',
+              ),
+            }
+          })(),
+        }
+      : {}),
   }
 }
 
@@ -1189,6 +1251,110 @@ const pathBlobMap = (
 const remediationInvalid = (message: string): BaynReleaseReviewHold =>
   hold('release-review-remediation-invalid', message, false)
 
+interface BoundRemediationReviewIdentity {
+  readonly mergeCommitSha: string
+  readonly sourcePullRequestNumber: number
+  readonly finalHeadSha: string
+  readonly sourcePullRequestEvidenceSha256: string
+}
+
+const evaluateBoundRemediationReview = (input: {
+  readonly remediationId: string
+  readonly commit: BaynReleaseRangeCommit
+  readonly identity: BoundRemediationReviewIdentity
+  readonly normalReview: BaynReleaseReviewEvaluation
+  readonly nowMs: number
+}): BaynReleaseReviewEligible | BaynReleaseReviewHold => {
+  const pullRequest = input.commit.reviewSnapshot?.pullRequest
+  if (
+    pullRequest === null ||
+    pullRequest === undefined ||
+    input.commit.sha !== input.identity.mergeCommitSha ||
+    pullRequest.number !== input.identity.sourcePullRequestNumber ||
+    pullRequest.mergeCommitSha !== input.identity.mergeCommitSha ||
+    pullRequest.headSha !== input.identity.finalHeadSha ||
+    pullRequestReviewEvidenceSha256(pullRequest) !== input.identity.sourcePullRequestEvidenceSha256
+  ) {
+    return remediationInvalid(`remediation ${input.remediationId} bound source PR evidence is not exact`)
+  }
+  if (pullRequest.threads.some((thread) => !thread.isResolved)) {
+    return remediationInvalid(`remediation ${input.remediationId} bound source PR has an unresolved review thread`)
+  }
+  const blockingReviews = pullRequest.reviews.filter(
+    (review) =>
+      review.authorLogin === baynCodexReviewer &&
+      (review.submittedAt === null || review.state === 'PENDING' || review.state === 'CHANGES_REQUESTED'),
+  )
+  if (blockingReviews.length > 0) {
+    return remediationInvalid(`remediation ${input.remediationId} bound source PR has a blocking Codex review`)
+  }
+  if (input.normalReview.status === 'eligible') return input.normalReview
+  if (input.normalReview.code !== 'exact-head-review-missing') return input.normalReview
+  if (
+    pullRequest.commitShas.length !== 1 ||
+    pullRequest.commitShas[0] !== pullRequest.headSha ||
+    pullRequest.headForcePushCount < 1 ||
+    pullRequest.headForcePushCount !== pullRequest.headForcePushes.length
+  ) {
+    return remediationInvalid(`remediation ${input.remediationId} final source history is not immutable`)
+  }
+  const createdAtMs = Date.parse(pullRequest.createdAt)
+  const mergedAtMs = pullRequest.mergedAt === null ? Number.NaN : Date.parse(pullRequest.mergedAt)
+  const forcePushKeys = pullRequest.headForcePushes.map(
+    (forcePush) =>
+      `${forcePush.createdAt}/${forcePush.beforeCommitSha}/${forcePush.afterCommitSha}/${forcePush.actorLogin ?? ''}`,
+  )
+  if (
+    !Number.isFinite(createdAtMs) ||
+    !Number.isFinite(mergedAtMs) ||
+    createdAtMs > mergedAtMs ||
+    new Set(forcePushKeys).size !== forcePushKeys.length ||
+    pullRequest.headForcePushes.some((forcePush) => {
+      const createdAt = Date.parse(forcePush.createdAt)
+      return !Number.isFinite(createdAt) || createdAt < createdAtMs || createdAt > mergedAtMs
+    })
+  ) {
+    return remediationInvalid(`remediation ${input.remediationId} force-push evidence is malformed or ambiguous`)
+  }
+  const latestForcePush = pullRequest.headForcePushes.toSorted((left, right) =>
+    right.createdAt.localeCompare(left.createdAt),
+  )[0]
+  if (latestForcePush === undefined || latestForcePush.afterCommitSha !== pullRequest.headSha) {
+    return remediationInvalid(`remediation ${input.remediationId} latest force push does not install the final head`)
+  }
+  const reactions = pullRequest.reactions.filter(
+    (reaction) => reaction.userLogin === baynCodexBotLogin && reaction.content === '+1',
+  )
+  if (reactions.length !== 1 || reactions[0] === undefined) {
+    return remediationInvalid(`remediation ${input.remediationId} exact final-head reaction is missing or ambiguous`)
+  }
+  const reactionAtMs = Date.parse(reactions[0].createdAt)
+  const latestForcePushAtMs = Date.parse(latestForcePush.createdAt)
+  if (
+    !Number.isFinite(reactionAtMs) ||
+    reactionAtMs <= latestForcePushAtMs ||
+    reactionAtMs < createdAtMs ||
+    reactionAtMs > mergedAtMs
+  ) {
+    return remediationInvalid(`remediation ${input.remediationId} exact final-head reaction is stale or pre-head`)
+  }
+  const eligibleAtMs = reactionAtMs + minimumExactReviewAgeMs
+  if (input.nowMs < eligibleAtMs) {
+    return hold(
+      'exact-head-review-settling',
+      `remediation ${input.remediationId} exact final-head reaction is still settling`,
+      true,
+    )
+  }
+  return {
+    status: 'eligible',
+    prNumber: pullRequest.number,
+    headSha: pullRequest.headSha,
+    reviewSubmittedAt: reactions[0].createdAt,
+    eligibleAt: new Date(eligibleAtMs).toISOString(),
+  }
+}
+
 const findReferencedCommit = (
   evidence: BaynReleaseReviewRemediationEvidence,
   sha: string,
@@ -1201,7 +1367,10 @@ const validateRemediationFeedback = (
   record: BaynReleaseReviewRemediationRecord,
   pullRequest: PullRequestReviewState,
 ): BaynReleaseReviewHold | null => {
-  if (record.schemaVersion === 'bayn.release-review-remediation.v2') {
+  if (
+    record.schemaVersion === 'bayn.release-review-remediation.v2' ||
+    record.schemaVersion === 'bayn.release-review-remediation.v3'
+  ) {
     const reconstruction = record.blocked.reconstruction
     if (reconstruction === undefined) {
       return remediationInvalid(`remediation ${record.remediationId} reconstruction is missing`)
@@ -1538,11 +1707,16 @@ const validateReleaseReviewRemediationV2 = (input: {
   readonly normalReviews: ReadonlyMap<string, BaynReleaseReviewEvaluation>
   readonly introduction: BaynReleaseRangeCommit
   readonly blockedIndex: number
+  readonly nowMs: number
 }): BaynReleaseReviewHold | null => {
   const { evidence, blockedCommit, comparison } = input
   const record = evidence.record
   const reconstruction = record.blocked.reconstruction
-  if (record.schemaVersion !== 'bayn.release-review-remediation.v2' || reconstruction === undefined) {
+  if (
+    (record.schemaVersion !== 'bayn.release-review-remediation.v2' &&
+      record.schemaVersion !== 'bayn.release-review-remediation.v3') ||
+    reconstruction === undefined
+  ) {
     return remediationInvalid(`remediation ${record.remediationId} v2 reconstruction is missing`)
   }
   if (
@@ -1646,11 +1820,21 @@ const validateReleaseReviewRemediationV2 = (input: {
       return remediationInvalid(`remediation ${record.remediationId} descendant ancestry is incomplete or downgraded`)
     }
     const normalDescendantReview = input.normalReviews.get(mergeCommit.sha)
-    if (normalDescendantReview?.status !== 'eligible')
-      return (
-        normalDescendantReview ??
-        remediationInvalid(`remediation ${record.remediationId} descendant exact-head review is missing`)
-      )
+    if (normalDescendantReview === undefined) {
+      return remediationInvalid(`remediation ${record.remediationId} descendant exact-head review is missing`)
+    }
+    if (record.schemaVersion === 'bayn.release-review-remediation.v3') {
+      const boundReview = evaluateBoundRemediationReview({
+        remediationId: record.remediationId,
+        commit: mergeCommit,
+        identity: descendant,
+        normalReview: normalDescendantReview,
+        nowMs: input.nowMs,
+      })
+      if (boundReview.status === 'hold') return boundReview
+    } else if (normalDescendantReview.status !== 'eligible') {
+      return normalDescendantReview
+    }
     const descendantPull = mergeCommit.reviewSnapshot?.pullRequest
     if (
       descendantPull === null ||
@@ -1684,13 +1868,80 @@ const validateReleaseReviewRemediationV2 = (input: {
       ? (introduction as BaynReleaseReviewHold)
       : remediationInvalid(`remediation ${record.remediationId} is stale or omits a newer source commit`)
   }
+  for (const successor of record.requiredSuccessors ?? []) {
+    const next = nextBaynCommit()
+    if (next === null || 'status' in next) {
+      return next ?? remediationInvalid(`remediation ${record.remediationId} successor chain is incomplete`)
+    }
+    const mergeCommit = next
+    if (mergeCommit.sha !== successor.mergeCommitSha) {
+      return remediationInvalid(`remediation ${record.remediationId} successor ancestry is incomplete or downgraded`)
+    }
+    const normalSuccessorReview = input.normalReviews.get(mergeCommit.sha)
+    if (normalSuccessorReview === undefined) {
+      return remediationInvalid(`remediation ${record.remediationId} successor exact-head review is missing`)
+    }
+    const boundReview = evaluateBoundRemediationReview({
+      remediationId: record.remediationId,
+      commit: mergeCommit,
+      identity: successor,
+      normalReview: normalSuccessorReview,
+      nowMs: input.nowMs,
+    })
+    if (boundReview.status === 'hold') return boundReview
+    const finalSuccessorHead = findReferencedCommit(evidence, successor.finalHeadSha)
+    if (finalSuccessorHead === null) {
+      return remediationInvalid(`remediation ${record.remediationId} successor head evidence is missing`)
+    }
+    const pathsHold = validateRemediationDescendantPathsV2({
+      remediationId: record.remediationId,
+      mergeCommit,
+      descendant: successor,
+      finalHead: finalSuccessorHead,
+    })
+    if (pathsHold !== null) return pathsHold
+    for (const path of successor.affectedPaths) {
+      if (expectedCurrentBlobs.has(path.path)) expectedCurrentBlobs.set(path.path, path.mergeBlobSha)
+    }
+  }
+  const completionCommit =
+    record.schemaVersion === 'bayn.release-review-remediation.v3'
+      ? comparison.commits.find(
+          (commit) =>
+            commit.sha !== input.introduction.sha &&
+            commit.fileChanges?.some(
+              (change) =>
+                change.path === evidence.recordPath &&
+                change.status === 'modified' &&
+                change.blobSha === evidence.recordBlobSha,
+            ),
+        )
+      : undefined
   while (cursor < comparison.commits.length) {
     const commit = comparison.commits[cursor]
     if (commit === undefined || commit.parents.length !== 1 || commit.parents[0] !== expectedParent) {
       return remediationInvalid(`remediation ${record.remediationId} source ancestry is not a direct-parent chain`)
     }
-    if (commit.files.some(isBaynReleaseAffectingPath)) {
-      return remediationInvalid(`remediation ${record.remediationId} omits a newer Bayn source commit`)
+    if (record.schemaVersion !== 'bayn.release-review-remediation.v3') {
+      if (commit.files.some(isBaynReleaseAffectingPath)) {
+        return remediationInvalid(`remediation ${record.remediationId} omits a newer Bayn source commit`)
+      }
+    } else {
+      if (
+        commit.sha !== completionCommit?.sha &&
+        commit.fileChanges?.some((change) => change.path === evidence.recordPath)
+      ) {
+        return remediationInvalid(`remediation ${record.remediationId} receipt changed after completion`)
+      }
+      if (commit.files.some((path) => expectedCurrentBlobs.has(path))) {
+        return remediationInvalid(`remediation ${record.remediationId} protected source changed after completion`)
+      }
+      if (commit.files.some(isBaynReleaseAffectingPath)) {
+        const laterReview = input.normalReviews.get(commit.sha)
+        if (laterReview?.status !== 'eligible') {
+          return laterReview ?? remediationInvalid(`remediation ${record.remediationId} newer source review is missing`)
+        }
+      }
     }
     expectedParent = commit.sha
     cursor += 1
@@ -1714,6 +1965,7 @@ const validateReleaseReviewRemediation = (input: {
   readonly blockedCommit: BaynReleaseRangeCommit
   readonly comparison: BaynReleaseComparison
   readonly normalReviews: ReadonlyMap<string, BaynReleaseReviewEvaluation>
+  readonly nowMs: number
 }): BaynReleaseReviewHold | null => {
   const { evidence, blockedCommit, comparison } = input
   const record = evidence.record
@@ -1721,27 +1973,68 @@ const validateReleaseReviewRemediation = (input: {
   if (evidence.recordPath !== expectedRecordPath) {
     return remediationInvalid(`remediation ${record.remediationId} record path is not canonical`)
   }
-  const matchingIntroductionCommits = comparison.commits.filter((commit) =>
+  const recordCommits = comparison.commits.filter((commit) =>
     commit.fileChanges?.some((change) => change.path === evidence.recordPath),
   )
-  if (matchingIntroductionCommits.length !== 1) {
-    return remediationInvalid(`remediation ${record.remediationId} record was not added exactly once`)
+  let introduction: BaynReleaseRangeCommit | undefined
+  if (record.schemaVersion === 'bayn.release-review-remediation.v3') {
+    const identity = record.introduction
+    if (identity === undefined || recordCommits.length !== 2) {
+      return remediationInvalid(`remediation ${record.remediationId} completion history is not exact`)
+    }
+    introduction = recordCommits.find((commit) => commit.sha === identity.mergeCommitSha)
+    const completion = recordCommits.find((commit) => commit.sha !== identity.mergeCommitSha)
+    const introductionChange = introduction?.fileChanges?.find((change) => change.path === evidence.recordPath)
+    const completionChange = completion?.fileChanges?.find((change) => change.path === evidence.recordPath)
+    if (
+      introduction === undefined ||
+      completion === undefined ||
+      introductionChange?.status !== 'added' ||
+      introductionChange.blobSha !== identity.introducedRecordBlobSha ||
+      completionChange?.status !== 'modified' ||
+      completionChange.blobSha !== evidence.recordBlobSha ||
+      comparison.commits.indexOf(completion) <= comparison.commits.indexOf(introduction)
+    ) {
+      return remediationInvalid(`remediation ${record.remediationId} completion record mutation is not exact`)
+    }
+    const completionReview = input.normalReviews.get(completion.sha)
+    if (completionReview?.status !== 'eligible') {
+      return remediationInvalid(`remediation ${record.remediationId} completion commit lacks exact-head review`)
+    }
+    const introductionNormalReview = input.normalReviews.get(introduction.sha)
+    if (introductionNormalReview === undefined) {
+      return remediationInvalid(`remediation ${record.remediationId} introduction review snapshot is missing`)
+    }
+    const introductionReview = evaluateBoundRemediationReview({
+      remediationId: record.remediationId,
+      commit: introduction,
+      identity,
+      normalReview: introductionNormalReview,
+      nowMs: input.nowMs,
+    })
+    if (introductionReview.status === 'hold') return introductionReview
+  } else {
+    if (recordCommits.length !== 1) {
+      return remediationInvalid(`remediation ${record.remediationId} record was not added exactly once`)
+    }
+    introduction = recordCommits[0]
+    if (introduction === undefined)
+      return remediationInvalid(`remediation ${record.remediationId} introduction is missing`)
+    const introductionChange = introduction.fileChanges?.find((change) => change.path === evidence.recordPath)
+    if (
+      introductionChange === undefined ||
+      introductionChange.status !== 'added' ||
+      introductionChange.blobSha !== evidence.recordBlobSha
+    ) {
+      return remediationInvalid(`remediation ${record.remediationId} record blob/introduction changed`)
+    }
+    const introductionReview = input.normalReviews.get(introduction.sha)
+    if (introductionReview?.status !== 'eligible') {
+      return remediationInvalid(`remediation ${record.remediationId} introducing commit lacks exact-head review`)
+    }
   }
-  const introduction = matchingIntroductionCommits[0]
   if (introduction === undefined)
     return remediationInvalid(`remediation ${record.remediationId} introduction is missing`)
-  const introductionChange = introduction.fileChanges?.find((change) => change.path === evidence.recordPath)
-  if (
-    introductionChange === undefined ||
-    introductionChange.status !== 'added' ||
-    introductionChange.blobSha !== evidence.recordBlobSha
-  ) {
-    return remediationInvalid(`remediation ${record.remediationId} record blob/introduction changed`)
-  }
-  const introductionReview = input.normalReviews.get(introduction.sha)
-  if (introductionReview?.status !== 'eligible') {
-    return remediationInvalid(`remediation ${record.remediationId} introducing commit lacks exact-head review`)
-  }
   const blockedIndex = comparison.commits.findIndex((commit) => commit.sha === blockedCommit.sha)
   const introductionIndex = comparison.commits.findIndex((commit) => commit.sha === introduction.sha)
   if (
@@ -1761,7 +2054,10 @@ const validateReleaseReviewRemediation = (input: {
   const feedbackHold = validateRemediationFeedback(record, blockedPull)
   if (feedbackHold !== null) return feedbackHold
 
-  if (record.schemaVersion === 'bayn.release-review-remediation.v2') {
+  if (
+    record.schemaVersion === 'bayn.release-review-remediation.v2' ||
+    record.schemaVersion === 'bayn.release-review-remediation.v3'
+  ) {
     return validateReleaseReviewRemediationV2({
       evidence,
       blockedCommit,
@@ -1769,6 +2065,7 @@ const validateReleaseReviewRemediation = (input: {
       normalReviews: input.normalReviews,
       introduction,
       blockedIndex,
+      nowMs: input.nowMs,
     })
   }
 
@@ -2151,11 +2448,63 @@ export const evaluateBaynReleaseEligibility = (input: {
         blockedCommit: commit,
         comparison,
         normalReviews,
+        nowMs: input.nowMs,
       })
       if (remediationHold !== null) return remediationHold
       usedRemediationIds.add(remediation[0].record.remediationId)
       for (const descendant of remediation[0].record.requiredDescendants) {
         coveredDescendantShas.add(descendant.mergeCommitSha)
+      }
+      for (const successor of remediation[0].record.requiredSuccessors ?? []) {
+        coveredDescendantShas.add(successor.mergeCommitSha)
+      }
+      if (remediation[0].record.schemaVersion === 'bayn.release-review-remediation.v3') {
+        for (const descendant of [
+          ...remediation[0].record.requiredDescendants,
+          ...(remediation[0].record.requiredSuccessors ?? []),
+        ]) {
+          const descendantCommit = comparison.commits.find((candidate) => candidate.sha === descendant.mergeCommitSha)
+          const descendantNormalReview = normalReviews.get(descendant.mergeCommitSha)
+          if (descendantCommit === undefined || descendantNormalReview === undefined) {
+            return remediationInvalid(
+              `remediation ${remediation[0].record.remediationId} descendant review snapshot is missing`,
+            )
+          }
+          const boundReview = evaluateBoundRemediationReview({
+            remediationId: remediation[0].record.remediationId,
+            commit: descendantCommit,
+            identity: descendant,
+            normalReview: descendantNormalReview,
+            nowMs: input.nowMs,
+          })
+          if (boundReview.status === 'hold') return boundReview
+          normalReviews.set(descendant.mergeCommitSha, boundReview)
+        }
+        const introductionIdentity = remediation[0].record.introduction
+        const introductionCommit = comparison.commits.find(
+          (candidate) => candidate.sha === introductionIdentity?.mergeCommitSha,
+        )
+        const introductionNormalReview =
+          introductionIdentity === undefined ? undefined : normalReviews.get(introductionIdentity.mergeCommitSha)
+        if (
+          introductionIdentity === undefined ||
+          introductionCommit === undefined ||
+          introductionNormalReview === undefined
+        ) {
+          return remediationInvalid(
+            `remediation ${remediation[0].record.remediationId} introduction review snapshot is missing`,
+          )
+        }
+        const introductionReview = evaluateBoundRemediationReview({
+          remediationId: remediation[0].record.remediationId,
+          commit: introductionCommit,
+          identity: introductionIdentity,
+          normalReview: introductionNormalReview,
+          nowMs: input.nowMs,
+        })
+        if (introductionReview.status === 'hold') return introductionReview
+        normalReviews.set(introductionIdentity.mergeCommitSha, introductionReview)
+        coveredDescendantShas.add(introductionIdentity.mergeCommitSha)
       }
       const sourcePull = commit.reviewSnapshot?.pullRequest
       if (sourcePull === null || sourcePull === undefined) {
@@ -3447,7 +3796,10 @@ const loadReleaseReviewRemediations = async (
       )
     }
     const references = new Map<string, readonly string[]>()
-    if (loaded.record.schemaVersion === 'bayn.release-review-remediation.v2') {
+    if (
+      loaded.record.schemaVersion === 'bayn.release-review-remediation.v2' ||
+      loaded.record.schemaVersion === 'bayn.release-review-remediation.v3'
+    ) {
       const reconstruction = loaded.record.blocked.reconstruction
       if (reconstruction === undefined) throw new Error(`remediation ${loaded.path} reconstruction is missing`)
       for (const head of reconstruction.heads) {
@@ -3466,7 +3818,7 @@ const loadReleaseReviewRemediations = async (
         loaded.record.blocked.affectedPaths.map((path) => path.path),
       )
     }
-    for (const descendant of loaded.record.requiredDescendants) {
+    for (const descendant of [...loaded.record.requiredDescendants, ...(loaded.record.requiredSuccessors ?? [])]) {
       references.set(
         descendant.finalHeadSha,
         descendant.affectedPaths.map((path) => path.path),
@@ -3483,7 +3835,8 @@ const loadReleaseReviewRemediations = async (
       return { ...commit, pathBlobs }
     })
     const currentPaths =
-      loaded.record.schemaVersion === 'bayn.release-review-remediation.v2'
+      loaded.record.schemaVersion === 'bayn.release-review-remediation.v2' ||
+      loaded.record.schemaVersion === 'bayn.release-review-remediation.v3'
         ? (loaded.record.blocked.reconstruction?.heads.at(-1)?.affectedPaths.map((path) => path.path) ?? [])
         : loaded.record.blocked.affectedPaths.map((path) => path.path)
     const currentPathBlobs = await mapWithConcurrency(currentPaths, 4, async (path) => ({
