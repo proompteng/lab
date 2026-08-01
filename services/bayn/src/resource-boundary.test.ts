@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Deferred, Effect, Exit, Fiber, Layer, Ref } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Ref } from 'effect'
 
 import { mapLayerAcquisitionError, retryLayerAcquisition } from './resource-boundary'
 
@@ -61,6 +61,27 @@ describe('scoped resource boundaries', () => {
 
     expect(attempts).toBe(1)
     expect(await Effect.runPromise(Ref.get(finalizations))).toBe(1)
+  })
+
+  test('preserves acquisition defects and finalizes the failed attempt once', async () => {
+    let finalizations = 0
+    const defect = new Error('defective acquisition')
+    const dependency = Layer.effectDiscard(
+      Effect.acquireRelease(Effect.void, () =>
+        Effect.sync(() => {
+          finalizations += 1
+        }),
+      ).pipe(Effect.andThen(Effect.die(defect))),
+    )
+    const resource = retryLayerAcquisition(dependency, (acquisition) => acquisition)
+
+    const exit = await Effect.runPromiseExit(Effect.scoped(Layer.build(resource)))
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) {
+      expect(Cause.squash(exit.cause)).toBe(defect)
+    }
+    expect(finalizations).toBe(1)
   })
 
   test('maps acquisition errors at the resource boundary and releases the failed resource once', async () => {
