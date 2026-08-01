@@ -15,9 +15,12 @@ import {
   candidateDevelopmentCalendarContract,
   candidateDevelopmentComparisonSemantics,
   candidateDevelopmentDoubledCostContract,
+  expectedCandidateDevelopmentRebalanceSchedule,
+  buildCandidateDevelopmentComparisonSemanticsEvidence,
   officialMonthEndSignalDates,
   preflightCandidateDevelopment,
   runCandidateDevelopment,
+  validateCandidateDevelopmentComparisonSeriesBinding,
   type CandidateDevelopmentAttemptIssue,
   type CandidateDevelopmentComparisonSemanticsIssue,
   type CandidateDevelopmentDoubledCostIssue,
@@ -47,6 +50,7 @@ import {
   type DailyPerformancePoint,
   DailyPerformanceSeriesArtifactSchema,
   DailyPositionMarksArtifactSchema,
+  DecisionPlanSchema,
   EquitySeriesArtifactSchema,
   EvaluationEventsSchema,
   EvaluationSummarySchema,
@@ -58,6 +62,7 @@ import { elapsedCalendarDays, MICROS, referencePriceMicros, type ExecutionModelF
 import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
 import { DIRECT_VOLATILITY_WINDOW, ExecutionModelSchema } from './protocol'
 import type { QualificationStatisticsFailure } from './qualification-statistics'
+import { prepareQualificationSeries } from './qualification-statistics'
 import {
   DigitsSchema,
   IsoDateSchema,
@@ -90,7 +95,9 @@ import {
   PriceAdjustment,
   PublicationSchema,
   type DailyBar,
+  type DecisionPlan,
   type EvaluationResult,
+  type InputManifest,
   type IsoDate,
   type PerformanceMetrics,
   type SimulationProtocol,
@@ -221,6 +228,15 @@ export interface CandidateDevelopmentArtifactRuntimeInput extends CandidateDevel
   readonly runtimeDataSchemaVersion: 'bayn.candidate-development-artifact-runtime-input.v1'
   readonly preflightInput: CandidateDevelopmentPreflightInput
   readonly marketData: CandidateDevelopmentMarketDataWitness
+}
+
+export interface CandidateDevelopmentPlannedDecision extends DecisionPlan {
+  readonly executionDate: IsoDate
+}
+
+export interface CandidateDevelopmentStrategyPlan {
+  readonly schemaVersion: 'bayn.candidate-development-strategy-plan.v1'
+  readonly decisions: readonly CandidateDevelopmentPlannedDecision[]
 }
 
 export interface CandidateDevelopmentStrategyProtocol extends SimulationProtocol {
@@ -4107,6 +4123,26 @@ const cumulativeMicrosFields = [
   ['cashYieldMicros', 'cumulativeCashYieldMicros'],
 ] as const
 
+interface CandidateDevelopmentPerformanceBaseline {
+  readonly equityMicros: string
+  readonly cumulativeTurnoverMicros: string
+  readonly cumulativeFeesMicros: string
+  readonly cumulativeSpreadCostMicros: string
+  readonly cumulativeSlippageCostMicros: string
+  readonly cumulativeCashYieldMicros: string
+}
+
+const performanceBaselineFromPoint = (
+  point: Pick<DailyPerformancePoint, keyof CandidateDevelopmentPerformanceBaseline>,
+): CandidateDevelopmentPerformanceBaseline => ({
+  equityMicros: point.equityMicros,
+  cumulativeTurnoverMicros: point.cumulativeTurnoverMicros,
+  cumulativeFeesMicros: point.cumulativeFeesMicros,
+  cumulativeSpreadCostMicros: point.cumulativeSpreadCostMicros,
+  cumulativeSlippageCostMicros: point.cumulativeSlippageCostMicros,
+  cumulativeCashYieldMicros: point.cumulativeCashYieldMicros,
+})
+
 const performanceEvidenceFailure = (
   series: CandidateDevelopmentPerformanceSeriesName,
   reason: Extract<
@@ -4131,7 +4167,7 @@ const performanceEvidenceFailure = (
 
 const unsignedMicros = (
   series: CandidateDevelopmentPerformanceSeriesName,
-  index: number,
+  index: number | null,
   field: string,
   value: string,
 ): Result.Result<bigint, CandidateDevelopmentCommandFailure> =>
@@ -4143,7 +4179,7 @@ const recomputePerformanceMetrics = (
   seriesName: CandidateDevelopmentPerformanceSeriesName,
   points: CandidateDevelopmentPerformanceSeries,
   initialCapitalMicros: string,
-  firstPreviousEquityMicros: string = initialCapitalMicros,
+  selectedWindowBaseline?: CandidateDevelopmentPerformanceBaseline,
 ): Result.Result<PerformanceMetrics, CandidateDevelopmentCommandFailure> => {
   if (points.length < 2) {
     return Result.fail(
@@ -4163,25 +4199,45 @@ const recomputePerformanceMetrics = (
         ),
       )
   if (Result.isFailure(initialCapital)) return Result.fail(initialCapital.failure)
-  const firstPreviousEquity = /^(?:[1-9][0-9]*)$/.test(firstPreviousEquityMicros)
-    ? Result.succeed(BigInt(firstPreviousEquityMicros))
+  const performanceBaseline = selectedWindowBaseline ?? {
+    equityMicros: initialCapitalMicros,
+    cumulativeTurnoverMicros: '0',
+    cumulativeFeesMicros: '0',
+    cumulativeSpreadCostMicros: '0',
+    cumulativeSlippageCostMicros: '0',
+    cumulativeCashYieldMicros: '0',
+  }
+  const baselineEquity = /^(?:[1-9][0-9]*)$/.test(performanceBaseline.equityMicros)
+    ? Result.succeed(BigInt(performanceBaseline.equityMicros))
     : Result.fail(
         performanceEvidenceFailure(
           seriesName,
           'micros-invalid',
           null,
-          'firstPreviousEquityMicros',
+          'performanceBaseline.equityMicros',
           'positive micros',
-          firstPreviousEquityMicros,
+          performanceBaseline.equityMicros,
         ),
       )
-  if (Result.isFailure(firstPreviousEquity)) return Result.fail(firstPreviousEquity.failure)
+  if (Result.isFailure(baselineEquity)) return Result.fail(baselineEquity.failure)
 
-  const equityMicros: bigint[] = []
-  const cumulative = Object.fromEntries(cumulativeMicrosFields.map(([, field]) => [field, 0n])) as Record<
+  const baselineCumulative = Object.fromEntries(cumulativeMicrosFields.map(([, field]) => [field, 0n])) as Record<
     (typeof cumulativeMicrosFields)[number][1],
     bigint
   >
+  for (const [, cumulativeField] of cumulativeMicrosFields) {
+    const parsed = unsignedMicros(
+      seriesName,
+      null,
+      `performanceBaseline.${cumulativeField}`,
+      performanceBaseline[cumulativeField],
+    )
+    if (Result.isFailure(parsed)) return Result.fail(parsed.failure)
+    baselineCumulative[cumulativeField] = parsed.success
+  }
+
+  const equityMicros: bigint[] = []
+  const cumulative = { ...baselineCumulative }
   for (let index = 0; index < points.length; index += 1) {
     const point = points[index]
     const previous = points[index - 1]
@@ -4205,7 +4261,7 @@ const recomputePerformanceMetrics = (
       )
     }
     equityMicros.push(equity.success)
-    const previousEquity = index === 0 ? firstPreviousEquity.success : equityMicros[index - 1]
+    const previousEquity = index === 0 ? baselineEquity.success : equityMicros[index - 1]
     const expectedReturn = Number(equity.success) / Number(previousEquity) - 1
     if (!Number.isFinite(expectedReturn) || !Object.is(point.netReturn, expectedReturn)) {
       return Result.fail(
@@ -4226,15 +4282,15 @@ const recomputePerformanceMetrics = (
       const observedCumulative = unsignedMicros(seriesName, index, cumulativeField, point[cumulativeField])
       if (Result.isFailure(observedCumulative)) return Result.fail(observedCumulative.failure)
       const prior = cumulative[cumulativeField]
-      const expected = index === 0 ? observedCumulative.success : prior + daily.success
-      if (index === 0 ? observedCumulative.success < daily.success : observedCumulative.success !== expected) {
+      const expected = prior + daily.success
+      if (observedCumulative.success !== expected) {
         return Result.fail(
           performanceEvidenceFailure(
             seriesName,
             'cumulative-mismatch',
             index,
             cumulativeField,
-            index === 0 ? `>=${daily.success}` : expected.toString(),
+            expected.toString(),
             observedCumulative.success.toString(),
           ),
         )
@@ -4246,12 +4302,12 @@ const recomputePerformanceMetrics = (
   return pipe(
     calculateExactPerformanceMetrics(
       equityMicros,
-      cumulative.cumulativeTurnoverMicros,
-      cumulative.cumulativeFeesMicros,
-      cumulative.cumulativeSpreadCostMicros,
-      cumulative.cumulativeSlippageCostMicros,
-      cumulative.cumulativeCashYieldMicros,
-      initialCapital.success,
+      cumulative.cumulativeTurnoverMicros - baselineCumulative.cumulativeTurnoverMicros,
+      cumulative.cumulativeFeesMicros - baselineCumulative.cumulativeFeesMicros,
+      cumulative.cumulativeSpreadCostMicros - baselineCumulative.cumulativeSpreadCostMicros,
+      cumulative.cumulativeSlippageCostMicros - baselineCumulative.cumulativeSlippageCostMicros,
+      cumulative.cumulativeCashYieldMicros - baselineCumulative.cumulativeCashYieldMicros,
+      baselineEquity.success,
     ),
     Result.mapError((cause) => performanceEvidenceFailure(seriesName, 'metrics-failed', null, null, null, null, cause)),
   )
@@ -5094,6 +5150,60 @@ const validateDecisionEventBinding = (
   return Result.succeed(undefined)
 }
 
+const validateRunIndependentDecisionPlans = (
+  field: string,
+  expected: EvaluationResult['signalDecisions'],
+  observed: EvaluationResult['signalDecisions'],
+): Result.Result<void, CandidateDevelopmentCommandFailure> =>
+  requireCanonicalEvidenceEqual(
+    field,
+    expected.map(({ decisionId: _, ...decision }) => decision),
+    observed.map(({ decisionId: _, ...decision }) => decision),
+  )
+
+const signalDecisionsInSimulationWindow = (
+  signalDecisions: EvaluationResult['signalDecisions'],
+  simulation: EvaluationResult['simulation'],
+): EvaluationResult['signalDecisions'] => {
+  const first = simulation.dailyMarks.at(0)?.sessionDate
+  const last = simulation.dailyMarks.at(-1)?.sessionDate
+  return first === undefined || last === undefined
+    ? []
+    : signalDecisions.filter(({ executionDate }) => executionDate >= first && executionDate <= last)
+}
+
+const decisionEventsInSimulationWindow = (
+  events: EvaluationResult['events'],
+  simulation: EvaluationResult['simulation'],
+): EvaluationResult['events'] => {
+  const first = simulation.dailyMarks.at(0)?.sessionDate
+  const last = simulation.dailyMarks.at(-1)?.sessionDate
+  return first === undefined || last === undefined
+    ? []
+    : events.filter((event) => event.kind === 'decision' && event.executionDate >= first && event.executionDate <= last)
+}
+
+const bindRunIndependentDecisionPlansToEvents = (
+  field: 'baseline' | 'stressed',
+  plans: EvaluationResult['signalDecisions'],
+  events: EvaluationResult['events'],
+): Result.Result<EvaluationResult['signalDecisions'], CandidateDevelopmentCommandFailure> => {
+  const decisionEvents = events.filter(
+    (event): event is Extract<EvaluationResult['events'][number], { readonly kind: 'decision' }> =>
+      event.kind === 'decision',
+  )
+  if (decisionEvents.length !== plans.length) {
+    return Result.fail(
+      markedEquityFailure('binding-mismatch', null, `${field}.decisionCount`, plans.length, decisionEvents.length),
+    )
+  }
+  const bound = plans.map((plan, index) => ({ ...plan, decisionId: decisionEvents[index]!.id }))
+  return pipe(
+    validateDecisionEventBinding(field, bound, events),
+    Result.map(() => bound),
+  )
+}
+
 const governedPriceMicros = (
   field: string,
   index: number,
@@ -5384,13 +5494,12 @@ const validateAccountingUniverse = (
   return Result.succeed(undefined)
 }
 
-const selectedTracePreviousEquity = (
+const selectedTracePerformanceBaseline = (
   field: 'baselineSimulation' | 'stressedSimulation',
   full: EvaluationResult['simulation'],
   selected: EvaluationResult['simulation'],
   events: EvaluationResult['events'],
-  initialCapitalMicros: string,
-): Result.Result<string, CandidateDevelopmentCommandFailure> => {
+): Result.Result<CandidateDevelopmentPerformanceBaseline, CandidateDevelopmentCommandFailure> => {
   const first = selected.dailyMarks.at(0)
   if (first === undefined) {
     return Result.fail(markedEquityFailure('selected-trace-mismatch', null, field, 'nonempty selected trace', 0))
@@ -5405,45 +5514,6 @@ const selectedTracePreviousEquity = (
     return Result.fail(markedEquityFailure('selected-trace-mismatch', null, `${field}.predecessorCount`, 1, startIndex))
   }
   const predecessor = full.dailyMarks[0]
-  const predecessorBindings = [
-    ['equityMicros', initialCapitalMicros, predecessor.equityMicros],
-    ['netReturn', 0, predecessor.netReturn],
-    ['turnoverMicros', '0', predecessor.turnoverMicros],
-    ['cumulativeTurnoverMicros', '0', predecessor.cumulativeTurnoverMicros],
-    ['feeMicros', '0', predecessor.feeMicros],
-    ['cumulativeFeesMicros', '0', predecessor.cumulativeFeesMicros],
-    ['spreadCostMicros', '0', predecessor.spreadCostMicros],
-    ['cumulativeSpreadCostMicros', '0', predecessor.cumulativeSpreadCostMicros],
-    ['slippageCostMicros', '0', predecessor.slippageCostMicros],
-    ['cumulativeSlippageCostMicros', '0', predecessor.cumulativeSlippageCostMicros],
-    ['cashYieldMicros', '0', predecessor.cashYieldMicros],
-    ['cumulativeCashYieldMicros', '0', predecessor.cumulativeCashYieldMicros],
-    ['peakEquityMicros', initialCapitalMicros, predecessor.peakEquityMicros],
-    ['drawdown', 0, predecessor.drawdown],
-    ['cashMicros', initialCapitalMicros, predecessor.cashMicros],
-  ] as const
-  for (const [name, expected, observed] of predecessorBindings) {
-    if (expected !== observed) {
-      return Result.fail(
-        markedEquityFailure('selected-trace-mismatch', 0, `${field}.predecessor.${name}`, expected, observed),
-      )
-    }
-  }
-  const nonzeroPosition = predecessor.positions.findIndex(
-    ({ quantityMicros, costBasisMicros, marketValueMicros }) =>
-      quantityMicros !== '0' || costBasisMicros !== '0' || marketValueMicros !== '0',
-  )
-  if (nonzeroPosition >= 0) {
-    return Result.fail(
-      markedEquityFailure(
-        'selected-trace-mismatch',
-        nonzeroPosition,
-        `${field}.predecessor.positions`,
-        'all-zero positions',
-        predecessor.positions[nonzeroPosition],
-      ),
-    )
-  }
   const last = selected.dailyMarks.at(-1)
   if (last === undefined || startIndex + selected.dailyMarks.length !== full.dailyMarks.length) {
     return Result.fail(
@@ -5477,15 +5547,15 @@ const selectedTracePreviousEquity = (
     for (const [dateField, observed] of evidenceDates) {
       const isEconomicBeforeWindow =
         event.kind === 'decision'
-          ? dateField === 'executionDate' && observed < first.sessionDate
-          : observed < first.sessionDate
+          ? dateField === 'executionDate' && observed < predecessor.sessionDate
+          : observed < predecessor.sessionDate
       if (isEconomicBeforeWindow) {
         return Result.fail(
           markedEquityFailure(
             'selected-trace-mismatch',
             index,
             `${field}.events.${dateField}`,
-            `>=${first.sessionDate}`,
+            `>=${predecessor.sessionDate}`,
             observed,
           ),
         )
@@ -5505,13 +5575,13 @@ const selectedTracePreviousEquity = (
   }
   for (let index = 0; index < full.orders.length; index += 1) {
     const observed = full.orders[index].sessionDate
-    if (observed < first.sessionDate) {
+    if (observed < predecessor.sessionDate) {
       return Result.fail(
         markedEquityFailure(
           'selected-trace-mismatch',
           index,
           `${field}.orders.sessionDate`,
-          `>=${first.sessionDate}`,
+          `>=${predecessor.sessionDate}`,
           observed,
         ),
       )
@@ -5530,13 +5600,13 @@ const selectedTracePreviousEquity = (
   }
   for (let index = 0; index < full.cashChanges.length; index += 1) {
     const observed = full.cashChanges[index].sessionDate
-    if (observed < first.sessionDate) {
+    if (observed < predecessor.sessionDate) {
       return Result.fail(
         markedEquityFailure(
           'selected-trace-mismatch',
           index,
           `${field}.cashChanges.sessionDate`,
-          `>=${first.sessionDate}`,
+          `>=${predecessor.sessionDate}`,
           observed,
         ),
       )
@@ -5553,17 +5623,22 @@ const selectedTracePreviousEquity = (
       )
     }
   }
-  return Result.succeed(initialCapitalMicros)
+  return Result.succeed(performanceBaselineFromPoint(predecessor))
 }
 
 interface CandidateDevelopmentAccountingValidation {
-  readonly strategyPreviousEquityMicros: string
-  readonly stressedPreviousEquityMicros: string
+  readonly strategyPerformanceBaseline: CandidateDevelopmentPerformanceBaseline
+  readonly stressedPerformanceBaseline: CandidateDevelopmentPerformanceBaseline
+}
+
+interface CandidateDevelopmentRebuiltBenchmark {
+  readonly series: readonly DailyPerformancePoint[]
+  readonly performanceBaseline: CandidateDevelopmentPerformanceBaseline
 }
 
 interface CandidateDevelopmentRebuiltBenchmarks {
-  readonly buyAndHold: readonly DailyPerformancePoint[]
-  readonly directVolTiming: readonly DailyPerformancePoint[]
+  readonly buyAndHold: CandidateDevelopmentRebuiltBenchmark
+  readonly directVolTiming: CandidateDevelopmentRebuiltBenchmark
 }
 
 const decisionTarget = (
@@ -5654,9 +5729,8 @@ export const validateCandidateDevelopmentAccountingReplay = (
 const selectRebuiltBenchmarkSeries = (
   series: readonly DailyPerformancePoint[],
   selectedSessions: readonly IsoDate[],
-  initialCapitalMicros: string,
   name: 'buy-and-hold' | 'direct-volatility-timing',
-): Result.Result<readonly DailyPerformancePoint[], CandidateDevelopmentCommandFailure> => {
+): Result.Result<CandidateDevelopmentRebuiltBenchmark, CandidateDevelopmentCommandFailure> => {
   const bySession = new Map(series.map((point) => [point.sessionDate, point] as const))
   const selected = selectedSessions.map((sessionDate) => bySession.get(sessionDate))
   const missing = selected.findIndex((point) => point === undefined)
@@ -5670,13 +5744,21 @@ const selectRebuiltBenchmarkSeries = (
   if (first === undefined) {
     return Result.fail(performanceEvidenceFailure(name, 'observations-insufficient', null, null, '>=2', 0))
   }
-  const normalizedReturn = Number(first.equityMicros) / Number(initialCapitalMicros) - 1
+  const firstIndex = series.findIndex((point) => point.sessionDate === first.sessionDate)
+  if (firstIndex !== 1) {
+    return Result.fail(performanceEvidenceFailure(name, 'session-mismatch', null, 'predecessorCount', 1, firstIndex))
+  }
+  const predecessor = series[0]
+  const normalizedReturn = Number(first.equityMicros) / Number(predecessor.equityMicros) - 1
   if (!Number.isFinite(normalizedReturn)) {
     return Result.fail(
       performanceEvidenceFailure(name, 'return-mismatch', 0, 'netReturn', 'finite normalized return', normalizedReturn),
     )
   }
-  return Result.succeed([{ ...first, netReturn: normalizedReturn }, ...complete.slice(1)])
+  return Result.succeed({
+    series: [{ ...first, netReturn: normalizedReturn }, ...complete.slice(1)],
+    performanceBaseline: performanceBaselineFromPoint(predecessor),
+  })
 }
 
 const rebuildCandidateDevelopmentBenchmarks = (
@@ -5836,16 +5918,10 @@ const rebuildCandidateDevelopmentBenchmarks = (
   }
   const selectedSessions = baseline.simulation.dailyMarks.map((mark) => mark.sessionDate)
   return Result.all({
-    buyAndHold: selectRebuiltBenchmarkSeries(
-      buyAndHold.success.dailyPerformance,
-      selectedSessions,
-      baseline.initialCapitalMicros,
-      'buy-and-hold',
-    ),
+    buyAndHold: selectRebuiltBenchmarkSeries(buyAndHold.success.dailyPerformance, selectedSessions, 'buy-and-hold'),
     directVolTiming: selectRebuiltBenchmarkSeries(
       directVolTiming.success.dailyPerformance,
       selectedSessions,
-      baseline.initialCapitalMicros,
       'direct-volatility-timing',
     ),
   })
@@ -5862,13 +5938,7 @@ const validateCandidateDevelopmentAccounting = (
   const scalarBindings = [
     ['runId', baseline.runId, accounting.runId],
     ['initialCapitalMicros', baseline.initialCapitalMicros, accounting.initialCapitalMicros],
-    ['evaluatorTotalFeesMicros', baseline.strategy.totalFeesMicros, accounting.evaluatorTotalFeesMicros],
     ['evaluatorEndingEquityMicros', baseline.strategy.endingEquityMicros, accounting.evaluatorEndingEquityMicros],
-    [
-      'stressedEvaluatorTotalFeesMicros',
-      baseline.doubleCostStrategy.totalFeesMicros,
-      accounting.stressedEvaluatorTotalFeesMicros,
-    ],
     [
       'stressedEvaluatorEndingEquityMicros',
       baseline.doubleCostStrategy.endingEquityMicros,
@@ -5914,36 +5984,60 @@ const validateCandidateDevelopmentAccounting = (
     if (Result.isFailure(binding)) return Result.fail(binding.failure)
   }
   const selectedTraceBindings = Result.all({
-    strategyPreviousEquityMicros: selectedTracePreviousEquity(
+    strategyPerformanceBaseline: selectedTracePerformanceBaseline(
       'baselineSimulation',
       accounting.baselineSimulation,
       baseline.simulation,
       accounting.events,
-      baseline.initialCapitalMicros,
     ),
-    stressedPreviousEquityMicros: selectedTracePreviousEquity(
+    stressedPerformanceBaseline: selectedTracePerformanceBaseline(
       'stressedSimulation',
       accounting.stressedSimulation,
       report.doubledCost.stressed.simulation,
       accounting.stressedEvents,
-      baseline.initialCapitalMicros,
     ),
   })
   if (Result.isFailure(selectedTraceBindings)) return Result.fail(selectedTraceBindings.failure)
-  const domainBindings = Result.all({
-    baselineCalendar: validateAccountingCalendar('baseline', officialSessions, accounting.baselineSimulation),
-    stressedCalendar: validateAccountingCalendar('stressed', officialSessions, accounting.stressedSimulation),
-    baselineUniverse: validateAccountingUniverse(
+  const selectedBaselinePlans = signalDecisionsInSimulationWindow(accounting.signalDecisions, baseline.simulation)
+  const selectedBaselineEvents = decisionEventsInSimulationWindow(accounting.events, baseline.simulation)
+  const baselineDecisionBindings = Result.all({
+    universe: validateAccountingUniverse(
       'baseline',
       strategyProtocol.universe,
-      baseline.signalDecisions,
+      accounting.signalDecisions,
       accounting.events,
       accounting.baselineSimulation,
     ),
+    selectedPlans: requireCanonicalEvidenceEqual(
+      'baseline.signalDecisions',
+      baseline.signalDecisions,
+      selectedBaselinePlans,
+    ),
+    fullEvents: validateDecisionEventBinding('baseline', accounting.signalDecisions, accounting.events),
+    selectedEvents: validateDecisionEventBinding('baseline', baseline.signalDecisions, selectedBaselineEvents),
+  })
+  if (Result.isFailure(baselineDecisionBindings)) return Result.fail(baselineDecisionBindings.failure)
+  const stressedAccountingPlans = bindRunIndependentDecisionPlansToEvents(
+    'stressed',
+    accounting.signalDecisions,
+    accounting.stressedEvents,
+  )
+  if (Result.isFailure(stressedAccountingPlans)) return Result.fail(stressedAccountingPlans.failure)
+  const selectedStressedPlans = signalDecisionsInSimulationWindow(
+    stressedAccountingPlans.success,
+    report.doubledCost.stressed.simulation,
+  )
+  const selectedStressedEvents = decisionEventsInSimulationWindow(
+    accounting.stressedEvents,
+    report.doubledCost.stressed.simulation,
+  )
+  const domainBindings = Result.all({
+    baselineCalendar: validateAccountingCalendar('baseline', officialSessions, accounting.baselineSimulation),
+    stressedCalendar: validateAccountingCalendar('stressed', officialSessions, accounting.stressedSimulation),
     stressedUniverse: validateAccountingUniverse(
       'stressed',
       strategyProtocol.universe,
-      report.doubledCost.stressed.signalDecisions,
+      stressedAccountingPlans.success,
       accounting.stressedEvents,
       accounting.stressedSimulation,
     ),
@@ -5966,7 +6060,7 @@ const validateCandidateDevelopmentAccounting = (
     baselineReplay: validateCandidateDevelopmentAccountingReplay(
       'baseline',
       accounting.runId,
-      baseline.signalDecisions,
+      accounting.signalDecisions,
       accounting.events,
       accounting.baselineSimulation,
       marketData,
@@ -5975,7 +6069,7 @@ const validateCandidateDevelopmentAccounting = (
     stressedReplay: validateCandidateDevelopmentAccountingReplay(
       'stressed',
       accounting.stressedRunId,
-      report.doubledCost.stressed.signalDecisions,
+      stressedAccountingPlans.success,
       accounting.stressedEvents,
       accounting.stressedSimulation,
       marketData,
@@ -5984,23 +6078,16 @@ const validateCandidateDevelopmentAccounting = (
   })
   if (Result.isFailure(domainBindings)) return Result.fail(domainBindings.failure)
   const decisionBindings = Result.all({
-    baselinePlans: requireCanonicalEvidenceEqual(
-      'baseline.signalDecisions',
-      baseline.signalDecisions,
-      accounting.signalDecisions,
-    ),
-    stressedPlans: requireCanonicalEvidenceEqual(
+    stressedPlans: validateRunIndependentDecisionPlans(
       'stressed.signalDecisions',
       report.doubledCost.stressed.signalDecisions,
-      accounting.signalDecisions,
+      selectedStressedPlans,
     ),
-    baselineFull: validateDecisionEventBinding('baseline', accounting.signalDecisions, accounting.events),
-    baselineSelected: validateDecisionEventBinding('baseline', baseline.signalDecisions, accounting.events),
-    stressed: validateDecisionEventBinding('stressed', accounting.signalDecisions, accounting.stressedEvents),
+    stressedFull: validateDecisionEventBinding('stressed', stressedAccountingPlans.success, accounting.stressedEvents),
     stressedSelected: validateDecisionEventBinding(
       'stressed',
       report.doubledCost.stressed.signalDecisions,
-      accounting.stressedEvents,
+      selectedStressedEvents,
     ),
   })
   if (Result.isFailure(decisionBindings)) return Result.fail(decisionBindings.failure)
@@ -6103,12 +6190,12 @@ const recomputeCandidateDevelopmentMetrics = (
     Result.all({
       buyBinding: requireCanonicalEvidenceEqual(
         'benchmarks.buyAndHold',
-        benchmarks.buyAndHold,
+        benchmarks.buyAndHold.series,
         baseline.benchmarkSeries.buyAndHold,
       ),
       directVolBinding: requireCanonicalEvidenceEqual(
         'benchmarks.directVolatilityTiming',
-        benchmarks.directVolTiming,
+        benchmarks.directVolTiming.series,
         baseline.benchmarkSeries.directVolTiming,
       ),
       doubleCostBinding: requireCanonicalEvidenceEqual(
@@ -6116,8 +6203,12 @@ const recomputeCandidateDevelopmentMetrics = (
         stressedPerformance,
         baseline.benchmarkSeries.doubleCostStrategy,
       ),
-      buySessions: validateSeriesSessions(strategyPoints, benchmarks.buyAndHold, 'buy-and-hold'),
-      volSessions: validateSeriesSessions(strategyPoints, benchmarks.directVolTiming, 'direct-volatility-timing'),
+      buySessions: validateSeriesSessions(strategyPoints, benchmarks.buyAndHold.series, 'buy-and-hold'),
+      volSessions: validateSeriesSessions(
+        strategyPoints,
+        benchmarks.directVolTiming.series,
+        'direct-volatility-timing',
+      ),
       doubleSessions: validateSeriesSessions(
         stressedPerformance,
         baseline.benchmarkSeries.doubleCostStrategy,
@@ -6128,24 +6219,31 @@ const recomputeCandidateDevelopmentMetrics = (
         'strategy',
         strategyPoints,
         baseline.initialCapitalMicros,
-        accounting.strategyPreviousEquityMicros,
+        accounting.strategyPerformanceBaseline,
       ),
-      buyAndHold: recomputePerformanceMetrics('buy-and-hold', benchmarks.buyAndHold, baseline.initialCapitalMicros),
+      buyAndHold: recomputePerformanceMetrics(
+        'buy-and-hold',
+        benchmarks.buyAndHold.series,
+        baseline.initialCapitalMicros,
+        benchmarks.buyAndHold.performanceBaseline,
+      ),
       directVolTiming: recomputePerformanceMetrics(
         'direct-volatility-timing',
-        benchmarks.directVolTiming,
+        benchmarks.directVolTiming.series,
         baseline.initialCapitalMicros,
+        benchmarks.directVolTiming.performanceBaseline,
       ),
       doubleCostSeries: recomputePerformanceMetrics(
         'double-cost-series',
         baseline.benchmarkSeries.doubleCostStrategy,
         baseline.initialCapitalMicros,
+        accounting.stressedPerformanceBaseline,
       ),
       doubleCostStressed: recomputePerformanceMetrics(
         'double-cost-stressed',
         stressedPoints,
         baseline.initialCapitalMicros,
-        accounting.stressedPreviousEquityMicros,
+        accounting.stressedPerformanceBaseline,
       ),
     }),
     Result.flatMap(({ buyAndHold, directVolTiming, doubleCostSeries, doubleCostStressed, strategy }) =>
@@ -6657,6 +6755,16 @@ const CandidateDevelopmentMarketDataWitnessSchema = Schema.Struct({
   bars: Schema.Array(CandidateDevelopmentDailyBarSchema).check(Schema.isMinLength(1)),
 })
 
+const CandidateDevelopmentPlannedDecisionSchema = Schema.Struct({
+  ...DecisionPlanSchema.fields,
+  executionDate: IsoDateSchema,
+})
+
+const CandidateDevelopmentStrategyPlanSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.candidate-development-strategy-plan.v1'),
+  decisions: Schema.Array(CandidateDevelopmentPlannedDecisionSchema).check(Schema.isMinLength(1)),
+})
+
 const CandidateDevelopmentMomentumStrategyIdentitySchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.candidate-development-strategy-identity.v1'),
   family: Schema.String.check(Schema.isMinLength(1)),
@@ -6828,6 +6936,16 @@ const decodeCandidateDevelopmentEvaluation = Schema.decodeUnknownResult(
 
 const decodeCandidateDevelopmentMarketDataWitness = Schema.decodeUnknownResult(
   CandidateDevelopmentMarketDataWitnessSchema,
+  strictParseOptions,
+)
+
+const decodeCandidateDevelopmentStrategyPlan = Schema.decodeUnknownResult(
+  CandidateDevelopmentStrategyPlanSchema,
+  strictParseOptions,
+)
+
+const decodeCandidateDevelopmentInputManifest = Schema.decodeUnknownResult(
+  InputManifestArtifactSchema,
   strictParseOptions,
 )
 
@@ -9468,8 +9586,1286 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
   })
 
 const candidateDevelopmentArtifactSchemaVersion = 'bayn.candidate-development-artifact.v1' as const
+const candidateDevelopmentPlanArtifactSchemaVersion = 'bayn.candidate-development-plan-artifact.v1' as const
 const candidateDevelopmentArtifactEvaluationTimeoutMs = 120_000
 const candidateDevelopmentArtifactInitializationTimeoutMs = 10_000
+
+const candidateDevelopmentPlanFailure = (field: string, cause: unknown): CandidateDevelopmentCommandFailure =>
+  sourceVerificationFailure('verify-program-binding', { field, cause })
+
+const exactStringSet = (expected: readonly string[], observed: readonly string[]): boolean => {
+  if (expected.length !== observed.length) return false
+  const expectedSorted = [...expected].sort()
+  const observedSorted = [...observed].sort()
+  return expectedSorted.every((value, index) => value === observedSorted[index])
+}
+
+const quantizeCandidateDevelopmentPlanNumber = (value: number): number =>
+  Math.round(value * 1_000_000_000_000) / 1_000_000_000_000
+
+const candidateDevelopmentSampleVariance = (values: readonly number[]): number | undefined => {
+  if (values.length < 2 || values.some((value) => !Number.isFinite(value))) return undefined
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (values.length - 1)
+  return Number.isFinite(variance) ? variance : undefined
+}
+
+const candidateDevelopmentSampleCovariance = (
+  first: readonly number[],
+  second: readonly number[],
+): number | undefined => {
+  if (first.length !== second.length || first.length < 2) return undefined
+  const firstMean = first.reduce((sum, value) => sum + value, 0) / first.length
+  const secondMean = second.reduce((sum, value) => sum + value, 0) / second.length
+  const covariance =
+    first.reduce((sum, value, index) => sum + (value - firstMean) * ((second[index] as number) - secondMean), 0) /
+    (first.length - 1)
+  return Number.isFinite(covariance) ? covariance : undefined
+}
+
+interface CandidateDevelopmentInverseVolatilityFeature {
+  readonly totalReturns: Readonly<Record<string, number>>
+  readonly dailyReturns: Readonly<Record<string, readonly number[]>>
+  readonly annualizedVolatilities: Readonly<Record<string, number>>
+  readonly targetWeights: Readonly<Record<string, number>>
+  readonly exposureScale: number
+  readonly estimatedAnnualizedPortfolioVolatility: number
+}
+
+const deriveCandidateDevelopmentInverseVolatilityFeature = (
+  alignedSessions: readonly AlignedSession[],
+  signalSessionIndex: number,
+  universe: readonly string[],
+  strategyIdentity: CandidateDevelopmentInverseVolatilityStrategyIdentity,
+  terminal: boolean,
+  field: string,
+): Result.Result<CandidateDevelopmentInverseVolatilityFeature, CandidateDevelopmentCommandFailure> => {
+  const parameters = strategyIdentity.parameters
+  const [firstRiskAsset, secondRiskAsset] = parameters.riskAssets
+  if (firstRiskAsset === secondRiskAsset || !universe.includes(firstRiskAsset) || !universe.includes(secondRiskAsset)) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure(`${field}.riskAssets`, {
+        expected: 'two distinct members of the governed universe',
+        observed: parameters.riskAssets,
+      }),
+    )
+  }
+  const firstPriceSessionIndex = signalSessionIndex - parameters.lookbackSessions
+  if (firstPriceSessionIndex < 0) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure(`${field}.window`, {
+        expected: parameters.lookbackSessions + 1,
+        observed: signalSessionIndex + 1,
+      }),
+    )
+  }
+  const totalReturns: Record<string, number> = {}
+  const dailyReturns: Record<string, readonly number[]> = {}
+  const annualizedVolatilities: Record<string, number> = {}
+  for (const symbol of universe) {
+    const returns: number[] = []
+    for (let sessionIndex = firstPriceSessionIndex + 1; sessionIndex <= signalSessionIndex; sessionIndex += 1) {
+      const previousClose = alignedSessions[sessionIndex - 1]?.bars[symbol]?.close
+      const currentClose = alignedSessions[sessionIndex]?.bars[symbol]?.close
+      if (
+        previousClose === undefined ||
+        currentClose === undefined ||
+        !Number.isFinite(previousClose) ||
+        !Number.isFinite(currentClose) ||
+        previousClose <= 0 ||
+        currentClose <= 0
+      ) {
+        return Result.fail(
+          candidateDevelopmentPlanFailure(`${field}.marketData.${symbol}`, {
+            expected: 'strictly positive finite adjusted closes across the complete lookback',
+            observed: { previousClose, currentClose },
+          }),
+        )
+      }
+      const dailyReturn = currentClose / previousClose - 1
+      if (!Number.isFinite(dailyReturn)) {
+        return Result.fail(
+          candidateDevelopmentPlanFailure(`${field}.dailyReturns.${symbol}`, {
+            expected: 'finite daily returns',
+            observed: dailyReturn,
+          }),
+        )
+      }
+      returns.push(dailyReturn)
+    }
+    const variance = candidateDevelopmentSampleVariance(returns)
+    const annualizedVolatility =
+      variance === undefined
+        ? undefined
+        : quantizeCandidateDevelopmentPlanNumber(Math.sqrt(variance * parameters.annualizationSessions))
+    if (annualizedVolatility === undefined || !Number.isFinite(annualizedVolatility) || annualizedVolatility <= 0) {
+      return Result.fail(
+        candidateDevelopmentPlanFailure(`${field}.annualizedVolatility.${symbol}`, {
+          expected: 'strictly positive finite sample annualized volatility',
+          observed: annualizedVolatility,
+        }),
+      )
+    }
+    const firstClose = alignedSessions[firstPriceSessionIndex]?.bars[symbol]?.close
+    const signalClose = alignedSessions[signalSessionIndex]?.bars[symbol]?.close
+    if (firstClose === undefined || signalClose === undefined || firstClose <= 0 || !Number.isFinite(signalClose)) {
+      return Result.fail(
+        candidateDevelopmentPlanFailure(`${field}.totalReturn.${symbol}`, {
+          expected: 'complete finite lookback prices',
+          observed: { firstClose, signalClose },
+        }),
+      )
+    }
+    totalReturns[symbol] = quantizeCandidateDevelopmentPlanNumber(signalClose / firstClose - 1)
+    dailyReturns[symbol] = returns
+    annualizedVolatilities[symbol] = annualizedVolatility
+  }
+  const firstRiskVolatility = annualizedVolatilities[firstRiskAsset]
+  const secondRiskVolatility = annualizedVolatilities[secondRiskAsset]
+  const firstRiskReturns = dailyReturns[firstRiskAsset]
+  const secondRiskReturns = dailyReturns[secondRiskAsset]
+  if (
+    firstRiskVolatility === undefined ||
+    secondRiskVolatility === undefined ||
+    firstRiskReturns === undefined ||
+    secondRiskReturns === undefined
+  ) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure(`${field}.riskAssets`, {
+        expected: parameters.riskAssets,
+        observed: Object.keys(annualizedVolatilities),
+      }),
+    )
+  }
+  const firstInverseVolatility = 1 / firstRiskVolatility
+  const secondInverseVolatility = 1 / secondRiskVolatility
+  const inverseVolatilityDenominator = firstInverseVolatility + secondInverseVolatility
+  const covariance = candidateDevelopmentSampleCovariance(firstRiskReturns, secondRiskReturns)
+  if (covariance === undefined || !Number.isFinite(inverseVolatilityDenominator) || inverseVolatilityDenominator <= 0) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure(`${field}.riskGeometry`, {
+        expected: 'finite sample covariance and inverse-volatility denominator',
+        observed: { covariance, inverseVolatilityDenominator },
+      }),
+    )
+  }
+  const normalizedFirstWeight = firstInverseVolatility / inverseVolatilityDenominator
+  const normalizedSecondWeight = secondInverseVolatility / inverseVolatilityDenominator
+  const unscaledPortfolioVariance =
+    normalizedFirstWeight ** 2 * firstRiskVolatility ** 2 +
+    normalizedSecondWeight ** 2 * secondRiskVolatility ** 2 +
+    2 * normalizedFirstWeight * normalizedSecondWeight * covariance * parameters.annualizationSessions
+  if (!Number.isFinite(unscaledPortfolioVariance) || unscaledPortfolioVariance <= 0) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure(`${field}.portfolioVariance`, {
+        expected: 'strictly positive finite sample portfolio variance',
+        observed: unscaledPortfolioVariance,
+      }),
+    )
+  }
+  const unscaledAnnualizedPortfolioVolatility = Math.sqrt(unscaledPortfolioVariance)
+  const riskScale = quantizeCandidateDevelopmentPlanNumber(
+    Math.min(
+      parameters.maximumGrossExposure,
+      parameters.targetAnnualizedVolatility / unscaledAnnualizedPortfolioVolatility,
+    ),
+  )
+  if (!Number.isFinite(riskScale) || riskScale <= 0) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure(`${field}.riskScale`, {
+        expected: 'strictly positive finite bounded risk scale',
+        observed: riskScale,
+      }),
+    )
+  }
+  const targetWeights = Object.fromEntries(
+    universe.map((symbol) => [
+      symbol,
+      terminal
+        ? 0
+        : symbol === firstRiskAsset
+          ? quantizeCandidateDevelopmentPlanNumber(normalizedFirstWeight * riskScale)
+          : symbol === secondRiskAsset
+            ? quantizeCandidateDevelopmentPlanNumber(normalizedSecondWeight * riskScale)
+            : 0,
+    ]),
+  )
+  const exposureScale = quantizeCandidateDevelopmentPlanNumber(
+    Object.values(targetWeights).reduce((sum, weight) => sum + weight, 0),
+  )
+  const portfolioReturns = Array.from({ length: parameters.lookbackSessions }, (_, returnIndex) =>
+    universe.reduce(
+      (sum, symbol) => sum + (dailyReturns[symbol]?.[returnIndex] ?? Number.NaN) * (targetWeights[symbol] ?? 0),
+      0,
+    ),
+  )
+  const portfolioVariance = candidateDevelopmentSampleVariance(portfolioReturns)
+  if (portfolioVariance === undefined) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure(`${field}.estimatedAnnualizedPortfolioVolatility`, {
+        expected: 'finite sample portfolio return variance',
+        observed: portfolioReturns,
+      }),
+    )
+  }
+  return Result.succeed({
+    totalReturns,
+    dailyReturns,
+    annualizedVolatilities,
+    targetWeights,
+    exposureScale,
+    estimatedAnnualizedPortfolioVolatility: quantizeCandidateDevelopmentPlanNumber(
+      Math.sqrt(portfolioVariance * parameters.annualizationSessions),
+    ),
+  })
+}
+
+const candidateDevelopmentMaximumGrossExposure = (strategyProtocol: CandidateDevelopmentStrategyProtocol): number => {
+  const strategyIdentity = strategyProtocol.strategyIdentity
+  if (strategyIdentity?.schemaVersion === 'bayn.candidate-development-strategy-identity.v2') {
+    return strategyIdentity.parameters.maximumGrossExposure
+  }
+  if (strategyIdentity?.schemaVersion === 'bayn.candidate-development-strategy-identity.v1') {
+    return strategyIdentity.parameters.selectedAssetWeight
+  }
+  return 1
+}
+
+const validateCandidateDevelopmentStrategyPlan = (
+  value: unknown,
+  preflight: CandidateDevelopmentPreflightPass,
+  strategyProtocol: CandidateDevelopmentStrategyProtocol,
+  officialSessions: readonly IsoDate[],
+  signalSessionDates: readonly IsoDate[],
+  alignedSessions: readonly AlignedSession[],
+): Result.Result<CandidateDevelopmentStrategyPlan, CandidateDevelopmentCommandFailure> => {
+  const decoded = decodeCandidateDevelopmentStrategyPlan(value)
+  if (Result.isFailure(decoded)) {
+    return Result.fail(candidateDevelopmentPlanFailure('artifact.plan', decoded.failure))
+  }
+  const plan = decoded.success as CandidateDevelopmentStrategyPlan
+  const officialSessionIndexByDate = new Map(officialSessions.map((session, index) => [session, index] as const))
+  const selectedStartIndex = officialSessionIndexByDate.get(preflight.selectedObservationStart)
+  const accountingStart = selectedStartIndex === undefined ? undefined : officialSessions[selectedStartIndex - 1]
+  if (accountingStart === undefined) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure('artifact.plan.openingDecision', {
+        expected: 'an official accounting predecessor for the selected observation window',
+        observed: { selectedStartIndex, selectedObservationStart: preflight.selectedObservationStart },
+      }),
+    )
+  }
+  const expectedSchedule = expectedCandidateDevelopmentRebalanceSchedule(
+    officialSessions,
+    signalSessionDates,
+    accountingStart,
+    preflight.selectedObservationEnd,
+  )
+  const openingDecision = expectedSchedule[0]
+  const selectedSchedule = expectedSchedule.slice(1)
+  if (
+    openingDecision?.executionDate !== accountingStart ||
+    selectedSchedule.length !== preflight.expectedRebalanceSchedule.length ||
+    selectedSchedule.some(
+      (boundary, index) =>
+        boundary.signalDate !== preflight.expectedRebalanceSchedule[index]?.signalDate ||
+        boundary.executionDate !== preflight.expectedRebalanceSchedule[index]?.executionDate,
+    )
+  ) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure('artifact.plan.openingDecision', {
+        expected: {
+          executionDate: accountingStart,
+          selectedSchedule: preflight.expectedRebalanceSchedule,
+        },
+        observed: { openingDecision, selectedSchedule },
+      }),
+    )
+  }
+  if (plan.decisions.length !== expectedSchedule.length) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure('artifact.plan.decisions.length', {
+        expected: expectedSchedule.length,
+        observed: plan.decisions.length,
+      }),
+    )
+  }
+  const universe = strategyProtocol.universe
+  const strategyIdentity = strategyProtocol.strategyIdentity
+  if (strategyIdentity === undefined) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure('artifact.strategyProtocol.strategyIdentity', {
+        expected: 'immutable allocation semantics',
+        observed: undefined,
+      }),
+    )
+  }
+  const maximumGrossExposure = candidateDevelopmentMaximumGrossExposure(strategyProtocol)
+  const lookbackSessions = strategyIdentity.parameters.lookbackSessions
+  const governedAssets = new Set(
+    strategyIdentity.schemaVersion === 'bayn.candidate-development-strategy-identity.v2'
+      ? strategyIdentity.parameters.riskAssets
+      : [...strategyIdentity.parameters.riskAssets, strategyIdentity.parameters.defensiveAsset],
+  )
+  if (
+    alignedSessions.length !== officialSessions.length ||
+    alignedSessions.some((session, index) => session.date !== officialSessions[index])
+  ) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure('artifact.plan.marketDataSessions', {
+        expected: officialSessions,
+        observed: alignedSessions.map(({ date }) => date),
+      }),
+    )
+  }
+  const normalizedDecisions: CandidateDevelopmentPlannedDecision[] = []
+  for (let index = 0; index < plan.decisions.length; index += 1) {
+    const decision = plan.decisions[index]
+    const expected = expectedSchedule[index]
+    if (decision.signalDate !== expected?.signalDate || decision.executionDate !== expected?.executionDate) {
+      return Result.fail(
+        candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].schedule`, {
+          expected,
+          observed: { signalDate: decision.signalDate, executionDate: decision.executionDate },
+        }),
+      )
+    }
+    const signalSessionIndex = officialSessionIndexByDate.get(decision.signalDate)
+    const covarianceWindowStartIndex = signalSessionIndex === undefined ? -1 : signalSessionIndex - lookbackSessions + 1
+    const covarianceReturnSessions =
+      covarianceWindowStartIndex < 0 || signalSessionIndex === undefined
+        ? []
+        : officialSessions.slice(covarianceWindowStartIndex, signalSessionIndex + 1)
+    const covariancePriceSessions =
+      covarianceWindowStartIndex < 1 || signalSessionIndex === undefined
+        ? []
+        : officialSessions.slice(covarianceWindowStartIndex - 1, signalSessionIndex + 1)
+    const expectedFirstSession = covarianceReturnSessions[0]
+    if (
+      covarianceReturnSessions.length !== lookbackSessions ||
+      covariancePriceSessions.length !== lookbackSessions + 1 ||
+      expectedFirstSession === undefined ||
+      decision.covarianceWindow.returnCount !== lookbackSessions ||
+      decision.covarianceWindow.firstSession !== expectedFirstSession ||
+      decision.covarianceWindow.lastSession !== decision.signalDate
+    ) {
+      return Result.fail(
+        candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].covarianceWindow`, {
+          expected: {
+            returnCount: lookbackSessions,
+            firstSession: expectedFirstSession ?? null,
+            lastSession: decision.signalDate,
+          },
+          observed: decision.covarianceWindow,
+        }),
+      )
+    }
+    const covarianceWindowHash = canonicalHashV1Result({
+      schemaVersion: 'bayn.candidate-development-plan-window.v1',
+      sessions: covariancePriceSessions,
+    })
+    if (Result.isFailure(covarianceWindowHash)) {
+      return Result.fail(
+        candidateDevelopmentPlanFailure(
+          `artifact.plan.decisions[${index}].covarianceWindow.sessionsHash`,
+          covarianceWindowHash.failure,
+        ),
+      )
+    }
+    const allocationTolerance = 1e-12 + Number.EPSILON
+    let inverseVolatilityFeature: CandidateDevelopmentInverseVolatilityFeature | undefined
+    if (strategyIdentity.schemaVersion === 'bayn.candidate-development-strategy-identity.v2') {
+      const derived = deriveCandidateDevelopmentInverseVolatilityFeature(
+        alignedSessions,
+        signalSessionIndex ?? -1,
+        universe,
+        strategyIdentity,
+        index === plan.decisions.length - 1,
+        `artifact.plan.decisions[${index}].inverseVolatility`,
+      )
+      if (Result.isFailure(derived)) return Result.fail(derived.failure)
+      inverseVolatilityFeature = derived.success
+      if (
+        universe.some((symbol) => {
+          const expectedWeight = inverseVolatilityFeature?.targetWeights[symbol]
+          const observedWeight = decision.targetWeights[symbol]
+          return (
+            expectedWeight === undefined ||
+            observedWeight === undefined ||
+            Math.abs(observedWeight - expectedWeight) > allocationTolerance
+          )
+        })
+      ) {
+        return Result.fail(
+          candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].inverseVolatility.allocation`, {
+            expected: inverseVolatilityFeature.targetWeights,
+            observed: decision.targetWeights,
+          }),
+        )
+      }
+      if (
+        Math.abs(decision.exposureScale - inverseVolatilityFeature.exposureScale) > allocationTolerance ||
+        Math.abs(
+          decision.estimatedAnnualizedPortfolioVolatility -
+            inverseVolatilityFeature.estimatedAnnualizedPortfolioVolatility,
+        ) > allocationTolerance
+      ) {
+        return Result.fail(
+          candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].inverseVolatility.riskScale`, {
+            expected: {
+              exposureScale: inverseVolatilityFeature.exposureScale,
+              estimatedAnnualizedPortfolioVolatility: inverseVolatilityFeature.estimatedAnnualizedPortfolioVolatility,
+            },
+            observed: {
+              exposureScale: decision.exposureScale,
+              estimatedAnnualizedPortfolioVolatility: decision.estimatedAnnualizedPortfolioVolatility,
+            },
+          }),
+        )
+      }
+    }
+    let momentumFeature:
+      | {
+          readonly totalReturns: Readonly<Record<string, number>>
+          readonly selectedSymbol: string | null
+          readonly estimatedAnnualizedPortfolioVolatility: number
+        }
+      | undefined
+    if (strategyIdentity.schemaVersion === 'bayn.candidate-development-strategy-identity.v1') {
+      const parameters = strategyIdentity.parameters
+      const [firstRiskAsset, secondRiskAsset] = parameters.riskAssets
+      if (
+        parameters.relativeMomentumTieBreak !== firstRiskAsset &&
+        parameters.relativeMomentumTieBreak !== secondRiskAsset
+      ) {
+        return Result.fail(
+          candidateDevelopmentPlanFailure(
+            'artifact.strategyProtocol.strategyIdentity.parameters.relativeMomentumTieBreak',
+            {
+              expected: parameters.riskAssets,
+              observed: parameters.relativeMomentumTieBreak,
+            },
+          ),
+        )
+      }
+      const firstFeatureSession =
+        signalSessionIndex === undefined ? undefined : alignedSessions[signalSessionIndex - lookbackSessions]
+      const signalSession = signalSessionIndex === undefined ? undefined : alignedSessions[signalSessionIndex]
+      if (firstFeatureSession === undefined || signalSession === undefined) {
+        return Result.fail(
+          candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].momentumWindow`, {
+            expected: { lookbackSessions, signalDate: decision.signalDate },
+            observed: null,
+          }),
+        )
+      }
+      const totalReturns: Record<string, number> = {}
+      for (const symbol of universe) {
+        const firstBar = firstFeatureSession.bars[symbol]
+        const signalBar = signalSession.bars[symbol]
+        if (firstBar === undefined || signalBar === undefined) {
+          return Result.fail(
+            candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].momentumWindow.${symbol}`, {
+              expected: [firstFeatureSession.date, signalSession.date],
+              observed: null,
+            }),
+          )
+        }
+        totalReturns[symbol] =
+          Math.round((signalBar.close / firstBar.close - 1) * 1_000_000_000_000) / 1_000_000_000_000
+      }
+      const firstRiskReturn = totalReturns[firstRiskAsset]
+      const secondRiskReturn = totalReturns[secondRiskAsset]
+      const defensiveReturn = totalReturns[parameters.defensiveAsset]
+      if (firstRiskReturn === undefined || secondRiskReturn === undefined || defensiveReturn === undefined) {
+        return Result.fail(
+          candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].momentumUniverse`, {
+            expected: [...parameters.riskAssets, parameters.defensiveAsset],
+            observed: Object.keys(totalReturns),
+          }),
+        )
+      }
+      const relativeWinner =
+        firstRiskReturn === secondRiskReturn
+          ? parameters.relativeMomentumTieBreak
+          : firstRiskReturn > secondRiskReturn
+            ? firstRiskAsset
+            : secondRiskAsset
+      const relativeWinnerReturn = totalReturns[relativeWinner]
+      const selectedSymbol =
+        relativeWinnerReturn !== undefined && relativeWinnerReturn > parameters.absoluteMomentumThreshold
+          ? relativeWinner
+          : defensiveReturn > parameters.absoluteMomentumThreshold
+            ? parameters.defensiveAsset
+            : null
+      const terminal = index === plan.decisions.length - 1
+      const expectedWeights = Object.fromEntries(
+        universe.map((symbol) => [symbol, !terminal && selectedSymbol === symbol ? parameters.selectedAssetWeight : 0]),
+      )
+      if (
+        universe.some((symbol) => {
+          const observedWeight = decision.targetWeights[symbol]
+          const expectedWeight = expectedWeights[symbol]
+          return (
+            observedWeight === undefined ||
+            expectedWeight === undefined ||
+            Math.abs(observedWeight - expectedWeight) > 1e-12 + Number.EPSILON
+          )
+        })
+      ) {
+        return Result.fail(
+          candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].momentumSelection`, {
+            expected: { selectedSymbol, targetWeights: expectedWeights },
+            observed: decision.targetWeights,
+          }),
+        )
+      }
+      const volatilityWindowStartIndex =
+        signalSessionIndex === undefined ? -1 : signalSessionIndex - parameters.volatilityWindowSessions + 1
+      if (volatilityWindowStartIndex < 1 || signalSessionIndex === undefined) {
+        return Result.fail(
+          candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].momentumVolatility.window`, {
+            expected: parameters.volatilityWindowSessions,
+            observed: signalSessionIndex === undefined ? 0 : signalSessionIndex,
+          }),
+        )
+      }
+      const portfolioReturns: number[] = []
+      for (let sessionIndex = volatilityWindowStartIndex; sessionIndex <= signalSessionIndex; sessionIndex += 1) {
+        let portfolioReturn = 0
+        for (const symbol of universe) {
+          const weight = expectedWeights[symbol]
+          if (weight === undefined || weight === 0) continue
+          const previousClose = alignedSessions[sessionIndex - 1]?.bars[symbol]?.close
+          const currentClose = alignedSessions[sessionIndex]?.bars[symbol]?.close
+          if (
+            previousClose === undefined ||
+            currentClose === undefined ||
+            !Number.isFinite(previousClose) ||
+            !Number.isFinite(currentClose) ||
+            previousClose <= 0 ||
+            currentClose <= 0
+          ) {
+            return Result.fail(
+              candidateDevelopmentPlanFailure(
+                `artifact.plan.decisions[${index}].momentumVolatility.marketData.${symbol}`,
+                {
+                  expected: 'strictly positive finite adjusted closes across the complete volatility window',
+                  observed: { previousClose, currentClose },
+                },
+              ),
+            )
+          }
+          portfolioReturn += (currentClose / previousClose - 1) * weight
+        }
+        portfolioReturns.push(portfolioReturn)
+      }
+      const portfolioVariance = candidateDevelopmentSampleVariance(portfolioReturns)
+      if (portfolioVariance === undefined) {
+        return Result.fail(
+          candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].momentumVolatility`, {
+            expected: 'finite sample portfolio return variance',
+            observed: portfolioReturns,
+          }),
+        )
+      }
+      const estimatedAnnualizedPortfolioVolatility = quantizeCandidateDevelopmentPlanNumber(
+        Math.sqrt(portfolioVariance * parameters.annualizationSessions),
+      )
+      if (
+        Math.abs(decision.estimatedAnnualizedPortfolioVolatility - estimatedAnnualizedPortfolioVolatility) >
+        allocationTolerance
+      ) {
+        return Result.fail(
+          candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].momentumVolatility`, {
+            expected: estimatedAnnualizedPortfolioVolatility,
+            observed: decision.estimatedAnnualizedPortfolioVolatility,
+          }),
+        )
+      }
+      momentumFeature = { totalReturns, selectedSymbol, estimatedAnnualizedPortfolioVolatility }
+    }
+    const weightSymbols = Object.keys(decision.targetWeights)
+    const signalSymbols = decision.signals.map(({ symbol }) => symbol)
+    if (!exactStringSet(universe, weightSymbols) || !exactStringSet(universe, signalSymbols)) {
+      return Result.fail(
+        candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].universe`, {
+          expected: universe,
+          observed: { weightSymbols, signalSymbols },
+        }),
+      )
+    }
+    const grossExposure = Object.values(decision.targetWeights).reduce((sum, weight) => sum + weight, 0)
+    const uncappedGrossExposure = decision.signals.reduce((sum, signal) => sum + signal.uncappedWeight, 0)
+    const cappedGrossExposure = decision.signals.reduce((sum, signal) => sum + signal.cappedWeight, 0)
+    const grossTolerance = allocationTolerance * Math.max(1, decision.signals.length)
+    if (!Number.isFinite(grossExposure) || grossExposure < 0 || grossExposure > maximumGrossExposure + grossTolerance) {
+      return Result.fail(
+        candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].grossExposure`, {
+          expected: `finite within 0..${maximumGrossExposure}`,
+          observed: grossExposure,
+        }),
+      )
+    }
+    if (
+      !Number.isFinite(uncappedGrossExposure) ||
+      uncappedGrossExposure < 0 ||
+      Math.abs(uncappedGrossExposure - grossExposure) > grossTolerance
+    ) {
+      return Result.fail(
+        candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].uncappedGrossExposure`, {
+          expected: 'the bounded final gross exposure',
+          observed: uncappedGrossExposure,
+        }),
+      )
+    }
+    if (
+      !Number.isFinite(cappedGrossExposure) ||
+      cappedGrossExposure < 0 ||
+      cappedGrossExposure > maximumGrossExposure + grossTolerance ||
+      Math.abs(cappedGrossExposure - grossExposure) > grossTolerance
+    ) {
+      return Result.fail(
+        candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].cappedGrossExposure`, {
+          expected: 'the bounded final gross exposure',
+          observed: cappedGrossExposure,
+        }),
+      )
+    }
+    if (Math.abs(decision.exposureScale - grossExposure) > grossTolerance) {
+      return Result.fail(
+        candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].exposureScale`, {
+          expected: grossExposure,
+          observed: decision.exposureScale,
+        }),
+      )
+    }
+    for (let signalIndex = 0; signalIndex < decision.signals.length; signalIndex += 1) {
+      const signal = decision.signals[signalIndex]
+      const targetWeight = decision.targetWeights[signal.symbol]
+      if (
+        !governedAssets.has(signal.symbol) &&
+        (signal.eligible || signal.targetWeight !== 0 || signal.uncappedWeight !== 0 || signal.cappedWeight !== 0)
+      ) {
+        return Result.fail(
+          candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].signals[${signalIndex}].governedAsset`, {
+            expected: { governedAssets: [...governedAssets], eligible: false, weight: 0 },
+            observed: signal,
+          }),
+        )
+      }
+      if (signal.horizons.length !== 1 || signal.horizons[0]?.horizonSessions !== lookbackSessions) {
+        return Result.fail(
+          candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].signals[${signalIndex}].horizons`, {
+            expected: [{ horizonSessions: lookbackSessions }],
+            observed: signal.horizons,
+          }),
+        )
+      }
+      if (momentumFeature !== undefined) {
+        const expectedReturn = momentumFeature.totalReturns[signal.symbol]
+        const horizon = signal.horizons[0]
+        if (
+          expectedReturn === undefined ||
+          horizon === undefined ||
+          Math.abs(horizon.return - expectedReturn) > allocationTolerance ||
+          Math.abs(horizon.normalizedTrend - expectedReturn) > allocationTolerance ||
+          Math.abs(signal.dailyVolatility) > allocationTolerance ||
+          Math.abs(
+            signal.annualizedVolatility -
+              (momentumFeature.selectedSymbol === signal.symbol
+                ? momentumFeature.estimatedAnnualizedPortfolioVolatility
+                : 0),
+          ) > allocationTolerance ||
+          Math.abs(signal.compositeScore - expectedReturn) > allocationTolerance ||
+          Math.abs(signal.positiveScore - Math.max(0, expectedReturn)) > allocationTolerance ||
+          signal.eligible !== (momentumFeature.selectedSymbol === signal.symbol)
+        ) {
+          return Result.fail(
+            candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].signals[${signalIndex}].momentum`, {
+              expected: {
+                return: expectedReturn,
+                normalizedTrend: expectedReturn,
+                dailyVolatility: 0,
+                annualizedVolatility:
+                  momentumFeature.selectedSymbol === signal.symbol
+                    ? momentumFeature.estimatedAnnualizedPortfolioVolatility
+                    : 0,
+                compositeScore: expectedReturn,
+                positiveScore: expectedReturn === undefined ? undefined : Math.max(0, expectedReturn),
+                eligible: momentumFeature.selectedSymbol === signal.symbol,
+              },
+              observed: signal,
+            }),
+          )
+        }
+      }
+      if (inverseVolatilityFeature !== undefined) {
+        const parameters = strategyIdentity.parameters
+        const expectedReturn = inverseVolatilityFeature.totalReturns[signal.symbol]
+        const expectedAnnualizedVolatility = inverseVolatilityFeature.annualizedVolatilities[signal.symbol]
+        const expectedEligible = parameters.riskAssets.includes(signal.symbol)
+        const expectedScore =
+          expectedEligible && expectedAnnualizedVolatility !== undefined ? 1 / expectedAnnualizedVolatility : 0
+        const horizon = signal.horizons[0]
+        if (
+          expectedReturn === undefined ||
+          expectedAnnualizedVolatility === undefined ||
+          horizon === undefined ||
+          Math.abs(horizon.return - expectedReturn) > allocationTolerance ||
+          Math.abs(horizon.normalizedTrend - expectedReturn) > allocationTolerance ||
+          Math.abs(
+            signal.dailyVolatility - expectedAnnualizedVolatility / Math.sqrt(parameters.annualizationSessions),
+          ) > allocationTolerance ||
+          Math.abs(signal.annualizedVolatility - expectedAnnualizedVolatility) > allocationTolerance ||
+          Math.abs(signal.compositeScore - expectedScore) > allocationTolerance ||
+          Math.abs(signal.positiveScore - expectedScore) > allocationTolerance ||
+          signal.eligible !== expectedEligible
+        ) {
+          return Result.fail(
+            candidateDevelopmentPlanFailure(
+              `artifact.plan.decisions[${index}].signals[${signalIndex}].inverseVolatility`,
+              {
+                expected: {
+                  return: expectedReturn,
+                  normalizedTrend: expectedReturn,
+                  dailyVolatility: expectedAnnualizedVolatility / Math.sqrt(parameters.annualizationSessions),
+                  annualizedVolatility: expectedAnnualizedVolatility,
+                  compositeScore: expectedScore,
+                  positiveScore: expectedScore,
+                  eligible: expectedEligible,
+                },
+                observed: signal,
+              },
+            ),
+          )
+        }
+      }
+      if (
+        targetWeight === undefined ||
+        !Object.is(signal.targetWeight, targetWeight) ||
+        Math.abs(signal.cappedWeight - signal.targetWeight) > allocationTolerance ||
+        Math.abs(signal.uncappedWeight - signal.targetWeight) > allocationTolerance
+      ) {
+        return Result.fail(
+          candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].signals[${signalIndex}]`, {
+            expected: {
+              targetWeight,
+              cappedWeight: targetWeight,
+              uncappedWeight: targetWeight,
+            },
+            observed: {
+              targetWeight: signal.targetWeight,
+              cappedWeight: signal.cappedWeight,
+              uncappedWeight: signal.uncappedWeight,
+            },
+          }),
+        )
+      }
+    }
+    if (strategyIdentity.schemaVersion === 'bayn.candidate-development-strategy-identity.v1') {
+      const allocatedWeights = Object.values(decision.targetWeights).filter((weight) => weight > allocationTolerance)
+      if (
+        allocatedWeights.length > 1 ||
+        (allocatedWeights[0] !== undefined &&
+          Math.abs(allocatedWeights[0] - strategyIdentity.parameters.selectedAssetWeight) > allocationTolerance)
+      ) {
+        return Result.fail(
+          candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].allocation`, {
+            expected: `all cash or one governed asset at ${strategyIdentity.parameters.selectedAssetWeight}`,
+            observed: decision.targetWeights,
+          }),
+        )
+      }
+    }
+    normalizedDecisions.push({
+      ...decision,
+      covarianceWindow: { ...decision.covarianceWindow, sessionsHash: covarianceWindowHash.success },
+    })
+  }
+  const terminal = plan.decisions.at(-1)
+  if (terminal === undefined || Object.values(terminal.targetWeights).some((weight) => weight !== 0)) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure('artifact.plan.terminalDecision', {
+        expected: 'all-cash target weights',
+        observed: terminal?.targetWeights ?? null,
+      }),
+    )
+  }
+  return Result.succeed({ ...plan, decisions: normalizedDecisions })
+}
+
+const validateCandidateDevelopmentPlanInputManifest = (
+  value: unknown,
+  runtimeInput: CandidateDevelopmentArtifactRuntimeInput,
+  strategyProtocol: CandidateDevelopmentStrategyProtocol,
+  preflight: CandidateDevelopmentPreflightPass,
+): Result.Result<InputManifest, CandidateDevelopmentCommandFailure> => {
+  const decoded = decodeCandidateDevelopmentInputManifest(value)
+  if (Result.isFailure(decoded)) {
+    return Result.fail(candidateDevelopmentPlanFailure('artifact.inputManifest', decoded.failure))
+  }
+  const manifest = decoded.success as InputManifest
+  const { hash: declaredManifestHash, ...manifestMaterial } = manifest
+  const recomputedManifestHash = canonicalHashV1Result(manifestMaterial)
+  if (Result.isFailure(recomputedManifestHash)) {
+    return Result.fail(candidateDevelopmentPlanFailure('artifact.inputManifest.hash', recomputedManifestHash.failure))
+  }
+  if (recomputedManifestHash.success !== declaredManifestHash) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure('artifact.inputManifest.hash', {
+        expected: recomputedManifestHash.success,
+        observed: declaredManifestHash,
+      }),
+    )
+  }
+  const committedMarketData = runtimeInput.sourceManifest.marketData
+  const bindings = [
+    ['hash', runtimeInput.marketData.inputManifestHash, manifest.hash],
+    ['committedInputManifestHash', committedMarketData.inputManifestHash, manifest.hash],
+    ['snapshotId', runtimeInput.marketData.snapshotId, manifest.finalizedSnapshot.snapshotId],
+    [
+      'finalizedSnapshotContentHash',
+      committedMarketData.finalizedSnapshotContentHash,
+      manifest.finalizedSnapshot.contentHash,
+    ],
+    ['sessionCount', runtimeInput.preflightInput.officialSessions.length, manifest.sessionCount],
+    ['rowCount', runtimeInput.marketData.bars.length, manifest.rowCount],
+  ] as const
+  for (const [field, expected, observed] of bindings) {
+    if (expected !== observed) {
+      return Result.fail(candidateDevelopmentPlanFailure(`artifact.inputManifest.${field}`, { expected, observed }))
+    }
+  }
+  const manifestSessions = [manifest.firstSession, manifest.lastSession]
+  const expectedSessions = [
+    runtimeInput.preflightInput.officialSessions[0],
+    runtimeInput.preflightInput.officialSessions.at(-1),
+  ]
+  const manifestUniverse = manifest.symbols.map(({ symbol }) => symbol)
+  if (
+    manifestSessions[0] !== expectedSessions[0] ||
+    manifestSessions[1] !== expectedSessions[1] ||
+    !exactStringSet(strategyProtocol.universe, manifestUniverse)
+  ) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure('artifact.inputManifest.coverage', {
+        expected: { sessions: expectedSessions, universe: strategyProtocol.universe },
+        observed: { sessions: manifestSessions, universe: manifestUniverse },
+      }),
+    )
+  }
+  const expectedBounds = {
+    dataStart: expectedSessions[0],
+    dataEnd: expectedSessions[1],
+    lookbackStart: expectedSessions[0],
+    evaluationStart: preflight.selectedObservationStart,
+    evaluationEnd: preflight.selectedObservationEnd,
+  } as const
+  for (const field of ['dataStart', 'dataEnd', 'lookbackStart', 'evaluationStart', 'evaluationEnd'] as const) {
+    if (manifest.bounds[field] !== expectedBounds[field]) {
+      return Result.fail(
+        candidateDevelopmentPlanFailure(`artifact.inputManifest.bounds.${field}`, {
+          expected: expectedBounds[field],
+          observed: manifest.bounds[field],
+        }),
+      )
+    }
+  }
+  return Result.succeed(manifest)
+}
+
+const selectedCandidateDevelopmentTrace = (
+  simulation: EvaluationResult['simulation'],
+  selectedSessions: readonly IsoDate[],
+): Result.Result<EvaluationResult['simulation'], CandidateDevelopmentCommandFailure> => {
+  const bySession = new Map(simulation.dailyMarks.map((mark) => [mark.sessionDate, mark] as const))
+  const dailyMarks = selectedSessions.map((sessionDate) => bySession.get(sessionDate))
+  const missing = dailyMarks.findIndex((mark) => mark === undefined)
+  if (missing >= 0) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure('artifact.plan.selectedTrace', {
+        index: missing,
+        expected: selectedSessions[missing],
+        observed: null,
+      }),
+    )
+  }
+  return Result.succeed({ ...simulation, dailyMarks: dailyMarks as EvaluationResult['simulation']['dailyMarks'] })
+}
+
+const selectedCandidateDevelopmentPerformance = (
+  series: readonly DailyPerformancePoint[],
+  selectedSessions: readonly IsoDate[],
+  field: string,
+): Result.Result<readonly DailyPerformancePoint[], CandidateDevelopmentCommandFailure> => {
+  const bySession = new Map(series.map((point) => [point.sessionDate, point] as const))
+  const selected = selectedSessions.map((sessionDate) => bySession.get(sessionDate))
+  const missing = selected.findIndex((point) => point === undefined)
+  return missing < 0
+    ? Result.succeed(selected as readonly DailyPerformancePoint[])
+    : Result.fail(
+        candidateDevelopmentPlanFailure(field, {
+          index: missing,
+          expected: selectedSessions[missing],
+          observed: null,
+        }),
+      )
+}
+
+export const buildCandidateDevelopmentPlanEvaluation = (
+  planValue: unknown,
+  inputManifestValue: unknown,
+  runtimeInput: CandidateDevelopmentArtifactRuntimeInput,
+  strategyProtocol: CandidateDevelopmentStrategyProtocol,
+): Result.Result<CandidateDevelopmentCommandEvaluation, CandidateDevelopmentCommandFailure> => {
+  const preflight = preflightCandidateDevelopment(runtimeInput.preflightInput)
+  if (Result.isFailure(preflight) || preflight.success.status !== 'PASS') {
+    return Result.fail(
+      candidateDevelopmentPlanFailure('artifact.plan.preflight', {
+        expected: 'PASS',
+        observed: Result.isFailure(preflight) ? preflight.failure : preflight.success,
+      }),
+    )
+  }
+  const manifest = validateCandidateDevelopmentPlanInputManifest(
+    inputManifestValue,
+    runtimeInput,
+    strategyProtocol,
+    preflight.success,
+  )
+  if (Result.isFailure(manifest)) return Result.fail(manifest.failure)
+  const aligned = alignBars(runtimeInput.marketData.bars, strategyProtocol.universe, manifest.success)
+  if (Result.isFailure(aligned)) {
+    return Result.fail(candidateDevelopmentPlanFailure('artifact.plan.marketData', aligned.failure))
+  }
+  const plan = validateCandidateDevelopmentStrategyPlan(
+    planValue,
+    preflight.success,
+    strategyProtocol,
+    runtimeInput.preflightInput.officialSessions,
+    runtimeInput.preflightInput.signalSessionDates,
+    aligned.success,
+  )
+  if (Result.isFailure(plan)) return Result.fail(plan.failure)
+  const sessions = aligned.success
+  const sessionIndexByDate = new Map(sessions.map((session, index) => [session.date, index] as const))
+  const selectedStartIndex = sessionIndexByDate.get(preflight.success.selectedObservationStart)
+  const selectedEndIndex = sessionIndexByDate.get(preflight.success.selectedObservationEnd)
+  if (
+    selectedStartIndex === undefined ||
+    selectedStartIndex < 1 ||
+    selectedEndIndex === undefined ||
+    selectedEndIndex < selectedStartIndex
+  ) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure('artifact.plan.evaluationWindow', {
+        selectedStart: preflight.success.selectedObservationStart,
+        selectedEnd: preflight.success.selectedObservationEnd,
+      }),
+    )
+  }
+  const targets: SimulationTarget[] = []
+  for (let index = 0; index < plan.success.decisions.length; index += 1) {
+    const planned = plan.success.decisions[index]
+    const signalIndex = sessionIndexByDate.get(planned.signalDate)
+    const executionIndex = sessionIndexByDate.get(planned.executionDate)
+    if (signalIndex === undefined || executionIndex === undefined || executionIndex !== signalIndex + 1) {
+      return Result.fail(
+        candidateDevelopmentPlanFailure(`artifact.plan.decisions[${index}].indices`, {
+          expected: 'adjacent governed sessions',
+          observed: { signalIndex, executionIndex },
+        }),
+      )
+    }
+    const { executionDate: _, ...decision } = planned
+    targets.push({ signalIndex, executionIndex, weights: planned.targetWeights, decision })
+  }
+  const accountingStartIndex = selectedStartIndex - 1
+  const evaluationSessions = sessions.slice(0, selectedEndIndex + 1)
+  const baselineSimulation = simulate(
+    evaluationSessions,
+    targets,
+    accountingStartIndex,
+    strategyProtocol,
+    MICROS,
+    runtimeInput.baselineRunId,
+    true,
+  )
+  if (Result.isFailure(baselineSimulation) || baselineSimulation.success.simulation === null) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure(
+        'artifact.plan.baselineSimulation',
+        Result.isFailure(baselineSimulation) ? baselineSimulation.failure : 'missing trace',
+      ),
+    )
+  }
+  const stressedSimulation = simulate(
+    evaluationSessions,
+    targets,
+    accountingStartIndex,
+    strategyProtocol,
+    MICROS * 2n,
+    runtimeInput.stressedRunId,
+    true,
+  )
+  if (Result.isFailure(stressedSimulation) || stressedSimulation.success.simulation === null) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure(
+        'artifact.plan.stressedSimulation',
+        Result.isFailure(stressedSimulation) ? stressedSimulation.failure : 'missing trace',
+      ),
+    )
+  }
+  const selectedSessions = preflight.success.selectedObservationSessions
+  const baselineTrace = selectedCandidateDevelopmentTrace(baselineSimulation.success.simulation, selectedSessions)
+  const stressedTrace = selectedCandidateDevelopmentTrace(stressedSimulation.success.simulation, selectedSessions)
+  const strategySeries = selectedCandidateDevelopmentPerformance(
+    baselineSimulation.success.dailyPerformance,
+    selectedSessions,
+    'artifact.plan.strategySeries',
+  )
+  const stressedSeries = selectedCandidateDevelopmentPerformance(
+    stressedSimulation.success.dailyPerformance,
+    selectedSessions,
+    'artifact.plan.stressedSeries',
+  )
+  if (Result.isFailure(baselineTrace)) return Result.fail(baselineTrace.failure)
+  if (Result.isFailure(stressedTrace)) return Result.fail(stressedTrace.failure)
+  if (Result.isFailure(strategySeries)) return Result.fail(strategySeries.failure)
+  if (Result.isFailure(stressedSeries)) return Result.fail(stressedSeries.failure)
+  const initialCapitalMicros = strategyProtocol.initialCapitalMicros
+  const baselinePredecessor = baselineSimulation.success.simulation.dailyMarks[0]
+  const stressedPredecessor = stressedSimulation.success.simulation.dailyMarks[0]
+  if (baselinePredecessor === undefined || stressedPredecessor === undefined) {
+    return Result.fail(candidateDevelopmentPlanFailure('artifact.plan.accountingPredecessor', 'missing'))
+  }
+  const strategyMetrics = recomputePerformanceMetrics(
+    'strategy',
+    strategySeries.success,
+    initialCapitalMicros,
+    performanceBaselineFromPoint(baselinePredecessor),
+  )
+  const stressedMetrics = recomputePerformanceMetrics(
+    'double-cost-stressed',
+    stressedSeries.success,
+    initialCapitalMicros,
+    performanceBaselineFromPoint(stressedPredecessor),
+  )
+  if (Result.isFailure(strategyMetrics)) return Result.fail(strategyMetrics.failure)
+  if (Result.isFailure(stressedMetrics)) return Result.fail(stressedMetrics.failure)
+  const terminalTarget = targets.at(-1)
+  if (terminalTarget === undefined) {
+    return Result.fail(candidateDevelopmentPlanFailure('artifact.plan.terminalTarget', 'missing'))
+  }
+  const benchmarkSymbol = strategyProtocol.benchmarks.symbol
+  const benchmarkProtocol: SimulationProtocol = { ...strategyProtocol, universe: [benchmarkSymbol] }
+  const directTargets: SimulationTarget[] = []
+  for (let index = 0; index < targets.length - 1; index += 1) {
+    const target = targets[index]
+    const weights = directVolatilityWeights(sessions, target.signalIndex, benchmarkProtocol)
+    if (Result.isFailure(weights)) {
+      return Result.fail(candidateDevelopmentPlanFailure(`artifact.plan.directVolatility[${index}]`, weights.failure))
+    }
+    directTargets.push({
+      signalIndex: target.signalIndex,
+      executionIndex: target.executionIndex,
+      weights: weights.success,
+    })
+  }
+  const benchmarkRunId = canonicalEvidenceHash('benchmarks.runId', {
+    schemaVersion: 'bayn.candidate-development-benchmark-run.v1',
+    candidateRunId: runtimeInput.baselineRunId,
+    marketDataContentHash: runtimeInput.marketData.contentHash,
+    policy: strategyProtocol.benchmarks,
+  })
+  if (Result.isFailure(benchmarkRunId)) return Result.fail(benchmarkRunId.failure)
+  const buyAndHoldSimulation = simulate(
+    evaluationSessions,
+    [
+      {
+        signalIndex: accountingStartIndex,
+        executionIndex: selectedStartIndex,
+        weights: { [benchmarkSymbol]: 1 },
+      },
+      {
+        signalIndex: terminalTarget.signalIndex,
+        executionIndex: terminalTarget.executionIndex,
+        weights: { [benchmarkSymbol]: 0 },
+      },
+    ],
+    accountingStartIndex,
+    benchmarkProtocol,
+    MICROS,
+    benchmarkRunId.success,
+    false,
+  )
+  const directVolatilitySimulation = simulate(
+    evaluationSessions,
+    [
+      ...directTargets,
+      {
+        signalIndex: terminalTarget.signalIndex,
+        executionIndex: terminalTarget.executionIndex,
+        weights: { [benchmarkSymbol]: 0 },
+      },
+    ],
+    accountingStartIndex,
+    benchmarkProtocol,
+    MICROS,
+    benchmarkRunId.success,
+    false,
+  )
+  if (Result.isFailure(buyAndHoldSimulation)) {
+    return Result.fail(candidateDevelopmentPlanFailure('artifact.plan.buyAndHold', buyAndHoldSimulation.failure))
+  }
+  if (Result.isFailure(directVolatilitySimulation)) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure('artifact.plan.directVolatility', directVolatilitySimulation.failure),
+    )
+  }
+  const buyAndHoldSeries = selectRebuiltBenchmarkSeries(
+    buyAndHoldSimulation.success.dailyPerformance,
+    selectedSessions,
+    'buy-and-hold',
+  )
+  const directVolatilitySeries = selectRebuiltBenchmarkSeries(
+    directVolatilitySimulation.success.dailyPerformance,
+    selectedSessions,
+    'direct-volatility-timing',
+  )
+  if (Result.isFailure(buyAndHoldSeries)) return Result.fail(buyAndHoldSeries.failure)
+  if (Result.isFailure(directVolatilitySeries)) return Result.fail(directVolatilitySeries.failure)
+  const buyAndHoldMetrics = recomputePerformanceMetrics(
+    'buy-and-hold',
+    buyAndHoldSeries.success.series,
+    initialCapitalMicros,
+    buyAndHoldSeries.success.performanceBaseline,
+  )
+  const directVolatilityMetrics = recomputePerformanceMetrics(
+    'direct-volatility-timing',
+    directVolatilitySeries.success.series,
+    initialCapitalMicros,
+    directVolatilitySeries.success.performanceBaseline,
+  )
+  if (Result.isFailure(buyAndHoldMetrics)) return Result.fail(buyAndHoldMetrics.failure)
+  if (Result.isFailure(directVolatilityMetrics)) return Result.fail(directVolatilityMetrics.failure)
+  const baselineAccountingTerminal = baselineSimulation.success.simulation.dailyMarks.at(-1)
+  const stressedAccountingTerminal = stressedSimulation.success.simulation.dailyMarks.at(-1)
+  if (baselineAccountingTerminal === undefined || stressedAccountingTerminal === undefined) {
+    return Result.fail(candidateDevelopmentPlanFailure('artifact.plan.accountingTerminal', 'missing'))
+  }
+  const baselineProof = reconcileMarkedEquity({
+    runId: runtimeInput.baselineRunId,
+    initialCapitalMicros,
+    evaluatorTotalFeesMicros: baselineAccountingTerminal.cumulativeFeesMicros,
+    evaluatorEndingEquityMicros: strategyMetrics.success.endingEquityMicros,
+    events: baselineSimulation.success.events,
+    simulation: baselineSimulation.success.simulation,
+  })
+  const stressedProof = reconcileMarkedEquity({
+    runId: runtimeInput.stressedRunId,
+    initialCapitalMicros,
+    evaluatorTotalFeesMicros: stressedAccountingTerminal.cumulativeFeesMicros,
+    evaluatorEndingEquityMicros: stressedMetrics.success.endingEquityMicros,
+    events: stressedSimulation.success.events,
+    simulation: stressedSimulation.success.simulation,
+  })
+  if (Result.isFailure(baselineProof)) {
+    return Result.fail(candidateDevelopmentPlanFailure('artifact.plan.baselineReconciliation', baselineProof.failure))
+  }
+  if (Result.isFailure(stressedProof)) {
+    return Result.fail(candidateDevelopmentPlanFailure('artifact.plan.stressedReconciliation', stressedProof.failure))
+  }
+  const selectedObservationStart = preflight.success.selectedObservationStart
+  const selectedObservationEnd = preflight.success.selectedObservationEnd
+  const selectedBaselineSignalDecisions = baselineSimulation.success.signalDecisions.filter(
+    ({ executionDate }) => executionDate >= selectedObservationStart && executionDate <= selectedObservationEnd,
+  )
+  const selectedStressedSignalDecisions = stressedSimulation.success.signalDecisions.filter(
+    ({ executionDate }) => executionDate >= selectedObservationStart && executionDate <= selectedObservationEnd,
+  )
+  const protocolHash = canonicalEvidenceHash('strategyProtocol', strategyProtocol)
+  if (Result.isFailure(protocolHash)) return Result.fail(protocolHash.failure)
+  const baseline: EvaluationResult = {
+    schemaVersion: 'bayn.evaluation.v6',
+    runId: runtimeInput.baselineRunId,
+    codeRevision: runtimeInput.sourceRevision,
+    protocolHash: protocolHash.success,
+    initialCapitalMicros,
+    inputManifest: manifest.success,
+    strategy: strategyMetrics.success,
+    buyAndHold: buyAndHoldMetrics.success,
+    directVolTiming: directVolatilityMetrics.success,
+    doubleCostStrategy: stressedMetrics.success,
+    verdict: buildVerdict(
+      strategyMetrics.success,
+      buyAndHoldMetrics.success,
+      directVolatilityMetrics.success,
+      stressedMetrics.success,
+      strategyProtocol,
+    ),
+    events: baselineSimulation.success.events,
+    signalDecisions: selectedBaselineSignalDecisions,
+    simulation: baselineTrace.success,
+    benchmarkSeries: {
+      buyAndHold: buyAndHoldSeries.success.series,
+      directVolTiming: directVolatilitySeries.success.series,
+      doubleCostStrategy: stressedSeries.success,
+    },
+    equitySeries: baselineProof.success.equitySeries,
+    markedEquityReconciliation: baselineProof.success.reconciliation,
+  }
+  const comparisonSeries = prepareQualificationSeries(baseline)
+  if (Result.isFailure(comparisonSeries)) {
+    return Result.fail(candidateDevelopmentPlanFailure('artifact.plan.comparisonSeries', comparisonSeries.failure))
+  }
+  const boundComparisonSeries = validateCandidateDevelopmentComparisonSeriesBinding(
+    preflight.success,
+    baseline,
+    comparisonSeries.success,
+  )
+  if (Result.isFailure(boundComparisonSeries)) {
+    return Result.fail(candidateDevelopmentPlanFailure('artifact.plan.comparisonSeries', boundComparisonSeries.failure))
+  }
+  const comparisonSemantics = buildCandidateDevelopmentComparisonSemanticsEvidence(
+    preflight.success,
+    boundComparisonSeries.success,
+  )
+  if (Result.isFailure(comparisonSemantics)) {
+    return Result.fail(
+      candidateDevelopmentPlanFailure('artifact.plan.comparisonSemantics', comparisonSemantics.failure),
+    )
+  }
+  return Result.succeed({
+    baseline,
+    comparisonSemantics: comparisonSemantics.success,
+    stressed: {
+      signalDecisions: selectedStressedSignalDecisions,
+      simulation: stressedTrace.success,
+    },
+    accounting: {
+      schemaVersion: 'bayn.candidate-development-accounting-evidence.v2',
+      runId: runtimeInput.baselineRunId,
+      initialCapitalMicros,
+      evaluatorTotalFeesMicros: baselineAccountingTerminal.cumulativeFeesMicros,
+      evaluatorEndingEquityMicros: strategyMetrics.success.endingEquityMicros,
+      events: baselineSimulation.success.events,
+      baselineSimulation: baselineSimulation.success.simulation,
+      equitySeries: baselineProof.success.equitySeries,
+      markedEquityReconciliation: baselineProof.success.reconciliation,
+      signalDecisions: baselineSimulation.success.signalDecisions,
+      stressedRunId: runtimeInput.stressedRunId,
+      stressedEvaluatorTotalFeesMicros: stressedAccountingTerminal.cumulativeFeesMicros,
+      stressedEvaluatorEndingEquityMicros: stressedMetrics.success.endingEquityMicros,
+      stressedEvents: stressedSimulation.success.events,
+      stressedSimulation: stressedSimulation.success.simulation,
+      stressedEquitySeries: stressedProof.success.equitySeries,
+      stressedMarkedEquityReconciliation: stressedProof.success.reconciliation,
+    },
+    marketData: runtimeInput.marketData,
+  })
+}
 
 const candidateDevelopmentArtifactSource = (moduleUrl: string): string => {
   const prefix = 'data:text/javascript;base64,'
@@ -9571,10 +10967,10 @@ const candidateDevelopmentArtifactContext = (): vm.Context => {
   return context
 }
 
-const runCandidateDevelopmentArtifactEvaluation = (
+const runCandidateDevelopmentArtifactComputation = (
   context: vm.Context,
   runtimeInput: CandidateDevelopmentArtifactRuntimeInput,
-): CandidateDevelopmentCommandEvaluation => {
+): unknown => {
   const runtimeInputJson = JSON.stringify(runtimeInput)
   Object.defineProperty(context, '__candidateDevelopmentRuntimeInputJson', {
     value: runtimeInputJson,
@@ -9591,19 +10987,35 @@ const runCandidateDevelopmentArtifactEvaluation = (
             return Object.freeze(value)
           }
           const runtimeInput = deepFreeze(JSON.parse(globalThis.__candidateDevelopmentRuntimeInputJson))
-          const evaluation = globalThis.__candidateDevelopmentArtifact.buildEvaluation(
-            runtimeInput,
-          )
+          const builderName =
+            globalThis.__candidateDevelopmentArtifact.schemaVersion === '${candidateDevelopmentPlanArtifactSchemaVersion}'
+              ? 'buildPlan'
+              : 'buildEvaluation'
+          const evaluation = globalThis.__candidateDevelopmentArtifact[builderName](runtimeInput)
           if (
             evaluation !== null &&
             (typeof evaluation === 'object' || typeof evaluation === 'function') &&
             typeof evaluation.then === 'function'
           ) {
-            throw new TypeError('candidate artifact buildEvaluation must be synchronous')
+            throw new TypeError('candidate artifact ' + builderName + ' must be synchronous')
           }
           const encoded = JSON.stringify(evaluation)
           if (typeof encoded !== 'string') {
-            throw new TypeError('candidate artifact evaluation must be JSON serializable')
+            throw new TypeError('candidate artifact output must be JSON serializable')
+          }
+          if (builderName === 'buildPlan') {
+            const repeated = globalThis.__candidateDevelopmentArtifact[builderName](runtimeInput)
+            if (
+              repeated !== null &&
+              (typeof repeated === 'object' || typeof repeated === 'function') &&
+              typeof repeated.then === 'function'
+            ) {
+              throw new TypeError('candidate artifact buildPlan must be synchronous')
+            }
+            const repeatedEncoded = JSON.stringify(repeated)
+            if (repeatedEncoded !== encoded) {
+              throw new TypeError('candidate artifact buildPlan must be deterministic')
+            }
           }
           return encoded
         })()
@@ -9611,12 +11023,8 @@ const runCandidateDevelopmentArtifactEvaluation = (
       context,
       { timeout: candidateDevelopmentArtifactEvaluationTimeoutMs },
     )
-    if (typeof output !== 'string') throw new TypeError('candidate artifact evaluation did not return JSON')
-    const decoded = validateCandidateDevelopmentCommandEvaluation(JSON.parse(output) as unknown)
-    if (Result.isFailure(decoded)) throw decoded.failure
-    const sourceBinding = validateCandidateDevelopmentVerifiedSource(decoded.success, runtimeInput)
-    if (Result.isFailure(sourceBinding)) throw sourceBinding.failure
-    return decoded.success
+    if (typeof output !== 'string') throw new TypeError('candidate artifact output did not return JSON')
+    return JSON.parse(output) as unknown
   } finally {
     Reflect.deleteProperty(context, '__candidateDevelopmentRuntimeInputJson')
   }
@@ -9628,6 +11036,12 @@ interface CandidateDevelopmentArtifactWorkerRequest {
   readonly moduleUrl: string
   readonly verifiedFiles: CandidateDevelopmentVerifiedSourceFiles
   readonly runtimeInput?: CandidateDevelopmentArtifactRuntimeInput
+}
+
+interface CandidateDevelopmentArtifactRuntimeEnvelope {
+  readonly schemaVersion: unknown
+  readonly inputManifest: unknown
+  readonly output: unknown
 }
 
 type CandidateDevelopmentArtifactWorkerResponse =
@@ -9683,14 +11097,19 @@ const loadCandidateDevelopmentArtifactContext = async (
         ) {
           throw new TypeError('candidateDevelopmentArtifact export is missing')
         }
-        if (typeof globalThis.__candidateDevelopmentArtifact.buildEvaluation !== 'function') {
-          throw new TypeError('candidateDevelopmentArtifact.buildEvaluation is missing')
+        const builderName =
+          globalThis.__candidateDevelopmentArtifact.schemaVersion === '${candidateDevelopmentPlanArtifactSchemaVersion}'
+            ? 'buildPlan'
+            : 'buildEvaluation'
+        if (typeof globalThis.__candidateDevelopmentArtifact[builderName] !== 'function') {
+          throw new TypeError('candidateDevelopmentArtifact.' + builderName + ' is missing')
         }
         return JSON.stringify({
           schemaVersion: globalThis.__candidateDevelopmentArtifact.schemaVersion,
           input: globalThis.__candidateDevelopmentArtifact.input,
           strategyProtocol: globalThis.__candidateDevelopmentArtifact.strategyProtocol,
           structuralBindings: globalThis.__candidateDevelopmentArtifact.structuralBindings,
+          inputManifest: globalThis.__candidateDevelopmentArtifact.inputManifest,
         })
       })()
     `,
@@ -9707,7 +11126,19 @@ const runCandidateDevelopmentArtifactWorkerTask = async (
   const loaded = await loadCandidateDevelopmentArtifactContext(request.moduleUrl, request.verifiedFiles)
   if (request.mode === 'definition') return loaded.definition
   if (request.runtimeInput === undefined) throw new TypeError('candidate artifact runtime input is missing')
-  return runCandidateDevelopmentArtifactEvaluation(loaded.context, request.runtimeInput)
+  const definition = recordOf(loaded.definition)
+  const output = runCandidateDevelopmentArtifactComputation(loaded.context, request.runtimeInput)
+  if (definition?.schemaVersion === candidateDevelopmentArtifactSchemaVersion) {
+    const decoded = validateCandidateDevelopmentCommandEvaluation(output)
+    if (Result.isFailure(decoded)) throw decoded.failure
+    const sourceBinding = validateCandidateDevelopmentVerifiedSource(decoded.success, request.runtimeInput)
+    if (Result.isFailure(sourceBinding)) throw sourceBinding.failure
+  }
+  return {
+    schemaVersion: definition?.schemaVersion,
+    inputManifest: definition?.inputManifest,
+    output,
+  } satisfies CandidateDevelopmentArtifactRuntimeEnvelope
 }
 
 class CandidateDevelopmentArtifactWorkerError extends Data.TaggedError('CandidateDevelopmentArtifactWorkerError')<{
@@ -9787,25 +11218,54 @@ export const executeCandidateDevelopmentArtifactRuntime = (
   verifiedFiles: CandidateDevelopmentVerifiedSourceFiles,
   strategyProtocol: CandidateDevelopmentStrategyProtocol,
   runtimeInput: CandidateDevelopmentArtifactRuntimeInput,
-): Effect.Effect<CandidateDevelopmentCommandEvaluation, CandidateDevelopmentCommandFailure> =>
-  Effect.fromResult(
+): Effect.Effect<CandidateDevelopmentCommandEvaluation, CandidateDevelopmentCommandFailure> => {
+  const { marketData: unverifiedMarketData, ...runtimeContext } = runtimeInput
+  return Effect.fromResult(
     validateCandidateDevelopmentRuntimeMarketData(
-      runtimeInput.marketData,
-      runtimeInput,
+      unverifiedMarketData,
+      runtimeContext,
       strategyProtocol,
-      runtimeInput.preflightInput,
+      runtimeContext.preflightInput,
     ),
   ).pipe(
     Effect.flatMap((marketData) =>
-      runCandidateDevelopmentArtifactWorker<unknown>({
-        _tag: 'CandidateDevelopmentArtifactWorkerRequest',
-        mode: 'evaluation',
-        moduleUrl,
-        verifiedFiles,
-        runtimeInput: { ...runtimeInput, marketData },
-      }),
+      pipe({ ...runtimeContext, marketData }, (verifiedRuntimeInput) =>
+        runCandidateDevelopmentArtifactWorker<CandidateDevelopmentArtifactRuntimeEnvelope>({
+          _tag: 'CandidateDevelopmentArtifactWorkerRequest',
+          mode: 'evaluation',
+          moduleUrl,
+          verifiedFiles,
+          runtimeInput: verifiedRuntimeInput,
+        }).pipe(Effect.map((envelope) => ({ envelope, runtimeInput: verifiedRuntimeInput }))),
+      ),
     ),
-    Effect.flatMap((value) => Effect.fromResult(validateCandidateDevelopmentCommandEvaluation(value))),
+    Effect.flatMap(({ envelope, runtimeInput: verifiedRuntimeInput }) => {
+      const evaluation =
+        envelope.schemaVersion === candidateDevelopmentArtifactSchemaVersion
+          ? validateCandidateDevelopmentCommandEvaluation(envelope.output)
+          : envelope.schemaVersion === candidateDevelopmentPlanArtifactSchemaVersion
+            ? buildCandidateDevelopmentPlanEvaluation(
+                envelope.output,
+                envelope.inputManifest,
+                verifiedRuntimeInput,
+                strategyProtocol,
+              )
+            : Result.fail<CandidateDevelopmentCommandFailure>({
+                _tag: 'CandidateDevelopmentCommandProgramInvalid',
+                reason: 'schema-version-mismatch',
+              })
+      return Effect.fromResult(
+        pipe(
+          evaluation,
+          Result.flatMap((decoded) =>
+            pipe(
+              validateCandidateDevelopmentVerifiedSource(decoded, verifiedRuntimeInput),
+              Result.map(() => decoded),
+            ),
+          ),
+        ),
+      )
+    }),
     Effect.mapError(
       (cause): CandidateDevelopmentCommandFailure =>
         cause instanceof CandidateDevelopmentArtifactWorkerError
@@ -9816,6 +11276,7 @@ export const executeCandidateDevelopmentArtifactRuntime = (
           : cause,
     ),
   )
+}
 
 export const evaluateCandidateDevelopmentArtifact: CandidateDevelopmentModuleImporter = (
   moduleUrl,
@@ -9835,12 +11296,23 @@ export const evaluateCandidateDevelopmentArtifact: CandidateDevelopmentModuleImp
       verifiedFiles,
     }).pipe(Effect.mapError(moduleLoadFailure))
     const definition = recordOf(definitionValue)
-    if (definition?.schemaVersion !== candidateDevelopmentArtifactSchemaVersion) {
+    if (
+      definition?.schemaVersion !== candidateDevelopmentArtifactSchemaVersion &&
+      definition?.schemaVersion !== candidateDevelopmentPlanArtifactSchemaVersion
+    ) {
       return yield* Effect.fail<CandidateDevelopmentCommandFailure>({
         _tag: 'CandidateDevelopmentCommandModuleLoadFailed',
         modulePath: verifiedFiles.modulePath,
         cause: new TypeError('candidate artifact schema version is invalid'),
       })
+    }
+    if (definition.schemaVersion === candidateDevelopmentPlanArtifactSchemaVersion) {
+      yield* Effect.fromResult(
+        pipe(
+          decodeCandidateDevelopmentInputManifest(definition.inputManifest),
+          Result.mapError((cause) => moduleLoadFailure(cause)),
+        ),
+      )
     }
     const strategyProtocol = yield* Effect.fromResult(
       decodeCandidateDevelopmentStrategyProtocol(definition.strategyProtocol),
