@@ -718,6 +718,32 @@ const multiStageHistory = {
 const decodeCapturedPullRequestReviewState = (chunks: readonly string[]): PullRequestReviewState =>
   JSON.parse(gunzipSync(Buffer.from(chunks.join(''), 'base64')).toString('utf8')) as PullRequestReviewState
 
+const capturedPr13452ReviewState = decodeCapturedPullRequestReviewState([
+  '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',
+  'wuNH/UHUD2ywD/8DbJZ+RiQYAAA=',
+])
+
 const capturedPr13429ReviewState = decodeCapturedPullRequestReviewState([
   'H4sIAAAAAAAC/+1dW3PcxpV+z69A5IfEzlxwG8wMZTtLkXSslCQypKJsEruMBtCYgYUBxmhA1DiVqjzt227Vbu377tP+kP0p/gX7E/ZcGjdySA0lmrYuLosc',
   'YoDu06e7v/P16dMHf/uFYdzLqlUgi3t7huW49nyAlwKh5KmMn4iVhOv3ViLJ7tEXSymis6XAi0Ho2FFgy7mUwdRyzdi17Ti0As+zLdeeilk8jUQQh/zgShYL',
@@ -1713,6 +1739,140 @@ const candidateDiagnosticsRemediationRecordPath =
 const realCandidateDiagnosticsRemediationRecord = parseBaynReleaseReviewRemediationRecord(
   JSON.parse(readFileSync(candidateDiagnosticsRemediationRecordPath, 'utf8')) as unknown,
 )
+const observeRecoveryRemediationRecordPath =
+  'services/bayn/release-review-remediations/44cb3bdb9f1ce7c77f453a85c57f1360d43b96c8.json'
+const realObserveRecoveryRemediationRecord = parseBaynReleaseReviewRemediationRecord(
+  JSON.parse(readFileSync(observeRecoveryRemediationRecordPath, 'utf8')) as unknown,
+)
+const observeRecoveryHistory = {
+  published: '3398bb82b6b22d80b10d059ac395895c6218954e',
+  blocked: '44cb3bdb9f1ce7c77f453a85c57f1360d43b96c8',
+  finalHead: '35968f9fb68e0e54237fca4964d583ecf52d428d',
+  introductionHead: '6'.repeat(40),
+  introductionMerge: '7'.repeat(40),
+} as const
+const observeRecoveryNowMs = Date.parse('2026-08-01T13:32:00Z')
+
+const observeRecoveryRemediationFixture = (): {
+  readonly snapshot: BaynReleaseEligibilitySnapshot
+  readonly evidence: BaynReleaseReviewRemediationEvidence
+} => {
+  const record = structuredClone(realObserveRecoveryRemediationRecord)
+  if (record.schemaVersion !== 'bayn.release-review-remediation.v4') {
+    throw new Error('expected the #13452 receipt to use continuous-source schema v4')
+  }
+  const blockedPull = structuredClone(capturedPr13452ReviewState)
+  if (pullRequestReviewEvidenceSha256(blockedPull) !== record.blocked.sourcePullRequestEvidenceSha256) {
+    throw new Error('captured PR #13452 evidence does not match the committed receipt')
+  }
+
+  const changes = record.blocked.affectedPaths.map((path) => ({ ...path }))
+  const pathBlobs = changes.map((path) => ({ path: path.path, blobSha: path.blobSha }))
+  const blockedCommit = {
+    sha: observeRecoveryHistory.blocked,
+    parents: [observeRecoveryHistory.published],
+    treeSha: record.blocked.mergeTreeSha,
+    files: changes.map((path) => path.path),
+    fileChanges: changes,
+    reviewSnapshot: {
+      mainCommitParents: [observeRecoveryHistory.published],
+      associatedPullRequests: [
+        associatedPull({
+          number: 13452,
+          headSha: observeRecoveryHistory.finalHead,
+          mergeCommitSha: observeRecoveryHistory.blocked,
+          mergedAt: blockedPull.mergedAt,
+        }),
+      ],
+      pullRequest: blockedPull,
+    },
+  }
+  const introductionSnapshot = reviewSnapshotFor({
+    commitSha: observeRecoveryHistory.introductionMerge,
+    prNumber: 13453,
+    headSha: observeRecoveryHistory.introductionHead,
+    parents: [observeRecoveryHistory.blocked],
+    mergedAt: '2026-08-01T13:31:00Z',
+    reviews: [
+      review({
+        commitSha: observeRecoveryHistory.introductionHead,
+        submittedAt: '2026-08-01T13:30:00Z',
+      }),
+    ],
+  })
+  const recordBlobSha = 'd2cfe0cea1ada46205923981641682d7df2529c3'
+  const introductionCommit = {
+    sha: observeRecoveryHistory.introductionMerge,
+    parents: [observeRecoveryHistory.blocked],
+    treeSha: '8'.repeat(40),
+    files: ['packages/scripts/src/bayn/verify-release-review.test.ts', observeRecoveryRemediationRecordPath],
+    fileChanges: [
+      {
+        path: 'packages/scripts/src/bayn/verify-release-review.test.ts',
+        previousPath: null,
+        status: 'modified',
+        blobSha: '9'.repeat(40),
+      },
+      {
+        path: observeRecoveryRemediationRecordPath,
+        previousPath: null,
+        status: 'added',
+        blobSha: recordBlobSha,
+      },
+    ],
+    reviewSnapshot: introductionSnapshot,
+  }
+  const evidence: BaynReleaseReviewRemediationEvidence = {
+    recordPath: observeRecoveryRemediationRecordPath,
+    recordBlobSha,
+    record,
+    referencedCommits: [
+      {
+        sha: observeRecoveryHistory.finalHead,
+        parents: [observeRecoveryHistory.published],
+        treeSha: record.blocked.finalHeadTreeSha,
+        files: changes.map((path) => path.path),
+        fileChanges: changes,
+        pathBlobs,
+      },
+    ],
+    currentPathBlobs: pathBlobs,
+  }
+  return {
+    evidence,
+    snapshot: {
+      currentCommitParents: [observeRecoveryHistory.blocked],
+      lastPublishedRevision: {
+        status: 'resolved',
+        revision: observeRecoveryHistory.published,
+        runId: 30700965429,
+        runNumber: 1_041,
+        runAttempt: 1,
+      },
+      comparison: {
+        status: 'ahead',
+        baseSha: observeRecoveryHistory.published,
+        headSha: observeRecoveryHistory.introductionMerge,
+        mergeBaseSha: observeRecoveryHistory.published,
+        aheadBy: 2,
+        totalCommits: 2,
+        commits: [blockedCommit, introductionCommit],
+        truncated: false,
+      },
+      remediations: [evidence],
+    },
+  }
+}
+
+const evaluateObserveRecoveryRemediationFixture = (fixture: ReturnType<typeof observeRecoveryRemediationFixture>) =>
+  evaluateBaynReleaseEligibility({
+    mainCommitSha: observeRecoveryHistory.introductionMerge,
+    baseRefName: 'main',
+    snapshot: fixture.snapshot,
+    nowMs: observeRecoveryNowMs,
+    pushBeforeSha: observeRecoveryHistory.blocked,
+  })
+
 const continuousHistory = {
   published: '69d803040c8866e7703df50a645a096c54e7eca5',
   blocked: '6737d29cda608c79714046d420ab7396d8e80f70',
@@ -2807,6 +2967,75 @@ const nestedSingleStageSuccessorRemediationFixture = (): BaynReleaseEligibilityS
 }
 
 describe('Bayn publication-range eligibility', () => {
+  test('parses the exact immutable #13452 observe-recovery v4 receipt', () => {
+    expect(realObserveRecoveryRemediationRecord).toMatchObject({
+      schemaVersion: 'bayn.release-review-remediation.v4',
+      remediationId: 'pr-13452-continuous-reviewed-source',
+      blocked: {
+        mergeCommitSha: observeRecoveryHistory.blocked,
+        mergeParentSha: observeRecoveryHistory.published,
+        mergeTreeSha: '5004c7cdf33f9469d8b40cd0acae4d5c3bc33d3e',
+        sourcePullRequestNumber: 13452,
+        finalHeadSha: observeRecoveryHistory.finalHead,
+        finalHeadParentSha: observeRecoveryHistory.published,
+        finalHeadTreeSha: '5004c7cdf33f9469d8b40cd0acae4d5c3bc33d3e',
+        sourcePullRequestEvidenceSha256: '3717d56ecf273c6ac250c0c4667e685675fdaecef985d109db2be23da6bfb5e8',
+        affectedPaths: { length: 6 },
+      },
+      requiredDescendants: [],
+    })
+  })
+
+  test('accepts #13452 only through its exact immutable review evidence and source blobs', () => {
+    expect(evaluateObserveRecoveryRemediationFixture(observeRecoveryRemediationFixture())).toEqual({
+      status: 'eligible',
+      lastPublishedRevision: observeRecoveryHistory.published,
+      checkedCommitCount: 2,
+      baynAffectingCommitCount: 2,
+      reviewedPullRequests: [
+        {
+          commitSha: observeRecoveryHistory.blocked,
+          prNumber: 13452,
+          headSha: observeRecoveryHistory.finalHead,
+          reviewSubmittedAt: '2026-08-01T13:02:04Z',
+          eligibleAt: '2026-08-01T13:02:34.000Z',
+        },
+        {
+          commitSha: observeRecoveryHistory.introductionMerge,
+          prNumber: 13453,
+          headSha: observeRecoveryHistory.introductionHead,
+          reviewSubmittedAt: '2026-08-01T13:30:00Z',
+          eligibleAt: '2026-08-01T13:30:30.000Z',
+        },
+      ],
+    })
+  })
+
+  test('keeps #13452 blocked without its exact v4 receipt', () => {
+    const fixture = observeRecoveryRemediationFixture()
+    expect(
+      evaluateBaynReleaseEligibility({
+        mainCommitSha: observeRecoveryHistory.introductionMerge,
+        baseRefName: 'main',
+        snapshot: { ...fixture.snapshot, remediations: [] },
+        nowMs: observeRecoveryNowMs,
+        pushBeforeSha: observeRecoveryHistory.blocked,
+      }),
+    ).toMatchObject({ status: 'hold', code: 'release-review-remediation-missing', retryable: false })
+  })
+
+  test('rejects #13452 remediation when an exact source blob binding is mutated', () => {
+    const fixture = observeRecoveryRemediationFixture()
+    const sourceBlob = fixture.evidence.referencedCommits[0]?.pathBlobs[0]
+    if (sourceBlob === undefined) throw new Error('missing #13452 source blob binding')
+    ;(sourceBlob as unknown as { blobSha: string }).blobSha = '0'.repeat(40)
+    expect(evaluateObserveRecoveryRemediationFixture(fixture)).toMatchObject({
+      status: 'hold',
+      code: 'release-review-remediation-invalid',
+      retryable: false,
+    })
+  })
+
   test('parses the exact immutable #13438 -> #13442 v9 reviewed-source receipt', () => {
     expect(realCandidateDiagnosticsRemediationRecord).toMatchObject({
       schemaVersion: 'bayn.release-review-remediation.v9',
