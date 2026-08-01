@@ -174,3 +174,40 @@ export const buildCandidateDevelopmentTrialHistory = (
     nextCandidatePreregistration,
   }
 }
+
+export const buildCandidateDevelopmentTrialHistoryAfterInvalidation = (): CandidateDevelopmentTrialHistory => {
+  const invalidation = buildCandidateDevelopmentInvalidPrecommit(buildCandidateDevelopmentPreregistration(4))
+  const history = buildCandidateDevelopmentTrialHistory({ latestInvalidPrecommit: invalidation })
+  const latestDevelopmentPreregistration = buildCandidateDevelopmentPreregistration(5)
+  const latestDevelopmentEvidence = {
+    ...history.latestDevelopmentEvidence,
+    candidateOrdinal: 5,
+    priorTrialCount: 4,
+    evidenceContentHash: 'development-evidence-5',
+    evaluatedSourceRevision: 'development-source-5',
+  }
+  const latestPriorTrials = {
+    ...history.latestReviewedCandidatePriorTrials,
+    developmentCandidateOrdinals: [3, 5],
+    latestDevelopmentEvidence: {
+      ...history.latestReviewedCandidatePriorTrials.latestDevelopmentEvidence,
+      candidateOrdinal: 5,
+      priorTrialCount: 4,
+      evidenceContentHash: latestDevelopmentEvidence.evidenceContentHash,
+    },
+    latestReviewedPreregistration: latestDevelopmentPreregistration,
+  }
+  return {
+    ...history,
+    developmentCandidateOrdinals: [3, 5],
+    latestReviewedCandidateLegacyPriorTrials: {
+      ...history.latestReviewedCandidateLegacyPriorTrials,
+      developmentCandidateOrdinals: [3, 5],
+      latestDevelopmentEvidence: latestPriorTrials.latestDevelopmentEvidence,
+      latestReviewedPreregistration: latestDevelopmentPreregistration,
+    },
+    latestReviewedCandidatePriorTrials: latestPriorTrials,
+    latestReviewedCandidatePreregistration: latestDevelopmentPreregistration,
+    latestDevelopmentEvidence,
+  }
+}

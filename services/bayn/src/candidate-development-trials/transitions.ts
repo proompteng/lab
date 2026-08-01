@@ -17,8 +17,10 @@ import {
   isRecord,
   stateIssue,
   validateCandidateDevelopmentTrialState,
+  validateDevelopmentTerminalEvidence,
   validateInvalidation,
   validateNextPreregistration,
+  validateQualificationTerminalEvidence,
 } from './validation'
 
 type ReviewSuccessorTransition = Extract<CandidateDevelopmentTrialTransition, { readonly _tag: 'REVIEW_SUCCESSOR' }>
@@ -180,6 +182,8 @@ const terminalizeDevelopmentOnly = (
       ),
     )
   }
+  const evidenceIssue = validateDevelopmentTerminalEvidence(evidence, 'transition.evidence')
+  if (evidenceIssue !== undefined) return blocked(evidenceIssue)
   const developmentMetricsObserved = evidence.developmentMetricsObserved ?? null
   const attemptMetricsObserved = successor.attempt.metricBearingAttemptsConsumed === 1
   if (developmentMetricsObserved !== null && developmentMetricsObserved !== attemptMetricsObserved) {
@@ -225,6 +229,8 @@ const terminalizeQualification = (
       stateIssue('state.currentSuccessor.attempt', 'ATTEMPT_KIND_MISMATCH', successor.attempt, 'QUALIFICATION_ATTEMPT'),
     )
   }
+  const evidenceIssue = validateQualificationTerminalEvidence(evidence, 'transition.evidence')
+  if (evidenceIssue !== undefined) return blocked(evidenceIssue)
   const trial: CandidateDevelopmentHistoricalQualificationTrial = {
     _tag: 'HISTORICAL_QUALIFICATION',
     candidateOrdinal: successor.preregistration.candidateOrdinal,

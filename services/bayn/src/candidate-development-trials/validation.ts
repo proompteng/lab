@@ -2,6 +2,7 @@ import { Result } from 'effect'
 
 import type {
   CandidateDevelopmentAttemptConsumption,
+  CandidateDevelopmentNextPreregistration,
   CandidateDevelopmentTrialHistory,
   CandidateDevelopmentTrialState,
   CandidateDevelopmentTrialStateIssue,
@@ -284,6 +285,34 @@ export const validateAttempt = (value: unknown, path: string): CandidateDevelopm
   }
 }
 
+export const validateDevelopmentTerminalEvidence = (
+  value: unknown,
+  path: string,
+): CandidateDevelopmentTrialStateIssue | undefined => {
+  if (!isRecord(value)) return stateIssue(path, 'TERMINAL_STATE_MISMATCH', value)
+  if (
+    !isNonEmptyString(value.evidenceContentHash) ||
+    (value.evaluatedSourceRevision !== undefined && !isNonEmptyString(value.evaluatedSourceRevision)) ||
+    (value.failureStage !== undefined &&
+      value.failureStage !== 'buildEvaluation-preflight' &&
+      value.failureStage !== 'development-evaluation') ||
+    (value.developmentMetricsObserved !== undefined && typeof value.developmentMetricsObserved !== 'boolean')
+  ) {
+    return stateIssue(path, 'TERMINAL_STATE_MISMATCH', value)
+  }
+  return undefined
+}
+
+export const validateQualificationTerminalEvidence = (
+  value: unknown,
+  path: string,
+): CandidateDevelopmentTrialStateIssue | undefined => {
+  if (!isRecord(value) || value.terminalStatus !== 'HOLD_REJECT' || !isNonEmptyString(value.sourceRevision)) {
+    return stateIssue(path, 'TERMINAL_STATE_MISMATCH', value)
+  }
+  return undefined
+}
+
 const validateLegacyHistoryShape = (value: unknown): CandidateDevelopmentTrialStateIssue | undefined => {
   if (!isRecord(value)) return stateIssue('history', 'MALFORMED_HISTORY', value)
   if (value.schemaVersion !== 'bayn.candidate-development-trial-history.v2') {
@@ -473,9 +502,17 @@ const validatePriorTrialOrdinals = (
   if (!qualification.every(isPositiveInteger) || equalOrdinalSequence(qualification as number[], 1) !== null) {
     return stateIssue(`${path}.qualificationCandidateOrdinals`, 'ORDINAL_SEQUENCE_GAP', qualification, '1..n')
   }
-  const expectedDevelopment = development.map((_, index) => qualification.length + index + 1)
-  if (!development.every(isPositiveInteger) || !sameOrdinals(development as number[], expectedDevelopment)) {
-    return stateIssue(`${path}.developmentCandidateOrdinals`, 'ORDINAL_SEQUENCE_GAP', development, expectedDevelopment)
+  if (
+    !development.every(isPositiveInteger) ||
+    !isStrictlyIncreasing(development as number[]) ||
+    development.some((ordinal) => (qualification as number[]).includes(ordinal))
+  ) {
+    return stateIssue(
+      `${path}.developmentCandidateOrdinals`,
+      'ORDINAL_SEQUENCE_GAP',
+      development,
+      'strictly increasing',
+    )
   }
   return undefined
 }
@@ -561,9 +598,7 @@ const validateHistoryPriorMaterialRelations = (
   const legacy = history.latestReviewedCandidateLegacyPriorTrials
   if (
     !sameOrdinals(legacy.qualificationCandidateOrdinals, history.completedCandidateOrdinals) ||
-    legacy.developmentCandidateOrdinals.some(
-      (ordinal, index) => ordinal !== history.developmentCandidateOrdinals[index],
-    ) ||
+    !isOrdinalPrefix(legacy.developmentCandidateOrdinals, history.developmentCandidateOrdinals) ||
     legacy.developmentCandidateOrdinals.at(-1) !== legacy.latestDevelopmentEvidence.candidateOrdinal ||
     legacy.latestReviewedPreregistration.candidateOrdinal !== legacy.latestDevelopmentEvidence.candidateOrdinal
   ) {
@@ -606,6 +641,9 @@ const expectedDevelopmentOrdinals = (
 const sameOrdinals = (left: readonly number[], right: readonly number[]): boolean =>
   left.length === right.length && left.every((ordinal, index) => ordinal === right[index])
 
+const isOrdinalPrefix = (prefix: readonly number[], values: readonly number[]): boolean =>
+  prefix.length <= values.length && prefix.every((ordinal, index) => ordinal === values[index])
+
 const isStrictlyIncreasing = (ordinals: readonly number[]): boolean =>
   ordinals.every((ordinal, index) => index === 0 || ordinal > ordinals[index - 1]!)
 
@@ -620,6 +658,9 @@ const validateClosedOrdinals = (
     if (seen.has(ordinal)) return stateIssue('history.ordinals', 'ORDINAL_OVERLAP', allClosed)
     seen.add(ordinal)
   }
+  const sorted = allClosed.sort((left, right) => left - right)
+  const sequenceIssue = equalOrdinalSequence(sorted, 1)
+  if (sequenceIssue !== null) return stateIssue('history.ordinals', 'ORDINAL_SEQUENCE_GAP', sorted, '1..n')
   return undefined
 }
 
@@ -642,16 +683,18 @@ const validateHistoryInvalidationBinding = (
 ): CandidateDevelopmentTrialStateIssue | undefined => {
   const invalidation = history.latestInvalidPrecommit
   if (invalidation === null) return undefined
-  if (invalidation.candidateOrdinal <= latestDevelopment) {
+  if (history.developmentCandidateOrdinals.includes(invalidation.candidateOrdinal)) {
     return stateIssue(
       'history.latestInvalidPrecommit.candidateOrdinal',
       'ORDINAL_OVERLAP',
       invalidation.candidateOrdinal,
     )
   }
+  const latestClosedOrdinal = Math.max(latestDevelopment, invalidation.candidateOrdinal)
   const reviewed = history.latestReviewedCandidatePreregistration
   if (
     history.nextCandidatePreregistration === null &&
+    invalidation.candidateOrdinal === latestClosedOrdinal &&
     (reviewed.candidateOrdinal !== invalidation.candidateOrdinal ||
       reviewed.priorTrialCount !== invalidation.priorTrialCount ||
       reviewed.modulePath !== invalidation.invalidatedModule.path ||
@@ -673,8 +716,8 @@ const validateHistorySuccessorBinding = (
   const latestClosedOrdinal = Math.max(latestDevelopment, invalidOrdinal ?? latestDevelopment)
   if (history.nextCandidatePreregistration === null) {
     if (
-      invalidOrdinal === null &&
-      history.latestReviewedCandidatePreregistration.candidateOrdinal !== latestClosedOrdinal
+      history.latestReviewedCandidatePreregistration.candidateOrdinal !== latestClosedOrdinal ||
+      history.latestReviewedCandidatePreregistration.priorTrialCount !== latestClosedOrdinal - 1
     ) {
       return stateIssue('history.latestReviewedCandidatePreregistration', 'SUCCESSOR_BINDING_MISMATCH')
     }
@@ -691,8 +734,39 @@ const validateHistorySuccessorBinding = (
       { candidateOrdinal: latestClosedOrdinal + 1, priorTrialCount: latestClosedOrdinal },
     )
   }
+  if (!sameNextPreregistration(history.nextCandidatePreregistration, history.latestReviewedCandidatePreregistration)) {
+    return stateIssue(
+      'history.nextCandidatePreregistration',
+      'SUCCESSOR_BINDING_MISMATCH',
+      history.nextCandidatePreregistration,
+      history.latestReviewedCandidatePreregistration,
+    )
+  }
   return undefined
 }
+
+const sameNextPreregistration = (
+  left: CandidateDevelopmentNextPreregistration,
+  right: CandidateDevelopmentNextPreregistration,
+): boolean =>
+  left.schemaVersion === right.schemaVersion &&
+  left.candidateOrdinal === right.candidateOrdinal &&
+  left.priorTrialCount === right.priorTrialCount &&
+  left.strategyProtocolHash === right.strategyProtocolHash &&
+  left.strategyIdentityHash === right.strategyIdentityHash &&
+  left.candidateDevelopmentProtocolHash === right.candidateDevelopmentProtocolHash &&
+  left.calendarHash === right.calendarHash &&
+  left.priorTrialsHash === right.priorTrialsHash &&
+  left.modulePath === right.modulePath &&
+  left.moduleSha256 === right.moduleSha256 &&
+  left.marketData.schemaVersion === right.marketData.schemaVersion &&
+  left.marketData.snapshotId === right.marketData.snapshotId &&
+  left.marketData.finalizedSnapshotContentHash === right.marketData.finalizedSnapshotContentHash &&
+  left.marketData.inputManifestHash === right.marketData.inputManifestHash &&
+  left.marketData.boundedContentHash === right.marketData.boundedContentHash &&
+  left.preregistration.sourceRevision === right.preregistration.sourceRevision &&
+  left.preregistration.path === right.preregistration.path &&
+  left.preregistration.blobOid === right.preregistration.blobOid
 
 export const validateCandidateDevelopmentTrialHistory = (
   value: unknown,
@@ -710,7 +784,7 @@ export const expectedNextOrdinal = (state: CandidateDevelopmentTrialState): numb
     ...state.invalidatedPrecommits.map((trial) => trial.invalidation.candidateOrdinal),
   ]
   const highestClosed = closedOrdinals.length === 0 ? 0 : Math.max(...closedOrdinals)
-  return state.currentSuccessor === null ? highestClosed + 1 : state.currentSuccessor.preregistration.candidateOrdinal
+  return highestClosed + 1
 }
 
 const validateStateEnvelope = (
@@ -770,6 +844,12 @@ const validateDevelopmentOnlyTrials = (
       !isPositiveInteger(trial.candidateOrdinal) ||
       trial.priorTrialCount !== trial.candidateOrdinal - 1 ||
       trial.status !== 'DEVELOPMENT_REJECTED' ||
+      (trial.evidenceContentHash !== null && !isNonEmptyString(trial.evidenceContentHash)) ||
+      (trial.evaluatedSourceRevision !== null && !isNonEmptyString(trial.evaluatedSourceRevision)) ||
+      (trial.failureStage !== null &&
+        trial.failureStage !== 'buildEvaluation-preflight' &&
+        trial.failureStage !== 'development-evaluation') ||
+      (trial.developmentMetricsObserved !== null && typeof trial.developmentMetricsObserved !== 'boolean') ||
       !isRecord(trial.attempt) ||
       trial.attempt._tag !== 'DEVELOPMENT_ONLY_ATTEMPT' ||
       trial.attempt.qualificationAttemptConsumed !== false

@@ -9,6 +9,7 @@ import {
   buildCandidateDevelopmentInvalidPrecommit,
   buildCandidateDevelopmentPreregistration,
   buildCandidateDevelopmentTrialHistory,
+  buildCandidateDevelopmentTrialHistoryAfterInvalidation,
 } from './test-builders'
 import {
   buildCandidateDevelopmentTrialState,
@@ -47,6 +48,50 @@ describe('candidate development trial state machine', () => {
       reason: 'PRECOMMIT_INVALIDATED',
     })
     expect(validateCandidateDevelopmentTrialState(state)).toEqual(Result.succeed(undefined))
+  })
+
+  test('preserves an invalidation gap and advances candidate 20 to successors 21 and 22', () => {
+    const historyWithGap = buildCandidateDevelopmentTrialHistoryAfterInvalidation()
+    expect(validateCandidateDevelopmentTrialHistory(historyWithGap)).toEqual(Result.succeed(undefined))
+    const normalizedGap = stateFrom(historyWithGap)
+    expect(normalizedGap.developmentOnlyTrials.map((trial) => trial.candidateOrdinal)).toEqual([3, 5])
+    expect(normalizedGap.invalidatedPrecommits.map((trial) => trial.invalidation.candidateOrdinal)).toEqual([4])
+    expect(normalizedGap.nextOrdinal).toBe(6)
+
+    const reviewed21 = reduceCandidateDevelopmentTrialState(stateFrom(frozenCandidateDevelopmentTrialHistory), {
+      _tag: 'REVIEW_SUCCESSOR',
+      preregistration: buildCandidateDevelopmentPreregistration(21),
+    })
+    expect(reviewed21._tag).toBe('APPLIED')
+    if (reviewed21._tag === 'BLOCKED') throw new Error('expected candidate 21 review to apply')
+    const consumed21 = reduceCandidateDevelopmentTrialState(reviewed21.state, {
+      _tag: 'CONSUME_DEVELOPMENT_ATTEMPT',
+      metricBearing: false,
+    })
+    expect(consumed21._tag).toBe('APPLIED')
+    if (consumed21._tag === 'BLOCKED') throw new Error('expected candidate 21 attempt to apply')
+    const terminalized21 = reduceCandidateDevelopmentTrialState(consumed21.state, {
+      _tag: 'TERMINALIZE_DEVELOPMENT_ONLY',
+      evidence: {
+        evidenceContentHash: 'development-evidence-21',
+        evaluatedSourceRevision: 'development-source-21',
+        failureStage: 'development-evaluation',
+        developmentMetricsObserved: false,
+      },
+    })
+    expect(terminalized21._tag).toBe('APPLIED')
+    if (terminalized21._tag === 'BLOCKED') throw new Error('expected candidate 21 terminalization to apply')
+    expect(terminalized21.state.developmentOnlyTrials.map((trial) => trial.candidateOrdinal)).toEqual([17, 18, 19, 21])
+    expect(terminalized21.state.nextOrdinal).toBe(22)
+
+    const reviewed22 = reduceCandidateDevelopmentTrialState(terminalized21.state, {
+      _tag: 'REVIEW_SUCCESSOR',
+      preregistration: buildCandidateDevelopmentPreregistration(22),
+    })
+    expect(reviewed22._tag).toBe('APPLIED')
+    if (reviewed22._tag === 'BLOCKED') throw new Error('expected candidate 22 review to apply')
+    expect(reviewed22.state.nextOrdinal).toBe(22)
+    expect(validateCandidateDevelopmentTrialState(reviewed22.state)).toEqual(Result.succeed(undefined))
   })
 
   test('reviews, consumes, and terminalizes a development-only successor exactly once', () => {
@@ -111,6 +156,12 @@ describe('candidate development trial state machine', () => {
       _tag: 'TERMINALIZE_QUALIFICATION',
       candidateOrdinal: 4,
     })
+    expect(
+      reduceCandidateDevelopmentTrialState(consumed.state, {
+        _tag: 'TERMINALIZE_QUALIFICATION',
+        evidence: { terminalStatus: 'HOLD_REJECT', sourceRevision: '' },
+      }),
+    ).toMatchObject({ _tag: 'BLOCKED', issue: { reason: 'TERMINAL_STATE_MISMATCH' } })
     const terminalized = reduceCandidateDevelopmentTrialState(consumed.state, {
       _tag: 'TERMINALIZE_QUALIFICATION',
       evidence: { terminalStatus: 'HOLD_REJECT', sourceRevision: 'qualification-source-4' },
@@ -178,6 +229,12 @@ describe('candidate development trial state machine', () => {
       }),
     ).toMatchObject({ _tag: 'BLOCKED', issue: { reason: 'TERMINAL_STATE_MISMATCH' } })
     expect(
+      reduceCandidateDevelopmentTrialState(consumed.state, {
+        _tag: 'TERMINALIZE_DEVELOPMENT_ONLY',
+        evidence: { evidenceContentHash: '' },
+      }),
+    ).toMatchObject({ _tag: 'BLOCKED', issue: { reason: 'TERMINAL_STATE_MISMATCH' } })
+    expect(
       reduceCandidateDevelopmentTrialState(consumed.state, { _tag: 'CONSUME_QUALIFICATION_ATTEMPT' }),
     ).toMatchObject({ _tag: 'BLOCKED', issue: { reason: 'ATTEMPT_ALREADY_CONSUMED' } })
     expect(
@@ -222,11 +279,39 @@ describe('candidate development trial state machine', () => {
       expect(Result.isFailure(validateCandidateDevelopmentTrialHistory(mutated))).toBe(true)
     }
 
+    const successorHistory = buildCandidateDevelopmentTrialHistory({
+      nextCandidatePreregistration: buildCandidateDevelopmentPreregistration(4),
+    })
+    const mismatchedSuccessor = structuredClone(successorHistory) as unknown as Record<string, unknown>
+    const nextSuccessor = mismatchedSuccessor.nextCandidatePreregistration as Record<string, unknown>
+    mismatchedSuccessor.nextCandidatePreregistration = {
+      ...nextSuccessor,
+      moduleSha256: 'a'.repeat(64),
+    }
+    expect(Result.isFailure(validateCandidateDevelopmentTrialHistory(mismatchedSuccessor))).toBe(true)
+
     const tamperedState = {
       ...stateFrom(invalidHistory),
       nextOrdinal: 99,
     }
     expect(deriveCandidateDevelopmentNextAction(tamperedState)).toMatchObject({
+      _tag: 'BLOCKED',
+      issue: { reason: 'NEXT_ORDINAL_MISMATCH' },
+    })
+    const successorState = stateFrom(successorHistory)
+    const missingLineageState = {
+      ...successorState,
+      nextOrdinal: 99,
+      currentSuccessor: {
+        ...successorState.currentSuccessor!,
+        preregistration: {
+          ...successorState.currentSuccessor!.preregistration,
+          candidateOrdinal: 99,
+          priorTrialCount: 98,
+        },
+      },
+    }
+    expect(deriveCandidateDevelopmentNextAction(missingLineageState)).toMatchObject({
       _tag: 'BLOCKED',
       issue: { reason: 'NEXT_ORDINAL_MISMATCH' },
     })
