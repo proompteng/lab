@@ -744,6 +744,113 @@ const capturedPr13452ReviewState = decodeCapturedPullRequestReviewState([
   'wuNH/UHUD2ywD/8DbJZ+RiQYAAA=',
 ])
 
+const capturedPr13459ReviewState = decodeCapturedPullRequestReviewState([
+  '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',
+])
+
 const capturedPr13429ReviewState = decodeCapturedPullRequestReviewState([
   'H4sIAAAAAAAC/+1dW3PcxpV+z69A5IfEzlxwG8wMZTtLkXSslCQypKJsEruMBtCYgYUBxmhA1DiVqjzt227Vbu377tP+kP0p/gX7E/ZcGjdySA0lmrYuLosc',
   'YoDu06e7v/P16dMHf/uFYdzLqlUgi3t7huW49nyAlwKh5KmMn4iVhOv3ViLJ7tEXSymis6XAi0Ho2FFgy7mUwdRyzdi17Ti0As+zLdeeilk8jUQQh/zgShYL',
@@ -1744,6 +1851,140 @@ const observeRecoveryRemediationRecordPath =
 const realObserveRecoveryRemediationRecord = parseBaynReleaseReviewRemediationRecord(
   JSON.parse(readFileSync(observeRecoveryRemediationRecordPath, 'utf8')) as unknown,
 )
+const planArtifactRemediationRecordPath =
+  'services/bayn/release-review-remediations/609289f00821b0219d4af04d8c32bfa2a96378e3.json'
+const realPlanArtifactRemediationRecord = parseBaynReleaseReviewRemediationRecord(
+  JSON.parse(readFileSync(planArtifactRemediationRecordPath, 'utf8')) as unknown,
+)
+const planArtifactHistory = {
+  published: '4199e631a5cd5810cad53e91dbd09a3230ea15cf',
+  blocked: '609289f00821b0219d4af04d8c32bfa2a96378e3',
+  finalHead: '9b240e72ec9b060d73994794085dd6e3aabb45b3',
+  introductionHead: '6'.repeat(40),
+  introductionMerge: '7'.repeat(40),
+} as const
+const planArtifactNowMs = Date.parse('2026-08-01T18:40:00Z')
+
+const planArtifactRemediationFixture = (): {
+  readonly snapshot: BaynReleaseEligibilitySnapshot
+  readonly evidence: BaynReleaseReviewRemediationEvidence
+} => {
+  const record = structuredClone(realPlanArtifactRemediationRecord)
+  if (record.schemaVersion !== 'bayn.release-review-remediation.v4') {
+    throw new Error('expected the #13459 receipt to use continuous-source schema v4')
+  }
+  const blockedPull = structuredClone(capturedPr13459ReviewState)
+  if (pullRequestReviewEvidenceSha256(blockedPull) !== record.blocked.sourcePullRequestEvidenceSha256) {
+    throw new Error('captured PR #13459 evidence does not match the committed receipt')
+  }
+
+  const changes = record.blocked.affectedPaths.map((path) => ({ ...path }))
+  const pathBlobs = changes.map((path) => ({ path: path.path, blobSha: path.blobSha }))
+  const blockedCommit = {
+    sha: planArtifactHistory.blocked,
+    parents: [planArtifactHistory.published],
+    treeSha: record.blocked.mergeTreeSha,
+    files: changes.map((path) => path.path),
+    fileChanges: changes,
+    reviewSnapshot: {
+      mainCommitParents: [planArtifactHistory.published],
+      associatedPullRequests: [
+        associatedPull({
+          number: 13459,
+          headSha: planArtifactHistory.finalHead,
+          mergeCommitSha: planArtifactHistory.blocked,
+          mergedAt: blockedPull.mergedAt,
+        }),
+      ],
+      pullRequest: blockedPull,
+    },
+  }
+  const introductionSnapshot = reviewSnapshotFor({
+    commitSha: planArtifactHistory.introductionMerge,
+    prNumber: 13460,
+    headSha: planArtifactHistory.introductionHead,
+    parents: [planArtifactHistory.blocked],
+    mergedAt: '2026-08-01T18:36:00Z',
+    reviews: [
+      review({
+        commitSha: planArtifactHistory.introductionHead,
+        submittedAt: '2026-08-01T18:35:00Z',
+      }),
+    ],
+  })
+  const recordBlobSha = '64e2fc1d7d87a7d861404d8776fbc8d62f06e864'
+  const introductionCommit = {
+    sha: planArtifactHistory.introductionMerge,
+    parents: [planArtifactHistory.blocked],
+    treeSha: '8'.repeat(40),
+    files: ['packages/scripts/src/bayn/verify-release-review.test.ts', planArtifactRemediationRecordPath],
+    fileChanges: [
+      {
+        path: 'packages/scripts/src/bayn/verify-release-review.test.ts',
+        previousPath: null,
+        status: 'modified',
+        blobSha: '9'.repeat(40),
+      },
+      {
+        path: planArtifactRemediationRecordPath,
+        previousPath: null,
+        status: 'added',
+        blobSha: recordBlobSha,
+      },
+    ],
+    reviewSnapshot: introductionSnapshot,
+  }
+  const evidence: BaynReleaseReviewRemediationEvidence = {
+    recordPath: planArtifactRemediationRecordPath,
+    recordBlobSha,
+    record,
+    referencedCommits: [
+      {
+        sha: planArtifactHistory.finalHead,
+        parents: [planArtifactHistory.published],
+        treeSha: record.blocked.finalHeadTreeSha,
+        files: changes.map((path) => path.path),
+        fileChanges: changes,
+        pathBlobs,
+      },
+    ],
+    currentPathBlobs: pathBlobs,
+  }
+  return {
+    evidence,
+    snapshot: {
+      currentCommitParents: [planArtifactHistory.blocked],
+      lastPublishedRevision: {
+        status: 'resolved',
+        revision: planArtifactHistory.published,
+        runId: 307_123_385_68,
+        runNumber: 1_057,
+        runAttempt: 1,
+      },
+      comparison: {
+        status: 'ahead',
+        baseSha: planArtifactHistory.published,
+        headSha: planArtifactHistory.introductionMerge,
+        mergeBaseSha: planArtifactHistory.published,
+        aheadBy: 2,
+        totalCommits: 2,
+        commits: [blockedCommit, introductionCommit],
+        truncated: false,
+      },
+      remediations: [evidence],
+    },
+  }
+}
+
+const evaluatePlanArtifactRemediationFixture = (fixture: ReturnType<typeof planArtifactRemediationFixture>) =>
+  evaluateBaynReleaseEligibility({
+    mainCommitSha: planArtifactHistory.introductionMerge,
+    baseRefName: 'main',
+    snapshot: fixture.snapshot,
+    nowMs: planArtifactNowMs,
+    pushBeforeSha: planArtifactHistory.blocked,
+  })
+
 const observeRecoveryHistory = {
   published: '3398bb82b6b22d80b10d059ac395895c6218954e',
   blocked: '44cb3bdb9f1ce7c77f453a85c57f1360d43b96c8',
@@ -2967,6 +3208,70 @@ const nestedSingleStageSuccessorRemediationFixture = (): BaynReleaseEligibilityS
 }
 
 describe('Bayn publication-range eligibility', () => {
+  test('parses the exact immutable #13459 plan-artifact v4 receipt', () => {
+    expect(realPlanArtifactRemediationRecord).toMatchObject({
+      schemaVersion: 'bayn.release-review-remediation.v4',
+      remediationId: 'pr-13459-continuous-reviewed-source',
+      blocked: {
+        mergeCommitSha: planArtifactHistory.blocked,
+        mergeParentSha: planArtifactHistory.published,
+        mergeTreeSha: 'ff8c85872e95092d9f2885293f83fcfc7282c233',
+        sourcePullRequestNumber: 13459,
+        finalHeadSha: planArtifactHistory.finalHead,
+        finalHeadParentSha: planArtifactHistory.published,
+        finalHeadTreeSha: 'ff8c85872e95092d9f2885293f83fcfc7282c233',
+        sourcePullRequestEvidenceSha256: '470d48d8aea9c359be633a2cd7b5cfe337efadb8fd824a490a2d127b022558fc',
+        affectedPaths: [
+          {
+            path: 'services/bayn/src/candidate-development-command.test.ts',
+            blobSha: '74c62baf059dc87d0977fdbb1d9fd99393ee9ebd',
+          },
+          {
+            path: 'services/bayn/src/candidate-development-command.ts',
+            blobSha: '5b17709bb96aa2ee17c2d3884dd5186c08318a1a',
+          },
+        ],
+      },
+      requiredDescendants: [],
+    })
+    expect(pullRequestReviewEvidenceSha256(capturedPr13459ReviewState)).toBe(
+      realPlanArtifactRemediationRecord.blocked.sourcePullRequestEvidenceSha256,
+    )
+  })
+
+  test('accepts #13459 only through its exact immutable review evidence and source blobs', () => {
+    expect(evaluatePlanArtifactRemediationFixture(planArtifactRemediationFixture())).toMatchObject({
+      status: 'eligible',
+      lastPublishedRevision: planArtifactHistory.published,
+      checkedCommitCount: 2,
+      baynAffectingCommitCount: 2,
+      reviewedPullRequests: [
+        {
+          commitSha: planArtifactHistory.blocked,
+          prNumber: 13459,
+          headSha: planArtifactHistory.finalHead,
+        },
+        {
+          commitSha: planArtifactHistory.introductionMerge,
+          prNumber: 13460,
+          headSha: planArtifactHistory.introductionHead,
+        },
+      ],
+    })
+  })
+
+  test('rejects #13459 remediation when an exact source blob binding is mutated', () => {
+    const fixture = planArtifactRemediationFixture()
+    const sourceBlob = fixture.evidence.referencedCommits[0]?.pathBlobs[0]
+    if (sourceBlob === undefined) throw new Error('missing #13459 source blob binding')
+    ;(sourceBlob as unknown as { blobSha: string }).blobSha = '0'.repeat(40)
+    expect(evaluatePlanArtifactRemediationFixture(fixture)).toMatchObject({
+      status: 'hold',
+      code: 'release-review-remediation-invalid',
+      retryable: false,
+    })
+  })
+
   test('parses the exact immutable #13452 observe-recovery v4 receipt', () => {
     expect(realObserveRecoveryRemediationRecord).toMatchObject({
       schemaVersion: 'bayn.release-review-remediation.v4',
