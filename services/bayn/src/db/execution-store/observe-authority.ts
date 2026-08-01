@@ -219,11 +219,28 @@ export const makeObserveAuthorityInterpreter = (
             AND state.effective = 'OBSERVE'
             AND state.kill_state = 'ACTIVE'
             AND state.reason = ${incompletePassReason}
-            AND previous_generation.broker_identity_schema_version = ${identity.schemaVersion}
-            AND previous_generation.broker_identity_hash = ${identity.identityHash}
-            AND previous_generation.broker_provider = ${identity.provider}
-            AND previous_generation.broker_environment = ${identity.environment}
-            AND previous_generation.account_id = ${identity.accountId}
+            AND (
+              (
+                previous_generation.broker_identity_schema_version = ${identity.schemaVersion}
+                AND previous_generation.broker_identity_hash = ${identity.identityHash}
+                AND previous_generation.broker_provider = ${identity.provider}
+                AND previous_generation.broker_environment = ${identity.environment}
+                AND previous_generation.account_id = ${identity.accountId}
+              )
+              OR (
+                ${identity.provider} = ${BrokerProvider.Alpaca}
+                AND ${identity.environment} = ${BrokerEnvironment.Sandbox}
+                AND previous_generation.generation_hash = ${LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH}
+                AND previous_generation.previous_generation_hash IS NULL
+                AND previous_generation.maximum = 'OBSERVE'
+                AND previous_generation.authority_version = 1
+                AND previous_generation.broker_identity_schema_version IS NULL
+                AND previous_generation.broker_identity_hash IS NULL
+                AND previous_generation.broker_provider IS NULL
+                AND previous_generation.broker_environment IS NULL
+                AND previous_generation.account_id IS NULL
+              )
+            )
             AND reconciliation.status = 'EXACT'
             AND reconciliation.expected_hash = reconciliation.observed_hash
             AND jsonb_array_length(reconciliation.discrepancies) = 0
