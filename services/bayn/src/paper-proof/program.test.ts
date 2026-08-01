@@ -475,8 +475,6 @@ const fixture = (options: FixtureOptions) => {
     },
     prepare: {
       prepareCapitalGrant: capabilities.prepareCapitalGrant,
-      reconcile: capabilities.reconcile,
-      currentUtcInstant: capabilities.currentUtcInstant,
     },
     submit: {
       activateCapitalGrant: capabilities.activateCapitalGrant,
@@ -485,9 +483,6 @@ const fixture = (options: FixtureOptions) => {
         recover: (value) => capabilities.execution.recover(value, MutationOperation.Submit),
       },
       prepareIntent: capabilities.prepareIntent,
-      reconcile: capabilities.reconcile,
-      restrictAuthority: capabilities.restrictAuthority,
-      currentUtcInstant: capabilities.currentUtcInstant,
     },
     cancel: {
       execution: {
@@ -495,9 +490,6 @@ const fixture = (options: FixtureOptions) => {
         recover: (value) => capabilities.execution.recover(value, MutationOperation.Cancel),
       },
       readIntent: capabilities.readIntent,
-      reconcile: capabilities.reconcile,
-      restrictAuthority: capabilities.restrictAuthority,
-      currentUtcInstant: capabilities.currentUtcInstant,
     },
     recover: {
       execution: {
@@ -505,9 +497,6 @@ const fixture = (options: FixtureOptions) => {
         recoverCancel: (value) => capabilities.execution.recover(value, MutationOperation.Cancel),
       },
       readIntent: capabilities.readIntent,
-      reconcile: capabilities.reconcile,
-      restrictAuthority: capabilities.restrictAuthority,
-      currentUtcInstant: capabilities.currentUtcInstant,
     },
   }
   return { calls, dependencies, mutationState, recoveryState, sequence }
@@ -532,19 +521,22 @@ const runWithTestClock = <A, E>(effect: Effect.Effect<A, E>, advanceMs: number):
 describe('bounded PAPER proof command', () => {
   test('operation programs expose only their permitted capabilities', async () => {
     const { dependencies } = fixture({ operation: 'PREPARE' })
-    const prepare: PaperProofPrepareDependencies = dependencies.prepare
+    const prepare: PaperProofPrepareDependencies = { ...dependencies.prepare, ...dependencies.containment }
     const submit: PaperProofSubmitDependencies = {
       ...dependencies.submit,
+      ...dependencies.containment,
       mutations: dependencies.mutations,
       recovery: dependencies.recovery,
     }
     const cancel: PaperProofCancelDependencies = {
       ...dependencies.cancel,
+      ...dependencies.containment,
       mutations: dependencies.mutations,
       recovery: dependencies.recovery,
     }
     const recover: PaperProofRecoverDependencies = {
       ...dependencies.recover,
+      ...dependencies.containment,
       mutations: dependencies.mutations,
       recovery: dependencies.recovery,
     }

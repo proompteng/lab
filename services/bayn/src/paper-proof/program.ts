@@ -46,10 +46,19 @@ export interface PaperProofDependencies {
   readonly mutations: PaperProofMutationStore
   /** Stateful recovery markers are canonical and shared by every mutation operation view. */
   readonly recovery: PaperProofRecoveryStore
-  readonly prepare: PaperProofPrepareDependencies
-  readonly submit: Omit<PaperProofSubmitDependencies, 'mutations' | 'recovery'>
-  readonly cancel: Omit<PaperProofCancelDependencies, 'mutations' | 'recovery'>
-  readonly recover: Omit<PaperProofRecoverDependencies, 'mutations' | 'recovery'>
+  readonly prepare: Omit<PaperProofPrepareDependencies, 'currentUtcInstant' | 'reconcile'>
+  readonly submit: Omit<
+    PaperProofSubmitDependencies,
+    'currentUtcInstant' | 'mutations' | 'reconcile' | 'recovery' | 'restrictAuthority'
+  >
+  readonly cancel: Omit<
+    PaperProofCancelDependencies,
+    'currentUtcInstant' | 'mutations' | 'reconcile' | 'recovery' | 'restrictAuthority'
+  >
+  readonly recover: Omit<
+    PaperProofRecoverDependencies,
+    'currentUtcInstant' | 'mutations' | 'reconcile' | 'recovery' | 'restrictAuthority'
+  >
 }
 
 const logContainmentFailure = <A>(
@@ -166,7 +175,11 @@ const runValidatedPaperProof = (
     case 'PREPARE':
       return runPaperProofPrepare(
         { command: { ...command, operation: 'PREPARE' }, sourcePlan: dependencies.sourcePlan },
-        dependencies.prepare,
+        {
+          ...dependencies.prepare,
+          currentUtcInstant: dependencies.containment.currentUtcInstant,
+          reconcile: dependencies.containment.reconcile,
+        },
       )
     case 'SUBMIT':
       return withRecoveryFinalizer(
@@ -176,7 +189,14 @@ const runValidatedPaperProof = (
         'paper-proof-submit-failure',
         runPaperProofSubmit(
           { command: { ...command, operation: 'SUBMIT' }, sourcePlan: dependencies.sourcePlan },
-          { ...dependencies.submit, mutations: dependencies.mutations, recovery: dependencies.recovery },
+          {
+            ...dependencies.submit,
+            currentUtcInstant: dependencies.containment.currentUtcInstant,
+            mutations: dependencies.mutations,
+            reconcile: dependencies.containment.reconcile,
+            recovery: dependencies.recovery,
+            restrictAuthority: dependencies.containment.restrictAuthority,
+          },
         ),
       )
     case 'CANCEL':
@@ -187,7 +207,14 @@ const runValidatedPaperProof = (
         'paper-proof-cancel-failure',
         runPaperProofCancel(
           { command: { ...command, operation: 'CANCEL' }, sourcePlan: dependencies.sourcePlan },
-          { ...dependencies.cancel, mutations: dependencies.mutations, recovery: dependencies.recovery },
+          {
+            ...dependencies.cancel,
+            currentUtcInstant: dependencies.containment.currentUtcInstant,
+            mutations: dependencies.mutations,
+            reconcile: dependencies.containment.reconcile,
+            recovery: dependencies.recovery,
+            restrictAuthority: dependencies.containment.restrictAuthority,
+          },
         ),
       )
     case 'RECOVER':
@@ -198,7 +225,14 @@ const runValidatedPaperProof = (
         'paper-proof-recover-load-or-execution-failure',
         runPaperProofRecover(
           { command: { ...command, operation: 'RECOVER' }, sourcePlan: dependencies.sourcePlan },
-          { ...dependencies.recover, mutations: dependencies.mutations, recovery: dependencies.recovery },
+          {
+            ...dependencies.recover,
+            currentUtcInstant: dependencies.containment.currentUtcInstant,
+            mutations: dependencies.mutations,
+            reconcile: dependencies.containment.reconcile,
+            recovery: dependencies.recovery,
+            restrictAuthority: dependencies.containment.restrictAuthority,
+          },
         ),
       )
   }
