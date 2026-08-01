@@ -343,6 +343,24 @@ describe('candidate development immutable evidence gate', () => {
     ).toMatchObject({ status: 'DEVELOPMENT_EVIDENCE_INVALID', nextCandidatePreregistration: null })
   }, 30_000)
 
+  test('carries decoded evidence through accounting validation before terminal authorization', () => {
+    const decision = decideCandidateDevelopmentEligibilityFromUnknown(
+      structuredClone(candidate17DevelopmentEvidence),
+      candidate17DevelopmentEvidenceExpectation,
+      candidate17Preregistration,
+    )
+    expect(decision).toEqual(candidate17ValidatedEligibility)
+
+    let qualificationLoads = 0
+    const authorization = withCandidateDevelopmentQualificationAuthorization(decision, () => {
+      qualificationLoads += 1
+      return 'qualification-holdout'
+    })
+
+    expect(authorization).toEqual({ status: 'BLOCKED', reason: 'DEVELOPMENT_REJECTED' })
+    expect(qualificationLoads).toBe(0)
+  })
+
   test('preserves Candidate 17 and 18 rejection and terminalizes Candidate 19 without consuming qualification', () => {
     expect(candidate17ValidatedEligibility).toMatchObject({
       status: 'DEVELOPMENT_REJECTED',
