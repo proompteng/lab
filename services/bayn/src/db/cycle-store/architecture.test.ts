@@ -1,42 +1,60 @@
 import { describe, expect, test } from 'bun:test'
-import { readdirSync, readFileSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, relative, resolve } from 'node:path'
 
 type DependencyGraph = ReadonlyMap<string, readonly string[]>
 
-const sourceRoot = resolve(import.meta.dir, '../..')
+const serviceRoot = resolve(import.meta.dir, '../../..')
+const sourceRoot = resolve(serviceRoot, 'src')
+const productionEntrypoints = [
+  resolve(sourceRoot, 'cycle-readiness.ts'),
+  resolve(sourceRoot, 'cycle-recovery.ts'),
+  resolve(sourceRoot, 'cycle-runner/recovery-decision-binding.ts'),
+  resolve(sourceRoot, 'cycle-runner/recovery-decisions.ts'),
+  resolve(sourceRoot, 'cycle-runner/recovery-model.ts'),
+  resolve(sourceRoot, 'cycle-runner/recovery-readiness-model.ts'),
+  resolve(sourceRoot, 'cycle-runner/recovery-readiness.ts'),
+  resolve(sourceRoot, 'cycle-runner/recovery-selection.ts'),
+  resolve(sourceRoot, 'db/cycle-store/index.ts'),
+]
 
-const sourceFilesUnder = (directory: string): readonly string[] =>
-  readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-    const file = join(directory, entry.name)
-    if (entry.isDirectory()) return sourceFilesUnder(file)
-    return entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts') ? [file] : []
-  })
+const normalizePath = (file: string): string => file.replaceAll('\\', '/')
 
-const resolveSourceImport = (from: string, specifier: string, sourceFiles: ReadonlySet<string>): string | undefined => {
-  if (!specifier.startsWith('.')) return undefined
-  const base = resolve(dirname(from), specifier)
-  for (const candidate of [base, `${base}.ts`, join(base, 'index.ts')]) {
-    if (sourceFiles.has(candidate)) return candidate
-  }
-  return undefined
+const sourcePath = (file: string): string => normalizePath(resolve(file))
+
+const sourceDependencies = (
+  file: string,
+  imports: Readonly<Record<string, { imports: readonly { path: string }[] }>>,
+  sourceFiles: ReadonlySet<string>,
+): readonly string[] => {
+  const dependencies = imports[file]?.imports ?? []
+  return [
+    ...new Set(
+      dependencies.flatMap(({ path }) => {
+        const base = path.startsWith('.')
+          ? sourcePath(resolve(dirname(file), path))
+          : path.startsWith('/')
+            ? sourcePath(path)
+            : undefined
+        if (base === undefined) return []
+        return [base, `${base}.ts`, `${base}/index.ts`].filter((candidate) => sourceFiles.has(candidate))
+      }),
+    ),
+  ]
 }
 
-const sourceDependencies = (file: string, sourceFiles: ReadonlySet<string>): readonly string[] => {
-  const source = readFileSync(file, 'utf8')
-  const specifiers = [
-    ...source.matchAll(/\bfrom\s+["'](\.[^"']+)["']/g),
-    ...source.matchAll(/\bimport\s+["'](\.[^"']+)["']/g),
-  ].map((match) => match[1])
-  return [...new Set(specifiers.flatMap((specifier) => (specifier === undefined ? [] : [specifier])))]
-    .map((specifier) => resolveSourceImport(file, specifier, sourceFiles))
-    .filter((dependency): dependency is string => dependency !== undefined)
-}
+const sourceDependencyGraph = (metafile: Bun.BuildMetafile): DependencyGraph => {
+  const sourceFiles = new Set(
+    Object.keys(metafile.inputs)
+      .map((file) => sourcePath(resolve(serviceRoot, file)))
+      .filter((file) => file.startsWith(`${normalizePath(sourceRoot)}/`)),
+  )
+  const imports = Object.fromEntries(
+    Object.entries(metafile.inputs).map(([file, input]) => [sourcePath(resolve(serviceRoot, file)), input]),
+  )
 
-const sourceDependencyGraph = (): DependencyGraph => {
-  const sourceFiles = sourceFilesUnder(sourceRoot)
-  const sourceFileSet = new Set(sourceFiles)
-  return new Map(sourceFiles.map((file) => [file, sourceDependencies(file, sourceFileSet)]))
+  return new Map([...sourceFiles].map((file) => [file, sourceDependencies(file, imports, sourceFiles)]))
 }
 
 const stronglyConnectedComponents = (graph: DependencyGraph): readonly (readonly string[])[] => {
@@ -72,7 +90,7 @@ const stronglyConnectedComponents = (graph: DependencyGraph): readonly (readonly
       onStack.delete(current)
       component.push(current)
     } while (current !== file)
-    if (component.length > 1) components.push(component)
+    if (component.length > 1 || graph.get(file)?.includes(file) === true) components.push(component)
   }
 
   for (const file of graph.keys()) {
@@ -92,11 +110,41 @@ const isCycleBoundary = (file: string): boolean => {
 }
 
 describe('cycle-store architecture', () => {
-  test('keeps cycle-store, readiness, and recovery modules outside import cycles', () => {
-    const cycles = stronglyConnectedComponents(sourceDependencyGraph())
-      .filter((component) => component.some(isCycleBoundary))
-      .map((component) => component.map((file) => relative(sourceRoot, file)).sort())
+  test('keeps cycle-store, readiness, and recovery modules outside import cycles', async () => {
+    const outputDirectory = await mkdtemp(resolve(tmpdir(), 'bayn-cycle-architecture-'))
+    try {
+      const metafilePath = resolve(outputDirectory, 'metafile.json')
+      const build = Bun.spawn(
+        [
+          process.execPath,
+          'build',
+          '--external=tigerbeetle-node',
+          `--metafile=${metafilePath}`,
+          `--outdir=${outputDirectory}`,
+          '--target=node',
+          ...productionEntrypoints,
+        ],
+        { stderr: 'pipe', stdout: 'pipe' },
+      )
+      const [exitCode, stdout, stderr] = await Promise.all([
+        build.exited,
+        new Response(build.stdout).text(),
+        new Response(build.stderr).text(),
+      ])
 
-    expect(cycles).toEqual([])
+      expect(exitCode).toBe(0)
+      if (exitCode !== 0) {
+        throw new Error([stdout, stderr].filter((output) => output.length > 0).join('\n'))
+      }
+
+      const metafile = (await Bun.file(metafilePath).json()) as Bun.BuildMetafile
+      const cycles = stronglyConnectedComponents(sourceDependencyGraph(metafile))
+        .filter((component) => component.some(isCycleBoundary))
+        .map((component) => component.map((file) => relative(sourceRoot, file)).sort())
+
+      expect(cycles).toEqual([])
+    } finally {
+      await rm(outputDirectory, { force: true, recursive: true })
+    }
   })
 })
