@@ -6,6 +6,7 @@ import type {
   CandidateDevelopmentDevelopmentOnlyTrial,
   CandidateDevelopmentHistoricalQualificationTrial,
   CandidateDevelopmentImmutableInvalidation,
+  CandidateDevelopmentSuccessorKind,
   CandidateDevelopmentTrialState,
   CandidateDevelopmentTrialStateIssue,
   CandidateDevelopmentTrialTransition,
@@ -72,8 +73,9 @@ const requireUnattemptedSuccessor = (
 
 const reviewSuccessor = (
   state: CandidateDevelopmentTrialState,
-  preregistration: ReviewSuccessorTransition['preregistration'],
+  transition: ReviewSuccessorTransition,
 ): CandidateDevelopmentTrialTransitionDecision => {
+  const { preregistration } = transition
   if (state.currentSuccessor !== null) {
     return blocked(stateIssue('state.currentSuccessor', 'SUCCESSOR_ALREADY_PRESENT', state.currentSuccessor))
   }
@@ -90,8 +92,13 @@ const reviewSuccessor = (
       }),
     )
   }
+  const kind: CandidateDevelopmentSuccessorKind = transition.kind ?? 'DEVELOPMENT_ONLY'
+  if (kind !== 'DEVELOPMENT_ONLY' && kind !== 'QUALIFICATION') {
+    return blocked(stateIssue('transition.kind', 'ATTEMPT_KIND_MISMATCH', kind, ['DEVELOPMENT_ONLY', 'QUALIFICATION']))
+  }
   const successor: CandidateDevelopmentCurrentSuccessor = {
     _tag: 'CURRENT_SUCCESSOR',
+    kind,
     preregistration: cloneAndFreeze(preregistration),
     attempt: unattempted,
   }
@@ -101,9 +108,13 @@ const reviewSuccessor = (
 const consumeAttempt = (
   state: CandidateDevelopmentTrialState,
   attempt: Exclude<CandidateDevelopmentAttemptConsumption, { readonly _tag: 'UNATTEMPTED' }>,
+  expectedKind: CandidateDevelopmentSuccessorKind,
 ): CandidateDevelopmentTrialTransitionDecision => {
   const successor = requireUnattemptedSuccessor(state)
   if (isIssue(successor)) return blocked(successor)
+  if (successor.kind !== expectedKind) {
+    return blocked(stateIssue('state.currentSuccessor.kind', 'ATTEMPT_KIND_MISMATCH', successor.kind, expectedKind))
+  }
   return applied({
     ...state,
     currentSuccessor: cloneAndFreeze({ ...successor, attempt }),
@@ -154,6 +165,11 @@ const terminalizeDevelopmentOnly = (
 ): CandidateDevelopmentTrialTransitionDecision => {
   const successor = requireSuccessor(state)
   if (isIssue(successor)) return blocked(successor)
+  if (successor.kind !== 'DEVELOPMENT_ONLY') {
+    return blocked(
+      stateIssue('state.currentSuccessor.kind', 'ATTEMPT_KIND_MISMATCH', successor.kind, 'DEVELOPMENT_ONLY'),
+    )
+  }
   if (successor.attempt._tag !== 'DEVELOPMENT_ONLY_ATTEMPT') {
     return blocked(
       stateIssue(
@@ -161,6 +177,18 @@ const terminalizeDevelopmentOnly = (
         'ATTEMPT_KIND_MISMATCH',
         successor.attempt,
         'DEVELOPMENT_ONLY_ATTEMPT',
+      ),
+    )
+  }
+  const developmentMetricsObserved = evidence.developmentMetricsObserved ?? null
+  const attemptMetricsObserved = successor.attempt.metricBearingAttemptsConsumed === 1
+  if (developmentMetricsObserved !== null && developmentMetricsObserved !== attemptMetricsObserved) {
+    return blocked(
+      stateIssue(
+        'transition.evidence.developmentMetricsObserved',
+        'TERMINAL_STATE_MISMATCH',
+        developmentMetricsObserved,
+        attemptMetricsObserved,
       ),
     )
   }
@@ -172,7 +200,7 @@ const terminalizeDevelopmentOnly = (
     evidenceContentHash: evidence.evidenceContentHash,
     evaluatedSourceRevision: evidence.evaluatedSourceRevision ?? null,
     failureStage: evidence.failureStage ?? null,
-    developmentMetricsObserved: evidence.developmentMetricsObserved ?? null,
+    developmentMetricsObserved,
     attempt: successor.attempt,
   }
   return applied({
@@ -189,6 +217,9 @@ const terminalizeQualification = (
 ): CandidateDevelopmentTrialTransitionDecision => {
   const successor = requireSuccessor(state)
   if (isIssue(successor)) return blocked(successor)
+  if (successor.kind !== 'QUALIFICATION') {
+    return blocked(stateIssue('state.currentSuccessor.kind', 'ATTEMPT_KIND_MISMATCH', successor.kind, 'QUALIFICATION'))
+  }
   if (successor.attempt._tag !== 'QUALIFICATION_ATTEMPT') {
     return blocked(
       stateIssue('state.currentSuccessor.attempt', 'ATTEMPT_KIND_MISMATCH', successor.attempt, 'QUALIFICATION_ATTEMPT'),
@@ -199,6 +230,7 @@ const terminalizeQualification = (
     candidateOrdinal: successor.preregistration.candidateOrdinal,
     priorTrialCount: successor.preregistration.priorTrialCount,
     terminalStatus: evidence.terminalStatus,
+    sourceRevision: evidence.sourceRevision,
     attempt: successor.attempt,
   }
   return applied({
@@ -218,23 +250,31 @@ export const reduceCandidateDevelopmentTrialState = (
   if (!isRecord(transition)) return blocked(stateIssue('transition', 'MALFORMED_HISTORY', transition))
   switch (transition._tag) {
     case 'REVIEW_SUCCESSOR':
-      return reviewSuccessor(state, transition.preregistration)
+      return reviewSuccessor(state, transition)
     case 'INVALIDATE_PRECOMMIT':
       return invalidateSuccessor(state, transition.invalidation)
     case 'CONSUME_DEVELOPMENT_ATTEMPT':
-      return consumeAttempt(state, {
-        _tag: 'DEVELOPMENT_ONLY_ATTEMPT',
-        attemptCount: 1,
-        metricBearingAttemptsConsumed: transition.metricBearing ? 1 : 0,
-        qualificationAttemptConsumed: false,
-      })
+      return consumeAttempt(
+        state,
+        {
+          _tag: 'DEVELOPMENT_ONLY_ATTEMPT',
+          attemptCount: 1,
+          metricBearingAttemptsConsumed: transition.metricBearing ? 1 : 0,
+          qualificationAttemptConsumed: false,
+        },
+        'DEVELOPMENT_ONLY',
+      )
     case 'CONSUME_QUALIFICATION_ATTEMPT':
-      return consumeAttempt(state, {
-        _tag: 'QUALIFICATION_ATTEMPT',
-        attemptCount: 1,
-        metricBearingAttemptsConsumed: 1,
-        qualificationAttemptConsumed: true,
-      })
+      return consumeAttempt(
+        state,
+        {
+          _tag: 'QUALIFICATION_ATTEMPT',
+          attemptCount: 1,
+          metricBearingAttemptsConsumed: 1,
+          qualificationAttemptConsumed: true,
+        },
+        'QUALIFICATION',
+      )
     case 'TERMINALIZE_DEVELOPMENT_ONLY':
       return terminalizeDevelopmentOnly(state, transition.evidence)
     case 'TERMINALIZE_QUALIFICATION':

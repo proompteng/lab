@@ -160,11 +160,14 @@ export type CandidateDevelopmentAttemptConsumption =
       readonly qualificationAttemptConsumed: true
     }
 
+export type CandidateDevelopmentSuccessorKind = 'DEVELOPMENT_ONLY' | 'QUALIFICATION'
+
 export interface CandidateDevelopmentHistoricalQualificationTrial {
   readonly _tag: 'HISTORICAL_QUALIFICATION'
   readonly candidateOrdinal: number
   readonly priorTrialCount: number
   readonly terminalStatus: 'HOLD_REJECT'
+  readonly sourceRevision: string | null
   readonly attempt: Extract<CandidateDevelopmentAttemptConsumption, { readonly _tag: 'QUALIFICATION_ATTEMPT' }>
 }
 
@@ -182,6 +185,7 @@ export interface CandidateDevelopmentDevelopmentOnlyTrial {
 
 export interface CandidateDevelopmentCurrentSuccessor {
   readonly _tag: 'CURRENT_SUCCESSOR'
+  readonly kind: CandidateDevelopmentSuccessorKind
   readonly preregistration: CandidateDevelopmentNextPreregistration
   readonly attempt: CandidateDevelopmentAttemptConsumption
 }
@@ -217,6 +221,7 @@ export type CandidateDevelopmentTrialTransition =
   | {
       readonly _tag: 'REVIEW_SUCCESSOR'
       readonly preregistration: CandidateDevelopmentNextPreregistration
+      readonly kind?: CandidateDevelopmentSuccessorKind
     }
   | {
       readonly _tag: 'CONSUME_DEVELOPMENT_ATTEMPT'

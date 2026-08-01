@@ -92,16 +92,19 @@ describe('candidate development trial state machine', () => {
   })
 
   test('consumes and terminalizes a qualification attempt independently from development trials', () => {
-    const state = stateFrom(
-      buildCandidateDevelopmentTrialHistory({
-        nextCandidatePreregistration: buildCandidateDevelopmentPreregistration(4),
-      }),
-    )
-    expect(deriveCandidateDevelopmentNextAction(state)).toMatchObject({
-      _tag: 'CONSUME_DEVELOPMENT_ATTEMPT',
+    const state = stateFrom(buildCandidateDevelopmentTrialHistory())
+    const reviewed = reduceCandidateDevelopmentTrialState(state, {
+      _tag: 'REVIEW_SUCCESSOR',
+      kind: 'QUALIFICATION',
+      preregistration: buildCandidateDevelopmentPreregistration(4),
+    })
+    expect(reviewed._tag).toBe('APPLIED')
+    if (reviewed._tag === 'BLOCKED') throw new Error('expected qualification review to apply')
+    expect(deriveCandidateDevelopmentNextAction(reviewed.state)).toMatchObject({
+      _tag: 'CONSUME_QUALIFICATION_ATTEMPT',
       candidateOrdinal: 4,
     })
-    const consumed = reduceCandidateDevelopmentTrialState(state, { _tag: 'CONSUME_QUALIFICATION_ATTEMPT' })
+    const consumed = reduceCandidateDevelopmentTrialState(reviewed.state, { _tag: 'CONSUME_QUALIFICATION_ATTEMPT' })
     expect(consumed._tag).toBe('APPLIED')
     if (consumed._tag === 'BLOCKED') throw new Error('expected qualification attempt to apply')
     expect(deriveCandidateDevelopmentNextAction(consumed.state)).toMatchObject({
@@ -115,8 +118,10 @@ describe('candidate development trial state machine', () => {
     expect(terminalized._tag).toBe('APPLIED')
     if (terminalized._tag === 'BLOCKED') throw new Error('expected qualification terminalization to apply')
     expect(terminalized.state.historicalQualificationTrials.map((trial) => trial.candidateOrdinal)).toEqual([1, 2, 4])
+    expect(terminalized.state.historicalQualificationTrials.at(-1)?.sourceRevision).toBe('qualification-source-4')
     expect(terminalized.state.developmentOnlyTrials.map((trial) => trial.candidateOrdinal)).toEqual([3])
     expect(terminalized.state.nextOrdinal).toBe(5)
+    expect(validateCandidateDevelopmentTrialState(terminalized.state)).toEqual(Result.succeed(undefined))
   })
 
   test('keeps an invalidated precommit immutable and waits for a new reviewed successor', () => {
@@ -167,6 +172,12 @@ describe('candidate development trial state machine', () => {
     })
     if (consumed._tag === 'BLOCKED') throw new Error('expected development attempt to apply')
     expect(
+      reduceCandidateDevelopmentTrialState(consumed.state, {
+        _tag: 'TERMINALIZE_DEVELOPMENT_ONLY',
+        evidence: { evidenceContentHash: 'contradictory-metrics', developmentMetricsObserved: true },
+      }),
+    ).toMatchObject({ _tag: 'BLOCKED', issue: { reason: 'TERMINAL_STATE_MISMATCH' } })
+    expect(
       reduceCandidateDevelopmentTrialState(consumed.state, { _tag: 'CONSUME_QUALIFICATION_ATTEMPT' }),
     ).toMatchObject({ _tag: 'BLOCKED', issue: { reason: 'ATTEMPT_ALREADY_CONSUMED' } })
     expect(
@@ -198,6 +209,11 @@ describe('candidate development trial state machine', () => {
       },
       (history: Record<string, unknown>) => {
         history.completedCandidateOrdinals = [1, 1]
+      },
+      (history: Record<string, unknown>) => {
+        const current = history.latestInvalidPrecommit as Record<string, unknown>
+        const naturalBuild = current.naturalBuild as Record<string, unknown>
+        naturalBuild.imageDigest = `legacy:${'a'.repeat(64)}`
       },
     ] as const
     for (const mutate of mutations) {

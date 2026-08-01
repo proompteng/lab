@@ -14,6 +14,7 @@ export type {
   CandidateDevelopmentQualificationEvidence,
   CandidateDevelopmentQualificationPreregistration,
   CandidateDevelopmentQualificationTerminalEvidence,
+  CandidateDevelopmentSuccessorKind,
   CandidateDevelopmentTrialHistory,
   CandidateDevelopmentTrialState,
   CandidateDevelopmentTrialStateIssue,

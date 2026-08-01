@@ -18,11 +18,17 @@ const actionForSuccessor = (successor: CandidateDevelopmentCurrentSuccessor): Ca
   const { candidateOrdinal } = successor.preregistration
   switch (successor.attempt._tag) {
     case 'UNATTEMPTED':
-      return {
-        _tag: 'CONSUME_DEVELOPMENT_ATTEMPT',
-        candidateOrdinal,
-        preregistration: successor.preregistration,
-      }
+      return successor.kind === 'QUALIFICATION'
+        ? {
+            _tag: 'CONSUME_QUALIFICATION_ATTEMPT',
+            candidateOrdinal,
+            preregistration: successor.preregistration,
+          }
+        : {
+            _tag: 'CONSUME_DEVELOPMENT_ATTEMPT',
+            candidateOrdinal,
+            preregistration: successor.preregistration,
+          }
     case 'DEVELOPMENT_ONLY_ATTEMPT':
       return {
         _tag: 'TERMINALIZE_DEVELOPMENT_ONLY',

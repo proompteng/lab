@@ -12,6 +12,7 @@ export type {
   CandidateDevelopmentImmutableInvalidation,
   CandidateDevelopmentNextAction,
   CandidateDevelopmentQualificationTerminalEvidence,
+  CandidateDevelopmentSuccessorKind,
   CandidateDevelopmentTrialState,
   CandidateDevelopmentTrialStateIssue,
   CandidateDevelopmentTrialStateIssueReason,

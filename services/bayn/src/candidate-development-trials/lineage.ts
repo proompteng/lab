@@ -49,11 +49,15 @@ const normalizedDevelopmentTrial = (
   },
 })
 
-const historicalQualificationTrial = (candidateOrdinal: number): CandidateDevelopmentHistoricalQualificationTrial => ({
+const historicalQualificationTrial = (
+  candidateOrdinal: number,
+  sourceRevision: string | null,
+): CandidateDevelopmentHistoricalQualificationTrial => ({
   _tag: 'HISTORICAL_QUALIFICATION',
   candidateOrdinal,
   priorTrialCount: candidateOrdinal - 1,
   terminalStatus: 'HOLD_REJECT',
+  sourceRevision,
   attempt: {
     _tag: 'QUALIFICATION_ATTEMPT',
     attemptCount: 1,
@@ -80,6 +84,7 @@ const currentSuccessor = (preregistration: CandidateDevelopmentTrialHistory['nex
     ? null
     : {
         _tag: 'CURRENT_SUCCESSOR' as const,
+        kind: 'DEVELOPMENT_ONLY' as const,
         preregistration: cloneAndFreeze(preregistration),
         attempt: unattempted,
       }
@@ -102,9 +107,17 @@ export const buildCandidateDevelopmentTrialState = (
   const validated = validateCandidateDevelopmentTrialHistory(history)
   if (Result.isFailure(validated)) return Result.fail(validated.failure)
   const successor = currentSuccessor(history.nextCandidatePreregistration)
+  const latestQualificationOrdinal = history.completedCandidateOrdinals.at(-1)
   const state: CandidateDevelopmentTrialState = {
     schemaVersion: 'bayn.candidate-development-trial-state.v1',
-    historicalQualificationTrials: cloneAndFreeze(history.completedCandidateOrdinals.map(historicalQualificationTrial)),
+    historicalQualificationTrials: cloneAndFreeze(
+      history.completedCandidateOrdinals.map((candidateOrdinal) =>
+        historicalQualificationTrial(
+          candidateOrdinal,
+          candidateOrdinal === latestQualificationOrdinal ? history.latestTerminalEvidence.sourceRevision : null,
+        ),
+      ),
+    ),
     developmentOnlyTrials: cloneAndFreeze(
       history.developmentCandidateOrdinals.map((candidateOrdinal) =>
         normalizedDevelopmentTrial(candidateOrdinal, history.latestDevelopmentEvidence),

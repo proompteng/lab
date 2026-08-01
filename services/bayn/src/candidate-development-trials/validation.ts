@@ -233,10 +233,9 @@ const validateInvalidationOutcomes = (
     naturalBuild.imagePublished !== true ||
     naturalBuild.deploymentAllowed !== false ||
     !isNonEmptyString(naturalBuild.runId) ||
-    !isHex(
-      typeof naturalBuild.imageDigest === 'string' ? naturalBuild.imageDigest.slice('sha256:'.length) : undefined,
-      64,
-    ) ||
+    typeof naturalBuild.imageDigest !== 'string' ||
+    !naturalBuild.imageDigest.startsWith('sha256:') ||
+    !isHex(naturalBuild.imageDigest.slice('sha256:'.length), 64) ||
     !isNonNegativeInteger(invalidatedModule.lineCount) ||
     !isNonNegativeInteger(invalidatedModule.byteCount) ||
     !hasInvalidationFindings(invalidatedModule.findings) ||
@@ -607,6 +606,9 @@ const expectedDevelopmentOrdinals = (
 const sameOrdinals = (left: readonly number[], right: readonly number[]): boolean =>
   left.length === right.length && left.every((ordinal, index) => ordinal === right[index])
 
+const isStrictlyIncreasing = (ordinals: readonly number[]): boolean =>
+  ordinals.every((ordinal, index) => index === 0 || ordinal > ordinals[index - 1]!)
+
 const validateClosedOrdinals = (
   history: CandidateDevelopmentTrialHistory,
   invalidOrdinal: number | null,
@@ -736,17 +738,17 @@ const validateHistoricalQualificationTrials = (
   for (const [index, trial] of state.historicalQualificationTrials.entries()) {
     if (!isRecord(trial)) return stateIssue(`state.historicalQualificationTrials[${index}]`, 'MALFORMED_HISTORY', trial)
   }
-  const sequenceIssue = equalOrdinalSequence(
-    state.historicalQualificationTrials.map((trial) => trial.candidateOrdinal),
-    1,
-  )
-  if (sequenceIssue !== null) return stateIssue('state.historicalQualificationTrials', 'ORDINAL_SEQUENCE_GAP')
+  const qualificationOrdinals = state.historicalQualificationTrials.map((trial) => trial.candidateOrdinal)
+  if (!isStrictlyIncreasing(qualificationOrdinals)) {
+    return stateIssue('state.historicalQualificationTrials', 'ORDINAL_OVERLAP', qualificationOrdinals)
+  }
   for (const [index, trial] of state.historicalQualificationTrials.entries()) {
     if (
       trial._tag !== 'HISTORICAL_QUALIFICATION' ||
       !isPositiveInteger(trial.candidateOrdinal) ||
       trial.priorTrialCount !== trial.candidateOrdinal - 1 ||
       trial.terminalStatus !== 'HOLD_REJECT' ||
+      (trial.sourceRevision !== null && !isNonEmptyString(trial.sourceRevision)) ||
       !isRecord(trial.attempt) ||
       trial.attempt._tag !== 'QUALIFICATION_ATTEMPT'
     ) {
@@ -776,6 +778,17 @@ const validateDevelopmentOnlyTrials = (
     }
     const attemptIssue = validateAttempt(trial.attempt, `state.developmentOnlyTrials[${index}].attempt`)
     if (attemptIssue !== undefined) return attemptIssue
+    if (
+      trial.developmentMetricsObserved !== null &&
+      trial.developmentMetricsObserved !== (trial.attempt.metricBearingAttemptsConsumed === 1)
+    ) {
+      return stateIssue(
+        `state.developmentOnlyTrials[${index}].developmentMetricsObserved`,
+        'TERMINAL_STATE_MISMATCH',
+        trial.developmentMetricsObserved,
+        trial.attempt.metricBearingAttemptsConsumed === 1,
+      )
+    }
   }
   return undefined
 }
@@ -813,6 +826,12 @@ const validateCurrentSuccessor = (
   if (!isRecord(successor) || successor._tag !== 'CURRENT_SUCCESSOR' || !isRecord(successor.attempt)) {
     return stateIssue('state.currentSuccessor', 'MALFORMED_HISTORY', successor)
   }
+  if (successor.kind !== 'DEVELOPMENT_ONLY' && successor.kind !== 'QUALIFICATION') {
+    return stateIssue('state.currentSuccessor.kind', 'ATTEMPT_KIND_MISMATCH', successor.kind, [
+      'DEVELOPMENT_ONLY',
+      'QUALIFICATION',
+    ])
+  }
   const preregistrationIssue = validateNextPreregistration(
     successor.preregistration,
     'state.currentSuccessor.preregistration',
@@ -826,7 +845,21 @@ const validateCurrentSuccessor = (
       state.nextOrdinal,
     )
   }
-  return validateAttempt(successor.attempt, 'state.currentSuccessor.attempt')
+  const attemptIssue = validateAttempt(successor.attempt, 'state.currentSuccessor.attempt')
+  if (attemptIssue !== undefined) return attemptIssue
+  if (
+    successor.attempt._tag !== 'UNATTEMPTED' &&
+    successor.attempt._tag !==
+      (successor.kind === 'QUALIFICATION' ? 'QUALIFICATION_ATTEMPT' : 'DEVELOPMENT_ONLY_ATTEMPT')
+  ) {
+    return stateIssue(
+      'state.currentSuccessor.attempt',
+      'ATTEMPT_KIND_MISMATCH',
+      successor.attempt,
+      successor.kind === 'QUALIFICATION' ? 'QUALIFICATION_ATTEMPT' : 'DEVELOPMENT_ONLY_ATTEMPT',
+    )
+  }
+  return undefined
 }
 
 const validateStateOrdinals = (
