@@ -16,6 +16,7 @@ export {
   candidate19DevelopmentFailureEvidenceExpectation,
   candidate19PriorTrialsMaterial,
   candidate20Preregistration,
+  candidate20PrecommitInvalidation,
   candidate20PriorTrialsMaterial,
   deriveCandidateDevelopmentLegacyPriorTrialsHash,
   deriveCandidateDevelopmentPriorTrialsHash,

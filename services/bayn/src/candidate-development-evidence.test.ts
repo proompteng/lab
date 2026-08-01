@@ -371,7 +371,7 @@ describe('candidate development immutable evidence gate', () => {
     expect(frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration).toEqual(
       candidate20Preregistration,
     )
-    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toEqual(candidate20Preregistration)
+    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toBeNull()
     expect(Math.max(...frozenCandidateDevelopmentTrialHistory.completedCandidateOrdinals)).toBe(16)
   })
 

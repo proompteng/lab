@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { execFile, spawn } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -9,15 +9,19 @@ import { Deferred, Effect, Fiber, Result } from 'effect'
 import { frozenCandidateDevelopmentSessions } from './candidate-development-calendar'
 import type { CandidateDevelopmentNextPreregistration } from './candidate-development-calendar'
 import {
+  authorizeCandidateDevelopmentAttempt,
   bindCandidateDevelopmentVerifiedSource,
   buildCandidateDevelopmentCommandReport as buildCandidateDevelopmentCommandReportPure,
   candidateDevelopmentCommandFailureOutputMaxBytes,
   candidateDevelopmentExecutableProgramSchemaVersion,
   evaluateCandidateDevelopmentArtifact,
+  executeCandidateDevelopmentArtifactRuntime,
   executeCandidateDevelopmentProgram,
   loadCandidateDevelopmentExecutableProgram,
+  loadCandidateDevelopmentRuntimeMarketDataFile,
   makeCandidateDevelopmentCommandReportWriter,
   openCandidateDevelopmentGitBatchObjectReader,
+  preregisterCandidateDevelopmentAttempt,
   renderCandidateDevelopmentCommandFailure,
   renderCandidateDevelopmentCommandReport,
   validateCandidateDevelopmentAccountingReplay,
@@ -25,6 +29,9 @@ import {
   validateCandidateDevelopmentExecutableProgram,
   validateCandidateDevelopmentPreregisteredMarketData,
   validateCandidateDevelopmentPreregistrationDocument,
+  validateCandidateDevelopmentRuntimeMarketData,
+  validateCandidateDevelopmentTrialHistoryClosure,
+  validateCandidateDevelopmentModuleSource,
   verifyCandidateDevelopmentPreregistrationLineage,
   verifyCandidateDevelopmentPreregistrationModuleNovelty,
   verifyCandidateDevelopmentRepositoryIntegrity,
@@ -41,6 +48,10 @@ import {
   type CandidateDevelopmentVerifiedModuleSource,
 } from './candidate-development-command'
 import {
+  frozenCandidateDevelopmentTrialHistory,
+  type CandidateDevelopmentTrialHistory,
+} from './candidate-development-trial-history'
+import {
   candidateDevelopmentComparisonSemantics,
   officialMonthEndSignalDates,
   type CandidateDevelopmentPreflightInput,
@@ -52,7 +63,6 @@ import { MICROS, referencePriceMicros } from './execution-model'
 import { alignBars, directVolatilityWeights, simulate, type SimulationTarget } from './simulation'
 import { calculateExactPerformanceMetrics, buildVerdict } from './simulation/metrics'
 import { reconcileMarkedEquity } from './simulation-reconciliation'
-import { candidateDevelopmentArtifact as candidate20Artifact } from './strategy/cross-sectional-short-term-reversal/candidate-20'
 import {
   DataFeed,
   DataSource,
@@ -164,9 +174,73 @@ const candidate20Input: CandidateDevelopmentPreflightInput = {
   signalSessionDates: officialMonthEndSignalDates(candidate20OfficialSessions),
   featureLookbackSessions: 21,
 }
-const candidate20StrategyProtocol =
-  candidate20Artifact.strategyProtocol as unknown as CandidateDevelopmentStrategyProtocol
-const candidate20StructuralBindings = candidate20Artifact.structuralBindings
+const candidate20StrategyProtocol: CandidateDevelopmentStrategyProtocol = {
+  schemaVersion: 'bayn.candidate-development-strategy-protocol.v2',
+  universe: ['DBC', 'EFA', 'IEF', 'SPY', 'VNQ'],
+  directVolatilityTarget: 0.1,
+  initialCapitalMicros: '1000000000000',
+  executionModel: defaultProtocolDocument.executionModel,
+  thresholds: {
+    minimumObservations: 504,
+    minimumAnnualizedReturn: 0,
+    minimumSharpeImprovement: 0,
+    maximumDrawdown: 0.35,
+    maximumAnnualTurnover: 12,
+    requirePositiveDoubleCostReturn: true,
+  },
+  marketData: {
+    schemaVersion: 'bayn.candidate-development-market-data-contract.v1',
+    snapshotId: candidate20MarketData.snapshotId,
+    contentHash: candidate20MarketData.boundedContentHash,
+  },
+  benchmarks: {
+    schemaVersion: 'bayn.candidate-development-benchmark-policy.v1',
+    symbol: 'SPY',
+    directVolatilityWindow: 63,
+    terminalPolicy: 'last-all-cash-strategy-decision',
+  },
+  strategyIdentity: {
+    schemaVersion: 'bayn.candidate-development-strategy-identity.v2',
+    family: 'inverse-volatility-risk-diversification',
+    identifier: 'candidate-20-cross-sectional-short-term-reversal-21-session-etf-losers',
+    researchSources: [
+      'https://doi.org/10.1111/j.1540-6261.1990.tb05110.x',
+      'https://doi.org/10.2307/2937816',
+      'https://doi.org/10.1093/rfs/3.2.175',
+    ],
+    parameters: {
+      id: 'cross-sectional-short-term-reversal-21-two-losers-half-weight-cash',
+      lookbackSessions: 21,
+      annualizationSessions: 252,
+      riskAssets: ['DBC', 'SPY'],
+      covarianceEstimator: 'sample',
+      targetAnnualizedVolatility: 0.1,
+      maximumGrossExposure: 1,
+    },
+    input: '22-adjusted-closes-ending-at-each-finalized-month-end-for-dbc-efa-ief-spy-vnq',
+    weighting:
+      'rank-all-five-etfs-by-ascending-21-session-return-select-at-most-two-strictly-negative-losers-at-fixed-half-weight',
+    riskScaling:
+      'none-covariance-and-target-volatility-fields-are-v2-schema-compatibility-metadata-and-do-not-affect-strategy-weights',
+    allocation: 'long-only-up-to-two-assets-with-unallocated-capital-held-as-cash-no-leverage-no-shorting',
+    schedule: 'official-month-end-finalized-close-to-next-session-open',
+    terminal: '2022-11-30-signal-liquidates-at-2022-12-01-open-and-remains-cash',
+    missingData: 'fail-closed-no-imputation-and-no-nonfinite-return-or-volatility',
+    doubledCost: 'fixed-baseline-signal-and-ordered-requested-filled-quantity-path-repriced-at-two-times-cost',
+  },
+}
+const candidate20StructuralBindings = {
+  schemaVersion: 'bayn.candidate-development-artifact-structural-bindings.v1' as const,
+  candidateOrdinal: 20,
+  priorTrialCount: 19,
+  strategyProtocolHash: candidate20PreregistrationDocument.strategyProtocolHash,
+  strategyIdentityHash: candidate20PreregistrationDocument.strategyIdentityHash,
+  candidateDevelopmentProtocolHash: candidate20PreregistrationDocument.candidateDevelopmentProtocolHash,
+  calendarHash: candidate20PreregistrationDocument.calendarHash,
+  priorTrialsHash: candidate20PreregistrationDocument.priorTrialsHash,
+  modulePath: candidate20ModuleRepositoryPath,
+  sourceManifestPath: candidate20SourceManifestRepositoryPath,
+}
 
 const candidate20VerifiedSourceFiles: CandidateDevelopmentVerifiedSourceFiles = {
   schemaVersion: 'bayn.candidate-development-verified-source-files.v1',
@@ -631,6 +705,14 @@ const fixtureStrategyProtocol = {
   },
 }
 const fixtureStrategyProtocolHash = canonicalHashV1(fixtureStrategyProtocol)
+const fixtureRuntimePreflightInput: CandidateDevelopmentPreflightInput = {
+  candidateOrdinal: 16,
+  priorTrialCount: 15,
+  expectedStrategyProtocolHash: fixtureStrategyProtocolHash,
+  officialSessions: fixtureOfficialSessions,
+  signalSessionDates: officialMonthEndSignalDates(fixtureOfficialSessions),
+  featureLookbackSessions: 126,
+}
 
 const fixtureStressedRunId = fixtureRunId
 const fixtureSourceManifest: CandidateDevelopmentSourceManifest = {
@@ -669,6 +751,35 @@ const fixtureVerifiedSource: CandidateDevelopmentVerifiedSource = {
   ...fixtureVerifiedSourceMaterial,
   baselineRunId: fixtureRunId,
   stressedRunId: fixtureStressedRunId,
+}
+
+const syntheticCandidate20Runtime = (
+  verifiedSource: CandidateDevelopmentVerifiedSource,
+  verifiedFiles: CandidateDevelopmentVerifiedSourceFiles = candidate20VerifiedSourceFiles,
+) => {
+  const sourceManifest = {
+    ...verifiedFiles.sourceManifest,
+    marketData: fixtureSourceManifest.marketData,
+  }
+  const runtimeVerifiedSource: CandidateDevelopmentVerifiedSource = {
+    ...verifiedSource,
+    sourceManifest,
+  }
+  const preflightInput: CandidateDevelopmentPreflightInput = {
+    ...candidate20Input,
+    officialSessions: fixtureOfficialSessions,
+    signalSessionDates: officialMonthEndSignalDates(fixtureOfficialSessions),
+  }
+  return {
+    verifiedFiles: { ...verifiedFiles, sourceManifest },
+    strategyProtocol: { ...candidate20StrategyProtocol, marketData: fixtureStrategyProtocol.marketData },
+    runtimeInput: {
+      ...runtimeVerifiedSource,
+      runtimeDataSchemaVersion: 'bayn.candidate-development-artifact-runtime-input.v1' as const,
+      preflightInput,
+      marketData: fixtureMarketData,
+    },
+  }
 }
 
 const canonicalAccountingFixture = (runId: string, costMultiplierMicros: bigint) => {
@@ -2623,16 +2734,42 @@ runCandidateDevelopmentCommandMain(Effect.fail(${testCase.failureExpression}))
     ] as const
 
     try {
-      for (const testCase of cases) {
-        const scriptPath = join(directory, `${testCase.name}.ts`)
-        const script = `
+      const results: Array<
+        | undefined
+        | {
+            readonly testCase: (typeof cases)[number]
+            readonly result: Awaited<ReturnType<typeof execFileResultPromise>>
+          }
+      > = Array.from({ length: cases.length })
+      let nextCaseIndex = 0
+      const workerCount = Math.min(4, cases.length)
+      await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+          while (true) {
+            const caseIndex = nextCaseIndex
+            nextCaseIndex += 1
+            const testCase = cases[caseIndex]
+            if (testCase === undefined) return
+
+            const scriptPath = join(directory, `${testCase.name}.ts`)
+            const script = `
 import { Effect } from 'effect'
 import { runCandidateDevelopmentCommandMain } from ${JSON.stringify(commandUrl)}
 
 runCandidateDevelopmentCommandMain(Effect.fail(${testCase.failureExpression}))
 `
-        await writeFile(scriptPath, script)
-        const result = await execFileResultPromise(process.execPath, [scriptPath], import.meta.dir)
+            await writeFile(scriptPath, script)
+            results[caseIndex] = {
+              testCase,
+              result: await execFileResultPromise(process.execPath, [scriptPath], import.meta.dir),
+            }
+          }
+        }),
+      )
+
+      for (const completed of results) {
+        if (completed === undefined) throw new Error('command validation worker did not complete every case')
+        const { result, testCase } = completed
         const expected = `${JSON.stringify({
           schemaVersion: 'bayn.candidate-development-command-failure.v1',
           error: {
@@ -5292,6 +5429,190 @@ runCandidateDevelopmentCommandMain(
     })
   })
 
+  test('advances reviewed lineage past an unattempted invalid precommit without consuming an attempt', () => {
+    const successorPreregistration: CandidateDevelopmentNextPreregistration = {
+      ...frozenCandidateDevelopmentTrialHistory.latestReviewedCandidatePreregistration,
+      candidateOrdinal: 21,
+      priorTrialCount: 20,
+      modulePath: 'services/bayn/src/strategy/synthetic-reviewed-successor/candidate-21.ts',
+      moduleSha256: 'a'.repeat(64),
+      preregistration: {
+        sourceRevision: 'b'.repeat(40),
+        path: 'services/bayn/candidates/ordinal-21-synthetic-reviewed-successor-preregistration.json',
+        blobOid: 'c'.repeat(40),
+      },
+    }
+    const successorHistory: CandidateDevelopmentTrialHistory = {
+      ...frozenCandidateDevelopmentTrialHistory,
+      latestReviewedCandidatePreregistration: successorPreregistration,
+      nextCandidatePreregistration: successorPreregistration,
+    }
+    expect(validateCandidateDevelopmentTrialHistoryClosure(successorHistory)).toEqual(Result.succeed(undefined))
+    expect(authorizeCandidateDevelopmentAttempt(successorHistory)).toEqual(Result.succeed(successorPreregistration))
+
+    const successorInput: CandidateDevelopmentPreflightInput = {
+      ...candidate20Input,
+      candidateOrdinal: 21,
+      priorTrialCount: 20,
+    }
+    const successorSourceManifest: CandidateDevelopmentSourceManifest = {
+      ...candidate20SourceManifest,
+      candidateOrdinal: 21,
+      priorTrialCount: 20,
+      modulePath: successorPreregistration.modulePath,
+      moduleSha256: successorPreregistration.moduleSha256,
+    }
+    const successorFiles: CandidateDevelopmentVerifiedSourceFiles = {
+      ...candidate20VerifiedSourceFiles,
+      modulePath: successorPreregistration.modulePath,
+      moduleSha256: successorPreregistration.moduleSha256,
+      sourceManifest: successorSourceManifest,
+    }
+    const verifiedSuccessor = successOf(
+      bindCandidateDevelopmentVerifiedSource(successorFiles, successorInput, successorHistory),
+    )
+    expect(preregisterCandidateDevelopmentAttempt(verifiedSuccessor, successorHistory)).toEqual(
+      Result.succeed(successorFiles.sourceManifestSha256),
+    )
+    expect(successorHistory.latestInvalidPrecommit).toMatchObject({
+      candidateOrdinal: 20,
+      status: 'PRECOMMIT_INVALID',
+      attemptStatus: 'UNATTEMPTED',
+      metricBearingAttemptsConsumed: 0,
+      qualificationAttemptConsumed: false,
+    })
+    expect(successorHistory.developmentCandidateOrdinals).toEqual([17, 18, 19])
+
+    expect(
+      validateCandidateDevelopmentTrialHistoryClosure({
+        ...successorHistory,
+        nextCandidatePreregistration: { ...successorPreregistration, candidateOrdinal: 22 },
+      }),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-attempt-authorization',
+        cause: {
+          field: 'trialHistory.nextCandidatePreregistration.lineage',
+          expected: { candidateOrdinal: 21, priorTrialCount: 20 },
+          observed: { candidateOrdinal: 22, priorTrialCount: 20 },
+        },
+      },
+    })
+
+    const completedSuccessorEvidence = {
+      ...successorHistory.latestDevelopmentEvidence,
+      candidateOrdinal: 21,
+      priorTrialCount: 20,
+      evidenceContentHash: 'd'.repeat(64),
+      evaluatedSourceRevision: 'e'.repeat(40),
+      failureStage: 'development-evaluation' as const,
+      developmentMetricsObserved: true,
+    }
+    const completedSuccessorHistory: CandidateDevelopmentTrialHistory = {
+      ...successorHistory,
+      developmentCandidateOrdinals: [17, 18, 19, 21],
+      latestDevelopmentEvidence: completedSuccessorEvidence,
+      nextCandidatePreregistration: null,
+    }
+    expect(validateCandidateDevelopmentTrialHistoryClosure(completedSuccessorHistory)).toEqual(
+      Result.succeed(undefined),
+    )
+    expect(authorizeCandidateDevelopmentAttempt(completedSuccessorHistory)).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-attempt-authorization',
+        cause: {
+          field: 'trialHistory.nextCandidatePreregistration',
+          observed: null,
+          latestDevelopmentEvidence: { candidateOrdinal: 21, priorTrialCount: 20 },
+        },
+      },
+    })
+    expect(
+      validateCandidateDevelopmentTrialHistoryClosure({
+        ...completedSuccessorHistory,
+        developmentCandidateOrdinals: [17, 18, 19, 20, 21],
+      }),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-attempt-authorization',
+        cause: {
+          field: 'trialHistory.developmentCandidateOrdinals',
+          index: 3,
+          expected: 21,
+          observed: 20,
+        },
+      },
+    })
+
+    const successorPriorTrials = {
+      ...completedSuccessorHistory.latestReviewedCandidatePriorTrials,
+      developmentCandidateOrdinals: [17, 18, 19, 21],
+      latestDevelopmentEvidence: {
+        candidateOrdinal: 21,
+        priorTrialCount: 20,
+        status: 'DEVELOPMENT_REJECTED' as const,
+        evidenceContentHash: completedSuccessorEvidence.evidenceContentHash,
+        qualificationAttemptConsumed: false as const,
+      },
+      latestReviewedPreregistration: successorPreregistration,
+    }
+    const candidate22Preregistration: CandidateDevelopmentNextPreregistration = {
+      ...successorPreregistration,
+      candidateOrdinal: 22,
+      priorTrialCount: 21,
+      priorTrialsHash: canonicalHashV1(successorPriorTrials),
+      modulePath: 'services/bayn/src/strategy/synthetic-reviewed-successor/candidate-22.ts',
+      moduleSha256: 'f'.repeat(64),
+      preregistration: {
+        sourceRevision: '1'.repeat(40),
+        path: 'services/bayn/candidates/ordinal-22-synthetic-reviewed-successor-preregistration.json',
+        blobOid: '2'.repeat(40),
+      },
+    }
+    const candidate22History: CandidateDevelopmentTrialHistory = {
+      ...completedSuccessorHistory,
+      latestReviewedCandidatePriorTrials: successorPriorTrials,
+      latestReviewedCandidatePreregistration: candidate22Preregistration,
+      nextCandidatePreregistration: candidate22Preregistration,
+    }
+    expect(validateCandidateDevelopmentTrialHistoryClosure(candidate22History)).toEqual(Result.succeed(undefined))
+    expect(authorizeCandidateDevelopmentAttempt(candidate22History)).toEqual(Result.succeed(candidate22Preregistration))
+    const candidate22Input: CandidateDevelopmentPreflightInput = {
+      ...candidate20Input,
+      candidateOrdinal: 22,
+      priorTrialCount: 21,
+    }
+    const candidate22SourceManifest: CandidateDevelopmentSourceManifest = {
+      ...candidate20SourceManifest,
+      candidateOrdinal: 22,
+      priorTrialCount: 21,
+      priorTrialsHash: candidate22Preregistration.priorTrialsHash,
+      modulePath: candidate22Preregistration.modulePath,
+      moduleSha256: candidate22Preregistration.moduleSha256,
+    }
+    const candidate22Files: CandidateDevelopmentVerifiedSourceFiles = {
+      ...candidate20VerifiedSourceFiles,
+      modulePath: candidate22Preregistration.modulePath,
+      moduleSha256: candidate22Preregistration.moduleSha256,
+      sourceManifest: candidate22SourceManifest,
+    }
+    const verifiedCandidate22 = successOf(
+      bindCandidateDevelopmentVerifiedSource(candidate22Files, candidate22Input, candidate22History),
+    )
+    expect(preregisterCandidateDevelopmentAttempt(verifiedCandidate22, candidate22History)).toEqual(
+      Result.succeed(candidate22Files.sourceManifestSha256),
+    )
+    expect(candidate22History.developmentCandidateOrdinals).toEqual([17, 18, 19, 21])
+    expect(candidate22History.latestInvalidPrecommit).toMatchObject({
+      candidateOrdinal: 20,
+      metricBearingAttemptsConsumed: 0,
+      qualificationAttemptConsumed: false,
+    })
+  })
+
   test('rejects colluding trial counts before preregistration', async () => {
     const input = {
       candidateOrdinal: 1,
@@ -5312,7 +5633,14 @@ runCandidateDevelopmentCommandMain(
         schemaVersion: 'bayn.candidate-development-artifact.v1',
         input: ${JSON.stringify(input)},
         strategyProtocol: ${JSON.stringify(fixtureStrategyProtocol)},
-        buildEvaluation: () => { throw new Error('must not evaluate') },
+        buildEvaluation: (verifiedSource) => {
+          if (
+            verifiedSource.sourceRevision === '' ||
+            verifiedSource.baselineRunId === '' ||
+            verifiedSource.stressedRunId === ''
+          ) return {}
+          throw new Error('must not evaluate')
+        },
       }
     `
     const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
@@ -5444,7 +5772,14 @@ runCandidateDevelopmentCommandMain(
         schemaVersion: 'bayn.candidate-development-artifact.v1',
         input: ${JSON.stringify(input)},
         strategyProtocol: ${JSON.stringify(fixtureStrategyProtocol)},
-        buildEvaluation: () => { throw new Error('consumed Candidate 16 must not evaluate') },
+        buildEvaluation: (verifiedSource) => {
+          if (
+            verifiedSource.sourceRevision === '' ||
+            verifiedSource.baselineRunId === '' ||
+            verifiedSource.stressedRunId === ''
+          ) return {}
+          throw new Error('consumed Candidate 16 must not evaluate')
+        },
       }
     `
     const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
@@ -6372,8 +6707,14 @@ runCandidateDevelopmentCommandMain(
         sourceRevision,
       }
       const expectedVerifiedSource = successOf(bindCandidateDevelopmentVerifiedSource(expectedFiles, candidate20Input))
+      const runtime = syntheticCandidate20Runtime(expectedVerifiedSource, expectedFiles)
       const decoded = await Effect.runPromise(
-        loaded.program.effects.evaluateDevelopment(undefined, undefined as never, loaded.verifiedSource),
+        executeCandidateDevelopmentArtifactRuntime(
+          `data:text/javascript;base64,${Buffer.from(importedSource).toString('base64')}`,
+          runtime.verifiedFiles,
+          runtime.strategyProtocol,
+          runtime.runtimeInput,
+        ),
       )
 
       expect(verificationPasses).toBe(2)
@@ -6441,6 +6782,11 @@ runCandidateDevelopmentCommandMain(
           let functionBlocked = false
           let constructorBlocked = false
           let evalBlocked = false
+          const functionSourceUnavailable =
+            candidateDevelopmentArtifact.buildEvaluation.toString() ===
+              'function () { [source unavailable] }' &&
+            String(candidateDevelopmentArtifact.buildEvaluation) ===
+              'function () { [source unavailable] }'
           try { globalThis['Function']('return 1')() } catch { functionBlocked = true }
           try { ({}).constructor.constructor('return 1')() } catch { constructorBlocked = true }
           try { globalThis['eval']('1') } catch { evalBlocked = true }
@@ -6450,7 +6796,10 @@ runCandidateDevelopmentCommandMain(
             !functionBlocked ||
             !constructorBlocked ||
             !evalBlocked ||
-            verifiedSource.baselineRunId !== ${JSON.stringify(verifiedSource.baselineRunId)}
+            !functionSourceUnavailable ||
+            verifiedSource.sourceRevision !== ${JSON.stringify(verifiedSource.sourceRevision)} ||
+            verifiedSource.baselineRunId !== ${JSON.stringify(verifiedSource.baselineRunId)} ||
+            verifiedSource.stressedRunId !== ${JSON.stringify(verifiedSource.stressedRunId)}
           ) {
             throw new Error('candidate artifact sandbox is not closed')
           }
@@ -6467,8 +6816,15 @@ runCandidateDevelopmentCommandMain(
         (loaded as { readonly candidateDevelopmentProgram?: unknown }).candidateDevelopmentProgram,
       ),
     )
+    expect(program.input).toEqual(candidate20Input)
+    const runtime = syntheticCandidate20Runtime(verifiedSource)
     const decoded = await Effect.runPromise(
-      program.effects.evaluateDevelopment(undefined, undefined as never, verifiedSource),
+      executeCandidateDevelopmentArtifactRuntime(
+        moduleUrl,
+        runtime.verifiedFiles,
+        runtime.strategyProtocol,
+        runtime.runtimeInput,
+      ),
     )
 
     expect(decoded.baseline.codeRevision).toBe(verifiedSource.sourceRevision)
@@ -6476,15 +6832,40 @@ runCandidateDevelopmentCommandMain(
     expect(decoded.accounting.stressedRunId).toBe(verifiedSource.stressedRunId)
   })
 
-  test('interrupts a real infinite-loop artifact worker promptly', async () => {
+  test('rejects dummy runtime reads when the returned evaluation keeps embedded provenance', async () => {
     const input = candidate20Input
+    const verifiedSource = successOf(bindCandidateDevelopmentVerifiedSource(candidate20VerifiedSourceFiles, input))
+    const report = reportFixture(0.01)
+    const baseEvaluation = commandEvaluationFixture(report, baselineFixture())
+    const embeddedSourceRevision = 'f'.repeat(40)
+    const embeddedBaselineRunId = 'e'.repeat(64)
+    const embeddedStressedRunId = 'd'.repeat(64)
+    const embeddedEvaluation = {
+      ...baseEvaluation,
+      baseline: {
+        ...baseEvaluation.baseline,
+        runId: embeddedBaselineRunId,
+        codeRevision: embeddedSourceRevision,
+      },
+      accounting: {
+        ...baseEvaluation.accounting,
+        runId: embeddedBaselineRunId,
+        stressedRunId: embeddedStressedRunId,
+      },
+    }
     const source = `
+      const embeddedEvaluation = ${JSON.stringify(embeddedEvaluation)}
       export const candidateDevelopmentArtifact = {
         schemaVersion: 'bayn.candidate-development-artifact.v1',
         input: ${JSON.stringify(input)},
         strategyProtocol: ${JSON.stringify(candidate20StrategyProtocol)},
         structuralBindings: ${JSON.stringify(candidate20StructuralBindings)},
-        buildEvaluation: () => { while (true) {} },
+        buildEvaluation: (runtimeInput) => {
+          void runtimeInput.sourceRevision
+          void runtimeInput.baselineRunId
+          void runtimeInput.stressedRunId
+          return embeddedEvaluation
+        },
       }
     `
     const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
@@ -6496,13 +6877,684 @@ runCandidateDevelopmentCommandMain(
         (loaded as { readonly candidateDevelopmentProgram?: unknown }).candidateDevelopmentProgram,
       ),
     )
+    expect(program.input).toEqual(candidate20Input)
+    const runtime = syntheticCandidate20Runtime(verifiedSource)
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        executeCandidateDevelopmentArtifactRuntime(
+          moduleUrl,
+          runtime.verifiedFiles,
+          runtime.strategyProtocol,
+          runtime.runtimeInput,
+        ),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      _tag: 'CandidateDevelopmentCommandProgramExecutionFailed',
+      cause: {
+        _tag: 'CandidateDevelopmentCommandMarkedEquityInvalid',
+        reason: 'binding-mismatch',
+        field: 'verifiedSource.codeRevision',
+        expected: verifiedSource.sourceRevision,
+        observed: embeddedSourceRevision,
+      },
+    })
+  })
+
+  test('loads content-verified runtime market data into an artifact without embedding bars', async () => {
+    const runtimeMarketData = fixtureMarketData
+    const verifiedSource = fixtureVerifiedSource
+    expect(
+      validateCandidateDevelopmentRuntimeMarketData(
+        runtimeMarketData,
+        verifiedSource,
+        fixtureStrategyProtocol,
+        fixtureRuntimePreflightInput,
+      ),
+    ).toEqual(Result.succeed(runtimeMarketData))
+    const firstBar = runtimeMarketData.bars[0]
+    if (firstBar === undefined) throw new Error('runtime market-data regression requires one bar')
+    const tamperedMarketData = {
+      ...runtimeMarketData,
+      bars: [{ ...firstBar, volume: firstBar.volume + 1 }, ...runtimeMarketData.bars.slice(1)],
+    }
+    expect(
+      validateCandidateDevelopmentRuntimeMarketData(
+        tamperedMarketData,
+        verifiedSource,
+        fixtureStrategyProtocol,
+        fixtureRuntimePreflightInput,
+      ),
+    ).toMatchObject({
+      failure: {
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-runtime-market-data',
+        cause: { field: 'runtimeMarketData.recomputedContentHash' },
+      },
+    })
+
+    const expectStructuralRejectionBeforeArtifact = async (
+      bars: readonly (typeof fixtureMarketBars)[number][],
+      expectedField?: string,
+    ): Promise<void> => {
+      const material = { ...fixtureMarketDataMaterial, bars }
+      const contentHash = canonicalHashV1(material)
+      const marketData = { ...material, contentHash }
+      const structuralVerifiedSource: CandidateDevelopmentVerifiedSource = {
+        ...verifiedSource,
+        sourceManifest: {
+          ...verifiedSource.sourceManifest,
+          marketData: { ...verifiedSource.sourceManifest.marketData, boundedContentHash: contentHash },
+        },
+      }
+      const structuralProtocol: CandidateDevelopmentStrategyProtocol = {
+        ...fixtureStrategyProtocol,
+        marketData: { ...fixtureStrategyProtocol.marketData, contentHash },
+      }
+      const failure = await Effect.runPromise(
+        Effect.flip(
+          executeCandidateDevelopmentArtifactRuntime(
+            'artifact-must-not-be-loaded',
+            fixtureVerifiedSourceFiles,
+            structuralProtocol,
+            {
+              ...structuralVerifiedSource,
+              runtimeDataSchemaVersion: 'bayn.candidate-development-artifact-runtime-input.v1',
+              preflightInput: fixtureRuntimePreflightInput,
+              marketData,
+            },
+          ),
+        ),
+      )
+      expect(failure).toMatchObject({
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-runtime-market-data',
+        ...(expectedField === undefined ? {} : { cause: { field: expectedField } }),
+      })
+    }
+    const secondBar = runtimeMarketData.bars[1]
+    if (secondBar === undefined) throw new Error('runtime market-data regression requires two bars')
+    await expectStructuralRejectionBeforeArtifact(
+      [firstBar, firstBar, ...runtimeMarketData.bars.slice(2)],
+      'runtimeMarketData.bars[1].symbol',
+    )
+    await expectStructuralRejectionBeforeArtifact(
+      [secondBar, firstBar, ...runtimeMarketData.bars.slice(2)],
+      'runtimeMarketData.bars[0].symbol',
+    )
+    await expectStructuralRejectionBeforeArtifact(
+      [{ ...firstBar, symbol: 'QQQ' as never }, ...runtimeMarketData.bars.slice(1)],
+      'runtimeMarketData.bars[0].symbol',
+    )
+    const barsPerSession = fixtureStrategyProtocol.universe.length
+    await expectStructuralRejectionBeforeArtifact(
+      runtimeMarketData.bars.slice(barsPerSession),
+      'runtimeMarketData.bars.length',
+    )
+    const finalSessionBars = runtimeMarketData.bars.slice(-barsPerSession)
+    await expectStructuralRejectionBeforeArtifact(
+      [...runtimeMarketData.bars, ...finalSessionBars],
+      'runtimeMarketData.bars.length',
+    )
+    await expectStructuralRejectionBeforeArtifact([
+      firstBar,
+      { ...secondBar, publicationSchemaVersion: 'signal.adjusted-daily-snapshot.v1' as never },
+      ...runtimeMarketData.bars.slice(2),
+    ])
+
+    const directory = await mkdtemp(join(import.meta.dir, '.candidate-development-runtime-data-'))
+    const marketDataPath = join(directory, 'market-data.json')
+    const processPath = join(directory, 'load-runtime-data.ts')
+    try {
+      await writeFile(marketDataPath, `${JSON.stringify(runtimeMarketData)}\n`)
+      const commandUrl = pathToFileURL(join(import.meta.dir, 'candidate-development-command.ts')).href
+      await writeFile(
+        processPath,
+        `import { Effect } from 'effect'
+         import { loadCandidateDevelopmentRuntimeMarketDataFile } from ${JSON.stringify(commandUrl)}
+         const verifiedSource = ${JSON.stringify(verifiedSource)}
+         const strategyProtocol = ${JSON.stringify(fixtureStrategyProtocol)}
+         const preflightInput = ${JSON.stringify(fixtureRuntimePreflightInput)}
+         const value = await Effect.runPromise(
+           loadCandidateDevelopmentRuntimeMarketDataFile(${JSON.stringify(marketDataPath)})(
+             verifiedSource,
+             strategyProtocol,
+             preflightInput,
+           ),
+         )
+         process.stdout.write(JSON.stringify({ contentHash: value.contentHash, barCount: value.bars.length }))
+        `,
+      )
+      const processResult = await execFileResultPromise(process.execPath, [processPath], import.meta.dir)
+      expect(processResult).toEqual({
+        exitCode: 0,
+        stdout: JSON.stringify({ contentHash: runtimeMarketData.contentHash, barCount: runtimeMarketData.bars.length }),
+        stderr: '',
+      })
+
+      const baseEvaluation = commandEvaluationFixture(reportFixture(0.01), baselineFixture())
+      const { marketData: _embeddedMarketData, ...evaluationWithoutMarketData } = baseEvaluation
+      const source = `
+        const evaluation = ${JSON.stringify(evaluationWithoutMarketData)}
+        export const candidateDevelopmentArtifact = {
+          schemaVersion: 'bayn.candidate-development-artifact.v1',
+          strategyProtocol: ${JSON.stringify(candidate20StrategyProtocol)},
+          structuralBindings: ${JSON.stringify(candidate20StructuralBindings)},
+          buildEvaluation: (runtimeInput) => ({
+            ...evaluation,
+            baseline: {
+              ...evaluation.baseline,
+              runId: runtimeInput.baselineRunId,
+              codeRevision: runtimeInput.sourceRevision,
+            },
+            accounting: {
+              ...evaluation.accounting,
+              runId: runtimeInput.baselineRunId,
+              stressedRunId: runtimeInput.stressedRunId,
+            },
+            marketData: runtimeInput.marketData,
+          }),
+        }
+      `
+      expect(source).not.toContain(JSON.stringify(firstBar))
+      const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
+      let runtimeLoads = 0
+      const loaded = await Effect.runPromise(
+        evaluateCandidateDevelopmentArtifact(moduleUrl, candidate20VerifiedSourceFiles, () => {
+          runtimeLoads += 1
+          return Effect.succeed(runtimeMarketData)
+        }),
+      )
+      const program = successOf(
+        validateCandidateDevelopmentExecutableProgram(
+          (loaded as { readonly candidateDevelopmentProgram?: unknown }).candidateDevelopmentProgram,
+        ),
+      )
+      expect(program.input).toEqual(candidate20Input)
+      expect(runtimeLoads).toBe(0)
+      expect(
+        await Effect.runPromise(
+          Effect.flip(program.effects.loadDevelopmentData(undefined as never, undefined as never)),
+        ),
+      ).toMatchObject({
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-runtime-market-data',
+        cause: {
+          field: 'runtimeMarketData.bars.length',
+          expected: candidate20Input.officialSessions.length * candidate20StrategyProtocol.universe.length,
+          observed: runtimeMarketData.bars.length,
+        },
+      })
+      expect(runtimeLoads).toBe(1)
+      const candidate20VerifiedSource = successOf(
+        bindCandidateDevelopmentVerifiedSource(candidate20VerifiedSourceFiles, candidate20Input),
+      )
+      const runtime = syntheticCandidate20Runtime(candidate20VerifiedSource)
+      const decoded = await Effect.runPromise(
+        executeCandidateDevelopmentArtifactRuntime(
+          moduleUrl,
+          runtime.verifiedFiles,
+          runtime.strategyProtocol,
+          runtime.runtimeInput,
+        ),
+      )
+      expect(decoded.marketData).toEqual(runtimeMarketData)
+      expect(decoded.baseline.codeRevision).toBe(candidate20VerifiedSource.sourceRevision)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+    expect(
+      await access(directory).then(
+        () => false,
+        () => true,
+      ),
+    ).toBe(true)
+  }, 60_000)
+
+  test('aborts an interrupted runtime market-data file read before artifact evaluation', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'bayn-candidate-runtime-read-abort-'))
+    const marketDataPath = join(directory, 'market-data.fifo')
+    const writerPath = join(directory, 'writer.mjs')
+    const readyPath = join(directory, 'writer-ready')
+    const resultPath = join(directory, 'writer-result')
+    const stopPath = join(directory, 'writer-stop')
+    let writer: ReturnType<typeof spawn> | undefined
+    let writerExited: Promise<{ readonly code: number | null; readonly stderr: string }> | undefined
+    let artifactEvaluationEntries = 0
+    const waitForPath = async (path: string, label: string): Promise<void> => {
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        try {
+          await access(path)
+          return
+        } catch {
+          await new Promise((resolveWait) => setTimeout(resolveWait, 10))
+        }
+      }
+      throw new Error(`${label} was not observed`)
+    }
+    try {
+      await execFilePromise('mkfifo', [marketDataPath], directory)
+      await writeFile(
+        writerPath,
+        `import { access, open, writeFile } from 'node:fs/promises'
+         const [marketDataPath, readyPath, resultPath, stopPath] = process.argv.slice(2)
+         const handle = await open(marketDataPath, 'w')
+         let writes = 0
+         try {
+           await writeFile(readyPath, 'ready')
+           const chunk = Buffer.alloc(4096, 0x20)
+           while (true) {
+             try {
+               await access(stopPath)
+               await writeFile(resultPath, \`completed:\${writes}\`)
+               break
+             } catch {}
+             await handle.write(chunk)
+             writes += 1
+             await new Promise((resolveWait) => setTimeout(resolveWait, 1))
+           }
+         } catch (cause) {
+           const code = typeof cause === 'object' && cause !== null && 'code' in cause ? String(cause.code) : 'unknown'
+           await writeFile(resultPath, \`aborted:\${code}:\${writes}\`)
+         } finally {
+           await handle.close().catch(() => undefined)
+         }
+        `,
+      )
+      const fiber = Effect.runFork(
+        loadCandidateDevelopmentRuntimeMarketDataFile(marketDataPath)(
+          fixtureVerifiedSource,
+          fixtureStrategyProtocol,
+          fixtureRuntimePreflightInput,
+        ).pipe(
+          Effect.flatMap(() =>
+            Effect.sync(() => {
+              artifactEvaluationEntries += 1
+            }),
+          ),
+        ),
+      )
+      writer = spawn(process.execPath, [writerPath, marketDataPath, readyPath, resultPath, stopPath], {
+        cwd: import.meta.dir,
+        stdio: ['ignore', 'ignore', 'pipe'],
+      })
+      writerExited = new Promise((resolveExit, rejectExit) => {
+        let stderr = ''
+        writer?.stderr?.setEncoding('utf8')
+        writer?.stderr?.on('data', (chunk: string) => {
+          stderr += chunk
+        })
+        writer?.once('error', rejectExit)
+        writer?.once('exit', (code) => resolveExit({ code, stderr }))
+      })
+      await waitForPath(readyPath, 'runtime market-data writer readiness')
+      await Effect.runPromise(Fiber.interrupt(fiber).pipe(Effect.timeout('1 second')))
+      await waitForPath(resultPath, 'runtime market-data read cancellation')
+      expect(await readFile(resultPath, 'utf8')).toMatch(/^aborted:EPIPE:\d+$/)
+      expect(artifactEvaluationEntries).toBe(0)
+      expect(await writerExited).toEqual({ code: 0, stderr: '' })
+    } finally {
+      await writeFile(stopPath, 'stop').catch(() => undefined)
+      if (writer !== undefined && writer.exitCode === null && writer.signalCode === null) writer.kill('SIGKILL')
+      await writerExited?.catch(() => undefined)
+      await rm(directory, { recursive: true, force: true })
+    }
+  }, 10_000)
+
+  test('rescans regex payloads after closed control-flow headers', async () => {
+    const embeddedBars = [
+      { sessionDate: '2026-01-02', open: 100, high: 101, low: 99, close: 100.5, volume: 1_000 },
+      { sessionDate: '2026-01-05', open: 101, high: 102, low: 100, close: 101.5, volume: 1_001 },
+    ]
+    const payloadBits = Array.from(Buffer.from(JSON.stringify(embeddedBars), 'utf8'), (byte) =>
+      byte.toString(2).padStart(8, '0'),
+    ).join('')
+    const whitespacePayload = Array.from(payloadBits, (bit) => (bit === '0' ? ' ' : '\t')).join('')
+    const exploitSource = `let encoded = ''
+      Object.defineProperty(RegExp.prototype, 'capture', {
+        get() { encoded = this.source; return true },
+      })
+      if ((true)) /${whitespacePayload}/.capture
+      const bits = Array.from(encoded, (value) =>
+        value === ' ' ? '0' : value.charCodeAt(0) === 92 ? '1' : ''
+      ).join('')
+      let decoded = ''
+      for (let index = 0; index < bits.length; index += 8) {
+        decoded += String.fromCharCode(Number.parseInt(bits.slice(index, index + 8), 2))
+      }
+      export const embeddedBars = JSON.parse(decoded)
+    `
+    const directory = await mkdtemp(join(tmpdir(), 'bayn-candidate-control-flow-regex-'))
+    const executablePath = join(directory, 'candidate.mjs')
+    try {
+      await writeFile(executablePath, exploitSource)
+      const executed = (await import(pathToFileURL(executablePath).href)) as { readonly embeddedBars: unknown }
+      expect(executed.embeddedBars).toEqual(embeddedBars)
+      expect(validateCandidateDevelopmentModuleSource(exploitSource, 'candidate/control-flow-regex.mjs')).toMatchObject(
+        {
+          failure: {
+            _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+            operation: 'verify-module-format',
+            cause: {
+              literalPayload: {
+                regularExpressionLiteralLengths: [payloadBits.length],
+              },
+            },
+          },
+        },
+      )
+      const control = `if ((true)) /SPY|DBC/.test('SPY')
+        while (false) /unused/.test('unused')
+        const methods = { if() { return 4 } }
+        export const ok = methods.if() / 2 === 2
+      `
+      expect(validateCandidateDevelopmentModuleSource(control, 'candidate/control-flow-regex-control.mjs')).toEqual(
+        Result.succeed(undefined),
+      )
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('derives regex payloads after every parsed statement block without reclassifying division', async () => {
+    const embeddedBars = [
+      { sessionDate: '2026-01-02', open: 100, high: 101, low: 99, close: 100.5, volume: 1_000 },
+      { sessionDate: '2026-01-05', open: 101, high: 102, low: 100, close: 101.5, volume: 1_001 },
+    ]
+    const payloadBits = Array.from(Buffer.from(JSON.stringify(embeddedBars), 'utf8'), (byte) =>
+      byte.toString(2).padStart(8, '0'),
+    ).join('')
+    const whitespacePayload = Array.from(payloadBits, (bit) => (bit === '0' ? ' ' : '\t')).join('')
+    const exploitSource = `let encoded = ''
+      Object.defineProperty(RegExp.prototype, 'captureBlock', {
+        get() { encoded = this.source; return true },
+      })
+      if (true) {} /${whitespacePayload}/.captureBlock
+      const bits = Array.from(encoded, (value) =>
+        value === ' ' ? '0' : value.charCodeAt(0) === 92 ? '1' : ''
+      ).join('')
+      let decoded = ''
+      for (let index = 0; index < bits.length; index += 8) {
+        decoded += String.fromCharCode(Number.parseInt(bits.slice(index, index + 8), 2))
+      }
+      process.stdout.write(JSON.stringify(JSON.parse(decoded)))
+    `
+    const directory = await mkdtemp(join(tmpdir(), 'bayn-candidate-post-block-regex-'))
+    const executablePath = join(directory, 'candidate.mjs')
+    try {
+      await writeFile(executablePath, exploitSource)
+      expect(await execFileResultPromise(process.execPath, [executablePath], directory)).toEqual({
+        exitCode: 0,
+        stdout: JSON.stringify(embeddedBars),
+        stderr: '',
+      })
+      expect(validateCandidateDevelopmentModuleSource(exploitSource, 'candidate/post-block-regex.mjs')).toMatchObject({
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-module-format',
+          cause: {
+            literalPayload: {
+              regularExpressionLiteralLengths: expect.arrayContaining([payloadBits.length]),
+            },
+          },
+        },
+      })
+      const control = `
+        if (true) {} /SPY|DBC/.test('SPY')
+        label: {} /EFA/.test('EFA')
+        function declared() {} /IEF/.test('IEF')
+        class Declared {} /VNQ/.test('VNQ')
+        const objectValue = ({ value: 8 }).value / 2
+        const objectLiteralDivision = ({ value: 8 }) / 2
+        export const ok = declared !== undefined && Declared !== undefined && objectValue === 4 && Number.isNaN(objectLiteralDivision)
+      `
+      expect(validateCandidateDevelopmentModuleSource(control, 'candidate/post-block-regex-control.mjs')).toEqual(
+        Result.succeed(undefined),
+      )
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('bounds exempt immutable decimal scalars to a canonical U128 representation', async () => {
+    const embeddedBars = [
+      { sessionDate: '2026-01-02', open: 100, high: 101, low: 99, close: 100.5, volume: 1_000 },
+      { sessionDate: '2026-01-05', open: 101, high: 102, low: 100, close: 101.5, volume: 1_001 },
+    ]
+    const decimalPayload = BigInt(`0x${Buffer.from(JSON.stringify(embeddedBars), 'utf8').toString('hex')}`).toString()
+    const exploitSource = `
+      export const candidateDevelopmentArtifact = {
+        strategyProtocol: { initialCapitalMicros: '${decimalPayload}' },
+        buildEvaluation: () => {
+          const hex = BigInt(candidateDevelopmentArtifact.strategyProtocol.initialCapitalMicros).toString(16)
+          return JSON.parse(Buffer.from(hex.length % 2 === 0 ? hex : '0' + hex, 'hex').toString('utf8'))
+        },
+      }
+      export const embeddedBars = candidateDevelopmentArtifact.buildEvaluation()
+    `
+    const directory = await mkdtemp(join(tmpdir(), 'bayn-candidate-immutable-decimal-payload-'))
+    const executablePath = join(directory, 'candidate.mjs')
+    try {
+      await writeFile(executablePath, exploitSource)
+      const executed = (await import(pathToFileURL(executablePath).href)) as { readonly embeddedBars: unknown }
+      expect(executed.embeddedBars).toEqual(embeddedBars)
+      expect(
+        validateCandidateDevelopmentModuleSource(exploitSource, 'candidate/immutable-decimal-payload.mjs'),
+      ).toMatchObject({
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-module-format',
+          cause: {
+            literalPayload: {
+              outOfRangeImmutableDecimalScalars: [
+                {
+                  path: 'strategyProtocol.initialCapitalMicros',
+                  length: decimalPayload.length,
+                  maximumLength: 39,
+                  exceedsMaximumValue: true,
+                },
+              ],
+            },
+          },
+        },
+      })
+      const boundedControl = `export const candidateDevelopmentArtifact = {
+        strategyProtocol: { initialCapitalMicros: '340282366920938463463374607431768211455' },
+        buildEvaluation: () => null,
+      }\n`
+      expect(
+        validateCandidateDevelopmentModuleSource(boundedControl, 'candidate/immutable-decimal-control.mjs'),
+      ).toEqual(Result.succeed(undefined))
+      const overMaximumControl = boundedControl.replace(
+        '340282366920938463463374607431768211455',
+        '340282366920938463463374607431768211456',
+      )
+      expect(
+        validateCandidateDevelopmentModuleSource(overMaximumControl, 'candidate/immutable-decimal-over-maximum.mjs'),
+      ).toMatchObject({
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-module-format',
+          cause: {
+            literalPayload: {
+              outOfRangeImmutableDecimalScalars: [
+                {
+                  path: 'strategyProtocol.initialCapitalMicros',
+                  length: 39,
+                  maximumLength: 39,
+                  exceedsMaximumValue: true,
+                },
+              ],
+            },
+          },
+        },
+      })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+    expect(
+      await access(directory).then(
+        () => false,
+        () => true,
+      ),
+    ).toBe(true)
+  })
+
+  test('rejects punctuation-only call payloads and bounds executable syntax and arguments', async () => {
+    const embeddedBars = [
+      { sessionDate: '2026-01-02', open: 100, high: 101, low: 99, close: 100.5, volume: 1_000 },
+      { sessionDate: '2026-01-05', open: 101, high: 102, low: 100, close: 101.5, volume: 1_001 },
+    ]
+    const serializedBars = JSON.stringify(embeddedBars)
+    const payloadBits = Array.from(Buffer.from(serializedBars, 'utf8'), (byte) =>
+      byte.toString(2).padStart(8, '0'),
+    ).join('')
+    const callArguments = Array.from(payloadBits, (bit) => (bit === '0' ? '[]' : '{}')).join(',')
+    const exploitSource = `const decode = (...values) => JSON.parse(values.reduce(
+      (text, _, offset) => offset % 8 === 0
+        ? text + String.fromCharCode(values.slice(offset, offset + 8).reduce(
+            (byte, value) => byte * 2 + (Array.isArray(value) ? 0 : 1),
+            0,
+          ))
+        : text,
+      '',
+    ))
+    export const embeddedBars = decode(${callArguments})
+    `
+    const directory = await mkdtemp(join(tmpdir(), 'bayn-candidate-call-argument-payload-'))
+    const executablePath = join(directory, 'candidate.mjs')
+    try {
+      await writeFile(executablePath, exploitSource)
+      const executed = (await import(pathToFileURL(executablePath).href)) as { readonly embeddedBars: unknown }
+      expect(executed.embeddedBars).toEqual(embeddedBars)
+
+      expect(
+        validateCandidateDevelopmentModuleSource(exploitSource, 'candidate/call-argument-payload.mjs'),
+      ).toMatchObject({
+        failure: {
+          _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+          operation: 'verify-module-format',
+          cause: {
+            literalPayload: {
+              executableKeywordOperatorCount: 0,
+              largestParenthesizedArgumentList: payloadBits.length,
+            },
+          },
+        },
+      })
+
+      const punctuationBudgetSource = `export const payload = ${'('.repeat(257)}{}${')'.repeat(257)}\n`
+      expect(
+        validateCandidateDevelopmentModuleSource(punctuationBudgetSource, 'candidate/punctuation-budget.mjs'),
+      ).toMatchObject({
+        failure: {
+          cause: {
+            literalPayload: {
+              executablePunctuationCount: 517,
+              parenthesizedArgumentListCount: 0,
+            },
+          },
+        },
+      })
+
+      const keywordOperatorExpressions = Array.from({ length: 33 }, (_, index) =>
+        index % 2 === 0 ? 'void []' : 'typeof {}',
+      ).join('\n')
+      const keywordOperatorBudgetSource = `${keywordOperatorExpressions}\nexport const operatorControl = true\n`
+      expect(
+        validateCandidateDevelopmentModuleSource(keywordOperatorBudgetSource, 'candidate/keyword-operator-budget.mjs'),
+      ).toMatchObject({
+        failure: {
+          cause: {
+            literalPayload: {
+              executableKeywordOperatorCount: 33,
+              executableKeywordOperatorBytes: 164,
+            },
+          },
+        },
+      })
+
+      const newArgumentBudgetSource = `export const payload = new Array(${Array.from({ length: 33 }, () => '{}').join(',')})\n`
+      expect(
+        validateCandidateDevelopmentModuleSource(newArgumentBudgetSource, 'candidate/new-argument-budget.mjs'),
+      ).toMatchObject({
+        failure: {
+          cause: {
+            literalPayload: {
+              parenthesizedArgumentCount: 33,
+              largestParenthesizedArgumentList: 33,
+            },
+          },
+        },
+      })
+
+      const conciseControl = `const pair = (left, right) => [left, right]
+      const values = pair([], {})
+      const wrapped = new Array(values[0], values[1])
+      const disposable = { value: 1 }
+      const removed = delete disposable.value
+      export const control =
+        typeof values === 'object' &&
+        void 0 === undefined &&
+        'length' in values &&
+        values instanceof Array &&
+        wrapped.length === 2 &&
+        removed
+      `
+      expect(
+        validateCandidateDevelopmentModuleSource(conciseControl, 'candidate/executable-syntax-control.mjs'),
+      ).toEqual(Result.succeed(undefined))
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+    expect(
+      await access(directory).then(
+        () => false,
+        () => true,
+      ),
+    ).toBe(true)
+  })
+
+  test('interrupts a real infinite-loop artifact worker promptly', async () => {
+    const input = candidate20Input
+    const source = `
+      export const candidateDevelopmentArtifact = {
+        schemaVersion: 'bayn.candidate-development-artifact.v1',
+        input: ${JSON.stringify(input)},
+        strategyProtocol: ${JSON.stringify(candidate20StrategyProtocol)},
+        structuralBindings: ${JSON.stringify(candidate20StructuralBindings)},
+        buildEvaluation: (verifiedSource) => {
+          if (
+            verifiedSource.sourceRevision === '' ||
+            verifiedSource.baselineRunId === '' ||
+            verifiedSource.stressedRunId === ''
+          ) return {}
+          while (true) {}
+        },
+      }
+    `
+    const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
+    const loaded = await Effect.runPromise(
+      evaluateCandidateDevelopmentArtifact(moduleUrl, candidate20VerifiedSourceFiles),
+    )
+    const program = successOf(
+      validateCandidateDevelopmentExecutableProgram(
+        (loaded as { readonly candidateDevelopmentProgram?: unknown }).candidateDevelopmentProgram,
+      ),
+    )
+    expect(program.input).toEqual(candidate20Input)
     const verifiedSource = successOf(bindCandidateDevelopmentVerifiedSource(candidate20VerifiedSourceFiles, input))
+    const runtime = syntheticCandidate20Runtime(verifiedSource)
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const fiber = yield* program.effects
-          .evaluateDevelopment(undefined, undefined as never, verifiedSource)
-          .pipe(Effect.forkChild)
+        const fiber = yield* executeCandidateDevelopmentArtifactRuntime(
+          moduleUrl,
+          runtime.verifiedFiles,
+          runtime.strategyProtocol,
+          runtime.runtimeInput,
+        ).pipe(Effect.forkChild)
         yield* Effect.sleep('50 millis')
         yield* Fiber.interrupt(fiber).pipe(Effect.timeout('1 second'))
       }),

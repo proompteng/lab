@@ -246,7 +246,7 @@ describe('Candidate 17 preregistration', () => {
       nextCandidatePreregistration: null,
     })
     expect(frozenCandidateDevelopmentTrialHistory.developmentCandidateOrdinals).toEqual([17, 18, 19])
-    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toEqual(candidate20Preregistration)
+    expect(frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration).toBeNull()
   })
 
   test('keeps future observations out of the causal signal and preserves the financing reserve', () => {
