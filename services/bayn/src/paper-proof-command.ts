@@ -44,7 +44,7 @@ export const runPaperProofCommand = (
     const operation = malformedOperation(input)
     return !hasPaperProofMutationAuthority(dependencies.runtime)
       ? Effect.fail(failure)
-      : containMalformedPaperProofCommand(operation ?? 'GATE', dependencies, failure)
+      : containMalformedPaperProofCommand(operation ?? 'GATE', dependencies.containment, failure)
   }
   const envelope: PaperProofCliEnvelope = decoded.success
   return runPaperProof(envelope.command, {

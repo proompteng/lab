@@ -13,8 +13,13 @@ import { paperProofCommandEntryGate, runPaperProofCommand } from '../paper-proof
 import {
   protectedEntryToken,
   runPaperProof,
+  runPaperProofPrepare,
   type PaperProofCommand,
+  type PaperProofCancelDependencies,
   type PaperProofDependencies,
+  type PaperProofPrepareDependencies,
+  type PaperProofRecoverDependencies,
+  type PaperProofSubmitDependencies,
   type PaperProofIntentSnapshot,
   type PaperProofRecoveryCompletion,
   type PaperProofRecoveryRequired,
@@ -63,7 +68,9 @@ const runtime = (mutation: boolean): PaperProofRuntimeBinding => ({
   strategy,
 })
 
-const command = (operation: PaperProofCommand['operation']): PaperProofCommand => ({
+const command = <Operation extends PaperProofCommand['operation']>(
+  operation: Operation,
+): Omit<PaperProofCommand, 'operation'> & { readonly operation: Operation } => ({
   schemaVersion: 'bayn.paper-proof-command.v1',
   operation,
   timeoutMs: 1_000,
@@ -232,6 +239,23 @@ const sameMutationEvent = (left: MutationEvent, right: MutationEvent): boolean =
   left.responseContentHash === right.responseContentHash &&
   left.occurredAt === right.occurredAt
 
+type PaperProofFixtureCapabilities = Pick<PaperProofDependencies, 'sourcePlan' | 'runtime' | 'protectedEntryToken'> & {
+  readonly prepareCapitalGrant: PaperProofDependencies['prepare']['prepareCapitalGrant']
+  readonly activateCapitalGrant: PaperProofDependencies['submit']['activateCapitalGrant']
+  readonly restrictAuthority: PaperProofDependencies['containment']['restrictAuthority']
+  readonly recovery: PaperProofDependencies['recover']['recovery']
+  readonly mutations: PaperProofDependencies['recover']['mutations']
+  readonly execution: {
+    readonly submit: PaperProofDependencies['submit']['execution']['submit']
+    readonly cancel: PaperProofDependencies['cancel']['execution']['cancel']
+    readonly recover: (intentId: string, operation: MutationOperation) => Effect.Effect<MutationEvent, Error>
+  }
+  readonly prepareIntent: PaperProofDependencies['submit']['prepareIntent']
+  readonly readIntent: PaperProofDependencies['cancel']['readIntent']
+  readonly reconcile: PaperProofDependencies['containment']['reconcile']
+  readonly currentUtcInstant: PaperProofDependencies['containment']['currentUtcInstant']
+}
+
 const fixture = (options: FixtureOptions) => {
   const sequence: string[] = []
   const recoveryState = options.recoveryState ?? {}
@@ -259,7 +283,7 @@ const fixture = (options: FixtureOptions) => {
     recoveryComplete: 0,
     clock: 0,
   }
-  const dependencies: PaperProofDependencies = {
+  const capabilities: PaperProofFixtureCapabilities = {
     sourcePlan,
     runtime: runtime(options.operation !== 'PREPARE'),
     protectedEntryToken: protectedEntryToken(sourcePlan),
@@ -436,6 +460,59 @@ const fixture = (options: FixtureOptions) => {
         : Effect.succeed('2026-07-31T08:00:01.000Z')
     }),
   }
+  const dependencies: PaperProofDependencies = {
+    sourcePlan: capabilities.sourcePlan,
+    runtime: capabilities.runtime,
+    protectedEntryToken: capabilities.protectedEntryToken,
+    containment: {
+      accountId,
+      restrictAuthority: capabilities.restrictAuthority,
+      reconcile: capabilities.reconcile,
+      currentUtcInstant: capabilities.currentUtcInstant,
+    },
+    prepare: {
+      prepareCapitalGrant: capabilities.prepareCapitalGrant,
+      reconcile: capabilities.reconcile,
+      currentUtcInstant: capabilities.currentUtcInstant,
+    },
+    submit: {
+      activateCapitalGrant: capabilities.activateCapitalGrant,
+      recovery: capabilities.recovery,
+      mutations: capabilities.mutations,
+      execution: {
+        submit: capabilities.execution.submit,
+        recover: (value) => capabilities.execution.recover(value, MutationOperation.Submit),
+      },
+      prepareIntent: capabilities.prepareIntent,
+      reconcile: capabilities.reconcile,
+      restrictAuthority: capabilities.restrictAuthority,
+      currentUtcInstant: capabilities.currentUtcInstant,
+    },
+    cancel: {
+      recovery: capabilities.recovery,
+      mutations: capabilities.mutations,
+      execution: {
+        cancel: capabilities.execution.cancel,
+        recover: (value) => capabilities.execution.recover(value, MutationOperation.Cancel),
+      },
+      readIntent: capabilities.readIntent,
+      reconcile: capabilities.reconcile,
+      restrictAuthority: capabilities.restrictAuthority,
+      currentUtcInstant: capabilities.currentUtcInstant,
+    },
+    recover: {
+      recovery: capabilities.recovery,
+      mutations: capabilities.mutations,
+      execution: {
+        recoverSubmit: (value) => capabilities.execution.recover(value, MutationOperation.Submit),
+        recoverCancel: (value) => capabilities.execution.recover(value, MutationOperation.Cancel),
+      },
+      readIntent: capabilities.readIntent,
+      reconcile: capabilities.reconcile,
+      restrictAuthority: capabilities.restrictAuthority,
+      currentUtcInstant: capabilities.currentUtcInstant,
+    },
+  }
   return { calls, dependencies, mutationState, recoveryState, sequence }
 }
 
@@ -456,6 +533,55 @@ const runWithTestClock = <A, E>(effect: Effect.Effect<A, E>, advanceMs: number):
   )
 
 describe('bounded PAPER proof command', () => {
+  test('operation programs expose only their permitted capabilities', async () => {
+    const { dependencies } = fixture({ operation: 'PREPARE' })
+    const prepare: PaperProofPrepareDependencies = dependencies.prepare
+    const submit: PaperProofSubmitDependencies = dependencies.submit
+    const cancel: PaperProofCancelDependencies = dependencies.cancel
+    const recover: PaperProofRecoverDependencies = dependencies.recover
+
+    // @ts-expect-error PREPARE cannot activate capital or access mutation execution.
+    void prepare.activateCapitalGrant
+    // @ts-expect-error PREPARE cannot read or write recovery state.
+    void prepare.recovery
+    // @ts-expect-error SUBMIT cannot issue cancellation broker I/O.
+    void submit.execution.cancel
+    // @ts-expect-error SUBMIT cannot read durable intent state.
+    void submit.readIntent
+    // @ts-expect-error CANCEL cannot activate capital.
+    void cancel.activateCapitalGrant
+    // @ts-expect-error CANCEL cannot issue submission broker I/O.
+    void cancel.execution.submit
+    // @ts-expect-error RECOVER cannot issue a broker POST.
+    void recover.execution.submit
+    // @ts-expect-error RECOVER cannot issue a broker DELETE.
+    void recover.execution.cancel
+    // @ts-expect-error RECOVER cannot prepare a new intent.
+    void recover.prepareIntent
+    // @ts-expect-error PREPARE cannot be invoked with a mutation command.
+    void runPaperProofPrepare({ command: command('SUBMIT'), sourcePlan }, prepare)
+
+    const receipt = await Effect.runPromise(runPaperProofPrepare({ command: command('PREPARE'), sourcePlan }, prepare))
+    expect(receipt.operation).toBe('PREPARE')
+  })
+
+  test('mutation program failures remain contained at the composition boundary', async () => {
+    const cases = [
+      { operation: 'SUBMIT' as const, options: { failRecoveryLoad: true } },
+      { operation: 'CANCEL' as const, options: {} },
+      { operation: 'RECOVER' as const, options: { recoveryState: { required: recoveryRequired('SUBMIT') } } },
+    ]
+
+    for (const entryCase of cases) {
+      const { calls, dependencies } = fixture({ operation: entryCase.operation, ...entryCase.options })
+      const exit = await Effect.runPromiseExit(runPaperProof(command(entryCase.operation), dependencies))
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      expect(calls.restrict).toBeGreaterThanOrEqual(1)
+      expect(calls.reconcile).toBeGreaterThanOrEqual(1)
+    }
+  })
+
   test('PREPARE reconciles and derives a generation without mutation services', async () => {
     const { calls, dependencies } = fixture({ operation: 'PREPARE' })
     const receipt = await Effect.runPromise(runPaperProof(command('PREPARE'), dependencies))

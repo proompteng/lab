@@ -6,7 +6,7 @@ import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import type { PaperProofCommand, PaperProofRuntimeBinding, PaperProofSourcePlan } from './model'
 import { PaperProofError, protectedEntryToken } from './model'
 
-const containmentIoCount = 3
+export const paperProofContainmentIoCount = 3
 
 const mismatch = (message: string): Result.Result<never, PaperProofError> =>
   Result.fail(
@@ -32,7 +32,7 @@ export const validatePaperProofEntry = (
   runtime: PaperProofRuntimeBinding,
   entryToken: string,
 ): Result.Result<void, PaperProofError> => {
-  const containmentReservationMs = command.containmentIoTimeoutMs * containmentIoCount
+  const containmentReservationMs = command.containmentIoTimeoutMs * paperProofContainmentIoCount
   if (command.timeoutMs <= containmentReservationMs) {
     return mismatch('paper proof timeout must reserve three separately bounded containment I/O windows')
   }
