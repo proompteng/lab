@@ -495,7 +495,8 @@ const remediationHistoryFixture = (): {
   const record = structuredClone(realRemediationRecord)
   if (
     record.schemaVersion === 'bayn.release-review-remediation.v4' ||
-    record.schemaVersion === 'bayn.release-review-remediation.v5'
+    record.schemaVersion === 'bayn.release-review-remediation.v5' ||
+    record.schemaVersion === 'bayn.release-review-remediation.v6'
   ) {
     throw new Error('expected a legacy remediation record')
   }
@@ -1723,9 +1724,19 @@ const continuousRemediationFixture = (): {
   readonly snapshot: BaynReleaseEligibilitySnapshot
   readonly evidence: BaynReleaseReviewRemediationEvidence
 } => {
-  const record = structuredClone(realContinuousRemediationRecord)
+  const currentRecord = structuredClone(realContinuousRemediationRecord)
+  if (currentRecord.schemaVersion !== 'bayn.release-review-remediation.v6') {
+    throw new Error('expected a v6 continuous-source remediation record')
+  }
+  const record = parseBaynReleaseReviewRemediationRecord({
+    schemaVersion: 'bayn.release-review-remediation.v5',
+    remediationId: currentRecord.remediationId,
+    blocked: currentRecord.blocked,
+    requiredDescendants: [],
+    introduction: currentRecord.introduction,
+  })
   if (record.schemaVersion !== 'bayn.release-review-remediation.v5') {
-    throw new Error('expected a v5 continuous-source remediation record')
+    throw new Error('failed to derive the v5 continuous-source fixture')
   }
   const blockedPull: PullRequestReviewState = {
     number: 13426,
@@ -1996,10 +2007,199 @@ const evaluateContinuousRemediationFixture = (
     pushBeforeSha: continuousHistory.introductionMerge,
   })
 
+const successorBoundHistory = {
+  updateHead: '4'.repeat(40),
+  updateMerge: '9'.repeat(40),
+} as const
+const successorBoundNowMs = Date.parse('2026-08-01T09:02:00Z')
+
+const successorBoundContinuousRemediationFixture = (): {
+  readonly snapshot: BaynReleaseEligibilitySnapshot
+  readonly evidence: BaynReleaseReviewRemediationEvidence
+} => {
+  const fixture = continuousRemediationFixture()
+  const comparison = fixture.snapshot.comparison
+  if (comparison === null || comparison.status !== 'ahead') throw new Error('missing continuous-source comparison')
+  const record = structuredClone(realContinuousRemediationRecord)
+  if (record.schemaVersion !== 'bayn.release-review-remediation.v6') {
+    throw new Error('expected a v6 continuous-source remediation record')
+  }
+
+  const blockedCommit = comparison.commits.find((commit) => commit.sha === record.blocked.mergeCommitSha)
+  const blockedPull = blockedCommit?.reviewSnapshot?.pullRequest
+  if (blockedPull === null || blockedPull === undefined) throw new Error('missing blocked source pull request')
+  ;(record.blocked as unknown as { sourcePullRequestEvidenceSha256: string }).sourcePullRequestEvidenceSha256 =
+    pullRequestReviewEvidenceSha256(blockedPull)
+
+  const successor = record.requiredSuccessors[0]
+  const successorReviewSnapshot = reviewSnapshotFor({
+    commitSha: successor.mergeCommitSha,
+    prNumber: successor.sourcePullRequestNumber,
+    headSha: successor.finalHeadSha,
+    parents: [successor.mergeParentSha],
+    mergedAt: '2026-07-31T21:12:49Z',
+    reviews: [
+      review({
+        commitSha: successor.finalHeadSha,
+        submittedAt: '2026-07-31T21:11:02Z',
+      }),
+    ],
+  })
+  const successorPull = successorReviewSnapshot.pullRequest
+  if (successorPull === null) throw new Error('missing successor pull request')
+  ;(successor as unknown as { sourcePullRequestEvidenceSha256: string }).sourcePullRequestEvidenceSha256 =
+    pullRequestReviewEvidenceSha256(successorPull)
+  const successorCommit = {
+    sha: successor.mergeCommitSha,
+    parents: [successor.mergeParentSha],
+    treeSha: successor.mergeTreeSha,
+    files: successor.affectedPaths.map((path) => path.path),
+    fileChanges: successor.affectedPaths.map((path) => ({ ...path })),
+    reviewSnapshot: successorReviewSnapshot,
+  }
+
+  const completion = record.completion
+  const completionReviewSnapshot = reviewSnapshotFor({
+    commitSha: completion.mergeCommitSha,
+    prNumber: completion.sourcePullRequestNumber,
+    headSha: completion.finalHeadSha,
+    parents: [completion.mergeParentSha],
+    mergedAt: '2026-08-01T08:31:00Z',
+    reviews: [
+      review({
+        commitSha: completion.finalHeadSha,
+        submittedAt: '2026-08-01T08:30:00Z',
+      }),
+    ],
+  })
+  const completionPull = completionReviewSnapshot.pullRequest
+  if (completionPull === null) throw new Error('missing completion pull request')
+  ;(completion as unknown as { sourcePullRequestEvidenceSha256: string }).sourcePullRequestEvidenceSha256 =
+    pullRequestReviewEvidenceSha256(completionPull)
+  const completionCommit = {
+    sha: completion.mergeCommitSha,
+    parents: [completion.mergeParentSha],
+    treeSha: completion.mergeTreeSha,
+    files: completion.affectedPaths.map((path) => path.path),
+    fileChanges: completion.affectedPaths.map((path) => ({ ...path })),
+    reviewSnapshot: completionReviewSnapshot,
+  }
+
+  const currentRecordBlobSha = '8'.repeat(40)
+  const updateChanges = [
+    {
+      path: 'packages/scripts/src/bayn/verify-release-review.test.ts',
+      previousPath: null,
+      status: 'modified',
+      blobSha: '1'.repeat(40),
+    },
+    {
+      path: 'packages/scripts/src/bayn/verify-release-review.ts',
+      previousPath: null,
+      status: 'modified',
+      blobSha: '2'.repeat(40),
+    },
+    {
+      path: continuousRemediationRecordPath,
+      previousPath: null,
+      status: 'modified',
+      blobSha: currentRecordBlobSha,
+    },
+  ] as const
+  const updateCommit = {
+    sha: successorBoundHistory.updateMerge,
+    parents: [completion.mergeCommitSha],
+    treeSha: '3'.repeat(40),
+    files: updateChanges.map((path) => path.path),
+    fileChanges: updateChanges,
+    reviewSnapshot: reviewSnapshotFor({
+      commitSha: successorBoundHistory.updateMerge,
+      prNumber: 13446,
+      headSha: successorBoundHistory.updateHead,
+      parents: [completion.mergeCommitSha],
+      mergedAt: '2026-08-01T09:01:00Z',
+      reviews: [
+        review({
+          commitSha: successorBoundHistory.updateHead,
+          submittedAt: '2026-08-01T09:00:00Z',
+        }),
+      ],
+    }),
+  }
+
+  const commits = comparison.commits
+    .map((commit) => {
+      if (commit.sha === successor.mergeCommitSha) return successorCommit
+      if (commit.sha === continuousHistory.completionMerge) return completionCommit
+      return commit
+    })
+    .concat(updateCommit)
+  const expectedCurrentBlobs = new Map(record.blocked.affectedPaths.map((path) => [path.path, path.blobSha] as const))
+  for (const transition of successor.protectedPathTransitions) {
+    expectedCurrentBlobs.set(transition.path, transition.afterBlobSha)
+  }
+  const evidence: BaynReleaseReviewRemediationEvidence = {
+    recordPath: continuousRemediationRecordPath,
+    recordBlobSha: currentRecordBlobSha,
+    record,
+    referencedCommits: [
+      fixture.evidence.referencedCommits[0]!,
+      {
+        sha: successor.finalHeadSha,
+        parents: [successor.finalHeadParentSha],
+        treeSha: successor.finalHeadTreeSha,
+        files: successor.affectedPaths.map((path) => path.path),
+        fileChanges: successor.affectedPaths.map((path) => ({ ...path })),
+        pathBlobs: successor.affectedPaths.map((path) => ({ path: path.path, blobSha: path.blobSha })),
+      },
+      fixture.evidence.referencedCommits[1]!,
+      {
+        sha: completion.finalHeadSha,
+        parents: [completion.finalHeadParentSha],
+        treeSha: completion.finalHeadTreeSha,
+        files: completion.affectedPaths.map((path) => path.path),
+        fileChanges: completion.affectedPaths.map((path) => ({ ...path })),
+        pathBlobs: completion.affectedPaths.map((path) => ({ path: path.path, blobSha: path.blobSha })),
+      },
+    ],
+    currentPathBlobs: [...expectedCurrentBlobs].map(([path, blobSha]) => ({ path, blobSha })),
+  }
+  return {
+    evidence,
+    snapshot: {
+      ...fixture.snapshot,
+      currentCommitParents: [completion.mergeCommitSha],
+      comparison: {
+        ...comparison,
+        headSha: successorBoundHistory.updateMerge,
+        aheadBy: commits.length,
+        totalCommits: commits.length,
+        commits,
+      },
+      remediations: [evidence],
+    },
+  }
+}
+
+const evaluateSuccessorBoundContinuousRemediationFixture = (
+  fixture: ReturnType<typeof successorBoundContinuousRemediationFixture>,
+  nowMs = successorBoundNowMs,
+) =>
+  evaluateBaynReleaseEligibility({
+    mainCommitSha: successorBoundHistory.updateMerge,
+    baseRefName: 'main',
+    snapshot: fixture.snapshot,
+    nowMs,
+    pushBeforeSha:
+      realContinuousRemediationRecord.schemaVersion === 'bayn.release-review-remediation.v6'
+        ? realContinuousRemediationRecord.completion.mergeCommitSha
+        : '0'.repeat(40),
+  })
+
 describe('Bayn publication-range eligibility', () => {
-  test('parses the exact immutable #13426 continuous-source v5 receipt with #13443 completion', () => {
+  test('parses the exact immutable #13426 continuous-source v6 receipt with reviewed successor and completion', () => {
     expect(realContinuousRemediationRecord).toMatchObject({
-      schemaVersion: 'bayn.release-review-remediation.v5',
+      schemaVersion: 'bayn.release-review-remediation.v6',
       remediationId: 'pr-13426-continuous-reviewed-source',
       blocked: {
         mergeCommitSha: continuousHistory.blocked,
@@ -2013,6 +2213,26 @@ describe('Bayn publication-range eligibility', () => {
         affectedPaths: { length: 18 },
       },
       requiredDescendants: [],
+      requiredSuccessors: [
+        {
+          mergeCommitSha: '2aa782001a9d7e1d9db68e5fa0929159755334cd',
+          mergeParentSha: continuousHistory.blocked,
+          mergeTreeSha: '92065c627993e2844f0990eb032a72e41205b77a',
+          sourcePullRequestNumber: 13432,
+          finalHeadSha: 'c1d955f30a6f004916e885d8d5dd61a5eb11ee92',
+          finalHeadParentSha: continuousHistory.blocked,
+          finalHeadTreeSha: '92065c627993e2844f0990eb032a72e41205b77a',
+          sourcePullRequestEvidenceSha256: 'f22e10837d3842354b3a2d986f27813bdc535630e4277006703273c6fc3c56df',
+          affectedPaths: { length: 7 },
+          protectedPathTransitions: [
+            {
+              path: 'services/bayn/src/observe-composition.ts',
+              beforeBlobSha: 'ab38e8303f0d4482a6daeb6dd8f239cfb59d6223',
+              afterBlobSha: 'aaba2e88d64a0bf20d98e18f181abe9b0deb9860',
+            },
+          ],
+        },
+      ],
       introduction: {
         mergeCommitSha: continuousHistory.introductionMerge,
         mergeParentSha: continuousHistory.intermediates.at(-1),
@@ -2025,6 +2245,313 @@ describe('Bayn publication-range eligibility', () => {
         introducedRecordBlobSha: 'dfde09ca935b9df6d48d34391d1cc0e599eab6c7',
         affectedPaths: { length: 3 },
       },
+      completion: {
+        mergeCommitSha: '8f6ab9086457f2a7e1f2147d57e06fc22c9881fc',
+        mergeParentSha: continuousHistory.introductionMerge,
+        mergeTreeSha: 'a51d7d16f0b9806ec2ae71dfa3862e0067d23851',
+        sourcePullRequestNumber: 13445,
+        finalHeadSha: 'c580b4df79290df7c0760c290cafca9a4d4ae315',
+        finalHeadParentSha: continuousHistory.introductionMerge,
+        finalHeadTreeSha: 'a51d7d16f0b9806ec2ae71dfa3862e0067d23851',
+        sourcePullRequestEvidenceSha256: '729f0f5c8208f284b889e97a8da90ac7aac02fffb3cb3880abc4d156cf459967',
+        completedRecordBlobSha: '5faaf371424c183a176b3659fc8108576d136b84',
+        affectedPaths: { length: 3 },
+      },
+    })
+  })
+
+  test('accepts the v6 receipt only with its exact reviewed successor, protected transition, completion, and update', () => {
+    const fixture = successorBoundContinuousRemediationFixture()
+    expect(evaluateSuccessorBoundContinuousRemediationFixture(fixture)).toMatchObject({
+      status: 'eligible',
+      lastPublishedRevision: continuousHistory.published,
+      checkedCommitCount: 8,
+      baynAffectingCommitCount: 5,
+      reviewedPullRequests: [
+        { commitSha: continuousHistory.blocked, prNumber: 13426, headSha: continuousHistory.finalHead },
+        { commitSha: '2aa782001a9d7e1d9db68e5fa0929159755334cd', prNumber: 13432 },
+        { commitSha: continuousHistory.introductionMerge, prNumber: 13443 },
+        { commitSha: '8f6ab9086457f2a7e1f2147d57e06fc22c9881fc', prNumber: 13445 },
+        { commitSha: successorBoundHistory.updateMerge, prNumber: 13446 },
+      ],
+    })
+  })
+
+  test('carries the v6 reaction-bound completion review into the publication-range decision', () => {
+    const fixture = successorBoundContinuousRemediationFixture()
+    const record = fixture.evidence.record
+    if (record.schemaVersion !== 'bayn.release-review-remediation.v6') throw new Error('expected v6 record')
+    const completion = fixture.snapshot.comparison?.commits.find(
+      (commit) => commit.sha === record.completion.mergeCommitSha,
+    )
+    const pullRequest = completion?.reviewSnapshot?.pullRequest
+    if (pullRequest === null || pullRequest === undefined) throw new Error('missing completion pull request')
+    ;(pullRequest as unknown as { reviews: PullRequestReview[] }).reviews = []
+    ;(pullRequest as unknown as { headForcePushes: PullRequestForcePush[] }).headForcePushes = [
+      {
+        actorLogin: 'gregkonush',
+        beforeCommitSha: '5'.repeat(40),
+        afterCommitSha: record.completion.finalHeadSha,
+        createdAt: '2026-08-01T08:30:10Z',
+      },
+    ]
+    ;(pullRequest as unknown as { headForcePushCount: number }).headForcePushCount = 1
+    ;(pullRequest as unknown as { reactions: PullRequestReaction[] }).reactions = [
+      reaction({ createdAt: '2026-08-01T08:30:20Z' }),
+    ]
+    ;(record.completion as unknown as { sourcePullRequestEvidenceSha256: string }).sourcePullRequestEvidenceSha256 =
+      pullRequestReviewEvidenceSha256(pullRequest)
+
+    const evaluation = evaluateSuccessorBoundContinuousRemediationFixture(fixture)
+    expect(evaluation).toMatchObject({ status: 'eligible' })
+    if (evaluation.status !== 'eligible') throw new Error('expected eligible publication range')
+    expect(
+      evaluation.reviewedPullRequests.find(
+        (reviewedPullRequest) => reviewedPullRequest.commitSha === record.completion.mergeCommitSha,
+      ),
+    ).toMatchObject({
+      prNumber: record.completion.sourcePullRequestNumber,
+      headSha: record.completion.finalHeadSha,
+      reviewSubmittedAt: '2026-08-01T08:30:20Z',
+    })
+  })
+
+  test('carries the v6 reaction-bound successor review into the publication-range decision', () => {
+    const fixture = successorBoundContinuousRemediationFixture()
+    const record = fixture.evidence.record
+    if (record.schemaVersion !== 'bayn.release-review-remediation.v6') throw new Error('expected v6 record')
+    const successorIdentity = record.requiredSuccessors[0]
+    const successor = fixture.snapshot.comparison?.commits.find(
+      (commit) => commit.sha === successorIdentity.mergeCommitSha,
+    )
+    const pullRequest = successor?.reviewSnapshot?.pullRequest
+    if (pullRequest === null || pullRequest === undefined) throw new Error('missing successor pull request')
+    ;(pullRequest as unknown as { reviews: PullRequestReview[] }).reviews = []
+    ;(pullRequest as unknown as { headForcePushes: PullRequestForcePush[] }).headForcePushes = [
+      {
+        actorLogin: 'gregkonush',
+        beforeCommitSha: '6'.repeat(40),
+        afterCommitSha: successorIdentity.finalHeadSha,
+        createdAt: '2026-07-31T21:12:00Z',
+      },
+    ]
+    ;(pullRequest as unknown as { headForcePushCount: number }).headForcePushCount = 1
+    ;(pullRequest as unknown as { reactions: PullRequestReaction[] }).reactions = [
+      reaction({ createdAt: '2026-07-31T21:12:10Z' }),
+    ]
+    ;(successorIdentity as unknown as { sourcePullRequestEvidenceSha256: string }).sourcePullRequestEvidenceSha256 =
+      pullRequestReviewEvidenceSha256(pullRequest)
+
+    const evaluation = evaluateSuccessorBoundContinuousRemediationFixture(fixture)
+    expect(evaluation).toMatchObject({ status: 'eligible' })
+    if (evaluation.status !== 'eligible') throw new Error('expected eligible publication range')
+    expect(
+      evaluation.reviewedPullRequests.find(
+        (reviewedPullRequest) => reviewedPullRequest.commitSha === successorIdentity.mergeCommitSha,
+      ),
+    ).toMatchObject({
+      prNumber: successorIdentity.sourcePullRequestNumber,
+      headSha: successorIdentity.finalHeadSha,
+      reviewSubmittedAt: '2026-07-31T21:12:10Z',
+    })
+  })
+
+  ;(
+    [
+      [
+        'missing successor',
+        (record: Record<string, unknown>) => {
+          record.requiredSuccessors = []
+        },
+      ],
+      [
+        'ambiguous successor set',
+        (record: Record<string, unknown>) => {
+          const successors = record.requiredSuccessors as unknown[]
+          record.requiredSuccessors = [...successors, structuredClone(successors[0])]
+        },
+      ],
+      [
+        'duplicate protected transition',
+        (record: Record<string, unknown>) => {
+          const successor = (record.requiredSuccessors as Record<string, unknown>[])[0]!
+          const transitions = successor.protectedPathTransitions as unknown[]
+          successor.protectedPathTransitions = [...transitions, structuredClone(transitions[0])]
+        },
+      ],
+    ] as const
+  ).forEach(([name, mutate]) => {
+    test(`rejects a v6 receipt with ${name}`, () => {
+      const record = structuredClone(realContinuousRemediationRecord) as unknown as Record<string, unknown>
+      mutate(record)
+      expect(() => parseBaynReleaseReviewRemediationRecord(record)).toThrow()
+    })
+  })
+
+  ;(
+    [
+      [
+        'wrong direct parent',
+        (fixture: ReturnType<typeof successorBoundContinuousRemediationFixture>) => {
+          const record = fixture.evidence.record
+          if (record.schemaVersion !== 'bayn.release-review-remediation.v6') throw new Error('expected v6 record')
+          const successor = fixture.snapshot.comparison?.commits.find(
+            (commit) => commit.sha === record.requiredSuccessors[0].mergeCommitSha,
+          )
+          if (successor === undefined) throw new Error('missing successor commit')
+          ;(successor as unknown as { parents: string[] }).parents = ['0'.repeat(40)]
+        },
+      ],
+      [
+        'wrong merge tree',
+        (fixture: ReturnType<typeof successorBoundContinuousRemediationFixture>) => {
+          const record = fixture.evidence.record
+          if (record.schemaVersion !== 'bayn.release-review-remediation.v6') throw new Error('expected v6 record')
+          const successor = fixture.snapshot.comparison?.commits.find(
+            (commit) => commit.sha === record.requiredSuccessors[0].mergeCommitSha,
+          )
+          if (successor === undefined) throw new Error('missing successor commit')
+          ;(successor as unknown as { treeSha: string }).treeSha = '0'.repeat(40)
+        },
+      ],
+      [
+        'incomplete successor path set',
+        (fixture: ReturnType<typeof successorBoundContinuousRemediationFixture>) => {
+          const record = fixture.evidence.record
+          if (record.schemaVersion !== 'bayn.release-review-remediation.v6') throw new Error('expected v6 record')
+          const finalHead = fixture.evidence.referencedCommits.find(
+            (commit) => commit.sha === record.requiredSuccessors[0].finalHeadSha,
+          )
+          if (finalHead === undefined) throw new Error('missing successor final head')
+          ;(finalHead as unknown as { files: string[] }).files = finalHead.files.slice(1)
+        },
+      ],
+      [
+        'wrong successor source blob',
+        (fixture: ReturnType<typeof successorBoundContinuousRemediationFixture>) => {
+          const record = fixture.evidence.record
+          if (record.schemaVersion !== 'bayn.release-review-remediation.v6') throw new Error('expected v6 record')
+          const finalHead = fixture.evidence.referencedCommits.find(
+            (commit) => commit.sha === record.requiredSuccessors[0].finalHeadSha,
+          )
+          const pathBlob = finalHead?.pathBlobs[0]
+          if (pathBlob === undefined) throw new Error('missing successor source blob')
+          ;(pathBlob as unknown as { blobSha: string }).blobSha = '0'.repeat(40)
+        },
+      ],
+      [
+        'wrong protected transition source blob',
+        (fixture: ReturnType<typeof successorBoundContinuousRemediationFixture>) => {
+          const record = fixture.evidence.record
+          if (record.schemaVersion !== 'bayn.release-review-remediation.v6') throw new Error('expected v6 record')
+          ;(
+            record.requiredSuccessors[0].protectedPathTransitions[0] as unknown as { beforeBlobSha: string }
+          ).beforeBlobSha = '0'.repeat(40)
+        },
+      ],
+      [
+        'stale transitioned current blob',
+        (fixture: ReturnType<typeof successorBoundContinuousRemediationFixture>) => {
+          const record = fixture.evidence.record
+          if (record.schemaVersion !== 'bayn.release-review-remediation.v6') throw new Error('expected v6 record')
+          const transition = record.requiredSuccessors[0].protectedPathTransitions[0]
+          const current = fixture.evidence.currentPathBlobs.find((path) => path.path === transition.path)
+          if (current === undefined) throw new Error('missing current protected blob')
+          ;(current as unknown as { blobSha: string }).blobSha = transition.beforeBlobSha
+        },
+      ],
+      [
+        'later undeclared protected mutation',
+        (fixture: ReturnType<typeof successorBoundContinuousRemediationFixture>) => {
+          const record = fixture.evidence.record
+          if (record.schemaVersion !== 'bayn.release-review-remediation.v6') throw new Error('expected v6 record')
+          const transition = record.requiredSuccessors[0].protectedPathTransitions[0]
+          const update = fixture.snapshot.comparison?.commits.find(
+            (commit) => commit.sha === successorBoundHistory.updateMerge,
+          )
+          if (update === undefined) throw new Error('missing v6 receipt update commit')
+          ;(update as unknown as { files: string[] }).files = [...update.files, transition.path]
+          ;(update as unknown as { fileChanges: unknown[] }).fileChanges = [
+            ...(update.fileChanges ?? []),
+            {
+              path: transition.path,
+              previousPath: null,
+              status: 'modified',
+              blobSha: '0'.repeat(40),
+            },
+          ]
+        },
+      ],
+      [
+        'edited successor review evidence',
+        (fixture: ReturnType<typeof successorBoundContinuousRemediationFixture>) => {
+          const record = fixture.evidence.record
+          if (record.schemaVersion !== 'bayn.release-review-remediation.v6') throw new Error('expected v6 record')
+          const successor = fixture.snapshot.comparison?.commits.find(
+            (commit) => commit.sha === record.requiredSuccessors[0].mergeCommitSha,
+          )
+          const pullRequest = successor?.reviewSnapshot?.pullRequest
+          if (pullRequest === null || pullRequest === undefined) throw new Error('missing successor pull request')
+          ;(pullRequest as unknown as { issueComments: PullRequestIssueComment[] }).issueComments = [
+            issueComment({ body: 'post-receipt edit' }),
+          ]
+        },
+      ],
+      [
+        'wrong completion identity',
+        (fixture: ReturnType<typeof successorBoundContinuousRemediationFixture>) => {
+          const record = fixture.evidence.record
+          if (record.schemaVersion !== 'bayn.release-review-remediation.v6') throw new Error('expected v6 record')
+          const completion = fixture.snapshot.comparison?.commits.find(
+            (commit) => commit.sha === record.completion.mergeCommitSha,
+          )
+          if (completion === undefined) throw new Error('missing completion commit')
+          ;(completion as unknown as { treeSha: string }).treeSha = '0'.repeat(40)
+        },
+      ],
+      [
+        'noncanonical current receipt update',
+        (fixture: ReturnType<typeof successorBoundContinuousRemediationFixture>) => {
+          const update = fixture.snapshot.comparison?.commits.find(
+            (commit) => commit.sha === successorBoundHistory.updateMerge,
+          )
+          const receipt = update?.fileChanges?.find((change) => change.path === continuousRemediationRecordPath)
+          if (receipt === undefined) throw new Error('missing current receipt mutation')
+          ;(receipt as unknown as { previousPath: string | null }).previousPath = 'stale-receipt.json'
+        },
+      ],
+    ] as const
+  ).forEach(([name, mutate]) => {
+    test(`rejects v6 continuous-source evidence with ${name}`, () => {
+      const fixture = successorBoundContinuousRemediationFixture()
+      mutate(fixture)
+      expect(evaluateSuccessorBoundContinuousRemediationFixture(fixture)).toMatchObject({
+        status: 'hold',
+        code: 'release-review-remediation-invalid',
+        retryable: false,
+      })
+    })
+  })
+
+  test('rejects a v6 receipt whose bound successor review has an unresolved thread', () => {
+    const fixture = successorBoundContinuousRemediationFixture()
+    const record = fixture.evidence.record
+    if (record.schemaVersion !== 'bayn.release-review-remediation.v6') throw new Error('expected v6 record')
+    const successor = fixture.snapshot.comparison?.commits.find(
+      (commit) => commit.sha === record.requiredSuccessors[0].mergeCommitSha,
+    )
+    const pullRequest = successor?.reviewSnapshot?.pullRequest
+    if (pullRequest === null || pullRequest === undefined) throw new Error('missing successor pull request')
+    ;(pullRequest as unknown as { threads: PullRequestReviewThread[] }).threads = [
+      thread({ id: 'successor-thread', isResolved: false, path: 'services/bayn/src/observe-composition.ts' }),
+    ]
+    ;(
+      record.requiredSuccessors[0] as unknown as { sourcePullRequestEvidenceSha256: string }
+    ).sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(pullRequest)
+    expect(evaluateSuccessorBoundContinuousRemediationFixture(fixture)).toMatchObject({
+      status: 'hold',
+      code: 'release-review-remediation-invalid',
+      retryable: false,
     })
   })
 

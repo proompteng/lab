@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "bayn.release-review-remediation.v5",
+  "schemaVersion": "bayn.release-review-remediation.v6",
   "remediationId": "pr-13426-continuous-reviewed-source",
   "blocked": {
     "mergeCommitSha": "6737d29cda608c79714046d420ab7396d8e80f70",
@@ -122,6 +122,69 @@
     ]
   },
   "requiredDescendants": [],
+  "requiredSuccessors": [
+    {
+      "mergeCommitSha": "2aa782001a9d7e1d9db68e5fa0929159755334cd",
+      "mergeParentSha": "6737d29cda608c79714046d420ab7396d8e80f70",
+      "mergeTreeSha": "92065c627993e2844f0990eb032a72e41205b77a",
+      "sourcePullRequestNumber": 13432,
+      "finalHeadSha": "c1d955f30a6f004916e885d8d5dd61a5eb11ee92",
+      "finalHeadParentSha": "6737d29cda608c79714046d420ab7396d8e80f70",
+      "finalHeadTreeSha": "92065c627993e2844f0990eb032a72e41205b77a",
+      "sourcePullRequestEvidenceSha256": "f22e10837d3842354b3a2d986f27813bdc535630e4277006703273c6fc3c56df",
+      "affectedPaths": [
+        {
+          "path": "services/bayn/src/cycle-observability.test.ts",
+          "previousPath": null,
+          "status": "modified",
+          "blobSha": "3b614caf7960040b86e5d20efd9a7235866a93e8"
+        },
+        {
+          "path": "services/bayn/src/cycle-observability.ts",
+          "previousPath": null,
+          "status": "modified",
+          "blobSha": "31f59003a20099163572cd7c7bf407441615c897"
+        },
+        {
+          "path": "services/bayn/src/cycle-runner/pass-decisions-observability.test.ts",
+          "previousPath": null,
+          "status": "added",
+          "blobSha": "2ccd08beed03727847797f803a76d228f4cae633"
+        },
+        {
+          "path": "services/bayn/src/cycle-runner/pass-decisions.ts",
+          "previousPath": null,
+          "status": "modified",
+          "blobSha": "a2b62e81a2d6e1133171a5815bf06f0dba02a128"
+        },
+        {
+          "path": "services/bayn/src/http.test.ts",
+          "previousPath": null,
+          "status": "modified",
+          "blobSha": "1827f6331644dcae0f49bc29c5deecffc0cf6dcd"
+        },
+        {
+          "path": "services/bayn/src/http.ts",
+          "previousPath": null,
+          "status": "modified",
+          "blobSha": "6b7420754525ddb380744709824c81e0ce013f38"
+        },
+        {
+          "path": "services/bayn/src/observe-composition.ts",
+          "previousPath": null,
+          "status": "modified",
+          "blobSha": "aaba2e88d64a0bf20d98e18f181abe9b0deb9860"
+        }
+      ],
+      "protectedPathTransitions": [
+        {
+          "path": "services/bayn/src/observe-composition.ts",
+          "beforeBlobSha": "ab38e8303f0d4482a6daeb6dd8f239cfb59d6223",
+          "afterBlobSha": "aaba2e88d64a0bf20d98e18f181abe9b0deb9860"
+        }
+      ]
+    }
+  ],
   "introduction": {
     "mergeCommitSha": "af1e0b0707c9f3ae6b05568b7e2984888d0d7d14",
     "mergeParentSha": "fa2016a8aa3c8b0f466ab84a7956c704dd9056c7",
@@ -150,6 +213,37 @@
         "previousPath": null,
         "status": "added",
         "blobSha": "dfde09ca935b9df6d48d34391d1cc0e599eab6c7"
+      }
+    ]
+  },
+  "completion": {
+    "mergeCommitSha": "8f6ab9086457f2a7e1f2147d57e06fc22c9881fc",
+    "mergeParentSha": "af1e0b0707c9f3ae6b05568b7e2984888d0d7d14",
+    "mergeTreeSha": "a51d7d16f0b9806ec2ae71dfa3862e0067d23851",
+    "sourcePullRequestNumber": 13445,
+    "finalHeadSha": "c580b4df79290df7c0760c290cafca9a4d4ae315",
+    "finalHeadParentSha": "af1e0b0707c9f3ae6b05568b7e2984888d0d7d14",
+    "finalHeadTreeSha": "a51d7d16f0b9806ec2ae71dfa3862e0067d23851",
+    "sourcePullRequestEvidenceSha256": "729f0f5c8208f284b889e97a8da90ac7aac02fffb3cb3880abc4d156cf459967",
+    "completedRecordBlobSha": "5faaf371424c183a176b3659fc8108576d136b84",
+    "affectedPaths": [
+      {
+        "path": "packages/scripts/src/bayn/verify-release-review.test.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "289ad5cc90b0e4a1ebe4bea91bc800f9f13de7f3"
+      },
+      {
+        "path": "packages/scripts/src/bayn/verify-release-review.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "0b3260c59a37022496086ef4ad3a5bcc387eec6e"
+      },
+      {
+        "path": "services/bayn/release-review-remediations/6737d29cda608c79714046d420ab7396d8e80f70.json",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "5faaf371424c183a176b3659fc8108576d136b84"
       }
     ]
   }
