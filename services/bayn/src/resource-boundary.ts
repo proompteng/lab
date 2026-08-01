@@ -1,30 +1,37 @@
-import { Context, Effect, Exit, Layer, Scope } from 'effect'
+import { Cause, Context, Effect, Exit, Layer, Scope } from 'effect'
 
 /**
- * Builds a fresh layer attempt in a child scope owned by the caller-owned scope.
- *
- * A fresh memo map is intentional: a failed acquisition must not be memoized as the result of a later retry. A
- * failed or interrupted attempt closes its child scope immediately; a successful attempt remains attached to the
- * caller-owned scope and is closed by the outer layer boundary.
+ * Runs one acquisition in a child scope. Failed or interrupted attempts close immediately and retain both the
+ * acquisition and cleanup causes; successful attempts leave the child scope attached to `scope` for the caller to own.
  */
-const acquireFreshLayer = <A, E, R>(
-  layer: Layer.Layer<A, E, R>,
+export const scopedAcquisition = <A, E, R>(
+  acquire: (scope: Scope.Scope) => Effect.Effect<A, E, R>,
   scope: Scope.Scope,
-): Effect.Effect<Context.Context<A>, E, R> =>
+): Effect.Effect<A, E, R> =>
   Effect.uninterruptibleMask((restore) =>
     Effect.gen(function* () {
       const attemptScope = yield* Scope.fork(scope)
-      const result = yield* Effect.exit(
-        restore(Layer.buildWithMemoMap(Layer.fresh(layer), Layer.makeMemoMapUnsafe(), attemptScope)),
-      )
+      const result = yield* Effect.exit(restore(acquire(attemptScope)))
 
       if (Exit.isSuccess(result)) {
         return result.value
       }
 
-      yield* Scope.close(attemptScope, result)
+      const closeExit = yield* Effect.exit(Scope.close(attemptScope, result))
+      if (Exit.isFailure(closeExit)) {
+        return yield* Effect.failCause(Cause.combine(result.cause, closeExit.cause))
+      }
       return yield* Effect.failCause(result.cause)
     }),
+  )
+
+const acquireFreshLayer = <A, E, R>(
+  layer: Layer.Layer<A, E, R>,
+  scope: Scope.Scope,
+): Effect.Effect<Context.Context<A>, E, R> =>
+  scopedAcquisition(
+    (attemptScope) => Layer.buildWithMemoMap(Layer.fresh(layer), Layer.makeMemoMapUnsafe(), attemptScope),
+    scope,
   )
 
 /**

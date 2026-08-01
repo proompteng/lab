@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Ref } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Result, Scope } from 'effect'
 
-import { mapLayerAcquisitionError, retryLayerAcquisition } from './resource-boundary'
+import { mapLayerAcquisitionError, retryLayerAcquisition, scopedAcquisition } from './resource-boundary'
 
 describe('scoped resource boundaries', () => {
   test('retries fresh acquisitions and finalizes every failed and successful attempt exactly once', async () => {
@@ -80,6 +80,47 @@ describe('scoped resource boundaries', () => {
     expect(Exit.isFailure(exit)).toBe(true)
     if (Exit.isFailure(exit)) {
       expect(Cause.squash(exit.cause)).toBe(defect)
+    }
+    expect(finalizations).toBe(1)
+  })
+
+  test('retains an acquisition failure when its finalizer defects', async () => {
+    let finalizations = 0
+    const acquisitionFailure = new Error('acquisition failure')
+    const cleanupDefect = new Error('cleanup defect')
+
+    const exit = await Effect.runPromiseExit(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const parentScope = yield* Scope.Scope
+          yield* scopedAcquisition(
+            (attemptScope) =>
+              Scope.provide(
+                Effect.acquireRelease(Effect.void, () =>
+                  Effect.sync(() => {
+                    finalizations += 1
+                  }).pipe(Effect.andThen(Effect.die(cleanupDefect))),
+                ).pipe(Effect.andThen(Effect.fail(acquisitionFailure))),
+                attemptScope,
+              ),
+            parentScope,
+          )
+        }),
+      ),
+    )
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) {
+      const failure = Cause.findErrorOption(exit.cause)
+      expect(Option.isSome(failure)).toBe(true)
+      if (Option.isSome(failure)) {
+        expect(failure.value).toBe(acquisitionFailure)
+      }
+      const defect = Cause.findDie(exit.cause)
+      expect(Result.isSuccess(defect)).toBe(true)
+      if (Result.isSuccess(defect)) {
+        expect(defect.success.defect).toBe(cleanupDefect)
+      }
     }
     expect(finalizations).toBe(1)
   })
