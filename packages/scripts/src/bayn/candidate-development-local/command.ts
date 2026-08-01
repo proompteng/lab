@@ -151,7 +151,7 @@ const gitPath = async (repositoryRoot: string): Promise<string> => {
 export const resolveCandidateDevelopmentLocalSource = async (
   args: CandidateDevelopmentLocalArguments,
 ): Promise<CandidateDevelopmentLocalSourceResolution> => {
-  const repositoryRoot = await realpath(await gitText(process.cwd(), ['rev-parse', '--show-toplevel']))
+  const repositoryRoot = await realpath(await gitToken(process.cwd(), ['rev-parse', '--show-toplevel']))
   let absoluteModulePath: string
   let absoluteSourceManifestPath: string
   try {
