@@ -58,6 +58,7 @@ const logContainmentFailure = <A>(
 
 const containFailure = (
   context: PaperProofContainmentContext,
+  accountId: string,
   dependencies: PaperProofContainmentDependencies,
   reason: string,
 ): Effect.Effect<void> =>
@@ -91,25 +92,27 @@ const containFailure = (
         'paper proof containment reconciliation failed',
         dependencies.reconcile(),
         context.containmentIoTimeoutMs,
-      ).pipe(
-        Effect.flatMap((result) => Effect.fromResult(validateReconciliationAccount(dependencies.accountId, result))),
-      ),
+      ).pipe(Effect.flatMap((result) => Effect.fromResult(validateReconciliationAccount(accountId, result)))),
     )
     yield* logContainmentFailure(context.operation, 'reconcile', reconciliationExit)
   })
 
 const withRecoveryFinalizer = <A>(
   command: PaperProofContainmentContext,
+  accountId: string,
   dependencies: PaperProofContainmentDependencies,
   reason: string,
   effect: Effect.Effect<A, PaperProofError>,
 ): Effect.Effect<A, PaperProofError> =>
   effect.pipe(
-    Effect.onExit((exit) => (Exit.isFailure(exit) ? containFailure(command, dependencies, reason) : Effect.void)),
+    Effect.onExit((exit) =>
+      Exit.isFailure(exit) ? containFailure(command, accountId, dependencies, reason) : Effect.void,
+    ),
   )
 
 export const containMalformedPaperProofCommand = (
   operation: PaperProofCommand['operation'] | 'GATE',
+  accountId: string,
   dependencies: PaperProofContainmentDependencies,
   failure: PaperProofError,
 ): Effect.Effect<never, PaperProofError> =>
@@ -118,6 +121,7 @@ export const containMalformedPaperProofCommand = (
       operation,
       containmentIoTimeoutMs: malformedCommandContainmentIoTimeoutMs,
     },
+    accountId,
     dependencies,
     'paper-proof-malformed-command-envelope',
     Effect.fail(failure),
@@ -157,6 +161,7 @@ const runValidatedPaperProof = (
     case 'SUBMIT':
       return withRecoveryFinalizer(
         command,
+        dependencies.sourcePlan.accountId,
         dependencies.containment,
         'paper-proof-submit-failure',
         runPaperProofSubmit(
@@ -167,6 +172,7 @@ const runValidatedPaperProof = (
     case 'CANCEL':
       return withRecoveryFinalizer(
         command,
+        dependencies.sourcePlan.accountId,
         dependencies.containment,
         'paper-proof-cancel-failure',
         runPaperProofCancel(
@@ -177,6 +183,7 @@ const runValidatedPaperProof = (
     case 'RECOVER':
       return withRecoveryFinalizer(
         command,
+        dependencies.sourcePlan.accountId,
         dependencies.containment,
         'paper-proof-recover-load-or-execution-failure',
         runPaperProofRecover(
@@ -199,7 +206,13 @@ export const runPaperProof = (
     validatePaperProofEntry(command, dependencies.sourcePlan, dependencies.runtime, dependencies.protectedEntryToken),
   )
   const containedEntry = requiresContainment
-    ? withRecoveryFinalizer(command, dependencies.containment, 'paper-proof-entry-gate-failure', entry)
+    ? withRecoveryFinalizer(
+        command,
+        dependencies.sourcePlan.accountId,
+        dependencies.containment,
+        'paper-proof-entry-gate-failure',
+        entry,
+      )
     : entry
   const execution = containedEntry.pipe(
     Effect.andThen(runValidatedPaperProof(command, dependencies)),

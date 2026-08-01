@@ -30,7 +30,6 @@ export interface PaperProofOperationContext<Operation extends PaperProofOperatio
 }
 
 export interface PaperProofContainmentDependencies {
-  readonly accountId: string
   readonly restrictAuthority: (reason: string, updatedAt: string) => Effect.Effect<void, Error>
   readonly reconcile: () => Effect.Effect<PaperProofReconciliation, Error>
   readonly currentUtcInstant: Effect.Effect<string, Error>

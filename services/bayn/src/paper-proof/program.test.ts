@@ -13,7 +13,6 @@ import { paperProofCommandEntryGate, runPaperProofCommand } from '../paper-proof
 import {
   protectedEntryToken,
   runPaperProof,
-  runPaperProofPrepare,
   type PaperProofCommand,
   type PaperProofCancelDependencies,
   type PaperProofDependencies,
@@ -26,6 +25,9 @@ import {
   type PaperProofRuntimeBinding,
   type PaperProofSourcePlan,
 } from './index'
+import { runPaperProofPrepare } from './prepare'
+
+type PaperProofPublicExports = typeof import('./index')
 
 const hash = (character: string): string => character.repeat(64)
 const accountId = 'paper-account'
@@ -465,7 +467,6 @@ const fixture = (options: FixtureOptions) => {
     runtime: capabilities.runtime,
     protectedEntryToken: capabilities.protectedEntryToken,
     containment: {
-      accountId,
       restrictAuthority: capabilities.restrictAuthority,
       reconcile: capabilities.reconcile,
       currentUtcInstant: capabilities.currentUtcInstant,
@@ -540,6 +541,12 @@ describe('bounded PAPER proof command', () => {
     const cancel: PaperProofCancelDependencies = dependencies.cancel
     const recover: PaperProofRecoverDependencies = dependencies.recover
 
+    // @ts-expect-error mutation runners stay behind the validated composition boundary.
+    void ({} as PaperProofPublicExports).runPaperProofSubmit
+    // @ts-expect-error mutation runners stay behind the validated composition boundary.
+    void ({} as PaperProofPublicExports).runPaperProofCancel
+    // @ts-expect-error containment must derive the expected account from the source plan.
+    void dependencies.containment.accountId
     // @ts-expect-error PREPARE cannot activate capital or access mutation execution.
     void prepare.activateCapitalGrant
     // @ts-expect-error PREPARE cannot read or write recovery state.
