@@ -108,6 +108,7 @@ const candidate17ArchiveReceiptMaterial = {
     ),
   ],
   facts: {
+    historicalEvidenceRevision: 'bc32db2e9eeb7140f422fc1b6621427a8f7dabfc',
     reviewedSourceRevision: '9a293a7a8f7cb4ed5c8ddf41d7dbf9abecb12510',
     mergedSourceRevision: '4f39bb8ad168c3a459afdfdb30feccd49aba22d8',
     baselineRunId: 'e732903a6e9fcbe64069030e8e37dfe4d85c9e616c10676d6cd8c7e1bbbfb82f',
@@ -139,7 +140,7 @@ const candidate17ArchiveReceiptMaterial = {
 
 export const candidate17ArchiveReceipt = {
   ...candidate17ArchiveReceiptMaterial,
-  receiptHash: 'fd1b4b81a5b51eadcddd1e2ec88f3b54e397cbf7310bb3c9dc6fc3a099556326',
+  receiptHash: '52b08ccd363e18fe0c79fc51d35b17ff8b6f9007ba3dc8ae51c60c29ee921603',
 } satisfies LegacyCandidateArchiveReceipt
 
 const candidate18ArchiveReceiptMaterial = {

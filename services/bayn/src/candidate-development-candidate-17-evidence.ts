@@ -16,6 +16,30 @@ import {
 const historicalEvidenceArtifact = candidate17ArchiveReceipt.historicalArtifacts.find(
   ({ kind }) => kind === 'development-evidence',
 )
+const historicalEvidenceRevision = candidate17ArchiveReceipt.facts.historicalEvidenceRevision
+
+const readHistoricalEvidenceBlob = (artifact: LegacyCandidateArchiveArtifact): string => {
+  try {
+    return execFileSync('git', ['cat-file', 'blob', artifact.blobOid], {
+      encoding: 'utf8',
+      maxBuffer: artifact.byteCount + 1,
+    })
+  } catch {
+    execFileSync('git', ['fetch', '--no-tags', '--depth=1', 'origin', historicalEvidenceRevision], {
+      stdio: 'ignore',
+    })
+    const observedBlobOid = execFileSync('git', ['rev-parse', `${historicalEvidenceRevision}:${artifact.path}`], {
+      encoding: 'utf8',
+    }).trim()
+    if (observedBlobOid !== artifact.blobOid) {
+      throw new Error(`historical Candidate 17 evidence blob OID mismatch: ${observedBlobOid}`)
+    }
+    return execFileSync('git', ['show', `${historicalEvidenceRevision}:${artifact.path}`], {
+      encoding: 'utf8',
+      maxBuffer: artifact.byteCount + 1,
+    })
+  }
+}
 
 const readHistoricalEvidence = (
   artifact: LegacyCandidateArchiveArtifact | undefined,
@@ -23,13 +47,7 @@ const readHistoricalEvidence = (
   artifact === undefined
     ? Result.fail({ _tag: 'Candidate17ArchiveEvidenceArtifactMissing' as const })
     : Result.try({
-        try: () =>
-          JSON.parse(
-            execFileSync('git', ['cat-file', 'blob', artifact.blobOid], {
-              encoding: 'utf8',
-              maxBuffer: artifact.byteCount + 1,
-            }),
-          ),
+        try: () => JSON.parse(readHistoricalEvidenceBlob(artifact)),
         catch: (cause) => ({ _tag: 'Candidate17ArchiveEvidenceBlobUnavailable' as const, cause }),
       })
 
