@@ -1174,6 +1174,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 19, name: 'explicit_execution_authority' },
       { migration_id: 20, name: 'pretransmit_submit_denial' },
       { migration_id: 21, name: 'expired_paper_cycle_terminalization' },
+      { migration_id: 22, name: 'observe_reconciliation_recovery' },
     ])
   })
 

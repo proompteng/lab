@@ -53,6 +53,7 @@ import {
 } from '../broker/observations'
 import { BrokerProvider, alpacaSandboxBaseUrl } from '../broker/alpaca'
 import { makeBrokerIdentity, type BrokerIdentity } from '../broker/identity'
+import { incompletePassReason } from '../simulation-reconciliation/broker-reconciler-model'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from './evidence-store'
 import {
   BrokerEventStore,
@@ -1008,6 +1009,218 @@ describePostgres('paper accounting persistence', () => {
       expect(result.historyVersions[1]?.authority_version).toBe(result.rotated.version)
     } finally {
       await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('keeps OBSERVE read-only after reconciliation failures and recovers only the legacy transient kill', async () => {
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionStore
+          const sql = yield* PgClient.PgClient
+          const initial = yield* store.ensureAuthorityGeneration({
+            generationHash: hash('observe-recovery-generation-a'),
+            maximum: Authority.Observe,
+          })
+          const [failedAt] = yield* sql<{ updated_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (failedAt === undefined) return yield* Effect.die(new Error('OBSERVE restriction time is unavailable'))
+
+          yield* store.restrictAuthority(incompletePassReason, failedAt.updated_at.toISOString())
+          const [afterReadOnlyFailure] = yield* sql<{
+            generation_hash: string
+            kill_state: KillState
+            reason: string | null
+            version: number
+          }>`
+            SELECT generation_hash, kill_state, reason, version::integer
+            FROM authority_state
+            WHERE singleton
+          `
+
+          yield* sql`
+            UPDATE authority_state
+            SET
+              effective = 'OBSERVE',
+              kill_state = 'ACTIVE',
+              reason = ${incompletePassReason},
+              version = version + 1,
+              updated_at = ${failedAt.updated_at.toISOString()}
+            WHERE singleton
+          `
+          const preservedWithoutReconciliation = yield* store.ensureAuthorityGeneration({
+            generationHash: hash('observe-recovery-generation-b'),
+            maximum: Authority.Observe,
+          })
+          const [reconciliationTime] = yield* sql<{ reconciled_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS reconciled_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (reconciliationTime === undefined) {
+            return yield* Effect.die(new Error('OBSERVE reconciliation time is unavailable'))
+          }
+          const reconciliationId = hash('observe-recovery-exact-reconciliation')
+          const reconciliationContentHash = hash('observe-recovery-exact-content')
+          const reconciliationStateHash = hash('observe-recovery-exact-state')
+          yield* sql`
+            INSERT INTO reconciliations (
+              reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+              content_hash, status, discrepancies, reconciled_at
+            ) VALUES (
+              ${reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId},
+              ${reconciliationStateHash}, ${reconciliationStateHash}, ${reconciliationContentHash},
+              'EXACT', ${sql.json(JSON.stringify([]))}, ${reconciliationTime.reconciled_at.toISOString()}
+            )
+          `
+          const recovered = yield* store.ensureAuthorityGeneration({
+            generationHash: hash('observe-recovery-generation-c'),
+            maximum: Authority.Observe,
+          })
+
+          const [operatorKillAt] = yield* sql<{ updated_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (operatorKillAt === undefined) return yield* Effect.die(new Error('operator kill time is unavailable'))
+          yield* sql`
+            UPDATE authority_state
+            SET
+              effective = 'OBSERVE',
+              kill_state = 'ACTIVE',
+              reason = 'operator kill',
+              version = version + 1,
+              updated_at = ${operatorKillAt.updated_at.toISOString()}
+            WHERE singleton
+          `
+          const preserved = yield* store.ensureAuthorityGeneration({
+            generationHash: hash('observe-recovery-generation-d'),
+            maximum: Authority.Observe,
+          })
+
+          return { initial, afterReadOnlyFailure, preservedWithoutReconciliation, recovered, preserved }
+        }),
+      )
+
+      expect(result.afterReadOnlyFailure).toEqual({
+        generation_hash: result.initial.generationHash,
+        kill_state: KillState.Clear,
+        reason: null,
+        version: result.initial.version,
+      })
+      expect(result.preservedWithoutReconciliation).toMatchObject({
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Active,
+        reason: incompletePassReason,
+        version: 3,
+      })
+      expect(result.recovered).toMatchObject({
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Clear,
+        version: 4,
+      })
+      expect(result.preserved).toMatchObject({
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Active,
+        reason: 'operator kill',
+        version: 6,
+      })
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('preserves the transient reconciliation kill across a broker identity rotation', async () => {
+    const initialRuntime = makeStoreRuntime({ fail: false, planHashes: [] })
+    try {
+      await initialRuntime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionStore
+          const sql = yield* PgClient.PgClient
+          yield* store.ensureAuthorityGeneration({
+            generationHash: hash('observe-recovery-identity-generation-a'),
+            maximum: Authority.Observe,
+          })
+          const [failedAt] = yield* sql<{ updated_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (failedAt === undefined) return yield* Effect.die(new Error('identity restriction time is unavailable'))
+          yield* sql`
+            UPDATE authority_state
+            SET
+              effective = 'OBSERVE',
+              kill_state = 'ACTIVE',
+              reason = ${incompletePassReason},
+              version = version + 1,
+              updated_at = ${failedAt.updated_at.toISOString()}
+            WHERE singleton
+          `
+        }),
+      )
+    } finally {
+      await initialRuntime.dispose()
+    }
+
+    const changedIdentity = brokerIdentity(BrokerEnvironment.Sandbox, 'changed-observe-recovery-account')
+    const changedRuntime = makeStoreRuntime({ fail: false, planHashes: [] }, observeConfigWithIdentity(changedIdentity))
+    try {
+      const result = await changedRuntime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionStore
+          const sql = yield* PgClient.PgClient
+          const [reconciliationTime] = yield* sql<{ reconciled_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS reconciled_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (reconciliationTime === undefined) {
+            return yield* Effect.die(new Error('identity reconciliation time is unavailable'))
+          }
+          const reconciliationStateHash = hash('observe-recovery-identity-state')
+          yield* sql`
+            INSERT INTO reconciliations (
+              reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+              content_hash, status, discrepancies, reconciled_at
+            ) VALUES (
+              ${hash('observe-recovery-identity-reconciliation')}, 'bayn.paper-reconciliation.v1',
+              ${changedIdentity.accountId}, ${reconciliationStateHash}, ${reconciliationStateHash},
+              ${hash('observe-recovery-identity-content')}, 'EXACT', ${sql.json(JSON.stringify([]))},
+              ${reconciliationTime.reconciled_at.toISOString()}
+            )
+          `
+          const rotated = yield* store.ensureAuthorityGeneration({
+            generationHash: hash('observe-recovery-identity-generation-b'),
+            maximum: Authority.Observe,
+          })
+          const history = yield* sql<{ account_id: string | null }>`
+            SELECT account_id
+            FROM authority_generations
+            ORDER BY authority_version
+          `
+          return { history, rotated }
+        }),
+      )
+
+      expect(result.rotated).toMatchObject({
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Active,
+        reason: incompletePassReason,
+        version: 3,
+      })
+      expect(result.history).toEqual([{ account_id: accountId }, { account_id: changedIdentity.accountId }])
+    } finally {
+      await changedRuntime.dispose()
     }
   }, 15_000)
 
