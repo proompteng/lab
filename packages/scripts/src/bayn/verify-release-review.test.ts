@@ -2604,9 +2604,9 @@ const nestedSingleStageSuccessorRemediationFixture = (): BaynReleaseEligibilityS
 }
 
 describe('Bayn publication-range eligibility', () => {
-  test('parses the exact immutable #13438 -> #13442 v8 reviewed-source receipt', () => {
+  test('parses the exact immutable #13438 -> #13442 v9 reviewed-source receipt', () => {
     expect(realCandidateDiagnosticsRemediationRecord).toMatchObject({
-      schemaVersion: 'bayn.release-review-remediation.v8',
+      schemaVersion: 'bayn.release-review-remediation.v9',
       remediationId: 'pr-13438-successor-bound-reviewed-source',
       blocked: {
         mergeCommitSha: 'ae4d23650c20cecbde2bac8416bc2b734381cb69',
@@ -2651,6 +2651,15 @@ describe('Bayn publication-range eligibility', () => {
         finalHeadSha: '211a901ddeacf6cab997252dee85e180e94595fa',
         sourcePullRequestEvidenceSha256: '8e59ead9e8a8c57c8c64c0b37ea1c5298b292dbc0b1efd69645ceb1678ae49b0',
         introducedRecordBlobSha: '2855013d0a960ebc9b2ee100301334fc1640d297',
+        affectedPaths: { length: 3 },
+      },
+      completion: {
+        mergeCommitSha: '3dabfa8b73e8a7de2c61a171b49e635a56774af3',
+        mergeParentSha: '628d3fd16d63f7b9e3fc02d3bbdfa130a121ed31',
+        sourcePullRequestNumber: 13449,
+        finalHeadSha: '711a3bfda038f696bc805ab32c1a8bfb93ce5d2b',
+        sourcePullRequestEvidenceSha256: 'a7234519bd57e2fdd1be320eae0a0dab802ee952ca3d379f180bbcc13c592a48',
+        completedRecordBlobSha: '63f78435bffefe00b904e02492693f53fb6cb6d4',
         affectedPaths: { length: 3 },
       },
     })
