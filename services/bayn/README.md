@@ -121,6 +121,28 @@ capital-promotion path remain dormant.
   the PostgreSQL commit, and one successful continuous check. Strategy rejection is an auditable economic
   `FAIL_CLOSED`; it remains separate from operational health and never expands authority.
 
+## Local candidate development
+
+Candidate development is a local, offline, one-shot operation. From a clean checkout, invoke the typed wrapper with the
+reviewed module, its source manifest, and the typed runtime market-data witness:
+
+```sh
+bun run --filter @proompteng/bayn candidate:development:local -- \
+  services/bayn/src/strategy/<candidate>.ts \
+  services/bayn/candidates/<candidate>-preregistration.json \
+  <typed-runtime-market-data.json>
+```
+
+The wrapper binds both source files to their exact `HEAD` blobs, checks the manifest's module binding, and then invokes
+the existing `candidate-development-command.ts`. The command remains responsible for reviewed preregistration,
+lineage, module policy, and typed market-data validation. The wrapper never reads or embeds the runtime market-data
+witness. It atomically reserves one compact receipt in Git metadata before starting the command and finalizes it with
+the source binding and exit status; a reserved or failed receipt is terminal and must not be retried.
+
+This path is development-only. It does not release, promote, deploy, invoke Argo, access qualification holdout data, or
+open broker capabilities. Qualification remains a separate single scheduled CI attempt against the exact reviewed
+source and sealed holdout; a genuine `PAPER` qualification is required before release or promotion.
+
 ## PAPER candidate discovery
 
 `BAYN_OPERATION` has no default. When it is absent, Bayn selects the credential-free service or autonomous GET-only

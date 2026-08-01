@@ -48,7 +48,13 @@ jobs:
         if: steps.dormancy.outputs.dormant == 'true'
         run: echo 'No credentials, Signal data, PostgreSQL state, holdout, image, or qualification command were accessed.'
 
-      - name: Bind the exact promoted unpinned qualification image
+      - name: Set up the runner image-build toolchain
+        if: steps.dormancy.outputs.dormant == 'false'
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          require-preinstalled: 'true'
+
+      - name: Build the exact checked-out source image locally
         id: image
         if: steps.dormancy.outputs.dormant == 'false'
         shell: bash
@@ -57,54 +63,26 @@ jobs:
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
           test "$(git rev-parse refs/remotes/origin/main)" = "${GITHUB_SHA}"
 
-          deployment='argocd/applications/bayn/deployment.yaml'
-          read_bayn_env() {
-            local name="$1"
-            NAME="$name" yq -er '
-              [.spec.template.spec.containers[]
-                | select(.name == "bayn")
-                | .env[]
-                | select(.name == strenv(NAME) and has("value"))
-                | .value]
-              | select(length == 1)
-              | .[0]
-            ' "$deployment"
-          }
+          image_link="${RUNNER_TEMP}/bayn-qualification-image"
+          image_load_log="${RUNNER_TEMP}/bayn-qualification-image-load.log"
+          rm -f -- "$image_link" "$image_load_log"
+          nix build .#bayn-image --print-build-logs --out-link "$image_link"
+          image_tar="$(readlink -f "$image_link")"
+          test -f "$image_tar"
 
-          qualification_pin_count="$(NAME=BAYN_QUALIFICATION_RUN_ID yq -r '
-            [.spec.template.spec.containers[]
-              | select(.name == "bayn")
-              | .env[]
-              | select(.name == strenv(NAME))]
-            | length
-          ' "$deployment")"
-          test "$qualification_pin_count" = 0
+          docker load --input "$image_tar" | tee "$image_load_log"
+          image_tag="$(sed -n 's/^Loaded image: //p' "$image_load_log" | tail -n 1)"
+          test -n "$image_tag"
+          image_id="$(docker image inspect "$image_tag" --format '{{.Id}}')"
+          [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "tag=${image_tag}" >> "$GITHUB_OUTPUT"
+          echo "reference=${image_tag}@${image_id}" >> "$GITHUB_OUTPUT"
 
-          source_sha="$(read_bayn_env BAYN_CODE_REVISION)"
-          image_repository="$(read_bayn_env BAYN_IMAGE_REPOSITORY)"
-          image_digest="$(read_bayn_env BAYN_IMAGE_DIGEST)"
-          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$image_repository" =~ ^[A-Za-z0-9._:/-]+$ ]]
-          [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-
-          image_reference="${image_repository}@${image_digest}"
-          echo "reference=${image_reference}" >> "$GITHUB_OUTPUT"
-
-      - name: Pull and verify the exact qualification image
+      - name: Preflight the exact source image without credentials or network
         if: steps.dormancy.outputs.dormant == 'false'
         shell: bash
         env:
-          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
-        run: |
-          set -euo pipefail
-          docker pull "$IMAGE_REFERENCE"
-          docker image inspect "$IMAGE_REFERENCE" --format '{{json .RepoDigests}}' |
-            jq -e --arg expected "$IMAGE_REFERENCE" 'index($expected) != null' >/dev/null
-
-      - name: Preflight immutable qualification evidence without credentials
-        if: steps.dormancy.outputs.dormant == 'false'
-        shell: bash
-        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
           IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
         run: |
           set -euo pipefail
@@ -112,6 +90,8 @@ jobs:
           rm -f -- "$preflight"
 
           docker run --rm \
+            --pull=never \
+            --network none \
             --read-only \
             --user "$(id -u):$(id -g)" \
             --tmpfs /tmp:rw,noexec,nosuid,size=64m \
@@ -126,7 +106,7 @@ jobs:
             -e BAYN_QUALIFICATION_IMAGE_REFERENCE="$IMAGE_REFERENCE" \
             -e BAYN_QUALIFICATION_MODE=preflight \
             --entrypoint bayn-qualification-collector \
-            "$IMAGE_REFERENCE" | tee "$preflight"
+            "$IMAGE_TAG" | tee "$preflight"
 
           mapfile -t preflight_lines < <(grep '^BAYN_QUALIFICATION_TERMINAL=' "$preflight")
           test "${#preflight_lines[@]}" -eq 1
@@ -140,11 +120,12 @@ jobs:
             and (.preregistrationHash | test("^[0-9a-f]{64}$"))
           ' <<< "${preflight_lines[0]#BAYN_QUALIFICATION_TERMINAL=}" >/dev/null
 
-      - name: Collect, lock, execute once, and independently audit
+      - name: Collect, lock, execute once, and independently audit the sealed holdout
         id: qualify
         if: steps.dormancy.outputs.dormant == 'false'
         shell: bash
         env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
           IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
           GITHUB_TOKEN: ${{ github.token }}
           BAYN_CLICKHOUSE_USERNAME: ${{ secrets.BAYN_QUALIFICATION_CLICKHOUSE_USERNAME }}
@@ -164,6 +145,7 @@ jobs:
           rm -f -- "$log" "$terminal"
 
           docker run --rm \
+            --pull=never \
             --network host \
             --read-only \
             --user "$(id -u):$(id -g)" \
@@ -188,7 +170,7 @@ jobs:
             -e BAYN_QUALIFICATION_IMAGE_REFERENCE="$IMAGE_REFERENCE" \
             -e BAYN_QUALIFICATION_MODE=execute \
             --entrypoint bayn-qualification-collector \
-            "$IMAGE_REFERENCE" | tee "$log"
+            "$IMAGE_TAG" | tee "$log"
 
           mapfile -t terminal_lines < <(grep '^BAYN_QUALIFICATION_TERMINAL=' "$log")
           test "${#terminal_lines[@]}" -eq 1
