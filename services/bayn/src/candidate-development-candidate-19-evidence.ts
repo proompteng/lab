@@ -1,10 +1,8 @@
-import { readFileSync } from 'node:fs'
-
-import rawEvidence from '../candidates/ordinal-19-inverse-volatility-risk-diversification-development-evidence.json' with { type: 'json' }
 import rawSourceManifest from '../candidates/ordinal-19-inverse-volatility-risk-diversification-source-manifest.json' with { type: 'json' }
 
 import { pipe, Result, Schema } from 'effect'
 
+import { candidate19ArchiveReceipt } from './candidate-archive/legacy-candidate-receipts'
 import { CandidateDevelopmentSourceManifestSchema } from './candidate-development-command'
 import { canonicalHashV1Result, sha256, type CanonicalHashFailure } from './hash'
 import {
@@ -101,9 +99,6 @@ export type Candidate19DevelopmentFailureEvidenceIssue =
 const candidate19DevelopmentFailureEvidenceContentHash =
   '6170af41ddc14c04412a1929a60c88f35062ec2440f6e4b3beb0539bd411f364'
 
-const candidate19AttemptOutputPath =
-  'services/bayn/candidates/ordinal-19-inverse-volatility-risk-diversification-development-attempt.log'
-
 const decodeCandidate19DevelopmentFailureEvidenceBoundary = Schema.decodeUnknownResult(
   Candidate19DevelopmentFailureEvidenceSchema,
   strictParseOptions,
@@ -122,7 +117,7 @@ const candidate19BindingMismatch = (
 
 export const validateCandidate19DevelopmentFailureEvidence = (
   value: unknown,
-  capturedOutput: string,
+  capturedOutput?: string,
 ): Result.Result<Candidate19DevelopmentFailureEvidence, Candidate19DevelopmentFailureEvidenceIssue> => {
   const decoded = decodeCandidate19DevelopmentFailureEvidenceBoundary(value)
   if (Result.isFailure(decoded)) {
@@ -143,18 +138,18 @@ export const validateCandidate19DevelopmentFailureEvidence = (
   }
 
   const bindings = [
-    ['recordedAt', '2026-07-31T17:24:03.530Z', evidence.recordedAt],
+    ['recordedAt', candidate19ArchiveReceipt.facts.recordedAt, evidence.recordedAt],
     ['candidateOrdinal', 19, evidence.candidateOrdinal],
     ['priorTrialCount', 18, evidence.priorTrialCount],
     [
       'preregistration.sourceRevision',
-      'bb24ec2ab4225b13920a2b50fb137c4134d2d75f',
+      candidate19ArchiveReceipt.facts.preregistrationSourceRevision,
       evidence.preregistration.sourceRevision,
     ],
     ['preregistration.blobOid', '02d9150a1f0007a644a084b3fca4cd543131374e', evidence.preregistration.blobOid],
     [
       'verifiedSource.sourceRevision',
-      '276805b77d783db907dcb86cba934d7a4f6a0147',
+      candidate19ArchiveReceipt.facts.sourceRevision,
       evidence.verifiedSource.sourceRevision,
     ],
     ['verifiedSource.moduleBlobOid', 'cc06d8506ba408aa8e24436a6b60faeadfb96d23', evidence.verifiedSource.moduleBlobOid],
@@ -175,58 +170,66 @@ export const validateCandidate19DevelopmentFailureEvidence = (
     ],
     [
       'verifiedSource.baselineRunId',
-      '28b3e80d0d817a2883e86c448851da9ef5b7d6bacd601cca0d314e7fc366bfab',
+      candidate19ArchiveReceipt.facts.baselineRunId,
       evidence.verifiedSource.baselineRunId,
     ],
     [
       'verifiedSource.stressedRunId',
-      '8ee52762be3fe38b71dcef30f8b07a123eeb79ca155c8919b67f42239dffa07f',
+      candidate19ArchiveReceipt.facts.stressedRunId,
       evidence.verifiedSource.stressedRunId,
     ],
     [
       'protocolBindings.strategyProtocolHash',
-      'b4a2a6c65a7fa5973f7cbc1fd5031e77d529f4884562e5cc8a105fc870ced78f',
+      candidate19ArchiveReceipt.facts.strategyProtocolHash,
       evidence.protocolBindings.strategyProtocolHash,
     ],
     [
       'protocolBindings.strategyIdentityHash',
-      'ccf8f03db1f0f9eb54f7ad42194c938e5a53e11573488fd31e7af871967af25a',
+      candidate19ArchiveReceipt.facts.strategyIdentityHash,
       evidence.protocolBindings.strategyIdentityHash,
     ],
     [
       'protocolBindings.candidateDevelopmentProtocolHash',
-      '663b59d6c570bbe3373d6e160609e0ad6294a687f435416f2a0956888d960738',
+      candidate19ArchiveReceipt.facts.candidateDevelopmentProtocolHash,
       evidence.protocolBindings.candidateDevelopmentProtocolHash,
     ],
     [
       'protocolBindings.calendarHash',
-      '4b2f519f336e4e730c1f0d69e860f25a8d4d0cfbd8e93c6b333ea83623d87237',
+      candidate19ArchiveReceipt.facts.calendarHash,
       evidence.protocolBindings.calendarHash,
     ],
     [
       'protocolBindings.priorTrialsHash',
-      '1dfc9b6832d4841093becd2c276141110afdfce28a0a88b301cfe9959b900d62',
+      candidate19ArchiveReceipt.facts.priorTrialsHash,
       evidence.protocolBindings.priorTrialsHash,
     ],
     [
       'preMetricEvidence.exactSourceLoadSha256',
-      '4d3274ac428093ecc52a17669af5d1c677a05f25052065fe1a9a58f821e4dd3e',
+      candidate19ArchiveReceipt.facts.exactSourceLoadSha256,
       evidence.preMetricEvidence.exactSourceLoadSha256,
     ],
     [
       'preMetricEvidence.preMetricDiagnosticSha256',
-      'fd3682f152ed1c72e7e3aea0ba20f0694ae98f9857fa117ff8626815b0e533a8',
+      candidate19ArchiveReceipt.facts.preMetricDiagnosticSha256,
       evidence.preMetricEvidence.preMetricDiagnosticSha256,
     ],
-    ['attempt.attemptedAt', '2026-07-31T17:23:55.178Z', evidence.attempt.attemptedAt],
-    ['attempt.finishedAt', '2026-07-31T17:24:03.530Z', evidence.attempt.finishedAt],
-    ['attempt.failure.capturedOutputPath', candidate19AttemptOutputPath, evidence.attempt.failure.capturedOutputPath],
+    ['attempt.attemptedAt', candidate19ArchiveReceipt.facts.attemptedAt, evidence.attempt.attemptedAt],
+    ['attempt.finishedAt', candidate19ArchiveReceipt.facts.recordedAt, evidence.attempt.finishedAt],
+    [
+      'attempt.failure.capturedOutputPath',
+      candidate19ArchiveReceipt.facts.capturedOutputPath,
+      evidence.attempt.failure.capturedOutputPath,
+    ],
     [
       'attempt.failure.capturedOutputSha256',
-      '702aed20f08899cf84500e67321cce42b24d1425595f3fa9f313aea46224d3c1',
+      candidate19ArchiveReceipt.facts.capturedOutputSha256,
       evidence.attempt.failure.capturedOutputSha256,
     ],
-    ['attempt.failure.capturedOutputBytes', 1268, evidence.attempt.failure.capturedOutputBytes],
+    [
+      'attempt.failure.capturedOutputBytes',
+      candidate19ArchiveReceipt.facts.capturedOutputBytes,
+      evidence.attempt.failure.capturedOutputBytes,
+    ],
   ] as const
   for (const [field, expected, observed] of bindings) {
     if (expected !== observed) return Result.fail(candidate19BindingMismatch(field, expected, observed))
@@ -249,37 +252,113 @@ export const validateCandidate19DevelopmentFailureEvidence = (
     )
   }
 
-  const capturedOutputHash = sha256(capturedOutput)
-  if (capturedOutputHash !== evidence.attempt.failure.capturedOutputSha256) {
-    return Result.fail(
-      candidate19BindingMismatch(
-        'attempt.failure.capturedOutputSha256',
-        evidence.attempt.failure.capturedOutputSha256,
-        capturedOutputHash,
-      ),
-    )
-  }
-  const capturedOutputBytes = Buffer.byteLength(capturedOutput)
-  if (capturedOutputBytes !== evidence.attempt.failure.capturedOutputBytes) {
-    return Result.fail(
-      candidate19BindingMismatch(
-        'attempt.failure.capturedOutputBytes',
-        evidence.attempt.failure.capturedOutputBytes,
-        capturedOutputBytes,
-      ),
-    )
+  if (capturedOutput !== undefined) {
+    const capturedOutputHash = sha256(capturedOutput)
+    if (capturedOutputHash !== evidence.attempt.failure.capturedOutputSha256) {
+      return Result.fail(
+        candidate19BindingMismatch(
+          'attempt.failure.capturedOutputSha256',
+          evidence.attempt.failure.capturedOutputSha256,
+          capturedOutputHash,
+        ),
+      )
+    }
+    const capturedOutputBytes = Buffer.byteLength(capturedOutput)
+    if (capturedOutputBytes !== evidence.attempt.failure.capturedOutputBytes) {
+      return Result.fail(
+        candidate19BindingMismatch(
+          'attempt.failure.capturedOutputBytes',
+          evidence.attempt.failure.capturedOutputBytes,
+          capturedOutputBytes,
+        ),
+      )
+    }
   }
 
   return Result.succeed(evidence)
 }
 
-const candidate19AttemptOutput = readFileSync(
-  new URL('../candidates/ordinal-19-inverse-volatility-risk-diversification-development-attempt.log', import.meta.url),
-  'utf8',
+const candidate19EvidenceArtifact = candidate19ArchiveReceipt.historicalArtifacts.find(
+  ({ kind }) => kind === 'development-evidence',
+)
+const candidate19PreregistrationArtifact = candidate19ArchiveReceipt.historicalArtifacts.find(
+  ({ kind }) => kind === 'preregistration',
+)
+const candidate19SourceManifestArtifact = candidate19ArchiveReceipt.historicalArtifacts.find(
+  ({ kind }) => kind === 'source-manifest',
 )
 
-export const candidate19DevelopmentFailureEvidenceResult = pipe(rawEvidence, (value) =>
-  validateCandidate19DevelopmentFailureEvidence(value, candidate19AttemptOutput),
+if (
+  candidate19EvidenceArtifact === undefined ||
+  candidate19PreregistrationArtifact === undefined ||
+  candidate19SourceManifestArtifact === undefined
+) {
+  throw new Error('Candidate 19 archive receipt is missing a required historical artifact')
+}
+
+const candidate19HistoricalEvidence = {
+  schemaVersion: 'bayn.candidate-development-attempt-failure-evidence.v2' as const,
+  recordedAt: candidate19ArchiveReceipt.facts.recordedAt,
+  candidateOrdinal: 19,
+  priorTrialCount: 18,
+  status: 'DEVELOPMENT_REJECTED' as const,
+  qualificationAttemptConsumed: false as const,
+  nextCandidatePreregistration: null,
+  preregistration: {
+    sourceRevision: candidate19ArchiveReceipt.facts.preregistrationSourceRevision,
+    path: candidate19PreregistrationArtifact.path,
+    blobOid: candidate19PreregistrationArtifact.blobOid,
+  },
+  verifiedSource: {
+    schemaVersion: 'bayn.candidate-development-verified-source.v1' as const,
+    sourceRevision: candidate19ArchiveReceipt.facts.sourceRevision,
+    modulePath: 'services/bayn/src/strategy/inverse-volatility-risk-diversification/candidate-19.ts',
+    moduleBlobOid: 'cc06d8506ba408aa8e24436a6b60faeadfb96d23',
+    moduleSha256: '90813ab3a3d3cb000bb894309694f94588f98730a6f78b8e1418a5c38d8cb45f',
+    sourceManifestPath: candidate19SourceManifestArtifact.path,
+    sourceManifestBlobOid: candidate19SourceManifestArtifact.blobOid,
+    sourceManifestSha256: candidate19SourceManifestArtifact.sha256,
+    sourceManifest: rawSourceManifest,
+    baselineRunId: candidate19ArchiveReceipt.facts.baselineRunId,
+    stressedRunId: candidate19ArchiveReceipt.facts.stressedRunId,
+  },
+  protocolBindings: {
+    strategyProtocolHash: candidate19ArchiveReceipt.facts.strategyProtocolHash,
+    strategyIdentityHash: candidate19ArchiveReceipt.facts.strategyIdentityHash,
+    candidateDevelopmentProtocolHash: candidate19ArchiveReceipt.facts.candidateDevelopmentProtocolHash,
+    calendarHash: candidate19ArchiveReceipt.facts.calendarHash,
+    priorTrialsHash: candidate19ArchiveReceipt.facts.priorTrialsHash,
+  },
+  preMetricEvidence: {
+    exactSourceLoadSha256: candidate19ArchiveReceipt.facts.exactSourceLoadSha256,
+    preMetricDiagnosticSha256: candidate19ArchiveReceipt.facts.preMetricDiagnosticSha256,
+    registrationSourceManifestSha256: candidate19ArchiveReceipt.facts.registrationSourceManifestSha256,
+    preflightStatus: 'PASS' as const,
+    registrationStatus: 'PASS' as const,
+  },
+  attempt: {
+    attemptedAt: candidate19ArchiveReceipt.facts.attemptedAt,
+    finishedAt: candidate19ArchiveReceipt.facts.recordedAt,
+    stage: 'development-evaluation' as const,
+    developmentMetricsObserved: true as const,
+    developmentReportWritten: false as const,
+    evaluationRerunAuthorized: false as const,
+    exitCode: 1 as const,
+    failure: {
+      _tag: 'CandidateDevelopmentCommandError' as const,
+      structuredFailureRendered: false as const,
+      disposition: 'DEFAULT_CLI_RENDERER_OMITTED_STRUCTURED_FAILURE' as const,
+      capturedOutputPath: candidate19ArchiveReceipt.facts.capturedOutputPath,
+      capturedOutputSha256: candidate19ArchiveReceipt.facts.capturedOutputSha256,
+      capturedOutputBytes: candidate19ArchiveReceipt.facts.capturedOutputBytes,
+    },
+  },
+  contentHash: candidate19ArchiveReceipt.facts.evidenceContentHash,
+} as const
+
+export const candidate19DevelopmentFailureEvidenceResult = pipe(
+  candidate19HistoricalEvidence,
+  validateCandidate19DevelopmentFailureEvidence,
 )
 
 export const candidate19DevelopmentFailureEvidenceExpectation = {

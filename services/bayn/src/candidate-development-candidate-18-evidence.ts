@@ -1,7 +1,8 @@
-import rawEvidence from '../candidates/ordinal-18-global-equity-dual-momentum-development-evidence.json' with { type: 'json' }
+import rawSourceManifest from '../candidates/ordinal-18-global-equity-dual-momentum-source-manifest.json' with { type: 'json' }
 
 import { pipe, Result, Schema } from 'effect'
 
+import { candidate18ArchiveReceipt } from './candidate-archive/legacy-candidate-receipts'
 import { CandidateDevelopmentSourceManifestSchema } from './candidate-development-command'
 import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
 import {
@@ -130,18 +131,18 @@ export const validateCandidate18DevelopmentFailureEvidence = (
   }
 
   const bindings = [
-    ['recordedAt', '2026-07-31T14:59:03.363Z', evidence.recordedAt],
+    ['recordedAt', candidate18ArchiveReceipt.facts.recordedAt, evidence.recordedAt],
     ['candidateOrdinal', 18, evidence.candidateOrdinal],
     ['priorTrialCount', 17, evidence.priorTrialCount],
     [
       'preregistration.sourceRevision',
-      '30614640c5dfa7a7d50bf053df153062ff0bbca4',
+      candidate18ArchiveReceipt.facts.preregistrationSourceRevision,
       evidence.preregistration.sourceRevision,
     ],
     ['preregistration.blobOid', '920a4afb8a7e5c1f6ef0875683ddc96a91008079', evidence.preregistration.blobOid],
     [
       'verifiedSource.sourceRevision',
-      '24465ada2b5e1e04c5058ad812b1eedd9f58b0dd',
+      candidate18ArchiveReceipt.facts.sourceRevision,
       evidence.verifiedSource.sourceRevision,
     ],
     ['verifiedSource.moduleBlobOid', '44357f3d98315e7d241e4f0184f7812f5a27e930', evidence.verifiedSource.moduleBlobOid],
@@ -162,42 +163,42 @@ export const validateCandidate18DevelopmentFailureEvidence = (
     ],
     [
       'verifiedSource.baselineRunId',
-      '8b326d204d0c0cabbddcd477cd2c2c8b0adfc1d3ccd1b60bfaa4c5bfa1eccb2b',
+      candidate18ArchiveReceipt.facts.baselineRunId,
       evidence.verifiedSource.baselineRunId,
     ],
     [
       'verifiedSource.stressedRunId',
-      'cfe9c71f6cb0d0badf95f850c2194dc3ed57f5b8ca2f45383127863e6dd0060b',
+      candidate18ArchiveReceipt.facts.stressedRunId,
       evidence.verifiedSource.stressedRunId,
     ],
     [
       'protocolBindings.strategyProtocolHash',
-      '7e27320b47cd170c1bc9c60ec3692593f2182af44bb48cef4d4a403b09601d75',
+      candidate18ArchiveReceipt.facts.strategyProtocolHash,
       evidence.protocolBindings.strategyProtocolHash,
     ],
     [
       'protocolBindings.strategyIdentityHash',
-      'ff762a985c129055670224dca5827a65c689f6f50e1e3765e7b521a05417b1f0',
+      candidate18ArchiveReceipt.facts.strategyIdentityHash,
       evidence.protocolBindings.strategyIdentityHash,
     ],
     [
       'protocolBindings.candidateDevelopmentProtocolHash',
-      '46657425873b4f766b5f49d0ebbe2ac3aa9cf53682a8508635be708406271877',
+      candidate18ArchiveReceipt.facts.candidateDevelopmentProtocolHash,
       evidence.protocolBindings.candidateDevelopmentProtocolHash,
     ],
     [
       'protocolBindings.calendarHash',
-      '4b2f519f336e4e730c1f0d69e860f25a8d4d0cfbd8e93c6b333ea83623d87237',
+      candidate18ArchiveReceipt.facts.calendarHash,
       evidence.protocolBindings.calendarHash,
     ],
     [
       'protocolBindings.priorTrialsHash',
-      '58f4e801380f35f483f998e00c82889e0cb6257e85542764e2dc8eaa4f3fd419',
+      candidate18ArchiveReceipt.facts.priorTrialsHash,
       evidence.protocolBindings.priorTrialsHash,
     ],
     [
       'protocolBindings.embeddedEvaluationProtocolHash',
-      'fa25d8c16bc4f4fde3bab99409ae60a6fd23332d295b3557231796cebb911390',
+      candidate18ArchiveReceipt.facts.embeddedEvaluationProtocolHash,
       evidence.protocolBindings.embeddedEvaluationProtocolHash,
     ],
   ] as const
@@ -216,8 +217,78 @@ export const validateCandidate18DevelopmentFailureEvidence = (
   return Result.succeed(evidence)
 }
 
+const candidate18EvidenceArtifact = candidate18ArchiveReceipt.historicalArtifacts.find(
+  ({ kind }) => kind === 'development-evidence',
+)
+const candidate18PreregistrationArtifact = candidate18ArchiveReceipt.historicalArtifacts.find(
+  ({ kind }) => kind === 'preregistration',
+)
+const candidate18SourceManifestArtifact = candidate18ArchiveReceipt.historicalArtifacts.find(
+  ({ kind }) => kind === 'source-manifest',
+)
+
+if (
+  candidate18EvidenceArtifact === undefined ||
+  candidate18PreregistrationArtifact === undefined ||
+  candidate18SourceManifestArtifact === undefined
+) {
+  throw new Error('Candidate 18 archive receipt is missing a required historical artifact')
+}
+
+const candidate18HistoricalEvidence = {
+  schemaVersion: 'bayn.candidate-development-attempt-failure-evidence.v1' as const,
+  recordedAt: candidate18ArchiveReceipt.facts.recordedAt,
+  candidateOrdinal: 18,
+  priorTrialCount: 17,
+  status: 'DEVELOPMENT_REJECTED' as const,
+  qualificationAttemptConsumed: false as const,
+  nextCandidatePreregistration: null,
+  preregistration: {
+    sourceRevision: candidate18ArchiveReceipt.facts.preregistrationSourceRevision,
+    path: candidate18PreregistrationArtifact.path,
+    blobOid: candidate18PreregistrationArtifact.blobOid,
+  },
+  verifiedSource: {
+    schemaVersion: 'bayn.candidate-development-verified-source.v1' as const,
+    sourceRevision: candidate18ArchiveReceipt.facts.sourceRevision,
+    modulePath: 'services/bayn/src/strategy/dual-momentum-global-equity/candidate-18.ts',
+    moduleBlobOid: '44357f3d98315e7d241e4f0184f7812f5a27e930',
+    moduleSha256: '27466a8c9a9acba475db9cd0d2916532208540a53bd1f0ece307df299e5e34e8',
+    sourceManifestPath: candidate18SourceManifestArtifact.path,
+    sourceManifestBlobOid: candidate18SourceManifestArtifact.blobOid,
+    sourceManifestSha256: candidate18SourceManifestArtifact.sha256,
+    sourceManifest: rawSourceManifest,
+    baselineRunId: candidate18ArchiveReceipt.facts.baselineRunId,
+    stressedRunId: candidate18ArchiveReceipt.facts.stressedRunId,
+  },
+  protocolBindings: {
+    strategyProtocolHash: candidate18ArchiveReceipt.facts.strategyProtocolHash,
+    strategyIdentityHash: candidate18ArchiveReceipt.facts.strategyIdentityHash,
+    candidateDevelopmentProtocolHash: candidate18ArchiveReceipt.facts.candidateDevelopmentProtocolHash,
+    calendarHash: candidate18ArchiveReceipt.facts.calendarHash,
+    priorTrialsHash: candidate18ArchiveReceipt.facts.priorTrialsHash,
+    embeddedEvaluationProtocolHash: candidate18ArchiveReceipt.facts.embeddedEvaluationProtocolHash,
+  },
+  attempt: {
+    attemptedAt: candidate18ArchiveReceipt.facts.recordedAt,
+    stage: 'buildEvaluation-preflight' as const,
+    developmentMetricsObserved: false as const,
+    developmentReportWritten: false as const,
+    evaluationRerunAuthorized: false as const,
+    failure: {
+      _tag: 'CandidateDevelopmentCommandProgramExecutionFailed' as const,
+      cause: {
+        _tag: 'Candidate18InvalidInput' as const,
+        operation: 'preflight' as const,
+        reason: candidate18ArchiveReceipt.facts.failureReason,
+      },
+    },
+  },
+  contentHash: candidate18ArchiveReceipt.facts.evidenceContentHash,
+} as const
+
 export const candidate18DevelopmentFailureEvidenceResult = pipe(
-  rawEvidence,
+  candidate18HistoricalEvidence,
   validateCandidate18DevelopmentFailureEvidence,
 )
 
