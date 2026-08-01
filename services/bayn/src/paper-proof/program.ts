@@ -1,5 +1,7 @@
 import { Clock, Duration, Effect, Exit } from 'effect'
 
+import { MutationOperation } from '../broker/alpaca-mutations'
+import type { MutationEvent } from '../execution/mutations'
 import { utcInstantFromEpochMillis } from '../time'
 import {
   runPaperProofCancel,
@@ -33,6 +35,25 @@ interface PaperProofContainmentContext {
   readonly containmentIoTimeoutMs: number
 }
 
+type PaperProofSubmitCompositionDependencies = Omit<
+  PaperProofSubmitDependencies,
+  'currentUtcInstant' | 'execution' | 'mutations' | 'reconcile' | 'recovery' | 'restrictAuthority'
+> & {
+  readonly execution: Omit<PaperProofSubmitDependencies['execution'], 'recover'>
+}
+
+type PaperProofCancelCompositionDependencies = Omit<
+  PaperProofCancelDependencies,
+  'currentUtcInstant' | 'execution' | 'mutations' | 'readIntent' | 'reconcile' | 'recovery' | 'restrictAuthority'
+> & {
+  readonly execution: Omit<PaperProofCancelDependencies['execution'], 'recover'>
+}
+
+type PaperProofRecoverCompositionDependencies = Omit<
+  PaperProofRecoverDependencies,
+  'currentUtcInstant' | 'execution' | 'mutations' | 'readIntent' | 'reconcile' | 'recovery' | 'restrictAuthority'
+>
+
 /**
  * Composition owns all live capabilities, but each operation receives only its nested capability surface. The
  * operation programs never receive runtime authority, the protected token, or another operation's broker adapter.
@@ -48,19 +69,12 @@ export interface PaperProofDependencies {
   readonly recovery: PaperProofRecoveryStore
   /** Durable intent state is canonical and shared by cancellation and recovery views. */
   readonly readIntent: PaperProofCancelDependencies['readIntent']
+  /** Broker recovery lookup is canonical and shared by the original mutation and RECOVER views. */
+  readonly recoverMutation: (intentId: string, operation: MutationOperation) => Effect.Effect<MutationEvent, Error>
   readonly prepare: Omit<PaperProofPrepareDependencies, 'currentUtcInstant' | 'reconcile'>
-  readonly submit: Omit<
-    PaperProofSubmitDependencies,
-    'currentUtcInstant' | 'mutations' | 'reconcile' | 'recovery' | 'restrictAuthority'
-  >
-  readonly cancel: Omit<
-    PaperProofCancelDependencies,
-    'currentUtcInstant' | 'mutations' | 'readIntent' | 'reconcile' | 'recovery' | 'restrictAuthority'
-  >
-  readonly recover: Omit<
-    PaperProofRecoverDependencies,
-    'currentUtcInstant' | 'mutations' | 'readIntent' | 'reconcile' | 'recovery' | 'restrictAuthority'
-  >
+  readonly submit: PaperProofSubmitCompositionDependencies
+  readonly cancel: PaperProofCancelCompositionDependencies
+  readonly recover: PaperProofRecoverCompositionDependencies
 }
 
 const logContainmentFailure = <A>(
@@ -195,6 +209,10 @@ const runValidatedPaperProof = (
             ...dependencies.submit,
             currentUtcInstant: dependencies.containment.currentUtcInstant,
             mutations: dependencies.mutations,
+            execution: {
+              ...dependencies.submit.execution,
+              recover: (intentId) => dependencies.recoverMutation(intentId, MutationOperation.Submit),
+            },
             reconcile: dependencies.containment.reconcile,
             recovery: dependencies.recovery,
             restrictAuthority: dependencies.containment.restrictAuthority,
@@ -213,6 +231,10 @@ const runValidatedPaperProof = (
             ...dependencies.cancel,
             currentUtcInstant: dependencies.containment.currentUtcInstant,
             mutations: dependencies.mutations,
+            execution: {
+              ...dependencies.cancel.execution,
+              recover: (intentId) => dependencies.recoverMutation(intentId, MutationOperation.Cancel),
+            },
             readIntent: dependencies.readIntent,
             reconcile: dependencies.containment.reconcile,
             recovery: dependencies.recovery,
@@ -232,6 +254,10 @@ const runValidatedPaperProof = (
             ...dependencies.recover,
             currentUtcInstant: dependencies.containment.currentUtcInstant,
             mutations: dependencies.mutations,
+            execution: {
+              recoverSubmit: (intentId) => dependencies.recoverMutation(intentId, MutationOperation.Submit),
+              recoverCancel: (intentId) => dependencies.recoverMutation(intentId, MutationOperation.Cancel),
+            },
             readIntent: dependencies.readIntent,
             reconcile: dependencies.containment.reconcile,
             recovery: dependencies.recovery,

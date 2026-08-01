@@ -469,6 +469,7 @@ const fixture = (options: FixtureOptions) => {
     mutations: capabilities.mutations,
     recovery: capabilities.recovery,
     readIntent: capabilities.readIntent,
+    recoverMutation: capabilities.execution.recover,
     containment: {
       restrictAuthority: capabilities.restrictAuthority,
       reconcile: capabilities.reconcile,
@@ -481,22 +482,15 @@ const fixture = (options: FixtureOptions) => {
       activateCapitalGrant: capabilities.activateCapitalGrant,
       execution: {
         submit: capabilities.execution.submit,
-        recover: (value) => capabilities.execution.recover(value, MutationOperation.Submit),
       },
       prepareIntent: capabilities.prepareIntent,
     },
     cancel: {
       execution: {
         cancel: capabilities.execution.cancel,
-        recover: (value) => capabilities.execution.recover(value, MutationOperation.Cancel),
       },
     },
-    recover: {
-      execution: {
-        recoverSubmit: (value) => capabilities.execution.recover(value, MutationOperation.Submit),
-        recoverCancel: (value) => capabilities.execution.recover(value, MutationOperation.Cancel),
-      },
-    },
+    recover: {},
   }
   return { calls, dependencies, mutationState, recoveryState, sequence }
 }
@@ -526,6 +520,10 @@ describe('bounded PAPER proof command', () => {
       ...dependencies.containment,
       mutations: dependencies.mutations,
       recovery: dependencies.recovery,
+      execution: {
+        ...dependencies.submit.execution,
+        recover: (value) => dependencies.recoverMutation(value, MutationOperation.Submit),
+      },
     }
     const cancel: PaperProofCancelDependencies = {
       ...dependencies.cancel,
@@ -533,6 +531,10 @@ describe('bounded PAPER proof command', () => {
       mutations: dependencies.mutations,
       recovery: dependencies.recovery,
       readIntent: dependencies.readIntent,
+      execution: {
+        ...dependencies.cancel.execution,
+        recover: (value) => dependencies.recoverMutation(value, MutationOperation.Cancel),
+      },
     }
     const recover: PaperProofRecoverDependencies = {
       ...dependencies.recover,
@@ -540,6 +542,10 @@ describe('bounded PAPER proof command', () => {
       mutations: dependencies.mutations,
       recovery: dependencies.recovery,
       readIntent: dependencies.readIntent,
+      execution: {
+        recoverSubmit: (value) => dependencies.recoverMutation(value, MutationOperation.Submit),
+        recoverCancel: (value) => dependencies.recoverMutation(value, MutationOperation.Cancel),
+      },
     }
 
     // @ts-expect-error mutation runners stay behind the validated composition boundary.
@@ -560,6 +566,12 @@ describe('bounded PAPER proof command', () => {
     void dependencies.cancel.readIntent
     // @ts-expect-error the root RECOVER view cannot replace the canonical durable intent reader.
     void dependencies.recover.readIntent
+    // @ts-expect-error the root SUBMIT view cannot replace the canonical broker recovery lookup.
+    void dependencies.submit.execution.recover
+    // @ts-expect-error the root CANCEL view cannot replace the canonical broker recovery lookup.
+    void dependencies.cancel.execution.recover
+    // @ts-expect-error the root RECOVER view receives canonical lookup adapters at dispatch time.
+    void dependencies.recover.execution
     // @ts-expect-error CANCEL cannot activate capital.
     void cancel.activateCapitalGrant
     // @ts-expect-error CANCEL cannot issue submission broker I/O.
