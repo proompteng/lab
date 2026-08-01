@@ -93,7 +93,7 @@ describe('scoped resource boundaries', () => {
       Effect.scoped(
         Effect.gen(function* () {
           const parentScope = yield* Scope.Scope
-          yield* scopedAcquisition(
+          return yield* scopedAcquisition(
             (attemptScope) =>
               Scope.provide(
                 Effect.acquireRelease(Effect.void, () =>
