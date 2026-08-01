@@ -1,0 +1,125 @@
+{
+  "schemaVersion": "bayn.release-review-remediation.v4",
+  "remediationId": "pr-13426-continuous-reviewed-source",
+  "blocked": {
+    "mergeCommitSha": "6737d29cda608c79714046d420ab7396d8e80f70",
+    "mergeParentSha": "69d803040c8866e7703df50a645a096c54e7eca5",
+    "mergeTreeSha": "b8f61426c9e182125208356d1bb50c14e83b1e65",
+    "sourcePullRequestNumber": 13426,
+    "finalHeadSha": "adc96644904d1f1c2640cc6a597d1cfc108caf91",
+    "finalHeadParentSha": "69d803040c8866e7703df50a645a096c54e7eca5",
+    "finalHeadTreeSha": "b8f61426c9e182125208356d1bb50c14e83b1e65",
+    "sourcePullRequestEvidenceSha256": "2d7c74531595b8b889b39e5ebe7281cb5f397cbe2cf832300a80a62e293fbd0f",
+    "affectedPaths": [
+      {
+        "path": "services/bayn/migrations/0021_expired_paper_cycle_terminalization.ts",
+        "previousPath": null,
+        "status": "added",
+        "blobSha": "717010f5ab97d40c339f1987d1b12be5b840dce6"
+      },
+      {
+        "path": "services/bayn/src/cycle-runner.test.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "6376cba88183608c59e5fb15d46dbc99e8694af5"
+      },
+      {
+        "path": "services/bayn/src/cycle-runner/model.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "f42d1f2b55ee7a1c5f9f4a8a1b740764d48c9e34"
+      },
+      {
+        "path": "services/bayn/src/cycle-runner/recovery-decision-binding.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "0f6d68cfb4b119f4527a0bd775db4f32c40e8693"
+      },
+      {
+        "path": "services/bayn/src/cycle-runner/recovery-model.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "edab01249f1d9f7bc3a7a153944fc5d77ba483c0"
+      },
+      {
+        "path": "services/bayn/src/db/cycle-store/binding-program.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "abf4ad6837980e4eb03609634a86a6f6622e55a8"
+      },
+      {
+        "path": "services/bayn/src/db/cycle-store/decisions.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "feb6b75ab4239b5c3c1ea85ab4b14a7e48705b92"
+      },
+      {
+        "path": "services/bayn/src/db/cycle-store/integration.test.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "91e778d4f40b1cb0249ee29fd64b58f55266cc35"
+      },
+      {
+        "path": "services/bayn/src/db/cycle-store/model.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "20931b0632bb790740b95f9b6fece9e081f5c5c2"
+      },
+      {
+        "path": "services/bayn/src/db/cycle-store/queries.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "df7b7dd5ff33745f94d89938aa0ae5170ad201e8"
+      },
+      {
+        "path": "services/bayn/src/db/cycle-store/rows.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "11c6e080c6e5444ce97186e64b26080b80274fc1"
+      },
+      {
+        "path": "services/bayn/src/db/evidence-store.integration.test.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "eeb53deddb024057beff098ab7c97ea5d90052c0"
+      },
+      {
+        "path": "services/bayn/src/db/migrations.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "b3e6d31d76b6e8ab1add9e20dca8176d63566dc8"
+      },
+      {
+        "path": "services/bayn/src/execution-candidate-discovery/program.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "937a75dc11668df5d53ab0470d98ed1c28961d60"
+      },
+      {
+        "path": "services/bayn/src/observe-composition.test.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "680cd7d2c7ba6c8607fd05c734331266c3b39d12"
+      },
+      {
+        "path": "services/bayn/src/observe-composition.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "ab38e8303f0d4482a6daeb6dd8f239cfb59d6223"
+      },
+      {
+        "path": "services/bayn/src/shadow-decision-contract.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "5b86a01873d4f9cae739136451337f2820a6190f"
+      },
+      {
+        "path": "services/bayn/src/shadow-decision.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "a059fae815156f68b825daf722b71d2f94708c46"
+      }
+    ]
+  },
+  "requiredDescendants": []
+}
