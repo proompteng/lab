@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "bayn.release-review-remediation.v4",
+  "remediationId": "pr-13452-continuous-reviewed-source",
+  "blocked": {
+    "mergeCommitSha": "44cb3bdb9f1ce7c77f453a85c57f1360d43b96c8",
+    "mergeParentSha": "3398bb82b6b22d80b10d059ac395895c6218954e",
+    "mergeTreeSha": "5004c7cdf33f9469d8b40cd0acae4d5c3bc33d3e",
+    "sourcePullRequestNumber": 13452,
+    "finalHeadSha": "35968f9fb68e0e54237fca4964d583ecf52d428d",
+    "finalHeadParentSha": "3398bb82b6b22d80b10d059ac395895c6218954e",
+    "finalHeadTreeSha": "5004c7cdf33f9469d8b40cd0acae4d5c3bc33d3e",
+    "sourcePullRequestEvidenceSha256": "3717d56ecf273c6ac250c0c4667e685675fdaecef985d109db2be23da6bfb5e8",
+    "affectedPaths": [
+      {
+        "path": "services/bayn/migrations/0022_observe_reconciliation_recovery.ts",
+        "previousPath": null,
+        "status": "added",
+        "blobSha": "6128ac34022795e4a096a54e8bbeaafacd1000d4"
+      },
+      {
+        "path": "services/bayn/src/db/evidence-store.integration.test.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "b3fddacbf7f8267c40efa47c823cc441f07e3168"
+      },
+      {
+        "path": "services/bayn/src/db/execution-store/observe-authority.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "ea56890a9671fc9f6ef023d5eb53382584a21070"
+      },
+      {
+        "path": "services/bayn/src/db/migrations.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "e306f817beca15eaba70da4b01292f0b2d358f6c"
+      },
+      {
+        "path": "services/bayn/src/db/paper-store.integration.test.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "d97f2be0adfc27c35e08aa616e10c1d1d083f403"
+      },
+      {
+        "path": "services/bayn/src/db/reconciliation.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "3e5674a20d30c3c4bca26d398b0fd7e2b39434db"
+      }
+    ]
+  },
+  "requiredDescendants": []
+}
