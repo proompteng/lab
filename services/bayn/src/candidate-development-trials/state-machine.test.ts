@@ -36,6 +36,17 @@ describe('candidate development trial state machine', () => {
 
     expect(state.historicalQualificationTrials).toHaveLength(16)
     expect(state.developmentOnlyTrials.map((trial) => trial.candidateOrdinal)).toEqual([17, 18, 19])
+    expect(
+      state.developmentOnlyTrials.map((trial) => [
+        trial.candidateOrdinal,
+        trial.developmentMetricsObserved,
+        trial.attempt.metricBearingAttemptsConsumed,
+      ]),
+    ).toEqual([
+      [17, true, 1],
+      [18, false, 0],
+      [19, true, 1],
+    ])
     expect(state.invalidatedPrecommits).toHaveLength(1)
     expect(state.invalidatedPrecommits[0]?.invalidation).toEqual(candidate20PrecommitInvalidation)
     expect(state.invalidatedPrecommits[0] && Object.isFrozen(state.invalidatedPrecommits[0].invalidation)).toBe(true)
@@ -83,6 +94,11 @@ describe('candidate development trial state machine', () => {
     if (terminalized21._tag === 'BLOCKED') throw new Error('expected candidate 21 terminalization to apply')
     expect(terminalized21.state.developmentOnlyTrials.map((trial) => trial.candidateOrdinal)).toEqual([17, 18, 19, 21])
     expect(terminalized21.state.nextOrdinal).toBe(22)
+    expect(deriveCandidateDevelopmentNextAction(terminalized21.state)).toMatchObject({
+      _tag: 'AWAIT_REVIEWED_PRECOMMIT',
+      candidateOrdinal: 22,
+      reason: 'NO_SUCCESSOR',
+    })
 
     const reviewed22 = reduceCandidateDevelopmentTrialState(terminalized21.state, {
       _tag: 'REVIEW_SUCCESSOR',
@@ -237,6 +253,18 @@ describe('candidate development trial state machine', () => {
     expect(
       reduceCandidateDevelopmentTrialState(consumed.state, { _tag: 'CONSUME_QUALIFICATION_ATTEMPT' }),
     ).toMatchObject({ _tag: 'BLOCKED', issue: { reason: 'ATTEMPT_ALREADY_CONSUMED' } })
+    expect(
+      reduceCandidateDevelopmentTrialState(reviewed.state, {
+        _tag: 'CONSUME_DEVELOPMENT_ATTEMPT',
+        metricBearing: 'true' as never,
+      }),
+    ).toMatchObject({ _tag: 'BLOCKED', issue: { reason: 'MALFORMED_HISTORY' } })
+    expect(
+      reduceCandidateDevelopmentTrialState(reviewed.state, {
+        _tag: 'CONSUME_DEVELOPMENT_ATTEMPT',
+        metricBearing: undefined as never,
+      }),
+    ).toMatchObject({ _tag: 'BLOCKED', issue: { reason: 'MALFORMED_HISTORY' } })
     expect(
       reduceCandidateDevelopmentTrialState(reviewed.state, {
         _tag: 'TERMINALIZE_QUALIFICATION',

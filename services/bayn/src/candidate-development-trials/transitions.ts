@@ -24,6 +24,10 @@ import {
 } from './validation'
 
 type ReviewSuccessorTransition = Extract<CandidateDevelopmentTrialTransition, { readonly _tag: 'REVIEW_SUCCESSOR' }>
+type ConsumeDevelopmentTransition = Extract<
+  CandidateDevelopmentTrialTransition,
+  { readonly _tag: 'CONSUME_DEVELOPMENT_ATTEMPT' }
+>
 type InvalidatePrecommitTransition = Extract<
   CandidateDevelopmentTrialTransition,
   { readonly _tag: 'INVALIDATE_PRECOMMIT' }
@@ -121,6 +125,25 @@ const consumeAttempt = (
     ...state,
     currentSuccessor: cloneAndFreeze({ ...successor, attempt }),
   })
+}
+
+const consumeDevelopmentOnlyAttempt = (
+  state: CandidateDevelopmentTrialState,
+  transition: ConsumeDevelopmentTransition,
+): CandidateDevelopmentTrialTransitionDecision => {
+  if (typeof transition.metricBearing !== 'boolean') {
+    return blocked(stateIssue('transition.metricBearing', 'MALFORMED_HISTORY', transition.metricBearing, 'boolean'))
+  }
+  return consumeAttempt(
+    state,
+    {
+      _tag: 'DEVELOPMENT_ONLY_ATTEMPT',
+      attemptCount: 1,
+      metricBearingAttemptsConsumed: transition.metricBearing ? 1 : 0,
+      qualificationAttemptConsumed: false,
+    },
+    'DEVELOPMENT_ONLY',
+  )
 }
 
 const matchesInvalidationBinding = (
@@ -260,16 +283,7 @@ export const reduceCandidateDevelopmentTrialState = (
     case 'INVALIDATE_PRECOMMIT':
       return invalidateSuccessor(state, transition.invalidation)
     case 'CONSUME_DEVELOPMENT_ATTEMPT':
-      return consumeAttempt(
-        state,
-        {
-          _tag: 'DEVELOPMENT_ONLY_ATTEMPT',
-          attemptCount: 1,
-          metricBearingAttemptsConsumed: transition.metricBearing ? 1 : 0,
-          qualificationAttemptConsumed: false,
-        },
-        'DEVELOPMENT_ONLY',
-      )
+      return consumeDevelopmentOnlyAttempt(state, transition)
     case 'CONSUME_QUALIFICATION_ATTEMPT':
       return consumeAttempt(
         state,

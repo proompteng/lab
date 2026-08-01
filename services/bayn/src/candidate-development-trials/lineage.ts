@@ -9,6 +9,7 @@ import type {
   CandidateDevelopmentTrialState,
   CandidateDevelopmentTrialStateIssue,
 } from './model'
+import { frozenDevelopmentMetricObservations } from './frozen-lineage'
 import { validateCandidateDevelopmentTrialHistory } from './validation'
 
 const unattempted: Extract<CandidateDevelopmentAttemptConsumption, { readonly _tag: 'UNATTEMPTED' }> = Object.freeze({
@@ -31,23 +32,28 @@ export const cloneAndFreeze = <T>(value: T): T => {
 const normalizedDevelopmentTrial = (
   ordinal: number,
   latest: CandidateDevelopmentTrialHistory['latestDevelopmentEvidence'],
-): CandidateDevelopmentDevelopmentOnlyTrial => ({
-  _tag: 'DEVELOPMENT_ONLY',
-  candidateOrdinal: ordinal,
-  priorTrialCount: ordinal - 1,
-  status: 'DEVELOPMENT_REJECTED',
-  evidenceContentHash: ordinal === latest.candidateOrdinal ? latest.evidenceContentHash : null,
-  evaluatedSourceRevision: ordinal === latest.candidateOrdinal ? latest.evaluatedSourceRevision : null,
-  failureStage: ordinal === latest.candidateOrdinal ? (latest.failureStage ?? null) : null,
-  developmentMetricsObserved: ordinal === latest.candidateOrdinal ? (latest.developmentMetricsObserved ?? null) : null,
-  attempt: {
-    _tag: 'DEVELOPMENT_ONLY_ATTEMPT',
-    attemptCount: 1,
-    metricBearingAttemptsConsumed:
-      ordinal === latest.candidateOrdinal && latest.developmentMetricsObserved === true ? 1 : 0,
-    qualificationAttemptConsumed: false,
-  },
-})
+): CandidateDevelopmentDevelopmentOnlyTrial => {
+  const developmentMetricsObserved =
+    ordinal === latest.candidateOrdinal
+      ? (latest.developmentMetricsObserved ?? null)
+      : (frozenDevelopmentMetricObservations[ordinal] ?? null)
+  return {
+    _tag: 'DEVELOPMENT_ONLY',
+    candidateOrdinal: ordinal,
+    priorTrialCount: ordinal - 1,
+    status: 'DEVELOPMENT_REJECTED',
+    evidenceContentHash: ordinal === latest.candidateOrdinal ? latest.evidenceContentHash : null,
+    evaluatedSourceRevision: ordinal === latest.candidateOrdinal ? latest.evaluatedSourceRevision : null,
+    failureStage: ordinal === latest.candidateOrdinal ? (latest.failureStage ?? null) : null,
+    developmentMetricsObserved,
+    attempt: {
+      _tag: 'DEVELOPMENT_ONLY_ATTEMPT',
+      attemptCount: 1,
+      metricBearingAttemptsConsumed: developmentMetricsObserved === null ? null : developmentMetricsObserved ? 1 : 0,
+      qualificationAttemptConsumed: false,
+    },
+  }
+}
 
 const historicalQualificationTrial = (
   candidateOrdinal: number,

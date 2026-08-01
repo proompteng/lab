@@ -100,6 +100,13 @@ export const candidate19DevelopmentFailureEvidenceExpectation = {
   developmentMetricsObserved: true,
 } as const
 
+/** The frozen archive records these metric-bearing observations for normalized historical trials. */
+export const frozenDevelopmentMetricObservations: Readonly<Partial<Record<number, boolean>>> = Object.freeze({
+  17: true,
+  18: candidate18DevelopmentFailureEvidenceExpectation.developmentMetricsObserved,
+  19: candidate19DevelopmentFailureEvidenceExpectation.developmentMetricsObserved,
+})
+
 export const candidate19DevelopmentEligibility = {
   status: 'DEVELOPMENT_REJECTED',
   evidenceContentHash: candidate19DevelopmentFailureEvidenceExpectation.evidenceContentHash,

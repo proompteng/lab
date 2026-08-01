@@ -270,7 +270,9 @@ export const validateAttempt = (value: unknown, path: string): CandidateDevelopm
         : stateIssue(path, 'ATTEMPT_ALREADY_CONSUMED', value)
     case 'DEVELOPMENT_ONLY_ATTEMPT':
       return value.attemptCount === 1 &&
-        (value.metricBearingAttemptsConsumed === 0 || value.metricBearingAttemptsConsumed === 1) &&
+        (value.metricBearingAttemptsConsumed === null ||
+          value.metricBearingAttemptsConsumed === 0 ||
+          value.metricBearingAttemptsConsumed === 1) &&
         value.qualificationAttemptConsumed === false
         ? undefined
         : stateIssue(path, 'ATTEMPT_ALREADY_CONSUMED', value)
@@ -284,6 +286,11 @@ export const validateAttempt = (value: unknown, path: string): CandidateDevelopm
       return stateIssue(path, 'MALFORMED_HISTORY', value)
   }
 }
+
+const metricBearingObservation = (
+  attempt: Extract<CandidateDevelopmentAttemptConsumption, { readonly _tag: 'DEVELOPMENT_ONLY_ATTEMPT' }>,
+): boolean | null =>
+  attempt.metricBearingAttemptsConsumed === null ? null : attempt.metricBearingAttemptsConsumed === 1
 
 export const validateDevelopmentTerminalEvidence = (
   value: unknown,
@@ -858,15 +865,16 @@ const validateDevelopmentOnlyTrials = (
     }
     const attemptIssue = validateAttempt(trial.attempt, `state.developmentOnlyTrials[${index}].attempt`)
     if (attemptIssue !== undefined) return attemptIssue
+    const metricBearing = metricBearingObservation(trial.attempt)
     if (
       trial.developmentMetricsObserved !== null &&
-      trial.developmentMetricsObserved !== (trial.attempt.metricBearingAttemptsConsumed === 1)
+      (metricBearing === null || trial.developmentMetricsObserved !== metricBearing)
     ) {
       return stateIssue(
         `state.developmentOnlyTrials[${index}].developmentMetricsObserved`,
         'TERMINAL_STATE_MISMATCH',
         trial.developmentMetricsObserved,
-        trial.attempt.metricBearingAttemptsConsumed === 1,
+        metricBearing,
       )
     }
   }
@@ -927,6 +935,12 @@ const validateCurrentSuccessor = (
   }
   const attemptIssue = validateAttempt(successor.attempt, 'state.currentSuccessor.attempt')
   if (attemptIssue !== undefined) return attemptIssue
+  if (
+    successor.attempt._tag === 'DEVELOPMENT_ONLY_ATTEMPT' &&
+    successor.attempt.metricBearingAttemptsConsumed === null
+  ) {
+    return stateIssue('state.currentSuccessor.attempt.metricBearingAttemptsConsumed', 'TERMINAL_STATE_MISMATCH')
+  }
   if (
     successor.attempt._tag !== 'UNATTEMPTED' &&
     successor.attempt._tag !==

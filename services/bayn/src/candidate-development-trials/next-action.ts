@@ -7,11 +7,14 @@ import type {
 } from './model'
 import { validateCandidateDevelopmentTrialState } from './validation'
 
+const immediatelyPrecedingOrdinalWasInvalidated = (state: CandidateDevelopmentTrialState): boolean =>
+  state.invalidatedPrecommits.some(({ invalidation }) => invalidation.candidateOrdinal === state.nextOrdinal - 1)
+
 const awaitReviewedPrecommit = (state: CandidateDevelopmentTrialState): CandidateDevelopmentNextAction => ({
   _tag: 'AWAIT_REVIEWED_PRECOMMIT',
   candidateOrdinal: state.nextOrdinal,
   priorTrialCount: state.nextOrdinal - 1,
-  reason: state.invalidatedPrecommits.length === 0 ? 'NO_SUCCESSOR' : 'PRECOMMIT_INVALIDATED',
+  reason: immediatelyPrecedingOrdinalWasInvalidated(state) ? 'PRECOMMIT_INVALIDATED' : 'NO_SUCCESSOR',
 })
 
 const actionForSuccessor = (successor: CandidateDevelopmentCurrentSuccessor): CandidateDevelopmentNextAction => {

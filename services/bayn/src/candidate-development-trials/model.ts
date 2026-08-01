@@ -150,7 +150,7 @@ export type CandidateDevelopmentAttemptConsumption =
   | {
       readonly _tag: 'DEVELOPMENT_ONLY_ATTEMPT'
       readonly attemptCount: 1
-      readonly metricBearingAttemptsConsumed: 0 | 1
+      readonly metricBearingAttemptsConsumed: 0 | 1 | null
       readonly qualificationAttemptConsumed: false
     }
   | {
