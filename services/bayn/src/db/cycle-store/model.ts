@@ -4,26 +4,13 @@ import { isSqlError, type SqlError } from 'effect/unstable/sql/SqlError'
 import type { AutonomousCycle, CycleCompletionState, CycleDraft, CycleTerminalReason } from '../../cycle'
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
 import type { InputManifest, IsoDate } from '../../types'
-import type { CycleStoreDecisionFailure } from './decisions'
+import type { CycleStoreDecisionFailure } from './decision-contract'
 
-export interface CycleDecisionStoreEvidence {
-  readonly paperCompletionEvidenceMatches: boolean
-  readonly paperGenerationIsSuperseded: boolean
-}
-
-const decisionStoreEvidence = new WeakMap<object, CycleDecisionStoreEvidence>()
-
-export const attachCycleDecisionStoreEvidence = (
-  document: CycleDecisionDocument,
-  evidence: CycleDecisionStoreEvidence,
-): CycleDecisionDocument => {
-  const attached = { ...document } satisfies CycleDecisionDocument
-  decisionStoreEvidence.set(attached, evidence)
-  return attached
-}
-
-export const cycleDecisionStoreEvidence = (document: CycleDecisionDocument): CycleDecisionStoreEvidence | undefined =>
-  decisionStoreEvidence.get(document)
+export {
+  attachCycleDecisionStoreEvidence,
+  cycleDecisionStoreEvidence,
+  type CycleDecisionStoreEvidence,
+} from './decision-contract'
 
 export interface CycleAcquireReceipt {
   readonly cycle: AutonomousCycle

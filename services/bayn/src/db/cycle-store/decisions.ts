@@ -10,16 +10,14 @@ import {
   type CycleCompletionState,
   type CycleDraft,
 } from '../../cycle'
-import { cycleTerminalReasonForBlockedTargetPlan } from '../../cycle-recovery'
+import { cycleTerminalReasonForBlockedTargetPlan } from '../../cycle-runner/recovery-decisions'
 import { CycleDecisionDocumentSchema, type CycleDecisionDocument } from '../../shadow-decision-contract'
 import { TargetPlanStatus } from '../../target-planner'
 import type { InputManifest } from '../../types'
-import { cycleDecisionStoreEvidence } from './model'
+import { cycleDecisionStoreEvidence } from './decision-contract'
+import type { CycleStoreDecisionFailure } from './decision-contract'
 
-export interface CycleStoreDecisionFailure {
-  readonly failure: 'conflict' | 'invariant' | 'not-found'
-  readonly message: string
-}
+export type { CycleStoreDecisionFailure } from './decision-contract'
 
 export type AcquireDecision =
   | {

@@ -9,7 +9,7 @@ import {
   type CycleCompletionState,
   type PendingCycle,
 } from '../cycle'
-import type { CyclePublicationReadiness } from '../cycle-readiness'
+import type { CyclePublicationReadiness } from './recovery-readiness-model'
 import { CycleDecisionDocumentSchema, type CycleDecisionDocument } from '../shadow-decision-contract'
 import {
   NonNegativeFiniteSchema,

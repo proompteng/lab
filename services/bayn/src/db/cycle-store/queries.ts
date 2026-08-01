@@ -3,12 +3,8 @@ import { Effect } from 'effect'
 
 import { CycleState, type AutonomousCycle } from '../../cycle'
 import type { CycleDecisionDocument, PaperDecisionDocument } from '../../shadow-decision-contract'
-import {
-  attachCycleDecisionStoreEvidence,
-  type CycleAuthoritySlot,
-  type CycleRecoveryScope,
-  type CycleStoreInternalError,
-} from './model'
+import { attachCycleDecisionStoreEvidence } from './decision-contract'
+import type { CycleAuthoritySlot, CycleRecoveryScope, CycleStoreInternalError } from './model'
 import { decodeDecisionEvidenceMatch, decodeStoredCycles, decodeStoredDecisionDocumentRows } from './rows'
 
 export interface CycleQueries {

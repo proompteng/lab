@@ -27,8 +27,8 @@ import {
   makeInitialCycle,
   validateBlockedDecision,
   validateCompletionDocument,
-  type CycleStoreDecisionFailure,
 } from './decisions'
+import type { CycleStoreDecisionFailure } from './decision-contract'
 
 const hash = (character: string): string => character.repeat(64)
 const accountId = 'paper-account-1'

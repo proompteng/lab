@@ -1,7 +1,7 @@
 export {
   cycleCompletionStateForTargetPlan,
   cycleTerminalReasonForBlockedTargetPlan,
-} from './cycle-runner/recovery-decision-binding'
+} from './cycle-runner/recovery-decisions'
 export { selectCycleRecovery } from './cycle-runner/recovery-selection'
 export {
   type CorrelatedCycleRecoveryState,
