@@ -493,7 +493,10 @@ const remediationHistoryFixture = (): {
     ],
   })
   const record = structuredClone(realRemediationRecord)
-  if (record.schemaVersion === 'bayn.release-review-remediation.v4') {
+  if (
+    record.schemaVersion === 'bayn.release-review-remediation.v4' ||
+    record.schemaVersion === 'bayn.release-review-remediation.v5'
+  ) {
     throw new Error('expected a legacy remediation record')
   }
   const mutableRecord = record as unknown as {
@@ -1703,18 +1706,26 @@ const continuousHistory = {
   blocked: '6737d29cda608c79714046d420ab7396d8e80f70',
   finalHead: 'adc96644904d1f1c2640cc6a597d1cfc108caf91',
   priorHead: 'ab989db8b42f9814f7aa22f7460becdee847a492',
-  introductionHead: '6'.repeat(40),
-  introductionMerge: '7'.repeat(40),
+  intermediates: [
+    '2aa782001a9d7e1d9db68e5fa0929159755334cd',
+    '7c2335792707e34ac41e4de5091d2e2af48b7657',
+    'ae4d23650c20cecbde2bac8416bc2b734381cb69',
+    'fa2016a8aa3c8b0f466ab84a7956c704dd9056c7',
+  ],
+  introductionHead: '3870d78808d0eec4f8d8a6b6d6f91af406d8fe05',
+  introductionMerge: 'af1e0b0707c9f3ae6b05568b7e2984888d0d7d14',
+  completionHead: 'a'.repeat(40),
+  completionMerge: 'b'.repeat(40),
 } as const
-const continuousNowMs = Date.parse('2026-07-31T20:42:00Z')
+const continuousNowMs = Date.parse('2026-08-01T08:32:00Z')
 
 const continuousRemediationFixture = (): {
   readonly snapshot: BaynReleaseEligibilitySnapshot
   readonly evidence: BaynReleaseReviewRemediationEvidence
 } => {
   const record = structuredClone(realContinuousRemediationRecord)
-  if (record.schemaVersion !== 'bayn.release-review-remediation.v4') {
-    throw new Error('expected a v4 continuous-source remediation record')
+  if (record.schemaVersion !== 'bayn.release-review-remediation.v5') {
+    throw new Error('expected a v5 continuous-source remediation record')
   }
   const blockedPull: PullRequestReviewState = {
     number: 13426,
@@ -1747,14 +1758,59 @@ const continuousRemediationFixture = (): {
     record as unknown as { blocked: { sourcePullRequestEvidenceSha256: string } }
   ).blocked.sourcePullRequestEvidenceSha256 = pullRequestReviewEvidenceSha256(blockedPull)
 
-  const changes = record.blocked.affectedPaths.map((path) => ({ ...path }))
-  const pathBlobs = changes.map((path) => ({ path: path.path, blobSha: path.blobSha }))
+  const introductionPull: PullRequestReviewState = {
+    number: 13443,
+    baseRefName: 'main',
+    headSha: continuousHistory.introductionHead,
+    mergeCommitSha: continuousHistory.introductionMerge,
+    createdAt: '2026-07-31T21:37:06Z',
+    mergedAt: '2026-08-01T08:29:45Z',
+    reviews: [],
+    threads: [],
+    commitShas: [continuousHistory.introductionHead],
+    issueComments: [
+      {
+        authorLogin: 'linear-code[bot]',
+        body: '<!-- linear-linkback -->\n<p><a href="https://linear.app/proompteng/issue/PROOMPT-443">PROOMPT-443</a></p>',
+        createdAt: '2026-07-31T21:37:08Z',
+        updatedAt: '2026-07-31T21:37:08Z',
+      },
+      {
+        authorLogin: 'gregkonush',
+        body: 'Exact-head completion audit on `6324fb116daa2cccbea895fde39ce46f61d39d0b` / base `2aa782001a9d7e1d9db68e5fa0929159755334cd`:\n\n- automatic review: unique trusted +1 at 2026-07-31T21:39:54Z; zero review threads\n- hosted gates: all successful, including packages-scripts, full Bayn, PostgreSQL 18, amd64, arm64, Effect compatibility, dependency invariant, broker sandbox, planner, and Bayn release gate\n- scope: one commit, exactly the two verifier files plus the immutable v4 receipt\n- worktree: clean\n- merge/auto-merge: not enabled; PR remains open\n\nRequired hold order remains: #13444 (PROOMPT-445) merge, then #13442 rebase/fresh review/merge, then fresh safe-main audit. Do not merge this PR before that sequence completes.\n',
+        createdAt: '2026-07-31T21:43:38Z',
+        updatedAt: '2026-07-31T21:43:38Z',
+      },
+      {
+        authorLogin: 'gregkonush',
+        body: '<!-- codex:ready -->\n:shipit:',
+        createdAt: '2026-07-31T21:43:41Z',
+        updatedAt: '2026-07-31T21:43:41Z',
+      },
+    ],
+    reactions: [reaction({ createdAt: '2026-08-01T08:29:17Z' })],
+    headForcePushes: [
+      {
+        actorLogin: 'gregkonush',
+        beforeCommitSha: '6324fb116daa2cccbea895fde39ce46f61d39d0b',
+        afterCommitSha: continuousHistory.introductionHead,
+        createdAt: '2026-08-01T08:24:53Z',
+      },
+    ],
+    headForcePushCount: 1,
+  }
+  if (pullRequestReviewEvidenceSha256(introductionPull) !== record.introduction.sourcePullRequestEvidenceSha256) {
+    throw new Error('exact #13443 review evidence fixture drifted')
+  }
+
+  const blockedChanges = record.blocked.affectedPaths.map((path) => ({ ...path }))
+  const blockedPathBlobs = blockedChanges.map((path) => ({ path: path.path, blobSha: path.blobSha }))
   const blockedCommit = {
     sha: continuousHistory.blocked,
     parents: [continuousHistory.published],
     treeSha: record.blocked.mergeTreeSha,
-    files: changes.map((path) => path.path),
-    fileChanges: changes,
+    files: blockedChanges.map((path) => path.path),
+    fileChanges: blockedChanges,
     reviewSnapshot: {
       mainCommitParents: [continuousHistory.published],
       associatedPullRequests: [
@@ -1768,50 +1824,85 @@ const continuousRemediationFixture = (): {
       pullRequest: blockedPull,
     },
   }
-  const introductionSnapshot = reviewSnapshotFor({
-    commitSha: continuousHistory.introductionMerge,
-    prNumber: 13443,
-    headSha: continuousHistory.introductionHead,
-    parents: [continuousHistory.blocked],
-    mergedAt: '2026-07-31T20:41:00Z',
-    reviews: [
-      review({
-        commitSha: continuousHistory.introductionHead,
-        submittedAt: '2026-07-31T20:40:00Z',
-      }),
+  const intermediateCommits = continuousHistory.intermediates.map((sha, index) => ({
+    sha,
+    parents: [index === 0 ? continuousHistory.blocked : continuousHistory.intermediates[index - 1]!],
+    treeSha: `${index + 1}`.repeat(40),
+    files: [`docs/proompt-443-intermediate-${index}.md`],
+    fileChanges: [
+      {
+        path: `docs/proompt-443-intermediate-${index}.md`,
+        previousPath: null,
+        status: 'added',
+        blobSha: `${index + 5}`.repeat(40),
+      },
     ],
-  })
-  const recordBlobSha = '8'.repeat(40)
+    reviewSnapshot: null,
+  }))
+  const introductionChanges = record.introduction.affectedPaths.map((path) => ({ ...path }))
+  const introductionPathBlobs = introductionChanges.map((path) => ({ path: path.path, blobSha: path.blobSha }))
   const introductionCommit = {
     sha: continuousHistory.introductionMerge,
-    parents: [continuousHistory.blocked],
-    treeSha: '9'.repeat(40),
+    parents: [record.introduction.mergeParentSha],
+    treeSha: record.introduction.mergeTreeSha,
+    files: introductionChanges.map((path) => path.path),
+    fileChanges: introductionChanges,
+    reviewSnapshot: {
+      mainCommitParents: [record.introduction.mergeParentSha],
+      associatedPullRequests: [
+        associatedPull({
+          number: 13443,
+          headSha: continuousHistory.introductionHead,
+          mergeCommitSha: continuousHistory.introductionMerge,
+          mergedAt: introductionPull.mergedAt,
+        }),
+      ],
+      pullRequest: introductionPull,
+    },
+  }
+  const recordBlobSha = '8'.repeat(40)
+  const completionCommit = {
+    sha: continuousHistory.completionMerge,
+    parents: [continuousHistory.introductionMerge],
+    treeSha: 'c'.repeat(40),
     files: [
-      'packages/scripts/src/bayn/verify-release-review.ts',
       'packages/scripts/src/bayn/verify-release-review.test.ts',
+      'packages/scripts/src/bayn/verify-release-review.ts',
       continuousRemediationRecordPath,
     ],
     fileChanges: [
       {
-        path: 'packages/scripts/src/bayn/verify-release-review.ts',
-        previousPath: null,
-        status: 'modified',
-        blobSha: '1'.repeat(40),
-      },
-      {
         path: 'packages/scripts/src/bayn/verify-release-review.test.ts',
         previousPath: null,
         status: 'modified',
-        blobSha: '2'.repeat(40),
+        blobSha: 'd'.repeat(40),
+      },
+      {
+        path: 'packages/scripts/src/bayn/verify-release-review.ts',
+        previousPath: null,
+        status: 'modified',
+        blobSha: 'e'.repeat(40),
       },
       {
         path: continuousRemediationRecordPath,
         previousPath: null,
-        status: 'added',
+        status: 'modified',
         blobSha: recordBlobSha,
       },
     ],
-    reviewSnapshot: introductionSnapshot,
+    reviewSnapshot: reviewSnapshotFor({
+      commitSha: continuousHistory.completionMerge,
+      prNumber: 13445,
+      headSha: continuousHistory.completionHead,
+      parents: [continuousHistory.introductionMerge],
+      mergedAt: '2026-08-01T08:31:00Z',
+      reviews: [
+        review({
+          commitSha: continuousHistory.completionHead,
+          submittedAt: '2026-08-01T08:30:00Z',
+        }),
+      ],
+    }),
   }
   const evidence: BaynReleaseReviewRemediationEvidence = {
     recordPath: continuousRemediationRecordPath,
@@ -1822,17 +1913,26 @@ const continuousRemediationFixture = (): {
         sha: continuousHistory.finalHead,
         parents: [continuousHistory.published],
         treeSha: record.blocked.finalHeadTreeSha,
-        files: changes.map((path) => path.path),
-        fileChanges: changes,
-        pathBlobs,
+        files: blockedChanges.map((path) => path.path),
+        fileChanges: blockedChanges,
+        pathBlobs: blockedPathBlobs,
+      },
+      {
+        sha: continuousHistory.introductionHead,
+        parents: [record.introduction.finalHeadParentSha],
+        treeSha: record.introduction.finalHeadTreeSha,
+        files: introductionChanges.map((path) => path.path),
+        fileChanges: introductionChanges,
+        pathBlobs: introductionPathBlobs,
       },
     ],
-    currentPathBlobs: pathBlobs,
+    currentPathBlobs: blockedPathBlobs,
   }
+  const commits = [blockedCommit, ...intermediateCommits, introductionCommit, completionCommit]
   return {
     evidence,
     snapshot: {
-      currentCommitParents: [continuousHistory.blocked],
+      currentCommitParents: [continuousHistory.introductionMerge],
       lastPublishedRevision: {
         status: 'resolved',
         revision: continuousHistory.published,
@@ -1843,11 +1943,11 @@ const continuousRemediationFixture = (): {
       comparison: {
         status: 'ahead',
         baseSha: continuousHistory.published,
-        headSha: continuousHistory.introductionMerge,
+        headSha: continuousHistory.completionMerge,
         mergeBaseSha: continuousHistory.published,
-        aheadBy: 2,
-        totalCommits: 2,
-        commits: [blockedCommit, introductionCommit],
+        aheadBy: commits.length,
+        totalCommits: commits.length,
+        commits,
         truncated: false,
       },
       remediations: [evidence],
@@ -1855,10 +1955,51 @@ const continuousRemediationFixture = (): {
   }
 }
 
+const continuousIntroductionEvidence = (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+  const record = fixture.evidence.record
+  if (record.schemaVersion !== 'bayn.release-review-remediation.v5') {
+    throw new Error('expected a v5 continuous-source remediation record')
+  }
+  const introductionCommit = fixture.snapshot.comparison?.commits.find(
+    (commit) => commit.sha === continuousHistory.introductionMerge,
+  )
+  const pullRequest = introductionCommit?.reviewSnapshot?.pullRequest
+  const finalHead = fixture.evidence.referencedCommits.find(
+    (commit) => commit.sha === continuousHistory.introductionHead,
+  )
+  if (
+    introductionCommit === undefined ||
+    pullRequest === null ||
+    pullRequest === undefined ||
+    finalHead === undefined
+  ) {
+    throw new Error('missing #13443 introduction evidence')
+  }
+  return { record, introductionCommit, pullRequest, finalHead }
+}
+
+const rebindContinuousIntroductionPull = (fixture: ReturnType<typeof continuousRemediationFixture>): void => {
+  const { record, pullRequest } = continuousIntroductionEvidence(fixture)
+  ;(record.introduction as unknown as { sourcePullRequestEvidenceSha256: string }).sourcePullRequestEvidenceSha256 =
+    pullRequestReviewEvidenceSha256(pullRequest)
+}
+
+const evaluateContinuousRemediationFixture = (
+  fixture: ReturnType<typeof continuousRemediationFixture>,
+  nowMs = continuousNowMs,
+) =>
+  evaluateBaynReleaseEligibility({
+    mainCommitSha: continuousHistory.completionMerge,
+    baseRefName: 'main',
+    snapshot: fixture.snapshot,
+    nowMs,
+    pushBeforeSha: continuousHistory.introductionMerge,
+  })
+
 describe('Bayn publication-range eligibility', () => {
-  test('parses the exact immutable #13426 continuous-source v4 receipt', () => {
+  test('parses the exact immutable #13426 continuous-source v5 receipt with #13443 completion', () => {
     expect(realContinuousRemediationRecord).toMatchObject({
-      schemaVersion: 'bayn.release-review-remediation.v4',
+      schemaVersion: 'bayn.release-review-remediation.v5',
       remediationId: 'pr-13426-continuous-reviewed-source',
       blocked: {
         mergeCommitSha: continuousHistory.blocked,
@@ -1872,24 +2013,36 @@ describe('Bayn publication-range eligibility', () => {
         affectedPaths: { length: 18 },
       },
       requiredDescendants: [],
+      introduction: {
+        mergeCommitSha: continuousHistory.introductionMerge,
+        mergeParentSha: continuousHistory.intermediates.at(-1),
+        mergeTreeSha: 'cf14f73afa2032aa0c135b11815273594c308e2b',
+        sourcePullRequestNumber: 13443,
+        finalHeadSha: continuousHistory.introductionHead,
+        finalHeadParentSha: continuousHistory.intermediates.at(-1),
+        finalHeadTreeSha: 'cf14f73afa2032aa0c135b11815273594c308e2b',
+        sourcePullRequestEvidenceSha256: '1d37445461c211e669f06a6af59cb1263c0d5e99312cff3aa237dd0fa249a487',
+        introducedRecordBlobSha: 'dfde09ca935b9df6d48d34391d1cc0e599eab6c7',
+        affectedPaths: { length: 3 },
+      },
     })
   })
 
-  test('accepts #13426 only through its exact continuous reviewed source binding', () => {
+  test('accepts #13426 only through exact continuous source and #13443 reaction-bound introduction evidence', () => {
     const fixture = continuousRemediationFixture()
     expect(
       evaluateBaynReleaseEligibility({
-        mainCommitSha: continuousHistory.introductionMerge,
+        mainCommitSha: continuousHistory.completionMerge,
         baseRefName: 'main',
         snapshot: fixture.snapshot,
         nowMs: continuousNowMs,
-        pushBeforeSha: continuousHistory.blocked,
+        pushBeforeSha: continuousHistory.introductionMerge,
       }),
     ).toEqual({
       status: 'eligible',
       lastPublishedRevision: continuousHistory.published,
-      checkedCommitCount: 2,
-      baynAffectingCommitCount: 2,
+      checkedCommitCount: 7,
+      baynAffectingCommitCount: 3,
       reviewedPullRequests: [
         {
           commitSha: continuousHistory.blocked,
@@ -1902,22 +2055,29 @@ describe('Bayn publication-range eligibility', () => {
           commitSha: continuousHistory.introductionMerge,
           prNumber: 13443,
           headSha: continuousHistory.introductionHead,
-          reviewSubmittedAt: '2026-07-31T20:40:00Z',
-          eligibleAt: '2026-07-31T20:40:30.000Z',
+          reviewSubmittedAt: '2026-08-01T08:29:17Z',
+          eligibleAt: '2026-08-01T08:29:47.000Z',
+        },
+        {
+          commitSha: continuousHistory.completionMerge,
+          prNumber: 13445,
+          headSha: continuousHistory.completionHead,
+          reviewSubmittedAt: '2026-08-01T08:30:00Z',
+          eligibleAt: '2026-08-01T08:30:30.000Z',
         },
       ],
     })
   })
 
-  test('keeps #13426 blocked without the exact v4 receipt', () => {
+  test('keeps #13426 blocked without the exact v5 receipt', () => {
     const fixture = continuousRemediationFixture()
     expect(
       evaluateBaynReleaseEligibility({
-        mainCommitSha: continuousHistory.introductionMerge,
+        mainCommitSha: continuousHistory.completionMerge,
         baseRefName: 'main',
         snapshot: { ...fixture.snapshot, remediations: [] },
         nowMs: continuousNowMs,
-        pushBeforeSha: continuousHistory.blocked,
+        pushBeforeSha: continuousHistory.introductionMerge,
       }),
     ).toMatchObject({ status: 'hold', code: 'release-review-remediation-missing', retryable: false })
   })
@@ -2023,7 +2183,9 @@ describe('Bayn publication-range eligibility', () => {
       [
         'discontinuous release ancestry',
         (fixture: ReturnType<typeof continuousRemediationFixture>) => {
-          const introduction = fixture.snapshot.comparison?.commits[1]
+          const introduction = fixture.snapshot.comparison?.commits.find(
+            (commit) => commit.sha === continuousHistory.introductionMerge,
+          )
           if (introduction === undefined) throw new Error('missing introduction commit')
           ;(introduction as unknown as { parents: string[] }).parents = ['0'.repeat(40)]
         },
@@ -2038,18 +2200,163 @@ describe('Bayn publication-range eligibility', () => {
       ],
     ] as const
   ).forEach(([name, mutate]) => {
-    test(`rejects v4 continuous-source remediation with ${name}`, () => {
+    test(`rejects v5 continuous-source remediation with ${name}`, () => {
       const fixture = continuousRemediationFixture()
       mutate(fixture)
       expect(
         evaluateBaynReleaseEligibility({
-          mainCommitSha: continuousHistory.introductionMerge,
+          mainCommitSha: continuousHistory.completionMerge,
           baseRefName: 'main',
           snapshot: fixture.snapshot,
           nowMs: continuousNowMs,
-          pushBeforeSha: continuousHistory.blocked,
+          pushBeforeSha: continuousHistory.introductionMerge,
         }),
       ).toMatchObject({ status: 'hold', code: 'release-review-remediation-invalid', retryable: false })
+    })
+  })
+
+  test('rejects edited immutable #13443 PR evidence', () => {
+    const fixture = continuousRemediationFixture()
+    const { pullRequest } = continuousIntroductionEvidence(fixture)
+    ;(pullRequest as unknown as { issueComments: PullRequestIssueComment[] }).issueComments = [
+      ...pullRequest.issueComments,
+      issueComment({
+        authorLogin: 'gregkonush',
+        body: 'post-receipt mutation',
+        createdAt: '2026-08-01T08:29:30Z',
+        updatedAt: '2026-08-01T08:29:30Z',
+      }),
+    ]
+    expect(evaluateContinuousRemediationFixture(fixture)).toMatchObject({
+      status: 'hold',
+      code: 'release-review-remediation-invalid',
+      retryable: false,
+    })
+  })
+
+  ;(
+    [
+      [
+        'pre-force-push reaction',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const { pullRequest } = continuousIntroductionEvidence(fixture)
+          ;(pullRequest.reactions[0] as unknown as { createdAt: string }).createdAt = '2026-08-01T08:24:53Z'
+          rebindContinuousIntroductionPull(fixture)
+        },
+      ],
+      [
+        'spoofed reaction actor',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const { pullRequest } = continuousIntroductionEvidence(fixture)
+          ;(pullRequest.reactions[0] as unknown as { userLogin: string }).userLogin = 'codex-lookalike[bot]'
+          rebindContinuousIntroductionPull(fixture)
+        },
+      ],
+      [
+        'multiple trusted reactions',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const { pullRequest } = continuousIntroductionEvidence(fixture)
+          ;(pullRequest as unknown as { reactions: PullRequestReaction[] }).reactions = [
+            ...pullRequest.reactions,
+            reaction({ createdAt: '2026-08-01T08:29:18Z' }),
+          ]
+          rebindContinuousIntroductionPull(fixture)
+        },
+      ],
+      [
+        'later force push',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const { pullRequest } = continuousIntroductionEvidence(fixture)
+          ;(pullRequest as unknown as { headForcePushes: PullRequestForcePush[] }).headForcePushes = [
+            ...pullRequest.headForcePushes,
+            {
+              actorLogin: 'gregkonush',
+              beforeCommitSha: '5'.repeat(40),
+              afterCommitSha: continuousHistory.introductionHead,
+              createdAt: '2026-08-01T08:29:20Z',
+            },
+          ]
+          ;(pullRequest as unknown as { headForcePushCount: number }).headForcePushCount = 2
+          rebindContinuousIntroductionPull(fixture)
+        },
+      ],
+      [
+        'wrong final head',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const { pullRequest } = continuousIntroductionEvidence(fixture)
+          ;(pullRequest as unknown as { headSha: string }).headSha = 'f'.repeat(40)
+          ;(pullRequest as unknown as { commitShas: string[] }).commitShas = ['f'.repeat(40)]
+          rebindContinuousIntroductionPull(fixture)
+        },
+      ],
+      [
+        'wrong final tree',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const { finalHead } = continuousIntroductionEvidence(fixture)
+          ;(finalHead as unknown as { treeSha: string }).treeSha = '0'.repeat(40)
+        },
+      ],
+      [
+        'source-dropping path evidence',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const { finalHead } = continuousIntroductionEvidence(fixture)
+          ;(finalHead as unknown as { files: string[] }).files = finalHead.files.slice(1)
+          ;(finalHead as unknown as { fileChanges: unknown[] }).fileChanges = finalHead.fileChanges.slice(1)
+          ;(finalHead as unknown as { pathBlobs: unknown[] }).pathBlobs = finalHead.pathBlobs.slice(1)
+        },
+      ],
+      [
+        'wrong source blob',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const { finalHead } = continuousIntroductionEvidence(fixture)
+          const pathBlob = finalHead.pathBlobs[0]
+          if (pathBlob === undefined) throw new Error('missing #13443 source blob')
+          ;(pathBlob as unknown as { blobSha: string }).blobSha = '0'.repeat(40)
+        },
+      ],
+      [
+        'discontinuous introduction ancestry',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const { introductionCommit } = continuousIntroductionEvidence(fixture)
+          ;(introductionCommit as unknown as { parents: string[] }).parents = ['0'.repeat(40)]
+        },
+      ],
+      [
+        'discontinuous completion ancestry',
+        (fixture: ReturnType<typeof continuousRemediationFixture>) => {
+          const completion = fixture.snapshot.comparison?.commits.find(
+            (commit) => commit.sha === continuousHistory.completionMerge,
+          )
+          if (completion === undefined) throw new Error('missing remediation completion commit')
+          ;(completion as unknown as { parents: string[] }).parents = ['0'.repeat(40)]
+        },
+      ],
+    ] as const
+  ).forEach(([name, mutate]) => {
+    test(`rejects #13443 introduction evidence with ${name}`, () => {
+      const fixture = continuousRemediationFixture()
+      mutate(fixture)
+      expect(evaluateContinuousRemediationFixture(fixture)).toMatchObject({
+        status: 'hold',
+        code: 'release-review-remediation-invalid',
+        retryable: false,
+      })
+    })
+  })
+
+  test('keeps the #13443 reaction fail-closed until its full 30-second settling interval completes', () => {
+    const fixture = continuousRemediationFixture()
+    const completion = fixture.snapshot.comparison?.commits.find(
+      (commit) => commit.sha === continuousHistory.completionMerge,
+    )
+    const completionReview = completion?.reviewSnapshot?.pullRequest?.reviews[0]
+    if (completionReview === undefined) throw new Error('missing completion review evidence')
+    ;(completionReview as unknown as { submittedAt: string }).submittedAt = '2026-08-01T08:28:00Z'
+    expect(evaluateContinuousRemediationFixture(fixture, Date.parse('2026-08-01T08:29:46Z'))).toMatchObject({
+      status: 'hold',
+      code: 'exact-head-review-settling',
+      retryable: true,
+      message: expect.stringContaining('exact final-head reaction is still settling'),
     })
   })
 
