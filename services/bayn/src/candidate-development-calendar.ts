@@ -1,4 +1,4 @@
-import { candidateDevelopmentCalendarContract } from './candidate-development'
+import { candidateDevelopmentCalendarContract } from './candidate-development-domain/protocol'
 import type { IsoDate } from './schemas'
 
 export type { CandidateDevelopmentNextPreregistration } from './candidate-development-decision'
@@ -90,16 +90,14 @@ const fullMarketClosures = new Set<IsoDate>([
 ])
 
 export const frozenCandidateDevelopmentSessions = (): readonly IsoDate[] => {
-  const sessions: IsoDate[] = []
-  for (
-    let date = new Date(`${candidateDevelopmentCalendarContract.start}T00:00:00.000Z`);
-    date <= new Date(`${candidateDevelopmentCalendarContract.end}T00:00:00.000Z`);
-    date = new Date(date.getTime() + 86_400_000)
-  ) {
+  const millisecondsPerDay = 86_400_000
+  const start = Date.parse(`${candidateDevelopmentCalendarContract.start}T00:00:00.000Z`)
+  const end = Date.parse(`${candidateDevelopmentCalendarContract.end}T00:00:00.000Z`)
+  const dayCount = Math.floor((end - start) / millisecondsPerDay) + 1
+
+  return Array.from({ length: dayCount }, (_, offset) => {
+    const date = new Date(start + offset * millisecondsPerDay)
     const session = date.toISOString().slice(0, 10) as IsoDate
-    if (date.getUTCDay() !== 0 && date.getUTCDay() !== 6 && !fullMarketClosures.has(session)) {
-      sessions.push(session)
-    }
-  }
-  return sessions
+    return date.getUTCDay() !== 0 && date.getUTCDay() !== 6 && !fullMarketClosures.has(session) ? session : undefined
+  }).filter((session): session is IsoDate => session !== undefined)
 }
