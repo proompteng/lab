@@ -10,11 +10,17 @@ import {
 import { runPaperProofPrepare, type PaperProofPrepareDependencies } from './prepare'
 import { runPaperProofRecover, type PaperProofRecoverDependencies } from './recovery'
 import { hasPaperProofMutationAuthority, paperProofContainmentIoCount, validatePaperProofEntry } from './gates'
-import { liftBounded, validateReconciliationAccount, type PaperProofContainmentDependencies } from './operations'
+import {
+  liftBounded,
+  validateReconciliationAccount,
+  type PaperProofContainmentDependencies,
+  type PaperProofMutationStore,
+} from './operations'
 import {
   PaperProofError,
   type PaperProofCommand,
   type PaperProofReceipt,
+  type PaperProofRecoveryStore,
   type PaperProofRuntimeBinding,
   type PaperProofSourcePlan,
 } from './model'
@@ -36,10 +42,14 @@ export interface PaperProofDependencies {
   readonly runtime: PaperProofRuntimeBinding
   readonly protectedEntryToken: string
   readonly containment: PaperProofContainmentDependencies
+  /** Stateful mutation evidence is canonical and shared by every mutation operation view. */
+  readonly mutations: PaperProofMutationStore
+  /** Stateful recovery markers are canonical and shared by every mutation operation view. */
+  readonly recovery: PaperProofRecoveryStore
   readonly prepare: PaperProofPrepareDependencies
-  readonly submit: PaperProofSubmitDependencies
-  readonly cancel: PaperProofCancelDependencies
-  readonly recover: PaperProofRecoverDependencies
+  readonly submit: Omit<PaperProofSubmitDependencies, 'mutations' | 'recovery'>
+  readonly cancel: Omit<PaperProofCancelDependencies, 'mutations' | 'recovery'>
+  readonly recover: Omit<PaperProofRecoverDependencies, 'mutations' | 'recovery'>
 }
 
 const logContainmentFailure = <A>(
@@ -166,7 +176,7 @@ const runValidatedPaperProof = (
         'paper-proof-submit-failure',
         runPaperProofSubmit(
           { command: { ...command, operation: 'SUBMIT' }, sourcePlan: dependencies.sourcePlan },
-          dependencies.submit,
+          { ...dependencies.submit, mutations: dependencies.mutations, recovery: dependencies.recovery },
         ),
       )
     case 'CANCEL':
@@ -177,7 +187,7 @@ const runValidatedPaperProof = (
         'paper-proof-cancel-failure',
         runPaperProofCancel(
           { command: { ...command, operation: 'CANCEL' }, sourcePlan: dependencies.sourcePlan },
-          dependencies.cancel,
+          { ...dependencies.cancel, mutations: dependencies.mutations, recovery: dependencies.recovery },
         ),
       )
     case 'RECOVER':
@@ -188,7 +198,7 @@ const runValidatedPaperProof = (
         'paper-proof-recover-load-or-execution-failure',
         runPaperProofRecover(
           { command: { ...command, operation: 'RECOVER' }, sourcePlan: dependencies.sourcePlan },
-          dependencies.recover,
+          { ...dependencies.recover, mutations: dependencies.mutations, recovery: dependencies.recovery },
         ),
       )
   }

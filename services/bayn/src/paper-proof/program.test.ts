@@ -245,8 +245,8 @@ type PaperProofFixtureCapabilities = Pick<PaperProofDependencies, 'sourcePlan' |
   readonly prepareCapitalGrant: PaperProofDependencies['prepare']['prepareCapitalGrant']
   readonly activateCapitalGrant: PaperProofDependencies['submit']['activateCapitalGrant']
   readonly restrictAuthority: PaperProofDependencies['containment']['restrictAuthority']
-  readonly recovery: PaperProofDependencies['recover']['recovery']
-  readonly mutations: PaperProofDependencies['recover']['mutations']
+  readonly recovery: PaperProofDependencies['recovery']
+  readonly mutations: PaperProofDependencies['mutations']
   readonly execution: {
     readonly submit: PaperProofDependencies['submit']['execution']['submit']
     readonly cancel: PaperProofDependencies['cancel']['execution']['cancel']
@@ -466,6 +466,8 @@ const fixture = (options: FixtureOptions) => {
     sourcePlan: capabilities.sourcePlan,
     runtime: capabilities.runtime,
     protectedEntryToken: capabilities.protectedEntryToken,
+    mutations: capabilities.mutations,
+    recovery: capabilities.recovery,
     containment: {
       restrictAuthority: capabilities.restrictAuthority,
       reconcile: capabilities.reconcile,
@@ -478,8 +480,6 @@ const fixture = (options: FixtureOptions) => {
     },
     submit: {
       activateCapitalGrant: capabilities.activateCapitalGrant,
-      recovery: capabilities.recovery,
-      mutations: capabilities.mutations,
       execution: {
         submit: capabilities.execution.submit,
         recover: (value) => capabilities.execution.recover(value, MutationOperation.Submit),
@@ -490,8 +490,6 @@ const fixture = (options: FixtureOptions) => {
       currentUtcInstant: capabilities.currentUtcInstant,
     },
     cancel: {
-      recovery: capabilities.recovery,
-      mutations: capabilities.mutations,
       execution: {
         cancel: capabilities.execution.cancel,
         recover: (value) => capabilities.execution.recover(value, MutationOperation.Cancel),
@@ -502,8 +500,6 @@ const fixture = (options: FixtureOptions) => {
       currentUtcInstant: capabilities.currentUtcInstant,
     },
     recover: {
-      recovery: capabilities.recovery,
-      mutations: capabilities.mutations,
       execution: {
         recoverSubmit: (value) => capabilities.execution.recover(value, MutationOperation.Submit),
         recoverCancel: (value) => capabilities.execution.recover(value, MutationOperation.Cancel),
@@ -537,9 +533,21 @@ describe('bounded PAPER proof command', () => {
   test('operation programs expose only their permitted capabilities', async () => {
     const { dependencies } = fixture({ operation: 'PREPARE' })
     const prepare: PaperProofPrepareDependencies = dependencies.prepare
-    const submit: PaperProofSubmitDependencies = dependencies.submit
-    const cancel: PaperProofCancelDependencies = dependencies.cancel
-    const recover: PaperProofRecoverDependencies = dependencies.recover
+    const submit: PaperProofSubmitDependencies = {
+      ...dependencies.submit,
+      mutations: dependencies.mutations,
+      recovery: dependencies.recovery,
+    }
+    const cancel: PaperProofCancelDependencies = {
+      ...dependencies.cancel,
+      mutations: dependencies.mutations,
+      recovery: dependencies.recovery,
+    }
+    const recover: PaperProofRecoverDependencies = {
+      ...dependencies.recover,
+      mutations: dependencies.mutations,
+      recovery: dependencies.recovery,
+    }
 
     // @ts-expect-error mutation runners stay behind the validated composition boundary.
     void ({} as PaperProofPublicExports).runPaperProofSubmit
