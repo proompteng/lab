@@ -21,17 +21,13 @@ export type {
   CandidateDevelopmentTrialStateIssueReason,
   CandidateDevelopmentTrialTransition,
   CandidateDevelopmentTrialTransitionDecision,
-} from './candidate-development-trials/model'
+} from './model'
 
 export {
   buildCandidateDevelopmentTrialState,
   candidateDevelopmentTrialStateFromHistory,
-  deriveCandidateDevelopmentNextAction,
   emptyCandidateDevelopmentTrialState,
-  nextCandidateDevelopmentOrdinal,
-  reduceCandidateDevelopmentTrialState,
-  validateCandidateDevelopmentTrialHistory,
-  validateCandidateDevelopmentTrialState,
-} from './candidate-development-trials/state-machine'
-
-export * from './candidate-development-trials/frozen-lineage'
+} from './lineage'
+export { deriveCandidateDevelopmentNextAction, nextCandidateDevelopmentOrdinal } from './next-action'
+export { reduceCandidateDevelopmentTrialState } from './transitions'
+export { validateCandidateDevelopmentTrialHistory, validateCandidateDevelopmentTrialState } from './validation'

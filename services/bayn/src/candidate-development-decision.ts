@@ -1,30 +1,30 @@
 import { candidateDevelopmentComparisonSemantics, candidateDevelopmentStatisticsPolicy } from './candidate-development'
 import type { QualificationSelectedBenchmarkComparisonAnalysis } from './qualification-statistics'
 
-export interface CandidateDevelopmentNextPreregistration {
-  readonly schemaVersion: 'bayn.candidate-development-next-preregistration.v1'
-  readonly candidateOrdinal: number
-  readonly priorTrialCount: number
-  readonly strategyProtocolHash: string
-  readonly strategyIdentityHash?: string
-  readonly candidateDevelopmentProtocolHash?: string
-  readonly calendarHash?: string
-  readonly priorTrialsHash?: string
-  readonly modulePath: string
-  readonly moduleSha256: string
-  readonly marketData: {
-    readonly schemaVersion: 'bayn.candidate-development-market-data-source.v1'
-    readonly snapshotId: string
-    readonly finalizedSnapshotContentHash: string
-    readonly inputManifestHash: string
-    readonly boundedContentHash: string
-  }
-  readonly preregistration: {
-    readonly sourceRevision: string
-    readonly path: string
-    readonly blobOid: string
-  }
-}
+export type { CandidateDevelopmentNextPreregistration } from './candidate-development-trials/state-machine'
+
+export type {
+  CandidateDevelopmentAttemptConsumption,
+  CandidateDevelopmentCurrentSuccessor,
+  CandidateDevelopmentDevelopmentOnlyTrial,
+  CandidateDevelopmentDevelopmentTerminalEvidence,
+  CandidateDevelopmentHistoricalQualificationTrial,
+  CandidateDevelopmentImmutableInvalidation,
+  CandidateDevelopmentNextAction,
+  CandidateDevelopmentQualificationTerminalEvidence,
+  CandidateDevelopmentSuccessorKind,
+  CandidateDevelopmentTrialState,
+  CandidateDevelopmentTrialStateIssue,
+  CandidateDevelopmentTrialStateIssueReason,
+  CandidateDevelopmentTrialTransition,
+  CandidateDevelopmentTrialTransitionDecision,
+} from './candidate-development-trials/state-machine'
+export {
+  deriveCandidateDevelopmentNextAction,
+  nextCandidateDevelopmentOrdinal,
+  reduceCandidateDevelopmentTrialState,
+  validateCandidateDevelopmentTrialState,
+} from './candidate-development-trials/state-machine'
 
 export type CandidateDevelopmentGateName =
   | (typeof candidateDevelopmentComparisonSemantics.gates)[keyof typeof candidateDevelopmentComparisonSemantics.gates]['name']
