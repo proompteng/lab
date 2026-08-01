@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "bayn.release-review-remediation.v8",
+  "schemaVersion": "bayn.release-review-remediation.v9",
   "remediationId": "pr-13438-successor-bound-reviewed-source",
   "blocked": {
     "mergeCommitSha": "ae4d23650c20cecbde2bac8416bc2b734381cb69",
@@ -182,6 +182,37 @@
         "previousPath": null,
         "status": "added",
         "blobSha": "2855013d0a960ebc9b2ee100301334fc1640d297"
+      }
+    ]
+  },
+  "completion": {
+    "mergeCommitSha": "3dabfa8b73e8a7de2c61a171b49e635a56774af3",
+    "mergeParentSha": "628d3fd16d63f7b9e3fc02d3bbdfa130a121ed31",
+    "mergeTreeSha": "217604b0c12d97ed2efb8f09caa1b3e4f1c5efd2",
+    "sourcePullRequestNumber": 13449,
+    "finalHeadSha": "711a3bfda038f696bc805ab32c1a8bfb93ce5d2b",
+    "finalHeadParentSha": "628d3fd16d63f7b9e3fc02d3bbdfa130a121ed31",
+    "finalHeadTreeSha": "217604b0c12d97ed2efb8f09caa1b3e4f1c5efd2",
+    "sourcePullRequestEvidenceSha256": "a7234519bd57e2fdd1be320eae0a0dab802ee952ca3d379f180bbcc13c592a48",
+    "completedRecordBlobSha": "63f78435bffefe00b904e02492693f53fb6cb6d4",
+    "affectedPaths": [
+      {
+        "path": "packages/scripts/src/bayn/verify-release-review.test.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "b05c0ca5efaa459e2902e5e5c1faad5870ce3de0"
+      },
+      {
+        "path": "packages/scripts/src/bayn/verify-release-review.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "316c12955710cb52c1725eda319c6effe8d24ae2"
+      },
+      {
+        "path": "services/bayn/release-review-remediations/ae4d23650c20cecbde2bac8416bc2b734381cb69.json",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "63f78435bffefe00b904e02492693f53fb6cb6d4"
       }
     ]
   }

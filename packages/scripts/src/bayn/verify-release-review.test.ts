@@ -2447,6 +2447,209 @@ const evaluateSingleStageSuccessorRemediationFixture = (
     pushBeforeSha: fixture.snapshot.currentCommitParents[0]!,
   })
 
+const reviewedCompletionHistory = {
+  completionMerge: '16'.repeat(20),
+  completionHead: '17'.repeat(20),
+  completionPriorHead: '18'.repeat(20),
+  completionTree: '19'.repeat(20),
+  completionRecordBlob: '1a'.repeat(20),
+  updateMerge: '1b'.repeat(20),
+  updateHead: '1c'.repeat(20),
+  updateTree: '1d'.repeat(20),
+  updateRecordBlob: '1e'.repeat(20),
+} as const
+
+const reviewedCompletionSingleStageSuccessorRemediationFixture = () => {
+  const fixture = singleStageSuccessorRemediationFixture()
+  const comparison = fixture.snapshot.comparison
+  const v7Record = fixture.evidence.record
+  if (
+    comparison === null ||
+    comparison.status !== 'ahead' ||
+    v7Record.schemaVersion !== 'bayn.release-review-remediation.v7'
+  ) {
+    throw new Error('missing v7 single-stage successor fixture')
+  }
+  const introductionCommit = comparison.commits.find((commit) => commit.sha === successorBoundHistory.updateMerge)
+  const introductionPull = introductionCommit?.reviewSnapshot?.pullRequest
+  const introductionRecordPath = introductionCommit?.fileChanges?.find(
+    (change) => change.path === fixture.evidence.recordPath,
+  )
+  if (
+    introductionCommit === undefined ||
+    introductionPull === null ||
+    introductionPull === undefined ||
+    introductionRecordPath === undefined
+  ) {
+    throw new Error('missing reviewed-completion introduction evidence')
+  }
+
+  const completionChanges = introductionCommit.files.map((path, index) => ({
+    path,
+    previousPath: null,
+    status: 'modified' as const,
+    blobSha:
+      path === fixture.evidence.recordPath
+        ? reviewedCompletionHistory.completionRecordBlob
+        : `${index + 2}a`.repeat(20),
+  }))
+  const completionSnapshot = reviewSnapshotFor({
+    commitSha: reviewedCompletionHistory.completionMerge,
+    prNumber: 13449,
+    headSha: reviewedCompletionHistory.completionHead,
+    parents: [introductionCommit.sha],
+    mergedAt: '2026-08-01T09:30:00Z',
+    reviews: [
+      review({
+        commitSha: reviewedCompletionHistory.completionPriorHead,
+        submittedAt: '2026-08-01T09:29:05Z',
+      }),
+    ],
+    reactions: [reaction({ createdAt: '2026-08-01T09:29:20Z' })],
+    headForcePushes: [
+      {
+        actorLogin: 'gregkonush',
+        beforeCommitSha: reviewedCompletionHistory.completionPriorHead,
+        afterCommitSha: reviewedCompletionHistory.completionHead,
+        createdAt: '2026-08-01T09:29:10Z',
+      },
+    ],
+    headForcePushCount: 1,
+  })
+  const completionPull = completionSnapshot.pullRequest
+  if (completionPull === null) throw new Error('missing reviewed-completion pull request')
+  const completionCommit = {
+    sha: reviewedCompletionHistory.completionMerge,
+    parents: [introductionCommit.sha],
+    treeSha: reviewedCompletionHistory.completionTree,
+    files: completionChanges.map((change) => change.path),
+    fileChanges: completionChanges,
+    reviewSnapshot: completionSnapshot,
+  } as const
+
+  const updateChanges = completionChanges.map((change, index) => ({
+    ...change,
+    blobSha:
+      change.path === fixture.evidence.recordPath
+        ? reviewedCompletionHistory.updateRecordBlob
+        : `${index + 5}a`.repeat(20),
+  }))
+  const updateCommit = {
+    sha: reviewedCompletionHistory.updateMerge,
+    parents: [completionCommit.sha],
+    treeSha: reviewedCompletionHistory.updateTree,
+    files: updateChanges.map((change) => change.path),
+    fileChanges: updateChanges,
+    reviewSnapshot: reviewSnapshotFor({
+      commitSha: reviewedCompletionHistory.updateMerge,
+      prNumber: 13450,
+      headSha: reviewedCompletionHistory.updateHead,
+      parents: [completionCommit.sha],
+      mergedAt: '2026-08-01T09:40:00Z',
+      reviews: [
+        review({
+          commitSha: reviewedCompletionHistory.updateHead,
+          submittedAt: '2026-08-01T09:39:00Z',
+        }),
+      ],
+    }),
+  } as const
+  const updatePull = updateCommit.reviewSnapshot.pullRequest
+  if (updatePull === null) throw new Error('missing reviewed-completion update pull request')
+
+  const introductionFinalHead = {
+    sha: introductionPull.headSha,
+    parents: [introductionCommit.parents[0]!],
+    treeSha: introductionCommit.treeSha,
+    files: introductionCommit.files,
+    fileChanges: introductionCommit.fileChanges ?? [],
+    pathBlobs: (introductionCommit.fileChanges ?? []).map((change) => ({
+      path: change.path,
+      blobSha: change.blobSha,
+    })),
+  }
+  const completionFinalHead = {
+    sha: reviewedCompletionHistory.completionHead,
+    parents: [introductionCommit.sha],
+    treeSha: reviewedCompletionHistory.completionTree,
+    files: completionCommit.files,
+    fileChanges: completionChanges,
+    pathBlobs: completionChanges.map((change) => ({ path: change.path, blobSha: change.blobSha })),
+  }
+  const record = parseBaynReleaseReviewRemediationRecord({
+    schemaVersion: 'bayn.release-review-remediation.v9',
+    remediationId: v7Record.remediationId,
+    blocked: v7Record.blocked,
+    requiredDescendants: [],
+    requiredSuccessors: v7Record.requiredSuccessors,
+    introduction: {
+      mergeCommitSha: introductionCommit.sha,
+      mergeParentSha: introductionCommit.parents[0],
+      mergeTreeSha: introductionCommit.treeSha,
+      sourcePullRequestNumber: introductionPull.number,
+      finalHeadSha: introductionPull.headSha,
+      finalHeadParentSha: introductionCommit.parents[0],
+      finalHeadTreeSha: introductionCommit.treeSha,
+      sourcePullRequestEvidenceSha256: pullRequestReviewEvidenceSha256(introductionPull),
+      introducedRecordBlobSha: introductionRecordPath.blobSha,
+      affectedPaths: introductionCommit.fileChanges,
+    },
+    completion: {
+      mergeCommitSha: completionCommit.sha,
+      mergeParentSha: introductionCommit.sha,
+      mergeTreeSha: completionCommit.treeSha,
+      sourcePullRequestNumber: completionPull.number,
+      finalHeadSha: completionPull.headSha,
+      finalHeadParentSha: introductionCommit.sha,
+      finalHeadTreeSha: completionCommit.treeSha,
+      sourcePullRequestEvidenceSha256: pullRequestReviewEvidenceSha256(completionPull),
+      completedRecordBlobSha: reviewedCompletionHistory.completionRecordBlob,
+      affectedPaths: completionChanges,
+    },
+  })
+  if (record.schemaVersion !== 'bayn.release-review-remediation.v9') {
+    throw new Error('failed to derive the v9 reviewed-completion fixture')
+  }
+  const commits = [
+    ...comparison.commits.filter((commit) => commit.sha !== introductionCommit.sha),
+    introductionCommit,
+    completionCommit,
+    updateCommit,
+  ]
+  const evidence: BaynReleaseReviewRemediationEvidence = {
+    ...fixture.evidence,
+    recordBlobSha: reviewedCompletionHistory.updateRecordBlob,
+    record,
+    referencedCommits: [...fixture.evidence.referencedCommits, introductionFinalHead, completionFinalHead],
+  }
+  return {
+    evidence,
+    snapshot: {
+      ...fixture.snapshot,
+      currentCommitParents: [completionCommit.sha],
+      comparison: {
+        ...comparison,
+        headSha: updateCommit.sha,
+        aheadBy: commits.length,
+        totalCommits: commits.length,
+        commits,
+      },
+      remediations: [evidence],
+    },
+  }
+}
+
+const evaluateReviewedCompletionSingleStageSuccessorRemediationFixture = (
+  fixture: ReturnType<typeof reviewedCompletionSingleStageSuccessorRemediationFixture>,
+) =>
+  evaluateBaynReleaseEligibility({
+    mainCommitSha: reviewedCompletionHistory.updateMerge,
+    baseRefName: 'main',
+    snapshot: fixture.snapshot,
+    nowMs: Date.parse('2026-08-01T09:45:00Z'),
+    pushBeforeSha: reviewedCompletionHistory.completionMerge,
+  })
+
 const nestedSingleStageSuccessorRemediationFixture = (): BaynReleaseEligibilitySnapshot => {
   const fixture = singleStageSuccessorRemediationFixture()
   const comparison = fixture.snapshot.comparison
@@ -2604,9 +2807,9 @@ const nestedSingleStageSuccessorRemediationFixture = (): BaynReleaseEligibilityS
 }
 
 describe('Bayn publication-range eligibility', () => {
-  test('parses the exact immutable #13438 -> #13442 v8 reviewed-source receipt', () => {
+  test('parses the exact immutable #13438 -> #13442 v9 reviewed-source receipt', () => {
     expect(realCandidateDiagnosticsRemediationRecord).toMatchObject({
-      schemaVersion: 'bayn.release-review-remediation.v8',
+      schemaVersion: 'bayn.release-review-remediation.v9',
       remediationId: 'pr-13438-successor-bound-reviewed-source',
       blocked: {
         mergeCommitSha: 'ae4d23650c20cecbde2bac8416bc2b734381cb69',
@@ -2653,6 +2856,80 @@ describe('Bayn publication-range eligibility', () => {
         introducedRecordBlobSha: '2855013d0a960ebc9b2ee100301334fc1640d297',
         affectedPaths: { length: 3 },
       },
+      completion: {
+        mergeCommitSha: '3dabfa8b73e8a7de2c61a171b49e635a56774af3',
+        mergeParentSha: '628d3fd16d63f7b9e3fc02d3bbdfa130a121ed31',
+        sourcePullRequestNumber: 13449,
+        finalHeadSha: '711a3bfda038f696bc805ab32c1a8bfb93ce5d2b',
+        sourcePullRequestEvidenceSha256: 'a7234519bd57e2fdd1be320eae0a0dab802ee952ca3d379f180bbcc13c592a48',
+        completedRecordBlobSha: '63f78435bffefe00b904e02492693f53fb6cb6d4',
+        affectedPaths: { length: 3 },
+      },
+    })
+  })
+
+  test('accepts a v9 receipt only through its reviewed completion and exact reviewed update', () => {
+    const fixture = reviewedCompletionSingleStageSuccessorRemediationFixture()
+    expect(evaluateReviewedCompletionSingleStageSuccessorRemediationFixture(fixture)).toMatchObject({
+      status: 'eligible',
+      lastPublishedRevision: continuousHistory.published,
+      checkedCommitCount: 5,
+      baynAffectingCommitCount: 5,
+      reviewedPullRequests: [
+        { commitSha: continuousHistory.blocked, prNumber: 13432 },
+        { commitSha: '2aa782001a9d7e1d9db68e5fa0929159755334cd', prNumber: 13432 },
+        { commitSha: successorBoundHistory.updateMerge, prNumber: 13446 },
+        { commitSha: reviewedCompletionHistory.completionMerge, prNumber: 13449 },
+        { commitSha: reviewedCompletionHistory.updateMerge, prNumber: 13450 },
+      ],
+    })
+  })
+
+  test('rejects a v9 receipt whose update is not the direct child of the bound completion', () => {
+    const fixture = reviewedCompletionSingleStageSuccessorRemediationFixture()
+    const update = fixture.snapshot.comparison?.commits.find(
+      (commit) => commit.sha === reviewedCompletionHistory.updateMerge,
+    )
+    if (update === undefined) throw new Error('missing v9 reviewed update')
+    ;(update as unknown as { parents: readonly string[] }).parents = [successorBoundHistory.updateMerge]
+    expect(evaluateReviewedCompletionSingleStageSuccessorRemediationFixture(fixture)).toMatchObject({
+      status: 'hold',
+      code: 'release-review-remediation-invalid',
+      retryable: false,
+    })
+  })
+
+  test('rejects a v9 receipt without an exact-head-reviewed update', () => {
+    const fixture = reviewedCompletionSingleStageSuccessorRemediationFixture()
+    const update = fixture.snapshot.comparison?.commits.find(
+      (commit) => commit.sha === reviewedCompletionHistory.updateMerge,
+    )
+    const pullRequest = update?.reviewSnapshot?.pullRequest
+    if (pullRequest === null || pullRequest === undefined) throw new Error('missing v9 update pull request')
+    ;(pullRequest as unknown as { reviews: readonly PullRequestReview[] }).reviews = []
+    expect(evaluateReviewedCompletionSingleStageSuccessorRemediationFixture(fixture)).toMatchObject({
+      status: 'hold',
+      code: 'exact-head-review-missing',
+      retryable: true,
+    })
+  })
+
+  test('rejects a v9 completion that lacks the bound final-head review reaction', () => {
+    const fixture = reviewedCompletionSingleStageSuccessorRemediationFixture()
+    const record = fixture.evidence.record
+    if (record.schemaVersion !== 'bayn.release-review-remediation.v9') throw new Error('missing v9 fixture')
+    const completion = fixture.snapshot.comparison?.commits.find(
+      (commit) => commit.sha === reviewedCompletionHistory.completionMerge,
+    )
+    const pullRequest = completion?.reviewSnapshot?.pullRequest
+    if (pullRequest === null || pullRequest === undefined) throw new Error('missing v9 completion pull request')
+    ;(pullRequest as unknown as { reactions: readonly PullRequestReaction[] }).reactions = []
+    ;(record.completion as unknown as { sourcePullRequestEvidenceSha256: string }).sourcePullRequestEvidenceSha256 =
+      pullRequestReviewEvidenceSha256(pullRequest)
+    expect(evaluateReviewedCompletionSingleStageSuccessorRemediationFixture(fixture)).toMatchObject({
+      status: 'hold',
+      code: 'release-review-remediation-invalid',
+      retryable: false,
     })
   })
 
