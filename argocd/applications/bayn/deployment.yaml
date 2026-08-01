@@ -60,9 +60,9 @@ spec:
               value: "a6530496d594a5425f091f30148012b12b6b030d49b396f925efe9ead3496217"
             - name: BAYN_MAXIMUM_AUTHORITY
               value: OBSERVE
-            # sha256("bayn/authority-generation/autonomous-observe-v1")
+            # sha256("bayn/authority-generation/autonomous-observe-v2")
             - name: BAYN_AUTHORITY_GENERATION_HASH
-              value: "d290539ec85334d8ce267f98919c139cb382068101042d69b5433832136dc063"
+              value: "10e59caf06d0a50f40a38a7d5c01867be18de00ce637b3a3687f49bc0ec45789"
             - name: BAYN_CYCLE_POLL_INTERVAL_MS
               value: "30000"
             - name: BAYN_BROKER_PROVIDER
