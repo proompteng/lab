@@ -1,0 +1,121 @@
+{
+  "schemaVersion": "bayn.release-review-remediation.v7",
+  "remediationId": "pr-13438-successor-bound-reviewed-source",
+  "blocked": {
+    "mergeCommitSha": "ae4d23650c20cecbde2bac8416bc2b734381cb69",
+    "mergeParentSha": "7c2335792707e34ac41e4de5091d2e2af48b7657",
+    "mergeTreeSha": "1b5e5d4d3bcc38f0d25a8efafc7d0d60d689c640",
+    "sourcePullRequestNumber": 13438,
+    "finalHeadSha": "bf17a9387e69896095096b9447aafed52711333c",
+    "finalHeadParentSha": "7c2335792707e34ac41e4de5091d2e2af48b7657",
+    "finalHeadTreeSha": "1b5e5d4d3bcc38f0d25a8efafc7d0d60d689c640",
+    "sourcePullRequestEvidenceSha256": "25bd010d4dd974cc734799cba99495bbef170995535282e73579f4ba8c4f5afe",
+    "affectedPaths": [
+      {
+        "path": "services/bayn/src/candidate-development-command.test.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "fb328b420ccc0acd6ca8376ce819909fd7a87eaf"
+      },
+      {
+        "path": "services/bayn/src/candidate-development-command.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "eb0e66568f0872434a753de6512844ea2a854ea1"
+      }
+    ]
+  },
+  "requiredDescendants": [],
+  "requiredSuccessors": [
+    {
+      "mergeCommitSha": "fa2016a8aa3c8b0f466ab84a7956c704dd9056c7",
+      "mergeParentSha": "ae4d23650c20cecbde2bac8416bc2b734381cb69",
+      "mergeTreeSha": "f532e9227a17089d2c504dbd241d2bb37ade7cd7",
+      "sourcePullRequestNumber": 13442,
+      "finalHeadSha": "a7b608a873057d9f65625515140e1dd83cda5e35",
+      "finalHeadParentSha": "ae4d23650c20cecbde2bac8416bc2b734381cb69",
+      "finalHeadTreeSha": "f532e9227a17089d2c504dbd241d2bb37ade7cd7",
+      "sourcePullRequestEvidenceSha256": "932e340efbef5df512d6317c05578350b3368ee6b72500d4d764ce622ed8519f",
+      "affectedPaths": [
+        {
+          "path": "services/bayn/candidates/ordinal-20-cross-sectional-short-term-reversal-invalidation.json",
+          "previousPath": null,
+          "status": "added",
+          "blobSha": "660a05860b133ead5242416635973cd82ed6c470"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-calendar.ts",
+          "previousPath": null,
+          "status": "modified",
+          "blobSha": "9b1f80f3d993abc3e0c8838ec9bc786cd361c905"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-candidate-17.test.ts",
+          "previousPath": null,
+          "status": "modified",
+          "blobSha": "cfde95dc53ff095f9fd33aaaf49b753bcdcc9ce6"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-candidate-18.test.ts",
+          "previousPath": null,
+          "status": "modified",
+          "blobSha": "6e58a78c74fc754c1471a04fef8e9f1618732183"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-candidate-19.test.ts",
+          "previousPath": null,
+          "status": "modified",
+          "blobSha": "5940dc6c97a1436bd08cb33a3dca0f47b105dbb1"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-candidate-20.test.ts",
+          "previousPath": null,
+          "status": "modified",
+          "blobSha": "e1c8dedaa0a3fdc1871ee77e263f7091ee6c5cbe"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-command.test.ts",
+          "previousPath": null,
+          "status": "modified",
+          "blobSha": "4a73bd65b65da8ec352147e27733a27abbf53828"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-command.ts",
+          "previousPath": null,
+          "status": "modified",
+          "blobSha": "3d328521e448ecee3c1ff82995b9a85f3b25d7a5"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-evidence.test.ts",
+          "previousPath": null,
+          "status": "modified",
+          "blobSha": "e591e037c97217fb48ec21770478b647954f3d1b"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-trial-history.ts",
+          "previousPath": null,
+          "status": "modified",
+          "blobSha": "0133484cd4d09ae21c03e42beea91e53f4ab70e2"
+        },
+        {
+          "path": "services/bayn/src/strategy/cross-sectional-short-term-reversal/candidate-20.ts",
+          "previousPath": null,
+          "status": "modified",
+          "blobSha": "9f61b1510da5cf973e11a75372b35f539f9b7b4d"
+        }
+      ],
+      "protectedPathTransitions": [
+        {
+          "path": "services/bayn/src/candidate-development-command.test.ts",
+          "beforeBlobSha": "fb328b420ccc0acd6ca8376ce819909fd7a87eaf",
+          "afterBlobSha": "4a73bd65b65da8ec352147e27733a27abbf53828"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-command.ts",
+          "beforeBlobSha": "eb0e66568f0872434a753de6512844ea2a854ea1",
+          "afterBlobSha": "3d328521e448ecee3c1ff82995b9a85f3b25d7a5"
+        }
+      ]
+    }
+  ]
+}
