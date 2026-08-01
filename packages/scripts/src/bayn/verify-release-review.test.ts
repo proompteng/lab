@@ -2218,17 +2218,133 @@ const singleStageSuccessorRemediationFixture = (): ReturnType<typeof successorBo
   ) {
     throw new Error('missing successor-bound continuous-source fixture')
   }
+  const currentSuccessor = currentRecord.requiredSuccessors[0]
+  const successorAffectedPaths = new Set(currentSuccessor.affectedPaths.map((path) => path.path))
+  const additionalBlockedPath = currentRecord.blocked.affectedPaths.find(
+    (path) => !successorAffectedPaths.has(path.path),
+  )
+  if (additionalBlockedPath === undefined) throw new Error('missing second synthetic v7 protected path')
+  const additionalAfterBlobSha = 'f'.repeat(40)
+  const successor = {
+    ...currentSuccessor,
+    affectedPaths: [
+      ...currentSuccessor.affectedPaths,
+      {
+        ...additionalBlockedPath,
+        previousPath: null,
+        status: 'modified' as const,
+        blobSha: additionalAfterBlobSha,
+      },
+    ],
+    protectedPathTransitions: [
+      ...currentSuccessor.protectedPathTransitions,
+      {
+        path: additionalBlockedPath.path,
+        beforeBlobSha: additionalBlockedPath.blobSha,
+        afterBlobSha: additionalAfterBlobSha,
+      },
+    ],
+  }
+  const successorTransitionPaths = new Set(successor.protectedPathTransitions.map((transition) => transition.path))
+  const blockedCommit = comparison.commits.find((commit) => commit.sha === currentRecord.blocked.mergeCommitSha)
+  const blockedPull = blockedCommit?.reviewSnapshot?.pullRequest
+  if (blockedCommit === undefined || blockedPull === null || blockedPull === undefined) {
+    throw new Error('missing v7 blocked source pull request')
+  }
+  const reviewedHeadSha = 'c'.repeat(40)
+  const reviewedHeadTreeSha = 'd'.repeat(40)
+  const reviewSubmittedAt = '2026-07-31T20:10:00Z'
+  const forcePushAt = '2026-07-31T20:20:00Z'
+  const findingBody = 'Catch the synchronous writer throw before it escapes the Effect boundary.'
+  const replyBody = 'Fixed in the final exact head with a real process regression.'
+  const reviewedAffectedPaths = currentRecord.blocked.affectedPaths
+    .filter((path) => successorTransitionPaths.has(path.path))
+    .map((path, index) => ({ ...path, blobSha: `${index + 5}`.repeat(40) }))
+  const feedbackPath = reviewedAffectedPaths[0]
+  if (feedbackPath === undefined) throw new Error('missing v7 feedback path')
+  ;(blockedPull as unknown as { createdAt: string; mergedAt: string }).createdAt = '2026-07-31T20:00:00Z'
+  ;(blockedPull as unknown as { mergedAt: string }).mergedAt = '2026-07-31T20:30:00Z'
+  ;(blockedPull as unknown as { reviews: readonly PullRequestReview[] }).reviews = [
+    review({ commitSha: reviewedHeadSha, submittedAt: reviewSubmittedAt }),
+  ]
+  ;(blockedPull as unknown as { threads: readonly PullRequestReviewThread[] }).threads = [
+    thread({
+      id: 'v7-reviewed-lineage-thread',
+      isResolved: true,
+      isOutdated: true,
+      path: feedbackPath.path,
+      comments: [
+        threadComment({
+          body: findingBody,
+          commitSha: reviewedHeadSha,
+          reviewCommitSha: reviewedHeadSha,
+          reviewSubmittedAt,
+          createdAt: reviewSubmittedAt,
+          url: 'https://github.com/proompteng/lab/pull/13438#discussion_r1',
+        }),
+        threadComment({
+          authorLogin: 'gregkonush',
+          authorAssociation: 'MEMBER',
+          body: replyBody,
+          commitSha: reviewedHeadSha,
+          reviewCommitSha: currentRecord.blocked.finalHeadSha,
+          reviewAuthorLogin: 'gregkonush',
+          reviewSubmittedAt: '2026-07-31T20:21:00Z',
+          createdAt: '2026-07-31T20:21:00Z',
+          url: 'https://github.com/proompteng/lab/pull/13438#discussion_r2',
+        }),
+      ],
+    }),
+  ]
+  ;(blockedPull as unknown as { reactions: readonly PullRequestReaction[] }).reactions = [
+    reaction({ createdAt: '2026-07-31T20:22:00Z' }),
+  ]
+  ;(blockedPull as unknown as { headForcePushes: readonly PullRequestForcePush[] }).headForcePushes = [
+    {
+      actorLogin: 'gregkonush',
+      beforeCommitSha: reviewedHeadSha,
+      afterCommitSha: currentRecord.blocked.finalHeadSha,
+      createdAt: forcePushAt,
+    },
+  ]
+  ;(blockedPull as unknown as { headForcePushCount: number }).headForcePushCount = 1
   const record = parseBaynReleaseReviewRemediationRecord({
     schemaVersion: 'bayn.release-review-remediation.v7',
     remediationId: 'pr-13438-successor-bound-reviewed-source',
-    blocked: currentRecord.blocked,
+    blocked: {
+      ...currentRecord.blocked,
+      affectedPaths: currentRecord.blocked.affectedPaths.filter((path) => successorTransitionPaths.has(path.path)),
+      sourcePullRequestEvidenceSha256: pullRequestReviewEvidenceSha256(blockedPull),
+      reviewedLineage: {
+        reviewedHeadSha,
+        reviewedHeadParentSha: currentRecord.blocked.mergeParentSha,
+        reviewedHeadTreeSha,
+        reviewSubmittedAt,
+        forcePush: {
+          beforeHeadSha: reviewedHeadSha,
+          afterHeadSha: currentRecord.blocked.finalHeadSha,
+          actorLogin: 'gregkonush',
+          createdAt: forcePushAt,
+        },
+        feedback: {
+          reviewedHeadSha,
+          fixedHeadSha: currentRecord.blocked.finalHeadSha,
+          threadId: 'v7-reviewed-lineage-thread',
+          path: feedbackPath.path,
+          findingUrl: 'https://github.com/proompteng/lab/pull/13438#discussion_r1',
+          findingBodySha256: sha256Text(findingBody),
+          fixReplyUrl: 'https://github.com/proompteng/lab/pull/13438#discussion_r2',
+          fixReplyBodySha256: sha256Text(replyBody),
+        },
+        affectedPaths: reviewedAffectedPaths,
+      },
+    },
     requiredDescendants: [],
-    requiredSuccessors: currentRecord.requiredSuccessors,
+    requiredSuccessors: [successor],
   })
   if (record.schemaVersion !== 'bayn.release-review-remediation.v7') {
     throw new Error('failed to derive the v7 single-stage successor fixture')
   }
-  const blockedCommit = comparison.commits.find((commit) => commit.sha === record.blocked.mergeCommitSha)
   const successorCommit = comparison.commits.find(
     (commit) => commit.sha === record.requiredSuccessors[0].mergeCommitSha,
   )
@@ -2236,6 +2352,16 @@ const singleStageSuccessorRemediationFixture = (): ReturnType<typeof successorBo
   if (blockedCommit === undefined || successorCommit === undefined || originalUpdate === undefined) {
     throw new Error('incomplete v7 single-stage successor fixture')
   }
+  ;(blockedCommit as unknown as { files: readonly string[] }).files = record.blocked.affectedPaths.map(
+    (path) => path.path,
+  )
+  ;(blockedCommit as unknown as { fileChanges: typeof record.blocked.affectedPaths }).fileChanges =
+    record.blocked.affectedPaths
+  ;(successorCommit as unknown as { files: readonly string[] }).files = record.requiredSuccessors[0].affectedPaths.map(
+    (path) => path.path,
+  )
+  ;(successorCommit as unknown as { fileChanges: readonly BaynReleaseCommitFileChange[] }).fileChanges =
+    record.requiredSuccessors[0].affectedPaths
   const updateCommit = {
     ...originalUpdate,
     parents: [successorCommit.sha],
@@ -2260,10 +2386,38 @@ const singleStageSuccessorRemediationFixture = (): ReturnType<typeof successorBo
   const evidence = {
     ...fixture.evidence,
     record,
-    referencedCommits: fixture.evidence.referencedCommits.filter(
-      (commit) =>
-        commit.sha === record.blocked.finalHeadSha || commit.sha === record.requiredSuccessors[0].finalHeadSha,
-    ),
+    referencedCommits: fixture.evidence.referencedCommits
+      .filter(
+        (commit) =>
+          commit.sha === record.blocked.finalHeadSha || commit.sha === record.requiredSuccessors[0].finalHeadSha,
+      )
+      .map((commit) => {
+        const affectedPaths =
+          commit.sha === record.blocked.finalHeadSha
+            ? record.blocked.affectedPaths
+            : record.requiredSuccessors[0].affectedPaths
+        return {
+          ...commit,
+          files: affectedPaths.map((path) => path.path),
+          fileChanges: affectedPaths,
+          pathBlobs: affectedPaths.map((path) => ({ path: path.path, blobSha: path.blobSha })),
+        }
+      })
+      .concat({
+        sha: record.blocked.reviewedLineage.reviewedHeadSha,
+        parents: [record.blocked.reviewedLineage.reviewedHeadParentSha],
+        treeSha: record.blocked.reviewedLineage.reviewedHeadTreeSha,
+        files: record.blocked.reviewedLineage.affectedPaths.map((path) => path.path),
+        fileChanges: record.blocked.reviewedLineage.affectedPaths,
+        pathBlobs: record.blocked.reviewedLineage.affectedPaths.map((path) => ({
+          path: path.path,
+          blobSha: path.blobSha,
+        })),
+      }),
+    currentPathBlobs: record.requiredSuccessors[0].protectedPathTransitions.map((transition) => ({
+      path: transition.path,
+      blobSha: transition.afterBlobSha,
+    })),
   }
   return {
     evidence,
@@ -2293,10 +2447,166 @@ const evaluateSingleStageSuccessorRemediationFixture = (
     pushBeforeSha: fixture.snapshot.currentCommitParents[0]!,
   })
 
+const nestedSingleStageSuccessorRemediationFixture = (): BaynReleaseEligibilitySnapshot => {
+  const fixture = singleStageSuccessorRemediationFixture()
+  const comparison = fixture.snapshot.comparison
+  const innerRecord = fixture.evidence.record
+  if (
+    comparison === null ||
+    comparison.status !== 'ahead' ||
+    innerRecord.schemaVersion !== 'bayn.release-review-remediation.v7'
+  ) {
+    throw new Error('missing nested v7 fixture')
+  }
+  const innerBlocked = comparison.commits.find((commit) => commit.sha === innerRecord.blocked.mergeCommitSha)
+  const update = comparison.commits.find((commit) => commit.sha === successorBoundHistory.updateMerge)
+  const innerFinalHead = fixture.evidence.referencedCommits.find(
+    (commit) => commit.sha === innerRecord.blocked.finalHeadSha,
+  )
+  const innerReviewedHead = fixture.evidence.referencedCommits.find(
+    (commit) => commit.sha === innerRecord.blocked.reviewedLineage.reviewedHeadSha,
+  )
+  if (
+    innerBlocked === undefined ||
+    update === undefined ||
+    innerFinalHead === undefined ||
+    innerReviewedHead === undefined
+  ) {
+    throw new Error('incomplete nested v7 fixture')
+  }
+
+  const outerMerge = 'd'.repeat(40)
+  const outerHead = 'e'.repeat(40)
+  const outerTree = 'f'.repeat(40)
+  const outerPath = 'services/bayn/src/nested-release-review-source.ts'
+  const outerBlob = '1'.repeat(40)
+  const outerRecordPath = `services/bayn/release-review-remediations/${outerMerge}.json`
+  const outerRecordBlob = '2'.repeat(40)
+  const outerReviewSnapshot = reviewSnapshotFor({
+    commitSha: outerMerge,
+    prNumber: 13425,
+    headSha: outerHead,
+    parents: [continuousHistory.published],
+    mergedAt: '2026-07-31T20:00:00Z',
+    reviews: [review({ commitSha: '3'.repeat(40), submittedAt: '2026-07-31T19:55:00Z' })],
+    reactions: [reaction({ createdAt: '2026-07-31T19:59:30Z' })],
+    headForcePushes: [
+      {
+        actorLogin: 'gregkonush',
+        beforeCommitSha: '3'.repeat(40),
+        afterCommitSha: outerHead,
+        createdAt: '2026-07-31T19:59:10Z',
+      },
+    ],
+    headForcePushCount: 1,
+  })
+  const outerPull = outerReviewSnapshot.pullRequest
+  if (outerPull === null) throw new Error('missing nested outer pull request')
+  const outerRecord = parseBaynReleaseReviewRemediationRecord({
+    schemaVersion: 'bayn.release-review-remediation.v4',
+    remediationId: 'nested-reviewed-source',
+    blocked: {
+      mergeCommitSha: outerMerge,
+      mergeParentSha: continuousHistory.published,
+      mergeTreeSha: outerTree,
+      sourcePullRequestNumber: 13425,
+      finalHeadSha: outerHead,
+      finalHeadParentSha: continuousHistory.published,
+      finalHeadTreeSha: outerTree,
+      sourcePullRequestEvidenceSha256: pullRequestReviewEvidenceSha256(outerPull),
+      affectedPaths: [
+        {
+          path: outerPath,
+          previousPath: null,
+          status: 'modified',
+          blobSha: outerBlob,
+        },
+      ],
+    },
+    requiredDescendants: [],
+  })
+  const outerCommit = {
+    sha: outerMerge,
+    parents: [continuousHistory.published],
+    treeSha: outerTree,
+    files: [outerPath],
+    fileChanges: [
+      {
+        path: outerPath,
+        previousPath: null,
+        status: 'modified',
+        blobSha: outerBlob,
+      },
+    ] satisfies readonly BaynReleaseCommitFileChange[],
+    reviewSnapshot: outerReviewSnapshot,
+  }
+
+  ;(innerBlocked as unknown as { parents: readonly string[] }).parents = [outerMerge]
+  if (innerBlocked.reviewSnapshot !== null) {
+    ;(innerBlocked.reviewSnapshot as unknown as { mainCommitParents: readonly string[] }).mainCommitParents = [
+      outerMerge,
+    ]
+  }
+  ;(innerRecord.blocked as unknown as { mergeParentSha: string; finalHeadParentSha: string }).mergeParentSha =
+    outerMerge
+  ;(innerRecord.blocked as unknown as { mergeParentSha: string; finalHeadParentSha: string }).finalHeadParentSha =
+    outerMerge
+  ;(innerRecord.blocked.reviewedLineage as unknown as { reviewedHeadParentSha: string }).reviewedHeadParentSha =
+    outerMerge
+  ;(innerFinalHead as unknown as { parents: readonly string[] }).parents = [outerMerge]
+  ;(innerReviewedHead as unknown as { parents: readonly string[] }).parents = [outerMerge]
+
+  const outerRecordChange: BaynReleaseCommitFileChange = {
+    path: outerRecordPath,
+    previousPath: null,
+    status: 'added',
+    blobSha: outerRecordBlob,
+  }
+  ;(update as unknown as { files: readonly string[] }).files = [...update.files, outerRecordPath]
+  ;(update as unknown as { fileChanges: readonly BaynReleaseCommitFileChange[] }).fileChanges = [
+    ...(update.fileChanges ?? []),
+    outerRecordChange,
+  ]
+  const outerEvidence: BaynReleaseReviewRemediationEvidence = {
+    recordPath: outerRecordPath,
+    recordBlobSha: outerRecordBlob,
+    record: outerRecord,
+    referencedCommits: [
+      {
+        sha: outerHead,
+        parents: [continuousHistory.published],
+        treeSha: outerTree,
+        files: [outerPath],
+        fileChanges: [
+          {
+            path: outerPath,
+            previousPath: null,
+            status: 'modified',
+            blobSha: outerBlob,
+          },
+        ],
+        pathBlobs: [{ path: outerPath, blobSha: outerBlob }],
+      },
+    ],
+    currentPathBlobs: [{ path: outerPath, blobSha: outerBlob }],
+  }
+  const commits = [outerCommit, ...comparison.commits]
+  return {
+    ...fixture.snapshot,
+    comparison: {
+      ...comparison,
+      aheadBy: commits.length,
+      totalCommits: commits.length,
+      commits,
+    },
+    remediations: [outerEvidence, fixture.evidence],
+  }
+}
+
 describe('Bayn publication-range eligibility', () => {
-  test('parses the exact immutable #13438 -> #13442 v7 reviewed-source receipt', () => {
+  test('parses the exact immutable #13438 -> #13442 v8 reviewed-source receipt', () => {
     expect(realCandidateDiagnosticsRemediationRecord).toMatchObject({
-      schemaVersion: 'bayn.release-review-remediation.v7',
+      schemaVersion: 'bayn.release-review-remediation.v8',
       remediationId: 'pr-13438-successor-bound-reviewed-source',
       blocked: {
         mergeCommitSha: 'ae4d23650c20cecbde2bac8416bc2b734381cb69',
@@ -2304,6 +2614,24 @@ describe('Bayn publication-range eligibility', () => {
         finalHeadSha: 'bf17a9387e69896095096b9447aafed52711333c',
         sourcePullRequestEvidenceSha256: '25bd010d4dd974cc734799cba99495bbef170995535282e73579f4ba8c4f5afe',
         affectedPaths: { length: 2 },
+        reviewedLineage: {
+          reviewedHeadSha: '9452b41b051f79f65a3dcc825593afb0390a0b2f',
+          reviewedHeadParentSha: '7c2335792707e34ac41e4de5091d2e2af48b7657',
+          reviewedHeadTreeSha: '3e11aedd2f991db054b78143956719fc3dad6744',
+          reviewSubmittedAt: '2026-08-01T01:01:06Z',
+          forcePush: {
+            beforeHeadSha: '9452b41b051f79f65a3dcc825593afb0390a0b2f',
+            afterHeadSha: 'bf17a9387e69896095096b9447aafed52711333c',
+            actorLogin: 'gregkonush',
+            createdAt: '2026-08-01T01:05:01Z',
+          },
+          feedback: {
+            threadId: 'PRRT_kwDOLkRLus6VkaW3',
+            findingBodySha256: 'b2888751b80020f76a4fbd9a733304a607fc3c6725a5ae3f5766ddbe560a0e72',
+            fixReplyBodySha256: 'd790110b2808020d52559efbe5e72042d746c593baf94536e0034acb01f4dfc0',
+          },
+          affectedPaths: { length: 2 },
+        },
       },
       requiredDescendants: [],
       requiredSuccessors: [
@@ -2316,20 +2644,112 @@ describe('Bayn publication-range eligibility', () => {
           protectedPathTransitions: { length: 2 },
         },
       ],
+      introduction: {
+        mergeCommitSha: '628d3fd16d63f7b9e3fc02d3bbdfa130a121ed31',
+        mergeParentSha: '045b69acf7681162983fa228b6d66b6677233ff2',
+        sourcePullRequestNumber: 13448,
+        finalHeadSha: '211a901ddeacf6cab997252dee85e180e94595fa',
+        sourcePullRequestEvidenceSha256: '8e59ead9e8a8c57c8c64c0b37ea1c5298b292dbc0b1efd69645ceb1678ae49b0',
+        introducedRecordBlobSha: '2855013d0a960ebc9b2ee100301334fc1640d297',
+        affectedPaths: { length: 3 },
+      },
     })
   })
 
-  test('accepts a reviewed single-stage v7 receipt with one exact reviewed protected-path successor', () => {
+  test('accepts a v7 receipt only through exact reviewed lineage and a reviewed successor', () => {
     const fixture = singleStageSuccessorRemediationFixture()
+    const record = fixture.evidence.record
+    if (record.schemaVersion !== 'bayn.release-review-remediation.v7') throw new Error('missing v7 fixture')
     expect(evaluateSingleStageSuccessorRemediationFixture(fixture)).toMatchObject({
       status: 'eligible',
       lastPublishedRevision: continuousHistory.published,
       reviewedPullRequests: [
-        { commitSha: continuousHistory.blocked, prNumber: 13426, headSha: continuousHistory.finalHead },
+        {
+          commitSha: continuousHistory.blocked,
+          prNumber: record.requiredSuccessors[0].sourcePullRequestNumber,
+          headSha: record.requiredSuccessors[0].finalHeadSha,
+        },
         { commitSha: '2aa782001a9d7e1d9db68e5fa0929159755334cd', prNumber: 13432 },
         { commitSha: successorBoundHistory.updateMerge, prNumber: 13446 },
       ],
     })
+  })
+
+  test('rejects a touched-only v7 successor without exact reviewed-head lineage', () => {
+    const record = structuredClone(realCandidateDiagnosticsRemediationRecord) as unknown as Record<string, unknown>
+    const blocked = record.blocked as Record<string, unknown>
+    delete blocked.reviewedLineage
+    expect(() => parseBaynReleaseReviewRemediationRecord(record)).toThrow()
+  })
+
+  test('rejects a v7 receipt when the reconstructed reviewed blob differs', () => {
+    const fixture = singleStageSuccessorRemediationFixture()
+    const record = fixture.evidence.record
+    if (record.schemaVersion !== 'bayn.release-review-remediation.v7') throw new Error('missing v7 fixture')
+    const reviewedHead = fixture.evidence.referencedCommits.find(
+      (commit) => commit.sha === record.blocked.reviewedLineage.reviewedHeadSha,
+    )
+    const reviewedBlob = reviewedHead?.pathBlobs[0]
+    if (reviewedBlob === undefined) throw new Error('missing reviewed lineage blob')
+    ;(reviewedBlob as unknown as { blobSha: string }).blobSha = '0'.repeat(40)
+    expect(evaluateSingleStageSuccessorRemediationFixture(fixture)).toMatchObject({
+      status: 'hold',
+      code: 'release-review-remediation-invalid',
+      retryable: false,
+    })
+  })
+
+  test('rejects a v7 receipt when the latest reviewed-head force push differs', () => {
+    const fixture = singleStageSuccessorRemediationFixture()
+    const record = fixture.evidence.record
+    if (record.schemaVersion !== 'bayn.release-review-remediation.v7') throw new Error('missing v7 fixture')
+    const blockedCommit = fixture.snapshot.comparison?.commits.find(
+      (commit) => commit.sha === record.blocked.mergeCommitSha,
+    )
+    const pullRequest = blockedCommit?.reviewSnapshot?.pullRequest
+    const forcePush = pullRequest?.headForcePushes[0]
+    if (pullRequest === null || pullRequest === undefined || forcePush === undefined) {
+      throw new Error('missing v7 reviewed lineage force push')
+    }
+    ;(forcePush as unknown as { beforeCommitSha: string }).beforeCommitSha = '0'.repeat(40)
+    ;(record.blocked as unknown as { sourcePullRequestEvidenceSha256: string }).sourcePullRequestEvidenceSha256 =
+      pullRequestReviewEvidenceSha256(pullRequest)
+    expect(evaluateSingleStageSuccessorRemediationFixture(fixture)).toMatchObject({
+      status: 'hold',
+      code: 'release-review-remediation-invalid',
+      retryable: false,
+    })
+  })
+
+  test('rejects a v7 receipt whose reviewed successor leaves any unreviewed blocked path intact', () => {
+    const fixture = singleStageSuccessorRemediationFixture()
+    const record = fixture.evidence.record
+    if (record.schemaVersion !== 'bayn.release-review-remediation.v7') throw new Error('missing v7 fixture')
+    const firstTransition = record.requiredSuccessors[0].protectedPathTransitions[0]
+    if (firstTransition === undefined) throw new Error('missing v7 protected transition')
+    ;(
+      record.requiredSuccessors[0] as unknown as {
+        protectedPathTransitions: readonly [typeof firstTransition]
+      }
+    ).protectedPathTransitions = [firstTransition]
+    expect(evaluateSingleStageSuccessorRemediationFixture(fixture)).toMatchObject({
+      status: 'hold',
+      code: 'release-review-remediation-invalid',
+      retryable: false,
+    })
+  })
+
+  test('composes an earlier continuous receipt with a later v7 remediation instead of requiring the blocked head twice', () => {
+    const snapshot = nestedSingleStageSuccessorRemediationFixture()
+    expect(
+      evaluateBaynReleaseEligibility({
+        mainCommitSha: successorBoundHistory.updateMerge,
+        baseRefName: 'main',
+        snapshot,
+        nowMs: successorBoundNowMs,
+        pushBeforeSha: snapshot.currentCommitParents[0]!,
+      }),
+    ).toMatchObject({ status: 'eligible' })
   })
 
   test('rejects a v7 receipt whose reviewed successor is missing', () => {

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "bayn.release-review-remediation.v7",
+  "schemaVersion": "bayn.release-review-remediation.v8",
   "remediationId": "pr-13438-successor-bound-reviewed-source",
   "blocked": {
     "mergeCommitSha": "ae4d23650c20cecbde2bac8416bc2b734381cb69",
@@ -23,7 +23,43 @@
         "status": "modified",
         "blobSha": "eb0e66568f0872434a753de6512844ea2a854ea1"
       }
-    ]
+    ],
+    "reviewedLineage": {
+      "reviewedHeadSha": "9452b41b051f79f65a3dcc825593afb0390a0b2f",
+      "reviewedHeadParentSha": "7c2335792707e34ac41e4de5091d2e2af48b7657",
+      "reviewedHeadTreeSha": "3e11aedd2f991db054b78143956719fc3dad6744",
+      "reviewSubmittedAt": "2026-08-01T01:01:06Z",
+      "forcePush": {
+        "beforeHeadSha": "9452b41b051f79f65a3dcc825593afb0390a0b2f",
+        "afterHeadSha": "bf17a9387e69896095096b9447aafed52711333c",
+        "actorLogin": "gregkonush",
+        "createdAt": "2026-08-01T01:05:01Z"
+      },
+      "feedback": {
+        "reviewedHeadSha": "9452b41b051f79f65a3dcc825593afb0390a0b2f",
+        "fixedHeadSha": "bf17a9387e69896095096b9447aafed52711333c",
+        "threadId": "PRRT_kwDOLkRLus6VkaW3",
+        "path": "services/bayn/src/candidate-development-command.ts",
+        "findingUrl": "https://github.com/proompteng/lab/pull/13438#discussion_r3694182686",
+        "findingBodySha256": "b2888751b80020f76a4fbd9a733304a607fc3c6725a5ae3f5766ddbe560a0e72",
+        "fixReplyUrl": "https://github.com/proompteng/lab/pull/13438#discussion_r3694191020",
+        "fixReplyBodySha256": "d790110b2808020d52559efbe5e72042d746c593baf94536e0034acb01f4dfc0"
+      },
+      "affectedPaths": [
+        {
+          "path": "services/bayn/src/candidate-development-command.test.ts",
+          "previousPath": null,
+          "status": "modified",
+          "blobSha": "2d85889b0bf8902478055cb5f3c625fa27884148"
+        },
+        {
+          "path": "services/bayn/src/candidate-development-command.ts",
+          "previousPath": null,
+          "status": "modified",
+          "blobSha": "0862930e0c4dfe5576593a79f5602241ee8f2ce6"
+        }
+      ]
+    }
   },
   "requiredDescendants": [],
   "requiredSuccessors": [
@@ -117,5 +153,36 @@
         }
       ]
     }
-  ]
+  ],
+  "introduction": {
+    "mergeCommitSha": "628d3fd16d63f7b9e3fc02d3bbdfa130a121ed31",
+    "mergeParentSha": "045b69acf7681162983fa228b6d66b6677233ff2",
+    "mergeTreeSha": "e0fd13cdf5b879dd7be5fbb282e9e2390ad39e6f",
+    "sourcePullRequestNumber": 13448,
+    "finalHeadSha": "211a901ddeacf6cab997252dee85e180e94595fa",
+    "finalHeadParentSha": "045b69acf7681162983fa228b6d66b6677233ff2",
+    "finalHeadTreeSha": "e0fd13cdf5b879dd7be5fbb282e9e2390ad39e6f",
+    "sourcePullRequestEvidenceSha256": "8e59ead9e8a8c57c8c64c0b37ea1c5298b292dbc0b1efd69645ceb1678ae49b0",
+    "introducedRecordBlobSha": "2855013d0a960ebc9b2ee100301334fc1640d297",
+    "affectedPaths": [
+      {
+        "path": "packages/scripts/src/bayn/verify-release-review.test.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "f76bd1f1250ccc712e070bcffcd69e1ec5b6d223"
+      },
+      {
+        "path": "packages/scripts/src/bayn/verify-release-review.ts",
+        "previousPath": null,
+        "status": "modified",
+        "blobSha": "bc0d8af96af4d40ca2a30c2ee40729f6523bd505"
+      },
+      {
+        "path": "services/bayn/release-review-remediations/ae4d23650c20cecbde2bac8416bc2b734381cb69.json",
+        "previousPath": null,
+        "status": "added",
+        "blobSha": "2855013d0a960ebc9b2ee100301334fc1640d297"
+      }
+    ]
+  }
 }
