@@ -48,6 +48,13 @@ export class ExecutionStoreError extends Data.TaggedError('ExecutionStoreError')
   readonly cause?: unknown
 }> {}
 
+/**
+ * The capital-grant lifecycle is the execution store's writer-fenced interpreter boundary. Its operations acquire the
+ * process-wide WriterFence at invocation time; all other execution-store capabilities remain fence-free because they
+ * do not own the authority-generation transaction.
+ */
+export type WriterFencedExecutionStoreOperation<A> = Effect.Effect<A, ExecutionStoreError, WriterFence>
+
 export interface BrokerEventStoreShape {
   readonly ingest: (input: BrokerEventInput) => Effect.Effect<EventReceipt, ExecutionStoreError>
   readonly ingestPositions: (
@@ -83,7 +90,7 @@ export interface CapitalGrantLifecycleStoreShape {
    */
   readonly prepareCapitalGrant: (
     proof: CapitalGrantProofBinding,
-  ) => Effect.Effect<CapitalGrantGeneration, ExecutionStoreError, WriterFence>
+  ) => WriterFencedExecutionStoreOperation<CapitalGrantGeneration>
   /**
    * SUBMIT activation operation: transactionally re-derives the stable generation identity
    * from the same proof binding, requires its hash to equal the configured generationHash, and records the latest
@@ -93,7 +100,7 @@ export interface CapitalGrantLifecycleStoreShape {
    */
   readonly activateCapitalGrant: (
     proof: CapitalGrantProofBinding,
-  ) => Effect.Effect<AuthorityState, ExecutionStoreError, WriterFence>
+  ) => WriterFencedExecutionStoreOperation<AuthorityState>
 }
 
 export interface AuthorityRestrictionStoreShape {

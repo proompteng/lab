@@ -1,0 +1,54 @@
+import { Context, Effect, Exit, Layer, Scope } from 'effect'
+
+/**
+ * Builds a fresh layer attempt in a child scope owned by the caller-owned scope.
+ *
+ * A fresh memo map is intentional: a failed acquisition must not be memoized as the result of a later retry. A
+ * failed or interrupted attempt closes its child scope immediately; a successful attempt remains attached to the
+ * caller-owned scope and is closed by the outer layer boundary.
+ */
+const acquireFreshLayer = <A, E, R>(
+  layer: Layer.Layer<A, E, R>,
+  scope: Scope.Scope,
+): Effect.Effect<Context.Context<A>, E, R> =>
+  Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const attemptScope = yield* Scope.fork(scope)
+      const result = yield* Effect.exit(
+        restore(Layer.buildWithMemoMap(Layer.fresh(layer), Layer.makeMemoMapUnsafe(), attemptScope)),
+      )
+
+      if (Exit.isSuccess(result)) {
+        return result.value
+      }
+
+      yield* Scope.close(attemptScope, result)
+      return yield* Effect.failCause(result.cause)
+    }),
+  )
+
+/**
+ * Owns the scope used by a resource boundary while keeping acquisition as an ordinary Effect.
+ */
+const scopedLayer = <A, E, R>(
+  acquire: (scope: Scope.Scope) => Effect.Effect<Context.Context<A>, E, R>,
+): Layer.Layer<A, E, R> => Layer.fromBuildMemo((_, scope) => acquire(scope))
+
+/**
+ * Applies a retry policy to fresh, scoped layer acquisition. The retry callback receives an Effect rather than a
+ * Layer, so retrying cannot accidentally rebuild a layer through a nested `Layer.build` conversion.
+ */
+export const retryLayerAcquisition = <A, E, R>(
+  layer: Layer.Layer<A, E, R>,
+  retry: (acquisition: Effect.Effect<Context.Context<A>, E, R>) => Effect.Effect<Context.Context<A>, E, R>,
+): Layer.Layer<A, E, R> => scopedLayer((scope) => retry(Effect.suspend(() => acquireFreshLayer(layer, scope))))
+
+/**
+ * Maps errors from a scoped dependency layer at the resource boundary. The dependency is built once for the
+ * boundary and its finalizers remain owned by the same scope as the layer that consumes it.
+ */
+export const mapLayerAcquisitionError = <A, E, E2, R>(
+  layer: Layer.Layer<A, E, R>,
+  mapError: (cause: E) => E2,
+): Layer.Layer<A, E2, R> =>
+  scopedLayer((scope) => Effect.suspend(() => acquireFreshLayer(layer, scope)).pipe(Effect.mapError(mapError)))

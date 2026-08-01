@@ -4,6 +4,7 @@ import { isSqlError } from 'effect/unstable/sql/SqlError'
 import { CycleObservabilityError } from './db/cycle-observability'
 import { DatabaseError } from './db/evidence-store'
 import { operationalError, retryableOperationalError, type Component, type OperationalError } from './errors'
+import { retryLayerAcquisition } from './resource-boundary'
 
 type DatabaseOperationFailure = DatabaseError | CycleObservabilityError
 
@@ -23,8 +24,8 @@ const isRetryableSqlAcquisition = (error: unknown): boolean => {
 }
 
 export const sqlResource = <A, E, R>(layer: Layer.Layer<A, E, R>): Layer.Layer<A, E, R> =>
-  Layer.effectContext(
-    Layer.build(layer).pipe(
+  retryLayerAcquisition(layer, (acquisition) =>
+    acquisition.pipe(
       Effect.retry({
         times: 2,
         schedule: Schedule.spaced(Duration.seconds(1)),
