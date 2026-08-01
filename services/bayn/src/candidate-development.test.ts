@@ -1119,6 +1119,65 @@ describe('candidate development walk-forward protocol', () => {
     )
   })
 
+  test('allows doubled-cost accounting to change while preserving causal signal and quantity invariants', () => {
+    const decisions = [signalDecision()]
+    const baselineSimulation = simulationTrace(candidateDevelopmentDoubledCostContract.baselineCostMultiplierMicros)
+    const stressedSimulation: SimulationTrace = {
+      ...baselineSimulation,
+      costMultiplierMicros: candidateDevelopmentDoubledCostContract.stressedCostMultiplierMicros,
+      cashChanges: [
+        {
+          id: 'c'.repeat(64),
+          sourceKind: 'fee',
+          sourceId: 'd'.repeat(64),
+          sessionDate: '2022-01-03',
+          amountMicros: '-1000',
+          cashAfterMicros: '999000',
+        },
+      ],
+    }
+
+    const pass = successOf(
+      validateCandidateDevelopmentDoubledCostCausalPath(
+        { signalDecisions: decisions, simulation: baselineSimulation },
+        { signalDecisions: decisions, simulation: stressedSimulation },
+      ),
+    )
+
+    expect(pass.status).toBe('PASS')
+    expect(stressedSimulation.cashChanges).not.toEqual(baselineSimulation.cashChanges)
+    expect(pass.signalDecisionsHash).toBe(successOf(canonicalHashV1Result(decisions)))
+    expect(pass.orderQuantityPathHash).toBe(
+      successOf(
+        canonicalHashV1Result(
+          baselineSimulation.orders.map(
+            ({
+              decisionId,
+              sessionDate,
+              symbol,
+              side,
+              requestedQuantityMicros,
+              filledQuantityMicros,
+              status,
+              rejectionReason,
+              unfilledRemainder,
+            }) => ({
+              decisionId,
+              sessionDate,
+              symbol,
+              side,
+              requestedQuantityMicros,
+              filledQuantityMicros,
+              status,
+              rejectionReason,
+              unfilledRemainder,
+            }),
+          ),
+        ),
+      ),
+    )
+  })
+
   test('proves the official terminal geometry is impossible while the distinct development geometry is feasible', () => {
     const sessions = developmentSessions()
     const official = successOf(
