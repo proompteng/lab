@@ -1138,6 +1138,198 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
+  test('recovers the exact identity-less autonomous OBSERVE root onto the configured sandbox identity', async () => {
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionStore
+          const sql = yield* PgClient.PgClient
+          const activatedAt = '2026-07-28T06:49:28.305Z'
+          yield* sql`
+            INSERT INTO authority_generations (
+              generation_hash, schema_version, previous_generation_hash, maximum,
+              authority_version, activated_at
+            ) VALUES (
+              ${LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH},
+              'bayn.authority-generation-history.v1', NULL, 'OBSERVE', 1, ${activatedAt}
+            )
+          `
+          yield* sql`
+            INSERT INTO authority_state (
+              schema_version, generation_hash, maximum, effective, kill_state,
+              reason, version, updated_at
+            ) VALUES (
+              'bayn.paper-authority.v1', ${LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH},
+              'OBSERVE', 'OBSERVE', 'CLEAR', NULL, 1, ${activatedAt}
+            )
+          `
+          const [failedAt] = yield* sql<{ updated_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (failedAt === undefined) return yield* Effect.die(new Error('legacy restriction time is unavailable'))
+          yield* sql`
+            UPDATE authority_state
+            SET
+              kill_state = 'ACTIVE',
+              reason = ${incompletePassReason},
+              version = 2,
+              updated_at = ${failedAt.updated_at.toISOString()}
+            WHERE singleton
+          `
+          const [reconciliationTime] = yield* sql<{ reconciled_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS reconciled_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (reconciliationTime === undefined) {
+            return yield* Effect.die(new Error('legacy reconciliation time is unavailable'))
+          }
+          const reconciliationStateHash = hash('legacy-observe-recovery-state')
+          yield* sql`
+            INSERT INTO reconciliations (
+              reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+              content_hash, status, discrepancies, reconciled_at
+            ) VALUES (
+              ${hash('legacy-observe-recovery-reconciliation')}, 'bayn.paper-reconciliation.v1', ${accountId},
+              ${reconciliationStateHash}, ${reconciliationStateHash},
+              ${hash('legacy-observe-recovery-content')}, 'EXACT', ${sql.json(JSON.stringify([]))},
+              ${reconciliationTime.reconciled_at.toISOString()}
+            )
+          `
+          const recovered = yield* store.ensureAuthorityGeneration({
+            generationHash: hash('legacy-observe-recovery-generation-v2'),
+            maximum: Authority.Observe,
+          })
+          const history = yield* sql<{
+            account_id: string | null
+            broker_environment: string | null
+            broker_identity_schema_version: string | null
+            broker_provider: string | null
+            previous_generation_hash: string | null
+          }>`
+            SELECT
+              previous_generation_hash,
+              broker_identity_schema_version,
+              broker_provider,
+              broker_environment,
+              account_id
+            FROM authority_generations
+            ORDER BY authority_version
+          `
+          return { history, recovered }
+        }),
+      )
+
+      expect(result.recovered).toMatchObject({
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Clear,
+        version: 3,
+      })
+      expect(result.history).toEqual([
+        {
+          previous_generation_hash: null,
+          broker_identity_schema_version: null,
+          broker_provider: null,
+          broker_environment: null,
+          account_id: null,
+        },
+        {
+          previous_generation_hash: LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH,
+          broker_identity_schema_version: 'bayn.broker-identity.v2',
+          broker_provider: BrokerProvider.Alpaca,
+          broker_environment: BrokerEnvironment.Sandbox,
+          account_id: accountId,
+        },
+      ])
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('preserves the transient kill for an arbitrary identity-less OBSERVE root', async () => {
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionStore
+          const sql = yield* PgClient.PgClient
+          const untrustedRoot = hash('untrusted-identity-less-observe-root')
+          const activatedAt = '2026-07-28T06:49:28.305Z'
+          yield* sql`
+            INSERT INTO authority_generations (
+              generation_hash, schema_version, previous_generation_hash, maximum,
+              authority_version, activated_at
+            ) VALUES (
+              ${untrustedRoot}, 'bayn.authority-generation-history.v1', NULL, 'OBSERVE', 1, ${activatedAt}
+            )
+          `
+          yield* sql`
+            INSERT INTO authority_state (
+              schema_version, generation_hash, maximum, effective, kill_state,
+              reason, version, updated_at
+            ) VALUES (
+              'bayn.paper-authority.v1', ${untrustedRoot},
+              'OBSERVE', 'OBSERVE', 'CLEAR', NULL, 1, ${activatedAt}
+            )
+          `
+          const [failedAt] = yield* sql<{ updated_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (failedAt === undefined) return yield* Effect.die(new Error('untrusted restriction time is unavailable'))
+          yield* sql`
+            UPDATE authority_state
+            SET
+              kill_state = 'ACTIVE',
+              reason = ${incompletePassReason},
+              version = 2,
+              updated_at = ${failedAt.updated_at.toISOString()}
+            WHERE singleton
+          `
+          const [reconciliationTime] = yield* sql<{ reconciled_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS reconciled_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (reconciliationTime === undefined) {
+            return yield* Effect.die(new Error('untrusted reconciliation time is unavailable'))
+          }
+          const reconciliationStateHash = hash('untrusted-observe-recovery-state')
+          yield* sql`
+            INSERT INTO reconciliations (
+              reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+              content_hash, status, discrepancies, reconciled_at
+            ) VALUES (
+              ${hash('untrusted-observe-recovery-reconciliation')}, 'bayn.paper-reconciliation.v1', ${accountId},
+              ${reconciliationStateHash}, ${reconciliationStateHash},
+              ${hash('untrusted-observe-recovery-content')}, 'EXACT', ${sql.json(JSON.stringify([]))},
+              ${reconciliationTime.reconciled_at.toISOString()}
+            )
+          `
+          return yield* store.ensureAuthorityGeneration({
+            generationHash: hash('untrusted-observe-recovery-generation-v2'),
+            maximum: Authority.Observe,
+          })
+        }),
+      )
+
+      expect(result).toMatchObject({
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Active,
+        reason: incompletePassReason,
+        version: 3,
+      })
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
   test('preserves the transient reconciliation kill across a broker identity rotation', async () => {
     const initialRuntime = makeStoreRuntime({ fail: false, planHashes: [] })
     try {
