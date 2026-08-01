@@ -3317,6 +3317,29 @@ export const evaluateBaynReleaseEligibility = (input: {
         remediation[0].record.schemaVersion === 'bayn.release-review-remediation.v5' ||
         remediation[0].record.schemaVersion === 'bayn.release-review-remediation.v6'
       ) {
+        if (remediation[0].record.schemaVersion === 'bayn.release-review-remediation.v6') {
+          const successorIdentity = remediation[0].record.requiredSuccessors[0]
+          const successorCommit = comparison.commits.find(
+            (candidate) => candidate.sha === successorIdentity.mergeCommitSha,
+          )
+          const successorNormalReview = normalReviews.get(successorIdentity.mergeCommitSha)
+          if (successorCommit === undefined || successorNormalReview === undefined) {
+            return remediationInvalid(
+              `remediation ${remediation[0].record.remediationId} successor review snapshot is missing`,
+            )
+          }
+          const successorReview = evaluateBoundRemediationReview({
+            remediationId: remediation[0].record.remediationId,
+            commit: successorCommit,
+            identity: successorIdentity,
+            normalReview: successorNormalReview,
+            nowMs: input.nowMs,
+          })
+          if (successorReview.status === 'hold') return successorReview
+          normalReviews.set(successorIdentity.mergeCommitSha, successorReview)
+          coveredDescendantShas.add(successorIdentity.mergeCommitSha)
+        }
+
         const introductionIdentity = remediation[0].record.introduction
         const introductionCommit = comparison.commits.find(
           (candidate) => candidate.sha === introductionIdentity.mergeCommitSha,

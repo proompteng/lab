@@ -2316,6 +2316,46 @@ describe('Bayn publication-range eligibility', () => {
     })
   })
 
+  test('carries the v6 reaction-bound successor review into the publication-range decision', () => {
+    const fixture = successorBoundContinuousRemediationFixture()
+    const record = fixture.evidence.record
+    if (record.schemaVersion !== 'bayn.release-review-remediation.v6') throw new Error('expected v6 record')
+    const successorIdentity = record.requiredSuccessors[0]
+    const successor = fixture.snapshot.comparison?.commits.find(
+      (commit) => commit.sha === successorIdentity.mergeCommitSha,
+    )
+    const pullRequest = successor?.reviewSnapshot?.pullRequest
+    if (pullRequest === null || pullRequest === undefined) throw new Error('missing successor pull request')
+    ;(pullRequest as unknown as { reviews: PullRequestReview[] }).reviews = []
+    ;(pullRequest as unknown as { headForcePushes: PullRequestForcePush[] }).headForcePushes = [
+      {
+        actorLogin: 'gregkonush',
+        beforeCommitSha: '6'.repeat(40),
+        afterCommitSha: successorIdentity.finalHeadSha,
+        createdAt: '2026-07-31T21:12:00Z',
+      },
+    ]
+    ;(pullRequest as unknown as { headForcePushCount: number }).headForcePushCount = 1
+    ;(pullRequest as unknown as { reactions: PullRequestReaction[] }).reactions = [
+      reaction({ createdAt: '2026-07-31T21:12:10Z' }),
+    ]
+    ;(successorIdentity as unknown as { sourcePullRequestEvidenceSha256: string }).sourcePullRequestEvidenceSha256 =
+      pullRequestReviewEvidenceSha256(pullRequest)
+
+    const evaluation = evaluateSuccessorBoundContinuousRemediationFixture(fixture)
+    expect(evaluation).toMatchObject({ status: 'eligible' })
+    if (evaluation.status !== 'eligible') throw new Error('expected eligible publication range')
+    expect(
+      evaluation.reviewedPullRequests.find(
+        (reviewedPullRequest) => reviewedPullRequest.commitSha === successorIdentity.mergeCommitSha,
+      ),
+    ).toMatchObject({
+      prNumber: successorIdentity.sourcePullRequestNumber,
+      headSha: successorIdentity.finalHeadSha,
+      reviewSubmittedAt: '2026-07-31T21:12:10Z',
+    })
+  })
+
   ;(
     [
       [
