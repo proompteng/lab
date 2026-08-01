@@ -2277,6 +2277,45 @@ describe('Bayn publication-range eligibility', () => {
     })
   })
 
+  test('carries the v6 reaction-bound completion review into the publication-range decision', () => {
+    const fixture = successorBoundContinuousRemediationFixture()
+    const record = fixture.evidence.record
+    if (record.schemaVersion !== 'bayn.release-review-remediation.v6') throw new Error('expected v6 record')
+    const completion = fixture.snapshot.comparison?.commits.find(
+      (commit) => commit.sha === record.completion.mergeCommitSha,
+    )
+    const pullRequest = completion?.reviewSnapshot?.pullRequest
+    if (pullRequest === null || pullRequest === undefined) throw new Error('missing completion pull request')
+    ;(pullRequest as unknown as { reviews: PullRequestReview[] }).reviews = []
+    ;(pullRequest as unknown as { headForcePushes: PullRequestForcePush[] }).headForcePushes = [
+      {
+        actorLogin: 'gregkonush',
+        beforeCommitSha: '5'.repeat(40),
+        afterCommitSha: record.completion.finalHeadSha,
+        createdAt: '2026-08-01T08:30:10Z',
+      },
+    ]
+    ;(pullRequest as unknown as { headForcePushCount: number }).headForcePushCount = 1
+    ;(pullRequest as unknown as { reactions: PullRequestReaction[] }).reactions = [
+      reaction({ createdAt: '2026-08-01T08:30:20Z' }),
+    ]
+    ;(record.completion as unknown as { sourcePullRequestEvidenceSha256: string }).sourcePullRequestEvidenceSha256 =
+      pullRequestReviewEvidenceSha256(pullRequest)
+
+    const evaluation = evaluateSuccessorBoundContinuousRemediationFixture(fixture)
+    expect(evaluation).toMatchObject({ status: 'eligible' })
+    if (evaluation.status !== 'eligible') throw new Error('expected eligible publication range')
+    expect(
+      evaluation.reviewedPullRequests.find(
+        (reviewedPullRequest) => reviewedPullRequest.commitSha === record.completion.mergeCommitSha,
+      ),
+    ).toMatchObject({
+      prNumber: record.completion.sourcePullRequestNumber,
+      headSha: record.completion.finalHeadSha,
+      reviewSubmittedAt: '2026-08-01T08:30:20Z',
+    })
+  })
+
   ;(
     [
       [

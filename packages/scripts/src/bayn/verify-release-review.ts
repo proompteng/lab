@@ -2414,6 +2414,7 @@ const validateContinuousSourceRemediation = (input: {
   readonly normalReviews: ReadonlyMap<string, BaynReleaseReviewEvaluation>
   readonly introduction: BaynReleaseRangeCommit
   readonly introductionReview?: BaynReleaseReviewEligible
+  readonly completionReview?: BaynReleaseReviewEligible
   readonly blockedIndex: number
   readonly nowMs: number
 }): BaynReleaseReviewHold | null => {
@@ -2597,7 +2598,11 @@ const validateContinuousSourceRemediation = (input: {
           ? successorBoundReview
           : commit.sha === input.introduction.sha && input.introductionReview !== undefined
             ? input.introductionReview
-            : input.normalReviews.get(commit.sha)
+            : record.schemaVersion === 'bayn.release-review-remediation.v6' &&
+                commit.sha === record.completion.mergeCommitSha &&
+                input.completionReview !== undefined
+              ? input.completionReview
+              : input.normalReviews.get(commit.sha)
       if (review === undefined) {
         return remediationInvalid(`remediation ${record.remediationId} newer source review is missing`)
       }
@@ -2638,6 +2643,7 @@ const validateReleaseReviewRemediation = (input: {
   )
   let introduction: BaynReleaseRangeCommit | undefined
   let introductionBoundReview: BaynReleaseReviewEligible | undefined
+  let completionBoundReview: BaynReleaseReviewEligible | undefined
   if (record.schemaVersion === 'bayn.release-review-remediation.v6') {
     if (recordCommits.length !== 3) {
       return remediationInvalid(`remediation ${record.remediationId} successor-bound history is not exact`)
@@ -2695,6 +2701,7 @@ const validateReleaseReviewRemediation = (input: {
       nowMs: input.nowMs,
     })
     if (completionReview.status === 'hold') return completionReview
+    completionBoundReview = completionReview
     const introductionNormalReview = input.normalReviews.get(introduction.sha)
     if (introductionNormalReview === undefined) {
       return remediationInvalid(`remediation ${record.remediationId} introduction review snapshot is missing`)
@@ -2846,6 +2853,7 @@ const validateReleaseReviewRemediation = (input: {
       normalReviews: input.normalReviews,
       introduction,
       introductionReview: introductionBoundReview,
+      completionReview: completionBoundReview,
       blockedIndex,
       nowMs: input.nowMs,
     })
@@ -3329,6 +3337,29 @@ export const evaluateBaynReleaseEligibility = (input: {
         if (introductionReview.status === 'hold') return introductionReview
         normalReviews.set(introductionIdentity.mergeCommitSha, introductionReview)
         coveredDescendantShas.add(introductionIdentity.mergeCommitSha)
+
+        if (remediation[0].record.schemaVersion === 'bayn.release-review-remediation.v6') {
+          const completionIdentity = remediation[0].record.completion
+          const completionCommit = comparison.commits.find(
+            (candidate) => candidate.sha === completionIdentity.mergeCommitSha,
+          )
+          const completionNormalReview = normalReviews.get(completionIdentity.mergeCommitSha)
+          if (completionCommit === undefined || completionNormalReview === undefined) {
+            return remediationInvalid(
+              `remediation ${remediation[0].record.remediationId} completion review snapshot is missing`,
+            )
+          }
+          const completionReview = evaluateBoundRemediationReview({
+            remediationId: remediation[0].record.remediationId,
+            commit: completionCommit,
+            identity: completionIdentity,
+            normalReview: completionNormalReview,
+            nowMs: input.nowMs,
+          })
+          if (completionReview.status === 'hold') return completionReview
+          normalReviews.set(completionIdentity.mergeCommitSha, completionReview)
+          coveredDescendantShas.add(completionIdentity.mergeCommitSha)
+        }
       }
       if (
         remediation[0].record.schemaVersion === 'bayn.release-review-remediation.v4' ||
