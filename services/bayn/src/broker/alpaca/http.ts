@@ -1,7 +1,8 @@
 import { NodeHttpClient, Undici } from '@effect/platform-node'
-import { Cause, Effect, Layer, pipe, Redacted, Result, Scope } from 'effect'
+import { Cause, Context, Effect, Layer, pipe, Redacted, Result, Schema, Scope } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 
+import { operationalError } from '../../errors'
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
 import { currentUtcInstant } from '../../time'
 import { decodeBrokerProxyUrl, type BrokerConnection } from '../connection'
@@ -71,6 +72,10 @@ import {
 
 const decodeResponseHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
 
+export class AlpacaHttpClient extends Context.Service<AlpacaHttpClient, HttpClient.HttpClient>()(
+  'bayn/AlpacaHttpClient',
+) {}
+
 const decodeInput = <A>(
   operation: BrokerReadOperation,
   decoder: Decoder<A>,
@@ -128,12 +133,14 @@ export const parseProxyUrl = (proxyUrl: string): Result.Result<URL, BrokerReadEr
     }),
   )
 
+const defaultProxyDispatcherDependencies: ProxyDispatcherDependencies = {
+  create: (url) => new Undici.ProxyAgent({ uri: url.toString() }),
+  destroy: (dispatcher) => dispatcher.destroy(),
+}
+
 const makeVerifiedProxyDispatcher = (
   proxyUrl: string,
-  dependencies: ProxyDispatcherDependencies = {
-    create: (url) => new Undici.ProxyAgent({ uri: url.toString() }),
-    destroy: (dispatcher) => dispatcher.destroy(),
-  },
+  dependencies: ProxyDispatcherDependencies = defaultProxyDispatcherDependencies,
 ): Effect.Effect<Undici.Dispatcher, BrokerReadError, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.try({
@@ -143,11 +150,158 @@ const makeVerifiedProxyDispatcher = (
     (dispatcher) => Effect.promise(() => dependencies.destroy(dispatcher)),
   )
 
-const proxyLayer = (connection: BrokerConnection): Layer.Layer<NodeHttpClient.Dispatcher, BrokerReadError> =>
-  Layer.effect(NodeHttpClient.Dispatcher, makeVerifiedProxyDispatcher(connection.proxyUrl))
+const proxyLayer = (
+  connection: BrokerConnection,
+  dependencies: ProxyDispatcherDependencies = defaultProxyDispatcherDependencies,
+): Layer.Layer<NodeHttpClient.Dispatcher, BrokerReadError> =>
+  Layer.effect(NodeHttpClient.Dispatcher, makeVerifiedProxyDispatcher(connection.proxyUrl, dependencies))
 
-export const alpacaHttpLayer = (connection: BrokerConnection): Layer.Layer<HttpClient.HttpClient, BrokerReadError> =>
-  NodeHttpClient.layerUndiciNoDispatcher.pipe(Layer.provide(proxyLayer(connection)))
+export const alpacaHttpLayer = (
+  connection: BrokerConnection,
+  dependencies: ProxyDispatcherDependencies = defaultProxyDispatcherDependencies,
+): Layer.Layer<HttpClient.HttpClient, BrokerReadError> =>
+  NodeHttpClient.layerUndiciNoDispatcher.pipe(Layer.provide(proxyLayer(connection, dependencies)))
+
+const LatestQuoteResponseSchema = Schema.Struct({
+  symbol: Schema.String,
+  quote: Schema.Struct({
+    ap: Schema.Finite,
+    bp: Schema.Finite,
+    t: Schema.String,
+  }),
+})
+
+export type LatestQuoteDecodeFailure =
+  | { readonly _tag: 'LatestQuoteResponseInvalid'; readonly cause: unknown }
+  | { readonly _tag: 'LatestQuoteSymbolMismatch'; readonly expected: string; readonly observed: string }
+  | { readonly _tag: 'LatestQuoteAskInvalid'; readonly symbol: string; readonly ask: number }
+  | { readonly _tag: 'LatestQuoteBidInvalid'; readonly symbol: string; readonly bid: number }
+  | { readonly _tag: 'LatestQuoteSpreadInvalid'; readonly symbol: string; readonly bid: number; readonly ask: number }
+
+export interface AlpacaFreshBrokerQuote {
+  readonly symbol: string
+  readonly bidPriceMicros: string
+  readonly askPriceMicros: string
+  readonly quotedAt: string
+  readonly observedAt: string
+}
+
+export const decodeFreshBrokerPrice = (
+  requestedSymbol: string,
+  raw: unknown,
+  observedAt: string,
+): Result.Result<AlpacaFreshBrokerQuote, LatestQuoteDecodeFailure> => {
+  const decoded = Schema.decodeUnknownResult(LatestQuoteResponseSchema, { onExcessProperty: 'ignore' })(raw)
+  if (Result.isFailure(decoded)) {
+    return Result.fail({ _tag: 'LatestQuoteResponseInvalid', cause: decoded.failure })
+  }
+  if (decoded.success.symbol !== requestedSymbol) {
+    return Result.fail({
+      _tag: 'LatestQuoteSymbolMismatch',
+      expected: requestedSymbol,
+      observed: decoded.success.symbol,
+    })
+  }
+  const bidMicros = Math.floor(decoded.success.quote.bp * 1_000_000)
+  const askMicros = Math.ceil(decoded.success.quote.ap * 1_000_000)
+  if (!Number.isFinite(decoded.success.quote.bp) || decoded.success.quote.bp <= 0 || !Number.isSafeInteger(bidMicros)) {
+    return Result.fail({
+      _tag: 'LatestQuoteBidInvalid',
+      symbol: requestedSymbol,
+      bid: decoded.success.quote.bp,
+    })
+  }
+  if (!Number.isFinite(decoded.success.quote.ap) || decoded.success.quote.ap <= 0 || !Number.isSafeInteger(askMicros)) {
+    return Result.fail({
+      _tag: 'LatestQuoteAskInvalid',
+      symbol: requestedSymbol,
+      ask: decoded.success.quote.ap,
+    })
+  }
+  if (bidMicros > askMicros) {
+    return Result.fail({
+      _tag: 'LatestQuoteSpreadInvalid',
+      symbol: requestedSymbol,
+      bid: decoded.success.quote.bp,
+      ask: decoded.success.quote.ap,
+    })
+  }
+  return Result.succeed({
+    symbol: requestedSymbol,
+    bidPriceMicros: bidMicros.toString(),
+    askPriceMicros: askMicros.toString(),
+    quotedAt: decoded.success.quote.t,
+    observedAt,
+  })
+}
+
+export const latestQuoteUrl = (symbol: string): URL => {
+  const url = new URL(`/v2/stocks/${encodeURIComponent(symbol)}/quotes/latest`, 'https://data.alpaca.markets')
+  url.searchParams.set('feed', 'sip')
+  return url
+}
+
+export const makeFreshBrokerPriceReader = (
+  connection: BrokerConnection,
+  client: HttpClient.HttpClient,
+): ((symbol: string) => Effect.Effect<AlpacaFreshBrokerQuote, ReturnType<typeof operationalError>>) => {
+  const authenticated = client.pipe(HttpClient.retryTransient({ times: connection.retryAttempts }))
+  const key = Redacted.value(connection.key)
+  const secret = Redacted.value(connection.secret)
+  return (symbol) =>
+    Effect.gen(function* () {
+      const request = HttpClientRequest.get(latestQuoteUrl(symbol), {
+        acceptJson: true,
+        headers: {
+          'APCA-API-KEY-ID': key,
+          'APCA-API-SECRET-KEY': secret,
+        },
+      })
+      const response = yield* authenticated
+        .execute(request)
+        .pipe(
+          Effect.mapError((cause) =>
+            operationalError('http', 'alpaca-latest-quote', 'Alpaca latest quote request failed', cause),
+          ),
+        )
+      if (response.status < 200 || response.status >= 300) {
+        return yield* Effect.fail(
+          operationalError(
+            'http',
+            'alpaca-latest-quote',
+            `Alpaca latest quote returned HTTP ${response.status.toString()}`,
+          ),
+        )
+      }
+      const raw = yield* response.json.pipe(
+        Effect.mapError((cause) =>
+          operationalError('http', 'alpaca-latest-quote', 'Alpaca latest quote body is not valid JSON', cause),
+        ),
+      )
+      const observedAt = yield* currentUtcInstant
+      return yield* Effect.fromResult(decodeFreshBrokerPrice(symbol, raw, observedAt)).pipe(
+        Effect.mapError((cause) =>
+          operationalError('http', 'alpaca-latest-quote', 'Alpaca latest quote violates the price contract', cause),
+        ),
+      )
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: connection.operationTimeoutMs,
+        orElse: () =>
+          Effect.fail(
+            operationalError(
+              'http',
+              'alpaca-latest-quote',
+              `Alpaca latest quote timed out after ${connection.operationTimeoutMs.toString()}ms`,
+            ),
+          ),
+      }),
+      Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders),
+      Effect.withSpan('broker.latest-quote', {
+        attributes: { 'broker.system': 'alpaca', 'broker.symbol': symbol },
+      }),
+    )
+}
 
 export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShape, never, HttpClient.HttpClient> =>
   Effect.gen(function* () {
