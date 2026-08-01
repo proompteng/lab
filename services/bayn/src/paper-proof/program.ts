@@ -46,6 +46,8 @@ export interface PaperProofDependencies {
   readonly mutations: PaperProofMutationStore
   /** Stateful recovery markers are canonical and shared by every mutation operation view. */
   readonly recovery: PaperProofRecoveryStore
+  /** Durable intent state is canonical and shared by cancellation and recovery views. */
+  readonly readIntent: PaperProofCancelDependencies['readIntent']
   readonly prepare: Omit<PaperProofPrepareDependencies, 'currentUtcInstant' | 'reconcile'>
   readonly submit: Omit<
     PaperProofSubmitDependencies,
@@ -53,11 +55,11 @@ export interface PaperProofDependencies {
   >
   readonly cancel: Omit<
     PaperProofCancelDependencies,
-    'currentUtcInstant' | 'mutations' | 'reconcile' | 'recovery' | 'restrictAuthority'
+    'currentUtcInstant' | 'mutations' | 'readIntent' | 'reconcile' | 'recovery' | 'restrictAuthority'
   >
   readonly recover: Omit<
     PaperProofRecoverDependencies,
-    'currentUtcInstant' | 'mutations' | 'reconcile' | 'recovery' | 'restrictAuthority'
+    'currentUtcInstant' | 'mutations' | 'readIntent' | 'reconcile' | 'recovery' | 'restrictAuthority'
   >
 }
 
@@ -211,6 +213,7 @@ const runValidatedPaperProof = (
             ...dependencies.cancel,
             currentUtcInstant: dependencies.containment.currentUtcInstant,
             mutations: dependencies.mutations,
+            readIntent: dependencies.readIntent,
             reconcile: dependencies.containment.reconcile,
             recovery: dependencies.recovery,
             restrictAuthority: dependencies.containment.restrictAuthority,
@@ -229,6 +232,7 @@ const runValidatedPaperProof = (
             ...dependencies.recover,
             currentUtcInstant: dependencies.containment.currentUtcInstant,
             mutations: dependencies.mutations,
+            readIntent: dependencies.readIntent,
             reconcile: dependencies.containment.reconcile,
             recovery: dependencies.recovery,
             restrictAuthority: dependencies.containment.restrictAuthority,

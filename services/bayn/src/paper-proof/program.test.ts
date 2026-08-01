@@ -253,7 +253,7 @@ type PaperProofFixtureCapabilities = Pick<PaperProofDependencies, 'sourcePlan' |
     readonly recover: (intentId: string, operation: MutationOperation) => Effect.Effect<MutationEvent, Error>
   }
   readonly prepareIntent: PaperProofDependencies['submit']['prepareIntent']
-  readonly readIntent: PaperProofDependencies['cancel']['readIntent']
+  readonly readIntent: PaperProofDependencies['readIntent']
   readonly reconcile: PaperProofDependencies['containment']['reconcile']
   readonly currentUtcInstant: PaperProofDependencies['containment']['currentUtcInstant']
 }
@@ -468,6 +468,7 @@ const fixture = (options: FixtureOptions) => {
     protectedEntryToken: capabilities.protectedEntryToken,
     mutations: capabilities.mutations,
     recovery: capabilities.recovery,
+    readIntent: capabilities.readIntent,
     containment: {
       restrictAuthority: capabilities.restrictAuthority,
       reconcile: capabilities.reconcile,
@@ -489,14 +490,12 @@ const fixture = (options: FixtureOptions) => {
         cancel: capabilities.execution.cancel,
         recover: (value) => capabilities.execution.recover(value, MutationOperation.Cancel),
       },
-      readIntent: capabilities.readIntent,
     },
     recover: {
       execution: {
         recoverSubmit: (value) => capabilities.execution.recover(value, MutationOperation.Submit),
         recoverCancel: (value) => capabilities.execution.recover(value, MutationOperation.Cancel),
       },
-      readIntent: capabilities.readIntent,
     },
   }
   return { calls, dependencies, mutationState, recoveryState, sequence }
@@ -533,12 +532,14 @@ describe('bounded PAPER proof command', () => {
       ...dependencies.containment,
       mutations: dependencies.mutations,
       recovery: dependencies.recovery,
+      readIntent: dependencies.readIntent,
     }
     const recover: PaperProofRecoverDependencies = {
       ...dependencies.recover,
       ...dependencies.containment,
       mutations: dependencies.mutations,
       recovery: dependencies.recovery,
+      readIntent: dependencies.readIntent,
     }
 
     // @ts-expect-error mutation runners stay behind the validated composition boundary.
@@ -555,6 +556,10 @@ describe('bounded PAPER proof command', () => {
     void submit.execution.cancel
     // @ts-expect-error SUBMIT cannot read durable intent state.
     void submit.readIntent
+    // @ts-expect-error the root CANCEL view cannot replace the canonical durable intent reader.
+    void dependencies.cancel.readIntent
+    // @ts-expect-error the root RECOVER view cannot replace the canonical durable intent reader.
+    void dependencies.recover.readIntent
     // @ts-expect-error CANCEL cannot activate capital.
     void cancel.activateCapitalGrant
     // @ts-expect-error CANCEL cannot issue submission broker I/O.
