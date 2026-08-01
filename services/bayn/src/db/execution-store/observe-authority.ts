@@ -8,6 +8,7 @@ import {
   type BrokerIdentity,
 } from '../../broker/identity'
 import { Authority, type AuthorityState } from '../../execution/contracts'
+import { incompletePassReason } from '../../simulation-reconciliation/broker-reconciler-model'
 import {
   decideObserveGeneration,
   validateAuthorityObservation,
@@ -201,17 +202,59 @@ export const makeObserveAuthorityInterpreter = (
         )
       `
       const rotated = yield* sql<Record<string, unknown>>`
-        UPDATE authority_state
+        WITH latest_reconciliation AS (
+          SELECT
+            status,
+            expected_hash,
+            observed_hash,
+            discrepancies,
+            reconciled_at
+          FROM reconciliations
+          WHERE account_id = ${identity.accountId}
+          ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+          LIMIT 1
+        ), recovery AS (
+          SELECT
+            state.maximum = 'OBSERVE'
+            AND state.effective = 'OBSERVE'
+            AND state.kill_state = 'ACTIVE'
+            AND state.reason = ${incompletePassReason}
+            AND previous_generation.broker_identity_schema_version = ${identity.schemaVersion}
+            AND previous_generation.broker_identity_hash = ${identity.identityHash}
+            AND previous_generation.broker_provider = ${identity.provider}
+            AND previous_generation.broker_environment = ${identity.environment}
+            AND previous_generation.account_id = ${identity.accountId}
+            AND reconciliation.status = 'EXACT'
+            AND reconciliation.expected_hash = reconciliation.observed_hash
+            AND jsonb_array_length(reconciliation.discrepancies) = 0
+            AND reconciliation.reconciled_at > state.updated_at
+            AND reconciliation.reconciled_at < ${activatedAt}
+            AND NOT EXISTS (
+              SELECT 1
+              FROM mutation_events AS mutation
+              JOIN intents AS intent ON intent.intent_id = mutation.intent_id
+              WHERE intent.account_id = ${identity.accountId}
+            ) AS eligible
+          FROM authority_state AS state
+          JOIN authority_generations AS previous_generation
+            ON previous_generation.generation_hash = state.generation_hash
+          LEFT JOIN latest_reconciliation AS reconciliation ON true
+          WHERE state.singleton
+        )
+        UPDATE authority_state AS state
         SET
           generation_hash = ${decision.generationHash},
           maximum = ${decision.maximum},
           effective = 'OBSERVE',
+          kill_state = CASE WHEN recovery.eligible THEN 'CLEAR' ELSE state.kill_state END,
+          reason = CASE WHEN recovery.eligible THEN NULL ELSE state.reason END,
           version = ${decision.authorityVersion},
           updated_at = ${activatedAt}
-        WHERE singleton
+        FROM recovery
+        WHERE state.singleton
         RETURNING
-          schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, updated_at
+          state.schema_version, state.generation_hash, state.maximum, state.effective, state.kill_state, state.reason,
+          state.version::text AS version, state.updated_at
       `.pipe(Effect.flatMap(decodeAuthorityStateRows))
       const rotatedRow = rotated[0]
       if (rotatedRow === undefined) {

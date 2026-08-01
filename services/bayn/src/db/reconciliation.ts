@@ -227,6 +227,7 @@ export const restrictAuthority = (
         version = version + 1,
         updated_at = ${updatedAt}
       WHERE singleton
+        AND maximum = 'PAPER'
         AND (effective <> 'OBSERVE' OR kill_state <> 'ACTIVE')
     `.pipe(Effect.asVoid),
   )
