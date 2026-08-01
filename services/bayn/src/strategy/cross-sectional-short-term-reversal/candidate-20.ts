@@ -1,15 +1,11 @@
-/**
- * Candidate 20 is permanently closed without an attempt.
- *
- * The reviewed precommit remains preserved in Git history and is bound by the
- * immutable invalidation record. This module intentionally exports no
- * executable strategy artifact and cannot be evaluated or preregistered.
- */
+import { candidate20ArchiveReceipt } from '../../candidate-archive/legacy-candidate-receipts'
+
+/** Candidate 20 is a data-only tombstone; no executable artifact is exported. */
 export const candidate20InvalidPrecommit = {
   schemaVersion: 'bayn.candidate-development-precommit-tombstone.v1',
-  candidateOrdinal: 20,
-  status: 'PRECOMMIT_INVALID',
-  attemptStatus: 'UNATTEMPTED',
-  invalidatedModuleSha256: '15570022245f8bba1c121c6657369d66085d6c3659aa326b50048be1ab050441',
+  candidateOrdinal: candidate20ArchiveReceipt.candidateOrdinal,
+  status: candidate20ArchiveReceipt.status,
+  attemptStatus: candidate20ArchiveReceipt.facts.attemptStatus,
+  invalidatedModuleSha256: candidate20ArchiveReceipt.facts.invalidatedModule.sha256,
   nextCandidatePreregistration: null,
 } as const
