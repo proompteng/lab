@@ -331,7 +331,13 @@ const prepareCandidateDevelopmentLocalAttempt = (
         return {
           attempt: join(receiptDirectory, `ordinal-${source.candidateOrdinal}.json`),
           legacy: legacyReceiptPath,
-          legacyPaths: [...new Set([legacyReceiptPath, ...legacyReceiptPaths])],
+          legacyPaths: [
+            ...new Set([
+              join(commonDirectory, legacyCandidateDevelopmentLocalReceiptName),
+              legacyReceiptPath,
+              ...legacyReceiptPaths,
+            ]),
+          ],
         }
       },
       catch: (cause) => localError('RECEIPT_RESERVATION_FAILED', 'candidate receipt path is unavailable', cause),
