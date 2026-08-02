@@ -46,8 +46,8 @@ describe('Bayn qualification workflow contract', () => {
   test('keeps dormancy ahead of every privileged or image operation', () => {
     const dormancy = stepIndex('Verify typed candidate dormancy before any privileged access')
     const stop = stepIndex('Stop safely while qualification is dormant')
-    const toolchain = stepIndex('Set up the runner image-build toolchain')
-    const build = stepIndex('Build the exact checked-out source image locally')
+    const toolchain = stepIndex('Set up the runner image-inspection toolchain')
+    const build = stepIndex('Resolve and load the exact checked-out source image')
     const preflight = stepIndex('Preflight the exact source image without credentials or network')
     const execution = stepIndex('Collect, lock, execute once, and independently audit the sealed holdout')
 
@@ -59,8 +59,8 @@ describe('Bayn qualification workflow contract', () => {
     expect(execution).toBeGreaterThan(preflight)
     expect(step('Stop safely while qualification is dormant').if).toBe("steps.dormancy.outputs.dormant == 'true'")
     for (const name of [
-      'Set up the runner image-build toolchain',
-      'Build the exact checked-out source image locally',
+      'Set up the runner image-inspection toolchain',
+      'Resolve and load the exact checked-out source image',
       'Preflight the exact source image without credentials or network',
       'Collect, lock, execute once, and independently audit the sealed holdout',
     ]) {
@@ -77,7 +77,7 @@ describe('Bayn qualification workflow contract', () => {
     )
   })
 
-  test('builds and runs the exact checked-out source without release or deployment orchestration', () => {
+  test('runs the exact checked-out source image without release or deployment orchestration', () => {
     const checkout = step('Checkout exact scheduled main')
     expect(checkout.uses).toBe('actions/checkout@v5')
     expect(checkout.with).toMatchObject({
@@ -86,15 +86,15 @@ describe('Bayn qualification workflow contract', () => {
       'persist-credentials': false,
     })
 
-    const build = runText('Build the exact checked-out source image locally')
-    expect(build).toContain('nix build .#bayn-image')
-    expect(build).toContain('docker load --input "$image_tar"')
-    expect(build).toContain('echo "tag=${image_tag}" >> "$GITHUB_OUTPUT"')
-    expect(build).toContain('echo "reference=${image_tag}@${image_id}" >> "$GITHUB_OUTPUT"')
+    const build = runText('Resolve and load the exact checked-out source image')
+    expect(build).toContain('crane digest "$image_tag"')
+    expect(build).toContain('image_reference="${IMAGE_REPOSITORY}@${image_digest}"')
+    expect(build).toContain('crane config --platform linux/arm64 "$image_reference"')
+    expect(build).toContain('docker pull --platform linux/arm64 "$image_reference"')
+    expect(build).toContain('echo "reference=${image_reference}" >> "$GITHUB_OUTPUT"')
 
     const allRuns = steps.flatMap((candidate) => (candidate.run === undefined ? [] : [candidate.run]))
     const orchestrationText = allRuns.join('\n')
-    expect(orchestrationText).not.toContain('docker pull')
     expect(orchestrationText).not.toContain('docker push')
     expect(orchestrationText).not.toContain('kubectl')
     expect(orchestrationText).not.toContain('argocd')

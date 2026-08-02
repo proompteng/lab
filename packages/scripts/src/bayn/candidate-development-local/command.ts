@@ -79,11 +79,18 @@ const isFileSystemError = (cause: unknown, code: string): boolean =>
 const gitCommandFailure = (): CandidateDevelopmentLocalError =>
   new CandidateDevelopmentLocalError('git-command-failed', 'Git could not verify the reviewed source binding')
 
+export const candidateDevelopmentGitCommand = (args: readonly string[]) => ({
+  args: ['--no-replace-objects', ...args],
+  env: Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_'))),
+})
+
 const gitText = async (repositoryRoot: string, args: readonly string[]): Promise<string> => {
   try {
-    const result = await execFileAsync('git', [...args], {
+    const command = candidateDevelopmentGitCommand(args)
+    const result = await execFileAsync('git', command.args, {
       cwd: repositoryRoot,
       encoding: 'utf8',
+      env: command.env,
       maxBuffer: maximumGitOutputBytes,
     })
     return String(result.stdout)
@@ -100,9 +107,11 @@ const gitToken = async (repositoryRoot: string, args: readonly string[]): Promis
 
 const gitDiffIsClean = async (repositoryRoot: string, paths: readonly string[]): Promise<boolean> => {
   try {
-    await execFileAsync('git', ['diff', '--quiet', 'HEAD', '--', ...paths], {
+    const command = candidateDevelopmentGitCommand(['diff', '--quiet', 'HEAD', '--', ...paths])
+    await execFileAsync('git', command.args, {
       cwd: repositoryRoot,
       encoding: 'utf8',
+      env: command.env,
       maxBuffer: maximumGitOutputBytes,
     })
     return true

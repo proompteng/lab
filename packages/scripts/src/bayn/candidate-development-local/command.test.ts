@@ -12,6 +12,7 @@ import {
 } from './contract'
 import {
   CandidateDevelopmentLocalError,
+  candidateDevelopmentGitCommand,
   runCandidateDevelopmentLocally,
   finalizeCandidateDevelopmentLocalReceipt,
   reserveCandidateDevelopmentLocalReceipt,
@@ -96,6 +97,19 @@ describe('candidate development local contract', () => {
 })
 
 describe('candidate development local command', () => {
+  test('uses the hardened Git view for every reviewed source read', () => {
+    const previousReplacementRef = process.env.GIT_REPLACE_REF_BASE
+    process.env.GIT_REPLACE_REF_BASE = '/tmp/replacement-refs'
+    try {
+      const command = candidateDevelopmentGitCommand(['rev-parse', 'HEAD'])
+      expect(command.args).toEqual(['--no-replace-objects', 'rev-parse', 'HEAD'])
+      expect(command.env).not.toHaveProperty('GIT_REPLACE_REF_BASE')
+    } finally {
+      if (previousReplacementRef === undefined) delete process.env.GIT_REPLACE_REF_BASE
+      else process.env.GIT_REPLACE_REF_BASE = previousReplacementRef
+    }
+  })
+
   test('rejects invalid arguments before source resolution or process execution', async () => {
     const fixture = dependenciesFor()
     let resolvedCount = 0
