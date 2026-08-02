@@ -1470,16 +1470,12 @@ const hasOnlySupersededCodexReviews = (
   const priorReviews = codexReviews.filter((review) => review.commitSha !== pullRequest.headSha)
   if (priorReviews.length === 0) return true
   if (latestForcePush === null) return false
-  const forcePushHeads = new Set(
-    pullRequest.headForcePushes.flatMap(({ beforeCommitSha, afterCommitSha }) => [beforeCommitSha, afterCommitSha]),
-  )
 
   return priorReviews.every((review) => {
     const submittedAtMs = review.submittedAt === null ? Number.NaN : Date.parse(review.submittedAt)
     return (
       review.commitSha !== null &&
       !pullRequest.commitShas.includes(review.commitSha) &&
-      forcePushHeads.has(review.commitSha) &&
       Number.isFinite(submittedAtMs) &&
       submittedAtMs < latestForcePush.createdAtMs
     )
