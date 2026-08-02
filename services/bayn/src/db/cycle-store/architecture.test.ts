@@ -17,10 +17,10 @@ describe('cycle-store architecture', () => {
       new Response(lint.stderr).text(),
     ])
 
-    expect(exitCode).toBe(0)
     if (exitCode !== 0) {
       throw new Error([stdout, stderr].filter((output) => output.length > 0).join('\n'))
     }
+    expect(exitCode).toBe(0)
 
     expect(JSON.parse(stdout)).toEqual({ cycles: [] })
   })
