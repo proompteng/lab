@@ -72,6 +72,14 @@ const pr13464CreatedAt = '2026-08-01T18:00:00Z'
 const pr13464ForcePushAt = '2026-08-01T19:51:52Z'
 const pr13464ReactionAt = '2026-08-01T19:54:46Z'
 const pr13464MergedAt = '2026-08-01T19:58:06Z'
+const pr13465MainCommitSha = '53f9cf57c445ad8ec96aa1726aa507f0d1367f97'
+const pr13465FinalHeadSha = '9d4ec40b67c4a79b0dd181fd795c1728f6587cca'
+const pr13465FirstCommitSha = '33918d75280cf37ff126967acb51d59feb9ba71e'
+const pr13465ReviewedHeadSha = '1879b6c4c9cffb45547d31d21d4b2ed55d32b0a5'
+const pr13465CreatedAt = '2026-08-01T19:51:56Z'
+const pr13465ForcePushAt = '2026-08-01T20:01:11Z'
+const pr13465ReactionAt = '2026-08-01T20:04:05Z'
+const pr13465MergedAt = '2026-08-01T20:11:18Z'
 
 const associatedPull = (overrides: Partial<AssociatedPullRequest> = {}): AssociatedPullRequest => ({
   number: 13390,
@@ -265,6 +273,74 @@ const pr13464ReactionSnapshot = (
         beforeCommitSha: pr13464PreviousHeadSha,
         afterCommitSha: pr13464FinalHeadSha,
         createdAt: pr13464ForcePushAt,
+      },
+    ],
+    headForcePushCount: options.headForcePushCount,
+  })
+
+const pr13465ReactionSnapshot = (
+  options: {
+    readonly commitShas?: readonly string[]
+    readonly reviews?: readonly PullRequestReview[]
+    readonly issueComments?: readonly PullRequestIssueComment[]
+    readonly threads?: readonly PullRequestReviewThread[]
+    readonly reactions?: readonly PullRequestReaction[]
+    readonly headForcePushes?: readonly PullRequestForcePush[]
+    readonly headForcePushCount?: number
+    readonly createdAt?: string
+    readonly mergedAt?: string
+  } = {},
+): BaynReleaseReviewSnapshot =>
+  reviewSnapshotFor({
+    commitSha: pr13465MainCommitSha,
+    prNumber: 13465,
+    headSha: pr13465FinalHeadSha,
+    parents: [pushBeforeSha],
+    createdAt: options.createdAt ?? pr13465CreatedAt,
+    mergedAt: options.mergedAt ?? pr13465MergedAt,
+    reviews: options.reviews ?? [
+      review({
+        commitSha: pr13465ReviewedHeadSha,
+        submittedAt: '2026-08-01T19:55:16Z',
+      }),
+      review({
+        authorLogin: 'gregkonush',
+        commitSha: pr13465FinalHeadSha,
+        submittedAt: '2026-08-01T20:11:03Z',
+      }),
+    ],
+    issueComments: options.issueComments ?? [],
+    threads: options.threads ?? [
+      thread({
+        id: 'pr-13465-resolved-outdated-feedback',
+        isResolved: true,
+        isOutdated: true,
+        comments: [
+          threadComment({
+            commitSha: pr13465ReviewedHeadSha,
+            reviewCommitSha: pr13465ReviewedHeadSha,
+            reviewSubmittedAt: '2026-08-01T19:55:16Z',
+          }),
+          threadComment({
+            authorLogin: 'gregkonush',
+            authorAssociation: 'MEMBER',
+            commitSha: pr13465ReviewedHeadSha,
+            reviewCommitSha: pr13465FinalHeadSha,
+            reviewAuthorLogin: 'gregkonush',
+            reviewSubmittedAt: '2026-08-01T20:11:03Z',
+            createdAt: '2026-08-01T20:11:03Z',
+          }),
+        ],
+      }),
+    ],
+    commitShas: options.commitShas ?? [pr13465FirstCommitSha, pr13465FinalHeadSha],
+    reactions: options.reactions ?? [reaction({ createdAt: pr13465ReactionAt })],
+    headForcePushes: options.headForcePushes ?? [
+      {
+        actorLogin: 'gregkonush',
+        beforeCommitSha: pr13465ReviewedHeadSha,
+        afterCommitSha: pr13465FinalHeadSha,
+        createdAt: pr13465ForcePushAt,
       },
     ],
     headForcePushCount: options.headForcePushCount,
@@ -6471,6 +6547,132 @@ describe('Bayn exact-head release review eligibility', () => {
     })
   })
 
+  test('accepts #13465 when an older formal review is superseded by the final force-push', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha: pr13465MainCommitSha,
+        baseRefName: 'main',
+        snapshot: pr13465ReactionSnapshot(),
+        nowMs: Date.parse('2026-08-01T20:12:00Z'),
+        pushBeforeSha: null,
+      }),
+    ).toEqual({
+      status: 'eligible',
+      prNumber: 13465,
+      headSha: pr13465FinalHeadSha,
+      reviewSubmittedAt: pr13465ReactionAt,
+      eligibleAt: '2026-08-01T20:04:35.000Z',
+    })
+  })
+
+  test.each([
+    [
+      'reviewed head survives in final history as unresolved feedback',
+      (_snapshot: BaynReleaseReviewSnapshot): BaynReleaseReviewSnapshot =>
+        pr13465ReactionSnapshot({
+          commitShas: [pr13465ReviewedHeadSha, pr13465FinalHeadSha],
+          threads: [
+            thread({
+              id: 'pr-13465-unresolved-feedback',
+              isResolved: false,
+              comments: [
+                threadComment({
+                  commitSha: pr13465ReviewedHeadSha,
+                  reviewCommitSha: pr13465ReviewedHeadSha,
+                  reviewSubmittedAt: '2026-08-01T19:55:16Z',
+                }),
+              ],
+            }),
+          ],
+        }),
+      'feedback-fix-attestation-missing',
+    ],
+    [
+      'exact-head pending review',
+      (_snapshot: BaynReleaseReviewSnapshot): BaynReleaseReviewSnapshot =>
+        pr13465ReactionSnapshot({
+          reviews: [
+            review({
+              commitSha: pr13465ReviewedHeadSha,
+              submittedAt: '2026-08-01T19:55:16Z',
+            }),
+            review({ commitSha: pr13465FinalHeadSha, submittedAt: null, state: 'PENDING' }),
+          ],
+        }),
+      'exact-head-review-pending',
+    ],
+    [
+      'exact-head changes-requested review',
+      (_snapshot: BaynReleaseReviewSnapshot): BaynReleaseReviewSnapshot =>
+        pr13465ReactionSnapshot({
+          reviews: [
+            review({
+              commitSha: pr13465ReviewedHeadSha,
+              submittedAt: '2026-08-01T19:55:16Z',
+            }),
+            review({
+              commitSha: pr13465FinalHeadSha,
+              submittedAt: '2026-08-01T20:02:00Z',
+              state: 'CHANGES_REQUESTED',
+            }),
+          ],
+        }),
+      'exact-head-review-changes-requested',
+    ],
+    [
+      'ambiguous trusted reactions',
+      (_snapshot: BaynReleaseReviewSnapshot): BaynReleaseReviewSnapshot =>
+        pr13465ReactionSnapshot({
+          reactions: [reaction({ createdAt: pr13465ReactionAt }), reaction({ createdAt: '2026-08-01T20:05:00Z' })],
+        }),
+      'exact-head-review-missing',
+    ],
+    [
+      'pre-head reaction',
+      (_snapshot: BaynReleaseReviewSnapshot): BaynReleaseReviewSnapshot =>
+        pr13465ReactionSnapshot({ reactions: [reaction({ createdAt: pr13465ForcePushAt })] }),
+      'exact-head-review-missing',
+    ],
+    [
+      'prior review submitted after the force-push',
+      (_snapshot: BaynReleaseReviewSnapshot): BaynReleaseReviewSnapshot =>
+        pr13465ReactionSnapshot({
+          reviews: [review({ commitSha: pr13465ReviewedHeadSha, submittedAt: '2026-08-01T20:02:00Z' })],
+        }),
+      'exact-head-review-missing',
+    ],
+    [
+      'prior review without a force-push',
+      (_snapshot: BaynReleaseReviewSnapshot): BaynReleaseReviewSnapshot =>
+        pr13465ReactionSnapshot({ headForcePushes: [], headForcePushCount: 0 }),
+      'exact-head-review-missing',
+    ],
+    [
+      'malformed force-push chain',
+      (_snapshot: BaynReleaseReviewSnapshot): BaynReleaseReviewSnapshot =>
+        pr13465ReactionSnapshot({
+          headForcePushes: [
+            {
+              actorLogin: 'gregkonush',
+              beforeCommitSha: pr13465ReviewedHeadSha,
+              afterCommitSha: '8'.repeat(40),
+              createdAt: pr13465ForcePushAt,
+            },
+          ],
+        }),
+      'exact-head-review-missing',
+    ],
+  ] as const)('rejects #13465 reaction evidence with %s', (_name, buildSnapshot, code) => {
+    const result = evaluateBaynReleaseReview({
+      mainCommitSha: pr13465MainCommitSha,
+      baseRefName: 'main',
+      snapshot: buildSnapshot(pr13465ReactionSnapshot()),
+      nowMs: Date.parse('2026-08-01T20:12:00Z'),
+      pushBeforeSha: null,
+    })
+    expect(result).toMatchObject({ status: 'hold', code })
+  })
+
   test('accepts #13464 through the exact final-head reaction after its force-push', () => {
     expect(
       evaluateBaynReleaseReview({
@@ -6626,11 +6828,11 @@ describe('Bayn exact-head release review eligibility', () => {
       },
     ],
     [
-      'reaction cannot replace an older Codex review',
+      'reaction cannot replace an unrelated older Codex review',
       (pull: PullRequestReviewState): void => {
         ;(pull as unknown as { reviews: PullRequestReview[] }).reviews = [
           review({
-            commitSha: pr13464PreviousHeadSha,
+            commitSha: '6'.repeat(40),
             submittedAt: '2026-08-01T19:40:00Z',
           }),
         ]

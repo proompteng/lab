@@ -1454,6 +1454,38 @@ const selectLatestForcePush = (
   return latest
 }
 
+const hasOnlySupersededCodexReviews = (
+  pullRequest: PullRequestReviewState,
+  latestForcePush: { readonly forcePush: PullRequestForcePush; readonly createdAtMs: number } | null,
+): boolean => {
+  const codexReviews = pullRequest.reviews.filter((review) => review.authorLogin === baynCodexReviewer)
+  const exactHeadReviews = codexReviews.filter((review) => review.commitSha === pullRequest.headSha)
+  if (
+    exactHeadReviews.some(
+      (review) => review.submittedAt === null || review.state === 'PENDING' || review.state === 'CHANGES_REQUESTED',
+    )
+  ) {
+    return false
+  }
+  const priorReviews = codexReviews.filter((review) => review.commitSha !== pullRequest.headSha)
+  if (priorReviews.length === 0) return true
+  if (latestForcePush === null || pullRequest.commitShas.length < 2) return false
+  const forcePushHeads = new Set(
+    pullRequest.headForcePushes.flatMap(({ beforeCommitSha, afterCommitSha }) => [beforeCommitSha, afterCommitSha]),
+  )
+
+  return priorReviews.every((review) => {
+    const submittedAtMs = review.submittedAt === null ? Number.NaN : Date.parse(review.submittedAt)
+    return (
+      review.commitSha !== null &&
+      !pullRequest.commitShas.includes(review.commitSha) &&
+      forcePushHeads.has(review.commitSha) &&
+      Number.isFinite(submittedAtMs) &&
+      submittedAtMs < latestForcePush.createdAtMs
+    )
+  })
+}
+
 const selectExactHeadCodexAttestation = (
   pullRequest: PullRequestReviewState,
   createdAtMs: number,
@@ -1481,11 +1513,11 @@ const selectExactHeadCodexAttestation = (
     }
   }
 
-  if (pullRequest.reviews.some((review) => review.authorLogin === baynCodexReviewer)) return undefined
   if (!hasUniqueFinalCommitHistory(pullRequest)) return undefined
   const latestForcePush = selectLatestForcePush(pullRequest, createdAtMs, mergedAtMs)
   if (latestForcePush === undefined) return undefined
   if (latestForcePush === null && pullRequest.commitShas.length !== 1) return undefined
+  if (!hasOnlySupersededCodexReviews(pullRequest, latestForcePush)) return undefined
 
   const reactions = pullRequest.reactions.filter(
     (candidate) => candidate.userLogin === baynCodexBotLogin && candidate.content === '+1',
