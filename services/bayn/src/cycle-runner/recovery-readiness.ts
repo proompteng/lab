@@ -1,7 +1,7 @@
 import { Result } from 'effect'
 
 import { CycleState, CycleTerminalReason, cycleDraftMatches, cycleDraftOf, type AutonomousCycle } from '../cycle'
-import type { CyclePublicationReadiness } from '../cycle-readiness'
+import type { CyclePublicationReadiness } from './recovery-readiness-model'
 import {
   isAlreadyBoundReadiness,
   selectRecoveryFailure,
