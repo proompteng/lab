@@ -1,3 +1,5 @@
+import { Result } from 'effect'
+
 import {
   makeQualificationStatisticsPolicy,
   qualificationPolicyMaximumCandidateOrdinal,
@@ -63,13 +65,15 @@ export const candidateDevelopmentDoubledCostContract = {
   invariants: ['signal-decisions', 'ordered-order-quantity-path'],
 } as const
 
-export const candidateDevelopmentStatisticsPolicy = makeQualificationStatisticsPolicy({
-  maximumCandidateOrdinal: candidateDevelopmentAttemptHorizon.maximumCandidateOrdinal,
-  walkForward: {
-    testSessions: candidateDevelopmentWalkForwardProtocol.testSessions,
-    minimumFolds: candidateDevelopmentWalkForwardProtocol.requiredFolds,
-  },
-}) satisfies QualificationStatisticsPolicy
+export const candidateDevelopmentStatisticsPolicy = Result.getOrThrow(
+  makeQualificationStatisticsPolicy({
+    maximumCandidateOrdinal: candidateDevelopmentAttemptHorizon.maximumCandidateOrdinal,
+    walkForward: {
+      testSessions: candidateDevelopmentWalkForwardProtocol.testSessions,
+      minimumFolds: candidateDevelopmentWalkForwardProtocol.requiredFolds,
+    },
+  }),
+) satisfies QualificationStatisticsPolicy
 
 export const candidateDevelopmentComparisonSemantics = {
   schemaVersion: 'bayn.candidate-development-comparison-semantics.v2',

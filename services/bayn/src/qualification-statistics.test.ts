@@ -96,9 +96,11 @@ const policy = (overrides: Partial<QualificationStatisticsPolicy> = {}): Qualifi
 
 describe('qualification statistics policy and power', () => {
   test('derives one exact policy for the declared ordinal horizon and preserves historical v1 decoding', () => {
-    const policyFromHorizon = makeQualificationStatisticsPolicy({
-      maximumCandidateOrdinal: qualificationPolicyMaximumCandidateOrdinal,
-    })
+    const policyFromHorizon = successOf(
+      makeQualificationStatisticsPolicy({
+        maximumCandidateOrdinal: qualificationPolicyMaximumCandidateOrdinal,
+      }),
+    )
 
     expect(policyFromHorizon).toEqual(defaultQualificationStatisticsPolicy)
     expect(defaultQualificationStatisticsPolicy).toMatchObject({
@@ -132,6 +134,28 @@ describe('qualification statistics policy and power', () => {
     }
     const decode = Schema.decodeUnknownSync(QualificationStatisticsPolicySchema, { onExcessProperty: 'error' })
     expect(decode(historicalPolicy)).toEqual(historicalPolicy)
+  })
+
+  test('rejects policy options that cannot produce schema-valid policies', () => {
+    expect(Result.isFailure(makeQualificationStatisticsPolicy({ maximumCandidateOrdinal: 0 }))).toBe(true)
+    expect(Result.isFailure(makeQualificationStatisticsPolicy({ maximumCandidateOrdinal: 1.5 }))).toBe(true)
+    expect(Result.isFailure(makeQualificationStatisticsPolicy({ maximumCandidateOrdinal: 251 }))).toBe(true)
+    expect(
+      Result.isFailure(
+        makeQualificationStatisticsPolicy({
+          maximumCandidateOrdinal: qualificationPolicyMaximumCandidateOrdinal,
+          walkForward: { testSessions: 0 },
+        }),
+      ),
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        makeQualificationStatisticsPolicy({
+          maximumCandidateOrdinal: qualificationPolicyMaximumCandidateOrdinal,
+          walkForward: { minimumFolds: 1.5 },
+        }),
+      ),
+    ).toBe(true)
   })
 
   test('strictly decodes the precommit and rejects invalid or unknown fields', () => {

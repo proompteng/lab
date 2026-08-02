@@ -15,6 +15,9 @@ const PositiveUnitInterval = Schema.Finite.check(Schema.isGreaterThan(0), Schema
 const SimpleReturn = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(-1))
 const Scalar = Schema.Union([Schema.Finite, Schema.Boolean, Schema.String])
 
+export const qualificationStatisticsMinimumBootstrapSamples = 1_000
+export const qualificationStatisticsMaximumBootstrapSamples = 100_000
+
 const QualificationStatisticsPolicyFields = {
   annualizationSessions: Schema.Literal(252),
   confidence: Schema.Struct({
@@ -24,7 +27,12 @@ const QualificationStatisticsPolicyFields = {
   }),
   bootstrap: Schema.Struct({
     method: Schema.Literal('paired-complete-rebalance-blocks'),
-    samples: Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 100_000 })),
+    samples: Schema.Int.check(
+      Schema.isBetween({
+        minimum: qualificationStatisticsMinimumBootstrapSamples,
+        maximum: qualificationStatisticsMaximumBootstrapSamples,
+      }),
+    ),
     seedNamespace: NonEmptyString,
     lowerQuantile: Schema.Literal('nearest-rank'),
   }),

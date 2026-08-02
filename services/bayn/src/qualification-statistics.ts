@@ -29,8 +29,10 @@ export {
   qualificationPolicyMaximumCandidateOrdinal,
   qualificationStatisticsPolicySchemaVersion,
   qualificationTailCapacityForOrdinal,
+  type QualificationStatisticsPolicyConstructionFailure,
   type QualificationOrdinalTailCapacity,
   type QualificationStatisticsPolicyOptions,
+  type QualificationStatisticsPolicyResult,
 } from './qualification-statistics/policy'
 export {
   renderQualificationStatisticsFailure,
