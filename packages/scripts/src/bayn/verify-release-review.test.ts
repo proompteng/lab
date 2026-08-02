@@ -6056,6 +6056,84 @@ describe('Bayn delayed-attestation publication retry', () => {
     })
   })
 
+  test('uses the latest per-thread reply when feedback attestations straddle the failed review gate', () => {
+    const firstReplyAt = '2026-07-30T07:01:00Z'
+    const finalReplyAt = '2026-07-30T07:03:00Z'
+    const feedbackReview = snapshot({
+      commitShas: [olderHeadSha, finalHeadSha],
+      reviews: [review({ commitSha: olderHeadSha, submittedAt: '2026-07-30T07:00:00Z' })],
+      threads: [
+        thread({
+          id: 'first-feedback-thread',
+          isResolved: true,
+          comments: [
+            threadComment({ reviewSubmittedAt: '2026-07-30T07:00:00Z' }),
+            threadComment({
+              authorLogin: 'gregkonush',
+              authorAssociation: 'MEMBER',
+              body: 'Fixed the first reviewed path.',
+              createdAt: firstReplyAt,
+              commitSha: finalHeadSha,
+              reviewCommitSha: finalHeadSha,
+              reviewAuthorLogin: 'gregkonush',
+              reviewSubmittedAt: firstReplyAt,
+            }),
+          ],
+        }),
+        thread({
+          id: 'second-feedback-thread',
+          path: 'services/bayn/src/second.ts',
+          isResolved: true,
+          comments: [
+            threadComment({ reviewSubmittedAt: '2026-07-30T07:00:00Z' }),
+            threadComment({
+              authorLogin: 'gregkonush',
+              authorAssociation: 'MEMBER',
+              body: 'Fixed the second reviewed path.',
+              createdAt: finalReplyAt,
+              commitSha: finalHeadSha,
+              reviewCommitSha: finalHeadSha,
+              reviewAuthorLogin: 'gregkonush',
+              reviewSubmittedAt: finalReplyAt,
+            }),
+          ],
+        }),
+      ],
+    })
+
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: feedbackReview,
+        nowMs: Date.parse('2026-07-30T07:02:30Z'),
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({
+      status: 'eligible',
+      eligibleAt: '2026-07-30T07:03:00.000Z',
+    })
+
+    expect(
+      evaluateBaynReleaseRetry({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: retrySnapshot({
+          reviewSnapshot: feedbackReview,
+          failedRun: failedBuildRun({ updatedAt: '2026-07-30T07:02:30Z' }),
+          failedReviewJobCompletedAt: '2026-07-30T07:02:30Z',
+        }),
+        trigger: { type: 'schedule' },
+        nowMs: retryNowMs,
+      }),
+    ).toMatchObject({
+      status: 'dispatch',
+      sourceCommitSha: mainCommitSha,
+      prNumber: 13390,
+      headSha: finalHeadSha,
+    })
+  })
+
   test('binds a retry to the earlier range commit whose attestation arrived after the failed current-main push', () => {
     const earlierCommitSha = heldCommitSha
     const earlierHeadSha = heldHeadSha

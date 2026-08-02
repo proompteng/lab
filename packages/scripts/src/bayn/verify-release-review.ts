@@ -1529,7 +1529,7 @@ const selectFeedbackFixEvidence = (
   const reviewedThreads = pullRequest.threads.filter((thread) => thread.comments.some(belongsToReview))
   if (reviewedThreads.length === 0) return undefined
 
-  const trustedAttestationTimes: number[] = []
+  const threadAttestationTimes: number[] = []
   const reviewedPaths = new Set<string>()
   for (const thread of reviewedThreads) {
     const reviewedComments = thread.comments.filter(belongsToReview)
@@ -1562,6 +1562,7 @@ const selectFeedbackFixEvidence = (
       const attestationTime = Date.parse(comment.reviewSubmittedAt)
       return Number.isFinite(attestationTime) && attestationTime >= reviewSubmittedAtMs ? [attestationTime] : []
     })
+    const earliestTrustedReplyAtMs = trustedReplies.length === 0 ? undefined : Math.min(...trustedReplies)
     if (
       !thread.isResolved ||
       (!isDirectFinalChild && trustedReplies.length === 0) ||
@@ -1569,10 +1570,10 @@ const selectFeedbackFixEvidence = (
     ) {
       return undefined
     }
-    trustedAttestationTimes.push(...trustedReplies)
+    if (earliestTrustedReplyAtMs !== undefined) threadAttestationTimes.push(earliestTrustedReplyAtMs)
   }
 
-  if (trustedAttestationTimes.length === 0) {
+  if (threadAttestationTimes.length === 0) {
     const finalHeadCommit = pullRequest.finalHeadCommit
     const changedFilePaths = finalHeadCommit?.fileChanges.flatMap((change) =>
       change.previousPath === null ? [change.path] : [change.path, change.previousPath],
@@ -1610,9 +1611,9 @@ const selectFeedbackFixEvidence = (
 
   return {
     eligibleAtMs:
-      trustedAttestationTimes.length === 0
+      threadAttestationTimes.length === 0
         ? reviewSubmittedAtMs + minimumExactReviewAgeMs
-        : Math.max(reviewSubmittedAtMs + minimumExactReviewAgeMs, Math.min(...trustedAttestationTimes)),
+        : Math.max(reviewSubmittedAtMs + minimumExactReviewAgeMs, Math.max(...threadAttestationTimes)),
   }
 }
 
