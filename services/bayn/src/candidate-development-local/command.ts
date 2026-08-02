@@ -1,5 +1,6 @@
 import { constants } from 'node:fs'
-import { link, mkdir, open, readFile, realpath, rename, unlink } from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
+import { link, mkdir, open, readFile, readdir, realpath, rename, unlink } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import process from 'node:process'
@@ -310,33 +311,22 @@ const prepareCandidateDevelopmentLocalAttempt = (
             signal,
           ),
         )
-        const worktreeList = await candidateDevelopmentSourceGit.text(
-          repositoryRoot,
-          ['worktree', 'list', '--porcelain'],
-          signal,
-        )
-        const worktreeRoots = worktreeList
-          .split('\n\n')
-          .map((record) =>
-            record
-              .split('\n')
-              .find((line) => line.startsWith('worktree '))
-              ?.slice('worktree '.length),
-          )
-          .filter((worktreeRoot): worktreeRoot is string => worktreeRoot !== undefined && worktreeRoot.length > 0)
-        if (worktreeRoots.length === 0) throw new Error('candidate worktree list is empty')
+        let worktreeAdministrativeEntries: Dirent[]
+        try {
+          worktreeAdministrativeEntries = await readdir(join(commonDirectory, 'worktrees'), { withFileTypes: true })
+        } catch (cause) {
+          if (!isFileSystemError(cause, 'ENOENT')) throw cause
+          worktreeAdministrativeEntries = []
+        }
         const legacyReceiptPaths = await Promise.all(
-          worktreeRoots.map(async (worktreeRoot) => {
-            const canonicalWorktreeRoot = await realpath(resolve(repositoryRoot, worktreeRoot))
-            return resolve(
-              canonicalWorktreeRoot,
-              await candidateDevelopmentSourceGit.text(
-                canonicalWorktreeRoot,
-                ['rev-parse', '--git-path', legacyCandidateDevelopmentLocalReceiptName],
-                signal,
-              ),
-            )
-          }),
+          worktreeAdministrativeEntries
+            .filter((entry) => entry.isDirectory())
+            .map(async (entry) => {
+              const administrativeDirectory = join(commonDirectory, 'worktrees', entry.name)
+              const gitDirectoryReference = (await readFile(join(administrativeDirectory, 'gitdir'), 'utf8')).trim()
+              if (gitDirectoryReference.length === 0) throw new Error('candidate worktree gitdir is empty')
+              return join(administrativeDirectory, legacyCandidateDevelopmentLocalReceiptName)
+            }),
         )
         return {
           attempt: join(receiptDirectory, `ordinal-${source.candidateOrdinal}.json`),
