@@ -13,7 +13,7 @@ import {
   prepareRiskBalancedTrendQualification,
   type CurrentDecisionCycleBinding,
 } from './risk-balanced-trend'
-import { makeStrategy } from './strategy'
+import { makeRiskBalancedTrendDefinition, makeRiskBalancedTrendStrategy, makeStrategy } from './strategy'
 import { makeSnapshot, makeTestProvenance, fixtureProtocol } from './test-fixtures'
 import type { CausalProtocol, IsoDate, Protocol } from './types'
 
@@ -138,6 +138,32 @@ describe('risk-balanced trend candidate', () => {
     expect(efa.compositeScore).toBeCloseTo(-Math.sqrt(8), 12)
     expect(efa.positiveScore).toBe(0)
     expect(decision.targetWeights).toEqual({ DBC: 0.666666666667, EEM: 0.333333333333, EFA: 0 })
+  })
+
+  test('uses the generic verified-context definition without changing the target portfolio or hash', () => {
+    const protocol = shortProtocol({
+      horizons: [1],
+      volatilityWindow: 2,
+      maximumSymbolWeight: 1,
+      maximumPortfolioVolatility: 1,
+    })
+    const sessionDates = ['2026-07-15', '2026-07-16', '2026-07-17'] as const satisfies readonly IsoDate[]
+    const closes = {
+      DBC: [100, 101, 103.02],
+      EEM: [100, 102, 103.02],
+      EFA: [100, 99, 97.02],
+    } as const
+    const direct = assertSuccess(makeRiskBalancedTrendDecision(sessionDates[2], sessionDates, closes, protocol))
+    const viaDefinition = assertSuccess(
+      makeRiskBalancedTrendDefinition(protocol).decide({
+        market: { signalDate: sessionDates[2], sessionDates, closes },
+        portfolio: { positions: {} },
+      }),
+    )
+
+    expect(viaDefinition).toEqual(direct)
+    expect(viaDefinition.targetWeights).toEqual(direct.targetWeights)
+    expect(canonicalHashV1(viaDefinition)).toBe(canonicalHashV1(direct))
   })
 
   test('requires three positive horizons and allocates by conviction per unit volatility in protocol v4', () => {
@@ -338,7 +364,7 @@ describe('risk-balanced trend candidate', () => {
 
   test('compiles one current decision with exact quantized terminal-session prices', () => {
     const snapshot = makeSnapshot(1_129)
-    const strategy = makeStrategy(fixtureProtocol, makeTestProvenance())
+    const strategy = makeRiskBalancedTrendStrategy(fixtureProtocol, makeTestProvenance())
     const bars = snapshot.bars.map((bar) =>
       bar.sessionDate === snapshot.manifest.lastSession && bar.symbol === fixtureProtocol.universe[0]
         ? { ...bar, close: 100.123456 }
@@ -573,9 +599,13 @@ describe('risk-balanced trend candidate', () => {
     const { decisionId: _, executionDate: __, ...retainedPlan } = retained
     expect(retainedPlan).toEqual(expectedDecision)
     const priorTrialRunIds = Array.from({ length: 8 }, (_, index) => index.toString(16).repeat(64))
-    const strategy = makeStrategy(fixtureProtocol, provenance)
+    const strategy = makeRiskBalancedTrendStrategy(fixtureProtocol, provenance)
+    const adapted = assertSuccess(strategy.evaluate(snapshot.bars, snapshot.manifest))
     const lock = assertSuccess(strategy.prepareLock(snapshot.manifest, sessionDates, priorTrialRunIds))
     const analysis = assertSuccess(strategy.analyze(first, priorTrialRunIds))
+    expect(adapted).toEqual(first)
+    expect(canonicalHashV1(adapted)).toBe(canonicalHashV1(first))
+    expect(strategy.provenance).toEqual(provenance)
     expect(lock.priorTrialRunIds).toEqual(priorTrialRunIds)
     expect(lock).toMatchObject({
       schemaVersion: 'bayn.qualification-lock.v3',
