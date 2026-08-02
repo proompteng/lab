@@ -74,7 +74,7 @@ describe('qualification lock', () => {
       schemaVersion: 'bayn.qualification-statistics-policy.v1',
       content: {
         schemaVersion: 'bayn.qualification-statistics-policy.v1',
-        bootstrap: { method: 'paired-complete-rebalance-blocks', samples: 5_000 },
+        bootstrap: { method: 'paired-complete-rebalance-blocks', samples: 10_000 },
       },
     })
   })

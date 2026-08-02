@@ -12,7 +12,10 @@ import {
   analyzeSelectedBenchmarkComparison,
   calculateQualificationPower,
   defaultQualificationStatisticsPolicy,
+  makeQualificationStatisticsPolicy,
   prepareQualificationSeries,
+  qualificationPolicyMaximumCandidateOrdinal,
+  qualificationTailCapacityForOrdinal,
   qualificationSelectedBenchmarkRule,
   selectQualificationBenchmarkFromCashAdjustedSharpes,
   type QualificationSeries,
@@ -92,6 +95,45 @@ const policy = (overrides: Partial<QualificationStatisticsPolicy> = {}): Qualifi
 })
 
 describe('qualification statistics policy and power', () => {
+  test('derives one exact policy for the declared ordinal horizon and preserves historical v1 decoding', () => {
+    const policyFromHorizon = makeQualificationStatisticsPolicy({
+      maximumCandidateOrdinal: qualificationPolicyMaximumCandidateOrdinal,
+    })
+
+    expect(policyFromHorizon).toEqual(defaultQualificationStatisticsPolicy)
+    expect(defaultQualificationStatisticsPolicy).toMatchObject({
+      schemaVersion: 'bayn.qualification-statistics-policy.v1',
+      confidence: {
+        familyOneSidedAlpha: 0.05,
+        multiplicityAdjustment: 'bonferroni',
+        minimumTailSamples: 20,
+      },
+      bootstrap: { samples: 10_000 },
+    })
+    for (
+      let candidateOrdinal = 1;
+      candidateOrdinal <= qualificationPolicyMaximumCandidateOrdinal;
+      candidateOrdinal += 1
+    ) {
+      const capacity = qualificationTailCapacityForOrdinal(defaultQualificationStatisticsPolicy, candidateOrdinal)
+      expect(capacity.candidateOrdinal).toBe(candidateOrdinal)
+      expect(capacity.tailSampleCount).toBeGreaterThanOrEqual(20)
+      expect(capacity.minimumTailSamples).toBe(20)
+    }
+    expect(qualificationTailCapacityForOrdinal(defaultQualificationStatisticsPolicy, 21)).toMatchObject({
+      candidateOrdinal: 21,
+      adjustedOneSidedAlpha: 0.05 / 21,
+      tailSampleCount: 23,
+    })
+
+    const historicalPolicy: QualificationStatisticsPolicy = {
+      ...defaultQualificationStatisticsPolicy,
+      bootstrap: { ...defaultQualificationStatisticsPolicy.bootstrap, samples: 5_000 },
+    }
+    const decode = Schema.decodeUnknownSync(QualificationStatisticsPolicySchema, { onExcessProperty: 'error' })
+    expect(decode(historicalPolicy)).toEqual(historicalPolicy)
+  })
+
   test('strictly decodes the precommit and rejects invalid or unknown fields', () => {
     const decode = Schema.decodeUnknownSync(QualificationStatisticsPolicySchema, {
       onExcessProperty: 'error',

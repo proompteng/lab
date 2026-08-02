@@ -15,8 +15,7 @@ const PositiveUnitInterval = Schema.Finite.check(Schema.isGreaterThan(0), Schema
 const SimpleReturn = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(-1))
 const Scalar = Schema.Union([Schema.Finite, Schema.Boolean, Schema.String])
 
-export const QualificationStatisticsPolicySchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.qualification-statistics-policy.v1'),
+const QualificationStatisticsPolicyFields = {
   annualizationSessions: Schema.Literal(252),
   confidence: Schema.Struct({
     familyOneSidedAlpha: Schema.Literal(0.05),
@@ -50,43 +49,13 @@ export const QualificationStatisticsPolicySchema = Schema.Struct({
   cashReturn: Schema.Struct({
     method: Schema.Literal('actual-365-simple'),
   }),
+} as const
+
+export const QualificationStatisticsPolicySchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.qualification-statistics-policy.v1'),
+  ...QualificationStatisticsPolicyFields,
 })
 export type QualificationStatisticsPolicy = typeof QualificationStatisticsPolicySchema.Type
-
-export const defaultQualificationStatisticsPolicy = {
-  schemaVersion: 'bayn.qualification-statistics-policy.v1',
-  annualizationSessions: 252,
-  confidence: {
-    familyOneSidedAlpha: 0.05,
-    multiplicityAdjustment: 'bonferroni',
-    minimumTailSamples: 20,
-  },
-  bootstrap: {
-    method: 'paired-complete-rebalance-blocks',
-    samples: 5_000,
-    seedNamespace: 'bayn-risk-balanced-trend-qualification-v1',
-    lowerQuantile: 'nearest-rank',
-  },
-  power: {
-    method: 'normal-approximation-independent-rebalance-blocks',
-    oneSidedAlpha: 0.05,
-    targetPower: 0.8,
-    minimumDetectableAnnualizedExcessReturn: 0.03,
-    assumedAnnualizedTrackingVolatility: 0.1,
-    assumedSessionsPerRebalanceBlock: 21,
-    absoluteMinimumSessions: 504,
-    absoluteMinimumRebalanceBlocks: 24,
-  },
-  walkForward: {
-    method: 'expanding-origin',
-    minimumTrainingSessions: 504,
-    testSessions: 252,
-    minimumFolds: 5,
-    minimumPositiveFoldFraction: 0.6,
-    maximumFoldDrawdown: 0.35,
-  },
-  cashReturn: { method: 'actual-365-simple' },
-} as const satisfies QualificationStatisticsPolicy
 
 export const QualificationObservationSchema = Schema.Struct({
   sessionDate: IsoDateSchema,
