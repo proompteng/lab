@@ -60,9 +60,9 @@ const fileExists = async (path: string): Promise<boolean> => {
   }
 }
 
-const legacyReceiptFor = (source: typeof boundSource.success) => {
+const legacyReceiptFor = (source: typeof boundSource.success, overrides: { readonly sourceRevision?: string } = {}) => {
   const legacySource = {
-    sourceRevision: source.sourceRevision,
+    sourceRevision: overrides.sourceRevision ?? source.sourceRevision,
     modulePath: source.modulePath,
     moduleBlobOid: source.moduleBlobOid,
     moduleSha256: source.moduleSha256,
@@ -92,6 +92,14 @@ const legacyReceiptFor = (source: typeof boundSource.success) => {
     source: { ...legacySource, bindingHash },
   }
 }
+
+const legacyReceiptContext = (candidateOrdinal: number, manifestBlobOid: string) => ({
+  repositoryRoot: '/repo',
+  sourceGit: {
+    text: async () => manifestBlobOid,
+    bytes: async () => Buffer.from(JSON.stringify({ candidateOrdinal }), 'utf8'),
+  },
+})
 
 const dependencies = (
   execute: CandidateDevelopmentLocalAttemptPort['execute'] = () => Effect.succeed(reportFor('PASS')),
@@ -347,9 +355,18 @@ describe('candidate development local program', () => {
     const reserved = makeCandidateDevelopmentLocalReceipt(boundSource.success, 'RESERVED')
     try {
       await mkdir(join(directory, 'bayn', 'candidate-development-attempts'), { recursive: true })
-      await writeFile(legacyReceiptPath, `${JSON.stringify(legacyReceiptFor(boundSource.success))}\n`, 'utf8')
+      await writeFile(
+        legacyReceiptPath,
+        `${JSON.stringify(legacyReceiptFor(boundSource.success, { sourceRevision: '1'.repeat(40) }))}\n`,
+        'utf8',
+      )
       const exit = await Effect.runPromiseExit(
-        reserveCandidateDevelopmentLocalReceipt(receiptPath, reserved, legacyReceiptPath),
+        reserveCandidateDevelopmentLocalReceipt(
+          receiptPath,
+          reserved,
+          legacyReceiptPath,
+          legacyReceiptContext(20, '5'.repeat(40)),
+        ),
       )
 
       expect(Exit.isFailure(exit)).toBe(true)
@@ -363,13 +380,29 @@ describe('candidate development local program', () => {
     const directory = await mkdtemp(join(tmpdir(), 'bayn-candidate-development-local-'))
     const receiptPath = join(directory, 'bayn', 'candidate-development-attempts', 'ordinal-20.json')
     const legacyReceiptPath = join(directory, 'bayn-candidate-development-local-receipt.json')
-    const differentSource = { ...boundSource.success, modulePath: 'services/bayn/src/strategy/other-candidate.ts' }
+    const differentSource = {
+      ...boundSource.success,
+      sourceRevision: '3'.repeat(40),
+      modulePath: 'services/bayn/src/strategy/other-candidate.ts',
+      moduleBlobOid: '7'.repeat(40),
+      moduleSha256: '8'.repeat(64),
+      sourceManifestPath: 'services/bayn/candidates/ordinal-21.json',
+      sourceManifestBlobOid: '9'.repeat(40),
+      sourceManifestSha256: 'a'.repeat(64),
+    }
     const reserved = makeCandidateDevelopmentLocalReceipt(boundSource.success, 'RESERVED')
     try {
       await mkdir(join(directory, 'bayn', 'candidate-development-attempts'), { recursive: true })
       await writeFile(legacyReceiptPath, `${JSON.stringify(legacyReceiptFor(differentSource))}\n`, 'utf8')
 
-      await Effect.runPromise(reserveCandidateDevelopmentLocalReceipt(receiptPath, reserved, legacyReceiptPath))
+      await Effect.runPromise(
+        reserveCandidateDevelopmentLocalReceipt(
+          receiptPath,
+          reserved,
+          legacyReceiptPath,
+          legacyReceiptContext(21, differentSource.sourceManifestBlobOid),
+        ),
+      )
 
       expect(JSON.parse(await readFile(receiptPath, 'utf8'))).toMatchObject({ status: 'RESERVED' })
     } finally {

@@ -15,6 +15,7 @@ import type {
   CandidateDevelopmentLoadedExecutableProgram,
   runCandidateDevelopmentCommand as runCandidateDevelopmentCommandType,
 } from '../candidate-development-command/orchestration'
+import type { CandidateDevelopmentSourceGit } from '../candidate-development-command/git-contracts'
 import {
   renderCandidateDevelopmentCommandDefect,
   renderCandidateDevelopmentCommandFailure,
@@ -44,11 +45,17 @@ export interface PreparedCandidateDevelopmentLocalAttempt {
   readonly source: CandidateDevelopmentLocalSourceBinding
 }
 
+export interface CandidateDevelopmentLocalReceiptReservationContext {
+  readonly repositoryRoot: string
+  readonly sourceGit?: CandidateDevelopmentSourceGit
+}
+
 export interface CandidateDevelopmentLocalAttemptPort {
   reserve: (
     path: string,
     receipt: CandidateDevelopmentLocalAttemptReceipt,
     legacyReceiptPath?: string,
+    context?: CandidateDevelopmentLocalReceiptReservationContext,
   ) => Effect.Effect<void, CandidateDevelopmentLocalError>
   execute: (
     prepared: PreparedCandidateDevelopmentLocalAttempt,
@@ -325,6 +332,7 @@ export const makeCandidateDevelopmentLocalAttempt =
         prepared.receiptPath,
         makeCandidateDevelopmentLocalReceipt(prepared.source, 'RESERVED'),
         prepared.legacyReceiptPath,
+        { repositoryRoot: prepared.repositoryRoot },
       )
       return yield* port.execute(prepared).pipe(
         Effect.onExit((exit) =>
@@ -393,10 +401,6 @@ const legacyReceiptSourceFields = [
   'bindingHash',
 ] as const
 
-const legacyReceiptSourceIdentityFields = legacyReceiptSourceFields.filter(
-  (field): field is Exclude<(typeof legacyReceiptSourceFields)[number], 'bindingHash'> => field !== 'bindingHash',
-)
-
 type LegacyReceiptInspection = 'ABSENT' | 'MATCHING_SOURCE' | 'DIFFERENT_SOURCE'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -404,7 +408,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const inspectLegacyCandidateDevelopmentLocalReceipt = async (
   path: string,
-  source: CandidateDevelopmentLocalSourceBinding,
+  candidateOrdinal: number,
+  context: CandidateDevelopmentLocalReceiptReservationContext | undefined,
 ): Promise<LegacyReceiptInspection> => {
   let serialized: string
   try {
@@ -487,19 +492,47 @@ const inspectLegacyCandidateDevelopmentLocalReceipt = async (
   if (legacySourceValue.bindingHash !== expectedBindingHash) {
     throw localError('RECEIPT_ALREADY_CONSUMED', 'legacy local receipt is invalid')
   }
-  return legacyReceiptSourceIdentityFields.every((field) => legacySourceValue[field] === source[field])
-    ? 'MATCHING_SOURCE'
-    : 'DIFFERENT_SOURCE'
+  if (context === undefined) {
+    throw localError('RECEIPT_ALREADY_CONSUMED', 'legacy local receipt cannot be verified')
+  }
+  try {
+    const sourceGit = context.sourceGit ?? candidateDevelopmentSourceGit
+    const manifestSpec = `${legacySource.sourceRevision}:${legacySource.sourceManifestPath}`
+    const manifestBlobOid = await sourceGit.text(context.repositoryRoot, ['rev-parse', manifestSpec])
+    if (manifestBlobOid !== legacySource.sourceManifestBlobOid) {
+      throw new Error('legacy source manifest blob changed')
+    }
+    const manifestSource = await sourceGit.bytes(context.repositoryRoot, ['cat-file', 'blob', manifestSpec])
+    const manifest = JSON.parse(manifestSource.toString('utf8')) as unknown
+    if (!isRecord(manifest)) throw new Error('legacy source manifest is invalid')
+    const manifestCandidateOrdinal = manifest.candidateOrdinal
+    if (
+      typeof manifestCandidateOrdinal !== 'number' ||
+      !Number.isSafeInteger(manifestCandidateOrdinal) ||
+      manifestCandidateOrdinal < 1
+    ) {
+      throw new Error('legacy source manifest ordinal is invalid')
+    }
+    return manifestCandidateOrdinal === candidateOrdinal ? 'MATCHING_SOURCE' : 'DIFFERENT_SOURCE'
+  } catch (cause) {
+    if (cause instanceof CandidateDevelopmentLocalError) throw cause
+    throw localError('RECEIPT_ALREADY_CONSUMED', 'legacy local receipt could not be verified', cause)
+  }
 }
 
 export const reserveCandidateDevelopmentLocalReceipt = (
   path: string,
   receipt: CandidateDevelopmentLocalAttemptReceipt,
   legacyReceiptPath = defaultLegacyReceiptPath(path),
+  context?: CandidateDevelopmentLocalReceiptReservationContext,
 ): Effect.Effect<void, CandidateDevelopmentLocalError> =>
   Effect.tryPromise({
     try: async () => {
-      const legacyReceipt = await inspectLegacyCandidateDevelopmentLocalReceipt(legacyReceiptPath, receipt.source)
+      const legacyReceipt = await inspectLegacyCandidateDevelopmentLocalReceipt(
+        legacyReceiptPath,
+        receipt.candidateOrdinal,
+        context,
+      )
       if (legacyReceipt === 'MATCHING_SOURCE') {
         throw localError(
           'RECEIPT_ALREADY_CONSUMED',
