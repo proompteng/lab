@@ -1,12 +1,17 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Effect, Exit, Option, Redacted, Ref, Result } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Redacted, Ref, Result } from 'effect'
 import { AuthorizationError, SqlError } from 'effect/unstable/sql/SqlError'
+import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 
+import { AlpacaBrokerResourcesLive } from './broker/alpaca/composition'
+import { BrokerProvider, BrokerSession, decodeBrokerConnection, type BrokerConnection } from './broker/alpaca'
+import { AlpacaHttpClient } from './broker/alpaca/http'
+import { BrokerEnvironment } from './broker/identity'
 import type { RuntimeConfig } from './config'
 import { BrokerAccess, noCapitalAuthority } from './execution/authority'
 import { EvidenceStore, type EvidenceStoreService } from './db/evidence-store'
-import { decodeFreshBrokerPrice, latestQuoteUrl } from './entrypoint'
+import { decodeFreshBrokerPrice, latestQuoteUrl } from './broker/alpaca/http'
 import { operationalError } from './errors'
 import { Journal, JournalLive, type JournalService, type TigerBeetleClient } from './ledger'
 import { MarketData, marketDataOperationError, type MarketDataService } from './market-data'
@@ -253,6 +258,146 @@ describe('TigerBeetle replica address decisions', () => {
 })
 
 describe('Bayn resource lifecycle', () => {
+  test('shares one Alpaca HTTP client between the session and mutation capability and finalizes it once', async () => {
+    const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
+    const connectionResult = decodeBrokerConnection({
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Sandbox,
+      baseUrl: 'https://paper-api.alpaca.markets',
+      expectedAccountId: accountId,
+      key: Redacted.make('paper-key'),
+      secret: Redacted.make('paper-secret'),
+      proxyUrl: 'http://bayn-egress-proxy:3128',
+      operationTimeoutMs: 1_000,
+      retryAttempts: 0,
+    })
+    const connection = Result.getOrThrow(connectionResult) as BrokerConnection
+    let acquisitions = 0
+    let finalizations = 0
+    const responseHeaders = {
+      'content-type': 'application/json',
+      'x-request-id': 'resource-lifecycle',
+      'x-ratelimit-limit': '200',
+      'x-ratelimit-remaining': '199',
+      'x-ratelimit-reset': '1784664000',
+    }
+    const accountResponse = {
+      id: accountId,
+      account_number: '010203ABCD',
+      status: 'ACTIVE',
+      currency: 'USD',
+      cash: '1000',
+      equity: '1000',
+      last_equity: '1000',
+      buying_power: '1000',
+      account_blocked: false,
+      trading_blocked: false,
+      trade_suspended_by_user: false,
+      options_buying_power: '0',
+    }
+    const client = HttpClient.make((request, target) => {
+      const url = new URL(target)
+      const body =
+        url.pathname === '/v2/account'
+          ? accountResponse
+          : url.pathname === '/v2/account/configurations'
+            ? { fractional_trading: true, no_shorting: true, suspend_trade: false }
+            : url.pathname === '/v2/orders' ||
+                url.pathname === '/v2/positions' ||
+                url.pathname === '/v2/account/activities/FILL' ||
+                url.pathname === '/v2/calendar'
+              ? []
+              : { code: 40410000, message: 'order not found' }
+      const status =
+        url.pathname.startsWith('/v2/orders/') || url.pathname === '/v2/orders:by_client_order_id' ? 404 : 200
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(request, new Response(JSON.stringify(body), { status, headers: responseHeaders })),
+      )
+    })
+    const http = Layer.effect(
+      HttpClient.HttpClient,
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          acquisitions += 1
+          return client
+        }),
+        () => Effect.sync(() => void (finalizations += 1)),
+      ),
+    )
+
+    const services = await Effect.runPromise(
+      Effect.scoped(
+        Effect.all({ session: BrokerSession, httpClient: AlpacaHttpClient }).pipe(
+          Effect.provide(AlpacaBrokerResourcesLive(connection, http)),
+        ),
+      ),
+    )
+
+    expect(services.httpClient).toBe(client)
+    expect(services.session.read).toBeDefined()
+    expect(acquisitions).toBe(1)
+    expect(finalizations).toBe(1)
+  })
+
+  test('finalizes the shared Alpaca HTTP layer once when session acquisition is interrupted', async () => {
+    const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
+    const connectionResult = decodeBrokerConnection({
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Sandbox,
+      baseUrl: 'https://paper-api.alpaca.markets',
+      expectedAccountId: accountId,
+      key: Redacted.make('paper-key'),
+      secret: Redacted.make('paper-secret'),
+      proxyUrl: 'http://bayn-egress-proxy:3128',
+      operationTimeoutMs: 1_000,
+      retryAttempts: 0,
+    })
+    const connection = Result.getOrThrow(connectionResult) as BrokerConnection
+    const started = await Effect.runPromise(Deferred.make<void>())
+    let acquisitions = 0
+    let finalizations = 0
+    let requestInterrupted = false
+    const client = HttpClient.make(() =>
+      Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Effect.never),
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            requestInterrupted = true
+          }),
+        ),
+      ),
+    )
+    const http = Layer.effect(
+      HttpClient.HttpClient,
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          acquisitions += 1
+          return client
+        }),
+        () => Effect.sync(() => void (finalizations += 1)),
+      ),
+    )
+
+    const exit = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fiber = yield* BrokerSession.pipe(
+            Effect.provide(AlpacaBrokerResourcesLive(connection, http)),
+            Effect.forkScoped({ startImmediately: true }),
+          )
+          yield* Deferred.await(started)
+          yield* Fiber.interrupt(fiber)
+          return yield* Fiber.await(fiber)
+        }),
+      ),
+    )
+
+    expect(Exit.isFailure(exit)).toBeTrue()
+    expect(requestInterrupted).toBeTrue()
+    expect(acquisitions).toBe(1)
+    expect(finalizations).toBe(1)
+  })
+
   test('closes the TigerBeetle client exactly once when its scope exits', async () => {
     let tigerBeetleCloseCount = 0
     const tigerBeetleClient = makeTigerBeetleClient({
