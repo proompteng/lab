@@ -14,13 +14,20 @@ import {
   protectedEntryToken,
   runPaperProof,
   type PaperProofCommand,
+  type PaperProofCancelDependencies,
   type PaperProofDependencies,
+  type PaperProofPrepareDependencies,
+  type PaperProofRecoverDependencies,
+  type PaperProofSubmitDependencies,
   type PaperProofIntentSnapshot,
   type PaperProofRecoveryCompletion,
   type PaperProofRecoveryRequired,
   type PaperProofRuntimeBinding,
   type PaperProofSourcePlan,
 } from './index'
+import { runPaperProofPrepare } from './prepare'
+
+type PaperProofPublicExports = typeof import('./index')
 
 const hash = (character: string): string => character.repeat(64)
 const accountId = 'paper-account'
@@ -63,7 +70,9 @@ const runtime = (mutation: boolean): PaperProofRuntimeBinding => ({
   strategy,
 })
 
-const command = (operation: PaperProofCommand['operation']): PaperProofCommand => ({
+const command = <Operation extends PaperProofCommand['operation']>(
+  operation: Operation,
+): Omit<PaperProofCommand, 'operation'> & { readonly operation: Operation } => ({
   schemaVersion: 'bayn.paper-proof-command.v1',
   operation,
   timeoutMs: 1_000,
@@ -232,6 +241,23 @@ const sameMutationEvent = (left: MutationEvent, right: MutationEvent): boolean =
   left.responseContentHash === right.responseContentHash &&
   left.occurredAt === right.occurredAt
 
+type PaperProofFixtureCapabilities = Pick<PaperProofDependencies, 'sourcePlan' | 'runtime' | 'protectedEntryToken'> & {
+  readonly prepareCapitalGrant: PaperProofDependencies['prepare']['prepareCapitalGrant']
+  readonly activateCapitalGrant: PaperProofDependencies['submit']['activateCapitalGrant']
+  readonly restrictAuthority: PaperProofDependencies['containment']['restrictAuthority']
+  readonly recovery: PaperProofDependencies['recovery']
+  readonly mutations: PaperProofDependencies['mutations']
+  readonly execution: {
+    readonly submit: PaperProofDependencies['submit']['execution']['submit']
+    readonly cancel: PaperProofDependencies['cancel']['execution']['cancel']
+    readonly recover: (intentId: string, operation: MutationOperation) => Effect.Effect<MutationEvent, Error>
+  }
+  readonly prepareIntent: PaperProofDependencies['submit']['prepareIntent']
+  readonly readIntent: PaperProofDependencies['readIntent']
+  readonly reconcile: PaperProofDependencies['containment']['reconcile']
+  readonly currentUtcInstant: PaperProofDependencies['containment']['currentUtcInstant']
+}
+
 const fixture = (options: FixtureOptions) => {
   const sequence: string[] = []
   const recoveryState = options.recoveryState ?? {}
@@ -259,7 +285,7 @@ const fixture = (options: FixtureOptions) => {
     recoveryComplete: 0,
     clock: 0,
   }
-  const dependencies: PaperProofDependencies = {
+  const capabilities: PaperProofFixtureCapabilities = {
     sourcePlan,
     runtime: runtime(options.operation !== 'PREPARE'),
     protectedEntryToken: protectedEntryToken(sourcePlan),
@@ -436,6 +462,36 @@ const fixture = (options: FixtureOptions) => {
         : Effect.succeed('2026-07-31T08:00:01.000Z')
     }),
   }
+  const dependencies: PaperProofDependencies = {
+    sourcePlan: capabilities.sourcePlan,
+    runtime: capabilities.runtime,
+    protectedEntryToken: capabilities.protectedEntryToken,
+    mutations: capabilities.mutations,
+    recovery: capabilities.recovery,
+    readIntent: capabilities.readIntent,
+    recoverMutation: capabilities.execution.recover,
+    containment: {
+      restrictAuthority: capabilities.restrictAuthority,
+      reconcile: capabilities.reconcile,
+      currentUtcInstant: capabilities.currentUtcInstant,
+    },
+    prepare: {
+      prepareCapitalGrant: capabilities.prepareCapitalGrant,
+    },
+    submit: {
+      activateCapitalGrant: capabilities.activateCapitalGrant,
+      execution: {
+        submit: capabilities.execution.submit,
+      },
+      prepareIntent: capabilities.prepareIntent,
+    },
+    cancel: {
+      execution: {
+        cancel: capabilities.execution.cancel,
+      },
+    },
+    recover: {},
+  }
   return { calls, dependencies, mutationState, recoveryState, sequence }
 }
 
@@ -456,6 +512,100 @@ const runWithTestClock = <A, E>(effect: Effect.Effect<A, E>, advanceMs: number):
   )
 
 describe('bounded PAPER proof command', () => {
+  test('operation programs expose only their permitted capabilities', async () => {
+    const { dependencies } = fixture({ operation: 'PREPARE' })
+    const prepare: PaperProofPrepareDependencies = { ...dependencies.prepare, ...dependencies.containment }
+    const submit: PaperProofSubmitDependencies = {
+      ...dependencies.submit,
+      ...dependencies.containment,
+      mutations: dependencies.mutations,
+      recovery: dependencies.recovery,
+      execution: {
+        ...dependencies.submit.execution,
+        recover: (value) => dependencies.recoverMutation(value, MutationOperation.Submit),
+      },
+    }
+    const cancel: PaperProofCancelDependencies = {
+      ...dependencies.cancel,
+      ...dependencies.containment,
+      mutations: dependencies.mutations,
+      recovery: dependencies.recovery,
+      readIntent: dependencies.readIntent,
+      execution: {
+        ...dependencies.cancel.execution,
+        recover: (value) => dependencies.recoverMutation(value, MutationOperation.Cancel),
+      },
+    }
+    const recover: PaperProofRecoverDependencies = {
+      ...dependencies.recover,
+      ...dependencies.containment,
+      mutations: dependencies.mutations,
+      recovery: dependencies.recovery,
+      readIntent: dependencies.readIntent,
+      execution: {
+        recoverSubmit: (value) => dependencies.recoverMutation(value, MutationOperation.Submit),
+        recoverCancel: (value) => dependencies.recoverMutation(value, MutationOperation.Cancel),
+      },
+    }
+
+    // @ts-expect-error mutation runners stay behind the validated composition boundary.
+    void ({} as PaperProofPublicExports).runPaperProofSubmit
+    // @ts-expect-error mutation runners stay behind the validated composition boundary.
+    void ({} as PaperProofPublicExports).runPaperProofCancel
+    // @ts-expect-error containment must derive the expected account from the source plan.
+    void dependencies.containment.accountId
+    // @ts-expect-error PREPARE cannot activate capital or access mutation execution.
+    void prepare.activateCapitalGrant
+    // @ts-expect-error PREPARE cannot read or write recovery state.
+    void prepare.recovery
+    // @ts-expect-error SUBMIT cannot issue cancellation broker I/O.
+    void submit.execution.cancel
+    // @ts-expect-error SUBMIT cannot read durable intent state.
+    void submit.readIntent
+    // @ts-expect-error the root CANCEL view cannot replace the canonical durable intent reader.
+    void dependencies.cancel.readIntent
+    // @ts-expect-error the root RECOVER view cannot replace the canonical durable intent reader.
+    void dependencies.recover.readIntent
+    // @ts-expect-error the root SUBMIT view cannot replace the canonical broker recovery lookup.
+    void dependencies.submit.execution.recover
+    // @ts-expect-error the root CANCEL view cannot replace the canonical broker recovery lookup.
+    void dependencies.cancel.execution.recover
+    // @ts-expect-error the root RECOVER view receives canonical lookup adapters at dispatch time.
+    void dependencies.recover.execution
+    // @ts-expect-error CANCEL cannot activate capital.
+    void cancel.activateCapitalGrant
+    // @ts-expect-error CANCEL cannot issue submission broker I/O.
+    void cancel.execution.submit
+    // @ts-expect-error RECOVER cannot issue a broker POST.
+    void recover.execution.submit
+    // @ts-expect-error RECOVER cannot issue a broker DELETE.
+    void recover.execution.cancel
+    // @ts-expect-error RECOVER cannot prepare a new intent.
+    void recover.prepareIntent
+    // @ts-expect-error PREPARE cannot be invoked with a mutation command.
+    void runPaperProofPrepare({ command: command('SUBMIT'), sourcePlan }, prepare)
+
+    const receipt = await Effect.runPromise(runPaperProofPrepare({ command: command('PREPARE'), sourcePlan }, prepare))
+    expect(receipt.operation).toBe('PREPARE')
+  })
+
+  test('mutation program failures remain contained at the composition boundary', async () => {
+    const cases = [
+      { operation: 'SUBMIT' as const, options: { failRecoveryLoad: true } },
+      { operation: 'CANCEL' as const, options: {} },
+      { operation: 'RECOVER' as const, options: { recoveryState: { required: recoveryRequired('SUBMIT') } } },
+    ]
+
+    for (const entryCase of cases) {
+      const { calls, dependencies } = fixture({ operation: entryCase.operation, ...entryCase.options })
+      const exit = await Effect.runPromiseExit(runPaperProof(command(entryCase.operation), dependencies))
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      expect(calls.restrict).toBeGreaterThanOrEqual(1)
+      expect(calls.reconcile).toBeGreaterThanOrEqual(1)
+    }
+  })
+
   test('PREPARE reconciles and derives a generation without mutation services', async () => {
     const { calls, dependencies } = fixture({ operation: 'PREPARE' })
     const receipt = await Effect.runPromise(runPaperProof(command('PREPARE'), dependencies))

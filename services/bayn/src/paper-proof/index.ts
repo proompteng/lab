@@ -1,4 +1,13 @@
-export { hasPaperProofMutationAuthority, validatePaperProofEntry } from './gates'
+export { hasPaperProofMutationAuthority, paperProofContainmentIoCount, validatePaperProofEntry } from './gates'
+export { type PaperProofCancelDependencies, type PaperProofSubmitDependencies } from './mutations'
+export { type PaperProofPrepareDependencies } from './prepare'
+export { type PaperProofRecoverDependencies } from './recovery'
+export {
+  type PaperProofContainmentDependencies,
+  type PaperProofCommandFor,
+  type PaperProofOperationContext,
+  type PaperProofRestrictionDependencies,
+} from './operations'
 export {
   decodePaperProofCliEnvelopeResult,
   decodePaperProofCommandResult,
