@@ -94,10 +94,11 @@ describe('Bayn qualification workflow contract', () => {
     expect(build).toContain('nix build .#bayn-image')
     expect(build).toContain('bash nix/verify-bayn-image-command.sh "$image_tar"')
     expect(build).toContain('docker load --input "$image_tar"')
-    expect(build).toContain('image_id="$(docker image inspect')
+    expect(build).toContain('image_digest="$(bash nix/oci-inspect-archive.sh "$image_tar" | jq -er')
+    expect(build).not.toContain("docker image inspect --format '{{.Id}}'")
     expect(build).toContain('source_revision="$(docker image inspect')
     expect(build).toContain('test "$source_revision" = "${GITHUB_SHA}"')
-    expect(build).toContain('echo "binding=${IMAGE_REPOSITORY}@${image_id}" >> "$GITHUB_OUTPUT"')
+    expect(build).toContain('echo "binding=${IMAGE_REPOSITORY}@${image_digest}" >> "$GITHUB_OUTPUT"')
 
     const orchestrationText = steps
       .flatMap((candidate) => (candidate.run === undefined ? [] : [candidate.run]))

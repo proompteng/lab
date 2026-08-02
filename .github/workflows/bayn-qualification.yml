@@ -79,12 +79,11 @@ jobs:
           docker load --input "$image_tar"
 
           run_reference="${IMAGE_REPOSITORY}:nix"
-          image_id="$(docker image inspect --format '{{.Id}}' "$run_reference")"
-          [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+          image_digest="$(bash nix/oci-inspect-archive.sh "$image_tar" | jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))')"
           source_revision="$(docker image inspect --format '{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' "$run_reference")"
           test "$source_revision" = "${GITHUB_SHA}"
           echo "run_reference=${run_reference}" >> "$GITHUB_OUTPUT"
-          echo "binding=${IMAGE_REPOSITORY}@${image_id}" >> "$GITHUB_OUTPUT"
+          echo "binding=${IMAGE_REPOSITORY}@${image_digest}" >> "$GITHUB_OUTPUT"
 
       - name: Run exactly one isolated read-only qualification
         id: qualify
