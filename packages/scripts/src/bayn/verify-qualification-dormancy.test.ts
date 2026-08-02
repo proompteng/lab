@@ -129,7 +129,7 @@ describe('qualification dormancy command', () => {
   test('keeps lifecycle validation in the service instead of reimplementing it in the adapter', async () => {
     const source = await readFile(verifierPath, 'utf8')
 
-    expect(evaluateQualificationDormancy({})).toMatchObject({
+    expect(await evaluateQualificationDormancy({})).toMatchObject({
       ok: false,
       issue: { path: 'history.schemaVersion', reason: 'UNSUPPORTED_SCHEMA' },
     })

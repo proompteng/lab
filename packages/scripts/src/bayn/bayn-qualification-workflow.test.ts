@@ -44,12 +44,18 @@ const runText = (name: string): string => step(name).run ?? ''
 
 describe('Bayn qualification workflow contract', () => {
   test('keeps the pure lifecycle gate ahead of every image, credential, or holdout operation', () => {
+    const lifecycleDependencies = stepIndex('Install local Bayn lifecycle dependencies')
     const lifecycle = stepIndex('Verify candidate lifecycle before any image or credential access')
     const stop = stepIndex('Stop safely while qualification is dormant')
     const toolchain = stepIndex('Set up the local image-build toolchain')
     const build = stepIndex('Build and load the exact checked-out source image locally')
     const qualification = stepIndex('Run exactly one isolated read-only qualification')
 
+    expect(lifecycleDependencies).toBeGreaterThanOrEqual(0)
+    expect(lifecycleDependencies).toBeLessThan(lifecycle)
+    expect(runText('Install local Bayn lifecycle dependencies')).toContain(
+      'bun install --frozen-lockfile --ignore-scripts --filter @proompteng/bayn',
+    )
     expect(lifecycle).toBeGreaterThanOrEqual(0)
     expect(stop).toBeGreaterThan(lifecycle)
     expect(toolchain).toBeGreaterThan(lifecycle)

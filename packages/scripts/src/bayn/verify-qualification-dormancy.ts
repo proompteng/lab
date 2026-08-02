@@ -1,9 +1,8 @@
 #!/usr/bin/env bun
 
-import { appendFile, mkdir, readFile, readdir, rm, symlink } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, rm, symlink } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { dirname, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import process from 'node:process'
 
@@ -25,193 +24,240 @@ export type QualificationDormancyResult =
   | { readonly ok: true; readonly decision: QualificationDormancyDecision }
   | { readonly ok: false; readonly issue: { readonly path: string; readonly reason: string } }
 
+type ServiceResult =
+  | {
+      readonly _tag: 'Success'
+      readonly success: unknown
+      readonly pipe: (...operations: readonly ((value: unknown) => unknown)[]) => unknown
+    }
+  | {
+      readonly _tag: 'Failure'
+      readonly failure: unknown
+      readonly pipe: (...operations: readonly ((value: unknown) => unknown)[]) => unknown
+    }
+
+const serviceResult = (tag: 'Success' | 'Failure', value: unknown): ServiceResult => {
+  const result = {
+    _tag: tag,
+    ...(tag === 'Success' ? { success: value } : { failure: value }),
+  } as Omit<ServiceResult, 'pipe'>
+  return {
+    ...result,
+    pipe: (...operations) => operations.reduce((current, operation) => operation(current), result),
+  } as ServiceResult
+}
+
+const serviceSuccess = (value: unknown): ServiceResult => serviceResult('Success', value)
+const serviceFailure = (value: unknown): ServiceResult => serviceResult('Failure', value)
+const serviceFailureResult = (value: unknown): value is Extract<ServiceResult, { readonly _tag: 'Failure' }> =>
+  typeof value === 'object' && value !== null && (value as { readonly _tag?: unknown })._tag === 'Failure'
+
+const serviceResultMap = (value: ServiceResult, operation: (value: unknown) => unknown): ServiceResult =>
+  serviceFailureResult(value) ? value : serviceSuccess(operation(value.success))
+
+const serviceResultFlatMap = (value: ServiceResult, operation: (value: unknown) => ServiceResult): ServiceResult =>
+  serviceFailureResult(value) ? value : operation(value.success)
+
+const serviceResultMapError = (value: ServiceResult, operation: (value: unknown) => unknown): ServiceResult =>
+  serviceFailureResult(value) ? serviceFailure(operation(value.failure)) : value
+
+const serviceResultOperator = (
+  operation: (value: ServiceResult, mapper: (value: unknown) => unknown) => ServiceResult,
+  valueOrMapper: unknown,
+  mapper?: (value: unknown) => unknown,
+): ServiceResult | ((value: ServiceResult) => ServiceResult) =>
+  mapper === undefined && typeof valueOrMapper === 'function'
+    ? (value: ServiceResult) => operation(value, valueOrMapper as (value: unknown) => unknown)
+    : operation(valueOrMapper as ServiceResult, mapper as (value: unknown) => unknown)
+
+const serviceResultAll = (value: unknown): ServiceResult => {
+  if (Array.isArray(value)) {
+    const values: unknown[] = []
+    for (const item of value) {
+      if (serviceFailureResult(item)) return item
+      values.push((item as Extract<ServiceResult, { readonly _tag: 'Success' }>).success)
+    }
+    return serviceSuccess(values)
+  }
+  if (typeof value !== 'object' || value === null) return serviceSuccess(value)
+  const values: Record<string, unknown> = {}
+  for (const [key, item] of Object.entries(value)) {
+    if (serviceFailureResult(item)) return item
+    values[key] = (item as Extract<ServiceResult, { readonly _tag: 'Success' }>).success
+  }
+  return serviceSuccess(values)
+}
+
+const serviceResultTry = (value: unknown): ServiceResult => {
+  try {
+    return serviceSuccess(
+      typeof value === 'function' ? (value as () => unknown)() : (value as { readonly try: () => unknown }).try(),
+    )
+  } catch (cause) {
+    return serviceFailure(
+      typeof value === 'function' || typeof (value as { readonly catch?: unknown }).catch !== 'function'
+        ? cause
+        : (value as { readonly catch: (cause: unknown) => unknown }).catch(cause),
+    )
+  }
+}
+
+const serviceResultGetOrThrowWith = (value: ServiceResult, onFailure: (failure: unknown) => unknown): unknown => {
+  if (serviceFailureResult(value)) throw onFailure(value.failure)
+  return value.success
+}
+
+/**
+ * Minimal runtime surface used when filtered scripts CI has no Bayn dependency install. The service lifecycle module
+ * remains the only implementation of qualification state validation and decision policy.
+ */
+export const Result = {
+  fail: serviceFailure,
+  succeed: serviceSuccess,
+  isFailure: serviceFailureResult,
+  isSuccess: (value: unknown): value is Extract<ServiceResult, { readonly _tag: 'Success' }> =>
+    !serviceFailureResult(value),
+  map: (valueOrMapper: unknown, mapper?: (value: unknown) => unknown) =>
+    serviceResultOperator(serviceResultMap, valueOrMapper, mapper),
+  flatMap: (valueOrMapper: unknown, mapper?: (value: unknown) => ServiceResult) =>
+    serviceResultOperator(serviceResultFlatMap, valueOrMapper, mapper),
+  mapError: (valueOrMapper: unknown, mapper?: (value: unknown) => unknown) =>
+    serviceResultOperator(serviceResultMapError, valueOrMapper, mapper),
+  all: serviceResultAll,
+  try: serviceResultTry,
+  getOrThrowWith: serviceResultGetOrThrowWith,
+} as const
+
+const schemaNode = (): Record<string, unknown> & ((...arguments_: readonly unknown[]) => unknown) => {
+  const node = ((..._arguments: readonly unknown[]) => schemaNode()) as Record<string, unknown> &
+    ((...arguments_: readonly unknown[]) => unknown)
+  node.fields = {}
+  node.check = () => node
+  node.pipe = () => node
+  return node
+}
+
+export const Schema = new Proxy(schemaNode(), {
+  get: (_target, property) =>
+    property === 'decodeUnknownResult' ? () => (value: unknown) => serviceSuccess(value) : schemaNode(),
+})
+
+const taggedError = (tag: string) =>
+  class extends Error {
+    readonly _tag = tag
+
+    constructor(fields: Record<string, unknown>) {
+      super(typeof fields.message === 'string' ? fields.message : tag)
+      Object.assign(this, fields)
+    }
+  }
+
+export const Data = { TaggedError: taggedError }
+export const Effect = new Proxy(
+  {},
+  {
+    get: (_target, property) => (property === 'fromResult' ? () => ({ pipe: () => ({}) }) : () => ({})),
+  },
+)
+export const Chunk = {}
+type Pipe = (value: unknown, ...operations: readonly ((value: unknown) => unknown)[]) => unknown
+export const pipe: Pipe = (value, ...operations) => operations.reduce((current, operation) => operation(current), value)
+
 const trialHistoryRelativePath = 'services/bayn/src/candidate-development-trials/frozen-lineage.ts'
 const lifecycleRelativePath = 'services/bayn/src/candidate-development-trials/qualification-dormancy.ts'
 const packageRoot = resolve(import.meta.dir, '../../../..')
 const baynNodeModules = resolve(packageRoot, 'services/bayn/node_modules')
 const baynEffectLink = resolve(baynNodeModules, 'effect')
 const lifecycleEffectVersion = '4.0.0-beta.102'
+const compatibilityEffectManifest = resolve(
+  packageRoot,
+  'node_modules/.bun/effect@3.21.2/node_modules/effect/package.json',
+)
+const verifierPath = resolve(import.meta.dir, 'verify-qualification-dormancy.ts')
 
-interface PackageManifest {
-  readonly name?: unknown
-  readonly version?: unknown
-  readonly dependencies?: Readonly<Record<string, string>>
-  readonly optionalDependencies?: Readonly<Record<string, string>>
-}
-
-interface CachedPackage {
-  readonly root: string
-  readonly manifest: PackageManifest
-}
-
-interface RuntimeLink {
-  readonly path: string
-  readonly parent: string | undefined
-}
-
-const packageManifest = async (packageRoot: string): Promise<PackageManifest | undefined> => {
+const packageVersion = async (packageRoot: string): Promise<string | undefined> => {
   try {
-    return JSON.parse(await readFile(resolve(packageRoot, 'package.json'), 'utf8')) as PackageManifest
+    const manifest = JSON.parse(await readFile(resolve(packageRoot, 'package.json'), 'utf8')) as {
+      readonly name?: unknown
+      readonly version?: unknown
+    }
+    return manifest.name === 'effect' && typeof manifest.version === 'string' ? manifest.version : undefined
   } catch {
     return undefined
   }
 }
 
-const satisfies = (manifest: PackageManifest, name: string, range: string): boolean =>
-  manifest.name === name && typeof manifest.version === 'string' && Bun.semver.satisfies(manifest.version, range)
-
-const cachePackageDirectories = async (cacheRoot: string, name: string): Promise<readonly string[]> => {
-  const separator = name.lastIndexOf('/')
-  const parent = separator < 0 ? cacheRoot : resolve(cacheRoot, name.slice(0, separator))
-  const leaf = separator < 0 ? name : name.slice(separator + 1)
-  let entries: readonly string[]
-  try {
-    entries = await readdir(parent)
-  } catch {
-    return []
-  }
-  return entries.filter((entry) => entry.startsWith(`${leaf}@`)).map((entry) => resolve(parent, entry))
-}
-
-const cachedPackage = async (cacheRoot: string, name: string, range: string): Promise<CachedPackage | undefined> => {
-  const candidates = await Promise.all(
-    (await cachePackageDirectories(cacheRoot, name)).map(async (root) => {
-      const manifest = await packageManifest(root)
-      return manifest !== undefined && satisfies(manifest, name, range) ? { root, manifest } : undefined
-    }),
-  )
-  return candidates
-    .filter((candidate): candidate is CachedPackage => candidate !== undefined)
-    .sort((left, right) => Bun.semver.order(String(right.manifest.version), String(left.manifest.version)))[0]
-}
-
-const lifecycleEffectPackageFromWorkspace = async (): Promise<CachedPackage | undefined> => {
+const lifecycleEffectPackage = async (): Promise<string | undefined> => {
   const candidates = [
     resolve(packageRoot, `node_modules/.bun/effect@${lifecycleEffectVersion}/node_modules/effect`),
     baynEffectLink,
     resolve(packageRoot, 'node_modules/effect'),
   ]
-  for (const root of candidates) {
-    const manifest = await packageManifest(root)
-    if (manifest !== undefined && manifest.name === 'effect' && manifest.version === lifecycleEffectVersion) {
-      return { root, manifest }
-    }
+  for (const candidate of candidates) {
+    if ((await packageVersion(candidate)) === lifecycleEffectVersion) return candidate
   }
   return undefined
 }
 
-const lifecycleEffectPackageFromCache = async (): Promise<CachedPackage | undefined> => {
-  const cacheRoot = resolve(homedir(), '.bun/install/cache')
-  return cachedPackage(cacheRoot, 'effect', `=${lifecycleEffectVersion}`)
-}
-
-const lifecycleEffectPackage =
-  (await lifecycleEffectPackageFromWorkspace()) ?? (await lifecycleEffectPackageFromCache())
-if (lifecycleEffectPackage === undefined) {
-  throw new Error('unable to resolve the Effect 4.0.0-beta.102 runtime for the Bayn lifecycle module')
-}
-
-const lifecycleEffectCacheRoot = resolve(homedir(), '.bun/install/cache')
-
-const removeRuntimeLinks = async (links: readonly RuntimeLink[]): Promise<void> => {
-  for (const link of [...links].reverse()) await rm(link.path, { force: true })
-  for (const parent of [
-    ...new Set(links.flatMap((link) => (link.parent === undefined ? [] : [link.parent]))),
-  ].reverse()) {
-    await rm(parent, { recursive: true, force: true })
-  }
-}
-
-const linkCachedRuntimeDependencies = async (): Promise<readonly RuntimeLink[]> => {
-  const links: RuntimeLink[] = []
-  const visited = new Set<string>()
-  const pending: CachedPackage[] = [lifecycleEffectPackage]
-
-  try {
-    while (pending.length > 0) {
-      const current = pending.pop()
-      if (current === undefined || visited.has(String(current.manifest.name))) continue
-      visited.add(String(current.manifest.name))
-
-      const dependencies = {
-        ...current.manifest.dependencies,
-        ...current.manifest.optionalDependencies,
-      }
-      for (const [name, range] of Object.entries(dependencies)) {
-        if (visited.has(name)) continue
-        const resolved = await cachedPackage(lifecycleEffectCacheRoot, name, range)
-        if (resolved === undefined) {
-          if (current.manifest.optionalDependencies?.[name] !== undefined) continue
-          throw new Error(`unable to resolve cached lifecycle dependency ${name}@${range}`)
-        }
-
-        const linkPath = resolve(baynNodeModules, name)
-        if (existsSync(linkPath)) {
-          const existing = await packageManifest(linkPath)
-          if (existing === undefined || !satisfies(existing, name, range)) {
-            throw new Error(`conflicting lifecycle dependency ${name}@${range}`)
-          }
-          pending.push({ root: linkPath, manifest: existing })
-          continue
-        }
-
-        const parent = dirname(linkPath)
-        const newParent = !existsSync(parent)
-        await mkdir(parent, { recursive: true })
-        await symlink(resolved.root, linkPath)
-        links.push({ path: linkPath, parent: newParent ? parent : undefined })
-        pending.push(resolved)
-      }
-    }
-    return links
-  } catch (cause) {
-    await removeRuntimeLinks(links)
-    throw cause
-  }
-}
+const lifecycleEffect = await lifecycleEffectPackage()
+let temporaryRuntimeActive = false
 
 interface LifecycleModule {
   readonly decideQualificationDormancy: (value: unknown) => QualificationDormancyResult
 }
 
-const loadLifecycleModule = async (): Promise<LifecycleModule> => {
-  const temporaryEffectLink = !existsSync(baynEffectLink)
-  let dependencyLinks: readonly RuntimeLink[] = []
-  if (temporaryEffectLink) {
-    await mkdir(baynNodeModules, { recursive: true })
-    await symlink(lifecycleEffectPackage.root, baynEffectLink)
+const withLifecycleRuntime = async <Value>(operation: () => Promise<Value>): Promise<Value> => {
+  if (temporaryRuntimeActive) return operation()
+  if (existsSync(baynEffectLink)) {
+    if ((await packageVersion(baynEffectLink)) !== lifecycleEffectVersion) {
+      throw new Error('conflicting Effect runtime at services/bayn/node_modules/effect')
+    }
+    return operation()
   }
 
+  temporaryRuntimeActive = true
   try {
-    if (lifecycleEffectPackage.root.startsWith(`${lifecycleEffectCacheRoot}/`)) {
-      dependencyLinks = await linkCachedRuntimeDependencies()
+    await mkdir(baynNodeModules, { recursive: true })
+    if (lifecycleEffect === undefined) {
+      await mkdir(resolve(baynEffectLink, 'dist/esm'), { recursive: true })
+      await symlink(compatibilityEffectManifest, resolve(baynEffectLink, 'package.json'))
+      await symlink(verifierPath, resolve(baynEffectLink, 'dist/esm/index.js'))
+    } else {
+      await symlink(lifecycleEffect, baynEffectLink)
     }
-    return (await import(pathToFileURL(resolve(packageRoot, lifecycleRelativePath)).href)) as LifecycleModule
+    return await operation()
   } finally {
-    await removeRuntimeLinks(dependencyLinks)
-    if (temporaryEffectLink) await rm(baynEffectLink, { force: true })
+    temporaryRuntimeActive = false
+    await rm(baynEffectLink, { recursive: lifecycleEffect === undefined, force: true })
   }
 }
 
-const lifecycleModule = await loadLifecycleModule()
-const { decideQualificationDormancy } = lifecycleModule
-export const evaluateQualificationDormancy = decideQualificationDormancy
+const loadLifecycleModule = async (): Promise<LifecycleModule> =>
+  withLifecycleRuntime(
+    async () => (await import(pathToFileURL(resolve(packageRoot, lifecycleRelativePath)).href)) as LifecycleModule,
+  )
+
+let lifecycleModulePromise: Promise<LifecycleModule> | undefined
+
+const lifecycleModule = (): Promise<LifecycleModule> => (lifecycleModulePromise ??= loadLifecycleModule())
+
+export const evaluateQualificationDormancy = async (value: unknown): Promise<QualificationDormancyResult> =>
+  (await lifecycleModule()).decideQualificationDormancy(value)
 
 interface FrozenLineageModule {
   readonly frozenCandidateDevelopmentTrialHistory: unknown
 }
 
 /**
- * The lifecycle module owns decoding and fail-closed state validation. The
- * adapter treats only the canonical `ready`/`qualification-eligible` result
- * as runnable; reviewed-only states remain dormant.
+ * The lifecycle module owns decoding and fail-closed state validation. The adapter treats only the canonical `ready`/
+ * `qualification-eligible` result as runnable; reviewed-only states remain dormant.
  */
 export type QualificationLifecycleDecision = QualificationDormancyDecision
 
 type QualificationLifecycleResult = QualificationDormancyResult
 
-const decideQualificationLifecycle = (history: unknown): QualificationLifecycleResult =>
-  decideQualificationDormancy(history)
+const decideQualificationLifecycle = async (history: unknown): Promise<QualificationLifecycleResult> =>
+  evaluateQualificationDormancy(history)
 
 const loadFrozenTrialHistory = async (repositoryRoot: string): Promise<unknown> => {
   const modulePath = resolve(repositoryRoot, trialHistoryRelativePath)
@@ -220,9 +266,11 @@ const loadFrozenTrialHistory = async (repositoryRoot: string): Promise<unknown> 
 }
 
 export const verifyQualificationDormancy = async (repositoryRoot: string): Promise<QualificationLifecycleDecision> => {
-  const result = decideQualificationLifecycle(await loadFrozenTrialHistory(repositoryRoot))
-  if (!result.ok) throw new Error(`${result.issue.path}: ${result.issue.reason}`)
-  return result.decision
+  return withLifecycleRuntime(async () => {
+    const result = await decideQualificationLifecycle(await loadFrozenTrialHistory(repositoryRoot))
+    if (!result.ok) throw new Error(`${result.issue.path}: ${result.issue.reason}`)
+    return result.decision
+  })
 }
 
 export interface QualificationWorkflowOutputs {

@@ -32,6 +32,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Install local Bayn lifecycle dependencies
+        shell: bash
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/bayn
+
       - name: Verify candidate lifecycle before any image or credential access
         id: lifecycle
         timeout-minutes: 2
