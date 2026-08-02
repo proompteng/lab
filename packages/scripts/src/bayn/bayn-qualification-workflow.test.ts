@@ -68,6 +68,8 @@ describe('Bayn qualification workflow contract', () => {
       'Build and load the exact checked-out source image locally',
       'Run exactly one isolated read-only qualification',
       'Upload immutable terminal qualification evidence',
+      'Build typed PAPER activation evidence',
+      'Upload immutable PAPER activation evidence',
       'Summarize terminal qualification evidence',
     ]) {
       expect(step(name).if).toContain("steps.lifecycle.outputs.eligible == 'true'")
@@ -145,6 +147,30 @@ describe('Bayn qualification workflow contract', () => {
       .join('\n')
     expect((orchestrationText.match(/BAYN_QUALIFICATION_MODE=execute/g) ?? []).length).toBe(1)
     expect((orchestrationText.match(/docker run --rm/g) ?? []).length).toBe(1)
+  })
+
+  test('builds and uploads one exact immutable activation artifact through the typed verifier', () => {
+    const producer = step('Build typed PAPER activation evidence')
+    const upload = step('Upload immutable PAPER activation evidence')
+    expect(producer.id).toBe('activation-evidence')
+    expect(producer.if).toBe("steps.lifecycle.outputs.eligible == 'true' && steps.qualify.outcome == 'success'")
+    expect(producer.env).toMatchObject({
+      REVIEWED_PINS_JSON: '${{ vars.BAYN_PAPER_ACTIVATION_REVIEWED_PINS_JSON }}',
+    })
+    expect(producer.run).toContain('--mode build-evidence')
+    expect(producer.run).toContain('--terminal "$TERMINAL"')
+    expect(producer.run).toContain('--reviewed-pins "$reviewed_pins"')
+    expect(producer.run).toContain('--output-dir "$output_directory"')
+    expect(producer.run).not.toContain('jq')
+    expect(upload.uses).toBe('actions/upload-artifact@v4')
+    expect(upload.if).toContain("steps.activation-evidence.outputs.emit == 'true'")
+    expect(upload.with).toMatchObject({
+      name: 'bayn-paper-activation-evidence-${{ github.run_id }}-${{ github.run_attempt }}',
+      path: '${{ runner.temp }}/bayn-paper-activation-evidence/evidence.json\n${{ runner.temp }}/bayn-paper-activation-evidence/pins.json\n',
+      'if-no-files-found': 'error',
+      overwrite: false,
+      'retention-days': 90,
+    })
   })
 
   test('keeps the qualification boundary read-only and wires credentials only at execution', () => {

@@ -5,7 +5,19 @@ import { dirname, join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
 import { parse } from 'yaml'
 
+import {
+  buildPaperActivationArtifact,
+  canonicalHashV1,
+  deriveObserveRollbackGeneration,
+  evaluatePaperActivation,
+  extractPaperActivationManifestPins,
+  renderPaperActivationTransition,
+  type QualificationTerminalEvidence,
+} from './verify-paper-activation'
+
 const path = new URL('../../../../.github/workflows/bayn-paper-activation.yml', import.meta.url)
+const deploymentPath = new URL('../../../../argocd/applications/bayn/deployment.yaml', import.meta.url)
+const kustomizationPath = new URL('../../../../argocd/applications/bayn/kustomization.yaml', import.meta.url)
 const workflow = readFileSync(path, 'utf8')
 const parsed = parse(workflow) as {
   readonly name: string
@@ -48,6 +60,83 @@ const stepFor = (jobName: string, stepName: string) => {
   const step = parsed.jobs[jobName]?.steps.find((candidate) => candidate.name === stepName)
   if (step === undefined) throw new Error(`workflow step ${jobName}/${stepName} is missing`)
   return step
+}
+
+const syntheticTerminal = (
+  sourceSha: string,
+  imageRepository: string,
+  imageDigest: string,
+  verdict: 'QUALIFIED' | 'REJECTED',
+): QualificationTerminalEvidence => {
+  const runId = 'a'.repeat(64)
+  const lockId = 'b'.repeat(64)
+  const resultHash = 'c'.repeat(64)
+  const auditMaterial = {
+    schemaVersion: 'bayn.qualification-audit.v2' as const,
+    runId,
+    status: 'PASS' as const,
+    reference: { economicStatus: 'PASS' as const, observations: 1, rebalanceCount: 0 },
+    evidence: { artifactCount: 1, eventCount: 2, gateCount: 3, lockId, resultHash },
+    policies: {
+      declaredAt: '2026-08-01T06:00:00Z',
+      lockId,
+      policySetHash: 'd'.repeat(64),
+      documents: [
+        {
+          name: 'execution',
+          schemaVersion: 'bayn.policy.v1',
+          contentHash: 'e'.repeat(64),
+          content: { maximum: 'PAPER' },
+        },
+      ],
+    },
+    contamination: {
+      lockCreatedAt: '2026-08-01T06:00:00Z',
+      resultCommittedAt: '2026-08-01T07:00:00Z',
+      replicas: ['signal-1'],
+      principals: { candidate: 'candidate', publishers: ['publisher'] },
+      access: [
+        {
+          replica: 'signal-1',
+          queryId: 'query-1',
+          queryStartTime: '2026-08-01T06:30:00Z',
+          user: 'candidate',
+          kind: 'bars' as const,
+        },
+      ],
+    },
+    repository: {
+      sourceCommitExists: true,
+      sourceCommitAncestorOfMain: true,
+      preLockResultReferences: [],
+      sourceRevision: sourceSha,
+    },
+    checks: [{ name: 'terminal-result-binding', passed: true, evidence: `verdict=${verdict}` }],
+  }
+  const audit = { ...auditMaterial, auditHash: canonicalHashV1(auditMaterial) }
+  const terminalMaterial = {
+    schemaVersion: 'bayn.qualification-collector-terminal.v1' as const,
+    repository: 'proompteng/lab',
+    currentMainSha: sourceSha,
+    sourceSha,
+    image: { repository: imageRepository, digest: imageDigest },
+    candidateOrdinal: 1,
+    githubRunId: '9001',
+    githubRunAttempt: 1,
+    preregistrationHash: 'f'.repeat(64),
+    eligibilityHash: '1'.repeat(64),
+    candidateBindingHash: '2'.repeat(64),
+    terminal: {
+      schemaVersion: 'bayn.qualification-execution.v1' as const,
+      runId,
+      lockId,
+      resultHash,
+      verdict,
+      persistence: { artifactCount: 1, eventCount: 2, gateCount: 3 },
+    },
+    audit,
+  }
+  return { ...terminalMaterial, evidenceHash: canonicalHashV1(terminalMaterial) }
 }
 
 const writeExecutable = (directory: string, name: string, contents: string): void => {
@@ -587,6 +676,102 @@ esac
       expect(result.githubOutput).toContain('live=false')
     } finally {
       result.dispose()
+    }
+  })
+
+  test('proves the synthetic QUALIFIED handoff and emits no artifact for REJECTED', () => {
+    const deployment = readFileSync(deploymentPath, 'utf8')
+    const kustomization = readFileSync(kustomizationPath, 'utf8')
+    const checkedOutPins = extractPaperActivationManifestPins(deployment, kustomization)
+    const terminal = syntheticTerminal(
+      checkedOutPins.sourceSha,
+      checkedOutPins.kustomizeImageRepository,
+      checkedOutPins.kustomizeImageDigest,
+      'QUALIFIED',
+    )
+    const reviewedPins = {
+      schemaVersion: 'bayn.paper-activation-reviewed-pins.v1' as const,
+      sourceSha: checkedOutPins.sourceSha,
+      imageRepository: checkedOutPins.kustomizeImageRepository,
+      imageDigest: checkedOutPins.kustomizeImageDigest,
+      protocolHash: '3'.repeat(64),
+      strategyBehaviorHash: checkedOutPins.strategyBehaviorHash,
+      strategyParameterHash: checkedOutPins.strategyParameterHash,
+      strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4' as const,
+      qualificationExecutionPolicyHash: '4'.repeat(64),
+      previousGenerationHash: checkedOutPins.currentAuthorityGenerationHash,
+      accountId: 'paper-account-1',
+      riskPolicyHash: '5'.repeat(64),
+      proofPlanHash: '6'.repeat(64),
+      reconciliationId: '7'.repeat(64),
+      reconciliationContentHash: '8'.repeat(64),
+      qualificationExpiresAt: '2026-08-01T10:00:00Z',
+      accountBindingHash: '9'.repeat(64),
+      brokerEnvironment: 'sandbox' as const,
+      brokerBaseUrl: 'https://paper-api.alpaca.markets',
+      maximumAuthority: 'PAPER' as const,
+      authorityExpiresAt: '2026-08-01T09:00:00Z',
+      unresolvedMutationCount: 0,
+      unknownMutationCount: 0,
+      openOrderCount: 0,
+      discrepancyCount: 0,
+      reconciliation: 'EXACT' as const,
+      killSwitchActive: false,
+      identityGap: false,
+      activationState: 'PRECOMMITTED' as const,
+    }
+    const artifact = buildPaperActivationArtifact({ terminal, reviewedPins })
+    expect(artifact).not.toBeNull()
+    if (artifact === null) return
+    const manifestPins = {
+      ...checkedOutPins,
+      qualificationRunId: artifact.evidence.qualificationRunId,
+    }
+    const decision = evaluatePaperActivation({
+      evidence: artifact.evidence,
+      pins: artifact.pins,
+      manifestPins,
+      now: '2026-08-01T08:00:00Z',
+      expectedRepository: 'proompteng/lab',
+      expectedActivationId: artifact.evidence.activationId,
+      trustedCurrentMainSha: checkedOutPins.sourceSha,
+    })
+    expect(decision).toMatchObject({ status: 'eligible' })
+    if (decision.status !== 'eligible') return
+    const rollback = deriveObserveRollbackGeneration({
+      repository: 'proompteng/lab',
+      activationId: artifact.evidence.activationId,
+      sourceMainSha: checkedOutPins.sourceSha,
+      previousObserveGenerationHash: checkedOutPins.currentAuthorityGenerationHash,
+      paperAuthorityGenerationHash: decision.authorityGenerationHash,
+    })
+    const proposal = renderPaperActivationTransition(
+      deployment,
+      decision.authorityGenerationHash,
+      rollback.generationHash,
+      artifact.evidence.authorityExpiresAt,
+    )
+    expect(proposal.paperDeployment).toContain('value: PAPER')
+    expect(proposal.paperDeployment).toContain('value: mutation')
+    expect(proposal.observeDeployment).toContain('value: OBSERVE')
+    expect(proposal.observeDeployment).toContain('value: read-only')
+
+    const rejected = syntheticTerminal(
+      checkedOutPins.sourceSha,
+      checkedOutPins.kustomizeImageRepository,
+      checkedOutPins.kustomizeImageDigest,
+      'REJECTED',
+    )
+    const rejectedArtifact = buildPaperActivationArtifact({ terminal: rejected, reviewedPins })
+    expect(rejectedArtifact).toBeNull()
+    const outputDirectory = mkdtempSync(join(tmpdir(), 'bayn-paper-rejected-'))
+    try {
+      if (rejectedArtifact !== null)
+        writeFileSync(join(outputDirectory, 'evidence.json'), JSON.stringify(rejectedArtifact))
+      expect(existsSync(join(outputDirectory, 'evidence.json'))).toBe(false)
+      expect(existsSync(join(outputDirectory, 'pins.json'))).toBe(false)
+    } finally {
+      rmSync(outputDirectory, { recursive: true, force: true })
     }
   })
 

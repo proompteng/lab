@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -6,6 +7,8 @@ import { describe, expect, test } from 'bun:test'
 import { parse } from 'yaml'
 
 import {
+  buildPaperActivationArtifact,
+  canonicalHashV1,
   deriveObserveRollbackGeneration,
   evaluatePaperActivation,
   extractDeploymentAuthorityState,
@@ -14,7 +17,9 @@ import {
   renderObserveRollback,
   renderPaperActivationTransition,
   type PaperActivationEvidence,
+  type PaperActivationReviewedPins,
   type PaperAuthorityGenerationMaterial,
+  type QualificationTerminalEvidence,
 } from './verify-paper-activation'
 
 const hash = 'a'.repeat(64)
@@ -54,26 +59,99 @@ const authorityGeneration = (overrides: Partial<PaperAuthorityGenerationMaterial
   const material = generationMaterial(overrides)
   return { ...material, generationHash: paperAuthorityGenerationHash(material) }
 }
-const evidence = (overrides: Partial<PaperActivationEvidence> = {}): PaperActivationEvidence => ({
-  schemaVersion: 1,
+const qualificationAuditMaterial = {
+  schemaVersion: 'bayn.qualification-audit.v2' as const,
+  runId: hash,
+  status: 'PASS' as const,
+  reference: { economicStatus: 'PASS' as const, observations: 1, rebalanceCount: 0 },
+  evidence: { artifactCount: 1, eventCount: 2, gateCount: 3, lockId: '1'.repeat(64), resultHash: '2'.repeat(64) },
+  policies: {
+    declaredAt: '2026-07-31T06:00:00Z',
+    lockId: '1'.repeat(64),
+    policySetHash: '3'.repeat(64),
+    documents: [
+      {
+        name: 'execution',
+        schemaVersion: 'bayn.policy.v1',
+        contentHash: '4'.repeat(64),
+        content: { maximum: 'PAPER' },
+      },
+    ],
+  },
+  contamination: {
+    lockCreatedAt: '2026-07-31T06:00:00Z',
+    resultCommittedAt: '2026-07-31T07:00:00Z',
+    replicas: ['signal-1'],
+    principals: { candidate: 'candidate', publishers: ['publisher'] },
+    access: [
+      {
+        replica: 'signal-1',
+        queryId: 'query-1',
+        queryStartTime: '2026-07-31T06:30:00Z',
+        user: 'candidate',
+        kind: 'bars' as const,
+      },
+    ],
+  },
+  repository: {
+    sourceCommitExists: true,
+    sourceCommitAncestorOfMain: true,
+    preLockResultReferences: [],
+    sourceRevision: sourceSha,
+  },
+  checks: [{ name: 'terminal-result-binding', passed: true, evidence: 'verdict=QUALIFIED' }],
+}
+const qualificationAudit = {
+  ...qualificationAuditMaterial,
+  auditHash: canonicalHashV1(qualificationAuditMaterial),
+}
+const qualificationTerminalMaterial = {
+  schemaVersion: 'bayn.qualification-collector-terminal.v1' as const,
   repository: 'proompteng/lab',
-  mainSha: sourceSha,
   currentMainSha: sourceSha,
+  sourceSha,
+  image: { repository: 'registry.ide-newton.ts.net/lab/bayn', digest: `sha256:${'c'.repeat(64)}` },
+  candidateOrdinal: 1,
+  githubRunId: '77',
+  githubRunAttempt: 1,
+  preregistrationHash: '8'.repeat(64),
+  eligibilityHash: '9'.repeat(64),
+  candidateBindingHash: 'a'.repeat(64),
+  terminal: {
+    schemaVersion: 'bayn.qualification-execution.v1' as const,
+    runId: hash,
+    lockId: '1'.repeat(64),
+    resultHash: '2'.repeat(64),
+    verdict: 'QUALIFIED' as const,
+    persistence: { artifactCount: 1, eventCount: 2, gateCount: 3 },
+  },
+  audit: qualificationAudit,
+}
+const qualificationTerminal: QualificationTerminalEvidence = {
+  ...qualificationTerminalMaterial,
+  evidenceHash: canonicalHashV1(qualificationTerminalMaterial),
+}
+const reviewedPins = (): PaperActivationReviewedPins => ({
+  schemaVersion: 'bayn.paper-activation-reviewed-pins.v1',
   sourceSha,
   imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
   imageDigest: `sha256:${'c'.repeat(64)}`,
   protocolHash: hash,
   strategyBehaviorHash: hash,
   strategyParameterHash: hash,
-  qualificationRunId: hash,
-  qualificationDecision: 'QUALIFIED',
-  qualificationObservedAt: '2026-07-31T07:00:00Z',
+  strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4',
+  qualificationExecutionPolicyHash: '3'.repeat(64),
+  previousGenerationHash: '0'.repeat(64),
+  accountId: 'paper-account-1',
+  riskPolicyHash: '4'.repeat(64),
+  proofPlanHash: '5'.repeat(64),
+  reconciliationId: '6'.repeat(64),
+  reconciliationContentHash: '7'.repeat(64),
   qualificationExpiresAt: '2026-08-01T07:00:00Z',
   accountBindingHash: hash,
   brokerEnvironment: 'sandbox',
   brokerBaseUrl: 'https://paper-api.alpaca.markets',
   maximumAuthority: 'PAPER',
-  authorityGeneration: authorityGeneration(),
   authorityExpiresAt: '2026-07-31T09:00:00Z',
   unresolvedMutationCount: 0,
   unknownMutationCount: 0,
@@ -83,9 +161,66 @@ const evidence = (overrides: Partial<PaperActivationEvidence> = {}): PaperActiva
   killSwitchActive: false,
   identityGap: false,
   activationState: 'PRECOMMITTED',
-  activationId: 'proompt-405-paper-proof-1',
-  ...overrides,
 })
+const evidence = (overrides: Partial<PaperActivationEvidence> = {}): PaperActivationEvidence => {
+  const base: PaperActivationEvidence = {
+    schemaVersion: 2,
+    repository: 'proompteng/lab',
+    mainSha: sourceSha,
+    currentMainSha: sourceSha,
+    sourceSha,
+    imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
+    imageDigest: `sha256:${'c'.repeat(64)}`,
+    protocolHash: hash,
+    strategyBehaviorHash: hash,
+    strategyParameterHash: hash,
+    qualificationRunId: hash,
+    qualificationDecision: 'QUALIFIED',
+    qualificationObservedAt: '2026-07-31T07:00:00Z',
+    qualificationExpiresAt: '2026-08-01T07:00:00Z',
+    accountBindingHash: hash,
+    brokerEnvironment: 'sandbox',
+    brokerBaseUrl: 'https://paper-api.alpaca.markets',
+    maximumAuthority: 'PAPER',
+    authorityGeneration: authorityGeneration(),
+    authorityExpiresAt: '2026-07-31T09:00:00Z',
+    unresolvedMutationCount: 0,
+    unknownMutationCount: 0,
+    openOrderCount: 0,
+    discrepancyCount: 0,
+    reconciliation: 'EXACT',
+    killSwitchActive: false,
+    identityGap: false,
+    activationState: 'PRECOMMITTED',
+    activationId: 'qualification-77-1',
+    qualificationTerminal,
+  }
+  const value = { ...base, ...overrides }
+  const auditMaterial = {
+    ...qualificationAuditMaterial,
+    runId: value.qualificationRunId,
+    evidence: { ...qualificationAuditMaterial.evidence, lockId: value.qualificationTerminal.terminal.lockId },
+    policies: { ...qualificationAuditMaterial.policies, lockId: value.qualificationTerminal.terminal.lockId },
+    repository: { ...qualificationAuditMaterial.repository, sourceRevision: value.sourceSha },
+  }
+  const audit = { ...auditMaterial, auditHash: canonicalHashV1(auditMaterial) }
+  const terminalMaterial = {
+    ...qualificationTerminalMaterial,
+    currentMainSha: value.mainSha,
+    sourceSha: value.sourceSha,
+    image: { repository: value.imageRepository, digest: value.imageDigest },
+    terminal: {
+      ...qualificationTerminalMaterial.terminal,
+      runId: value.qualificationRunId,
+      verdict: value.qualificationDecision,
+    },
+    audit,
+  }
+  return {
+    ...value,
+    qualificationTerminal: { ...terminalMaterial, evidenceHash: canonicalHashV1(terminalMaterial) },
+  }
+}
 const manifestPins = (value: PaperActivationEvidence) => ({
   sourceSha: value.sourceSha,
   strategyBehaviorHash: value.strategyBehaviorHash,
@@ -114,11 +249,92 @@ const evaluate = (value = evidence()) =>
     manifestPins: manifestPins(value),
     now,
     expectedRepository: 'proompteng/lab',
-    expectedActivationId: 'proompt-405-paper-proof-1',
+    expectedActivationId: 'qualification-77-1',
     trustedCurrentMainSha: sourceSha,
   })
 
 describe('Bayn PAPER activation verifier', () => {
+  test('builds one authenticated activation artifact from a qualified terminal and reviewed pins', () => {
+    const artifact = buildPaperActivationArtifact({ terminal: qualificationTerminal, reviewedPins: reviewedPins() })
+    expect(artifact).not.toBeNull()
+    if (artifact === null) return
+    expect(artifact.evidence.qualificationDecision).toBe('QUALIFIED')
+    expect(artifact.evidence.qualificationTerminal).toEqual(qualificationTerminal)
+    expect(artifact.evidence.activationId).toBe('qualification-77-1')
+    expect(
+      evaluatePaperActivation({
+        evidence: artifact.evidence,
+        pins: artifact.pins,
+        manifestPins: manifestPins(artifact.evidence),
+        now,
+        expectedRepository: artifact.evidence.repository,
+        expectedActivationId: artifact.evidence.activationId,
+        trustedCurrentMainSha: sourceSha,
+      }),
+    ).toMatchObject({ status: 'eligible' })
+  })
+
+  test('does not build an activation artifact for a rejected terminal verdict', () => {
+    const rejectedMaterial = {
+      ...qualificationTerminalMaterial,
+      terminal: { ...qualificationTerminalMaterial.terminal, verdict: 'REJECTED' as const },
+    }
+    const rejected: QualificationTerminalEvidence = {
+      ...rejectedMaterial,
+      evidenceHash: canonicalHashV1(rejectedMaterial),
+    }
+    expect(buildPaperActivationArtifact({ terminal: rejected, reviewedPins: reviewedPins() })).toBeNull()
+  })
+
+  test('CLI materializes exactly evidence.json and pins.json for a qualified terminal', () => {
+    const root = mkdtempSync(join(tmpdir(), 'bayn-paper-evidence-cli-'))
+    const terminalPath = join(root, 'terminal.json')
+    const reviewedPinsPath = join(root, 'reviewed-pins.json')
+    const outputDirectory = join(root, 'artifact')
+    const githubOutput = join(root, 'github-output')
+    writeFileSync(terminalPath, `${JSON.stringify(qualificationTerminal)}\n`)
+    writeFileSync(reviewedPinsPath, `${JSON.stringify(reviewedPins())}\n`)
+    try {
+      execFileSync(
+        process.execPath,
+        [
+          join(process.cwd(), 'packages/scripts/src/bayn/verify-paper-activation.ts'),
+          '--mode',
+          'build-evidence',
+          '--terminal',
+          terminalPath,
+          '--reviewed-pins',
+          reviewedPinsPath,
+          '--output-dir',
+          outputDirectory,
+          '--github-output',
+          githubOutput,
+        ],
+        { cwd: process.cwd(), encoding: 'utf8' },
+      )
+      expect(JSON.parse(readFileSync(join(outputDirectory, 'evidence.json'), 'utf8'))).toMatchObject({
+        schemaVersion: 2,
+        qualificationDecision: 'QUALIFIED',
+      })
+      expect(JSON.parse(readFileSync(join(outputDirectory, 'pins.json'), 'utf8'))).toEqual(
+        buildPaperActivationArtifact({ terminal: qualificationTerminal, reviewedPins: reviewedPins() })?.pins,
+      )
+      expect(readFileSync(githubOutput, 'utf8')).toBe('emit=true\n')
+      expect(readdirSync(outputDirectory).sort()).toEqual(['evidence.json', 'pins.json'])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('rejects a terminal artifact whose authenticated evidence hash was changed', () => {
+    expect(() =>
+      buildPaperActivationArtifact({
+        terminal: { ...qualificationTerminal, sourceSha: 'd'.repeat(40) },
+        reviewedPins: reviewedPins(),
+      }),
+    ).toThrow('invalid or unauthenticated')
+  })
+
   test('accepts one exact current-main precommitted sandbox PAPER tuple', () =>
     expect(evaluate()).toMatchObject({ status: 'eligible' }))
   const holds: Array<[string, Partial<PaperActivationEvidence>, string]> = [

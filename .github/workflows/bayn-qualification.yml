@@ -34,7 +34,7 @@ jobs:
 
       - name: Install local Bayn lifecycle dependencies
         shell: bash
-        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/bayn
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/bayn --filter @proompteng/scripts
 
       - name: Verify candidate lifecycle before any image or credential access
         id: lifecycle
@@ -153,26 +153,40 @@ jobs:
             --entrypoint bayn-qualification-collector \
             "$IMAGE_REFERENCE" >"$log" 2>&1
 
-          mapfile -t terminal_lines < <(grep '^BAYN_QUALIFICATION_TERMINAL=' "$log")
+          terminal_lines=()
+          while IFS= read -r terminal_line; do terminal_lines+=("$terminal_line"); done < <(grep '^BAYN_QUALIFICATION_TERMINAL=' "$log")
           test "${#terminal_lines[@]}" -eq 1
           printf '%s\n' "${terminal_lines[0]#BAYN_QUALIFICATION_TERMINAL=}" > "$terminal"
-          jq -e '
-            .schemaVersion == "bayn.qualification-collector-terminal.v1"
-            and (.sourceSha | test("^[0-9a-f]{40}$"))
-            and (.eligibilityHash | test("^[0-9a-f]{64}$"))
-            and (.candidateBindingHash | test("^[0-9a-f]{64}$"))
-            and (.terminal.schemaVersion == "bayn.qualification-execution.v1")
-            and (.terminal.runId | test("^[0-9a-f]{64}$"))
-            and (.terminal.lockId | test("^[0-9a-f]{64}$"))
-            and (.terminal.resultHash | test("^[0-9a-f]{64}$"))
-            and (.audit.schemaVersion == "bayn.qualification-audit.v2")
-            and (.audit.status == "PASS")
-            and (.audit.runId == .terminal.runId)
-            and (.audit.evidence.lockId == .terminal.lockId)
-            and (.audit.evidence.resultHash == .terminal.resultHash)
-            and (.evidenceHash | test("^[0-9a-f]{64}$"))
-          ' "$terminal" >/dev/null
           echo "terminal=${terminal}" >> "$GITHUB_OUTPUT"
+
+      - name: Build typed PAPER activation evidence
+        id: activation-evidence
+        if: steps.lifecycle.outputs.eligible == 'true' && steps.qualify.outcome == 'success'
+        shell: bash
+        env:
+          TERMINAL: ${{ steps.qualify.outputs.terminal }}
+          REVIEWED_PINS_JSON: ${{ vars.BAYN_PAPER_ACTIVATION_REVIEWED_PINS_JSON }}
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+
+          output_directory="${RUNNER_TEMP}/bayn-paper-activation-evidence"
+          rm -rf -- "$output_directory"
+          if [[ -z "${REVIEWED_PINS_JSON:-}" ]]; then
+            echo 'Reviewed PAPER activation pins are not configured; activation evidence remains dormant.'
+            echo 'emit=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          reviewed_pins="${RUNNER_TEMP}/bayn-paper-activation-reviewed-pins.json"
+          printf '%s' "$REVIEWED_PINS_JSON" > "$reviewed_pins"
+          bun packages/scripts/src/bayn/verify-paper-activation.ts \
+            --mode build-evidence \
+            --terminal "$TERMINAL" \
+            --reviewed-pins "$reviewed_pins" \
+            --output-dir "$output_directory" \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Upload immutable terminal qualification evidence
         if: steps.lifecycle.outputs.eligible == 'true' && steps.qualify.outcome == 'success'
@@ -181,6 +195,18 @@ jobs:
           name: bayn-qualification-terminal-${{ github.sha }}-${{ github.run_id }}
           path: ${{ steps.qualify.outputs.terminal }}
           if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload immutable PAPER activation evidence
+        if: steps.lifecycle.outputs.eligible == 'true' && steps.activation-evidence.outcome == 'success' && steps.activation-evidence.outputs.emit == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bayn-paper-activation-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/bayn-paper-activation-evidence/evidence.json
+            ${{ runner.temp }}/bayn-paper-activation-evidence/pins.json
+          if-no-files-found: error
+          overwrite: false
           retention-days: 90
 
       - name: Summarize terminal qualification evidence

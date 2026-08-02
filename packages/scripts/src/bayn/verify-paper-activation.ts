@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 
 import { parse } from 'yaml'
@@ -52,8 +52,82 @@ export type DeploymentAuthorityState = {
   readonly authorityGenerationHash: string
 }
 
+export type QualificationAuditEvidence = {
+  readonly schemaVersion: 'bayn.qualification-audit.v2'
+  readonly runId: string
+  readonly status: 'PASS' | 'FAIL'
+  readonly reference: {
+    readonly economicStatus: 'PASS' | 'FAIL_CLOSED'
+    readonly observations: number
+    readonly rebalanceCount: number
+  }
+  readonly evidence: {
+    readonly artifactCount: number
+    readonly eventCount: number
+    readonly gateCount: number
+    readonly lockId: string
+    readonly resultHash: string
+  }
+  readonly policies: {
+    readonly declaredAt: string
+    readonly lockId: string
+    readonly policySetHash: string
+    readonly documents: readonly {
+      readonly name: string
+      readonly schemaVersion: string
+      readonly contentHash: string
+      readonly content: unknown
+    }[]
+  }
+  readonly contamination: {
+    readonly lockCreatedAt: string
+    readonly resultCommittedAt: string
+    readonly replicas: readonly string[]
+    readonly principals: { readonly candidate: string; readonly publishers: readonly string[] }
+    readonly access: readonly {
+      readonly replica: string
+      readonly queryId: string
+      readonly queryStartTime: string
+      readonly user: string
+      readonly kind: 'manifest' | 'sessions' | 'bars'
+    }[]
+  }
+  readonly repository: {
+    readonly sourceCommitExists: boolean
+    readonly sourceCommitAncestorOfMain: boolean
+    readonly preLockResultReferences: readonly string[]
+    readonly sourceRevision: string
+  }
+  readonly checks: readonly { readonly name: string; readonly passed: boolean; readonly evidence: string }[]
+  readonly auditHash: string
+}
+
+export type QualificationTerminalEvidence = {
+  readonly schemaVersion: 'bayn.qualification-collector-terminal.v1'
+  readonly repository: string
+  readonly currentMainSha: string
+  readonly sourceSha: string
+  readonly image: { readonly repository: string; readonly digest: string }
+  readonly candidateOrdinal: number
+  readonly githubRunId: string
+  readonly githubRunAttempt: number
+  readonly preregistrationHash: string
+  readonly eligibilityHash: string
+  readonly candidateBindingHash: string
+  readonly terminal: {
+    readonly schemaVersion: 'bayn.qualification-execution.v1'
+    readonly runId: string
+    readonly lockId: string
+    readonly resultHash: string
+    readonly verdict: 'QUALIFIED' | 'REJECTED'
+    readonly persistence: { readonly artifactCount: number; readonly eventCount: number; readonly gateCount: number }
+  }
+  readonly audit: QualificationAuditEvidence
+  readonly evidenceHash: string
+}
+
 export type PaperActivationEvidence = {
-  readonly schemaVersion: 1
+  readonly schemaVersion: 2
   readonly repository: string
   readonly mainSha: string
   readonly currentMainSha: string
@@ -82,6 +156,46 @@ export type PaperActivationEvidence = {
   readonly identityGap: boolean
   readonly activationState: 'PRECOMMITTED' | 'IN_FLIGHT' | 'CONSUMED' | 'CANCELLED'
   readonly activationId: string
+  readonly qualificationTerminal: QualificationTerminalEvidence
+}
+
+export type PaperActivationReviewedPins = {
+  readonly schemaVersion: 'bayn.paper-activation-reviewed-pins.v1'
+  readonly sourceSha: string
+  readonly imageRepository: string
+  readonly imageDigest: string
+  readonly protocolHash: string
+  readonly strategyBehaviorHash: string
+  readonly strategyParameterHash: string
+  readonly strategyParameterSchemaVersion:
+    | 'bayn.risk-balanced-trend.protocol.v3'
+    | 'bayn.risk-balanced-trend.protocol.v4'
+  readonly qualificationExecutionPolicyHash: string
+  readonly previousGenerationHash: string
+  readonly accountId: string
+  readonly riskPolicyHash: string
+  readonly proofPlanHash: string
+  readonly reconciliationId: string
+  readonly reconciliationContentHash: string
+  readonly qualificationExpiresAt: string
+  readonly accountBindingHash: string
+  readonly brokerEnvironment: 'sandbox' | 'live'
+  readonly brokerBaseUrl: string
+  readonly maximumAuthority: 'OBSERVE' | 'PAPER' | 'LIVE'
+  readonly authorityExpiresAt: string
+  readonly unresolvedMutationCount: number
+  readonly unknownMutationCount: number
+  readonly openOrderCount: number
+  readonly discrepancyCount: number
+  readonly reconciliation: 'EXACT' | 'NON_EXACT' | 'UNKNOWN'
+  readonly killSwitchActive: boolean
+  readonly identityGap: boolean
+  readonly activationState: 'PRECOMMITTED' | 'IN_FLIGHT' | 'CONSUMED' | 'CANCELLED'
+}
+
+export type PaperActivationArtifact = {
+  readonly evidence: PaperActivationEvidence
+  readonly pins: PaperActivationPins
 }
 
 export type PaperActivationPins = Pick<
@@ -153,6 +267,7 @@ const evidenceKeys = [
   'identityGap',
   'activationState',
   'activationId',
+  'qualificationTerminal',
 ] as const satisfies readonly (keyof PaperActivationEvidence)[]
 const pinKeys = [
   'sourceSha',
@@ -203,6 +318,88 @@ const paperGenerationKeys = [
   'reconciliationContentHash',
   'generationHash',
 ] as const satisfies readonly (keyof PaperAuthorityGeneration)[]
+
+const qualificationTerminalKeys = [
+  'schemaVersion',
+  'repository',
+  'currentMainSha',
+  'sourceSha',
+  'image',
+  'candidateOrdinal',
+  'githubRunId',
+  'githubRunAttempt',
+  'preregistrationHash',
+  'eligibilityHash',
+  'candidateBindingHash',
+  'terminal',
+  'audit',
+  'evidenceHash',
+] as const satisfies readonly (keyof QualificationTerminalEvidence)[]
+const qualificationExecutionKeys = ['schemaVersion', 'runId', 'lockId', 'resultHash', 'verdict', 'persistence'] as const
+const qualificationPersistenceKeys = ['artifactCount', 'eventCount', 'gateCount'] as const
+const qualificationAuditKeys = [
+  'schemaVersion',
+  'runId',
+  'status',
+  'reference',
+  'evidence',
+  'policies',
+  'contamination',
+  'repository',
+  'checks',
+  'auditHash',
+] as const
+const qualificationAuditReferenceKeys = ['economicStatus', 'observations', 'rebalanceCount'] as const
+const qualificationAuditEvidenceKeys = ['artifactCount', 'eventCount', 'gateCount', 'lockId', 'resultHash'] as const
+const qualificationAuditPoliciesKeys = ['declaredAt', 'lockId', 'policySetHash', 'documents'] as const
+const qualificationAuditDocumentKeys = ['name', 'schemaVersion', 'contentHash', 'content'] as const
+const qualificationAuditContaminationKeys = [
+  'lockCreatedAt',
+  'resultCommittedAt',
+  'replicas',
+  'principals',
+  'access',
+] as const
+const qualificationAuditPrincipalsKeys = ['candidate', 'publishers'] as const
+const qualificationAuditAccessKeys = ['replica', 'queryId', 'queryStartTime', 'user', 'kind'] as const
+const qualificationAuditRepositoryKeys = [
+  'sourceCommitExists',
+  'sourceCommitAncestorOfMain',
+  'preLockResultReferences',
+  'sourceRevision',
+] as const
+const qualificationAuditCheckKeys = ['name', 'passed', 'evidence'] as const
+const reviewedPinKeys = [
+  'schemaVersion',
+  'sourceSha',
+  'imageRepository',
+  'imageDigest',
+  'protocolHash',
+  'strategyBehaviorHash',
+  'strategyParameterHash',
+  'strategyParameterSchemaVersion',
+  'qualificationExecutionPolicyHash',
+  'previousGenerationHash',
+  'accountId',
+  'riskPolicyHash',
+  'proofPlanHash',
+  'reconciliationId',
+  'reconciliationContentHash',
+  'qualificationExpiresAt',
+  'accountBindingHash',
+  'brokerEnvironment',
+  'brokerBaseUrl',
+  'maximumAuthority',
+  'authorityExpiresAt',
+  'unresolvedMutationCount',
+  'unknownMutationCount',
+  'openOrderCount',
+  'discrepancyCount',
+  'reconciliation',
+  'killSwitchActive',
+  'identityGap',
+  'activationState',
+] as const satisfies readonly (keyof PaperActivationReviewedPins)[]
 
 const requirePins = <Key extends string>(value: unknown, keys: readonly Key[]): Record<Key, string> | null => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
@@ -274,7 +471,289 @@ const canonicalJsonV1 = (value: unknown, ancestors: readonly object[] = []): str
   return `{${entries.join(',')}}`
 }
 
-const canonicalHashV1 = (value: unknown): string => sha256(canonicalJsonV1(value))
+export const canonicalHashV1 = (value: unknown): string => sha256(canonicalJsonV1(value))
+
+const isNonNegativeSafeInteger = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+
+const nonEmptyStringArray = (value: unknown): value is readonly string[] =>
+  Array.isArray(value) && value.every((entry) => typeof entry === 'string' && entry.length > 0)
+
+const exactObject = (value: unknown, keys: readonly string[]): Record<string, unknown> | null => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  return hasExactKeys(record, keys) ? record : null
+}
+
+const requireQualificationAudit = (value: unknown): QualificationAuditEvidence | null => {
+  const record = exactObject(value, qualificationAuditKeys)
+  if (record === null) return null
+  if (record.schemaVersion !== 'bayn.qualification-audit.v2') return null
+  if (typeof record.runId !== 'string' || !isHash(record.runId)) return null
+  if (record.status !== 'PASS' && record.status !== 'FAIL') return null
+
+  const reference = exactObject(record.reference, qualificationAuditReferenceKeys)
+  if (reference === null) return null
+  if (reference.economicStatus !== 'PASS' && reference.economicStatus !== 'FAIL_CLOSED') return null
+  if (!isNonNegativeSafeInteger(reference.observations) || !isNonNegativeSafeInteger(reference.rebalanceCount))
+    return null
+
+  const evidence = exactObject(record.evidence, qualificationAuditEvidenceKeys)
+  if (evidence === null) return null
+  if (
+    !isNonNegativeSafeInteger(evidence.artifactCount) ||
+    !isNonNegativeSafeInteger(evidence.eventCount) ||
+    !isNonNegativeSafeInteger(evidence.gateCount) ||
+    typeof evidence.lockId !== 'string' ||
+    !isHash(evidence.lockId) ||
+    typeof evidence.resultHash !== 'string' ||
+    !isHash(evidence.resultHash)
+  )
+    return null
+
+  const policies = exactObject(record.policies, qualificationAuditPoliciesKeys)
+  if (policies === null) return null
+  if (
+    typeof policies.declaredAt !== 'string' ||
+    policies.declaredAt.length === 0 ||
+    typeof policies.lockId !== 'string' ||
+    !isHash(policies.lockId) ||
+    typeof policies.policySetHash !== 'string' ||
+    !isHash(policies.policySetHash) ||
+    !Array.isArray(policies.documents)
+  )
+    return null
+  for (const document of policies.documents) {
+    const documentRecord = exactObject(document, qualificationAuditDocumentKeys)
+    if (
+      documentRecord === null ||
+      typeof documentRecord.name !== 'string' ||
+      documentRecord.name.length === 0 ||
+      typeof documentRecord.schemaVersion !== 'string' ||
+      documentRecord.schemaVersion.length === 0 ||
+      typeof documentRecord.contentHash !== 'string' ||
+      !isHash(documentRecord.contentHash)
+    )
+      return null
+  }
+
+  const contamination = exactObject(record.contamination, qualificationAuditContaminationKeys)
+  if (contamination === null) return null
+  if (
+    typeof contamination.lockCreatedAt !== 'string' ||
+    contamination.lockCreatedAt.length === 0 ||
+    typeof contamination.resultCommittedAt !== 'string' ||
+    contamination.resultCommittedAt.length === 0 ||
+    !nonEmptyStringArray(contamination.replicas)
+  )
+    return null
+  const principals = exactObject(contamination.principals, qualificationAuditPrincipalsKeys)
+  if (
+    principals === null ||
+    typeof principals.candidate !== 'string' ||
+    principals.candidate.length === 0 ||
+    !nonEmptyStringArray(principals.publishers) ||
+    !Array.isArray(contamination.access)
+  )
+    return null
+  for (const access of contamination.access) {
+    const accessRecord = exactObject(access, qualificationAuditAccessKeys)
+    if (
+      accessRecord === null ||
+      typeof accessRecord.replica !== 'string' ||
+      accessRecord.replica.length === 0 ||
+      typeof accessRecord.queryId !== 'string' ||
+      accessRecord.queryId.length === 0 ||
+      typeof accessRecord.queryStartTime !== 'string' ||
+      accessRecord.queryStartTime.length === 0 ||
+      typeof accessRecord.user !== 'string' ||
+      accessRecord.user.length === 0 ||
+      (accessRecord.kind !== 'manifest' && accessRecord.kind !== 'sessions' && accessRecord.kind !== 'bars')
+    )
+      return null
+  }
+
+  const repository = exactObject(record.repository, qualificationAuditRepositoryKeys)
+  if (
+    repository === null ||
+    repository.sourceCommitExists !== true ||
+    repository.sourceCommitAncestorOfMain !== true ||
+    !Array.isArray(repository.preLockResultReferences) ||
+    !repository.preLockResultReferences.every((entry) => typeof entry === 'string') ||
+    typeof repository.sourceRevision !== 'string' ||
+    !isSha(repository.sourceRevision)
+  )
+    return null
+
+  if (!Array.isArray(record.checks)) return null
+  for (const check of record.checks) {
+    const checkRecord = exactObject(check, qualificationAuditCheckKeys)
+    if (
+      checkRecord === null ||
+      typeof checkRecord.name !== 'string' ||
+      checkRecord.name.length === 0 ||
+      typeof checkRecord.passed !== 'boolean' ||
+      typeof checkRecord.evidence !== 'string' ||
+      checkRecord.evidence.length === 0
+    )
+      return null
+  }
+  if (typeof record.auditHash !== 'string' || !isHash(record.auditHash)) return null
+
+  try {
+    const { auditHash: _auditHash, ...auditMaterial } = record
+    if (canonicalHashV1(auditMaterial) !== record.auditHash) return null
+  } catch {
+    return null
+  }
+  return record as unknown as QualificationAuditEvidence
+}
+
+const requireQualificationTerminal = (value: unknown): QualificationTerminalEvidence | null => {
+  const record = exactObject(value, qualificationTerminalKeys)
+  if (record === null || record.schemaVersion !== 'bayn.qualification-collector-terminal.v1') return null
+  if (
+    typeof record.repository !== 'string' ||
+    record.repository.length === 0 ||
+    typeof record.currentMainSha !== 'string' ||
+    !isSha(record.currentMainSha) ||
+    typeof record.sourceSha !== 'string' ||
+    !isSha(record.sourceSha) ||
+    typeof record.candidateOrdinal !== 'number' ||
+    !Number.isSafeInteger(record.candidateOrdinal) ||
+    record.candidateOrdinal < 1 ||
+    typeof record.githubRunId !== 'string' ||
+    !/^\d+$/.test(record.githubRunId) ||
+    typeof record.githubRunAttempt !== 'number' ||
+    !Number.isSafeInteger(record.githubRunAttempt) ||
+    record.githubRunAttempt < 1
+  )
+    return null
+  const image = exactObject(record.image, ['repository', 'digest'])
+  if (
+    image === null ||
+    typeof image.repository !== 'string' ||
+    image.repository.length === 0 ||
+    typeof image.digest !== 'string' ||
+    !isDigest(image.digest)
+  )
+    return null
+  for (const key of ['preregistrationHash', 'eligibilityHash', 'candidateBindingHash', 'evidenceHash'] as const) {
+    if (typeof record[key] !== 'string' || !isHash(record[key])) return null
+  }
+
+  const execution = exactObject(record.terminal, qualificationExecutionKeys)
+  if (execution === null || execution.schemaVersion !== 'bayn.qualification-execution.v1') return null
+  if (
+    typeof execution.runId !== 'string' ||
+    !isHash(execution.runId) ||
+    typeof execution.lockId !== 'string' ||
+    !isHash(execution.lockId) ||
+    typeof execution.resultHash !== 'string' ||
+    !isHash(execution.resultHash) ||
+    (execution.verdict !== 'QUALIFIED' && execution.verdict !== 'REJECTED')
+  )
+    return null
+  const persistence = exactObject(execution.persistence, qualificationPersistenceKeys)
+  if (
+    persistence === null ||
+    !isNonNegativeSafeInteger(persistence.artifactCount) ||
+    !isNonNegativeSafeInteger(persistence.eventCount) ||
+    !isNonNegativeSafeInteger(persistence.gateCount)
+  )
+    return null
+
+  const audit = requireQualificationAudit(record.audit)
+  if (audit === null || audit.status !== 'PASS') return null
+  if (
+    audit.runId !== execution.runId ||
+    audit.evidence.lockId !== execution.lockId ||
+    audit.evidence.resultHash !== execution.resultHash ||
+    audit.policies.lockId !== execution.lockId ||
+    audit.repository.sourceRevision !== record.sourceSha ||
+    audit.evidence.artifactCount !== persistence.artifactCount ||
+    audit.evidence.eventCount !== persistence.eventCount ||
+    audit.evidence.gateCount !== persistence.gateCount
+  )
+    return null
+
+  try {
+    const { evidenceHash: _evidenceHash, ...terminalMaterial } = record
+    if (canonicalHashV1(terminalMaterial) !== record.evidenceHash) return null
+  } catch {
+    return null
+  }
+  return {
+    ...(record as unknown as Omit<QualificationTerminalEvidence, 'image' | 'terminal' | 'audit'>),
+    image: image as QualificationTerminalEvidence['image'],
+    terminal: execution as QualificationTerminalEvidence['terminal'],
+    audit,
+  }
+}
+
+const requireReviewedPins = (value: unknown): PaperActivationReviewedPins | null => {
+  const record = exactObject(value, reviewedPinKeys)
+  if (record === null || record.schemaVersion !== 'bayn.paper-activation-reviewed-pins.v1') return null
+  const stringKeys = [
+    'imageRepository',
+    'protocolHash',
+    'strategyBehaviorHash',
+    'strategyParameterHash',
+    'qualificationExecutionPolicyHash',
+    'previousGenerationHash',
+    'accountId',
+    'riskPolicyHash',
+    'proofPlanHash',
+    'reconciliationId',
+    'reconciliationContentHash',
+    'qualificationExpiresAt',
+    'accountBindingHash',
+    'brokerBaseUrl',
+    'authorityExpiresAt',
+  ] as const
+  if (stringKeys.some((key) => typeof record[key] !== 'string' || record[key].length === 0)) return null
+  if (typeof record.sourceSha !== 'string' || !isSha(record.sourceSha)) return null
+  if (typeof record.imageDigest !== 'string' || !isDigest(record.imageDigest)) return null
+  for (const key of [
+    'protocolHash',
+    'strategyBehaviorHash',
+    'strategyParameterHash',
+    'qualificationExecutionPolicyHash',
+    'previousGenerationHash',
+    'riskPolicyHash',
+    'proofPlanHash',
+    'reconciliationId',
+    'reconciliationContentHash',
+    'accountBindingHash',
+  ] as const) {
+    if (typeof record[key] !== 'string' || !isHash(record[key])) return null
+  }
+  if (
+    record.strategyParameterSchemaVersion !== 'bayn.risk-balanced-trend.protocol.v3' &&
+    record.strategyParameterSchemaVersion !== 'bayn.risk-balanced-trend.protocol.v4'
+  )
+    return null
+  if (record.brokerEnvironment !== 'sandbox' && record.brokerEnvironment !== 'live') return null
+  if (
+    record.maximumAuthority !== 'OBSERVE' &&
+    record.maximumAuthority !== 'PAPER' &&
+    record.maximumAuthority !== 'LIVE'
+  )
+    return null
+  const countKeys = ['unresolvedMutationCount', 'unknownMutationCount', 'openOrderCount', 'discrepancyCount'] as const
+  if (countKeys.some((key) => !isNonNegativeSafeInteger(record[key]))) return null
+  if (record.reconciliation !== 'EXACT' && record.reconciliation !== 'NON_EXACT' && record.reconciliation !== 'UNKNOWN')
+    return null
+  if (
+    record.activationState !== 'PRECOMMITTED' &&
+    record.activationState !== 'IN_FLIGHT' &&
+    record.activationState !== 'CONSUMED' &&
+    record.activationState !== 'CANCELLED'
+  )
+    return null
+  if (typeof record.killSwitchActive !== 'boolean' || typeof record.identityGap !== 'boolean') return null
+  return record as unknown as PaperActivationReviewedPins
+}
 
 const requirePaperAuthorityGeneration = (value: unknown): PaperAuthorityGeneration | null => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
@@ -343,7 +822,7 @@ const requireEvidence = (value: unknown): PaperActivationEvidence | null => {
     })
   )
     return null
-  if (record.schemaVersion !== 1) return null
+  if (record.schemaVersion !== 2) return null
   if (record.qualificationDecision !== 'QUALIFIED' && record.qualificationDecision !== 'REJECTED') return null
   if (record.brokerEnvironment !== 'sandbox' && record.brokerEnvironment !== 'live') return null
   if (
@@ -364,7 +843,24 @@ const requireEvidence = (value: unknown): PaperActivationEvidence | null => {
   if (typeof record.killSwitchActive !== 'boolean' || typeof record.identityGap !== 'boolean') return null
   const authorityGeneration = requirePaperAuthorityGeneration(record.authorityGeneration)
   if (authorityGeneration === null) return null
-  return { ...(record as unknown as Omit<PaperActivationEvidence, 'authorityGeneration'>), authorityGeneration }
+  const qualificationTerminal = requireQualificationTerminal(record.qualificationTerminal)
+  if (qualificationTerminal === null) return null
+  if (
+    qualificationTerminal.repository !== record.repository ||
+    qualificationTerminal.currentMainSha !== record.mainSha ||
+    qualificationTerminal.sourceSha !== record.sourceSha ||
+    qualificationTerminal.image.repository !== record.imageRepository ||
+    qualificationTerminal.image.digest !== record.imageDigest ||
+    qualificationTerminal.terminal.runId !== record.qualificationRunId ||
+    qualificationTerminal.terminal.verdict !== record.qualificationDecision ||
+    qualificationTerminal.audit.contamination.resultCommittedAt !== record.qualificationObservedAt
+  )
+    return null
+  return {
+    ...(record as unknown as Omit<PaperActivationEvidence, 'authorityGeneration' | 'qualificationTerminal'>),
+    authorityGeneration,
+    qualificationTerminal,
+  }
 }
 
 const expectRecord = (value: unknown, label: string): Record<string, unknown> => {
@@ -642,6 +1138,98 @@ export const paperAuthorityGenerationHash = (
   generation: PaperAuthorityGenerationMaterial | PaperAuthorityGeneration,
 ): string => canonicalHashV1(paperAuthorityGenerationIdentity(generation))
 
+export const buildPaperActivationArtifact = (input: {
+  readonly terminal: unknown
+  readonly reviewedPins: unknown
+}): PaperActivationArtifact | null => {
+  const terminal = requireQualificationTerminal(input.terminal)
+  if (terminal === null) throw new Error('qualification terminal evidence is invalid or unauthenticated')
+  if (terminal.terminal.verdict === 'REJECTED') return null
+
+  const reviewed = requireReviewedPins(input.reviewedPins)
+  if (reviewed === null) throw new Error('reviewed PAPER activation pins are invalid or incomplete')
+  if (reviewed.sourceSha !== terminal.sourceSha)
+    throw new Error('reviewed source SHA does not match qualification terminal')
+  if (reviewed.imageRepository !== terminal.image.repository || reviewed.imageDigest !== terminal.image.digest)
+    throw new Error('reviewed image pin does not match qualification terminal')
+
+  const activationId = `qualification-${terminal.githubRunId}-${terminal.githubRunAttempt}`
+  const generationMaterial: PaperAuthorityGenerationMaterial = {
+    schemaVersion: 'bayn.paper-authority-generation.v2',
+    maximum: 'PAPER',
+    previousGenerationHash: reviewed.previousGenerationHash,
+    qualificationRunId: terminal.terminal.runId,
+    qualificationLockId: terminal.terminal.lockId,
+    qualificationResultHash: terminal.terminal.resultHash,
+    protocolHash: reviewed.protocolHash,
+    qualificationExecutionPolicyHash: reviewed.qualificationExecutionPolicyHash,
+    qualificationSourceRevision: terminal.sourceSha,
+    qualificationImageRepository: terminal.image.repository,
+    qualificationImageDigest: terminal.image.digest,
+    activationSourceRevision: terminal.sourceSha,
+    activationImageRepository: terminal.image.repository,
+    activationImageDigest: terminal.image.digest,
+    strategyName: 'risk-balanced-trend',
+    strategyBehaviorHash: reviewed.strategyBehaviorHash,
+    strategyParameterHash: reviewed.strategyParameterHash,
+    strategyParameterSchemaVersion: reviewed.strategyParameterSchemaVersion,
+    accountId: reviewed.accountId,
+    riskPolicyHash: reviewed.riskPolicyHash,
+    proofPlanHash: reviewed.proofPlanHash,
+    reconciliationId: reviewed.reconciliationId,
+    reconciliationContentHash: reviewed.reconciliationContentHash,
+  }
+  const authorityGeneration: PaperAuthorityGeneration = {
+    ...generationMaterial,
+    generationHash: paperAuthorityGenerationHash(generationMaterial),
+  }
+  const evidence: PaperActivationEvidence = {
+    schemaVersion: 2,
+    repository: terminal.repository,
+    mainSha: terminal.currentMainSha,
+    currentMainSha: terminal.currentMainSha,
+    sourceSha: terminal.sourceSha,
+    imageRepository: terminal.image.repository,
+    imageDigest: terminal.image.digest,
+    protocolHash: reviewed.protocolHash,
+    strategyBehaviorHash: reviewed.strategyBehaviorHash,
+    strategyParameterHash: reviewed.strategyParameterHash,
+    qualificationRunId: terminal.terminal.runId,
+    qualificationDecision: 'QUALIFIED',
+    qualificationObservedAt: terminal.audit.contamination.resultCommittedAt,
+    qualificationExpiresAt: reviewed.qualificationExpiresAt,
+    accountBindingHash: reviewed.accountBindingHash,
+    brokerEnvironment: reviewed.brokerEnvironment,
+    brokerBaseUrl: reviewed.brokerBaseUrl,
+    maximumAuthority: reviewed.maximumAuthority,
+    authorityGeneration,
+    authorityExpiresAt: reviewed.authorityExpiresAt,
+    unresolvedMutationCount: reviewed.unresolvedMutationCount,
+    unknownMutationCount: reviewed.unknownMutationCount,
+    openOrderCount: reviewed.openOrderCount,
+    discrepancyCount: reviewed.discrepancyCount,
+    reconciliation: reviewed.reconciliation,
+    killSwitchActive: reviewed.killSwitchActive,
+    identityGap: reviewed.identityGap,
+    activationState: reviewed.activationState,
+    activationId,
+    qualificationTerminal: terminal,
+  }
+  return {
+    evidence,
+    pins: {
+      sourceSha: evidence.sourceSha,
+      imageRepository: evidence.imageRepository,
+      imageDigest: evidence.imageDigest,
+      protocolHash: evidence.protocolHash,
+      strategyBehaviorHash: evidence.strategyBehaviorHash,
+      strategyParameterHash: evidence.strategyParameterHash,
+      qualificationRunId: evidence.qualificationRunId,
+      accountBindingHash: evidence.accountBindingHash,
+    },
+  }
+}
+
 export const deriveObserveRollbackGeneration = (input: {
   readonly repository: string
   readonly activationId: string
@@ -684,11 +1272,16 @@ export const evaluatePaperActivation = (input: {
   const manifestPins = requirePins(input.manifestPins, manifestPinKeys)
   if (manifestPins === null)
     return hold('invalid-manifest-pins', 'manifest pins must contain the complete exact schema')
-  if (evidence.schemaVersion !== 1) return hold('unsupported-schema', 'activation evidence schema is unsupported')
+  if (evidence.schemaVersion !== 2) return hold('unsupported-schema', 'activation evidence schema is unsupported')
   if (evidence.repository !== input.expectedRepository)
     return hold('repository-mismatch', 'evidence belongs to another repository')
   if (evidence.activationId !== input.expectedActivationId)
     return hold('activation-id-mismatch', 'activation id does not match the precommit')
+  if (
+    evidence.activationId !==
+    `qualification-${evidence.qualificationTerminal.githubRunId}-${evidence.qualificationTerminal.githubRunAttempt}`
+  )
+    return hold('activation-id-mismatch', 'activation id does not match the authenticated qualification run')
   if (
     !isSha(input.trustedCurrentMainSha) ||
     !isSha(evidence.mainSha) ||
@@ -798,6 +1391,24 @@ const parseArguments = (arguments_: readonly string[]): Record<string, string> =
 if (import.meta.main) {
   try {
     const args = parseArguments(process.argv.slice(2))
+    if (args.mode === 'build-evidence') {
+      const artifact = buildPaperActivationArtifact({
+        terminal: JSON.parse(readFileSync(args.terminal ?? '', 'utf8')) as unknown,
+        reviewedPins: JSON.parse(readFileSync(args['reviewed-pins'] ?? '', 'utf8')) as unknown,
+      })
+      if (artifact === null) {
+        if (args['github-output'] !== undefined) appendFileSync(args['github-output'], 'emit=false\n')
+        console.log('BAYN_PAPER_ACTIVATION_EVIDENCE_NOT_EMITTED verdict=REJECTED')
+        process.exit(0)
+      }
+      const outputDirectory = args['output-dir'] ?? ''
+      mkdirSync(outputDirectory, { recursive: true })
+      writeFileSync(`${outputDirectory}/evidence.json`, `${JSON.stringify(artifact.evidence, null, 2)}\n`)
+      writeFileSync(`${outputDirectory}/pins.json`, `${JSON.stringify(artifact.pins, null, 2)}\n`)
+      if (args['github-output'] !== undefined) appendFileSync(args['github-output'], 'emit=true\n')
+      console.log('BAYN_PAPER_ACTIVATION_EVIDENCE_EMITTED')
+      process.exit(0)
+    }
     if (args.mode === 'extract-manifest-pins') {
       const manifestPins = extractPaperActivationManifestPins(
         readFileSync(args.deployment ?? '', 'utf8'),

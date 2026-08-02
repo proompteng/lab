@@ -9,7 +9,7 @@ import { BrokerEnvironment } from '../broker/identity'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import { Authority, IntentState, TerminalOutcome } from '../execution/contracts'
 import { MutationEventType, MutationStoreError, type MutationEvent } from '../execution/mutations'
-import { paperProofCommandEntryGate, runPaperProofCommand } from '../paper-proof-command'
+import { runPaperProofCommand } from '../paper-proof-command'
 import {
   protectedEntryToken,
   runPaperProof,
@@ -1551,12 +1551,5 @@ describe('bounded PAPER proof command', () => {
       expect(calls.cancel).toBe(0)
       expect(calls.recover).toBe(0)
     }
-  })
-
-  test('executable default entry remains fail-closed without a pinned plan', async () => {
-    const exit = await Effect.runPromiseExit(paperProofCommandEntryGate)
-
-    expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain('intentionally disabled')
   })
 })

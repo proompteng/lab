@@ -1,4 +1,3 @@
-import { NodeRuntime } from '@effect/platform-node'
 import { Effect, Result } from 'effect'
 
 import {
@@ -56,17 +55,4 @@ export const runPaperProofCommand = (
     ...dependencies,
     protectedEntryToken: envelope.protectedEntryToken,
   })
-}
-
-export const paperProofCommandEntryGate = Effect.fail(
-  new PaperProofError({
-    operation: 'GATE',
-    failure: 'gate-closed',
-    message:
-      'PAPER proof CLI is source-ready but intentionally disabled: no reviewed source plan and protected sandbox entry binding are pinned',
-  }),
-)
-
-if (import.meta.main) {
-  NodeRuntime.runMain(paperProofCommandEntryGate)
 }

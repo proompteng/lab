@@ -84,6 +84,10 @@ jobs:
         with:
           bun-version: 1.3.14
 
+      - name: Install activation verifier dependencies
+        shell: bash
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/scripts
+
       - name: Authenticate activation identity and evidence producer
         id: identity
         env:
@@ -845,7 +849,8 @@ jobs:
             echo 'BAYN_PAPER_ACTIVATION_HOLD rollback-precommit-changed: rollback branch differs from the workflow-produced commit' >&2
             exit 1
           }
-          mapfile -t metadata_lines < <(
+          metadata_lines=()
+          while IFS= read -r metadata_line_value; do metadata_lines+=("$metadata_line_value"); done < <(
             git show -s --format=%B "${old_rollback_sha}" | sed -n 's/^BAYN_PAPER_ROLLBACK_METADATA=//p'
           )
           [[ "${#metadata_lines[@]}" == 1 ]] || {
@@ -1591,7 +1596,8 @@ jobs:
             echo 'BAYN_PAPER_ACTIVATION_HOLD watchdog-artifact-list-invalid: repository artifact discovery is incomplete or duplicated' >&2
             exit 1
           }
-          mapfile -t attestation_artifacts < <(
+          attestation_artifacts=()
+          while IFS= read -r attestation_line; do attestation_artifacts+=("$attestation_line"); done < <(
             jq -c --arg cutoff "${retention_cutoff}" '
               .[] | .artifacts[] |
               select(.expired == false and .created_at >= $cutoff) |
@@ -1599,7 +1605,8 @@ jobs:
               select((.workflow_run.id | tostring) == $identity.runId)
             ' <<< "${artifact_pages}"
           )
-          for artifact in "${attestation_artifacts[@]}"; do
+          if [[ ${#attestation_artifacts[@]} -gt 0 ]]; then
+            for artifact in "${attestation_artifacts[@]}"; do
             artifact_id="$(jq -r '.id' <<< "${artifact}")"
             artifact_name="$(jq -r '.name' <<< "${artifact}")"
             artifact_workflow_run_id="$(jq -r '.workflow_run.id' <<< "${artifact}")"
@@ -1849,7 +1856,10 @@ jobs:
                   git commit-tree "${tree}" -p "${current_main_sha}"
             )"
             rm -f "${index}"
-            mapfile -t rollback_remote_refs < <(git ls-remote --heads origin "refs/heads/${rollback_branch}")
+            rollback_remote_refs=()
+            while IFS= read -r rollback_remote_ref; do rollback_remote_refs+=("$rollback_remote_ref"); done < <(
+              git ls-remote --heads origin "refs/heads/${rollback_branch}"
+            )
             [[ "${#rollback_remote_refs[@]}" -le 1 ]] || {
               echo "Rollback branch ${rollback_branch} resolved to multiple remote refs." >&2
               exit 1
@@ -1989,4 +1999,5 @@ jobs:
               echo "Rollback PR #${rollback_pr} did not reach a clean exact-head reviewed state." >&2
               exit 1
             }
-          done
+            done
+          fi
