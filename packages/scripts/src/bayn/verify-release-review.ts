@@ -1497,7 +1497,7 @@ const selectExactHeadCodexAttestation = (
   if (
     !Number.isFinite(reactionAtMs) ||
     reactionAtMs < createdAtMs ||
-    reactionAtMs > mergedAtMs ||
+    (latestForcePush !== null && reactionAtMs > mergedAtMs) ||
     (latestForcePush !== null && reactionAtMs <= latestForcePush.createdAtMs)
   ) {
     return undefined

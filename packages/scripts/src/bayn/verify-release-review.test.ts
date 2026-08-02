@@ -6009,7 +6009,7 @@ describe('Bayn delayed-attestation publication retry', () => {
           parents: [lastPublishedSha],
           mergedAt: '2026-07-30T07:00:00Z',
           reviews: [],
-          reactions: [reaction({ createdAt: '2026-07-30T07:00:00Z' })],
+          reactions: [reaction({ createdAt: '2026-07-30T07:03:00Z' })],
           threads: [thread({ isResolved: false })],
         }),
         code: 'active-unresolved-review-threads',
@@ -6209,8 +6209,8 @@ describe('Bayn delayed-attestation publication retry', () => {
               event: 'push',
               status: 'completed',
               conclusion: 'failure',
-              created_at: '2026-07-30T06:59:00Z',
-              updated_at: '2026-07-30T06:59:20Z',
+              created_at: '2026-07-30T07:00:05Z',
+              updated_at: '2026-07-30T07:02:30Z',
             },
           ],
         })
@@ -6223,14 +6223,14 @@ describe('Bayn delayed-attestation publication retry', () => {
               name: 'Verify exact-head Codex review',
               status: 'completed',
               conclusion: 'failure',
-              completed_at: '2026-07-30T06:59:20Z',
+              completed_at: '2026-07-30T07:02:30Z',
             },
             {
               id: 90860000002,
               name: 'image',
               status: 'completed',
               conclusion: 'skipped',
-              completed_at: '2026-07-30T06:59:21Z',
+              completed_at: '2026-07-30T07:02:31Z',
             },
           ],
         })
@@ -6286,7 +6286,7 @@ describe('Bayn delayed-attestation publication retry', () => {
           {
             user: { login: baynCodexBotLogin },
             content: '+1',
-            created_at: '2026-07-30T06:59:30Z',
+            created_at: '2026-07-30T07:03:00Z',
           },
         ])
       }
@@ -6446,6 +6446,28 @@ describe('Bayn exact-head release review eligibility', () => {
       headSha: finalHeadSha,
       reviewSubmittedAt: '2026-07-30T07:01:00Z',
       eligibleAt: '2026-07-30T07:01:30.000Z',
+    })
+  })
+
+  test('preserves delayed immutable reactions that arrive after merge', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: snapshot({
+          associated: [associatedPull({ mergedAt: '2026-07-30T07:01:30Z' })],
+          reviews: [],
+          reactions: [reaction({ createdAt: '2026-07-30T07:03:00Z' })],
+        }),
+        nowMs: Date.parse('2026-07-30T07:04:00Z'),
+        pushBeforeSha: null,
+      }),
+    ).toEqual({
+      status: 'eligible',
+      prNumber: 13390,
+      headSha: finalHeadSha,
+      reviewSubmittedAt: '2026-07-30T07:03:00Z',
+      eligibleAt: '2026-07-30T07:03:30.000Z',
     })
   })
 
