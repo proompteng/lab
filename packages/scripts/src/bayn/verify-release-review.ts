@@ -1525,25 +1525,6 @@ const selectReviewThreads = (
     thread.comments.some((comment) => reviewCommentBelongsTo(comment, reviewEvidence)),
   )
 
-const selectTrustedFinalHeadReplyTimes = (
-  pullRequest: PullRequestReviewState,
-  thread: PullRequestReviewThread,
-  reviewSubmittedAtMs: number,
-): readonly number[] =>
-  thread.comments.flatMap((comment) => {
-    if (
-      comment.authorLogin === null ||
-      comment.authorLogin === baynCodexReviewer ||
-      !trustedFeedbackAssociations.has(comment.authorAssociation) ||
-      comment.reviewCommitSha !== pullRequest.headSha ||
-      comment.reviewSubmittedAt === null
-    ) {
-      return []
-    }
-    const attestationTime = Date.parse(comment.reviewSubmittedAt)
-    return Number.isFinite(attestationTime) && attestationTime >= reviewSubmittedAtMs ? [attestationTime] : []
-  })
-
 const selectFeedbackFixEvidence = (
   pullRequest: PullRequestReviewState,
   reviewEvidence: PullRequestReview,
@@ -1552,12 +1533,10 @@ const selectFeedbackFixEvidence = (
   if (reviewEvidence.commitSha === null || reviewEvidence.submittedAt === null) return undefined
   const reviewedCommitIndex = pullRequest.commitShas.indexOf(reviewEvidence.commitSha)
   const finalCommitIndex = pullRequest.commitShas.length - 1
-  if (reviewedCommitIndex < 0 || reviewedCommitIndex >= finalCommitIndex) return undefined
-  const isDirectFinalChild = reviewedCommitIndex + 1 === finalCommitIndex
+  if (reviewedCommitIndex < 0 || reviewedCommitIndex + 1 !== finalCommitIndex) return undefined
   const reviewedThreads = selectReviewThreads(pullRequest, reviewEvidence)
   if (reviewedThreads.length === 0) return undefined
 
-  const threadAttestationTimes: number[] = []
   const reviewedPaths = new Set<string>()
   for (const thread of reviewedThreads) {
     const reviewedComments = thread.comments.filter((comment) => reviewCommentBelongsTo(comment, reviewEvidence))
@@ -1576,60 +1555,44 @@ const selectFeedbackFixEvidence = (
       return undefined
     }
     reviewedPaths.add(thread.path)
-
-    const trustedReplies = selectTrustedFinalHeadReplyTimes(pullRequest, thread, reviewSubmittedAtMs)
-    const earliestTrustedReplyAtMs = trustedReplies.length === 0 ? undefined : Math.min(...trustedReplies)
-    if (
-      !thread.isResolved ||
-      (!isDirectFinalChild && trustedReplies.length === 0) ||
-      (!thread.isOutdated && trustedReplies.length === 0)
-    ) {
-      return undefined
-    }
-    if (earliestTrustedReplyAtMs !== undefined) threadAttestationTimes.push(earliestTrustedReplyAtMs)
+    if (!thread.isResolved || !thread.isOutdated) return undefined
   }
 
-  if (threadAttestationTimes.length === 0) {
-    const finalHeadCommit = pullRequest.finalHeadCommit
-    const changedFilePaths = finalHeadCommit?.fileChanges.flatMap((change) =>
-      change.previousPath === null ? [change.path] : [change.path, change.previousPath],
-    )
-    const finalFilePaths = finalHeadCommit?.files
-    const finalFilePathSet = finalFilePaths === undefined ? null : new Set(finalFilePaths)
-    const changedFilePathSet = changedFilePaths === undefined ? null : new Set(changedFilePaths)
-    const finalBaynPaths = finalHeadCommit?.fileChanges
-      .filter((change) => isBaynReleaseAffectingPath(change.path))
-      .map((change) => change.path)
-    if (
-      finalHeadCommit === undefined ||
-      finalHeadCommit === null ||
-      finalHeadCommit.sha !== pullRequest.headSha ||
-      finalHeadCommit.parents.length !== 1 ||
-      finalHeadCommit.parents[0] !== reviewEvidence.commitSha ||
-      finalFilePaths === undefined ||
-      changedFilePaths === undefined ||
-      finalFilePaths.length !== changedFilePaths.length ||
-      finalFilePathSet === null ||
-      changedFilePathSet === null ||
-      finalFilePathSet.size !== finalFilePaths.length ||
-      changedFilePathSet.size !== changedFilePaths.length ||
-      finalFilePaths.some((path) => !changedFilePathSet.has(path)) ||
-      changedFilePaths.some((path) => !finalFilePathSet.has(path)) ||
-      finalHeadCommit.fileChanges.some((change) => change.path.length === 0 || change.previousPath !== null) ||
-      finalBaynPaths === undefined ||
-      finalBaynPaths.length === 0 ||
-      new Set(finalBaynPaths).size !== finalBaynPaths.length ||
-      finalBaynPaths.some((path) => !reviewedPaths.has(path))
-    ) {
-      return undefined
-    }
+  const finalHeadCommit = pullRequest.finalHeadCommit
+  const changedFilePaths = finalHeadCommit?.fileChanges.flatMap((change) =>
+    change.previousPath === null ? [change.path] : [change.path, change.previousPath],
+  )
+  const finalFilePaths = finalHeadCommit?.files
+  const finalFilePathSet = finalFilePaths === undefined ? null : new Set(finalFilePaths)
+  const changedFilePathSet = changedFilePaths === undefined ? null : new Set(changedFilePaths)
+  const finalBaynPaths = finalHeadCommit?.fileChanges
+    .filter((change) => isBaynReleaseAffectingPath(change.path))
+    .map((change) => change.path)
+  if (
+    finalHeadCommit === undefined ||
+    finalHeadCommit === null ||
+    finalHeadCommit.sha !== pullRequest.headSha ||
+    finalHeadCommit.parents.length !== 1 ||
+    finalHeadCommit.parents[0] !== reviewEvidence.commitSha ||
+    finalFilePaths === undefined ||
+    changedFilePaths === undefined ||
+    finalFilePaths.length !== changedFilePaths.length ||
+    finalFilePathSet === null ||
+    changedFilePathSet === null ||
+    finalFilePathSet.size !== finalFilePaths.length ||
+    changedFilePathSet.size !== changedFilePaths.length ||
+    finalFilePaths.some((path) => !changedFilePathSet.has(path)) ||
+    changedFilePaths.some((path) => !finalFilePathSet.has(path)) ||
+    finalHeadCommit.fileChanges.some((change) => change.path.length === 0 || change.previousPath !== null) ||
+    finalBaynPaths === undefined ||
+    new Set(finalBaynPaths).size !== finalBaynPaths.length ||
+    finalBaynPaths.some((path) => !reviewedPaths.has(path))
+  ) {
+    return undefined
   }
 
   return {
-    eligibleAtMs:
-      threadAttestationTimes.length === 0
-        ? reviewSubmittedAtMs + minimumExactReviewAgeMs
-        : Math.max(reviewSubmittedAtMs + minimumExactReviewAgeMs, Math.max(...threadAttestationTimes)),
+    eligibleAtMs: reviewSubmittedAtMs + minimumExactReviewAgeMs,
   }
 }
 
@@ -1711,14 +1674,8 @@ const shouldFetchFinalHeadCommitDetail = (pullRequest: PullRequestReviewState): 
     return false
   }
 
-  const reviewSubmittedAtMs = Date.parse(feedbackFixReview.submittedAt)
-  const reviewedThreads = selectReviewThreads(pullRequest, feedbackFixReview)
-  return (
-    reviewedThreads.length > 0 &&
-    reviewedThreads.every(
-      (thread) => selectTrustedFinalHeadReplyTimes(pullRequest, thread, reviewSubmittedAtMs).length === 0,
-    )
-  )
+  const reviewedCommitIndex = pullRequest.commitShas.indexOf(feedbackFixReview.commitSha as string)
+  return reviewedCommitIndex + 1 === pullRequest.commitShas.length - 1
 }
 
 export const evaluateBaynReleaseReview = (input: {

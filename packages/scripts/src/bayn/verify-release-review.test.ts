@@ -128,6 +128,19 @@ const pr13475FinalHeadCommit: PullRequestFinalHeadCommitDetail = {
     },
   ],
 }
+const genericFeedbackFixFinalHeadCommit: PullRequestFinalHeadCommitDetail = {
+  sha: finalHeadSha,
+  parents: [olderHeadSha],
+  files: ['packages/scripts/src/bayn/verify-release-review.ts'],
+  fileChanges: [
+    {
+      path: 'packages/scripts/src/bayn/verify-release-review.ts',
+      previousPath: null,
+      status: 'modified',
+      blobSha: null,
+    },
+  ],
+}
 const pr13473EarlierForcePush: PullRequestForcePush = {
   actorLogin: 'gregkonush',
   beforeCommitSha: pr13473EarlierForcePushBeforeSha,
@@ -239,6 +252,7 @@ const snapshot = (
     readonly threads?: readonly PullRequestReviewThread[]
     readonly mainCommitParents?: readonly string[]
     readonly commitShas?: readonly string[]
+    readonly finalHeadCommit?: PullRequestFinalHeadCommitDetail | null
     readonly issueComments?: readonly PullRequestIssueComment[]
     readonly reactions?: readonly PullRequestReaction[]
     readonly headForcePushes?: readonly PullRequestForcePush[]
@@ -267,6 +281,7 @@ const snapshot = (
             reviews: options.reviews ?? [review()],
             threads: options.threads ?? [],
             commitShas: options.commitShas ?? [source.headSha],
+            finalHeadCommit: options.finalHeadCommit,
             issueComments: options.issueComments ?? [],
             reactions: options.reactions ?? [],
             headForcePushes: options.headForcePushes ?? [],
@@ -5980,7 +5995,8 @@ describe('Bayn delayed-attestation publication retry', () => {
     const resolvedFeedback = snapshot({
       commitShas: [olderHeadSha, finalHeadSha],
       reviews: [review({ commitSha: olderHeadSha, submittedAt: '2026-07-30T07:00:00Z' })],
-      threads: [thread({ isResolved: true, comments: feedbackComments })],
+      finalHeadCommit: genericFeedbackFixFinalHeadCommit,
+      threads: [thread({ isResolved: true, isOutdated: true, comments: feedbackComments })],
     })
     expect(
       evaluateBaynReleaseRetry({
@@ -6002,12 +6018,14 @@ describe('Bayn delayed-attestation publication retry', () => {
     })
   })
 
-  test('dispatches when the final required feedback attestation arrives after the failed push', () => {
+  test('does not use a trusted feedback reply as delayed retry evidence', () => {
     const feedbackReview = snapshot({
       commitShas: [olderHeadSha, finalHeadSha],
       reviews: [review({ commitSha: olderHeadSha, submittedAt: '2026-07-30T07:00:00Z' })],
+      finalHeadCommit: genericFeedbackFixFinalHeadCommit,
       threads: [
         thread({
+          isOutdated: true,
           comments: [
             threadComment({
               createdAt: '2026-07-30T07:00:00Z',
@@ -6038,7 +6056,7 @@ describe('Bayn delayed-attestation publication retry', () => {
     ).toMatchObject({
       status: 'eligible',
       reviewSubmittedAt: '2026-07-30T07:00:00Z',
-      eligibleAt: '2026-07-30T07:03:00.000Z',
+      eligibleAt: '2026-07-30T07:00:30.000Z',
     })
     expect(
       evaluateBaynReleaseRetry({
@@ -6049,18 +6067,18 @@ describe('Bayn delayed-attestation publication retry', () => {
         nowMs: retryNowMs,
       }),
     ).toMatchObject({
-      status: 'dispatch',
-      sourceCommitSha: mainCommitSha,
-      prNumber: 13390,
-      headSha: finalHeadSha,
+      status: 'hold',
+      code: 'retry-attestation-not-delayed',
+      retryable: true,
     })
   })
 
-  test('uses the latest per-thread reply when feedback attestations straddle the failed review gate', () => {
+  test('rejects a multi-commit feedback fix even when every thread has a trusted final-head reply', () => {
     const firstReplyAt = '2026-07-30T07:01:00Z'
     const finalReplyAt = '2026-07-30T07:03:00Z'
+    const intermediateFixSha = '4'.repeat(40)
     const feedbackReview = snapshot({
-      commitShas: [olderHeadSha, finalHeadSha],
+      commitShas: [olderHeadSha, intermediateFixSha, finalHeadSha],
       reviews: [review({ commitSha: olderHeadSha, submittedAt: '2026-07-30T07:00:00Z' })],
       threads: [
         thread({
@@ -6110,27 +6128,9 @@ describe('Bayn delayed-attestation publication retry', () => {
         pushBeforeSha: null,
       }),
     ).toMatchObject({
-      status: 'eligible',
-      eligibleAt: '2026-07-30T07:03:00.000Z',
-    })
-
-    expect(
-      evaluateBaynReleaseRetry({
-        mainCommitSha,
-        baseRefName: 'main',
-        snapshot: retrySnapshot({
-          reviewSnapshot: feedbackReview,
-          failedRun: failedBuildRun({ updatedAt: '2026-07-30T07:02:30Z' }),
-          failedReviewJobCompletedAt: '2026-07-30T07:02:30Z',
-        }),
-        trigger: { type: 'schedule' },
-        nowMs: retryNowMs,
-      }),
-    ).toMatchObject({
-      status: 'dispatch',
-      sourceCommitSha: mainCommitSha,
-      prNumber: 13390,
-      headSha: finalHeadSha,
+      status: 'hold',
+      code: 'feedback-fix-attestation-missing',
+      retryable: true,
     })
   })
 
@@ -7129,6 +7129,34 @@ describe('Bayn exact-head release review eligibility', () => {
     })
   })
 
+  test('accepts a direct-child feedback fix with no release-affecting Bayn path', () => {
+    const reviewedTestPath = 'packages/scripts/src/bayn/verify-release-review.test.ts'
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha: pr13475MainCommitSha,
+        baseRefName: 'main',
+        snapshot: pr13475ReviewSnapshot({
+          finalHeadCommit: {
+            sha: pr13475FinalHeadSha,
+            parents: [pr13475ReviewedHeadSha],
+            files: [reviewedTestPath],
+            fileChanges: [
+              {
+                path: reviewedTestPath,
+                previousPath: null,
+                status: 'modified',
+                blobSha: null,
+              },
+            ],
+          },
+          threads: [pr13475FeedbackThread({ path: reviewedTestPath })],
+        }),
+        nowMs: Date.parse('2026-08-02T11:00:00Z'),
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({ status: 'eligible', prNumber: 13475, headSha: pr13475FinalHeadSha })
+  })
+
   test.each([
     [
       'unresolved actionable thread',
@@ -7639,8 +7667,10 @@ describe('Bayn exact-head release review eligibility', () => {
         snapshot: snapshot({
           commitShas: [olderHeadSha, finalHeadSha],
           reviews: [review({ commitSha: olderHeadSha })],
+          finalHeadCommit: genericFeedbackFixFinalHeadCommit,
           threads: [
             thread({
+              isOutdated: true,
               comments: [
                 threadComment(),
                 threadComment({
@@ -7668,7 +7698,7 @@ describe('Bayn exact-head release review eligibility', () => {
     })
   })
 
-  test('retries a stale feedback-attestation read and then accepts the indexed reply', async () => {
+  test('retries a stale final-head detail read and then accepts the indexed commit', async () => {
     let calls = 0
     const sleeps: number[] = []
     const result = await pollBaynReleaseReview({
@@ -7681,8 +7711,10 @@ describe('Bayn exact-head release review eligibility', () => {
         return snapshot({
           commitShas: [olderHeadSha, finalHeadSha],
           reviews: [review({ commitSha: olderHeadSha })],
+          finalHeadCommit: calls === 1 ? null : genericFeedbackFixFinalHeadCommit,
           threads: [
             thread({
+              isOutdated: true,
               comments: [
                 threadComment(),
                 ...(calls === 1
@@ -7764,7 +7796,7 @@ describe('Bayn exact-head release review eligibility', () => {
     })
   })
 
-  test('accepts a final trusted feedback reply without per-commit attestations', () => {
+  test('rejects a final trusted feedback reply across multiple commits', () => {
     const intermediateFixSha = '4'.repeat(40)
     expect(
       evaluateBaynReleaseReview({
@@ -7791,12 +7823,10 @@ describe('Bayn exact-head release review eligibility', () => {
         nowMs: evaluationNowMs,
         pushBeforeSha: null,
       }),
-    ).toEqual({
-      status: 'eligible',
-      prNumber: 13390,
-      headSha: finalHeadSha,
-      reviewSubmittedAt: '2026-07-30T07:01:00Z',
-      eligibleAt: '2026-07-30T07:01:30.000Z',
+    ).toMatchObject({
+      status: 'hold',
+      code: 'feedback-fix-attestation-missing',
+      retryable: true,
     })
   })
 
@@ -8388,5 +8418,204 @@ describe('Bayn exact-head release review eligibility', () => {
 
     await expect(loader()).rejects.toMatchObject({ code: 'github-api-pagination-limit' })
     expect(finalHeadDetailRequests).toBe(1)
+  })
+
+  test('requires final-head detail for all-replied and mixed feedback threads', async () => {
+    const fallbackReviewSubmittedAt = '2026-07-30T07:00:00Z'
+    const trustedReplyAt = '2026-07-30T07:00:30Z'
+    const fallbackPath = 'services/bayn/src/example.ts'
+    const makeFetchFn = (finalFilePaths: readonly string[], includeNoReplyThread = true) => {
+      let finalHeadDetailRequests = 0
+      const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.includes('/commits/')) {
+          if (!url.includes('/pulls?')) {
+            if (url.includes(`/commits/${finalHeadSha}?`)) {
+              finalHeadDetailRequests += 1
+              return Response.json({
+                sha: finalHeadSha,
+                parents: [{ sha: olderHeadSha }],
+                files: finalFilePaths.map((filename) => ({ filename, status: 'modified' })),
+              })
+            }
+            return Response.json({
+              sha: mainCommitSha,
+              parents: [{ sha: pushBeforeSha }],
+              files: [{ filename: fallbackPath }],
+            })
+          }
+          return Response.json([
+            {
+              number: 13390,
+              base: { ref: 'main' },
+              head: { sha: finalHeadSha },
+              merge_commit_sha: mainCommitSha,
+              merged_at: '2026-07-30T07:01:30Z',
+            },
+          ])
+        }
+        if (url.includes('/issues/13390/comments?') || url.includes('/issues/13390/reactions?')) {
+          return Response.json([])
+        }
+
+        const request = JSON.parse(String(init?.body)) as { readonly query: string }
+        if (request.query.includes('BaynReleasePullRequestMetadata')) {
+          return Response.json({
+            data: {
+              repository: {
+                pullRequest: {
+                  number: 13390,
+                  baseRefName: 'main',
+                  headRefOid: finalHeadSha,
+                  createdAt: '2026-07-30T06:59:00Z',
+                  mergedAt: '2026-07-30T07:01:30Z',
+                  mergeCommit: { oid: mainCommitSha },
+                  timelineItems: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+                },
+              },
+            },
+          })
+        }
+        if (request.query.includes('BaynReleasePullRequestReviews')) {
+          return Response.json({
+            data: {
+              repository: {
+                pullRequest: {
+                  reviews: {
+                    nodes: [
+                      {
+                        author: { login: baynCodexReviewer },
+                        commit: { oid: olderHeadSha },
+                        submittedAt: fallbackReviewSubmittedAt,
+                        state: 'COMMENTED',
+                      },
+                    ],
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                  },
+                },
+              },
+            },
+          })
+        }
+        if (request.query.includes('BaynReleasePullRequestThreads')) {
+          const reviewedComment = {
+            author: { login: baynCodexReviewer },
+            authorAssociation: 'NONE',
+            body: 'Review finding',
+            createdAt: fallbackReviewSubmittedAt,
+            commit: { oid: olderHeadSha },
+            pullRequestReview: {
+              author: { login: baynCodexReviewer },
+              commit: { oid: olderHeadSha },
+              submittedAt: fallbackReviewSubmittedAt,
+              state: 'COMMENTED',
+            },
+            url: 'https://github.com/proompteng/lab/pull/13390#discussion_reviewed',
+          }
+          const trustedReply = {
+            author: { login: 'gregkonush' },
+            authorAssociation: 'MEMBER',
+            body: 'Fixed in the final head.',
+            createdAt: trustedReplyAt,
+            commit: { oid: finalHeadSha },
+            pullRequestReview: {
+              author: { login: 'gregkonush' },
+              commit: { oid: finalHeadSha },
+              submittedAt: trustedReplyAt,
+              state: 'COMMENTED',
+            },
+            url: 'https://github.com/proompteng/lab/pull/13390#discussion_reply',
+          }
+          return Response.json({
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewThreads: {
+                    nodes: [
+                      {
+                        id: 'mixed-replied-thread',
+                        isResolved: true,
+                        isOutdated: true,
+                        path: fallbackPath,
+                        comments: {
+                          nodes: [reviewedComment, trustedReply],
+                          pageInfo: { hasNextPage: false, endCursor: null },
+                        },
+                      },
+                      ...(includeNoReplyThread
+                        ? [
+                            {
+                              id: 'mixed-no-reply-thread',
+                              isResolved: true,
+                              isOutdated: true,
+                              path: fallbackPath,
+                              comments: {
+                                nodes: [reviewedComment],
+                                pageInfo: { hasNextPage: false, endCursor: null },
+                              },
+                            },
+                          ]
+                        : []),
+                    ],
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                  },
+                },
+              },
+            },
+          })
+        }
+        if (request.query.includes('BaynReleasePullRequestCommits')) {
+          return Response.json({
+            data: {
+              repository: {
+                pullRequest: {
+                  commits: {
+                    nodes: [{ commit: { oid: olderHeadSha } }, { commit: { oid: finalHeadSha } }],
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                  },
+                },
+              },
+            },
+          })
+        }
+        throw new Error('unexpected mixed fixture request')
+      }) as typeof fetch
+      return { fetchFn, getFinalHeadDetailRequests: () => finalHeadDetailRequests }
+    }
+
+    const evaluateLoaded = async (finalFilePaths: readonly string[], includeNoReplyThread = true) => {
+      const fixture = makeFetchFn(finalFilePaths, includeNoReplyThread)
+      const loader = createGitHubReleaseReviewLoader({
+        repository: 'proompteng/lab',
+        token: 'fixture-token',
+        mainCommitSha,
+        baseRefName: 'main',
+        requestTimeoutMs: 1_000,
+        fetchFn: fixture.fetchFn,
+      })
+      const result = evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: await loader(),
+        nowMs: evaluationNowMs,
+        pushBeforeSha: null,
+      })
+      expect(fixture.getFinalHeadDetailRequests()).toBe(1)
+      return result
+    }
+
+    expect(await evaluateLoaded([fallbackPath, 'services/bayn/src/unreviewed.ts'])).toMatchObject({
+      status: 'hold',
+      code: 'feedback-fix-attestation-missing',
+    })
+    expect(await evaluateLoaded([fallbackPath, 'services/bayn/src/unreviewed.ts'], false)).toMatchObject({
+      status: 'hold',
+      code: 'feedback-fix-attestation-missing',
+    })
+    expect(await evaluateLoaded([fallbackPath])).toMatchObject({
+      status: 'eligible',
+      prNumber: 13390,
+      headSha: finalHeadSha,
+    })
   })
 })
