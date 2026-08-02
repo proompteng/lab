@@ -32,6 +32,7 @@ import {
   type BaynReleaseReviewRemediationEvidence,
   type BaynReleaseReviewRemediationRecord,
   type PullRequestReview,
+  type PullRequestFinalHeadCommitDetail,
   type PullRequestReviewState,
   type PullRequestIssueComment,
   type PullRequestForcePush,
@@ -113,6 +114,20 @@ const pr13475FinalCommitShas = [
   pr13475ReviewedHeadSha,
   pr13475FinalHeadSha,
 ] as const
+const pr13475ReviewedPath = 'services/bayn/src/candidate-development-local/command.ts'
+const pr13475FinalHeadCommit: PullRequestFinalHeadCommitDetail = {
+  sha: pr13475FinalHeadSha,
+  parents: [pr13475ReviewedHeadSha],
+  files: [pr13475ReviewedPath],
+  fileChanges: [
+    {
+      path: pr13475ReviewedPath,
+      previousPath: null,
+      status: 'modified',
+      blobSha: null,
+    },
+  ],
+}
 const pr13473EarlierForcePush: PullRequestForcePush = {
   actorLogin: 'gregkonush',
   beforeCommitSha: pr13473EarlierForcePushBeforeSha,
@@ -280,6 +295,7 @@ const reviewSnapshotFor = (options: {
   readonly reviews?: readonly PullRequestReview[]
   readonly threads?: readonly PullRequestReviewThread[]
   readonly commitShas?: readonly string[]
+  readonly finalHeadCommit?: PullRequestFinalHeadCommitDetail | null
   readonly issueComments?: readonly PullRequestIssueComment[]
   readonly reactions?: readonly PullRequestReaction[]
   readonly headForcePushes?: readonly PullRequestForcePush[]
@@ -314,6 +330,7 @@ const reviewSnapshotFor = (options: {
       ],
       threads: options.threads ?? [],
       commitShas: options.commitShas ?? [options.headSha],
+      finalHeadCommit: options.finalHeadCommit,
       issueComments: options.issueComments ?? [],
       reactions: options.reactions ?? [],
       headForcePushes: options.headForcePushes ?? [],
@@ -325,6 +342,7 @@ const reviewSnapshotFor = (options: {
 const pr13464ReactionSnapshot = (
   options: {
     readonly commitShas?: readonly string[]
+    readonly finalHeadCommit?: PullRequestFinalHeadCommitDetail | null
     readonly reviews?: readonly PullRequestReview[]
     readonly issueComments?: readonly PullRequestIssueComment[]
     readonly threads?: readonly PullRequestReviewThread[]
@@ -460,7 +478,7 @@ const pr13475FeedbackThread = (overrides: Partial<PullRequestReviewThread> = {})
     id: 'PRRT_kwDOLkRLus6VwJXZ',
     isResolved: true,
     isOutdated: true,
-    path: 'services/bayn/src/candidate-development-local/command.ts',
+    path: pr13475ReviewedPath,
     url: 'https://github.com/proompteng/lab/pull/13475#discussion_r3698708781',
     comments: [
       threadComment({
@@ -479,6 +497,7 @@ const pr13475FeedbackThread = (overrides: Partial<PullRequestReviewThread> = {})
 const pr13475ReviewSnapshot = (
   options: {
     readonly commitShas?: readonly string[]
+    readonly finalHeadCommit?: PullRequestFinalHeadCommitDetail | null
     readonly reviews?: readonly PullRequestReview[]
     readonly threads?: readonly PullRequestReviewThread[]
   } = {},
@@ -493,6 +512,7 @@ const pr13475ReviewSnapshot = (
     reviews: options.reviews ?? pr13475Reviews,
     threads: options.threads ?? [pr13475FeedbackThread()],
     commitShas: options.commitShas ?? pr13475FinalCommitShas,
+    finalHeadCommit: options.finalHeadCommit === undefined ? pr13475FinalHeadCommit : options.finalHeadCommit,
   })
 
 const eligibilitySnapshot = (
@@ -5574,6 +5594,13 @@ describe('Bayn publication-range eligibility', () => {
           ],
         })
       }
+      if (url.includes('/commits/') && !url.includes('/pulls?')) {
+        return Response.json({
+          sha: finalHeadSha,
+          parents: [{ sha: olderHeadSha }],
+          files: [{ filename: 'services/bayn/src/example.ts' }],
+        })
+      }
       if (url.includes('/issues/13390/comments?') || url.includes('/issues/13390/reactions?')) {
         return Response.json([])
       }
@@ -6511,6 +6538,13 @@ describe('Bayn delayed-attestation publication retry', () => {
           files: [{ filename: 'packages/scripts/src/bayn/verify-release-review.ts' }],
         })
       }
+      if (url.includes('/commits/') && !url.includes('/pulls?')) {
+        return Response.json({
+          sha: finalHeadSha,
+          parents: [{ sha: olderHeadSha }],
+          files: [{ filename: 'packages/scripts/src/bayn/verify-release-review.ts' }],
+        })
+      }
       if (url.includes('/issues/13401/comments?')) return Response.json([])
       if (url.includes('/issues/13401/reactions?')) {
         return Response.json([
@@ -7058,6 +7092,35 @@ describe('Bayn exact-head release review eligibility', () => {
           }),
         ],
       }),
+      'feedback-fix-attestation-missing',
+    ],
+    [
+      'direct child fixes reviewed file but also changes a second Bayn path',
+      pr13475ReviewSnapshot({
+        finalHeadCommit: {
+          ...pr13475FinalHeadCommit,
+          files: [pr13475ReviewedPath, 'services/bayn/src/unreviewed.ts'],
+          fileChanges: [
+            ...pr13475FinalHeadCommit.fileChanges,
+            {
+              path: 'services/bayn/src/unreviewed.ts',
+              previousPath: null,
+              status: 'modified',
+              blobSha: null,
+            },
+          ],
+        },
+      }),
+      'feedback-fix-attestation-missing',
+    ],
+    [
+      'missing final-head commit detail',
+      pr13475ReviewSnapshot({ finalHeadCommit: null }),
+      'feedback-fix-attestation-missing',
+    ],
+    [
+      'malformed final-head commit detail',
+      pr13475ReviewSnapshot({ finalHeadCommit: { ...pr13475FinalHeadCommit, parents: [pushBeforeSha] } }),
       'feedback-fix-attestation-missing',
     ],
     ['missing feedback thread', pr13475ReviewSnapshot({ threads: [] }), 'feedback-fix-attestation-missing'],
@@ -7929,9 +7992,10 @@ describe('Bayn exact-head release review eligibility', () => {
       const url = String(input)
       if (url.includes('/commits/')) {
         if (!url.includes('/pulls?')) {
+          const isFinalHeadDetail = url.includes(`/commits/${finalHeadSha}?`)
           return Response.json({
-            sha: mainCommitSha,
-            parents: [{ sha: pushBeforeSha }],
+            sha: isFinalHeadDetail ? finalHeadSha : mainCommitSha,
+            parents: [{ sha: isFinalHeadDetail ? olderHeadSha : pushBeforeSha }],
             files: [{ filename: 'services/bayn/src/example.ts' }],
           })
         }

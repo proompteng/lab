@@ -51,6 +51,13 @@ export interface PullRequestForcePush {
   readonly createdAt: string
 }
 
+export interface PullRequestFinalHeadCommitDetail {
+  readonly sha: string
+  readonly parents: readonly string[]
+  readonly files: readonly string[]
+  readonly fileChanges: readonly BaynReleaseCommitFileChange[]
+}
+
 export interface PullRequestReviewThreadComment {
   readonly authorLogin: string | null
   readonly authorAssociation: string
@@ -83,6 +90,7 @@ export interface PullRequestReviewState {
   readonly reviews: readonly PullRequestReview[]
   readonly threads: readonly PullRequestReviewThread[]
   readonly commitShas: readonly string[]
+  readonly finalHeadCommit?: PullRequestFinalHeadCommitDetail | null
   readonly issueComments: readonly PullRequestIssueComment[]
   readonly reactions: readonly PullRequestReaction[]
   readonly headForcePushes: readonly PullRequestForcePush[]
@@ -1514,25 +1522,17 @@ const selectFeedbackFixEvidence = (
   const finalCommitIndex = pullRequest.commitShas.length - 1
   if (reviewedCommitIndex < 0 || reviewedCommitIndex >= finalCommitIndex) return undefined
   const isDirectFinalChild = reviewedCommitIndex + 1 === finalCommitIndex
+  const belongsToReview = (comment: PullRequestReviewThreadComment): boolean =>
+    comment.reviewAuthorLogin === baynCodexReviewer &&
+    (comment.reviewCommitSha === reviewEvidence.commitSha || comment.reviewSubmittedAt === reviewEvidence.submittedAt)
 
-  const reviewedThreads = pullRequest.threads.filter((thread) =>
-    thread.comments.some(
-      (comment) =>
-        comment.reviewAuthorLogin === baynCodexReviewer &&
-        (comment.reviewCommitSha === reviewEvidence.commitSha ||
-          comment.reviewSubmittedAt === reviewEvidence.submittedAt),
-    ),
-  )
+  const reviewedThreads = pullRequest.threads.filter((thread) => thread.comments.some(belongsToReview))
   if (reviewedThreads.length === 0) return undefined
 
   const trustedAttestationTimes: number[] = []
+  const reviewedPaths = new Set<string>()
   for (const thread of reviewedThreads) {
-    const reviewedComments = thread.comments.filter(
-      (comment) =>
-        comment.reviewAuthorLogin === baynCodexReviewer &&
-        (comment.reviewCommitSha === reviewEvidence.commitSha ||
-          comment.reviewSubmittedAt === reviewEvidence.submittedAt),
-    )
+    const reviewedComments = thread.comments.filter(belongsToReview)
     if (
       thread.path === null ||
       thread.path.length === 0 ||
@@ -1547,6 +1547,7 @@ const selectFeedbackFixEvidence = (
     ) {
       return undefined
     }
+    reviewedPaths.add(thread.path)
 
     const trustedReplies = thread.comments.flatMap((comment) => {
       if (
@@ -1569,6 +1570,42 @@ const selectFeedbackFixEvidence = (
       return undefined
     }
     trustedAttestationTimes.push(...trustedReplies)
+  }
+
+  if (trustedAttestationTimes.length === 0) {
+    const finalHeadCommit = pullRequest.finalHeadCommit
+    const changedFilePaths = finalHeadCommit?.fileChanges.flatMap((change) =>
+      change.previousPath === null ? [change.path] : [change.path, change.previousPath],
+    )
+    const finalFilePaths = finalHeadCommit?.files
+    const finalFilePathSet = finalFilePaths === undefined ? null : new Set(finalFilePaths)
+    const changedFilePathSet = changedFilePaths === undefined ? null : new Set(changedFilePaths)
+    const finalBaynPaths = finalHeadCommit?.fileChanges
+      .filter((change) => isBaynReleaseAffectingPath(change.path))
+      .map((change) => change.path)
+    if (
+      finalHeadCommit === undefined ||
+      finalHeadCommit === null ||
+      finalHeadCommit.sha !== pullRequest.headSha ||
+      finalHeadCommit.parents.length !== 1 ||
+      finalHeadCommit.parents[0] !== reviewEvidence.commitSha ||
+      finalFilePaths === undefined ||
+      changedFilePaths === undefined ||
+      finalFilePaths.length !== changedFilePaths.length ||
+      finalFilePathSet === null ||
+      changedFilePathSet === null ||
+      finalFilePathSet.size !== finalFilePaths.length ||
+      changedFilePathSet.size !== changedFilePaths.length ||
+      finalFilePaths.some((path) => !changedFilePathSet.has(path)) ||
+      changedFilePaths.some((path) => !finalFilePathSet.has(path)) ||
+      finalHeadCommit.fileChanges.some((change) => change.path.length === 0 || change.previousPath !== null) ||
+      finalBaynPaths === undefined ||
+      finalBaynPaths.length === 0 ||
+      new Set(finalBaynPaths).size !== finalBaynPaths.length ||
+      finalBaynPaths.some((path) => !reviewedPaths.has(path))
+    ) {
+      return undefined
+    }
   }
 
   return {
@@ -4803,12 +4840,8 @@ const parseComparison = (value: unknown): ParsedComparison => {
   }
 }
 
-interface CommitDetail {
-  readonly sha: string
-  readonly parents: readonly string[]
+interface CommitDetail extends PullRequestFinalHeadCommitDetail {
   readonly treeSha: string
-  readonly files: readonly string[]
-  readonly fileChanges: readonly BaynReleaseCommitFileChange[]
 }
 
 const parseCommitDetail = (value: unknown, expectedSha: string): CommitDetail => {
@@ -5467,18 +5500,19 @@ const loadCommitReviewSnapshot = async (
 
   const candidate = candidates[0]
   if (candidate === undefined) throw new Error('source pull selection was unexpectedly empty')
-  const [metadata, reviews, threads, commitShas, issueComments, reactions] = await Promise.all([
+  const [metadata, reviews, threads, commitShas, issueComments, reactions, finalHeadCommit] = await Promise.all([
     fetchPullRequestMetadata(options, candidate.number),
     fetchPullRequestReviews(options, candidate.number),
     fetchPullRequestThreads(options, candidate.number),
     fetchPullRequestCommitShas(options, candidate.number),
     fetchPullRequestIssueComments(options, candidate.number),
     fetchPullRequestReactions(options, candidate.number),
+    fetchCommitDetail(options, candidate.headSha),
   ])
   return {
     mainCommitParents: commit.parents,
     associatedPullRequests,
-    pullRequest: { ...metadata, reviews, threads, commitShas, issueComments, reactions },
+    pullRequest: { ...metadata, reviews, threads, commitShas, finalHeadCommit, issueComments, reactions },
   }
 }
 
