@@ -551,7 +551,14 @@ const validateHistoryRelations = (
     return stateIssue('history.latestReviewedCandidatePriorTrials', 'LATEST_EVIDENCE_MISMATCH', prior)
   }
   const invalidation = history.latestInvalidPrecommit
-  if (invalidation !== null && history.nextCandidatePreregistration === null) {
+  const closedOrdinals = [
+    ...history.completedCandidateOrdinals,
+    ...history.developmentCandidateOrdinals,
+    ...(invalidation === null ? [] : [invalidation.candidateOrdinal]),
+  ]
+  const highestClosed = Math.max(...closedOrdinals)
+  const invalidationIsLatest = invalidation?.candidateOrdinal === highestClosed
+  if (invalidation !== null && invalidationIsLatest && history.nextCandidatePreregistration === null) {
     if (
       invalidation.candidateOrdinal !== history.latestReviewedCandidatePreregistration.candidateOrdinal ||
       invalidation.invalidatedModule.path !== history.latestReviewedCandidatePreregistration.modulePath ||
@@ -568,12 +575,6 @@ const validateHistoryRelations = (
       )
     }
   }
-  const closedOrdinals = [
-    ...history.completedCandidateOrdinals,
-    ...history.developmentCandidateOrdinals,
-    ...(invalidation === null ? [] : [invalidation.candidateOrdinal]),
-  ]
-  const highestClosed = Math.max(...closedOrdinals)
   if (history.nextCandidatePreregistration !== null) {
     if (
       history.nextCandidatePreregistration.candidateOrdinal !== highestClosed + 1 ||
@@ -588,7 +589,7 @@ const validateHistoryRelations = (
       )
     }
   } else {
-    const expectedReviewedOrdinal = invalidation?.candidateOrdinal ?? latestDevelopment
+    const expectedReviewedOrdinal = invalidationIsLatest ? invalidation.candidateOrdinal : latestDevelopment
     if (history.latestReviewedCandidatePreregistration.candidateOrdinal !== expectedReviewedOrdinal) {
       return stateIssue(
         'history.latestReviewedCandidatePreregistration',
@@ -766,11 +767,38 @@ const validateActiveTrial = (trial: unknown): CandidateDevelopmentTrialStateIssu
   const preregistrationIssue = validateNextPreregistration(trial.preregistration, 'state.activeTrial.preregistration')
   if (preregistrationIssue !== undefined) return preregistrationIssue
   const activeTrial = trial as unknown as CandidateDevelopmentActiveTrial
+  if (
+    activeTrial.preregistration.candidateOrdinal !== activeTrial.candidateOrdinal ||
+    activeTrial.preregistration.priorTrialCount !== activeTrial.priorTrialCount
+  ) {
+    return stateIssue('state.activeTrial.preregistration', 'SUCCESSOR_BINDING_MISMATCH', activeTrial.preregistration, {
+      candidateOrdinal: activeTrial.candidateOrdinal,
+      priorTrialCount: activeTrial.priorTrialCount,
+    })
+  }
   switch (activeTrial._tag) {
-    case 'DEVELOPMENT_PENDING':
-      return validateDevelopmentAttempt(activeTrial.developmentAttempt, 'state.activeTrial.developmentAttempt', true)
-    case 'DEVELOPMENT_OUTCOME_PENDING':
-      return validateDevelopmentAttempt(activeTrial.developmentAttempt, 'state.activeTrial.developmentAttempt', true)
+    case 'DEVELOPMENT_PENDING': {
+      const attemptIssue = validateDevelopmentAttempt(
+        activeTrial.developmentAttempt,
+        'state.activeTrial.developmentAttempt',
+        true,
+      )
+      if (attemptIssue !== undefined) return attemptIssue
+      return activeTrial.developmentAttempt._tag === 'DEVELOPMENT_UNATTEMPTED'
+        ? undefined
+        : stateIssue('state.activeTrial.developmentAttempt', 'ATTEMPT_KIND_MISMATCH')
+    }
+    case 'DEVELOPMENT_OUTCOME_PENDING': {
+      const attemptIssue = validateDevelopmentAttempt(
+        activeTrial.developmentAttempt,
+        'state.activeTrial.developmentAttempt',
+        true,
+      )
+      if (attemptIssue !== undefined) return attemptIssue
+      return activeTrial.developmentAttempt._tag === 'DEVELOPMENT_ATTEMPTED'
+        ? undefined
+        : stateIssue('state.activeTrial.developmentAttempt', 'ATTEMPT_KIND_MISMATCH')
+    }
     case 'QUALIFICATION_ELIGIBLE': {
       const attemptIssue = validateDevelopmentAttempt(
         activeTrial.developmentAttempt,

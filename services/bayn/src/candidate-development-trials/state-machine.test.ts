@@ -9,6 +9,7 @@ import {
   buildCandidateDevelopmentInvalidPrecommit,
   buildCandidateDevelopmentPreregistration,
   buildCandidateDevelopmentTrialHistory,
+  buildCandidateDevelopmentTrialHistoryAfterInvalidation,
 } from './test-builders'
 import {
   buildCandidateDevelopmentTrialState,
@@ -24,6 +25,12 @@ const successOf = <A, E>(result: Result.Result<A, E>): A => {
   expect(Result.isSuccess(result)).toBe(true)
   if (Result.isFailure(result)) throw new Error('expected lifecycle fixture to validate')
   return result.success
+}
+
+const expectIssue = (result: Result.Result<unknown, { readonly reason: string }>, reason: string): void => {
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isSuccess(result)) throw new Error('expected lifecycle validation to fail')
+  expect(result.failure.reason).toBe(reason)
 }
 
 const stateFrom = (history: CandidateDevelopmentTrialHistory): CandidateDevelopmentTrialState =>
@@ -247,6 +254,70 @@ describe('candidate development lifecycle', () => {
         preregistration,
       }),
     ).toMatchObject({ _tag: 'BLOCKED', issue: { reason: 'NEXT_ORDINAL_MISMATCH' } })
+  })
+
+  test('binds active preregistration and development attempt variants to their lifecycle phase', () => {
+    const reviewed = appliedState(
+      reduceCandidateDevelopmentTrialState(stateFrom(buildCandidateDevelopmentTrialHistory()), {
+        _tag: 'REVIEW_CANDIDATE',
+        preregistration: buildCandidateDevelopmentPreregistration(4),
+      }),
+    )
+    if (reviewed.activeTrial === null) throw new Error('expected reviewed candidate')
+
+    expectIssue(
+      validateCandidateDevelopmentTrialState({
+        ...reviewed,
+        activeTrial: {
+          ...reviewed.activeTrial,
+          preregistration: buildCandidateDevelopmentPreregistration(5),
+        },
+      }),
+      'SUCCESSOR_BINDING_MISMATCH',
+    )
+
+    expectIssue(
+      validateCandidateDevelopmentTrialState({
+        ...reviewed,
+        activeTrial: {
+          ...reviewed.activeTrial,
+          developmentAttempt: { _tag: 'DEVELOPMENT_ATTEMPTED', attemptCount: 1, metricBearing: true },
+        },
+      }),
+      'ATTEMPT_KIND_MISMATCH',
+    )
+
+    const attempted = appliedState(
+      reduceCandidateDevelopmentTrialState(reviewed, {
+        _tag: 'CONSUME_DEVELOPMENT_ATTEMPT',
+        metricBearing: true,
+      }),
+    )
+    if (attempted.activeTrial === null) throw new Error('expected development attempt')
+    expectIssue(
+      validateCandidateDevelopmentTrialState({
+        ...attempted,
+        activeTrial: {
+          ...attempted.activeTrial,
+          developmentAttempt: { _tag: 'DEVELOPMENT_UNATTEMPTED', attemptCount: 0 },
+        },
+      }),
+      'ATTEMPT_KIND_MISMATCH',
+    )
+  })
+
+  test('preserves later trials after an older invalidation', () => {
+    const history = buildCandidateDevelopmentTrialHistoryAfterInvalidation()
+    expect(validateCandidateDevelopmentTrialHistory(history)).toEqual(Result.succeed(undefined))
+    const state = stateFrom(history)
+    expect(state.closedTrials.map((trial) => [trial.candidateOrdinal, trial._tag])).toEqual([
+      [1, 'QUALIFICATION_TERMINAL'],
+      [2, 'QUALIFICATION_TERMINAL'],
+      [3, 'DEVELOPMENT_REJECTED'],
+      [4, 'PRECOMMIT_INVALIDATED'],
+      [5, 'DEVELOPMENT_REJECTED'],
+    ])
+    expect(state.nextOrdinal).toBe(6)
   })
 
   test('fails closed on malformed lifecycle state and history', () => {
