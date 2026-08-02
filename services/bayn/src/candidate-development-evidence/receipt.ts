@@ -1,6 +1,6 @@
 import { Result } from 'effect'
 
-import { buildCandidateDevelopmentCommandReport } from '../candidate-development-command'
+import { buildCandidateDevelopmentCommandReport } from '../candidate-development-command/report-policy'
 import type { CandidateDevelopmentNextPreregistration } from '../candidate-development-decision'
 import { collectCandidateDevelopmentEligibilityBindings, collectCanonicalBinding } from './bindings'
 import { validateCandidateDevelopmentCompleteEvidence } from './accounting'
