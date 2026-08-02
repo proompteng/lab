@@ -790,6 +790,31 @@ describe('OBSERVE runtime composition', () => {
     ).toBe('unknown-order')
   })
 
+  test('chooses cancellation recovery before submit recovery and fresh-policy gates', async () => {
+    const fixture = await paperLifecycleFixture()
+    const event = (operation: MutationOperation, eventType: MutationEventType): MutationEvent => ({
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: canonicalHashV1({ operation, eventType, intentId: fixture.intent.intentId }),
+      mutationId: canonicalHashV1({ operation, intentId: fixture.intent.intentId }),
+      intentId: fixture.intent.intentId,
+      sequence: 2,
+      operation,
+      eventType,
+      requestHash: '1'.repeat(64),
+      consistencyDelayMs: 1_000,
+      occurredAt: fixture.document.createdAt,
+    })
+
+    const submit = event(MutationOperation.Submit, MutationEventType.SubmitAccepted)
+    const cancel = event(MutationOperation.Cancel, MutationEventType.CancelUnknown)
+
+    expect(Result.getOrThrow(decidePreparedMutationRecovery(fixture.intent, submit, cancel))).toEqual({
+      _tag: 'Recover',
+      operation: MutationOperation.Cancel,
+      event: cancel,
+    })
+  })
+
   test('keeps OBSERVE recovery-only execution lookup-capable while fresh submit remains structurally unavailable', async () => {
     const fixture = await paperLifecycleFixture()
     const occurredAt = fixture.document.createdAt
