@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Effect, Exit, Layer, Option, Redacted, Ref, Result } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Redacted, Ref, Result } from 'effect'
 import { AuthorizationError, SqlError } from 'effect/unstable/sql/SqlError'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 
@@ -335,6 +335,65 @@ describe('Bayn resource lifecycle', () => {
 
     expect(services.httpClient).toBe(client)
     expect(services.session.read).toBeDefined()
+    expect(acquisitions).toBe(1)
+    expect(finalizations).toBe(1)
+  })
+
+  test('finalizes the shared Alpaca HTTP layer once when session acquisition is interrupted', async () => {
+    const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
+    const connectionResult = decodeBrokerConnection({
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Sandbox,
+      baseUrl: 'https://paper-api.alpaca.markets',
+      expectedAccountId: accountId,
+      key: Redacted.make('paper-key'),
+      secret: Redacted.make('paper-secret'),
+      proxyUrl: 'http://bayn-egress-proxy:3128',
+      operationTimeoutMs: 1_000,
+      retryAttempts: 0,
+    })
+    const connection = Result.getOrThrow(connectionResult) as BrokerConnection
+    const started = await Effect.runPromise(Deferred.make<void>())
+    let acquisitions = 0
+    let finalizations = 0
+    let requestInterrupted = false
+    const client = HttpClient.make(() =>
+      Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Effect.never),
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            requestInterrupted = true
+          }),
+        ),
+      ),
+    )
+    const http = Layer.effect(
+      HttpClient.HttpClient,
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          acquisitions += 1
+          return client
+        }),
+        () => Effect.sync(() => void (finalizations += 1)),
+      ),
+    )
+
+    const exit = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fiber = yield* BrokerSession.pipe(
+            Effect.provide(AlpacaBrokerResourcesLive(connection, http)),
+            Effect.forkScoped({ startImmediately: true }),
+          )
+          yield* Deferred.await(started)
+          yield* Fiber.interrupt(fiber)
+          return yield* Fiber.await(fiber)
+        }),
+      ),
+    )
+
+    expect(Exit.isFailure(exit)).toBeTrue()
+    expect(requestInterrupted).toBeTrue()
     expect(acquisitions).toBe(1)
     expect(finalizations).toBe(1)
   })
