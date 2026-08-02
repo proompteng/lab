@@ -8098,15 +8098,34 @@ describe('Bayn exact-head release review eligibility', () => {
     expect(requireHold(result).message).toContain('bounded wait exhausted')
   })
 
-  test('decodes a complete deterministic GitHub API fixture', async () => {
+  test('does not request paginated final-head detail for exact-head evidence', async () => {
+    let finalHeadDetailRequests = 0
     const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.includes('/commits/')) {
         if (!url.includes('/pulls?')) {
           const isFinalHeadDetail = url.includes(`/commits/${finalHeadSha}?`)
+          if (isFinalHeadDetail) {
+            finalHeadDetailRequests += 1
+            return new Response(
+              JSON.stringify({
+                sha: finalHeadSha,
+                parents: [{ sha: olderHeadSha }],
+                files: Array.from({ length: 101 }, (_, index) => ({
+                  filename: `services/bayn/src/generated-${index}.ts`,
+                })),
+              }),
+              {
+                headers: {
+                  'content-type': 'application/json',
+                  link: '<https://api.github.com/next>; rel="next"',
+                },
+              },
+            )
+          }
           return Response.json({
-            sha: isFinalHeadDetail ? finalHeadSha : mainCommitSha,
-            parents: [{ sha: isFinalHeadDetail ? olderHeadSha : pushBeforeSha }],
+            sha: mainCommitSha,
+            parents: [{ sha: pushBeforeSha }],
             files: [{ filename: 'services/bayn/src/example.ts' }],
           })
         }
@@ -8215,5 +8234,159 @@ describe('Bayn exact-head release review eligibility', () => {
         pushBeforeSha: null,
       }),
     ).toMatchObject({ status: 'eligible', prNumber: 13390, headSha: finalHeadSha })
+    expect(finalHeadDetailRequests).toBe(0)
+  })
+
+  test('requests paginated final-head detail for no-reply feedback-fix evidence and fails closed', async () => {
+    const fallbackReviewSubmittedAt = '2026-07-30T07:00:00Z'
+    const fallbackPath = 'services/bayn/src/example.ts'
+    let finalHeadDetailRequests = 0
+    const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/commits/')) {
+        if (!url.includes('/pulls?')) {
+          if (url.includes(`/commits/${finalHeadSha}?`)) {
+            finalHeadDetailRequests += 1
+            return new Response(
+              JSON.stringify({
+                sha: finalHeadSha,
+                parents: [{ sha: olderHeadSha }],
+                files: Array.from({ length: 101 }, (_, index) => ({ filename: `${fallbackPath}-${index}` })),
+              }),
+              {
+                headers: {
+                  'content-type': 'application/json',
+                  link: '<https://api.github.com/next>; rel="next"',
+                },
+              },
+            )
+          }
+          return Response.json({
+            sha: mainCommitSha,
+            parents: [{ sha: pushBeforeSha }],
+            files: [{ filename: fallbackPath }],
+          })
+        }
+        return Response.json([
+          {
+            number: 13390,
+            base: { ref: 'main' },
+            head: { sha: finalHeadSha },
+            merge_commit_sha: mainCommitSha,
+            merged_at: '2026-07-30T07:01:30Z',
+          },
+        ])
+      }
+      if (url.includes('/issues/13390/comments?') || url.includes('/issues/13390/reactions?')) {
+        return Response.json([])
+      }
+
+      const request = JSON.parse(String(init?.body)) as { readonly query: string }
+      if (request.query.includes('BaynReleasePullRequestMetadata')) {
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                number: 13390,
+                baseRefName: 'main',
+                headRefOid: finalHeadSha,
+                createdAt: '2026-07-30T06:59:00Z',
+                mergedAt: '2026-07-30T07:01:30Z',
+                mergeCommit: { oid: mainCommitSha },
+                timelineItems: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+              },
+            },
+          },
+        })
+      }
+      if (request.query.includes('BaynReleasePullRequestReviews')) {
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                reviews: {
+                  nodes: [
+                    {
+                      author: { login: baynCodexReviewer },
+                      commit: { oid: olderHeadSha },
+                      submittedAt: fallbackReviewSubmittedAt,
+                      state: 'COMMENTED',
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+        })
+      }
+      if (request.query.includes('BaynReleasePullRequestThreads')) {
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [
+                    {
+                      id: 'fallback-thread',
+                      isResolved: true,
+                      isOutdated: true,
+                      path: fallbackPath,
+                      comments: {
+                        nodes: [
+                          {
+                            author: { login: baynCodexReviewer },
+                            authorAssociation: 'NONE',
+                            body: 'Review finding',
+                            createdAt: fallbackReviewSubmittedAt,
+                            commit: { oid: olderHeadSha },
+                            pullRequestReview: {
+                              author: { login: baynCodexReviewer },
+                              commit: { oid: olderHeadSha },
+                              submittedAt: fallbackReviewSubmittedAt,
+                              state: 'COMMENTED',
+                            },
+                            url: 'https://github.com/proompteng/lab/pull/13390#discussion_fallback',
+                          },
+                        ],
+                        pageInfo: { hasNextPage: false, endCursor: null },
+                      },
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+        })
+      }
+      if (request.query.includes('BaynReleasePullRequestCommits')) {
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                commits: {
+                  nodes: [{ commit: { oid: olderHeadSha } }, { commit: { oid: finalHeadSha } }],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+        })
+      }
+      throw new Error('unexpected fallback fixture request')
+    }) as typeof fetch
+
+    const loader = createGitHubReleaseReviewLoader({
+      repository: 'proompteng/lab',
+      token: 'fixture-token',
+      mainCommitSha,
+      baseRefName: 'main',
+      requestTimeoutMs: 1_000,
+      fetchFn,
+    })
+
+    await expect(loader()).rejects.toMatchObject({ code: 'github-api-pagination-limit' })
+    expect(finalHeadDetailRequests).toBe(1)
   })
 })

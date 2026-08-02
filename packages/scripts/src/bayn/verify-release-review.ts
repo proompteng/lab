@@ -1512,6 +1512,38 @@ const selectLatestApplicableCodexReview = (
   return latest.length === 1 ? latest[0]?.review : undefined
 }
 
+const reviewCommentBelongsTo = (comment: PullRequestReviewThreadComment, reviewEvidence: PullRequestReview): boolean =>
+  comment.reviewAuthorLogin === baynCodexReviewer &&
+  comment.reviewCommitSha === reviewEvidence.commitSha &&
+  comment.reviewSubmittedAt === reviewEvidence.submittedAt
+
+const selectReviewThreads = (
+  pullRequest: PullRequestReviewState,
+  reviewEvidence: PullRequestReview,
+): readonly PullRequestReviewThread[] =>
+  pullRequest.threads.filter((thread) =>
+    thread.comments.some((comment) => reviewCommentBelongsTo(comment, reviewEvidence)),
+  )
+
+const selectTrustedFinalHeadReplyTimes = (
+  pullRequest: PullRequestReviewState,
+  thread: PullRequestReviewThread,
+  reviewSubmittedAtMs: number,
+): readonly number[] =>
+  thread.comments.flatMap((comment) => {
+    if (
+      comment.authorLogin === null ||
+      comment.authorLogin === baynCodexReviewer ||
+      !trustedFeedbackAssociations.has(comment.authorAssociation) ||
+      comment.reviewCommitSha !== pullRequest.headSha ||
+      comment.reviewSubmittedAt === null
+    ) {
+      return []
+    }
+    const attestationTime = Date.parse(comment.reviewSubmittedAt)
+    return Number.isFinite(attestationTime) && attestationTime >= reviewSubmittedAtMs ? [attestationTime] : []
+  })
+
 const selectFeedbackFixEvidence = (
   pullRequest: PullRequestReviewState,
   reviewEvidence: PullRequestReview,
@@ -1522,18 +1554,13 @@ const selectFeedbackFixEvidence = (
   const finalCommitIndex = pullRequest.commitShas.length - 1
   if (reviewedCommitIndex < 0 || reviewedCommitIndex >= finalCommitIndex) return undefined
   const isDirectFinalChild = reviewedCommitIndex + 1 === finalCommitIndex
-  const belongsToReview = (comment: PullRequestReviewThreadComment): boolean =>
-    comment.reviewAuthorLogin === baynCodexReviewer &&
-    comment.reviewCommitSha === reviewEvidence.commitSha &&
-    comment.reviewSubmittedAt === reviewEvidence.submittedAt
-
-  const reviewedThreads = pullRequest.threads.filter((thread) => thread.comments.some(belongsToReview))
+  const reviewedThreads = selectReviewThreads(pullRequest, reviewEvidence)
   if (reviewedThreads.length === 0) return undefined
 
   const threadAttestationTimes: number[] = []
   const reviewedPaths = new Set<string>()
   for (const thread of reviewedThreads) {
-    const reviewedComments = thread.comments.filter(belongsToReview)
+    const reviewedComments = thread.comments.filter((comment) => reviewCommentBelongsTo(comment, reviewEvidence))
     if (
       thread.path === null ||
       thread.path.length === 0 ||
@@ -1550,19 +1577,7 @@ const selectFeedbackFixEvidence = (
     }
     reviewedPaths.add(thread.path)
 
-    const trustedReplies = thread.comments.flatMap((comment) => {
-      if (
-        comment.authorLogin === null ||
-        comment.authorLogin === baynCodexReviewer ||
-        !trustedFeedbackAssociations.has(comment.authorAssociation) ||
-        comment.reviewCommitSha !== pullRequest.headSha ||
-        comment.reviewSubmittedAt === null
-      ) {
-        return []
-      }
-      const attestationTime = Date.parse(comment.reviewSubmittedAt)
-      return Number.isFinite(attestationTime) && attestationTime >= reviewSubmittedAtMs ? [attestationTime] : []
-    })
+    const trustedReplies = selectTrustedFinalHeadReplyTimes(pullRequest, thread, reviewSubmittedAtMs)
     const earliestTrustedReplyAtMs = trustedReplies.length === 0 ? undefined : Math.min(...trustedReplies)
     if (
       !thread.isResolved ||
@@ -1672,6 +1687,38 @@ const selectExactHeadCodexAttestation = (
     submittedAt: reaction.createdAt,
     state: 'COMMENTED',
   }
+}
+
+const shouldFetchFinalHeadCommitDetail = (pullRequest: PullRequestReviewState): boolean => {
+  const createdAtMs = Date.parse(pullRequest.createdAt)
+  const mergedAtMs = pullRequest.mergedAt === null ? Number.NaN : Date.parse(pullRequest.mergedAt)
+  if (!Number.isFinite(createdAtMs) || !Number.isFinite(mergedAtMs) || createdAtMs > mergedAtMs) return false
+
+  const codexReviews = pullRequest.reviews.filter((review) => review.authorLogin === baynCodexReviewer)
+  const exactHeadReviews = codexReviews.filter((review) => review.commitSha === pullRequest.headSha)
+  if (exactHeadReviews.some((review) => review.submittedAt === null || review.state === 'PENDING')) return false
+  if (exactHeadReviews.some((review) => review.submittedAt !== null)) return false
+  if (selectExactHeadCodexAttestation(pullRequest, createdAtMs, mergedAtMs) !== undefined) return false
+  if (!hasUniqueFinalCommitHistory(pullRequest)) return false
+
+  const feedbackFixReview = selectLatestApplicableCodexReview(pullRequest, codexReviews)
+  if (
+    feedbackFixReview === undefined ||
+    !eligibleReviewStates.has(feedbackFixReview.state) ||
+    feedbackFixReview.submittedAt === null ||
+    !Number.isFinite(Date.parse(feedbackFixReview.submittedAt))
+  ) {
+    return false
+  }
+
+  const reviewSubmittedAtMs = Date.parse(feedbackFixReview.submittedAt)
+  const reviewedThreads = selectReviewThreads(pullRequest, feedbackFixReview)
+  return (
+    reviewedThreads.length > 0 &&
+    reviewedThreads.every(
+      (thread) => selectTrustedFinalHeadReplyTimes(pullRequest, thread, reviewSubmittedAtMs).length === 0,
+    )
+  )
 }
 
 export const evaluateBaynReleaseReview = (input: {
@@ -5502,19 +5549,22 @@ const loadCommitReviewSnapshot = async (
 
   const candidate = candidates[0]
   if (candidate === undefined) throw new Error('source pull selection was unexpectedly empty')
-  const [metadata, reviews, threads, commitShas, issueComments, reactions, finalHeadCommit] = await Promise.all([
+  const [metadata, reviews, threads, commitShas, issueComments, reactions] = await Promise.all([
     fetchPullRequestMetadata(options, candidate.number),
     fetchPullRequestReviews(options, candidate.number),
     fetchPullRequestThreads(options, candidate.number),
     fetchPullRequestCommitShas(options, candidate.number),
     fetchPullRequestIssueComments(options, candidate.number),
     fetchPullRequestReactions(options, candidate.number),
-    fetchCommitDetail(options, candidate.headSha),
   ])
+  const pullRequest = { ...metadata, reviews, threads, commitShas, issueComments, reactions }
+  const finalHeadCommit = shouldFetchFinalHeadCommitDetail(pullRequest)
+    ? await fetchCommitDetail(options, candidate.headSha)
+    : undefined
   return {
     mainCommitParents: commit.parents,
     associatedPullRequests,
-    pullRequest: { ...metadata, reviews, threads, commitShas, finalHeadCommit, issueComments, reactions },
+    pullRequest: { ...pullRequest, finalHeadCommit },
   }
 }
 
