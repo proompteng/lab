@@ -3764,7 +3764,7 @@ export const evaluateBaynReleaseEligibility = (input: {
           })
           continue
         }
-        if (review.code !== 'exact-head-review-missing' && remediation.length === 0) {
+        if (review.code !== 'exact-head-review-missing') {
           return {
             ...review,
             message: `Bayn-affecting commit ${shortSha(commit.sha)} after last published ${shortSha(published.revision)} is not release-eligible: ${review.message}`,

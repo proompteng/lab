@@ -5040,7 +5040,7 @@ describe('Bayn publication-range eligibility', () => {
       },
     ],
     [
-      'additional unresolved source review thread',
+      'existing receipt cannot override an unresolved source review hold',
       (fixture: ReturnType<typeof remediationHistoryFixture>) => {
         const pull = fixture.snapshot.comparison!.commits[0]!.reviewSnapshot!.pullRequest!
         ;(pull.threads as PullRequestReviewThread[]).push(
@@ -5178,7 +5178,9 @@ describe('Bayn publication-range eligibility', () => {
       code:
         name === 'newer unreviewed source downgrade'
           ? 'release-range-metadata-mismatch'
-          : 'release-review-remediation-invalid',
+          : name === 'existing receipt cannot override an unresolved source review hold'
+            ? 'active-unresolved-review-threads'
+            : 'release-review-remediation-invalid',
       retryable: false,
     })
   })
