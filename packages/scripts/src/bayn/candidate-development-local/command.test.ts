@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
 import {
@@ -44,6 +44,8 @@ const resolved: CandidateDevelopmentLocalSourceResolution = {
   sourceManifestPath: 'services/bayn/candidates/example.json',
   runtimeMarketDataPath: '/sealed/typed-runtime-market-data.json',
   receiptPath: '/repo/.git/bayn-candidate-development-local-receipt.json',
+  attemptReceiptPath: '/repo/.git/bayn/candidate-development-attempts/ordinal-20.json',
+  candidateOrdinal: 20,
   source: source.value,
 }
 
@@ -319,6 +321,29 @@ describe('candidate development local command', () => {
       })
       await finalizeCandidateDevelopmentLocalReceipt(receiptPath, completed)
       expect(JSON.parse(await readFile(receiptPath, 'utf8'))).toMatchObject({ status: 'completed', exitCode: 0 })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('claims the v3 ordinal path before the legacy path for upgrade coordination', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'bayn-candidate-development-local-'))
+    const legacyReceiptPath = join(directory, 'worktree-git', 'bayn-candidate-development-local-receipt.json')
+    const attemptReceiptPath = join(
+      directory,
+      'common-git',
+      'bayn',
+      'candidate-development-attempts',
+      'ordinal-20.json',
+    )
+    const reserved = makeCandidateDevelopmentLocalAttemptReceipt(source.value, 'reserved')
+    try {
+      await mkdir(join(directory, 'worktree-git'), { recursive: true })
+      await mkdir(dirname(attemptReceiptPath), { recursive: true })
+      await reserveCandidateDevelopmentLocalReceipt(legacyReceiptPath, reserved, 20, attemptReceiptPath)
+
+      expect(JSON.parse(await readFile(attemptReceiptPath, 'utf8'))).toMatchObject({ status: 'reserved', attempt: 1 })
+      expect(JSON.parse(await readFile(legacyReceiptPath, 'utf8'))).toMatchObject({ status: 'reserved', attempt: 1 })
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
