@@ -143,6 +143,7 @@ describe('candidate development local command', () => {
           'services/bayn/candidates/example.json',
           '/sealed/typed-runtime-market-data.json',
         ],
+        sourceRevision: 'a'.repeat(40),
       },
     ])
     expect(fixture.receipts.map(({ status }) => status)).toEqual(['reserved', 'completed'])

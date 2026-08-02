@@ -56,6 +56,7 @@ export interface CandidateDevelopmentLocalSourceResolution {
 export interface CandidateDevelopmentLocalProcessRequest {
   readonly repositoryRoot: string
   readonly argv: readonly string[]
+  readonly sourceRevision: string
 }
 
 export interface CandidateDevelopmentLocalDependencies {
@@ -327,6 +328,10 @@ export const runCandidateDevelopmentProcess = async (
     stdin: 'inherit',
     stdout: 'inherit',
     stderr: 'inherit',
+    env: {
+      ...process.env,
+      BAYN_CANDIDATE_DEVELOPMENT_EXPECTED_SOURCE_REVISION: request.sourceRevision,
+    },
   })
   return child.exited
 }
@@ -380,6 +385,7 @@ export const runCandidateDevelopmentLocally = async (
     exitCode = await dependencies.runCandidateDevelopment({
       repositoryRoot: resolved.repositoryRoot,
       argv: [resolved.modulePath, resolved.sourceManifestPath, resolved.runtimeMarketDataPath],
+      sourceRevision: resolved.source.sourceRevision,
     })
   } catch {
     try {

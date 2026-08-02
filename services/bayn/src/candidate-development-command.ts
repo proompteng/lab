@@ -38,6 +38,7 @@ import type {
 const modulePath = process.argv.at(2)
 const sourceManifestPath = process.argv.at(3)
 const runtimeMarketDataPath = process.argv.at(4)
+const expectedSourceRevision = process.env.BAYN_CANDIDATE_DEVELOPMENT_EXPECTED_SOURCE_REVISION
 
 const executeLoadedCandidateDevelopmentProgram = (
   loaded: CandidateDevelopmentLoadedExecutableProgram,
@@ -71,7 +72,13 @@ const main = (
               module,
               manifest,
               evaluateCandidateDevelopmentArtifact,
-              verifyCandidateDevelopmentSourceFiles,
+              (sourceModulePath, sourceManifest, sourceGit) =>
+                verifyCandidateDevelopmentSourceFiles(
+                  sourceModulePath,
+                  sourceManifest,
+                  sourceGit,
+                  expectedSourceRevision,
+                ),
               loadCandidateDevelopmentRuntimeMarketDataFile(runtimeMarketDataPath),
             ),
           ).pipe(Effect.flatMap(executeLoadedCandidateDevelopmentProgram))

@@ -9,35 +9,10 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'services/bayn/**'
-      - 'packages/scripts/src/bayn/update-manifests.ts'
-      - 'packages/scripts/src/bayn/verify-release-review.ts'
-      - 'services/bayn/release-review-remediations/**'
-      - 'nix/images/bayn.nix'
-      - 'nix/images/bayn-runtime-root.nix'
-      - 'nix/images/bun-workspace-service.nix'
-      - 'nix/images/bun-workspace-deps-source.nix'
-      - 'nix/packages.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
-      - 'nix/oci-release-contract.sh'
-      - 'nix/verify-bayn-image-command.sh'
-      - 'flake.nix'
-      - 'flake.lock'
-      - 'bun.lock'
-      - 'package.json'
-      - '**/package.json'
-      - '.npmrc'
-      - 'bunfig.toml'
-      - 'patches/**'
-      - 'tsconfig.base.json'
-      - '.github/actions/setup-nix-toolchain/**'
-      - '.github/workflows/bayn-*.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
+    # Qualification binds to sha-${GITHUB_SHA}; publish an immutable image for
+    # every main SHA. The release-review verifier still gates Bayn-affecting
+    # changes, while unrelated commits receive an exact-source image without a
+    # review requirement.
   issue_comment:
     types:
       - created

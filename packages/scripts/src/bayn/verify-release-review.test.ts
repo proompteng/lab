@@ -5080,6 +5080,42 @@ describe('Bayn publication-range eligibility', () => {
     })
   })
 
+  test('publishes an exact image for a clean non-Bayn main commit', () => {
+    const result = evaluateBaynReleaseEligibility({
+      mainCommitSha,
+      baseRefName: 'main',
+      snapshot: eligibilitySnapshot({
+        comparison: {
+          status: 'ahead',
+          baseSha: lastPublishedSha,
+          headSha: mainCommitSha,
+          mergeBaseSha: lastPublishedSha,
+          aheadBy: 1,
+          totalCommits: 1,
+          commits: [
+            {
+              sha: mainCommitSha,
+              parents: [pushBeforeSha],
+              files: ['README.md'],
+              reviewSnapshot: null,
+            },
+          ],
+          truncated: false,
+        },
+      }),
+      nowMs: evaluationNowMs,
+      pushBeforeSha,
+    })
+
+    expect(result).toMatchObject({
+      status: 'eligible',
+      lastPublishedRevision: lastPublishedSha,
+      checkedCommitCount: 1,
+      baynAffectingCommitCount: 0,
+      reviewedPullRequests: [],
+    })
+  })
+
   test('holds a later clean separate push when an earlier held Bayn run was cancelled', () => {
     const heldReview = reviewSnapshotFor({
       commitSha: heldCommitSha,
