@@ -82,6 +82,23 @@ describe('candidate development source provenance', () => {
       expect(verified.files.sourceRevision).toMatch(/^[0-9a-f]{40}$/)
       expect(verified.files.moduleBlobOid).toMatch(/^[0-9a-f]{40}$/)
       expect(Buffer.from(verified.moduleUrl.split(',')[1] ?? '', 'base64').toString('utf8')).toBe(moduleBytes)
+      const mismatchedSourceRevision =
+        '0'.repeat(40) === verified.files.sourceRevision ? '1'.repeat(40) : '0'.repeat(40)
+      expect(
+        await Effect.runPromise(
+          Effect.flip(
+            verifyCandidateDevelopmentSourceFiles(modulePath, sourceManifestPath, sourceGit, mismatchedSourceRevision),
+          ),
+        ),
+      ).toMatchObject({
+        _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+        operation: 'verify-head',
+        cause: {
+          field: 'expectedSourceRevision',
+          expected: mismatchedSourceRevision,
+          observed: verified.files.sourceRevision,
+        },
+      })
 
       const replacementPath = join(candidateDirectory, 'replacement.mjs')
       const replacementBytes = "throw new Error('replacement blob executed')\n"

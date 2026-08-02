@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test'
+import { ConfigProvider, Effect } from 'effect'
 
 import {
   candidateDevelopmentExecutableProgramSchemaVersion,
+  loadCandidateDevelopmentExpectedSourceRevision,
   renderCandidateDevelopmentCommandFailure,
 } from './candidate-development-command'
 
@@ -21,5 +23,42 @@ describe('candidate-development-command compatibility facade', () => {
         },
       }) + '\n',
     )
+  })
+
+  test('loads the reserved source revision through the typed config provider', async () => {
+    const sourceRevision = 'a'.repeat(40)
+    const loaded = await Effect.runPromise(
+      loadCandidateDevelopmentExpectedSourceRevision.pipe(
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromUnknown({ BAYN_CANDIDATE_DEVELOPMENT_EXPECTED_SOURCE_REVISION: sourceRevision }),
+        ),
+      ),
+    )
+
+    expect(loaded).toBe(sourceRevision)
+  })
+
+  test('fails closed when the reserved source revision is invalid configuration', async () => {
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        loadCandidateDevelopmentExpectedSourceRevision.pipe(
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.fromUnknown({ BAYN_CANDIDATE_DEVELOPMENT_EXPECTED_SOURCE_REVISION: 'not-a-revision' }),
+          ),
+        ),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      _tag: 'CandidateDevelopmentCommandSourceVerificationFailed',
+      operation: 'verify-head',
+      cause: {
+        field: 'expectedSourceRevision',
+        expected: 'lowercase 40-character Git revision when configured',
+        observed: 'invalid configuration',
+      },
+    })
   })
 })

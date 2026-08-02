@@ -12,7 +12,7 @@ import { writeSync } from 'node:fs'
 import { isMainThread } from 'node:worker_threads'
 
 import { NodeRuntime } from '@effect/platform-node'
-import { Cause, Data, Effect } from 'effect'
+import { Cause, Config, Data, Effect, Option } from 'effect'
 
 import {
   evaluateCandidateDevelopmentArtifact,
@@ -30,6 +30,7 @@ import {
 } from './candidate-development-command/failures'
 import { sourceVerificationFailure } from './candidate-development-command/evaluation'
 import { verifyCandidateDevelopmentSourceFiles } from './candidate-development-command/source-git'
+import { GitSourceRevisionSchema } from './schemas'
 import type {
   CandidateDevelopmentCommandFailure,
   CandidateDevelopmentCommandReport,
@@ -38,6 +39,20 @@ import type {
 const modulePath = process.argv.at(2)
 const sourceManifestPath = process.argv.at(3)
 const runtimeMarketDataPath = process.argv.at(4)
+
+const expectedSourceRevisionConfig = Config.option(
+  Config.schema(GitSourceRevisionSchema, 'BAYN_CANDIDATE_DEVELOPMENT_EXPECTED_SOURCE_REVISION'),
+).pipe(Config.map(Option.getOrUndefined))
+
+export const loadCandidateDevelopmentExpectedSourceRevision = expectedSourceRevisionConfig.pipe(
+  Effect.mapError(() =>
+    sourceVerificationFailure('verify-head', {
+      field: 'expectedSourceRevision',
+      expected: 'lowercase 40-character Git revision when configured',
+      observed: 'invalid configuration',
+    }),
+  ),
+)
 
 const executeLoadedCandidateDevelopmentProgram = (
   loaded: CandidateDevelopmentLoadedExecutableProgram,
@@ -51,31 +66,41 @@ const executeLoadedCandidateDevelopmentProgram = (
     ),
   )
 
-const main = (
-  modulePath === undefined
-    ? Effect.fail<CandidateDevelopmentCommandFailure>({ _tag: 'CandidateDevelopmentCommandModulePathMissing' })
+const main = Effect.gen(function* () {
+  const expectedSourceRevision = yield* loadCandidateDevelopmentExpectedSourceRevision
+  return modulePath === undefined
+    ? yield* Effect.fail<CandidateDevelopmentCommandFailure>({ _tag: 'CandidateDevelopmentCommandModulePathMissing' })
     : sourceManifestPath === undefined
-      ? Effect.fail<CandidateDevelopmentCommandFailure>({
+      ? yield* Effect.fail<CandidateDevelopmentCommandFailure>({
           _tag: 'CandidateDevelopmentCommandSourceManifestPathMissing',
         })
       : runtimeMarketDataPath === undefined
-        ? Effect.fail<CandidateDevelopmentCommandFailure>(
+        ? yield* Effect.fail<CandidateDevelopmentCommandFailure>(
             sourceVerificationFailure('verify-runtime-market-data', {
               field: 'runtimeMarketDataPath',
               expected: 'path to a typed content-verified runtime market-data witness',
               observed: null,
             }),
           )
-        : loadAuthorizedCandidateDevelopmentExecutableProgram(modulePath, sourceManifestPath, (module, manifest) =>
-            loadCandidateDevelopmentExecutableProgram(
-              module,
-              manifest,
-              evaluateCandidateDevelopmentArtifact,
-              verifyCandidateDevelopmentSourceFiles,
-              loadCandidateDevelopmentRuntimeMarketDataFile(runtimeMarketDataPath),
-            ),
+        : yield* loadAuthorizedCandidateDevelopmentExecutableProgram(
+            modulePath,
+            sourceManifestPath,
+            (module, manifest) =>
+              loadCandidateDevelopmentExecutableProgram(
+                module,
+                manifest,
+                evaluateCandidateDevelopmentArtifact,
+                (sourceModulePath, sourceManifest, sourceGit) =>
+                  verifyCandidateDevelopmentSourceFiles(
+                    sourceModulePath,
+                    sourceManifest,
+                    sourceGit,
+                    expectedSourceRevision,
+                  ),
+                loadCandidateDevelopmentRuntimeMarketDataFile(runtimeMarketDataPath),
+              ),
           ).pipe(Effect.flatMap(executeLoadedCandidateDevelopmentProgram))
-).pipe(Effect.annotateLogs({ operation: 'candidate-development-command' }))
+}).pipe(Effect.annotateLogs({ operation: 'candidate-development-command' }))
 
 export class CandidateDevelopmentCommandError extends Data.TaggedError('CandidateDevelopmentCommandError')<{
   readonly failure: CandidateDevelopmentCommandFailure

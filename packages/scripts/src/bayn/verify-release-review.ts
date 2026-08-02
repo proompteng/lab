@@ -3614,11 +3614,13 @@ export const evaluateBaynReleaseEligibility = (input: {
 
   const affectingCommits = comparison.commits.filter((commit) => commit.files.some(isBaynReleaseAffectingPath))
   if (comparison.aheadBy > 0 && affectingCommits.length === 0) {
-    return hold(
-      'release-range-metadata-mismatch',
-      `triggered Bayn release range ${shortSha(published.revision)}..${shortSha(input.mainCommitSha)} contains no Bayn-affecting commit`,
-      false,
-    )
+    return {
+      status: 'eligible',
+      lastPublishedRevision: published.revision,
+      checkedCommitCount: comparison.commits.length,
+      baynAffectingCommitCount: 0,
+      reviewedPullRequests: [],
+    }
   }
 
   const normalReviews = new Map<string, BaynReleaseReviewEvaluation>()

@@ -31,6 +31,7 @@ export type CandidateDevelopmentSourceVerifier = (
   modulePath: string,
   sourceManifestPath: string,
   sourceGit?: CandidateDevelopmentSourceGit,
+  expectedSourceRevision?: string,
 ) => Effect.Effect<CandidateDevelopmentVerifiedModuleSource, CandidateDevelopmentCommandFailure>
 
 export interface CandidateDevelopmentSourceGit {

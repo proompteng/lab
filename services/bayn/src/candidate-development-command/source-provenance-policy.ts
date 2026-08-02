@@ -36,6 +36,8 @@ const activeGitMetadataLines = (value: string, commentsAllowed: boolean): readon
     .map((line) => line.trim())
     .filter((line) => line.length > 0 && (!commentsAllowed || !line.startsWith('#')))
 
+const sourceRevisionPattern = /^[0-9a-f]{40}$/
+
 const readOptionalGitMetadata = async (path: string, signal: AbortSignal): Promise<string> => {
   try {
     return await readFile(path, { encoding: 'utf8', signal })
@@ -401,6 +403,7 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
   modulePath,
   sourceManifestPath,
   sourceGit: CandidateDevelopmentSourceGit = candidateDevelopmentSourceGit,
+  expectedSourceRevision,
 ) =>
   Effect.tryPromise({
     try: async (signal) => {
@@ -429,6 +432,20 @@ export const verifyCandidateDevelopmentSourceFiles: CandidateDevelopmentSourceVe
       if (!/^[0-9a-f]{40}$/.test(sourceRevision)) {
         throw new CandidateDevelopmentSourceVerificationError('verify-head', {
           expected: 'lowercase 40-character Git revision',
+          observed: sourceRevision,
+        })
+      }
+      if (expectedSourceRevision !== undefined && !sourceRevisionPattern.test(expectedSourceRevision)) {
+        throw new CandidateDevelopmentSourceVerificationError('verify-head', {
+          field: 'expectedSourceRevision',
+          expected: 'lowercase 40-character Git revision',
+          observed: expectedSourceRevision,
+        })
+      }
+      if (expectedSourceRevision !== undefined && sourceRevision !== expectedSourceRevision) {
+        throw new CandidateDevelopmentSourceVerificationError('verify-head', {
+          field: 'expectedSourceRevision',
+          expected: expectedSourceRevision,
           observed: sourceRevision,
         })
       }

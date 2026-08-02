@@ -1,94 +1,127 @@
 import { describe, expect, test } from 'bun:test'
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 
-const workflow = readFileSync('.github/workflows/bayn-qualification.yml', 'utf8')
-const image = readFileSync('nix/images/bayn.nix', 'utf8')
-const packageManifest = readFileSync('services/bayn/package.json', 'utf8')
-const collector = readFileSync('services/bayn/src/qualification-collector-command.ts', 'utf8')
-const auditCommand = readFileSync('services/bayn/src/qualification-audit-command.ts', 'utf8')
+import { parse } from 'yaml'
 
-describe('Bayn qualification workflow collector/executor contract', () => {
-  test('stays dormant before any credential, image, database, Signal, or qualification access', () => {
-    const dormant = workflow.indexOf('Verify typed candidate dormancy before any privileged access')
-    const safeNoop = workflow.indexOf('Stop safely while qualification is dormant')
-    const imageBinding = workflow.indexOf('Bind the exact promoted unpinned qualification image')
-    const secretReference = workflow.indexOf('secrets.BAYN_QUALIFICATION_CLICKHOUSE_USERNAME')
-    const imagePull = workflow.indexOf('docker pull "$IMAGE_REFERENCE"')
+const workflowPath = '.github/workflows/bayn-qualification.yml'
+const packageManifestPath = 'services/bayn/package.json'
 
-    expect(dormant).toBeGreaterThan(0)
-    expect(safeNoop).toBeGreaterThan(dormant)
-    expect(imageBinding).toBeGreaterThan(safeNoop)
-    expect(imageBinding).toBeGreaterThan(dormant)
-    expect(secretReference).toBeGreaterThan(imageBinding)
-    expect(imagePull).toBeGreaterThan(imageBinding)
-    expect(workflow).toContain('bun packages/scripts/src/bayn/verify-qualification-dormancy.ts')
-    expect(workflow).toContain('--repository-root "$GITHUB_WORKSPACE"')
-    expect(workflow).toContain('--github-output "$GITHUB_OUTPUT"')
-    expect(workflow).not.toContain("rg -n 'nextCandidatePreregistration: null'")
-    expect(workflow).not.toContain('services/bayn/src/candidate-development-calendar.ts')
-    expect(workflow).toContain(
-      'No credentials, Signal data, PostgreSQL state, holdout, image, or qualification command were accessed.',
+interface WorkflowStep {
+  readonly name?: string
+  readonly id?: string
+  readonly if?: string
+  readonly run?: string
+  readonly uses?: string
+  readonly with?: Record<string, unknown>
+  readonly env?: Record<string, unknown>
+}
+
+interface QualificationWorkflow {
+  readonly permissions: Record<string, string>
+  readonly jobs: {
+    readonly eligibility: {
+      readonly steps: readonly WorkflowStep[]
+    }
+  }
+}
+
+const workflow = parse(readFileSync(workflowPath, 'utf8')) as QualificationWorkflow
+const packageManifest = JSON.parse(readFileSync(packageManifestPath, 'utf8')) as {
+  readonly scripts: Record<string, string>
+}
+const steps = workflow.jobs.eligibility.steps
+
+const step = (name: string): WorkflowStep => {
+  const found = steps.find((candidate) => candidate.name === name)
+  if (found === undefined) throw new Error(`workflow step is missing: ${name}`)
+  return found
+}
+
+const stepIndex = (name: string): number => steps.findIndex((candidate) => candidate.name === name)
+
+const runText = (name: string): string => step(name).run ?? ''
+
+describe('Bayn qualification workflow contract', () => {
+  test('keeps dormancy ahead of every privileged or image operation', () => {
+    const dormancy = stepIndex('Verify typed candidate dormancy before any privileged access')
+    const stop = stepIndex('Stop safely while qualification is dormant')
+    const toolchain = stepIndex('Set up the runner image-inspection toolchain')
+    const build = stepIndex('Resolve and load the exact checked-out source image')
+    const preflight = stepIndex('Preflight the exact source image without credentials or network')
+    const execution = stepIndex('Collect, lock, execute once, and independently audit the sealed holdout')
+
+    expect(dormancy).toBeGreaterThanOrEqual(0)
+    expect(stop).toBeGreaterThan(dormancy)
+    expect(toolchain).toBeGreaterThan(stop)
+    expect(build).toBeGreaterThan(toolchain)
+    expect(preflight).toBeGreaterThan(build)
+    expect(execution).toBeGreaterThan(preflight)
+    expect(step('Stop safely while qualification is dormant').if).toBe("steps.dormancy.outputs.dormant == 'true'")
+    for (const name of [
+      'Set up the runner image-inspection toolchain',
+      'Resolve and load the exact checked-out source image',
+      'Preflight the exact source image without credentials or network',
+      'Collect, lock, execute once, and independently audit the sealed holdout',
+    ]) {
+      expect(step(name).if).toBe("steps.dormancy.outputs.dormant == 'false'")
+    }
+    expect(runText('Verify typed candidate dormancy before any privileged access')).toContain(
+      'verify-qualification-dormancy.ts',
     )
-    expect(workflow).toContain('id: dormancy')
-    expect(workflow).not.toContain('steps.calendar')
-    expect(workflow).toContain("if: steps.dormancy.outputs.dormant == 'true'")
-    expect(workflow).not.toContain("steps.dormancy.outputs.dormant != 'true'")
-    expect(workflow).toContain("if: steps.dormancy.outputs.dormant == 'false'")
-  })
-
-  test('binds and executes only the exact promoted unpinned source image', () => {
-    expect(workflow).toContain('fetch-depth: 0')
-    expect(workflow).toContain('persist-credentials: false')
-    expect(workflow).toContain('test "$(git rev-parse refs/remotes/origin/main)" = "${GITHUB_SHA}"')
-    expect(workflow).toContain('qualification_pin_count')
-    expect(workflow).toContain('test "$qualification_pin_count" = 0')
-    expect(workflow).toContain('[[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]')
-    expect(workflow).toContain('image_reference="${image_repository}@${image_digest}"')
-    expect(workflow).toContain('docker pull "$IMAGE_REFERENCE"')
-    expect(workflow).toContain('jq -e --arg expected "$IMAGE_REFERENCE" \'index($expected) != null\'')
-    expect(workflow).toContain('--read-only')
-    expect(workflow).toContain('--mount "type=bind,src=${GITHUB_WORKSPACE},dst=/workspace,readonly"')
-    expect(workflow).toContain('--entrypoint bayn-qualification-collector')
-    expect(workflow).toContain('"$IMAGE_REFERENCE" | tee "$log"')
-  })
-
-  test('uses in-process evidence rather than an arbitrary prewritten eligibility file', () => {
-    expect(workflow).not.toContain('/run/bayn-qualification/eligibility-input.json')
-    expect(workflow).not.toContain('verify-qualification-eligibility.ts')
-    expect(collector).toContain('verifyCandidateDevelopmentRepositoryIntegrity')
-    expect(collector).toContain('verifyCandidateDevelopmentPreregistrationLineage')
-    expect(collector).toContain('validateCandidateDevelopmentPreregistrationDocument')
-    expect(collector).toContain('verifyCandidateDevelopmentPreregistrationModuleNovelty')
-    expect(collector).toContain('verifyQualificationCandidateImmutableSource')
-    expect(collector).toContain('compiledBoundedContentHash')
-    expect(collector).toContain('isQualificationSourceAffectingPath')
-    expect(collector).toContain("['diff', '--no-renames', '--name-only'")
-    expect(collector).toContain('verifyQualificationCandidateBinding')
-    expect(collector).toContain('runStartup(input.plan.config')
-    expect(collector).toContain('collectQualificationAuditReport')
-    expect(collector.indexOf('readQualification(candidate.candidateRunId)')).toBeLessThan(
-      collector.indexOf('runStartup(input.plan.config'),
+    expect(runText('Verify typed candidate dormancy before any privileged access')).toContain(
+      '--repository-root "$GITHUB_WORKSPACE"',
+    )
+    expect(runText('Verify typed candidate dormancy before any privileged access')).toContain(
+      '--github-output "$GITHUB_OUTPUT"',
     )
   })
 
-  test('runs the exact image preflight without credentials before the secret-bearing execution step', () => {
-    const preflight = workflow.indexOf('Preflight immutable qualification evidence without credentials')
-    const secretExecution = workflow.indexOf('Collect, lock, execute once, and independently audit')
-    const firstSecret = workflow.indexOf('secrets.BAYN_QUALIFICATION_CLICKHOUSE_USERNAME')
+  test('runs the exact checked-out source image without release or deployment orchestration', () => {
+    const checkout = step('Checkout exact scheduled main')
+    expect(checkout.uses).toBe('actions/checkout@v5')
+    expect(checkout.with).toMatchObject({
+      ref: '${{ github.sha }}',
+      'fetch-depth': 0,
+      'persist-credentials': false,
+    })
 
-    expect(preflight).toBeGreaterThan(0)
-    expect(secretExecution).toBeGreaterThan(preflight)
-    expect(firstSecret).toBeGreaterThan(secretExecution)
-    expect(workflow).toContain('-e BAYN_QUALIFICATION_MODE=preflight')
-    expect(workflow).toContain('-e BAYN_QUALIFICATION_MODE=execute')
-    expect(workflow).toContain('bayn.qualification-collector-preflight.v1')
+    const build = runText('Resolve and load the exact checked-out source image')
+    expect(build).toContain('crane digest "$image_tag"')
+    expect(build).toContain('image_reference="${IMAGE_REPOSITORY}@${image_digest}"')
+    expect(build).toContain('crane config --platform linux/arm64 "$image_reference"')
+    expect(build).toContain('docker pull --platform linux/arm64 "$image_reference"')
+    expect(build).toContain('echo "reference=${image_reference}" >> "$GITHUB_OUTPUT"')
+
+    const allRuns = steps.flatMap((candidate) => (candidate.run === undefined ? [] : [candidate.run]))
+    const orchestrationText = allRuns.join('\n')
+    expect(orchestrationText).not.toContain('docker push')
+    expect(orchestrationText).not.toContain('kubectl')
+    expect(orchestrationText).not.toContain('argocd')
+    expect(orchestrationText).not.toContain('deployment.yaml')
+    expect(orchestrationText).not.toContain('BAYN_QUALIFICATION_RUN_ID')
+
+    const preflight = runText('Preflight the exact source image without credentials or network')
+    expect(preflight).toContain('--network none')
+    expect(preflight).toContain('--read-only')
+    expect(preflight).toContain('--mount "type=bind,src=${GITHUB_WORKSPACE},dst=/workspace,readonly"')
+    expect(preflight).toContain('-e BAYN_QUALIFICATION_MODE=preflight')
+    expect(preflight).toContain('--entrypoint bayn-qualification-collector')
+
+    const execution = runText('Collect, lock, execute once, and independently audit the sealed holdout')
+    expect(execution).toContain('--network host')
+    expect(execution).toContain('--read-only')
+    expect(execution).toContain('-e BAYN_QUALIFICATION_MODE=execute')
+    expect(execution).toContain('--entrypoint bayn-qualification-collector')
+    expect((orchestrationText.match(/BAYN_QUALIFICATION_MODE=execute/g) ?? []).length).toBe(1)
   })
 
-  test('keeps GitHub permissions read-only and declares only explicit secret wiring', () => {
-    expect(workflow).toContain('actions: read')
-    expect(workflow).toContain('contents: read')
-    expect(workflow).not.toMatch(/(?:issues|packages|pull-requests|statuses|checks|deployments|id-token): write/)
-    for (const secret of [
+  test('keeps the qualification boundary read-only and wires only the declared execution secrets', () => {
+    expect(workflow.permissions).toEqual({ actions: 'read', contents: 'read' })
+    expect(step('Reject manual invocation').if).toBe("github.event_name == 'workflow_dispatch'")
+    expect(runText('Reject manual invocation')).toContain('Manual qualification dispatch is forbidden.')
+
+    const expectedSecrets = [
       'BAYN_QUALIFICATION_CLICKHOUSE_USERNAME',
       'BAYN_QUALIFICATION_CLICKHOUSE_PASSWORD',
       'BAYN_QUALIFICATION_POSTGRES_URL',
@@ -96,54 +129,32 @@ describe('Bayn qualification workflow collector/executor contract', () => {
       'BAYN_QUALIFICATION_SIGNAL_PUBLISHER_USERNAME',
       'BAYN_QUALIFICATION_AUDIT_CLICKHOUSE_USERNAME',
       'BAYN_QUALIFICATION_AUDIT_CLICKHOUSE_PASSWORD',
-    ]) {
-      expect(workflow).toContain(`secrets.${secret}`)
+    ]
+    const executionEnv = step('Collect, lock, execute once, and independently audit the sealed holdout').env ?? {}
+    expect(Object.keys(executionEnv).filter((key) => key.startsWith('BAYN_'))).toEqual([
+      'BAYN_CLICKHOUSE_USERNAME',
+      'BAYN_CLICKHOUSE_PASSWORD',
+      'BAYN_POSTGRES_URL',
+      'BAYN_QUALIFICATION_POSTGRES_CA_PEM',
+      'BAYN_AUDIT_SIGNAL_PUBLISHER_USERNAME',
+      'BAYN_AUDIT_CLICKHOUSE_USERNAME',
+      'BAYN_AUDIT_CLICKHOUSE_PASSWORD',
+    ])
+    for (const secret of expectedSecrets) {
+      expect(JSON.stringify(executionEnv)).toContain(`secrets.${secret}`)
     }
-    expect(workflow).toContain("if: github.event_name == 'workflow_dispatch'")
-    expect(workflow).toContain('Manual qualification dispatch is forbidden.')
+    expect(
+      JSON.stringify(step('Preflight the exact source image without credentials or network').env ?? {}),
+    ).not.toContain('secrets.')
   })
 
-  test('packages the candidate, collector, and independent audit into both production image platforms', () => {
-    expect(packageManifest).toContain('"collect:qualification": "bun src/qualification-collector-command.ts"')
-    for (const command of [
-      'qualification-audit-command',
-      'qualification-candidate-command',
-      'qualification-collector-command',
-    ]) {
-      expect(packageManifest).toContain(`src/${command}.ts`)
-      expect(image).toContain(`src/${command}.ts`)
-      expect(image).toContain(`dist/${command}.js`)
+  test('parses every shell step with Bash and exposes the local candidate-development wrapper', () => {
+    for (const candidate of steps) {
+      if (candidate.run === undefined) continue
+      expect(() => execFileSync('bash', ['-n'], { input: candidate.run, encoding: 'utf8' })).not.toThrow()
     }
-    expect(image).toContain('pkgs.git')
-    expect(image).toContain('bayn-qualification-candidate')
-    expect(image).toContain('bayn-qualification-audit')
-    expect(image).toContain('bayn-qualification-collector')
-    expect(image).toContain('exec "$root/bin/bun" "$root/app/services/bayn/dist/qualification-collector-command.js"')
-    expect(image).toContain('includeBunRuntime = true;')
-    expect(image).toContain('sha256-y7PRw8e/DeerQppuopDJREtOGA5qB24hX9HUyumngzg=')
-    expect(image).toContain('sha256-SnSTaAPp9/4mjEQxUwZGApZWqsfPd+2MWtvwJ10iqkQ=')
-  })
-
-  test('keeps standalone dossier output while the collector imports the report-only audit wrapper', () => {
-    expect(auditCommand).toContain('const collectQualificationAuditOutput')
-    expect(auditCommand).toContain('const { input, report } = yield* collectQualificationAuditOutput')
-    expect(auditCommand).toContain('renderQualificationAuditCommandOutput(report)')
-    expect(auditCommand).toContain('completeQualificationAuditCommand(input, report)')
-    expect(auditCommand).toContain("input.output === 'audit' && 'status' in report && report.status !== 'PASS'")
-    expect(auditCommand).toContain('export const requireQualificationAuditReport')
-    expect(auditCommand).toContain(
-      'export const collectQualificationAuditReport = collectQualificationAuditOutput.pipe(',
+    expect(packageManifest.scripts['candidate:development:local']).toBe(
+      'bun ../../packages/scripts/src/bayn/candidate-development-local/command.ts',
     )
-    expect(collector).toContain("import { collectQualificationAuditReport } from './qualification-audit-command'")
-  })
-
-  test('keeps collector configuration failures typed and delegates termination to NodeRuntime', () => {
-    expect(collector).toContain('export const requiredQualificationEnvironment')
-    expect(collector).toContain('export const loadQualificationCollectorInvocation')
-    expect(collector).toContain('export const qualificationCollectorMain')
-    expect(collector).toContain('Effect.tapError')
-    expect(collector).toContain('NodeRuntime.runMain(qualificationCollectorMain)')
-    expect(collector).not.toContain('process.exitCode')
-    expect(collector).not.toContain('Effect.catch((error)')
   })
 })

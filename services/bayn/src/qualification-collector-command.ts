@@ -814,8 +814,22 @@ const environmentValue = (deployment: string, name: string): string => {
   return value.startsWith('"') ? String(JSON.parse(value)) : value
 }
 
-const hasEnvironmentBlock = (deployment: string, name: string): boolean =>
-  new RegExp(`^\\s*- name: ${name}$`, 'm').test(deployment)
+export interface QualificationImageBinding {
+  readonly repository: string
+  readonly digest: string
+}
+
+export const parseQualificationImageReference = (value: string): QualificationImageBinding | undefined => {
+  const separator = value.lastIndexOf('@')
+  if (separator <= 0 || separator === value.length - 1) return undefined
+  const taggedRepository = value.slice(0, separator)
+  const digest = value.slice(separator + 1)
+  if (!imageDigest.test(digest)) return undefined
+  const lastSlash = taggedRepository.lastIndexOf('/')
+  const lastColon = taggedRepository.lastIndexOf(':')
+  const repository = lastColon > lastSlash ? taggedRepository.slice(0, lastColon) : taggedRepository
+  return repository.length === 0 ? undefined : { repository, digest }
+}
 
 const exactBaynBuildInputPaths = new Set([
   'packages/scripts/src/bayn/update-manifests.ts',
@@ -853,13 +867,6 @@ export const isQualificationSourceAffectingPath = (path: string): boolean =>
 const loadDeploymentRuntime = async (repositoryPath: string): Promise<DeploymentRuntime> => {
   const path = resolve(repositoryPath, 'argocd/applications/bayn/deployment.yaml')
   const deployment = await readFile(path, 'utf8')
-  if (hasEnvironmentBlock(deployment, 'BAYN_QUALIFICATION_RUN_ID')) {
-    throw collectorError(
-      'eligibility',
-      'qualification-pin-present',
-      'a fresh qualification attempt requires the exact promoted runtime to be unpinned',
-    )
-  }
   const runtime: DeploymentRuntime = {
     sourceSha: environmentValue(deployment, 'BAYN_CODE_REVISION'),
     imageRepository: environmentValue(deployment, 'BAYN_IMAGE_REPOSITORY'),
@@ -953,6 +960,22 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
         'qualification collector requires production build metadata',
       )
     }
+    const imageReference = yield* requiredQualificationEnvironment(process.env, 'BAYN_QUALIFICATION_IMAGE_REFERENCE')
+    const imageBinding = parseQualificationImageReference(imageReference)
+    if (imageBinding === undefined || imageBinding.repository !== embeddedBuildMetadata.imageRepository) {
+      return yield* collectorError(
+        'configuration',
+        'qualification-image-binding-invalid',
+        'qualification must bind the exact locally built image and embedded repository',
+      )
+    }
+    if (embeddedBuildMetadata.sourceRevision !== currentMainSha) {
+      return yield* collectorError(
+        'configuration',
+        'image-source-mismatch',
+        'qualification image source differs from the exact scheduled source',
+      )
+    }
 
     yield* verifyCandidateDevelopmentRepositoryIntegrity(repositoryPath).pipe(
       Effect.mapError((cause) =>
@@ -967,33 +990,18 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
           ? cause
           : collectorError('configuration', 'deployment-read-failed', 'deployment runtime could not be read', cause),
     })
-    if (embeddedBuildMetadata.sourceRevision !== deployment.sourceSha) {
-      return yield* collectorError(
-        'configuration',
-        'image-source-mismatch',
-        'qualification image source differs from the promoted deployment source',
-      )
-    }
-    if (deployment.sourceSha !== currentMainSha) {
-      yield* verifyCandidateDevelopmentPreregistrationLineage(
-        repositoryPath,
-        deployment.sourceSha,
-        currentMainSha,
-      ).pipe(
-        Effect.mapError((cause) =>
-          collectorError(
-            'repository',
-            'image-source-lineage-invalid',
-            'promoted image source is not an ancestor of current main',
-            cause,
-          ),
-        ),
-      )
+    const qualificationRuntime: DeploymentRuntime = {
+      ...deployment,
+      sourceSha: currentMainSha,
+      imageRepository: imageBinding.repository,
+      imageDigest: imageBinding.digest,
+      strategyBehaviorHash: embeddedBuildMetadata.strategyBehaviorHash,
+      strategyParameterHash: embeddedBuildMetadata.strategyParameterHash,
     }
     yield* verifyCandidateDevelopmentPreregistrationLineage(
       repositoryPath,
       preregistration.preregistration.sourceRevision,
-      deployment.sourceSha,
+      currentMainSha,
     ).pipe(
       Effect.mapError((cause) =>
         collectorError(
@@ -1017,7 +1025,6 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
           preregistrationBlobOid,
           moduleBlobOid,
           moduleBytes,
-          sourceAdvancePaths,
         ] = await Promise.all([
           gitText(repositoryPath, ['rev-parse', '--show-toplevel'], signal).then(realpath),
           gitText(repositoryPath, ['rev-parse', 'HEAD'], signal),
@@ -1038,19 +1045,16 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
             ['rev-parse', `${preregistration.preregistration.sourceRevision}:${preregistration.preregistration.path}`],
             signal,
           ),
-          gitText(repositoryPath, ['rev-parse', `${deployment.sourceSha}:${preregistration.modulePath}`], signal),
-          gitBytes(
+          gitText(
             repositoryPath,
-            ['cat-file', 'blob', `${deployment.sourceSha}:${preregistration.modulePath}`],
+            ['rev-parse', `${qualificationRuntime.sourceSha}:${preregistration.modulePath}`],
             signal,
           ),
-          deployment.sourceSha === currentMainSha
-            ? Promise.resolve('')
-            : gitText(
-                repositoryPath,
-                ['diff', '--no-renames', '--name-only', `${deployment.sourceSha}..${currentMainSha}`],
-                signal,
-              ),
+          gitBytes(
+            repositoryPath,
+            ['cat-file', 'blob', `${qualificationRuntime.sourceSha}:${preregistration.modulePath}`],
+            signal,
+          ),
         ])
         return {
           topLevel,
@@ -1063,10 +1067,6 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
           moduleBlobOid,
           moduleBytes,
           moduleSha256: createHash('sha256').update(moduleBytes).digest('hex'),
-          sourceAdvancePaths: sourceAdvancePaths
-            .split('\n')
-            .map((path) => path.trim())
-            .filter(Boolean),
         }
       },
       catch: (cause) =>
@@ -1110,7 +1110,7 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
     }
     const candidateSource = yield* verifyQualificationCandidateImmutableSource({
       repositoryPath,
-      sourceRevision: deployment.sourceSha,
+      sourceRevision: qualificationRuntime.sourceSha,
       preregistration,
       preregistrationBytes: staticGit.preregistrationBytes,
       moduleBlobOid: staticGit.moduleBlobOid,
@@ -1162,27 +1162,6 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
         'repository identity or current main changed during evidence collection',
       )
     }
-    const staleSourcePaths = staticGit.sourceAdvancePaths.filter(isQualificationSourceAffectingPath)
-    if (staleSourcePaths.length > 0) {
-      return yield* collectorError(
-        'repository',
-        'image-source-stale',
-        `current main contains Bayn image input changes after the promoted source: ${staleSourcePaths.slice(0, 5).join(', ')}`,
-      )
-    }
-    const imageReference = yield* requiredQualificationEnvironment(process.env, 'BAYN_QUALIFICATION_IMAGE_REFERENCE')
-    if (
-      deployment.imageRepository !== embeddedBuildMetadata.imageRepository ||
-      deployment.strategyBehaviorHash !== embeddedBuildMetadata.strategyBehaviorHash ||
-      deployment.strategyParameterHash !== embeddedBuildMetadata.strategyParameterHash ||
-      imageReference !== `${deployment.imageRepository}@${deployment.imageDigest}`
-    ) {
-      return yield* collectorError(
-        'configuration',
-        'promoted-image-binding-invalid',
-        'promoted deployment does not bind the exact collector image and scheduled main',
-      )
-    }
     const preregistrationHash = yield* Effect.fromResult(canonicalHashV1Result(preregistration)).pipe(
       Effect.mapError((cause) =>
         collectorError('eligibility', 'preregistration-hash-failed', 'preregistration could not be hashed', cause),
@@ -1196,13 +1175,13 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
       repositoryPath,
       repository,
       currentMainSha,
-      sourceSha: deployment.sourceSha,
+      sourceSha: qualificationRuntime.sourceSha,
       githubRunId,
       githubRunAttempt,
       moduleBlobOid: candidateSource.moduleBlobOid,
       candidateDefinitionHash: candidateSource.definitionHash,
       compiledBoundedContentHash: candidateSource.compiledBoundedContentHash,
-      deployment,
+      deployment: qualificationRuntime,
     })
   })
 

@@ -20,6 +20,7 @@ import {
   isQualificationSourceAffectingPath,
   loadQualificationCollectorInvocation,
   missingQualificationWiring,
+  parseQualificationImageReference,
   qualificationAttemptState,
   QualificationCollectorError,
   runQualificationCollector,
@@ -672,6 +673,14 @@ describe('qualification collector orchestration', () => {
     ]) {
       expect(isQualificationSourceAffectingPath(path)).toBe(false)
     }
+  })
+
+  test('canonicalizes the locally loaded image reference without a registry release binding', () => {
+    expect(parseQualificationImageReference('registry.example/lab/bayn:nix@sha256:' + 'a'.repeat(64))).toEqual({
+      repository: 'registry.example/lab/bayn',
+      digest: 'sha256:' + 'a'.repeat(64),
+    })
+    expect(parseQualificationImageReference('registry.example/lab/bayn@sha256:' + 'a'.repeat(63))).toBeUndefined()
   })
 
   test('does not let a later serialized queue starve the currently executing run', () => {

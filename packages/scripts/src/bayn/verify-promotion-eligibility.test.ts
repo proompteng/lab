@@ -46,7 +46,7 @@ const currentMainSha = '1'.repeat(40)
 
 const buildWorkflowPath = new URL('../../../../.github/workflows/bayn-build-push.yml', import.meta.url)
 const buildWorkflow = parse(readFileSync(buildWorkflowPath, 'utf8')) as {
-  readonly on: { readonly push: { readonly paths: readonly string[] } }
+  readonly on: { readonly push: { readonly paths?: readonly string[] } }
 }
 
 const representativeBuildTriggerPath = (pattern: string): string => {
@@ -749,7 +749,8 @@ describe('Bayn promotion eligibility', () => {
   })
 
   test('matches the release lane Bayn build-input freshness boundary', () => {
-    for (const pattern of buildWorkflow.on.push.paths) {
+    expect(buildWorkflow.on.push.paths).toBeUndefined()
+    for (const pattern of buildWorkflow.on.push.paths ?? []) {
       const path = representativeBuildTriggerPath(pattern)
       expect(isBaynPromotionSourceAffectingPath(path)).toBeTrue()
     }
