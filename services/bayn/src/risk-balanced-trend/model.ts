@@ -96,9 +96,6 @@ export type RiskBalancedTrendDomainFailure =
       readonly expected: 'bayn.risk-balanced-trend-decision-plan.v1'
     }
   | {
-      readonly _tag: 'CandidateSimulationTraceMissing'
-    }
-  | {
       readonly _tag: 'ManifestDecodeFailed'
       readonly cause: Schema.SchemaError
     }
@@ -142,7 +139,6 @@ const domainFailureTags = new Set<RiskBalancedTrendDomainFailure['_tag']>([
   'CurrentDecisionNotMonthEnd',
   'CurrentDecisionCoverageMismatch',
   'DecisionSchemaMismatch',
-  'CandidateSimulationTraceMissing',
   'ManifestDecodeFailed',
   'ManifestUniverseMismatch',
   'ManifestSnapshotBoundsMismatch',
@@ -194,8 +190,6 @@ const renderDomainFailure = (failure: RiskBalancedTrendDomainFailure): string =>
       return `current decision covers ${failure.observedSymbols.join(',')}; expected ${failure.expectedSymbols.join(',')}`
     case 'DecisionSchemaMismatch':
       return `strategy decision schema ${failure.observed} does not match ${failure.expected}`
-    case 'CandidateSimulationTraceMissing':
-      return 'candidate simulation omitted its trace'
     case 'ManifestDecodeFailed':
       return `strategy manifest is invalid: ${failure.cause.message}`
     case 'ManifestUniverseMismatch':

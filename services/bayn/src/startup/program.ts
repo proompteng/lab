@@ -6,7 +6,7 @@ import { OperationalError, formatError } from '../errors'
 import type { MarketDataInspection } from '../market-data'
 import { databaseOperation, withinDeadline } from '../operations'
 import type { RuntimeState } from '../runtime-state'
-import type { Strategy } from '../strategy'
+import type { StrategyRuntime } from '../strategy'
 import type { EvaluationResult } from '../types'
 import {
   decidePinnedQualification,
@@ -122,7 +122,14 @@ const prepareQualification = (
     'list-prior-trials',
   ).pipe(
     Effect.flatMap((priorTrialRunIds) =>
-      fromStartupDecision(prepareQualificationLock(workflow.strategy, inspection, priorTrialRunIds)),
+      fromStartupDecision(
+        prepareQualificationLock(
+          workflow.strategy.definition,
+          workflow.strategy.provenance,
+          inspection,
+          priorTrialRunIds,
+        ),
+      ),
     ),
     Effect.map((lock) => ({ inspection, lock })),
   )
@@ -136,7 +143,7 @@ const openQualification = (
       workflow.dependencies.evidenceStore.openQualification({
         lock: candidate.lock,
         inputManifest: candidate.inspection.manifest,
-        parameters: workflow.strategy.parameters,
+        parameters: workflow.strategy.definition.parameters,
         provenance: workflow.strategy.provenance,
       }),
       'open-qualification',
@@ -170,14 +177,22 @@ const loadAndEvaluate = (
 ): Effect.Effect<EvaluationResult, OperationalError> =>
   withinDeadline(workflow.dependencies.marketData.load, workflow.config.operationTimeoutMs, 'market-data', 'load').pipe(
     Effect.flatMap((snapshot) =>
-      fromStartupDecision(evaluateLockedSnapshot(workflow.strategy, candidate.inspection, candidate.lock, snapshot)),
+      fromStartupDecision(
+        evaluateLockedSnapshot(
+          workflow.strategy.definition,
+          workflow.strategy.provenance,
+          candidate.inspection,
+          candidate.lock,
+          snapshot,
+        ),
+      ),
     ),
     Effect.tap((evaluation) =>
       Effect.logInfo('Bayn strategy evaluation completed').pipe(
         Effect.annotateLogs({
           service: 'bayn',
           runId: evaluation.runId,
-          strategy: workflow.strategy.name,
+          strategy: workflow.strategy.definition.name,
           verdict: evaluation.verdict.status,
           eventCount: evaluation.events.length,
         }),
@@ -194,7 +209,7 @@ const persistEvaluation = (
     databaseOperation(
       workflow.dependencies.evidenceStore.persist({
         provenance: workflow.strategy.provenance,
-        parameters: workflow.strategy.parameters,
+        parameters: workflow.strategy.definition.parameters,
         evaluation: evidence.evaluation,
         reconciliation: evidence.reconciliation,
         qualification: { lock: candidate.lock, result: evidence.qualification },
@@ -204,7 +219,11 @@ const persistEvaluation = (
     workflow.config.operationTimeoutMs,
     'database',
     'persist-evaluation',
-  ).pipe(Effect.map((persistence) => evaluatedCompletion(workflow.strategy, evidence, persistence)))
+  ).pipe(
+    Effect.map((persistence) =>
+      evaluatedCompletion(workflow.strategy.definition, workflow.strategy.provenance, evidence, persistence),
+    ),
+  )
 
 const evaluateAcquiredQualification = (
   workflow: EvaluationWorkflow,
@@ -219,7 +238,9 @@ const evaluateAcquiredQualification = (
         'journal-and-reconcile',
       ).pipe(
         Effect.flatMap((reconciliation) =>
-          fromStartupDecision(qualifyEvaluation(workflow.strategy, candidate.lock, evaluation, reconciliation)),
+          fromStartupDecision(
+            qualifyEvaluation(workflow.strategy.definition, candidate.lock, evaluation, reconciliation),
+          ),
         ),
       ),
     ),
@@ -312,7 +333,7 @@ const recoverPinnedQualification = (
     Effect.withLogSpan('startup'),
   )
 
-const logEvaluationStart = (config: RuntimeConfig, strategy: Strategy): Effect.Effect<void> =>
+const logEvaluationStart = (config: RuntimeConfig, strategy: StrategyRuntime): Effect.Effect<void> =>
   Effect.logInfo('Bayn startup evaluation started').pipe(
     Effect.annotateLogs({
       service: 'bayn',
@@ -340,7 +361,7 @@ const runEvaluationWorkflow = (workflow: EvaluationWorkflow): Effect.Effect<Star
 const evaluateAndJournal = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
-  strategy: Strategy,
+  strategy: StrategyRuntime,
   dependencies: StartupDependencies,
 ): Effect.Effect<void, OperationalError> =>
   logEvaluationStart(config, strategy).pipe(
@@ -352,7 +373,7 @@ const evaluateAndJournal = (
 export const runStartup = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
-  strategy: Strategy,
+  strategy: StrategyRuntime,
   dependencies: StartupDependencies,
 ): Effect.Effect<void, OperationalError> =>
   (config.qualificationRunId === undefined

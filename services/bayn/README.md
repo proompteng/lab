@@ -133,11 +133,12 @@ bun run --filter @proompteng/bayn candidate:development:local -- \
   <typed-runtime-market-data.json>
 ```
 
-The wrapper binds both source files to their exact `HEAD` blobs, checks the manifest's module binding, and then invokes
-the existing `candidate-development-command.ts`. The command remains responsible for reviewed preregistration,
-lineage, module policy, and typed market-data validation. The wrapper never reads or embeds the runtime market-data
-witness. It atomically reserves one compact receipt in Git metadata before starting the command and finalizes it with
-the source binding and exit status; a reserved or failed receipt is terminal and must not be retried.
+The command binds both source files to their exact `HEAD` blobs, checks the manifest's module, protocol, trial-lineage,
+and snapshot bindings, decodes the frozen witness, and evaluates the statically composed reviewed `StrategyDefinition`
+through the same pure runner used by qualification and live decisions. It never dynamically imports candidate source,
+scans or compiles JavaScript, or creates an executable artifact. It atomically reserves one compact receipt in Git
+metadata before evaluation and finalizes it with the exact source/protocol/snapshot/trial binding and terminal status; a
+reserved or failed receipt is terminal and must not be retried.
 
 This path is development-only. It does not release, promote, deploy, invoke Argo, access qualification holdout data, or
 open broker capabilities. Qualification remains a separate single scheduled CI attempt against the exact reviewed

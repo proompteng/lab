@@ -1,6 +1,6 @@
 import { Result } from 'effect'
 
-import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
+import type { CanonicalHashFailure } from '../hash'
 import type { IsoDate } from '../schemas'
 import {
   bindCandidateDevelopmentAttempt,

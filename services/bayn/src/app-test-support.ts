@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 
 import { expect } from 'bun:test'
 
-import { Effect, Option, Redacted, Result } from 'effect'
+import { Effect, Option, pipe, Redacted, Result } from 'effect'
 
 import type { RuntimeConfig } from './config'
 import { deriveCycleOperationsStatus } from './cycle-observability'
@@ -12,9 +12,15 @@ import type { MarketDataService } from './market-data'
 import { Authority } from './execution/contracts'
 import { BrokerAccess, noCapitalAuthority } from './execution/authority'
 import { makeQualificationResult } from './qualification'
-import { summarizeEvaluation } from './risk-balanced-trend'
+import {
+  analyzeQualification,
+  defaultQualificationStatisticsPolicy,
+  prepareQualificationSeries,
+} from './qualification-statistics'
+import { evaluateRiskBalancedTrend, parseMatchingManifest, summarizeEvaluation } from './risk-balanced-trend'
 import type { RuntimeState } from './runtime-state'
-import { makeStrategy } from './strategy'
+import { makeRiskBalancedTrendDefinition } from './strategy'
+import { prepareRiskBalancedTrendQualificationLock } from './strategy/risk-balanced-trend/qualification'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
 export const provenance = makeTestProvenance()
@@ -151,21 +157,40 @@ export const successfulEvidenceStore: EvidenceStoreService = {
 }
 
 export const fixtureSnapshot = makeSnapshot()
-export const fixtureStrategy = makeStrategy(fixtureProtocol, provenance)
-const fixtureEvaluationResult = fixtureStrategy.evaluate(fixtureSnapshot.bars, fixtureSnapshot.manifest)
+export const fixtureRuntime = {
+  definition: makeRiskBalancedTrendDefinition(fixtureProtocol),
+  provenance,
+} as const
+const fixtureEvaluationResult = evaluateRiskBalancedTrend(
+  fixtureSnapshot.bars,
+  fixtureSnapshot.manifest,
+  fixtureProtocol,
+  provenance,
+  fixtureRuntime.definition,
+)
 assert(
   Result.isSuccess(fixtureEvaluationResult),
   `fixture strategy evaluation must succeed: ${JSON.stringify(fixtureEvaluationResult)}`,
 )
 export const fixtureEvaluation = fixtureEvaluationResult.success
-const fixtureLockResult = fixtureStrategy.prepareLock(
-  fixtureSnapshot.manifest,
-  [...new Set(fixtureSnapshot.bars.map((bar) => bar.sessionDate))].sort(),
-  [],
+const fixtureLockResult = pipe(
+  parseMatchingManifest(fixtureSnapshot.manifest, fixtureProtocol),
+  Result.flatMap((manifest) =>
+    prepareRiskBalancedTrendQualificationLock(
+      manifest,
+      [...new Set(fixtureSnapshot.bars.map((bar) => bar.sessionDate))].sort(),
+      [],
+      fixtureProtocol,
+      provenance,
+    ),
+  ),
 )
 assert(Result.isSuccess(fixtureLockResult), 'fixture qualification lock must succeed')
 export const fixtureLock = fixtureLockResult.success
-const fixtureAnalysisResult = fixtureStrategy.analyze(fixtureEvaluation, [])
+const fixtureAnalysisResult = pipe(
+  prepareQualificationSeries(fixtureEvaluation),
+  Result.flatMap((series) => analyzeQualification(series, defaultQualificationStatisticsPolicy, [])),
+)
 assert(Result.isSuccess(fixtureAnalysisResult), 'fixture qualification analysis must succeed')
 const fixtureQualificationResult = makeQualificationResult(
   fixtureLock,
@@ -179,18 +204,37 @@ export const pinnedExecutionProvenance = {
   sourceRevision: 'e'.repeat(40),
   image: { repository: provenance.image.repository, digest: `sha256:${'f'.repeat(64)}` },
 }
-export const pinnedStrategy = makeStrategy(fixtureProtocol, pinnedExecutionProvenance)
-const pinnedEvaluationResult = pinnedStrategy.evaluate(fixtureSnapshot.bars, fixtureSnapshot.manifest)
+export const pinnedRuntime = {
+  definition: makeRiskBalancedTrendDefinition(fixtureProtocol),
+  provenance: pinnedExecutionProvenance,
+} as const
+const pinnedEvaluationResult = evaluateRiskBalancedTrend(
+  fixtureSnapshot.bars,
+  fixtureSnapshot.manifest,
+  fixtureProtocol,
+  pinnedExecutionProvenance,
+  pinnedRuntime.definition,
+)
 assert(Result.isSuccess(pinnedEvaluationResult), 'pinned strategy evaluation must succeed')
 export const pinnedEvaluation = pinnedEvaluationResult.success
-const pinnedLockResult = pinnedStrategy.prepareLock(
-  fixtureSnapshot.manifest,
-  [...new Set(fixtureSnapshot.bars.map((bar) => bar.sessionDate))].sort(),
-  [],
+const pinnedLockResult = pipe(
+  parseMatchingManifest(fixtureSnapshot.manifest, fixtureProtocol),
+  Result.flatMap((manifest) =>
+    prepareRiskBalancedTrendQualificationLock(
+      manifest,
+      [...new Set(fixtureSnapshot.bars.map((bar) => bar.sessionDate))].sort(),
+      [],
+      fixtureProtocol,
+      pinnedExecutionProvenance,
+    ),
+  ),
 )
 assert(Result.isSuccess(pinnedLockResult), 'pinned qualification lock must succeed')
 export const pinnedLock = pinnedLockResult.success
-const pinnedAnalysisResult = pinnedStrategy.analyze(pinnedEvaluation, [])
+const pinnedAnalysisResult = pipe(
+  prepareQualificationSeries(pinnedEvaluation),
+  Result.flatMap((series) => analyzeQualification(series, defaultQualificationStatisticsPolicy, [])),
+)
 assert(Result.isSuccess(pinnedAnalysisResult), 'pinned qualification analysis must succeed')
 const pinnedQualificationResult = makeQualificationResult(
   pinnedLock,

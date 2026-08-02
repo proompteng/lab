@@ -30,7 +30,7 @@ const runSession = (
   return pipe(
     accrueSessionCash(state, session, input),
     Result.flatMap((accrued) => {
-      const target = Reflect.get(targets, index) as SimulationTarget | undefined
+      const target = targets[index]
       return target === undefined ? Result.succeed(accrued) : rebalanceSession(accrued, session, target, opening, input)
     }),
     Result.flatMap((updated) => closeSession(updated, session, opening, input)),

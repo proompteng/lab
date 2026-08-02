@@ -17,8 +17,9 @@ import { Journal, JournalLive, type JournalService, type TigerBeetleClient } fro
 import { MarketData, marketDataOperationError, type MarketDataService } from './market-data'
 import { initialState, type RuntimeState } from './runtime-state'
 import { runStartup } from './startup'
-import { makeStrategy, type Strategy } from './strategy'
-import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
+import { fixtureRuntime } from './app-test-support'
+import type { StrategyRuntime } from './strategy'
+import { makeSnapshot, makeTestProvenance } from './test-fixtures'
 import {
   parseReplicaEndpoints,
   resolveReplicaAddresses,
@@ -27,13 +28,12 @@ import {
   type ReplicaAddressValidationError,
 } from './tigerbeetle-client'
 
-const initialize = (runtimeConfig: RuntimeConfig, state: Ref.Ref<RuntimeState>, strategy: Strategy) =>
+const initialize = (runtimeConfig: RuntimeConfig, state: Ref.Ref<RuntimeState>, strategy: StrategyRuntime) =>
   Effect.all({ marketData: MarketData, journal: Journal, evidenceStore: EvidenceStore }).pipe(
     Effect.flatMap((dependencies) => runStartup(runtimeConfig, state, strategy, dependencies)),
   )
 
 const provenance = makeTestProvenance()
-const fixtureStrategy = makeStrategy(fixtureProtocol, provenance)
 
 const config: RuntimeConfig = {
   host: '127.0.0.1',
@@ -580,7 +580,7 @@ describe('Bayn resource lifecycle', () => {
 
     const exit = await Effect.runPromiseExit(
       Effect.scoped(
-        initialize(config, state, fixtureStrategy).pipe(
+        initialize(config, state, fixtureRuntime).pipe(
           Effect.provideService(Journal, successfulJournal),
           Effect.provideService(EvidenceStore, successfulEvidenceStore),
           Effect.provideService(MarketData, marketData),
@@ -604,7 +604,7 @@ describe('Bayn resource lifecycle', () => {
 
     await Effect.runPromise(
       Effect.scoped(
-        initialize(config, state, fixtureStrategy).pipe(
+        initialize(config, state, fixtureRuntime).pipe(
           Effect.provideService(Journal, successfulJournal),
           Effect.provideService(EvidenceStore, successfulEvidenceStore),
           Effect.provideService(MarketData, marketData),
@@ -629,7 +629,7 @@ describe('Bayn resource lifecycle', () => {
 
     await Effect.runPromise(
       Effect.scoped(
-        initialize(config, state, fixtureStrategy).pipe(
+        initialize(config, state, fixtureRuntime).pipe(
           Effect.provideService(Journal, successfulJournal),
           Effect.provideService(EvidenceStore, successfulEvidenceStore),
           Effect.provideService(MarketData, marketData),
@@ -662,7 +662,7 @@ describe('Bayn resource lifecycle', () => {
 
     const exit = await Effect.runPromiseExit(
       Effect.scoped(
-        initialize(config, state, fixtureStrategy).pipe(
+        initialize(config, state, fixtureRuntime).pipe(
           Effect.provideService(MarketData, marketData),
           Effect.provideService(EvidenceStore, successfulEvidenceStore),
           Effect.provide(

@@ -1,4 +1,8 @@
-import { candidateDevelopmentCalendarContract } from '../candidate-development'
+import {
+  candidate17ArchiveReceipt,
+  candidate18ArchiveReceipt,
+  candidate19ArchiveReceipt,
+} from '../candidate-archive/legacy-candidate-receipts'
 import type {
   CandidateDevelopmentInvalidPrecommit,
   CandidateDevelopmentLegacyPriorTrialsMaterial,
@@ -9,6 +13,18 @@ import type {
   CandidateDevelopmentTrialHistory,
 } from './model'
 import { canonicalHashV1Result } from '../hash'
+
+const archivedStringFact = (receipt: { readonly facts: Readonly<Record<string, unknown>> }, key: string): string => {
+  const value = receipt.facts[key]
+  if (typeof value !== 'string') throw new Error(`archived candidate fact ${key} is not a string`)
+  return value
+}
+
+const archivedBooleanFact = (receipt: { readonly facts: Readonly<Record<string, unknown>> }, key: string): boolean => {
+  const value = receipt.facts[key]
+  if (typeof value !== 'boolean') throw new Error(`archived candidate fact ${key} is not a boolean`)
+  return value
+}
 
 export const candidate16TerminalEvidence: CandidateDevelopmentQualificationEvidence = {
   candidateOrdinal: 16,
@@ -46,72 +62,12 @@ export const candidate17Preregistration: CandidateDevelopmentNextPreregistration
   },
 }
 
-export const candidate17DevelopmentEvidenceExpectation = {
-  bindings: {
-    schemaVersion: 'bayn.candidate-development-evidence-bindings.v1',
-    candidateOrdinal: 17,
-    priorTrialCount: 16,
-    preregistration: candidate17Preregistration.preregistration,
-    reviewedSourceRevision: '9a293a7a8f7cb4ed5c8ddf41d7dbf9abecb12510',
-    mergedSourceRevision: '4f39bb8ad168c3a459afdfdb30feccd49aba22d8',
-    module: {
-      path: candidate17Preregistration.modulePath,
-      blobOid: '8d1ccbfc6bef2c1707ac85f51d1647a7a8bfd98b',
-      sha256: candidate17Preregistration.moduleSha256,
-    },
-    sourceManifest: {
-      path: 'services/bayn/candidates/ordinal-17-volatility-managed-trend-overlay-source-manifest.json',
-      blobOid: '23521cd435a97045adf18d1f075599fe5d22d750',
-      sha256: 'ffc4d8cb6e473d660096dc18fe786d0b498adbab70bce9a3814c8bf3fdaeb954',
-    },
-    strategyProtocolHash: candidate17Preregistration.strategyProtocolHash,
-    candidateDevelopmentProtocolHash: '72754b1178308c721a43aa1b295a374ccb82cb6c0a790187bdfc4f4ed066302a',
-    marketData: candidate17Preregistration.marketData,
-    calendar: candidateDevelopmentCalendarContract,
-  },
-  evidenceContentHash: '97b9c2d6dc1d59d9b60686065bc4d595b8d1f22cdff9930b6131427b90e13f26',
-  independentlyReproducedEvaluationHash: 'c7e551fc6352c4294f38e083b8743b882f2874ec4d614f46a04539d2a72d79a1',
-  independentlyReproducedDecisionOutputHash: '9d76278fa34c18d38110b42980e65dd7941267968420e10fa0c0515b5075ed14',
-} as const
-
-export const candidate17DevelopmentEligibility = {
-  status: 'DEVELOPMENT_REJECTED',
-  evidenceContentHash: candidate17DevelopmentEvidenceExpectation.evidenceContentHash,
-  nextCandidatePreregistration: null,
-} as const
-
-export const candidate18DevelopmentFailureEvidenceExpectation = {
-  evidenceContentHash: '65d6f044f3f323aa87ff26a3dca011053aa3172c8a4ce422841497ccf370a5b6',
-  evaluatedSourceRevision: '24465ada2b5e1e04c5058ad812b1eedd9f58b0dd',
-  failureStage: 'buildEvaluation-preflight',
-  developmentMetricsObserved: false,
-} as const
-
-export const candidate18DevelopmentEligibility = {
-  status: 'DEVELOPMENT_REJECTED',
-  evidenceContentHash: candidate18DevelopmentFailureEvidenceExpectation.evidenceContentHash,
-  nextCandidatePreregistration: null,
-} as const
-
-export const candidate19DevelopmentFailureEvidenceExpectation = {
-  evidenceContentHash: '6170af41ddc14c04412a1929a60c88f35062ec2440f6e4b3beb0539bd411f364',
-  evaluatedSourceRevision: '276805b77d783db907dcb86cba934d7a4f6a0147',
-  failureStage: 'development-evaluation',
-  developmentMetricsObserved: true,
-} as const
-
 /** The frozen archive records these metric-bearing observations for normalized historical trials. */
 export const frozenDevelopmentMetricObservations: Readonly<Partial<Record<number, boolean>>> = Object.freeze({
-  17: true,
-  18: candidate18DevelopmentFailureEvidenceExpectation.developmentMetricsObserved,
-  19: candidate19DevelopmentFailureEvidenceExpectation.developmentMetricsObserved,
+  17: archivedBooleanFact(candidate17ArchiveReceipt, 'developmentMetricsObserved'),
+  18: archivedBooleanFact(candidate18ArchiveReceipt, 'developmentMetricsObserved'),
+  19: archivedBooleanFact(candidate19ArchiveReceipt, 'developmentMetricsObserved'),
 })
-
-export const candidate19DevelopmentEligibility = {
-  status: 'DEVELOPMENT_REJECTED',
-  evidenceContentHash: candidate19DevelopmentFailureEvidenceExpectation.evidenceContentHash,
-  nextCandidatePreregistration: null,
-} as const
 
 export const candidate18Preregistration: CandidateDevelopmentNextPreregistration = {
   schemaVersion: 'bayn.candidate-development-next-preregistration.v1',
@@ -228,7 +184,7 @@ export const candidate18LegacyPriorTrialsMaterial: CandidateDevelopmentLegacyPri
     candidateOrdinal: 17,
     priorTrialCount: 16,
     status: 'DEVELOPMENT_REJECTED',
-    evidenceContentHash: candidate17DevelopmentEvidenceExpectation.evidenceContentHash,
+    evidenceContentHash: archivedStringFact(candidate17ArchiveReceipt, 'evidenceContentHash'),
     qualificationAttemptConsumed: false,
   },
   latestReviewedPreregistration: candidate17Preregistration,
@@ -254,7 +210,7 @@ export const candidate19PriorTrialsMaterial: CandidateDevelopmentPriorTrialsMate
     candidateOrdinal: 18,
     priorTrialCount: 17,
     status: 'DEVELOPMENT_REJECTED',
-    evidenceContentHash: candidate18DevelopmentFailureEvidenceExpectation.evidenceContentHash,
+    evidenceContentHash: archivedStringFact(candidate18ArchiveReceipt, 'evidenceContentHash'),
     qualificationAttemptConsumed: false,
   },
   latestReviewedPreregistration: candidate18Preregistration,
@@ -270,7 +226,7 @@ export const candidate20PriorTrialsMaterial: CandidateDevelopmentPriorTrialsMate
     candidateOrdinal: 19,
     priorTrialCount: 18,
     status: 'DEVELOPMENT_REJECTED',
-    evidenceContentHash: candidate19DevelopmentFailureEvidenceExpectation.evidenceContentHash,
+    evidenceContentHash: archivedStringFact(candidate19ArchiveReceipt, 'evidenceContentHash'),
     qualificationAttemptConsumed: false,
   },
   latestReviewedPreregistration: candidate19Preregistration,
@@ -296,10 +252,10 @@ export const frozenCandidateDevelopmentTrialHistory: CandidateDevelopmentTrialHi
     candidateOrdinal: 19,
     priorTrialCount: 18,
     status: 'DEVELOPMENT_REJECTED',
-    evidenceContentHash: candidate19DevelopmentFailureEvidenceExpectation.evidenceContentHash,
-    evaluatedSourceRevision: candidate19DevelopmentFailureEvidenceExpectation.evaluatedSourceRevision,
-    failureStage: candidate19DevelopmentFailureEvidenceExpectation.failureStage,
-    developmentMetricsObserved: candidate19DevelopmentFailureEvidenceExpectation.developmentMetricsObserved,
+    evidenceContentHash: archivedStringFact(candidate19ArchiveReceipt, 'evidenceContentHash'),
+    evaluatedSourceRevision: archivedStringFact(candidate19ArchiveReceipt, 'sourceRevision'),
+    failureStage: 'development-evaluation',
+    developmentMetricsObserved: archivedBooleanFact(candidate19ArchiveReceipt, 'developmentMetricsObserved'),
     qualificationAttemptConsumed: false,
   },
   latestInvalidPrecommit: candidate20PrecommitInvalidation,

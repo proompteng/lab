@@ -17,7 +17,7 @@ import {
   type RuntimeState,
 } from './runtime-state'
 import { runStartup, type StartupDependencies } from './startup'
-import type { Strategy } from './strategy'
+import type { StrategyRuntime } from './strategy'
 import { utcInstantFromEpochMillis } from './time'
 import type { ExecutionProgram } from './execution/runtime-program'
 
@@ -42,7 +42,7 @@ export type ApplicationIdentity<C extends LoadedRuntimeConfig = LoadedRuntimeCon
   readonly config: C
   readonly protocol: CausalProtocol
   readonly parameterHash: string
-  readonly strategy: Strategy
+  readonly strategy: StrategyRuntime
   readonly strategyProtocolHash: string
 }
 
@@ -227,7 +227,7 @@ const startAutonomousCycle = <StartupR, LoopR>(
 
 export const runApplication = <StartupR, LoopR>(
   config: RuntimeConfig,
-  strategy: Strategy,
+  strategy: StrategyRuntime,
   dependencies: ApplicationDependencies,
   runtime: ApplicationRuntime<StartupR, LoopR>,
 ): Effect.Effect<never, OperationalError, HttpServer.HttpServer | StartupR | LoopR> =>

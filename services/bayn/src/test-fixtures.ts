@@ -13,6 +13,10 @@ import {
   type IsoDate,
   type Protocol,
 } from './types'
+import {
+  makeRiskBalancedTrendDefinition,
+  type RiskBalancedTrendStrategyDefinition,
+} from './strategy/risk-balanced-trend'
 
 export const fixtureProtocol = Effect.runSync(loadDefaultProtocol)
 
@@ -37,6 +41,14 @@ export const makeTestProvenance = (
       parameterSchemaVersion: protocol.schemaVersion,
     },
   })
+
+export const makeTestDefinition = (
+  protocol: Protocol = fixtureProtocol,
+  decide: RiskBalancedTrendStrategyDefinition['decide'] = makeRiskBalancedTrendDefinition(protocol).decide,
+): RiskBalancedTrendStrategyDefinition => ({
+  ...makeRiskBalancedTrendDefinition(protocol),
+  decide,
+})
 
 export const makeBars = (sessionCount = 1_122): readonly DailyBar[] => {
   const bars: DailyBar[] = []

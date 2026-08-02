@@ -5,7 +5,7 @@ import { Clock, Context, Deferred, Effect, Fiber, Layer, Option, pipe, Redacted,
 import {
   config,
   fixtureEvaluation,
-  fixtureStrategy,
+  fixtureRuntime,
   marketDataService,
   pinnedEvaluation,
   pinnedLock,
@@ -45,7 +45,7 @@ import { canonicalHashV1OrThrow } from './hash'
 import type { BrokerProbe } from './health'
 import { HttpServerLive } from './http'
 import { loadObserveRiskPolicy } from './observe-composition'
-import { makeStrategy } from './strategy'
+import { makeRiskBalancedTrendDefinition } from './strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 import { scopedAcquisition } from './resource-boundary'
 
@@ -173,11 +173,13 @@ const prepareConfig = (
 ): Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'ExecutionPrepare' }> => {
   const autonomous = autonomousConfig(runtime)
   const prepareStrategy = {
-    ...fixtureStrategy.provenance.strategy,
+    ...fixtureRuntime.provenance.strategy,
     parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4' as const,
   }
   const riskPolicyHash = canonicalHashV1OrThrow(
-    Effect.runSync(loadObserveRiskPolicy(autonomous.alpaca.expectedAccountId, fixtureStrategy.parameters.universe)),
+    Effect.runSync(
+      loadObserveRiskPolicy(autonomous.alpaca.expectedAccountId, fixtureRuntime.definition.parameters.universe),
+    ),
   )
   const strategyProtocolHash = makeStrategyProtocolHash(prepareStrategy)
   const reconciliationId = 'd'.repeat(64)
@@ -226,9 +228,9 @@ const prepareConfig = (
 const applicationIdentity = (loaded: LoadedRuntimeConfig): ApplicationIdentity => ({
   config: loaded,
   protocol: fixtureProtocol,
-  parameterHash: fixtureStrategy.provenance.strategy.parameterHash,
-  strategy: fixtureStrategy,
-  strategyProtocolHash: makeStrategyProtocolHash(fixtureStrategy.provenance.strategy),
+  parameterHash: fixtureRuntime.provenance.strategy.parameterHash,
+  strategy: fixtureRuntime,
+  strategyProtocolHash: makeStrategyProtocolHash(fixtureRuntime.provenance.strategy),
 })
 
 describe('Bayn application composition', () => {
@@ -364,7 +366,7 @@ describe('Bayn application composition', () => {
           const fiber = yield* pipe(
             runApplication(
               autonomousConfig(config),
-              fixtureStrategy,
+              fixtureRuntime,
               {
                 marketData,
                 journal: successfulJournal,
@@ -401,7 +403,7 @@ describe('Bayn application composition', () => {
           const unresolvedStartCycle = () => Effect.succeed(Effect.void)
           const fiber = yield* runApplication(
             autonomousConfig(config),
-            fixtureStrategy,
+            fixtureRuntime,
             {
               marketData: marketDataService(Effect.succeed(makeSnapshot())),
               journal: successfulJournal,
@@ -478,7 +480,7 @@ describe('Bayn application composition', () => {
           )
           const fiber = yield* runApplication<never, never>(
             autonomousConfig(config),
-            fixtureStrategy,
+            fixtureRuntime,
             {
               marketData: marketDataService(Effect.succeed(makeSnapshot())),
               journal: successfulJournal,
@@ -594,7 +596,7 @@ describe('Bayn application composition', () => {
             )
           const fiber = yield* runApplication(
             autonomousConfig(config),
-            fixtureStrategy,
+            fixtureRuntime,
             {
               marketData: marketDataService(Effect.succeed(makeSnapshot())),
               journal: successfulJournal,
@@ -619,10 +621,11 @@ describe('Bayn application composition', () => {
   })
 
   test('keeps the pinned qualification scope separate from the current decision protocol identity', async () => {
-    const currentStrategy = makeStrategy(
-      fixtureProtocol,
-      makeTestProvenance(fixtureProtocol, { behaviorHash: 'c'.repeat(64) }),
-    )
+    const currentStrategy = {
+      definition: makeRiskBalancedTrendDefinition(fixtureProtocol),
+      provenance: makeTestProvenance(fixtureProtocol, { behaviorHash: 'c'.repeat(64) }),
+    }
+
     const currentProtocolHash = makeStrategyProtocolHash(currentStrategy.provenance.strategy)
     expect(currentProtocolHash).not.toBe(pinnedEvaluation.protocolHash)
 

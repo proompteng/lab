@@ -288,12 +288,13 @@ export const makeEvaluationIdentity = (
   inputManifest: InputManifest,
   protocol: Protocol,
   provenance: RuntimeProvenance,
+  expectedStrategyName = 'risk-balanced-trend',
 ): Result.Result<EvaluationIdentity, SimulationFailure> => {
-  if (provenance.strategy.name !== 'risk-balanced-trend') {
+  if (provenance.strategy.name !== expectedStrategyName) {
     return fail({
       _tag: 'RuntimeStrategyMismatch',
       observed: provenance.strategy.name,
-      expected: 'risk-balanced-trend',
+      expected: expectedStrategyName,
     })
   }
   if (provenance.strategy.parameterSchemaVersion !== protocol.schemaVersion) {

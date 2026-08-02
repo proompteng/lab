@@ -5,7 +5,11 @@ import { Option, Result } from 'effect'
 
 import { makeQualificationResult } from '../../qualification'
 import { evaluateRiskBalancedTrend } from '../../risk-balanced-trend'
-import { makeStrategy } from '../../strategy'
+import { parseMatchingManifest } from '../../risk-balanced-trend'
+import {
+  prepareRiskBalancedTrendQualificationLock,
+  analyzeRiskBalancedTrendEvaluation,
+} from '../../strategy/risk-balanced-trend/qualification'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from '../../test-fixtures'
 import {
   decodeQualificationRecord,
@@ -24,9 +28,14 @@ const makeFixture = (sourceRevision = 'a'.repeat(40)) => {
   const provenance = makeTestProvenance(fixtureProtocol, { sourceRevision })
   const evaluation = successOf(evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance))
   const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
-  const strategy = makeStrategy(fixtureProtocol, provenance)
-  const lock = successOf(strategy.prepareLock(evaluation.inputManifest, sessionDates, []))
-  const analysis = successOf(strategy.analyze(evaluation, []))
+  const lock = successOf(
+    parseMatchingManifest(evaluation.inputManifest, fixtureProtocol).pipe(
+      Result.flatMap((manifest) =>
+        prepareRiskBalancedTrendQualificationLock(manifest, sessionDates, [], fixtureProtocol, provenance),
+      ),
+    ),
+  )
+  const analysis = successOf(analyzeRiskBalancedTrendEvaluation(evaluation, []))
   const result = successOf(makeQualificationResult(lock, evaluation.verdict, analysis))
   return {
     open: {

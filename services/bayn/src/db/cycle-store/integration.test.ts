@@ -73,7 +73,8 @@ import {
   makePaperDecisionDocument,
   type PaperDecisionDocument,
 } from '../../shadow-decision-contract'
-import { makeStrategy } from '../../strategy'
+import { fixtureRuntime } from '../../app-test-support'
+import { makeRiskBalancedTrendDefinition } from '../../strategy'
 import { TargetPlanReason, TargetPlanStatus } from '../../target-planner'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from '../../test-fixtures'
 import {
@@ -225,7 +226,10 @@ const dueProtocol: Protocol = {
   historyStart: dueHistoryStart,
   evaluationStart: dueEvaluationStart,
 }
-const dueStrategy = makeStrategy(dueProtocol, makeTestProvenance(dueProtocol))
+const dueStrategy = {
+  definition: makeRiskBalancedTrendDefinition(dueProtocol),
+  provenance: makeTestProvenance(dueProtocol),
+} as const
 
 const autonomousRuntimeConfig: RuntimeConfig = {
   host: '127.0.0.1',
@@ -1290,7 +1294,6 @@ const buildPlannedPaperDecision = (
     const policy = options.transformPolicy?.(sourcePolicy) ?? sourcePolicy
     const reconciliation = plannedPaperReconciliation(cycle, evaluatedAt)
     const decision = plannedPaperDecisionPlan(cycle)
-    const priceMicros = Object.fromEntries(fixtureProtocol.universe.map((symbol) => [symbol, '100000000']))
     yield* TestClock.setTime(Date.parse(evaluatedAt))
     const document = yield* buildMutationShadowCycleDecision({
       authorityGenerationHash: plannedPaperGenerationHash,
@@ -1298,7 +1301,10 @@ const buildPlannedPaperDecision = (
       executionModel: fixtureProtocol.executionModel,
       policy,
       reconcile: Effect.succeed(reconciliation),
-      strategy: { currentDecision: () => Result.succeed({ decision, priceMicros }) },
+      strategy: {
+        definition: { ...fixtureRuntime.definition, decide: () => Result.succeed(decision) },
+        provenance: fixtureRuntime.provenance,
+      },
     }).pipe(
       Effect.provideService(BrokerRead, plannedPaperBrokerRead(cycle, evaluatedAt)),
       Effect.provideService(MarketData, plannedPaperMarketData(cycle, boundSnapshotId, options.snapshotFinalizedAt)),

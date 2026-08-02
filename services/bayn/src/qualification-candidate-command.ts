@@ -2,13 +2,15 @@ import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Effect, Layer, Result } from 'effect'
 import * as Reactivity from 'effect/unstable/reactivity/Reactivity'
 
-import type { ApplicationIdentity } from './app'
 import type { CandidateDevelopmentNextPreregistration } from './candidate-development-calendar'
+import { makeStrategyProtocolHash, type RuntimeProvenance } from './contracts'
 import { canonicalHashV1Result } from './hash'
 import type { MarketDataInspection } from './market-data'
 import type { QualificationLock } from './qualification'
 import { qualificationCandidateMain } from './qualification-candidate/program'
+import { hashParameters } from './protocol'
 import { prepareQualificationLock } from './startup/decisions'
+import type { RiskBalancedTrendStrategyDefinition } from './strategy/risk-balanced-trend'
 
 export type QualificationCandidateBindingFailure =
   | {
@@ -36,12 +38,27 @@ export interface QualificationCandidateBindingReceipt {
   readonly snapshotId: string
   readonly inputManifestHash: string
   readonly finalizedSnapshotContentHash: string
-  readonly committedBoundedContentHash: string
-  readonly compiledBoundedContentHash: string
+  readonly boundedContentHash: string
+  readonly moduleSha256: string
+  readonly trialHistoryHash: string
+  readonly strategyProtocolHash: string
   readonly candidateRunId: string
   readonly lockId: string
   readonly bindingHash: string
   readonly lock: QualificationLock
+}
+
+export interface QualificationCandidateRuntime {
+  readonly definition: RiskBalancedTrendStrategyDefinition
+  readonly provenance: RuntimeProvenance
+  readonly moduleSha256: string
+  readonly trialHistoryHash: string
+  readonly boundedContentHash: string
+}
+
+export interface QualificationCandidateDeployment {
+  readonly sourceRevision: string
+  readonly image: RuntimeProvenance['image']
 }
 
 const mismatch = (
@@ -63,8 +80,8 @@ const mismatch = (
  */
 export const verifyQualificationCandidateBinding = (
   preregistration: CandidateDevelopmentNextPreregistration,
-  compiledBoundedContentHash: string,
-  identity: ApplicationIdentity,
+  candidate: QualificationCandidateRuntime,
+  deployment: QualificationCandidateDeployment,
   inspection: MarketDataInspection,
   priorTrialRunIds: readonly string[],
 ): Result.Result<QualificationCandidateBindingReceipt, QualificationCandidateBindingFailure> =>
@@ -79,18 +96,44 @@ export const verifyQualificationCandidateBinding = (
     if (priorTrialRunIds.length !== preregistration.priorTrialCount) {
       return yield* mismatch('database.priorTrialCount', preregistration.priorTrialCount, priorTrialRunIds.length)
     }
-    if (identity.strategyProtocolHash !== preregistration.strategyProtocolHash) {
+    if (candidate.definition.name !== candidate.provenance.strategy.name) {
+      return yield* mismatch('strategy.name', candidate.definition.name, candidate.provenance.strategy.name)
+    }
+    if (candidate.moduleSha256 !== preregistration.moduleSha256) {
+      return yield* mismatch('moduleSha256', preregistration.moduleSha256, candidate.moduleSha256)
+    }
+    if (candidate.provenance.strategy.behaviorHash !== candidate.moduleSha256) {
       return yield* mismatch(
-        'strategyProtocolHash',
-        preregistration.strategyProtocolHash,
-        identity.strategyProtocolHash,
+        'strategy.behaviorHash',
+        candidate.moduleSha256,
+        candidate.provenance.strategy.behaviorHash,
       )
     }
-    if (preregistration.marketData.boundedContentHash !== compiledBoundedContentHash) {
+    const parameterHash = hashParameters(candidate.definition.parameters)
+    if (candidate.provenance.strategy.parameterHash !== parameterHash) {
+      return yield* mismatch('strategy.parameterHash', parameterHash, candidate.provenance.strategy.parameterHash)
+    }
+    if (candidate.trialHistoryHash !== preregistration.priorTrialsHash) {
+      return yield* mismatch('priorTrialsHash', preregistration.priorTrialsHash, candidate.trialHistoryHash)
+    }
+    const strategyProtocolHash = makeStrategyProtocolHash(candidate.provenance.strategy)
+    if (strategyProtocolHash !== preregistration.strategyProtocolHash) {
+      return yield* mismatch('strategyProtocolHash', preregistration.strategyProtocolHash, strategyProtocolHash)
+    }
+    if (candidate.provenance.sourceRevision !== deployment.sourceRevision) {
+      return yield* mismatch('sourceRevision', deployment.sourceRevision, candidate.provenance.sourceRevision)
+    }
+    if (candidate.provenance.image.repository !== deployment.image.repository) {
+      return yield* mismatch('image.repository', deployment.image.repository, candidate.provenance.image.repository)
+    }
+    if (candidate.provenance.image.digest !== deployment.image.digest) {
+      return yield* mismatch('image.digest', deployment.image.digest, candidate.provenance.image.digest)
+    }
+    if (candidate.boundedContentHash !== preregistration.marketData.boundedContentHash) {
       return yield* mismatch(
         'marketData.boundedContentHash',
-        compiledBoundedContentHash,
         preregistration.marketData.boundedContentHash,
+        candidate.boundedContentHash,
       )
     }
 
@@ -109,17 +152,17 @@ export const verifyQualificationCandidateBinding = (
     }
 
     const lock = yield* Result.mapError(
-      prepareQualificationLock(identity.strategy, inspection, priorTrialRunIds),
+      prepareQualificationLock(candidate.definition, candidate.provenance, inspection, priorTrialRunIds),
       (cause): QualificationCandidateBindingFailure => ({
         _tag: 'QualificationCandidateLockPreparationFailed',
         cause,
       }),
     )
     for (const [field, expected, observed] of [
-      ['lock.sourceRevision', identity.config.build.sourceRevision, lock.sourceRevision],
-      ['lock.image.repository', identity.config.build.imageRepository, lock.image.repository],
-      ['lock.image.digest', identity.config.build.imageDigest, lock.image.digest],
-      ['lock.protocolHash', identity.strategyProtocolHash, lock.protocolHash],
+      ['lock.sourceRevision', deployment.sourceRevision, lock.sourceRevision],
+      ['lock.image.repository', deployment.image.repository, lock.image.repository],
+      ['lock.image.digest', deployment.image.digest, lock.image.digest],
+      ['lock.protocolHash', strategyProtocolHash, lock.protocolHash],
       ['lock.data.snapshotId', preregistration.marketData.snapshotId, lock.data.snapshotId],
       ['lock.data.inputManifestHash', preregistration.marketData.inputManifestHash, lock.data.inputManifestHash],
       ['lock.data.contentHash', preregistration.marketData.finalizedSnapshotContentHash, lock.data.contentHash],
@@ -131,14 +174,16 @@ export const verifyQualificationCandidateBinding = (
       schemaVersion: 'bayn.qualification-candidate-binding.v1' as const,
       candidateOrdinal: preregistration.candidateOrdinal,
       priorTrialCount: preregistration.priorTrialCount,
-      sourceRevision: identity.config.build.sourceRevision,
-      imageRepository: identity.config.build.imageRepository,
-      imageDigest: identity.config.build.imageDigest,
+      sourceRevision: deployment.sourceRevision,
+      imageRepository: deployment.image.repository,
+      imageDigest: deployment.image.digest,
       snapshotId: snapshot.snapshotId,
       inputManifestHash: manifest.hash,
       finalizedSnapshotContentHash: snapshot.contentHash,
-      committedBoundedContentHash: preregistration.marketData.boundedContentHash,
-      compiledBoundedContentHash,
+      boundedContentHash: preregistration.marketData.boundedContentHash,
+      moduleSha256: candidate.moduleSha256,
+      trialHistoryHash: candidate.trialHistoryHash,
+      strategyProtocolHash,
       candidateRunId: lock.candidateRunId,
       lockId: lock.lockId,
     }

@@ -1,4 +1,4 @@
-import { Clock, Data, Duration, Effect, Option, Ref, Result } from 'effect'
+import { Clock, Data, Duration, Effect, Option, pipe, Ref, Result } from 'effect'
 
 import type { AutonomousCycleLoop, AutonomousCycleStartup } from './app'
 import { BrokerRead, type BrokerReadShape, type MarketCalendarQuery } from './broker/alpaca'
@@ -70,7 +70,9 @@ import {
   type TargetPlannerFailure,
   type TargetPlanResult,
 } from './target-planner'
-import type { CurrentStrategyDecision, Strategy } from './strategy'
+import type { CurrentRiskBalancedTrendDecision } from './risk-balanced-trend'
+import type { StrategyRuntime } from './strategy'
+import { compileCurrentRiskBalancedTrendDecision, parseMatchingManifest } from './risk-balanced-trend'
 import {
   appendPendingMutationOrder,
   decideMutationIntentSettlement,
@@ -161,7 +163,7 @@ export const loadObserveRiskPolicy = (accountId: string, allowedSymbols: readonl
     ...observeRiskLimits,
   })
 
-type ObserveStrategy = Pick<Strategy, 'currentDecision'>
+type ObserveStrategy = StrategyRuntime
 
 class ReconciliationPassTimeoutError extends Data.TaggedError('ReconciliationPassTimeoutError')<{
   readonly timeoutMs: number
@@ -499,9 +501,20 @@ const compileObserveStrategyDecision = <R>(
   input: ObserveDecisionInput<R>,
   facts: ObserveDecisionFacts,
   executionSession: ExecutionSessionBinding,
-): Effect.Effect<CurrentStrategyDecision, OperationalError> =>
+): Effect.Effect<CurrentRiskBalancedTrendDecision, OperationalError> =>
   Effect.fromResult(
-    input.strategy.currentDecision(facts.snapshot.bars, facts.snapshot.manifest, executionSession),
+    pipe(
+      parseMatchingManifest(facts.snapshot.manifest, input.strategy.definition.parameters),
+      Result.flatMap((manifest) =>
+        compileCurrentRiskBalancedTrendDecision(
+          facts.snapshot.bars,
+          manifest,
+          input.strategy.definition.parameters,
+          executionSession,
+          input.strategy.definition,
+        ),
+      ),
+    ),
   ).pipe(
     Effect.mapError((cause) =>
       operationalError('strategy', 'current-decision', 'current strategy decision compilation failed', cause),
@@ -511,7 +524,7 @@ const compileObserveStrategyDecision = <R>(
 const prepareObservePlanner = <R>(
   input: ObserveDecisionInput<R>,
   facts: ObserveDecisionFacts,
-  compiled: CurrentStrategyDecision,
+  compiled: CurrentRiskBalancedTrendDecision,
 ): Result.Result<ObservePlannerPreparation, ObserveDecisionCompositionFailure> =>
   Result.flatMap(referencePrices(compiled.decision.signalDate, facts.evaluatedAt, compiled.priceMicros), (prices) =>
     Result.flatMap(
@@ -679,7 +692,7 @@ export type ObserveAutonomousCycleInput = {
   readonly pollIntervalMs: number
   readonly reconciliationIntervalMs: number
   readonly reconciliationPassTimeoutMs: number
-  readonly strategy: Pick<Strategy, 'currentDecision' | 'parameters' | 'provenance'>
+  readonly strategy: StrategyRuntime
 }
 
 type ObserveDecisionRuntime =
@@ -704,7 +717,7 @@ export type ObserveStartupPreparation = {
 export const prepareObserveStartup = (
   input: ObserveAutonomousCycleInput,
 ): Result.Result<ObserveStartupPreparation, OperationalError> => {
-  const executionModel = input.strategy.parameters.executionModel
+  const executionModel = input.strategy.definition.parameters.executionModel
   if (executionModel.schemaVersion !== 'bayn.execution-model.v2') {
     return Result.fail(
       operationalError('strategy', 'cycle-loop', 'autonomous cycles require the causal v2 execution model'),
@@ -1349,7 +1362,7 @@ export const makeObserveAutonomousCycleStartup =
   (startup) =>
     Effect.gen(function* () {
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
-      const policy = yield* loadObserveRiskPolicy(input.accountId, input.strategy.parameters.universe).pipe(
+      const policy = yield* loadObserveRiskPolicy(input.accountId, input.strategy.definition.parameters.universe).pipe(
         Effect.mapError((cause) =>
           operationalError('strategy', 'risk-policy', 'source-controlled paper risk policy is invalid', cause),
         ),
@@ -1374,7 +1387,7 @@ export const makeMutationAutonomousCycleStartup =
     Effect.gen(function* () {
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
       yield* Effect.fromResult(validateMutationExecutionProgram(input))
-      const policy = yield* loadObserveRiskPolicy(input.accountId, input.strategy.parameters.universe).pipe(
+      const policy = yield* loadObserveRiskPolicy(input.accountId, input.strategy.definition.parameters.universe).pipe(
         Effect.mapError((cause) =>
           operationalError('strategy', 'risk-policy', 'source-controlled paper risk policy is invalid', cause),
         ),

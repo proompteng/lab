@@ -1,9 +1,8 @@
-export { makeRiskBalancedTrendDefinition } from './decision'
+export { makeRiskBalancedTrendDefinition, riskBalancedTrendContextAtSignal } from './decision'
 export type {
   RiskBalancedTrendMarketContext,
-  RiskBalancedTrendPortfolioContext,
   RiskBalancedTrendStrategyDefinition,
   RiskBalancedTrendTargetPortfolio,
 } from './decision'
-export { makeRiskBalancedTrendStrategy } from './strategy'
-export type { RiskBalancedTrendStrategy, RiskBalancedTrendStrategyPrepareLockFailure } from './strategy'
+export { prepareRiskBalancedTrendQualificationLock } from './qualification'
+export type { RiskBalancedTrendStrategyPrepareLockFailure } from './qualification'

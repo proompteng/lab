@@ -1,30 +1,29 @@
 import type { Result } from 'effect'
 
+import type { Protocol } from '../types'
+
 /** A concrete strategy closes this to its finite tagged decision-failure union. */
 export interface StrategyDecisionFailure {
   readonly _tag: string
 }
 
 /** The common output consumed by later portfolio planning stages. */
-export interface StrategyTargetPortfolio {
+export interface TargetPortfolio {
   readonly targetWeights: Readonly<Record<string, number>>
 }
 
 /** Inputs verified by the caller before a pure strategy decision is requested. */
-export interface VerifiedStrategyContext<TMarket, TPortfolio> {
+export interface VerifiedStrategyContext<TMarket> {
   readonly market: TMarket
-  readonly portfolio: TPortfolio
 }
 
 /** Pure strategy identity and decision boundary shared by development and runtimes. */
 export interface StrategyDefinition<
-  TParameters,
   TMarket,
-  TPortfolio,
-  TTargetPortfolio extends StrategyTargetPortfolio,
   TFailure extends StrategyDecisionFailure,
+  TTarget extends TargetPortfolio = TargetPortfolio,
 > {
   readonly name: string
-  readonly parameters: TParameters
-  readonly decide: (context: VerifiedStrategyContext<TMarket, TPortfolio>) => Result.Result<TTargetPortfolio, TFailure>
+  readonly parameters: Protocol
+  readonly decide: (context: VerifiedStrategyContext<TMarket>) => Result.Result<TTarget, TFailure>
 }
