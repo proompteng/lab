@@ -42,12 +42,14 @@ export interface PreparedCandidateDevelopmentLocalAttempt {
   readonly args: CandidateDevelopmentLocalArguments
   readonly receiptPath: string
   readonly legacyReceiptPath: string
+  readonly legacyReceiptPaths: readonly string[]
   readonly source: CandidateDevelopmentLocalSourceBinding
 }
 
 export interface CandidateDevelopmentLocalReceiptReservationContext {
   readonly repositoryRoot: string
   readonly sourceGit?: CandidateDevelopmentSourceGit
+  readonly legacyReceiptPaths?: readonly string[]
 }
 
 export interface CandidateDevelopmentLocalAttemptPort {
@@ -308,9 +310,38 @@ const prepareCandidateDevelopmentLocalAttempt = (
             signal,
           ),
         )
+        const worktreeList = await candidateDevelopmentSourceGit.text(
+          repositoryRoot,
+          ['worktree', 'list', '--porcelain'],
+          signal,
+        )
+        const worktreeRoots = worktreeList
+          .split('\n\n')
+          .map((record) =>
+            record
+              .split('\n')
+              .find((line) => line.startsWith('worktree '))
+              ?.slice('worktree '.length),
+          )
+          .filter((worktreeRoot): worktreeRoot is string => worktreeRoot !== undefined && worktreeRoot.length > 0)
+        if (worktreeRoots.length === 0) throw new Error('candidate worktree list is empty')
+        const legacyReceiptPaths = await Promise.all(
+          worktreeRoots.map(async (worktreeRoot) => {
+            const canonicalWorktreeRoot = await realpath(resolve(repositoryRoot, worktreeRoot))
+            return resolve(
+              canonicalWorktreeRoot,
+              await candidateDevelopmentSourceGit.text(
+                canonicalWorktreeRoot,
+                ['rev-parse', '--git-path', legacyCandidateDevelopmentLocalReceiptName],
+                signal,
+              ),
+            )
+          }),
+        )
         return {
           attempt: join(receiptDirectory, `ordinal-${source.candidateOrdinal}.json`),
           legacy: legacyReceiptPath,
+          legacyPaths: [...new Set([legacyReceiptPath, ...legacyReceiptPaths])],
         }
       },
       catch: (cause) => localError('RECEIPT_RESERVATION_FAILED', 'candidate receipt path is unavailable', cause),
@@ -320,6 +351,7 @@ const prepareCandidateDevelopmentLocalAttempt = (
       args: normalizedArgs,
       receiptPath: receiptPaths.attempt,
       legacyReceiptPath: receiptPaths.legacy,
+      legacyReceiptPaths: receiptPaths.legacyPaths,
       source,
     }
   })
@@ -332,7 +364,10 @@ export const makeCandidateDevelopmentLocalAttempt =
         prepared.receiptPath,
         makeCandidateDevelopmentLocalReceipt(prepared.source, 'RESERVED'),
         prepared.legacyReceiptPath,
-        { repositoryRoot: prepared.repositoryRoot },
+        {
+          repositoryRoot: prepared.repositoryRoot,
+          legacyReceiptPaths: prepared.legacyReceiptPaths,
+        },
       )
       return yield* port.execute(prepared).pipe(
         Effect.onExit((exit) =>
@@ -384,6 +419,15 @@ const writeFinalizationTemporary = async (temporaryPath: string, content: string
     await temporary.sync()
   } finally {
     await temporary.close()
+  }
+}
+
+const syncReceiptDirectory = async (path: string): Promise<void> => {
+  const directory = await open(path, constants.O_RDONLY | constants.O_DIRECTORY)
+  try {
+    await directory.sync()
+  } finally {
+    await directory.close()
   }
 }
 
@@ -528,12 +572,13 @@ export const reserveCandidateDevelopmentLocalReceipt = (
 ): Effect.Effect<void, CandidateDevelopmentLocalError> =>
   Effect.tryPromise({
     try: async () => {
-      const legacyReceipt = await inspectLegacyCandidateDevelopmentLocalReceipt(
-        legacyReceiptPath,
-        receipt.candidateOrdinal,
-        context,
+      const legacyReceiptPaths = [...new Set([legacyReceiptPath, ...(context?.legacyReceiptPaths ?? [])])]
+      const legacyReceipts = await Promise.all(
+        legacyReceiptPaths.map((candidateLegacyReceiptPath) =>
+          inspectLegacyCandidateDevelopmentLocalReceipt(candidateLegacyReceiptPath, receipt.candidateOrdinal, context),
+        ),
       )
-      if (legacyReceipt === 'MATCHING_SOURCE') {
+      if (legacyReceipts.some((legacyReceipt) => legacyReceipt === 'MATCHING_SOURCE')) {
         throw localError(
           'RECEIPT_ALREADY_CONSUMED',
           'candidate development attempt was already consumed by the legacy local receipt',
@@ -557,7 +602,9 @@ export const reserveCandidateDevelopmentLocalReceipt = (
         }
         throw cause
       }
-      await unlink(markerPath).catch(() => undefined)
+      await syncReceiptDirectory(dirname(path))
+      await unlink(markerPath)
+      await syncReceiptDirectory(dirname(path))
     },
     catch: (cause) =>
       cause instanceof CandidateDevelopmentLocalError
@@ -575,6 +622,7 @@ export const finalizeCandidateDevelopmentLocalReceipt = (
       try {
         await writeFinalizationTemporary(temporaryPath, serializeCandidateDevelopmentLocalReceipt(receipt))
         await rename(temporaryPath, path)
+        await syncReceiptDirectory(dirname(path))
       } catch (cause) {
         await unlink(temporaryPath).catch(() => undefined)
         throw cause

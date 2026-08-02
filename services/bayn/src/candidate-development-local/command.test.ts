@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { Deferred, Effect, Exit, Fiber, Result } from 'effect'
 
@@ -41,6 +41,7 @@ const prepared: PreparedCandidateDevelopmentLocalAttempt = {
   },
   receiptPath: '/repo/.git/bayn/candidate-development-attempts/ordinal-20.json',
   legacyReceiptPath: '/repo/.git/bayn-candidate-development-local-receipt.json',
+  legacyReceiptPaths: ['/repo/.git/bayn-candidate-development-local-receipt.json'],
   source: boundSource.success,
 }
 
@@ -405,6 +406,42 @@ describe('candidate development local program', () => {
       )
 
       expect(JSON.parse(await readFile(receiptPath, 'utf8'))).toMatchObject({ status: 'RESERVED' })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('rejects a matching legacy receipt from a registered linked worktree', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'bayn-candidate-development-local-'))
+    const receiptPath = join(directory, 'bayn', 'candidate-development-attempts', 'ordinal-20.json')
+    const currentLegacyReceiptPath = join(
+      directory,
+      'current-worktree',
+      'bayn-candidate-development-local-receipt.json',
+    )
+    const linkedWorktreeLegacyReceiptPath = join(
+      directory,
+      'linked-worktree-git',
+      'bayn-candidate-development-local-receipt.json',
+    )
+    const reserved = makeCandidateDevelopmentLocalReceipt(boundSource.success, 'RESERVED')
+    try {
+      await mkdir(dirname(receiptPath), { recursive: true })
+      await mkdir(dirname(linkedWorktreeLegacyReceiptPath), { recursive: true })
+      await writeFile(
+        linkedWorktreeLegacyReceiptPath,
+        `${JSON.stringify(legacyReceiptFor(boundSource.success, { sourceRevision: '1'.repeat(40) }))}\n`,
+        'utf8',
+      )
+      const exit = await Effect.runPromiseExit(
+        reserveCandidateDevelopmentLocalReceipt(receiptPath, reserved, currentLegacyReceiptPath, {
+          ...legacyReceiptContext(20, '5'.repeat(40)),
+          legacyReceiptPaths: [linkedWorktreeLegacyReceiptPath],
+        }),
+      )
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      expect(await fileExists(receiptPath)).toBe(false)
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

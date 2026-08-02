@@ -51,6 +51,7 @@ export interface CandidateDevelopmentLocalSourceResolution {
   readonly sourceManifestPath: string
   readonly runtimeMarketDataPath: string
   readonly receiptPath: string
+  readonly attemptReceiptPath: string
   readonly candidateOrdinal: number
   readonly source: CandidateDevelopmentLocalSourceBinding
 }
@@ -70,6 +71,7 @@ export interface CandidateDevelopmentLocalDependencies {
     path: string,
     receipt: CandidateDevelopmentLocalAttemptReceipt,
     candidateOrdinal?: number,
+    attemptReceiptPath?: string,
   ) => Promise<void>
   readonly finalizeReceipt: (path: string, receipt: CandidateDevelopmentLocalAttemptReceipt) => Promise<void>
   readonly runCandidateDevelopment: (request: CandidateDevelopmentLocalProcessRequest) => Promise<number>
@@ -195,6 +197,11 @@ const gitPath = async (repositoryRoot: string): Promise<string> => {
   return resolve(repositoryRoot, path)
 }
 
+const gitCommonPath = async (repositoryRoot: string): Promise<string> => {
+  const path = await gitToken(repositoryRoot, ['rev-parse', '--git-common-dir'])
+  return realpath(resolve(repositoryRoot, path))
+}
+
 export const resolveCandidateDevelopmentLocalSource = async (
   args: CandidateDevelopmentLocalArguments,
 ): Promise<CandidateDevelopmentLocalSourceResolution> => {
@@ -258,12 +265,19 @@ export const resolveCandidateDevelopmentLocalSource = async (
   }
   const source = validateCandidateDevelopmentLocalSourceBinding(sourceInput)
   if (!source.ok) throw new CandidateDevelopmentLocalError(source.code, source.message)
+  const commonDirectory = await gitCommonPath(repositoryRoot)
   return {
     repositoryRoot,
     modulePath,
     sourceManifestPath,
     runtimeMarketDataPath: resolve(repositoryRoot, args.runtimeMarketDataPath),
     receiptPath: await gitPath(repositoryRoot),
+    attemptReceiptPath: join(
+      commonDirectory,
+      'bayn',
+      'candidate-development-attempts',
+      `ordinal-${candidateOrdinal}.json`,
+    ),
     candidateOrdinal,
     source: source.value,
   }
@@ -351,9 +365,10 @@ export const reserveCandidateDevelopmentLocalReceipt = async (
   path: string,
   receipt: CandidateDevelopmentLocalAttemptReceipt,
   candidateOrdinal?: number,
+  attemptReceiptPath?: string,
 ): Promise<void> => {
   if (candidateOrdinal !== undefined) {
-    const attemptPath = candidateDevelopmentAttemptReceiptPath(path, candidateOrdinal)
+    const attemptPath = attemptReceiptPath ?? candidateDevelopmentAttemptReceiptPath(path, candidateOrdinal)
     await mkdir(dirname(attemptPath), { recursive: true, mode: 0o700 })
     await reserveReceiptAtPath(attemptPath, receipt)
   }
@@ -426,7 +441,12 @@ export const runCandidateDevelopmentLocally = async (
   if (!parsed.ok) throw new CandidateDevelopmentLocalError(parsed.code, parsed.message)
   const resolved = await dependencies.resolveSourceBinding(parsed.value)
   const reserved = makeCandidateDevelopmentLocalAttemptReceipt(resolved.source, 'reserved')
-  await dependencies.reserveReceipt(resolved.receiptPath, reserved, resolved.candidateOrdinal)
+  await dependencies.reserveReceipt(
+    resolved.receiptPath,
+    reserved,
+    resolved.candidateOrdinal,
+    resolved.attemptReceiptPath,
+  )
 
   try {
     await dependencies.revalidateSourceBinding(resolved)
@@ -511,6 +531,6 @@ export const runCandidateDevelopmentLocally = async (
 
 if (import.meta.main) {
   const { runCandidateDevelopmentLocalMain } =
-    await import('../../../../../services/bayn/src/candidate-development-local/command.ts')
+    await import('../../../../../services/bayn/src/candidate-development-local/command')
   runCandidateDevelopmentLocalMain(process.argv.slice(2))
 }
