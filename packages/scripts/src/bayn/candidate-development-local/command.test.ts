@@ -153,6 +153,47 @@ describe('candidate development local command', () => {
     }
   })
 
+  test('rejects an index-hidden evaluator modification during source revalidation', async () => {
+    const repository = await mkdtemp(join(tmpdir(), 'bayn-candidate-development-index-source-'))
+    const modulePath = 'services/bayn/src/strategy/example.ts'
+    const sourceManifestPath = 'services/bayn/candidates/example.json'
+    const evaluatorPath = 'services/bayn/src/evaluator.ts'
+    try {
+      await mkdir(join(repository, 'services/bayn/src/strategy'), { recursive: true })
+      await mkdir(join(repository, 'services/bayn/candidates'), { recursive: true })
+      await writeFile(join(repository, modulePath), 'export const candidateDevelopmentProgram = {}\n')
+      await writeFile(join(repository, sourceManifestPath), '{}\n')
+      await writeFile(join(repository, evaluatorPath), 'export const evaluator = 1\n')
+      await execFileAsync('git', ['init', '-q'], { cwd: repository })
+      await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: repository })
+      await execFileAsync('git', ['config', 'user.name', 'Bayn Test'], { cwd: repository })
+      await execFileAsync('git', ['add', '.'], { cwd: repository })
+      await execFileAsync('git', ['commit', '-qm', 'test: bind evaluator source'], { cwd: repository })
+      const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repository })
+      const sourceRevision = String(stdout).trim()
+      const sourceBinding = validateCandidateDevelopmentLocalSourceBinding({
+        ...source.value,
+        sourceRevision,
+      })
+      if (!sourceBinding.ok) throw new Error(sourceBinding.message)
+      const resolution: CandidateDevelopmentLocalSourceResolution = {
+        ...resolved,
+        repositoryRoot: repository,
+        modulePath,
+        sourceManifestPath,
+        source: sourceBinding.value,
+      }
+      await execFileAsync('git', ['update-index', '--assume-unchanged', '--', evaluatorPath], { cwd: repository })
+      await writeFile(join(repository, evaluatorPath), 'export const evaluator = 2\n')
+
+      await expect(revalidateCandidateDevelopmentLocalSource(resolution)).rejects.toMatchObject({
+        code: 'source-working-tree-dirty',
+      })
+    } finally {
+      await rm(repository, { recursive: true, force: true })
+    }
+  })
+
   test('rejects invalid arguments before source resolution or process execution', async () => {
     const fixture = dependenciesFor()
     let resolvedCount = 0

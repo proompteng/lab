@@ -126,6 +126,15 @@ const gitDiffIsClean = async (repositoryRoot: string, paths: readonly string[]):
 }
 
 const gitWorkingTreeIsClean = async (repositoryRoot: string, paths: readonly string[]): Promise<boolean> => {
+  const indexEntries = await gitText(repositoryRoot, ['ls-files', '-v', '--', ...paths])
+  if (
+    indexEntries
+      .split('\n')
+      .filter((entry) => entry.length > 0)
+      .some((entry) => !entry.startsWith('H '))
+  ) {
+    return false
+  }
   if (!(await gitDiffIsClean(repositoryRoot, paths))) return false
   const status = await gitText(repositoryRoot, [
     'status',
