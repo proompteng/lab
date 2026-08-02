@@ -1414,7 +1414,47 @@ const timestampWithinPullRequest = (
   return Number.isFinite(timestampMs) && timestampMs >= createdAtMs && (timestampMs <= mergedAtMs || allowAfterMerge)
 }
 
-const exactHeadCodexAttestation = (
+const hasUniqueFinalCommitHistory = (pullRequest: PullRequestReviewState): boolean =>
+  pullRequest.commitShas.length > 0 &&
+  pullRequest.commitShas.at(-1) === pullRequest.headSha &&
+  new Set(pullRequest.commitShas).size === pullRequest.commitShas.length
+
+const selectLatestForcePush = (
+  pullRequest: PullRequestReviewState,
+  createdAtMs: number,
+  mergedAtMs: number,
+): { readonly forcePush: PullRequestForcePush; readonly createdAtMs: number } | null | undefined => {
+  if (pullRequest.headForcePushCount !== pullRequest.headForcePushes.length) return undefined
+  if (pullRequest.headForcePushes.length === 0) return null
+
+  const forcePushes = pullRequest.headForcePushes
+    .map((forcePush) => ({ forcePush, createdAtMs: Date.parse(forcePush.createdAt) }))
+    .toSorted((left, right) => left.createdAtMs - right.createdAtMs)
+  const forcePushKeys = forcePushes.map(
+    ({ forcePush }) =>
+      `${forcePush.createdAt}/${forcePush.beforeCommitSha}/${forcePush.afterCommitSha}/${forcePush.actorLogin ?? ''}`,
+  )
+  if (
+    new Set(forcePushKeys).size !== forcePushKeys.length ||
+    forcePushes.some(
+      ({ forcePush, createdAtMs: forcePushAtMs }, index) =>
+        !Number.isFinite(forcePushAtMs) ||
+        forcePushAtMs < createdAtMs ||
+        forcePushAtMs > mergedAtMs ||
+        forcePush.beforeCommitSha === forcePush.afterCommitSha ||
+        (index > 0 && forcePushAtMs <= (forcePushes[index - 1]?.createdAtMs ?? Number.NaN)) ||
+        (index > 0 && forcePush.beforeCommitSha !== forcePushes[index - 1]?.forcePush.afterCommitSha),
+    )
+  ) {
+    return undefined
+  }
+
+  const latest = forcePushes.at(-1)
+  if (latest === undefined || latest.forcePush.afterCommitSha !== pullRequest.headSha) return undefined
+  return latest
+}
+
+const selectExactHeadCodexAttestation = (
   pullRequest: PullRequestReviewState,
   createdAtMs: number,
   mergedAtMs: number,
@@ -1441,22 +1481,27 @@ const exactHeadCodexAttestation = (
     }
   }
 
+  if (pullRequest.reviews.some((review) => review.authorLogin === baynCodexReviewer)) return undefined
+  if (!hasUniqueFinalCommitHistory(pullRequest)) return undefined
+  const latestForcePush = selectLatestForcePush(pullRequest, createdAtMs, mergedAtMs)
+  if (latestForcePush === undefined) return undefined
+  if (latestForcePush === null && pullRequest.commitShas.length !== 1) return undefined
+
+  const reactions = pullRequest.reactions.filter(
+    (candidate) => candidate.userLogin === baynCodexBotLogin && candidate.content === '+1',
+  )
+  if (reactions.length !== 1) return undefined
+  const reaction = reactions[0]
+  if (reaction === undefined) return undefined
+  const reactionAtMs = Date.parse(reaction.createdAt)
   if (
-    pullRequest.commitShas.length !== 1 ||
-    pullRequest.commitShas[0] !== pullRequest.headSha ||
-    pullRequest.headForcePushCount !== 0
+    !Number.isFinite(reactionAtMs) ||
+    reactionAtMs < createdAtMs ||
+    (latestForcePush !== null && reactionAtMs > mergedAtMs) ||
+    (latestForcePush !== null && reactionAtMs <= latestForcePush.createdAtMs)
   ) {
     return undefined
   }
-  const reaction = pullRequest.reactions
-    .filter(
-      (candidate) =>
-        candidate.userLogin === baynCodexBotLogin &&
-        candidate.content === '+1' &&
-        timestampWithinPullRequest(candidate.createdAt, createdAtMs, mergedAtMs, true),
-    )
-    .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))[0]
-  if (reaction === undefined) return undefined
   return {
     authorLogin: baynCodexReviewer,
     commitSha: pullRequest.headSha,
@@ -1561,14 +1606,10 @@ export const evaluateBaynReleaseReview = (input: {
     .toSorted((left, right) => (right.submittedAt as string).localeCompare(left.submittedAt as string))[0]
 
   let reviewEvidence =
-    exactSubmittedReview ?? exactHeadCodexAttestation(pullRequest, pullRequestCreatedAtMs, pullRequestMergedAtMs)
+    exactSubmittedReview ?? selectExactHeadCodexAttestation(pullRequest, pullRequestCreatedAtMs, pullRequestMergedAtMs)
   let feedbackFixCommitShas: readonly string[] = []
   if (reviewEvidence === undefined) {
-    if (
-      pullRequest.commitShas.length === 0 ||
-      pullRequest.commitShas.at(-1) !== pullRequest.headSha ||
-      new Set(pullRequest.commitShas).size !== pullRequest.commitShas.length
-    ) {
+    if (!hasUniqueFinalCommitHistory(pullRequest)) {
       return hold(
         'source-pr-commit-history-mismatch',
         `source PR #${pullRequest.number} commit history does not uniquely terminate at final head ${shortSha(pullRequest.headSha)}`,

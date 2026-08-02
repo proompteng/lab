@@ -65,6 +65,13 @@ const lastPublishedSha = 'e'.repeat(40)
 const heldCommitSha = 'f'.repeat(40)
 const heldHeadSha = '1'.repeat(40)
 const evaluationNowMs = Date.parse('2026-07-30T07:02:00Z')
+const pr13464MainCommitSha = '4'.repeat(40)
+const pr13464FinalHeadSha = 'ebcffacfc4710a2e1dbb77a0f1dad880ad1e636f'
+const pr13464PreviousHeadSha = '865ed1f2b95c6a31d894cd54866637963dd9c0d1'
+const pr13464CreatedAt = '2026-08-01T18:00:00Z'
+const pr13464ForcePushAt = '2026-08-01T19:51:52Z'
+const pr13464ReactionAt = '2026-08-01T19:54:46Z'
+const pr13464MergedAt = '2026-08-01T19:58:06Z'
 
 const associatedPull = (overrides: Partial<AssociatedPullRequest> = {}): AssociatedPullRequest => ({
   number: 13390,
@@ -184,10 +191,12 @@ const reviewSnapshotFor = (options: {
   readonly parents: readonly string[]
   readonly reviews?: readonly PullRequestReview[]
   readonly threads?: readonly PullRequestReviewThread[]
+  readonly commitShas?: readonly string[]
   readonly issueComments?: readonly PullRequestIssueComment[]
   readonly reactions?: readonly PullRequestReaction[]
   readonly headForcePushes?: readonly PullRequestForcePush[]
   readonly headForcePushCount?: number
+  readonly createdAt?: string
   readonly mergedAt?: string
 }): BaynReleaseReviewSnapshot => {
   const associated = associatedPull({
@@ -208,7 +217,7 @@ const reviewSnapshotFor = (options: {
       baseRefName: 'main',
       headSha: options.headSha,
       mergeCommitSha: options.commitSha,
-      createdAt: sourceCreatedAt,
+      createdAt: options.createdAt ?? sourceCreatedAt,
       mergedAt: associated.mergedAt,
       reviews: options.reviews ?? [
         review({
@@ -216,7 +225,7 @@ const reviewSnapshotFor = (options: {
         }),
       ],
       threads: options.threads ?? [],
-      commitShas: [options.headSha],
+      commitShas: options.commitShas ?? [options.headSha],
       issueComments: options.issueComments ?? [],
       reactions: options.reactions ?? [],
       headForcePushes: options.headForcePushes ?? [],
@@ -224,6 +233,42 @@ const reviewSnapshotFor = (options: {
     },
   }
 }
+
+const pr13464ReactionSnapshot = (
+  options: {
+    readonly commitShas?: readonly string[]
+    readonly reviews?: readonly PullRequestReview[]
+    readonly issueComments?: readonly PullRequestIssueComment[]
+    readonly threads?: readonly PullRequestReviewThread[]
+    readonly reactions?: readonly PullRequestReaction[]
+    readonly headForcePushes?: readonly PullRequestForcePush[]
+    readonly headForcePushCount?: number
+    readonly createdAt?: string
+    readonly mergedAt?: string
+  } = {},
+): BaynReleaseReviewSnapshot =>
+  reviewSnapshotFor({
+    commitSha: pr13464MainCommitSha,
+    prNumber: 13464,
+    headSha: pr13464FinalHeadSha,
+    parents: [pushBeforeSha],
+    createdAt: options.createdAt ?? pr13464CreatedAt,
+    mergedAt: options.mergedAt ?? pr13464MergedAt,
+    reviews: options.reviews ?? [],
+    issueComments: options.issueComments ?? [],
+    threads: options.threads ?? [],
+    commitShas: options.commitShas ?? [pr13464FinalHeadSha],
+    reactions: options.reactions ?? [reaction({ createdAt: pr13464ReactionAt })],
+    headForcePushes: options.headForcePushes ?? [
+      {
+        actorLogin: 'gregkonush',
+        beforeCommitSha: pr13464PreviousHeadSha,
+        afterCommitSha: pr13464FinalHeadSha,
+        createdAt: pr13464ForcePushAt,
+      },
+    ],
+    headForcePushCount: options.headForcePushCount,
+  })
 
 const eligibilitySnapshot = (
   overrides: Partial<BaynReleaseEligibilitySnapshot> = {},
@@ -4297,7 +4342,7 @@ describe('Bayn publication-range eligibility', () => {
       status: 'hold',
       code: 'exact-head-review-settling',
       retryable: true,
-      message: expect.stringContaining('exact final-head reaction is still settling'),
+      message: expect.stringContaining('exact-head review is 29s old'),
     })
   })
 
@@ -6401,6 +6446,260 @@ describe('Bayn exact-head release review eligibility', () => {
       headSha: finalHeadSha,
       reviewSubmittedAt: '2026-07-30T07:01:00Z',
       eligibleAt: '2026-07-30T07:01:30.000Z',
+    })
+  })
+
+  test('preserves delayed immutable reactions that arrive after merge', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: snapshot({
+          associated: [associatedPull({ mergedAt: '2026-07-30T07:01:30Z' })],
+          reviews: [],
+          reactions: [reaction({ createdAt: '2026-07-30T07:03:00Z' })],
+        }),
+        nowMs: Date.parse('2026-07-30T07:04:00Z'),
+        pushBeforeSha: null,
+      }),
+    ).toEqual({
+      status: 'eligible',
+      prNumber: 13390,
+      headSha: finalHeadSha,
+      reviewSubmittedAt: '2026-07-30T07:03:00Z',
+      eligibleAt: '2026-07-30T07:03:30.000Z',
+    })
+  })
+
+  test('accepts #13464 through the exact final-head reaction after its force-push', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha: pr13464MainCommitSha,
+        baseRefName: 'main',
+        snapshot: pr13464ReactionSnapshot(),
+        nowMs: Date.parse('2026-08-01T20:00:00Z'),
+        pushBeforeSha: null,
+      }),
+    ).toEqual({
+      status: 'eligible',
+      prNumber: 13464,
+      headSha: pr13464FinalHeadSha,
+      reviewSubmittedAt: pr13464ReactionAt,
+      eligibleAt: '2026-08-01T19:55:16.000Z',
+    })
+  })
+
+  test('preserves formal exact-head review evidence after a force-push', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha: pr13464MainCommitSha,
+        baseRefName: 'main',
+        snapshot: pr13464ReactionSnapshot({
+          reviews: [
+            review({
+              commitSha: pr13464FinalHeadSha,
+              submittedAt: '2026-08-01T19:53:00Z',
+            }),
+          ],
+          reactions: [],
+        }),
+        nowMs: Date.parse('2026-08-01T20:00:00Z'),
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({
+      status: 'eligible',
+      prNumber: 13464,
+      headSha: pr13464FinalHeadSha,
+      reviewSubmittedAt: '2026-08-01T19:53:00Z',
+    })
+  })
+
+  test('preserves a clean exact-head issue-comment attestation after a force-push', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha: pr13464MainCommitSha,
+        baseRefName: 'main',
+        snapshot: pr13464ReactionSnapshot({
+          issueComments: [
+            issueComment({
+              body: `Codex Review: Didn't find any major issues. Bravo.\n\n**Reviewed commit:** \`${pr13464FinalHeadSha.slice(0, 10)}\`\n`,
+              createdAt: '2026-08-01T19:53:00Z',
+              updatedAt: '2026-08-01T19:53:00Z',
+            }),
+          ],
+          reactions: [],
+        }),
+        nowMs: Date.parse('2026-08-01T20:00:00Z'),
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({
+      status: 'eligible',
+      prNumber: 13464,
+      headSha: pr13464FinalHeadSha,
+      reviewSubmittedAt: '2026-08-01T19:53:00Z',
+    })
+  })
+
+  test.each([
+    [
+      'reaction before the last force-push',
+      (pull: PullRequestReviewState): void => {
+        ;(pull.reactions[0] as { createdAt: string }).createdAt = pr13464ForcePushAt
+      },
+    ],
+    [
+      'reaction between multiple force-pushes',
+      (pull: PullRequestReviewState): void => {
+        const intermediateHead = '7'.repeat(40)
+        ;(pull.reactions[0] as { createdAt: string }).createdAt = '2026-08-01T19:54:00Z'
+        ;(pull as unknown as { headForcePushes: PullRequestForcePush[] }).headForcePushes = [
+          {
+            actorLogin: 'gregkonush',
+            beforeCommitSha: pr13464PreviousHeadSha,
+            afterCommitSha: intermediateHead,
+            createdAt: '2026-08-01T19:50:00Z',
+          },
+          {
+            actorLogin: 'gregkonush',
+            beforeCommitSha: intermediateHead,
+            afterCommitSha: pr13464FinalHeadSha,
+            createdAt: '2026-08-01T19:55:00Z',
+          },
+        ]
+        ;(pull as unknown as { headForcePushCount: number }).headForcePushCount = 2
+      },
+    ],
+    [
+      'latest force-push to a different head',
+      (pull: PullRequestReviewState): void => {
+        ;(pull.headForcePushes[0] as { afterCommitSha: string }).afterCommitSha = '8'.repeat(40)
+        ;(pull.reactions[0] as { createdAt: string }).createdAt = '2026-08-01T19:54:00Z'
+      },
+    ],
+    [
+      'multiple trusted reactions',
+      (pull: PullRequestReviewState): void => {
+        ;(pull as unknown as { reactions: PullRequestReaction[] }).reactions = [
+          ...pull.reactions,
+          reaction({ createdAt: '2026-08-01T19:55:00Z' }),
+        ]
+      },
+    ],
+    [
+      'unrelated reaction actor',
+      (pull: PullRequestReviewState): void => {
+        ;(pull.reactions[0] as { userLogin: string }).userLogin = 'codex-lookalike[bot]'
+      },
+    ],
+    [
+      'unrelated reaction content',
+      (pull: PullRequestReviewState): void => {
+        ;(pull.reactions[0] as { content: string }).content = 'heart'
+      },
+    ],
+    [
+      'discontinuous force-push history',
+      (pull: PullRequestReviewState): void => {
+        const intermediateHead = '7'.repeat(40)
+        ;(pull as unknown as { headForcePushes: PullRequestForcePush[] }).headForcePushes = [
+          {
+            actorLogin: 'gregkonush',
+            beforeCommitSha: pr13464PreviousHeadSha,
+            afterCommitSha: intermediateHead,
+            createdAt: '2026-08-01T19:50:00Z',
+          },
+          {
+            actorLogin: 'gregkonush',
+            beforeCommitSha: '9'.repeat(40),
+            afterCommitSha: pr13464FinalHeadSha,
+            createdAt: '2026-08-01T19:55:00Z',
+          },
+        ]
+        ;(pull as unknown as { headForcePushCount: number }).headForcePushCount = 2
+        ;(pull.reactions[0] as { createdAt: string }).createdAt = '2026-08-01T19:56:00Z'
+      },
+    ],
+    [
+      'force-push count mismatch',
+      (pull: PullRequestReviewState): void => {
+        ;(pull as unknown as { headForcePushCount: number }).headForcePushCount = 2
+      },
+    ],
+    [
+      'reaction cannot replace an older Codex review',
+      (pull: PullRequestReviewState): void => {
+        ;(pull as unknown as { reviews: PullRequestReview[] }).reviews = [
+          review({
+            commitSha: pr13464PreviousHeadSha,
+            submittedAt: '2026-08-01T19:40:00Z',
+          }),
+        ]
+      },
+    ],
+    [
+      'ambiguous force-push timestamps',
+      (pull: PullRequestReviewState): void => {
+        const intermediateHead = '7'.repeat(40)
+        ;(pull as unknown as { headForcePushes: PullRequestForcePush[] }).headForcePushes = [
+          {
+            actorLogin: 'gregkonush',
+            beforeCommitSha: pr13464PreviousHeadSha,
+            afterCommitSha: intermediateHead,
+            createdAt: '2026-08-01T19:50:00Z',
+          },
+          {
+            actorLogin: 'gregkonush',
+            beforeCommitSha: intermediateHead,
+            afterCommitSha: pr13464FinalHeadSha,
+            createdAt: '2026-08-01T19:50:00Z',
+          },
+        ]
+        ;(pull as unknown as { headForcePushCount: number }).headForcePushCount = 2
+        ;(pull.reactions[0] as { createdAt: string }).createdAt = '2026-08-01T19:51:00Z'
+      },
+    ],
+    [
+      'reaction outside the merge evidence window',
+      (pull: PullRequestReviewState): void => {
+        ;(pull.reactions[0] as { createdAt: string }).createdAt = '2026-08-01T19:58:07Z'
+      },
+    ],
+  ] as const)('rejects #13464 reaction evidence with %s', (_name, mutate) => {
+    const reviewSnapshot = pr13464ReactionSnapshot()
+    const pull = reviewSnapshot.pullRequest
+    if (pull === null) throw new Error('missing #13464 pull request')
+    mutate(pull)
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha: pr13464MainCommitSha,
+        baseRefName: 'main',
+        snapshot: reviewSnapshot,
+        nowMs: Date.parse('2026-08-01T20:00:00Z'),
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'exact-head-review-missing',
+      retryable: true,
+    })
+  })
+
+  test.each([
+    ['non-terminal final commit history', ['9'.repeat(40)]],
+    ['duplicate final commit history', [pr13464FinalHeadSha, pr13464FinalHeadSha]],
+  ] as const)('rejects #13464 reaction with %s', (_name, commitShas) => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha: pr13464MainCommitSha,
+        baseRefName: 'main',
+        snapshot: pr13464ReactionSnapshot({ commitShas }),
+        nowMs: Date.parse('2026-08-01T20:00:00Z'),
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'source-pr-commit-history-mismatch',
+      retryable: false,
     })
   })
 
