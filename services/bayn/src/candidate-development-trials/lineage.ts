@@ -1,23 +1,21 @@
 import { Result } from 'effect'
 
 import type {
-  CandidateDevelopmentAttemptConsumption,
-  CandidateDevelopmentDevelopmentOnlyTrial,
-  CandidateDevelopmentHistoricalQualificationTrial,
-  CandidateDevelopmentImmutableInvalidation,
+  CandidateDevelopmentClosedTrial,
+  CandidateDevelopmentDevelopmentAttempted,
+  CandidateDevelopmentDevelopmentRejectedTrial,
+  CandidateDevelopmentDevelopmentTerminalEvidence,
+  CandidateDevelopmentInvalidPrecommit,
+  CandidateDevelopmentNextPreregistration,
+  CandidateDevelopmentPrecommitInvalidatedTrial,
+  CandidateDevelopmentQualificationCompletedTrial,
+  CandidateDevelopmentQualificationTerminalEvidence,
   CandidateDevelopmentTrialHistory,
   CandidateDevelopmentTrialState,
   CandidateDevelopmentTrialStateIssue,
 } from './model'
 import { frozenDevelopmentMetricObservations } from './frozen-lineage'
-import { validateCandidateDevelopmentTrialHistory } from './validation'
-
-const unattempted: Extract<CandidateDevelopmentAttemptConsumption, { readonly _tag: 'UNATTEMPTED' }> = Object.freeze({
-  _tag: 'UNATTEMPTED',
-  attemptCount: 0,
-  metricBearingAttemptsConsumed: 0,
-  qualificationAttemptConsumed: false,
-})
+import { validateCandidateDevelopmentTrialHistory, validateCandidateDevelopmentTrialState } from './validation'
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 
@@ -29,120 +27,156 @@ export const cloneAndFreeze = <T>(value: T): T => {
   return Object.freeze(cloned) as T
 }
 
-const normalizedDevelopmentTrial = (
-  ordinal: number,
-  latest: CandidateDevelopmentTrialHistory['latestDevelopmentEvidence'],
-): CandidateDevelopmentDevelopmentOnlyTrial => {
-  const developmentMetricsObserved =
-    ordinal === latest.candidateOrdinal
-      ? (latest.developmentMetricsObserved ?? null)
-      : (frozenDevelopmentMetricObservations[ordinal] ?? null)
+const developmentAttempt = (metricBearing: boolean | null): CandidateDevelopmentDevelopmentAttempted => ({
+  _tag: 'DEVELOPMENT_ATTEMPTED',
+  attemptCount: 1,
+  metricBearing,
+})
+
+const latestDevelopmentEvidence = (
+  history: CandidateDevelopmentTrialHistory,
+  candidateOrdinal: number,
+): CandidateDevelopmentDevelopmentTerminalEvidence | null => {
+  if (candidateOrdinal !== history.latestDevelopmentEvidence.candidateOrdinal) return null
   return {
-    _tag: 'DEVELOPMENT_ONLY',
-    candidateOrdinal: ordinal,
-    priorTrialCount: ordinal - 1,
-    status: 'DEVELOPMENT_REJECTED',
-    evidenceContentHash: ordinal === latest.candidateOrdinal ? latest.evidenceContentHash : null,
-    evaluatedSourceRevision: ordinal === latest.candidateOrdinal ? latest.evaluatedSourceRevision : null,
-    failureStage: ordinal === latest.candidateOrdinal ? (latest.failureStage ?? null) : null,
-    developmentMetricsObserved,
-    attempt: {
-      _tag: 'DEVELOPMENT_ONLY_ATTEMPT',
-      attemptCount: 1,
-      metricBearingAttemptsConsumed: developmentMetricsObserved === null ? null : developmentMetricsObserved ? 1 : 0,
-      qualificationAttemptConsumed: false,
-    },
+    evidenceContentHash: history.latestDevelopmentEvidence.evidenceContentHash,
+    evaluatedSourceRevision: history.latestDevelopmentEvidence.evaluatedSourceRevision,
+    ...(history.latestDevelopmentEvidence.failureStage === undefined
+      ? {}
+      : { failureStage: history.latestDevelopmentEvidence.failureStage }),
+    ...(history.latestDevelopmentEvidence.developmentMetricsObserved === undefined
+      ? {}
+      : { developmentMetricsObserved: history.latestDevelopmentEvidence.developmentMetricsObserved }),
   }
 }
 
-const historicalQualificationTrial = (
+const historicalDevelopmentMetric = (
+  history: CandidateDevelopmentTrialHistory,
   candidateOrdinal: number,
-  sourceRevision: string | null,
-): CandidateDevelopmentHistoricalQualificationTrial => ({
-  _tag: 'HISTORICAL_QUALIFICATION',
+): boolean | null =>
+  candidateOrdinal === history.latestDevelopmentEvidence.candidateOrdinal
+    ? (history.latestDevelopmentEvidence.developmentMetricsObserved ?? null)
+    : (frozenDevelopmentMetricObservations[candidateOrdinal] ?? null)
+
+const historicalQualificationEvidence = (
+  history: CandidateDevelopmentTrialHistory,
+  candidateOrdinal: number,
+): CandidateDevelopmentQualificationTerminalEvidence | null =>
+  candidateOrdinal === history.latestTerminalEvidence.candidateOrdinal
+    ? {
+        terminalStatus: history.latestTerminalEvidence.terminalStatus,
+        sourceRevision: history.latestTerminalEvidence.sourceRevision,
+      }
+    : null
+
+const developmentPreregistration = (
+  history: CandidateDevelopmentTrialHistory,
+  candidateOrdinal: number,
+): CandidateDevelopmentNextPreregistration | null =>
+  candidateOrdinal === history.latestReviewedCandidatePriorTrials.latestReviewedPreregistration.candidateOrdinal
+    ? history.latestReviewedCandidatePriorTrials.latestReviewedPreregistration
+    : null
+
+const buildQualificationCompletedTrial = (
+  history: CandidateDevelopmentTrialHistory,
+  candidateOrdinal: number,
+): CandidateDevelopmentQualificationCompletedTrial => ({
+  _tag: 'QUALIFICATION_TERMINAL',
   candidateOrdinal,
   priorTrialCount: candidateOrdinal - 1,
-  terminalStatus: 'HOLD_REJECT',
-  sourceRevision,
-  attempt: {
-    _tag: 'QUALIFICATION_ATTEMPT',
+  preregistration: null,
+  developmentAttempt: developmentAttempt(null),
+  developmentEvidence: null,
+  qualificationAttempt: {
+    _tag: 'QUALIFICATION_ATTEMPTED',
     attemptCount: 1,
-    metricBearingAttemptsConsumed: 1,
-    qualificationAttemptConsumed: true,
   },
+  terminalEvidence: historicalQualificationEvidence(history, candidateOrdinal),
 })
 
-const invalidatedPrecommit = (
-  invalidation: CandidateDevelopmentTrialHistory['latestInvalidPrecommit'],
-): readonly CandidateDevelopmentImmutableInvalidation[] =>
-  invalidation === null
-    ? []
-    : [
-        {
-          _tag: 'IMMUTABLE_INVALIDATION' as const,
-          invalidation: cloneAndFreeze(invalidation),
-          attempt: unattempted,
-        },
-      ]
+const buildDevelopmentRejectedTrial = (
+  history: CandidateDevelopmentTrialHistory,
+  candidateOrdinal: number,
+): CandidateDevelopmentDevelopmentRejectedTrial => ({
+  _tag: 'DEVELOPMENT_REJECTED',
+  candidateOrdinal,
+  priorTrialCount: candidateOrdinal - 1,
+  preregistration: developmentPreregistration(history, candidateOrdinal),
+  developmentAttempt: developmentAttempt(historicalDevelopmentMetric(history, candidateOrdinal)),
+  developmentEvidence: latestDevelopmentEvidence(history, candidateOrdinal),
+})
 
-const currentSuccessor = (preregistration: CandidateDevelopmentTrialHistory['nextCandidatePreregistration']) =>
-  preregistration === null
+const buildInvalidatedTrial = (
+  invalidation: CandidateDevelopmentInvalidPrecommit,
+): CandidateDevelopmentPrecommitInvalidatedTrial => ({
+  _tag: 'PRECOMMIT_INVALIDATED',
+  candidateOrdinal: invalidation.candidateOrdinal,
+  priorTrialCount: invalidation.priorTrialCount,
+  invalidation: cloneAndFreeze(invalidation),
+})
+
+const closedTrialsFromHistory = (
+  history: CandidateDevelopmentTrialHistory,
+): readonly CandidateDevelopmentClosedTrial[] => {
+  const invalidation = history.latestInvalidPrecommit
+  const invalidatedOrdinal = invalidation?.candidateOrdinal
+  const ordinals = [
+    ...history.completedCandidateOrdinals,
+    ...history.developmentCandidateOrdinals,
+    ...(invalidatedOrdinal === undefined ? [] : [invalidatedOrdinal]),
+  ].sort((left, right) => left - right)
+  return ordinals.map((candidateOrdinal) => {
+    if (candidateOrdinal === invalidatedOrdinal && invalidation !== null && invalidation !== undefined) {
+      return buildInvalidatedTrial(invalidation)
+    }
+    if (history.developmentCandidateOrdinals.includes(candidateOrdinal)) {
+      return buildDevelopmentRejectedTrial(history, candidateOrdinal)
+    }
+    return buildQualificationCompletedTrial(history, candidateOrdinal)
+  })
+}
+
+const activeTrialFromHistory = (history: CandidateDevelopmentTrialHistory) =>
+  history.nextCandidatePreregistration === null
     ? null
     : {
-        _tag: 'CURRENT_SUCCESSOR' as const,
-        kind: 'DEVELOPMENT_ONLY' as const,
-        preregistration: cloneAndFreeze(preregistration),
-        attempt: unattempted,
+        _tag: 'DEVELOPMENT_PENDING' as const,
+        candidateOrdinal: history.nextCandidatePreregistration.candidateOrdinal,
+        priorTrialCount: history.nextCandidatePreregistration.priorTrialCount,
+        preregistration: cloneAndFreeze(history.nextCandidatePreregistration),
+        developmentAttempt: {
+          _tag: 'DEVELOPMENT_UNATTEMPTED' as const,
+          attemptCount: 0 as const,
+        },
       }
 
-const nextOrdinal = (
-  history: CandidateDevelopmentTrialHistory,
-  successor: ReturnType<typeof currentSuccessor>,
-): number =>
-  successor === null
-    ? Math.max(
-        history.completedCandidateOrdinals.at(-1) ?? 0,
-        history.developmentCandidateOrdinals.at(-1) ?? 0,
-        history.latestInvalidPrecommit?.candidateOrdinal ?? 0,
-      ) + 1
-    : successor.preregistration.candidateOrdinal
+const nextOrdinalFromClosedTrials = (closedTrials: readonly CandidateDevelopmentClosedTrial[]): number => {
+  const highestClosed = closedTrials.at(-1)?.candidateOrdinal ?? 0
+  return highestClosed + 1
+}
 
 export const buildCandidateDevelopmentTrialState = (
   history: CandidateDevelopmentTrialHistory,
 ): Result.Result<CandidateDevelopmentTrialState, CandidateDevelopmentTrialStateIssue> => {
-  const validated = validateCandidateDevelopmentTrialHistory(history)
-  if (Result.isFailure(validated)) return Result.fail(validated.failure)
-  const successor = currentSuccessor(history.nextCandidatePreregistration)
-  const latestQualificationOrdinal = history.completedCandidateOrdinals.at(-1)
+  const historyValidation = validateCandidateDevelopmentTrialHistory(history)
+  if (Result.isFailure(historyValidation)) return Result.fail(historyValidation.failure)
+  const closedTrials = closedTrialsFromHistory(history)
+  const activeTrial = activeTrialFromHistory(history)
   const state: CandidateDevelopmentTrialState = {
     schemaVersion: 'bayn.candidate-development-trial-state.v1',
-    historicalQualificationTrials: cloneAndFreeze(
-      history.completedCandidateOrdinals.map((candidateOrdinal) =>
-        historicalQualificationTrial(
-          candidateOrdinal,
-          candidateOrdinal === latestQualificationOrdinal ? history.latestTerminalEvidence.sourceRevision : null,
-        ),
-      ),
-    ),
-    developmentOnlyTrials: cloneAndFreeze(
-      history.developmentCandidateOrdinals.map((candidateOrdinal) =>
-        normalizedDevelopmentTrial(candidateOrdinal, history.latestDevelopmentEvidence),
-      ),
-    ),
-    invalidatedPrecommits: cloneAndFreeze(invalidatedPrecommit(history.latestInvalidPrecommit)),
-    currentSuccessor: cloneAndFreeze(successor),
-    nextOrdinal: nextOrdinal(history, successor),
+    closedTrials: cloneAndFreeze(closedTrials),
+    activeTrial: cloneAndFreeze(activeTrial),
+    nextOrdinal: activeTrial?.candidateOrdinal ?? nextOrdinalFromClosedTrials(closedTrials),
   }
-  return Result.succeed(state)
+  const stateValidation = validateCandidateDevelopmentTrialState(state)
+  return Result.isFailure(stateValidation) ? Result.fail(stateValidation.failure) : Result.succeed(state)
 }
 
 export const candidateDevelopmentTrialStateFromHistory = buildCandidateDevelopmentTrialState
 
 export const emptyCandidateDevelopmentTrialState = (): CandidateDevelopmentTrialState => ({
   schemaVersion: 'bayn.candidate-development-trial-state.v1',
-  historicalQualificationTrials: [],
-  developmentOnlyTrials: [],
-  invalidatedPrecommits: [],
-  currentSuccessor: null,
+  closedTrials: [],
+  activeTrial: null,
   nextOrdinal: 1,
 })

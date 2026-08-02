@@ -114,7 +114,7 @@ export interface CandidateDevelopmentPriorTrialsMaterial {
   readonly latestReviewedPreregistration: CandidateDevelopmentNextPreregistration
 }
 
-/** The v2 history remains the wire-compatible facade consumed by Bayn. */
+/** The v2 history is a wire-compatible input facade; the trial state below is authoritative. */
 export interface CandidateDevelopmentTrialHistory {
   readonly schemaVersion: 'bayn.candidate-development-trial-history.v2'
   readonly completedCandidateOrdinals: readonly number[]
@@ -140,6 +140,10 @@ export interface CandidateDevelopmentTrialHistory {
   readonly nextCandidatePreregistration: CandidateDevelopmentNextPreregistration | null
 }
 
+/**
+ * Retained only for existing type-only consumers of the old normalized facade. The lifecycle no longer uses a
+ * successor kind or this attempt union as an authority.
+ */
 export type CandidateDevelopmentAttemptConsumption =
   | {
       readonly _tag: 'UNATTEMPTED'
@@ -160,50 +164,8 @@ export type CandidateDevelopmentAttemptConsumption =
       readonly qualificationAttemptConsumed: true
     }
 
+/** @deprecated The canonical lifecycle has no mutually exclusive successor kinds. */
 export type CandidateDevelopmentSuccessorKind = 'DEVELOPMENT_ONLY' | 'QUALIFICATION'
-
-export interface CandidateDevelopmentHistoricalQualificationTrial {
-  readonly _tag: 'HISTORICAL_QUALIFICATION'
-  readonly candidateOrdinal: number
-  readonly priorTrialCount: number
-  readonly terminalStatus: 'HOLD_REJECT'
-  readonly sourceRevision: string | null
-  readonly attempt: Extract<CandidateDevelopmentAttemptConsumption, { readonly _tag: 'QUALIFICATION_ATTEMPT' }>
-}
-
-export interface CandidateDevelopmentDevelopmentOnlyTrial {
-  readonly _tag: 'DEVELOPMENT_ONLY'
-  readonly candidateOrdinal: number
-  readonly priorTrialCount: number
-  readonly status: 'DEVELOPMENT_REJECTED'
-  readonly evidenceContentHash: string | null
-  readonly evaluatedSourceRevision: string | null
-  readonly failureStage: 'buildEvaluation-preflight' | 'development-evaluation' | null
-  readonly developmentMetricsObserved: boolean | null
-  readonly attempt: Extract<CandidateDevelopmentAttemptConsumption, { readonly _tag: 'DEVELOPMENT_ONLY_ATTEMPT' }>
-}
-
-export interface CandidateDevelopmentCurrentSuccessor {
-  readonly _tag: 'CURRENT_SUCCESSOR'
-  readonly kind: CandidateDevelopmentSuccessorKind
-  readonly preregistration: CandidateDevelopmentNextPreregistration
-  readonly attempt: CandidateDevelopmentAttemptConsumption
-}
-
-export interface CandidateDevelopmentImmutableInvalidation {
-  readonly _tag: 'IMMUTABLE_INVALIDATION'
-  readonly invalidation: CandidateDevelopmentInvalidPrecommit
-  readonly attempt: Extract<CandidateDevelopmentAttemptConsumption, { readonly _tag: 'UNATTEMPTED' }>
-}
-
-export interface CandidateDevelopmentTrialState {
-  readonly schemaVersion: 'bayn.candidate-development-trial-state.v1'
-  readonly historicalQualificationTrials: readonly CandidateDevelopmentHistoricalQualificationTrial[]
-  readonly developmentOnlyTrials: readonly CandidateDevelopmentDevelopmentOnlyTrial[]
-  readonly invalidatedPrecommits: readonly CandidateDevelopmentImmutableInvalidation[]
-  readonly currentSuccessor: CandidateDevelopmentCurrentSuccessor | null
-  readonly nextOrdinal: number
-}
 
 export interface CandidateDevelopmentDevelopmentTerminalEvidence {
   readonly evidenceContentHash: string
@@ -217,21 +179,152 @@ export interface CandidateDevelopmentQualificationTerminalEvidence {
   readonly sourceRevision: string
 }
 
+export interface CandidateDevelopmentDevelopmentUnattempted {
+  readonly _tag: 'DEVELOPMENT_UNATTEMPTED'
+  readonly attemptCount: 0
+}
+
+export interface CandidateDevelopmentDevelopmentAttempted {
+  readonly _tag: 'DEVELOPMENT_ATTEMPTED'
+  readonly attemptCount: 1
+  /** Historical records may not retain this observation; active attempts must. */
+  readonly metricBearing: boolean | null
+}
+
+export type CandidateDevelopmentDevelopmentAttempt =
+  | CandidateDevelopmentDevelopmentUnattempted
+  | CandidateDevelopmentDevelopmentAttempted
+
+export interface CandidateDevelopmentQualificationUnavailable {
+  readonly _tag: 'QUALIFICATION_UNAVAILABLE'
+  readonly attemptCount: 0
+}
+
+export interface CandidateDevelopmentQualificationUnattempted {
+  readonly _tag: 'QUALIFICATION_UNATTEMPTED'
+  readonly attemptCount: 0
+}
+
+export interface CandidateDevelopmentQualificationAttempted {
+  readonly _tag: 'QUALIFICATION_ATTEMPTED'
+  readonly attemptCount: 1
+}
+
+export type CandidateDevelopmentQualificationAttempt =
+  | CandidateDevelopmentQualificationUnavailable
+  | CandidateDevelopmentQualificationUnattempted
+  | CandidateDevelopmentQualificationAttempted
+
+export interface CandidateDevelopmentDevelopmentPendingTrial {
+  readonly _tag: 'DEVELOPMENT_PENDING'
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly preregistration: CandidateDevelopmentNextPreregistration
+  readonly developmentAttempt: CandidateDevelopmentDevelopmentUnattempted
+}
+
+export interface CandidateDevelopmentDevelopmentOutcomePendingTrial {
+  readonly _tag: 'DEVELOPMENT_OUTCOME_PENDING'
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly preregistration: CandidateDevelopmentNextPreregistration
+  readonly developmentAttempt: CandidateDevelopmentDevelopmentAttempted
+}
+
+export interface CandidateDevelopmentQualificationEligibleTrial {
+  readonly _tag: 'QUALIFICATION_ELIGIBLE'
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly preregistration: CandidateDevelopmentNextPreregistration
+  readonly developmentAttempt: CandidateDevelopmentDevelopmentAttempted & { readonly metricBearing: boolean }
+  readonly developmentEvidence: CandidateDevelopmentDevelopmentTerminalEvidence
+  readonly qualificationAttempt: CandidateDevelopmentQualificationUnattempted
+}
+
+export interface CandidateDevelopmentQualificationAttemptedTrial {
+  readonly _tag: 'QUALIFICATION_ATTEMPTED'
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly preregistration: CandidateDevelopmentNextPreregistration
+  readonly developmentAttempt: CandidateDevelopmentDevelopmentAttempted & { readonly metricBearing: boolean }
+  readonly developmentEvidence: CandidateDevelopmentDevelopmentTerminalEvidence
+  readonly qualificationAttempt: CandidateDevelopmentQualificationAttempted
+}
+
+export type CandidateDevelopmentActiveTrial =
+  | CandidateDevelopmentDevelopmentPendingTrial
+  | CandidateDevelopmentDevelopmentOutcomePendingTrial
+  | CandidateDevelopmentQualificationEligibleTrial
+  | CandidateDevelopmentQualificationAttemptedTrial
+
+export interface CandidateDevelopmentPrecommitInvalidatedTrial {
+  readonly _tag: 'PRECOMMIT_INVALIDATED'
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly invalidation: CandidateDevelopmentInvalidPrecommit
+}
+
+export interface CandidateDevelopmentDevelopmentRejectedTrial {
+  readonly _tag: 'DEVELOPMENT_REJECTED'
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly preregistration: CandidateDevelopmentNextPreregistration | null
+  readonly developmentAttempt: CandidateDevelopmentDevelopmentAttempted
+  readonly developmentEvidence: CandidateDevelopmentDevelopmentTerminalEvidence | null
+}
+
+export interface CandidateDevelopmentQualificationCompletedTrial {
+  readonly _tag: 'QUALIFICATION_TERMINAL'
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly preregistration: CandidateDevelopmentNextPreregistration | null
+  readonly developmentAttempt: CandidateDevelopmentDevelopmentAttempted
+  readonly developmentEvidence: CandidateDevelopmentDevelopmentTerminalEvidence | null
+  readonly qualificationAttempt: CandidateDevelopmentQualificationAttempted
+  readonly terminalEvidence: CandidateDevelopmentQualificationTerminalEvidence | null
+}
+
+export type CandidateDevelopmentClosedTrial =
+  | CandidateDevelopmentPrecommitInvalidatedTrial
+  | CandidateDevelopmentDevelopmentRejectedTrial
+  | CandidateDevelopmentQualificationCompletedTrial
+
+export type CandidateDevelopmentLifecycle = CandidateDevelopmentClosedTrial | CandidateDevelopmentActiveTrial
+
+export interface CandidateDevelopmentTrialState {
+  readonly schemaVersion: 'bayn.candidate-development-trial-state.v1'
+  readonly closedTrials: readonly CandidateDevelopmentClosedTrial[]
+  readonly activeTrial: CandidateDevelopmentActiveTrial | null
+  readonly nextOrdinal: number
+}
+
+/** @deprecated Existing type-only exports now point at the canonical lifecycle records. */
+export type CandidateDevelopmentHistoricalQualificationTrial = CandidateDevelopmentQualificationCompletedTrial
+/** @deprecated Existing type-only exports now point at the canonical lifecycle records. */
+export type CandidateDevelopmentDevelopmentOnlyTrial = CandidateDevelopmentDevelopmentRejectedTrial
+/** @deprecated Existing type-only exports now point at the canonical lifecycle records. */
+export type CandidateDevelopmentImmutableInvalidation = CandidateDevelopmentPrecommitInvalidatedTrial
+/** @deprecated Existing type-only exports now point at the canonical active lifecycle. */
+export type CandidateDevelopmentCurrentSuccessor = CandidateDevelopmentActiveTrial
+
 export type CandidateDevelopmentTrialTransition =
   | {
-      readonly _tag: 'REVIEW_SUCCESSOR'
+      readonly _tag: 'REVIEW_CANDIDATE'
       readonly preregistration: CandidateDevelopmentNextPreregistration
-      readonly kind?: CandidateDevelopmentSuccessorKind
     }
   | {
       readonly _tag: 'CONSUME_DEVELOPMENT_ATTEMPT'
       readonly metricBearing: boolean
     }
-  | { readonly _tag: 'CONSUME_QUALIFICATION_ATTEMPT' }
   | {
-      readonly _tag: 'TERMINALIZE_DEVELOPMENT_ONLY'
+      readonly _tag: 'REJECT_DEVELOPMENT'
       readonly evidence: CandidateDevelopmentDevelopmentTerminalEvidence
     }
+  | {
+      readonly _tag: 'APPROVE_FOR_QUALIFICATION'
+      readonly evidence: CandidateDevelopmentDevelopmentTerminalEvidence
+    }
+  | { readonly _tag: 'CONSUME_QUALIFICATION_ATTEMPT' }
   | {
       readonly _tag: 'TERMINALIZE_QUALIFICATION'
       readonly evidence: CandidateDevelopmentQualificationTerminalEvidence
@@ -248,6 +341,7 @@ export type CandidateDevelopmentTrialStateIssueReason =
   | 'PRIOR_TRIAL_COUNT_MISMATCH'
   | 'ORDINAL_SEQUENCE_GAP'
   | 'ORDINAL_OVERLAP'
+  | 'ORDINAL_REUSE'
   | 'LATEST_EVIDENCE_MISMATCH'
   | 'INVALIDATION_NOT_IMMUTABLE'
   | 'INVALIDATION_BINDING_MISMATCH'
@@ -256,6 +350,9 @@ export type CandidateDevelopmentTrialStateIssueReason =
   | 'SUCCESSOR_ALREADY_PRESENT'
   | 'ATTEMPT_ALREADY_CONSUMED'
   | 'ATTEMPT_KIND_MISMATCH'
+  | 'QUALIFICATION_NOT_ELIGIBLE'
+  | 'DEVELOPMENT_OUTCOME_REQUIRED'
+  | 'DEVELOPMENT_OUTCOME_MISMATCH'
   | 'TERMINAL_STATE_MISMATCH'
   | 'NEXT_ORDINAL_MISMATCH'
 
@@ -267,16 +364,19 @@ export interface CandidateDevelopmentTrialStateIssue {
   readonly observed?: unknown
 }
 
-export type CandidateDevelopmentTrialTransitionDecision =
+export type CandidateDevelopmentTrialStateDecision =
   | { readonly _tag: 'APPLIED'; readonly state: CandidateDevelopmentTrialState }
   | { readonly _tag: 'BLOCKED'; readonly issue: CandidateDevelopmentTrialStateIssue }
+
+/** @deprecated Existing type-only exports retain the previous decision name. */
+export type CandidateDevelopmentTrialTransitionDecision = CandidateDevelopmentTrialStateDecision
 
 export type CandidateDevelopmentNextAction =
   | {
       readonly _tag: 'AWAIT_REVIEWED_PRECOMMIT'
       readonly candidateOrdinal: number
       readonly priorTrialCount: number
-      readonly reason: 'NO_SUCCESSOR' | 'PRECOMMIT_INVALIDATED'
+      readonly reason: 'NO_SUCCESSOR' | 'PRECOMMIT_INVALIDATED' | 'DEVELOPMENT_REJECTED'
     }
   | {
       readonly _tag: 'CONSUME_DEVELOPMENT_ATTEMPT'
@@ -284,7 +384,7 @@ export type CandidateDevelopmentNextAction =
       readonly preregistration: CandidateDevelopmentNextPreregistration
     }
   | {
-      readonly _tag: 'TERMINALIZE_DEVELOPMENT_ONLY'
+      readonly _tag: 'AWAIT_DEVELOPMENT_OUTCOME'
       readonly candidateOrdinal: number
       readonly preregistration: CandidateDevelopmentNextPreregistration
     }

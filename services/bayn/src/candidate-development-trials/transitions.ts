@@ -1,16 +1,19 @@
 import { Result } from 'effect'
 
 import type {
-  CandidateDevelopmentAttemptConsumption,
-  CandidateDevelopmentCurrentSuccessor,
-  CandidateDevelopmentDevelopmentOnlyTrial,
-  CandidateDevelopmentHistoricalQualificationTrial,
-  CandidateDevelopmentImmutableInvalidation,
-  CandidateDevelopmentSuccessorKind,
+  CandidateDevelopmentActiveTrial,
+  CandidateDevelopmentClosedTrial,
+  CandidateDevelopmentDevelopmentAttempted,
+  CandidateDevelopmentDevelopmentOutcomePendingTrial,
+  CandidateDevelopmentDevelopmentPendingTrial,
+  CandidateDevelopmentDevelopmentRejectedTrial,
+  CandidateDevelopmentQualificationAttemptedTrial,
+  CandidateDevelopmentQualificationCompletedTrial,
+  CandidateDevelopmentQualificationEligibleTrial,
   CandidateDevelopmentTrialState,
+  CandidateDevelopmentTrialStateDecision,
   CandidateDevelopmentTrialStateIssue,
   CandidateDevelopmentTrialTransition,
-  CandidateDevelopmentTrialTransitionDecision,
 } from './model'
 import { cloneAndFreeze } from './lineage'
 import {
@@ -23,282 +26,299 @@ import {
   validateQualificationTerminalEvidence,
 } from './validation'
 
-type ReviewSuccessorTransition = Extract<CandidateDevelopmentTrialTransition, { readonly _tag: 'REVIEW_SUCCESSOR' }>
+type ReviewCandidateTransition = Extract<CandidateDevelopmentTrialTransition, { readonly _tag: 'REVIEW_CANDIDATE' }>
 type ConsumeDevelopmentTransition = Extract<
   CandidateDevelopmentTrialTransition,
   { readonly _tag: 'CONSUME_DEVELOPMENT_ATTEMPT' }
 >
-type InvalidatePrecommitTransition = Extract<
+type DevelopmentOutcomeTransition = Extract<
   CandidateDevelopmentTrialTransition,
-  { readonly _tag: 'INVALIDATE_PRECOMMIT' }
->
-type TerminalizeDevelopmentTransition = Extract<
-  CandidateDevelopmentTrialTransition,
-  { readonly _tag: 'TERMINALIZE_DEVELOPMENT_ONLY' }
+  { readonly _tag: 'REJECT_DEVELOPMENT' | 'APPROVE_FOR_QUALIFICATION' }
 >
 type TerminalizeQualificationTransition = Extract<
   CandidateDevelopmentTrialTransition,
   { readonly _tag: 'TERMINALIZE_QUALIFICATION' }
 >
+type InvalidatePrecommitTransition = Extract<
+  CandidateDevelopmentTrialTransition,
+  { readonly _tag: 'INVALIDATE_PRECOMMIT' }
+>
 
-const unattempted: Extract<CandidateDevelopmentAttemptConsumption, { readonly _tag: 'UNATTEMPTED' }> = Object.freeze({
-  _tag: 'UNATTEMPTED',
-  attemptCount: 0,
-  metricBearingAttemptsConsumed: 0,
-  qualificationAttemptConsumed: false,
-})
-
-const applied = (state: CandidateDevelopmentTrialState): CandidateDevelopmentTrialTransitionDecision => ({
+const applied = (state: CandidateDevelopmentTrialState): CandidateDevelopmentTrialStateDecision => ({
   _tag: 'APPLIED',
-  state,
+  state: cloneAndFreeze(state),
 })
 
-const blocked = (issue: CandidateDevelopmentTrialStateIssue): CandidateDevelopmentTrialTransitionDecision => ({
+const blocked = (issue: CandidateDevelopmentTrialStateIssue): CandidateDevelopmentTrialStateDecision => ({
   _tag: 'BLOCKED',
   issue,
 })
 
+const activeTrial = (
+  state: CandidateDevelopmentTrialState,
+): CandidateDevelopmentActiveTrial | CandidateDevelopmentTrialStateIssue =>
+  state.activeTrial ?? stateIssue('state.activeTrial', 'SUCCESSOR_REQUIRED')
+
 const isIssue = (
-  value: CandidateDevelopmentCurrentSuccessor | CandidateDevelopmentTrialStateIssue,
+  value: CandidateDevelopmentActiveTrial | CandidateDevelopmentTrialStateIssue,
 ): value is CandidateDevelopmentTrialStateIssue => value._tag === 'CandidateDevelopmentTrialStateInvalid'
 
-const requireSuccessor = (
+const nextState = (
   state: CandidateDevelopmentTrialState,
-): CandidateDevelopmentCurrentSuccessor | CandidateDevelopmentTrialStateIssue =>
-  state.currentSuccessor ?? stateIssue('state.currentSuccessor', 'SUCCESSOR_REQUIRED')
+  update: Partial<CandidateDevelopmentTrialState>,
+): CandidateDevelopmentTrialState => ({
+  ...state,
+  ...update,
+})
 
-const requireUnattemptedSuccessor = (
+const reviewCandidate = (
   state: CandidateDevelopmentTrialState,
-): CandidateDevelopmentCurrentSuccessor | CandidateDevelopmentTrialStateIssue => {
-  const successor = requireSuccessor(state)
-  if (isIssue(successor)) return successor
-  return successor.attempt._tag === 'UNATTEMPTED'
-    ? successor
-    : stateIssue('state.currentSuccessor.attempt', 'ATTEMPT_ALREADY_CONSUMED', successor.attempt)
-}
-
-const reviewSuccessor = (
-  state: CandidateDevelopmentTrialState,
-  transition: ReviewSuccessorTransition,
-): CandidateDevelopmentTrialTransitionDecision => {
-  const { preregistration } = transition
-  if (state.currentSuccessor !== null) {
-    return blocked(stateIssue('state.currentSuccessor', 'SUCCESSOR_ALREADY_PRESENT', state.currentSuccessor))
+  transition: ReviewCandidateTransition,
+): CandidateDevelopmentTrialStateDecision => {
+  if (state.activeTrial !== null) {
+    return blocked(stateIssue('state.activeTrial', 'SUCCESSOR_ALREADY_PRESENT', state.activeTrial))
   }
-  const preregistrationIssue = validateNextPreregistration(preregistration, 'transition.preregistration')
+  const preregistrationIssue = validateNextPreregistration(transition.preregistration, 'transition.preregistration')
   if (preregistrationIssue !== undefined) return blocked(preregistrationIssue)
   if (
-    preregistration.candidateOrdinal !== state.nextOrdinal ||
-    preregistration.priorTrialCount !== state.nextOrdinal - 1
+    transition.preregistration.candidateOrdinal !== state.nextOrdinal ||
+    transition.preregistration.priorTrialCount !== state.nextOrdinal - 1
   ) {
     return blocked(
-      stateIssue('transition.preregistration', 'NEXT_ORDINAL_MISMATCH', preregistration, {
+      stateIssue('transition.preregistration', 'NEXT_ORDINAL_MISMATCH', transition.preregistration, {
         candidateOrdinal: state.nextOrdinal,
         priorTrialCount: state.nextOrdinal - 1,
       }),
     )
   }
-  const kind: CandidateDevelopmentSuccessorKind = transition.kind ?? 'DEVELOPMENT_ONLY'
-  if (kind !== 'DEVELOPMENT_ONLY' && kind !== 'QUALIFICATION') {
-    return blocked(stateIssue('transition.kind', 'ATTEMPT_KIND_MISMATCH', kind, ['DEVELOPMENT_ONLY', 'QUALIFICATION']))
+  const reviewed: CandidateDevelopmentDevelopmentPendingTrial = {
+    _tag: 'DEVELOPMENT_PENDING',
+    candidateOrdinal: transition.preregistration.candidateOrdinal,
+    priorTrialCount: transition.preregistration.priorTrialCount,
+    preregistration: cloneAndFreeze(transition.preregistration),
+    developmentAttempt: {
+      _tag: 'DEVELOPMENT_UNATTEMPTED',
+      attemptCount: 0,
+    },
   }
-  const successor: CandidateDevelopmentCurrentSuccessor = {
-    _tag: 'CURRENT_SUCCESSOR',
-    kind,
-    preregistration: cloneAndFreeze(preregistration),
-    attempt: unattempted,
-  }
-  return applied({ ...state, currentSuccessor: cloneAndFreeze(successor) })
+  return applied(nextState(state, { activeTrial: reviewed }))
 }
 
-const consumeAttempt = (
-  state: CandidateDevelopmentTrialState,
-  attempt: Exclude<CandidateDevelopmentAttemptConsumption, { readonly _tag: 'UNATTEMPTED' }>,
-  expectedKind: CandidateDevelopmentSuccessorKind,
-): CandidateDevelopmentTrialTransitionDecision => {
-  const successor = requireUnattemptedSuccessor(state)
-  if (isIssue(successor)) return blocked(successor)
-  if (successor.kind !== expectedKind) {
-    return blocked(stateIssue('state.currentSuccessor.kind', 'ATTEMPT_KIND_MISMATCH', successor.kind, expectedKind))
-  }
-  return applied({
-    ...state,
-    currentSuccessor: cloneAndFreeze({ ...successor, attempt }),
-  })
-}
-
-const consumeDevelopmentOnlyAttempt = (
+const consumeDevelopmentAttempt = (
   state: CandidateDevelopmentTrialState,
   transition: ConsumeDevelopmentTransition,
-): CandidateDevelopmentTrialTransitionDecision => {
+): CandidateDevelopmentTrialStateDecision => {
   if (typeof transition.metricBearing !== 'boolean') {
     return blocked(stateIssue('transition.metricBearing', 'MALFORMED_HISTORY', transition.metricBearing, 'boolean'))
   }
-  return consumeAttempt(
-    state,
-    {
-      _tag: 'DEVELOPMENT_ONLY_ATTEMPT',
+  const current = activeTrial(state)
+  if (isIssue(current)) return blocked(current)
+  if (current._tag !== 'DEVELOPMENT_PENDING') {
+    return blocked(stateIssue('state.activeTrial.developmentAttempt', 'ATTEMPT_ALREADY_CONSUMED', current))
+  }
+  const attempted: CandidateDevelopmentDevelopmentOutcomePendingTrial = {
+    _tag: 'DEVELOPMENT_OUTCOME_PENDING',
+    candidateOrdinal: current.candidateOrdinal,
+    priorTrialCount: current.priorTrialCount,
+    preregistration: current.preregistration,
+    developmentAttempt: {
+      _tag: 'DEVELOPMENT_ATTEMPTED',
       attemptCount: 1,
-      metricBearingAttemptsConsumed: transition.metricBearing ? 1 : 0,
-      qualificationAttemptConsumed: false,
+      metricBearing: transition.metricBearing,
     },
-    'DEVELOPMENT_ONLY',
+  }
+  return applied(nextState(state, { activeTrial: attempted }))
+}
+
+const validateOutcomeEvidence = (
+  current: CandidateDevelopmentDevelopmentOutcomePendingTrial,
+  evidence: unknown,
+): CandidateDevelopmentTrialStateIssue | undefined => {
+  const evidenceIssue = validateDevelopmentTerminalEvidence(evidence, 'transition.evidence')
+  if (evidenceIssue !== undefined) return evidenceIssue
+  if (
+    isRecord(evidence) &&
+    evidence.developmentMetricsObserved !== undefined &&
+    evidence.developmentMetricsObserved !== current.developmentAttempt.metricBearing
+  ) {
+    return stateIssue(
+      'transition.evidence.developmentMetricsObserved',
+      'DEVELOPMENT_OUTCOME_MISMATCH',
+      evidence.developmentMetricsObserved,
+      current.developmentAttempt.metricBearing,
+    )
+  }
+  return undefined
+}
+
+const developmentOutcome = (
+  state: CandidateDevelopmentTrialState,
+  transition: DevelopmentOutcomeTransition,
+): CandidateDevelopmentTrialStateDecision => {
+  const current = activeTrial(state)
+  if (isIssue(current)) return blocked(current)
+  if (current._tag === 'DEVELOPMENT_PENDING') {
+    return blocked(stateIssue('state.activeTrial', 'DEVELOPMENT_OUTCOME_REQUIRED', current))
+  }
+  if (current._tag !== 'DEVELOPMENT_OUTCOME_PENDING') {
+    return blocked(
+      stateIssue('state.activeTrial', 'DEVELOPMENT_OUTCOME_MISMATCH', current, 'DEVELOPMENT_OUTCOME_PENDING'),
+    )
+  }
+  const evidenceIssue = validateOutcomeEvidence(current, transition.evidence)
+  if (evidenceIssue !== undefined) return blocked(evidenceIssue)
+  const evidence = cloneAndFreeze(transition.evidence)
+  if (transition._tag === 'REJECT_DEVELOPMENT') {
+    const rejected: CandidateDevelopmentDevelopmentRejectedTrial = {
+      _tag: 'DEVELOPMENT_REJECTED',
+      candidateOrdinal: current.candidateOrdinal,
+      priorTrialCount: current.priorTrialCount,
+      preregistration: current.preregistration,
+      developmentAttempt: current.developmentAttempt,
+      developmentEvidence: evidence,
+    }
+    return applied(
+      nextState(state, {
+        closedTrials: [...state.closedTrials, rejected],
+        activeTrial: null,
+        nextOrdinal: current.candidateOrdinal + 1,
+      }),
+    )
+  }
+  const eligible: CandidateDevelopmentQualificationEligibleTrial = {
+    _tag: 'QUALIFICATION_ELIGIBLE',
+    candidateOrdinal: current.candidateOrdinal,
+    priorTrialCount: current.priorTrialCount,
+    preregistration: current.preregistration,
+    developmentAttempt: current.developmentAttempt as CandidateDevelopmentDevelopmentAttempted & {
+      readonly metricBearing: boolean
+    },
+    developmentEvidence: evidence,
+    qualificationAttempt: {
+      _tag: 'QUALIFICATION_UNATTEMPTED',
+      attemptCount: 0,
+    },
+  }
+  return applied(nextState(state, { activeTrial: eligible }))
+}
+
+const invalidatePrecommit = (
+  state: CandidateDevelopmentTrialState,
+  transition: InvalidatePrecommitTransition,
+): CandidateDevelopmentTrialStateDecision => {
+  const current = activeTrial(state)
+  if (isIssue(current)) return blocked(current)
+  if (current._tag !== 'DEVELOPMENT_PENDING') {
+    return blocked(stateIssue('state.activeTrial.developmentAttempt', 'ATTEMPT_ALREADY_CONSUMED', current))
+  }
+  const invalidationIssue = validateInvalidation(transition.invalidation, 'transition.invalidation')
+  if (invalidationIssue !== undefined) return blocked(invalidationIssue)
+  const invalidation = transition.invalidation
+  if (
+    invalidation.candidateOrdinal !== current.candidateOrdinal ||
+    invalidation.priorTrialCount !== current.priorTrialCount ||
+    invalidation.invalidatedModule.path !== current.preregistration.modulePath ||
+    invalidation.invalidatedModule.sha256 !== current.preregistration.moduleSha256 ||
+    invalidation.preregistration.sourceRevision !== current.preregistration.preregistration.sourceRevision ||
+    invalidation.preregistration.path !== current.preregistration.preregistration.path ||
+    invalidation.preregistration.blobOid !== current.preregistration.preregistration.blobOid
+  ) {
+    return blocked(
+      stateIssue('transition.invalidation', 'INVALIDATION_BINDING_MISMATCH', invalidation, current.preregistration),
+    )
+  }
+  const invalidated: CandidateDevelopmentClosedTrial = {
+    _tag: 'PRECOMMIT_INVALIDATED',
+    candidateOrdinal: invalidation.candidateOrdinal,
+    priorTrialCount: invalidation.priorTrialCount,
+    invalidation: cloneAndFreeze(invalidation),
+  }
+  return applied(
+    nextState(state, {
+      closedTrials: [...state.closedTrials, invalidated],
+      activeTrial: null,
+      nextOrdinal: invalidation.candidateOrdinal + 1,
+    }),
   )
 }
 
-const matchesInvalidationBinding = (
-  successor: CandidateDevelopmentCurrentSuccessor,
-  invalidation: InvalidatePrecommitTransition['invalidation'],
-): boolean =>
-  invalidation.candidateOrdinal === successor.preregistration.candidateOrdinal &&
-  invalidation.priorTrialCount === successor.preregistration.priorTrialCount &&
-  invalidation.invalidatedModule.path === successor.preregistration.modulePath &&
-  invalidation.invalidatedModule.sha256 === successor.preregistration.moduleSha256 &&
-  invalidation.preregistration.sourceRevision === successor.preregistration.preregistration.sourceRevision &&
-  invalidation.preregistration.path === successor.preregistration.preregistration.path &&
-  invalidation.preregistration.blobOid === successor.preregistration.preregistration.blobOid
-
-const invalidateSuccessor = (
-  state: CandidateDevelopmentTrialState,
-  invalidation: InvalidatePrecommitTransition['invalidation'],
-): CandidateDevelopmentTrialTransitionDecision => {
-  const successor = requireUnattemptedSuccessor(state)
-  if (isIssue(successor)) return blocked(successor)
-  const invalidationIssue = validateInvalidation(invalidation, 'transition.invalidation')
-  if (invalidationIssue !== undefined) return blocked(invalidationIssue)
-  if (!matchesInvalidationBinding(successor, invalidation)) {
-    return blocked(
-      stateIssue('transition.invalidation', 'INVALIDATION_BINDING_MISMATCH', invalidation, successor.preregistration),
-    )
+const consumeQualificationAttempt = (state: CandidateDevelopmentTrialState): CandidateDevelopmentTrialStateDecision => {
+  const current = activeTrial(state)
+  if (isIssue(current)) return blocked(current)
+  if (current._tag !== 'QUALIFICATION_ELIGIBLE') {
+    if (current._tag === 'QUALIFICATION_ATTEMPTED') {
+      return blocked(stateIssue('state.activeTrial.qualificationAttempt', 'ATTEMPT_ALREADY_CONSUMED', current))
+    }
+    return blocked(stateIssue('state.activeTrial', 'QUALIFICATION_NOT_ELIGIBLE', current))
   }
-  const invalidated: CandidateDevelopmentImmutableInvalidation = {
-    _tag: 'IMMUTABLE_INVALIDATION',
-    invalidation: cloneAndFreeze(invalidation),
-    attempt: unattempted,
+  const attempted: CandidateDevelopmentQualificationAttemptedTrial = {
+    _tag: 'QUALIFICATION_ATTEMPTED',
+    candidateOrdinal: current.candidateOrdinal,
+    priorTrialCount: current.priorTrialCount,
+    preregistration: current.preregistration,
+    developmentAttempt: current.developmentAttempt,
+    developmentEvidence: current.developmentEvidence,
+    qualificationAttempt: {
+      _tag: 'QUALIFICATION_ATTEMPTED',
+      attemptCount: 1,
+    },
   }
-  return applied({
-    ...state,
-    invalidatedPrecommits: [...state.invalidatedPrecommits, cloneAndFreeze(invalidated)],
-    currentSuccessor: null,
-    nextOrdinal: invalidation.candidateOrdinal + 1,
-  })
-}
-
-const terminalizeDevelopmentOnly = (
-  state: CandidateDevelopmentTrialState,
-  evidence: TerminalizeDevelopmentTransition['evidence'],
-): CandidateDevelopmentTrialTransitionDecision => {
-  const successor = requireSuccessor(state)
-  if (isIssue(successor)) return blocked(successor)
-  if (successor.kind !== 'DEVELOPMENT_ONLY') {
-    return blocked(
-      stateIssue('state.currentSuccessor.kind', 'ATTEMPT_KIND_MISMATCH', successor.kind, 'DEVELOPMENT_ONLY'),
-    )
-  }
-  if (successor.attempt._tag !== 'DEVELOPMENT_ONLY_ATTEMPT') {
-    return blocked(
-      stateIssue(
-        'state.currentSuccessor.attempt',
-        'ATTEMPT_KIND_MISMATCH',
-        successor.attempt,
-        'DEVELOPMENT_ONLY_ATTEMPT',
-      ),
-    )
-  }
-  const evidenceIssue = validateDevelopmentTerminalEvidence(evidence, 'transition.evidence')
-  if (evidenceIssue !== undefined) return blocked(evidenceIssue)
-  const developmentMetricsObserved = evidence.developmentMetricsObserved ?? null
-  const attemptMetricsObserved = successor.attempt.metricBearingAttemptsConsumed === 1
-  if (developmentMetricsObserved !== null && developmentMetricsObserved !== attemptMetricsObserved) {
-    return blocked(
-      stateIssue(
-        'transition.evidence.developmentMetricsObserved',
-        'TERMINAL_STATE_MISMATCH',
-        developmentMetricsObserved,
-        attemptMetricsObserved,
-      ),
-    )
-  }
-  const trial: CandidateDevelopmentDevelopmentOnlyTrial = {
-    _tag: 'DEVELOPMENT_ONLY',
-    candidateOrdinal: successor.preregistration.candidateOrdinal,
-    priorTrialCount: successor.preregistration.priorTrialCount,
-    status: 'DEVELOPMENT_REJECTED',
-    evidenceContentHash: evidence.evidenceContentHash,
-    evaluatedSourceRevision: evidence.evaluatedSourceRevision ?? null,
-    failureStage: evidence.failureStage ?? null,
-    developmentMetricsObserved,
-    attempt: successor.attempt,
-  }
-  return applied({
-    ...state,
-    developmentOnlyTrials: [...state.developmentOnlyTrials, cloneAndFreeze(trial)],
-    currentSuccessor: null,
-    nextOrdinal: successor.preregistration.candidateOrdinal + 1,
-  })
+  return applied(nextState(state, { activeTrial: attempted }))
 }
 
 const terminalizeQualification = (
   state: CandidateDevelopmentTrialState,
-  evidence: TerminalizeQualificationTransition['evidence'],
-): CandidateDevelopmentTrialTransitionDecision => {
-  const successor = requireSuccessor(state)
-  if (isIssue(successor)) return blocked(successor)
-  if (successor.kind !== 'QUALIFICATION') {
-    return blocked(stateIssue('state.currentSuccessor.kind', 'ATTEMPT_KIND_MISMATCH', successor.kind, 'QUALIFICATION'))
-  }
-  if (successor.attempt._tag !== 'QUALIFICATION_ATTEMPT') {
+  transition: TerminalizeQualificationTransition,
+): CandidateDevelopmentTrialStateDecision => {
+  const current = activeTrial(state)
+  if (isIssue(current)) return blocked(current)
+  if (current._tag !== 'QUALIFICATION_ATTEMPTED') {
     return blocked(
-      stateIssue('state.currentSuccessor.attempt', 'ATTEMPT_KIND_MISMATCH', successor.attempt, 'QUALIFICATION_ATTEMPT'),
+      stateIssue('state.activeTrial.qualificationAttempt', 'ATTEMPT_KIND_MISMATCH', current, 'QUALIFICATION_ATTEMPTED'),
     )
   }
-  const evidenceIssue = validateQualificationTerminalEvidence(evidence, 'transition.evidence')
+  const evidenceIssue = validateQualificationTerminalEvidence(transition.evidence, 'transition.evidence')
   if (evidenceIssue !== undefined) return blocked(evidenceIssue)
-  const trial: CandidateDevelopmentHistoricalQualificationTrial = {
-    _tag: 'HISTORICAL_QUALIFICATION',
-    candidateOrdinal: successor.preregistration.candidateOrdinal,
-    priorTrialCount: successor.preregistration.priorTrialCount,
-    terminalStatus: evidence.terminalStatus,
-    sourceRevision: evidence.sourceRevision,
-    attempt: successor.attempt,
+  const terminal: CandidateDevelopmentQualificationCompletedTrial = {
+    _tag: 'QUALIFICATION_TERMINAL',
+    candidateOrdinal: current.candidateOrdinal,
+    priorTrialCount: current.priorTrialCount,
+    preregistration: current.preregistration,
+    developmentAttempt: current.developmentAttempt,
+    developmentEvidence: current.developmentEvidence,
+    qualificationAttempt: current.qualificationAttempt,
+    terminalEvidence: cloneAndFreeze(transition.evidence),
   }
-  return applied({
-    ...state,
-    historicalQualificationTrials: [...state.historicalQualificationTrials, cloneAndFreeze(trial)],
-    currentSuccessor: null,
-    nextOrdinal: successor.preregistration.candidateOrdinal + 1,
-  })
+  return applied(
+    nextState(state, {
+      closedTrials: [...state.closedTrials, terminal],
+      activeTrial: null,
+      nextOrdinal: current.candidateOrdinal + 1,
+    }),
+  )
 }
 
 export const reduceCandidateDevelopmentTrialState = (
   state: CandidateDevelopmentTrialState,
   transition: CandidateDevelopmentTrialTransition,
-): CandidateDevelopmentTrialTransitionDecision => {
+): CandidateDevelopmentTrialStateDecision => {
   const stateValidation = validateCandidateDevelopmentTrialState(state)
   if (Result.isFailure(stateValidation)) return blocked(stateValidation.failure)
   if (!isRecord(transition)) return blocked(stateIssue('transition', 'MALFORMED_HISTORY', transition))
   switch (transition._tag) {
-    case 'REVIEW_SUCCESSOR':
-      return reviewSuccessor(state, transition)
-    case 'INVALIDATE_PRECOMMIT':
-      return invalidateSuccessor(state, transition.invalidation)
+    case 'REVIEW_CANDIDATE':
+      return reviewCandidate(state, transition)
     case 'CONSUME_DEVELOPMENT_ATTEMPT':
-      return consumeDevelopmentOnlyAttempt(state, transition)
+      return consumeDevelopmentAttempt(state, transition)
+    case 'REJECT_DEVELOPMENT':
+    case 'APPROVE_FOR_QUALIFICATION':
+      return developmentOutcome(state, transition)
+    case 'INVALIDATE_PRECOMMIT':
+      return invalidatePrecommit(state, transition)
     case 'CONSUME_QUALIFICATION_ATTEMPT':
-      return consumeAttempt(
-        state,
-        {
-          _tag: 'QUALIFICATION_ATTEMPT',
-          attemptCount: 1,
-          metricBearingAttemptsConsumed: 1,
-          qualificationAttemptConsumed: true,
-        },
-        'QUALIFICATION',
-      )
-    case 'TERMINALIZE_DEVELOPMENT_ONLY':
-      return terminalizeDevelopmentOnly(state, transition.evidence)
+      return consumeQualificationAttempt(state)
     case 'TERMINALIZE_QUALIFICATION':
-      return terminalizeQualification(state, transition.evidence)
+      return terminalizeQualification(state, transition)
     default:
       return blocked(stateIssue('transition', 'MALFORMED_HISTORY', transition))
   }
