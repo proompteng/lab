@@ -32,8 +32,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify typed candidate dormancy before any privileged access
-        id: dormancy
+      - name: Install local Bayn lifecycle dependencies
+        shell: bash
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/bayn
+
+      - name: Verify candidate lifecycle before any image or credential access
+        id: lifecycle
         timeout-minutes: 2
         shell: bash
         run: |
@@ -45,18 +49,20 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
 
       - name: Stop safely while qualification is dormant
-        if: steps.dormancy.outputs.dormant == 'true'
-        run: echo 'No credentials, Signal data, PostgreSQL state, holdout, image, or qualification command were accessed.'
+        if: steps.lifecycle.outputs.eligible != 'true'
+        run: |
+          echo "Qualification remains dormant: ${{ steps.lifecycle.outputs.reason }}"
+          echo 'No credentials, Signal data, PostgreSQL state, holdout, image, or qualification command were accessed.'
 
-      - name: Set up the runner image-inspection toolchain
-        if: steps.dormancy.outputs.dormant == 'false'
+      - name: Set up the local image-build toolchain
+        if: steps.lifecycle.outputs.eligible == 'true'
         uses: ./.github/actions/setup-nix-toolchain
         with:
           require-preinstalled: 'true'
 
-      - name: Resolve and load the exact checked-out source image
+      - name: Build and load the exact checked-out source image locally
         id: image
-        if: steps.dormancy.outputs.dormant == 'false'
+        if: steps.lifecycle.outputs.eligible == 'true'
         shell: bash
         env:
           IMAGE_REPOSITORY: registry.ide-newton.ts.net/lab/bayn
@@ -65,63 +71,41 @@ jobs:
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
           test "$(git rev-parse refs/remotes/origin/main)" = "${GITHUB_SHA}"
 
-          image_tag="${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}"
-          image_digest="$(crane digest "$image_tag")"
-          [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          image_reference="${IMAGE_REPOSITORY}@${image_digest}"
-          image_config="$(crane config --platform linux/arm64 "$image_reference")"
-          test "$(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' <<< "$image_config")" = "${GITHUB_SHA}"
-          docker pull --platform linux/arm64 "$image_reference"
-          docker image inspect "$image_reference" >/dev/null
-          echo "reference=${image_reference}" >> "$GITHUB_OUTPUT"
+          output_link="${RUNNER_TEMP}/bayn-qualification-image"
+          nix build .#bayn-image --print-build-logs --out-link "$output_link"
+          image_tar="$(readlink -f "$output_link")"
+          test -f "$image_tar"
+          bash nix/verify-bayn-image-command.sh "$image_tar"
+          docker load --input "$image_tar"
 
-      - name: Preflight the exact source image without credentials or network
-        if: steps.dormancy.outputs.dormant == 'false'
-        shell: bash
-        env:
-          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
-        run: |
-          set -euo pipefail
-          preflight="${RUNNER_TEMP}/bayn-qualification-preflight.log"
-          rm -f -- "$preflight"
+          run_reference="${IMAGE_REPOSITORY}:nix"
+          local_manifest_digest="$(bash nix/oci-inspect-archive.sh "$image_tar" | jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))')"
+          published_reference="${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}"
+          published_digest="$(regctl image digest "$published_reference")"
+          [[ "$published_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          published_manifest="$(regctl manifest get "$published_reference" --format raw-body)"
+          jq -e --arg local_manifest_digest "$local_manifest_digest" '
+            (.manifests | type == "array")
+            and any(.manifests[]; .platform.os == "linux" and .platform.architecture == "amd64")
+            and any(
+              .manifests[];
+              .platform.os == "linux"
+              and .platform.architecture == "arm64"
+              and .digest == $local_manifest_digest
+            )
+          ' <<<"$published_manifest" >/dev/null
+          source_revision="$(docker image inspect --format '{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' "$run_reference")"
+          test "$source_revision" = "${GITHUB_SHA}"
+          echo "run_reference=${run_reference}" >> "$GITHUB_OUTPUT"
+          echo "binding=${IMAGE_REPOSITORY}@${published_digest}" >> "$GITHUB_OUTPUT"
 
-          docker run --rm \
-            --pull=never \
-            --network none \
-            --read-only \
-            --user "$(id -u):$(id -g)" \
-            --tmpfs /tmp:rw,noexec,nosuid,size=64m \
-            --mount "type=bind,src=${GITHUB_WORKSPACE},dst=/workspace,readonly" \
-            -e GITHUB_EVENT_NAME \
-            -e GITHUB_REPOSITORY \
-            -e GITHUB_RUN_ATTEMPT \
-            -e GITHUB_RUN_ID \
-            -e GITHUB_SHA \
-            -e BAYN_QUALIFICATION_REPOSITORY_PATH=/workspace \
-            -e BAYN_QUALIFICATION_TRUSTED_REPOSITORY="${GITHUB_REPOSITORY}" \
-            -e BAYN_QUALIFICATION_IMAGE_REFERENCE="$IMAGE_REFERENCE" \
-            -e BAYN_QUALIFICATION_MODE=preflight \
-            --entrypoint bayn-qualification-collector \
-            "$IMAGE_REFERENCE" | tee "$preflight"
-
-          mapfile -t preflight_lines < <(grep '^BAYN_QUALIFICATION_TERMINAL=' "$preflight")
-          test "${#preflight_lines[@]}" -eq 1
-          jq -e '
-            .schemaVersion == "bayn.qualification-collector-preflight.v1"
-            and .status == "READY"
-            and (.currentMainSha | test("^[0-9a-f]{40}$"))
-            and (.sourceSha | test("^[0-9a-f]{40}$"))
-            and (.image.digest | test("^sha256:[0-9a-f]{64}$"))
-            and (.candidateOrdinal | type == "number")
-            and (.preregistrationHash | test("^[0-9a-f]{64}$"))
-          ' <<< "${preflight_lines[0]#BAYN_QUALIFICATION_TERMINAL=}" >/dev/null
-
-      - name: Collect, lock, execute once, and independently audit the sealed holdout
+      - name: Run exactly one isolated read-only qualification
         id: qualify
-        if: steps.dormancy.outputs.dormant == 'false'
+        if: steps.lifecycle.outputs.eligible == 'true'
         shell: bash
         env:
-          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+          IMAGE_REFERENCE: ${{ steps.image.outputs.run_reference }}
+          IMAGE_BINDING: ${{ steps.image.outputs.binding }}
           GITHUB_TOKEN: ${{ github.token }}
           BAYN_CLICKHOUSE_USERNAME: ${{ secrets.BAYN_QUALIFICATION_CLICKHOUSE_USERNAME }}
           BAYN_CLICKHOUSE_PASSWORD: ${{ secrets.BAYN_QUALIFICATION_CLICKHOUSE_PASSWORD }}
@@ -143,6 +127,8 @@ jobs:
             --pull=never \
             --network host \
             --read-only \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
             --user "$(id -u):$(id -g)" \
             --tmpfs /tmp:rw,noexec,nosuid,size=128m \
             --mount "type=bind,src=${GITHUB_WORKSPACE},dst=/workspace,readonly" \
@@ -162,10 +148,10 @@ jobs:
             -e BAYN_AUDIT_CLICKHOUSE_PASSWORD \
             -e BAYN_QUALIFICATION_REPOSITORY_PATH=/workspace \
             -e BAYN_QUALIFICATION_TRUSTED_REPOSITORY="${GITHUB_REPOSITORY}" \
-            -e BAYN_QUALIFICATION_IMAGE_REFERENCE="$IMAGE_REFERENCE" \
+            -e BAYN_QUALIFICATION_IMAGE_REFERENCE="$IMAGE_BINDING" \
             -e BAYN_QUALIFICATION_MODE=execute \
             --entrypoint bayn-qualification-collector \
-            "$IMAGE_REFERENCE" | tee "$log"
+            "$IMAGE_REFERENCE" >"$log" 2>&1
 
           mapfile -t terminal_lines < <(grep '^BAYN_QUALIFICATION_TERMINAL=' "$log")
           test "${#terminal_lines[@]}" -eq 1
@@ -189,7 +175,7 @@ jobs:
           echo "terminal=${terminal}" >> "$GITHUB_OUTPUT"
 
       - name: Upload immutable terminal qualification evidence
-        if: steps.dormancy.outputs.dormant == 'false' && steps.qualify.outcome == 'success'
+        if: steps.lifecycle.outputs.eligible == 'true' && steps.qualify.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: bayn-qualification-terminal-${{ github.sha }}-${{ github.run_id }}
@@ -198,7 +184,7 @@ jobs:
           retention-days: 90
 
       - name: Summarize terminal qualification evidence
-        if: steps.dormancy.outputs.dormant == 'false' && steps.qualify.outcome == 'success'
+        if: steps.lifecycle.outputs.eligible == 'true' && steps.qualify.outcome == 'success'
         shell: bash
         env:
           TERMINAL: ${{ steps.qualify.outputs.terminal }}
