@@ -1513,11 +1513,14 @@ const selectFeedbackFixEvidence = (
   const reviewedCommitIndex = pullRequest.commitShas.indexOf(reviewEvidence.commitSha)
   const finalCommitIndex = pullRequest.commitShas.length - 1
   if (reviewedCommitIndex < 0 || reviewedCommitIndex >= finalCommitIndex) return undefined
+  const isDirectFinalChild = reviewedCommitIndex + 1 === finalCommitIndex
 
   const reviewedThreads = pullRequest.threads.filter((thread) =>
     thread.comments.some(
       (comment) =>
-        comment.reviewAuthorLogin === baynCodexReviewer && comment.reviewCommitSha === reviewEvidence.commitSha,
+        comment.reviewAuthorLogin === baynCodexReviewer &&
+        (comment.reviewCommitSha === reviewEvidence.commitSha ||
+          comment.reviewSubmittedAt === reviewEvidence.submittedAt),
     ),
   )
   if (reviewedThreads.length === 0) return undefined
@@ -1526,7 +1529,9 @@ const selectFeedbackFixEvidence = (
   for (const thread of reviewedThreads) {
     const reviewedComments = thread.comments.filter(
       (comment) =>
-        comment.reviewAuthorLogin === baynCodexReviewer && comment.reviewCommitSha === reviewEvidence.commitSha,
+        comment.reviewAuthorLogin === baynCodexReviewer &&
+        (comment.reviewCommitSha === reviewEvidence.commitSha ||
+          comment.reviewSubmittedAt === reviewEvidence.submittedAt),
     )
     if (
       thread.path === null ||
@@ -1536,13 +1541,13 @@ const selectFeedbackFixEvidence = (
         (comment) =>
           comment.reviewSubmittedAt !== reviewEvidence.submittedAt ||
           comment.reviewState !== reviewEvidence.state ||
-          comment.commitSha === null,
+          comment.commitSha !== reviewEvidence.commitSha ||
+          comment.reviewCommitSha !== reviewEvidence.commitSha,
       )
     ) {
       return undefined
     }
 
-    const changedReviewedPath = reviewedComments.some((comment) => comment.commitSha === pullRequest.headSha)
     const trustedReplies = thread.comments.flatMap((comment) => {
       if (
         comment.authorLogin === null ||
@@ -1558,7 +1563,7 @@ const selectFeedbackFixEvidence = (
     })
     if (
       !thread.isResolved ||
-      (!changedReviewedPath && trustedReplies.length === 0) ||
+      (!isDirectFinalChild && trustedReplies.length === 0) ||
       (!thread.isOutdated && trustedReplies.length === 0)
     ) {
       return undefined

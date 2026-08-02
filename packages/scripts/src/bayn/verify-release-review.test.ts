@@ -465,7 +465,7 @@ const pr13475FeedbackThread = (overrides: Partial<PullRequestReviewThread> = {})
     comments: [
       threadComment({
         body: 'Include the main-worktree legacy receipt in linked checks.',
-        commitSha: pr13475FinalHeadSha,
+        commitSha: pr13475ReviewedHeadSha,
         reviewCommitSha: pr13475ReviewedHeadSha,
         reviewAuthorLogin: baynCodexReviewer,
         reviewSubmittedAt: pr13475ReviewSubmittedAt,
@@ -7024,7 +7024,7 @@ describe('Bayn exact-head release review eligibility', () => {
       'feedback-fix-attestation-missing',
     ],
     [
-      'unchanged reviewed path',
+      'direct final child but thread not outdated',
       pr13475ReviewSnapshot({
         threads: [
           pr13475FeedbackThread({
@@ -7042,14 +7042,15 @@ describe('Bayn exact-head release review eligibility', () => {
       'feedback-fix-attestation-missing',
     ],
     [
-      'intermediate fix later reverted before final head',
+      'two post-review commits with first outdating and second revert',
       pr13475ReviewSnapshot({
         commitShas: [...pr13475FinalCommitShas.slice(0, -1), 'a'.repeat(40), pr13475FinalHeadSha],
         threads: [
           pr13475FeedbackThread({
+            isOutdated: true,
             comments: [
               threadComment({
-                commitSha: 'a'.repeat(40),
+                commitSha: pr13475ReviewedHeadSha,
                 reviewCommitSha: pr13475ReviewedHeadSha,
                 reviewSubmittedAt: pr13475ReviewSubmittedAt,
               }),
@@ -7059,6 +7060,7 @@ describe('Bayn exact-head release review eligibility', () => {
       }),
       'feedback-fix-attestation-missing',
     ],
+    ['missing feedback thread', pr13475ReviewSnapshot({ threads: [] }), 'feedback-fix-attestation-missing'],
     [
       'reviewed head absent from final history',
       pr13475ReviewSnapshot({
