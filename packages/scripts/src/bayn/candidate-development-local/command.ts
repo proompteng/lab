@@ -19,6 +19,7 @@ import {
 const execFileAsync = promisify(execFile)
 const maximumGitOutputBytes = 8 * 1024 * 1024
 const candidateDevelopmentCommandPath = 'services/bayn/src/candidate-development-command.ts'
+const candidateDevelopmentEvaluatorSourcePath = 'services/bayn/src'
 const localReceiptName = 'bayn-candidate-development-local-receipt.json'
 
 export type CandidateDevelopmentLocalErrorCode =
@@ -124,6 +125,28 @@ const gitDiffIsClean = async (repositoryRoot: string, paths: readonly string[]):
   }
 }
 
+const gitWorkingTreeIsClean = async (repositoryRoot: string, paths: readonly string[]): Promise<boolean> => {
+  const indexEntries = await gitText(repositoryRoot, ['ls-files', '-v', '--', ...paths])
+  if (
+    indexEntries
+      .split('\n')
+      .filter((entry) => entry.length > 0)
+      .some((entry) => !entry.startsWith('H '))
+  ) {
+    return false
+  }
+  if (!(await gitDiffIsClean(repositoryRoot, paths))) return false
+  const status = await gitText(repositoryRoot, [
+    'status',
+    '--porcelain=v1',
+    '--untracked-files=all',
+    '--ignored=matching',
+    '--',
+    ...paths,
+  ])
+  return status.length === 0
+}
+
 const repositoryRelativePath = (repositoryRoot: string, absolutePath: string, label: string): string => {
   const path = relative(repositoryRoot, absolutePath)
   if (path.length === 0 || path === '..' || path.startsWith(`..${sep}`) || path.startsWith(sep)) {
@@ -174,10 +197,16 @@ export const resolveCandidateDevelopmentLocalSource = async (
 
   const modulePath = repositoryRelativePath(repositoryRoot, absoluteModulePath, 'module')
   const sourceManifestPath = repositoryRelativePath(repositoryRoot, absoluteSourceManifestPath, 'source manifest')
-  if (!(await gitDiffIsClean(repositoryRoot, [modulePath, sourceManifestPath]))) {
+  if (
+    !(await gitWorkingTreeIsClean(repositoryRoot, [
+      modulePath,
+      sourceManifestPath,
+      candidateDevelopmentEvaluatorSourcePath,
+    ]))
+  ) {
     throw new CandidateDevelopmentLocalError(
       'source-working-tree-dirty',
-      'module and source manifest must match their exact reviewed HEAD blobs',
+      'candidate module, source manifest, and evaluator source must match their exact reviewed HEAD blobs',
     )
   }
   for (const path of [modulePath, sourceManifestPath]) {
@@ -236,10 +265,16 @@ export const revalidateCandidateDevelopmentLocalSource = async (
       'the reviewed source revision changed during local candidate development',
     )
   }
-  if (!(await gitDiffIsClean(resolution.repositoryRoot, [resolution.modulePath, resolution.sourceManifestPath]))) {
+  if (
+    !(await gitWorkingTreeIsClean(resolution.repositoryRoot, [
+      resolution.modulePath,
+      resolution.sourceManifestPath,
+      candidateDevelopmentEvaluatorSourcePath,
+    ]))
+  ) {
     throw new CandidateDevelopmentLocalError(
       'source-working-tree-dirty',
-      'module and source manifest changed during local candidate development',
+      'candidate module, source manifest, or evaluator source changed during local candidate development',
     )
   }
   const [moduleBlobOid, sourceManifestBlobOid] = await Promise.all([
