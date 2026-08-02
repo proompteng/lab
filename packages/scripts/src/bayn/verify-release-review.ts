@@ -1442,8 +1442,7 @@ const selectLatestForcePush = (
         forcePushAtMs < createdAtMs ||
         forcePushAtMs > mergedAtMs ||
         forcePush.beforeCommitSha === forcePush.afterCommitSha ||
-        (index > 0 && forcePushAtMs <= (forcePushes[index - 1]?.createdAtMs ?? Number.NaN)) ||
-        (index > 0 && forcePush.beforeCommitSha !== forcePushes[index - 1]?.forcePush.afterCommitSha),
+        (index > 0 && forcePushAtMs <= (forcePushes[index - 1]?.createdAtMs ?? Number.NaN)),
     )
   ) {
     return undefined

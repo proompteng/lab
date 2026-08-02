@@ -82,8 +82,11 @@ const pr13465ReactionAt = '2026-08-01T20:04:05Z'
 const pr13465MergedAt = '2026-08-01T20:11:18Z'
 const pr13473MainCommitSha = '656ee63062a9f4ca3825b52a5c548b66f3f0bd91'
 const pr13473FinalHeadSha = 'fe1921870cedf7218a6490737d0e5495254ddbd1'
+const pr13473EarlierForcePushBeforeSha = '00a0a05131d943a00e0afc8b2187f7c488f750c8'
+const pr13473EarlierForcePushAfterSha = '9c4dee691b971f8d745324345d64e6a010135cce'
 const pr13473ForcePushBeforeSha = '4144813131ef9f8d6ed1d285ddaef6cdd04d85b4'
 const pr13473CreatedAt = '2026-08-01T20:51:19Z'
+const pr13473EarlierForcePushAt = '2026-08-01T21:21:55Z'
 const pr13473ForcePushAt = '2026-08-02T05:22:35Z'
 const pr13473ReactionAt = '2026-08-02T05:25:34Z'
 const pr13473MergedAt = '2026-08-02T05:31:11Z'
@@ -95,6 +98,18 @@ const pr13473FinalCommitShas = [
   '49d772ff13fd17c6f1068d71aaeb10c46da6d5f4',
   pr13473FinalHeadSha,
 ] as const
+const pr13473EarlierForcePush: PullRequestForcePush = {
+  actorLogin: 'gregkonush',
+  beforeCommitSha: pr13473EarlierForcePushBeforeSha,
+  afterCommitSha: pr13473EarlierForcePushAfterSha,
+  createdAt: pr13473EarlierForcePushAt,
+}
+const pr13473FinalForcePush: PullRequestForcePush = {
+  actorLogin: 'gregkonush',
+  beforeCommitSha: pr13473ForcePushBeforeSha,
+  afterCommitSha: pr13473FinalHeadSha,
+  createdAt: pr13473ForcePushAt,
+}
 
 const associatedPull = (overrides: Partial<AssociatedPullRequest> = {}): AssociatedPullRequest => ({
   number: 13390,
@@ -409,14 +424,7 @@ const pr13473ReactionSnapshot = (
     threads: options.threads ?? [],
     commitShas: options.commitShas ?? pr13473FinalCommitShas,
     reactions: options.reactions ?? [reaction({ createdAt: pr13473ReactionAt })],
-    headForcePushes: options.headForcePushes ?? [
-      {
-        actorLogin: 'gregkonush',
-        beforeCommitSha: pr13473ForcePushBeforeSha,
-        afterCommitSha: pr13473FinalHeadSha,
-        createdAt: pr13473ForcePushAt,
-      },
-    ],
+    headForcePushes: options.headForcePushes ?? [pr13473EarlierForcePush, pr13473FinalForcePush],
     headForcePushCount: options.headForcePushCount,
   })
 
@@ -6812,7 +6820,7 @@ describe('Bayn exact-head release review eligibility', () => {
       'exact-head-review-missing',
     ],
     [
-      'discontinuous force-push chain',
+      'reaction between discontinuous force-pushes',
       (_snapshot: BaynReleaseReviewSnapshot): BaynReleaseReviewSnapshot =>
         pr13473ReactionSnapshot({
           headForcePushes: [
@@ -6828,6 +6836,28 @@ describe('Bayn exact-head release review eligibility', () => {
               afterCommitSha: pr13473FinalHeadSha,
               createdAt: pr13473ForcePushAt,
             },
+          ],
+          headForcePushCount: 2,
+          reactions: [reaction({ createdAt: '2026-08-02T05:21:00Z' })],
+        }),
+      'exact-head-review-missing',
+    ],
+    [
+      'duplicate force-push events',
+      (_snapshot: BaynReleaseReviewSnapshot): BaynReleaseReviewSnapshot =>
+        pr13473ReactionSnapshot({
+          headForcePushes: [pr13473EarlierForcePush, pr13473FinalForcePush, pr13473FinalForcePush],
+          headForcePushCount: 3,
+        }),
+      'exact-head-review-missing',
+    ],
+    [
+      'unordered force-push timestamps',
+      (_snapshot: BaynReleaseReviewSnapshot): BaynReleaseReviewSnapshot =>
+        pr13473ReactionSnapshot({
+          headForcePushes: [
+            pr13473EarlierForcePush,
+            { ...pr13473FinalForcePush, createdAt: pr13473EarlierForcePushAt },
           ],
           headForcePushCount: 2,
         }),
@@ -6882,6 +6912,24 @@ describe('Bayn exact-head release review eligibility', () => {
       pushBeforeSha: null,
     })
     expect(result).toMatchObject({ status: 'hold', code })
+  })
+
+  test('rejects #13473 reaction evidence when a prior reviewed SHA survives in final history', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha: pr13473MainCommitSha,
+        baseRefName: 'main',
+        snapshot: pr13473ReactionSnapshot({
+          commitShas: ['4cd852300c68898d4bb56bf64306a139b5715c4e', pr13473FinalHeadSha],
+        }),
+        nowMs: Date.parse('2026-08-02T05:32:00Z'),
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'feedback-fix-attestation-missing',
+      retryable: true,
+    })
   })
 
   test('accepts #13464 through the exact final-head reaction after its force-push', () => {
@@ -7011,7 +7059,7 @@ describe('Bayn exact-head release review eligibility', () => {
       },
     ],
     [
-      'discontinuous force-push history',
+      'reaction between discontinuous force-pushes',
       (pull: PullRequestReviewState): void => {
         const intermediateHead = '7'.repeat(40)
         ;(pull as unknown as { headForcePushes: PullRequestForcePush[] }).headForcePushes = [
@@ -7029,7 +7077,7 @@ describe('Bayn exact-head release review eligibility', () => {
           },
         ]
         ;(pull as unknown as { headForcePushCount: number }).headForcePushCount = 2
-        ;(pull.reactions[0] as { createdAt: string }).createdAt = '2026-08-01T19:56:00Z'
+        ;(pull.reactions[0] as { createdAt: string }).createdAt = '2026-08-01T19:54:00Z'
       },
     ],
     [
