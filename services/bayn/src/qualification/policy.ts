@@ -1,6 +1,6 @@
 import { pipe, Result, Schema } from 'effect'
 
-import { defaultQualificationStatisticsPolicy } from '../qualification-statistics/model'
+import { defaultQualificationStatisticsPolicy } from '../qualification-statistics/policy'
 import { strictParseOptions } from '../schemas'
 import type { QualificationConstructionFailure } from './failure'
 import { hashQualificationMaterial } from './hashing'

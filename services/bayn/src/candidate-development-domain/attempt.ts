@@ -1,6 +1,7 @@
 import { Result } from 'effect'
 
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
+import { qualificationTailCapacityForOrdinal } from '../qualification-statistics'
 import {
   candidateDevelopmentAttemptHorizon,
   candidateDevelopmentProtocol,
@@ -65,20 +66,19 @@ export const bindCandidateDevelopmentAttempt = (
     })
   }
 
-  const adjustedOneSidedAlpha = candidateDevelopmentStatisticsPolicy.confidence.familyOneSidedAlpha / candidateOrdinal
-  const tailSampleCount = Math.floor(candidateDevelopmentStatisticsPolicy.bootstrap.samples * adjustedOneSidedAlpha)
+  const tailCapacity = qualificationTailCapacityForOrdinal(candidateDevelopmentStatisticsPolicy, candidateOrdinal)
   const capacity = {
     candidateOrdinal,
     priorTrialCount,
     bootstrapSamples: candidateDevelopmentStatisticsPolicy.bootstrap.samples,
-    adjustedOneSidedAlpha,
-    tailSampleCount,
-    minimumTailSamples: candidateDevelopmentStatisticsPolicy.confidence.minimumTailSamples,
+    adjustedOneSidedAlpha: tailCapacity.adjustedOneSidedAlpha,
+    tailSampleCount: tailCapacity.tailSampleCount,
+    minimumTailSamples: tailCapacity.minimumTailSamples,
     maximumCandidateOrdinal: candidateDevelopmentAttemptHorizon.maximumCandidateOrdinal,
   }
 
   return candidateOrdinal <= candidateDevelopmentAttemptHorizon.maximumCandidateOrdinal &&
-    tailSampleCount >= candidateDevelopmentStatisticsPolicy.confidence.minimumTailSamples
+    tailCapacity.tailSampleCount >= candidateDevelopmentStatisticsPolicy.confidence.minimumTailSamples
     ? Result.succeed(capacity)
     : Result.fail({ _tag: 'CandidateDevelopmentBootstrapTailInfeasible', ...capacity })
 }

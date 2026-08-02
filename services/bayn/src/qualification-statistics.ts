@@ -16,7 +16,6 @@ export {
   QualificationAnalysisSchema,
   QualificationSeriesSchema,
   QualificationStatisticsPolicySchema,
-  defaultQualificationStatisticsPolicy,
   type PowerAnalysis,
   type QualificationAnalysis,
   type QualificationAnalysisInput,
@@ -24,6 +23,17 @@ export {
   type QualificationSeries,
   type QualificationStatisticsPolicy,
 } from './qualification-statistics/model'
+export {
+  defaultQualificationStatisticsPolicy,
+  makeQualificationStatisticsPolicy,
+  qualificationPolicyMaximumCandidateOrdinal,
+  qualificationStatisticsPolicySchemaVersion,
+  qualificationTailCapacityForOrdinal,
+  type QualificationStatisticsPolicyConstructionFailure,
+  type QualificationOrdinalTailCapacity,
+  type QualificationStatisticsPolicyOptions,
+  type QualificationStatisticsPolicyResult,
+} from './qualification-statistics/policy'
 export {
   renderQualificationStatisticsFailure,
   type QualificationStatisticsFailure,

@@ -9,6 +9,7 @@ import type {
   QualificationStatisticsPolicy,
 } from './model'
 import { annualizedSharpe, mean, nearestRankLowerQuantile, roundStatistic } from './numerical-methods'
+import { qualificationTailCapacityForOrdinal } from './policy'
 import type { CompleteBlockWork } from './series'
 
 export const qualificationSelectedBenchmarkRule = {
@@ -166,9 +167,9 @@ export const runQualificationBootstrap = (
   policy: QualificationStatisticsPolicy,
   priorTrialCount: number,
 ): Result.Result<BootstrapAnalysis, QualificationStatisticsFailure> => {
+  const candidateOrdinal = priorTrialCount + 1
   const benchmark = selectQualificationBenchmark(series.observations, policy.annualizationSessions)
-  const adjustedOneSidedAlpha = policy.confidence.familyOneSidedAlpha / (priorTrialCount + 1)
-  const tailSampleCount = Math.floor(policy.bootstrap.samples * adjustedOneSidedAlpha)
+  const { adjustedOneSidedAlpha, tailSampleCount } = qualificationTailCapacityForOrdinal(policy, candidateOrdinal)
   return pipe(
     hashQualificationEvidence('bootstrap-seed', {
       schemaVersion: 'bayn.qualification-bootstrap-seed.v1',
@@ -282,9 +283,9 @@ export const runSelectedBenchmarkBootstrapComparison = (
   policy: QualificationStatisticsPolicy,
   priorTrialCount: number,
 ): Result.Result<QualificationSelectedBenchmarkBootstrapComparison, QualificationStatisticsFailure> => {
+  const candidateOrdinal = priorTrialCount + 1
   const benchmark = selectQualificationBenchmark(series.observations, policy.annualizationSessions)
-  const adjustedOneSidedAlpha = policy.confidence.familyOneSidedAlpha / (priorTrialCount + 1)
-  const tailSampleCount = Math.floor(policy.bootstrap.samples * adjustedOneSidedAlpha)
+  const { adjustedOneSidedAlpha, tailSampleCount } = qualificationTailCapacityForOrdinal(policy, candidateOrdinal)
   return pipe(
     hashQualificationEvidence('bootstrap-seed', {
       schemaVersion: 'bayn.qualification-bootstrap-seed.v1',

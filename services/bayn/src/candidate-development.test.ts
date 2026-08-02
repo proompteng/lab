@@ -5,7 +5,6 @@ import {
   bindCandidateDevelopmentAttempt,
   buildCandidateDevelopmentComparisonSemanticsEvidence,
   candidateDevelopmentAttemptHorizon,
-  candidateDevelopmentBootstrapSamples,
   candidateDevelopmentCalendarContract,
   candidateDevelopmentComparisonSemantics,
   candidateDevelopmentDoubledCostContract,
@@ -30,6 +29,7 @@ import { canonicalHashV1Result } from './hash'
 import { makeEvaluationIdentity } from './simulation'
 import {
   defaultQualificationStatisticsPolicy,
+  qualificationTailCapacityForOrdinal,
   prepareQualificationSeries,
   type QualificationSeries,
 } from './qualification-statistics'
@@ -552,13 +552,30 @@ describe('candidate development walk-forward protocol', () => {
     }
   })
 
-  test('binds Candidate 13 and the deterministic bootstrap horizon before any effects', () => {
+  test('binds every declared ordinal to the shared deterministic bootstrap horizon before any effects', () => {
     const candidate13 = successOf(bindCandidateDevelopmentAttempt(13, 12))
+    const candidate21 = successOf(bindCandidateDevelopmentAttempt(21, 20))
     const horizon = successOf(bindCandidateDevelopmentAttempt(25, 24))
 
-    expect(candidateDevelopmentBootstrapSamples).toBe(10_000)
     expect(candidateDevelopmentStatisticsPolicy.bootstrap.samples).toBe(10_000)
-    expect(defaultQualificationStatisticsPolicy.bootstrap.samples).toBe(5_000)
+    expect(defaultQualificationStatisticsPolicy.bootstrap.samples).toBe(10_000)
+    expect(candidateDevelopmentStatisticsPolicy.confidence).toEqual(defaultQualificationStatisticsPolicy.confidence)
+    expect(candidateDevelopmentStatisticsPolicy.bootstrap).toEqual(defaultQualificationStatisticsPolicy.bootstrap)
+    for (
+      let candidateOrdinal = 1;
+      candidateOrdinal <= candidateDevelopmentAttemptHorizon.maximumCandidateOrdinal;
+      candidateOrdinal += 1
+    ) {
+      const attempt = successOf(bindCandidateDevelopmentAttempt(candidateOrdinal, candidateOrdinal - 1))
+      const terminalCapacity = qualificationTailCapacityForOrdinal(
+        defaultQualificationStatisticsPolicy,
+        candidateOrdinal,
+      )
+      expect(attempt.tailSampleCount).toBe(terminalCapacity.tailSampleCount)
+      expect(attempt.tailSampleCount).toBeGreaterThanOrEqual(
+        defaultQualificationStatisticsPolicy.confidence.minimumTailSamples,
+      )
+    }
     expect(bindCandidateDevelopmentAttempt(13, 11)).toEqual(
       Result.fail({
         _tag: 'CandidateDevelopmentAttemptLineageMismatch',
@@ -575,8 +592,8 @@ describe('candidate development walk-forward protocol', () => {
       minimumTailSamples: 20,
       maximumCandidateOrdinal: 25,
     })
+    expect(candidate21.tailSampleCount).toBe(23)
     expect(horizon.tailSampleCount).toBe(20)
-    expect(Math.floor((candidateDevelopmentBootstrapSamples - 1) * (0.05 / 25))).toBe(19)
     expect(bindCandidateDevelopmentAttempt(26, 25)).toMatchObject(
       Result.fail({
         _tag: 'CandidateDevelopmentBootstrapTailInfeasible',
@@ -1223,7 +1240,7 @@ describe('candidate development walk-forward protocol', () => {
       },
       bootstrap: {
         method: 'paired-complete-rebalance-blocks',
-        samples: 5_000,
+        samples: 10_000,
         seedNamespace: 'bayn-risk-balanced-trend-qualification-v1',
         lowerQuantile: 'nearest-rank',
       },
@@ -1237,7 +1254,7 @@ describe('candidate development walk-forward protocol', () => {
       },
     })
     expect(successOf(canonicalHashV1Result(defaultQualificationStatisticsPolicy))).toBe(
-      '8090c35a5e76e02bde5c74f7a71b5d0b005c3e0409165fde96f2748e827e88de',
+      '79a2e1048e51c90f5fd61e6fde0e052847c61570556838c06a718ce0dbd5839e',
     )
   })
 

@@ -1,5 +1,8 @@
+import { Result } from 'effect'
+
 import {
-  defaultQualificationStatisticsPolicy,
+  makeQualificationStatisticsPolicy,
+  qualificationPolicyMaximumCandidateOrdinal,
   qualificationSelectedBenchmarkRule,
   type QualificationStatisticsPolicy,
 } from '../qualification-statistics'
@@ -20,9 +23,9 @@ export const candidateDevelopmentCalendarContract = {
  * 252-session causal lookback and next-session execution inside the frozen 1,762-session development calendar.
  * Latest-contiguous selection maximizes recency while deriving every boundary only from the frozen calendar and
  * preregistered geometry, never from realized returns.
- * Terminal qualification continues to use defaultQualificationStatisticsPolicy unchanged. Its paired complete-block
- * bootstrap also remains unchanged and samples only observed, non-wrapping rebalance blocks, following the dependent
- * block-resampling principle of Künsch (1989, doi:10.1214/aos/1176347265).
+ * Development and terminal qualification share one ordinal-bound statistics policy. Its paired complete-block bootstrap
+ * samples only observed, non-wrapping rebalance blocks, following the dependent block-resampling principle of Künsch
+ * (1989, doi:10.1214/aos/1176347265).
  */
 export const candidateDevelopmentWalkForwardProtocol = {
   method: 'expanding-origin',
@@ -36,7 +39,7 @@ export const candidateDevelopmentWalkForwardProtocol = {
 
 export const candidateDevelopmentAttemptHorizon = {
   schemaVersion: 'bayn.candidate-development-attempt-horizon.v1',
-  maximumCandidateOrdinal: 25,
+  maximumCandidateOrdinal: qualificationPolicyMaximumCandidateOrdinal,
   ordinalBinding: 'candidate-ordinal-equals-prior-trial-count-plus-one',
 } as const
 
@@ -62,23 +65,15 @@ export const candidateDevelopmentDoubledCostContract = {
   invariants: ['signal-decisions', 'ordered-order-quantity-path'],
 } as const
 
-export const candidateDevelopmentBootstrapSamples = 10_000
-
-export const candidateDevelopmentStatisticsPolicy = {
-  ...defaultQualificationStatisticsPolicy,
-  confidence: { ...defaultQualificationStatisticsPolicy.confidence },
-  bootstrap: {
-    ...defaultQualificationStatisticsPolicy.bootstrap,
-    samples: candidateDevelopmentBootstrapSamples,
-  },
-  power: { ...defaultQualificationStatisticsPolicy.power },
-  walkForward: {
-    ...defaultQualificationStatisticsPolicy.walkForward,
-    testSessions: candidateDevelopmentWalkForwardProtocol.testSessions,
-    minimumFolds: candidateDevelopmentWalkForwardProtocol.requiredFolds,
-  },
-  cashReturn: { ...defaultQualificationStatisticsPolicy.cashReturn },
-} as const satisfies QualificationStatisticsPolicy
+export const candidateDevelopmentStatisticsPolicy = Result.getOrThrow(
+  makeQualificationStatisticsPolicy({
+    maximumCandidateOrdinal: candidateDevelopmentAttemptHorizon.maximumCandidateOrdinal,
+    walkForward: {
+      testSessions: candidateDevelopmentWalkForwardProtocol.testSessions,
+      minimumFolds: candidateDevelopmentWalkForwardProtocol.requiredFolds,
+    },
+  }),
+) satisfies QualificationStatisticsPolicy
 
 export const candidateDevelopmentComparisonSemantics = {
   schemaVersion: 'bayn.candidate-development-comparison-semantics.v2',
