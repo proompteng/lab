@@ -1,20 +1,37 @@
 #!/usr/bin/env bun
 
 import { appendFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { delimiter, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import process from 'node:process'
 
-import {
-  decideQualificationDormancy,
-  type QualificationDormancyDecision,
-  type QualificationDormancyResult,
+import type {
+  QualificationDormancyDecision,
+  QualificationDormancyResult,
 } from '../../../../services/bayn/src/candidate-development-trials/qualification-dormancy'
 
 export type { QualificationDormancyDecision, QualificationDormancyResult }
-export { decideQualificationDormancy as evaluateQualificationDormancy }
 
 const trialHistoryRelativePath = 'services/bayn/src/candidate-development-trials/frozen-lineage.ts'
+const lifecycleRelativePath = 'services/bayn/src/candidate-development-trials/qualification-dormancy.ts'
+const packageRoot = resolve(import.meta.dir, '../../../..')
+
+// The scripts CI job installs only its selected workspace closure, so the
+// service's peer dependency may be present only in Bun's content-addressed
+// store. Make that package location visible before importing the canonical
+// service module; the lifecycle decision itself remains service-owned.
+process.env.NODE_PATH = [
+  resolve(packageRoot, 'services/bayn/node_modules'),
+  resolve(packageRoot, 'node_modules/.bun/effect@4.0.0-beta.102/node_modules'),
+  resolve(packageRoot, 'node_modules/.bun/effect@3.21.2/node_modules'),
+  process.env.NODE_PATH,
+]
+  .filter((entry): entry is string => entry !== undefined && entry.length > 0)
+  .join(delimiter)
+
+const lifecycleModule = await import(pathToFileURL(resolve(packageRoot, lifecycleRelativePath)).href)
+const { decideQualificationDormancy } = lifecycleModule
+export const evaluateQualificationDormancy = decideQualificationDormancy
 
 interface FrozenLineageModule {
   readonly frozenCandidateDevelopmentTrialHistory: unknown
