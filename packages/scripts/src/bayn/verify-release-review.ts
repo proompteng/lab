@@ -1469,7 +1469,7 @@ const hasOnlySupersededCodexReviews = (
   }
   const priorReviews = codexReviews.filter((review) => review.commitSha !== pullRequest.headSha)
   if (priorReviews.length === 0) return true
-  if (latestForcePush === null || pullRequest.commitShas.length < 2) return false
+  if (latestForcePush === null) return false
   const forcePushHeads = new Set(
     pullRequest.headForcePushes.flatMap(({ beforeCommitSha, afterCommitSha }) => [beforeCommitSha, afterCommitSha]),
   )
@@ -3696,6 +3696,7 @@ export const evaluateBaynReleaseEligibility = (input: {
     }
   }
 
+  const remediations = input.snapshot.remediations ?? []
   const normalReviews = new Map<string, BaynReleaseReviewEvaluation>()
   for (const commit of affectingCommits) {
     if (commit.reviewSnapshot === null) {
@@ -3715,7 +3716,6 @@ export const evaluateBaynReleaseEligibility = (input: {
     normalReviews.set(commit.sha, review)
   }
 
-  const remediations = input.snapshot.remediations ?? []
   const remediationIds = remediations.map((remediation) => remediation.record.remediationId)
   const blockedRemediationShas = remediations.map((remediation) => remediation.record.blocked.mergeCommitSha)
   const recordPaths = remediations.map((remediation) => remediation.recordPath)
@@ -3733,42 +3733,44 @@ export const evaluateBaynReleaseEligibility = (input: {
   for (const commit of affectingCommits) {
     const review = normalReviews.get(commit.sha)
     if (review === undefined) throw new Error(`missing normal review evaluation for ${commit.sha}`)
-    if (review.status === 'hold') {
-      if (coveredDescendantShas.has(commit.sha) && review.code === 'exact-head-review-missing') {
-        const sourcePull = commit.reviewSnapshot?.pullRequest
-        const reviewedAncestor = sourcePull?.reviews
-          .filter(
-            (candidate) =>
-              candidate.authorLogin === baynCodexReviewer &&
-              candidate.commitSha !== null &&
-              candidate.submittedAt !== null &&
-              eligibleReviewStates.has(candidate.state),
-          )
-          .toSorted((left, right) => (right.submittedAt as string).localeCompare(left.submittedAt as string))[0]
-        if (
-          sourcePull === null ||
-          sourcePull === undefined ||
-          reviewedAncestor?.submittedAt === null ||
-          reviewedAncestor?.submittedAt === undefined
-        ) {
-          return remediationInvalid(`covered descendant ${shortSha(commit.sha)} review evidence is incomplete`)
+    const remediation = remediations.filter((candidate) => candidate.record.blocked.mergeCommitSha === commit.sha)
+    if (review.status === 'hold' || remediation.length > 0) {
+      if (review.status === 'hold') {
+        if (coveredDescendantShas.has(commit.sha) && review.code === 'exact-head-review-missing') {
+          const sourcePull = commit.reviewSnapshot?.pullRequest
+          const reviewedAncestor = sourcePull?.reviews
+            .filter(
+              (candidate) =>
+                candidate.authorLogin === baynCodexReviewer &&
+                candidate.commitSha !== null &&
+                candidate.submittedAt !== null &&
+                eligibleReviewStates.has(candidate.state),
+            )
+            .toSorted((left, right) => (right.submittedAt as string).localeCompare(left.submittedAt as string))[0]
+          if (
+            sourcePull === null ||
+            sourcePull === undefined ||
+            reviewedAncestor?.submittedAt === null ||
+            reviewedAncestor?.submittedAt === undefined
+          ) {
+            return remediationInvalid(`covered descendant ${shortSha(commit.sha)} review evidence is incomplete`)
+          }
+          reviewedPullRequests.push({
+            commitSha: commit.sha,
+            prNumber: sourcePull.number,
+            headSha: sourcePull.headSha,
+            reviewSubmittedAt: reviewedAncestor.submittedAt,
+            eligibleAt: reviewedAncestor.submittedAt,
+          })
+          continue
         }
-        reviewedPullRequests.push({
-          commitSha: commit.sha,
-          prNumber: sourcePull.number,
-          headSha: sourcePull.headSha,
-          reviewSubmittedAt: reviewedAncestor.submittedAt,
-          eligibleAt: reviewedAncestor.submittedAt,
-        })
-        continue
-      }
-      if (review.code !== 'exact-head-review-missing') {
-        return {
-          ...review,
-          message: `Bayn-affecting commit ${shortSha(commit.sha)} after last published ${shortSha(published.revision)} is not release-eligible: ${review.message}`,
+        if (review.code !== 'exact-head-review-missing' && remediation.length === 0) {
+          return {
+            ...review,
+            message: `Bayn-affecting commit ${shortSha(commit.sha)} after last published ${shortSha(published.revision)} is not release-eligible: ${review.message}`,
+          }
         }
       }
-      const remediation = remediations.filter((candidate) => candidate.record.blocked.mergeCommitSha === commit.sha)
       if (remediation.length === 0) {
         const sourcePull = commit.reviewSnapshot?.pullRequest
         const reviewedAncestorDropped =

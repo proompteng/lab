@@ -3437,7 +3437,7 @@ describe('Bayn publication-range eligibility', () => {
     })
   })
 
-  test('keeps #13452 blocked without its exact v4 receipt', () => {
+  test('accepts #13452 through causal final-head reaction evidence without a remediation receipt', () => {
     const fixture = observeRecoveryRemediationFixture()
     expect(
       evaluateBaynReleaseEligibility({
@@ -3447,7 +3447,7 @@ describe('Bayn publication-range eligibility', () => {
         nowMs: observeRecoveryNowMs,
         pushBeforeSha: observeRecoveryHistory.blocked,
       }),
-    ).toMatchObject({ status: 'hold', code: 'release-review-remediation-missing', retryable: false })
+    ).toMatchObject({ status: 'eligible' })
   })
 
   test('rejects #13452 remediation when an exact source blob binding is mutated', () => {
@@ -4131,7 +4131,7 @@ describe('Bayn publication-range eligibility', () => {
     })
   })
 
-  test('keeps #13426 blocked without the exact v5 receipt', () => {
+  test('accepts #13426 through causal final-head reaction evidence without a remediation receipt', () => {
     const fixture = continuousRemediationFixture()
     expect(
       evaluateBaynReleaseEligibility({
@@ -4141,7 +4141,7 @@ describe('Bayn publication-range eligibility', () => {
         nowMs: continuousNowMs,
         pushBeforeSha: continuousHistory.introductionMerge,
       }),
-    ).toMatchObject({ status: 'hold', code: 'release-review-remediation-missing', retryable: false })
+    ).toMatchObject({ status: 'eligible' })
   })
 
   ;(
@@ -6553,6 +6553,24 @@ describe('Bayn exact-head release review eligibility', () => {
         mainCommitSha: pr13465MainCommitSha,
         baseRefName: 'main',
         snapshot: pr13465ReactionSnapshot(),
+        nowMs: Date.parse('2026-08-01T20:12:00Z'),
+        pushBeforeSha: null,
+      }),
+    ).toEqual({
+      status: 'eligible',
+      prNumber: 13465,
+      headSha: pr13465FinalHeadSha,
+      reviewSubmittedAt: pr13465ReactionAt,
+      eligibleAt: '2026-08-01T20:04:35.000Z',
+    })
+  })
+
+  test('accepts #13465 when the final force-push history exposes only the final commit', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha: pr13465MainCommitSha,
+        baseRefName: 'main',
+        snapshot: pr13465ReactionSnapshot({ commitShas: [pr13465FinalHeadSha] }),
         nowMs: Date.parse('2026-08-01T20:12:00Z'),
         pushBeforeSha: null,
       }),
