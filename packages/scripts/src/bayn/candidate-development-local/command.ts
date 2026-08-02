@@ -482,27 +482,8 @@ export const runCandidateDevelopmentLocally = async (
   return { receiptPath: resolved.receiptPath, receipt: completed }
 }
 
-const renderLocalError = (cause: unknown): string => {
-  const error =
-    cause instanceof CandidateDevelopmentLocalError
-      ? cause
-      : new CandidateDevelopmentLocalError('candidate-process-failed', 'local candidate development failed')
-  return `${JSON.stringify({
-    schemaVersion: 'bayn.candidate-development-local-error.v1',
-    code: error.code,
-    message: error.message,
-  })}\n`
-}
-
 if (import.meta.main) {
-  runCandidateDevelopmentLocally(process.argv.slice(2))
-    .then(({ receipt }) => {
-      process.stderr.write(
-        `BAYN_CANDIDATE_DEVELOPMENT_LOCAL_RECEIPT=${serializeCandidateDevelopmentLocalReceipt(receipt)}`,
-      )
-    })
-    .catch((cause) => {
-      process.stderr.write(`BAYN_CANDIDATE_DEVELOPMENT_LOCAL_ERROR=${renderLocalError(cause)}`)
-      process.exitCode = 1
-    })
+  const { runCandidateDevelopmentLocalMain } =
+    await import('../../../../../services/bayn/src/candidate-development-local/command.ts')
+  runCandidateDevelopmentLocalMain(process.argv.slice(2))
 }
