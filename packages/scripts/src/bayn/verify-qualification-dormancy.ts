@@ -215,6 +215,7 @@ const withLifecycleRuntime = async <Value>(operation: () => Promise<Value>): Pro
   try {
     await mkdir(baynNodeModules, { recursive: true })
     if (lifecycleEffect === undefined) {
+      await rm(baynEffectLink, { force: true })
       await mkdir(resolve(baynEffectLink, 'dist/esm'), { recursive: true })
       await writeFile(
         resolve(baynEffectLink, 'package.json'),
