@@ -14,6 +14,7 @@ import {
   BrokerSessionAcquisitionStage,
   acquireBrokerSession,
   layer,
+  mapHttpAcquisitionError,
   retryRecoverableBrokerSessionAcquisition,
 } from './session'
 
@@ -354,6 +355,42 @@ describe('Alpaca broker session acquisition retry', () => {
     )
 
     expect(requests).toBe(1)
+    expect(finalizations).toBe(1)
+  })
+
+  test('maps HTTP resource acquisition once and finalizes a failed resource exactly once', async () => {
+    const options = connection(0)
+    const cause = new BrokerReadError({
+      operation: 'proxy',
+      kind: BrokerReadErrorKind.Configuration,
+      message: 'proxy dispatcher acquisition failed',
+      retryable: false,
+    })
+    let finalizations = 0
+    const client = HttpClient.make(() => Effect.die('unused HTTP client'))
+    const http = Layer.effect(
+      HttpClient.HttpClient,
+      Effect.acquireRelease(Effect.succeed(client), () =>
+        Effect.sync(() => {
+          finalizations += 1
+        }),
+      ).pipe(Effect.andThen(Effect.fail(cause))),
+    )
+
+    const failure = await Effect.runPromise(
+      Effect.flip(Effect.scoped(Layer.build(mapHttpAcquisitionError(options, http)))),
+    )
+
+    expect(failure).toMatchObject({
+      stage: BrokerSessionAcquisitionStage.Connection,
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Sandbox,
+      baseUrl: alpacaSandboxBaseUrl,
+      expectedAccountId: accountId,
+      cause,
+    })
+    expect(JSON.stringify(failure)).not.toContain(key)
+    expect(JSON.stringify(failure)).not.toContain(secret)
     expect(finalizations).toBe(1)
   })
 })

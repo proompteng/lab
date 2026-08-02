@@ -17,10 +17,22 @@ export class WriterFenceError extends Data.TaggedError('WriterFenceError')<{
 export interface WriterFenceService {
   readonly backendPid: number
   readonly check: Effect.Effect<void, WriterFenceError>
-  readonly transaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | WriterFenceError, R>
+  readonly transaction: WriterFenceTransaction
 }
 
+export type WriterFenceTransaction = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+) => Effect.Effect<A, E | WriterFenceError, R>
+
 export class WriterFence extends Context.Service<WriterFence, WriterFenceService>()('bayn/WriterFence') {}
+
+/**
+ * Explicitly crosses the WriterFence interpreter boundary for callers that do not already hold the service value.
+ */
+export const withWriterFence = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E | WriterFenceError, R | WriterFence> =>
+  Effect.flatMap(WriterFence, (fence) => fence.transaction(effect))
 
 const unavailable = (operation: 'acquire' | 'check' | 'transaction', cause: unknown) =>
   new WriterFenceError({
