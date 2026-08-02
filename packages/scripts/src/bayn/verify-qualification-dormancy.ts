@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { appendFile, mkdir, readFile, rm, symlink } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -169,10 +169,6 @@ const packageRoot = resolve(import.meta.dir, '../../../..')
 const baynNodeModules = resolve(packageRoot, 'services/bayn/node_modules')
 const baynEffectLink = resolve(baynNodeModules, 'effect')
 const lifecycleEffectVersion = '4.0.0-beta.102'
-const compatibilityEffectManifest = resolve(
-  packageRoot,
-  'node_modules/.bun/effect@3.21.2/node_modules/effect/package.json',
-)
 const verifierPath = resolve(import.meta.dir, 'verify-qualification-dormancy.ts')
 
 const packageVersion = async (packageRoot: string): Promise<string | undefined> => {
@@ -220,7 +216,16 @@ const withLifecycleRuntime = async <Value>(operation: () => Promise<Value>): Pro
     await mkdir(baynNodeModules, { recursive: true })
     if (lifecycleEffect === undefined) {
       await mkdir(resolve(baynEffectLink, 'dist/esm'), { recursive: true })
-      await symlink(compatibilityEffectManifest, resolve(baynEffectLink, 'package.json'))
+      await writeFile(
+        resolve(baynEffectLink, 'package.json'),
+        JSON.stringify({
+          name: 'effect',
+          version: lifecycleEffectVersion,
+          type: 'module',
+          exports: { '.': './dist/esm/index.js' },
+        }),
+        'utf8',
+      )
       await symlink(verifierPath, resolve(baynEffectLink, 'dist/esm/index.js'))
     } else {
       await symlink(lifecycleEffect, baynEffectLink)
