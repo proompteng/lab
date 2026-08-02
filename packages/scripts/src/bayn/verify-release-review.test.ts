@@ -98,6 +98,21 @@ const pr13473FinalCommitShas = [
   '49d772ff13fd17c6f1068d71aaeb10c46da6d5f4',
   pr13473FinalHeadSha,
 ] as const
+const pr13475MainCommitSha = '8bafccc0bd689a90b20c359cf77e852546056026'
+const pr13475FinalHeadSha = '22dd9788538add020d8b113f3319c77db2f3a71d'
+const pr13475ReviewedHeadSha = 'feffd9f2ee697252e032dc36bf871675848f1ca2'
+const pr13475CreatedAt = '2026-08-02T08:33:25Z'
+const pr13475ReviewSubmittedAt = '2026-08-02T10:32:16Z'
+const pr13475MergedAt = '2026-08-02T10:46:55Z'
+const pr13475FinalCommitShas = [
+  '69f6ee223a0c04d04319f3ddd095964e49bbb055',
+  '051746efa174fb84a8699aebaa3d700a4ee7cb43',
+  '8b92f7e23b21ebb539466e429bed87e59defab47',
+  'f0b6ddf9ba9e76cb9b39cc3fe3107a0973657bd3',
+  'ecad4b74bdfa83dc88941c8ffa8af4685f815d4d',
+  pr13475ReviewedHeadSha,
+  pr13475FinalHeadSha,
+] as const
 const pr13473EarlierForcePush: PullRequestForcePush = {
   actorLogin: 'gregkonush',
   beforeCommitSha: pr13473EarlierForcePushBeforeSha,
@@ -149,6 +164,18 @@ const pr13473SupersededReviews: readonly PullRequestReview[] = [
     commitSha: '9c4dee691b971f8d745324345d64e6a010135cce',
     submittedAt: '2026-08-01T21:25:46Z',
   }),
+]
+
+const pr13475Reviews: readonly PullRequestReview[] = [
+  review({ commitSha: '01ba3227241175d35a5c06025d6e700626849124', submittedAt: '2026-08-02T08:36:25Z' }),
+  review({ commitSha: '80085b78a765128300a9aa92c9054b2c21a7073b', submittedAt: '2026-08-02T08:45:07Z' }),
+  review({ commitSha: '7346dbef6dde37a7ea09dc7040f3084a59600245', submittedAt: '2026-08-02T08:53:43Z' }),
+  review({ commitSha: '69f6ee223a0c04d04319f3ddd095964e49bbb055', submittedAt: '2026-08-02T09:31:34Z' }),
+  review({ commitSha: '051746efa174fb84a8699aebaa3d700a4ee7cb43', submittedAt: '2026-08-02T09:53:41Z' }),
+  review({ commitSha: '8b92f7e23b21ebb539466e429bed87e59defab47', submittedAt: '2026-08-02T10:02:20Z' }),
+  review({ commitSha: 'f0b6ddf9ba9e76cb9b39cc3fe3107a0973657bd3', submittedAt: '2026-08-02T10:12:24Z' }),
+  review({ commitSha: 'ecad4b74bdfa83dc88941c8ffa8af4685f815d4d', submittedAt: '2026-08-02T10:24:44Z' }),
+  review({ commitSha: pr13475ReviewedHeadSha, submittedAt: pr13475ReviewSubmittedAt }),
 ]
 
 const issueComment = (overrides: Partial<PullRequestIssueComment> = {}): PullRequestIssueComment => ({
@@ -426,6 +453,46 @@ const pr13473ReactionSnapshot = (
     reactions: options.reactions ?? [reaction({ createdAt: pr13473ReactionAt })],
     headForcePushes: options.headForcePushes ?? [pr13473EarlierForcePush, pr13473FinalForcePush],
     headForcePushCount: options.headForcePushCount,
+  })
+
+const pr13475FeedbackThread = (overrides: Partial<PullRequestReviewThread> = {}): PullRequestReviewThread =>
+  thread({
+    id: 'PRRT_kwDOLkRLus6VwJXZ',
+    isResolved: true,
+    isOutdated: true,
+    path: 'services/bayn/src/candidate-development-local/command.ts',
+    url: 'https://github.com/proompteng/lab/pull/13475#discussion_r3698708781',
+    comments: [
+      threadComment({
+        body: 'Include the main-worktree legacy receipt in linked checks.',
+        commitSha: pr13475FinalHeadSha,
+        reviewCommitSha: pr13475ReviewedHeadSha,
+        reviewAuthorLogin: baynCodexReviewer,
+        reviewSubmittedAt: pr13475ReviewSubmittedAt,
+        createdAt: '2026-08-02T10:32:17Z',
+        url: 'https://github.com/proompteng/lab/pull/13475#discussion_r3698708781',
+      }),
+    ],
+    ...overrides,
+  })
+
+const pr13475ReviewSnapshot = (
+  options: {
+    readonly commitShas?: readonly string[]
+    readonly reviews?: readonly PullRequestReview[]
+    readonly threads?: readonly PullRequestReviewThread[]
+  } = {},
+): BaynReleaseReviewSnapshot =>
+  reviewSnapshotFor({
+    commitSha: pr13475MainCommitSha,
+    prNumber: 13475,
+    headSha: pr13475FinalHeadSha,
+    parents: [pushBeforeSha],
+    createdAt: pr13475CreatedAt,
+    mergedAt: pr13475MergedAt,
+    reviews: options.reviews ?? pr13475Reviews,
+    threads: options.threads ?? [pr13475FeedbackThread()],
+    commitShas: options.commitShas ?? pr13475FinalCommitShas,
   })
 
 const eligibilitySnapshot = (
@@ -6286,7 +6353,7 @@ describe('Bayn delayed-attestation publication retry', () => {
     ).toEqual({ commitShaPrefix: mainCommitSha.slice(0, 12), prNumber: 13401 })
     expect(
       parseFailedReviewThreadBlock(
-        `2026-07-30T07:02:30Z BAYN_RELEASE_REVIEW_HOLD feedback-fix-attestation-missing: Bayn-affecting commit ${mainCommitSha.slice(0, 12)} after last published ${lastPublishedSha.slice(0, 12)} is not release-eligible: source PR #13401 final head ${finalHeadSha.slice(0, 12)} carries review from ${olderHeadSha.slice(0, 12)}, but post-review commit ${finalHeadSha.slice(0, 12)} lacks a trusted member reply on a resolved Codex thread from that review\n`,
+        `2026-07-30T07:02:30Z BAYN_RELEASE_REVIEW_HOLD feedback-fix-attestation-missing: Bayn-affecting commit ${mainCommitSha.slice(0, 12)} after last published ${lastPublishedSha.slice(0, 12)} is not release-eligible: source PR #13401 final head ${finalHeadSha.slice(0, 12)} carries review from ${olderHeadSha.slice(0, 12)}, but post-review feedback threads are not a resolved, final-head-safe causal fix from that review\n`,
       ),
     ).toEqual({ commitShaPrefix: mainCommitSha.slice(0, 12), prNumber: 13401 })
     expect(
@@ -6932,6 +6999,144 @@ describe('Bayn exact-head release review eligibility', () => {
     })
   })
 
+  test('accepts the real #13475 final feedback-fix head without a member reply ceremony', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha: pr13475MainCommitSha,
+        baseRefName: 'main',
+        snapshot: pr13475ReviewSnapshot(),
+        nowMs: Date.parse('2026-08-02T11:00:00Z'),
+        pushBeforeSha: null,
+      }),
+    ).toEqual({
+      status: 'eligible',
+      prNumber: 13475,
+      headSha: pr13475FinalHeadSha,
+      reviewSubmittedAt: pr13475ReviewSubmittedAt,
+      eligibleAt: '2026-08-02T10:32:46.000Z',
+    })
+  })
+
+  test.each([
+    [
+      'unresolved actionable thread',
+      pr13475ReviewSnapshot({ threads: [pr13475FeedbackThread({ isResolved: false })] }),
+      'feedback-fix-attestation-missing',
+    ],
+    [
+      'unchanged reviewed path',
+      pr13475ReviewSnapshot({
+        threads: [
+          pr13475FeedbackThread({
+            isOutdated: false,
+            comments: [
+              threadComment({
+                commitSha: pr13475ReviewedHeadSha,
+                reviewCommitSha: pr13475ReviewedHeadSha,
+                reviewSubmittedAt: pr13475ReviewSubmittedAt,
+              }),
+            ],
+          }),
+        ],
+      }),
+      'feedback-fix-attestation-missing',
+    ],
+    [
+      'intermediate fix later reverted before final head',
+      pr13475ReviewSnapshot({
+        commitShas: [...pr13475FinalCommitShas.slice(0, -1), 'a'.repeat(40), pr13475FinalHeadSha],
+        threads: [
+          pr13475FeedbackThread({
+            comments: [
+              threadComment({
+                commitSha: 'a'.repeat(40),
+                reviewCommitSha: pr13475ReviewedHeadSha,
+                reviewSubmittedAt: pr13475ReviewSubmittedAt,
+              }),
+            ],
+          }),
+        ],
+      }),
+      'feedback-fix-attestation-missing',
+    ],
+    [
+      'reviewed head absent from final history',
+      pr13475ReviewSnapshot({
+        commitShas: [pr13475FinalCommitShas[0]!, pr13475FinalHeadSha],
+        reviews: [review({ commitSha: pr13475ReviewedHeadSha, submittedAt: pr13475ReviewSubmittedAt })],
+      }),
+      'exact-head-review-missing',
+    ],
+    [
+      'final head not later than reviewed head',
+      pr13475ReviewSnapshot({ commitShas: [pr13475ReviewedHeadSha] }),
+      'source-pr-commit-history-mismatch',
+    ],
+    [
+      'ambiguous latest applicable review',
+      pr13475ReviewSnapshot({
+        reviews: [
+          review({ commitSha: 'ecad4b74bdfa83dc88941c8ffa8af4685f815d4d', submittedAt: pr13475ReviewSubmittedAt }),
+          review({ commitSha: pr13475ReviewedHeadSha, submittedAt: pr13475ReviewSubmittedAt }),
+        ],
+      }),
+      'exact-head-review-missing',
+    ],
+    [
+      'stale unrelated trusted reply',
+      pr13475ReviewSnapshot({
+        threads: [
+          pr13475FeedbackThread({
+            isOutdated: false,
+            comments: [
+              threadComment({
+                commitSha: pr13475ReviewedHeadSha,
+                reviewCommitSha: pr13475ReviewedHeadSha,
+                reviewSubmittedAt: pr13475ReviewSubmittedAt,
+              }),
+              threadComment({
+                authorLogin: 'gregkonush',
+                authorAssociation: 'MEMBER',
+                commitSha: pr13475ReviewedHeadSha,
+                reviewCommitSha: 'a'.repeat(40),
+                reviewAuthorLogin: 'gregkonush',
+                reviewSubmittedAt: '2026-08-02T10:40:00Z',
+              }),
+            ],
+          }),
+        ],
+      }),
+      'feedback-fix-attestation-missing',
+    ],
+    [
+      'malformed review comment binding',
+      pr13475ReviewSnapshot({
+        threads: [
+          pr13475FeedbackThread({
+            comments: [
+              threadComment({
+                commitSha: pr13475FinalHeadSha,
+                reviewCommitSha: pr13475ReviewedHeadSha,
+                reviewSubmittedAt: null,
+              }),
+            ],
+          }),
+        ],
+      }),
+      'feedback-fix-attestation-missing',
+    ],
+  ] as const)('rejects #13475 feedback-fix evidence with %s', (_name, reviewSnapshot, code) => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha: pr13475MainCommitSha,
+        baseRefName: 'main',
+        snapshot: reviewSnapshot,
+        nowMs: Date.parse('2026-08-02T11:00:00Z'),
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({ status: 'hold', code })
+  })
+
   test('accepts #13464 through the exact final-head reaction after its force-push', () => {
     expect(
       evaluateBaynReleaseReview({
@@ -7383,7 +7588,7 @@ describe('Bayn exact-head release review eligibility', () => {
     })
   })
 
-  test('requires an attestation for every commit after the reviewed head', () => {
+  test('accepts a final trusted feedback reply without per-commit attestations', () => {
     const intermediateFixSha = '4'.repeat(40)
     expect(
       evaluateBaynReleaseReview({
@@ -7410,10 +7615,12 @@ describe('Bayn exact-head release review eligibility', () => {
         nowMs: evaluationNowMs,
         pushBeforeSha: null,
       }),
-    ).toMatchObject({
-      status: 'hold',
-      code: 'feedback-fix-attestation-missing',
-      retryable: true,
+    ).toEqual({
+      status: 'eligible',
+      prNumber: 13390,
+      headSha: finalHeadSha,
+      reviewSubmittedAt: '2026-07-30T07:01:00Z',
+      eligibleAt: '2026-07-30T07:01:30.000Z',
     })
   })
 
