@@ -79,11 +79,25 @@ jobs:
           docker load --input "$image_tar"
 
           run_reference="${IMAGE_REPOSITORY}:nix"
-          image_digest="$(bash nix/oci-inspect-archive.sh "$image_tar" | jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))')"
+          local_manifest_digest="$(bash nix/oci-inspect-archive.sh "$image_tar" | jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))')"
+          published_reference="${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}"
+          published_digest="$(regctl image digest "$published_reference")"
+          [[ "$published_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          published_manifest="$(regctl manifest get "$published_reference" --format raw-body)"
+          jq -e --arg local_manifest_digest "$local_manifest_digest" '
+            (.manifests | type == "array")
+            and any(.manifests[]; .platform.os == "linux" and .platform.architecture == "amd64")
+            and any(
+              .manifests[];
+              .platform.os == "linux"
+              and .platform.architecture == "arm64"
+              and .digest == $local_manifest_digest
+            )
+          ' <<<"$published_manifest" >/dev/null
           source_revision="$(docker image inspect --format '{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' "$run_reference")"
           test "$source_revision" = "${GITHUB_SHA}"
           echo "run_reference=${run_reference}" >> "$GITHUB_OUTPUT"
-          echo "binding=${IMAGE_REPOSITORY}@${image_digest}" >> "$GITHUB_OUTPUT"
+          echo "binding=${IMAGE_REPOSITORY}@${published_digest}" >> "$GITHUB_OUTPUT"
 
       - name: Run exactly one isolated read-only qualification
         id: qualify
