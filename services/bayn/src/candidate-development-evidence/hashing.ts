@@ -1,6 +1,10 @@
 import { Result } from 'effect'
 
-import { validateCandidateDevelopmentCommandEvaluation } from '../candidate-development-command'
+import { validateCandidateDevelopmentCommandEvaluation } from '../candidate-development-command/runtime-policy'
+import type {
+  CandidateDevelopmentCommandEvaluation,
+  CandidateDevelopmentVerifiedSource,
+} from '../candidate-development-command/contracts'
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import { collectCanonicalBinding, collectCanonicalBindings } from './bindings'
 import type {
@@ -9,10 +13,6 @@ import type {
   CandidateDevelopmentImmutableEvidence,
   CandidateDevelopmentIndependentReproduction,
 } from './model'
-import type {
-  CandidateDevelopmentCommandEvaluation,
-  CandidateDevelopmentVerifiedSource,
-} from '../candidate-development-command'
 
 export const candidateDevelopmentEvidenceMaterial = (
   evidence: CandidateDevelopmentImmutableEvidence,

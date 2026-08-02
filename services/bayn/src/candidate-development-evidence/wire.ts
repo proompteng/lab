@@ -5,8 +5,8 @@ import {
   CandidateDevelopmentPreflightInputSchema,
   CandidateDevelopmentSourceManifestSchema,
   CandidateDevelopmentStrategyProtocolSchema,
-  validateCandidateDevelopmentCommandEvaluation,
-} from '../candidate-development-command'
+} from '../candidate-development-command/contracts'
+import { validateCandidateDevelopmentCommandEvaluation } from '../candidate-development-command/runtime-policy'
 import {
   GitSourceRevisionSchema,
   NonNegativeIntegerSchema,

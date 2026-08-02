@@ -10,10 +10,8 @@ import {
   type CandidateDevelopmentPreflightPass,
   type CandidateDevelopmentReport,
 } from '../candidate-development'
-import {
-  validateCandidateDevelopmentCommandEvaluation,
-  type CandidateDevelopmentCommandEvaluation,
-} from '../candidate-development-command'
+import { validateCandidateDevelopmentCommandEvaluation } from '../candidate-development-command/runtime-policy'
+import type { CandidateDevelopmentCommandEvaluation } from '../candidate-development-command/contracts'
 import { deriveCandidateDevelopmentDecision } from '../candidate-development-decision'
 import { canonicalHashV1Result } from '../hash'
 import { prepareQualificationSeries } from '../qualification-statistics'

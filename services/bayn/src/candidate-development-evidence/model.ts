@@ -8,7 +8,7 @@ import type {
   CandidateDevelopmentCommandEvaluation,
   CandidateDevelopmentStrategyProtocol,
   CandidateDevelopmentVerifiedSource,
-} from '../candidate-development-command'
+} from '../candidate-development-command/contracts'
 import type {
   CandidateDevelopmentDecision,
   CandidateDevelopmentNextPreregistration,

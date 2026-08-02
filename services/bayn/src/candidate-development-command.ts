@@ -1,12 +1,61 @@
-export * from './candidate-development-command/contracts'
-export * from './candidate-development-command/failures'
-export * from './candidate-development-command/evaluation'
-export * from './candidate-development-command/runtime-policy'
-export * from './candidate-development-command/source-git'
-export * from './candidate-development-command/artifact-policy'
-export * from './candidate-development-command/plan-evaluation'
-export * from './candidate-development-command/sandbox'
-export * from './candidate-development-command/orchestration'
+// Keep this module as the application/CLI boundary. Internal policies and contracts are
+// re-exported only for the compatibility consumers that still import this historical path.
+export {
+  candidateDevelopmentExecutableProgramSchemaVersion,
+  CandidateDevelopmentSourceManifestSchema,
+} from './candidate-development-command/contracts'
+export type {
+  CandidateDevelopmentCommandEvaluation,
+  CandidateDevelopmentExecutableProgram,
+  CandidateDevelopmentSourceManifest,
+  CandidateDevelopmentStrategyPlan,
+  CandidateDevelopmentStrategyProtocol,
+  CandidateDevelopmentVerifiedSource,
+  CandidateDevelopmentVerifiedSourceFiles,
+} from './candidate-development-command/contracts'
+export type {
+  CandidateDevelopmentSourceGit,
+  CandidateDevelopmentSourceVerifier,
+  CandidateDevelopmentVerifiedModuleSource,
+} from './candidate-development-command/git-contracts'
+export { candidateDevelopmentCommandFailureOutputMaxBytes } from './candidate-development-command/failure-core'
+export { renderCandidateDevelopmentCommandFailure } from './candidate-development-command/failure-dispatch'
+export {
+  authorizeCandidateDevelopmentAttempt,
+  bindCandidateDevelopmentVerifiedSource,
+  preregisterCandidateDevelopmentAttempt,
+  validateCandidateDevelopmentPreregisteredMarketData,
+  validateCandidateDevelopmentTrialHistoryClosure,
+} from './candidate-development-command/evaluation-authority'
+export { buildCandidateDevelopmentCommandReport } from './candidate-development-command/report-policy'
+export { validateCandidateDevelopmentAccountingReplay } from './candidate-development-command/accounting-replay'
+export {
+  validateCandidateDevelopmentCommandEvaluation,
+  validateCandidateDevelopmentExecutableProgram,
+  validateCandidateDevelopmentPreregistrationDocument,
+  validateCandidateDevelopmentRuntimeMarketData,
+} from './candidate-development-command/runtime-policy'
+export { validateCandidateDevelopmentModuleSource } from './candidate-development-command/artifact-public-policy'
+export { buildCandidateDevelopmentPlanEvaluation } from './candidate-development-command/plan-builder'
+export {
+  evaluateCandidateDevelopmentArtifact,
+  executeCandidateDevelopmentArtifactRuntime,
+  loadCandidateDevelopmentRuntimeMarketDataFile,
+} from './candidate-development-command/sandbox'
+export {
+  executeCandidateDevelopmentProgram,
+  loadCandidateDevelopmentExecutableProgram,
+  makeCandidateDevelopmentCommandReportWriter,
+  renderCandidateDevelopmentCommandReport,
+  writeCandidateDevelopmentCommandReport,
+} from './candidate-development-command/orchestration'
+export { openCandidateDevelopmentGitBatchObjectReader } from './candidate-development-command/git-interpreter'
+export {
+  verifyCandidateDevelopmentPreregistrationLineage,
+  verifyCandidateDevelopmentPreregistrationModuleNovelty,
+  verifyCandidateDevelopmentRepositoryIntegrity,
+  verifyCandidateDevelopmentSourceFiles,
+} from './candidate-development-command/source-provenance-policy'
 
 import { writeSync } from 'node:fs'
 import { isMainThread } from 'node:worker_threads'
@@ -27,9 +76,9 @@ import {
 import {
   renderCandidateDevelopmentCommandDefect,
   renderCandidateDevelopmentCommandFailure,
-} from './candidate-development-command/failures'
-import { sourceVerificationFailure } from './candidate-development-command/evaluation'
-import { verifyCandidateDevelopmentSourceFiles } from './candidate-development-command/source-git'
+} from './candidate-development-command/failure-dispatch'
+import { sourceVerificationFailure } from './candidate-development-command/evaluation-metrics'
+import { verifyCandidateDevelopmentSourceFiles } from './candidate-development-command/source-provenance-policy'
 import { GitSourceRevisionSchema } from './schemas'
 import type {
   CandidateDevelopmentCommandFailure,
