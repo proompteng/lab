@@ -1,8 +1,8 @@
 import { constants } from 'node:fs'
-import { link, lstat, mkdir, open, realpath, rename, unlink } from 'node:fs/promises'
+import { link, mkdir, open, readFile, realpath, rename, unlink } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
 import process from 'node:process'
-import { randomUUID } from 'node:crypto'
 
 import { NodeRuntime } from '@effect/platform-node'
 import { Cause, Data, Effect, Exit } from 'effect'
@@ -11,22 +11,15 @@ import type {
   CandidateDevelopmentCommandFailure,
   CandidateDevelopmentCommandReport,
 } from '../candidate-development-command/contracts'
-import {
-  evaluateCandidateDevelopmentArtifact,
-  loadCandidateDevelopmentRuntimeMarketDataFile,
-} from '../candidate-development-command/sandbox'
-import {
-  loadAuthorizedCandidateDevelopmentExecutableProgram,
-  loadCandidateDevelopmentExecutableProgram,
-  runCandidateDevelopmentCommand,
-  type CandidateDevelopmentLoadedExecutableProgram,
+import type {
+  CandidateDevelopmentLoadedExecutableProgram,
+  runCandidateDevelopmentCommand as runCandidateDevelopmentCommandType,
 } from '../candidate-development-command/orchestration'
 import {
   renderCandidateDevelopmentCommandDefect,
   renderCandidateDevelopmentCommandFailure,
 } from '../candidate-development-command/failures'
 import { candidateDevelopmentSourceGit } from '../candidate-development-command/git-interpreter'
-import { verifyCandidateDevelopmentSourceFiles } from '../candidate-development-command/source-provenance-policy'
 import {
   bindCandidateDevelopmentLocalSource,
   CandidateDevelopmentLocalError,
@@ -93,6 +86,8 @@ const localError = (
 const isFileSystemError = (cause: unknown, code: string): boolean =>
   typeof cause === 'object' && cause !== null && 'code' in cause && cause.code === code
 
+type CandidateDevelopmentCommandRunner = typeof runCandidateDevelopmentCommandType
+
 export const resolveCandidateDevelopmentLocalArguments = (
   repositoryRoot: string,
   args: CandidateDevelopmentLocalArguments,
@@ -114,9 +109,14 @@ export const verifyCandidateDevelopmentLocalSourceTree = (
   repositoryRoot: string,
   paths: readonly string[],
   sourceGit = candidateDevelopmentSourceGit,
+  expectedSourceRevision?: string,
 ): Effect.Effect<void, CandidateDevelopmentLocalError> =>
   Effect.tryPromise({
     try: async (signal) => {
+      if (expectedSourceRevision !== undefined) {
+        const sourceRevision = await sourceGit.text(repositoryRoot, ['rev-parse', 'HEAD'], signal)
+        if (sourceRevision !== expectedSourceRevision) throw new Error('source revision changed during the attempt')
+      }
       const tracked = await sourceGit.text(repositoryRoot, ['ls-files', '-v', '--', ...paths], signal)
       if (
         tracked
@@ -144,9 +144,10 @@ export const verifyCandidateDevelopmentLocalSourceTree = (
   })
 
 const executeLoadedCandidateDevelopmentProgram = (
+  runCommand: CandidateDevelopmentCommandRunner,
   loaded: CandidateDevelopmentLoadedExecutableProgram,
 ): Effect.Effect<CandidateDevelopmentCommandReport, CandidateDevelopmentCommandFailure> =>
-  runCandidateDevelopmentCommand(loaded.program, loaded.verifiedSource).pipe(
+  runCommand(loaded.program, loaded.verifiedSource).pipe(
     Effect.mapError(
       (cause): CandidateDevelopmentCommandFailure => ({
         _tag: 'CandidateDevelopmentCommandProgramExecutionFailed',
@@ -166,31 +167,64 @@ const executeCandidateDevelopmentCommand = (
     prepared.source.sourceManifestPath,
     candidateDevelopmentEvaluatorSourcePath,
   ]
-  const verifySourceTree = verifyCandidateDevelopmentLocalSourceTree(prepared.repositoryRoot, sourcePaths)
+  const verifySourceTree = verifyCandidateDevelopmentLocalSourceTree(
+    prepared.repositoryRoot,
+    sourcePaths,
+    candidateDevelopmentSourceGit,
+    prepared.source.sourceRevision,
+  )
+  const loadInterpreter = Effect.tryPromise({
+    try: async () => {
+      const [sandbox, orchestration, sourceProvenance] = await Promise.all([
+        import('../candidate-development-command/sandbox'),
+        import('../candidate-development-command/orchestration'),
+        import('../candidate-development-command/source-provenance-policy'),
+      ])
+      return { sandbox, orchestration, sourceProvenance }
+    },
+    catch: (cause) => localError('SOURCE_BINDING_INVALID', 'candidate development interpreter is unavailable', cause),
+  })
   return verifySourceTree.pipe(
-    Effect.flatMap(() =>
-      loadAuthorizedCandidateDevelopmentExecutableProgram(
-        prepared.args.modulePath,
-        prepared.args.sourceManifestPath,
-        (module, manifest) =>
-          loadCandidateDevelopmentExecutableProgram(
-            module,
-            manifest,
-            evaluateCandidateDevelopmentArtifact,
-            (sourceModulePath, sourceManifest, sourceGit) =>
-              verifyCandidateDevelopmentSourceFiles(
-                sourceModulePath,
-                sourceManifest,
-                sourceGit,
-                prepared.source.sourceRevision,
-              ),
-            loadCandidateDevelopmentRuntimeMarketDataFile(prepared.args.runtimeMarketDataPath),
-          ),
+    Effect.flatMap(() => loadInterpreter),
+    Effect.flatMap(({ sandbox, orchestration, sourceProvenance }) =>
+      orchestration
+        .loadAuthorizedCandidateDevelopmentExecutableProgram(
+          prepared.args.modulePath,
+          prepared.args.sourceManifestPath,
+          (module, manifest) =>
+            orchestration.loadCandidateDevelopmentExecutableProgram(
+              module,
+              manifest,
+              sandbox.evaluateCandidateDevelopmentArtifact,
+              (sourceModulePath, sourceManifest, sourceGit) =>
+                sourceProvenance.verifyCandidateDevelopmentSourceFiles(
+                  sourceModulePath,
+                  sourceManifest,
+                  sourceGit,
+                  prepared.source.sourceRevision,
+                ),
+              sandbox.loadCandidateDevelopmentRuntimeMarketDataFile(prepared.args.runtimeMarketDataPath),
+            ),
+        )
+        .pipe(Effect.map((loaded) => ({ loaded, runCommand: orchestration.runCandidateDevelopmentCommand }))),
+    ),
+    Effect.tap(() =>
+      verifyCandidateDevelopmentLocalSourceTree(
+        prepared.repositoryRoot,
+        sourcePaths,
+        candidateDevelopmentSourceGit,
+        prepared.source.sourceRevision,
       ),
     ),
-    Effect.tap(() => verifyCandidateDevelopmentLocalSourceTree(prepared.repositoryRoot, sourcePaths)),
-    Effect.flatMap(executeLoadedCandidateDevelopmentProgram),
-    Effect.tap(() => verifyCandidateDevelopmentLocalSourceTree(prepared.repositoryRoot, sourcePaths)),
+    Effect.flatMap(({ loaded, runCommand }) => executeLoadedCandidateDevelopmentProgram(runCommand, loaded)),
+    Effect.tap(() =>
+      verifyCandidateDevelopmentLocalSourceTree(
+        prepared.repositoryRoot,
+        sourcePaths,
+        candidateDevelopmentSourceGit,
+        prepared.source.sourceRevision,
+      ),
+    ),
   )
 }
 
@@ -202,6 +236,14 @@ const prepareCandidateDevelopmentLocalAttempt = (
       try: async (signal) =>
         realpath(await candidateDevelopmentSourceGit.text(process.cwd(), ['rev-parse', '--show-toplevel'], signal)),
       catch: (cause) => localError('SOURCE_BINDING_INVALID', 'candidate repository root is unavailable', cause),
+    })
+    const sourceRevision = yield* Effect.tryPromise({
+      try: async (signal) => {
+        const revision = await candidateDevelopmentSourceGit.text(repositoryRoot, ['rev-parse', 'HEAD'], signal)
+        if (!/^[0-9a-f]{40}$/.test(revision)) throw new Error('candidate source revision is invalid')
+        return revision
+      },
+      catch: (cause) => localError('SOURCE_BINDING_INVALID', 'candidate source revision is unavailable', cause),
     })
     const normalizedArgs = resolveCandidateDevelopmentLocalArguments(repositoryRoot, args)
     const sourcePaths = yield* Effect.try({
@@ -215,10 +257,23 @@ const prepareCandidateDevelopmentLocalAttempt = (
           ? cause
           : localError('SOURCE_BINDING_INVALID', 'candidate source paths are invalid', cause),
     })
-    yield* verifyCandidateDevelopmentLocalSourceTree(repositoryRoot, sourcePaths)
-    const verified = yield* verifyCandidateDevelopmentSourceFiles(
+    yield* verifyCandidateDevelopmentLocalSourceTree(
+      repositoryRoot,
+      sourcePaths,
+      candidateDevelopmentSourceGit,
+      sourceRevision,
+    )
+    const verifySourceFiles = yield* Effect.tryPromise({
+      try: async () =>
+        (await import('../candidate-development-command/source-provenance-policy'))
+          .verifyCandidateDevelopmentSourceFiles,
+      catch: (cause) => localError('SOURCE_BINDING_INVALID', 'candidate source verifier is unavailable', cause),
+    })
+    const verified = yield* verifySourceFiles(
       normalizedArgs.modulePath,
       normalizedArgs.sourceManifestPath,
+      candidateDevelopmentSourceGit,
+      sourceRevision,
     ).pipe(
       Effect.mapError((cause) => localError('SOURCE_BINDING_INVALID', 'candidate source binding is invalid', cause)),
     )
@@ -296,31 +351,145 @@ export const makeCandidateDevelopmentLocalAttempt =
     })
   }
 
-const writeSynchronizedExclusiveFile = async (temporaryPath: string, content: string): Promise<void> => {
-  const handle = await open(
+const writeReservationMarker = async (markerPath: string, content: string): Promise<void> => {
+  const marker = await open(
+    markerPath,
+    constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+    0o600,
+  )
+  try {
+    await marker.writeFile(content, 'utf8')
+    await marker.sync()
+  } finally {
+    await marker.close()
+  }
+}
+
+const writeFinalizationTemporary = async (temporaryPath: string, content: string): Promise<void> => {
+  const temporary = await open(
     temporaryPath,
     constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
     0o600,
   )
   try {
-    await handle.writeFile(content, 'utf8')
-    await handle.sync()
+    await temporary.writeFile(content, 'utf8')
+    await temporary.sync()
   } finally {
-    await handle.close()
+    await temporary.close()
   }
 }
 
 const defaultLegacyReceiptPath = (path: string): string =>
   join(dirname(dirname(path)), legacyCandidateDevelopmentLocalReceiptName)
 
-const pathExists = async (path: string): Promise<boolean> => {
+const legacyReceiptSourceFields = [
+  'sourceRevision',
+  'modulePath',
+  'moduleBlobOid',
+  'moduleSha256',
+  'sourceManifestPath',
+  'sourceManifestBlobOid',
+  'sourceManifestSha256',
+  'bindingHash',
+] as const
+
+const legacyReceiptSourceIdentityFields = legacyReceiptSourceFields.filter(
+  (field): field is Exclude<(typeof legacyReceiptSourceFields)[number], 'bindingHash'> => field !== 'bindingHash',
+)
+
+type LegacyReceiptInspection = 'ABSENT' | 'MATCHING_SOURCE' | 'DIFFERENT_SOURCE'
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const inspectLegacyCandidateDevelopmentLocalReceipt = async (
+  path: string,
+  source: CandidateDevelopmentLocalSourceBinding,
+): Promise<LegacyReceiptInspection> => {
+  let serialized: string
   try {
-    await lstat(path)
-    return true
+    serialized = await readFile(path, 'utf8')
   } catch (cause) {
-    if (isFileSystemError(cause, 'ENOENT')) return false
-    throw cause
+    if (isFileSystemError(cause, 'ENOENT')) return 'ABSENT'
+    throw localError('RECEIPT_ALREADY_CONSUMED', 'legacy local receipt could not be inspected')
   }
+
+  let value: unknown
+  try {
+    value = JSON.parse(serialized) as unknown
+  } catch {
+    throw localError('RECEIPT_ALREADY_CONSUMED', 'legacy local receipt is invalid')
+  }
+  if (!isRecord(value) || value.schemaVersion !== 'bayn.candidate-development-local-attempt.v1') {
+    throw localError('RECEIPT_ALREADY_CONSUMED', 'legacy local receipt is invalid')
+  }
+  const exitCode = value.exitCode
+  if (
+    value.attempt !== 1 ||
+    (value.status !== 'reserved' && value.status !== 'completed' && value.status !== 'failed') ||
+    (exitCode !== undefined && (typeof exitCode !== 'number' || !Number.isInteger(exitCode) || exitCode < 0))
+  ) {
+    throw localError('RECEIPT_ALREADY_CONSUMED', 'legacy local receipt is invalid')
+  }
+  const legacySourceValue = value.source
+  if (
+    !isRecord(legacySourceValue) ||
+    legacyReceiptSourceFields.some((field) => typeof legacySourceValue[field] !== 'string')
+  ) {
+    throw localError('RECEIPT_ALREADY_CONSUMED', 'legacy local receipt is invalid')
+  }
+  const legacySource = {
+    sourceRevision: legacySourceValue.sourceRevision as string,
+    modulePath: legacySourceValue.modulePath as string,
+    moduleBlobOid: legacySourceValue.moduleBlobOid as string,
+    moduleSha256: legacySourceValue.moduleSha256 as string,
+    sourceManifestPath: legacySourceValue.sourceManifestPath as string,
+    sourceManifestBlobOid: legacySourceValue.sourceManifestBlobOid as string,
+    sourceManifestSha256: legacySourceValue.sourceManifestSha256 as string,
+  }
+  if (
+    !/^[0-9a-f]{40}$/.test(legacySource.sourceRevision) ||
+    !/^[0-9a-f]{40}$/.test(legacySource.moduleBlobOid) ||
+    !/^[0-9a-f]{64}$/.test(legacySource.moduleSha256) ||
+    !/^[0-9a-f]{40}$/.test(legacySource.sourceManifestBlobOid) ||
+    !/^[0-9a-f]{64}$/.test(legacySource.sourceManifestSha256) ||
+    legacySource.modulePath.length === 0 ||
+    legacySource.sourceManifestPath.length === 0 ||
+    legacySource.modulePath.includes('\u0000') ||
+    legacySource.sourceManifestPath.includes('\u0000') ||
+    legacySource.modulePath.includes('\n') ||
+    legacySource.modulePath.includes('\r') ||
+    legacySource.sourceManifestPath.includes('\n') ||
+    legacySource.sourceManifestPath.includes('\r') ||
+    legacySource.modulePath.startsWith('/') ||
+    legacySource.sourceManifestPath.startsWith('/') ||
+    legacySource.modulePath.split('/').some((part) => part === '' || part === '..') ||
+    legacySource.sourceManifestPath.split('/').some((part) => part === '' || part === '..') ||
+    !/^[0-9a-f]{64}$/.test(legacySourceValue.bindingHash as string)
+  ) {
+    throw localError('RECEIPT_ALREADY_CONSUMED', 'legacy local receipt is invalid')
+  }
+  const expectedBindingHash = createHash('sha256')
+    .update(
+      JSON.stringify([
+        'bayn.candidate-development-local-source-binding.v1',
+        legacySource.sourceRevision,
+        legacySource.modulePath,
+        legacySource.moduleBlobOid,
+        legacySource.moduleSha256,
+        legacySource.sourceManifestPath,
+        legacySource.sourceManifestBlobOid,
+        legacySource.sourceManifestSha256,
+      ]),
+      'utf8',
+    )
+    .digest('hex')
+  if (legacySourceValue.bindingHash !== expectedBindingHash) {
+    throw localError('RECEIPT_ALREADY_CONSUMED', 'legacy local receipt is invalid')
+  }
+  return legacyReceiptSourceIdentityFields.every((field) => legacySourceValue[field] === source[field])
+    ? 'MATCHING_SOURCE'
+    : 'DIFFERENT_SOURCE'
 }
 
 export const reserveCandidateDevelopmentLocalReceipt = (
@@ -330,7 +499,8 @@ export const reserveCandidateDevelopmentLocalReceipt = (
 ): Effect.Effect<void, CandidateDevelopmentLocalError> =>
   Effect.tryPromise({
     try: async () => {
-      if (await pathExists(legacyReceiptPath)) {
+      const legacyReceipt = await inspectLegacyCandidateDevelopmentLocalReceipt(legacyReceiptPath, receipt.source)
+      if (legacyReceipt === 'MATCHING_SOURCE') {
         throw localError(
           'RECEIPT_ALREADY_CONSUMED',
           'candidate development attempt was already consumed by the legacy local receipt',
@@ -338,7 +508,7 @@ export const reserveCandidateDevelopmentLocalReceipt = (
       }
       const markerPath = `${path}.reservation`
       try {
-        await writeSynchronizedExclusiveFile(markerPath, serializeCandidateDevelopmentLocalReceipt(receipt))
+        await writeReservationMarker(markerPath, serializeCandidateDevelopmentLocalReceipt(receipt))
       } catch (cause) {
         if (isFileSystemError(cause, 'EEXIST')) {
           throw localError('RECEIPT_ALREADY_CONSUMED', 'candidate development attempt was already consumed', cause)
@@ -370,7 +540,7 @@ export const finalizeCandidateDevelopmentLocalReceipt = (
     try: async () => {
       const temporaryPath = join(dirname(path), `.${receipt.candidateOrdinal}-${process.pid}-${randomUUID()}.tmp`)
       try {
-        await writeSynchronizedExclusiveFile(temporaryPath, serializeCandidateDevelopmentLocalReceipt(receipt))
+        await writeFinalizationTemporary(temporaryPath, serializeCandidateDevelopmentLocalReceipt(receipt))
         await rename(temporaryPath, path)
       } catch (cause) {
         await unlink(temporaryPath).catch(() => undefined)
