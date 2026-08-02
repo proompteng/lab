@@ -7280,6 +7280,39 @@ describe('Bayn exact-head release review eligibility', () => {
     ).toMatchObject({ status: 'hold', code })
   })
 
+  test('ignores an earlier review thread on the same predecessor head', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha: pr13475MainCommitSha,
+        baseRefName: 'main',
+        snapshot: pr13475ReviewSnapshot({
+          reviews: [
+            review({ commitSha: pr13475ReviewedHeadSha, submittedAt: '2026-08-02T10:31:00Z' }),
+            review({ commitSha: pr13475ReviewedHeadSha, submittedAt: pr13475ReviewSubmittedAt }),
+          ],
+          threads: [
+            thread({
+              id: 'pr-13475-earlier-review-thread',
+              isResolved: true,
+              isOutdated: true,
+              path: 'services/bayn/src/older-reviewed-path.ts',
+              comments: [
+                threadComment({
+                  commitSha: pr13475ReviewedHeadSha,
+                  reviewCommitSha: pr13475ReviewedHeadSha,
+                  reviewSubmittedAt: '2026-08-02T10:31:00Z',
+                }),
+              ],
+            }),
+            pr13475FeedbackThread(),
+          ],
+        }),
+        nowMs: Date.parse('2026-08-02T11:00:00Z'),
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({ status: 'eligible', eligibleAt: '2026-08-02T10:32:46.000Z' })
+  })
+
   test('accepts #13464 through the exact final-head reaction after its force-push', () => {
     expect(
       evaluateBaynReleaseReview({

@@ -1524,7 +1524,8 @@ const selectFeedbackFixEvidence = (
   const isDirectFinalChild = reviewedCommitIndex + 1 === finalCommitIndex
   const belongsToReview = (comment: PullRequestReviewThreadComment): boolean =>
     comment.reviewAuthorLogin === baynCodexReviewer &&
-    (comment.reviewCommitSha === reviewEvidence.commitSha || comment.reviewSubmittedAt === reviewEvidence.submittedAt)
+    comment.reviewCommitSha === reviewEvidence.commitSha &&
+    comment.reviewSubmittedAt === reviewEvidence.submittedAt
 
   const reviewedThreads = pullRequest.threads.filter((thread) => thread.comments.some(belongsToReview))
   if (reviewedThreads.length === 0) return undefined
