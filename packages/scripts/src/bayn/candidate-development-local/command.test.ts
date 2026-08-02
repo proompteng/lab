@@ -11,6 +11,7 @@ import {
   type CandidateDevelopmentLocalAttemptReceipt,
 } from './contract'
 import {
+  CandidateDevelopmentLocalError,
   runCandidateDevelopmentLocally,
   finalizeCandidateDevelopmentLocalReceipt,
   reserveCandidateDevelopmentLocalReceipt,
@@ -55,6 +56,7 @@ const dependenciesFor = (
     processes,
     dependencies: {
       resolveSourceBinding: async () => resolved,
+      revalidateSourceBinding: async () => undefined,
       reserveReceipt: async (_path, receipt) => {
         if (consumed.value) throw new Error('receipt exists')
         consumed.value = true
@@ -132,6 +134,48 @@ describe('candidate development local command', () => {
     expect(fixture.receipts.map(({ status }) => status)).toEqual(['reserved', 'completed'])
     expect(result.receipt.status).toBe('completed')
     expect(JSON.stringify(result.receipt)).not.toContain('/sealed/typed-runtime-market-data.json')
+  })
+
+  test('does not launch when the reviewed binding changes before the child starts', async () => {
+    const fixture = dependenciesFor()
+    let revalidationCount = 0
+    const dependencies: CandidateDevelopmentLocalDependencies = {
+      ...fixture.dependencies,
+      revalidateSourceBinding: async () => {
+        revalidationCount += 1
+        throw new CandidateDevelopmentLocalError('source-binding-invalid', 'source changed')
+      },
+    }
+
+    await expect(
+      runCandidateDevelopmentLocally(['module.ts', 'manifest.json', 'runtime.json'], dependencies),
+    ).rejects.toMatchObject({ code: 'source-binding-invalid' })
+    expect(revalidationCount).toBe(1)
+    expect(fixture.processes).toEqual([])
+    expect(fixture.receipts.map(({ status }) => status)).toEqual(['reserved', 'failed'])
+  })
+
+  test('burns the attempt when the reviewed binding changes after the child exits', async () => {
+    const fixture = dependenciesFor()
+    let revalidationCount = 0
+    const dependencies: CandidateDevelopmentLocalDependencies = {
+      ...fixture.dependencies,
+      revalidateSourceBinding: async () => {
+        revalidationCount += 1
+        if (revalidationCount === 2)
+          throw new CandidateDevelopmentLocalError('source-binding-invalid', 'source changed')
+      },
+    }
+
+    await expect(
+      runCandidateDevelopmentLocally(['module.ts', 'manifest.json', 'runtime.json'], dependencies),
+    ).rejects.toMatchObject({ code: 'source-binding-invalid' })
+    expect(revalidationCount).toBe(2)
+    expect(fixture.processes).toHaveLength(1)
+    expect(fixture.receipts.map(({ status, exitCode }) => [status, exitCode])).toEqual([
+      ['reserved', undefined],
+      ['failed', 0],
+    ])
   })
 
   test('consumes the one-shot receipt when the child exits nonzero', async () => {

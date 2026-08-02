@@ -62,6 +62,7 @@ export interface CandidateDevelopmentLocalDependencies {
   readonly resolveSourceBinding: (
     args: CandidateDevelopmentLocalArguments,
   ) => Promise<CandidateDevelopmentLocalSourceResolution>
+  readonly revalidateSourceBinding: (resolution: CandidateDevelopmentLocalSourceResolution) => Promise<void>
   readonly reserveReceipt: (path: string, receipt: CandidateDevelopmentLocalAttemptReceipt) => Promise<void>
   readonly finalizeReceipt: (path: string, receipt: CandidateDevelopmentLocalAttemptReceipt) => Promise<void>
   readonly runCandidateDevelopment: (request: CandidateDevelopmentLocalProcessRequest) => Promise<number>
@@ -176,8 +177,8 @@ export const resolveCandidateDevelopmentLocalSource = async (
   }
 
   const sourceRevision = await gitToken(repositoryRoot, ['rev-parse', 'HEAD'])
-  const moduleSpec = `HEAD:${modulePath}`
-  const sourceManifestSpec = `HEAD:${sourceManifestPath}`
+  const moduleSpec = `${sourceRevision}:${modulePath}`
+  const sourceManifestSpec = `${sourceRevision}:${sourceManifestPath}`
   const [moduleBlobOid, sourceManifestBlobOid, moduleSource, sourceManifestSource] = await Promise.all([
     gitToken(repositoryRoot, ['rev-parse', moduleSpec]),
     gitToken(repositoryRoot, ['rev-parse', sourceManifestSpec]),
@@ -212,6 +213,43 @@ export const resolveCandidateDevelopmentLocalSource = async (
     runtimeMarketDataPath: resolve(repositoryRoot, args.runtimeMarketDataPath),
     receiptPath: await gitPath(repositoryRoot),
     source: source.value,
+  }
+}
+
+export const revalidateCandidateDevelopmentLocalSource = async (
+  resolution: CandidateDevelopmentLocalSourceResolution,
+): Promise<void> => {
+  const currentRevision = await gitToken(resolution.repositoryRoot, ['rev-parse', 'HEAD'])
+  if (currentRevision !== resolution.source.sourceRevision) {
+    throw new CandidateDevelopmentLocalError(
+      'source-binding-invalid',
+      'the reviewed source revision changed during local candidate development',
+    )
+  }
+  if (!(await gitDiffIsClean(resolution.repositoryRoot, [resolution.modulePath, resolution.sourceManifestPath]))) {
+    throw new CandidateDevelopmentLocalError(
+      'source-working-tree-dirty',
+      'module and source manifest changed during local candidate development',
+    )
+  }
+  const [moduleBlobOid, sourceManifestBlobOid] = await Promise.all([
+    gitToken(resolution.repositoryRoot, [
+      'rev-parse',
+      `${resolution.source.sourceRevision}:${resolution.source.modulePath}`,
+    ]),
+    gitToken(resolution.repositoryRoot, [
+      'rev-parse',
+      `${resolution.source.sourceRevision}:${resolution.source.sourceManifestPath}`,
+    ]),
+  ])
+  if (
+    moduleBlobOid !== resolution.source.moduleBlobOid ||
+    sourceManifestBlobOid !== resolution.source.sourceManifestBlobOid
+  ) {
+    throw new CandidateDevelopmentLocalError(
+      'source-binding-invalid',
+      'the reviewed source blobs changed during local candidate development',
+    )
   }
 }
 
@@ -286,6 +324,7 @@ export const runCandidateDevelopmentProcess = async (
 
 const defaultDependencies: CandidateDevelopmentLocalDependencies = {
   resolveSourceBinding: resolveCandidateDevelopmentLocalSource,
+  revalidateSourceBinding: revalidateCandidateDevelopmentLocalSource,
   reserveReceipt: reserveCandidateDevelopmentLocalReceipt,
   finalizeReceipt: finalizeCandidateDevelopmentLocalReceipt,
   runCandidateDevelopment: runCandidateDevelopmentProcess,
@@ -313,6 +352,20 @@ export const runCandidateDevelopmentLocally = async (
   const reserved = makeCandidateDevelopmentLocalAttemptReceipt(resolved.source, 'reserved')
   await dependencies.reserveReceipt(resolved.receiptPath, reserved)
 
+  try {
+    await dependencies.revalidateSourceBinding(resolved)
+  } catch (cause) {
+    try {
+      await finalizeFailedAttempt(dependencies, resolved.receiptPath, resolved.source)
+    } catch {
+      throw new CandidateDevelopmentLocalError(
+        'receipt-finalization-failed',
+        'the local attempt receipt could not be finalized; do not retry',
+      )
+    }
+    throw cause
+  }
+
   let exitCode: number
   try {
     exitCode = await dependencies.runCandidateDevelopment({
@@ -329,6 +382,20 @@ export const runCandidateDevelopmentLocally = async (
       )
     }
     throw new CandidateDevelopmentLocalError('candidate-process-failed', 'the candidate-development command failed')
+  }
+
+  try {
+    await dependencies.revalidateSourceBinding(resolved)
+  } catch (cause) {
+    try {
+      await finalizeFailedAttempt(dependencies, resolved.receiptPath, resolved.source, exitCode)
+    } catch {
+      throw new CandidateDevelopmentLocalError(
+        'receipt-finalization-failed',
+        'the local attempt receipt could not be finalized; do not retry',
+      )
+    }
+    throw cause
   }
 
   if (!Number.isSafeInteger(exitCode) || exitCode < 0) {

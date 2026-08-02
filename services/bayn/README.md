@@ -129,7 +129,7 @@ reviewed module, its source manifest, and the typed runtime market-data witness:
 ```sh
 bun run --filter @proompteng/bayn candidate:development:local -- \
   services/bayn/src/strategy/<candidate>.ts \
-  services/bayn/candidates/<candidate>-preregistration.json \
+  services/bayn/candidates/<candidate>-source-manifest.json \
   <typed-runtime-market-data.json>
 ```
 
