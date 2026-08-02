@@ -44,6 +44,7 @@ const resolved: CandidateDevelopmentLocalSourceResolution = {
   sourceManifestPath: 'services/bayn/candidates/example.json',
   runtimeMarketDataPath: '/sealed/typed-runtime-market-data.json',
   receiptPath: '/repo/.git/bayn-candidate-development-local-receipt.json',
+  candidateOrdinal: 20,
   source: source.value,
 }
 
@@ -319,6 +320,24 @@ describe('candidate development local command', () => {
       })
       await finalizeCandidateDevelopmentLocalReceipt(receiptPath, completed)
       expect(JSON.parse(await readFile(receiptPath, 'utf8'))).toMatchObject({ status: 'completed', exitCode: 0 })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('claims the v3 ordinal path before the legacy path for upgrade coordination', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'bayn-candidate-development-local-'))
+    const legacyReceiptPath = join(directory, 'bayn-candidate-development-local-receipt.json')
+    const reserved = makeCandidateDevelopmentLocalAttemptReceipt(source.value, 'reserved')
+    try {
+      await reserveCandidateDevelopmentLocalReceipt(legacyReceiptPath, reserved, 20)
+
+      expect(
+        JSON.parse(
+          await readFile(join(directory, 'bayn', 'candidate-development-attempts', 'ordinal-20.json'), 'utf8'),
+        ),
+      ).toMatchObject({ status: 'reserved', attempt: 1 })
+      expect(JSON.parse(await readFile(legacyReceiptPath, 'utf8'))).toMatchObject({ status: 'reserved', attempt: 1 })
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

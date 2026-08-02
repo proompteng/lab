@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { link, realpath, rename, unlink, writeFile } from 'node:fs/promises'
-import { relative, resolve, sep } from 'node:path'
+import { link, mkdir, realpath, rename, unlink, writeFile } from 'node:fs/promises'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 import { promisify } from 'node:util'
 
@@ -51,6 +51,7 @@ export interface CandidateDevelopmentLocalSourceResolution {
   readonly sourceManifestPath: string
   readonly runtimeMarketDataPath: string
   readonly receiptPath: string
+  readonly candidateOrdinal: number
   readonly source: CandidateDevelopmentLocalSourceBinding
 }
 
@@ -65,7 +66,11 @@ export interface CandidateDevelopmentLocalDependencies {
     args: CandidateDevelopmentLocalArguments,
   ) => Promise<CandidateDevelopmentLocalSourceResolution>
   readonly revalidateSourceBinding: (resolution: CandidateDevelopmentLocalSourceResolution) => Promise<void>
-  readonly reserveReceipt: (path: string, receipt: CandidateDevelopmentLocalAttemptReceipt) => Promise<void>
+  readonly reserveReceipt: (
+    path: string,
+    receipt: CandidateDevelopmentLocalAttemptReceipt,
+    candidateOrdinal?: number,
+  ) => Promise<void>
   readonly finalizeReceipt: (path: string, receipt: CandidateDevelopmentLocalAttemptReceipt) => Promise<void>
   readonly runCandidateDevelopment: (request: CandidateDevelopmentLocalProcessRequest) => Promise<number>
 }
@@ -162,7 +167,7 @@ const sourceManifestRecord = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>
 }
 
-const verifySourceManifest = (value: unknown, modulePath: string, moduleSha256: string): void => {
+const verifySourceManifest = (value: unknown, modulePath: string, moduleSha256: string): number => {
   const manifest = sourceManifestRecord(value)
   if (manifest.schemaVersion !== 'bayn.candidate-development-source-manifest.v1') {
     throw new CandidateDevelopmentLocalError('source-manifest-invalid', 'source manifest schema is unsupported')
@@ -173,6 +178,14 @@ const verifySourceManifest = (value: unknown, modulePath: string, moduleSha256: 
   if (manifest.moduleSha256 !== undefined && manifest.moduleSha256 !== moduleSha256) {
     throw new CandidateDevelopmentLocalError('source-manifest-invalid', 'source manifest module hash is not exact')
   }
+  if (
+    typeof manifest.candidateOrdinal !== 'number' ||
+    !Number.isSafeInteger(manifest.candidateOrdinal) ||
+    manifest.candidateOrdinal < 1
+  ) {
+    throw new CandidateDevelopmentLocalError('source-manifest-invalid', 'source manifest candidate ordinal is invalid')
+  }
+  return manifest.candidateOrdinal
 }
 
 const sourceSha256 = (value: string): string => createHash('sha256').update(value, 'utf8').digest('hex')
@@ -232,7 +245,7 @@ export const resolveCandidateDevelopmentLocalSource = async (
   } catch {
     throw new CandidateDevelopmentLocalError('source-manifest-invalid', 'source manifest is not valid JSON')
   }
-  verifySourceManifest(parsedManifest, modulePath, moduleSha256)
+  const candidateOrdinal = verifySourceManifest(parsedManifest, modulePath, moduleSha256)
 
   const sourceInput: CandidateDevelopmentLocalSourceBindingInput = {
     sourceRevision,
@@ -251,6 +264,7 @@ export const resolveCandidateDevelopmentLocalSource = async (
     sourceManifestPath,
     runtimeMarketDataPath: resolve(repositoryRoot, args.runtimeMarketDataPath),
     receiptPath: await gitPath(repositoryRoot),
+    candidateOrdinal,
     source: source.value,
   }
 }
@@ -300,10 +314,7 @@ export const revalidateCandidateDevelopmentLocalSource = async (
 
 const temporaryReceiptPath = (path: string): string => `${path}.tmp-${process.pid}-${randomUUID()}`
 
-export const reserveCandidateDevelopmentLocalReceipt = async (
-  path: string,
-  receipt: CandidateDevelopmentLocalAttemptReceipt,
-): Promise<void> => {
+const reserveReceiptAtPath = async (path: string, receipt: CandidateDevelopmentLocalAttemptReceipt): Promise<void> => {
   const temporaryPath = temporaryReceiptPath(path)
   try {
     await writeFile(temporaryPath, serializeCandidateDevelopmentLocalReceipt(receipt), {
@@ -331,6 +342,22 @@ export const reserveCandidateDevelopmentLocalReceipt = async (
   } finally {
     await unlink(temporaryPath).catch(() => undefined)
   }
+}
+
+const candidateDevelopmentAttemptReceiptPath = (legacyReceiptPath: string, candidateOrdinal: number): string =>
+  join(dirname(legacyReceiptPath), 'bayn', 'candidate-development-attempts', `ordinal-${candidateOrdinal}.json`)
+
+export const reserveCandidateDevelopmentLocalReceipt = async (
+  path: string,
+  receipt: CandidateDevelopmentLocalAttemptReceipt,
+  candidateOrdinal?: number,
+): Promise<void> => {
+  if (candidateOrdinal !== undefined) {
+    const attemptPath = candidateDevelopmentAttemptReceiptPath(path, candidateOrdinal)
+    await mkdir(dirname(attemptPath), { recursive: true, mode: 0o700 })
+    await reserveReceiptAtPath(attemptPath, receipt)
+  }
+  await reserveReceiptAtPath(path, receipt)
 }
 
 export const finalizeCandidateDevelopmentLocalReceipt = async (
@@ -399,7 +426,7 @@ export const runCandidateDevelopmentLocally = async (
   if (!parsed.ok) throw new CandidateDevelopmentLocalError(parsed.code, parsed.message)
   const resolved = await dependencies.resolveSourceBinding(parsed.value)
   const reserved = makeCandidateDevelopmentLocalAttemptReceipt(resolved.source, 'reserved')
-  await dependencies.reserveReceipt(resolved.receiptPath, reserved)
+  await dependencies.reserveReceipt(resolved.receiptPath, reserved, resolved.candidateOrdinal)
 
   try {
     await dependencies.revalidateSourceBinding(resolved)
