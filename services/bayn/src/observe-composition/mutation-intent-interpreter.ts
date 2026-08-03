@@ -462,6 +462,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
     }
 
     const terminalEvidence: PaperCycleIntentTerminalEvidence[] = []
+    let unsuccessfulIntentFound = false
     const hasFilledIntent = paperCycleHasFilledIntent(
       preparedIntents.flatMap((prepared) => (prepared.stored === undefined ? [] : [prepared.stored.intent])),
       facts.reconciliation.brokerState.orders,
@@ -492,24 +493,12 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
             ...(latest === undefined ? {} : { latestMutationAt: latest.occurredAt }),
           })
           if (record.intent.terminalOutcome !== TerminalOutcome.Filled) {
+            unsuccessfulIntentFound = true
             yield* dependencies.restrictAuthority(
               `bound PAPER cycle ${cycle.identity.cycleId}`,
               `intent ${prepared.intent.intentId} ended ${record.intent.terminalOutcome ?? 'without outcome'}`,
             )
-            const recoveryDeadline =
-              input.mutationPhase === 'CLOSE' ? input.paperEpisodeExpiresAt : input.paperEpisodeCutoffAt
-            if (
-              (hasFilledIntent || (input.mutationPhase === 'CLOSE' && hasOpenPosition)) &&
-              recoveryDeadline !== undefined &&
-              facts.evaluatedAt < recoveryDeadline
-            ) {
-              return { _tag: 'Wait', observedAt: facts.evaluatedAt }
-            }
-            return {
-              _tag: 'Block',
-              reason: CycleTerminalReason.Risk,
-              observedAt: facts.evaluatedAt,
-            }
+            continue
           }
           break
         case 'Pending':
@@ -579,6 +568,23 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
             submitExpiresAt,
           }
         }
+      }
+    }
+
+    if (unsuccessfulIntentFound) {
+      const recoveryDeadline =
+        input.mutationPhase === 'CLOSE' ? input.paperEpisodeExpiresAt : input.paperEpisodeCutoffAt
+      if (
+        (hasFilledIntent || (input.mutationPhase === 'CLOSE' && hasOpenPosition)) &&
+        recoveryDeadline !== undefined &&
+        facts.evaluatedAt < recoveryDeadline
+      ) {
+        return { _tag: 'Wait', observedAt: facts.evaluatedAt }
+      }
+      return {
+        _tag: 'Block',
+        reason: CycleTerminalReason.Risk,
+        observedAt: facts.evaluatedAt,
       }
     }
 

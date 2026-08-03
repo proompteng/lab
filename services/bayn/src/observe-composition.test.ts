@@ -566,7 +566,32 @@ const reconciliationResultAt = (
   const result = reconciliationResult(generationHash, Authority.Paper, positions, orders)
   const authority = result.riskContext.authority
   if (authority === null) throw new Error('post-cutoff reconciliation fixture requires PAPER authority')
-  const exact = { ...result.report.reconciliation, reconciledAt: observedAt }
+  const account = { ...result.brokerState.account, observedAt }
+  const stateHash = Result.getOrThrow(
+    reconciledStateHash({
+      account,
+      positions,
+      positionsObservedAt: observedAt,
+      orders,
+      ordersObservedAt: observedAt,
+      accountingHash,
+    }),
+  )
+  const material = {
+    ...result.report.reconciliation,
+    expectedHash: stateHash,
+    observedHash: stateHash,
+    reconciledAt: observedAt,
+  }
+  const reconciliationId = canonicalHashV1({
+    schemaVersion: 'bayn.paper-reconciliation-id.v1',
+    material,
+  })
+  const exact = {
+    ...material,
+    reconciliationId,
+    contentHash: canonicalHashV1({ ...material, reconciliationId }),
+  }
   return {
     report: {
       ...result.report,
@@ -574,6 +599,7 @@ const reconciliationResultAt = (
     },
     brokerState: {
       ...result.brokerState,
+      account,
       positionsObservedAt: observedAt,
       ordersObservedAt: observedAt,
       reconciliation: exact,
@@ -2196,6 +2222,146 @@ describe('OBSERVE runtime composition', () => {
     )
 
     expect(step).toEqual({ _tag: 'Wait', observedAt })
+    expect(restrictions).toHaveLength(1)
+  })
+
+  test('continues to an unsubmitted later close intent after an earlier close rejection', async () => {
+    const fixture = await paperLifecycleFixture(
+      (policy) => ({
+        ...policy,
+        maxBrokerStateAgeMs: 3_600_000,
+        maxMarketDataAgeMs: 3_600_000,
+      }),
+      partialFillDecision,
+    )
+    const observedAt = new Date(Date.parse(fixture.document.submissionCutoffAt) + 1_000).toISOString()
+    const closeExpiresAt = new Date(Date.parse(observedAt) + 60_000).toISOString()
+    const positions = fixture.intents.map((intent) => ({
+      schemaVersion: 'bayn.paper-position.v1' as const,
+      accountId,
+      symbol: intent.symbol,
+      quantityMicros: '1000000',
+      averageEntryPriceMicros: '100000000',
+      marketPriceMicros: '100000000',
+      marketValueMicros: '100000000',
+      unrealizedPnlMicros: '0',
+      observedAt,
+    }))
+    const currentReconciliation = reconciliationResultAt(observedAt, 0, 0, positions)
+    const close = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(observedAt))
+        return yield* buildClosingPaperCycleDecision(
+          fixture.input,
+          fixture.preparation,
+          fixture.policy,
+          fixture.boundCycle,
+          fixture.document,
+          Effect.succeed(currentReconciliation),
+          closeExpiresAt,
+        )
+      }).pipe(
+        Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+        Effect.provideService(MarketData, marketData([])),
+        Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
+        Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
+        Effect.provideService(ValuationStore, {} as ValuationStoreShape),
+        Effect.provideService(ReconciliationStore, {} as ReconciliationStoreShape),
+        Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
+        Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
+        Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+    const closeIntents = await Promise.all(
+      close.targetPlan.intentTargets.map(async (target, index) => {
+        const risk = close.deltaRisk[index]
+        if (risk === undefined) throw new Error('PAPER close fixture risk binding is missing')
+        return Effect.runPromise(
+          planPaperIntent(
+            {
+              schemaVersion: 'bayn.paper-intent-plan.v1',
+              ...target,
+              notionalLimitMicros: risk.notionalLimitMicros,
+              createdAt: close.createdAt,
+            },
+            {
+              authority: {
+                schemaVersion: 'bayn.paper-authority.v1',
+                generationHash,
+                maximum: Authority.Paper,
+                effective: Authority.Paper,
+                kill: KillState.Clear,
+                version: 1,
+                updatedAt: close.createdAt,
+              },
+            },
+          ),
+        )
+      }),
+    )
+    const firstIntent = closeIntents[0]
+    const secondIntent = closeIntents[1]
+    if (firstIntent === undefined || secondIntent === undefined) {
+      return expect.unreachable('multi-symbol close fixture requires two intents')
+    }
+    expect(close.orderedIntentIds).toHaveLength(2)
+
+    const rejected: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '9'.repeat(64),
+      mutationId: 'a'.repeat(64),
+      intentId: firstIntent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitRejected,
+      requestHash: 'b'.repeat(64),
+      consistencyDelayMs: 1_000,
+      requestId: 'multi-symbol-close-rejected-request',
+      responseStatus: 422,
+      responseContentHash: 'c'.repeat(64),
+      occurredAt: observedAt,
+    }
+    const records = new Map<string, StoredIntent>([
+      [firstIntent.intentId, storedIntent(firstIntent, IntentState.Terminal, observedAt, TerminalOutcome.Rejected)],
+      [secondIntent.intentId, storedIntent(secondIntent, IntentState.Planned, close.createdAt)],
+    ])
+    const latestSubmits = new Map<string, MutationEvent | undefined>([
+      [firstIntent.intentId, rejected],
+      [secondIntent.intentId, undefined],
+    ])
+    const restrictions: string[] = []
+    const step = await prepareStoredPaperStep(
+      fixture,
+      records.get(firstIntent.intentId) as StoredIntent,
+      rejected,
+      observedAt,
+      0,
+      (reason) => restrictions.push(reason),
+      {
+        ...fixture.input,
+        mutationPhase: 'CLOSE',
+        paperEpisodeCutoffAt: fixture.document.submissionCutoffAt,
+        paperEpisodeExpiresAt: closeExpiresAt,
+      },
+      undefined,
+      true,
+      fixture.policy,
+      fixture.preparation,
+      records,
+      latestSubmits,
+      [],
+      close,
+      positions,
+    )
+
+    expect(step).toMatchObject({
+      _tag: 'Execute',
+      action: 'SUBMIT',
+      intentId: secondIntent.intentId,
+      observedAt,
+      submitExpiresAt: closeExpiresAt,
+    })
     expect(restrictions).toHaveLength(1)
   })
 
