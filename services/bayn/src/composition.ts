@@ -11,6 +11,7 @@ import {
   Redacted,
   Ref,
   Result,
+  Schedule,
   Schema,
   Scope,
   Stdio,
@@ -623,15 +624,18 @@ const restrictPaperAtExpiry = (
     const remainingMs = Date.parse(expiresAt) - Date.parse(observedAt)
     if (remainingMs > 0) yield* Effect.sleep(Duration.millis(remainingMs))
     yield* restrictMutationAuthority('PAPER activation lease', 'immutable activation request expired').pipe(
-      Effect.matchEffect({
-        onFailure: (cause) =>
-          Effect.logError('Bayn PAPER activation expiry restriction failed').pipe(
-            Effect.annotateLogs({ reason: cause instanceof Error ? cause.message : String(cause) }),
-          ),
-        onSuccess: () => Effect.void,
-      }),
       Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
       Effect.provideService(WriterFence, writerFence),
+      Effect.retry({
+        times: 4,
+        schedule: Schedule.spaced(Duration.seconds(1)),
+      }),
+      Effect.tapError((cause) =>
+        Effect.logError('Bayn PAPER activation expiry restriction exhausted retries').pipe(
+          Effect.annotateLogs({ reason: cause instanceof Error ? cause.message : String(cause) }),
+        ),
+      ),
+      Effect.orDie,
     )
   })
 
@@ -644,11 +648,11 @@ const makeClosedCycleReceiptEmitter =
     sql: PgClient.PgClient,
     authorityGenerationHash: string,
     receiptStore: ForwardPerformanceReceiptStoreShape,
-  ): ((cycleId: string | undefined, observedAt: string) => Effect.Effect<void>) =>
+  ): ((cycleId: string | undefined, observedAt: string) => Effect.Effect<boolean>) =>
   (cycleId, observedAt) =>
     Effect.gen(function* () {
       const existing = yield* receiptStore.read(authorityGenerationHash)
-      if (Option.isSome(existing)) return
+      if (Option.isSome(existing)) return true
       const receipt = yield* Effect.scoped(
         runForwardPerformance(config, undefined, { authorityGenerationHash }).pipe(
           Effect.provideService(PgClient.PgClient, sql),
@@ -683,20 +687,20 @@ const makeClosedCycleReceiptEmitter =
             openPositionCount: receipt.reconciliationProof.openPositionCount,
           }),
         )
-        return
+        return false
       }
       if (receipt.profitability === 'PROFITABLE' && netRealizedPnl <= 0n) {
         yield* Effect.logError('Bayn forward-performance receipt rejected an unsupported positive claim').pipe(
           Effect.annotateLogs({ service: 'bayn', cycleId, receiptHash: receipt.receiptHash }),
         )
-        return
+        return false
       }
       const receiptCycleId = cycleId ?? receipt.window.lastCycleId
       if (receiptCycleId === null || receiptCycleId === undefined) {
         yield* Effect.logWarning(
           'Bayn forward-performance receipt withheld: no closed cycle identity was observed',
         ).pipe(Effect.annotateLogs({ service: 'bayn', observedAt }))
-        return
+        return false
       }
       const envelope = yield* Effect.fromResult(
         makeForwardPerformanceReceiptEnvelope({
@@ -719,30 +723,46 @@ const makeClosedCycleReceiptEmitter =
           netRealizedPnlAfterCostsMicros: stored.receipt.totals.netRealizedPnlAfterCostsMicros,
         }),
       )
+      return true
     }).pipe(
       Effect.catch((cause) =>
-        Effect.logError('Bayn forward-performance receipt emission failed').pipe(
-          Effect.annotateLogs({
-            service: 'bayn',
-            cycleId,
-            observedAt,
-            reason: cause instanceof Error ? cause.message : String(cause),
-          }),
-        ),
+        Effect.logError('Bayn forward-performance receipt emission failed')
+          .pipe(
+            Effect.annotateLogs({
+              service: 'bayn',
+              cycleId,
+              observedAt,
+              reason: cause instanceof Error ? cause.message : String(cause),
+            }),
+          )
+          .pipe(Effect.as(false)),
       ),
     )
 
 const retryClosedCycleReceipts = (
-  emit: (cycleId: string | undefined, observedAt: string) => Effect.Effect<void>,
+  emit: (cycleId: string | undefined, observedAt: string) => Effect.Effect<boolean>,
   cutoffAt: string,
   intervalMs: number,
-): Effect.Effect<never> =>
-  Effect.forever(
-    currentUtcInstant.pipe(
-      Effect.flatMap((observedAt) => (observedAt >= cutoffAt ? emit(undefined, observedAt) : Effect.void)),
-      Effect.andThen(Effect.sleep(Duration.millis(Math.max(1_000, intervalMs)))),
-    ),
-  )
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const interval = Math.max(1_000, intervalMs)
+    const maximumAttempts = 16
+    let attempts = 0
+    while (attempts < maximumAttempts) {
+      const observedAt = yield* currentUtcInstant
+      const untilCutoff = Date.parse(cutoffAt) - Date.parse(observedAt)
+      if (untilCutoff > 0) {
+        yield* Effect.sleep(Duration.millis(Math.min(interval, untilCutoff)))
+        continue
+      }
+      attempts += 1
+      if (yield* emit(undefined, observedAt)) return
+      if (attempts < maximumAttempts) yield* Effect.sleep(Duration.millis(interval))
+    }
+    yield* Effect.logWarning('Bayn forward-performance receipt retry window exhausted').pipe(
+      Effect.annotateLogs({ service: 'bayn', authorityGenerationCutoffAt: cutoffAt, attempts: maximumAttempts }),
+    )
+  })
 
 const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
   Effect.gen(function* () {
@@ -933,7 +953,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                   runtimeServices.forwardPerformanceReceiptStore,
                                 )
                                 const onClosedCycle = (cycleId: string, observedAt: string) =>
-                                  emitClosedCycleReceipt(cycleId, observedAt)
+                                  emitClosedCycleReceipt(cycleId, observedAt).pipe(Effect.asVoid)
                                 return makeMutation(
                                   runtimeServices.session,
                                   authority,

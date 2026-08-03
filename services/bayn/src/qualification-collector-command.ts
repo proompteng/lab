@@ -651,18 +651,19 @@ export const executeQualificationAttempt = (
       }
     }
 
-    const opened = yield* input.dependencies.evidenceStore
-      .openQualification({
+    const timeoutMs = input.plan.config.operationTimeoutMs
+    const opened = yield* qualificationOperationWithinDeadline(
+      input.dependencies.evidenceStore.openQualification({
         lock: candidate.lock,
         inputManifest: input.inspection.manifest,
         parameters: input.candidate.application.definition.parameters,
         provenance: input.candidate.provenance,
-      })
-      .pipe(
-        Effect.mapError((cause) =>
-          collectorError('execution', 'qualification-open-failed', 'qualification lock could not be acquired', cause),
-        ),
-      )
+      }),
+      timeoutMs,
+      'qualification-open',
+      (cause) =>
+        collectorError('execution', 'qualification-open-failed', 'qualification lock could not be acquired', cause),
+    )
     const path = yield* Effect.fromResult(decideQualificationPath(candidate.lock, opened)).pipe(
       Effect.mapError((cause) =>
         collectorError(
@@ -680,7 +681,6 @@ export const executeQualificationAttempt = (
         'qualification became terminal while the exact attempt was being acquired',
       )
     }
-    const timeoutMs = input.plan.config.operationTimeoutMs
     const snapshot = yield* qualificationOperationWithinDeadline(
       input.dependencies.marketData.load,
       timeoutMs,

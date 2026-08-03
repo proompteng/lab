@@ -29,6 +29,7 @@ import {
   planPaperIntent,
   validateCommitIdentity,
   validateCurrentAuthority,
+  validateCurrentClosingAuthority,
   type AuthorityBindingRow,
   type IntentPlan,
   type PreparedCommit,
@@ -371,6 +372,17 @@ describe('pure intent commit decisions', () => {
       'AuthorityGenerationHistoryMismatch',
       'AuthorityGenerationHistoryMismatch',
     ])
+  })
+
+  test('permits a sell-only close intent after the kill restricts effective authority', () => {
+    const closingIntent = { ...paperIntent, side: OrderSide.Sell }
+
+    expect(
+      Result.isSuccess(
+        validateCurrentClosingAuthority([authorityRow({ kill_state: KillState.Active })], closingIntent),
+      ),
+    ).toBe(true)
+    expect(Result.isFailure(validateCurrentClosingAuthority([authorityRow()], paperIntent))).toBe(true)
   })
 
   test('strictly decodes database rows and rejects excess or malformed fields', () => {

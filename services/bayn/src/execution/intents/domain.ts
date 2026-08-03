@@ -697,7 +697,7 @@ export const validateCurrentClosingAuthority = (
   if (authority.maximum !== Authority.Paper) {
     return Result.fail({ _tag: 'MaximumAuthorityNotPaper', observed: authority.maximum })
   }
-  if (authority.kill_state !== KillState.Clear) {
+  if (authority.kill_state !== KillState.Clear && authority.kill_state !== KillState.Active) {
     return Result.fail({ _tag: 'AuthorityKillNotClear', observed: authority.kill_state })
   }
   if (authority.generation_hash !== intent.authorityGenerationHash) {
