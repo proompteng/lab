@@ -192,7 +192,9 @@ export const validatePersistenceEvaluation = (
       )
     }
 
-    const decisionEvents = evaluation.events.filter((event) => event.kind === 'decision')
+    const decisionEvents = evaluation.events.filter(
+      (event) => event.kind === 'decision' && event.terminalClose !== true,
+    )
     if (evaluation.signalDecisions.length !== decisionEvents.length) {
       return yield* persistenceMismatch(
         'signal-decisions',
