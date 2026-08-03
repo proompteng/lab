@@ -1406,6 +1406,8 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
         preregistration.preregistration.path,
         activeCandidate.sourceManifest.path,
         candidateDevelopmentTrialLedgerPath,
+        'services/bayn/src/candidate-development-local/command.ts',
+        'services/bayn/src/qualification-collector-command.ts',
       ],
       preregistration,
       preregistrationBytes: staticGit.preregistrationBytes,

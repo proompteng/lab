@@ -452,11 +452,20 @@ const prepareCandidateDevelopmentLocalAttempt = (
       try: () => receiptPathFor(repositoryRoot, source.sourceManifest.candidateOrdinal, sourceGit),
       catch: (cause) => localError('RECEIPT_RESERVATION_FAILED', 'candidate receipt path is unavailable', cause),
     })
-    if (sourceRevision !== preregistration.preregistration.sourceRevision) {
-      return yield* Effect.fail(
-        localError('SOURCE_BINDING_INVALID', 'candidate checkout is not the exact preregistered source revision'),
-      )
-    }
+    yield* Effect.tryPromise({
+      try: (signal) =>
+        sourceGit.text(
+          repositoryRoot,
+          ['merge-base', '--is-ancestor', preregistration.preregistration.sourceRevision, sourceRevision],
+          signal,
+        ),
+      catch: (cause) =>
+        localError(
+          'SOURCE_BINDING_INVALID',
+          'candidate checkout is not a descendant of the preregistered source revision',
+          cause,
+        ),
+    })
     const sourceApplication = yield* loadReviewedStrategyApplication(canonicalArgs.modulePath, sourceRevision).pipe(
       Effect.mapError((cause) =>
         localError('SOURCE_BINDING_INVALID', 'reviewed candidate application could not be loaded', cause),
