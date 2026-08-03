@@ -139,6 +139,12 @@ const gitBytes = (repositoryPath: string, args: readonly string[], signal?: Abor
 
 const sha256Bytes = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
 
+export const sourceManifestBindingMatches = (
+  binding: { readonly blobOid: string; readonly sha256: string },
+  observedBlobOid: string,
+  observedBytes: Uint8Array,
+): boolean => binding.blobOid === observedBlobOid && binding.sha256 === sha256Bytes(observedBytes)
+
 const decodePreregistration = Schema.decodeUnknownResult(
   CandidateDevelopmentNextPreregistrationDocumentSchema,
   strictParseOptions,
@@ -1292,6 +1298,8 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
           preregistrationBlobOid,
           moduleBlobOid,
           moduleBytes,
+          sourceManifestBlobOid,
+          sourceManifestBytes,
         ] = await Promise.all([
           gitText(repositoryPath, ['rev-parse', '--show-toplevel'], signal).then(realpath),
           gitText(repositoryPath, ['rev-parse', 'HEAD'], signal),
@@ -1322,6 +1330,16 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
             ['cat-file', 'blob', `${qualificationRuntime.sourceSha}:${preregistration.modulePath}`],
             signal,
           ),
+          gitText(
+            repositoryPath,
+            ['rev-parse', `${qualificationRuntime.sourceSha}:${activeCandidate.sourceManifest.path}`],
+            signal,
+          ),
+          gitBytes(
+            repositoryPath,
+            ['cat-file', 'blob', `${qualificationRuntime.sourceSha}:${activeCandidate.sourceManifest.path}`],
+            signal,
+          ),
         ])
         return {
           topLevel,
@@ -1333,6 +1351,8 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
           preregistrationBlobOid,
           moduleBlobOid,
           moduleBytes,
+          sourceManifestBlobOid,
+          sourceManifestBytes,
         }
       },
       catch: (cause) =>
@@ -1371,6 +1391,19 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
         'repository',
         'preregistration-source-mismatch',
         'preregistration document or candidate module differs from the reviewed immutable source',
+      )
+    }
+    if (
+      !sourceManifestBindingMatches(
+        activeCandidate.sourceManifest,
+        staticGit.sourceManifestBlobOid,
+        staticGit.sourceManifestBytes,
+      )
+    ) {
+      return yield* collectorError(
+        'repository',
+        'source-manifest-mismatch',
+        'source manifest differs from the active candidate registration',
       )
     }
     const candidateSource = yield* verifyQualificationCandidateSource({

@@ -17,6 +17,7 @@ import {
   qualificationAttemptState,
   QualificationCollectorError,
   runQualificationCollector,
+  sourceManifestBindingMatches,
   verifyQualificationCandidateSource,
   type QualificationCollectorExecutionReceipt,
   type QualificationCollectorPrelockEvidence,
@@ -339,6 +340,17 @@ describe('qualification collector boundaries', () => {
   test('reports missing wiring without exposing secret values', () => {
     expect(missingQualificationWiring({})).toContain('GITHUB_TOKEN')
     expect(missingQualificationWiring({ GITHUB_TOKEN: 'secret' })).not.toContain('GITHUB_TOKEN')
+  })
+
+  test('requires the scheduled source manifest to match its registered blob and bytes', () => {
+    const bytes = Buffer.from('{"candidateOrdinal":21}\n')
+    const binding = {
+      blobOid: 'a'.repeat(40),
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    }
+    expect(sourceManifestBindingMatches(binding, binding.blobOid, bytes)).toBe(true)
+    expect(sourceManifestBindingMatches(binding, 'b'.repeat(40), bytes)).toBe(false)
+    expect(sourceManifestBindingMatches(binding, binding.blobOid, Buffer.from('changed\n'))).toBe(false)
   })
 
   test('rejects malformed or source-mismatched preregistration bytes before any evaluation', async () => {
