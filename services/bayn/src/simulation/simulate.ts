@@ -3,7 +3,8 @@ import { Chunk, pipe, Result } from 'effect'
 import { ContractVersion, type SimulationProtocol } from '../types'
 import type { FeeEvent, FillEvent, IsoDate } from '../types'
 import { calculateSessionFees } from '../execution-model'
-import { accrueSessionCash, makeCashChange, makeFeeEvent, parseMicros } from './evidence'
+import { accrueSessionCash, makeCashChange, makeDecision, makeFeeEvent, parseMicros, recordDecision } from './evidence'
+import { requiredSession } from './inputs'
 import { calculateExactPerformanceMetrics } from './metrics'
 import type { AlignedSession, SimulationDecision, SimulationFailure, SimulationInput, SimulationTarget } from './model'
 import { rebalanceSession } from './rebalance'
@@ -26,6 +27,18 @@ const hasOpenPosition = (state: SimulationState): boolean =>
 
 const isFlatTarget = (target: SimulationTarget): boolean =>
   Object.values(target.weights).every((weight) => weight === 0)
+
+const recordSkippedTargetDecision = (
+  state: SimulationState,
+  session: AlignedSession,
+  target: SimulationTarget,
+  input: SimulationInput,
+): Result.Result<SimulationState, SimulationFailure> =>
+  pipe(
+    requiredSession(input.sessions, target.signalIndex, 'planning'),
+    Result.flatMap((signalSession) => makeDecision(input.runId, target, signalSession.date, session.date)),
+    Result.flatMap((decision) => recordDecision(state, target, decision, input.recordEvents)),
+  )
 
 const consolidateSessionFees = (
   state: SimulationState,
@@ -150,6 +163,11 @@ const runSession = (
   const target = replaceScheduledTarget ? terminalTargetFor(scheduledTarget) : scheduledTarget
   return pipe(
     accrueSessionCash(state, session, input),
+    Result.flatMap((accrued) =>
+      replaceScheduledTarget && scheduledTarget !== undefined
+        ? recordSkippedTargetDecision(accrued, session, scheduledTarget, input)
+        : Result.succeed(accrued),
+    ),
     Result.flatMap((accrued) => {
       return target === undefined ? Result.succeed(accrued) : rebalanceSession(accrued, session, target, opening, input)
     }),

@@ -153,7 +153,7 @@ export const replay = (
       }
     }
 
-    const runTarget = (target: Target): ReferenceComputation<void> => {
+    const runTarget = (target: Target, execute = true): ReferenceComputation<void> => {
       const terminalClose = target.terminalClose === true
       const signalSession = sessions[target.signalIndex]
       if (signalSession === undefined) {
@@ -187,6 +187,7 @@ export const replay = (
           decisions.push({ ...plan, decisionId: decision.id, executionDate: decision.executionDate })
         }
       }
+      if (!execute) return Result.succeed(undefined)
 
       const planPricesResult = replayPrices(signalSession, protocol, (bar) => bar.close)
       if (Result.isFailure(planPricesResult)) return Result.fail(planPricesResult.failure)
@@ -432,6 +433,10 @@ export const replay = (
     })
     const target = replaceScheduledTarget ? terminalTargetFor(scheduledTarget) : scheduledTarget
 
+    if (replaceScheduledTarget && scheduledTarget !== undefined) {
+      const scheduledResult = runTarget(scheduledTarget, false)
+      if (Result.isFailure(scheduledResult)) return Result.fail(scheduledResult.failure)
+    }
     if (target !== undefined) {
       const scheduledResult = runTarget(target)
       if (Result.isFailure(scheduledResult)) return Result.fail(scheduledResult.failure)

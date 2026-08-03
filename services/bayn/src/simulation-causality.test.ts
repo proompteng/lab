@@ -180,5 +180,6 @@ describe('live-causal simulation', () => {
     const finalOrders = result.success.simulation?.orders.filter((order) => order.sessionDate === '2026-01-06') ?? []
     expect(finalOrders.map(({ symbol, side }) => ({ symbol, side }))).toEqual([{ symbol: 'AAA', side: 'sell' }])
     expect(result.success.events.filter((event) => event.kind === 'decision' && event.terminalClose)).toHaveLength(1)
+    expect(result.success.signalDecisions.map((decision) => decision.signalDate)).toEqual(['2026-01-02', '2026-01-05'])
   })
 })
