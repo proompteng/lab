@@ -148,15 +148,17 @@ const gitText = async (cwd: string, args: readonly string[]): Promise<string> =>
   return stdout.trim()
 }
 
-const sourceFixture = async (malformed = false) => {
+const sourceFixture = async (malformed = false, historicalModule = false) => {
   const repositoryPath = await mkdtemp(join(tmpdir(), 'bayn-qualification-source-'))
   const modulePath = 'services/bayn/src/strategy/candidate-21.ts'
+  const historicalModulePath = 'services/bayn/src/strategy/old-candidate.ts'
   const preregistrationPath = 'services/bayn/candidates/ordinal-21-preregistration.json'
   const moduleBytes = Buffer.from("export const strategyDefinition = { name: 'candidate-21' }\n")
   const moduleSha256 = createHash('sha256').update(moduleBytes).digest('hex')
   await gitText(repositoryPath, ['init', '-b', 'main'])
   await gitText(repositoryPath, ['config', 'user.email', 'qualification-test@example.invalid'])
   await gitText(repositoryPath, ['config', 'user.name', 'Qualification Test'])
+  await gitText(repositoryPath, ['config', 'commit.gpgsign', 'false'])
   const preregistration: CandidateDevelopmentNextPreregistration = {
     schemaVersion: 'bayn.candidate-development-next-preregistration.v1',
     candidateOrdinal: 21,
@@ -177,6 +179,12 @@ const sourceFixture = async (malformed = false) => {
       path: preregistrationPath,
       blobOid: '',
     },
+  }
+  if (historicalModule) {
+    await mkdir(join(repositoryPath, dirname(historicalModulePath)), { recursive: true })
+    await writeFile(join(repositoryPath, historicalModulePath), moduleBytes)
+    await gitText(repositoryPath, ['add', historicalModulePath])
+    await gitText(repositoryPath, ['commit', '-m', 'add historical module blob'])
   }
   await mkdir(join(repositoryPath, dirname(preregistrationPath)), { recursive: true })
   const { preregistration: _registrationMetadata, ...document } = preregistration
@@ -281,6 +289,16 @@ describe('qualification collector boundaries', () => {
       expect(failure).toMatchObject({ code: 'candidate-source-mismatch' })
     } finally {
       await valid.cleanup()
+    }
+  })
+
+  test('rejects a candidate module blob reachable from preregistration parent ancestry', async () => {
+    const reused = await sourceFixture(false, true)
+    try {
+      const failure = await Effect.runPromise(Effect.flip(verifyQualificationCandidateSource(reused.input)))
+      expect(failure).toMatchObject({ code: 'candidate-module-not-novel' })
+    } finally {
+      await reused.cleanup()
     }
   })
 

@@ -8,6 +8,11 @@ import process from 'node:process'
 import { NodeRuntime } from '@effect/platform-node'
 import { Cause, Data, Effect, Exit, Result } from 'effect'
 
+import {
+  frozenCandidateDevelopmentTrialHistory,
+  type CandidateDevelopmentNextPreregistration,
+} from '../candidate-development-calendar'
+import { validateCandidateDevelopmentTrialHistory } from '../candidate-development-trials/validation'
 import { makeRuntimeProvenanceResult, makeStrategyProtocolHash, type RuntimeProvenance } from '../contracts'
 import { canonicalHashV1Result } from '../hash'
 import { hashParameters } from '../protocol'
@@ -224,6 +229,46 @@ const verifySourceManifest = (
   return Result.succeed(decoded.success)
 }
 
+export const verifyCandidateDevelopmentSourceManifest = (
+  sourceManifest: CandidateDevelopmentSourceManifest,
+  preregistration: CandidateDevelopmentNextPreregistration,
+): Result.Result<void, CandidateDevelopmentLocalError> => {
+  const mismatched =
+    sourceManifest.candidateOrdinal !== preregistration.candidateOrdinal ||
+    sourceManifest.priorTrialCount !== preregistration.priorTrialCount ||
+    sourceManifest.trialHistoryHash !== preregistration.priorTrialsHash ||
+    sourceManifest.strategyProtocolHash !== preregistration.strategyProtocolHash ||
+    sourceManifest.modulePath !== preregistration.modulePath ||
+    sourceManifest.moduleSha256 !== preregistration.moduleSha256 ||
+    sourceManifest.marketData.snapshotId !== preregistration.marketData.snapshotId ||
+    sourceManifest.marketData.inputManifestHash !== preregistration.marketData.inputManifestHash ||
+    sourceManifest.marketData.boundedContentHash !== preregistration.marketData.boundedContentHash
+  return mismatched
+    ? Result.fail(
+        localError(
+          'SOURCE_BINDING_INVALID',
+          'candidate source manifest does not match the frozen preregistered trial successor',
+        ),
+      )
+    : Result.succeed(undefined)
+}
+
+const loadFrozenCandidateDevelopmentPreregistration = (): Result.Result<
+  CandidateDevelopmentNextPreregistration,
+  CandidateDevelopmentLocalError
+> => {
+  const history = validateCandidateDevelopmentTrialHistory(frozenCandidateDevelopmentTrialHistory)
+  if (Result.isFailure(history)) {
+    return Result.fail(
+      localError('SOURCE_BINDING_INVALID', 'frozen candidate development trial history is invalid', history.failure),
+    )
+  }
+  const preregistration = frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration
+  return preregistration === null
+    ? Result.fail(localError('MODULE_INVALID', 'no preregistered candidate development successor is available'))
+    : Result.succeed(preregistration)
+}
+
 const readReviewedSource = async (
   repositoryRoot: string,
   modulePath: string,
@@ -269,6 +314,7 @@ const prepareCandidateDevelopmentLocalAttempt = (
   sourceGit: CandidateDevelopmentSourceGit = candidateDevelopmentSourceGit,
 ): Effect.Effect<PreparedCandidateDevelopmentLocalAttempt, CandidateDevelopmentLocalError> =>
   Effect.gen(function* () {
+    const preregistration = yield* Effect.fromResult(loadFrozenCandidateDevelopmentPreregistration())
     const repositoryRoot = yield* Effect.tryPromise({
       try: async (signal) => realpath(await sourceGit.text(process.cwd(), ['rev-parse', '--show-toplevel'], signal)),
       catch: (cause) => localError('SOURCE_BINDING_INVALID', 'candidate repository root is unavailable', cause),
@@ -338,6 +384,8 @@ const prepareCandidateDevelopmentLocalAttempt = (
         if (Result.isFailure(manifestValue)) throw manifestValue.failure
         const manifest = verifySourceManifest(manifestValue.success, modulePath, sha256Bytes(reviewed.moduleBytes))
         if (Result.isFailure(manifest)) throw manifest.failure
+        const lineage = verifyCandidateDevelopmentSourceManifest(manifest.success, preregistration)
+        if (Result.isFailure(lineage)) throw lineage.failure
         if (manifest.success.moduleFormat !== 'typescript-strategy-definition-v1') {
           throw new Error('candidate module format is unsupported')
         }

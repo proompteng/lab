@@ -145,11 +145,6 @@ const gitBytes = (repositoryPath: string, args: readonly string[], signal?: Abor
     )
   })
 
-const isGitMissingObject = (cause: unknown): boolean => {
-  if (typeof cause !== 'object' || cause === null || !('code' in cause)) return false
-  return cause.code === 128
-}
-
 const sha256Bytes = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
 
 const decodePreregistration = Schema.decodeUnknownResult(
@@ -178,13 +173,16 @@ const verifyCandidateSourceNovelty = (
 ): Effect.Effect<void, QualificationCollectorError> =>
   Effect.tryPromise({
     try: async (signal) => {
-      const preregisteredModule = `${input.preregistration.preregistration.sourceRevision}:${input.preregistration.modulePath}`
-      try {
-        await gitText(input.repositoryPath, ['rev-parse', '--verify', preregisteredModule], signal)
-        throw new Error('candidate module existed at preregistration')
-      } catch (cause) {
-        if (cause instanceof Error && cause.message === 'candidate module existed at preregistration') throw cause
-        if (!isGitMissingObject(cause)) throw cause
+      const reachableObjects = await gitText(
+        input.repositoryPath,
+        ['rev-list', '--objects', `${input.preregistration.preregistration.sourceRevision}^`],
+        signal,
+      )
+      const moduleWasPreviouslyReachable = reachableObjects
+        .split('\n')
+        .some((line) => line.split(/\s+/, 1)[0] === input.moduleBlobOid)
+      if (moduleWasPreviouslyReachable) {
+        throw new Error('candidate module existed in preregistration parent ancestry')
       }
     },
     catch: (cause) =>

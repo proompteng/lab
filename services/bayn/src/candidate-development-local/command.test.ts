@@ -8,6 +8,7 @@ import { Effect, Exit, Result } from 'effect'
 import { makeStrategyProtocolHash } from '../contracts'
 import { fixtureSnapshot, fixtureRuntime } from '../app-test-support'
 import { fixtureProtocol, makeTestDefinition } from '../test-fixtures'
+import type { CandidateDevelopmentNextPreregistration } from '../candidate-development-calendar'
 import {
   candidateDevelopmentTerminalStatus,
   evaluateCandidateDevelopmentDefinition,
@@ -15,6 +16,7 @@ import {
   reserveCandidateDevelopmentLocalReceipt,
   runCandidateDevelopmentLocally,
   verifyCandidateDevelopmentLocalSourceTree,
+  verifyCandidateDevelopmentSourceManifest,
   type CandidateDevelopmentLocalAttemptPort,
   type CandidateDevelopmentLocalDependencies,
   type PreparedCandidateDevelopmentLocalAttempt,
@@ -87,6 +89,28 @@ const source = successOf(
   }),
 )
 
+const expectedPreregistration: CandidateDevelopmentNextPreregistration = {
+  schemaVersion: 'bayn.candidate-development-next-preregistration.v1',
+  candidateOrdinal: sourceManifest.candidateOrdinal,
+  priorTrialCount: sourceManifest.priorTrialCount,
+  strategyProtocolHash: sourceManifest.strategyProtocolHash,
+  priorTrialsHash: sourceManifest.trialHistoryHash,
+  modulePath: sourceManifest.modulePath,
+  moduleSha256: sourceManifest.moduleSha256,
+  marketData: {
+    schemaVersion: 'bayn.candidate-development-market-data-source.v1',
+    snapshotId: sourceManifest.marketData.snapshotId,
+    finalizedSnapshotContentHash: 'a'.repeat(64),
+    inputManifestHash: sourceManifest.marketData.inputManifestHash,
+    boundedContentHash: sourceManifest.marketData.boundedContentHash,
+  },
+  preregistration: {
+    sourceRevision,
+    path: sourceManifestPath,
+    blobOid: sourceManifestBlobOid,
+  },
+}
+
 const prepared: PreparedCandidateDevelopmentLocalAttempt = {
   repositoryRoot: '/repo',
   args: {
@@ -102,6 +126,25 @@ const prepared: PreparedCandidateDevelopmentLocalAttempt = {
 }
 
 describe('candidate-development-local domain boundary', () => {
+  test('binds local source manifest identity to the exact frozen successor', () => {
+    expect(Result.isSuccess(verifyCandidateDevelopmentSourceManifest(sourceManifest, expectedPreregistration))).toBe(
+      true,
+    )
+    for (const stale of [
+      { candidateOrdinal: 1 },
+      { priorTrialCount: 0 },
+      { trialHistoryHash: '0'.repeat(64) },
+      { modulePath: 'services/bayn/src/strategy/old-candidate.ts' },
+      { moduleSha256: '0'.repeat(64) },
+    ]) {
+      expect(
+        Result.isFailure(
+          verifyCandidateDevelopmentSourceManifest({ ...sourceManifest, ...stale }, expectedPreregistration),
+        ),
+      ).toBe(true)
+    }
+  })
+
   test('requires statistical PASS alongside economic PASS before reporting PASS', () => {
     expect(candidateDevelopmentTerminalStatus('PASS', 'PASS')).toBe('PASS')
     expect(candidateDevelopmentTerminalStatus('PASS', 'REJECTED')).toBe('HOLD_REJECT')
