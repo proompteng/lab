@@ -25,6 +25,7 @@ import {
   transactionTransferQuery,
   validatePersistedRunEvidence,
   type JournalService,
+  type LedgerCreateResult,
   type LedgerPlan,
   type TigerBeetleClient,
 } from './ledger'
@@ -66,6 +67,12 @@ const materializeAccounts = (plan: LedgerPlan): Account[] => {
 
 const materializeTransfers = (plan: LedgerPlan): Transfer[] =>
   plan.transfers.map((transfer) => ({ ...transfer, timestamp: 1n }))
+
+const createResult = (outcome: LedgerCreateResult['outcome'], status: number, timestamp = 1n): LedgerCreateResult => ({
+  timestamp,
+  outcome,
+  status,
+})
 
 const journalConfig = {
   operationTimeoutMs: 1_000,
@@ -121,20 +128,20 @@ const makeLedgerClient = () => {
   const client: TigerBeetleClient = {
     createAccounts: async (batch) =>
       batch.map((account) => {
-        if (accounts.has(account.id)) return { timestamp: 1n, status: CreateAccountStatus.exists }
+        if (accounts.has(account.id)) return createResult('exists', CreateAccountStatus.exists)
         accounts.set(account.id, { ...account, timestamp: 1n })
-        return { timestamp: 1n, status: CreateAccountStatus.created }
+        return createResult('created', CreateAccountStatus.created)
       }),
     createTransfers: async (batch) =>
       batch.map((transfer) => {
-        if (transfers.has(transfer.id)) return { timestamp: 1n, status: CreateTransferStatus.exists }
+        if (transfers.has(transfer.id)) return createResult('exists', CreateTransferStatus.exists)
         const debit = accounts.get(transfer.debit_account_id)
         const credit = accounts.get(transfer.credit_account_id)
         if (debit === undefined || credit === undefined) throw new Error('transfer references an unknown account')
         accounts.set(debit.id, { ...debit, debits_posted: debit.debits_posted + transfer.amount })
         accounts.set(credit.id, { ...credit, credits_posted: credit.credits_posted + transfer.amount })
         transfers.set(transfer.id, { ...transfer, timestamp: 1n })
-        return { timestamp: 1n, status: CreateTransferStatus.created }
+        return createResult('created', CreateTransferStatus.created)
       }),
     lookupAccounts: async (ids) =>
       ids.flatMap((id) => {
@@ -187,15 +194,15 @@ describe('TigerBeetle ledger decisions', () => {
     const plan = paperPlan('a')
     const accounts = plan.accounts.slice(0, 2)
     const accountDecision = classifyAccountCreateBatch(accounts, [
-      { timestamp: 1n, status: CreateAccountStatus.exists },
-      { timestamp: 2n, status: CreateAccountStatus.created },
+      createResult('exists', CreateAccountStatus.exists),
+      createResult('created', CreateAccountStatus.created, 2n),
     ])
     expect(assertSuccess(accountDecision)).toEqual([accounts[0]])
 
     const rejectedAccount = assertFailure(
       classifyAccountCreateBatch(accounts, [
-        { timestamp: 1n, status: CreateAccountStatus.created },
-        { timestamp: 2n, status: CreateAccountStatus.exists_with_different_code },
+        createResult('created', CreateAccountStatus.created),
+        createResult('rejected', CreateAccountStatus.exists_with_different_code, 2n),
       ]),
     )
     expect(rejectedAccount).toBeInstanceOf(LedgerValidationError)
@@ -213,8 +220,8 @@ describe('TigerBeetle ledger decisions', () => {
     expect(
       assertSuccess(
         classifyTransferCreateBatch(transfers, [
-          { timestamp: 1n, status: CreateTransferStatus.created },
-          { timestamp: 2n, status: CreateTransferStatus.exists },
+          createResult('created', CreateTransferStatus.created),
+          createResult('exists', CreateTransferStatus.exists, 2n),
         ]),
       ),
     ).toEqual([transfers[1]])
@@ -423,6 +430,7 @@ describe('TigerBeetle simulation journal', () => {
       createAccounts: async (accounts) =>
         accounts.map((_, index) => ({
           timestamp: 1n,
+          outcome: index === 0 ? 'rejected' : 'created',
           status: index === 0 ? CreateAccountStatus.exists_with_different_code : CreateAccountStatus.created,
         })),
       createTransfers: async () => {
