@@ -77,7 +77,10 @@ const CandidateDevelopmentSourceManifestSchema = Schema.Struct({
   strategyProtocolHash: Sha256Schema,
   modulePath: StrictNonEmptyStringSchema,
   moduleSha256: Sha256Schema,
-  moduleFormat: Schema.Literal('typescript-strategy-definition-v1'),
+  moduleFormat: Schema.Union([
+    Schema.Literal('typescript-strategy-definition-v1'),
+    Schema.Literal('typescript-strategy-application-v1'),
+  ]),
   marketData: Schema.Struct({
     schemaVersion: Schema.Literal('bayn.candidate-development-market-data-source.v2'),
     snapshotId: Sha256Schema,

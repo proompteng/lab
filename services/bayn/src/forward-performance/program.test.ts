@@ -751,7 +751,7 @@ describe('forward performance read program', () => {
       observation.statements.some((statement) =>
         statement.includes('reconciliation.reconciled_at < next_generation.activated_at'),
       ),
-    ).toBe(false)
+    ).toBe(true)
     expect(
       observation.statements.some(
         (statement) =>

@@ -53,6 +53,7 @@ import {
   type CandidateDevelopmentRuntimeMarketDataWitness,
   type CandidateDevelopmentSourceManifest,
 } from './domain'
+import { loadReviewedStrategyApplication } from './source-module'
 
 const candidateDevelopmentEvaluatorSourcePath = 'services/bayn/src'
 
@@ -420,7 +421,10 @@ const prepareCandidateDevelopmentLocalAttempt = (
         if (Result.isFailure(manifest)) throw manifest.failure
         const lineage = verifyCandidateDevelopmentSourceManifest(manifest.success, preregistration)
         if (Result.isFailure(lineage)) throw lineage.failure
-        if (manifest.success.moduleFormat !== 'typescript-strategy-definition-v1') {
+        if (
+          manifest.success.moduleFormat !== 'typescript-strategy-definition-v1' &&
+          manifest.success.moduleFormat !== 'typescript-strategy-application-v1'
+        ) {
           throw new Error('candidate module format is unsupported')
         }
         const bound = bindCandidateDevelopmentLocalSource({
@@ -434,29 +438,9 @@ const prepareCandidateDevelopmentLocalAttempt = (
           sourceManifest: manifest.success,
         })
         if (Result.isFailure(bound)) throw bound.failure
-        const reviewedApplication =
-          application.reviewedSource === undefined
-            ? bindReviewedStrategySource(application, {
-                sourceRevision,
-                modulePath,
-                moduleSha256: bound.success.moduleSha256,
-              })
-            : application
-        const provenance = makeCandidateProvenance(reviewedApplication.definition, bound.success)
-        if (Result.isFailure(provenance)) throw provenance.failure
-        const binding = verifyCandidateBinding(
-          reviewedApplication,
-          reviewedApplication.definition,
-          bound.success,
-          manifest.success,
-          provenance.success,
-        )
-        if (Result.isFailure(binding)) throw binding.failure
         return {
-          application: reviewedApplication,
           source: bound.success,
           sourceManifest: manifest.success,
-          provenance: provenance.success,
         }
       },
       catch: (cause) =>
@@ -468,15 +452,55 @@ const prepareCandidateDevelopmentLocalAttempt = (
       try: () => receiptPathFor(repositoryRoot, source.sourceManifest.candidateOrdinal, sourceGit),
       catch: (cause) => localError('RECEIPT_RESERVATION_FAILED', 'candidate receipt path is unavailable', cause),
     })
+    if (sourceRevision !== preregistration.preregistration.sourceRevision) {
+      return yield* Effect.fail(
+        localError('SOURCE_BINDING_INVALID', 'candidate checkout is not the exact preregistered source revision'),
+      )
+    }
+    const sourceApplication = yield* loadReviewedStrategyApplication(canonicalArgs.modulePath, sourceRevision).pipe(
+      Effect.mapError((cause) =>
+        localError('SOURCE_BINDING_INVALID', 'reviewed candidate application could not be loaded', cause),
+      ),
+    )
+    if (
+      sourceApplication.definition.name !== application.definition.name ||
+      hashParameters(sourceApplication.definition.parameters) !== hashParameters(application.definition.parameters)
+    ) {
+      return yield* Effect.fail(
+        localError(
+          'SOURCE_BINDING_INVALID',
+          'reviewed candidate module does not match the registered application identity',
+        ),
+      )
+    }
+    const reviewedApplication =
+      sourceApplication.reviewedSource === undefined
+        ? bindReviewedStrategySource(sourceApplication, {
+            sourceRevision,
+            modulePath: source.source.modulePath,
+            moduleSha256: source.source.moduleSha256,
+          })
+        : sourceApplication
+    const provenance = yield* Effect.fromResult(
+      makeCandidateProvenance(reviewedApplication.definition, source.source),
+    ).pipe(Effect.mapError((cause) => cause))
+    const binding = verifyCandidateBinding(
+      reviewedApplication,
+      reviewedApplication.definition,
+      source.source,
+      source.sourceManifest,
+      provenance,
+    )
+    if (Result.isFailure(binding)) return yield* Effect.fail(binding.failure)
     return {
       repositoryRoot,
       args: canonicalArgs,
       receiptPath,
       source: source.source,
       sourceManifest: source.sourceManifest,
-      application: source.application,
-      definition: source.application.definition,
-      provenance: source.provenance,
+      application: reviewedApplication,
+      definition: reviewedApplication.definition,
+      provenance,
     }
   })
 

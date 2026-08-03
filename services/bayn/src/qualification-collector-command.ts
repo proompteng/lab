@@ -42,6 +42,7 @@ import type { QualificationAuditReport } from './audit/audit'
 import { hashParameters } from './protocol'
 import { decideQualificationPath, evaluateLockedSnapshot, qualifyEvaluation } from './startup/decisions'
 import { activeStrategyBehaviorHash, bindReviewedStrategySource } from './strategy'
+import { loadReviewedStrategyApplication } from './candidate-development-local/source-module'
 import {
   NonNegativeIntegerSchema,
   PositiveIntegerSchema,
@@ -1217,13 +1218,39 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
       moduleBlobOid: staticGit.moduleBlobOid,
       moduleBytes: staticGit.moduleBytes,
     })
-    const candidate = yield* Effect.fromResult(
-      makeQualificationCandidateRuntime(
-        activeCandidate.application,
-        qualificationRuntime,
-        candidateSource,
-        preregistration,
+    if (qualificationRuntime.sourceSha !== preregistration.preregistration.sourceRevision) {
+      return yield* collectorError(
+        'candidate',
+        'candidate-source-revision-mismatch',
+        'qualification must execute the exact preregistered source revision',
+      )
+    }
+    const sourceApplication = yield* loadReviewedStrategyApplication(
+      resolve(repositoryPath, candidateSource.modulePath),
+      qualificationRuntime.sourceSha,
+    ).pipe(
+      Effect.mapError((cause) =>
+        collectorError(
+          'candidate',
+          'candidate-application-load-failed',
+          'reviewed candidate application could not be loaded',
+          cause,
+        ),
       ),
+    )
+    if (
+      sourceApplication.definition.name !== activeCandidate.application.definition.name ||
+      hashParameters(sourceApplication.definition.parameters) !==
+        hashParameters(activeCandidate.application.definition.parameters)
+    ) {
+      return yield* collectorError(
+        'candidate',
+        'candidate-application-identity-mismatch',
+        'reviewed candidate module does not match the registered application identity',
+      )
+    }
+    const candidate = yield* Effect.fromResult(
+      makeQualificationCandidateRuntime(sourceApplication, qualificationRuntime, candidateSource, preregistration),
     )
     const candidateSourceHash = yield* Effect.fromResult(
       canonicalHashV1Result({

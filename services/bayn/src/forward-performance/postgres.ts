@@ -368,11 +368,17 @@ const generationScope = (
       return sql`EXISTS (
         SELECT 1
         FROM authority_generations AS scope_generation
+        LEFT JOIN authority_generations AS next_generation
+          ON next_generation.previous_generation_hash = scope_generation.generation_hash
         WHERE scope_generation.generation_hash = ${authorityGenerationHash}
           AND scope_generation.maximum = 'PAPER'
           AND scope_generation.account_id = ${accountId}
           AND reconciliation.account_id = scope_generation.account_id
           AND reconciliation.reconciled_at >= scope_generation.activated_at
+          AND (
+            next_generation.activated_at IS NULL
+            OR reconciliation.reconciled_at < next_generation.activated_at
+          )
       )`
     case 'snapshot':
       return sql`EXISTS (
