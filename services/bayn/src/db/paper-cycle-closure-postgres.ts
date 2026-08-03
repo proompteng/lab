@@ -47,17 +47,87 @@ const readByCycleId = (
     ),
   )
 
+const readLatestReplanByCycleId = (
+  sql: PgClient.PgClient,
+  cycleId: string,
+): Effect.Effect<Option.Option<PaperCycleClosure>, PaperCycleClosureStoreError> =>
+  sql<Record<string, unknown>>`
+    SELECT document
+    FROM autonomous_cycle_paper_close_replans
+    WHERE cycle_id = ${cycleId}
+    ORDER BY created_at DESC, content_hash COLLATE "C" DESC
+    LIMIT 1
+  `.pipe(
+    Effect.flatMap((rows) => decodeRows(rows)),
+    Effect.flatMap((rows) => {
+      const row = rows[0]
+      if (row === undefined) return Effect.succeed(Option.none())
+      if (typeof row !== 'object' || row === null || !('document' in row)) {
+        return Effect.fail(storeError('read-replan', 'decode', 'paper close replan row is missing its document'))
+      }
+      const decoded = decodePaperCycleClosureResult(row.document)
+      return decoded._tag === 'Failure'
+        ? Effect.fail(
+            storeError('read-replan', 'decode', 'paper close replan failed schema validation', decoded.failure),
+          )
+        : Effect.succeed(Option.some(decoded.success))
+    }),
+    Effect.mapError((cause) =>
+      cause instanceof PaperCycleClosureStoreError
+        ? cause
+        : storeError('read-replan', 'query', 'paper close replan read failed', cause),
+    ),
+  )
+
+const readReplanByHash = (
+  sql: PgClient.PgClient,
+  cycleId: string,
+  contentHash: string,
+): Effect.Effect<Option.Option<PaperCycleClosure>, PaperCycleClosureStoreError> =>
+  sql<Record<string, unknown>>`
+    SELECT document
+    FROM autonomous_cycle_paper_close_replans
+    WHERE cycle_id = ${cycleId}
+      AND content_hash = ${contentHash}
+  `.pipe(
+    Effect.flatMap((rows) => decodeRows(rows)),
+    Effect.flatMap((rows) => {
+      const row = rows[0]
+      if (row === undefined) return Effect.succeed(Option.none())
+      if (typeof row !== 'object' || row === null || !('document' in row)) {
+        return Effect.fail(storeError('bind-replan', 'decode', 'paper close replan row is missing its document'))
+      }
+      const decoded = decodePaperCycleClosureResult(row.document)
+      return decoded._tag === 'Failure'
+        ? Effect.fail(
+            storeError('bind-replan', 'decode', 'paper close replan failed schema validation', decoded.failure),
+          )
+        : Effect.succeed(Option.some(decoded.success))
+    }),
+    Effect.mapError((cause) =>
+      cause instanceof PaperCycleClosureStoreError
+        ? cause
+        : storeError('bind-replan', 'query', 'paper close replan read failed', cause),
+    ),
+  )
+
 const makeStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
   const fence = yield* WriterFence
   const store: PaperCycleClosureStoreShape = {
     read: (cycleId) => readByCycleId(sql, cycleId),
+    readLatestReplan: (cycleId) => readLatestReplanByCycleId(sql, cycleId),
     containsIntent: (intentId) =>
       sql<{ readonly contains: boolean }>`
         SELECT EXISTS (
           SELECT 1
-          FROM autonomous_cycle_paper_closures,
-          LATERAL jsonb_array_elements_text(document #> '{document,orderedIntentIds}') AS intent(value)
+          FROM autonomous_cycle_paper_closures AS closure,
+          LATERAL jsonb_array_elements_text(closure.document #> '{document,orderedIntentIds}') AS intent(value)
+          WHERE intent.value = ${intentId}
+        ) OR EXISTS (
+          SELECT 1
+          FROM autonomous_cycle_paper_close_replans AS replan,
+          LATERAL jsonb_array_elements_text(replan.document #> '{document,orderedIntentIds}') AS intent(value)
           WHERE intent.value = ${intentId}
         ) AS contains
       `.pipe(
@@ -73,6 +143,47 @@ const makeStore = Effect.gen(function* () {
             : storeError('contains-intent', 'query', 'paper closure intent lookup failed', cause),
         ),
       ),
+    bindReplan: (closure) =>
+      fence
+        .transaction(
+          Effect.gen(function* () {
+            yield* sql`
+            INSERT INTO autonomous_cycle_paper_close_replans (
+              content_hash,
+              cycle_id,
+              document,
+              created_at,
+              expires_at
+            ) VALUES (
+              ${closure.contentHash},
+              ${closure.cycleId},
+              ${sql.json(closure)},
+              ${closure.createdAt},
+              ${closure.expiresAt}
+            )
+            ON CONFLICT (content_hash) DO NOTHING
+          `
+            const stored = yield* readReplanByHash(sql, closure.cycleId, closure.contentHash)
+            if (Option.isNone(stored)) {
+              return yield* Effect.fail(
+                storeError('bind-replan', 'invariant', 'paper close replan disappeared after its immutable bind'),
+              )
+            }
+            if (stored.value.contentHash !== closure.contentHash) {
+              return yield* Effect.fail(
+                storeError('bind-replan', 'conflict', 'paper close replan identity was reused with different content'),
+              )
+            }
+            return stored.value
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            cause instanceof PaperCycleClosureStoreError
+              ? cause
+              : storeError('bind-replan', 'query', 'paper close replan bind failed', cause),
+          ),
+        ),
     bind: (closure) =>
       fence
         .transaction(

@@ -36,6 +36,13 @@ export const paperCycleHasFilledIntent = (
   )
 }
 
+/** A settled close plan must be replaced when authoritative positions remain open. */
+export const paperClosePlanNeedsResidualReplan = (
+  intents: readonly Pick<Intent, 'state'>[],
+  openPositionCount: number,
+): boolean =>
+  intents.length > 0 && intents.every((intent) => intent.state === IntentState.Terminal) && openPositionCount > 0
+
 const comparePositionSymbol = (left: Position, right: Position): number =>
   left.symbol < right.symbol ? -1 : left.symbol > right.symbol ? 1 : 0
 

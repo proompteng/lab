@@ -733,6 +733,9 @@ describe('forward performance read program', () => {
     ).toBe(true)
     expect(observation.statements.some((statement) => statement.includes('first_cycle.submission_open_at'))).toBe(true)
     expect(
+      observation.statements.some((statement) => statement.includes("cycle.state IN ('PENDING', 'ACTIVE', 'BLOCKED')")),
+    ).toBe(true)
+    expect(
       observation.statements.some(
         (statement) =>
           statement.includes('JOIN intents AS scope_intent') &&

@@ -74,6 +74,7 @@ import {
   paperSubmitExpiresAt,
   paperMutationSubmissionAllowed,
   paperCycleHasFilledIntent,
+  paperClosePlanNeedsResidualReplan,
   prepareNextMutationIntent,
   projectWorstCasePendingMutationPosition,
   loadObserveRiskPolicy,
@@ -141,6 +142,12 @@ test('PAPER entry submission is allowed before cutoff and denied afterward', () 
       observedAt: '2020-05-01T13:05:00.000Z',
     }),
   ).toBe(true)
+})
+
+test('requires a bounded residual close replan after a settled close leaves a position open', () => {
+  expect(paperClosePlanNeedsResidualReplan([{ state: IntentState.Terminal }], 1)).toBe(true)
+  expect(paperClosePlanNeedsResidualReplan([{ state: IntentState.Acknowledged }], 1)).toBe(false)
+  expect(paperClosePlanNeedsResidualReplan([{ state: IntentState.Terminal }], 0)).toBe(false)
 })
 
 const calendarMaterial = {

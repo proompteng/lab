@@ -105,6 +105,7 @@ import {
   mutationRecoveryIsDue,
   paperSubmitExpiresAt,
   paperCycleHasFilledIntent,
+  paperClosePlanNeedsResidualReplan,
   projectWorstCasePendingMutationPosition,
   type BoundMutationCycleOutcome,
   type MutationIntentExecutionResult,
@@ -145,6 +146,7 @@ export {
   mutationRecoveryIsDue,
   paperSubmitExpiresAt,
   paperCycleHasFilledIntent,
+  paperClosePlanNeedsResidualReplan,
   projectWorstCasePendingMutationPosition,
 }
 export type {
@@ -962,6 +964,49 @@ const readPaperCycleClosure = (
     Effect.map(Option.getOrUndefined),
   )
 
+const readLatestPaperCycleCloseReplan = (
+  cycleId: string,
+  store: PaperCycleClosureStoreShape,
+): Effect.Effect<PaperCycleClosure | undefined, CycleRunnerError> =>
+  store.readLatestReplan(cycleId).pipe(
+    Effect.mapError((cause) => mutationRunnerError('durable PAPER close replan read failed', cause, 'store')),
+    Effect.map(Option.getOrUndefined),
+  )
+
+const closePlanNeedsResidualReplan = (
+  document: PaperDecisionDocument,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+): Effect.Effect<boolean, CycleRunnerError, ObserveDecisionRuntime | IntentStore> =>
+  Effect.gen(function* () {
+    const intentStore = yield* IntentStore
+    const records = yield* Effect.forEach(
+      document.orderedIntentIds,
+      (intentId) =>
+        intentStore
+          .read(intentId)
+          .pipe(
+            Effect.mapError((cause) => mutationRunnerError('PAPER close intent recovery read failed', cause, 'store')),
+          ),
+      { concurrency: 1 },
+    )
+    if (
+      records.length === 0 ||
+      records.some(Option.isNone) ||
+      records.some((record) => Option.isSome(record) && record.value.intent.state !== IntentState.Terminal)
+    ) {
+      return false
+    }
+    const facts = yield* reconcile.pipe(
+      Effect.mapError((cause) => mutationRunnerError('PAPER residual close reconciliation failed', cause)),
+    )
+    return paperClosePlanNeedsResidualReplan(
+      records
+        .map((record) => (Option.isSome(record) ? record.value.intent : undefined))
+        .filter((intent): intent is NonNullable<typeof intent> => intent !== undefined),
+      countOpenPositions(facts.brokerState.positions),
+    )
+  })
+
 const ensurePaperCycleClosure = (
   input: ObserveAutonomousCycleInput,
   preparation: ObserveStartupPreparation,
@@ -977,7 +1022,6 @@ const ensurePaperCycleClosure = (
     const observedAt = yield* currentUtcInstant
     if (observedAt < cutoffAt) return undefined
     const existing = yield* readPaperCycleClosure(cycle.identity.cycleId, store)
-    if (existing !== undefined) return existing.document
     const entryDecisionHash = cycle.bindings.decisionHash
     if (entryDecisionHash === undefined) {
       return yield* Effect.fail(
@@ -988,16 +1032,53 @@ const ensurePaperCycleClosure = (
         ),
       )
     }
+    if (existing === undefined) {
+      const document = yield* buildClosingPaperCycleDecision(
+        mutationDecisionInput(input, preparation, policy, cycle, reconcile),
+        closeExpiresAt,
+      ).pipe(
+        Effect.mapError((cause) => {
+          const converted = decisionBuildError(cause)
+          return mutationRunnerError('deterministic PAPER close plan construction failed', converted, converted.failure)
+        }),
+      )
+      if (!document.dispatchable || document.targetPlan.status !== TargetPlanStatus.Planned) return undefined
+      const closure = yield* Effect.fromResult(
+        makePaperCycleClosure({
+          schemaVersion: 'bayn.paper-cycle-closure.v1',
+          cycleId: cycle.identity.cycleId,
+          entryDecisionHash,
+          document,
+          createdAt: document.createdAt,
+          expiresAt: closeExpiresAt,
+        }),
+      ).pipe(
+        Effect.mapError((cause) => mutationRunnerError('PAPER close plan canonical binding failed', cause, 'contract')),
+      )
+      const stored = yield* store
+        .bind(closure)
+        .pipe(Effect.mapError((cause) => mutationRunnerError('PAPER close plan durable bind failed', cause, 'store')))
+      return stored.document
+    }
+
+    const latestReplan = yield* readLatestPaperCycleCloseReplan(cycle.identity.cycleId, store)
+    const active = latestReplan ?? existing
+    if (!(yield* closePlanNeedsResidualReplan(active.document, reconcile))) return active.document
+
     const document = yield* buildClosingPaperCycleDecision(
       mutationDecisionInput(input, preparation, policy, cycle, reconcile),
       closeExpiresAt,
     ).pipe(
       Effect.mapError((cause) => {
         const converted = decisionBuildError(cause)
-        return mutationRunnerError('deterministic PAPER close plan construction failed', converted, converted.failure)
+        return mutationRunnerError(
+          'deterministic PAPER residual close plan construction failed',
+          converted,
+          converted.failure,
+        )
       }),
     )
-    if (!document.dispatchable || document.targetPlan.status !== TargetPlanStatus.Planned) return undefined
+    if (!document.dispatchable || document.targetPlan.status !== TargetPlanStatus.Planned) return active.document
     const closure = yield* Effect.fromResult(
       makePaperCycleClosure({
         schemaVersion: 'bayn.paper-cycle-closure.v1',
@@ -1008,11 +1089,17 @@ const ensurePaperCycleClosure = (
         expiresAt: closeExpiresAt,
       }),
     ).pipe(
-      Effect.mapError((cause) => mutationRunnerError('PAPER close plan canonical binding failed', cause, 'contract')),
+      Effect.mapError((cause) =>
+        mutationRunnerError('PAPER residual close plan canonical binding failed', cause, 'contract'),
+      ),
     )
     const stored = yield* store
-      .bind(closure)
-      .pipe(Effect.mapError((cause) => mutationRunnerError('PAPER close plan durable bind failed', cause, 'store')))
+      .bindReplan(closure)
+      .pipe(
+        Effect.mapError((cause) =>
+          mutationRunnerError('PAPER residual close plan durable bind failed', cause, 'store'),
+        ),
+      )
     return stored.document
   })
 

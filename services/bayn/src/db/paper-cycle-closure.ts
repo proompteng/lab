@@ -45,7 +45,7 @@ export const makePaperCycleClosure = (
   )
 
 export class PaperCycleClosureStoreError extends Data.TaggedError('PaperCycleClosureStoreError')<{
-  readonly operation: 'bind' | 'read' | 'contains-intent'
+  readonly operation: 'bind' | 'read' | 'bind-replan' | 'read-replan' | 'contains-intent'
   readonly failure: 'conflict' | 'decode' | 'invariant' | 'query'
   readonly message: string
   readonly cause?: unknown
@@ -54,6 +54,11 @@ export class PaperCycleClosureStoreError extends Data.TaggedError('PaperCycleClo
 export interface PaperCycleClosureStoreShape {
   readonly bind: (closure: PaperCycleClosure) => Effect.Effect<PaperCycleClosure, PaperCycleClosureStoreError>
   readonly read: (cycleId: string) => Effect.Effect<Option.Option<PaperCycleClosure>, PaperCycleClosureStoreError>
+  /** Appends a durable replacement close plan without mutating the first close plan. */
+  readonly bindReplan: (closure: PaperCycleClosure) => Effect.Effect<PaperCycleClosure, PaperCycleClosureStoreError>
+  readonly readLatestReplan: (
+    cycleId: string,
+  ) => Effect.Effect<Option.Option<PaperCycleClosure>, PaperCycleClosureStoreError>
   readonly containsIntent: (intentId: string) => Effect.Effect<boolean, PaperCycleClosureStoreError>
 }
 
