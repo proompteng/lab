@@ -7,6 +7,7 @@ import {
   baynImagePublishJobName,
   evaluateBaynPublication,
   isBaynReleaseAffectingPath,
+  mergePullRequestEvidencePage,
   migrationCheckpointPath,
   selectExactHeadReviewEvidence,
   selectLatestSuccessfulPublishRun,
@@ -15,6 +16,7 @@ import {
   type BaynWorkflowRun,
   type MainCommitEvidence,
   type MigrationCheckpoint,
+  type PullRequestEvidenceAccumulator,
   type PullRequestReviewState,
   type SourcePullRequestEvidence,
 } from './verify-release-review'
@@ -43,6 +45,7 @@ const reviewPullRequest = (overrides: Partial<PullRequestReviewState> = {}): Pul
   headSha: sha('a'),
   mergeCommitSha: null,
   createdAt: '2026-08-03T00:00:00Z',
+  updatedAt: '2026-08-03T00:00:30Z',
   mergedAt: null,
   headCommittedAt: '2026-08-03T00:00:30Z',
   reviews: [
@@ -74,6 +77,7 @@ const gateRun = (overrides: Partial<BaynWorkflowRun> = {}): BaynWorkflowRun => (
   event: 'pull_request',
   headBranch: 'codex/exact-head',
   headSha: sha('a'),
+  displayTitle: `Bayn release gate #13500 base=${sha('d')}`,
   status: 'completed',
   conclusion: 'success',
   createdAt: '2026-08-03T00:02:00Z',
@@ -210,6 +214,19 @@ describe('Bayn PR-time exact-head release gate', () => {
       nowMs: Date.parse('2026-08-03T00:02:00Z'),
     })
     expect(unrelated).toMatchObject({ status: 'hold', code: 'exact-head-review-missing' })
+
+    const forcePushedExistingSha = selectExactHeadReviewEvidence({
+      pullRequest: reviewPullRequest({
+        updatedAt: '2026-08-03T00:01:01Z',
+        reviews: [{ ...reviewPullRequest().reviews[0], commitSha: sha('c') }],
+        reactions: [{ userLogin: 'chatgpt-codex-connector[bot]', content: '+1', createdAt: '2026-08-03T00:01:00Z' }],
+      }),
+      expectedNumber: 13_499,
+      expectedBaseRefName: 'main',
+      expectedHeadSha: sha('a'),
+      nowMs: Date.parse('2026-08-03T00:02:00Z'),
+    })
+    expect(forcePushedExistingSha).toMatchObject({ status: 'hold', code: 'exact-head-review-missing' })
   })
 
   test('rejects unresolved threads even with exact-head Codex review', () => {
@@ -246,6 +263,42 @@ describe('Bayn PR-time exact-head release gate', () => {
   })
 })
 
+test('does not append a completed GraphQL connection while another connection paginates', () => {
+  const initial: PullRequestEvidenceAccumulator = {
+    commits: [],
+    headCommittedAt: null,
+    reviews: [],
+    threads: [],
+    commitsComplete: false,
+    reviewsComplete: false,
+    threadsComplete: false,
+  }
+  const firstPage = mergePullRequestEvidencePage(initial, {
+    metadata: reviewPullRequest(),
+    commits: [sha('c')],
+    headCommittedAt: '2026-08-03T00:00:30Z',
+    reviews: [],
+    threads: [],
+    commitPageInfo: { hasNextPage: false, endCursor: null },
+    reviewPageInfo: { hasNextPage: true, endCursor: 'review-1' },
+    threadPageInfo: { hasNextPage: false, endCursor: null },
+  })
+  const secondPage = mergePullRequestEvidencePage(firstPage, {
+    metadata: reviewPullRequest(),
+    commits: [sha('c')],
+    headCommittedAt: '2026-08-03T00:00:30Z',
+    reviews: [reviewPullRequest().reviews[0]],
+    threads: [],
+    commitPageInfo: { hasNextPage: false, endCursor: null },
+    reviewPageInfo: { hasNextPage: false, endCursor: null },
+    threadPageInfo: { hasNextPage: false, endCursor: null },
+  })
+  expect(secondPage.commits).toEqual([sha('c')])
+  expect(secondPage.reviews).toHaveLength(1)
+  expect(secondPage.commitsComplete).toBe(true)
+  expect(secondPage.reviewsComplete).toBe(true)
+})
+
 describe('Bayn post-merge gate receipt selection', () => {
   test('accepts only the trusted bayn-ci pull-request gate before merge', () => {
     const selected = selectTrustedBaynGateRun({
@@ -253,6 +306,7 @@ describe('Bayn post-merge gate receipt selection', () => {
       jobsByRunId: new Map([[101, [gateJob()]]]),
       repository: 'proompteng/lab',
       pullRequestNumber: sourcePullRequest.number,
+      pullRequestBaseSha: sourcePullRequest.baseSha,
       pullRequestHeadSha: sourcePullRequest.headSha,
       pullRequestHeadBranch: sourcePullRequest.headBranch,
       mergedAt: sourcePullRequest.mergedAt as string,
@@ -265,6 +319,7 @@ describe('Bayn post-merge gate receipt selection', () => {
       jobsByRunId: new Map([[101, [gateJob()]]]),
       repository: 'proompteng/lab',
       pullRequestNumber: sourcePullRequest.number,
+      pullRequestBaseSha: sourcePullRequest.baseSha,
       pullRequestHeadSha: sourcePullRequest.headSha,
       pullRequestHeadBranch: sourcePullRequest.headBranch,
       mergedAt: sourcePullRequest.mergedAt as string,
@@ -293,6 +348,7 @@ describe('Bayn post-merge gate receipt selection', () => {
       gateRun({ event: 'workflow_run' }),
       gateRun({ headSha: sha('9') }),
       gateRun({ headBranch: 'main' }),
+      gateRun({ displayTitle: 'bayn' }),
     ]) {
       expect(selectTrustedBaynGateRun({ ...input, runs: [spoofedRun] })).toBeUndefined()
     }
@@ -309,6 +365,7 @@ describe('Bayn post-merge gate receipt selection', () => {
         ]),
         repository: 'proompteng/lab',
         pullRequestNumber: sourcePullRequest.number,
+        pullRequestBaseSha: sourcePullRequest.baseSha,
         pullRequestHeadSha: sourcePullRequest.headSha,
         pullRequestHeadBranch: sourcePullRequest.headBranch,
         mergedAt: sourcePullRequest.mergedAt as string,
@@ -393,6 +450,7 @@ describe('Bayn image publication identity', () => {
     event: 'push',
     headBranch: 'main',
     headSha: sha('1'),
+    displayTitle: 'bayn-build-push',
     status: 'completed',
     conclusion: 'success',
     createdAt: '2026-08-03T00:00:00Z',
@@ -434,6 +492,9 @@ test('classifies the verifier baseline receipt as Bayn-affecting', () => {
 })
 
 test('executes the release gate from the trusted base while evaluating the exact PR head', () => {
+  expect(baynCiWorkflow).toContain(
+    'run-name: Bayn release gate #${{ github.event.pull_request.number }} base=${{ github.event.pull_request.base.sha }}',
+  )
   expect(baynCiWorkflow).toContain('name: Checkout trusted base verifier')
   expect(baynCiWorkflow).toContain('ref: ${{ github.event.pull_request.base.sha }}')
   expect(baynCiWorkflow).not.toContain('name: Checkout exact reviewed PR head')

@@ -1,4 +1,5 @@
 name: bayn
+run-name: Bayn release gate #${{ github.event.pull_request.number }} base=${{ github.event.pull_request.base.sha }}
 
 permissions:
   contents: read

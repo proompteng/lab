@@ -14,6 +14,8 @@ const baynBuildWorkflowPath = '.github/workflows/bayn-build-push.yml'
 export const baynReleaseGateName = 'Bayn release gate'
 export const baynImagePublishJobName = 'image / publish-index'
 export const migrationCheckpointPath = 'packages/scripts/src/bayn/bayn-release-review-baseline.json'
+export const baynReleaseGateRunTitle = (pullRequestNumber: number, baseSha: string): string =>
+  `${baynReleaseGateName} #${pullRequestNumber} base=${baseSha}`
 
 export const baynCodexReviewer = 'chatgpt-codex-connector'
 export const baynCodexBotLogin = 'chatgpt-codex-connector[bot]'
@@ -53,6 +55,7 @@ export interface PullRequestReviewState {
   readonly headSha: string
   readonly mergeCommitSha: string | null
   readonly createdAt: string
+  readonly updatedAt: string
   readonly mergedAt: string | null
   readonly headCommittedAt: string | null
   readonly reviews: readonly PullRequestReview[]
@@ -114,6 +117,7 @@ export interface BaynWorkflowRun {
   readonly event: string
   readonly headBranch: string
   readonly headSha: string
+  readonly displayTitle: string
   readonly status: string
   readonly conclusion: string | null
   readonly createdAt: string
@@ -364,14 +368,17 @@ export const selectExactHeadReviewEvidence = (input: PullRequestGateInput): Revi
     }
     const reactionAtMs = Date.parse(reaction.createdAt)
     const createdAtMs = Date.parse(pullRequest.createdAt)
+    const updatedAtMs = Date.parse(pullRequest.updatedAt)
     const headCommittedAtMs =
       pullRequest.headCommittedAt === null ? Number.NaN : Date.parse(pullRequest.headCommittedAt)
     if (
       !Number.isFinite(reactionAtMs) ||
       !Number.isFinite(createdAtMs) ||
+      !Number.isFinite(updatedAtMs) ||
       !Number.isFinite(headCommittedAtMs) ||
       reactionAtMs <= headCommittedAtMs ||
       reactionAtMs < createdAtMs ||
+      reactionAtMs <= updatedAtMs ||
       reactionAtMs > input.nowMs
     ) {
       return holdReview(
@@ -427,9 +434,11 @@ export const selectTrustedBaynGateRun = (input: {
   readonly jobsByRunId: ReadonlyMap<number, readonly BaynWorkflowJob[]>
   readonly repository: string
   readonly pullRequestNumber: number
+  readonly pullRequestBaseSha: string
   readonly pullRequestHeadSha: string
   readonly pullRequestHeadBranch: string
   readonly mergedAt: string
+  readonly requireRunTitle?: boolean
 }): TrustedBaynGateRun | undefined => {
   const mergedAtMs = Date.parse(input.mergedAt)
   if (!Number.isFinite(mergedAtMs)) return undefined
@@ -440,6 +449,8 @@ export const selectTrustedBaynGateRun = (input: {
         run.workflowPath === githubWorkflowPath &&
         run.repository === input.repository &&
         run.event === 'pull_request' &&
+        (input.requireRunTitle === false ||
+          run.displayTitle === baynReleaseGateRunTitle(input.pullRequestNumber, input.pullRequestBaseSha)) &&
         run.headSha === input.pullRequestHeadSha &&
         run.headBranch === input.pullRequestHeadBranch &&
         Number.isFinite(Date.parse(run.createdAt)) &&
@@ -465,11 +476,6 @@ export const selectTrustedBaynGateRun = (input: {
   ) {
     return undefined
   }
-  // The PR number is bound by the merge association and the exact final head;
-  // the trusted run is additionally bound to this repository, workflow path,
-  // event, branch, and head SHA. GitHub does not populate pull_requests on all
-  // same-repository pull_request workflow runs.
-  void input.pullRequestNumber
   return { run: latestRun, job: gateJob }
 }
 
@@ -702,6 +708,7 @@ const pullRequestEvidenceQuery = `
         headRefName
         headRefOid
         createdAt
+        updatedAt
         mergedAt
         mergeCommit { oid }
         commits(first: 100, after: $commitCursor) {
@@ -726,19 +733,78 @@ const pullRequestEvidenceQuery = `
   }
 `
 
-const parsePullRequestPage = (
-  value: Record<string, unknown>,
-  operation: string,
-): {
+export interface PullRequestEvidencePageInfo {
+  readonly hasNextPage: boolean
+  readonly endCursor: string | null
+}
+
+export interface PullRequestEvidencePage {
   readonly metadata: PullRequestReviewState
   readonly commits: readonly string[]
   readonly headCommittedAt: string | null
   readonly reviews: readonly PullRequestReview[]
   readonly threads: readonly PullRequestReviewThread[]
-  readonly commitPageInfo: { readonly hasNextPage: boolean; readonly endCursor: string | null }
-  readonly reviewPageInfo: { readonly hasNextPage: boolean; readonly endCursor: string | null }
-  readonly threadPageInfo: { readonly hasNextPage: boolean; readonly endCursor: string | null }
-} => {
+  readonly commitPageInfo: PullRequestEvidencePageInfo
+  readonly reviewPageInfo: PullRequestEvidencePageInfo
+  readonly threadPageInfo: PullRequestEvidencePageInfo
+}
+
+export interface PullRequestEvidenceAccumulator {
+  readonly commits: readonly string[]
+  readonly headCommittedAt: string | null
+  readonly reviews: readonly PullRequestReview[]
+  readonly threads: readonly PullRequestReviewThread[]
+  readonly commitsComplete: boolean
+  readonly reviewsComplete: boolean
+  readonly threadsComplete: boolean
+}
+
+const mergePullRequestConnection = <T>(
+  complete: boolean,
+  current: readonly T[],
+  incoming: readonly T[],
+  hasNextPage: boolean,
+): { readonly values: readonly T[]; readonly complete: boolean } => ({
+  values: complete ? current : [...current, ...incoming],
+  complete: complete || !hasNextPage,
+})
+
+export const mergePullRequestEvidencePage = (
+  accumulator: PullRequestEvidenceAccumulator,
+  page: PullRequestEvidencePage,
+): PullRequestEvidenceAccumulator => {
+  const commits = mergePullRequestConnection(
+    accumulator.commitsComplete,
+    accumulator.commits,
+    page.commits,
+    page.commitPageInfo.hasNextPage,
+  )
+  const reviews = mergePullRequestConnection(
+    accumulator.reviewsComplete,
+    accumulator.reviews,
+    page.reviews,
+    page.reviewPageInfo.hasNextPage,
+  )
+  const threads = mergePullRequestConnection(
+    accumulator.threadsComplete,
+    accumulator.threads,
+    page.threads,
+    page.threadPageInfo.hasNextPage,
+  )
+  return {
+    commits: commits.values,
+    headCommittedAt: accumulator.commitsComplete
+      ? accumulator.headCommittedAt
+      : (page.headCommittedAt ?? accumulator.headCommittedAt),
+    reviews: reviews.values,
+    threads: threads.values,
+    commitsComplete: commits.complete,
+    reviewsComplete: reviews.complete,
+    threadsComplete: threads.complete,
+  }
+}
+
+const parsePullRequestPage = (value: Record<string, unknown>, operation: string): PullRequestEvidencePage => {
   const repository = expectRecord(value.repository, operation)
   const pullRequestValue = repository.pullRequest
   if (pullRequestValue === null) throw new GitHubReleaseReviewError('github-api-invalid-response', operation)
@@ -752,6 +818,7 @@ const parsePullRequestPage = (
     headSha: expectSha(pullRequest.headRefOid, `${operation} head SHA`),
     mergeCommitSha: mergeCommit === null ? null : expectSha(mergeCommit.oid, `${operation} merge SHA`),
     createdAt: expectString(pullRequest.createdAt, `${operation} created at`),
+    updatedAt: expectString(pullRequest.updatedAt, `${operation} updated at`),
     mergedAt: expectNullableString(pullRequest.mergedAt, `${operation} merged at`),
     headCommittedAt: null,
     reviews: [],
@@ -853,10 +920,15 @@ const fetchPullRequestReviewState = async (
   let reviewCursor: string | null = null
   let threadCursor: string | null = null
   let metadata: PullRequestReviewState | null = null
-  const commits: string[] = []
-  const reviews: PullRequestReview[] = []
-  const threads: PullRequestReviewThread[] = []
-  let headCommittedAt: string | null = null
+  let accumulator: PullRequestEvidenceAccumulator = {
+    commits: [],
+    headCommittedAt: null,
+    reviews: [],
+    threads: [],
+    commitsComplete: false,
+    reviewsComplete: false,
+    threadsComplete: false,
+  }
   for (let page = 0; page < maximumPages; page += 1) {
     const operation = `read pull request #${number} evidence page ${page + 1}`
     const data = await requestGraphql({
@@ -883,13 +955,10 @@ const fetchPullRequestReviewState = async (
     ) {
       throw new GitHubReleaseReviewError('github-api-invalid-response', `${operation} metadata changed`)
     }
-    commits.push(...pageEvidence.commits)
-    headCommittedAt = pageEvidence.headCommittedAt ?? headCommittedAt
-    reviews.push(...pageEvidence.reviews)
-    threads.push(...pageEvidence.threads)
-    commitCursor = pageEvidence.commitPageInfo.hasNextPage ? pageEvidence.commitPageInfo.endCursor : null
-    reviewCursor = pageEvidence.reviewPageInfo.hasNextPage ? pageEvidence.reviewPageInfo.endCursor : null
-    threadCursor = pageEvidence.threadPageInfo.hasNextPage ? pageEvidence.threadPageInfo.endCursor : null
+    accumulator = mergePullRequestEvidencePage(accumulator, pageEvidence)
+    commitCursor = accumulator.commitsComplete ? null : pageEvidence.commitPageInfo.endCursor
+    reviewCursor = accumulator.reviewsComplete ? null : pageEvidence.reviewPageInfo.endCursor
+    threadCursor = accumulator.threadsComplete ? null : pageEvidence.threadPageInfo.endCursor
     if (
       (pageEvidence.commitPageInfo.hasNextPage && commitCursor === null) ||
       (pageEvidence.reviewPageInfo.hasNextPage && reviewCursor === null) ||
@@ -897,10 +966,17 @@ const fetchPullRequestReviewState = async (
     ) {
       throw new GitHubReleaseReviewError('github-api-invalid-response', operation)
     }
-    if (commitCursor === null && reviewCursor === null && threadCursor === null) {
+    if (accumulator.commitsComplete && accumulator.reviewsComplete && accumulator.threadsComplete) {
       if (metadata === null) throw new GitHubReleaseReviewError('github-api-invalid-response', operation)
       const reactions = await fetchPullRequestReactions(options, number)
-      return { ...metadata, headCommittedAt, reviews, threads, commitShas: commits, reactions }
+      return {
+        ...metadata,
+        headCommittedAt: accumulator.headCommittedAt,
+        reviews: accumulator.reviews,
+        threads: accumulator.threads,
+        commitShas: accumulator.commits,
+        reactions,
+      }
     }
   }
   throw new GitHubReleaseReviewError('github-api-pagination-limit', `read pull request #${number} evidence`)
@@ -1038,6 +1114,7 @@ const parseWorkflowRun = (value: unknown, context: string): BaynWorkflowRun => {
     event: expectString(run.event, `${context} event`),
     headBranch: expectString(run.head_branch, `${context} head branch`),
     headSha: expectSha(run.head_sha, `${context} head SHA`),
+    displayTitle: expectString(run.display_title, `${context} display title`),
     status: expectString(run.status, `${context} status`),
     conclusion: expectNullableString(run.conclusion, `${context} conclusion`),
     createdAt: expectString(run.created_at, `${context} created at`),
@@ -1134,6 +1211,7 @@ const fetchTrustedGateRun = async (
       jobsByRunId,
       repository: options.repository,
       pullRequestNumber: pullRequest.number,
+      pullRequestBaseSha: pullRequest.baseSha,
       pullRequestHeadSha: pullRequest.headSha,
       pullRequestHeadBranch: pullRequest.headBranch,
       mergedAt: pullRequest.mergedAt,
@@ -1373,9 +1451,11 @@ const verifyMigrationCheckpointGate = async (
       jobsByRunId: new Map([[run.id, jobs]]),
       repository: options.repository,
       pullRequestNumber: sourcePullRequest.number,
+      pullRequestBaseSha: sourcePullRequest.baseSha,
       pullRequestHeadSha: sourcePullRequest.headSha,
       pullRequestHeadBranch: sourcePullRequest.headBranch,
       mergedAt: sourcePullRequest.mergedAt,
+      requireRunTitle: false,
     }) !== undefined
   )
 }
