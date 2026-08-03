@@ -1,7 +1,7 @@
 import { Result, Schema } from 'effect'
 
 import { MutationOperation } from '../../broker/alpaca-mutations'
-import { Authority, IntentState, KillState, TerminalOutcome } from '../contracts'
+import { Authority, IntentState, KillState, OrderSide, TerminalOutcome } from '../contracts'
 import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
@@ -61,6 +61,7 @@ const IntentRows = Schema.Array(
     generation_risk_policy_hash: Schema.NullOr(Sha256),
     generation_strategy_name: Schema.NullOr(NonEmptyString),
     policy_hash: Sha256,
+    side: Schema.Enum(OrderSide),
     state: Schema.Enum(IntentState),
     strategy_name: NonEmptyString,
     updated_at: UtcInstant,
@@ -156,6 +157,7 @@ export const decodeIntentSnapshot = (
             authorityGenerationHash: intent.authority_generation_hash,
             policyHash: intent.policy_hash,
             state: intent.state,
+            side: intent.side,
             strategyName: intent.strategy_name,
             updatedAt: intent.updated_at,
             generationAccountId: intent.generation_account_id,

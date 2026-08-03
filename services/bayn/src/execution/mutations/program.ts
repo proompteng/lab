@@ -31,9 +31,20 @@ export const makePostgresMutationStore = Effect.gen(function* () {
   const appendOutcome = outcome.appendOutcome
 
   return {
-    authorizeSubmit: (intentId) => run('begin-submit', start.authorizeSubmit(intentId)),
-    beginSubmit: (intentId, requestHash, consistencyDelayMs, occurredAt) =>
-      run('begin-submit', start.begin(MutationOperation.Submit, intentId, requestHash, consistencyDelayMs, occurredAt)),
+    authorizeSubmit: (intentId, closeOnly) => run('begin-submit', start.authorizeSubmit(intentId, closeOnly)),
+    beginSubmit: (intentId, requestHash, consistencyDelayMs, occurredAt, closeOnly) =>
+      run(
+        'begin-submit',
+        start.begin(
+          MutationOperation.Submit,
+          intentId,
+          requestHash,
+          consistencyDelayMs,
+          occurredAt,
+          undefined,
+          closeOnly,
+        ),
+      ),
     submitAccepted: (intentId, requestHash, brokerOrderId, evidence, terminalOutcome) =>
       run(
         'record-submit',

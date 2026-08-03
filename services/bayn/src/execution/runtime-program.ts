@@ -102,6 +102,7 @@ const validateFinalSubmitRisk = (intentId: string, dependencies: ExecutionProgra
 const validatePaperEpisodeLease = (
   intentId: string,
   dependencies: ExecutionProgramDependencies,
+  closeIntent?: boolean,
 ): Effect.Effect<void, FinalSubmitAuthorizationFailure> =>
   Effect.gen(function* () {
     if (
@@ -110,10 +111,10 @@ const validatePaperEpisodeLease = (
     ) {
       return
     }
-    const closeIntent = dependencies.isPaperEpisodeCloseIntent
-      ? yield* dependencies.isPaperEpisodeCloseIntent(intentId)
-      : false
-    const expiresAt = closeIntent ? dependencies.paperEpisodeCloseExpiresAt : dependencies.paperEpisodeEntryExpiresAt
+    const isCloseIntent =
+      closeIntent ??
+      (dependencies.isPaperEpisodeCloseIntent ? yield* dependencies.isPaperEpisodeCloseIntent(intentId) : false)
+    const expiresAt = isCloseIntent ? dependencies.paperEpisodeCloseExpiresAt : dependencies.paperEpisodeEntryExpiresAt
     if (expiresAt === undefined) return
     const observedAt = yield* dependencies.currentUtcInstant
     if (observedAt < expiresAt) return
@@ -130,7 +131,10 @@ export const authorizeFinalBrokerSubmit = <A, E, R>(
   return dependencies.writerFence
     .transaction(
       Effect.gen(function* () {
-        yield* dependencies.mutationStore.authorizeSubmit(intent.intentId)
+        const closeOnly = dependencies.isPaperEpisodeCloseIntent
+          ? yield* dependencies.isPaperEpisodeCloseIntent(intent.intentId)
+          : false
+        yield* dependencies.mutationStore.authorizeSubmit(intent.intentId, closeOnly)
         yield* validateFinalSubmitRisk(intent.intentId, dependencies)
         const persisted = yield* finalLiveGrantAuthorization(authority, dependencies)
         yield* validateFinalSubmitRisk(intent.intentId, dependencies)
@@ -138,7 +142,7 @@ export const authorizeFinalBrokerSubmit = <A, E, R>(
           yield* finalLiveBrokerAuthorization(authority, persisted, intent, dependencies)
           yield* validateFinalSubmitRisk(intent.intentId, dependencies)
         }
-        yield* validatePaperEpisodeLease(intent.intentId, dependencies)
+        yield* validatePaperEpisodeLease(intent.intentId, dependencies, closeOnly)
         transmissionStarted = true
         return yield* transmit
       }),
@@ -186,13 +190,21 @@ export const makeExecutionProgram = (authority: ExecutionAuthority, dependencies
         authorizeFinalBrokerSubmit(mutationAuthority, intent, transmit, dependencies),
     }),
   }
+  const isPaperEpisodeCloseIntent = (intentId: string) =>
+    dependencies.isPaperEpisodeCloseIntent === undefined
+      ? Effect.succeed(false)
+      : dependencies.isPaperEpisodeCloseIntent(intentId)
   return Result.succeed({
     _tag: 'ExecutionProgram' as const,
     schemaVersion: 'bayn.execution-program.v1' as const,
     authority,
     dryRunSubmit: (intentId: string) => provideCoordinatorDependencies(dryRunSubmit(intentId), coordinatorDependencies),
     submit: (intentId: string, consistencyDelayMs: number) =>
-      provideCoordinatorDependencies(submit(intentId, consistencyDelayMs), coordinatorDependencies),
+      isPaperEpisodeCloseIntent(intentId).pipe(
+        Effect.flatMap((closeOnly) =>
+          provideCoordinatorDependencies(submit(intentId, consistencyDelayMs, closeOnly), coordinatorDependencies),
+        ),
+      ),
     cancel: (intentId: string, consistencyDelayMs: number) =>
       provideCoordinatorDependencies(cancel(intentId, consistencyDelayMs), coordinatorDependencies),
     recover: (intentId: string, operation: MutationOperation) =>

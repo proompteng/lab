@@ -214,6 +214,7 @@ const startSubmit = (
   requestHash: string,
   request: DryRunSubmitDecision['request'],
   consistencyDelayMs: number,
+  closeOnly: boolean,
 ) =>
   services.fence.check.pipe(
     Effect.andThen(requireActiveSubmitRiskDecision(stored)),
@@ -221,7 +222,13 @@ const startSubmit = (
     Effect.flatMap((occurredAt) =>
       liftDecision(nextInstant(MutationOperation.Submit, stored.updatedAt, occurredAt)).pipe(
         Effect.flatMap((nextOccurredAt) =>
-          services.mutations.beginSubmit(stored.intent.intentId, requestHash, consistencyDelayMs, nextOccurredAt),
+          services.mutations.beginSubmit(
+            stored.intent.intentId,
+            requestHash,
+            consistencyDelayMs,
+            nextOccurredAt,
+            closeOnly,
+          ),
         ),
       ),
     ),
@@ -230,7 +237,7 @@ const startSubmit = (
     ),
   )
 
-const runSubmit = (services: MutationServices, intentId: string, consistencyDelayMs: number) =>
+const runSubmit = (services: MutationServices, intentId: string, consistencyDelayMs: number, closeOnly: boolean) =>
   services.mutations
     .latest(intentId, MutationOperation.Submit)
     .pipe(
@@ -240,9 +247,9 @@ const runSubmit = (services: MutationServices, intentId: string, consistencyDela
             liftDecision(encodeOrder(MutationOperation.Submit, stored.intent)).pipe(
               Effect.flatMap(({ request, requestHash }) =>
                 existing === undefined
-                  ? startSubmit(services, stored, requestHash, request, consistencyDelayMs)
+                  ? startSubmit(services, stored, requestHash, request, consistencyDelayMs, closeOnly)
                   : services.mutations
-                      .beginSubmit(intentId, requestHash, consistencyDelayMs, existing.occurredAt)
+                      .beginSubmit(intentId, requestHash, consistencyDelayMs, existing.occurredAt, closeOnly)
                       .pipe(Effect.map(({ event }) => event)),
               ),
             ),
@@ -251,12 +258,12 @@ const runSubmit = (services: MutationServices, intentId: string, consistencyDela
       ),
     )
 
-export const submit = (intentId: string, consistencyDelayMs: number) =>
+export const submit = (intentId: string, consistencyDelayMs: number, closeOnly = false) =>
   Effect.all({
     mutations: MutationStore,
     broker: BrokerMutation,
     fence: WriterFence,
-  }).pipe(Effect.flatMap((services) => runSubmit(services, intentId, consistencyDelayMs)))
+  }).pipe(Effect.flatMap((services) => runSubmit(services, intentId, consistencyDelayMs, closeOnly)))
 
 const persistCancelDecision = (
   services: MutationServices,

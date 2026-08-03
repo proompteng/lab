@@ -284,13 +284,17 @@ describe('same-code execution program composition', () => {
     const afterEntryBeforeClose = '2026-07-28T08:02:00.000Z'
     const afterClose = '2026-07-28T08:17:00.000Z'
     let posts = 0
+    let authorizedCloseOnly: boolean | undefined
     const shared: ExecutionProgramDependencies = {
       ...dependencies('paper-lease'),
       intentStore: {
         read: () => Effect.succeed(Option.some(stored)),
       } as unknown as ExecutionProgramDependencies['intentStore'],
       mutationStore: {
-        authorizeSubmit: () => Effect.void,
+        authorizeSubmit: (_intentId: string, closeOnly?: boolean) => {
+          authorizedCloseOnly = closeOnly
+          return Effect.void
+        },
       } as unknown as ExecutionProgramDependencies['mutationStore'],
       writerFence: {
         backendPid: 1,
@@ -313,6 +317,7 @@ describe('same-code execution program composition', () => {
       ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
     )
     expect(finalAuthorizationFailureTag(denied)).toBe('PaperEpisodeExpired')
+    expect(authorizedCloseOnly).toBe(false)
     expect(posts).toBe(0)
 
     const closed = await Effect.runPromise(
@@ -329,6 +334,7 @@ describe('same-code execution program composition', () => {
       }).pipe(Effect.provide(TestClock.layer())),
     )
     expect(closed).toBeUndefined()
+    expect(authorizedCloseOnly).toBe(true)
     expect(posts).toBe(1)
 
     const closeExpired = await Effect.runPromise(

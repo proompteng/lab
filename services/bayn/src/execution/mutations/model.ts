@@ -2,7 +2,7 @@ import { Context, Data, Effect, Schema } from 'effect'
 
 import { MutationEvidenceSchema, MutationOperation, type MutationEvidence } from '../../broker/alpaca-mutations'
 import type { CanonicalHashFailure } from '../../hash'
-import { Authority, IntentState, KillState, TerminalOutcome } from '../contracts'
+import { Authority, IntentState, KillState, OrderSide, TerminalOutcome } from '../contracts'
 import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
@@ -52,6 +52,7 @@ export const StartInputSchema = Schema.Struct({
   consistencyDelayMs: ConsistencyDelay,
   occurredAt: UtcInstant,
   brokerOrderId: Schema.optionalKey(BrokerOrderId),
+  closeOnly: Schema.optionalKey(Schema.Literal(true)),
 })
 export const OutcomeInputSchema = Schema.Struct({
   intentId: Sha256,
@@ -101,12 +102,16 @@ export interface StartReceipt {
 }
 
 export interface MutationStoreShape {
-  readonly authorizeSubmit: (intentId: string) => Effect.Effect<void, MutationStoreError | WriterFenceError>
+  readonly authorizeSubmit: (
+    intentId: string,
+    closeOnly?: boolean,
+  ) => Effect.Effect<void, MutationStoreError | WriterFenceError>
   readonly beginSubmit: (
     intentId: string,
     requestHash: string,
     consistencyDelayMs: number,
     occurredAt: string,
+    closeOnly?: boolean,
   ) => Effect.Effect<StartReceipt, MutationStoreError | WriterFenceError>
   readonly submitAccepted: (
     intentId: string,
@@ -203,6 +208,7 @@ export interface MutationIntentSnapshot {
   readonly authorityGenerationHash: string
   readonly policyHash: string
   readonly state: IntentState
+  readonly side: OrderSide
   readonly strategyName: string
   readonly updatedAt: string
   readonly generationAccountId: string | null

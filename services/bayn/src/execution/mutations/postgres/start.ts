@@ -21,7 +21,10 @@ import { fromDecision } from './shared'
 import type { WriterFenceError, WriterFenceService } from '../../writer-fence'
 
 export interface MutationStartPostgres {
-  readonly authorizeSubmit: (intentId: string) => Effect.Effect<void, MutationStoreError | SqlError>
+  readonly authorizeSubmit: (
+    intentId: string,
+    closeOnly?: boolean,
+  ) => Effect.Effect<void, MutationStoreError | SqlError>
   readonly begin: (
     operation: MutationOperation,
     intentId: string,
@@ -29,6 +32,7 @@ export interface MutationStartPostgres {
     consistencyDelayMs: number,
     occurredAt: string,
     brokerOrderId?: string,
+    closeOnly?: boolean,
   ) => Effect.Effect<StartReceipt, MutationStoreError | SqlError | WriterFenceError>
 }
 
@@ -37,7 +41,7 @@ export const makeMutationStartPostgres = (
   fence: WriterFenceService,
   events: MutationEventPostgres,
 ): MutationStartPostgres => {
-  const readAuthorityBinding = (operation: MutationOperation) =>
+  const readAuthorityBinding = (operation: MutationOperation, closeOnly = false) =>
     sql<{
       effective: string
       generation_hash: string
@@ -62,7 +66,7 @@ export const makeMutationStartPostgres = (
       Effect.flatMap((rows) =>
         fromDecision(() =>
           Result.flatMap(decodeAuthoritySnapshot(operation, rows), (authority) =>
-            decideMutationAuthority(operation, authority),
+            decideMutationAuthority(operation, authority, closeOnly),
           ),
         ),
       ),
@@ -113,6 +117,7 @@ export const makeMutationStartPostgres = (
       generation_risk_policy_hash: string | null
       generation_strategy_name: string | null
       policy_hash: string
+      side: string
       state: string
       strategy_name: string
       updated_at: string
@@ -121,6 +126,7 @@ export const makeMutationStartPostgres = (
         intent.account_id,
         intent.authority_generation_hash,
         intent.policy_hash,
+        intent.side,
         intent.state,
         intent.strategy_name,
         generation.account_id AS generation_account_id,
@@ -158,7 +164,7 @@ export const makeMutationStartPostgres = (
       const replay = yield* fromDecision(() => decideMutationStartReplay(operation, input, existing))
       if (replay._tag === 'ReplayMutation') return replay.receipt
 
-      const authority = yield* readAuthorityBinding(operation)
+      const authority = yield* readAuthorityBinding(operation, input.closeOnly === true)
       if (operation === MutationOperation.Submit) yield* requireNoOtherUnresolved(input.intentId)
       const intent = yield* readIntent(operation, input.intentId)
       const submitted =
@@ -182,6 +188,7 @@ export const makeMutationStartPostgres = (
     consistencyDelayMs: number,
     occurredAt: string,
     brokerOrderId?: string,
+    closeOnly?: boolean,
   ) =>
     fromDecision(() =>
       decodeStartInput(operation, {
@@ -190,14 +197,15 @@ export const makeMutationStartPostgres = (
         consistencyDelayMs,
         occurredAt,
         ...(brokerOrderId === undefined ? {} : { brokerOrderId }),
+        ...(closeOnly === true ? { closeOnly: true as const } : {}),
       }),
     ).pipe(Effect.flatMap((input) => fence.transaction(beginTransaction(operation, input))))
 
-  const authorizeSubmit = (intentId: string) =>
+  const authorizeSubmit = (intentId: string, closeOnly = false) =>
     Effect.gen(function* () {
-      const authority = yield* readAuthorityBinding(MutationOperation.Submit)
+      const authority = yield* readAuthorityBinding(MutationOperation.Submit, closeOnly)
       const intent = yield* readIntent(MutationOperation.Submit, intentId)
-      yield* fromDecision(() => decideFinalSubmitAuthorization(authority, intent))
+      yield* fromDecision(() => decideFinalSubmitAuthorization(authority, intent, closeOnly))
     })
 
   return { authorizeSubmit, begin }
