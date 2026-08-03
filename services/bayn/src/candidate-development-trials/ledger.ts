@@ -100,6 +100,40 @@ const historicalLedger = [
     metricBearingAttemptsConsumed: 0 as const,
     qualificationAttemptConsumed: false as const,
   },
+  {
+    _tag: 'DEVELOPMENT_PENDING' as const,
+    candidateOrdinal: 21,
+    priorTrialCount: 20,
+    strategyName: 'candidate-21-six-month-rotation',
+    preregistration: {
+      schemaVersion: 'bayn.candidate-development-next-preregistration.v1' as const,
+      candidateOrdinal: 21,
+      priorTrialCount: 20,
+      strategyProtocolHash: '9f03db47df47cb133b922c795b9cbd5c5b78e3d6d3411ec74e303d7f193f81fe',
+      candidateDevelopmentProtocolHash: '41fb58503e94222ea98d5e929f431a31ad6a1720ff7eb88a5f7935396a254769',
+      calendarHash: '4b2f519f336e4e730c1f0d69e860f25a8d4d0cfbd8e93c6b333ea83623d87237',
+      priorTrialsHash: '295eff4120c4d3deb33e09e3948bc5a670b55a836dc6be6849b2eea979e60008',
+      modulePath: 'services/bayn/src/strategy/candidate-21.ts',
+      moduleSha256: '929ce699203425b95a06597c98fbbff3d124dda5da68e187ebb1f289d9ded5b1',
+      marketData: {
+        schemaVersion: 'bayn.candidate-development-market-data-source.v1' as const,
+        snapshotId: '2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0',
+        finalizedSnapshotContentHash: '8e376546f6a6cc1dbe2e910db3d68f584fc0bd9c4858166042ce32aa077eed0d',
+        inputManifestHash: '1e5377336f2e6feb751000114b81cc89aee5be7542e213c320f2cfbb4185bb2b',
+        boundedContentHash: 'b6052c8ebdca855973adf4e41efafb5028fd8dbbaa70809331f6017519b1c995',
+      },
+      preregistration: {
+        sourceRevision: '90e7bd810923d31fef75caaab95ddebf89fe7bfc',
+        path: 'services/bayn/candidates/ordinal-21-six-month-rotation-preregistration.json',
+        blobOid: 'bba3ffb476aa763a31cc69f545f8fbf9a3eda11d',
+      },
+    },
+    sourceManifest: {
+      path: 'services/bayn/candidates/ordinal-21-source-manifest.json',
+      blobOid: '0e19efebffc2f060aa1be894be0a24b60605c184',
+      sha256: 'b6cf022eba56430c6418dc8a9bdbfd00e78dddcb4825f1e0a7853c8e3dbdcd98',
+    },
+  },
 ] as const
 
 /** One append-only source-controlled ledger. Candidate 20 is represented once as the terminal tombstone entry. */
