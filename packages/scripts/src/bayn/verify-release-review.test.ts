@@ -6,6 +6,7 @@ import {
   baynReleaseGateName,
   baynImagePublishJobName,
   evaluateBaynPublication,
+  isBaynReleaseAffectingChange,
   isBaynReleaseAffectingPath,
   mergePullRequestEvidencePage,
   migrationCheckpointPath,
@@ -440,6 +441,35 @@ describe('Bayn publication boundary', () => {
     })
     expect(result).toMatchObject({ status: 'hold', code: 'non-single-commit-main-push' })
   })
+
+  test('treats a rename from a protected Bayn path as release-affecting', () => {
+    expect(
+      isBaynReleaseAffectingChange({ path: 'docs/example.ts', previousPath: 'services/bayn/src/example.ts' }),
+    ).toBe(true)
+
+    const result = evaluateBaynPublication({
+      mainCommitSha: sha('f'),
+      pushBeforeSha: baseline.endCommitSha,
+      publishedRevision: baseline.startCommitSha,
+      commits: [
+        {
+          sha: baseline.endCommitSha,
+          parents: [baseline.startCommitSha],
+          files: [{ path: 'services/bayn/src/old.ts', previousPath: null }],
+          sourcePullRequest: null,
+          gateRun: null,
+        },
+        mainCommit({
+          files: [{ path: 'docs/example.ts', previousPath: 'services/bayn/src/example.ts' }],
+          sourcePullRequest: null,
+          gateRun: null,
+        }),
+      ],
+      migrationCheckpoint: baseline,
+      repository: 'proompteng/lab',
+    })
+    expect(result).toMatchObject({ status: 'hold', code: 'no-associated-source-pr' })
+  })
 })
 
 describe('Bayn image publication identity', () => {
@@ -500,6 +530,11 @@ test('executes the release gate from the trusted base while evaluating the exact
   expect(baynCiWorkflow).not.toContain('name: Checkout exact reviewed PR head')
   expect(baynCiWorkflow).not.toContain('ref: ${{ github.event.pull_request.head.sha }}')
   expect(baynCiWorkflow).toContain("github.event.pull_request.base.sha != '8cfdab1bafb0a2f2650c9e0340a3157b75cfb648'")
+  expect(
+    baynCiWorkflow.match(
+      /github\.event_name == 'pull_request'\s+&&\s+needs\.changes\.outputs\.bayn == 'true'\s+&&\s+github\.event\.pull_request\.base\.sha != '8cfdab1bafb0a2f2650c9e0340a3157b75cfb648'/g,
+    ),
+  ).toHaveLength(3)
   expect(baynCiWorkflow).toContain('--commit "${PR_HEAD}"')
   expect(baynCiWorkflow).toContain('--pull-request-number "${PR_NUMBER}"')
   expect(baynCiWorkflow).toContain('--pull-request-head "${PR_HEAD}"')

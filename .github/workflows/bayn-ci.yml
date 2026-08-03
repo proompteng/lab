@@ -283,6 +283,7 @@ jobs:
       - name: Checkout trusted base verifier
         if: >-
           ${{
+            github.event_name == 'pull_request' &&
             needs.changes.outputs.bayn == 'true' &&
             github.event.pull_request.base.sha != '8cfdab1bafb0a2f2650c9e0340a3157b75cfb648'
           }}
@@ -293,6 +294,7 @@ jobs:
       - name: Set up Bun for trusted release gate
         if: >-
           ${{
+            github.event_name == 'pull_request' &&
             needs.changes.outputs.bayn == 'true' &&
             github.event.pull_request.base.sha != '8cfdab1bafb0a2f2650c9e0340a3157b75cfb648'
           }}
@@ -303,6 +305,7 @@ jobs:
       - name: Evaluate exact final-head Codex review
         if: >-
           ${{
+            github.event_name == 'pull_request' &&
             needs.changes.outputs.bayn == 'true' &&
             github.event.pull_request.base.sha != '8cfdab1bafb0a2f2650c9e0340a3157b75cfb648'
           }}

@@ -258,6 +258,10 @@ export const isBaynReleaseAffectingPath = (path: string): boolean =>
   path.endsWith('/package.json') ||
   exactBaynReleasePaths.has(path)
 
+export const isBaynReleaseAffectingChange = (change: CommitFileChange): boolean =>
+  isBaynReleaseAffectingPath(change.path) ||
+  (change.previousPath !== null && isBaynReleaseAffectingPath(change.previousPath))
+
 const shortSha = (sha: string): string => sha.slice(0, 12)
 
 const holdReview = (
@@ -522,9 +526,7 @@ export const evaluateBaynPublication = (input: ReleaseRangeInput): PublicationEv
   }
 
   const checkpointIndex = input.commits.findIndex((commit) => commit.sha === input.migrationCheckpoint.endCommitSha)
-  const baynCommits = input.commits.filter((commit) =>
-    commit.files.some((file) => isBaynReleaseAffectingPath(file.path)),
-  )
+  const baynCommits = input.commits.filter((commit) => commit.files.some(isBaynReleaseAffectingChange))
   for (const commit of baynCommits) {
     const commitIndex = input.commits.indexOf(commit)
     if (baselineCovered && commitIndex <= checkpointIndex) continue
@@ -1369,7 +1371,7 @@ const buildMainCommitEvidence = async (
   needsGate: boolean,
 ): Promise<MainCommitEvidence> => {
   const detail = await fetchCommitDetail(options, commitSha)
-  const baynAffecting = detail.files.some((file) => isBaynReleaseAffectingPath(file.path))
+  const baynAffecting = detail.files.some(isBaynReleaseAffectingChange)
   if (!baynAffecting || !needsGate) {
     return { ...detail, sourcePullRequest: null, gateRun: null }
   }
