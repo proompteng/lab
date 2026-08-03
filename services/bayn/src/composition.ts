@@ -472,6 +472,47 @@ const preparedPaperActivationIsBound = (
   return Result.succeed(undefined)
 }
 
+const readBoundPaperActivationGeneration = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  request: PaperActivationRequest,
+  authorityStore: AuthorityGenerationStoreShape,
+): Effect.Effect<CapitalGrantGeneration, OperationalError> =>
+  Effect.gen(function* () {
+    if (authorityStore.readAuthorityState === undefined || authorityStore.readAuthorityGeneration === undefined) {
+      return yield* Effect.fail(
+        paperActivationOperationalError('durable PAPER recovery requires authority history read capabilities'),
+      )
+    }
+    const authority = yield* authorityStore
+      .readAuthorityState()
+      .pipe(Effect.mapError((cause) => paperActivationOperationalError('durable PAPER authority read failed', cause)))
+    if (authority.maximum !== Authority.Paper) {
+      return yield* Effect.fail(
+        paperActivationOperationalError('durable PAPER recovery requires PAPER maximum authority'),
+      )
+    }
+    const closeAuthorityIsBound =
+      (authority.effective === Authority.Paper && authority.kill === KillState.Clear) ||
+      (authority.effective === Authority.Observe && authority.kill === KillState.Active)
+    if (!closeAuthorityIsBound) {
+      return yield* Effect.fail(
+        paperActivationOperationalError(
+          'durable PAPER recovery requires clear PAPER or active OBSERVE close authority',
+        ),
+      )
+    }
+    const generation = yield* authorityStore
+      .readAuthorityGeneration(authority.generationHash)
+      .pipe(Effect.mapError((cause) => paperActivationOperationalError('durable PAPER generation read failed', cause)))
+    if (generation === undefined) {
+      return yield* Effect.fail(paperActivationOperationalError('durable PAPER generation history is missing'))
+    }
+    yield* Effect.fromResult(paperGenerationIsBoundToRequest(request, plan, generation)).pipe(
+      Effect.mapError((message) => paperActivationOperationalError(message)),
+    )
+    return generation
+  })
+
 const recoverPaperActivationGeneration = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: PaperActivationRequest,
@@ -497,42 +538,39 @@ const recoverPaperActivationGeneration = (
         paperActivationOperationalError('durable PAPER close recovery is outside its immutable close lease'),
       )
     }
-    if (authorityStore.readAuthorityState === undefined || authorityStore.readAuthorityGeneration === undefined) {
-      return yield* Effect.fail(
-        paperActivationOperationalError('durable PAPER close recovery requires authority history read capabilities'),
-      )
-    }
-    const authority = yield* authorityStore
-      .readAuthorityState()
-      .pipe(Effect.mapError((cause) => paperActivationOperationalError('durable PAPER authority read failed', cause)))
-    if (authority.maximum !== Authority.Paper) {
-      return yield* Effect.fail(
-        paperActivationOperationalError('durable PAPER close recovery requires PAPER maximum authority'),
-      )
-    }
-    const closeAuthorityIsBound =
-      (authority.effective === Authority.Paper && authority.kill === KillState.Clear) ||
-      (authority.effective === Authority.Observe && authority.kill === KillState.Active)
-    if (!closeAuthorityIsBound) {
-      return yield* Effect.fail(
-        paperActivationOperationalError(
-          'durable PAPER close recovery requires clear PAPER or active OBSERVE close authority',
-        ),
-      )
-    }
-    const generation = yield* authorityStore
-      .readAuthorityGeneration(authority.generationHash)
-      .pipe(Effect.mapError((cause) => paperActivationOperationalError('durable PAPER generation read failed', cause)))
-    if (generation === undefined) {
-      return yield* Effect.fail(
-        paperActivationOperationalError('durable PAPER close recovery generation history is missing'),
-      )
-    }
-    yield* Effect.fromResult(paperGenerationIsBoundToRequest(request, plan, generation)).pipe(
+    return yield* readBoundPaperActivationGeneration(plan, request, authorityStore)
+  })
+
+const recoverPaperReceiptFinalizationGeneration = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  request: PaperActivationRequest,
+  evidence: RuntimeEvidence,
+  authorityStore: AuthorityGenerationStoreShape,
+  authorityRestrictionStore: AuthorityRestrictionStoreShape,
+  writerFence: WriterFenceService,
+): Effect.Effect<CapitalGrantGeneration, OperationalError> =>
+  Effect.gen(function* () {
+    const observedAt = yield* currentUtcInstant
+    yield* Effect.fromResult(paperActivationRequestIsCurrent(request, plan, evidence, observedAt, true)).pipe(
       Effect.mapError((message) => paperActivationOperationalError(message)),
     )
-    return generation
+    if (observedAt < paperEpisodeCloseExpiresAt(request.expiresAt)) {
+      return yield* Effect.fail(
+        paperActivationOperationalError('durable PAPER receipt finalization is outside its bounded lease'),
+      )
+    }
+    yield* restrictExpiredPaperActivation(authorityRestrictionStore, writerFence)
+    if (!paperReceiptFinalizationWindowOpen(request.expiresAt, observedAt)) {
+      return yield* Effect.fail(
+        paperActivationOperationalError('durable PAPER receipt finalization is outside its bounded lease'),
+      )
+    }
+    return yield* readBoundPaperActivationGeneration(plan, request, authorityStore)
   })
+
+type PaperActivationStartupResolution =
+  | { readonly _tag: 'ReceiptFinalization'; readonly generation: CapitalGrantGeneration }
+  | { readonly _tag: 'Mutation'; readonly generation: CapitalGrantGeneration }
 
 const preparePaperActivation = (
   plan: ApplicationPlanFor<'AutonomousService'>,
@@ -789,6 +827,13 @@ export const retryClosedCycleReceipts = (
 export const closedCycleReceiptEmissionAllowed = (cutoffAt: string, observedAt: string): boolean =>
   Date.parse(observedAt) >= Date.parse(cutoffAt)
 
+export const paperReceiptFinalizationWindowOpen = (authorityExpiresAt: string, observedAt: string): boolean => {
+  const observedMs = Date.parse(observedAt)
+  const closeExpiresMs = Date.parse(paperEpisodeCloseExpiresAt(authorityExpiresAt))
+  const finalizationExpiresMs = Date.parse(paperEpisodeReceiptFinalizationExpiresAt(authorityExpiresAt))
+  return Number.isFinite(observedMs) && observedMs >= closeExpiresMs && observedMs < finalizationExpiresMs
+}
+
 const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
   Effect.gen(function* () {
     const dependencies = yield* applicationDependencies
@@ -907,153 +952,195 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                             Effect.as(readRuntime()),
                           )
                         }
-                        const prepareOrRecover = currentUtcInstant.pipe(
-                          Effect.flatMap((observedAt) =>
-                            observedAt >= request.cutoffAt
-                              ? recoverPaperActivationGeneration(
-                                  observePlan,
-                                  request,
-                                  evidence,
-                                  runtimeServices.authorityGenerationStore,
-                                  runtimeServices.authorityRestrictionStore,
-                                  runtimeServices.writerFence,
-                                ).pipe(Effect.map((generation) => ({ generation })))
-                              : preparePaperActivation(observePlan, evidence, request),
-                          ),
-                        )
+                        const prepareOrRecover: Effect.Effect<PaperActivationStartupResolution, OperationalError> =
+                          currentUtcInstant.pipe(
+                            Effect.flatMap(
+                              (observedAt): Effect.Effect<PaperActivationStartupResolution, OperationalError> =>
+                                observedAt >= paperEpisodeCloseExpiresAt(request.expiresAt)
+                                  ? recoverPaperReceiptFinalizationGeneration(
+                                      observePlan,
+                                      request,
+                                      evidence,
+                                      runtimeServices.authorityGenerationStore,
+                                      runtimeServices.authorityRestrictionStore,
+                                      runtimeServices.writerFence,
+                                    ).pipe(
+                                      Effect.map((generation) => ({
+                                        _tag: 'ReceiptFinalization' as const,
+                                        generation,
+                                      })),
+                                    )
+                                  : observedAt >= request.cutoffAt
+                                    ? recoverPaperActivationGeneration(
+                                        observePlan,
+                                        request,
+                                        evidence,
+                                        runtimeServices.authorityGenerationStore,
+                                        runtimeServices.authorityRestrictionStore,
+                                        runtimeServices.writerFence,
+                                      ).pipe(Effect.map((generation) => ({ _tag: 'Mutation' as const, generation })))
+                                    : preparePaperActivation(observePlan, evidence, request).pipe(
+                                        Effect.map(({ generation }) => ({ _tag: 'Mutation' as const, generation })),
+                                      ),
+                            ),
+                          )
                         return prepareOrRecover.pipe(
-                          Effect.flatMap((prepared) => {
-                            if (observePlan.config.alpaca.identity.environment !== BrokerEnvironment.Sandbox) {
-                              return Effect.fail(
-                                paperActivationOperationalError('paper activation requires a sandbox broker'),
-                              )
-                            }
-                            return currentUtcInstant.pipe(
-                              Effect.flatMap((observedAt) =>
-                                resolvePreparedSandboxAuthority({
-                                  brokerIdentity: observePlan.config.alpaca.identity as Extract<
-                                    typeof observePlan.config.alpaca.identity,
-                                    { readonly environment: BrokerEnvironment.Sandbox }
-                                  >,
-                                  strategy: observePlan.strategy.provenance.strategy,
-                                  generationHash: prepared.generation.generationHash,
-                                  observedAt,
-                                }),
-                              ),
-                              Effect.mapError((cause) =>
-                                paperActivationOperationalError(
-                                  'prepared sandbox execution authority is invalid',
-                                  cause,
-                                ),
-                              ),
-                              Effect.flatMap((authority) => {
-                                const realizedPolicy = resolveExecutionPolicy({
-                                  brokerIdentity: observePlan.config.alpaca.identity,
-                                  brokerAccess: BrokerAccess.Mutation,
-                                  capitalAuthority: CapitalAuthoritySelection.Sandbox,
-                                  authorityGenerationHash: prepared.generation.generationHash,
-                                  liveCapitalGrantHash: undefined,
-                                })
-                                if (Result.isFailure(realizedPolicy)) {
-                                  return Effect.fail(
-                                    paperActivationOperationalError(
-                                      'prepared sandbox execution policy is invalid',
-                                      realizedPolicy.failure,
-                                    ),
-                                  )
-                                }
-                                const realizedConfig = {
-                                  ...observePlan.config,
-                                  execution: realizedPolicy.success,
-                                } as Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'AutonomousService' }>
-                                const realizedPlan = makeApplicationPlan({
-                                  config: realizedConfig,
-                                  protocol: observePlan.protocol,
-                                  parameterHash: observePlan.parameterHash,
-                                  strategy: observePlan.strategy,
-                                  strategyProtocolHash: observePlan.strategyProtocolHash,
-                                }) as ApplicationPlanFor<'AutonomousService'>
+                          Effect.flatMap(
+                            (
+                              prepared,
+                            ): Effect.Effect<AutonomousRuntime<never, never>, OperationalError, Scope.Scope> => {
+                              if (prepared._tag === 'ReceiptFinalization') {
                                 const emitClosedCycleReceipt = makeClosedCycleReceiptEmitter(
-                                  realizedPlan.config,
+                                  observePlan.config,
                                   runtimeServices.pgClient,
                                   prepared.generation.generationHash,
                                   runtimeServices.forwardPerformanceReceiptStore,
                                 )
-                                const onClosedCycle = (cycleId: string, observedAt: string) =>
-                                  closedCycleReceiptEmissionAllowed(request.cutoffAt, observedAt)
-                                    ? emitClosedCycleReceipt(cycleId, observedAt).pipe(Effect.asVoid)
-                                    : Effect.void
-                                return makeMutation(
-                                  runtimeServices.session,
-                                  authority,
-                                  runtimeServices.alpacaHttpClient,
-                                ).pipe(
-                                  Effect.flatMap((brokerMutation) =>
-                                    Effect.fromResult(
-                                      makeExecutionProgram(authority, {
-                                        brokerRead: runtimeServices.session.read,
-                                        liveCapitalGrants: runtimeServices.liveCapitalGrants,
-                                        freshBrokerPrice: makeFreshBrokerPriceReader(
-                                          runtimeServices.session.connection,
-                                          runtimeServices.alpacaHttpClient,
-                                        ),
-                                        currentUtcInstant,
-                                        paperEpisodeEntryExpiresAt: request.cutoffAt,
-                                        paperEpisodeCloseExpiresAt: paperEpisodeCloseExpiresAt(request.expiresAt),
-                                        isPaperEpisodeCloseIntent: (intentId) =>
-                                          runtimeServices.paperCycleClosureStore
-                                            .containsIntent(intentId)
-                                            .pipe(Effect.catch(() => Effect.succeed(false))),
-                                        intentStore: runtimeServices.intentStore,
-                                        mutationStore: runtimeServices.mutationStore,
-                                        writerFence: runtimeServices.writerFence,
-                                        brokerMutation,
-                                      }),
+                                return Effect.gen(function* () {
+                                  yield* Effect.forkScoped(
+                                    retryClosedCycleReceipts(
+                                      emitClosedCycleReceipt,
+                                      request.cutoffAt,
+                                      paperEpisodeReceiptFinalizationExpiresAt(request.expiresAt),
+                                      observePlan.config.alpaca.reconciliationIntervalMs,
                                     ),
-                                  ),
-                                  Effect.mapError(executionProgramError),
-                                  Effect.tap(() =>
-                                    realizedPaperActivation(state, request, prepared.generation.generationHash),
-                                  ),
-                                  Effect.tap(() =>
-                                    Effect.forkScoped(
-                                      retryClosedCycleReceipts(
-                                        emitClosedCycleReceipt,
-                                        request.cutoffAt,
-                                        paperEpisodeReceiptFinalizationExpiresAt(request.expiresAt),
-                                        realizedPlan.config.alpaca.reconciliationIntervalMs,
-                                      ),
-                                    ).pipe(Effect.asVoid),
-                                  ),
-                                  Effect.tap(() =>
-                                    Effect.forkScoped(
-                                      restrictPaperAtExpiry(
-                                        paperEpisodeCloseExpiresAt(request.expiresAt),
-                                        runtimeServices.authorityRestrictionStore,
-                                        runtimeServices.writerFence,
-                                      ),
-                                    ).pipe(Effect.asVoid),
-                                  ),
-                                  Effect.map((executionProgram) => ({
-                                    _tag: 'AutonomousMutation' as const,
-                                    broker: runtimeBroker(realizedPlan, runtimeServices.session.read, true),
-                                    executionProgram,
-                                    startCycle: (startup: AutonomousCycleStartupInput) =>
-                                      mutationCycle(
-                                        realizedPlan,
-                                        executionProgram,
-                                        request,
-                                        runtimeServices.paperCycleClosureStore,
-                                        onClosedCycle,
-                                      )(startup).pipe(
-                                        Effect.provide(cycleResources),
-                                        Effect.map((loop) => loop.pipe(Effect.provide(cycleResources))),
-                                      ),
-                                  })),
+                                  )
+                                  yield* pendingPaperActivation(state, request, 'REQUEST_EXPIRED')
+                                  return readRuntime()
+                                })
+                              }
+                              if (observePlan.config.alpaca.identity.environment !== BrokerEnvironment.Sandbox) {
+                                return Effect.fail(
+                                  paperActivationOperationalError('paper activation requires a sandbox broker'),
                                 )
-                              }),
-                            )
-                          }),
+                              }
+                              return currentUtcInstant.pipe(
+                                Effect.flatMap((observedAt) =>
+                                  resolvePreparedSandboxAuthority({
+                                    brokerIdentity: observePlan.config.alpaca.identity as Extract<
+                                      typeof observePlan.config.alpaca.identity,
+                                      { readonly environment: BrokerEnvironment.Sandbox }
+                                    >,
+                                    strategy: observePlan.strategy.provenance.strategy,
+                                    generationHash: prepared.generation.generationHash,
+                                    observedAt,
+                                  }),
+                                ),
+                                Effect.mapError((cause) =>
+                                  paperActivationOperationalError(
+                                    'prepared sandbox execution authority is invalid',
+                                    cause,
+                                  ),
+                                ),
+                                Effect.flatMap((authority) => {
+                                  const realizedPolicy = resolveExecutionPolicy({
+                                    brokerIdentity: observePlan.config.alpaca.identity,
+                                    brokerAccess: BrokerAccess.Mutation,
+                                    capitalAuthority: CapitalAuthoritySelection.Sandbox,
+                                    authorityGenerationHash: prepared.generation.generationHash,
+                                    liveCapitalGrantHash: undefined,
+                                  })
+                                  if (Result.isFailure(realizedPolicy)) {
+                                    return Effect.fail(
+                                      paperActivationOperationalError(
+                                        'prepared sandbox execution policy is invalid',
+                                        realizedPolicy.failure,
+                                      ),
+                                    )
+                                  }
+                                  const realizedConfig = {
+                                    ...observePlan.config,
+                                    execution: realizedPolicy.success,
+                                  } as Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'AutonomousService' }>
+                                  const realizedPlan = makeApplicationPlan({
+                                    config: realizedConfig,
+                                    protocol: observePlan.protocol,
+                                    parameterHash: observePlan.parameterHash,
+                                    strategy: observePlan.strategy,
+                                    strategyProtocolHash: observePlan.strategyProtocolHash,
+                                  }) as ApplicationPlanFor<'AutonomousService'>
+                                  const emitClosedCycleReceipt = makeClosedCycleReceiptEmitter(
+                                    realizedPlan.config,
+                                    runtimeServices.pgClient,
+                                    prepared.generation.generationHash,
+                                    runtimeServices.forwardPerformanceReceiptStore,
+                                  )
+                                  const onClosedCycle = (cycleId: string, observedAt: string) =>
+                                    closedCycleReceiptEmissionAllowed(request.cutoffAt, observedAt)
+                                      ? emitClosedCycleReceipt(cycleId, observedAt).pipe(Effect.asVoid)
+                                      : Effect.void
+                                  return makeMutation(
+                                    runtimeServices.session,
+                                    authority,
+                                    runtimeServices.alpacaHttpClient,
+                                  ).pipe(
+                                    Effect.flatMap((brokerMutation) =>
+                                      Effect.fromResult(
+                                        makeExecutionProgram(authority, {
+                                          brokerRead: runtimeServices.session.read,
+                                          liveCapitalGrants: runtimeServices.liveCapitalGrants,
+                                          freshBrokerPrice: makeFreshBrokerPriceReader(
+                                            runtimeServices.session.connection,
+                                            runtimeServices.alpacaHttpClient,
+                                          ),
+                                          currentUtcInstant,
+                                          paperEpisodeEntryExpiresAt: request.cutoffAt,
+                                          paperEpisodeCloseExpiresAt: paperEpisodeCloseExpiresAt(request.expiresAt),
+                                          isPaperEpisodeCloseIntent: (intentId) =>
+                                            runtimeServices.paperCycleClosureStore
+                                              .containsIntent(intentId)
+                                              .pipe(Effect.catch(() => Effect.succeed(false))),
+                                          intentStore: runtimeServices.intentStore,
+                                          mutationStore: runtimeServices.mutationStore,
+                                          writerFence: runtimeServices.writerFence,
+                                          brokerMutation,
+                                        }),
+                                      ),
+                                    ),
+                                    Effect.mapError(executionProgramError),
+                                    Effect.tap(() =>
+                                      realizedPaperActivation(state, request, prepared.generation.generationHash),
+                                    ),
+                                    Effect.tap(() =>
+                                      Effect.forkScoped(
+                                        retryClosedCycleReceipts(
+                                          emitClosedCycleReceipt,
+                                          request.cutoffAt,
+                                          paperEpisodeReceiptFinalizationExpiresAt(request.expiresAt),
+                                          realizedPlan.config.alpaca.reconciliationIntervalMs,
+                                        ),
+                                      ).pipe(Effect.asVoid),
+                                    ),
+                                    Effect.tap(() =>
+                                      Effect.forkScoped(
+                                        restrictPaperAtExpiry(
+                                          paperEpisodeCloseExpiresAt(request.expiresAt),
+                                          runtimeServices.authorityRestrictionStore,
+                                          runtimeServices.writerFence,
+                                        ),
+                                      ).pipe(Effect.asVoid),
+                                    ),
+                                    Effect.map((executionProgram) => ({
+                                      _tag: 'AutonomousMutation' as const,
+                                      broker: runtimeBroker(realizedPlan, runtimeServices.session.read, true),
+                                      executionProgram,
+                                      startCycle: (startup: AutonomousCycleStartupInput) =>
+                                        mutationCycle(
+                                          realizedPlan,
+                                          executionProgram,
+                                          request,
+                                          runtimeServices.paperCycleClosureStore,
+                                          onClosedCycle,
+                                        )(startup).pipe(
+                                          Effect.provide(cycleResources),
+                                          Effect.map((loop) => loop.pipe(Effect.provide(cycleResources))),
+                                        ),
+                                    })),
+                                  )
+                                }),
+                              )
+                            },
+                          ),
                           Effect.catch((cause) =>
                             Effect.logWarning('Bayn PAPER activation remains in OBSERVE').pipe(
                               Effect.annotateLogs({

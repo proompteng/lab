@@ -5,6 +5,7 @@ import { TestClock } from 'effect/testing'
 
 import {
   closedCycleReceiptEmissionAllowed,
+  paperReceiptFinalizationWindowOpen,
   restrictExpiredPaperActivation,
   retryClosedCycleReceipts,
 } from './composition'
@@ -108,6 +109,12 @@ describe('Bayn PAPER receipt retry boundary', () => {
 
   test('leaves a bounded post-close finalization window for late settlement', () => {
     expect(paperEpisodeReceiptFinalizationExpiresAt('2026-08-03T12:00:00.000Z')).toBe('2026-08-03T12:30:00.000Z')
+  })
+
+  test('keeps receipt finalization available after a restart during the close-to-receipt grace window', () => {
+    expect(paperReceiptFinalizationWindowOpen('2026-08-03T12:00:00.000Z', '2026-08-03T12:15:00.001Z')).toBe(true)
+    expect(paperReceiptFinalizationWindowOpen('2026-08-03T12:00:00.000Z', '2026-08-03T12:30:00.000Z')).toBe(false)
+    expect(paperReceiptFinalizationWindowOpen('2026-08-03T12:00:00.000Z', '2026-08-03T12:14:59.999Z')).toBe(false)
   })
 })
 
