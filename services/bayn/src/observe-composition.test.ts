@@ -4082,7 +4082,7 @@ describe('OBSERVE runtime composition', () => {
       decodeAutonomousCycle({
         ...cycle,
         state: CycleState.Blocked,
-        terminalReason: CycleTerminalReason.MissedSubmission,
+        terminalReason: CycleTerminalReason.Authority,
         stateVersion: cycle.stateVersion + 1,
         updatedAt: observedAt,
         terminalAt: observedAt,
@@ -4105,7 +4105,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.sync(() => {
           blocked += 1
           expect(cycleId).toBe(cycle.identity.cycleId)
-          expect(reason).toBe(CycleTerminalReason.MissedSubmission)
+          expect(reason).toBe(CycleTerminalReason.Authority)
           expect(blockAt).toBe(observedAt)
           terminal = true
           return { cycle: terminalCycle, changed: true }

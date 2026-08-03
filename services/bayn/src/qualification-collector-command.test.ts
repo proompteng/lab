@@ -157,6 +157,7 @@ const sourceFixture = async (malformed = false, historicalModule = false) => {
   const modulePath = 'services/bayn/src/strategy/candidate-21.ts'
   const historicalModulePath = 'services/bayn/src/strategy/old-candidate.ts'
   const preregistrationPath = 'services/bayn/candidates/ordinal-21-preregistration.json'
+  const ledgerPath = 'services/bayn/src/candidate-development-trials/ledger.ts'
   const moduleBytes = Buffer.from("export const strategyDefinition = { name: 'candidate-21' }\n")
   const moduleSha256 = createHash('sha256').update(moduleBytes).digest('hex')
   await gitText(repositoryPath, ['init', '-b', 'main'])
@@ -194,6 +195,11 @@ const sourceFixture = async (malformed = false, historicalModule = false) => {
     await gitText(repositoryPath, ['commit', '-m', 'add historical module blob'])
   }
   await mkdir(join(repositoryPath, dirname(preregistrationPath)), { recursive: true })
+  await mkdir(join(repositoryPath, dirname(ledgerPath)), { recursive: true })
+  await writeFile(
+    join(repositoryPath, ledgerPath),
+    'const historicalLedger = [\n  { value: 1 },\n] as const\n\n/** One append-only source-controlled ledger. */\nexport const registration = null\n',
+  )
   const { preregistration: _registrationMetadata, ...document } = preregistration
   await writeFile(join(repositoryPath, preregistrationPath), malformed ? '{' : JSON.stringify(document))
   await gitText(repositoryPath, ['add', '.'])
@@ -218,10 +224,11 @@ const sourceFixture = async (malformed = false, historicalModule = false) => {
   const preregistrationBytes = Buffer.from(malformed ? '{' : JSON.stringify(boundDocument))
   return {
     repositoryPath,
+    ledgerPath,
     input: {
       repositoryPath,
       sourceRevision,
-      allowedDescendantPaths: [modulePath, preregistrationPath],
+      allowedDescendantPaths: [modulePath, preregistrationPath, ledgerPath],
       preregistration: bound,
       preregistrationBytes,
       moduleBlobOid,
@@ -388,6 +395,40 @@ describe('qualification collector boundaries', () => {
       )
       expect(accepted.reviewedSourceRevision).toBe(valid.input.preregistration.preregistration.sourceRevision)
       expect(descendant).not.toBe(sourceBeforeApproval)
+
+      await writeFile(
+        join(valid.repositoryPath, valid.ledgerPath),
+        'const historicalLedger = [\n  { value: 1 },\n  { value: 2 },\n] as const\n\n/** One append-only source-controlled ledger. */\nexport const registration = null\n',
+      )
+      await gitText(valid.repositoryPath, ['add', valid.ledgerPath])
+      await gitText(valid.repositoryPath, ['commit', '-m', 'append terminal ledger evidence'])
+      const ledgerDescendant = await gitText(valid.repositoryPath, ['rev-parse', 'HEAD'])
+      const acceptedLedger = await Effect.runPromise(
+        verifyQualificationCandidateSource({
+          ...valid.input,
+          sourceRevision: ledgerDescendant,
+          allowedDescendantPaths: valid.input.allowedDescendantPaths,
+        }),
+      )
+      expect(acceptedLedger.reviewedSourceRevision).toBe(valid.input.preregistration.preregistration.sourceRevision)
+
+      await writeFile(
+        join(valid.repositoryPath, valid.ledgerPath),
+        'const historicalLedger = [\n  { value: 1 },\n  { value: 2 },\n] as const\n\n/** One append-only source-controlled ledger. */\nexport const registration = true\n',
+      )
+      await gitText(valid.repositoryPath, ['add', valid.ledgerPath])
+      await gitText(valid.repositoryPath, ['commit', '-m', 'change ledger executable'])
+      const unsafeLedgerDescendant = await gitText(valid.repositoryPath, ['rev-parse', 'HEAD'])
+      const ledgerFailure = await Effect.runPromise(
+        Effect.flip(
+          verifyQualificationCandidateSource({
+            ...valid.input,
+            sourceRevision: unsafeLedgerDescendant,
+            allowedDescendantPaths: valid.input.allowedDescendantPaths,
+          }),
+        ),
+      )
+      expect(ledgerFailure).toMatchObject({ code: 'candidate-source-descendant-invalid' })
 
       await writeFile(
         join(valid.repositoryPath, 'services/bayn/src/strategy/helper.ts'),

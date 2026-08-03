@@ -8,6 +8,7 @@ import process from 'node:process'
 import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Data, Effect, Layer, Logger, Option, Result, Schema } from 'effect'
 import * as Reactivity from 'effect/unstable/reactivity/Reactivity'
+import { LanguageVariant, SyntaxKind, createScanner } from 'typescript/unstable/ast'
 
 import type { ApplicationPlanFor } from './app'
 import { embeddedBuildMetadata } from './build'
@@ -57,6 +58,7 @@ const sha64 = /^[0-9a-f]{64}$/
 const imageDigest = /^sha256:[0-9a-f]{64}$/
 const maximumGitOutputBytes = 16 * 1024 * 1024
 const defaultOperationTimeoutMs = 60_000
+const candidateDevelopmentTrialLedgerPath = 'services/bayn/src/candidate-development-trials/ledger.ts'
 const defaultAuditReplicaUrls = [
   'http://chi-torghut-clickhouse-default-0-0.torghut.svc.cluster.local:8123',
   'http://chi-torghut-clickhouse-default-0-1.torghut.svc.cluster.local:8123',
@@ -188,6 +190,139 @@ export interface QualificationCandidateImmutableSourceReceipt {
   readonly preregistrationHash: string
 }
 
+const ledgerDeclaration = 'const historicalLedger = ['
+const ledgerSuffix = '\n] as const\n\n/** One append-only source-controlled ledger.'
+
+const dataOnlyLedgerEntries = (text: string): boolean => {
+  const scanner = createScanner(true, LanguageVariant.Standard, text, 0, text.length)
+  let token = scanner.scan()
+
+  const take = (expected: SyntaxKind): boolean => {
+    if (token !== expected) return false
+    token = scanner.scan()
+    return true
+  }
+  const tokenIs = (expected: SyntaxKind): boolean => token === expected
+
+  const dataValue = (): boolean => {
+    if (
+      token === SyntaxKind.StringLiteral ||
+      token === SyntaxKind.NumericLiteral ||
+      token === SyntaxKind.TrueKeyword ||
+      token === SyntaxKind.FalseKeyword ||
+      token === SyntaxKind.NullKeyword
+    ) {
+      token = scanner.scan()
+      return true
+    }
+    if (token === SyntaxKind.OpenBraceToken) {
+      token = scanner.scan()
+      if (token === SyntaxKind.CloseBraceToken) {
+        token = scanner.scan()
+        return true
+      }
+      while (token !== SyntaxKind.EndOfFile) {
+        if (token !== SyntaxKind.Identifier && token !== SyntaxKind.StringLiteral) return false
+        token = scanner.scan()
+        if (!take(SyntaxKind.ColonToken) || !dataValue()) return false
+        if (tokenIs(SyntaxKind.CloseBraceToken)) {
+          token = scanner.scan()
+          return true
+        }
+        if (token !== SyntaxKind.CommaToken) return false
+        token = scanner.scan()
+        if (tokenIs(SyntaxKind.CloseBraceToken)) {
+          token = scanner.scan()
+          return true
+        }
+      }
+    }
+    if (token === SyntaxKind.OpenBracketToken) {
+      token = scanner.scan()
+      if (token === SyntaxKind.CloseBracketToken) {
+        token = scanner.scan()
+        return true
+      }
+      while (token !== SyntaxKind.EndOfFile) {
+        if (!dataValue()) return false
+        if (tokenIs(SyntaxKind.CloseBracketToken)) {
+          token = scanner.scan()
+          return true
+        }
+        if (token !== SyntaxKind.CommaToken) return false
+        token = scanner.scan()
+        if (tokenIs(SyntaxKind.CloseBracketToken)) {
+          token = scanner.scan()
+          return true
+        }
+      }
+    }
+    return false
+  }
+
+  let count = 0
+  while (token !== SyntaxKind.EndOfFile) {
+    if (!dataValue()) return false
+    count += 1
+    if (token !== SyntaxKind.CommaToken) return false
+    token = scanner.scan()
+  }
+  return count > 0
+}
+
+const verifyAppendOnlyTrialLedger = async (
+  input: QualificationCandidateImmutableSourceInput,
+  signal: AbortSignal,
+): Promise<void> => {
+  const [reviewedBytes, currentBytes] = await Promise.all([
+    gitBytes(
+      input.repositoryPath,
+      [
+        'cat-file',
+        'blob',
+        `${input.preregistration.preregistration.sourceRevision}:${candidateDevelopmentTrialLedgerPath}`,
+      ],
+      signal,
+    ),
+    gitBytes(
+      input.repositoryPath,
+      ['cat-file', 'blob', `${input.sourceRevision}:${candidateDevelopmentTrialLedgerPath}`],
+      signal,
+    ),
+  ])
+  const reviewedText = reviewedBytes.toString('utf8')
+  const currentText = currentBytes.toString('utf8')
+  const reviewedArrayStart = reviewedText.indexOf(ledgerDeclaration)
+  const currentArrayStart = currentText.indexOf(ledgerDeclaration)
+  const reviewedSuffixStart = reviewedText.indexOf(ledgerSuffix, reviewedArrayStart + ledgerDeclaration.length)
+  const currentSuffixStart = currentText.indexOf(ledgerSuffix, currentArrayStart + ledgerDeclaration.length)
+  if (
+    reviewedArrayStart < 0 ||
+    currentArrayStart < 0 ||
+    reviewedSuffixStart < 0 ||
+    currentSuffixStart < 0 ||
+    reviewedText.indexOf(ledgerDeclaration, reviewedArrayStart + ledgerDeclaration.length) >= 0 ||
+    currentText.indexOf(ledgerDeclaration, currentArrayStart + ledgerDeclaration.length) >= 0
+  ) {
+    throw new Error('candidate trial ledger does not expose one historicalLedger array')
+  }
+  const reviewedBodyStart = reviewedArrayStart + ledgerDeclaration.length
+  const currentBodyStart = currentArrayStart + ledgerDeclaration.length
+  const reviewedBody = reviewedText.slice(reviewedBodyStart, reviewedSuffixStart)
+  const currentBody = currentText.slice(currentBodyStart, currentSuffixStart)
+  if (
+    currentText.slice(0, currentArrayStart) !== reviewedText.slice(0, reviewedArrayStart) ||
+    currentText.slice(currentSuffixStart) !== reviewedText.slice(reviewedSuffixStart) ||
+    !currentBody.startsWith(reviewedBody)
+  ) {
+    throw new Error('candidate trial ledger descendant changed executable code or reviewed evidence')
+  }
+  const appended = currentBody.slice(reviewedBody.length)
+  if (appended.trim().length === 0 || !dataOnlyLedgerEntries(appended)) {
+    throw new Error('candidate trial ledger descendant must append data-only terminal evidence')
+  }
+}
+
 const verifyCandidateSourceDescendant = (
   input: QualificationCandidateImmutableSourceInput,
 ): Effect.Effect<void, QualificationCollectorError> =>
@@ -214,6 +349,9 @@ const verifyCandidateSourceDescendant = (
       const unexpectedPath = changedPaths.find((path) => !allowedPaths.has(path))
       if (unexpectedPath !== undefined) {
         throw new Error(`unapproved qualification descendant path: ${unexpectedPath}`)
+      }
+      if (changedPaths.includes(candidateDevelopmentTrialLedgerPath)) {
+        await verifyAppendOnlyTrialLedger(input, signal)
       }
     },
     catch: (cause) =>
@@ -1267,7 +1405,7 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
         preregistration.modulePath,
         preregistration.preregistration.path,
         activeCandidate.sourceManifest.path,
-        'services/bayn/src/candidate-development-trials/ledger.ts',
+        candidateDevelopmentTrialLedgerPath,
       ],
       preregistration,
       preregistrationBytes: staticGit.preregistrationBytes,
