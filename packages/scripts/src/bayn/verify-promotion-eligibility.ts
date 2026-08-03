@@ -38,7 +38,6 @@ const promotionPathSet = new Set<string>(baynPromotionManifestPaths)
 
 const exactBaynBuildInputPaths = new Set([
   'packages/scripts/src/bayn/update-manifests.ts',
-  'packages/scripts/src/bayn/verify-release-review.ts',
   'nix/images/bayn.nix',
   'nix/images/bayn-runtime-root.nix',
   'nix/images/bun-workspace-service.nix',

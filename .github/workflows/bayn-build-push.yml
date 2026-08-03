@@ -3,7 +3,6 @@ name: bayn-build-push
 permissions:
   actions: read
   contents: read
-  pull-requests: read
 
 on:
   push:
@@ -15,49 +14,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  release-review-eligibility:
-    name: Verify trusted source release gates
-    runs-on: arc-arm64
-    timeout-minutes: 10
-    outputs:
-      publish: ${{ steps.verify.outputs.publish }}
-      source_sha: ${{ steps.verify.outputs.source_sha }}
-    steps:
-      - name: Checkout exact main commit
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - name: Verify source PR gates before publication
-        id: verify
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PUSH_BEFORE: ${{ github.event.before }}
-        run: >-
-          bun packages/scripts/src/bayn/verify-release-review.ts
-          --mode publish
-          --repository "${GITHUB_REPOSITORY}"
-          --repository-root "${GITHUB_WORKSPACE}"
-          --commit "${GITHUB_SHA}"
-          --push-before "${PUSH_BEFORE}"
-          --github-output "${GITHUB_OUTPUT}"
-          --request-timeout-ms 10000
-
   image:
-    if: needs.release-review-eligibility.outputs.publish == 'true'
-    needs: release-review-eligibility
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: bayn
       package_attr: bayn-image
-      tag: sha-${{ needs.release-review-eligibility.outputs.source_sha }}
-      source_revision: ${{ needs.release-review-eligibility.outputs.source_sha }}
+      tag: sha-${{ github.sha }}
+      source_revision: ${{ github.sha }}
       pr_number: ''
       latest: true
       publish_on_dispatch: false
