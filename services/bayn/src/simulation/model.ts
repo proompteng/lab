@@ -110,6 +110,9 @@ export type SimulationDomainFailure =
       readonly executionIndex: number
     }
   | {
+      readonly _tag: 'SimulationTraceMissing'
+    }
+  | {
       readonly _tag: 'InvalidSimulationRange'
       readonly startIndex: number
       readonly sessionCount: number
@@ -158,7 +161,7 @@ export type SimulationDomainFailure =
   | {
       readonly _tag: 'RuntimeStrategyMismatch'
       readonly observed: string
-      readonly expected: 'risk-balanced-trend'
+      readonly expected: string
     }
   | {
       readonly _tag: 'RuntimeParameterSchemaMismatch'
@@ -234,6 +237,8 @@ export const renderSimulationFailure = (failure: SimulationFailure): string => {
       return `buying-power fill adjustment ${failure.adjustedFilledQuantityMicros} must be within 0..${failure.modeledFilledQuantityMicros}`
     case 'CandidateDecisionMissing':
       return `candidate target ${failure.signalIndex}->${failure.executionIndex} has no strategy decision`
+    case 'SimulationTraceMissing':
+      return 'strategy simulation omitted its trace'
     case 'InvalidSimulationRange':
       return `simulation start index ${failure.startIndex} is outside ${failure.sessionCount} sessions`
     case 'DuplicateExecutionTarget':
@@ -279,6 +284,8 @@ export interface SimulationTarget {
   readonly executionIndex: number
   readonly weights: Readonly<Record<string, number>>
   readonly decision?: DecisionPlan
+  /** Generic strategy definitions do not expose risk-specific signal evidence. */
+  readonly requireDecisionEvidence?: boolean
 }
 
 export interface SimulationResult {

@@ -5,7 +5,7 @@ import { renderCanonicalJsonFailure } from '../hash'
 import { renderQualificationConstructionFailure } from '../qualification'
 import { renderQualificationStatisticsFailure } from '../qualification-statistics'
 import { renderRiskBalancedTrendFailure, renderRiskBalancedTrendEvaluationIssues } from '../risk-balanced-trend'
-import type { StrategyPrepareLockFailure } from '../strategy'
+import type { RiskBalancedTrendStrategyPrepareLockFailure } from '../strategy/risk-balanced-trend'
 import type { StartupDecisionFailure } from './model'
 
 const causeMessage = (cause: unknown): string => {
@@ -61,7 +61,7 @@ const renderCanonicalizationFailure = (
   }
 }
 
-const renderPrepareLockFailure = (failure: StrategyPrepareLockFailure): string => {
+const renderPrepareLockFailure = (failure: RiskBalancedTrendStrategyPrepareLockFailure): string => {
   switch (failure._tag) {
     case 'QualificationCanonicalizationFailed':
     case 'QualificationSchemaInvalid':

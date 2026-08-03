@@ -16,8 +16,14 @@ import {
   type QualificationAuditReport,
 } from './audit/audit'
 import { makeQualificationDossier as makeQualificationDossierResult, type QualificationDossier } from './audit/dossier'
-import { makeStrategy } from './strategy'
-import { summarizeEvaluation } from './risk-balanced-trend'
+import {
+  analyzeQualification,
+  defaultQualificationStatisticsPolicy,
+  prepareQualificationSeries,
+} from './qualification-statistics'
+import { evaluateRiskBalancedTrend, parseMatchingManifest, summarizeEvaluation } from './risk-balanced-trend'
+import { makeRiskBalancedTrendDefinition } from './strategy'
+import { prepareRiskBalancedTrendQualificationLock } from './strategy/risk-balanced-trend/qualification'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
 const auditQualification = (input: QualificationAuditInput): QualificationAuditReport => {
@@ -41,15 +47,21 @@ const fixture = (priorTrialRunIds: readonly string[] = []): QualificationAuditIn
   const snapshot = makeSnapshot(900)
   const protocol = fixtureProtocol
   const provenance = makeTestProvenance()
-  const strategy = makeStrategy(protocol, provenance)
-  const evaluationResult = strategy.evaluate(snapshot.bars, snapshot.manifest)
+  const definition = makeRiskBalancedTrendDefinition(protocol)
+  const evaluationResult = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, protocol, provenance, definition)
   assert(Result.isSuccess(evaluationResult), 'strategy evaluation fixture must succeed')
   const evaluation = evaluationResult.success
   const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
-  const lockResult = strategy.prepareLock(snapshot.manifest, sessionDates, priorTrialRunIds)
+  const lockResult = parseMatchingManifest(snapshot.manifest, protocol).pipe(
+    Result.flatMap((manifest) =>
+      prepareRiskBalancedTrendQualificationLock(manifest, sessionDates, priorTrialRunIds, protocol, provenance),
+    ),
+  )
   assert(Result.isSuccess(lockResult), 'qualification lock fixture must succeed')
   const lock = lockResult.success
-  const analysisResult = strategy.analyze(evaluation, priorTrialRunIds)
+  const analysisResult = prepareQualificationSeries(evaluation).pipe(
+    Result.flatMap((series) => analyzeQualification(series, defaultQualificationStatisticsPolicy, priorTrialRunIds)),
+  )
   assert(Result.isSuccess(analysisResult), 'qualification analysis fixture must succeed')
   const analysis = analysisResult.success
   const resultDecision = makeQualificationResult(lock, evaluation.verdict, analysis)

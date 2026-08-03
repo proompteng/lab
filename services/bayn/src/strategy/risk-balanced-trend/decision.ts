@@ -3,7 +3,7 @@ import { Result, pipe } from 'effect'
 import { canonicalHashResult, requiredRecordValue, requiredSession, type AlignedSession } from '../../simulation'
 import { ContractVersion, type DecisionPlan, type IsoDate, type Protocol } from '../../types'
 import type { RiskBalancedTrendDecision, RiskBalancedTrendFailure } from '../../risk-balanced-trend/model'
-import type { StrategyDefinition, StrategyTargetPortfolio, VerifiedStrategyContext } from '../core'
+import type { StrategyDefinition, TargetPortfolio, VerifiedStrategyContext } from '../core'
 import { quantizeWeights, redistributeWithCap } from './allocation'
 import { annualizedPortfolioVolatility } from './risk'
 import { finalizeSignals, prepareSignal, type PreparedSignal } from './signals'
@@ -165,34 +165,26 @@ export interface RiskBalancedTrendMarketContext {
   readonly closes: Readonly<Record<string, readonly number[]>>
 }
 
-export interface RiskBalancedTrendPortfolioContext {
-  readonly positions: Readonly<Record<string, number>>
-}
-
-export type RiskBalancedTrendTargetPortfolio = DecisionPlan & StrategyTargetPortfolio
+export type RiskBalancedTrendTargetPortfolio = DecisionPlan & TargetPortfolio
 
 export type RiskBalancedTrendStrategyDefinition = StrategyDefinition<
-  Protocol,
   RiskBalancedTrendMarketContext,
-  RiskBalancedTrendPortfolioContext,
-  RiskBalancedTrendTargetPortfolio,
-  RiskBalancedTrendFailure
+  RiskBalancedTrendFailure,
+  RiskBalancedTrendTargetPortfolio
 >
 
 export const makeRiskBalancedTrendDefinition = (protocol: Protocol): RiskBalancedTrendStrategyDefinition => ({
   name: 'risk-balanced-trend',
   parameters: protocol,
-  decide: ({ market }: VerifiedStrategyContext<RiskBalancedTrendMarketContext, RiskBalancedTrendPortfolioContext>) =>
+  decide: ({ market }: VerifiedStrategyContext<RiskBalancedTrendMarketContext>) =>
     makeRiskBalancedTrendDecision(market.signalDate, market.sessionDates, market.closes, protocol),
 })
 
-const emptyPortfolioContext: RiskBalancedTrendPortfolioContext = { positions: {} }
-
-export const decisionFromAlignedSessions = (
+export const riskBalancedTrendContextAtSignal = (
   sessions: readonly AlignedSession[],
   signalIndex: number,
   protocol: Protocol,
-): RiskBalancedTrendDecision =>
+): Result.Result<VerifiedStrategyContext<RiskBalancedTrendMarketContext>, RiskBalancedTrendFailure> =>
   pipe(
     requiredSession(sessions, signalIndex, 'signal-decision'),
     Result.flatMap((signalSession) => {
@@ -207,16 +199,24 @@ export const decisionFromAlignedSessions = (
             ),
           ),
         ),
-        Result.flatMap((closes) =>
-          makeRiskBalancedTrendDefinition(protocol).decide({
-            market: {
-              signalDate: signalSession.date,
-              sessionDates: history.map((session) => session.date),
-              closes: Object.fromEntries(closes),
-            },
-            portfolio: emptyPortfolioContext,
-          }),
-        ),
+        Result.map((closes) => ({
+          market: {
+            signalDate: signalSession.date,
+            sessionDates: history.map((session) => session.date),
+            closes: Object.fromEntries(closes),
+          },
+        })),
       )
     }),
+  )
+
+export const decisionFromAlignedSessions = (
+  sessions: readonly AlignedSession[],
+  signalIndex: number,
+  protocol: Protocol,
+  definition: RiskBalancedTrendStrategyDefinition = makeRiskBalancedTrendDefinition(protocol),
+): RiskBalancedTrendDecision =>
+  pipe(
+    riskBalancedTrendContextAtSignal(sessions, signalIndex, protocol),
+    Result.flatMap((context) => definition.decide(context)),
   )

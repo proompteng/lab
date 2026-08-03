@@ -13,8 +13,7 @@ import {
 import { operationalError } from './errors'
 import { canonicalHashV1Result, type CanonicalJsonFailure } from './hash'
 import { loadDefaultProtocol, type CausalProtocol } from './protocol'
-import { type Strategy } from './strategy'
-import { makeRiskBalancedTrendStrategy } from './strategy/risk-balanced-trend/strategy'
+import { makeRiskBalancedTrendDefinition, type StrategyRuntime } from './strategy'
 
 type RuntimeIdentityFailure =
   | {
@@ -37,10 +36,12 @@ type RuntimeSeed = {
 
 type ParameterizedRuntime = RuntimeSeed & { readonly parameterHash: string }
 type ProvenanceRuntime = ParameterizedRuntime & { readonly provenance: RuntimeProvenance }
-type StrategyRuntime = ProvenanceRuntime & { readonly strategy: Strategy }
+type SelectedRuntime = ProvenanceRuntime & { readonly strategy: StrategyRuntime }
 
-const selectStrategy = (runtime: ProvenanceRuntime): Strategy =>
-  makeRiskBalancedTrendStrategy(runtime.protocol, runtime.provenance)
+const selectStrategy = (runtime: ProvenanceRuntime): StrategyRuntime => ({
+  definition: makeRiskBalancedTrendDefinition(runtime.protocol),
+  provenance: runtime.provenance,
+})
 
 const hashRuntimeParameters = (seed: RuntimeSeed): Result.Result<ParameterizedRuntime, RuntimeIdentityFailure> =>
   pipe(
@@ -75,10 +76,10 @@ const addRuntimeProvenance = (
     Result.map((provenance) => ({ ...parameterized, provenance })),
   )
 
-const addStrategy = (runtime: ProvenanceRuntime): StrategyRuntime => ({ ...runtime, strategy: selectStrategy(runtime) })
+const addStrategy = (runtime: ProvenanceRuntime): SelectedRuntime => ({ ...runtime, strategy: selectStrategy(runtime) })
 
 const addStrategyProtocolHash = (
-  runtime: StrategyRuntime,
+  runtime: SelectedRuntime,
 ): Result.Result<ApplicationIdentity, RuntimeIdentityFailure> =>
   pipe(
     makeStrategyProtocolHashResult(runtime.strategy.provenance.strategy),

@@ -435,7 +435,7 @@ const preparePaperActivation = (
     )
     const riskPolicy = yield* loadObserveRiskPolicy(
       plan.config.alpaca.expectedAccountId,
-      plan.strategy.parameters.universe,
+      plan.strategy.definition.parameters.universe,
     ).pipe(
       Effect.mapError((cause) =>
         paperActivationOperationalError('source-controlled OBSERVE risk policy is invalid', cause),
@@ -850,7 +850,7 @@ const discoverExecutionCandidate = (plan: ApplicationPlanFor<'ExecutionCandidate
 
 const runExecutionCandidateDiscovery = (plan: ApplicationPlanFor<'ExecutionCandidateDiscovery'>) =>
   pipe(
-    loadObserveRiskPolicy(plan.config.alpaca.expectedAccountId, plan.strategy.parameters.universe),
+    loadObserveRiskPolicy(plan.config.alpaca.expectedAccountId, plan.strategy.definition.parameters.universe),
     Effect.mapError((cause) =>
       operationalError(
         'config',
@@ -912,7 +912,7 @@ export const validateExecutionPreparePlan = (plan: ApplicationPlanFor<'Execution
   Effect.gen(function* () {
     const riskPolicy = yield* loadObserveRiskPolicy(
       plan.config.alpaca.expectedAccountId,
-      plan.strategy.parameters.universe,
+      plan.strategy.definition.parameters.universe,
     ).pipe(
       Effect.mapError((cause) =>
         operationalError('config', 'execution-prepare', 'source-controlled OBSERVE risk policy is invalid', cause),

@@ -80,8 +80,11 @@ import {
   defaultQualificationStatisticsPolicy,
   type QualificationSeries,
 } from '../qualification-statistics'
-import { evaluateRiskBalancedTrend, summarizeEvaluation } from '../risk-balanced-trend'
-import { makeStrategy } from '../strategy'
+import { evaluateRiskBalancedTrend, parseMatchingManifest, summarizeEvaluation } from '../risk-balanced-trend'
+import {
+  analyzeRiskBalancedTrendEvaluation,
+  prepareRiskBalancedTrendQualificationLock,
+} from '../strategy/risk-balanced-trend/qualification'
 import { makeSnapshot, makeTestProvenance, fixtureProtocol } from '../test-fixtures'
 import type { CausalProtocol, Protocol } from '../types'
 import {
@@ -587,12 +590,21 @@ const makeInput = (
 }
 
 const makeLockedInput = (input: PersistEvaluationInput, priorTrialRunIds: readonly string[] = []) => {
-  const strategy = makeStrategy(fixtureProtocol, input.provenance)
   const sessionDates = [...new Set(riskBalancedTrendSnapshot.bars.map((bar) => bar.sessionDate))].sort()
-  const lockResult = strategy.prepareLock(input.evaluation.inputManifest, sessionDates, priorTrialRunIds)
+  const lockResult = parseMatchingManifest(input.evaluation.inputManifest, input.parameters).pipe(
+    Result.flatMap((manifest) =>
+      prepareRiskBalancedTrendQualificationLock(
+        manifest,
+        sessionDates,
+        priorTrialRunIds,
+        input.parameters,
+        input.provenance,
+      ),
+    ),
+  )
   assert(Result.isSuccess(lockResult), 'qualification lock fixture must succeed')
   const lock = lockResult.success
-  const analysisResult = strategy.analyze(input.evaluation, priorTrialRunIds)
+  const analysisResult = analyzeRiskBalancedTrendEvaluation(input.evaluation, priorTrialRunIds)
   assert(Result.isSuccess(analysisResult), 'qualification analysis fixture must succeed')
   const result = successOfResult(makeQualificationResult(lock, input.evaluation.verdict, analysisResult.success))
   return {
@@ -5144,10 +5156,19 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         yield* store.openQualification(terminalQualification.open)
         yield* store.persist(terminalQualification.persist)
         const priorTrialRunIds = yield* store.listPriorTrials
-        const strategy = makeStrategy(fixtureProtocol, candidate.provenance)
         const sessionDates = [...new Set(riskBalancedTrendSnapshot.bars.map((bar) => bar.sessionDate))].sort()
         const lock = yield* Effect.fromResult(
-          strategy.prepareLock(candidate.evaluation.inputManifest, sessionDates, priorTrialRunIds),
+          parseMatchingManifest(candidate.evaluation.inputManifest, candidate.parameters).pipe(
+            Result.flatMap((manifest) =>
+              prepareRiskBalancedTrendQualificationLock(
+                manifest,
+                sessionDates,
+                priorTrialRunIds,
+                candidate.parameters,
+                candidate.provenance,
+              ),
+            ),
+          ),
         )
         return { lock, priorTrialRunIds }
       }),

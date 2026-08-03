@@ -1,20 +1,22 @@
 import { describe, expect, test } from 'bun:test'
-import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 
-import { Deferred, Effect, Exit, Fiber, Result } from 'effect'
+import { Effect, Exit, Result } from 'effect'
 
-import type { CandidateDevelopmentCommandReport } from '../candidate-development-command/contracts'
-import { frozenSourceVerifiedSourceFiles } from '../candidate-development-command/test-support/provenance-fixtures'
+import { makeStrategyProtocolHash } from '../contracts'
+import { fixtureSnapshot, fixtureRuntime } from '../app-test-support'
+import { fixtureProtocol, makeTestDefinition } from '../test-fixtures'
+import type { CandidateDevelopmentNextPreregistration } from '../candidate-development-calendar'
 import {
-  finalizeCandidateDevelopmentLocalReceipt,
+  candidateDevelopmentTerminalStatus,
+  evaluateCandidateDevelopmentDefinition,
   makeCandidateDevelopmentLocalAttempt,
   reserveCandidateDevelopmentLocalReceipt,
-  resolveCandidateDevelopmentLocalArguments,
   runCandidateDevelopmentLocally,
   verifyCandidateDevelopmentLocalSourceTree,
+  verifyCandidateDevelopmentSourceManifest,
   type CandidateDevelopmentLocalAttemptPort,
   type CandidateDevelopmentLocalDependencies,
   type PreparedCandidateDevelopmentLocalAttempt,
@@ -22,443 +24,261 @@ import {
 import {
   bindCandidateDevelopmentLocalSource,
   CandidateDevelopmentLocalError,
+  decodeCandidateDevelopmentRuntimeMarketDataWitness,
   makeCandidateDevelopmentLocalReceipt,
   parseCandidateDevelopmentLocalArguments,
   serializeCandidateDevelopmentLocalReceipt,
-  type CandidateDevelopmentLocalDecisionStatus,
+  witnessContentHash,
   type CandidateDevelopmentLocalAttemptReceipt,
+  type CandidateDevelopmentRuntimeMarketDataWitness,
+  type CandidateDevelopmentSourceManifest,
 } from './domain'
 
-const boundSource = bindCandidateDevelopmentLocalSource(frozenSourceVerifiedSourceFiles)
-if (Result.isFailure(boundSource)) throw new Error('candidate local source fixture must be valid')
+const successOf = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw new Error('fixture construction failed')
+  return result.success
+}
+
+const sourceModulePath = 'services/bayn/src/strategy/candidate-21.ts'
+const sourceManifestPath = 'services/bayn/candidates/ordinal-21-source-manifest.json'
+const sourceRevision = 'a'.repeat(40)
+const moduleBlobOid = 'b'.repeat(40)
+const sourceManifestBlobOid = 'c'.repeat(40)
+const moduleSha256 = 'd'.repeat(64)
+
+const witnessContent = {
+  schemaVersion: 'bayn.strategy-development-market-data-witness.v1' as const,
+  snapshotId: fixtureSnapshot.manifest.finalizedSnapshot.snapshotId,
+  inputManifest: fixtureSnapshot.manifest,
+  bars: fixtureSnapshot.bars,
+}
+
+const witness: CandidateDevelopmentRuntimeMarketDataWitness = {
+  ...witnessContent,
+  contentHash: successOf(witnessContentHash(witnessContent)),
+}
+
+const sourceManifest: CandidateDevelopmentSourceManifest = {
+  schemaVersion: 'bayn.candidate-development-source-manifest.v2',
+  candidateOrdinal: 21,
+  priorTrialCount: 20,
+  trialHistoryHash: 'f'.repeat(64),
+  strategyName: 'risk-balanced-trend',
+  strategyProtocolHash: makeStrategyProtocolHash(fixtureRuntime.provenance.strategy),
+  modulePath: sourceModulePath,
+  moduleSha256,
+  moduleFormat: 'typescript-strategy-definition-v1',
+  marketData: {
+    schemaVersion: 'bayn.candidate-development-market-data-source.v2',
+    snapshotId: witness.snapshotId,
+    inputManifestHash: witness.inputManifest.hash,
+    boundedContentHash: witness.contentHash,
+  },
+}
+
+const source = successOf(
+  bindCandidateDevelopmentLocalSource({
+    sourceRevision,
+    modulePath: sourceModulePath,
+    moduleBlobOid,
+    moduleSha256,
+    sourceManifestPath,
+    sourceManifestBlobOid,
+    sourceManifestSha256: 'e'.repeat(64),
+    sourceManifest,
+  }),
+)
+
+const expectedPreregistration: CandidateDevelopmentNextPreregistration = {
+  schemaVersion: 'bayn.candidate-development-next-preregistration.v1',
+  candidateOrdinal: sourceManifest.candidateOrdinal,
+  priorTrialCount: sourceManifest.priorTrialCount,
+  strategyProtocolHash: sourceManifest.strategyProtocolHash,
+  priorTrialsHash: sourceManifest.trialHistoryHash,
+  modulePath: sourceManifest.modulePath,
+  moduleSha256: sourceManifest.moduleSha256,
+  marketData: {
+    schemaVersion: 'bayn.candidate-development-market-data-source.v1',
+    snapshotId: sourceManifest.marketData.snapshotId,
+    finalizedSnapshotContentHash: 'a'.repeat(64),
+    inputManifestHash: sourceManifest.marketData.inputManifestHash,
+    boundedContentHash: sourceManifest.marketData.boundedContentHash,
+  },
+  preregistration: {
+    sourceRevision,
+    path: sourceManifestPath,
+    blobOid: sourceManifestBlobOid,
+  },
+}
 
 const prepared: PreparedCandidateDevelopmentLocalAttempt = {
   repositoryRoot: '/repo',
   args: {
-    modulePath: 'services/bayn/src/strategy/candidate-20.ts',
-    sourceManifestPath: 'services/bayn/candidates/candidate-20.json',
-    runtimeMarketDataPath: '/sealed/runtime-market-data.json',
+    modulePath: '/repo/services/bayn/src/strategy/candidate-21.ts',
+    sourceManifestPath: '/repo/services/bayn/candidates/ordinal-21-source-manifest.json',
+    runtimeMarketDataPath: '/sealed/witness.json',
   },
-  receiptPath: '/repo/.git/bayn/candidate-development-attempts/ordinal-20.json',
-  legacyReceiptPath: '/repo/.git/bayn-candidate-development-local-receipt.json',
-  legacyReceiptPaths: ['/repo/.git/bayn-candidate-development-local-receipt.json'],
-  source: boundSource.success,
+  receiptPath: '/repo/.git/bayn/candidate-development-attempts/ordinal-21.json',
+  source,
+  sourceManifest,
+  definition: fixtureRuntime.definition,
+  provenance: fixtureRuntime.provenance,
 }
 
-const reportFor = (status: CandidateDevelopmentLocalDecisionStatus): CandidateDevelopmentCommandReport =>
-  ({
-    contentHash: status === 'PASS' ? 'f'.repeat(64) : 'e'.repeat(64),
-    decision: { status },
-  }) as CandidateDevelopmentCommandReport
-
-const fileExists = async (path: string): Promise<boolean> => {
-  try {
-    await readFile(path, 'utf8')
-    return true
-  } catch (cause) {
-    if (typeof cause === 'object' && cause !== null && 'code' in cause && cause.code === 'ENOENT') return false
-    throw cause
-  }
-}
-
-const legacyReceiptFor = (source: typeof boundSource.success, overrides: { readonly sourceRevision?: string } = {}) => {
-  const legacySource = {
-    sourceRevision: overrides.sourceRevision ?? source.sourceRevision,
-    modulePath: source.modulePath,
-    moduleBlobOid: source.moduleBlobOid,
-    moduleSha256: source.moduleSha256,
-    sourceManifestPath: source.sourceManifestPath,
-    sourceManifestBlobOid: source.sourceManifestBlobOid,
-    sourceManifestSha256: source.sourceManifestSha256,
-  }
-  const bindingHash = createHash('sha256')
-    .update(
-      JSON.stringify([
-        'bayn.candidate-development-local-source-binding.v1',
-        legacySource.sourceRevision,
-        legacySource.modulePath,
-        legacySource.moduleBlobOid,
-        legacySource.moduleSha256,
-        legacySource.sourceManifestPath,
-        legacySource.sourceManifestBlobOid,
-        legacySource.sourceManifestSha256,
-      ]),
-      'utf8',
+describe('candidate-development-local domain boundary', () => {
+  test('binds local source manifest identity to the exact frozen successor', () => {
+    expect(Result.isSuccess(verifyCandidateDevelopmentSourceManifest(sourceManifest, expectedPreregistration))).toBe(
+      true,
     )
-    .digest('hex')
-  return {
-    schemaVersion: 'bayn.candidate-development-local-attempt.v1',
-    attempt: 1,
-    status: 'completed',
-    source: { ...legacySource, bindingHash },
-  }
-}
+    for (const stale of [
+      { candidateOrdinal: 1 },
+      { priorTrialCount: 0 },
+      { trialHistoryHash: '0'.repeat(64) },
+      { modulePath: 'services/bayn/src/strategy/old-candidate.ts' },
+      { moduleSha256: '0'.repeat(64) },
+    ]) {
+      expect(
+        Result.isFailure(
+          verifyCandidateDevelopmentSourceManifest({ ...sourceManifest, ...stale }, expectedPreregistration),
+        ),
+      ).toBe(true)
+    }
+  })
 
-const legacyReceiptContext = (candidateOrdinal: number, manifestBlobOid: string) => ({
-  repositoryRoot: '/repo',
-  sourceGit: {
-    text: async () => manifestBlobOid,
-    bytes: async () => Buffer.from(JSON.stringify({ candidateOrdinal }), 'utf8'),
-  },
-})
+  test('requires statistical PASS alongside economic PASS before reporting PASS', () => {
+    expect(candidateDevelopmentTerminalStatus('PASS', 'PASS')).toBe('PASS')
+    expect(candidateDevelopmentTerminalStatus('PASS', 'REJECTED')).toBe('HOLD_REJECT')
+    expect(candidateDevelopmentTerminalStatus('PASS', 'INSUFFICIENT')).toBe('HOLD_REJECT')
+    expect(candidateDevelopmentTerminalStatus('FAIL_CLOSED', 'PASS')).toBe('HOLD_REJECT')
+  })
 
-const dependencies = (
-  execute: CandidateDevelopmentLocalAttemptPort['execute'] = () => Effect.succeed(reportFor('PASS')),
-): {
-  readonly value: CandidateDevelopmentLocalDependencies
-  readonly events: string[]
-  readonly finalized: CandidateDevelopmentLocalAttemptReceipt[]
-} => {
-  const events: string[] = []
-  const finalized: CandidateDevelopmentLocalAttemptReceipt[] = []
-  const port: CandidateDevelopmentLocalAttemptPort = {
-    reserve: (_path, receipt) =>
-      Effect.sync(() => {
-        events.push(`reserve:${receipt.status}`)
-      }),
-    execute: (preparedAttempt) =>
-      Effect.sync(() =>
-        events.push(`execute:${preparedAttempt.source.sourceRevision}:${preparedAttempt.args.runtimeMarketDataPath}`),
-      ).pipe(Effect.andThen(execute(preparedAttempt))),
-    finalize: (_path, receipt) =>
-      Effect.sync(() => {
-        finalized.push(receipt)
-        events.push(`finalize:${receipt.status}`)
-      }),
-  }
-  return {
-    events,
-    finalized,
-    value: {
-      prepare: () => Effect.sync(() => (events.push('prepare'), prepared)),
-      attempt: makeCandidateDevelopmentLocalAttempt(port),
-    },
-  }
-}
-
-const runWithDependencies = (fixture: { readonly value: CandidateDevelopmentLocalDependencies }) =>
-  runCandidateDevelopmentLocally(
-    [prepared.args.modulePath, prepared.args.sourceManifestPath, prepared.args.runtimeMarketDataPath],
-    fixture.value,
-  )
-
-describe('candidate development local domain', () => {
-  test('requires exactly three opaque paths', () => {
+  test('accepts exactly three path arguments and excludes witness paths from receipts', () => {
     expect(
-      Result.isSuccess(parseCandidateDevelopmentLocalArguments(['module.ts', 'manifest.json', 'runtime.json'])),
+      Result.isSuccess(parseCandidateDevelopmentLocalArguments(['module.ts', 'manifest.json', 'witness.json'])),
     ).toBe(true)
     expect(Result.isFailure(parseCandidateDevelopmentLocalArguments(['module.ts', 'manifest.json']))).toBe(true)
+    expect(Result.isFailure(decodeCandidateDevelopmentRuntimeMarketDataWitness({}))).toBe(true)
+
+    const receipt = makeCandidateDevelopmentLocalReceipt(source, 'PASS', 'f'.repeat(64))
+    expect(serializeCandidateDevelopmentLocalReceipt(receipt)).not.toContain('witness.json')
+    expect(receipt.schemaVersion).toBe('bayn.candidate-development-local-attempt.v3')
   })
 
-  test('binds reviewed source identity without recording the runtime witness path or contents', () => {
-    const receipt = makeCandidateDevelopmentLocalReceipt(boundSource.success, 'PASS', reportFor('PASS').contentHash)
-    const serialized = serializeCandidateDevelopmentLocalReceipt(receipt)
-    expect(receipt.source).toMatchObject({
-      sourceRevision: frozenSourceVerifiedSourceFiles.sourceRevision,
-      moduleBlobOid: frozenSourceVerifiedSourceFiles.moduleBlobOid,
-      moduleSha256: frozenSourceVerifiedSourceFiles.moduleSha256,
-      sourceManifestBlobOid: frozenSourceVerifiedSourceFiles.sourceManifestBlobOid,
-      sourceManifestSha256: frozenSourceVerifiedSourceFiles.sourceManifestSha256,
+  test('rejects a mixed snapshot during the shared evaluation', () => {
+    const mixedWitness = {
+      ...witness,
+      bars: [{ ...witness.bars[0]!, symbol: 'NOT_IN_THE_UNIVERSE' }, ...witness.bars.slice(1)],
+    }
+    const result = evaluateCandidateDevelopmentDefinition(
+      fixtureRuntime.definition,
+      mixedWitness,
+      source,
+      sourceManifest,
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure.code).toBe('DECISION_FAILED')
+  })
+
+  test('rejects candidate-vs-plan substitution through the bound protocol hash', () => {
+    const result = evaluateCandidateDevelopmentDefinition(
+      makeTestDefinition(fixtureProtocol, fixtureRuntime.definition.decide),
+      witness,
+      source,
+      { ...sourceManifest, strategyProtocolHash: '0'.repeat(64) },
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure.code).toBe('SOURCE_BINDING_INVALID')
+  })
+
+  test('binds qualification analysis to the preregistered candidate ordinal and history', () => {
+    const bound = evaluateCandidateDevelopmentDefinition(fixtureRuntime.definition, witness, source, sourceManifest)
+    const firstCandidate = evaluateCandidateDevelopmentDefinition(fixtureRuntime.definition, witness, source, {
+      ...sourceManifest,
+      candidateOrdinal: 1,
+      priorTrialCount: 0,
     })
-    expect(receipt.source.bindingHash).toMatch(/^[0-9a-f]{64}$/)
-    expect(serialized).not.toContain('/sealed/runtime-market-data.json')
-    expect(serialized).not.toContain('bars')
-    expect(serialized).not.toContain('strategyProtocol')
+    expect(Result.isSuccess(bound)).toBe(true)
+    expect(Result.isSuccess(firstCandidate)).toBe(true)
+    if (Result.isSuccess(bound) && Result.isSuccess(firstCandidate)) {
+      expect(bound.success.terminalReportHash).not.toBe(firstCandidate.success.terminalReportHash)
+    }
+
+    const inconsistent = evaluateCandidateDevelopmentDefinition(fixtureRuntime.definition, witness, source, {
+      ...sourceManifest,
+      priorTrialCount: 19,
+    })
+    expect(inconsistent).toMatchObject({
+      _tag: 'Failure',
+      failure: { code: 'DECISION_FAILED' },
+    })
   })
 
-  test('resolves documented repository-relative paths from the repository root', () => {
-    expect(
-      resolveCandidateDevelopmentLocalArguments('/repo', {
-        modulePath: 'services/bayn/src/strategy/candidate-20.ts',
-        sourceManifestPath: 'services/bayn/candidates/candidate-20.json',
-        runtimeMarketDataPath: 'sealed/runtime-market-data.json',
+  test('maps a pure decision failure to a failed terminal outcome', () => {
+    const failingDefinition = makeTestDefinition(fixtureProtocol, () =>
+      Result.fail({
+        _tag: 'RiskBalancedTrendUniverseMismatch',
+        expected: fixtureProtocol.universe,
+        observed: [],
       }),
-    ).toEqual({
-      modulePath: '/repo/services/bayn/src/strategy/candidate-20.ts',
-      sourceManifestPath: '/repo/services/bayn/candidates/candidate-20.json',
-      runtimeMarketDataPath: '/repo/sealed/runtime-market-data.json',
-    })
-  })
-
-  test('rejects evaluator source drift before executing a reviewed module', async () => {
-    const sourceGit = {
-      text: async (_repositoryRoot: string, args: readonly string[]) => {
-        if (args[0] === 'ls-files') return 'H services/bayn/src/evaluator.ts'
-        if (args[0] === 'diff') return ''
-        if (args[0] === 'status') return ' M services/bayn/src/evaluator.ts'
-        throw new Error(`unexpected Git command: ${args.join(' ')}`)
-      },
-      bytes: async () => Buffer.alloc(0),
-    }
-    const exit = await Effect.runPromiseExit(
-      verifyCandidateDevelopmentLocalSourceTree('/repo', ['services/bayn/src'], sourceGit),
     )
-
-    expect(Exit.isFailure(exit)).toBe(true)
-  })
-
-  test('rejects a changed HEAD even when the evaluator tree is otherwise clean', async () => {
-    const sourceGit = {
-      text: async (_repositoryRoot: string, args: readonly string[]) => {
-        if (args[0] === 'rev-parse') return 'a'.repeat(40)
-        if (args[0] === 'ls-files') return 'H services/bayn/src/evaluator.ts'
-        if (args[0] === 'diff') return ''
-        if (args[0] === 'status') return ''
-        throw new Error(`unexpected Git command: ${args.join(' ')}`)
-      },
-      bytes: async () => Buffer.alloc(0),
-    }
-    const exit = await Effect.runPromiseExit(
-      verifyCandidateDevelopmentLocalSourceTree('/repo', ['services/bayn/src'], sourceGit, 'b'.repeat(40)),
-    )
-
-    expect(Exit.isFailure(exit)).toBe(true)
+    const result = evaluateCandidateDevelopmentDefinition(failingDefinition, witness, source, sourceManifest)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure.code).toBe('DECISION_FAILED')
   })
 })
 
-describe('candidate development local program', () => {
-  test('reserves before evaluation and finalizes PASS exactly once', async () => {
-    const fixture = dependencies()
-    const receipt = await Effect.runPromise(runWithDependencies(fixture))
-
-    expect(fixture.events).toEqual([
-      'prepare',
-      'reserve:RESERVED',
-      `execute:${prepared.source.sourceRevision}:${prepared.args.runtimeMarketDataPath}`,
-      'finalize:PASS',
-    ])
-    expect(fixture.finalized).toHaveLength(1)
-    expect(receipt).toMatchObject({ status: 'PASS', terminalReportHash: reportFor('PASS').contentHash })
-  })
-
-  test('records HOLD_REJECT separately from PASS while retaining the report hash', async () => {
-    const fixture = dependencies(() => Effect.succeed(reportFor('HOLD_REJECT')))
-    const receipt = await Effect.runPromise(runWithDependencies(fixture))
-
-    expect(fixture.finalized).toHaveLength(1)
-    expect(fixture.finalized[0]).toMatchObject({
-      status: 'HOLD_REJECT',
-      terminalReportHash: reportFor('HOLD_REJECT').contentHash,
-    })
-    expect(receipt).toMatchObject({
-      status: 'HOLD_REJECT',
-      terminalReportHash: reportFor('HOLD_REJECT').contentHash,
-    })
-  })
-
-  test('burns and finalizes the reservation as FAILED when evaluation fails', async () => {
-    const fixture = dependencies(() => Effect.fail({ _tag: 'CandidateDevelopmentCommandModulePathMissing' } as const))
-    const exit = await Effect.runPromiseExit(runWithDependencies(fixture))
-
-    expect(Exit.isFailure(exit)).toBe(true)
-    expect(fixture.events.at(-1)).toBe('finalize:FAILED')
-    expect(fixture.finalized).toHaveLength(1)
-    expect(fixture.finalized[0]).toMatchObject({ status: 'FAILED', terminalReportHash: null })
-  })
-
-  test('finalizes FAILED on interruption exactly once', async () => {
-    const started = await Effect.runPromise(Deferred.make<void>())
-    const fixture = dependencies(() => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)))
-    const fiber = Effect.runFork(runWithDependencies(fixture))
-
-    await Effect.runPromise(Deferred.await(started))
-    await Effect.runPromise(Fiber.interrupt(fiber))
-    const exit = await Effect.runPromise(Fiber.await(fiber))
-
-    expect(Exit.isFailure(exit)).toBe(true)
-    expect(fixture.finalized).toHaveLength(1)
-    expect(fixture.finalized[0]).toMatchObject({ status: 'FAILED', terminalReportHash: null })
-  })
-
-  test('never starts evaluation when the atomic reservation already exists', async () => {
-    const fixture = dependencies()
-    const blocked: CandidateDevelopmentLocalDependencies = {
-      ...fixture.value,
-      attempt: makeCandidateDevelopmentLocalAttempt({
-        reserve: () =>
-          Effect.fail(
-            new CandidateDevelopmentLocalError({
-              code: 'RECEIPT_ALREADY_CONSUMED',
-              message: 'already consumed',
-            }),
-          ),
-        execute: () => Effect.fail({ _tag: 'CandidateDevelopmentCommandModulePathMissing' } as const),
-        finalize: () => Effect.void,
-      }),
+describe('candidate-development-local source and attempt lifecycle', () => {
+  test('fails closed when reviewed source state changes', async () => {
+    const sourceGit = {
+      text: async (_root: string, args: readonly string[]) => {
+        if (args[0] === 'rev-parse' && args[1] === 'HEAD') return 'f'.repeat(40)
+        if (args[0] === 'ls-files') return 'H services/bayn/src/strategy/candidate-21.ts'
+        if (args[0] === 'diff') return 'services/bayn/src/strategy/candidate-21.ts'
+        return ''
+      },
+      bytes: async () => Buffer.alloc(0),
     }
-    const exit = await Effect.runPromiseExit(runWithDependencies({ value: blocked }))
-
-    expect(Exit.isFailure(exit)).toBe(true)
-    expect(fixture.events.some((event) => event.startsWith('execute:'))).toBe(false)
-  })
-
-  test('an existing RESERVED receipt burns the ordinal across a crash and blocks retry', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'bayn-candidate-development-local-'))
-    const receiptPath = join(directory, 'receipt.json')
-    const reserved = makeCandidateDevelopmentLocalReceipt(boundSource.success, 'RESERVED')
-    let executeCount = 0
-    try {
-      await Effect.runPromise(reserveCandidateDevelopmentLocalReceipt(receiptPath, reserved))
-      const exit = await Effect.runPromiseExit(
-        runCandidateDevelopmentLocally(
-          [prepared.args.modulePath, prepared.args.sourceManifestPath, prepared.args.runtimeMarketDataPath],
-          {
-            prepare: () => Effect.succeed({ ...prepared, receiptPath }),
-            attempt: makeCandidateDevelopmentLocalAttempt({
-              reserve: reserveCandidateDevelopmentLocalReceipt,
-              execute: () =>
-                Effect.sync(() => {
-                  executeCount += 1
-                  return reportFor('PASS')
-                }),
-              finalize: finalizeCandidateDevelopmentLocalReceipt,
-            }),
-          },
-        ),
-      )
-
-      expect(Exit.isFailure(exit)).toBe(true)
-      expect(executeCount).toBe(0)
-      expect(JSON.parse(await readFile(receiptPath, 'utf8'))).toMatchObject({
-        attempt: 1,
-        status: 'RESERVED',
-        terminalReportHash: null,
-      })
-    } finally {
-      await rm(directory, { recursive: true, force: true })
-    }
-  })
-
-  test('claims and replaces one compact receipt atomically', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'bayn-candidate-development-local-'))
-    const receiptPath = join(directory, 'receipt.json')
-    const reserved = makeCandidateDevelopmentLocalReceipt(boundSource.success, 'RESERVED')
-    const completed = makeCandidateDevelopmentLocalReceipt(boundSource.success, 'PASS', reportFor('PASS').contentHash)
-    try {
-      await Effect.runPromise(reserveCandidateDevelopmentLocalReceipt(receiptPath, reserved))
-      const duplicate = await Effect.runPromiseExit(reserveCandidateDevelopmentLocalReceipt(receiptPath, reserved))
-      expect(Exit.isFailure(duplicate)).toBe(true)
-      await Effect.runPromise(finalizeCandidateDevelopmentLocalReceipt(receiptPath, completed))
-      expect(JSON.parse(await readFile(receiptPath, 'utf8'))).toMatchObject({
-        schemaVersion: 'bayn.candidate-development-local-attempt.v3',
-        status: 'PASS',
-        terminalReportHash: reportFor('PASS').contentHash,
-      })
-    } finally {
-      await rm(directory, { recursive: true, force: true })
-    }
-  })
-
-  test('rejects a legacy receipt before creating the v3 reservation', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'bayn-candidate-development-local-'))
-    const receiptPath = join(directory, 'bayn', 'candidate-development-attempts', 'ordinal-20.json')
-    const legacyReceiptPath = join(directory, 'bayn-candidate-development-local-receipt.json')
-    const reserved = makeCandidateDevelopmentLocalReceipt(boundSource.success, 'RESERVED')
-    try {
-      await mkdir(join(directory, 'bayn', 'candidate-development-attempts'), { recursive: true })
-      await writeFile(
-        legacyReceiptPath,
-        `${JSON.stringify(legacyReceiptFor(boundSource.success, { sourceRevision: '1'.repeat(40) }))}\n`,
-        'utf8',
-      )
-      const exit = await Effect.runPromiseExit(
-        reserveCandidateDevelopmentLocalReceipt(
-          receiptPath,
-          reserved,
-          legacyReceiptPath,
-          legacyReceiptContext(20, '5'.repeat(40)),
-        ),
-      )
-
-      expect(Exit.isFailure(exit)).toBe(true)
-      expect(await fileExists(receiptPath)).toBe(false)
-    } finally {
-      await rm(directory, { recursive: true, force: true })
-    }
-  })
-
-  test('allows a valid legacy receipt for a different source binding', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'bayn-candidate-development-local-'))
-    const receiptPath = join(directory, 'bayn', 'candidate-development-attempts', 'ordinal-20.json')
-    const legacyReceiptPath = join(directory, 'bayn-candidate-development-local-receipt.json')
-    const differentSource = {
-      ...boundSource.success,
-      sourceRevision: '3'.repeat(40),
-      modulePath: 'services/bayn/src/strategy/other-candidate.ts',
-      moduleBlobOid: '7'.repeat(40),
-      moduleSha256: '8'.repeat(64),
-      sourceManifestPath: 'services/bayn/candidates/ordinal-21.json',
-      sourceManifestBlobOid: '9'.repeat(40),
-      sourceManifestSha256: 'a'.repeat(64),
-    }
-    const reserved = makeCandidateDevelopmentLocalReceipt(boundSource.success, 'RESERVED')
-    try {
-      await mkdir(join(directory, 'bayn', 'candidate-development-attempts'), { recursive: true })
-      await writeFile(legacyReceiptPath, `${JSON.stringify(legacyReceiptFor(differentSource))}\n`, 'utf8')
-
-      await Effect.runPromise(
-        reserveCandidateDevelopmentLocalReceipt(
-          receiptPath,
-          reserved,
-          legacyReceiptPath,
-          legacyReceiptContext(21, differentSource.sourceManifestBlobOid),
-        ),
-      )
-
-      expect(JSON.parse(await readFile(receiptPath, 'utf8'))).toMatchObject({ status: 'RESERVED' })
-    } finally {
-      await rm(directory, { recursive: true, force: true })
-    }
-  })
-
-  test('rejects a matching legacy receipt from a registered linked worktree', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'bayn-candidate-development-local-'))
-    const receiptPath = join(directory, 'bayn', 'candidate-development-attempts', 'ordinal-20.json')
-    const currentLegacyReceiptPath = join(
-      directory,
-      'current-worktree',
-      'bayn-candidate-development-local-receipt.json',
+    const exit = await Effect.runPromiseExit(
+      verifyCandidateDevelopmentLocalSourceTree('/repo', [sourceModulePath], sourceGit, sourceRevision),
     )
-    const linkedWorktreeLegacyReceiptPath = join(
-      directory,
-      'linked-worktree-git',
-      'bayn-candidate-development-local-receipt.json',
-    )
-    const reserved = makeCandidateDevelopmentLocalReceipt(boundSource.success, 'RESERVED')
+    expect(Exit.isFailure(exit)).toBe(true)
+  })
+
+  test('reserves an attempt once and rejects replay', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'bayn-candidate-local-'))
+    const path = join(directory, 'ordinal-21.json')
+    const receipt = makeCandidateDevelopmentLocalReceipt(source, 'RESERVED')
     try {
-      await mkdir(dirname(receiptPath), { recursive: true })
-      await mkdir(dirname(linkedWorktreeLegacyReceiptPath), { recursive: true })
-      await writeFile(
-        linkedWorktreeLegacyReceiptPath,
-        `${JSON.stringify(legacyReceiptFor(boundSource.success, { sourceRevision: '1'.repeat(40) }))}\n`,
-        'utf8',
-      )
-      const exit = await Effect.runPromiseExit(
-        reserveCandidateDevelopmentLocalReceipt(receiptPath, reserved, currentLegacyReceiptPath, {
-          ...legacyReceiptContext(20, '5'.repeat(40)),
-          legacyReceiptPaths: [linkedWorktreeLegacyReceiptPath],
+      await Effect.runPromise(reserveCandidateDevelopmentLocalReceipt(path, receipt))
+      const replay = await Effect.runPromiseExit(reserveCandidateDevelopmentLocalReceipt(path, receipt))
+      expect(Exit.isFailure(replay)).toBe(true)
+      expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({ status: 'RESERVED', attempt: 1 })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('finalizes a failed decision exactly once', async () => {
+    const events: string[] = []
+    const finalized: CandidateDevelopmentLocalAttemptReceipt[] = []
+    const port: CandidateDevelopmentLocalAttemptPort = {
+      reserve: () => Effect.sync(() => events.push('reserve')),
+      execute: () => Effect.fail(new CandidateDevelopmentLocalError({ code: 'DECISION_FAILED', message: 'failed' })),
+      finalize: (_path, receipt) =>
+        Effect.sync(() => {
+          events.push('finalize')
+          finalized.push(receipt)
         }),
-      )
-
-      expect(Exit.isFailure(exit)).toBe(true)
-      expect(await fileExists(receiptPath)).toBe(false)
-    } finally {
-      await rm(directory, { recursive: true, force: true })
     }
-  })
-
-  test('leaves a crash marker as the consumed reservation without publishing a partial receipt', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'bayn-candidate-development-local-'))
-    const receiptPath = join(directory, 'receipt.json')
-    const reserved = makeCandidateDevelopmentLocalReceipt(boundSource.success, 'RESERVED')
-    try {
-      await writeFile(`${receiptPath}.reservation`, '', 'utf8')
-      const exit = await Effect.runPromiseExit(reserveCandidateDevelopmentLocalReceipt(receiptPath, reserved))
-
-      expect(Exit.isFailure(exit)).toBe(true)
-      expect(await fileExists(receiptPath)).toBe(false)
-    } finally {
-      await rm(directory, { recursive: true, force: true })
-    }
+    const result = await Effect.runPromiseExit(
+      runCandidateDevelopmentLocally(['module.ts', 'manifest.json', 'witness.json'], {
+        prepare: () => Effect.succeed(prepared),
+        attempt: makeCandidateDevelopmentLocalAttempt(port),
+      } satisfies CandidateDevelopmentLocalDependencies),
+    )
+    expect(Exit.isFailure(result)).toBe(true)
+    expect(events).toEqual(['reserve', 'finalize'])
+    expect(finalized).toHaveLength(1)
+    expect(finalized[0]?.status).toBe('FAILED')
   })
 })

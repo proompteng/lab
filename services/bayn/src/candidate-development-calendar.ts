@@ -3,17 +3,11 @@ import type { IsoDate } from './schemas'
 
 export type { CandidateDevelopmentNextPreregistration } from './candidate-development-decision'
 export {
-  candidate17DevelopmentEligibility,
-  candidate17DevelopmentEvidenceExpectation,
   candidate17Preregistration,
   candidate18Preregistration,
-  candidate18DevelopmentEligibility,
-  candidate18DevelopmentFailureEvidenceExpectation,
   candidate18LegacyPriorTrialsMaterial,
   candidate18PriorTrialsMaterial,
   candidate19Preregistration,
-  candidate19DevelopmentEligibility,
-  candidate19DevelopmentFailureEvidenceExpectation,
   candidate19PriorTrialsMaterial,
   candidate20Preregistration,
   candidate20PrecommitInvalidation,

@@ -73,7 +73,7 @@ export const prepareSignal = (
   historyLength: number,
   protocol: Protocol,
 ): Result.Result<PreparedSignal, RiskBalancedTrendFailure> => {
-  const history = Reflect.get(closes, symbol) as readonly number[] | undefined
+  const history = closes[symbol]
   if (history === undefined || history.length !== historyLength) {
     return fail({
       _tag: 'RiskBalancedTrendCloseHistoryMismatch',

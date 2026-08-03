@@ -1,36 +1,15 @@
 import { describe, expect, test } from 'bun:test'
 import { Effect } from 'effect'
 
-import type { ApplicationIdentity } from './app'
-import { config, fixtureLock, fixtureSnapshot, fixtureStrategy, provenance } from './app-test-support'
+import { config, fixtureLock, fixtureRuntime, fixtureSnapshot, provenance } from './app-test-support'
 import type { CandidateDevelopmentNextPreregistration } from './candidate-development-calendar'
-import type { LoadedRuntimeConfig } from './config'
-import { BrokerAccess, noCapitalAuthority } from './execution/authority'
 import { marketDataService } from './app-test-support'
 import { verifyQualificationCandidateBinding } from './qualification-candidate-command'
-import { fixtureProtocol } from './test-fixtures'
+import { makeStrategyProtocolHash } from './contracts'
+import { fixtureProtocol, makeTestProvenance } from './test-fixtures'
 
 const inspection = Effect.runSync(marketDataService(Effect.succeed(fixtureSnapshot)).inspect)
 const compiledBoundedContentHash = '2'.repeat(64)
-
-const loadedConfig: LoadedRuntimeConfig = {
-  ...config,
-  runtimeMode: 'BrokerlessService',
-  cyclePollIntervalMs: 30_000,
-  alpaca: undefined,
-  execution: {
-    brokerAccess: BrokerAccess.ReadOnly,
-    capitalAuthority: noCapitalAuthority,
-  },
-}
-
-const identity: ApplicationIdentity = {
-  config: loadedConfig,
-  protocol: fixtureProtocol,
-  parameterHash: provenance.strategy.parameterHash,
-  strategy: fixtureStrategy,
-  strategyProtocolHash: fixtureLock.protocolHash,
-}
 
 const preregistration = (
   overrides: Partial<CandidateDevelopmentNextPreregistration> = {},
@@ -38,9 +17,10 @@ const preregistration = (
   schemaVersion: 'bayn.candidate-development-next-preregistration.v1',
   candidateOrdinal: 1,
   priorTrialCount: 0,
-  strategyProtocolHash: identity.strategyProtocolHash,
+  strategyProtocolHash: fixtureLock.protocolHash,
   modulePath: 'services/bayn/src/strategy/candidate-17.ts',
-  moduleSha256: '1'.repeat(64),
+  moduleSha256: provenance.strategy.behaviorHash,
+  priorTrialsHash: '9'.repeat(64),
   marketData: {
     schemaVersion: 'bayn.candidate-development-market-data-source.v1',
     snapshotId: fixtureSnapshot.manifest.finalizedSnapshot.snapshotId,
@@ -57,11 +37,22 @@ const preregistration = (
 })
 
 describe('qualification candidate metadata binding', () => {
+  const candidate = {
+    definition: fixtureRuntime.definition,
+    provenance,
+    moduleSha256: provenance.strategy.behaviorHash,
+    trialHistoryHash: '9'.repeat(64),
+    boundedContentHash: compiledBoundedContentHash,
+  } as const
+
   test('prepares the exact production lock from immutable metadata without loading bars or writing', () => {
     const result = verifyQualificationCandidateBinding(
       preregistration(),
-      compiledBoundedContentHash,
-      identity,
+      candidate,
+      {
+        sourceRevision: config.build.sourceRevision,
+        image: { repository: config.build.imageRepository, digest: config.build.imageDigest },
+      },
       inspection,
       [],
     )
@@ -78,8 +69,9 @@ describe('qualification candidate metadata binding', () => {
         snapshotId: fixtureSnapshot.manifest.finalizedSnapshot.snapshotId,
         inputManifestHash: fixtureSnapshot.manifest.hash,
         finalizedSnapshotContentHash: fixtureSnapshot.manifest.finalizedSnapshot.contentHash,
-        committedBoundedContentHash: compiledBoundedContentHash,
-        compiledBoundedContentHash,
+        boundedContentHash: compiledBoundedContentHash,
+        moduleSha256: provenance.strategy.behaviorHash,
+        trialHistoryHash: '9'.repeat(64),
         candidateRunId: fixtureLock.candidateRunId,
         lockId: fixtureLock.lockId,
       })
@@ -89,17 +81,55 @@ describe('qualification candidate metadata binding', () => {
   })
 
   test('rejects a preregistered bounded dataset that differs from the compiled candidate protocol before lock preparation', () => {
-    const result = verifyQualificationCandidateBinding(preregistration(), 'a'.repeat(64), identity, inspection, [])
+    const result = verifyQualificationCandidateBinding(
+      preregistration(),
+      { ...candidate, boundedContentHash: 'a'.repeat(64) },
+      {
+        sourceRevision: config.build.sourceRevision,
+        image: { repository: config.build.imageRepository, digest: config.build.imageDigest },
+      },
+      inspection,
+      [],
+    )
 
     expect(result).toMatchObject({
       _tag: 'Failure',
       failure: {
         _tag: 'QualificationCandidateBindingMismatch',
         field: 'marketData.boundedContentHash',
-        expected: 'a'.repeat(64),
-        observed: compiledBoundedContentHash,
+        expected: compiledBoundedContentHash,
+        observed: 'a'.repeat(64),
       },
     })
+  })
+
+  test('uses the preregistered candidate definition and provenance rather than the live plan definition', () => {
+    const candidateProvenance = makeTestProvenance(fixtureProtocol, { behaviorHash: 'e'.repeat(64) })
+    const candidateRuntime = {
+      ...candidate,
+      provenance: candidateProvenance,
+      moduleSha256: 'e'.repeat(64),
+    }
+    const registration = preregistration({
+      strategyProtocolHash: makeStrategyProtocolHash(candidateProvenance.strategy),
+      moduleSha256: 'e'.repeat(64),
+    })
+    const result = verifyQualificationCandidateBinding(
+      registration,
+      candidateRuntime,
+      {
+        sourceRevision: config.build.sourceRevision,
+        image: { repository: config.build.imageRepository, digest: config.build.imageDigest },
+      },
+      inspection,
+      [],
+    )
+
+    expect(result._tag).toBe('Success')
+    if (result._tag === 'Success') {
+      expect(result.success.lock.protocolHash).toBe(makeStrategyProtocolHash(candidateProvenance.strategy))
+      expect(result.success.lock.protocolHash).not.toBe(fixtureLock.protocolHash)
+    }
   })
 
   test.each([
@@ -133,8 +163,11 @@ describe('qualification candidate metadata binding', () => {
   ] as const)('rejects changed %s before a lock can be requested', (_name, registration, priorTrials, field) => {
     const result = verifyQualificationCandidateBinding(
       registration,
-      compiledBoundedContentHash,
-      identity,
+      candidate,
+      {
+        sourceRevision: config.build.sourceRevision,
+        image: { repository: config.build.imageRepository, digest: config.build.imageDigest },
+      },
       inspection,
       priorTrials,
     )

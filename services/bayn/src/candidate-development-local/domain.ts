@@ -1,13 +1,28 @@
-import { Data, Result } from 'effect'
+import { Data, Result, Schema } from 'effect'
 
+import { InputManifestArtifactSchema } from '../evidence-contracts'
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
-import type { CandidateDevelopmentVerifiedSourceFiles } from '../candidate-development-command/contracts'
+import {
+  IsoDateSchema,
+  NonNegativeFiniteSchema,
+  NonNegativeIntegerSchema,
+  PositiveFiniteSchema,
+  PositiveIntegerSchema,
+  Sha256Schema,
+  StrictNonEmptyStringSchema,
+  SymbolSchema,
+  strictParseOptions,
+} from '../schemas'
+import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type DailyBar, type InputManifest } from '../types'
 
 export const candidateDevelopmentLocalReceiptSchemaVersion = 'bayn.candidate-development-local-attempt.v3' as const
 
 export type CandidateDevelopmentLocalErrorCode =
   | 'INVALID_ARGUMENTS'
   | 'SOURCE_BINDING_INVALID'
+  | 'WITNESS_INVALID'
+  | 'MODULE_INVALID'
+  | 'DECISION_FAILED'
   | 'RECEIPT_ALREADY_CONSUMED'
   | 'RECEIPT_RESERVATION_FAILED'
   | 'RECEIPT_FINALIZATION_FAILED'
@@ -24,8 +39,86 @@ export interface CandidateDevelopmentLocalArguments {
   readonly runtimeMarketDataPath: string
 }
 
+const DailyBarSchema = Schema.Struct({
+  symbol: SymbolSchema,
+  sessionDate: IsoDateSchema,
+  open: PositiveFiniteSchema,
+  high: PositiveFiniteSchema,
+  low: PositiveFiniteSchema,
+  close: PositiveFiniteSchema,
+  volume: NonNegativeFiniteSchema,
+  source: Schema.Enum(DataSource),
+  sourceFeed: Schema.Enum(DataFeed),
+  adjustment: Schema.Enum(PriceAdjustment),
+  publicationSchemaVersion: Schema.Enum(PublicationSchema),
+}).check(
+  Schema.makeFilter((bar) =>
+    bar.low <= Math.min(bar.open, bar.close) && bar.high >= Math.max(bar.open, bar.close) && bar.low <= bar.high
+      ? []
+      : [{ path: ['low'], issue: 'must satisfy low <= min(open, close) <= max(open, close) <= high' }],
+  ),
+)
+
+const CandidateDevelopmentRuntimeMarketDataWitnessSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.strategy-development-market-data-witness.v1'),
+  snapshotId: Sha256Schema,
+  inputManifest: InputManifestArtifactSchema,
+  contentHash: Sha256Schema,
+  bars: Schema.Array(DailyBarSchema).check(Schema.isMinLength(1)),
+})
+
+const CandidateDevelopmentSourceManifestSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.candidate-development-source-manifest.v2'),
+  candidateOrdinal: PositiveIntegerSchema,
+  priorTrialCount: NonNegativeIntegerSchema,
+  trialHistoryHash: Sha256Schema,
+  strategyName: StrictNonEmptyStringSchema,
+  strategyProtocolHash: Sha256Schema,
+  modulePath: StrictNonEmptyStringSchema,
+  moduleSha256: Sha256Schema,
+  moduleFormat: Schema.Literal('typescript-strategy-definition-v1'),
+  marketData: Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.candidate-development-market-data-source.v2'),
+    snapshotId: Sha256Schema,
+    inputManifestHash: Sha256Schema,
+    boundedContentHash: Sha256Schema,
+  }),
+})
+
+export type CandidateDevelopmentRuntimeMarketDataWitness =
+  typeof CandidateDevelopmentRuntimeMarketDataWitnessSchema.Type
+export type CandidateDevelopmentSourceManifest = typeof CandidateDevelopmentSourceManifestSchema.Type
+
+export const decodeCandidateDevelopmentRuntimeMarketDataWitness = Schema.decodeUnknownResult(
+  CandidateDevelopmentRuntimeMarketDataWitnessSchema,
+  strictParseOptions,
+)
+
+export const decodeCandidateDevelopmentSourceManifest = Schema.decodeUnknownResult(
+  CandidateDevelopmentSourceManifestSchema,
+  strictParseOptions,
+)
+
+export interface CandidateDevelopmentVerifiedSourceFiles {
+  readonly sourceRevision: string
+  readonly modulePath: string
+  readonly moduleBlobOid: string
+  readonly moduleSha256: string
+  readonly sourceManifestPath: string
+  readonly sourceManifestBlobOid: string
+  readonly sourceManifestSha256: string
+  readonly sourceManifest: CandidateDevelopmentSourceManifest
+}
+
 export interface CandidateDevelopmentLocalSourceBinding {
   readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly trialHistoryHash: string
+  readonly strategyName: string
+  readonly strategyProtocolHash: string
+  readonly snapshotId: string
+  readonly inputManifestHash: string
+  readonly boundedContentHash: string
   readonly sourceRevision: string
   readonly modulePath: string
   readonly moduleBlobOid: string
@@ -37,7 +130,6 @@ export interface CandidateDevelopmentLocalSourceBinding {
 }
 
 export type CandidateDevelopmentLocalDecisionStatus = 'PASS' | 'HOLD_REJECT'
-
 export type CandidateDevelopmentLocalTerminalStatus = CandidateDevelopmentLocalDecisionStatus | 'FAILED'
 
 export interface CandidateDevelopmentLocalAttemptReceipt {
@@ -69,7 +161,13 @@ const pathArgument = (value: unknown): value is string =>
 export const parseCandidateDevelopmentLocalArguments = (
   argv: readonly string[],
 ): Result.Result<CandidateDevelopmentLocalArguments, CandidateDevelopmentLocalError> => {
-  if (argv.length !== 3 || !argv.every(pathArgument)) {
+  const [modulePath, sourceManifestPath, runtimeMarketDataPath] = argv
+  if (
+    argv.length !== 3 ||
+    !pathArgument(modulePath) ||
+    !pathArgument(sourceManifestPath) ||
+    !pathArgument(runtimeMarketDataPath)
+  ) {
     return Result.fail(
       new CandidateDevelopmentLocalError({
         code: 'INVALID_ARGUMENTS',
@@ -77,7 +175,6 @@ export const parseCandidateDevelopmentLocalArguments = (
       }),
     )
   }
-  const [modulePath, sourceManifestPath, runtimeMarketDataPath] = argv as readonly [string, string, string]
   return Result.succeed({ modulePath, sourceManifestPath, runtimeMarketDataPath })
 }
 
@@ -89,17 +186,15 @@ type SourceBindingResult = Result.Result<
 export const bindCandidateDevelopmentLocalSource = (
   files: CandidateDevelopmentVerifiedSourceFiles,
 ): SourceBindingResult => {
-  const candidateOrdinal = files.sourceManifest.candidateOrdinal
-  if (!Number.isSafeInteger(candidateOrdinal) || candidateOrdinal < 1) {
-    return Result.fail(
-      new CandidateDevelopmentLocalError({
-        code: 'SOURCE_BINDING_INVALID',
-        message: 'candidate source manifest has an invalid ordinal',
-      }),
-    )
-  }
   const source = {
-    candidateOrdinal,
+    candidateOrdinal: files.sourceManifest.candidateOrdinal,
+    priorTrialCount: files.sourceManifest.priorTrialCount,
+    trialHistoryHash: files.sourceManifest.trialHistoryHash,
+    strategyName: files.sourceManifest.strategyName,
+    strategyProtocolHash: files.sourceManifest.strategyProtocolHash,
+    snapshotId: files.sourceManifest.marketData.snapshotId,
+    inputManifestHash: files.sourceManifest.marketData.inputManifestHash,
+    boundedContentHash: files.sourceManifest.marketData.boundedContentHash,
     sourceRevision: files.sourceRevision,
     modulePath: files.modulePath,
     moduleBlobOid: files.moduleBlobOid,
@@ -132,3 +227,26 @@ export const makeCandidateDevelopmentLocalTerminalReceipt = (
 
 export const serializeCandidateDevelopmentLocalReceipt = (receipt: CandidateDevelopmentLocalAttemptReceipt): string =>
   `${JSON.stringify(receipt)}\n`
+
+export const makeCandidateDevelopmentLocalTerminalReportHash = (
+  source: CandidateDevelopmentLocalSourceBinding,
+  status: CandidateDevelopmentLocalDecisionStatus,
+  evaluationHash: string,
+  targetHash: string,
+  qualificationAnalysisHash: string,
+): Result.Result<string, CanonicalHashFailure> =>
+  canonicalHashV1Result({
+    schemaVersion: 'bayn.candidate-development-local-terminal.v1',
+    candidateOrdinal: source.candidateOrdinal,
+    sourceBindingHash: source.bindingHash,
+    status,
+    evaluationHash,
+    targetHash,
+    qualificationAnalysisHash,
+  })
+
+export const witnessContentHash = (
+  witness: Omit<CandidateDevelopmentRuntimeMarketDataWitness, 'contentHash'>,
+): Result.Result<string, CanonicalHashFailure> => canonicalHashV1Result(witness)
+
+export type { DailyBar, InputManifest }

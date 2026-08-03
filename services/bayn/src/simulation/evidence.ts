@@ -233,13 +233,14 @@ export const recordDecision = (
   recordEvents: boolean,
 ): Result.Result<SimulationState, SimulationFailure> => {
   if (!recordEvents) return Result.succeed(state)
-  if (target.decision === undefined) {
+  if (target.decision === undefined && target.requireDecisionEvidence !== false) {
     return fail({
       _tag: 'CandidateDecisionMissing',
       signalIndex: target.signalIndex,
       executionIndex: target.executionIndex,
     })
   }
+  if (target.decision === undefined) return Result.succeed({ ...state, events: Chunk.append(state.events, decision) })
   return pipe(
     Result.all({
       decisionWeightsHash: canonicalHashResult('decision-target', target.decision.targetWeights),

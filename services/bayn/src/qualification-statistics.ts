@@ -1,4 +1,9 @@
-export { analyzeQualification, analyzeQualificationInput } from './qualification-statistics/analysis'
+export {
+  analyzeQualification,
+  analyzeQualificationAtOrdinal,
+  analyzeQualificationInput,
+  type QualificationBoundTrialHistory,
+} from './qualification-statistics/analysis'
 export {
   qualificationSelectedBenchmarkRule,
   selectQualificationBenchmarkFromCashAdjustedSharpes,

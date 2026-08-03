@@ -13,8 +13,14 @@ import {
   type QualificationTerminalConflict,
   type QualificationTerminalState,
 } from '../qualification'
-import { defaultQualificationStatisticsPolicy, prepareQualificationSeries } from '../qualification-statistics'
-import { makeStrategy } from '../strategy'
+import {
+  analyzeQualification,
+  defaultQualificationStatisticsPolicy,
+  prepareQualificationSeries,
+} from '../qualification-statistics'
+import { makeRiskBalancedTrendDefinition } from '../strategy'
+import { evaluateRiskBalancedTrend, parseMatchingManifest } from '../risk-balanced-trend'
+import { prepareRiskBalancedTrendQualificationLock } from '../strategy/risk-balanced-trend/qualification'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from '../test-fixtures'
 
 const successOf = <A, E>(result: Result.Result<A, E>): A => {
@@ -24,10 +30,19 @@ const successOf = <A, E>(result: Result.Result<A, E>): A => {
 
 const fixture = () => {
   const snapshot = makeSnapshot(900)
-  const strategy = makeStrategy(fixtureProtocol, makeTestProvenance())
-  const evaluation = successOf(strategy.evaluate(snapshot.bars, snapshot.manifest))
+  const provenance = makeTestProvenance()
+  const definition = makeRiskBalancedTrendDefinition(fixtureProtocol)
+  const evaluation = successOf(
+    evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance, definition),
+  )
   const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
-  const lock = successOf(strategy.prepareLock(snapshot.manifest, sessionDates, []))
+  const lock = successOf(
+    parseMatchingManifest(snapshot.manifest, fixtureProtocol).pipe(
+      Result.flatMap((manifest) =>
+        prepareRiskBalancedTrendQualificationLock(manifest, sessionDates, [], fixtureProtocol, provenance),
+      ),
+    ),
+  )
   const series = successOf(prepareQualificationSeries(evaluation))
   const evidence = successOf(
     runQualificationPipeline({
@@ -61,7 +76,11 @@ class TerminalInterpreter {
 describe('qualification one-shot terminal integration', () => {
   test('constructs the same typed analysis and receipt through the explicit pipeline', () => {
     const { evidence, evaluation, lock } = fixture()
-    const directAnalysis = successOf(makeStrategy(fixtureProtocol, makeTestProvenance()).analyze(evaluation, []))
+    const directAnalysis = successOf(
+      prepareQualificationSeries(evaluation).pipe(
+        Result.flatMap((series) => analyzeQualification(series, defaultQualificationStatisticsPolicy, [])),
+      ),
+    )
     const directResult = successOf(makeQualificationResult(lock, evaluation.verdict, directAnalysis))
 
     expect(evidence.analysis).toEqual(directAnalysis)

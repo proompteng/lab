@@ -1,18 +1,12 @@
 import { pipe, Result } from 'effect'
 
 import type { RuntimeProvenance } from '../contracts'
-import { MICROS, referencePriceMicros } from '../execution-model'
-import { reconcileMarkedEquity } from '../simulation-reconciliation'
+import { referencePriceMicros } from '../execution-model'
 import {
   alignBars,
-  buildVerdict,
-  directVolatilityWeights,
   makeEvaluationIdentity,
-  roundWeight,
   selectEvaluationWindow,
-  simulate,
   type AlignedSession,
-  type SimulationTarget,
   requiredRecordValue,
   requiredSession,
 } from '../simulation'
@@ -26,26 +20,23 @@ import {
   type Protocol,
 } from '../types'
 import { decisionFromAlignedSessions, requiredHistory } from './decisions'
+import { evaluateStrategyDefinition } from '../strategy/evaluation-runner'
+import {
+  makeRiskBalancedTrendDefinition,
+  riskBalancedTrendContextAtSignal,
+  type RiskBalancedTrendStrategyDefinition,
+} from '../strategy/risk-balanced-trend'
 import {
   type CurrentDecisionCycleBinding,
   type CurrentRiskBalancedTrendDecisionResult,
-  type PreparedEvaluation,
   type QualificationPrecommit,
   type RiskBalancedTrendEvaluation,
-  type RiskBalancedTrendEvaluationIssue,
   type RiskBalancedTrendFailure,
 } from './model'
-import { decodeCurrentDecisionCycleBinding } from './schema'
+import { decodeCurrentDecisionCycleBinding, parseMatchingManifest } from './schema'
 
 const fail = <A = never>(failure: RiskBalancedTrendFailure): Result.Result<A, RiskBalancedTrendFailure> =>
   Result.fail(failure)
-
-const failEvaluation = <A = never>(
-  issues: readonly RiskBalancedTrendEvaluationIssue[],
-): Result.Result<A, readonly RiskBalancedTrendEvaluationIssue[]> => Result.fail(issues)
-
-const singleIssue = (failure: RiskBalancedTrendEvaluationIssue): readonly RiskBalancedTrendEvaluationIssue[] =>
-  Object.freeze([failure])
 
 const terminalPrices = (
   session: AlignedSession,
@@ -69,6 +60,7 @@ export const compileCurrentRiskBalancedTrendDecision = (
   inputManifest: InputManifest,
   protocol: Protocol,
   cycleBinding: CurrentDecisionCycleBinding,
+  definition: RiskBalancedTrendStrategyDefinition = makeRiskBalancedTrendDefinition(protocol),
 ): CurrentRiskBalancedTrendDecisionResult =>
   pipe(
     decodeCurrentDecisionCycleBinding(cycleBinding),
@@ -104,7 +96,7 @@ export const compileCurrentRiskBalancedTrendDecision = (
               }
               return pipe(
                 Result.all({
-                  decision: decisionFromAlignedSessions(sessions, sessions.length - 1, protocol),
+                  decision: decisionFromAlignedSessions(sessions, sessions.length - 1, protocol, definition),
                   priceMicros: terminalPrices(terminalSession, protocol),
                 }),
                 Result.flatMap(({ decision, priceMicros }) => {
@@ -112,7 +104,7 @@ export const compileCurrentRiskBalancedTrendDecision = (
                   return decision.signalDate === terminalSession.date &&
                     observedSymbols.length === protocol.universe.length &&
                     protocol.universe.every((symbol) => {
-                      const price = Reflect.get(priceMicros, symbol)
+                      const price = priceMicros[symbol]
                       return typeof price === 'string' && /^[1-9][0-9]*$/.test(price)
                     })
                     ? Result.succeed({ decision, priceMicros })
@@ -189,221 +181,21 @@ export const prepareRiskBalancedTrendQualification = (
     ),
   )
 
-interface EvaluationTargets {
-  readonly strategy: readonly SimulationTarget[]
-  readonly buyAndHold: readonly SimulationTarget[]
-  readonly directVolatility: readonly SimulationTarget[]
-}
-
-const evaluationTargets = (
-  sessions: readonly AlignedSession[],
-  window: { readonly signalIndices: readonly number[]; readonly startIndex: number },
-  protocol: Protocol,
-): Result.Result<EvaluationTargets, RiskBalancedTrendFailure> =>
-  pipe(
-    Result.all({
-      strategy: Result.all(
-        window.signalIndices.map((signalIndex) =>
-          pipe(
-            decisionFromAlignedSessions(sessions, signalIndex, protocol),
-            Result.map(
-              (decision): SimulationTarget => ({
-                signalIndex,
-                executionIndex: signalIndex + 1,
-                weights: decision.targetWeights,
-                decision,
-              }),
-            ),
-          ),
-        ),
-      ),
-      equalWeight: roundWeight(1 / protocol.universe.length),
-      directVolatility: Result.all(
-        window.signalIndices.map((signalIndex) =>
-          pipe(
-            directVolatilityWeights(sessions, signalIndex, protocol),
-            Result.map(
-              (weights): SimulationTarget => ({
-                signalIndex,
-                executionIndex: signalIndex + 1,
-                weights,
-              }),
-            ),
-          ),
-        ),
-      ),
-    }),
-    Result.map(({ strategy, equalWeight, directVolatility }) => ({
-      strategy,
-      buyAndHold: [
-        {
-          signalIndex: window.startIndex - 1,
-          executionIndex: window.startIndex,
-          weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, equalWeight])),
-        },
-      ],
-      directVolatility,
-    })),
-  )
-
-const ensureCandidateTrace = (result: {
-  readonly strategy: PreparedEvaluation['strategy']
-  readonly buyAndHold: PreparedEvaluation['buyAndHold']
-  readonly directVolTiming: PreparedEvaluation['directVolTiming']
-  readonly doubleCost: PreparedEvaluation['doubleCost']
-}): Result.Result<PreparedEvaluation['simulation'], RiskBalancedTrendFailure> =>
-  result.strategy.simulation === null
-    ? fail({ _tag: 'CandidateSimulationTraceMissing' })
-    : Result.succeed(result.strategy.simulation)
-
-const ensureSignalDecisions = (
-  decisions: PreparedEvaluation['strategy']['signalDecisions'],
-): Result.Result<PreparedEvaluation['signalDecisions'], RiskBalancedTrendFailure> =>
-  pipe(
-    Result.all(
-      decisions.map((decision) =>
-        decision.schemaVersion === ContractVersion.DecisionPlan
-          ? Result.succeed(decision)
-          : fail({
-              _tag: 'DecisionSchemaMismatch',
-              observed: decision.schemaVersion,
-              expected: ContractVersion.DecisionPlan,
-            }),
-      ),
-    ),
-    Result.map((values) => values),
-  )
-
-const prepareEvaluation = (
-  bars: readonly DailyBar[],
-  inputManifest: InputManifest,
-  protocol: Protocol,
-  provenance: RuntimeProvenance,
-): Result.Result<PreparedEvaluation, RiskBalancedTrendFailure> =>
-  pipe(
-    Result.all({
-      identity: makeEvaluationIdentity(inputManifest, protocol, provenance),
-      sessions: alignBars(bars, protocol.universe, inputManifest),
-    }),
-    Result.flatMap(({ identity, sessions }) =>
-      pipe(
-        selectEvaluationWindow(
-          sessions.map((session) => session.date),
-          inputManifest,
-          requiredHistory(protocol),
-          protocol.thresholds.minimumObservations,
-        ),
-        Result.flatMap((window) =>
-          pipe(
-            evaluationTargets(sessions, window, protocol),
-            Result.flatMap((targets) => {
-              const evaluationSessions = sessions.slice(0, window.evaluationEndExclusive)
-              return pipe(
-                Result.all({
-                  strategy: simulate(
-                    evaluationSessions,
-                    targets.strategy,
-                    window.startIndex,
-                    protocol,
-                    MICROS,
-                    identity.runId,
-                    true,
-                  ),
-                  buyAndHold: simulate(
-                    evaluationSessions,
-                    targets.buyAndHold,
-                    window.startIndex,
-                    protocol,
-                    MICROS,
-                    identity.runId,
-                    false,
-                  ),
-                  directVolTiming: simulate(
-                    evaluationSessions,
-                    targets.directVolatility,
-                    window.startIndex,
-                    protocol,
-                    MICROS,
-                    identity.runId,
-                    false,
-                  ),
-                  doubleCost: simulate(
-                    evaluationSessions,
-                    targets.strategy,
-                    window.startIndex,
-                    protocol,
-                    BigInt(protocol.executionModel.doubleCostMultiplier) * MICROS,
-                    identity.runId,
-                    false,
-                  ),
-                }),
-                Result.flatMap((simulations) =>
-                  pipe(
-                    Result.all({
-                      signalDecisions: ensureSignalDecisions(simulations.strategy.signalDecisions),
-                      simulation: ensureCandidateTrace(simulations),
-                    }),
-                    Result.map(({ signalDecisions, simulation }) => ({
-                      ...identity,
-                      ...simulations,
-                      simulation,
-                      signalDecisions,
-                    })),
-                  ),
-                ),
-              )
-            }),
-          ),
-        ),
-      ),
-    ),
-  )
-
 export const evaluateRiskBalancedTrend = (
   bars: readonly DailyBar[],
   inputManifest: InputManifest,
   protocol: Protocol,
   provenance: RuntimeProvenance,
+  definition: RiskBalancedTrendStrategyDefinition = makeRiskBalancedTrendDefinition(protocol),
 ): RiskBalancedTrendEvaluation => {
-  const prepared = prepareEvaluation(bars, inputManifest, protocol, provenance)
-  if (Result.isFailure(prepared)) return failEvaluation(singleIssue(prepared.failure))
-  const markedEquity = reconcileMarkedEquity({
-    runId: prepared.success.runId,
-    initialCapitalMicros: protocol.initialCapitalMicros,
-    evaluatorTotalFeesMicros: prepared.success.strategy.metrics.totalFeesMicros,
-    evaluatorEndingEquityMicros: prepared.success.strategy.metrics.endingEquityMicros,
-    events: prepared.success.strategy.events,
-    simulation: prepared.success.simulation,
-  })
-  if (Result.isFailure(markedEquity)) return failEvaluation(markedEquity.failure)
-  return Result.succeed({
-    schemaVersion: ContractVersion.Evaluation,
-    runId: prepared.success.runId,
-    codeRevision: provenance.sourceRevision,
-    protocolHash: prepared.success.protocolHash,
-    initialCapitalMicros: protocol.initialCapitalMicros,
-    inputManifest,
-    strategy: prepared.success.strategy.metrics,
-    buyAndHold: prepared.success.buyAndHold.metrics,
-    directVolTiming: prepared.success.directVolTiming.metrics,
-    doubleCostStrategy: prepared.success.doubleCost.metrics,
-    verdict: buildVerdict(
-      prepared.success.strategy.metrics,
-      prepared.success.buyAndHold.metrics,
-      prepared.success.directVolTiming.metrics,
-      prepared.success.doubleCost.metrics,
-      protocol,
-    ),
-    events: prepared.success.strategy.events,
-    signalDecisions: prepared.success.signalDecisions,
-    simulation: prepared.success.simulation,
-    benchmarkSeries: {
-      buyAndHold: prepared.success.buyAndHold.dailyPerformance,
-      directVolTiming: prepared.success.directVolTiming.dailyPerformance,
-      doubleCostStrategy: prepared.success.doubleCost.dailyPerformance,
-    },
-    equitySeries: markedEquity.success.equitySeries,
-    markedEquityReconciliation: markedEquity.success.reconciliation,
+  const verifiedManifest = parseMatchingManifest(inputManifest, protocol)
+  if (Result.isFailure(verifiedManifest)) return Result.fail([verifiedManifest.failure])
+  return evaluateStrategyDefinition({
+    definition,
+    provenance,
+    bars,
+    inputManifest: verifiedManifest.success,
+    contextAtSignal: (sessions, signalIndex) => riskBalancedTrendContextAtSignal(sessions, signalIndex, protocol),
   })
 }
 

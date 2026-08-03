@@ -4,10 +4,9 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
-import * as vm from 'node:vm'
 
 import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node'
-import { Data, Effect, Layer, Logger, Option, Ref, Result } from 'effect'
+import { Data, Effect, Layer, Logger, Option, Ref, Result, Schema } from 'effect'
 import * as Reactivity from 'effect/unstable/reactivity/Reactivity'
 
 import type { ApplicationPlanFor } from './app'
@@ -16,12 +15,7 @@ import {
   type CandidateDevelopmentNextPreregistration,
   frozenCandidateDevelopmentTrialHistory,
 } from './candidate-development-calendar'
-import {
-  validateCandidateDevelopmentPreregistrationDocument,
-  verifyCandidateDevelopmentPreregistrationLineage,
-  verifyCandidateDevelopmentPreregistrationModuleNovelty,
-  verifyCandidateDevelopmentRepositoryIntegrity,
-} from './candidate-development-command'
+import { makeRuntimeProvenanceResult, makeStrategyProtocolHash } from './contracts'
 import { EvidenceStore, type EvidenceStoreService, type QualificationRecord } from './db/evidence-store'
 import {
   ApplicationPlatformLive,
@@ -40,10 +34,20 @@ import { collectQualificationAuditReport } from './qualification-audit-command'
 import {
   verifyQualificationCandidateBinding,
   type QualificationCandidateBindingReceipt,
+  type QualificationCandidateRuntime,
 } from './qualification-candidate-command'
 import type { QualificationAuditReport } from './audit/audit'
+import { hashParameters } from './protocol'
 import { initialState } from './runtime-state'
 import { runStartup } from './startup'
+import {
+  NonNegativeIntegerSchema,
+  PositiveIntegerSchema,
+  Sha256Schema,
+  StrictNonEmptyStringSchema,
+  strictParseOptions,
+} from './schemas'
+import type { RiskBalancedTrendStrategyDefinition } from './strategy/risk-balanced-trend'
 
 const sha40 = /^[0-9a-f]{40}$/
 const sha64 = /^[0-9a-f]{64}$/
@@ -54,50 +58,39 @@ const defaultAuditReplicaUrls = [
   'http://chi-torghut-clickhouse-default-0-0.torghut.svc.cluster.local:8123',
   'http://chi-torghut-clickhouse-default-0-1.torghut.svc.cluster.local:8123',
 ] as const
-const candidateArtifactSchemaVersion = 'bayn.candidate-development-artifact.v1'
-const candidateStrategyProtocolSchemaVersion = 'bayn.candidate-development-strategy-protocol.v2'
-const candidateMarketDataContractSchemaVersion = 'bayn.candidate-development-market-data-contract.v1'
-const candidateDefinitionTimeoutMs = 10_000
-const forbiddenCandidateDefinitionIdentifiers = new Set([
-  'Atomics',
-  'Bun',
-  'Date',
-  'EventSource',
-  'FinalizationRegistry',
-  'Function',
-  'Intl',
-  'Loader',
-  'Promise',
-  'ShadowRealm',
-  'SharedArrayBuffer',
-  'SharedWorker',
-  'Temporal',
-  'WebAssembly',
-  'WebSocket',
-  'WeakRef',
-  'Worker',
-  'XMLHttpRequest',
-  'async',
-  'await',
-  'console',
-  'crypto',
-  'eval',
-  'fetch',
-  'import',
-  'localeCompare',
-  'module',
-  'navigator',
-  'performance',
-  'process',
-  'queueMicrotask',
-  'require',
-  'setImmediate',
-  'setInterval',
-  'setTimeout',
-  'toLocaleLowerCase',
-  'toLocaleString',
-  'toLocaleUpperCase',
-])
+
+/** The future candidate PR replaces this value with its reviewed static import. */
+const reviewedCandidateDefinition: RiskBalancedTrendStrategyDefinition | undefined = undefined
+
+const CandidateDevelopmentNextPreregistrationSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.candidate-development-next-preregistration.v1'),
+  candidateOrdinal: PositiveIntegerSchema,
+  priorTrialCount: NonNegativeIntegerSchema,
+  strategyProtocolHash: Sha256Schema,
+  strategyIdentityHash: Schema.optionalKey(Sha256Schema),
+  candidateDevelopmentProtocolHash: Schema.optionalKey(Sha256Schema),
+  calendarHash: Schema.optionalKey(Sha256Schema),
+  priorTrialsHash: Schema.optionalKey(Sha256Schema),
+  modulePath: StrictNonEmptyStringSchema,
+  moduleSha256: Sha256Schema,
+  marketData: Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.candidate-development-market-data-source.v1'),
+    snapshotId: Sha256Schema,
+    finalizedSnapshotContentHash: Sha256Schema,
+    inputManifestHash: Sha256Schema,
+    boundedContentHash: Sha256Schema,
+  }),
+})
+
+const QualificationWorkflowRunsSchema = Schema.Struct({
+  total_count: Schema.Finite,
+  workflow_runs: Schema.Array(
+    Schema.Struct({
+      id: Schema.Finite,
+      head_sha: Schema.String,
+    }),
+  ),
+})
 
 export class QualificationCollectorError extends Data.TaggedError('QualificationCollectorError')<{
   readonly phase: 'audit' | 'candidate' | 'configuration' | 'eligibility' | 'execution' | 'repository' | 'wiring'
@@ -113,141 +106,51 @@ const collectorError = (
   cause?: unknown,
 ): QualificationCollectorError => new QualificationCollectorError({ phase, code, message, cause })
 
-const recordOf = (value: unknown): Record<string, unknown> | undefined =>
-  typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
+const gitEnvironment = (): NodeJS.ProcessEnv =>
+  Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')))
 
-const candidateDefinitionIdentifierIssues = (source: string): readonly string[] => {
-  const issues: string[] = []
-  let index = 0
-  while (index < source.length) {
-    const character = source[index]
-    const next = source[index + 1]
-    if (character === "'" || character === '"') {
-      const quote = character
-      index += 1
-      while (index < source.length) {
-        if (source[index] === '\\') index += 2
-        else if (source[index] === quote) {
-          index += 1
-          break
-        } else index += 1
-      }
-      continue
-    }
-    if (character === '`') {
-      issues.push('template-literal')
-      break
-    }
-    if (character === '/' && next === '/') {
-      index += 2
-      while (index < source.length && source[index] !== '\n') index += 1
-      continue
-    }
-    if (character === '/' && next === '*') {
-      index += 2
-      while (index + 1 < source.length && !(source[index] === '*' && source[index + 1] === '/')) index += 1
-      index += 2
-      continue
-    }
-    if (character !== undefined && /[A-Za-z_$]/.test(character)) {
-      let end = index + 1
-      while (end < source.length && /[A-Za-z0-9_$]/.test(source[end] ?? '')) end += 1
-      const identifier = source.slice(index, end)
-      if (forbiddenCandidateDefinitionIdentifiers.has(identifier)) issues.push(identifier)
-      index = end
-      continue
-    }
-    index += 1
-  }
-  return [...new Set(issues)].sort()
-}
-
-const candidateDefinitionContext = (): vm.Context => {
-  const context = vm.createContext(Object.create(null), {
-    codeGeneration: { strings: false, wasm: false },
-    microtaskMode: 'afterEvaluate',
-    name: 'bayn-qualification-candidate-definition',
+const gitText = (repositoryPath: string, args: readonly string[], signal?: AbortSignal): Promise<string> =>
+  new Promise((resolveGit, rejectGit) => {
+    execFile(
+      'git',
+      ['--no-replace-objects', '-C', repositoryPath, ...args],
+      {
+        encoding: 'utf8',
+        env: gitEnvironment(),
+        maxBuffer: maximumGitOutputBytes,
+        signal,
+      },
+      (error, stdout) => {
+        if (error === null) resolveGit(String(stdout).trim())
+        else rejectGit(error)
+      },
+    )
   })
-  vm.runInContext(
-    `
-      Object.defineProperty(globalThis, 'constructor', {
-        value: null,
-        writable: false,
-        configurable: false,
-      })
-      Object.defineProperty(Error, 'prepareStackTrace', {
-        value: undefined,
-        writable: false,
-        configurable: false,
-      })
-      Object.defineProperty(Error, 'captureStackTrace', {
-        value: undefined,
-        writable: false,
-        configurable: false,
-      })
-      Error.stackTraceLimit = 0
-      for (const name of [
-        'process',
-        'Bun',
-        'console',
-        'Date',
-        'Intl',
-        'Loader',
-        'Temporal',
-        'performance',
-        'crypto',
-        'navigator',
-        'fetch',
-        'require',
-        'module',
-        'exports',
-        'Promise',
-        'ShadowRealm',
-        'Atomics',
-        'SharedArrayBuffer',
-        'FinalizationRegistry',
-        'WeakRef',
-        'WebAssembly',
-        'Worker',
-        'SharedWorker',
-        'XMLHttpRequest',
-        'WebSocket',
-        'EventSource',
-        'setTimeout',
-        'setInterval',
-        'setImmediate',
-        'queueMicrotask',
-      ]) {
-        Object.defineProperty(globalThis, name, {
-          value: undefined,
-          writable: false,
-          configurable: false,
-        })
-      }
-      Object.defineProperty(Math, 'random', {
-        value: undefined,
-        writable: false,
-        configurable: false,
-      })
-      for (const [prototype, names] of [
-        [String.prototype, ['localeCompare', 'toLocaleLowerCase', 'toLocaleUpperCase']],
-        [Number.prototype, ['toLocaleString']],
-        [BigInt.prototype, ['toLocaleString']],
-      ]) {
-        for (const name of names) {
-          Object.defineProperty(prototype, name, {
-            value: undefined,
-            writable: false,
-            configurable: false,
-          })
-        }
-      }
-    `,
-    context,
-    { timeout: candidateDefinitionTimeoutMs },
-  )
-  return context
-}
+
+const gitBytes = (repositoryPath: string, args: readonly string[], signal?: AbortSignal): Promise<Buffer> =>
+  new Promise((resolveGit, rejectGit) => {
+    execFile(
+      'git',
+      ['--no-replace-objects', '-C', repositoryPath, ...args],
+      {
+        encoding: 'buffer',
+        env: gitEnvironment(),
+        maxBuffer: 64 * 1024 * 1024,
+        signal,
+      },
+      (error, stdout) => {
+        if (error === null) resolveGit(Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout))
+        else rejectGit(error)
+      },
+    )
+  })
+
+const sha256Bytes = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
+
+const decodePreregistration = Schema.decodeUnknownResult(
+  CandidateDevelopmentNextPreregistrationSchema,
+  strictParseOptions,
+)
 
 export interface QualificationCandidateImmutableSourceInput {
   readonly repositoryPath: string
@@ -259,109 +162,48 @@ export interface QualificationCandidateImmutableSourceInput {
 }
 
 export interface QualificationCandidateImmutableSourceReceipt {
-  readonly schemaVersion: 'bayn.qualification-candidate-source.v1'
+  readonly schemaVersion: 'bayn.qualification-candidate-source.v2'
   readonly moduleBlobOid: string
-  readonly compiledBoundedContentHash: string
-  readonly definitionHash: string
+  readonly moduleSha256: string
+  readonly preregistrationHash: string
 }
 
-const loadCandidateCompiledDefinition = (
+const verifyCandidateSourceNovelty = (
   input: QualificationCandidateImmutableSourceInput,
-): Effect.Effect<
-  { readonly compiledBoundedContentHash: string; readonly definitionHash: string },
-  QualificationCollectorError
-> =>
+): Effect.Effect<void, QualificationCollectorError> =>
   Effect.tryPromise({
     try: async (signal) => {
-      if (signal.aborted) throw signal.reason
-      const source = Buffer.from(input.moduleBytes).toString('utf8')
-      const transpiler = new Bun.Transpiler({ loader: 'js' })
-      const imports = transpiler.scanImports(source)
-      const normalized = transpiler.transformSync(source)
-      const identifiers = candidateDefinitionIdentifierIssues(normalized)
-      if (imports.length > 0 || identifiers.length > 0) {
-        throw new TypeError(
-          `candidate module is not self-contained: imports=${JSON.stringify(imports)} identifiers=${JSON.stringify(identifiers)}`,
-        )
-      }
-      const context = candidateDefinitionContext()
-      const artifactModule = new vm.SourceTextModule(source, {
-        context,
-        identifier: `git:${input.sourceRevision}:${input.moduleBlobOid}`,
-        initializeImportMeta: (meta) => Object.freeze(meta),
-      })
-      await artifactModule.link(() => {
-        throw new TypeError('candidate artifact imports are prohibited')
-      })
-      await artifactModule.evaluate({ timeout: candidateDefinitionTimeoutMs })
-      if (signal.aborted) throw signal.reason
-      const artifact = Reflect.get(artifactModule.namespace, 'candidateDevelopmentArtifact') as unknown
-      Object.defineProperty(context, '__candidateDevelopmentArtifact', {
-        value: artifact,
-        writable: false,
-        configurable: false,
-      })
-      const encoded = vm.runInContext(
-        `
-          (() => {
-            const artifact = globalThis.__candidateDevelopmentArtifact
-            if (artifact === null || typeof artifact !== 'object') {
-              throw new TypeError('candidateDevelopmentArtifact export is missing')
-            }
-            if (typeof artifact.buildEvaluation !== 'function') {
-              throw new TypeError('candidateDevelopmentArtifact.buildEvaluation is missing')
-            }
-            return JSON.stringify({
-              schemaVersion: artifact.schemaVersion,
-              input: artifact.input,
-              strategyProtocol: artifact.strategyProtocol,
-            })
-          })()
-        `,
-        context,
-        { timeout: candidateDefinitionTimeoutMs },
+      const reachableObjects = await gitText(
+        input.repositoryPath,
+        ['rev-list', '--objects', `${input.preregistration.preregistration.sourceRevision}^`],
+        signal,
       )
-      if (typeof encoded !== 'string') throw new TypeError('candidate artifact definition is not JSON serializable')
-      const definition = JSON.parse(encoded) as unknown
-      const definitionRecord = recordOf(definition)
-      const candidateInput = recordOf(definitionRecord?.input)
-      const strategyProtocol = recordOf(definitionRecord?.strategyProtocol)
-      const marketData = recordOf(strategyProtocol?.marketData)
-      if (
-        definitionRecord?.schemaVersion !== candidateArtifactSchemaVersion ||
-        candidateInput?.candidateOrdinal !== input.preregistration.candidateOrdinal ||
-        candidateInput?.priorTrialCount !== input.preregistration.priorTrialCount ||
-        candidateInput?.expectedStrategyProtocolHash !== input.preregistration.strategyProtocolHash ||
-        strategyProtocol?.schemaVersion !== candidateStrategyProtocolSchemaVersion ||
-        marketData?.schemaVersion !== candidateMarketDataContractSchemaVersion ||
-        marketData.snapshotId !== input.preregistration.marketData.snapshotId ||
-        typeof marketData.contentHash !== 'string' ||
-        !sha64.test(marketData.contentHash)
-      ) {
-        throw new TypeError('candidate artifact definition differs from the reviewed preregistration')
+      const moduleWasPreviouslyReachable = reachableObjects
+        .split('\n')
+        .some((line) => line.split(/\s+/, 1)[0] === input.moduleBlobOid)
+      if (moduleWasPreviouslyReachable) {
+        throw new Error('candidate module existed in preregistration parent ancestry')
       }
-      const strategyProtocolHash = Result.getOrThrow(canonicalHashV1Result(strategyProtocol))
-      if (strategyProtocolHash !== input.preregistration.strategyProtocolHash) {
-        throw new TypeError('candidate artifact strategy protocol hash differs from the reviewed preregistration')
-      }
-      const definitionHash = Result.getOrThrow(canonicalHashV1Result(definition))
-      return { compiledBoundedContentHash: marketData.contentHash, definitionHash }
     },
     catch: (cause) =>
       collectorError(
         'candidate',
-        'candidate-definition-invalid',
-        'candidate module definition could not be verified',
+        'candidate-module-not-novel',
+        'candidate module must first appear after preregistration',
         cause,
       ),
   })
 
-export const verifyQualificationCandidateImmutableSource = (
+/** Verify only reviewed bytes and immutable hashes; it never compiles or evaluates candidate source. */
+export const verifyQualificationCandidateSource = (
   input: QualificationCandidateImmutableSourceInput,
 ): Effect.Effect<QualificationCandidateImmutableSourceReceipt, QualificationCollectorError> =>
   Effect.gen(function* () {
-    const preregistrationDocument = yield* Effect.try({
-      try: () => JSON.parse(Buffer.from(input.preregistrationBytes).toString('utf8')) as unknown,
+    const preregistrationValue = yield* Effect.try({
+      try: () => {
+        const value: unknown = JSON.parse(Buffer.from(input.preregistrationBytes).toString('utf8'))
+        return value
+      },
       catch: (cause) =>
         collectorError(
           'candidate',
@@ -370,39 +212,83 @@ export const verifyQualificationCandidateImmutableSource = (
           cause,
         ),
     })
-    yield* Effect.fromResult(
-      validateCandidateDevelopmentPreregistrationDocument(input.preregistration, preregistrationDocument),
-    ).pipe(
+    const decoded = yield* Effect.fromResult(decodePreregistration(preregistrationValue)).pipe(
       Effect.mapError((cause) =>
         collectorError(
           'candidate',
           'preregistration-document-invalid',
-          'reviewed preregistration document differs from the compiled calendar/module/data binding',
+          'reviewed preregistration document is not a valid candidate registration',
           cause,
         ),
       ),
     )
-    yield* verifyCandidateDevelopmentPreregistrationModuleNovelty(
-      input.repositoryPath,
-      input.preregistration.preregistration.sourceRevision,
-      input.preregistration.modulePath,
-      input.moduleBlobOid,
-    ).pipe(
+    const { preregistration: _preregistration, ...expectedDocument } = input.preregistration
+    const expectedDocumentHash = yield* Effect.fromResult(canonicalHashV1Result(expectedDocument)).pipe(
       Effect.mapError((cause) =>
-        collectorError(
-          'candidate',
-          'candidate-module-not-novel',
-          'candidate module blob existed at or before preregistration',
-          cause,
-        ),
+        collectorError('candidate', 'preregistration-hash-failed', 'candidate registration could not be hashed', cause),
       ),
     )
-    const definition = yield* loadCandidateCompiledDefinition(input)
-    return {
-      schemaVersion: 'bayn.qualification-candidate-source.v1',
-      moduleBlobOid: input.moduleBlobOid,
-      ...definition,
+    const observedDocumentHash = yield* Effect.fromResult(canonicalHashV1Result(decoded)).pipe(
+      Effect.mapError((cause) =>
+        collectorError('candidate', 'preregistration-hash-failed', 'candidate registration could not be hashed', cause),
+      ),
+    )
+    if (expectedDocumentHash !== observedDocumentHash) {
+      return yield* collectorError(
+        'candidate',
+        'preregistration-document-invalid',
+        'reviewed preregistration bytes differ from the frozen registration',
+      )
     }
+    if (input.preregistration.priorTrialsHash === undefined) {
+      return yield* collectorError(
+        'candidate',
+        'trial-history-hash-missing',
+        'active candidate registration must bind the exact prior-trial history hash',
+      )
+    }
+    if (
+      input.preregistration.candidateOrdinal !== input.preregistration.priorTrialCount + 1 ||
+      !input.preregistration.modulePath.endsWith('.ts') ||
+      input.preregistration.moduleSha256 !== sha256Bytes(input.moduleBytes) ||
+      !sha40.test(input.moduleBlobOid)
+    ) {
+      return yield* collectorError(
+        'candidate',
+        'candidate-source-mismatch',
+        'candidate module bytes, path, or trial lineage does not match the preregistration',
+      )
+    }
+    yield* verifyCandidateSourceNovelty(input)
+    return {
+      schemaVersion: 'bayn.qualification-candidate-source.v2' as const,
+      moduleBlobOid: input.moduleBlobOid,
+      moduleSha256: sha256Bytes(input.moduleBytes),
+      preregistrationHash: sha256Bytes(input.preregistrationBytes),
+    }
+  })
+
+const verifyRepositoryIntegrity = (repositoryPath: string): Effect.Effect<void, QualificationCollectorError> =>
+  Effect.tryPromise({
+    try: async (signal) => {
+      const [shallow, replacements, config] = await Promise.all([
+        gitText(repositoryPath, ['rev-parse', '--is-shallow-repository'], signal),
+        gitText(repositoryPath, ['replace', '-l'], signal),
+        gitText(repositoryPath, ['config', '--list'], signal),
+      ])
+      if (shallow !== 'false') throw new Error('repository must not be shallow')
+      if (replacements.length > 0) throw new Error('repository must not contain replacement refs')
+      if (
+        config
+          .split('\n')
+          .map((line) => line.slice(0, line.indexOf('=')))
+          .some((key) => key === 'core.alternates' || key === 'extensions.objectformat')
+      ) {
+        throw new Error('repository object storage configuration is not trusted')
+      }
+    },
+    catch: (cause) =>
+      collectorError('repository', 'repository-integrity-invalid', 'repository integrity verification failed', cause),
   })
 
 export interface QualificationCollectorPrelockEvidence {
@@ -414,12 +300,15 @@ export interface QualificationCollectorPrelockEvidence {
   readonly imageDigest: string
   readonly strategyBehaviorHash: string
   readonly strategyParameterHash: string
+  readonly strategyProtocolHash: string
   readonly candidateOrdinal: number
   readonly priorTrialCount: number
   readonly preregistrationHash: string
   readonly moduleBlobOid: string
-  readonly candidateDefinitionHash: string
-  readonly compiledBoundedContentHash: string
+  readonly moduleSha256: string
+  readonly trialHistoryHash: string
+  readonly candidateSourceHash: string
+  readonly boundedContentHash: string
   readonly activeAttemptRunIds: readonly string[]
   readonly githubRunId: string
   readonly githubRunAttempt: number
@@ -488,7 +377,10 @@ export const runQualificationCollector = <Prelock extends QualificationCollector
       candidate.sourceRevision !== prelock.sourceSha ||
       candidate.imageRepository !== prelock.imageRepository ||
       candidate.imageDigest !== prelock.imageDigest ||
-      candidate.compiledBoundedContentHash !== prelock.compiledBoundedContentHash
+      candidate.boundedContentHash !== prelock.boundedContentHash ||
+      candidate.moduleSha256 !== prelock.moduleSha256 ||
+      candidate.trialHistoryHash !== prelock.trialHistoryHash ||
+      candidate.strategyProtocolHash !== prelock.strategyProtocolHash
     ) {
       return yield* collectorError(
         'candidate',
@@ -505,12 +397,15 @@ export const runQualificationCollector = <Prelock extends QualificationCollector
       imageDigest: prelock.imageDigest,
       strategyBehaviorHash: prelock.strategyBehaviorHash,
       strategyParameterHash: prelock.strategyParameterHash,
+      strategyProtocolHash: prelock.strategyProtocolHash,
       candidateOrdinal: prelock.candidateOrdinal,
       priorTrialCount: prelock.priorTrialCount,
       preregistrationHash: prelock.preregistrationHash,
       moduleBlobOid: prelock.moduleBlobOid,
-      candidateDefinitionHash: prelock.candidateDefinitionHash,
-      compiledBoundedContentHash: prelock.compiledBoundedContentHash,
+      moduleSha256: prelock.moduleSha256,
+      trialHistoryHash: prelock.trialHistoryHash,
+      candidateSourceHash: prelock.candidateSourceHash,
+      boundedContentHash: prelock.boundedContentHash,
       candidateBindingHash: candidate.bindingHash,
       candidateRunId: candidate.candidateRunId,
       lockId: candidate.lockId,
@@ -568,7 +463,7 @@ export const runQualificationCollector = <Prelock extends QualificationCollector
     return { ...material, evidenceHash }
   })
 
-interface DeploymentRuntime {
+export interface DeploymentRuntime {
   readonly sourceSha: string
   readonly imageRepository: string
   readonly imageDigest: string
@@ -599,8 +494,11 @@ interface StaticQualificationEvidence {
   readonly githubRunId: string
   readonly githubRunAttempt: number
   readonly moduleBlobOid: string
-  readonly candidateDefinitionHash: string
-  readonly compiledBoundedContentHash: string
+  readonly moduleSha256: string
+  readonly trialHistoryHash: string
+  readonly candidateSourceHash: string
+  readonly boundedContentHash: string
+  readonly candidate: QualificationCandidateRuntime
   readonly deployment: DeploymentRuntime
 }
 
@@ -626,6 +524,7 @@ interface ProductionPrelockEvidence extends QualificationCollectorPrelockEvidenc
   readonly inspection: MarketDataInspection
   readonly priorTrialRunIds: readonly string[]
   readonly preregistration: CandidateDevelopmentNextPreregistration
+  readonly candidate: QualificationCandidateRuntime
   readonly dependencies: {
     readonly marketData: MarketDataService
     readonly journal: JournalService
@@ -653,9 +552,14 @@ export const qualificationAttemptState = (
 
 export interface QualificationExecutionInput {
   readonly plan: ApplicationPlanFor<'BrokerlessService'>
+  readonly candidate: QualificationCandidateRuntime
   readonly inspection: MarketDataInspection
   readonly priorTrialRunIds: readonly string[]
-  readonly dependencies: ProductionPrelockEvidence['dependencies']
+  readonly dependencies: {
+    readonly marketData: MarketDataService
+    readonly journal: JournalService
+    readonly evidenceStore: EvidenceStoreService
+  }
 }
 
 export const executeQualificationAttempt = (
@@ -676,14 +580,18 @@ export const executeQualificationAttempt = (
         ),
       )
     const attemptState = yield* qualificationAttemptState(existing)
-
     const state = yield* Ref.make(initialState())
     const executionDependencies = freezeQualificationPrelockDependencies(
       input.dependencies,
       input.inspection,
       input.priorTrialRunIds,
     )
-    yield* runStartup(input.plan.config, state, input.plan.strategy, executionDependencies).pipe(
+    yield* runStartup(
+      input.plan.config,
+      state,
+      { definition: input.candidate.definition, provenance: input.candidate.provenance },
+      executionDependencies,
+    ).pipe(
       Effect.mapError((cause) =>
         collectorError('execution', 'qualification-runtime-failed', 'qualification runtime failed', cause),
       ),
@@ -708,7 +616,7 @@ export const executeQualificationAttempt = (
     }
     const qualification = completed.evidence.qualification
     return {
-      schemaVersion: 'bayn.qualification-execution.v1',
+      schemaVersion: 'bayn.qualification-execution.v1' as const,
       runId: completed.evidence.evaluation.runId,
       lockId: qualification.lockId,
       resultHash: qualification.resultHash,
@@ -722,10 +630,10 @@ export const executeQualificationAttempt = (
   })
 
 export const freezeQualificationPrelockDependencies = (
-  dependencies: ProductionPrelockEvidence['dependencies'],
+  dependencies: QualificationExecutionInput['dependencies'],
   inspection: MarketDataInspection,
   priorTrialRunIds: readonly string[],
-): ProductionPrelockEvidence['dependencies'] => ({
+): QualificationExecutionInput['dependencies'] => ({
   marketData: { ...dependencies.marketData, inspect: Effect.succeed(inspection) },
   journal: dependencies.journal,
   evidenceStore: { ...dependencies.evidenceStore, listPriorTrials: Effect.succeed(priorTrialRunIds) },
@@ -777,33 +685,6 @@ const repositoryFromOrigin = (value: string): Effect.Effect<string, Qualificatio
   return canonicalRepository(`${match[1]}/${match[2]}`)
 }
 
-const gitEnvironment = (): NodeJS.ProcessEnv =>
-  Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')))
-
-const gitOutput = (
-  repositoryPath: string,
-  args: readonly string[],
-  signal: AbortSignal,
-  encoding: 'buffer' | 'utf8' = 'utf8',
-): Promise<Buffer | string> =>
-  new Promise((resolveGit, rejectGit) => {
-    execFile(
-      'git',
-      ['--no-replace-objects', '-C', repositoryPath, ...args],
-      { encoding, env: gitEnvironment(), maxBuffer: maximumGitOutputBytes, signal },
-      (error, stdout) => {
-        if (error !== null) rejectGit(error)
-        else resolveGit(encoding === 'utf8' ? String(stdout).trim() : (stdout as Buffer))
-      },
-    )
-  })
-
-const gitText = (repositoryPath: string, args: readonly string[], signal: AbortSignal): Promise<string> =>
-  gitOutput(repositoryPath, args, signal, 'utf8').then(String)
-
-const gitBytes = (repositoryPath: string, args: readonly string[], signal: AbortSignal): Promise<Buffer> =>
-  gitOutput(repositoryPath, args, signal, 'buffer').then((value) => value as Buffer)
-
 const environmentValue = (deployment: string, name: string): string => {
   const pattern = new RegExp(`^\\s*- name: ${name}\\n\\s+value: ([^\\n]+)$`, 'gm')
   const matches = [...deployment.matchAll(pattern)]
@@ -811,7 +692,10 @@ const environmentValue = (deployment: string, name: string): string => {
     throw collectorError('configuration', 'deployment-binding-missing', `expected exactly one ${name} value`)
   }
   const value = matches[0][1].trim()
-  return value.startsWith('"') ? String(JSON.parse(value)) : value
+  if (!value.startsWith('"')) return value
+  const parsed: unknown = JSON.parse(value)
+  if (typeof parsed !== 'string') throw new Error(`${name} deployment value is not a string`)
+  return parsed
 }
 
 export interface QualificationImageBinding {
@@ -865,8 +749,7 @@ export const isQualificationSourceAffectingPath = (path: string): boolean =>
   path === '.github/workflows/nix-oci-build-common.yml'
 
 const loadDeploymentRuntime = async (repositoryPath: string): Promise<DeploymentRuntime> => {
-  const path = resolve(repositoryPath, 'argocd/applications/bayn/deployment.yaml')
-  const deployment = await readFile(path, 'utf8')
+  const deployment = await readFile(resolve(repositoryPath, 'argocd/applications/bayn/deployment.yaml'), 'utf8')
   const runtime: DeploymentRuntime = {
     sourceSha: environmentValue(deployment, 'BAYN_CODE_REVISION'),
     imageRepository: environmentValue(deployment, 'BAYN_IMAGE_REPOSITORY'),
@@ -929,6 +812,69 @@ export const loadQualificationCollectorInvocation = (
     return { mode: rawMode, eventName: 'schedule', currentMainSha }
   })
 
+export const makeQualificationCandidateRuntime = (
+  definition: RiskBalancedTrendStrategyDefinition,
+  deployment: DeploymentRuntime,
+  source: { readonly moduleSha256: string },
+  preregistration: CandidateDevelopmentNextPreregistration,
+): Result.Result<QualificationCandidateRuntime, QualificationCollectorError> => {
+  if (preregistration.priorTrialsHash === undefined) {
+    return Result.fail(
+      collectorError(
+        'candidate',
+        'trial-history-hash-missing',
+        'candidate registration has no prior-trial history hash',
+      ),
+    )
+  }
+  const parameterHash = hashParameters(definition.parameters)
+  if (source.moduleSha256 !== deployment.strategyBehaviorHash) {
+    return Result.fail(
+      collectorError(
+        'candidate',
+        'deployment-strategy-behavior-mismatch',
+        'candidate module hash differs from the embedded deployment strategy behavior hash',
+      ),
+    )
+  }
+  if (parameterHash !== deployment.strategyParameterHash) {
+    return Result.fail(
+      collectorError(
+        'candidate',
+        'deployment-strategy-parameter-mismatch',
+        'candidate parameter hash differs from the embedded deployment strategy parameter hash',
+      ),
+    )
+  }
+  const provenance = makeRuntimeProvenanceResult({
+    sourceRevision: deployment.sourceSha,
+    image: { repository: deployment.imageRepository, digest: deployment.imageDigest },
+    strategy: {
+      name: 'risk-balanced-trend',
+      behaviorHash: source.moduleSha256,
+      parameterHash,
+      parameterSchemaVersion: definition.parameters.schemaVersion,
+    },
+  })
+  if (Result.isFailure(provenance)) {
+    return Result.fail(
+      collectorError(
+        'candidate',
+        'candidate-provenance-invalid',
+        'candidate provenance could not be constructed',
+        provenance.failure,
+      ),
+    )
+  }
+  return Result.succeed({
+    definition,
+    provenance: provenance.success,
+    moduleSha256: source.moduleSha256,
+    trialHistoryHash: preregistration.priorTrialsHash,
+    boundedContentHash: preregistration.marketData.boundedContentHash,
+  })
+}
+
 const collectStaticQualificationEvidence = (invocation: QualificationCollectorInvocation) =>
   Effect.gen(function* () {
     const preregistration = frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration
@@ -952,7 +898,6 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
     if (repository !== trustedRepository) {
       return yield* collectorError('repository', 'repository-identity-mismatch', 'workflow repository is not trusted')
     }
-    const currentMainSha = invocation.currentMainSha
     if (embeddedBuildMetadata === undefined) {
       return yield* collectorError(
         'configuration',
@@ -969,7 +914,7 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
         'qualification must bind the exact locally built image and embedded repository',
       )
     }
-    if (embeddedBuildMetadata.sourceRevision !== currentMainSha) {
+    if (embeddedBuildMetadata.sourceRevision !== invocation.currentMainSha) {
       return yield* collectorError(
         'configuration',
         'image-source-mismatch',
@@ -977,12 +922,7 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
       )
     }
 
-    yield* verifyCandidateDevelopmentRepositoryIntegrity(repositoryPath).pipe(
-      Effect.mapError((cause) =>
-        collectorError('repository', 'repository-integrity-invalid', 'repository integrity verification failed', cause),
-      ),
-    )
-
+    yield* verifyRepositoryIntegrity(repositoryPath)
     const deployment = yield* Effect.tryPromise({
       try: () => loadDeploymentRuntime(repositoryPath),
       catch: (cause) =>
@@ -992,26 +932,27 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
     })
     const qualificationRuntime: DeploymentRuntime = {
       ...deployment,
-      sourceSha: currentMainSha,
+      sourceSha: invocation.currentMainSha,
       imageRepository: imageBinding.repository,
       imageDigest: imageBinding.digest,
       strategyBehaviorHash: embeddedBuildMetadata.strategyBehaviorHash,
       strategyParameterHash: embeddedBuildMetadata.strategyParameterHash,
     }
-    yield* verifyCandidateDevelopmentPreregistrationLineage(
-      repositoryPath,
-      preregistration.preregistration.sourceRevision,
-      currentMainSha,
-    ).pipe(
-      Effect.mapError((cause) =>
+    yield* Effect.tryPromise({
+      try: (signal) =>
+        gitText(
+          repositoryPath,
+          ['merge-base', '--is-ancestor', preregistration.preregistration.sourceRevision, invocation.currentMainSha],
+          signal,
+        ),
+      catch: (cause) =>
         collectorError(
           'repository',
           'preregistration-lineage-invalid',
-          'preregistration lineage verification failed',
+          'preregistration is not an ancestor of current main',
           cause,
         ),
-      ),
-    )
+    })
 
     const staticGit = yield* Effect.tryPromise({
       try: async (signal) => {
@@ -1066,7 +1007,6 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
           preregistrationBlobOid,
           moduleBlobOid,
           moduleBytes,
-          moduleSha256: createHash('sha256').update(moduleBytes).digest('hex'),
         }
       },
       catch: (cause) =>
@@ -1084,8 +1024,8 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
       rawOriginUrls.length === 1 ? yield* repositoryFromOrigin(rawOriginUrls[0] ?? '') : undefined
     if (
       staticGit.topLevel !== repositoryPath ||
-      staticGit.head !== currentMainSha ||
-      staticGit.originMain !== currentMainSha ||
+      staticGit.head !== invocation.currentMainSha ||
+      staticGit.originMain !== invocation.currentMainSha ||
       rawOriginUrls.length !== 1 ||
       observedRepository !== trustedRepository ||
       rewriteKeys.length !== 0
@@ -1093,14 +1033,13 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
       return yield* collectorError(
         'repository',
         'repository-binding-invalid',
-        'checked-out repository, origin, or exact main binding is invalid',
+        'exact checked-out main binding is invalid',
       )
     }
-
     if (
       staticGit.preregistrationBlobOid !== preregistration.preregistration.blobOid ||
       staticGit.moduleBlobOid.length !== 40 ||
-      staticGit.moduleSha256 !== preregistration.moduleSha256
+      sha256Bytes(staticGit.moduleBytes) !== preregistration.moduleSha256
     ) {
       return yield* collectorError(
         'repository',
@@ -1108,7 +1047,7 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
         'preregistration document or candidate module differs from the reviewed immutable source',
       )
     }
-    const candidateSource = yield* verifyQualificationCandidateImmutableSource({
+    const candidateSource = yield* verifyQualificationCandidateSource({
       repositoryPath,
       sourceRevision: qualificationRuntime.sourceSha,
       preregistration,
@@ -1116,17 +1055,48 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
       moduleBlobOid: staticGit.moduleBlobOid,
       moduleBytes: staticGit.moduleBytes,
     })
-
-    yield* verifyCandidateDevelopmentRepositoryIntegrity(repositoryPath).pipe(
+    if (reviewedCandidateDefinition === undefined) {
+      return yield* collectorError(
+        'candidate',
+        'candidate-definition-not-statically-composed',
+        'active qualification requires the reviewed candidate StrategyDefinition as a static import',
+      )
+    }
+    const candidate = yield* Effect.fromResult(
+      makeQualificationCandidateRuntime(
+        reviewedCandidateDefinition,
+        qualificationRuntime,
+        candidateSource,
+        preregistration,
+      ),
+    )
+    const candidateSourceHash = yield* Effect.fromResult(
+      canonicalHashV1Result({
+        schemaVersion: 'bayn.qualification-candidate-source-binding.v1',
+        candidateOrdinal: preregistration.candidateOrdinal,
+        sourceRevision: qualificationRuntime.sourceSha,
+        modulePath: preregistration.modulePath,
+        moduleBlobOid: candidateSource.moduleBlobOid,
+        moduleSha256: candidateSource.moduleSha256,
+        preregistrationHash: candidateSource.preregistrationHash,
+        trialHistoryHash: candidate.trialHistoryHash,
+        strategyProtocolHash: makeStrategyProtocolHash(candidate.provenance.strategy),
+        snapshotId: preregistration.marketData.snapshotId,
+        inputManifestHash: preregistration.marketData.inputManifestHash,
+        boundedContentHash: candidate.boundedContentHash,
+      }),
+    ).pipe(
       Effect.mapError((cause) =>
         collectorError(
-          'repository',
-          'repository-integrity-invalid',
-          'repository changed during evidence collection',
+          'candidate',
+          'candidate-source-hash-failed',
+          'candidate source binding could not be hashed',
           cause,
         ),
       ),
     )
+
+    yield* verifyRepositoryIntegrity(repositoryPath)
     const finalGit = yield* Effect.tryPromise({
       try: async (signal) => {
         const [head, originMain, originUrls, configuration] = await Promise.all([
@@ -1144,43 +1114,37 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
       .split('\n')
       .map((value) => value.trim())
       .filter(Boolean)
-    const finalRewriteKeys = finalGit.configuration
-      .split('\n')
-      .map((line) => line.slice(0, line.indexOf('=')).toLowerCase())
-      .filter((key) => key.startsWith('url.') && (key.endsWith('.insteadof') || key.endsWith('.pushinsteadof')))
     const finalRepository = finalOrigins.length === 1 ? yield* repositoryFromOrigin(finalOrigins[0] ?? '') : undefined
     if (
-      finalGit.head !== currentMainSha ||
-      finalGit.originMain !== currentMainSha ||
+      finalGit.head !== invocation.currentMainSha ||
+      finalGit.originMain !== invocation.currentMainSha ||
       finalOrigins.length !== 1 ||
       finalRepository !== trustedRepository ||
-      finalRewriteKeys.length !== 0
+      finalGit.configuration.split('\n').some((line) => line.startsWith('url.') && line.includes('.insteadof='))
     ) {
       return yield* collectorError(
         'repository',
         'repository-binding-changed',
-        'repository identity or current main changed during evidence collection',
+        'repository changed during evidence collection',
       )
     }
-    const preregistrationHash = yield* Effect.fromResult(canonicalHashV1Result(preregistration)).pipe(
-      Effect.mapError((cause) =>
-        collectorError('eligibility', 'preregistration-hash-failed', 'preregistration could not be hashed', cause),
-      ),
-    )
     const githubRunId = yield* requiredQualificationEnvironment(process.env, 'GITHUB_RUN_ID')
     const githubRunAttempt = yield* positiveIntegerQualificationEnvironment(process.env, 'GITHUB_RUN_ATTEMPT')
     return Option.some<StaticQualificationEvidence>({
       preregistration,
-      preregistrationHash,
+      preregistrationHash: candidateSource.preregistrationHash,
       repositoryPath,
       repository,
-      currentMainSha,
+      currentMainSha: invocation.currentMainSha,
       sourceSha: qualificationRuntime.sourceSha,
       githubRunId,
       githubRunAttempt,
       moduleBlobOid: candidateSource.moduleBlobOid,
-      candidateDefinitionHash: candidateSource.definitionHash,
-      compiledBoundedContentHash: candidateSource.compiledBoundedContentHash,
+      moduleSha256: candidateSource.moduleSha256,
+      trialHistoryHash: candidate.trialHistoryHash,
+      candidateSourceHash,
+      boundedContentHash: candidate.boundedContentHash,
+      candidate,
       deployment: qualificationRuntime,
     })
   })
@@ -1233,15 +1197,12 @@ export const blockingQualificationWorkflowRunIds = (
   currentRunId: number,
   runs: readonly QualificationWorkflowRunIdentity[],
 ): readonly string[] => {
-  if (!Number.isSafeInteger(currentRunId) || currentRunId < 1) {
+  if (!Number.isSafeInteger(currentRunId) || currentRunId < 1)
     throw new TypeError('current GitHub Actions run ID is invalid')
-  }
   const blocking = new Set<string>()
   for (const run of runs) {
     if (!Number.isSafeInteger(run.id) || run.id < 1) throw new TypeError('GitHub Actions run ID is invalid')
-    if (run.id !== currentRunId && (run.status === 'in_progress' || run.id < currentRunId)) {
-      blocking.add(String(run.id))
-    }
+    if (run.id !== currentRunId && (run.status === 'in_progress' || run.id < currentRunId)) blocking.add(String(run.id))
   }
   return [...blocking].sort((left, right) => Number(left) - Number(right))
 }
@@ -1303,9 +1264,8 @@ const activeWorkflowRuns = (
   Effect.tryPromise({
     try: async (signal) => {
       const currentRunNumber = Number(currentRunId)
-      if (!Number.isSafeInteger(currentRunNumber) || currentRunNumber < 1) {
+      if (!Number.isSafeInteger(currentRunNumber) || currentRunNumber < 1)
         throw new Error('current GitHub Actions run ID is invalid')
-      }
       const api = (process.env.GITHUB_API_URL?.trim() || 'https://api.github.com').replace(/\/$/, '')
       const runs: QualificationWorkflowRunIdentity[] = []
       for (const status of ['queued', 'in_progress'] as const) {
@@ -1321,40 +1281,27 @@ const activeWorkflowRuns = (
           },
         )
         if (!response.ok) throw new Error(`GitHub Actions run query returned ${response.status}`)
-        if (response.headers.get('link')?.includes('rel="next"') === true) {
+        if (response.headers.get('link')?.includes('rel="next"') === true)
           throw new Error('GitHub Actions run query exceeded one bounded page')
-        }
-        const body = (await response.json()) as {
-          readonly total_count?: number
-          readonly workflow_runs?: readonly { readonly id?: number; readonly head_sha?: string }[]
-        }
+        const raw: unknown = await response.json()
+        const decoded = Schema.decodeUnknownResult(QualificationWorkflowRunsSchema, strictParseOptions)(raw)
+        if (Result.isFailure(decoded)) throw decoded.failure
         if (
-          !Number.isSafeInteger(body.total_count) ||
-          body.total_count === undefined ||
-          body.total_count < 0 ||
-          !Array.isArray(body.workflow_runs) ||
-          body.total_count !== body.workflow_runs.length
-        ) {
-          throw new Error('GitHub Actions run query returned incomplete or malformed evidence')
-        }
-        for (const run of body.workflow_runs) {
-          if (!Number.isSafeInteger(run.id) || run.id === undefined || run.id < 1 || !sha40.test(run.head_sha ?? '')) {
-            throw new Error('GitHub Actions run query returned an invalid run identity')
-          }
+          !Number.isSafeInteger(decoded.success.total_count) ||
+          decoded.success.total_count < 0 ||
+          decoded.success.total_count !== decoded.success.workflow_runs.length
+        )
+          throw new Error('GitHub Actions run query returned incomplete evidence')
+        for (const run of decoded.success.workflow_runs) {
+          if (!Number.isSafeInteger(run.id) || run.id < 1 || !sha40.test(run.head_sha))
+            throw new Error('GitHub Actions run query returned invalid identity')
           runs.push({ id: run.id, status })
         }
       }
       return blockingQualificationWorkflowRunIds(currentRunNumber, runs)
     },
     catch: (cause) =>
-      cause instanceof QualificationCollectorError
-        ? cause
-        : collectorError(
-            'eligibility',
-            'github-attempt-read-failed',
-            'active workflow attempts could not be read',
-            cause,
-          ),
+      collectorError('eligibility', 'github-attempt-read-failed', 'active workflow attempts could not be read', cause),
   })
 
 const qualificationResources = (plan: ApplicationPlanFor<'BrokerlessService'>) => {
@@ -1379,11 +1326,7 @@ const makeProductionOperations = (
   let collected: ProductionPrelockEvidence | undefined
   return {
     collectPrelock: Effect.gen(function* () {
-      const dependencies = yield* Effect.all({
-        marketData: MarketData,
-        journal: Journal,
-        evidenceStore: EvidenceStore,
-      })
+      const dependencies = yield* Effect.all({ marketData: MarketData, journal: Journal, evidenceStore: EvidenceStore })
       const [inspection, priorTrialRunIds, activeAttemptRunIds] = yield* Effect.all([
         dependencies.marketData.inspect.pipe(
           Effect.mapError((cause) =>
@@ -1414,14 +1357,17 @@ const makeProductionOperations = (
         sourceSha: staticEvidence.sourceSha,
         imageRepository: staticEvidence.deployment.imageRepository,
         imageDigest: staticEvidence.deployment.imageDigest,
-        strategyBehaviorHash: staticEvidence.deployment.strategyBehaviorHash,
-        strategyParameterHash: staticEvidence.deployment.strategyParameterHash,
+        strategyBehaviorHash: staticEvidence.candidate.provenance.strategy.behaviorHash,
+        strategyParameterHash: staticEvidence.candidate.provenance.strategy.parameterHash,
+        strategyProtocolHash: makeStrategyProtocolHash(staticEvidence.candidate.provenance.strategy),
         candidateOrdinal: staticEvidence.preregistration.candidateOrdinal,
         priorTrialCount: staticEvidence.preregistration.priorTrialCount,
         preregistrationHash: staticEvidence.preregistrationHash,
         moduleBlobOid: staticEvidence.moduleBlobOid,
-        candidateDefinitionHash: staticEvidence.candidateDefinitionHash,
-        compiledBoundedContentHash: staticEvidence.compiledBoundedContentHash,
+        moduleSha256: staticEvidence.moduleSha256,
+        trialHistoryHash: staticEvidence.trialHistoryHash,
+        candidateSourceHash: staticEvidence.candidateSourceHash,
+        boundedContentHash: staticEvidence.boundedContentHash,
         activeAttemptRunIds,
         githubRunId: staticEvidence.githubRunId,
         githubRunAttempt: staticEvidence.githubRunAttempt,
@@ -1429,6 +1375,7 @@ const makeProductionOperations = (
         inspection,
         priorTrialRunIds,
         preregistration: staticEvidence.preregistration,
+        candidate: staticEvidence.candidate,
         dependencies,
       }
       collected = value
@@ -1438,8 +1385,11 @@ const makeProductionOperations = (
       Effect.fromResult(
         verifyQualificationCandidateBinding(
           prelock.preregistration,
-          prelock.compiledBoundedContentHash,
-          prelock.plan,
+          prelock.candidate,
+          {
+            sourceRevision: prelock.sourceSha,
+            image: { repository: prelock.imageRepository, digest: prelock.imageDigest },
+          },
           prelock.inspection,
           prelock.priorTrialRunIds,
         ),
@@ -1450,16 +1400,16 @@ const makeProductionOperations = (
       ),
     executeQualification: (prelock, candidate) =>
       Effect.gen(function* () {
-        if (collected !== prelock) {
+        if (collected !== prelock)
           return yield* collectorError(
             'execution',
             'prelock-evidence-replaced',
             'qualification execution must consume the exact collected prelock evidence',
           )
-        }
         return yield* executeQualificationAttempt(
           {
             plan: prelock.plan,
+            candidate: prelock.candidate,
             inspection: prelock.inspection,
             priorTrialRunIds: prelock.priorTrialRunIds,
             dependencies: prelock.dependencies,

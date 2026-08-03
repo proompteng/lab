@@ -15,7 +15,8 @@ import type { QualificationConstructionFailure, QualificationLock, Qualification
 import type { QualificationStatisticsFailure } from '../qualification-statistics'
 import type { RiskBalancedTrendEvaluationIssue } from '../risk-balanced-trend'
 import type { RuntimeEvidence } from '../runtime-state'
-import type { Strategy, StrategyPrepareLockFailure } from '../strategy'
+import type { RiskBalancedTrendStrategyPrepareLockFailure } from '../strategy/risk-balanced-trend'
+import type { StrategyRuntime } from '../strategy'
 import type { EvaluationResult, ReconciliationResult } from '../types'
 
 export type TerminalQualificationRecord = Extract<QualificationRecord, { readonly state: 'TERMINAL' }>
@@ -28,7 +29,7 @@ export interface StartupDependencies {
 
 export interface EvaluationWorkflow {
   readonly config: RuntimeConfig
-  readonly strategy: Strategy
+  readonly strategy: StrategyRuntime
   readonly dependencies: StartupDependencies
 }
 
@@ -214,7 +215,7 @@ export type StartupDecisionFailure =
       readonly _tag: 'StrategyOperationFailed'
       readonly operation: 'prepare-lock'
       readonly strategyName: string
-      readonly cause: StrategyPrepareLockFailure
+      readonly cause: RiskBalancedTrendStrategyPrepareLockFailure
     }
   | {
       readonly _tag: 'StrategyOperationFailed'

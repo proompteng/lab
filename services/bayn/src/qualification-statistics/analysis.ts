@@ -22,27 +22,37 @@ import { calculateQualificationPower } from './power'
 import { buildCompleteBlocks } from './series'
 import { calculateWalkForward } from './walk-forward'
 
-export const analyzeQualificationInput = (
-  input: QualificationAnalysisInput,
+export interface QualificationBoundTrialHistory {
+  readonly candidateOrdinal: number
+  readonly priorTrialCount: number
+  readonly priorTrialsHash: string
+}
+
+type QualificationLineage = {
+  readonly priorTrialRunIds: readonly string[]
+  readonly priorTrialCount: number
+  readonly priorTrialsHash?: string
+}
+
+const analyzeQualificationLineage = (
+  seriesInput: QualificationSeries,
+  policyInput: QualificationStatisticsPolicy,
+  lineage: QualificationLineage,
 ): Result.Result<QualificationAnalysis, QualificationStatisticsFailure> =>
   pipe(
     Result.all({
       series: pipe(
-        decodeQualificationSeries(input.series),
+        decodeQualificationSeries(seriesInput),
         Result.mapError(qualificationStatisticsSchemaFailure('series')),
       ),
       policy: pipe(
-        decodeQualificationStatisticsPolicy(input.policy),
+        decodeQualificationStatisticsPolicy(policyInput),
         Result.mapError(qualificationStatisticsSchemaFailure('policy')),
       ),
-      priorTrialRunIds: pipe(
-        decodePriorTrialRunIds(input.priorTrialRunIds),
-        Result.mapError(qualificationStatisticsSchemaFailure('prior-trial-run-ids')),
-      ),
     }),
-    Result.flatMap(({ policy, priorTrialRunIds, series }) => {
-      if (!isCanonicalOrder(priorTrialRunIds)) {
-        return statisticsFailure({ _tag: 'QualificationLineageInvalid', priorTrialRunIds })
+    Result.flatMap(({ policy, series }) => {
+      if (!isCanonicalOrder(lineage.priorTrialRunIds)) {
+        return statisticsFailure({ _tag: 'QualificationLineageInvalid', priorTrialRunIds: lineage.priorTrialRunIds })
       }
       return pipe(
         buildCompleteBlocks(series),
@@ -51,7 +61,7 @@ export const analyzeQualificationInput = (
           return pipe(
             Result.all({
               power: calculateQualificationPower(policy, blocks.length, availableCompleteSessions),
-              bootstrap: runQualificationBootstrap(series, blocks, policy, priorTrialRunIds.length),
+              bootstrap: runQualificationBootstrap(series, blocks, policy, lineage.priorTrialCount),
               walkForward: calculateWalkForward(series, policy),
             }),
             Result.flatMap(({ bootstrap, power, walkForward }) => {
@@ -60,8 +70,14 @@ export const analyzeQualificationInput = (
                 schemaVersion: 'bayn.qualification-analysis.v1' as const,
                 runId: series.runId,
                 policy,
-                priorTrialRunIds,
-                candidateOrdinal: priorTrialRunIds.length + 1,
+                priorTrialRunIds: lineage.priorTrialRunIds,
+                ...(lineage.priorTrialsHash === undefined
+                  ? {}
+                  : {
+                      priorTrialCount: lineage.priorTrialCount,
+                      priorTrialsHash: lineage.priorTrialsHash,
+                    }),
+                candidateOrdinal: lineage.priorTrialCount + 1,
                 completeBlocks: blocks.map((block) => block.evidence),
                 power,
                 bootstrap,
@@ -85,6 +101,46 @@ export const analyzeQualificationInput = (
       )
     }),
   )
+
+export const analyzeQualificationInput = (
+  input: QualificationAnalysisInput,
+): Result.Result<QualificationAnalysis, QualificationStatisticsFailure> =>
+  pipe(
+    Result.all({
+      priorTrialRunIds: pipe(
+        decodePriorTrialRunIds(input.priorTrialRunIds),
+        Result.mapError(qualificationStatisticsSchemaFailure('prior-trial-run-ids')),
+      ),
+    }),
+    Result.flatMap(({ priorTrialRunIds }) =>
+      analyzeQualificationLineage(input.series, input.policy, {
+        priorTrialRunIds,
+        priorTrialCount: priorTrialRunIds.length,
+      }),
+    ),
+  )
+
+export const analyzeQualificationAtOrdinal = (
+  series: QualificationSeries,
+  policy: QualificationStatisticsPolicy,
+  history: QualificationBoundTrialHistory,
+): Result.Result<QualificationAnalysis, QualificationStatisticsFailure> => {
+  if (
+    !Number.isSafeInteger(history.candidateOrdinal) ||
+    history.candidateOrdinal <= 0 ||
+    !Number.isSafeInteger(history.priorTrialCount) ||
+    history.priorTrialCount < 0 ||
+    history.candidateOrdinal !== history.priorTrialCount + 1 ||
+    !/^[0-9a-f]{64}$/.test(history.priorTrialsHash)
+  ) {
+    return statisticsFailure({ _tag: 'QualificationBoundLineageInvalid', ...history })
+  }
+  return analyzeQualificationLineage(series, policy, {
+    priorTrialRunIds: [],
+    priorTrialCount: history.priorTrialCount,
+    priorTrialsHash: history.priorTrialsHash,
+  })
+}
 
 export const analyzeQualification = (
   series: QualificationSeries,

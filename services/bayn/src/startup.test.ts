@@ -13,7 +13,7 @@ import {
   marketDataService,
   successfulEvidenceStore,
   fixtureEvaluation,
-  fixtureStrategy,
+  fixtureRuntime,
   fixtureSnapshot,
   fixtureLock,
   fixtureQualification,
@@ -23,7 +23,6 @@ import {
   pinnedQualification,
   pinnedRuntimeConfig,
   pinnedStoredEvidence,
-  pinnedStrategy,
   pinnedStore,
 } from './app-test-support'
 import { runApplication, type BrokerlessApplicationConfig } from './app'
@@ -46,7 +45,11 @@ import { Journal, type JournalService } from './ledger'
 import { MarketData } from './market-data'
 import { defaultProtocolDocument, loadProtocol } from './protocol'
 import { makeQualificationLock, makeQualificationPolicyDocument, makeQualificationResult } from './qualification'
-import { defaultQualificationStatisticsPolicy } from './qualification-statistics'
+import {
+  analyzeQualification,
+  defaultQualificationStatisticsPolicy,
+  prepareQualificationSeries,
+} from './qualification-statistics'
 import { evaluateRiskBalancedTrend, summarizeEvaluation } from './risk-balanced-trend'
 import { initialState, type RuntimeState } from './runtime-state'
 import {
@@ -60,7 +63,7 @@ import {
   runStartup,
   type StartupDecisionFailure,
 } from './startup'
-import type { Strategy } from './strategy'
+import type { StrategyRuntime } from './strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
 const testStartupDependencies = Effect.all({
@@ -69,12 +72,12 @@ const testStartupDependencies = Effect.all({
   evidenceStore: EvidenceStore,
 })
 
-const initialize = (runtimeConfig: typeof config, state: Ref.Ref<RuntimeState>, strategy: Strategy) =>
+const initialize = (runtimeConfig: typeof config, state: Ref.Ref<RuntimeState>, strategy: StrategyRuntime) =>
   testStartupDependencies.pipe(
     Effect.flatMap((dependencies) => runStartup(runtimeConfig, state, strategy, dependencies)),
   )
 
-const brokerlessApplication = (runtimeConfig: BrokerlessApplicationConfig, strategy: Strategy) =>
+const brokerlessApplication = (runtimeConfig: BrokerlessApplicationConfig, strategy: StrategyRuntime) =>
   Effect.all({
     marketData: MarketData,
     journal: Journal,
@@ -145,7 +148,7 @@ const candidateQualification = {
   },
   lock: fixtureLock,
 } satisfies {
-  readonly inspection: Parameters<typeof evaluateLockedSnapshot>[1]
+  readonly inspection: Parameters<typeof evaluateLockedSnapshot>[2]
   readonly lock: typeof fixtureLock
 }
 
@@ -426,14 +429,14 @@ describe('Bayn startup pure decisions', () => {
       result: fixtureQualification,
     }
     const exact = decisionSuccess(
-      decideTerminalRecovery(fixtureStrategy.provenance, path, Option.some(recoveredFixture())),
+      decideTerminalRecovery(fixtureRuntime.provenance, path, Option.some(recoveredFixture())),
     )
     expect(exact).toMatchObject({
       _tag: 'TerminalRecovered',
       evidence: { startupMode: 'recovered', evaluation: { runId: fixtureEvaluation.runId } },
     })
 
-    const missing = decisionFailure(decideTerminalRecovery(fixtureStrategy.provenance, path, Option.none()))
+    const missing = decisionFailure(decideTerminalRecovery(fixtureRuntime.provenance, path, Option.none()))
     expect(missing).toEqual({
       _tag: 'QualificationStateInvalid',
       details: {
@@ -450,7 +453,7 @@ describe('Bayn startup pure decisions', () => {
 
     const forgedPath = decisionFailure(
       decideTerminalRecovery(
-        fixtureStrategy.provenance,
+        fixtureRuntime.provenance,
         { ...path, runId: pinnedQualification.runId },
         Option.some(recoveredFixture()),
       ),
@@ -469,7 +472,7 @@ describe('Bayn startup pure decisions', () => {
       const recovered = recoveredFixture()
       const mismatch = decisionFailure(
         decideTerminalRecovery(
-          fixtureStrategy.provenance,
+          fixtureRuntime.provenance,
           path,
           Option.some({
             ...recovered,
@@ -536,7 +539,7 @@ describe('Bayn startup pure decisions', () => {
     const terminalRecovered = recoveredFixture()
     const terminalMismatch = decisionFailure(
       decideTerminalRecovery(
-        fixtureStrategy.provenance,
+        fixtureRuntime.provenance,
         terminalPath,
         Option.some({
           ...terminalRecovered,
@@ -568,7 +571,13 @@ describe('Bayn startup pure decisions', () => {
       manifest: { ...fixtureSnapshot.manifest, hash: '0'.repeat(64) },
     }
     const mismatch = decisionFailure(
-      evaluateLockedSnapshot(fixtureStrategy, candidateQualification.inspection, fixtureLock, loaded),
+      evaluateLockedSnapshot(
+        fixtureRuntime.definition,
+        fixtureRuntime.provenance,
+        candidateQualification.inspection,
+        fixtureLock,
+        loaded,
+      ),
     )
     expect(mismatch).toEqual({
       _tag: 'BindingMismatch',
@@ -587,19 +596,22 @@ describe('Bayn startup pure decisions', () => {
 
   test('returns an exact evaluation-run mismatch without throwing or journaling', () => {
     const evaluationRunId = '0'.repeat(64)
-    const strategy: Strategy = {
-      ...fixtureStrategy,
-      evaluate: () => Result.succeed({ ...fixtureEvaluation, runId: evaluationRunId }),
-    }
+    const lock = { ...fixtureLock, candidateRunId: evaluationRunId }
     const mismatch = decisionFailure(
-      evaluateLockedSnapshot(strategy, candidateQualification.inspection, fixtureLock, fixtureSnapshot),
+      evaluateLockedSnapshot(
+        fixtureRuntime.definition,
+        fixtureRuntime.provenance,
+        candidateQualification.inspection,
+        lock,
+        fixtureSnapshot,
+      ),
     )
     expect(mismatch).toEqual({
       _tag: 'BindingMismatch',
       details: {
         binding: 'evaluation-run',
-        lockedRunId: fixtureLock.candidateRunId,
-        evaluationRunId,
+        lockedRunId: evaluationRunId,
+        evaluationRunId: fixtureLock.candidateRunId,
       },
     })
     expectRenderedFailure(mismatch, {
@@ -623,15 +635,8 @@ describe('Bayn startup pure decisions', () => {
     })
     assert(Result.isSuccess(tunedLockResult), 'tuned qualification lock must succeed')
     const tunedLock = tunedLockResult.success
-    const strategy: Strategy = {
-      ...fixtureStrategy,
-      analyze: () => {
-        throw new Error('legacy default-policy analyzer must not run')
-      },
-    }
-
     const evidence = decisionSuccess(
-      qualifyEvaluation(strategy, tunedLock, fixtureEvaluation, recoveredFixture().reconciliation),
+      qualifyEvaluation(fixtureRuntime.definition, tunedLock, fixtureEvaluation, recoveredFixture().reconciliation),
     )
 
     expect(evidence.qualification.lockId).toBe(tunedLock.lockId)
@@ -641,12 +646,6 @@ describe('Bayn startup pure decisions', () => {
   })
 
   test('renders evaluate, analyze, and qualify failures from their typed causes', () => {
-    const evaluationCause = {
-      _tag: 'CanonicalJsonFailure',
-      path: '$.inputManifest',
-      reason: 'non-json-type',
-      actualType: 'undefined',
-    } as const
     const reconciliation = recoveredFixture().reconciliation
     const duplicatedBuyAndHold = fixtureEvaluation.benchmarkSeries.buyAndHold.at(0)
     assert(duplicatedBuyAndHold !== undefined, 'fixture buy-and-hold series must not be empty')
@@ -671,20 +670,14 @@ describe('Bayn startup pure decisions', () => {
     }[] = [
       {
         operation: 'evaluate',
-        message: `${fixtureStrategy.name} evaluation failed: input-manifest canonicalization failed at $.inputManifest: non-json-type`,
+        message: `${fixtureRuntime.definition.name} evaluation failed: strategy simulation omitted its trace`,
         decide: () =>
           evaluateLockedSnapshot(
             {
-              ...fixtureStrategy,
-              evaluate: () =>
-                Result.fail([
-                  {
-                    _tag: 'CanonicalizationFailed',
-                    operation: 'input-manifest',
-                    cause: evaluationCause,
-                  },
-                ]),
+              ...fixtureRuntime.definition,
+              decide: () => Result.fail({ _tag: 'SimulationTraceMissing' }),
             },
+            fixtureRuntime.provenance,
             candidateQualification.inspection,
             fixtureLock,
             fixtureSnapshot,
@@ -692,13 +685,13 @@ describe('Bayn startup pure decisions', () => {
       },
       {
         operation: 'analyze',
-        message: `${fixtureStrategy.name} analysis failed: qualification series duplicate-buy-and-hold-date at ${duplicatedBuyAndHold.sessionDate} (strategy=${fixtureEvaluation.simulation.dailyMarks.length}, buy-and-hold=${misalignedEvaluation.benchmarkSeries.buyAndHold.length}, direct-volatility=${fixtureEvaluation.benchmarkSeries.directVolTiming.length})`,
-        decide: () => qualifyEvaluation(fixtureStrategy, fixtureLock, misalignedEvaluation, reconciliation),
+        message: `${fixtureRuntime.definition.name} analysis failed: qualification series duplicate-buy-and-hold-date at ${duplicatedBuyAndHold.sessionDate} (strategy=${fixtureEvaluation.simulation.dailyMarks.length}, buy-and-hold=${misalignedEvaluation.benchmarkSeries.buyAndHold.length}, direct-volatility=${fixtureEvaluation.benchmarkSeries.directVolTiming.length})`,
+        decide: () => qualifyEvaluation(fixtureRuntime.definition, fixtureLock, misalignedEvaluation, reconciliation),
       },
       {
         operation: 'qualify',
-        message: `${fixtureStrategy.name} qualification failed: qualification analysis run ${fixtureEvaluation.runId} does not match locked run ${mismatchedLock.candidateRunId}`,
-        decide: () => qualifyEvaluation(fixtureStrategy, mismatchedLock, fixtureEvaluation, reconciliation),
+        message: `${fixtureRuntime.definition.name} qualification failed: qualification analysis run ${fixtureEvaluation.runId} does not match locked run ${mismatchedLock.candidateRunId}`,
+        decide: () => qualifyEvaluation(fixtureRuntime.definition, mismatchedLock, fixtureEvaluation, reconciliation),
       },
     ]
 
@@ -707,7 +700,7 @@ describe('Bayn startup pure decisions', () => {
       expect(failure).toMatchObject({
         _tag: 'StrategyOperationFailed',
         operation: testCase.operation,
-        strategyName: fixtureStrategy.name,
+        strategyName: fixtureRuntime.definition.name,
       })
       expectRenderedFailure(failure, {
         component: 'strategy',
@@ -759,7 +752,7 @@ describe('Bayn startup lifecycle', () => {
     const state = await Effect.runPromise(Ref.make(initialState()))
 
     await Effect.runPromise(
-      initialize(pinnedRuntimeConfig, state, fixtureStrategy).pipe(
+      initialize(pinnedRuntimeConfig, state, fixtureRuntime).pipe(
         Effect.provideService(MarketData, {
           check: forbidden('pinned startup must not check Signal'),
           inspect: forbidden('pinned startup must not inspect Signal'),
@@ -851,7 +844,9 @@ describe('Bayn startup lifecycle', () => {
     })
     assert(Result.isSuccess(historicalLockResult), 'historical lock fixture must succeed')
     const historicalLock = historicalLockResult.success
-    const historicalAnalysisResult = pinnedStrategy.analyze(pinnedEvaluation, [])
+    const historicalAnalysisResult = prepareQualificationSeries(pinnedEvaluation).pipe(
+      Result.flatMap((series) => analyzeQualification(series, defaultQualificationStatisticsPolicy, [])),
+    )
     assert(Result.isSuccess(historicalAnalysisResult), 'historical analysis fixture must succeed')
     const historicalQualificationResult = makeQualificationResult(
       historicalLock,
@@ -890,14 +885,14 @@ describe('Bayn startup lifecycle', () => {
     const state = await Effect.runPromise(Ref.make(initialState()))
 
     await Effect.runPromise(
-      initialize(pinnedRuntimeConfig, state, fixtureStrategy).pipe(
+      initialize(pinnedRuntimeConfig, state, fixtureRuntime).pipe(
         Effect.provideService(MarketData, marketDataService(Effect.die(new Error('must not load bars')))),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, store),
       ),
     )
 
-    expect(fixtureStrategy.provenance.strategy.parameterSchemaVersion).toBe('bayn.risk-balanced-trend.protocol.v4')
+    expect(fixtureRuntime.provenance.strategy.parameterSchemaVersion).toBe('bayn.risk-balanced-trend.protocol.v4')
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
       status: 'STARTING',
       evidence: {
@@ -913,7 +908,7 @@ describe('Bayn startup lifecycle', () => {
       {
         name: 'stored protocol',
         config: pinnedRuntimeConfig,
-        strategy: fixtureStrategy,
+        strategy: fixtureRuntime,
         store: {
           ...pinnedStore(),
           read: () =>
@@ -931,19 +926,19 @@ describe('Bayn startup lifecycle', () => {
           ...pinnedRuntimeConfig,
           clickhouse: { ...pinnedRuntimeConfig.clickhouse, snapshotId: '0'.repeat(64) },
         },
-        strategy: fixtureStrategy,
+        strategy: fixtureRuntime,
         store: pinnedStore(),
       },
       {
         name: 'terminal result',
         config: pinnedRuntimeConfig,
-        strategy: fixtureStrategy,
+        strategy: fixtureRuntime,
         store: { ...pinnedStore(), readQualification: () => Effect.succeed(Option.none()) },
       },
       {
         name: 'durable evidence',
         config: pinnedRuntimeConfig,
-        strategy: fixtureStrategy,
+        strategy: fixtureRuntime,
         store: { ...pinnedStore(), recover: () => Effect.succeed(Option.none()) },
       },
     ]
@@ -968,7 +963,7 @@ describe('Bayn startup lifecycle', () => {
   test('converts malformed persisted canonical material to a terminal failure without a defect', async () => {
     const state = await Effect.runPromise(Ref.make(initialState()))
     const exit = await Effect.runPromiseExit(
-      initialize(pinnedRuntimeConfig, state, fixtureStrategy).pipe(
+      initialize(pinnedRuntimeConfig, state, fixtureRuntime).pipe(
         Effect.provideService(MarketData, marketDataService(Effect.die(new Error('must not load bars')))),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, {
@@ -991,16 +986,8 @@ describe('Bayn startup lifecycle', () => {
     const evaluationResult = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
     assert(Result.isSuccess(evaluationResult), 'recovery fixture evaluation must succeed')
     const evaluation = evaluationResult.success
-    let evaluations = 0
     let journalWrites = 0
     let persistenceWrites = 0
-    const strategy: Strategy = {
-      ...fixtureStrategy,
-      evaluate: () => {
-        evaluations += 1
-        return Result.succeed(evaluation)
-      },
-    }
     const journal: JournalService = {
       post: () => Effect.void,
       verifyAccount: () => Effect.succeed(true),
@@ -1036,7 +1023,7 @@ describe('Bayn startup lifecycle', () => {
     const state = await Effect.runPromise(Ref.make(initialState()))
 
     await Effect.runPromise(
-      initialize(config, state, strategy).pipe(
+      initialize(config, state, fixtureRuntime).pipe(
         Effect.provideService(
           MarketData,
           marketDataService(Effect.die(new Error('terminal recovery must not load bars')), snapshot),
@@ -1046,11 +1033,7 @@ describe('Bayn startup lifecycle', () => {
       ),
     )
 
-    expect({ evaluations, journalWrites, persistenceWrites }).toEqual({
-      evaluations: 0,
-      journalWrites: 0,
-      persistenceWrites: 0,
-    })
+    expect({ journalWrites, persistenceWrites }).toEqual({ journalWrites: 0, persistenceWrites: 0 })
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
       status: 'STARTING',
       evidence: {
@@ -1084,7 +1067,7 @@ describe('Bayn startup lifecycle', () => {
     const state = await Effect.runPromise(Ref.make(initialState()))
 
     await Effect.runPromise(
-      initialize(config, state, fixtureStrategy).pipe(
+      initialize(config, state, fixtureRuntime).pipe(
         Effect.provideService(
           MarketData,
           marketDataService(Effect.die(new Error('unrelated terminal qualification must not load bars')), snapshot),
@@ -1104,16 +1087,8 @@ describe('Bayn startup lifecycle', () => {
 
   test('fails closed on an opened qualification without reading bars or mutating evidence', async () => {
     const snapshot = makeSnapshot()
-    let evaluations = 0
     let journalWrites = 0
     let persistenceWrites = 0
-    const strategy: Strategy = {
-      ...fixtureStrategy,
-      evaluate: () => {
-        evaluations += 1
-        return Result.fail([{ _tag: 'CandidateSimulationTraceMissing' }])
-      },
-    }
     const journal: JournalService = {
       post: () => Effect.void,
       verifyAccount: () => Effect.succeed(true),
@@ -1135,7 +1110,7 @@ describe('Bayn startup lifecycle', () => {
     const state = await Effect.runPromise(Ref.make(initialState()))
 
     await Effect.runPromise(
-      initialize(config, state, strategy).pipe(
+      initialize(config, state, fixtureRuntime).pipe(
         Effect.provideService(
           MarketData,
           marketDataService(Effect.die(new Error('incomplete qualification must not load bars')), snapshot),
@@ -1145,11 +1120,7 @@ describe('Bayn startup lifecycle', () => {
       ),
     )
 
-    expect({ evaluations, journalWrites, persistenceWrites }).toEqual({
-      evaluations: 0,
-      journalWrites: 0,
-      persistenceWrites: 0,
-    })
+    expect({ journalWrites, persistenceWrites }).toEqual({ journalWrites: 0, persistenceWrites: 0 })
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
       status: 'FAILED',
       evidence: null,
@@ -1159,15 +1130,7 @@ describe('Bayn startup lifecycle', () => {
 
   test('fails closed instead of re-evaluating a corrupt matching durable run', async () => {
     const snapshot = makeSnapshot()
-    let evaluations = 0
     let journalWrites = 0
-    const strategy: Strategy = {
-      ...fixtureStrategy,
-      evaluate: () => {
-        evaluations += 1
-        return Result.fail([{ _tag: 'CandidateSimulationTraceMissing' }])
-      },
-    }
     const store: EvidenceStoreService = {
       ...successfulEvidenceStore,
       openQualification: () => Effect.succeed({ state: 'TERMINAL', lock: fixtureLock, result: fixtureQualification }),
@@ -1193,7 +1156,7 @@ describe('Bayn startup lifecycle', () => {
     const state = await Effect.runPromise(Ref.make(initialState()))
 
     await Effect.runPromise(
-      initialize(config, state, strategy).pipe(
+      initialize(config, state, fixtureRuntime).pipe(
         Effect.provideService(
           MarketData,
           marketDataService(Effect.die(new Error('corrupt recovery must not load bars')), snapshot),
@@ -1203,7 +1166,7 @@ describe('Bayn startup lifecycle', () => {
       ),
     )
 
-    expect({ evaluations, journalWrites }).toEqual({ evaluations: 0, journalWrites: 0 })
+    expect({ journalWrites }).toEqual({ journalWrites: 0 })
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
       status: 'FAILED',
       evidence: null,
@@ -1211,17 +1174,19 @@ describe('Bayn startup lifecycle', () => {
     })
   })
 
-  test('evaluates through the provided strategy capability', async () => {
+  test('evaluates through the provided StrategyDefinition and shared runner', async () => {
     let calls = 0
     const snapshot = makeSnapshot()
     const state = await Effect.runPromise(Ref.make(initialState()))
-    const strategy: Strategy = {
-      ...fixtureStrategy,
-      name: 'test-strategy',
-      evaluate: (bars, manifest) => {
-        calls += 1
-        return evaluateRiskBalancedTrend(bars, manifest, fixtureProtocol, provenance)
+    const strategy: StrategyRuntime = {
+      definition: {
+        ...fixtureRuntime.definition,
+        decide: (context) => {
+          calls += 1
+          return fixtureRuntime.definition.decide(context)
+        },
       },
+      provenance: fixtureRuntime.provenance,
     }
 
     await Effect.runPromise(
@@ -1232,7 +1197,7 @@ describe('Bayn startup lifecycle', () => {
       ),
     )
 
-    expect(calls).toBe(1)
+    expect(calls).toBe(fixtureEvaluation.signalDecisions.length)
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({ status: 'STARTING' })
   })
 
@@ -1242,7 +1207,7 @@ describe('Bayn startup lifecycle', () => {
     const marketData = marketDataService(Effect.succeed(snapshot))
 
     await Effect.runPromise(
-      initialize(config, state, fixtureStrategy).pipe(
+      initialize(config, state, fixtureRuntime).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
@@ -1271,17 +1236,6 @@ describe('Bayn startup lifecycle', () => {
       ...baseMarketData,
       inspect: Effect.sync(() => calls.push('inspect')).pipe(Effect.andThen(baseMarketData.inspect)),
       load: Effect.sync(() => calls.push('load')).pipe(Effect.andThen(Effect.succeed(snapshot))),
-    }
-    const strategy: Strategy = {
-      ...fixtureStrategy,
-      prepareLock: (manifest, sessionDates, priorTrialRunIds) => {
-        calls.push('prepare-lock')
-        return fixtureStrategy.prepareLock(manifest, sessionDates, priorTrialRunIds)
-      },
-      evaluate: (bars, manifest) => {
-        calls.push('evaluate')
-        return fixtureStrategy.evaluate(bars, manifest)
-      },
     }
     const journal: JournalService = {
       ...successfulJournal,
@@ -1324,7 +1278,7 @@ describe('Bayn startup lifecycle', () => {
     const state = await Effect.runPromise(Ref.make(initialState()))
 
     await Effect.runPromise(
-      initialize(config, state, strategy).pipe(
+      initialize(config, state, fixtureRuntime).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, journal),
         Effect.provideService(EvidenceStore, store),
@@ -1336,10 +1290,8 @@ describe('Bayn startup lifecycle', () => {
       'database-check',
       'inspect',
       'list-prior-trials',
-      'prepare-lock',
       'open-qualification',
       'load',
-      'evaluate',
       'journal',
       'persist',
     ])
@@ -1351,7 +1303,7 @@ describe('Bayn startup lifecycle', () => {
     const marketData = marketDataService(Effect.succeed(shortSnapshot), shortSnapshot)
 
     await Effect.runPromise(
-      initialize(config, state, fixtureStrategy).pipe(
+      initialize(config, state, fixtureRuntime).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
@@ -1372,7 +1324,7 @@ describe('Bayn startup lifecycle', () => {
     )
 
     const exit = await Effect.runPromiseExit(
-      initialize({ ...config, operationTimeoutMs: 10 }, state, fixtureStrategy).pipe(
+      initialize({ ...config, operationTimeoutMs: 10 }, state, fixtureRuntime).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
@@ -1388,7 +1340,7 @@ describe('Bayn startup lifecycle', () => {
   test('propagates an unexpected defect instead of leaving a detached STARTING worker', async () => {
     const marketData = marketDataService(Effect.die(new Error('unexpected startup defect')))
     const exit = await Effect.runPromiseExit(
-      brokerlessApplication(brokerlessConfig(config), fixtureStrategy).pipe(
+      brokerlessApplication(brokerlessConfig(config), fixtureRuntime).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
@@ -1416,7 +1368,7 @@ describe('Bayn startup lifecycle', () => {
       check: Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true)))),
     }
     const exit = await Effect.runPromiseExit(
-      brokerlessApplication(brokerlessConfig({ ...config, operationTimeoutMs: 10 }), fixtureStrategy).pipe(
+      brokerlessApplication(brokerlessConfig({ ...config, operationTimeoutMs: 10 }), fixtureRuntime).pipe(
         Effect.provideService(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
         Effect.provideService(Journal, journal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
@@ -1459,7 +1411,7 @@ describe('Bayn startup lifecycle', () => {
     }
 
     const exit = await Effect.runPromiseExit(
-      initialize(config, state, fixtureStrategy).pipe(
+      initialize(config, state, fixtureRuntime).pipe(
         Effect.provideService(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, unavailable),
@@ -1490,7 +1442,7 @@ describe('Bayn startup lifecycle', () => {
     }
 
     await Effect.runPromise(
-      initialize(config, state, fixtureStrategy).pipe(
+      initialize(config, state, fixtureRuntime).pipe(
         Effect.provideService(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, unauthorized),

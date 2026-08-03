@@ -8,6 +8,7 @@ import {
   QualificationAnalysisSchema,
   QualificationStatisticsPolicySchema,
   analyzeQualification,
+  analyzeQualificationAtOrdinal,
   analyzeQualificationInput,
   analyzeSelectedBenchmarkComparison,
   calculateQualificationPower,
@@ -490,6 +491,31 @@ describe('deterministic paired block bootstrap', () => {
         priorTrialRunIds: ['2'.repeat(64), '1'.repeat(64)],
       }),
     )
+  })
+
+  test('consumes a bound preregistered ordinal without fabricating prior run IDs', () => {
+    const first = successOf(
+      analyzeQualificationAtOrdinal(makeSeries(), policy(), {
+        candidateOrdinal: 1,
+        priorTrialCount: 0,
+        priorTrialsHash: 'a'.repeat(64),
+      }),
+    )
+    const twentyFirst = successOf(
+      analyzeQualificationAtOrdinal(makeSeries(), policy(), {
+        candidateOrdinal: 21,
+        priorTrialCount: 20,
+        priorTrialsHash: 'b'.repeat(64),
+      }),
+    )
+
+    expect(first.priorTrialRunIds).toEqual([])
+    expect(first.priorTrialCount).toBe(0)
+    expect(twentyFirst.priorTrialRunIds).toEqual([])
+    expect(twentyFirst.priorTrialCount).toBe(20)
+    expect(twentyFirst.candidateOrdinal).toBe(21)
+    expect(twentyFirst.bootstrap.adjustedOneSidedAlpha).toBe(0.05 / 21)
+    expect(twentyFirst.bootstrap.adjustedOneSidedAlpha).toBeLessThan(first.bootstrap.adjustedOneSidedAlpha)
   })
 })
 

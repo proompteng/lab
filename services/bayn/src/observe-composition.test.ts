@@ -4,7 +4,7 @@ import { Cause, Deferred, Effect, Exit, Fiber, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import type { AutonomousCycleLoop } from './app'
-import { fixtureStrategy } from './app-test-support'
+import { fixtureRuntime } from './app-test-support'
 import {
   AccountStatus as BrokerAccountStatus,
   BrokerRead,
@@ -100,7 +100,7 @@ import { reconciledStateHash } from './reconciliation'
 import { Reason, type Policy } from './risk'
 import { decodePaperDecisionDocument, makePaperDecisionDocument } from './shadow-decision-contract'
 import { TargetPlanStatus } from './target-planner'
-import { fixtureProtocol, makeSnapshot } from './test-fixtures'
+import { fixtureProtocol, makeSnapshot, makeTestDefinition } from './test-fixtures'
 import type { DecisionPlan, IsoDate } from './types'
 
 const signalDate = '2020-04-30'
@@ -208,16 +208,18 @@ const cycle = Effect.runSync(
 )
 
 const sourceSnapshot = makeSnapshot(1_129)
+const { hash: _sourceManifestHash, ...sourceManifestMaterial } = sourceSnapshot.manifest
+const snapshotManifest = {
+  ...sourceManifestMaterial,
+  finalizedSnapshot: {
+    ...sourceManifestMaterial.finalizedSnapshot,
+    snapshotId,
+    finalizedAt: '2020-04-30T22:00:00.000Z',
+  },
+} as const
 const snapshot: MarketDataSnapshot = {
   bars: sourceSnapshot.bars,
-  manifest: {
-    ...sourceSnapshot.manifest,
-    finalizedSnapshot: {
-      ...sourceSnapshot.manifest.finalizedSnapshot,
-      snapshotId,
-      finalizedAt: '2020-04-30T22:00:00.000Z',
-    },
-  },
+  manifest: { ...snapshotManifest, hash: canonicalHashV1(snapshotManifest) },
 }
 
 const account: AccountSnapshot = {
@@ -338,7 +340,10 @@ const decision: DecisionPlan = {
     targetWeight: index === 0 ? 0.5 : 0,
   })),
 }
-const priceMicros = Object.fromEntries(fixtureProtocol.universe.map((symbol) => [symbol, '100000000']))
+const runtimeWithDecision = (decide: typeof fixtureRuntime.definition.decide) => ({
+  definition: makeTestDefinition(fixtureProtocol, decide),
+  provenance: fixtureRuntime.provenance,
+})
 
 const marketData = (requests: unknown[]): MarketDataService => ({
   check: Effect.die(new Error('decision building must not run the static snapshot check')),
@@ -402,7 +407,7 @@ const provideDecisionServices = <A, E>(
 
 const sandboxExecutionProgram = (
   authorityGenerationHash = generationHash,
-  strategy = fixtureStrategy.provenance.strategy,
+  strategy = fixtureRuntime.provenance.strategy,
 ): ExecutionProgram => {
   const brokerIdentity = Result.getOrThrow(
     makeBrokerIdentity({
@@ -440,7 +445,7 @@ const paperLifecycleFixture = async (transformPolicy: (policy: Policy) => Policy
     pollIntervalMs: 30_000,
     reconciliationIntervalMs: 30_000,
     reconciliationPassTimeoutMs: 30_000,
-    strategy: fixtureStrategy,
+    strategy: fixtureRuntime,
     executionProgram: sandboxExecutionProgram(),
   } as const
   const preparation = Result.getOrThrow(prepareObserveStartup(input))
@@ -454,7 +459,7 @@ const paperLifecycleFixture = async (transformPolicy: (policy: Policy) => Policy
         executionModel: fixtureProtocol.executionModel,
         policy,
         reconcile: Effect.succeed(reconciliationResult(generationHash, Authority.Paper)),
-        strategy: { currentDecision: () => Result.succeed({ decision, priceMicros }) },
+        strategy: runtimeWithDecision(() => Result.succeed(decision)),
       })
     }).pipe(
       (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
@@ -1950,12 +1955,12 @@ describe('OBSERVE runtime composition', () => {
       pollIntervalMs: 30_000,
       reconciliationIntervalMs: 30_000,
       reconciliationPassTimeoutMs: 30_000,
-      strategy: fixtureStrategy,
+      strategy: fixtureRuntime,
     })
 
     expect(Result.isSuccess(prepared)).toBe(true)
     if (Result.isSuccess(prepared)) {
-      expect(prepared.success.strategyProtocolHash).toBe(makeStrategyProtocolHash(fixtureStrategy.provenance.strategy))
+      expect(prepared.success.strategyProtocolHash).toBe(makeStrategyProtocolHash(fixtureRuntime.provenance.strategy))
     }
   })
 
@@ -1984,15 +1989,10 @@ describe('OBSERVE runtime composition', () => {
         executionModel: fixtureProtocol.executionModel,
         policy,
         reconcile: Effect.succeed(reconciliationResult()),
-        strategy: {
-          currentDecision: (_bars, _manifest, binding) => {
-            strategyCalls += 1
-            expect(binding.signal.sessionDate).toBe(signalDate)
-            expect(binding.executionSession.date).toBe(executionDate)
-            expect(binding.submissionOpenAt).toBe(reconciledAt)
-            return Result.succeed({ decision, priceMicros })
-          },
-        },
+        strategy: runtimeWithDecision(() => {
+          strategyCalls += 1
+          return Result.succeed(decision)
+        }),
       })
     }).pipe(
       (program) => provideDecisionServices(program, marketData(snapshotRequests), calendarRead(calendarQueries)),
@@ -2020,7 +2020,13 @@ describe('OBSERVE runtime composition', () => {
       },
       targetPlan: {
         status: 'PLANNED',
-        intentTargets: [{ symbol: fixtureProtocol.universe[0], side: 'BUY', quantityMicros: '5000000' }],
+        intentTargets: [
+          {
+            symbol: fixtureProtocol.universe[0],
+            side: 'BUY',
+            quantityMicros: expect.stringMatching(/^[1-9][0-9]*$/),
+          },
+        ],
       },
       deltaRisk: [
         {
@@ -2047,7 +2053,7 @@ describe('OBSERVE runtime composition', () => {
         executionModel: fixtureProtocol.executionModel,
         policy,
         reconcile: Effect.succeed(reconciliationResult(generationHash, Authority.Paper)),
-        strategy: { currentDecision: () => Result.succeed({ decision, priceMicros }) },
+        strategy: runtimeWithDecision(() => Result.succeed(decision)),
       })
     }).pipe(
       (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
@@ -2139,12 +2145,10 @@ describe('OBSERVE runtime composition', () => {
             executionModel: fixtureProtocol.executionModel,
             policy,
             reconcile: Effect.succeed(reconciliationResult('9'.repeat(64))),
-            strategy: {
-              currentDecision: () => {
-                strategyCalls += 1
-                return Result.succeed({ decision, priceMicros })
-              },
-            },
+            strategy: runtimeWithDecision(() => {
+              strategyCalls += 1
+              return Result.succeed(decision)
+            }),
           })
         }).pipe(
           (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
@@ -2180,7 +2184,7 @@ describe('OBSERVE runtime composition', () => {
             executionModel: fixtureProtocol.executionModel,
             policy,
             reconcile: Effect.succeed(reconciliationResult()),
-            strategy: { currentDecision: () => Result.fail(strategyFailure) },
+            strategy: runtimeWithDecision(() => Result.fail(strategyFailure)),
           })
         }).pipe(
           (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
@@ -2210,11 +2214,9 @@ describe('OBSERVE runtime composition', () => {
           executionModel: fixtureProtocol.executionModel,
           policy,
           reconcile: Effect.succeed(reconciliationResult()),
-          strategy: {
-            currentDecision: () => {
-              throw defect
-            },
-          },
+          strategy: runtimeWithDecision(() => {
+            throw defect
+          }),
         })
       }).pipe(
         (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
@@ -2323,7 +2325,7 @@ describe('OBSERVE runtime composition', () => {
             executionModel: fixtureProtocol.executionModel,
             policy,
             reconcile: testCase.reconcile,
-            strategy: { currentDecision: () => Result.succeed({ decision, priceMicros }) },
+            strategy: runtimeWithDecision(() => Result.succeed(decision)),
           }).pipe((program) => provideDecisionServices(program, testCase.marketData, testCase.marketCalendar)),
         ),
       )
@@ -2398,7 +2400,7 @@ describe('OBSERVE runtime composition', () => {
       pollIntervalMs: 30_000,
       reconciliationIntervalMs: 30_000,
       reconciliationPassTimeoutMs: 30_000,
-      strategy: fixtureStrategy,
+      strategy: fixtureRuntime,
     })
 
     await Effect.runPromise(
@@ -2670,7 +2672,7 @@ describe('OBSERVE runtime composition', () => {
       pollIntervalMs: 30_000,
       reconciliationIntervalMs: 30_000,
       reconciliationPassTimeoutMs: 30_000,
-      strategy: fixtureStrategy,
+      strategy: fixtureRuntime,
     })
 
     const observation = await Effect.runPromise(
@@ -2730,7 +2732,7 @@ describe('OBSERVE runtime composition', () => {
       pollIntervalMs: 100,
       reconciliationIntervalMs: 100,
       reconciliationPassTimeoutMs: 30_000,
-      strategy: fixtureStrategy,
+      strategy: fixtureRuntime,
       executionProgram: sandboxExecutionProgram(),
     })
     const intentStore = {} as IntentStoreService
@@ -2902,7 +2904,7 @@ describe('OBSERVE runtime composition', () => {
       pollIntervalMs: 5,
       reconciliationIntervalMs: 10,
       reconciliationPassTimeoutMs: 2,
-      strategy: fixtureStrategy,
+      strategy: fixtureRuntime,
       executionProgram: sandboxExecutionProgram(),
     })
     const failureObservations: Parameters<Parameters<typeof failureStartup>[0]['recordPass']>[0][] = []
@@ -2987,7 +2989,7 @@ describe('OBSERVE runtime composition', () => {
       pollIntervalMs: 250,
       reconciliationIntervalMs: 100,
       reconciliationPassTimeoutMs: 30_000,
-      strategy: fixtureStrategy,
+      strategy: fixtureRuntime,
       executionProgram: sandboxExecutionProgram(),
     })
     const recoveryObservations: Parameters<Parameters<typeof recoveryStartup>[0]['recordPass']>[0][] = []
@@ -3061,7 +3063,7 @@ describe('OBSERVE runtime composition', () => {
       pollIntervalMs: 99,
       reconciliationIntervalMs: 100,
       reconciliationPassTimeoutMs: 100,
-      strategy: fixtureStrategy,
+      strategy: fixtureRuntime,
       executionProgram: sandboxExecutionProgram(),
     })
     mutationPhase = true
@@ -3137,7 +3139,7 @@ describe('OBSERVE runtime composition', () => {
           executionModel: fixtureProtocol.executionModel,
           policy: postReconcilePolicy,
           reconcile: Effect.succeed(paperResult),
-          strategy: { currentDecision: () => Result.succeed({ decision, priceMicros }) },
+          strategy: runtimeWithDecision(() => Result.succeed(decision)),
         })
       }).pipe(
         (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
@@ -3220,7 +3222,7 @@ describe('OBSERVE runtime composition', () => {
             pollIntervalMs: 10_000,
             reconciliationIntervalMs: 100,
             reconciliationPassTimeoutMs: 50,
-            strategy: fixtureStrategy,
+            strategy: fixtureRuntime,
             executionProgram: sandboxExecutionProgram(),
           })
           const loop = yield* postReconcileStartup({
@@ -3428,7 +3430,7 @@ describe('OBSERVE runtime composition', () => {
             pollIntervalMs: 1_000,
             reconciliationIntervalMs: 100,
             reconciliationPassTimeoutMs: 50,
-            strategy: fixtureStrategy,
+            strategy: fixtureRuntime,
           })
           const loop = yield* startup({
             qualificationRunId: 'c'.repeat(64),
@@ -3480,7 +3482,7 @@ describe('OBSERVE runtime composition', () => {
           executionModel: fixtureProtocol.executionModel,
           policy,
           reconcile: Effect.succeed(reconciliationResult()),
-          strategy: { currentDecision: () => Result.succeed({ decision, priceMicros }) },
+          strategy: runtimeWithDecision(() => Result.succeed(decision)),
         })
       }).pipe(
         (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
@@ -3586,7 +3588,7 @@ describe('OBSERVE runtime composition', () => {
       pollIntervalMs: 30_000,
       reconciliationIntervalMs: 30_000,
       reconciliationPassTimeoutMs: 30_000,
-      strategy: fixtureStrategy,
+      strategy: fixtureRuntime,
       executionProgram: sandboxExecutionProgram(),
     })
 
@@ -3694,7 +3696,7 @@ describe('OBSERVE runtime composition', () => {
       pollIntervalMs: 30_000,
       reconciliationIntervalMs: 30_000,
       reconciliationPassTimeoutMs: 30_000,
-      strategy: fixtureStrategy,
+      strategy: fixtureRuntime,
       executionProgram: sandboxExecutionProgram(),
     })
 
@@ -3740,7 +3742,7 @@ describe('OBSERVE runtime composition', () => {
       pollIntervalMs: 30_000,
       reconciliationIntervalMs: 30_000,
       reconciliationPassTimeoutMs: 30_000,
-      strategy: fixtureStrategy,
+      strategy: fixtureRuntime,
     })
 
     expect(typeof startup).toBe('function')
@@ -3750,7 +3752,7 @@ describe('OBSERVE runtime composition', () => {
     for (const executionProgram of [
       sandboxExecutionProgram('9'.repeat(64)),
       sandboxExecutionProgram(generationHash, {
-        ...fixtureStrategy.provenance.strategy,
+        ...fixtureRuntime.provenance.strategy,
         behaviorHash: '8'.repeat(64),
       }),
     ]) {
@@ -3760,7 +3762,7 @@ describe('OBSERVE runtime composition', () => {
         pollIntervalMs: 30_000,
         reconciliationIntervalMs: 30_000,
         reconciliationPassTimeoutMs: 30_000,
-        strategy: fixtureStrategy,
+        strategy: fixtureRuntime,
         executionProgram,
       })
 
