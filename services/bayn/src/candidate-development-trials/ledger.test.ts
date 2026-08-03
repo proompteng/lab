@@ -17,6 +17,7 @@ import { qualificationDormancyDecisionFromLedgerState } from './qualification-do
 const approvalEvidence = (
   preregistration: CandidateDevelopmentNextPreregistration,
   sourceManifestBinding: CandidateDevelopmentLocalSourceManifestBinding,
+  evaluatedSourceRevision = preregistration.preregistration.sourceRevision,
 ) => {
   if (preregistration.priorTrialsHash === undefined) throw new Error('approval fixture requires a trial history hash')
   const sourceMaterial = {
@@ -28,7 +29,7 @@ const approvalEvidence = (
     snapshotId: preregistration.marketData.snapshotId,
     inputManifestHash: preregistration.marketData.inputManifestHash,
     boundedContentHash: preregistration.marketData.boundedContentHash,
-    sourceRevision: preregistration.preregistration.sourceRevision,
+    sourceRevision: evaluatedSourceRevision,
     modulePath: preregistration.modulePath,
     moduleBlobOid: '3'.repeat(40),
     moduleSha256: preregistration.moduleSha256,
@@ -45,7 +46,7 @@ const approvalEvidence = (
     '8'.repeat(64),
   )
   return {
-    sourceRevision: preregistration.preregistration.sourceRevision,
+    sourceRevision: evaluatedSourceRevision,
     terminalReport,
     terminalReportHash: canonicalHashV1(terminalReport),
   }
@@ -270,6 +271,95 @@ describe('Bayn candidate development trial ledger', () => {
     expect(qualificationDormancyDecisionFromLedgerState(duplicate)).toEqual({
       ok: false,
       issue: { path: 'entries[21].candidateOrdinal', reason: 'INVALID_STATE' },
+    })
+  })
+
+  test('closes a pending candidate after its one-shot development rejection', () => {
+    const preregistration = {
+      ...candidate20Preregistration,
+      candidateOrdinal: 21,
+      priorTrialCount: 20,
+      preregistration: {
+        ...candidate20Preregistration.preregistration,
+        sourceRevision: 'a'.repeat(40),
+        blobOid: 'b'.repeat(40),
+      },
+    }
+    const sourceManifest = {
+      path: 'services/bayn/candidates/ordinal-21-source-manifest.json',
+      blobOid: 'c'.repeat(40),
+      sha256: 'e'.repeat(64),
+    }
+    const pending = {
+      _tag: 'DEVELOPMENT_PENDING' as const,
+      candidateOrdinal: 21,
+      priorTrialCount: 20,
+      strategyName: 'risk-balanced-trend',
+      preregistration,
+      sourceManifest,
+    }
+    expect(
+      qualificationDormancyDecisionFromLedgerState({
+        ...candidateDevelopmentTrialLedgerState,
+        entries: [
+          ...candidateDevelopmentTrialLedgerState.entries,
+          pending,
+          {
+            _tag: 'DEVELOPMENT_REJECTED' as const,
+            candidateOrdinal: 21,
+            priorTrialCount: 20,
+            sourceRevision: 'd'.repeat(40),
+          },
+        ],
+        developmentCandidateOrdinals: [...candidateDevelopmentTrialLedgerState.developmentCandidateOrdinals, 21],
+        activeCandidate: null,
+      }),
+    ).toEqual({
+      ok: true,
+      decision: { status: 'dormant', reason: 'development-rejected', candidateOrdinal: 21 },
+    })
+  })
+
+  test('preserves the evaluated descendant revision in development approval evidence', () => {
+    const preregistration = {
+      ...candidate20Preregistration,
+      candidateOrdinal: 21,
+      priorTrialCount: 20,
+      preregistration: {
+        ...candidate20Preregistration.preregistration,
+        sourceRevision: 'a'.repeat(40),
+        blobOid: 'b'.repeat(40),
+      },
+    }
+    const sourceManifest = {
+      path: 'services/bayn/candidates/ordinal-21-source-manifest.json',
+      blobOid: 'c'.repeat(40),
+      sha256: 'e'.repeat(64),
+    }
+    const pending = {
+      _tag: 'DEVELOPMENT_PENDING' as const,
+      candidateOrdinal: 21,
+      priorTrialCount: 20,
+      strategyName: 'risk-balanced-trend',
+      preregistration,
+      sourceManifest,
+    }
+    const approval = {
+      _tag: 'DEVELOPMENT_APPROVED' as const,
+      candidateOrdinal: 21,
+      priorTrialCount: 20,
+      ...approvalEvidence(preregistration, sourceManifest, 'd'.repeat(40)),
+    }
+    expect(
+      qualificationDormancyDecisionFromLedgerState({
+        ...candidateDevelopmentTrialLedgerState,
+        entries: [...candidateDevelopmentTrialLedgerState.entries, pending, approval],
+        developmentCandidateOrdinals: [...candidateDevelopmentTrialLedgerState.developmentCandidateOrdinals, 21],
+        activeCandidate: { preregistration, strategyName: 'risk-balanced-trend', sourceManifest },
+      }),
+    ).toMatchObject({
+      ok: true,
+      decision: { status: 'ready', reason: 'qualification-eligible', candidateOrdinal: 21 },
     })
   })
 

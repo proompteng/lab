@@ -18,6 +18,7 @@ import {
   type CandidateDevelopmentNextPreregistration,
 } from './candidate-development-calendar'
 import { qualificationDormancyDecisionFromLedgerState } from './candidate-development-trials/qualification-dormancy'
+import { CandidateDevelopmentNextPreregistrationDocumentSchema } from './candidate-development-trials/model'
 import { makeRuntimeProvenanceResult, makeStrategyProtocolHash } from './contracts'
 import { EvidenceStore, type EvidenceStoreService, type QualificationRecord } from './db/evidence-store'
 import {
@@ -44,13 +45,7 @@ import { hashParameters } from './protocol'
 import { decideQualificationPath, evaluateLockedSnapshot, qualifyEvaluation } from './startup/decisions'
 import { activeStrategyBehaviorHash, bindReviewedStrategySource } from './strategy'
 import { loadReviewedStrategyApplication } from './candidate-development-local/source-module'
-import {
-  NonNegativeIntegerSchema,
-  PositiveIntegerSchema,
-  Sha256Schema,
-  StrictNonEmptyStringSchema,
-  strictParseOptions,
-} from './schemas'
+import { strictParseOptions } from './schemas'
 import type { QualificationCandidateApplication } from './qualification-binding'
 
 const sha40 = /^[0-9a-f]{40}$/
@@ -63,26 +58,6 @@ const defaultAuditReplicaUrls = [
   'http://chi-torghut-clickhouse-default-0-0.torghut.svc.cluster.local:8123',
   'http://chi-torghut-clickhouse-default-0-1.torghut.svc.cluster.local:8123',
 ] as const
-
-const CandidateDevelopmentNextPreregistrationSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.candidate-development-next-preregistration.v1'),
-  candidateOrdinal: PositiveIntegerSchema,
-  priorTrialCount: NonNegativeIntegerSchema,
-  strategyProtocolHash: Sha256Schema,
-  strategyIdentityHash: Schema.optionalKey(Sha256Schema),
-  candidateDevelopmentProtocolHash: Schema.optionalKey(Sha256Schema),
-  calendarHash: Schema.optionalKey(Sha256Schema),
-  priorTrialsHash: Schema.optionalKey(Sha256Schema),
-  modulePath: StrictNonEmptyStringSchema,
-  moduleSha256: Sha256Schema,
-  marketData: Schema.Struct({
-    schemaVersion: Schema.Literal('bayn.candidate-development-market-data-source.v1'),
-    snapshotId: Sha256Schema,
-    finalizedSnapshotContentHash: Sha256Schema,
-    inputManifestHash: Sha256Schema,
-    boundedContentHash: Sha256Schema,
-  }),
-})
 
 const QualificationWorkflowRunsSchema = Schema.Struct({
   total_count: Schema.Finite,
@@ -165,7 +140,7 @@ const gitBytes = (repositoryPath: string, args: readonly string[], signal?: Abor
 const sha256Bytes = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
 
 const decodePreregistration = Schema.decodeUnknownResult(
-  CandidateDevelopmentNextPreregistrationSchema,
+  CandidateDevelopmentNextPreregistrationDocumentSchema,
   strictParseOptions,
 )
 
@@ -1185,7 +1160,7 @@ export const makeQualificationCandidateRuntime = (
     image: { repository: deployment.imageRepository, digest: deployment.imageDigest },
     strategy: {
       name: definition.name,
-      behaviorHash: deployment.strategyBehaviorHash,
+      behaviorHash: source.moduleSha256,
       parameterHash,
       parameterSchemaVersion: definition.parameters.schemaVersion,
     },
@@ -1204,7 +1179,7 @@ export const makeQualificationCandidateRuntime = (
     application: boundApplication,
     provenance: provenance.success,
     moduleSha256: source.moduleSha256,
-    strategyBehaviorHash: deployment.strategyBehaviorHash,
+    strategyBehaviorHash: source.moduleSha256,
     trialHistoryHash: preregistration.priorTrialsHash,
     boundedContentHash: preregistration.marketData.boundedContentHash,
   })
@@ -1412,6 +1387,66 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
       moduleBlobOid: staticGit.moduleBlobOid,
       moduleBytes: staticGit.moduleBytes,
     })
+    const developmentApproval = candidateDevelopmentTrialLedgerState.entries.at(-1)
+    if (developmentApproval?._tag === 'DEVELOPMENT_APPROVED') {
+      yield* Effect.tryPromise({
+        try: (signal) =>
+          gitText(
+            repositoryPath,
+            [
+              'merge-base',
+              '--is-ancestor',
+              preregistration.preregistration.sourceRevision,
+              developmentApproval.sourceRevision,
+            ],
+            signal,
+          ),
+        catch: (cause) =>
+          collectorError(
+            'candidate',
+            'development-source-revision-invalid',
+            'development approval evidence must descend from the preregistered source',
+            cause,
+          ),
+      })
+      yield* Effect.tryPromise({
+        try: (signal) =>
+          gitText(
+            repositoryPath,
+            ['merge-base', '--is-ancestor', developmentApproval.sourceRevision, qualificationRuntime.sourceSha],
+            signal,
+          ),
+        catch: (cause) =>
+          collectorError(
+            'candidate',
+            'development-source-revision-invalid',
+            'development approval evidence must bind to an ancestor of the scheduled source',
+            cause,
+          ),
+      })
+      const approvedModuleBytes = yield* Effect.tryPromise({
+        try: (signal) =>
+          gitBytes(
+            repositoryPath,
+            ['cat-file', 'blob', `${developmentApproval.sourceRevision}:${preregistration.modulePath}`],
+            signal,
+          ),
+        catch: (cause) =>
+          collectorError(
+            'candidate',
+            'development-source-revision-invalid',
+            'development approval evidence does not contain the preregistered candidate module',
+            cause,
+          ),
+      })
+      if (sha256Bytes(approvedModuleBytes) !== preregistration.moduleSha256) {
+        return yield* collectorError(
+          'candidate',
+          'development-source-revision-invalid',
+          'development approval evidence does not bind the preregistered candidate module bytes',
+        )
+      }
+    }
     const sourceApplication = yield* loadReviewedStrategyApplication(
       resolve(repositoryPath, candidateSource.modulePath),
       qualificationRuntime.sourceSha,
@@ -1425,10 +1460,16 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
         ),
       ),
     )
+    const candidateParameterHash = hashParameters(sourceApplication.definition.parameters)
+    const candidateStrategyProtocolHash = makeStrategyProtocolHash({
+      name: sourceApplication.definition.name,
+      behaviorHash: preregistration.moduleSha256,
+      parameterHash: candidateParameterHash,
+      parameterSchemaVersion: sourceApplication.definition.parameters.schemaVersion,
+    })
     if (
-      sourceApplication.definition.name !== activeCandidate.application.definition.name ||
-      hashParameters(sourceApplication.definition.parameters) !==
-        hashParameters(activeCandidate.application.definition.parameters)
+      sourceApplication.definition.name !== activeCandidate.strategyName ||
+      candidateStrategyProtocolHash !== preregistration.strategyProtocolHash
     ) {
       return yield* collectorError(
         'candidate',
