@@ -1090,17 +1090,6 @@ export const readForwardPerformancePostgres = (
               AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
             ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
             LIMIT 1
-          ), baseline_snapshot AS (
-            SELECT
-              event.event_id,
-              event.observed_at,
-              snapshot.cash_micros
-            FROM account_snapshots AS snapshot
-            JOIN broker_events AS event ON event.event_id = snapshot.event_id
-            WHERE snapshot.account_id = ${accountId}
-              AND ${generationScope(sql, accountId, authorityGenerationHash, 'snapshot')}
-            ORDER BY event.source_sequence, event.event_id COLLATE "C"
-            LIMIT 1
           ), opening_snapshot AS (
             SELECT
               event.event_id,
@@ -1116,6 +1105,12 @@ export const readForwardPerformancePostgres = (
               AND event.observed_at <= latest_reconciliation.reconciled_at
             ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
             LIMIT 1
+          ), baseline_snapshot AS (
+            SELECT
+              opening_snapshot.event_id,
+              opening_snapshot.observed_at,
+              opening_snapshot.cash_micros
+            FROM opening_snapshot
           ), pre_window_accounted_cash AS (
             SELECT COALESCE(sum(transaction.cash_delta_micros), 0) AS cash_delta_micros
             FROM accounting_transactions AS transaction

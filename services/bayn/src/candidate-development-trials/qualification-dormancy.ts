@@ -208,12 +208,29 @@ const validateLedger = (
   const entries = decoded.success
   if (entries.length < 20) return { ok: false, result: invalidLedger('entries') }
   for (const [index, entry] of entries.entries()) {
-    const expectedOrdinal = index + 1
-    if (entry.candidateOrdinal !== expectedOrdinal) {
-      return { ok: false, result: invalidLedger(`entries[${index}].candidateOrdinal`) }
-    }
-    if (entry.priorTrialCount !== index) {
+    if (entry.priorTrialCount !== entry.candidateOrdinal - 1) {
       return { ok: false, result: invalidLedger(`entries[${index}].priorTrialCount`) }
+    }
+
+    const previous = entries[index - 1]
+    if (previous === undefined) {
+      if (entry.candidateOrdinal !== 1) return { ok: false, result: invalidLedger('entries') }
+      continue
+    }
+
+    const isQualificationTerminalAfterApproval =
+      previous._tag === 'DEVELOPMENT_APPROVED' &&
+      entry._tag === 'QUALIFICATION_TERMINAL' &&
+      previous.candidateOrdinal === entry.candidateOrdinal
+    if (isQualificationTerminalAfterApproval) continue
+
+    if (entry.candidateOrdinal !== previous.candidateOrdinal + 1) {
+      return {
+        ok: false,
+        result: invalidLedger(
+          entry.candidateOrdinal === previous.candidateOrdinal ? `entries[${index}].candidateOrdinal` : 'entries',
+        ),
+      }
     }
   }
 
@@ -246,11 +263,6 @@ const validateLedger = (
     return { ok: false, result: invalidLedger('latestInvalidPrecommit') }
   }
 
-  const approvals = entries.filter((entry) => entry._tag === 'DEVELOPMENT_APPROVED')
-  if (approvals.length > 1 || (approvals.length === 1 && entries.at(-1)?._tag !== 'DEVELOPMENT_APPROVED')) {
-    return { ok: false, result: invalidLedger('entries.DEVELOPMENT_APPROVED') }
-  }
-
   return { ok: true, entries }
 }
 
@@ -277,7 +289,7 @@ export const qualificationDormancyDecisionFromLedgerState = (
   if (active === null) {
     const last = entries.at(-1)
     if (last?._tag === 'DEVELOPMENT_APPROVED') return invalidLedger('activeCandidate')
-    if (state.latestInvalidPrecommit !== null) {
+    if (last?._tag === 'PRECOMMIT_INVALID' && state.latestInvalidPrecommit !== null) {
       return {
         ok: true,
         decision: {
@@ -299,8 +311,13 @@ export const qualificationDormancyDecisionFromLedgerState = (
   const candidateOrdinal = active.preregistration.candidateOrdinal
   const lastEntry = entries.at(-1)
   const activeApproval = lastEntry?._tag === 'DEVELOPMENT_APPROVED' ? lastEntry : undefined
-  const closedEntryCount = activeApproval === undefined ? entries.length : entries.length - 1
-  if (candidateOrdinal !== closedEntryCount + 1 || active.preregistration.priorTrialCount !== closedEntryCount) {
+  const lastCandidateOrdinal = lastEntry?.candidateOrdinal ?? 0
+  const expectedPriorTrialCount = candidateOrdinal - 1
+  const expectedCandidateOrdinal = activeApproval === undefined ? lastCandidateOrdinal + 1 : lastCandidateOrdinal
+  if (
+    candidateOrdinal !== expectedCandidateOrdinal ||
+    active.preregistration.priorTrialCount !== expectedPriorTrialCount
+  ) {
     return invalidLedger('activeCandidate.preregistration.candidateOrdinal')
   }
   if (

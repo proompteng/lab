@@ -123,6 +123,51 @@ describe('Bayn candidate development trial ledger', () => {
       },
     })
 
+    const terminalized = {
+      ...approved,
+      activeCandidate: null,
+      completedCandidateOrdinals: [...approved.completedCandidateOrdinals, 21],
+      entries: [
+        ...approved.entries,
+        { _tag: 'QUALIFICATION_TERMINAL' as const, candidateOrdinal: 21, priorTrialCount: 20 },
+      ],
+    }
+    expect(qualificationDormancyDecisionFromLedgerState(terminalized)).toEqual({
+      ok: true,
+      decision: { status: 'dormant', reason: 'preregistration-missing', candidateOrdinal: null },
+    })
+
+    const successorCandidate = {
+      ...activeCandidate,
+      preregistration: {
+        ...activeCandidate.preregistration,
+        candidateOrdinal: 22,
+        priorTrialCount: 21,
+      },
+    }
+    const successorApproved = {
+      ...terminalized,
+      activeCandidate: successorCandidate,
+      developmentCandidateOrdinals: [...approved.developmentCandidateOrdinals, 22],
+      entries: [
+        ...terminalized.entries,
+        {
+          _tag: 'DEVELOPMENT_APPROVED' as const,
+          candidateOrdinal: 22,
+          priorTrialCount: 21,
+          ...approvalEvidence(successorCandidate.preregistration, successorCandidate.sourceManifest),
+        },
+      ],
+    }
+    expect(
+      qualificationDormancyDecisionFromLedgerState(
+        successorApproved as unknown as CandidateDevelopmentTrialLedgerState,
+      ),
+    ).toMatchObject({
+      ok: true,
+      decision: { status: 'ready', reason: 'qualification-eligible', candidateOrdinal: 22 },
+    })
+
     const approval = approved.entries.at(-1)
     if (approval?._tag !== 'DEVELOPMENT_APPROVED') throw new Error('expected a development approval entry')
     expect(

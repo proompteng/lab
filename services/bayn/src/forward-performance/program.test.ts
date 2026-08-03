@@ -647,6 +647,10 @@ describe('forward performance read program', () => {
         ),
       ),
     ).toBe(true)
+    const cashYieldStatement = observation.statements.find((statement) => statement.includes('AS cash_yield_micros'))
+    expect(cashYieldStatement).toContain(
+      'baseline_snapshot AS ( SELECT opening_snapshot.event_id, opening_snapshot.observed_at, opening_snapshot.cash_micros FROM opening_snapshot',
+    )
     expect(
       observation.statements.some(
         (statement) =>
