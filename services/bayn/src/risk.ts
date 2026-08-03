@@ -784,7 +784,7 @@ const buildAuthorityAndStateGates = (
   metrics: DerivedRiskMetrics,
   reconciledHash: string,
 ): readonly GateResult[] => {
-  const { policy, state } = facts
+  const { intent, policy, state } = facts
   const closeOnly = state.closeOnly === true
   return [
     makeGate(
@@ -793,7 +793,13 @@ const buildAuthorityAndStateGates = (
       `${state.authority.maximum}:${state.authority.effective}`,
       closeOnly ? 'PAPER:(PAPER|OBSERVE)' : 'PAPER:PAPER',
     ),
-    makeGate(Gate.Kill, state.authority.kill === KillState.Clear, state.authority.kill, 'CLEAR'),
+    makeGate(
+      Gate.Kill,
+      state.authority.kill === KillState.Clear ||
+        (closeOnly && intent.side === OrderSide.Sell && state.authority.kill === KillState.Active),
+      state.authority.kill,
+      closeOnly ? 'CLEAR|ACTIVE_FOR_SELL_CLOSE' : 'CLEAR',
+    ),
     makeGate(
       Gate.Reconciliation,
       state.reconciliation.status === ReconciliationStatus.Exact &&

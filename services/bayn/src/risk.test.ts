@@ -466,6 +466,24 @@ describe('bounded paper risk', () => {
     })
   })
 
+  test('permits only the bounded sell close through an active kill', () => {
+    const closeOnlyState = makeState({
+      closeOnly: true,
+      closeOnlyExpiresAt: '2026-07-21T21:01:00.000Z',
+      authority: {
+        ...baseState().authority,
+        effective: Authority.Observe,
+        kill: KillState.Active,
+        reason: 'paper close-only containment',
+      },
+    })
+
+    const close = evaluateSuccess(makeIntent({ side: OrderSide.Sell }), closeOnlyState, makePolicy())
+    expect(close.decision.outcome).toBe(RiskOutcome.Approved)
+    expect(close.gates.find((gate) => gate.name === Gate.Kill)?.passed).toBe(true)
+    expectBlocked(Reason.KillActive, makeIntent(), closeOnlyState)
+  })
+
   test('approves at submission open and blocks immediately before it and exactly at cutoff', () => {
     const state = makeState()
     const atOpen = makeState({
