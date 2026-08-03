@@ -26,6 +26,7 @@ import legacyObserveRecovery from '../../migrations/0023_legacy_observe_recovery
 import paperCycleClosures from '../../migrations/0024_paper_cycle_closures'
 import forwardPerformanceReceipts from '../../migrations/0025_forward_performance_receipts'
 import paperCycleCloseReplans from '../../migrations/0026_paper_cycle_close_replans'
+import distinctCloseReplanIntents from '../../migrations/0027_distinct_close_replan_intents'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -54,4 +55,5 @@ export const migrationLoader = PgMigrator.fromRecord({
   '24_paper_cycle_closures': paperCycleClosures,
   '25_forward_performance_receipts': forwardPerformanceReceipts,
   '26_paper_cycle_close_replans': paperCycleCloseReplans,
+  '27_distinct_close_replan_intents': distinctCloseReplanIntents,
 })

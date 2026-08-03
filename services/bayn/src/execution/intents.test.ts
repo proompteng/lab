@@ -149,6 +149,7 @@ const storedRow = {
   time_in_force: paperIntent.timeInForce,
   quantity_micros: paperIntent.quantityMicros,
   notional_limit_micros: paperIntent.notionalLimitMicros,
+  replan_generation_hash: null,
   state: IntentState.Approved,
   terminal_outcome: null,
   state_version: 2,
@@ -257,6 +258,19 @@ describe('deterministic paper intents', () => {
       Exit.isFailure(await Effect.runPromiseExit(paperIntentIdForPlan({ ...input, extra: true }, hash('a')))),
     ).toBe(true)
     expect(Exit.isFailure(await Effect.runPromiseExit(paperIntentIdForPlan(input, 'not-a-hash')))).toBe(true)
+  })
+
+  test('binds each residual close generation to a distinct PAPER intent identity', async () => {
+    const [first, second, replay] = await Effect.runPromise(
+      Effect.all([
+        paperIntentIdForPlan({ ...input, replanGenerationHash: hash('c') }, hash('a')),
+        paperIntentIdForPlan({ ...input, replanGenerationHash: hash('d') }, hash('a')),
+        paperIntentIdForPlan({ ...input, replanGenerationHash: hash('c') }, hash('a')),
+      ]),
+    )
+
+    expect(first).not.toBe(second)
+    expect(replay).toBe(first)
   })
 
   test('refuses to create a durable intent from OBSERVE authority', async () => {

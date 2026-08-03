@@ -129,6 +129,7 @@ const IntentExecutionRow = Schema.Struct({
   symbol: NonEmptyString,
   side: Schema.Literals(['BUY', 'SELL']),
   quantity_micros: Schema.String,
+  replan_generation_hash: Schema.NullOr(Sha256),
   terminal_outcome: Schema.NullOr(Schema.Literals(['FILLED', 'CANCELED', 'EXPIRED', 'REJECTED', 'BLOCKED'])),
   created_at: Schema.Date,
   updated_at: Schema.Date,
@@ -635,6 +636,7 @@ const intentExecutionKey = (input: {
   readonly symbol: string
   readonly side: 'BUY' | 'SELL'
   readonly quantityMicros: string
+  readonly replanGenerationHash?: string
   readonly createdAt: string
 }): string =>
   JSON.stringify([
@@ -644,6 +646,7 @@ const intentExecutionKey = (input: {
     input.symbol,
     input.side,
     input.quantityMicros,
+    input.replanGenerationHash ?? null,
     input.createdAt,
   ])
 
@@ -661,6 +664,7 @@ const executionEvidenceFromRows = (
       symbol: row.symbol,
       side: row.side,
       quantityMicros: row.quantity_micros,
+      ...(row.replan_generation_hash === null ? {} : { replanGenerationHash: row.replan_generation_hash }),
       createdAt: row.created_at.toISOString(),
     }),
   )
@@ -676,6 +680,7 @@ const executionEvidenceFromRows = (
   for (const row of decisionRows) {
     const document = row.document
     if (document.targetPlan.status !== 'PLANNED') continue
+    const replanGenerationHash = document.mode === 'PAPER' ? document.replanGenerationHash : undefined
     for (const target of document.targetPlan.intentTargets) {
       const matchingReferences = document.targetPlan.targets.filter((candidate) => candidate.symbol === target.symbol)
       const reference = matchingReferences.length === 1 ? matchingReferences[0] : undefined
@@ -687,6 +692,7 @@ const executionEvidenceFromRows = (
           symbol: target.symbol,
           side: target.side,
           quantityMicros: target.quantityMicros,
+          ...(replanGenerationHash === undefined ? {} : { replanGenerationHash }),
           createdAt: document.createdAt,
         }),
       )
@@ -1098,6 +1104,7 @@ export const readForwardPerformancePostgres = (
             intent.symbol,
             intent.side,
             intent.quantity_micros::text AS quantity_micros,
+            intent.replan_generation_hash,
             intent.terminal_outcome,
             intent.created_at,
             intent.updated_at

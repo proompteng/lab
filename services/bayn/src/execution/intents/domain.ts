@@ -1,5 +1,3 @@
-import { Buffer } from 'node:buffer'
-
 import { Context, Data, Effect, Option, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../../hash'
@@ -43,6 +41,8 @@ export const IntentPlanSchema = Schema.Struct({
   timeInForce: Schema.Enum(TimeInForce),
   quantityMicros: PositiveMicrosSchema,
   notionalLimitMicros: PositiveMicrosSchema,
+  /** Binds a residual close intent to the immediately preceding close-plan generation. */
+  replanGenerationHash: Schema.optionalKey(Sha256),
   createdAt: UtcInstant,
 })
 export type IntentPlan = typeof IntentPlanSchema.Type
@@ -71,6 +71,7 @@ export type IntentCanonicalMaterial =
       readonly decisionHash: string
       readonly accountId: string
       readonly symbol: string
+      readonly replanGenerationHash?: string
     }
   | { readonly _tag: 'ImmutableIntentContent'; readonly intentId: string }
   | { readonly _tag: 'RiskDecisionIdentity'; readonly decisionId: string; readonly intentId: string }
@@ -105,7 +106,8 @@ const referenceIdentityMaterial = (input: IntentPlan) => ({
 })
 
 const paperIdentityMaterial = (input: IntentPlan, authorityGenerationHash: string) => ({
-  schemaVersion: 'bayn.paper-intent-identity.v2',
+  schemaVersion:
+    input.replanGenerationHash === undefined ? 'bayn.paper-intent-identity.v2' : 'bayn.paper-intent-identity.v3',
   authorityGenerationHash,
   strategyName: input.strategyName,
   cycleId: input.cycleId,
@@ -117,6 +119,7 @@ const paperIdentityMaterial = (input: IntentPlan, authorityGenerationHash: strin
   timeInForce: input.timeInForce,
   quantityMicros: input.quantityMicros,
   notionalLimitMicros: input.notionalLimitMicros,
+  ...(input.replanGenerationHash === undefined ? {} : { replanGenerationHash: input.replanGenerationHash }),
 })
 
 const referenceIntentIdResult = (input: IntentPlan): Result.Result<string, IntentCanonicalizationFailure> =>
@@ -145,13 +148,35 @@ const paperIntentIdResult = (
       decisionHash: input.decisionHash,
       accountId: input.accountId,
       symbol: input.symbol,
+      ...(input.replanGenerationHash === undefined ? {} : { replanGenerationHash: input.replanGenerationHash }),
     },
     paperIdentityMaterial(input, authorityGenerationHash),
   )
 
+export const paperIntentIdForDecodedPlan = paperIntentIdResult
+
 export const intentIdForPlan = referenceIntentIdResult
 
-const clientOrderId = (intentId: string): string => `b1_${Buffer.from(intentId, 'hex').toString('base64url')}`
+const base64UrlAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+
+const base64UrlEncodeHex = (value: string): string => {
+  let encoded = ''
+  for (let index = 0; index < value.length; index += 6) {
+    const first = Number.parseInt(value.slice(index, index + 2), 16)
+    const secondHex = value.slice(index + 2, index + 4)
+    const thirdHex = value.slice(index + 4, index + 6)
+    const second = secondHex === '' ? undefined : Number.parseInt(secondHex, 16)
+    const third = thirdHex === '' ? undefined : Number.parseInt(thirdHex, 16)
+    encoded += base64UrlAlphabet[first >> 2]
+    encoded += base64UrlAlphabet[((first & 0b11) << 4) | ((second ?? 0) >> 4)]
+    if (second === undefined) continue
+    encoded += base64UrlAlphabet[((second & 0b1111) << 2) | ((third ?? 0) >> 6)]
+    if (third !== undefined) encoded += base64UrlAlphabet[third & 0b111111]
+  }
+  return encoded
+}
+
+export const clientOrderIdForIntentId = (intentId: string): string => `b1_${base64UrlEncodeHex(intentId)}`
 
 type IntentConstructionFailure =
   | IntentCanonicalizationFailure
@@ -176,7 +201,7 @@ const makeReferenceIntentResult = (decoded: IntentPlan): Result.Result<Reference
       decisionHash: decoded.decisionHash,
       policyHash: decoded.policyHash,
       accountId: decoded.accountId,
-      clientOrderId: clientOrderId(intentId.success),
+      clientOrderId: clientOrderIdForIntentId(intentId.success),
       symbol: decoded.symbol,
       side: decoded.side,
       orderType: decoded.orderType,
@@ -206,13 +231,14 @@ const makePaperIntentResult = (
       decisionHash: decoded.decisionHash,
       policyHash: decoded.policyHash,
       accountId: decoded.accountId,
-      clientOrderId: clientOrderId(intentId.success),
+      clientOrderId: clientOrderIdForIntentId(intentId.success),
       symbol: decoded.symbol,
       side: decoded.side,
       orderType: decoded.orderType,
       timeInForce: decoded.timeInForce,
       quantityMicros: decoded.quantityMicros,
       notionalLimitMicros: decoded.notionalLimitMicros,
+      ...(decoded.replanGenerationHash === undefined ? {} : { replanGenerationHash: decoded.replanGenerationHash }),
       state: IntentState.Planned,
       createdAt: decoded.createdAt,
     }),
@@ -325,6 +351,7 @@ const intentRowFields = {
   time_in_force: Schema.Enum(TimeInForce),
   quantity_micros: PositiveMicrosSchema,
   notional_limit_micros: PositiveMicrosSchema,
+  replan_generation_hash: Schema.NullOr(Sha256),
   state: Schema.Enum(IntentState),
   terminal_outcome: Schema.NullOr(Schema.Enum(TerminalOutcome)),
   state_version: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -403,6 +430,7 @@ const storedRowToRecord = (row: StoredRow): Result.Result<StoredIntent, StoredRo
     timeInForce: row.time_in_force,
     quantityMicros: row.quantity_micros,
     notionalLimitMicros: row.notional_limit_micros,
+    ...(row.replan_generation_hash === null ? {} : { replanGenerationHash: row.replan_generation_hash }),
     state: row.state,
     ...(row.terminal_outcome === null ? {} : { terminalOutcome: row.terminal_outcome }),
     createdAt: row.created_at,
@@ -479,6 +507,7 @@ const planFromIntent = (intent: Intent): IntentPlan => ({
   timeInForce: intent.timeInForce,
   quantityMicros: intent.quantityMicros,
   notionalLimitMicros: intent.notionalLimitMicros,
+  ...(intent.replanGenerationHash === undefined ? {} : { replanGenerationHash: intent.replanGenerationHash }),
   createdAt: intent.createdAt,
 })
 
@@ -540,6 +569,7 @@ const immutableIntentMaterial = (intent: Intent) => ({
   timeInForce: intent.timeInForce,
   quantityMicros: intent.quantityMicros,
   notionalLimitMicros: intent.notionalLimitMicros,
+  ...(intent.replanGenerationHash === undefined ? {} : { replanGenerationHash: intent.replanGenerationHash }),
   createdAt: intent.createdAt,
 })
 

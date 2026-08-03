@@ -9,8 +9,8 @@
 
 let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  # SHA-256 identity for bayn.risk-balanced-trend.behavior.v3, verified by the production executable.
-  strategyBehaviorHash = "9e87fe0f66048c48da2191ef1fae36ef3ee0eb4ddcd036ef40881f0fe0f6eb42";
+  # SHA-256 identity for bayn.risk-balanced-trend.behavior.v4, verified by the production executable.
+  strategyBehaviorHash = "dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46";
   # Canonical hash of the compiled bayn.risk-balanced-trend.protocol.v4 document.
   strategyParameterHash = "19bc51c7361b181aa48845d178cb63373b3f2e017bcbea1cf3b70ab16647f8a9";
   forwardPerformanceCommand = pkgs.writeShellScriptBin "bayn-forward-performance" ''

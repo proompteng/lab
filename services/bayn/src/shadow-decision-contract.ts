@@ -1,6 +1,6 @@
 import { Data, Result, Schema } from 'effect'
 
-import { intentIdForPlan } from './execution/intents/domain'
+import { intentIdForPlan, paperIntentIdForDecodedPlan } from './execution/intents/domain'
 import { canonicalHashV1Result } from './hash'
 import { OrderSide, PositiveMicrosSchema, RiskOutcome } from './execution/contracts'
 import { EvaluationSchema, Reason } from './risk'
@@ -162,6 +162,8 @@ const PaperDecisionMaterialSchema = Schema.Struct({
   deltaRisk: Schema.Array(DeltaRiskEvaluationSchema),
   orderedIntentIds: Schema.Array(Sha256Schema),
   riskBlock: Schema.optionalKey(PaperRiskBlockSchema),
+  /** Previous close-plan content hash used to derive a distinct residual close identity. */
+  replanGenerationHash: Schema.optionalKey(Sha256Schema),
   createdAt: UtcInstantSchema,
   submissionCutoffAt: UtcInstantSchema,
   expiresAt: UtcInstantSchema,
@@ -220,21 +222,9 @@ const paperMaterialIssues = (document: typeof PaperDecisionMaterialSchema.Type):
       schemaVersion: 'bayn.paper-intent-plan.v1',
       ...target,
       notionalLimitMicros: risk.notionalLimitMicros,
+      ...(document.replanGenerationHash === undefined ? {} : { replanGenerationHash: document.replanGenerationHash }),
     } as const
-    const identity = canonicalHashV1Result({
-      schemaVersion: 'bayn.paper-intent-identity.v2',
-      authorityGenerationHash: document.bindings.authorityGenerationHash,
-      strategyName: plan.strategyName,
-      cycleId: plan.cycleId,
-      decisionHash: plan.decisionHash,
-      accountId: plan.accountId,
-      symbol: plan.symbol,
-      side: plan.side,
-      orderType: plan.orderType,
-      timeInForce: plan.timeInForce,
-      quantityMicros: plan.quantityMicros,
-      notionalLimitMicros: plan.notionalLimitMicros,
-    })
+    const identity = paperIntentIdForDecodedPlan(plan, document.bindings.authorityGenerationHash)
     if (Result.isFailure(identity) || document.orderedIntentIds[index] !== identity.success) {
       issues.push({ path: ['orderedIntentIds', index], issue: 'must bind the exact ordered target content' })
     }

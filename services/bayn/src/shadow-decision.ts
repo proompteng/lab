@@ -1,10 +1,14 @@
-import { Buffer } from 'node:buffer'
-
 import { Data, Effect, Result, Schema } from 'effect'
 
 import { AutonomousCycleSchema, CycleState, type AutonomousCycle } from './cycle'
 import { DecisionPlanSchema, type DecisionPlan } from './evidence-contracts'
-import { intentIdForPlan, IntentPlanSchema, type IntentPlan } from './execution/intents/domain'
+import {
+  intentIdForPlan,
+  clientOrderIdForIntentId,
+  paperIntentIdForDecodedPlan,
+  IntentPlanSchema,
+  type IntentPlan,
+} from './execution/intents/domain'
 import { canonicalHashV1Result } from './hash'
 import {
   Authority,
@@ -70,6 +74,8 @@ export interface PaperDecisionInput extends ObserveShadowDecisionInput {
   readonly authorityGenerationHash: string
   /** A close-only plan uses the activation lease as its submission boundary. */
   readonly submissionCutoffAt?: string
+  /** Residual close plans bind their intents to the preceding close-plan content hash. */
+  readonly replanGenerationHash?: string
 }
 
 export class ShadowDecisionError extends Data.TaggedError('ShadowDecisionError')<{
@@ -324,27 +330,13 @@ const makeRiskIntent = (
       ? Result.mapError(intentIdForPlan(decodedPlan.success), (cause) =>
           error('contract', 'shadow target delta identity is not canonicalizable', cause),
         )
-      : Result.mapError(
-          canonicalHashV1Result({
-            schemaVersion: 'bayn.paper-intent-identity.v2',
-            authorityGenerationHash,
-            strategyName: decodedPlan.success.strategyName,
-            cycleId: decodedPlan.success.cycleId,
-            decisionHash: decodedPlan.success.decisionHash,
-            accountId: decodedPlan.success.accountId,
-            symbol: decodedPlan.success.symbol,
-            side: decodedPlan.success.side,
-            orderType: decodedPlan.success.orderType,
-            timeInForce: decodedPlan.success.timeInForce,
-            quantityMicros: decodedPlan.success.quantityMicros,
-            notionalLimitMicros: decodedPlan.success.notionalLimitMicros,
-          }),
-          (cause) => error('contract', 'PAPER target delta identity is not canonicalizable', cause),
+      : Result.mapError(paperIntentIdForDecodedPlan(decodedPlan.success, authorityGenerationHash), (cause) =>
+          error('contract', 'PAPER target delta identity is not canonicalizable', cause),
         )
   const identity = Result.mapError(
     Result.map(identityResult, (intentId) => ({
       intentId,
-      clientOrderId: `b1_${Buffer.from(intentId, 'hex').toString('base64url')}`,
+      clientOrderId: clientOrderIdForIntentId(intentId),
     })),
     (cause) => cause,
   )
@@ -370,6 +362,9 @@ const makeRiskIntent = (
       timeInForce: decoded.timeInForce,
       quantityMicros: decoded.quantityMicros,
       notionalLimitMicros: decoded.notionalLimitMicros,
+      ...(authorityGenerationHash === undefined || decoded.replanGenerationHash === undefined
+        ? {}
+        : { replanGenerationHash: decoded.replanGenerationHash }),
       state: IntentState.Planned,
       createdAt: decoded.createdAt,
     }),
@@ -392,6 +387,7 @@ interface ShadowReductionContext {
   readonly targetsBySymbol: ReadonlyMap<string, PlannedTargetQuantity>
   readonly authority: Authority
   readonly authorityGenerationHash?: string
+  readonly replanGenerationHash?: string
 }
 
 const reduceShadowDelta = (
@@ -408,6 +404,7 @@ const reduceShadowDelta = (
       schemaVersion: 'bayn.paper-intent-plan.v1',
       ...targetIntent,
       notionalLimitMicros: provided.notionalLimitMicros,
+      ...(context.replanGenerationHash === undefined ? {} : { replanGenerationHash: context.replanGenerationHash }),
     },
     context.authorityGenerationHash,
   )
@@ -594,6 +591,7 @@ const reduceShadowRisk = (
   prepared: PreparedShadowRisk,
   authority: Authority,
   authorityGenerationHash?: string,
+  replanGenerationHash?: string,
 ): Result.Result<ShadowReduction, ShadowDecisionError> =>
   prepared.input.targetPlan.intentTargets.reduce<Result.Result<ShadowReduction, ShadowDecisionError>>(
     (accumulator, targetIntent) =>
@@ -607,6 +605,7 @@ const reduceShadowRisk = (
               targetsBySymbol: prepared.targetsBySymbol,
               authority,
               authorityGenerationHash,
+              replanGenerationHash,
             }),
       ),
     Result.succeed({
@@ -687,6 +686,7 @@ const assemblePaperDecisionDocument = (
   reduction: ShadowReduction,
   authorityGenerationHash: string,
   submissionCutoffAt: string,
+  replanGenerationHash?: string,
 ): Result.Result<PaperDecisionDocument, ShadowDecisionError> => {
   const { input, policyHash, strategyDecisionHash } = context
   const planningBrokerStateHash = Result.mapError(
@@ -719,6 +719,7 @@ const assemblePaperDecisionDocument = (
       deltaRisk: reduction.deltaRisk,
       orderedIntentIds: reduction.deltaRisk.map((risk) => risk.evaluation.input.intentId),
       ...(reduction.riskBlock === undefined ? {} : { riskBlock: reduction.riskBlock }),
+      ...(replanGenerationHash === undefined ? {} : { replanGenerationHash }),
       submissionCutoffAt,
       expiresAt: submissionCutoffAt,
       createdAt: input.plannerInput.observedAt,
@@ -745,13 +746,16 @@ export const buildPaperDecision = (
       (context) =>
         Result.flatMap(validateShadowPlanningBindings(context), () =>
           Result.flatMap(prepareShadowRisk(context), (prepared) =>
-            Result.flatMap(reduceShadowRisk(prepared, Authority.Paper, input.authorityGenerationHash), (reduction) =>
-              assemblePaperDecisionDocument(
-                context,
-                reduction,
-                input.authorityGenerationHash,
-                input.submissionCutoffAt ?? input.cycle.window.submissionCutoffAt,
-              ),
+            Result.flatMap(
+              reduceShadowRisk(prepared, Authority.Paper, input.authorityGenerationHash, input.replanGenerationHash),
+              (reduction) =>
+                assemblePaperDecisionDocument(
+                  context,
+                  reduction,
+                  input.authorityGenerationHash,
+                  input.submissionCutoffAt ?? input.cycle.window.submissionCutoffAt,
+                  input.replanGenerationHash,
+                ),
             ),
           ),
         ),

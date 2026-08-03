@@ -39,7 +39,7 @@ capital-promotion path remain dormant.
 - The executable embeds source, repository, and strategy-behavior identity. Startup verifies the compiled behavior and
   parameter hashes against those embedded facts, and status exposes the promoted image digest, parameter hash, and
   contract versions. The v4 precommit uses behavior hash
-  `9e87fe0f66048c48da2191ef1fae36ef3ee0eb4ddcd036ef40881f0fe0f6eb42` and parameter hash
+  `dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46` and parameter hash
   `19bc51c7361b181aa48845d178cb63373b3f2e017bcbea1cf3b70ab16647f8a9`.
 - The package `dev` and `start` scripts use explicit `development-configured` provenance because their artifacts are
   not OCI production builds. That mode is visible in status and cannot override an executable with embedded metadata;

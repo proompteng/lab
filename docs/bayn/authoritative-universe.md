@@ -146,7 +146,7 @@ cap and covariance-aware portfolio scaling.
 
 The v4 source-controlled identities are:
 
-- behavior `9e87fe0f66048c48da2191ef1fae36ef3ee0eb4ddcd036ef40881f0fe0f6eb42`;
+- behavior `dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46`;
 - parameters `19bc51c7361b181aa48845d178cb63373b3f2e017bcbea1cf3b70ab16647f8a9`; and
 - deterministic fixture evaluation `81002ac221b557498e06cbcd9307d986ed21ff2c2ce883adcc489fef7f468416`.
 

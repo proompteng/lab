@@ -322,6 +322,9 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
           schemaVersion: 'bayn.paper-intent-plan.v1',
           ...lookup.targetIntent,
           notionalLimitMicros: lookup.riskBinding.notionalLimitMicros,
+          ...(document.replanGenerationHash === undefined
+            ? {}
+            : { replanGenerationHash: document.replanGenerationHash }),
           createdAt: document.createdAt,
         },
         { authority: documentAuthority },

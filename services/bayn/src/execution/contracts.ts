@@ -366,6 +366,8 @@ const intentFields = {
   timeInForce: Schema.Enum(TimeInForce),
   quantityMicros: PositiveMicros,
   notionalLimitMicros: PositiveMicros,
+  /** Hash of the prior close plan that authorizes a distinct residual close generation. */
+  replanGenerationHash: Schema.optionalKey(Sha256),
   state: Schema.Enum(IntentState),
   terminalOutcome: Schema.optionalKey(Schema.Enum(TerminalOutcome)),
   createdAt: UtcInstant,

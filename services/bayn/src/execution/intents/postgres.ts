@@ -51,6 +51,7 @@ const selectRows = (sql: PgClient.PgClient, predicate: Fragment) => sql`
     intent.time_in_force,
     intent.quantity_micros::text,
     intent.notional_limit_micros::text,
+    intent.replan_generation_hash,
     intent.state,
     intent.terminal_outcome,
     intent.state_version::integer,
@@ -249,6 +250,7 @@ const readConflicts = (
         AND intent.cycle_id = ${intent.cycleId}
         AND intent.decision_hash = ${intent.decisionHash}
         AND intent.symbol = ${intent.symbol}
+        AND intent.replan_generation_hash IS NOT DISTINCT FROM ${intent.replanGenerationHash ?? null}
       )
     `,
   ).pipe(
@@ -303,6 +305,7 @@ const insertIntent = (sql: PgClient.PgClient, intent: Intent) =>
       time_in_force,
       quantity_micros,
       notional_limit_micros,
+      replan_generation_hash,
       state,
       created_at,
       updated_at
@@ -322,6 +325,7 @@ const insertIntent = (sql: PgClient.PgClient, intent: Intent) =>
       ${intent.timeInForce},
       ${intent.quantityMicros},
       ${intent.notionalLimitMicros},
+      ${intent.replanGenerationHash ?? null},
       ${intent.state},
       ${intent.createdAt},
       ${intent.createdAt}

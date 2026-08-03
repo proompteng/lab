@@ -735,6 +735,7 @@ export const buildMutationShadowCycleDecision = <R>(
 const buildClosingPaperCycleDecision = <R>(
   input: ObserveDecisionInput<R>,
   closeExpiresAt: string,
+  replanGenerationHash?: string,
 ): Effect.Effect<PaperDecisionDocument, ObserveDecisionFailure, BrokerRead | MarketData | R> =>
   Effect.gen(function* () {
     const readPreparation = yield* Effect.fromResult(prepareObserveDecisionReads(input))
@@ -779,6 +780,7 @@ const buildClosingPaperCycleDecision = <R>(
       riskInputs,
       authorityGenerationHash: input.authorityGenerationHash,
       submissionCutoffAt: closeExpiresAt,
+      ...(replanGenerationHash === undefined ? {} : { replanGenerationHash }),
     })
   })
 
@@ -1068,6 +1070,7 @@ const ensurePaperCycleClosure = (
     const document = yield* buildClosingPaperCycleDecision(
       mutationDecisionInput(input, preparation, policy, cycle, reconcile),
       closeExpiresAt,
+      active.contentHash,
     ).pipe(
       Effect.mapError((cause) => {
         const converted = decisionBuildError(cause)
