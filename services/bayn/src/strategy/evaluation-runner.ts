@@ -194,6 +194,7 @@ const prepareStrategyEvaluation = <TMarket, TFailure extends StrategyDecisionFai
                     MICROS,
                     identity.runId,
                     false,
+                    (target, executionIndex) => closeStrategyTarget({ ...target, executionIndex }, input.application),
                   ),
                   directVolTiming: simulate(
                     evaluationSessions,
@@ -203,6 +204,7 @@ const prepareStrategyEvaluation = <TMarket, TFailure extends StrategyDecisionFai
                     MICROS,
                     identity.runId,
                     false,
+                    (target, executionIndex) => closeStrategyTarget({ ...target, executionIndex }, input.application),
                   ),
                   doubleCost: simulate(
                     evaluationSessions,

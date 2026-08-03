@@ -209,8 +209,17 @@ const evaluateReferenceWithWork = (
   if (Result.isFailure(directVolTargetsResult)) return Result.fail(directVolTargetsResult.failure)
   const directVolTargets = directVolTargetsResult.success
   const strategy = replay(boundedSessions, candidateTargets, startIndex, protocol, MICROS, runId, true, closeAtEnd)
-  const buyAndHold = replay(boundedSessions, buyAndHoldTargets, startIndex, protocol, MICROS, runId, false)
-  const directVolTiming = replay(boundedSessions, directVolTargets, startIndex, protocol, MICROS, runId, false)
+  const buyAndHold = replay(boundedSessions, buyAndHoldTargets, startIndex, protocol, MICROS, runId, false, closeAtEnd)
+  const directVolTiming = replay(
+    boundedSessions,
+    directVolTargets,
+    startIndex,
+    protocol,
+    MICROS,
+    runId,
+    false,
+    closeAtEnd,
+  )
   const doubleCostStrategy = replay(
     boundedSessions,
     candidateTargets,
