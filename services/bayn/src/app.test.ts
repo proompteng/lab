@@ -47,6 +47,7 @@ import { HttpServerLive } from './http'
 import { loadObserveRiskPolicy } from './observe-composition'
 import { makeStrategy } from './strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
+import { scopedAcquisition } from './resource-boundary'
 
 const cycleObservability = {
   read: () =>
@@ -494,30 +495,38 @@ describe('Bayn application composition', () => {
               startCycle: () => Effect.succeed(Effect.never),
               resolveAfterStartup: () =>
                 Effect.flatMap(Scope.Scope, (scope) =>
-                  Layer.buildWithMemoMap(Layer.fresh(runtimeResourceLayer), Layer.makeMemoMapUnsafe(), scope).pipe(
-                    Effect.map((context) => {
-                      const resource = Context.get(context, RuntimeResource)
-                      const runtimeBroker = {
-                        ...broker,
-                        read: {
-                          ...broker.read,
-                          account: resource.use('health').pipe(Effect.andThen(broker.read.account)),
-                        },
-                      }
-                      return {
-                        _tag: 'AutonomousRead' as const,
-                        broker: runtimeBroker,
-                        startCycle: ({ recordPass }: AutonomousCycleStartupInput) =>
-                          resource.use('cycle').pipe(
-                            Effect.andThen(Clock.currentTimeMillis),
-                            Effect.map((millis) => new Date(millis).toISOString()),
-                            Effect.flatMap((observedAt) =>
-                              recordPass({ result: 'SUCCESS', observedAt, outcome: 'NO_PUBLICATION' }),
-                            ),
-                            Effect.as(Effect.never),
-                          ),
-                      }
-                    }),
+                  scopedAcquisition(
+                    (attemptScope) =>
+                      Layer.buildWithMemoMap(
+                        Layer.fresh(runtimeResourceLayer),
+                        Layer.makeMemoMapUnsafe(),
+                        attemptScope,
+                      ).pipe(
+                        Effect.map((context) => {
+                          const resource = Context.get(context, RuntimeResource)
+                          const runtimeBroker = {
+                            ...broker,
+                            read: {
+                              ...broker.read,
+                              account: resource.use('health').pipe(Effect.andThen(broker.read.account)),
+                            },
+                          }
+                          return {
+                            _tag: 'AutonomousRead' as const,
+                            broker: runtimeBroker,
+                            startCycle: ({ recordPass }: AutonomousCycleStartupInput) =>
+                              resource.use('cycle').pipe(
+                                Effect.andThen(Clock.currentTimeMillis),
+                                Effect.map((millis) => new Date(millis).toISOString()),
+                                Effect.flatMap((observedAt) =>
+                                  recordPass({ result: 'SUCCESS', observedAt, outcome: 'NO_PUBLICATION' }),
+                                ),
+                                Effect.as(Effect.never),
+                              ),
+                          }
+                        }),
+                      ),
+                    scope,
                   ),
                 ),
             },
@@ -534,6 +543,36 @@ describe('Bayn application composition', () => {
 
     expect(events).toContain('cycle')
     expect(events).toContain('health')
+    expect(finalizations).toBe(1)
+  })
+
+  test('closes partial runtime acquisition before pending recovery', async () => {
+    const acquisitionFailure = new Error('runtime resource acquisition failed')
+    let finalizations = 0
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const parentScope = yield* Scope.Scope
+          const partialLayer = Layer.effectDiscard(
+            Effect.acquireRelease(Effect.succeed(undefined), () => Effect.sync(() => void (finalizations += 1))).pipe(
+              Effect.andThen(Effect.fail(acquisitionFailure)),
+            ),
+          )
+          const failure = yield* Effect.flip(
+            scopedAcquisition(
+              (attemptScope) =>
+                Layer.buildWithMemoMap(Layer.fresh(partialLayer), Layer.makeMemoMapUnsafe(), attemptScope),
+              parentScope,
+            ),
+          )
+
+          expect(failure).toBe(acquisitionFailure)
+          expect(finalizations).toBe(1)
+        }),
+      ),
+    )
+
     expect(finalizations).toBe(1)
   })
 
