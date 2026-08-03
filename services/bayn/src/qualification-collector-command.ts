@@ -18,6 +18,7 @@ import {
   type CandidateDevelopmentNextPreregistration,
 } from './candidate-development-calendar'
 import { qualificationDormancyDecisionFromLedgerState } from './candidate-development-trials/qualification-dormancy'
+import { CandidateDevelopmentNextPreregistrationDocumentSchema } from './candidate-development-trials/model'
 import { makeRuntimeProvenanceResult, makeStrategyProtocolHash } from './contracts'
 import { EvidenceStore, type EvidenceStoreService, type QualificationRecord } from './db/evidence-store'
 import {
@@ -44,13 +45,7 @@ import { hashParameters } from './protocol'
 import { decideQualificationPath, evaluateLockedSnapshot, qualifyEvaluation } from './startup/decisions'
 import { activeStrategyBehaviorHash, bindReviewedStrategySource } from './strategy'
 import { loadReviewedStrategyApplication } from './candidate-development-local/source-module'
-import {
-  NonNegativeIntegerSchema,
-  PositiveIntegerSchema,
-  Sha256Schema,
-  StrictNonEmptyStringSchema,
-  strictParseOptions,
-} from './schemas'
+import { strictParseOptions } from './schemas'
 import type { QualificationCandidateApplication } from './qualification-binding'
 
 const sha40 = /^[0-9a-f]{40}$/
@@ -63,26 +58,6 @@ const defaultAuditReplicaUrls = [
   'http://chi-torghut-clickhouse-default-0-0.torghut.svc.cluster.local:8123',
   'http://chi-torghut-clickhouse-default-0-1.torghut.svc.cluster.local:8123',
 ] as const
-
-const CandidateDevelopmentNextPreregistrationSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.candidate-development-next-preregistration.v1'),
-  candidateOrdinal: PositiveIntegerSchema,
-  priorTrialCount: NonNegativeIntegerSchema,
-  strategyProtocolHash: Sha256Schema,
-  strategyIdentityHash: Schema.optionalKey(Sha256Schema),
-  candidateDevelopmentProtocolHash: Schema.optionalKey(Sha256Schema),
-  calendarHash: Schema.optionalKey(Sha256Schema),
-  priorTrialsHash: Schema.optionalKey(Sha256Schema),
-  modulePath: StrictNonEmptyStringSchema,
-  moduleSha256: Sha256Schema,
-  marketData: Schema.Struct({
-    schemaVersion: Schema.Literal('bayn.candidate-development-market-data-source.v1'),
-    snapshotId: Sha256Schema,
-    finalizedSnapshotContentHash: Sha256Schema,
-    inputManifestHash: Sha256Schema,
-    boundedContentHash: Sha256Schema,
-  }),
-})
 
 const QualificationWorkflowRunsSchema = Schema.Struct({
   total_count: Schema.Finite,
@@ -165,7 +140,7 @@ const gitBytes = (repositoryPath: string, args: readonly string[], signal?: Abor
 const sha256Bytes = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
 
 const decodePreregistration = Schema.decodeUnknownResult(
-  CandidateDevelopmentNextPreregistrationSchema,
+  CandidateDevelopmentNextPreregistrationDocumentSchema,
   strictParseOptions,
 )
 
@@ -1406,8 +1381,6 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
         preregistration.preregistration.path,
         activeCandidate.sourceManifest.path,
         candidateDevelopmentTrialLedgerPath,
-        'services/bayn/src/candidate-development-local/command.ts',
-        'services/bayn/src/qualification-collector-command.ts',
       ],
       preregistration,
       preregistrationBytes: staticGit.preregistrationBytes,
@@ -1427,10 +1400,16 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
         ),
       ),
     )
+    const candidateParameterHash = hashParameters(sourceApplication.definition.parameters)
+    const candidateStrategyProtocolHash = makeStrategyProtocolHash({
+      name: sourceApplication.definition.name,
+      behaviorHash: preregistration.moduleSha256,
+      parameterHash: candidateParameterHash,
+      parameterSchemaVersion: sourceApplication.definition.parameters.schemaVersion,
+    })
     if (
-      sourceApplication.definition.name !== activeCandidate.application.definition.name ||
-      hashParameters(sourceApplication.definition.parameters) !==
-        hashParameters(activeCandidate.application.definition.parameters)
+      sourceApplication.definition.name !== activeCandidate.strategyName ||
+      candidateStrategyProtocolHash !== preregistration.strategyProtocolHash
     ) {
       return yield* collectorError(
         'candidate',

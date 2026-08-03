@@ -10,8 +10,18 @@ import {
   CandidateDevelopmentLocalSourceManifestBindingSchema,
   CandidateDevelopmentLocalTerminalReportSchema,
 } from '../candidate-development-local/domain'
-import type { CandidateDevelopmentInvalidPrecommit, CandidateDevelopmentNextPreregistration } from './model'
-import { NonNegativeIntegerSchema, PositiveIntegerSchema, Sha256Schema, strictParseOptions } from '../schemas'
+import {
+  CandidateDevelopmentNextPreregistrationSchema,
+  type CandidateDevelopmentInvalidPrecommit,
+  type CandidateDevelopmentNextPreregistration,
+} from './model'
+import {
+  NonNegativeIntegerSchema,
+  PositiveIntegerSchema,
+  Sha256Schema,
+  StrictNonEmptyStringSchema,
+  strictParseOptions,
+} from '../schemas'
 import type { StrategyApplication } from '../strategy'
 
 const TrialLedgerEntrySchema = Schema.Union([
@@ -41,6 +51,14 @@ const TrialLedgerEntrySchema = Schema.Union([
     attemptStatus: Schema.Literal('UNATTEMPTED'),
     metricBearingAttemptsConsumed: Schema.Literal(0),
     qualificationAttemptConsumed: Schema.Literal(false),
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal('DEVELOPMENT_PENDING'),
+    candidateOrdinal: PositiveIntegerSchema,
+    priorTrialCount: NonNegativeIntegerSchema,
+    strategyName: StrictNonEmptyStringSchema,
+    preregistration: CandidateDevelopmentNextPreregistrationSchema,
+    sourceManifest: CandidateDevelopmentLocalSourceManifestBindingSchema,
   }),
 ])
 
@@ -91,14 +109,35 @@ export const candidateDevelopmentTrialLedger: readonly CandidateDevelopmentTrial
 
 export interface ActiveCandidateDevelopmentRegistration {
   readonly preregistration: CandidateDevelopmentNextPreregistration
+  readonly strategyName?: string
   /** The exact reviewed source-manifest object consumed by both local development and qualification. */
   readonly sourceManifest: typeof CandidateDevelopmentLocalSourceManifestBindingSchema.Type
-  /** The one reviewed application consumed by both local development and qualification. */
-  readonly application: StrategyApplication<any, any, any>
+  /** Compatibility projection for archived fixtures; production adapters load the registered module export. */
+  readonly application?: StrategyApplication<any, any, any>
 }
 
-/** Candidate 21 is intentionally absent until the architecture gates are merged. */
-export const activeCandidateDevelopmentRegistration: ActiveCandidateDevelopmentRegistration | null = null
+const activeRegistrationFromLedger = (
+  entries: readonly CandidateDevelopmentTrialLedgerEntry[],
+): ActiveCandidateDevelopmentRegistration | null => {
+  const pending = [...entries].reverse().find((entry) => entry._tag === 'DEVELOPMENT_PENDING')
+  if (pending === undefined) return null
+  const latest = entries.at(-1)
+  if (
+    latest !== undefined &&
+    latest.candidateOrdinal === pending.candidateOrdinal &&
+    (latest._tag === 'DEVELOPMENT_REJECTED' || latest._tag === 'QUALIFICATION_TERMINAL')
+  ) {
+    return null
+  }
+  return Object.freeze({
+    preregistration: pending.preregistration,
+    strategyName: pending.strategyName,
+    sourceManifest: pending.sourceManifest,
+  })
+}
+
+/** The active registration is derived from one append-only pending entry; its application is the module export. */
+export const activeCandidateDevelopmentRegistration = activeRegistrationFromLedger(candidateDevelopmentTrialLedger)
 
 export interface CandidateDevelopmentTrialLedgerState {
   readonly entries: readonly CandidateDevelopmentTrialLedgerEntry[]

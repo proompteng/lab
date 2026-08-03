@@ -56,6 +56,7 @@ import {
 import { loadReviewedStrategyApplication } from './source-module'
 
 const candidateDevelopmentEvaluatorSourcePath = 'services/bayn/src'
+const candidateDevelopmentTrialLedgerSourcePath = 'services/bayn/src/candidate-development-trials/ledger.ts'
 
 export interface CandidateDevelopmentSourceGit {
   readonly text: (repositoryRoot: string, args: readonly string[], signal?: AbortSignal) => Promise<string>
@@ -207,6 +208,38 @@ export const verifyCandidateDevelopmentLocalSourceTree = (
       ),
   })
 
+const verifyCandidateDevelopmentLocalSourceDescendant = (
+  repositoryRoot: string,
+  reviewedSourceRevision: string,
+  sourceRevision: string,
+  modulePath: string,
+  sourceManifestPath: string,
+  sourceGit: CandidateDevelopmentSourceGit,
+): Effect.Effect<void, CandidateDevelopmentLocalError> =>
+  Effect.tryPromise({
+    try: async (signal) => {
+      const changedPaths = (
+        await sourceGit.text(
+          repositoryRoot,
+          ['diff', '--name-only', '--no-renames', `${reviewedSourceRevision}..${sourceRevision}`, '--'],
+          signal,
+        )
+      )
+        .split('\n')
+        .filter(Boolean)
+      const allowedPaths = new Set([modulePath, sourceManifestPath, candidateDevelopmentTrialLedgerSourcePath])
+      const unexpectedPath = changedPaths.find((path) => !allowedPaths.has(path))
+      if (unexpectedPath !== undefined)
+        throw new Error(`unapproved candidate source descendant path: ${unexpectedPath}`)
+    },
+    catch: (cause) =>
+      localError(
+        'SOURCE_BINDING_INVALID',
+        'candidate source descendants may only add the reviewed module, manifest, and terminal ledger data',
+        cause,
+      ),
+  })
+
 const decodeJson = (bytes: Buffer, message: string): Result.Result<unknown, CandidateDevelopmentLocalError> => {
   try {
     const value: unknown = JSON.parse(bytes.toString('utf8'))
@@ -335,7 +368,6 @@ const receiptPathFor = async (
 
 const prepareCandidateDevelopmentLocalAttempt = (
   args: CandidateDevelopmentLocalArguments,
-  application: StrategyApplication<any, any, any>,
   sourceManifestBinding: CandidateDevelopmentLocalSourceManifestBinding,
   sourceGit: CandidateDevelopmentSourceGit = candidateDevelopmentSourceGit,
 ): Effect.Effect<PreparedCandidateDevelopmentLocalAttempt, CandidateDevelopmentLocalError> =>
@@ -466,22 +498,19 @@ const prepareCandidateDevelopmentLocalAttempt = (
           cause,
         ),
     })
+    yield* verifyCandidateDevelopmentLocalSourceDescendant(
+      repositoryRoot,
+      preregistration.preregistration.sourceRevision,
+      sourceRevision,
+      modulePath,
+      sourceManifestPath,
+      sourceGit,
+    )
     const sourceApplication = yield* loadReviewedStrategyApplication(canonicalArgs.modulePath, sourceRevision).pipe(
       Effect.mapError((cause) =>
         localError('SOURCE_BINDING_INVALID', 'reviewed candidate application could not be loaded', cause),
       ),
     )
-    if (
-      sourceApplication.definition.name !== application.definition.name ||
-      hashParameters(sourceApplication.definition.parameters) !== hashParameters(application.definition.parameters)
-    ) {
-      return yield* Effect.fail(
-        localError(
-          'SOURCE_BINDING_INVALID',
-          'reviewed candidate module does not match the registered application identity',
-        ),
-      )
-    }
     const reviewedApplication =
       sourceApplication.reviewedSource === undefined
         ? bindReviewedStrategySource(sourceApplication, {
@@ -847,14 +876,10 @@ const liveDependencies: CandidateDevelopmentLocalDependencies = {
       ? Effect.fail(
           localError(
             'MODULE_INVALID',
-            'no active candidate strategy application is statically composed for local development',
+            'no active candidate development registration is available for local development',
           ),
         )
-      : prepareCandidateDevelopmentLocalAttempt(
-          args,
-          activeCandidateDevelopmentRegistration.application,
-          activeCandidateDevelopmentRegistration.sourceManifest,
-        ),
+      : prepareCandidateDevelopmentLocalAttempt(args, activeCandidateDevelopmentRegistration.sourceManifest),
   attempt: makeCandidateDevelopmentLocalAttempt({
     reserve: reserveCandidateDevelopmentLocalReceipt,
     execute: executeCandidateDevelopmentLocalAttempt,

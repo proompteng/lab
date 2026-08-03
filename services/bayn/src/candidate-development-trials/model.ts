@@ -1,27 +1,47 @@
-export interface CandidateDevelopmentNextPreregistration {
-  readonly schemaVersion: 'bayn.candidate-development-next-preregistration.v1'
-  readonly candidateOrdinal: number
-  readonly priorTrialCount: number
-  readonly strategyProtocolHash: string
-  readonly strategyIdentityHash?: string
-  readonly candidateDevelopmentProtocolHash?: string
-  readonly calendarHash?: string
-  readonly priorTrialsHash?: string
-  readonly modulePath: string
-  readonly moduleSha256: string
-  readonly marketData: {
-    readonly schemaVersion: 'bayn.candidate-development-market-data-source.v1'
-    readonly snapshotId: string
-    readonly finalizedSnapshotContentHash: string
-    readonly inputManifestHash: string
-    readonly boundedContentHash: string
-  }
-  readonly preregistration: {
-    readonly sourceRevision: string
-    readonly path: string
-    readonly blobOid: string
-  }
-}
+import { Schema } from 'effect'
+
+import {
+  NonNegativeIntegerSchema,
+  PositiveIntegerSchema,
+  Sha256Schema,
+  SourceRevisionSchema,
+  StrictNonEmptyStringSchema,
+} from '../schemas'
+
+const CandidateDevelopmentNextPreregistrationFields = {
+  schemaVersion: Schema.Literal('bayn.candidate-development-next-preregistration.v1'),
+  candidateOrdinal: PositiveIntegerSchema,
+  priorTrialCount: NonNegativeIntegerSchema,
+  strategyProtocolHash: Sha256Schema,
+  strategyIdentityHash: Schema.optionalKey(Sha256Schema),
+  candidateDevelopmentProtocolHash: Schema.optionalKey(Sha256Schema),
+  calendarHash: Schema.optionalKey(Sha256Schema),
+  priorTrialsHash: Schema.optionalKey(Sha256Schema),
+  modulePath: StrictNonEmptyStringSchema,
+  moduleSha256: Sha256Schema,
+  marketData: Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.candidate-development-market-data-source.v1'),
+    snapshotId: Sha256Schema,
+    finalizedSnapshotContentHash: Sha256Schema,
+    inputManifestHash: Sha256Schema,
+    boundedContentHash: Sha256Schema,
+  }),
+} as const
+
+export const CandidateDevelopmentNextPreregistrationDocumentSchema = Schema.Struct(
+  CandidateDevelopmentNextPreregistrationFields,
+)
+
+export const CandidateDevelopmentNextPreregistrationSchema = Schema.Struct({
+  ...CandidateDevelopmentNextPreregistrationFields,
+  preregistration: Schema.Struct({
+    sourceRevision: SourceRevisionSchema,
+    path: StrictNonEmptyStringSchema,
+    blobOid: Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/)),
+  }),
+})
+
+export type CandidateDevelopmentNextPreregistration = typeof CandidateDevelopmentNextPreregistrationSchema.Type
 
 export interface CandidateDevelopmentQualificationEvidence {
   readonly candidateOrdinal: number

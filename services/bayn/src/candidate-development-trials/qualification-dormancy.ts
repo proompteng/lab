@@ -224,6 +224,12 @@ const validateLedger = (
       previous.candidateOrdinal === entry.candidateOrdinal
     if (isQualificationTerminalAfterApproval) continue
 
+    const isDevelopmentApprovalAfterPending =
+      previous._tag === 'DEVELOPMENT_PENDING' &&
+      entry._tag === 'DEVELOPMENT_APPROVED' &&
+      previous.candidateOrdinal === entry.candidateOrdinal
+    if (isDevelopmentApprovalAfterPending) continue
+
     if (entry.candidateOrdinal !== previous.candidateOrdinal + 1) {
       return {
         ok: false,
@@ -313,7 +319,9 @@ export const qualificationDormancyDecisionFromLedgerState = (
   const activeApproval = lastEntry?._tag === 'DEVELOPMENT_APPROVED' ? lastEntry : undefined
   const lastCandidateOrdinal = lastEntry?.candidateOrdinal ?? 0
   const expectedPriorTrialCount = candidateOrdinal - 1
-  const expectedCandidateOrdinal = activeApproval === undefined ? lastCandidateOrdinal + 1 : lastCandidateOrdinal
+  const activePending = lastEntry?._tag === 'DEVELOPMENT_PENDING' ? lastEntry : undefined
+  const expectedCandidateOrdinal =
+    activeApproval !== undefined || activePending !== undefined ? lastCandidateOrdinal : lastCandidateOrdinal + 1
   if (
     candidateOrdinal !== expectedCandidateOrdinal ||
     active.preregistration.priorTrialCount !== expectedPriorTrialCount
@@ -331,8 +339,8 @@ export const qualificationDormancyDecisionFromLedgerState = (
   if (activeApproval === undefined) {
     return { ok: true, decision: { status: 'dormant', reason: 'development-not-approved', candidateOrdinal } }
   }
-  const strategyName = active.application?.definition?.name
-  if (typeof strategyName !== 'string') return invalidLedger('activeCandidate.application.definition.name')
+  const strategyName = active.strategyName ?? active.application?.definition?.name
+  if (typeof strategyName !== 'string') return invalidLedger('activeCandidate.strategyName')
   const sourceManifest = Schema.decodeUnknownResult(
     CandidateDevelopmentLocalSourceManifestBindingSchema,
     strictParseOptions,
