@@ -493,7 +493,7 @@ test('classifies the verifier baseline receipt as Bayn-affecting', () => {
 
 test('executes the release gate from the trusted base while evaluating the exact PR head', () => {
   expect(baynCiWorkflow).toContain(
-    'run-name: Bayn release gate #${{ github.event.pull_request.number }} base=${{ github.event.pull_request.base.sha }}',
+    "run-name: 'Bayn release gate #${{ github.event.pull_request.number }} base=${{ github.event.pull_request.base.sha }}'",
   )
   expect(baynCiWorkflow).toContain('name: Checkout trusted base verifier')
   expect(baynCiWorkflow).toContain('ref: ${{ github.event.pull_request.base.sha }}')
