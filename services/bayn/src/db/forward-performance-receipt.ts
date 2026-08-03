@@ -194,6 +194,8 @@ export const ForwardPerformanceReceiptEnvelopeSchema = Schema.Struct({
   contentHash: Sha256Schema,
 }).check(
   Schema.makeFilter((envelope) => {
+    if (typeof envelope.receipt !== 'object' || envelope.receipt === null) return false
+    if (!('receiptHash' in envelope.receipt) || envelope.receipt.receiptHash !== envelope.receiptHash) return false
     const { contentHash: _contentHash, ...material } = envelope
     const expected = canonicalHashV1Result(material)
     return Result.isSuccess(expected) && expected.success === envelope.contentHash

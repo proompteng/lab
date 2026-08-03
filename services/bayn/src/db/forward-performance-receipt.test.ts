@@ -109,4 +109,14 @@ describe('forward-performance receipt persistence contract', () => {
     expect(decodeForwardPerformanceReceiptEnvelopeResult(envelope)._tag).toBe('Success')
     expect(decoded._tag).toBe('Failure')
   })
+
+  test('rejects a valid receipt when the envelope hash binding differs', () => {
+    const mismatchedMaterial = { ...envelopeMaterial, receiptHash: hash }
+    const decoded = decodeForwardPerformanceReceiptEnvelopeResult({
+      ...mismatchedMaterial,
+      contentHash: canonicalHashV1(mismatchedMaterial),
+    })
+
+    expect(decoded._tag).toBe('Failure')
+  })
 })
