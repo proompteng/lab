@@ -748,6 +748,15 @@ describe('forward performance read program', () => {
         statement.includes('reconciliation.reconciled_at < next_generation.activated_at'),
       ),
     ).toBe(false)
+    expect(
+      observation.statements.some(
+        (statement) =>
+          statement.includes('FROM accounting_transactions AS transaction') &&
+          statement.includes('LEFT JOIN intents AS intent') &&
+          statement.includes('transaction.occurred_at <= latest_reconciliation.reconciled_at') &&
+          !statement.includes('next_intent.created_at'),
+      ),
+    ).toBe(true)
     expect(observation.statements.some((statement) => statement.includes('first_cycle.submission_open_at'))).toBe(true)
     expect(
       observation.statements.some((statement) => statement.includes("cycle.state IN ('PENDING', 'ACTIVE', 'BLOCKED')")),

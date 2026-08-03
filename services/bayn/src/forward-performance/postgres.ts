@@ -455,6 +455,8 @@ const closingSnapshotBoundary = (
         )
       )`
 
+const ledgerReplayBoundary = (sql: PgClient.PgClient) => sql`latest_reconciliation.reconciled_at`
+
 const signedI128 = (value: string): bigint | undefined => {
   if (!INTEGER_PATTERN.test(value)) return undefined
   const parsed = BigInt(value)
@@ -623,7 +625,7 @@ const ledgerTransactionQuery = (
   CROSS JOIN latest_reconciliation
   LEFT JOIN intents AS intent ON intent.intent_id = transaction.intent_id
   WHERE transaction.account_id = ${accountId}
-    AND transaction.occurred_at <= ${closingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
+    AND transaction.occurred_at <= ${ledgerReplayBoundary(sql)}
   ORDER BY transaction.occurred_at, transaction.transaction_id COLLATE "C"
 `
 
@@ -723,7 +725,7 @@ const ledgerReceiptQuery = (
   JOIN accounting_transactions AS transaction USING (broker_event_id)
   CROSS JOIN latest_reconciliation
   WHERE transaction.account_id = ${accountId}
-    AND transaction.occurred_at <= ${closingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
+    AND transaction.occurred_at <= ${ledgerReplayBoundary(sql)}
   ORDER BY receipt.broker_event_id COLLATE "C"
 `
 
