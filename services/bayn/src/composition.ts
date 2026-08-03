@@ -477,6 +477,8 @@ const recoverPaperActivationGeneration = (
   request: PaperActivationRequest,
   evidence: RuntimeEvidence,
   authorityStore: AuthorityGenerationStoreShape,
+  authorityRestrictionStore: AuthorityRestrictionStoreShape,
+  writerFence: WriterFenceService,
 ): Effect.Effect<CapitalGrantGeneration, OperationalError> =>
   Effect.gen(function* () {
     const observedAt = yield* currentUtcInstant
@@ -484,7 +486,13 @@ const recoverPaperActivationGeneration = (
       Effect.mapError((message) => paperActivationOperationalError(message)),
     )
     const closeExpiresAt = paperEpisodeCloseExpiresAt(request.expiresAt)
-    if (observedAt < request.cutoffAt || observedAt >= closeExpiresAt) {
+    if (observedAt >= closeExpiresAt) {
+      yield* restrictExpiredPaperActivation(authorityRestrictionStore, writerFence)
+      return yield* Effect.fail(
+        paperActivationOperationalError('durable PAPER close recovery is outside its immutable close lease'),
+      )
+    }
+    if (observedAt < request.cutoffAt) {
       return yield* Effect.fail(
         paperActivationOperationalError('durable PAPER close recovery is outside its immutable close lease'),
       )
@@ -620,6 +628,16 @@ const realizedPaperActivation = (
     error: null,
   }))
 
+export const restrictExpiredPaperActivation = (
+  authorityRestrictionStore: AuthorityRestrictionStoreShape,
+  writerFence: WriterFenceService,
+): Effect.Effect<void, OperationalError> =>
+  restrictMutationAuthority('PAPER activation lease', 'immutable activation request expired').pipe(
+    Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
+    Effect.provideService(WriterFence, writerFence),
+    Effect.mapError((cause) => paperActivationOperationalError('expired PAPER activation restriction failed', cause)),
+  )
+
 const restrictPaperAtExpiry = (
   expiresAt: string,
   authorityRestrictionStore: AuthorityRestrictionStoreShape,
@@ -629,9 +647,7 @@ const restrictPaperAtExpiry = (
     const observedAt = yield* currentUtcInstant
     const remainingMs = Date.parse(expiresAt) - Date.parse(observedAt)
     if (remainingMs > 0) yield* Effect.sleep(Duration.millis(remainingMs))
-    yield* restrictMutationAuthority('PAPER activation lease', 'immutable activation request expired').pipe(
-      Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
-      Effect.provideService(WriterFence, writerFence),
+    yield* restrictExpiredPaperActivation(authorityRestrictionStore, writerFence).pipe(
       Effect.retry({
         times: 4,
         schedule: Schedule.spaced(Duration.seconds(1)),
@@ -896,6 +912,8 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                   request,
                                   evidence,
                                   runtimeServices.authorityGenerationStore,
+                                  runtimeServices.authorityRestrictionStore,
+                                  runtimeServices.writerFence,
                                 ).pipe(Effect.map((generation) => ({ generation })))
                               : preparePaperActivation(observePlan, evidence, request),
                           ),

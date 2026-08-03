@@ -3,7 +3,9 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Fiber } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { retryClosedCycleReceipts } from './composition'
+import { restrictExpiredPaperActivation, retryClosedCycleReceipts } from './composition'
+import type { AuthorityRestrictionStoreShape } from './db/execution-store'
+import type { WriterFenceService } from './execution/writer-fence'
 import { paperEpisodeReceiptFinalizationExpiresAt } from './observe-composition'
 
 describe('Bayn PAPER receipt retry boundary', () => {
@@ -95,5 +97,36 @@ describe('Bayn PAPER receipt retry boundary', () => {
 
   test('leaves a bounded post-close finalization window for late settlement', () => {
     expect(paperEpisodeReceiptFinalizationExpiresAt('2026-08-03T12:00:00.000Z')).toBe('2026-08-03T12:30:00.000Z')
+  })
+})
+
+describe('Bayn PAPER startup recovery boundary', () => {
+  test('restricts durable authority before an expired close recovery is rejected', async () => {
+    const restrictions: Array<{ readonly reason: string; readonly updatedAt: string }> = []
+    const authorityRestrictionStore: AuthorityRestrictionStoreShape = {
+      restrictAuthority: (reason, updatedAt) =>
+        Effect.sync(() => {
+          restrictions.push({ reason, updatedAt })
+        }),
+    }
+    const writerFence: WriterFenceService = {
+      backendPid: 1,
+      check: Effect.void,
+      transaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+    }
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-08-03T12:00:00.000Z'))
+        yield* restrictExpiredPaperActivation(authorityRestrictionStore, writerFence)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(restrictions).toEqual([
+      {
+        reason: 'PAPER activation lease restricted effective authority: immutable activation request expired',
+        updatedAt: '2026-08-03T12:00:00.000Z',
+      },
+    ])
   })
 })
