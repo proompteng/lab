@@ -20,7 +20,7 @@ import {
 import { acquireAuditRepositoryClient } from './repository'
 import { acquireAuditSignalClient, loadAuditSignal } from './signal'
 import { acquireAuditSignalReplicaClient, readAuditSignalAccess } from './signal-access'
-import { bindReviewedStrategySource, makeActiveStrategyApplication } from '../../strategy'
+import { activeStrategyBehaviorHash, bindReviewedStrategySource, makeActiveStrategyApplication } from '../../strategy'
 import { loadReviewedStrategyApplication } from '../../candidate-development-local/source-module'
 import type { StrategyApplication } from '../../strategy/core'
 import { hashParameters } from '../../protocol'
@@ -33,7 +33,16 @@ const loadAuditStrategyApplication = (
   protocol: Parameters<typeof makeActiveStrategyApplication>[0],
   expectedBehaviorHash: string,
 ): Effect.Effect<StrategyApplication<any, any, any>, QualificationAuditCommandError> => {
-  if (input.candidateModulePath.trim().length === 0) return Effect.succeed(makeActiveStrategyApplication(protocol))
+  if (input.candidateModulePath.trim().length === 0) {
+    return expectedBehaviorHash === activeStrategyBehaviorHash
+      ? Effect.succeed(makeActiveStrategyApplication(protocol))
+      : Effect.fail(
+          qualificationAuditCommandError(
+            'configuration',
+            'BAYN_AUDIT_CANDIDATE_MODULE_PATH and BAYN_AUDIT_CANDIDATE_MODULE_SHA256 are required for the persisted strategy behavior',
+          ),
+        )
+  }
   if (!sha256Pattern.test(input.candidateModuleSha256)) {
     return Effect.fail(
       qualificationAuditCommandError(
