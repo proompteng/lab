@@ -230,6 +230,12 @@ const validateLedger = (
       previous.candidateOrdinal === entry.candidateOrdinal
     if (isDevelopmentApprovalAfterPending) continue
 
+    const isDevelopmentRejectionAfterPending =
+      previous._tag === 'DEVELOPMENT_PENDING' &&
+      entry._tag === 'DEVELOPMENT_REJECTED' &&
+      previous.candidateOrdinal === entry.candidateOrdinal
+    if (isDevelopmentRejectionAfterPending) continue
+
     if (entry.candidateOrdinal !== previous.candidateOrdinal + 1) {
       return {
         ok: false,

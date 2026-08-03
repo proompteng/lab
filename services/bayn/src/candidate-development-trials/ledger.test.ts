@@ -273,6 +273,52 @@ describe('Bayn candidate development trial ledger', () => {
     })
   })
 
+  test('closes a pending candidate after its one-shot development rejection', () => {
+    const preregistration = {
+      ...candidate20Preregistration,
+      candidateOrdinal: 21,
+      priorTrialCount: 20,
+      preregistration: {
+        ...candidate20Preregistration.preregistration,
+        sourceRevision: 'a'.repeat(40),
+        blobOid: 'b'.repeat(40),
+      },
+    }
+    const sourceManifest = {
+      path: 'services/bayn/candidates/ordinal-21-source-manifest.json',
+      blobOid: 'c'.repeat(40),
+      sha256: 'e'.repeat(64),
+    }
+    const pending = {
+      _tag: 'DEVELOPMENT_PENDING' as const,
+      candidateOrdinal: 21,
+      priorTrialCount: 20,
+      strategyName: 'risk-balanced-trend',
+      preregistration,
+      sourceManifest,
+    }
+    expect(
+      qualificationDormancyDecisionFromLedgerState({
+        ...candidateDevelopmentTrialLedgerState,
+        entries: [
+          ...candidateDevelopmentTrialLedgerState.entries,
+          pending,
+          {
+            _tag: 'DEVELOPMENT_REJECTED' as const,
+            candidateOrdinal: 21,
+            priorTrialCount: 20,
+            sourceRevision: 'd'.repeat(40),
+          },
+        ],
+        developmentCandidateOrdinals: [...candidateDevelopmentTrialLedgerState.developmentCandidateOrdinals, 21],
+        activeCandidate: null,
+      }),
+    ).toEqual({
+      ok: true,
+      decision: { status: 'dormant', reason: 'development-rejected', candidateOrdinal: 21 },
+    })
+  })
+
   test('fails closed for an incomplete predecessor ledger and derives the active prior count from it', () => {
     const activeCandidate = {
       preregistration: {
