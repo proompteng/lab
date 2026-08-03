@@ -51,6 +51,12 @@ export type QualificationStatisticsFailure =
       readonly priorTrialRunIds: readonly string[]
     }
   | {
+      readonly _tag: 'QualificationBoundLineageInvalid'
+      readonly candidateOrdinal: number
+      readonly priorTrialCount: number
+      readonly priorTrialsHash: string
+    }
+  | {
       readonly _tag: 'QualificationRandomIndexInvalid'
       readonly maximum: number
     }
@@ -80,6 +86,8 @@ export const renderQualificationStatisticsFailure = (failure: QualificationStati
       return `qualification series ${failure.reason} at ${failure.sessionDate ?? 'no session'} (strategy=${failure.strategyCount}, buy-and-hold=${failure.buyAndHoldCount}, direct-volatility=${failure.directVolatilityCount})`
     case 'QualificationLineageInvalid':
       return `prior qualification run IDs are not canonical: ${failure.priorTrialRunIds.join(',')}`
+    case 'QualificationBoundLineageInvalid':
+      return `bound qualification trial lineage is invalid for candidate ${failure.candidateOrdinal} with ${failure.priorTrialCount} prior trials`
     case 'QualificationRandomIndexInvalid':
       return `bootstrap random index maximum must be positive: ${failure.maximum}`
     case 'QualificationSamplingBlockMissing':

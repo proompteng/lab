@@ -465,7 +465,7 @@ export const runQualificationCollector = <Prelock extends QualificationCollector
     return { ...material, evidenceHash }
   })
 
-interface DeploymentRuntime {
+export interface DeploymentRuntime {
   readonly sourceSha: string
   readonly imageRepository: string
   readonly imageDigest: string
@@ -814,7 +814,7 @@ export const loadQualificationCollectorInvocation = (
     return { mode: rawMode, eventName: 'schedule', currentMainSha }
   })
 
-const makeQualificationCandidateRuntime = (
+export const makeQualificationCandidateRuntime = (
   definition: RiskBalancedTrendStrategyDefinition,
   deployment: DeploymentRuntime,
   source: { readonly moduleSha256: string },
@@ -829,13 +829,32 @@ const makeQualificationCandidateRuntime = (
       ),
     )
   }
+  const parameterHash = hashParameters(definition.parameters)
+  if (source.moduleSha256 !== deployment.strategyBehaviorHash) {
+    return Result.fail(
+      collectorError(
+        'candidate',
+        'deployment-strategy-behavior-mismatch',
+        'candidate module hash differs from the embedded deployment strategy behavior hash',
+      ),
+    )
+  }
+  if (parameterHash !== deployment.strategyParameterHash) {
+    return Result.fail(
+      collectorError(
+        'candidate',
+        'deployment-strategy-parameter-mismatch',
+        'candidate parameter hash differs from the embedded deployment strategy parameter hash',
+      ),
+    )
+  }
   const provenance = makeRuntimeProvenanceResult({
     sourceRevision: deployment.sourceSha,
     image: { repository: deployment.imageRepository, digest: deployment.imageDigest },
     strategy: {
       name: 'risk-balanced-trend',
       behaviorHash: source.moduleSha256,
-      parameterHash: hashParameters(definition.parameters),
+      parameterHash,
       parameterSchemaVersion: definition.parameters.schemaVersion,
     },
   })

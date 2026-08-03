@@ -184,6 +184,8 @@ export const QualificationAnalysisMaterialSchema = Schema.Struct({
   runId: Sha256Schema,
   policy: QualificationStatisticsPolicySchema,
   priorTrialRunIds: Schema.Array(Sha256Schema),
+  priorTrialCount: Schema.optionalKey(NonNegativeInteger),
+  priorTrialsHash: Schema.optionalKey(Sha256Schema),
   candidateOrdinal: PositiveInteger,
   completeBlocks: Schema.Array(CompleteBlockSchema),
   power: PowerAnalysisSchema,
@@ -203,12 +205,26 @@ export const QualificationAnalysisSchema = QualificationAnalysisBase.check(
   Schema.makeFilter((analysis: typeof QualificationAnalysisBase.Type) => {
     const { analysisHash, ...material } = analysis
     const issues = [...canonicalOrderIssues('priorTrialRunIds', analysis.priorTrialRunIds)]
+    const priorTrialCount = analysis.priorTrialCount ?? analysis.priorTrialRunIds.length
     const bootstrapSamples = {
       schemaVersion: 'bayn.qualification-bootstrap-samples.v1',
       annualizedExcessReturnSamples: analysis.bootstrap.annualizedExcessReturnSamples,
       sharpeDifferenceSamples: analysis.bootstrap.sharpeDifferenceSamples,
     }
-    if (analysis.candidateOrdinal !== analysis.priorTrialRunIds.length + 1) {
+    if (
+      (analysis.priorTrialCount !== undefined && analysis.priorTrialsHash === undefined) ||
+      (analysis.priorTrialsHash !== undefined && analysis.priorTrialCount === undefined)
+    ) {
+      issues.push({ path: ['priorTrialCount'], issue: 'bound trial count and history hash must be provided together' })
+    }
+    if (
+      analysis.priorTrialCount !== undefined &&
+      analysis.priorTrialRunIds.length > 0 &&
+      analysis.priorTrialCount !== analysis.priorTrialRunIds.length
+    ) {
+      issues.push({ path: ['priorTrialCount'], issue: 'must match the exact prior trial run ID count' })
+    }
+    if (analysis.candidateOrdinal !== priorTrialCount + 1) {
       issues.push({ path: ['candidateOrdinal'], issue: 'must follow every prior trial' })
     }
     if (

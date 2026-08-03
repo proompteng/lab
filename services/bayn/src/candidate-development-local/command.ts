@@ -12,7 +12,7 @@ import { makeRuntimeProvenanceResult, makeStrategyProtocolHash, type RuntimeProv
 import { canonicalHashV1Result } from '../hash'
 import { hashParameters } from '../protocol'
 import {
-  analyzeQualification,
+  analyzeQualificationAtOrdinal,
   defaultQualificationStatisticsPolicy,
   prepareQualificationSeries,
 } from '../qualification-statistics'
@@ -472,7 +472,13 @@ export const evaluateCandidateDevelopmentDefinition = (
     return Result.fail(localError('DECISION_FAILED', 'candidate strategy evaluation failed', evaluation.failure))
   }
   const analysis = prepareQualificationSeries(evaluation.success).pipe(
-    Result.flatMap((series) => analyzeQualification(series, defaultQualificationStatisticsPolicy, [])),
+    Result.flatMap((series) =>
+      analyzeQualificationAtOrdinal(series, defaultQualificationStatisticsPolicy, {
+        candidateOrdinal: sourceManifest.candidateOrdinal,
+        priorTrialCount: sourceManifest.priorTrialCount,
+        priorTrialsHash: sourceManifest.trialHistoryHash,
+      }),
+    ),
   )
   if (Result.isFailure(analysis)) {
     return Result.fail(localError('DECISION_FAILED', 'candidate qualification statistics failed', analysis.failure))

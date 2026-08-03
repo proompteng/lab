@@ -73,7 +73,6 @@ import {
   makePaperDecisionDocument,
   type PaperDecisionDocument,
 } from '../../shadow-decision-contract'
-import { fixtureRuntime } from '../../app-test-support'
 import { makeRiskBalancedTrendDefinition } from '../../strategy'
 import { TargetPlanReason, TargetPlanStatus } from '../../target-planner'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from '../../test-fixtures'
@@ -874,6 +873,37 @@ const makeDraft = (
   return draftResult.success
 }
 
+const makePlannedDraft = (accountId: string, executionPolicy: CycleExecutionPolicy): CycleDraft =>
+  makeDraft(accountId, {
+    executionPolicy,
+    executionSessionDate: '2026-04-01',
+    executionOpenAt: '2026-04-01T13:30:00.000Z',
+    executionCloseAt: '2026-04-01T20:00:00.000Z',
+  })
+
+const monthEndExecutionWindow = (
+  evaluatedAt: string,
+): {
+  readonly evaluationAt: string
+  readonly executionOpenAt: string
+  readonly executionSessionDate: IsoDate
+  readonly snapshotBoundAt: string
+  readonly signalSessionDate: IsoDate
+} => {
+  const evaluated = new Date(evaluatedAt)
+  const execution = new Date(evaluated.getTime() + 44 * 60_000)
+  const signal = new Date(Date.UTC(execution.getUTCFullYear(), execution.getUTCMonth(), 0))
+  while (signal.getUTCDay() === 0 || signal.getUTCDay() === 6) signal.setUTCDate(signal.getUTCDate() - 1)
+  const executionSessionDate = execution.toISOString().slice(0, 10) as IsoDate
+  return {
+    evaluationAt: evaluatedAt,
+    executionOpenAt: execution.toISOString(),
+    executionSessionDate,
+    snapshotBoundAt: new Date(evaluated.getTime() - 2 * 60_000).toISOString(),
+    signalSessionDate: signal.toISOString().slice(0, 10) as IsoDate,
+  }
+}
+
 const insertSnapshotReference = (
   snapshotId: string,
   options: {
@@ -974,6 +1004,7 @@ const acquireAt = '2026-03-06T21:01:00.000Z'
 const snapshotAt = '2026-03-06T21:02:00.000Z'
 const activeAt = '2026-03-06T21:03:00.000Z'
 const decisionAt = '2026-03-09T13:00:00.000Z'
+const plannedDecisionAt = '2026-04-01T13:00:00.000Z'
 const terminalAt = '2026-03-09T13:01:00.000Z'
 
 const shadowReconciliation = (draft: CycleDraft) => {
@@ -1090,7 +1121,7 @@ const makePaperNoTradeDecision = (draft: CycleDraft, boundSnapshotId: string) =>
 const plannedPaperGenerationHash = 'a'.repeat(64)
 const plannedPaperAccountingHash = '8'.repeat(64)
 
-const plannedPaperReconciliation = (draft: CycleDraft, observedAt = decisionAt): ReconciliationPassResult => {
+const plannedPaperReconciliation = (draft: CycleDraft, observedAt = plannedDecisionAt): ReconciliationPassResult => {
   const account = {
     schemaVersion: 'bayn.paper-account-snapshot.v1' as const,
     accountId: draft.identity.accountId,
@@ -1203,20 +1234,75 @@ const plannedPaperDecisionPlan = (draft: CycleDraft): DecisionPlan => {
   }
 }
 
+const plannedPaperSnapshot = (
+  draft: CycleDraft,
+  boundSnapshotId: string,
+  snapshotFinalizedAt: string,
+): MarketDataSnapshot => {
+  const source = makeSnapshot(1_129)
+  const sourceSessions = [...new Set(source.bars.map((bar) => bar.sessionDate))].sort()
+  const sourceLastSession = sourceSessions.at(-1)
+  if (sourceLastSession === undefined) throw new RangeError('planned PAPER fixture has no source sessions')
+  const sessionOffsetMs =
+    Date.parse(`${draft.identity.signalSessionDate}T00:00:00.000Z`) - Date.parse(`${sourceLastSession}T00:00:00.000Z`)
+  const shiftSession = (session: IsoDate): IsoDate =>
+    new Date(Date.parse(`${session}T00:00:00.000Z`) + sessionOffsetMs).toISOString().slice(0, 10) as IsoDate
+  const sessions = sourceSessions.map(shiftSession)
+  const firstSession = sessions.at(0)
+  const lastSession = sessions.at(-1)
+  if (firstSession === undefined || lastSession === undefined) {
+    throw new RangeError('planned PAPER fixture has no shifted sessions')
+  }
+  const bars = source.bars.map((bar) => ({ ...bar, sessionDate: shiftSession(bar.sessionDate) }))
+  const { hash: _sourceManifestHash, ...sourceManifest } = source.manifest
+  const material: Omit<InputManifest, 'hash'> = {
+    ...sourceManifest,
+    bounds: {
+      ...sourceManifest.bounds,
+      dataStart: firstSession,
+      dataEnd: lastSession,
+      lookbackStart: firstSession,
+      evaluationStart: shiftSession(sourceManifest.bounds.evaluationStart),
+      evaluationEnd: lastSession,
+    },
+    rowCount: bars.length,
+    sessionCount: sessions.length,
+    firstSession,
+    lastSession,
+    symbols: sourceManifest.symbols.map((coverage) => ({
+      ...coverage,
+      rows: sessions.length,
+      firstSession,
+      lastSession,
+    })),
+    finalizedSnapshot: {
+      ...sourceManifest.finalizedSnapshot,
+      snapshotId: boundSnapshotId,
+      publicationId: boundSnapshotId,
+      calendarVersion: signalCalendarVersion,
+      finalizedAt: snapshotFinalizedAt,
+      requestedStart: firstSession,
+      firstSession,
+      lastSession,
+      asOfSession: draft.identity.signalSessionDate,
+      rowCount: bars.length,
+      sessionCount: sessions.length,
+      contentHash: boundSnapshotId,
+    },
+  }
+  return {
+    bars,
+    manifest: { ...material, hash: canonicalHashV1(material) },
+  }
+}
+
 const plannedPaperMarketData = (
   draft: CycleDraft,
   boundSnapshotId: string,
   snapshotFinalizedAt = acquireAt,
 ): MarketDataService => {
   const unused = Effect.die(new Error('planned PAPER persistence fixture used an unrelated market-data capability'))
-  const snapshot: MarketDataSnapshot = {
-    bars: makeSnapshot(1_129).bars,
-    manifest: makeInputManifest(boundSnapshotId, {
-      asOfSession: draft.identity.signalSessionDate,
-      finalizedAt: snapshotFinalizedAt,
-      lastSession: draft.identity.signalSessionDate,
-    }),
-  }
+  const snapshot = plannedPaperSnapshot(draft, boundSnapshotId, snapshotFinalizedAt)
   return {
     check: unused,
     inspect: unused,
@@ -1289,7 +1375,7 @@ const buildPlannedPaperDecision = (
   } = {},
 ) =>
   Effect.gen(function* () {
-    const evaluatedAt = options.evaluatedAt ?? decisionAt
+    const evaluatedAt = options.evaluatedAt ?? plannedDecisionAt
     const sourcePolicy = yield* loadObserveRiskPolicy(cycle.identity.accountId, fixtureProtocol.universe)
     const policy = options.transformPolicy?.(sourcePolicy) ?? sourcePolicy
     const reconciliation = plannedPaperReconciliation(cycle, evaluatedAt)
@@ -1302,8 +1388,8 @@ const buildPlannedPaperDecision = (
       policy,
       reconcile: Effect.succeed(reconciliation),
       strategy: {
-        definition: { ...fixtureRuntime.definition, decide: () => Result.succeed(decision) },
-        provenance: fixtureRuntime.provenance,
+        definition: { ...dueStrategy.definition, decide: () => Result.succeed(decision) },
+        provenance: dueStrategy.provenance,
       },
     }).pipe(
       Effect.provideService(BrokerRead, plannedPaperBrokerRead(cycle, evaluatedAt)),
@@ -3031,7 +3117,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
 
   test('terminalizes an expired untouched PAPER plan and releases oldest-unfinished selection', async () => {
     const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
-    const draft = makeDraft('paper-account-expired-planned', { executionPolicy })
+    const draft = makePlannedDraft('paper-account-expired-planned', executionPolicy)
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* CycleStore
@@ -3047,7 +3133,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         }
         yield* insertReconciliation(planned.reconciliation)
         yield* insertQualifiedPaperLineage(planned.document)
-        yield* store.bindDecision(draft.identity.cycleId, planned.document, decisionAt)
+        yield* store.bindDecision(draft.identity.cycleId, planned.document, plannedDecisionAt)
 
         const riskExpiresAt = planned.document.deltaRisk[0]?.evaluation.decision.expiresAt
         if (riskExpiresAt === undefined) return yield* Effect.die(new Error('PAPER risk expiry is missing'))
@@ -3161,7 +3247,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
 
   test('terminalizes a PAPER cycle whose immutable authority generation has a durable descendant', async () => {
     const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
-    const draft = makeDraft('paper-account-superseded-generation', { executionPolicy })
+    const draft = makePlannedDraft('paper-account-superseded-generation', executionPolicy)
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* CycleStore
@@ -3174,7 +3260,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         }
         yield* insertReconciliation(planned.reconciliation)
         yield* insertQualifiedPaperLineage(planned.document)
-        yield* store.bindDecision(draft.identity.cycleId, planned.document, decisionAt)
+        yield* store.bindDecision(draft.identity.cycleId, planned.document, plannedDecisionAt)
         const successor = yield* insertSupersedingObserveGeneration(planned.document)
         const directWrongReason = yield* Effect.exit(
           store.block(draft.identity.cycleId, CycleTerminalReason.Risk, successor.activatedAt),
@@ -3254,22 +3340,22 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             ) AS evaluated_at
           `
           if (clock === undefined) return yield* Effect.die(new Error('database Clock returned no row'))
-          const evaluatedAt = clock.evaluated_at
-          const executionOpen = new Date(Date.parse(evaluatedAt) + 20 * 60_000)
-          const executionSessionDate = executionOpen.toISOString().slice(0, 10) as IsoDate
-          const signalDateValue = new Date(`${executionSessionDate}T00:00:00.000Z`)
-          signalDateValue.setUTCDate(signalDateValue.getUTCDate() - 1)
-          const signalSessionDate = signalDateValue.toISOString().slice(0, 10) as IsoDate
+          const {
+            evaluationAt: evaluatedAt,
+            executionOpenAt,
+            executionSessionDate,
+            signalSessionDate,
+            snapshotBoundAt,
+          } = monthEndExecutionWindow(clock.evaluated_at)
           const draft = makeDraft(`paper-account-superseded-${fixture}`, {
             executionPolicy,
             executionCloseAt: `${executionSessionDate}T23:59:59.999Z`,
-            executionOpenAt: executionOpen.toISOString(),
+            executionOpenAt,
             executionSessionDate,
             signalSessionDate,
           })
           const acquisitionAt = new Date(Date.parse(draft.window.signalCloseAt) + 60_000).toISOString()
-          const snapshotBoundAt = new Date(Date.parse(draft.window.signalCloseAt) + 120_000).toISOString()
-          const activatedAt = new Date(Date.parse(draft.window.signalCloseAt) + 180_000).toISOString()
+          const activatedAt = new Date(Date.parse(snapshotBoundAt) + 1_000).toISOString()
           const manifest = makeInputManifest(snapshotA, {
             asOfSession: signalSessionDate,
             finalizedAt: snapshotBoundAt,
@@ -3412,22 +3498,22 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           ) AS evaluated_at
         `
         if (clock === undefined) return yield* Effect.die(new Error('database Clock returned no row'))
-        const evaluatedAt = clock.evaluated_at
-        const executionOpen = new Date(Date.parse(evaluatedAt) + 20 * 60_000)
-        const executionSessionDate = executionOpen.toISOString().slice(0, 10) as IsoDate
-        const signalDateValue = new Date(`${executionSessionDate}T00:00:00.000Z`)
-        signalDateValue.setUTCDate(signalDateValue.getUTCDate() - 1)
-        const signalSessionDate = signalDateValue.toISOString().slice(0, 10) as IsoDate
+        const {
+          evaluationAt: evaluatedAt,
+          executionOpenAt,
+          executionSessionDate,
+          signalSessionDate,
+          snapshotBoundAt,
+        } = monthEndExecutionWindow(clock.evaluated_at)
         const draft = makeDraft('paper-account-unresolved-cancel-terminalization', {
           executionPolicy,
           executionCloseAt: `${executionSessionDate}T23:59:59.999Z`,
-          executionOpenAt: executionOpen.toISOString(),
+          executionOpenAt,
           executionSessionDate,
           signalSessionDate,
         })
         const acquisitionAt = new Date(Date.parse(draft.window.signalCloseAt) + 60_000).toISOString()
-        const snapshotBoundAt = new Date(Date.parse(draft.window.signalCloseAt) + 120_000).toISOString()
-        const activatedAt = new Date(Date.parse(draft.window.signalCloseAt) + 180_000).toISOString()
+        const activatedAt = new Date(Date.parse(snapshotBoundAt) + 1_000).toISOString()
         const manifest = makeInputManifest(snapshotA, {
           asOfSession: signalSessionDate,
           finalizedAt: snapshotBoundAt,
@@ -3518,7 +3604,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
 
   test('binds and terminalizes a real PAPER risk block without intent or broker mutation state', async () => {
     const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
-    const draft = makeDraft('paper-account-risk-blocked', { executionPolicy })
+    const draft = makePlannedDraft('paper-account-risk-blocked', executionPolicy)
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* CycleStore
@@ -3537,8 +3623,8 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         }
         yield* insertReconciliation(planned.reconciliation)
         yield* insertQualifiedPaperLineage(planned.document)
-        const bound = yield* store.bindDecision(draft.identity.cycleId, planned.document, decisionAt)
-        const bindingReplay = yield* store.bindDecision(draft.identity.cycleId, planned.document, decisionAt)
+        const bound = yield* store.bindDecision(draft.identity.cycleId, planned.document, plannedDecisionAt)
+        const bindingReplay = yield* store.bindDecision(draft.identity.cycleId, planned.document, plannedDecisionAt)
 
         const sql = yield* PgClient.PgClient
         const directCompleted = yield* Effect.exit(sql`
@@ -3546,12 +3632,12 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           SET
             state = ${CycleState.Completed},
             state_version = state_version + 1,
-            updated_at = ${decisionAt},
-            terminal_at = ${decisionAt}
+            updated_at = ${plannedDecisionAt},
+            terminal_at = ${plannedDecisionAt}
           WHERE cycle_id = ${draft.identity.cycleId}
         `)
         const storeCompleted = yield* Effect.exit(
-          store.finish(draft.identity.cycleId, CycleState.Completed, decisionAt),
+          store.finish(draft.identity.cycleId, CycleState.Completed, plannedDecisionAt),
         )
         const directWrongReason = yield* Effect.exit(sql`
           UPDATE autonomous_cycles
@@ -3559,13 +3645,13 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             state = ${CycleState.Blocked},
             terminal_reason = ${CycleTerminalReason.Reconciliation},
             state_version = state_version + 1,
-            updated_at = ${decisionAt},
-            terminal_at = ${decisionAt}
+            updated_at = ${plannedDecisionAt},
+            terminal_at = ${plannedDecisionAt}
           WHERE cycle_id = ${draft.identity.cycleId}
         `)
 
-        const blocked = yield* store.block(draft.identity.cycleId, CycleTerminalReason.Risk, decisionAt)
-        const blockReplay = yield* store.block(draft.identity.cycleId, CycleTerminalReason.Risk, decisionAt)
+        const blocked = yield* store.block(draft.identity.cycleId, CycleTerminalReason.Risk, plannedDecisionAt)
+        const blockReplay = yield* store.block(draft.identity.cycleId, CycleTerminalReason.Risk, plannedDecisionAt)
         const unfinished = yield* store.readOldestUnfinished({
           qualificationRunId: draft.identity.qualificationRunId,
           accountId: draft.identity.accountId,
@@ -3630,7 +3716,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     expect(result.blocked.cycle).toMatchObject({
       state: CycleState.Blocked,
       terminalReason: CycleTerminalReason.Risk,
-      terminalAt: decisionAt,
+      terminalAt: plannedDecisionAt,
     })
     expect(result.blockReplay.changed).toBe(false)
     expect(result.blockReplay.cycle).toEqual(result.blocked.cycle)
@@ -3655,24 +3741,24 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           ) AS evaluated_at
         `
         if (clock === undefined) return yield* Effect.die(new Error('database Clock returned no row'))
-        const evaluatedAt = clock.evaluated_at
-        const executionOpen = new Date(Date.parse(evaluatedAt) + 20 * 60_000)
-        const executionSessionDate = executionOpen.toISOString().slice(0, 10) as IsoDate
-        const signalDateValue = new Date(`${executionSessionDate}T00:00:00.000Z`)
-        signalDateValue.setUTCDate(signalDateValue.getUTCDate() - 1)
-        const signalSessionDate = signalDateValue.toISOString().slice(0, 10) as IsoDate
+        const {
+          evaluationAt: evaluatedAt,
+          executionOpenAt,
+          executionSessionDate,
+          signalSessionDate,
+          snapshotBoundAt,
+        } = monthEndExecutionWindow(clock.evaluated_at)
         const executionCloseAt = `${executionSessionDate}T23:59:59.999Z`
         const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
         const draft = makeDraft('paper-account-terminal-denied', {
           executionPolicy,
           executionCloseAt,
-          executionOpenAt: executionOpen.toISOString(),
+          executionOpenAt,
           executionSessionDate,
           signalSessionDate,
         })
         const acquisitionAt = new Date(Date.parse(draft.window.signalCloseAt) + 60_000).toISOString()
-        const snapshotBoundAt = new Date(Date.parse(draft.window.signalCloseAt) + 120_000).toISOString()
-        const activatedAt = new Date(Date.parse(draft.window.signalCloseAt) + 180_000).toISOString()
+        const activatedAt = new Date(Date.parse(snapshotBoundAt) + 1_000).toISOString()
         const manifest = makeInputManifest(snapshotB, {
           asOfSession: signalSessionDate,
           finalizedAt: snapshotBoundAt,
@@ -3792,23 +3878,23 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           ) AS evaluated_at
         `
         if (clock === undefined) return yield* Effect.die(new Error('database Clock returned no row'))
-        const evaluatedAt = clock.evaluated_at
-        const executionOpen = new Date(Date.parse(evaluatedAt) + 20 * 60_000)
-        const executionSessionDate = executionOpen.toISOString().slice(0, 10) as IsoDate
-        const signalDateValue = new Date(`${executionSessionDate}T00:00:00.000Z`)
-        signalDateValue.setUTCDate(signalDateValue.getUTCDate() - 1)
-        const signalSessionDate = signalDateValue.toISOString().slice(0, 10) as IsoDate
+        const {
+          evaluationAt: evaluatedAt,
+          executionOpenAt,
+          executionSessionDate,
+          signalSessionDate,
+          snapshotBoundAt,
+        } = monthEndExecutionWindow(clock.evaluated_at)
         const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(fixtureProtocol.executionModel))
         const draft = makeDraft('paper-account-completion-proof', {
           executionPolicy,
           executionCloseAt: `${executionSessionDate}T23:59:59.999Z`,
-          executionOpenAt: executionOpen.toISOString(),
+          executionOpenAt,
           executionSessionDate,
           signalSessionDate,
         })
         const acquisitionAt = new Date(Date.parse(draft.window.signalCloseAt) + 60_000).toISOString()
-        const snapshotBoundAt = new Date(Date.parse(draft.window.signalCloseAt) + 120_000).toISOString()
-        const activatedAt = new Date(Date.parse(draft.window.signalCloseAt) + 180_000).toISOString()
+        const activatedAt = new Date(Date.parse(snapshotBoundAt) + 1_000).toISOString()
         const manifest = makeInputManifest(snapshotB, {
           asOfSession: signalSessionDate,
           finalizedAt: snapshotBoundAt,

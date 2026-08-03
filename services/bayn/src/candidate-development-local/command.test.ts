@@ -139,6 +139,29 @@ describe('candidate-development-local domain boundary', () => {
     if (Result.isFailure(result)) expect(result.failure.code).toBe('SOURCE_BINDING_INVALID')
   })
 
+  test('binds qualification analysis to the preregistered candidate ordinal and history', () => {
+    const bound = evaluateCandidateDevelopmentDefinition(fixtureRuntime.definition, witness, source, sourceManifest)
+    const firstCandidate = evaluateCandidateDevelopmentDefinition(fixtureRuntime.definition, witness, source, {
+      ...sourceManifest,
+      candidateOrdinal: 1,
+      priorTrialCount: 0,
+    })
+    expect(Result.isSuccess(bound)).toBe(true)
+    expect(Result.isSuccess(firstCandidate)).toBe(true)
+    if (Result.isSuccess(bound) && Result.isSuccess(firstCandidate)) {
+      expect(bound.success.terminalReportHash).not.toBe(firstCandidate.success.terminalReportHash)
+    }
+
+    const inconsistent = evaluateCandidateDevelopmentDefinition(fixtureRuntime.definition, witness, source, {
+      ...sourceManifest,
+      priorTrialCount: 19,
+    })
+    expect(inconsistent).toMatchObject({
+      _tag: 'Failure',
+      failure: { code: 'DECISION_FAILED' },
+    })
+  })
+
   test('maps a pure decision failure to a failed terminal outcome', () => {
     const failingDefinition = makeTestDefinition(fixtureProtocol, () =>
       Result.fail({

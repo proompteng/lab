@@ -4,12 +4,13 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-import { Effect, Option } from 'effect'
+import { Effect, Option, Result } from 'effect'
 
 import type { CandidateDevelopmentNextPreregistration } from './candidate-development-calendar'
 import {
   blockingQualificationWorkflowRunIds,
   loadQualificationCollectorInvocation,
+  makeQualificationCandidateRuntime,
   missingQualificationWiring,
   qualificationAttemptState,
   QualificationCollectorError,
@@ -17,10 +18,12 @@ import {
   verifyQualificationCandidateSource,
   type QualificationCollectorExecutionReceipt,
   type QualificationCollectorPrelockEvidence,
+  type DeploymentRuntime,
 } from './qualification-collector-command'
+import { candidate18Preregistration } from './candidate-development-calendar'
 import type { QualificationAuditReport } from './audit/audit'
 import type { QualificationCandidateBindingReceipt } from './qualification-candidate-command'
-import { fixtureLock } from './app-test-support'
+import { fixtureLock, fixtureRuntime } from './app-test-support'
 
 const prelock = (
   overrides: Partial<QualificationCollectorPrelockEvidence> = {},
@@ -66,6 +69,28 @@ const candidate = (input = prelock()): QualificationCandidateBindingReceipt => (
   lockId: '5'.repeat(64),
   bindingHash: '6'.repeat(64),
   lock: fixtureLock,
+})
+
+const deployment = (overrides: Partial<DeploymentRuntime> = {}): DeploymentRuntime => ({
+  sourceSha: 'a'.repeat(40),
+  imageRepository: 'registry.example.test/lab/bayn',
+  imageDigest: `sha256:${'b'.repeat(64)}`,
+  strategyBehaviorHash: fixtureRuntime.provenance.strategy.behaviorHash,
+  strategyParameterHash: fixtureRuntime.provenance.strategy.parameterHash,
+  maximumAuthority: 'OBSERVE',
+  clickhouseUrl: 'http://clickhouse.example.test',
+  signalSnapshotId: 'c'.repeat(64),
+  signalPublicationAsOf: '2026-01-30T00:00:00.000Z',
+  signalCalendarVersion: 'fixture-calendar-v2',
+  signalDataStart: '2016-01-04',
+  signalDataEnd: '2026-01-30',
+  signalLookbackStart: '2016-01-04',
+  signalEvaluationStart: '2017-01-03',
+  signalEvaluationEnd: '2026-01-30',
+  tigerBeetleClusterId: '1',
+  tigerBeetleAddresses: '127.0.0.1:3000',
+  tigerBeetleLedger: '1',
+  ...overrides,
 })
 
 const execution = (binding = candidate()): QualificationCollectorExecutionReceipt => ({
@@ -184,6 +209,39 @@ const sourceFixture = async (malformed = false) => {
 }
 
 describe('qualification collector boundaries', () => {
+  test('rejects a candidate whose module or parameter identity differs from the embedded deployment', () => {
+    const source = { moduleSha256: fixtureRuntime.provenance.strategy.behaviorHash }
+    const matching = makeQualificationCandidateRuntime(
+      fixtureRuntime.definition,
+      deployment(),
+      source,
+      candidate18Preregistration,
+    )
+    expect(Result.isSuccess(matching)).toBe(true)
+
+    const behaviorMismatch = makeQualificationCandidateRuntime(
+      fixtureRuntime.definition,
+      deployment({ strategyBehaviorHash: '0'.repeat(64) }),
+      source,
+      candidate18Preregistration,
+    )
+    expect(behaviorMismatch).toMatchObject({
+      _tag: 'Failure',
+      failure: { code: 'deployment-strategy-behavior-mismatch' },
+    })
+
+    const parameterMismatch = makeQualificationCandidateRuntime(
+      fixtureRuntime.definition,
+      deployment({ strategyParameterHash: '1'.repeat(64) }),
+      source,
+      candidate18Preregistration,
+    )
+    expect(parameterMismatch).toMatchObject({
+      _tag: 'Failure',
+      failure: { code: 'deployment-strategy-parameter-mismatch' },
+    })
+  })
+
   test('rejects non-scheduled and manual invocations', async () => {
     const manual = await Effect.runPromise(
       Effect.flip(loadQualificationCollectorInvocation({ GITHUB_EVENT_NAME: 'workflow_dispatch' })),
