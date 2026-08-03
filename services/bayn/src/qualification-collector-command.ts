@@ -580,18 +580,14 @@ export const executeQualificationAttempt = (
   candidate: QualificationCandidateBindingReceipt,
 ): Effect.Effect<QualificationCollectorExecutionReceipt, QualificationCollectorError> =>
   Effect.gen(function* () {
-    const existing = yield* input.dependencies.evidenceStore
-      .readQualification(candidate.candidateRunId)
-      .pipe(
-        Effect.mapError((cause) =>
-          collectorError(
-            'execution',
-            'qualification-state-read-failed',
-            'qualification state could not be read',
-            cause,
-          ),
-        ),
-      )
+    const timeoutMs = input.plan.config.operationTimeoutMs
+    const existing = yield* qualificationOperationWithinDeadline(
+      input.dependencies.evidenceStore.readQualification(candidate.candidateRunId),
+      timeoutMs,
+      'qualification-state-read',
+      (cause) =>
+        collectorError('execution', 'qualification-state-read-failed', 'qualification state could not be read', cause),
+    )
     const attemptState = yield* qualificationAttemptState(existing)
     const strategy = {
       application: input.candidate.application,
@@ -599,18 +595,13 @@ export const executeQualificationAttempt = (
       provenance: input.candidate.provenance,
     }
     if (attemptState === 'RECOVER_TERMINAL') {
-      const recovered = yield* input.dependencies.evidenceStore
-        .recover(candidate.candidateRunId, input.candidate.provenance)
-        .pipe(
-          Effect.mapError((cause) =>
-            collectorError(
-              'execution',
-              'qualification-recovery-failed',
-              'terminal qualification recovery failed',
-              cause,
-            ),
-          ),
-        )
+      const recovered = yield* qualificationOperationWithinDeadline(
+        input.dependencies.evidenceStore.recover(candidate.candidateRunId, input.candidate.provenance),
+        timeoutMs,
+        'qualification-recovery',
+        (cause) =>
+          collectorError('execution', 'qualification-recovery-failed', 'terminal qualification recovery failed', cause),
+      )
       if (Option.isNone(recovered)) {
         return yield* collectorError(
           'execution',
@@ -618,18 +609,18 @@ export const executeQualificationAttempt = (
           'terminal qualification evidence is missing for the recorded result',
         )
       }
-      const qualification = yield* input.dependencies.evidenceStore
-        .readQualification(candidate.candidateRunId)
-        .pipe(
-          Effect.mapError((cause) =>
-            collectorError(
-              'execution',
-              'qualification-state-read-failed',
-              'qualification state could not be re-read',
-              cause,
-            ),
+      const qualification = yield* qualificationOperationWithinDeadline(
+        input.dependencies.evidenceStore.readQualification(candidate.candidateRunId),
+        timeoutMs,
+        'qualification-state-reread',
+        (cause) =>
+          collectorError(
+            'execution',
+            'qualification-state-read-failed',
+            'qualification state could not be re-read',
+            cause,
           ),
-        )
+      )
       if (Option.isNone(qualification) || qualification.value.state !== 'TERMINAL') {
         return yield* collectorError(
           'execution',
@@ -651,7 +642,6 @@ export const executeQualificationAttempt = (
       }
     }
 
-    const timeoutMs = input.plan.config.operationTimeoutMs
     const opened = yield* qualificationOperationWithinDeadline(
       input.dependencies.evidenceStore.openQualification({
         lock: candidate.lock,
