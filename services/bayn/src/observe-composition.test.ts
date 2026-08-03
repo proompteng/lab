@@ -625,6 +625,7 @@ const prepareStoredPaperStep = async (
   latestSubmits: ReadonlyMap<string, MutationEvent | undefined> = new Map([[record.intent.intentId, latest]]),
   reconciledOrders: readonly Order[] = [],
   document: typeof fixture.document = fixture.document,
+  reconciledPositions: readonly Position[] = [],
 ) => {
   const intentStore: IntentStoreService = {
     commit: () => Effect.succeed({ record, deduplicated: true }),
@@ -655,7 +656,9 @@ const prepareStoredPaperStep = async (
         policy,
         fixture.boundCycle,
         document,
-        Effect.succeed(reconciliationResultAt(observedAt, unknownMutationCount, 0, [], reconciledOrders)),
+        Effect.succeed(
+          reconciliationResultAt(observedAt, unknownMutationCount, 0, reconciledPositions, reconciledOrders),
+        ),
         allowSubmit,
       )
     }).pipe(
@@ -1985,6 +1988,66 @@ describe('OBSERVE runtime composition', () => {
       updatedAt: rejectedAt,
     })
     expect(restrictions[0]?.reason).toContain(`intent ${fixture.intent.intentId} ended REJECTED`)
+  })
+
+  test('keeps a rejected PAPER close intent recoverable while reconciliation still shows an open position', async () => {
+    const fixture = await paperLifecycleFixture()
+    const observedAt = new Date(Date.parse(fixture.document.createdAt) + 1_000).toISOString()
+    const closeExpiresAt = new Date(Date.parse(observedAt) + 60_000).toISOString()
+    const rejected: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '5'.repeat(64),
+      mutationId: '6'.repeat(64),
+      intentId: fixture.intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitRejected,
+      requestHash: '7'.repeat(64),
+      consistencyDelayMs: 1_000,
+      requestId: 'paper-close-rejected-request',
+      responseStatus: 422,
+      responseContentHash: '8'.repeat(64),
+      occurredAt: observedAt,
+    }
+    const restrictions: string[] = []
+    const step = await prepareStoredPaperStep(
+      fixture,
+      storedIntent(fixture.intent, IntentState.Terminal, observedAt, TerminalOutcome.Rejected),
+      rejected,
+      observedAt,
+      0,
+      (reason) => restrictions.push(reason),
+      {
+        ...fixture.input,
+        mutationPhase: 'CLOSE',
+        paperEpisodeCutoffAt: fixture.document.submissionCutoffAt,
+        paperEpisodeExpiresAt: closeExpiresAt,
+      },
+      undefined,
+      true,
+      fixture.policy,
+      fixture.preparation,
+      undefined,
+      undefined,
+      [],
+      { ...fixture.document, submissionCutoffAt: closeExpiresAt, expiresAt: closeExpiresAt },
+      [
+        {
+          schemaVersion: 'bayn.paper-position.v1',
+          accountId,
+          symbol: fixture.intent.symbol,
+          quantityMicros: '1000000',
+          averageEntryPriceMicros: '100000000',
+          marketPriceMicros: '100000000',
+          marketValueMicros: '100000000',
+          unrealizedPnlMicros: '0',
+          observedAt,
+        },
+      ],
+    )
+
+    expect(step).toEqual({ _tag: 'Wait', observedAt })
+    expect(restrictions).toHaveLength(1)
   })
 
   test('keeps a partially filled PAPER cycle recoverable until its close phase', async () => {

@@ -335,33 +335,21 @@ const generationScope = (
       return sql`EXISTS (
         SELECT 1
         FROM authority_generations AS scope_generation
-        LEFT JOIN authority_generations AS next_generation
-          ON next_generation.previous_generation_hash = scope_generation.generation_hash
         WHERE scope_generation.generation_hash = ${authorityGenerationHash}
           AND scope_generation.maximum = 'PAPER'
           AND scope_generation.account_id = ${accountId}
           AND reconciliation.account_id = scope_generation.account_id
           AND reconciliation.reconciled_at >= scope_generation.activated_at
-          AND (
-            next_generation.activated_at IS NULL
-            OR reconciliation.reconciled_at < next_generation.activated_at
-          )
       )`
     case 'snapshot':
       return sql`EXISTS (
         SELECT 1
         FROM authority_generations AS scope_generation
-        LEFT JOIN authority_generations AS next_generation
-          ON next_generation.previous_generation_hash = scope_generation.generation_hash
         WHERE scope_generation.generation_hash = ${authorityGenerationHash}
           AND scope_generation.maximum = 'PAPER'
           AND scope_generation.account_id = ${accountId}
           AND snapshot.account_id = scope_generation.account_id
           AND event.observed_at >= scope_generation.activated_at
-          AND (
-            next_generation.activated_at IS NULL
-            OR event.observed_at < next_generation.activated_at
-          )
       )`
     case 'opening-snapshot':
       return sql`EXISTS (
@@ -1044,22 +1032,44 @@ export const readForwardPerformancePostgres = (
             ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
             LIMIT 1
           )
-          SELECT
-            cycle.cycle_id,
-            decision.decision_hash,
-            decision.document,
-            decision.created_at
-          FROM autonomous_cycles AS cycle
-          JOIN autonomous_cycle_shadow_decisions AS decision
-            ON decision.cycle_id = cycle.cycle_id
-            AND decision.decision_hash = cycle.decision_hash
+          SELECT decision_rows.cycle_id, decision_rows.decision_hash, decision_rows.document, decision_rows.created_at
+          FROM (
+            SELECT
+              cycle.cycle_id,
+              decision.decision_hash,
+              decision.document,
+              decision.created_at
+            FROM autonomous_cycles AS cycle
+            JOIN autonomous_cycle_shadow_decisions AS decision
+              ON decision.cycle_id = cycle.cycle_id
+              AND decision.decision_hash = cycle.decision_hash
+            WHERE decision.schema_version IN ('bayn.observe-shadow-decision.v1', 'bayn.paper-cycle-decision.v1')
+            UNION ALL
+            SELECT
+              cycle.cycle_id,
+              closure.document #>> '{document,contentHash}' AS decision_hash,
+              closure.document -> 'document' AS document,
+              (closure.document ->> 'createdAt')::timestamptz AS created_at
+            FROM autonomous_cycles AS cycle
+            JOIN autonomous_cycle_paper_closures AS closure ON closure.cycle_id = cycle.cycle_id
+            WHERE closure.document #>> '{document,schemaVersion}' = 'bayn.paper-cycle-decision.v1'
+            UNION ALL
+            SELECT
+              cycle.cycle_id,
+              replan.document #>> '{document,contentHash}' AS decision_hash,
+              replan.document -> 'document' AS document,
+              (replan.document ->> 'createdAt')::timestamptz AS created_at
+            FROM autonomous_cycles AS cycle
+            JOIN autonomous_cycle_paper_close_replans AS replan ON replan.cycle_id = cycle.cycle_id
+            WHERE replan.document #>> '{document,schemaVersion}' = 'bayn.paper-cycle-decision.v1'
+          ) AS decision_rows
+          JOIN autonomous_cycles AS cycle ON cycle.cycle_id = decision_rows.cycle_id
           CROSS JOIN latest_reconciliation
           WHERE cycle.account_id = ${accountId}
             AND cycle.state = 'COMPLETED'
             AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
             AND cycle.terminal_at <= latest_reconciliation.reconciled_at
-            AND decision.schema_version IN ('bayn.observe-shadow-decision.v1', 'bayn.paper-cycle-decision.v1')
-          ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
+          ORDER BY decision_rows.cycle_id COLLATE "C", decision_rows.created_at, decision_rows.decision_hash COLLATE "C"
         `.pipe(Effect.flatMap(decodeCycleDecisions))
         const marketVolumeBindingRows = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (

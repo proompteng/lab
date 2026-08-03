@@ -648,6 +648,13 @@ describe('forward performance read program', () => {
       ),
     ).toBe(true)
     expect(
+      observation.statements.some(
+        (statement) =>
+          statement.includes('JOIN autonomous_cycle_paper_closures AS closure') &&
+          statement.includes('JOIN autonomous_cycle_paper_close_replans AS replan'),
+      ),
+    ).toBe(true)
+    expect(
       observation.statements.some((statement) => statement.includes('JOIN snapshot_references AS reference')),
     ).toBe(true)
     expect(observation.statements.some((statement) => statement.includes('FROM intents AS intent'))).toBe(true)
@@ -730,7 +737,12 @@ describe('forward performance read program', () => {
       observation.statements.some((statement) =>
         statement.includes('event.observed_at < next_generation.activated_at'),
       ),
-    ).toBe(true)
+    ).toBe(false)
+    expect(
+      observation.statements.some((statement) =>
+        statement.includes('reconciliation.reconciled_at < next_generation.activated_at'),
+      ),
+    ).toBe(false)
     expect(observation.statements.some((statement) => statement.includes('first_cycle.submission_open_at'))).toBe(true)
     expect(
       observation.statements.some((statement) => statement.includes("cycle.state IN ('PENDING', 'ACTIVE', 'BLOCKED')")),

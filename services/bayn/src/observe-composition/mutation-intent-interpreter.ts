@@ -465,6 +465,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
       preparedIntents.flatMap((prepared) => (prepared.stored === undefined ? [] : [prepared.stored.intent])),
       facts.reconciliation.brokerState.orders,
     )
+    const hasOpenPosition = countOpenPositions(facts.reconciliation.brokerState.positions) > 0
     for (const prepared of preparedIntents) {
       const stored = yield* intentStore
         .read(prepared.intent.intentId)
@@ -496,7 +497,11 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
             )
             const recoveryDeadline =
               input.mutationPhase === 'CLOSE' ? input.paperEpisodeExpiresAt : input.paperEpisodeCutoffAt
-            if (hasFilledIntent && recoveryDeadline !== undefined && facts.evaluatedAt < recoveryDeadline) {
+            if (
+              (hasFilledIntent || (input.mutationPhase === 'CLOSE' && hasOpenPosition)) &&
+              recoveryDeadline !== undefined &&
+              facts.evaluatedAt < recoveryDeadline
+            ) {
               return { _tag: 'Wait', observedAt: facts.evaluatedAt }
             }
             return {
