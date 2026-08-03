@@ -3,198 +3,26 @@ name: bayn-build-push
 permissions:
   actions: read
   contents: read
-  pull-requests: read
 
 on:
   push:
     branches:
       - main
-    # Qualification binds to sha-${GITHUB_SHA}; publish an immutable image for
-    # every main SHA. The release-review verifier still gates Bayn-affecting
-    # changes, while unrelated commits receive an exact-source image without a
-    # review requirement.
-  issue_comment:
-    types:
-      - created
-  schedule:
-    - cron: '*/10 * * * *'
-  workflow_dispatch:
-    inputs:
-      retry_source_sha:
-        description: Exact merged Bayn source commit whose push review gate failed.
-        required: true
-        type: string
-      retry_pr_number:
-        description: Source pull request number bound to the failed merge.
-        required: true
-        type: string
-      retry_pr_head:
-        description: Never-force-pushed final source pull request head.
-        required: true
-        type: string
-      retry_failed_run_id:
-        description: Failed Bayn push run whose review gate exhausted before publication.
-        required: true
-        type: string
+
 concurrency:
-  group: >-
-    ${{ github.workflow }}-${{
-      github.event_name == 'schedule' &&
-      'retry-schedule' ||
-      github.event_name == 'issue_comment' &&
-      format('retry-comment-{0}', github.event.issue.number) ||
-      'main'
-    }}
+  group: ${{ github.workflow }}-main
   cancel-in-progress: true
 
 jobs:
-  retry-discovery:
-    if: >-
-      ${{
-        github.event_name == 'schedule' ||
-        (
-          github.event_name == 'issue_comment' &&
-          github.event.issue.pull_request &&
-          github.event.comment.user.login == 'chatgpt-codex-connector[bot]'
-        )
-      }}
-    name: Discover delayed exact-head attestation
-    runs-on: arc-arm64
-    timeout-minutes: 3
-    outputs:
-      dispatch: ${{ steps.retry.outputs.dispatch }}
-      retry_source_sha: ${{ steps.retry.outputs.retry_source_sha }}
-      retry_pr_number: ${{ steps.retry.outputs.retry_pr_number }}
-      retry_pr_head: ${{ steps.retry.outputs.retry_pr_head }}
-      retry_failed_run_id: ${{ steps.retry.outputs.retry_failed_run_id }}
-    steps:
-      - name: Checkout trusted default-branch verifier
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ github.sha }}
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - name: Discover exact failed source now eligible for retry
-        id: retry
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_PR_NUMBER: ${{ github.event.issue.number }}
-          EVENT_ACTOR: ${{ github.event.comment.user.login }}
-        run: |
-          set -euo pipefail
-          args=(
-            bun packages/scripts/src/bayn/verify-release-review.ts
-            --mode retry-discovery
-            --repository "${GITHUB_REPOSITORY}"
-            --repository-root "${GITHUB_WORKSPACE}"
-            --commit "${GITHUB_SHA}"
-            --github-output "${GITHUB_OUTPUT}"
-            --request-timeout-ms 10000
-          )
-          if [ "${EVENT_NAME}" = issue_comment ]; then
-            args+=(
-              --trigger-kind issue-comment
-              --trigger-pr-number "${EVENT_PR_NUMBER}"
-              --trigger-actor-login "${EVENT_ACTOR}"
-            )
-          else
-            args+=(--trigger-kind schedule)
-          fi
-          "${args[@]}"
-
-      - name: Dispatch trusted main publication retry
-        if: steps.retry.outputs.dispatch == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN }}
-          RETRY_SOURCE_SHA: ${{ steps.retry.outputs.retry_source_sha }}
-          RETRY_PR_NUMBER: ${{ steps.retry.outputs.retry_pr_number }}
-          RETRY_PR_HEAD: ${{ steps.retry.outputs.retry_pr_head }}
-          RETRY_FAILED_RUN_ID: ${{ steps.retry.outputs.retry_failed_run_id }}
-        run: |
-          set -euo pipefail
-          test -n "${GH_TOKEN}"
-          gh api \
-            --method POST \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/bayn-build-push.yml/dispatches" \
-            -f ref=main \
-            -f "inputs[retry_source_sha]=${RETRY_SOURCE_SHA}" \
-            -f "inputs[retry_pr_number]=${RETRY_PR_NUMBER}" \
-            -f "inputs[retry_pr_head]=${RETRY_PR_HEAD}" \
-            -f "inputs[retry_failed_run_id]=${RETRY_FAILED_RUN_ID}"
-
-  release-review-eligibility:
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    name: Verify exact-head Codex review
-    runs-on: arc-arm64
-    timeout-minutes: 6
-    outputs:
-      publish: ${{ steps.verify.outputs.publish }}
-      source_sha: ${{ steps.verify.outputs.source_sha }}
-    steps:
-      - name: Checkout exact main commit
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ github.sha }}
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - name: Hold until source PR review is release-eligible
-        id: verify
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EVENT_NAME: ${{ github.event_name }}
-          PUSH_BEFORE: ${{ github.event.before }}
-          RETRY_SOURCE_SHA: ${{ inputs.retry_source_sha }}
-          RETRY_PR_NUMBER: ${{ inputs.retry_pr_number }}
-          RETRY_PR_HEAD: ${{ inputs.retry_pr_head }}
-          RETRY_FAILED_RUN_ID: ${{ inputs.retry_failed_run_id }}
-        run: |
-          set -euo pipefail
-          if [ "${EVENT_NAME}" = push ]; then
-            bun packages/scripts/src/bayn/verify-release-review.ts \
-              --mode push \
-              --repository "${GITHUB_REPOSITORY}" \
-              --repository-root "${GITHUB_WORKSPACE}" \
-              --commit "${GITHUB_SHA}" \
-              --push-before "${PUSH_BEFORE}" \
-              --max-attempts 10 \
-              --poll-interval-ms 10000 \
-              --request-timeout-ms 10000 \
-              --github-output "${GITHUB_OUTPUT}"
-          else
-            bun packages/scripts/src/bayn/verify-release-review.ts \
-              --mode retry-publication \
-              --repository "${GITHUB_REPOSITORY}" \
-              --repository-root "${GITHUB_WORKSPACE}" \
-              --commit "${GITHUB_SHA}" \
-              --retry-source-commit "${RETRY_SOURCE_SHA}" \
-              --retry-pr-number "${RETRY_PR_NUMBER}" \
-              --retry-head "${RETRY_PR_HEAD}" \
-              --retry-failed-run-id "${RETRY_FAILED_RUN_ID}" \
-              --request-timeout-ms 10000 \
-              --github-output "${GITHUB_OUTPUT}"
-          fi
-
   image:
-    if: needs.release-review-eligibility.outputs.publish == 'true'
-    needs: release-review-eligibility
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: bayn
       package_attr: bayn-image
-      tag: sha-${{ needs.release-review-eligibility.outputs.source_sha }}
-      source_revision: ${{ needs.release-review-eligibility.outputs.source_sha }}
-      # Keep OCI builds out of the repository-wide `ci-pr-*` concurrency group.
+      tag: sha-${{ github.sha }}
+      source_revision: ${{ github.sha }}
       pr_number: ''
       latest: true
-      publish_on_dispatch: true
+      publish_on_dispatch: false
       release_artifact_name: bayn-release-contract
     secrets: inherit

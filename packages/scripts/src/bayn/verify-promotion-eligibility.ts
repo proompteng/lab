@@ -11,7 +11,6 @@ const maximumArtifactBytes = 2 * 1024 * 1024
 const maximumContractBytes = 128 * 1024
 const maximumRunLogEntries = 100
 const maximumRunLogEntryBytes = 1024 * 1024
-const maximumReleaseSearchLookbackMs = 24 * 60 * 60 * 1_000
 const maximumReleaseTriggerDelayMs = 24 * 60 * 60 * 1_000
 const releaseTriggerClockSkewMs = 5 * 60 * 1_000
 const minimumExactReviewAgeMs = 30_000
@@ -38,7 +37,6 @@ const promotionPathSet = new Set<string>(baynPromotionManifestPaths)
 
 const exactBaynBuildInputPaths = new Set([
   'packages/scripts/src/bayn/update-manifests.ts',
-  'packages/scripts/src/bayn/verify-release-review.ts',
   'nix/images/bayn.nix',
   'nix/images/bayn-runtime-root.nix',
   'nix/images/bun-workspace-service.nix',
@@ -1734,7 +1732,8 @@ export const isBaynPromotionBuildRunCandidate = (
   sourceSha: string,
 ): boolean =>
   run.headBranch === 'main' &&
-  ((run.event === 'push' && run.headSha === sourceSha) || run.event === 'workflow_dispatch') &&
+  run.event === 'push' &&
+  run.headSha === sourceSha &&
   run.status === 'completed' &&
   run.conclusion === 'success'
 
@@ -1743,7 +1742,7 @@ interface WorkflowRunsQuery {
   readonly workflow: string
   readonly page: number
   readonly headSha?: string
-  readonly event?: 'push' | 'workflow_dispatch' | 'workflow_run'
+  readonly event?: 'push' | 'workflow_run'
   readonly status?: 'success'
   readonly createdAfter?: string
   readonly createdBefore?: string
@@ -2160,13 +2159,6 @@ const fetchWorkflowJobs = async (
   throw new GitHubPromotionEligibilityError('github-api-pagination-limit', `read workflow run ${options.runId} jobs`)
 }
 
-const buildRunHasReviewedSource = async (
-  options: GitHubRequestOptions & { readonly repository: string; readonly runId: number },
-): Promise<boolean> =>
-  (await fetchWorkflowJobs(options)).some(
-    (job) => job.name === 'Verify exact-head Codex review' && job.conclusion === 'success',
-  )
-
 type BaynReleaseRunPromotionInspection =
   | { readonly status: 'created'; readonly evidence: BaynReleasePromotionEvidence }
   | { readonly status: 'held' | 'failed' | 'settling' | 'invalid'; readonly evidence: null }
@@ -2291,7 +2283,6 @@ const resolveProvenance = async (
     readonly sourceSha: string
     readonly pullNumber: number
     readonly headSha: string
-    readonly promotionCommittedAt: string
   },
 ): Promise<BaynPromotionProvenance> => {
   const requestOptions: GitHubRequestOptions = {
@@ -2299,34 +2290,17 @@ const resolveProvenance = async (
     requestTimeoutMs: options.requestTimeoutMs,
     fetchFn: options.fetchFn,
   }
-  const promotionCommittedAtMs = Date.parse(options.promotionCommittedAt)
-  if (!Number.isFinite(promotionCommittedAtMs)) {
-    throw new Error('promotion commit timestamp is invalid')
-  }
-  const promotionSearchStart = new Date(promotionCommittedAtMs - maximumReleaseSearchLookbackMs).toISOString()
-  const promotionSearchEnd = new Date(promotionCommittedAtMs).toISOString()
-  const [successfulPushRuns, successfulDispatchRuns] = await Promise.all([
-    fetchWorkflowRuns({
-      ...requestOptions,
-      repository: options.repository,
-      workflow: buildWorkflow,
-      headSha: options.sourceSha,
-      event: 'push',
-      status: 'success',
-    }),
-    fetchWorkflowRuns({
-      ...requestOptions,
-      repository: options.repository,
-      workflow: buildWorkflow,
-      event: 'workflow_dispatch',
-      status: 'success',
-      createdAfter: promotionSearchStart,
-      createdBefore: promotionSearchEnd,
-    }),
-  ])
+  const successfulPushRuns = await fetchWorkflowRuns({
+    ...requestOptions,
+    repository: options.repository,
+    workflow: buildWorkflow,
+    headSha: options.sourceSha,
+    event: 'push',
+    status: 'success',
+  })
   const successfulBuildRuns = [
     ...new Map(
-      [...successfulPushRuns, ...successfulDispatchRuns]
+      successfulPushRuns
         .filter((run) => isBaynPromotionBuildRunCandidate(run, options.sourceSha))
         .map((run) => [run.id, run]),
     ).values(),
@@ -2334,25 +2308,14 @@ const resolveProvenance = async (
   if (successfulBuildRuns.length === 0) {
     return {
       status: 'missing',
-      reason: `no successful reviewed ${buildWorkflow} main push exists for ${shortSha(options.sourceSha)}`,
-    }
-  }
-
-  const buildRuns: WorkflowRun[] = []
-  for (const run of successfulBuildRuns) {
-    if (await buildRunHasReviewedSource({ ...options, runId: run.id })) buildRuns.push(run)
-  }
-  if (buildRuns.length === 0) {
-    return {
-      status: 'missing',
-      reason: `successful ${buildWorkflow} run(s) for ${shortSha(options.sourceSha)} do not yet expose the exact-head Codex review job`,
+      reason: `no successful ${buildWorkflow} main push exists for ${shortSha(options.sourceSha)}`,
     }
   }
 
   const contractCandidates: Array<{ readonly run: WorkflowRun; readonly contract: BaynReleaseContract }> = []
   let missingArtifact = false
   let staleArtifact = false
-  for (const run of buildRuns) {
+  for (const run of successfulBuildRuns) {
     const matchingArtifacts = (await fetchArtifacts({ ...options, runId: run.id })).filter(
       (artifact) => artifact.name === releaseContractArtifact,
     )
@@ -2629,7 +2592,6 @@ export const createGitHubPromotionEligibilityLoader = (options: {
                 sourceSha: loaded.sourceSha as string,
                 pullNumber: loaded.pullRequest.number,
                 headSha: loaded.pullRequest.headSha,
-                promotionCommittedAt: loaded.pullRequest.headCommittedAt,
               }),
             ))()
     const [reviews, threads, issueComments, reactions] = await Promise.all([
