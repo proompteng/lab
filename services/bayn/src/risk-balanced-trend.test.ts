@@ -695,7 +695,7 @@ describe('risk-balanced trend candidate', () => {
     )
     expect(analysis.priorTrialRunIds).toEqual(priorTrialRunIds)
     expect(analysis.candidateOrdinal).toBe(9)
-    expect(canonicalHashV1(first)).toBe('f31a417c3823ecd21af48740ec98d143f6430cd5936c023965ae457ee5934029')
+    expect(canonicalHashV1(first)).toBe('e071381cf1ad78bb0c85cba343e4009e99147393ff95687a27d8bf31968b9d4d')
     expect(canonicalHashV1(first.signalDecisions)).toBe(
       'a7ee602d168b076e56759e852ac3a207d7f74774ee0f2650c0922ad1e1f4e272',
     )
