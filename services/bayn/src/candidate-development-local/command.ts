@@ -434,17 +434,30 @@ const prepareCandidateDevelopmentLocalAttempt = (
           sourceManifest: manifest.success,
         })
         if (Result.isFailure(bound)) throw bound.failure
-        const provenance = makeCandidateProvenance(application.definition, bound.success)
+        const reviewedApplication =
+          application.reviewedSource === undefined
+            ? bindReviewedStrategySource(application, {
+                sourceRevision,
+                modulePath,
+                moduleSha256: bound.success.moduleSha256,
+              })
+            : application
+        const provenance = makeCandidateProvenance(reviewedApplication.definition, bound.success)
         if (Result.isFailure(provenance)) throw provenance.failure
         const binding = verifyCandidateBinding(
-          application,
-          application.definition,
+          reviewedApplication,
+          reviewedApplication.definition,
           bound.success,
           manifest.success,
           provenance.success,
         )
         if (Result.isFailure(binding)) throw binding.failure
-        return { source: bound.success, sourceManifest: manifest.success, provenance: provenance.success }
+        return {
+          application: reviewedApplication,
+          source: bound.success,
+          sourceManifest: manifest.success,
+          provenance: provenance.success,
+        }
       },
       catch: (cause) =>
         cause instanceof CandidateDevelopmentLocalError
@@ -461,8 +474,8 @@ const prepareCandidateDevelopmentLocalAttempt = (
       receiptPath,
       source: source.source,
       sourceManifest: source.sourceManifest,
-      application,
-      definition: application.definition,
+      application: source.application,
+      definition: source.application.definition,
       provenance: source.provenance,
     }
   })

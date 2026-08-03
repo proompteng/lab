@@ -41,7 +41,7 @@ import {
 import type { QualificationAuditReport } from './audit/audit'
 import { hashParameters } from './protocol'
 import { decideQualificationPath, evaluateLockedSnapshot, qualifyEvaluation } from './startup/decisions'
-import { activeStrategyBehaviorHash } from './strategy'
+import { activeStrategyBehaviorHash, bindReviewedStrategySource } from './strategy'
 import {
   NonNegativeIntegerSchema,
   PositiveIntegerSchema,
@@ -946,7 +946,15 @@ export const makeQualificationCandidateRuntime = (
     )
   }
   const definition = application.definition
-  const reviewedSource = application.reviewedSource
+  const boundApplication =
+    application.reviewedSource === undefined
+      ? bindReviewedStrategySource(application, {
+          sourceRevision: source.sourceRevision,
+          modulePath: source.modulePath,
+          moduleSha256: source.moduleSha256,
+        })
+      : application
+  const reviewedSource = boundApplication.reviewedSource
   if (
     reviewedSource === undefined ||
     reviewedSource.sourceRevision !== source.sourceRevision ||
@@ -1004,7 +1012,7 @@ export const makeQualificationCandidateRuntime = (
     )
   }
   return Result.succeed({
-    application,
+    application: boundApplication,
     provenance: provenance.success,
     moduleSha256: source.moduleSha256,
     strategyBehaviorHash: deployment.strategyBehaviorHash,
