@@ -104,6 +104,21 @@ const collectorError = (
   cause?: unknown,
 ): QualificationCollectorError => new QualificationCollectorError({ phase, code, message, cause })
 
+export const qualificationOperationWithinDeadline = <A, E>(
+  effect: Effect.Effect<A, E>,
+  timeoutMs: number,
+  operation: string,
+  mapError: (cause: E) => QualificationCollectorError,
+): Effect.Effect<A, QualificationCollectorError> =>
+  effect.pipe(
+    Effect.mapError(mapError),
+    Effect.timeoutOrElse({
+      duration: timeoutMs,
+      orElse: () =>
+        Effect.fail(collectorError('execution', `${operation}-timeout`, `${operation} timed out after ${timeoutMs}ms`)),
+    }),
+  )
+
 const gitEnvironment = (): NodeJS.ProcessEnv =>
   Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')))
 
@@ -665,15 +680,18 @@ export const executeQualificationAttempt = (
         'qualification became terminal while the exact attempt was being acquired',
       )
     }
-    const snapshot = yield* input.dependencies.marketData.load.pipe(
-      Effect.mapError((cause) =>
+    const timeoutMs = input.plan.config.operationTimeoutMs
+    const snapshot = yield* qualificationOperationWithinDeadline(
+      input.dependencies.marketData.load,
+      timeoutMs,
+      'qualification-data-load',
+      (cause) =>
         collectorError(
           'execution',
           'qualification-data-load-failed',
           'qualification snapshot could not be loaded',
           cause,
         ),
-      ),
     )
     const evaluation = yield* Effect.fromResult(
       evaluateLockedSnapshot(strategy, input.candidate.provenance, input.inspection, candidate.lock, snapshot),
@@ -682,18 +700,18 @@ export const executeQualificationAttempt = (
         collectorError('execution', 'qualification-evaluation-failed', 'qualification evaluation failed', cause),
       ),
     )
-    const reconciliation = yield* input.dependencies.journal
-      .journalAndReconcile(evaluation)
-      .pipe(
-        Effect.mapError((cause) =>
-          collectorError(
-            'execution',
-            'qualification-reconciliation-failed',
-            'qualification reconciliation failed',
-            cause,
-          ),
+    const reconciliation = yield* qualificationOperationWithinDeadline(
+      input.dependencies.journal.journalAndReconcile(evaluation),
+      timeoutMs,
+      'qualification-reconciliation',
+      (cause) =>
+        collectorError(
+          'execution',
+          'qualification-reconciliation-failed',
+          'qualification reconciliation failed',
+          cause,
         ),
-      )
+    )
     const evidence = yield* Effect.fromResult(
       qualifyEvaluation(strategy, candidate.lock, evaluation, reconciliation),
     ).pipe(
@@ -701,24 +719,24 @@ export const executeQualificationAttempt = (
         collectorError('execution', 'qualification-analysis-failed', 'qualification analysis failed', cause),
       ),
     )
-    const persistence = yield* input.dependencies.evidenceStore
-      .persist({
+    const persistence = yield* qualificationOperationWithinDeadline(
+      input.dependencies.evidenceStore.persist({
         provenance: input.candidate.provenance,
         parameters: input.candidate.application.definition.parameters,
         evaluation,
         reconciliation,
         qualification: { lock: candidate.lock, result: evidence.qualification },
-      })
-      .pipe(
-        Effect.mapError((cause) =>
-          collectorError(
-            'execution',
-            'qualification-persist-failed',
-            'qualification evidence could not be persisted',
-            cause,
-          ),
+      }),
+      timeoutMs,
+      'qualification-persist',
+      (cause) =>
+        collectorError(
+          'execution',
+          'qualification-persist-failed',
+          'qualification evidence could not be persisted',
+          cause,
         ),
-      )
+    )
     const qualification = evidence.qualification
     return {
       schemaVersion: 'bayn.qualification-execution.v1' as const,

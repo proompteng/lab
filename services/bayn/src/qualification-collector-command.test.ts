@@ -4,7 +4,8 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-import { Effect, Option, Result } from 'effect'
+import { Effect, Fiber, Option, Result } from 'effect'
+import { TestClock } from 'effect/testing'
 
 import type { CandidateDevelopmentNextPreregistration } from './candidate-development-calendar'
 import {
@@ -12,6 +13,7 @@ import {
   loadQualificationCollectorInvocation,
   makeQualificationCandidateRuntime,
   missingQualificationWiring,
+  qualificationOperationWithinDeadline,
   qualificationAttemptState,
   QualificationCollectorError,
   runQualificationCollector,
@@ -217,6 +219,33 @@ const sourceFixture = async (malformed = false, historicalModule = false) => {
 }
 
 describe('qualification collector boundaries', () => {
+  test('interrupts a post-lock operation at the configured deadline', async () => {
+    let interrupted = false
+    const timeout = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fiber = yield* qualificationOperationWithinDeadline(
+            Effect.never.pipe(Effect.ensuring(Effect.sync(() => void (interrupted = true)))),
+            10,
+            'qualification-data-load',
+            () =>
+              new QualificationCollectorError({
+                phase: 'execution',
+                code: 'underlying-failure',
+                message: 'underlying operation failed',
+              }),
+          ).pipe(Effect.flip, Effect.forkScoped({ startImmediately: true }))
+          yield* Effect.yieldNow
+          yield* TestClock.adjust(10)
+          return yield* Fiber.join(fiber)
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(timeout).toMatchObject({ code: 'qualification-data-load-timeout' })
+    expect(interrupted).toBe(true)
+  })
+
   test('rejects a candidate whose module or parameter identity differs from the embedded deployment', () => {
     const source = { moduleSha256: fixtureRuntime.provenance.strategy.behaviorHash }
     const matching = makeQualificationCandidateRuntime(
