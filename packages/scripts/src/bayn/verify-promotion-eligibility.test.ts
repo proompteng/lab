@@ -763,7 +763,7 @@ describe('Bayn promotion eligibility', () => {
     }
   })
 
-  test('accepts exact-source pushes and main retry dispatches for later contract binding', () => {
+  test('accepts only exact-source main pushes for later contract binding', () => {
     const run = {
       headSha: sourceSha,
       headBranch: 'main',
@@ -771,10 +771,10 @@ describe('Bayn promotion eligibility', () => {
       conclusion: 'success',
     } as const
     expect(isBaynPromotionBuildRunCandidate({ ...run, event: 'push' }, sourceSha)).toBeTrue()
-    expect(isBaynPromotionBuildRunCandidate({ ...run, event: 'workflow_dispatch' }, sourceSha)).toBeTrue()
+    expect(isBaynPromotionBuildRunCandidate({ ...run, event: 'workflow_dispatch' }, sourceSha)).toBeFalse()
     expect(isBaynPromotionBuildRunCandidate({ ...run, event: 'issue_comment' }, sourceSha)).toBeFalse()
     expect(isBaynPromotionBuildRunCandidate({ ...run, event: 'push' }, staleHeadSha)).toBeFalse()
-    expect(isBaynPromotionBuildRunCandidate({ ...run, event: 'workflow_dispatch' }, staleHeadSha)).toBeTrue()
+    expect(isBaynPromotionBuildRunCandidate({ ...run, event: 'workflow_dispatch' }, staleHeadSha)).toBeFalse()
     expect(
       isBaynPromotionBuildRunCandidate(
         { ...run, event: 'workflow_dispatch', headBranch: 'release-candidate' },
@@ -783,7 +783,7 @@ describe('Bayn promotion eligibility', () => {
     ).toBeFalse()
   })
 
-  test('lists retry-dispatch and release runs without assuming the source SHA', () => {
+  test('lists exact-source push and release runs without assuming the source SHA', () => {
     const push = new URL(
       baynWorkflowRunsUrl({
         repository,
@@ -796,21 +796,6 @@ describe('Bayn promotion eligibility', () => {
     )
     expect(push.searchParams.get('head_sha')).toBe(sourceSha)
     expect(push.searchParams.get('event')).toBe('push')
-
-    const dispatch = new URL(
-      baynWorkflowRunsUrl({
-        repository,
-        workflow: 'bayn-build-push.yml',
-        page: 1,
-        event: 'workflow_dispatch',
-        status: 'success',
-        createdAfter: '2026-07-30T10:00:00.000Z',
-        createdBefore: '2026-07-30T11:00:00.000Z',
-      }),
-    )
-    expect(dispatch.searchParams.has('head_sha')).toBeFalse()
-    expect(dispatch.searchParams.get('event')).toBe('workflow_dispatch')
-    expect(dispatch.searchParams.get('created')).toBe('2026-07-30T10:00:00.000Z..2026-07-30T11:00:00.000Z')
 
     const releaseRange = baynReleaseSearchRange('2026-07-29T10:00:00.000Z')
     expect(releaseRange).toEqual({
@@ -1825,9 +1810,6 @@ describe('real release provenance discovery regression', () => {
         const parsed = new URL(url)
         workflowQueries.push(parsed)
         if (parsed.pathname.endsWith('/bayn-build-push.yml/runs')) {
-          if (parsed.searchParams.get('event') === 'workflow_dispatch') {
-            return Response.json({ workflow_runs: [] })
-          }
           return Response.json({
             workflow_runs: [
               {
@@ -1863,11 +1845,6 @@ describe('real release provenance discovery regression', () => {
             ],
           })
         }
-      }
-      if (url.endsWith(`/actions/runs/${realBuildRunId}/jobs?per_page=100&page=1`)) {
-        return Response.json({
-          jobs: [{ name: 'Verify exact-head Codex review', conclusion: 'success', steps: [] }],
-        })
       }
       if (url.endsWith(`/actions/runs/${realBuildRunId}/artifacts?per_page=100&page=1`)) {
         return Response.json({
@@ -1934,12 +1911,10 @@ describe('real release provenance discovery regression', () => {
       promotionHeadSha: realPromotionHeadSha,
       contract: realContract,
     })
-    const dispatchQuery = workflowQueries.find(
-      (query) =>
-        query.pathname.endsWith('/bayn-build-push.yml/runs') && query.searchParams.get('event') === 'workflow_dispatch',
-    )
     const releaseQuery = workflowQueries.find((query) => query.pathname.endsWith('/bayn-release.yml/runs'))
-    expect(dispatchQuery?.searchParams.has('head_sha')).toBeFalse()
+    expect(workflowQueries.filter((query) => query.pathname.endsWith('/bayn-build-push.yml/runs'))).toHaveLength(1)
+    expect(workflowQueries[0]?.searchParams.get('event')).toBe('push')
+    expect(workflowQueries[0]?.searchParams.get('head_sha')).toBe(realSourceSha)
     expect(releaseQuery?.searchParams.has('head_sha')).toBeFalse()
     expect(releaseQuery?.searchParams.get('created')).toBe('2026-07-30T14:17:43.000Z..2026-07-31T14:22:43.000Z')
   })
