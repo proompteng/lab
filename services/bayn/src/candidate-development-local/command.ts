@@ -42,6 +42,7 @@ import {
   witnessContentHash,
   type CandidateDevelopmentLocalArguments,
   type CandidateDevelopmentLocalAttemptReceipt,
+  type CandidateDevelopmentLocalSourceManifestBinding,
   type CandidateDevelopmentLocalSourceBinding,
   type CandidateDevelopmentLocalTerminalOutcome,
   type CandidateDevelopmentRuntimeMarketDataWitness,
@@ -257,6 +258,14 @@ export const verifyCandidateDevelopmentSourceManifest = (
     : Result.succeed(undefined)
 }
 
+export const verifyCandidateDevelopmentSourceManifestBinding = (
+  observed: CandidateDevelopmentLocalSourceManifestBinding,
+  expected: CandidateDevelopmentLocalSourceManifestBinding,
+): Result.Result<void, CandidateDevelopmentLocalError> =>
+  observed.path === expected.path && observed.blobOid === expected.blobOid && observed.sha256 === expected.sha256
+    ? Result.succeed(undefined)
+    : Result.fail(localError('SOURCE_BINDING_INVALID', 'candidate source manifest object is not the reviewed object'))
+
 const loadFrozenCandidateDevelopmentPreregistration = (): Result.Result<
   CandidateDevelopmentNextPreregistration,
   CandidateDevelopmentLocalError
@@ -321,6 +330,7 @@ const receiptPathFor = async (
 const prepareCandidateDevelopmentLocalAttempt = (
   args: CandidateDevelopmentLocalArguments,
   application: StrategyApplication<any, any, any>,
+  sourceManifestBinding: CandidateDevelopmentLocalSourceManifestBinding,
   sourceGit: CandidateDevelopmentSourceGit = candidateDevelopmentSourceGit,
 ): Effect.Effect<PreparedCandidateDevelopmentLocalAttempt, CandidateDevelopmentLocalError> =>
   Effect.gen(function* () {
@@ -390,6 +400,15 @@ const prepareCandidateDevelopmentLocalAttempt = (
           sourceGit,
           signal,
         )
+        const sourceManifestBindingResult = verifyCandidateDevelopmentSourceManifestBinding(
+          {
+            path: sourceManifestPath,
+            blobOid: reviewed.sourceManifestBlobOid,
+            sha256: sha256Bytes(reviewed.sourceManifestBytes),
+          },
+          sourceManifestBinding,
+        )
+        if (Result.isFailure(sourceManifestBindingResult)) throw sourceManifestBindingResult.failure
         const manifestValue = decodeJson(reviewed.sourceManifestBytes, 'candidate source manifest is not valid JSON')
         if (Result.isFailure(manifestValue)) throw manifestValue.failure
         const manifest = verifySourceManifest(manifestValue.success, modulePath, sha256Bytes(reviewed.moduleBytes))
@@ -764,7 +783,11 @@ const liveDependencies: CandidateDevelopmentLocalDependencies = {
             'no active candidate strategy application is statically composed for local development',
           ),
         )
-      : prepareCandidateDevelopmentLocalAttempt(args, activeCandidateDevelopmentRegistration.application),
+      : prepareCandidateDevelopmentLocalAttempt(
+          args,
+          activeCandidateDevelopmentRegistration.application,
+          activeCandidateDevelopmentRegistration.sourceManifest,
+        ),
   attempt: makeCandidateDevelopmentLocalAttempt({
     reserve: reserveCandidateDevelopmentLocalReceipt,
     execute: executeCandidateDevelopmentLocalAttempt,

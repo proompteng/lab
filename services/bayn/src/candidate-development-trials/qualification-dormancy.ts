@@ -1,5 +1,9 @@
 import { Result, Schema } from 'effect'
 
+import {
+  CandidateDevelopmentLocalSourceManifestBindingSchema,
+  type CandidateDevelopmentLocalSourceManifestBinding,
+} from '../candidate-development-local/domain'
 import type {
   CandidateDevelopmentNextPreregistration,
   CandidateDevelopmentTrialHistory,
@@ -140,6 +144,7 @@ const sameOrdinals = (left: readonly number[], right: readonly number[]): boolea
 const validateDevelopmentApprovalEvidence = (
   entry: Extract<CandidateDevelopmentTrialLedgerEntry, { readonly _tag: 'DEVELOPMENT_APPROVED' }>,
   preregistration: CandidateDevelopmentNextPreregistration,
+  sourceManifestBinding: CandidateDevelopmentLocalSourceManifestBinding,
   strategyName: string,
 ): QualificationDormancyResult => {
   if (entry.terminalReport.status !== 'PASS') return invalidLedger('entries.DEVELOPMENT_APPROVED.terminalReport.status')
@@ -164,6 +169,9 @@ const validateDevelopmentApprovalEvidence = (
     ['priorTrialCount', preregistration.priorTrialCount, source.priorTrialCount],
     ['strategyName', strategyName, source.strategyName],
     ['sourceRevision', preregistration.preregistration.sourceRevision, source.sourceRevision],
+    ['sourceManifestPath', sourceManifestBinding.path, source.sourceManifestPath],
+    ['sourceManifestBlobOid', sourceManifestBinding.blobOid, source.sourceManifestBlobOid],
+    ['sourceManifestSha256', sourceManifestBinding.sha256, source.sourceManifestSha256],
     ['modulePath', preregistration.modulePath, source.modulePath],
     ['moduleSha256', preregistration.moduleSha256, source.moduleSha256],
     ['strategyProtocolHash', preregistration.strategyProtocolHash, source.strategyProtocolHash],
@@ -307,9 +315,14 @@ export const qualificationDormancyDecisionFromLedgerState = (
     return { ok: true, decision: { status: 'dormant', reason: 'development-not-approved', candidateOrdinal } }
   }
   const strategyName = active.application?.definition?.name
-  return typeof strategyName === 'string'
-    ? validateDevelopmentApprovalEvidence(activeApproval, active.preregistration, strategyName)
-    : invalidLedger('activeCandidate.application.definition.name')
+  if (typeof strategyName !== 'string') return invalidLedger('activeCandidate.application.definition.name')
+  const sourceManifest = Schema.decodeUnknownResult(
+    CandidateDevelopmentLocalSourceManifestBindingSchema,
+    strictParseOptions,
+  )(active.sourceManifest)
+  return Result.isFailure(sourceManifest)
+    ? invalidLedger('activeCandidate.sourceManifest')
+    : validateDevelopmentApprovalEvidence(activeApproval, active.preregistration, sourceManifest.success, strategyName)
 }
 
 export const decideQualificationDormancy = (value: unknown): QualificationDormancyResult => {

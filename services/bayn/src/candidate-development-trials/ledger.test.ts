@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 
-import { makeCandidateDevelopmentLocalTerminalReport } from '../candidate-development-local/domain'
+import {
+  makeCandidateDevelopmentLocalTerminalReport,
+  type CandidateDevelopmentLocalSourceManifestBinding,
+} from '../candidate-development-local/domain'
 import { canonicalHashV1 } from '../hash'
 import { candidate20Preregistration } from './frozen-lineage'
 import {
@@ -11,7 +14,10 @@ import {
 import type { CandidateDevelopmentNextPreregistration } from './model'
 import { qualificationDormancyDecisionFromLedgerState } from './qualification-dormancy'
 
-const approvalEvidence = (preregistration: CandidateDevelopmentNextPreregistration) => {
+const approvalEvidence = (
+  preregistration: CandidateDevelopmentNextPreregistration,
+  sourceManifestBinding: CandidateDevelopmentLocalSourceManifestBinding,
+) => {
   if (preregistration.priorTrialsHash === undefined) throw new Error('approval fixture requires a trial history hash')
   const sourceMaterial = {
     candidateOrdinal: preregistration.candidateOrdinal,
@@ -26,9 +32,9 @@ const approvalEvidence = (preregistration: CandidateDevelopmentNextPreregistrati
     modulePath: preregistration.modulePath,
     moduleBlobOid: '3'.repeat(40),
     moduleSha256: preregistration.moduleSha256,
-    sourceManifestPath: `services/bayn/candidates/ordinal-${preregistration.candidateOrdinal}-source-manifest.json`,
-    sourceManifestBlobOid: '4'.repeat(40),
-    sourceManifestSha256: '5'.repeat(64),
+    sourceManifestPath: sourceManifestBinding.path,
+    sourceManifestBlobOid: sourceManifestBinding.blobOid,
+    sourceManifestSha256: sourceManifestBinding.sha256,
   }
   const source = { ...sourceMaterial, bindingHash: canonicalHashV1(sourceMaterial) }
   const terminalReport = makeCandidateDevelopmentLocalTerminalReport(
@@ -80,6 +86,11 @@ describe('Bayn candidate development trial ledger', () => {
         },
       },
       application: { definition: { name: 'risk-balanced-trend' } },
+      sourceManifest: {
+        path: 'services/bayn/candidates/ordinal-21-source-manifest.json',
+        blobOid: 'c'.repeat(40),
+        sha256: 'e'.repeat(64),
+      },
     }
     const pending = {
       ...candidateDevelopmentTrialLedgerState,
@@ -99,7 +110,7 @@ describe('Bayn candidate development trial ledger', () => {
           _tag: 'DEVELOPMENT_APPROVED' as const,
           candidateOrdinal: 21,
           priorTrialCount: 20,
-          ...approvalEvidence(activeCandidate.preregistration),
+          ...approvalEvidence(activeCandidate.preregistration, activeCandidate.sourceManifest),
         },
       ],
     }
@@ -156,6 +167,11 @@ describe('Bayn candidate development trial ledger', () => {
         },
       },
       application: { definition: { name: 'risk-balanced-trend' } },
+      sourceManifest: {
+        path: 'services/bayn/candidates/ordinal-21-source-manifest.json',
+        blobOid: 'c'.repeat(40),
+        sha256: 'e'.repeat(64),
+      },
     }
     const base = {
       ...candidateDevelopmentTrialLedgerState,
@@ -169,13 +185,16 @@ describe('Bayn candidate development trial ledger', () => {
           _tag: 'DEVELOPMENT_APPROVED' as const,
           candidateOrdinal: 21,
           priorTrialCount: 19,
-          ...approvalEvidence({
-            ...activeCandidate.preregistration,
-            preregistration: {
-              ...activeCandidate.preregistration.preregistration,
-              sourceRevision: 'c'.repeat(40),
+          ...approvalEvidence(
+            {
+              ...activeCandidate.preregistration,
+              preregistration: {
+                ...activeCandidate.preregistration.preregistration,
+                sourceRevision: 'c'.repeat(40),
+              },
             },
-          }),
+            activeCandidate.sourceManifest,
+          ),
         },
       ],
     }
@@ -193,13 +212,13 @@ describe('Bayn candidate development trial ledger', () => {
           _tag: 'DEVELOPMENT_APPROVED' as const,
           candidateOrdinal: 21,
           priorTrialCount: 20,
-          ...approvalEvidence(activeCandidate.preregistration),
+          ...approvalEvidence(activeCandidate.preregistration, activeCandidate.sourceManifest),
         },
         {
           _tag: 'DEVELOPMENT_APPROVED' as const,
           candidateOrdinal: 21,
           priorTrialCount: 20,
-          ...approvalEvidence(activeCandidate.preregistration),
+          ...approvalEvidence(activeCandidate.preregistration, activeCandidate.sourceManifest),
         },
       ],
     }

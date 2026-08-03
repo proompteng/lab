@@ -6,7 +6,10 @@ import {
   candidate18Preregistration,
   candidate19Preregistration,
 } from './frozen-lineage'
-import { CandidateDevelopmentLocalTerminalReportSchema } from '../candidate-development-local/domain'
+import {
+  CandidateDevelopmentLocalSourceManifestBindingSchema,
+  CandidateDevelopmentLocalTerminalReportSchema,
+} from '../candidate-development-local/domain'
 import type { CandidateDevelopmentInvalidPrecommit, CandidateDevelopmentNextPreregistration } from './model'
 import { NonNegativeIntegerSchema, PositiveIntegerSchema, Sha256Schema, strictParseOptions } from '../schemas'
 import type { StrategyApplication } from '../strategy'
@@ -88,6 +91,8 @@ export const candidateDevelopmentTrialLedger: readonly CandidateDevelopmentTrial
 
 export interface ActiveCandidateDevelopmentRegistration {
   readonly preregistration: CandidateDevelopmentNextPreregistration
+  /** The exact reviewed source-manifest object consumed by both local development and qualification. */
+  readonly sourceManifest: typeof CandidateDevelopmentLocalSourceManifestBindingSchema.Type
   /** The one reviewed application consumed by both local development and qualification. */
   readonly application: StrategyApplication<any, any, any>
 }

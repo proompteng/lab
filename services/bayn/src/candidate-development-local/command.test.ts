@@ -15,6 +15,7 @@ import {
   makeCandidateDevelopmentLocalAttempt,
   reserveCandidateDevelopmentLocalReceipt,
   runCandidateDevelopmentLocally,
+  verifyCandidateDevelopmentSourceManifestBinding,
   verifyCandidateDevelopmentLocalSourceTree,
   verifyCandidateDevelopmentSourceManifest,
   type CandidateDevelopmentLocalAttemptPort,
@@ -142,6 +143,20 @@ describe('candidate-development-local domain boundary', () => {
         Result.isFailure(
           verifyCandidateDevelopmentSourceManifest({ ...sourceManifest, ...stale }, expectedPreregistration),
         ),
+      ).toBe(true)
+    }
+  })
+
+  test('requires the exact reviewed source-manifest path, blob, and bytes', () => {
+    const expected = { path: sourceManifestPath, blobOid: sourceManifestBlobOid, sha256: 'e'.repeat(64) }
+    expect(Result.isSuccess(verifyCandidateDevelopmentSourceManifestBinding(expected, expected))).toBe(true)
+    for (const stale of [
+      { path: 'services/bayn/candidates/other-source-manifest.json' },
+      { blobOid: 'f'.repeat(40) },
+      { sha256: '0'.repeat(64) },
+    ]) {
+      expect(
+        Result.isFailure(verifyCandidateDevelopmentSourceManifestBinding({ ...expected, ...stale }, expected)),
       ).toBe(true)
     }
   })

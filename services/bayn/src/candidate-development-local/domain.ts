@@ -132,6 +132,15 @@ export interface CandidateDevelopmentLocalSourceBinding {
 
 const SourceObjectOidSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/))
 
+export const CandidateDevelopmentLocalSourceManifestBindingSchema = Schema.Struct({
+  path: StrictNonEmptyStringSchema,
+  blobOid: SourceObjectOidSchema,
+  sha256: Sha256Schema,
+})
+
+export type CandidateDevelopmentLocalSourceManifestBinding =
+  typeof CandidateDevelopmentLocalSourceManifestBindingSchema.Type
+
 export const CandidateDevelopmentLocalSourceBindingSchema = Schema.Struct({
   candidateOrdinal: PositiveIntegerSchema,
   priorTrialCount: NonNegativeIntegerSchema,
