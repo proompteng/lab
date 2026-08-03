@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "bayn.candidate-development-source-manifest.v2",
+  "candidateOrdinal": 21,
+  "priorTrialCount": 20,
+  "trialHistoryHash": "295eff4120c4d3deb33e09e3948bc5a670b55a836dc6be6849b2eea979e60008",
+  "strategyName": "candidate-21-six-month-rotation",
+  "strategyProtocolHash": "fd0a271c22691770246e16ca5aa38ba5b9c546d4070ae5382e8a79f40d5c2bd5",
+  "modulePath": "services/bayn/src/strategy/candidate-21.ts",
+  "moduleSha256": "e77081c2c6904a67b293334b6e051d76dd634974ec0055dd099e5c4d84985b06",
+  "moduleFormat": "typescript-strategy-application-v1",
+  "marketData": {
+    "schemaVersion": "bayn.candidate-development-market-data-source.v2",
+    "snapshotId": "2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0",
+    "inputManifestHash": "1e5377336f2e6feb751000114b81cc89aee5be7542e213c320f2cfbb4185bb2b",
+    "boundedContentHash": "b6052c8ebdca855973adf4e41efafb5028fd8dbbaa70809331f6017519b1c995"
+  }
+}
