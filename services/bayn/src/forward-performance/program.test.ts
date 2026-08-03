@@ -641,13 +641,12 @@ describe('forward performance read program', () => {
       ),
     ).toBe(true)
     expect(
-      observation.statements.some(
-        (statement) =>
-          statement.includes("decision.schema_version = 'bayn.observe-shadow-decision.v1'") &&
-          statement.includes("decision.document ->> 'mode' = 'OBSERVE'"),
+      observation.statements.some((statement) =>
+        statement.includes(
+          "decision.schema_version IN ('bayn.observe-shadow-decision.v1', 'bayn.paper-cycle-decision.v1')",
+        ),
       ),
     ).toBe(true)
-    expect(observation.statements.some((statement) => statement.includes('bayn.paper-cycle-decision.v1'))).toBe(false)
     expect(
       observation.statements.some((statement) => statement.includes('JOIN snapshot_references AS reference')),
     ).toBe(true)

@@ -22,7 +22,7 @@ import {
   StrictNonEmptyStringSchema as NonEmptyString,
   strictParseOptions,
 } from '../schemas'
-import { ObserveShadowDecisionDocumentSchema } from '../shadow-decision-contract'
+import { CycleDecisionDocumentSchema } from '../shadow-decision-contract'
 import type {
   ForwardPerformanceCashYieldEvidence,
   ForwardPerformanceCycleEvidence,
@@ -106,10 +106,10 @@ const TransactionRow = Schema.Struct({
   cycle_id: Schema.NullOr(Sha256),
 })
 
-const ObserveDecisionRow = Schema.Struct({
+const CycleDecisionRow = Schema.Struct({
   cycle_id: Sha256,
   decision_hash: Sha256,
-  document: ObserveShadowDecisionDocumentSchema,
+  document: CycleDecisionDocumentSchema,
   created_at: Schema.Date,
 })
 const MarketVolumeBindingRow = Schema.Struct({
@@ -185,7 +185,7 @@ const decodeTransactions = Schema.decodeUnknownEffect(Schema.Array(TransactionRo
 const decodeReceipts = Schema.decodeUnknownEffect(Schema.Array(AccountingReceiptRowSchema), strictParseOptions)
 const decodeCount = Schema.decodeUnknownEffect(Schema.Tuple([CountRow]), strictParseOptions)
 const decodeDurableExecutions = Schema.decodeUnknownEffect(Schema.Array(DurableExecutionRow), strictParseOptions)
-const decodeObserveDecisions = Schema.decodeUnknownEffect(Schema.Array(ObserveDecisionRow), strictParseOptions)
+const decodeCycleDecisions = Schema.decodeUnknownEffect(Schema.Array(CycleDecisionRow), strictParseOptions)
 const decodeMarketVolumeBindings = Schema.decodeUnknownEffect(Schema.Array(MarketVolumeBindingRow), strictParseOptions)
 const decodeExecutionIntents = Schema.decodeUnknownEffect(Schema.Array(IntentExecutionRow), strictParseOptions)
 const decodeExecutionOrders = Schema.decodeUnknownEffect(Schema.Array(OrderExecutionRow), strictParseOptions)
@@ -632,7 +632,7 @@ const intentExecutionKey = (input: {
   ])
 
 const executionEvidenceFromRows = (
-  decisionRows: readonly (typeof ObserveDecisionRow.Type)[],
+  decisionRows: readonly (typeof CycleDecisionRow.Type)[],
   intentRows: readonly (typeof IntentExecutionRow.Type)[],
   orderRows: readonly (typeof OrderExecutionRow.Type)[],
   fillRows: readonly (typeof FillExecutionRow.Type)[],
@@ -1013,7 +1013,7 @@ export const readForwardPerformancePostgres = (
         const receipts = yield* Effect.forEach(receiptRows, (row) =>
           decodeAccountingReceipt(accountingReceiptFromRow(row)),
         )
-        const observeDecisionRows = yield* sql<Record<string, unknown>>`
+        const cycleDecisionRows = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (
             SELECT reconciliation.reconciled_at
             FROM reconciliations AS reconciliation
@@ -1036,10 +1036,9 @@ export const readForwardPerformancePostgres = (
             AND cycle.state = 'COMPLETED'
             AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
             AND cycle.terminal_at <= latest_reconciliation.reconciled_at
-            AND decision.schema_version = 'bayn.observe-shadow-decision.v1'
-            AND decision.document ->> 'mode' = 'OBSERVE'
+            AND decision.schema_version IN ('bayn.observe-shadow-decision.v1', 'bayn.paper-cycle-decision.v1')
           ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
-        `.pipe(Effect.flatMap(decodeObserveDecisions))
+        `.pipe(Effect.flatMap(decodeCycleDecisions))
         const marketVolumeBindingRows = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (
             SELECT reconciliation.reconciled_at
@@ -1447,7 +1446,7 @@ export const readForwardPerformancePostgres = (
           }),
         )
         const executionEvidence = executionEvidenceFromRows(
-          observeDecisionRows,
+          cycleDecisionRows,
           executionIntentRows,
           executionOrderRows,
           executionFillRows,

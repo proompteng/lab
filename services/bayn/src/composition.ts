@@ -744,28 +744,35 @@ const makeClosedCycleReceiptEmitter =
       ),
     )
 
-const retryClosedCycleReceipts = (
+export const retryClosedCycleReceipts = (
   emit: (cycleId: string | undefined, observedAt: string) => Effect.Effect<boolean>,
   cutoffAt: string,
+  closeExpiresAt: string,
   intervalMs: number,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     const interval = Math.max(1_000, intervalMs)
-    const maximumAttempts = 16
     let attempts = 0
-    while (attempts < maximumAttempts) {
+    while (true) {
       const observedAt = yield* currentUtcInstant
       const untilCutoff = Date.parse(cutoffAt) - Date.parse(observedAt)
       if (untilCutoff > 0) {
         yield* Effect.sleep(Duration.millis(Math.min(interval, untilCutoff)))
         continue
       }
+      const untilCloseExpiry = Date.parse(closeExpiresAt) - Date.parse(observedAt)
+      if (untilCloseExpiry <= 0) break
       attempts += 1
       if (yield* emit(undefined, observedAt)) return
-      if (attempts < maximumAttempts) yield* Effect.sleep(Duration.millis(interval))
+      if (untilCloseExpiry > 0) yield* Effect.sleep(Duration.millis(Math.min(interval, untilCloseExpiry)))
     }
     yield* Effect.logWarning('Bayn forward-performance receipt retry window exhausted').pipe(
-      Effect.annotateLogs({ service: 'bayn', authorityGenerationCutoffAt: cutoffAt, attempts: maximumAttempts }),
+      Effect.annotateLogs({
+        service: 'bayn',
+        authorityGenerationCutoffAt: cutoffAt,
+        authorityGenerationCloseExpiresAt: closeExpiresAt,
+        attempts,
+      }),
     )
   })
 
@@ -996,6 +1003,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                       retryClosedCycleReceipts(
                                         emitClosedCycleReceipt,
                                         request.cutoffAt,
+                                        paperEpisodeCloseExpiresAt(request.expiresAt),
                                         realizedPlan.config.alpaca.reconciliationIntervalMs,
                                       ),
                                     ).pipe(Effect.asVoid),
