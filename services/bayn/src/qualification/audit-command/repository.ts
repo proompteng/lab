@@ -3,10 +3,10 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process'
 
 import type { RepositoryAudit } from '../../audit/audit'
 import {
+  QualificationAuditCommandError,
   qualificationAuditCommandError,
   type AcquireAuditRepositoryClient,
   type AuditRepositoryClient,
-  type QualificationAuditCommandError,
 } from './model'
 
 const repositoryAuditWithClient = (
@@ -47,12 +47,49 @@ const repositoryAuditWithClient = (
     ),
   )
 
+const verifySourceCheckoutWithClient = (
+  processes: ChildProcessSpawner.ChildProcessSpawner['Service'],
+  repositoryPath: string,
+  sourceRevision: string,
+): Effect.Effect<void, QualificationAuditCommandError> =>
+  Effect.gen(function* () {
+    const headLines = yield* processes.lines(
+      ChildProcess.make('git', ['-C', repositoryPath, '--no-optional-locks', 'rev-parse', '--verify', 'HEAD']),
+    )
+    const statusLines = yield* processes.lines(
+      ChildProcess.make('git', [
+        '-C',
+        repositoryPath,
+        '--no-optional-locks',
+        'status',
+        '--porcelain=v1',
+        '--untracked-files=all',
+      ]),
+    )
+    if (headLines[0] !== sourceRevision || statusLines.length > 0) {
+      return yield* Effect.fail(
+        qualificationAuditCommandError(
+          'repository',
+          'audit repository must be a clean checkout at the persisted source revision',
+        ),
+      )
+    }
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof QualificationAuditCommandError
+        ? cause
+        : qualificationAuditCommandError('repository', 'audit source checkout could not be verified', cause),
+    ),
+  )
+
 export const acquireAuditRepositoryClient: AcquireAuditRepositoryClient<ChildProcessSpawner.ChildProcessSpawner> = (
   input,
 ) =>
   ChildProcessSpawner.ChildProcessSpawner.pipe(
     Effect.map(
       (processes): AuditRepositoryClient => ({
+        verifySourceCheckout: (sourceRevision) =>
+          verifySourceCheckoutWithClient(processes, input.repositoryPath, sourceRevision),
         audit: (sourceRevision, lockCreatedAt, resultIdentity) =>
           repositoryAuditWithClient(processes, input.repositoryPath, sourceRevision, lockCreatedAt, resultIdentity),
       }),

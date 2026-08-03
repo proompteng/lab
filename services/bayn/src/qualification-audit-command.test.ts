@@ -140,6 +140,41 @@ describe('qualification audit command', () => {
     expect(acquisitions).toEqual({ database: 1, repository: 0, signal: 0, signalReplica: 0 })
   })
 
+  test('verifies the persisted source checkout before loading an audited strategy', async () => {
+    const sourceRevision = 'c'.repeat(40)
+    const repositoryFailure = new QualificationAuditCommandError({
+      operation: 'repository',
+      message: 'audit repository must be a clean checkout at the persisted source revision',
+    })
+    const database = {
+      ...opaqueDatabase,
+      run: { ...opaqueDatabase.run, sourceRevision },
+      artifacts: [
+        {
+          name: 'input-manifest',
+          schemaVersion: signalSnapshot.manifest.schemaVersion,
+          contentHash: 'd'.repeat(64),
+          payload: signalSnapshot.manifest,
+        },
+      ],
+    } as unknown as AuditDatabaseSnapshot
+    const input = auditConfig()
+    const readers = makeQualificationAuditReaders(input, {
+      database: () => Effect.succeed({ read: () => Effect.succeed(database) }),
+      signal: () => Effect.die('signal must not be acquired before source verification'),
+      signalReplica: () => Effect.die('signal replica must not be acquired before source verification'),
+      repository: () =>
+        Effect.succeed({
+          verifySourceCheckout: () => Effect.fail(repositoryFailure),
+          audit: () => Effect.fail(repositoryFailure),
+        }),
+    })
+
+    const failure = await Effect.runPromise(Effect.flip(runQualificationAudit(input, readers)))
+
+    expect(failure).toBe(repositoryFailure)
+  })
+
   test('acquires, uses, and releases the PostgreSQL audit client exactly once', async () => {
     let acquisitions = 0
     let releases = 0

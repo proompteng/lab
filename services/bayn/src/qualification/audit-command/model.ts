@@ -86,6 +86,7 @@ export type AcquireAuditSignalReplicaClient<R> = (
 ) => Effect.Effect<AuditSignalReplicaClient, QualificationAuditCommandError, Scope.Scope | R>
 
 export interface AuditRepositoryClient {
+  readonly verifySourceCheckout: (sourceRevision: string) => Effect.Effect<void, QualificationAuditCommandError>
   readonly audit: (
     sourceRevision: string,
     lockCreatedAt: string,
@@ -117,6 +118,7 @@ export interface QualificationAuditReaders<R = never> {
     lockCreatedAt: string,
     resultIdentity: readonly string[],
   ) => Effect.Effect<RepositoryAudit, QualificationAuditCommandError, R>
+  readonly verifySourceCheckout: (sourceRevision: string) => Effect.Effect<void, QualificationAuditCommandError, R>
 }
 
 export interface QualificationAuditAcquirers<R> {

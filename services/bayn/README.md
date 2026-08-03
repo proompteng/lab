@@ -208,9 +208,13 @@ BAYN_AUDIT_SIGNAL_PASSWORD=<readonly-bayn-password> \
 BAYN_AUDIT_CLICKHOUSE_URLS=<replica-0-audit-url>,<replica-1-audit-url> \
 BAYN_AUDIT_CLICKHOUSE_USERNAME=<query-log-audit-user> \
 BAYN_AUDIT_CLICKHOUSE_PASSWORD=<query-log-audit-password> \
-BAYN_AUDIT_REPOSITORY_PATH=<lab-checkout> \
+BAYN_AUDIT_REPOSITORY_PATH=<clean-lab-checkout-at-the-run-source-revision> \
   bun run --filter @proompteng/bayn audit:qualification
 ```
+
+The audit checkout must be clean and its `HEAD` must equal the persisted run source revision. This binds the reviewed
+candidate module and every local dependency it imports to the same source tree; the command fails closed for a newer,
+dirty, or otherwise different checkout.
 
 The audit command is not part of the deployed runtime and never calls TigerBeetle or a broker. Its privileged
 ClickHouse credential is operator-supplied only to read `system.query_log`; the service keeps its normal Signal

@@ -116,6 +116,8 @@ export const makeQualificationAuditReaders = <R>(
     acquirers
       .repository(input)
       .pipe(Effect.flatMap((repository) => repository.audit(sourceRevision, lockCreatedAt, resultIdentity))),
+  verifySourceCheckout: (sourceRevision) =>
+    acquirers.repository(input).pipe(Effect.flatMap((repository) => repository.verifySourceCheckout(sourceRevision))),
 })
 
 export const runQualificationAudit = <R>(input: AuditConfig, readers: QualificationAuditReaders<R>) =>
@@ -126,6 +128,7 @@ export const runQualificationAudit = <R>(input: AuditConfig, readers: Qualificat
       return yield* qualificationAuditCommandError('audit', 'input-manifest artifact is missing')
     }
     const manifest = yield* decodeInputManifestArtifact(inputManifestArtifact.payload)
+    yield* readers.verifySourceCheckout(database.run.sourceRevision)
     const protocol = database.protocol.parameters
     const application = yield* loadAuditStrategyApplication(
       input,
