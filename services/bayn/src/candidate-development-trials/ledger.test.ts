@@ -14,6 +14,12 @@ import {
 import type { CandidateDevelopmentNextPreregistration } from './model'
 import { qualificationDormancyDecisionFromLedgerState } from './qualification-dormancy'
 
+const preCandidate21LedgerState: CandidateDevelopmentTrialLedgerState = {
+  ...candidateDevelopmentTrialLedgerState,
+  entries: candidateDevelopmentTrialLedgerState.entries.slice(0, -1),
+  activeCandidate: null,
+}
+
 const approvalEvidence = (
   preregistration: CandidateDevelopmentNextPreregistration,
   sourceManifestBinding: CandidateDevelopmentLocalSourceManifestBinding,
@@ -71,7 +77,8 @@ describe('Bayn candidate development trial ledger', () => {
     )
     expect(candidateDevelopmentTrialLedgerState.developmentCandidateOrdinals).toEqual([17, 18, 19])
     expect(candidateDevelopmentTrialLedgerState.latestInvalidPrecommit?.status).toBe('PRECOMMIT_INVALID')
-    expect(candidateDevelopmentTrialLedgerState.activeCandidate).toBeNull()
+    expect(candidateDevelopmentTrialLedgerState.activeCandidate?.preregistration.candidateOrdinal).toBe(21)
+    expect(candidateDevelopmentTrialLedgerState.activeCandidate?.strategyName).toBe('candidate-21-six-month-rotation')
   })
 
   test('keeps an active registration dormant until its one terminal development approval is appended', () => {
@@ -94,7 +101,7 @@ describe('Bayn candidate development trial ledger', () => {
       },
     }
     const pending = {
-      ...candidateDevelopmentTrialLedgerState,
+      ...preCandidate21LedgerState,
       activeCandidate,
     } as unknown as CandidateDevelopmentTrialLedgerState
     expect(qualificationDormancyDecisionFromLedgerState(pending)).toEqual({
@@ -220,7 +227,7 @@ describe('Bayn candidate development trial ledger', () => {
       },
     }
     const base = {
-      ...candidateDevelopmentTrialLedgerState,
+      ...preCandidate21LedgerState,
       activeCandidate,
     } as unknown as CandidateDevelopmentTrialLedgerState
     const mismatched = {
@@ -300,9 +307,9 @@ describe('Bayn candidate development trial ledger', () => {
     }
     expect(
       qualificationDormancyDecisionFromLedgerState({
-        ...candidateDevelopmentTrialLedgerState,
+        ...preCandidate21LedgerState,
         entries: [
-          ...candidateDevelopmentTrialLedgerState.entries,
+          ...preCandidate21LedgerState.entries,
           pending,
           {
             _tag: 'DEVELOPMENT_REJECTED' as const,
@@ -311,7 +318,7 @@ describe('Bayn candidate development trial ledger', () => {
             sourceRevision: 'd'.repeat(40),
           },
         ],
-        developmentCandidateOrdinals: [...candidateDevelopmentTrialLedgerState.developmentCandidateOrdinals, 21],
+        developmentCandidateOrdinals: [...preCandidate21LedgerState.developmentCandidateOrdinals, 21],
         activeCandidate: null,
       }),
     ).toEqual({
@@ -352,9 +359,9 @@ describe('Bayn candidate development trial ledger', () => {
     }
     expect(
       qualificationDormancyDecisionFromLedgerState({
-        ...candidateDevelopmentTrialLedgerState,
-        entries: [...candidateDevelopmentTrialLedgerState.entries, pending, approval],
-        developmentCandidateOrdinals: [...candidateDevelopmentTrialLedgerState.developmentCandidateOrdinals, 21],
+        ...preCandidate21LedgerState,
+        entries: [...preCandidate21LedgerState.entries, pending, approval],
+        developmentCandidateOrdinals: [...preCandidate21LedgerState.developmentCandidateOrdinals, 21],
         activeCandidate: { preregistration, strategyName: 'risk-balanced-trend', sourceManifest },
       }),
     ).toMatchObject({
@@ -378,7 +385,7 @@ describe('Bayn candidate development trial ledger', () => {
       application: {},
     }
     const base = {
-      ...candidateDevelopmentTrialLedgerState,
+      ...preCandidate21LedgerState,
       activeCandidate,
     } as unknown as CandidateDevelopmentTrialLedgerState
 
