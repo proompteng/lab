@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Clock, Deferred, Effect, Fiber, Layer, Option, pipe, Redacted, Ref, Result } from 'effect'
+import { Clock, Context, Deferred, Effect, Fiber, Layer, Option, pipe, Redacted, Ref, Result, Scope } from 'effect'
 
 import {
   config,
@@ -431,6 +431,110 @@ describe('Bayn application composition', () => {
     )
 
     expect(events).toEqual(['resolved', 'cycle'])
+  })
+
+  test('keeps resolver-owned runtime resources open through cycle and health until application interruption', async () => {
+    const events: string[] = []
+    let finalizations = 0
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cycleUsed = yield* Deferred.make<void>()
+          const healthUsed = yield* Deferred.make<void>()
+          type RuntimeResource = {
+            readonly close: () => void
+            readonly use: (consumer: 'cycle' | 'health') => Effect.Effect<void>
+          }
+          const RuntimeResource = Context.Service<RuntimeResource>('BaynApplicationTest/RuntimeResource')
+          const runtimeResourceLayer = Layer.effect(
+            RuntimeResource,
+            Effect.acquireRelease(
+              Effect.sync(() => {
+                let open = true
+                const resource: RuntimeResource = {
+                  close: () => void (open = false),
+                  use: (consumer) =>
+                    Effect.sync(() => {
+                      if (!open) throw new Error(`runtime resource was finalized before ${consumer} use`)
+                      events.push(consumer)
+                    }).pipe(
+                      Effect.andThen(
+                        consumer === 'cycle'
+                          ? Deferred.succeed(cycleUsed, undefined)
+                          : Deferred.succeed(healthUsed, undefined),
+                      ),
+                    ),
+                }
+                return resource
+              }),
+              (resource) =>
+                Effect.sync(() => {
+                  resource.close()
+                  finalizations += 1
+                }),
+            ),
+          )
+          const fiber = yield* runApplication<never, never>(
+            autonomousConfig(config),
+            fixtureStrategy,
+            {
+              marketData: marketDataService(Effect.succeed(makeSnapshot())),
+              journal: successfulJournal,
+              evidenceStore: successfulEvidenceStore,
+              cycleObservability,
+            },
+            {
+              _tag: 'AutonomousRead',
+              brokerConfiguration: {
+                expectedAccountId: brokerAccountId,
+                executionEligible: false,
+                executionDisabledReason: 'BROKER_ACCESS_READ_ONLY',
+              },
+              startCycle: () => Effect.succeed(Effect.never),
+              resolveAfterStartup: () =>
+                Effect.flatMap(Scope.Scope, (scope) =>
+                  Layer.buildWithMemoMap(Layer.fresh(runtimeResourceLayer), Layer.makeMemoMapUnsafe(), scope).pipe(
+                    Effect.map((context) => {
+                      const resource = Context.get(context, RuntimeResource)
+                      const runtimeBroker = {
+                        ...broker,
+                        read: {
+                          ...broker.read,
+                          account: resource.use('health').pipe(Effect.andThen(broker.read.account)),
+                        },
+                      }
+                      return {
+                        _tag: 'AutonomousRead' as const,
+                        broker: runtimeBroker,
+                        startCycle: ({ recordPass }: AutonomousCycleStartupInput) =>
+                          resource.use('cycle').pipe(
+                            Effect.andThen(Clock.currentTimeMillis),
+                            Effect.map((millis) => new Date(millis).toISOString()),
+                            Effect.flatMap((observedAt) =>
+                              recordPass({ result: 'SUCCESS', observedAt, outcome: 'NO_PUBLICATION' }),
+                            ),
+                            Effect.as(Effect.never),
+                          ),
+                      }
+                    }),
+                  ),
+                ),
+            },
+          ).pipe(Effect.provide(HttpServerLive(config)), Effect.forkScoped)
+
+          yield* Deferred.await(cycleUsed).pipe(Effect.timeout('1 second'))
+          expect(finalizations).toBe(0)
+          yield* Deferred.await(healthUsed).pipe(Effect.timeout('1 second'))
+          expect(finalizations).toBe(0)
+          yield* Fiber.interrupt(fiber)
+        }),
+      ),
+    )
+
+    expect(events).toContain('cycle')
+    expect(events).toContain('health')
+    expect(finalizations).toBe(1)
   })
 
   test('starts the same scoped autonomous cycle for mutation runtime readiness', async () => {

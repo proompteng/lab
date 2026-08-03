@@ -111,7 +111,7 @@ export type AutonomousRuntime<StartupR, LoopR> = Extract<
 
 export type AutonomousRuntimeResolver<StartupR, LoopR> = (
   state: Ref.Ref<RuntimeState>,
-) => Effect.Effect<AutonomousRuntime<StartupR, LoopR>, never, StartupR | LoopR>
+) => Effect.Effect<AutonomousRuntime<StartupR, LoopR>, never, StartupR | LoopR | Scope.Scope>
 
 const cyclePassError = (observation: Extract<AutonomousCyclePassObservation, { readonly result: 'FAILURE' }>): string =>
   `cycleRunner: ${observation.operation}/${observation.failure}: ${observation.message}`
@@ -164,7 +164,11 @@ const initialRuntimeState = <StartupR, LoopR>(runtime: ApplicationRuntime<Startu
 const resolveRuntimeAfterStartup = <StartupR, LoopR>(
   runtime: ApplicationRuntime<StartupR, LoopR>,
   state: Ref.Ref<RuntimeState>,
-): Effect.Effect<AutonomousRuntime<StartupR, LoopR> | ApplicationRuntime<StartupR, LoopR>, never, StartupR | LoopR> =>
+): Effect.Effect<
+  AutonomousRuntime<StartupR, LoopR> | ApplicationRuntime<StartupR, LoopR>,
+  never,
+  StartupR | LoopR | Scope.Scope
+> =>
   runtime._tag === 'AutonomousRead' && runtime.resolveAfterStartup !== undefined
     ? runtime.resolveAfterStartup(state)
     : Effect.succeed(runtime)

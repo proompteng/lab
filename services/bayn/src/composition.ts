@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from '@effect/platform-node'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
-import { Effect, Layer, Match, Option, pipe, Redacted, Ref, Result, Schema, Stdio, Stream } from 'effect'
+import { Effect, Layer, Match, Option, pipe, Redacted, Ref, Result, Schema, Scope, Stdio, Stream } from 'effect'
 
 import {
   makeApplicationPlan,
@@ -565,10 +565,10 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
         return Result.succeed({ request, evidence: current.evidence })
       })
       return validateStaticRequest.pipe(
-        Effect.flatMap((validated): Effect.Effect<AutonomousRuntime<never, never>, never> => {
+        Effect.flatMap((validated): Effect.Effect<AutonomousRuntime<never, never>, never, Scope.Scope> => {
           if (Result.isFailure(validated)) return Effect.succeed(pendingRuntime())
           const request = validated.success.request
-          return Effect.scopedWith((scope) =>
+          return Effect.flatMap(Scope.Scope, (scope) =>
             Layer.buildWithMemoMap(
               Layer.fresh(AutonomousRuntimeResourcesLive(observePlan)),
               Layer.makeMemoMapUnsafe(),
