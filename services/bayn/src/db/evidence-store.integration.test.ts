@@ -1136,6 +1136,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       'accounting_transactions',
       'authority_generations',
       'authority_state',
+      'autonomous_cycle_paper_close_replans',
       'autonomous_cycle_paper_closures',
       'autonomous_cycle_shadow_decisions',
       'autonomous_cycles',
