@@ -231,7 +231,8 @@ const evaluateReferenceWithWork = (
   const runId = runIdentityResult.success.runId
   const protocolHash = protocolHashResult.success
   const candidateTargetsResult =
-    application !== undefined && application.definition.name !== 'risk-balanced-trend'
+    application !== undefined &&
+    (application.reviewedSource !== undefined || application.definition.name !== 'risk-balanced-trend')
       ? strategyTargetsFromApplication(sessions, eligibleSignals, application)
       : Result.all(
           eligibleSignals.map((signalIndex) =>

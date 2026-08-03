@@ -15,6 +15,7 @@ import { MICROS } from './execution-model'
 import { hashParameters } from './protocol'
 import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
 import { evaluateStrategyApplication } from './strategy/evaluation-runner'
+import { bindReviewedStrategySource } from './strategy'
 import { makeRiskBalancedTrendApplication, makeRiskBalancedTrendDefinition } from './strategy/risk-balanced-trend'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
@@ -53,10 +54,14 @@ describe('independent qualification reference', () => {
     expect(reference.doubleCostStrategy.daily).toEqual(actual.benchmarkSeries.doubleCostStrategy)
   })
 
-  test('replays a reviewed non-legacy application instead of substituting the legacy planner', () => {
+  test('replays a reviewed application even when its display name matches the legacy planner', () => {
     const snapshot = makeSnapshot(900)
-    const definition = { ...makeRiskBalancedTrendDefinition(fixtureProtocol), name: 'candidate-test-rotation' }
-    const application = makeRiskBalancedTrendApplication(fixtureProtocol, definition)
+    const definition = makeRiskBalancedTrendDefinition(fixtureProtocol)
+    const application = bindReviewedStrategySource(makeRiskBalancedTrendApplication(fixtureProtocol, definition), {
+      sourceRevision: 'a'.repeat(40),
+      modulePath: 'services/bayn/src/strategy/candidate.ts',
+      moduleSha256: 'd'.repeat(64),
+    })
     const provenance = makeRuntimeProvenance({
       sourceRevision: 'a'.repeat(40),
       image: {

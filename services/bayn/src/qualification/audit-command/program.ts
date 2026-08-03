@@ -31,6 +31,7 @@ const loadAuditStrategyApplication = (
   input: AuditConfig,
   sourceRevision: string,
   protocol: Parameters<typeof makeActiveStrategyApplication>[0],
+  expectedBehaviorHash: string,
 ): Effect.Effect<StrategyApplication<any, any, any>, QualificationAuditCommandError> => {
   if (input.candidateModulePath.trim().length === 0) return Effect.succeed(makeActiveStrategyApplication(protocol))
   if (!sha256Pattern.test(input.candidateModuleSha256)) {
@@ -43,7 +44,7 @@ const loadAuditStrategyApplication = (
   }
   return Effect.gen(function* () {
     const moduleBytes = yield* Effect.tryPromise({
-      try: () => readFile(input.candidateModulePath),
+      try: (signal) => readFile(input.candidateModulePath, { signal }),
       catch: (cause) =>
         qualificationAuditCommandError('repository', 'candidate strategy module could not be read', cause),
     })
@@ -53,6 +54,14 @@ const loadAuditStrategyApplication = (
         qualificationAuditCommandError(
           'repository',
           'candidate strategy module bytes do not match the qualification provenance',
+        ),
+      )
+    }
+    if (observedModuleSha256 !== expectedBehaviorHash) {
+      return yield* Effect.fail(
+        qualificationAuditCommandError(
+          'repository',
+          'candidate strategy module bytes do not match the persisted behavior identity',
         ),
       )
     }
@@ -109,7 +118,12 @@ export const runQualificationAudit = <R>(input: AuditConfig, readers: Qualificat
     }
     const manifest = yield* decodeInputManifestArtifact(inputManifestArtifact.payload)
     const protocol = database.protocol.parameters
-    const application = yield* loadAuditStrategyApplication(input, database.run.sourceRevision, protocol)
+    const application = yield* loadAuditStrategyApplication(
+      input,
+      database.run.sourceRevision,
+      protocol,
+      database.protocol.behaviorHash,
+    )
     const signal = yield* readers.loadSignal(manifest, protocol)
     const signalAccess = yield* readers.readSignalAccess(
       database,

@@ -54,6 +54,7 @@ const imageDigest = /^sha256:[0-9a-f]{64}$/
 const maximumGitOutputBytes = 16 * 1024 * 1024
 const defaultOperationTimeoutMs = 60_000
 const candidateDevelopmentTrialLedgerPath = 'services/bayn/src/candidate-development-trials/ledger.ts'
+const candidateDevelopmentDormancyTestPath = 'packages/scripts/src/bayn/verify-qualification-dormancy.test.ts'
 const defaultAuditReplicaUrls = [
   'http://chi-torghut-clickhouse-default-0-0.torghut.svc.cluster.local:8123',
   'http://chi-torghut-clickhouse-default-0-1.torghut.svc.cluster.local:8123',
@@ -1414,6 +1415,7 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
         preregistration.preregistration.path,
         activeCandidate.sourceManifest.path,
         candidateDevelopmentTrialLedgerPath,
+        candidateDevelopmentDormancyTestPath,
       ],
       preregistration,
       preregistrationBytes: staticGit.preregistrationBytes,

@@ -209,7 +209,10 @@ export const makeAuditFacts = (
   // Terminal liquidation was added after the v6 evaluation contract was already persisted.
   // The persisted v4 behavior identity is the durable marker even when a flat strategy emits no
   // terminal-close decision; the event marker preserves legacy v6 evidence semantics.
-  const closeAtEnd = strategyName !== auditContract.name || usesTerminalReplaySemantics(database)
+  const closeAtEnd =
+    input.application.reviewedSource !== undefined ||
+    strategyName !== auditContract.name ||
+    usesTerminalReplaySemantics(database)
   const referenceResult = evaluateReference(
     input.bars,
     input.manifest,
