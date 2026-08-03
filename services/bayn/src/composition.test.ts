@@ -9,7 +9,6 @@ describe('Bayn PAPER receipt retry boundary', () => {
   test('keeps retrying through the close lease instead of a fixed attempt count', async () => {
     const startAt = Date.parse('2026-08-03T12:00:00.000Z')
     const cutoffAt = new Date(startAt + 1_000).toISOString()
-    const closeExpiresAt = new Date(startAt + 18_000).toISOString()
     const observedAt: string[] = []
 
     await Effect.runPromise(
@@ -23,7 +22,6 @@ describe('Bayn PAPER receipt retry boundary', () => {
               return observedAt.length >= 17
             }),
           cutoffAt,
-          closeExpiresAt,
           1_000,
         ).pipe(Effect.forkChild({ startImmediately: true }))
         yield* Effect.yieldNow
@@ -36,10 +34,9 @@ describe('Bayn PAPER receipt retry boundary', () => {
     expect(observedAt.at(-1)).toBe(new Date(startAt + 17_000).toISOString())
   })
 
-  test('keeps retrying after the close lease for final reconciliation evidence', async () => {
+  test('keeps retrying until close settlement and reconciliation produce a receipt', async () => {
     const startAt = Date.parse('2026-08-03T12:00:00.000Z')
     const cutoffAt = new Date(startAt + 1_000).toISOString()
-    const closeExpiresAt = new Date(startAt + 3_000).toISOString()
     const observedAt: string[] = []
 
     await Effect.runPromise(
@@ -49,20 +46,18 @@ describe('Bayn PAPER receipt retry boundary', () => {
           (_cycleId, current) =>
             Effect.sync(() => {
               observedAt.push(current)
-              return observedAt.length >= 5
+              return observedAt.length >= 8
             }),
           cutoffAt,
-          closeExpiresAt,
           1_000,
-          3_000,
         ).pipe(Effect.forkChild({ startImmediately: true }))
         yield* Effect.yieldNow
-        yield* TestClock.adjust(5_000)
+        yield* TestClock.adjust(8_000)
         yield* Fiber.join(retry)
       }).pipe(Effect.provide(TestClock.layer())),
     )
 
-    expect(observedAt).toHaveLength(5)
-    expect(observedAt.at(-1)).toBe(new Date(startAt + 5_000).toISOString())
+    expect(observedAt).toHaveLength(8)
+    expect(observedAt.at(-1)).toBe(new Date(startAt + 8_000).toISOString())
   })
 })

@@ -747,14 +747,10 @@ const makeClosedCycleReceiptEmitter =
 export const retryClosedCycleReceipts = (
   emit: (cycleId: string | undefined, observedAt: string) => Effect.Effect<boolean>,
   cutoffAt: string,
-  closeExpiresAt: string,
   intervalMs: number,
-  postLeaseGraceMs = Math.max(1_000, intervalMs),
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     const interval = Math.max(1_000, intervalMs)
-    const receiptRetryDeadlineMs = Date.parse(closeExpiresAt) + Math.max(0, postLeaseGraceMs)
-    let attempts = 0
     while (true) {
       const observedAt = yield* currentUtcInstant
       const untilCutoff = Date.parse(cutoffAt) - Date.parse(observedAt)
@@ -762,23 +758,9 @@ export const retryClosedCycleReceipts = (
         yield* Effect.sleep(Duration.millis(Math.min(interval, untilCutoff)))
         continue
       }
-      const untilReceiptRetryDeadline = receiptRetryDeadlineMs - Date.parse(observedAt)
-      if (untilReceiptRetryDeadline <= 0) break
-      attempts += 1
       if (yield* emit(undefined, observedAt)) return
-      if (untilReceiptRetryDeadline > 0) {
-        yield* Effect.sleep(Duration.millis(Math.min(interval, untilReceiptRetryDeadline)))
-      }
+      yield* Effect.sleep(Duration.millis(interval))
     }
-    yield* Effect.logWarning('Bayn forward-performance receipt retry window exhausted').pipe(
-      Effect.annotateLogs({
-        service: 'bayn',
-        authorityGenerationCutoffAt: cutoffAt,
-        authorityGenerationCloseExpiresAt: closeExpiresAt,
-        receiptRetryDeadlineMs,
-        attempts,
-      }),
-    )
   })
 
 const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
@@ -969,10 +951,6 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                   prepared.generation.generationHash,
                                   runtimeServices.forwardPerformanceReceiptStore,
                                 )
-                                const receiptFinalizationGraceMs =
-                                  realizedPlan.config.cyclePollIntervalMs +
-                                  realizedPlan.config.alpaca.reconciliationIntervalMs +
-                                  realizedPlan.config.operationTimeoutMs
                                 const onClosedCycle = (cycleId: string, observedAt: string) =>
                                   emitClosedCycleReceipt(cycleId, observedAt).pipe(Effect.asVoid)
                                 return makeMutation(
@@ -1012,9 +990,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                       retryClosedCycleReceipts(
                                         emitClosedCycleReceipt,
                                         request.cutoffAt,
-                                        paperEpisodeCloseExpiresAt(request.expiresAt),
                                         realizedPlan.config.alpaca.reconciliationIntervalMs,
-                                        receiptFinalizationGraceMs,
                                       ),
                                     ).pipe(Effect.asVoid),
                                   ),
