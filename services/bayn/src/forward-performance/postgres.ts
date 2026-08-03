@@ -280,6 +280,7 @@ const generationScope = (
           AND scope_generation.maximum = 'PAPER'
           AND scope_generation.account_id = ${accountId}
           AND scope_generation.qualification_run_id = cycle.qualification_run_id
+          AND cycle.account_id = scope_generation.account_id
           AND (
             EXISTS (
               SELECT 1
@@ -298,6 +299,16 @@ const generationScope = (
               WHERE scoped_intent.cycle_id = cycle.cycle_id
                 AND scoped_intent.account_id = scope_generation.account_id
                 AND scoped_intent.authority_generation_hash = scope_generation.generation_hash
+            )
+            OR (
+              cycle.state IN ('PENDING', 'ACTIVE', 'BLOCKED')
+              AND cycle.submission_open_at >= scope_generation.activated_at
+              AND NOT EXISTS (
+                SELECT 1
+                FROM authority_generations AS next_generation
+                WHERE next_generation.previous_generation_hash = scope_generation.generation_hash
+                  AND cycle.submission_open_at >= next_generation.activated_at
+              )
             )
           )
       )`

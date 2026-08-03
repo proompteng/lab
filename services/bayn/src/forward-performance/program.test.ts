@@ -724,10 +724,15 @@ describe('forward performance read program', () => {
       ),
     ).toBe(true)
     expect(
-      observation.statements.some((statement) =>
-        statement.includes('cycle.submission_open_at >= scope_generation.activated_at'),
+      observation.statements.some(
+        (statement) =>
+          statement.includes("cycle.state IN ('PENDING', 'ACTIVE', 'BLOCKED')") &&
+          statement.includes('cycle.account_id = scope_generation.account_id') &&
+          statement.includes('cycle.submission_open_at >= scope_generation.activated_at') &&
+          statement.includes('next_generation.previous_generation_hash = scope_generation.generation_hash') &&
+          statement.includes('cycle.submission_open_at >= next_generation.activated_at'),
       ),
-    ).toBe(false)
+    ).toBe(true)
     expect(
       observation.statements.some((statement) =>
         statement.includes('transaction.occurred_at < next_generation.activated_at'),
