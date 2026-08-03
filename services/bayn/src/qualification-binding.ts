@@ -31,6 +31,7 @@ export interface QualificationCandidateBindingReceipt {
   readonly candidateOrdinal: number
   readonly priorTrialCount: number
   readonly sourceRevision: string
+  readonly reviewedSourceRevision: string
   readonly imageRepository: string
   readonly imageDigest: string
   readonly snapshotId: string
@@ -101,10 +102,13 @@ export const verifyQualificationCandidateBinding = (
       return yield* mismatch('strategy.name', definition.name, candidate.provenance.strategy.name)
     }
     const reviewedSource = candidate.application.reviewedSource
-    if (reviewedSource === undefined || reviewedSource.sourceRevision !== deployment.sourceRevision) {
+    if (
+      reviewedSource === undefined ||
+      reviewedSource.sourceRevision !== preregistration.preregistration.sourceRevision
+    ) {
       return yield* mismatch(
         'application.reviewedSource.sourceRevision',
-        deployment.sourceRevision,
+        preregistration.preregistration.sourceRevision,
         reviewedSource?.sourceRevision,
       )
     }
@@ -195,6 +199,7 @@ export const verifyQualificationCandidateBinding = (
       candidateOrdinal: preregistration.candidateOrdinal,
       priorTrialCount: preregistration.priorTrialCount,
       sourceRevision: deployment.sourceRevision,
+      reviewedSourceRevision: preregistration.preregistration.sourceRevision,
       imageRepository: deployment.image.repository,
       imageDigest: deployment.image.digest,
       snapshotId: snapshot.snapshotId,
