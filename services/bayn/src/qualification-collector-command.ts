@@ -177,6 +177,7 @@ export interface QualificationCandidateImmutableSourceInput {
 
 export interface QualificationCandidateImmutableSourceReceipt {
   readonly schemaVersion: 'bayn.qualification-candidate-source.v3'
+  readonly sourceRevision: string
   readonly modulePath: string
   readonly moduleBlobOid: string
   readonly moduleSha256: string
@@ -277,6 +278,7 @@ export const verifyQualificationCandidateSource = (
     yield* verifyCandidateSourceNovelty(input)
     return {
       schemaVersion: 'bayn.qualification-candidate-source.v3' as const,
+      sourceRevision: input.sourceRevision,
       modulePath: input.preregistration.modulePath,
       moduleBlobOid: input.moduleBlobOid,
       moduleSha256: sha256Bytes(input.moduleBytes),
@@ -931,7 +933,7 @@ export const loadQualificationCollectorInvocation = (
 export const makeQualificationCandidateRuntime = (
   application: QualificationCandidateApplication,
   deployment: DeploymentRuntime,
-  source: { readonly modulePath: string; readonly moduleSha256: string },
+  source: { readonly sourceRevision: string; readonly modulePath: string; readonly moduleSha256: string },
   preregistration: CandidateDevelopmentNextPreregistration,
 ): Result.Result<QualificationCandidateRuntime, QualificationCollectorError> => {
   if (preregistration.priorTrialsHash === undefined) {
@@ -947,6 +949,8 @@ export const makeQualificationCandidateRuntime = (
   const reviewedSource = application.reviewedSource
   if (
     reviewedSource === undefined ||
+    reviewedSource.sourceRevision !== source.sourceRevision ||
+    reviewedSource.sourceRevision !== deployment.sourceSha ||
     reviewedSource.modulePath !== source.modulePath ||
     reviewedSource.modulePath !== preregistration.modulePath ||
     reviewedSource.moduleSha256 !== source.moduleSha256 ||

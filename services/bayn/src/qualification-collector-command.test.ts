@@ -249,6 +249,7 @@ describe('qualification collector boundaries', () => {
 
   test('separates candidate module provenance from deployed behavior and parameter identity', () => {
     const source = {
+      sourceRevision: deployment().sourceSha,
       modulePath: candidate18Preregistration.modulePath,
       moduleSha256: candidate18Preregistration.moduleSha256,
     }

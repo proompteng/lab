@@ -527,6 +527,7 @@ const verifyCandidateBinding = (
 ): Result.Result<void, CandidateDevelopmentLocalError> => {
   if (
     application.reviewedSource === undefined ||
+    application.reviewedSource.sourceRevision !== source.sourceRevision ||
     application.reviewedSource.modulePath !== source.modulePath ||
     application.reviewedSource.moduleSha256 !== source.moduleSha256
   ) {
@@ -621,7 +622,11 @@ export const evaluateCandidateDevelopmentDefinition = (
   evaluateCandidateDevelopmentApplication(
     bindReviewedStrategySource(
       { ...makeActiveStrategyApplication(definition.parameters), definition },
-      { modulePath: source.modulePath, moduleSha256: source.moduleSha256 },
+      {
+        sourceRevision: source.sourceRevision,
+        modulePath: source.modulePath,
+        moduleSha256: source.moduleSha256,
+      },
     ),
     witness,
     source,

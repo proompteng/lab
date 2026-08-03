@@ -31,6 +31,7 @@ export interface VerifiedStrategyContext<TMarket> {
 
 /** Immutable identity of the reviewed source module that exports a candidate application. */
 export interface ReviewedStrategySource {
+  readonly sourceRevision: string
   readonly modulePath: string
   readonly moduleSha256: string
 }

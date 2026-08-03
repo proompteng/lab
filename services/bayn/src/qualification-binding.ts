@@ -101,7 +101,14 @@ export const verifyQualificationCandidateBinding = (
       return yield* mismatch('strategy.name', definition.name, candidate.provenance.strategy.name)
     }
     const reviewedSource = candidate.application.reviewedSource
-    if (reviewedSource === undefined || reviewedSource.modulePath !== preregistration.modulePath) {
+    if (reviewedSource === undefined || reviewedSource.sourceRevision !== deployment.sourceRevision) {
+      return yield* mismatch(
+        'application.reviewedSource.sourceRevision',
+        deployment.sourceRevision,
+        reviewedSource?.sourceRevision,
+      )
+    }
+    if (reviewedSource.modulePath !== preregistration.modulePath) {
       return yield* mismatch(
         'application.reviewedSource.modulePath',
         preregistration.modulePath,
