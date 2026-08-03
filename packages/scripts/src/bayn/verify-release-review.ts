@@ -51,6 +51,13 @@ export interface PullRequestForcePush {
   readonly createdAt: string
 }
 
+export interface PullRequestFinalHeadCommitDetail {
+  readonly sha: string
+  readonly parents: readonly string[]
+  readonly files: readonly string[]
+  readonly fileChanges: readonly BaynReleaseCommitFileChange[]
+}
+
 export interface PullRequestReviewThreadComment {
   readonly authorLogin: string | null
   readonly authorAssociation: string
@@ -83,6 +90,7 @@ export interface PullRequestReviewState {
   readonly reviews: readonly PullRequestReview[]
   readonly threads: readonly PullRequestReviewThread[]
   readonly commitShas: readonly string[]
+  readonly finalHeadCommit?: PullRequestFinalHeadCommitDetail | null
   readonly issueComments: readonly PullRequestIssueComment[]
   readonly reactions: readonly PullRequestReaction[]
   readonly headForcePushes: readonly PullRequestForcePush[]
@@ -1481,6 +1489,113 @@ const hasOnlySupersededCodexReviews = (
   })
 }
 
+const selectLatestApplicableCodexReview = (
+  pullRequest: PullRequestReviewState,
+  codexReviews: readonly PullRequestReview[],
+): PullRequestReview | undefined => {
+  const candidates = codexReviews
+    .filter(
+      (review) =>
+        review.commitSha !== null &&
+        review.commitSha !== pullRequest.headSha &&
+        review.submittedAt !== null &&
+        pullRequest.commitShas.includes(review.commitSha),
+    )
+    .map((review) => ({ review, submittedAtMs: Date.parse(review.submittedAt as string) }))
+  if (candidates.some(({ submittedAtMs }) => !Number.isFinite(submittedAtMs))) return undefined
+
+  const latestSubmittedAtMs = Math.max(
+    ...candidates.map(({ submittedAtMs }) => submittedAtMs),
+    Number.NEGATIVE_INFINITY,
+  )
+  const latest = candidates.filter(({ submittedAtMs }) => submittedAtMs === latestSubmittedAtMs)
+  return latest.length === 1 ? latest[0]?.review : undefined
+}
+
+const reviewCommentBelongsTo = (comment: PullRequestReviewThreadComment, reviewEvidence: PullRequestReview): boolean =>
+  comment.reviewAuthorLogin === baynCodexReviewer &&
+  comment.reviewCommitSha === reviewEvidence.commitSha &&
+  comment.reviewSubmittedAt === reviewEvidence.submittedAt
+
+const selectReviewThreads = (
+  pullRequest: PullRequestReviewState,
+  reviewEvidence: PullRequestReview,
+): readonly PullRequestReviewThread[] =>
+  pullRequest.threads.filter((thread) =>
+    thread.comments.some((comment) => reviewCommentBelongsTo(comment, reviewEvidence)),
+  )
+
+const selectFeedbackFixEvidence = (
+  pullRequest: PullRequestReviewState,
+  reviewEvidence: PullRequestReview,
+  reviewSubmittedAtMs: number,
+): { readonly eligibleAtMs: number } | undefined => {
+  if (reviewEvidence.commitSha === null || reviewEvidence.submittedAt === null) return undefined
+  const reviewedCommitIndex = pullRequest.commitShas.indexOf(reviewEvidence.commitSha)
+  const finalCommitIndex = pullRequest.commitShas.length - 1
+  if (reviewedCommitIndex < 0 || reviewedCommitIndex + 1 !== finalCommitIndex) return undefined
+  const reviewedThreads = selectReviewThreads(pullRequest, reviewEvidence)
+  if (reviewedThreads.length === 0) return undefined
+
+  const reviewedPaths = new Set<string>()
+  for (const thread of reviewedThreads) {
+    const reviewedComments = thread.comments.filter((comment) => reviewCommentBelongsTo(comment, reviewEvidence))
+    if (
+      thread.path === null ||
+      thread.path.length === 0 ||
+      reviewedComments.length === 0 ||
+      reviewedComments.some(
+        (comment) =>
+          comment.reviewSubmittedAt !== reviewEvidence.submittedAt ||
+          comment.reviewState !== reviewEvidence.state ||
+          comment.commitSha !== reviewEvidence.commitSha ||
+          comment.reviewCommitSha !== reviewEvidence.commitSha,
+      )
+    ) {
+      return undefined
+    }
+    reviewedPaths.add(thread.path)
+    if (!thread.isResolved || !thread.isOutdated) return undefined
+  }
+
+  const finalHeadCommit = pullRequest.finalHeadCommit
+  const changedFilePaths = finalHeadCommit?.fileChanges.flatMap((change) =>
+    change.previousPath === null ? [change.path] : [change.path, change.previousPath],
+  )
+  const finalFilePaths = finalHeadCommit?.files
+  const finalFilePathSet = finalFilePaths === undefined ? null : new Set(finalFilePaths)
+  const changedFilePathSet = changedFilePaths === undefined ? null : new Set(changedFilePaths)
+  const finalBaynPaths = finalHeadCommit?.fileChanges
+    .filter((change) => isBaynReleaseAffectingPath(change.path))
+    .map((change) => change.path)
+  if (
+    finalHeadCommit === undefined ||
+    finalHeadCommit === null ||
+    finalHeadCommit.sha !== pullRequest.headSha ||
+    finalHeadCommit.parents.length !== 1 ||
+    finalHeadCommit.parents[0] !== reviewEvidence.commitSha ||
+    finalFilePaths === undefined ||
+    changedFilePaths === undefined ||
+    finalFilePaths.length !== changedFilePaths.length ||
+    finalFilePathSet === null ||
+    changedFilePathSet === null ||
+    finalFilePathSet.size !== finalFilePaths.length ||
+    changedFilePathSet.size !== changedFilePaths.length ||
+    finalFilePaths.some((path) => !changedFilePathSet.has(path)) ||
+    changedFilePaths.some((path) => !finalFilePathSet.has(path)) ||
+    finalHeadCommit.fileChanges.some((change) => change.path.length === 0 || change.previousPath !== null) ||
+    finalBaynPaths === undefined ||
+    new Set(finalBaynPaths).size !== finalBaynPaths.length ||
+    finalBaynPaths.some((path) => !reviewedPaths.has(path))
+  ) {
+    return undefined
+  }
+
+  return {
+    eligibleAtMs: reviewSubmittedAtMs + minimumExactReviewAgeMs,
+  }
+}
+
 const selectExactHeadCodexAttestation = (
   pullRequest: PullRequestReviewState,
   createdAtMs: number,
@@ -1535,6 +1650,32 @@ const selectExactHeadCodexAttestation = (
     submittedAt: reaction.createdAt,
     state: 'COMMENTED',
   }
+}
+
+const shouldFetchFinalHeadCommitDetail = (pullRequest: PullRequestReviewState): boolean => {
+  const createdAtMs = Date.parse(pullRequest.createdAt)
+  const mergedAtMs = pullRequest.mergedAt === null ? Number.NaN : Date.parse(pullRequest.mergedAt)
+  if (!Number.isFinite(createdAtMs) || !Number.isFinite(mergedAtMs) || createdAtMs > mergedAtMs) return false
+
+  const codexReviews = pullRequest.reviews.filter((review) => review.authorLogin === baynCodexReviewer)
+  const exactHeadReviews = codexReviews.filter((review) => review.commitSha === pullRequest.headSha)
+  if (exactHeadReviews.some((review) => review.submittedAt === null || review.state === 'PENDING')) return false
+  if (exactHeadReviews.some((review) => review.submittedAt !== null)) return false
+  if (selectExactHeadCodexAttestation(pullRequest, createdAtMs, mergedAtMs) !== undefined) return false
+  if (!hasUniqueFinalCommitHistory(pullRequest)) return false
+
+  const feedbackFixReview = selectLatestApplicableCodexReview(pullRequest, codexReviews)
+  if (
+    feedbackFixReview === undefined ||
+    !eligibleReviewStates.has(feedbackFixReview.state) ||
+    feedbackFixReview.submittedAt === null ||
+    !Number.isFinite(Date.parse(feedbackFixReview.submittedAt))
+  ) {
+    return false
+  }
+
+  const reviewedCommitIndex = pullRequest.commitShas.indexOf(feedbackFixReview.commitSha as string)
+  return reviewedCommitIndex + 1 === pullRequest.commitShas.length - 1
 }
 
 export const evaluateBaynReleaseReview = (input: {
@@ -1634,7 +1775,7 @@ export const evaluateBaynReleaseReview = (input: {
 
   let reviewEvidence =
     exactSubmittedReview ?? selectExactHeadCodexAttestation(pullRequest, pullRequestCreatedAtMs, pullRequestMergedAtMs)
-  let feedbackFixCommitShas: readonly string[] = []
+  let feedbackFixReview: PullRequestReview | null = null
   if (reviewEvidence === undefined) {
     if (!hasUniqueFinalCommitHistory(pullRequest)) {
       return hold(
@@ -1644,16 +1785,7 @@ export const evaluateBaynReleaseReview = (input: {
       )
     }
 
-    const priorSubmittedReviews = codexReviews
-      .filter(
-        (review) =>
-          review.commitSha !== null &&
-          review.commitSha !== pullRequest.headSha &&
-          review.submittedAt !== null &&
-          pullRequest.commitShas.includes(review.commitSha),
-      )
-      .toSorted((left, right) => (right.submittedAt as string).localeCompare(left.submittedAt as string))
-    reviewEvidence = priorSubmittedReviews[0]
+    reviewEvidence = selectLatestApplicableCodexReview(pullRequest, codexReviews)
     if (reviewEvidence === undefined) {
       const olderReviewedHeads = [
         ...new Set(
@@ -1681,7 +1813,7 @@ export const evaluateBaynReleaseReview = (input: {
         false,
       )
     }
-    feedbackFixCommitShas = pullRequest.commitShas.slice(reviewedCommitIndex + 1)
+    feedbackFixReview = reviewEvidence
   }
 
   if (reviewEvidence.state === 'CHANGES_REQUESTED') {
@@ -1717,41 +1849,16 @@ export const evaluateBaynReleaseReview = (input: {
   }
   let eligibleAtMs = reviewSubmittedAtMs + minimumExactReviewAgeMs
 
-  if (feedbackFixCommitShas.length > 0) {
-    const reviewedHeadSha = reviewEvidence.commitSha as string
-    for (const fixCommitSha of feedbackFixCommitShas) {
-      const trustedAttestationTimes = pullRequest.threads.flatMap((thread) => {
-        if (!thread.isResolved) return []
-        const belongsToReviewedHead = thread.comments.some(
-          (comment) =>
-            comment.reviewAuthorLogin === baynCodexReviewer &&
-            comment.reviewCommitSha === reviewedHeadSha &&
-            comment.reviewSubmittedAt === reviewEvidence.submittedAt,
-        )
-        if (!belongsToReviewedHead) return []
-        return thread.comments.flatMap((comment) => {
-          if (
-            comment.authorLogin === null ||
-            comment.authorLogin === baynCodexReviewer ||
-            !trustedFeedbackAssociations.has(comment.authorAssociation) ||
-            comment.reviewCommitSha !== fixCommitSha ||
-            comment.reviewSubmittedAt === null
-          ) {
-            return []
-          }
-          const attestationTime = Date.parse(comment.reviewSubmittedAt)
-          return Number.isFinite(attestationTime) && attestationTime >= reviewSubmittedAtMs ? [attestationTime] : []
-        })
-      })
-      if (trustedAttestationTimes.length === 0) {
-        return hold(
-          'feedback-fix-attestation-missing',
-          `source PR #${pullRequest.number} final head ${shortSha(pullRequest.headSha)} carries review from ${shortSha(reviewedHeadSha)}, but post-review commit ${shortSha(fixCommitSha)} lacks a trusted member reply on a resolved Codex thread from that review`,
-          true,
-        )
-      }
-      eligibleAtMs = Math.max(eligibleAtMs, Math.min(...trustedAttestationTimes))
+  if (feedbackFixReview !== null) {
+    const feedbackFixEvidence = selectFeedbackFixEvidence(pullRequest, feedbackFixReview, reviewSubmittedAtMs)
+    if (feedbackFixEvidence === undefined) {
+      return hold(
+        'feedback-fix-attestation-missing',
+        `source PR #${pullRequest.number} final head ${shortSha(pullRequest.headSha)} carries review from ${shortSha(feedbackFixReview.commitSha as string)}, but post-review feedback threads are not a resolved, final-head-safe causal fix from that review`,
+        true,
+      )
     }
+    eligibleAtMs = Math.max(eligibleAtMs, feedbackFixEvidence.eligibleAtMs)
   }
 
   const unresolvedThreads = pullRequest.threads.filter((thread) => !thread.isResolved)
@@ -4680,7 +4787,7 @@ const parseBaynBuildWorkflowJobs = (value: unknown): readonly BaynBuildWorkflowJ
 export const parseFailedReviewThreadBlock = (log: string): FailedReviewThreadBlock | null => {
   const patterns = [
     /BAYN_RELEASE_REVIEW_HOLD active-unresolved-review-threads: Bayn-affecting commit ([0-9a-f]{12}) .*? source PR #(\d+) has \d+ unresolved review thread\(s\):/g,
-    /BAYN_RELEASE_REVIEW_HOLD feedback-fix-attestation-missing: Bayn-affecting commit ([0-9a-f]{12}) .*? source PR #(\d+) final head [0-9a-f]{12} carries review from [0-9a-f]{12}, but post-review commit [0-9a-f]{12} lacks a trusted member reply on a resolved Codex thread from that review/g,
+    /BAYN_RELEASE_REVIEW_HOLD feedback-fix-attestation-missing: Bayn-affecting commit ([0-9a-f]{12}) .*? source PR #(\d+) final head [0-9a-f]{12} carries review from [0-9a-f]{12}, but post-review feedback threads are not a resolved, final-head-safe causal fix from that review/g,
   ]
   const matches = patterns.flatMap((pattern) =>
     [...log.matchAll(pattern)].map((match) => ({
@@ -4739,12 +4846,8 @@ const parseComparison = (value: unknown): ParsedComparison => {
   }
 }
 
-interface CommitDetail {
-  readonly sha: string
-  readonly parents: readonly string[]
+interface CommitDetail extends PullRequestFinalHeadCommitDetail {
   readonly treeSha: string
-  readonly files: readonly string[]
-  readonly fileChanges: readonly BaynReleaseCommitFileChange[]
 }
 
 const parseCommitDetail = (value: unknown, expectedSha: string): CommitDetail => {
@@ -5411,10 +5514,14 @@ const loadCommitReviewSnapshot = async (
     fetchPullRequestIssueComments(options, candidate.number),
     fetchPullRequestReactions(options, candidate.number),
   ])
+  const pullRequest = { ...metadata, reviews, threads, commitShas, issueComments, reactions }
+  const finalHeadCommit = shouldFetchFinalHeadCommitDetail(pullRequest)
+    ? await fetchCommitDetail(options, candidate.headSha)
+    : undefined
   return {
     mainCommitParents: commit.parents,
     associatedPullRequests,
-    pullRequest: { ...metadata, reviews, threads, commitShas, issueComments, reactions },
+    pullRequest: { ...pullRequest, finalHeadCommit },
   }
 }
 

@@ -32,6 +32,7 @@ import {
   type BaynReleaseReviewRemediationEvidence,
   type BaynReleaseReviewRemediationRecord,
   type PullRequestReview,
+  type PullRequestFinalHeadCommitDetail,
   type PullRequestReviewState,
   type PullRequestIssueComment,
   type PullRequestForcePush,
@@ -98,6 +99,48 @@ const pr13473FinalCommitShas = [
   '49d772ff13fd17c6f1068d71aaeb10c46da6d5f4',
   pr13473FinalHeadSha,
 ] as const
+const pr13475MainCommitSha = '8bafccc0bd689a90b20c359cf77e852546056026'
+const pr13475FinalHeadSha = '22dd9788538add020d8b113f3319c77db2f3a71d'
+const pr13475ReviewedHeadSha = 'feffd9f2ee697252e032dc36bf871675848f1ca2'
+const pr13475CreatedAt = '2026-08-02T08:33:25Z'
+const pr13475ReviewSubmittedAt = '2026-08-02T10:32:16Z'
+const pr13475MergedAt = '2026-08-02T10:46:55Z'
+const pr13475FinalCommitShas = [
+  '69f6ee223a0c04d04319f3ddd095964e49bbb055',
+  '051746efa174fb84a8699aebaa3d700a4ee7cb43',
+  '8b92f7e23b21ebb539466e429bed87e59defab47',
+  'f0b6ddf9ba9e76cb9b39cc3fe3107a0973657bd3',
+  'ecad4b74bdfa83dc88941c8ffa8af4685f815d4d',
+  pr13475ReviewedHeadSha,
+  pr13475FinalHeadSha,
+] as const
+const pr13475ReviewedPath = 'services/bayn/src/candidate-development-local/command.ts'
+const pr13475FinalHeadCommit: PullRequestFinalHeadCommitDetail = {
+  sha: pr13475FinalHeadSha,
+  parents: [pr13475ReviewedHeadSha],
+  files: [pr13475ReviewedPath],
+  fileChanges: [
+    {
+      path: pr13475ReviewedPath,
+      previousPath: null,
+      status: 'modified',
+      blobSha: null,
+    },
+  ],
+}
+const genericFeedbackFixFinalHeadCommit: PullRequestFinalHeadCommitDetail = {
+  sha: finalHeadSha,
+  parents: [olderHeadSha],
+  files: ['packages/scripts/src/bayn/verify-release-review.ts'],
+  fileChanges: [
+    {
+      path: 'packages/scripts/src/bayn/verify-release-review.ts',
+      previousPath: null,
+      status: 'modified',
+      blobSha: null,
+    },
+  ],
+}
 const pr13473EarlierForcePush: PullRequestForcePush = {
   actorLogin: 'gregkonush',
   beforeCommitSha: pr13473EarlierForcePushBeforeSha,
@@ -151,6 +194,18 @@ const pr13473SupersededReviews: readonly PullRequestReview[] = [
   }),
 ]
 
+const pr13475Reviews: readonly PullRequestReview[] = [
+  review({ commitSha: '01ba3227241175d35a5c06025d6e700626849124', submittedAt: '2026-08-02T08:36:25Z' }),
+  review({ commitSha: '80085b78a765128300a9aa92c9054b2c21a7073b', submittedAt: '2026-08-02T08:45:07Z' }),
+  review({ commitSha: '7346dbef6dde37a7ea09dc7040f3084a59600245', submittedAt: '2026-08-02T08:53:43Z' }),
+  review({ commitSha: '69f6ee223a0c04d04319f3ddd095964e49bbb055', submittedAt: '2026-08-02T09:31:34Z' }),
+  review({ commitSha: '051746efa174fb84a8699aebaa3d700a4ee7cb43', submittedAt: '2026-08-02T09:53:41Z' }),
+  review({ commitSha: '8b92f7e23b21ebb539466e429bed87e59defab47', submittedAt: '2026-08-02T10:02:20Z' }),
+  review({ commitSha: 'f0b6ddf9ba9e76cb9b39cc3fe3107a0973657bd3', submittedAt: '2026-08-02T10:12:24Z' }),
+  review({ commitSha: 'ecad4b74bdfa83dc88941c8ffa8af4685f815d4d', submittedAt: '2026-08-02T10:24:44Z' }),
+  review({ commitSha: pr13475ReviewedHeadSha, submittedAt: pr13475ReviewSubmittedAt }),
+]
+
 const issueComment = (overrides: Partial<PullRequestIssueComment> = {}): PullRequestIssueComment => ({
   authorLogin: baynCodexBotLogin,
   body: `Codex Review: Didn't find any major issues. Bravo.\n\n**Reviewed commit:** \`${finalHeadSha.slice(0, 10)}\`\n`,
@@ -197,6 +252,7 @@ const snapshot = (
     readonly threads?: readonly PullRequestReviewThread[]
     readonly mainCommitParents?: readonly string[]
     readonly commitShas?: readonly string[]
+    readonly finalHeadCommit?: PullRequestFinalHeadCommitDetail | null
     readonly issueComments?: readonly PullRequestIssueComment[]
     readonly reactions?: readonly PullRequestReaction[]
     readonly headForcePushes?: readonly PullRequestForcePush[]
@@ -225,6 +281,7 @@ const snapshot = (
             reviews: options.reviews ?? [review()],
             threads: options.threads ?? [],
             commitShas: options.commitShas ?? [source.headSha],
+            finalHeadCommit: options.finalHeadCommit,
             issueComments: options.issueComments ?? [],
             reactions: options.reactions ?? [],
             headForcePushes: options.headForcePushes ?? [],
@@ -253,6 +310,7 @@ const reviewSnapshotFor = (options: {
   readonly reviews?: readonly PullRequestReview[]
   readonly threads?: readonly PullRequestReviewThread[]
   readonly commitShas?: readonly string[]
+  readonly finalHeadCommit?: PullRequestFinalHeadCommitDetail | null
   readonly issueComments?: readonly PullRequestIssueComment[]
   readonly reactions?: readonly PullRequestReaction[]
   readonly headForcePushes?: readonly PullRequestForcePush[]
@@ -287,6 +345,7 @@ const reviewSnapshotFor = (options: {
       ],
       threads: options.threads ?? [],
       commitShas: options.commitShas ?? [options.headSha],
+      finalHeadCommit: options.finalHeadCommit,
       issueComments: options.issueComments ?? [],
       reactions: options.reactions ?? [],
       headForcePushes: options.headForcePushes ?? [],
@@ -298,6 +357,7 @@ const reviewSnapshotFor = (options: {
 const pr13464ReactionSnapshot = (
   options: {
     readonly commitShas?: readonly string[]
+    readonly finalHeadCommit?: PullRequestFinalHeadCommitDetail | null
     readonly reviews?: readonly PullRequestReview[]
     readonly issueComments?: readonly PullRequestIssueComment[]
     readonly threads?: readonly PullRequestReviewThread[]
@@ -426,6 +486,48 @@ const pr13473ReactionSnapshot = (
     reactions: options.reactions ?? [reaction({ createdAt: pr13473ReactionAt })],
     headForcePushes: options.headForcePushes ?? [pr13473EarlierForcePush, pr13473FinalForcePush],
     headForcePushCount: options.headForcePushCount,
+  })
+
+const pr13475FeedbackThread = (overrides: Partial<PullRequestReviewThread> = {}): PullRequestReviewThread =>
+  thread({
+    id: 'PRRT_kwDOLkRLus6VwJXZ',
+    isResolved: true,
+    isOutdated: true,
+    path: pr13475ReviewedPath,
+    url: 'https://github.com/proompteng/lab/pull/13475#discussion_r3698708781',
+    comments: [
+      threadComment({
+        body: 'Include the main-worktree legacy receipt in linked checks.',
+        commitSha: pr13475ReviewedHeadSha,
+        reviewCommitSha: pr13475ReviewedHeadSha,
+        reviewAuthorLogin: baynCodexReviewer,
+        reviewSubmittedAt: pr13475ReviewSubmittedAt,
+        createdAt: '2026-08-02T10:32:17Z',
+        url: 'https://github.com/proompteng/lab/pull/13475#discussion_r3698708781',
+      }),
+    ],
+    ...overrides,
+  })
+
+const pr13475ReviewSnapshot = (
+  options: {
+    readonly commitShas?: readonly string[]
+    readonly finalHeadCommit?: PullRequestFinalHeadCommitDetail | null
+    readonly reviews?: readonly PullRequestReview[]
+    readonly threads?: readonly PullRequestReviewThread[]
+  } = {},
+): BaynReleaseReviewSnapshot =>
+  reviewSnapshotFor({
+    commitSha: pr13475MainCommitSha,
+    prNumber: 13475,
+    headSha: pr13475FinalHeadSha,
+    parents: [pushBeforeSha],
+    createdAt: pr13475CreatedAt,
+    mergedAt: pr13475MergedAt,
+    reviews: options.reviews ?? pr13475Reviews,
+    threads: options.threads ?? [pr13475FeedbackThread()],
+    commitShas: options.commitShas ?? pr13475FinalCommitShas,
+    finalHeadCommit: options.finalHeadCommit === undefined ? pr13475FinalHeadCommit : options.finalHeadCommit,
   })
 
 const eligibilitySnapshot = (
@@ -5507,6 +5609,13 @@ describe('Bayn publication-range eligibility', () => {
           ],
         })
       }
+      if (url.includes('/commits/') && !url.includes('/pulls?')) {
+        return Response.json({
+          sha: finalHeadSha,
+          parents: [{ sha: olderHeadSha }],
+          files: [{ filename: 'services/bayn/src/example.ts' }],
+        })
+      }
       if (url.includes('/issues/13390/comments?') || url.includes('/issues/13390/reactions?')) {
         return Response.json([])
       }
@@ -5886,7 +5995,8 @@ describe('Bayn delayed-attestation publication retry', () => {
     const resolvedFeedback = snapshot({
       commitShas: [olderHeadSha, finalHeadSha],
       reviews: [review({ commitSha: olderHeadSha, submittedAt: '2026-07-30T07:00:00Z' })],
-      threads: [thread({ isResolved: true, comments: feedbackComments })],
+      finalHeadCommit: genericFeedbackFixFinalHeadCommit,
+      threads: [thread({ isResolved: true, isOutdated: true, comments: feedbackComments })],
     })
     expect(
       evaluateBaynReleaseRetry({
@@ -5908,12 +6018,14 @@ describe('Bayn delayed-attestation publication retry', () => {
     })
   })
 
-  test('dispatches when the final required feedback attestation arrives after the failed push', () => {
+  test('does not use a trusted feedback reply as delayed retry evidence', () => {
     const feedbackReview = snapshot({
       commitShas: [olderHeadSha, finalHeadSha],
       reviews: [review({ commitSha: olderHeadSha, submittedAt: '2026-07-30T07:00:00Z' })],
+      finalHeadCommit: genericFeedbackFixFinalHeadCommit,
       threads: [
         thread({
+          isOutdated: true,
           comments: [
             threadComment({
               createdAt: '2026-07-30T07:00:00Z',
@@ -5944,7 +6056,7 @@ describe('Bayn delayed-attestation publication retry', () => {
     ).toMatchObject({
       status: 'eligible',
       reviewSubmittedAt: '2026-07-30T07:00:00Z',
-      eligibleAt: '2026-07-30T07:03:00.000Z',
+      eligibleAt: '2026-07-30T07:00:30.000Z',
     })
     expect(
       evaluateBaynReleaseRetry({
@@ -5955,10 +6067,70 @@ describe('Bayn delayed-attestation publication retry', () => {
         nowMs: retryNowMs,
       }),
     ).toMatchObject({
-      status: 'dispatch',
-      sourceCommitSha: mainCommitSha,
-      prNumber: 13390,
-      headSha: finalHeadSha,
+      status: 'hold',
+      code: 'retry-attestation-not-delayed',
+      retryable: true,
+    })
+  })
+
+  test('rejects a multi-commit feedback fix even when every thread has a trusted final-head reply', () => {
+    const firstReplyAt = '2026-07-30T07:01:00Z'
+    const finalReplyAt = '2026-07-30T07:03:00Z'
+    const intermediateFixSha = '4'.repeat(40)
+    const feedbackReview = snapshot({
+      commitShas: [olderHeadSha, intermediateFixSha, finalHeadSha],
+      reviews: [review({ commitSha: olderHeadSha, submittedAt: '2026-07-30T07:00:00Z' })],
+      threads: [
+        thread({
+          id: 'first-feedback-thread',
+          isResolved: true,
+          comments: [
+            threadComment({ reviewSubmittedAt: '2026-07-30T07:00:00Z' }),
+            threadComment({
+              authorLogin: 'gregkonush',
+              authorAssociation: 'MEMBER',
+              body: 'Fixed the first reviewed path.',
+              createdAt: firstReplyAt,
+              commitSha: finalHeadSha,
+              reviewCommitSha: finalHeadSha,
+              reviewAuthorLogin: 'gregkonush',
+              reviewSubmittedAt: firstReplyAt,
+            }),
+          ],
+        }),
+        thread({
+          id: 'second-feedback-thread',
+          path: 'services/bayn/src/second.ts',
+          isResolved: true,
+          comments: [
+            threadComment({ reviewSubmittedAt: '2026-07-30T07:00:00Z' }),
+            threadComment({
+              authorLogin: 'gregkonush',
+              authorAssociation: 'MEMBER',
+              body: 'Fixed the second reviewed path.',
+              createdAt: finalReplyAt,
+              commitSha: finalHeadSha,
+              reviewCommitSha: finalHeadSha,
+              reviewAuthorLogin: 'gregkonush',
+              reviewSubmittedAt: finalReplyAt,
+            }),
+          ],
+        }),
+      ],
+    })
+
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: feedbackReview,
+        nowMs: Date.parse('2026-07-30T07:02:30Z'),
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({
+      status: 'hold',
+      code: 'feedback-fix-attestation-missing',
+      retryable: true,
     })
   })
 
@@ -6286,7 +6458,7 @@ describe('Bayn delayed-attestation publication retry', () => {
     ).toEqual({ commitShaPrefix: mainCommitSha.slice(0, 12), prNumber: 13401 })
     expect(
       parseFailedReviewThreadBlock(
-        `2026-07-30T07:02:30Z BAYN_RELEASE_REVIEW_HOLD feedback-fix-attestation-missing: Bayn-affecting commit ${mainCommitSha.slice(0, 12)} after last published ${lastPublishedSha.slice(0, 12)} is not release-eligible: source PR #13401 final head ${finalHeadSha.slice(0, 12)} carries review from ${olderHeadSha.slice(0, 12)}, but post-review commit ${finalHeadSha.slice(0, 12)} lacks a trusted member reply on a resolved Codex thread from that review\n`,
+        `2026-07-30T07:02:30Z BAYN_RELEASE_REVIEW_HOLD feedback-fix-attestation-missing: Bayn-affecting commit ${mainCommitSha.slice(0, 12)} after last published ${lastPublishedSha.slice(0, 12)} is not release-eligible: source PR #13401 final head ${finalHeadSha.slice(0, 12)} carries review from ${olderHeadSha.slice(0, 12)}, but post-review feedback threads are not a resolved, final-head-safe causal fix from that review\n`,
       ),
     ).toEqual({ commitShaPrefix: mainCommitSha.slice(0, 12), prNumber: 13401 })
     expect(
@@ -6441,6 +6613,13 @@ describe('Bayn delayed-attestation publication retry', () => {
         return Response.json({
           sha: mainCommitSha,
           parents: [{ sha: lastPublishedSha }],
+          files: [{ filename: 'packages/scripts/src/bayn/verify-release-review.ts' }],
+        })
+      }
+      if (url.includes('/commits/') && !url.includes('/pulls?')) {
+        return Response.json({
+          sha: finalHeadSha,
+          parents: [{ sha: olderHeadSha }],
           files: [{ filename: 'packages/scripts/src/bayn/verify-release-review.ts' }],
         })
       }
@@ -6932,6 +7111,236 @@ describe('Bayn exact-head release review eligibility', () => {
     })
   })
 
+  test('accepts the real #13475 final feedback-fix head without a member reply ceremony', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha: pr13475MainCommitSha,
+        baseRefName: 'main',
+        snapshot: pr13475ReviewSnapshot(),
+        nowMs: Date.parse('2026-08-02T11:00:00Z'),
+        pushBeforeSha: null,
+      }),
+    ).toEqual({
+      status: 'eligible',
+      prNumber: 13475,
+      headSha: pr13475FinalHeadSha,
+      reviewSubmittedAt: pr13475ReviewSubmittedAt,
+      eligibleAt: '2026-08-02T10:32:46.000Z',
+    })
+  })
+
+  test('accepts a direct-child feedback fix with no release-affecting Bayn path', () => {
+    const reviewedTestPath = 'packages/scripts/src/bayn/verify-release-review.test.ts'
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha: pr13475MainCommitSha,
+        baseRefName: 'main',
+        snapshot: pr13475ReviewSnapshot({
+          finalHeadCommit: {
+            sha: pr13475FinalHeadSha,
+            parents: [pr13475ReviewedHeadSha],
+            files: [reviewedTestPath],
+            fileChanges: [
+              {
+                path: reviewedTestPath,
+                previousPath: null,
+                status: 'modified',
+                blobSha: null,
+              },
+            ],
+          },
+          threads: [pr13475FeedbackThread({ path: reviewedTestPath })],
+        }),
+        nowMs: Date.parse('2026-08-02T11:00:00Z'),
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({ status: 'eligible', prNumber: 13475, headSha: pr13475FinalHeadSha })
+  })
+
+  test.each([
+    [
+      'unresolved actionable thread',
+      pr13475ReviewSnapshot({ threads: [pr13475FeedbackThread({ isResolved: false })] }),
+      'feedback-fix-attestation-missing',
+    ],
+    [
+      'direct final child but thread not outdated',
+      pr13475ReviewSnapshot({
+        threads: [
+          pr13475FeedbackThread({
+            isOutdated: false,
+            comments: [
+              threadComment({
+                commitSha: pr13475ReviewedHeadSha,
+                reviewCommitSha: pr13475ReviewedHeadSha,
+                reviewSubmittedAt: pr13475ReviewSubmittedAt,
+              }),
+            ],
+          }),
+        ],
+      }),
+      'feedback-fix-attestation-missing',
+    ],
+    [
+      'two post-review commits with first outdating and second revert',
+      pr13475ReviewSnapshot({
+        commitShas: [...pr13475FinalCommitShas.slice(0, -1), 'a'.repeat(40), pr13475FinalHeadSha],
+        threads: [
+          pr13475FeedbackThread({
+            isOutdated: true,
+            comments: [
+              threadComment({
+                commitSha: pr13475ReviewedHeadSha,
+                reviewCommitSha: pr13475ReviewedHeadSha,
+                reviewSubmittedAt: pr13475ReviewSubmittedAt,
+              }),
+            ],
+          }),
+        ],
+      }),
+      'feedback-fix-attestation-missing',
+    ],
+    [
+      'direct child fixes reviewed file but also changes a second Bayn path',
+      pr13475ReviewSnapshot({
+        finalHeadCommit: {
+          ...pr13475FinalHeadCommit,
+          files: [pr13475ReviewedPath, 'services/bayn/src/unreviewed.ts'],
+          fileChanges: [
+            ...pr13475FinalHeadCommit.fileChanges,
+            {
+              path: 'services/bayn/src/unreviewed.ts',
+              previousPath: null,
+              status: 'modified',
+              blobSha: null,
+            },
+          ],
+        },
+      }),
+      'feedback-fix-attestation-missing',
+    ],
+    [
+      'missing final-head commit detail',
+      pr13475ReviewSnapshot({ finalHeadCommit: null }),
+      'feedback-fix-attestation-missing',
+    ],
+    [
+      'malformed final-head commit detail',
+      pr13475ReviewSnapshot({ finalHeadCommit: { ...pr13475FinalHeadCommit, parents: [pushBeforeSha] } }),
+      'feedback-fix-attestation-missing',
+    ],
+    ['missing feedback thread', pr13475ReviewSnapshot({ threads: [] }), 'feedback-fix-attestation-missing'],
+    [
+      'reviewed head absent from final history',
+      pr13475ReviewSnapshot({
+        commitShas: [pr13475FinalCommitShas[0]!, pr13475FinalHeadSha],
+        reviews: [review({ commitSha: pr13475ReviewedHeadSha, submittedAt: pr13475ReviewSubmittedAt })],
+      }),
+      'exact-head-review-missing',
+    ],
+    [
+      'final head not later than reviewed head',
+      pr13475ReviewSnapshot({ commitShas: [pr13475ReviewedHeadSha] }),
+      'source-pr-commit-history-mismatch',
+    ],
+    [
+      'ambiguous latest applicable review',
+      pr13475ReviewSnapshot({
+        reviews: [
+          review({ commitSha: 'ecad4b74bdfa83dc88941c8ffa8af4685f815d4d', submittedAt: pr13475ReviewSubmittedAt }),
+          review({ commitSha: pr13475ReviewedHeadSha, submittedAt: pr13475ReviewSubmittedAt }),
+        ],
+      }),
+      'exact-head-review-missing',
+    ],
+    [
+      'stale unrelated trusted reply',
+      pr13475ReviewSnapshot({
+        threads: [
+          pr13475FeedbackThread({
+            isOutdated: false,
+            comments: [
+              threadComment({
+                commitSha: pr13475ReviewedHeadSha,
+                reviewCommitSha: pr13475ReviewedHeadSha,
+                reviewSubmittedAt: pr13475ReviewSubmittedAt,
+              }),
+              threadComment({
+                authorLogin: 'gregkonush',
+                authorAssociation: 'MEMBER',
+                commitSha: pr13475ReviewedHeadSha,
+                reviewCommitSha: 'a'.repeat(40),
+                reviewAuthorLogin: 'gregkonush',
+                reviewSubmittedAt: '2026-08-02T10:40:00Z',
+              }),
+            ],
+          }),
+        ],
+      }),
+      'feedback-fix-attestation-missing',
+    ],
+    [
+      'malformed review comment binding',
+      pr13475ReviewSnapshot({
+        threads: [
+          pr13475FeedbackThread({
+            comments: [
+              threadComment({
+                commitSha: pr13475FinalHeadSha,
+                reviewCommitSha: pr13475ReviewedHeadSha,
+                reviewSubmittedAt: null,
+              }),
+            ],
+          }),
+        ],
+      }),
+      'feedback-fix-attestation-missing',
+    ],
+  ] as const)('rejects #13475 feedback-fix evidence with %s', (_name, reviewSnapshot, code) => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha: pr13475MainCommitSha,
+        baseRefName: 'main',
+        snapshot: reviewSnapshot,
+        nowMs: Date.parse('2026-08-02T11:00:00Z'),
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({ status: 'hold', code })
+  })
+
+  test('ignores an earlier review thread on the same predecessor head', () => {
+    expect(
+      evaluateBaynReleaseReview({
+        mainCommitSha: pr13475MainCommitSha,
+        baseRefName: 'main',
+        snapshot: pr13475ReviewSnapshot({
+          reviews: [
+            review({ commitSha: pr13475ReviewedHeadSha, submittedAt: '2026-08-02T10:31:00Z' }),
+            review({ commitSha: pr13475ReviewedHeadSha, submittedAt: pr13475ReviewSubmittedAt }),
+          ],
+          threads: [
+            thread({
+              id: 'pr-13475-earlier-review-thread',
+              isResolved: true,
+              isOutdated: true,
+              path: 'services/bayn/src/older-reviewed-path.ts',
+              comments: [
+                threadComment({
+                  commitSha: pr13475ReviewedHeadSha,
+                  reviewCommitSha: pr13475ReviewedHeadSha,
+                  reviewSubmittedAt: '2026-08-02T10:31:00Z',
+                }),
+              ],
+            }),
+            pr13475FeedbackThread(),
+          ],
+        }),
+        nowMs: Date.parse('2026-08-02T11:00:00Z'),
+        pushBeforeSha: null,
+      }),
+    ).toMatchObject({ status: 'eligible', eligibleAt: '2026-08-02T10:32:46.000Z' })
+  })
+
   test('accepts #13464 through the exact final-head reaction after its force-push', () => {
     expect(
       evaluateBaynReleaseReview({
@@ -7258,8 +7667,10 @@ describe('Bayn exact-head release review eligibility', () => {
         snapshot: snapshot({
           commitShas: [olderHeadSha, finalHeadSha],
           reviews: [review({ commitSha: olderHeadSha })],
+          finalHeadCommit: genericFeedbackFixFinalHeadCommit,
           threads: [
             thread({
+              isOutdated: true,
               comments: [
                 threadComment(),
                 threadComment({
@@ -7287,7 +7698,7 @@ describe('Bayn exact-head release review eligibility', () => {
     })
   })
 
-  test('retries a stale feedback-attestation read and then accepts the indexed reply', async () => {
+  test('retries a stale final-head detail read and then accepts the indexed commit', async () => {
     let calls = 0
     const sleeps: number[] = []
     const result = await pollBaynReleaseReview({
@@ -7300,8 +7711,10 @@ describe('Bayn exact-head release review eligibility', () => {
         return snapshot({
           commitShas: [olderHeadSha, finalHeadSha],
           reviews: [review({ commitSha: olderHeadSha })],
+          finalHeadCommit: calls === 1 ? null : genericFeedbackFixFinalHeadCommit,
           threads: [
             thread({
+              isOutdated: true,
               comments: [
                 threadComment(),
                 ...(calls === 1
@@ -7383,7 +7796,7 @@ describe('Bayn exact-head release review eligibility', () => {
     })
   })
 
-  test('requires an attestation for every commit after the reviewed head', () => {
+  test('rejects a final trusted feedback reply across multiple commits', () => {
     const intermediateFixSha = '4'.repeat(40)
     expect(
       evaluateBaynReleaseReview({
@@ -7715,11 +8128,31 @@ describe('Bayn exact-head release review eligibility', () => {
     expect(requireHold(result).message).toContain('bounded wait exhausted')
   })
 
-  test('decodes a complete deterministic GitHub API fixture', async () => {
+  test('does not request paginated final-head detail for exact-head evidence', async () => {
+    let finalHeadDetailRequests = 0
     const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.includes('/commits/')) {
         if (!url.includes('/pulls?')) {
+          const isFinalHeadDetail = url.includes(`/commits/${finalHeadSha}?`)
+          if (isFinalHeadDetail) {
+            finalHeadDetailRequests += 1
+            return new Response(
+              JSON.stringify({
+                sha: finalHeadSha,
+                parents: [{ sha: olderHeadSha }],
+                files: Array.from({ length: 101 }, (_, index) => ({
+                  filename: `services/bayn/src/generated-${index}.ts`,
+                })),
+              }),
+              {
+                headers: {
+                  'content-type': 'application/json',
+                  link: '<https://api.github.com/next>; rel="next"',
+                },
+              },
+            )
+          }
           return Response.json({
             sha: mainCommitSha,
             parents: [{ sha: pushBeforeSha }],
@@ -7831,5 +8264,358 @@ describe('Bayn exact-head release review eligibility', () => {
         pushBeforeSha: null,
       }),
     ).toMatchObject({ status: 'eligible', prNumber: 13390, headSha: finalHeadSha })
+    expect(finalHeadDetailRequests).toBe(0)
+  })
+
+  test('requests paginated final-head detail for no-reply feedback-fix evidence and fails closed', async () => {
+    const fallbackReviewSubmittedAt = '2026-07-30T07:00:00Z'
+    const fallbackPath = 'services/bayn/src/example.ts'
+    let finalHeadDetailRequests = 0
+    const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/commits/')) {
+        if (!url.includes('/pulls?')) {
+          if (url.includes(`/commits/${finalHeadSha}?`)) {
+            finalHeadDetailRequests += 1
+            return new Response(
+              JSON.stringify({
+                sha: finalHeadSha,
+                parents: [{ sha: olderHeadSha }],
+                files: Array.from({ length: 101 }, (_, index) => ({ filename: `${fallbackPath}-${index}` })),
+              }),
+              {
+                headers: {
+                  'content-type': 'application/json',
+                  link: '<https://api.github.com/next>; rel="next"',
+                },
+              },
+            )
+          }
+          return Response.json({
+            sha: mainCommitSha,
+            parents: [{ sha: pushBeforeSha }],
+            files: [{ filename: fallbackPath }],
+          })
+        }
+        return Response.json([
+          {
+            number: 13390,
+            base: { ref: 'main' },
+            head: { sha: finalHeadSha },
+            merge_commit_sha: mainCommitSha,
+            merged_at: '2026-07-30T07:01:30Z',
+          },
+        ])
+      }
+      if (url.includes('/issues/13390/comments?') || url.includes('/issues/13390/reactions?')) {
+        return Response.json([])
+      }
+
+      const request = JSON.parse(String(init?.body)) as { readonly query: string }
+      if (request.query.includes('BaynReleasePullRequestMetadata')) {
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                number: 13390,
+                baseRefName: 'main',
+                headRefOid: finalHeadSha,
+                createdAt: '2026-07-30T06:59:00Z',
+                mergedAt: '2026-07-30T07:01:30Z',
+                mergeCommit: { oid: mainCommitSha },
+                timelineItems: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+              },
+            },
+          },
+        })
+      }
+      if (request.query.includes('BaynReleasePullRequestReviews')) {
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                reviews: {
+                  nodes: [
+                    {
+                      author: { login: baynCodexReviewer },
+                      commit: { oid: olderHeadSha },
+                      submittedAt: fallbackReviewSubmittedAt,
+                      state: 'COMMENTED',
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+        })
+      }
+      if (request.query.includes('BaynReleasePullRequestThreads')) {
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [
+                    {
+                      id: 'fallback-thread',
+                      isResolved: true,
+                      isOutdated: true,
+                      path: fallbackPath,
+                      comments: {
+                        nodes: [
+                          {
+                            author: { login: baynCodexReviewer },
+                            authorAssociation: 'NONE',
+                            body: 'Review finding',
+                            createdAt: fallbackReviewSubmittedAt,
+                            commit: { oid: olderHeadSha },
+                            pullRequestReview: {
+                              author: { login: baynCodexReviewer },
+                              commit: { oid: olderHeadSha },
+                              submittedAt: fallbackReviewSubmittedAt,
+                              state: 'COMMENTED',
+                            },
+                            url: 'https://github.com/proompteng/lab/pull/13390#discussion_fallback',
+                          },
+                        ],
+                        pageInfo: { hasNextPage: false, endCursor: null },
+                      },
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+        })
+      }
+      if (request.query.includes('BaynReleasePullRequestCommits')) {
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                commits: {
+                  nodes: [{ commit: { oid: olderHeadSha } }, { commit: { oid: finalHeadSha } }],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+        })
+      }
+      throw new Error('unexpected fallback fixture request')
+    }) as typeof fetch
+
+    const loader = createGitHubReleaseReviewLoader({
+      repository: 'proompteng/lab',
+      token: 'fixture-token',
+      mainCommitSha,
+      baseRefName: 'main',
+      requestTimeoutMs: 1_000,
+      fetchFn,
+    })
+
+    await expect(loader()).rejects.toMatchObject({ code: 'github-api-pagination-limit' })
+    expect(finalHeadDetailRequests).toBe(1)
+  })
+
+  test('requires final-head detail for all-replied and mixed feedback threads', async () => {
+    const fallbackReviewSubmittedAt = '2026-07-30T07:00:00Z'
+    const trustedReplyAt = '2026-07-30T07:00:30Z'
+    const fallbackPath = 'services/bayn/src/example.ts'
+    const makeFetchFn = (finalFilePaths: readonly string[], includeNoReplyThread = true) => {
+      let finalHeadDetailRequests = 0
+      const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.includes('/commits/')) {
+          if (!url.includes('/pulls?')) {
+            if (url.includes(`/commits/${finalHeadSha}?`)) {
+              finalHeadDetailRequests += 1
+              return Response.json({
+                sha: finalHeadSha,
+                parents: [{ sha: olderHeadSha }],
+                files: finalFilePaths.map((filename) => ({ filename, status: 'modified' })),
+              })
+            }
+            return Response.json({
+              sha: mainCommitSha,
+              parents: [{ sha: pushBeforeSha }],
+              files: [{ filename: fallbackPath }],
+            })
+          }
+          return Response.json([
+            {
+              number: 13390,
+              base: { ref: 'main' },
+              head: { sha: finalHeadSha },
+              merge_commit_sha: mainCommitSha,
+              merged_at: '2026-07-30T07:01:30Z',
+            },
+          ])
+        }
+        if (url.includes('/issues/13390/comments?') || url.includes('/issues/13390/reactions?')) {
+          return Response.json([])
+        }
+
+        const request = JSON.parse(String(init?.body)) as { readonly query: string }
+        if (request.query.includes('BaynReleasePullRequestMetadata')) {
+          return Response.json({
+            data: {
+              repository: {
+                pullRequest: {
+                  number: 13390,
+                  baseRefName: 'main',
+                  headRefOid: finalHeadSha,
+                  createdAt: '2026-07-30T06:59:00Z',
+                  mergedAt: '2026-07-30T07:01:30Z',
+                  mergeCommit: { oid: mainCommitSha },
+                  timelineItems: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+                },
+              },
+            },
+          })
+        }
+        if (request.query.includes('BaynReleasePullRequestReviews')) {
+          return Response.json({
+            data: {
+              repository: {
+                pullRequest: {
+                  reviews: {
+                    nodes: [
+                      {
+                        author: { login: baynCodexReviewer },
+                        commit: { oid: olderHeadSha },
+                        submittedAt: fallbackReviewSubmittedAt,
+                        state: 'COMMENTED',
+                      },
+                    ],
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                  },
+                },
+              },
+            },
+          })
+        }
+        if (request.query.includes('BaynReleasePullRequestThreads')) {
+          const reviewedComment = {
+            author: { login: baynCodexReviewer },
+            authorAssociation: 'NONE',
+            body: 'Review finding',
+            createdAt: fallbackReviewSubmittedAt,
+            commit: { oid: olderHeadSha },
+            pullRequestReview: {
+              author: { login: baynCodexReviewer },
+              commit: { oid: olderHeadSha },
+              submittedAt: fallbackReviewSubmittedAt,
+              state: 'COMMENTED',
+            },
+            url: 'https://github.com/proompteng/lab/pull/13390#discussion_reviewed',
+          }
+          const trustedReply = {
+            author: { login: 'gregkonush' },
+            authorAssociation: 'MEMBER',
+            body: 'Fixed in the final head.',
+            createdAt: trustedReplyAt,
+            commit: { oid: finalHeadSha },
+            pullRequestReview: {
+              author: { login: 'gregkonush' },
+              commit: { oid: finalHeadSha },
+              submittedAt: trustedReplyAt,
+              state: 'COMMENTED',
+            },
+            url: 'https://github.com/proompteng/lab/pull/13390#discussion_reply',
+          }
+          return Response.json({
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewThreads: {
+                    nodes: [
+                      {
+                        id: 'mixed-replied-thread',
+                        isResolved: true,
+                        isOutdated: true,
+                        path: fallbackPath,
+                        comments: {
+                          nodes: [reviewedComment, trustedReply],
+                          pageInfo: { hasNextPage: false, endCursor: null },
+                        },
+                      },
+                      ...(includeNoReplyThread
+                        ? [
+                            {
+                              id: 'mixed-no-reply-thread',
+                              isResolved: true,
+                              isOutdated: true,
+                              path: fallbackPath,
+                              comments: {
+                                nodes: [reviewedComment],
+                                pageInfo: { hasNextPage: false, endCursor: null },
+                              },
+                            },
+                          ]
+                        : []),
+                    ],
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                  },
+                },
+              },
+            },
+          })
+        }
+        if (request.query.includes('BaynReleasePullRequestCommits')) {
+          return Response.json({
+            data: {
+              repository: {
+                pullRequest: {
+                  commits: {
+                    nodes: [{ commit: { oid: olderHeadSha } }, { commit: { oid: finalHeadSha } }],
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                  },
+                },
+              },
+            },
+          })
+        }
+        throw new Error('unexpected mixed fixture request')
+      }) as typeof fetch
+      return { fetchFn, getFinalHeadDetailRequests: () => finalHeadDetailRequests }
+    }
+
+    const evaluateLoaded = async (finalFilePaths: readonly string[], includeNoReplyThread = true) => {
+      const fixture = makeFetchFn(finalFilePaths, includeNoReplyThread)
+      const loader = createGitHubReleaseReviewLoader({
+        repository: 'proompteng/lab',
+        token: 'fixture-token',
+        mainCommitSha,
+        baseRefName: 'main',
+        requestTimeoutMs: 1_000,
+        fetchFn: fixture.fetchFn,
+      })
+      const result = evaluateBaynReleaseReview({
+        mainCommitSha,
+        baseRefName: 'main',
+        snapshot: await loader(),
+        nowMs: evaluationNowMs,
+        pushBeforeSha: null,
+      })
+      expect(fixture.getFinalHeadDetailRequests()).toBe(1)
+      return result
+    }
+
+    expect(await evaluateLoaded([fallbackPath, 'services/bayn/src/unreviewed.ts'])).toMatchObject({
+      status: 'hold',
+      code: 'feedback-fix-attestation-missing',
+    })
+    expect(await evaluateLoaded([fallbackPath, 'services/bayn/src/unreviewed.ts'], false)).toMatchObject({
+      status: 'hold',
+      code: 'feedback-fix-attestation-missing',
+    })
+    expect(await evaluateLoaded([fallbackPath])).toMatchObject({
+      status: 'eligible',
+      prNumber: 13390,
+      headSha: finalHeadSha,
+    })
   })
 })
