@@ -446,6 +446,11 @@ const verifyCandidateBinding = (
       )
 }
 
+export const candidateDevelopmentTerminalStatus = (
+  economicStatus: 'PASS' | 'FAIL_CLOSED',
+  qualificationStatus: 'PASS' | 'REJECTED' | 'INSUFFICIENT',
+): 'PASS' | 'HOLD_REJECT' => (economicStatus === 'PASS' && qualificationStatus === 'PASS' ? 'PASS' : 'HOLD_REJECT')
+
 export const evaluateCandidateDevelopmentDefinition = (
   definition: RiskBalancedTrendStrategyDefinition,
   witness: CandidateDevelopmentRuntimeMarketDataWitness,
@@ -489,7 +494,7 @@ export const evaluateCandidateDevelopmentDefinition = (
   if (Result.isFailure(evaluationHash) || Result.isFailure(targetHash) || Result.isFailure(qualificationAnalysisHash)) {
     return Result.fail(localError('DECISION_FAILED', 'candidate terminal hashes could not be constructed'))
   }
-  const status = evaluation.success.verdict.status === 'PASS' ? 'PASS' : 'HOLD_REJECT'
+  const status = candidateDevelopmentTerminalStatus(evaluation.success.verdict.status, analysis.success.status)
   const terminalReportHash = makeCandidateDevelopmentLocalTerminalReportHash(
     source,
     status,

@@ -9,6 +9,7 @@ import { makeStrategyProtocolHash } from '../contracts'
 import { fixtureSnapshot, fixtureRuntime } from '../app-test-support'
 import { fixtureProtocol, makeTestDefinition } from '../test-fixtures'
 import {
+  candidateDevelopmentTerminalStatus,
   evaluateCandidateDevelopmentDefinition,
   makeCandidateDevelopmentLocalAttempt,
   reserveCandidateDevelopmentLocalReceipt,
@@ -101,6 +102,13 @@ const prepared: PreparedCandidateDevelopmentLocalAttempt = {
 }
 
 describe('candidate-development-local domain boundary', () => {
+  test('requires statistical PASS alongside economic PASS before reporting PASS', () => {
+    expect(candidateDevelopmentTerminalStatus('PASS', 'PASS')).toBe('PASS')
+    expect(candidateDevelopmentTerminalStatus('PASS', 'REJECTED')).toBe('HOLD_REJECT')
+    expect(candidateDevelopmentTerminalStatus('PASS', 'INSUFFICIENT')).toBe('HOLD_REJECT')
+    expect(candidateDevelopmentTerminalStatus('FAIL_CLOSED', 'PASS')).toBe('HOLD_REJECT')
+  })
+
   test('accepts exactly three path arguments and excludes witness paths from receipts', () => {
     expect(
       Result.isSuccess(parseCandidateDevelopmentLocalArguments(['module.ts', 'manifest.json', 'witness.json'])),
