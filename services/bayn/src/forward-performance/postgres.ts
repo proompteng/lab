@@ -309,10 +309,14 @@ const generationScope = (
         FROM authority_generations AS scope_generation
         LEFT JOIN authority_generations AS next_generation
           ON next_generation.previous_generation_hash = scope_generation.generation_hash
+        JOIN intents AS scope_intent
+          ON scope_intent.intent_id = transaction.intent_id
+          AND scope_intent.account_id = transaction.account_id
         WHERE scope_generation.generation_hash = ${authorityGenerationHash}
           AND scope_generation.maximum = 'PAPER'
           AND scope_generation.account_id = ${accountId}
           AND transaction.account_id = scope_generation.account_id
+          AND scope_intent.authority_generation_hash = scope_generation.generation_hash
           AND transaction.occurred_at >= scope_generation.activated_at
           AND (
             next_generation.activated_at IS NULL

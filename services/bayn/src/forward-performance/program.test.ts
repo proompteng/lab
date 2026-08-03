@@ -708,6 +708,14 @@ describe('forward performance read program', () => {
           statement.includes('intent.created_at >= scope_generation.activated_at'),
       ),
     ).toBe(true)
+    expect(
+      observation.statements.some(
+        (statement) =>
+          statement.includes('JOIN intents AS scope_intent') &&
+          statement.includes('scope_intent.intent_id = transaction.intent_id') &&
+          statement.includes('scope_intent.authority_generation_hash = scope_generation.generation_hash'),
+      ),
+    ).toBe(true)
   })
 
   test('does not excuse any reconciliation discrepancy beyond the exact cash-yield residual', async () => {
