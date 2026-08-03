@@ -357,6 +357,14 @@ const makeMaterial = (
       reasonCodes,
       cashYield: input.cashYieldEvidence ?? null,
     },
+    reconciliationProof: {
+      accountingReceiptsExact: input.accountingReceiptsExact,
+      ledgerExact: input.ledgerExact,
+      missingLedgerAccountCount: input.missingLedgerAccountCount,
+      unresolvedMutationCount: input.unresolvedMutationCount,
+      unclosedCycleCount: input.unclosedCycleCount,
+      openPositionCount: input.openPositionCount,
+    },
     executionQuality: measurements.executionQuality,
     observedCapacity: measurements.observedCapacity,
     profitability:

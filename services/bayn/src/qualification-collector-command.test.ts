@@ -22,7 +22,7 @@ import {
 } from './qualification-collector-command'
 import { candidate18Preregistration } from './candidate-development-calendar'
 import type { QualificationAuditReport } from './audit/audit'
-import type { QualificationCandidateBindingReceipt } from './qualification-candidate-command'
+import type { QualificationCandidateBindingReceipt } from './qualification-binding'
 import { fixtureLock, fixtureRuntime } from './app-test-support'
 
 const prelock = (
@@ -220,7 +220,7 @@ describe('qualification collector boundaries', () => {
   test('rejects a candidate whose module or parameter identity differs from the embedded deployment', () => {
     const source = { moduleSha256: fixtureRuntime.provenance.strategy.behaviorHash }
     const matching = makeQualificationCandidateRuntime(
-      fixtureRuntime.definition,
+      fixtureRuntime.application,
       deployment(),
       source,
       candidate18Preregistration,
@@ -228,7 +228,7 @@ describe('qualification collector boundaries', () => {
     expect(Result.isSuccess(matching)).toBe(true)
 
     const behaviorMismatch = makeQualificationCandidateRuntime(
-      fixtureRuntime.definition,
+      fixtureRuntime.application,
       deployment({ strategyBehaviorHash: '0'.repeat(64) }),
       source,
       candidate18Preregistration,
@@ -239,7 +239,7 @@ describe('qualification collector boundaries', () => {
     })
 
     const parameterMismatch = makeQualificationCandidateRuntime(
-      fixtureRuntime.definition,
+      fixtureRuntime.application,
       deployment({ strategyParameterHash: '1'.repeat(64) }),
       source,
       candidate18Preregistration,

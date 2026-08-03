@@ -4,7 +4,7 @@ import type { RuntimeProvenance } from '../../contracts'
 import type { QualificationLock, QualificationResult } from '../../qualification'
 import type { EvaluationResult, InputManifest, Protocol, ReconciliationResult } from '../../types'
 import type { PersistenceReceipt, RecoveredEvaluationEvidence, StoredEvaluationEvidence } from '../evidence-recovery'
-import type { DatabaseError } from './errors'
+import type { DatabaseError } from './error-contract'
 
 export interface PersistEvaluationInput {
   readonly provenance: RuntimeProvenance

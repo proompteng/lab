@@ -1,11 +1,44 @@
 import { Data, Result } from 'effect'
-import type { Account, Transfer } from 'tigerbeetle-node'
 
 import { renderCanonicalJsonFailure, type CanonicalJsonFailure } from '../hash'
 import type { EvaluationEvent, ReconciliationResult } from '../types'
 
 export const LEDGER_SCHEMA_VERSION = 2
 export const LEDGER_BATCH_MAX = 8_189
+export const LEDGER_ACCOUNT_HISTORY_FLAG = 1 << 3
+
+/** Domain-owned record shapes; the TigerBeetle SDK is confined to transport adapters. */
+export interface LedgerAccountRecord {
+  readonly id: bigint
+  readonly debits_pending: bigint
+  readonly debits_posted: bigint
+  readonly credits_pending: bigint
+  readonly credits_posted: bigint
+  readonly user_data_128: bigint
+  readonly user_data_64: bigint
+  readonly user_data_32: number
+  readonly reserved: number
+  readonly ledger: number
+  readonly code: number
+  readonly flags: number
+  readonly timestamp: bigint
+}
+
+export interface LedgerTransferRecord {
+  readonly id: bigint
+  readonly debit_account_id: bigint
+  readonly credit_account_id: bigint
+  readonly amount: bigint
+  readonly pending_id: bigint
+  readonly user_data_128: bigint
+  readonly user_data_64: bigint
+  readonly user_data_32: number
+  readonly timeout: number
+  readonly ledger: number
+  readonly code: number
+  readonly flags: number
+  readonly timestamp: bigint
+}
 
 export const AccountCode = {
   cash: 110,
@@ -115,8 +148,8 @@ export const failLedgerValidation = (
 export interface LedgerPlan {
   readonly runKey: bigint
   readonly runTag: bigint
-  readonly accounts: readonly Account[]
-  readonly transfers: readonly Transfer[]
+  readonly accounts: readonly LedgerAccountRecord[]
+  readonly transfers: readonly LedgerTransferRecord[]
 }
 
 export interface EvaluationLedgerPlan extends LedgerPlan {

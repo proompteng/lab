@@ -1,6 +1,7 @@
 import { Result, pipe } from 'effect'
 
-import type { ExecutionModel, IsoDate } from '../../types'
+import type { ExecutionModel } from '../../execution-model-contract'
+import type { IsoDate } from '../../schemas'
 import { ensureUnsigned, fail, quantizeDown, roundDiv, scaledNumber, type ExecutionResult } from './fixed-point'
 import { BPS, MICROS, PPM } from './model'
 

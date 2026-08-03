@@ -1,6 +1,21 @@
 import { NodeHttpClient, NodeServices } from '@effect/platform-node'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
-import { Effect, Layer, Match, Option, pipe, Redacted, Ref, Result, Schema, Scope, Stdio, Stream } from 'effect'
+import { PgClient } from '@effect/sql-pg'
+import {
+  Duration,
+  Effect,
+  Layer,
+  Match,
+  Option,
+  pipe,
+  Redacted,
+  Ref,
+  Result,
+  Schema,
+  Scope,
+  Stdio,
+  Stream,
+} from 'effect'
 
 import {
   makeApplicationPlan,
@@ -21,6 +36,14 @@ import { BrokerEnvironment } from './broker/identity'
 import type { LoadedRuntimeConfig } from './config'
 import { CycleObservability, CycleObservabilityLive } from './db/cycle-observability'
 import { CycleStore, CycleStoreLive } from './db/cycle-store'
+import {
+  ForwardPerformanceReceiptStore,
+  type ForwardPerformanceReceiptStoreShape,
+  makeForwardPerformanceReceiptEnvelope,
+} from './db/forward-performance-receipt'
+import { ForwardPerformanceReceiptStoreLive } from './db/forward-performance-receipt-postgres'
+import { PaperCycleClosureStore, type PaperCycleClosureStoreShape } from './db/paper-cycle-closure'
+import { PaperCycleClosureStoreLive as PaperCycleClosureStorePostgresLive } from './db/paper-cycle-closure-postgres'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from './db/evidence-store'
 import {
   AuthorityGenerationStore,
@@ -30,6 +53,7 @@ import {
   FillAccountingStore,
   ReconciliationStore,
   ValuationStore,
+  type AuthorityRestrictionStoreShape,
 } from './db/execution-store'
 import { LiveCapitalGrantStore, LiveCapitalGrantStoreLive } from './db/live-capital-grant'
 import { BrokerAccess, CapitalAuthorityKind, noCapitalAuthority } from './execution/authority'
@@ -44,9 +68,10 @@ import { IntentStore, IntentStoreLive } from './execution/intents'
 import { MutationStore, MutationStoreLive } from './execution/mutations'
 import { makeExecutionProgram, type ExecutionProgram } from './execution/runtime-program'
 import { resolvePreparedSandboxAuthority } from './execution/runtime-authority'
-import { WriterFence, WriterFenceLive } from './execution/writer-fence'
+import { WriterFence, WriterFenceLive, type WriterFenceService } from './execution/writer-fence'
 import { operationalError, OperationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
+import { runForwardPerformance } from './forward-performance'
 import { HttpServerLive } from './http'
 import { Journal, JournalLive } from './ledger'
 import { MarketData, MarketDataLive } from './market-data'
@@ -54,7 +79,9 @@ import {
   loadObserveRiskPolicy,
   makeMutationAutonomousCycleStartup,
   makeObserveAutonomousCycleStartup,
+  paperEpisodeCloseExpiresAt,
 } from './observe-composition'
+import { restrictMutationAuthority } from './observe-composition/mutation-interpreter'
 import { sqlResource } from './operations'
 import {
   discoverPaperCandidates as discoverExecutionCandidatesHistoricalCodec,
@@ -77,6 +104,7 @@ import {
 import { currentUtcInstant } from './time'
 import type { RuntimeEvidence, RuntimeState } from './runtime-state'
 import { scopedAcquisition } from './resource-boundary'
+import { strategyApplication } from './strategy'
 
 export const ClickHouseClientResourceLive = (config: LoadedRuntimeConfig) =>
   ClickhouseClient.layer({
@@ -149,6 +177,8 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'Autonom
     IntentStoreLive,
     MutationStoreLive,
     LiveCapitalGrantStoreLive,
+    PaperCycleClosureStorePostgresLive,
+    ForwardPerformanceReceiptStoreLive,
   ).pipe(Layer.provideMerge(writerFence), Layer.provideMerge(postgres), Layer.provideMerge(journal))
   return Layer.mergeAll(
     BrokerSessionResourceLive(plan.config),
@@ -224,7 +254,13 @@ const observeCycle = (plan: ApplicationPlanFor<'AutonomousService'>) =>
     strategy: plan.strategy,
   })
 
-const mutationCycle = (plan: ApplicationPlanFor<'AutonomousService'>, executionProgram: ExecutionProgram) =>
+const mutationCycle = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  executionProgram: ExecutionProgram,
+  paperEpisode: Pick<PaperActivationRequest, 'cutoffAt' | 'expiresAt'>,
+  paperCycleClosureStore: PaperCycleClosureStoreShape,
+  onClosedCycle: (cycleId: string, observedAt: string) => Effect.Effect<void>,
+) =>
   makeMutationAutonomousCycleStartup({
     accountId: plan.config.alpaca.expectedAccountId,
     authorityGenerationHash:
@@ -236,6 +272,10 @@ const mutationCycle = (plan: ApplicationPlanFor<'AutonomousService'>, executionP
     reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
     strategy: plan.strategy,
     executionProgram,
+    paperCycleClosureStore,
+    onClosedCycle,
+    paperEpisodeCutoffAt: paperEpisode.cutoffAt,
+    paperEpisodeExpiresAt: paperEpisodeCloseExpiresAt(paperEpisode.expiresAt),
   })
 
 const executionProgramError = (
@@ -511,6 +551,108 @@ const realizedPaperActivation = (
     error: null,
   }))
 
+const restrictPaperAtExpiry = (
+  expiresAt: string,
+  authorityRestrictionStore: AuthorityRestrictionStoreShape,
+  writerFence: WriterFenceService,
+): Effect.Effect<void, never> =>
+  Effect.gen(function* () {
+    const observedAt = yield* currentUtcInstant
+    const remainingMs = Date.parse(expiresAt) - Date.parse(observedAt)
+    if (remainingMs > 0) yield* Effect.sleep(Duration.millis(remainingMs))
+    yield* restrictMutationAuthority('PAPER activation lease', 'immutable activation request expired').pipe(
+      Effect.matchEffect({
+        onFailure: (cause) =>
+          Effect.logError('Bayn PAPER activation expiry restriction failed').pipe(
+            Effect.annotateLogs({ reason: cause instanceof Error ? cause.message : String(cause) }),
+          ),
+        onSuccess: () => Effect.void,
+      }),
+      Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
+      Effect.provideService(WriterFence, writerFence),
+    )
+  })
+
+const signedMicros = (value: string | null): bigint | undefined =>
+  value !== null && /^-?(?:0|[1-9][0-9]*)$/.test(value) ? BigInt(value) : undefined
+
+const makeClosedCycleReceiptEmitter =
+  (
+    config: LoadedRuntimeConfig,
+    sql: PgClient.PgClient,
+    authorityGenerationHash: string,
+    receiptStore: ForwardPerformanceReceiptStoreShape,
+  ): ((cycleId: string, observedAt: string) => Effect.Effect<void>) =>
+  (cycleId, observedAt) =>
+    Effect.gen(function* () {
+      const existing = yield* receiptStore.read(authorityGenerationHash)
+      if (Option.isSome(existing)) return
+      const receipt = yield* Effect.scoped(
+        runForwardPerformance(config).pipe(Effect.provideService(PgClient.PgClient, sql)),
+      )
+      const netRealizedPnl = signedMicros(receipt.totals.netRealizedPnlAfterCostsMicros)
+      const exactClosedEvidence =
+        receipt.evidence.status === 'SUFFICIENT' &&
+        receipt.reconciliationProof.accountingReceiptsExact &&
+        receipt.reconciliationProof.ledgerExact &&
+        receipt.reconciliationProof.unclosedCycleCount === 0 &&
+        receipt.reconciliationProof.openPositionCount === 0 &&
+        netRealizedPnl !== undefined
+      if (!exactClosedEvidence) {
+        yield* Effect.logWarning('Bayn forward-performance receipt withheld: closed exact evidence is incomplete').pipe(
+          Effect.annotateLogs({
+            service: 'bayn',
+            cycleId,
+            observedAt,
+            evidenceStatus: receipt.evidence.status,
+            accountingReceiptsExact: receipt.reconciliationProof.accountingReceiptsExact,
+            ledgerExact: receipt.reconciliationProof.ledgerExact,
+            unclosedCycleCount: receipt.reconciliationProof.unclosedCycleCount,
+            openPositionCount: receipt.reconciliationProof.openPositionCount,
+          }),
+        )
+        return
+      }
+      if (receipt.profitability === 'PROFITABLE' && netRealizedPnl <= 0n) {
+        yield* Effect.logError('Bayn forward-performance receipt rejected an unsupported positive claim').pipe(
+          Effect.annotateLogs({ service: 'bayn', cycleId, receiptHash: receipt.receiptHash }),
+        )
+        return
+      }
+      const envelope = yield* Effect.fromResult(
+        makeForwardPerformanceReceiptEnvelope({
+          schemaVersion: 'bayn.forward-performance-receipt-envelope.v1',
+          authorityGenerationHash,
+          cycleId,
+          receiptHash: receipt.receiptHash,
+          receipt,
+          createdAt: observedAt,
+        }),
+      )
+      const stored = yield* receiptStore.bind(envelope)
+      yield* Effect.logInfo('Bayn forward-performance receipt emitted').pipe(
+        Effect.annotateLogs({
+          service: 'bayn',
+          cycleId,
+          receiptHash: stored.receiptHash,
+          evidenceStatus: stored.receipt.evidence.status,
+          profitability: stored.receipt.profitability,
+          netRealizedPnlAfterCostsMicros: stored.receipt.totals.netRealizedPnlAfterCostsMicros,
+        }),
+      )
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logError('Bayn forward-performance receipt emission failed').pipe(
+          Effect.annotateLogs({
+            service: 'bayn',
+            cycleId,
+            observedAt,
+            reason: cause instanceof Error ? cause.message : String(cause),
+          }),
+        ),
+      ),
+    )
+
 const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
   Effect.gen(function* () {
     const dependencies = yield* applicationDependencies
@@ -579,6 +721,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                 ).pipe(
                   Effect.flatMap((runtimeContext) =>
                     Effect.all({
+                      pgClient: PgClient.PgClient,
                       session: BrokerSession,
                       alpacaHttpClient: AlpacaHttpClient,
                       liveCapitalGrants: LiveCapitalGrantStore,
@@ -592,6 +735,8 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                       reconciliationStore: ReconciliationStore,
                       authorityGenerationStore: AuthorityGenerationStore,
                       authorityRestrictionStore: AuthorityRestrictionStore,
+                      paperCycleClosureStore: PaperCycleClosureStore,
+                      forwardPerformanceReceiptStore: ForwardPerformanceReceiptStore,
                     }).pipe(
                       Effect.flatMap((runtimeServices) => {
                         const cycleResources = Layer.mergeAll(
@@ -607,6 +752,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                           Layer.succeed(WriterFence, runtimeServices.writerFence),
                           Layer.succeed(IntentStore, runtimeServices.intentStore),
                           Layer.succeed(MutationStore, runtimeServices.mutationStore),
+                          Layer.succeed(PaperCycleClosureStore, runtimeServices.paperCycleClosureStore),
                         )
                         const readStartCycle = (startup: AutonomousCycleStartupInput) =>
                           observeCycle(observePlan)(startup).pipe(
@@ -677,6 +823,12 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                   strategy: observePlan.strategy,
                                   strategyProtocolHash: observePlan.strategyProtocolHash,
                                 }) as ApplicationPlanFor<'AutonomousService'>
+                                const onClosedCycle = makeClosedCycleReceiptEmitter(
+                                  realizedPlan.config,
+                                  runtimeServices.pgClient,
+                                  prepared.generation.generationHash,
+                                  runtimeServices.forwardPerformanceReceiptStore,
+                                )
                                 return makeMutation(
                                   runtimeServices.session,
                                   authority,
@@ -692,6 +844,11 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                           runtimeServices.alpacaHttpClient,
                                         ),
                                         currentUtcInstant,
+                                        paperEpisodeExpiresAt: paperEpisodeCloseExpiresAt(request.expiresAt),
+                                        isPaperEpisodeCloseIntent: (intentId) =>
+                                          runtimeServices.paperCycleClosureStore
+                                            .containsIntent(intentId)
+                                            .pipe(Effect.catch(() => Effect.succeed(false))),
                                         intentStore: runtimeServices.intentStore,
                                         mutationStore: runtimeServices.mutationStore,
                                         writerFence: runtimeServices.writerFence,
@@ -703,6 +860,15 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                   Effect.tap(() =>
                                     realizedPaperActivation(state, request, prepared.generation.generationHash),
                                   ),
+                                  Effect.tap(() =>
+                                    Effect.forkScoped(
+                                      restrictPaperAtExpiry(
+                                        request.expiresAt,
+                                        runtimeServices.authorityRestrictionStore,
+                                        runtimeServices.writerFence,
+                                      ),
+                                    ).pipe(Effect.asVoid),
+                                  ),
                                   Effect.map((executionProgram) => ({
                                     _tag: 'AutonomousMutation' as const,
                                     broker: runtimeBroker(realizedPlan, runtimeServices.session.read, true),
@@ -711,6 +877,9 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                       mutationCycle(
                                         realizedPlan,
                                         executionProgram,
+                                        request,
+                                        runtimeServices.paperCycleClosureStore,
+                                        onClosedCycle,
                                       )(startup).pipe(
                                         Effect.provide(cycleResources),
                                         Effect.map((loop) => loop.pipe(Effect.provide(cycleResources))),
@@ -920,12 +1089,16 @@ export const validateExecutionPreparePlan = (plan: ApplicationPlanFor<'Execution
     )
     const riskPolicyHash = yield* policyHash(riskPolicy, 'execution-prepare-policy')
     const configuredStrategy = plan.strategy.provenance.strategy
-    if (configuredStrategy.parameterSchemaVersion !== 'bayn.risk-balanced-trend.protocol.v4') {
+    const application = strategyApplication(plan.strategy)
+    if (
+      configuredStrategy.name !== application.definition.name ||
+      configuredStrategy.parameterSchemaVersion !== application.definition.parameters.schemaVersion
+    ) {
       return yield* Effect.fail(
         new OperationalError({
           component: 'strategy',
           operation: 'execution-prepare',
-          message: 'EXECUTION_PREPARE requires the reviewed risk-balanced-trend protocol v4',
+          message: 'EXECUTION_PREPARE strategy identity does not match the composed application',
           retryable: false,
           cause: { _tag: 'StrategyProtocolVersionMismatch' },
         }),

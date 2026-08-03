@@ -605,7 +605,16 @@ describe('risk-balanced trend candidate', () => {
 
     expect(first).toEqual(second)
     expect(first.schemaVersion).toBe('bayn.evaluation.v6')
-    expect(first.signalDecisions).toHaveLength(first.events.filter((event) => event.kind === 'decision').length)
+    const terminalCloseEvents = first.events.filter(
+      (event) => event.kind === 'decision' && event.terminalClose === true,
+    )
+    expect(terminalCloseEvents).toHaveLength(1)
+    expect(first.signalDecisions).toHaveLength(
+      first.events.filter((event) => event.kind === 'decision' && event.terminalClose !== true).length,
+    )
+    expect(first.simulation.dailyMarks.at(-1)?.positions.every((position) => position.quantityMicros === '0')).toBe(
+      true,
+    )
     expect(first.simulation.dailyMarks).toHaveLength(first.strategy.observations)
     expect(first.equitySeries).toHaveLength(first.strategy.observations)
     expect(first.doubleCostStrategy.observations).toBe(first.strategy.observations)
@@ -686,7 +695,7 @@ describe('risk-balanced trend candidate', () => {
     )
     expect(analysis.priorTrialRunIds).toEqual(priorTrialRunIds)
     expect(analysis.candidateOrdinal).toBe(9)
-    expect(canonicalHashV1(first)).toBe('81002ac221b557498e06cbcd9307d986ed21ff2c2ce883adcc489fef7f468416')
+    expect(canonicalHashV1(first)).toBe('f31a417c3823ecd21af48740ec98d143f6430cd5936c023965ae457ee5934029')
     expect(canonicalHashV1(first.signalDecisions)).toBe(
       'a7ee602d168b076e56759e852ac3a207d7f74774ee0f2650c0922ad1e1f4e272',
     )

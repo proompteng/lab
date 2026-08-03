@@ -463,7 +463,7 @@ describe('ledger plan Result algebra', () => {
     expect(first.runKey).toBe(69_942_771_251_131_843_050_516_581_237_517_927_397n)
     expect(first.runTag).toBe(2_699_395_039_088_034_789n)
     expect(first.accounts).toHaveLength(11)
-    expect(first.transfers).toHaveLength(249)
+    expect(first.transfers).toHaveLength(258)
     expect(first.accounts[0].id).toBe(43_249_501_142_936_952_057_395_946_051_265_147_876n)
     expect(first.accounts.at(-1)?.id).toBe(187_166_520_106_165_147_592_061_639_881_212_135_452n)
     expect(first.transfers[0].id).toBe(843_588_107_247_104_286_364_813_362_505_705_787n)
@@ -473,7 +473,7 @@ describe('ledger plan Result algebra', () => {
     )
     expect(first.accounts.every((account) => account.flags === AccountFlags.history)).toBeTrue()
     expect(first.transfers.every((transfer) => transfer.flags === 0 && transfer.amount > 0n)).toBeTrue()
-    expect(hashPlan(first)).toBe('92365839d645ebb14e6cefcefe92f6459aadde44b101926952767962112c8762')
+    expect(hashPlan(first)).toBe('9e4f815019e89744429af0ce5add0de162b088607ffcc37d9e5eee49695efd4a')
   })
 
   test('preserves the same balanced plan across deterministic event permutations', () => {

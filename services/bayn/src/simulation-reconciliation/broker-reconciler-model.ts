@@ -17,7 +17,7 @@ import {
   type FillEventInput,
   type PositionSnapshotInput,
 } from '../broker/observations'
-import type { ExecutionStoreError } from '../db/execution-store'
+import type { ExecutionStoreError } from '../db/execution-store/contract'
 import type { BrokerSnapshot, ReconciliationReport } from '../db/reconciliation'
 import type { WriterFenceError } from '../execution/writer-fence'
 import type { CanonicalHashFailure } from '../hash'

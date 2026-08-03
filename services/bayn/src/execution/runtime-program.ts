@@ -38,6 +38,14 @@ export interface ExecutionProgramDependencies {
   readonly liveCapitalGrants: Pick<LiveCapitalGrantStoreShape, 'lockForSubmit' | 'read'>
   readonly freshBrokerPrice: (symbol: string) => Effect.Effect<FreshBrokerQuote, OperationalError>
   readonly currentUtcInstant: Effect.Effect<string>
+  /**
+   * The activation lease is checked at the final writer fence, immediately before
+   * broker transmission. This keeps a long-lived runtime from inheriting startup
+   * PAPER authority after the reviewed activation request has expired.
+   */
+  readonly paperEpisodeExpiresAt?: string
+  /** Close-only intents may finish recovery after the entry lease expires. */
+  readonly isPaperEpisodeCloseIntent?: (intentId: string) => Effect.Effect<boolean>
 }
 
 export interface ExecutionProgramConstructionFailure {
@@ -101,34 +109,47 @@ export const authorizeFinalBrokerSubmit = <A, E, R>(
   dependencies: ExecutionProgramDependencies,
 ): Effect.Effect<A, E | FinalSubmitAuthorizationFailure, R> => {
   let transmissionStarted = false
-  return dependencies.writerFence
-    .transaction(
-      Effect.gen(function* () {
-        yield* dependencies.mutationStore.authorizeSubmit(intent.intentId)
-        yield* validateFinalSubmitRisk(intent.intentId, dependencies)
-        const persisted = yield* finalLiveGrantAuthorization(authority, dependencies)
-        yield* validateFinalSubmitRisk(intent.intentId, dependencies)
-        if (persisted !== undefined) {
-          yield* finalLiveBrokerAuthorization(authority, persisted, intent, dependencies)
+  const lease = Effect.gen(function* () {
+    const observedAt = yield* dependencies.currentUtcInstant
+    const expiresAt = dependencies.paperEpisodeExpiresAt
+    if (expiresAt === undefined || observedAt < expiresAt) return true
+    const closeIntent = dependencies.isPaperEpisodeCloseIntent
+      ? yield* dependencies.isPaperEpisodeCloseIntent(intent.intentId)
+      : false
+    if (!closeIntent) {
+      return yield* Effect.fail({ _tag: 'PaperEpisodeExpired' as const, expiresAt, observedAt })
+    }
+    return true
+  })
+  return lease.pipe(
+    Effect.andThen(
+      dependencies.writerFence.transaction(
+        Effect.gen(function* () {
+          yield* dependencies.mutationStore.authorizeSubmit(intent.intentId)
           yield* validateFinalSubmitRisk(intent.intentId, dependencies)
-        }
-        transmissionStarted = true
-        return yield* transmit
-      }),
-    )
-    .pipe(
-      Effect.mapError((cause) =>
-        transmissionStarted && cause instanceof WriterFenceError
-          ? unknownOutcome(
-              MutationOperation.Submit,
-              'final submit transaction failed after broker transmission began',
-              undefined,
-              undefined,
-              cause,
-            )
-          : cause,
+          const persisted = yield* finalLiveGrantAuthorization(authority, dependencies)
+          yield* validateFinalSubmitRisk(intent.intentId, dependencies)
+          if (persisted !== undefined) {
+            yield* finalLiveBrokerAuthorization(authority, persisted, intent, dependencies)
+            yield* validateFinalSubmitRisk(intent.intentId, dependencies)
+          }
+          transmissionStarted = true
+          return yield* transmit
+        }),
       ),
-    )
+    ),
+    Effect.mapError((cause) =>
+      transmissionStarted && cause instanceof WriterFenceError
+        ? unknownOutcome(
+            MutationOperation.Submit,
+            'final submit transaction failed after broker transmission began',
+            undefined,
+            undefined,
+            cause,
+          )
+        : cause,
+    ),
+  )
 }
 
 const provideCoordinatorDependencies = <A, E, R>(

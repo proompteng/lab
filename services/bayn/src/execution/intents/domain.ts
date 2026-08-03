@@ -298,6 +298,11 @@ export interface IntentStoreService {
     intent: Intent,
     decision: RiskDecision,
   ) => Effect.Effect<IntentReceipt, IntentStoreError | WriterFenceError>
+  /** Commits a pre-registered sell-only close intent after effective PAPER is restricted. */
+  readonly commitClosing?: (
+    intent: Intent,
+    decision: RiskDecision,
+  ) => Effect.Effect<IntentReceipt, IntentStoreError | WriterFenceError>
   readonly read: (intentId: string) => Effect.Effect<Option.Option<StoredIntent>, IntentStoreError>
 }
 
@@ -619,6 +624,7 @@ export type AuthorityBindingFailure =
       readonly observed: string | null
       readonly expected: string
     }
+  | { readonly _tag: 'ClosingIntentMustSell' }
 
 export const decodeAuthorityBindingRows = (
   rows: unknown,
@@ -649,6 +655,50 @@ export const validateCurrentAuthority = (
   }
   if (authority.effective !== Authority.Paper) {
     return Result.fail({ _tag: 'EffectiveAuthorityNotPaper', observed: authority.effective })
+  }
+  if (authority.generation_hash !== intent.authorityGenerationHash) {
+    return Result.fail({
+      _tag: 'AuthorityGenerationMismatch',
+      observed: authority.generation_hash,
+      expected: intent.authorityGenerationHash,
+    })
+  }
+  const generationFields = [
+    ['maximum', authority.generation_maximum, Authority.Paper],
+    ['accountId', authority.generation_account_id, intent.accountId],
+    ['riskPolicyHash', authority.generation_risk_policy_hash, intent.policyHash],
+    ['strategyName', authority.generation_strategy_name, intent.strategyName],
+  ] as const
+  const mismatch = generationFields.find(([, observed, expected]) => observed !== expected)
+  if (mismatch !== undefined) {
+    const [field, observed, expected] = mismatch
+    return Result.fail({
+      _tag: 'AuthorityGenerationHistoryMismatch',
+      generationHash: authority.generation_hash,
+      field,
+      observed,
+      expected,
+    })
+  }
+  return Result.succeed({ _tag: 'CurrentCapitalGrant', binding: authority })
+}
+
+export const validateCurrentClosingAuthority = (
+  rows: readonly AuthorityBindingRow[],
+  intent: Intent,
+): Result.Result<
+  { readonly _tag: 'CurrentCapitalGrant'; readonly binding: AuthorityBindingRow },
+  AuthorityBindingFailure
+> => {
+  if (intent.side !== 'SELL') return Result.fail({ _tag: 'ClosingIntentMustSell' })
+  if (rows.length === 0) return Result.fail({ _tag: 'AuthorityMissing' })
+  if (rows.length > 1) return Result.fail({ _tag: 'MultipleAuthorityRows', count: rows.length })
+  const authority = rows[0]
+  if (authority.maximum !== Authority.Paper) {
+    return Result.fail({ _tag: 'MaximumAuthorityNotPaper', observed: authority.maximum })
+  }
+  if (authority.kill_state !== KillState.Clear) {
+    return Result.fail({ _tag: 'AuthorityKillNotClear', observed: authority.kill_state })
   }
   if (authority.generation_hash !== intent.authorityGenerationHash) {
     return Result.fail({

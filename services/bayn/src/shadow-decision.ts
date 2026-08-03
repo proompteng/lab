@@ -63,10 +63,13 @@ export interface ObserveShadowDecisionInput {
   readonly targetPlan: TargetPlanResult
   readonly policy: Policy
   readonly riskInputs: readonly ShadowDeltaRiskInput[]
+  readonly submissionCutoffAt?: string
 }
 
 export interface PaperDecisionInput extends ObserveShadowDecisionInput {
   readonly authorityGenerationHash: string
+  /** A close-only plan uses the activation lease as its submission boundary. */
+  readonly submissionCutoffAt?: string
 }
 
 export class ShadowDecisionError extends Data.TaggedError('ShadowDecisionError')<{
@@ -98,6 +101,7 @@ const ObserveShadowDecisionInputSchema = Schema.Struct({
   targetPlan: TargetPlanResultSchema,
   policy: PolicySchema,
   riskInputs: Schema.Array(ShadowDeltaRiskInputSchema),
+  submissionCutoffAt: Schema.optional(UtcInstantSchema),
 })
 
 const decodeObserveShadowDecisionInputResult = Schema.decodeUnknownResult(
@@ -191,12 +195,13 @@ const validateBindings = (
   if (cycle.bindings.snapshotId !== snapshot.snapshotId) {
     return Result.fail(error('binding', 'shadow snapshot must match the immutable cycle snapshot binding'))
   }
+  const submissionCutoffAt = input.submissionCutoffAt ?? cycle.window.submissionCutoffAt
   if (
     plannerInput.cycleId !== cycle.identity.cycleId ||
     plannerInput.strategyName !== cycle.identity.strategyName ||
     plannerInput.accountId !== cycle.identity.accountId ||
     plannerInput.signalDate !== cycle.identity.signalSessionDate ||
-    plannerInput.submissionCutoffAt !== cycle.window.submissionCutoffAt
+    plannerInput.submissionCutoffAt !== submissionCutoffAt
   ) {
     return Result.fail(error('binding', 'target planner identity must match the active autonomous cycle'))
   }
@@ -245,7 +250,12 @@ const validateRiskState = (
 ): Result.Result<void, ShadowDecisionError> => {
   const { cycle, plannerInput, snapshot } = input
   const state = riskInput.state
-  if (state.authority.effective !== authority) {
+  const authorityCompatible =
+    state.closeOnly === true && authority === Authority.Paper
+      ? state.authority.maximum === Authority.Paper &&
+        (state.authority.effective === Authority.Paper || state.authority.effective === Authority.Observe)
+      : state.authority.effective === authority
+  if (!authorityCompatible) {
     return Result.fail(error('binding', `decision risk requires effective ${authority} authority`))
   }
   if (state.evaluatedAt !== plannerInput.observedAt) {
@@ -676,6 +686,7 @@ const assemblePaperDecisionDocument = (
   context: ShadowDecisionContext,
   reduction: ShadowReduction,
   authorityGenerationHash: string,
+  submissionCutoffAt: string,
 ): Result.Result<PaperDecisionDocument, ShadowDecisionError> => {
   const { input, policyHash, strategyDecisionHash } = context
   const planningBrokerStateHash = Result.mapError(
@@ -708,8 +719,8 @@ const assemblePaperDecisionDocument = (
       deltaRisk: reduction.deltaRisk,
       orderedIntentIds: reduction.deltaRisk.map((risk) => risk.evaluation.input.intentId),
       ...(reduction.riskBlock === undefined ? {} : { riskBlock: reduction.riskBlock }),
-      submissionCutoffAt: input.cycle.window.submissionCutoffAt,
-      expiresAt: input.cycle.window.submissionCutoffAt,
+      submissionCutoffAt,
+      expiresAt: submissionCutoffAt,
       createdAt: input.plannerInput.observedAt,
     }),
     (cause) => error('contract', 'PAPER decision document failed durable contract validation', cause),
@@ -729,12 +740,18 @@ export const buildPaperDecision = (
         targetPlan: input.targetPlan,
         policy: input.policy,
         riskInputs: input.riskInputs,
+        ...(input.submissionCutoffAt === undefined ? {} : { submissionCutoffAt: input.submissionCutoffAt }),
       }),
       (context) =>
         Result.flatMap(validateShadowPlanningBindings(context), () =>
           Result.flatMap(prepareShadowRisk(context), (prepared) =>
             Result.flatMap(reduceShadowRisk(prepared, Authority.Paper, input.authorityGenerationHash), (reduction) =>
-              assemblePaperDecisionDocument(context, reduction, input.authorityGenerationHash),
+              assemblePaperDecisionDocument(
+                context,
+                reduction,
+                input.authorityGenerationHash,
+                input.submissionCutoffAt ?? input.cycle.window.submissionCutoffAt,
+              ),
             ),
           ),
         ),

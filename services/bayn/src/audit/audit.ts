@@ -3,12 +3,23 @@ import { Result, Schema } from 'effect'
 import type { ContractConstructionFailure } from '../contracts'
 import type { CanonicalHashFailure } from '../hash'
 import type { QualificationLock, QualificationResult } from '../qualification'
-import type { DailyBar, EconomicVerdict, EvaluationEvent, InputManifest, Protocol } from '../types'
-import { auditContract, makeAuditFacts } from './core'
-import { auditSignalAndRepository, auditStoredEvidence } from './evidence-checks'
-import { auditQualificationBindings, makeAuditReport } from './qualification-checks'
+import {
+  ContractVersion,
+  type DailyBar,
+  type EconomicVerdict,
+  type EvaluationEvent,
+  type InputManifest,
+  type Protocol,
+} from '../types'
 import type { ReferenceEvaluationFailure } from './reference'
-import { auditArtifactManifest, auditReferenceArtifacts } from './reference-checks'
+
+export const auditContract = {
+  name: 'risk-balanced-trend',
+  evaluationSchemaVersion: ContractVersion.Evaluation,
+  summarySchemaVersion: ContractVersion.EvaluationSummary,
+  decisionArtifactName: 'risk-balanced-trend-decisions',
+  decisionArtifactSchemaVersion: 'bayn.risk-balanced-trend-decisions.v1',
+} as const
 
 type GateScalar = EconomicVerdict['gates'][number]['actual']
 
@@ -319,22 +330,3 @@ export interface QualificationAuditReport {
   readonly checks: readonly AuditCheck[]
   readonly auditHash: string
 }
-
-export const auditQualification = (
-  input: QualificationAuditInput,
-): Result.Result<QualificationAuditReport, QualificationAuditFailure> =>
-  Result.gen(function* () {
-    const facts = yield* makeAuditFacts(input)
-    const artifactManifestChecks = yield* auditArtifactManifest(facts)
-    const storedEvidenceChecks = yield* auditStoredEvidence(facts)
-    const referenceArtifactChecks = yield* auditReferenceArtifacts(facts)
-    const qualificationBindingChecks = yield* auditQualificationBindings(facts)
-    const checks = [
-      ...storedEvidenceChecks,
-      ...referenceArtifactChecks,
-      ...artifactManifestChecks,
-      ...qualificationBindingChecks,
-      ...auditSignalAndRepository(facts),
-    ]
-    return yield* makeAuditReport(facts, checks)
-  })

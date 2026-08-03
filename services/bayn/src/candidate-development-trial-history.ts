@@ -35,3 +35,9 @@ export {
 } from './candidate-development-trials/state-machine'
 
 export * from './candidate-development-trials/frozen-lineage'
+export {
+  activeCandidateDevelopmentRegistration,
+  candidateDevelopmentTrialLedger,
+  candidateDevelopmentTrialLedgerState,
+  deriveCandidateDevelopmentTrialLedgerState,
+} from './candidate-development-trials/ledger'

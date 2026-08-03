@@ -1,14 +1,15 @@
 import { Result } from 'effect'
-import type { Account, Transfer } from 'tigerbeetle-node'
 
 import {
   failLedgerValidation,
+  type LedgerAccountRecord,
   type LedgerPlan,
+  type LedgerTransferRecord,
   type LedgerValidationError,
   type LedgerValidationOperation,
 } from './model'
 
-export const accountMetadataMatches = (actual: Account, expected: Account): boolean =>
+export const accountMetadataMatches = (actual: LedgerAccountRecord, expected: LedgerAccountRecord): boolean =>
   actual.id === expected.id &&
   actual.user_data_128 === expected.user_data_128 &&
   actual.user_data_64 === expected.user_data_64 &&
@@ -18,7 +19,7 @@ export const accountMetadataMatches = (actual: Account, expected: Account): bool
   actual.code === expected.code &&
   actual.flags === expected.flags
 
-export const transferMetadataMatches = (actual: Transfer, expected: Transfer): boolean =>
+export const transferMetadataMatches = (actual: LedgerTransferRecord, expected: LedgerTransferRecord): boolean =>
   actual.id === expected.id &&
   actual.debit_account_id === expected.debit_account_id &&
   actual.credit_account_id === expected.credit_account_id &&
@@ -83,16 +84,16 @@ const verifyUniqueExact = <Record extends { readonly id: bigint }>(
 export const verifyExactAccounts = (
   operation: LedgerValidationOperation,
   kind: string,
-  actual: readonly Account[],
-  expected: readonly Account[],
+  actual: readonly LedgerAccountRecord[],
+  expected: readonly LedgerAccountRecord[],
 ): Result.Result<void, LedgerValidationError> =>
   verifyUniqueExact(operation, kind, actual, expected, accountMetadataMatches)
 
 export const verifyExactTransfers = (
   operation: LedgerValidationOperation,
   kind: string,
-  actual: readonly Transfer[],
-  expected: readonly Transfer[],
+  actual: readonly LedgerTransferRecord[],
+  expected: readonly LedgerTransferRecord[],
 ): Result.Result<void, LedgerValidationError> =>
   verifyUniqueExact(operation, kind, actual, expected, transferMetadataMatches)
 
@@ -101,8 +102,8 @@ export const verifyLedgerPlanRecords = (
   accountKind: string,
   transferKind: string,
   plan: LedgerPlan,
-  actualAccounts: readonly Account[],
-  actualTransfers: readonly Transfer[],
+  actualAccounts: readonly LedgerAccountRecord[],
+  actualTransfers: readonly LedgerTransferRecord[],
 ): Result.Result<void, LedgerValidationError> =>
   Result.gen(function* () {
     yield* verifyExactAccounts(operation, accountKind, actualAccounts, plan.accounts)
@@ -110,9 +111,9 @@ export const verifyLedgerPlanRecords = (
   })
 
 export const preflightTransfers = (
-  expected: readonly Transfer[],
-  existing: readonly Transfer[],
-): Result.Result<readonly Transfer[], LedgerValidationError> => {
+  expected: readonly LedgerTransferRecord[],
+  existing: readonly LedgerTransferRecord[],
+): Result.Result<readonly LedgerTransferRecord[], LedgerValidationError> => {
   const expectedDuplicateId = duplicateRecordId(expected)
   const existingDuplicateId = duplicateRecordId(existing)
   if (expectedDuplicateId !== undefined || existingDuplicateId !== undefined) {
@@ -152,14 +153,14 @@ export const preflightTransfers = (
 }
 
 export interface LedgerBalances {
-  readonly accountsById: ReadonlyMap<bigint, Account>
-  readonly transfersById: ReadonlyMap<bigint, Transfer>
+  readonly accountsById: ReadonlyMap<bigint, LedgerAccountRecord>
+  readonly transfersById: ReadonlyMap<bigint, LedgerTransferRecord>
 }
 
 export const reconcileBalances = (
   operation: 'check-run' | 'reconcile' | 'verify-account',
-  accounts: readonly Account[],
-  transfers: readonly Transfer[],
+  accounts: readonly LedgerAccountRecord[],
+  transfers: readonly LedgerTransferRecord[],
   runId?: string,
 ): Result.Result<LedgerBalances, LedgerValidationError> => {
   const accountDuplicateId = duplicateRecordId(accounts)
@@ -250,8 +251,8 @@ export const reconcileBalances = (
 
 export const reconcileLedgerPlan = (
   plan: LedgerPlan,
-  actualAccounts: readonly Account[],
-  actualTransfers: readonly Transfer[],
+  actualAccounts: readonly LedgerAccountRecord[],
+  actualTransfers: readonly LedgerTransferRecord[],
   operation: 'reconcile' | 'verify-account' = 'reconcile',
 ): Result.Result<void, LedgerValidationError> =>
   Result.gen(function* () {

@@ -232,6 +232,8 @@ const StateBase = Schema.Struct({
   executionSession: ExecutionSessionBindingSchema,
   reservedBuyingPowerMicros: UnsignedMicrosSchema,
   evaluatedAt: UtcInstant,
+  closeOnly: Schema.optional(Schema.Boolean),
+  closeOnlyExpiresAt: Schema.optional(UtcInstant),
 })
 
 const timeDoesNotFollow = (candidate: string, boundary: string): boolean => candidate > boundary
@@ -303,6 +305,19 @@ export const StateSchema = StateBase.check(
     }
     if (state.authority.updatedAt > state.authorityObservedAt) {
       issues.push({ path: ['authorityObservedAt'], issue: 'must not precede the authority update' })
+    }
+    if (state.closeOnly === true && state.closeOnlyExpiresAt === undefined) {
+      issues.push({ path: ['closeOnlyExpiresAt'], issue: 'close-only risk state requires its bounded close lease' })
+    }
+    if (
+      state.closeOnly === true &&
+      state.closeOnlyExpiresAt !== undefined &&
+      state.closeOnlyExpiresAt <= state.evaluatedAt
+    ) {
+      issues.push({
+        path: ['closeOnlyExpiresAt'],
+        issue: 'close-only risk state must be evaluated before its close lease expires',
+      })
     }
     if (
       state.reconciliation.reconciledAt < state.account.observedAt ||
@@ -770,12 +785,13 @@ const buildAuthorityAndStateGates = (
   reconciledHash: string,
 ): readonly GateResult[] => {
   const { policy, state } = facts
+  const closeOnly = state.closeOnly === true
   return [
     makeGate(
       Gate.Authority,
-      state.authority.maximum === Authority.Paper && state.authority.effective === Authority.Paper,
+      state.authority.maximum === Authority.Paper && (closeOnly || state.authority.effective === Authority.Paper),
       `${state.authority.maximum}:${state.authority.effective}`,
-      'PAPER:PAPER',
+      closeOnly ? 'PAPER:(PAPER|OBSERVE)' : 'PAPER:PAPER',
     ),
     makeGate(Gate.Kill, state.authority.kill === KillState.Clear, state.authority.kill, 'CLEAR'),
     makeGate(
@@ -800,9 +816,13 @@ const buildAuthorityAndStateGates = (
     ),
     makeGate(
       Gate.Session,
-      facts.evaluatedAt >= facts.submissionOpenAt && facts.evaluatedAt < facts.submissionCutoffAt,
+      closeOnly
+        ? facts.state.closeOnlyExpiresAt !== undefined && facts.evaluatedAt < instant(facts.state.closeOnlyExpiresAt)
+        : facts.evaluatedAt >= facts.submissionOpenAt && facts.evaluatedAt < facts.submissionCutoffAt,
       state.evaluatedAt,
-      `[${state.executionSession.submissionOpenAt},${state.executionSession.submissionCutoffAt})`,
+      closeOnly
+        ? `<${state.closeOnlyExpiresAt ?? state.executionSession.submissionCutoffAt}`
+        : `[${state.executionSession.submissionOpenAt},${state.executionSession.submissionCutoffAt})`,
     ),
     makeGate(Gate.UnknownMutations, state.unknownMutationCount === 0, state.unknownMutationCount, 0),
     makeGate(
@@ -911,18 +931,20 @@ const buildRiskGates = (
 ]
 
 const deriveRiskExpiry = (facts: RiskFacts, metrics: DerivedRiskMetrics, outcome: RiskOutcome): string => {
+  const submissionExpiry =
+    facts.state.closeOnly === true && facts.state.closeOnlyExpiresAt !== undefined
+      ? instant(facts.state.closeOnlyExpiresAt)
+      : facts.submissionCutoffAt
   const approvalExpiry = Math.min(
     facts.evaluatedAt + facts.policy.decisionTtlMs,
     facts.intentCreatedAt + facts.policy.maxIntentAgeMs,
     metrics.brokerFreshUntil,
     metrics.marketFreshUntil,
-    facts.submissionCutoffAt,
+    submissionExpiry,
   )
   const ordinaryBlockedExpiry = facts.evaluatedAt + Math.min(1_000, facts.policy.decisionTtlMs)
   const blockedExpiry =
-    facts.evaluatedAt < facts.submissionCutoffAt
-      ? Math.min(ordinaryBlockedExpiry, facts.submissionCutoffAt)
-      : ordinaryBlockedExpiry
+    facts.evaluatedAt < submissionExpiry ? Math.min(ordinaryBlockedExpiry, submissionExpiry) : ordinaryBlockedExpiry
   return utc(outcome === RiskOutcome.Approved ? approvalExpiry : blockedExpiry)
 }
 
@@ -970,6 +992,12 @@ const deriveRiskBindingHashes = (facts: RiskFacts): Result.Result<RiskBindingHas
       items: facts.state.orders,
       observedAt: facts.state.ordersObservedAt,
       unknownMutationCount: facts.state.unknownMutationCount,
+      ...(facts.state.closeOnly === true
+        ? {
+            closeOnly: true,
+            closeOnlyExpiresAt: facts.state.closeOnlyExpiresAt,
+          }
+        : {}),
     }),
     marketDataHash: riskEvidenceHash(facts, {
       symbol: facts.state.marketDataSymbol,

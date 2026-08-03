@@ -1,16 +1,14 @@
-import { NodeRuntime, NodeServices } from '@effect/platform-node'
-import { Effect, Layer, Result } from 'effect'
-import * as Reactivity from 'effect/unstable/reactivity/Reactivity'
+import { Result } from 'effect'
 
 import type { CandidateDevelopmentNextPreregistration } from './candidate-development-calendar'
 import { makeStrategyProtocolHash, type RuntimeProvenance } from './contracts'
 import { canonicalHashV1Result } from './hash'
 import type { MarketDataInspection } from './market-data'
 import type { QualificationLock } from './qualification'
-import { qualificationCandidateMain } from './qualification-candidate/program'
 import { hashParameters } from './protocol'
-import { prepareQualificationLock } from './startup/decisions'
-import type { RiskBalancedTrendStrategyDefinition } from './strategy/risk-balanced-trend'
+import type { StrategyApplication } from './strategy'
+
+export type QualificationCandidateApplication = StrategyApplication<any, any, any>
 
 export type QualificationCandidateBindingFailure =
   | {
@@ -49,9 +47,12 @@ export interface QualificationCandidateBindingReceipt {
 }
 
 export interface QualificationCandidateRuntime {
-  readonly definition: RiskBalancedTrendStrategyDefinition
+  /** The same composed application used by development and qualification evaluation. */
+  readonly application: QualificationCandidateApplication
   readonly provenance: RuntimeProvenance
   readonly moduleSha256: string
+  /** Runtime behavior identity is separate from the reviewed module-byte binding. */
+  readonly strategyBehaviorHash?: string
   readonly trialHistoryHash: string
   readonly boundedContentHash: string
 }
@@ -74,9 +75,8 @@ const mismatch = (
   })
 
 /**
- * Metadata-only candidate command used by the unattended collector before the
- * production startup path opens the durable qualification lock. It never loads
- * bars, touches TigerBeetle, or writes PostgreSQL.
+ * Bind only reviewed metadata and the qualification lock. This adapter does not load bars, touch a broker,
+ * or write PostgreSQL; the collector owns the one governed execution after this binding is complete.
  */
 export const verifyQualificationCandidateBinding = (
   preregistration: CandidateDevelopmentNextPreregistration,
@@ -86,6 +86,7 @@ export const verifyQualificationCandidateBinding = (
   priorTrialRunIds: readonly string[],
 ): Result.Result<QualificationCandidateBindingReceipt, QualificationCandidateBindingFailure> =>
   Result.gen(function* () {
+    const definition = candidate.application.definition
     if (preregistration.candidateOrdinal !== preregistration.priorTrialCount + 1) {
       return yield* mismatch(
         'preregistration.candidateOrdinal',
@@ -96,20 +97,17 @@ export const verifyQualificationCandidateBinding = (
     if (priorTrialRunIds.length !== preregistration.priorTrialCount) {
       return yield* mismatch('database.priorTrialCount', preregistration.priorTrialCount, priorTrialRunIds.length)
     }
-    if (candidate.definition.name !== candidate.provenance.strategy.name) {
-      return yield* mismatch('strategy.name', candidate.definition.name, candidate.provenance.strategy.name)
+    if (definition.name !== candidate.provenance.strategy.name) {
+      return yield* mismatch('strategy.name', definition.name, candidate.provenance.strategy.name)
     }
     if (candidate.moduleSha256 !== preregistration.moduleSha256) {
       return yield* mismatch('moduleSha256', preregistration.moduleSha256, candidate.moduleSha256)
     }
-    if (candidate.provenance.strategy.behaviorHash !== candidate.moduleSha256) {
-      return yield* mismatch(
-        'strategy.behaviorHash',
-        candidate.moduleSha256,
-        candidate.provenance.strategy.behaviorHash,
-      )
+    const expectedBehaviorHash = candidate.strategyBehaviorHash ?? candidate.moduleSha256
+    if (candidate.provenance.strategy.behaviorHash !== expectedBehaviorHash) {
+      return yield* mismatch('strategy.behaviorHash', expectedBehaviorHash, candidate.provenance.strategy.behaviorHash)
     }
-    const parameterHash = hashParameters(candidate.definition.parameters)
+    const parameterHash = hashParameters(definition.parameters)
     if (candidate.provenance.strategy.parameterHash !== parameterHash) {
       return yield* mismatch('strategy.parameterHash', parameterHash, candidate.provenance.strategy.parameterHash)
     }
@@ -152,7 +150,7 @@ export const verifyQualificationCandidateBinding = (
     }
 
     const lock = yield* Result.mapError(
-      prepareQualificationLock(candidate.definition, candidate.provenance, inspection, priorTrialRunIds),
+      candidate.application.prepareQualificationLock(inspection, candidate.provenance, priorTrialRunIds),
       (cause): QualificationCandidateBindingFailure => ({
         _tag: 'QualificationCandidateLockPreparationFailed',
         cause,
@@ -196,9 +194,3 @@ export const verifyQualificationCandidateBinding = (
     )
     return { ...material, bindingHash, lock }
   })
-
-if (import.meta.main) {
-  NodeRuntime.runMain(
-    qualificationCandidateMain.pipe(Effect.provide(Layer.merge(NodeServices.layer, Reactivity.layer))),
-  )
-}

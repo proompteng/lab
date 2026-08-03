@@ -17,14 +17,8 @@ import {
   type QualificationResult,
 } from '../qualification'
 import { prepareQualificationSeries } from '../qualification-statistics'
-import {
-  evaluateRiskBalancedTrend,
-  parseMatchingManifest,
-  summarizeEvaluation,
-  type RiskBalancedTrendEvaluationIssue,
-} from '../risk-balanced-trend'
-import type { RiskBalancedTrendStrategyDefinition } from '../strategy/risk-balanced-trend'
-import { prepareRiskBalancedTrendQualificationLock } from '../strategy/risk-balanced-trend/qualification'
+import { strategyApplication, type StrategyRuntimeInput } from '../strategy'
+import { evaluateStrategyApplication, summarizeEvaluation } from '../strategy/evaluation-runner'
 import type { EvaluationResult, ReconciliationResult } from '../types'
 import type {
   EvaluationEvidence,
@@ -252,28 +246,17 @@ export const decidePinnedRecovery = (
 }
 
 export const prepareQualificationLock = (
-  strategy: RiskBalancedTrendStrategyDefinition,
+  strategy: StrategyRuntimeInput,
   provenance: RuntimeProvenance,
   inspection: MarketDataInspection,
   priorTrialRunIds: readonly string[],
 ): Result.Result<QualificationLock, StartupDecisionFailure> =>
   Result.mapError(
-    pipe(
-      parseMatchingManifest(inspection.manifest, strategy.parameters),
-      Result.flatMap((manifest) =>
-        prepareRiskBalancedTrendQualificationLock(
-          manifest,
-          inspection.sessionDates,
-          priorTrialRunIds,
-          strategy.parameters,
-          provenance,
-        ),
-      ),
-    ),
+    strategyApplication(strategy).prepareQualificationLock(inspection, provenance, priorTrialRunIds),
     (cause): StartupDecisionFailure => ({
       _tag: 'StrategyOperationFailed',
       operation: 'prepare-lock',
-      strategyName: strategy.name,
+      strategyName: strategyApplication(strategy).definition.name,
       cause,
     }),
   )
@@ -422,7 +405,7 @@ export const decideTerminalRecovery = (
 }
 
 export const evaluateLockedSnapshot = (
-  strategy: RiskBalancedTrendStrategyDefinition,
+  strategy: StrategyRuntimeInput,
   provenance: RuntimeProvenance,
   inspection: MarketDataInspection,
   lock: QualificationLock,
@@ -449,18 +432,22 @@ export const evaluateLockedSnapshot = (
     })
   }
   const evaluationResult = pipe(
-    parseMatchingManifest(snapshot.manifest, strategy.parameters),
-    Result.mapError((failure): readonly RiskBalancedTrendEvaluationIssue[] => [failure]),
+    strategyApplication(strategy).parseManifest(snapshot.manifest),
     Result.flatMap((manifest) =>
-      evaluateRiskBalancedTrend(snapshot.bars, manifest, strategy.parameters, provenance, strategy),
+      evaluateStrategyApplication({
+        application: strategyApplication(strategy),
+        provenance,
+        bars: snapshot.bars,
+        inputManifest: manifest,
+      }),
     ),
   )
   if (Result.isFailure(evaluationResult)) {
     return Result.fail({
       _tag: 'StrategyOperationFailed',
       operation: 'evaluate',
-      strategyName: strategy.name,
-      cause: evaluationResult.failure,
+      strategyName: strategyApplication(strategy).definition.name,
+      cause: Array.isArray(evaluationResult.failure) ? evaluationResult.failure : [evaluationResult.failure],
     })
   }
   if (evaluationResult.success.runId !== lock.candidateRunId) {
@@ -502,7 +489,7 @@ const qualificationPipelineFailure = (
 }
 
 export const qualifyEvaluation = (
-  strategy: RiskBalancedTrendStrategyDefinition,
+  strategy: StrategyRuntimeInput,
   lock: QualificationLock,
   evaluation: EvaluationResult,
   reconciliation: ReconciliationResult,
@@ -513,7 +500,7 @@ export const qualifyEvaluation = (
       (cause): StartupDecisionFailure => ({
         _tag: 'StrategyOperationFailed',
         operation: 'analyze',
-        strategyName: strategy.name,
+        strategyName: strategyApplication(strategy).definition.name,
         cause,
       }),
     ),
@@ -525,7 +512,7 @@ export const qualifyEvaluation = (
       evaluationVerdict: evaluation.verdict,
       series: seriesResult.success,
     }),
-    Result.mapError((cause) => qualificationPipelineFailure(strategy.name, cause)),
+    Result.mapError((cause) => qualificationPipelineFailure(strategyApplication(strategy).definition.name, cause)),
   )
   return Result.isFailure(qualification)
     ? Result.fail(qualification.failure)
@@ -533,7 +520,7 @@ export const qualifyEvaluation = (
 }
 
 export const evaluatedCompletion = (
-  strategy: RiskBalancedTrendStrategyDefinition,
+  strategy: StrategyRuntimeInput,
   provenance: RuntimeProvenance,
   evidence: EvaluationEvidence,
   persistence: PersistenceReceipt,

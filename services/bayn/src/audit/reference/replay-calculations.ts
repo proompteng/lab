@@ -98,6 +98,7 @@ export const makeReferenceOrder = (
   requestedQuantityMicros: bigint,
   referencePrice: bigint,
   protocol: SimulationProtocol,
+  forceFullFill = false,
 ): ReferenceComputation<SimulatedOrder> =>
   pipe(
     makeOrderOutcome({
@@ -107,11 +108,13 @@ export const makeReferenceOrder = (
         executionDate: decision.executionDate,
         symbol,
         side,
+        ...(forceFullFill ? { forceFullFill: true } : {}),
       },
       side,
       requestedQuantityMicros,
       referencePriceMicros: referencePrice,
       model: protocol.executionModel,
+      forceFullFill,
     }),
     Result.flatMap((outcome) => {
       const material = {

@@ -94,11 +94,11 @@ describe('qualification dormancy command', () => {
   lifecycleTest('fails closed on malformed lineage without writing a workflow output', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'bayn-qualification-malformed-'))
     try {
-      const lineageDirectory = join(directory, 'services/bayn/src/candidate-development-trials')
-      await mkdir(lineageDirectory, { recursive: true })
+      const ledgerDirectory = join(directory, 'services/bayn/src/candidate-development-trials')
+      await mkdir(ledgerDirectory, { recursive: true })
       await writeFile(
-        join(lineageDirectory, 'frozen-lineage.ts'),
-        'export const frozenCandidateDevelopmentTrialHistory = {}\n',
+        join(ledgerDirectory, 'ledger.ts'),
+        'export const candidateDevelopmentTrialLedgerState = {}\n',
         'utf8',
       )
       const githubOutput = join(directory, 'github-output')
@@ -118,7 +118,7 @@ describe('qualification dormancy command', () => {
 
       expect(exitCode).toBe(1)
       expect(stdout).toBe('')
-      expect(stderr).toContain('history.schemaVersion: UNSUPPORTED_SCHEMA')
+      expect(stderr).toContain('ledger: INVALID_STATE')
       expect(`${stdout}${stderr}`).not.toContain('must-not-be-printed')
       await access(githubOutput).then(
         () => {

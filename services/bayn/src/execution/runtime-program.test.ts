@@ -263,6 +263,72 @@ describe('same-code execution program composition', () => {
     )
   })
 
+  test('expires PAPER submission authority at runtime while allowing only a precommitted close intent', async () => {
+    const sandboxIdentity = identity(BrokerEnvironment.Sandbox)
+    const authority = Result.getOrThrow(
+      makeExecutionAuthority({
+        brokerIdentity: sandboxIdentity,
+        brokerAccess: BrokerAccess.Mutation,
+        capitalAuthority: sandboxCapitalAuthority(authorityGenerationHash),
+        strategy,
+        observedAt,
+      }),
+    )
+    if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('fixture requires mutation authority')
+
+    const { intent: sourceIntent, stored: sourceStored } = finalLiveFixture()
+    const intent: Intent = { ...sourceIntent, side: OrderSide.Sell }
+    const stored: StoredIntent = { ...sourceStored, intent }
+    const episodeExpiresAt = '2026-07-28T08:01:00.000Z'
+    const afterEpisode = '2026-07-28T08:02:00.000Z'
+    let posts = 0
+    const shared: ExecutionProgramDependencies = {
+      ...dependencies('paper-lease'),
+      intentStore: {
+        read: () => Effect.succeed(Option.some(stored)),
+      } as unknown as ExecutionProgramDependencies['intentStore'],
+      mutationStore: {
+        authorizeSubmit: () => Effect.void,
+      } as unknown as ExecutionProgramDependencies['mutationStore'],
+      writerFence: {
+        backendPid: 1,
+        check: Effect.void,
+        transaction: (effect) => effect,
+      },
+      currentUtcInstant: Effect.succeed(afterEpisode),
+      paperEpisodeExpiresAt: episodeExpiresAt,
+    }
+
+    const denied = await Effect.runPromise(
+      authorizeFinalBrokerSubmit(
+        authority,
+        intent,
+        Effect.sync(() => {
+          posts += 1
+        }),
+        { ...shared, isPaperEpisodeCloseIntent: () => Effect.succeed(false) },
+      ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
+    )
+    expect(finalAuthorizationFailureTag(denied)).toBe('PaperEpisodeExpired')
+    expect(posts).toBe(0)
+
+    const closed = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(afterEpisode))
+        return yield* authorizeFinalBrokerSubmit(
+          authority,
+          intent,
+          Effect.sync(() => {
+            posts += 1
+          }),
+          { ...shared, isPaperEpisodeCloseIntent: () => Effect.succeed(true) },
+        )
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(closed).toBeUndefined()
+    expect(posts).toBe(1)
+  })
+
   test('rechecks risk expiry after a blocking live-grant lock and performs zero broker posts', async () => {
     const liveIdentity = identity(BrokerEnvironment.Live)
     const expiresAt = '2026-07-28T08:00:00.010Z'

@@ -8,7 +8,7 @@ import {
   renderSimulationReconciliationIssues,
   type MarkedEquityProof,
 } from '../simulation-reconciliation'
-import { ContractVersion, type SimulationTrace } from '../types'
+import type { SimulationTrace } from '../types'
 import type {
   AuditCanonicalizationSubject,
   AuditCheck,
@@ -18,14 +18,7 @@ import type {
   SignalAccessRecord,
 } from './audit'
 import { evaluateReference, type ReferenceEvaluation } from './reference'
-
-export const auditContract = {
-  name: 'risk-balanced-trend',
-  evaluationSchemaVersion: ContractVersion.Evaluation,
-  summarySchemaVersion: ContractVersion.EvaluationSummary,
-  decisionArtifactName: 'risk-balanced-trend-decisions',
-  decisionArtifactSchemaVersion: 'bayn.risk-balanced-trend-decisions.v1',
-} as const
+import { auditContract } from './audit'
 
 export const MICROS_STRING = '1000000'
 

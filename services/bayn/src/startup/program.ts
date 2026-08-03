@@ -123,12 +123,7 @@ const prepareQualification = (
   ).pipe(
     Effect.flatMap((priorTrialRunIds) =>
       fromStartupDecision(
-        prepareQualificationLock(
-          workflow.strategy.definition,
-          workflow.strategy.provenance,
-          inspection,
-          priorTrialRunIds,
-        ),
+        prepareQualificationLock(workflow.strategy, workflow.strategy.provenance, inspection, priorTrialRunIds),
       ),
     ),
     Effect.map((lock) => ({ inspection, lock })),
@@ -179,7 +174,7 @@ const loadAndEvaluate = (
     Effect.flatMap((snapshot) =>
       fromStartupDecision(
         evaluateLockedSnapshot(
-          workflow.strategy.definition,
+          workflow.strategy,
           workflow.strategy.provenance,
           candidate.inspection,
           candidate.lock,
@@ -221,7 +216,7 @@ const persistEvaluation = (
     'persist-evaluation',
   ).pipe(
     Effect.map((persistence) =>
-      evaluatedCompletion(workflow.strategy.definition, workflow.strategy.provenance, evidence, persistence),
+      evaluatedCompletion(workflow.strategy, workflow.strategy.provenance, evidence, persistence),
     ),
   )
 
@@ -238,9 +233,7 @@ const evaluateAcquiredQualification = (
         'journal-and-reconcile',
       ).pipe(
         Effect.flatMap((reconciliation) =>
-          fromStartupDecision(
-            qualifyEvaluation(workflow.strategy.definition, candidate.lock, evaluation, reconciliation),
-          ),
+          fromStartupDecision(qualifyEvaluation(workflow.strategy, candidate.lock, evaluation, reconciliation)),
         ),
       ),
     ),

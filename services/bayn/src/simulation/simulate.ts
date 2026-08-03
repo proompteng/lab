@@ -1,7 +1,9 @@
 import { Chunk, pipe, Result } from 'effect'
 
 import { ContractVersion, type SimulationProtocol } from '../types'
-import { accrueSessionCash, parseMicros } from './evidence'
+import type { FeeEvent, FillEvent, IsoDate } from '../types'
+import { calculateSessionFees } from '../execution-model'
+import { accrueSessionCash, makeCashChange, makeFeeEvent, parseMicros } from './evidence'
 import { calculateExactPerformanceMetrics } from './metrics'
 import type { AlignedSession, SimulationDecision, SimulationFailure, SimulationInput, SimulationTarget } from './model'
 import { rebalanceSession } from './rebalance'
@@ -19,6 +21,106 @@ const openingSnapshot = (state: SimulationState): SessionOpeningSnapshot => ({
   totalCashYieldMicros: state.totalCashYieldMicros,
 })
 
+const hasOpenPosition = (state: SimulationState): boolean =>
+  Object.values(state.positions).some((position) => position.quantityMicros > 0n)
+
+const consolidateSessionFees = (
+  state: SimulationState,
+  sessionDate: IsoDate,
+  input: SimulationInput,
+): Result.Result<SimulationState, SimulationFailure> => {
+  if (!input.recordEvents) return Result.succeed(state)
+  const events = Chunk.toReadonlyArray(state.events)
+  const fees = events.filter((event): event is FeeEvent => event.kind === 'fee' && event.sessionDate === sessionDate)
+  if (fees.length < 2) return Result.succeed(state)
+  const feeIds = new Set(fees.map((fee) => fee.id))
+  const charged = fees.reduce(
+    (sum, fee) => ({
+      commissionMicros: sum.commissionMicros + BigInt(fee.commissionMicros),
+      secMicros: sum.secMicros + BigInt(fee.secMicros),
+      tafMicros: sum.tafMicros + BigInt(fee.tafMicros),
+      catMicros: sum.catMicros + BigInt(fee.catMicros),
+      totalMicros: sum.totalMicros + BigInt(fee.totalMicros),
+    }),
+    {
+      commissionMicros: 0n,
+      secMicros: 0n,
+      tafMicros: 0n,
+      catMicros: 0n,
+      totalMicros: 0n,
+    },
+  )
+  const inputs = events
+    .filter((event): event is FillEvent => event.kind === 'fill' && event.sessionDate === sessionDate)
+    .map((fill) => ({
+      side: fill.side,
+      quantityMicros: BigInt(fill.quantityMicros),
+      notionalMicros: BigInt(fill.notionalMicros),
+    }))
+  const eventIndexById = new Map(events.map((event, index) => [event.id, index]))
+  const adjustedCashChanges = Result.all(
+    Chunk.toReadonlyArray(state.cashChanges)
+      .filter((change) => change.sourceKind !== 'fee' || !feeIds.has(change.sourceId))
+      .map((change) => {
+        if (change.sourceKind !== 'fill') return Result.succeed(change)
+        const source = events.find((event): event is FillEvent => event.kind === 'fill' && event.id === change.sourceId)
+        const sourceIndex = eventIndexById.get(change.sourceId)
+        if (source === undefined || sourceIndex === undefined) return Result.succeed(change)
+        const removedBefore = fees
+          .filter((fee) => (eventIndexById.get(fee.id) ?? Number.MAX_SAFE_INTEGER) < sourceIndex)
+          .reduce((total, fee) => total + BigInt(fee.totalMicros), 0n)
+        return removedBefore === 0n
+          ? Result.succeed(change)
+          : makeCashChange(
+              input.runId,
+              source,
+              BigInt(change.amountMicros),
+              BigInt(change.cashAfterMicros) + removedBefore,
+            )
+      }),
+  )
+  return pipe(
+    Result.all({
+      cashChanges: adjustedCashChanges,
+      expected: calculateSessionFees(inputs, input.protocol.executionModel, input.costMultiplierMicros),
+    }),
+    Result.flatMap(({ cashChanges, expected }) =>
+      pipe(
+        makeFeeEvent(input.runId, sessionDate, expected),
+        Result.flatMap((fee) => {
+          const correctedState = {
+            ...state,
+            cashMicros: state.cashMicros + charged.totalMicros - expected.totalMicros,
+            totalFeesMicros: state.totalFeesMicros - charged.totalMicros + expected.totalMicros,
+          }
+          return pipe(
+            makeCashChange(input.runId, fee, -expected.totalMicros, correctedState.cashMicros),
+            Result.map((cashChange) => ({ correctedState, cashChanges, fee, cashChange })),
+          )
+        }),
+      ),
+    ),
+    Result.map(({ correctedState, cashChanges, fee, cashChange }) => ({
+      ...correctedState,
+      events: Chunk.fromIterable([...events.filter((event) => event.kind !== 'fee' || !feeIds.has(event.id)), fee]),
+      cashChanges: Chunk.fromIterable([...cashChanges, cashChange]),
+    })),
+  )
+}
+
+const terminalCloseTarget = (
+  input: SimulationInput,
+  source: SimulationTarget | undefined,
+  finalSessionIndex: number,
+): SimulationTarget => ({
+  ...source,
+  signalIndex: Math.max(0, finalSessionIndex - 1),
+  executionIndex: finalSessionIndex,
+  weights: Object.fromEntries(input.protocol.universe.map((symbol) => [symbol, 0])),
+  requireDecisionEvidence: false,
+  terminalClose: true,
+})
+
 const runSession = (
   state: SimulationState,
   session: AlignedSession,
@@ -33,6 +135,17 @@ const runSession = (
       const target = targets[index]
       return target === undefined ? Result.succeed(accrued) : rebalanceSession(accrued, session, target, opening, input)
     }),
+    Result.flatMap((updated) => {
+      if (input.terminalCloseTarget === undefined || index !== input.sessions.length - 1 || !hasOpenPosition(updated)) {
+        return Result.succeed(updated)
+      }
+      const source = targets[index] ?? input.targets.at(-1)
+      const terminalTarget =
+        input.terminalCloseTarget?.(source ?? terminalCloseTarget(input, undefined, index), index) ??
+        terminalCloseTarget(input, source, index)
+      return rebalanceSession(updated, session, terminalTarget, openingSnapshot(updated), input)
+    }),
+    Result.flatMap((updated) => consolidateSessionFees(updated, session.date, input)),
     Result.flatMap((updated) => closeSession(updated, session, opening, input)),
   )
 }
@@ -104,6 +217,7 @@ export const simulate = (
   costMultiplierMicros: bigint,
   runId: string,
   recordEvents: boolean,
+  terminalCloseTarget?: (target: SimulationTarget, executionIndex: number) => SimulationTarget,
 ): SimulationDecision => {
   if (protocol.executionModel.schemaVersion !== 'bayn.execution-model.v2') {
     return fail({
@@ -118,6 +232,7 @@ export const simulate = (
   const input = {
     sessions,
     targets,
+    terminalCloseTarget,
     startIndex,
     protocol,
     costMultiplierMicros,

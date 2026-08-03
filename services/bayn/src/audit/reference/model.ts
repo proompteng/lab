@@ -25,6 +25,7 @@ export interface Target {
   readonly executionIndex: number
   readonly weights: Readonly<Record<string, number>>
   readonly plan?: DecisionPlan
+  readonly terminalClose?: boolean
 }
 
 export interface Position {

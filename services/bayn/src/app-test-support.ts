@@ -19,7 +19,7 @@ import {
 } from './qualification-statistics'
 import { evaluateRiskBalancedTrend, parseMatchingManifest, summarizeEvaluation } from './risk-balanced-trend'
 import type { RuntimeState } from './runtime-state'
-import { makeRiskBalancedTrendDefinition } from './strategy'
+import { makeRiskBalancedTrendApplication } from './strategy'
 import { prepareRiskBalancedTrendQualificationLock } from './strategy/risk-balanced-trend/qualification'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
@@ -157,8 +157,10 @@ export const successfulEvidenceStore: EvidenceStoreService = {
 }
 
 export const fixtureSnapshot = makeSnapshot()
+const fixtureApplication = makeRiskBalancedTrendApplication(fixtureProtocol)
 export const fixtureRuntime = {
-  definition: makeRiskBalancedTrendDefinition(fixtureProtocol),
+  application: fixtureApplication,
+  definition: fixtureApplication.definition,
   provenance,
 } as const
 const fixtureEvaluationResult = evaluateRiskBalancedTrend(
@@ -204,8 +206,10 @@ export const pinnedExecutionProvenance = {
   sourceRevision: 'e'.repeat(40),
   image: { repository: provenance.image.repository, digest: `sha256:${'f'.repeat(64)}` },
 }
+const pinnedApplication = makeRiskBalancedTrendApplication(fixtureProtocol)
 export const pinnedRuntime = {
-  definition: makeRiskBalancedTrendDefinition(fixtureProtocol),
+  application: pinnedApplication,
+  definition: pinnedApplication.definition,
   provenance: pinnedExecutionProvenance,
 } as const
 const pinnedEvaluationResult = evaluateRiskBalancedTrend(

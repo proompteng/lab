@@ -18,11 +18,6 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/forward-performance-command.js" "$@"
   '';
-  qualificationCandidateCommand = pkgs.writeShellScriptBin "bayn-qualification-candidate" ''
-    set -eu
-    root="''${BAYN_IMAGE_ROOT:-}"
-    exec "$root/bin/node" "$root/app/services/bayn/dist/qualification-candidate-command.js" "$@"
-  '';
   qualificationAuditCommand = pkgs.writeShellScriptBin "bayn-qualification-audit" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
@@ -42,7 +37,7 @@ let
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/qualification-audit-command.ts src/qualification-candidate-command.ts src/qualification-collector-command.ts src/forward-performance-command.ts --target=node "
+      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/qualification-audit-command.ts src/qualification-collector-command.ts src/forward-performance-command.ts --target=node "
       + "--external tigerbeetle-node --outdir=dist "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "
@@ -63,7 +58,6 @@ let
     mkdir -p "$out/app/services/bayn/dist" "$out/app/services/bayn/node_modules/tigerbeetle-node"
     cp "$TMPDIR/work/services/bayn/dist/index.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/qualification-audit-command.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/qualification-candidate-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/qualification-collector-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/forward-performance-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
@@ -107,7 +101,6 @@ import ./bun-workspace-service.nix {
     pkgs.cacert
     pkgs.git
     forwardPerformanceCommand
-    qualificationCandidateCommand
     qualificationAuditCommand
     qualificationCollectorCommand
   ];

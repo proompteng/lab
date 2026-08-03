@@ -2,7 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { EvaluationBoundsSchema, FinalizedSnapshotProvenanceSchema, IsoDateSchema, Sha256Schema } from './contracts'
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from './hash'
-import { ExecutionModelSchema } from './protocol'
+import { ExecutionModelSchema } from './execution-model-contract'
 import {
   DigitsSchema as Micros,
   ImageDigestSchema as ImageDigest,
@@ -15,7 +15,7 @@ import {
   UnitIntervalSchema as UnitIntervalFinite,
   strictParseOptions as StrictParseOptions,
 } from './schemas'
-import { MARKED_EQUITY_TOLERANCE_MICROS } from './simulation-reconciliation'
+import { MARKED_EQUITY_TOLERANCE_MICROS } from './simulation-reconciliation/constants'
 
 const Scalar = Schema.Union([Schema.Finite, Schema.Boolean, Schema.String])
 
@@ -194,6 +194,7 @@ const DecisionEventSchema = Schema.Struct({
   signalDate: IsoDateSchema,
   executionDate: IsoDateSchema,
   targetWeights: Schema.Record(Schema.String, Schema.Finite),
+  terminalClose: Schema.optional(Schema.Literal(true)),
 })
 
 const FillEventSchema = Schema.Struct({

@@ -3,7 +3,7 @@ import { ChildProcessSpawner } from 'effect/unstable/process'
 import * as Reactivity from 'effect/unstable/reactivity/Reactivity'
 import { FileSystem } from 'effect'
 
-import { auditQualification } from '../../audit/audit'
+import { auditQualification } from '../../audit/run'
 import { makeQualificationDossier } from '../../audit/dossier'
 import { decodeInputManifestArtifact } from '../../evidence-contracts'
 import { acquireAuditDatabaseClient, readAuditDatabase } from './database'

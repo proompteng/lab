@@ -1,7 +1,12 @@
 import { Effect, flow, Match, pipe, Result } from 'effect'
 
 import { makeApplicationPlan, type ApplicationIdentity, type ApplicationPlan } from './app'
-import { riskBalancedTrendBehaviorHash } from './behavior'
+import {
+  activeStrategyBehaviorHash,
+  activeStrategyName,
+  makeActiveStrategyApplication,
+  type StrategyRuntime,
+} from './strategy'
 import { verifyBehaviorHash, verifyParameterHash } from './build'
 import { loadConfig, type LoadedRuntimeConfig } from './config'
 import {
@@ -13,7 +18,6 @@ import {
 import { operationalError } from './errors'
 import { canonicalHashV1Result, type CanonicalJsonFailure } from './hash'
 import { loadDefaultProtocol, type CausalProtocol } from './protocol'
-import { makeRiskBalancedTrendDefinition, type StrategyRuntime } from './strategy'
 
 type RuntimeIdentityFailure =
   | {
@@ -38,10 +42,10 @@ type ParameterizedRuntime = RuntimeSeed & { readonly parameterHash: string }
 type ProvenanceRuntime = ParameterizedRuntime & { readonly provenance: RuntimeProvenance }
 type SelectedRuntime = ProvenanceRuntime & { readonly strategy: StrategyRuntime }
 
-const selectStrategy = (runtime: ProvenanceRuntime): StrategyRuntime => ({
-  definition: makeRiskBalancedTrendDefinition(runtime.protocol),
-  provenance: runtime.provenance,
-})
+const selectStrategy = (runtime: ProvenanceRuntime): StrategyRuntime => {
+  const application = makeActiveStrategyApplication(runtime.protocol)
+  return { application, definition: application.definition, provenance: runtime.provenance }
+}
 
 const hashRuntimeParameters = (seed: RuntimeSeed): Result.Result<ParameterizedRuntime, RuntimeIdentityFailure> =>
   pipe(
@@ -61,8 +65,8 @@ const addRuntimeProvenance = (
         digest: parameterized.config.build.imageDigest,
       },
       strategy: {
-        name: 'risk-balanced-trend',
-        behaviorHash: riskBalancedTrendBehaviorHash,
+        name: activeStrategyName,
+        behaviorHash: activeStrategyBehaviorHash,
         parameterHash: parameterized.parameterHash,
         parameterSchemaVersion: parameterized.protocol.schemaVersion,
       },
@@ -141,7 +145,7 @@ const verifyRuntimeIdentity = (
   pipe(
     Effect.all(
       [
-        verifyBehaviorHash(identity.config.build, riskBalancedTrendBehaviorHash),
+        verifyBehaviorHash(identity.config.build, activeStrategyBehaviorHash),
         verifyParameterHash(identity.config.build, identity.parameterHash),
       ],
       { discard: true },

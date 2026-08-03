@@ -8,13 +8,13 @@ import { makeStrategyProtocolHash } from './contracts'
 import { canonicalHashV1 } from './hash'
 import { makeQualificationResult } from './qualification'
 import {
-  auditQualification as auditQualificationResult,
   classifySignalTableAccess,
   validateSignalReplicaTopology,
   type AuditDatabaseSnapshot,
   type QualificationAuditInput,
   type QualificationAuditReport,
 } from './audit/audit'
+import { auditQualification as auditQualificationResult } from './audit/run'
 import { makeQualificationDossier as makeQualificationDossierResult, type QualificationDossier } from './audit/dossier'
 import {
   analyzeQualification,
@@ -365,7 +365,7 @@ describe('qualification audit', () => {
     ])
     expect(first.policies.policySetHash).toBe(canonicalHashV1(first.policies.documents))
     expect(second.auditHash).toBe(first.auditHash)
-    expect(first.auditHash).toBe('b95f97dfe898fff9fd248d2ef44b66509cde232b56903d77ac9a3c8fe840ba2c')
+    expect(first.auditHash).toBe('ceeb9c48d71f19d8fde3aa2611831cb15a8ef58426857a8839c7c7dfe1697335')
   })
 
   test('passes for a later candidate when prior terminal result lineage is complete', () => {

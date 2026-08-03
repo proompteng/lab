@@ -17,6 +17,7 @@ import {
   decodeStoredIntentRows,
   validateCommitIdentity,
   validateCurrentAuthority,
+  validateCurrentClosingAuthority,
   type AuthorityBindingFailure,
   type AuthorityBindingRow,
   type CommitMaterialFailure,
@@ -154,6 +155,8 @@ const authorityError = (failure: AuthorityBindingFailure): IntentStoreError => {
         `active PAPER generation ${failure.generationHash} has mismatched ${failure.field}`,
         failure,
       )
+    case 'ClosingIntentMustSell':
+      return storeError('invariant', 'commit', 'a PAPER close intent must be sell-only', failure)
   }
 }
 
@@ -399,6 +402,7 @@ const reclassifyAfterInsert = (
 const resolveIntent = (
   sql: PgClient.PgClient,
   prepared: PreparedCommit,
+  closing = false,
 ): Effect.Effect<ResolvedIntent, IntentStoreError> =>
   Effect.gen(function* () {
     const records = yield* readConflicts(sql, prepared.intent)
@@ -410,9 +414,11 @@ const resolveIntent = (
     }
 
     const authorityRows = yield* readCurrentAuthority(sql)
-    yield* Effect.fromResult(validateCurrentAuthority(authorityRows, prepared.intent)).pipe(
-      Effect.mapError(authorityError),
-    )
+    yield* Effect.fromResult(
+      closing
+        ? validateCurrentClosingAuthority(authorityRows, prepared.intent)
+        : validateCurrentAuthority(authorityRows, prepared.intent),
+    ).pipe(Effect.mapError(authorityError))
     if (disposition._tag === 'CompleteIntent') {
       return { _tag: 'Pending', record: disposition.record } satisfies ResolvedIntent
     }
@@ -453,8 +459,9 @@ const persistDecision = (
 const commitTransaction = (
   sql: PgClient.PgClient,
   prepared: PreparedCommit,
+  closing = false,
 ): Effect.Effect<IntentReceipt, IntentStoreError> =>
-  resolveIntent(sql, prepared).pipe(
+  resolveIntent(sql, prepared, closing).pipe(
     Effect.flatMap((resolved) =>
       resolved._tag === 'Replay' ? Effect.succeed(resolved.receipt) : persistDecision(sql, prepared),
     ),
@@ -469,6 +476,13 @@ const makeStore = Effect.gen(function* () {
         Effect.fromResult(validateCommitIdentity(intent, decision)).pipe(
           Effect.mapError(commitMaterialError),
           Effect.flatMap((prepared) => fence.transaction(commitTransaction(sql, prepared))),
+        ),
+      ),
+    commitClosing: (intent, decision) =>
+      runCommit(
+        Effect.fromResult(validateCommitIdentity(intent, decision)).pipe(
+          Effect.mapError(commitMaterialError),
+          Effect.flatMap((prepared) => fence.transaction(commitTransaction(sql, prepared, true))),
         ),
       ),
     read: (intentId) => runRead(readById(sql, 'read', intentId)),

@@ -109,12 +109,14 @@ describe('current contracts', () => {
       strategy: { parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v2' },
     })
     await expectFailure(decodeRuntimeProvenance({ ...provenance, futureField: true }))
-    await expectFailure(
-      decodeRuntimeProvenance({
-        ...provenance,
-        strategy: { ...provenance.strategy, name: 'tsmom', parameterSchemaVersion: 'bayn.tsmom.protocol.v2' },
-      }),
-    )
+    expect(
+      Effect.runPromise(
+        decodeRuntimeProvenance({
+          ...provenance,
+          strategy: { ...provenance.strategy, name: 'tsmom', parameterSchemaVersion: 'bayn.tsmom.protocol.v2' },
+        }),
+      ),
+    ).resolves.toMatchObject({ strategy: { name: 'tsmom', parameterSchemaVersion: 'bayn.tsmom.protocol.v2' } })
   })
 
   test('returns malformed runtime provenance as a typed construction failure', () => {

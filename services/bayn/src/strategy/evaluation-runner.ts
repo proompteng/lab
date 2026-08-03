@@ -17,27 +17,32 @@ import {
   type SimulationTarget,
 } from '../simulation'
 import { DecisionPlanSchema } from '../evidence-contracts'
-import { ContractVersion, type DecisionPlan, type EvaluationResult, type InputManifest, type Protocol } from '../types'
+import {
+  ContractVersion,
+  type DecisionPlan,
+  type EvaluationResult,
+  type EvaluationSummary,
+  type InputManifest,
+  type Protocol,
+} from '../types'
 import { canonicalHashV1Result } from '../hash'
 import { strictParseOptions } from '../schemas'
-import type { StrategyDecisionFailure, StrategyDefinition, TargetPortfolio, VerifiedStrategyContext } from './core'
+import type { StrategyApplication, StrategyDecisionFailure, TargetPortfolio } from './core'
 
 export type StrategyEvaluationFailure<TFailure extends StrategyDecisionFailure> =
   | SimulationFailure
   | TFailure
   | SimulationReconciliationIssue
 
-export type StrategyContextAtSignal<TMarket, TFailure extends StrategyDecisionFailure> = (
-  sessions: readonly AlignedSession[],
-  signalIndex: number,
-) => Result.Result<VerifiedStrategyContext<TMarket>, SimulationFailure | TFailure>
-
-export interface StrategyEvaluationInput<TMarket, TFailure extends StrategyDecisionFailure> {
-  readonly definition: StrategyDefinition<TMarket, TFailure, TargetPortfolio>
+export interface StrategyEvaluationInput<
+  TMarket,
+  TFailure extends StrategyDecisionFailure,
+  TTarget extends TargetPortfolio = TargetPortfolio,
+> {
+  readonly application: StrategyApplication<TMarket, TFailure, TTarget>
   readonly provenance: RuntimeProvenance
   readonly bars: readonly import('../types').DailyBar[]
   readonly inputManifest: InputManifest
-  readonly contextAtSignal: StrategyContextAtSignal<TMarket, TFailure>
 }
 
 export interface PreparedStrategyEvaluation {
@@ -57,17 +62,16 @@ const decisionPlanFromTarget = (target: TargetPortfolio): DecisionPlan | undefin
   return Result.isSuccess(decoded) ? decoded.success : undefined
 }
 
-const strategyTargets = <TMarket, TFailure extends StrategyDecisionFailure>(
+const strategyTargets = <TMarket, TFailure extends StrategyDecisionFailure, TTarget extends TargetPortfolio>(
   sessions: readonly AlignedSession[],
   signalIndices: readonly number[],
-  definition: StrategyDefinition<TMarket, TFailure>,
-  contextAtSignal: StrategyContextAtSignal<TMarket, TFailure>,
+  application: StrategyApplication<TMarket, TFailure, TTarget>,
 ): Result.Result<readonly SimulationTarget[], SimulationFailure | TFailure> =>
   Result.all(
     signalIndices.map((signalIndex) =>
       pipe(
-        contextAtSignal(sessions, signalIndex),
-        Result.flatMap((context) => definition.decide(context)),
+        application.contextAtSignal(sessions, signalIndex),
+        Result.flatMap((context) => application.definition.decide(context)),
         Result.map(
           (target): SimulationTarget => ({
             signalIndex,
@@ -81,12 +85,28 @@ const strategyTargets = <TMarket, TFailure extends StrategyDecisionFailure>(
     ),
   )
 
-const evaluationTargets = <TMarket, TFailure extends StrategyDecisionFailure>(
+const closeStrategyTarget = <TMarket, TFailure extends StrategyDecisionFailure, TTarget extends TargetPortfolio>(
+  target: SimulationTarget,
+  application: StrategyApplication<TMarket, TFailure, TTarget>,
+): SimulationTarget => {
+  const closedWeights =
+    target.decision === undefined
+      ? Object.fromEntries(Object.keys(target.weights).map((symbol) => [symbol, 0]))
+      : application.closeTarget(target.decision as unknown as TTarget).targetWeights
+  return {
+    ...target,
+    weights: closedWeights,
+    decision: undefined,
+    requireDecisionEvidence: false,
+    terminalClose: true,
+  }
+}
+
+const evaluationTargets = <TMarket, TFailure extends StrategyDecisionFailure, TTarget extends TargetPortfolio>(
   sessions: readonly AlignedSession[],
   window: { readonly signalIndices: readonly number[]; readonly startIndex: number },
   protocol: Protocol,
-  definition: StrategyDefinition<TMarket, TFailure>,
-  contextAtSignal: StrategyContextAtSignal<TMarket, TFailure>,
+  application: StrategyApplication<TMarket, TFailure, TTarget>,
 ): Result.Result<
   {
     readonly strategy: readonly SimulationTarget[]
@@ -97,7 +117,7 @@ const evaluationTargets = <TMarket, TFailure extends StrategyDecisionFailure>(
 > =>
   pipe(
     Result.all({
-      strategy: strategyTargets(sessions, window.signalIndices, definition, contextAtSignal),
+      strategy: strategyTargets(sessions, window.signalIndices, application),
       equalWeight: roundWeight(1 / protocol.universe.length),
       directVolatility: Result.all(
         window.signalIndices.map((signalIndex) =>
@@ -127,13 +147,18 @@ const evaluationTargets = <TMarket, TFailure extends StrategyDecisionFailure>(
     })),
   )
 
-const prepareStrategyEvaluation = <TMarket, TFailure extends StrategyDecisionFailure>(
-  input: StrategyEvaluationInput<TMarket, TFailure>,
+const prepareStrategyEvaluation = <TMarket, TFailure extends StrategyDecisionFailure, TTarget extends TargetPortfolio>(
+  input: StrategyEvaluationInput<TMarket, TFailure, TTarget>,
 ): Result.Result<PreparedStrategyEvaluation, SimulationFailure | TFailure> => {
-  const protocol = input.definition.parameters
+  const protocol = input.application.definition.parameters
   return pipe(
     Result.all({
-      identity: makeEvaluationIdentity(input.inputManifest, protocol, input.provenance, input.definition.name),
+      identity: makeEvaluationIdentity(
+        input.inputManifest,
+        protocol,
+        input.provenance,
+        input.application.definition.name,
+      ),
       sessions: alignBars(input.bars, protocol.universe, input.inputManifest),
     }),
     Result.flatMap(({ identity, sessions }) =>
@@ -146,7 +171,7 @@ const prepareStrategyEvaluation = <TMarket, TFailure extends StrategyDecisionFai
         ),
         Result.flatMap((window) =>
           pipe(
-            evaluationTargets(sessions, window, protocol, input.definition, input.contextAtSignal),
+            evaluationTargets(sessions, window, protocol, input.application),
             Result.flatMap((targets) => {
               const evaluationSessions = sessions.slice(0, window.evaluationEndExclusive)
               return pipe(
@@ -159,6 +184,7 @@ const prepareStrategyEvaluation = <TMarket, TFailure extends StrategyDecisionFai
                     MICROS,
                     identity.runId,
                     true,
+                    (target, executionIndex) => closeStrategyTarget({ ...target, executionIndex }, input.application),
                   ),
                   buyAndHold: simulate(
                     evaluationSessions,
@@ -186,6 +212,7 @@ const prepareStrategyEvaluation = <TMarket, TFailure extends StrategyDecisionFai
                     BigInt(protocol.executionModel.doubleCostMultiplier) * MICROS,
                     identity.runId,
                     false,
+                    (target, executionIndex) => closeStrategyTarget({ ...target, executionIndex }, input.application),
                   ),
                 }),
                 Result.flatMap((simulations) =>
@@ -208,15 +235,19 @@ const prepareStrategyEvaluation = <TMarket, TFailure extends StrategyDecisionFai
   )
 }
 
-export const evaluateStrategyDefinition = <TMarket, TFailure extends StrategyDecisionFailure>(
-  input: StrategyEvaluationInput<TMarket, TFailure>,
+export const evaluateStrategyApplication = <
+  TMarket,
+  TFailure extends StrategyDecisionFailure,
+  TTarget extends TargetPortfolio,
+>(
+  input: StrategyEvaluationInput<TMarket, TFailure, TTarget>,
 ): Result.Result<EvaluationResult, readonly StrategyEvaluationFailure<TFailure>[]> => {
   const prepared = prepareStrategyEvaluation(input)
   if (Result.isFailure(prepared)) return Result.fail([prepared.failure])
   const { strategy, buyAndHold, directVolTiming, doubleCost } = prepared.success
   const markedEquity = reconcileMarkedEquity({
     runId: prepared.success.runId,
-    initialCapitalMicros: input.definition.parameters.initialCapitalMicros,
+    initialCapitalMicros: input.application.definition.parameters.initialCapitalMicros,
     evaluatorTotalFeesMicros: strategy.metrics.totalFeesMicros,
     evaluatorEndingEquityMicros: strategy.metrics.endingEquityMicros,
     events: strategy.events,
@@ -228,7 +259,7 @@ export const evaluateStrategyDefinition = <TMarket, TFailure extends StrategyDec
     runId: prepared.success.runId,
     codeRevision: input.provenance.sourceRevision,
     protocolHash: prepared.success.protocolHash,
-    initialCapitalMicros: input.definition.parameters.initialCapitalMicros,
+    initialCapitalMicros: input.application.definition.parameters.initialCapitalMicros,
     inputManifest: input.inputManifest,
     strategy: strategy.metrics,
     buyAndHold: buyAndHold.metrics,
@@ -239,7 +270,7 @@ export const evaluateStrategyDefinition = <TMarket, TFailure extends StrategyDec
       buyAndHold.metrics,
       directVolTiming.metrics,
       doubleCost.metrics,
-      input.definition.parameters,
+      input.application.definition.parameters,
     ),
     events: strategy.events,
     signalDecisions: strategy.signalDecisions,
@@ -253,6 +284,40 @@ export const evaluateStrategyDefinition = <TMarket, TFailure extends StrategyDec
     markedEquityReconciliation: markedEquity.success.reconciliation,
   })
 }
+
+export const summarizeEvaluation = (evaluation: EvaluationResult): EvaluationSummary => ({
+  schemaVersion: ContractVersion.EvaluationSummary,
+  evaluationSchemaVersion: ContractVersion.Evaluation,
+  runId: evaluation.runId,
+  codeRevision: evaluation.codeRevision,
+  protocolHash: evaluation.protocolHash,
+  initialCapitalMicros: evaluation.initialCapitalMicros,
+  input: {
+    snapshotId: evaluation.inputManifest.finalizedSnapshot.snapshotId,
+    publicationId: evaluation.inputManifest.finalizedSnapshot.publicationId,
+    manifestHash: evaluation.inputManifest.hash,
+    bounds: evaluation.inputManifest.bounds,
+    rowCount: evaluation.inputManifest.rowCount,
+    sessionCount: evaluation.inputManifest.sessionCount,
+    symbols: evaluation.inputManifest.symbols.map((coverage) => coverage.symbol),
+  },
+  strategy: evaluation.strategy,
+  buyAndHold: evaluation.buyAndHold,
+  directVolTiming: evaluation.directVolTiming,
+  doubleCostStrategy: evaluation.doubleCostStrategy,
+  verdict: evaluation.verdict,
+  eventCount: evaluation.events.length,
+  signalDecisionCount: evaluation.signalDecisions.length,
+  orderCount: evaluation.simulation.orders.length,
+  cashChangeCount: evaluation.simulation.cashChanges.length,
+  dailyMarkCount: evaluation.simulation.dailyMarks.length,
+  benchmarkSeriesCounts: {
+    buyAndHold: evaluation.benchmarkSeries.buyAndHold.length,
+    directVolTiming: evaluation.benchmarkSeries.directVolTiming.length,
+    doubleCostStrategy: evaluation.benchmarkSeries.doubleCostStrategy.length,
+  },
+  markedEquityReconciliation: evaluation.markedEquityReconciliation,
+})
 
 export const hashTargetPortfolio = (
   target: TargetPortfolio,

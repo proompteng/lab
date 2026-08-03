@@ -1,0 +1,69 @@
+import { Context, Data, Effect, Option, Result, Schema } from 'effect'
+
+import { canonicalHashV1Result } from '../hash'
+import { PaperDecisionDocumentSchema } from '../shadow-decision-contract'
+import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
+
+const PaperCycleClosureMaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.paper-cycle-closure.v1'),
+  cycleId: Sha256Schema,
+  entryDecisionHash: Sha256Schema,
+  document: PaperDecisionDocumentSchema,
+  createdAt: UtcInstantSchema,
+  expiresAt: UtcInstantSchema,
+}).check(
+  Schema.makeFilter(
+    (closure) =>
+      closure.document.mode === 'PAPER' &&
+      closure.document.dispatchable &&
+      closure.document.bindings.cycleId === closure.cycleId &&
+      closure.document.submissionCutoffAt === closure.expiresAt &&
+      closure.document.expiresAt === closure.expiresAt &&
+      closure.document.createdAt === closure.createdAt,
+  ),
+)
+
+export const PaperCycleClosureSchema = Schema.Struct({
+  ...PaperCycleClosureMaterialSchema.fields,
+  contentHash: Sha256Schema,
+}).check(
+  Schema.makeFilter((closure) => {
+    const { contentHash: _contentHash, ...material } = closure
+    const expected = canonicalHashV1Result(material)
+    return Result.isSuccess(expected) && expected.success === closure.contentHash
+  }),
+)
+
+export type PaperCycleClosureMaterial = typeof PaperCycleClosureMaterialSchema.Type
+export type PaperCycleClosure = typeof PaperCycleClosureSchema.Type
+
+export const makePaperCycleClosure = (
+  material: PaperCycleClosureMaterial,
+): Result.Result<PaperCycleClosure, 'PaperCycleClosureCanonicalizationFailed'> =>
+  Result.map(canonicalHashV1Result(material), (contentHash) => ({ ...material, contentHash })).pipe(
+    Result.mapError(() => 'PaperCycleClosureCanonicalizationFailed' as const),
+  )
+
+export class PaperCycleClosureStoreError extends Data.TaggedError('PaperCycleClosureStoreError')<{
+  readonly operation: 'bind' | 'read' | 'contains-intent'
+  readonly failure: 'conflict' | 'decode' | 'invariant' | 'query'
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
+export interface PaperCycleClosureStoreShape {
+  readonly bind: (closure: PaperCycleClosure) => Effect.Effect<PaperCycleClosure, PaperCycleClosureStoreError>
+  readonly read: (cycleId: string) => Effect.Effect<Option.Option<PaperCycleClosure>, PaperCycleClosureStoreError>
+  readonly containsIntent: (intentId: string) => Effect.Effect<boolean, PaperCycleClosureStoreError>
+}
+
+export class PaperCycleClosureStore extends Context.Service<PaperCycleClosureStore, PaperCycleClosureStoreShape>()(
+  'bayn/PaperCycleClosureStore',
+) {}
+
+export const decodePaperCycleClosureResult = Schema.decodeUnknownResult(PaperCycleClosureSchema, strictParseOptions)
+
+export const decodePaperCycleClosureMaterialResult = Schema.decodeUnknownResult(
+  PaperCycleClosureMaterialSchema,
+  strictParseOptions,
+)

@@ -1,17 +1,19 @@
 import { Result } from 'effect'
-import { AccountFlags, type Account, type Transfer } from 'tigerbeetle-node'
 
 import { canonicalHashV1Result, stableU128, stableU64 } from '../hash'
 import type { DecodedLedgerInput } from './input'
 import {
   AccountCode,
   failLedgerPlan,
+  LEDGER_ACCOUNT_HISTORY_FLAG,
   LEDGER_BATCH_MAX,
   LEDGER_SCHEMA_VERSION,
   TransferCode,
   type EvaluationLedgerPlan,
+  type LedgerAccountRecord,
   type LedgerPlanAmountField,
   type LedgerPlanFailureDetail,
+  type LedgerTransferRecord,
 } from './model'
 
 const makeAccount = (
@@ -21,7 +23,7 @@ const makeAccount = (
   ledger: number,
   name: string,
   code: number,
-): Account => ({
+): LedgerAccountRecord => ({
   id: stableU128('bayn-account-v1', runId, name),
   debits_pending: 0n,
   debits_posted: 0n,
@@ -33,7 +35,7 @@ const makeAccount = (
   reserved: 0,
   ledger,
   code,
-  flags: AccountFlags.history,
+  flags: LEDGER_ACCOUNT_HISTORY_FLAG,
   timestamp: 0n,
 })
 
@@ -48,7 +50,7 @@ const makeTransfer = (
   amount: bigint,
   code: number,
   eventHash: string,
-): Transfer => ({
+): LedgerTransferRecord => ({
   id: stableU128('bayn-transfer-v1', runId, eventId, leg),
   debit_account_id: debitAccountId,
   credit_account_id: creditAccountId,
@@ -94,8 +96,8 @@ export const planDecodedLedgerInput = (
   Result.gen(function* () {
     const runKey = stableU128('bayn-run-v1', input.runId)
     const runTag = stableU64('bayn-run-v1', input.runId)
-    const accountsByName = new Map<string, Account>()
-    const addAccount = (name: string, code: number): Account => {
+    const accountsByName = new Map<string, LedgerAccountRecord>()
+    const addAccount = (name: string, code: number): LedgerAccountRecord => {
       const account = makeAccount(input.runId, runKey, runTag, ledger, name, code)
       accountsByName.set(name, account)
       return account
@@ -120,7 +122,7 @@ export const planDecodedLedgerInput = (
       runId: input.runId,
       amountMicros: input.initialCapitalMicros.toString(),
     })
-    const transfers: Transfer[] = [
+    const transfers: LedgerTransferRecord[] = [
       makeTransfer(
         input.runId,
         runTag,

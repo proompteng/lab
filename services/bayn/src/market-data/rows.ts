@@ -1,6 +1,7 @@
 import { Result, Schema, pipe } from 'effect'
 
-import { decodeSignalCount, type MarketDataVerificationError } from '../market-data-verification'
+import { decodeSignalCount } from './verification/shared'
+import type { MarketDataVerificationError } from './verification/errors'
 import {
   DigitsSchema,
   GitSourceRevisionSchema as SourceRevisionSchema,

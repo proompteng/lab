@@ -1,10 +1,9 @@
 import { Result } from 'effect'
-import type { Account, Transfer } from 'tigerbeetle-node'
 
 import { canonicalHashV1Result } from '../hash'
-import type { LedgerPlan, LedgerPlanHashFailure } from './model'
+import type { LedgerAccountRecord, LedgerPlan, LedgerPlanHashFailure, LedgerTransferRecord } from './model'
 
-const serializeRecord = (record: Account | Transfer): Record<string, number | string> =>
+const serializeRecord = (record: LedgerAccountRecord | LedgerTransferRecord): Record<string, number | string> =>
   Object.fromEntries(
     Object.entries(record).map(([key, value]) => [key, typeof value === 'bigint' ? value.toString() : value]),
   )

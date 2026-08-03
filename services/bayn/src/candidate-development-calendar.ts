@@ -3,6 +3,9 @@ import type { IsoDate } from './schemas'
 
 export type { CandidateDevelopmentNextPreregistration } from './candidate-development-decision'
 export {
+  activeCandidateDevelopmentRegistration,
+  candidateDevelopmentTrialLedger,
+  candidateDevelopmentTrialLedgerState,
   candidate17Preregistration,
   candidate18Preregistration,
   candidate18LegacyPriorTrialsMaterial,

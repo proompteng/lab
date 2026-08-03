@@ -22,6 +22,11 @@ import { retainAutonomousCyclePassObservation } from './cycle-runner/pass-decisi
 import { CycleNotDueReconciliationError, type ReconciliationCadenceState } from './cycle-runner/model'
 import { CycleStore } from './db/cycle-store'
 import {
+  makePaperCycleClosure,
+  type PaperCycleClosure,
+  type PaperCycleClosureStoreShape,
+} from './db/paper-cycle-closure'
+import {
   BrokerEventStore,
   AuthorityGenerationStore,
   AuthorityRestrictionStore,
@@ -69,10 +74,10 @@ import {
   type TargetPlannerInput,
   type TargetPlannerFailure,
   type TargetPlanResult,
+  TargetPlanStatus,
 } from './target-planner'
-import type { CurrentRiskBalancedTrendDecision } from './risk-balanced-trend'
-import type { StrategyRuntime } from './strategy'
-import { compileCurrentRiskBalancedTrendDecision, parseMatchingManifest } from './risk-balanced-trend'
+import { strategyApplication, type CompiledStrategyDecision, type StrategyRuntime } from './strategy'
+import type { DecisionPlan } from './types'
 import {
   appendPendingMutationOrder,
   decideMutationIntentSettlement,
@@ -261,6 +266,11 @@ type ObserveAuthorityObservation = {
 type ObservePlannerPreparation = {
   readonly plannerInput: TargetPlannerInput
   readonly prices: SignalSessionReferencePrices
+}
+
+type ObservePlannerOverrides = {
+  readonly targetWeights?: DecisionPlan['targetWeights']
+  readonly submissionCutoffAt?: string
 }
 
 const compositionFailure = (
@@ -497,36 +507,55 @@ const prepareExecutionSessionBinding = <R>(
   )
 }
 
+type CompiledObserveStrategyDecision = CompiledStrategyDecision & { readonly decision: DecisionPlan }
+
+const unwrapStrategyApplicationFailure = (cause: unknown): unknown => {
+  if (
+    typeof cause === 'object' &&
+    cause !== null &&
+    '_tag' in cause &&
+    cause._tag === 'StrategyApplicationFailure' &&
+    'cause' in cause
+  ) {
+    return cause.cause
+  }
+  return cause
+}
+
 const compileObserveStrategyDecision = <R>(
   input: ObserveDecisionInput<R>,
   facts: ObserveDecisionFacts,
   executionSession: ExecutionSessionBinding,
-): Effect.Effect<CurrentRiskBalancedTrendDecision, OperationalError> =>
+): Effect.Effect<CompiledObserveStrategyDecision, OperationalError> =>
   Effect.fromResult(
-    pipe(
-      parseMatchingManifest(facts.snapshot.manifest, input.strategy.definition.parameters),
-      Result.flatMap((manifest) =>
-        compileCurrentRiskBalancedTrendDecision(
-          facts.snapshot.bars,
-          manifest,
-          input.strategy.definition.parameters,
-          executionSession,
-          input.strategy.definition,
+    (() => {
+      const application = strategyApplication(input.strategy)
+      return pipe(
+        application.parseManifest(facts.snapshot.manifest),
+        Result.flatMap((manifest) =>
+          application.evaluateCurrentDecision(facts.snapshot.bars, manifest, executionSession),
         ),
-      ),
-    ),
+        Result.map((compiled) => ({ ...compiled, decision: compiled.decision as DecisionPlan })),
+      )
+    })(),
   ).pipe(
     Effect.mapError((cause) =>
-      operationalError('strategy', 'current-decision', 'current strategy decision compilation failed', cause),
+      operationalError(
+        'strategy',
+        'current-decision',
+        'current strategy decision compilation failed',
+        unwrapStrategyApplicationFailure(cause),
+      ),
     ),
   )
 
 const prepareObservePlanner = <R>(
   input: ObserveDecisionInput<R>,
   facts: ObserveDecisionFacts,
-  compiled: CurrentRiskBalancedTrendDecision,
+  compiled: CompiledObserveStrategyDecision,
+  overrides: ObservePlannerOverrides = {},
 ): Result.Result<ObservePlannerPreparation, ObserveDecisionCompositionFailure> =>
-  Result.flatMap(referencePrices(compiled.decision.signalDate, facts.evaluatedAt, compiled.priceMicros), (prices) =>
+  Result.flatMap(referencePrices(compiled.signalDate, facts.evaluatedAt, compiled.priceMicros), (prices) =>
     Result.flatMap(
       hashObserveMaterial('risk-policy-hash', 'OBSERVE risk policy is not canonicalizable', input.policy),
       (policyHash) =>
@@ -546,12 +575,12 @@ const prepareObservePlanner = <R>(
               policyHash,
               accountId: input.cycle.identity.accountId,
               signalDate: input.cycle.identity.signalSessionDate,
-              targetWeights: compiled.decision.targetWeights,
+              targetWeights: overrides.targetWeights ?? compiled.decision.targetWeights,
               referencePrices: prices,
               brokerState: facts.reconciliation.brokerState,
               precision: input.executionModel.precision,
               maximumInputAgeMs: Math.min(input.policy.maxBrokerStateAgeMs, input.policy.maxMarketDataAgeMs),
-              submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+              submissionCutoffAt: overrides.submissionCutoffAt ?? input.cycle.window.submissionCutoffAt,
               observedAt: facts.evaluatedAt,
             },
           }),
@@ -566,6 +595,7 @@ const reduceObserveRiskInputs = <R>(
   executionSession: ExecutionSessionBinding,
   targetPlan: TargetPlanResult,
   prices: SignalSessionReferencePrices,
+  closeOnlyExpiresAt?: string,
 ): Result.Result<readonly ShadowDeltaRiskInput[], ObserveDecisionCompositionFailure> =>
   Result.mapError(
     Result.all(
@@ -606,6 +636,7 @@ const reduceObserveRiskInputs = <R>(
               executionSession,
               reservedBuyingPowerMicros: '0',
               evaluatedAt: facts.evaluatedAt,
+              ...(closeOnlyExpiresAt === undefined ? {} : { closeOnly: true as const, closeOnlyExpiresAt }),
             }
             return {
               symbol: target.symbol,
@@ -681,6 +712,56 @@ export const buildMutationShadowCycleDecision = <R>(
 ): Effect.Effect<PaperDecisionDocument, ObserveDecisionFailure, BrokerRead | MarketData | R> =>
   buildCycleDecision(input, Authority.Paper)
 
+const buildClosingPaperCycleDecision = <R>(
+  input: ObserveDecisionInput<R>,
+  closeExpiresAt: string,
+): Effect.Effect<PaperDecisionDocument, ObserveDecisionFailure, BrokerRead | MarketData | R> =>
+  Effect.gen(function* () {
+    const readPreparation = yield* Effect.fromResult(prepareObserveDecisionReads(input))
+    const facts = yield* readObserveDecisionFacts(input, readPreparation)
+    const executionAuthority = yield* Effect.fromResult(
+      requireMutationAuthorityGeneration(facts.reconciliation, input.policy, input.authorityGenerationHash),
+    )
+    const executionSession = yield* Effect.fromResult(prepareExecutionSessionBinding(input, facts))
+    const compiled = yield* compileObserveStrategyDecision(input, facts, executionSession)
+    const closeDecision = strategyApplication(input.strategy).closeTarget(compiled.decision) as DecisionPlan
+    const closeCompiled: CompiledObserveStrategyDecision = { ...compiled, decision: closeDecision }
+    const plannerPreparation = yield* Effect.fromResult(
+      prepareObservePlanner(input, facts, closeCompiled, {
+        targetWeights: closeDecision.targetWeights,
+        submissionCutoffAt: closeExpiresAt,
+      }),
+    )
+    const targetPlan = yield* Effect.fromResult(planTargets(plannerPreparation.plannerInput))
+    const riskInputs = yield* Effect.fromResult(
+      reduceObserveRiskInputs(
+        input,
+        facts,
+        executionAuthority,
+        executionSession,
+        targetPlan,
+        plannerPreparation.prices,
+        closeExpiresAt,
+      ),
+    )
+    const finalizedSnapshot = facts.snapshot.manifest.finalizedSnapshot
+    return yield* buildPaperDecision({
+      cycle: input.cycle,
+      snapshot: {
+        snapshotId: finalizedSnapshot.snapshotId,
+        contentHash: finalizedSnapshot.contentHash,
+        finalizedAt: finalizedSnapshot.finalizedAt,
+      },
+      compiledDecision: closeDecision,
+      plannerInput: plannerPreparation.plannerInput,
+      targetPlan,
+      policy: input.policy,
+      riskInputs,
+      authorityGenerationHash: input.authorityGenerationHash,
+      submissionCutoffAt: closeExpiresAt,
+    })
+  })
+
 const observePass = (
   recordPass: Parameters<AutonomousCycleStartup>[0]['recordPass'],
   observation: CyclePassObservation,
@@ -693,7 +774,17 @@ export type ObserveAutonomousCycleInput = {
   readonly reconciliationIntervalMs: number
   readonly reconciliationPassTimeoutMs: number
   readonly strategy: StrategyRuntime
+  readonly mutationPhase?: 'ENTRY' | 'CLOSE'
+  readonly paperCycleClosureStore?: PaperCycleClosureStoreShape
+  readonly paperEpisodeCutoffAt?: string
+  readonly paperEpisodeExpiresAt?: string
+  readonly onClosedCycle?: (cycleId: string, observedAt: string) => Effect.Effect<void>
 }
+
+export const paperEpisodeCloseGraceMs = 15 * 60_000
+
+export const paperEpisodeCloseExpiresAt = (authorityExpiresAt: string): string =>
+  new Date(Date.parse(authorityExpiresAt) + paperEpisodeCloseGraceMs).toISOString()
 
 type ObserveDecisionRuntime =
   | BrokerRead
@@ -717,7 +808,7 @@ export type ObserveStartupPreparation = {
 export const prepareObserveStartup = (
   input: ObserveAutonomousCycleInput,
 ): Result.Result<ObserveStartupPreparation, OperationalError> => {
-  const executionModel = input.strategy.definition.parameters.executionModel
+  const executionModel = strategyApplication(input.strategy).definition.parameters.executionModel
   if (executionModel.schemaVersion !== 'bayn.execution-model.v2') {
     return Result.fail(
       operationalError('strategy', 'cycle-loop', 'autonomous cycles require the causal v2 execution model'),
@@ -827,6 +918,69 @@ const readBoundMutationDocument = (
     ),
   )
 
+const readPaperCycleClosure = (
+  cycleId: string,
+  store: PaperCycleClosureStoreShape,
+): Effect.Effect<PaperCycleClosure | undefined, CycleRunnerError> =>
+  store.read(cycleId).pipe(
+    Effect.mapError((cause) => mutationRunnerError('durable PAPER close plan read failed', cause, 'store')),
+    Effect.map(Option.getOrUndefined),
+  )
+
+const ensurePaperCycleClosure = (
+  input: ObserveAutonomousCycleInput,
+  preparation: ObserveStartupPreparation,
+  policy: Policy,
+  cycle: AutonomousCycle,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+): Effect.Effect<PaperDecisionDocument | undefined, CycleRunnerError, RecoveryFirstRuntime> =>
+  Effect.gen(function* () {
+    const cutoffAt = input.paperEpisodeCutoffAt
+    const closeExpiresAt = input.paperEpisodeExpiresAt
+    const store = input.paperCycleClosureStore
+    if (cutoffAt === undefined || closeExpiresAt === undefined || store === undefined) return undefined
+    const observedAt = yield* currentUtcInstant
+    if (observedAt < cutoffAt) return undefined
+    const existing = yield* readPaperCycleClosure(cycle.identity.cycleId, store)
+    if (existing !== undefined) return existing.document
+    const entryDecisionHash = cycle.bindings.decisionHash
+    if (entryDecisionHash === undefined) {
+      return yield* Effect.fail(
+        mutationRunnerError(
+          'active PAPER cycle has no immutable entry decision hash for its close plan',
+          undefined,
+          'contract',
+        ),
+      )
+    }
+    const document = yield* buildClosingPaperCycleDecision(
+      mutationDecisionInput(input, preparation, policy, cycle, reconcile),
+      closeExpiresAt,
+    ).pipe(
+      Effect.mapError((cause) => {
+        const converted = decisionBuildError(cause)
+        return mutationRunnerError('deterministic PAPER close plan construction failed', converted, converted.failure)
+      }),
+    )
+    if (!document.dispatchable || document.targetPlan.status !== TargetPlanStatus.Planned) return undefined
+    const closure = yield* Effect.fromResult(
+      makePaperCycleClosure({
+        schemaVersion: 'bayn.paper-cycle-closure.v1',
+        cycleId: cycle.identity.cycleId,
+        entryDecisionHash,
+        document,
+        createdAt: document.createdAt,
+        expiresAt: closeExpiresAt,
+      }),
+    ).pipe(
+      Effect.mapError((cause) => mutationRunnerError('PAPER close plan canonical binding failed', cause, 'contract')),
+    )
+    const stored = yield* store
+      .bind(closure)
+      .pipe(Effect.mapError((cause) => mutationRunnerError('PAPER close plan durable bind failed', cause, 'store')))
+    return stored.document
+  })
+
 const mutationDecisionInput = (
   input: ObserveAutonomousCycleInput,
   preparation: ObserveStartupPreparation,
@@ -903,14 +1057,21 @@ const executeBoundPaperCycle = (
   capability: PaperExecutionCapability,
 ): Effect.Effect<BoundMutationCycleOutcome, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
+    const closeDocument = yield* ensurePaperCycleClosure(input, preparation, policy, cycle, reconcile)
+    const closeOnly = closeDocument !== undefined
+    const phaseInput: ObserveAutonomousCycleInput = {
+      ...input,
+      ...(closeOnly ? { mutationPhase: 'CLOSE' as const } : { mutationPhase: 'ENTRY' as const }),
+    }
+    const activeDocument = closeDocument ?? document
     const step = yield* prepareNextMutationIntent(
-      input,
+      phaseInput,
       preparation,
       policy,
       cycle,
-      document,
+      activeDocument,
       reconcile,
-      capability._tag === 'Mutation',
+      capability._tag === 'Mutation' && (closeOnly || input.paperEpisodeCutoffAt === undefined),
     )
     if (step._tag !== 'Execute') return step
     const executed = yield* capability._tag === 'Mutation'
@@ -955,6 +1116,7 @@ const mutationBound = (cycle: AutonomousCycle | undefined): cycle is AutonomousC
   cycle !== undefined && cycle.state === CycleState.Active && cycle.bindings.decisionHash !== undefined
 
 const interpretBoundMutationCycleOutcome = (
+  input: ObserveAutonomousCycleInput,
   outcome: BoundMutationCycleOutcome,
   cycle: AutonomousCycle,
   context: CycleRunContext<ObserveDecisionRuntime>,
@@ -984,6 +1146,11 @@ const interpretBoundMutationCycleOutcome = (
       return CycleStore.pipe(
         Effect.flatMap((store) => store.finish(cycle.identity.cycleId, CycleState.Completed, outcome.observedAt)),
         Effect.mapError((cause) => mutationRunnerError('completed PAPER cycle finalization failed', cause, 'store')),
+        Effect.tap((receipt) =>
+          receipt.changed && input.onClosedCycle !== undefined
+            ? input.onClosedCycle(cycle.identity.cycleId, outcome.observedAt)
+            : Effect.void,
+        ),
         Effect.map((receipt) => ({
           outcome: 'RECOVERED' as const,
           action: 'COMPLETED' as const,
@@ -1008,7 +1175,7 @@ const recoverBoundMutationCycle = (
       document.mode === 'OBSERVE'
         ? runAutonomousCyclePass(context)
         : executeBoundPaperCycle(input, preparation, policy, cycle, document, reconcile, capability).pipe(
-            Effect.flatMap((outcome) => interpretBoundMutationCycleOutcome(outcome, cycle, context)),
+            Effect.flatMap((outcome) => interpretBoundMutationCycleOutcome(input, outcome, cycle, context)),
           ),
     ),
   )
@@ -1022,17 +1189,25 @@ const runRecoveryFirstCyclePass = (
   capability: PaperExecutionCapability,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, RecoveryFirstRuntime> =>
   readUnfinishedMutationCycle(context).pipe(
-    Effect.flatMap((unfinished) =>
-      mutationBound(unfinished)
-        ? recoverBoundMutationCycle(input, preparation, policy, unfinished, context, reconcile, capability)
-        : runAutonomousCyclePass(context).pipe(
+    Effect.flatMap((unfinished) => {
+      if (mutationBound(unfinished)) {
+        return recoverBoundMutationCycle(input, preparation, policy, unfinished, context, reconcile, capability)
+      }
+      return currentUtcInstant.pipe(
+        Effect.flatMap((observedAt) => {
+          if (input.paperEpisodeCutoffAt !== undefined && observedAt >= input.paperEpisodeCutoffAt) {
+            return Effect.succeed({ outcome: 'NO_PUBLICATION' as const, observedAt })
+          }
+          return runAutonomousCyclePass(context).pipe(
             Effect.flatMap((result) =>
               result.outcome === 'RECOVERED' && result.action === 'BOUND_DECISION'
                 ? recoverBoundMutationCycle(input, preparation, policy, result.cycle, context, reconcile, capability)
                 : Effect.succeed(result),
             ),
-          ),
-    ),
+          )
+        }),
+      )
+    }),
   )
 
 const observeMutationPass = (
@@ -1362,7 +1537,10 @@ export const makeObserveAutonomousCycleStartup =
   (startup) =>
     Effect.gen(function* () {
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
-      const policy = yield* loadObserveRiskPolicy(input.accountId, input.strategy.definition.parameters.universe).pipe(
+      const policy = yield* loadObserveRiskPolicy(
+        input.accountId,
+        strategyApplication(input.strategy).definition.parameters.universe,
+      ).pipe(
         Effect.mapError((cause) =>
           operationalError('strategy', 'risk-policy', 'source-controlled paper risk policy is invalid', cause),
         ),
@@ -1387,7 +1565,10 @@ export const makeMutationAutonomousCycleStartup =
     Effect.gen(function* () {
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
       yield* Effect.fromResult(validateMutationExecutionProgram(input))
-      const policy = yield* loadObserveRiskPolicy(input.accountId, input.strategy.definition.parameters.universe).pipe(
+      const policy = yield* loadObserveRiskPolicy(
+        input.accountId,
+        strategyApplication(input.strategy).definition.parameters.universe,
+      ).pipe(
         Effect.mapError((cause) =>
           operationalError('strategy', 'risk-policy', 'source-controlled paper risk policy is invalid', cause),
         ),

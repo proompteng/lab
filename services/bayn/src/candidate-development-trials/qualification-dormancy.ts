@@ -6,6 +6,7 @@ import type {
   CandidateDevelopmentTrialState,
   CandidateDevelopmentTrialStateIssue,
 } from './model'
+import type { CandidateDevelopmentTrialLedgerState } from './ledger'
 import { buildCandidateDevelopmentTrialState } from './lineage'
 import { validateCandidateDevelopmentTrialState } from './validation'
 
@@ -120,6 +121,81 @@ export const qualificationDormancyDecisionFromState = (
   return Result.isFailure(validation)
     ? { ok: false, issue: mapStateIssue(validation.failure) }
     : { ok: true, decision: decisionFromState(state) }
+}
+
+const invalidLedger = (path: string): QualificationDormancyResult => ({
+  ok: false,
+  issue: { path, reason: 'INVALID_STATE' },
+})
+
+/**
+ * Qualification reads the append-only ledger, while the older history reducer remains available for immutable
+ * archived evidence. Only a development approval entry can make the single active registration runnable.
+ */
+export const qualificationDormancyDecisionFromLedgerState = (
+  state: CandidateDevelopmentTrialLedgerState,
+): QualificationDormancyResult => {
+  if (
+    !Array.isArray(state.entries) ||
+    !Array.isArray(state.completedCandidateOrdinals) ||
+    !Array.isArray(state.developmentCandidateOrdinals)
+  ) {
+    return invalidLedger('ledger')
+  }
+
+  const active = state.activeCandidate
+  if (active === null) {
+    const last = state.entries.at(-1)
+    if (state.latestInvalidPrecommit !== null) {
+      return {
+        ok: true,
+        decision: {
+          status: 'dormant',
+          reason: 'precommit-invalid-unattempted',
+          candidateOrdinal: state.latestInvalidPrecommit.candidateOrdinal,
+        },
+      }
+    }
+    if (last?._tag === 'DEVELOPMENT_REJECTED') {
+      return {
+        ok: true,
+        decision: { status: 'dormant', reason: 'development-rejected', candidateOrdinal: last.candidateOrdinal },
+      }
+    }
+    return { ok: true, decision: { status: 'dormant', reason: 'preregistration-missing', candidateOrdinal: null } }
+  }
+
+  const candidateOrdinal = active.preregistration.candidateOrdinal
+  const candidateEntries = state.entries.filter((entry) => entry.candidateOrdinal === candidateOrdinal)
+  if (candidateOrdinal !== active.preregistration.priorTrialCount + 1) {
+    return invalidLedger('activeCandidate.preregistration.candidateOrdinal')
+  }
+  if (candidateEntries.some((entry) => entry._tag === 'QUALIFICATION_TERMINAL')) {
+    return {
+      ok: true,
+      decision: { status: 'dormant', reason: 'qualification-attempt-consumed', candidateOrdinal },
+    }
+  }
+  if (candidateEntries.some((entry) => entry._tag === 'DEVELOPMENT_REJECTED')) {
+    return {
+      ok: true,
+      decision: { status: 'dormant', reason: 'development-rejected', candidateOrdinal },
+    }
+  }
+  const approval = candidateEntries.find((entry) => entry._tag === 'DEVELOPMENT_APPROVED')
+  if (approval === undefined) {
+    return { ok: true, decision: { status: 'dormant', reason: 'development-not-approved', candidateOrdinal } }
+  }
+  return {
+    ok: true,
+    decision: {
+      status: 'ready',
+      reason: 'qualification-eligible',
+      candidateOrdinal,
+      preregistrationSourceRevision: active.preregistration.preregistration.sourceRevision,
+      preregistrationBlobOid: active.preregistration.preregistration.blobOid,
+    },
+  }
 }
 
 export const decideQualificationDormancy = (value: unknown): QualificationDormancyResult => {

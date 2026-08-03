@@ -121,6 +121,7 @@ const prepared: PreparedCandidateDevelopmentLocalAttempt = {
   receiptPath: '/repo/.git/bayn/candidate-development-attempts/ordinal-21.json',
   source,
   sourceManifest,
+  application: fixtureRuntime.application,
   definition: fixtureRuntime.definition,
   provenance: fixtureRuntime.provenance,
 }

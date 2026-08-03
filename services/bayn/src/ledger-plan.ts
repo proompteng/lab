@@ -7,12 +7,14 @@ import {
   AccountCode,
   failLedgerValidation,
   ledgerValidationError,
+  LEDGER_ACCOUNT_HISTORY_FLAG,
   LEDGER_BATCH_MAX,
   LEDGER_SCHEMA_VERSION,
   LedgerValidationError,
   makeLedgerPlanFailure,
   renderLedgerPlanFailure,
   TransferCode,
+  type LedgerAccountRecord,
   type EvaluationLedgerPlan,
   type LedgerInput,
   type LedgerPlan,
@@ -23,6 +25,7 @@ import {
   type LedgerPlanInputField,
   type LedgerValidationOperation,
   type LedgerValidationReason,
+  type LedgerTransferRecord,
 } from './ledger-plan/model'
 import { validatePersistedRunEvidence } from './ledger-plan/persisted-evidence'
 import {
@@ -50,6 +53,7 @@ export {
   failLedgerValidation,
   hashLedgerPlanResult,
   ledgerValidationError,
+  LEDGER_ACCOUNT_HISTORY_FLAG,
   LEDGER_BATCH_MAX,
   LEDGER_SCHEMA_VERSION,
   LedgerValidationError,
@@ -67,6 +71,7 @@ export {
 export type {
   EvaluationLedgerPlan,
   LedgerInput,
+  LedgerAccountRecord,
   LedgerPlan,
   LedgerPlanAmountField,
   LedgerPlanFailure,
@@ -75,4 +80,5 @@ export type {
   LedgerPlanInputField,
   LedgerValidationOperation,
   LedgerValidationReason,
+  LedgerTransferRecord,
 }

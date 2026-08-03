@@ -11,8 +11,12 @@ import type {
   SignalDecision,
   SimulatedOrder,
 } from './evidence-contracts'
-import type { EconomicThresholds, ExecutionModel } from './protocol'
+import type { EconomicThresholds } from './protocol'
+import type { ExecutionModel } from './execution-model-contract'
 import type { IsoDate } from './schemas'
+import { DataFeed, DataSource, PriceAdjustment, PublicationSchema } from './contracts'
+
+export { ContractVersion, DataFeed, DataSource, PriceAdjustment, PublicationSchema } from './contracts'
 
 export type {
   CashChange,
@@ -41,34 +45,10 @@ export type {
   SymbolCoverage,
   SymbolSignal,
 } from './evidence-contracts'
-export type { CausalProtocol, EconomicThresholds, ExecutionModel, Protocol } from './protocol'
+export type { CausalProtocol, EconomicThresholds, Protocol } from './protocol'
+export type { ExecutionModel } from './execution-model-contract'
 export { DIRECT_VOLATILITY_WINDOW } from './protocol'
 export type { IsoDate } from './schemas'
-
-export enum DataSource {
-  Alpaca = 'alpaca',
-}
-
-export enum DataFeed {
-  Sip = 'sip',
-}
-
-export enum PriceAdjustment {
-  All = 'all',
-}
-
-export enum PublicationSchema {
-  AdjustedDailySnapshotV2 = 'signal.adjusted-daily-snapshot.v2',
-}
-
-export enum ContractVersion {
-  DecisionPlan = 'bayn.risk-balanced-trend-decision-plan.v1',
-  Evaluation = 'bayn.evaluation.v6',
-  EvaluationSummary = 'bayn.evaluation-summary.v5',
-  PartialFillSeed = 'bayn.partial-fill-seed.v1',
-  RunIdentity = 'bayn.run-identity.v1',
-  SimulationTrace = 'bayn.simulation-trace.v3',
-}
 
 export interface DailyBar {
   readonly symbol: string
