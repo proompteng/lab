@@ -1,11 +1,25 @@
 import { Resolver } from 'node:dns/promises'
 import { isIP } from 'node:net'
 
-import { type Client, type ClientInitArgs, createClient } from 'tigerbeetle-node'
+import {
+  type Client,
+  type ClientInitArgs,
+  CreateAccountStatus,
+  type CreateAccountResult,
+  createClient,
+  CreateTransferStatus,
+  type CreateTransferResult,
+} from 'tigerbeetle-node'
 import { Data, Effect, Option, Result, Scope, ScopedRef, Semaphore } from 'effect'
 
 import type { RuntimeConfig } from './config'
 import { OperationalError, operationalError } from './errors'
+import type {
+  LedgerAccountRecord,
+  LedgerCreateResult,
+  LedgerQueryFilter,
+  LedgerTransferRecord,
+} from './ledger-plan/model'
 
 type ResolveHostname = (hostname: string) => Effect.Effect<readonly string[], OperationalError>
 
@@ -246,7 +260,7 @@ export interface JournalDependencies {
   ) => Effect.Effect<string[], OperationalError>
 }
 
-export type TigerBeetleClient = Pick<
+type TigerBeetleNodeClient = Pick<
   Client,
   | 'createAccounts'
   | 'createTransfers'
@@ -257,7 +271,46 @@ export type TigerBeetleClient = Pick<
   | 'destroy'
 >
 
-const defaultDependencies: JournalDependencies = { createClient, resolveReplicaAddresses }
+export interface TigerBeetleClient {
+  readonly createAccounts: (accounts: readonly LedgerAccountRecord[]) => Promise<readonly LedgerCreateResult[]>
+  readonly createTransfers: (transfers: readonly LedgerTransferRecord[]) => Promise<readonly LedgerCreateResult[]>
+  readonly lookupAccounts: (ids: readonly bigint[]) => Promise<readonly LedgerAccountRecord[]>
+  readonly lookupTransfers: (ids: readonly bigint[]) => Promise<readonly LedgerTransferRecord[]>
+  readonly queryAccounts: (filter: LedgerQueryFilter) => Promise<readonly LedgerAccountRecord[]>
+  readonly queryTransfers: (filter: LedgerQueryFilter) => Promise<readonly LedgerTransferRecord[]>
+  readonly destroy: () => void
+}
+
+const normalizeCreateResult = (
+  result: CreateAccountResult | CreateTransferResult,
+  created: number,
+  exists: number,
+): LedgerCreateResult => ({
+  timestamp: result.timestamp,
+  outcome: result.status === created ? 'created' : result.status === exists ? 'exists' : 'rejected',
+  status: result.status,
+})
+
+const adaptTigerBeetleClient = (client: TigerBeetleNodeClient): TigerBeetleClient => ({
+  createAccounts: async (accounts) =>
+    (await client.createAccounts([...accounts])).map((result) =>
+      normalizeCreateResult(result, CreateAccountStatus.created, CreateAccountStatus.exists),
+    ),
+  createTransfers: async (transfers) =>
+    (await client.createTransfers([...transfers])).map((result) =>
+      normalizeCreateResult(result, CreateTransferStatus.created, CreateTransferStatus.exists),
+    ),
+  lookupAccounts: async (ids) => client.lookupAccounts([...ids]),
+  lookupTransfers: async (ids) => client.lookupTransfers([...ids]),
+  queryAccounts: async (filter) => client.queryAccounts(filter),
+  queryTransfers: async (filter) => client.queryTransfers(filter),
+  destroy: () => client.destroy(),
+})
+
+const defaultDependencies: JournalDependencies = {
+  createClient: (options) => adaptTigerBeetleClient(createClient(options)),
+  resolveReplicaAddresses,
+}
 
 export interface TigerBeetleRequestClient {
   readonly request: <A>(

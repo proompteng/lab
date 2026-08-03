@@ -1,4 +1,3 @@
-import type { Account, Transfer } from 'tigerbeetle-node'
 import { Context, Effect, Layer, Result } from 'effect'
 
 import type { RuntimeConfig } from './config'
@@ -14,7 +13,9 @@ import {
   verifyExactTransfers,
   verifyLedgerPlanRecords,
   type LedgerInput,
+  type LedgerAccountRecord,
   type LedgerPlan,
+  type LedgerTransferRecord,
 } from './ledger-plan'
 import {
   accountReconciliationQueries,
@@ -64,7 +65,7 @@ const validationBoundary = <A>(decision: Result.Result<A, LedgerValidationError>
 
 const createAndVerifyAccounts = (
   client: TigerBeetleRequestClient,
-  accounts: readonly Account[],
+  accounts: readonly LedgerAccountRecord[],
 ): Effect.Effect<void, JournalError> =>
   Effect.gen(function* () {
     const results = yield* client.request('create-accounts', (active) => active.createAccounts([...accounts]))
@@ -81,7 +82,7 @@ const createAndVerifyAccounts = (
 
 const createAndVerifyTransfers = (
   client: TigerBeetleRequestClient,
-  transfers: readonly Transfer[],
+  transfers: readonly LedgerTransferRecord[],
 ): Effect.Effect<void, JournalError> =>
   Effect.gen(function* () {
     const existing = yield* client.request('lookup-preflight-transfers', (active) =>
@@ -211,6 +212,7 @@ export {
   LedgerValidationError,
   reconcileLedgerPlan,
   validatePersistedRunEvidence,
+  type LedgerCreateResult,
   type EvaluationLedgerPlan,
   type LedgerInput,
   type LedgerPlan,

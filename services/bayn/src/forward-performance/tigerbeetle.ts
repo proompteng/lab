@@ -1,5 +1,4 @@
 import { Data, Effect, Result, Scope } from 'effect'
-import type { Account } from 'tigerbeetle-node'
 
 import type { RuntimeConfig } from '../config'
 import { assembleAccountPlan, accountReconciliationQueries } from '../ledger/decisions'
@@ -9,6 +8,7 @@ import {
   ledgerValidationError,
   reconcileLedgerPlan,
   type LedgerPlan,
+  type LedgerAccountRecord,
   type LedgerValidationError,
 } from '../ledger-plan'
 import { makeTigerBeetleRequestClient, type JournalDependencies } from '../tigerbeetle-client'
@@ -57,7 +57,7 @@ const generationLedgerTotals = (plan: LedgerPlan): ForwardPerformanceLedgerTotal
   cashYieldMicros: '0',
 })
 
-const openInventoryCount = (accounts: readonly Account[]): number =>
+const openInventoryCount = (accounts: readonly LedgerAccountRecord[]): number =>
   accounts.filter(
     (account) => account.code === AccountCode.inventory && account.debits_posted !== account.credits_posted,
   ).length

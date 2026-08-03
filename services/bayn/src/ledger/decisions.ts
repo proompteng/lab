@@ -1,13 +1,4 @@
 import { Result } from 'effect'
-import {
-  type Account,
-  type CreateAccountResult,
-  CreateAccountStatus,
-  type CreateTransferResult,
-  CreateTransferStatus,
-  type QueryFilter,
-  type Transfer,
-} from 'tigerbeetle-node'
 
 import { stableU128, stableU64 } from '../hash'
 import {
@@ -16,19 +7,19 @@ import {
   LEDGER_BATCH_MAX,
   ledgerValidationError,
   type LedgerPlan,
+  type LedgerAccountRecord,
+  type LedgerCreateResult,
+  type LedgerQueryFilter,
+  type LedgerTransferRecord,
   type LedgerValidationError,
 } from '../ledger-plan'
 import type { ReconciliationResult } from '../types'
-
-type CreateResult = CreateAccountResult | CreateTransferResult
 
 const classifyCreateBatch = <Record extends { readonly id: bigint }>(
   kind: 'account' | 'transfer',
   operation: 'verify-account-results' | 'verify-transfer-results',
   records: readonly Record[],
-  results: readonly CreateResult[],
-  created: number,
-  exists: number,
+  results: readonly LedgerCreateResult[],
 ): Result.Result<readonly Record[], LedgerValidationError> => {
   if (results.length !== records.length) {
     return failLedgerValidation(
@@ -43,8 +34,8 @@ const classifyCreateBatch = <Record extends { readonly id: bigint }>(
   for (let index = 0; index < results.length; index += 1) {
     const result = results[index]
     const record = records[index]
-    if (result.status === created) continue
-    if (result.status === exists) {
+    if (result.outcome === 'created') continue
+    if (result.outcome === 'exists') {
       existing.push(record)
       continue
     }
@@ -59,32 +50,18 @@ const classifyCreateBatch = <Record extends { readonly id: bigint }>(
 }
 
 export const classifyAccountCreateBatch = (
-  accounts: readonly Account[],
-  results: readonly CreateAccountResult[],
-): Result.Result<readonly Account[], LedgerValidationError> =>
-  classifyCreateBatch(
-    'account',
-    'verify-account-results',
-    accounts,
-    results,
-    CreateAccountStatus.created,
-    CreateAccountStatus.exists,
-  )
+  accounts: readonly LedgerAccountRecord[],
+  results: readonly LedgerCreateResult[],
+): Result.Result<readonly LedgerAccountRecord[], LedgerValidationError> =>
+  classifyCreateBatch('account', 'verify-account-results', accounts, results)
 
 export const classifyTransferCreateBatch = (
-  transfers: readonly Transfer[],
-  results: readonly CreateTransferResult[],
-): Result.Result<readonly Transfer[], LedgerValidationError> =>
-  classifyCreateBatch(
-    'transfer',
-    'verify-transfer-results',
-    transfers,
-    results,
-    CreateTransferStatus.created,
-    CreateTransferStatus.exists,
-  )
+  transfers: readonly LedgerTransferRecord[],
+  results: readonly LedgerCreateResult[],
+): Result.Result<readonly LedgerTransferRecord[], LedgerValidationError> =>
+  classifyCreateBatch('transfer', 'verify-transfer-results', transfers, results)
 
-const queryFilter = (ledger: number): QueryFilter => ({
+const queryFilter = (ledger: number): LedgerQueryFilter => ({
   user_data_128: 0n,
   user_data_64: 0n,
   user_data_32: 0,
@@ -96,7 +73,7 @@ const queryFilter = (ledger: number): QueryFilter => ({
   flags: 0,
 })
 
-export const transactionTransferQuery = (plan: LedgerPlan): Result.Result<QueryFilter, LedgerValidationError> => {
+export const transactionTransferQuery = (plan: LedgerPlan): Result.Result<LedgerQueryFilter, LedgerValidationError> => {
   if (plan.accounts.length === 0 || plan.transfers.length === 0) {
     return Result.fail(
       ledgerValidationError('post', 'empty-plan', 'TigerBeetle posting plan must contain accounts and transfers', {
@@ -144,8 +121,8 @@ export const transactionTransferQuery = (plan: LedgerPlan): Result.Result<QueryF
 }
 
 export interface LedgerQueries {
-  readonly accounts: QueryFilter
-  readonly transfers: QueryFilter
+  readonly accounts: LedgerQueryFilter
+  readonly transfers: LedgerQueryFilter
 }
 
 export const persistedRunQueries = (
@@ -213,8 +190,8 @@ export const assembleAccountPlan = (
 ): Result.Result<LedgerPlan, LedgerValidationError> => {
   const runKey = stableU128('bayn-paper-account-v1', accountId)
   const runTag = stableU64('bayn-paper-account-v1', accountId)
-  const accounts = new Map<bigint, Account>()
-  const transfers = new Map<bigint, Transfer>()
+  const accounts = new Map<bigint, LedgerAccountRecord>()
+  const transfers = new Map<bigint, LedgerTransferRecord>()
   for (const plan of plans) {
     if (plan.runKey !== runKey || plan.runTag !== runTag) {
       return failLedgerValidation(

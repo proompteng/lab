@@ -40,6 +40,31 @@ export interface LedgerTransferRecord {
   readonly timestamp: bigint
 }
 
+export type LedgerCreateOutcome = 'created' | 'exists' | 'rejected'
+
+/**
+ * Result facts normalized by the TigerBeetle adapter before they reach the
+ * pure ledger decisions. `status` is retained only as opaque rejection
+ * material for audit diagnostics.
+ */
+export interface LedgerCreateResult {
+  readonly timestamp: bigint
+  readonly outcome: LedgerCreateOutcome
+  readonly status: number
+}
+
+export interface LedgerQueryFilter {
+  readonly user_data_128: bigint
+  readonly user_data_64: bigint
+  readonly user_data_32: number
+  readonly ledger: number
+  readonly code: number
+  readonly timestamp_min: bigint
+  readonly timestamp_max: bigint
+  readonly limit: number
+  readonly flags: number
+}
+
 export const AccountCode = {
   cash: 110,
   inventory: 120,
