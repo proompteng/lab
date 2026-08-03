@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from '@effect/platform-node'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
-import { Effect, Layer, Match, Option, pipe, Redacted, Ref, Result, Schema, Stdio, Stream } from 'effect'
+import { Effect, Layer, Match, Option, pipe, Redacted, Ref, Result, Schema, Scope, Stdio, Stream } from 'effect'
 
 import {
   makeApplicationPlan,
@@ -76,6 +76,7 @@ import {
 } from './execution-prepare'
 import { currentUtcInstant } from './time'
 import type { RuntimeEvidence, RuntimeState } from './runtime-state'
+import { scopedAcquisition } from './resource-boundary'
 
 export const ClickHouseClientResourceLive = (config: LoadedRuntimeConfig) =>
   ClickhouseClient.layer({
@@ -565,172 +566,181 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
         return Result.succeed({ request, evidence: current.evidence })
       })
       return validateStaticRequest.pipe(
-        Effect.flatMap((validated): Effect.Effect<AutonomousRuntime<never, never>, never> => {
+        Effect.flatMap((validated): Effect.Effect<AutonomousRuntime<never, never>, never, Scope.Scope> => {
           if (Result.isFailure(validated)) return Effect.succeed(pendingRuntime())
           const request = validated.success.request
-          return Effect.scopedWith((scope) =>
-            Layer.buildWithMemoMap(
-              Layer.fresh(AutonomousRuntimeResourcesLive(observePlan)),
-              Layer.makeMemoMapUnsafe(),
-              scope,
-            ).pipe(
-              Effect.flatMap((runtimeContext) =>
-                Effect.all({
-                  session: BrokerSession,
-                  alpacaHttpClient: AlpacaHttpClient,
-                  liveCapitalGrants: LiveCapitalGrantStore,
-                  intentStore: IntentStore,
-                  mutationStore: MutationStore,
-                  writerFence: WriterFence,
-                  cycleStore: CycleStore,
-                  brokerEventStore: BrokerEventStore,
-                  fillAccountingStore: FillAccountingStore,
-                  valuationStore: ValuationStore,
-                  reconciliationStore: ReconciliationStore,
-                  authorityGenerationStore: AuthorityGenerationStore,
-                  authorityRestrictionStore: AuthorityRestrictionStore,
-                }).pipe(
-                  Effect.flatMap((runtimeServices) => {
-                    const cycleResources = Layer.mergeAll(
-                      Layer.succeed(BrokerRead, runtimeServices.session.read),
-                      Layer.succeed(MarketData, dependencies.marketData),
-                      Layer.succeed(CycleStore, runtimeServices.cycleStore),
-                      Layer.succeed(BrokerEventStore, runtimeServices.brokerEventStore),
-                      Layer.succeed(FillAccountingStore, runtimeServices.fillAccountingStore),
-                      Layer.succeed(ValuationStore, runtimeServices.valuationStore),
-                      Layer.succeed(ReconciliationStore, runtimeServices.reconciliationStore),
-                      Layer.succeed(AuthorityGenerationStore, runtimeServices.authorityGenerationStore),
-                      Layer.succeed(AuthorityRestrictionStore, runtimeServices.authorityRestrictionStore),
-                      Layer.succeed(WriterFence, runtimeServices.writerFence),
-                      Layer.succeed(IntentStore, runtimeServices.intentStore),
-                      Layer.succeed(MutationStore, runtimeServices.mutationStore),
-                    )
-                    const readStartCycle = (startup: AutonomousCycleStartupInput) =>
-                      observeCycle(observePlan)(startup).pipe(
-                        Effect.provide(cycleResources),
-                        Effect.map((loop) => loop.pipe(Effect.provide(cycleResources))),
-                      )
-                    const readRuntime = () => ({
-                      _tag: 'AutonomousRead' as const,
-                      broker: runtimeBroker(observePlan, runtimeServices.session.read, false),
-                      startCycle: readStartCycle,
-                    })
-                    if (request === null) return Effect.succeed(readRuntime())
-                    const evidence = validated.success.evidence
-                    if (evidence === null) {
-                      return pendingPaperActivation(state, request, 'STARTUP_EVIDENCE_UNAVAILABLE').pipe(
-                        Effect.as(readRuntime()),
-                      )
-                    }
-                    return preparePaperActivation(observePlan, evidence, request).pipe(
-                      Effect.flatMap((prepared) => {
-                        if (observePlan.config.alpaca.identity.environment !== BrokerEnvironment.Sandbox) {
-                          return Effect.fail(
-                            paperActivationOperationalError('paper activation requires a sandbox broker'),
+          return Effect.flatMap(Scope.Scope, (scope) =>
+            scopedAcquisition(
+              (attemptScope) =>
+                Layer.buildWithMemoMap(
+                  Layer.fresh(AutonomousRuntimeResourcesLive(observePlan)),
+                  Layer.makeMemoMapUnsafe(),
+                  attemptScope,
+                ).pipe(
+                  Effect.flatMap((runtimeContext) =>
+                    Effect.all({
+                      session: BrokerSession,
+                      alpacaHttpClient: AlpacaHttpClient,
+                      liveCapitalGrants: LiveCapitalGrantStore,
+                      intentStore: IntentStore,
+                      mutationStore: MutationStore,
+                      writerFence: WriterFence,
+                      cycleStore: CycleStore,
+                      brokerEventStore: BrokerEventStore,
+                      fillAccountingStore: FillAccountingStore,
+                      valuationStore: ValuationStore,
+                      reconciliationStore: ReconciliationStore,
+                      authorityGenerationStore: AuthorityGenerationStore,
+                      authorityRestrictionStore: AuthorityRestrictionStore,
+                    }).pipe(
+                      Effect.flatMap((runtimeServices) => {
+                        const cycleResources = Layer.mergeAll(
+                          Layer.succeed(BrokerRead, runtimeServices.session.read),
+                          Layer.succeed(MarketData, dependencies.marketData),
+                          Layer.succeed(CycleStore, runtimeServices.cycleStore),
+                          Layer.succeed(BrokerEventStore, runtimeServices.brokerEventStore),
+                          Layer.succeed(FillAccountingStore, runtimeServices.fillAccountingStore),
+                          Layer.succeed(ValuationStore, runtimeServices.valuationStore),
+                          Layer.succeed(ReconciliationStore, runtimeServices.reconciliationStore),
+                          Layer.succeed(AuthorityGenerationStore, runtimeServices.authorityGenerationStore),
+                          Layer.succeed(AuthorityRestrictionStore, runtimeServices.authorityRestrictionStore),
+                          Layer.succeed(WriterFence, runtimeServices.writerFence),
+                          Layer.succeed(IntentStore, runtimeServices.intentStore),
+                          Layer.succeed(MutationStore, runtimeServices.mutationStore),
+                        )
+                        const readStartCycle = (startup: AutonomousCycleStartupInput) =>
+                          observeCycle(observePlan)(startup).pipe(
+                            Effect.provide(cycleResources),
+                            Effect.map((loop) => loop.pipe(Effect.provide(cycleResources))),
+                          )
+                        const readRuntime = () => ({
+                          _tag: 'AutonomousRead' as const,
+                          broker: runtimeBroker(observePlan, runtimeServices.session.read, false),
+                          startCycle: readStartCycle,
+                        })
+                        if (request === null) return Effect.succeed(readRuntime())
+                        const evidence = validated.success.evidence
+                        if (evidence === null) {
+                          return pendingPaperActivation(state, request, 'STARTUP_EVIDENCE_UNAVAILABLE').pipe(
+                            Effect.as(readRuntime()),
                           )
                         }
-                        return currentUtcInstant.pipe(
-                          Effect.flatMap((observedAt) =>
-                            resolvePreparedSandboxAuthority({
-                              brokerIdentity: observePlan.config.alpaca.identity as Extract<
-                                typeof observePlan.config.alpaca.identity,
-                                { readonly environment: BrokerEnvironment.Sandbox }
-                              >,
-                              strategy: observePlan.strategy.provenance.strategy,
-                              generationHash: prepared.generation.generationHash,
-                              observedAt,
-                            }),
-                          ),
-                          Effect.mapError((cause) =>
-                            paperActivationOperationalError('prepared sandbox execution authority is invalid', cause),
-                          ),
-                          Effect.flatMap((authority) => {
-                            const realizedPolicy = resolveExecutionPolicy({
-                              brokerIdentity: observePlan.config.alpaca.identity,
-                              brokerAccess: BrokerAccess.Mutation,
-                              capitalAuthority: CapitalAuthoritySelection.Sandbox,
-                              authorityGenerationHash: prepared.generation.generationHash,
-                              liveCapitalGrantHash: undefined,
-                            })
-                            if (Result.isFailure(realizedPolicy)) {
+                        return preparePaperActivation(observePlan, evidence, request).pipe(
+                          Effect.flatMap((prepared) => {
+                            if (observePlan.config.alpaca.identity.environment !== BrokerEnvironment.Sandbox) {
                               return Effect.fail(
-                                paperActivationOperationalError(
-                                  'prepared sandbox execution policy is invalid',
-                                  realizedPolicy.failure,
-                                ),
+                                paperActivationOperationalError('paper activation requires a sandbox broker'),
                               )
                             }
-                            const realizedConfig = {
-                              ...observePlan.config,
-                              execution: realizedPolicy.success,
-                            } as Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'AutonomousService' }>
-                            const realizedPlan = makeApplicationPlan({
-                              config: realizedConfig,
-                              protocol: observePlan.protocol,
-                              parameterHash: observePlan.parameterHash,
-                              strategy: observePlan.strategy,
-                              strategyProtocolHash: observePlan.strategyProtocolHash,
-                            }) as ApplicationPlanFor<'AutonomousService'>
-                            return makeMutation(
-                              runtimeServices.session,
-                              authority,
-                              runtimeServices.alpacaHttpClient,
-                            ).pipe(
-                              Effect.flatMap((brokerMutation) =>
-                                Effect.fromResult(
-                                  makeExecutionProgram(authority, {
-                                    brokerRead: runtimeServices.session.read,
-                                    liveCapitalGrants: runtimeServices.liveCapitalGrants,
-                                    freshBrokerPrice: makeFreshBrokerPriceReader(
-                                      runtimeServices.session.connection,
-                                      runtimeServices.alpacaHttpClient,
-                                    ),
-                                    currentUtcInstant,
-                                    intentStore: runtimeServices.intentStore,
-                                    mutationStore: runtimeServices.mutationStore,
-                                    writerFence: runtimeServices.writerFence,
-                                    brokerMutation,
-                                  }),
+                            return currentUtcInstant.pipe(
+                              Effect.flatMap((observedAt) =>
+                                resolvePreparedSandboxAuthority({
+                                  brokerIdentity: observePlan.config.alpaca.identity as Extract<
+                                    typeof observePlan.config.alpaca.identity,
+                                    { readonly environment: BrokerEnvironment.Sandbox }
+                                  >,
+                                  strategy: observePlan.strategy.provenance.strategy,
+                                  generationHash: prepared.generation.generationHash,
+                                  observedAt,
+                                }),
+                              ),
+                              Effect.mapError((cause) =>
+                                paperActivationOperationalError(
+                                  'prepared sandbox execution authority is invalid',
+                                  cause,
                                 ),
                               ),
-                              Effect.mapError(executionProgramError),
-                              Effect.tap(() =>
-                                realizedPaperActivation(state, request, prepared.generation.generationHash),
-                              ),
-                              Effect.map((executionProgram) => ({
-                                _tag: 'AutonomousMutation' as const,
-                                broker: runtimeBroker(realizedPlan, runtimeServices.session.read, true),
-                                executionProgram,
-                                startCycle: (startup: AutonomousCycleStartupInput) =>
-                                  mutationCycle(
-                                    realizedPlan,
-                                    executionProgram,
-                                  )(startup).pipe(
-                                    Effect.provide(cycleResources),
-                                    Effect.map((loop) => loop.pipe(Effect.provide(cycleResources))),
+                              Effect.flatMap((authority) => {
+                                const realizedPolicy = resolveExecutionPolicy({
+                                  brokerIdentity: observePlan.config.alpaca.identity,
+                                  brokerAccess: BrokerAccess.Mutation,
+                                  capitalAuthority: CapitalAuthoritySelection.Sandbox,
+                                  authorityGenerationHash: prepared.generation.generationHash,
+                                  liveCapitalGrantHash: undefined,
+                                })
+                                if (Result.isFailure(realizedPolicy)) {
+                                  return Effect.fail(
+                                    paperActivationOperationalError(
+                                      'prepared sandbox execution policy is invalid',
+                                      realizedPolicy.failure,
+                                    ),
+                                  )
+                                }
+                                const realizedConfig = {
+                                  ...observePlan.config,
+                                  execution: realizedPolicy.success,
+                                } as Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'AutonomousService' }>
+                                const realizedPlan = makeApplicationPlan({
+                                  config: realizedConfig,
+                                  protocol: observePlan.protocol,
+                                  parameterHash: observePlan.parameterHash,
+                                  strategy: observePlan.strategy,
+                                  strategyProtocolHash: observePlan.strategyProtocolHash,
+                                }) as ApplicationPlanFor<'AutonomousService'>
+                                return makeMutation(
+                                  runtimeServices.session,
+                                  authority,
+                                  runtimeServices.alpacaHttpClient,
+                                ).pipe(
+                                  Effect.flatMap((brokerMutation) =>
+                                    Effect.fromResult(
+                                      makeExecutionProgram(authority, {
+                                        brokerRead: runtimeServices.session.read,
+                                        liveCapitalGrants: runtimeServices.liveCapitalGrants,
+                                        freshBrokerPrice: makeFreshBrokerPriceReader(
+                                          runtimeServices.session.connection,
+                                          runtimeServices.alpacaHttpClient,
+                                        ),
+                                        currentUtcInstant,
+                                        intentStore: runtimeServices.intentStore,
+                                        mutationStore: runtimeServices.mutationStore,
+                                        writerFence: runtimeServices.writerFence,
+                                        brokerMutation,
+                                      }),
+                                    ),
                                   ),
-                              })),
+                                  Effect.mapError(executionProgramError),
+                                  Effect.tap(() =>
+                                    realizedPaperActivation(state, request, prepared.generation.generationHash),
+                                  ),
+                                  Effect.map((executionProgram) => ({
+                                    _tag: 'AutonomousMutation' as const,
+                                    broker: runtimeBroker(realizedPlan, runtimeServices.session.read, true),
+                                    executionProgram,
+                                    startCycle: (startup: AutonomousCycleStartupInput) =>
+                                      mutationCycle(
+                                        realizedPlan,
+                                        executionProgram,
+                                      )(startup).pipe(
+                                        Effect.provide(cycleResources),
+                                        Effect.map((loop) => loop.pipe(Effect.provide(cycleResources))),
+                                      ),
+                                  })),
+                                )
+                              }),
                             )
                           }),
+                          Effect.catch((cause) =>
+                            Effect.logWarning('Bayn PAPER activation remains in OBSERVE').pipe(
+                              Effect.annotateLogs({
+                                service: 'bayn',
+                                activation: 'PENDING',
+                                reason: cause instanceof Error ? cause.message : String(cause),
+                              }),
+                              Effect.andThen(
+                                pendingPaperActivation(state, request, 'PREPARATION_FAILED').pipe(
+                                  Effect.as(readRuntime()),
+                                ),
+                              ),
+                            ),
+                          ),
                         )
                       }),
-                      Effect.catch((cause) =>
-                        Effect.logWarning('Bayn PAPER activation remains in OBSERVE').pipe(
-                          Effect.annotateLogs({
-                            service: 'bayn',
-                            activation: 'PENDING',
-                            reason: cause instanceof Error ? cause.message : String(cause),
-                          }),
-                          Effect.andThen(
-                            pendingPaperActivation(state, request, 'PREPARATION_FAILED').pipe(Effect.as(readRuntime())),
-                          ),
-                        ),
-                      ),
-                    )
-                  }),
-                  Effect.provide(runtimeContext),
+                      Effect.provide(runtimeContext),
+                    ),
+                  ),
                 ),
-              ),
+              scope,
             ),
           ).pipe(
             Effect.catch((cause) =>
