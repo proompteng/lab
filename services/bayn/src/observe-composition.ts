@@ -608,19 +608,25 @@ const prepareObservePlanner = <R>(
     ),
   )
 
-const reduceObserveRiskInputs = <R>(
-  input: ObserveDecisionInput<R>,
-  facts: ObserveDecisionFacts,
-  authorityObservation: ObserveAuthorityObservation,
-  executionSession: ExecutionSessionBinding,
-  targetPlan: TargetPlanResult,
-  prices: SignalSessionReferencePrices,
-  closeOnlyExpiresAt?: string,
+type RiskInputPreparation = {
+  readonly executionModel: CausalProtocol['executionModel']
+  readonly reconciliation: ReconciliationPassResult
+  readonly authorityObservation: ObserveAuthorityObservation
+  readonly executionSession: ExecutionSessionBinding
+  readonly targetPlan: TargetPlanResult
+  readonly prices: SignalSessionReferencePrices
+  readonly snapshotContentHash: string
+  readonly evaluatedAt: string
+  readonly closeOnlyExpiresAt?: string
+}
+
+const reduceRiskInputs = (
+  input: RiskInputPreparation,
 ): Result.Result<readonly ShadowDeltaRiskInput[], ObserveDecisionCompositionFailure> =>
   Result.mapError(
     Result.all(
-      targetPlan.intentTargets.map((target) => {
-        const referencePrice = BigInt(prices.priceMicros[target.symbol])
+      input.targetPlan.intentTargets.map((target) => {
+        const referencePrice = BigInt(input.prices.priceMicros[target.symbol])
         return Result.map(
           makeFillTerms(
             target.side === OrderSide.Buy ? 'buy' : 'sell',
@@ -630,33 +636,33 @@ const reduceObserveRiskInputs = <R>(
             MICROS,
           ),
           (fillTerms): ShadowDeltaRiskInput => {
-            const reconciliation = facts.reconciliation
-            const finalizedSnapshot = facts.snapshot.manifest.finalizedSnapshot
             const state: State = {
               schemaVersion: 'bayn.paper-risk-state.v2',
               brokerMode: BrokerMode.Paper,
-              account: reconciliation.brokerState.account,
-              positions: reconciliation.brokerState.positions,
-              positionsObservedAt: reconciliation.brokerState.positionsObservedAt,
-              orders: reconciliation.brokerState.orders,
-              ordersObservedAt: reconciliation.brokerState.ordersObservedAt,
-              reconciliation: reconciliation.brokerState.reconciliation,
-              authority: authorityObservation.authority,
-              authorityObservedAt: authorityObservation.observedAt,
-              unknownMutationCount: reconciliation.riskContext.unknownMutationCount,
-              dailyTradedNotionalMicros: reconciliation.riskContext.dailyTradedNotionalMicros,
-              dayStartEquityMicros: reconciliation.riskContext.dayStartEquityMicros,
-              peakEquityMicros: reconciliation.riskContext.peakEquityMicros,
-              accountingHash: reconciliation.brokerState.accountingHash,
+              account: input.reconciliation.brokerState.account,
+              positions: input.reconciliation.brokerState.positions,
+              positionsObservedAt: input.reconciliation.brokerState.positionsObservedAt,
+              orders: input.reconciliation.brokerState.orders,
+              ordersObservedAt: input.reconciliation.brokerState.ordersObservedAt,
+              reconciliation: input.reconciliation.brokerState.reconciliation,
+              authority: input.authorityObservation.authority,
+              authorityObservedAt: input.authorityObservation.observedAt,
+              unknownMutationCount: input.reconciliation.riskContext.unknownMutationCount,
+              dailyTradedNotionalMicros: input.reconciliation.riskContext.dailyTradedNotionalMicros,
+              dayStartEquityMicros: input.reconciliation.riskContext.dayStartEquityMicros,
+              peakEquityMicros: input.reconciliation.riskContext.peakEquityMicros,
+              accountingHash: input.reconciliation.brokerState.accountingHash,
               marketDataSymbol: target.symbol,
-              marketDataHash: finalizedSnapshot.contentHash,
+              marketDataHash: input.snapshotContentHash,
               referencePriceMicros: referencePrice.toString(),
               expectedExecutionPriceMicros: fillTerms.fillPriceMicros.toString(),
-              marketDataObservedAt: facts.evaluatedAt,
-              executionSession,
+              marketDataObservedAt: input.evaluatedAt,
+              executionSession: input.executionSession,
               reservedBuyingPowerMicros: '0',
-              evaluatedAt: facts.evaluatedAt,
-              ...(closeOnlyExpiresAt === undefined ? {} : { closeOnly: true as const, closeOnlyExpiresAt }),
+              evaluatedAt: input.evaluatedAt,
+              ...(input.closeOnlyExpiresAt === undefined
+                ? {}
+                : { closeOnly: true as const, closeOnlyExpiresAt: input.closeOnlyExpiresAt }),
             }
             return {
               symbol: target.symbol,
@@ -669,6 +675,27 @@ const reduceObserveRiskInputs = <R>(
     ),
     (cause) => compositionFailure('shadow-risk-inputs', 'shadow risk input construction failed', cause),
   )
+
+const reduceObserveRiskInputs = <R>(
+  input: ObserveDecisionInput<R>,
+  facts: ObserveDecisionFacts,
+  authorityObservation: ObserveAuthorityObservation,
+  executionSession: ExecutionSessionBinding,
+  targetPlan: TargetPlanResult,
+  prices: SignalSessionReferencePrices,
+  closeOnlyExpiresAt?: string,
+): Result.Result<readonly ShadowDeltaRiskInput[], ObserveDecisionCompositionFailure> =>
+  reduceRiskInputs({
+    executionModel: input.executionModel,
+    reconciliation: facts.reconciliation,
+    authorityObservation,
+    executionSession,
+    targetPlan,
+    prices,
+    snapshotContentHash: facts.snapshot.manifest.finalizedSnapshot.contentHash,
+    evaluatedAt: facts.evaluatedAt,
+    ...(closeOnlyExpiresAt === undefined ? {} : { closeOnlyExpiresAt }),
+  })
 
 export const buildObserveCycleDecision = <R>(
   input: ObserveDecisionInput<R>,
@@ -723,7 +750,11 @@ function buildCycleDecision<R>(
     }
     return authorityRequirement === Authority.Observe
       ? yield* buildObserveShadowDecision(decisionInput)
-      : yield* buildPaperDecision({ ...decisionInput, authorityGenerationHash: input.authorityGenerationHash })
+      : yield* buildPaperDecision({
+          ...decisionInput,
+          authorityGenerationHash: input.authorityGenerationHash,
+          executionSession,
+        })
   })
 }
 
@@ -732,56 +763,183 @@ export const buildMutationShadowCycleDecision = <R>(
 ): Effect.Effect<PaperDecisionDocument, ObserveDecisionFailure, BrokerRead | MarketData | R> =>
   buildCycleDecision(input, Authority.Paper)
 
-const buildClosingPaperCycleDecision = <R>(
-  input: ObserveDecisionInput<R>,
-  closeExpiresAt: string,
-  replanGenerationHash?: string,
-): Effect.Effect<PaperDecisionDocument, ObserveDecisionFailure, BrokerRead | MarketData | R> =>
-  Effect.gen(function* () {
-    const readPreparation = yield* Effect.fromResult(prepareObserveDecisionReads(input))
-    const facts = yield* readObserveDecisionFacts(input, readPreparation)
-    const executionAuthority = yield* Effect.fromResult(
-      requireMutationAuthorityGeneration(facts.reconciliation, input.policy, input.authorityGenerationHash),
-    )
-    const executionSession = yield* Effect.fromResult(prepareExecutionSessionBinding(input, facts))
-    const compiled = yield* compileObserveStrategyDecision(input, facts, executionSession)
-    const closeDecision = strategyApplication(input.strategy).closeTarget(compiled.decision) as DecisionPlan
-    const closeCompiled: CompiledObserveStrategyDecision = { ...compiled, decision: closeDecision }
-    const plannerPreparation = yield* Effect.fromResult(
-      prepareObservePlanner(input, facts, closeCompiled, {
-        targetWeights: closeDecision.targetWeights,
-        submissionCutoffAt: closeExpiresAt,
-      }),
-    )
-    const targetPlan = yield* Effect.fromResult(planTargets(plannerPreparation.plannerInput))
-    const riskInputs = yield* Effect.fromResult(
-      reduceObserveRiskInputs(
-        input,
-        facts,
-        executionAuthority,
-        executionSession,
-        targetPlan,
-        plannerPreparation.prices,
-        closeExpiresAt,
+const makeClosingReferencePrices = (
+  entryDocument: PaperDecisionDocument,
+  positions: ReconciliationPassResult['brokerState']['positions'],
+  signalDate: SignalSessionReferencePrices['signalDate'],
+  observedAt: string,
+): Result.Result<SignalSessionReferencePrices, ObserveDecisionCompositionFailure> => {
+  const prices = new Map(entryDocument.targetPlan.targets.map((target) => [target.symbol, target.referencePriceMicros]))
+  for (const position of positions) {
+    const observedPrice = position.marketPriceMicros
+    const fallbackPrice = prices.get(position.symbol)
+    if (/^[1-9][0-9]*$/.test(observedPrice)) {
+      prices.set(position.symbol, observedPrice)
+    } else if (fallbackPrice === undefined) {
+      return Result.fail(
+        compositionFailure(
+          'reference-prices',
+          `close position ${position.symbol} has no positive persisted reference price`,
+        ),
+      )
+    }
+  }
+  return referencePrices(
+    signalDate,
+    observedAt,
+    Object.fromEntries([...prices.entries()].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))),
+  )
+}
+
+const makeClosingDecisionPlan = (
+  signalDate: SignalSessionReferencePrices['signalDate'],
+  symbols: readonly string[],
+): Result.Result<DecisionPlan, ObserveDecisionCompositionFailure> => {
+  const orderedSymbols = [...new Set(symbols)].sort()
+  const sessionsHash = canonicalHashV1Result({
+    schemaVersion: 'bayn.paper-close-decision-sessions.v1',
+    signalDate,
+    symbols: orderedSymbols,
+  })
+  if (Result.isFailure(sessionsHash)) {
+    return Result.fail(
+      compositionFailure(
+        'compiled-decision-hash',
+        'close decision session identity is not canonicalizable',
+        sessionsHash.failure,
       ),
     )
-    const finalizedSnapshot = facts.snapshot.manifest.finalizedSnapshot
+  }
+  return Result.succeed({
+    schemaVersion: 'bayn.risk-balanced-trend-decision-plan.v1',
+    signalDate,
+    covarianceWindow: {
+      returnCount: 1,
+      firstSession: signalDate,
+      lastSession: signalDate,
+      sessionsHash: sessionsHash.success,
+    },
+    estimatedAnnualizedPortfolioVolatility: 0,
+    exposureScale: 0,
+    targetWeights: Object.fromEntries(orderedSymbols.map((symbol) => [symbol, 0])),
+    signals: orderedSymbols.map((symbol) => ({
+      symbol,
+      horizons: [{ horizonSessions: 1, return: 0, normalizedTrend: 0 }],
+      dailyVolatility: 0,
+      annualizedVolatility: 0,
+      compositeScore: 0,
+      positiveScore: 0,
+      eligible: false,
+      uncappedWeight: 0,
+      cappedWeight: 0,
+      targetWeight: 0,
+    })),
+  })
+}
+
+export const buildClosingPaperCycleDecision = (
+  input: ObserveAutonomousCycleInput,
+  preparation: ObserveStartupPreparation,
+  policy: Policy,
+  cycle: AutonomousCycle,
+  entryDocument: PaperDecisionDocument,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+  closeExpiresAt: string,
+  replanGenerationHash?: string,
+): Effect.Effect<PaperDecisionDocument, CycleRunnerError, ObserveDecisionRuntime> =>
+  Effect.gen(function* () {
+    const reconciliation = yield* reconcile.pipe(
+      Effect.mapError((cause) => mutationRunnerError('PAPER close reconciliation failed', cause)),
+    )
+    const evaluatedAt = yield* currentUtcInstant
+    const executionAuthority = yield* Effect.fromResult(
+      requireMutationAuthorityGeneration(reconciliation, policy, input.authorityGenerationHash),
+    ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
+    const executionSession = entryDocument.executionSession
+    if (executionSession === undefined) {
+      return yield* Effect.fail(
+        mutationRunnerError(
+          'active PAPER cycle has no persisted execution session for its close plan',
+          undefined,
+          'contract',
+        ),
+      )
+    }
+    const symbols = [
+      ...entryDocument.targetPlan.targets.map((target) => target.symbol),
+      ...reconciliation.brokerState.positions.map((position) => position.symbol),
+    ]
+    const closeDecision = yield* Effect.fromResult(
+      makeClosingDecisionPlan(cycle.identity.signalSessionDate, symbols),
+    ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
+    const closeDecisionHash = yield* Effect.fromResult(
+      hashObserveMaterial('compiled-decision-hash', 'close decision is not canonicalizable', closeDecision),
+    ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
+    const prices = yield* Effect.fromResult(
+      makeClosingReferencePrices(
+        entryDocument,
+        reconciliation.brokerState.positions,
+        cycle.identity.signalSessionDate,
+        evaluatedAt,
+      ),
+    ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
+    const policyHash = yield* Effect.fromResult(
+      hashObserveMaterial('risk-policy-hash', 'PAPER close risk policy is not canonicalizable', policy),
+    ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
+    const plannerInput: TargetPlannerInput = {
+      schemaVersion: 'bayn.paper-target-planner-input.v1',
+      strategyName: cycle.identity.strategyName,
+      cycleId: cycle.identity.cycleId,
+      decisionHash: closeDecisionHash,
+      policyHash,
+      accountId: cycle.identity.accountId,
+      signalDate: cycle.identity.signalSessionDate,
+      targetWeights: closeDecision.targetWeights,
+      referencePrices: prices,
+      brokerState: reconciliation.brokerState,
+      precision: preparation.executionModel.precision,
+      maximumInputAgeMs: Math.min(policy.maxBrokerStateAgeMs, policy.maxMarketDataAgeMs),
+      submissionCutoffAt: closeExpiresAt,
+      observedAt: evaluatedAt,
+    }
+    const targetPlan = yield* Effect.fromResult(planTargets(plannerInput)).pipe(
+      Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')),
+    )
+    const riskInputs = yield* Effect.fromResult(
+      reduceRiskInputs({
+        executionModel: preparation.executionModel,
+        reconciliation,
+        authorityObservation: executionAuthority,
+        executionSession,
+        targetPlan,
+        prices,
+        snapshotContentHash: entryDocument.bindings.snapshotContentHash,
+        evaluatedAt,
+        closeOnlyExpiresAt: closeExpiresAt,
+      }),
+    ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
     return yield* buildPaperDecision({
-      cycle: input.cycle,
+      cycle,
       snapshot: {
-        snapshotId: finalizedSnapshot.snapshotId,
-        contentHash: finalizedSnapshot.contentHash,
-        finalizedAt: finalizedSnapshot.finalizedAt,
+        snapshotId: entryDocument.bindings.snapshotId,
+        contentHash: entryDocument.bindings.snapshotContentHash,
+        finalizedAt: entryDocument.bindings.snapshotFinalizedAt,
       },
       compiledDecision: closeDecision,
-      plannerInput: plannerPreparation.plannerInput,
+      plannerInput,
       targetPlan,
-      policy: input.policy,
+      policy,
       riskInputs,
       authorityGenerationHash: input.authorityGenerationHash,
+      executionSession,
       submissionCutoffAt: closeExpiresAt,
       ...(replanGenerationHash === undefined ? {} : { replanGenerationHash }),
-    })
+    }).pipe(
+      Effect.mapError((cause) => {
+        const converted = decisionBuildError(cause)
+        return mutationRunnerError('deterministic PAPER close plan construction failed', converted, converted.failure)
+      }),
+    )
   })
 
 const observePass = (
@@ -1014,6 +1172,7 @@ const ensurePaperCycleClosure = (
   preparation: ObserveStartupPreparation,
   policy: Policy,
   cycle: AutonomousCycle,
+  entryDocument: PaperDecisionDocument,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
 ): Effect.Effect<PaperDecisionDocument | undefined, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
@@ -1036,13 +1195,13 @@ const ensurePaperCycleClosure = (
     }
     if (existing === undefined) {
       const document = yield* buildClosingPaperCycleDecision(
-        mutationDecisionInput(input, preparation, policy, cycle, reconcile),
+        input,
+        preparation,
+        policy,
+        cycle,
+        entryDocument,
+        reconcile,
         closeExpiresAt,
-      ).pipe(
-        Effect.mapError((cause) => {
-          const converted = decisionBuildError(cause)
-          return mutationRunnerError('deterministic PAPER close plan construction failed', converted, converted.failure)
-        }),
       )
       if (!document.dispatchable || document.targetPlan.status !== TargetPlanStatus.Planned) return undefined
       const closure = yield* Effect.fromResult(
@@ -1068,18 +1227,14 @@ const ensurePaperCycleClosure = (
     if (!(yield* closePlanNeedsResidualReplan(active.document, reconcile))) return active.document
 
     const document = yield* buildClosingPaperCycleDecision(
-      mutationDecisionInput(input, preparation, policy, cycle, reconcile),
+      input,
+      preparation,
+      policy,
+      cycle,
+      entryDocument,
+      reconcile,
       closeExpiresAt,
       active.contentHash,
-    ).pipe(
-      Effect.mapError((cause) => {
-        const converted = decisionBuildError(cause)
-        return mutationRunnerError(
-          'deterministic PAPER residual close plan construction failed',
-          converted,
-          converted.failure,
-        )
-      }),
     )
     if (!document.dispatchable || document.targetPlan.status !== TargetPlanStatus.Planned) return active.document
     const closure = yield* Effect.fromResult(
@@ -1204,7 +1359,7 @@ const executeBoundPaperCycle = (
 ): Effect.Effect<BoundMutationCycleOutcome, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
     const observedAt = yield* currentUtcInstant
-    const closeDocument = yield* ensurePaperCycleClosure(input, preparation, policy, cycle, reconcile)
+    const closeDocument = yield* ensurePaperCycleClosure(input, preparation, policy, cycle, document, reconcile)
     const closeOnly = closeDocument !== undefined
     const phaseInput: ObserveAutonomousCycleInput = {
       ...input,

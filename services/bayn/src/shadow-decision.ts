@@ -9,6 +9,7 @@ import {
   IntentPlanSchema,
   type IntentPlan,
 } from './execution/intents/domain'
+import type { ExecutionSessionBinding } from './execution-session'
 import { canonicalHashV1Result } from './hash'
 import {
   Authority,
@@ -72,6 +73,8 @@ export interface ObserveShadowDecisionInput {
 
 export interface PaperDecisionInput extends ObserveShadowDecisionInput {
   readonly authorityGenerationHash: string
+  /** The immutable signal/session binding retained for restart-safe close construction. */
+  readonly executionSession: ExecutionSessionBinding
   /** A close-only plan uses the activation lease as its submission boundary. */
   readonly submissionCutoffAt?: string
   /** Residual close plans bind their intents to the preceding close-plan content hash. */
@@ -685,6 +688,7 @@ const assemblePaperDecisionDocument = (
   context: ShadowDecisionContext,
   reduction: ShadowReduction,
   authorityGenerationHash: string,
+  executionSession: ExecutionSessionBinding,
   submissionCutoffAt: string,
   replanGenerationHash?: string,
 ): Result.Result<PaperDecisionDocument, ShadowDecisionError> => {
@@ -715,6 +719,7 @@ const assemblePaperDecisionDocument = (
         reconciliationHash: input.plannerInput.brokerState.reconciliation.contentHash,
         authorityGenerationHash,
       },
+      executionSession,
       targetPlan: input.targetPlan,
       deltaRisk: reduction.deltaRisk,
       orderedIntentIds: reduction.deltaRisk.map((risk) => risk.evaluation.input.intentId),
@@ -753,6 +758,7 @@ export const buildPaperDecision = (
                   context,
                   reduction,
                   input.authorityGenerationHash,
+                  input.executionSession,
                   input.submissionCutoffAt ?? input.cycle.window.submissionCutoffAt,
                   input.replanGenerationHash,
                 ),

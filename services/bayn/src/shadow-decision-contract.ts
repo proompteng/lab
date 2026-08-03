@@ -1,6 +1,7 @@
 import { Data, Result, Schema } from 'effect'
 
 import { intentIdForPlan, paperIntentIdForDecodedPlan } from './execution/intents/domain'
+import { ExecutionSessionBindingSchema } from './execution-session'
 import { canonicalHashV1Result } from './hash'
 import { OrderSide, PositiveMicrosSchema, RiskOutcome } from './execution/contracts'
 import { EvaluationSchema, Reason } from './risk'
@@ -158,6 +159,8 @@ const PaperDecisionMaterialSchema = Schema.Struct({
   mode: Schema.Literal('PAPER'),
   dispatchable: Schema.Boolean,
   bindings: PaperDecisionBindingsSchema,
+  /** Persist the complete signal/session binding so a close plan can be built after data services expire. */
+  executionSession: Schema.optionalKey(ExecutionSessionBindingSchema),
   targetPlan: TargetPlanResultSchema,
   deltaRisk: Schema.Array(DeltaRiskEvaluationSchema),
   orderedIntentIds: Schema.Array(Sha256Schema),

@@ -59,6 +59,7 @@ import { canonicalHashV1 } from './hash'
 import { MarketData, type MarketDataService, type MarketDataSnapshot } from './market-data'
 import {
   buildMutationShadowCycleDecision,
+  buildClosingPaperCycleDecision,
   buildObserveCycleDecision,
   appendPendingMutationOrder,
   countOpenPositions,
@@ -1988,6 +1989,99 @@ describe('OBSERVE runtime composition', () => {
       updatedAt: rejectedAt,
     })
     expect(restrictions[0]?.reason).toContain(`intent ${fixture.intent.intentId} ended REJECTED`)
+  })
+
+  test('builds a deterministic close from persisted entry binding when signal services are unavailable', async () => {
+    const fixture = await paperLifecycleFixture((policy) => ({
+      ...policy,
+      maxBrokerStateAgeMs: 3_600_000,
+      maxMarketDataAgeMs: 3_600_000,
+    }))
+    const observedAt = new Date(Date.parse(fixture.document.submissionCutoffAt) + 1_000).toISOString()
+    const closeExpiresAt = new Date(Date.parse(observedAt) + 60_000).toISOString()
+    const position: Position = {
+      schemaVersion: 'bayn.paper-position.v1',
+      accountId,
+      symbol: fixture.intent.symbol,
+      quantityMicros: '1000000',
+      averageEntryPriceMicros: '100000000',
+      marketPriceMicros: '100000000',
+      marketValueMicros: '100000000',
+      unrealizedPnlMicros: '0',
+      observedAt,
+    }
+    const baseReconciliation = reconciliationResultAt(observedAt, 0, 0, [position])
+    const closeAccount = { ...baseReconciliation.brokerState.account, observedAt }
+    const closeStateHash = Result.getOrThrow(
+      reconciledStateHash({
+        account: closeAccount,
+        positions: [position],
+        positionsObservedAt: observedAt,
+        orders: [],
+        ordersObservedAt: observedAt,
+        accountingHash,
+      }),
+    )
+    const closeReconciliationMaterial = {
+      ...baseReconciliation.brokerState.reconciliation,
+      expectedHash: closeStateHash,
+      observedHash: closeStateHash,
+      reconciledAt: observedAt,
+    }
+    const closeReconciliationId = canonicalHashV1({
+      schemaVersion: 'bayn.paper-reconciliation-id.v1',
+      material: closeReconciliationMaterial,
+    })
+    const closeReconciliation = {
+      ...closeReconciliationMaterial,
+      reconciliationId: closeReconciliationId,
+      contentHash: canonicalHashV1({ ...closeReconciliationMaterial, reconciliationId: closeReconciliationId }),
+    }
+    const currentReconciliation: ReconciliationPassResult = {
+      ...baseReconciliation,
+      report: { ...baseReconciliation.report, reconciliation: closeReconciliation },
+      brokerState: {
+        ...baseReconciliation.brokerState,
+        account: closeAccount,
+        reconciliation: closeReconciliation,
+      },
+    }
+    const program = Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(observedAt))
+      return yield* buildClosingPaperCycleDecision(
+        fixture.input,
+        fixture.preparation,
+        fixture.policy,
+        fixture.boundCycle,
+        fixture.document,
+        Effect.succeed(currentReconciliation),
+        closeExpiresAt,
+      )
+    }).pipe(
+      Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+      Effect.provideService(MarketData, marketData([])),
+      Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
+      Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
+      Effect.provideService(ValuationStore, {} as ValuationStoreShape),
+      Effect.provideService(ReconciliationStore, {} as ReconciliationStoreShape),
+      Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
+      Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
+      Effect.provideService(WriterFence, {} as WriterFenceService),
+      Effect.provide(TestClock.layer()),
+    )
+
+    const close = await Effect.runPromise(program)
+
+    expect(close.executionSession).toEqual(fixture.document.executionSession)
+    expect(close.targetPlan.intentTargets).toMatchObject([
+      {
+        symbol: fixture.intent.symbol,
+        side: OrderSide.Sell,
+        quantityMicros: '1000000',
+      },
+    ])
+    expect(close.targetPlan.intentTargets).toHaveLength(1)
+    expect(close.dispatchable).toBe(true)
   })
 
   test('keeps a rejected PAPER close intent recoverable while reconciliation still shows an open position', async () => {

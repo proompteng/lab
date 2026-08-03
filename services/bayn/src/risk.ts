@@ -278,8 +278,9 @@ export const StateSchema = StateBase.check(
       issues.push({ path: ['marketDataHash'], issue: 'must match the finalized signal-session binding' })
     }
     if (
-      state.executionSession.planningBrokerState.contentHash !== state.reconciliation.observedHash ||
-      state.executionSession.planningBrokerState.observedAt !== state.reconciliation.reconciledAt
+      state.closeOnly !== true &&
+      (state.executionSession.planningBrokerState.contentHash !== state.reconciliation.observedHash ||
+        state.executionSession.planningBrokerState.observedAt !== state.reconciliation.reconciledAt)
     ) {
       issues.push({
         path: ['executionSession', 'planningBrokerState'],
