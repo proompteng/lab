@@ -277,7 +277,7 @@ describe('qualification collector boundaries', () => {
     expect(Result.isSuccess(matching)).toBe(true)
     if (Result.isSuccess(matching)) {
       expect(matching.success.moduleSha256).toBe(source.moduleSha256)
-      expect(matching.success.strategyBehaviorHash).toBe(activeStrategyBehaviorHash)
+      expect(matching.success.strategyBehaviorHash).toBe(source.moduleSha256)
     }
     const reviewedSource = {
       ...source,

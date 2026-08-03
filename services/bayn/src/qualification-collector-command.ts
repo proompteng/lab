@@ -1160,7 +1160,7 @@ export const makeQualificationCandidateRuntime = (
     image: { repository: deployment.imageRepository, digest: deployment.imageDigest },
     strategy: {
       name: definition.name,
-      behaviorHash: deployment.strategyBehaviorHash,
+      behaviorHash: source.moduleSha256,
       parameterHash,
       parameterSchemaVersion: definition.parameters.schemaVersion,
     },
@@ -1179,7 +1179,7 @@ export const makeQualificationCandidateRuntime = (
     application: boundApplication,
     provenance: provenance.success,
     moduleSha256: source.moduleSha256,
-    strategyBehaviorHash: deployment.strategyBehaviorHash,
+    strategyBehaviorHash: source.moduleSha256,
     trialHistoryHash: preregistration.priorTrialsHash,
     boundedContentHash: preregistration.marketData.boundedContentHash,
   })
@@ -1393,6 +1393,26 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
         try: (signal) =>
           gitText(
             repositoryPath,
+            [
+              'merge-base',
+              '--is-ancestor',
+              preregistration.preregistration.sourceRevision,
+              developmentApproval.sourceRevision,
+            ],
+            signal,
+          ),
+        catch: (cause) =>
+          collectorError(
+            'candidate',
+            'development-source-revision-invalid',
+            'development approval evidence must descend from the preregistered source',
+            cause,
+          ),
+      })
+      yield* Effect.tryPromise({
+        try: (signal) =>
+          gitText(
+            repositoryPath,
             ['merge-base', '--is-ancestor', developmentApproval.sourceRevision, qualificationRuntime.sourceSha],
             signal,
           ),
@@ -1404,6 +1424,28 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
             cause,
           ),
       })
+      const approvedModuleBytes = yield* Effect.tryPromise({
+        try: (signal) =>
+          gitBytes(
+            repositoryPath,
+            ['cat-file', 'blob', `${developmentApproval.sourceRevision}:${preregistration.modulePath}`],
+            signal,
+          ),
+        catch: (cause) =>
+          collectorError(
+            'candidate',
+            'development-source-revision-invalid',
+            'development approval evidence does not contain the preregistered candidate module',
+            cause,
+          ),
+      })
+      if (sha256Bytes(approvedModuleBytes) !== preregistration.moduleSha256) {
+        return yield* collectorError(
+          'candidate',
+          'development-source-revision-invalid',
+          'development approval evidence does not bind the preregistered candidate module bytes',
+        )
+      }
     }
     const sourceApplication = yield* loadReviewedStrategyApplication(
       resolve(repositoryPath, candidateSource.modulePath),
