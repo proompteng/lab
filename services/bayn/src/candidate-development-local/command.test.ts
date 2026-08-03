@@ -162,7 +162,7 @@ describe('candidate-development-local domain boundary', () => {
 
     const receipt = makeCandidateDevelopmentLocalReceipt(source, 'PASS', 'f'.repeat(64))
     expect(serializeCandidateDevelopmentLocalReceipt(receipt)).not.toContain('witness.json')
-    expect(receipt.schemaVersion).toBe('bayn.candidate-development-local-attempt.v3')
+    expect(receipt.schemaVersion).toBe('bayn.candidate-development-local-attempt.v4')
   })
 
   test('rejects a mixed snapshot during the shared evaluation', () => {

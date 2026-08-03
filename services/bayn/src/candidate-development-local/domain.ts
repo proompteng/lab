@@ -9,13 +9,14 @@ import {
   PositiveFiniteSchema,
   PositiveIntegerSchema,
   Sha256Schema,
+  SourceRevisionSchema,
   StrictNonEmptyStringSchema,
   SymbolSchema,
   strictParseOptions,
 } from '../schemas'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type DailyBar, type InputManifest } from '../types'
 
-export const candidateDevelopmentLocalReceiptSchemaVersion = 'bayn.candidate-development-local-attempt.v3' as const
+export const candidateDevelopmentLocalReceiptSchemaVersion = 'bayn.candidate-development-local-attempt.v4' as const
 
 export type CandidateDevelopmentLocalErrorCode =
   | 'INVALID_ARGUMENTS'
@@ -129,6 +130,38 @@ export interface CandidateDevelopmentLocalSourceBinding {
   readonly bindingHash: string
 }
 
+const SourceObjectOidSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/))
+
+export const CandidateDevelopmentLocalSourceBindingSchema = Schema.Struct({
+  candidateOrdinal: PositiveIntegerSchema,
+  priorTrialCount: NonNegativeIntegerSchema,
+  trialHistoryHash: Sha256Schema,
+  strategyName: StrictNonEmptyStringSchema,
+  strategyProtocolHash: Sha256Schema,
+  snapshotId: Sha256Schema,
+  inputManifestHash: Sha256Schema,
+  boundedContentHash: Sha256Schema,
+  sourceRevision: SourceRevisionSchema,
+  modulePath: StrictNonEmptyStringSchema,
+  moduleBlobOid: SourceObjectOidSchema,
+  moduleSha256: Sha256Schema,
+  sourceManifestPath: StrictNonEmptyStringSchema,
+  sourceManifestBlobOid: SourceObjectOidSchema,
+  sourceManifestSha256: Sha256Schema,
+  bindingHash: Sha256Schema,
+})
+
+export const CandidateDevelopmentLocalTerminalReportSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.candidate-development-local-terminal.v1'),
+  source: CandidateDevelopmentLocalSourceBindingSchema,
+  status: Schema.Union([Schema.Literal('PASS'), Schema.Literal('HOLD_REJECT')]),
+  evaluationHash: Sha256Schema,
+  targetHash: Sha256Schema,
+  qualificationAnalysisHash: Sha256Schema,
+})
+
+export type CandidateDevelopmentLocalTerminalReport = typeof CandidateDevelopmentLocalTerminalReportSchema.Type
+
 export type CandidateDevelopmentLocalDecisionStatus = 'PASS' | 'HOLD_REJECT'
 export type CandidateDevelopmentLocalTerminalStatus = CandidateDevelopmentLocalDecisionStatus | 'FAILED'
 
@@ -138,16 +171,19 @@ export interface CandidateDevelopmentLocalAttemptReceipt {
   readonly attempt: 1
   readonly status: 'RESERVED' | CandidateDevelopmentLocalTerminalStatus
   readonly source: CandidateDevelopmentLocalSourceBinding
+  readonly terminalReport: CandidateDevelopmentLocalTerminalReport | null
   readonly terminalReportHash: string | null
 }
 
 export type CandidateDevelopmentLocalTerminalOutcome =
   | {
       readonly status: CandidateDevelopmentLocalDecisionStatus
+      readonly terminalReport: CandidateDevelopmentLocalTerminalReport
       readonly terminalReportHash: string
     }
   | {
       readonly status: 'FAILED'
+      readonly terminalReport: null
       readonly terminalReportHash: null
     }
 
@@ -210,20 +246,37 @@ export const makeCandidateDevelopmentLocalReceipt = (
   source: CandidateDevelopmentLocalSourceBinding,
   status: CandidateDevelopmentLocalAttemptReceipt['status'],
   terminalReportHash: string | null = null,
+  terminalReport: CandidateDevelopmentLocalTerminalReport | null = null,
 ): CandidateDevelopmentLocalAttemptReceipt => ({
   schemaVersion: candidateDevelopmentLocalReceiptSchemaVersion,
   candidateOrdinal: source.candidateOrdinal,
   attempt: 1,
   status,
   source,
+  terminalReport,
   terminalReportHash,
+})
+
+export const makeCandidateDevelopmentLocalTerminalReport = (
+  source: CandidateDevelopmentLocalSourceBinding,
+  status: CandidateDevelopmentLocalDecisionStatus,
+  evaluationHash: string,
+  targetHash: string,
+  qualificationAnalysisHash: string,
+): CandidateDevelopmentLocalTerminalReport => ({
+  schemaVersion: 'bayn.candidate-development-local-terminal.v1',
+  source,
+  status,
+  evaluationHash,
+  targetHash,
+  qualificationAnalysisHash,
 })
 
 export const makeCandidateDevelopmentLocalTerminalReceipt = (
   source: CandidateDevelopmentLocalSourceBinding,
   outcome: CandidateDevelopmentLocalTerminalOutcome,
 ): CandidateDevelopmentLocalAttemptReceipt =>
-  makeCandidateDevelopmentLocalReceipt(source, outcome.status, outcome.terminalReportHash)
+  makeCandidateDevelopmentLocalReceipt(source, outcome.status, outcome.terminalReportHash, outcome.terminalReport)
 
 export const serializeCandidateDevelopmentLocalReceipt = (receipt: CandidateDevelopmentLocalAttemptReceipt): string =>
   `${JSON.stringify(receipt)}\n`
@@ -235,15 +288,9 @@ export const makeCandidateDevelopmentLocalTerminalReportHash = (
   targetHash: string,
   qualificationAnalysisHash: string,
 ): Result.Result<string, CanonicalHashFailure> =>
-  canonicalHashV1Result({
-    schemaVersion: 'bayn.candidate-development-local-terminal.v1',
-    candidateOrdinal: source.candidateOrdinal,
-    sourceBindingHash: source.bindingHash,
-    status,
-    evaluationHash,
-    targetHash,
-    qualificationAnalysisHash,
-  })
+  canonicalHashV1Result(
+    makeCandidateDevelopmentLocalTerminalReport(source, status, evaluationHash, targetHash, qualificationAnalysisHash),
+  )
 
 export const witnessContentHash = (
   witness: Omit<CandidateDevelopmentRuntimeMarketDataWitness, 'contentHash'>,

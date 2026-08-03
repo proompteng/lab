@@ -13,6 +13,7 @@ import {
 } from './ledger'
 import { buildCandidateDevelopmentTrialState } from './lineage'
 import { validateCandidateDevelopmentTrialState } from './validation'
+import { canonicalHashV1Result } from '../hash'
 import { strictParseOptions } from '../schemas'
 
 export type QualificationDormancyDecision =
@@ -136,6 +137,58 @@ const invalidLedger = (path: string): QualificationDormancyResult => ({
 const sameOrdinals = (left: readonly number[], right: readonly number[]): boolean =>
   left.length === right.length && left.every((ordinal, index) => ordinal === right[index])
 
+const validateDevelopmentApprovalEvidence = (
+  entry: Extract<CandidateDevelopmentTrialLedgerEntry, { readonly _tag: 'DEVELOPMENT_APPROVED' }>,
+  preregistration: CandidateDevelopmentNextPreregistration,
+  strategyName: string,
+): QualificationDormancyResult => {
+  if (entry.terminalReport.status !== 'PASS') return invalidLedger('entries.DEVELOPMENT_APPROVED.terminalReport.status')
+
+  const reportHash = canonicalHashV1Result(entry.terminalReport)
+  if (Result.isFailure(reportHash) || reportHash.success !== entry.terminalReportHash) {
+    return invalidLedger('entries.DEVELOPMENT_APPROVED.terminalReportHash')
+  }
+
+  const { bindingHash: _bindingHash, ...bindingMaterial } = entry.terminalReport.source
+  const expectedBindingHash = canonicalHashV1Result(bindingMaterial)
+  if (
+    Result.isFailure(expectedBindingHash) ||
+    expectedBindingHash.success !== entry.terminalReport.source.bindingHash
+  ) {
+    return invalidLedger('entries.DEVELOPMENT_APPROVED.terminalReport.source.bindingHash')
+  }
+
+  const source = entry.terminalReport.source
+  const expected = [
+    ['candidateOrdinal', preregistration.candidateOrdinal, source.candidateOrdinal],
+    ['priorTrialCount', preregistration.priorTrialCount, source.priorTrialCount],
+    ['strategyName', strategyName, source.strategyName],
+    ['sourceRevision', preregistration.preregistration.sourceRevision, source.sourceRevision],
+    ['modulePath', preregistration.modulePath, source.modulePath],
+    ['moduleSha256', preregistration.moduleSha256, source.moduleSha256],
+    ['strategyProtocolHash', preregistration.strategyProtocolHash, source.strategyProtocolHash],
+    ['trialHistoryHash', preregistration.priorTrialsHash, source.trialHistoryHash],
+    ['snapshotId', preregistration.marketData.snapshotId, source.snapshotId],
+    ['inputManifestHash', preregistration.marketData.inputManifestHash, source.inputManifestHash],
+    ['boundedContentHash', preregistration.marketData.boundedContentHash, source.boundedContentHash],
+  ] as const
+  const mismatch = expected.find(
+    ([, expectedValue, observed]) => expectedValue === undefined || expectedValue !== observed,
+  )
+  return mismatch === undefined
+    ? {
+        ok: true,
+        decision: {
+          status: 'ready',
+          reason: 'qualification-eligible',
+          candidateOrdinal: source.candidateOrdinal,
+          preregistrationSourceRevision: source.sourceRevision,
+          preregistrationBlobOid: preregistration.preregistration.blobOid,
+        },
+      }
+    : invalidLedger(`entries.DEVELOPMENT_APPROVED.terminalReport.source.${mismatch[0]}`)
+}
+
 const validateLedger = (
   state: CandidateDevelopmentTrialLedgerState,
 ):
@@ -215,6 +268,7 @@ export const qualificationDormancyDecisionFromLedgerState = (
   const active = state.activeCandidate
   if (active === null) {
     const last = entries.at(-1)
+    if (last?._tag === 'DEVELOPMENT_APPROVED') return invalidLedger('activeCandidate')
     if (state.latestInvalidPrecommit !== null) {
       return {
         ok: true,
@@ -252,16 +306,10 @@ export const qualificationDormancyDecisionFromLedgerState = (
   if (activeApproval === undefined) {
     return { ok: true, decision: { status: 'dormant', reason: 'development-not-approved', candidateOrdinal } }
   }
-  return {
-    ok: true,
-    decision: {
-      status: 'ready',
-      reason: 'qualification-eligible',
-      candidateOrdinal,
-      preregistrationSourceRevision: active.preregistration.preregistration.sourceRevision,
-      preregistrationBlobOid: active.preregistration.preregistration.blobOid,
-    },
-  }
+  const strategyName = active.application?.definition?.name
+  return typeof strategyName === 'string'
+    ? validateDevelopmentApprovalEvidence(activeApproval, active.preregistration, strategyName)
+    : invalidLedger('activeCandidate.application.definition.name')
 }
 
 export const decideQualificationDormancy = (value: unknown): QualificationDormancyResult => {

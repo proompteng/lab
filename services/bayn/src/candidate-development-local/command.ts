@@ -33,6 +33,7 @@ import {
   CandidateDevelopmentLocalError,
   decodeCandidateDevelopmentRuntimeMarketDataWitness,
   decodeCandidateDevelopmentSourceManifest,
+  makeCandidateDevelopmentLocalTerminalReport,
   makeCandidateDevelopmentLocalReceipt,
   makeCandidateDevelopmentLocalTerminalReceipt,
   makeCandidateDevelopmentLocalTerminalReportHash,
@@ -557,6 +558,13 @@ export const evaluateCandidateDevelopmentApplication = (
     return Result.fail(localError('DECISION_FAILED', 'candidate terminal hashes could not be constructed'))
   }
   const status = candidateDevelopmentTerminalStatus(evaluation.success.verdict.status, analysis.success.status)
+  const terminalReport = makeCandidateDevelopmentLocalTerminalReport(
+    source,
+    status,
+    evaluationHash.success,
+    targetHash.success,
+    qualificationAnalysisHash.success,
+  )
   const terminalReportHash = makeCandidateDevelopmentLocalTerminalReportHash(
     source,
     status,
@@ -566,7 +574,7 @@ export const evaluateCandidateDevelopmentApplication = (
   )
   return Result.isFailure(terminalReportHash)
     ? Result.fail(localError('DECISION_FAILED', 'candidate terminal receipt hash could not be constructed'))
-    : Result.succeed({ status, terminalReportHash: terminalReportHash.success })
+    : Result.succeed({ status, terminalReport, terminalReportHash: terminalReportHash.success })
 }
 
 export const evaluateCandidateDevelopmentDefinition = (
@@ -646,7 +654,7 @@ export const makeCandidateDevelopmentLocalAttempt =
       const exit = yield* Effect.exit(port.execute(prepared))
       const outcome: CandidateDevelopmentLocalTerminalOutcome = Exit.isSuccess(exit)
         ? exit.value
-        : { status: 'FAILED', terminalReportHash: null }
+        : { status: 'FAILED', terminalReport: null, terminalReportHash: null }
       const terminalReceipt = makeCandidateDevelopmentLocalTerminalReceipt(prepared.source, outcome)
       yield* port.finalize(prepared.receiptPath, terminalReceipt)
       return yield* Exit.isSuccess(exit) ? Effect.succeed(terminalReceipt) : Effect.failCause(exit.cause)

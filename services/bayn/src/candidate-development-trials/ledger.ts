@@ -6,8 +6,9 @@ import {
   candidate18Preregistration,
   candidate19Preregistration,
 } from './frozen-lineage'
+import { CandidateDevelopmentLocalTerminalReportSchema } from '../candidate-development-local/domain'
 import type { CandidateDevelopmentInvalidPrecommit, CandidateDevelopmentNextPreregistration } from './model'
-import { NonNegativeIntegerSchema, PositiveIntegerSchema, strictParseOptions } from '../schemas'
+import { NonNegativeIntegerSchema, PositiveIntegerSchema, Sha256Schema, strictParseOptions } from '../schemas'
 import type { StrategyApplication } from '../strategy'
 
 const TrialLedgerEntrySchema = Schema.Union([
@@ -27,7 +28,8 @@ const TrialLedgerEntrySchema = Schema.Union([
     candidateOrdinal: PositiveIntegerSchema,
     priorTrialCount: NonNegativeIntegerSchema,
     sourceRevision: Schema.String,
-    terminalReportHash: Schema.String,
+    terminalReportHash: Sha256Schema,
+    terminalReport: CandidateDevelopmentLocalTerminalReportSchema,
   }),
   Schema.Struct({
     _tag: Schema.Literal('PRECOMMIT_INVALID'),

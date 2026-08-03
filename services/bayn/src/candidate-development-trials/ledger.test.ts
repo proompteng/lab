@@ -1,12 +1,49 @@
 import { describe, expect, test } from 'bun:test'
 
+import { makeCandidateDevelopmentLocalTerminalReport } from '../candidate-development-local/domain'
+import { canonicalHashV1 } from '../hash'
 import { candidate20Preregistration } from './frozen-lineage'
 import {
   candidateDevelopmentTrialLedger,
   candidateDevelopmentTrialLedgerState,
   type CandidateDevelopmentTrialLedgerState,
 } from './ledger'
+import type { CandidateDevelopmentNextPreregistration } from './model'
 import { qualificationDormancyDecisionFromLedgerState } from './qualification-dormancy'
+
+const approvalEvidence = (preregistration: CandidateDevelopmentNextPreregistration) => {
+  if (preregistration.priorTrialsHash === undefined) throw new Error('approval fixture requires a trial history hash')
+  const sourceMaterial = {
+    candidateOrdinal: preregistration.candidateOrdinal,
+    priorTrialCount: preregistration.priorTrialCount,
+    trialHistoryHash: preregistration.priorTrialsHash,
+    strategyName: 'risk-balanced-trend',
+    strategyProtocolHash: preregistration.strategyProtocolHash,
+    snapshotId: preregistration.marketData.snapshotId,
+    inputManifestHash: preregistration.marketData.inputManifestHash,
+    boundedContentHash: preregistration.marketData.boundedContentHash,
+    sourceRevision: preregistration.preregistration.sourceRevision,
+    modulePath: preregistration.modulePath,
+    moduleBlobOid: '3'.repeat(40),
+    moduleSha256: preregistration.moduleSha256,
+    sourceManifestPath: `services/bayn/candidates/ordinal-${preregistration.candidateOrdinal}-source-manifest.json`,
+    sourceManifestBlobOid: '4'.repeat(40),
+    sourceManifestSha256: '5'.repeat(64),
+  }
+  const source = { ...sourceMaterial, bindingHash: canonicalHashV1(sourceMaterial) }
+  const terminalReport = makeCandidateDevelopmentLocalTerminalReport(
+    source,
+    'PASS',
+    '6'.repeat(64),
+    '7'.repeat(64),
+    '8'.repeat(64),
+  )
+  return {
+    sourceRevision: preregistration.preregistration.sourceRevision,
+    terminalReport,
+    terminalReportHash: canonicalHashV1(terminalReport),
+  }
+}
 
 describe('Bayn candidate development trial ledger', () => {
   test('keeps Candidate 20 as one immutable invalid and unattempted tombstone', () => {
@@ -42,7 +79,7 @@ describe('Bayn candidate development trial ledger', () => {
           blobOid: 'b'.repeat(40),
         },
       },
-      application: {},
+      application: { definition: { name: 'risk-balanced-trend' } },
     }
     const pending = {
       ...candidateDevelopmentTrialLedgerState,
@@ -62,8 +99,7 @@ describe('Bayn candidate development trial ledger', () => {
           _tag: 'DEVELOPMENT_APPROVED' as const,
           candidateOrdinal: 21,
           priorTrialCount: 20,
-          sourceRevision: 'a'.repeat(40),
-          terminalReportHash: 'c'.repeat(64),
+          ...approvalEvidence(activeCandidate.preregistration),
         },
       ],
     }
@@ -74,6 +110,36 @@ describe('Bayn candidate development trial ledger', () => {
         reason: 'qualification-eligible',
         candidateOrdinal: 21,
       },
+    })
+
+    const approval = approved.entries.at(-1)
+    if (approval?._tag !== 'DEVELOPMENT_APPROVED') throw new Error('expected a development approval entry')
+    expect(
+      qualificationDormancyDecisionFromLedgerState({
+        ...approved,
+        entries: [...approved.entries.slice(0, -1), { ...approval, terminalReportHash: 'd'.repeat(64) }],
+      }),
+    ).toEqual({
+      ok: false,
+      issue: { path: 'entries.DEVELOPMENT_APPROVED.terminalReportHash', reason: 'INVALID_STATE' },
+    })
+
+    const holdRejectedReport = { ...approval.terminalReport, status: 'HOLD_REJECT' as const }
+    expect(
+      qualificationDormancyDecisionFromLedgerState({
+        ...approved,
+        entries: [
+          ...approved.entries.slice(0, -1),
+          {
+            ...approval,
+            terminalReport: holdRejectedReport,
+            terminalReportHash: canonicalHashV1(holdRejectedReport),
+          },
+        ],
+      }),
+    ).toEqual({
+      ok: false,
+      issue: { path: 'entries.DEVELOPMENT_APPROVED.terminalReport.status', reason: 'INVALID_STATE' },
     })
   })
 
@@ -89,7 +155,7 @@ describe('Bayn candidate development trial ledger', () => {
           blobOid: 'b'.repeat(40),
         },
       },
-      application: {},
+      application: { definition: { name: 'risk-balanced-trend' } },
     }
     const base = {
       ...candidateDevelopmentTrialLedgerState,
@@ -103,8 +169,13 @@ describe('Bayn candidate development trial ledger', () => {
           _tag: 'DEVELOPMENT_APPROVED' as const,
           candidateOrdinal: 21,
           priorTrialCount: 19,
-          sourceRevision: 'c'.repeat(40),
-          terminalReportHash: 'd'.repeat(64),
+          ...approvalEvidence({
+            ...activeCandidate.preregistration,
+            preregistration: {
+              ...activeCandidate.preregistration.preregistration,
+              sourceRevision: 'c'.repeat(40),
+            },
+          }),
         },
       ],
     }
@@ -122,15 +193,13 @@ describe('Bayn candidate development trial ledger', () => {
           _tag: 'DEVELOPMENT_APPROVED' as const,
           candidateOrdinal: 21,
           priorTrialCount: 20,
-          sourceRevision: 'a'.repeat(40),
-          terminalReportHash: 'd'.repeat(64),
+          ...approvalEvidence(activeCandidate.preregistration),
         },
         {
           _tag: 'DEVELOPMENT_APPROVED' as const,
           candidateOrdinal: 21,
           priorTrialCount: 20,
-          sourceRevision: 'a'.repeat(40),
-          terminalReportHash: 'e'.repeat(64),
+          ...approvalEvidence(activeCandidate.preregistration),
         },
       ],
     }
