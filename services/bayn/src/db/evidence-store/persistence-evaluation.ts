@@ -2,6 +2,7 @@ import { Result } from 'effect'
 
 import { makeRunIdentityResult, makeStrategyProtocolHashResult } from '../../contracts'
 import { reconcileMarkedEquity } from '../../simulation-reconciliation'
+import type { DecisionEvent } from '../../types'
 import type { PersistEvaluationInput } from './model'
 import { persistenceCanonicalHash, persistenceMismatch } from './persistence-failures'
 import type { PersistencePlanFailure, ValidatedPersistenceEvaluation } from './persistence-model'
@@ -193,7 +194,7 @@ export const validatePersistenceEvaluation = (
     }
 
     const decisionEvents = evaluation.events.filter(
-      (event) => event.kind === 'decision' && event.terminalClose !== true,
+      (event): event is DecisionEvent => event.kind === 'decision' && event.terminalClose !== true,
     )
     if (evaluation.signalDecisions.length !== decisionEvents.length) {
       return yield* persistenceMismatch(
