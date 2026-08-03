@@ -13,9 +13,7 @@ import type { JournalService } from '../ledger'
 import type { MarketDataInspection, MarketDataService } from '../market-data'
 import type { QualificationConstructionFailure, QualificationLock, QualificationResult } from '../qualification'
 import type { QualificationStatisticsFailure } from '../qualification-statistics'
-import type { RiskBalancedTrendEvaluationIssue } from '../risk-balanced-trend'
 import type { RuntimeEvidence } from '../runtime-state'
-import type { RiskBalancedTrendStrategyPrepareLockFailure } from '../strategy/risk-balanced-trend'
 import type { StrategyRuntime } from '../strategy'
 import type { EvaluationResult, ReconciliationResult } from '../types'
 
@@ -209,13 +207,13 @@ export type StartupDecisionFailure =
       readonly _tag: 'StrategyOperationFailed'
       readonly operation: 'evaluate'
       readonly strategyName: string
-      readonly cause: readonly RiskBalancedTrendEvaluationIssue[]
+      readonly cause: readonly unknown[]
     }
   | {
       readonly _tag: 'StrategyOperationFailed'
       readonly operation: 'prepare-lock'
       readonly strategyName: string
-      readonly cause: RiskBalancedTrendStrategyPrepareLockFailure
+      readonly cause: unknown
     }
   | {
       readonly _tag: 'StrategyOperationFailed'

@@ -7,7 +7,10 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1 } from './hash'
+import { align } from './audit/reference/decisions'
+import { replay } from './audit/reference/replay'
 import { evaluateReference, measureReferenceEvaluationWork, restrictReferenceBuyFill } from './audit/reference'
+import { MICROS } from './execution-model'
 import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
@@ -44,6 +47,60 @@ describe('independent qualification reference', () => {
     expect(reference.buyAndHold.daily).toEqual(actual.benchmarkSeries.buyAndHold)
     expect(reference.directVolTiming.daily).toEqual(actual.benchmarkSeries.directVolTiming)
     expect(reference.doubleCostStrategy.daily).toEqual(actual.benchmarkSeries.doubleCostStrategy)
+  })
+
+  test('preserves legacy replay semantics without a durable terminal-close marker', () => {
+    const snapshot = makeSnapshot(900)
+    const provenance = makeTestProvenance()
+    const current = assertSuccess(
+      evaluateReference(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance, true),
+    )
+    const legacy = assertSuccess(
+      evaluateReference(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance, false),
+    )
+
+    expect(
+      current.strategy.events.filter((event) => event.kind === 'decision' && event.terminalClose === true),
+    ).toHaveLength(1)
+    expect(
+      legacy.strategy.events.filter((event) => event.kind === 'decision' && event.terminalClose === true),
+    ).toHaveLength(0)
+  })
+
+  test('does not append a redundant terminal close after a scheduled flat target', () => {
+    const snapshot = makeSnapshot(900)
+    const provenance = makeTestProvenance()
+    const actual = assertSuccess(
+      evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance),
+    )
+    const aligned = assertSuccess(align(snapshot.bars, snapshot.manifest, fixtureProtocol.universe))
+    const firstDecision = actual.signalDecisions[0]
+    assert(firstDecision !== undefined, 'fixture must contain one strategy decision')
+    const signalIndex = aligned.findIndex((session) => session.date === firstDecision.signalDate)
+    expect(signalIndex).toBeGreaterThanOrEqual(0)
+    const executionIndex = signalIndex + 1
+    const { decisionId: _decisionId, executionDate: _executionDate, ...decisionPlan } = firstDecision
+    const buyWeights = Object.fromEntries(
+      fixtureProtocol.universe.map((symbol, index) => [symbol, index === 0 ? 1 : 0]),
+    )
+    const terminalWeights = Object.fromEntries(fixtureProtocol.universe.map((symbol) => [symbol, 0]))
+    const result = assertSuccess(
+      replay(
+        aligned,
+        [
+          { signalIndex, executionIndex, weights: buyWeights, plan: decisionPlan },
+          { signalIndex, executionIndex: aligned.length - 1, weights: terminalWeights, plan: decisionPlan },
+        ],
+        executionIndex,
+        fixtureProtocol,
+        MICROS,
+        actual.runId,
+        true,
+        true,
+      ),
+    )
+
+    expect(result.events.filter((event) => event.kind === 'decision' && event.terminalClose === true)).toHaveLength(0)
   })
 
   test('binds the result to raw market data', () => {

@@ -6,15 +6,17 @@ import { join, resolve } from 'node:path'
 import process from 'node:process'
 
 import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node'
-import { Data, Effect, Layer, Logger, Option, Ref, Result, Schema } from 'effect'
+import { Data, Effect, Layer, Logger, Option, Result, Schema } from 'effect'
 import * as Reactivity from 'effect/unstable/reactivity/Reactivity'
 
 import type { ApplicationPlanFor } from './app'
 import { embeddedBuildMetadata } from './build'
 import {
+  activeCandidateDevelopmentRegistration,
+  candidateDevelopmentTrialLedgerState,
   type CandidateDevelopmentNextPreregistration,
-  frozenCandidateDevelopmentTrialHistory,
 } from './candidate-development-calendar'
+import { qualificationDormancyDecisionFromLedgerState } from './candidate-development-trials/qualification-dormancy'
 import { makeRuntimeProvenanceResult, makeStrategyProtocolHash } from './contracts'
 import { EvidenceStore, type EvidenceStoreService, type QualificationRecord } from './db/evidence-store'
 import {
@@ -35,11 +37,12 @@ import {
   verifyQualificationCandidateBinding,
   type QualificationCandidateBindingReceipt,
   type QualificationCandidateRuntime,
-} from './qualification-candidate-command'
+} from './qualification-binding'
 import type { QualificationAuditReport } from './audit/audit'
 import { hashParameters } from './protocol'
-import { initialState } from './runtime-state'
-import { runStartup } from './startup'
+import { decideQualificationPath, evaluateLockedSnapshot, qualifyEvaluation } from './startup/decisions'
+import { activeStrategyBehaviorHash, bindReviewedStrategySource } from './strategy'
+import { loadReviewedStrategyApplication } from './candidate-development-local/source-module'
 import {
   NonNegativeIntegerSchema,
   PositiveIntegerSchema,
@@ -47,7 +50,7 @@ import {
   StrictNonEmptyStringSchema,
   strictParseOptions,
 } from './schemas'
-import type { RiskBalancedTrendStrategyDefinition } from './strategy/risk-balanced-trend'
+import type { QualificationCandidateApplication } from './qualification-binding'
 
 const sha40 = /^[0-9a-f]{40}$/
 const sha64 = /^[0-9a-f]{64}$/
@@ -58,9 +61,6 @@ const defaultAuditReplicaUrls = [
   'http://chi-torghut-clickhouse-default-0-0.torghut.svc.cluster.local:8123',
   'http://chi-torghut-clickhouse-default-0-1.torghut.svc.cluster.local:8123',
 ] as const
-
-/** The future candidate PR replaces this value with its reviewed static import. */
-const reviewedCandidateDefinition: RiskBalancedTrendStrategyDefinition | undefined = undefined
 
 const CandidateDevelopmentNextPreregistrationSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.candidate-development-next-preregistration.v1'),
@@ -105,6 +105,21 @@ const collectorError = (
   message: string,
   cause?: unknown,
 ): QualificationCollectorError => new QualificationCollectorError({ phase, code, message, cause })
+
+export const qualificationOperationWithinDeadline = <A, E>(
+  effect: Effect.Effect<A, E>,
+  timeoutMs: number,
+  operation: string,
+  mapError: (cause: E) => QualificationCollectorError,
+): Effect.Effect<A, QualificationCollectorError> =>
+  effect.pipe(
+    Effect.mapError(mapError),
+    Effect.timeoutOrElse({
+      duration: timeoutMs,
+      orElse: () =>
+        Effect.fail(collectorError('execution', `${operation}-timeout`, `${operation} timed out after ${timeoutMs}ms`)),
+    }),
+  )
 
 const gitEnvironment = (): NodeJS.ProcessEnv =>
   Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')))
@@ -162,7 +177,9 @@ export interface QualificationCandidateImmutableSourceInput {
 }
 
 export interface QualificationCandidateImmutableSourceReceipt {
-  readonly schemaVersion: 'bayn.qualification-candidate-source.v2'
+  readonly schemaVersion: 'bayn.qualification-candidate-source.v3'
+  readonly sourceRevision: string
+  readonly modulePath: string
   readonly moduleBlobOid: string
   readonly moduleSha256: string
   readonly preregistrationHash: string
@@ -261,7 +278,9 @@ export const verifyQualificationCandidateSource = (
     }
     yield* verifyCandidateSourceNovelty(input)
     return {
-      schemaVersion: 'bayn.qualification-candidate-source.v2' as const,
+      schemaVersion: 'bayn.qualification-candidate-source.v3' as const,
+      sourceRevision: input.sourceRevision,
+      modulePath: input.preregistration.modulePath,
       moduleBlobOid: input.moduleBlobOid,
       moduleSha256: sha256Bytes(input.moduleBytes),
       preregistrationHash: sha256Bytes(input.preregistrationBytes),
@@ -567,64 +586,164 @@ export const executeQualificationAttempt = (
   candidate: QualificationCandidateBindingReceipt,
 ): Effect.Effect<QualificationCollectorExecutionReceipt, QualificationCollectorError> =>
   Effect.gen(function* () {
-    const existing = yield* input.dependencies.evidenceStore
-      .readQualification(candidate.candidateRunId)
-      .pipe(
-        Effect.mapError((cause) =>
+    const timeoutMs = input.plan.config.operationTimeoutMs
+    const existing = yield* qualificationOperationWithinDeadline(
+      input.dependencies.evidenceStore.readQualification(candidate.candidateRunId),
+      timeoutMs,
+      'qualification-state-read',
+      (cause) =>
+        collectorError('execution', 'qualification-state-read-failed', 'qualification state could not be read', cause),
+    )
+    const attemptState = yield* qualificationAttemptState(existing)
+    const strategy = {
+      application: input.candidate.application,
+      definition: input.candidate.application.definition,
+      provenance: input.candidate.provenance,
+    }
+    if (attemptState === 'RECOVER_TERMINAL') {
+      const recovered = yield* qualificationOperationWithinDeadline(
+        input.dependencies.evidenceStore.recover(candidate.candidateRunId, input.candidate.provenance),
+        timeoutMs,
+        'qualification-recovery',
+        (cause) =>
+          collectorError('execution', 'qualification-recovery-failed', 'terminal qualification recovery failed', cause),
+      )
+      if (Option.isNone(recovered)) {
+        return yield* collectorError(
+          'execution',
+          'qualification-terminal-missing',
+          'terminal qualification evidence is missing for the recorded result',
+        )
+      }
+      const qualification = yield* qualificationOperationWithinDeadline(
+        input.dependencies.evidenceStore.readQualification(candidate.candidateRunId),
+        timeoutMs,
+        'qualification-state-reread',
+        (cause) =>
           collectorError(
             'execution',
             'qualification-state-read-failed',
-            'qualification state could not be read',
+            'qualification state could not be re-read',
             cause,
           ),
-        ),
       )
-    const attemptState = yield* qualificationAttemptState(existing)
-    const state = yield* Ref.make(initialState())
-    const executionDependencies = freezeQualificationPrelockDependencies(
-      input.dependencies,
-      input.inspection,
-      input.priorTrialRunIds,
+      if (Option.isNone(qualification) || qualification.value.state !== 'TERMINAL') {
+        return yield* collectorError(
+          'execution',
+          'qualification-replay-invalid',
+          'terminal qualification recovery did not return a terminal result',
+        )
+      }
+      return {
+        schemaVersion: 'bayn.qualification-execution.v1' as const,
+        runId: recovered.value.evaluation.runId,
+        lockId: qualification.value.result.lockId,
+        resultHash: qualification.value.result.resultHash,
+        verdict: qualification.value.result.verdict,
+        persistence: {
+          artifactCount: recovered.value.persistence.artifactCount,
+          eventCount: recovered.value.persistence.eventCount,
+          gateCount: recovered.value.persistence.gateCount,
+        },
+      }
+    }
+
+    const opened = yield* qualificationOperationWithinDeadline(
+      input.dependencies.evidenceStore.openQualification({
+        lock: candidate.lock,
+        inputManifest: input.inspection.manifest,
+        parameters: input.candidate.application.definition.parameters,
+        provenance: input.candidate.provenance,
+      }),
+      timeoutMs,
+      'qualification-open',
+      (cause) =>
+        collectorError('execution', 'qualification-open-failed', 'qualification lock could not be acquired', cause),
     )
-    yield* runStartup(
-      input.plan.config,
-      state,
-      { definition: input.candidate.definition, provenance: input.candidate.provenance },
-      executionDependencies,
-    ).pipe(
+    const path = yield* Effect.fromResult(decideQualificationPath(candidate.lock, opened)).pipe(
       Effect.mapError((cause) =>
-        collectorError('execution', 'qualification-runtime-failed', 'qualification runtime failed', cause),
+        collectorError(
+          'execution',
+          'qualification-open-binding-invalid',
+          'qualification lock binding was not exact',
+          cause,
+        ),
       ),
     )
-    const completed = yield* Ref.get(state)
-    if (completed.status === 'FAILED' || completed.evidence === null) {
-      return yield* collectorError(
-        'execution',
-        'qualification-terminal-missing',
-        completed.error ?? 'qualification did not produce terminal durable evidence',
-      )
-    }
-    if (
-      completed.evidence.startupMode === 'pinned' ||
-      (attemptState === 'RECOVER_TERMINAL' && completed.evidence.startupMode !== 'recovered')
-    ) {
+    if (path._tag !== 'EvaluateAcquired') {
       return yield* collectorError(
         'execution',
         'qualification-replay-invalid',
-        'collector did not evaluate or recover the exact unpinned qualification attempt',
+        'qualification became terminal while the exact attempt was being acquired',
       )
     }
-    const qualification = completed.evidence.qualification
+    const snapshot = yield* qualificationOperationWithinDeadline(
+      input.dependencies.marketData.load,
+      timeoutMs,
+      'qualification-data-load',
+      (cause) =>
+        collectorError(
+          'execution',
+          'qualification-data-load-failed',
+          'qualification snapshot could not be loaded',
+          cause,
+        ),
+    )
+    const evaluation = yield* Effect.fromResult(
+      evaluateLockedSnapshot(strategy, input.candidate.provenance, input.inspection, candidate.lock, snapshot),
+    ).pipe(
+      Effect.mapError((cause) =>
+        collectorError('execution', 'qualification-evaluation-failed', 'qualification evaluation failed', cause),
+      ),
+    )
+    const reconciliation = yield* qualificationOperationWithinDeadline(
+      input.dependencies.journal.journalAndReconcile(evaluation),
+      timeoutMs,
+      'qualification-reconciliation',
+      (cause) =>
+        collectorError(
+          'execution',
+          'qualification-reconciliation-failed',
+          'qualification reconciliation failed',
+          cause,
+        ),
+    )
+    const evidence = yield* Effect.fromResult(
+      qualifyEvaluation(strategy, candidate.lock, evaluation, reconciliation),
+    ).pipe(
+      Effect.mapError((cause) =>
+        collectorError('execution', 'qualification-analysis-failed', 'qualification analysis failed', cause),
+      ),
+    )
+    const persistence = yield* qualificationOperationWithinDeadline(
+      input.dependencies.evidenceStore.persist({
+        provenance: input.candidate.provenance,
+        parameters: input.candidate.application.definition.parameters,
+        evaluation,
+        reconciliation,
+        qualification: { lock: candidate.lock, result: evidence.qualification },
+      }),
+      timeoutMs,
+      'qualification-persist',
+      (cause) =>
+        collectorError(
+          'execution',
+          'qualification-persist-failed',
+          'qualification evidence could not be persisted',
+          cause,
+        ),
+    )
+    const qualification = evidence.qualification
     return {
       schemaVersion: 'bayn.qualification-execution.v1' as const,
-      runId: completed.evidence.evaluation.runId,
+      runId: evaluation.runId,
       lockId: qualification.lockId,
       resultHash: qualification.resultHash,
       verdict: qualification.verdict,
       persistence: {
-        artifactCount: completed.evidence.persistence.artifactCount,
-        eventCount: completed.evidence.persistence.eventCount,
-        gateCount: completed.evidence.persistence.gateCount,
+        artifactCount: persistence.artifactCount,
+        eventCount: persistence.eventCount,
+        gateCount: persistence.gateCount,
       },
     }
   })
@@ -813,9 +932,9 @@ export const loadQualificationCollectorInvocation = (
   })
 
 export const makeQualificationCandidateRuntime = (
-  definition: RiskBalancedTrendStrategyDefinition,
+  application: QualificationCandidateApplication,
   deployment: DeploymentRuntime,
-  source: { readonly moduleSha256: string },
+  source: { readonly sourceRevision: string; readonly modulePath: string; readonly moduleSha256: string },
   preregistration: CandidateDevelopmentNextPreregistration,
 ): Result.Result<QualificationCandidateRuntime, QualificationCollectorError> => {
   if (preregistration.priorTrialsHash === undefined) {
@@ -827,13 +946,40 @@ export const makeQualificationCandidateRuntime = (
       ),
     )
   }
+  const definition = application.definition
+  const boundApplication =
+    application.reviewedSource === undefined
+      ? bindReviewedStrategySource(application, {
+          sourceRevision: source.sourceRevision,
+          modulePath: source.modulePath,
+          moduleSha256: source.moduleSha256,
+        })
+      : application
+  const reviewedSource = boundApplication.reviewedSource
+  if (
+    reviewedSource === undefined ||
+    reviewedSource.sourceRevision !== source.sourceRevision ||
+    reviewedSource.sourceRevision !== deployment.sourceSha ||
+    reviewedSource.modulePath !== source.modulePath ||
+    reviewedSource.modulePath !== preregistration.modulePath ||
+    reviewedSource.moduleSha256 !== source.moduleSha256 ||
+    reviewedSource.moduleSha256 !== preregistration.moduleSha256
+  ) {
+    return Result.fail(
+      collectorError(
+        'candidate',
+        'candidate-application-source-mismatch',
+        'executable candidate application is not the reviewed module export',
+      ),
+    )
+  }
   const parameterHash = hashParameters(definition.parameters)
-  if (source.moduleSha256 !== deployment.strategyBehaviorHash) {
+  if (deployment.strategyBehaviorHash !== activeStrategyBehaviorHash) {
     return Result.fail(
       collectorError(
         'candidate',
         'deployment-strategy-behavior-mismatch',
-        'candidate module hash differs from the embedded deployment strategy behavior hash',
+        'embedded deployment strategy behavior hash differs from the active application behavior hash',
       ),
     )
   }
@@ -850,8 +996,8 @@ export const makeQualificationCandidateRuntime = (
     sourceRevision: deployment.sourceSha,
     image: { repository: deployment.imageRepository, digest: deployment.imageDigest },
     strategy: {
-      name: 'risk-balanced-trend',
-      behaviorHash: source.moduleSha256,
+      name: definition.name,
+      behaviorHash: deployment.strategyBehaviorHash,
       parameterHash,
       parameterSchemaVersion: definition.parameters.schemaVersion,
     },
@@ -867,9 +1013,10 @@ export const makeQualificationCandidateRuntime = (
     )
   }
   return Result.succeed({
-    definition,
+    application: boundApplication,
     provenance: provenance.success,
     moduleSha256: source.moduleSha256,
+    strategyBehaviorHash: deployment.strategyBehaviorHash,
     trialHistoryHash: preregistration.priorTrialsHash,
     boundedContentHash: preregistration.marketData.boundedContentHash,
   })
@@ -877,8 +1024,24 @@ export const makeQualificationCandidateRuntime = (
 
 const collectStaticQualificationEvidence = (invocation: QualificationCollectorInvocation) =>
   Effect.gen(function* () {
-    const preregistration = frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration
-    if (preregistration === null) return Option.none<StaticQualificationEvidence>()
+    const activeCandidate = activeCandidateDevelopmentRegistration
+    if (activeCandidate === null) return Option.none<StaticQualificationEvidence>()
+    const lifecycle = qualificationDormancyDecisionFromLedgerState(candidateDevelopmentTrialLedgerState)
+    if (!lifecycle.ok) {
+      return yield* collectorError(
+        'eligibility',
+        'candidate-ledger-invalid',
+        'active candidate ledger state is invalid; qualification remains fail-closed',
+      )
+    }
+    if (lifecycle.decision.status !== 'ready') {
+      return yield* collectorError(
+        'eligibility',
+        'candidate-development-not-approved',
+        'qualification requires the one terminal local development approval before any qualification access',
+      )
+    }
+    const preregistration = activeCandidate.preregistration
 
     const repositoryPathInput = yield* requiredQualificationEnvironment(
       process.env,
@@ -1055,20 +1218,39 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
       moduleBlobOid: staticGit.moduleBlobOid,
       moduleBytes: staticGit.moduleBytes,
     })
-    if (reviewedCandidateDefinition === undefined) {
+    if (qualificationRuntime.sourceSha !== preregistration.preregistration.sourceRevision) {
       return yield* collectorError(
         'candidate',
-        'candidate-definition-not-statically-composed',
-        'active qualification requires the reviewed candidate StrategyDefinition as a static import',
+        'candidate-source-revision-mismatch',
+        'qualification must execute the exact preregistered source revision',
+      )
+    }
+    const sourceApplication = yield* loadReviewedStrategyApplication(
+      resolve(repositoryPath, candidateSource.modulePath),
+      qualificationRuntime.sourceSha,
+    ).pipe(
+      Effect.mapError((cause) =>
+        collectorError(
+          'candidate',
+          'candidate-application-load-failed',
+          'reviewed candidate application could not be loaded',
+          cause,
+        ),
+      ),
+    )
+    if (
+      sourceApplication.definition.name !== activeCandidate.application.definition.name ||
+      hashParameters(sourceApplication.definition.parameters) !==
+        hashParameters(activeCandidate.application.definition.parameters)
+    ) {
+      return yield* collectorError(
+        'candidate',
+        'candidate-application-identity-mismatch',
+        'reviewed candidate module does not match the registered application identity',
       )
     }
     const candidate = yield* Effect.fromResult(
-      makeQualificationCandidateRuntime(
-        reviewedCandidateDefinition,
-        qualificationRuntime,
-        candidateSource,
-        preregistration,
-      ),
+      makeQualificationCandidateRuntime(sourceApplication, qualificationRuntime, candidateSource, preregistration),
     )
     const candidateSourceHash = yield* Effect.fromResult(
       canonicalHashV1Result({

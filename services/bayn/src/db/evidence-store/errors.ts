@@ -1,9 +1,10 @@
-import { Data, Effect, Match, Schema } from 'effect'
+import { Effect, Match, Schema } from 'effect'
 import { isSqlError, type SqlErrorReason } from 'effect/unstable/sql/SqlError'
 
 import { renderEvidenceRecoveryIssue, type EvidenceRecoveryIssue } from '../evidence-recovery'
 import { renderPersistencePlanFailure } from './persistence-failures'
 import type { PersistencePlanFailure } from './persistence-model'
+import { DatabaseError, type DatabaseFailure, type PersistenceFailure } from './error-contract'
 import {
   renderQualificationDecisionFailure,
   renderStoredQualificationFailure,
@@ -11,16 +12,7 @@ import {
   type StoredQualificationFailure,
 } from './qualification'
 
-export type DatabaseFailure = 'constraint' | 'decode' | 'invariant' | 'migration' | 'query' | 'unavailable'
-export type PersistenceFailure = 'connectivity' | 'constraint' | 'decode' | 'invariant' | 'query' | 'transaction'
-
-export class DatabaseError extends Data.TaggedError('DatabaseError')<{
-  readonly failure: DatabaseFailure
-  readonly persistenceFailure?: PersistenceFailure
-  readonly operation: string
-  readonly message: string
-  readonly cause?: unknown
-}> {}
+export { DatabaseError, type DatabaseFailure, type PersistenceFailure } from './error-contract'
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
 

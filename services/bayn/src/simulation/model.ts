@@ -286,6 +286,8 @@ export interface SimulationTarget {
   readonly decision?: DecisionPlan
   /** Generic strategy definitions do not expose risk-specific signal evidence. */
   readonly requireDecisionEvidence?: boolean
+  /** Terminal liquidation uses the same costs but must settle the modeled closing leg. */
+  readonly terminalClose?: boolean
 }
 
 export interface SimulationResult {
@@ -301,6 +303,7 @@ export type SimulationDecision = Result.Result<SimulationResult, SimulationFailu
 export interface SimulationInput {
   readonly sessions: readonly AlignedSession[]
   readonly targets: readonly SimulationTarget[]
+  readonly terminalCloseTarget?: (target: SimulationTarget, executionIndex: number) => SimulationTarget
   readonly startIndex: number
   readonly protocol: SimulationProtocol
   readonly costMultiplierMicros: bigint

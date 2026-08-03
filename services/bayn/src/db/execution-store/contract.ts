@@ -80,6 +80,11 @@ export interface AuthorityGenerationStoreShape {
   readonly ensureAuthorityGeneration: (
     input: EnsureAuthorityGenerationInput,
   ) => Effect.Effect<AuthorityState, ExecutionStoreError>
+  /** Read-only recovery view used to resume a durable PAPER close lease after process restart. */
+  readonly readAuthorityState?: () => Effect.Effect<AuthorityState, ExecutionStoreError>
+  readonly readAuthorityGeneration?: (
+    generationHash: string,
+  ) => Effect.Effect<CapitalGrantGeneration | undefined, ExecutionStoreError>
 }
 
 export interface CapitalGrantLifecycleStoreShape {

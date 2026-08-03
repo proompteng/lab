@@ -55,11 +55,8 @@ export interface PaperGenerationEvidenceFacts {
   readonly completeStatusCount: number
   readonly writingDetail: unknown
   readonly completeDetail: unknown
-  readonly protocolSchemaVersion:
-    | 'bayn.risk-balanced-trend.protocol.v2'
-    | 'bayn.risk-balanced-trend.protocol.v3'
-    | 'bayn.risk-balanced-trend.protocol.v4'
-  readonly strategyName: 'risk-balanced-trend'
+  readonly protocolSchemaVersion: string
+  readonly strategyName: string
   readonly behaviorHash: string
   readonly parameterHash: string
   readonly parameters: unknown
@@ -571,8 +568,6 @@ export const validatePaperGenerationEvidence = (
       facts.resultRunId === binding.qualificationRunId &&
       facts.resultLockId === facts.lockId &&
       facts.candidateRunId === binding.qualificationRunId &&
-      facts.protocolSchemaVersion === 'bayn.risk-balanced-trend.protocol.v4' &&
-      facts.strategyName === 'risk-balanced-trend' &&
       facts.behaviorHash === facts.strategyBehaviorHash &&
       facts.parameterHash === facts.strategyParameterHash &&
       parametersHash === facts.parameterHash &&
@@ -651,7 +646,7 @@ const readCapitalGrantGenerationMaterial = (input: {
       strategyName: input.evidence.strategyName,
       strategyBehaviorHash: input.evidence.behaviorHash,
       strategyParameterHash: input.evidence.parameterHash,
-      strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4',
+      strategyParameterSchemaVersion: input.evidence.protocolSchemaVersion,
       accountId: input.binding.accountId,
       riskPolicyHash: input.proof.riskPolicyHash,
       proofPlanHash: input.proof.proofPlanHash,

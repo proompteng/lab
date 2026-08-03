@@ -142,4 +142,44 @@ describe('live-causal simulation', () => {
     expect(rotationOrders.some((order) => order.side === 'sell')).toBe(true)
     expect(rotationOrders.some((order) => order.side === 'buy')).toBe(false)
   })
+
+  test('consolidates final-session fees identically for trace and trace-free simulations', () => {
+    const finalTarget: SimulationTarget = {
+      signalIndex: 0,
+      executionIndex: 2,
+      weights: { AAA: 1, BBB: 0 },
+      decision: plan('2026-01-02', { AAA: 1, BBB: 0 }),
+    }
+    const close = (target: SimulationTarget, executionIndex: number): SimulationTarget => ({
+      ...target,
+      executionIndex,
+      weights: { AAA: 0, BBB: 0 },
+      decision: undefined,
+      requireDecisionEvidence: false,
+      terminalClose: true,
+    })
+    const traced = simulate(sessions(), [finalTarget], 1, protocol, MICROS, 'a'.repeat(64), true, close)
+    const traceFree = simulate(sessions(), [finalTarget], 1, protocol, MICROS, 'a'.repeat(64), false, close)
+    if (Result.isFailure(traced) || Result.isFailure(traceFree)) throw new Error('fee consolidation fixture failed')
+
+    expect(traceFree.success.metrics.totalFeesMicros).toBe(traced.success.metrics.totalFeesMicros)
+  })
+
+  test('replaces a final non-flat target with the terminal close instead of a same-session round trip', () => {
+    const close = (target: SimulationTarget, executionIndex: number): SimulationTarget => ({
+      ...target,
+      executionIndex,
+      weights: { AAA: 0, BBB: 0 },
+      decision: undefined,
+      requireDecisionEvidence: false,
+      terminalClose: true,
+    })
+    const result = simulate(sessions(), targets, 1, protocol, MICROS, 'a'.repeat(64), true, close)
+    if (Result.isFailure(result)) throw new Error('terminal replacement fixture failed')
+
+    const finalOrders = result.success.simulation?.orders.filter((order) => order.sessionDate === '2026-01-06') ?? []
+    expect(finalOrders.map(({ symbol, side }) => ({ symbol, side }))).toEqual([{ symbol: 'AAA', side: 'sell' }])
+    expect(result.success.events.filter((event) => event.kind === 'decision' && event.terminalClose)).toHaveLength(1)
+    expect(result.success.signalDecisions.map((decision) => decision.signalDate)).toEqual(['2026-01-02', '2026-01-05'])
+  })
 })

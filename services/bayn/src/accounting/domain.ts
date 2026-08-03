@@ -1,9 +1,16 @@
-import type { Account, Transfer } from 'tigerbeetle-node'
-import { AccountFlags } from 'tigerbeetle-node'
 import { pipe, Result } from 'effect'
 
 import { canonicalHashV1Result, stableU128, stableU64 } from '../hash'
-import { AccountCode, hashLedgerPlanResult, LEDGER_SCHEMA_VERSION, TransferCode, type LedgerPlan } from '../ledger-plan'
+import {
+  AccountCode,
+  hashLedgerPlanResult,
+  LEDGER_ACCOUNT_HISTORY_FLAG,
+  LEDGER_SCHEMA_VERSION,
+  TransferCode,
+  type LedgerAccountRecord,
+  type LedgerPlan,
+  type LedgerTransferRecord,
+} from '../ledger-plan'
 import { OrderSide, type Fill } from '../execution/contracts'
 import { roundUnsignedHalfUp } from '../unsigned-round-half-up'
 import { type AccountingFailure, type AccountingHashOperation, type AccountingMicrosField } from './failure'
@@ -156,7 +163,7 @@ const calculateAmounts = (fill: Fill, prior: PositionCost): Result.Result<Accoun
     ),
   )
 
-const makeAccount = (brokerAccountId: string, ledger: number, spec: AccountSpec): Account => ({
+const makeAccount = (brokerAccountId: string, ledger: number, spec: AccountSpec): LedgerAccountRecord => ({
   id: stableU128('bayn-paper-ledger-account-v1', brokerAccountId, spec.name),
   debits_pending: 0n,
   debits_posted: 0n,
@@ -168,7 +175,7 @@ const makeAccount = (brokerAccountId: string, ledger: number, spec: AccountSpec)
   reserved: 0,
   ledger,
   code: spec.code,
-  flags: AccountFlags.history,
+  flags: LEDGER_ACCOUNT_HISTORY_FLAG,
   timestamp: 0n,
 })
 
@@ -178,7 +185,7 @@ const makeTransfer = (
   brokerAccountId: string,
   ledger: number,
   accountingLeg: AccountingLeg,
-): Transfer => ({
+): LedgerTransferRecord => ({
   id: stableU128('bayn-paper-transfer-v1', brokerEventId, accountingLeg.leg),
   debit_account_id: makeAccount(brokerAccountId, ledger, {
     name: accountingLeg.debitName,

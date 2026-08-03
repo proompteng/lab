@@ -501,24 +501,17 @@ describe('paper contracts', () => {
         schemaVersion: 'bayn.paper-authority-generation.v1',
       }),
     )
-    expect(() =>
-      makeCapitalGrantGeneration({
-        ...material,
-        strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v2' as never,
-      }),
-    ).toThrow()
+    const genericStrategyGeneration = makeCapitalGrantGeneration({
+      ...material,
+      strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v2' as never,
+    })
+    expect(genericStrategyGeneration.strategyParameterSchemaVersion).toBe('bayn.risk-balanced-trend.protocol.v2')
     expect(
       makeCapitalGrantGenerationResult({
         ...material,
         strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v2' as never,
       }),
-    ).toMatchObject({
-      _tag: 'Failure',
-      failure: {
-        _tag: 'CapitalGrantGenerationSchemaInvalid',
-        operation: 'material',
-      },
-    })
+    ).toMatchObject({ _tag: 'Success' })
     expect(
       makeCapitalGrantGenerationResult({
         ...material,

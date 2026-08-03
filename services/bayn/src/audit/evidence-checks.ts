@@ -1,8 +1,7 @@
 import { Result } from 'effect'
 
-import type { AuditCheck, QualificationAuditFailure } from './audit'
+import { auditContract, type AuditCheck, type QualificationAuditFailure } from './audit'
 import {
-  auditContract,
   auditHashMatches,
   hashAuditMaterial,
   makeAuditCheck,

@@ -251,11 +251,22 @@ const sellOrder = (
   decision: DecisionEvent,
   session: AlignedSession,
   input: SimulationInput,
+  forceFullFill: boolean,
 ): Result.Result<PreparedOrder, SimulationFailure> =>
   pipe(
     requiredRecordValue(executionPrices, sell.symbol, 'price', 'execution prices'),
     Result.flatMap((price) =>
-      makeOrder(input.runId, decision, session.date, sell.symbol, 'sell', sell.quantityMicros, price, input.protocol),
+      makeOrder(
+        input.runId,
+        decision,
+        session.date,
+        sell.symbol,
+        'sell',
+        sell.quantityMicros,
+        price,
+        input.protocol,
+        forceFullFill,
+      ),
     ),
   )
 
@@ -295,6 +306,14 @@ const applySellOrder = (
                 turnoverMicros: state.turnoverMicros + terms.notionalMicros,
                 totalSpreadCostMicros: state.totalSpreadCostMicros + terms.spreadCostMicros,
                 totalSlippageCostMicros: state.totalSlippageCostMicros + terms.slippageCostMicros,
+                sessionFeeInputs: [
+                  ...state.sessionFeeInputs,
+                  {
+                    side: 'sell' as const,
+                    quantityMicros: order.filledQuantityMicros,
+                    notionalMicros: terms.notionalMicros,
+                  },
+                ],
                 positions: updatePosition(state.positions, order.event.symbol, {
                   quantityMicros: position.quantityMicros - order.filledQuantityMicros,
                   costBasisMicros: position.costBasisMicros - costBasis,
@@ -348,6 +367,14 @@ const applyBuyOrder = (
                     turnoverMicros: state.turnoverMicros + terms.notionalMicros,
                     totalSpreadCostMicros: state.totalSpreadCostMicros + terms.spreadCostMicros,
                     totalSlippageCostMicros: state.totalSlippageCostMicros + terms.slippageCostMicros,
+                    sessionFeeInputs: [
+                      ...state.sessionFeeInputs,
+                      {
+                        side: 'buy' as const,
+                        quantityMicros: order.filledQuantityMicros,
+                        notionalMicros: terms.notionalMicros,
+                      },
+                    ],
                     positions: updatePosition(state.positions, order.event.symbol, {
                       quantityMicros: position.quantityMicros + order.filledQuantityMicros,
                       costBasisMicros: position.costBasisMicros + terms.notionalMicros,
@@ -418,6 +445,7 @@ interface RebalanceContext {
   readonly executionPrices: Readonly<Record<string, bigint>>
   readonly planningPrices: Readonly<Record<string, bigint>>
   readonly minimumNotionalMicros: bigint
+  readonly terminalClose: boolean
 }
 
 interface RebalanceCandidates extends RebalanceContext {
@@ -462,6 +490,7 @@ const prepareRebalanceContext = (
               executionPrices,
               planningPrices,
               minimumNotionalMicros,
+              terminalClose: target.terminalClose === true,
             })),
           ),
         ),
@@ -516,7 +545,14 @@ const planRebalanceOrders = (context: RebalanceCandidates): Result.Result<Rebala
         ),
         sellOrders: Result.all(
           context.sells.map((sell) =>
-            sellOrder(sell, context.executionPrices, context.decision, context.session, context.input),
+            sellOrder(
+              sell,
+              context.executionPrices,
+              context.decision,
+              context.session,
+              context.input,
+              context.terminalClose,
+            ),
           ),
         ),
       }),

@@ -23,12 +23,13 @@ export type QualificationDormancyResult =
   | { readonly ok: true; readonly decision: QualificationDormancyDecision }
   | { readonly ok: false; readonly issue: { readonly path: string; readonly reason: string } }
 
-const trialHistoryRelativePath = 'services/bayn/src/candidate-development-trials/frozen-lineage.ts'
+const ledgerRelativePath = 'services/bayn/src/candidate-development-trials/ledger.ts'
 const lifecycleRelativePath = 'services/bayn/src/candidate-development-trials/qualification-dormancy.ts'
 const packageRoot = resolve(import.meta.dir, '../../../..')
 
 interface LifecycleModule {
   readonly decideQualificationDormancy: (value: unknown) => QualificationDormancyResult
+  readonly qualificationDormancyDecisionFromLedgerState: (value: unknown) => QualificationDormancyResult
 }
 
 let lifecycleModulePromise: Promise<LifecycleModule> | undefined
@@ -42,21 +43,23 @@ const lifecycleModule = (): Promise<LifecycleModule> =>
 export const evaluateQualificationDormancy = async (value: unknown): Promise<QualificationDormancyResult> =>
   (await lifecycleModule()).decideQualificationDormancy(value)
 
-interface FrozenLineageModule {
-  readonly frozenCandidateDevelopmentTrialHistory: unknown
+interface LedgerModule {
+  readonly candidateDevelopmentTrialLedgerState: unknown
 }
 
 /** Only the canonical ready/qualification-eligible decision can cross into the runnable workflow. */
 export type QualificationLifecycleDecision = QualificationDormancyDecision
 
-const loadFrozenTrialHistory = async (repositoryRoot: string): Promise<unknown> => {
-  const modulePath = resolve(repositoryRoot, trialHistoryRelativePath)
-  const loaded = (await import(pathToFileURL(modulePath).href)) as FrozenLineageModule
-  return loaded.frozenCandidateDevelopmentTrialHistory
+const loadTrialLedgerState = async (repositoryRoot: string): Promise<unknown> => {
+  const modulePath = resolve(repositoryRoot, ledgerRelativePath)
+  const loaded = (await import(pathToFileURL(modulePath).href)) as LedgerModule
+  return loaded.candidateDevelopmentTrialLedgerState
 }
 
 export const verifyQualificationDormancy = async (repositoryRoot: string): Promise<QualificationLifecycleDecision> => {
-  const result = await evaluateQualificationDormancy(await loadFrozenTrialHistory(repositoryRoot))
+  const result = (await lifecycleModule()).qualificationDormancyDecisionFromLedgerState(
+    await loadTrialLedgerState(repositoryRoot),
+  )
   if (!result.ok) throw new Error(`${result.issue.path}: ${result.issue.reason}`)
   return result.decision
 }

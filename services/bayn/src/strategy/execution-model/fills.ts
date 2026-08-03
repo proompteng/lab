@@ -1,7 +1,8 @@
 import { Result, pipe } from 'effect'
 
 import { canonicalHashV1Result } from '../../hash'
-import type { ExecutionModel, OrderRejectionReason, OrderStatus } from '../../types'
+import type { ExecutionModel } from '../../execution-model-contract'
+import type { OrderRejectionReason, OrderStatus } from '../../evidence-contracts'
 import {
   ceilDiv,
   ensureUnsigned,
@@ -132,6 +133,7 @@ export interface OrderOutcomeInput {
   readonly requestedQuantityMicros: bigint
   readonly referencePriceMicros: bigint
   readonly model: ExecutionModel
+  readonly forceFullFill?: boolean
 }
 
 export const makeOrderOutcome = (input: OrderOutcomeInput): ExecutionResult<OrderOutcome> =>
@@ -183,7 +185,7 @@ export const makeOrderOutcome = (input: OrderOutcomeInput): ExecutionResult<Orde
                 ),
                 Result.flatMap((identityHash) => {
                   const bucket = BigInt(`0x${identityHash.slice(0, 16)}`) % PPM
-                  if (bucket >= probability) {
+                  if (input.forceFullFill === true || bucket >= probability) {
                     return Result.succeed({
                       requestedQuantityMicros: requested,
                       filledQuantityMicros: requested,

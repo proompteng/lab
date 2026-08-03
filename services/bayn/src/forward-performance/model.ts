@@ -350,6 +350,14 @@ export interface ForwardPerformanceReceiptMaterial {
     readonly reasonCodes: readonly ForwardPerformanceReasonCode[]
     readonly cashYield: ForwardPerformanceCashYieldBinding | null
   }
+  readonly reconciliationProof: {
+    readonly accountingReceiptsExact: boolean
+    readonly ledgerExact: boolean
+    readonly missingLedgerAccountCount: number
+    readonly unresolvedMutationCount: number
+    readonly unclosedCycleCount: number
+    readonly openPositionCount: number
+  }
   readonly executionQuality: {
     readonly status: ForwardPerformanceMeasurementStatus
     readonly reasonCodes: readonly ForwardPerformanceExecutionQualityReasonCode[]

@@ -6,6 +6,7 @@ import {
   MarkedEquityReconciliationSchema,
 } from '../../evidence-contracts'
 import type { MarkedEquityProof } from '../../simulation-reconciliation'
+import type { DecisionEvent } from '../../types'
 import { requiredArtifact } from './artifacts'
 import {
   type EvidenceRecoveryIssue,
@@ -110,7 +111,9 @@ const validateSignalDecisions = (prepared: PreparedEvidenceRecovery): Result.Res
   Result.gen(function* () {
     const { decoded } = prepared
     const decisions = decoded.signalDecisions.items
-    const events = decoded.events.filter((event) => event.kind === 'decision')
+    const events = decoded.events.filter(
+      (event): event is DecisionEvent => event.kind === 'decision' && event.terminalClose !== true,
+    )
     if (decoded.evaluation.signalDecisionCount !== decisions.length) {
       return yield* componentMismatch(
         ['evaluation', 'signalDecisionCount'],

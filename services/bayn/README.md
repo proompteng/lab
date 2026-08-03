@@ -39,7 +39,7 @@ capital-promotion path remain dormant.
 - The executable embeds source, repository, and strategy-behavior identity. Startup verifies the compiled behavior and
   parameter hashes against those embedded facts, and status exposes the promoted image digest, parameter hash, and
   contract versions. The v4 precommit uses behavior hash
-  `9e87fe0f66048c48da2191ef1fae36ef3ee0eb4ddcd036ef40881f0fe0f6eb42` and parameter hash
+  `dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46` and parameter hash
   `19bc51c7361b181aa48845d178cb63373b3f2e017bcbea1cf3b70ab16647f8a9`.
 - The package `dev` and `start` scripts use explicit `development-configured` provenance because their artifacts are
   not OCI production builds. That mode is visible in status and cannot override an executable with embedded metadata;
@@ -217,103 +217,6 @@ ClickHouse credential is operator-supplied only to read `system.query_log`; the 
 read-only identity. Any recorded bars-table access takes fail-closed precedence over sessions or manifests; SQL aliases
 cannot relabel a read. The log cannot retroactively prove that an operator query returned only bounded count/hash
 evidence, so any Signal-table read by a principal other than the candidate or declared publisher makes the audit fail.
-
-Before the one-shot qualification release, `candidate:qualification` verifies one exact natural Signal publication
-without opening a qualification lock or changing any system. It requires two direct physical ClickHouse endpoints and
-uses the declared Signal publisher principal to select the latest correction for the compiled Bayn universe on each
-replica with ClickHouse `readonly=1`. It then fully loads and cryptographically verifies the manifest, sessions, bars,
-duplicate keys, cardinalities, and content hashes on both replicas; requires identical canonical snapshot bytes and
-complete topology coverage; and checks in a PostgreSQL `REPEATABLE READ, READ ONLY` transaction that the snapshot has no
-qualification lock.
-
-The publisher principal is deliberate: this command reads candidate bars before Bayn opens the lock, so the later
-qualification audit must receive the same value as `BAYN_AUDIT_SIGNAL_PUBLISHER_USERNAME`. Using the ordinary Bayn
-principal for this pre-lock full read contaminates the candidate chronology. The command emits deterministic
-`bayn.qualification-candidate.v1` JSON containing the complete `BaynCandidateRuntime` expected by the release writer,
-with Signal bounds derived only from the compiled protocol and the supplied TigerBeetle identity. It does not publish
-Signal data, invoke a backfill, acquire a lock, run Bayn, or write PostgreSQL.
-
-When PostgreSQL TLS is enabled, `BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME` is required and must be the DNS identity in
-the CNPG server certificate; for Bayn it is `bayn-db-rw.bayn`. Node-postgres replaces an explicit TLS server name when
-the connection host is a non-IP DNS name, so a local port-forward URI must use `127.0.0.1`, never `localhost`. A DNS
-connection host is accepted only when it exactly equals the configured certificate identity. TLS or routing query
-parameters are forbidden because connection-string parameters can override the explicit verified SSL object. Derive
-the authenticated `postgresql://...@127.0.0.1:<dynamic-port>/bayn` URI in memory from the approved CNPG secret, load
-the publisher password without echoing it, and keep shell tracing disabled. When PostgreSQL TLS is disabled, both
-TLS-only variables must be absent rather than silently ignored.
-
-```sh
-(
-  set -euo pipefail
-  set +x
-  umask 077
-
-  : "${BAYN_CANDIDATE_SIGNAL_PUBLICATION_DATE:?required}"
-  : "${BAYN_CANDIDATE_CLICKHOUSE_URLS:?required}"
-  : "${BAYN_CANDIDATE_SIGNAL_PUBLISHER_USERNAME:?required}"
-  : "${BAYN_CANDIDATE_SIGNAL_PUBLISHER_PASSWORD:?load securely without printing}"
-  : "${BAYN_CANDIDATE_POSTGRES_URL:?load securely without printing}"
-  : "${BAYN_CANDIDATE_POSTGRES_TLS:?required}"
-  : "${BAYN_CANDIDATE_TIGERBEETLE_CLUSTER_ID:?required}"
-  : "${BAYN_CANDIDATE_TIGERBEETLE_ADDRESSES:?required}"
-  : "${BAYN_CANDIDATE_TIGERBEETLE_LEDGER:?required}"
-  if [[ "${BAYN_CANDIDATE_POSTGRES_TLS}" == true ]]; then
-    : "${BAYN_CANDIDATE_POSTGRES_CA_PATH:?required with PostgreSQL TLS}"
-    : "${BAYN_CANDIDATE_POSTGRES_TLS_SERVER_NAME:?required with PostgreSQL TLS}"
-  fi
-
-  candidate_tmp_root="${TMPDIR:-/tmp}"
-  candidate_tmp_root="${candidate_tmp_root%/}"
-  candidate_tmp_dir="$(mktemp -d "${candidate_tmp_root}/bayn-candidate.XXXXXXXX")"
-  candidate_stderr="${candidate_tmp_dir}/verifier.stderr"
-  cleanup_candidate() {
-    rm -f -- "${candidate_stderr}"
-    rmdir -- "${candidate_tmp_dir}"
-  }
-  trap cleanup_candidate EXIT
-  trap 'exit 129' HUP
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
-
-  if candidate_receipt="$(bun run --filter @proompteng/bayn candidate:qualification 2>"${candidate_stderr}")"; then
-    :
-  else
-    status=$?
-    # The command's typed stderr is credential-safe; emit it once before the EXIT trap deletes the private file.
-    cat -- "${candidate_stderr}" >&2
-    printf 'candidate verification failed with status %d; stop without retry\n' "${status}" >&2
-    exit "${status}"
-  fi
-
-  unset BAYN_CANDIDATE_SIGNAL_PUBLISHER_PASSWORD BAYN_CANDIDATE_POSTGRES_URL
-  jq -e \
-    --arg publication "${BAYN_CANDIDATE_SIGNAL_PUBLICATION_DATE}" \
-    --arg principal "${BAYN_CANDIDATE_SIGNAL_PUBLISHER_USERNAME}" '
-    .snapshotCanonicalHash as $snapshotHash
-    | .schemaVersion == "bayn.qualification-candidate.v1"
-    and .publicationDate == $publication
-    and .publisherPrincipal == $principal
-    and .qualificationLockCount == 0
-    and ($snapshotHash | test("^[a-f0-9]{64}$"))
-    and (.inputManifestHash | test("^[a-f0-9]{64}$"))
-    and (([.replicas[].replica] | sort) == [
-      "chi-torghut-clickhouse-default-0-0-0",
-      "chi-torghut-clickhouse-default-0-1-0"
-    ])
-    and (([.replicas[].endpointHost] | unique | length) == 2)
-    and (([.replicas[].snapshotCanonicalHash] | unique) == [$snapshotHash])
-    and (.candidateRuntime.BAYN_SIGNAL_SNAPSHOT_ID | test("^[a-f0-9]{64}$"))
-    and .candidateRuntime.BAYN_SIGNAL_PUBLICATION_ASOF == $publication
-    and .candidateRuntime.BAYN_SIGNAL_DATA_END == $publication
-    and .candidateRuntime.BAYN_SIGNAL_EVALUATION_END == $publication
-    and (.candidateRuntime | all(.[]; type == "string" and length > 0))
-  ' <<<"${candidate_receipt}" >/dev/null
-
-  # The separately authorized writer must be the next command in this subshell and consume candidate_receipt directly.
-  # Otherwise exit here and let the subshell discard it. Never tee or redirect the receipt into a repository,
-  # worktree, generated dossier, or persistent JSON file.
-)
-```
 
 Set `BAYN_AUDIT_OUTPUT=dossier` on the same command to emit `bayn.qualification-dossier.v2`. The deterministic dossier
 binds the full audited subject, evidence-set hashes, immutable lock/result, prior trials, contamination records,

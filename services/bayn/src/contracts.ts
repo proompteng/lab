@@ -13,7 +13,30 @@ import {
   UtcInstantSchema as UtcInstant,
   strictParseOptions as StrictParseOptions,
 } from './schemas'
-import { ContractVersion, DataFeed, DataSource, PriceAdjustment, PublicationSchema } from './types'
+export enum DataSource {
+  Alpaca = 'alpaca',
+}
+
+export enum DataFeed {
+  Sip = 'sip',
+}
+
+export enum PriceAdjustment {
+  All = 'all',
+}
+
+export enum PublicationSchema {
+  AdjustedDailySnapshotV2 = 'signal.adjusted-daily-snapshot.v2',
+}
+
+export enum ContractVersion {
+  DecisionPlan = 'bayn.risk-balanced-trend-decision-plan.v1',
+  Evaluation = 'bayn.evaluation.v6',
+  EvaluationSummary = 'bayn.evaluation-summary.v5',
+  PartialFillSeed = 'bayn.partial-fill-seed.v1',
+  RunIdentity = 'bayn.run-identity.v1',
+  SimulationTrace = 'bayn.simulation-trace.v3',
+}
 
 const CanonicalJson = Schema.Unknown.check(Schema.makeFilter(Schema.is(Schema.Json), { expected: 'a JSON value' }))
 
@@ -118,7 +141,7 @@ const RunIdentityFields = {
     digest: ImageDigest,
   }),
   strategy: Schema.Struct({
-    name: Schema.Literal('risk-balanced-trend'),
+    name: NonEmptyString,
     behaviorHash: Sha256Schema,
     parameters: CanonicalJson,
   }),
@@ -168,14 +191,10 @@ const RuntimeProvenanceBase = Schema.Struct({
     digest: ImageDigest,
   }),
   strategy: Schema.Struct({
-    name: Schema.Literal('risk-balanced-trend'),
+    name: NonEmptyString,
     behaviorHash: Sha256Schema,
     parameterHash: Sha256Schema,
-    parameterSchemaVersion: Schema.Literals([
-      'bayn.risk-balanced-trend.protocol.v2',
-      'bayn.risk-balanced-trend.protocol.v3',
-      'bayn.risk-balanced-trend.protocol.v4',
-    ]),
+    parameterSchemaVersion: NonEmptyString,
   }),
   contractVersions: Schema.Struct({
     runtimeProvenance: Schema.Literal('bayn.runtime-provenance.v2'),

@@ -641,13 +641,23 @@ describe('forward performance read program', () => {
       ),
     ).toBe(true)
     expect(
-      observation.statements.some(
-        (statement) =>
-          statement.includes("decision.schema_version = 'bayn.observe-shadow-decision.v1'") &&
-          statement.includes("decision.document ->> 'mode' = 'OBSERVE'"),
+      observation.statements.some((statement) =>
+        statement.includes(
+          "decision.schema_version IN ('bayn.observe-shadow-decision.v1', 'bayn.paper-cycle-decision.v1')",
+        ),
       ),
     ).toBe(true)
-    expect(observation.statements.some((statement) => statement.includes('bayn.paper-cycle-decision.v1'))).toBe(false)
+    const cashYieldStatement = observation.statements.find((statement) => statement.includes('AS cash_yield_micros'))
+    expect(cashYieldStatement).toContain(
+      'baseline_snapshot AS ( SELECT opening_snapshot.event_id, opening_snapshot.observed_at, opening_snapshot.cash_micros FROM opening_snapshot',
+    )
+    expect(
+      observation.statements.some(
+        (statement) =>
+          statement.includes('JOIN autonomous_cycle_paper_closures AS closure') &&
+          statement.includes('JOIN autonomous_cycle_paper_close_replans AS replan'),
+      ),
+    ).toBe(true)
     expect(
       observation.statements.some((statement) => statement.includes('JOIN snapshot_references AS reference')),
     ).toBe(true)
@@ -690,6 +700,79 @@ describe('forward performance read program', () => {
       accountedCashDeltaMicros: '0',
       cashYieldMicros: '200',
     })
+  })
+
+  test('scopes forward-performance PostgreSQL evidence to one PAPER authority generation', async () => {
+    const observation: SqlObservation = { statements: [] }
+    const evidence = await Effect.runPromise(
+      readForwardPerformancePostgres(makeReadOnlySql(observation), identityResult.success.accountId, hash('9')),
+    )
+
+    expect(evidence.cycles).toEqual([])
+    expect(
+      observation.statements.filter((statement) => statement.includes('scope_generation.generation_hash')).length,
+    ).toBeGreaterThan(10)
+    expect(
+      observation.statements.some(
+        (statement) =>
+          statement.includes('intent.authority_generation_hash = scope_generation.generation_hash') &&
+          statement.includes('intent.created_at >= scope_generation.activated_at'),
+      ),
+    ).toBe(true)
+    expect(
+      observation.statements.some(
+        (statement) =>
+          statement.includes("scoped_decision.schema_version = 'bayn.paper-cycle-decision.v1'") &&
+          statement.includes("scoped_decision.document #>> '{bindings,authorityGenerationHash}'") &&
+          statement.includes('scoped_intent.authority_generation_hash = scope_generation.generation_hash'),
+      ),
+    ).toBe(true)
+    expect(
+      observation.statements.some(
+        (statement) =>
+          statement.includes("cycle.state IN ('PENDING', 'ACTIVE', 'BLOCKED')") &&
+          statement.includes('cycle.account_id = scope_generation.account_id') &&
+          statement.includes('cycle.created_at >= scope_generation.activated_at') &&
+          statement.includes('next_generation.previous_generation_hash = scope_generation.generation_hash') &&
+          statement.includes('cycle.created_at >= next_generation.activated_at'),
+      ),
+    ).toBe(true)
+    expect(
+      observation.statements.some((statement) =>
+        statement.includes('transaction.occurred_at < next_generation.activated_at'),
+      ),
+    ).toBe(false)
+    expect(
+      observation.statements.some((statement) =>
+        statement.includes('event.observed_at < next_generation.activated_at'),
+      ),
+    ).toBe(true)
+    expect(
+      observation.statements.some((statement) =>
+        statement.includes('reconciliation.reconciled_at < next_generation.activated_at'),
+      ),
+    ).toBe(true)
+    expect(
+      observation.statements.some(
+        (statement) =>
+          statement.includes('FROM accounting_transactions AS transaction') &&
+          statement.includes('LEFT JOIN intents AS intent') &&
+          statement.includes('transaction.occurred_at <= latest_reconciliation.reconciled_at') &&
+          !statement.includes('next_intent.created_at'),
+      ),
+    ).toBe(true)
+    expect(observation.statements.some((statement) => statement.includes('first_cycle.submission_open_at'))).toBe(true)
+    expect(
+      observation.statements.some((statement) => statement.includes("cycle.state IN ('PENDING', 'ACTIVE', 'BLOCKED')")),
+    ).toBe(true)
+    expect(
+      observation.statements.some(
+        (statement) =>
+          statement.includes('JOIN intents AS scope_intent') &&
+          statement.includes('scope_intent.intent_id = transaction.intent_id') &&
+          statement.includes('scope_intent.authority_generation_hash = scope_generation.generation_hash'),
+      ),
+    ).toBe(true)
   })
 
   test('does not excuse any reconciliation discrepancy beyond the exact cash-yield residual', async () => {
@@ -817,6 +900,7 @@ describe('forward performance read program', () => {
             cashYieldMicros: '200',
           },
           transactions: [prepared.transaction],
+          ledgerTransactions: [prepared.transaction],
           transactionEvidence: [
             {
               transactionId: prepared.transaction.transactionId,
@@ -830,6 +914,7 @@ describe('forward performance read program', () => {
           executionEvidence: [],
           marketVolumeRequests: [marketVolumeRequest],
           receipts: [accountingReceipt],
+          ledgerReceipts: [accountingReceipt],
           durableExecutionBindings: [
             {
               accountId: identityResult.success.accountId,

@@ -13,7 +13,7 @@ import type {
   SimulationTrace,
 } from '../types'
 
-export const MARKED_EQUITY_TOLERANCE_MICROS = 0n
+export { MARKED_EQUITY_TOLERANCE_MICROS } from './constants'
 
 export type UnsignedIntegerEvidence =
   | {

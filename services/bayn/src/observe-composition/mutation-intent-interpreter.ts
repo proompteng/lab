@@ -23,11 +23,14 @@ import { TargetPlanStatus } from '../target-planner'
 import type { CausalProtocol } from '../protocol'
 import {
   decidePaperCycleCompletion,
+  countOpenPositions,
+  decidePreparedCloseIntentAdmission,
   decidePreparedMutationIntent,
   decidePreparedMutationIntentAdmission,
   decidePreparedMutationRecovery,
   expiredPaperPlanTerminalReason,
   mutationRecoveryIsDue,
+  paperCycleHasFilledIntent,
   paperSubmitExpiresAt,
   type PaperCycleIntentTerminalEvidence,
   type PreparedMutationCycleStep,
@@ -47,6 +50,9 @@ export type MutationPreparationFacts = {
 export type MutationIntentInput = {
   readonly accountId: string
   readonly authorityGenerationHash: string
+  readonly mutationPhase?: 'ENTRY' | 'CLOSE'
+  readonly paperEpisodeCutoffAt?: string
+  readonly paperEpisodeExpiresAt?: string
 }
 
 export type MutationPreparation = {
@@ -63,6 +69,7 @@ export type MutationPreparationFactsRequest<
   readonly preparation: P
   readonly policy: Policy
   readonly cycle: AutonomousCycle
+  readonly document: PaperDecisionDocument
   readonly reconcile: Effect.Effect<ReconciliationPassResult, E, R>
 }
 
@@ -85,12 +92,15 @@ const validateBoundMutationDocument = (
   document: PaperDecisionDocument,
 ): Result.Result<void, CycleRunnerError> =>
   cycle.state !== CycleState.Active ||
-  cycle.bindings.decisionHash !== document.contentHash ||
+  (input.mutationPhase === 'CLOSE'
+    ? cycle.bindings.decisionHash === undefined
+    : cycle.bindings.decisionHash !== document.contentHash) ||
   cycle.bindings.snapshotId !== document.bindings.snapshotId ||
   cycle.identity.cycleId !== document.bindings.cycleId ||
   cycle.identity.qualificationRunId !== document.bindings.qualificationRunId ||
   cycle.identity.accountId !== document.bindings.accountId ||
   cycle.identity.strategyProtocolHash !== document.bindings.strategyProtocolHash ||
+  (input.mutationPhase === 'CLOSE' && input.authorityGenerationHash !== document.bindings.authorityGenerationHash) ||
   input.accountId !== document.bindings.accountId
     ? Result.fail(
         mutationRunnerError(
@@ -121,9 +131,26 @@ const validateCurrentMutationPolicy = (
 }
 
 const boundPaperSubmissionCutoff = (
+  input: MutationIntentInput,
   cycle: AutonomousCycle,
   document: PaperDecisionDocument,
 ): Result.Result<string, CycleRunnerError> => {
+  if (input.mutationPhase === 'CLOSE') {
+    if (
+      input.paperEpisodeExpiresAt === undefined ||
+      document.submissionCutoffAt !== input.paperEpisodeExpiresAt ||
+      document.expiresAt !== input.paperEpisodeExpiresAt
+    ) {
+      return Result.fail(
+        mutationRunnerError(
+          'durable PAPER close plan changed from its immutable activation close lease',
+          undefined,
+          'contract',
+        ),
+      )
+    }
+    return Result.succeed(input.paperEpisodeExpiresAt)
+  }
   if (
     document.submissionCutoffAt !== cycle.window.submissionCutoffAt ||
     document.expiresAt !== cycle.window.submissionCutoffAt
@@ -210,7 +237,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
 ): Effect.Effect<PreparedMutationCycleStep, CycleRunnerError, R | IntentStore | MutationStore> =>
   Effect.gen(function* () {
     yield* Effect.fromResult(validateBoundMutationDocument(input, cycle, document))
-    const submissionCutoffAt = yield* Effect.fromResult(boundPaperSubmissionCutoff(cycle, document))
+    const submissionCutoffAt = yield* Effect.fromResult(boundPaperSubmissionCutoff(input, cycle, document))
     const generationIsSuperseded = input.authorityGenerationHash !== document.bindings.authorityGenerationHash
     if (document.riskBlock !== undefined) {
       return {
@@ -296,6 +323,9 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
           schemaVersion: 'bayn.paper-intent-plan.v1',
           ...lookup.targetIntent,
           notionalLimitMicros: lookup.riskBinding.notionalLimitMicros,
+          ...(document.replanGenerationHash === undefined
+            ? {}
+            : { replanGenerationHash: document.replanGenerationHash }),
           createdAt: document.createdAt,
         },
         { authority: documentAuthority },
@@ -400,18 +430,28 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
       }
     }
 
+    if (input.mutationPhase === 'CLOSE' && intentStore.commitClosing === undefined) {
+      return yield* Effect.fail(
+        mutationRunnerError(
+          'PAPER close intent store does not expose the close-only authority port',
+          undefined,
+          'store',
+        ),
+      )
+    }
     yield* Effect.forEach(
       preparedIntents,
       (prepared) =>
-        intentStore
-          .commit(prepared.intent, prepared.riskBinding.evaluation.decision)
-          .pipe(
-            Effect.mapError((cause) => mutationRunnerError('durable PAPER intent-set commit failed', cause, 'store')),
-          ),
+        (input.mutationPhase === 'CLOSE' && intentStore.commitClosing !== undefined
+          ? intentStore.commitClosing(prepared.intent, prepared.riskBinding.evaluation.decision)
+          : intentStore.commit(prepared.intent, prepared.riskBinding.evaluation.decision)
+        ).pipe(
+          Effect.mapError((cause) => mutationRunnerError('durable PAPER intent-set commit failed', cause, 'store')),
+        ),
       { concurrency: 1, discard: true },
     )
 
-    const facts = yield* dependencies.readFacts({ input, preparation, policy, cycle, reconcile })
+    const facts = yield* dependencies.readFacts({ input, preparation, policy, cycle, document, reconcile })
     if (
       document.bindings.snapshotContentHash !== facts.snapshot.contentHash ||
       document.bindings.snapshotFinalizedAt !== facts.snapshot.finalizedAt
@@ -422,6 +462,12 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
     }
 
     const terminalEvidence: PaperCycleIntentTerminalEvidence[] = []
+    let unsuccessfulIntentFound = false
+    const hasFilledIntent = paperCycleHasFilledIntent(
+      preparedIntents.flatMap((prepared) => (prepared.stored === undefined ? [] : [prepared.stored.intent])),
+      facts.reconciliation.brokerState.orders,
+    )
+    const hasOpenPosition = countOpenPositions(facts.reconciliation.brokerState.positions) > 0
     for (const prepared of preparedIntents) {
       const stored = yield* intentStore
         .read(prepared.intent.intentId)
@@ -447,15 +493,12 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
             ...(latest === undefined ? {} : { latestMutationAt: latest.occurredAt }),
           })
           if (record.intent.terminalOutcome !== TerminalOutcome.Filled) {
+            unsuccessfulIntentFound = true
             yield* dependencies.restrictAuthority(
               `bound PAPER cycle ${cycle.identity.cycleId}`,
               `intent ${prepared.intent.intentId} ended ${record.intent.terminalOutcome ?? 'without outcome'}`,
             )
-            return {
-              _tag: 'Block',
-              reason: CycleTerminalReason.Risk,
-              observedAt: facts.evaluatedAt,
-            }
+            continue
           }
           break
         case 'Pending':
@@ -495,16 +538,27 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
             }
           }
           yield* Effect.fromResult(
-            decidePreparedMutationIntentAdmission(
-              decision,
-              facts.authority.effective,
-              facts.evaluatedAt,
-              submitExpiresAt,
-              facts.reconciliation.riskContext.unknownMutationCount,
-              facts.reconciliation.brokerState.reconciliation.status,
-              facts.reconciliation.report.metrics.accountingExact,
-              facts.reconciliation.brokerState.unknownOrderCount,
-            ),
+            input.mutationPhase === 'CLOSE'
+              ? decidePreparedCloseIntentAdmission(
+                  prepared.intent,
+                  decision,
+                  facts.evaluatedAt,
+                  submitExpiresAt,
+                  facts.reconciliation.riskContext.unknownMutationCount,
+                  facts.reconciliation.brokerState.reconciliation.status,
+                  facts.reconciliation.report.metrics.accountingExact,
+                  facts.reconciliation.brokerState.unknownOrderCount,
+                )
+              : decidePreparedMutationIntentAdmission(
+                  decision,
+                  facts.authority.effective,
+                  facts.evaluatedAt,
+                  submitExpiresAt,
+                  facts.reconciliation.riskContext.unknownMutationCount,
+                  facts.reconciliation.brokerState.reconciliation.status,
+                  facts.reconciliation.report.metrics.accountingExact,
+                  facts.reconciliation.brokerState.unknownOrderCount,
+                ),
           ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
           return {
             _tag: 'Execute',
@@ -517,12 +571,30 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
       }
     }
 
+    if (unsuccessfulIntentFound) {
+      const recoveryDeadline =
+        input.mutationPhase === 'CLOSE' ? input.paperEpisodeExpiresAt : input.paperEpisodeCutoffAt
+      if (
+        (hasFilledIntent || (input.mutationPhase === 'CLOSE' && hasOpenPosition)) &&
+        recoveryDeadline !== undefined &&
+        facts.evaluatedAt < recoveryDeadline
+      ) {
+        return { _tag: 'Wait', observedAt: facts.evaluatedAt }
+      }
+      return {
+        _tag: 'Block',
+        reason: CycleTerminalReason.Risk,
+        observedAt: facts.evaluatedAt,
+      }
+    }
+
     const completion = decidePaperCycleCompletion(document.createdAt, terminalEvidence, {
       status: facts.reconciliation.brokerState.reconciliation.status,
       reconciledAt: facts.reconciliation.brokerState.reconciliation.reconciledAt,
       accountingExact: facts.reconciliation.report.metrics.accountingExact,
       unknownMutationCount: facts.reconciliation.riskContext.unknownMutationCount,
       unknownOrderCount: facts.reconciliation.brokerState.unknownOrderCount,
+      openPositionCount: countOpenPositions(facts.reconciliation.brokerState.positions),
     })
     return completion._tag === 'Complete'
       ? { _tag: 'Complete', observedAt: facts.evaluatedAt }

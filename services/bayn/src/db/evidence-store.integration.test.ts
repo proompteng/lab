@@ -1136,8 +1136,11 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       'accounting_transactions',
       'authority_generations',
       'authority_state',
+      'autonomous_cycle_paper_close_replans',
+      'autonomous_cycle_paper_closures',
       'autonomous_cycle_shadow_decisions',
       'autonomous_cycles',
+      'autonomous_forward_performance_receipts',
       'broker_errors',
       'broker_events',
       'evaluation_artifacts',
@@ -1188,6 +1191,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 21, name: 'expired_paper_cycle_terminalization' },
       { migration_id: 22, name: 'observe_reconciliation_recovery' },
       { migration_id: 23, name: 'legacy_observe_recovery' },
+      { migration_id: 24, name: 'paper_cycle_closures' },
+      { migration_id: 25, name: 'forward_performance_receipts' },
+      { migration_id: 26, name: 'paper_cycle_close_replans' },
+      { migration_id: 27, name: 'distinct_close_replan_intents' },
     ])
   })
 
@@ -1734,6 +1741,36 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       intents: 1,
       decisions: 1,
     })
+  })
+
+  test('commits a residual close generation beside its predecessor with a distinct identity binding', async () => {
+    await activateAuditedCapitalGrant()
+    const execution = makeExecutionRuntime()
+    const first = await Effect.runPromise(plan(intentPlan()))
+    const replan = await Effect.runPromise(plan(intentPlan({ replanGenerationHash: fixtureHash('prior-close-plan') })))
+    const firstDecision = await Effect.runPromise(riskDecision(first, RiskOutcome.Approved))
+    const replanDecision = await Effect.runPromise(riskDecision(replan, RiskOutcome.Approved))
+
+    try {
+      const receipts = await execution.runPromise(
+        Effect.flatMap(IntentStore, (store) =>
+          Effect.all([store.commit(first, firstDecision), store.commit(replan, replanDecision)], {
+            concurrency: 1,
+          }),
+        ),
+      )
+      const counts = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          return yield* sql<{ count: number }>`SELECT count(*)::integer AS count FROM intents`
+        }),
+      )
+
+      expect(receipts.map((receipt) => receipt.deduplicated)).toEqual([false, false])
+      expect(counts[0]?.count).toBe(2)
+    } finally {
+      await execution.dispose()
+    }
   })
 
   test('atomically blocks rejected risk and rejects divergent deterministic reuse', async () => {

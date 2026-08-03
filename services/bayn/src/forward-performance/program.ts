@@ -61,12 +61,14 @@ export interface ForwardPerformanceReaders {
   readonly postgres: (
     sql: PgClient.PgClient,
     accountId: string,
+    authorityGenerationHash?: string,
   ) => Effect.Effect<ForwardPerformancePostgresEvidence, ForwardPerformancePostgresError>
   readonly ledger: (
     config: Pick<LoadedRuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
     accountId: string,
-    plans: readonly LedgerPlan[],
+    accountPlans: readonly LedgerPlan[],
     cashYieldEvidence?: ForwardPerformanceCashYieldEvidence,
+    generationPlans?: readonly LedgerPlan[],
   ) => Effect.Effect<ForwardPerformanceLedgerEvidence, ForwardPerformanceLedgerError, Scope.Scope>
   readonly marketVolume: (
     config: Pick<LoadedRuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
@@ -76,7 +78,8 @@ export interface ForwardPerformanceReaders {
 
 export const liveForwardPerformanceReaders: ForwardPerformanceReaders = {
   postgres: readForwardPerformancePostgres,
-  ledger: readForwardPerformanceLedger,
+  ledger: (config, accountId, accountPlans, cashYieldEvidence, generationPlans) =>
+    readForwardPerformanceLedger(config, accountId, accountPlans, cashYieldEvidence, undefined, generationPlans),
   marketVolume: readForwardPerformanceMarketVolume,
 }
 
@@ -498,13 +501,14 @@ const requireBrokerIdentity = (
 export const runForwardPerformance = (
   loadedConfig: LoadedRuntimeConfig,
   readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
+  options: { readonly authorityGenerationHash?: string } = {},
 ): Effect.Effect<ForwardPerformanceReceipt, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
   Effect.gen(function* () {
     const config = yield* requireBrokerIdentity(loadedConfig)
     const identity = config.execution.brokerIdentity
     const sql = yield* PgClient.PgClient
     const postgres = yield* readers
-      .postgres(sql, identity.accountId)
+      .postgres(sql, identity.accountId, options.authorityGenerationHash)
       .pipe(Effect.mapError((cause) => programError('postgres-read', cause.message, cause)))
     const marketVolumeEvidence = yield* readers
       .marketVolume(config, postgres.marketVolumeRequests)
@@ -518,7 +522,9 @@ export const runForwardPerformance = (
     )
 
     const accountingVerification = verifyAccountingReceipts(postgres.transactions, postgres.receipts, config)
-    const plans = Result.isSuccess(accountingVerification) ? accountingVerification.success.plans : []
+    const generationPlans = Result.isSuccess(accountingVerification) ? accountingVerification.success.plans : []
+    const ledgerVerification = verifyAccountingReceipts(postgres.ledgerTransactions, postgres.ledgerReceipts, config)
+    const accountPlans = Result.isSuccess(ledgerVerification) ? ledgerVerification.success.plans : []
     const accountingReceiptsExact =
       Result.isSuccess(accountingVerification) &&
       postgres.unaccountedFillCount === 0 &&
@@ -526,7 +532,7 @@ export const runForwardPerformance = (
       [...accountingVerification.success.exactReceipts.values()].every(Boolean)
 
     const ledger = yield* readers
-      .ledger(config, identity.accountId, plans, postgres.cashYieldEvidence)
+      .ledger(config, identity.accountId, accountPlans, postgres.cashYieldEvidence, generationPlans)
       .pipe(Effect.mapError((cause) => programError('ledger-read', cause.message, cause)))
     const reconciliation =
       postgres.reconciliation === undefined

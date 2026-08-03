@@ -171,6 +171,7 @@ const decisionIntent = (state: IntentState = IntentState.Approved): MutationInte
   authorityGenerationHash: intent.authorityGenerationHash,
   policyHash: intent.policyHash,
   state,
+  side: intent.side,
   strategyName: intent.strategyName,
   updatedAt: initialTime,
   generationAccountId: accountId,
@@ -248,6 +249,24 @@ describe('MutationStore decision algebra', () => {
       ),
     ).toEqual(submitBinding)
 
+    const closeBinding = resultSuccess(
+      decideMutationAuthority(
+        MutationOperation.Submit,
+        { ...decisionAuthority, effective: Authority.Observe, killState: KillState.Active },
+        true,
+      ),
+    )
+    expect(closeBinding).toEqual(submitBinding)
+    expect(
+      resultFailure(
+        decideMutationAuthority(MutationOperation.Submit, {
+          ...decisionAuthority,
+          effective: Authority.Observe,
+          killState: KillState.Active,
+        }),
+      ),
+    ).toMatchObject({ failure: 'authority' })
+
     const failures: readonly [MutationOperation, MutationAuthoritySnapshot | undefined, string][] = [
       [MutationOperation.Submit, undefined, 'paper authority is not initialized'],
       [
@@ -306,6 +325,33 @@ describe('MutationStore decision algebra', () => {
         operation: 'begin-submit',
       })
     }
+
+    const closeBinding = resultSuccess(
+      decideMutationAuthority(
+        MutationOperation.Submit,
+        { ...decisionAuthority, effective: Authority.Observe, killState: KillState.Active },
+        true,
+      ),
+    )
+    const closeInput = { ...decisionStartInput(MutationOperation.Submit), closeOnly: true as const }
+    const closeStarted = resultSuccess(
+      decideMutationStart(
+        MutationOperation.Submit,
+        closeInput,
+        closeBinding,
+        { ...decisionIntent(), side: OrderSide.Sell },
+        undefined,
+      ),
+    )
+    expect(closeStarted.intentTransition).toBe('ApprovedToIoStarted')
+    expect(
+      resultFailure(
+        decideMutationStart(MutationOperation.Submit, closeInput, closeBinding, decisionIntent(), undefined),
+      ),
+    ).toMatchObject({ failure: 'authority', message: 'close-only submit requires a sell intent' })
+    expect(
+      resultFailure(decideFinalSubmitAuthorization(closeBinding, decisionIntent(IntentState.IoStarted), true)),
+    ).toMatchObject({ failure: 'authority', message: 'close-only submit requires a sell intent' })
   })
 
   test('decides start replay, immutable binding, stale time, and retained cancel identity', () => {

@@ -29,6 +29,7 @@ import {
   planPaperIntent,
   validateCommitIdentity,
   validateCurrentAuthority,
+  validateCurrentClosingAuthority,
   type AuthorityBindingRow,
   type IntentPlan,
   type PreparedCommit,
@@ -148,6 +149,7 @@ const storedRow = {
   time_in_force: paperIntent.timeInForce,
   quantity_micros: paperIntent.quantityMicros,
   notional_limit_micros: paperIntent.notionalLimitMicros,
+  replan_generation_hash: null,
   state: IntentState.Approved,
   terminal_outcome: null,
   state_version: 2,
@@ -256,6 +258,19 @@ describe('deterministic paper intents', () => {
       Exit.isFailure(await Effect.runPromiseExit(paperIntentIdForPlan({ ...input, extra: true }, hash('a')))),
     ).toBe(true)
     expect(Exit.isFailure(await Effect.runPromiseExit(paperIntentIdForPlan(input, 'not-a-hash')))).toBe(true)
+  })
+
+  test('binds each residual close generation to a distinct PAPER intent identity', async () => {
+    const [first, second, replay] = await Effect.runPromise(
+      Effect.all([
+        paperIntentIdForPlan({ ...input, replanGenerationHash: hash('c') }, hash('a')),
+        paperIntentIdForPlan({ ...input, replanGenerationHash: hash('d') }, hash('a')),
+        paperIntentIdForPlan({ ...input, replanGenerationHash: hash('c') }, hash('a')),
+      ]),
+    )
+
+    expect(first).not.toBe(second)
+    expect(replay).toBe(first)
   })
 
   test('refuses to create a durable intent from OBSERVE authority', async () => {
@@ -371,6 +386,17 @@ describe('pure intent commit decisions', () => {
       'AuthorityGenerationHistoryMismatch',
       'AuthorityGenerationHistoryMismatch',
     ])
+  })
+
+  test('permits a sell-only close intent after the kill restricts effective authority', () => {
+    const closingIntent = { ...paperIntent, side: OrderSide.Sell }
+
+    expect(
+      Result.isSuccess(
+        validateCurrentClosingAuthority([authorityRow({ kill_state: KillState.Active })], closingIntent),
+      ),
+    ).toBe(true)
+    expect(Result.isFailure(validateCurrentClosingAuthority([authorityRow()], paperIntent))).toBe(true)
   })
 
   test('strictly decodes database rows and rejects excess or malformed fields', () => {

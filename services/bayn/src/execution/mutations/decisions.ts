@@ -2,7 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { MutationOperation, type MutationEvidence } from '../../broker/alpaca-mutations'
 import { canonicalHashV1Result } from '../../hash'
-import { Authority, IntentState, KillState, TerminalOutcome } from '../contracts'
+import { Authority, IntentState, KillState, OrderSide, TerminalOutcome } from '../contracts'
 import { strictParseOptions } from '../../schemas'
 import {
   MutationEventType,
@@ -201,6 +201,7 @@ export const decideMutationStartReplay = (
 export const decideMutationAuthority = (
   operation: MutationOperation,
   authority: MutationAuthoritySnapshot | undefined,
+  closeOnly = false,
 ): Result.Result<MutationAuthorityBinding, MutationStoreError> => {
   const storeOperation = startStoreOperationFor(operation)
   if (authority === undefined) {
@@ -209,10 +210,12 @@ export const decideMutationAuthority = (
   if (authority.maximum !== Authority.Paper) {
     return Result.fail(storeError(storeOperation, 'authority', 'GitOps maximum authority is not PAPER'))
   }
-  if (
-    operation === MutationOperation.Submit &&
-    (authority.effective !== Authority.Paper || authority.killState !== KillState.Clear)
-  ) {
+  const ordinarySubmit = authority.effective === Authority.Paper && authority.killState === KillState.Clear
+  const boundedCloseSubmit =
+    closeOnly &&
+    (authority.effective === Authority.Paper || authority.effective === Authority.Observe) &&
+    (authority.killState === KillState.Clear || authority.killState === KillState.Active)
+  if (operation === MutationOperation.Submit && !ordinarySubmit && !boundedCloseSubmit) {
     return Result.fail(storeError('begin-submit', 'authority', 'effective authority is not PAPER and clear'))
   }
   if (
@@ -238,9 +241,13 @@ export const decideMutationAuthority = (
 export const decideFinalSubmitAuthorization = (
   authority: MutationAuthorityBinding,
   intent: MutationIntentSnapshot | undefined,
+  closeOnly = false,
 ): Result.Result<void, MutationStoreError> => {
   if (intent === undefined) {
     return Result.fail(storeError('begin-submit', 'invariant', 'final submit intent does not exist'))
+  }
+  if (closeOnly && intent.side !== OrderSide.Sell) {
+    return Result.fail(storeError('begin-submit', 'authority', 'close-only submit requires a sell intent'))
   }
   if (
     intent.state !== IntentState.IoStarted ||
@@ -298,6 +305,9 @@ export const decideMutationStart = (
     return Result.fail(
       storeError(storeOperation, 'authority', 'intent account does not match the active PAPER authority generation'),
     )
+  }
+  if (input.closeOnly === true && intent.side !== OrderSide.Sell) {
+    return Result.fail(storeError('begin-submit', 'authority', 'close-only submit requires a sell intent'))
   }
   if (operation === MutationOperation.Submit && intent.authorityGenerationHash !== authority.generationHash) {
     return Result.fail(

@@ -1,10 +1,15 @@
-import { Buffer } from 'node:buffer'
-
 import { Data, Effect, Result, Schema } from 'effect'
 
 import { AutonomousCycleSchema, CycleState, type AutonomousCycle } from './cycle'
 import { DecisionPlanSchema, type DecisionPlan } from './evidence-contracts'
-import { intentIdForPlan, IntentPlanSchema, type IntentPlan } from './execution/intents/domain'
+import {
+  intentIdForPlan,
+  clientOrderIdForIntentId,
+  paperIntentIdForDecodedPlan,
+  IntentPlanSchema,
+  type IntentPlan,
+} from './execution/intents/domain'
+import type { ExecutionSessionBinding } from './execution-session'
 import { canonicalHashV1Result } from './hash'
 import {
   Authority,
@@ -63,10 +68,17 @@ export interface ObserveShadowDecisionInput {
   readonly targetPlan: TargetPlanResult
   readonly policy: Policy
   readonly riskInputs: readonly ShadowDeltaRiskInput[]
+  readonly submissionCutoffAt?: string
 }
 
 export interface PaperDecisionInput extends ObserveShadowDecisionInput {
   readonly authorityGenerationHash: string
+  /** The immutable signal/session binding retained for restart-safe close construction. */
+  readonly executionSession: ExecutionSessionBinding
+  /** A close-only plan uses the activation lease as its submission boundary. */
+  readonly submissionCutoffAt?: string
+  /** Residual close plans bind their intents to the preceding close-plan content hash. */
+  readonly replanGenerationHash?: string
 }
 
 export class ShadowDecisionError extends Data.TaggedError('ShadowDecisionError')<{
@@ -98,6 +110,7 @@ const ObserveShadowDecisionInputSchema = Schema.Struct({
   targetPlan: TargetPlanResultSchema,
   policy: PolicySchema,
   riskInputs: Schema.Array(ShadowDeltaRiskInputSchema),
+  submissionCutoffAt: Schema.optional(UtcInstantSchema),
 })
 
 const decodeObserveShadowDecisionInputResult = Schema.decodeUnknownResult(
@@ -191,12 +204,13 @@ const validateBindings = (
   if (cycle.bindings.snapshotId !== snapshot.snapshotId) {
     return Result.fail(error('binding', 'shadow snapshot must match the immutable cycle snapshot binding'))
   }
+  const submissionCutoffAt = input.submissionCutoffAt ?? cycle.window.submissionCutoffAt
   if (
     plannerInput.cycleId !== cycle.identity.cycleId ||
     plannerInput.strategyName !== cycle.identity.strategyName ||
     plannerInput.accountId !== cycle.identity.accountId ||
     plannerInput.signalDate !== cycle.identity.signalSessionDate ||
-    plannerInput.submissionCutoffAt !== cycle.window.submissionCutoffAt
+    plannerInput.submissionCutoffAt !== submissionCutoffAt
   ) {
     return Result.fail(error('binding', 'target planner identity must match the active autonomous cycle'))
   }
@@ -245,7 +259,12 @@ const validateRiskState = (
 ): Result.Result<void, ShadowDecisionError> => {
   const { cycle, plannerInput, snapshot } = input
   const state = riskInput.state
-  if (state.authority.effective !== authority) {
+  const authorityCompatible =
+    state.closeOnly === true && authority === Authority.Paper
+      ? state.authority.maximum === Authority.Paper &&
+        (state.authority.effective === Authority.Paper || state.authority.effective === Authority.Observe)
+      : state.authority.effective === authority
+  if (!authorityCompatible) {
     return Result.fail(error('binding', `decision risk requires effective ${authority} authority`))
   }
   if (state.evaluatedAt !== plannerInput.observedAt) {
@@ -314,27 +333,13 @@ const makeRiskIntent = (
       ? Result.mapError(intentIdForPlan(decodedPlan.success), (cause) =>
           error('contract', 'shadow target delta identity is not canonicalizable', cause),
         )
-      : Result.mapError(
-          canonicalHashV1Result({
-            schemaVersion: 'bayn.paper-intent-identity.v2',
-            authorityGenerationHash,
-            strategyName: decodedPlan.success.strategyName,
-            cycleId: decodedPlan.success.cycleId,
-            decisionHash: decodedPlan.success.decisionHash,
-            accountId: decodedPlan.success.accountId,
-            symbol: decodedPlan.success.symbol,
-            side: decodedPlan.success.side,
-            orderType: decodedPlan.success.orderType,
-            timeInForce: decodedPlan.success.timeInForce,
-            quantityMicros: decodedPlan.success.quantityMicros,
-            notionalLimitMicros: decodedPlan.success.notionalLimitMicros,
-          }),
-          (cause) => error('contract', 'PAPER target delta identity is not canonicalizable', cause),
+      : Result.mapError(paperIntentIdForDecodedPlan(decodedPlan.success, authorityGenerationHash), (cause) =>
+          error('contract', 'PAPER target delta identity is not canonicalizable', cause),
         )
   const identity = Result.mapError(
     Result.map(identityResult, (intentId) => ({
       intentId,
-      clientOrderId: `b1_${Buffer.from(intentId, 'hex').toString('base64url')}`,
+      clientOrderId: clientOrderIdForIntentId(intentId),
     })),
     (cause) => cause,
   )
@@ -360,6 +365,9 @@ const makeRiskIntent = (
       timeInForce: decoded.timeInForce,
       quantityMicros: decoded.quantityMicros,
       notionalLimitMicros: decoded.notionalLimitMicros,
+      ...(authorityGenerationHash === undefined || decoded.replanGenerationHash === undefined
+        ? {}
+        : { replanGenerationHash: decoded.replanGenerationHash }),
       state: IntentState.Planned,
       createdAt: decoded.createdAt,
     }),
@@ -382,6 +390,7 @@ interface ShadowReductionContext {
   readonly targetsBySymbol: ReadonlyMap<string, PlannedTargetQuantity>
   readonly authority: Authority
   readonly authorityGenerationHash?: string
+  readonly replanGenerationHash?: string
 }
 
 const reduceShadowDelta = (
@@ -398,6 +407,7 @@ const reduceShadowDelta = (
       schemaVersion: 'bayn.paper-intent-plan.v1',
       ...targetIntent,
       notionalLimitMicros: provided.notionalLimitMicros,
+      ...(context.replanGenerationHash === undefined ? {} : { replanGenerationHash: context.replanGenerationHash }),
     },
     context.authorityGenerationHash,
   )
@@ -584,6 +594,7 @@ const reduceShadowRisk = (
   prepared: PreparedShadowRisk,
   authority: Authority,
   authorityGenerationHash?: string,
+  replanGenerationHash?: string,
 ): Result.Result<ShadowReduction, ShadowDecisionError> =>
   prepared.input.targetPlan.intentTargets.reduce<Result.Result<ShadowReduction, ShadowDecisionError>>(
     (accumulator, targetIntent) =>
@@ -597,6 +608,7 @@ const reduceShadowRisk = (
               targetsBySymbol: prepared.targetsBySymbol,
               authority,
               authorityGenerationHash,
+              replanGenerationHash,
             }),
       ),
     Result.succeed({
@@ -676,6 +688,9 @@ const assemblePaperDecisionDocument = (
   context: ShadowDecisionContext,
   reduction: ShadowReduction,
   authorityGenerationHash: string,
+  executionSession: ExecutionSessionBinding,
+  submissionCutoffAt: string,
+  replanGenerationHash?: string,
 ): Result.Result<PaperDecisionDocument, ShadowDecisionError> => {
   const { input, policyHash, strategyDecisionHash } = context
   const planningBrokerStateHash = Result.mapError(
@@ -704,12 +719,14 @@ const assemblePaperDecisionDocument = (
         reconciliationHash: input.plannerInput.brokerState.reconciliation.contentHash,
         authorityGenerationHash,
       },
+      executionSession,
       targetPlan: input.targetPlan,
       deltaRisk: reduction.deltaRisk,
       orderedIntentIds: reduction.deltaRisk.map((risk) => risk.evaluation.input.intentId),
       ...(reduction.riskBlock === undefined ? {} : { riskBlock: reduction.riskBlock }),
-      submissionCutoffAt: input.cycle.window.submissionCutoffAt,
-      expiresAt: input.cycle.window.submissionCutoffAt,
+      ...(replanGenerationHash === undefined ? {} : { replanGenerationHash }),
+      submissionCutoffAt,
+      expiresAt: submissionCutoffAt,
       createdAt: input.plannerInput.observedAt,
     }),
     (cause) => error('contract', 'PAPER decision document failed durable contract validation', cause),
@@ -729,12 +746,22 @@ export const buildPaperDecision = (
         targetPlan: input.targetPlan,
         policy: input.policy,
         riskInputs: input.riskInputs,
+        ...(input.submissionCutoffAt === undefined ? {} : { submissionCutoffAt: input.submissionCutoffAt }),
       }),
       (context) =>
         Result.flatMap(validateShadowPlanningBindings(context), () =>
           Result.flatMap(prepareShadowRisk(context), (prepared) =>
-            Result.flatMap(reduceShadowRisk(prepared, Authority.Paper, input.authorityGenerationHash), (reduction) =>
-              assemblePaperDecisionDocument(context, reduction, input.authorityGenerationHash),
+            Result.flatMap(
+              reduceShadowRisk(prepared, Authority.Paper, input.authorityGenerationHash, input.replanGenerationHash),
+              (reduction) =>
+                assemblePaperDecisionDocument(
+                  context,
+                  reduction,
+                  input.authorityGenerationHash,
+                  input.executionSession,
+                  input.submissionCutoffAt ?? input.cycle.window.submissionCutoffAt,
+                  input.replanGenerationHash,
+                ),
             ),
           ),
         ),

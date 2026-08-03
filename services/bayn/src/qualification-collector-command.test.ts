@@ -4,7 +4,8 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-import { Effect, Option, Result } from 'effect'
+import { Effect, Fiber, Option, Result } from 'effect'
+import { TestClock } from 'effect/testing'
 
 import type { CandidateDevelopmentNextPreregistration } from './candidate-development-calendar'
 import {
@@ -12,6 +13,7 @@ import {
   loadQualificationCollectorInvocation,
   makeQualificationCandidateRuntime,
   missingQualificationWiring,
+  qualificationOperationWithinDeadline,
   qualificationAttemptState,
   QualificationCollectorError,
   runQualificationCollector,
@@ -22,8 +24,9 @@ import {
 } from './qualification-collector-command'
 import { candidate18Preregistration } from './candidate-development-calendar'
 import type { QualificationAuditReport } from './audit/audit'
-import type { QualificationCandidateBindingReceipt } from './qualification-candidate-command'
+import type { QualificationCandidateBindingReceipt } from './qualification-binding'
 import { fixtureLock, fixtureRuntime } from './app-test-support'
+import { activeStrategyBehaviorHash, bindReviewedStrategySource } from './strategy'
 
 const prelock = (
   overrides: Partial<QualificationCollectorPrelockEvidence> = {},
@@ -75,7 +78,7 @@ const deployment = (overrides: Partial<DeploymentRuntime> = {}): DeploymentRunti
   sourceSha: 'a'.repeat(40),
   imageRepository: 'registry.example.test/lab/bayn',
   imageDigest: `sha256:${'b'.repeat(64)}`,
-  strategyBehaviorHash: fixtureRuntime.provenance.strategy.behaviorHash,
+  strategyBehaviorHash: activeStrategyBehaviorHash,
   strategyParameterHash: fixtureRuntime.provenance.strategy.parameterHash,
   maximumAuthority: 'OBSERVE',
   clickhouseUrl: 'http://clickhouse.example.test',
@@ -217,18 +220,49 @@ const sourceFixture = async (malformed = false, historicalModule = false) => {
 }
 
 describe('qualification collector boundaries', () => {
-  test('rejects a candidate whose module or parameter identity differs from the embedded deployment', () => {
-    const source = { moduleSha256: fixtureRuntime.provenance.strategy.behaviorHash }
-    const matching = makeQualificationCandidateRuntime(
-      fixtureRuntime.definition,
-      deployment(),
-      source,
-      candidate18Preregistration,
+  test('interrupts a post-lock operation at the configured deadline', async () => {
+    let interrupted = false
+    const timeout = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fiber = yield* qualificationOperationWithinDeadline(
+            Effect.never.pipe(Effect.ensuring(Effect.sync(() => void (interrupted = true)))),
+            10,
+            'qualification-data-load',
+            () =>
+              new QualificationCollectorError({
+                phase: 'execution',
+                code: 'underlying-failure',
+                message: 'underlying operation failed',
+              }),
+          ).pipe(Effect.flip, Effect.forkScoped({ startImmediately: true }))
+          yield* Effect.yieldNow
+          yield* TestClock.adjust(10)
+          return yield* Fiber.join(fiber)
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
     )
+
+    expect(timeout).toMatchObject({ code: 'qualification-data-load-timeout' })
+    expect(interrupted).toBe(true)
+  })
+
+  test('separates candidate module provenance from deployed behavior and parameter identity', () => {
+    const source = {
+      sourceRevision: deployment().sourceSha,
+      modulePath: candidate18Preregistration.modulePath,
+      moduleSha256: candidate18Preregistration.moduleSha256,
+    }
+    const application = bindReviewedStrategySource(fixtureRuntime.application, source)
+    const matching = makeQualificationCandidateRuntime(application, deployment(), source, candidate18Preregistration)
     expect(Result.isSuccess(matching)).toBe(true)
+    if (Result.isSuccess(matching)) {
+      expect(matching.success.moduleSha256).toBe(source.moduleSha256)
+      expect(matching.success.strategyBehaviorHash).toBe(activeStrategyBehaviorHash)
+    }
 
     const behaviorMismatch = makeQualificationCandidateRuntime(
-      fixtureRuntime.definition,
+      application,
       deployment({ strategyBehaviorHash: '0'.repeat(64) }),
       source,
       candidate18Preregistration,
@@ -239,7 +273,7 @@ describe('qualification collector boundaries', () => {
     })
 
     const parameterMismatch = makeQualificationCandidateRuntime(
-      fixtureRuntime.definition,
+      application,
       deployment({ strategyParameterHash: '1'.repeat(64) }),
       source,
       candidate18Preregistration,
@@ -247,6 +281,17 @@ describe('qualification collector boundaries', () => {
     expect(parameterMismatch).toMatchObject({
       _tag: 'Failure',
       failure: { code: 'deployment-strategy-parameter-mismatch' },
+    })
+
+    const substitutedApplication = bindReviewedStrategySource(fixtureRuntime.application, {
+      ...source,
+      moduleSha256: '0'.repeat(64),
+    })
+    expect(
+      makeQualificationCandidateRuntime(substitutedApplication, deployment(), source, candidate18Preregistration),
+    ).toMatchObject({
+      _tag: 'Failure',
+      failure: { code: 'candidate-application-source-mismatch' },
     })
   })
 

@@ -1180,7 +1180,7 @@ describe('forward performance domain', () => {
 
     expect(first).toEqual(second)
     expect(first.schemaVersion).toBe('bayn.forward-performance-receipt.v3')
-    expect(first.receiptHash).toBe('4c3ca795ead141e908c3d7b397937408f5b4f75b723c983a22081b05197f9c88')
+    expect(first.receiptHash).toBe('62d38bc64113308d3aba90c29c877cceb9c3c7d390ca382dd26ff1207ab1a6e4')
     expect(first.evidence).toEqual({
       status: 'SUFFICIENT',
       reasonCodes: [],

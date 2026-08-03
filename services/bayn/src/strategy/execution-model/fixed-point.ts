@@ -1,6 +1,6 @@
 import { Result, pipe } from 'effect'
 
-import type { ExecutionModel } from '../../types'
+import type { ExecutionModel } from '../../execution-model-contract'
 import { roundUnsignedHalfUp } from '../../unsigned-round-half-up'
 import { MICROS, WEIGHT_SCALE, type ExecutionModelFailure } from './model'
 

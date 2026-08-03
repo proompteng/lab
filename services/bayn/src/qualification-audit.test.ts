@@ -3,18 +3,20 @@ import assert from 'node:assert/strict'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { makeEquitySeriesArtifact } from './evidence-contracts'
+import { riskBalancedTrendBehaviorV4Hash } from './behavior'
 import { makeStrategyProtocolHash } from './contracts'
+import { makeEquitySeriesArtifact } from './evidence-contracts'
 import { canonicalHashV1 } from './hash'
 import { makeQualificationResult } from './qualification'
 import {
-  auditQualification as auditQualificationResult,
   classifySignalTableAccess,
   validateSignalReplicaTopology,
   type AuditDatabaseSnapshot,
   type QualificationAuditInput,
   type QualificationAuditReport,
 } from './audit/audit'
+import { makeAuditFacts, usesTerminalReplaySemantics } from './audit/core'
+import { auditQualification as auditQualificationResult } from './audit/run'
 import { makeQualificationDossier as makeQualificationDossierResult, type QualificationDossier } from './audit/dossier'
 import {
   analyzeQualification,
@@ -350,6 +352,44 @@ const replaceFirstItem = (
 }
 
 describe('qualification audit', () => {
+  test('persists terminal replay semantics independently of a strategy close event', () => {
+    const input = fixture()
+    const database: AuditDatabaseSnapshot = {
+      ...input.database,
+      protocol: { ...input.database.protocol, behaviorHash: riskBalancedTrendBehaviorV4Hash },
+      events: input.database.events.filter(
+        ({ payload }) => !(payload.kind === 'decision' && payload.terminalClose === true),
+      ),
+    }
+    const facts = makeAuditFacts({ ...input, database })
+    const legacyFacts = makeAuditFacts({
+      ...input,
+      database: {
+        ...database,
+        protocol: { ...database.protocol, behaviorHash: 'e'.repeat(64) },
+      },
+    })
+
+    expect(usesTerminalReplaySemantics(database)).toBe(true)
+    expect(Result.isSuccess(facts)).toBe(true)
+    expect(Result.isSuccess(legacyFacts)).toBe(true)
+    if (Result.isFailure(facts)) return
+    if (Result.isFailure(legacyFacts)) return
+    expect(facts.success.reference.buyAndHold.metrics.endingEquityMicros).not.toBe(
+      legacyFacts.success.reference.buyAndHold.metrics.endingEquityMicros,
+    )
+    expect(facts.success.reference.directVolTiming.metrics.endingEquityMicros).not.toBe(
+      legacyFacts.success.reference.directVolTiming.metrics.endingEquityMicros,
+    )
+    expect(
+      usesTerminalReplaySemantics({
+        ...database,
+        protocol: { ...database.protocol, behaviorHash: 'e'.repeat(64) },
+        events: [],
+      }),
+    ).toBe(false)
+  })
+
   test('passes only when independent replay, lineage, chronology, and immutable evidence agree', () => {
     const first = auditQualification(fixture())
     const second = auditQualification(fixture())
@@ -365,7 +405,7 @@ describe('qualification audit', () => {
     ])
     expect(first.policies.policySetHash).toBe(canonicalHashV1(first.policies.documents))
     expect(second.auditHash).toBe(first.auditHash)
-    expect(first.auditHash).toBe('b95f97dfe898fff9fd248d2ef44b66509cde232b56903d77ac9a3c8fe840ba2c')
+    expect(first.auditHash).toBe('8a362e971730ff6808f93658f1364650ffc3ddc445830714b1452113fac4b9f7')
   })
 
   test('passes for a later candidate when prior terminal result lineage is complete', () => {

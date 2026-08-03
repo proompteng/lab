@@ -9,10 +9,10 @@ import { NodeRuntime } from '@effect/platform-node'
 import { Cause, Data, Effect, Exit, Result } from 'effect'
 
 import {
-  frozenCandidateDevelopmentTrialHistory,
+  activeCandidateDevelopmentRegistration,
+  candidateDevelopmentTrialLedgerState,
   type CandidateDevelopmentNextPreregistration,
 } from '../candidate-development-calendar'
-import { validateCandidateDevelopmentTrialHistory } from '../candidate-development-trials/validation'
 import { makeRuntimeProvenanceResult, makeStrategyProtocolHash, type RuntimeProvenance } from '../contracts'
 import { canonicalHashV1Result } from '../hash'
 import { hashParameters } from '../protocol'
@@ -22,17 +22,23 @@ import {
   prepareQualificationSeries,
 } from '../qualification-statistics'
 import {
-  evaluateStrategyDefinition,
+  evaluateStrategyApplication,
   hashEvaluationTargets,
   hashStrategyEvaluation,
 } from '../strategy/evaluation-runner'
-import type { RiskBalancedTrendStrategyDefinition } from '../strategy/risk-balanced-trend'
-import { riskBalancedTrendContextAtSignal } from '../strategy/risk-balanced-trend'
+import {
+  bindReviewedStrategySource,
+  makeActiveStrategyApplication,
+  type StrategyApplication,
+  type StrategyDefinition,
+} from '../strategy'
+import { qualificationDormancyDecisionFromLedgerState } from '../candidate-development-trials/qualification-dormancy'
 import {
   bindCandidateDevelopmentLocalSource,
   CandidateDevelopmentLocalError,
   decodeCandidateDevelopmentRuntimeMarketDataWitness,
   decodeCandidateDevelopmentSourceManifest,
+  makeCandidateDevelopmentLocalTerminalReport,
   makeCandidateDevelopmentLocalReceipt,
   makeCandidateDevelopmentLocalTerminalReceipt,
   makeCandidateDevelopmentLocalTerminalReportHash,
@@ -41,11 +47,13 @@ import {
   witnessContentHash,
   type CandidateDevelopmentLocalArguments,
   type CandidateDevelopmentLocalAttemptReceipt,
+  type CandidateDevelopmentLocalSourceManifestBinding,
   type CandidateDevelopmentLocalSourceBinding,
   type CandidateDevelopmentLocalTerminalOutcome,
   type CandidateDevelopmentRuntimeMarketDataWitness,
   type CandidateDevelopmentSourceManifest,
 } from './domain'
+import { loadReviewedStrategyApplication } from './source-module'
 
 const candidateDevelopmentEvaluatorSourcePath = 'services/bayn/src'
 
@@ -94,7 +102,10 @@ export interface PreparedCandidateDevelopmentLocalAttempt {
   readonly receiptPath: string
   readonly source: CandidateDevelopmentLocalSourceBinding
   readonly sourceManifest: CandidateDevelopmentSourceManifest
-  readonly definition: RiskBalancedTrendStrategyDefinition
+  /** The exact source-controlled application used by the terminal evaluator. */
+  readonly application: StrategyApplication<any, any, any>
+  /** Compatibility projection retained for archived receipt/test consumers. */
+  readonly definition: StrategyDefinition<any, any, any>
   readonly provenance: RuntimeProvenance
 }
 
@@ -253,20 +264,34 @@ export const verifyCandidateDevelopmentSourceManifest = (
     : Result.succeed(undefined)
 }
 
+export const verifyCandidateDevelopmentSourceManifestBinding = (
+  observed: CandidateDevelopmentLocalSourceManifestBinding,
+  expected: CandidateDevelopmentLocalSourceManifestBinding,
+): Result.Result<void, CandidateDevelopmentLocalError> =>
+  observed.path === expected.path && observed.blobOid === expected.blobOid && observed.sha256 === expected.sha256
+    ? Result.succeed(undefined)
+    : Result.fail(localError('SOURCE_BINDING_INVALID', 'candidate source manifest object is not the reviewed object'))
+
 const loadFrozenCandidateDevelopmentPreregistration = (): Result.Result<
   CandidateDevelopmentNextPreregistration,
   CandidateDevelopmentLocalError
 > => {
-  const history = validateCandidateDevelopmentTrialHistory(frozenCandidateDevelopmentTrialHistory)
-  if (Result.isFailure(history)) {
-    return Result.fail(
-      localError('SOURCE_BINDING_INVALID', 'frozen candidate development trial history is invalid', history.failure),
-    )
-  }
-  const preregistration = frozenCandidateDevelopmentTrialHistory.nextCandidatePreregistration
-  return preregistration === null
+  const active = activeCandidateDevelopmentRegistration
+  return active === null
     ? Result.fail(localError('MODULE_INVALID', 'no preregistered candidate development successor is available'))
-    : Result.succeed(preregistration)
+    : (() => {
+        const lifecycle = qualificationDormancyDecisionFromLedgerState(candidateDevelopmentTrialLedgerState)
+        return lifecycle.ok &&
+          lifecycle.decision.status === 'dormant' &&
+          lifecycle.decision.reason === 'development-not-approved'
+          ? Result.succeed(active.preregistration)
+          : Result.fail(
+              localError(
+                'MODULE_INVALID',
+                'the active candidate development registration has already consumed or terminalized its attempt',
+              ),
+            )
+      })()
 }
 
 const readReviewedSource = async (
@@ -310,7 +335,8 @@ const receiptPathFor = async (
 
 const prepareCandidateDevelopmentLocalAttempt = (
   args: CandidateDevelopmentLocalArguments,
-  definition: RiskBalancedTrendStrategyDefinition,
+  application: StrategyApplication<any, any, any>,
+  sourceManifestBinding: CandidateDevelopmentLocalSourceManifestBinding,
   sourceGit: CandidateDevelopmentSourceGit = candidateDevelopmentSourceGit,
 ): Effect.Effect<PreparedCandidateDevelopmentLocalAttempt, CandidateDevelopmentLocalError> =>
   Effect.gen(function* () {
@@ -380,13 +406,25 @@ const prepareCandidateDevelopmentLocalAttempt = (
           sourceGit,
           signal,
         )
+        const sourceManifestBindingResult = verifyCandidateDevelopmentSourceManifestBinding(
+          {
+            path: sourceManifestPath,
+            blobOid: reviewed.sourceManifestBlobOid,
+            sha256: sha256Bytes(reviewed.sourceManifestBytes),
+          },
+          sourceManifestBinding,
+        )
+        if (Result.isFailure(sourceManifestBindingResult)) throw sourceManifestBindingResult.failure
         const manifestValue = decodeJson(reviewed.sourceManifestBytes, 'candidate source manifest is not valid JSON')
         if (Result.isFailure(manifestValue)) throw manifestValue.failure
         const manifest = verifySourceManifest(manifestValue.success, modulePath, sha256Bytes(reviewed.moduleBytes))
         if (Result.isFailure(manifest)) throw manifest.failure
         const lineage = verifyCandidateDevelopmentSourceManifest(manifest.success, preregistration)
         if (Result.isFailure(lineage)) throw lineage.failure
-        if (manifest.success.moduleFormat !== 'typescript-strategy-definition-v1') {
+        if (
+          manifest.success.moduleFormat !== 'typescript-strategy-definition-v1' &&
+          manifest.success.moduleFormat !== 'typescript-strategy-application-v1'
+        ) {
           throw new Error('candidate module format is unsupported')
         }
         const bound = bindCandidateDevelopmentLocalSource({
@@ -400,11 +438,10 @@ const prepareCandidateDevelopmentLocalAttempt = (
           sourceManifest: manifest.success,
         })
         if (Result.isFailure(bound)) throw bound.failure
-        const provenance = makeCandidateProvenance(definition, bound.success)
-        if (Result.isFailure(provenance)) throw provenance.failure
-        const binding = verifyCandidateBinding(definition, bound.success, manifest.success, provenance.success)
-        if (Result.isFailure(binding)) throw binding.failure
-        return { source: bound.success, sourceManifest: manifest.success, provenance: provenance.success }
+        return {
+          source: bound.success,
+          sourceManifest: manifest.success,
+        }
       },
       catch: (cause) =>
         cause instanceof CandidateDevelopmentLocalError
@@ -415,14 +452,55 @@ const prepareCandidateDevelopmentLocalAttempt = (
       try: () => receiptPathFor(repositoryRoot, source.sourceManifest.candidateOrdinal, sourceGit),
       catch: (cause) => localError('RECEIPT_RESERVATION_FAILED', 'candidate receipt path is unavailable', cause),
     })
+    if (sourceRevision !== preregistration.preregistration.sourceRevision) {
+      return yield* Effect.fail(
+        localError('SOURCE_BINDING_INVALID', 'candidate checkout is not the exact preregistered source revision'),
+      )
+    }
+    const sourceApplication = yield* loadReviewedStrategyApplication(canonicalArgs.modulePath, sourceRevision).pipe(
+      Effect.mapError((cause) =>
+        localError('SOURCE_BINDING_INVALID', 'reviewed candidate application could not be loaded', cause),
+      ),
+    )
+    if (
+      sourceApplication.definition.name !== application.definition.name ||
+      hashParameters(sourceApplication.definition.parameters) !== hashParameters(application.definition.parameters)
+    ) {
+      return yield* Effect.fail(
+        localError(
+          'SOURCE_BINDING_INVALID',
+          'reviewed candidate module does not match the registered application identity',
+        ),
+      )
+    }
+    const reviewedApplication =
+      sourceApplication.reviewedSource === undefined
+        ? bindReviewedStrategySource(sourceApplication, {
+            sourceRevision,
+            modulePath: source.source.modulePath,
+            moduleSha256: source.source.moduleSha256,
+          })
+        : sourceApplication
+    const provenance = yield* Effect.fromResult(
+      makeCandidateProvenance(reviewedApplication.definition, source.source),
+    ).pipe(Effect.mapError((cause) => cause))
+    const binding = verifyCandidateBinding(
+      reviewedApplication,
+      reviewedApplication.definition,
+      source.source,
+      source.sourceManifest,
+      provenance,
+    )
+    if (Result.isFailure(binding)) return yield* Effect.fail(binding.failure)
     return {
       repositoryRoot,
       args: canonicalArgs,
       receiptPath,
       source: source.source,
       sourceManifest: source.sourceManifest,
-      definition,
-      provenance: source.provenance,
+      application: reviewedApplication,
+      definition: reviewedApplication.definition,
+      provenance,
     }
   })
 
@@ -455,7 +533,7 @@ const readWitness = (
   })
 
 const makeCandidateProvenance = (
-  definition: RiskBalancedTrendStrategyDefinition,
+  definition: StrategyDefinition<any, any, any>,
   source: CandidateDevelopmentLocalSourceBinding,
 ): Result.Result<RuntimeProvenance, CandidateDevelopmentLocalError> => {
   const parameterHash = hashParameters(definition.parameters)
@@ -466,7 +544,7 @@ const makeCandidateProvenance = (
       digest: `sha256:${source.moduleSha256}`,
     },
     strategy: {
-      name: 'risk-balanced-trend',
+      name: definition.name,
       behaviorHash: source.moduleSha256,
       parameterHash,
       parameterSchemaVersion: definition.parameters.schemaVersion,
@@ -478,11 +556,22 @@ const makeCandidateProvenance = (
 }
 
 const verifyCandidateBinding = (
-  definition: RiskBalancedTrendStrategyDefinition,
+  application: StrategyApplication<any, any, any>,
+  definition: StrategyDefinition<any, any, any>,
   source: CandidateDevelopmentLocalSourceBinding,
   sourceManifest: CandidateDevelopmentSourceManifest,
   provenance: RuntimeProvenance,
 ): Result.Result<void, CandidateDevelopmentLocalError> => {
+  if (
+    application.reviewedSource === undefined ||
+    application.reviewedSource.sourceRevision !== source.sourceRevision ||
+    application.reviewedSource.modulePath !== source.modulePath ||
+    application.reviewedSource.moduleSha256 !== source.moduleSha256
+  ) {
+    return Result.fail(
+      localError('SOURCE_BINDING_INVALID', 'candidate application is not the reviewed source module export'),
+    )
+  }
   if (definition.name !== sourceManifest.strategyName) {
     return Result.fail(localError('SOURCE_BINDING_INVALID', 'candidate definition does not match the source manifest'))
   }
@@ -499,27 +588,26 @@ export const candidateDevelopmentTerminalStatus = (
   qualificationStatus: 'PASS' | 'REJECTED' | 'INSUFFICIENT',
 ): 'PASS' | 'HOLD_REJECT' => (economicStatus === 'PASS' && qualificationStatus === 'PASS' ? 'PASS' : 'HOLD_REJECT')
 
-export const evaluateCandidateDevelopmentDefinition = (
-  definition: RiskBalancedTrendStrategyDefinition,
+export const evaluateCandidateDevelopmentApplication = (
+  application: StrategyApplication<any, any, any>,
   witness: CandidateDevelopmentRuntimeMarketDataWitness,
   source: CandidateDevelopmentLocalSourceBinding,
   sourceManifest: CandidateDevelopmentSourceManifest,
 ): Result.Result<CandidateDevelopmentLocalTerminalOutcome, CandidateDevelopmentLocalError> => {
+  const definition = application.definition
   const provenance = makeCandidateProvenance(definition, source)
   if (Result.isFailure(provenance)) {
     return Result.fail(provenance.failure)
   }
-  const binding = verifyCandidateBinding(definition, source, sourceManifest, provenance.success)
+  const binding = verifyCandidateBinding(application, definition, source, sourceManifest, provenance.success)
   if (Result.isFailure(binding)) {
     return Result.fail(binding.failure)
   }
-  const evaluation = evaluateStrategyDefinition({
-    definition,
+  const evaluation = evaluateStrategyApplication({
+    application,
     provenance: provenance.success,
     bars: witness.bars,
     inputManifest: witness.inputManifest,
-    contextAtSignal: (sessions, signalIndex) =>
-      riskBalancedTrendContextAtSignal(sessions, signalIndex, definition.parameters),
   })
   if (Result.isFailure(evaluation)) {
     return Result.fail(localError('DECISION_FAILED', 'candidate strategy evaluation failed', evaluation.failure))
@@ -543,6 +631,13 @@ export const evaluateCandidateDevelopmentDefinition = (
     return Result.fail(localError('DECISION_FAILED', 'candidate terminal hashes could not be constructed'))
   }
   const status = candidateDevelopmentTerminalStatus(evaluation.success.verdict.status, analysis.success.status)
+  const terminalReport = makeCandidateDevelopmentLocalTerminalReport(
+    source,
+    status,
+    evaluationHash.success,
+    targetHash.success,
+    qualificationAnalysisHash.success,
+  )
   const terminalReportHash = makeCandidateDevelopmentLocalTerminalReportHash(
     source,
     status,
@@ -552,8 +647,28 @@ export const evaluateCandidateDevelopmentDefinition = (
   )
   return Result.isFailure(terminalReportHash)
     ? Result.fail(localError('DECISION_FAILED', 'candidate terminal receipt hash could not be constructed'))
-    : Result.succeed({ status, terminalReportHash: terminalReportHash.success })
+    : Result.succeed({ status, terminalReport, terminalReportHash: terminalReportHash.success })
 }
+
+export const evaluateCandidateDevelopmentDefinition = (
+  definition: StrategyDefinition<any, any, any>,
+  witness: CandidateDevelopmentRuntimeMarketDataWitness,
+  source: CandidateDevelopmentLocalSourceBinding,
+  sourceManifest: CandidateDevelopmentSourceManifest,
+): Result.Result<CandidateDevelopmentLocalTerminalOutcome, CandidateDevelopmentLocalError> =>
+  evaluateCandidateDevelopmentApplication(
+    bindReviewedStrategySource(
+      { ...makeActiveStrategyApplication(definition.parameters), definition },
+      {
+        sourceRevision: source.sourceRevision,
+        modulePath: source.modulePath,
+        moduleSha256: source.moduleSha256,
+      },
+    ),
+    witness,
+    source,
+    sourceManifest,
+  )
 
 const executeCandidateDevelopmentLocalAttempt = (
   prepared: PreparedCandidateDevelopmentLocalAttempt,
@@ -598,7 +713,7 @@ const executeCandidateDevelopmentLocalAttempt = (
           : localError('SOURCE_BINDING_INVALID', 'candidate source bytes could not be verified', cause),
     })
     return yield* Effect.fromResult(
-      evaluateCandidateDevelopmentDefinition(prepared.definition, witness, prepared.source, prepared.sourceManifest),
+      evaluateCandidateDevelopmentApplication(prepared.application, witness, prepared.source, prepared.sourceManifest),
     ).pipe(
       Effect.mapError((cause) =>
         cause instanceof CandidateDevelopmentLocalError
@@ -616,7 +731,7 @@ export const makeCandidateDevelopmentLocalAttempt =
       const exit = yield* Effect.exit(port.execute(prepared))
       const outcome: CandidateDevelopmentLocalTerminalOutcome = Exit.isSuccess(exit)
         ? exit.value
-        : { status: 'FAILED', terminalReportHash: null }
+        : { status: 'FAILED', terminalReport: null, terminalReportHash: null }
       const terminalReceipt = makeCandidateDevelopmentLocalTerminalReceipt(prepared.source, outcome)
       yield* port.finalize(prepared.receiptPath, terminalReceipt)
       return yield* Exit.isSuccess(exit) ? Effect.succeed(terminalReceipt) : Effect.failCause(exit.cause)
@@ -717,23 +832,20 @@ export const finalizeCandidateDevelopmentLocalReceipt = (
       ),
   })
 
-/**
- * A candidate PR supplies this value with a normal static import. There is intentionally no runtime module loader:
- * with no preregistered candidate the local command remains unavailable and cannot accidentally evaluate live strategy
- * code as a candidate.
- */
-const reviewedCandidateDefinition: RiskBalancedTrendStrategyDefinition | undefined = undefined
-
 const liveDependencies: CandidateDevelopmentLocalDependencies = {
   prepare: (args) =>
-    reviewedCandidateDefinition === undefined
+    activeCandidateDevelopmentRegistration === null
       ? Effect.fail(
           localError(
             'MODULE_INVALID',
-            'no reviewed candidate StrategyDefinition is statically composed for local development',
+            'no active candidate strategy application is statically composed for local development',
           ),
         )
-      : prepareCandidateDevelopmentLocalAttempt(args, reviewedCandidateDefinition),
+      : prepareCandidateDevelopmentLocalAttempt(
+          args,
+          activeCandidateDevelopmentRegistration.application,
+          activeCandidateDevelopmentRegistration.sourceManifest,
+        ),
   attempt: makeCandidateDevelopmentLocalAttempt({
     reserve: reserveCandidateDevelopmentLocalReceipt,
     execute: executeCandidateDevelopmentLocalAttempt,

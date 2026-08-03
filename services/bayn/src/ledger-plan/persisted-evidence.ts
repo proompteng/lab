@@ -1,13 +1,15 @@
 import { Result } from 'effect'
-import { AccountFlags, type Account, type Transfer } from 'tigerbeetle-node'
 
 import { canonicalHashV1, stableU128, stableU64 } from '../hash'
 import type { ReconciliationResult } from '../types'
 import {
   AccountCode,
   failLedgerValidation,
+  LEDGER_ACCOUNT_HISTORY_FLAG,
   LEDGER_SCHEMA_VERSION,
   TransferCode,
+  type LedgerAccountRecord,
+  type LedgerTransferRecord,
   type LedgerValidationError,
 } from './model'
 import { reconcileBalances } from './verification'
@@ -37,7 +39,7 @@ const verifyPersistedAccount = (
   ledger: number,
   runKey: bigint,
   runTag: bigint,
-  account: Account,
+  account: LedgerAccountRecord,
 ): Result.Result<void, LedgerValidationError> => {
   const fixedName = fixedAccountNames.get(account.code)
   const expectedId = fixedName === undefined ? undefined : stableU128('bayn-account-v1', result.runId, fixedName)
@@ -49,7 +51,7 @@ const verifyPersistedAccount = (
     account.reserved !== 0 ||
     account.ledger !== ledger ||
     !accountCodes.has(account.code) ||
-    account.flags !== AccountFlags.history ||
+    account.flags !== LEDGER_ACCOUNT_HISTORY_FLAG ||
     account.timestamp <= 0n ||
     (expectedId !== undefined && account.id !== expectedId)
   ) {
@@ -67,7 +69,7 @@ const verifyPersistedAccount = (
           reserved: 0,
           ledger,
           accountCodes: [...accountCodes],
-          flags: AccountFlags.history,
+          flags: LEDGER_ACCOUNT_HISTORY_FLAG,
           positiveTimestamp: true,
           ...(expectedId === undefined ? {} : { deterministicId: expectedId }),
         },
@@ -81,8 +83,8 @@ const verifyPersistedTransfer = (
   result: ReconciliationResult,
   ledger: number,
   runTag: bigint,
-  accountsById: ReadonlyMap<bigint, Account>,
-  transfer: Transfer,
+  accountsById: ReadonlyMap<bigint, LedgerAccountRecord>,
+  transfer: LedgerTransferRecord,
 ): Result.Result<void, LedgerValidationError> => {
   const debit = accountsById.get(transfer.debit_account_id)
   const credit = accountsById.get(transfer.credit_account_id)
@@ -146,8 +148,8 @@ const verifyPersistedTransfer = (
 export const validatePersistedRunEvidence = (
   result: ReconciliationResult,
   ledger: number,
-  accounts: readonly Account[],
-  transfers: readonly Transfer[],
+  accounts: readonly LedgerAccountRecord[],
+  transfers: readonly LedgerTransferRecord[],
 ): Result.Result<void, LedgerValidationError> =>
   Result.gen(function* () {
     if (accounts.length !== result.accountCount) {

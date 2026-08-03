@@ -1,5 +1,6 @@
 import { Chunk, Option, pipe, Result } from 'effect'
 
+import type { FeeInput } from '../execution-model'
 import type {
   CashChange,
   DailyPerformancePoint,
@@ -33,6 +34,8 @@ export interface SimulationState {
   readonly totalSpreadCostMicros: bigint
   readonly totalSlippageCostMicros: bigint
   readonly totalCashYieldMicros: bigint
+  /** Fills from the current session, retained so trace-free runs can consolidate fees exactly. */
+  readonly sessionFeeInputs: readonly FeeInput[]
   readonly previousEquityMicros: bigint
   readonly peakEquityMicros: bigint
   readonly previousSessionDate: IsoDate | null
@@ -90,6 +93,7 @@ export const initialState = (initialCapitalMicros: bigint): SimulationState => (
   totalSpreadCostMicros: 0n,
   totalSlippageCostMicros: 0n,
   totalCashYieldMicros: 0n,
+  sessionFeeInputs: [],
   previousEquityMicros: initialCapitalMicros,
   peakEquityMicros: initialCapitalMicros,
   previousSessionDate: null,

@@ -52,6 +52,11 @@ interface ReplayState {
   readonly previousDate?: IsoDate
 }
 
+const hasOpenPosition = (positions: ReadonlyMap<string, Position>): boolean =>
+  [...positions.values()].some((position) => position.quantityMicros !== 0n)
+
+const isFlatTarget = (target: Target): boolean => Object.values(target.weights).every((weight) => weight === 0)
+
 export const replay = (
   sessions: readonly Session[],
   targets: readonly Target[],
@@ -60,6 +65,7 @@ export const replay = (
   costMultiplierMicros: bigint,
   runId: string,
   retainTrace: boolean,
+  closeAtEnd = false,
 ): ReferenceComputation<ReplayWithWork> => {
   if (protocol.executionModel.schemaVersion !== 'bayn.execution-model.v2') {
     return Result.fail({
@@ -90,22 +96,23 @@ export const replay = (
   const changes: CashChange[] = []
   const marks: DailyPositionMark[] = []
   const daily: DailyPerformancePoint[] = []
-
   for (let index = startIndex; index < sessions.length; index += 1) {
     const session = sessions[index]
-    const target = targetBySession.get(index)
+    const scheduledTarget = targetBySession.get(index)
+    const lastTarget = targets.at(-1)
     const beforeTurnover = state.turnoverMicros
     const beforeFees = state.feeMicros
     const beforeSpread = state.spreadMicros
     const beforeSlippage = state.slippageMicros
     const beforeYield = state.cashYieldMicros
-    const planningCashSnapshot = state.cashMicros
+    let planningCashSnapshot = state.cashMicros
     let cash = state.cashMicros
     let turnover = state.turnoverMicros
     let fees = state.feeMicros
     let spread = state.spreadMicros
     let slippage = state.slippageMicros
     let cashYield = state.cashYieldMicros
+    const allSessionFills: FillEvent[] = []
     let positions = state.positions
     let writablePositions: Map<string, Position> | undefined
     const writePosition = (symbol: string, position: Position): void => {
@@ -146,7 +153,8 @@ export const replay = (
       }
     }
 
-    if (target !== undefined) {
+    const runTarget = (target: Target, execute = true): ReferenceComputation<void> => {
+      const terminalClose = target.terminalClose === true
       const signalSession = sessions[target.signalIndex]
       if (signalSession === undefined) {
         return Result.fail({
@@ -160,12 +168,14 @@ export const replay = (
         signalDate: signalSession.date,
         executionDate: session.date,
         targetWeights: target.weights,
+        ...('terminalClose' in target && target.terminalClose === true ? { terminalClose: true as const } : {}),
       }
       const decisionResult = makeReferenceDecisionEvent(runId, decisionMaterial)
       if (Result.isFailure(decisionResult)) return Result.fail(decisionResult.failure)
       const decision: DecisionEvent = decisionResult.success
       if (retainTrace) {
-        if (target.plan === undefined) {
+        const plan = 'plan' in target ? target.plan : undefined
+        if (plan === undefined && !terminalClose) {
           return Result.fail({
             _tag: 'ReferenceMissingDecisionPlan',
             signalIndex: target.signalIndex,
@@ -173,8 +183,11 @@ export const replay = (
           })
         }
         events.push(decision)
-        decisions.push({ ...target.plan, decisionId: decision.id, executionDate: decision.executionDate })
+        if (plan !== undefined) {
+          decisions.push({ ...plan, decisionId: decision.id, executionDate: decision.executionDate })
+        }
       }
+      if (!execute) return Result.succeed(undefined)
 
       const planPricesResult = replayPrices(signalSession, protocol, (bar) => bar.close)
       if (Result.isFailure(planPricesResult)) return Result.fail(planPricesResult.failure)
@@ -189,7 +202,7 @@ export const replay = (
       const desiredResult = replayDesiredQuantities(planEquity, target.weights, planPrices, protocol)
       if (Result.isFailure(desiredResult)) return Result.fail(desiredResult.failure)
       const desired = desiredResult.success
-      const sessionFills: FillEvent[] = []
+      const targetFills: FillEvent[] = []
 
       const sellPlans = [...protocol.universe]
         .sort()
@@ -234,6 +247,7 @@ export const replay = (
             candidate.quantityMicros,
             fillPrices[candidate.symbol],
             protocol,
+            terminalClose,
           ),
         ),
       )
@@ -321,7 +335,7 @@ export const replay = (
           quantityMicros: position.quantityMicros - quantity,
           costBasisMicros: position.costBasisMicros - costBasis,
         })
-        sessionFills.push(event)
+        targetFills.push(event)
         if (retainTrace) {
           events.push(event)
           const change = makeCashChange(runId, event, terms.notionalMicros, cash)
@@ -355,7 +369,7 @@ export const replay = (
           quantityMicros: position.quantityMicros + quantity,
           costBasisMicros: position.costBasisMicros + terms.notionalMicros,
         })
-        sessionFills.push(event)
+        targetFills.push(event)
         if (retainTrace) {
           events.push(event)
           const change = makeCashChange(runId, event, -terms.notionalMicros, cash)
@@ -365,7 +379,7 @@ export const replay = (
       }
 
       const feeResult = calculateSessionFees(
-        sessionFills.map((event) => ({
+        targetFills.map((event) => ({
           side: event.side,
           quantityMicros: BigInt(event.quantityMicros),
           notionalMicros: BigInt(event.notionalMicros),
@@ -398,6 +412,145 @@ export const replay = (
       }
       if (cash < 0n) {
         return Result.fail({ _tag: 'ReferenceNegativeCash', sessionDate: session.date, cashMicros: cash.toString() })
+      }
+      allSessionFills.push(...targetFills)
+      planningCashSnapshot = cash
+      return Result.succeed(undefined)
+    }
+
+    const terminalSession = closeAtEnd && index === sessions.length - 1
+    const replaceScheduledTarget = terminalSession && scheduledTarget !== undefined && !isFlatTarget(scheduledTarget)
+    const terminalTargetFor = (source: Target | undefined): Target => ({
+      ...(source ?? {
+        signalIndex: Math.max(0, index - 1),
+        executionIndex: index,
+        weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, 0])),
+      }),
+      executionIndex: index,
+      weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, 0])),
+      plan: undefined,
+      terminalClose: true,
+    })
+    const target = replaceScheduledTarget ? terminalTargetFor(scheduledTarget) : scheduledTarget
+
+    if (replaceScheduledTarget && scheduledTarget !== undefined) {
+      const scheduledResult = runTarget(scheduledTarget, false)
+      if (Result.isFailure(scheduledResult)) return Result.fail(scheduledResult.failure)
+    }
+    if (target !== undefined) {
+      const scheduledResult = runTarget(target)
+      if (Result.isFailure(scheduledResult)) return Result.fail(scheduledResult.failure)
+    }
+
+    const mustCloseAtEnd = terminalSession && !replaceScheduledTarget && hasOpenPosition(positions)
+    const closeSource = scheduledTarget ?? lastTarget
+    const terminalTarget =
+      mustCloseAtEnd && closeSource !== undefined
+        ? {
+            ...closeSource,
+            executionIndex: index,
+            weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, 0])),
+            plan: undefined,
+            terminalClose: true,
+          }
+        : mustCloseAtEnd
+          ? {
+              signalIndex: Math.max(0, index - 1),
+              executionIndex: index,
+              weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, 0])),
+              terminalClose: true,
+            }
+          : undefined
+    if (terminalTarget !== undefined) {
+      const terminalResult = runTarget(terminalTarget)
+      if (Result.isFailure(terminalResult)) return Result.fail(terminalResult.failure)
+    }
+
+    const aggregateFeeResult = calculateSessionFees(
+      allSessionFills.map((fill) => ({
+        side: fill.side,
+        quantityMicros: BigInt(fill.quantityMicros),
+        notionalMicros: BigInt(fill.notionalMicros),
+      })),
+      protocol.executionModel,
+      costMultiplierMicros,
+    )
+    if (Result.isFailure(aggregateFeeResult)) return Result.fail(aggregateFeeResult.failure)
+    const aggregateFee = aggregateFeeResult.success
+    if (!retainTrace && allSessionFills.length > 0) {
+      const charged = fees - beforeFees
+      cash += charged - aggregateFee.totalMicros
+      fees += aggregateFee.totalMicros - charged
+    }
+
+    if (retainTrace) {
+      const sessionFees = events.filter(
+        (event): event is FeeEvent => event.kind === 'fee' && event.sessionDate === session.date,
+      )
+      if (sessionFees.length >= 2) {
+        const feeIds = new Set(sessionFees.map((fee) => fee.id))
+        const charged = sessionFees.reduce(
+          (sum, fee) => ({
+            commissionMicros: sum.commissionMicros + BigInt(fee.commissionMicros),
+            secMicros: sum.secMicros + BigInt(fee.secMicros),
+            tafMicros: sum.tafMicros + BigInt(fee.tafMicros),
+            catMicros: sum.catMicros + BigInt(fee.catMicros),
+            totalMicros: sum.totalMicros + BigInt(fee.totalMicros),
+          }),
+          {
+            commissionMicros: 0n,
+            secMicros: 0n,
+            tafMicros: 0n,
+            catMicros: 0n,
+            totalMicros: 0n,
+          },
+        )
+        const eventIndexById = new Map(events.map((event, index) => [event.id, index]))
+        const adjustedChangesResult = Result.all(
+          changes
+            .filter((change) => change.sourceKind !== 'fee' || !feeIds.has(change.sourceId))
+            .map((change) => {
+              if (change.sourceKind !== 'fill') return Result.succeed(change)
+              const source = events.find(
+                (event): event is FillEvent => event.kind === 'fill' && event.id === change.sourceId,
+              )
+              const sourceIndex = eventIndexById.get(change.sourceId)
+              if (source === undefined || sourceIndex === undefined) return Result.succeed(change)
+              const removedBefore = sessionFees
+                .filter((fee) => (eventIndexById.get(fee.id) ?? Number.MAX_SAFE_INTEGER) < sourceIndex)
+                .reduce((total, fee) => total + BigInt(fee.totalMicros), 0n)
+              return removedBefore === 0n
+                ? Result.succeed(change)
+                : makeCashChange(
+                    runId,
+                    source,
+                    BigInt(change.amountMicros),
+                    BigInt(change.cashAfterMicros) + removedBefore,
+                  )
+            }),
+        )
+        if (Result.isFailure(adjustedChangesResult)) return Result.fail(adjustedChangesResult.failure)
+        cash += charged.totalMicros - aggregateFee.totalMicros
+        fees += aggregateFee.totalMicros - charged.totalMicros
+        const aggregateResult = makeReferenceFeeEvent(runId, {
+          sessionDate: session.date,
+          commissionMicros: aggregateFee.commissionMicros.toString(),
+          secMicros: aggregateFee.secMicros.toString(),
+          tafMicros: aggregateFee.tafMicros.toString(),
+          catMicros: aggregateFee.catMicros.toString(),
+          totalMicros: aggregateFee.totalMicros.toString(),
+        })
+        if (Result.isFailure(aggregateResult)) return Result.fail(aggregateResult.failure)
+        const aggregate = aggregateResult.success
+        const changeResult = makeCashChange(runId, aggregate, -aggregateFee.totalMicros, cash)
+        if (Result.isFailure(changeResult)) return Result.fail(changeResult.failure)
+        events.splice(
+          0,
+          events.length,
+          ...events.filter((event) => event.kind !== 'fee' || !feeIds.has(event.id)),
+          aggregate,
+        )
+        changes.splice(0, changes.length, ...adjustedChangesResult.success, changeResult.success)
       }
     }
 

@@ -1,5 +1,6 @@
 import type { CanonicalHashFailure } from '../../hash'
-import type { ExecutionModel, IsoDate } from '../../types'
+import type { ExecutionModel } from '../../execution-model-contract'
+import type { IsoDate } from '../../schemas'
 import type { UnsignedRoundHalfUpFailure } from '../../unsigned-round-half-up'
 
 export const MICROS = 1_000_000n

@@ -78,9 +78,9 @@ const renderStrategyOperationFailure = (
 ): string => {
   switch (failure.operation) {
     case 'prepare-lock':
-      return renderPrepareLockFailure(failure.cause)
+      return renderPrepareLockFailure(failure.cause as RiskBalancedTrendStrategyPrepareLockFailure)
     case 'evaluate':
-      return renderRiskBalancedTrendEvaluationIssues(failure.cause)
+      return renderRiskBalancedTrendEvaluationIssues(failure.cause as never)
     case 'analyze':
       return renderQualificationStatisticsFailure(failure.cause)
     case 'qualify':

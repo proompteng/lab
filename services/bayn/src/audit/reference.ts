@@ -97,6 +97,7 @@ const evaluateReferenceWithWork = (
   manifest: InputManifest,
   protocol: Protocol,
   provenance: RuntimeProvenance,
+  closeAtEnd: boolean,
 ): ReferenceComputation<ReferenceEvaluationWithWork> => {
   const sessionsResult = align(bars, manifest, protocol.universe)
   if (Result.isFailure(sessionsResult)) return Result.fail(sessionsResult.failure)
@@ -207,9 +208,18 @@ const evaluateReferenceWithWork = (
   )
   if (Result.isFailure(directVolTargetsResult)) return Result.fail(directVolTargetsResult.failure)
   const directVolTargets = directVolTargetsResult.success
-  const strategy = replay(boundedSessions, candidateTargets, startIndex, protocol, MICROS, runId, true)
-  const buyAndHold = replay(boundedSessions, buyAndHoldTargets, startIndex, protocol, MICROS, runId, false)
-  const directVolTiming = replay(boundedSessions, directVolTargets, startIndex, protocol, MICROS, runId, false)
+  const strategy = replay(boundedSessions, candidateTargets, startIndex, protocol, MICROS, runId, true, closeAtEnd)
+  const buyAndHold = replay(boundedSessions, buyAndHoldTargets, startIndex, protocol, MICROS, runId, false, closeAtEnd)
+  const directVolTiming = replay(
+    boundedSessions,
+    directVolTargets,
+    startIndex,
+    protocol,
+    MICROS,
+    runId,
+    false,
+    closeAtEnd,
+  )
   const doubleCostStrategy = replay(
     boundedSessions,
     candidateTargets,
@@ -218,6 +228,7 @@ const evaluateReferenceWithWork = (
     BigInt(protocol.executionModel.doubleCostMultiplier) * MICROS,
     runId,
     false,
+    closeAtEnd,
   )
   return pipe(
     Result.all({ strategy, buyAndHold, directVolTiming, doubleCostStrategy }),
@@ -254,9 +265,10 @@ export const evaluateReference = (
   manifest: InputManifest,
   protocol: Protocol,
   provenance: RuntimeProvenance,
+  closeAtEnd = true,
 ): ReferenceComputation<ReferenceEvaluation> =>
   pipe(
-    evaluateReferenceWithWork(bars, manifest, protocol, provenance),
+    evaluateReferenceWithWork(bars, manifest, protocol, provenance, closeAtEnd),
     Result.map((reference) => ({
       runId: reference.runId,
       protocolHash: reference.protocolHash,
@@ -273,9 +285,10 @@ export const measureReferenceEvaluationWork = (
   manifest: InputManifest,
   protocol: Protocol,
   provenance: RuntimeProvenance,
+  closeAtEnd = true,
 ): ReferenceComputation<ReferenceEvaluationWork> =>
   pipe(
-    evaluateReferenceWithWork(bars, manifest, protocol, provenance),
+    evaluateReferenceWithWork(bars, manifest, protocol, provenance, closeAtEnd),
     Result.map((reference) => ({
       strategy: reference.strategy.work,
       buyAndHold: reference.buyAndHold.work,

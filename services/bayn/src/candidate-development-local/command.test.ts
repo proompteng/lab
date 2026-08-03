@@ -15,6 +15,7 @@ import {
   makeCandidateDevelopmentLocalAttempt,
   reserveCandidateDevelopmentLocalReceipt,
   runCandidateDevelopmentLocally,
+  verifyCandidateDevelopmentSourceManifestBinding,
   verifyCandidateDevelopmentLocalSourceTree,
   verifyCandidateDevelopmentSourceManifest,
   type CandidateDevelopmentLocalAttemptPort,
@@ -121,6 +122,7 @@ const prepared: PreparedCandidateDevelopmentLocalAttempt = {
   receiptPath: '/repo/.git/bayn/candidate-development-attempts/ordinal-21.json',
   source,
   sourceManifest,
+  application: fixtureRuntime.application,
   definition: fixtureRuntime.definition,
   provenance: fixtureRuntime.provenance,
 }
@@ -145,6 +147,20 @@ describe('candidate-development-local domain boundary', () => {
     }
   })
 
+  test('requires the exact reviewed source-manifest path, blob, and bytes', () => {
+    const expected = { path: sourceManifestPath, blobOid: sourceManifestBlobOid, sha256: 'e'.repeat(64) }
+    expect(Result.isSuccess(verifyCandidateDevelopmentSourceManifestBinding(expected, expected))).toBe(true)
+    for (const stale of [
+      { path: 'services/bayn/candidates/other-source-manifest.json' },
+      { blobOid: 'f'.repeat(40) },
+      { sha256: '0'.repeat(64) },
+    ]) {
+      expect(
+        Result.isFailure(verifyCandidateDevelopmentSourceManifestBinding({ ...expected, ...stale }, expected)),
+      ).toBe(true)
+    }
+  })
+
   test('requires statistical PASS alongside economic PASS before reporting PASS', () => {
     expect(candidateDevelopmentTerminalStatus('PASS', 'PASS')).toBe('PASS')
     expect(candidateDevelopmentTerminalStatus('PASS', 'REJECTED')).toBe('HOLD_REJECT')
@@ -161,7 +177,7 @@ describe('candidate-development-local domain boundary', () => {
 
     const receipt = makeCandidateDevelopmentLocalReceipt(source, 'PASS', 'f'.repeat(64))
     expect(serializeCandidateDevelopmentLocalReceipt(receipt)).not.toContain('witness.json')
-    expect(receipt.schemaVersion).toBe('bayn.candidate-development-local-attempt.v3')
+    expect(receipt.schemaVersion).toBe('bayn.candidate-development-local-attempt.v4')
   })
 
   test('rejects a mixed snapshot during the shared evaluation', () => {

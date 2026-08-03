@@ -2,7 +2,6 @@ import { Result } from 'effect'
 
 import type { EvaluationBounds } from '../../contracts'
 import { canonicalHashV1Result } from '../../hash'
-import type { SignalManifestRow } from '../rows'
 import type { BoundField, MarketDataVerificationError } from './errors'
 
 export const database = 'signal' as const
@@ -68,7 +67,10 @@ export const canonicalUniverse = (
 }
 
 export const withoutSnapshot = <A extends { readonly snapshot_id: string }>({ snapshot_id: _, ...row }: A) => row
-export const withoutManifestHash = ({ manifest_content_hash: _, ...manifest }: SignalManifestRow) => manifest
+export const withoutManifestHash = <A extends { readonly manifest_content_hash: string }>({
+  manifest_content_hash: _,
+  ...manifest
+}: A) => manifest
 export const toUtcInstant = (value: string): string => `${value.replace(' ', 'T')}Z`
 
 const boundFields: readonly BoundField[] = ['dataStart', 'dataEnd', 'lookbackStart', 'evaluationStart', 'evaluationEnd']

@@ -15,7 +15,8 @@ import {
   type QualificationAnalysis,
   type QualificationStatisticsFailure,
 } from '../../qualification-statistics'
-import { prepareRiskBalancedTrendQualification, type RiskBalancedTrendFailure } from '../../risk-balanced-trend'
+import { prepareRiskBalancedTrendQualification } from './qualification-precommit'
+import type { RiskBalancedTrendFailure } from '../../risk-balanced-trend/model'
 import type { EvaluationResult, InputManifest, IsoDate, Protocol } from '../../types'
 
 export type RiskBalancedTrendStrategyPrepareLockFailure = RiskBalancedTrendFailure | QualificationConstructionFailure

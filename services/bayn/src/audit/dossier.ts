@@ -9,8 +9,8 @@ import {
 } from '../qualification'
 import { strictParseOptions as StrictParseOptions } from '../schemas'
 import type { InputManifest } from '../types'
+import { auditQualification } from './run'
 import {
-  auditQualification,
   type AuditDatabaseSnapshot,
   type QualificationAuditFailure,
   type QualificationAuditInput,

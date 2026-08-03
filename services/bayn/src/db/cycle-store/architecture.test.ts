@@ -4,8 +4,8 @@ import { resolve } from 'node:path'
 const serviceRoot = resolve(import.meta.dir, '../../..')
 const architectureLint = resolve(import.meta.dir, 'architecture-lint.mjs')
 
-describe('cycle-store architecture', () => {
-  test('keeps cycle-store, readiness, and recovery modules outside import cycles', async () => {
+describe('Bayn production architecture', () => {
+  test('keeps production modules outside import cycles', async () => {
     const lint = Bun.spawn(['node', architectureLint], {
       cwd: serviceRoot,
       stderr: 'pipe',

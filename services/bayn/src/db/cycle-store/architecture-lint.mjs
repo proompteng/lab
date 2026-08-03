@@ -98,16 +98,6 @@ const stronglyConnectedComponents = (graph) => {
   return components
 }
 
-const isCycleBoundary = (file) => {
-  const name = relative(sourceRoot, file).replaceAll('\\', '/')
-  return (
-    name.startsWith('db/cycle-store/') ||
-    name === 'cycle-readiness.ts' ||
-    name === 'cycle-recovery.ts' ||
-    name.startsWith('cycle-runner/recovery-')
-  )
-}
-
 const api = new API({ cwd: serviceRoot })
 try {
   const snapshot = api.updateSnapshot({ openProjects: [configFile] })
@@ -117,9 +107,9 @@ try {
       .find((candidate) => normalizePath(candidate.configFileName) === normalizePath(configFile))
     if (project === undefined) throw new Error(`TypeScript project was not loaded from ${configFile}`)
 
-    const cycles = stronglyConnectedComponents(sourceDependencyGraph(project.program))
-      .filter((component) => component.some(isCycleBoundary))
-      .map((component) => component.map((file) => relative(sourceRoot, file).replaceAll('\\', '/')).sort())
+    const cycles = stronglyConnectedComponents(sourceDependencyGraph(project.program)).map((component) =>
+      component.map((file) => relative(sourceRoot, file).replaceAll('\\', '/')).sort(),
+    )
 
     const result = { cycles }
     if (cycles.length > 0) {

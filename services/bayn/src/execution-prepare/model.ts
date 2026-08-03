@@ -22,19 +22,7 @@ export const executionPrepareRequestSchemaVersion = 'bayn.execution-prepare-requ
 export const executionPrepareProofPlanSchemaVersion = 'bayn.execution-prepare-proof-plan.v1' as const
 export const executionPrepareReceiptSchemaVersion = 'bayn.execution-prepare-receipt.v1' as const
 
-const StrategySchema = RuntimeProvenanceSchema.fields.strategy.pipe(
-  Schema.refine(
-    (
-      strategy,
-    ): strategy is typeof RuntimeProvenanceSchema.fields.strategy.Type & {
-      readonly name: 'risk-balanced-trend'
-      readonly parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4'
-    } =>
-      strategy.name === 'risk-balanced-trend' &&
-      strategy.parameterSchemaVersion === 'bayn.risk-balanced-trend.protocol.v4',
-    { expected: 'the current risk-balanced-trend protocol v4 strategy identity' },
-  ),
-)
+const StrategySchema = RuntimeProvenanceSchema.fields.strategy
 
 export const ExecutionPrepareProofPlanSchema = Schema.Struct({
   schemaVersion: Schema.Literal(executionPrepareProofPlanSchemaVersion),

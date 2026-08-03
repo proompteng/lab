@@ -8,6 +8,7 @@ import {
   ImageDigestSchema,
   ImageRepositorySchema,
   Sha256Schema,
+  StrictNonEmptyStringSchema,
   UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
@@ -37,10 +38,10 @@ export interface LiveCapitalGrantRequest {
 export const paperActivationRequestSchemaVersion = 'bayn.paper-activation-request.v1' as const
 
 const PaperActivationStrategySchema = Schema.Struct({
-  name: Schema.Literal('risk-balanced-trend'),
+  name: StrictNonEmptyStringSchema,
   behaviorHash: Sha256Schema,
   parameterHash: Sha256Schema,
-  parameterSchemaVersion: Schema.Literal('bayn.risk-balanced-trend.protocol.v4'),
+  parameterSchemaVersion: StrictNonEmptyStringSchema,
   protocolHash: Sha256Schema,
 })
 

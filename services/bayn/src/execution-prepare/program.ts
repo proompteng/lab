@@ -76,14 +76,11 @@ export const buildExecutionPrepareProofPlanRequest = (
   if (runtime.sourceRevision !== discoveryRuntime.sourceRevision) return discoveryMismatch('sourceRevision')
   if (runtime.imageRepository !== discoveryRuntime.image.repository) return discoveryMismatch('imageRepository')
   if (runtime.imageDigest !== discoveryRuntime.image.digest) return discoveryMismatch('imageDigest')
-  if (discoveryRuntime.strategy.parameterSchemaVersion !== 'bayn.risk-balanced-trend.protocol.v4') {
-    return discoveryMismatch('strategyParameterSchemaVersion')
-  }
   const strategy = {
     name: discoveryRuntime.strategy.name,
     behaviorHash: discoveryRuntime.strategy.behaviorHash,
     parameterHash: discoveryRuntime.strategy.parameterHash,
-    parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4' as const,
+    parameterSchemaVersion: discoveryRuntime.strategy.parameterSchemaVersion,
   }
   if (!matchesStrategy(runtime.strategy, strategy)) return discoveryMismatch('strategyBehaviorHash')
   if (runtime.strategyProtocolHash !== discoveryRuntime.strategyProtocolHash) {

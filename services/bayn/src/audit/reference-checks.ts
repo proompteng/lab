@@ -2,9 +2,8 @@ import { Result, Schema } from 'effect'
 
 import { ReconciliationResultSchema } from '../evidence-contracts'
 import { strictParseOptions as StrictParseOptions } from '../schemas'
-import type { AuditCheck, QualificationAuditFailure } from './audit'
+import { auditContract, type AuditCheck, type QualificationAuditFailure } from './audit'
 import {
-  auditContract,
   hashAuditMaterial,
   makeAuditCheck,
   makeEvaluationSummary,

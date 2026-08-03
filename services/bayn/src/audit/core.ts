@@ -1,5 +1,6 @@
 import { Result } from 'effect'
 
+import { riskBalancedTrendTerminalReplayBehaviorHashes } from '../behavior'
 import { makeRuntimeProvenanceResult, type RuntimeProvenance } from '../contracts'
 import { canonicalHashV1Result } from '../hash'
 import type { QualificationLock, QualificationResult } from '../qualification'
@@ -8,7 +9,7 @@ import {
   renderSimulationReconciliationIssues,
   type MarkedEquityProof,
 } from '../simulation-reconciliation'
-import { ContractVersion, type SimulationTrace } from '../types'
+import type { SimulationTrace } from '../types'
 import type {
   AuditCanonicalizationSubject,
   AuditCheck,
@@ -18,14 +19,7 @@ import type {
   SignalAccessRecord,
 } from './audit'
 import { evaluateReference, type ReferenceEvaluation } from './reference'
-
-export const auditContract = {
-  name: 'risk-balanced-trend',
-  evaluationSchemaVersion: ContractVersion.Evaluation,
-  summarySchemaVersion: ContractVersion.EvaluationSummary,
-  decisionArtifactName: 'risk-balanced-trend-decisions',
-  decisionArtifactSchemaVersion: 'bayn.risk-balanced-trend-decisions.v1',
-} as const
+import { auditContract } from './audit'
 
 export const MICROS_STRING = '1000000'
 
@@ -117,6 +111,18 @@ export const makeEvaluationSummary = (
   markedEquityReconciliation: markedEquity,
 })
 
+const hasTerminalCloseEvent = (database: AuditDatabaseSnapshot): boolean =>
+  database.events.some(({ payload }) => payload.kind === 'decision' && payload.terminalClose === true)
+
+/**
+ * Terminal liquidation is part of the v4 behavior identity, not a property of whether the
+ * strategy happened to need a closing decision on its final session. The event marker remains
+ * the compatibility path for v6 evidence written before that identity was persisted.
+ */
+export const usesTerminalReplaySemantics = (database: AuditDatabaseSnapshot): boolean =>
+  riskBalancedTrendTerminalReplayBehaviorHashes.includes(database.protocol.behaviorHash) ||
+  hasTerminalCloseEvent(database)
+
 export type MarkedEquityAuditMaterial =
   | { readonly _tag: 'Available'; readonly proof: MarkedEquityProof }
   | { readonly _tag: 'Unavailable'; readonly evidence: string }
@@ -199,7 +205,17 @@ export const makeAuditFacts = (
     },
   })
   if (Result.isFailure(provenanceResult)) return Result.fail(provenanceResult.failure)
-  const referenceResult = evaluateReference(input.bars, input.manifest, input.protocol, provenanceResult.success)
+  // Terminal liquidation was added after the v6 evaluation contract was already persisted.
+  // The persisted v4 behavior identity is the durable marker even when a flat strategy emits no
+  // terminal-close decision; the event marker preserves legacy v6 evidence semantics.
+  const closeAtEnd = usesTerminalReplaySemantics(database)
+  const referenceResult = evaluateReference(
+    input.bars,
+    input.manifest,
+    input.protocol,
+    provenanceResult.success,
+    closeAtEnd,
+  )
   if (Result.isFailure(referenceResult)) return Result.fail(referenceResult.failure)
   const reference = referenceResult.success
   const trace = reference.strategy.trace

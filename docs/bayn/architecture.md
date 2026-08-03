@@ -158,7 +158,7 @@ aggregate pre-submit buying power and cannot spend planned sell proceeds. The se
 changing it may alter fills, gaps, slippage, shortfall, and performance, but cannot alter planned quantities.
 
 The source-controlled v4 precommit identities are behavior
-`9e87fe0f66048c48da2191ef1fae36ef3ee0eb4ddcd036ef40881f0fe0f6eb42` and parameters
+`dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46` and parameters
 `19bc51c7361b181aa48845d178cb63373b3f2e017bcbea1cf3b70ab16647f8a9`. They do not relabel the terminal v3
 rejection and do not constitute a new qualification. GitOps must hold this changed identity until a finalized snapshot
 newer than the observed 2026-07-24 snapshot is available.

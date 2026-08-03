@@ -17,6 +17,32 @@ import type { PlannedTargetQuantity } from '../target-planner'
 
 const quantityScale = 1_000_000n
 
+export const countOpenPositions = (positions: readonly Pick<Position, 'quantityMicros'>[]): number =>
+  positions.filter((position) => BigInt(position.quantityMicros) !== 0n).length
+
+export const paperCycleHasFilledIntent = (
+  intents: readonly Pick<Intent, 'intentId' | 'state' | 'terminalOutcome'>[],
+  orders: readonly Pick<Order, 'intentId' | 'filledQuantityMicros'>[] = [],
+): boolean => {
+  const intentIds = new Set(intents.map((intent) => intent.intentId))
+  return (
+    intents.some(
+      (intent) => intent.state === IntentState.Terminal && intent.terminalOutcome === TerminalOutcome.Filled,
+    ) ||
+    orders.some(
+      (order) =>
+        order.intentId !== undefined && intentIds.has(order.intentId) && BigInt(order.filledQuantityMicros) > 0n,
+    )
+  )
+}
+
+/** A settled close plan must be replaced when authoritative positions remain open. */
+export const paperClosePlanNeedsResidualReplan = (
+  intents: readonly Pick<Intent, 'state'>[],
+  openPositionCount: number,
+): boolean =>
+  intents.length > 0 && intents.every((intent) => intent.state === IntentState.Terminal) && openPositionCount > 0
+
 const comparePositionSymbol = (left: Position, right: Position): number =>
   left.symbol < right.symbol ? -1 : left.symbol > right.symbol ? 1 : 0
 
@@ -200,6 +226,62 @@ export const decidePreparedMutationIntentAdmission = (
   return Result.succeed(undefined)
 }
 
+export const decidePreparedCloseIntentAdmission = (
+  intent: Pick<Intent, 'side'>,
+  prepared: PreparedMutationIntentDecision,
+  observedAt: string,
+  expiresAt: string,
+  unknownMutationCount: number,
+  reconciliationStatus: ReconciliationStatus = ReconciliationStatus.Exact,
+  accountingExact = true,
+  unknownOrderCount = 0,
+): Result.Result<void, PreparedMutationIntentAdmissionFailure> => {
+  if (prepared._tag !== 'Submit') return Result.succeed(undefined)
+  if (intent.side !== 'SELL') {
+    return Result.fail({
+      _tag: 'PreparedMutationIntentAdmissionFailure',
+      reason: 'authority',
+      message: 'close-only PAPER admission permits sell intents only',
+    })
+  }
+  if (observedAt >= expiresAt) {
+    return Result.fail({
+      _tag: 'PreparedMutationIntentAdmissionFailure',
+      reason: 'expiry',
+      message: 'close-only PAPER submit is forbidden after the bounded close lease',
+    })
+  }
+  if (reconciliationStatus !== ReconciliationStatus.Exact) {
+    return Result.fail({
+      _tag: 'PreparedMutationIntentAdmissionFailure',
+      reason: 'reconciliation-not-exact',
+      message: 'close-only PAPER submit requires exact same-pass reconciliation',
+    })
+  }
+  if (!accountingExact) {
+    return Result.fail({
+      _tag: 'PreparedMutationIntentAdmissionFailure',
+      reason: 'accounting-inexact',
+      message: 'close-only PAPER submit requires exact same-pass accounting',
+    })
+  }
+  if (unknownMutationCount !== 0) {
+    return Result.fail({
+      _tag: 'PreparedMutationIntentAdmissionFailure',
+      reason: 'unknown-mutation',
+      message: 'close-only PAPER submit is forbidden while a mutation outcome is unknown',
+    })
+  }
+  if (unknownOrderCount !== 0) {
+    return Result.fail({
+      _tag: 'PreparedMutationIntentAdmissionFailure',
+      reason: 'unknown-order',
+      message: 'close-only PAPER submit is forbidden while a broker order is unknown',
+    })
+  }
+  return Result.succeed(undefined)
+}
+
 export const appendPendingMutationOrder = (orders: readonly Order[], pending: Order): readonly Order[] =>
   orders.some((order) => order.brokerOrderId === pending.brokerOrderId || order.clientOrderId === pending.clientOrderId)
     ? orders
@@ -218,6 +300,7 @@ export interface PaperCycleReconciliationEvidence {
   readonly accountingExact: boolean
   readonly unknownMutationCount: number
   readonly unknownOrderCount: number
+  readonly openPositionCount?: number
 }
 
 export type PaperCycleCompletionDecision =
@@ -232,6 +315,7 @@ export type PaperCycleCompletionDecision =
         | 'reconciliation-not-exact'
         | 'unknown-mutation'
         | 'unknown-order'
+        | 'open-position'
     }
 
 export const decidePaperCycleCompletion = (
@@ -251,6 +335,7 @@ export const decidePaperCycleCompletion = (
   if (!reconciliation.accountingExact) return { _tag: 'Wait', reason: 'accounting-inexact' }
   if (reconciliation.unknownMutationCount !== 0) return { _tag: 'Wait', reason: 'unknown-mutation' }
   if (reconciliation.unknownOrderCount !== 0) return { _tag: 'Wait', reason: 'unknown-order' }
+  if ((reconciliation.openPositionCount ?? 0) !== 0) return { _tag: 'Wait', reason: 'open-position' }
   const latestEvidenceAt = Math.max(
     Date.parse(documentCreatedAt),
     ...intents.flatMap((intent) => [

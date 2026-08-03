@@ -35,7 +35,12 @@ export const makeDecision = (
   signalDate: IsoDate,
   executionDate: IsoDate,
 ): Result.Result<DecisionEvent, SimulationFailure> => {
-  const payload = { signalDate, executionDate, targetWeights: target.weights }
+  const payload = {
+    signalDate,
+    executionDate,
+    targetWeights: target.weights,
+    ...(target.terminalClose === true ? { terminalClose: true as const } : {}),
+  }
   return pipe(
     canonicalHashResult('decision', { runId, kind: 'decision', ...payload }),
     Result.map((id) => ({ kind: 'decision' as const, id, ...payload })),
@@ -51,6 +56,7 @@ export const makeOrder = (
   requestedQuantityMicros: bigint,
   referencePrice: bigint,
   protocol: SimulationProtocol,
+  forceFullFill = false,
 ): Result.Result<PreparedOrder, SimulationFailure> =>
   pipe(
     makeOrderOutcome({
@@ -60,11 +66,13 @@ export const makeOrder = (
         executionDate: decision.executionDate,
         symbol,
         side,
+        ...(forceFullFill ? { forceFullFill: true } : {}),
       },
       side,
       requestedQuantityMicros,
       referencePriceMicros: referencePrice,
       model: protocol.executionModel,
+      forceFullFill,
     }),
     Result.flatMap((outcome) => {
       const payload = {

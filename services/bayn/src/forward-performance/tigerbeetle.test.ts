@@ -60,6 +60,25 @@ const plans = (): readonly LedgerPlan[] => [
   ).ledger,
 ]
 
+const secondGenerationPlans = (): readonly LedgerPlan[] => [
+  success(
+    prepareAccounting(
+      'c'.repeat(64),
+      fill('second-buy', OrderSide.Buy, '200000000', '400'),
+      { quantityMicros: '0', costMicros: '0' },
+      ledger,
+    ),
+  ).ledger,
+  success(
+    prepareAccounting(
+      'd'.repeat(64),
+      fill('second-sell', OrderSide.Sell, '220000000', '600'),
+      { quantityMicros: '1000000', costMicros: '200000000' },
+      ledger,
+    ),
+  ).ledger,
+]
+
 const materializeAccounts = (plan: LedgerPlan): readonly Account[] => {
   const balances = new Map(plan.accounts.map((account) => [account.id, { debits: 0n, credits: 0n }]))
   for (const transfer of plan.transfers) {
@@ -179,6 +198,35 @@ const dependencies = (
 })
 
 describe('forward performance TigerBeetle read', () => {
+  test('reconciles cumulative stable-account balances while reporting only the selected generation totals', async () => {
+    const priorPlans = plans()
+    const currentPlans = secondGenerationPlans()
+    const accountPlan = success(assembleAccountPlan(accountId, [...priorPlans, ...currentPlans]))
+
+    const evidence = await Effect.runPromise(
+      Effect.scoped(
+        readForwardPerformanceLedger(
+          config,
+          accountId,
+          [...priorPlans, ...currentPlans],
+          undefined,
+          dependencies(materializeAccounts(accountPlan), materializeTransfers(accountPlan)),
+          currentPlans,
+        ),
+      ),
+    )
+
+    expect(evidence.ledgerExact).toBe(true)
+    expect(evidence.totals).toEqual({
+      realizedGainMicros: '20000000',
+      realizedLossMicros: '0',
+      brokerExecutionFeesMicros: '1000',
+      otherChargedCostsMicros: '0',
+      cashYieldMicros: '0',
+    })
+    expect(evidence.openPositionCount).toBe(0)
+  })
+
   test('reconciles authoritative account balances and transfer events exactly', async () => {
     const accountingPlans = plans()
     const accountPlan = success(assembleAccountPlan(accountId, accountingPlans))

@@ -1,6 +1,6 @@
 import { Result, pipe } from 'effect'
 
-import type { ExecutionModel } from '../../types'
+import type { ExecutionModel } from '../../execution-model-contract'
 import { ceilDiv, ensureUnsigned, fail, scaledNumber, type ExecutionResult } from './fixed-point'
 import { BPS, MICROS } from './model'
 
