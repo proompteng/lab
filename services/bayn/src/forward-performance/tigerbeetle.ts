@@ -41,10 +41,21 @@ const ledgerError = (cause: OperationalError | LedgerValidationError): ForwardPe
     cause,
   })
 
-const accountAmount = (accounts: readonly Account[], code: number, side: 'debit' | 'credit'): bigint =>
-  accounts
-    .filter((account) => account.code === code)
-    .reduce((total, account) => total + (side === 'debit' ? account.debits_posted : account.credits_posted), 0n)
+const planAmount = (plan: LedgerPlan, code: number, side: 'debit' | 'credit'): bigint => {
+  const accounts = new Map(plan.accounts.map((account) => [account.id, account.code]))
+  return plan.transfers.reduce((total, transfer) => {
+    const accountId = side === 'debit' ? transfer.debit_account_id : transfer.credit_account_id
+    return accounts.get(accountId) === code ? total + transfer.amount : total
+  }, 0n)
+}
+
+const generationLedgerTotals = (plan: LedgerPlan): ForwardPerformanceLedgerTotals => ({
+  realizedGainMicros: planAmount(plan, AccountCode.realizedGain, 'credit').toString(),
+  realizedLossMicros: planAmount(plan, AccountCode.realizedLoss, 'debit').toString(),
+  brokerExecutionFeesMicros: planAmount(plan, AccountCode.feeExpense, 'debit').toString(),
+  otherChargedCostsMicros: '0',
+  cashYieldMicros: '0',
+})
 
 const openInventoryCount = (accounts: readonly Account[]): number =>
   accounts.filter(
@@ -159,15 +170,21 @@ const validateCashYieldEvidence = (
 export const readForwardPerformanceLedger = (
   config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
   accountId: string,
-  plans: readonly LedgerPlan[],
+  ledgerPlans: readonly LedgerPlan[],
   cashYieldEvidence?: ForwardPerformanceCashYieldEvidence,
   dependencies?: JournalDependencies,
+  generationPlans: readonly LedgerPlan[] = ledgerPlans,
 ): Effect.Effect<ForwardPerformanceLedgerEvidence, ForwardPerformanceLedgerError, Scope.Scope> =>
   Effect.gen(function* () {
     const cashYieldResidual = yield* Effect.fromResult(validateCashYieldEvidence(cashYieldEvidence)).pipe(
       Effect.mapError(ledgerError),
     )
-    const plan = yield* Effect.fromResult(assembleAccountPlan(accountId, plans)).pipe(Effect.mapError(ledgerError))
+    const plan = yield* Effect.fromResult(assembleAccountPlan(accountId, ledgerPlans)).pipe(
+      Effect.mapError(ledgerError),
+    )
+    const generationPlan = yield* Effect.fromResult(assembleAccountPlan(accountId, generationPlans)).pipe(
+      Effect.mapError(ledgerError),
+    )
     const boundedQueries = yield* Effect.fromResult(accountReconciliationQueries(plan, config.tigerBeetle.ledger)).pipe(
       Effect.mapError(ledgerError),
     )
@@ -208,11 +225,7 @@ export const readForwardPerformanceLedger = (
 
     return {
       totals: {
-        realizedGainMicros: accountAmount(accounts, AccountCode.realizedGain, 'credit').toString(),
-        realizedLossMicros: accountAmount(accounts, AccountCode.realizedLoss, 'debit').toString(),
-        brokerExecutionFeesMicros: accountAmount(accounts, AccountCode.feeExpense, 'debit').toString(),
-        otherChargedCostsMicros: '0',
-        cashYieldMicros: '0',
+        ...generationLedgerTotals(generationPlan),
       },
       ledgerExact: Result.isSuccess(reconciliation),
       missingLedgerAccountCount,

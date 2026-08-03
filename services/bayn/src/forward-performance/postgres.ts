@@ -213,10 +213,14 @@ export interface ForwardPerformancePostgresEvidence {
   readonly startingCapitalMicros?: string
   readonly cashYieldEvidence?: ForwardPerformanceCashYieldEvidence
   readonly transactions: readonly AccountingTransaction[]
+  /** All account transactions through the selected reconciliation, for stable-account ledger replay. */
+  readonly ledgerTransactions: readonly AccountingTransaction[]
   readonly transactionEvidence: readonly ForwardPerformanceTransactionEvidence[]
   readonly executionEvidence: readonly ForwardPerformanceExecutionEvidence[]
   readonly marketVolumeRequests: readonly ForwardPerformanceMarketVolumeRequest[]
   readonly receipts: readonly AccountingReceipt[]
+  /** All accounting receipts paired with ledgerTransactions, for stable-account ledger replay. */
+  readonly ledgerReceipts: readonly AccountingReceipt[]
   readonly durableExecutionBindings: readonly {
     readonly accountId: string
     readonly accountReferenceHash: string
@@ -581,6 +585,48 @@ const transactionQuery = (
   ORDER BY transaction.occurred_at, transaction.transaction_id COLLATE "C"
 `
 
+const ledgerTransactionQuery = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  authorityGenerationHash: string | undefined,
+) => sql<Record<string, unknown>>`
+  WITH latest_reconciliation AS (
+    SELECT reconciliation.reconciled_at
+    FROM reconciliations AS reconciliation
+    WHERE reconciliation.account_id = ${accountId}
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+    ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
+    LIMIT 1
+  )
+  SELECT
+    transaction.schema_version,
+    transaction.transaction_id,
+    transaction.broker_event_id,
+    transaction.intent_id,
+    transaction.account_id,
+    transaction.symbol,
+    transaction.side,
+    transaction.quantity_micros::text AS quantity_micros,
+    transaction.price_micros::text AS price_micros,
+    transaction.notional_micros::text AS notional_micros,
+    transaction.fee_micros::text AS fee_micros,
+    transaction.cost_basis_micros::text AS cost_basis_micros,
+    transaction.realized_pnl_micros::text AS realized_pnl_micros,
+    transaction.quantity_delta_micros::text AS quantity_delta_micros,
+    transaction.cost_basis_delta_micros::text AS cost_basis_delta_micros,
+    transaction.cash_delta_micros::text AS cash_delta_micros,
+    transaction.ledger_plan_hash,
+    transaction.content_hash,
+    transaction.occurred_at,
+    intent.cycle_id
+  FROM accounting_transactions AS transaction
+  CROSS JOIN latest_reconciliation
+  LEFT JOIN intents AS intent ON intent.intent_id = transaction.intent_id
+  WHERE transaction.account_id = ${accountId}
+    AND transaction.occurred_at <= ${closingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
+  ORDER BY transaction.occurred_at, transaction.transaction_id COLLATE "C"
+`
+
 const receiptQuery = (sql: PgClient.PgClient, accountId: string, authorityGenerationHash: string | undefined) => sql<
   Record<string, unknown>
 >`
@@ -640,6 +686,44 @@ const receiptQuery = (sql: PgClient.PgClient, accountId: string, authorityGenera
     receipt.recorded_at
   FROM accounting_receipts AS receipt
   JOIN selected_transactions USING (broker_event_id)
+  ORDER BY receipt.broker_event_id COLLATE "C"
+`
+
+const ledgerReceiptQuery = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  authorityGenerationHash: string | undefined,
+) => sql<Record<string, unknown>>`
+  WITH latest_reconciliation AS (
+    SELECT reconciliation.reconciled_at
+    FROM reconciliations AS reconciliation
+    WHERE reconciliation.account_id = ${accountId}
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+    ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
+    LIMIT 1
+  )
+  SELECT
+    receipt.schema_version,
+    receipt.receipt_id,
+    receipt.intent_id,
+    receipt.broker_event_id,
+    receipt.tigerbeetle_cluster_id::text AS tigerbeetle_cluster_id,
+    receipt.tigerbeetle_ledger::integer AS tigerbeetle_ledger,
+    ARRAY(
+      SELECT item.value::text FROM unnest(receipt.account_ids) AS item(value) ORDER BY item.value
+    ) AS account_ids,
+    ARRAY(
+      SELECT item.value::text FROM unnest(receipt.transfer_ids) AS item(value) ORDER BY item.value
+    ) AS transfer_ids,
+    receipt.debit_micros::text AS debit_micros,
+    receipt.credit_micros::text AS credit_micros,
+    receipt.content_hash,
+    receipt.recorded_at
+  FROM accounting_receipts AS receipt
+  JOIN accounting_transactions AS transaction USING (broker_event_id)
+  CROSS JOIN latest_reconciliation
+  WHERE transaction.account_id = ${accountId}
+    AND transaction.occurred_at <= ${closingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
   ORDER BY receipt.broker_event_id COLLATE "C"
 `
 
@@ -1052,10 +1136,19 @@ export const readForwardPerformancePostgres = (
         const transactionRows = yield* transactionQuery(sql, accountId, authorityGenerationHash).pipe(
           Effect.flatMap(decodeTransactions),
         )
+        const ledgerTransactionRows = yield* ledgerTransactionQuery(sql, accountId, authorityGenerationHash).pipe(
+          Effect.flatMap(decodeTransactions),
+        )
         const receiptRows = yield* receiptQuery(sql, accountId, authorityGenerationHash).pipe(
           Effect.flatMap(decodeReceipts),
         )
+        const ledgerReceiptRows = yield* ledgerReceiptQuery(sql, accountId, authorityGenerationHash).pipe(
+          Effect.flatMap(decodeReceipts),
+        )
         const receipts = yield* Effect.forEach(receiptRows, (row) =>
+          decodeAccountingReceipt(accountingReceiptFromRow(row)),
+        )
+        const ledgerReceipts = yield* Effect.forEach(ledgerReceiptRows, (row) =>
           decodeAccountingReceipt(accountingReceiptFromRow(row)),
         )
         const cycleDecisionRows = yield* sql<Record<string, unknown>>`
@@ -1499,6 +1592,7 @@ export const readForwardPerformancePostgres = (
                 cashYieldMicros: cashYieldRow.cash_yield_micros,
               }
         const transactions = transactionRows.map(accountingTransactionFromRow)
+        const ledgerTransactions = ledgerTransactionRows.map(accountingTransactionFromRow)
         const transactionEvidence = transactionRows.map(
           (row): ForwardPerformanceTransactionEvidence => ({
             transactionId: row.transaction_id,
@@ -1536,10 +1630,12 @@ export const readForwardPerformancePostgres = (
             : { startingCapitalMicros: startingCapitalRows[0].starting_capital_micros }),
           ...(cashYieldEvidence === undefined ? {} : { cashYieldEvidence }),
           transactions,
+          ledgerTransactions,
           transactionEvidence,
           executionEvidence,
           marketVolumeRequests,
           receipts,
+          ledgerReceipts,
           durableExecutionBindings: durableExecutionRows.map((row) => ({
             accountId: row.account_id ?? '',
             accountReferenceHash: row.broker_identity_hash ?? '',

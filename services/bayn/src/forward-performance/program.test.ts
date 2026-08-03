@@ -887,6 +887,7 @@ describe('forward performance read program', () => {
             cashYieldMicros: '200',
           },
           transactions: [prepared.transaction],
+          ledgerTransactions: [prepared.transaction],
           transactionEvidence: [
             {
               transactionId: prepared.transaction.transactionId,
@@ -900,6 +901,7 @@ describe('forward performance read program', () => {
           executionEvidence: [],
           marketVolumeRequests: [marketVolumeRequest],
           receipts: [accountingReceipt],
+          ledgerReceipts: [accountingReceipt],
           durableExecutionBindings: [
             {
               accountId: identityResult.success.accountId,
