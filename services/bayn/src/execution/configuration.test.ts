@@ -4,7 +4,12 @@ import { Result } from 'effect'
 
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { BrokerAccess, CapitalAuthorityKind } from './authority'
-import { CapitalAuthoritySelection, resolveExecutionPolicy } from './configuration'
+import {
+  CapitalAuthoritySelection,
+  decodePaperActivationRequestResult,
+  makePaperActivationRequest,
+  resolveExecutionPolicy,
+} from './configuration'
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const authorityGenerationHash = '1'.repeat(64)
@@ -130,5 +135,40 @@ describe('execution policy configuration', () => {
       grantHash: liveCapitalGrantHash,
       authorityGenerationHash,
     })
+  })
+
+  test('decodes only a canonical immutable activation request', () => {
+    const material = {
+      schemaVersion: 'bayn.paper-activation-request.v1' as const,
+      qualification: {
+        runId: '4'.repeat(64),
+        lockId: '5'.repeat(64),
+        resultHash: '6'.repeat(64),
+        sourceRevision: 'a'.repeat(40),
+        imageRepository: 'ghcr.io/proompteng/bayn',
+        imageDigest: `sha256:${'7'.repeat(64)}`,
+      },
+      activation: {
+        sourceRevision: 'b'.repeat(40),
+        imageRepository: 'ghcr.io/proompteng/bayn',
+        imageDigest: `sha256:${'8'.repeat(64)}`,
+      },
+      strategy: {
+        name: 'risk-balanced-trend' as const,
+        behaviorHash: '9'.repeat(64),
+        parameterHash: 'a'.repeat(64),
+        parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4' as const,
+        protocolHash: 'b'.repeat(64),
+      },
+      limits: { maxOpenOrders: 0 as const, maxPositions: 0 as const },
+      cutoffAt: '2026-07-28T08:00:00.000Z',
+      expiresAt: '2026-07-28T09:30:00.000Z',
+    }
+    const request = Result.getOrThrow(makePaperActivationRequest(material))
+    expect(decodePaperActivationRequestResult(request)).toMatchObject({ _tag: 'Success', success: request })
+    expect(decodePaperActivationRequestResult({ ...request, requestHash: 'c'.repeat(64) })).toMatchObject({
+      _tag: 'Failure',
+    })
+    expect(decodePaperActivationRequestResult({ ...request, unexpected: true })).toMatchObject({ _tag: 'Failure' })
   })
 })

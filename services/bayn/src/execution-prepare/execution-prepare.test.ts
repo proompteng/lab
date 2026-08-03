@@ -2,26 +2,38 @@ import { describe, expect, test } from 'bun:test'
 
 import { Effect, Result } from 'effect'
 
+import { pinnedLock, pinnedQualification } from '../app-test-support'
 import { BrokerEnvironment, BrokerProvider } from '../broker/identity'
 import {
   CapitalGrantLifecycleStore,
   ExecutionStoreError,
   type CapitalGrantLifecycleStoreShape,
 } from '../db/execution-store'
+import { validateDerivedPaperGeneration } from '../db/capital-grant-algebra'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import { Authority, makeCapitalGrantGenerationResult, type CapitalGrantGeneration } from '../execution/contracts'
 import { WriterFence, type WriterFenceService } from '../execution/writer-fence'
 import { canonicalHashV1OrThrow, sha256 } from '../hash'
 import { renderExecutionPrepareFailure } from './failure'
 import type { ExecutionPrepareGenerationField } from './failure'
-import type { ExecutionPrepareRequest, ExecutionPrepareRuntimeBinding } from './model'
-import { prepareExecution } from './program'
+import {
+  PaperCandidateIneligibility,
+  type ExecutionCandidateDiscoveryReceipt,
+} from '../execution-candidate-discovery/model'
+import type { ExecutionPrepareProofPlanRequest, ExecutionPrepareRuntimeBinding } from './model'
+import {
+  buildExecutionPrepareProofPlanRequest,
+  prepareExecution,
+  prepareValidatedExecutionWithGeneration,
+} from './program'
 import { makeExecutionPrepareDiscoveryReceiptFixture } from './test-fixture'
 import {
   authenticateExecutionPrepareDiscovery,
   makeExecutionPrepareReceipt,
   validateExecutionPrepareInput,
 } from './validation'
+
+type ExecutionPrepareRequest = ExecutionPrepareProofPlanRequest
 
 const hash = (label: string): string => sha256(`execution-prepare:${label}`)
 const sourceRevision = 'a'.repeat(40)
@@ -58,14 +70,24 @@ const discoveryReceipt = makeExecutionPrepareDiscoveryReceiptFixture({
 })
 const discoveredCandidate = discoveryReceipt.candidateFacts.candidates[0]!
 
+const receiptWithCandidates = (
+  receipt: ExecutionCandidateDiscoveryReceipt,
+  candidates: readonly ExecutionCandidateDiscoveryReceipt['candidateFacts']['candidates'][number][],
+): ExecutionCandidateDiscoveryReceipt => {
+  const candidateFacts = { ...receipt.candidateFacts, candidates }
+  const candidateFactsHash = canonicalHashV1OrThrow(candidateFacts)
+  const material = { ...receipt, candidateFacts, candidateFactsHash }
+  const { observationReceiptHash: _observationReceiptHash, ...withoutObservationHash } = material
+  return { ...material, observationReceiptHash: canonicalHashV1OrThrow(withoutObservationHash) }
+}
+
 const proofPlan = {
   schemaVersion: 'bayn.execution-prepare-proof-plan.v1' as const,
-  candidate: {
+  candidateSet: {
     discoveryReceiptHash: discoveryReceipt.observationReceiptHash,
     immutableBindingHash: discoveryReceipt.immutableBindingHash,
     candidateFactsHash: discoveryReceipt.candidateFactsHash,
-    candidateOrdinal: discoveredCandidate.ordinal,
-    observedPlanIntentId: discoveredCandidate.observedPlanIntentId,
+    candidateCount: discoveryReceipt.candidateFacts.candidates.length,
     cycleId: discoveryReceipt.binding.cycle.cycleId,
     decisionHash: discoveryReceipt.binding.cycle.decisionHash,
   },
@@ -100,16 +122,13 @@ const request: ExecutionPrepareRequest = {
 }
 
 const requestForDiscoveryReceipt = (receipt: ExecutionPrepareRequest['discoveryReceipt']): ExecutionPrepareRequest => {
-  const candidate = receipt.candidateFacts.candidates[0]
-  if (candidate === undefined) throw new Error('execution prepare test fixture requires one candidate')
   const changedProofPlan = {
     ...proofPlan,
-    candidate: {
+    candidateSet: {
       discoveryReceiptHash: receipt.observationReceiptHash,
       immutableBindingHash: receipt.immutableBindingHash,
       candidateFactsHash: receipt.candidateFactsHash,
-      candidateOrdinal: candidate.ordinal,
-      observedPlanIntentId: candidate.observedPlanIntentId,
+      candidateCount: receipt.candidateFacts.candidates.length,
       cycleId: receipt.binding.cycle.cycleId,
       decisionHash: receipt.binding.cycle.decisionHash,
     },
@@ -177,6 +196,184 @@ const validated = () =>
   )
 
 describe('EXECUTION_PREPARE pure validation', () => {
+  test('builds the existing proof plan from the terminal binding, captured receipt, and durable qualification', () => {
+    const durableQualification = {
+      state: 'TERMINAL' as const,
+      lock: pinnedLock,
+      // The constructor consumes the store's already-audited terminal. The
+      // store integration tests cover the canonical result hash and verdict;
+      // this unit test supplies the qualified branch to exercise projection.
+      result: { ...pinnedQualification, verdict: 'QUALIFIED' as const },
+    }
+    const riskPolicyHash = pinnedLock.policies.execution.contentHash
+    const durableDiscoveryReceipt = makeExecutionPrepareDiscoveryReceiptFixture({
+      sourceRevision,
+      imageRepository,
+      imageDigest,
+      strategy,
+      strategyProtocolHash,
+      qualificationRunId: pinnedQualification.runId,
+      accountId,
+      authorityGenerationHash,
+      policyHash: riskPolicyHash,
+      reconciliationId,
+      reconciliationContentHash,
+    })
+    const terminalBinding = {
+      runId: pinnedQualification.runId,
+      lockId: pinnedLock.lockId,
+      resultHash: pinnedQualification.resultHash,
+      verdict: 'QUALIFIED' as const,
+      sourceRevision: pinnedLock.sourceRevision,
+      imageRepository: pinnedLock.image.repository,
+      imageDigest: pinnedLock.image.digest,
+      candidateOrdinal: 21,
+    }
+    const runtimeBinding: ExecutionPrepareRuntimeBinding = {
+      ...runtime,
+      qualificationRunId: pinnedQualification.runId,
+      riskPolicyHash,
+    }
+    const requestInput = {
+      schemaVersion: 'bayn.execution-prepare-request.v1' as const,
+      qualification: terminalBinding,
+      discoveryReceipt: durableDiscoveryReceipt,
+    }
+
+    const prepared = Result.getOrThrow(
+      buildExecutionPrepareProofPlanRequest({
+        request: requestInput,
+        qualification: durableQualification,
+        runtime: runtimeBinding,
+      }),
+    )
+
+    expect(prepared.proofPlan.binding).toMatchObject({
+      qualificationRunId: pinnedQualification.runId,
+      qualificationLockId: pinnedLock.lockId,
+      qualificationResultHash: pinnedQualification.resultHash,
+      protocolHash: pinnedLock.protocolHash,
+      qualificationExecutionPolicyHash: riskPolicyHash,
+      qualificationSourceRevision: pinnedLock.sourceRevision,
+      qualificationImageRepository: pinnedLock.image.repository,
+      qualificationImageDigest: pinnedLock.image.digest,
+    })
+    expect(prepared.proofPlanHash).toBe(canonicalHashV1OrThrow(prepared.proofPlan))
+    expect(
+      buildExecutionPrepareProofPlanRequest({
+        request: { ...requestInput, qualification: { ...terminalBinding, resultHash: hash('tampered-result') } },
+        qualification: durableQualification,
+        runtime: runtimeBinding,
+      }),
+    ).toMatchObject({ _tag: 'Failure', failure: { _tag: 'ExecutionPrepareRuntimeMismatch' } })
+  })
+
+  test('binds the complete execution candidate set independently of qualification ordinal', () => {
+    const pinnedDiscoveryReceipt = makeExecutionPrepareDiscoveryReceiptFixture({
+      sourceRevision,
+      imageRepository,
+      imageDigest,
+      strategy,
+      strategyProtocolHash,
+      qualificationRunId: pinnedQualification.runId,
+      accountId,
+      authorityGenerationHash,
+      policyHash: pinnedLock.policies.execution.contentHash,
+      reconciliationId,
+      reconciliationContentHash,
+    })
+    const pinnedCandidate = pinnedDiscoveryReceipt.candidateFacts.candidates[0]
+    if (pinnedCandidate === undefined) throw new Error('execution prepare test fixture requires one candidate')
+    const secondCandidate = {
+      ...pinnedCandidate,
+      ordinal: 1,
+      observedPlanIntentId: hash('second-execution'),
+      symbol: 'QQQ' as const,
+      asset: {
+        ...pinnedCandidate.asset,
+        requestedSymbol: 'QQQ' as const,
+        symbol: 'QQQ' as const,
+        assetId: 'fixture-qqq-asset',
+      },
+    }
+    const executionCandidateSet = receiptWithCandidates(pinnedDiscoveryReceipt, [pinnedCandidate, secondCandidate])
+    const terminalBinding = {
+      runId: pinnedQualification.runId,
+      lockId: pinnedLock.lockId,
+      resultHash: pinnedQualification.resultHash,
+      verdict: 'QUALIFIED' as const,
+      sourceRevision: pinnedLock.sourceRevision,
+      imageRepository: pinnedLock.image.repository,
+      imageDigest: pinnedLock.image.digest,
+      candidateOrdinal: 21,
+    }
+    const preparedRuntime = {
+      ...runtime,
+      qualificationRunId: pinnedQualification.runId,
+      riskPolicyHash: pinnedLock.policies.execution.contentHash,
+    }
+    const build = (discoveryReceipt: ExecutionCandidateDiscoveryReceipt) =>
+      buildExecutionPrepareProofPlanRequest({
+        request: {
+          schemaVersion: 'bayn.execution-prepare-request.v1',
+          qualification: terminalBinding,
+          discoveryReceipt,
+        },
+        qualification: {
+          state: 'TERMINAL' as const,
+          lock: pinnedLock,
+          result: { ...pinnedQualification, verdict: 'QUALIFIED' as const },
+        },
+        runtime: preparedRuntime,
+      })
+
+    const prepared = Result.getOrThrow(build(executionCandidateSet))
+    expect(prepared.proofPlan.candidateSet).toMatchObject({
+      candidateCount: 2,
+      candidateFactsHash: executionCandidateSet.candidateFactsHash,
+    })
+    expect(prepared.proofPlanHash).toBe(canonicalHashV1OrThrow(prepared.proofPlan))
+
+    const empty = receiptWithCandidates(pinnedDiscoveryReceipt, [])
+    expect(build(empty)).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExecutionPrepareDiscoveryMismatch', field: 'candidateSet' },
+    })
+
+    const ineligibleCandidate = {
+      ...pinnedCandidate,
+      ordinal: 0,
+      observedPlanIntentId: hash('ineligible-execution'),
+      assetEligibility: { eligible: false, reasons: [PaperCandidateIneligibility.NotTradable] },
+      fractionalTradingEligible: false,
+    }
+    expect(build(receiptWithCandidates(pinnedDiscoveryReceipt, [ineligibleCandidate, secondCandidate]))).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExecutionPrepareDiscoveryMismatch', field: 'candidateSetEligibility' },
+    })
+
+    const reordered = receiptWithCandidates(pinnedDiscoveryReceipt, [secondCandidate, pinnedCandidate])
+    const prevalidated = Result.getOrThrow(validateExecutionPrepareInput(prepared, preparedRuntime))
+    expect(authenticateExecutionPrepareDiscovery(prevalidated, executionCandidateSet)).toMatchObject({
+      _tag: 'Success',
+    })
+    expect(authenticateExecutionPrepareDiscovery(prevalidated, reordered)).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExecutionPrepareDiscoveryMismatch', field: 'candidateFactsHash' },
+    })
+
+    const extraCandidate = { ...secondCandidate, ordinal: 2, observedPlanIntentId: hash('extra-execution') }
+    expect(
+      authenticateExecutionPrepareDiscovery(
+        prevalidated,
+        receiptWithCandidates(pinnedDiscoveryReceipt, [pinnedCandidate, secondCandidate, extraCandidate]),
+      ),
+    ).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ExecutionPrepareDiscoveryMismatch', field: 'candidateFactsHash' },
+    })
+  })
+
   test('derives the exact proof binding and deterministic redacted non-dispatchable receipt', () => {
     const input = validated()
     const first = Result.getOrThrow(makeExecutionPrepareReceipt(input, generation()))
@@ -225,8 +422,10 @@ describe('EXECUTION_PREPARE pure validation', () => {
   })
 
   test('rejects every discovery-derived proof field and tampered receipt material', () => {
-    const withCandidate = (candidate: ExecutionPrepareRequest['proofPlan']['candidate']): ExecutionPrepareRequest => {
-      const changedProofPlan = { ...proofPlan, candidate }
+    const withCandidateSet = (
+      candidateSet: ExecutionPrepareRequest['proofPlan']['candidateSet'],
+    ): ExecutionPrepareRequest => {
+      const changedProofPlan = { ...proofPlan, candidateSet }
       return { ...request, proofPlan: changedProofPlan, proofPlanHash: canonicalHashV1OrThrow(changedProofPlan) }
     }
     const withBinding = (binding: ExecutionPrepareRequest['proofPlan']['binding']): ExecutionPrepareRequest => {
@@ -235,25 +434,21 @@ describe('EXECUTION_PREPARE pure validation', () => {
     }
     const cases = [
       {
-        request: withCandidate({ ...proofPlan.candidate, discoveryReceiptHash: hash('foreign-receipt') }),
+        request: withCandidateSet({ ...proofPlan.candidateSet, discoveryReceiptHash: hash('foreign-receipt') }),
         field: 'observationReceiptHash',
       },
       {
-        request: withCandidate({ ...proofPlan.candidate, immutableBindingHash: hash('foreign-binding') }),
+        request: withCandidateSet({ ...proofPlan.candidateSet, immutableBindingHash: hash('foreign-binding') }),
         field: 'immutableBindingHash',
       },
       {
-        request: withCandidate({ ...proofPlan.candidate, candidateFactsHash: hash('foreign-candidate-facts') }),
+        request: withCandidateSet({ ...proofPlan.candidateSet, candidateFactsHash: hash('foreign-candidate-facts') }),
         field: 'candidateFactsHash',
       },
-      { request: withCandidate({ ...proofPlan.candidate, candidateOrdinal: 1 }), field: 'candidateOrdinal' },
+      { request: withCandidateSet({ ...proofPlan.candidateSet, candidateCount: 2 }), field: 'candidateSetCount' },
+      { request: withCandidateSet({ ...proofPlan.candidateSet, cycleId: hash('foreign-cycle') }), field: 'cycleId' },
       {
-        request: withCandidate({ ...proofPlan.candidate, observedPlanIntentId: hash('foreign-intent') }),
-        field: 'observedPlanIntentId',
-      },
-      { request: withCandidate({ ...proofPlan.candidate, cycleId: hash('foreign-cycle') }), field: 'cycleId' },
-      {
-        request: withCandidate({ ...proofPlan.candidate, decisionHash: hash('foreign-decision') }),
+        request: withCandidateSet({ ...proofPlan.candidateSet, decisionHash: hash('foreign-decision') }),
         field: 'decisionHash',
       },
       {
@@ -442,13 +637,13 @@ describe('EXECUTION_PREPARE pure validation', () => {
 
     expect(validateExecutionPrepareInput(requestForDiscoveryReceipt(ineligibleReceipt), runtime)).toMatchObject({
       _tag: 'Failure',
-      failure: { _tag: 'ExecutionPrepareDiscoveryMismatch', field: 'assetEligibility' },
+      failure: { _tag: 'ExecutionPrepareDiscoveryMismatch', field: 'candidateSetEligibility' },
     })
     expect(
       validateExecutionPrepareInput(requestForDiscoveryReceipt(fractionalIneligibleReceipt), runtime),
     ).toMatchObject({
       _tag: 'Failure',
-      failure: { _tag: 'ExecutionPrepareDiscoveryMismatch', field: 'fractionalTradingEligibility' },
+      failure: { _tag: 'ExecutionPrepareDiscoveryMismatch', field: 'candidateSetEligibility' },
     })
     expect(
       validateExecutionPrepareInput(requestForDiscoveryReceipt(integerWithoutFractionalEligibility), runtime),
@@ -549,6 +744,29 @@ describe('EXECUTION_PREPARE program boundary', () => {
     expect(receipt.dispatchable).toBe(false)
     expect(prepareCalls).toBe(1)
     expect(activateCalls).toBe(0)
+  })
+
+  test('carries the store-derived v2 generation through the PREPARE output and runtime binding', async () => {
+    const preparedGeneration = generation()
+    const lifecycle: CapitalGrantLifecycleStoreShape = {
+      prepareCapitalGrant: () => Effect.succeed(preparedGeneration),
+      activateCapitalGrant: () => Effect.die(new Error('activation must remain unreachable')),
+    }
+    const output = await Effect.runPromise(
+      prepareValidatedExecutionWithGeneration(validated()).pipe(
+        Effect.provideService(CapitalGrantLifecycleStore, lifecycle),
+        Effect.provideService(WriterFence, writerFence),
+      ),
+    )
+
+    expect(output.generation.generationHash).toBe(preparedGeneration.generationHash)
+    expect(
+      validateDerivedPaperGeneration(output.generation, {
+        accountId,
+        configuredGenerationHash: preparedGeneration.generationHash,
+        qualificationRunId,
+      }),
+    ).toMatchObject({ _tag: 'Success' })
   })
 
   test('does not call the store when self-hashed discovery material lacks the verified anchor', async () => {

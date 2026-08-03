@@ -297,6 +297,11 @@ export const statusFacts = (
 ) => {
   const broker = publicBrokerState(state)
   const dependencies = publicDependencies(state)
+  const paperActivationRealized = state.paperActivation?._tag === 'Realized'
+  const effectiveBrokerAccess = paperActivationRealized ? BrokerAccess.Mutation : execution.brokerAccess
+  const effectiveCapitalAuthority = paperActivationRealized
+    ? CapitalAuthorityKind.Sandbox
+    : execution.capitalAuthority._tag
   return {
     service: 'bayn',
     operational: {
@@ -338,11 +343,12 @@ export const statusFacts = (
     },
     cycle: publicCycleState(state),
     autonomousCycleLoop: publicAutonomousCycleLoop(state),
+    paperActivation: state.paperActivation ?? { _tag: 'NotConfigured' },
     broker,
     authority: {
       brokerEnvironment: execution.brokerIdentity?.environment ?? null,
-      brokerAccess: execution.brokerAccess,
-      capitalAuthority: execution.capitalAuthority._tag,
+      brokerAccess: effectiveBrokerAccess,
+      capitalAuthority: effectiveCapitalAuthority,
       durable:
         state.cycle.condition === CycleOperationsCondition.Unknown
           ? {
@@ -367,8 +373,8 @@ export const statusFacts = (
                 reason: state.cycle.authority.reason,
                 updatedAt: state.cycle.authority.updatedAt,
               },
-      brokerOrders: execution.brokerAccess === BrokerAccess.Mutation,
-      capitalPromotion: execution.capitalAuthority._tag !== CapitalAuthorityKind.None,
+      brokerOrders: effectiveBrokerAccess === BrokerAccess.Mutation,
+      capitalPromotion: effectiveCapitalAuthority !== CapitalAuthorityKind.None,
     },
     build: {
       sourceRevision: provenance.sourceRevision,
@@ -500,6 +506,10 @@ export const renderPrometheusMetrics = (
     cycleObservationAvailable === false ? 'unknown' : (state.cycle.last?.terminalReason?.toLowerCase() ?? 'none')
   const loopResults = ['unknown', 'success', 'failure'] as const
   const loopResult = state.autonomousCycleLoop.lastPass?.result.toLowerCase() ?? 'unknown'
+  const paperActivationRealized = state.paperActivation?._tag === 'Realized'
+  const effectiveBrokerMutation = paperActivationRealized || config.execution.brokerAccess === BrokerAccess.Mutation
+  const effectiveCapitalPromotion =
+    paperActivationRealized || config.execution.capitalAuthority._tag !== CapitalAuthorityKind.None
   const cadence = autonomousCycleCadenceObservation(state)
   const cadenceConditions = Object.values(MonthEndCadenceCondition)
   const cadenceReasons = Object.values(MonthEndCadenceReason)
@@ -512,8 +522,9 @@ export const renderPrometheusMetrics = (
     state.autonomousCycleLoop.lastPass === null || state.health.checkedAt === null
       ? undefined
       : Math.max(0, Date.parse(state.health.checkedAt) - Date.parse(state.autonomousCycleLoop.lastPass.observedAt))
-  const effectiveAuthority =
-    state.cycle.authority === null
+  const effectiveAuthority = paperActivationRealized
+    ? 'paper'
+    : state.cycle.authority === null
       ? 'unknown'
       : state.cycle.authority.effective === Authority.Paper
         ? 'paper'
@@ -645,13 +656,21 @@ export const renderPrometheusMetrics = (
     `bayn_reconciliation_stale_threshold_seconds ${prometheusNumber(config.reconciliationStaleThresholdMs / 1_000)}`,
     '# HELP bayn_broker_access Configured broker access capability.',
     '# TYPE bayn_broker_access gauge',
-    `bayn_broker_access{access="read-only"} ${config.execution.brokerAccess === BrokerAccess.ReadOnly ? 1 : 0}`,
-    `bayn_broker_access{access="mutation"} ${config.execution.brokerAccess === BrokerAccess.Mutation ? 1 : 0}`,
+    `bayn_broker_access{access="read-only"} ${effectiveBrokerMutation ? 0 : 1}`,
+    `bayn_broker_access{access="mutation"} ${effectiveBrokerMutation ? 1 : 0}`,
     '# HELP bayn_capital_authority Configured capital authority.',
     '# TYPE bayn_capital_authority gauge',
     ...Object.values(CapitalAuthorityKind).map(
       (authority) =>
-        `bayn_capital_authority{authority="${authority}"} ${config.execution.capitalAuthority._tag === authority ? 1 : 0}`,
+        `bayn_capital_authority{authority="${authority}"} ${
+          paperActivationRealized
+            ? authority === CapitalAuthorityKind.Sandbox
+              ? 1
+              : 0
+            : config.execution.capitalAuthority._tag === authority
+              ? 1
+              : 0
+        }`,
     ),
     ...(cycleObservationAvailable
       ? [
@@ -680,10 +699,10 @@ export const renderPrometheusMetrics = (
     `bayn_broker_account_bound ${booleanMetric(publicBroker.accountBound)}`,
     '# HELP bayn_broker_orders_enabled Whether broker mutation dispatch is enabled in this runtime.',
     '# TYPE bayn_broker_orders_enabled gauge',
-    `bayn_broker_orders_enabled ${config.execution.brokerAccess === BrokerAccess.Mutation ? 1 : 0}`,
+    `bayn_broker_orders_enabled ${effectiveBrokerMutation ? 1 : 0}`,
     '# HELP bayn_capital_promotion_enabled Whether capital promotion is enabled in this runtime.',
     '# TYPE bayn_capital_promotion_enabled gauge',
-    `bayn_capital_promotion_enabled ${config.execution.capitalAuthority._tag === CapitalAuthorityKind.None ? 0 : 1}`,
+    `bayn_capital_promotion_enabled ${effectiveCapitalPromotion ? 1 : 0}`,
     '# HELP bayn_build_info Verified runtime build provenance.',
     '# TYPE bayn_build_info gauge',
     `bayn_build_info{source_revision="${prometheusLabel(provenance.sourceRevision)}",image_digest="${prometheusLabel(provenance.image.digest)}",verification="${prometheusLabel(provenanceVerification)}"} 1`,

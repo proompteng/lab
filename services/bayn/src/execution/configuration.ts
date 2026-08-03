@@ -1,7 +1,16 @@
-import { Result } from 'effect'
+import { pipe, Result, Schema } from 'effect'
 
 import type { BrokerIdentity } from '../broker/identity'
 import { BrokerEnvironment } from '../broker/identity'
+import { canonicalHashV1Result } from '../hash'
+import {
+  GitSourceRevisionSchema,
+  ImageDigestSchema,
+  ImageRepositorySchema,
+  Sha256Schema,
+  UtcInstantSchema,
+  strictParseOptions,
+} from '../schemas'
 import { BrokerAccess, CapitalAuthorityKind } from './authority'
 
 export enum CapitalAuthoritySelection {
@@ -24,6 +33,78 @@ export interface LiveCapitalGrantRequest {
   readonly grantHash: string
   readonly authorityGenerationHash: string
 }
+
+export const paperActivationRequestSchemaVersion = 'bayn.paper-activation-request.v1' as const
+
+const PaperActivationStrategySchema = Schema.Struct({
+  name: Schema.Literal('risk-balanced-trend'),
+  behaviorHash: Sha256Schema,
+  parameterHash: Sha256Schema,
+  parameterSchemaVersion: Schema.Literal('bayn.risk-balanced-trend.protocol.v4'),
+  protocolHash: Sha256Schema,
+})
+
+const PaperActivationRevisionBindingSchema = Schema.Struct({
+  sourceRevision: GitSourceRevisionSchema,
+  imageRepository: ImageRepositorySchema,
+  imageDigest: ImageDigestSchema,
+})
+
+const PaperActivationRequestMaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(paperActivationRequestSchemaVersion),
+  qualification: Schema.Struct({
+    runId: Sha256Schema,
+    lockId: Sha256Schema,
+    resultHash: Sha256Schema,
+    sourceRevision: GitSourceRevisionSchema,
+    imageRepository: ImageRepositorySchema,
+    imageDigest: ImageDigestSchema,
+  }),
+  activation: PaperActivationRevisionBindingSchema,
+  strategy: PaperActivationStrategySchema,
+  limits: Schema.Struct({
+    maxOpenOrders: Schema.Literal(0),
+    maxPositions: Schema.Literal(0),
+  }),
+  cutoffAt: UtcInstantSchema,
+  expiresAt: UtcInstantSchema,
+})
+
+export const PaperActivationRequestSchema = Schema.Struct({
+  ...PaperActivationRequestMaterialSchema.fields,
+  requestHash: Sha256Schema,
+}).check(
+  Schema.makeFilter((request: typeof PaperActivationRequestMaterialSchema.Type & { readonly requestHash: string }) => {
+    if (request.expiresAt <= request.cutoffAt) return false
+    const expected = canonicalHashV1Result(requestWithoutHash(request))
+    return Result.isSuccess(expected) && request.requestHash === expected.success
+  }),
+)
+
+export type PaperActivationRequest = typeof PaperActivationRequestSchema.Type
+
+const requestWithoutHash = (
+  request:
+    | PaperActivationRequest
+    | (typeof PaperActivationRequestMaterialSchema.Type & { readonly requestHash: string }),
+) => {
+  const { requestHash: _requestHash, ...material } = request
+  return material
+}
+
+export const makePaperActivationRequest = (
+  material: typeof PaperActivationRequestMaterialSchema.Type,
+): Result.Result<PaperActivationRequest, 'PaperActivationRequestCanonicalizationFailed'> =>
+  pipe(
+    canonicalHashV1Result(material),
+    Result.mapError(() => 'PaperActivationRequestCanonicalizationFailed' as const),
+    Result.flatMap((requestHash) => Result.succeed({ ...material, requestHash } as PaperActivationRequest)),
+  )
+
+export const decodePaperActivationRequestResult = Schema.decodeUnknownResult(
+  PaperActivationRequestSchema,
+  strictParseOptions,
+)
 
 export type CapitalAuthorityRequest = NoCapitalRequest | SandboxCapitalRequest | LiveCapitalGrantRequest
 

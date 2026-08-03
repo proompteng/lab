@@ -8,11 +8,11 @@ import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import { canonicalHashV1Result } from '../hash'
 import {
   decodeExecutionPrepareReceiptResult,
-  decodeExecutionPrepareRequestResult,
+  decodeExecutionPrepareProofPlanRequestResult,
   type ExecutionPrepareProofPlan,
+  type ExecutionPrepareProofPlanRequest,
   ExecutionPrepareRuntimeBindingSchema,
   type ExecutionPrepareReceipt,
-  type ExecutionPrepareRequest,
   type ExecutionPrepareRuntimeBinding,
 } from './model'
 import type {
@@ -23,7 +23,7 @@ import type {
 } from './failure'
 
 export interface PrevalidatedExecutionPrepareInput {
-  readonly request: ExecutionPrepareRequest
+  readonly request: ExecutionPrepareProofPlanRequest
   readonly runtime: ExecutionPrepareRuntimeBinding
 }
 
@@ -80,19 +80,6 @@ const validateDiscoveryReceiptHashes = (
   return Result.succeed(undefined)
 }
 
-const selectedCandidate = (
-  receipt: ExecutionCandidateDiscoveryReceipt,
-  ordinal: number,
-): Result.Result<
-  ExecutionCandidateDiscoveryReceipt['candidateFacts']['candidates'][number],
-  ExecutionPrepareFailure
-> => {
-  const candidate = receipt.candidateFacts.candidates[ordinal]
-  return candidate === undefined || candidate.ordinal !== ordinal
-    ? discoveryMismatch('candidateOrdinal')
-    : Result.succeed(candidate)
-}
-
 const validateReceiptBinding = (
   receipt: ExecutionCandidateDiscoveryReceipt,
   binding: ExecutionPrepareProofPlan['binding'],
@@ -130,13 +117,33 @@ const validateReceiptBinding = (
     : discoveryMismatch('reconciliationContentHash')
 }
 
-const validateCandidateClaim = (
+const validateCandidateEligibility = (
+  candidate: ExecutionCandidateDiscoveryReceipt['candidateFacts']['candidates'][number],
+): Result.Result<void, ExecutionPrepareFailure> => {
+  if (!candidate.assetEligibility.eligible) return discoveryMismatch('candidateSetEligibility')
+  const fractionalQuantity = !candidate.observedPlannedQuantityMicros.padStart(7, '0').endsWith('000000')
+  return fractionalQuantity && !candidate.fractionalTradingEligible
+    ? discoveryMismatch('candidateSetEligibility')
+    : Result.succeed(undefined)
+}
+
+export const validateExecutionCandidateSet = (
   receipt: ExecutionCandidateDiscoveryReceipt,
-  candidateBinding: ExecutionPrepareProofPlan['candidate'],
+): Result.Result<void, ExecutionPrepareFailure> => {
+  if (receipt.candidateFacts.candidates.length === 0) return discoveryMismatch('candidateSet')
+  for (const candidate of receipt.candidateFacts.candidates) {
+    const eligibility = validateCandidateEligibility(candidate)
+    if (Result.isFailure(eligibility)) return Result.fail(eligibility.failure)
+  }
+  return Result.succeed(undefined)
+}
+
+const validateCandidateSetClaim = (
+  receipt: ExecutionCandidateDiscoveryReceipt,
+  candidateBinding: ExecutionPrepareProofPlan['candidateSet'],
   requireObservationReceiptHash: boolean,
 ): Result.Result<void, ExecutionPrepareFailure> => {
-  const candidate = selectedCandidate(receipt, candidateBinding.candidateOrdinal)
-  if (Result.isFailure(candidate)) return Result.fail(candidate.failure)
+  if (receipt.candidateFacts.candidates.length === 0) return discoveryMismatch('candidateSet')
   if (requireObservationReceiptHash && candidateBinding.discoveryReceiptHash !== receipt.observationReceiptHash) {
     return discoveryMismatch('observationReceiptHash')
   }
@@ -146,41 +153,28 @@ const validateCandidateClaim = (
   if (candidateBinding.candidateFactsHash !== receipt.candidateFactsHash) {
     return discoveryMismatch('candidateFactsHash')
   }
-  if (candidateBinding.observedPlanIntentId !== candidate.success.observedPlanIntentId) {
-    return discoveryMismatch('observedPlanIntentId')
-  }
+  if (candidateBinding.candidateCount !== receipt.candidateFacts.candidates.length)
+    return discoveryMismatch('candidateSetCount')
   if (candidateBinding.cycleId !== receipt.binding.cycle.cycleId) return discoveryMismatch('cycleId')
   if (candidateBinding.decisionHash !== receipt.binding.cycle.decisionHash) return discoveryMismatch('decisionHash')
 
   return Result.succeed(undefined)
 }
 
-const validateCandidateEligibility = (
-  candidate: ExecutionCandidateDiscoveryReceipt['candidateFacts']['candidates'][number],
-): Result.Result<void, ExecutionPrepareFailure> => {
-  if (!candidate.assetEligibility.eligible) return discoveryMismatch('assetEligibility')
-  const fractionalQuantity = !candidate.observedPlannedQuantityMicros.padStart(7, '0').endsWith('000000')
-  return fractionalQuantity && !candidate.fractionalTradingEligible
-    ? discoveryMismatch('fractionalTradingEligibility')
-    : Result.succeed(undefined)
-}
-
 const authenticateDiscoveryReceipt = (
-  request: ExecutionPrepareRequest,
+  request: ExecutionPrepareProofPlanRequest,
 ): Result.Result<void, ExecutionPrepareFailure> => {
   const hashes = validateDiscoveryReceiptHashes(request.discoveryReceipt)
   if (Result.isFailure(hashes)) return Result.fail(hashes.failure)
-  const candidate = validateCandidateClaim(request.discoveryReceipt, request.proofPlan.candidate, true)
-  if (Result.isFailure(candidate)) return Result.fail(candidate.failure)
+  const candidateSet = validateCandidateSetClaim(request.discoveryReceipt, request.proofPlan.candidateSet, true)
+  if (Result.isFailure(candidateSet)) return Result.fail(candidateSet.failure)
   const binding = validateReceiptBinding(request.discoveryReceipt, request.proofPlan.binding)
   if (Result.isFailure(binding)) return Result.fail(binding.failure)
-  const selected = selectedCandidate(request.discoveryReceipt, request.proofPlan.candidate.candidateOrdinal)
-  if (Result.isFailure(selected)) return Result.fail(selected.failure)
-  return validateCandidateEligibility(selected.success)
+  return validateExecutionCandidateSet(request.discoveryReceipt)
 }
 
 const validateRuntimeAgainstProof = (
-  request: ExecutionPrepareRequest,
+  request: ExecutionPrepareProofPlanRequest,
   runtime: ExecutionPrepareRuntimeBinding,
 ): Result.Result<void, ExecutionPrepareFailure> => {
   const binding = request.proofPlan.binding
@@ -213,7 +207,7 @@ export const validateExecutionPrepareInput = (
   candidate: unknown,
   runtimeCandidate: unknown,
 ): Result.Result<PrevalidatedExecutionPrepareInput, ExecutionPrepareFailure> => {
-  const decodedRequest = decodeExecutionPrepareRequestResult(candidate)
+  const decodedRequest = decodeExecutionPrepareProofPlanRequestResult(candidate)
   if (Result.isFailure(decodedRequest)) {
     return fail({ _tag: 'ExecutionPrepareRequestInvalid', cause: decodedRequest.failure })
   }
@@ -253,12 +247,10 @@ export const authenticateExecutionPrepareDiscovery = (
   }
   const binding = validateReceiptBinding(trustedReceipt, input.request.proofPlan.binding)
   if (Result.isFailure(binding)) return Result.fail(binding.failure)
-  const requestedCandidate = input.request.proofPlan.candidate
-  const candidateClaim = validateCandidateClaim(trustedReceipt, requestedCandidate, false)
+  const requestedCandidateSet = input.request.proofPlan.candidateSet
+  const candidateClaim = validateCandidateSetClaim(trustedReceipt, requestedCandidateSet, false)
   if (Result.isFailure(candidateClaim)) return Result.fail(candidateClaim.failure)
-  const candidate = selectedCandidate(trustedReceipt, requestedCandidate.candidateOrdinal)
-  if (Result.isFailure(candidate)) return Result.fail(candidate.failure)
-  const eligibility = validateCandidateEligibility(candidate.success)
+  const eligibility = validateExecutionCandidateSet(trustedReceipt)
   if (Result.isFailure(eligibility)) return Result.fail(eligibility.failure)
   return Result.succeed({
     ...input,
@@ -345,7 +337,7 @@ export const makeExecutionPrepareReceipt = (
       environment: BrokerEnvironment.Sandbox,
       access: BrokerAccess.ReadOnly,
     },
-    candidate: input.proofPlan.candidate,
+    candidateSet: input.proofPlan.candidateSet,
     qualification: {
       runId: generation.qualificationRunId,
       lockId: generation.qualificationLockId,

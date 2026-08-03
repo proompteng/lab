@@ -79,12 +79,26 @@ export interface AutonomousCycleLoopStatus {
   readonly lastPass: AutonomousCyclePassObservation | null
 }
 
+export type PaperActivationRuntimeState =
+  | { readonly _tag: 'NotConfigured' }
+  | {
+      readonly _tag: 'Pending'
+      readonly requestHash: string | null
+      readonly reason: 'REQUEST_INVALID' | 'STARTUP_EVIDENCE_UNAVAILABLE' | 'PREPARATION_FAILED' | 'REQUEST_EXPIRED'
+    }
+  | {
+      readonly _tag: 'Realized'
+      readonly requestHash: string
+      readonly generationHash: string
+    }
+
 export interface RuntimeState {
   readonly status: 'STARTING' | 'READY' | 'DEGRADED' | 'FAILED'
   readonly evidence: RuntimeEvidence | null
   readonly health: RuntimeHealth
   readonly cycle: CycleOperationsStatus
   readonly autonomousCycleLoop: AutonomousCycleLoopStatus
+  readonly paperActivation?: PaperActivationRuntimeState
   readonly broker: BrokerStatus | null
   readonly error: string | null
 }
@@ -112,6 +126,7 @@ export const initialState = (broker?: BrokerConfiguration, autonomousCycleLoopCo
     startedAt: null,
     lastPass: null,
   },
+  paperActivation: { _tag: 'NotConfigured' },
   broker:
     broker === undefined
       ? null

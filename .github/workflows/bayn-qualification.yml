@@ -165,20 +165,36 @@ jobs:
             and (.terminal.runId | test("^[0-9a-f]{64}$"))
             and (.terminal.lockId | test("^[0-9a-f]{64}$"))
             and (.terminal.resultHash | test("^[0-9a-f]{64}$"))
+            and (.terminal.verdict == "QUALIFIED" or .terminal.verdict == "REJECTED")
             and (.audit.schemaVersion == "bayn.qualification-audit.v2")
             and (.audit.status == "PASS")
             and (.audit.runId == .terminal.runId)
             and (.audit.evidence.lockId == .terminal.lockId)
             and (.audit.evidence.resultHash == .terminal.resultHash)
+            and (.audit.evidence.artifactCount == .terminal.persistence.artifactCount)
+            and (.audit.evidence.eventCount == .terminal.persistence.eventCount)
+            and (.audit.evidence.gateCount == .terminal.persistence.gateCount)
+            and ([.audit.policies.documents[] | select(.name == "execution")] | length == 1)
+            and ((.terminal.verdict == "QUALIFIED" and .audit.reference.economicStatus == "PASS") or .terminal.verdict == "REJECTED")
             and (.evidenceHash | test("^[0-9a-f]{64}$"))
           ' "$terminal" >/dev/null
           echo "terminal=${terminal}" >> "$GITHUB_OUTPUT"
+          echo "verdict=$(jq -r '.terminal.verdict' "$terminal")" >> "$GITHUB_OUTPUT"
 
       - name: Upload immutable terminal qualification evidence
         if: steps.lifecycle.outputs.eligible == 'true' && steps.qualify.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: bayn-qualification-terminal-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ steps.qualify.outputs.terminal }}
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload exactly one qualified activation terminal
+        if: steps.lifecycle.outputs.eligible == 'true' && steps.qualify.outcome == 'success' && steps.qualify.outputs.verdict == 'QUALIFIED'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bayn-paper-activation-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.qualify.outputs.terminal }}
           if-no-files-found: error
           retention-days: 90

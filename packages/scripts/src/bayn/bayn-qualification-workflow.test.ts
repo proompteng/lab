@@ -50,6 +50,8 @@ describe('Bayn qualification workflow contract', () => {
     const toolchain = stepIndex('Set up the local image-build toolchain')
     const build = stepIndex('Build and load the exact checked-out source image locally')
     const qualification = stepIndex('Run exactly one isolated read-only qualification')
+    const terminalUpload = stepIndex('Upload immutable terminal qualification evidence')
+    const activationUpload = stepIndex('Upload exactly one qualified activation terminal')
 
     expect(lifecycleDependencies).toBeGreaterThanOrEqual(0)
     expect(lifecycleDependencies).toBeLessThan(lifecycle)
@@ -68,10 +70,15 @@ describe('Bayn qualification workflow contract', () => {
       'Build and load the exact checked-out source image locally',
       'Run exactly one isolated read-only qualification',
       'Upload immutable terminal qualification evidence',
+      'Upload exactly one qualified activation terminal',
       'Summarize terminal qualification evidence',
     ]) {
       expect(step(name).if).toContain("steps.lifecycle.outputs.eligible == 'true'")
     }
+    expect(activationUpload).toBeGreaterThan(terminalUpload)
+    expect(step('Upload exactly one qualified activation terminal').if).toContain(
+      "steps.qualify.outputs.verdict == 'QUALIFIED'",
+    )
 
     const lifecycleRun = runText('Verify candidate lifecycle before any image or credential access')
     expect(lifecycleRun).toContain('verify-qualification-dormancy.ts')
@@ -145,6 +152,23 @@ describe('Bayn qualification workflow contract', () => {
       .join('\n')
     expect((orchestrationText.match(/BAYN_QUALIFICATION_MODE=execute/g) ?? []).length).toBe(1)
     expect((orchestrationText.match(/docker run --rm/g) ?? []).length).toBe(1)
+  })
+
+  test('uploads the exact terminal once and creates no activation artifact for REJECTED', () => {
+    const qualify = runText('Run exactly one isolated read-only qualification')
+    const terminalUpload = step('Upload immutable terminal qualification evidence')
+    const activationUpload = step('Upload exactly one qualified activation terminal')
+    expect(qualify).toContain('echo "verdict=$(jq -r \'.terminal.verdict\' "$terminal")" >> "$GITHUB_OUTPUT"')
+    expect(terminalUpload.uses).toBe('actions/upload-artifact@v4')
+    expect(activationUpload.uses).toBe('actions/upload-artifact@v4')
+    expect(activationUpload.with?.name).toBe(
+      'bayn-paper-activation-evidence-${{ github.run_id }}-${{ github.run_attempt }}',
+    )
+    expect(activationUpload.with?.path).toBe('${{ steps.qualify.outputs.terminal }}')
+    expect(activationUpload.if).toBe(
+      "steps.lifecycle.outputs.eligible == 'true' && steps.qualify.outcome == 'success' && steps.qualify.outputs.verdict == 'QUALIFIED'",
+    )
+    expect(activationUpload.if).not.toContain('REJECTED')
   })
 
   test('keeps the qualification boundary read-only and wires credentials only at execution', () => {

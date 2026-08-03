@@ -292,6 +292,37 @@ describe('Bayn HTTP pure decisions', () => {
     })
   })
 
+  test('projects realized PAPER capability from the actual prepared generation', () => {
+    const realized = {
+      ...readyState(),
+      paperActivation: {
+        _tag: 'Realized' as const,
+        requestHash: 'a'.repeat(64),
+        generationHash: 'b'.repeat(64),
+      },
+    }
+    const facts = statusFacts(realized, readOnlyExecution, provenance, 'embedded')
+    expect(facts.authority).toMatchObject({
+      brokerAccess: BrokerAccess.Mutation,
+      capitalAuthority: CapitalAuthorityKind.Sandbox,
+      brokerOrders: true,
+      capitalPromotion: true,
+    })
+    const metrics = renderPrometheusMetrics(
+      realized,
+      {
+        cycleStallThresholdMs: config.cycleStallThresholdMs,
+        execution: readOnlyExecution,
+        reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
+        unknownMutationThresholdMs: config.unknownMutationThresholdMs,
+      },
+      provenance,
+      'embedded',
+    )
+    expect(metrics).toContain('bayn_broker_orders_enabled 1')
+    expect(metrics).toContain('bayn_capital_promotion_enabled 1')
+  })
+
   test('covers every readiness decision branch without mutating runtime facts', () => {
     const healthy = readyState()
     const checkedAt = healthy.health.checkedAt
