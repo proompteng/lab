@@ -416,6 +416,30 @@ const openingSnapshotBoundary = (
         )
       )`
 
+const closingSnapshotBoundary = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  authorityGenerationHash: string | undefined,
+) =>
+  authorityGenerationHash === undefined
+    ? sql`latest_reconciliation.reconciled_at`
+    : sql`LEAST(
+        latest_reconciliation.reconciled_at,
+        COALESCE(
+          (
+            SELECT MIN(next_intent.created_at) - INTERVAL '1 microsecond'
+            FROM authority_generations AS next_generation
+            JOIN intents AS next_intent
+              ON next_intent.authority_generation_hash = next_generation.generation_hash
+              AND next_intent.account_id = next_generation.account_id
+            WHERE next_generation.previous_generation_hash = ${authorityGenerationHash}
+              AND next_generation.maximum = 'PAPER'
+              AND next_generation.account_id = ${accountId}
+          ),
+          latest_reconciliation.reconciled_at
+        )
+      )`
+
 const signedI128 = (value: string): bigint | undefined => {
   if (!INTEGER_PATTERN.test(value)) return undefined
   const parsed = BigInt(value)
@@ -968,7 +992,7 @@ export const readForwardPerformancePostgres = (
             CROSS JOIN latest_reconciliation
             WHERE snapshot.account_id = ${accountId}
               AND ${generationScope(sql, accountId, authorityGenerationHash, 'snapshot')}
-              AND event.observed_at <= latest_reconciliation.reconciled_at
+              AND event.observed_at <= ${closingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
             ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
             LIMIT 1
           ), accounted_cash AS (

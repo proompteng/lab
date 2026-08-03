@@ -786,6 +786,9 @@ export const retryClosedCycleReceipts = (
     }
   })
 
+export const closedCycleReceiptEmissionAllowed = (cutoffAt: string, observedAt: string): boolean =>
+  Date.parse(observedAt) >= Date.parse(cutoffAt)
+
 const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
   Effect.gen(function* () {
     const dependencies = yield* applicationDependencies
@@ -977,7 +980,9 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                   runtimeServices.forwardPerformanceReceiptStore,
                                 )
                                 const onClosedCycle = (cycleId: string, observedAt: string) =>
-                                  emitClosedCycleReceipt(cycleId, observedAt).pipe(Effect.asVoid)
+                                  closedCycleReceiptEmissionAllowed(request.cutoffAt, observedAt)
+                                    ? emitClosedCycleReceipt(cycleId, observedAt).pipe(Effect.asVoid)
+                                    : Effect.void
                                 return makeMutation(
                                   runtimeServices.session,
                                   authority,

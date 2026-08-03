@@ -3,12 +3,23 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Fiber } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { restrictExpiredPaperActivation, retryClosedCycleReceipts } from './composition'
+import {
+  closedCycleReceiptEmissionAllowed,
+  restrictExpiredPaperActivation,
+  retryClosedCycleReceipts,
+} from './composition'
 import type { AuthorityRestrictionStoreShape } from './db/execution-store'
 import type { WriterFenceService } from './execution/writer-fence'
 import { paperEpisodeReceiptFinalizationExpiresAt } from './observe-composition'
 
 describe('Bayn PAPER receipt retry boundary', () => {
+  test('does not bind a generation receipt before its PAPER entry cutoff', () => {
+    const cutoffAt = '2026-08-03T12:00:00.000Z'
+
+    expect(closedCycleReceiptEmissionAllowed(cutoffAt, '2026-08-03T11:59:59.999Z')).toBe(false)
+    expect(closedCycleReceiptEmissionAllowed(cutoffAt, cutoffAt)).toBe(true)
+  })
+
   test('keeps retrying through the close lease instead of a fixed attempt count', async () => {
     const startAt = Date.parse('2026-08-03T12:00:00.000Z')
     const cutoffAt = new Date(startAt + 1_000).toISOString()
