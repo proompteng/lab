@@ -2,7 +2,13 @@ import { Clock, Data, Duration, Effect, Option, pipe, Ref, Result } from 'effect
 
 import type { AutonomousCycleLoop, AutonomousCycleStartup } from './app'
 import { BrokerRead, type BrokerReadShape, type MarketCalendarQuery } from './broker/alpaca'
-import { CycleState, makeCycleExecutionPolicyFromModel, type AutonomousCycle, type CycleExecutionPolicy } from './cycle'
+import {
+  CycleState,
+  CycleTerminalReason,
+  makeCycleExecutionPolicyFromModel,
+  type AutonomousCycle,
+  type CycleExecutionPolicy,
+} from './cycle'
 import {
   CycleDecisionBuildError,
   CycleRunnerError,
@@ -51,7 +57,15 @@ import { makeStrategyProtocolHash } from './contracts'
 import { OperationalError, operationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
 import { MarketData, type MarketDataService } from './market-data'
-import { Authority, OrderSide, OrderType, TimeInForce, type AuthorityState } from './execution/contracts'
+import {
+  Authority,
+  IntentState,
+  OrderSide,
+  OrderType,
+  TerminalOutcome,
+  TimeInForce,
+  type AuthorityState,
+} from './execution/contracts'
 import type { CausalProtocol } from './protocol'
 import { runOnce, type ReconciliationPassResult } from './reconciler'
 import { reconciledStateHash } from './reconciliation'
@@ -90,6 +104,7 @@ import {
   mutationIntentReconciliationDelayMs,
   mutationRecoveryIsDue,
   paperSubmitExpiresAt,
+  paperCycleHasFilledIntent,
   projectWorstCasePendingMutationPosition,
   type BoundMutationCycleOutcome,
   type MutationIntentExecutionResult,
@@ -129,6 +144,7 @@ export {
   mutationIntentReconciliationDelayMs,
   mutationRecoveryIsDue,
   paperSubmitExpiresAt,
+  paperCycleHasFilledIntent,
   projectWorstCasePendingMutationPosition,
 }
 export type {
@@ -992,6 +1008,27 @@ const ensurePaperCycleClosure = (
     return stored.document
   })
 
+const entryPaperCycleHasUnsuccessfulIntent = (
+  document: PaperDecisionDocument,
+): Effect.Effect<boolean, CycleRunnerError, IntentStore> =>
+  Effect.gen(function* () {
+    const store = yield* IntentStore
+    const records = yield* Effect.forEach(
+      document.orderedIntentIds,
+      (intentId) =>
+        store
+          .read(intentId)
+          .pipe(Effect.mapError((cause) => mutationRunnerError('entry PAPER intent read failed', cause, 'store'))),
+      { concurrency: 1 },
+    )
+    return records.some(
+      (record) =>
+        Option.isSome(record) &&
+        record.value.intent.state === IntentState.Terminal &&
+        record.value.intent.terminalOutcome !== TerminalOutcome.Filled,
+    )
+  })
+
 const mutationDecisionInput = (
   input: ObserveAutonomousCycleInput,
   preparation: ObserveStartupPreparation,
@@ -1090,7 +1127,12 @@ const executeBoundPaperCycle = (
         observedAt,
       }),
     )
-    if (step._tag !== 'Execute') return step
+    if (step._tag !== 'Execute') {
+      if (step._tag === 'Complete' && closeOnly && (yield* entryPaperCycleHasUnsuccessfulIntent(document))) {
+        return { _tag: 'Block', reason: CycleTerminalReason.Risk, observedAt: step.observedAt }
+      }
+      return step
+    }
     const executed = yield* capability._tag === 'Mutation'
       ? executeMutationIntent(
           capability.executionProgram,

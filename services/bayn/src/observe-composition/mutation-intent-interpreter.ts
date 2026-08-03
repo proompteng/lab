@@ -30,6 +30,7 @@ import {
   decidePreparedMutationRecovery,
   expiredPaperPlanTerminalReason,
   mutationRecoveryIsDue,
+  paperCycleHasFilledIntent,
   paperSubmitExpiresAt,
   type PaperCycleIntentTerminalEvidence,
   type PreparedMutationCycleStep,
@@ -50,6 +51,7 @@ export type MutationIntentInput = {
   readonly accountId: string
   readonly authorityGenerationHash: string
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
+  readonly paperEpisodeCutoffAt?: string
   readonly paperEpisodeExpiresAt?: string
 }
 
@@ -456,6 +458,9 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
     }
 
     const terminalEvidence: PaperCycleIntentTerminalEvidence[] = []
+    const hasFilledIntent = paperCycleHasFilledIntent(
+      preparedIntents.flatMap((prepared) => (prepared.stored === undefined ? [] : [prepared.stored.intent])),
+    )
     for (const prepared of preparedIntents) {
       const stored = yield* intentStore
         .read(prepared.intent.intentId)
@@ -485,6 +490,14 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
               `bound PAPER cycle ${cycle.identity.cycleId}`,
               `intent ${prepared.intent.intentId} ended ${record.intent.terminalOutcome ?? 'without outcome'}`,
             )
+            if (
+              input.mutationPhase !== 'CLOSE' &&
+              input.paperEpisodeCutoffAt !== undefined &&
+              facts.evaluatedAt < input.paperEpisodeCutoffAt &&
+              hasFilledIntent
+            ) {
+              return { _tag: 'Wait', observedAt: facts.evaluatedAt }
+            }
             return {
               _tag: 'Block',
               reason: CycleTerminalReason.Risk,

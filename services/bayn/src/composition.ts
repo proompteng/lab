@@ -974,7 +974,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                           runtimeServices.alpacaHttpClient,
                                         ),
                                         currentUtcInstant,
-                                        paperEpisodeEntryExpiresAt: request.expiresAt,
+                                        paperEpisodeEntryExpiresAt: request.cutoffAt,
                                         paperEpisodeCloseExpiresAt: paperEpisodeCloseExpiresAt(request.expiresAt),
                                         isPaperEpisodeCloseIntent: (intentId) =>
                                           runtimeServices.paperCycleClosureStore

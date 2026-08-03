@@ -156,6 +156,10 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
               ) AS latest ON true
               WHERE intent.state <> 'TERMINAL'
                 OR (
+                  intent.state = 'TERMINAL'
+                  AND intent.terminal_outcome = 'FILLED'
+                )
+                OR (
                   latest.operation = 'SUBMIT'
                   AND latest.event_type NOT IN (
                     'SUBMIT_ACCEPTED',

@@ -369,6 +369,11 @@ const decision: DecisionPlan = {
     targetWeight: index === 0 ? 0.5 : 0,
   })),
 }
+
+const partialFillDecision: DecisionPlan = {
+  ...decision,
+  targetWeights: Object.fromEntries(fixtureProtocol.universe.map((symbol, index) => [symbol, index < 2 ? 0.1 : 0])),
+}
 const runtimeWithDecision = (decide: typeof fixtureRuntime.definition.decide) => ({
   definition: makeTestDefinition(fixtureProtocol, decide),
   provenance: fixtureRuntime.provenance,
@@ -467,7 +472,10 @@ const sandboxExecutionProgram = (
   }
 }
 
-const paperLifecycleFixture = async (transformPolicy: (policy: Policy) => Policy = (policy) => policy) => {
+const paperLifecycleFixture = async (
+  transformPolicy: (policy: Policy) => Policy = (policy) => policy,
+  strategyDecision: DecisionPlan = decision,
+) => {
   const input = {
     accountId,
     authorityGenerationHash: generationHash,
@@ -488,7 +496,7 @@ const paperLifecycleFixture = async (transformPolicy: (policy: Policy) => Policy
         executionModel: fixtureProtocol.executionModel,
         policy,
         reconcile: Effect.succeed(reconciliationResult(generationHash, Authority.Paper)),
-        strategy: runtimeWithDecision(() => Result.succeed(decision)),
+        strategy: runtimeWithDecision(() => Result.succeed(strategyDecision)),
       })
     }).pipe(
       (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
@@ -503,33 +511,37 @@ const paperLifecycleFixture = async (transformPolicy: (policy: Policy) => Policy
       updatedAt: document.createdAt,
     }),
   )
-  const target = document.targetPlan.intentTargets[0]
-  const risk = document.deltaRisk[0]
-  if (target === undefined || risk === undefined) {
-    throw new Error('PAPER lifecycle fixture requires one planned intent')
-  }
-  const intent = await Effect.runPromise(
-    planPaperIntent(
-      {
-        schemaVersion: 'bayn.paper-intent-plan.v1',
-        ...target,
-        notionalLimitMicros: risk.notionalLimitMicros,
-        createdAt: document.createdAt,
-      },
-      {
-        authority: {
-          schemaVersion: 'bayn.paper-authority.v1',
-          generationHash,
-          maximum: Authority.Paper,
-          effective: Authority.Paper,
-          kill: KillState.Clear,
-          version: 1,
-          updatedAt: document.createdAt,
-        },
-      },
-    ),
+  const intents = await Promise.all(
+    document.targetPlan.intentTargets.map(async (target, index) => {
+      const risk = document.deltaRisk[index]
+      if (risk === undefined) throw new Error('PAPER lifecycle fixture risk binding is missing')
+      return Effect.runPromise(
+        planPaperIntent(
+          {
+            schemaVersion: 'bayn.paper-intent-plan.v1',
+            ...target,
+            notionalLimitMicros: risk.notionalLimitMicros,
+            createdAt: document.createdAt,
+          },
+          {
+            authority: {
+              schemaVersion: 'bayn.paper-authority.v1',
+              generationHash,
+              maximum: Authority.Paper,
+              effective: Authority.Paper,
+              kill: KillState.Clear,
+              version: 1,
+              updatedAt: document.createdAt,
+            },
+          },
+        ),
+      )
+    }),
   )
-  return { boundCycle, document, input, intent, policy, preparation, risk }
+  const intent = intents[0]
+  const risk = document.deltaRisk[0]
+  if (intent === undefined || risk === undefined) throw new Error('PAPER lifecycle fixture requires one planned intent')
+  return { boundCycle, document, input, intent, intents, policy, preparation, risk }
 }
 
 const reconciliationResultAt = (
@@ -587,19 +599,24 @@ const prepareStoredPaperStep = async (
   observedAt: string,
   unknownMutationCount = 0,
   onRestriction: (reason: string, updatedAt: string) => void = () => undefined,
-  input: typeof fixture.input = fixture.input,
+  input: typeof fixture.input & { readonly paperEpisodeCutoffAt?: string } = fixture.input,
   latestCancel?: MutationEvent,
   allowSubmit = true,
   policy: Policy = fixture.policy,
   preparation = fixture.preparation,
+  records: ReadonlyMap<string, StoredIntent> = new Map([[record.intent.intentId, record]]),
+  latestSubmits: ReadonlyMap<string, MutationEvent | undefined> = new Map([[record.intent.intentId, latest]]),
 ) => {
   const intentStore: IntentStoreService = {
     commit: () => Effect.succeed({ record, deduplicated: true }),
-    read: () => Effect.succeed(Option.some(record)),
+    read: (intentId) => {
+      const stored = records.get(intentId)
+      return Effect.succeed(stored === undefined ? Option.none() : Option.some(stored))
+    },
   }
   const mutationStore = {
-    latest: (_intentId: string, operation: MutationOperation) =>
-      Effect.succeed(operation === MutationOperation.Submit ? latest : latestCancel),
+    latest: (intentId: string, operation: MutationOperation) =>
+      Effect.succeed(operation === MutationOperation.Submit ? latestSubmits.get(intentId) : latestCancel),
   } as unknown as MutationStoreShape
   const authorityRestrictionStore: AuthorityRestrictionStoreShape = {
     restrictAuthority: (reason, updatedAt) => Effect.sync(() => onRestriction(reason, updatedAt)),
@@ -1948,6 +1965,73 @@ describe('OBSERVE runtime composition', () => {
       updatedAt: rejectedAt,
     })
     expect(restrictions[0]?.reason).toContain(`intent ${fixture.intent.intentId} ended REJECTED`)
+  })
+
+  test('keeps a partially filled PAPER cycle recoverable until its close phase', async () => {
+    const fixture = await paperLifecycleFixture((policy) => policy, partialFillDecision)
+    const filledIntent = fixture.intents[0]
+    const rejectedIntent = fixture.intents[1]
+    if (filledIntent === undefined || rejectedIntent === undefined) {
+      return expect.unreachable('partial-fill fixture requires two planned intents')
+    }
+    const observedAt = new Date(Date.parse(fixture.document.createdAt) + 1_000).toISOString()
+    const cutoffAt = new Date(Date.parse(observedAt) + 60_000).toISOString()
+    const filledRecord = storedIntent(filledIntent, IntentState.Terminal, observedAt, TerminalOutcome.Filled)
+    const rejectedRecord = storedIntent(rejectedIntent, IntentState.Terminal, observedAt, TerminalOutcome.Rejected)
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: 'd'.repeat(64),
+      mutationId: 'e'.repeat(64),
+      intentId: filledIntent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: 'f'.repeat(64),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'partial-filled-order',
+      occurredAt: observedAt,
+    }
+    const rejected: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '1'.repeat(64),
+      mutationId: '2'.repeat(64),
+      intentId: rejectedIntent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitRejected,
+      requestHash: '3'.repeat(64),
+      consistencyDelayMs: 1_000,
+      requestId: 'partial-rejected-request',
+      responseStatus: 422,
+      responseContentHash: '4'.repeat(64),
+      occurredAt: observedAt,
+    }
+    const restrictions: string[] = []
+    const step = await prepareStoredPaperStep(
+      fixture,
+      filledRecord,
+      accepted,
+      observedAt,
+      0,
+      (reason) => restrictions.push(reason),
+      { ...fixture.input, paperEpisodeCutoffAt: cutoffAt },
+      undefined,
+      true,
+      fixture.policy,
+      fixture.preparation,
+      new Map([
+        [filledIntent.intentId, filledRecord],
+        [rejectedIntent.intentId, rejectedRecord],
+      ]),
+      new Map([
+        [filledIntent.intentId, accepted],
+        [rejectedIntent.intentId, rejected],
+      ]),
+    )
+
+    expect(step).toEqual({ _tag: 'Wait', observedAt })
+    expect(restrictions).toHaveLength(1)
+    expect(restrictions[0]).toContain(`intent ${rejectedIntent.intentId} ended REJECTED`)
   })
 
   test('completes a filled PAPER cycle after a later exact post-cutoff reconciliation', async () => {

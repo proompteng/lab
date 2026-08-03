@@ -20,6 +20,9 @@ const quantityScale = 1_000_000n
 export const countOpenPositions = (positions: readonly Pick<Position, 'quantityMicros'>[]): number =>
   positions.filter((position) => BigInt(position.quantityMicros) !== 0n).length
 
+export const paperCycleHasFilledIntent = (intents: readonly Pick<Intent, 'state' | 'terminalOutcome'>[]): boolean =>
+  intents.some((intent) => intent.state === IntentState.Terminal && intent.terminalOutcome === TerminalOutcome.Filled)
+
 const comparePositionSymbol = (left: Position, right: Position): number =>
   left.symbol < right.symbol ? -1 : left.symbol > right.symbol ? 1 : 0
 
