@@ -64,6 +64,8 @@ const auditConfig = (overrides: Partial<AuditConfig> = {}): AuditConfig => ({
   auditClickhouseUsername: 'bayn-audit-query-log',
   auditClickhousePassword: Redacted.make('audit-password'),
   repositoryPath: import.meta.dir,
+  candidateModulePath: '',
+  candidateModuleSha256: '',
   operationTimeoutMs: 5_000,
   ...overrides,
 })

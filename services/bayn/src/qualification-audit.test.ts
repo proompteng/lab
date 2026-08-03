@@ -24,7 +24,7 @@ import {
   prepareQualificationSeries,
 } from './qualification-statistics'
 import { evaluateRiskBalancedTrend, parseMatchingManifest, summarizeEvaluation } from './risk-balanced-trend'
-import { makeRiskBalancedTrendDefinition } from './strategy'
+import { makeRiskBalancedTrendApplication, makeRiskBalancedTrendDefinition } from './strategy'
 import { prepareRiskBalancedTrendQualificationLock } from './strategy/risk-balanced-trend/qualification'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
@@ -269,6 +269,7 @@ const fixture = (priorTrialRunIds: readonly string[] = []): QualificationAuditIn
     bars: snapshot.bars,
     manifest: snapshot.manifest,
     protocol,
+    application: makeRiskBalancedTrendApplication(protocol, definition),
     database,
     signalReplicas: ['replica-0', 'replica-1'],
     signalAccess: [

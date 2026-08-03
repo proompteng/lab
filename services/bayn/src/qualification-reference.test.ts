@@ -7,11 +7,15 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1 } from './hash'
+import { makeRuntimeProvenance } from './contracts'
 import { align } from './audit/reference/decisions'
 import { replay } from './audit/reference/replay'
 import { evaluateReference, measureReferenceEvaluationWork, restrictReferenceBuyFill } from './audit/reference'
 import { MICROS } from './execution-model'
+import { hashParameters } from './protocol'
 import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
+import { evaluateStrategyApplication } from './strategy/evaluation-runner'
+import { makeRiskBalancedTrendApplication, makeRiskBalancedTrendDefinition } from './strategy/risk-balanced-trend'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
 const assertSuccess = <A, E>(result: Result.Result<A, E>): A => {
@@ -47,6 +51,44 @@ describe('independent qualification reference', () => {
     expect(reference.buyAndHold.daily).toEqual(actual.benchmarkSeries.buyAndHold)
     expect(reference.directVolTiming.daily).toEqual(actual.benchmarkSeries.directVolTiming)
     expect(reference.doubleCostStrategy.daily).toEqual(actual.benchmarkSeries.doubleCostStrategy)
+  })
+
+  test('replays a reviewed non-legacy application instead of substituting the legacy planner', () => {
+    const snapshot = makeSnapshot(900)
+    const definition = { ...makeRiskBalancedTrendDefinition(fixtureProtocol), name: 'candidate-test-rotation' }
+    const application = makeRiskBalancedTrendApplication(fixtureProtocol, definition)
+    const provenance = makeRuntimeProvenance({
+      sourceRevision: 'a'.repeat(40),
+      image: {
+        repository: 'registry.ide-newton.ts.net/lab/bayn',
+        digest: `sha256:${'b'.repeat(64)}`,
+      },
+      strategy: {
+        name: definition.name,
+        behaviorHash: 'd'.repeat(64),
+        parameterHash: hashParameters(fixtureProtocol),
+        parameterSchemaVersion: fixtureProtocol.schemaVersion,
+      },
+    })
+    const actual = assertSuccess(
+      evaluateStrategyApplication({
+        application,
+        provenance,
+        bars: snapshot.bars,
+        inputManifest: snapshot.manifest,
+      }),
+    )
+    const reference = assertSuccess(
+      evaluateReference(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance, true, application),
+    )
+
+    expect(reference.runId).toBe(actual.runId)
+    expect(reference.protocolHash).toBe(actual.protocolHash)
+    expect(reference.strategy.metrics).toEqual(actual.strategy)
+    expect(reference.strategy.events).toEqual(actual.events)
+    expect(reference.strategy.decisions).toEqual(actual.signalDecisions)
+    expect(reference.strategy.trace).toEqual(actual.simulation)
+    expect(reference.verdict).toEqual(actual.verdict)
   })
 
   test('preserves legacy replay semantics without a durable terminal-close marker', () => {

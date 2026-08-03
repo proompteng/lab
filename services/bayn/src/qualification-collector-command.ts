@@ -1695,6 +1695,8 @@ const configureRuntimeEnvironment = (
     BAYN_AUDIT_CLICKHOUSE_USERNAME: wiring.auditClickhouseUsername,
     BAYN_AUDIT_CLICKHOUSE_PASSWORD: wiring.auditClickhousePassword,
     BAYN_AUDIT_REPOSITORY_PATH: staticEvidence.repositoryPath,
+    BAYN_AUDIT_CANDIDATE_MODULE_PATH: resolve(staticEvidence.repositoryPath, staticEvidence.preregistration.modulePath),
+    BAYN_AUDIT_CANDIDATE_MODULE_SHA256: staticEvidence.moduleSha256,
     BAYN_AUDIT_OPERATION_TIMEOUT_MS: operationTimeout,
   })
   delete process.env.BAYN_QUALIFICATION_RUN_ID

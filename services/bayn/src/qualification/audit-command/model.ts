@@ -25,6 +25,8 @@ export const qualificationAuditConfig = Config.all({
   auditClickhouseUsername: Config.string('BAYN_AUDIT_CLICKHOUSE_USERNAME'),
   auditClickhousePassword: Config.redacted('BAYN_AUDIT_CLICKHOUSE_PASSWORD'),
   repositoryPath: Config.string('BAYN_AUDIT_REPOSITORY_PATH').pipe(Config.withDefault('.')),
+  candidateModulePath: Config.string('BAYN_AUDIT_CANDIDATE_MODULE_PATH').pipe(Config.withDefault('')),
+  candidateModuleSha256: Config.string('BAYN_AUDIT_CANDIDATE_MODULE_SHA256').pipe(Config.withDefault('')),
   operationTimeoutMs: Config.schema(PositiveInteger, 'BAYN_AUDIT_OPERATION_TIMEOUT_MS').pipe(
     Config.withDefault(60_000),
   ),

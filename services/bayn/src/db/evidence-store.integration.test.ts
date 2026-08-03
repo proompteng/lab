@@ -4960,6 +4960,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       auditClickhouseUsername: 'bayn-audit-query-log',
       auditClickhousePassword: Redacted.make('unused'),
       repositoryPath: '.',
+      candidateModulePath: '',
+      candidateModuleSha256: '',
       operationTimeoutMs: 5_000,
     }
     const snapshot = await Effect.runPromise(

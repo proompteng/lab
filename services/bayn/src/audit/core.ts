@@ -171,12 +171,13 @@ export const makeAuditFacts = (
   input: QualificationAuditInput,
 ): Result.Result<QualificationAuditFacts, QualificationAuditFailure> => {
   const database = input.database
-  if (database.protocol.strategyName !== auditContract.name || database.run.strategyName !== auditContract.name) {
+  const strategyName = input.application.definition.name
+  if (database.protocol.strategyName !== strategyName || database.run.strategyName !== strategyName) {
     return Result.fail({
       _tag: 'UnsupportedAuditStrategyContract',
       protocolStrategyName: database.protocol.strategyName,
       runStrategyName: database.run.strategyName,
-      requiredStrategyName: auditContract.name,
+      requiredStrategyName: strategyName,
     })
   }
   const supportedSchemaVersions = [
@@ -208,13 +209,14 @@ export const makeAuditFacts = (
   // Terminal liquidation was added after the v6 evaluation contract was already persisted.
   // The persisted v4 behavior identity is the durable marker even when a flat strategy emits no
   // terminal-close decision; the event marker preserves legacy v6 evidence semantics.
-  const closeAtEnd = usesTerminalReplaySemantics(database)
+  const closeAtEnd = strategyName !== auditContract.name || usesTerminalReplaySemantics(database)
   const referenceResult = evaluateReference(
     input.bars,
     input.manifest,
     input.protocol,
     provenanceResult.success,
     closeAtEnd,
+    input.application,
   )
   if (Result.isFailure(referenceResult)) return Result.fail(referenceResult.failure)
   const reference = referenceResult.success

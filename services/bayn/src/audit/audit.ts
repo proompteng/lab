@@ -12,6 +12,7 @@ import {
   type Protocol,
 } from '../types'
 import type { ReferenceEvaluationFailure } from './reference'
+import type { StrategyApplication } from '../strategy/core'
 
 export const auditContract = {
   name: 'risk-balanced-trend',
@@ -146,6 +147,8 @@ export interface QualificationAuditInput {
   readonly bars: readonly DailyBar[]
   readonly manifest: InputManifest
   readonly protocol: Protocol
+  /** The reviewed pure application that produced the qualification attempt. */
+  readonly application: StrategyApplication<any, any, any>
   readonly database: AuditDatabaseSnapshot
   readonly signalReplicas: readonly string[]
   readonly signalAccess: readonly SignalAccessRecord[]
@@ -241,7 +244,7 @@ export type QualificationAuditFailure =
       readonly _tag: 'UnsupportedAuditStrategyContract'
       readonly protocolStrategyName: string
       readonly runStrategyName: string
-      readonly requiredStrategyName: typeof auditContract.name
+      readonly requiredStrategyName: string
     }
   | {
       readonly _tag: 'UnsupportedAuditProtocolVersion'
