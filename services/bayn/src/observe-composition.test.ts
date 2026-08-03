@@ -4075,21 +4075,21 @@ describe('OBSERVE runtime composition', () => {
     expect(authorityRestrictions).toBe(0)
   })
 
-  test('terminalizes an unbound PAPER cycle as NO_TRADE after the authority cutoff', async () => {
+  test('terminalizes an unbound PAPER cycle as BLOCKED after the authority cutoff', async () => {
     const cutoffAt = '2020-05-01T12:45:00.000Z'
     const observedAt = '2020-05-01T12:45:01.000Z'
     const terminalCycle = Effect.runSync(
       decodeAutonomousCycle({
         ...cycle,
-        state: CycleState.NoTrade,
-        bindings: { ...cycle.bindings, decisionHash: 'd'.repeat(64) },
+        state: CycleState.Blocked,
+        terminalReason: CycleTerminalReason.MissedSubmission,
         stateVersion: cycle.stateVersion + 1,
         updatedAt: observedAt,
         terminalAt: observedAt,
       }),
     )
     const forbidden = (capability: string) => Effect.die(new Error(`cutoff recovery must not use ${capability}`))
-    let finished = 0
+    let blocked = 0
     let terminal = false
     const cycleStore: CycleStoreShape = {
       acquire: () => forbidden('cycle acquisition'),
@@ -4100,16 +4100,16 @@ describe('OBSERVE runtime composition', () => {
       bindSnapshot: () => forbidden('snapshot binding'),
       activate: () => forbidden('cycle activation'),
       bindDecision: () => forbidden('decision binding'),
-      finish: (cycleId, state, finishAt) =>
+      finish: () => forbidden('cycle finishing'),
+      block: (cycleId, reason, blockAt) =>
         Effect.sync(() => {
-          finished += 1
+          blocked += 1
           expect(cycleId).toBe(cycle.identity.cycleId)
-          expect(state).toBe(CycleState.NoTrade)
-          expect(finishAt).toBe(observedAt)
+          expect(reason).toBe(CycleTerminalReason.MissedSubmission)
+          expect(blockAt).toBe(observedAt)
           terminal = true
           return { cycle: terminalCycle, changed: true }
         }),
-      block: () => forbidden('cycle blocking'),
     }
     const brokerRead = {
       account: forbidden('broker account read'),
@@ -4195,7 +4195,7 @@ describe('OBSERVE runtime composition', () => {
     )
 
     expect(observation).toMatchObject({ result: 'SUCCESS', outcome: 'RECOVERED' })
-    expect(finished).toBe(1)
+    expect(blocked).toBe(1)
     expect(terminal).toBe(true)
   })
 

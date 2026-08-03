@@ -1510,11 +1510,11 @@ const terminalizeUnboundMutationCycleAtCutoff = (
   observedAt: string,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, CycleStore> =>
   CycleStore.pipe(
-    Effect.flatMap((store) => store.finish(cycle.identity.cycleId, CycleState.NoTrade, observedAt)),
+    Effect.flatMap((store) => store.block(cycle.identity.cycleId, CycleTerminalReason.MissedSubmission, observedAt)),
     Effect.mapError((cause) => mutationRunnerError('expired PAPER unbound cycle finalization failed', cause, 'store')),
     Effect.map((receipt) => ({
       outcome: 'RECOVERED' as const,
-      action: 'NO_TRADE' as const,
+      action: 'BLOCKED' as const,
       observedAt,
       cycle: receipt.cycle,
     })),
