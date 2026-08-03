@@ -257,6 +257,7 @@ type GenerationScopeTarget =
   | 'transaction'
   | 'reconciliation'
   | 'snapshot'
+  | 'opening-snapshot'
   | 'order'
   | 'fill'
   | 'mutation'
@@ -320,8 +321,6 @@ const generationScope = (
       return sql`EXISTS (
         SELECT 1
         FROM authority_generations AS scope_generation
-        LEFT JOIN authority_generations AS next_generation
-          ON next_generation.previous_generation_hash = scope_generation.generation_hash
         JOIN intents AS scope_intent
           ON scope_intent.intent_id = transaction.intent_id
           AND scope_intent.account_id = transaction.account_id
@@ -330,11 +329,6 @@ const generationScope = (
           AND scope_generation.account_id = ${accountId}
           AND transaction.account_id = scope_generation.account_id
           AND scope_intent.authority_generation_hash = scope_generation.generation_hash
-          AND transaction.occurred_at >= scope_generation.activated_at
-          AND (
-            next_generation.activated_at IS NULL
-            OR transaction.occurred_at < next_generation.activated_at
-          )
       )`
     case 'reconciliation':
       return sql`EXISTS (
@@ -368,12 +362,18 @@ const generationScope = (
             OR event.observed_at < next_generation.activated_at
           )
       )`
+    case 'opening-snapshot':
+      return sql`EXISTS (
+        SELECT 1
+        FROM authority_generations AS scope_generation
+        WHERE scope_generation.generation_hash = ${authorityGenerationHash}
+          AND scope_generation.maximum = 'PAPER'
+          AND scope_generation.account_id = ${accountId}
+      )`
     case 'order':
       return sql`EXISTS (
         SELECT 1
         FROM authority_generations AS scope_generation
-        LEFT JOIN authority_generations AS next_generation
-          ON next_generation.previous_generation_hash = scope_generation.generation_hash
         JOIN intents AS scope_intent
           ON scope_intent.intent_id = observed_order.intent_id
           AND scope_intent.account_id = observed_order.account_id
@@ -381,18 +381,11 @@ const generationScope = (
           AND scope_generation.maximum = 'PAPER'
           AND scope_generation.account_id = ${accountId}
           AND scope_intent.authority_generation_hash = scope_generation.generation_hash
-          AND event.observed_at >= scope_generation.activated_at
-          AND (
-            next_generation.activated_at IS NULL
-            OR event.observed_at < next_generation.activated_at
-          )
       )`
     case 'fill':
       return sql`EXISTS (
         SELECT 1
         FROM authority_generations AS scope_generation
-        LEFT JOIN authority_generations AS next_generation
-          ON next_generation.previous_generation_hash = scope_generation.generation_hash
         JOIN intents AS scope_intent
           ON scope_intent.intent_id = fill.intent_id
           AND scope_intent.account_id = fill.account_id
@@ -400,18 +393,11 @@ const generationScope = (
           AND scope_generation.maximum = 'PAPER'
           AND scope_generation.account_id = ${accountId}
           AND scope_intent.authority_generation_hash = scope_generation.generation_hash
-          AND event.observed_at >= scope_generation.activated_at
-          AND (
-            next_generation.activated_at IS NULL
-            OR event.observed_at < next_generation.activated_at
-          )
       )`
     case 'mutation':
       return sql`EXISTS (
         SELECT 1
         FROM authority_generations AS scope_generation
-        LEFT JOIN authority_generations AS next_generation
-          ON next_generation.previous_generation_hash = scope_generation.generation_hash
         JOIN intents AS scope_intent
           ON scope_intent.intent_id = event.intent_id
           AND scope_intent.account_id = ${accountId}
@@ -419,14 +405,27 @@ const generationScope = (
           AND scope_generation.maximum = 'PAPER'
           AND scope_generation.account_id = ${accountId}
           AND scope_intent.authority_generation_hash = scope_generation.generation_hash
-          AND event.occurred_at >= scope_generation.activated_at
-          AND (
-            next_generation.activated_at IS NULL
-            OR event.occurred_at < next_generation.activated_at
-          )
       )`
   }
 }
+
+const openingSnapshotBoundary = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  authorityGenerationHash: string | undefined,
+) =>
+  authorityGenerationHash === undefined
+    ? sql`first_cycle.submission_open_at`
+    : sql`GREATEST(
+        first_cycle.submission_open_at,
+        (
+          SELECT scope_generation.activated_at
+          FROM authority_generations AS scope_generation
+          WHERE scope_generation.generation_hash = ${authorityGenerationHash}
+            AND scope_generation.maximum = 'PAPER'
+            AND scope_generation.account_id = ${accountId}
+        )
+      )`
 
 const signedI128 = (value: string): bigint | undefined => {
   if (!INTEGER_PATTERN.test(value)) return undefined
@@ -520,8 +519,8 @@ const transactionQuery = (
     CROSS JOIN latest_reconciliation
     CROSS JOIN first_cycle
     WHERE snapshot.account_id = ${accountId}
-      AND ${generationScope(sql, accountId, authorityGenerationHash, 'snapshot')}
-      AND event.observed_at <= first_cycle.submission_open_at
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
+      AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
       AND event.observed_at <= latest_reconciliation.reconciled_at
     ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
     LIMIT 1
@@ -583,8 +582,8 @@ const receiptQuery = (sql: PgClient.PgClient, accountId: string, authorityGenera
     CROSS JOIN latest_reconciliation
     CROSS JOIN first_cycle
     WHERE snapshot.account_id = ${accountId}
-      AND ${generationScope(sql, accountId, authorityGenerationHash, 'snapshot')}
-      AND event.observed_at <= first_cycle.submission_open_at
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
+      AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
       AND event.observed_at <= latest_reconciliation.reconciled_at
     ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
     LIMIT 1
@@ -909,8 +908,8 @@ export const readForwardPerformancePostgres = (
           CROSS JOIN latest_reconciliation
           CROSS JOIN first_cycle
           WHERE snapshot.account_id = ${accountId}
-            AND ${generationScope(sql, accountId, authorityGenerationHash, 'snapshot')}
-            AND event.observed_at <= first_cycle.submission_open_at
+            AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
+            AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
             AND event.observed_at <= latest_reconciliation.reconciled_at
           ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
           LIMIT 1
@@ -953,8 +952,8 @@ export const readForwardPerformancePostgres = (
             CROSS JOIN latest_reconciliation
             CROSS JOIN first_cycle
             WHERE snapshot.account_id = ${accountId}
-              AND ${generationScope(sql, accountId, authorityGenerationHash, 'snapshot')}
-              AND event.observed_at <= first_cycle.submission_open_at
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
+              AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
               AND event.observed_at <= latest_reconciliation.reconciled_at
             ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
             LIMIT 1
@@ -1214,8 +1213,8 @@ export const readForwardPerformancePostgres = (
             CROSS JOIN latest_reconciliation
             CROSS JOIN first_cycle
             WHERE snapshot.account_id = ${accountId}
-              AND ${generationScope(sql, accountId, authorityGenerationHash, 'snapshot')}
-              AND event.observed_at <= first_cycle.submission_open_at
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'opening-snapshot')}
+              AND event.observed_at <= ${openingSnapshotBoundary(sql, accountId, authorityGenerationHash)}
               AND event.observed_at <= latest_reconciliation.reconciled_at
             ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
             LIMIT 1

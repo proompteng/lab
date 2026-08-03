@@ -722,6 +722,17 @@ describe('forward performance read program', () => {
       ),
     ).toBe(false)
     expect(
+      observation.statements.some((statement) =>
+        statement.includes('transaction.occurred_at < next_generation.activated_at'),
+      ),
+    ).toBe(false)
+    expect(
+      observation.statements.some((statement) =>
+        statement.includes('event.observed_at < next_generation.activated_at'),
+      ),
+    ).toBe(true)
+    expect(observation.statements.some((statement) => statement.includes('first_cycle.submission_open_at'))).toBe(true)
+    expect(
       observation.statements.some(
         (statement) =>
           statement.includes('JOIN intents AS scope_intent') &&
