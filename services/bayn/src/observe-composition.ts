@@ -1505,6 +1505,21 @@ const readUnfinishedMutationCycle = (
 const mutationBound = (cycle: AutonomousCycle | undefined): cycle is AutonomousCycle =>
   cycle !== undefined && cycle.state === CycleState.Active && cycle.bindings.decisionHash !== undefined
 
+const terminalizeUnboundMutationCycleAtCutoff = (
+  cycle: AutonomousCycle,
+  observedAt: string,
+): Effect.Effect<CycleRunResult, CycleRunnerError, CycleStore> =>
+  CycleStore.pipe(
+    Effect.flatMap((store) => store.finish(cycle.identity.cycleId, CycleState.NoTrade, observedAt)),
+    Effect.mapError((cause) => mutationRunnerError('expired PAPER unbound cycle finalization failed', cause, 'store')),
+    Effect.map((receipt) => ({
+      outcome: 'RECOVERED' as const,
+      action: 'NO_TRADE' as const,
+      observedAt,
+      cycle: receipt.cycle,
+    })),
+  )
+
 const interpretBoundMutationCycleOutcome = (
   input: ObserveAutonomousCycleInput,
   outcome: BoundMutationCycleOutcome,
@@ -1585,6 +1600,13 @@ const runRecoveryFirstCyclePass = (
       }
       return currentUtcInstant.pipe(
         Effect.flatMap((observedAt) => {
+          if (
+            input.paperEpisodeCutoffAt !== undefined &&
+            observedAt >= input.paperEpisodeCutoffAt &&
+            unfinished !== undefined
+          ) {
+            return terminalizeUnboundMutationCycleAtCutoff(unfinished, observedAt)
+          }
           if (input.paperEpisodeCutoffAt !== undefined && observedAt >= input.paperEpisodeCutoffAt) {
             return Effect.succeed({ outcome: 'NO_PUBLICATION' as const, observedAt })
           }

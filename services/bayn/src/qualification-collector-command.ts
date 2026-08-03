@@ -170,6 +170,8 @@ const decodePreregistration = Schema.decodeUnknownResult(
 export interface QualificationCandidateImmutableSourceInput {
   readonly repositoryPath: string
   readonly sourceRevision: string
+  /** Paths that may change after the reviewed source commit without changing the executable candidate. */
+  readonly allowedDescendantPaths: readonly string[]
   readonly preregistration: CandidateDevelopmentNextPreregistration
   readonly preregistrationBytes: Uint8Array
   readonly moduleBlobOid: string
@@ -177,13 +179,51 @@ export interface QualificationCandidateImmutableSourceInput {
 }
 
 export interface QualificationCandidateImmutableSourceReceipt {
-  readonly schemaVersion: 'bayn.qualification-candidate-source.v3'
+  readonly schemaVersion: 'bayn.qualification-candidate-source.v4'
   readonly sourceRevision: string
+  readonly reviewedSourceRevision: string
   readonly modulePath: string
   readonly moduleBlobOid: string
   readonly moduleSha256: string
   readonly preregistrationHash: string
 }
+
+const verifyCandidateSourceDescendant = (
+  input: QualificationCandidateImmutableSourceInput,
+): Effect.Effect<void, QualificationCollectorError> =>
+  Effect.tryPromise({
+    try: async (signal) => {
+      const changedPaths = (
+        await gitBytes(
+          input.repositoryPath,
+          [
+            'diff',
+            '--name-only',
+            '-z',
+            '--no-renames',
+            `${input.preregistration.preregistration.sourceRevision}..${input.sourceRevision}`,
+            '--',
+          ],
+          signal,
+        )
+      )
+        .toString('utf8')
+        .split('\0')
+        .filter(Boolean)
+      const allowedPaths = new Set(input.allowedDescendantPaths)
+      const unexpectedPath = changedPaths.find((path) => !allowedPaths.has(path))
+      if (unexpectedPath !== undefined) {
+        throw new Error(`unapproved qualification descendant path: ${unexpectedPath}`)
+      }
+    },
+    catch: (cause) =>
+      collectorError(
+        'candidate',
+        'candidate-source-descendant-invalid',
+        'qualification source may only contain the reviewed candidate and registration bookkeeping after preregistration',
+        cause,
+      ),
+  })
 
 const verifyCandidateSourceNovelty = (
   input: QualificationCandidateImmutableSourceInput,
@@ -277,9 +317,11 @@ export const verifyQualificationCandidateSource = (
       )
     }
     yield* verifyCandidateSourceNovelty(input)
+    yield* verifyCandidateSourceDescendant(input)
     return {
-      schemaVersion: 'bayn.qualification-candidate-source.v3' as const,
+      schemaVersion: 'bayn.qualification-candidate-source.v4' as const,
       sourceRevision: input.sourceRevision,
+      reviewedSourceRevision: input.preregistration.preregistration.sourceRevision,
       modulePath: input.preregistration.modulePath,
       moduleBlobOid: input.moduleBlobOid,
       moduleSha256: sha256Bytes(input.moduleBytes),
@@ -934,7 +976,12 @@ export const loadQualificationCollectorInvocation = (
 export const makeQualificationCandidateRuntime = (
   application: QualificationCandidateApplication,
   deployment: DeploymentRuntime,
-  source: { readonly sourceRevision: string; readonly modulePath: string; readonly moduleSha256: string },
+  source: {
+    readonly sourceRevision: string
+    readonly reviewedSourceRevision?: string
+    readonly modulePath: string
+    readonly moduleSha256: string
+  },
   preregistration: CandidateDevelopmentNextPreregistration,
 ): Result.Result<QualificationCandidateRuntime, QualificationCollectorError> => {
   if (preregistration.priorTrialsHash === undefined) {
@@ -947,10 +994,11 @@ export const makeQualificationCandidateRuntime = (
     )
   }
   const definition = application.definition
+  const reviewedSourceRevision = source.reviewedSourceRevision ?? source.sourceRevision
   const boundApplication =
     application.reviewedSource === undefined
       ? bindReviewedStrategySource(application, {
-          sourceRevision: source.sourceRevision,
+          sourceRevision: reviewedSourceRevision,
           modulePath: source.modulePath,
           moduleSha256: source.moduleSha256,
         })
@@ -958,8 +1006,10 @@ export const makeQualificationCandidateRuntime = (
   const reviewedSource = boundApplication.reviewedSource
   if (
     reviewedSource === undefined ||
-    reviewedSource.sourceRevision !== source.sourceRevision ||
-    reviewedSource.sourceRevision !== deployment.sourceSha ||
+    reviewedSource.sourceRevision !== reviewedSourceRevision ||
+    (source.reviewedSourceRevision !== undefined &&
+      reviewedSource.sourceRevision !== preregistration.preregistration.sourceRevision) ||
+    source.sourceRevision !== deployment.sourceSha ||
     reviewedSource.modulePath !== source.modulePath ||
     reviewedSource.modulePath !== preregistration.modulePath ||
     reviewedSource.moduleSha256 !== source.moduleSha256 ||
@@ -1213,18 +1263,17 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
     const candidateSource = yield* verifyQualificationCandidateSource({
       repositoryPath,
       sourceRevision: qualificationRuntime.sourceSha,
+      allowedDescendantPaths: [
+        preregistration.modulePath,
+        preregistration.preregistration.path,
+        activeCandidate.sourceManifest.path,
+        'services/bayn/src/candidate-development-trials/ledger.ts',
+      ],
       preregistration,
       preregistrationBytes: staticGit.preregistrationBytes,
       moduleBlobOid: staticGit.moduleBlobOid,
       moduleBytes: staticGit.moduleBytes,
     })
-    if (qualificationRuntime.sourceSha !== preregistration.preregistration.sourceRevision) {
-      return yield* collectorError(
-        'candidate',
-        'candidate-source-revision-mismatch',
-        'qualification must execute the exact preregistered source revision',
-      )
-    }
     const sourceApplication = yield* loadReviewedStrategyApplication(
       resolve(repositoryPath, candidateSource.modulePath),
       qualificationRuntime.sourceSha,
@@ -1257,6 +1306,7 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
         schemaVersion: 'bayn.qualification-candidate-source-binding.v1',
         candidateOrdinal: preregistration.candidateOrdinal,
         sourceRevision: qualificationRuntime.sourceSha,
+        reviewedSourceRevision: candidateSource.reviewedSourceRevision,
         modulePath: preregistration.modulePath,
         moduleBlobOid: candidateSource.moduleBlobOid,
         moduleSha256: candidateSource.moduleSha256,

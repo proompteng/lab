@@ -59,6 +59,7 @@ const candidate = (input = prelock()): QualificationCandidateBindingReceipt => (
   candidateOrdinal: input.candidateOrdinal,
   priorTrialCount: input.priorTrialCount,
   sourceRevision: input.sourceSha,
+  reviewedSourceRevision: 'a'.repeat(40),
   imageRepository: input.imageRepository,
   imageDigest: input.imageDigest,
   snapshotId: 'f'.repeat(64),
@@ -162,6 +163,9 @@ const sourceFixture = async (malformed = false, historicalModule = false) => {
   await gitText(repositoryPath, ['config', 'user.email', 'qualification-test@example.invalid'])
   await gitText(repositoryPath, ['config', 'user.name', 'Qualification Test'])
   await gitText(repositoryPath, ['config', 'commit.gpgsign', 'false'])
+  await writeFile(join(repositoryPath, 'README.md'), 'qualification source fixture\n')
+  await gitText(repositoryPath, ['add', 'README.md'])
+  await gitText(repositoryPath, ['commit', '-m', 'create source fixture'])
   const preregistration: CandidateDevelopmentNextPreregistration = {
     schemaVersion: 'bayn.candidate-development-next-preregistration.v1',
     candidateOrdinal: 21,
@@ -214,7 +218,15 @@ const sourceFixture = async (malformed = false, historicalModule = false) => {
   const preregistrationBytes = Buffer.from(malformed ? '{' : JSON.stringify(boundDocument))
   return {
     repositoryPath,
-    input: { repositoryPath, sourceRevision, preregistration: bound, preregistrationBytes, moduleBlobOid, moduleBytes },
+    input: {
+      repositoryPath,
+      sourceRevision,
+      allowedDescendantPaths: [modulePath, preregistrationPath],
+      preregistration: bound,
+      preregistrationBytes,
+      moduleBlobOid,
+      moduleBytes,
+    },
     cleanup: () => rm(repositoryPath, { recursive: true, force: true }),
   }
 }
@@ -344,6 +356,47 @@ describe('qualification collector boundaries', () => {
       expect(failure).toMatchObject({ code: 'candidate-module-not-novel' })
     } finally {
       await reused.cleanup()
+    }
+  })
+
+  test('accepts registration bookkeeping descendants but rejects executable helper drift', async () => {
+    const valid = await sourceFixture()
+    try {
+      const sourceBeforeApproval = await gitText(valid.repositoryPath, ['rev-parse', 'HEAD'])
+      await writeFile(join(valid.repositoryPath, valid.input.preregistration.preregistration.path), '{}')
+      await gitText(valid.repositoryPath, ['add', valid.input.preregistration.preregistration.path])
+      await gitText(valid.repositoryPath, ['commit', '-m', 'record development approval'])
+      const descendant = await gitText(valid.repositoryPath, ['rev-parse', 'HEAD'])
+      const accepted = await Effect.runPromise(
+        verifyQualificationCandidateSource({
+          ...valid.input,
+          sourceRevision: descendant,
+          preregistrationBytes: valid.input.preregistrationBytes,
+          allowedDescendantPaths: valid.input.allowedDescendantPaths,
+        }),
+      )
+      expect(accepted.reviewedSourceRevision).toBe(valid.input.preregistration.preregistration.sourceRevision)
+      expect(descendant).not.toBe(sourceBeforeApproval)
+
+      await writeFile(
+        join(valid.repositoryPath, 'services/bayn/src/strategy/helper.ts'),
+        'export const changed = true\n',
+      )
+      await gitText(valid.repositoryPath, ['add', 'services/bayn/src/strategy/helper.ts'])
+      await gitText(valid.repositoryPath, ['commit', '-m', 'change executable helper'])
+      const unsafeDescendant = await gitText(valid.repositoryPath, ['rev-parse', 'HEAD'])
+      const failure = await Effect.runPromise(
+        Effect.flip(
+          verifyQualificationCandidateSource({
+            ...valid.input,
+            sourceRevision: unsafeDescendant,
+            preregistrationBytes: valid.input.preregistrationBytes,
+          }),
+        ),
+      )
+      expect(failure).toMatchObject({ code: 'candidate-source-descendant-invalid' })
+    } finally {
+      await valid.cleanup()
     }
   })
 
