@@ -166,7 +166,13 @@ const ForwardPerformanceReceiptSchema = Schema.Struct({
     Schema.Literal('UNDETERMINED'),
   ]),
   receiptHash: Sha256Schema,
-})
+}).check(
+  Schema.makeFilter((receipt) => {
+    const { receiptHash: _receiptHash, ...material } = receipt
+    const expected = canonicalHashV1Result(material)
+    return Result.isSuccess(expected) && expected.success === receipt.receiptHash
+  }),
+)
 
 const ForwardPerformanceReceiptEnvelopeMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.forward-performance-receipt-envelope.v1'),
