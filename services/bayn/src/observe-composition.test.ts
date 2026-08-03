@@ -4075,6 +4075,130 @@ describe('OBSERVE runtime composition', () => {
     expect(authorityRestrictions).toBe(0)
   })
 
+  test('terminalizes an unbound PAPER cycle as BLOCKED after the authority cutoff', async () => {
+    const cutoffAt = '2020-05-01T12:45:00.000Z'
+    const observedAt = '2020-05-01T12:45:01.000Z'
+    const terminalCycle = Effect.runSync(
+      decodeAutonomousCycle({
+        ...cycle,
+        state: CycleState.Blocked,
+        terminalReason: CycleTerminalReason.Authority,
+        stateVersion: cycle.stateVersion + 1,
+        updatedAt: observedAt,
+        terminalAt: observedAt,
+      }),
+    )
+    const forbidden = (capability: string) => Effect.die(new Error(`cutoff recovery must not use ${capability}`))
+    let blocked = 0
+    let terminal = false
+    const cycleStore: CycleStoreShape = {
+      acquire: () => forbidden('cycle acquisition'),
+      read: () => forbidden('cycle read by ID'),
+      readAuthoritySlot: () => forbidden('authority-slot read'),
+      readOldestUnfinished: () => Effect.succeed(terminal ? Option.none() : Option.some(cycle)),
+      readDecisionDocument: () => forbidden('decision document read'),
+      bindSnapshot: () => forbidden('snapshot binding'),
+      activate: () => forbidden('cycle activation'),
+      bindDecision: () => forbidden('decision binding'),
+      finish: () => forbidden('cycle finishing'),
+      block: (cycleId, reason, blockAt) =>
+        Effect.sync(() => {
+          blocked += 1
+          expect(cycleId).toBe(cycle.identity.cycleId)
+          expect(reason).toBe(CycleTerminalReason.Authority)
+          expect(blockAt).toBe(observedAt)
+          terminal = true
+          return { cycle: terminalCycle, changed: true }
+        }),
+    }
+    const brokerRead = {
+      account: forbidden('broker account read'),
+      accountConfiguration: forbidden('broker account-configuration read'),
+      assetBySymbol: () => forbidden('broker asset read'),
+      positions: forbidden('broker positions read'),
+      orders: () => forbidden('broker orders read'),
+      orderById: () => forbidden('broker order lookup'),
+      orderByClientId: () => forbidden('broker client-order lookup'),
+      fillActivities: () => forbidden('broker fill read'),
+      marketCalendar: () => forbidden('broker calendar read'),
+    } satisfies BrokerReadShape
+    const executionStore = {
+      ingest: () => forbidden('broker-event persistence'),
+      ingestPositions: () => forbidden('position persistence'),
+      account: () => forbidden('accounting read'),
+      value: () => forbidden('valuation persistence'),
+      hasAccountBaseline: () => forbidden('account baseline read'),
+      bindings: () => forbidden('accounting binding read'),
+      reconcile: () => forbidden('reconciliation persistence'),
+      ensureAuthorityGeneration: () => forbidden('authority initialization'),
+      restrictAuthority: () => forbidden('authority restriction'),
+    } satisfies BrokerEventStoreShape &
+      FillAccountingStoreShape &
+      ValuationStoreShape &
+      ReconciliationStoreShape &
+      AuthorityGenerationStoreShape &
+      AuthorityRestrictionStoreShape
+    const marketDataService: MarketDataService = {
+      check: forbidden('market-data health check'),
+      inspect: forbidden('market-data inspection'),
+      inspectCyclePublications: forbidden('cycle publication inspection'),
+      inspectPublication: () => forbidden('publication inspection'),
+      inspectSnapshotPublication: () => forbidden('snapshot publication inspection'),
+      loadSnapshotPublication: () => forbidden('snapshot publication load'),
+      load: forbidden('market-data load'),
+    }
+    const writerFence: WriterFenceService = {
+      backendPid: 1,
+      check: forbidden('writer-fence check'),
+      transaction: () => forbidden('writer-fence transaction'),
+    }
+    const startup = makeMutationAutonomousCycleStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      pollIntervalMs: 30_000,
+      reconciliationIntervalMs: 30_000,
+      reconciliationPassTimeoutMs: 30_000,
+      strategy: fixtureRuntime,
+      executionProgram: sandboxExecutionProgram(),
+      paperEpisodeCutoffAt: cutoffAt,
+    })
+
+    const observation = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(observedAt))
+          const pass = yield* Deferred.make<Parameters<Parameters<typeof startup>[0]['recordPass']>[0]>()
+          const loop = yield* startup({
+            qualificationRunId: cycle.identity.qualificationRunId,
+            recordPass: (result) => Deferred.succeed(pass, result).pipe(Effect.asVoid),
+          })
+          const fiber = yield* loop.pipe(
+            Effect.provideService(BrokerRead, brokerRead),
+            Effect.provideService(CycleStore, cycleStore),
+            Effect.provideService(MarketData, marketDataService),
+            Effect.provideService(BrokerEventStore, executionStore),
+            Effect.provideService(FillAccountingStore, executionStore),
+            Effect.provideService(ValuationStore, executionStore),
+            Effect.provideService(ReconciliationStore, executionStore),
+            Effect.provideService(AuthorityGenerationStore, executionStore),
+            Effect.provideService(AuthorityRestrictionStore, executionStore),
+            Effect.provideService(IntentStore, {} as IntentStoreService),
+            Effect.provideService(MutationStore, {} as MutationStoreShape),
+            Effect.provideService(WriterFence, writerFence),
+            Effect.forkScoped({ startImmediately: true }),
+          )
+          const result = yield* Deferred.await(pass).pipe(Effect.timeout('1 second'))
+          yield* Fiber.interrupt(fiber)
+          return result
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(observation).toMatchObject({ result: 'SUCCESS', outcome: 'RECOVERED' })
+    expect(blocked).toBe(1)
+    expect(terminal).toBe(true)
+  })
+
   test('recovers a bound OBSERVE decision before entering PAPER intent or broker execution', async () => {
     const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, fixtureProtocol.universe))
     const document = await Effect.runPromise(

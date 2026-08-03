@@ -59,6 +59,7 @@ const candidate = (input = prelock()): QualificationCandidateBindingReceipt => (
   candidateOrdinal: input.candidateOrdinal,
   priorTrialCount: input.priorTrialCount,
   sourceRevision: input.sourceSha,
+  reviewedSourceRevision: 'a'.repeat(40),
   imageRepository: input.imageRepository,
   imageDigest: input.imageDigest,
   snapshotId: 'f'.repeat(64),
@@ -156,12 +157,16 @@ const sourceFixture = async (malformed = false, historicalModule = false) => {
   const modulePath = 'services/bayn/src/strategy/candidate-21.ts'
   const historicalModulePath = 'services/bayn/src/strategy/old-candidate.ts'
   const preregistrationPath = 'services/bayn/candidates/ordinal-21-preregistration.json'
+  const ledgerPath = 'services/bayn/src/candidate-development-trials/ledger.ts'
   const moduleBytes = Buffer.from("export const strategyDefinition = { name: 'candidate-21' }\n")
   const moduleSha256 = createHash('sha256').update(moduleBytes).digest('hex')
   await gitText(repositoryPath, ['init', '-b', 'main'])
   await gitText(repositoryPath, ['config', 'user.email', 'qualification-test@example.invalid'])
   await gitText(repositoryPath, ['config', 'user.name', 'Qualification Test'])
   await gitText(repositoryPath, ['config', 'commit.gpgsign', 'false'])
+  await writeFile(join(repositoryPath, 'README.md'), 'qualification source fixture\n')
+  await gitText(repositoryPath, ['add', 'README.md'])
+  await gitText(repositoryPath, ['commit', '-m', 'create source fixture'])
   const preregistration: CandidateDevelopmentNextPreregistration = {
     schemaVersion: 'bayn.candidate-development-next-preregistration.v1',
     candidateOrdinal: 21,
@@ -190,6 +195,11 @@ const sourceFixture = async (malformed = false, historicalModule = false) => {
     await gitText(repositoryPath, ['commit', '-m', 'add historical module blob'])
   }
   await mkdir(join(repositoryPath, dirname(preregistrationPath)), { recursive: true })
+  await mkdir(join(repositoryPath, dirname(ledgerPath)), { recursive: true })
+  await writeFile(
+    join(repositoryPath, ledgerPath),
+    'const historicalLedger = [\n  { value: 1 },\n] as const\n\n/** One append-only source-controlled ledger. */\nexport const registration = null\n',
+  )
   const { preregistration: _registrationMetadata, ...document } = preregistration
   await writeFile(join(repositoryPath, preregistrationPath), malformed ? '{' : JSON.stringify(document))
   await gitText(repositoryPath, ['add', '.'])
@@ -214,7 +224,16 @@ const sourceFixture = async (malformed = false, historicalModule = false) => {
   const preregistrationBytes = Buffer.from(malformed ? '{' : JSON.stringify(boundDocument))
   return {
     repositoryPath,
-    input: { repositoryPath, sourceRevision, preregistration: bound, preregistrationBytes, moduleBlobOid, moduleBytes },
+    ledgerPath,
+    input: {
+      repositoryPath,
+      sourceRevision,
+      allowedDescendantPaths: [modulePath, preregistrationPath, ledgerPath],
+      preregistration: bound,
+      preregistrationBytes,
+      moduleBlobOid,
+      moduleBytes,
+    },
     cleanup: () => rm(repositoryPath, { recursive: true, force: true }),
   }
 }
@@ -260,6 +279,17 @@ describe('qualification collector boundaries', () => {
       expect(matching.success.moduleSha256).toBe(source.moduleSha256)
       expect(matching.success.strategyBehaviorHash).toBe(activeStrategyBehaviorHash)
     }
+    const reviewedSource = {
+      ...source,
+      sourceRevision: candidate18Preregistration.preregistration.sourceRevision,
+    }
+    const descendant = makeQualificationCandidateRuntime(
+      bindReviewedStrategySource(fixtureRuntime.application, reviewedSource),
+      deployment(),
+      { ...source, reviewedSourceRevision: reviewedSource.sourceRevision },
+      candidate18Preregistration,
+    )
+    expect(Result.isSuccess(descendant)).toBe(true)
 
     const behaviorMismatch = makeQualificationCandidateRuntime(
       application,
@@ -344,6 +374,81 @@ describe('qualification collector boundaries', () => {
       expect(failure).toMatchObject({ code: 'candidate-module-not-novel' })
     } finally {
       await reused.cleanup()
+    }
+  })
+
+  test('accepts registration bookkeeping descendants but rejects executable helper drift', async () => {
+    const valid = await sourceFixture()
+    try {
+      const sourceBeforeApproval = await gitText(valid.repositoryPath, ['rev-parse', 'HEAD'])
+      await writeFile(join(valid.repositoryPath, valid.input.preregistration.preregistration.path), '{}')
+      await gitText(valid.repositoryPath, ['add', valid.input.preregistration.preregistration.path])
+      await gitText(valid.repositoryPath, ['commit', '-m', 'record development approval'])
+      const descendant = await gitText(valid.repositoryPath, ['rev-parse', 'HEAD'])
+      const accepted = await Effect.runPromise(
+        verifyQualificationCandidateSource({
+          ...valid.input,
+          sourceRevision: descendant,
+          preregistrationBytes: valid.input.preregistrationBytes,
+          allowedDescendantPaths: valid.input.allowedDescendantPaths,
+        }),
+      )
+      expect(accepted.reviewedSourceRevision).toBe(valid.input.preregistration.preregistration.sourceRevision)
+      expect(descendant).not.toBe(sourceBeforeApproval)
+
+      await writeFile(
+        join(valid.repositoryPath, valid.ledgerPath),
+        'const historicalLedger = [\n  { value: 1 },\n  { value: 2 },\n] as const\n\n/** One append-only source-controlled ledger. */\nexport const registration = null\n',
+      )
+      await gitText(valid.repositoryPath, ['add', valid.ledgerPath])
+      await gitText(valid.repositoryPath, ['commit', '-m', 'append terminal ledger evidence'])
+      const ledgerDescendant = await gitText(valid.repositoryPath, ['rev-parse', 'HEAD'])
+      const acceptedLedger = await Effect.runPromise(
+        verifyQualificationCandidateSource({
+          ...valid.input,
+          sourceRevision: ledgerDescendant,
+          allowedDescendantPaths: valid.input.allowedDescendantPaths,
+        }),
+      )
+      expect(acceptedLedger.reviewedSourceRevision).toBe(valid.input.preregistration.preregistration.sourceRevision)
+
+      await writeFile(
+        join(valid.repositoryPath, valid.ledgerPath),
+        'const historicalLedger = [\n  { value: 1 },\n  { value: 2 },\n] as const\n\n/** One append-only source-controlled ledger. */\nexport const registration = true\n',
+      )
+      await gitText(valid.repositoryPath, ['add', valid.ledgerPath])
+      await gitText(valid.repositoryPath, ['commit', '-m', 'change ledger executable'])
+      const unsafeLedgerDescendant = await gitText(valid.repositoryPath, ['rev-parse', 'HEAD'])
+      const ledgerFailure = await Effect.runPromise(
+        Effect.flip(
+          verifyQualificationCandidateSource({
+            ...valid.input,
+            sourceRevision: unsafeLedgerDescendant,
+            allowedDescendantPaths: valid.input.allowedDescendantPaths,
+          }),
+        ),
+      )
+      expect(ledgerFailure).toMatchObject({ code: 'candidate-source-descendant-invalid' })
+
+      await writeFile(
+        join(valid.repositoryPath, 'services/bayn/src/strategy/helper.ts'),
+        'export const changed = true\n',
+      )
+      await gitText(valid.repositoryPath, ['add', 'services/bayn/src/strategy/helper.ts'])
+      await gitText(valid.repositoryPath, ['commit', '-m', 'change executable helper'])
+      const unsafeDescendant = await gitText(valid.repositoryPath, ['rev-parse', 'HEAD'])
+      const failure = await Effect.runPromise(
+        Effect.flip(
+          verifyQualificationCandidateSource({
+            ...valid.input,
+            sourceRevision: unsafeDescendant,
+            preregistrationBytes: valid.input.preregistrationBytes,
+          }),
+        ),
+      )
+      expect(failure).toMatchObject({ code: 'candidate-source-descendant-invalid' })
+    } finally {
+      await valid.cleanup()
     }
   })
 

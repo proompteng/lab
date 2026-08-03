@@ -342,4 +342,18 @@ describe('cycle store decisions', () => {
       message: 'cycle blocked reason must match its exact durable shadow decision',
     })
   })
+
+  test('uses an authority block for an unbound cycle before its submission deadline', () => {
+    const unbound = activeCycle()
+    const beforeSubmissionCutoff = new Date(Date.parse(unbound.window.submissionCutoffAt) - 1).toISOString()
+
+    expect(value(decideBlock(unbound, CycleTerminalReason.Authority, beforeSubmissionCutoff))).toMatchObject({
+      _tag: 'Persist',
+      reason: CycleTerminalReason.Authority,
+    })
+    expect(failure(decideBlock(unbound, CycleTerminalReason.MissedSubmission, beforeSubmissionCutoff))).toMatchObject({
+      failure: 'invariant',
+      message: 'missed-submission transition cannot precede the broker submission cutoff',
+    })
+  })
 })

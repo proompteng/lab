@@ -8,6 +8,7 @@ import process from 'node:process'
 import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Data, Effect, Layer, Logger, Option, Result, Schema } from 'effect'
 import * as Reactivity from 'effect/unstable/reactivity/Reactivity'
+import { LanguageVariant, SyntaxKind, createScanner } from 'typescript/unstable/ast'
 
 import type { ApplicationPlanFor } from './app'
 import { embeddedBuildMetadata } from './build'
@@ -57,6 +58,7 @@ const sha64 = /^[0-9a-f]{64}$/
 const imageDigest = /^sha256:[0-9a-f]{64}$/
 const maximumGitOutputBytes = 16 * 1024 * 1024
 const defaultOperationTimeoutMs = 60_000
+const candidateDevelopmentTrialLedgerPath = 'services/bayn/src/candidate-development-trials/ledger.ts'
 const defaultAuditReplicaUrls = [
   'http://chi-torghut-clickhouse-default-0-0.torghut.svc.cluster.local:8123',
   'http://chi-torghut-clickhouse-default-0-1.torghut.svc.cluster.local:8123',
@@ -170,6 +172,8 @@ const decodePreregistration = Schema.decodeUnknownResult(
 export interface QualificationCandidateImmutableSourceInput {
   readonly repositoryPath: string
   readonly sourceRevision: string
+  /** Paths that may change after the reviewed source commit without changing the executable candidate. */
+  readonly allowedDescendantPaths: readonly string[]
   readonly preregistration: CandidateDevelopmentNextPreregistration
   readonly preregistrationBytes: Uint8Array
   readonly moduleBlobOid: string
@@ -177,13 +181,187 @@ export interface QualificationCandidateImmutableSourceInput {
 }
 
 export interface QualificationCandidateImmutableSourceReceipt {
-  readonly schemaVersion: 'bayn.qualification-candidate-source.v3'
+  readonly schemaVersion: 'bayn.qualification-candidate-source.v4'
   readonly sourceRevision: string
+  readonly reviewedSourceRevision: string
   readonly modulePath: string
   readonly moduleBlobOid: string
   readonly moduleSha256: string
   readonly preregistrationHash: string
 }
+
+const ledgerDeclaration = 'const historicalLedger = ['
+const ledgerSuffix = '\n] as const\n\n/** One append-only source-controlled ledger.'
+
+const dataOnlyLedgerEntries = (text: string): boolean => {
+  const scanner = createScanner(true, LanguageVariant.Standard, text, 0, text.length)
+  let token = scanner.scan()
+
+  const take = (expected: SyntaxKind): boolean => {
+    if (token !== expected) return false
+    token = scanner.scan()
+    return true
+  }
+  const tokenIs = (expected: SyntaxKind): boolean => token === expected
+
+  const dataValue = (): boolean => {
+    if (
+      token === SyntaxKind.StringLiteral ||
+      token === SyntaxKind.NumericLiteral ||
+      token === SyntaxKind.TrueKeyword ||
+      token === SyntaxKind.FalseKeyword ||
+      token === SyntaxKind.NullKeyword
+    ) {
+      token = scanner.scan()
+      return true
+    }
+    if (token === SyntaxKind.OpenBraceToken) {
+      token = scanner.scan()
+      if (token === SyntaxKind.CloseBraceToken) {
+        token = scanner.scan()
+        return true
+      }
+      while (token !== SyntaxKind.EndOfFile) {
+        if (token !== SyntaxKind.Identifier && token !== SyntaxKind.StringLiteral) return false
+        token = scanner.scan()
+        if (!take(SyntaxKind.ColonToken) || !dataValue()) return false
+        if (tokenIs(SyntaxKind.CloseBraceToken)) {
+          token = scanner.scan()
+          return true
+        }
+        if (token !== SyntaxKind.CommaToken) return false
+        token = scanner.scan()
+        if (tokenIs(SyntaxKind.CloseBraceToken)) {
+          token = scanner.scan()
+          return true
+        }
+      }
+    }
+    if (token === SyntaxKind.OpenBracketToken) {
+      token = scanner.scan()
+      if (token === SyntaxKind.CloseBracketToken) {
+        token = scanner.scan()
+        return true
+      }
+      while (token !== SyntaxKind.EndOfFile) {
+        if (!dataValue()) return false
+        if (tokenIs(SyntaxKind.CloseBracketToken)) {
+          token = scanner.scan()
+          return true
+        }
+        if (token !== SyntaxKind.CommaToken) return false
+        token = scanner.scan()
+        if (tokenIs(SyntaxKind.CloseBracketToken)) {
+          token = scanner.scan()
+          return true
+        }
+      }
+    }
+    return false
+  }
+
+  let count = 0
+  while (token !== SyntaxKind.EndOfFile) {
+    if (!dataValue()) return false
+    count += 1
+    if (token !== SyntaxKind.CommaToken) return false
+    token = scanner.scan()
+  }
+  return count > 0
+}
+
+const verifyAppendOnlyTrialLedger = async (
+  input: QualificationCandidateImmutableSourceInput,
+  signal: AbortSignal,
+): Promise<void> => {
+  const [reviewedBytes, currentBytes] = await Promise.all([
+    gitBytes(
+      input.repositoryPath,
+      [
+        'cat-file',
+        'blob',
+        `${input.preregistration.preregistration.sourceRevision}:${candidateDevelopmentTrialLedgerPath}`,
+      ],
+      signal,
+    ),
+    gitBytes(
+      input.repositoryPath,
+      ['cat-file', 'blob', `${input.sourceRevision}:${candidateDevelopmentTrialLedgerPath}`],
+      signal,
+    ),
+  ])
+  const reviewedText = reviewedBytes.toString('utf8')
+  const currentText = currentBytes.toString('utf8')
+  const reviewedArrayStart = reviewedText.indexOf(ledgerDeclaration)
+  const currentArrayStart = currentText.indexOf(ledgerDeclaration)
+  const reviewedSuffixStart = reviewedText.indexOf(ledgerSuffix, reviewedArrayStart + ledgerDeclaration.length)
+  const currentSuffixStart = currentText.indexOf(ledgerSuffix, currentArrayStart + ledgerDeclaration.length)
+  if (
+    reviewedArrayStart < 0 ||
+    currentArrayStart < 0 ||
+    reviewedSuffixStart < 0 ||
+    currentSuffixStart < 0 ||
+    reviewedText.indexOf(ledgerDeclaration, reviewedArrayStart + ledgerDeclaration.length) >= 0 ||
+    currentText.indexOf(ledgerDeclaration, currentArrayStart + ledgerDeclaration.length) >= 0
+  ) {
+    throw new Error('candidate trial ledger does not expose one historicalLedger array')
+  }
+  const reviewedBodyStart = reviewedArrayStart + ledgerDeclaration.length
+  const currentBodyStart = currentArrayStart + ledgerDeclaration.length
+  const reviewedBody = reviewedText.slice(reviewedBodyStart, reviewedSuffixStart)
+  const currentBody = currentText.slice(currentBodyStart, currentSuffixStart)
+  if (
+    currentText.slice(0, currentArrayStart) !== reviewedText.slice(0, reviewedArrayStart) ||
+    currentText.slice(currentSuffixStart) !== reviewedText.slice(reviewedSuffixStart) ||
+    !currentBody.startsWith(reviewedBody)
+  ) {
+    throw new Error('candidate trial ledger descendant changed executable code or reviewed evidence')
+  }
+  const appended = currentBody.slice(reviewedBody.length)
+  if (appended.trim().length === 0 || !dataOnlyLedgerEntries(appended)) {
+    throw new Error('candidate trial ledger descendant must append data-only terminal evidence')
+  }
+}
+
+const verifyCandidateSourceDescendant = (
+  input: QualificationCandidateImmutableSourceInput,
+): Effect.Effect<void, QualificationCollectorError> =>
+  Effect.tryPromise({
+    try: async (signal) => {
+      const changedPaths = (
+        await gitBytes(
+          input.repositoryPath,
+          [
+            'diff',
+            '--name-only',
+            '-z',
+            '--no-renames',
+            `${input.preregistration.preregistration.sourceRevision}..${input.sourceRevision}`,
+            '--',
+          ],
+          signal,
+        )
+      )
+        .toString('utf8')
+        .split('\0')
+        .filter(Boolean)
+      const allowedPaths = new Set(input.allowedDescendantPaths)
+      const unexpectedPath = changedPaths.find((path) => !allowedPaths.has(path))
+      if (unexpectedPath !== undefined) {
+        throw new Error(`unapproved qualification descendant path: ${unexpectedPath}`)
+      }
+      if (changedPaths.includes(candidateDevelopmentTrialLedgerPath)) {
+        await verifyAppendOnlyTrialLedger(input, signal)
+      }
+    },
+    catch: (cause) =>
+      collectorError(
+        'candidate',
+        'candidate-source-descendant-invalid',
+        'qualification source may only contain the reviewed candidate and registration bookkeeping after preregistration',
+        cause,
+      ),
+  })
 
 const verifyCandidateSourceNovelty = (
   input: QualificationCandidateImmutableSourceInput,
@@ -277,9 +455,11 @@ export const verifyQualificationCandidateSource = (
       )
     }
     yield* verifyCandidateSourceNovelty(input)
+    yield* verifyCandidateSourceDescendant(input)
     return {
-      schemaVersion: 'bayn.qualification-candidate-source.v3' as const,
+      schemaVersion: 'bayn.qualification-candidate-source.v4' as const,
       sourceRevision: input.sourceRevision,
+      reviewedSourceRevision: input.preregistration.preregistration.sourceRevision,
       modulePath: input.preregistration.modulePath,
       moduleBlobOid: input.moduleBlobOid,
       moduleSha256: sha256Bytes(input.moduleBytes),
@@ -934,7 +1114,12 @@ export const loadQualificationCollectorInvocation = (
 export const makeQualificationCandidateRuntime = (
   application: QualificationCandidateApplication,
   deployment: DeploymentRuntime,
-  source: { readonly sourceRevision: string; readonly modulePath: string; readonly moduleSha256: string },
+  source: {
+    readonly sourceRevision: string
+    readonly reviewedSourceRevision?: string
+    readonly modulePath: string
+    readonly moduleSha256: string
+  },
   preregistration: CandidateDevelopmentNextPreregistration,
 ): Result.Result<QualificationCandidateRuntime, QualificationCollectorError> => {
   if (preregistration.priorTrialsHash === undefined) {
@@ -947,10 +1132,11 @@ export const makeQualificationCandidateRuntime = (
     )
   }
   const definition = application.definition
+  const reviewedSourceRevision = source.reviewedSourceRevision ?? source.sourceRevision
   const boundApplication =
     application.reviewedSource === undefined
       ? bindReviewedStrategySource(application, {
-          sourceRevision: source.sourceRevision,
+          sourceRevision: reviewedSourceRevision,
           modulePath: source.modulePath,
           moduleSha256: source.moduleSha256,
         })
@@ -958,8 +1144,10 @@ export const makeQualificationCandidateRuntime = (
   const reviewedSource = boundApplication.reviewedSource
   if (
     reviewedSource === undefined ||
-    reviewedSource.sourceRevision !== source.sourceRevision ||
-    reviewedSource.sourceRevision !== deployment.sourceSha ||
+    reviewedSource.sourceRevision !== reviewedSourceRevision ||
+    (source.reviewedSourceRevision !== undefined &&
+      reviewedSource.sourceRevision !== preregistration.preregistration.sourceRevision) ||
+    source.sourceRevision !== deployment.sourceSha ||
     reviewedSource.modulePath !== source.modulePath ||
     reviewedSource.modulePath !== preregistration.modulePath ||
     reviewedSource.moduleSha256 !== source.moduleSha256 ||
@@ -1213,18 +1401,17 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
     const candidateSource = yield* verifyQualificationCandidateSource({
       repositoryPath,
       sourceRevision: qualificationRuntime.sourceSha,
+      allowedDescendantPaths: [
+        preregistration.modulePath,
+        preregistration.preregistration.path,
+        activeCandidate.sourceManifest.path,
+        candidateDevelopmentTrialLedgerPath,
+      ],
       preregistration,
       preregistrationBytes: staticGit.preregistrationBytes,
       moduleBlobOid: staticGit.moduleBlobOid,
       moduleBytes: staticGit.moduleBytes,
     })
-    if (qualificationRuntime.sourceSha !== preregistration.preregistration.sourceRevision) {
-      return yield* collectorError(
-        'candidate',
-        'candidate-source-revision-mismatch',
-        'qualification must execute the exact preregistered source revision',
-      )
-    }
     const sourceApplication = yield* loadReviewedStrategyApplication(
       resolve(repositoryPath, candidateSource.modulePath),
       qualificationRuntime.sourceSha,
@@ -1257,6 +1444,7 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
         schemaVersion: 'bayn.qualification-candidate-source-binding.v1',
         candidateOrdinal: preregistration.candidateOrdinal,
         sourceRevision: qualificationRuntime.sourceSha,
+        reviewedSourceRevision: candidateSource.reviewedSourceRevision,
         modulePath: preregistration.modulePath,
         moduleBlobOid: candidateSource.moduleBlobOid,
         moduleSha256: candidateSource.moduleSha256,
