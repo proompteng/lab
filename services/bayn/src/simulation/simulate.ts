@@ -24,6 +24,9 @@ const openingSnapshot = (state: SimulationState): SessionOpeningSnapshot => ({
 const hasOpenPosition = (state: SimulationState): boolean =>
   Object.values(state.positions).some((position) => position.quantityMicros !== 0n)
 
+const isFlatTarget = (target: SimulationTarget): boolean =>
+  Object.values(target.weights).every((weight) => weight === 0)
+
 const consolidateSessionFees = (
   state: SimulationState,
   sessionDate: IsoDate,
@@ -137,21 +140,30 @@ const runSession = (
   input: SimulationInput,
 ): Result.Result<SimulationState, SimulationFailure> => {
   const opening = openingSnapshot(state)
+  const finalSession = input.terminalCloseTarget !== undefined && index === input.sessions.length - 1
+  const scheduledTarget = targets[index]
+  const replaceScheduledTarget = finalSession && scheduledTarget !== undefined && !isFlatTarget(scheduledTarget)
+  const terminalTargetFor = (source: SimulationTarget | undefined): SimulationTarget => {
+    const fallback = source ?? terminalCloseTarget(input, undefined, index)
+    return input.terminalCloseTarget?.(fallback, index) ?? terminalCloseTarget(input, source, index)
+  }
+  const target = replaceScheduledTarget ? terminalTargetFor(scheduledTarget) : scheduledTarget
   return pipe(
     accrueSessionCash(state, session, input),
     Result.flatMap((accrued) => {
-      const target = targets[index]
       return target === undefined ? Result.succeed(accrued) : rebalanceSession(accrued, session, target, opening, input)
     }),
     Result.flatMap((updated) => {
-      if (input.terminalCloseTarget === undefined || index !== input.sessions.length - 1 || !hasOpenPosition(updated)) {
+      if (replaceScheduledTarget || !finalSession || !hasOpenPosition(updated)) {
         return Result.succeed(updated)
       }
-      const source = targets[index] ?? input.targets.at(-1)
-      const terminalTarget =
-        input.terminalCloseTarget?.(source ?? terminalCloseTarget(input, undefined, index), index) ??
-        terminalCloseTarget(input, source, index)
-      return rebalanceSession(updated, session, terminalTarget, openingSnapshot(updated), input)
+      return rebalanceSession(
+        updated,
+        session,
+        terminalTargetFor(scheduledTarget ?? input.targets.at(-1)),
+        openingSnapshot(updated),
+        input,
+      )
     }),
     Result.flatMap((updated) => consolidateSessionFees(updated, session.date, opening, input)),
     Result.flatMap((updated) => closeSession(updated, session, opening, input)),

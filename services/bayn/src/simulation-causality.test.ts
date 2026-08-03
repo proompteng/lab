@@ -164,4 +164,21 @@ describe('live-causal simulation', () => {
 
     expect(traceFree.success.metrics.totalFeesMicros).toBe(traced.success.metrics.totalFeesMicros)
   })
+
+  test('replaces a final non-flat target with the terminal close instead of a same-session round trip', () => {
+    const close = (target: SimulationTarget, executionIndex: number): SimulationTarget => ({
+      ...target,
+      executionIndex,
+      weights: { AAA: 0, BBB: 0 },
+      decision: undefined,
+      requireDecisionEvidence: false,
+      terminalClose: true,
+    })
+    const result = simulate(sessions(), targets, 1, protocol, MICROS, 'a'.repeat(64), true, close)
+    if (Result.isFailure(result)) throw new Error('terminal replacement fixture failed')
+
+    const finalOrders = result.success.simulation?.orders.filter((order) => order.sessionDate === '2026-01-06') ?? []
+    expect(finalOrders.map(({ symbol, side }) => ({ symbol, side }))).toEqual([{ symbol: 'AAA', side: 'sell' }])
+    expect(result.success.events.filter((event) => event.kind === 'decision' && event.terminalClose)).toHaveLength(1)
+  })
 })

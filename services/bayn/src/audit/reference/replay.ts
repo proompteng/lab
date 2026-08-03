@@ -55,6 +55,8 @@ interface ReplayState {
 const hasOpenPosition = (positions: ReadonlyMap<string, Position>): boolean =>
   [...positions.values()].some((position) => position.quantityMicros !== 0n)
 
+const isFlatTarget = (target: Target): boolean => Object.values(target.weights).every((weight) => weight === 0)
+
 export const replay = (
   sessions: readonly Session[],
   targets: readonly Target[],
@@ -415,12 +417,27 @@ export const replay = (
       return Result.succeed(undefined)
     }
 
-    if (scheduledTarget !== undefined) {
-      const scheduledResult = runTarget(scheduledTarget)
+    const terminalSession = closeAtEnd && index === sessions.length - 1
+    const replaceScheduledTarget = terminalSession && scheduledTarget !== undefined && !isFlatTarget(scheduledTarget)
+    const terminalTargetFor = (source: Target | undefined): Target => ({
+      ...(source ?? {
+        signalIndex: Math.max(0, index - 1),
+        executionIndex: index,
+        weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, 0])),
+      }),
+      executionIndex: index,
+      weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, 0])),
+      plan: undefined,
+      terminalClose: true,
+    })
+    const target = replaceScheduledTarget ? terminalTargetFor(scheduledTarget) : scheduledTarget
+
+    if (target !== undefined) {
+      const scheduledResult = runTarget(target)
       if (Result.isFailure(scheduledResult)) return Result.fail(scheduledResult.failure)
     }
 
-    const mustCloseAtEnd = closeAtEnd && index === sessions.length - 1 && hasOpenPosition(positions)
+    const mustCloseAtEnd = terminalSession && !replaceScheduledTarget && hasOpenPosition(positions)
     const closeSource = scheduledTarget ?? lastTarget
     const terminalTarget =
       mustCloseAtEnd && closeSource !== undefined
