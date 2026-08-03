@@ -272,6 +272,17 @@ describe('qualification collector boundaries', () => {
       expect(matching.success.moduleSha256).toBe(source.moduleSha256)
       expect(matching.success.strategyBehaviorHash).toBe(activeStrategyBehaviorHash)
     }
+    const reviewedSource = {
+      ...source,
+      sourceRevision: candidate18Preregistration.preregistration.sourceRevision,
+    }
+    const descendant = makeQualificationCandidateRuntime(
+      bindReviewedStrategySource(fixtureRuntime.application, reviewedSource),
+      deployment(),
+      { ...source, reviewedSourceRevision: reviewedSource.sourceRevision },
+      candidate18Preregistration,
+    )
+    expect(Result.isSuccess(descendant)).toBe(true)
 
     const behaviorMismatch = makeQualificationCandidateRuntime(
       application,
