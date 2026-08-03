@@ -692,6 +692,25 @@ describe('forward performance read program', () => {
     })
   })
 
+  test('scopes forward-performance PostgreSQL evidence to one PAPER authority generation', async () => {
+    const observation: SqlObservation = { statements: [] }
+    const evidence = await Effect.runPromise(
+      readForwardPerformancePostgres(makeReadOnlySql(observation), identityResult.success.accountId, hash('9')),
+    )
+
+    expect(evidence.cycles).toEqual([])
+    expect(
+      observation.statements.filter((statement) => statement.includes('scope_generation.generation_hash')).length,
+    ).toBeGreaterThan(10)
+    expect(
+      observation.statements.some(
+        (statement) =>
+          statement.includes('intent.authority_generation_hash = scope_generation.generation_hash') &&
+          statement.includes('intent.created_at >= scope_generation.activated_at'),
+      ),
+    ).toBe(true)
+  })
+
   test('does not excuse any reconciliation discrepancy beyond the exact cash-yield residual', async () => {
     const observation: SqlObservation = { statements: [] }
     const sql = makeReadOnlySql(observation, { extraReconciliationDiscrepancy: true })

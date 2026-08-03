@@ -61,6 +61,7 @@ export interface ForwardPerformanceReaders {
   readonly postgres: (
     sql: PgClient.PgClient,
     accountId: string,
+    authorityGenerationHash?: string,
   ) => Effect.Effect<ForwardPerformancePostgresEvidence, ForwardPerformancePostgresError>
   readonly ledger: (
     config: Pick<LoadedRuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
@@ -498,13 +499,14 @@ const requireBrokerIdentity = (
 export const runForwardPerformance = (
   loadedConfig: LoadedRuntimeConfig,
   readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
+  options: { readonly authorityGenerationHash?: string } = {},
 ): Effect.Effect<ForwardPerformanceReceipt, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
   Effect.gen(function* () {
     const config = yield* requireBrokerIdentity(loadedConfig)
     const identity = config.execution.brokerIdentity
     const sql = yield* PgClient.PgClient
     const postgres = yield* readers
-      .postgres(sql, identity.accountId)
+      .postgres(sql, identity.accountId, options.authorityGenerationHash)
       .pipe(Effect.mapError((cause) => programError('postgres-read', cause.message, cause)))
     const marketVolumeEvidence = yield* readers
       .marketVolume(config, postgres.marketVolumeRequests)

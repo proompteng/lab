@@ -864,6 +864,15 @@ type PaperExecutionCapability =
   | { readonly _tag: 'RecoveryOnly' }
   | { readonly _tag: 'Mutation'; readonly executionProgram: ExecutionProgram }
 
+export const paperMutationSubmissionAllowed = (input: {
+  readonly capability: PaperExecutionCapability['_tag']
+  readonly closeOnly: boolean
+  readonly paperEpisodeCutoffAt?: string
+  readonly observedAt: string
+}): boolean =>
+  input.capability === 'Mutation' &&
+  (input.closeOnly || input.paperEpisodeCutoffAt === undefined || input.observedAt < input.paperEpisodeCutoffAt)
+
 type RecoveryFirstDecisionBuilder = (
   cycle: AutonomousCycle,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
@@ -1059,6 +1068,7 @@ const executeBoundPaperCycle = (
   capability: PaperExecutionCapability,
 ): Effect.Effect<BoundMutationCycleOutcome, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
+    const observedAt = yield* currentUtcInstant
     const closeDocument = yield* ensurePaperCycleClosure(input, preparation, policy, cycle, reconcile)
     const closeOnly = closeDocument !== undefined
     const phaseInput: ObserveAutonomousCycleInput = {
@@ -1073,7 +1083,12 @@ const executeBoundPaperCycle = (
       cycle,
       activeDocument,
       reconcile,
-      capability._tag === 'Mutation' && (closeOnly || input.paperEpisodeCutoffAt === undefined),
+      paperMutationSubmissionAllowed({
+        capability: capability._tag,
+        closeOnly,
+        paperEpisodeCutoffAt: input.paperEpisodeCutoffAt,
+        observedAt,
+      }),
     )
     if (step._tag !== 'Execute') return step
     const executed = yield* capability._tag === 'Mutation'

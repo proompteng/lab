@@ -7,7 +7,7 @@ import {
   decodePersistedBrokerIdentity,
   type BrokerIdentity,
 } from '../../broker/identity'
-import { Authority, type AuthorityState } from '../../execution/contracts'
+import { Authority, type AuthorityState, type CapitalGrantGeneration } from '../../execution/contracts'
 import { incompletePassReason } from '../../simulation-reconciliation/broker-reconciler-model'
 import {
   decideObserveGeneration,
@@ -16,7 +16,7 @@ import {
   type ObserveGenerationDecision,
   type ObserveGenerationRequest,
 } from '../capital-grant-algebra'
-import { authorityStateFromRow, type AuthorityPostgres } from './authority-shared'
+import { authorityStateFromRow, paperGenerationFromRow, type AuthorityPostgres } from './authority-shared'
 import type { EnsureAuthorityGenerationInput, ExecutionStoreError } from './contract'
 import { failExecutionStore, liftAuthorityDecision, runExecutionOperation } from './errors'
 import {
@@ -107,6 +107,10 @@ export interface ObserveAuthorityInterpreter {
   readonly ensureAuthorityGeneration: (
     input: EnsureAuthorityGenerationInput,
   ) => Effect.Effect<AuthorityState, ExecutionStoreError>
+  readonly readAuthorityState: () => Effect.Effect<AuthorityState, ExecutionStoreError>
+  readonly readAuthorityGeneration: (
+    generationHash: string,
+  ) => Effect.Effect<CapitalGrantGeneration | undefined, ExecutionStoreError>
 }
 
 export const makeObserveAuthorityInterpreter = (
@@ -319,5 +323,35 @@ export const makeObserveAuthorityInterpreter = (
       ),
     )
 
-  return { ensureAuthorityGeneration }
+  const readAuthorityState = () =>
+    runExecutionOperation(
+      'authority',
+      sql<Record<string, unknown>>`
+        SELECT schema_version, generation_hash, maximum, effective, kill_state, reason,
+          version::text AS version, updated_at
+        FROM authority_state
+        WHERE singleton
+      `.pipe(
+        Effect.flatMap(decodeAuthorityStateRows),
+        Effect.flatMap((rows) =>
+          rows[0] === undefined
+            ? failExecutionStore('authority', 'invariant', 'durable authority state is missing')
+            : authorityStateFromRow(rows[0]),
+        ),
+      ),
+    )
+
+  const readAuthorityGeneration = (generationHash: string) =>
+    runExecutionOperation(
+      'authority',
+      authority.readGeneration(generationHash).pipe(
+        Effect.flatMap((rows) => {
+          const row = rows[0]
+          if (row === undefined || row.maximum !== Authority.Paper) return Effect.succeed(undefined)
+          return paperGenerationFromRow(row).pipe(Effect.map((generation) => generation))
+        }),
+      ),
+    )
+
+  return { ensureAuthorityGeneration, readAuthorityState, readAuthorityGeneration }
 }

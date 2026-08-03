@@ -251,6 +251,166 @@ const SIGNED_I128_MIN = -(1n << 127n)
 const SIGNED_I128_MAX = (1n << 127n) - 1n
 const INTEGER_PATTERN = /^(?:0|-[1-9][0-9]*|[1-9][0-9]*)$/
 
+type GenerationScopeTarget =
+  | 'cycle'
+  | 'intent'
+  | 'transaction'
+  | 'reconciliation'
+  | 'snapshot'
+  | 'order'
+  | 'fill'
+  | 'mutation'
+
+const generationScope = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  authorityGenerationHash: string | undefined,
+  target: GenerationScopeTarget,
+) => {
+  if (authorityGenerationHash === undefined) return true
+
+  switch (target) {
+    case 'cycle':
+      return sql`EXISTS (
+        SELECT 1
+        FROM authority_generations AS scope_generation
+        LEFT JOIN authority_generations AS next_generation
+          ON next_generation.previous_generation_hash = scope_generation.generation_hash
+        WHERE scope_generation.generation_hash = ${authorityGenerationHash}
+          AND scope_generation.maximum = 'PAPER'
+          AND scope_generation.account_id = ${accountId}
+          AND scope_generation.qualification_run_id = cycle.qualification_run_id
+          AND cycle.submission_open_at >= scope_generation.activated_at
+          AND (
+            next_generation.activated_at IS NULL
+            OR cycle.submission_open_at < next_generation.activated_at
+          )
+      )`
+    case 'intent':
+      return sql`EXISTS (
+        SELECT 1
+        FROM authority_generations AS scope_generation
+        LEFT JOIN authority_generations AS next_generation
+          ON next_generation.previous_generation_hash = scope_generation.generation_hash
+        WHERE scope_generation.generation_hash = ${authorityGenerationHash}
+          AND scope_generation.maximum = 'PAPER'
+          AND scope_generation.account_id = ${accountId}
+          AND intent.account_id = scope_generation.account_id
+          AND intent.authority_generation_hash = scope_generation.generation_hash
+          AND intent.created_at >= scope_generation.activated_at
+          AND (
+            next_generation.activated_at IS NULL
+            OR intent.created_at < next_generation.activated_at
+          )
+      )`
+    case 'transaction':
+      return sql`EXISTS (
+        SELECT 1
+        FROM authority_generations AS scope_generation
+        LEFT JOIN authority_generations AS next_generation
+          ON next_generation.previous_generation_hash = scope_generation.generation_hash
+        WHERE scope_generation.generation_hash = ${authorityGenerationHash}
+          AND scope_generation.maximum = 'PAPER'
+          AND scope_generation.account_id = ${accountId}
+          AND transaction.account_id = scope_generation.account_id
+          AND transaction.occurred_at >= scope_generation.activated_at
+          AND (
+            next_generation.activated_at IS NULL
+            OR transaction.occurred_at < next_generation.activated_at
+          )
+      )`
+    case 'reconciliation':
+      return sql`EXISTS (
+        SELECT 1
+        FROM authority_generations AS scope_generation
+        LEFT JOIN authority_generations AS next_generation
+          ON next_generation.previous_generation_hash = scope_generation.generation_hash
+        WHERE scope_generation.generation_hash = ${authorityGenerationHash}
+          AND scope_generation.maximum = 'PAPER'
+          AND scope_generation.account_id = ${accountId}
+          AND reconciliation.account_id = scope_generation.account_id
+          AND reconciliation.reconciled_at >= scope_generation.activated_at
+          AND (
+            next_generation.activated_at IS NULL
+            OR reconciliation.reconciled_at < next_generation.activated_at
+          )
+      )`
+    case 'snapshot':
+      return sql`EXISTS (
+        SELECT 1
+        FROM authority_generations AS scope_generation
+        LEFT JOIN authority_generations AS next_generation
+          ON next_generation.previous_generation_hash = scope_generation.generation_hash
+        WHERE scope_generation.generation_hash = ${authorityGenerationHash}
+          AND scope_generation.maximum = 'PAPER'
+          AND scope_generation.account_id = ${accountId}
+          AND snapshot.account_id = scope_generation.account_id
+          AND event.observed_at >= scope_generation.activated_at
+          AND (
+            next_generation.activated_at IS NULL
+            OR event.observed_at < next_generation.activated_at
+          )
+      )`
+    case 'order':
+      return sql`EXISTS (
+        SELECT 1
+        FROM authority_generations AS scope_generation
+        LEFT JOIN authority_generations AS next_generation
+          ON next_generation.previous_generation_hash = scope_generation.generation_hash
+        JOIN intents AS scope_intent
+          ON scope_intent.intent_id = observed_order.intent_id
+          AND scope_intent.account_id = observed_order.account_id
+        WHERE scope_generation.generation_hash = ${authorityGenerationHash}
+          AND scope_generation.maximum = 'PAPER'
+          AND scope_generation.account_id = ${accountId}
+          AND scope_intent.authority_generation_hash = scope_generation.generation_hash
+          AND event.observed_at >= scope_generation.activated_at
+          AND (
+            next_generation.activated_at IS NULL
+            OR event.observed_at < next_generation.activated_at
+          )
+      )`
+    case 'fill':
+      return sql`EXISTS (
+        SELECT 1
+        FROM authority_generations AS scope_generation
+        LEFT JOIN authority_generations AS next_generation
+          ON next_generation.previous_generation_hash = scope_generation.generation_hash
+        JOIN intents AS scope_intent
+          ON scope_intent.intent_id = fill.intent_id
+          AND scope_intent.account_id = fill.account_id
+        WHERE scope_generation.generation_hash = ${authorityGenerationHash}
+          AND scope_generation.maximum = 'PAPER'
+          AND scope_generation.account_id = ${accountId}
+          AND scope_intent.authority_generation_hash = scope_generation.generation_hash
+          AND event.observed_at >= scope_generation.activated_at
+          AND (
+            next_generation.activated_at IS NULL
+            OR event.observed_at < next_generation.activated_at
+          )
+      )`
+    case 'mutation':
+      return sql`EXISTS (
+        SELECT 1
+        FROM authority_generations AS scope_generation
+        LEFT JOIN authority_generations AS next_generation
+          ON next_generation.previous_generation_hash = scope_generation.generation_hash
+        JOIN intents AS scope_intent
+          ON scope_intent.intent_id = event.intent_id
+          AND scope_intent.account_id = ${accountId}
+        WHERE scope_generation.generation_hash = ${authorityGenerationHash}
+          AND scope_generation.maximum = 'PAPER'
+          AND scope_generation.account_id = ${accountId}
+          AND scope_intent.authority_generation_hash = scope_generation.generation_hash
+          AND event.occurred_at >= scope_generation.activated_at
+          AND (
+            next_generation.activated_at IS NULL
+            OR event.occurred_at < next_generation.activated_at
+          )
+      )`
+  }
+}
+
 const signedI128 = (value: string): bigint | undefined => {
   if (!INTEGER_PATTERN.test(value)) return undefined
   const parsed = BigInt(value)
@@ -316,19 +476,25 @@ const reconciliationExactness = (
   return { performanceExact: true, cashYieldAdjustedExact: true }
 }
 
-const transactionQuery = (sql: PgClient.PgClient, accountId: string) => sql<Record<string, unknown>>`
+const transactionQuery = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  authorityGenerationHash: string | undefined,
+) => sql<Record<string, unknown>>`
   WITH latest_reconciliation AS (
-    SELECT reconciled_at
-    FROM reconciliations
-    WHERE account_id = ${accountId}
-    ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+    SELECT reconciliation.reconciled_at
+    FROM reconciliations AS reconciliation
+    WHERE reconciliation.account_id = ${accountId}
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+    ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
     LIMIT 1
   ), first_cycle AS (
-    SELECT submission_open_at
-    FROM autonomous_cycles
-    WHERE account_id = ${accountId}
-      AND state IN ('COMPLETED', 'NO_TRADE')
-    ORDER BY submission_open_at, cycle_id COLLATE "C"
+    SELECT cycle.submission_open_at
+    FROM autonomous_cycles AS cycle
+    WHERE cycle.account_id = ${accountId}
+      AND cycle.state IN ('COMPLETED', 'NO_TRADE')
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
+    ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
     LIMIT 1
   ), opening_snapshot AS (
     SELECT event.observed_at
@@ -337,6 +503,7 @@ const transactionQuery = (sql: PgClient.PgClient, accountId: string) => sql<Reco
     CROSS JOIN latest_reconciliation
     CROSS JOIN first_cycle
     WHERE snapshot.account_id = ${accountId}
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'snapshot')}
       AND event.observed_at <= first_cycle.submission_open_at
       AND event.observed_at <= latest_reconciliation.reconciled_at
     ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
@@ -370,22 +537,27 @@ const transactionQuery = (sql: PgClient.PgClient, accountId: string) => sql<Reco
   WHERE transaction.account_id = ${accountId}
     AND transaction.occurred_at >= opening_snapshot.observed_at
     AND transaction.occurred_at <= latest_reconciliation.reconciled_at
+    AND ${generationScope(sql, accountId, authorityGenerationHash, 'transaction')}
   ORDER BY transaction.occurred_at, transaction.transaction_id COLLATE "C"
 `
 
-const receiptQuery = (sql: PgClient.PgClient, accountId: string) => sql<Record<string, unknown>>`
+const receiptQuery = (sql: PgClient.PgClient, accountId: string, authorityGenerationHash: string | undefined) => sql<
+  Record<string, unknown>
+>`
   WITH latest_reconciliation AS (
-    SELECT reconciled_at
-    FROM reconciliations
-    WHERE account_id = ${accountId}
-    ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+    SELECT reconciliation.reconciled_at
+    FROM reconciliations AS reconciliation
+    WHERE reconciliation.account_id = ${accountId}
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+    ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
     LIMIT 1
   ), first_cycle AS (
-    SELECT submission_open_at
-    FROM autonomous_cycles
-    WHERE account_id = ${accountId}
-      AND state IN ('COMPLETED', 'NO_TRADE')
-    ORDER BY submission_open_at, cycle_id COLLATE "C"
+    SELECT cycle.submission_open_at
+    FROM autonomous_cycles AS cycle
+    WHERE cycle.account_id = ${accountId}
+      AND cycle.state IN ('COMPLETED', 'NO_TRADE')
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
+    ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
     LIMIT 1
   ), opening_snapshot AS (
     SELECT event.observed_at
@@ -394,18 +566,20 @@ const receiptQuery = (sql: PgClient.PgClient, accountId: string) => sql<Record<s
     CROSS JOIN latest_reconciliation
     CROSS JOIN first_cycle
     WHERE snapshot.account_id = ${accountId}
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'snapshot')}
       AND event.observed_at <= first_cycle.submission_open_at
       AND event.observed_at <= latest_reconciliation.reconciled_at
     ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
     LIMIT 1
   ), selected_transactions AS (
     SELECT broker_event_id
-    FROM accounting_transactions
+    FROM accounting_transactions AS transaction
     CROSS JOIN latest_reconciliation
     CROSS JOIN opening_snapshot
-    WHERE account_id = ${accountId}
-      AND occurred_at >= opening_snapshot.observed_at
-      AND occurred_at <= latest_reconciliation.reconciled_at
+    WHERE transaction.account_id = ${accountId}
+      AND transaction.occurred_at >= opening_snapshot.observed_at
+      AND transaction.occurred_at <= latest_reconciliation.reconciled_at
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'transaction')}
   )
   SELECT
     receipt.schema_version,
@@ -624,6 +798,7 @@ const marketVolumeRequestsFromRows = (
 export const readForwardPerformancePostgres = (
   sql: PgClient.PgClient,
   accountId: string,
+  authorityGenerationHash?: string,
 ): Effect.Effect<ForwardPerformancePostgresEvidence, ForwardPerformancePostgresError> =>
   sql
     .withTransaction(
@@ -642,19 +817,21 @@ export const readForwardPerformancePostgres = (
             state,
             submission_open_at,
             terminal_at
-          FROM autonomous_cycles
-          WHERE account_id = ${accountId}
-            AND state IN ('COMPLETED', 'NO_TRADE')
-          ORDER BY submission_open_at, cycle_id COLLATE "C"
+          FROM autonomous_cycles AS cycle
+          WHERE cycle.account_id = ${accountId}
+            AND cycle.state IN ('COMPLETED', 'NO_TRADE')
+            AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
+          ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
         `.pipe(Effect.flatMap(decodeCycles))
 
         const strategyRows = yield* sql<Record<string, unknown>>`
           WITH first_cycle AS (
             SELECT qualification_run_id, strategy_protocol_hash
-            FROM autonomous_cycles
-            WHERE account_id = ${accountId}
-              AND state IN ('COMPLETED', 'NO_TRADE')
-            ORDER BY submission_open_at, cycle_id COLLATE "C"
+            FROM autonomous_cycles AS cycle
+            WHERE cycle.account_id = ${accountId}
+              AND cycle.state IN ('COMPLETED', 'NO_TRADE')
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
+            ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
             LIMIT 1
           )
           SELECT
@@ -685,25 +862,28 @@ export const readForwardPerformancePostgres = (
 
         const reconciliationRows = yield* sql<Record<string, unknown>>`
           SELECT reconciliation_id, content_hash, status, discrepancies, reconciled_at
-          FROM reconciliations
-          WHERE account_id = ${accountId}
-          ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+          FROM reconciliations AS reconciliation
+          WHERE reconciliation.account_id = ${accountId}
+            AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+          ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
           LIMIT 1
         `.pipe(Effect.flatMap(decodeReconciliation))
 
         const startingCapitalRows = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (
-            SELECT reconciled_at
-            FROM reconciliations
-            WHERE account_id = ${accountId}
-            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+            SELECT reconciliation.reconciled_at
+            FROM reconciliations AS reconciliation
+            WHERE reconciliation.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+            ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
             LIMIT 1
           ), first_cycle AS (
-            SELECT submission_open_at
-            FROM autonomous_cycles
-            WHERE account_id = ${accountId}
-              AND state IN ('COMPLETED', 'NO_TRADE')
-            ORDER BY submission_open_at, cycle_id COLLATE "C"
+            SELECT cycle.submission_open_at
+            FROM autonomous_cycles AS cycle
+            WHERE cycle.account_id = ${accountId}
+              AND cycle.state IN ('COMPLETED', 'NO_TRADE')
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
+            ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
             LIMIT 1
           )
           SELECT snapshot.equity_micros::text AS starting_capital_micros
@@ -712,6 +892,7 @@ export const readForwardPerformancePostgres = (
           CROSS JOIN latest_reconciliation
           CROSS JOIN first_cycle
           WHERE snapshot.account_id = ${accountId}
+            AND ${generationScope(sql, accountId, authorityGenerationHash, 'snapshot')}
             AND event.observed_at <= first_cycle.submission_open_at
             AND event.observed_at <= latest_reconciliation.reconciled_at
           ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
@@ -721,16 +902,18 @@ export const readForwardPerformancePostgres = (
         const cashYieldRows = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (
             SELECT reconciliation_id, content_hash, reconciled_at
-            FROM reconciliations
-            WHERE account_id = ${accountId}
-            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+            FROM reconciliations AS reconciliation
+            WHERE reconciliation.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+            ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
             LIMIT 1
           ), first_cycle AS (
-            SELECT submission_open_at
-            FROM autonomous_cycles
-            WHERE account_id = ${accountId}
-              AND state IN ('COMPLETED', 'NO_TRADE')
-            ORDER BY submission_open_at, cycle_id COLLATE "C"
+            SELECT cycle.submission_open_at
+            FROM autonomous_cycles AS cycle
+            WHERE cycle.account_id = ${accountId}
+              AND cycle.state IN ('COMPLETED', 'NO_TRADE')
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
+            ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
             LIMIT 1
           ), baseline_snapshot AS (
             SELECT
@@ -740,6 +923,7 @@ export const readForwardPerformancePostgres = (
             FROM account_snapshots AS snapshot
             JOIN broker_events AS event ON event.event_id = snapshot.event_id
             WHERE snapshot.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'snapshot')}
             ORDER BY event.source_sequence, event.event_id COLLATE "C"
             LIMIT 1
           ), opening_snapshot AS (
@@ -752,6 +936,7 @@ export const readForwardPerformancePostgres = (
             CROSS JOIN latest_reconciliation
             CROSS JOIN first_cycle
             WHERE snapshot.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'snapshot')}
               AND event.observed_at <= first_cycle.submission_open_at
               AND event.observed_at <= latest_reconciliation.reconciled_at
             ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
@@ -761,6 +946,7 @@ export const readForwardPerformancePostgres = (
             FROM accounting_transactions AS transaction
             CROSS JOIN opening_snapshot
             WHERE transaction.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'transaction')}
               AND transaction.occurred_at < opening_snapshot.observed_at
           ), closing_snapshot AS (
             SELECT
@@ -771,6 +957,7 @@ export const readForwardPerformancePostgres = (
             JOIN broker_events AS event ON event.event_id = snapshot.event_id
             CROSS JOIN latest_reconciliation
             WHERE snapshot.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'snapshot')}
               AND event.observed_at <= latest_reconciliation.reconciled_at
             ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
             LIMIT 1
@@ -780,6 +967,7 @@ export const readForwardPerformancePostgres = (
             CROSS JOIN latest_reconciliation
             CROSS JOIN opening_snapshot
             WHERE transaction.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'transaction')}
               AND transaction.occurred_at >= opening_snapshot.observed_at
               AND transaction.occurred_at <= latest_reconciliation.reconciled_at
           )
@@ -816,17 +1004,22 @@ export const readForwardPerformancePostgres = (
           CROSS JOIN accounted_cash
         `.pipe(Effect.flatMap(decodeCashYieldEvidence))
 
-        const transactionRows = yield* transactionQuery(sql, accountId).pipe(Effect.flatMap(decodeTransactions))
-        const receiptRows = yield* receiptQuery(sql, accountId).pipe(Effect.flatMap(decodeReceipts))
+        const transactionRows = yield* transactionQuery(sql, accountId, authorityGenerationHash).pipe(
+          Effect.flatMap(decodeTransactions),
+        )
+        const receiptRows = yield* receiptQuery(sql, accountId, authorityGenerationHash).pipe(
+          Effect.flatMap(decodeReceipts),
+        )
         const receipts = yield* Effect.forEach(receiptRows, (row) =>
           decodeAccountingReceipt(accountingReceiptFromRow(row)),
         )
         const observeDecisionRows = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (
-            SELECT reconciled_at
-            FROM reconciliations
-            WHERE account_id = ${accountId}
-            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+            SELECT reconciliation.reconciled_at
+            FROM reconciliations AS reconciliation
+            WHERE reconciliation.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+            ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
             LIMIT 1
           )
           SELECT
@@ -841,6 +1034,7 @@ export const readForwardPerformancePostgres = (
           CROSS JOIN latest_reconciliation
           WHERE cycle.account_id = ${accountId}
             AND cycle.state = 'COMPLETED'
+            AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
             AND cycle.terminal_at <= latest_reconciliation.reconciled_at
             AND decision.schema_version = 'bayn.observe-shadow-decision.v1'
             AND decision.document ->> 'mode' = 'OBSERVE'
@@ -848,10 +1042,11 @@ export const readForwardPerformancePostgres = (
         `.pipe(Effect.flatMap(decodeObserveDecisions))
         const marketVolumeBindingRows = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (
-            SELECT reconciled_at
-            FROM reconciliations
-            WHERE account_id = ${accountId}
-            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+            SELECT reconciliation.reconciled_at
+            FROM reconciliations AS reconciliation
+            WHERE reconciliation.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+            ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
             LIMIT 1
           )
           SELECT
@@ -866,15 +1061,17 @@ export const readForwardPerformancePostgres = (
           CROSS JOIN latest_reconciliation
           WHERE cycle.account_id = ${accountId}
             AND cycle.state = 'COMPLETED'
+            AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
             AND cycle.terminal_at <= latest_reconciliation.reconciled_at
           ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
         `.pipe(Effect.flatMap(decodeMarketVolumeBindings))
         const executionIntentRows = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (
-            SELECT reconciled_at
-            FROM reconciliations
-            WHERE account_id = ${accountId}
-            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+            SELECT reconciliation.reconciled_at
+            FROM reconciliations AS reconciliation
+            WHERE reconciliation.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+            ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
             LIMIT 1
           )
           SELECT
@@ -893,6 +1090,7 @@ export const readForwardPerformancePostgres = (
           JOIN autonomous_cycles AS cycle ON cycle.cycle_id = intent.cycle_id
           CROSS JOIN latest_reconciliation
           WHERE intent.account_id = ${accountId}
+            AND ${generationScope(sql, accountId, authorityGenerationHash, 'intent')}
             AND cycle.account_id = ${accountId}
             AND cycle.state = 'COMPLETED'
             AND cycle.terminal_at <= latest_reconciliation.reconciled_at
@@ -900,10 +1098,11 @@ export const readForwardPerformancePostgres = (
         `.pipe(Effect.flatMap(decodeExecutionIntents))
         const executionOrderRows = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (
-            SELECT reconciled_at
-            FROM reconciliations
-            WHERE account_id = ${accountId}
-            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+            SELECT reconciliation.reconciled_at
+            FROM reconciliations AS reconciliation
+            WHERE reconciliation.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+            ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
             LIMIT 1
           )
           SELECT DISTINCT ON (observed_order.intent_id)
@@ -925,6 +1124,7 @@ export const readForwardPerformancePostgres = (
           JOIN autonomous_cycles AS cycle ON cycle.cycle_id = intent.cycle_id
           CROSS JOIN latest_reconciliation
           WHERE observed_order.account_id = ${accountId}
+            AND ${generationScope(sql, accountId, authorityGenerationHash, 'order')}
             AND cycle.account_id = ${accountId}
             AND cycle.state = 'COMPLETED'
             AND cycle.terminal_at <= latest_reconciliation.reconciled_at
@@ -936,10 +1136,11 @@ export const readForwardPerformancePostgres = (
         `.pipe(Effect.flatMap(decodeExecutionOrders))
         const executionFillRows = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (
-            SELECT reconciled_at
-            FROM reconciliations
-            WHERE account_id = ${accountId}
-            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+            SELECT reconciliation.reconciled_at
+            FROM reconciliations AS reconciliation
+            WHERE reconciliation.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+            ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
             LIMIT 1
           )
           SELECT
@@ -963,6 +1164,7 @@ export const readForwardPerformancePostgres = (
           JOIN autonomous_cycles AS cycle ON cycle.cycle_id = intent.cycle_id
           CROSS JOIN latest_reconciliation
           WHERE fill.account_id = ${accountId}
+            AND ${generationScope(sql, accountId, authorityGenerationHash, 'fill')}
             AND cycle.account_id = ${accountId}
             AND cycle.state = 'COMPLETED'
             AND cycle.terminal_at <= latest_reconciliation.reconciled_at
@@ -975,17 +1177,19 @@ export const readForwardPerformancePostgres = (
         `.pipe(Effect.flatMap(decodeExecutionFills))
         const durableExecutionRows = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (
-            SELECT reconciled_at
-            FROM reconciliations
-            WHERE account_id = ${accountId}
-            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+            SELECT reconciliation.reconciled_at
+            FROM reconciliations AS reconciliation
+            WHERE reconciliation.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+            ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
             LIMIT 1
           ), first_cycle AS (
-            SELECT submission_open_at
-            FROM autonomous_cycles
-            WHERE account_id = ${accountId}
-              AND state IN ('COMPLETED', 'NO_TRADE')
-            ORDER BY submission_open_at, cycle_id COLLATE "C"
+            SELECT cycle.submission_open_at
+            FROM autonomous_cycles AS cycle
+            WHERE cycle.account_id = ${accountId}
+              AND cycle.state IN ('COMPLETED', 'NO_TRADE')
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
+            ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
             LIMIT 1
           ), opening_snapshot AS (
             SELECT event.observed_at
@@ -994,6 +1198,7 @@ export const readForwardPerformancePostgres = (
             CROSS JOIN latest_reconciliation
             CROSS JOIN first_cycle
             WHERE snapshot.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'snapshot')}
               AND event.observed_at <= first_cycle.submission_open_at
               AND event.observed_at <= latest_reconciliation.reconciled_at
             ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
@@ -1021,6 +1226,7 @@ export const readForwardPerformancePostgres = (
           JOIN authority_generations AS generation
             ON generation.generation_hash = intent.authority_generation_hash
           WHERE transaction.account_id = ${accountId}
+            AND ${generationScope(sql, accountId, authorityGenerationHash, 'transaction')}
             AND transaction.occurred_at >= opening_snapshot.observed_at
             AND transaction.occurred_at <= latest_reconciliation.reconciled_at
           ORDER BY
@@ -1045,6 +1251,7 @@ export const readForwardPerformancePostgres = (
           FROM autonomous_cycles AS cycle
           WHERE cycle.account_id = ${accountId}
             AND cycle.state IN ('PENDING', 'ACTIVE')
+            AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
         `.pipe(Effect.flatMap(decodeCount))
 
         const [unresolvedMutations] = yield* sql<Record<string, unknown>>`
@@ -1060,6 +1267,7 @@ export const readForwardPerformancePostgres = (
             LIMIT 1
           ) AS latest_mutation ON true
           WHERE intent.account_id = ${accountId}
+            AND ${generationScope(sql, accountId, authorityGenerationHash, 'intent')}
             AND (
               intent.state <> 'TERMINAL'
               OR latest_mutation.event_type IN (
@@ -1071,10 +1279,11 @@ export const readForwardPerformancePostgres = (
 
         const [postReconciliationActivity] = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (
-            SELECT reconciled_at
-            FROM reconciliations
-            WHERE account_id = ${accountId}
-            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+            SELECT reconciliation.reconciled_at
+            FROM reconciliations AS reconciliation
+            WHERE reconciliation.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+            ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
             LIMIT 1
           )
           SELECT count(*)::integer AS count
@@ -1083,6 +1292,7 @@ export const readForwardPerformancePostgres = (
             FROM accounting_transactions AS transaction
             CROSS JOIN latest_reconciliation
             WHERE transaction.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'transaction')}
               AND transaction.occurred_at > latest_reconciliation.reconciled_at
             UNION ALL
             SELECT fill.event_id AS activity_id
@@ -1090,6 +1300,7 @@ export const readForwardPerformancePostgres = (
             JOIN broker_events AS event ON event.event_id = fill.event_id
             CROSS JOIN latest_reconciliation
             WHERE fill.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'fill')}
               AND event.occurred_at > latest_reconciliation.reconciled_at
               AND NOT EXISTS (
                 SELECT 1
@@ -1102,16 +1313,18 @@ export const readForwardPerformancePostgres = (
             JOIN intents AS intent ON intent.intent_id = event.intent_id
             CROSS JOIN latest_reconciliation
             WHERE intent.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'mutation')}
               AND event.occurred_at >= latest_reconciliation.reconciled_at
           ) AS activity
         `.pipe(Effect.flatMap(decodeCount))
 
         const [openPositions] = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (
-            SELECT reconciled_at
-            FROM reconciliations
-            WHERE account_id = ${accountId}
-            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+            SELECT reconciliation.reconciled_at
+            FROM reconciliations AS reconciliation
+            WHERE reconciliation.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+            ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
             LIMIT 1
           )
           SELECT count(*)::integer AS count
@@ -1120,6 +1333,7 @@ export const readForwardPerformancePostgres = (
             FROM accounting_transactions AS transaction
             CROSS JOIN latest_reconciliation
             WHERE transaction.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'transaction')}
               AND transaction.occurred_at <= latest_reconciliation.reconciled_at
             GROUP BY transaction.symbol
             HAVING sum(transaction.quantity_delta_micros) <> 0
@@ -1129,10 +1343,11 @@ export const readForwardPerformancePostgres = (
 
         const [unaccountedFills] = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (
-            SELECT reconciled_at
-            FROM reconciliations
-            WHERE account_id = ${accountId}
-            ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC
+            SELECT reconciliation.reconciled_at
+            FROM reconciliations AS reconciliation
+            WHERE reconciliation.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+            ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
             LIMIT 1
           )
           SELECT count(*)::integer AS count
@@ -1140,9 +1355,10 @@ export const readForwardPerformancePostgres = (
           JOIN broker_events AS event ON event.event_id = fill.event_id
           CROSS JOIN latest_reconciliation
           LEFT JOIN accounting_transactions AS transaction ON transaction.broker_event_id = fill.event_id
-          LEFT JOIN accounting_receipts AS receipt ON receipt.broker_event_id = fill.event_id
-          WHERE fill.account_id = ${accountId}
-            AND event.occurred_at <= latest_reconciliation.reconciled_at
+            LEFT JOIN accounting_receipts AS receipt ON receipt.broker_event_id = fill.event_id
+            WHERE fill.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'fill')}
+              AND event.occurred_at <= latest_reconciliation.reconciled_at
             AND (transaction.transaction_id IS NULL OR receipt.receipt_id IS NULL)
         `.pipe(Effect.flatMap(decodeCount))
 

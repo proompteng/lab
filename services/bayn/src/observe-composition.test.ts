@@ -72,6 +72,7 @@ import {
   mutationRecoveryIsDue,
   mutationIntentReconciliationDelayMs,
   paperSubmitExpiresAt,
+  paperMutationSubmissionAllowed,
   prepareNextMutationIntent,
   projectWorstCasePendingMutationPosition,
   loadObserveRiskPolicy,
@@ -112,6 +113,33 @@ const generationHash = 'a'.repeat(64)
 const accountingHash = 'b'.repeat(64)
 const reconciledAt = '2020-05-01T12:45:01.000Z'
 const evaluatedAt = '2020-05-01T12:45:02.000Z'
+
+test('PAPER entry submission is allowed before cutoff and denied afterward', () => {
+  expect(
+    paperMutationSubmissionAllowed({
+      capability: 'Mutation',
+      closeOnly: false,
+      paperEpisodeCutoffAt: '2020-05-01T13:00:00.000Z',
+      observedAt: '2020-05-01T12:59:59.000Z',
+    }),
+  ).toBe(true)
+  expect(
+    paperMutationSubmissionAllowed({
+      capability: 'Mutation',
+      closeOnly: false,
+      paperEpisodeCutoffAt: '2020-05-01T13:00:00.000Z',
+      observedAt: '2020-05-01T13:00:00.000Z',
+    }),
+  ).toBe(false)
+  expect(
+    paperMutationSubmissionAllowed({
+      capability: 'Mutation',
+      closeOnly: true,
+      paperEpisodeCutoffAt: '2020-05-01T13:00:00.000Z',
+      observedAt: '2020-05-01T13:05:00.000Z',
+    }),
+  ).toBe(true)
+})
 
 const calendarMaterial = {
   schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
