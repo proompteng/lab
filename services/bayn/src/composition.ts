@@ -496,14 +496,19 @@ const recoverPaperActivationGeneration = (
     const authority = yield* authorityStore
       .readAuthorityState()
       .pipe(Effect.mapError((cause) => paperActivationOperationalError('durable PAPER authority read failed', cause)))
-    if (authority.maximum !== Authority.Paper || authority.effective !== Authority.Paper) {
+    if (authority.maximum !== Authority.Paper) {
       return yield* Effect.fail(
-        paperActivationOperationalError('durable PAPER close recovery requires effective PAPER authority'),
+        paperActivationOperationalError('durable PAPER close recovery requires PAPER maximum authority'),
       )
     }
-    if (authority.kill !== KillState.Clear) {
+    const closeAuthorityIsBound =
+      (authority.effective === Authority.Paper && authority.kill === KillState.Clear) ||
+      (authority.effective === Authority.Observe && authority.kill === KillState.Active)
+    if (!closeAuthorityIsBound) {
       return yield* Effect.fail(
-        paperActivationOperationalError('durable PAPER close recovery is blocked by the authority kill state'),
+        paperActivationOperationalError(
+          'durable PAPER close recovery requires clear PAPER or active OBSERVE close authority',
+        ),
       )
     }
     const generation = yield* authorityStore
