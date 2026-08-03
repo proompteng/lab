@@ -31,10 +31,12 @@ import {
   type QualificationSeries,
 } from '../qualification-statistics'
 import { fixtureProtocol } from '../test-fixtures'
-import type { ExecutionPrepareRequest, ExecutionPrepareRuntimeBinding } from './model'
+import type { ExecutionPrepareProofPlanRequest, ExecutionPrepareRuntimeBinding } from './model'
 import { ExecutionPrepareStoreLive } from './live'
 import { prepareExecution } from './program'
 import { makeExecutionPrepareDiscoveryReceiptFixture } from './test-fixture'
+
+type ExecutionPrepareRequest = ExecutionPrepareProofPlanRequest
 
 const postgresUrl = process.env.BAYN_TEST_POSTGRES_URL
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
@@ -501,15 +503,13 @@ const makeRequest = (
     reconciliationId: binding.reconciliationId,
     reconciliationContentHash: binding.reconciliationContentHash,
   })
-  const discoveredCandidate = discoveryReceipt.candidateFacts.candidates[0]!
   const proofPlan = {
     schemaVersion: 'bayn.execution-prepare-proof-plan.v1' as const,
-    candidate: {
+    candidateSet: {
       discoveryReceiptHash: discoveryReceipt.observationReceiptHash,
       immutableBindingHash: discoveryReceipt.immutableBindingHash,
       candidateFactsHash: discoveryReceipt.candidateFactsHash,
-      candidateOrdinal: discoveredCandidate.ordinal,
-      observedPlanIntentId: discoveredCandidate.observedPlanIntentId,
+      candidateCount: discoveryReceipt.candidateFacts.candidates.length,
       cycleId: discoveryReceipt.binding.cycle.cycleId,
       decisionHash: discoveryReceipt.binding.cycle.decisionHash,
     },
@@ -756,9 +756,9 @@ describePostgres('EXECUTION_PREPARE PostgreSQL boundary', () => {
           const before = yield* durableSnapshot
           const mixedProofPlan = {
             ...request.proofPlan,
-            candidate: {
-              ...request.proofPlan.candidate,
-              observedPlanIntentId: hash('foreign-observed-plan-intent'),
+            candidateSet: {
+              ...request.proofPlan.candidateSet,
+              candidateCount: request.proofPlan.candidateSet.candidateCount + 1,
             },
           }
           const candidates: readonly [unknown, unknown][] = [

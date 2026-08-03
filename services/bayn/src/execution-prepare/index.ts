@@ -3,16 +3,26 @@ export { ExecutionPrepareStoreLive } from './live'
 export {
   decodeExecutionPrepareReceiptResult,
   decodeExecutionPrepareRequestResult,
+  decodeExecutionPrepareProofPlanRequestResult,
   ExecutionPrepareProofPlanSchema,
+  ExecutionPrepareProofPlanRequestSchema,
   ExecutionPrepareReceiptSchema,
   ExecutionPrepareRequestSchema,
   ExecutionPrepareRuntimeBindingSchema,
   type ExecutionPrepareProofPlan,
+  type ExecutionPrepareProofPlanRequest,
+  type ExecutionPrepareOutput,
   type ExecutionPrepareReceipt,
   type ExecutionPrepareRequest,
   type ExecutionPrepareRuntimeBinding,
 } from './model'
-export { authenticateValidatedExecutionPrepare, prepareExecution, prepareValidatedExecution } from './program'
+export {
+  authenticateValidatedExecutionPrepare,
+  buildExecutionPrepareProofPlanRequest,
+  prepareExecution,
+  prepareValidatedExecution,
+  prepareValidatedExecutionWithGeneration,
+} from './program'
 export {
   authenticateExecutionPrepareDiscovery,
   makeExecutionPrepareReceipt,

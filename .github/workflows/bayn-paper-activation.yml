@@ -1,19 +1,16 @@
 name: bayn-paper-activation
 run-name: >-
   ${{
-    github.event_name == 'workflow_run' &&
     format(
       'bayn-paper-activation-qualification-{0}-{1}',
       github.event.workflow_run.id,
       github.event.workflow_run.run_attempt
-    ) ||
-    'bayn-paper-rollback-watchdog'
+    )
   }}
 
-# GitHub loads workflow_run and schedule workflows from the default branch.
-# GITHUB_TOKEN remains read-only. The existing non-recursive token is exposed
-# only to those trusted default-branch runs after the activation evidence is
-# authenticated and the mandatory OBSERVE rollback is precommitted.
+# This workflow only authenticates immutable qualification material and opens
+# bounded GitOps proposals. Runtime discovery, reconciliation, and PREPARE
+# remain inside the Bayn process after startup.
 permissions:
   actions: read
   contents: read
@@ -26,14 +23,10 @@ on:
       - completed
     branches:
       - main
-  schedule:
-    - cron: '3,8,13,18,23,28,33,38,43,48,53,58 * * * *'
 
 concurrency:
   group: >-
     ${{
-      github.event_name == 'schedule' &&
-      'bayn-paper-rollback-watchdog' ||
       format(
         'bayn-paper-activation-qualification-{0}-{1}',
         github.event.workflow_run.id,
@@ -43,10 +36,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  verify-and-prepare:
-    name: Verify and precommit bounded PAPER transition
+  verify-and-propose:
+    name: Verify request and propose bounded GitOps transition
     if: >-
-      github.event_name == 'workflow_run' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'schedule' &&
       github.event.workflow_run.head_branch == 'main'
@@ -56,19 +48,14 @@ jobs:
       live: ${{ steps.identity.outputs.live }}
       activation_id: ${{ steps.identity.outputs.activation_id }}
       current_main_sha: ${{ steps.identity.outputs.current_main_sha }}
-      authority_expires_at: ${{ steps.contract.outputs.authority_expires_at }}
-      qualification_expires_at: ${{ steps.contract.outputs.qualification_expires_at }}
-      authority_generation_hash: ${{ steps.contract.outputs.authority_generation_hash }}
-      source_sha: ${{ steps.contract.outputs.source_sha }}
-      image_digest: ${{ steps.contract.outputs.image_digest }}
-      baseline_cycle_id: ${{ steps.baseline.outputs.baseline_cycle_id }}
-      observe_authority_generation_hash: ${{ steps.rollback_generation.outputs.observe_authority_generation_hash }}
-      previous_observe_authority_generation_hash: ${{ steps.rollback_generation.outputs.previous_observe_generation_hash }}
+      producer_head_sha: ${{ steps.identity.outputs.producer_head_sha }}
+      request_hash: ${{ steps.request.outputs.request_hash }}
+      cutoff_at: ${{ steps.request.outputs.cutoff_at }}
+      expires_at: ${{ steps.request.outputs.expires_at }}
       activation_branch: ${{ steps.gitops.outputs.activation_branch }}
       activation_commit_sha: ${{ steps.gitops.outputs.activation_commit_sha }}
       rollback_branch: ${{ steps.gitops.outputs.rollback_branch }}
       rollback_commit_sha: ${{ steps.gitops.outputs.rollback_commit_sha }}
-      rollback_metadata_b64: ${{ steps.gitops.outputs.rollback_metadata_b64 }}
       activation_pr: ${{ steps.gitops.outputs.activation_pr }}
       rollback_pr: ${{ steps.gitops.outputs.rollback_pr }}
     steps:
@@ -84,7 +71,7 @@ jobs:
         with:
           bun-version: 1.3.14
 
-      - name: Authenticate activation identity and evidence producer
+      - name: Authenticate producer, artifact identity, and current main
         id: identity
         env:
           ACTIVATION_ID: ${{ format('qualification-{0}-{1}', github.event.workflow_run.id, github.event.workflow_run.run_attempt) }}
@@ -92,103 +79,93 @@ jobs:
           EVIDENCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           EVIDENCE_RUN_ID: ${{ github.event.workflow_run.id }}
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
           set -euo pipefail
-          [[ "${ACTIVATION_ID}" =~ ^[a-z0-9][a-z0-9._-]{0,127}$ ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD invalid-activation-id: activation id is not canonical' >&2
-            exit 1
-          }
-          [[ "${EVIDENCE_RUN_ID}" =~ ^[1-9][0-9]{0,19}$ ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD invalid-evidence-run-id: run id is not canonical' >&2
-            exit 1
-          }
-          [[ "${EVIDENCE_RUN_ATTEMPT}" =~ ^[1-9][0-9]{0,9}$ ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD invalid-evidence-run-attempt: run attempt is not canonical' >&2
-            exit 1
-          }
-          [[ "${ARTIFACT_NAME}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD invalid-artifact-name: artifact name is not canonical' >&2
-            exit 1
-          }
+          [[ "${ACTIVATION_ID}" =~ ^[a-z0-9][a-z0-9._-]{0,127}$ ]]
+          [[ "${EVIDENCE_RUN_ID}" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "${EVIDENCE_RUN_ATTEMPT}" =~ ^[1-9][0-9]{0,9}$ ]]
+          [[ "${ARTIFACT_NAME}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]
+
           current_main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq '.sha')"
-          [[ "$(git rev-parse HEAD)" == "${current_main_sha}" ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD noncurrent-main: checkout is not exact current main' >&2
-            exit 1
-          }
+          [[ "${current_main_sha}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${current_main_sha}"
 
           self_workflow_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/bayn-paper-activation.yml" --jq '.id')"
-          prior_runs="$(
-            gh api --paginate \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/${self_workflow_id}/runs?event=workflow_run&per_page=100"
-          )"
-          duplicate_count="$(
-            jq -s --argjson current "${GITHUB_RUN_ID}" --arg title "bayn-paper-activation-${ACTIVATION_ID}" '
-              [[.[].workflow_runs[]] | .[] | select(.id != $current and .display_title == $title)] | length
-            ' <<< "${prior_runs}"
-          )"
+          prior_runs="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/workflows/${self_workflow_id}/runs?event=workflow_run&per_page=100")"
+          duplicate_count="$(jq -s --argjson current "${GITHUB_RUN_ID}" --arg title "bayn-paper-activation-${ACTIVATION_ID}" '[.[].workflow_runs[]] | map(select(.id != $current and .display_title == $title)) | length' <<<"${prior_runs}")"
           [[ "${duplicate_count}" == 0 ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD activation-already-claimed: an earlier workflow run owns this activation id' >&2
+            echo 'BAYN_PAPER_ACTIVATION_HOLD activation-already-claimed' >&2
             exit 1
           }
 
-          evidence_workflow="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/bayn-qualification.yml")"
-          evidence_run="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${EVIDENCE_RUN_ID}")"
-          evidence_attempt="$(jq -r '.run_attempt' <<< "${evidence_run}")"
-          expected_artifact_name="bayn-paper-activation-evidence-${EVIDENCE_RUN_ID}-${evidence_attempt}"
+          qualification_workflow="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/bayn-qualification.yml")"
+          qualification_run="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${EVIDENCE_RUN_ID}")"
+          qualification_attempt="$(jq -r '.run_attempt' <<<"${qualification_run}")"
+          expected_artifact="bayn-paper-activation-evidence-${EVIDENCE_RUN_ID}-${qualification_attempt}"
           if
-            [[ "$(jq -r '.workflow_id' <<< "${evidence_run}")" != "$(jq -r '.id' <<< "${evidence_workflow}")" ]] ||
-            [[ "$(jq -r '.path' <<< "${evidence_run}")" != '.github/workflows/bayn-qualification.yml' ]] ||
-            [[ "$(jq -r '.event' <<< "${evidence_run}")" != schedule ]] ||
-            [[ "$(jq -r '.status' <<< "${evidence_run}")" != completed ]] ||
-            [[ "$(jq -r '.conclusion' <<< "${evidence_run}")" != success ]] ||
-            [[ "$(jq -r '.head_branch' <<< "${evidence_run}")" != main ]] ||
-            [[ "$(jq -r '.head_sha' <<< "${evidence_run}")" != "${current_main_sha}" ]] ||
-            [[ "$(jq -r '.repository.full_name' <<< "${evidence_run}")" != "${GITHUB_REPOSITORY}" ]] ||
-            [[ "${evidence_attempt}" != "${EVIDENCE_RUN_ATTEMPT}" ]] ||
-            [[ "${ARTIFACT_NAME}" != "${expected_artifact_name}" ]]
+            [[ "$(jq -r '.workflow_id' <<<"${qualification_run}")" != "$(jq -r '.id' <<<"${qualification_workflow}")" ]] ||
+            [[ "$(jq -r '.path' <<<"${qualification_run}")" != '.github/workflows/bayn-qualification.yml' ]] ||
+            [[ "$(jq -r '.event' <<<"${qualification_run}")" != 'schedule' ]] ||
+            [[ "$(jq -r '.status' <<<"${qualification_run}")" != 'completed' ]] ||
+            [[ "$(jq -r '.conclusion' <<<"${qualification_run}")" != 'success' ]] ||
+            [[ "$(jq -r '.head_branch' <<<"${qualification_run}")" != 'main' ]] ||
+            [[ "$(jq -r '.repository.full_name' <<<"${qualification_run}")" != "${GITHUB_REPOSITORY}" ]] ||
+            [[ "${qualification_attempt}" != "${EVIDENCE_RUN_ATTEMPT}" ]] ||
+            [[ "${ARTIFACT_NAME}" != "${expected_artifact}" ]]
           then
-            echo 'BAYN_PAPER_ACTIVATION_HOLD untrusted-evidence-run: artifact producer is not the designated successful current-main scheduled qualification run' >&2
+            echo 'BAYN_PAPER_ACTIVATION_HOLD untrusted-evidence-run' >&2
             exit 1
           fi
+          producer_head_sha="$(jq -er '.head_sha' <<<"${qualification_run}")"
+          [[ "${producer_head_sha}" =~ ^[0-9a-f]{40}$ ]]
+
           artifacts="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${EVIDENCE_RUN_ID}/artifacts?name=${ARTIFACT_NAME}&per_page=100")"
-          artifact_count="$(jq --arg name "${ARTIFACT_NAME}" '[.artifacts[] | select(.expired == false and .name == $name)] | length' <<< "${artifacts}")"
+          artifact_count="$(jq --arg name "${ARTIFACT_NAME}" '[.artifacts[] | select(.expired == false and .name == $name)] | length' <<<"${artifacts}")"
           if [[ "${artifact_count}" == 0 ]]; then
-            echo 'No exact activation evidence artifact exists; PAPER activation remains dormant.'
+            echo 'No qualified activation artifact exists; Bayn remains dormant.'
             {
               echo "activation_id=${ACTIVATION_ID}"
               echo "current_main_sha=${current_main_sha}"
+              echo "producer_head_sha=${producer_head_sha}"
               echo 'live=false'
-            } >> "$GITHUB_OUTPUT"
+            } >>"${GITHUB_OUTPUT}"
             exit 0
           fi
           [[ "${artifact_count}" == 1 ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD evidence-artifact-ambiguous: expected one unexpired exact artifact' >&2
+            echo 'BAYN_PAPER_ACTIVATION_HOLD evidence-artifact-ambiguous' >&2
             exit 1
           }
-
           {
             echo "activation_id=${ACTIVATION_ID}"
             echo "current_main_sha=${current_main_sha}"
+            echo "producer_head_sha=${producer_head_sha}"
             echo 'live=true'
-          } >> "$GITHUB_OUTPUT"
+          } >>"${GITHUB_OUTPUT}"
 
-      - name: Download authenticated immutable activation evidence
+      - name: Download exactly one authenticated qualified terminal
         if: steps.identity.outputs.live == 'true'
         env:
           ARTIFACT_NAME: ${{ format('bayn-paper-activation-evidence-{0}-{1}', github.event.workflow_run.id, github.event.workflow_run.run_attempt) }}
           EVIDENCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          PRODUCER_HEAD_SHA: ${{ steps.identity.outputs.producer_head_sha }}
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
           set -euo pipefail
           mkdir -p activation-evidence
-          gh run download "${EVIDENCE_RUN_ID}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --name "${ARTIFACT_NAME}" \
-            --dir activation-evidence
-          test -s activation-evidence/evidence.json
-          test -s activation-evidence/pins.json
+          gh run download "${EVIDENCE_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --name "${ARTIFACT_NAME}" --dir activation-evidence
+          mapfile -t files < <(find activation-evidence -type f -name '*.json' -print)
+          test "${#files[@]}" -eq 1
+          mv "${files[0]}" activation-evidence/terminal.json
+          jq -e --arg producer_head_sha "${PRODUCER_HEAD_SHA}" '
+            .schemaVersion == "bayn.qualification-collector-terminal.v1" and
+            .terminal.verdict == "QUALIFIED" and
+            .currentMainSha == $producer_head_sha and
+            .sourceSha == $producer_head_sha
+          ' activation-evidence/terminal.json >/dev/null
 
-      - name: Extract deployment and effective Kustomize pins
+      - name: Extract source-controlled manifest pins
         if: steps.identity.outputs.live == 'true'
         run: |
           set -euo pipefail
@@ -198,113 +175,68 @@ jobs:
             --kustomization argocd/applications/bayn/kustomization.yaml \
             --output activation-evidence/manifest-pins.json
 
-      - name: Verify exact tuple and fail-closed runtime state
-        id: contract
+      - name: Assemble compact runtime-owned activation request
+        id: request
         if: steps.identity.outputs.live == 'true'
         env:
-          ACTIVATION_ID: ${{ steps.identity.outputs.activation_id }}
           CURRENT_MAIN_SHA: ${{ steps.identity.outputs.current_main_sha }}
+          PRODUCER_HEAD_SHA: ${{ steps.identity.outputs.producer_head_sha }}
+        shell: bash
         run: |
           set -euo pipefail
+          request_now="$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)"
           bun packages/scripts/src/bayn/verify-paper-activation.ts \
+            --mode assemble-request \
+            --terminal activation-evidence/terminal.json \
+            --manifest-pins activation-evidence/manifest-pins.json \
             --repository "${GITHUB_REPOSITORY}" \
-            --activation-id "${ACTIVATION_ID}" \
             --current-main-sha "${CURRENT_MAIN_SHA}" \
-            --evidence activation-evidence/evidence.json \
-            --pins activation-evidence/pins.json \
-            --manifest-pins activation-evidence/manifest-pins.json
+            --producer-head-sha "${PRODUCER_HEAD_SHA}" \
+            --now "${request_now}" \
+            --output activation-evidence/request.json
           {
-            echo "authority_expires_at=$(jq -r '.authorityExpiresAt' activation-evidence/evidence.json)"
-            echo "qualification_expires_at=$(jq -r '.qualificationExpiresAt' activation-evidence/evidence.json)"
-            echo "authority_generation_hash=$(jq -r '.authorityGeneration.generationHash' activation-evidence/evidence.json)"
-            echo "image_digest=$(jq -r '.imageDigest' activation-evidence/evidence.json)"
-            echo "source_sha=$(jq -r '.sourceSha' activation-evidence/evidence.json)"
-          } >> "$GITHUB_OUTPUT"
+            echo "now=${request_now}"
+            echo "request_hash=$(jq -r '.requestHash' activation-evidence/request.json)"
+            echo "cutoff_at=$(jq -r '.cutoffAt' activation-evidence/request.json)"
+            echo "expires_at=$(jq -r '.expiresAt' activation-evidence/request.json)"
+          } >>"${GITHUB_OUTPUT}"
 
-      - name: Precommit a fresh OBSERVE rollback generation
-        id: rollback_generation
+      - name: Verify request against exact source and image pins
         if: steps.identity.outputs.live == 'true'
         env:
-          ACTIVATION_ID: ${{ steps.identity.outputs.activation_id }}
           CURRENT_MAIN_SHA: ${{ steps.identity.outputs.current_main_sha }}
-          PAPER_AUTHORITY_GENERATION_HASH: ${{ steps.contract.outputs.authority_generation_hash }}
+          PRODUCER_HEAD_SHA: ${{ steps.identity.outputs.producer_head_sha }}
+          REQUEST_NOW: ${{ steps.request.outputs.now }}
+        shell: bash
         run: |
           set -euo pipefail
-          previous_observe_generation_hash="$(jq -r '.currentAuthorityGenerationHash' activation-evidence/manifest-pins.json)"
           bun packages/scripts/src/bayn/verify-paper-activation.ts \
-            --mode derive-observe-rollback \
+            --mode verify-request \
+            --request activation-evidence/request.json \
+            --manifest-pins activation-evidence/manifest-pins.json \
             --repository "${GITHUB_REPOSITORY}" \
-            --activation-id "${ACTIVATION_ID}" \
-            --source-main-sha "${CURRENT_MAIN_SHA}" \
-            --previous-observe-generation-hash "${previous_observe_generation_hash}" \
-            --paper-authority-generation-hash "${PAPER_AUTHORITY_GENERATION_HASH}" \
-            --output activation-evidence/observe-rollback-generation.json
-          observe_authority_generation_hash="$(jq -r '.generationHash' activation-evidence/observe-rollback-generation.json)"
-          [[ "${observe_authority_generation_hash}" =~ ^[0-9a-f]{64}$ ]]
-          [[ "${observe_authority_generation_hash}" != "${previous_observe_generation_hash}" ]]
-          [[ "${observe_authority_generation_hash}" != "${PAPER_AUTHORITY_GENERATION_HASH}" ]]
-          {
-            echo "observe_authority_generation_hash=${observe_authority_generation_hash}"
-            echo "previous_observe_generation_hash=${previous_observe_generation_hash}"
-          } >> "$GITHUB_OUTPUT"
+            --current-main-sha "${CURRENT_MAIN_SHA}" \
+            --producer-head-sha "${PRODUCER_HEAD_SHA}" \
+            --now "${REQUEST_NOW}"
 
-      - name: Render reviewed activation and mandatory OBSERVE rollback
+      - name: Render request and bounded rollback manifests
         if: steps.identity.outputs.live == 'true'
         run: |
           set -euo pipefail
           bun packages/scripts/src/bayn/verify-paper-activation.ts \
-            --mode render-transition \
+            --mode render-request-transition \
             --deployment argocd/applications/bayn/deployment.yaml \
-            --authority-generation-hash "${{ steps.contract.outputs.authority_generation_hash }}" \
-            --observe-authority-generation-hash "${{ steps.rollback_generation.outputs.observe_authority_generation_hash }}" \
-            --authority-expires-at "${{ steps.contract.outputs.authority_expires_at }}" \
-            --paper-output deployment.paper.yaml \
-            --observe-output deployment.observe.yaml
-          diff -u \
-            --label a/argocd/applications/bayn/deployment.yaml \
-            --label b/argocd/applications/bayn/deployment.yaml \
-            argocd/applications/bayn/deployment.yaml deployment.paper.yaml > activation.patch || true
-          diff -u \
-            --label a/argocd/applications/bayn/deployment.yaml \
-            --label b/argocd/applications/bayn/deployment.yaml \
-            deployment.paper.yaml deployment.observe.yaml > rollback.patch || true
-          test -s activation.patch
+            --request activation-evidence/request.json \
+            --request-output deployment.request.yaml \
+            --rollback-output deployment.rollback.yaml
+          diff -u argocd/applications/bayn/deployment.yaml deployment.request.yaml > request.patch || true
+          diff -u deployment.request.yaml deployment.rollback.yaml > rollback.patch || true
+          test -s request.patch
           test -s rollback.patch
-          grep -q 'value: PAPER' activation.patch
-          grep -q 'value: mutation' activation.patch
-          grep -q 'value: sandbox-capital' activation.patch
-          grep -q 'value: OBSERVE' rollback.patch
-          grep -q 'value: read-only' rollback.patch
-          grep -q 'value: none' rollback.patch
-          ! grep -Eq 'api\.alpaca\.markets|BAYN_BROKER_ENVIRONMENT.*live|value: LIVE|live-capital-grant' activation.patch
+          grep -q 'BAYN_PAPER_ACTIVATION_REQUEST' request.patch
+          ! grep -Eq 'value: PAPER|value: mutation|value: sandbox-capital' request.patch
 
-      - name: Capture exact OBSERVE baseline before any GitOps write
-        id: baseline
-        if: steps.identity.outputs.live == 'true'
-        run: |
-          set -euo pipefail
-          status_file="${RUNNER_TEMP}/bayn-observe-baseline.json"
-          curl -fsS --connect-timeout 5 --max-time 15 \
-            http://bayn.bayn.svc.cluster.local/v1/status > "${status_file}"
-          jq -e '
-            .operational.ready == true and
-            .qualification.verdict == "QUALIFIED" and
-            .authority.brokerEnvironment == "sandbox" and
-            .authority.brokerAccess == "read-only" and
-            .authority.capitalAuthority == "none" and
-            .authority.durable.available == true and
-            .authority.durable.maximum == "observe" and
-            .authority.durable.effective == "observe" and
-            .authority.durable.kill == "clear" and
-            .cycle.observationAvailable == true and
-            .cycle.mutations.unresolvedCount == 0 and
-            .cycle.reconciliation.status == "EXACT" and
-            .cycle.reconciliation.discrepancyCount == 0 and
-            .cycle.reconciliation.coversLatestMutation == true
-          ' "${status_file}" >/dev/null
-          echo "baseline_cycle_id=$(jq -r '.cycle.last.cycleId // ""' "${status_file}")" >> "$GITHUB_OUTPUT"
-
-      - name: Persist verified transition contract
+      - name: Persist authenticated request contract
         if: steps.identity.outputs.live == 'true'
         uses: actions/upload-artifact@v4
         with:
@@ -312,58 +244,41 @@ jobs:
           if-no-files-found: error
           retention-days: 90
           path: |
-            activation.patch
+            request.patch
             rollback.patch
-            activation-evidence/evidence.json
-            activation-evidence/pins.json
+            activation-evidence/terminal.json
+            activation-evidence/request.json
             activation-evidence/manifest-pins.json
-            activation-evidence/observe-rollback-generation.json
 
-      - name: Atomically claim and create paired reviewed GitOps pull requests
+      - name: Create ready bounded activation and rollback pull requests
         id: gitops
         if: steps.identity.outputs.live == 'true'
         env:
           ACTIVATION_ID: ${{ steps.identity.outputs.activation_id }}
-          AUTHORITY_EXPIRES_AT: ${{ steps.contract.outputs.authority_expires_at }}
-          AUTHORITY_GENERATION_HASH: ${{ steps.contract.outputs.authority_generation_hash }}
-          BASELINE_CYCLE_ID: ${{ steps.baseline.outputs.baseline_cycle_id }}
           CURRENT_MAIN_SHA: ${{ steps.identity.outputs.current_main_sha }}
+          PRODUCER_HEAD_SHA: ${{ steps.identity.outputs.producer_head_sha }}
+          REQUEST_HASH: ${{ steps.request.outputs.request_hash }}
+          CUTOFF_AT: ${{ steps.request.outputs.cutoff_at }}
+          EXPIRES_AT: ${{ steps.request.outputs.expires_at }}
           GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN }}
-          OBSERVE_AUTHORITY_GENERATION_HASH: ${{ steps.rollback_generation.outputs.observe_authority_generation_hash }}
-          PREVIOUS_OBSERVE_GENERATION_HASH: ${{ steps.rollback_generation.outputs.previous_observe_generation_hash }}
+        shell: bash
         run: |
           set -euo pipefail
           [[ -n "${GH_TOKEN}" ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD protected-gitops-token-missing: non-dry-run activation is unavailable' >&2
+            echo 'BAYN_PAPER_ACTIVATION_HOLD protected-gitops-token-missing' >&2
             exit 1
           }
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq '.sha')" = "${CURRENT_MAIN_SHA}"
           activation_branch="codex/bayn-paper-activation/${ACTIVATION_ID}"
           rollback_branch="codex/bayn-paper-rollback/${ACTIVATION_ID}"
           if git ls-remote --exit-code --heads origin "refs/heads/${activation_branch}" >/dev/null 2>&1; then
-            echo 'BAYN_PAPER_ACTIVATION_HOLD activation-already-claimed: durable activation branch already exists' >&2
+            echo 'BAYN_PAPER_ACTIVATION_HOLD activation-branch-already-exists' >&2
             exit 1
           fi
           if git ls-remote --exit-code --heads origin "refs/heads/${rollback_branch}" >/dev/null 2>&1; then
-            echo 'BAYN_PAPER_ACTIVATION_HOLD rollback-already-precommitted: durable rollback branch already exists' >&2
+            echo 'BAYN_PAPER_ACTIVATION_HOLD rollback-branch-already-exists' >&2
             exit 1
           fi
-
-          metadata="$(
-            jq -nc \
-              --arg activationBranch "${activation_branch}" \
-              --arg activationId "${ACTIVATION_ID}" \
-              --arg authorityExpiresAt "${AUTHORITY_EXPIRES_AT}" \
-              --arg authorityGenerationHash "${AUTHORITY_GENERATION_HASH}" \
-              --arg baselineCycleId "${BASELINE_CYCLE_ID}" \
-              --arg observeAuthorityGenerationHash "${OBSERVE_AUTHORITY_GENERATION_HASH}" \
-              --arg previousObserveGenerationHash "${PREVIOUS_OBSERVE_GENERATION_HASH}" \
-              --arg rollbackBranch "${rollback_branch}" \
-              --arg sourceMainSha "${CURRENT_MAIN_SHA}" \
-              --arg workflowRunAttempt "${GITHUB_RUN_ATTEMPT}" \
-              --arg workflowRunId "${GITHUB_RUN_ID}" \
-              '{schemaVersion:1,activationId:$activationId,activationBranch:$activationBranch,rollbackBranch:$rollbackBranch,sourceMainSha:$sourceMainSha,authorityGenerationHash:$authorityGenerationHash,previousObserveGenerationHash:$previousObserveGenerationHash,observeAuthorityGenerationHash:$observeAuthorityGenerationHash,authorityExpiresAt:$authorityExpiresAt,baselineCycleId:$baselineCycleId,workflowRunId:($workflowRunId|tonumber),workflowRunAttempt:($workflowRunAttempt|tonumber)}'
-          )"
-          metadata_b64="$(printf '%s' "${metadata}" | base64 -w0)"
 
           make_commit() {
             local base="$1" deployment="$2" message="$3"
@@ -372,8 +287,7 @@ jobs:
             rm -f "${index}"
             GIT_INDEX_FILE="${index}" git read-tree "${base}"
             blob="$(git hash-object -w "${deployment}")"
-            GIT_INDEX_FILE="${index}" git update-index --add --cacheinfo \
-              100644,"${blob}",argocd/applications/bayn/deployment.yaml
+            GIT_INDEX_FILE="${index}" git update-index --add --cacheinfo 100644,"${blob}",argocd/applications/bayn/deployment.yaml
             tree="$(GIT_INDEX_FILE="${index}" git write-tree)"
             commit="$(printf '%s\n' "${message}" | git commit-tree "${tree}" -p "${base}")"
             rm -f "${index}"
@@ -382,59 +296,27 @@ jobs:
 
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          activation_commit="$(make_commit "${CURRENT_MAIN_SHA}" deployment.paper.yaml "chore(bayn): activate bounded PAPER ${ACTIVATION_ID}")"
-          rollback_message="$(printf 'chore(bayn): precommit OBSERVE rollback %s\n\nBAYN_PAPER_ROLLBACK_METADATA=%s' "${ACTIVATION_ID}" "${metadata_b64}")"
-          rollback_commit="$(make_commit "${CURRENT_MAIN_SHA}" deployment.observe.yaml "${rollback_message}")"
+          activation_commit="$(make_commit "${CURRENT_MAIN_SHA}" deployment.request.yaml "chore(bayn): submit bounded PAPER request ${ACTIVATION_ID}")"
+          rollback_commit="$(make_commit "${activation_commit}" deployment.rollback.yaml "chore(bayn): remove bounded PAPER request ${ACTIVATION_ID}")"
           gh auth setup-git
           git push origin "${activation_commit}:refs/heads/${activation_branch}"
           git push origin "${rollback_commit}:refs/heads/${rollback_branch}"
 
-          template_file='.github/PULL_REQUEST_TEMPLATE.md'
-          test -s "${template_file}"
-          for heading in '## Summary' '## Related Issues' '## Testing' '## Breaking Changes' '## Checklist'; do
-            grep -Fxq "${heading}" "${template_file}"
-          done
-          cat > rollback-pr-body.md <<EOF
-          ## Summary
-
-          - Restore Bayn to explicit OBSERVE / read-only / no-capital authority after activation \`${ACTIVATION_ID}\`.
-          - Use the precommitted fresh OBSERVE generation bound to the paired PAPER transition.
-          - Preserve the rollback branch for automatic retargeting to the exact activated main.
-
-          ## Related Issues
-
-          PROOMPT-405
-
-          ## Testing
-
-          - The parent activation workflow verified and persisted the exact rollback patch before creating this PR.
-          - Protected checks and unresolved-thread state are revalidated on the unchanged exact head before merge.
-
-          ## Breaking Changes
-
-          None
-
-          ## Checklist
-
-          - [x] Testing section documents the exact validation performed (or \`N/A\` with justification).
-          - [x] Screenshots and Breaking Changes sections are handled appropriately (removed or filled in).
-          - [x] Documentation, release notes, and follow-ups are updated or tracked.
-          EOF
           cat > activation-pr-body.md <<EOF
           ## Summary
 
-          - Activate the reviewed bounded sandbox PAPER generation for \`${ACTIVATION_ID}\`.
-          - Bind the transition to exact current-main source, image, qualification, account, and authority evidence.
-          - Pair this transition with rollback branch \`${rollback_branch}\` and authority deadline \`${AUTHORITY_EXPIRES_AT}\`.
+          - Add one immutable Bayn PAPER activation request for runtime-owned discovery and OBSERVE PREPARE.
+          - Keep the configured service authority OBSERVE/read-only/no-capital until the live process validates the request and realizes the exact v2 generation.
+          - Qualification source: ${PRODUCER_HEAD_SHA}; activation source: ${CURRENT_MAIN_SHA}.
 
           ## Related Issues
 
-          PROOMPT-405
+          PROOMPT-445
 
           ## Testing
 
-          - The activation workflow verified the immutable evidence tuple and rendered the exact PAPER and OBSERVE patches.
-          - Protected checks, exact head/base, review threads, qualification expiry, and authority expiry are revalidated before merge.
+          - The workflow authenticated exactly one QUALIFIED terminal artifact and verified its canonical request hash, source, image, strategy, zero-order limits, cutoff, and expiry.
+          - No kubectl, broker mutation, deployment, or PAPER activation operation is performed by this workflow.
 
           ## Breaking Changes
 
@@ -442,1551 +324,43 @@ jobs:
 
           ## Checklist
 
-          - [x] Testing section documents the exact validation performed (or \`N/A\` with justification).
-          - [x] Screenshots and Breaking Changes sections are handled appropriately (removed or filled in).
+          - [x] Testing section documents the exact validation performed.
+          - [x] Screenshots and Breaking Changes sections are handled appropriately.
+          - [x] Documentation, release notes, and follow-ups are updated or tracked.
+          EOF
+          cat > rollback-pr-body.md <<EOF
+          ## Summary
+
+          - Remove the bounded Bayn PAPER activation request from the paired activation branch.
+          - This rollback PR targets main and restores the exact OBSERVE/read-only/no-capital deployment.
+
+          ## Related Issues
+
+          PROOMPT-445
+
+          ## Testing
+
+          - The parent workflow rendered and checked the exact request and rollback manifests before opening either ready PR.
+          - Request hash: ${REQUEST_HASH}; immutable cutoff: ${CUTOFF_AT}; expiry: ${EXPIRES_AT}.
+
+          ## Breaking Changes
+
+          None
+
+          ## Checklist
+
+          - [x] Testing section documents the exact validation performed.
+          - [x] Screenshots and Breaking Changes sections are handled appropriately.
           - [x] Documentation, release notes, and follow-ups are updated or tracked.
           EOF
 
-          rollback_url="$(
-            gh pr create \
-              --repo "${GITHUB_REPOSITORY}" \
-              --base main \
-              --head "${rollback_branch}" \
-              --draft \
-              --title "chore(bayn): restore OBSERVE after ${ACTIVATION_ID}" \
-              --body-file rollback-pr-body.md
-          )"
-          activation_url="$(
-            gh pr create \
-              --repo "${GITHUB_REPOSITORY}" \
-              --base main \
-              --head "${activation_branch}" \
-              --draft \
-              --title "chore(bayn): activate bounded PAPER ${ACTIVATION_ID}" \
-              --body-file activation-pr-body.md
-          )"
+          activation_url="$(gh pr create --repo "${GITHUB_REPOSITORY}" --base main --head "${activation_branch}" --title "chore(bayn): submit bounded PAPER request ${ACTIVATION_ID}" --body-file activation-pr-body.md)"
+          rollback_url="$(gh pr create --repo "${GITHUB_REPOSITORY}" --base main --head "${rollback_branch}" --title "chore(bayn): remove bounded PAPER request ${ACTIVATION_ID}" --body-file rollback-pr-body.md)"
           {
             echo "activation_branch=${activation_branch}"
             echo "activation_commit_sha=${activation_commit}"
             echo "activation_pr=${activation_url##*/}"
             echo "rollback_branch=${rollback_branch}"
             echo "rollback_commit_sha=${rollback_commit}"
-            echo "rollback_metadata_b64=${metadata_b64}"
             echo "rollback_pr=${rollback_url##*/}"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Persist rollback watchdog attestation
-        if: steps.identity.outputs.live == 'true'
-        env:
-          ACTIVATION_BRANCH: ${{ steps.gitops.outputs.activation_branch }}
-          ACTIVATION_COMMIT_SHA: ${{ steps.gitops.outputs.activation_commit_sha }}
-          ACTIVATION_ID: ${{ steps.identity.outputs.activation_id }}
-          AUTHORITY_EXPIRES_AT: ${{ steps.contract.outputs.authority_expires_at }}
-          AUTHORITY_GENERATION_HASH: ${{ steps.contract.outputs.authority_generation_hash }}
-          CURRENT_MAIN_SHA: ${{ steps.identity.outputs.current_main_sha }}
-          OBSERVE_AUTHORITY_GENERATION_HASH: ${{ steps.rollback_generation.outputs.observe_authority_generation_hash }}
-          ROLLBACK_BRANCH: ${{ steps.gitops.outputs.rollback_branch }}
-          ROLLBACK_COMMIT_SHA: ${{ steps.gitops.outputs.rollback_commit_sha }}
-          ROLLBACK_METADATA_B64: ${{ steps.gitops.outputs.rollback_metadata_b64 }}
-          WORKFLOW_HEAD_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          jq -nc \
-            --arg activationBranch "${ACTIVATION_BRANCH}" \
-            --arg activationCommitSha "${ACTIVATION_COMMIT_SHA}" \
-            --arg activationId "${ACTIVATION_ID}" \
-            --arg authorityExpiresAt "${AUTHORITY_EXPIRES_AT}" \
-            --arg authorityGenerationHash "${AUTHORITY_GENERATION_HASH}" \
-            --arg observeAuthorityGenerationHash "${OBSERVE_AUTHORITY_GENERATION_HASH}" \
-            --arg repository "${GITHUB_REPOSITORY}" \
-            --arg rollbackBranch "${ROLLBACK_BRANCH}" \
-            --arg rollbackCommitSha "${ROLLBACK_COMMIT_SHA}" \
-            --arg rollbackMetadataB64 "${ROLLBACK_METADATA_B64}" \
-            --arg sourceMainSha "${CURRENT_MAIN_SHA}" \
-            --arg workflowHeadSha "${WORKFLOW_HEAD_SHA}" \
-            --arg workflowPath '.github/workflows/bayn-paper-activation.yml' \
-            --arg workflowRunAttempt "${GITHUB_RUN_ATTEMPT}" \
-            --arg workflowRunId "${GITHUB_RUN_ID}" '
-              {
-                schemaVersion: 1,
-                repository: $repository,
-                workflowPath: $workflowPath,
-                workflowRunId: ($workflowRunId | tonumber),
-                workflowRunAttempt: ($workflowRunAttempt | tonumber),
-                activationId: $activationId,
-                activationBranch: $activationBranch,
-                activationCommitSha: $activationCommitSha,
-                rollbackBranch: $rollbackBranch,
-                rollbackCommitSha: $rollbackCommitSha,
-                rollbackMetadataB64: $rollbackMetadataB64,
-                sourceMainSha: $sourceMainSha,
-                workflowHeadSha: $workflowHeadSha,
-                authorityGenerationHash: $authorityGenerationHash,
-                observeAuthorityGenerationHash: $observeAuthorityGenerationHash,
-                authorityExpiresAt: $authorityExpiresAt
-              }
-            ' > bayn-paper-rollback-attestation.json
-
-      - name: Upload rollback watchdog attestation
-        if: steps.identity.outputs.live == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: bayn-paper-rollback-attestation-${{ steps.identity.outputs.activation_id }}-${{ github.run_id }}-${{ github.run_attempt }}
-          if-no-files-found: error
-          retention-days: 90
-          path: bayn-paper-rollback-attestation.json
-
-      - name: Release activation only after durable rollback attestation
-        if: steps.identity.outputs.live == 'true'
-        env:
-          ACTIVATION_BRANCH: ${{ steps.gitops.outputs.activation_branch }}
-          EXPECTED_ACTIVATION_SHA: ${{ steps.gitops.outputs.activation_commit_sha }}
-          EXPECTED_BASE_SHA: ${{ steps.identity.outputs.current_main_sha }}
-          GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN }}
-          PR_NUMBER: ${{ steps.gitops.outputs.activation_pr }}
-        run: |
-          set -euo pipefail
-          pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          current_main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq '.sha')"
-          if
-            [[ "${current_main_sha}" != "${EXPECTED_BASE_SHA}" ]] ||
-            [[ "$(jq -r '.state' <<< "${pull}")" != open ]] ||
-            [[ "$(jq -r '.draft' <<< "${pull}")" != true ]] ||
-            [[ "$(jq -r '.merged_at // ""' <<< "${pull}")" != '' ]] ||
-            [[ "$(jq -r '.head.sha' <<< "${pull}")" != "${EXPECTED_ACTIVATION_SHA}" ]] ||
-            [[ "$(jq -r '.head.ref' <<< "${pull}")" != "${ACTIVATION_BRANCH}" ]] ||
-            [[ "$(jq -r '.base.ref' <<< "${pull}")" != main ]] ||
-            [[ "$(jq -r '.base.sha' <<< "${pull}")" != "${EXPECTED_BASE_SHA}" ]]
-          then
-            echo 'BAYN_PAPER_ACTIVATION_HOLD activation-draft-changed: activation is not the exact attested draft' >&2
-            exit 1
-          fi
-          gh pr ready "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}"
-          ready_pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          if
-            [[ "$(jq -r '.state' <<< "${ready_pull}")" != open ]] ||
-            [[ "$(jq -r '.draft' <<< "${ready_pull}")" != false ]] ||
-            [[ "$(jq -r '.merged_at // ""' <<< "${ready_pull}")" != '' ]] ||
-            [[ "$(jq -r '.head.sha' <<< "${ready_pull}")" != "${EXPECTED_ACTIVATION_SHA}" ]] ||
-            [[ "$(jq -r '.head.ref' <<< "${ready_pull}")" != "${ACTIVATION_BRANCH}" ]] ||
-            [[ "$(jq -r '.base.ref' <<< "${ready_pull}")" != main ]] ||
-            [[ "$(jq -r '.base.sha' <<< "${ready_pull}")" != "${EXPECTED_BASE_SHA}" ]]
-          then
-            gh pr ready "${PR_NUMBER}" --undo --repo "${GITHUB_REPOSITORY}" >/dev/null
-            contained_pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-            if
-              [[ "$(jq -r '.state' <<< "${contained_pull}")" != open ]] ||
-              [[ "$(jq -r '.draft' <<< "${contained_pull}")" != true ]] ||
-              [[ "$(jq -r '.merged_at // ""' <<< "${contained_pull}")" != '' ]]
-            then
-              echo 'BAYN_PAPER_ACTIVATION_HOLD activation-containment-failed: drifted activation did not return to an unmerged draft' >&2
-              exit 1
-            fi
-            echo 'BAYN_PAPER_ACTIVATION_HOLD activation-ready-changed: activation changed while leaving draft' >&2
-            exit 1
-          fi
-
-  activate-and-observe:
-    name: Merge reviewed activation and observe one natural cycle
-    needs: verify-and-prepare
-    if: >-
-      needs.verify-and-prepare.outputs.live == 'true' &&
-      github.event_name == 'workflow_run'
-    runs-on: arc-arm64
-    timeout-minutes: 120
-    outputs:
-      observation: ${{ steps.observe.outputs.observation }}
-      rollback_commit_sha: ${{ steps.rebase_rollback.outputs.rollback_commit_sha }}
-    steps:
-      - name: Checkout trusted transition controller
-        uses: actions/checkout@v5
-        with:
-          ref: main
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - name: Merge only a clean exact-head protected activation PR
-        id: merge_activation
-        env:
-          ACTIVATION_BRANCH: ${{ needs.verify-and-prepare.outputs.activation_branch }}
-          EXPECTED_ACTIVATION_SHA: ${{ needs.verify-and-prepare.outputs.activation_commit_sha }}
-          EXPECTED_ROLLBACK_SHA: ${{ needs.verify-and-prepare.outputs.rollback_commit_sha }}
-          AUTHORITY_EXPIRES_AT: ${{ needs.verify-and-prepare.outputs.authority_expires_at }}
-          EXPECTED_BASE_SHA: ${{ needs.verify-and-prepare.outputs.current_main_sha }}
-          GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN }}
-          PR_NUMBER: ${{ needs.verify-and-prepare.outputs.activation_pr }}
-          QUALIFICATION_EXPIRES_AT: ${{ needs.verify-and-prepare.outputs.qualification_expires_at }}
-          ROLLBACK_BRANCH: ${{ needs.verify-and-prepare.outputs.rollback_branch }}
-          ROLLBACK_PR_NUMBER: ${{ needs.verify-and-prepare.outputs.rollback_pr }}
-        run: |
-          set -euo pipefail
-          expected_sha="${EXPECTED_ACTIVATION_SHA}"
-          [[ "${expected_sha}" =~ ^[0-9a-f]{40}$ ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD invalid-activation-commit: workflow-produced activation SHA is malformed' >&2
-            exit 1
-          }
-          branch_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${ACTIVATION_BRANCH}" --jq '.object.sha')"
-          [[ "${branch_sha}" == "${expected_sha}" ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD activation-head-changed: activation branch differs from the verified workflow-produced commit' >&2
-            exit 1
-          }
-          [[ "${EXPECTED_ROLLBACK_SHA}" =~ ^[0-9a-f]{40}$ ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD invalid-rollback-commit: workflow-produced rollback SHA is malformed' >&2
-            exit 1
-          }
-          ensure_rollback_pr_open() {
-            local rollback_pull rollback_state
-            rollback_pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${ROLLBACK_PR_NUMBER}")"
-            if
-              [[ "$(jq -r '.head.sha' <<< "${rollback_pull}")" != "${EXPECTED_ROLLBACK_SHA}" ]] ||
-              [[ "$(jq -r '.head.ref' <<< "${rollback_pull}")" != "${ROLLBACK_BRANCH}" ]] ||
-              [[ "$(jq -r '.base.ref' <<< "${rollback_pull}")" != main ]] ||
-              [[ "$(jq -r '.merged_at // ""' <<< "${rollback_pull}")" != '' ]]
-            then
-              echo 'BAYN_PAPER_ACTIVATION_HOLD rollback-pr-drift: paired rollback PR no longer matches the workflow-produced OBSERVE commit' >&2
-              return 1
-            fi
-            rollback_state="$(jq -r '.state' <<< "${rollback_pull}")"
-            if [[ "${rollback_state}" == closed ]]; then
-              gh api --method PATCH "repos/${GITHUB_REPOSITORY}/pulls/${ROLLBACK_PR_NUMBER}" -f state=open >/dev/null || {
-                echo 'BAYN_PAPER_ACTIVATION_HOLD rollback-pr-closed: paired rollback PR could not be reopened' >&2
-                return 1
-              }
-              rollback_pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${ROLLBACK_PR_NUMBER}")"
-            fi
-            if
-              [[ "$(jq -r '.state' <<< "${rollback_pull}")" != open ]] ||
-              [[ "$(jq -r '.head.sha' <<< "${rollback_pull}")" != "${EXPECTED_ROLLBACK_SHA}" ]] ||
-              [[ "$(jq -r '.head.ref' <<< "${rollback_pull}")" != "${ROLLBACK_BRANCH}" ]] ||
-              [[ "$(jq -r '.base.ref' <<< "${rollback_pull}")" != main ]] ||
-              [[ "$(jq -r '.merged_at // ""' <<< "${rollback_pull}")" != '' ]]
-            then
-              echo 'BAYN_PAPER_ACTIVATION_HOLD rollback-pr-closed: paired rollback PR is not open and exact' >&2
-              return 1
-            fi
-          }
-          ensure_rollback_pr_open
-          count_unresolved_threads() {
-            local pr_number="$1" cursor='' page page_unresolved has_next end_cursor unresolved=0
-            local query='query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$after){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}'
-            for page_number in $(seq 1 100); do
-              local -a request=(
-                graphql
-                -f "query=${query}"
-                -F "owner=${GITHUB_REPOSITORY%%/*}"
-                -F "name=${GITHUB_REPOSITORY##*/}"
-                -F "number=${pr_number}"
-              )
-              [[ -z "${cursor}" ]] || request+=(-f "after=${cursor}")
-              page="$(gh api "${request[@]}")"
-              jq -e '
-                ((.errors // []) | length) == 0 and
-                (.data.repository.pullRequest.reviewThreads.nodes | type) == "array" and
-                (.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type) == "boolean"
-              ' <<< "${page}" >/dev/null || {
-                echo 'BAYN_PAPER_ACTIVATION_HOLD review-thread-pagination-invalid: GitHub returned incomplete review-thread evidence' >&2
-                return 1
-              }
-              page_unresolved="$(
-                jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length' \
-                  <<< "${page}"
-              )"
-              unresolved="$((unresolved + page_unresolved))"
-              has_next="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<< "${page}")"
-              if [[ "${has_next}" == false ]]; then
-                printf '%s\n' "${unresolved}"
-                return 0
-              fi
-              end_cursor="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // ""' <<< "${page}")"
-              [[ -n "${end_cursor}" ]] || {
-                echo 'BAYN_PAPER_ACTIVATION_HOLD review-thread-pagination-invalid: next review-thread page has no cursor' >&2
-                return 1
-              }
-              cursor="${end_cursor}"
-            done
-            echo 'BAYN_PAPER_ACTIVATION_HOLD review-thread-pagination-limit: review-thread evidence exceeds the bounded 100-page limit' >&2
-            return 1
-          }
-          load_check_runs() {
-            local commit_sha="$1" pages
-            pages="$(
-              gh api --paginate --slurp \
-                "repos/${GITHUB_REPOSITORY}/commits/${commit_sha}/check-runs?filter=latest&per_page=100"
-            )"
-            jq -e '
-              type == "array" and length > 0 and
-              all(.[];
-                (.total_count | type) == "number" and
-                (.check_runs | type) == "array" and
-                (.check_runs | length) <= 100 and
-                all(.check_runs[]; (.id | type) == "number")
-              ) and
-              ([.[].total_count] | unique | length) == 1 and
-              ([.[] | .check_runs[]] | length) == .[0].total_count and
-              ([.[] | .check_runs[].id] | length) == ([.[] | .check_runs[].id] | unique | length)
-            ' <<< "${pages}" >/dev/null || {
-              echo 'BAYN_PAPER_ACTIVATION_HOLD check-run-pagination-invalid: GitHub returned incomplete or duplicate check-run evidence' >&2
-              return 1
-            }
-            jq -c '{check_runs: [.[] | .check_runs[]]}' <<< "${pages}"
-          }
-          expiry_epoch="$(date -u -d "${AUTHORITY_EXPIRES_AT}" +%s)"
-          qualification_expiry_epoch="$(date -u -d "${QUALIFICATION_EXPIRES_AT}" +%s)"
-          for attempt in $(seq 1 80); do
-            pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-            [[ "$(jq -r '.head.sha' <<< "${pull}")" == "${expected_sha}" ]]
-            [[ "$(jq -r '.base.ref' <<< "${pull}")" == main ]]
-            current_main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq '.sha')"
-            if
-              [[ "${current_main_sha}" != "${EXPECTED_BASE_SHA}" ]] ||
-              [[ "$(jq -r '.base.sha' <<< "${pull}")" != "${EXPECTED_BASE_SHA}" ]]
-            then
-              echo 'BAYN_PAPER_ACTIVATION_HOLD activation-base-changed: current main differs from the verified activation base' >&2
-              exit 1
-            fi
-            now_epoch="$(date -u +%s)"
-            if [[ "$((qualification_expiry_epoch - now_epoch))" -lt 900 ]]; then
-              echo 'BAYN_PAPER_ACTIVATION_HOLD qualification-stale: fewer than 15 minutes remain before qualification expiry' >&2
-              exit 1
-            fi
-            if [[ "$((expiry_epoch - now_epoch))" -lt 900 ]]; then
-              echo 'BAYN_PAPER_ACTIVATION_HOLD authority-window-too-short: fewer than 15 minutes remain before PAPER expiry' >&2
-              exit 1
-            fi
-            unresolved="$(count_unresolved_threads "${PR_NUMBER}")"
-            checks="$(load_check_runs "${expected_sha}")"
-            pending="$(jq '[.check_runs[] | select(.status != "completed")] | length' <<< "${checks}")"
-            failed="$(jq '[.check_runs[] | select(.status == "completed" and (.conclusion | IN("success", "neutral", "skipped") | not))] | length' <<< "${checks}")"
-            if
-              [[ "${unresolved}" == 0 ]] &&
-              [[ "${pending}" == 0 ]] &&
-              [[ "${failed}" == 0 ]] &&
-              [[ "$(jq '.check_runs | length' <<< "${checks}")" -gt 0 ]] &&
-              [[ "$(jq -r '.mergeable_state' <<< "${pull}")" =~ ^(clean|unstable)$ ]]
-            then
-              final_pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-              final_main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq '.sha')"
-              if
-                [[ "$(jq -r '.head.sha' <<< "${final_pull}")" != "${expected_sha}" ]] ||
-                [[ "$(jq -r '.base.ref' <<< "${final_pull}")" != main ]] ||
-                [[ "$(jq -r '.base.sha' <<< "${final_pull}")" != "${EXPECTED_BASE_SHA}" ]] ||
-                [[ "${final_main_sha}" != "${EXPECTED_BASE_SHA}" ]]
-              then
-                echo 'BAYN_PAPER_ACTIVATION_HOLD activation-base-changed: base changed immediately before merge' >&2
-                exit 1
-              fi
-              final_now_epoch="$(date -u +%s)"
-              if [[ "$((qualification_expiry_epoch - final_now_epoch))" -lt 900 ]]; then
-                echo 'BAYN_PAPER_ACTIVATION_HOLD qualification-stale: qualification expired or is too close immediately before merge' >&2
-                exit 1
-              fi
-              if [[ "$((expiry_epoch - final_now_epoch))" -lt 900 ]]; then
-                echo 'BAYN_PAPER_ACTIVATION_HOLD authority-window-too-short: expiry is too close immediately before merge' >&2
-                exit 1
-              fi
-              ensure_rollback_pr_open
-              result="$(
-                gh api --method PUT "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/merge" \
-                  -f merge_method=squash \
-                  -f sha="${expected_sha}"
-              )"
-              [[ "$(jq -r '.merged' <<< "${result}")" == true ]]
-              merged_pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-              activation_merged_at="$(jq -r '.merged_at // ""' <<< "${merged_pull}")"
-              [[ -n "${activation_merged_at}" ]]
-              date -u -d "${activation_merged_at}" +%s >/dev/null
-              echo "activation_merged_at=${activation_merged_at}" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            sleep 15
-          done
-          echo 'BAYN_PAPER_ACTIVATION_HOLD activation-review-timeout: exact-head GitOps review did not settle' >&2
-          exit 1
-
-      - name: Rebase the precommitted rollback tree onto activated main
-        id: rebase_rollback
-        env:
-          ACTIVATION_BRANCH: ${{ needs.verify-and-prepare.outputs.activation_branch }}
-          ACTIVATION_ID: ${{ needs.verify-and-prepare.outputs.activation_id }}
-          AUTHORITY_EXPIRES_AT: ${{ needs.verify-and-prepare.outputs.authority_expires_at }}
-          AUTHORITY_GENERATION_HASH: ${{ needs.verify-and-prepare.outputs.authority_generation_hash }}
-          BASELINE_CYCLE_ID: ${{ needs.verify-and-prepare.outputs.baseline_cycle_id }}
-          EXPECTED_ROLLBACK_METADATA_B64: ${{ needs.verify-and-prepare.outputs.rollback_metadata_b64 }}
-          EXPECTED_ROLLBACK_SHA: ${{ needs.verify-and-prepare.outputs.rollback_commit_sha }}
-          GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN }}
-          OBSERVE_AUTHORITY_GENERATION_HASH: ${{ needs.verify-and-prepare.outputs.observe_authority_generation_hash }}
-          PREVIOUS_OBSERVE_AUTHORITY_GENERATION_HASH: ${{ needs.verify-and-prepare.outputs.previous_observe_authority_generation_hash }}
-          ROLLBACK_BRANCH: ${{ needs.verify-and-prepare.outputs.rollback_branch }}
-          SOURCE_MAIN_SHA: ${{ needs.verify-and-prepare.outputs.current_main_sha }}
-        run: |
-          set -euo pipefail
-          [[ "${EXPECTED_ROLLBACK_SHA}" =~ ^[0-9a-f]{40}$ ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD invalid-rollback-commit: workflow-produced rollback SHA is malformed' >&2
-            exit 1
-          }
-          [[ -n "${EXPECTED_ROLLBACK_METADATA_B64}" ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD invalid-rollback-metadata: workflow-produced rollback metadata is missing' >&2
-            exit 1
-          }
-          gh auth setup-git
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git fetch origin \
-            "main:refs/remotes/origin/main" \
-            "${ROLLBACK_BRANCH}:refs/remotes/origin/${ROLLBACK_BRANCH}"
-          current_main_sha="$(git rev-parse origin/main)"
-          old_rollback_sha="$(git rev-parse "origin/${ROLLBACK_BRANCH}")"
-          [[ "${old_rollback_sha}" == "${EXPECTED_ROLLBACK_SHA}" ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD rollback-precommit-changed: rollback branch differs from the workflow-produced commit' >&2
-            exit 1
-          }
-          mapfile -t metadata_lines < <(
-            git show -s --format=%B "${old_rollback_sha}" | sed -n 's/^BAYN_PAPER_ROLLBACK_METADATA=//p'
-          )
-          [[ "${#metadata_lines[@]}" == 1 ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD rollback-metadata-drift: rollback commit must contain exactly one metadata record' >&2
-            exit 1
-          }
-          metadata_line="${metadata_lines[0]}"
-          [[ "${metadata_line}" == "${EXPECTED_ROLLBACK_METADATA_B64}" ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD rollback-metadata-drift: rollback metadata differs from the workflow-produced record' >&2
-            exit 1
-          }
-          metadata="$(printf '%s' "${metadata_line}" | base64 -d)" || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD rollback-metadata-drift: rollback metadata is not valid Base64' >&2
-            exit 1
-          }
-          jq -e \
-            --arg activationBranch "${ACTIVATION_BRANCH}" \
-            --arg activationId "${ACTIVATION_ID}" \
-            --arg authorityExpiresAt "${AUTHORITY_EXPIRES_AT}" \
-            --arg authorityGenerationHash "${AUTHORITY_GENERATION_HASH}" \
-            --arg baselineCycleId "${BASELINE_CYCLE_ID}" \
-            --arg observeAuthorityGenerationHash "${OBSERVE_AUTHORITY_GENERATION_HASH}" \
-            --arg previousObserveGenerationHash "${PREVIOUS_OBSERVE_AUTHORITY_GENERATION_HASH}" \
-            --arg rollbackBranch "${ROLLBACK_BRANCH}" \
-            --arg sourceMainSha "${SOURCE_MAIN_SHA}" \
-            --arg workflowRunAttempt "${GITHUB_RUN_ATTEMPT}" \
-            --arg workflowRunId "${GITHUB_RUN_ID}" '
-              type == "object" and
-              keys == [
-                "activationBranch",
-                "activationId",
-                "authorityExpiresAt",
-                "authorityGenerationHash",
-                "baselineCycleId",
-                "observeAuthorityGenerationHash",
-                "previousObserveGenerationHash",
-                "rollbackBranch",
-                "schemaVersion",
-                "sourceMainSha",
-                "workflowRunAttempt",
-                "workflowRunId"
-              ] and
-              .schemaVersion == 1 and
-              .activationBranch == $activationBranch and
-              .activationId == $activationId and
-              .authorityExpiresAt == $authorityExpiresAt and
-              .authorityGenerationHash == $authorityGenerationHash and
-              .baselineCycleId == $baselineCycleId and
-              .observeAuthorityGenerationHash == $observeAuthorityGenerationHash and
-              .previousObserveGenerationHash == $previousObserveGenerationHash and
-              .rollbackBranch == $rollbackBranch and
-              .sourceMainSha == $sourceMainSha and
-              (.workflowRunAttempt | tostring) == $workflowRunAttempt and
-              (.workflowRunId | tostring) == $workflowRunId
-            ' <<< "${metadata}" >/dev/null || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD rollback-metadata-drift: decoded rollback metadata differs from the workflow-produced tuple' >&2
-            exit 1
-          }
-          git show "${current_main_sha}:argocd/applications/bayn/deployment.yaml" > deployment.paper.yaml
-          bun packages/scripts/src/bayn/verify-paper-activation.ts \
-            --mode inspect-deployment-authority \
-            --deployment deployment.paper.yaml \
-            --output deployment-paper-authority.json
-          if
-            [[ "$(jq -r '.maximumAuthority' deployment-paper-authority.json)" != PAPER ]] ||
-            [[ "$(jq -r '.authorityGenerationHash' deployment-paper-authority.json)" != "${AUTHORITY_GENERATION_HASH}" ]]
-          then
-            echo 'BAYN_PAPER_ACTIVATION_HOLD foreign-paper-generation: current main no longer contains this activation PAPER generation' >&2
-            exit 1
-          fi
-          bun packages/scripts/src/bayn/verify-paper-activation.ts \
-            --mode render-rollback \
-            --deployment deployment.paper.yaml \
-            --observe-authority-generation-hash "${OBSERVE_AUTHORITY_GENERATION_HASH}" \
-            --output deployment.observe.yaml
-          index="$(mktemp)"
-          rm -f "${index}"
-          GIT_INDEX_FILE="${index}" git read-tree "${current_main_sha}"
-          blob="$(git hash-object -w deployment.observe.yaml)"
-          GIT_INDEX_FILE="${index}" git update-index --add --cacheinfo \
-            100644,"${blob}",argocd/applications/bayn/deployment.yaml
-          tree="$(GIT_INDEX_FILE="${index}" git write-tree)"
-          rollback_commit="$(
-            printf 'chore(bayn): restore OBSERVE after %s\n\nBAYN_PAPER_ROLLBACK_METADATA=%s\n' \
-              "${ACTIVATION_ID}" "${metadata_line}" | git commit-tree "${tree}" -p "${current_main_sha}"
-          )"
-          rm -f "${index}"
-          git push --force-with-lease="refs/heads/${ROLLBACK_BRANCH}:${old_rollback_sha}" \
-            origin "${rollback_commit}:refs/heads/${ROLLBACK_BRANCH}"
-          echo "rollback_commit_sha=${rollback_commit}" >> "$GITHUB_OUTPUT"
-
-      - name: Wait for the verified PAPER rollout
-        id: rollout
-        env:
-          AUTHORITY_EXPIRES_AT: ${{ needs.verify-and-prepare.outputs.authority_expires_at }}
-          AUTHORITY_GENERATION_HASH: ${{ needs.verify-and-prepare.outputs.authority_generation_hash }}
-          ACTIVATION_MERGED_AT: ${{ steps.merge_activation.outputs.activation_merged_at }}
-          EXPECTED_IMAGE_DIGEST: ${{ needs.verify-and-prepare.outputs.image_digest }}
-          EXPECTED_SOURCE_SHA: ${{ needs.verify-and-prepare.outputs.source_sha }}
-          PREACTIVATION_BASELINE_CYCLE_ID: ${{ needs.verify-and-prepare.outputs.baseline_cycle_id }}
-        run: |
-          set -euo pipefail
-          evidence_dir="${RUNNER_TEMP}/bayn-paper-observation"
-          mkdir -p "${evidence_dir}"
-          rollout_status="${evidence_dir}/rollout-status.json"
-          printf 'null\n' > "${rollout_status}"
-          activation_merge_epoch_ms="$(date -u -d "${ACTIVATION_MERGED_AT}" +%s%3N)"
-          expiry_epoch="$(date -u -d "${AUTHORITY_EXPIRES_AT}" +%s)"
-          rollout_deadline="$(( $(date -u +%s) + 600 ))"
-          if [[ "${expiry_epoch}" -lt "${rollout_deadline}" ]]; then
-            rollout_deadline="${expiry_epoch}"
-          fi
-          while [[ "$(date -u +%s)" -lt "${rollout_deadline}" ]]; do
-            if curl -fsS --connect-timeout 5 --max-time 15 \
-              http://bayn.bayn.svc.cluster.local/v1/status > "${rollout_status}"
-            then
-              if jq -e \
-                --arg digest "${EXPECTED_IMAGE_DIGEST}" \
-                --arg generation "${AUTHORITY_GENERATION_HASH}" \
-                --arg source "${EXPECTED_SOURCE_SHA}" '
-                  .operational.ready == true and
-                  .qualification.verdict == "QUALIFIED" and
-                  .build.sourceRevision == $source and
-                  .build.image.digest == $digest and
-                  .authority.brokerEnvironment == "sandbox" and
-                  .authority.brokerAccess == "mutation" and
-                  .authority.capitalAuthority == "sandbox-capital" and
-                  .authority.durable.maximum == "paper" and
-                  .authority.durable.effective == "paper" and
-                  .authority.durable.kill == "clear" and
-                  .cycle.observationAvailable == true and
-                  .cycle.authority.generationHash == $generation and
-                  .cycle.mutations.unresolvedCount == 0 and
-                  .cycle.reconciliation.status == "EXACT" and
-                  .cycle.reconciliation.discrepancyCount == 0 and
-                  .cycle.reconciliation.coversLatestMutation == true
-                ' "${rollout_status}" >/dev/null
-              then
-                paper_rollout_observed_at="$(jq -r '.operational.checkedAt // ""' "${rollout_status}")"
-                paper_rollout_observed_epoch_ms="$(date -u -d "${paper_rollout_observed_at}" +%s%3N)"
-                paper_authority_updated_at="$(jq -r '.cycle.authority.updatedAt // ""' "${rollout_status}")"
-                paper_authority_updated_epoch_ms="$(date -u -d "${paper_authority_updated_at}" +%s%3N)"
-                if
-                  [[ "${paper_authority_updated_epoch_ms}" -lt "${activation_merge_epoch_ms}" ]] ||
-                  [[ "${paper_authority_updated_epoch_ms}" -gt "${paper_rollout_observed_epoch_ms}" ]]
-                then
-                  echo 'BAYN_PAPER_ACTIVATION_HOLD paper-authority-chronology: reviewed PAPER authority transition is not within the activation visibility window' >&2
-                  exit 1
-                fi
-                paper_baseline_current_cycle_id="$(jq -r '.cycle.current.cycleId // ""' "${rollout_status}")"
-                if [[ -n "${paper_baseline_current_cycle_id}" ]]; then
-                  paper_baseline_current_created_at="$(jq -r '.cycle.current.createdAt // ""' "${rollout_status}")"
-                  if
-                    ! paper_baseline_current_created_epoch_ms="$(date -u -d "${paper_baseline_current_created_at}" +%s%3N)" ||
-                    [[ "${paper_baseline_current_created_epoch_ms}" -le "${activation_merge_epoch_ms}" ]] ||
-                    [[ "${paper_baseline_current_created_epoch_ms}" -le "${paper_authority_updated_epoch_ms}" ]]
-                  then
-                    echo 'BAYN_PAPER_ACTIVATION_HOLD active-cycle-before-paper-authority: current cycle did not start under the reviewed PAPER authority' >&2
-                    exit 1
-                  fi
-                fi
-                first_paper_last_cycle_id="$(jq -r '.cycle.last.cycleId // ""' "${rollout_status}")"
-                initial_terminal_cycle_id=''
-                if [[ -n "${first_paper_last_cycle_id}" && "${first_paper_last_cycle_id}" != "${PREACTIVATION_BASELINE_CYCLE_ID}" ]]; then
-                  first_paper_last_phase="$(jq -r '.cycle.last.phase // ""' "${rollout_status}")"
-                  first_paper_last_created_at="$(jq -r '.cycle.last.createdAt // ""' "${rollout_status}")"
-                  if
-                    ! first_paper_last_created_epoch_ms="$(date -u -d "${first_paper_last_created_at}" +%s%3N)" ||
-                    [[ "${first_paper_last_created_epoch_ms}" -le "${activation_merge_epoch_ms}" ]] ||
-                    [[ "${first_paper_last_created_epoch_ms}" -le "${paper_authority_updated_epoch_ms}" ]]
-                  then
-                    echo 'BAYN_PAPER_ACTIVATION_HOLD initial-cycle-before-paper-authority: changed terminal cycle did not start under the reviewed PAPER authority' >&2
-                    exit 1
-                  fi
-                  case "${first_paper_last_phase}" in
-                    COMPLETED | NO_TRADE | BLOCKED)
-                      if [[ -n "${paper_baseline_current_cycle_id}" ]]; then
-                        echo 'BAYN_PAPER_ACTIVATION_HOLD multiple-paper-cycles-before-observation: PAPER already contains a terminal and active cycle' >&2
-                        exit 1
-                      fi
-                      initial_terminal_cycle_id="${first_paper_last_cycle_id}"
-                      ;;
-                    *)
-                      echo 'BAYN_PAPER_ACTIVATION_HOLD invalid-first-paper-cycle: first PAPER status contains a changed nonterminal last cycle' >&2
-                      exit 1
-                      ;;
-                  esac
-                fi
-                {
-                  echo "paper_baseline_last_cycle_id=${PREACTIVATION_BASELINE_CYCLE_ID}"
-                  echo "paper_baseline_current_cycle_id=${paper_baseline_current_cycle_id}"
-                  echo "paper_initial_terminal_cycle_id=${initial_terminal_cycle_id}"
-                  echo "paper_authority_updated_at=${paper_authority_updated_at}"
-                  echo "paper_rollout_observed_at=${paper_rollout_observed_at}"
-                } >> "$GITHUB_OUTPUT"
-                exit 0
-              fi
-              if jq -e '
-                .authority.brokerEnvironment == "live" or
-                .authority.capitalAuthority == "live-capital-grant"
-              ' "${rollout_status}" >/dev/null
-              then
-                echo 'BAYN_PAPER_ACTIVATION_HOLD live-money-rollout: rollout exposed live-money authority' >&2
-                exit 1
-              fi
-            fi
-            sleep 10
-          done
-          echo 'BAYN_PAPER_ACTIVATION_HOLD paper-rollout-timeout: reviewed PAPER state did not become ready within 10 minutes' >&2
-          exit 1
-
-      - name: Observe exactly one new natural scheduled cycle
-        id: observe
-        env:
-          AUTHORITY_EXPIRES_AT: ${{ needs.verify-and-prepare.outputs.authority_expires_at }}
-          AUTHORITY_GENERATION_HASH: ${{ needs.verify-and-prepare.outputs.authority_generation_hash }}
-          ACTIVATION_MERGED_AT: ${{ steps.merge_activation.outputs.activation_merged_at }}
-          BASELINE_CURRENT_CYCLE_ID: ${{ steps.rollout.outputs.paper_baseline_current_cycle_id }}
-          BASELINE_LAST_CYCLE_ID: ${{ steps.rollout.outputs.paper_baseline_last_cycle_id }}
-          EXPECTED_IMAGE_DIGEST: ${{ needs.verify-and-prepare.outputs.image_digest }}
-          EXPECTED_SOURCE_SHA: ${{ needs.verify-and-prepare.outputs.source_sha }}
-          INITIAL_TERMINAL_CYCLE_ID: ${{ steps.rollout.outputs.paper_initial_terminal_cycle_id }}
-          PAPER_ROLLOUT_OBSERVED_AT: ${{ steps.rollout.outputs.paper_rollout_observed_at }}
-        run: |
-          set -euo pipefail
-          evidence_dir="${RUNNER_TEMP}/bayn-paper-observation"
-          mkdir -p "${evidence_dir}"
-          cp "${evidence_dir}/rollout-status.json" "${evidence_dir}/status.json"
-          outcome='timeout'
-          observed_cycle_id="${BASELINE_CURRENT_CYCLE_ID}"
-          rollout_epoch_ms="$(date -u -d "${PAPER_ROLLOUT_OBSERVED_AT}" +%s%3N)"
-          if [[ -n "${INITIAL_TERMINAL_CYCLE_ID}" ]]; then
-            initial_phase="$(jq -r '.cycle.last.phase // ""' "${evidence_dir}/status.json")"
-            [[ "$(jq -r '.cycle.last.cycleId // ""' "${evidence_dir}/status.json")" == "${INITIAL_TERMINAL_CYCLE_ID}" ]]
-            observed_cycle_id="${INITIAL_TERMINAL_CYCLE_ID}"
-            case "${initial_phase}" in
-              COMPLETED | NO_TRADE) outcome='terminal_success' ;;
-              BLOCKED) outcome='terminal_failure' ;;
-              *) outcome='invalid-initial-terminal-cycle' ;;
-            esac
-          fi
-          while
-            [[ "${outcome}" == timeout ]] &&
-            [[ "$(date -u +%s)" -lt "$(date -u -d "${AUTHORITY_EXPIRES_AT}" +%s)" ]]
-          do
-            status_file="${evidence_dir}/status.json"
-            if ! curl -fsS --connect-timeout 5 --max-time 15 \
-              http://bayn.bayn.svc.cluster.local/v1/status > "${status_file}"; then
-              outcome='status_unavailable'
-              break
-            fi
-            if ! jq -e \
-              --arg digest "${EXPECTED_IMAGE_DIGEST}" \
-              --arg generation "${AUTHORITY_GENERATION_HASH}" \
-              --arg source "${EXPECTED_SOURCE_SHA}" '
-                .operational.ready == true and
-                .qualification.verdict == "QUALIFIED" and
-                .build.sourceRevision == $source and
-                .build.image.digest == $digest and
-                .authority.brokerEnvironment == "sandbox" and
-                .authority.brokerAccess == "mutation" and
-                .authority.capitalAuthority == "sandbox-capital" and
-                .authority.durable.maximum == "paper" and
-                .authority.durable.effective == "paper" and
-                .authority.durable.kill == "clear" and
-                .cycle.observationAvailable == true and
-                .cycle.authority.generationHash == $generation and
-                .cycle.mutations.unresolvedCount == 0 and
-                .cycle.reconciliation.status == "EXACT" and
-                .cycle.reconciliation.discrepancyCount == 0 and
-                .cycle.reconciliation.coversLatestMutation == true
-              ' "${status_file}" >/dev/null
-            then
-              outcome='safety_discrepancy'
-              break
-            fi
-            current_cycle_id="$(jq -r '.cycle.current.cycleId // ""' "${status_file}")"
-            if [[ -n "${current_cycle_id}" ]]; then
-              current_created_at="$(jq -r '.cycle.current.createdAt // ""' "${status_file}")"
-              if [[ "${current_cycle_id}" != "${BASELINE_CURRENT_CYCLE_ID}" ]]; then
-                if
-                  ! current_created_epoch_ms="$(date -u -d "${current_created_at}" +%s%3N)" ||
-                  [[ "${current_created_epoch_ms}" -le "${rollout_epoch_ms}" ]]
-                then
-                  outcome='cycle-not-started-under-visible-paper'
-                  break
-                fi
-              fi
-              if [[ -n "${observed_cycle_id}" && "${current_cycle_id}" != "${observed_cycle_id}" ]]; then
-                outcome='multiple-paper-cycles'
-                break
-              fi
-              observed_cycle_id="${current_cycle_id}"
-            fi
-            last_cycle_id="$(jq -r '.cycle.last.cycleId // ""' "${status_file}")"
-            last_phase="$(jq -r '.cycle.last.phase // ""' "${status_file}")"
-            last_created_at="$(jq -r '.cycle.last.createdAt // ""' "${status_file}")"
-            if
-              [[ -n "${last_cycle_id}" ]] &&
-              [[ "${last_cycle_id}" != "${BASELINE_LAST_CYCLE_ID}" ]]
-            then
-              if [[ "${last_cycle_id}" == "${BASELINE_CURRENT_CYCLE_ID}" ]]; then
-                if [[ "${observed_cycle_id}" != "${last_cycle_id}" ]]; then
-                  outcome='cycle-not-started-under-visible-paper'
-                  break
-                fi
-              elif
-                ! last_created_epoch_ms="$(date -u -d "${last_created_at}" +%s%3N)" ||
-                [[ "${last_created_epoch_ms}" -le "${rollout_epoch_ms}" ]] ||
-                { [[ -n "${observed_cycle_id}" ]] && [[ "${last_cycle_id}" != "${observed_cycle_id}" ]]; }
-              then
-                outcome='cycle-not-started-under-visible-paper'
-                break
-              fi
-              observed_cycle_id="${last_cycle_id}"
-              case "${last_phase}" in
-                COMPLETED | NO_TRADE)
-                  outcome='terminal_success'
-                  break
-                  ;;
-                BLOCKED)
-                  outcome='terminal_failure'
-                  break
-                  ;;
-              esac
-            fi
-            sleep 30
-          done
-          jq -n \
-            --arg authorityExpiresAt "${AUTHORITY_EXPIRES_AT}" \
-            --arg authorityGenerationHash "${AUTHORITY_GENERATION_HASH}" \
-            --arg activationMergedAt "${ACTIVATION_MERGED_AT}" \
-            --arg baselineCurrentCycleId "${BASELINE_CURRENT_CYCLE_ID}" \
-            --arg baselineLastCycleId "${BASELINE_LAST_CYCLE_ID}" \
-            --arg observedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --arg observedCycleId "${observed_cycle_id}" \
-            --arg outcome "${outcome}" \
-            --arg paperRolloutObservedAt "${PAPER_ROLLOUT_OBSERVED_AT}" \
-            --slurpfile status "${evidence_dir}/status.json" \
-            '{schemaVersion:1,authorityExpiresAt:$authorityExpiresAt,authorityGenerationHash:$authorityGenerationHash,activationMergedAt:$activationMergedAt,paperRolloutObservedAt:$paperRolloutObservedAt,baselineCurrentCycleId:$baselineCurrentCycleId,baselineLastCycleId:$baselineLastCycleId,observedCycleId:$observedCycleId,observedAt:$observedAt,outcome:$outcome,status:($status[0] // null)}' \
-            > "${evidence_dir}/proof.json"
-          echo "observation=${outcome}" >> "$GITHUB_OUTPUT"
-          [[ "${outcome}" == terminal_success || "${outcome}" == terminal_failure ]] || exit 1
-
-      - name: Persist natural-cycle observation
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: bayn-paper-observation-${{ needs.verify-and-prepare.outputs.activation_id }}-${{ github.run_id }}
-          if-no-files-found: warn
-          retention-days: 90
-          path: ${{ runner.temp }}/bayn-paper-observation/*.json
-
-  rollback:
-    name: Always restore reviewed OBSERVE GitOps state
-    needs:
-      - verify-and-prepare
-      - activate-and-observe
-    if: >-
-      always() &&
-      needs.verify-and-prepare.outputs.live == 'true' &&
-      github.event_name == 'workflow_run'
-    runs-on: arc-arm64
-    timeout-minutes: 45
-    steps:
-      - name: Checkout trusted rollback controller
-        uses: actions/checkout@v5
-        with:
-          ref: main
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Determine whether activation merged
-        id: activation_state
-        env:
-          EXPECTED_ACTIVATION_SHA: ${{ needs.verify-and-prepare.outputs.activation_commit_sha }}
-          GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN }}
-          PR_NUMBER: ${{ needs.verify-and-prepare.outputs.activation_pr }}
-        run: |
-          set -euo pipefail
-          restore='true'
-          if pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" 2>/dev/null)"; then
-            if
-              [[ "$(jq -r '.head.sha // ""' <<< "${pull}")" == "${EXPECTED_ACTIVATION_SHA}" ]] &&
-              [[ "$(jq -r '.state // ""' <<< "${pull}")" == closed ]] &&
-              [[ -n "$(jq -r '.merged_at // ""' <<< "${pull}")" ]] &&
-              [[ -n "$(jq -r '.base.ref // ""' <<< "${pull}")" ]] &&
-              [[ "$(jq -r '.base.ref // ""' <<< "${pull}")" != main ]]
-            then
-              restore='false'
-              echo 'Activation PR merged only into a foreign base; production OBSERVE rollback is not required for this attempt.'
-            elif
-              [[ "$(jq -r '.head.sha // ""' <<< "${pull}")" == "${EXPECTED_ACTIVATION_SHA}" ]] &&
-              [[ "$(jq -r '.merged_at // ""' <<< "${pull}")" == '' ]]
-            then
-              if [[ "$(jq -r '.state // ""' <<< "${pull}")" != closed ]]; then
-                if gh api --method PATCH "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" -f state=closed >/dev/null; then
-                  pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-                else
-                  echo 'Activation PR could not be closed; retaining fail-closed OBSERVE rollback.' >&2
-                fi
-              fi
-              if
-                [[ "$(jq -r '.head.sha // ""' <<< "${pull}")" == "${EXPECTED_ACTIVATION_SHA}" ]] &&
-                [[ "$(jq -r '.state // ""' <<< "${pull}")" == closed ]] &&
-                [[ "$(jq -r '.merged_at // ""' <<< "${pull}")" == '' ]]
-              then
-                restore='false'
-                echo 'Activation PR is exact, closed, and unmerged; OBSERVE rollback is not required for this attempt.'
-              fi
-            fi
-          else
-            echo 'Activation PR state is unavailable; retaining fail-closed OBSERVE rollback.' >&2
-          fi
-          echo "restore=${restore}" >> "$GITHUB_OUTPUT"
-
-      - name: Reopen and mark precommitted rollback ready
-        if: steps.activation_state.outputs.restore == 'true'
-        env:
-          EXPECTED_ROLLBACK_SHA: ${{ needs.activate-and-observe.outputs.rollback_commit_sha || needs.verify-and-prepare.outputs.rollback_commit_sha }}
-          GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN }}
-          PR_NUMBER: ${{ needs.verify-and-prepare.outputs.rollback_pr }}
-        run: |
-          set -euo pipefail
-          pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          if [[ "$(jq -r '.state' <<< "${pull}")" == closed && "$(jq -r '.merged_at // ""' <<< "${pull}")" == '' ]]; then
-            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" -f state=open >/dev/null
-            pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          fi
-          if
-            [[ "$(jq -r '.state' <<< "${pull}")" != open ]] ||
-            [[ "$(jq -r '.head.sha' <<< "${pull}")" != "${EXPECTED_ROLLBACK_SHA}" ]] ||
-            [[ "$(jq -r '.base.ref' <<< "${pull}")" != main ]] ||
-            [[ "$(jq -r '.merged_at // ""' <<< "${pull}")" != '' ]]
-          then
-            echo 'BAYN_PAPER_ACTIVATION_HOLD rollback-pr-closed: mandatory OBSERVE rollback PR is not open and exact' >&2
-            exit 1
-          fi
-          gh pr ready "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" || true
-
-      - name: Merge only clean exact-head protected rollback
-        if: steps.activation_state.outputs.restore == 'true'
-        env:
-          EXPECTED_ROLLBACK_SHA: ${{ needs.activate-and-observe.outputs.rollback_commit_sha || needs.verify-and-prepare.outputs.rollback_commit_sha }}
-          GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN }}
-          PR_NUMBER: ${{ needs.verify-and-prepare.outputs.rollback_pr }}
-        run: |
-          set -euo pipefail
-          expected_sha="${EXPECTED_ROLLBACK_SHA}"
-          [[ "${expected_sha}" =~ ^[0-9a-f]{40}$ ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD invalid-rollback-commit: workflow-produced rollback SHA is malformed' >&2
-            exit 1
-          }
-          initial_pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          [[ "$(jq -r '.head.sha' <<< "${initial_pull}")" == "${expected_sha}" ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD rollback-head-changed: rollback PR differs from the workflow-produced commit' >&2
-            exit 1
-          }
-          [[ "$(jq -r '.base.ref' <<< "${initial_pull}")" == main ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD rollback-base-changed: mandatory rollback PR no longer targets main' >&2
-            exit 1
-          }
-          [[ "$(jq -r '.state' <<< "${initial_pull}")" == open ]] || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD rollback-pr-closed: mandatory rollback PR is not open' >&2
-            exit 1
-          }
-          count_unresolved_threads() {
-            local pr_number="$1" cursor='' page page_unresolved has_next end_cursor unresolved=0
-            local query='query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$after){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}'
-            for page_number in $(seq 1 100); do
-              local -a request=(
-                graphql
-                -f "query=${query}"
-                -F "owner=${GITHUB_REPOSITORY%%/*}"
-                -F "name=${GITHUB_REPOSITORY##*/}"
-                -F "number=${pr_number}"
-              )
-              [[ -z "${cursor}" ]] || request+=(-f "after=${cursor}")
-              page="$(gh api "${request[@]}")"
-              jq -e '
-                ((.errors // []) | length) == 0 and
-                (.data.repository.pullRequest.reviewThreads.nodes | type) == "array" and
-                (.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type) == "boolean"
-              ' <<< "${page}" >/dev/null || {
-                echo 'BAYN_PAPER_ACTIVATION_HOLD review-thread-pagination-invalid: GitHub returned incomplete review-thread evidence' >&2
-                return 1
-              }
-              page_unresolved="$(
-                jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length' \
-                  <<< "${page}"
-              )"
-              unresolved="$((unresolved + page_unresolved))"
-              has_next="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<< "${page}")"
-              if [[ "${has_next}" == false ]]; then
-                printf '%s\n' "${unresolved}"
-                return 0
-              fi
-              end_cursor="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // ""' <<< "${page}")"
-              [[ -n "${end_cursor}" ]] || {
-                echo 'BAYN_PAPER_ACTIVATION_HOLD review-thread-pagination-invalid: next review-thread page has no cursor' >&2
-                return 1
-              }
-              cursor="${end_cursor}"
-            done
-            echo 'BAYN_PAPER_ACTIVATION_HOLD review-thread-pagination-limit: review-thread evidence exceeds the bounded 100-page limit' >&2
-            return 1
-          }
-          load_check_runs() {
-            local commit_sha="$1" pages
-            pages="$(
-              gh api --paginate --slurp \
-                "repos/${GITHUB_REPOSITORY}/commits/${commit_sha}/check-runs?filter=latest&per_page=100"
-            )"
-            jq -e '
-              type == "array" and length > 0 and
-              all(.[];
-                (.total_count | type) == "number" and
-                (.check_runs | type) == "array" and
-                (.check_runs | length) <= 100 and
-                all(.check_runs[]; (.id | type) == "number")
-              ) and
-              ([.[].total_count] | unique | length) == 1 and
-              ([.[] | .check_runs[]] | length) == .[0].total_count and
-              ([.[] | .check_runs[].id] | length) == ([.[] | .check_runs[].id] | unique | length)
-            ' <<< "${pages}" >/dev/null || {
-              echo 'BAYN_PAPER_ACTIVATION_HOLD check-run-pagination-invalid: GitHub returned incomplete or duplicate check-run evidence' >&2
-              return 1
-            }
-            jq -c '{check_runs: [.[] | .check_runs[]]}' <<< "${pages}"
-          }
-          for attempt in $(seq 1 100); do
-            pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-            [[ "$(jq -r '.head.sha' <<< "${pull}")" == "${expected_sha}" ]]
-            [[ "$(jq -r '.base.ref' <<< "${pull}")" == main ]] || {
-              echo 'BAYN_PAPER_ACTIVATION_HOLD rollback-base-changed: mandatory rollback PR no longer targets main' >&2
-              exit 1
-            }
-            [[ "$(jq -r '.state' <<< "${pull}")" == open ]] || {
-              echo 'BAYN_PAPER_ACTIVATION_HOLD rollback-pr-closed: mandatory rollback PR closed during protected-check wait' >&2
-              exit 1
-            }
-            unresolved="$(count_unresolved_threads "${PR_NUMBER}")"
-            checks="$(load_check_runs "${expected_sha}")"
-            pending="$(jq '[.check_runs[] | select(.status != "completed")] | length' <<< "${checks}")"
-            failed="$(jq '[.check_runs[] | select(.status == "completed" and (.conclusion | IN("success", "neutral", "skipped") | not))] | length' <<< "${checks}")"
-            if
-              [[ "${unresolved}" == 0 ]] &&
-              [[ "${pending}" == 0 ]] &&
-              [[ "${failed}" == 0 ]] &&
-              [[ "$(jq '.check_runs | length' <<< "${checks}")" -gt 0 ]] &&
-              [[ "$(jq -r '.mergeable_state' <<< "${pull}")" =~ ^(clean|unstable)$ ]]
-            then
-              final_pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-              if
-                [[ "$(jq -r '.head.sha' <<< "${final_pull}")" != "${expected_sha}" ]] ||
-                [[ "$(jq -r '.base.ref' <<< "${final_pull}")" != main ]] ||
-                [[ "$(jq -r '.state' <<< "${final_pull}")" != open ]]
-              then
-                echo 'BAYN_PAPER_ACTIVATION_HOLD rollback-base-changed: rollback head or base changed immediately before merge' >&2
-                exit 1
-              fi
-              result="$(
-                gh api --method PUT "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/merge" \
-                  -f merge_method=squash \
-                  -f sha="${expected_sha}"
-              )"
-              [[ "$(jq -r '.merged' <<< "${result}")" == true ]]
-              exit 0
-            fi
-            sleep 15
-          done
-          echo 'BAYN_PAPER_ACTIVATION_HOLD rollback-review-timeout: mandatory OBSERVE rollback did not settle' >&2
-          exit 1
-
-      - name: Verify live OBSERVE restoration
-        if: steps.activation_state.outputs.restore == 'true'
-        run: |
-          set -euo pipefail
-          for attempt in $(seq 1 60); do
-            if
-              curl -fsS --connect-timeout 5 --max-time 15 \
-                http://bayn.bayn.svc.cluster.local/v1/status > "${RUNNER_TEMP}/bayn-observe-restored.json" &&
-              jq -e '
-                .authority.brokerAccess == "read-only" and
-                .authority.capitalAuthority == "none" and
-                .authority.durable.maximum == "observe" and
-                .authority.durable.effective == "observe"
-              ' "${RUNNER_TEMP}/bayn-observe-restored.json" >/dev/null
-            then
-              exit 0
-            fi
-            sleep 10
-          done
-          exit 1
-
-      - name: Persist OBSERVE restoration proof
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: bayn-observe-restoration-${{ needs.verify-and-prepare.outputs.activation_id }}-${{ github.run_id }}
-          if-no-files-found: warn
-          retention-days: 90
-          path: ${{ runner.temp }}/bayn-observe-restored.json
-
-  rollback-watchdog:
-    name: Recover abandoned PAPER activation
-    if: >-
-      github.event_name == 'schedule'
-    runs-on: arc-arm64
-    timeout-minutes: 30
-    steps:
-      - name: Checkout current main rollback controller
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - name: Restore OBSERVE for expired or abandoned activation
-        env:
-          GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN }}
-        run: |
-          set -euo pipefail
-          [[ -n "${GH_TOKEN}" ]] || {
-            echo 'AGENTS_SPLIT_TOKEN is required for the PAPER rollback watchdog.' >&2
-            exit 1
-          }
-          repository_owner="${GITHUB_REPOSITORY%%/*}"
-          gh auth setup-git
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git fetch origin "main:refs/remotes/origin/main"
-          watchdog_main_sha="$(git rev-parse origin/main)"
-          git show "${watchdog_main_sha}:argocd/applications/bayn/deployment.yaml" > deployment.watchdog-current.yaml
-          bun packages/scripts/src/bayn/verify-paper-activation.ts \
-            --mode inspect-deployment-authority \
-            --deployment deployment.watchdog-current.yaml \
-            --output deployment-watchdog-authority.json
-          watchdog_maximum="$(jq -r '.maximumAuthority' deployment-watchdog-authority.json)"
-          watchdog_paper_generation="$(jq -r '.authorityGenerationHash' deployment-watchdog-authority.json)"
-          if [[ "${watchdog_maximum}" == OBSERVE ]]; then
-            echo 'GitOps already declares OBSERVE; no rollback discovery is required.'
-            exit 0
-          fi
-          [[ "${watchdog_maximum}" == PAPER ]] || {
-            echo "Current GitOps authority ${watchdog_maximum} is neither PAPER nor OBSERVE." >&2
-            exit 1
-          }
-          count_unresolved_threads() {
-            local pr_number="$1" cursor='' page page_unresolved has_next end_cursor unresolved=0
-            local query='query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$after){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}'
-            for page_number in $(seq 1 100); do
-              local -a request=(
-                graphql
-                -f "query=${query}"
-                -F "owner=${GITHUB_REPOSITORY%%/*}"
-                -F "name=${GITHUB_REPOSITORY##*/}"
-                -F "number=${pr_number}"
-              )
-              [[ -z "${cursor}" ]] || request+=(-f "after=${cursor}")
-              page="$(gh api "${request[@]}")"
-              jq -e '
-                ((.errors // []) | length) == 0 and
-                (.data.repository.pullRequest.reviewThreads.nodes | type) == "array" and
-                (.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type) == "boolean"
-              ' <<< "${page}" >/dev/null || {
-                echo 'BAYN_PAPER_ACTIVATION_HOLD review-thread-pagination-invalid: GitHub returned incomplete review-thread evidence' >&2
-                return 1
-              }
-              page_unresolved="$(
-                jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length' \
-                  <<< "${page}"
-              )"
-              unresolved="$((unresolved + page_unresolved))"
-              has_next="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<< "${page}")"
-              if [[ "${has_next}" == false ]]; then
-                printf '%s\n' "${unresolved}"
-                return 0
-              fi
-              end_cursor="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // ""' <<< "${page}")"
-              [[ -n "${end_cursor}" ]] || {
-                echo 'BAYN_PAPER_ACTIVATION_HOLD review-thread-pagination-invalid: next review-thread page has no cursor' >&2
-                return 1
-              }
-              cursor="${end_cursor}"
-            done
-            echo 'BAYN_PAPER_ACTIVATION_HOLD review-thread-pagination-limit: review-thread evidence exceeds the bounded 100-page limit' >&2
-            return 1
-          }
-          load_check_runs() {
-            local commit_sha="$1" pages
-            pages="$(
-              gh api --paginate --slurp \
-                "repos/${GITHUB_REPOSITORY}/commits/${commit_sha}/check-runs?filter=latest&per_page=100"
-            )"
-            jq -e '
-              type == "array" and length > 0 and
-              all(.[];
-                (.total_count | type) == "number" and
-                (.check_runs | type) == "array" and
-                (.check_runs | length) <= 100 and
-                all(.check_runs[]; (.id | type) == "number")
-              ) and
-              ([.[].total_count] | unique | length) == 1 and
-              ([.[] | .check_runs[]] | length) == .[0].total_count and
-              ([.[] | .check_runs[].id] | length) == ([.[] | .check_runs[].id] | unique | length)
-            ' <<< "${pages}" >/dev/null || {
-              echo 'BAYN_PAPER_ACTIVATION_HOLD check-run-pagination-invalid: GitHub returned incomplete or duplicate check-run evidence' >&2
-              return 1
-            }
-            jq -c '{check_runs: [.[] | .check_runs[]]}' <<< "${pages}"
-          }
-          retention_cutoff="$(date -u -d '91 days ago' +%Y-%m-%dT%H:%M:%SZ)"
-          artifact_pages="$(
-            gh api --paginate --slurp \
-              "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100"
-          )"
-          jq -e '
-            type == "array" and length > 0 and
-            all(.[];
-              (.total_count | type) == "number" and
-              (.artifacts | type) == "array" and
-              (.artifacts | length) <= 100 and
-              all(.artifacts[];
-                (.id | type) == "number" and
-                (.name | type) == "string" and
-                (.expired | type) == "boolean" and
-                (.created_at | type) == "string" and
-                (.workflow_run | type) == "object" and
-                (.workflow_run.id | type) == "number" and
-                .workflow_run.id > 0
-              )
-            ) and
-            ([.[].total_count] | unique | length) == 1 and
-            ([.[] | .artifacts[]] | length) == .[0].total_count and
-            ([.[] | .artifacts[].id] | length) == ([.[] | .artifacts[].id] | unique | length)
-          ' <<< "${artifact_pages}" >/dev/null || {
-            echo 'BAYN_PAPER_ACTIVATION_HOLD watchdog-artifact-list-invalid: repository artifact discovery is incomplete or duplicated' >&2
-            exit 1
-          }
-          mapfile -t attestation_artifacts < <(
-            jq -c --arg cutoff "${retention_cutoff}" '
-              .[] | .artifacts[] |
-              select(.expired == false and .created_at >= $cutoff) |
-              (.name | capture("^bayn-paper-rollback-attestation-(?<activationId>.+)-(?<runId>[1-9][0-9]*)-(?<attempt>[1-9][0-9]*)$")) as $identity |
-              select((.workflow_run.id | tostring) == $identity.runId)
-            ' <<< "${artifact_pages}"
-          )
-          for artifact in "${attestation_artifacts[@]}"; do
-            artifact_id="$(jq -r '.id' <<< "${artifact}")"
-            artifact_name="$(jq -r '.name' <<< "${artifact}")"
-            artifact_workflow_run_id="$(jq -r '.workflow_run.id' <<< "${artifact}")"
-            attestation_zip="$(mktemp)"
-            attestation_file="$(mktemp)"
-            if
-              ! gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > "${attestation_zip}" ||
-              ! python3 -c 'import pathlib,sys,zipfile; bundle=zipfile.ZipFile(sys.argv[1]); names=bundle.namelist(); names == ["bayn-paper-rollback-attestation.json"] or (_ for _ in ()).throw(SystemExit("activation attestation archive shape is invalid")); pathlib.Path(sys.argv[2]).write_bytes(bundle.read(names[0]))' "${attestation_zip}" "${attestation_file}"
-            then
-              rm -f "${attestation_zip}" "${attestation_file}"
-              echo "Skipping attestation artifact ${artifact_id}: archive is invalid."
-              continue
-            fi
-            attestation="$(cat "${attestation_file}")"
-            rm -f "${attestation_zip}" "${attestation_file}"
-            if ! jq -e \
-              --arg artifactWorkflowRunId "${artifact_workflow_run_id}" \
-              --arg repository "${GITHUB_REPOSITORY}" \
-              --arg workflowPath '.github/workflows/bayn-paper-activation.yml' '
-                type == "object" and
-                keys == [
-                  "activationBranch",
-                  "activationCommitSha",
-                  "activationId",
-                  "authorityExpiresAt",
-                  "authorityGenerationHash",
-                  "observeAuthorityGenerationHash",
-                  "repository",
-                  "rollbackBranch",
-                  "rollbackCommitSha",
-                  "rollbackMetadataB64",
-                  "schemaVersion",
-                  "sourceMainSha",
-                  "workflowHeadSha",
-                  "workflowPath",
-                  "workflowRunAttempt",
-                  "workflowRunId"
-                ] and
-                .schemaVersion == 1 and
-                .repository == $repository and
-                .workflowPath == $workflowPath and
-                (.workflowRunId | type == "number" and floor == . and . > 0 and (tostring == $artifactWorkflowRunId)) and
-                (.workflowRunAttempt | type == "number" and floor == . and . > 0) and
-                (.activationId | type == "string" and test("^[a-z0-9][a-z0-9._-]{0,127}$")) and
-                (.activationBranch | type == "string" and startswith("codex/bayn-paper-activation/")) and
-                (.activationCommitSha | type == "string" and test("^[0-9a-f]{40}$")) and
-                (.rollbackBranch | type == "string" and startswith("codex/bayn-paper-rollback/")) and
-                (.rollbackCommitSha | type == "string" and test("^[0-9a-f]{40}$")) and
-                (.rollbackMetadataB64 | type == "string" and length > 0) and
-                (.sourceMainSha | type == "string" and test("^[0-9a-f]{40}$")) and
-                (.workflowHeadSha | type == "string" and test("^[0-9a-f]{40}$")) and
-                (.authorityGenerationHash | type == "string" and test("^[0-9a-f]{64}$")) and
-                (.observeAuthorityGenerationHash | type == "string" and test("^[0-9a-f]{64}$")) and
-                (.authorityExpiresAt | type == "string" and length > 0)
-              ' <<< "${attestation}" >/dev/null
-            then
-              echo "Skipping attestation artifact ${artifact_id}: attestation is malformed."
-              continue
-            fi
-            workflow_run_id="$(jq -r '.workflowRunId' <<< "${attestation}")"
-            workflow_run_attempt="$(jq -r '.workflowRunAttempt' <<< "${attestation}")"
-            activation_id="$(jq -r '.activationId' <<< "${attestation}")"
-            activation_branch="$(jq -r '.activationBranch' <<< "${attestation}")"
-            rollback_branch="$(jq -r '.rollbackBranch' <<< "${attestation}")"
-            metadata_b64="$(jq -r '.rollbackMetadataB64' <<< "${attestation}")"
-            expected_artifact_name="bayn-paper-rollback-attestation-${activation_id}-${workflow_run_id}-${workflow_run_attempt}"
-            [[ "${artifact_name}" == "${expected_artifact_name}" ]] || {
-              echo "Skipping activation run ${workflow_run_id}: activation attestation name is not exact."
-              continue
-            }
-            [[ "$(jq -r '.authorityGenerationHash' <<< "${attestation}")" == "${watchdog_paper_generation}" ]] || {
-              echo "Skipping stale attestation ${artifact_name}: current PAPER generation belongs to another activation."
-              continue
-            }
-            workflow_attempt="$(
-              gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${workflow_run_id}/attempts/${workflow_run_attempt}"
-            )" || {
-              echo "Skipping activation run ${workflow_run_id} attempt ${workflow_run_attempt}: workflow attempt is unavailable."
-              continue
-            }
-            if ! jq -e \
-              --arg repository "${GITHUB_REPOSITORY}" \
-              --arg workflowPath '.github/workflows/bayn-paper-activation.yml' \
-              --arg workflowRunAttempt "${workflow_run_attempt}" \
-              --arg workflowRunId "${workflow_run_id}" '
-                (.id | tostring) == $workflowRunId and
-                (.run_attempt | tostring) == $workflowRunAttempt and
-                .event == "workflow_run" and
-                .path == $workflowPath and
-                (.head_sha | type == "string" and test("^[0-9a-f]{40}$")) and
-                .repository.full_name == $repository and
-                (.status | IN("queued", "in_progress", "completed"))
-              ' <<< "${workflow_attempt}" >/dev/null
-            then
-              echo "Skipping activation run ${workflow_run_id} attempt ${workflow_run_attempt}: workflow attempt identity is invalid."
-              continue
-            fi
-            workflow_status="$(jq -r '.status' <<< "${workflow_attempt}")"
-            workflow_head_sha="$(jq -r '.head_sha' <<< "${workflow_attempt}")"
-            [[ "$(jq -r '.workflowHeadSha' <<< "${attestation}")" == "${workflow_head_sha}" ]] || {
-              echo "Skipping activation run ${workflow_run_id} attempt ${workflow_run_attempt}: workflow head differs from the attestation."
-              continue
-            }
-            source_main_sha="$(jq -r '.sourceMainSha' <<< "${attestation}")"
-            if
-              ! metadata="$(printf '%s' "${metadata_b64}" | base64 -d 2>/dev/null)" ||
-              ! jq -e \
-                --arg activationBranch "${activation_branch}" \
-                --arg activationId "${activation_id}" \
-                --arg authorityExpiresAt "$(jq -r '.authorityExpiresAt' <<< "${attestation}")" \
-                --arg authorityGenerationHash "$(jq -r '.authorityGenerationHash' <<< "${attestation}")" \
-                --arg observeAuthorityGenerationHash "$(jq -r '.observeAuthorityGenerationHash' <<< "${attestation}")" \
-                --arg rollbackBranch "${rollback_branch}" \
-                --arg sourceMainSha "${source_main_sha}" \
-                --arg workflowRunAttempt "${workflow_run_attempt}" \
-                --arg workflowRunId "${workflow_run_id}" '
-                  type == "object" and
-                  keys == [
-                    "activationBranch",
-                    "activationId",
-                    "authorityExpiresAt",
-                    "authorityGenerationHash",
-                    "baselineCycleId",
-                    "observeAuthorityGenerationHash",
-                    "previousObserveGenerationHash",
-                    "rollbackBranch",
-                    "schemaVersion",
-                    "sourceMainSha",
-                    "workflowRunAttempt",
-                    "workflowRunId"
-                  ] and
-                  .schemaVersion == 1 and
-                  .activationId == $activationId and
-                  .activationBranch == $activationBranch and
-                  .rollbackBranch == $rollbackBranch and
-                  .sourceMainSha == $sourceMainSha and
-                  .authorityGenerationHash == $authorityGenerationHash and
-                  (.previousObserveGenerationHash | type == "string" and test("^[0-9a-f]{64}$")) and
-                  .observeAuthorityGenerationHash == $observeAuthorityGenerationHash and
-                  .authorityExpiresAt == $authorityExpiresAt and
-                  (.baselineCycleId | type == "string") and
-                  (.workflowRunAttempt | tostring) == $workflowRunAttempt and
-                  (.workflowRunId | tostring) == $workflowRunId
-                ' <<< "${metadata}" >/dev/null
-            then
-              echo "Skipping activation run ${workflow_run_id}: rollback metadata is malformed or does not match the attestation."
-              continue
-            fi
-            activation_commit_sha="$(jq -r '.activationCommitSha' <<< "${attestation}")"
-            initial_rollback_sha="$(jq -r '.rollbackCommitSha' <<< "${attestation}")"
-            activation_commit_record="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${activation_commit_sha}")"
-            initial_rollback_record="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${initial_rollback_sha}")"
-            jq -e \
-              --arg activationCommitSha "${activation_commit_sha}" \
-              --arg sourceMainSha "${source_main_sha}" '
-                .sha == $activationCommitSha and
-                (.parents | length) == 1 and
-                .parents[0].sha == $sourceMainSha and
-                (.files | length) == 1 and
-                .files[0].filename == "argocd/applications/bayn/deployment.yaml" and
-                .files[0].status == "modified"
-              ' <<< "${activation_commit_record}" >/dev/null || {
-              echo "Skipping activation run ${workflow_run_id}: workflow-produced activation commit is invalid."
-              continue
-            }
-            jq -e \
-              --arg metadataLine "BAYN_PAPER_ROLLBACK_METADATA=${metadata_b64}" \
-              --arg rollbackCommitSha "${initial_rollback_sha}" \
-              --arg sourceMainSha "${source_main_sha}" '
-                .sha == $rollbackCommitSha and
-                (.parents | length) == 1 and
-                .parents[0].sha == $sourceMainSha and
-                (.files | length) == 1 and
-                .files[0].filename == "argocd/applications/bayn/deployment.yaml" and
-                .files[0].status == "modified" and
-                ([.commit.message | split("\n")[] | select(startswith("BAYN_PAPER_ROLLBACK_METADATA="))] == [$metadataLine])
-              ' <<< "${initial_rollback_record}" >/dev/null || {
-              echo "Skipping activation run ${workflow_run_id}: workflow-produced rollback commit is invalid."
-              continue
-            }
-            activation_prs="$(
-              gh api "repos/${GITHUB_REPOSITORY}/pulls?state=all&head=${repository_owner}:${activation_branch}&per_page=100"
-            )"
-            activation_candidates="$(
-              jq --arg branch "${activation_branch}" --arg head "${activation_commit_sha}" '
-                [.[] | select(
-                  .merged_at != null and
-                  (.base.ref | type) == "string" and
-                  (.base.ref | length) > 0 and
-                  .head.ref == $branch and
-                  .head.sha == $head
-                )]
-              ' <<< "${activation_prs}"
-            )"
-            [[ "$(jq 'length' <<< "${activation_candidates}")" == 1 ]] || continue
-            if ! deadline_epoch="$(date -u -d "$(jq -r '.authorityExpiresAt' <<< "${metadata}")" +%s 2>/dev/null)"; then
-              echo "Skipping activation run ${workflow_run_id}: authority deadline is malformed."
-              continue
-            fi
-            now_epoch="$(date -u +%s)"
-            if [[ "${workflow_status}" =~ ^(queued|in_progress)$ && "${now_epoch}" -lt "${deadline_epoch}" ]]; then
-              continue
-            fi
-
-            observe_generation="$(jq -r '.observeAuthorityGenerationHash' <<< "${metadata}")"
-            gh auth setup-git
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git fetch origin "main:refs/remotes/origin/main"
-            current_main_sha="$(git rev-parse origin/main)"
-            git show "${current_main_sha}:argocd/applications/bayn/deployment.yaml" > deployment.current.yaml
-            bun packages/scripts/src/bayn/verify-paper-activation.ts \
-              --mode inspect-deployment-authority \
-              --deployment deployment.current.yaml \
-              --output deployment-authority.json
-            current_maximum="$(jq -r '.maximumAuthority' deployment-authority.json)"
-            current_generation="$(jq -r '.authorityGenerationHash' deployment-authority.json)"
-            if [[ "${current_maximum}" == OBSERVE ]]; then
-              continue
-            fi
-            [[ "${current_maximum}" == PAPER ]] || {
-              echo "Current GitOps authority ${current_maximum} is neither PAPER nor OBSERVE." >&2
-              exit 1
-            }
-            expected_paper_generation="$(jq -r '.authorityGenerationHash' <<< "${metadata}")"
-            if [[ "${current_generation}" != "${expected_paper_generation}" ]]; then
-              echo "Skipping stale rollback ${rollback_branch}: current PAPER generation belongs to another activation."
-              continue
-            fi
-            bun packages/scripts/src/bayn/verify-paper-activation.ts \
-              --mode render-rollback \
-              --deployment deployment.current.yaml \
-              --observe-authority-generation-hash "${observe_generation}" \
-              --output deployment.observe.yaml
-            desired_blob="$(git hash-object -w deployment.observe.yaml)"
-            index="$(mktemp)"
-            rm -f "${index}"
-            GIT_INDEX_FILE="${index}" git read-tree "${current_main_sha}"
-            GIT_INDEX_FILE="${index}" git update-index --add --cacheinfo \
-              100644,"${desired_blob}",argocd/applications/bayn/deployment.yaml
-            tree="$(GIT_INDEX_FILE="${index}" git write-tree)"
-            commit_date="$(jq -r '.authorityExpiresAt' <<< "${metadata}")"
-            new_rollback_sha="$(
-              printf 'chore(bayn): watchdog restore OBSERVE %s\n\nBAYN_PAPER_ROLLBACK_METADATA=%s\n' \
-                "${activation_id}" "${metadata_b64}" |
-                GIT_AUTHOR_DATE="${commit_date}" GIT_COMMITTER_DATE="${commit_date}" \
-                  git commit-tree "${tree}" -p "${current_main_sha}"
-            )"
-            rm -f "${index}"
-            mapfile -t rollback_remote_refs < <(git ls-remote --heads origin "refs/heads/${rollback_branch}")
-            [[ "${#rollback_remote_refs[@]}" -le 1 ]] || {
-              echo "Rollback branch ${rollback_branch} resolved to multiple remote refs." >&2
-              exit 1
-            }
-            existing_rollback_sha=''
-            if [[ "${#rollback_remote_refs[@]}" == 1 ]]; then
-              existing_rollback_sha="${rollback_remote_refs[0]%%$'\t'*}"
-              [[ "${existing_rollback_sha}" =~ ^[0-9a-f]{40}$ ]] || {
-                echo "Rollback branch ${rollback_branch} has an invalid remote head." >&2
-                exit 1
-              }
-            fi
-            if [[ "${existing_rollback_sha}" != "${new_rollback_sha}" ]]; then
-              git push --force-with-lease="refs/heads/${rollback_branch}:${existing_rollback_sha}" \
-                origin "${new_rollback_sha}:refs/heads/${rollback_branch}"
-            fi
-            rollback_prs="$(
-              gh api "repos/${GITHUB_REPOSITORY}/pulls?state=all&head=${repository_owner}:${rollback_branch}&per_page=100"
-            )"
-            rollback_candidates="$(
-              jq --arg branch "${rollback_branch}" --arg head "${new_rollback_sha}" '
-                [.[] | select(.merged_at == null and .base.ref == "main" and .head.ref == $branch and .head.sha == $head)]
-              ' <<< "${rollback_prs}"
-            )"
-            candidate_count="$(jq 'length' <<< "${rollback_candidates}")"
-            [[ "${candidate_count}" -le 1 ]] || {
-              echo "Rollback branch ${rollback_branch} has multiple exact unmerged main PRs." >&2
-              exit 1
-            }
-            if [[ "${candidate_count}" == 0 ]]; then
-              template_file='.github/PULL_REQUEST_TEMPLATE.md'
-              test -s "${template_file}"
-              for heading in '## Summary' '## Related Issues' '## Testing' '## Breaking Changes' '## Checklist'; do
-                grep -Fxq "${heading}" "${template_file}"
-              done
-              {
-                printf '%s\n' '## Summary' ''
-                printf -- '- Restore Bayn to explicit OBSERVE / read-only / no-capital authority after activation `%s`.\n' "${activation_id}"
-                printf '%s\n' \
-                  '- Recreate the exact main-targeted rollback after the prior pull-request path became unusable.' \
-                  '- Preserve the workflow-attested authority and rollback generation binding.' \
-                  '' \
-                  '## Related Issues' \
-                  '' \
-                  'PROOMPT-405' \
-                  '' \
-                  '## Testing' \
-                  '' \
-                  '- The watchdog authenticated the exact activation workflow run, attestation artifact, activation commit, rollback commit, and current PAPER generation.' \
-                  '- Protected checks and every review-thread page are revalidated on the unchanged exact head before merge.' \
-                  '' \
-                  '## Breaking Changes' \
-                  '' \
-                  'None' \
-                  '' \
-                  '## Checklist' \
-                  '' \
-                  '- [x] Testing section documents the exact validation performed (or `N/A` with justification).' \
-                  '- [x] Screenshots and Breaking Changes sections are handled appropriately (removed or filled in).' \
-                  '- [x] Documentation, release notes, and follow-ups are updated or tracked.'
-              } > rollback-watchdog-pr-body.md
-              rollback_url="$(
-                gh pr create \
-                  --repo "${GITHUB_REPOSITORY}" \
-                  --base main \
-                  --head "${rollback_branch}" \
-                  --title "chore(bayn): watchdog restore OBSERVE ${activation_id}" \
-                  --body-file rollback-watchdog-pr-body.md
-              )"
-              rollback_pr="${rollback_url##*/}"
-            else
-              rollback_pr="$(jq -r '.[0].number' <<< "${rollback_candidates}")"
-            fi
-            rollback_pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${rollback_pr}")"
-            if [[ "$(jq -r '.state' <<< "${rollback_pull}")" == closed && "$(jq -r '.merged_at // ""' <<< "${rollback_pull}")" == '' ]]; then
-              gh api --method PATCH "repos/${GITHUB_REPOSITORY}/pulls/${rollback_pr}" -f state=open >/dev/null
-              rollback_pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${rollback_pr}")"
-            fi
-            if
-              [[ "$(jq -r '.state' <<< "${rollback_pull}")" != open ]] ||
-              [[ "$(jq -r '.head.sha' <<< "${rollback_pull}")" != "${new_rollback_sha}" ]] ||
-              [[ "$(jq -r '.head.ref' <<< "${rollback_pull}")" != "${rollback_branch}" ]] ||
-              [[ "$(jq -r '.base.ref' <<< "${rollback_pull}")" != main ]] ||
-              [[ "$(jq -r '.merged_at // ""' <<< "${rollback_pull}")" != '' ]]
-            then
-              echo "Rollback PR #${rollback_pr} is not the exact open main-targeted rollback." >&2
-              exit 1
-            fi
-            gh pr ready "${rollback_pr}" --repo "${GITHUB_REPOSITORY}" || true
-            rollback_merged='false'
-            for check_attempt in $(seq 1 40); do
-              pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${rollback_pr}")"
-              [[ "$(jq -r '.head.sha' <<< "${pull}")" == "${new_rollback_sha}" ]] || {
-                echo "Rollback PR #${rollback_pr} head changed during protected-check wait." >&2
-                exit 1
-              }
-              [[ "$(jq -r '.base.ref' <<< "${pull}")" == main ]] || {
-                echo "Rollback PR #${rollback_pr} no longer targets main." >&2
-                exit 1
-              }
-              [[ "$(jq -r '.state' <<< "${pull}")" == open ]] || {
-                echo "Rollback PR #${rollback_pr} closed during protected-check wait." >&2
-                exit 1
-              }
-              unresolved="$(count_unresolved_threads "${rollback_pr}")"
-              checks="$(load_check_runs "${new_rollback_sha}")"
-              pending="$(jq '[.check_runs[] | select(.status != "completed")] | length' <<< "${checks}")"
-              failed="$(jq '[.check_runs[] | select(.status == "completed" and (.conclusion | IN("success", "neutral", "skipped") | not))] | length' <<< "${checks}")"
-              if
-                [[ "${unresolved}" == 0 ]] &&
-                [[ "${pending}" == 0 ]] &&
-                [[ "${failed}" == 0 ]] &&
-                [[ "$(jq '.check_runs | length' <<< "${checks}")" -gt 0 ]] &&
-                [[ "$(jq -r '.mergeable_state' <<< "${pull}")" =~ ^(clean|unstable)$ ]]
-              then
-                final_pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${rollback_pr}")"
-                if
-                  [[ "$(jq -r '.head.sha' <<< "${final_pull}")" != "${new_rollback_sha}" ]] ||
-                  [[ "$(jq -r '.base.ref' <<< "${final_pull}")" != main ]] ||
-                  [[ "$(jq -r '.state' <<< "${final_pull}")" != open ]]
-                then
-                  echo "Rollback PR #${rollback_pr} head or base changed immediately before merge." >&2
-                  exit 1
-                fi
-                result="$(
-                  gh api --method PUT "repos/${GITHUB_REPOSITORY}/pulls/${rollback_pr}/merge" \
-                    -f merge_method=squash \
-                    -f sha="${new_rollback_sha}"
-                )"
-                [[ "$(jq -r '.merged' <<< "${result}")" == true ]]
-                rollback_merged='true'
-                break
-              fi
-              sleep 15
-            done
-            [[ "${rollback_merged}" == true ]] || {
-              echo "Rollback PR #${rollback_pr} did not reach a clean exact-head reviewed state." >&2
-              exit 1
-            }
-          done
+          } >>"${GITHUB_OUTPUT}"

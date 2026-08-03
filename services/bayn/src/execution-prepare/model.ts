@@ -1,16 +1,18 @@
 import { Result, Schema } from 'effect'
 
 import { BrokerEnvironment, BrokerProvider } from '../broker/identity'
+import type { ReadPreflight } from '../broker/alpaca'
 import { RuntimeProvenanceSchema } from '../contracts'
 import { DiscoveryReceiptSchema } from '../execution-candidate-discovery/model'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
-import { Authority } from '../execution/contracts'
+import { Authority, type CapitalGrantGeneration } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
 import {
   GitSourceRevisionSchema,
   ImageDigestSchema,
   ImageRepositorySchema,
   NonNegativeIntegerSchema,
+  PositiveIntegerSchema,
   Sha256Schema,
   StrictNonEmptyStringSchema,
   strictParseOptions,
@@ -36,12 +38,11 @@ const StrategySchema = RuntimeProvenanceSchema.fields.strategy.pipe(
 
 export const ExecutionPrepareProofPlanSchema = Schema.Struct({
   schemaVersion: Schema.Literal(executionPrepareProofPlanSchemaVersion),
-  candidate: Schema.Struct({
+  candidateSet: Schema.Struct({
     discoveryReceiptHash: Sha256Schema,
     immutableBindingHash: Sha256Schema,
     candidateFactsHash: Sha256Schema,
-    candidateOrdinal: NonNegativeIntegerSchema,
-    observedPlanIntentId: Sha256Schema,
+    candidateCount: PositiveIntegerSchema,
     cycleId: Sha256Schema,
     decisionHash: Sha256Schema,
   }),
@@ -71,14 +72,35 @@ export type ExecutionPrepareProofPlan = typeof ExecutionPrepareProofPlanSchema.T
 
 export const ExecutionPrepareRequestSchema = Schema.Struct({
   schemaVersion: Schema.Literal(executionPrepareRequestSchemaVersion),
+  qualification: Schema.Struct({
+    runId: Sha256Schema,
+    lockId: Sha256Schema,
+    resultHash: Sha256Schema,
+    verdict: Schema.Literal('QUALIFIED'),
+    sourceRevision: GitSourceRevisionSchema,
+    imageRepository: ImageRepositorySchema,
+    imageDigest: ImageDigestSchema,
+    candidateOrdinal: NonNegativeIntegerSchema,
+  }),
   discoveryReceipt: DiscoveryReceiptSchema,
-  proofPlan: ExecutionPrepareProofPlanSchema,
-  proofPlanHash: Sha256Schema,
 })
 export type ExecutionPrepareRequest = typeof ExecutionPrepareRequestSchema.Type
 
 export const decodeExecutionPrepareRequestResult = Schema.decodeUnknownResult(
   ExecutionPrepareRequestSchema,
+  strictParseOptions,
+)
+
+export const ExecutionPrepareProofPlanRequestSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(executionPrepareRequestSchemaVersion),
+  discoveryReceipt: DiscoveryReceiptSchema,
+  proofPlan: ExecutionPrepareProofPlanSchema,
+  proofPlanHash: Sha256Schema,
+})
+export type ExecutionPrepareProofPlanRequest = typeof ExecutionPrepareProofPlanRequestSchema.Type
+
+export const decodeExecutionPrepareProofPlanRequestResult = Schema.decodeUnknownResult(
+  ExecutionPrepareProofPlanRequestSchema,
   strictParseOptions,
 )
 
@@ -115,7 +137,7 @@ const ExecutionPrepareReceiptMaterialSchema = Schema.Struct({
     environment: Schema.Literal(BrokerEnvironment.Sandbox),
     access: Schema.Literal(BrokerAccess.ReadOnly),
   }),
-  candidate: ExecutionPrepareProofPlanSchema.fields.candidate,
+  candidateSet: ExecutionPrepareProofPlanSchema.fields.candidateSet,
   qualification: Schema.Struct({
     runId: Sha256Schema,
     lockId: Sha256Schema,
@@ -161,3 +183,9 @@ export const decodeExecutionPrepareReceiptResult = Schema.decodeUnknownResult(
   ExecutionPrepareReceiptSchema,
   strictParseOptions,
 )
+
+export interface ExecutionPrepareOutput {
+  readonly receipt: ExecutionPrepareReceipt
+  readonly generation: CapitalGrantGeneration
+  readonly preflight: ReadPreflight
+}

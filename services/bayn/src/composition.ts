@@ -1,29 +1,49 @@
 import { NodeHttpClient, NodeServices } from '@effect/platform-node'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
-import { Effect, Layer, Match, pipe, Redacted, Result, Schema, Stdio, Stream } from 'effect'
+import { Effect, Layer, Match, Option, pipe, Redacted, Ref, Result, Schema, Stdio, Stream } from 'effect'
 
 import {
+  makeApplicationPlan,
   runApplication,
   type ApplicationDependencies,
   type ApplicationIdentity,
   type ApplicationPlan,
   type ApplicationPlanFor,
+  type AutonomousCycleStartupInput,
+  type AutonomousRuntime,
+  type AutonomousRuntimeResolver,
 } from './app'
 import { AlpacaBrokerResourcesLive } from './broker/alpaca/composition'
-import { BrokerSession, type BrokerReadShape } from './broker/alpaca'
+import { BrokerRead, BrokerSession, type BrokerReadShape } from './broker/alpaca'
 import { AlpacaHttpClient, makeFreshBrokerPriceReader } from './broker/alpaca/http'
 import { BrokerMutationError, makeMutation } from './broker/alpaca-mutations'
+import { BrokerEnvironment } from './broker/identity'
 import type { LoadedRuntimeConfig } from './config'
 import { CycleObservability, CycleObservabilityLive } from './db/cycle-observability'
-import { CycleStoreLive } from './db/cycle-store'
+import { CycleStore, CycleStoreLive } from './db/cycle-store'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from './db/evidence-store'
-import { ExecutionStoreLive } from './db/execution-store'
+import {
+  AuthorityGenerationStore,
+  AuthorityRestrictionStore,
+  BrokerEventStore,
+  ExecutionStoreLive,
+  FillAccountingStore,
+  ReconciliationStore,
+  ValuationStore,
+} from './db/execution-store'
 import { LiveCapitalGrantStore, LiveCapitalGrantStoreLive } from './db/live-capital-grant'
-import { BrokerAccess } from './execution/authority'
+import { BrokerAccess, CapitalAuthorityKind, noCapitalAuthority } from './execution/authority'
+import {
+  CapitalAuthoritySelection,
+  decodePaperActivationRequestResult,
+  resolveExecutionPolicy,
+  type ExecutionPolicy,
+  type PaperActivationRequest,
+} from './execution/configuration'
 import { IntentStore, IntentStoreLive } from './execution/intents'
 import { MutationStore, MutationStoreLive } from './execution/mutations'
 import { makeExecutionProgram, type ExecutionProgram } from './execution/runtime-program'
-import { renderRuntimeAuthorityFailure, resolveRuntimeAuthority } from './execution/runtime-authority'
+import { resolvePreparedSandboxAuthority } from './execution/runtime-authority'
 import { WriterFence, WriterFenceLive } from './execution/writer-fence'
 import { operationalError, OperationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
@@ -43,15 +63,19 @@ import {
 } from './execution-candidate-discovery'
 import {
   authenticateValidatedExecutionPrepare,
+  buildExecutionPrepareProofPlanRequest,
   ExecutionPrepareStoreLive,
-  prepareValidatedExecution,
+  prepareValidatedExecutionWithGeneration,
   renderExecutionPrepareFailure,
   validateExecutionPrepareInput,
   type ExecutionPrepareFailure,
-  type ExecutionPrepareReceipt,
+  type ExecutionPrepareRequest,
+  type ExecutionPrepareOutput,
+  type ExecutionPrepareRuntimeBinding,
   type PrevalidatedExecutionPrepareInput,
 } from './execution-prepare'
 import { currentUtcInstant } from './time'
+import type { RuntimeEvidence, RuntimeState } from './runtime-state'
 
 export const ClickHouseClientResourceLive = (config: LoadedRuntimeConfig) =>
   ClickhouseClient.layer({
@@ -106,6 +130,18 @@ export const BrokerlessApplicationResourcesLive = (plan: ApplicationPlanFor<'Bro
 export const AutonomousApplicationResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
   const postgres = PostgresAuthorityLive(plan.config)
   const journal = JournalResourceLive(plan.config)
+  return Layer.mergeAll(
+    HttpServerLive(plan.config),
+    SignalMarketDataLive(plan),
+    postgres,
+    journal,
+    CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
+  ).pipe(Layer.provideMerge(ApplicationPlatformLive))
+}
+
+export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
+  const postgres = sqlResource(PostgresClientResourceLive(plan.config))
+  const journal = JournalResourceLive(plan.config)
   const writerFence = WriterFenceResourceLive.pipe(Layer.provide(postgres))
   const executionPersistence = Layer.mergeAll(
     ExecutionStoreResourceLive(plan.config),
@@ -114,11 +150,6 @@ export const AutonomousApplicationResourcesLive = (plan: ApplicationPlanFor<'Aut
     LiveCapitalGrantStoreLive,
   ).pipe(Layer.provideMerge(writerFence), Layer.provideMerge(postgres), Layer.provideMerge(journal))
   return Layer.mergeAll(
-    HttpServerLive(plan.config),
-    SignalMarketDataLive(plan),
-    postgres,
-    journal,
-    CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
     BrokerSessionResourceLive(plan.config),
     executionPersistence,
     CycleStoreResourceLive.pipe(Layer.provide(postgres)),
@@ -135,19 +166,23 @@ export const ExecutionCandidateDiscoveryResourcesLive = (plan: ApplicationPlanFo
   ).pipe(Layer.provideMerge(ApplicationPlatformLive))
 }
 
-export const ExecutionPrepareResourcesLive = (plan: ApplicationPlanFor<'ExecutionPrepare'>) => {
+export const ExecutionPrepareValidationResourcesLive = (plan: ApplicationPlanFor<'ExecutionPrepare'>) => {
+  const postgres = sqlResource(PostgresClientResourceLive(plan.config))
+  const evidenceStore = EvidenceStoreResourceLive(plan.config).pipe(Layer.provide(postgres))
+  return Layer.mergeAll(postgres, evidenceStore).pipe(Layer.provideMerge(ApplicationPlatformLive))
+}
+
+export const ExecutionPrepareExecutionResourcesLive = (plan: ApplicationPlanFor<'ExecutionPrepare'>) => {
   const postgres = sqlResource(PostgresClientResourceLive(plan.config))
   const writerFence = WriterFenceResourceLive.pipe(Layer.provide(postgres))
   const executionPrepareStore = ExecutionPrepareStoreLive(plan.config).pipe(Layer.provide(postgres))
-  return Layer.mergeAll(
-    postgres,
-    writerFence,
-    executionPrepareStore,
-    CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
-    CycleStoreResourceLive.pipe(Layer.provide(postgres)),
-    BrokerSessionResourceLive(plan.config),
-  ).pipe(Layer.provideMerge(ApplicationPlatformLive))
+  return Layer.mergeAll(postgres, writerFence, executionPrepareStore, BrokerSessionResourceLive(plan.config)).pipe(
+    Layer.provideMerge(ApplicationPlatformLive),
+  )
 }
+
+// Kept for the existing entrypoint export; validation uses the separate layer above.
+export const ExecutionPrepareResourcesLive = ExecutionPrepareExecutionResourcesLive
 
 const applicationDependencies: Effect.Effect<
   ApplicationDependencies,
@@ -191,16 +226,16 @@ const observeCycle = (plan: ApplicationPlanFor<'AutonomousService'>) =>
 const mutationCycle = (plan: ApplicationPlanFor<'AutonomousService'>, executionProgram: ExecutionProgram) =>
   makeMutationAutonomousCycleStartup({
     accountId: plan.config.alpaca.expectedAccountId,
-    authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
+    authorityGenerationHash:
+      plan.config.execution.capitalAuthority._tag === CapitalAuthorityKind.Sandbox
+        ? plan.config.execution.capitalAuthority.authorityGenerationHash
+        : plan.config.alpaca.authorityGenerationHash,
     pollIntervalMs: plan.config.cyclePollIntervalMs,
     reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
     reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
     strategy: plan.strategy,
     executionProgram,
   })
-
-const authorityError = (cause: Effect.Error<ReturnType<typeof resolveRuntimeAuthority>>) =>
-  operationalError('config', 'execution-authority', renderRuntimeAuthorityFailure(cause), cause)
 
 const executionProgramError = (
   cause: BrokerMutationError | Result.Result.Failure<ReturnType<typeof makeExecutionProgram>>,
@@ -209,52 +244,526 @@ const executionProgramError = (
     ? operationalError('config', 'broker-mutation', cause.message, cause)
     : operationalError('config', 'execution-program', 'execution program requires validated mutation authority', cause)
 
+type ReadOnlyExecutionPolicy = Extract<ExecutionPolicy, { readonly brokerAccess: BrokerAccess.ReadOnly }>
+
+const paperActivationOperationalError = (message: string, cause?: unknown): OperationalError =>
+  new OperationalError({
+    component: 'strategy',
+    operation: 'paper-activation-prepare',
+    message,
+    retryable: false,
+    cause: cause === undefined ? { _tag: 'PaperActivationPreparationRejected' } : cause,
+  })
+
+const decodeConfiguredPaperActivationRequest = (serialized: string): Result.Result<PaperActivationRequest, string> => {
+  let value: unknown
+  try {
+    value = JSON.parse(serialized) as unknown
+  } catch {
+    return Result.fail('configured PAPER activation request is not valid JSON')
+  }
+  const decoded = decodePaperActivationRequestResult(value)
+  return Result.isFailure(decoded)
+    ? Result.fail('configured PAPER activation request failed its canonical schema and hash validation')
+    : Result.succeed(decoded.success)
+}
+
+const readOnlyExecutionPolicy = (plan: ApplicationPlanFor<'AutonomousService'>): ReadOnlyExecutionPolicy => ({
+  brokerIdentity: plan.config.alpaca.identity,
+  brokerAccess: BrokerAccess.ReadOnly,
+  capitalAuthority: noCapitalAuthority,
+})
+
+const paperActivationRequestIsCurrent = (
+  request: PaperActivationRequest,
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  evidence: RuntimeEvidence | null,
+  observedAt: string,
+): Result.Result<void, string> => {
+  if (evidence === null) return Result.fail('pinned qualification evidence was not published by startup')
+  if (request.expiresAt <= observedAt || request.cutoffAt <= observedAt) {
+    return Result.fail('paper activation request is expired or past its immutable cutoff')
+  }
+  if (request.strategy.protocolHash !== plan.strategyProtocolHash) {
+    return Result.fail('paper activation request strategy protocol does not match the current strategy')
+  }
+  const strategy = plan.strategy.provenance.strategy
+  if (
+    request.strategy.name !== strategy.name ||
+    request.strategy.behaviorHash !== strategy.behaviorHash ||
+    request.strategy.parameterHash !== strategy.parameterHash ||
+    request.strategy.parameterSchemaVersion !== strategy.parameterSchemaVersion
+  ) {
+    return Result.fail('paper activation request strategy identity does not match the current strategy')
+  }
+  if (
+    request.activation.sourceRevision !== plan.config.build.sourceRevision ||
+    request.activation.imageRepository !== plan.config.build.imageRepository ||
+    request.activation.imageDigest !== plan.config.build.imageDigest
+  ) {
+    return Result.fail('paper activation request is not bound to the current activation build')
+  }
+  if (
+    evidence.evaluation.runId !== request.qualification.runId ||
+    evidence.qualification.runId !== request.qualification.runId ||
+    evidence.qualification.lockId !== request.qualification.lockId ||
+    evidence.qualification.resultHash !== request.qualification.resultHash
+  ) {
+    return Result.fail('paper activation request does not match the recovered qualification result')
+  }
+  if (evidence.qualification.verdict !== 'QUALIFIED' || evidence.qualification.evaluationVerdict.status !== 'PASS') {
+    return Result.fail('paper activation request requires a qualified economic result')
+  }
+  if (
+    evidence.provenance.sourceRevision !== request.qualification.sourceRevision ||
+    evidence.provenance.image.repository !== request.qualification.imageRepository ||
+    evidence.provenance.image.digest !== request.qualification.imageDigest
+  ) {
+    return Result.fail('paper activation request does not match the durable qualification provenance')
+  }
+  return Result.succeed(undefined)
+}
+
+const internalExecutionPlan = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  mode: 'ExecutionCandidateDiscovery' | 'ExecutionPrepare',
+  request: PaperActivationRequest,
+  execution: ReadOnlyExecutionPolicy,
+  executionPrepareRequest?: ExecutionPrepareRequest,
+) => {
+  const config = {
+    ...plan.config,
+    runtimeMode: mode,
+    qualificationRunId: request.qualification.runId,
+    execution,
+    ...(executionPrepareRequest === undefined ? {} : { executionPrepareRequest }),
+  } as Extract<LoadedRuntimeConfig, { readonly runtimeMode: typeof mode }>
+  return makeApplicationPlan({
+    config,
+    protocol: plan.protocol,
+    parameterHash: plan.parameterHash,
+    strategy: plan.strategy,
+    strategyProtocolHash: plan.strategyProtocolHash,
+  }) as ApplicationPlan
+}
+
+const buildPaperActivationPrepareRequest = (
+  request: PaperActivationRequest,
+  evidence: RuntimeEvidence,
+  discoveryReceipt: ExecutionCandidateDiscoveryReceipt,
+): Result.Result<ExecutionPrepareRequest, string> => {
+  if (evidence.qualification.analysis.candidateOrdinal < 0) {
+    return Result.fail('recovered qualification candidate ordinal is invalid')
+  }
+  return Result.succeed({
+    schemaVersion: 'bayn.execution-prepare-request.v1',
+    qualification: {
+      runId: request.qualification.runId,
+      lockId: request.qualification.lockId,
+      resultHash: request.qualification.resultHash,
+      verdict: 'QUALIFIED',
+      sourceRevision: request.qualification.sourceRevision,
+      imageRepository: request.qualification.imageRepository,
+      imageDigest: request.qualification.imageDigest,
+      candidateOrdinal: evidence.qualification.analysis.candidateOrdinal,
+    },
+    discoveryReceipt,
+  })
+}
+
+const preparedPaperActivationIsBound = (
+  request: PaperActivationRequest,
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  prepared: ExecutionPrepareOutput,
+): Result.Result<void, string> => {
+  const { generation, preflight } = prepared
+  if (generation.maximum !== 'PAPER') return Result.fail('execution PREPARE did not return PAPER generation')
+  if (generation.previousGenerationHash !== plan.config.alpaca.authorityGenerationHash) {
+    return Result.fail('execution PREPARE did not chain from the configured OBSERVE generation')
+  }
+  if (
+    generation.qualificationRunId !== request.qualification.runId ||
+    generation.qualificationLockId !== request.qualification.lockId ||
+    generation.qualificationResultHash !== request.qualification.resultHash ||
+    generation.qualificationSourceRevision !== request.qualification.sourceRevision ||
+    generation.qualificationImageRepository !== request.qualification.imageRepository ||
+    generation.qualificationImageDigest !== request.qualification.imageDigest
+  ) {
+    return Result.fail('prepared generation is not bound to the requested qualification')
+  }
+  if (
+    generation.activationSourceRevision !== request.activation.sourceRevision ||
+    generation.activationImageRepository !== request.activation.imageRepository ||
+    generation.activationImageDigest !== request.activation.imageDigest ||
+    generation.strategyName !== request.strategy.name ||
+    generation.strategyBehaviorHash !== request.strategy.behaviorHash ||
+    generation.strategyParameterHash !== request.strategy.parameterHash ||
+    generation.strategyParameterSchemaVersion !== request.strategy.parameterSchemaVersion ||
+    generation.protocolHash !== request.strategy.protocolHash
+  ) {
+    return Result.fail('prepared generation is not bound to the requested current strategy and build')
+  }
+  if (preflight.environment !== BrokerEnvironment.Sandbox) return Result.fail('paper PREPARE broker is not sandbox')
+  if (preflight.accountId !== plan.config.alpaca.expectedAccountId) {
+    return Result.fail('paper PREPARE broker account does not match the configured account')
+  }
+  if (
+    preflight.openOrderCount !== request.limits.maxOpenOrders ||
+    preflight.positionCount !== request.limits.maxPositions
+  ) {
+    return Result.fail('paper PREPARE broker preflight is not an empty order book and position set')
+  }
+  return Result.succeed(undefined)
+}
+
+const preparePaperActivation = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  evidence: RuntimeEvidence,
+  request: PaperActivationRequest,
+): Effect.Effect<ExecutionPrepareOutput, OperationalError> =>
+  Effect.gen(function* () {
+    const observedAt = yield* currentUtcInstant
+    yield* Effect.fromResult(paperActivationRequestIsCurrent(request, plan, evidence, observedAt)).pipe(
+      Effect.mapError((message) => paperActivationOperationalError(message)),
+    )
+    const discoveryConfig = internalExecutionPlan(
+      plan,
+      'ExecutionCandidateDiscovery',
+      request,
+      readOnlyExecutionPolicy(plan),
+    )
+    const riskPolicy = yield* loadObserveRiskPolicy(
+      plan.config.alpaca.expectedAccountId,
+      plan.strategy.parameters.universe,
+    ).pipe(
+      Effect.mapError((cause) =>
+        paperActivationOperationalError('source-controlled OBSERVE risk policy is invalid', cause),
+      ),
+    )
+    const riskPolicyHash = yield* policyHash(riskPolicy, 'paper-candidate-policy').pipe(
+      Effect.mapError((cause) => paperActivationOperationalError(cause.message, cause)),
+    )
+    const discoveryReceipt = yield* discoverExecutionCandidate(
+      discoveryConfig as ApplicationPlanFor<'ExecutionCandidateDiscovery'>,
+      riskPolicyHash,
+    ).pipe(
+      Effect.provide(
+        ExecutionCandidateDiscoveryResourcesLive(discoveryConfig as ApplicationPlanFor<'ExecutionCandidateDiscovery'>),
+      ),
+      Effect.mapError((cause) =>
+        paperActivationOperationalError('execution candidate discovery resource failed', cause),
+      ),
+    )
+    const prepareRequest = yield* Effect.fromResult(
+      buildPaperActivationPrepareRequest(request, evidence, discoveryReceipt),
+    ).pipe(Effect.mapError((message) => paperActivationOperationalError(message)))
+    const prepareConfig = internalExecutionPlan(
+      plan,
+      'ExecutionPrepare',
+      request,
+      readOnlyExecutionPolicy(plan),
+      prepareRequest,
+    )
+    const validated = yield* validateExecutionPreparePlan(prepareConfig as ApplicationPlanFor<'ExecutionPrepare'>).pipe(
+      Effect.provide(ExecutionPrepareValidationResourcesLive(prepareConfig as ApplicationPlanFor<'ExecutionPrepare'>)),
+      Effect.mapError((cause) => paperActivationOperationalError('execution PREPARE validation failed', cause)),
+    )
+    const prepared = yield* prepareExecutionPrepareOutput(validated).pipe(
+      Effect.provide(ExecutionPrepareExecutionResourcesLive(prepareConfig as ApplicationPlanFor<'ExecutionPrepare'>)),
+      Effect.mapError((cause) => paperActivationOperationalError('execution PREPARE resource failed', cause)),
+    )
+    yield* Effect.fromResult(preparedPaperActivationIsBound(request, plan, prepared)).pipe(
+      Effect.mapError((message) => paperActivationOperationalError(message)),
+    )
+    return prepared
+  })
+
+const pendingPaperActivation = (
+  state: Ref.Ref<RuntimeState>,
+  request: PaperActivationRequest | null,
+  reason: Extract<NonNullable<RuntimeState['paperActivation']>, { readonly _tag: 'Pending' }>['reason'],
+): Effect.Effect<void> =>
+  Ref.update(state, (current) => ({
+    ...current,
+    paperActivation: { _tag: 'Pending' as const, requestHash: request?.requestHash ?? null, reason },
+    broker:
+      current.broker === null
+        ? null
+        : {
+            ...current.broker,
+            executionEligible: false,
+            executionDisabledReason: 'PAPER_ACTIVATION_NOT_PREPARED',
+          },
+    error: null,
+  }))
+
+const realizedPaperActivation = (
+  state: Ref.Ref<RuntimeState>,
+  request: PaperActivationRequest,
+  generationHash: string,
+): Effect.Effect<void> =>
+  Ref.update(state, (current) => ({
+    ...current,
+    paperActivation: { _tag: 'Realized' as const, requestHash: request.requestHash, generationHash },
+    broker:
+      current.broker === null ? null : { ...current.broker, executionEligible: true, executionDisabledReason: null },
+    error: null,
+  }))
+
 const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
   Effect.gen(function* () {
-    const { dependencies, session, alpacaHttpClient, liveCapitalGrants } = yield* Effect.all({
-      dependencies: applicationDependencies,
-      session: BrokerSession,
-      alpacaHttpClient: AlpacaHttpClient,
-      liveCapitalGrants: LiveCapitalGrantStore,
-    })
-    const observedAt = yield* currentUtcInstant
-    const authority = yield* resolveRuntimeAuthority(
-      {
-        policy: plan.config.execution,
-        strategy: plan.strategy.provenance.strategy,
-        observedAt,
+    const dependencies = yield* applicationDependencies
+    const observeConfig = {
+      ...plan.config,
+      execution: readOnlyExecutionPolicy(plan),
+    } as Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'AutonomousService' }>
+    const observePlan = makeApplicationPlan({
+      config: observeConfig,
+      protocol: plan.protocol,
+      parameterHash: plan.parameterHash,
+      strategy: plan.strategy,
+      strategyProtocolHash: plan.strategyProtocolHash,
+    }) as ApplicationPlanFor<'AutonomousService'>
+    const serializedRequest = observePlan.config.paperActivationRequestJson
+    const noCycle = (
+      _startup: AutonomousCycleStartupInput,
+    ): Effect.Effect<Effect.Effect<void, never, never>, OperationalError, never> => Effect.succeed(Effect.never)
+    const pendingRuntime = () => ({
+      _tag: 'AutonomousRead' as const,
+      brokerConfiguration: {
+        expectedAccountId: observePlan.config.alpaca.expectedAccountId,
+        executionEligible: false,
+        executionDisabledReason: 'BROKER_ACCESS_READ_ONLY',
       },
-      { liveCapitalGrants },
-    ).pipe(Effect.mapError(authorityError))
-
-    if (authority.brokerAccess === BrokerAccess.ReadOnly) {
-      return yield* runApplication(plan.config, plan.strategy, dependencies, {
-        _tag: 'AutonomousRead',
-        broker: runtimeBroker(plan, session.read, false),
-        startCycle: observeCycle(plan),
-      })
-    }
-
-    const executionDependencies = yield* Effect.all({
-      intentStore: IntentStore,
-      mutationStore: MutationStore,
-      writerFence: WriterFence,
-      brokerMutation: makeMutation(session, authority, alpacaHttpClient),
+      startCycle: noCycle,
     })
-    const executionProgram = yield* Effect.fromResult(
-      makeExecutionProgram(authority, {
-        brokerRead: session.read,
-        liveCapitalGrants,
-        freshBrokerPrice: makeFreshBrokerPriceReader(session.connection, alpacaHttpClient),
-        currentUtcInstant,
-        ...executionDependencies,
-      }),
-    ).pipe(Effect.mapError(executionProgramError))
-    return yield* runApplication(plan.config, plan.strategy, dependencies, {
-      _tag: 'AutonomousMutation',
-      broker: runtimeBroker(plan, session.read, true),
-      executionProgram,
-      startCycle: mutationCycle(plan, executionProgram),
+    const resolveAfterStartup: AutonomousRuntimeResolver<never, never> = (state) => {
+      const decodedRequest: Result.Result<PaperActivationRequest | null, string> =
+        serializedRequest === undefined
+          ? Result.succeed(null)
+          : decodeConfiguredPaperActivationRequest(serializedRequest)
+      const validateStaticRequest: Effect.Effect<
+        Result.Result<
+          { readonly request: PaperActivationRequest | null; readonly evidence: RuntimeEvidence | null },
+          string
+        >,
+        OperationalError
+      > = Effect.gen(function* () {
+        if (Result.isFailure(decodedRequest)) {
+          yield* pendingPaperActivation(state, null, 'REQUEST_INVALID')
+          return Result.fail('request-invalid')
+        }
+        const request = decodedRequest.success
+        const current = yield* Ref.get(state)
+        if (request === null) return Result.succeed({ request, evidence: current.evidence })
+        const observedAt = yield* currentUtcInstant
+        const validation = paperActivationRequestIsCurrent(request, observePlan, current.evidence, observedAt)
+        if (Result.isFailure(validation)) {
+          yield* pendingPaperActivation(state, request, 'PREPARATION_FAILED')
+          return Result.fail(validation.failure)
+        }
+        return Result.succeed({ request, evidence: current.evidence })
+      })
+      return validateStaticRequest.pipe(
+        Effect.flatMap((validated): Effect.Effect<AutonomousRuntime<never, never>, never> => {
+          if (Result.isFailure(validated)) return Effect.succeed(pendingRuntime())
+          const request = validated.success.request
+          return Effect.scopedWith((scope) =>
+            Layer.buildWithMemoMap(
+              Layer.fresh(AutonomousRuntimeResourcesLive(observePlan)),
+              Layer.makeMemoMapUnsafe(),
+              scope,
+            ).pipe(
+              Effect.flatMap((runtimeContext) =>
+                Effect.all({
+                  session: BrokerSession,
+                  alpacaHttpClient: AlpacaHttpClient,
+                  liveCapitalGrants: LiveCapitalGrantStore,
+                  intentStore: IntentStore,
+                  mutationStore: MutationStore,
+                  writerFence: WriterFence,
+                  cycleStore: CycleStore,
+                  brokerEventStore: BrokerEventStore,
+                  fillAccountingStore: FillAccountingStore,
+                  valuationStore: ValuationStore,
+                  reconciliationStore: ReconciliationStore,
+                  authorityGenerationStore: AuthorityGenerationStore,
+                  authorityRestrictionStore: AuthorityRestrictionStore,
+                }).pipe(
+                  Effect.flatMap((runtimeServices) => {
+                    const cycleResources = Layer.mergeAll(
+                      Layer.succeed(BrokerRead, runtimeServices.session.read),
+                      Layer.succeed(MarketData, dependencies.marketData),
+                      Layer.succeed(CycleStore, runtimeServices.cycleStore),
+                      Layer.succeed(BrokerEventStore, runtimeServices.brokerEventStore),
+                      Layer.succeed(FillAccountingStore, runtimeServices.fillAccountingStore),
+                      Layer.succeed(ValuationStore, runtimeServices.valuationStore),
+                      Layer.succeed(ReconciliationStore, runtimeServices.reconciliationStore),
+                      Layer.succeed(AuthorityGenerationStore, runtimeServices.authorityGenerationStore),
+                      Layer.succeed(AuthorityRestrictionStore, runtimeServices.authorityRestrictionStore),
+                      Layer.succeed(WriterFence, runtimeServices.writerFence),
+                      Layer.succeed(IntentStore, runtimeServices.intentStore),
+                      Layer.succeed(MutationStore, runtimeServices.mutationStore),
+                    )
+                    const readStartCycle = (startup: AutonomousCycleStartupInput) =>
+                      observeCycle(observePlan)(startup).pipe(
+                        Effect.provide(cycleResources),
+                        Effect.map((loop) => loop.pipe(Effect.provide(cycleResources))),
+                      )
+                    const readRuntime = () => ({
+                      _tag: 'AutonomousRead' as const,
+                      broker: runtimeBroker(observePlan, runtimeServices.session.read, false),
+                      startCycle: readStartCycle,
+                    })
+                    if (request === null) return Effect.succeed(readRuntime())
+                    const evidence = validated.success.evidence
+                    if (evidence === null) {
+                      return pendingPaperActivation(state, request, 'STARTUP_EVIDENCE_UNAVAILABLE').pipe(
+                        Effect.as(readRuntime()),
+                      )
+                    }
+                    return preparePaperActivation(observePlan, evidence, request).pipe(
+                      Effect.flatMap((prepared) => {
+                        if (observePlan.config.alpaca.identity.environment !== BrokerEnvironment.Sandbox) {
+                          return Effect.fail(
+                            paperActivationOperationalError('paper activation requires a sandbox broker'),
+                          )
+                        }
+                        return currentUtcInstant.pipe(
+                          Effect.flatMap((observedAt) =>
+                            resolvePreparedSandboxAuthority({
+                              brokerIdentity: observePlan.config.alpaca.identity as Extract<
+                                typeof observePlan.config.alpaca.identity,
+                                { readonly environment: BrokerEnvironment.Sandbox }
+                              >,
+                              strategy: observePlan.strategy.provenance.strategy,
+                              generationHash: prepared.generation.generationHash,
+                              observedAt,
+                            }),
+                          ),
+                          Effect.mapError((cause) =>
+                            paperActivationOperationalError('prepared sandbox execution authority is invalid', cause),
+                          ),
+                          Effect.flatMap((authority) => {
+                            const realizedPolicy = resolveExecutionPolicy({
+                              brokerIdentity: observePlan.config.alpaca.identity,
+                              brokerAccess: BrokerAccess.Mutation,
+                              capitalAuthority: CapitalAuthoritySelection.Sandbox,
+                              authorityGenerationHash: prepared.generation.generationHash,
+                              liveCapitalGrantHash: undefined,
+                            })
+                            if (Result.isFailure(realizedPolicy)) {
+                              return Effect.fail(
+                                paperActivationOperationalError(
+                                  'prepared sandbox execution policy is invalid',
+                                  realizedPolicy.failure,
+                                ),
+                              )
+                            }
+                            const realizedConfig = {
+                              ...observePlan.config,
+                              execution: realizedPolicy.success,
+                            } as Extract<LoadedRuntimeConfig, { readonly runtimeMode: 'AutonomousService' }>
+                            const realizedPlan = makeApplicationPlan({
+                              config: realizedConfig,
+                              protocol: observePlan.protocol,
+                              parameterHash: observePlan.parameterHash,
+                              strategy: observePlan.strategy,
+                              strategyProtocolHash: observePlan.strategyProtocolHash,
+                            }) as ApplicationPlanFor<'AutonomousService'>
+                            return makeMutation(
+                              runtimeServices.session,
+                              authority,
+                              runtimeServices.alpacaHttpClient,
+                            ).pipe(
+                              Effect.flatMap((brokerMutation) =>
+                                Effect.fromResult(
+                                  makeExecutionProgram(authority, {
+                                    brokerRead: runtimeServices.session.read,
+                                    liveCapitalGrants: runtimeServices.liveCapitalGrants,
+                                    freshBrokerPrice: makeFreshBrokerPriceReader(
+                                      runtimeServices.session.connection,
+                                      runtimeServices.alpacaHttpClient,
+                                    ),
+                                    currentUtcInstant,
+                                    intentStore: runtimeServices.intentStore,
+                                    mutationStore: runtimeServices.mutationStore,
+                                    writerFence: runtimeServices.writerFence,
+                                    brokerMutation,
+                                  }),
+                                ),
+                              ),
+                              Effect.mapError(executionProgramError),
+                              Effect.tap(() =>
+                                realizedPaperActivation(state, request, prepared.generation.generationHash),
+                              ),
+                              Effect.map((executionProgram) => ({
+                                _tag: 'AutonomousMutation' as const,
+                                broker: runtimeBroker(realizedPlan, runtimeServices.session.read, true),
+                                executionProgram,
+                                startCycle: (startup: AutonomousCycleStartupInput) =>
+                                  mutationCycle(
+                                    realizedPlan,
+                                    executionProgram,
+                                  )(startup).pipe(
+                                    Effect.provide(cycleResources),
+                                    Effect.map((loop) => loop.pipe(Effect.provide(cycleResources))),
+                                  ),
+                              })),
+                            )
+                          }),
+                        )
+                      }),
+                      Effect.catch((cause) =>
+                        Effect.logWarning('Bayn PAPER activation remains in OBSERVE').pipe(
+                          Effect.annotateLogs({
+                            service: 'bayn',
+                            activation: 'PENDING',
+                            reason: cause instanceof Error ? cause.message : String(cause),
+                          }),
+                          Effect.andThen(
+                            pendingPaperActivation(state, request, 'PREPARATION_FAILED').pipe(Effect.as(readRuntime())),
+                          ),
+                        ),
+                      ),
+                    )
+                  }),
+                  Effect.provide(runtimeContext),
+                ),
+              ),
+            ),
+          ).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning('Bayn PAPER activation remains in OBSERVE').pipe(
+                Effect.annotateLogs({
+                  service: 'bayn',
+                  activation: 'PENDING',
+                  reason: cause instanceof Error ? cause.message : String(cause),
+                }),
+                Effect.andThen(
+                  request === null
+                    ? Effect.succeed(pendingRuntime())
+                    : pendingPaperActivation(state, request, 'PREPARATION_FAILED').pipe(Effect.as(pendingRuntime())),
+                ),
+              ),
+            ),
+          )
+        }),
+        Effect.catch((cause) =>
+          Effect.logWarning('Bayn PAPER activation remains in OBSERVE').pipe(
+            Effect.annotateLogs({
+              service: 'bayn',
+              activation: 'PENDING',
+              reason: cause instanceof Error ? cause.message : String(cause),
+            }),
+            Effect.andThen(pendingPaperActivation(state, null, 'PREPARATION_FAILED').pipe(Effect.as(pendingRuntime()))),
+          ),
+        ),
+      )
+    }
+    return yield* runApplication(observePlan.config, observePlan.strategy, dependencies, {
+      ...pendingRuntime(),
+      resolveAfterStartup,
     })
   })
 
@@ -274,11 +783,11 @@ const writeDiscoveryReceipt = (receipt: ExecutionCandidateDiscoveryReceipt) =>
     ),
   )
 
-const writeExecutionPrepareReceipt = (receipt: ExecutionPrepareReceipt) =>
+const writeExecutionPrepareOutput = (output: ExecutionPrepareOutput) =>
   pipe(
-    encodeJson(receipt),
+    encodeJson(output),
     Effect.mapError((cause) =>
-      operationalError('strategy', 'execution-prepare-output', 'EXECUTION_PREPARE receipt encoding failed', cause),
+      operationalError('strategy', 'execution-prepare-output', 'EXECUTION_PREPARE output encoding failed', cause),
     ),
     Effect.flatMap((output) =>
       pipe(
@@ -345,11 +854,15 @@ const runExecutionCandidateDiscovery = (plan: ApplicationPlanFor<'ExecutionCandi
     Effect.flatMap(writeDiscoveryReceipt),
   )
 
-const executionPrepareRuntimeBinding = (plan: ApplicationPlanFor<'ExecutionPrepare'>, riskPolicyHash: string) => ({
+const executionPrepareRuntimeBinding = (
+  plan: ApplicationPlanFor<'ExecutionPrepare'>,
+  riskPolicyHash: string,
+  strategy: ExecutionPrepareRuntimeBinding['strategy'],
+): ExecutionPrepareRuntimeBinding => ({
   sourceRevision: plan.config.build.sourceRevision,
   imageRepository: plan.config.build.imageRepository,
   imageDigest: plan.config.build.imageDigest,
-  strategy: plan.strategy.provenance.strategy,
+  strategy,
   strategyProtocolHash: plan.strategyProtocolHash,
   qualificationRunId: plan.config.qualificationRunId,
   accountId: plan.config.alpaca.expectedAccountId,
@@ -360,20 +873,6 @@ const executionPrepareRuntimeBinding = (plan: ApplicationPlanFor<'ExecutionPrepa
   capitalAuthority: plan.config.execution.capitalAuthority._tag,
   authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
   riskPolicyHash,
-})
-
-const executionPrepareCandidateIdentity = (plan: ApplicationPlanFor<'ExecutionPrepare'>, riskPolicyHash: string) => ({
-  sourceRevision: plan.config.build.sourceRevision,
-  image: {
-    repository: plan.config.build.imageRepository,
-    digest: plan.config.build.imageDigest,
-  },
-  strategy: plan.strategy.provenance.strategy,
-  strategyProtocolHash: plan.strategyProtocolHash,
-  qualificationRunId: plan.config.qualificationRunId,
-  accountId: plan.config.alpaca.expectedAccountId,
-  authorityGenerationHash: plan.config.alpaca.authorityGenerationHash,
-  policyHash: riskPolicyHash,
 })
 
 const executionPrepareOperationalCause = (cause: ExecutionPrepareFailure) => {
@@ -410,40 +909,83 @@ export const validateExecutionPreparePlan = (plan: ApplicationPlanFor<'Execution
       ),
     )
     const riskPolicyHash = yield* policyHash(riskPolicy, 'execution-prepare-policy')
-    return yield* Effect.fromResult(
-      validateExecutionPrepareInput(
-        plan.config.executionPrepareRequest,
-        executionPrepareRuntimeBinding(plan, riskPolicyHash),
-      ),
-    ).pipe(Effect.mapError(executionPrepareOperationalError))
-  })
-
-const runExecutionPrepare = (
-  plan: ApplicationPlanFor<'ExecutionPrepare'>,
-  prevalidated: PrevalidatedExecutionPrepareInput,
-) =>
-  Effect.gen(function* () {
-    yield* BrokerSession
-    const trustedReceipt = yield* discoverExecutionCandidatesHistoricalCodec(
-      executionPrepareCandidateIdentity(plan, prevalidated.runtime.riskPolicyHash),
-    ).pipe(
-      Effect.mapError(
-        (cause) =>
-          new OperationalError({
-            component: 'strategy',
-            operation: 'execution-prepare-discovery',
-            message: renderExecutionCandidateDiscoveryError(cause),
-            retryable: false,
-            cause: { _tag: cause._tag },
-          }),
-      ),
+    const configuredStrategy = plan.strategy.provenance.strategy
+    if (configuredStrategy.parameterSchemaVersion !== 'bayn.risk-balanced-trend.protocol.v4') {
+      return yield* Effect.fail(
+        new OperationalError({
+          component: 'strategy',
+          operation: 'execution-prepare',
+          message: 'EXECUTION_PREPARE requires the reviewed risk-balanced-trend protocol v4',
+          retryable: false,
+          cause: { _tag: 'StrategyProtocolVersionMismatch' },
+        }),
+      )
+    }
+    const strategy: ExecutionPrepareRuntimeBinding['strategy'] = {
+      name: configuredStrategy.name,
+      behaviorHash: configuredStrategy.behaviorHash,
+      parameterHash: configuredStrategy.parameterHash,
+      parameterSchemaVersion: configuredStrategy.parameterSchemaVersion,
+    }
+    const evidenceStore = yield* EvidenceStore
+    const qualification = yield* evidenceStore.readQualification(
+      plan.config.executionPrepareRequest.qualification.runId,
     )
-    const validated = yield* authenticateValidatedExecutionPrepare(prevalidated, trustedReceipt).pipe(
+    if (Option.isNone(qualification)) {
+      return yield* Effect.fail(
+        new OperationalError({
+          component: 'strategy',
+          operation: 'execution-prepare',
+          message: 'EXECUTION_PREPARE qualification evidence is unavailable',
+          retryable: false,
+          cause: { _tag: 'QualificationEvidenceUnavailable' },
+        }),
+      )
+    }
+    const runtime = executionPrepareRuntimeBinding(plan, riskPolicyHash, strategy)
+    const proofPlanRequest = yield* Effect.fromResult(
+      buildExecutionPrepareProofPlanRequest({
+        request: plan.config.executionPrepareRequest,
+        qualification: qualification.value,
+        runtime,
+      }),
+    ).pipe(Effect.mapError(executionPrepareOperationalError))
+    return yield* Effect.fromResult(validateExecutionPrepareInput(proofPlanRequest, runtime)).pipe(
       Effect.mapError(executionPrepareOperationalError),
     )
-    const receipt = yield* prepareValidatedExecution(validated).pipe(Effect.mapError(executionPrepareOperationalError))
-    yield* writeExecutionPrepareReceipt(receipt)
   })
+
+const prepareExecutionPrepareOutput = (prevalidated: PrevalidatedExecutionPrepareInput) =>
+  Effect.gen(function* () {
+    const session = yield* BrokerSession
+    const validated = yield* authenticateValidatedExecutionPrepare(
+      prevalidated,
+      prevalidated.request.discoveryReceipt,
+    ).pipe(Effect.mapError(executionPrepareOperationalError))
+    const prepared = yield* prepareValidatedExecutionWithGeneration(validated).pipe(
+      Effect.mapError(executionPrepareOperationalError),
+    )
+    return { ...prepared, preflight: session.preflight }
+  })
+
+export const prepareExecutionPreparePlan = (plan: ApplicationPlanFor<'ExecutionPrepare'>) =>
+  validateExecutionPreparePlan(plan).pipe(
+    Effect.flatMap((prevalidated) => prepareExecutionPrepareOutput(prevalidated)),
+    Effect.mapError(executionPrepareBoundaryError),
+  )
+
+export const runExecutionPreparePlan = (plan: ApplicationPlanFor<'ExecutionPrepare'>) =>
+  validateExecutionPreparePlan(plan).pipe(
+    Effect.provide(ExecutionPrepareValidationResourcesLive(plan)),
+    Effect.flatMap((prevalidated) =>
+      prepareExecutionPrepareOutput(prevalidated).pipe(
+        Effect.provide(ExecutionPrepareExecutionResourcesLive(plan)),
+        Effect.flatMap(writeExecutionPrepareOutput),
+        Effect.provide(ApplicationPlatformLive),
+      ),
+    ),
+    Effect.mapError(executionPrepareBoundaryError),
+  )
 
 export const executionPrepareBoundaryError = (cause: unknown): OperationalError =>
   cause instanceof OperationalError
@@ -470,13 +1012,6 @@ export const runApplicationPlan = pipe(
   Match.tag('ExecutionCandidateDiscovery', (plan) =>
     runExecutionCandidateDiscovery(plan).pipe(Effect.provide(ExecutionCandidateDiscoveryResourcesLive(plan))),
   ),
-  Match.tag('ExecutionPrepare', (plan) =>
-    validateExecutionPreparePlan(plan).pipe(
-      Effect.flatMap((validated) =>
-        runExecutionPrepare(plan, validated).pipe(Effect.provide(ExecutionPrepareResourcesLive(plan))),
-      ),
-      Effect.mapError(executionPrepareBoundaryError),
-    ),
-  ),
+  Match.tag('ExecutionPrepare', runExecutionPreparePlan),
   Match.exhaustive,
 )

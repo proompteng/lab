@@ -64,6 +64,7 @@ export const runtimeConfigSource = Config.all({
   strategyParameterHash: Config.schema(Sha256Schema, 'BAYN_STRATEGY_PARAMETER_HASH'),
   provenanceMode: Config.schema(ProvenanceMode, 'BAYN_PROVENANCE_MODE').pipe(Config.withDefault('production')),
   qualificationRunId: Config.option(Config.schema(Sha256Schema, 'BAYN_QUALIFICATION_RUN_ID')),
+  paperActivationRequestJson: Config.option(nonEmptyString('BAYN_PAPER_ACTIVATION_REQUEST')),
   operation: Config.option(runtimeOperation),
   executionPrepareRequest: Config.option(
     Config.schema(Schema.fromJsonString(ExecutionPrepareRequestSchema), 'BAYN_EXECUTION_PREPARE_REQUEST'),
@@ -121,6 +122,7 @@ export const runtimeConfigSource = Config.all({
       host: config.host,
       port: config.port,
       qualificationRunId: Option.getOrUndefined(config.qualificationRunId),
+      paperActivationRequestJson: Option.getOrUndefined(config.paperActivationRequestJson),
       configuredOperation: Option.getOrUndefined(config.operation),
       executionPrepareRequest: Option.getOrUndefined(config.executionPrepareRequest),
       legacyMaximumAuthority: Option.getOrUndefined(config.legacyMaximumAuthority),

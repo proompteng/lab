@@ -15,7 +15,6 @@ import { BrokerAccess, BrokerEnvironment, CapitalAuthorityKind } from './executi
 import { CapitalAuthoritySelection } from './execution/configuration'
 import type { ExecutionPrepareRequest } from './execution-prepare'
 import { makeExecutionPrepareDiscoveryReceiptFixture } from './execution-prepare/test-fixture'
-import { canonicalHashV1OrThrow } from './hash'
 
 const sourceRevision = 'a'.repeat(40)
 const imageRepository = 'registry.ide-newton.ts.net/lab/bayn'
@@ -57,45 +56,19 @@ const executionPrepareDiscoveryReceipt = makeExecutionPrepareDiscoveryReceiptFix
 })
 const executionPrepareCandidate = executionPrepareDiscoveryReceipt.candidateFacts.candidates[0]!
 
-const executionPrepareProofPlan = {
-  schemaVersion: 'bayn.execution-prepare-proof-plan.v1' as const,
-  candidate: {
-    discoveryReceiptHash: executionPrepareDiscoveryReceipt.observationReceiptHash,
-    immutableBindingHash: executionPrepareDiscoveryReceipt.immutableBindingHash,
-    candidateFactsHash: executionPrepareDiscoveryReceipt.candidateFactsHash,
-    candidateOrdinal: executionPrepareCandidate.ordinal,
-    observedPlanIntentId: executionPrepareCandidate.observedPlanIntentId,
-    cycleId: executionPrepareDiscoveryReceipt.binding.cycle.cycleId,
-    decisionHash: executionPrepareDiscoveryReceipt.binding.cycle.decisionHash,
-  },
-  binding: {
-    activationSourceRevision: sourceRevision,
-    activationImageRepository: imageRepository,
-    activationImageDigest: imageDigest,
-    qualificationSourceRevision: 'f'.repeat(40),
-    qualificationImageRepository: imageRepository,
-    qualificationImageDigest: `sha256:${'1'.repeat(64)}` as const,
-    strategy: executionPrepareStrategy,
-    strategyProtocolHash: executionPrepareStrategyProtocolHash,
-    qualificationRunId,
-    qualificationLockId: '8'.repeat(64),
-    qualificationResultHash: '9'.repeat(64),
-    protocolHash: 'a'.repeat(64),
-    qualificationExecutionPolicyHash: 'b'.repeat(64),
-    accountId: alpacaAccountId,
-    brokerIdentityHash: 'c'.repeat(64),
-    authorityGenerationHash,
-    riskPolicyHash: executionPrepareRiskPolicyHash,
-    reconciliationId: executionPrepareReconciliationId,
-    reconciliationContentHash: executionPrepareReconciliationContentHash,
-  },
-}
-
 const executionPrepareRequest: ExecutionPrepareRequest = {
   schemaVersion: 'bayn.execution-prepare-request.v1',
+  qualification: {
+    runId: qualificationRunId,
+    lockId: '8'.repeat(64),
+    resultHash: '9'.repeat(64),
+    verdict: 'QUALIFIED',
+    sourceRevision: 'f'.repeat(40),
+    imageRepository,
+    imageDigest: `sha256:${'1'.repeat(64)}`,
+    candidateOrdinal: executionPrepareCandidate.ordinal,
+  },
   discoveryReceipt: executionPrepareDiscoveryReceipt,
-  proofPlan: executionPrepareProofPlan,
-  proofPlanHash: canonicalHashV1OrThrow(executionPrepareProofPlan),
 }
 
 const baseParsedConfig: ParsedRuntimeConfig = {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Clock, Context, Deferred, Effect, Fiber, Layer, pipe, Redacted, Result } from 'effect'
+import { Clock, Deferred, Effect, Fiber, Layer, Option, pipe, Redacted, Ref, Result } from 'effect'
 
 import {
   config,
@@ -8,6 +8,8 @@ import {
   fixtureStrategy,
   marketDataService,
   pinnedEvaluation,
+  pinnedLock,
+  pinnedQualification,
   pinnedRuntimeConfig,
   pinnedStore,
   successfulEvidenceStore,
@@ -21,7 +23,14 @@ import {
   makeApplicationPlan,
   runApplication,
 } from './app'
-import { AccountStatus, BrokerProvider, alpacaSandboxBaseUrl, type BrokerReadShape } from './broker/alpaca'
+import {
+  AccountStatus,
+  BrokerProvider,
+  BrokerSession,
+  alpacaSandboxBaseUrl,
+  type BrokerReadShape,
+  type BrokerSessionShape,
+} from './broker/alpaca'
 import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
 import { makeBrokerIdentity } from './broker/identity'
 import type { LoadedRuntimeConfig } from './config'
@@ -29,6 +38,7 @@ import { makeStrategyProtocolHash } from './contracts'
 import { BrokerAccess, BrokerEnvironment, noCapitalAuthority } from './execution/authority'
 import type { ExecutionProgram } from './execution/runtime-program'
 import { executionPrepareBoundaryError, validateExecutionPreparePlan } from './entrypoint'
+import { EvidenceStore } from './db/evidence-store'
 import type { ExecutionPrepareRequest } from './execution-prepare'
 import { makeExecutionPrepareDiscoveryReceiptFixture } from './execution-prepare/test-fixture'
 import { canonicalHashV1OrThrow } from './hash'
@@ -185,44 +195,19 @@ const prepareConfig = (
     reconciliationContentHash,
   })
   const discoveredCandidate = discoveryReceipt.candidateFacts.candidates[0]!
-  const proofPlan = {
-    schemaVersion: 'bayn.execution-prepare-proof-plan.v1' as const,
-    candidate: {
-      discoveryReceiptHash: discoveryReceipt.observationReceiptHash,
-      immutableBindingHash: discoveryReceipt.immutableBindingHash,
-      candidateFactsHash: discoveryReceipt.candidateFactsHash,
-      candidateOrdinal: discoveredCandidate.ordinal,
-      observedPlanIntentId: discoveredCandidate.observedPlanIntentId,
-      cycleId: discoveryReceipt.binding.cycle.cycleId,
-      decisionHash: discoveryReceipt.binding.cycle.decisionHash,
-    },
-    binding: {
-      activationSourceRevision: runtime.build.sourceRevision,
-      activationImageRepository: runtime.build.imageRepository,
-      activationImageDigest: runtime.build.imageDigest,
-      qualificationSourceRevision: 'a'.repeat(40),
-      qualificationImageRepository: runtime.build.imageRepository,
-      qualificationImageDigest: `sha256:${'7'.repeat(64)}` as const,
-      strategy: prepareStrategy,
-      strategyProtocolHash,
-      qualificationRunId: pinnedEvaluation.runId,
-      qualificationLockId: '8'.repeat(64),
-      qualificationResultHash: '9'.repeat(64),
-      protocolHash: 'a'.repeat(64),
-      qualificationExecutionPolicyHash: 'b'.repeat(64),
-      accountId: autonomous.alpaca.expectedAccountId,
-      brokerIdentityHash: autonomous.alpaca.identity.identityHash,
-      authorityGenerationHash: autonomous.alpaca.authorityGenerationHash,
-      riskPolicyHash,
-      reconciliationId,
-      reconciliationContentHash,
-    },
-  }
   const executionPrepareRequest: ExecutionPrepareRequest = {
     schemaVersion: 'bayn.execution-prepare-request.v1',
+    qualification: {
+      runId: pinnedQualification.runId,
+      lockId: pinnedLock.lockId,
+      resultHash: pinnedQualification.resultHash,
+      verdict: 'QUALIFIED',
+      sourceRevision: pinnedLock.sourceRevision,
+      imageRepository: pinnedLock.image.repository,
+      imageDigest: pinnedLock.image.digest,
+      candidateOrdinal: discoveredCandidate.ordinal,
+    },
     discoveryReceipt,
-    proofPlan,
-    proofPlanHash: canonicalHashV1OrThrow(proofPlan),
   }
   return {
     ...autonomous,
@@ -286,68 +271,13 @@ describe('Bayn application composition', () => {
     expect(JSON.stringify(failure)).not.toContain('credential')
   })
 
-  test('rejects semantic EXECUTION_PREPARE drift before resource acquisition', async () => {
+  test('rejects terminal and captured-discovery drift before downstream resources', async () => {
     const base = prepareConfig(pinnedRuntimeConfig)
-    const requestWithBinding = (binding: ExecutionPrepareRequest['proofPlan']['binding']): ExecutionPrepareRequest => {
-      const proofPlan = { ...base.executionPrepareRequest.proofPlan, binding }
-      return {
-        ...base.executionPrepareRequest,
-        proofPlan,
-        proofPlanHash: canonicalHashV1OrThrow(proofPlan),
-      }
-    }
-    const requestWithCandidate = (
-      candidate: ExecutionPrepareRequest['proofPlan']['candidate'],
-    ): ExecutionPrepareRequest => {
-      const proofPlan = { ...base.executionPrepareRequest.proofPlan, candidate }
-      return {
-        ...base.executionPrepareRequest,
-        proofPlan,
-        proofPlanHash: canonicalHashV1OrThrow(proofPlan),
-      }
-    }
     const requests: readonly ExecutionPrepareRequest[] = [
-      requestWithBinding({ ...base.executionPrepareRequest.proofPlan.binding, accountId: 'drifted-account' }),
-      requestWithBinding({
-        ...base.executionPrepareRequest.proofPlan.binding,
-        authorityGenerationHash: '0'.repeat(64),
-      }),
-      requestWithBinding({
-        ...base.executionPrepareRequest.proofPlan.binding,
-        strategy: {
-          ...base.executionPrepareRequest.proofPlan.binding.strategy,
-          behaviorHash: '0'.repeat(64),
-        },
-      }),
-      requestWithBinding({ ...base.executionPrepareRequest.proofPlan.binding, riskPolicyHash: '0'.repeat(64) }),
-      { ...base.executionPrepareRequest, proofPlanHash: '0'.repeat(64) },
-      requestWithCandidate({
-        ...base.executionPrepareRequest.proofPlan.candidate,
-        observedPlanIntentId: '0'.repeat(64),
-      }),
-      requestWithCandidate({ ...base.executionPrepareRequest.proofPlan.candidate, candidateOrdinal: 1 }),
-      requestWithCandidate({
-        ...base.executionPrepareRequest.proofPlan.candidate,
-        immutableBindingHash: '0'.repeat(64),
-      }),
-      requestWithCandidate({
-        ...base.executionPrepareRequest.proofPlan.candidate,
-        candidateFactsHash: '0'.repeat(64),
-      }),
-      requestWithCandidate({ ...base.executionPrepareRequest.proofPlan.candidate, cycleId: '0'.repeat(64) }),
-      requestWithCandidate({ ...base.executionPrepareRequest.proofPlan.candidate, decisionHash: '0'.repeat(64) }),
-      requestWithBinding({
-        ...base.executionPrepareRequest.proofPlan.binding,
-        activationSourceRevision: '0'.repeat(40),
-      }),
-      requestWithBinding({
-        ...base.executionPrepareRequest.proofPlan.binding,
-        reconciliationId: '0'.repeat(64),
-      }),
-      requestWithBinding({
-        ...base.executionPrepareRequest.proofPlan.binding,
-        reconciliationContentHash: '0'.repeat(64),
-      }),
+      {
+        ...base.executionPrepareRequest,
+        qualification: { ...base.executionPrepareRequest.qualification, resultHash: '0'.repeat(64) },
+      },
       {
         ...base.executionPrepareRequest,
         discoveryReceipt: {
@@ -356,17 +286,13 @@ describe('Bayn application composition', () => {
         },
       },
     ]
-    const ExternalResource = Context.Service<'execution-prepare-test-resource', number>(
-      'execution-prepare-test-resource',
-    )
-
     for (const executionPrepareRequest of requests) {
       let acquisitions = 0
       const resources = Layer.effect(
-        ExternalResource,
+        BrokerSession,
         Effect.sync(() => {
           acquisitions += 1
-          return acquisitions
+          return {} as BrokerSessionShape
         }),
       )
       const plan = makeApplicationPlan(
@@ -377,10 +303,23 @@ describe('Bayn application composition', () => {
       )
       if (plan._tag !== 'ExecutionPrepare') throw new Error('fixture must produce EXECUTION_PREPARE')
 
+      const qualifiedEvidenceStore = {
+        ...pinnedStore(),
+        readQualification: () =>
+          Effect.succeed(
+            Option.some({
+              state: 'TERMINAL' as const,
+              lock: pinnedLock,
+              result: { ...pinnedQualification, verdict: 'QUALIFIED' as const },
+            }),
+          ),
+      }
+
       const failure = await Effect.runPromise(
         Effect.flip(
           validateExecutionPreparePlan(plan).pipe(
-            Effect.flatMap(() => ExternalResource.pipe(Effect.provide(resources))),
+            Effect.provide(Layer.succeed(EvidenceStore, qualifiedEvidenceStore)),
+            Effect.flatMap(() => BrokerSession.pipe(Effect.provide(resources))),
           ),
         ),
       )
@@ -445,6 +384,53 @@ describe('Bayn application composition', () => {
     expect(calls).toEqual(['initialize', 'autonomous-cycle'])
     expect(startupQualificationRunId).toBe(fixtureEvaluation.runId)
     expect(backgroundInterrupted).toBe(true)
+  })
+
+  test('resolves the autonomous broker runtime before starting its cycle', async () => {
+    const events: string[] = []
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>()
+          const startCycle = () =>
+            Effect.sync(() => events.push('cycle')).pipe(
+              Effect.andThen(Deferred.succeed(started, undefined)),
+              Effect.andThen(Effect.never),
+            )
+          const unresolvedStartCycle = () => Effect.succeed(Effect.void)
+          const fiber = yield* runApplication(
+            autonomousConfig(config),
+            fixtureStrategy,
+            {
+              marketData: marketDataService(Effect.succeed(makeSnapshot())),
+              journal: successfulJournal,
+              evidenceStore: successfulEvidenceStore,
+              cycleObservability,
+            },
+            {
+              _tag: 'AutonomousRead',
+              brokerConfiguration: {
+                expectedAccountId: brokerAccountId,
+                executionEligible: false,
+                executionDisabledReason: 'BROKER_ACCESS_READ_ONLY',
+              },
+              startCycle: unresolvedStartCycle,
+              resolveAfterStartup: (state) =>
+                Effect.gen(function* () {
+                  const current = yield* Ref.get(state)
+                  expect(current.broker?.readAvailable).toBe(null)
+                  events.push('resolved')
+                  return { _tag: 'AutonomousRead' as const, broker, startCycle }
+                }),
+            },
+          ).pipe(Effect.provide(HttpServerLive(config)), Effect.forkScoped)
+          yield* Deferred.await(started).pipe(Effect.timeout('1 second'))
+          yield* Fiber.interrupt(fiber)
+        }),
+      ),
+    )
+
+    expect(events).toEqual(['resolved', 'cycle'])
   })
 
   test('starts the same scoped autonomous cycle for mutation runtime readiness', async () => {

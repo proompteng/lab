@@ -10,7 +10,12 @@ import { runHealthMonitor, type BrokerProbe, type HealthDependencies } from './h
 import { serveHttp } from './http'
 import type { JournalService } from './ledger'
 import type { MarketDataService } from './market-data'
-import { initialState, type AutonomousCyclePassObservation, type RuntimeState } from './runtime-state'
+import {
+  initialState,
+  type AutonomousCyclePassObservation,
+  type BrokerConfiguration,
+  type RuntimeState,
+} from './runtime-state'
 import { runStartup, type StartupDependencies } from './startup'
 import type { Strategy } from './strategy'
 import { utcInstantFromEpochMillis } from './time'
@@ -87,8 +92,10 @@ export type ApplicationRuntime<StartupR, LoopR> =
   | { readonly _tag: 'Brokerless' }
   | {
       readonly _tag: 'AutonomousRead'
-      readonly broker: BrokerProbe
+      readonly broker?: BrokerProbe
+      readonly brokerConfiguration?: BrokerConfiguration
       readonly startCycle: AutonomousCycleStartup<StartupR, LoopR>
+      readonly resolveAfterStartup?: AutonomousRuntimeResolver<StartupR, LoopR>
     }
   | {
       readonly _tag: 'AutonomousMutation'
@@ -97,10 +104,14 @@ export type ApplicationRuntime<StartupR, LoopR> =
       readonly startCycle: AutonomousCycleStartup<StartupR, LoopR>
     }
 
-type AutonomousRuntime<StartupR, LoopR> = Extract<
+export type AutonomousRuntime<StartupR, LoopR> = Extract<
   ApplicationRuntime<StartupR, LoopR>,
   { readonly _tag: 'AutonomousRead' | 'AutonomousMutation' }
 >
+
+export type AutonomousRuntimeResolver<StartupR, LoopR> = (
+  state: Ref.Ref<RuntimeState>,
+) => Effect.Effect<AutonomousRuntime<StartupR, LoopR>, never, StartupR | LoopR>
 
 const cyclePassError = (observation: Extract<AutonomousCyclePassObservation, { readonly result: 'FAILURE' }>): string =>
   `cycleRunner: ${observation.operation}/${observation.failure}: ${observation.message}`
@@ -143,7 +154,20 @@ const brokerProbe = <StartupR, LoopR>(runtime: ApplicationRuntime<StartupR, Loop
   runtime._tag === 'Brokerless' ? undefined : runtime.broker
 
 const initialRuntimeState = <StartupR, LoopR>(runtime: ApplicationRuntime<StartupR, LoopR>): RuntimeState =>
-  runtime._tag === 'Brokerless' ? initialState() : initialState(runtime.broker, true)
+  runtime._tag === 'Brokerless'
+    ? initialState()
+    : initialState(
+        runtime._tag === 'AutonomousRead' ? (runtime.broker ?? runtime.brokerConfiguration) : runtime.broker,
+        true,
+      )
+
+const resolveRuntimeAfterStartup = <StartupR, LoopR>(
+  runtime: ApplicationRuntime<StartupR, LoopR>,
+  state: Ref.Ref<RuntimeState>,
+): Effect.Effect<AutonomousRuntime<StartupR, LoopR> | ApplicationRuntime<StartupR, LoopR>, never, StartupR | LoopR> =>
+  runtime._tag === 'AutonomousRead' && runtime.resolveAfterStartup !== undefined
+    ? runtime.resolveAfterStartup(state)
+    : Effect.succeed(runtime)
 
 const currentUtcInstant = Clock.currentTimeMillis.pipe(
   Effect.flatMap((millis) =>
@@ -210,10 +234,11 @@ export const runApplication = <StartupR, LoopR>(
       serveHttp(config, state, strategy.provenance, config.build.verification, dependencies.evidenceStore.read),
     ),
     Effect.tap(({ state }) => runStartup(config, state, strategy, dependencies)),
-    Effect.bind('autonomousCycleFiber', ({ state }) => startAutonomousCycle(runtime, state)),
-    Effect.tap(({ autonomousCycleFiber, state }) =>
+    Effect.bind('resolvedRuntime', ({ state }) => resolveRuntimeAfterStartup(runtime, state)),
+    Effect.bind('autonomousCycleFiber', ({ state, resolvedRuntime }) => startAutonomousCycle(resolvedRuntime, state)),
+    Effect.tap(({ autonomousCycleFiber, resolvedRuntime, state }) =>
       pipe(
-        runHealthMonitor(config, state, dependencies, brokerProbe(runtime), autonomousCycleFiber),
+        runHealthMonitor(config, state, dependencies, brokerProbe(resolvedRuntime), autonomousCycleFiber),
         Effect.forkScoped({ startImmediately: true }),
       ),
     ),
