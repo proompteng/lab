@@ -1136,8 +1136,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       'accounting_transactions',
       'authority_generations',
       'authority_state',
+      'autonomous_cycle_paper_closures',
       'autonomous_cycle_shadow_decisions',
       'autonomous_cycles',
+      'autonomous_forward_performance_receipts',
       'broker_errors',
       'broker_events',
       'evaluation_artifacts',
@@ -1188,6 +1190,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 21, name: 'expired_paper_cycle_terminalization' },
       { migration_id: 22, name: 'observe_reconciliation_recovery' },
       { migration_id: 23, name: 'legacy_observe_recovery' },
+      { migration_id: 24, name: 'paper_cycle_closures' },
+      { migration_id: 25, name: 'forward_performance_receipts' },
     ])
   })
 
