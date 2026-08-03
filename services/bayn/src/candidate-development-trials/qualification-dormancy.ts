@@ -1,4 +1,4 @@
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import type {
   CandidateDevelopmentNextPreregistration,
@@ -6,9 +6,14 @@ import type {
   CandidateDevelopmentTrialState,
   CandidateDevelopmentTrialStateIssue,
 } from './model'
-import type { CandidateDevelopmentTrialLedgerState } from './ledger'
+import {
+  CandidateDevelopmentTrialLedgerSchema,
+  type CandidateDevelopmentTrialLedgerEntry,
+  type CandidateDevelopmentTrialLedgerState,
+} from './ledger'
 import { buildCandidateDevelopmentTrialState } from './lineage'
 import { validateCandidateDevelopmentTrialState } from './validation'
+import { strictParseOptions } from '../schemas'
 
 export type QualificationDormancyDecision =
   | {
@@ -128,6 +133,66 @@ const invalidLedger = (path: string): QualificationDormancyResult => ({
   issue: { path, reason: 'INVALID_STATE' },
 })
 
+const sameOrdinals = (left: readonly number[], right: readonly number[]): boolean =>
+  left.length === right.length && left.every((ordinal, index) => ordinal === right[index])
+
+const validateLedger = (
+  state: CandidateDevelopmentTrialLedgerState,
+):
+  | { readonly ok: true; readonly entries: readonly CandidateDevelopmentTrialLedgerEntry[] }
+  | { readonly ok: false; readonly result: QualificationDormancyResult } => {
+  const decoded = Schema.decodeUnknownResult(CandidateDevelopmentTrialLedgerSchema, strictParseOptions)(state.entries)
+  if (Result.isFailure(decoded)) return { ok: false, result: invalidLedger('entries') }
+
+  const entries = decoded.success
+  if (entries.length < 20) return { ok: false, result: invalidLedger('entries') }
+  for (const [index, entry] of entries.entries()) {
+    const expectedOrdinal = index + 1
+    if (entry.candidateOrdinal !== expectedOrdinal) {
+      return { ok: false, result: invalidLedger(`entries[${index}].candidateOrdinal`) }
+    }
+    if (entry.priorTrialCount !== index) {
+      return { ok: false, result: invalidLedger(`entries[${index}].priorTrialCount`) }
+    }
+  }
+
+  const candidate20 = entries[19]
+  if (candidate20?._tag !== 'PRECOMMIT_INVALID') return { ok: false, result: invalidLedger('entries[19]') }
+
+  const completedCandidateOrdinals = entries
+    .filter((entry) => entry._tag === 'QUALIFICATION_TERMINAL')
+    .map((entry) => entry.candidateOrdinal)
+  const developmentCandidateOrdinals = entries
+    .filter((entry) => entry._tag === 'DEVELOPMENT_REJECTED' || entry._tag === 'DEVELOPMENT_APPROVED')
+    .map((entry) => entry.candidateOrdinal)
+  if (!sameOrdinals(state.completedCandidateOrdinals, completedCandidateOrdinals)) {
+    return { ok: false, result: invalidLedger('completedCandidateOrdinals') }
+  }
+  if (!sameOrdinals(state.developmentCandidateOrdinals, developmentCandidateOrdinals)) {
+    return { ok: false, result: invalidLedger('developmentCandidateOrdinals') }
+  }
+
+  const invalidPrecommit = entries.find((entry) => entry._tag === 'PRECOMMIT_INVALID')
+  const projectedInvalidPrecommit = state.latestInvalidPrecommit
+  if (
+    (invalidPrecommit === undefined) !== (projectedInvalidPrecommit === null) ||
+    (invalidPrecommit !== undefined &&
+      (projectedInvalidPrecommit === null ||
+        projectedInvalidPrecommit.candidateOrdinal !== invalidPrecommit.candidateOrdinal ||
+        projectedInvalidPrecommit.priorTrialCount !== invalidPrecommit.priorTrialCount ||
+        projectedInvalidPrecommit.status !== 'PRECOMMIT_INVALID'))
+  ) {
+    return { ok: false, result: invalidLedger('latestInvalidPrecommit') }
+  }
+
+  const approvals = entries.filter((entry) => entry._tag === 'DEVELOPMENT_APPROVED')
+  if (approvals.length > 1 || (approvals.length === 1 && entries.at(-1)?._tag !== 'DEVELOPMENT_APPROVED')) {
+    return { ok: false, result: invalidLedger('entries.DEVELOPMENT_APPROVED') }
+  }
+
+  return { ok: true, entries }
+}
+
 /**
  * Qualification reads the append-only ledger, while the older history reducer remains available for immutable
  * archived evidence. Only a development approval entry can make the single active registration runnable.
@@ -143,9 +208,13 @@ export const qualificationDormancyDecisionFromLedgerState = (
     return invalidLedger('ledger')
   }
 
+  const validatedLedger = validateLedger(state)
+  if (!validatedLedger.ok) return validatedLedger.result
+  const entries = validatedLedger.entries
+
   const active = state.activeCandidate
   if (active === null) {
-    const last = state.entries.at(-1)
+    const last = entries.at(-1)
     if (state.latestInvalidPrecommit !== null) {
       return {
         ok: true,
@@ -166,33 +235,21 @@ export const qualificationDormancyDecisionFromLedgerState = (
   }
 
   const candidateOrdinal = active.preregistration.candidateOrdinal
-  const candidateEntries = state.entries.filter((entry) => entry.candidateOrdinal === candidateOrdinal)
-  if (candidateOrdinal !== active.preregistration.priorTrialCount + 1) {
+  const lastEntry = entries.at(-1)
+  const activeApproval = lastEntry?._tag === 'DEVELOPMENT_APPROVED' ? lastEntry : undefined
+  const closedEntryCount = activeApproval === undefined ? entries.length : entries.length - 1
+  if (candidateOrdinal !== closedEntryCount + 1 || active.preregistration.priorTrialCount !== closedEntryCount) {
     return invalidLedger('activeCandidate.preregistration.candidateOrdinal')
   }
-  const approvals = candidateEntries.filter((entry) => entry._tag === 'DEVELOPMENT_APPROVED')
-  if (approvals.length > 1) return invalidLedger('entries.DEVELOPMENT_APPROVED')
-  const approval = approvals[0]
   if (
-    approval !== undefined &&
-    (approval.priorTrialCount !== active.preregistration.priorTrialCount ||
-      approval.sourceRevision !== active.preregistration.preregistration.sourceRevision)
+    activeApproval !== undefined &&
+    (activeApproval.candidateOrdinal !== candidateOrdinal ||
+      activeApproval.priorTrialCount !== active.preregistration.priorTrialCount ||
+      activeApproval.sourceRevision !== active.preregistration.preregistration.sourceRevision)
   ) {
     return invalidLedger('entries.DEVELOPMENT_APPROVED.binding')
   }
-  if (candidateEntries.some((entry) => entry._tag === 'QUALIFICATION_TERMINAL')) {
-    return {
-      ok: true,
-      decision: { status: 'dormant', reason: 'qualification-attempt-consumed', candidateOrdinal },
-    }
-  }
-  if (candidateEntries.some((entry) => entry._tag === 'DEVELOPMENT_REJECTED')) {
-    return {
-      ok: true,
-      decision: { status: 'dormant', reason: 'development-rejected', candidateOrdinal },
-    }
-  }
-  if (approval === undefined) {
+  if (activeApproval === undefined) {
     return { ok: true, decision: { status: 'dormant', reason: 'development-not-approved', candidateOrdinal } }
   }
   return {

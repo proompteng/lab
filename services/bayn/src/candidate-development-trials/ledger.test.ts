@@ -55,6 +55,7 @@ describe('Bayn candidate development trial ledger', () => {
 
     const approved = {
       ...pending,
+      developmentCandidateOrdinals: [...pending.developmentCandidateOrdinals, 21],
       entries: [
         ...pending.entries,
         {
@@ -109,11 +110,12 @@ describe('Bayn candidate development trial ledger', () => {
     }
     expect(qualificationDormancyDecisionFromLedgerState(mismatched)).toEqual({
       ok: false,
-      issue: { path: 'entries.DEVELOPMENT_APPROVED.binding', reason: 'INVALID_STATE' },
+      issue: { path: 'entries[20].priorTrialCount', reason: 'INVALID_STATE' },
     })
 
     const duplicate = {
       ...base,
+      developmentCandidateOrdinals: [...base.developmentCandidateOrdinals, 21],
       entries: [
         ...base.entries,
         {
@@ -134,7 +136,56 @@ describe('Bayn candidate development trial ledger', () => {
     }
     expect(qualificationDormancyDecisionFromLedgerState(duplicate)).toEqual({
       ok: false,
-      issue: { path: 'entries.DEVELOPMENT_APPROVED', reason: 'INVALID_STATE' },
+      issue: { path: 'entries[21].candidateOrdinal', reason: 'INVALID_STATE' },
+    })
+  })
+
+  test('fails closed for an incomplete predecessor ledger and derives the active prior count from it', () => {
+    const activeCandidate = {
+      preregistration: {
+        ...candidate20Preregistration,
+        candidateOrdinal: 21,
+        priorTrialCount: 20,
+        preregistration: {
+          ...candidate20Preregistration.preregistration,
+          sourceRevision: 'a'.repeat(40),
+          blobOid: 'b'.repeat(40),
+        },
+      },
+      application: {},
+    }
+    const base = {
+      ...candidateDevelopmentTrialLedgerState,
+      activeCandidate,
+    } as unknown as CandidateDevelopmentTrialLedgerState
+
+    expect(
+      qualificationDormancyDecisionFromLedgerState({
+        ...base,
+        entries: base.entries.filter((entry) => entry.candidateOrdinal !== 19),
+      }),
+    ).toEqual({ ok: false, issue: { path: 'entries', reason: 'INVALID_STATE' } })
+
+    expect(
+      qualificationDormancyDecisionFromLedgerState({
+        ...base,
+        entries: base.entries.map((entry) =>
+          entry.candidateOrdinal === 19 ? { ...entry, priorTrialCount: 0 } : entry,
+        ),
+      }),
+    ).toEqual({ ok: false, issue: { path: 'entries[18].priorTrialCount', reason: 'INVALID_STATE' } })
+
+    expect(
+      qualificationDormancyDecisionFromLedgerState({
+        ...base,
+        activeCandidate: {
+          ...activeCandidate,
+          preregistration: { ...activeCandidate.preregistration, priorTrialCount: 19 },
+        },
+      } as unknown as CandidateDevelopmentTrialLedgerState),
+    ).toEqual({
+      ok: false,
+      issue: { path: 'activeCandidate.preregistration.candidateOrdinal', reason: 'INVALID_STATE' },
     })
   })
 })

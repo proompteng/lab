@@ -41,6 +41,8 @@ const TrialLedgerEntrySchema = Schema.Union([
 
 const TrialLedgerSchema = Schema.Array(TrialLedgerEntrySchema)
 
+export const CandidateDevelopmentTrialLedgerSchema = TrialLedgerSchema
+
 export type CandidateDevelopmentTrialLedgerEntry = typeof TrialLedgerEntrySchema.Type
 
 const historicalLedger = [
