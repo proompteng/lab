@@ -728,9 +728,9 @@ describe('forward performance read program', () => {
         (statement) =>
           statement.includes("cycle.state IN ('PENDING', 'ACTIVE', 'BLOCKED')") &&
           statement.includes('cycle.account_id = scope_generation.account_id') &&
-          statement.includes('cycle.submission_open_at >= scope_generation.activated_at') &&
+          statement.includes('cycle.created_at >= scope_generation.activated_at') &&
           statement.includes('next_generation.previous_generation_hash = scope_generation.generation_hash') &&
-          statement.includes('cycle.submission_open_at >= next_generation.activated_at'),
+          statement.includes('cycle.created_at >= next_generation.activated_at'),
       ),
     ).toBe(true)
     expect(
@@ -742,7 +742,7 @@ describe('forward performance read program', () => {
       observation.statements.some((statement) =>
         statement.includes('event.observed_at < next_generation.activated_at'),
       ),
-    ).toBe(false)
+    ).toBe(true)
     expect(
       observation.statements.some((statement) =>
         statement.includes('reconciliation.reconciled_at < next_generation.activated_at'),

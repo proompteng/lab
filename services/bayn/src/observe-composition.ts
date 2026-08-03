@@ -1333,6 +1333,33 @@ const readMutationPreparationFacts = (
     }
   })
 
+const readCloseMutationPreparationFacts = (
+  request: MutationPreparationFactsRequest<
+    ObserveDecisionRuntime,
+    ReconciliationPassError,
+    ObserveAutonomousCycleInput,
+    ObserveStartupPreparation
+  >,
+): Effect.Effect<MutationPreparationFacts, CycleRunnerError, ObserveDecisionRuntime> =>
+  Effect.gen(function* () {
+    const reconciliation = yield* request.reconcile.pipe(
+      Effect.mapError((cause) => mutationRunnerError('PAPER close reconciliation failed', cause)),
+    )
+    const evaluatedAt = yield* currentUtcInstant
+    const authority = yield* Effect.fromResult(
+      requireMutationAuthorityGeneration(reconciliation, request.policy, request.input.authorityGenerationHash),
+    ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
+    return {
+      snapshot: {
+        contentHash: request.document.bindings.snapshotContentHash,
+        finalizedAt: request.document.bindings.snapshotFinalizedAt,
+      },
+      reconciliation,
+      authority: authority.authority,
+      evaluatedAt,
+    }
+  })
+
 export const prepareNextMutationIntent = (
   input: ObserveAutonomousCycleInput,
   preparation: ObserveStartupPreparation,
@@ -1344,7 +1371,7 @@ export const prepareNextMutationIntent = (
 ): Effect.Effect<PreparedMutationCycleStep, CycleRunnerError, ObserveDecisionRuntime | IntentStore | MutationStore> =>
   prepareMutationIntent(input, preparation, policy, cycle, document, reconcile, allowSubmit, {
     now: currentUtcInstant,
-    readFacts: readMutationPreparationFacts,
+    readFacts: input.mutationPhase === 'CLOSE' ? readCloseMutationPreparationFacts : readMutationPreparationFacts,
     restrictAuthority: restrictMutationAuthority,
   })
 

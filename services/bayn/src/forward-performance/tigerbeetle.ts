@@ -170,24 +170,24 @@ const validateCashYieldEvidence = (
 export const readForwardPerformanceLedger = (
   config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
   accountId: string,
-  ledgerPlans: readonly LedgerPlan[],
+  accountPlans: readonly LedgerPlan[],
   cashYieldEvidence?: ForwardPerformanceCashYieldEvidence,
   dependencies?: JournalDependencies,
-  generationPlans: readonly LedgerPlan[] = ledgerPlans,
+  generationPlans: readonly LedgerPlan[] = accountPlans,
 ): Effect.Effect<ForwardPerformanceLedgerEvidence, ForwardPerformanceLedgerError, Scope.Scope> =>
   Effect.gen(function* () {
     const cashYieldResidual = yield* Effect.fromResult(validateCashYieldEvidence(cashYieldEvidence)).pipe(
       Effect.mapError(ledgerError),
     )
-    const plan = yield* Effect.fromResult(assembleAccountPlan(accountId, ledgerPlans)).pipe(
+    const accountPlan = yield* Effect.fromResult(assembleAccountPlan(accountId, accountPlans)).pipe(
       Effect.mapError(ledgerError),
     )
     const generationPlan = yield* Effect.fromResult(assembleAccountPlan(accountId, generationPlans)).pipe(
       Effect.mapError(ledgerError),
     )
-    const boundedQueries = yield* Effect.fromResult(accountReconciliationQueries(plan, config.tigerBeetle.ledger)).pipe(
-      Effect.mapError(ledgerError),
-    )
+    const boundedQueries = yield* Effect.fromResult(
+      accountReconciliationQueries(accountPlan, config.tigerBeetle.ledger),
+    ).pipe(Effect.mapError(ledgerError))
     const queries = {
       accounts: { ...boundedQueries.accounts, limit: LEDGER_BATCH_MAX },
       transfers: { ...boundedQueries.transfers, limit: LEDGER_BATCH_MAX },
@@ -218,10 +218,10 @@ export const readForwardPerformanceLedger = (
       )
     }
 
-    const expectedAccountIds = new Set(plan.accounts.map((account) => account.id))
+    const expectedAccountIds = new Set(accountPlan.accounts.map((account) => account.id))
     const actualAccountIds = new Set(accounts.map((account) => account.id))
     const missingLedgerAccountCount = [...expectedAccountIds].filter((id) => !actualAccountIds.has(id)).length
-    const reconciliation = reconcileLedgerPlan(plan, accounts, transfers, 'verify-account')
+    const reconciliation = reconcileLedgerPlan(accountPlan, accounts, transfers, 'verify-account')
 
     return {
       totals: {

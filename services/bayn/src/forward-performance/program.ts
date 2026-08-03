@@ -66,7 +66,7 @@ export interface ForwardPerformanceReaders {
   readonly ledger: (
     config: Pick<LoadedRuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
     accountId: string,
-    ledgerPlans: readonly LedgerPlan[],
+    accountPlans: readonly LedgerPlan[],
     cashYieldEvidence?: ForwardPerformanceCashYieldEvidence,
     generationPlans?: readonly LedgerPlan[],
   ) => Effect.Effect<ForwardPerformanceLedgerEvidence, ForwardPerformanceLedgerError, Scope.Scope>
@@ -78,8 +78,8 @@ export interface ForwardPerformanceReaders {
 
 export const liveForwardPerformanceReaders: ForwardPerformanceReaders = {
   postgres: readForwardPerformancePostgres,
-  ledger: (config, accountId, plans, cashYieldEvidence, generationPlans) =>
-    readForwardPerformanceLedger(config, accountId, plans, cashYieldEvidence, undefined, generationPlans),
+  ledger: (config, accountId, accountPlans, cashYieldEvidence, generationPlans) =>
+    readForwardPerformanceLedger(config, accountId, accountPlans, cashYieldEvidence, undefined, generationPlans),
   marketVolume: readForwardPerformanceMarketVolume,
 }
 
@@ -524,7 +524,7 @@ export const runForwardPerformance = (
     const accountingVerification = verifyAccountingReceipts(postgres.transactions, postgres.receipts, config)
     const generationPlans = Result.isSuccess(accountingVerification) ? accountingVerification.success.plans : []
     const ledgerVerification = verifyAccountingReceipts(postgres.ledgerTransactions, postgres.ledgerReceipts, config)
-    const ledgerPlans = Result.isSuccess(ledgerVerification) ? ledgerVerification.success.plans : []
+    const accountPlans = Result.isSuccess(ledgerVerification) ? ledgerVerification.success.plans : []
     const accountingReceiptsExact =
       Result.isSuccess(accountingVerification) &&
       postgres.unaccountedFillCount === 0 &&
@@ -532,7 +532,7 @@ export const runForwardPerformance = (
       [...accountingVerification.success.exactReceipts.values()].every(Boolean)
 
     const ledger = yield* readers
-      .ledger(config, identity.accountId, ledgerPlans, postgres.cashYieldEvidence, generationPlans)
+      .ledger(config, identity.accountId, accountPlans, postgres.cashYieldEvidence, generationPlans)
       .pipe(Effect.mapError((cause) => programError('ledger-read', cause.message, cause)))
     const reconciliation =
       postgres.reconciliation === undefined

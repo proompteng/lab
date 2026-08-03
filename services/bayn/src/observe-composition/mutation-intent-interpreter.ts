@@ -69,6 +69,7 @@ export type MutationPreparationFactsRequest<
   readonly preparation: P
   readonly policy: Policy
   readonly cycle: AutonomousCycle
+  readonly document: PaperDecisionDocument
   readonly reconcile: Effect.Effect<ReconciliationPassResult, E, R>
 }
 
@@ -450,7 +451,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
       { concurrency: 1, discard: true },
     )
 
-    const facts = yield* dependencies.readFacts({ input, preparation, policy, cycle, reconcile })
+    const facts = yield* dependencies.readFacts({ input, preparation, policy, cycle, document, reconcile })
     if (
       document.bindings.snapshotContentHash !== facts.snapshot.contentHash ||
       document.bindings.snapshotFinalizedAt !== facts.snapshot.finalizedAt

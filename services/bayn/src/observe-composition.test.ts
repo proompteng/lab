@@ -2082,6 +2082,61 @@ describe('OBSERVE runtime composition', () => {
     ])
     expect(close.targetPlan.intentTargets).toHaveLength(1)
     expect(close.dispatchable).toBe(true)
+
+    const committedIntents = new Map<string, StoredIntent>()
+    const closeIntentStore: IntentStoreService = {
+      commit: () => Effect.die(new Error('close admission must use commitClosing')),
+      commitClosing: (intent) =>
+        Effect.sync(() => {
+          const record = storedIntent(intent, IntentState.Planned, close.createdAt)
+          committedIntents.set(intent.intentId, record)
+          return { record, deduplicated: false }
+        }),
+      read: (intentId) => {
+        const record = committedIntents.get(intentId)
+        return Effect.succeed(record === undefined ? Option.none() : Option.some(record))
+      },
+    }
+    const closeMutationStore = {
+      latest: () => Effect.succeed(undefined),
+    } as unknown as MutationStoreShape
+    const admission = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(observedAt))
+        return yield* prepareNextMutationIntent(
+          {
+            ...fixture.input,
+            mutationPhase: 'CLOSE',
+            paperEpisodeCutoffAt: fixture.document.submissionCutoffAt,
+            paperEpisodeExpiresAt: closeExpiresAt,
+          },
+          fixture.preparation,
+          fixture.policy,
+          fixture.boundCycle,
+          close,
+          Effect.succeed(currentReconciliation),
+        )
+      }).pipe(
+        Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+        Effect.provideService(MarketData, marketData([])),
+        Effect.provideService(IntentStore, closeIntentStore),
+        Effect.provideService(MutationStore, closeMutationStore),
+        Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
+        Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
+        Effect.provideService(ValuationStore, {} as ValuationStoreShape),
+        Effect.provideService(ReconciliationStore, {} as ReconciliationStoreShape),
+        Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
+        Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
+        Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+
+    expect(admission).toMatchObject({
+      _tag: 'Execute',
+      action: 'SUBMIT',
+      intentId: close.orderedIntentIds[0],
+    })
   })
 
   test('keeps a rejected PAPER close intent recoverable while reconciliation still shows an open position', async () => {

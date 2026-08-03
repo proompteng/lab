@@ -258,6 +258,7 @@ const INTEGER_PATTERN = /^(?:0|-[1-9][0-9]*|[1-9][0-9]*)$/
 
 type GenerationScopeTarget =
   | 'cycle'
+  | 'unclosed-cycle'
   | 'intent'
   | 'transaction'
   | 'reconciliation'
@@ -306,14 +307,31 @@ const generationScope = (
             )
             OR (
               cycle.state IN ('PENDING', 'ACTIVE', 'BLOCKED')
-              AND cycle.submission_open_at >= scope_generation.activated_at
+              AND cycle.created_at >= scope_generation.activated_at
               AND NOT EXISTS (
                 SELECT 1
                 FROM authority_generations AS next_generation
                 WHERE next_generation.previous_generation_hash = scope_generation.generation_hash
-                  AND cycle.submission_open_at >= next_generation.activated_at
+                  AND cycle.created_at >= next_generation.activated_at
               )
             )
+          )
+      )`
+    case 'unclosed-cycle':
+      return sql`EXISTS (
+        SELECT 1
+        FROM authority_generations AS scope_generation
+        LEFT JOIN authority_generations AS next_generation
+          ON next_generation.previous_generation_hash = scope_generation.generation_hash
+        WHERE scope_generation.generation_hash = ${authorityGenerationHash}
+          AND scope_generation.maximum = 'PAPER'
+          AND scope_generation.account_id = ${accountId}
+          AND scope_generation.qualification_run_id = cycle.qualification_run_id
+          AND cycle.account_id = scope_generation.account_id
+          AND cycle.created_at >= scope_generation.activated_at
+          AND (
+            next_generation.activated_at IS NULL
+            OR cycle.created_at < next_generation.activated_at
           )
       )`
     case 'intent':
@@ -360,11 +378,17 @@ const generationScope = (
       return sql`EXISTS (
         SELECT 1
         FROM authority_generations AS scope_generation
+        LEFT JOIN authority_generations AS next_generation
+          ON next_generation.previous_generation_hash = scope_generation.generation_hash
         WHERE scope_generation.generation_hash = ${authorityGenerationHash}
           AND scope_generation.maximum = 'PAPER'
           AND scope_generation.account_id = ${accountId}
           AND snapshot.account_id = scope_generation.account_id
           AND event.observed_at >= scope_generation.activated_at
+          AND (
+            next_generation.activated_at IS NULL
+            OR event.observed_at < next_generation.activated_at
+          )
       )`
     case 'opening-snapshot':
       return sql`EXISTS (
@@ -440,6 +464,26 @@ const closingSnapshotBoundary = (
     ? sql`latest_reconciliation.reconciled_at`
     : sql`LEAST(
         latest_reconciliation.reconciled_at,
+        COALESCE(
+          (
+            SELECT MAX(cycle.terminal_at)
+            FROM autonomous_cycles AS cycle
+            WHERE cycle.account_id = ${accountId}
+              AND cycle.state IN ('COMPLETED', 'NO_TRADE')
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
+          ),
+          latest_reconciliation.reconciled_at
+        ),
+        COALESCE(
+          (
+            SELECT MIN(next_generation.activated_at) - INTERVAL '1 microsecond'
+            FROM authority_generations AS next_generation
+            WHERE next_generation.previous_generation_hash = ${authorityGenerationHash}
+              AND next_generation.maximum = 'PAPER'
+              AND next_generation.account_id = ${accountId}
+          ),
+          latest_reconciliation.reconciled_at
+        ),
         COALESCE(
           (
             SELECT MIN(next_intent.created_at) - INTERVAL '1 microsecond'
@@ -1415,7 +1459,7 @@ export const readForwardPerformancePostgres = (
             -- A terminally blocked PAPER cycle is terminal evidence of an incomplete generation.
             -- Count it as unclosed so an earlier successful cycle cannot produce a sufficient receipt.
             AND cycle.state IN ('PENDING', 'ACTIVE', 'BLOCKED')
-            AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
+            AND ${generationScope(sql, accountId, authorityGenerationHash, 'unclosed-cycle')}
         `.pipe(Effect.flatMap(decodeCount))
 
         const [unresolvedMutations] = yield* sql<Record<string, unknown>>`
