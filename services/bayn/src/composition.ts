@@ -775,7 +775,7 @@ export const retryClosedCycleReceipts = (
         service: 'bayn',
         authorityGenerationCutoffAt: cutoffAt,
         authorityGenerationCloseExpiresAt: closeExpiresAt,
-        receiptRetryDeadlineAt: new Date(receiptRetryDeadlineMs).toISOString(),
+        receiptRetryDeadlineMs,
         attempts,
       }),
     )
