@@ -747,19 +747,25 @@ const makeClosedCycleReceiptEmitter =
 export const retryClosedCycleReceipts = (
   emit: (cycleId: string | undefined, observedAt: string) => Effect.Effect<boolean>,
   cutoffAt: string,
+  retryUntilAt: string,
   intervalMs: number,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     const interval = Math.max(1_000, intervalMs)
+    const cutoffMs = Date.parse(cutoffAt)
+    const retryUntilMs = Date.parse(retryUntilAt)
+    if (!Number.isFinite(cutoffMs) || !Number.isFinite(retryUntilMs) || retryUntilMs < cutoffMs) return
     while (true) {
       const observedAt = yield* currentUtcInstant
-      const untilCutoff = Date.parse(cutoffAt) - Date.parse(observedAt)
+      const observedMs = Date.parse(observedAt)
+      const untilCutoff = cutoffMs - observedMs
       if (untilCutoff > 0) {
         yield* Effect.sleep(Duration.millis(Math.min(interval, untilCutoff)))
         continue
       }
       if (yield* emit(undefined, observedAt)) return
-      yield* Effect.sleep(Duration.millis(interval))
+      if (observedMs >= retryUntilMs) return
+      yield* Effect.sleep(Duration.millis(Math.min(interval, retryUntilMs - observedMs)))
     }
   })
 
@@ -990,6 +996,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                       retryClosedCycleReceipts(
                                         emitClosedCycleReceipt,
                                         request.cutoffAt,
+                                        paperEpisodeCloseExpiresAt(request.expiresAt),
                                         realizedPlan.config.alpaca.reconciliationIntervalMs,
                                       ),
                                     ).pipe(Effect.asVoid),
