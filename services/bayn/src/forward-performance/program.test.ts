@@ -711,6 +711,19 @@ describe('forward performance read program', () => {
     expect(
       observation.statements.some(
         (statement) =>
+          statement.includes("scoped_decision.schema_version = 'bayn.paper-cycle-decision.v1'") &&
+          statement.includes("scoped_decision.document #>> '{bindings,authorityGenerationHash}'") &&
+          statement.includes('scoped_intent.authority_generation_hash = scope_generation.generation_hash'),
+      ),
+    ).toBe(true)
+    expect(
+      observation.statements.some((statement) =>
+        statement.includes('cycle.submission_open_at >= scope_generation.activated_at'),
+      ),
+    ).toBe(false)
+    expect(
+      observation.statements.some(
+        (statement) =>
           statement.includes('JOIN intents AS scope_intent') &&
           statement.includes('scope_intent.intent_id = transaction.intent_id') &&
           statement.includes('scope_intent.authority_generation_hash = scope_generation.generation_hash'),

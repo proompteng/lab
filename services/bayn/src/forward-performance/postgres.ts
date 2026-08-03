@@ -274,16 +274,29 @@ const generationScope = (
       return sql`EXISTS (
         SELECT 1
         FROM authority_generations AS scope_generation
-        LEFT JOIN authority_generations AS next_generation
-          ON next_generation.previous_generation_hash = scope_generation.generation_hash
         WHERE scope_generation.generation_hash = ${authorityGenerationHash}
           AND scope_generation.maximum = 'PAPER'
           AND scope_generation.account_id = ${accountId}
           AND scope_generation.qualification_run_id = cycle.qualification_run_id
-          AND cycle.submission_open_at >= scope_generation.activated_at
           AND (
-            next_generation.activated_at IS NULL
-            OR cycle.submission_open_at < next_generation.activated_at
+            EXISTS (
+              SELECT 1
+              FROM autonomous_cycle_shadow_decisions AS scoped_decision
+              WHERE scoped_decision.cycle_id = cycle.cycle_id
+                AND scoped_decision.decision_hash = cycle.decision_hash
+                AND scoped_decision.schema_version = 'bayn.paper-cycle-decision.v1'
+                AND scoped_decision.document ->> 'mode' = 'PAPER'
+                AND scoped_decision.document #>> '{bindings,accountId}' = scope_generation.account_id
+                AND scoped_decision.document #>> '{bindings,qualificationRunId}' = cycle.qualification_run_id
+                AND scoped_decision.document #>> '{bindings,authorityGenerationHash}' = scope_generation.generation_hash
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM intents AS scoped_intent
+              WHERE scoped_intent.cycle_id = cycle.cycle_id
+                AND scoped_intent.account_id = scope_generation.account_id
+                AND scoped_intent.authority_generation_hash = scope_generation.generation_hash
+            )
           )
       )`
     case 'intent':

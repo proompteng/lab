@@ -83,6 +83,7 @@ import {
   makeMutationAutonomousCycleStartup,
   makeObserveAutonomousCycleStartup,
   paperEpisodeCloseExpiresAt,
+  paperEpisodeReceiptFinalizationExpiresAt,
 } from './observe-composition'
 import { restrictMutationAuthority } from './observe-composition/mutation-interpreter'
 import { sqlResource } from './operations'
@@ -996,7 +997,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                       retryClosedCycleReceipts(
                                         emitClosedCycleReceipt,
                                         request.cutoffAt,
-                                        paperEpisodeCloseExpiresAt(request.expiresAt),
+                                        paperEpisodeReceiptFinalizationExpiresAt(request.expiresAt),
                                         realizedPlan.config.alpaca.reconciliationIntervalMs,
                                       ),
                                     ).pipe(Effect.asVoid),

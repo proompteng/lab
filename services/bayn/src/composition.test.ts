@@ -4,6 +4,7 @@ import { Effect, Fiber } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { retryClosedCycleReceipts } from './composition'
+import { paperEpisodeReceiptFinalizationExpiresAt } from './observe-composition'
 
 describe('Bayn PAPER receipt retry boundary', () => {
   test('keeps retrying through the close lease instead of a fixed attempt count', async () => {
@@ -63,7 +64,7 @@ describe('Bayn PAPER receipt retry boundary', () => {
     expect(observedAt.at(-1)).toBe(new Date(startAt + 8_000).toISOString())
   })
 
-  test('stops receipt retries at the bounded close lease when evidence never becomes eligible', async () => {
+  test('stops receipt retries at the bounded finalization lease when evidence never becomes eligible', async () => {
     const startAt = Date.parse('2026-08-03T12:00:00.000Z')
     const cutoffAt = new Date(startAt + 1_000).toISOString()
     const retryUntilAt = new Date(startAt + 4_000).toISOString()
@@ -90,5 +91,9 @@ describe('Bayn PAPER receipt retry boundary', () => {
 
     expect(observedAt).toHaveLength(4)
     expect(observedAt.at(-1)).toBe(retryUntilAt)
+  })
+
+  test('leaves a bounded post-close finalization window for late settlement', () => {
+    expect(paperEpisodeReceiptFinalizationExpiresAt('2026-08-03T12:00:00.000Z')).toBe('2026-08-03T12:30:00.000Z')
   })
 })
