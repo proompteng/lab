@@ -837,6 +837,64 @@ const makeClosingDecisionPlan = (
   })
 }
 
+const recoverPaperExecutionSession = (
+  preparation: ObserveStartupPreparation,
+  cycle: AutonomousCycle,
+  entryDocument: PaperDecisionDocument,
+): Result.Result<ExecutionSessionBinding, ObserveDecisionCompositionFailure> => {
+  const bindRecoveredSession = (input: Parameters<typeof bindCycleExecutionSession>[0]) =>
+    Result.mapError(bindCycleExecutionSession(input), (cause) =>
+      compositionFailure('cycle-binding', 'PAPER execution-session binding does not match its cycle', cause),
+    )
+  const persistedSession = entryDocument.executionSession
+  if (persistedSession !== undefined) {
+    return bindRecoveredSession({
+      cycle,
+      signal: persistedSession.signal,
+      planningBrokerState: persistedSession.planningBrokerState,
+      calendar: persistedSession.calendar,
+      executionModel: preparation.executionModel,
+    })
+  }
+
+  const legacyCalendarMaterial = {
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+    source: 'alpaca-v2-calendar' as const,
+    requestedRange: {
+      start: cycle.identity.signalSessionDate,
+      end: cycle.identity.executionSessionDate,
+    },
+    timeZone: 'UTC' as const,
+    sessions: [
+      {
+        date: cycle.window.executionSessionDate,
+        openAt: cycle.window.executionOpenAt,
+        closeAt: cycle.window.executionCloseAt,
+      },
+    ],
+  }
+  return Result.flatMap(
+    Result.mapError(canonicalHashV1Result(legacyCalendarMaterial), (cause) =>
+      compositionFailure('cycle-binding', 'legacy PAPER close calendar material is not canonicalizable', cause),
+    ),
+    (normalizedResponseHash) =>
+      bindRecoveredSession({
+        cycle,
+        signal: {
+          sessionDate: cycle.identity.signalSessionDate,
+          finalizedAt: entryDocument.bindings.snapshotFinalizedAt,
+          contentHash: entryDocument.bindings.snapshotContentHash,
+        },
+        planningBrokerState: {
+          observedAt: entryDocument.createdAt,
+          contentHash: entryDocument.bindings.planningBrokerStateHash,
+        },
+        calendar: { ...legacyCalendarMaterial, normalizedResponseHash },
+        executionModel: preparation.executionModel,
+      }),
+  )
+}
+
 export const buildClosingPaperCycleDecision = (
   input: ObserveAutonomousCycleInput,
   preparation: ObserveStartupPreparation,
@@ -855,16 +913,9 @@ export const buildClosingPaperCycleDecision = (
     const executionAuthority = yield* Effect.fromResult(
       requireMutationAuthorityGeneration(reconciliation, policy, input.authorityGenerationHash),
     ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
-    const executionSession = entryDocument.executionSession
-    if (executionSession === undefined) {
-      return yield* Effect.fail(
-        mutationRunnerError(
-          'active PAPER cycle has no persisted execution session for its close plan',
-          undefined,
-          'contract',
-        ),
-      )
-    }
+    const executionSession = yield* Effect.fromResult(
+      recoverPaperExecutionSession(preparation, cycle, entryDocument),
+    ).pipe(Effect.mapError((cause) => mutationRunnerError(cause.message, cause, 'contract')))
     const symbols = [
       ...entryDocument.targetPlan.targets.map((target) => target.symbol),
       ...reconciliation.brokerState.positions.map((position) => position.symbol),

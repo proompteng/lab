@@ -2072,31 +2072,36 @@ describe('OBSERVE runtime composition', () => {
         reconciliation: closeReconciliation,
       },
     }
-    const program = Effect.gen(function* () {
-      yield* TestClock.setTime(Date.parse(observedAt))
-      return yield* buildClosingPaperCycleDecision(
-        fixture.input,
-        fixture.preparation,
-        fixture.policy,
-        fixture.boundCycle,
-        fixture.document,
-        Effect.succeed(currentReconciliation),
-        closeExpiresAt,
+    const buildClose = (entryDocument: typeof fixture.document) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(observedAt))
+          return yield* buildClosingPaperCycleDecision(
+            fixture.input,
+            fixture.preparation,
+            fixture.policy,
+            fixture.boundCycle,
+            entryDocument,
+            Effect.succeed(currentReconciliation),
+            closeExpiresAt,
+          )
+        }).pipe(
+          Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+          Effect.provideService(MarketData, marketData([])),
+          Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
+          Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
+          Effect.provideService(ValuationStore, {} as ValuationStoreShape),
+          Effect.provideService(ReconciliationStore, {} as ReconciliationStoreShape),
+          Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
+          Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
+          Effect.provideService(WriterFence, {} as WriterFenceService),
+          Effect.provide(TestClock.layer()),
+        ),
       )
-    }).pipe(
-      Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
-      Effect.provideService(MarketData, marketData([])),
-      Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
-      Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
-      Effect.provideService(ValuationStore, {} as ValuationStoreShape),
-      Effect.provideService(ReconciliationStore, {} as ReconciliationStoreShape),
-      Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
-      Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
-      Effect.provideService(WriterFence, {} as WriterFenceService),
-      Effect.provide(TestClock.layer()),
-    )
 
-    const close = await Effect.runPromise(program)
+    const close = await buildClose(fixture.document)
+    const { executionSession: _legacyExecutionSession, ...legacyDocument } = fixture.document
+    const legacyClose = await buildClose(legacyDocument as typeof fixture.document)
 
     expect(close.executionSession).toEqual(fixture.document.executionSession)
     expect(close.targetPlan.intentTargets).toMatchObject([
@@ -2108,6 +2113,7 @@ describe('OBSERVE runtime composition', () => {
     ])
     expect(close.targetPlan.intentTargets).toHaveLength(1)
     expect(close.dispatchable).toBe(true)
+    expect(legacyClose.targetPlan.intentTargets).toEqual(close.targetPlan.intentTargets)
 
     const committedIntents = new Map<string, StoredIntent>()
     const closeIntentStore: IntentStoreService = {
