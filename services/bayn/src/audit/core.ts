@@ -1,5 +1,6 @@
 import { Result } from 'effect'
 
+import { riskBalancedTrendBehaviorHash } from '../behavior'
 import { makeRuntimeProvenanceResult, type RuntimeProvenance } from '../contracts'
 import { canonicalHashV1Result } from '../hash'
 import type { QualificationLock, QualificationResult } from '../qualification'
@@ -110,6 +111,17 @@ export const makeEvaluationSummary = (
   markedEquityReconciliation: markedEquity,
 })
 
+const hasTerminalCloseEvent = (database: AuditDatabaseSnapshot): boolean =>
+  database.events.some(({ payload }) => payload.kind === 'decision' && payload.terminalClose === true)
+
+/**
+ * Terminal liquidation is part of the v4 behavior identity, not a property of whether the
+ * strategy happened to need a closing decision on its final session. The event marker remains
+ * the compatibility path for v6 evidence written before that identity was persisted.
+ */
+export const usesTerminalReplaySemantics = (database: AuditDatabaseSnapshot): boolean =>
+  database.protocol.behaviorHash === riskBalancedTrendBehaviorHash || hasTerminalCloseEvent(database)
+
 export type MarkedEquityAuditMaterial =
   | { readonly _tag: 'Available'; readonly proof: MarkedEquityProof }
   | { readonly _tag: 'Unavailable'; readonly evidence: string }
@@ -193,11 +205,9 @@ export const makeAuditFacts = (
   })
   if (Result.isFailure(provenanceResult)) return Result.fail(provenanceResult.failure)
   // Terminal liquidation was added after the v6 evaluation contract was already persisted.
-  // A durable terminal-close decision is the marker for the new replay semantics; old v6 runs
-  // without that marker must continue through the legacy marked-end replay.
-  const closeAtEnd = database.events.some(
-    ({ payload }) => payload.kind === 'decision' && payload.terminalClose === true,
-  )
+  // The persisted v4 behavior identity is the durable marker even when a flat strategy emits no
+  // terminal-close decision; the event marker preserves legacy v6 evidence semantics.
+  const closeAtEnd = usesTerminalReplaySemantics(database)
   const referenceResult = evaluateReference(
     input.bars,
     input.manifest,
