@@ -26,7 +26,7 @@ import { candidate18Preregistration } from './candidate-development-calendar'
 import type { QualificationAuditReport } from './audit/audit'
 import type { QualificationCandidateBindingReceipt } from './qualification-binding'
 import { fixtureLock, fixtureRuntime } from './app-test-support'
-import { activeStrategyBehaviorHash } from './strategy'
+import { activeStrategyBehaviorHash, bindReviewedStrategySource } from './strategy'
 
 const prelock = (
   overrides: Partial<QualificationCollectorPrelockEvidence> = {},
@@ -248,13 +248,12 @@ describe('qualification collector boundaries', () => {
   })
 
   test('separates candidate module provenance from deployed behavior and parameter identity', () => {
-    const source = { moduleSha256: '8'.repeat(64) }
-    const matching = makeQualificationCandidateRuntime(
-      fixtureRuntime.application,
-      deployment(),
-      source,
-      candidate18Preregistration,
-    )
+    const source = {
+      modulePath: candidate18Preregistration.modulePath,
+      moduleSha256: candidate18Preregistration.moduleSha256,
+    }
+    const application = bindReviewedStrategySource(fixtureRuntime.application, source)
+    const matching = makeQualificationCandidateRuntime(application, deployment(), source, candidate18Preregistration)
     expect(Result.isSuccess(matching)).toBe(true)
     if (Result.isSuccess(matching)) {
       expect(matching.success.moduleSha256).toBe(source.moduleSha256)
@@ -262,7 +261,7 @@ describe('qualification collector boundaries', () => {
     }
 
     const behaviorMismatch = makeQualificationCandidateRuntime(
-      fixtureRuntime.application,
+      application,
       deployment({ strategyBehaviorHash: '0'.repeat(64) }),
       source,
       candidate18Preregistration,
@@ -273,7 +272,7 @@ describe('qualification collector boundaries', () => {
     })
 
     const parameterMismatch = makeQualificationCandidateRuntime(
-      fixtureRuntime.application,
+      application,
       deployment({ strategyParameterHash: '1'.repeat(64) }),
       source,
       candidate18Preregistration,
@@ -281,6 +280,17 @@ describe('qualification collector boundaries', () => {
     expect(parameterMismatch).toMatchObject({
       _tag: 'Failure',
       failure: { code: 'deployment-strategy-parameter-mismatch' },
+    })
+
+    const substitutedApplication = bindReviewedStrategySource(fixtureRuntime.application, {
+      ...source,
+      moduleSha256: '0'.repeat(64),
+    })
+    expect(
+      makeQualificationCandidateRuntime(substitutedApplication, deployment(), source, candidate18Preregistration),
+    ).toMatchObject({
+      _tag: 'Failure',
+      failure: { code: 'candidate-application-source-mismatch' },
     })
   })
 

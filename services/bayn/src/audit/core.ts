@@ -1,6 +1,6 @@
 import { Result } from 'effect'
 
-import { riskBalancedTrendBehaviorHash } from '../behavior'
+import { riskBalancedTrendTerminalReplayBehaviorHashes } from '../behavior'
 import { makeRuntimeProvenanceResult, type RuntimeProvenance } from '../contracts'
 import { canonicalHashV1Result } from '../hash'
 import type { QualificationLock, QualificationResult } from '../qualification'
@@ -120,7 +120,8 @@ const hasTerminalCloseEvent = (database: AuditDatabaseSnapshot): boolean =>
  * the compatibility path for v6 evidence written before that identity was persisted.
  */
 export const usesTerminalReplaySemantics = (database: AuditDatabaseSnapshot): boolean =>
-  database.protocol.behaviorHash === riskBalancedTrendBehaviorHash || hasTerminalCloseEvent(database)
+  riskBalancedTrendTerminalReplayBehaviorHashes.includes(database.protocol.behaviorHash) ||
+  hasTerminalCloseEvent(database)
 
 export type MarkedEquityAuditMaterial =
   | { readonly _tag: 'Available'; readonly proof: MarkedEquityProof }

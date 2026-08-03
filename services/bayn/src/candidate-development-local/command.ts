@@ -26,7 +26,12 @@ import {
   hashEvaluationTargets,
   hashStrategyEvaluation,
 } from '../strategy/evaluation-runner'
-import { makeActiveStrategyApplication, type StrategyApplication, type StrategyDefinition } from '../strategy'
+import {
+  bindReviewedStrategySource,
+  makeActiveStrategyApplication,
+  type StrategyApplication,
+  type StrategyDefinition,
+} from '../strategy'
 import { qualificationDormancyDecisionFromLedgerState } from '../candidate-development-trials/qualification-dormancy'
 import {
   bindCandidateDevelopmentLocalSource,
@@ -432,6 +437,7 @@ const prepareCandidateDevelopmentLocalAttempt = (
         const provenance = makeCandidateProvenance(application.definition, bound.success)
         if (Result.isFailure(provenance)) throw provenance.failure
         const binding = verifyCandidateBinding(
+          application,
           application.definition,
           bound.success,
           manifest.success,
@@ -513,11 +519,21 @@ const makeCandidateProvenance = (
 }
 
 const verifyCandidateBinding = (
+  application: StrategyApplication<any, any, any>,
   definition: StrategyDefinition<any, any, any>,
   source: CandidateDevelopmentLocalSourceBinding,
   sourceManifest: CandidateDevelopmentSourceManifest,
   provenance: RuntimeProvenance,
 ): Result.Result<void, CandidateDevelopmentLocalError> => {
+  if (
+    application.reviewedSource === undefined ||
+    application.reviewedSource.modulePath !== source.modulePath ||
+    application.reviewedSource.moduleSha256 !== source.moduleSha256
+  ) {
+    return Result.fail(
+      localError('SOURCE_BINDING_INVALID', 'candidate application is not the reviewed source module export'),
+    )
+  }
   if (definition.name !== sourceManifest.strategyName) {
     return Result.fail(localError('SOURCE_BINDING_INVALID', 'candidate definition does not match the source manifest'))
   }
@@ -545,7 +561,7 @@ export const evaluateCandidateDevelopmentApplication = (
   if (Result.isFailure(provenance)) {
     return Result.fail(provenance.failure)
   }
-  const binding = verifyCandidateBinding(definition, source, sourceManifest, provenance.success)
+  const binding = verifyCandidateBinding(application, definition, source, sourceManifest, provenance.success)
   if (Result.isFailure(binding)) {
     return Result.fail(binding.failure)
   }
@@ -603,10 +619,10 @@ export const evaluateCandidateDevelopmentDefinition = (
   sourceManifest: CandidateDevelopmentSourceManifest,
 ): Result.Result<CandidateDevelopmentLocalTerminalOutcome, CandidateDevelopmentLocalError> =>
   evaluateCandidateDevelopmentApplication(
-    {
-      ...makeActiveStrategyApplication(definition.parameters),
-      definition,
-    },
+    bindReviewedStrategySource(
+      { ...makeActiveStrategyApplication(definition.parameters), definition },
+      { modulePath: source.modulePath, moduleSha256: source.moduleSha256 },
+    ),
     witness,
     source,
     sourceManifest,

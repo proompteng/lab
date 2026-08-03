@@ -100,6 +100,21 @@ export const verifyQualificationCandidateBinding = (
     if (definition.name !== candidate.provenance.strategy.name) {
       return yield* mismatch('strategy.name', definition.name, candidate.provenance.strategy.name)
     }
+    const reviewedSource = candidate.application.reviewedSource
+    if (reviewedSource === undefined || reviewedSource.modulePath !== preregistration.modulePath) {
+      return yield* mismatch(
+        'application.reviewedSource.modulePath',
+        preregistration.modulePath,
+        reviewedSource?.modulePath,
+      )
+    }
+    if (reviewedSource.moduleSha256 !== preregistration.moduleSha256) {
+      return yield* mismatch(
+        'application.reviewedSource.moduleSha256',
+        preregistration.moduleSha256,
+        reviewedSource.moduleSha256,
+      )
+    }
     if (candidate.moduleSha256 !== preregistration.moduleSha256) {
       return yield* mismatch('moduleSha256', preregistration.moduleSha256, candidate.moduleSha256)
     }

@@ -1,7 +1,13 @@
 import type { RuntimeProvenance } from './contracts'
 import { riskBalancedTrendBehaviorHash } from './behavior'
 import { makeRiskBalancedTrendApplication } from './strategy/risk-balanced-trend'
-import type { StrategyApplication, StrategyDefinition, StrategyDecisionFailure, TargetPortfolio } from './strategy/core'
+import type {
+  ReviewedStrategySource,
+  StrategyApplication,
+  StrategyDefinition,
+  StrategyDecisionFailure,
+  TargetPortfolio,
+} from './strategy/core'
 
 export type {
   CompiledStrategyDecision,
@@ -9,6 +15,7 @@ export type {
   StrategyApplicationFailure,
   StrategyDecisionFailure,
   StrategyDefinition,
+  ReviewedStrategySource,
   TargetPortfolio,
   VerifiedStrategyContext,
 } from './strategy/core'
@@ -22,6 +29,19 @@ export {
 export const makeActiveStrategyApplication = makeRiskBalancedTrendApplication
 export const activeStrategyName = 'risk-balanced-trend' as const
 export const activeStrategyBehaviorHash = riskBalancedTrendBehaviorHash
+
+/** Attach the reviewed module identity to the executable application exported by that module. */
+export const bindReviewedStrategySource = <
+  TMarket,
+  TFailure extends StrategyDecisionFailure,
+  TTarget extends TargetPortfolio,
+>(
+  application: StrategyApplication<TMarket, TFailure, TTarget>,
+  reviewedSource: ReviewedStrategySource,
+): StrategyApplication<TMarket, TFailure, TTarget> => ({
+  ...application,
+  reviewedSource: Object.freeze({ ...reviewedSource }),
+})
 export type {
   RiskBalancedTrendMarketContext,
   RiskBalancedTrendStrategyApplication,

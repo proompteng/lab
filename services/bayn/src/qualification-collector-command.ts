@@ -176,7 +176,8 @@ export interface QualificationCandidateImmutableSourceInput {
 }
 
 export interface QualificationCandidateImmutableSourceReceipt {
-  readonly schemaVersion: 'bayn.qualification-candidate-source.v2'
+  readonly schemaVersion: 'bayn.qualification-candidate-source.v3'
+  readonly modulePath: string
   readonly moduleBlobOid: string
   readonly moduleSha256: string
   readonly preregistrationHash: string
@@ -275,7 +276,8 @@ export const verifyQualificationCandidateSource = (
     }
     yield* verifyCandidateSourceNovelty(input)
     return {
-      schemaVersion: 'bayn.qualification-candidate-source.v2' as const,
+      schemaVersion: 'bayn.qualification-candidate-source.v3' as const,
+      modulePath: input.preregistration.modulePath,
       moduleBlobOid: input.moduleBlobOid,
       moduleSha256: sha256Bytes(input.moduleBytes),
       preregistrationHash: sha256Bytes(input.preregistrationBytes),
@@ -929,7 +931,7 @@ export const loadQualificationCollectorInvocation = (
 export const makeQualificationCandidateRuntime = (
   application: QualificationCandidateApplication,
   deployment: DeploymentRuntime,
-  source: { readonly moduleSha256: string },
+  source: { readonly modulePath: string; readonly moduleSha256: string },
   preregistration: CandidateDevelopmentNextPreregistration,
 ): Result.Result<QualificationCandidateRuntime, QualificationCollectorError> => {
   if (preregistration.priorTrialsHash === undefined) {
@@ -942,6 +944,22 @@ export const makeQualificationCandidateRuntime = (
     )
   }
   const definition = application.definition
+  const reviewedSource = application.reviewedSource
+  if (
+    reviewedSource === undefined ||
+    reviewedSource.modulePath !== source.modulePath ||
+    reviewedSource.modulePath !== preregistration.modulePath ||
+    reviewedSource.moduleSha256 !== source.moduleSha256 ||
+    reviewedSource.moduleSha256 !== preregistration.moduleSha256
+  ) {
+    return Result.fail(
+      collectorError(
+        'candidate',
+        'candidate-application-source-mismatch',
+        'executable candidate application is not the reviewed module export',
+      ),
+    )
+  }
   const parameterHash = hashParameters(definition.parameters)
   if (deployment.strategyBehaviorHash !== activeStrategyBehaviorHash) {
     return Result.fail(

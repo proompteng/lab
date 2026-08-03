@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { riskBalancedTrendBehaviorHash } from './behavior'
+import { riskBalancedTrendBehaviorV4Hash } from './behavior'
 import { makeStrategyProtocolHash } from './contracts'
 import { makeEquitySeriesArtifact } from './evidence-contracts'
 import { canonicalHashV1 } from './hash'
@@ -356,7 +356,7 @@ describe('qualification audit', () => {
     const input = fixture()
     const database: AuditDatabaseSnapshot = {
       ...input.database,
-      protocol: { ...input.database.protocol, behaviorHash: riskBalancedTrendBehaviorHash },
+      protocol: { ...input.database.protocol, behaviorHash: riskBalancedTrendBehaviorV4Hash },
       events: input.database.events.filter(
         ({ payload }) => !(payload.kind === 'decision' && payload.terminalClose === true),
       ),

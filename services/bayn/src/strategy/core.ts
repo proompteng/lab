@@ -29,6 +29,12 @@ export interface VerifiedStrategyContext<TMarket> {
   readonly market: TMarket
 }
 
+/** Immutable identity of the reviewed source module that exports a candidate application. */
+export interface ReviewedStrategySource {
+  readonly modulePath: string
+  readonly moduleSha256: string
+}
+
 /** Pure strategy identity and decision boundary shared by development and runtimes. */
 export interface StrategyDefinition<
   TMarket,
@@ -52,6 +58,8 @@ export interface StrategyApplication<
   TApplicationFailure extends StrategyApplicationFailure = StrategyApplicationFailure,
 > {
   readonly definition: StrategyDefinition<TMarket, TFailure, TTarget>
+  /** Candidate applications carry the exact reviewed module identity they execute. */
+  readonly reviewedSource?: ReviewedStrategySource
   /** Deterministic flat target used for the terminal close of an evaluation or runtime episode. */
   readonly closeTarget: (target: TTarget) => TTarget
   readonly contextAtSignal: (
