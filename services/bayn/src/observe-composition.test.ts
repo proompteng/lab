@@ -61,6 +61,7 @@ import {
   buildMutationShadowCycleDecision,
   buildObserveCycleDecision,
   appendPendingMutationOrder,
+  countOpenPositions,
   decidePaperCycleCompletion,
   decidePreparedMutationIntent,
   decidePreparedMutationIntentAdmission,
@@ -950,6 +951,7 @@ describe('OBSERVE runtime composition', () => {
       }),
     ).toEqual({ _tag: 'Wait', reason: 'unknown-mutation' })
     expect(decidePaperCycleCompletion(evaluatedAt, [filled], laterReconciliation)).toEqual({ _tag: 'Complete' })
+    expect(countOpenPositions([{ quantityMicros: '0' }, { quantityMicros: '-1' }, { quantityMicros: '2' }])).toBe(2)
   })
 
   test('retains an unfilled sell while reserving a later buy in projected risk positions', () => {

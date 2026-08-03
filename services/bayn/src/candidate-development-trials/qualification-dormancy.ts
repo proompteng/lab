@@ -170,6 +170,16 @@ export const qualificationDormancyDecisionFromLedgerState = (
   if (candidateOrdinal !== active.preregistration.priorTrialCount + 1) {
     return invalidLedger('activeCandidate.preregistration.candidateOrdinal')
   }
+  const approvals = candidateEntries.filter((entry) => entry._tag === 'DEVELOPMENT_APPROVED')
+  if (approvals.length > 1) return invalidLedger('entries.DEVELOPMENT_APPROVED')
+  const approval = approvals[0]
+  if (
+    approval !== undefined &&
+    (approval.priorTrialCount !== active.preregistration.priorTrialCount ||
+      approval.sourceRevision !== active.preregistration.preregistration.sourceRevision)
+  ) {
+    return invalidLedger('entries.DEVELOPMENT_APPROVED.binding')
+  }
   if (candidateEntries.some((entry) => entry._tag === 'QUALIFICATION_TERMINAL')) {
     return {
       ok: true,
@@ -182,7 +192,6 @@ export const qualificationDormancyDecisionFromLedgerState = (
       decision: { status: 'dormant', reason: 'development-rejected', candidateOrdinal },
     }
   }
-  const approval = candidateEntries.find((entry) => entry._tag === 'DEVELOPMENT_APPROVED')
   if (approval === undefined) {
     return { ok: true, decision: { status: 'dormant', reason: 'development-not-approved', candidateOrdinal } }
   }

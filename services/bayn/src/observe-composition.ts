@@ -80,6 +80,7 @@ import { strategyApplication, type CompiledStrategyDecision, type StrategyRuntim
 import type { DecisionPlan } from './types'
 import {
   appendPendingMutationOrder,
+  countOpenPositions,
   decideMutationIntentSettlement,
   decidePaperCycleCompletion,
   decidePreparedMutationIntent,
@@ -117,6 +118,7 @@ import {
 
 export {
   appendPendingMutationOrder,
+  countOpenPositions,
   decideMutationIntentSettlement,
   decidePaperCycleCompletion,
   decidePreparedMutationIntent,

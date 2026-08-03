@@ -280,7 +280,9 @@ describe('same-code execution program composition', () => {
     const intent: Intent = { ...sourceIntent, side: OrderSide.Sell }
     const stored: StoredIntent = { ...sourceStored, intent }
     const episodeExpiresAt = '2026-07-28T08:01:00.000Z'
-    const afterEpisode = '2026-07-28T08:02:00.000Z'
+    const closeExpiresAt = '2026-07-28T08:16:00.000Z'
+    const afterEntryBeforeClose = '2026-07-28T08:02:00.000Z'
+    const afterClose = '2026-07-28T08:17:00.000Z'
     let posts = 0
     const shared: ExecutionProgramDependencies = {
       ...dependencies('paper-lease'),
@@ -295,8 +297,9 @@ describe('same-code execution program composition', () => {
         check: Effect.void,
         transaction: (effect) => effect,
       },
-      currentUtcInstant: Effect.succeed(afterEpisode),
-      paperEpisodeExpiresAt: episodeExpiresAt,
+      currentUtcInstant: Effect.succeed(afterEntryBeforeClose),
+      paperEpisodeEntryExpiresAt: episodeExpiresAt,
+      paperEpisodeCloseExpiresAt: closeExpiresAt,
     }
 
     const denied = await Effect.runPromise(
@@ -314,7 +317,7 @@ describe('same-code execution program composition', () => {
 
     const closed = await Effect.runPromise(
       Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(afterEpisode))
+        yield* TestClock.setTime(Date.parse(afterEntryBeforeClose))
         return yield* authorizeFinalBrokerSubmit(
           authority,
           intent,
@@ -326,6 +329,23 @@ describe('same-code execution program composition', () => {
       }).pipe(Effect.provide(TestClock.layer())),
     )
     expect(closed).toBeUndefined()
+    expect(posts).toBe(1)
+
+    const closeExpired = await Effect.runPromise(
+      authorizeFinalBrokerSubmit(
+        authority,
+        intent,
+        Effect.sync(() => {
+          posts += 1
+        }),
+        {
+          ...shared,
+          currentUtcInstant: Effect.succeed(afterClose),
+          isPaperEpisodeCloseIntent: () => Effect.succeed(true),
+        },
+      ).pipe(Effect.exit, Effect.provide(TestClock.layer())),
+    )
+    expect(finalAuthorizationFailureTag(closeExpired)).toBe('PaperEpisodeExpired')
     expect(posts).toBe(1)
   })
 

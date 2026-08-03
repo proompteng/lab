@@ -582,7 +582,7 @@ const makeClosedCycleReceiptEmitter =
     sql: PgClient.PgClient,
     authorityGenerationHash: string,
     receiptStore: ForwardPerformanceReceiptStoreShape,
-  ): ((cycleId: string, observedAt: string) => Effect.Effect<void>) =>
+  ): ((cycleId: string | undefined, observedAt: string) => Effect.Effect<void>) =>
   (cycleId, observedAt) =>
     Effect.gen(function* () {
       const existing = yield* receiptStore.read(authorityGenerationHash)
@@ -619,11 +619,18 @@ const makeClosedCycleReceiptEmitter =
         )
         return
       }
+      const receiptCycleId = cycleId ?? receipt.window.lastCycleId
+      if (receiptCycleId === null || receiptCycleId === undefined) {
+        yield* Effect.logWarning(
+          'Bayn forward-performance receipt withheld: no closed cycle identity was observed',
+        ).pipe(Effect.annotateLogs({ service: 'bayn', observedAt }))
+        return
+      }
       const envelope = yield* Effect.fromResult(
         makeForwardPerformanceReceiptEnvelope({
           schemaVersion: 'bayn.forward-performance-receipt-envelope.v1',
           authorityGenerationHash,
-          cycleId,
+          cycleId: receiptCycleId,
           receiptHash: receipt.receiptHash,
           receipt,
           createdAt: observedAt,
@@ -652,6 +659,18 @@ const makeClosedCycleReceiptEmitter =
         ),
       ),
     )
+
+const retryClosedCycleReceipts = (
+  emit: (cycleId: string | undefined, observedAt: string) => Effect.Effect<void>,
+  cutoffAt: string,
+  intervalMs: number,
+): Effect.Effect<never> =>
+  Effect.forever(
+    currentUtcInstant.pipe(
+      Effect.flatMap((observedAt) => (observedAt >= cutoffAt ? emit(undefined, observedAt) : Effect.void)),
+      Effect.andThen(Effect.sleep(Duration.millis(Math.max(1_000, intervalMs)))),
+    ),
+  )
 
 const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
   Effect.gen(function* () {
@@ -823,12 +842,14 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                   strategy: observePlan.strategy,
                                   strategyProtocolHash: observePlan.strategyProtocolHash,
                                 }) as ApplicationPlanFor<'AutonomousService'>
-                                const onClosedCycle = makeClosedCycleReceiptEmitter(
+                                const emitClosedCycleReceipt = makeClosedCycleReceiptEmitter(
                                   realizedPlan.config,
                                   runtimeServices.pgClient,
                                   prepared.generation.generationHash,
                                   runtimeServices.forwardPerformanceReceiptStore,
                                 )
+                                const onClosedCycle = (cycleId: string, observedAt: string) =>
+                                  emitClosedCycleReceipt(cycleId, observedAt)
                                 return makeMutation(
                                   runtimeServices.session,
                                   authority,
@@ -844,7 +865,8 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                           runtimeServices.alpacaHttpClient,
                                         ),
                                         currentUtcInstant,
-                                        paperEpisodeExpiresAt: paperEpisodeCloseExpiresAt(request.expiresAt),
+                                        paperEpisodeEntryExpiresAt: request.expiresAt,
+                                        paperEpisodeCloseExpiresAt: paperEpisodeCloseExpiresAt(request.expiresAt),
                                         isPaperEpisodeCloseIntent: (intentId) =>
                                           runtimeServices.paperCycleClosureStore
                                             .containsIntent(intentId)
@@ -859,6 +881,15 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                   Effect.mapError(executionProgramError),
                                   Effect.tap(() =>
                                     realizedPaperActivation(state, request, prepared.generation.generationHash),
+                                  ),
+                                  Effect.tap(() =>
+                                    Effect.forkScoped(
+                                      retryClosedCycleReceipts(
+                                        emitClosedCycleReceipt,
+                                        request.cutoffAt,
+                                        realizedPlan.config.alpaca.reconciliationIntervalMs,
+                                      ),
+                                    ).pipe(Effect.asVoid),
                                   ),
                                   Effect.tap(() =>
                                     Effect.forkScoped(

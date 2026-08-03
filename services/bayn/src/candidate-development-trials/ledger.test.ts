@@ -75,4 +75,66 @@ describe('Bayn candidate development trial ledger', () => {
       },
     })
   })
+
+  test('fails closed when development approval does not bind the active preregistration', () => {
+    const activeCandidate = {
+      preregistration: {
+        ...candidate20Preregistration,
+        candidateOrdinal: 21,
+        priorTrialCount: 20,
+        preregistration: {
+          ...candidate20Preregistration.preregistration,
+          sourceRevision: 'a'.repeat(40),
+          blobOid: 'b'.repeat(40),
+        },
+      },
+      application: {},
+    }
+    const base = {
+      ...candidateDevelopmentTrialLedgerState,
+      activeCandidate,
+    } as unknown as CandidateDevelopmentTrialLedgerState
+    const mismatched = {
+      ...base,
+      entries: [
+        ...base.entries,
+        {
+          _tag: 'DEVELOPMENT_APPROVED' as const,
+          candidateOrdinal: 21,
+          priorTrialCount: 19,
+          sourceRevision: 'c'.repeat(40),
+          terminalReportHash: 'd'.repeat(64),
+        },
+      ],
+    }
+    expect(qualificationDormancyDecisionFromLedgerState(mismatched)).toEqual({
+      ok: false,
+      issue: { path: 'entries.DEVELOPMENT_APPROVED.binding', reason: 'INVALID_STATE' },
+    })
+
+    const duplicate = {
+      ...base,
+      entries: [
+        ...base.entries,
+        {
+          _tag: 'DEVELOPMENT_APPROVED' as const,
+          candidateOrdinal: 21,
+          priorTrialCount: 20,
+          sourceRevision: 'a'.repeat(40),
+          terminalReportHash: 'd'.repeat(64),
+        },
+        {
+          _tag: 'DEVELOPMENT_APPROVED' as const,
+          candidateOrdinal: 21,
+          priorTrialCount: 20,
+          sourceRevision: 'a'.repeat(40),
+          terminalReportHash: 'e'.repeat(64),
+        },
+      ],
+    }
+    expect(qualificationDormancyDecisionFromLedgerState(duplicate)).toEqual({
+      ok: false,
+      issue: { path: 'entries.DEVELOPMENT_APPROVED', reason: 'INVALID_STATE' },
+    })
+  })
 })

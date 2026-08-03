@@ -23,6 +23,7 @@ import { TargetPlanStatus } from '../target-planner'
 import type { CausalProtocol } from '../protocol'
 import {
   decidePaperCycleCompletion,
+  countOpenPositions,
   decidePreparedCloseIntentAdmission,
   decidePreparedMutationIntent,
   decidePreparedMutationIntentAdmission,
@@ -567,9 +568,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
       accountingExact: facts.reconciliation.report.metrics.accountingExact,
       unknownMutationCount: facts.reconciliation.riskContext.unknownMutationCount,
       unknownOrderCount: facts.reconciliation.brokerState.unknownOrderCount,
-      openPositionCount: facts.reconciliation.brokerState.positions.filter(
-        (position) => BigInt(position.quantityMicros) > 0n,
-      ).length,
+      openPositionCount: countOpenPositions(facts.reconciliation.brokerState.positions),
     })
     return completion._tag === 'Complete'
       ? { _tag: 'Complete', observedAt: facts.evaluatedAt }
