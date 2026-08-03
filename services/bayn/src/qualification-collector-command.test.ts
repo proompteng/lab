@@ -26,6 +26,7 @@ import { candidate18Preregistration } from './candidate-development-calendar'
 import type { QualificationAuditReport } from './audit/audit'
 import type { QualificationCandidateBindingReceipt } from './qualification-binding'
 import { fixtureLock, fixtureRuntime } from './app-test-support'
+import { activeStrategyBehaviorHash } from './strategy'
 
 const prelock = (
   overrides: Partial<QualificationCollectorPrelockEvidence> = {},
@@ -77,7 +78,7 @@ const deployment = (overrides: Partial<DeploymentRuntime> = {}): DeploymentRunti
   sourceSha: 'a'.repeat(40),
   imageRepository: 'registry.example.test/lab/bayn',
   imageDigest: `sha256:${'b'.repeat(64)}`,
-  strategyBehaviorHash: fixtureRuntime.provenance.strategy.behaviorHash,
+  strategyBehaviorHash: activeStrategyBehaviorHash,
   strategyParameterHash: fixtureRuntime.provenance.strategy.parameterHash,
   maximumAuthority: 'OBSERVE',
   clickhouseUrl: 'http://clickhouse.example.test',
@@ -246,8 +247,8 @@ describe('qualification collector boundaries', () => {
     expect(interrupted).toBe(true)
   })
 
-  test('rejects a candidate whose module or parameter identity differs from the embedded deployment', () => {
-    const source = { moduleSha256: fixtureRuntime.provenance.strategy.behaviorHash }
+  test('separates candidate module provenance from deployed behavior and parameter identity', () => {
+    const source = { moduleSha256: '8'.repeat(64) }
     const matching = makeQualificationCandidateRuntime(
       fixtureRuntime.application,
       deployment(),
@@ -255,6 +256,10 @@ describe('qualification collector boundaries', () => {
       candidate18Preregistration,
     )
     expect(Result.isSuccess(matching)).toBe(true)
+    if (Result.isSuccess(matching)) {
+      expect(matching.success.moduleSha256).toBe(source.moduleSha256)
+      expect(matching.success.strategyBehaviorHash).toBe(activeStrategyBehaviorHash)
+    }
 
     const behaviorMismatch = makeQualificationCandidateRuntime(
       fixtureRuntime.application,

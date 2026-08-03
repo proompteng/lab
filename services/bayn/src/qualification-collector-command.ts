@@ -41,6 +41,7 @@ import {
 import type { QualificationAuditReport } from './audit/audit'
 import { hashParameters } from './protocol'
 import { decideQualificationPath, evaluateLockedSnapshot, qualifyEvaluation } from './startup/decisions'
+import { activeStrategyBehaviorHash } from './strategy'
 import {
   NonNegativeIntegerSchema,
   PositiveIntegerSchema,
@@ -942,12 +943,12 @@ export const makeQualificationCandidateRuntime = (
   }
   const definition = application.definition
   const parameterHash = hashParameters(definition.parameters)
-  if (source.moduleSha256 !== deployment.strategyBehaviorHash) {
+  if (deployment.strategyBehaviorHash !== activeStrategyBehaviorHash) {
     return Result.fail(
       collectorError(
         'candidate',
         'deployment-strategy-behavior-mismatch',
-        'candidate module hash differs from the embedded deployment strategy behavior hash',
+        'embedded deployment strategy behavior hash differs from the active application behavior hash',
       ),
     )
   }
