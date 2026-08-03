@@ -73,6 +73,7 @@ import {
   mutationIntentReconciliationDelayMs,
   paperSubmitExpiresAt,
   paperMutationSubmissionAllowed,
+  paperCycleHasFilledIntent,
   prepareNextMutationIntent,
   projectWorstCasePendingMutationPosition,
   loadObserveRiskPolicy,
@@ -94,6 +95,7 @@ import {
   TimeInForce,
   type AccountSnapshot,
   type Intent,
+  type Order,
   type Position,
   type Reconciliation,
 } from './paper'
@@ -262,13 +264,13 @@ const account: AccountSnapshot = {
   observedAt: reconciledAt,
 }
 
-const reconciliation = (): Reconciliation => {
+const reconciliation = (positions: readonly Position[] = [], orders: readonly Order[] = []): Reconciliation => {
   const stateHash = Result.getOrThrow(
     reconciledStateHash({
       account,
-      positions: [],
+      positions,
       positionsObservedAt: reconciledAt,
-      orders: [],
+      orders,
       ordersObservedAt: reconciledAt,
       accountingHash,
     }),
@@ -296,8 +298,10 @@ const reconciliation = (): Reconciliation => {
 const reconciliationResult = (
   authorityGenerationHash = generationHash,
   maximum: Authority = Authority.Observe,
+  positions: readonly Position[] = [],
+  orders: readonly Order[] = [],
 ): ReconciliationPassResult => {
-  const exact = reconciliation()
+  const exact = reconciliation(positions, orders)
   return {
     report: {
       reconciliation: exact,
@@ -313,9 +317,9 @@ const reconciliationResult = (
     },
     brokerState: {
       account,
-      positions: [],
+      positions,
       positionsObservedAt: reconciledAt,
-      orders: [],
+      orders,
       ordersObservedAt: reconciledAt,
       accountingHash,
       reconciliation: exact,
@@ -548,8 +552,10 @@ const reconciliationResultAt = (
   observedAt: string,
   unknownMutationCount = 0,
   unknownOrderCount = 0,
+  positions: readonly Position[] = [],
+  orders: readonly Order[] = [],
 ): ReconciliationPassResult => {
-  const result = reconciliationResult(generationHash, Authority.Paper)
+  const result = reconciliationResult(generationHash, Authority.Paper, positions, orders)
   const authority = result.riskContext.authority
   if (authority === null) throw new Error('post-cutoff reconciliation fixture requires PAPER authority')
   const exact = { ...result.report.reconciliation, reconciledAt: observedAt }
@@ -599,16 +605,23 @@ const prepareStoredPaperStep = async (
   observedAt: string,
   unknownMutationCount = 0,
   onRestriction: (reason: string, updatedAt: string) => void = () => undefined,
-  input: typeof fixture.input & { readonly paperEpisodeCutoffAt?: string } = fixture.input,
+  input: typeof fixture.input & {
+    readonly mutationPhase?: 'ENTRY' | 'CLOSE'
+    readonly paperEpisodeCutoffAt?: string
+    readonly paperEpisodeExpiresAt?: string
+  } = fixture.input,
   latestCancel?: MutationEvent,
   allowSubmit = true,
   policy: Policy = fixture.policy,
   preparation = fixture.preparation,
   records: ReadonlyMap<string, StoredIntent> = new Map([[record.intent.intentId, record]]),
   latestSubmits: ReadonlyMap<string, MutationEvent | undefined> = new Map([[record.intent.intentId, latest]]),
+  reconciledOrders: readonly Order[] = [],
+  document: typeof fixture.document = fixture.document,
 ) => {
   const intentStore: IntentStoreService = {
     commit: () => Effect.succeed({ record, deduplicated: true }),
+    commitClosing: () => Effect.succeed({ record, deduplicated: true }),
     read: (intentId) => {
       const stored = records.get(intentId)
       return Effect.succeed(stored === undefined ? Option.none() : Option.some(stored))
@@ -634,8 +647,8 @@ const prepareStoredPaperStep = async (
         preparation,
         policy,
         fixture.boundCycle,
-        fixture.document,
-        Effect.succeed(reconciliationResultAt(observedAt, unknownMutationCount)),
+        document,
+        Effect.succeed(reconciliationResultAt(observedAt, unknownMutationCount, 0, [], reconciledOrders)),
         allowSubmit,
       )
     }).pipe(
@@ -2032,6 +2045,92 @@ describe('OBSERVE runtime composition', () => {
     expect(step).toEqual({ _tag: 'Wait', observedAt })
     expect(restrictions).toHaveLength(1)
     expect(restrictions[0]).toContain(`intent ${rejectedIntent.intentId} ended REJECTED`)
+  })
+
+  test('keeps a single canceled partial-fill PAPER intent recoverable before cutoff', async () => {
+    const fixture = await paperLifecycleFixture()
+    const observedAt = new Date(Date.parse(fixture.document.createdAt) + 1_000).toISOString()
+    const cutoffAt = new Date(Date.parse(observedAt) + 60_000).toISOString()
+    const record = storedIntent(fixture.intent, IntentState.Terminal, observedAt, TerminalOutcome.Canceled)
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '5'.repeat(64),
+      mutationId: '6'.repeat(64),
+      intentId: fixture.intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: '7'.repeat(64),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'single-partial-canceled-order',
+      occurredAt: observedAt,
+    }
+    const partialOrder: Order = {
+      schemaVersion: 'bayn.paper-order.v1',
+      accountId,
+      brokerOrderId: accepted.brokerOrderId ?? 'single-partial-canceled-order',
+      clientOrderId: fixture.intent.clientOrderId,
+      intentId: fixture.intent.intentId,
+      symbol: fixture.intent.symbol,
+      side: fixture.intent.side,
+      orderType: fixture.intent.orderType,
+      timeInForce: fixture.intent.timeInForce,
+      quantityMicros: fixture.intent.quantityMicros,
+      filledQuantityMicros: '1',
+      status: OrderStatus.Canceled,
+      observedAt,
+    }
+    const restrictions: string[] = []
+
+    const step = await prepareStoredPaperStep(
+      fixture,
+      record,
+      accepted,
+      observedAt,
+      0,
+      (reason) => restrictions.push(reason),
+      { ...fixture.input, paperEpisodeCutoffAt: cutoffAt },
+      undefined,
+      true,
+      fixture.policy,
+      fixture.preparation,
+      undefined,
+      undefined,
+      [partialOrder],
+    )
+
+    expect(step).toEqual({ _tag: 'Wait', observedAt })
+    expect(restrictions).toHaveLength(1)
+    expect(restrictions[0]).toContain(`intent ${fixture.intent.intentId} ended CANCELED`)
+    expect(paperCycleHasFilledIntent([record.intent], [partialOrder])).toBe(true)
+
+    const closeExpiresAt = new Date(Date.parse(cutoffAt) + 60_000).toISOString()
+    const closeRestrictions: string[] = []
+    const closeStep = await prepareStoredPaperStep(
+      fixture,
+      record,
+      accepted,
+      observedAt,
+      0,
+      (reason) => closeRestrictions.push(reason),
+      {
+        ...fixture.input,
+        mutationPhase: 'CLOSE',
+        paperEpisodeCutoffAt: cutoffAt,
+        paperEpisodeExpiresAt: closeExpiresAt,
+      },
+      undefined,
+      true,
+      fixture.policy,
+      fixture.preparation,
+      undefined,
+      undefined,
+      [partialOrder],
+      { ...fixture.document, submissionCutoffAt: closeExpiresAt, expiresAt: closeExpiresAt },
+    )
+
+    expect(closeStep).toEqual({ _tag: 'Wait', observedAt })
+    expect(closeRestrictions).toHaveLength(1)
   })
 
   test('completes a filled PAPER cycle after a later exact post-cutoff reconciliation', async () => {

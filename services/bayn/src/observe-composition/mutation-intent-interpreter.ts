@@ -460,6 +460,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
     const terminalEvidence: PaperCycleIntentTerminalEvidence[] = []
     const hasFilledIntent = paperCycleHasFilledIntent(
       preparedIntents.flatMap((prepared) => (prepared.stored === undefined ? [] : [prepared.stored.intent])),
+      facts.reconciliation.brokerState.orders,
     )
     for (const prepared of preparedIntents) {
       const stored = yield* intentStore
@@ -490,12 +491,9 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
               `bound PAPER cycle ${cycle.identity.cycleId}`,
               `intent ${prepared.intent.intentId} ended ${record.intent.terminalOutcome ?? 'without outcome'}`,
             )
-            if (
-              input.mutationPhase !== 'CLOSE' &&
-              input.paperEpisodeCutoffAt !== undefined &&
-              facts.evaluatedAt < input.paperEpisodeCutoffAt &&
-              hasFilledIntent
-            ) {
+            const recoveryDeadline =
+              input.mutationPhase === 'CLOSE' ? input.paperEpisodeExpiresAt : input.paperEpisodeCutoffAt
+            if (hasFilledIntent && recoveryDeadline !== undefined && facts.evaluatedAt < recoveryDeadline) {
               return { _tag: 'Wait', observedAt: facts.evaluatedAt }
             }
             return {

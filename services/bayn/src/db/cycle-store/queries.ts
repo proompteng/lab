@@ -160,6 +160,17 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
                   AND intent.terminal_outcome = 'FILLED'
                 )
                 OR (
+                  intent.state = 'TERMINAL'
+                  AND intent.terminal_outcome <> 'FILLED'
+                  AND EXISTS (
+                    SELECT 1
+                    FROM orders AS partial_order
+                    WHERE partial_order.account_id = intent.account_id
+                      AND partial_order.intent_id = intent.intent_id
+                      AND partial_order.filled_quantity_micros > 0
+                  )
+                )
+                OR (
                   latest.operation = 'SUBMIT'
                   AND latest.event_type NOT IN (
                     'SUBMIT_ACCEPTED',
