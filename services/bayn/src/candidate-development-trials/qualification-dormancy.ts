@@ -168,7 +168,6 @@ const validateDevelopmentApprovalEvidence = (
     ['candidateOrdinal', preregistration.candidateOrdinal, source.candidateOrdinal],
     ['priorTrialCount', preregistration.priorTrialCount, source.priorTrialCount],
     ['strategyName', strategyName, source.strategyName],
-    ['sourceRevision', preregistration.preregistration.sourceRevision, source.sourceRevision],
     ['sourceManifestPath', sourceManifestBinding.path, source.sourceManifestPath],
     ['sourceManifestBlobOid', sourceManifestBinding.blobOid, source.sourceManifestBlobOid],
     ['sourceManifestSha256', sourceManifestBinding.sha256, source.sourceManifestSha256],
@@ -338,7 +337,7 @@ export const qualificationDormancyDecisionFromLedgerState = (
     activeApproval !== undefined &&
     (activeApproval.candidateOrdinal !== candidateOrdinal ||
       activeApproval.priorTrialCount !== active.preregistration.priorTrialCount ||
-      activeApproval.sourceRevision !== active.preregistration.preregistration.sourceRevision)
+      activeApproval.sourceRevision !== activeApproval.terminalReport.source.sourceRevision)
   ) {
     return invalidLedger('entries.DEVELOPMENT_APPROVED.binding')
   }

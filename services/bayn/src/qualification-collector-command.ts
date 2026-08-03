@@ -1387,6 +1387,24 @@ const collectStaticQualificationEvidence = (invocation: QualificationCollectorIn
       moduleBlobOid: staticGit.moduleBlobOid,
       moduleBytes: staticGit.moduleBytes,
     })
+    const developmentApproval = candidateDevelopmentTrialLedgerState.entries.at(-1)
+    if (developmentApproval?._tag === 'DEVELOPMENT_APPROVED') {
+      yield* Effect.tryPromise({
+        try: (signal) =>
+          gitText(
+            repositoryPath,
+            ['merge-base', '--is-ancestor', developmentApproval.sourceRevision, qualificationRuntime.sourceSha],
+            signal,
+          ),
+        catch: (cause) =>
+          collectorError(
+            'candidate',
+            'development-source-revision-invalid',
+            'development approval evidence must bind to an ancestor of the scheduled source',
+            cause,
+          ),
+      })
+    }
     const sourceApplication = yield* loadReviewedStrategyApplication(
       resolve(repositoryPath, candidateSource.modulePath),
       qualificationRuntime.sourceSha,
