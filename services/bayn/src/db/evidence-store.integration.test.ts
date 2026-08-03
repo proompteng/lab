@@ -1193,6 +1193,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 23, name: 'legacy_observe_recovery' },
       { migration_id: 24, name: 'paper_cycle_closures' },
       { migration_id: 25, name: 'forward_performance_receipts' },
+      { migration_id: 26, name: 'paper_cycle_close_replans' },
     ])
   })
 
