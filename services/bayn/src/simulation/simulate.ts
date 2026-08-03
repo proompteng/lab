@@ -22,17 +22,31 @@ const openingSnapshot = (state: SimulationState): SessionOpeningSnapshot => ({
 })
 
 const hasOpenPosition = (state: SimulationState): boolean =>
-  Object.values(state.positions).some((position) => position.quantityMicros > 0n)
+  Object.values(state.positions).some((position) => position.quantityMicros !== 0n)
 
 const consolidateSessionFees = (
   state: SimulationState,
   sessionDate: IsoDate,
+  opening: SessionOpeningSnapshot,
   input: SimulationInput,
 ): Result.Result<SimulationState, SimulationFailure> => {
-  if (!input.recordEvents) return Result.succeed(state)
+  const feeInputs = state.sessionFeeInputs
+  if (feeInputs.length === 0) return Result.succeed({ ...state, sessionFeeInputs: [] })
+  const expectedResult = calculateSessionFees(feeInputs, input.protocol.executionModel, input.costMultiplierMicros)
+  if (Result.isFailure(expectedResult)) return Result.fail(expectedResult.failure)
+  const expected = expectedResult.success
+  const chargedWithoutTrace = state.totalFeesMicros - opening.totalFeesMicros
+  if (!input.recordEvents) {
+    return Result.succeed({
+      ...state,
+      cashMicros: state.cashMicros + chargedWithoutTrace - expected.totalMicros,
+      totalFeesMicros: state.totalFeesMicros - chargedWithoutTrace + expected.totalMicros,
+      sessionFeeInputs: [],
+    })
+  }
   const events = Chunk.toReadonlyArray(state.events)
   const fees = events.filter((event): event is FeeEvent => event.kind === 'fee' && event.sessionDate === sessionDate)
-  if (fees.length < 2) return Result.succeed(state)
+  if (fees.length === 0) return Result.succeed({ ...state, sessionFeeInputs: [] })
   const feeIds = new Set(fees.map((fee) => fee.id))
   const charged = fees.reduce(
     (sum, fee) => ({
@@ -50,13 +64,6 @@ const consolidateSessionFees = (
       totalMicros: 0n,
     },
   )
-  const inputs = events
-    .filter((event): event is FillEvent => event.kind === 'fill' && event.sessionDate === sessionDate)
-    .map((fill) => ({
-      side: fill.side,
-      quantityMicros: BigInt(fill.quantityMicros),
-      notionalMicros: BigInt(fill.notionalMicros),
-    }))
   const eventIndexById = new Map(events.map((event, index) => [event.id, index]))
   const adjustedCashChanges = Result.all(
     Chunk.toReadonlyArray(state.cashChanges)
@@ -82,7 +89,7 @@ const consolidateSessionFees = (
   return pipe(
     Result.all({
       cashChanges: adjustedCashChanges,
-      expected: calculateSessionFees(inputs, input.protocol.executionModel, input.costMultiplierMicros),
+      expected: Result.succeed(expected),
     }),
     Result.flatMap(({ cashChanges, expected }) =>
       pipe(
@@ -92,6 +99,7 @@ const consolidateSessionFees = (
             ...state,
             cashMicros: state.cashMicros + charged.totalMicros - expected.totalMicros,
             totalFeesMicros: state.totalFeesMicros - charged.totalMicros + expected.totalMicros,
+            sessionFeeInputs: [],
           }
           return pipe(
             makeCashChange(input.runId, fee, -expected.totalMicros, correctedState.cashMicros),
@@ -145,7 +153,7 @@ const runSession = (
         terminalCloseTarget(input, source, index)
       return rebalanceSession(updated, session, terminalTarget, openingSnapshot(updated), input)
     }),
-    Result.flatMap((updated) => consolidateSessionFees(updated, session.date, input)),
+    Result.flatMap((updated) => consolidateSessionFees(updated, session.date, opening, input)),
     Result.flatMap((updated) => closeSession(updated, session, opening, input)),
   )
 }

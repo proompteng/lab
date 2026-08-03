@@ -192,7 +192,19 @@ export const makeAuditFacts = (
     },
   })
   if (Result.isFailure(provenanceResult)) return Result.fail(provenanceResult.failure)
-  const referenceResult = evaluateReference(input.bars, input.manifest, input.protocol, provenanceResult.success)
+  // Terminal liquidation was added after the v6 evaluation contract was already persisted.
+  // A durable terminal-close decision is the marker for the new replay semantics; old v6 runs
+  // without that marker must continue through the legacy marked-end replay.
+  const closeAtEnd = database.events.some(
+    ({ payload }) => payload.kind === 'decision' && payload.terminalClose === true,
+  )
+  const referenceResult = evaluateReference(
+    input.bars,
+    input.manifest,
+    input.protocol,
+    provenanceResult.success,
+    closeAtEnd,
+  )
   if (Result.isFailure(referenceResult)) return Result.fail(referenceResult.failure)
   const reference = referenceResult.success
   const trace = reference.strategy.trace

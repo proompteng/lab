@@ -52,6 +52,9 @@ interface ReplayState {
   readonly previousDate?: IsoDate
 }
 
+const hasOpenPosition = (positions: ReadonlyMap<string, Position>): boolean =>
+  [...positions.values()].some((position) => position.quantityMicros !== 0n)
+
 export const replay = (
   sessions: readonly Session[],
   targets: readonly Target[],
@@ -95,32 +98,6 @@ export const replay = (
     const session = sessions[index]
     const scheduledTarget = targetBySession.get(index)
     const lastTarget = targets.at(-1)
-    const mustCloseAtEnd =
-      closeAtEnd &&
-      index === sessions.length - 1 &&
-      (scheduledTarget !== undefined || [...state.positions.values()].some((position) => position.quantityMicros > 0n))
-    const closeSource = scheduledTarget ?? lastTarget
-    const terminalTarget =
-      mustCloseAtEnd && closeSource !== undefined
-        ? {
-            ...closeSource,
-            executionIndex: index,
-            weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, 0])),
-            plan: undefined,
-            terminalClose: true,
-          }
-        : mustCloseAtEnd
-          ? {
-              signalIndex: Math.max(0, index - 1),
-              executionIndex: index,
-              weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, 0])),
-              terminalClose: true,
-            }
-          : undefined
-    const sessionTargets = [
-      ...(scheduledTarget === undefined ? [] : [scheduledTarget]),
-      ...(terminalTarget === undefined ? [] : [terminalTarget]),
-    ]
     const beforeTurnover = state.turnoverMicros
     const beforeFees = state.feeMicros
     const beforeSpread = state.spreadMicros
@@ -174,8 +151,8 @@ export const replay = (
       }
     }
 
-    for (const target of sessionTargets) {
-      const terminalClose = target === terminalTarget
+    const runTarget = (target: Target): ReferenceComputation<void> => {
+      const terminalClose = target.terminalClose === true
       const signalSession = sessions[target.signalIndex]
       if (signalSession === undefined) {
         return Result.fail({
@@ -435,6 +412,53 @@ export const replay = (
       }
       allSessionFills.push(...targetFills)
       planningCashSnapshot = cash
+      return Result.succeed(undefined)
+    }
+
+    if (scheduledTarget !== undefined) {
+      const scheduledResult = runTarget(scheduledTarget)
+      if (Result.isFailure(scheduledResult)) return Result.fail(scheduledResult.failure)
+    }
+
+    const mustCloseAtEnd = closeAtEnd && index === sessions.length - 1 && hasOpenPosition(positions)
+    const closeSource = scheduledTarget ?? lastTarget
+    const terminalTarget =
+      mustCloseAtEnd && closeSource !== undefined
+        ? {
+            ...closeSource,
+            executionIndex: index,
+            weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, 0])),
+            plan: undefined,
+            terminalClose: true,
+          }
+        : mustCloseAtEnd
+          ? {
+              signalIndex: Math.max(0, index - 1),
+              executionIndex: index,
+              weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, 0])),
+              terminalClose: true,
+            }
+          : undefined
+    if (terminalTarget !== undefined) {
+      const terminalResult = runTarget(terminalTarget)
+      if (Result.isFailure(terminalResult)) return Result.fail(terminalResult.failure)
+    }
+
+    const aggregateFeeResult = calculateSessionFees(
+      allSessionFills.map((fill) => ({
+        side: fill.side,
+        quantityMicros: BigInt(fill.quantityMicros),
+        notionalMicros: BigInt(fill.notionalMicros),
+      })),
+      protocol.executionModel,
+      costMultiplierMicros,
+    )
+    if (Result.isFailure(aggregateFeeResult)) return Result.fail(aggregateFeeResult.failure)
+    const aggregateFee = aggregateFeeResult.success
+    if (!retainTrace && allSessionFills.length > 0) {
+      const charged = fees - beforeFees
+      cash += charged - aggregateFee.totalMicros
+      fees += aggregateFee.totalMicros - charged
     }
 
     if (retainTrace) {
@@ -484,30 +508,19 @@ export const replay = (
             }),
         )
         if (Result.isFailure(adjustedChangesResult)) return Result.fail(adjustedChangesResult.failure)
-        const feeResult = calculateSessionFees(
-          allSessionFills.map((fill) => ({
-            side: fill.side,
-            quantityMicros: BigInt(fill.quantityMicros),
-            notionalMicros: BigInt(fill.notionalMicros),
-          })),
-          protocol.executionModel,
-          costMultiplierMicros,
-        )
-        if (Result.isFailure(feeResult)) return Result.fail(feeResult.failure)
-        const fee = feeResult.success
-        cash += charged.totalMicros - fee.totalMicros
-        fees += fee.totalMicros - charged.totalMicros
+        cash += charged.totalMicros - aggregateFee.totalMicros
+        fees += aggregateFee.totalMicros - charged.totalMicros
         const aggregateResult = makeReferenceFeeEvent(runId, {
           sessionDate: session.date,
-          commissionMicros: fee.commissionMicros.toString(),
-          secMicros: fee.secMicros.toString(),
-          tafMicros: fee.tafMicros.toString(),
-          catMicros: fee.catMicros.toString(),
-          totalMicros: fee.totalMicros.toString(),
+          commissionMicros: aggregateFee.commissionMicros.toString(),
+          secMicros: aggregateFee.secMicros.toString(),
+          tafMicros: aggregateFee.tafMicros.toString(),
+          catMicros: aggregateFee.catMicros.toString(),
+          totalMicros: aggregateFee.totalMicros.toString(),
         })
         if (Result.isFailure(aggregateResult)) return Result.fail(aggregateResult.failure)
         const aggregate = aggregateResult.success
-        const changeResult = makeCashChange(runId, aggregate, -fee.totalMicros, cash)
+        const changeResult = makeCashChange(runId, aggregate, -aggregateFee.totalMicros, cash)
         if (Result.isFailure(changeResult)) return Result.fail(changeResult.failure)
         events.splice(
           0,

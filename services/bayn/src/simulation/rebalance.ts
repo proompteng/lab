@@ -306,6 +306,14 @@ const applySellOrder = (
                 turnoverMicros: state.turnoverMicros + terms.notionalMicros,
                 totalSpreadCostMicros: state.totalSpreadCostMicros + terms.spreadCostMicros,
                 totalSlippageCostMicros: state.totalSlippageCostMicros + terms.slippageCostMicros,
+                sessionFeeInputs: [
+                  ...state.sessionFeeInputs,
+                  {
+                    side: 'sell' as const,
+                    quantityMicros: order.filledQuantityMicros,
+                    notionalMicros: terms.notionalMicros,
+                  },
+                ],
                 positions: updatePosition(state.positions, order.event.symbol, {
                   quantityMicros: position.quantityMicros - order.filledQuantityMicros,
                   costBasisMicros: position.costBasisMicros - costBasis,
@@ -359,6 +367,14 @@ const applyBuyOrder = (
                     turnoverMicros: state.turnoverMicros + terms.notionalMicros,
                     totalSpreadCostMicros: state.totalSpreadCostMicros + terms.spreadCostMicros,
                     totalSlippageCostMicros: state.totalSlippageCostMicros + terms.slippageCostMicros,
+                    sessionFeeInputs: [
+                      ...state.sessionFeeInputs,
+                      {
+                        side: 'buy' as const,
+                        quantityMicros: order.filledQuantityMicros,
+                        notionalMicros: terms.notionalMicros,
+                      },
+                    ],
                     positions: updatePosition(state.positions, order.event.symbol, {
                       quantityMicros: position.quantityMicros + order.filledQuantityMicros,
                       costBasisMicros: position.costBasisMicros + terms.notionalMicros,
