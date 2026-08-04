@@ -139,6 +139,7 @@ describe('Bayn candidate development trial ledger', () => {
       ...pending.preregistration,
       candidateOrdinal: 22,
       priorTrialCount: 21,
+      priorTrialsHash: canonicalHashV1(candidateDevelopmentTrialLedgerState.entries),
       modulePath: 'services/bayn/src/strategy/candidate-22.ts',
       preregistration: {
         sourceRevision: 'b'.repeat(40),
@@ -210,6 +211,39 @@ describe('Bayn candidate development trial ledger', () => {
     ).toEqual({
       ok: false,
       issue: { path: 'entries.DEVELOPMENT_REJECTED.terminalReport.source.bindingHash', reason: 'INVALID_STATE' },
+    })
+  })
+
+  test('rejects a pending successor whose declared history hash is not the exact prior ledger', () => {
+    const pendingIndex = candidateDevelopmentTrialLedgerState.entries.findIndex(
+      (entry) => entry._tag === 'DEVELOPMENT_PENDING' && entry.candidateOrdinal === 21,
+    )
+    const pending = candidateDevelopmentTrialLedgerState.entries.at(pendingIndex)
+    if (pending?._tag !== 'DEVELOPMENT_PENDING') throw new Error('expected the pending Candidate 21 registration')
+    const declaredPriorTrialsHash = pending.preregistration.priorTrialsHash
+    if (declaredPriorTrialsHash === undefined) throw new Error('expected Candidate 21 trial-history binding')
+
+    expect(canonicalHashV1(candidateDevelopmentTrialLedgerState.entries.slice(0, pendingIndex))).toBe(
+      declaredPriorTrialsHash,
+    )
+    expect(
+      qualificationDormancyDecisionFromLedgerState({
+        ...candidateDevelopmentTrialLedgerState,
+        entries: candidateDevelopmentTrialLedgerState.entries.map((entry, index) =>
+          index === pendingIndex
+            ? {
+                ...pending,
+                preregistration: { ...pending.preregistration, priorTrialsHash: '0'.repeat(64) },
+              }
+            : entry,
+        ),
+      }),
+    ).toEqual({
+      ok: false,
+      issue: {
+        path: `entries[${pendingIndex}].preregistration.priorTrialsHash`,
+        reason: 'INVALID_STATE',
+      },
     })
   })
 
@@ -418,6 +452,7 @@ describe('Bayn candidate development trial ledger', () => {
       ...candidate20Preregistration,
       candidateOrdinal: 21,
       priorTrialCount: 20,
+      priorTrialsHash: canonicalHashV1(preCandidate21LedgerState.entries),
       preregistration: {
         ...candidate20Preregistration.preregistration,
         sourceRevision: 'a'.repeat(40),
@@ -464,6 +499,7 @@ describe('Bayn candidate development trial ledger', () => {
       ...candidate20Preregistration,
       candidateOrdinal: 21,
       priorTrialCount: 20,
+      priorTrialsHash: canonicalHashV1(preCandidate21LedgerState.entries),
       preregistration: {
         ...candidate20Preregistration.preregistration,
         sourceRevision: 'a'.repeat(40),
