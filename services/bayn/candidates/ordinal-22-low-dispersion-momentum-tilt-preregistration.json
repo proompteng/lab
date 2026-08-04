@@ -5,7 +5,7 @@
   "strategyProtocolHash": "7439fb7aa6838f77fd936b3332851981bb8c1c8a713653107a8baa43e6eb53ab",
   "candidateDevelopmentProtocolHash": "0fbd4067a7421ff8f575dc876e94fae2893457b8a33add847f5e26dfde8091a9",
   "calendarHash": "4b2f519f336e4e730c1f0d69e860f25a8d4d0cfbd8e93c6b333ea83623d87237",
-  "priorTrialsHash": "bf81c1b63d206882a50703981d621b8decf8fcd561d0dcba58655ae287b9baaa",
+  "priorTrialsHash": "d0ea5dc985522a99ce93f530218d52a42eb846bea73b5c2a56640bfd2d59ff96",
   "modulePath": "services/bayn/src/strategy/candidate-22.ts",
   "moduleSha256": "938a2f83f11c81f10325365f4b0456097c7038eee84e3fc08687f1d4d08d7177",
   "marketData": {

@@ -269,6 +269,16 @@ const validateLedger = (
       return { ok: false, result: invalidLedger(`entries[${index}].priorTrialCount`) }
     }
 
+    if (entry._tag === 'DEVELOPMENT_PENDING') {
+      const priorTrialsHash = canonicalHashV1Result(entries.slice(0, index))
+      if (Result.isFailure(priorTrialsHash) || entry.preregistration.priorTrialsHash !== priorTrialsHash.success) {
+        return {
+          ok: false,
+          result: invalidLedger(`entries[${index}].preregistration.priorTrialsHash`),
+        }
+      }
+    }
+
     const previous = entries[index - 1]
     if (previous === undefined) {
       if (entry.candidateOrdinal !== 1) return { ok: false, result: invalidLedger('entries') }
