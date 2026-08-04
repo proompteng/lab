@@ -85,37 +85,25 @@ describe('Bayn candidate development trial ledger', () => {
     expect(candidateDevelopmentTrialLedgerState.completedCandidateOrdinals).toEqual(
       Array.from({ length: 16 }, (_, index) => index + 1),
     )
-    expect(candidateDevelopmentTrialLedgerState.developmentCandidateOrdinals).toEqual([17, 18, 19, 21])
+    expect(candidateDevelopmentTrialLedgerState.developmentCandidateOrdinals).toEqual([17, 18, 19, 21, 22])
     expect(candidateDevelopmentTrialLedgerState.latestInvalidPrecommit?.status).toBe('PRECOMMIT_INVALID')
-    const active = candidateDevelopmentTrialLedgerState.activeCandidate
-    if (active === null) {
-      expect(qualificationDormancyDecisionFromLedgerState(candidateDevelopmentTrialLedgerState)).toEqual({
-        ok: true,
-        decision: { status: 'dormant', reason: 'development-rejected', candidateOrdinal: 21 },
-      })
-    } else {
-      expect(active).toMatchObject({
-        strategyName: 'candidate-22-low-dispersion-momentum-tilt',
-        preregistration: { candidateOrdinal: 22, priorTrialCount: 21 },
-        sourceManifest: { path: 'services/bayn/candidates/ordinal-22-source-manifest.json' },
-      })
-      expect(qualificationDormancyDecisionFromLedgerState(candidateDevelopmentTrialLedgerState)).toEqual({
-        ok: true,
-        decision: { status: 'dormant', reason: 'development-not-approved', candidateOrdinal: 22 },
-      })
-    }
+    expect(candidateDevelopmentTrialLedgerState.activeCandidate).toBeNull()
+    expect(qualificationDormancyDecisionFromLedgerState(candidateDevelopmentTrialLedgerState)).toEqual({
+      ok: true,
+      decision: { status: 'dormant', reason: 'development-rejected', candidateOrdinal: 22 },
+    })
   })
 
   test('binds the terminal rejection to its report hash, status, and source revision', () => {
     const rejectionIndex = candidateDevelopmentTrialLedgerState.entries.findIndex(
-      (entry) => entry._tag === 'DEVELOPMENT_REJECTED' && entry.candidateOrdinal === 21,
+      (entry) => entry._tag === 'DEVELOPMENT_REJECTED' && entry.candidateOrdinal === 22,
     )
     const rejection = candidateDevelopmentTrialLedgerState.entries.at(rejectionIndex)
     const pending = candidateDevelopmentTrialLedgerState.entries.at(rejectionIndex - 1)
     if (rejection?._tag !== 'DEVELOPMENT_REJECTED' || rejection.terminalReport === undefined) {
-      throw new Error('expected the terminal Candidate 21 rejection')
+      throw new Error('expected the terminal Candidate 22 rejection')
     }
-    if (pending?._tag !== 'DEVELOPMENT_PENDING') throw new Error('expected the pending Candidate 21 registration')
+    if (pending?._tag !== 'DEVELOPMENT_PENDING') throw new Error('expected the pending Candidate 22 registration')
     const withRejection = (replacement: typeof rejection) =>
       qualificationDormancyDecisionFromLedgerState({
         ...candidateDevelopmentTrialLedgerState,
@@ -152,17 +140,20 @@ describe('Bayn candidate development trial ledger', () => {
       issue: { path: 'entries.DEVELOPMENT_REJECTED.terminalReport.source.bindingHash', reason: 'INVALID_STATE' },
     })
 
-    expect(withRejection(rejection)).toEqual(
-      candidateDevelopmentTrialLedgerState.activeCandidate === null
-        ? {
-            ok: true,
-            decision: { status: 'dormant', reason: 'development-rejected', candidateOrdinal: 21 },
-          }
-        : {
-            ok: true,
-            decision: { status: 'dormant', reason: 'development-not-approved', candidateOrdinal: 22 },
-          },
-    )
+    expect(rejection).toMatchObject({
+      sourceRevision: '85677b0f4b8396bceba7bf33d6d2fca4e81c6d0c',
+      terminalReportHash: '56d845e58845106a54569278eb5c265437dbe288ac93a1d97de2dc886169af24',
+      terminalReport: {
+        status: 'HOLD_REJECT',
+        evaluationHash: 'bd98ee2294dd48caecf682419e0b094f92cac1972be7af7aff8363a60188fa00',
+        targetHash: 'e9e46ab3cecfaa95cd88cb65a83a571edfbc05909b9940057e2bea5277f78acf',
+        qualificationAnalysisHash: 'fdb003763930de38e74d0c3ab00d9fa6480ad35a973b8ca884fd8987750e7533',
+      },
+    })
+    expect(withRejection(rejection)).toEqual({
+      ok: true,
+      decision: { status: 'dormant', reason: 'development-rejected', candidateOrdinal: 22 },
+    })
     expect(
       qualificationDormancyDecisionFromLedgerState({
         ...candidateDevelopmentTrialLedgerState,
