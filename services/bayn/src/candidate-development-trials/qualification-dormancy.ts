@@ -147,21 +147,8 @@ const validateDevelopmentApprovalEvidence = (
   sourceManifestBinding: CandidateDevelopmentLocalSourceManifestBinding,
   strategyName: string,
 ): QualificationDormancyResult => {
-  if (entry.terminalReport.status !== 'PASS') return invalidLedger('entries.DEVELOPMENT_APPROVED.terminalReport.status')
-
-  const reportHash = canonicalHashV1Result(entry.terminalReport)
-  if (Result.isFailure(reportHash) || reportHash.success !== entry.terminalReportHash) {
-    return invalidLedger('entries.DEVELOPMENT_APPROVED.terminalReportHash')
-  }
-
-  const { bindingHash: _bindingHash, ...bindingMaterial } = entry.terminalReport.source
-  const expectedBindingHash = canonicalHashV1Result(bindingMaterial)
-  if (
-    Result.isFailure(expectedBindingHash) ||
-    expectedBindingHash.success !== entry.terminalReport.source.bindingHash
-  ) {
-    return invalidLedger('entries.DEVELOPMENT_APPROVED.terminalReport.source.bindingHash')
-  }
+  const integrityIssue = validateDevelopmentTerminalReportIntegrity(entry, 'PASS')
+  if (integrityIssue !== undefined) return integrityIssue
 
   const source = entry.terminalReport.source
   const expected = [
@@ -194,6 +181,77 @@ const validateDevelopmentApprovalEvidence = (
         },
       }
     : invalidLedger(`entries.DEVELOPMENT_APPROVED.terminalReport.source.${mismatch[0]}`)
+}
+
+type DevelopmentTerminalLedgerEntry =
+  | Extract<CandidateDevelopmentTrialLedgerEntry, { readonly _tag: 'DEVELOPMENT_APPROVED' }>
+  | Extract<CandidateDevelopmentTrialLedgerEntry, { readonly _tag: 'DEVELOPMENT_REJECTED' }>
+
+const validateDevelopmentTerminalReportIntegrity = (
+  entry: DevelopmentTerminalLedgerEntry,
+  expectedStatus: 'PASS' | 'HOLD_REJECT',
+): QualificationDormancyResult | undefined => {
+  if (entry.terminalReport === undefined || entry.terminalReportHash === undefined) {
+    return invalidLedger(`entries.${entry._tag}.terminalReport`)
+  }
+  if (entry.terminalReport.status !== expectedStatus) {
+    return invalidLedger(`entries.${entry._tag}.terminalReport.status`)
+  }
+
+  const reportHash = canonicalHashV1Result(entry.terminalReport)
+  if (Result.isFailure(reportHash) || reportHash.success !== entry.terminalReportHash) {
+    return invalidLedger(`entries.${entry._tag}.terminalReportHash`)
+  }
+
+  const { bindingHash: _bindingHash, ...bindingMaterial } = entry.terminalReport.source
+  const expectedBindingHash = canonicalHashV1Result(bindingMaterial)
+  if (
+    Result.isFailure(expectedBindingHash) ||
+    expectedBindingHash.success !== entry.terminalReport.source.bindingHash
+  ) {
+    return invalidLedger(`entries.${entry._tag}.terminalReport.source.bindingHash`)
+  }
+
+  if (
+    entry.terminalReport.source.candidateOrdinal !== entry.candidateOrdinal ||
+    entry.terminalReport.source.priorTrialCount !== entry.priorTrialCount ||
+    entry.terminalReport.source.sourceRevision !== entry.sourceRevision
+  ) {
+    return invalidLedger(`entries.${entry._tag}.terminalReport.source.identity`)
+  }
+  return undefined
+}
+
+const validateDevelopmentRejectionEvidence = (
+  entry: Extract<CandidateDevelopmentTrialLedgerEntry, { readonly _tag: 'DEVELOPMENT_REJECTED' }>,
+  pending: Extract<CandidateDevelopmentTrialLedgerEntry, { readonly _tag: 'DEVELOPMENT_PENDING' }>,
+): QualificationDormancyResult | undefined => {
+  const integrityIssue = validateDevelopmentTerminalReportIntegrity(entry, 'HOLD_REJECT')
+  if (integrityIssue !== undefined) return integrityIssue
+  if (entry.terminalReport === undefined) return invalidLedger('entries.DEVELOPMENT_REJECTED.terminalReport')
+
+  const source = entry.terminalReport.source
+  const expected = [
+    ['candidateOrdinal', pending.preregistration.candidateOrdinal, source.candidateOrdinal],
+    ['priorTrialCount', pending.preregistration.priorTrialCount, source.priorTrialCount],
+    ['strategyName', pending.strategyName, source.strategyName],
+    ['sourceManifestPath', pending.sourceManifest.path, source.sourceManifestPath],
+    ['sourceManifestBlobOid', pending.sourceManifest.blobOid, source.sourceManifestBlobOid],
+    ['sourceManifestSha256', pending.sourceManifest.sha256, source.sourceManifestSha256],
+    ['modulePath', pending.preregistration.modulePath, source.modulePath],
+    ['moduleSha256', pending.preregistration.moduleSha256, source.moduleSha256],
+    ['strategyProtocolHash', pending.preregistration.strategyProtocolHash, source.strategyProtocolHash],
+    ['trialHistoryHash', pending.preregistration.priorTrialsHash, source.trialHistoryHash],
+    ['snapshotId', pending.preregistration.marketData.snapshotId, source.snapshotId],
+    ['inputManifestHash', pending.preregistration.marketData.inputManifestHash, source.inputManifestHash],
+    ['boundedContentHash', pending.preregistration.marketData.boundedContentHash, source.boundedContentHash],
+  ] as const
+  const mismatch = expected.find(
+    ([, expectedValue, observed]) => expectedValue === undefined || expectedValue !== observed,
+  )
+  return mismatch === undefined
+    ? undefined
+    : invalidLedger(`entries.DEVELOPMENT_REJECTED.terminalReport.source.${mismatch[0]}`)
 }
 
 const validateLedger = (
@@ -311,6 +369,14 @@ export const qualificationDormancyDecisionFromLedgerState = (
       }
     }
     if (last?._tag === 'DEVELOPMENT_REJECTED') {
+      if (last.candidateOrdinal >= 20) {
+        const pending = entries.at(-2)
+        if (pending?._tag !== 'DEVELOPMENT_PENDING' || pending.candidateOrdinal !== last.candidateOrdinal) {
+          return invalidLedger('entries.DEVELOPMENT_REJECTED.binding')
+        }
+        const rejectionIssue = validateDevelopmentRejectionEvidence(last, pending)
+        if (rejectionIssue !== undefined) return rejectionIssue
+      }
       return {
         ok: true,
         decision: { status: 'dormant', reason: 'development-rejected', candidateOrdinal: last.candidateOrdinal },

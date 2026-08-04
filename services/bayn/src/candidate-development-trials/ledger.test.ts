@@ -33,6 +33,7 @@ const approvalEvidence = (
   preregistration: CandidateDevelopmentNextPreregistration,
   sourceManifestBinding: CandidateDevelopmentLocalSourceManifestBinding,
   evaluatedSourceRevision = preregistration.preregistration.sourceRevision,
+  status: 'PASS' | 'HOLD_REJECT' = 'PASS',
 ) => {
   if (preregistration.priorTrialsHash === undefined) throw new Error('approval fixture requires a trial history hash')
   const sourceMaterial = {
@@ -55,7 +56,7 @@ const approvalEvidence = (
   const source = { ...sourceMaterial, bindingHash: canonicalHashV1(sourceMaterial) }
   const terminalReport = makeCandidateDevelopmentLocalTerminalReport(
     source,
-    'PASS',
+    status,
     '6'.repeat(64),
     '7'.repeat(64),
     '8'.repeat(64),
@@ -90,6 +91,46 @@ describe('Bayn candidate development trial ledger', () => {
     expect(qualificationDormancyDecisionFromLedgerState(candidateDevelopmentTrialLedgerState)).toEqual({
       ok: true,
       decision: { status: 'dormant', reason: 'development-rejected', candidateOrdinal: 21 },
+    })
+  })
+
+  test('binds the terminal rejection to its report hash, status, and source revision', () => {
+    const rejection = candidateDevelopmentTrialLedgerState.entries.at(-1)
+    if (rejection?._tag !== 'DEVELOPMENT_REJECTED' || rejection.terminalReport === undefined) {
+      throw new Error('expected the terminal Candidate 21 rejection')
+    }
+    const withRejection = (replacement: typeof rejection) =>
+      qualificationDormancyDecisionFromLedgerState({
+        ...candidateDevelopmentTrialLedgerState,
+        entries: [...candidateDevelopmentTrialLedgerState.entries.slice(0, -1), replacement],
+      })
+
+    expect(withRejection({ ...rejection, terminalReportHash: '0'.repeat(64) })).toEqual({
+      ok: false,
+      issue: { path: 'entries.DEVELOPMENT_REJECTED.terminalReportHash', reason: 'INVALID_STATE' },
+    })
+    expect(
+      withRejection({
+        ...rejection,
+        terminalReport: { ...rejection.terminalReport, status: 'PASS' },
+      }),
+    ).toEqual({
+      ok: false,
+      issue: { path: 'entries.DEVELOPMENT_REJECTED.terminalReport.status', reason: 'INVALID_STATE' },
+    })
+    const alteredReport = {
+      ...rejection.terminalReport,
+      source: { ...rejection.terminalReport.source, sourceRevision: 'a'.repeat(40) },
+    }
+    expect(
+      withRejection({
+        ...rejection,
+        terminalReport: alteredReport,
+        terminalReportHash: canonicalHashV1(alteredReport),
+      }),
+    ).toEqual({
+      ok: false,
+      issue: { path: 'entries.DEVELOPMENT_REJECTED.terminalReport.source.bindingHash', reason: 'INVALID_STATE' },
     })
   })
 
@@ -327,7 +368,7 @@ describe('Bayn candidate development trial ledger', () => {
             _tag: 'DEVELOPMENT_REJECTED' as const,
             candidateOrdinal: 21,
             priorTrialCount: 20,
-            sourceRevision: 'd'.repeat(40),
+            ...approvalEvidence(preregistration, sourceManifest, 'd'.repeat(40), 'HOLD_REJECT'),
           },
         ],
         developmentCandidateOrdinals: [...preCandidate21LedgerState.developmentCandidateOrdinals, 21],
