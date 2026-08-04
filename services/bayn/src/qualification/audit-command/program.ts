@@ -157,8 +157,10 @@ export const makeQualificationAuditReaders = <R>(
     acquirers
       .repository(input)
       .pipe(Effect.flatMap((repository) => repository.audit(sourceRevision, lockCreatedAt, resultIdentity))),
-  verifySourceCheckout: (sourceRevision) =>
-    acquirers.repository(input).pipe(Effect.flatMap((repository) => repository.verifySourceCheckout(sourceRevision))),
+  verifySourceCheckout: (sourceRevision, candidateModulePath) =>
+    acquirers
+      .repository(input)
+      .pipe(Effect.flatMap((repository) => repository.verifySourceCheckout(sourceRevision, candidateModulePath))),
 })
 
 export const runQualificationAudit = <R>(input: AuditConfig, readers: QualificationAuditReaders<R>) =>
