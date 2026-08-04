@@ -234,6 +234,40 @@ const historicalLedger = [
       qualificationAnalysisHash: 'fdb003763930de38e74d0c3ab00d9fa6480ad35a973b8ca884fd8987750e7533',
     },
   },
+  {
+    _tag: 'DEVELOPMENT_PENDING' as const,
+    candidateOrdinal: 23,
+    priorTrialCount: 22,
+    strategyName: 'candidate-23-long-horizon-trend-consensus',
+    preregistration: {
+      schemaVersion: 'bayn.candidate-development-next-preregistration.v1' as const,
+      candidateOrdinal: 23,
+      priorTrialCount: 22,
+      strategyProtocolHash: '4c872d202736df67a1884165ff7dcff5d4c0786661acbb1c52f1da4d954e7c71',
+      candidateDevelopmentProtocolHash: '67df3759bf447907a8252563e3b6e4b5cfec1b6b75d34e235857581377b81099',
+      calendarHash: '4b2f519f336e4e730c1f0d69e860f25a8d4d0cfbd8e93c6b333ea83623d87237',
+      priorTrialsHash: '3f274a01dfc943d6648044eb9530dce3a0dc5d31b9b55ff5271c671f5639821e',
+      modulePath: 'services/bayn/src/strategy/candidate-23.ts',
+      moduleSha256: '94f3a5d098cbfab2cf6dd2cc5282be352a9b283d1117c674817921019a708197',
+      marketData: {
+        schemaVersion: 'bayn.candidate-development-market-data-source.v1' as const,
+        snapshotId: '2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0',
+        finalizedSnapshotContentHash: '8e376546f6a6cc1dbe2e910db3d68f584fc0bd9c4858166042ce32aa077eed0d',
+        inputManifestHash: '1e5377336f2e6feb751000114b81cc89aee5be7542e213c320f2cfbb4185bb2b',
+        boundedContentHash: 'b6052c8ebdca855973adf4e41efafb5028fd8dbbaa70809331f6017519b1c995',
+      },
+      preregistration: {
+        sourceRevision: 'bee48b55268061cf0059dbd79b78405c875f199f',
+        path: 'services/bayn/candidates/ordinal-23-long-horizon-trend-consensus-preregistration.json',
+        blobOid: '6288eaa3ce74daff10ec5a7374c54666f02b163d',
+      },
+    },
+    sourceManifest: {
+      path: 'services/bayn/candidates/ordinal-23-source-manifest.json',
+      blobOid: '918abb4e5d66bc069267de999f103c280d11d321',
+      sha256: '571cef9990c7e28ba24327b428df0f4c98af71bb882d10281b1a624cdf5aeb7b',
+    },
+  },
 ] as const
 
 /** One append-only source-controlled ledger. Candidate 20 is represented once as the terminal tombstone entry. */

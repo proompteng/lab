@@ -87,10 +87,18 @@ describe('Bayn candidate development trial ledger', () => {
     )
     expect(candidateDevelopmentTrialLedgerState.developmentCandidateOrdinals).toEqual([17, 18, 19, 21, 22])
     expect(candidateDevelopmentTrialLedgerState.latestInvalidPrecommit?.status).toBe('PRECOMMIT_INVALID')
-    expect(candidateDevelopmentTrialLedgerState.activeCandidate).toBeNull()
+    expect(candidateDevelopmentTrialLedgerState.activeCandidate).toMatchObject({
+      preregistration: {
+        candidateOrdinal: 23,
+        priorTrialCount: 22,
+        modulePath: 'services/bayn/src/strategy/candidate-23.ts',
+      },
+      strategyName: 'candidate-23-long-horizon-trend-consensus',
+      sourceManifest: { path: 'services/bayn/candidates/ordinal-23-source-manifest.json' },
+    })
     expect(qualificationDormancyDecisionFromLedgerState(candidateDevelopmentTrialLedgerState)).toEqual({
       ok: true,
-      decision: { status: 'dormant', reason: 'development-rejected', candidateOrdinal: 22 },
+      decision: { status: 'dormant', reason: 'development-not-approved', candidateOrdinal: 23 },
     })
   })
 
@@ -152,7 +160,7 @@ describe('Bayn candidate development trial ledger', () => {
     })
     expect(withRejection(rejection)).toEqual({
       ok: true,
-      decision: { status: 'dormant', reason: 'development-rejected', candidateOrdinal: 22 },
+      decision: { status: 'dormant', reason: 'development-not-approved', candidateOrdinal: 23 },
     })
     expect(
       qualificationDormancyDecisionFromLedgerState({
