@@ -291,7 +291,16 @@ const validateLedger = (
       previous._tag === 'DEVELOPMENT_PENDING' &&
       entry._tag === 'DEVELOPMENT_REJECTED' &&
       previous.candidateOrdinal === entry.candidateOrdinal
-    if (isDevelopmentRejectionAfterPending) continue
+    if (entry._tag === 'DEVELOPMENT_REJECTED' && entry.candidateOrdinal >= 20 && !isDevelopmentRejectionAfterPending) {
+      return { ok: false, result: invalidLedger('entries.DEVELOPMENT_REJECTED.binding') }
+    }
+    if (isDevelopmentRejectionAfterPending) {
+      if (entry.candidateOrdinal >= 20) {
+        const rejectionIssue = validateDevelopmentRejectionEvidence(entry, previous)
+        if (rejectionIssue !== undefined) return { ok: false, result: rejectionIssue }
+      }
+      continue
+    }
 
     if (entry.candidateOrdinal !== previous.candidateOrdinal + 1) {
       return {
@@ -369,14 +378,6 @@ export const qualificationDormancyDecisionFromLedgerState = (
       }
     }
     if (last?._tag === 'DEVELOPMENT_REJECTED') {
-      if (last.candidateOrdinal >= 20) {
-        const pending = entries.at(-2)
-        if (pending?._tag !== 'DEVELOPMENT_PENDING' || pending.candidateOrdinal !== last.candidateOrdinal) {
-          return invalidLedger('entries.DEVELOPMENT_REJECTED.binding')
-        }
-        const rejectionIssue = validateDevelopmentRejectionEvidence(last, pending)
-        if (rejectionIssue !== undefined) return rejectionIssue
-      }
       return {
         ok: true,
         decision: { status: 'dormant', reason: 'development-rejected', candidateOrdinal: last.candidateOrdinal },
