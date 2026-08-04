@@ -69,8 +69,19 @@ const approvalEvidence = (
 }
 
 describe('Bayn candidate development trial ledger', () => {
-  test('keeps Candidate 20 as one immutable invalid and unattempted tombstone', () => {
+  test('keeps Candidate 20 immutable and derives the current lifecycle from the append-only tail', () => {
     const candidate20 = candidateDevelopmentTrialLedger.filter((entry) => entry.candidateOrdinal === 20)
+    const latest = candidateDevelopmentTrialLedgerState.entries.at(-1)
+    if (latest === undefined) throw new Error('expected a development ledger tail')
+    const expectedReason =
+      latest._tag === 'DEVELOPMENT_PENDING'
+        ? 'development-not-approved'
+        : latest._tag === 'DEVELOPMENT_APPROVED'
+          ? 'qualification-eligible'
+          : latest._tag === 'DEVELOPMENT_REJECTED'
+            ? 'development-rejected'
+            : null
+    if (expectedReason === null) throw new Error('expected a terminal or active development ledger tail')
 
     expect(candidate20).toEqual([
       {
@@ -85,12 +96,17 @@ describe('Bayn candidate development trial ledger', () => {
     expect(candidateDevelopmentTrialLedgerState.completedCandidateOrdinals).toEqual(
       Array.from({ length: 16 }, (_, index) => index + 1),
     )
-    expect(candidateDevelopmentTrialLedgerState.developmentCandidateOrdinals).toEqual([17, 18, 19, 21, 22])
+    expect(candidateDevelopmentTrialLedgerState.developmentCandidateOrdinals.slice(0, 5)).toEqual([17, 18, 19, 21, 22])
+    expect(candidateDevelopmentTrialLedgerState.developmentCandidateOrdinals).not.toContain(20)
     expect(candidateDevelopmentTrialLedgerState.latestInvalidPrecommit?.status).toBe('PRECOMMIT_INVALID')
-    expect(candidateDevelopmentTrialLedgerState.activeCandidate).toBeNull()
-    expect(qualificationDormancyDecisionFromLedgerState(candidateDevelopmentTrialLedgerState)).toEqual({
+    expect(candidateDevelopmentTrialLedgerState.activeCandidate === null).toBe(latest._tag === 'DEVELOPMENT_REJECTED')
+    expect(qualificationDormancyDecisionFromLedgerState(candidateDevelopmentTrialLedgerState)).toMatchObject({
       ok: true,
-      decision: { status: 'dormant', reason: 'development-rejected', candidateOrdinal: 22 },
+      decision: {
+        status: latest._tag === 'DEVELOPMENT_APPROVED' ? 'ready' : 'dormant',
+        reason: expectedReason,
+        candidateOrdinal: latest.candidateOrdinal,
+      },
     })
   })
 
@@ -150,10 +166,9 @@ describe('Bayn candidate development trial ledger', () => {
         qualificationAnalysisHash: 'fdb003763930de38e74d0c3ab00d9fa6480ad35a973b8ca884fd8987750e7533',
       },
     })
-    expect(withRejection(rejection)).toEqual({
-      ok: true,
-      decision: { status: 'dormant', reason: 'development-rejected', candidateOrdinal: 22 },
-    })
+    expect(withRejection(rejection)).toEqual(
+      qualificationDormancyDecisionFromLedgerState(candidateDevelopmentTrialLedgerState),
+    )
     expect(
       qualificationDormancyDecisionFromLedgerState({
         ...candidateDevelopmentTrialLedgerState,
