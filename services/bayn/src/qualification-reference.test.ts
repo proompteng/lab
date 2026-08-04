@@ -15,7 +15,7 @@ import { MICROS } from './execution-model'
 import { hashParameters } from './protocol'
 import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
 import { evaluateStrategyApplication } from './strategy/evaluation-runner'
-import { bindReviewedStrategySource } from './strategy'
+import { bindReviewedStrategySource, type StrategyApplication, type TargetPortfolio } from './strategy'
 import { makeRiskBalancedTrendApplication, makeRiskBalancedTrendDefinition } from './strategy/risk-balanced-trend'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
@@ -92,6 +92,62 @@ describe('independent qualification reference', () => {
     expect(reference.strategy.metrics).toEqual(actual.strategy)
     expect(reference.strategy.events).toEqual(actual.events)
     expect(reference.strategy.decisions).toEqual(actual.signalDecisions)
+    expect(reference.strategy.trace).toEqual(actual.simulation)
+    expect(reference.verdict).toEqual(actual.verdict)
+  })
+
+  test('replays a reviewed generic target without requiring risk-specific decision evidence', () => {
+    const snapshot = makeSnapshot(900)
+    const baseApplication = makeRiskBalancedTrendApplication(
+      fixtureProtocol,
+      makeRiskBalancedTrendDefinition(fixtureProtocol),
+    )
+    const application = bindReviewedStrategySource(
+      {
+        ...baseApplication,
+        closeTarget: (target) => ({ targetWeights: target.targetWeights }),
+        definition: {
+          ...baseApplication.definition,
+          decide: (context) =>
+            Result.map(baseApplication.definition.decide(context), (target) => ({
+              targetWeights: target.targetWeights,
+            })),
+        },
+      } as StrategyApplication<any, any, TargetPortfolio>,
+      {
+        sourceRevision: 'a'.repeat(40),
+        modulePath: 'services/bayn/src/strategy/candidate.ts',
+        moduleSha256: 'd'.repeat(64),
+      },
+    )
+    const provenance = makeRuntimeProvenance({
+      sourceRevision: 'a'.repeat(40),
+      image: {
+        repository: 'registry.ide-newton.ts.net/lab/bayn',
+        digest: `sha256:${'b'.repeat(64)}`,
+      },
+      strategy: {
+        name: application.definition.name,
+        behaviorHash: 'd'.repeat(64),
+        parameterHash: hashParameters(fixtureProtocol),
+        parameterSchemaVersion: fixtureProtocol.schemaVersion,
+      },
+    })
+    const actual = assertSuccess(
+      evaluateStrategyApplication({
+        application,
+        provenance,
+        bars: snapshot.bars,
+        inputManifest: snapshot.manifest,
+      }),
+    )
+    const reference = assertSuccess(
+      evaluateReference(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance, true, application),
+    )
+
+    expect(reference.strategy.metrics).toEqual(actual.strategy)
+    expect(reference.strategy.events).toEqual(actual.events)
+    expect(reference.strategy.decisions).toEqual([])
     expect(reference.strategy.trace).toEqual(actual.simulation)
     expect(reference.verdict).toEqual(actual.verdict)
   })

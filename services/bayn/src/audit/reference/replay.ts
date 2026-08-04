@@ -175,7 +175,7 @@ export const replay = (
       const decision: DecisionEvent = decisionResult.success
       if (retainTrace) {
         const plan = 'plan' in target ? target.plan : undefined
-        if (plan === undefined && !terminalClose) {
+        if (plan === undefined && !terminalClose && target.requireDecisionEvidence !== false) {
           return Result.fail({
             _tag: 'ReferenceMissingDecisionPlan',
             signalIndex: target.signalIndex,

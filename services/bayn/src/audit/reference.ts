@@ -132,18 +132,12 @@ const strategyTargetsFromApplication = (
         ),
         Result.flatMap((target) => {
           const decision = Schema.decodeUnknownResult(DecisionPlanSchema, strictParseOptions)(target)
-          return Result.isFailure(decision)
-            ? Result.fail<ReferenceEvaluationFailure>({
-                _tag: 'ReferenceMissingDecisionPlan',
-                signalIndex,
-                executionIndex: signalIndex + 1,
-              })
-            : Result.succeed({
-                signalIndex,
-                executionIndex: signalIndex + 1,
-                weights: target.targetWeights,
-                plan: decision.success,
-              })
+          return Result.succeed({
+            signalIndex,
+            executionIndex: signalIndex + 1,
+            weights: target.targetWeights,
+            ...(Result.isSuccess(decision) ? { plan: decision.success } : { requireDecisionEvidence: false as const }),
+          })
         }),
       ),
     ),

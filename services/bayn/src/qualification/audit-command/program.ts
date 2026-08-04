@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 
 import { Effect } from 'effect'
 import { ChildProcessSpawner } from 'effect/unstable/process'
@@ -27,6 +28,35 @@ import { hashParameters } from '../../protocol'
 
 const sha256Pattern = /^[0-9a-f]{64}$/
 
+const verifiedCandidateModulePath = (input: AuditConfig): Effect.Effect<string, QualificationAuditCommandError> =>
+  Effect.gen(function* () {
+    const repositoryRoot = yield* Effect.tryPromise({
+      try: () => realpath(resolve(input.repositoryPath)),
+      catch: (cause) =>
+        qualificationAuditCommandError('repository', 'audit repository path could not be resolved', cause),
+    })
+    const modulePath = yield* Effect.tryPromise({
+      try: () => realpath(resolve(input.candidateModulePath)),
+      catch: (cause) =>
+        qualificationAuditCommandError('repository', 'candidate strategy module path could not be resolved', cause),
+    })
+    const relativeModulePath = relative(repositoryRoot, modulePath)
+    if (
+      relativeModulePath.length === 0 ||
+      relativeModulePath === '..' ||
+      relativeModulePath.startsWith(`..${sep}`) ||
+      isAbsolute(relativeModulePath)
+    ) {
+      return yield* Effect.fail(
+        qualificationAuditCommandError(
+          'repository',
+          'candidate strategy module must resolve inside the audit repository',
+        ),
+      )
+    }
+    return modulePath
+  })
+
 const loadAuditStrategyApplication = (
   input: AuditConfig,
   sourceRevision: string,
@@ -52,8 +82,9 @@ const loadAuditStrategyApplication = (
     )
   }
   return Effect.gen(function* () {
+    const modulePath = yield* verifiedCandidateModulePath(input)
     const moduleBytes = yield* Effect.tryPromise({
-      try: (signal) => readFile(input.candidateModulePath, { signal }),
+      try: (signal) => readFile(modulePath, { signal }),
       catch: (cause) =>
         qualificationAuditCommandError('repository', 'candidate strategy module could not be read', cause),
     })
@@ -74,7 +105,17 @@ const loadAuditStrategyApplication = (
         ),
       )
     }
-    const application = yield* loadReviewedStrategyApplication(input.candidateModulePath, sourceRevision).pipe(
+    const application = yield* loadReviewedStrategyApplication(modulePath, sourceRevision).pipe(
+      Effect.timeoutOrElse({
+        duration: input.operationTimeoutMs,
+        orElse: () =>
+          Effect.fail(
+            qualificationAuditCommandError(
+              'repository',
+              'candidate strategy application load exceeded the configured audit timeout',
+            ),
+          ),
+      }),
       Effect.mapError((cause) =>
         qualificationAuditCommandError('repository', 'candidate strategy application could not be loaded', cause),
       ),
@@ -89,7 +130,7 @@ const loadAuditStrategyApplication = (
     }
     return bindReviewedStrategySource(application, {
       sourceRevision,
-      modulePath: input.candidateModulePath,
+      modulePath,
       moduleSha256: input.candidateModuleSha256,
     })
   })
@@ -128,7 +169,11 @@ export const runQualificationAudit = <R>(input: AuditConfig, readers: Qualificat
       return yield* qualificationAuditCommandError('audit', 'input-manifest artifact is missing')
     }
     const manifest = yield* decodeInputManifestArtifact(inputManifestArtifact.payload)
-    yield* readers.verifySourceCheckout(database.run.sourceRevision)
+    const candidateModulePath = input.candidateModulePath.trim()
+    yield* readers.verifySourceCheckout(
+      database.run.sourceRevision,
+      candidateModulePath.length === 0 ? undefined : resolve(candidateModulePath),
+    )
     const protocol = database.protocol.parameters
     const application = yield* loadAuditStrategyApplication(
       input,

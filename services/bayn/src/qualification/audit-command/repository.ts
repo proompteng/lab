@@ -51,6 +51,7 @@ const verifySourceCheckoutWithClient = (
   processes: ChildProcessSpawner.ChildProcessSpawner['Service'],
   repositoryPath: string,
   sourceRevision: string,
+  candidateModulePath?: string,
 ): Effect.Effect<void, QualificationAuditCommandError> =>
   Effect.gen(function* () {
     const headLines = yield* processes.lines(
@@ -66,7 +67,25 @@ const verifySourceCheckoutWithClient = (
         '--untracked-files=all',
       ]),
     )
-    if (headLines[0] !== sourceRevision || statusLines.length > 0) {
+    const trackedModuleLines =
+      candidateModulePath === undefined
+        ? []
+        : yield* processes.lines(
+            ChildProcess.make('git', [
+              '-C',
+              repositoryPath,
+              '--no-optional-locks',
+              'ls-files',
+              '--error-unmatch',
+              '--',
+              candidateModulePath,
+            ]),
+          )
+    if (
+      headLines[0] !== sourceRevision ||
+      statusLines.length > 0 ||
+      (candidateModulePath !== undefined && (trackedModuleLines.length !== 1 || trackedModuleLines[0] === undefined))
+    ) {
       return yield* Effect.fail(
         qualificationAuditCommandError(
           'repository',
@@ -88,8 +107,8 @@ export const acquireAuditRepositoryClient: AcquireAuditRepositoryClient<ChildPro
   ChildProcessSpawner.ChildProcessSpawner.pipe(
     Effect.map(
       (processes): AuditRepositoryClient => ({
-        verifySourceCheckout: (sourceRevision) =>
-          verifySourceCheckoutWithClient(processes, input.repositoryPath, sourceRevision),
+        verifySourceCheckout: (sourceRevision, candidateModulePath) =>
+          verifySourceCheckoutWithClient(processes, input.repositoryPath, sourceRevision, candidateModulePath),
         audit: (sourceRevision, lockCreatedAt, resultIdentity) =>
           repositoryAuditWithClient(processes, input.repositoryPath, sourceRevision, lockCreatedAt, resultIdentity),
       }),
