@@ -268,6 +268,38 @@ const historicalLedger = [
       sha256: '571cef9990c7e28ba24327b428df0f4c98af71bb882d10281b1a624cdf5aeb7b',
     },
   },
+  {
+    _tag: 'DEVELOPMENT_REJECTED' as const,
+    candidateOrdinal: 23,
+    priorTrialCount: 22,
+    sourceRevision: '8c57049a24f59e694c2633754f0ccaa90a3d0d7f',
+    terminalReportHash: '232a7554bbc4b46c0db4c5045900220379abeb74cb1f376ced6ae526d838f739',
+    terminalReport: {
+      schemaVersion: 'bayn.candidate-development-local-terminal.v1' as const,
+      source: {
+        candidateOrdinal: 23,
+        priorTrialCount: 22,
+        trialHistoryHash: '3f274a01dfc943d6648044eb9530dce3a0dc5d31b9b55ff5271c671f5639821e',
+        strategyName: 'candidate-23-long-horizon-trend-consensus',
+        strategyProtocolHash: '4c872d202736df67a1884165ff7dcff5d4c0786661acbb1c52f1da4d954e7c71',
+        snapshotId: '2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0',
+        inputManifestHash: '1e5377336f2e6feb751000114b81cc89aee5be7542e213c320f2cfbb4185bb2b',
+        boundedContentHash: 'b6052c8ebdca855973adf4e41efafb5028fd8dbbaa70809331f6017519b1c995',
+        sourceRevision: '8c57049a24f59e694c2633754f0ccaa90a3d0d7f',
+        modulePath: 'services/bayn/src/strategy/candidate-23.ts',
+        moduleBlobOid: '7cc023405cd9995713418e8413ac82bbf8adaad8',
+        moduleSha256: '94f3a5d098cbfab2cf6dd2cc5282be352a9b283d1117c674817921019a708197',
+        sourceManifestPath: 'services/bayn/candidates/ordinal-23-source-manifest.json',
+        sourceManifestBlobOid: '918abb4e5d66bc069267de999f103c280d11d321',
+        sourceManifestSha256: '571cef9990c7e28ba24327b428df0f4c98af71bb882d10281b1a624cdf5aeb7b',
+        bindingHash: 'c14806eca01e02645d18a98b5ffb1668ac7839f8049f702ad0ae23fcb7e57c8f',
+      },
+      status: 'HOLD_REJECT',
+      evaluationHash: 'c407ff956f50dac3a6dfc015d1038d7cae43314c05c14daf8759ac3b3a6a97a1',
+      targetHash: 'd31e47331c02e93ae4f36aec8958ec1b3337116c2ac9669343c139935f3c71d5',
+      qualificationAnalysisHash: '9bc11fc3026a938f4109c96298050a713b7ad14379c76181f12835cccda65784',
+    },
+  },
 ] as const
 
 /** One append-only source-controlled ledger. Candidate 20 is represented once as the terminal tombstone entry. */
