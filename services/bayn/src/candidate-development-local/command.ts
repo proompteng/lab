@@ -209,7 +209,7 @@ export const verifyCandidateDevelopmentLocalSourceTree = (
       ),
   })
 
-const verifyCandidateDevelopmentLocalSourceDescendant = (
+export const verifyCandidateDevelopmentLocalSourceDescendant = (
   repositoryRoot: string,
   reviewedSourceRevision: string,
   sourceRevision: string,

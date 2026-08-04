@@ -16,6 +16,7 @@ import {
   reserveCandidateDevelopmentLocalReceipt,
   runCandidateDevelopmentLocally,
   verifyCandidateDevelopmentSourceManifestBinding,
+  verifyCandidateDevelopmentLocalSourceDescendant,
   verifyCandidateDevelopmentLocalSourceTree,
   verifyCandidateDevelopmentSourceManifest,
   type CandidateDevelopmentLocalAttemptPort,
@@ -258,6 +259,43 @@ describe('candidate-development-local source and attempt lifecycle', () => {
       verifyCandidateDevelopmentLocalSourceTree('/repo', [sourceModulePath], sourceGit, sourceRevision),
     )
     expect(Exit.isFailure(exit)).toBe(true)
+  })
+
+  test('allows only the reviewed Candidate 21 dormancy fixture in a source descendant', async () => {
+    const allowedPaths = [
+      sourceModulePath,
+      sourceManifestPath,
+      'services/bayn/src/candidate-development-trials/ledger.ts',
+      'packages/scripts/src/bayn/verify-qualification-dormancy.test.ts',
+    ]
+    const sourceGit = (changedPaths: readonly string[]) => ({
+      text: async (_root: string, args: readonly string[]) => (args[0] === 'diff' ? changedPaths.join('\n') : ''),
+      bytes: async () => Buffer.alloc(0),
+    })
+
+    const accepted = await Effect.runPromiseExit(
+      verifyCandidateDevelopmentLocalSourceDescendant(
+        '/repo',
+        sourceRevision,
+        'f'.repeat(40),
+        sourceModulePath,
+        sourceManifestPath,
+        sourceGit(allowedPaths),
+      ),
+    )
+    expect(Exit.isSuccess(accepted)).toBe(true)
+
+    const rejected = await Effect.runPromiseExit(
+      verifyCandidateDevelopmentLocalSourceDescendant(
+        '/repo',
+        sourceRevision,
+        'f'.repeat(40),
+        sourceModulePath,
+        sourceManifestPath,
+        sourceGit([...allowedPaths, 'services/bayn/src/unrelated.ts']),
+      ),
+    )
+    expect(Exit.isFailure(rejected)).toBe(true)
   })
 
   test('reserves an attempt once and rejects replay', async () => {
