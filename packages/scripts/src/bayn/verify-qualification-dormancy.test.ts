@@ -25,8 +25,8 @@ describe('qualification dormancy command', () => {
     const decision = await verifyQualificationDormancy(repositoryRoot)
     expect(decision).toEqual({
       status: 'dormant',
-      reason: 'development-rejected',
-      candidateOrdinal: 23,
+      reason: 'development-not-approved',
+      candidateOrdinal: 24,
     })
   })
 
@@ -84,7 +84,7 @@ describe('qualification dormancy command', () => {
       expect(stderr).toBe('')
       expect(stdout).toContain('"status":"dormant"')
       expect(await readFile(githubOutput, 'utf8')).toBe(
-        'eligible=false\ndormant=true\nreason=development-rejected\ncandidate_ordinal=23\n',
+        'eligible=false\ndormant=true\nreason=development-not-approved\ncandidate_ordinal=24\n',
       )
     } finally {
       await rm(directory, { recursive: true, force: true })

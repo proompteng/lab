@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "bayn.candidate-development-source-manifest.v2",
+  "candidateOrdinal": 24,
+  "priorTrialCount": 23,
+  "trialHistoryHash": "1e34949870418ab15c4120e9a45de1d41d0ed4a07fdbcc31d4a22cd22e5f42b3",
+  "strategyName": "candidate-24-twelve-month-time-series-momentum",
+  "strategyProtocolHash": "e5984cde401715e654a61b268bf3c70ebf600b9e303efb348c0e6c3d9eacd7c1",
+  "modulePath": "services/bayn/src/strategy/candidate-24.ts",
+  "moduleSha256": "dc9132bc2332f1878dd7f698f426f875d6370c354da38d38055c5ea32849d24c",
+  "moduleFormat": "typescript-strategy-application-v1",
+  "marketData": {
+    "schemaVersion": "bayn.candidate-development-market-data-source.v2",
+    "snapshotId": "2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0",
+    "inputManifestHash": "1e5377336f2e6feb751000114b81cc89aee5be7542e213c320f2cfbb4185bb2b",
+    "boundedContentHash": "b6052c8ebdca855973adf4e41efafb5028fd8dbbaa70809331f6017519b1c995"
+  }
+}
