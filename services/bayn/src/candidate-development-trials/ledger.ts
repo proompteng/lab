@@ -134,6 +134,12 @@ const historicalLedger = [
       sha256: '0613547be32377af4431b87476b7cee15af107f7860fbc5cff346763c5b9150c',
     },
   },
+  {
+    _tag: 'DEVELOPMENT_REJECTED' as const,
+    candidateOrdinal: 21,
+    priorTrialCount: 20,
+    sourceRevision: 'd98164a2df566c6181fb6ea9580b6273f68c57e7',
+  },
 ] as const
 
 /** One append-only source-controlled ledger. Candidate 20 is represented once as the terminal tombstone entry. */

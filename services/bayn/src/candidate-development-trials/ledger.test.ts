@@ -14,11 +14,17 @@ import {
 import type { CandidateDevelopmentNextPreregistration } from './model'
 import { qualificationDormancyDecisionFromLedgerState } from './qualification-dormancy'
 
+const candidate21EntryIndex = candidateDevelopmentTrialLedgerState.entries.findIndex(
+  (entry) => entry.candidateOrdinal === 21,
+)
 const preCandidate21LedgerState: CandidateDevelopmentTrialLedgerState =
-  candidateDevelopmentTrialLedgerState.entries.at(-1)?._tag === 'DEVELOPMENT_PENDING'
+  candidate21EntryIndex >= 0
     ? {
         ...candidateDevelopmentTrialLedgerState,
-        entries: candidateDevelopmentTrialLedgerState.entries.slice(0, -1),
+        entries: candidateDevelopmentTrialLedgerState.entries.slice(0, candidate21EntryIndex),
+        developmentCandidateOrdinals: candidateDevelopmentTrialLedgerState.developmentCandidateOrdinals.filter(
+          (ordinal) => ordinal < 21,
+        ),
         activeCandidate: null,
       }
     : candidateDevelopmentTrialLedgerState
@@ -78,14 +84,13 @@ describe('Bayn candidate development trial ledger', () => {
     expect(candidateDevelopmentTrialLedgerState.completedCandidateOrdinals).toEqual(
       Array.from({ length: 16 }, (_, index) => index + 1),
     )
-    expect(candidateDevelopmentTrialLedgerState.developmentCandidateOrdinals).toEqual([17, 18, 19])
+    expect(candidateDevelopmentTrialLedgerState.developmentCandidateOrdinals).toEqual([17, 18, 19, 21])
     expect(candidateDevelopmentTrialLedgerState.latestInvalidPrecommit?.status).toBe('PRECOMMIT_INVALID')
-    if (candidateDevelopmentTrialLedgerState.activeCandidate === null) {
-      expect(candidateDevelopmentTrialLedgerState.activeCandidate).toBeNull()
-    } else {
-      expect(candidateDevelopmentTrialLedgerState.activeCandidate.preregistration.candidateOrdinal).toBe(21)
-      expect(candidateDevelopmentTrialLedgerState.activeCandidate.strategyName).toBe('candidate-21-six-month-rotation')
-    }
+    expect(candidateDevelopmentTrialLedgerState.activeCandidate).toBeNull()
+    expect(qualificationDormancyDecisionFromLedgerState(candidateDevelopmentTrialLedgerState)).toEqual({
+      ok: true,
+      decision: { status: 'dormant', reason: 'development-rejected', candidateOrdinal: 21 },
+    })
   })
 
   test('keeps an active registration dormant until its one terminal development approval is appended', () => {
