@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "bayn.candidate-development-source-manifest.v2",
+  "candidateOrdinal": 22,
+  "priorTrialCount": 21,
+  "trialHistoryHash": "d0ea5dc985522a99ce93f530218d52a42eb846bea73b5c2a56640bfd2d59ff96",
+  "strategyName": "candidate-22-low-dispersion-momentum-tilt",
+  "strategyProtocolHash": "7439fb7aa6838f77fd936b3332851981bb8c1c8a713653107a8baa43e6eb53ab",
+  "modulePath": "services/bayn/src/strategy/candidate-22.ts",
+  "moduleSha256": "938a2f83f11c81f10325365f4b0456097c7038eee84e3fc08687f1d4d08d7177",
+  "moduleFormat": "typescript-strategy-application-v1",
+  "marketData": {
+    "schemaVersion": "bayn.candidate-development-market-data-source.v2",
+    "snapshotId": "2a91f0177684f7022f746207333e510c8268f9b77a04b778a04220a33ccf79e0",
+    "inputManifestHash": "1e5377336f2e6feb751000114b81cc89aee5be7542e213c320f2cfbb4185bb2b",
+    "boundedContentHash": "b6052c8ebdca855973adf4e41efafb5028fd8dbbaa70809331f6017519b1c995"
+  }
+}
