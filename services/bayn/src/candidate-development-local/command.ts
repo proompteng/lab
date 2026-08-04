@@ -57,6 +57,7 @@ import { loadReviewedStrategyApplication } from './source-module'
 
 const candidateDevelopmentEvaluatorSourcePath = 'services/bayn/src'
 const candidateDevelopmentTrialLedgerSourcePath = 'services/bayn/src/candidate-development-trials/ledger.ts'
+const candidateDevelopmentDormancyTestSourcePath = 'packages/scripts/src/bayn/verify-qualification-dormancy.test.ts'
 
 export interface CandidateDevelopmentSourceGit {
   readonly text: (repositoryRoot: string, args: readonly string[], signal?: AbortSignal) => Promise<string>
@@ -227,7 +228,12 @@ const verifyCandidateDevelopmentLocalSourceDescendant = (
       )
         .split('\n')
         .filter(Boolean)
-      const allowedPaths = new Set([modulePath, sourceManifestPath, candidateDevelopmentTrialLedgerSourcePath])
+      const allowedPaths = new Set([
+        modulePath,
+        sourceManifestPath,
+        candidateDevelopmentTrialLedgerSourcePath,
+        candidateDevelopmentDormancyTestSourcePath,
+      ])
       const unexpectedPath = changedPaths.find((path) => !allowedPaths.has(path))
       if (unexpectedPath !== undefined)
         throw new Error(`unapproved candidate source descendant path: ${unexpectedPath}`)
@@ -235,7 +241,7 @@ const verifyCandidateDevelopmentLocalSourceDescendant = (
     catch: (cause) =>
       localError(
         'SOURCE_BINDING_INVALID',
-        'candidate source descendants may only add the reviewed module, manifest, and terminal ledger data',
+        'candidate source descendants may only add the reviewed module, manifest, terminal ledger, and dormancy fixture',
         cause,
       ),
   })
