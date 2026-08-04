@@ -1,4 +1,4 @@
-import { pipe, Result } from 'effect'
+import { pipe, Result, Schema } from 'effect'
 
 import { makeRunIdentityResult, makeStrategyProtocolHashResult, type RuntimeProvenance } from '../contracts'
 import { MICROS } from '../execution-model'
@@ -11,6 +11,9 @@ import type {
   Protocol,
   SimulationProtocol,
 } from '../types'
+import { DecisionPlanSchema } from '../evidence-contracts'
+import { strictParseOptions } from '../schemas'
+import type { StrategyApplication } from '../strategy/core'
 import {
   align,
   directVolatilityTarget,
@@ -23,10 +26,12 @@ import { hashReferenceMaterial } from './reference/replay/identities'
 import type {
   ReferenceComputation,
   ReferenceEvaluation,
+  ReferenceEvaluationFailure,
   ReferenceEvaluationWithWork,
   ReferenceEvaluationWork,
   Replay,
   ReplayWithWork,
+  Session,
   Target,
 } from './reference/model'
 import { replay } from './reference/replay'
@@ -92,12 +97,59 @@ const makeVerdict = (
   return { status: gates.every((gate) => gate.passed) ? 'PASS' : 'FAIL_CLOSED', gates }
 }
 
+/**
+ * Candidate qualification must replay the exact reviewed application that produced the stored
+ * decisions. The reference still owns the independent session selection, benchmark construction,
+ * and accounting replay; only the strategy decision is supplied by the reviewed application.
+ */
+const strategyTargetsFromApplication = (
+  sessions: readonly Session[],
+  signalIndices: readonly number[],
+  application: StrategyApplication<any, any, any>,
+): ReferenceComputation<readonly Target[]> =>
+  Result.all(
+    signalIndices.map((signalIndex) =>
+      pipe(
+        application.contextAtSignal(sessions, signalIndex),
+        Result.mapError(
+          (cause): ReferenceEvaluationFailure => ({
+            _tag: 'ReferenceStrategyDecisionFailed',
+            signalIndex,
+            cause,
+          }),
+        ),
+        Result.flatMap((context) =>
+          pipe(
+            application.definition.decide(context),
+            Result.mapError(
+              (cause): ReferenceEvaluationFailure => ({
+                _tag: 'ReferenceStrategyDecisionFailed',
+                signalIndex,
+                cause,
+              }),
+            ),
+          ),
+        ),
+        Result.flatMap((target) => {
+          const decision = Schema.decodeUnknownResult(DecisionPlanSchema, strictParseOptions)(target)
+          return Result.succeed({
+            signalIndex,
+            executionIndex: signalIndex + 1,
+            weights: target.targetWeights,
+            ...(Result.isSuccess(decision) ? { plan: decision.success } : { requireDecisionEvidence: false as const }),
+          })
+        }),
+      ),
+    ),
+  )
+
 const evaluateReferenceWithWork = (
   bars: readonly DailyBar[],
   manifest: InputManifest,
   protocol: Protocol,
   provenance: RuntimeProvenance,
   closeAtEnd: boolean,
+  application?: StrategyApplication<any, any, any>,
 ): ReferenceComputation<ReferenceEvaluationWithWork> => {
   const sessionsResult = align(bars, manifest, protocol.universe)
   if (Result.isFailure(sessionsResult)) return Result.fail(sessionsResult.failure)
@@ -145,10 +197,10 @@ const evaluateReferenceWithWork = (
     parameterHash,
     parameterSchemaVersion: protocol.schemaVersion,
   }
-  if (parameterHash !== provenance.strategy.parameterHash || provenance.strategy.name !== 'risk-balanced-trend') {
+  if (parameterHash !== provenance.strategy.parameterHash) {
     return Result.fail({
       _tag: 'ReferenceProvenanceMismatch',
-      requiredStrategyName: 'risk-balanced-trend',
+      requiredStrategyName: provenance.strategy.name,
       actualStrategyName: provenance.strategy.name,
       expectedParameterHash: parameterHash,
       actualParameterHash: provenance.strategy.parameterHash,
@@ -172,16 +224,25 @@ const evaluateReferenceWithWork = (
   if (Result.isFailure(protocolHashResult)) return Result.fail(protocolHashResult.failure)
   const runId = runIdentityResult.success.runId
   const protocolHash = protocolHashResult.success
-  const candidateTargetsResult = Result.all(
-    eligibleSignals.map((signalIndex) =>
-      pipe(
-        riskBalancedDecisionPlan(signalIndex, sessions, protocol),
-        Result.map(
-          (plan): Target => ({ signalIndex, executionIndex: signalIndex + 1, weights: plan.targetWeights, plan }),
-        ),
-      ),
-    ),
-  )
+  const candidateTargetsResult =
+    application !== undefined &&
+    (application.reviewedSource !== undefined || application.definition.name !== 'risk-balanced-trend')
+      ? strategyTargetsFromApplication(sessions, eligibleSignals, application)
+      : Result.all(
+          eligibleSignals.map((signalIndex) =>
+            pipe(
+              riskBalancedDecisionPlan(signalIndex, sessions, protocol),
+              Result.map(
+                (plan): Target => ({
+                  signalIndex,
+                  executionIndex: signalIndex + 1,
+                  weights: plan.targetWeights,
+                  plan,
+                }),
+              ),
+            ),
+          ),
+        )
   if (Result.isFailure(candidateTargetsResult)) return Result.fail(candidateTargetsResult.failure)
   const candidateTargets = candidateTargetsResult.success
   const equalWeight = roundWeight(1 / protocol.universe.length)
@@ -266,9 +327,10 @@ export const evaluateReference = (
   protocol: Protocol,
   provenance: RuntimeProvenance,
   closeAtEnd = true,
+  application?: StrategyApplication<any, any, any>,
 ): ReferenceComputation<ReferenceEvaluation> =>
   pipe(
-    evaluateReferenceWithWork(bars, manifest, protocol, provenance, closeAtEnd),
+    evaluateReferenceWithWork(bars, manifest, protocol, provenance, closeAtEnd, application),
     Result.map((reference) => ({
       runId: reference.runId,
       protocolHash: reference.protocolHash,
@@ -286,9 +348,10 @@ export const measureReferenceEvaluationWork = (
   protocol: Protocol,
   provenance: RuntimeProvenance,
   closeAtEnd = true,
+  application?: StrategyApplication<any, any, any>,
 ): ReferenceComputation<ReferenceEvaluationWork> =>
   pipe(
-    evaluateReferenceWithWork(bars, manifest, protocol, provenance, closeAtEnd),
+    evaluateReferenceWithWork(bars, manifest, protocol, provenance, closeAtEnd, application),
     Result.map((reference) => ({
       strategy: reference.strategy.work,
       buyAndHold: reference.buyAndHold.work,

@@ -26,6 +26,31 @@ const isStrategyApplication = (value: unknown): value is StrategyApplication<any
   )
 }
 
+const importReviewedModule = (moduleUrl: string, signal: AbortSignal): Promise<unknown> =>
+  new Promise((resolve, reject) => {
+    let settled = false
+    const abort = () => fail(signal.reason ?? new Error('reviewed strategy module import interrupted'))
+    const cleanup = () => signal.removeEventListener('abort', abort)
+    const succeed = (value: unknown) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(value)
+    }
+    const fail = (cause: unknown) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(cause)
+    }
+    if (signal.aborted) {
+      abort()
+      return
+    }
+    signal.addEventListener('abort', abort, { once: true })
+    import(moduleUrl).then(succeed, fail)
+  })
+
 /**
  * Load the executable application from the reviewed checkout rather than using a separately composed substitute.
  * The revision query keeps Bun from reusing a module cached from another checked-out source revision.
@@ -35,17 +60,18 @@ export const loadReviewedStrategyApplication = (
   sourceRevision: string,
 ): Effect.Effect<StrategyApplication<any, any, any>, CandidateDevelopmentSourceModuleError> =>
   Effect.tryPromise({
-    try: async () => {
+    try: (signal) => {
       const moduleUrl = `${pathToFileURL(absoluteModulePath).href}?bayn-source-revision=${sourceRevision}`
-      const loaded: unknown = await import(moduleUrl)
-      const application =
-        typeof loaded === 'object' && loaded !== null
-          ? (loaded as Record<string, unknown>).strategyApplication
-          : undefined
-      if (!isStrategyApplication(application)) {
-        throw new Error('reviewed candidate module must export strategyApplication')
-      }
-      return application
+      return importReviewedModule(moduleUrl, signal).then((loaded: unknown) => {
+        const application =
+          typeof loaded === 'object' && loaded !== null
+            ? (loaded as Record<string, unknown>).strategyApplication
+            : undefined
+        if (!isStrategyApplication(application)) {
+          throw new Error('reviewed candidate module must export strategyApplication')
+        }
+        return application
+      })
     },
     catch: (cause) =>
       new CandidateDevelopmentSourceModuleError({

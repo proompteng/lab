@@ -25,6 +25,7 @@ export interface Target {
   readonly executionIndex: number
   readonly weights: Readonly<Record<string, number>>
   readonly plan?: DecisionPlan
+  readonly requireDecisionEvidence?: boolean
   readonly terminalClose?: boolean
 }
 
@@ -254,10 +255,15 @@ export type ReferenceEvaluationFailure =
     }
   | {
       readonly _tag: 'ReferenceProvenanceMismatch'
-      readonly requiredStrategyName: 'risk-balanced-trend'
+      readonly requiredStrategyName: string
       readonly actualStrategyName: string
       readonly expectedParameterHash: string
       readonly actualParameterHash: string
+    }
+  | {
+      readonly _tag: 'ReferenceStrategyDecisionFailed'
+      readonly signalIndex: number
+      readonly cause: unknown
     }
 
 export type ReferenceCanonicalizationSubject =
