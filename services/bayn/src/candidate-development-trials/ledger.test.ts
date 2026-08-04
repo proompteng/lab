@@ -96,9 +96,11 @@ describe('Bayn candidate development trial ledger', () => {
 
   test('binds the terminal rejection to its report hash, status, and source revision', () => {
     const rejection = candidateDevelopmentTrialLedgerState.entries.at(-1)
+    const pending = candidateDevelopmentTrialLedgerState.entries.at(-2)
     if (rejection?._tag !== 'DEVELOPMENT_REJECTED' || rejection.terminalReport === undefined) {
       throw new Error('expected the terminal Candidate 21 rejection')
     }
+    if (pending?._tag !== 'DEVELOPMENT_PENDING') throw new Error('expected the pending Candidate 21 registration')
     const withRejection = (replacement: typeof rejection) =>
       qualificationDormancyDecisionFromLedgerState({
         ...candidateDevelopmentTrialLedgerState,
@@ -124,6 +126,83 @@ describe('Bayn candidate development trial ledger', () => {
     }
     expect(
       withRejection({
+        ...rejection,
+        terminalReport: alteredReport,
+        terminalReportHash: canonicalHashV1(alteredReport),
+      }),
+    ).toEqual({
+      ok: false,
+      issue: { path: 'entries.DEVELOPMENT_REJECTED.terminalReport.source.bindingHash', reason: 'INVALID_STATE' },
+    })
+
+    const successorPreregistration = {
+      ...pending.preregistration,
+      candidateOrdinal: 22,
+      priorTrialCount: 21,
+      modulePath: 'services/bayn/src/strategy/candidate-22.ts',
+      preregistration: {
+        sourceRevision: 'b'.repeat(40),
+        path: 'services/bayn/candidates/ordinal-22-preregistration.json',
+        blobOid: 'c'.repeat(40),
+      },
+    }
+    const successorSourceManifest = {
+      path: 'services/bayn/candidates/ordinal-22-source-manifest.json',
+      blobOid: 'd'.repeat(40),
+      sha256: 'e'.repeat(64),
+    }
+    const successorPending = {
+      _tag: 'DEVELOPMENT_PENDING' as const,
+      candidateOrdinal: 22,
+      priorTrialCount: 21,
+      strategyName: 'candidate-22',
+      preregistration: successorPreregistration,
+      sourceManifest: successorSourceManifest,
+    }
+    const withSuccessor = (replacement: typeof rejection) =>
+      qualificationDormancyDecisionFromLedgerState({
+        ...candidateDevelopmentTrialLedgerState,
+        entries: [...candidateDevelopmentTrialLedgerState.entries.slice(0, -1), replacement, successorPending],
+        activeCandidate: {
+          preregistration: successorPreregistration,
+          strategyName: successorPending.strategyName,
+          sourceManifest: successorSourceManifest,
+        },
+      })
+
+    expect(withSuccessor(rejection)).toEqual({
+      ok: true,
+      decision: { status: 'dormant', reason: 'development-not-approved', candidateOrdinal: 22 },
+    })
+    expect(
+      qualificationDormancyDecisionFromLedgerState({
+        ...candidateDevelopmentTrialLedgerState,
+        entries: [...candidateDevelopmentTrialLedgerState.entries.slice(0, -2), rejection, successorPending],
+        activeCandidate: {
+          preregistration: successorPreregistration,
+          strategyName: successorPending.strategyName,
+          sourceManifest: successorSourceManifest,
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      issue: { path: 'entries.DEVELOPMENT_REJECTED.binding', reason: 'INVALID_STATE' },
+    })
+    expect(withSuccessor({ ...rejection, terminalReportHash: '0'.repeat(64) })).toEqual({
+      ok: false,
+      issue: { path: 'entries.DEVELOPMENT_REJECTED.terminalReportHash', reason: 'INVALID_STATE' },
+    })
+    expect(
+      withSuccessor({
+        ...rejection,
+        terminalReport: { ...rejection.terminalReport, status: 'PASS' },
+      }),
+    ).toEqual({
+      ok: false,
+      issue: { path: 'entries.DEVELOPMENT_REJECTED.terminalReport.status', reason: 'INVALID_STATE' },
+    })
+    expect(
+      withSuccessor({
         ...rejection,
         terminalReport: alteredReport,
         terminalReportHash: canonicalHashV1(alteredReport),
