@@ -123,7 +123,7 @@ const historicalLedger = [
         boundedContentHash: 'b6052c8ebdca855973adf4e41efafb5028fd8dbbaa70809331f6017519b1c995',
       },
       preregistration: {
-        sourceRevision: '3c42ea0b783fcc6cb3fe6693bf82330bf42b9734',
+        sourceRevision: 'f9c90e5158212d862ca4b64cf9624fe424f09ba6',
         path: 'services/bayn/candidates/ordinal-21-six-month-rotation-preregistration.json',
         blobOid: 'f61534e914c854aec0c19c28cfd24490e59f36c7',
       },
