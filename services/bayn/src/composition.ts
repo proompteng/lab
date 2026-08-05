@@ -1217,7 +1217,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                           _tag: 'AutonomousRead' as const,
                           broker: runtimeBroker(observePlan, runtimeServices.session.read, false),
                           ...(request !== null && isResearchPaperActivationRequest(request)
-                            ? { cycleBindingId: null }
+                            ? { cycleBindingId: null, cycleObservationId: request.grant.planHash }
                             : {}),
                           startCycle: readStartCycle,
                         })
@@ -1390,6 +1390,8 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                     strategy: observePlan.strategy,
                                     strategyProtocolHash: observePlan.strategyProtocolHash,
                                   }) as ApplicationPlanFor<'AutonomousService'>
+                                  const paperGrant = paperGrantFromGeneration(prepared.generation)
+                                  const cycleBindingId = paperGrantKey(paperGrant)
                                   const emitClosedCycleReceipt = makeClosedCycleReceiptEmitter(
                                     realizedPlan.config,
                                     runtimeServices.pgClient,
@@ -1448,7 +1450,7 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                         state,
                                         request,
                                         prepared.generation.generationHash,
-                                        paperGrantFromGeneration(prepared.generation)._tag,
+                                        paperGrant._tag,
                                       ),
                                     ),
                                     Effect.tap(() =>
@@ -1473,7 +1475,8 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                     Effect.map((executionProgram) => ({
                                       _tag: 'AutonomousMutation' as const,
                                       broker: runtimeBroker(realizedPlan, runtimeServices.session.read, true),
-                                      cycleBindingId: paperGrantKey(paperGrantFromGeneration(prepared.generation)),
+                                      cycleBindingId,
+                                      cycleObservationId: cycleBindingId,
                                       executionProgram,
                                       startCycle: (startup: AutonomousCycleStartupInput) =>
                                         mutationCycle(

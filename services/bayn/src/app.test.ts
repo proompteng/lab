@@ -392,33 +392,50 @@ describe('Bayn application composition', () => {
   test('starts a research-bound autonomous cycle without qualification evidence', async () => {
     const researchPlanHash = 'b'.repeat(64)
     let startedBindingId: string | undefined
+    let observedBindingId: string | undefined
 
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const started = yield* Deferred.make<void>()
+          const observed = yield* Deferred.make<void>()
           const startCycle = ({ qualificationRunId }: AutonomousCycleStartupInput) =>
             Effect.sync(() => void (startedBindingId = qualificationRunId)).pipe(
               Effect.as(Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))),
             )
+          const researchCycleObservability = {
+            read: (bindingId: string) =>
+              Effect.sync(() => void (observedBindingId = bindingId)).pipe(
+                Effect.andThen(Deferred.succeed(observed, undefined)),
+                Effect.andThen(cycleObservability.read()),
+              ),
+          }
           const fiber = yield* runApplication(
-            { ...autonomousConfig(config), qualificationRunId: 'c'.repeat(64) },
+            autonomousConfig(config),
             fixtureRuntime,
             {
               marketData: marketDataService(Effect.succeed(makeSnapshot())),
               journal: successfulJournal,
               evidenceStore: successfulEvidenceStore,
-              cycleObservability,
+              cycleObservability: researchCycleObservability,
             },
-            { _tag: 'AutonomousRead', broker, cycleBindingId: researchPlanHash, startCycle },
+            {
+              _tag: 'AutonomousRead',
+              broker,
+              cycleBindingId: researchPlanHash,
+              cycleObservationId: researchPlanHash,
+              startCycle,
+            },
           ).pipe(Effect.provide(HttpServerLive(config)), Effect.forkScoped)
           yield* Deferred.await(started).pipe(Effect.timeout('1 second'))
+          yield* Deferred.await(observed).pipe(Effect.timeout('1 second'))
           yield* Fiber.interrupt(fiber)
         }),
       ),
     )
 
     expect(startedBindingId).toBe(researchPlanHash)
+    expect(observedBindingId).toBe(researchPlanHash)
   })
 
   test('explicitly suppresses a pending research cycle despite recovered qualification evidence', async () => {

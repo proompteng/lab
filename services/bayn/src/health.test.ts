@@ -783,6 +783,61 @@ describe('Bayn continuous health', () => {
     expect(transition.next.cycle.alerts.authorityIncoherent).toBe(false)
   })
 
+  test('projects a realized research PAPER episode through its read-only bootstrap config', () => {
+    const checkedAt = '2026-08-05T12:00:00.000Z'
+    const current: RuntimeState = {
+      ...readyState(),
+      paperActivation: {
+        _tag: 'Realized',
+        requestHash: 'a'.repeat(64),
+        generationHash: 'b'.repeat(64),
+        grant: 'Research',
+        cutoffAt: '2026-09-01T13:30:00.000Z',
+        expiresAt: '2026-09-03T20:00:00.000Z',
+        maximumCloseSessions: 3,
+      },
+    }
+    const transition = deriveHealthTransition(current, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: {
+          _tag: 'Available',
+          value: {
+            ...emptyCycleProjection(),
+            authority: {
+              generationHash: 'b'.repeat(64),
+              maximum: Authority.Paper,
+              effective: Authority.Paper,
+              kill: KillState.Clear,
+              reason: null,
+              updatedAt: checkedAt,
+            },
+            reconciliation: {
+              accountId: brokerAccountId,
+              reconciliationId: 'c'.repeat(64),
+              status: ReconciliationStatus.Exact,
+              discrepancyCount: 0,
+              reconciledAt: checkedAt,
+              coversLatestMutation: true,
+            },
+          },
+        },
+        broker: null,
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: availableClock(checkedAt),
+    })
+
+    expect(transition.next.cycle.reason).not.toBe(CycleOperationsReason.AuthorityMaximumMismatch)
+    expect(transition.next.cycle.alerts.authorityIncoherent).toBe(false)
+  })
+
   test('does not manufacture a cycle-runner stall from a rejected finite clock', () => {
     const progressAt = '2026-07-20T00:00:00.000Z'
     const current: RuntimeState = {

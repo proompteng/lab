@@ -207,6 +207,7 @@ const collectHealthProbeResults = (
   evidenceStore: HealthDependencies['evidenceStore'],
   cycleObservability: HealthDependencies['cycleObservability'],
   broker: BrokerProbe | undefined,
+  cycleObservationId: string | undefined,
 ): Effect.Effect<HealthProbeResults, never> =>
   Effect.map(
     Effect.all(
@@ -260,7 +261,7 @@ const collectHealthProbeResults = (
             ? Effect.fail(operationalError('database', 'cycle-observability', 'startup evidence is unavailable'))
             : withinDeadline(
                 databaseOperation(
-                  cycleObservability.read(evidence.evaluation.runId, broker?.expectedAccountId),
+                  cycleObservability.read(cycleObservationId ?? evidence.evaluation.runId, broker?.expectedAccountId),
                   'cycle-observability',
                 ),
                 config.operationTimeoutMs,
@@ -288,6 +289,7 @@ export const checkHealth = (
   dependencies: HealthDependencies,
   broker?: BrokerProbe,
   autonomousCycleFiber?: Fiber.Fiber<void, never>,
+  cycleObservationId?: string,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     const initial = yield* Ref.get(state)
@@ -299,6 +301,7 @@ export const checkHealth = (
       dependencies.evidenceStore,
       dependencies.cycleObservability,
       broker,
+      cycleObservationId,
     )
     const checkedAtMs = yield* Clock.currentTimeMillis
     const checkedAtResult = utcInstantFromEpochMillisResult(checkedAtMs)
@@ -327,8 +330,9 @@ export const runHealthMonitor = (
   dependencies: HealthDependencies,
   broker?: BrokerProbe,
   autonomousCycleFiber?: Fiber.Fiber<void, never>,
+  cycleObservationId?: string,
 ): Effect.Effect<void> =>
-  checkHealth(config, state, dependencies, broker, autonomousCycleFiber).pipe(
+  checkHealth(config, state, dependencies, broker, autonomousCycleFiber, cycleObservationId).pipe(
     Effect.repeat(Schedule.spaced(Duration.millis(config.healthIntervalMs))),
     Effect.asVoid,
   )
