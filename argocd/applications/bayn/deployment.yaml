@@ -47,11 +47,11 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: 480cf29e682f42e59f6d94288b0ac85d0389a154
+              value: 56453573fd0618c2488f8b1c339e9abca3883e61
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:a8a3fa3e35ada6faa19b270d15f2e4279be4c16139dc9c44d1cbc66e6ec8f90c
+              value: sha256:2bffdbed6891d5d689809e0dae961625a1505342137805760da18bd66f022c70
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46"
             - name: BAYN_STRATEGY_PARAMETER_HASH
@@ -63,9 +63,9 @@ spec:
                   key: paper-activation-request
             - name: BAYN_MAXIMUM_AUTHORITY
               value: OBSERVE
-            # sha256("bayn/authority-generation/autonomous-observe-v4")
+            # sha256("bayn/authority-generation/autonomous-observe-v5")
             - name: BAYN_AUTHORITY_GENERATION_HASH
-              value: "eefd8a8ff59509e2c7b01a704c5781dbddfeb56c8acad817b6fad79729db1a93"
+              value: "dbb4d330aeb81b55715aff4cca8ad658ff3af0bf6394158609069ab8d1c0ebe9"
             - name: BAYN_CYCLE_POLL_INTERVAL_MS
               value: "30000"
             - name: BAYN_BROKER_PROVIDER
