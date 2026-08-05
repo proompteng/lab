@@ -28,7 +28,7 @@ export const createDelegatedAgentTools = (): EffectTool[] => [
     annotations: destructiveAnnotations,
     scopes: WRITE_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: AgentStartInput, { config, runner, auth }) =>
+    handler: (args: AgentStartInput, { config, runner, auth, sessionId }) =>
       Effect.tryPromise({
         try: async () => {
           const manifest = buildAgentRunManifest(config, args)
@@ -43,6 +43,8 @@ export const createDelegatedAgentTools = (): EffectTool[] => [
             maxOutputBytes: args.maxOutputBytes,
             auth,
             auditEvent: 'agent_start',
+            sessionId,
+            mutation: true,
           })
           return jsonTextResult({
             ok: result.ok,
@@ -66,7 +68,7 @@ export const createDelegatedAgentTools = (): EffectTool[] => [
     annotations: openReadOnlyAnnotations,
     scopes: READ_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: AgentNameInput, { config, runner, auth }) =>
+    handler: (args: AgentNameInput, { config, runner, auth, sessionId }) =>
       Effect.tryPromise({
         try: async () => {
           const namespace = args.namespace ?? config.agentNamespace
@@ -77,6 +79,7 @@ export const createDelegatedAgentTools = (): EffectTool[] => [
             maxOutputBytes: args.maxOutputBytes,
             auth,
             auditEvent: 'agent_status_get_agentrun',
+            sessionId,
           })
           const getJobs = await runner.runProcess({
             command: 'kubectl',
@@ -94,6 +97,7 @@ export const createDelegatedAgentTools = (): EffectTool[] => [
             maxOutputBytes: args.maxOutputBytes,
             auth,
             auditEvent: 'agent_status_get_jobs',
+            sessionId,
           })
           return jsonTextResult({
             ok: getAgentRun.ok,
@@ -117,7 +121,7 @@ export const createDelegatedAgentTools = (): EffectTool[] => [
     annotations: openReadOnlyAnnotations,
     scopes: READ_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: AgentReadInput, { config, runner, auth }) =>
+    handler: (args: AgentReadInput, { config, runner, auth, sessionId }) =>
       Effect.tryPromise({
         try: async () => {
           const namespace = args.namespace ?? config.agentNamespace
@@ -139,6 +143,7 @@ export const createDelegatedAgentTools = (): EffectTool[] => [
               maxOutputBytes: args.maxOutputBytes,
               auth,
               auditEvent: 'agent_read',
+              sessionId,
             }),
           )
         },
@@ -154,7 +159,7 @@ export const createDelegatedAgentTools = (): EffectTool[] => [
     annotations: destructiveAnnotations,
     scopes: WRITE_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: AgentNameInput, { config, runner, auth }) =>
+    handler: (args: AgentNameInput, { config, runner, auth, sessionId }) =>
       Effect.tryPromise({
         try: async () =>
           jsonTextResult(
@@ -165,6 +170,8 @@ export const createDelegatedAgentTools = (): EffectTool[] => [
               maxOutputBytes: args.maxOutputBytes,
               auth,
               auditEvent: 'agent_cancel',
+              sessionId,
+              mutation: true,
             }),
           ),
         catch: agentsShellErrorFromUnknown,

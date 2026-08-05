@@ -1,5 +1,3 @@
-import { relative, resolve } from 'node:path'
-
 import { Effect } from 'effect'
 
 import { WRITE_SCOPES, writeAnnotations } from '../constants'
@@ -7,7 +5,6 @@ import { agentsShellErrorFromUnknown } from '../errors'
 import { toolSecurityMeta, type EffectTool } from '../mcp-adapter'
 import { jsonTextResult } from '../results'
 import { ApplyPatchInputSchema, ApplyPatchOutputSchema, type ApplyPatchInput } from '../schemas'
-import { isInsidePath, resolveExistingDirectory } from '../workspace-policy'
 
 const extractCodexPatchPaths = (patch: string) => {
   const paths = new Set<string>()
@@ -18,7 +15,7 @@ const extractCodexPatchPaths = (patch: string) => {
   return Array.from(paths)
 }
 
-const validateCodexPatch = (workspaceRoot: string, cwd: string, patch: string) => {
+const validateCodexPatch = (patch: string) => {
   if (!patch.trimStart().startsWith('*** Begin Patch')) {
     throw new Error("patch must start with '*** Begin Patch'")
   }
@@ -27,12 +24,6 @@ const validateCodexPatch = (workspaceRoot: string, cwd: string, patch: string) =
   }
   const paths = extractCodexPatchPaths(patch)
   if (paths.length === 0) throw new Error('patch does not contain recognizable Codex patch file paths')
-  for (const path of paths) {
-    const candidate = resolve(cwd, path)
-    if (!isInsidePath(resolve(workspaceRoot), candidate)) {
-      throw new Error(`patch path must stay under workspace: ${path}`)
-    }
-  }
   return paths
 }
 
@@ -40,27 +31,28 @@ export const createPatchTools = (): EffectTool[] => [
   {
     name: 'apply_patch',
     title: 'Apply Codex patch',
-    description:
-      'Edit files under /workspace with Codex patch syntax. Pass the full *** Begin Patch / *** End Patch document.',
+    description: 'Edit files in the current leased workspace with Codex patch syntax.',
     inputSchema: ApplyPatchInputSchema,
     outputSchema: ApplyPatchOutputSchema,
     annotations: writeAnnotations,
     scopes: WRITE_SCOPES,
     ...toolSecurityMeta([WRITE_SCOPES[0]]),
-    handler: (args: ApplyPatchInput, { config, runner, auth }) =>
+    handler: (args: ApplyPatchInput, { runner, auth, sessionId }) =>
       Effect.tryPromise({
         try: async () => {
-          const cwd = resolveExistingDirectory(config.workspaceRoot, args.cwd ?? 'lab')
-          const changedFiles = validateCodexPatch(config.workspaceRoot, cwd, args.patch)
+          const changedFiles = validateCodexPatch(args.patch)
+          runner.leases.validateMutationPaths(sessionId, auth, args.cwd, changedFiles)
           const result = await runner.runProcess({
             command: 'apply_patch',
             args: [],
-            cwd: relative(resolve(config.workspaceRoot), cwd) || '.',
+            cwd: args.cwd,
             stdin: args.patch,
             timeoutSeconds: args.timeoutSeconds,
             maxOutputBytes: args.maxOutputBytes,
             auth,
             auditEvent: 'apply_patch',
+            sessionId,
+            mutation: true,
           })
           return jsonTextResult({ ...result, changedFiles })
         },

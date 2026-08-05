@@ -1,5 +1,4 @@
-import { readFileSync } from 'node:fs'
-import { relative, resolve } from 'node:path'
+import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs'
 
 import { Effect } from 'effect'
 
@@ -16,23 +15,47 @@ import {
   type ReadFileInput,
   type SearchInput,
 } from '../schemas'
-import { resolveExistingDirectory, resolveWorkspacePath } from '../workspace-policy'
+
+const readValidatedFilePrefix = (path: string, maxBytes: number) => {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  try {
+    const stat = fstatSync(fd)
+    if (!stat.isFile()) throw new Error(`read_file supports regular files only: ${path}`)
+    const openedPath = realpathSync(`/proc/self/fd/${fd}`)
+    if (openedPath !== path) {
+      throw new Error(`read_file path changed after validation: ${path}`)
+    }
+    const length = Math.min(stat.size, maxBytes)
+    const buffer = Buffer.alloc(length)
+    let offset = 0
+    while (offset < length) {
+      const bytesRead = readSync(fd, buffer, offset, length - offset, offset)
+      if (bytesRead === 0) break
+      offset += bytesRead
+    }
+    return {
+      content: buffer.subarray(0, offset).toString('utf8'),
+      bytes: stat.size,
+      truncated: stat.size > maxBytes,
+    }
+  } finally {
+    closeSync(fd)
+  }
+}
 
 export const createFileTools = (): EffectTool[] => [
   {
     name: 'search',
     title: 'Search files',
-    description:
-      'Search text under /workspace with rg. Output is bounded and dependency/cache/generated dirs are skipped.',
+    description: 'Search the shared seed or current leased workspace with bounded ripgrep output.',
     inputSchema: SearchInputSchema,
     outputSchema: CommandResultSchema,
     annotations: readOnlyAnnotations,
     scopes: READ_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: SearchInput, { config, runner, auth }) =>
+    handler: (args: SearchInput, { config, runner, auth, sessionId }) =>
       Effect.tryPromise({
         try: async () => {
-          const cwd = resolveExistingDirectory(config.workspaceRoot, args.path)
           const rgArgs = ['--line-number', '--no-heading', '--color=never', '--hidden']
           for (const exclude of DEFAULT_WORKSPACE_SEARCH_EXCLUDES) {
             rgArgs.push('-g', `!${exclude}/**`)
@@ -44,12 +67,13 @@ export const createFileTools = (): EffectTool[] => [
           const result = await runner.runProcess({
             command: 'rg',
             args: rgArgs,
-            cwd: relative(resolve(config.workspaceRoot), cwd) || '.',
+            cwd: args.path,
             timeoutSeconds: config.defaultTimeoutSeconds,
             maxOutputBytes: args.maxOutputBytes,
             okExitCodes: [0, 1],
             auth,
             auditEvent: 'search',
+            sessionId,
           })
           return jsonTextResult(result)
         },
@@ -59,16 +83,16 @@ export const createFileTools = (): EffectTool[] => [
   {
     name: 'read_file',
     title: 'Read file',
-    description: 'Read a bounded UTF-8 prefix from a file under /workspace.',
+    description: 'Read a bounded UTF-8 prefix from the shared seed or current leased workspace.',
     inputSchema: ReadFileInputSchema,
     outputSchema: ReadFileOutputSchema,
     annotations: readOnlyAnnotations,
     scopes: READ_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: ReadFileInput, { config }) =>
+    handler: (args: ReadFileInput, { config, runner, auth, sessionId }) =>
       Effect.try({
         try: () => {
-          const path = resolveWorkspacePath(config.workspaceRoot, args.path)
+          const path = runner.leases.resolveReadablePath(sessionId, auth, args.path)
           const maxBytes = asPositiveInteger(
             args.maxBytes,
             'maxBytes',
@@ -76,13 +100,10 @@ export const createFileTools = (): EffectTool[] => [
             config.maxOutputBytes,
             1,
           )
-          const buffer = readFileSync(path)
-          const slice = buffer.subarray(0, maxBytes)
+          const file = readValidatedFilePrefix(path, maxBytes)
           return jsonTextResult({
             path,
-            content: slice.toString('utf8'),
-            bytes: buffer.length,
-            truncated: buffer.length > maxBytes,
+            ...file,
           })
         },
         catch: agentsShellErrorFromUnknown,

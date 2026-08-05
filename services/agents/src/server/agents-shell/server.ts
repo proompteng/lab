@@ -7,7 +7,12 @@ import { installEffectToolHandlers } from './mcp-adapter'
 import type { AgentsShellRunner } from './runner'
 import { createAgentsShellTools } from './tools'
 
-export const createAgentsShellServer = (config: AgentsShellConfig, runner: AgentsShellRunner, auth: AuthContext) => {
+export const createAgentsShellServer = (
+  config: AgentsShellConfig,
+  runner: AgentsShellRunner,
+  auth: AuthContext | (() => AuthContext),
+  sessionId = `ephemeral:${crypto.randomUUID()}`,
+) => {
   const server = new McpServer(
     {
       name: config.name,
@@ -21,7 +26,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     },
   )
 
-  installEffectToolHandlers(server, createAgentsShellTools(), { config, runner, auth })
+  installEffectToolHandlers(server, createAgentsShellTools(), { config, runner, auth, sessionId })
 
   return server
 }

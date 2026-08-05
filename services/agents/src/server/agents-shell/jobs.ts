@@ -1,5 +1,4 @@
-import type { ChildProcessByStdio } from 'node:child_process'
-import type { Readable } from 'node:stream'
+import type { ChildProcess } from 'node:child_process'
 
 import type { ProcessResult } from './process-runner'
 
@@ -13,9 +12,11 @@ export type OutputTail = {
 
 export type ShellJob = {
   id: string
+  sessionId: string
+  leaseId: string
   command: string
   cwd: string
-  process: ChildProcessByStdio<null, Readable, Readable>
+  process: ChildProcess
   startedAt: string
   finishedAt: string | null
   status: ShellJobStatus
@@ -32,6 +33,9 @@ export type CommandInput = {
   cwd: string
   timeoutSeconds: number
   maxOutputBytes: number
+  sessionId: string
+  leaseId: string
+  leaseExpiresAt: string
 }
 
 export type ShellJobSummary = ProcessResult & {
@@ -59,6 +63,10 @@ export class ShellJobStore {
   set(jobId: string, job: ShellJob) {
     this.jobs.set(jobId, job)
     return this
+  }
+
+  delete(jobId: string) {
+    return this.jobs.delete(jobId)
   }
 
   values() {
