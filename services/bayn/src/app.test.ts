@@ -393,6 +393,8 @@ describe('Bayn application composition', () => {
     const researchPlanHash = 'b'.repeat(64)
     let startedBindingId: string | undefined
     let observedBindingId: string | undefined
+    let startupMarketDataLoads = 0
+    let startupQualificationOpens = 0
 
     await Effect.runPromise(
       Effect.scoped(
@@ -414,13 +416,26 @@ describe('Bayn application composition', () => {
             autonomousConfig(config),
             fixtureRuntime,
             {
-              marketData: marketDataService(Effect.succeed(makeSnapshot())),
+              marketData: marketDataService(
+                Effect.sync(() => {
+                  startupMarketDataLoads += 1
+                  return makeSnapshot()
+                }),
+              ),
               journal: successfulJournal,
-              evidenceStore: successfulEvidenceStore,
+              evidenceStore: {
+                ...successfulEvidenceStore,
+                openQualification: (request) =>
+                  Effect.sync(() => {
+                    startupQualificationOpens += 1
+                    return { state: 'ACQUIRED' as const, lock: request.lock }
+                  }),
+              },
               cycleObservability: researchCycleObservability,
             },
             {
               _tag: 'AutonomousRead',
+              startupEvidenceMode: 'Research',
               broker,
               cycleBindingId: researchPlanHash,
               cycleObservationId: researchPlanHash,
@@ -436,6 +451,8 @@ describe('Bayn application composition', () => {
 
     expect(startedBindingId).toBe(researchPlanHash)
     expect(observedBindingId).toBe(researchPlanHash)
+    expect(startupMarketDataLoads).toBe(0)
+    expect(startupQualificationOpens).toBe(0)
   })
 
   test('explicitly suppresses a pending research cycle despite recovered qualification evidence', async () => {

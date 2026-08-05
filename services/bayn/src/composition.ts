@@ -1143,11 +1143,20 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
       strategyProtocolHash: plan.strategyProtocolHash,
     }) as ApplicationPlanFor<'AutonomousService'>
     const serializedRequest = observePlan.config.paperActivationRequestJson
+    const decodedRequest: Result.Result<PaperActivationRequest | null, string> =
+      serializedRequest === undefined ? Result.succeed(null) : decodeConfiguredPaperActivationRequest(serializedRequest)
+    const startupEvidenceMode =
+      Result.isSuccess(decodedRequest) &&
+      decodedRequest.success !== null &&
+      isResearchPaperActivationRequest(decodedRequest.success)
+        ? ('Research' as const)
+        : ('Qualification' as const)
     const noCycle = (
       _startup: AutonomousCycleStartupInput,
     ): Effect.Effect<Effect.Effect<void, never, never>, OperationalError, never> => Effect.succeed(Effect.never)
     const pendingRuntime = () => ({
       _tag: 'AutonomousRead' as const,
+      startupEvidenceMode,
       cycleBindingId: null,
       brokerConfiguration: {
         expectedAccountId: observePlan.config.alpaca.expectedAccountId,
@@ -1157,10 +1166,6 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
       startCycle: noCycle,
     })
     const resolveAfterStartup: AutonomousRuntimeResolver<never, never> = (state) => {
-      const decodedRequest: Result.Result<PaperActivationRequest | null, string> =
-        serializedRequest === undefined
-          ? Result.succeed(null)
-          : decodeConfiguredPaperActivationRequest(serializedRequest)
       const validateStaticRequest: Effect.Effect<
         Result.Result<
           { readonly request: PaperActivationRequest | null; readonly evidence: RuntimeEvidence | null },
@@ -1238,6 +1243,10 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                           )
                         const readRuntime = () => ({
                           _tag: 'AutonomousRead' as const,
+                          startupEvidenceMode:
+                            request !== null && isResearchPaperActivationRequest(request)
+                              ? ('Research' as const)
+                              : ('Qualification' as const),
                           broker: runtimeBroker(observePlan, runtimeServices.session.read, false),
                           ...(request !== null && isResearchPaperActivationRequest(request)
                             ? { cycleBindingId: null, cycleObservationId: request.grant.planHash }
@@ -1497,6 +1506,9 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                     ),
                                     Effect.map((executionProgram) => ({
                                       _tag: 'AutonomousMutation' as const,
+                                      startupEvidenceMode: isResearchPaperActivationRequest(request)
+                                        ? ('Research' as const)
+                                        : ('Qualification' as const),
                                       broker: runtimeBroker(realizedPlan, runtimeServices.session.read, true),
                                       cycleBindingId,
                                       cycleObservationId: cycleBindingId,
