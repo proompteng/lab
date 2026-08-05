@@ -43,8 +43,11 @@ export interface UpdateBaynManifestOptions {
 
 export interface BaynManifestUpdate {
   readonly promotionAction: 'promote' | 'hold'
-  readonly promotionReason: 'eligible' | 'strategy-identity-change-requires-fresh-snapshot'
-  readonly qualificationMode: 'preserve' | 'replace' | 'install'
+  readonly promotionReason:
+    | 'eligible'
+    | 'strategy-identity-change-requires-fresh-snapshot'
+    | 'research-paper-activation-refresh-required'
+  readonly qualificationMode: 'preserve' | 'replace' | 'install' | 'research'
   readonly hadQualificationPin: boolean
   readonly qualificationBindingsMatch: boolean
   readonly snapshotChanged: boolean
@@ -75,6 +78,7 @@ const environmentValue = (deployment: string, name: string): string => {
 }
 
 const qualificationPin = /            - name: BAYN_QUALIFICATION_RUN_ID\n              value: [^\n]+\n/
+const paperActivationRequest = /            - name: BAYN_PAPER_ACTIVATION_REQUEST\n/
 const qualificationIdentityNames = [
   'BAYN_SIGNAL_SNAPSHOT_ID',
   'BAYN_SIGNAL_PUBLICATION_ASOF',
@@ -157,7 +161,7 @@ const validateCandidateRuntime = (runtime: BaynCandidateRuntime): void => {
 
 const transitionQualificationPin = (
   deployment: string,
-  mode: 'preserve' | 'replace' | 'install',
+  mode: BaynManifestUpdate['qualificationMode'],
   hadQualificationPin: boolean,
   acceptedQualificationRunId: string | undefined,
 ): string => {
@@ -166,6 +170,12 @@ const transitionQualificationPin = (
     return deployment
   }
   if (mode === 'replace') return hadQualificationPin ? deployment.replace(qualificationPin, '') : deployment
+  if (mode === 'research') {
+    if (hadQualificationPin || acceptedQualificationRunId !== undefined) {
+      throw new Error('research PAPER release cannot carry qualification state')
+    }
+    return deployment
+  }
   if (acceptedQualificationRunId === undefined) {
     throw new Error('cannot install a missing accepted qualification run ID')
   }
@@ -204,6 +214,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const qualificationPins = [...deployment.matchAll(new RegExp(qualificationPin.source, 'g'))]
   if (qualificationPins.length > 1) throw new Error('expected at most one BAYN_QUALIFICATION_RUN_ID block')
   const hadQualificationPin = qualificationPins.length === 1
+  const paperActivationRequests = [...deployment.matchAll(new RegExp(paperActivationRequest.source, 'g'))]
+  if (paperActivationRequests.length > 1) throw new Error('expected at most one BAYN_PAPER_ACTIVATION_REQUEST block')
+  const hasPaperActivationRequest = paperActivationRequests.length === 1
   const deployedQualificationRunId = hadQualificationPin
     ? environmentValue(deployment, 'BAYN_QUALIFICATION_RUN_ID')
     : null
@@ -228,6 +241,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   )
   const strategyIdentityMatches =
     deployedBehaviorHash === options.strategyBehaviorHash && deployedParameterHash === options.strategyParameterHash
+  const activationBuildMatches = deployedSourceSha === options.sourceSha && deployedImageDigest === options.digest
   const acceptedQualificationRunId = options.acceptedQualificationRunId
   const acceptedRunAlreadyPinned =
     acceptedQualificationRunId !== undefined && deployedQualificationRunId === acceptedQualificationRunId
@@ -238,6 +252,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     throw new Error('an accepted qualification pin cannot be rebound to different strategy or runtime identity')
   }
   if (acceptedQualificationRunId !== undefined && !acceptedRunAlreadyPinned) {
+    if (hasPaperActivationRequest) {
+      throw new Error('qualification installation cannot reuse a configured PAPER activation request')
+    }
     if (hadQualificationPin) {
       throw new Error('qualification installation requires an already-deployed unpinned runtime')
     }
@@ -250,18 +267,23 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
       throw new Error('qualification installation must pin the exact deployed source, image, strategy, and runtime')
     }
   }
-  const unpinnedCandidateReplay = !hadQualificationPin && acceptedQualificationRunId === undefined
+  const researchPaperRelease =
+    !hadQualificationPin && hasPaperActivationRequest && acceptedQualificationRunId === undefined
+  if (researchPaperRelease && (!strategyIdentityMatches || !candidateRuntimeMatchesDeployment)) {
+    throw new Error('a research PAPER release cannot change strategy or runtime identity')
+  }
+  const unpinnedCandidateReplay =
+    !hadQualificationPin && !hasPaperActivationRequest && acceptedQualificationRunId === undefined
   if (
     unpinnedCandidateReplay &&
-    (deployedSourceSha !== options.sourceSha ||
-      deployedImageDigest !== options.digest ||
-      !strategyIdentityMatches ||
-      !candidateRuntimeMatchesDeployment)
+    (!activationBuildMatches || !strategyIdentityMatches || !candidateRuntimeMatchesDeployment)
   ) {
     throw new Error('an unpinned qualification candidate is immutable until its terminal run is pinned')
   }
   let qualificationMode: BaynManifestUpdate['qualificationMode']
-  if (acceptedQualificationRunId !== undefined && !acceptedRunAlreadyPinned) {
+  if (researchPaperRelease) {
+    qualificationMode = 'research'
+  } else if (acceptedQualificationRunId !== undefined && !acceptedRunAlreadyPinned) {
     qualificationMode = 'install'
   } else if (hadQualificationPin && strategyIdentityMatches && qualificationBindingsMatch) {
     qualificationMode = 'preserve'
@@ -297,10 +319,17 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
       ...updateDetails,
     }
   }
+  if (researchPaperRelease && !activationBuildMatches) {
+    return {
+      promotionAction: 'hold',
+      promotionReason: 'research-paper-activation-refresh-required',
+      ...updateDetails,
+    }
+  }
   if (qualificationMode === 'replace' && hadQualificationPin && !snapshotChanged) {
     throw new Error('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
   }
-  if (unpinnedCandidateReplay) {
+  if (researchPaperRelease || unpinnedCandidateReplay) {
     return {
       promotionAction: 'promote',
       promotionReason: 'eligible',
