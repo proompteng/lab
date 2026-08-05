@@ -208,6 +208,7 @@ const collectHealthProbeResults = (
   cycleObservability: HealthDependencies['cycleObservability'],
   broker: BrokerProbe | undefined,
   cycleObservationId: string | undefined,
+  qualificationEvidenceRequired: boolean,
 ): Effect.Effect<HealthProbeResults, never> => {
   const cycleBindingId = cycleObservationId ?? evidence?.evaluation.runId
   return Effect.map(
@@ -223,7 +224,9 @@ const collectHealthProbeResults = (
         ),
         observe(
           withinDeadline(marketData.check, config.operationTimeoutMs, 'market-data', 'continuous-health').pipe(
-            Effect.flatMap((snapshot) => ensureSignalIdentity(snapshot, evidence)),
+            Effect.flatMap((snapshot) =>
+              qualificationEvidenceRequired ? ensureSignalIdentity(snapshot, evidence) : Effect.void,
+            ),
           ),
         ),
         observe(
@@ -235,27 +238,29 @@ const collectHealthProbeResults = (
           ),
         ),
         observe(
-          evidence === null
-            ? Effect.fail(operationalError('database', 'verify-evidence', 'startup evidence is unavailable'))
-            : withinDeadline(
-                Effect.all([
-                  databaseOperation(
-                    evidenceStore.recover(evidence.evaluation.runId, evidence.provenance),
-                    'continuous-recovery',
+          !qualificationEvidenceRequired
+            ? Effect.void
+            : evidence === null
+              ? Effect.fail(operationalError('database', 'verify-evidence', 'startup evidence is unavailable'))
+              : withinDeadline(
+                  Effect.all([
+                    databaseOperation(
+                      evidenceStore.recover(evidence.evaluation.runId, evidence.provenance),
+                      'continuous-recovery',
+                    ),
+                    databaseOperation(
+                      evidenceStore.readQualification(evidence.evaluation.runId),
+                      'continuous-qualification',
+                    ),
+                  ]),
+                  config.operationTimeoutMs,
+                  'database',
+                  'continuous-recovery',
+                ).pipe(
+                  Effect.flatMap(([recovered, qualification]) =>
+                    ensureDurableEvidence(Option.getOrNull(recovered), Option.getOrNull(qualification), evidence),
                   ),
-                  databaseOperation(
-                    evidenceStore.readQualification(evidence.evaluation.runId),
-                    'continuous-qualification',
-                  ),
-                ]),
-                config.operationTimeoutMs,
-                'database',
-                'continuous-recovery',
-              ).pipe(
-                Effect.flatMap(([recovered, qualification]) =>
-                  ensureDurableEvidence(Option.getOrNull(recovered), Option.getOrNull(qualification), evidence),
                 ),
-              ),
         ),
         observe(
           cycleBindingId === undefined
@@ -292,6 +297,7 @@ export const checkHealth = (
   broker?: BrokerProbe,
   autonomousCycleFiber?: Fiber.Fiber<void, never>,
   cycleObservationId?: string,
+  qualificationEvidenceRequired = true,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     const initial = yield* Ref.get(state)
@@ -304,6 +310,7 @@ export const checkHealth = (
       dependencies.cycleObservability,
       broker,
       cycleObservationId,
+      qualificationEvidenceRequired,
     )
     const checkedAtMs = yield* Clock.currentTimeMillis
     const checkedAtResult = utcInstantFromEpochMillisResult(checkedAtMs)
@@ -315,7 +322,7 @@ export const checkHealth = (
     const transition = yield* Ref.modify(state, (current) => {
       const decision = deriveHealthTransition(current, {
         config,
-        evidenceAvailable: initial.evidence !== null,
+        evidenceAvailable: initial.evidence !== null || !qualificationEvidenceRequired,
         results,
         broker: brokerConfiguration(broker),
         cycleFiber,
@@ -333,8 +340,14 @@ export const runHealthMonitor = (
   broker?: BrokerProbe,
   autonomousCycleFiber?: Fiber.Fiber<void, never>,
   cycleObservationId?: string,
+  qualificationEvidenceRequired = true,
 ): Effect.Effect<void> =>
-  checkHealth(config, state, dependencies, broker, autonomousCycleFiber, cycleObservationId).pipe(
-    Effect.repeat(Schedule.spaced(Duration.millis(config.healthIntervalMs))),
-    Effect.asVoid,
-  )
+  checkHealth(
+    config,
+    state,
+    dependencies,
+    broker,
+    autonomousCycleFiber,
+    cycleObservationId,
+    qualificationEvidenceRequired,
+  ).pipe(Effect.repeat(Schedule.spaced(Duration.millis(config.healthIntervalMs))), Effect.asVoid)

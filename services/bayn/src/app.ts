@@ -92,6 +92,7 @@ export type ApplicationRuntime<StartupR, LoopR> =
   | { readonly _tag: 'Brokerless' }
   | {
       readonly _tag: 'AutonomousRead'
+      readonly startupEvidenceMode?: 'Qualification' | 'Research'
       readonly broker?: BrokerProbe
       readonly brokerConfiguration?: BrokerConfiguration
       /** null explicitly suppresses cycles even when startup recovered historical qualification evidence. */
@@ -103,6 +104,7 @@ export type ApplicationRuntime<StartupR, LoopR> =
     }
   | {
       readonly _tag: 'AutonomousMutation'
+      readonly startupEvidenceMode?: 'Qualification' | 'Research'
       readonly broker: BrokerProbe
       readonly cycleBindingId?: string | null
       readonly cycleObservationId?: string
@@ -158,6 +160,9 @@ const applyAutonomousCyclePass = (current: RuntimeState, observation: Autonomous
 
 const brokerProbe = <StartupR, LoopR>(runtime: ApplicationRuntime<StartupR, LoopR>): BrokerProbe | undefined =>
   runtime._tag === 'Brokerless' ? undefined : runtime.broker
+
+const qualificationEvidenceRequired = <StartupR, LoopR>(runtime: ApplicationRuntime<StartupR, LoopR>): boolean =>
+  runtime._tag === 'Brokerless' || runtime.startupEvidenceMode !== 'Research'
 
 const initialRuntimeState = <StartupR, LoopR>(runtime: ApplicationRuntime<StartupR, LoopR>): RuntimeState =>
   runtime._tag === 'Brokerless'
@@ -247,7 +252,9 @@ export const runApplication = <StartupR, LoopR>(
     Effect.tap(({ state }) =>
       serveHttp(config, state, strategy.provenance, config.build.verification, dependencies.evidenceStore.read),
     ),
-    Effect.tap(({ state }) => runStartup(config, state, strategy, dependencies)),
+    Effect.tap(({ state }) =>
+      qualificationEvidenceRequired(runtime) ? runStartup(config, state, strategy, dependencies) : Effect.void,
+    ),
     Effect.bind('resolvedRuntime', ({ state }) => resolveRuntimeAfterStartup(runtime, state)),
     Effect.bind('autonomousCycleFiber', ({ state, resolvedRuntime }) => startAutonomousCycle(resolvedRuntime, state)),
     Effect.tap(({ autonomousCycleFiber, resolvedRuntime, state }) =>
@@ -261,6 +268,7 @@ export const runApplication = <StartupR, LoopR>(
           resolvedRuntime._tag === 'Brokerless'
             ? undefined
             : (resolvedRuntime.cycleObservationId ?? resolvedRuntime.cycleBindingId ?? undefined),
+          qualificationEvidenceRequired(resolvedRuntime),
         ),
         Effect.forkScoped({ startImmediately: true }),
       ),

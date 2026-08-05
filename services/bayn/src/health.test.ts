@@ -58,10 +58,19 @@ const probe = (
   broker?: BrokerProbe,
   cycleFiber?: Fiber.Fiber<void, never>,
   cycleObservationId?: string,
+  qualificationEvidenceRequired = true,
 ) =>
   testHealthDependencies.pipe(
     Effect.flatMap((dependencies) =>
-      checkHealth(runtimeConfig, state, dependencies, broker, cycleFiber, cycleObservationId),
+      checkHealth(
+        runtimeConfig,
+        state,
+        dependencies,
+        broker,
+        cycleFiber,
+        cycleObservationId,
+        qualificationEvidenceRequired,
+      ),
     ),
   )
 
@@ -843,17 +852,13 @@ describe('Bayn continuous health', () => {
 
   test('observes a research cycle binding when startup evidence is unavailable', async () => {
     const researchPlanHash = 'b'.repeat(64)
-    const initial: RuntimeState = { ...readyState(), evidence: null }
+    const initial = initialState()
     const observedBindings: string[] = []
-    const projection = {
-      ...emptyCycleProjection(),
-      current: pendingCycle('2026-07-20T00:00:00.000Z'),
-      unfinishedCycleCount: 1,
-    }
+    const projection = emptyCycleProjection()
     const program = Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse('2026-07-20T00:00:00.000Z'))
       const state = yield* Ref.make(initial)
-      yield* probe(config, state, undefined, undefined, researchPlanHash).pipe(
+      yield* probe(config, state, undefined, undefined, researchPlanHash, false).pipe(
         Effect.provideService(MarketData, {
           check: Effect.succeed(makeSnapshot().manifest.finalizedSnapshot),
           inspect: Effect.die(new Error('health probes must not inspect sessions')),
@@ -881,8 +886,15 @@ describe('Bayn continuous health', () => {
 
       expect(observedBindings).toEqual([researchPlanHash])
       expect(yield* Ref.get(state)).toMatchObject({
-        health: { dependencies: { cycle: { status: 'AVAILABLE', error: null } } },
-        cycle: { current: { cycleId: projection.current.cycleId }, unfinishedCycleCount: 1 },
+        status: 'READY',
+        health: {
+          dependencies: {
+            signal: { status: 'AVAILABLE', error: null },
+            evidence: { status: 'AVAILABLE', error: null },
+            cycle: { status: 'AVAILABLE', error: null },
+          },
+        },
+        cycle: { condition: CycleOperationsCondition.Waiting, unfinishedCycleCount: 0 },
       })
     }).pipe(Effect.provide(TestClock.layer()))
 
