@@ -47,11 +47,11 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: 78d5b3ae0f8286ab54b2349f6bb8ef79d2752cd1
+              value: 56453573fd0618c2488f8b1c339e9abca3883e61
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:79ea78c09ce29ece97fb4c5c0070d568504a9f9695e5a1c74295415c987ff269
+              value: sha256:2bffdbed6891d5d689809e0dae961625a1505342137805760da18bd66f022c70
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46"
             - name: BAYN_STRATEGY_PARAMETER_HASH
