@@ -208,8 +208,9 @@ const collectHealthProbeResults = (
   cycleObservability: HealthDependencies['cycleObservability'],
   broker: BrokerProbe | undefined,
   cycleObservationId: string | undefined,
-): Effect.Effect<HealthProbeResults, never> =>
-  Effect.map(
+): Effect.Effect<HealthProbeResults, never> => {
+  const cycleBindingId = cycleObservationId ?? evidence?.evaluation.runId
+  return Effect.map(
     Effect.all(
       [
         observe(
@@ -257,11 +258,11 @@ const collectHealthProbeResults = (
               ),
         ),
         observe(
-          evidence === null
+          cycleBindingId === undefined
             ? Effect.fail(operationalError('database', 'cycle-observability', 'startup evidence is unavailable'))
             : withinDeadline(
                 databaseOperation(
-                  cycleObservability.read(cycleObservationId ?? evidence.evaluation.runId, broker?.expectedAccountId),
+                  cycleObservability.read(cycleBindingId, broker?.expectedAccountId),
                   'cycle-observability',
                 ),
                 config.operationTimeoutMs,
@@ -282,6 +283,7 @@ const collectHealthProbeResults = (
       broker: brokerResult,
     }),
   )
+}
 
 export const checkHealth = (
   config: RuntimeConfig,
