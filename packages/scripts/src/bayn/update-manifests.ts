@@ -43,7 +43,10 @@ export interface UpdateBaynManifestOptions {
 
 export interface BaynManifestUpdate {
   readonly promotionAction: 'promote' | 'hold'
-  readonly promotionReason: 'eligible' | 'strategy-identity-change-requires-fresh-snapshot'
+  readonly promotionReason:
+    | 'eligible'
+    | 'strategy-identity-change-requires-fresh-snapshot'
+    | 'research-paper-activation-refresh-required'
   readonly qualificationMode: 'preserve' | 'replace' | 'install' | 'research'
   readonly hadQualificationPin: boolean
   readonly qualificationBindingsMatch: boolean
@@ -238,6 +241,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   )
   const strategyIdentityMatches =
     deployedBehaviorHash === options.strategyBehaviorHash && deployedParameterHash === options.strategyParameterHash
+  const activationBuildMatches = deployedSourceSha === options.sourceSha && deployedImageDigest === options.digest
   const acceptedQualificationRunId = options.acceptedQualificationRunId
   const acceptedRunAlreadyPinned =
     acceptedQualificationRunId !== undefined && deployedQualificationRunId === acceptedQualificationRunId
@@ -272,10 +276,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     !hadQualificationPin && !hasPaperActivationRequest && acceptedQualificationRunId === undefined
   if (
     unpinnedCandidateReplay &&
-    (deployedSourceSha !== options.sourceSha ||
-      deployedImageDigest !== options.digest ||
-      !strategyIdentityMatches ||
-      !candidateRuntimeMatchesDeployment)
+    (!activationBuildMatches || !strategyIdentityMatches || !candidateRuntimeMatchesDeployment)
   ) {
     throw new Error('an unpinned qualification candidate is immutable until its terminal run is pinned')
   }
@@ -318,10 +319,17 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
       ...updateDetails,
     }
   }
+  if (researchPaperRelease && !activationBuildMatches) {
+    return {
+      promotionAction: 'hold',
+      promotionReason: 'research-paper-activation-refresh-required',
+      ...updateDetails,
+    }
+  }
   if (qualificationMode === 'replace' && hadQualificationPin && !snapshotChanged) {
     throw new Error('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
   }
-  if (unpinnedCandidateReplay) {
+  if (researchPaperRelease || unpinnedCandidateReplay) {
     return {
       promotionAction: 'promote',
       promotionReason: 'eligible',

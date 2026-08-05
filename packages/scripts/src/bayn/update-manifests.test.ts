@@ -324,25 +324,32 @@ describe('Bayn manifest promotion', () => {
     expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
   })
 
-  test('promotes source-only changes for a research PAPER activation without weakening candidate immutability', () => {
+  test('holds source-only research PAPER changes until the build-bound activation request is refreshed', () => {
     const paths = makeFixture({ qualificationRunId: null, paperActivationRequest: true })
+    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
 
     expect(promote(paths)).toMatchObject({
-      promotionAction: 'promote',
-      promotionReason: 'eligible',
+      promotionAction: 'hold',
+      promotionReason: 'research-paper-activation-refresh-required',
       qualificationMode: 'research',
       hadQualificationPin: false,
       qualificationBindingsMatch: true,
       snapshotChanged: false,
     })
-    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
-      `- name: BAYN_CODE_REVISION\n              value: ${'a'.repeat(40)}`,
-    )
-    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
-      `- name: BAYN_IMAGE_DIGEST\n              value: sha256:${'b'.repeat(64)}`,
-    )
-    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain('BAYN_PAPER_ACTIVATION_REQUEST')
-    expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
+  })
+
+  test('makes an exact research PAPER release replay a no-op', () => {
+    const paths = makeFixture({ qualificationRunId: null, paperActivationRequest: true })
+    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+
+    expect(promote(paths, { digest: `sha256:${'0'.repeat(64)}` }, '0'.repeat(40))).toMatchObject({
+      promotionAction: 'promote',
+      promotionReason: 'eligible',
+      qualificationMode: 'research',
+      hadQualificationPin: false,
+    })
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 
   test('keeps research PAPER strategy and runtime identity immutable across a service release', () => {
