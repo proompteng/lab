@@ -37,10 +37,12 @@ export const makeExecutionPersistence = (config: ExecutionStoreRuntimeConfig) =>
         ensureAuthorityGeneration: observeAuthority.ensureAuthorityGeneration,
         readAuthorityState: observeAuthority.readAuthorityState,
         readAuthorityGeneration: observeAuthority.readAuthorityGeneration,
+        readResearchAuthorityGeneration: observeAuthority.readResearchAuthorityGeneration,
       },
       capitalGrantLifecycle: {
         prepareCapitalGrant: capitalGrant.prepareCapitalGrant,
         activateCapitalGrant: capitalGrant.activateCapitalGrant,
+        activateResearchCapitalGrant: capitalGrant.activateResearchCapitalGrant,
       },
       authorityRestriction: {
         restrictAuthority: (reason, updatedAt) =>

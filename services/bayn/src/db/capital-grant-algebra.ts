@@ -8,11 +8,16 @@ import {
   KillState,
   ReconciliationStatus,
   makeCapitalGrantGenerationResult,
+  makeResearchCapitalGrantGenerationResult,
   type AuthorityState,
   type CapitalGrantGeneration,
   type CapitalGrantGenerationConstructionFailure,
   type CapitalGrantGenerationMaterial,
   type CapitalGrantProofBinding,
+  type ResearchCapitalGrantGeneration,
+  type ResearchCapitalGrantGenerationConstructionFailure,
+  type ResearchCapitalGrantGenerationMaterial,
+  type ResearchCapitalGrantProofBinding,
 } from '../execution/contracts'
 import type { QualificationLock, QualificationResult } from '../qualification'
 
@@ -78,6 +83,12 @@ export interface MutationBaselineFacts {
 export interface DerivedPaperGeneration {
   readonly current: AuthorityState
   readonly generation: CapitalGrantGeneration
+  readonly reconciliation: ExactReconciliationFacts
+}
+
+export interface DerivedResearchPaperGeneration {
+  readonly current: AuthorityState
+  readonly generation: ResearchCapitalGrantGeneration
   readonly reconciliation: ExactReconciliationFacts
 }
 
@@ -252,6 +263,7 @@ export type CapitalGrantAlgebraFailure =
       readonly reconciledAt: Date
     }
   | { readonly _tag: 'PaperGenerationDerivationFailed'; readonly cause: unknown }
+  | { readonly _tag: 'ResearchPaperGenerationDerivationFailed'; readonly cause: unknown }
   | {
       readonly _tag: 'ReconciliationNotFresh'
       readonly reconciledAt: Date
@@ -273,6 +285,22 @@ export type CapitalGrantAlgebraFailure =
       readonly _tag: 'DerivedPaperGenerationMismatch'
       readonly derivedGenerationHash: string
       readonly configuredGenerationHash: string
+    }
+  | {
+      readonly _tag: 'ResearchPaperGenerationReplayMismatch'
+      readonly generationHash: string
+      readonly expectedPreviousGenerationHash: string
+    }
+  | {
+      readonly _tag: 'ResearchPaperGenerationRuntimeMismatch'
+      readonly field:
+        | 'accountId'
+        | 'activationBuild'
+        | 'brokerIdentityHash'
+        | 'generationHash'
+        | 'proofPlanHash'
+        | 'riskPolicyHash'
+        | 'strategy'
     }
 
 export interface CapitalGrantFailureDetails {
@@ -680,6 +708,107 @@ export const deriveCapitalGrantGeneration = (input: {
     Result.map((generation) => ({ current: input.current, generation, reconciliation: input.reconciliation })),
   )
 
+const researchRuntimeMismatch = (
+  field: Extract<CapitalGrantAlgebraFailure, { readonly _tag: 'ResearchPaperGenerationRuntimeMismatch' }>['field'],
+): Result.Result<never, CapitalGrantAlgebraFailure> =>
+  Result.fail({ _tag: 'ResearchPaperGenerationRuntimeMismatch', field })
+
+export const validateResearchCapitalGrantProof = (input: {
+  readonly proof: ResearchCapitalGrantProofBinding
+  readonly configuredSourceGenerationHash: string
+  readonly accountId: string
+  readonly brokerIdentityHash: string
+  readonly build: AuthorityBuildFacts
+}): Result.Result<void, CapitalGrantAlgebraFailure> => {
+  const { proof, build } = input
+  if (proof.accountId !== input.accountId) return researchRuntimeMismatch('accountId')
+  if (proof.brokerIdentityHash !== input.brokerIdentityHash) return researchRuntimeMismatch('brokerIdentityHash')
+  if (proof.proofPlanHash !== proof.grant.planHash) return researchRuntimeMismatch('proofPlanHash')
+  if (
+    proof.activationSourceRevision !== build.sourceRevision ||
+    proof.activationImageRepository !== build.imageRepository ||
+    proof.activationImageDigest !== build.imageDigest
+  ) {
+    return researchRuntimeMismatch('activationBuild')
+  }
+  if (
+    proof.strategyBehaviorHash !== build.strategyBehaviorHash ||
+    proof.strategyParameterHash !== build.strategyParameterHash
+  ) {
+    return researchRuntimeMismatch('strategy')
+  }
+  return /^[0-9a-f]{64}$/.test(input.configuredSourceGenerationHash)
+    ? Result.succeed(undefined)
+    : researchRuntimeMismatch('generationHash')
+}
+
+const researchCapitalGrantGenerationMaterial = (input: {
+  readonly current: AuthorityState
+  readonly proof: ResearchCapitalGrantProofBinding
+  readonly reconciliation: ExactReconciliationFacts
+}): ResearchCapitalGrantGenerationMaterial => ({
+  schemaVersion: 'bayn.paper-authority-generation.v3',
+  maximum: Authority.Paper,
+  previousGenerationHash: input.current.generationHash,
+  grant: input.proof.grant,
+  activationSourceRevision: input.proof.activationSourceRevision,
+  activationImageRepository: input.proof.activationImageRepository,
+  activationImageDigest: input.proof.activationImageDigest,
+  strategyName: input.proof.strategyName,
+  strategyBehaviorHash: input.proof.strategyBehaviorHash,
+  strategyParameterHash: input.proof.strategyParameterHash,
+  strategyParameterSchemaVersion: input.proof.strategyParameterSchemaVersion,
+  strategyProtocolHash: input.proof.strategyProtocolHash,
+  accountId: input.proof.accountId,
+  brokerIdentityHash: input.proof.brokerIdentityHash,
+  riskPolicyHash: input.proof.riskPolicyHash,
+  proofPlanHash: input.proof.proofPlanHash,
+  reconciliationId: input.reconciliation.reconciliationId,
+  reconciliationContentHash: input.reconciliation.contentHash,
+})
+
+export const deriveResearchCapitalGrantGeneration = (input: {
+  readonly current: AuthorityState
+  readonly proof: ResearchCapitalGrantProofBinding
+  readonly reconciliation: ExactReconciliationFacts
+}): Result.Result<DerivedResearchPaperGeneration, CapitalGrantAlgebraFailure> =>
+  pipe(
+    makeResearchCapitalGrantGenerationResult(researchCapitalGrantGenerationMaterial(input)),
+    Result.mapError(
+      (cause: ResearchCapitalGrantGenerationConstructionFailure): CapitalGrantAlgebraFailure => ({
+        _tag: 'ResearchPaperGenerationDerivationFailed',
+        cause,
+      }),
+    ),
+    Result.map((generation) => ({ current: input.current, generation, reconciliation: input.reconciliation })),
+  )
+
+export const validateResearchPaperGenerationReplay = (
+  stored: ResearchCapitalGrantGeneration,
+  proof: ResearchCapitalGrantProofBinding,
+  expectedPreviousGenerationHash: string,
+): Result.Result<void, CapitalGrantAlgebraFailure> =>
+  stored.previousGenerationHash === expectedPreviousGenerationHash &&
+  stored.grant.planHash === proof.grant.planHash &&
+  stored.activationSourceRevision === proof.activationSourceRevision &&
+  stored.activationImageRepository === proof.activationImageRepository &&
+  stored.activationImageDigest === proof.activationImageDigest &&
+  stored.strategyName === proof.strategyName &&
+  stored.strategyBehaviorHash === proof.strategyBehaviorHash &&
+  stored.strategyParameterHash === proof.strategyParameterHash &&
+  stored.strategyParameterSchemaVersion === proof.strategyParameterSchemaVersion &&
+  stored.strategyProtocolHash === proof.strategyProtocolHash &&
+  stored.accountId === proof.accountId &&
+  stored.brokerIdentityHash === proof.brokerIdentityHash &&
+  stored.riskPolicyHash === proof.riskPolicyHash &&
+  stored.proofPlanHash === proof.proofPlanHash
+    ? Result.succeed(undefined)
+    : fail({
+        _tag: 'ResearchPaperGenerationReplayMismatch',
+        generationHash: stored.generationHash,
+        expectedPreviousGenerationHash,
+      })
+
 export const validatePaperGenerationFreshness = (
   reconciliation: ExactReconciliationFacts,
   observedAt: Date,
@@ -697,7 +826,7 @@ export const validatePaperGenerationFreshness = (
 
 export const decidePaperActivation = (
   current: AuthorityState,
-  binding: PaperGenerationRuntimeBinding,
+  binding: Pick<PaperGenerationRuntimeBinding, 'configuredGenerationHash'>,
 ): Result.Result<PaperActivationDecision, CapitalGrantAlgebraFailure> => {
   if (current.maximum !== Authority.Paper) {
     return Result.map(
@@ -837,11 +966,24 @@ export const capitalGrantFailureDetails = (failure: CapitalGrantAlgebraFailure):
         message: 'derived PAPER generation is invalid',
         cause: failure.cause,
       }
+    case 'ResearchPaperGenerationDerivationFailed':
+      return {
+        failure: 'decode',
+        message: 'derived research PAPER generation is invalid',
+        cause: failure.cause,
+      }
     case 'DurablePaperGenerationMismatch':
       return { failure: 'conflict', message: 'durable PAPER generation differs from the configured generation' }
     case 'PaperGenerationReplayMismatch':
       return { failure: 'conflict', message: 'PAPER generation history differs from deterministic replay' }
     case 'DerivedPaperGenerationMismatch':
       return { failure: 'invariant', message: 'derived PAPER generation differs from the configured generation' }
+    case 'ResearchPaperGenerationReplayMismatch':
+      return { failure: 'conflict', message: 'research PAPER generation history differs from deterministic replay' }
+    case 'ResearchPaperGenerationRuntimeMismatch':
+      return {
+        failure: 'invariant',
+        message: `research PAPER generation ${failure.field} binding differs from the current runtime`,
+      }
   }
 }

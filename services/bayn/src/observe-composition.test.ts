@@ -118,7 +118,7 @@ const accountingHash = 'b'.repeat(64)
 const reconciledAt = '2020-05-01T12:45:01.000Z'
 const evaluatedAt = '2020-05-01T12:45:02.000Z'
 
-test('PAPER entry submission is allowed before cutoff and denied afterward', () => {
+test('PAPER submissions obey separate entry and final close-session cutoffs', () => {
   expect(
     paperMutationSubmissionAllowed({
       capability: 'Mutation',
@@ -140,9 +140,19 @@ test('PAPER entry submission is allowed before cutoff and denied afterward', () 
       capability: 'Mutation',
       closeOnly: true,
       paperEpisodeCutoffAt: '2020-05-01T13:00:00.000Z',
+      paperEpisodeCloseSubmitCutoffAt: '2020-05-03T20:00:00.000Z',
       observedAt: '2020-05-01T13:05:00.000Z',
     }),
   ).toBe(true)
+  expect(
+    paperMutationSubmissionAllowed({
+      capability: 'Mutation',
+      closeOnly: true,
+      paperEpisodeCutoffAt: '2020-05-01T13:00:00.000Z',
+      paperEpisodeCloseSubmitCutoffAt: '2020-05-03T20:00:00.000Z',
+      observedAt: '2020-05-03T20:00:00.000Z',
+    }),
+  ).toBe(false)
 })
 
 test('requires a bounded residual close replan after a settled close leaves a position open', () => {

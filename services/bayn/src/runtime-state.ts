@@ -90,6 +90,17 @@ export type PaperActivationRuntimeState =
       readonly _tag: 'Realized'
       readonly requestHash: string
       readonly generationHash: string
+      readonly grant: 'Qualified' | 'Research'
+      readonly cutoffAt: string
+      readonly expiresAt: string
+      readonly maximumCloseSessions: number | null
+    }
+  | {
+      readonly _tag: 'Completed'
+      readonly requestHash: string
+      readonly generationHash: string
+      readonly grant: 'Qualified' | 'Research'
+      readonly receiptHash: string
     }
 
 export interface RuntimeState {

@@ -713,6 +713,10 @@ const writerFence: WriterFenceService = {
   transaction: (effect) => effect,
 }
 
+const unusedResearchCapitalGrantLifecycle = {
+  activateResearchCapitalGrant: () => Effect.die(new Error('research activation must remain unreachable')),
+} satisfies Pick<CapitalGrantLifecycleStoreShape, 'activateResearchCapitalGrant'>
+
 const runProgram = (
   lifecycle: CapitalGrantLifecycleStoreShape,
   candidateRequest: ExecutionPrepareRequest = request,
@@ -728,6 +732,7 @@ describe('EXECUTION_PREPARE program boundary', () => {
     let prepareCalls = 0
     let activateCalls = 0
     const lifecycle: CapitalGrantLifecycleStoreShape = {
+      ...unusedResearchCapitalGrantLifecycle,
       prepareCapitalGrant: () =>
         Effect.sync(() => {
           prepareCalls += 1
@@ -749,6 +754,7 @@ describe('EXECUTION_PREPARE program boundary', () => {
   test('carries the store-derived v2 generation through the PREPARE output and runtime binding', async () => {
     const preparedGeneration = generation()
     const lifecycle: CapitalGrantLifecycleStoreShape = {
+      ...unusedResearchCapitalGrantLifecycle,
       prepareCapitalGrant: () => Effect.succeed(preparedGeneration),
       activateCapitalGrant: () => Effect.die(new Error('activation must remain unreachable')),
     }
@@ -786,6 +792,7 @@ describe('EXECUTION_PREPARE program boundary', () => {
       observedPlanIntentId: hash('fabricated-program-intent'),
     })
     const lifecycle: CapitalGrantLifecycleStoreShape = {
+      ...unusedResearchCapitalGrantLifecycle,
       prepareCapitalGrant: () =>
         Effect.sync(() => {
           prepareCalls += 1
@@ -812,6 +819,7 @@ describe('EXECUTION_PREPARE program boundary', () => {
       cause: new Error('underlying schema failure'),
     })
     const lifecycle: CapitalGrantLifecycleStoreShape = {
+      ...unusedResearchCapitalGrantLifecycle,
       prepareCapitalGrant: () => Effect.fail(lifecycleFailure),
       activateCapitalGrant: () => Effect.die(new Error('activation must remain unreachable')),
     }

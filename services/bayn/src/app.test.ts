@@ -389,6 +389,85 @@ describe('Bayn application composition', () => {
     expect(backgroundInterrupted).toBe(true)
   })
 
+  test('starts a research-bound autonomous cycle without qualification evidence', async () => {
+    const researchPlanHash = 'b'.repeat(64)
+    let startedBindingId: string | undefined
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>()
+          const startCycle = ({ qualificationRunId }: AutonomousCycleStartupInput) =>
+            Effect.sync(() => void (startedBindingId = qualificationRunId)).pipe(
+              Effect.as(Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))),
+            )
+          const fiber = yield* runApplication(
+            { ...autonomousConfig(config), qualificationRunId: 'c'.repeat(64) },
+            fixtureRuntime,
+            {
+              marketData: marketDataService(Effect.succeed(makeSnapshot())),
+              journal: successfulJournal,
+              evidenceStore: successfulEvidenceStore,
+              cycleObservability,
+            },
+            { _tag: 'AutonomousRead', broker, cycleBindingId: researchPlanHash, startCycle },
+          ).pipe(Effect.provide(HttpServerLive(config)), Effect.forkScoped)
+          yield* Deferred.await(started).pipe(Effect.timeout('1 second'))
+          yield* Fiber.interrupt(fiber)
+        }),
+      ),
+    )
+
+    expect(startedBindingId).toBe(researchPlanHash)
+  })
+
+  test('explicitly suppresses a pending research cycle despite recovered qualification evidence', async () => {
+    let cycleStarted = false
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const resolved = yield* Deferred.make<void>()
+          const fiber = yield* runApplication(
+            autonomousConfig(config),
+            fixtureRuntime,
+            {
+              marketData: marketDataService(Effect.succeed(makeSnapshot())),
+              journal: successfulJournal,
+              evidenceStore: successfulEvidenceStore,
+              cycleObservability,
+            },
+            {
+              _tag: 'AutonomousRead',
+              cycleBindingId: null,
+              broker,
+              startCycle: () =>
+                Effect.sync(() => {
+                  cycleStarted = true
+                }).pipe(Effect.as(Effect.never)),
+              resolveAfterStartup: () =>
+                Deferred.succeed(resolved, undefined).pipe(
+                  Effect.as({
+                    _tag: 'AutonomousRead' as const,
+                    cycleBindingId: null,
+                    broker,
+                    startCycle: () =>
+                      Effect.sync(() => {
+                        cycleStarted = true
+                      }).pipe(Effect.as(Effect.never)),
+                  }),
+                ),
+            },
+          ).pipe(Effect.provide(HttpServerLive(config)), Effect.forkScoped)
+          yield* Deferred.await(resolved).pipe(Effect.timeout('1 second'))
+          yield* Effect.yieldNow
+          expect(cycleStarted).toBe(false)
+          yield* Fiber.interrupt(fiber)
+        }),
+      ),
+    )
+  })
+
   test('resolves the autonomous broker runtime before starting its cycle', async () => {
     const events: string[] = []
     await Effect.runPromise(

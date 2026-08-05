@@ -1,19 +1,23 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
 
+import { BrokerEnvironment } from '../../broker/identity'
 import { WriterFence } from '../../execution/writer-fence'
 import { historicalSandboxAuthority } from '../../execution/legacy-authority'
 import {
   Authority,
   decodeCapitalGrantProofBinding,
+  decodeResearchCapitalGrantProofBinding,
   type AuthorityState,
   type CapitalGrantGeneration,
   type CapitalGrantProofBinding,
+  type ResearchCapitalGrantProofBinding,
 } from '../../execution/contracts'
 import {
   bindPaperGenerationRuntime,
   decidePaperActivation,
   deriveCapitalGrantGeneration,
+  deriveResearchCapitalGrantGeneration,
   paperActivationEffectiveAuthority,
   validateDerivedPaperGeneration,
   validateLatestExactReconciliation,
@@ -23,13 +27,21 @@ import {
   validatePaperGenerationReplay,
   validatePaperPrepareGeneration,
   validatePaperSourceAuthority,
+  validateResearchCapitalGrantProof,
+  validateResearchPaperGenerationReplay,
   type DerivedPaperGeneration,
+  type DerivedResearchPaperGeneration,
   type ExactReconciliationFacts,
   type PaperActivationDecision,
   type PaperGenerationEvidenceFacts,
   type PaperGenerationRuntimeBinding,
 } from '../capital-grant-algebra'
-import { authorityStateFromRow, paperGenerationFromRow, type AuthorityPostgres } from './authority-shared'
+import {
+  authorityStateFromRow,
+  paperGenerationFromRow,
+  researchPaperGenerationFromRow,
+  type AuthorityPostgres,
+} from './authority-shared'
 import type { ExecutionStoreError, ExecutionStoreRuntimeConfig } from './contract'
 import { failExecutionStore, liftAuthorityDecision, runExecutionOperation } from './errors'
 import {
@@ -48,6 +60,15 @@ export interface CapitalGrantInterpreter {
   readonly activateCapitalGrant: (
     proof: CapitalGrantProofBinding,
   ) => Effect.Effect<AuthorityState, ExecutionStoreError, WriterFence>
+  readonly activateResearchCapitalGrant: (
+    proof: ResearchCapitalGrantProofBinding,
+  ) => Effect.Effect<AuthorityState, ExecutionStoreError, WriterFence>
+}
+
+interface ResearchPaperRuntimeBinding {
+  readonly accountId: string
+  readonly brokerIdentityHash: string
+  readonly configuredSourceGenerationHash: string
 }
 
 export const makeCapitalGrantInterpreter = (
@@ -76,6 +97,28 @@ export const makeCapitalGrantInterpreter = (
         operation,
       ),
     )
+
+  const requireResearchPaperRuntime = (): Effect.Effect<ResearchPaperRuntimeBinding, ExecutionStoreError> => {
+    const identity = config.execution.brokerIdentity
+    const alpaca = config.alpaca
+    if (
+      identity === undefined ||
+      alpaca === undefined ||
+      identity.environment !== BrokerEnvironment.Sandbox ||
+      identity.accountId !== alpaca.expectedAccountId
+    ) {
+      return failExecutionStore(
+        'authority',
+        'invariant',
+        'research PAPER generation requires the exact configured sandbox broker identity and OBSERVE generation',
+      )
+    }
+    return Effect.succeed({
+      accountId: identity.accountId,
+      brokerIdentityHash: identity.identityHash,
+      configuredSourceGenerationHash: alpaca.authorityGenerationHash,
+    })
+  }
 
   const evidenceFacts = (row: ActivationEvidenceRow): PaperGenerationEvidenceFacts => ({
     lock: row.lock_payload,
@@ -194,7 +237,7 @@ export const makeCapitalGrantInterpreter = (
     reconciledAt: row.reconciled_at,
   })
 
-  const readLatestExactReconciliation = (binding: PaperGenerationRuntimeBinding) =>
+  const readLatestExactReconciliation = (binding: Pick<PaperGenerationRuntimeBinding, 'accountId'>) =>
     sql<Record<string, unknown>>`
       SELECT
         reconciliation_id, account_id, content_hash, status, reconciled_at
@@ -211,7 +254,10 @@ export const makeCapitalGrantInterpreter = (
       ),
     )
 
-  const verifyMutationCoverage = (binding: PaperGenerationRuntimeBinding, reconciliation: ExactReconciliationFacts) =>
+  const verifyMutationCoverage = (
+    binding: Pick<PaperGenerationRuntimeBinding, 'accountId'>,
+    reconciliation: ExactReconciliationFacts,
+  ) =>
     sql<Record<string, unknown>>`
       WITH latest AS (
         SELECT DISTINCT ON (event.mutation_id)
@@ -282,7 +328,7 @@ export const makeCapitalGrantInterpreter = (
       )
     })
 
-  const requireFreshPaperGeneration = (derived: DerivedPaperGeneration) =>
+  const requireFreshPaperGeneration = (derived: Pick<DerivedPaperGeneration, 'reconciliation'>) =>
     authority.nextAuthorityInstant.pipe(
       Effect.flatMap((observedAt) =>
         liftAuthorityDecision(
@@ -323,6 +369,36 @@ export const makeCapitalGrantInterpreter = (
       ),
       Effect.as(current),
     )
+
+  const activateAuthorityState = (
+    generationHash: string,
+    authorityVersion: number,
+    kill: AuthorityState['kill'],
+    activatedAt: Date,
+  ) => {
+    const effective = paperActivationEffectiveAuthority(kill)
+    return sql<Record<string, unknown>>`
+      UPDATE authority_state
+      SET
+        generation_hash = ${generationHash},
+        maximum = 'PAPER',
+        effective = ${effective},
+        version = ${authorityVersion},
+        updated_at = ${activatedAt}
+      WHERE singleton
+      RETURNING
+        schema_version, generation_hash, maximum, effective, kill_state, reason,
+        version::text AS version, updated_at
+    `.pipe(
+      Effect.flatMap(decodeAuthorityStateRows),
+      Effect.flatMap((rows) => {
+        const row = rows[0]
+        return row === undefined
+          ? failExecutionStore('authority', 'invariant', 'PAPER authority was not activated')
+          : authorityStateFromRow(row)
+      }),
+    )
+  }
 
   const writePaperGenerationActivation = (
     decision: Extract<PaperActivationDecision, { readonly _tag: 'ActivatePaperGeneration' }>,
@@ -376,25 +452,12 @@ export const makeCapitalGrantInterpreter = (
           ${input.reconciliationContentHash}, ${activatedAt}
         )
       `
-      const effective = paperActivationEffectiveAuthority(derived.current.kill)
-      const activatedRows = yield* sql<Record<string, unknown>>`
-        UPDATE authority_state
-        SET
-          generation_hash = ${input.generationHash},
-          maximum = 'PAPER',
-          effective = ${effective},
-          version = ${decision.authorityVersion},
-          updated_at = ${activatedAt}
-        WHERE singleton
-        RETURNING
-          schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, updated_at
-      `.pipe(Effect.flatMap(decodeAuthorityStateRows))
-      const activatedRow = activatedRows[0]
-      if (activatedRow === undefined) {
-        return yield* failExecutionStore('authority', 'invariant', 'PAPER authority was not activated')
-      }
-      return yield* authorityStateFromRow(activatedRow)
+      return yield* activateAuthorityState(
+        input.generationHash,
+        decision.authorityVersion,
+        derived.current.kill,
+        activatedAt,
+      )
     })
 
   const activatePaperGenerationTransaction = (
@@ -426,5 +489,136 @@ export const makeCapitalGrantInterpreter = (
       }),
     )
 
-  return { prepareCapitalGrant, activateCapitalGrant }
+  const deriveResearchPaperGeneration = (
+    proof: ResearchCapitalGrantProofBinding,
+    binding: ResearchPaperRuntimeBinding,
+    current: AuthorityState,
+  ) =>
+    Effect.gen(function* () {
+      yield* liftAuthorityDecision(validatePaperSourceAuthority(current))
+      yield* liftAuthorityDecision(
+        validatePaperPrepareGeneration(current, {
+          accountId: binding.accountId,
+          configuredGenerationHash: binding.configuredSourceGenerationHash,
+          qualificationRunId: proof.grant.planHash,
+        }),
+      )
+      yield* liftAuthorityDecision(
+        validateResearchCapitalGrantProof({
+          proof,
+          configuredSourceGenerationHash: binding.configuredSourceGenerationHash,
+          accountId: binding.accountId,
+          brokerIdentityHash: binding.brokerIdentityHash,
+          build: config.build,
+        }),
+      )
+      const reconciliation = yield* readLatestExactReconciliation(binding)
+      yield* verifyMutationCoverage(binding, reconciliation)
+      return yield* liftAuthorityDecision(deriveResearchCapitalGrantGeneration({ current, proof, reconciliation }))
+    })
+
+  const replayResearchPaperGeneration = (
+    current: AuthorityState,
+    history: Parameters<typeof researchPaperGenerationFromRow>[0],
+    proof: ResearchCapitalGrantProofBinding,
+    binding: ResearchPaperRuntimeBinding,
+  ) =>
+    researchPaperGenerationFromRow(history).pipe(
+      Effect.flatMap((stored) =>
+        liftAuthorityDecision(
+          validateResearchPaperGenerationReplay(stored, proof, binding.configuredSourceGenerationHash),
+        ),
+      ),
+      Effect.as(current),
+    )
+
+  const writeResearchPaperGenerationActivation = (
+    decision: Extract<PaperActivationDecision, { readonly _tag: 'ActivatePaperGeneration' }>,
+    derived: DerivedResearchPaperGeneration,
+    activatedAt: Date,
+  ) =>
+    Effect.gen(function* () {
+      const input = derived.generation
+      const identity = config.execution.brokerIdentity
+      if (
+        identity === undefined ||
+        identity.environment !== BrokerEnvironment.Sandbox ||
+        identity.accountId !== input.accountId ||
+        identity.identityHash !== input.brokerIdentityHash
+      ) {
+        return yield* failExecutionStore(
+          'authority',
+          'invariant',
+          'research PAPER generation broker identity does not match the configured sandbox account',
+        )
+      }
+      yield* sql`
+        INSERT INTO authority_generations (
+          generation_hash, schema_version, activation_schema_version,
+          previous_generation_hash, maximum, authority_version,
+          activation_source_revision, activation_image_repository, activation_image_digest,
+          strategy_name, strategy_behavior_hash, strategy_parameter_hash,
+          strategy_parameter_schema_version, strategy_protocol_hash, account_id,
+          broker_identity_schema_version, broker_identity_hash, broker_provider, broker_environment,
+          risk_policy_hash, proof_plan_hash, reconciliation_id, reconciliation_content_hash,
+          research_plan_hash, activated_at
+        ) VALUES (
+          ${input.generationHash}, 'bayn.authority-generation-history.v1', ${input.schemaVersion},
+          ${input.previousGenerationHash}, 'PAPER', ${decision.authorityVersion},
+          ${input.activationSourceRevision}, ${input.activationImageRepository}, ${input.activationImageDigest},
+          ${input.strategyName}, ${input.strategyBehaviorHash}, ${input.strategyParameterHash},
+          ${input.strategyParameterSchemaVersion}, ${input.strategyProtocolHash}, ${input.accountId},
+          ${identity.schemaVersion}, ${identity.identityHash}, ${identity.provider}, ${identity.environment},
+          ${input.riskPolicyHash}, ${input.proofPlanHash}, ${input.reconciliationId},
+          ${input.reconciliationContentHash}, ${input.grant.planHash}, ${activatedAt}
+        )
+      `
+      return yield* activateAuthorityState(
+        input.generationHash,
+        decision.authorityVersion,
+        derived.current.kill,
+        activatedAt,
+      )
+    })
+
+  const activateResearchPaperGenerationTransaction = (
+    proof: ResearchCapitalGrantProofBinding,
+    binding: ResearchPaperRuntimeBinding,
+  ) =>
+    Effect.gen(function* () {
+      const locked = yield* authority.lockCapitalGrant(binding.accountId)
+      const decision = yield* liftAuthorityDecision(
+        decidePaperActivation(locked.current, { configuredGenerationHash: locked.current.generationHash }),
+      )
+      if (decision._tag === 'ReplayPaperGeneration') {
+        return yield* replayResearchPaperGeneration(decision.current, locked.history, proof, binding)
+      }
+      const derived = yield* deriveResearchPaperGeneration(proof, binding, decision.current)
+      const [existing] = yield* authority.readGeneration(derived.generation.generationHash)
+      yield* authority.requireUnusedGeneration(derived.generation.generationHash, existing)
+      const activatedAt = yield* requireFreshPaperGeneration(derived)
+      return yield* writeResearchPaperGenerationActivation(decision, derived, activatedAt)
+    })
+
+  const activateResearchCapitalGrant = (candidate: ResearchCapitalGrantProofBinding) =>
+    runExecutionOperation(
+      'authority',
+      Effect.gen(function* () {
+        const proof = yield* decodeResearchCapitalGrantProofBinding(candidate)
+        const binding = yield* requireResearchPaperRuntime()
+        yield* liftAuthorityDecision(
+          validateResearchCapitalGrantProof({
+            proof,
+            configuredSourceGenerationHash: binding.configuredSourceGenerationHash,
+            accountId: binding.accountId,
+            brokerIdentityHash: binding.brokerIdentityHash,
+            build: config.build,
+          }),
+        )
+        const fence = yield* WriterFence
+        return yield* fence.transaction(activateResearchPaperGenerationTransaction(proof, binding))
+      }),
+    )
+
+  return { prepareCapitalGrant, activateCapitalGrant, activateResearchCapitalGrant }
 }

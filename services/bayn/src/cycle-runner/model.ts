@@ -22,6 +22,7 @@ export class CycleNotDueReconciliationError extends Data.TaggedError('CycleNotDu
 
 export interface CycleRunContext<R = never> {
   readonly qualificationRunId: string
+  readonly cadence?: 'MONTHLY' | 'PAPER_BOOTSTRAP'
   readonly strategyProtocolHash: string
   readonly accountId: string
   readonly executionPolicy: CycleExecutionPolicy
@@ -33,6 +34,7 @@ export interface CycleRunContext<R = never> {
 
 export interface CycleCandidate {
   readonly qualificationRunId: string
+  readonly cadence?: 'MONTHLY' | 'PAPER_BOOTSTRAP'
   readonly strategyProtocolHash: string
   readonly accountId: string
   readonly signalSession: SignalCycleSession

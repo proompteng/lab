@@ -10,6 +10,8 @@ import {
   ReconciliationStatus,
   type AuthorityState,
   type CapitalGrantProofBinding,
+  type ResearchCapitalGrantGenerationMaterial,
+  type ResearchCapitalGrantProofBinding,
 } from '../execution/contracts'
 import { makeQualificationResult } from '../qualification'
 import {
@@ -23,6 +25,7 @@ import {
   decideObserveGeneration,
   decidePaperActivation,
   deriveCapitalGrantGeneration,
+  deriveResearchCapitalGrantGeneration,
   nextAuthorityVersion,
   paperActivationEffectiveAuthority,
   capitalGrantFailureDetails,
@@ -38,6 +41,8 @@ import {
   validatePaperGenerationReplay,
   validatePaperPrepareGeneration,
   validatePaperSourceAuthority,
+  validateResearchCapitalGrantProof,
+  validateResearchPaperGenerationReplay,
   type ExactReconciliationFacts,
   type CapitalGrantAlgebraFailure,
   type PaperGenerationEvidenceFacts,
@@ -97,6 +102,45 @@ const reconciliation: ExactReconciliationFacts = {
   contentHash: hash('reconciliation-content'),
   status: ReconciliationStatus.Exact,
   reconciledAt: new Date('2026-07-25T20:00:00.500Z'),
+}
+
+const researchProof = (): ResearchCapitalGrantProofBinding => {
+  const material: ResearchCapitalGrantGenerationMaterial = {
+    schemaVersion: 'bayn.paper-authority-generation.v3' as const,
+    maximum: Authority.Paper,
+    previousGenerationHash: observeGenerationHash,
+    grant: { _tag: 'Research' as const, planHash: hash('research-plan') },
+    activationSourceRevision: config.build.sourceRevision,
+    activationImageRepository: config.build.imageRepository,
+    activationImageDigest: config.build.imageDigest,
+    strategyName: 'risk-balanced-trend',
+    strategyBehaviorHash: config.build.strategyBehaviorHash,
+    strategyParameterHash: config.build.strategyParameterHash,
+    strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4',
+    strategyProtocolHash: hash('strategy-protocol'),
+    accountId,
+    brokerIdentityHash: hash('broker-identity'),
+    riskPolicyHash: hash('risk-policy'),
+    proofPlanHash: hash('research-plan'),
+    reconciliationId: reconciliation.reconciliationId,
+    reconciliationContentHash: reconciliation.contentHash,
+  }
+  return {
+    schemaVersion: 'bayn.research-paper-grant-proof.v1',
+    grant: material.grant,
+    activationSourceRevision: material.activationSourceRevision,
+    activationImageRepository: material.activationImageRepository,
+    activationImageDigest: material.activationImageDigest,
+    strategyName: material.strategyName,
+    strategyBehaviorHash: material.strategyBehaviorHash,
+    strategyParameterHash: material.strategyParameterHash,
+    strategyParameterSchemaVersion: material.strategyParameterSchemaVersion,
+    strategyProtocolHash: material.strategyProtocolHash,
+    accountId: material.accountId,
+    brokerIdentityHash: material.brokerIdentityHash,
+    riskPolicyHash: material.riskPolicyHash,
+    proofPlanHash: material.proofPlanHash,
+  }
 }
 
 const qualificationSeries = (runId: string): QualificationSeries => {
@@ -596,5 +640,42 @@ describe('PAPER authority algebra', () => {
     })
     expect(paperActivationEffectiveAuthority(KillState.Clear)).toBe(Authority.Paper)
     expect(paperActivationEffectiveAuthority(KillState.Active)).toBe(Authority.Observe)
+  })
+
+  test('derives and replays a research PAPER generation without qualification evidence', () => {
+    const research = researchProof()
+    expect(
+      successOf(
+        validateResearchCapitalGrantProof({
+          proof: research,
+          configuredSourceGenerationHash: observeGenerationHash,
+          accountId,
+          brokerIdentityHash: research.brokerIdentityHash,
+          build: config.build,
+        }),
+      ),
+    ).toBeUndefined()
+    const derived = successOf(
+      deriveResearchCapitalGrantGeneration({ current: observeAuthority, proof: research, reconciliation }),
+    )
+    expect(derived.generation).toMatchObject({
+      schemaVersion: 'bayn.paper-authority-generation.v3',
+      previousGenerationHash: observeGenerationHash,
+      grant: research.grant,
+      accountId,
+    })
+    expect(derived.generation.generationHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(
+      successOf(validateResearchPaperGenerationReplay(derived.generation, research, observeGenerationHash)),
+    ).toBeUndefined()
+    expect(
+      failureOf(
+        validateResearchPaperGenerationReplay(
+          derived.generation,
+          { ...research, riskPolicyHash: hash('changed-risk-policy') },
+          observeGenerationHash,
+        ),
+      ),
+    ).toMatchObject({ _tag: 'ResearchPaperGenerationReplayMismatch' })
   })
 })

@@ -114,7 +114,9 @@ export const AuthorityStateRows = Schema.Array(AuthorityStateRow).check(Schema.i
 export const AuthorityStateObservationRows = Schema.Array(AuthorityStateObservationRow).check(Schema.isMaxLength(1))
 export const AuthorityGenerationRow = Schema.Struct({
   generation_hash: Sha256,
-  activation_schema_version: Schema.NullOr(Schema.Literal('bayn.paper-authority-generation.v2')),
+  activation_schema_version: Schema.NullOr(
+    Schema.Literals(['bayn.paper-authority-generation.v2', 'bayn.paper-authority-generation.v3']),
+  ),
   previous_generation_hash: Schema.NullOr(Sha256),
   maximum: Schema.Enum(Authority),
   authority_version: Schema.String,
@@ -144,6 +146,8 @@ export const AuthorityGenerationRow = Schema.Struct({
   proof_plan_hash: Schema.NullOr(Sha256),
   reconciliation_id: Schema.NullOr(Sha256),
   reconciliation_content_hash: Schema.NullOr(Sha256),
+  research_plan_hash: Schema.NullOr(Sha256),
+  strategy_protocol_hash: Schema.NullOr(Sha256),
   activated_at: Schema.Date,
 })
 export type AuthorityGenerationRow = typeof AuthorityGenerationRow.Type

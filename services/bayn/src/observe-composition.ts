@@ -57,6 +57,7 @@ import { makeStrategyProtocolHash } from './contracts'
 import { OperationalError, operationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
 import { MarketData, type MarketDataService } from './market-data'
+import { decidePaperEpisodeCycleTerminalization } from './paper-episode'
 import {
   Authority,
   IntentState,
@@ -1005,9 +1006,11 @@ export type ObserveAutonomousCycleInput = {
   readonly reconciliationIntervalMs: number
   readonly reconciliationPassTimeoutMs: number
   readonly strategy: StrategyRuntime
+  readonly cycleCadence?: 'MONTHLY' | 'PAPER_BOOTSTRAP'
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
   readonly paperCycleClosureStore?: PaperCycleClosureStoreShape
   readonly paperEpisodeCutoffAt?: string
+  readonly paperEpisodeCloseSubmitCutoffAt?: string
   readonly paperEpisodeExpiresAt?: string
   readonly onClosedCycle?: (cycleId: string, observedAt: string) => Effect.Effect<void>
 }
@@ -1105,10 +1108,13 @@ export const paperMutationSubmissionAllowed = (input: {
   readonly capability: PaperExecutionCapability['_tag']
   readonly closeOnly: boolean
   readonly paperEpisodeCutoffAt?: string
+  readonly paperEpisodeCloseSubmitCutoffAt?: string
   readonly observedAt: string
 }): boolean =>
   input.capability === 'Mutation' &&
-  (input.closeOnly || input.paperEpisodeCutoffAt === undefined || input.observedAt < input.paperEpisodeCutoffAt)
+  (input.closeOnly
+    ? input.paperEpisodeCloseSubmitCutoffAt === undefined || input.observedAt < input.paperEpisodeCloseSubmitCutoffAt
+    : input.paperEpisodeCutoffAt === undefined || input.observedAt < input.paperEpisodeCutoffAt)
 
 type RecoveryFirstDecisionBuilder = (
   cycle: AutonomousCycle,
@@ -1455,14 +1461,30 @@ const executeBoundPaperCycle = (
         capability: capability._tag,
         closeOnly,
         paperEpisodeCutoffAt: input.paperEpisodeCutoffAt,
+        paperEpisodeCloseSubmitCutoffAt: input.paperEpisodeCloseSubmitCutoffAt,
         observedAt,
       }),
     )
     if (step._tag !== 'Execute') {
-      if (step._tag === 'Complete' && closeOnly && (yield* entryPaperCycleHasUnsuccessfulIntent(document))) {
-        return { _tag: 'Block', reason: CycleTerminalReason.Risk, observedAt: step.observedAt }
+      if (step._tag !== 'Complete') return step
+      const entryHasUnsuccessfulIntent =
+        closeOnly || (input.paperEpisodeCutoffAt !== undefined && observedAt >= input.paperEpisodeCutoffAt)
+          ? yield* entryPaperCycleHasUnsuccessfulIntent(document)
+          : false
+      const terminalization = decidePaperEpisodeCycleTerminalization({
+        closeOnly,
+        observedAt,
+        ...(input.paperEpisodeCutoffAt === undefined ? {} : { entryCutoffAt: input.paperEpisodeCutoffAt }),
+        entryHasUnsuccessfulIntent,
+      })
+      switch (terminalization._tag) {
+        case 'WaitForClose':
+          return { _tag: 'Wait', observedAt: step.observedAt }
+        case 'Block':
+          return { _tag: 'Block', reason: CycleTerminalReason.Risk, observedAt: step.observedAt }
+        case 'Complete':
+          return step
       }
-      return step
     }
     const executed = yield* capability._tag === 'Mutation'
       ? executeMutationIntent(
@@ -1860,6 +1882,7 @@ const recoveryFirstCycleLoop = (
         Effect.gen(function* () {
           const context: CycleRunContext<ObserveDecisionRuntime> = {
             qualificationRunId: startup.qualificationRunId,
+            ...(input.cycleCadence === undefined ? {} : { cadence: input.cycleCadence }),
             strategyProtocolHash: preparation.strategyProtocolHash,
             accountId: input.accountId,
             executionPolicy: preparation.executionPolicy,

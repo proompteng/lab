@@ -299,6 +299,10 @@ describe('Bayn HTTP pure decisions', () => {
         _tag: 'Realized' as const,
         requestHash: 'a'.repeat(64),
         generationHash: 'b'.repeat(64),
+        grant: 'Research' as const,
+        cutoffAt: '2026-09-01T13:30:00.000Z',
+        expiresAt: '2026-09-03T20:00:00.000Z',
+        maximumCloseSessions: 3,
       },
     }
     const facts = statusFacts(realized, readOnlyExecution, provenance, 'embedded')

@@ -60,6 +60,7 @@ import {
   Authority,
   IntentState,
   KillState,
+  makeResearchCapitalGrantGenerationResult,
   ReconciliationStatus,
   RiskOutcome,
 } from '../../execution/contracts'
@@ -67,6 +68,7 @@ import { BrokerAccess, noCapitalAuthority } from '../../execution/authority'
 import { planPaperIntent } from '../../execution/intents'
 import { runOnce, type ReconciliationPassResult } from '../../reconciler'
 import { reconciledStateHash } from '../../reconciliation'
+import { readForwardPerformancePostgres } from '../../forward-performance/postgres'
 import { Reason, type Policy } from '../../risk'
 import {
   makeObserveShadowDecisionDocument,
@@ -1095,7 +1097,11 @@ const makeShadowDecision = (
   return result.success
 }
 
-const makePaperNoTradeDecision = (draft: CycleDraft, boundSnapshotId: string) => {
+const makePaperNoTradeDecision = (
+  draft: CycleDraft,
+  boundSnapshotId: string,
+  authorityGenerationHash = 'a'.repeat(64),
+) => {
   const observe = makeShadowDecision(draft, boundSnapshotId)
   const result = makePaperDecisionDocument({
     schemaVersion: 'bayn.paper-cycle-decision.v1',
@@ -1104,7 +1110,7 @@ const makePaperNoTradeDecision = (draft: CycleDraft, boundSnapshotId: string) =>
     bindings: {
       ...observe.bindings,
       qualificationRunId: draft.identity.qualificationRunId,
-      authorityGenerationHash: 'a'.repeat(64),
+      authorityGenerationHash,
     },
     targetPlan: observe.targetPlan,
     deltaRisk: [],
@@ -3113,6 +3119,118 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       bindings: { authorityGenerationHash: 'a'.repeat(64) },
       orderedIntentIds: [],
     })
+  })
+
+  test('projects a research PAPER generation into exact forward-performance strategy evidence', async () => {
+    const researchPlanHash = '7'.repeat(64)
+    const parentGenerationHash = '6'.repeat(64)
+    const accountId = 'paper-account-research-forward-performance'
+    const draft = makeDraft(accountId, { qualificationRunId: researchPlanHash })
+    const reconciliation = shadowReconciliation(draft)
+    const sourceRevision = '1'.repeat(40)
+    const imageRepository = 'registry.example.com/lab/bayn'
+    const imageDigest = `sha256:${'2'.repeat(64)}`
+    const strategyBehaviorHash = '3'.repeat(64)
+    const strategyParameterHash = '4'.repeat(64)
+    const riskPolicyHash = '2'.repeat(64)
+    const brokerIdentity = Result.getOrThrow(
+      makeBrokerIdentity({
+        schemaVersion: 'bayn.broker-identity.v2',
+        provider: BrokerProvider.Alpaca,
+        environment: BrokerEnvironment.Sandbox,
+        accountId,
+      }),
+    )
+    const generation = Result.getOrThrow(
+      makeResearchCapitalGrantGenerationResult({
+        schemaVersion: 'bayn.paper-authority-generation.v3',
+        maximum: Authority.Paper,
+        previousGenerationHash: parentGenerationHash,
+        grant: { _tag: 'Research', planHash: researchPlanHash },
+        activationSourceRevision: sourceRevision,
+        activationImageRepository: imageRepository,
+        activationImageDigest: imageDigest,
+        strategyName: draft.identity.strategyName,
+        strategyBehaviorHash,
+        strategyParameterHash,
+        strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
+        strategyProtocolHash: draft.identity.strategyProtocolHash,
+        accountId,
+        brokerIdentityHash: brokerIdentity.identityHash,
+        riskPolicyHash,
+        proofPlanHash: researchPlanHash,
+        reconciliationId: reconciliation.reconciliationId,
+        reconciliationContentHash: reconciliation.contentHash,
+      }),
+    )
+    const document = makePaperNoTradeDecision(draft, snapshotA, generation.generationHash)
+
+    const evidence = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const sql = yield* PgClient.PgClient
+        yield* insertShadowReconciliation(draft)
+        yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash, schema_version, previous_generation_hash, maximum,
+            authority_version, activated_at
+          ) VALUES (
+            ${parentGenerationHash}, 'bayn.authority-generation-history.v1', NULL,
+            'OBSERVE', 1, '2026-03-06T21:00:00.000Z'
+          )
+        `
+        yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash, schema_version, activation_schema_version,
+            previous_generation_hash, maximum, authority_version,
+            activation_source_revision, activation_image_repository, activation_image_digest,
+            strategy_name, strategy_behavior_hash, strategy_parameter_hash,
+            strategy_parameter_schema_version, strategy_protocol_hash, account_id,
+            broker_identity_schema_version, broker_identity_hash, broker_provider, broker_environment,
+            risk_policy_hash, proof_plan_hash, reconciliation_id, reconciliation_content_hash,
+            research_plan_hash, activated_at
+          ) VALUES (
+            ${generation.generationHash}, 'bayn.authority-generation-history.v1', ${generation.schemaVersion},
+            ${generation.previousGenerationHash}, 'PAPER', 2,
+            ${generation.activationSourceRevision}, ${generation.activationImageRepository},
+            ${generation.activationImageDigest}, ${generation.strategyName}, ${generation.strategyBehaviorHash},
+            ${generation.strategyParameterHash}, ${generation.strategyParameterSchemaVersion},
+            ${generation.strategyProtocolHash}, ${generation.accountId}, ${brokerIdentity.schemaVersion},
+            ${brokerIdentity.identityHash}, ${brokerIdentity.provider}, ${brokerIdentity.environment},
+            ${generation.riskPolicyHash}, ${generation.proofPlanHash}, ${generation.reconciliationId},
+            ${generation.reconciliationContentHash}, ${generation.grant.planHash},
+            '2026-03-06T21:02:30.000Z'
+          )
+        `
+        yield* store.acquire(draft, '2026-03-06T21:03:00.000Z')
+        yield* store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotA), '2026-03-06T21:04:00.000Z')
+        yield* store.activate(draft.identity.cycleId, '2026-03-06T21:05:00.000Z')
+        yield* store.bindDecision(draft.identity.cycleId, document, decisionAt)
+        yield* store.finish(draft.identity.cycleId, CycleState.NoTrade, terminalAt)
+        return yield* readForwardPerformancePostgres(sql, accountId, generation.generationHash)
+      }),
+    )
+
+    expect(evidence.cycles).toEqual([
+      expect.objectContaining({
+        cycleId: draft.identity.cycleId,
+        qualificationRunId: researchPlanHash,
+        strategyProtocolHash: draft.identity.strategyProtocolHash,
+        state: CycleState.NoTrade,
+      }),
+    ])
+    expect(evidence.strategy).toEqual({
+      qualificationRunId: researchPlanHash,
+      strategyName: draft.identity.strategyName,
+      strategyProtocolHash: draft.identity.strategyProtocolHash,
+      strategyBehaviorHash,
+      strategyParameterHash,
+      strategyParameterSchemaVersion: generation.strategyParameterSchemaVersion,
+      sourceRevision,
+      imageRepository,
+      imageDigest,
+    })
+    expect(evidence.unclosedCycleCount).toBe(0)
   })
 
   test('terminalizes an expired untouched PAPER plan and releases oldest-unfinished selection', async () => {

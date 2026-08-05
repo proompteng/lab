@@ -95,7 +95,7 @@ const continueCycleAuthorityReads = <R>(
 ): Effect.Effect<CycleAuthoritySelection, CycleRunnerError> => {
   const [publication, ...remaining] = publications
   if (publication === undefined) {
-    return Effect.succeed(completeCycleAuthoritySelection(state))
+    return Effect.succeed(completeCycleAuthoritySelection(state, context.cadence))
   }
   return pipe(
     readCycleAuthoritySlot(store, context, publication),

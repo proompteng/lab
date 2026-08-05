@@ -27,7 +27,9 @@ import {
   ReconciliationStatus,
   TimeInForce,
   makeCapitalGrantGenerationResult,
+  makeResearchCapitalGrantGenerationResult,
   type CapitalGrantGeneration,
+  type ResearchCapitalGrantGeneration,
 } from '../execution/contracts'
 import {
   defaultQualificationStatisticsPolicyDocument,
@@ -98,6 +100,8 @@ const successOfResult = <A, E>(result: Result.Result<A, E>): A => {
 }
 const makeCapitalGrantGeneration = (input: Parameters<typeof makeCapitalGrantGenerationResult>[0]) =>
   successOfResult(makeCapitalGrantGenerationResult(input))
+const makeResearchCapitalGrantGeneration = (input: Parameters<typeof makeResearchCapitalGrantGenerationResult>[0]) =>
+  successOfResult(makeResearchCapitalGrantGenerationResult(input))
 const observedAt = '2026-07-22T15:30:01.000Z'
 const occurredAt = '2026-07-22T15:30:00.000Z'
 const hash = (value: string): string => canonicalHashV1({ value })
@@ -718,6 +722,53 @@ const proofBinding = (activation: CapitalGrantGeneration) => ({
   proofPlanHash: activation.proofPlanHash,
 })
 
+const makeResearchActivation = (
+  previousGenerationHash: string,
+  reconciliation: Pick<ReconciliationFixture, 'contentHash' | 'reconciliationId'>,
+): ResearchCapitalGrantGeneration =>
+  makeResearchCapitalGrantGeneration({
+    schemaVersion: 'bayn.paper-authority-generation.v3',
+    maximum: Authority.Paper,
+    previousGenerationHash,
+    grant: { _tag: 'Research', planHash: hash('bounded-research-paper-plan') },
+    activationSourceRevision: config.build.sourceRevision,
+    activationImageRepository: config.build.imageRepository,
+    activationImageDigest: config.build.imageDigest,
+    strategyName: 'risk-balanced-trend',
+    strategyBehaviorHash: config.build.strategyBehaviorHash,
+    strategyParameterHash: config.build.strategyParameterHash,
+    strategyParameterSchemaVersion: fixtureProtocol.schemaVersion,
+    strategyProtocolHash: makeStrategyProtocolHash({
+      name: 'risk-balanced-trend',
+      behaviorHash: config.build.strategyBehaviorHash,
+      parameterHash: config.build.strategyParameterHash,
+      parameterSchemaVersion: fixtureProtocol.schemaVersion,
+    }),
+    accountId,
+    brokerIdentityHash: sandboxBrokerIdentity(accountId).identityHash,
+    riskPolicyHash: hash('bounded-research-risk-policy'),
+    proofPlanHash: hash('bounded-research-paper-plan'),
+    reconciliationId: reconciliation.reconciliationId,
+    reconciliationContentHash: reconciliation.contentHash,
+  })
+
+const researchProofBinding = (activation: ResearchCapitalGrantGeneration) => ({
+  schemaVersion: 'bayn.research-paper-grant-proof.v1' as const,
+  grant: activation.grant,
+  activationSourceRevision: activation.activationSourceRevision,
+  activationImageRepository: activation.activationImageRepository,
+  activationImageDigest: activation.activationImageDigest,
+  strategyName: activation.strategyName,
+  strategyBehaviorHash: activation.strategyBehaviorHash,
+  strategyParameterHash: activation.strategyParameterHash,
+  strategyParameterSchemaVersion: activation.strategyParameterSchemaVersion,
+  strategyProtocolHash: activation.strategyProtocolHash,
+  accountId: activation.accountId,
+  brokerIdentityHash: activation.brokerIdentityHash,
+  riskPolicyHash: activation.riskPolicyHash,
+  proofPlanHash: activation.proofPlanHash,
+})
+
 const paperRuntimeConfig = (
   activation: CapitalGrantGeneration,
   overrides: Partial<RuntimeConfig> = {},
@@ -767,6 +818,32 @@ const prepareRuntimeConfig = (activation: CapitalGrantGeneration): RuntimeConfig
     alpaca: {
       ...alpaca,
       authorityGenerationHash: activation.previousGenerationHash,
+    },
+  }
+}
+
+const researchRuntimeConfig = (sourceGenerationHash: string): RuntimeConfig => {
+  const identity = sandboxBrokerIdentity(accountId)
+  return {
+    ...config,
+    execution: {
+      brokerIdentity: identity,
+      brokerAccess: BrokerAccess.ReadOnly,
+      capitalAuthority: noCapitalAuthority,
+    },
+    alpaca: {
+      provider: BrokerProvider.Alpaca,
+      environment: BrokerEnvironment.Sandbox,
+      identity,
+      baseUrl: alpacaSandboxBaseUrl,
+      expectedAccountId: accountId,
+      authorityGenerationHash: sourceGenerationHash,
+      key: Redacted.make('unused'),
+      secret: Redacted.make('unused'),
+      proxyUrl: 'http://bayn-egress-proxy.invalid',
+      operationTimeoutMs: config.operationTimeoutMs,
+      retryAttempts: 0,
+      reconciliationIntervalMs: 30_000,
     },
   }
 }
@@ -1834,6 +1911,84 @@ describePostgres('paper accounting persistence', () => {
       })
     } finally {
       await activationRuntime.dispose()
+    }
+  }, 15_000)
+
+  test('atomically activates, reads, and exactly replays one reconciliation-bound research PAPER generation', async () => {
+    const initialGenerationHash = hash('research-paper-observe-generation')
+    const reconciliation = exactReconciliation('research-paper')
+    const expected = makeResearchActivation(initialGenerationHash, reconciliation)
+    const staticRequest = makeResearchActivation(initialGenerationHash, exactReconciliation('static-request'))
+    expect(staticRequest.generationHash).toBe(expected.generationHash)
+    expect(staticRequest.reconciliationId).not.toBe(expected.reconciliationId)
+    expect(staticRequest.reconciliationContentHash).not.toBe(expected.reconciliationContentHash)
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] }, researchRuntimeConfig(initialGenerationHash))
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionStore
+          const sql = yield* PgClient.PgClient
+          const activateResearch = store.activateResearchCapitalGrant
+          const readResearch = store.readResearchAuthorityGeneration
+          const readQualified = store.readAuthorityGeneration
+          assert(activateResearch !== undefined, 'research PAPER activation must be implemented')
+          assert(readResearch !== undefined, 'research PAPER history read must be implemented')
+          assert(readQualified !== undefined, 'qualified PAPER history read must be implemented')
+          yield* seedExactReconciliation(reconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: initialGenerationHash,
+            maximum: Authority.Observe,
+          })
+          const activated = yield* activateResearch(researchProofBinding(staticRequest))
+          const beforeReplay = yield* readAuthorityTupleEvidence
+          const replay = yield* activateResearch(researchProofBinding(staticRequest))
+          const afterReplay = yield* readAuthorityTupleEvidence
+          const research = yield* readResearch(expected.generationHash)
+          const qualified = yield* readQualified(expected.generationHash)
+          const [history] = yield* sql<{
+            activation_schema_version: string
+            history_count: number
+            research_plan_hash: string
+            strategy_protocol_hash: string
+          }>`
+            SELECT
+              count(*)::integer AS history_count,
+              min(activation_schema_version) AS activation_schema_version,
+              min(research_plan_hash) AS research_plan_hash,
+              min(strategy_protocol_hash) AS strategy_protocol_hash
+            FROM authority_generations
+            WHERE generation_hash = ${expected.generationHash}
+          `
+          return {
+            activated,
+            afterReplay,
+            beforeReplay,
+            history,
+            qualified,
+            replay,
+            research,
+          }
+        }),
+      )
+
+      expect(result.activated).toMatchObject({
+        generationHash: expected.generationHash,
+        maximum: Authority.Paper,
+        effective: Authority.Paper,
+        version: 2,
+      })
+      expect(result.replay).toEqual(result.activated)
+      expect(result.afterReplay).toEqual(result.beforeReplay)
+      expect(result.research).toEqual(expected)
+      expect(result.qualified).toBeUndefined()
+      expect(result.history).toEqual({
+        activation_schema_version: 'bayn.paper-authority-generation.v3',
+        history_count: 1,
+        research_plan_hash: expected.grant.planHash,
+        strategy_protocol_hash: expected.strategyProtocolHash,
+      })
+    } finally {
+      await runtime.dispose()
     }
   }, 15_000)
 
