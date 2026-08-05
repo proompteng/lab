@@ -821,13 +821,36 @@ const prepareOrRecoverResearchPaperActivation = (
         maximum: authority.maximum,
         effective: authority.effective,
         kill: authority.kill,
+        ...(authority.reason === undefined ? {} : { reason: authority.reason }),
       }),
     ).pipe(
       Effect.mapError((cause) =>
         paperActivationOperationalError('research PAPER durable authority does not match this episode', cause),
       ),
     )
-    if (decision._tag === 'Activate') {
+    if (decision._tag === 'Rearm') {
+      const rearmed = yield* authorityStore
+        .ensureAuthorityGeneration({
+          generationHash: plan.config.alpaca.authorityGenerationHash,
+          maximum: Authority.Observe,
+        })
+        .pipe(
+          Effect.mapError((cause) =>
+            paperActivationOperationalError('research PAPER source authority rearm failed', cause),
+          ),
+        )
+      if (
+        rearmed.generationHash !== plan.config.alpaca.authorityGenerationHash ||
+        rearmed.maximum !== Authority.Observe ||
+        rearmed.effective !== Authority.Observe ||
+        rearmed.kill !== KillState.Clear
+      ) {
+        return yield* Effect.fail(
+          paperActivationOperationalError('research PAPER source authority rearm did not return clear OBSERVE'),
+        )
+      }
+    }
+    if (decision._tag !== 'Resume') {
       return yield* prepareResearchPaperActivation(plan, request, session, authorityStore, lifecycle, writerFence)
     }
     const generation = yield* readBoundPaperActivationGeneration(plan, request, authorityStore)

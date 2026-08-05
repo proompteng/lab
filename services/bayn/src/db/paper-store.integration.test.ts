@@ -56,6 +56,7 @@ import {
 import { BrokerProvider, alpacaSandboxBaseUrl } from '../broker/alpaca'
 import { makeBrokerIdentity, type BrokerIdentity } from '../broker/identity'
 import { incompletePassReason } from '../simulation-reconciliation/broker-reconciler-model'
+import { paperEpisodeFailureRestrictionPrefix } from '../paper-episode'
 import { EvidenceStore, EvidenceStoreFromPostgres, PostgresClientLive } from './evidence-store'
 import {
   BrokerEventStore,
@@ -1986,6 +1987,136 @@ describePostgres('paper accounting persistence', () => {
         history_count: 1,
         research_plan_hash: expected.grant.planHash,
         strategy_protocol_hash: expected.strategyProtocolHash,
+      })
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('rearms an unused failed research PAPER episode only after its cycle is terminal and reconciled', async () => {
+    const sourceGenerationHash = hash('research-paper-rearm-source')
+    const nextSourceGenerationHash = hash('research-paper-rearm-next-source')
+    const activationReconciliation = exactReconciliation('research-paper-rearm-activation')
+    const activation = makeResearchActivation(sourceGenerationHash, activationReconciliation)
+    const cycleId = hash('research-paper-rearm-cycle')
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] }, researchRuntimeConfig(sourceGenerationHash))
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionStore
+          const sql = yield* PgClient.PgClient
+          const activateResearch = store.activateResearchCapitalGrant
+          assert(activateResearch !== undefined, 'research PAPER activation must be implemented')
+
+          yield* seedExactReconciliation(activationReconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: sourceGenerationHash,
+            maximum: Authority.Observe,
+          })
+          const activated = yield* activateResearch(researchProofBinding(activation))
+          const [restrictionTime] = yield* sql<{ updated_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (restrictionTime === undefined) return yield* Effect.die(new Error('restriction time is unavailable'))
+          yield* store.restrictAuthority(
+            `${paperEpisodeFailureRestrictionPrefix} build-decision failed`,
+            restrictionTime.updated_at.toISOString(),
+          )
+
+          yield* sql`
+            WITH timing AS (
+              SELECT clock_timestamp() AS created_at, date_trunc('day', clock_timestamp()) AS day_start
+            )
+            INSERT INTO autonomous_cycles (
+              cycle_id, schema_version, identity_schema_version, strategy_name,
+              qualification_run_id, strategy_protocol_hash, account_id,
+              signal_session_date, signal_calendar_version,
+              execution_policy_schema_version, execution_policy_hash,
+              strategy_execution_model_hash, submission_window_ms,
+              submission_cutoff_before_open_ms, window_schema_version,
+              execution_calendar_schema_version, execution_calendar_source,
+              execution_calendar_hash, execution_session_date, signal_close_at,
+              publication_deadline_at, submission_open_at, execution_open_at,
+              execution_close_at, submission_cutoff_at, state, snapshot_id,
+              decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
+            )
+            SELECT
+              ${cycleId}, 'bayn.autonomous-cycle.v1', 'bayn.autonomous-cycle-identity.v1',
+              'risk-balanced-trend', ${activation.grant.planHash}, ${activation.strategyProtocolHash}, ${accountId},
+              day_start::date, 'test-calendar-v1',
+              'bayn.autonomous-cycle-execution-policy.v1', ${hash('research-paper-rearm-policy')},
+              ${hash('research-paper-rearm-execution-model')}, 1800000, 1800000,
+              'bayn.autonomous-cycle-window.v1', 'bayn.alpaca-market-calendar-observation.v1',
+              'alpaca-v2-calendar', ${hash('research-paper-rearm-calendar')}, (day_start + interval '1 day')::date,
+              day_start + interval '20 hours', day_start + interval '1 day 12 hours 30 minutes',
+              day_start + interval '1 day 12 hours 30 minutes', day_start + interval '1 day 13 hours 30 minutes',
+              day_start + interval '1 day 15 hours', day_start + interval '1 day 13 hours',
+              'PENDING', NULL, NULL, NULL, 1, created_at, created_at, NULL
+            FROM timing
+          `
+          yield* seedExactReconciliation(exactReconciliation('research-paper-rearm-before-terminal'))
+          const beforePremature = yield* readAuthorityTupleEvidence
+          const premature = yield* Effect.flip(
+            store.ensureAuthorityGeneration({
+              generationHash: nextSourceGenerationHash,
+              maximum: Authority.Observe,
+            }),
+          )
+          const afterPremature = yield* readAuthorityTupleEvidence
+
+          yield* sql`
+            WITH timing AS (
+              SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS terminal_at
+              FROM autonomous_cycles
+              WHERE cycle_id = ${cycleId}
+            )
+            UPDATE autonomous_cycles AS cycle
+            SET
+              state = 'BLOCKED',
+              terminal_reason = 'BLOCKED_AUTHORITY',
+              state_version = 2,
+              updated_at = timing.terminal_at,
+              terminal_at = timing.terminal_at
+            FROM timing
+            WHERE cycle.cycle_id = ${cycleId}
+          `
+          yield* seedExactReconciliation(exactReconciliation('research-paper-rearm-after-terminal'))
+          const rearmed = yield* store.ensureAuthorityGeneration({
+            generationHash: nextSourceGenerationHash,
+            maximum: Authority.Observe,
+          })
+          const [history] = yield* sql<{
+            maximum: Authority
+            previous_generation_hash: string | null
+          }>`
+            SELECT maximum, previous_generation_hash
+            FROM authority_generations
+            WHERE generation_hash = ${nextSourceGenerationHash}
+          `
+          return { activated, afterPremature, beforePremature, history, premature, rearmed }
+        }),
+      )
+
+      expect(result.activated).toMatchObject({
+        generationHash: activation.generationHash,
+        maximum: Authority.Paper,
+        effective: Authority.Paper,
+        kill: KillState.Clear,
+      })
+      expect(result.premature).toMatchObject({ operation: 'authority', failure: 'invariant' })
+      expect(result.afterPremature).toEqual(result.beforePremature)
+      expect(result.rearmed).toMatchObject({
+        generationHash: nextSourceGenerationHash,
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Clear,
+      })
+      expect(result.rearmed.reason).toBeUndefined()
+      expect(result.history).toEqual({
+        maximum: Authority.Observe,
+        previous_generation_hash: activation.generationHash,
       })
     } finally {
       await runtime.dispose()
