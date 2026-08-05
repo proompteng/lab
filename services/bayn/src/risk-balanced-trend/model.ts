@@ -80,11 +80,6 @@ export type RiskBalancedTrendDomainFailure =
       readonly observedSession: IsoDate | null
     }
   | {
-      readonly _tag: 'CurrentDecisionNotMonthEnd'
-      readonly signalSession: IsoDate
-      readonly executionSession: IsoDate
-    }
-  | {
       readonly _tag: 'CurrentDecisionCoverageMismatch'
       readonly signalDate: IsoDate
       readonly expectedSymbols: readonly string[]
@@ -136,7 +131,6 @@ const domainFailureTags = new Set<RiskBalancedTrendDomainFailure['_tag']>([
   'SignalSessionMissing',
   'CurrentDecisionBindingDecodeFailed',
   'CurrentDecisionSessionMismatch',
-  'CurrentDecisionNotMonthEnd',
   'CurrentDecisionCoverageMismatch',
   'DecisionSchemaMismatch',
   'ManifestDecodeFailed',
@@ -184,8 +178,6 @@ const renderDomainFailure = (failure: RiskBalancedTrendDomainFailure): string =>
       return `current decision binding is invalid: ${failure.cause.message}`
     case 'CurrentDecisionSessionMismatch':
       return `current decision session ${failure.observedSession ?? 'missing'} does not match manifest/snapshot/binding ${failure.manifestSession}/${failure.snapshotSession}/${failure.bindingSession}`
-    case 'CurrentDecisionNotMonthEnd':
-      return `current decision signal ${failure.signalSession} and execution ${failure.executionSession} are in the same month`
     case 'CurrentDecisionCoverageMismatch':
       return `current decision covers ${failure.observedSymbols.join(',')}; expected ${failure.expectedSymbols.join(',')}`
     case 'DecisionSchemaMismatch':
