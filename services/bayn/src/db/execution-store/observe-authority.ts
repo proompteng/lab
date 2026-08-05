@@ -274,18 +274,41 @@ export const makeObserveAuthorityInterpreter = (
             ON previous_generation.generation_hash = state.generation_hash
           LEFT JOIN latest_reconciliation AS reconciliation ON true
           WHERE state.singleton
+        ), research_rearm AS (
+          SELECT
+            state.maximum = 'PAPER'
+            AND state.effective = 'OBSERVE'
+            AND state.kill_state = 'ACTIVE'
+            AND state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
+            AND previous_generation.activation_schema_version = 'bayn.paper-authority-generation.v3' AS candidate,
+            research_paper_rearm_eligible(
+              ${decision.generationHash},
+              ${decision.authorityVersion},
+              ${activatedAt}
+            ) AS eligible
+          FROM authority_state AS state
+          JOIN authority_generations AS previous_generation
+            ON previous_generation.generation_hash = state.generation_hash
+          WHERE state.singleton
         )
         UPDATE authority_state AS state
         SET
           generation_hash = ${decision.generationHash},
           maximum = ${decision.maximum},
           effective = 'OBSERVE',
-          kill_state = CASE WHEN recovery.eligible THEN 'CLEAR' ELSE state.kill_state END,
-          reason = CASE WHEN recovery.eligible THEN NULL ELSE state.reason END,
+          kill_state = CASE
+            WHEN recovery.eligible OR research_rearm.eligible THEN 'CLEAR'
+            ELSE state.kill_state
+          END,
+          reason = CASE
+            WHEN recovery.eligible OR research_rearm.eligible THEN NULL
+            ELSE state.reason
+          END,
           version = ${decision.authorityVersion},
           updated_at = ${activatedAt}
-        FROM recovery
+        FROM recovery, research_rearm
         WHERE state.singleton
+          AND (NOT research_rearm.candidate OR research_rearm.eligible)
         RETURNING
           state.schema_version, state.generation_hash, state.maximum, state.effective, state.kill_state, state.reason,
           state.version::text AS version, state.updated_at

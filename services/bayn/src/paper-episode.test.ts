@@ -186,7 +186,7 @@ describe('decidePaperEpisode', () => {
     expect(success(state, safeFacts())).toEqual({ _tag: 'RemainFailed', state })
   })
 
-  test('activates only from the exact OBSERVE source and resumes only clear effective PAPER authority', () => {
+  test('activates, rearms, and resumes only from their exact durable authority states', () => {
     const common = {
       sourceGenerationHash: 'a'.repeat(64),
     }
@@ -215,8 +215,30 @@ describe('decidePaperEpisode', () => {
         maximum: 'PAPER',
         effective: 'OBSERVE',
         kill: 'ACTIVE',
+        reason: 'PAPER autonomous cycle loop restricted effective authority: build-decision failed',
+      }),
+    ).toEqual(Result.succeed({ _tag: 'Rearm' }))
+  })
+
+  test('does not rearm an operator kill, an unchanged source generation, or unknown authority state', () => {
+    const common = {
+      generationHash: 'b'.repeat(64),
+      sourceGenerationHash: 'a'.repeat(64),
+      maximum: 'PAPER' as const,
+      effective: 'OBSERVE' as const,
+      kill: 'ACTIVE' as const,
+    }
+    expect(decidePaperEpisodeAuthority({ ...common, reason: 'operator kill' })).toEqual(
+      Result.fail({ _tag: 'IdentityDrift' }),
+    )
+    expect(
+      decidePaperEpisodeAuthority({
+        ...common,
+        sourceGenerationHash: common.generationHash,
+        reason: 'PAPER autonomous cycle loop restricted effective authority: build-decision failed',
       }),
     ).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
+    expect(decidePaperEpisodeAuthority(common)).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
   })
 
   test('rejects source-generation drift instead of activating over unknown OBSERVE history', () => {

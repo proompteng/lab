@@ -103,9 +103,15 @@ export interface PaperEpisodeAuthorityFacts {
   readonly maximum: 'OBSERVE' | 'PAPER'
   readonly effective: 'OBSERVE' | 'PAPER'
   readonly kill: 'CLEAR' | 'ACTIVE'
+  readonly reason?: string
 }
 
-export type PaperEpisodeAuthorityDecision = { readonly _tag: 'Activate' } | { readonly _tag: 'Resume' }
+export const paperEpisodeFailureRestrictionPrefix = 'PAPER autonomous cycle loop restricted effective authority:'
+
+export type PaperEpisodeAuthorityDecision =
+  | { readonly _tag: 'Activate' }
+  | { readonly _tag: 'Rearm' }
+  | { readonly _tag: 'Resume' }
 
 export const decidePaperEpisodeAuthority = (
   facts: PaperEpisodeAuthorityFacts,
@@ -120,6 +126,15 @@ export const decidePaperEpisodeAuthority = (
   }
   if (facts.maximum === 'PAPER' && facts.effective === 'PAPER' && facts.kill === 'CLEAR') {
     return Result.succeed({ _tag: 'Resume' })
+  }
+  if (
+    facts.maximum === 'PAPER' &&
+    facts.effective === 'OBSERVE' &&
+    facts.kill === 'ACTIVE' &&
+    facts.generationHash !== facts.sourceGenerationHash &&
+    facts.reason?.startsWith(paperEpisodeFailureRestrictionPrefix) === true
+  ) {
+    return Result.succeed({ _tag: 'Rearm' })
   }
   return Result.fail({ _tag: 'IdentityDrift' })
 }
