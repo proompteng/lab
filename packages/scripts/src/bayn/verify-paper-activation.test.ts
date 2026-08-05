@@ -11,9 +11,25 @@ const deploymentPath = new URL('../../../../argocd/applications/bayn/deployment.
 const kustomizationPath = new URL('../../../../argocd/applications/bayn/kustomization.yaml', import.meta.url)
 const deployment = await Bun.file(deploymentPath).text()
 const kustomization = await Bun.file(kustomizationPath).text()
-const manifestPins = extractPaperActivationManifestPins(deployment, kustomization)
 const producerHeadSha = 'a'.repeat(40)
-const terminalRunId = manifestPins.qualificationRunId
+const terminalRunId = '1'.repeat(64)
+
+const qualificationFixture = (researchDeployment: string): string => {
+  const activationRequest = `            - name: BAYN_PAPER_ACTIVATION_REQUEST
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: paper-activation-request
+`
+  const qualificationRun = `            - name: BAYN_QUALIFICATION_RUN_ID
+              value: "${terminalRunId}"
+`
+  if (!researchDeployment.includes(activationRequest)) throw new Error('research activation fixture is missing')
+  return researchDeployment.replace(activationRequest, qualificationRun)
+}
+
+const qualifiedDeployment = qualificationFixture(deployment)
+const manifestPins = extractPaperActivationManifestPins(qualifiedDeployment, kustomization)
 const terminal = {
   schemaVersion: 'bayn.qualification-collector-terminal.v1',
   repository: 'proompteng/lab',
@@ -69,13 +85,13 @@ describe('Bayn PAPER activation request', () => {
   test('renders only the request and a rollback that restores OBSERVE', () => {
     expect(requestResult._tag).toBe('Success')
     if (requestResult._tag === 'Failure') return
-    const rendered = renderPaperActivationRequestTransition(deployment, requestResult.value)
+    const rendered = renderPaperActivationRequestTransition(qualifiedDeployment, requestResult.value)
     expect(rendered.requestDeployment).toContain('BAYN_PAPER_ACTIVATION_REQUEST')
     expect(rendered.requestDeployment).toContain('value: OBSERVE')
     expect(rendered.requestDeployment).not.toContain('value: PAPER')
     expect(rendered.requestDeployment).not.toContain('value: mutation')
     expect(rendered.requestDeployment).not.toContain('value: sandbox-capital')
-    expect(rendered.rollbackDeployment).toBe(deployment)
+    expect(rendered.rollbackDeployment).toBe(qualifiedDeployment)
     expect(rendered.rollbackDeployment).not.toContain('BAYN_PAPER_ACTIVATION_REQUEST')
   })
 
@@ -128,10 +144,18 @@ describe('Bayn PAPER activation request', () => {
   })
 
   test('accepts rendered Kubernetes tag plus digest image references', () => {
-    const renderedImage = deployment.replace(
+    const renderedImage = qualifiedDeployment.replace(
       `image: ${manifestPins.deploymentImageRepository}\n`,
       `image: ${manifestPins.deploymentImageRepository}:sha-${manifestPins.sourceSha}@${manifestPins.deploymentImageDigest}\n`,
     )
     expect(extractPaperActivationManifestPins(renderedImage, kustomization)).toEqual(manifestPins)
+  })
+
+  test('does not mistake a sealed research grant for qualification evidence', () => {
+    expect(() => extractPaperActivationManifestPins(deployment, kustomization)).toThrow(
+      'deployment must contain exactly one BAYN_QUALIFICATION_RUN_ID value',
+    )
+    expect(deployment).toContain('key: paper-activation-request')
+    expect(deployment).not.toContain('BAYN_QUALIFICATION_RUN_ID')
   })
 })
