@@ -155,9 +155,14 @@ export const initialState = (broker?: BrokerConfiguration, autonomousCycleLoopCo
   error: null,
 })
 
+export const qualificationEvidenceSatisfied = (state: RuntimeState): boolean =>
+  state.evidence !== null ||
+  ((state.paperActivation?._tag === 'Realized' || state.paperActivation?._tag === 'Completed') &&
+    state.paperActivation.grant === 'Research')
+
 export const isReady = (state: RuntimeState): boolean =>
   state.status === 'READY' &&
-  state.evidence !== null &&
+  qualificationEvidenceSatisfied(state) &&
   state.cycle.condition !== CycleOperationsCondition.Unknown &&
   state.cycle.condition !== CycleOperationsCondition.Stalled &&
   state.cycle.condition !== CycleOperationsCondition.Failed &&

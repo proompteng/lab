@@ -42,7 +42,7 @@ import {
 import { readinessResponseDecision, statusFacts } from './http'
 import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
-import { initialState, type RuntimeState } from './runtime-state'
+import { initialState, isReady, type RuntimeState } from './runtime-state'
 import { makeSnapshot } from './test-fixtures'
 
 const testHealthDependencies = Effect.all({
@@ -852,11 +852,42 @@ describe('Bayn continuous health', () => {
 
   test('observes a research cycle binding when startup evidence is unavailable', async () => {
     const researchPlanHash = 'b'.repeat(64)
-    const initial = initialState()
+    const checkedAt = '2026-07-20T00:00:00.000Z'
+    const generationHash = 'd'.repeat(64)
+    const initial: RuntimeState = {
+      ...initialState(),
+      paperActivation: {
+        _tag: 'Realized',
+        requestHash: 'c'.repeat(64),
+        generationHash,
+        grant: 'Research',
+        cutoffAt: '2026-09-01T20:00:00.000Z',
+        expiresAt: '2026-09-03T20:00:00.000Z',
+        maximumCloseSessions: 3,
+      },
+    }
     const observedBindings: string[] = []
-    const projection = emptyCycleProjection()
+    const projection: CycleOperationsProjection = {
+      ...emptyCycleProjection(),
+      authority: {
+        generationHash,
+        maximum: Authority.Paper,
+        effective: Authority.Paper,
+        kill: KillState.Clear,
+        reason: null,
+        updatedAt: checkedAt,
+      },
+      reconciliation: {
+        accountId: brokerAccountId,
+        reconciliationId: 'e'.repeat(64),
+        status: ReconciliationStatus.Exact,
+        discrepancyCount: 0,
+        reconciledAt: checkedAt,
+        coversLatestMutation: true,
+      },
+    }
     const program = Effect.gen(function* () {
-      yield* TestClock.setTime(Date.parse('2026-07-20T00:00:00.000Z'))
+      yield* TestClock.setTime(Date.parse(checkedAt))
       const state = yield* Ref.make(initial)
       yield* probe(config, state, undefined, undefined, researchPlanHash, false).pipe(
         Effect.provideService(MarketData, {
@@ -885,7 +916,8 @@ describe('Bayn continuous health', () => {
       )
 
       expect(observedBindings).toEqual([researchPlanHash])
-      expect(yield* Ref.get(state)).toMatchObject({
+      const observed = yield* Ref.get(state)
+      expect(observed).toMatchObject({
         status: 'READY',
         health: {
           dependencies: {
@@ -896,6 +928,7 @@ describe('Bayn continuous health', () => {
         },
         cycle: { condition: CycleOperationsCondition.Waiting, unfinishedCycleCount: 0 },
       })
+      expect(isReady(observed)).toBe(true)
     }).pipe(Effect.provide(TestClock.layer()))
 
     await Effect.runPromise(program)

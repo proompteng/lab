@@ -12,7 +12,12 @@ import type { FinalizedSnapshotProvenance } from '../contracts'
 import type { QualificationRecord, RecoveredEvaluationEvidence } from '../db/evidence-store'
 import { OperationalError, operationalError } from '../errors'
 import { databaseOperation, withinDeadline } from '../operations'
-import type { BrokerConfiguration, RuntimeEvidence, RuntimeState } from '../runtime-state'
+import {
+  qualificationEvidenceSatisfied,
+  type BrokerConfiguration,
+  type RuntimeEvidence,
+  type RuntimeState,
+} from '../runtime-state'
 import { utcInstantFromEpochMillisResult } from '../time'
 import {
   deriveHealthLogDecisions,
@@ -322,7 +327,7 @@ export const checkHealth = (
     const transition = yield* Ref.modify(state, (current) => {
       const decision = deriveHealthTransition(current, {
         config,
-        evidenceAvailable: initial.evidence !== null || !qualificationEvidenceRequired,
+        evidenceAvailable: qualificationEvidenceSatisfied(initial),
         results,
         broker: brokerConfiguration(broker),
         cycleFiber,

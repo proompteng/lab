@@ -1173,6 +1173,42 @@ describe('Bayn HTTP probes', () => {
     )
   })
 
+  test('reports an evidence-free realized research PAPER runtime as ready', async () => {
+    const researchState: RuntimeState = {
+      ...readyState(),
+      evidence: null,
+      paperActivation: {
+        _tag: 'Realized',
+        requestHash: 'a'.repeat(64),
+        generationHash: 'b'.repeat(64),
+        grant: 'Research',
+        cutoffAt: '2026-09-01T20:00:00.000Z',
+        expiresAt: '2026-09-03T20:00:00.000Z',
+        maximumCloseSessions: 3,
+      },
+    }
+
+    await withHttpServer({ state: researchState }, ({ port }) =>
+      Effect.all([request(port, '/readyz'), request(port, '/v1/status'), request(port, '/metrics')]).pipe(
+        Effect.tap(([ready, status, metrics]) =>
+          Effect.sync(() => {
+            expect(ready).toMatchObject({ status: 200, body: { ready: true, status: 'READY' } })
+            expect(status).toMatchObject({
+              status: 200,
+              body: {
+                operational: { ready: true },
+                evidence: { status: 'UNKNOWN', runId: null },
+                paperActivation: { _tag: 'Realized', grant: 'Research' },
+              },
+            })
+            expect(metrics.body).toContain('bayn_runtime_ready 1')
+          }),
+        ),
+        Effect.asVoid,
+      ),
+    )
+  })
+
   test('keeps a typed latest loop failure visible and makes readiness and metrics fail closed', async () => {
     const failedAt = '2026-07-20T00:00:00.000Z'
     const failedState: RuntimeState = {
