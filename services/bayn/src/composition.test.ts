@@ -1,12 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Fiber, Ref, Result } from 'effect'
+import { Deferred, Effect, Fiber, Ref, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
   closedCycleReceiptEmissionAllowed,
   finalizePaperEpisode,
   paperReceiptFinalizationWindowOpen,
+  refreshResearchPaperActivationReconciliation,
   restrictExpiredPaperActivation,
   retryClosedCycleReceipts,
 } from './composition'
@@ -160,6 +161,88 @@ describe('Bayn PAPER receipt retry boundary', () => {
 })
 
 describe('Bayn PAPER startup recovery boundary', () => {
+  test('persists one fresh reconciliation before activating a new research PAPER generation', async () => {
+    const operations: string[] = []
+
+    await Effect.runPromise(
+      refreshResearchPaperActivationReconciliation(
+        Effect.sync(() => {
+          operations.push('reconcile')
+        }),
+        1_000,
+      ).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            operations.push('activate')
+          }),
+        ),
+      ),
+    )
+
+    expect(operations).toEqual(['reconcile', 'activate'])
+  })
+
+  test('keeps activation disabled when the fresh reconciliation fails', async () => {
+    const operations: string[] = []
+    const reconciliationFailure = new Error('read-only reconciliation failed')
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        refreshResearchPaperActivationReconciliation(Effect.fail(reconciliationFailure), 1_000).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              operations.push('activate')
+            }),
+          ),
+        ),
+      ),
+    )
+
+    expect(operations).toEqual([])
+    expect(failure.message).toBe('research PAPER pre-activation reconciliation failed')
+    expect(failure.cause).toBe(reconciliationFailure)
+  })
+
+  test('times out and interrupts pre-activation reconciliation before activation', async () => {
+    const operations: string[] = []
+    const timeoutFailure = await Effect.runPromise(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>()
+        const finalizations = yield* Ref.make(0)
+        const activation = yield* refreshResearchPaperActivationReconciliation(
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Effect.never),
+            Effect.ensuring(Ref.update(finalizations, (count) => count + 1)),
+          ),
+          1_000,
+        ).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              operations.push('activate')
+            }),
+          ),
+          Effect.flip,
+          Effect.forkChild({ startImmediately: true }),
+        )
+
+        yield* Deferred.await(started)
+        yield* TestClock.adjust(999)
+        expect(yield* Ref.get(finalizations)).toBe(0)
+        yield* TestClock.adjust(1)
+
+        const failure = yield* Fiber.join(activation)
+        expect(yield* Ref.get(finalizations)).toBe(1)
+        return failure
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(operations).toEqual([])
+    expect(timeoutFailure.message).toBe('research PAPER pre-activation reconciliation failed')
+    expect(timeoutFailure.cause).toMatchObject({
+      message: 'research PAPER pre-activation reconciliation timed out',
+    })
+  })
+
   test('restricts durable authority before an expired close recovery is rejected', async () => {
     const restrictions: Array<{ readonly reason: string; readonly updatedAt: string }> = []
     const authorityRestrictionStore: AuthorityRestrictionStoreShape = {
