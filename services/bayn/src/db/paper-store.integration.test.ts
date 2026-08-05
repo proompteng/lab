@@ -2241,6 +2241,53 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
+  test('rotates a non-rearm research PAPER kill to OBSERVE without clearing it', async () => {
+    const sourceGenerationHash = hash('operator-killed-research-paper-source')
+    const nextSourceGenerationHash = hash('operator-killed-research-paper-next-source')
+    const activationReconciliation = exactReconciliation('operator-killed-research-paper-activation')
+    const activation = makeResearchActivation(sourceGenerationHash, activationReconciliation)
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] }, researchRuntimeConfig(sourceGenerationHash))
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* ExecutionStore
+          const sql = yield* PgClient.PgClient
+          const activateResearch = store.activateResearchCapitalGrant
+          assert(activateResearch !== undefined, 'research PAPER activation must be implemented')
+
+          yield* seedExactReconciliation(activationReconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: sourceGenerationHash,
+            maximum: Authority.Observe,
+          })
+          yield* activateResearch(researchProofBinding(activation))
+          const [restrictionTime] = yield* sql<{ updated_at: Date }>`
+            SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (restrictionTime === undefined) return yield* Effect.die(new Error('restriction time is unavailable'))
+          yield* store.restrictAuthority('operator requested PAPER stop', restrictionTime.updated_at.toISOString())
+
+          return yield* store.ensureAuthorityGeneration({
+            generationHash: nextSourceGenerationHash,
+            maximum: Authority.Observe,
+          })
+        }),
+      )
+
+      expect(result).toMatchObject({
+        generationHash: nextSourceGenerationHash,
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Active,
+        reason: 'operator requested PAPER stop',
+      })
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
   test('activates PAPER after fresh exact reconciliation covers terminal cancel mutation history', async () => {
     const initialGenerationHash = hash('terminal-canceled-observe-generation')
     const reconciliation = exactReconciliation('terminal-canceled-paper')
