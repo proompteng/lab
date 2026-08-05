@@ -28,6 +28,23 @@ const kustomization = readFileSync(
   new URL('../../../../argocd/applications/bayn/kustomization.yaml', import.meta.url),
   'utf8',
 )
+const terminalRunId = '1'.repeat(64)
+
+const qualificationFixture = (researchDeployment: string): string => {
+  const activationRequest = `            - name: BAYN_PAPER_ACTIVATION_REQUEST
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: paper-activation-request
+`
+  const qualificationRun = `            - name: BAYN_QUALIFICATION_RUN_ID
+              value: "${terminalRunId}"
+`
+  if (!researchDeployment.includes(activationRequest)) throw new Error('research activation fixture is missing')
+  return researchDeployment.replace(activationRequest, qualificationRun)
+}
+
+const qualifiedDeployment = qualificationFixture(deployment)
 
 describe('Bayn paper activation workflow contract', () => {
   test('reacts only to completed scheduled qualification and has no pod control channel', () => {
@@ -48,7 +65,7 @@ describe('Bayn paper activation workflow contract', () => {
   })
 
   test('QUALIFIED terminal produces one verified bounded proposal and REJECTED produces none', () => {
-    const pins = extractPaperActivationManifestPins(deployment, kustomization)
+    const pins = extractPaperActivationManifestPins(qualifiedDeployment, kustomization)
     const qualifiedTerminal = {
       schemaVersion: 'bayn.qualification-collector-terminal.v1',
       repository: 'proompteng/lab',
@@ -84,7 +101,7 @@ describe('Bayn paper activation workflow contract', () => {
         now: '2026-08-02T07:30:00.000Z',
       }),
     ).toMatchObject({ status: 'verified' })
-    const proposal = renderPaperActivationRequestTransition(deployment, request.value)
+    const proposal = renderPaperActivationRequestTransition(qualifiedDeployment, request.value)
     expect(proposal.requestDeployment).toContain('BAYN_PAPER_ACTIVATION_REQUEST')
     expect(proposal.requestDeployment).not.toContain('value: PAPER')
     expect(proposal.rollbackDeployment).not.toContain('BAYN_PAPER_ACTIVATION_REQUEST')
