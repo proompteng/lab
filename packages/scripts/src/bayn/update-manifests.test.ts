@@ -37,6 +37,7 @@ interface FixtureOptions {
   readonly behaviorHash?: string
   readonly parameterHash?: string
   readonly qualificationRunId?: string | null
+  readonly paperActivationRequest?: boolean
 }
 
 interface FixturePaths {
@@ -77,6 +78,9 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
     environmentBlock('BAYN_STRATEGY_BEHAVIOR_HASH', options.behaviorHash ?? strategyBehaviorHash),
     environmentBlock('BAYN_STRATEGY_PARAMETER_HASH', options.parameterHash ?? strategyParameterHash),
     pin === null ? '' : environmentBlock('BAYN_QUALIFICATION_RUN_ID', pin),
+    options.paperActivationRequest === true
+      ? '            - name: BAYN_PAPER_ACTIVATION_REQUEST\n              valueFrom:\n                secretKeyRef:\n                  name: bayn-alpaca-auth\n                  key: paper-activation-request\n'
+      : '',
     ...Object.entries(bindings).map(([name, value]) => environmentBlock(name, value)),
   ].join('')
 
@@ -318,6 +322,62 @@ describe('Bayn manifest promotion', () => {
     )
     expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
     expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
+  })
+
+  test('promotes source-only changes for a research PAPER activation without weakening candidate immutability', () => {
+    const paths = makeFixture({ qualificationRunId: null, paperActivationRequest: true })
+
+    expect(promote(paths)).toMatchObject({
+      promotionAction: 'promote',
+      promotionReason: 'eligible',
+      qualificationMode: 'research',
+      hadQualificationPin: false,
+      qualificationBindingsMatch: true,
+      snapshotChanged: false,
+    })
+    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
+      `- name: BAYN_CODE_REVISION\n              value: ${'a'.repeat(40)}`,
+    )
+    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
+      `- name: BAYN_IMAGE_DIGEST\n              value: sha256:${'b'.repeat(64)}`,
+    )
+    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain('BAYN_PAPER_ACTIVATION_REQUEST')
+    expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
+  })
+
+  test('keeps research PAPER strategy and runtime identity immutable across a service release', () => {
+    const paths = makeFixture({ qualificationRunId: null, paperActivationRequest: true })
+    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+
+    expect(() => promote(paths, { strategyParameterHash: '6'.repeat(64) })).toThrow(
+      'a research PAPER release cannot change strategy or runtime identity',
+    )
+    expect(() =>
+      promote(paths, {
+        candidateRuntime: {
+          ...currentBindings,
+          BAYN_SIGNAL_SNAPSHOT_ID: '5'.repeat(64),
+        },
+      }),
+    ).toThrow('a research PAPER release cannot change strategy or runtime identity')
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
+  })
+
+  test('does not install a qualification pin through an existing PAPER activation request', () => {
+    const paths = makeFixture({ qualificationRunId: null, paperActivationRequest: true })
+    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+
+    expect(() =>
+      promote(
+        paths,
+        {
+          acceptedQualificationRunId: '8'.repeat(64),
+          digest: `sha256:${'0'.repeat(64)}`,
+        },
+        '0'.repeat(40),
+      ),
+    ).toThrow('qualification installation cannot reuse a configured PAPER activation request')
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 
   test('rejects installing an accepted run while replacing a pinned runtime', () => {

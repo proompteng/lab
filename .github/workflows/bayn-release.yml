@@ -144,7 +144,7 @@ jobs:
               --strategy-parameter-hash "$strategy_parameter_hash" \
               --rollout-timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           )"
-          jq -e '(.promotionAction == "promote" or .promotionAction == "hold") and (.qualificationMode == "preserve" or .qualificationMode == "replace" or .qualificationMode == "install")' <<< "$promotion"
+          jq -e '(.promotionAction == "promote" or .promotionAction == "hold") and (.qualificationMode == "preserve" or .qualificationMode == "replace" or .qualificationMode == "install" or .qualificationMode == "research")' <<< "$promotion"
           {
             echo "promotion_action=$(jq -r '.promotionAction' <<< "$promotion")"
             echo "promotion_reason=$(jq -r '.promotionReason' <<< "$promotion")"
@@ -235,7 +235,9 @@ jobs:
             there is no schema fallback or automatic rename. `preserve` keeps the terminal run only when compiled
             behavior, protocol parameters, Signal inputs, TigerBeetle cluster ID, and TigerBeetle ledger all match.
             Replica addresses are transport and an explicit candidate may change them without relabeling qualification
-            evidence. `replace` removes an existing incompatible pin only for a fresh Signal snapshot. `install` is
+            evidence. `replace` removes an existing incompatible pin only for a fresh Signal snapshot. `research`
+            keeps qualification state absent while advancing an unchanged-strategy, unchanged-runtime research PAPER
+            service image; its build-bound activation request must be refreshed separately. `install` is
             available only to a controlled invocation that supplies the complete reviewed candidate runtime and exact
             independently accepted terminal run ID; automatic image promotion supplies neither and therefore never
             creates a pin. Installation can pin only the exact source, image digest, compiled strategy, and runtime
