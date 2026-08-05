@@ -1127,6 +1127,20 @@ describe('autonomous cycle runner', () => {
         'PAPER_BOOTSTRAP',
       ),
     ).toEqual({ _tag: 'ALREADY_TERMINAL', cycle: blocked })
+    const newerPublication = finalizedPublicationInspection('2026-02-02')
+    expect(
+      completeCycleAuthoritySelection(
+        { _tag: 'UNCLAIMED', publications: [newerPublication, publication], latestTerminal: terminal },
+        'PAPER_BOOTSTRAP',
+      ),
+    ).toEqual({ _tag: 'READ_CALENDAR', publications: [newerPublication] })
+    const riskBlocked = { ...terminal, terminalReason: CycleTerminalReason.Risk }
+    expect(
+      completeCycleAuthoritySelection(
+        { _tag: 'UNCLAIMED', publications: [newerPublication], latestTerminal: riskBlocked },
+        'PAPER_BOOTSTRAP',
+      ),
+    ).toEqual({ _tag: 'ALREADY_TERMINAL', cycle: riskBlocked })
     expect(
       selectCycleAuthoritySlots([
         { publication, existing: terminal },
@@ -2477,6 +2491,63 @@ describe('autonomous cycle runner', () => {
     })
     expect(calendarReads).toBe(1)
     expect(control.binds).toBe(0)
+  })
+
+  test('admits only a newer PAPER bootstrap publication after a missed publication deadline', async () => {
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const store = cycleStore(control)
+    let calendarReads = 0
+    const read = brokerRead(() => {
+      calendarReads += 1
+      return Effect.succeed({ value: monthEndCalendar, evidence })
+    })
+    const paperContext = { ...context(), cadence: 'PAPER_BOOTSTRAP' as const }
+    const missedPublication = finalizedPublicationInspection('2026-01-29', '2026-01-29T21:15:00.000Z')
+    const newerPublication = finalizedPublicationInspection('2026-01-30', '2026-01-30T21:15:00.000Z')
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-01-30T14:30:00.000Z'))
+        const missed = yield* provide(
+          runAutonomousCyclePass(paperContext),
+          read,
+          store,
+          marketDataService(Effect.succeed(finalizedPublications([missedPublication]))),
+        )
+        yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
+        const successor = yield* provide(
+          runAutonomousCyclePass(paperContext),
+          read,
+          store,
+          marketDataService(
+            Effect.succeed(finalizedPublications([newerPublication, missedPublication])),
+            newerPublication,
+          ),
+        )
+        return { missed, successor }
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(result.missed).toMatchObject({
+      outcome: 'ACQUIRED',
+      signalSessionDate: '2026-01-29',
+      readiness: {
+        outcome: 'BLOCKED',
+        cycle: { state: CycleState.Blocked, terminalReason: CycleTerminalReason.MissedPublication },
+      },
+    })
+    expect(result.successor).toMatchObject({
+      outcome: 'ACQUIRED',
+      signalSessionDate: '2026-01-30',
+      executionSessionDate: '2026-02-02',
+      readiness: {
+        outcome: 'BOUND',
+        cycle: { state: CycleState.Pending, bindings: { snapshotId } },
+      },
+    })
+    expect(calendarReads).toBe(2)
+    expect(control.acquisitions).toHaveLength(2)
+    expect(control.binds).toBe(1)
   })
 
   test('reinspects and activates a bound cycle on restart before any new discovery', async () => {

@@ -1,4 +1,4 @@
-import { CycleState, isTerminalCycleState, type AutonomousCycle } from '../cycle'
+import { CycleState, CycleTerminalReason, isTerminalCycleState, type AutonomousCycle } from '../cycle'
 import type { MarketDataInspection } from '../market-data'
 import type { NonEmptyPublications } from './calendar-decisions'
 
@@ -92,12 +92,20 @@ export const completeCycleAuthoritySelection = (
   cadence?: 'MONTHLY' | 'PAPER_BOOTSTRAP',
 ): CycleAuthoritySelection => {
   if (state._tag === 'TERMINAL') return { _tag: 'ALREADY_TERMINAL', cycle: state.latestTerminal }
-  if (
-    cadence === 'PAPER_BOOTSTRAP' &&
-    state.latestTerminal !== undefined &&
-    state.latestTerminal.state !== CycleState.NoTrade
-  ) {
-    return { _tag: 'ALREADY_TERMINAL', cycle: state.latestTerminal }
+  const latestTerminal = state.latestTerminal
+  if (cadence === 'PAPER_BOOTSTRAP' && latestTerminal !== undefined && latestTerminal.state !== CycleState.NoTrade) {
+    const newerPublications = state.publications.filter(
+      (publication) => publication.signalSession.session_date > latestTerminal.identity.signalSessionDate,
+    )
+    const [firstNewerPublication, ...remainingNewerPublications] = newerPublications
+    if (
+      latestTerminal.state === CycleState.Blocked &&
+      latestTerminal.terminalReason === CycleTerminalReason.MissedPublication &&
+      firstNewerPublication !== undefined
+    ) {
+      return { _tag: 'READ_CALENDAR', publications: [firstNewerPublication, ...remainingNewerPublications] }
+    }
+    return { _tag: 'ALREADY_TERMINAL', cycle: latestTerminal }
   }
   return { _tag: 'READ_CALENDAR', publications: state.publications }
 }
