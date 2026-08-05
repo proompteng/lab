@@ -57,9 +57,12 @@ const probe = (
   state: Ref.Ref<RuntimeState>,
   broker?: BrokerProbe,
   cycleFiber?: Fiber.Fiber<void, never>,
+  cycleObservationId?: string,
 ) =>
   testHealthDependencies.pipe(
-    Effect.flatMap((dependencies) => checkHealth(runtimeConfig, state, dependencies, broker, cycleFiber)),
+    Effect.flatMap((dependencies) =>
+      checkHealth(runtimeConfig, state, dependencies, broker, cycleFiber, cycleObservationId),
+    ),
   )
 
 const monitor = (
@@ -781,6 +784,109 @@ describe('Bayn continuous health', () => {
     expect(transition.next.status).toBe('READY')
     expect(transition.next.cycle.reason).not.toBe(CycleOperationsReason.AuthorityMaximumMismatch)
     expect(transition.next.cycle.alerts.authorityIncoherent).toBe(false)
+  })
+
+  test('projects a realized research PAPER episode through its read-only bootstrap config', () => {
+    const checkedAt = '2026-08-05T12:00:00.000Z'
+    const current: RuntimeState = {
+      ...readyState(),
+      paperActivation: {
+        _tag: 'Realized',
+        requestHash: 'a'.repeat(64),
+        generationHash: 'b'.repeat(64),
+        grant: 'Research',
+        cutoffAt: '2026-09-01T13:30:00.000Z',
+        expiresAt: '2026-09-03T20:00:00.000Z',
+        maximumCloseSessions: 3,
+      },
+    }
+    const transition = deriveHealthTransition(current, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: {
+          _tag: 'Available',
+          value: {
+            ...emptyCycleProjection(),
+            authority: {
+              generationHash: 'b'.repeat(64),
+              maximum: Authority.Paper,
+              effective: Authority.Paper,
+              kill: KillState.Clear,
+              reason: null,
+              updatedAt: checkedAt,
+            },
+            reconciliation: {
+              accountId: brokerAccountId,
+              reconciliationId: 'c'.repeat(64),
+              status: ReconciliationStatus.Exact,
+              discrepancyCount: 0,
+              reconciledAt: checkedAt,
+              coversLatestMutation: true,
+            },
+          },
+        },
+        broker: null,
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: availableClock(checkedAt),
+    })
+
+    expect(transition.next.cycle.reason).not.toBe(CycleOperationsReason.AuthorityMaximumMismatch)
+    expect(transition.next.cycle.alerts.authorityIncoherent).toBe(false)
+  })
+
+  test('observes a research cycle binding when startup evidence is unavailable', async () => {
+    const researchPlanHash = 'b'.repeat(64)
+    const initial: RuntimeState = { ...readyState(), evidence: null }
+    const observedBindings: string[] = []
+    const projection = {
+      ...emptyCycleProjection(),
+      current: pendingCycle('2026-07-20T00:00:00.000Z'),
+      unfinishedCycleCount: 1,
+    }
+    const program = Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse('2026-07-20T00:00:00.000Z'))
+      const state = yield* Ref.make(initial)
+      yield* probe(config, state, undefined, undefined, researchPlanHash).pipe(
+        Effect.provideService(MarketData, {
+          check: Effect.succeed(makeSnapshot().manifest.finalizedSnapshot),
+          inspect: Effect.die(new Error('health probes must not inspect sessions')),
+          inspectCyclePublications: Effect.die(
+            new Error('health probes must not inspect cycle publication candidates'),
+          ),
+          inspectPublication: () => Effect.die(new Error('health probes must not inspect cycle publications')),
+          inspectSnapshotPublication: () =>
+            Effect.die(new Error('health probes must not inspect bound cycle publications')),
+          loadSnapshotPublication: () => Effect.die(new Error('health probes must not load bound cycle bars')),
+          load: Effect.die(new Error('health probes must not load bars')),
+        }),
+        Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(EvidenceStore, recoveringStore(readyState())),
+        Effect.provideService(
+          CycleObservability,
+          cycleObservability((bindingId) =>
+            Effect.sync(() => {
+              observedBindings.push(bindingId)
+              return projection
+            }),
+          ),
+        ),
+      )
+
+      expect(observedBindings).toEqual([researchPlanHash])
+      expect(yield* Ref.get(state)).toMatchObject({
+        health: { dependencies: { cycle: { status: 'AVAILABLE', error: null } } },
+        cycle: { current: { cycleId: projection.current.cycleId }, unfinishedCycleCount: 1 },
+      })
+    }).pipe(Effect.provide(TestClock.layer()))
+
+    await Effect.runPromise(program)
   })
 
   test('does not manufacture a cycle-runner stall from a rejected finite clock', () => {

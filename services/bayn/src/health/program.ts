@@ -207,8 +207,10 @@ const collectHealthProbeResults = (
   evidenceStore: HealthDependencies['evidenceStore'],
   cycleObservability: HealthDependencies['cycleObservability'],
   broker: BrokerProbe | undefined,
-): Effect.Effect<HealthProbeResults, never> =>
-  Effect.map(
+  cycleObservationId: string | undefined,
+): Effect.Effect<HealthProbeResults, never> => {
+  const cycleBindingId = cycleObservationId ?? evidence?.evaluation.runId
+  return Effect.map(
     Effect.all(
       [
         observe(
@@ -256,11 +258,11 @@ const collectHealthProbeResults = (
               ),
         ),
         observe(
-          evidence === null
+          cycleBindingId === undefined
             ? Effect.fail(operationalError('database', 'cycle-observability', 'startup evidence is unavailable'))
             : withinDeadline(
                 databaseOperation(
-                  cycleObservability.read(evidence.evaluation.runId, broker?.expectedAccountId),
+                  cycleObservability.read(cycleBindingId, broker?.expectedAccountId),
                   'cycle-observability',
                 ),
                 config.operationTimeoutMs,
@@ -281,6 +283,7 @@ const collectHealthProbeResults = (
       broker: brokerResult,
     }),
   )
+}
 
 export const checkHealth = (
   config: RuntimeConfig,
@@ -288,6 +291,7 @@ export const checkHealth = (
   dependencies: HealthDependencies,
   broker?: BrokerProbe,
   autonomousCycleFiber?: Fiber.Fiber<void, never>,
+  cycleObservationId?: string,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     const initial = yield* Ref.get(state)
@@ -299,6 +303,7 @@ export const checkHealth = (
       dependencies.evidenceStore,
       dependencies.cycleObservability,
       broker,
+      cycleObservationId,
     )
     const checkedAtMs = yield* Clock.currentTimeMillis
     const checkedAtResult = utcInstantFromEpochMillisResult(checkedAtMs)
@@ -327,8 +332,9 @@ export const runHealthMonitor = (
   dependencies: HealthDependencies,
   broker?: BrokerProbe,
   autonomousCycleFiber?: Fiber.Fiber<void, never>,
+  cycleObservationId?: string,
 ): Effect.Effect<void> =>
-  checkHealth(config, state, dependencies, broker, autonomousCycleFiber).pipe(
+  checkHealth(config, state, dependencies, broker, autonomousCycleFiber, cycleObservationId).pipe(
     Effect.repeat(Schedule.spaced(Duration.millis(config.healthIntervalMs))),
     Effect.asVoid,
   )

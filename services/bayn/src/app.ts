@@ -96,6 +96,8 @@ export type ApplicationRuntime<StartupR, LoopR> =
       readonly brokerConfiguration?: BrokerConfiguration
       /** null explicitly suppresses cycles even when startup recovered historical qualification evidence. */
       readonly cycleBindingId?: string | null
+      /** Overrides startup qualification evidence when health observes a separately bound research cycle. */
+      readonly cycleObservationId?: string
       readonly startCycle: AutonomousCycleStartup<StartupR, LoopR>
       readonly resolveAfterStartup?: AutonomousRuntimeResolver<StartupR, LoopR>
     }
@@ -103,6 +105,7 @@ export type ApplicationRuntime<StartupR, LoopR> =
       readonly _tag: 'AutonomousMutation'
       readonly broker: BrokerProbe
       readonly cycleBindingId?: string | null
+      readonly cycleObservationId?: string
       readonly executionProgram: ExecutionProgram
       readonly startCycle: AutonomousCycleStartup<StartupR, LoopR>
     }
@@ -249,7 +252,16 @@ export const runApplication = <StartupR, LoopR>(
     Effect.bind('autonomousCycleFiber', ({ state, resolvedRuntime }) => startAutonomousCycle(resolvedRuntime, state)),
     Effect.tap(({ autonomousCycleFiber, resolvedRuntime, state }) =>
       pipe(
-        runHealthMonitor(config, state, dependencies, brokerProbe(resolvedRuntime), autonomousCycleFiber),
+        runHealthMonitor(
+          config,
+          state,
+          dependencies,
+          brokerProbe(resolvedRuntime),
+          autonomousCycleFiber,
+          resolvedRuntime._tag === 'Brokerless'
+            ? undefined
+            : (resolvedRuntime.cycleObservationId ?? resolvedRuntime.cycleBindingId ?? undefined),
+        ),
         Effect.forkScoped({ startImmediately: true }),
       ),
     ),

@@ -11,6 +11,7 @@ import {
   type CycleOperationsStatus,
   unknownCycleOperationsStatus,
 } from '../cycle-observability'
+import { Authority } from '../execution/contracts'
 import type { QualificationRecord, RecoveredEvaluationEvidence } from '../db/evidence-store'
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../hash'
 import type {
@@ -258,6 +259,7 @@ const deriveBrokerStatus = (
 const deriveCycleStatus = (
   result: ProbeResult<CycleOperationsProjection>,
   config: RuntimeConfig,
+  runtime: RuntimeState,
   clock: HealthProbeClock,
 ): CycleOperationsStatus => {
   const clockError =
@@ -274,7 +276,9 @@ const deriveCycleStatus = (
       deriveCycleOperationsStatusResult(
         result.value,
         clock.checkedAtMs,
-        historicalSandboxAuthority(config.execution),
+        runtime.paperActivation?._tag === 'Realized' || runtime.paperActivation?._tag === 'Completed'
+          ? Authority.Paper
+          : historicalSandboxAuthority(config.execution),
         config,
       ),
       {
@@ -383,7 +387,7 @@ export const deriveHealthTransition = (current: RuntimeState, input: HealthTrans
     input.broker !== undefined,
   )
   const cycleObservation = publicCycleObservation(input.results.cycle)
-  const cycle = deriveCycleStatus(cycleObservation, input.config, input.clock)
+  const cycle = deriveCycleStatus(cycleObservation, input.config, current, input.clock)
   const broker = deriveBrokerStatus(current.broker, input.broker, input.results.broker, checkedAt)
   const health = deriveRuntimeHealth(current, { ...input.results, cycle: cycleObservation }, cycleRunner, checkedAt)
   const failures = summarizeHealthFailures(health, broker, cycle, clockError)
