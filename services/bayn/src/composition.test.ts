@@ -7,6 +7,7 @@ import {
   closedCycleReceiptEmissionAllowed,
   finalizePaperEpisode,
   paperReceiptFinalizationWindowOpen,
+  refreshResearchPaperActivationReconciliation,
   restrictExpiredPaperActivation,
   retryClosedCycleReceipts,
 } from './composition'
@@ -160,6 +161,47 @@ describe('Bayn PAPER receipt retry boundary', () => {
 })
 
 describe('Bayn PAPER startup recovery boundary', () => {
+  test('persists one fresh reconciliation before activating a new research PAPER generation', async () => {
+    const operations: string[] = []
+
+    await Effect.runPromise(
+      refreshResearchPaperActivationReconciliation(
+        Effect.sync(() => {
+          operations.push('reconcile')
+        }),
+      ).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            operations.push('activate')
+          }),
+        ),
+      ),
+    )
+
+    expect(operations).toEqual(['reconcile', 'activate'])
+  })
+
+  test('keeps activation disabled when the fresh reconciliation fails', async () => {
+    const operations: string[] = []
+    const reconciliationFailure = new Error('read-only reconciliation failed')
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        refreshResearchPaperActivationReconciliation(Effect.fail(reconciliationFailure)).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              operations.push('activate')
+            }),
+          ),
+        ),
+      ),
+    )
+
+    expect(operations).toEqual([])
+    expect(failure.message).toBe('research PAPER pre-activation reconciliation failed')
+    expect(failure.cause).toBe(reconciliationFailure)
+  })
+
   test('restricts durable authority before an expired close recovery is rejected', async () => {
     const restrictions: Array<{ readonly reason: string; readonly updatedAt: string }> = []
     const authorityRestrictionStore: AuthorityRestrictionStoreShape = {

@@ -112,6 +112,7 @@ import {
 } from './observe-composition'
 import { restrictMutationAuthority } from './observe-composition/mutation-interpreter'
 import { sqlResource } from './operations'
+import { runOnce, type ReconciliationPassError } from './reconciler'
 import {
   discoverPaperCandidates as discoverExecutionCandidatesHistoricalCodec,
   renderExecutionCandidateDiscoveryError,
@@ -815,6 +816,16 @@ const prepareResearchPaperActivation = (
     )
   })
 
+export const refreshResearchPaperActivationReconciliation = <E, R>(
+  reconcile: Effect.Effect<unknown, E, R>,
+): Effect.Effect<void, OperationalError, R> =>
+  reconcile.pipe(
+    Effect.mapError((cause) =>
+      paperActivationOperationalError('research PAPER pre-activation reconciliation failed', cause),
+    ),
+    Effect.asVoid,
+  )
+
 const prepareOrRecoverResearchPaperActivation = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: ResearchPaperActivationRequest,
@@ -822,6 +833,7 @@ const prepareOrRecoverResearchPaperActivation = (
   authorityStore: AuthorityGenerationStoreShape,
   lifecycle: CapitalGrantLifecycleStoreShape,
   writerFence: WriterFenceService,
+  reconcile: Effect.Effect<unknown, ReconciliationPassError | OperationalError>,
 ): Effect.Effect<ResearchCapitalGrantGeneration, OperationalError> =>
   Effect.gen(function* () {
     if (authorityStore.readAuthorityState === undefined) {
@@ -876,6 +888,7 @@ const prepareOrRecoverResearchPaperActivation = (
       }
     }
     if (decision._tag !== 'Resume') {
+      yield* refreshResearchPaperActivationReconciliation(reconcile)
       return yield* prepareResearchPaperActivation(plan, request, session, authorityStore, lifecycle, writerFence)
     }
     return (
@@ -1320,6 +1333,18 @@ const runAutonomousService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
                                           runtimeServices.authorityGenerationStore,
                                           runtimeServices.capitalGrantLifecycleStore,
                                           runtimeServices.writerFence,
+                                          runOnce.pipe(
+                                            Effect.timeoutOrElse({
+                                              duration: observePlan.config.operationTimeoutMs,
+                                              orElse: () =>
+                                                Effect.fail(
+                                                  paperActivationOperationalError(
+                                                    'research PAPER pre-activation reconciliation timed out',
+                                                  ),
+                                                ),
+                                            }),
+                                            Effect.provide(cycleResources),
+                                          ),
                                         ).pipe(Effect.map((generation) => ({ _tag: 'Mutation' as const, generation })))
                                       : evidence === null
                                         ? Effect.fail(
