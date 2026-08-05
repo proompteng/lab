@@ -761,6 +761,24 @@ const validateActivatedResearchAuthority = (authority: AuthorityState): Result.R
     ? Result.succeed(undefined)
     : Result.fail('research PAPER activation did not return clear effective PAPER authority')
 
+const readCurrentResearchPaperGeneration = (
+  authority: AuthorityState,
+  authorityStore: AuthorityGenerationStoreShape,
+): Effect.Effect<ResearchCapitalGrantGeneration | undefined, OperationalError> => {
+  if (authority.maximum !== Authority.Paper) return Effect.succeed(undefined)
+  if (authorityStore.readResearchAuthorityGeneration === undefined) {
+    return Effect.fail(paperActivationOperationalError('research PAPER startup requires v3 authority history reads'))
+  }
+  return authorityStore.readResearchAuthorityGeneration(authority.generationHash).pipe(
+    Effect.mapError((cause) => paperActivationOperationalError('research PAPER generation read failed', cause)),
+    Effect.flatMap((generation) =>
+      generation === undefined
+        ? Effect.fail(paperActivationOperationalError('durable research PAPER history is missing'))
+        : Effect.succeed(generation),
+    ),
+  )
+}
+
 const prepareResearchPaperActivation = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: ResearchPaperActivationRequest,
@@ -814,10 +832,17 @@ const prepareOrRecoverResearchPaperActivation = (
     const authority = yield* authorityStore
       .readAuthorityState()
       .pipe(Effect.mapError((cause) => paperActivationOperationalError('research PAPER authority read failed', cause)))
+    const currentGeneration = yield* readCurrentResearchPaperGeneration(authority, authorityStore)
+    const currentGenerationMatchesRequest =
+      currentGeneration !== undefined &&
+      Result.isSuccess(
+        researchPaperGenerationIsBoundToRequest(request, plan.config.alpaca.authorityGenerationHash, currentGeneration),
+      )
     const decision = yield* Effect.fromResult(
       decidePaperEpisodeAuthority({
         generationHash: authority.generationHash,
         sourceGenerationHash: plan.config.alpaca.authorityGenerationHash,
+        currentGenerationMatchesRequest,
         maximum: authority.maximum,
         effective: authority.effective,
         kill: authority.kill,
@@ -853,10 +878,10 @@ const prepareOrRecoverResearchPaperActivation = (
     if (decision._tag !== 'Resume') {
       return yield* prepareResearchPaperActivation(plan, request, session, authorityStore, lifecycle, writerFence)
     }
-    const generation = yield* readBoundPaperActivationGeneration(plan, request, authorityStore)
-    return generation.schemaVersion === 'bayn.paper-authority-generation.v3'
-      ? generation
-      : yield* Effect.fail(paperActivationOperationalError('research PAPER recovery loaded qualified history'))
+    return (
+      currentGeneration ??
+      (yield* Effect.fail(paperActivationOperationalError('research PAPER recovery lost durable history')))
+    )
   })
 
 const pendingPaperActivation = (

@@ -29,6 +29,7 @@ import paperCycleCloseReplans from '../../migrations/0026_paper_cycle_close_repl
 import distinctCloseReplanIntents from '../../migrations/0027_distinct_close_replan_intents'
 import researchPaperGrants from '../../migrations/0028_research_paper_grants'
 import unusedResearchPaperRearm from '../../migrations/0029_unused_research_paper_rearm'
+import clearUnusedResearchPaperRearm from '../../migrations/0030_clear_unused_research_paper_rearm'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -60,4 +61,5 @@ export const migrationLoader = PgMigrator.fromRecord({
   '27_distinct_close_replan_intents': distinctCloseReplanIntents,
   '28_research_paper_grants': researchPaperGrants,
   '29_unused_research_paper_rearm': unusedResearchPaperRearm,
+  '30_clear_unused_research_paper_rearm': clearUnusedResearchPaperRearm,
 })

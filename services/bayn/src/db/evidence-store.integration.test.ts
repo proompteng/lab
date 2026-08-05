@@ -1197,6 +1197,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 27, name: 'distinct_close_replan_intents' },
       { migration_id: 28, name: 'research_paper_grants' },
       { migration_id: 29, name: 'unused_research_paper_rearm' },
+      { migration_id: 30, name: 'clear_unused_research_paper_rearm' },
     ])
   })
 
