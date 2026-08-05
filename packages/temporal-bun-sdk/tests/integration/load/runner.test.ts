@@ -90,6 +90,41 @@ test('worker load update termination keeps unrelated not-found failures fatal', 
   ).toBe(false)
 })
 
+test('worker load update drive tolerates workflows that complete before an update', async () => {
+  type DriveClient = Parameters<typeof __workerLoadTestHooks.driveWorkflowUpdates>[0]
+  type DriveSubmission = Parameters<typeof __workerLoadTestHooks.driveWorkflowUpdates>[1][number]
+  type DriveConfig = Parameters<typeof __workerLoadTestHooks.driveWorkflowUpdates>[2]
+  let terminateCalls = 0
+  const client = {
+    workflow: {
+      update: async () => {
+        throw new ConnectError('workflow execution already completed', Code.NotFound)
+      },
+      terminate: async () => {
+        terminateCalls += 1
+      },
+    },
+  } as unknown as DriveClient
+  const submission = {
+    plan: {
+      id: 'completed-before-update',
+      workflowType: 'workerLoadUpdateWorkflow',
+      input: { cycles: 2, holdMs: 250, delayMs: 50 },
+    },
+    handle: { workflowId: 'completed-before-update', runId: 'run-1' },
+  } satisfies DriveSubmission
+  const config = {
+    updatesPerWorkflow: 1,
+    updateDelayMs: 50,
+  } as DriveConfig
+
+  const events = await __workerLoadTestHooks.driveWorkflowUpdates(client, [submission], config)
+
+  expect(events).toHaveLength(1)
+  expect(events[0]?.status).toBe('already-completed')
+  expect(terminateCalls).toBe(0)
+})
+
 test('worker load update termination classifies shard-status cleanup transients', () => {
   expect(
     __workerLoadTestHooks.isTransientWorkflowTerminationCleanupFailure(
