@@ -484,19 +484,19 @@ describe('risk-balanced trend candidate', () => {
     })
   })
 
-  test('rejects a current decision outside the bound month-end cycle', () => {
+  test('compiles a same-month PAPER bootstrap decision while preserving binding validation', () => {
     const snapshot = makeSnapshot()
     const definition = makeRiskBalancedTrendDefinition(fixtureProtocol)
 
-    const notMonthEnd = compileCurrentRiskBalancedTrendDecision(
+    const bootstrap = compileCurrentRiskBalancedTrendDecision(
       snapshot.bars,
       snapshot.manifest,
       fixtureProtocol,
       currentDecisionBinding(snapshot.manifest.lastSession, ['2020-04-21', '2020-04-22', '2020-05-01']),
       definition,
     )
-    assert(Result.isFailure(notMonthEnd), 'same-month execution must fail')
-    expect(notMonthEnd.failure).toMatchObject({ _tag: 'CurrentDecisionNotMonthEnd' })
+    assert(Result.isSuccess(bootstrap), 'cycle admission, not strategy evaluation, owns cadence enforcement')
+    expect(bootstrap.success.decision.signalDate).toBe(snapshot.manifest.lastSession)
     const invalidBinding = compileCurrentRiskBalancedTrendDecision(
       snapshot.bars,
       snapshot.manifest,

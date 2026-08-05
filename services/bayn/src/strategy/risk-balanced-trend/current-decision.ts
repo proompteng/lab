@@ -64,16 +64,6 @@ export const compileCurrentRiskBalancedTrendDecision = (
                   observedSession: terminalSession.date,
                 })
               }
-              if (
-                protocol.rebalance === 'month-end' &&
-                binding.signal.sessionDate.slice(0, 7) === binding.executionSession.date.slice(0, 7)
-              ) {
-                return fail({
-                  _tag: 'CurrentDecisionNotMonthEnd',
-                  signalSession: binding.signal.sessionDate,
-                  executionSession: binding.executionSession.date,
-                })
-              }
               return pipe(
                 Result.all({
                   decision: decisionFromAlignedSessions(sessions, sessions.length - 1, protocol, definition),
