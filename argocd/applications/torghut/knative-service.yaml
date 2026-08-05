@@ -44,7 +44,7 @@ spec:
             - name: TRADING_SCHEDULER_SHUTDOWN_DRAIN_SECONDS
               value: "45"
             - name: TRADING_SCHEDULER_SUCCESS_MAX_AGE_SECONDS
-              value: "30"
+              value: "300"
             - name: TRADING_BROKER_MUTATION_RECOVERY_ENABLED
               value: "true"
             - name: TRADING_BROKER_MUTATION_HTTP_TIMEOUT_SECONDS
