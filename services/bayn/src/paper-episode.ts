@@ -100,6 +100,7 @@ export interface PaperEpisodeMarketSession {
 export interface PaperEpisodeAuthorityFacts {
   readonly generationHash: string
   readonly sourceGenerationHash: string
+  readonly currentGenerationMatchesRequest: boolean
   readonly maximum: 'OBSERVE' | 'PAPER'
   readonly effective: 'OBSERVE' | 'PAPER'
   readonly kill: 'CLEAR' | 'ACTIVE'
@@ -124,8 +125,22 @@ export const decidePaperEpisodeAuthority = (
   ) {
     return Result.succeed({ _tag: 'Activate' })
   }
-  if (facts.maximum === 'PAPER' && facts.effective === 'PAPER' && facts.kill === 'CLEAR') {
+  if (
+    facts.maximum === 'PAPER' &&
+    facts.effective === 'PAPER' &&
+    facts.kill === 'CLEAR' &&
+    facts.currentGenerationMatchesRequest
+  ) {
     return Result.succeed({ _tag: 'Resume' })
+  }
+  if (
+    facts.maximum === 'PAPER' &&
+    facts.effective === 'PAPER' &&
+    facts.kill === 'CLEAR' &&
+    !facts.currentGenerationMatchesRequest &&
+    facts.generationHash !== facts.sourceGenerationHash
+  ) {
+    return Result.succeed({ _tag: 'Rearm' })
   }
   if (
     facts.maximum === 'PAPER' &&

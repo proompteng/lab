@@ -189,6 +189,7 @@ describe('decidePaperEpisode', () => {
   test('activates, rearms, and resumes only from their exact durable authority states', () => {
     const common = {
       sourceGenerationHash: 'a'.repeat(64),
+      currentGenerationMatchesRequest: false,
     }
     expect(
       decidePaperEpisodeAuthority({
@@ -206,6 +207,7 @@ describe('decidePaperEpisode', () => {
         maximum: 'PAPER',
         effective: 'PAPER',
         kill: 'CLEAR',
+        currentGenerationMatchesRequest: true,
       }),
     ).toEqual(Result.succeed({ _tag: 'Resume' }))
     expect(
@@ -218,6 +220,15 @@ describe('decidePaperEpisode', () => {
         reason: 'PAPER autonomous cycle loop restricted effective authority: build-decision failed',
       }),
     ).toEqual(Result.succeed({ _tag: 'Rearm' }))
+    expect(
+      decidePaperEpisodeAuthority({
+        ...common,
+        generationHash: 'c'.repeat(64),
+        maximum: 'PAPER',
+        effective: 'PAPER',
+        kill: 'CLEAR',
+      }),
+    ).toEqual(Result.succeed({ _tag: 'Rearm' }))
   })
 
   test('does not rearm an operator kill, an unchanged source generation, or unknown authority state', () => {
@@ -227,6 +238,7 @@ describe('decidePaperEpisode', () => {
       maximum: 'PAPER' as const,
       effective: 'OBSERVE' as const,
       kill: 'ACTIVE' as const,
+      currentGenerationMatchesRequest: false,
     }
     expect(decidePaperEpisodeAuthority({ ...common, reason: 'operator kill' })).toEqual(
       Result.fail({ _tag: 'IdentityDrift' }),
@@ -236,6 +248,15 @@ describe('decidePaperEpisode', () => {
         ...common,
         sourceGenerationHash: common.generationHash,
         reason: 'PAPER autonomous cycle loop restricted effective authority: build-decision failed',
+      }),
+    ).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
+    expect(
+      decidePaperEpisodeAuthority({
+        ...common,
+        sourceGenerationHash: common.generationHash,
+        maximum: 'PAPER',
+        effective: 'PAPER',
+        kill: 'CLEAR',
       }),
     ).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
     expect(decidePaperEpisodeAuthority(common)).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
@@ -248,6 +269,7 @@ describe('decidePaperEpisode', () => {
       maximum: 'OBSERVE',
       effective: 'OBSERVE',
       kill: 'CLEAR',
+      currentGenerationMatchesRequest: false,
     })
     expect(result).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
   })
