@@ -118,11 +118,7 @@ export const decidePaperEpisodeAuthority = (
   ) {
     return Result.succeed({ _tag: 'Activate' })
   }
-  if (
-    facts.maximum === 'PAPER' &&
-    ((facts.effective === 'PAPER' && facts.kill === 'CLEAR') ||
-      (facts.effective === 'OBSERVE' && facts.kill === 'ACTIVE'))
-  ) {
+  if (facts.maximum === 'PAPER' && facts.effective === 'PAPER' && facts.kill === 'CLEAR') {
     return Result.succeed({ _tag: 'Resume' })
   }
   return Result.fail({ _tag: 'IdentityDrift' })

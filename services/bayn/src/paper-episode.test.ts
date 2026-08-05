@@ -186,7 +186,7 @@ describe('decidePaperEpisode', () => {
     expect(success(state, safeFacts())).toEqual({ _tag: 'RemainFailed', state })
   })
 
-  test('activates only from the exact OBSERVE source and resumes only the exact durable PAPER generation', () => {
+  test('activates only from the exact OBSERVE source and resumes only clear effective PAPER authority', () => {
     const common = {
       sourceGenerationHash: 'a'.repeat(64),
     }
@@ -216,7 +216,7 @@ describe('decidePaperEpisode', () => {
         effective: 'OBSERVE',
         kill: 'ACTIVE',
       }),
-    ).toEqual(Result.succeed({ _tag: 'Resume' }))
+    ).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
   })
 
   test('rejects source-generation drift instead of activating over unknown OBSERVE history', () => {
