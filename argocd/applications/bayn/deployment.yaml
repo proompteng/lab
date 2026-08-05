@@ -23,7 +23,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-08-05T18:20:04Z"
+        kubectl.kubernetes.io/restartedAt: "2026-08-05T18:39:15Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -63,9 +63,9 @@ spec:
                   key: paper-activation-request
             - name: BAYN_MAXIMUM_AUTHORITY
               value: OBSERVE
-            # sha256("bayn/authority-generation/autonomous-observe-v5")
+            # sha256("bayn/authority-generation/autonomous-observe-v6")
             - name: BAYN_AUTHORITY_GENERATION_HASH
-              value: "dbb4d330aeb81b55715aff4cca8ad658ff3af0bf6394158609069ab8d1c0ebe9"
+              value: "8c36d4fe9956e2b73de40e47b5cb7a21d764acf3e0422bd4caaa88e594d6c94b"
             - name: BAYN_CYCLE_POLL_INTERVAL_MS
               value: "30000"
             - name: BAYN_BROKER_PROVIDER
