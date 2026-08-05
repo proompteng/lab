@@ -1,6 +1,7 @@
 import { pipe, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
+import { ResearchPaperGrantSchema } from '../paper-episode'
 import {
   ImageDigestSchema as ImageDigest,
   Sha256Schema as Sha256,
@@ -602,6 +603,24 @@ export const CapitalGrantProofBindingSchema = Schema.Struct({
 })
 export type CapitalGrantProofBinding = typeof CapitalGrantProofBindingSchema.Type
 
+export const ResearchCapitalGrantProofBindingSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.research-paper-grant-proof.v1'),
+  grant: ResearchPaperGrantSchema,
+  activationSourceRevision: SourceRevision,
+  activationImageRepository: NonEmptyString,
+  activationImageDigest: ImageDigest,
+  strategyName: NonEmptyString,
+  strategyBehaviorHash: Sha256,
+  strategyParameterHash: Sha256,
+  strategyParameterSchemaVersion: NonEmptyString,
+  strategyProtocolHash: Sha256,
+  accountId: NonEmptyString,
+  brokerIdentityHash: Sha256,
+  riskPolicyHash: Sha256,
+  proofPlanHash: Sha256,
+})
+export type ResearchCapitalGrantProofBinding = typeof ResearchCapitalGrantProofBindingSchema.Type
+
 const CapitalGrantGenerationIdentityMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.paper-authority-generation.v2'),
   maximum: Schema.Literal(Authority.Paper),
@@ -713,6 +732,115 @@ export const makeCapitalGrantGenerationResult = (
     ),
   )
 
+const ResearchCapitalGrantGenerationIdentityMaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.paper-authority-generation.v3'),
+  maximum: Schema.Literal(Authority.Paper),
+  previousGenerationHash: Sha256,
+  grant: ResearchPaperGrantSchema,
+  activationSourceRevision: SourceRevision,
+  activationImageRepository: NonEmptyString,
+  activationImageDigest: ImageDigest,
+  strategyName: NonEmptyString,
+  strategyBehaviorHash: Sha256,
+  strategyParameterHash: Sha256,
+  strategyParameterSchemaVersion: NonEmptyString,
+  strategyProtocolHash: Sha256,
+  accountId: NonEmptyString,
+  brokerIdentityHash: Sha256,
+  riskPolicyHash: Sha256,
+  proofPlanHash: Sha256,
+})
+
+export const ResearchCapitalGrantGenerationMaterialSchema = Schema.Struct({
+  ...ResearchCapitalGrantGenerationIdentityMaterialSchema.fields,
+  reconciliationId: Sha256,
+  reconciliationContentHash: Sha256,
+})
+export type ResearchCapitalGrantGenerationMaterial = typeof ResearchCapitalGrantGenerationMaterialSchema.Type
+
+const researchCapitalGrantGenerationIdentity = (material: ResearchCapitalGrantGenerationMaterial) => {
+  const {
+    reconciliationContentHash: _reconciliationContentHash,
+    reconciliationId: _reconciliationId,
+    ...identity
+  } = material
+  return identity
+}
+
+const ResearchCapitalGrantGenerationBase = Schema.Struct({
+  ...ResearchCapitalGrantGenerationMaterialSchema.fields,
+  generationHash: Sha256,
+})
+
+export const ResearchCapitalGrantGenerationSchema = ResearchCapitalGrantGenerationBase.check(
+  Schema.makeFilter(
+    (generation: typeof ResearchCapitalGrantGenerationBase.Type) => {
+      const { generationHash, ...material } = generation
+      const expectedHash = canonicalHashV1Result(researchCapitalGrantGenerationIdentity(material))
+      return Result.isSuccess(expectedHash) && generationHash === expectedHash.success
+    },
+    { expected: 'a generation hash matching the stable research PAPER authority identity' },
+  ),
+)
+export type ResearchCapitalGrantGeneration = typeof ResearchCapitalGrantGenerationSchema.Type
+
+export type ResearchCapitalGrantGenerationConstructionFailure =
+  | {
+      readonly _tag: 'ResearchCapitalGrantGenerationSchemaInvalid'
+      readonly operation: 'material' | 'generation'
+      readonly cause: Schema.SchemaError
+    }
+  | {
+      readonly _tag: 'ResearchCapitalGrantGenerationCanonicalizationFailed'
+      readonly cause: CanonicalHashFailure
+    }
+
+const decodeResearchCapitalGrantGenerationMaterialResult = Schema.decodeUnknownResult(
+  ResearchCapitalGrantGenerationMaterialSchema,
+  StrictParseOptions,
+)
+const decodeResearchCapitalGrantGenerationResult = Schema.decodeUnknownResult(
+  ResearchCapitalGrantGenerationSchema,
+  StrictParseOptions,
+)
+
+export const makeResearchCapitalGrantGenerationResult = (
+  input: ResearchCapitalGrantGenerationMaterial,
+): Result.Result<ResearchCapitalGrantGeneration, ResearchCapitalGrantGenerationConstructionFailure> =>
+  pipe(
+    decodeResearchCapitalGrantGenerationMaterialResult(input),
+    Result.mapError(
+      (cause): ResearchCapitalGrantGenerationConstructionFailure => ({
+        _tag: 'ResearchCapitalGrantGenerationSchemaInvalid',
+        operation: 'material',
+        cause,
+      }),
+    ),
+    Result.flatMap((material) =>
+      pipe(
+        canonicalHashV1Result(researchCapitalGrantGenerationIdentity(material)),
+        Result.mapError(
+          (cause): ResearchCapitalGrantGenerationConstructionFailure => ({
+            _tag: 'ResearchCapitalGrantGenerationCanonicalizationFailed',
+            cause,
+          }),
+        ),
+        Result.flatMap((generationHash) =>
+          pipe(
+            decodeResearchCapitalGrantGenerationResult({ ...material, generationHash }),
+            Result.mapError(
+              (cause): ResearchCapitalGrantGenerationConstructionFailure => ({
+                _tag: 'ResearchCapitalGrantGenerationSchemaInvalid',
+                operation: 'generation',
+                cause,
+              }),
+            ),
+          ),
+        ),
+      ),
+    ),
+  )
+
 const AuthorityStateBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.paper-authority.v1'),
   generationHash: Sha256,
@@ -762,5 +890,13 @@ export const decodeCapitalGrantProofBinding = Schema.decodeUnknownEffect(
   CapitalGrantProofBindingSchema,
   StrictParseOptions,
 )
+export const decodeResearchCapitalGrantProofBinding = Schema.decodeUnknownEffect(
+  ResearchCapitalGrantProofBindingSchema,
+  StrictParseOptions,
+)
 export const decodeCapitalGrantGeneration = Schema.decodeUnknownEffect(CapitalGrantGenerationSchema, StrictParseOptions)
+export const decodeResearchCapitalGrantGeneration = Schema.decodeUnknownEffect(
+  ResearchCapitalGrantGenerationSchema,
+  StrictParseOptions,
+)
 export const decodeAuthorityState = Schema.decodeUnknownEffect(AuthorityStateSchema, StrictParseOptions)

@@ -284,7 +284,8 @@ const generationScope = (
         WHERE scope_generation.generation_hash = ${authorityGenerationHash}
           AND scope_generation.maximum = 'PAPER'
           AND scope_generation.account_id = ${accountId}
-          AND scope_generation.qualification_run_id = cycle.qualification_run_id
+          AND COALESCE(scope_generation.qualification_run_id, scope_generation.research_plan_hash)
+            = cycle.qualification_run_id
           AND cycle.account_id = scope_generation.account_id
           AND (
             EXISTS (
@@ -326,7 +327,8 @@ const generationScope = (
         WHERE scope_generation.generation_hash = ${authorityGenerationHash}
           AND scope_generation.maximum = 'PAPER'
           AND scope_generation.account_id = ${accountId}
-          AND scope_generation.qualification_run_id = cycle.qualification_run_id
+          AND COALESCE(scope_generation.qualification_run_id, scope_generation.research_plan_hash)
+            = cycle.qualification_run_id
           AND cycle.account_id = scope_generation.account_id
           AND cycle.created_at >= scope_generation.activated_at
           AND (
@@ -1007,38 +1009,72 @@ export const readForwardPerformancePostgres = (
 
         const strategyRows = yield* sql<Record<string, unknown>>`
           WITH first_cycle AS (
-            SELECT qualification_run_id, strategy_protocol_hash
+            SELECT qualification_run_id, strategy_protocol_hash, created_at
             FROM autonomous_cycles AS cycle
             WHERE cycle.account_id = ${accountId}
               AND cycle.state IN ('COMPLETED', 'NO_TRADE')
               AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
             ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
             LIMIT 1
+          ), qualified_strategy AS (
+            SELECT
+              evaluation.run_id AS qualification_run_id,
+              evaluation.strategy_name,
+              protocol.protocol_hash AS strategy_protocol_hash,
+              protocol.behavior_hash AS strategy_behavior_hash,
+              protocol.parameter_hash AS strategy_parameter_hash,
+              protocol.schema_version AS strategy_parameter_schema_version,
+              evaluation.source_revision,
+              evaluation.image_repository,
+              evaluation.image_digest
+            FROM first_cycle
+            JOIN qualification_results AS result
+              ON result.run_id = first_cycle.qualification_run_id
+              AND result.verdict = 'QUALIFIED'
+            JOIN qualification_locks AS qualification_lock ON qualification_lock.lock_id = result.lock_id
+            JOIN evaluation_runs AS evaluation ON evaluation.run_id = result.run_id
+            JOIN protocol_locks AS protocol
+              ON protocol.protocol_hash = first_cycle.strategy_protocol_hash
+              AND protocol.protocol_hash = qualification_lock.protocol_hash
+              AND protocol.protocol_hash = evaluation.protocol_hash
+            WHERE evaluation.status = 'COMPLETE'
+              AND qualification_lock.source_revision = evaluation.source_revision
+              AND qualification_lock.image_repository = evaluation.image_repository
+              AND qualification_lock.image_digest = evaluation.image_digest
+          ), research_strategy AS (
+            SELECT
+              generation.research_plan_hash AS qualification_run_id,
+              generation.strategy_name,
+              generation.strategy_protocol_hash,
+              generation.strategy_behavior_hash,
+              generation.strategy_parameter_hash,
+              generation.strategy_parameter_schema_version,
+              generation.activation_source_revision AS source_revision,
+              generation.activation_image_repository AS image_repository,
+              generation.activation_image_digest AS image_digest
+            FROM first_cycle
+            JOIN authority_generations AS generation
+              ON generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
+              AND generation.maximum = 'PAPER'
+              AND generation.account_id = ${accountId}
+              AND generation.research_plan_hash = first_cycle.qualification_run_id
+              AND generation.strategy_protocol_hash = first_cycle.strategy_protocol_hash
+              AND first_cycle.created_at >= generation.activated_at
+            WHERE ${
+              authorityGenerationHash === undefined
+                ? true
+                : sql`generation.generation_hash = ${authorityGenerationHash}`
+            }
+              AND NOT EXISTS (
+                SELECT 1
+                FROM authority_generations AS next_generation
+                WHERE next_generation.previous_generation_hash = generation.generation_hash
+                  AND first_cycle.created_at >= next_generation.activated_at
+              )
           )
-          SELECT
-            evaluation.run_id AS qualification_run_id,
-            evaluation.strategy_name,
-            protocol.protocol_hash AS strategy_protocol_hash,
-            protocol.behavior_hash AS strategy_behavior_hash,
-            protocol.parameter_hash AS strategy_parameter_hash,
-            protocol.schema_version AS strategy_parameter_schema_version,
-            evaluation.source_revision,
-            evaluation.image_repository,
-            evaluation.image_digest
-          FROM first_cycle
-          JOIN qualification_results AS result
-            ON result.run_id = first_cycle.qualification_run_id
-            AND result.verdict = 'QUALIFIED'
-          JOIN qualification_locks AS qualification_lock ON qualification_lock.lock_id = result.lock_id
-          JOIN evaluation_runs AS evaluation ON evaluation.run_id = result.run_id
-          JOIN protocol_locks AS protocol
-            ON protocol.protocol_hash = first_cycle.strategy_protocol_hash
-            AND protocol.protocol_hash = qualification_lock.protocol_hash
-            AND protocol.protocol_hash = evaluation.protocol_hash
-          WHERE evaluation.status = 'COMPLETE'
-            AND qualification_lock.source_revision = evaluation.source_revision
-            AND qualification_lock.image_repository = evaluation.image_repository
-            AND qualification_lock.image_digest = evaluation.image_digest
+          SELECT * FROM qualified_strategy
+          UNION ALL
+          SELECT * FROM research_strategy
         `.pipe(Effect.flatMap(decodeStrategy))
 
         const reconciliationRows = yield* sql<Record<string, unknown>>`
@@ -1416,20 +1452,27 @@ export const readForwardPerformancePostgres = (
             generation.broker_identity_hash,
             generation.broker_provider,
             generation.broker_environment,
-            generation.qualification_run_id,
+            COALESCE(generation.qualification_run_id, generation.research_plan_hash) AS qualification_run_id,
             generation.strategy_name,
-            generation.protocol_hash,
+            COALESCE(generation.protocol_hash, generation.strategy_protocol_hash) AS protocol_hash,
             generation.strategy_behavior_hash,
             generation.strategy_parameter_hash,
             generation.strategy_parameter_schema_version,
-            generation.qualification_execution_policy_hash,
-            generation.qualification_source_revision,
-            generation.qualification_image_repository,
-            generation.qualification_image_digest
+            COALESCE(generation.qualification_execution_policy_hash, cycle.execution_policy_hash)
+              AS qualification_execution_policy_hash,
+            COALESCE(generation.qualification_source_revision, generation.activation_source_revision)
+              AS qualification_source_revision,
+            COALESCE(generation.qualification_image_repository, generation.activation_image_repository)
+              AS qualification_image_repository,
+            COALESCE(generation.qualification_image_digest, generation.activation_image_digest)
+              AS qualification_image_digest
           FROM accounting_transactions AS transaction
           CROSS JOIN latest_reconciliation
           CROSS JOIN opening_snapshot
           JOIN intents AS intent ON intent.intent_id = transaction.intent_id
+          JOIN autonomous_cycles AS cycle
+            ON cycle.cycle_id = intent.cycle_id
+            AND cycle.account_id = intent.account_id
           JOIN authority_generations AS generation
             ON generation.generation_hash = intent.authority_generation_hash
           WHERE transaction.account_id = ${accountId}
@@ -1441,16 +1484,16 @@ export const readForwardPerformancePostgres = (
             generation.broker_identity_hash,
             generation.broker_provider,
             generation.broker_environment,
-            generation.qualification_run_id,
+            COALESCE(generation.qualification_run_id, generation.research_plan_hash),
             generation.strategy_name,
-            generation.protocol_hash,
+            COALESCE(generation.protocol_hash, generation.strategy_protocol_hash),
             generation.strategy_behavior_hash,
             generation.strategy_parameter_hash,
             generation.strategy_parameter_schema_version,
-            generation.qualification_execution_policy_hash,
-            generation.qualification_source_revision,
-            generation.qualification_image_repository,
-            generation.qualification_image_digest
+            COALESCE(generation.qualification_execution_policy_hash, cycle.execution_policy_hash),
+            COALESCE(generation.qualification_source_revision, generation.activation_source_revision),
+            COALESCE(generation.qualification_image_repository, generation.activation_image_repository),
+            COALESCE(generation.qualification_image_digest, generation.activation_image_digest)
         `.pipe(Effect.flatMap(decodeDurableExecutions))
 
         const [unclosedCycles] = yield* sql<Record<string, unknown>>`

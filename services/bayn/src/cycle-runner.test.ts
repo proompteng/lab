@@ -49,6 +49,7 @@ import {
   type CycleRunResult,
 } from './cycle-runner'
 import { CycleNotDueReconciliationError } from './cycle-runner/model'
+import { completeCycleAuthoritySelection } from './cycle-runner/decisions'
 import { runAutonomousCycleUntilSettled } from './cycle-runner/program'
 import { selectBoundDecision } from './cycle-runner/recovery-decision-binding'
 import { selectCycleRecovery, type CycleRecoveryState } from './cycle-recovery'
@@ -1107,6 +1108,26 @@ describe('autonomous cycle runner', () => {
       })
     }
     expect(
+      completeCycleAuthoritySelection(
+        { _tag: 'UNCLAIMED', publications: [publication], latestTerminal: terminal },
+        'PAPER_BOOTSTRAP',
+      ),
+    ).toEqual({ _tag: 'ALREADY_TERMINAL', cycle: terminal })
+    const noTrade = { ...terminal, state: CycleState.NoTrade }
+    expect(
+      completeCycleAuthoritySelection(
+        { _tag: 'UNCLAIMED', publications: [publication], latestTerminal: noTrade },
+        'PAPER_BOOTSTRAP',
+      ),
+    ).toEqual({ _tag: 'READ_CALENDAR', publications: [publication] })
+    const blocked = { ...terminal, state: CycleState.Blocked }
+    expect(
+      completeCycleAuthoritySelection(
+        { _tag: 'UNCLAIMED', publications: [publication], latestTerminal: blocked },
+        'PAPER_BOOTSTRAP',
+      ),
+    ).toEqual({ _tag: 'ALREADY_TERMINAL', cycle: blocked })
+    expect(
       selectCycleAuthoritySlots([
         { publication, existing: terminal },
         { publication: olderPublication, existing: olderTerminal },
@@ -1444,6 +1465,20 @@ describe('autonomous cycle runner', () => {
       executionOpenAt: '2026-02-02T14:30:00.000Z',
       executionCloseAt: '2026-02-02T20:00:00.000Z',
     })
+  })
+
+  test('admits a PAPER bootstrap publication without weakening the default monthly cadence', () => {
+    const executionSession = selectNextExecutionSession('2026-01-29', ordinaryNotDueCalendar)
+    if (executionSession === undefined) throw new Error('bootstrap fixture must have an execution session')
+    const monthly = makeDueCycleDraft(candidate('2026-01-29'), ordinaryNotDueCalendar, executionSession)
+    const bootstrap = makeDueCycleDraft(
+      { ...candidate('2026-01-29'), cadence: 'PAPER_BOOTSTRAP' },
+      ordinaryNotDueCalendar,
+      executionSession,
+    )
+    expect(monthly).toEqual(Result.succeed(undefined))
+    expect(Result.isSuccess(bootstrap)).toBe(true)
+    if (Result.isSuccess(bootstrap)) expect(bootstrap.success?.identity.signalSessionDate).toBe('2026-01-29')
   })
 
   test('does nothing when no finalized publication exists and never reads the broker', async () => {

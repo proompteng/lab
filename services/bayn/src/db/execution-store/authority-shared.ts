@@ -4,8 +4,10 @@ import { Effect, Schema } from 'effect'
 import {
   decodeAuthorityState,
   decodeCapitalGrantGeneration,
+  decodeResearchCapitalGrantGeneration,
   type AuthorityState,
   type CapitalGrantGeneration,
+  type ResearchCapitalGrantGeneration,
 } from '../../execution/contracts'
 import {
   requireUnusedAuthorityGeneration,
@@ -46,7 +48,7 @@ export const paperGenerationFromRow = (
   row: AuthorityGenerationRow,
 ): Effect.Effect<CapitalGrantGeneration, ExecutionStoreError | Schema.SchemaError> => {
   if (
-    row.activation_schema_version === null ||
+    row.activation_schema_version !== 'bayn.paper-authority-generation.v2' ||
     row.previous_generation_hash === null ||
     row.qualification_run_id === null ||
     row.qualification_lock_id === null ||
@@ -99,6 +101,53 @@ export const paperGenerationFromRow = (
   })
 }
 
+export const researchPaperGenerationFromRow = (
+  row: AuthorityGenerationRow,
+): Effect.Effect<ResearchCapitalGrantGeneration, ExecutionStoreError | Schema.SchemaError> => {
+  if (
+    row.activation_schema_version !== 'bayn.paper-authority-generation.v3' ||
+    row.previous_generation_hash === null ||
+    row.research_plan_hash === null ||
+    row.activation_source_revision === null ||
+    row.activation_image_repository === null ||
+    row.activation_image_digest === null ||
+    row.strategy_name === null ||
+    row.strategy_behavior_hash === null ||
+    row.strategy_parameter_hash === null ||
+    row.strategy_parameter_schema_version === null ||
+    row.strategy_protocol_hash === null ||
+    row.account_id === null ||
+    row.broker_identity_hash === null ||
+    row.risk_policy_hash === null ||
+    row.proof_plan_hash === null ||
+    row.reconciliation_id === null ||
+    row.reconciliation_content_hash === null
+  ) {
+    return failExecutionStore('authority', 'invariant', 'research PAPER authority generation history is incomplete')
+  }
+  return decodeResearchCapitalGrantGeneration({
+    schemaVersion: row.activation_schema_version,
+    generationHash: row.generation_hash,
+    maximum: row.maximum,
+    previousGenerationHash: row.previous_generation_hash,
+    grant: { _tag: 'Research', planHash: row.research_plan_hash },
+    activationSourceRevision: row.activation_source_revision,
+    activationImageRepository: row.activation_image_repository,
+    activationImageDigest: row.activation_image_digest,
+    strategyName: row.strategy_name,
+    strategyBehaviorHash: row.strategy_behavior_hash,
+    strategyParameterHash: row.strategy_parameter_hash,
+    strategyParameterSchemaVersion: row.strategy_parameter_schema_version,
+    strategyProtocolHash: row.strategy_protocol_hash,
+    accountId: row.account_id,
+    brokerIdentityHash: row.broker_identity_hash,
+    riskPolicyHash: row.risk_policy_hash,
+    proofPlanHash: row.proof_plan_hash,
+    reconciliationId: row.reconciliation_id,
+    reconciliationContentHash: row.reconciliation_content_hash,
+  })
+}
+
 const generationHistoryFacts = (
   history: AuthorityGenerationRow,
 ): AuthorityGenerationHistoryFacts & { readonly row: AuthorityGenerationRow } => ({
@@ -137,7 +186,7 @@ export const makeAuthorityPostgres = (sql: PgClient.PgClient) => {
         activation_source_revision, activation_image_repository, activation_image_digest,
         strategy_name, strategy_behavior_hash, strategy_parameter_hash,
         strategy_parameter_schema_version, account_id, risk_policy_hash, proof_plan_hash,
-        reconciliation_id, reconciliation_content_hash, activated_at
+        reconciliation_id, reconciliation_content_hash, research_plan_hash, strategy_protocol_hash, activated_at
       FROM authority_generations
       WHERE generation_hash = ${generationHash}
     `.pipe(Effect.flatMap(decodeAuthorityGenerationRows))

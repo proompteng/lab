@@ -4,10 +4,15 @@ import { Result } from 'effect'
 
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { BrokerAccess, CapitalAuthorityKind } from './authority'
+import { Authority, makeResearchCapitalGrantGenerationResult } from './contracts'
 import {
   CapitalAuthoritySelection,
   decodePaperActivationRequestResult,
   makePaperActivationRequest,
+  makeResearchPaperActivationRequest,
+  makeResearchPaperPlanHash,
+  researchCapitalGrantProof,
+  researchPaperGenerationIsBoundToRequest,
   resolveExecutionPolicy,
 } from './configuration'
 
@@ -170,5 +175,90 @@ describe('execution policy configuration', () => {
       _tag: 'Failure',
     })
     expect(decodePaperActivationRequestResult({ ...request, unexpected: true })).toMatchObject({ _tag: 'Failure' })
+  })
+
+  test('decodes a canonical research grant without qualification aliases', () => {
+    const sourceGenerationHash = '0'.repeat(64)
+    const plan = {
+      schemaVersion: 'bayn.paper-research-plan.v1' as const,
+      activation: {
+        sourceRevision: 'a'.repeat(40),
+        imageRepository: 'ghcr.io/proompteng/bayn',
+        imageDigest: `sha256:${'3'.repeat(64)}`,
+      },
+      strategy: {
+        name: 'risk-balanced-trend',
+        behaviorHash: '4'.repeat(64),
+        parameterHash: '5'.repeat(64),
+        parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4',
+        protocolHash: '6'.repeat(64),
+      },
+      broker: {
+        environment: BrokerEnvironment.Sandbox,
+        accountId,
+        identityHash: '7'.repeat(64),
+      },
+      riskPolicyHash: '8'.repeat(64),
+      limits: { maxOpenOrders: 0 as const, maxPositions: 0 as const },
+      cutoffAt: '2026-09-01T13:00:00.000Z',
+      expiresAt: '2026-09-03T20:00:00.000Z',
+      maximumCloseSessions: 3 as const,
+    } as const
+    const planHash = Result.getOrThrow(makeResearchPaperPlanHash(plan))
+    const { schemaVersion: _planSchemaVersion, ...planFields } = plan
+    const generation = Result.getOrThrow(
+      makeResearchCapitalGrantGenerationResult({
+        schemaVersion: 'bayn.paper-authority-generation.v3',
+        maximum: Authority.Paper,
+        previousGenerationHash: sourceGenerationHash,
+        grant: { _tag: 'Research', planHash },
+        activationSourceRevision: 'a'.repeat(40),
+        activationImageRepository: 'ghcr.io/proompteng/bayn',
+        activationImageDigest: `sha256:${'3'.repeat(64)}`,
+        strategyName: 'risk-balanced-trend',
+        strategyBehaviorHash: '4'.repeat(64),
+        strategyParameterHash: '5'.repeat(64),
+        strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4',
+        strategyProtocolHash: '6'.repeat(64),
+        accountId,
+        brokerIdentityHash: '7'.repeat(64),
+        riskPolicyHash: '8'.repeat(64),
+        proofPlanHash: planHash,
+        reconciliationId: '9'.repeat(64),
+        reconciliationContentHash: 'a'.repeat(64),
+      }),
+    )
+    const request = Result.getOrThrow(
+      makeResearchPaperActivationRequest({
+        schemaVersion: 'bayn.paper-research-activation-request.v1',
+        grant: { _tag: 'Research', planHash },
+        ...planFields,
+      }),
+    )
+    expect(decodePaperActivationRequestResult(request)).toMatchObject({ _tag: 'Success', success: request })
+    expect(decodePaperActivationRequestResult({ ...request, grant: { _tag: 'Qualified' } })).toMatchObject({
+      _tag: 'Failure',
+    })
+    expect(decodePaperActivationRequestResult({ ...request, maximumCloseSessions: 4 })).toMatchObject({
+      _tag: 'Failure',
+    })
+    expect(
+      makeResearchPaperActivationRequest({
+        schemaVersion: 'bayn.paper-research-activation-request.v1',
+        grant: { _tag: 'Research', planHash },
+        ...planFields,
+        cutoffAt: '2026-09-02T13:00:00.000Z',
+      }),
+    ).toEqual(Result.fail('ResearchPaperPlanHashMismatch'))
+    expect(researchCapitalGrantProof(request)).toMatchObject({
+      grant: request.grant,
+      proofPlanHash: request.grant.planHash,
+    })
+    expect(researchPaperGenerationIsBoundToRequest(request, sourceGenerationHash, generation)).toEqual(
+      Result.succeed(undefined),
+    )
+    expect(researchPaperGenerationIsBoundToRequest(request, 'f'.repeat(64), generation)).toMatchObject({
+      _tag: 'Failure',
+    })
   })
 })

@@ -730,6 +730,23 @@ describe('forward performance read program', () => {
     expect(
       observation.statements.some(
         (statement) =>
+          statement.includes('COALESCE(scope_generation.qualification_run_id, scope_generation.research_plan_hash)') &&
+          statement.includes('= cycle.qualification_run_id'),
+      ),
+    ).toBe(true)
+    expect(
+      observation.statements.some(
+        (statement) =>
+          statement.includes('COALESCE(generation.qualification_run_id, generation.research_plan_hash)') &&
+          statement.includes('COALESCE(generation.protocol_hash, generation.strategy_protocol_hash)') &&
+          statement.includes(
+            'COALESCE(generation.qualification_source_revision, generation.activation_source_revision)',
+          ),
+      ),
+    ).toBe(true)
+    expect(
+      observation.statements.some(
+        (statement) =>
           statement.includes("cycle.state IN ('PENDING', 'ACTIVE', 'BLOCKED')") &&
           statement.includes('cycle.account_id = scope_generation.account_id') &&
           statement.includes('cycle.created_at >= scope_generation.activated_at') &&

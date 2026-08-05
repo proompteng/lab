@@ -206,6 +206,7 @@ export const makeDueCycleDraft = (
   observation: MarketCalendarObservation,
   executionSession: MarketCalendarSession,
 ): Result.Result<CycleDraft | undefined, CycleConstructionFailure> =>
+  candidate.cadence !== 'PAPER_BOOTSTRAP' &&
   !isMonthEndCycleDue(candidate.signalSession.session_date, executionSession.date)
     ? Result.succeed(undefined)
     : Result.flatMap(

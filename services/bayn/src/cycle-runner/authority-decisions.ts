@@ -1,4 +1,4 @@
-import { isTerminalCycleState, type AutonomousCycle } from '../cycle'
+import { CycleState, isTerminalCycleState, type AutonomousCycle } from '../cycle'
 import type { MarketDataInspection } from '../market-data'
 import type { NonEmptyPublications } from './calendar-decisions'
 
@@ -87,10 +87,20 @@ export const reduceCycleAuthoritySelection = (
   }
 }
 
-export const completeCycleAuthoritySelection = (state: CycleAuthoritySelectionState): CycleAuthoritySelection =>
-  state._tag === 'UNCLAIMED'
-    ? { _tag: 'READ_CALENDAR', publications: state.publications }
-    : { _tag: 'ALREADY_TERMINAL', cycle: state.latestTerminal }
+export const completeCycleAuthoritySelection = (
+  state: CycleAuthoritySelectionState,
+  cadence?: 'MONTHLY' | 'PAPER_BOOTSTRAP',
+): CycleAuthoritySelection => {
+  if (state._tag === 'TERMINAL') return { _tag: 'ALREADY_TERMINAL', cycle: state.latestTerminal }
+  if (
+    cadence === 'PAPER_BOOTSTRAP' &&
+    state.latestTerminal !== undefined &&
+    state.latestTerminal.state !== CycleState.NoTrade
+  ) {
+    return { _tag: 'ALREADY_TERMINAL', cycle: state.latestTerminal }
+  }
+  return { _tag: 'READ_CALENDAR', publications: state.publications }
+}
 
 export const selectCycleAuthoritySlots = (slots: NonEmptyAuthoritySlots): CycleAuthoritySelection => {
   const [first, ...remaining] = slots

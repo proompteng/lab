@@ -7,7 +7,12 @@ import {
   decodePersistedBrokerIdentity,
   type BrokerIdentity,
 } from '../../broker/identity'
-import { Authority, type AuthorityState, type CapitalGrantGeneration } from '../../execution/contracts'
+import {
+  Authority,
+  type AuthorityState,
+  type CapitalGrantGeneration,
+  type ResearchCapitalGrantGeneration,
+} from '../../execution/contracts'
 import { incompletePassReason } from '../../simulation-reconciliation/broker-reconciler-model'
 import {
   decideObserveGeneration,
@@ -16,7 +21,12 @@ import {
   type ObserveGenerationDecision,
   type ObserveGenerationRequest,
 } from '../capital-grant-algebra'
-import { authorityStateFromRow, paperGenerationFromRow, type AuthorityPostgres } from './authority-shared'
+import {
+  authorityStateFromRow,
+  paperGenerationFromRow,
+  researchPaperGenerationFromRow,
+  type AuthorityPostgres,
+} from './authority-shared'
 import type { EnsureAuthorityGenerationInput, ExecutionStoreError } from './contract'
 import { failExecutionStore, liftAuthorityDecision, runExecutionOperation } from './errors'
 import {
@@ -111,6 +121,9 @@ export interface ObserveAuthorityInterpreter {
   readonly readAuthorityGeneration: (
     generationHash: string,
   ) => Effect.Effect<CapitalGrantGeneration | undefined, ExecutionStoreError>
+  readonly readResearchAuthorityGeneration: (
+    generationHash: string,
+  ) => Effect.Effect<ResearchCapitalGrantGeneration | undefined, ExecutionStoreError>
 }
 
 export const makeObserveAuthorityInterpreter = (
@@ -347,11 +360,35 @@ export const makeObserveAuthorityInterpreter = (
       authority.readGeneration(generationHash).pipe(
         Effect.flatMap((rows) => {
           const row = rows[0]
-          if (row === undefined || row.maximum !== Authority.Paper) return Effect.succeed(undefined)
+          if (
+            row === undefined ||
+            row.maximum !== Authority.Paper ||
+            row.activation_schema_version !== 'bayn.paper-authority-generation.v2'
+          ) {
+            return Effect.succeed(undefined)
+          }
           return paperGenerationFromRow(row).pipe(Effect.map((generation) => generation))
         }),
       ),
     )
 
-  return { ensureAuthorityGeneration, readAuthorityState, readAuthorityGeneration }
+  const readResearchAuthorityGeneration = (generationHash: string) =>
+    runExecutionOperation(
+      'authority',
+      authority.readGeneration(generationHash).pipe(
+        Effect.flatMap((rows) => {
+          const row = rows[0]
+          if (
+            row === undefined ||
+            row.maximum !== Authority.Paper ||
+            row.activation_schema_version !== 'bayn.paper-authority-generation.v3'
+          ) {
+            return Effect.succeed(undefined)
+          }
+          return researchPaperGenerationFromRow(row).pipe(Effect.map((generation) => generation))
+        }),
+      ),
+    )
+
+  return { ensureAuthorityGeneration, readAuthorityState, readAuthorityGeneration, readResearchAuthorityGeneration }
 }

@@ -9,6 +9,8 @@ import type {
   AuthorityState,
   CapitalGrantGeneration,
   CapitalGrantProofBinding,
+  ResearchCapitalGrantGeneration,
+  ResearchCapitalGrantProofBinding,
   Valuation,
 } from '../../execution/contracts'
 import type { BrokerSnapshot, IntentBinding, ReconciliationWriteResult } from '../reconciliation'
@@ -85,6 +87,9 @@ export interface AuthorityGenerationStoreShape {
   readonly readAuthorityGeneration?: (
     generationHash: string,
   ) => Effect.Effect<CapitalGrantGeneration | undefined, ExecutionStoreError>
+  readonly readResearchAuthorityGeneration?: (
+    generationHash: string,
+  ) => Effect.Effect<ResearchCapitalGrantGeneration | undefined, ExecutionStoreError>
 }
 
 export interface CapitalGrantLifecycleStoreShape {
@@ -105,6 +110,14 @@ export interface CapitalGrantLifecycleStoreShape {
    */
   readonly activateCapitalGrant: (
     proof: CapitalGrantProofBinding,
+  ) => WriterFencedExecutionStoreOperation<AuthorityState>
+  /**
+   * Atomically derives a reconciliation-bound research generation, records it, and activates PAPER authority. The
+   * static request intentionally cannot predict this generation hash because reconciliation continues until the
+   * activation transaction acquires its fence.
+   */
+  readonly activateResearchCapitalGrant: (
+    proof: ResearchCapitalGrantProofBinding,
   ) => WriterFencedExecutionStoreOperation<AuthorityState>
 }
 

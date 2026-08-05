@@ -94,12 +94,15 @@ export type ApplicationRuntime<StartupR, LoopR> =
       readonly _tag: 'AutonomousRead'
       readonly broker?: BrokerProbe
       readonly brokerConfiguration?: BrokerConfiguration
+      /** null explicitly suppresses cycles even when startup recovered historical qualification evidence. */
+      readonly cycleBindingId?: string | null
       readonly startCycle: AutonomousCycleStartup<StartupR, LoopR>
       readonly resolveAfterStartup?: AutonomousRuntimeResolver<StartupR, LoopR>
     }
   | {
       readonly _tag: 'AutonomousMutation'
       readonly broker: BrokerProbe
+      readonly cycleBindingId?: string | null
       readonly executionProgram: ExecutionProgram
       readonly startCycle: AutonomousCycleStartup<StartupR, LoopR>
     }
@@ -197,14 +200,14 @@ const markAutonomousCycleStarted = (state: Ref.Ref<RuntimeState>, startedAt: str
 const forkAutonomousCycle = <StartupR, LoopR>(
   runtime: AutonomousRuntime<StartupR, LoopR>,
   state: Ref.Ref<RuntimeState>,
-  qualificationRunId: string,
+  cycleBindingId: string,
 ): Effect.Effect<Fiber.Fiber<void, never>, OperationalError, StartupR | LoopR | Scope.Scope> =>
   pipe(
     currentUtcInstant,
     Effect.tap((startedAt) => markAutonomousCycleStarted(state, startedAt)),
     Effect.flatMap(() =>
       runtime.startCycle({
-        qualificationRunId,
+        qualificationRunId: cycleBindingId,
         recordPass: (observation) => recordAutonomousCyclePass(state, observation),
       }),
     ),
@@ -218,11 +221,15 @@ const startAutonomousCycle = <StartupR, LoopR>(
   runtime._tag === 'Brokerless'
     ? Effect.succeed(undefined)
     : Ref.get(state).pipe(
-        Effect.flatMap((initialized) =>
-          initialized.evidence === null
+        Effect.flatMap((initialized) => {
+          const cycleBindingId =
+            runtime.cycleBindingId === null
+              ? undefined
+              : (runtime.cycleBindingId ?? initialized.evidence?.evaluation.runId)
+          return cycleBindingId === undefined
             ? Effect.succeed(undefined)
-            : forkAutonomousCycle(runtime, state, initialized.evidence.evaluation.runId),
-        ),
+            : forkAutonomousCycle(runtime, state, cycleBindingId)
+        }),
       )
 
 export const runApplication = <StartupR, LoopR>(

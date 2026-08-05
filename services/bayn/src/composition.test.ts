@@ -1,17 +1,58 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Fiber } from 'effect'
+import { Effect, Fiber, Ref, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
   closedCycleReceiptEmissionAllowed,
+  finalizePaperEpisode,
   paperReceiptFinalizationWindowOpen,
   restrictExpiredPaperActivation,
   retryClosedCycleReceipts,
 } from './composition'
+import { BrokerEnvironment } from './broker/identity'
 import type { AuthorityRestrictionStoreShape } from './db/execution-store'
+import { makeResearchPaperActivationRequest, makeResearchPaperPlanHash } from './execution/configuration'
 import type { WriterFenceService } from './execution/writer-fence'
 import { paperEpisodeReceiptFinalizationExpiresAt } from './observe-composition'
+import { initialState } from './runtime-state'
+
+const hash = (value: string) => value.repeat(64).slice(0, 64)
+
+const researchPlan = {
+  schemaVersion: 'bayn.paper-research-plan.v1' as const,
+  activation: {
+    sourceRevision: '3'.repeat(40),
+    imageRepository: 'registry.example.test/bayn',
+    imageDigest: `sha256:${hash('4')}`,
+  },
+  strategy: {
+    name: 'risk-balanced-trend',
+    behaviorHash: hash('5'),
+    parameterHash: hash('6'),
+    parameterSchemaVersion: 'bayn.robust-trend-parameters.v2',
+    protocolHash: hash('7'),
+  },
+  broker: {
+    environment: BrokerEnvironment.Sandbox,
+    accountId: 'paper-account',
+    identityHash: hash('8'),
+  },
+  riskPolicyHash: hash('9'),
+  limits: { maxOpenOrders: 0 as const, maxPositions: 0 as const },
+  cutoffAt: '2026-09-01T13:30:00.000Z',
+  expiresAt: '2026-09-03T20:00:00.000Z',
+  maximumCloseSessions: 3 as const,
+} as const
+const { schemaVersion: _researchPlanSchemaVersion, ...researchPlanFields } = researchPlan
+
+const researchRequest = Result.getOrThrow(
+  makeResearchPaperActivationRequest({
+    schemaVersion: 'bayn.paper-research-activation-request.v1',
+    grant: { _tag: 'Research', planHash: Result.getOrThrow(makeResearchPaperPlanHash(researchPlan)) },
+    ...researchPlanFields,
+  }),
+)
 
 describe('Bayn PAPER receipt retry boundary', () => {
   test('does not bind a generation receipt before its PAPER entry cutoff', () => {
@@ -146,5 +187,56 @@ describe('Bayn PAPER startup recovery boundary', () => {
         updatedAt: '2026-08-03T12:00:00.000Z',
       },
     ])
+  })
+
+  test('returns to OBSERVE presentation only after the exact flat receipt is durable', async () => {
+    const restrictions: string[] = []
+    const authorityRestrictionStore: AuthorityRestrictionStoreShape = {
+      restrictAuthority: (reason) =>
+        Effect.sync(() => {
+          restrictions.push(reason)
+        }),
+    }
+    const writerFence: WriterFenceService = {
+      backendPid: 1,
+      check: Effect.void,
+      transaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+    }
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const state = yield* Ref.make(
+          initialState(
+            { expectedAccountId: 'paper-account', executionEligible: true, executionDisabledReason: null },
+            true,
+          ),
+        )
+        const finalized = yield* finalizePaperEpisode(
+          state,
+          researchRequest,
+          hash('2'),
+          authorityRestrictionStore,
+          writerFence,
+          () => Effect.succeed(hash('a')),
+          'cycle-1',
+          '2026-09-03T20:01:00.000Z',
+        )
+        return { finalized, state: yield* Ref.get(state) }
+      }),
+    )
+
+    expect(result.finalized).toBe(true)
+    expect(restrictions).toEqual(['PAPER episode restricted effective authority: flat exact receipt finalized'])
+    expect(result.state.paperActivation).toEqual({
+      _tag: 'Completed',
+      requestHash: researchRequest.requestHash,
+      generationHash: hash('2'),
+      grant: 'Research',
+      receiptHash: hash('a'),
+    })
+    expect(result.state.broker).toMatchObject({
+      executionEligible: false,
+      executionDisabledReason: 'PAPER_EPISODE_COMPLETED',
+    })
   })
 })
