@@ -632,17 +632,15 @@ const reduceRiskInputs = (
     Result.all(
       input.targetPlan.intentTargets.map((target) => {
         const referencePrice = BigInt(input.prices.priceMicros[target.symbol])
-        const quantity = BigInt(target.quantityMicros)
         return Result.map(
           makeFillTerms(
             target.side === OrderSide.Buy ? 'buy' : 'sell',
-            quantity,
+            BigInt(target.quantityMicros),
             referencePrice,
             input.executionModel,
             MICROS,
           ),
           (fillTerms): ShadowDeltaRiskInput => {
-            const orderNotionalLimit = (quantity * fillTerms.fillPriceMicros + MICROS - 1n) / MICROS
             const state: State = {
               schemaVersion: 'bayn.paper-risk-state.v2',
               brokerMode: BrokerMode.Paper,
@@ -673,7 +671,7 @@ const reduceRiskInputs = (
             }
             return {
               symbol: target.symbol,
-              notionalLimitMicros: orderNotionalLimit.toString(),
+              notionalLimitMicros: fillTerms.notionalMicros.toString(),
               state,
             }
           },

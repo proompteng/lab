@@ -61,6 +61,7 @@ const riskFailurePairs = [
   { operation: 'bind-authority', reason: 'authority-maximum' },
   { operation: 'canonicalize-input', reason: 'evidence' },
   { operation: 'canonicalize-input', reason: 'reconciliation' },
+  { operation: 'compute-metrics', reason: 'order-notional' },
   { operation: 'decode-input', reason: 'intent' },
   { operation: 'decode-input', reason: 'policy' },
   { operation: 'decode-input', reason: 'positions' },
@@ -373,6 +374,18 @@ const openOrder = (brokerOrderId: string) => ({
 })
 
 describe('bounded paper risk', () => {
+  test('uses the execution-model half-up notional at the intent and mutation boundary', () => {
+    const intent = makeIntent({ quantityMicros: '1', notionalLimitMicros: '100' })
+    const state = makeState({
+      expectedExecutionPriceMicros: '100000001',
+      referencePriceMicros: '100000000',
+    })
+    const result = evaluateSuccess(intent, state, makePolicy())
+
+    expect(result.metrics.orderNotionalMicros).toBe('100')
+    expect(result.decision.reasonCodes).not.toContain(Reason.IntentNotionalExceeded)
+  })
+
   test('strictly decodes complete policy and coherent state', () => {
     expect(makePolicy().schemaVersion).toBe('bayn.paper-risk-policy.v1')
     expect(makeState().schemaVersion).toBe('bayn.paper-risk-state.v2')

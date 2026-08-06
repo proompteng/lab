@@ -1,6 +1,7 @@
 import { Data, Result, Schema, pipe } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
+import { notionalMicros } from './execution-model'
 import { ExecutionSessionBindingSchema } from './execution-session'
 import {
   AccountSnapshotSchema,
@@ -465,9 +466,15 @@ interface DecodeRiskOutputIssue {
   readonly reason: 'decision' | 'evaluation' | 'input'
 }
 
+interface ComputeRiskMetricsIssue {
+  readonly operation: 'compute-metrics'
+  readonly reason: 'order-notional'
+}
+
 type RiskEvaluationIssue =
   | BindRiskAuthorityIssue
   | CanonicalizeRiskInputIssue
+  | ComputeRiskMetricsIssue
   | DecodeRiskInputIssue
   | DecodeRiskOutputIssue
 
@@ -515,6 +522,13 @@ const decodeRiskOutputFailure = (
   facts: Readonly<Record<string, unknown>> = {},
   cause?: unknown,
 ): RiskEvaluationFailure => new RiskEvaluationFailure({ operation: 'decode-output', reason, message, facts, cause })
+
+const computeRiskMetricsFailure = (
+  reason: RiskEvaluationReason<'compute-metrics'>,
+  message: string,
+  facts: Readonly<Record<string, unknown>> = {},
+  cause?: unknown,
+): RiskEvaluationFailure => new RiskEvaluationFailure({ operation: 'compute-metrics', reason, message, facts, cause })
 
 const RiskIntentSchema = Schema.Union([IntentSchema, ReferenceIntentSchema])
 const ProposedPositionsSchema = Schema.Array(PositionSchema)
@@ -648,8 +662,19 @@ const parseRiskFacts = (
   maxAdverseSlippageBps: BigInt(policy.maxAdverseSlippageBps),
 })
 
-const deriveRiskMetrics = (facts: RiskFacts): DerivedRiskMetrics => {
-  const orderNotionalMicros = divideUp(facts.intentQuantityMicros * facts.expectedExecutionPriceMicros, QUANTITY_SCALE)
+const deriveRiskMetrics = (facts: RiskFacts): Result.Result<DerivedRiskMetrics, RiskEvaluationFailure> => {
+  const orderNotional = notionalMicros(facts.intentQuantityMicros, facts.expectedExecutionPriceMicros)
+  if (Result.isFailure(orderNotional)) {
+    return Result.fail(
+      computeRiskMetricsFailure(
+        'order-notional',
+        'risk order notional could not be computed from decoded execution terms',
+        { intentId: facts.intent.intentId },
+        orderNotional.failure,
+      ),
+    )
+  }
+  const orderNotionalMicros = orderNotional.success
   const direction = facts.intent.side === OrderSide.Buy ? 1n : -1n
   const currentSymbolQuantityMicros = facts.positions
     .filter((position) => position.symbol === facts.intent.symbol)
@@ -688,7 +713,7 @@ const deriveRiskMetrics = (facts: RiskFacts): DerivedRiskMetrics => {
     instant(facts.state.authorityObservedAt),
   )
 
-  return {
+  return Result.succeed({
     orderNotionalMicros,
     currentSymbolQuantityMicros,
     postTradeSymbolQuantityMicros,
@@ -706,7 +731,7 @@ const deriveRiskMetrics = (facts: RiskFacts): DerivedRiskMetrics => {
     oldestBrokerStateAt,
     brokerFreshUntil: oldestBrokerStateAt + facts.policy.maxBrokerStateAgeMs,
     marketFreshUntil: facts.marketDataObservedAt + facts.policy.maxMarketDataAgeMs,
-  }
+  })
 }
 
 const deriveReconciledHash = (facts: RiskFacts): Result.Result<string, RiskEvaluationFailure> =>
@@ -1168,18 +1193,19 @@ const evaluateDecoded = (
   Result.flatMap(validateAuthorityBinding(intent, state), () => {
     const facts = parseRiskFacts(intent, state, policy, proposedPositions)
     return Result.flatMap(deriveReconciledHash(facts), (reconciledHash) => {
-      const metrics = deriveRiskMetrics(facts)
-      const gates = buildRiskGates(facts, metrics, reconciledHash)
-      const reasonCodes = gates.filter((gate) => !gate.passed).map((gate) => gate.reason)
-      const outcome = reasonCodes.length === 0 ? RiskOutcome.Approved : RiskOutcome.Blocked
-      const expiresAt = deriveRiskExpiry(facts, metrics, outcome)
-      return Result.flatMap(deriveRiskBindingHashes(facts), (hashes) =>
-        Result.flatMap(makeRiskInput(facts, hashes, expiresAt), (input) =>
-          Result.flatMap(makeRiskDecision(facts, hashes, input, outcome, reasonCodes, expiresAt), (decision) =>
-            makeRiskEvaluation(hashes, input, decision, gates, metrics),
+      return Result.flatMap(deriveRiskMetrics(facts), (metrics) => {
+        const gates = buildRiskGates(facts, metrics, reconciledHash)
+        const reasonCodes = gates.filter((gate) => !gate.passed).map((gate) => gate.reason)
+        const outcome = reasonCodes.length === 0 ? RiskOutcome.Approved : RiskOutcome.Blocked
+        const expiresAt = deriveRiskExpiry(facts, metrics, outcome)
+        return Result.flatMap(deriveRiskBindingHashes(facts), (hashes) =>
+          Result.flatMap(makeRiskInput(facts, hashes, expiresAt), (input) =>
+            Result.flatMap(makeRiskDecision(facts, hashes, input, outcome, reasonCodes, expiresAt), (decision) =>
+              makeRiskEvaluation(hashes, input, decision, gates, metrics),
+            ),
           ),
-        ),
-      )
+        )
+      })
     })
   })
 
