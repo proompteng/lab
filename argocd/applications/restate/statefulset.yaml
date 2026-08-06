@@ -1,0 +1,120 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: restate
+  labels:
+    app: restate
+    app.kubernetes.io/name: restate
+    app.kubernetes.io/version: "1.7.2"
+spec:
+  serviceName: restate-cluster
+  replicas: 1
+  revisionHistoryLimit: 10
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      app: restate
+  template:
+    metadata:
+      labels:
+        app: restate
+      annotations:
+        kubectl.kubernetes.io/default-container: restate
+    spec:
+      serviceAccountName: restate
+      securityContext:
+        fsGroup: 2000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - labelSelector:
+            matchLabels:
+              app: restate
+          maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+      containers:
+        - name: restate
+          image: docker.restate.dev/restatedev/restate:1.7.2
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsGroup: 3000
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          ports:
+            - containerPort: 9070
+              name: admin
+            - containerPort: 8080
+              name: ingress
+            - containerPort: 5122
+              name: node
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
+            - name: SERVICE_NAME
+              value: restate-cluster
+            - name: RESTATE_NODE_NAME
+              value: $(POD_NAME)
+            - name: RESTATE_LOG_FILTER
+              value: info
+            - name: RESTATE_ADVERTISED_ADDRESS
+              value: http://$(POD_NAME).$(SERVICE_NAME):5122
+            - name: RESTATE_LOG_FORMAT
+              value: json
+            - name: RESTATE_CLUSTER_NAME
+              value: proompteng-self-hosted
+            - name: RESTATE_ROCKSDB_TOTAL_MEMORY_SIZE
+              value: 1Gi
+            - name: RESTATE_LISTEN_MODE
+              value: tcp
+          readinessProbe:
+            httpGet:
+              path: /restate/health
+              port: ingress
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - mountPath: /restate-data
+              name: storage
+            - mountPath: /tmp
+              name: tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: storage
+        labels:
+          app: restate
+          app.kubernetes.io/name: restate
+      spec:
+        storageClassName: rook-ceph-block
+        volumeMode: Filesystem
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 16Gi
