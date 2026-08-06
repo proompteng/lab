@@ -6,6 +6,7 @@ import {
   decidePaperEpisodeAuthority,
   decidePaperEpisodeCycleTerminalization,
   failedPaperEpisode,
+  paperEpisodeAllocationCapitalMicros,
   paperGrantFromGeneration,
   paperGrantKey,
   validatePaperEpisodeCloseWindow,
@@ -32,6 +33,27 @@ const safeFacts = (overrides: Partial<PaperEpisodeFacts> = {}): PaperEpisodeFact
     unresolvedMutationCount: 0,
   },
   ...overrides,
+})
+
+describe('paperEpisodeAllocationCapitalMicros', () => {
+  test('selects the smallest account, exposure, and remaining-turnover bound', () => {
+    const common = {
+      accountEquityMicros: 100_000_000_000n,
+      dailyTradedNotionalMicros: 0n,
+      maxGrossExposureMicros: 1_000_000_000n,
+      maxNetExposureMicros: 1_000_000_000n,
+      maxDailyTradedNotionalMicros: 1_000_000_000n,
+      maxAdverseSlippageBps: 0n,
+    }
+
+    expect(paperEpisodeAllocationCapitalMicros(common)).toBe(1_000_000_000n)
+    expect(paperEpisodeAllocationCapitalMicros({ ...common, dailyTradedNotionalMicros: 750_000_000n })).toBe(
+      250_000_000n,
+    )
+    expect(paperEpisodeAllocationCapitalMicros({ ...common, accountEquityMicros: 200_000_000n })).toBe(200_000_000n)
+    expect(paperEpisodeAllocationCapitalMicros({ ...common, dailyTradedNotionalMicros: 1_000_000_001n })).toBe(0n)
+    expect(paperEpisodeAllocationCapitalMicros({ ...common, maxAdverseSlippageBps: 10n })).toBe(999_000_999n)
+  })
 })
 
 const success = (state: PaperEpisodeState, facts: PaperEpisodeFacts) => {

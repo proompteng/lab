@@ -60,6 +60,7 @@ export const TargetPlannerInputSchema = Schema.Struct({
   accountId: StrictNonEmptyStringSchema,
   signalDate: SignalSessionReferencePricesSchema.fields.signalDate,
   targetWeights: Schema.Record(SymbolSchema, UnitIntervalSchema),
+  allocationCapitalMicros: Schema.optionalKey(UnsignedMicrosSchema),
   referencePrices: SignalSessionReferencePricesSchema,
   brokerState: TargetPlannerBrokerStateSchema,
   precision: Schema.Struct({

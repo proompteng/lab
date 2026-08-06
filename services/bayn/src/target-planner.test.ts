@@ -41,6 +41,7 @@ interface FixtureOptions {
   readonly accountId?: string
   readonly accountStatus?: AccountStatus
   readonly accountObservedAt?: string
+  readonly allocationCapitalMicros?: string
   readonly buyingPowerMicros?: string
   readonly decisionHash?: string
   readonly equityMicros?: string
@@ -180,6 +181,9 @@ const fixture = (options: FixtureOptions = {}): TargetPlannerInput => {
       AMD: 0.5,
       NVDA: 0.5,
     },
+    ...(options.allocationCapitalMicros === undefined
+      ? {}
+      : { allocationCapitalMicros: options.allocationCapitalMicros }),
     referencePrices: referencePrices(
       prices,
       options.pricesObservedAt ?? pricesObservedAt,
@@ -213,6 +217,48 @@ const planSuccess = (input: TargetPlannerInput): TargetPlanResult => {
 }
 
 describe('causal target planner', () => {
+  test('sizes an immutable PAPER target against its bounded allocation instead of full account equity', () => {
+    const bounded = planSuccess(
+      fixture({
+        allocationCapitalMicros: '1000000000',
+        buyingPowerMicros: '400000000000',
+        equityMicros: '100000000000',
+        positions: [],
+      }),
+    )
+
+    expect(bounded).toMatchObject({
+      status: TargetPlanStatus.Planned,
+      requiredReferenceBuyNotionalMicros: '1000000000',
+      targets: [
+        { symbol: 'AMD', targetQuantityMicros: '10000000' },
+        { symbol: 'NVDA', targetQuantityMicros: '5000000' },
+      ],
+    })
+  })
+
+  test('preserves legacy full-equity planning and rejects allocation above current equity', () => {
+    const legacy = planSuccess(fixture({ positions: [] }))
+    const excessive = planSuccess(
+      fixture({ allocationCapitalMicros: '10000000001', equityMicros: '10000000000', positions: [] }),
+    )
+
+    expect(legacy.targets).toMatchObject([
+      { symbol: 'AMD', targetQuantityMicros: '100000000' },
+      { symbol: 'NVDA', targetQuantityMicros: '50000000' },
+    ])
+    expect(excessive).toMatchObject({ status: TargetPlanStatus.Blocked, reason: TargetPlanReason.InputMismatch })
+  })
+
+  test('turns an exhausted allocation into a deterministic flat no-trade target', () => {
+    expect(planSuccess(fixture({ allocationCapitalMicros: '0', positions: [] }))).toMatchObject({
+      status: TargetPlanStatus.NoTrade,
+      reason: TargetPlanReason.TargetsSatisfied,
+      requiredReferenceBuyNotionalMicros: '0',
+      intentTargets: [],
+    })
+  })
+
   test('produces exact target deltas in stable sell-then-buy order without crediting the sell', () => {
     const result = planSuccess(fixture())
 

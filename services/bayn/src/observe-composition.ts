@@ -57,7 +57,7 @@ import { makeStrategyProtocolHash } from './contracts'
 import { OperationalError, operationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
 import { MarketData, type MarketDataService } from './market-data'
-import { decidePaperEpisodeCycleTerminalization } from './paper-episode'
+import { decidePaperEpisodeCycleTerminalization, paperEpisodeAllocationCapitalMicros } from './paper-episode'
 import {
   Authority,
   IntentState,
@@ -290,6 +290,7 @@ type ObservePlannerPreparation = {
 }
 
 type ObservePlannerOverrides = {
+  readonly allocationCapitalMicros?: string
   readonly targetWeights?: DecisionPlan['targetWeights']
   readonly submissionCutoffAt?: string
 }
@@ -597,6 +598,9 @@ const prepareObservePlanner = <R>(
               accountId: input.cycle.identity.accountId,
               signalDate: input.cycle.identity.signalSessionDate,
               targetWeights: overrides.targetWeights ?? compiled.decision.targetWeights,
+              ...(overrides.allocationCapitalMicros === undefined
+                ? {}
+                : { allocationCapitalMicros: overrides.allocationCapitalMicros }),
               referencePrices: prices,
               brokerState: facts.reconciliation.brokerState,
               precision: input.executionModel.precision,
@@ -628,15 +632,17 @@ const reduceRiskInputs = (
     Result.all(
       input.targetPlan.intentTargets.map((target) => {
         const referencePrice = BigInt(input.prices.priceMicros[target.symbol])
+        const quantity = BigInt(target.quantityMicros)
         return Result.map(
           makeFillTerms(
             target.side === OrderSide.Buy ? 'buy' : 'sell',
-            BigInt(target.quantityMicros),
+            quantity,
             referencePrice,
             input.executionModel,
             MICROS,
           ),
           (fillTerms): ShadowDeltaRiskInput => {
+            const orderNotionalLimit = (quantity * fillTerms.fillPriceMicros + MICROS - 1n) / MICROS
             const state: State = {
               schemaVersion: 'bayn.paper-risk-state.v2',
               brokerMode: BrokerMode.Paper,
@@ -667,7 +673,7 @@ const reduceRiskInputs = (
             }
             return {
               symbol: target.symbol,
-              notionalLimitMicros: fillTerms.notionalMicros.toString(),
+              notionalLimitMicros: orderNotionalLimit.toString(),
               state,
             }
           },
@@ -723,7 +729,25 @@ function buildCycleDecision<R>(
     )
     const executionSession = yield* Effect.fromResult(prepareExecutionSessionBinding(input, facts))
     const compiled = yield* compileObserveStrategyDecision(input, facts, executionSession)
-    const plannerPreparation = yield* Effect.fromResult(prepareObservePlanner(input, facts, compiled))
+    const plannerPreparation = yield* Effect.fromResult(
+      prepareObservePlanner(
+        input,
+        facts,
+        compiled,
+        authorityRequirement === Authority.Paper
+          ? {
+              allocationCapitalMicros: paperEpisodeAllocationCapitalMicros({
+                accountEquityMicros: BigInt(facts.reconciliation.brokerState.account.equityMicros),
+                dailyTradedNotionalMicros: BigInt(facts.reconciliation.riskContext.dailyTradedNotionalMicros),
+                maxGrossExposureMicros: BigInt(input.policy.maxGrossExposureMicros),
+                maxNetExposureMicros: BigInt(input.policy.maxNetExposureMicros),
+                maxDailyTradedNotionalMicros: BigInt(input.policy.maxDailyTradedNotionalMicros),
+                maxAdverseSlippageBps: BigInt(input.policy.maxAdverseSlippageBps),
+              }).toString(),
+            }
+          : {},
+      ),
+    )
     const targetPlan = yield* Effect.fromResult(planTargets(plannerPreparation.plannerInput))
     const riskInputs = yield* Effect.fromResult(
       reduceObserveRiskInputs(
@@ -1542,6 +1566,28 @@ const terminalizeUnboundMutationCycleAtCutoff = (
     })),
   )
 
+export const terminalizeBlockedPaperCycle = (
+  cycle: AutonomousCycle,
+  outcome: Extract<BoundMutationCycleOutcome, { readonly _tag: 'Block' }>,
+): Effect.Effect<CycleRunResult, CycleRunnerError, CycleStore | AuthorityRestrictionStore | WriterFence> =>
+  restrictMutationAuthority(
+    'PAPER autonomous cycle loop',
+    `bound cycle ${cycle.identity.cycleId} blocked: ${outcome.reason}`,
+  ).pipe(
+    Effect.andThen(
+      CycleStore.pipe(
+        Effect.flatMap((store) => store.block(cycle.identity.cycleId, outcome.reason, outcome.observedAt)),
+        Effect.mapError((cause) => mutationRunnerError('blocked PAPER cycle finalization failed', cause, 'store')),
+      ),
+    ),
+    Effect.map((receipt) => ({
+      outcome: 'RECOVERED' as const,
+      action: 'BLOCKED' as const,
+      observedAt: outcome.observedAt,
+      cycle: receipt.cycle,
+    })),
+  )
+
 const interpretBoundMutationCycleOutcome = (
   input: ObserveAutonomousCycleInput,
   outcome: BoundMutationCycleOutcome,
@@ -1559,16 +1605,7 @@ const interpretBoundMutationCycleOutcome = (
         cycle,
       })
     case 'Block':
-      return CycleStore.pipe(
-        Effect.flatMap((store) => store.block(cycle.identity.cycleId, outcome.reason, outcome.observedAt)),
-        Effect.mapError((cause) => mutationRunnerError('expired PAPER cycle finalization failed', cause, 'store')),
-        Effect.map((receipt) => ({
-          outcome: 'RECOVERED' as const,
-          action: 'BLOCKED' as const,
-          observedAt: outcome.observedAt,
-          cycle: receipt.cycle,
-        })),
-      )
+      return terminalizeBlockedPaperCycle(cycle, outcome)
     case 'Complete':
       return CycleStore.pipe(
         Effect.flatMap((store) => store.finish(cycle.identity.cycleId, CycleState.Completed, outcome.observedAt)),

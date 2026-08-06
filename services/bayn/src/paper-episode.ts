@@ -20,6 +20,33 @@ export const ResearchPaperGrantSchema = Schema.Struct({
 export const PaperGrantSchema = Schema.Union([QualifiedPaperGrantSchema, ResearchPaperGrantSchema])
 export type PaperGrant = typeof PaperGrantSchema.Type
 
+export interface PaperEpisodeAllocationFacts {
+  readonly accountEquityMicros: bigint
+  readonly dailyTradedNotionalMicros: bigint
+  readonly maxGrossExposureMicros: bigint
+  readonly maxNetExposureMicros: bigint
+  readonly maxDailyTradedNotionalMicros: bigint
+  readonly maxAdverseSlippageBps: bigint
+}
+
+const nonNegative = (value: bigint): bigint => (value < 0n ? 0n : value)
+const BASIS_POINTS = 10_000n
+
+/** Bounds target construction to the capital that this episode may actually put at risk. */
+export const paperEpisodeAllocationCapitalMicros = (facts: PaperEpisodeAllocationFacts): bigint => {
+  const remainingDailyTurnover = nonNegative(facts.maxDailyTradedNotionalMicros - facts.dailyTradedNotionalMicros)
+  const referenceCapitalWithinTurnover =
+    (remainingDailyTurnover * BASIS_POINTS) / (BASIS_POINTS + nonNegative(facts.maxAdverseSlippageBps))
+  return [
+    facts.accountEquityMicros,
+    facts.maxGrossExposureMicros,
+    facts.maxNetExposureMicros,
+    referenceCapitalWithinTurnover,
+  ]
+    .map(nonNegative)
+    .reduce((minimum, value) => (value < minimum ? value : minimum))
+}
+
 export const paperGrantKey = (grant: PaperGrant): string =>
   grant._tag === 'Qualified' ? grant.qualification.runId : grant.planHash
 
