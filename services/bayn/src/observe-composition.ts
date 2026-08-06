@@ -57,7 +57,7 @@ import { makeStrategyProtocolHash } from './contracts'
 import { OperationalError, operationalError } from './errors'
 import { canonicalHashV1Result } from './hash'
 import { MarketData, type MarketDataService } from './market-data'
-import { decidePaperEpisodeCycleTerminalization } from './paper-episode'
+import { decidePaperEpisodeCycleTerminalization, paperEpisodeAllocationCapitalMicros } from './paper-episode'
 import {
   Authority,
   IntentState,
@@ -251,6 +251,7 @@ type ObserveDecisionCompositionFailure = {
     | 'compiled-decision-hash'
     | 'cycle-binding'
     | 'observe-authority'
+    | 'paper-episode-allocation'
     | 'reconciled-state-hash'
     | 'reference-prices'
     | 'risk-policy-hash'
@@ -290,6 +291,7 @@ type ObservePlannerPreparation = {
 }
 
 type ObservePlannerOverrides = {
+  readonly allocationCapitalMicros?: string
   readonly targetWeights?: DecisionPlan['targetWeights']
   readonly submissionCutoffAt?: string
 }
@@ -586,10 +588,8 @@ const prepareObservePlanner = <R>(
             'current strategy decision is not canonicalizable',
             compiled.decision,
           ),
-          (decisionHash) => ({
-            prices,
-            plannerInput: {
-              schemaVersion: 'bayn.paper-target-planner-input.v1',
+          (decisionHash) => {
+            const commonPlannerInput = {
               strategyName: input.cycle.identity.strategyName,
               cycleId: input.cycle.identity.cycleId,
               decisionHash,
@@ -603,8 +603,22 @@ const prepareObservePlanner = <R>(
               maximumInputAgeMs: Math.min(input.policy.maxBrokerStateAgeMs, input.policy.maxMarketDataAgeMs),
               submissionCutoffAt: overrides.submissionCutoffAt ?? input.cycle.window.submissionCutoffAt,
               observedAt: facts.evaluatedAt,
-            },
-          }),
+            }
+            return {
+              prices,
+              plannerInput:
+                overrides.allocationCapitalMicros === undefined
+                  ? {
+                      schemaVersion: 'bayn.paper-target-planner-input.v1' as const,
+                      ...commonPlannerInput,
+                    }
+                  : {
+                      schemaVersion: 'bayn.paper-target-planner-input.v2' as const,
+                      ...commonPlannerInput,
+                      allocationCapitalMicros: overrides.allocationCapitalMicros,
+                    },
+            }
+          },
         ),
     ),
   )
@@ -723,7 +737,41 @@ function buildCycleDecision<R>(
     )
     const executionSession = yield* Effect.fromResult(prepareExecutionSessionBinding(input, facts))
     const compiled = yield* compileObserveStrategyDecision(input, facts, executionSession)
-    const plannerPreparation = yield* Effect.fromResult(prepareObservePlanner(input, facts, compiled))
+    const allocationCapitalMicros =
+      authorityRequirement === Authority.Paper
+        ? yield* Effect.fromResult(
+            paperEpisodeAllocationCapitalMicros({
+              accountEquityMicros: BigInt(facts.reconciliation.brokerState.account.equityMicros),
+              dailyTradedNotionalMicros: BigInt(facts.reconciliation.riskContext.dailyTradedNotionalMicros),
+              maxGrossExposureMicros: BigInt(input.policy.maxGrossExposureMicros),
+              maxNetExposureMicros: BigInt(input.policy.maxNetExposureMicros),
+              maxDailyTradedNotionalMicros: BigInt(input.policy.maxDailyTradedNotionalMicros),
+              maxAdverseSlippageBps: BigInt(input.policy.maxAdverseSlippageBps),
+              positions: facts.reconciliation.brokerState.positions,
+              referencePriceMicros: compiled.priceMicros,
+            }),
+          ).pipe(
+            Effect.mapError((cause) =>
+              compositionFailure(
+                'paper-episode-allocation',
+                'PAPER entry cannot fit its complete sell-plus-buy plan inside the remaining turnover budget',
+                cause,
+              ),
+            ),
+          )
+        : undefined
+    const plannerPreparation = yield* Effect.fromResult(
+      prepareObservePlanner(
+        input,
+        facts,
+        compiled,
+        authorityRequirement === Authority.Paper
+          ? {
+              allocationCapitalMicros: allocationCapitalMicros?.toString(),
+            }
+          : {},
+      ),
+    )
     const targetPlan = yield* Effect.fromResult(planTargets(plannerPreparation.plannerInput))
     const riskInputs = yield* Effect.fromResult(
       reduceObserveRiskInputs(
@@ -1542,6 +1590,28 @@ const terminalizeUnboundMutationCycleAtCutoff = (
     })),
   )
 
+export const terminalizeBlockedPaperCycle = (
+  cycle: AutonomousCycle,
+  outcome: Extract<BoundMutationCycleOutcome, { readonly _tag: 'Block' }>,
+): Effect.Effect<CycleRunResult, CycleRunnerError, CycleStore | AuthorityRestrictionStore | WriterFence> =>
+  restrictMutationAuthority(
+    'PAPER autonomous cycle loop',
+    `bound cycle ${cycle.identity.cycleId} blocked: ${outcome.reason}`,
+  ).pipe(
+    Effect.andThen(
+      CycleStore.pipe(
+        Effect.flatMap((store) => store.block(cycle.identity.cycleId, outcome.reason, outcome.observedAt)),
+        Effect.mapError((cause) => mutationRunnerError('blocked PAPER cycle finalization failed', cause, 'store')),
+      ),
+    ),
+    Effect.map((receipt) => ({
+      outcome: 'RECOVERED' as const,
+      action: 'BLOCKED' as const,
+      observedAt: outcome.observedAt,
+      cycle: receipt.cycle,
+    })),
+  )
+
 const interpretBoundMutationCycleOutcome = (
   input: ObserveAutonomousCycleInput,
   outcome: BoundMutationCycleOutcome,
@@ -1559,16 +1629,7 @@ const interpretBoundMutationCycleOutcome = (
         cycle,
       })
     case 'Block':
-      return CycleStore.pipe(
-        Effect.flatMap((store) => store.block(cycle.identity.cycleId, outcome.reason, outcome.observedAt)),
-        Effect.mapError((cause) => mutationRunnerError('expired PAPER cycle finalization failed', cause, 'store')),
-        Effect.map((receipt) => ({
-          outcome: 'RECOVERED' as const,
-          action: 'BLOCKED' as const,
-          observedAt: outcome.observedAt,
-          cycle: receipt.cycle,
-        })),
-      )
+      return terminalizeBlockedPaperCycle(cycle, outcome)
     case 'Complete':
       return CycleStore.pipe(
         Effect.flatMap((store) => store.finish(cycle.identity.cycleId, CycleState.Completed, outcome.observedAt)),

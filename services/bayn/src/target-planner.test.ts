@@ -25,6 +25,7 @@ import {
   type SignalSessionReferencePrices,
   type TargetPlanResult,
   type TargetPlannerInput,
+  type TargetPlannerInputV1,
 } from './target-planner'
 
 const hash = (digit: string): string => digit.repeat(64)
@@ -41,6 +42,7 @@ interface FixtureOptions {
   readonly accountId?: string
   readonly accountStatus?: AccountStatus
   readonly accountObservedAt?: string
+  readonly allocationCapitalMicros?: string
   readonly buyingPowerMicros?: string
   readonly decisionHash?: string
   readonly equityMicros?: string
@@ -168,8 +170,7 @@ const fixture = (options: FixtureOptions = {}): TargetPlannerInput => {
     observedAt: options.accountObservedAt ?? brokerObservedAt,
   }
   const prices = options.priceMicros ?? { AMD: '50000000', NVDA: '100000000' }
-  return {
-    schemaVersion: 'bayn.paper-target-planner-input.v1',
+  const common: Omit<TargetPlannerInputV1, 'schemaVersion'> = {
     strategyName: 'risk-balanced-trend',
     cycleId: hash('1'),
     decisionHash: options.decisionHash ?? hash('2'),
@@ -204,6 +205,13 @@ const fixture = (options: FixtureOptions = {}): TargetPlannerInput => {
     submissionCutoffAt: options.submissionCutoffAt ?? submissionCutoffAt,
     observedAt: options.observedAt ?? observedAt,
   }
+  return options.allocationCapitalMicros === undefined
+    ? { schemaVersion: 'bayn.paper-target-planner-input.v1', ...common }
+    : {
+        schemaVersion: 'bayn.paper-target-planner-input.v2',
+        ...common,
+        allocationCapitalMicros: options.allocationCapitalMicros,
+      }
 }
 
 const planSuccess = (input: TargetPlannerInput): TargetPlanResult => {
@@ -213,6 +221,60 @@ const planSuccess = (input: TargetPlannerInput): TargetPlanResult => {
 }
 
 describe('causal target planner', () => {
+  test('sizes an immutable PAPER target against its bounded allocation instead of full account equity', () => {
+    const bounded = planSuccess(
+      fixture({
+        allocationCapitalMicros: '1000000000',
+        buyingPowerMicros: '400000000000',
+        equityMicros: '100000000000',
+        positions: [],
+      }),
+    )
+
+    expect(bounded).toMatchObject({
+      status: TargetPlanStatus.Planned,
+      requiredReferenceBuyNotionalMicros: '1000000000',
+      targets: [
+        { symbol: 'AMD', targetQuantityMicros: '10000000' },
+        { symbol: 'NVDA', targetQuantityMicros: '5000000' },
+      ],
+    })
+  })
+
+  test('preserves legacy full-equity planning and rejects allocation above current equity', () => {
+    const legacy = planSuccess(fixture({ positions: [] }))
+    const excessive = planSuccess(
+      fixture({ allocationCapitalMicros: '10000000001', equityMicros: '10000000000', positions: [] }),
+    )
+
+    expect(legacy.targets).toMatchObject([
+      { symbol: 'AMD', targetQuantityMicros: '100000000' },
+      { symbol: 'NVDA', targetQuantityMicros: '50000000' },
+    ])
+    expect(excessive).toMatchObject({ status: TargetPlanStatus.Blocked, reason: TargetPlanReason.InputMismatch })
+  })
+
+  test('versions bounded allocation separately from strict legacy planner evidence', () => {
+    const legacy = fixture({ positions: [] })
+    const bounded = fixture({ allocationCapitalMicros: '1000000000', positions: [] })
+
+    expect(legacy.schemaVersion).toBe('bayn.paper-target-planner-input.v1')
+    expect(bounded.schemaVersion).toBe('bayn.paper-target-planner-input.v2')
+    expect(Result.isFailure(planTargets({ ...legacy, allocationCapitalMicros: '1000000000' }))).toBe(true)
+    if (bounded.schemaVersion !== 'bayn.paper-target-planner-input.v2') throw new Error('expected v2 planner input')
+    const { allocationCapitalMicros: _allocationCapitalMicros, ...boundedWithoutAllocation } = bounded
+    expect(Result.isFailure(planTargets(boundedWithoutAllocation))).toBe(true)
+  })
+
+  test('turns an exhausted allocation into a deterministic flat no-trade target', () => {
+    expect(planSuccess(fixture({ allocationCapitalMicros: '0', positions: [] }))).toMatchObject({
+      status: TargetPlanStatus.NoTrade,
+      reason: TargetPlanReason.TargetsSatisfied,
+      requiredReferenceBuyNotionalMicros: '0',
+      intentTargets: [],
+    })
+  })
+
   test('produces exact target deltas in stable sell-then-buy order without crediting the sell', () => {
     const result = planSuccess(fixture())
 
