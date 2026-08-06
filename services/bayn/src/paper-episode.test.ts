@@ -44,15 +44,54 @@ describe('paperEpisodeAllocationCapitalMicros', () => {
       maxNetExposureMicros: 1_000_000_000n,
       maxDailyTradedNotionalMicros: 1_000_000_000n,
       maxAdverseSlippageBps: 0n,
+      positions: [],
+      referencePriceMicros: {},
     }
 
-    expect(paperEpisodeAllocationCapitalMicros(common)).toBe(1_000_000_000n)
-    expect(paperEpisodeAllocationCapitalMicros({ ...common, dailyTradedNotionalMicros: 750_000_000n })).toBe(
-      250_000_000n,
+    expect(Result.getOrThrow(paperEpisodeAllocationCapitalMicros(common))).toBe(1_000_000_000n)
+    expect(
+      Result.getOrThrow(paperEpisodeAllocationCapitalMicros({ ...common, dailyTradedNotionalMicros: 750_000_000n })),
+    ).toBe(250_000_000n)
+    expect(
+      Result.getOrThrow(paperEpisodeAllocationCapitalMicros({ ...common, accountEquityMicros: 200_000_000n })),
+    ).toBe(200_000_000n)
+    expect(
+      Result.getOrThrow(paperEpisodeAllocationCapitalMicros({ ...common, dailyTradedNotionalMicros: 1_000_000_001n })),
+    ).toBe(0n)
+    expect(Result.getOrThrow(paperEpisodeAllocationCapitalMicros({ ...common, maxAdverseSlippageBps: 10n }))).toBe(
+      999_000_999n,
     )
-    expect(paperEpisodeAllocationCapitalMicros({ ...common, accountEquityMicros: 200_000_000n })).toBe(200_000_000n)
-    expect(paperEpisodeAllocationCapitalMicros({ ...common, dailyTradedNotionalMicros: 1_000_000_001n })).toBe(0n)
-    expect(paperEpisodeAllocationCapitalMicros({ ...common, maxAdverseSlippageBps: 10n })).toBe(999_000_999n)
+  })
+
+  test('bounds both sides of a rebalance and rejects exposure that cannot fit the remaining turnover', () => {
+    const common = {
+      accountEquityMicros: 100_000_000_000n,
+      dailyTradedNotionalMicros: 750_000_000n,
+      maxGrossExposureMicros: 1_000_000_000n,
+      maxNetExposureMicros: 1_000_000_000n,
+      maxDailyTradedNotionalMicros: 1_000_000_000n,
+      maxAdverseSlippageBps: 0n,
+      referencePriceMicros: { SPY: '100000000' },
+    }
+    const scalable = Result.getOrThrow(
+      paperEpisodeAllocationCapitalMicros({
+        ...common,
+        positions: [{ symbol: 'SPY', quantityMicros: '1000000' }],
+      }),
+    )
+    const rejected = paperEpisodeAllocationCapitalMicros({
+      ...common,
+      positions: [{ symbol: 'SPY', quantityMicros: '10000000' }],
+    })
+
+    expect(scalable).toBe(150_000_000n)
+    expect(rejected).toEqual(
+      Result.fail({
+        _tag: 'CurrentExposureExceedsRemainingTurnover',
+        currentReferenceGrossExposureMicros: 1_000_000_000n,
+        remainingReferenceTurnoverMicros: 250_000_000n,
+      }),
+    )
   })
 })
 

@@ -2877,6 +2877,58 @@ describe('OBSERVE runtime composition', () => {
     ).toBe(true)
   })
 
+  test('rejects a PAPER entry before planning when existing exposure cannot fit remaining turnover', async () => {
+    const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, fixtureProtocol.universe))
+    const highBalanceAccount: AccountSnapshot = {
+      ...account,
+      cashMicros: '100000000000',
+      equityMicros: '100000000000',
+      buyingPowerMicros: '400000000000',
+    }
+    const existingPosition: Position = {
+      schemaVersion: 'bayn.paper-position.v1',
+      accountId,
+      symbol: 'SPY',
+      quantityMicros: '10000000000',
+      averageEntryPriceMicros: '100000000',
+      marketPriceMicros: '100000000',
+      marketValueMicros: '1000000000000',
+      unrealizedPnlMicros: '0',
+      observedAt: reconciledAt,
+    }
+    const reconciled = reconciliationResult(generationHash, Authority.Paper, [existingPosition], [], highBalanceAccount)
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(evaluatedAt))
+          return yield* buildMutationShadowCycleDecision({
+            authorityGenerationHash: generationHash,
+            cycle,
+            executionModel: fixtureProtocol.executionModel,
+            policy,
+            reconcile: Effect.succeed({
+              ...reconciled,
+              riskContext: {
+                ...reconciled.riskContext,
+                dailyTradedNotionalMicros: '750000000',
+              },
+            }),
+            strategy: runtimeWithDecision(() => Result.succeed(decision)),
+          })
+        }).pipe(
+          (effect) => provideDecisionServices(effect, marketData([]), calendarRead([])),
+          Effect.provide(TestClock.layer()),
+        ),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      _tag: 'ObserveDecisionCompositionFailure',
+      operation: 'paper-episode-allocation',
+      cause: { _tag: 'CurrentExposureExceedsRemainingTurnover' },
+    })
+  })
+
   test('fails closed when same-pass reconciliation observes another authority generation', async () => {
     const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, fixtureProtocol.universe))
     let strategyCalls = 0

@@ -1,5 +1,6 @@
 import { Result, Schema } from 'effect'
 
+import { notionalMicros } from './execution-model'
 import { Sha256Schema } from './schemas'
 
 export const QualificationBindingSchema = Schema.Struct({
@@ -27,24 +28,82 @@ export interface PaperEpisodeAllocationFacts {
   readonly maxNetExposureMicros: bigint
   readonly maxDailyTradedNotionalMicros: bigint
   readonly maxAdverseSlippageBps: bigint
+  readonly positions: readonly {
+    readonly quantityMicros: string
+    readonly symbol: string
+  }[]
+  readonly referencePriceMicros: Readonly<Record<string, string>>
 }
 
+export type PaperEpisodeAllocationFailure =
+  | {
+      readonly _tag: 'CurrentExposureExceedsRemainingTurnover'
+      readonly currentReferenceGrossExposureMicros: bigint
+      readonly remainingReferenceTurnoverMicros: bigint
+    }
+  | { readonly _tag: 'InvalidPositionReferenceNotional'; readonly cause: unknown; readonly symbol: string }
+  | { readonly _tag: 'MissingPositionReferencePrice'; readonly symbol: string }
+
 const nonNegative = (value: bigint): bigint => (value < 0n ? 0n : value)
+const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
 const BASIS_POINTS = 10_000n
 
-/** Bounds target construction to the capital that this episode may actually put at risk. */
-export const paperEpisodeAllocationCapitalMicros = (facts: PaperEpisodeAllocationFacts): bigint => {
+const currentReferenceGrossExposureMicros = (
+  facts: PaperEpisodeAllocationFacts,
+): Result.Result<bigint, PaperEpisodeAllocationFailure> =>
+  facts.positions.reduce<Result.Result<bigint, PaperEpisodeAllocationFailure>>(
+    (total, position) =>
+      Result.flatMap(total, (current) => {
+        const price = facts.referencePriceMicros[position.symbol]
+        if (price === undefined) {
+          return Result.fail({ _tag: 'MissingPositionReferencePrice', symbol: position.symbol })
+        }
+        return Result.mapError(
+          Result.map(
+            notionalMicros(absolute(BigInt(position.quantityMicros)), BigInt(price)),
+            (notional) => current + notional,
+          ),
+          (cause): PaperEpisodeAllocationFailure => ({
+            _tag: 'InvalidPositionReferenceNotional',
+            cause,
+            symbol: position.symbol,
+          }),
+        )
+      }),
+    Result.succeed(0n),
+  )
+
+/**
+ * Bounds entry target construction by a sell-plus-buy turnover upper bound. Current reference gross exposure plus
+ * target gross capital bounds every absolute target delta, including rotations; an infeasible current portfolio is
+ * rejected before target planning instead of producing a risk-blocked authority transition.
+ */
+export const paperEpisodeAllocationCapitalMicros = (
+  facts: PaperEpisodeAllocationFacts,
+): Result.Result<bigint, PaperEpisodeAllocationFailure> => {
   const remainingDailyTurnover = nonNegative(facts.maxDailyTradedNotionalMicros - facts.dailyTradedNotionalMicros)
-  const referenceCapitalWithinTurnover =
+  const remainingReferenceTurnover =
     (remainingDailyTurnover * BASIS_POINTS) / (BASIS_POINTS + nonNegative(facts.maxAdverseSlippageBps))
-  return [
-    facts.accountEquityMicros,
-    facts.maxGrossExposureMicros,
-    facts.maxNetExposureMicros,
-    referenceCapitalWithinTurnover,
-  ]
-    .map(nonNegative)
-    .reduce((minimum, value) => (value < minimum ? value : minimum))
+  return Result.flatMap(currentReferenceGrossExposureMicros(facts), (currentReferenceGrossExposure) => {
+    if (currentReferenceGrossExposure > remainingReferenceTurnover) {
+      return Result.fail({
+        _tag: 'CurrentExposureExceedsRemainingTurnover',
+        currentReferenceGrossExposureMicros: currentReferenceGrossExposure,
+        remainingReferenceTurnoverMicros: remainingReferenceTurnover,
+      })
+    }
+    const referenceCapitalWithinTurnover = remainingReferenceTurnover - currentReferenceGrossExposure
+    return Result.succeed(
+      [
+        facts.accountEquityMicros,
+        facts.maxGrossExposureMicros,
+        facts.maxNetExposureMicros,
+        referenceCapitalWithinTurnover,
+      ]
+        .map(nonNegative)
+        .reduce((minimum, value) => (value < minimum ? value : minimum)),
+    )
+  })
 }
 
 export const paperGrantKey = (grant: PaperGrant): string =>

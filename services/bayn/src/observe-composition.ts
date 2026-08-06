@@ -251,6 +251,7 @@ type ObserveDecisionCompositionFailure = {
     | 'compiled-decision-hash'
     | 'cycle-binding'
     | 'observe-authority'
+    | 'paper-episode-allocation'
     | 'reconciled-state-hash'
     | 'reference-prices'
     | 'risk-policy-hash'
@@ -736,6 +737,29 @@ function buildCycleDecision<R>(
     )
     const executionSession = yield* Effect.fromResult(prepareExecutionSessionBinding(input, facts))
     const compiled = yield* compileObserveStrategyDecision(input, facts, executionSession)
+    const allocationCapitalMicros =
+      authorityRequirement === Authority.Paper
+        ? yield* Effect.fromResult(
+            paperEpisodeAllocationCapitalMicros({
+              accountEquityMicros: BigInt(facts.reconciliation.brokerState.account.equityMicros),
+              dailyTradedNotionalMicros: BigInt(facts.reconciliation.riskContext.dailyTradedNotionalMicros),
+              maxGrossExposureMicros: BigInt(input.policy.maxGrossExposureMicros),
+              maxNetExposureMicros: BigInt(input.policy.maxNetExposureMicros),
+              maxDailyTradedNotionalMicros: BigInt(input.policy.maxDailyTradedNotionalMicros),
+              maxAdverseSlippageBps: BigInt(input.policy.maxAdverseSlippageBps),
+              positions: facts.reconciliation.brokerState.positions,
+              referencePriceMicros: compiled.priceMicros,
+            }),
+          ).pipe(
+            Effect.mapError((cause) =>
+              compositionFailure(
+                'paper-episode-allocation',
+                'PAPER entry cannot fit its complete sell-plus-buy plan inside the remaining turnover budget',
+                cause,
+              ),
+            ),
+          )
+        : undefined
     const plannerPreparation = yield* Effect.fromResult(
       prepareObservePlanner(
         input,
@@ -743,14 +767,7 @@ function buildCycleDecision<R>(
         compiled,
         authorityRequirement === Authority.Paper
           ? {
-              allocationCapitalMicros: paperEpisodeAllocationCapitalMicros({
-                accountEquityMicros: BigInt(facts.reconciliation.brokerState.account.equityMicros),
-                dailyTradedNotionalMicros: BigInt(facts.reconciliation.riskContext.dailyTradedNotionalMicros),
-                maxGrossExposureMicros: BigInt(input.policy.maxGrossExposureMicros),
-                maxNetExposureMicros: BigInt(input.policy.maxNetExposureMicros),
-                maxDailyTradedNotionalMicros: BigInt(input.policy.maxDailyTradedNotionalMicros),
-                maxAdverseSlippageBps: BigInt(input.policy.maxAdverseSlippageBps),
-              }).toString(),
+              allocationCapitalMicros: allocationCapitalMicros?.toString(),
             }
           : {},
       ),
