@@ -21,7 +21,7 @@ import {
 } from './broker/alpaca'
 import { BrokerEnvironment, makeBrokerIdentity } from './broker/identity'
 import { CycleOperationsCondition, CycleOperationsReason, type CycleOperationsProjection } from './cycle-observability'
-import { CycleState } from './cycle'
+import { CycleState, CycleTerminalReason } from './cycle'
 import { CycleObservability, type CycleObservabilityShape } from './db/cycle-observability'
 import { EvidenceStore } from './db/evidence-store'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
@@ -1131,6 +1131,64 @@ describe('Bayn continuous health', () => {
         },
       },
       failedDependencies: ['cycle'],
+    })
+  })
+
+  test('keeps readiness available when a current active cycle succeeds a blocked terminal cycle', () => {
+    const previous = pendingCycle('2026-07-20T11:00:00.000Z')
+    const current = pendingCycle('2026-07-21T11:00:00.000Z')
+    const transition = deriveHealthTransition(readyState(), {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Available', value: undefined },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: {
+          _tag: 'Available',
+          value: {
+            ...emptyCycleProjection(),
+            current: {
+              ...current,
+              cycleId: '4'.repeat(64),
+              signalSessionDate: '2026-07-20',
+              executionSessionDate: '2026-07-21',
+              phase: CycleState.Active,
+              submissionOpenAt: '2026-07-21T12:45:00.000Z',
+              submissionCutoffAt: '2026-07-21T13:15:00.000Z',
+              executionOpenAt: '2026-07-21T13:30:00.000Z',
+              executionCloseAt: '2026-07-21T20:00:00.000Z',
+            },
+            last: {
+              ...previous,
+              phase: CycleState.Blocked,
+              snapshotId: null,
+              terminalReason: CycleTerminalReason.MissedPublication,
+              terminalAt: '2026-07-20T12:00:00.000Z',
+            },
+            unfinishedCycleCount: 1,
+          },
+        },
+        broker: null,
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      clock: availableClock('2026-07-21T14:00:00.000Z'),
+    })
+
+    expect(transition).toMatchObject({
+      next: {
+        status: 'READY',
+        cycle: {
+          current: { phase: CycleState.Active, cycleId: '4'.repeat(64) },
+          last: { phase: CycleState.Blocked, terminalReason: CycleTerminalReason.MissedPublication },
+          condition: CycleOperationsCondition.Running,
+          reason: CycleOperationsReason.Active,
+          alerts: { cycleFailed: false, cycleStalled: false },
+        },
+      },
+      failedDependencies: [],
     })
   })
 

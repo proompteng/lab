@@ -435,24 +435,42 @@ describe('autonomous cycle operations classification', () => {
     })
   })
 
-  test('keeps a blocked terminal result failed through a later attempt and clears on confirmed terminal success', () => {
+  test('reports a current active successor while retaining the prior blocked terminal evidence', () => {
     const blocked = snapshot(CycleState.Blocked)
-    const recovering = deriveCycleOperationsStatus(
-      projection({
-        current: snapshot(CycleState.Active, {
-          cycleId: '4'.repeat(64),
-          signalSessionDate: '2026-07-20',
-          executionSessionDate: '2026-07-21',
-          submissionOpenAt: '2026-07-20T12:00:00.000Z',
-          submissionCutoffAt: '2026-07-20T12:30:00.000Z',
-          executionOpenAt: '2026-07-20T12:32:00.000Z',
-          executionCloseAt: '2026-07-20T20:00:00.000Z',
-          updatedAt: '2026-07-20T11:59:59.000Z',
-        }),
-        last: blocked,
-        unfinishedCycleCount: 1,
-      }),
+    const successor = snapshot(CycleState.Active, {
+      cycleId: '4'.repeat(64),
+      signalSessionDate: '2026-07-20',
+      executionSessionDate: '2026-07-21',
+      submissionOpenAt: '2026-07-21T12:45:00.000Z',
+      submissionCutoffAt: '2026-07-21T13:15:00.000Z',
+      executionOpenAt: '2026-07-21T13:30:00.000Z',
+      executionCloseAt: '2026-07-21T20:00:00.000Z',
+      updatedAt: '2026-07-21T13:30:00.000Z',
+    })
+    const recoveringProjection = projection({ current: successor, last: blocked, unfinishedCycleCount: 1 })
+    const withoutSuccessor = deriveCycleOperationsStatus(
+      projection({ last: blocked }),
       Date.parse(now),
+      Authority.Observe,
+      thresholds,
+    )
+    const recovering = deriveCycleOperationsStatus(
+      recoveringProjection,
+      Date.parse('2026-07-21T14:00:00.000Z'),
+      Authority.Observe,
+      thresholds,
+    )
+    const unsafeRecovering = deriveCycleOperationsStatus(
+      {
+        ...recoveringProjection,
+        mutations: {
+          eventCount: 1,
+          unresolvedCount: 1,
+          oldestUnresolvedAt: '2026-07-21T13:59:00.000Z',
+          latestOccurredAt: '2026-07-21T13:59:00.000Z',
+        },
+      },
+      Date.parse('2026-07-21T14:00:00.000Z'),
       Authority.Observe,
       thresholds,
     )
@@ -469,9 +487,21 @@ describe('autonomous cycle operations classification', () => {
       thresholds,
     )
 
-    expect(recovering).toMatchObject({
+    expect(withoutSuccessor).toMatchObject({
       condition: CycleOperationsCondition.Failed,
       reason: CycleOperationsReason.LastCycleBlocked,
+      alerts: { cycleFailed: true },
+    })
+    expect(recovering).toMatchObject({
+      current: { phase: CycleState.Active, cycleId: '4'.repeat(64) },
+      last: { phase: CycleState.Blocked, terminalReason: CycleTerminalReason.DataStale },
+      condition: CycleOperationsCondition.Running,
+      reason: CycleOperationsReason.Active,
+      alerts: { cycleFailed: false, cycleStalled: false },
+    })
+    expect(unsafeRecovering).toMatchObject({
+      condition: CycleOperationsCondition.Failed,
+      reason: CycleOperationsReason.UnresolvedMutation,
       alerts: { cycleFailed: true },
     })
     expect(recovered).toMatchObject({
