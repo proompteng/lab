@@ -25,6 +25,7 @@ import {
   type SignalSessionReferencePrices,
   type TargetPlanResult,
   type TargetPlannerInput,
+  type TargetPlannerInputV1,
 } from './target-planner'
 
 const hash = (digit: string): string => digit.repeat(64)
@@ -169,8 +170,7 @@ const fixture = (options: FixtureOptions = {}): TargetPlannerInput => {
     observedAt: options.accountObservedAt ?? brokerObservedAt,
   }
   const prices = options.priceMicros ?? { AMD: '50000000', NVDA: '100000000' }
-  return {
-    schemaVersion: 'bayn.paper-target-planner-input.v1',
+  const common: Omit<TargetPlannerInputV1, 'schemaVersion'> = {
     strategyName: 'risk-balanced-trend',
     cycleId: hash('1'),
     decisionHash: options.decisionHash ?? hash('2'),
@@ -181,9 +181,6 @@ const fixture = (options: FixtureOptions = {}): TargetPlannerInput => {
       AMD: 0.5,
       NVDA: 0.5,
     },
-    ...(options.allocationCapitalMicros === undefined
-      ? {}
-      : { allocationCapitalMicros: options.allocationCapitalMicros }),
     referencePrices: referencePrices(
       prices,
       options.pricesObservedAt ?? pricesObservedAt,
@@ -208,6 +205,13 @@ const fixture = (options: FixtureOptions = {}): TargetPlannerInput => {
     submissionCutoffAt: options.submissionCutoffAt ?? submissionCutoffAt,
     observedAt: options.observedAt ?? observedAt,
   }
+  return options.allocationCapitalMicros === undefined
+    ? { schemaVersion: 'bayn.paper-target-planner-input.v1', ...common }
+    : {
+        schemaVersion: 'bayn.paper-target-planner-input.v2',
+        ...common,
+        allocationCapitalMicros: options.allocationCapitalMicros,
+      }
 }
 
 const planSuccess = (input: TargetPlannerInput): TargetPlanResult => {
@@ -248,6 +252,18 @@ describe('causal target planner', () => {
       { symbol: 'NVDA', targetQuantityMicros: '50000000' },
     ])
     expect(excessive).toMatchObject({ status: TargetPlanStatus.Blocked, reason: TargetPlanReason.InputMismatch })
+  })
+
+  test('versions bounded allocation separately from strict legacy planner evidence', () => {
+    const legacy = fixture({ positions: [] })
+    const bounded = fixture({ allocationCapitalMicros: '1000000000', positions: [] })
+
+    expect(legacy.schemaVersion).toBe('bayn.paper-target-planner-input.v1')
+    expect(bounded.schemaVersion).toBe('bayn.paper-target-planner-input.v2')
+    expect(Result.isFailure(planTargets({ ...legacy, allocationCapitalMicros: '1000000000' }))).toBe(true)
+    if (bounded.schemaVersion !== 'bayn.paper-target-planner-input.v2') throw new Error('expected v2 planner input')
+    const { allocationCapitalMicros: _allocationCapitalMicros, ...boundedWithoutAllocation } = bounded
+    expect(Result.isFailure(planTargets(boundedWithoutAllocation))).toBe(true)
   })
 
   test('turns an exhausted allocation into a deterministic flat no-trade target', () => {

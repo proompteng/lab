@@ -587,10 +587,8 @@ const prepareObservePlanner = <R>(
             'current strategy decision is not canonicalizable',
             compiled.decision,
           ),
-          (decisionHash) => ({
-            prices,
-            plannerInput: {
-              schemaVersion: 'bayn.paper-target-planner-input.v1',
+          (decisionHash) => {
+            const commonPlannerInput = {
               strategyName: input.cycle.identity.strategyName,
               cycleId: input.cycle.identity.cycleId,
               decisionHash,
@@ -598,17 +596,28 @@ const prepareObservePlanner = <R>(
               accountId: input.cycle.identity.accountId,
               signalDate: input.cycle.identity.signalSessionDate,
               targetWeights: overrides.targetWeights ?? compiled.decision.targetWeights,
-              ...(overrides.allocationCapitalMicros === undefined
-                ? {}
-                : { allocationCapitalMicros: overrides.allocationCapitalMicros }),
               referencePrices: prices,
               brokerState: facts.reconciliation.brokerState,
               precision: input.executionModel.precision,
               maximumInputAgeMs: Math.min(input.policy.maxBrokerStateAgeMs, input.policy.maxMarketDataAgeMs),
               submissionCutoffAt: overrides.submissionCutoffAt ?? input.cycle.window.submissionCutoffAt,
               observedAt: facts.evaluatedAt,
-            },
-          }),
+            }
+            return {
+              prices,
+              plannerInput:
+                overrides.allocationCapitalMicros === undefined
+                  ? {
+                      schemaVersion: 'bayn.paper-target-planner-input.v1' as const,
+                      ...commonPlannerInput,
+                    }
+                  : {
+                      schemaVersion: 'bayn.paper-target-planner-input.v2' as const,
+                      ...commonPlannerInput,
+                      allocationCapitalMicros: overrides.allocationCapitalMicros,
+                    },
+            }
+          },
         ),
     ),
   )

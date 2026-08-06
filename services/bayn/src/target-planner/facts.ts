@@ -141,7 +141,8 @@ export const parseTargetPlannerFacts = (input: TargetPlannerInput, hashes: Targe
     quantityIncrement: BigInt(input.precision.quantityIncrementMicros),
     minimumBuyNotional: BigInt(input.precision.minimumBuyNotionalMicros),
     equity,
-    allocationCapital: input.allocationCapitalMicros === undefined ? equity : BigInt(input.allocationCapitalMicros),
+    allocationCapital:
+      input.schemaVersion === 'bayn.paper-target-planner-input.v1' ? equity : BigInt(input.allocationCapitalMicros),
     availableBuyingPower: BigInt(input.brokerState.account.buyingPowerMicros),
   }
 }
