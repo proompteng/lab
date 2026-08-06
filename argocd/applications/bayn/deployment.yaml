@@ -23,7 +23,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-08-05T18:39:15Z"
+        kubectl.kubernetes.io/restartedAt: "2026-08-06T09:27:24Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -47,11 +47,11 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: 716d38b69e86e083dadc413d7ab880c536e0fac0
+              value: 5b3eabfc4d55671d10322b47cda641b7d0161bcf
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:c3e81bc00b0a4601d932c311876ba1a59c7c83557c0cd56ad53ac12fae76ad33
+              value: sha256:15649e3ad02f83eae913b66dc4545d1dc587c9c692b9d6335e5d76e282f272f7
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "dde55f6292080b185554148cbfe4380e729626df1d11cbb47392645a80ce6c46"
             - name: BAYN_STRATEGY_PARAMETER_HASH
@@ -63,9 +63,9 @@ spec:
                   key: paper-activation-request
             - name: BAYN_MAXIMUM_AUTHORITY
               value: OBSERVE
-            # sha256("bayn/authority-generation/autonomous-observe-v6")
+            # sha256("bayn/authority-generation/autonomous-observe-v7")
             - name: BAYN_AUTHORITY_GENERATION_HASH
-              value: "8c36d4fe9956e2b73de40e47b5cb7a21d764acf3e0422bd4caaa88e594d6c94b"
+              value: "e26fd8bb80aea84d7da04b0a57bddf132031bf27badc8d3f12d7b9bc5ce7a519"
             - name: BAYN_CYCLE_POLL_INTERVAL_MS
               value: "30000"
             - name: BAYN_BROKER_PROVIDER
