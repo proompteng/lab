@@ -420,12 +420,11 @@ const lifecycleCondition = (
   nowMs: number,
   cycleStallThresholdMs: number,
 ): readonly [CycleOperationsCondition, CycleOperationsReason] => {
-  if (projection.last?.phase === CycleState.Blocked) {
-    return [CycleOperationsCondition.Failed, CycleOperationsReason.LastCycleBlocked]
-  }
-
   const current = projection.current
   if (current === null) {
+    if (projection.last?.phase === CycleState.Blocked) {
+      return [CycleOperationsCondition.Failed, CycleOperationsReason.LastCycleBlocked]
+    }
     if (projection.last?.phase === CycleState.Completed) {
       return [CycleOperationsCondition.Waiting, CycleOperationsReason.LastCycleCompleted]
     }
