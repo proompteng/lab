@@ -195,6 +195,59 @@ export const makeObserveAuthorityInterpreter = (
       return current
     })
 
+  const terminalizeUnusedPreSubmissionResearchCycles = (
+    decision: Extract<ObserveGenerationDecision, { readonly _tag: 'RotateObserveGeneration' }>,
+    activatedAt: Date,
+  ) =>
+    sql`
+      UPDATE autonomous_cycles AS cycle
+      SET
+        state = 'BLOCKED',
+        terminal_reason = 'BLOCKED_PROVENANCE_MISMATCH',
+        state_version = cycle.state_version + 1,
+        updated_at = ${activatedAt},
+        terminal_at = ${activatedAt}
+      FROM authority_state AS state
+      JOIN authority_generations AS previous_generation
+        ON previous_generation.generation_hash = state.generation_hash
+      JOIN authority_generations AS candidate_generation
+        ON candidate_generation.generation_hash = ${decision.generationHash}
+      WHERE state.singleton
+        AND state.generation_hash = ${decision.current.generationHash}
+        AND state.maximum = 'PAPER'
+        AND previous_generation.maximum = 'PAPER'
+        AND previous_generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
+        AND previous_generation.proof_plan_hash IS NOT NULL
+        AND candidate_generation.previous_generation_hash = previous_generation.generation_hash
+        AND candidate_generation.maximum = 'OBSERVE'
+        AND candidate_generation.activation_schema_version IS NULL
+        AND candidate_generation.authority_version = ${decision.authorityVersion}
+        AND candidate_generation.activated_at = ${activatedAt}
+        AND (
+          (
+            state.effective = 'OBSERVE'
+            AND state.kill_state = 'ACTIVE'
+            AND state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
+          )
+          OR (
+            state.effective = 'PAPER'
+            AND state.kill_state = 'CLEAR'
+            AND state.reason IS NULL
+          )
+        )
+        AND cycle.qualification_run_id = previous_generation.proof_plan_hash
+        AND cycle.account_id = previous_generation.account_id
+        AND cycle.state IN ('PENDING', 'ACTIVE')
+        AND cycle.decision_hash IS NULL
+        AND cycle.updated_at <= ${activatedAt}
+        AND ${activatedAt} < cycle.submission_open_at
+        AND NOT EXISTS (
+          SELECT 1
+          FROM intents AS intent
+          WHERE intent.cycle_id = cycle.cycle_id
+        )
+    `
+
   const rotateObserveGeneration = (
     decision: Extract<ObserveGenerationDecision, { readonly _tag: 'RotateObserveGeneration' }>,
   ) =>
@@ -218,6 +271,7 @@ export const makeObserveAuthorityInterpreter = (
           ${activatedAt}
         )
       `
+      yield* terminalizeUnusedPreSubmissionResearchCycles(decision, activatedAt)
       const rotated = yield* sql<Record<string, unknown>>`
         WITH latest_reconciliation AS (
           SELECT

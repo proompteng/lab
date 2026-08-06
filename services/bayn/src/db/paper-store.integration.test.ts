@@ -1993,7 +1993,7 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
-  test('rearms an unused failed research PAPER episode only after its cycle is terminal and reconciled', async () => {
+  test('rolls back research PAPER rearm after the cycle submission window opens', async () => {
     const sourceGenerationHash = hash('research-paper-rearm-source')
     const nextSourceGenerationHash = hash('research-paper-rearm-next-source')
     const activationReconciliation = exactReconciliation('research-paper-rearm-activation')
@@ -2027,7 +2027,7 @@ describePostgres('paper accounting persistence', () => {
 
           yield* sql`
             WITH timing AS (
-              SELECT clock_timestamp() AS created_at, date_trunc('day', clock_timestamp()) AS day_start
+              SELECT (clock_timestamp() AT TIME ZONE 'UTC')::date - 1 AS execution_date
             )
             INSERT INTO autonomous_cycles (
               cycle_id, schema_version, identity_schema_version, strategy_name,
@@ -2045,18 +2045,23 @@ describePostgres('paper accounting persistence', () => {
             SELECT
               ${cycleId}, 'bayn.autonomous-cycle.v1', 'bayn.autonomous-cycle-identity.v1',
               'risk-balanced-trend', ${activation.grant.planHash}, ${activation.strategyProtocolHash}, ${accountId},
-              day_start::date, 'test-calendar-v1',
+              execution_date - 1, 'test-calendar-v1',
               'bayn.autonomous-cycle-execution-policy.v1', ${hash('research-paper-rearm-policy')},
               ${hash('research-paper-rearm-execution-model')}, 1800000, 1800000,
               'bayn.autonomous-cycle-window.v1', 'bayn.alpaca-market-calendar-observation.v1',
-              'alpaca-v2-calendar', ${hash('research-paper-rearm-calendar')}, (day_start + interval '1 day')::date,
-              day_start + interval '20 hours', day_start + interval '1 day 12 hours 30 minutes',
-              day_start + interval '1 day 12 hours 30 minutes', day_start + interval '1 day 13 hours 30 minutes',
-              day_start + interval '1 day 15 hours', day_start + interval '1 day 13 hours',
-              'PENDING', NULL, NULL, NULL, 1, created_at, created_at, NULL
+              'alpaca-v2-calendar', ${hash('research-paper-rearm-calendar')}, execution_date,
+              ((execution_date - 1) + time '20:00') AT TIME ZONE 'UTC',
+              (execution_date + time '12:30') AT TIME ZONE 'UTC',
+              (execution_date + time '12:30') AT TIME ZONE 'UTC',
+              (execution_date + time '13:30') AT TIME ZONE 'UTC',
+              (execution_date + time '20:00') AT TIME ZONE 'UTC',
+              (execution_date + time '13:00') AT TIME ZONE 'UTC',
+              'PENDING', NULL, NULL, NULL, 1,
+              ((execution_date - 1) + time '20:00') AT TIME ZONE 'UTC',
+              ((execution_date - 1) + time '20:00') AT TIME ZONE 'UTC', NULL
             FROM timing
           `
-          yield* seedExactReconciliation(exactReconciliation('research-paper-rearm-before-terminal'))
+          yield* seedExactReconciliation(exactReconciliation('research-paper-rearm-after-submission-open'))
           const beforePremature = yield* readAuthorityTupleEvidence
           const premature = yield* Effect.flip(
             store.ensureAuthorityGeneration({
@@ -2065,37 +2070,23 @@ describePostgres('paper accounting persistence', () => {
             }),
           )
           const afterPremature = yield* readAuthorityTupleEvidence
-
-          yield* sql`
-            WITH timing AS (
-              SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS terminal_at
-              FROM autonomous_cycles
-              WHERE cycle_id = ${cycleId}
-            )
-            UPDATE autonomous_cycles AS cycle
-            SET
-              state = 'BLOCKED',
-              terminal_reason = 'BLOCKED_AUTHORITY',
-              state_version = 2,
-              updated_at = timing.terminal_at,
-              terminal_at = timing.terminal_at
-            FROM timing
+          const [rollback] = yield* sql<{
+            candidate_history_count: number
+            cycle_state: string
+            cycle_state_version: number
+          }>`
+            SELECT
+              cycle.state AS cycle_state,
+              cycle.state_version AS cycle_state_version,
+              (
+                SELECT count(*)::integer
+                FROM authority_generations
+                WHERE generation_hash = ${nextSourceGenerationHash}
+              ) AS candidate_history_count
+            FROM autonomous_cycles AS cycle
             WHERE cycle.cycle_id = ${cycleId}
           `
-          yield* seedExactReconciliation(exactReconciliation('research-paper-rearm-after-terminal'))
-          const rearmed = yield* store.ensureAuthorityGeneration({
-            generationHash: nextSourceGenerationHash,
-            maximum: Authority.Observe,
-          })
-          const [history] = yield* sql<{
-            maximum: Authority
-            previous_generation_hash: string | null
-          }>`
-            SELECT maximum, previous_generation_hash
-            FROM authority_generations
-            WHERE generation_hash = ${nextSourceGenerationHash}
-          `
-          return { activated, afterPremature, beforePremature, history, premature, rearmed }
+          return { activated, afterPremature, beforePremature, premature, rollback }
         }),
       )
 
@@ -2107,28 +2098,23 @@ describePostgres('paper accounting persistence', () => {
       })
       expect(result.premature).toMatchObject({ operation: 'authority', failure: 'invariant' })
       expect(result.afterPremature).toEqual(result.beforePremature)
-      expect(result.rearmed).toMatchObject({
-        generationHash: nextSourceGenerationHash,
-        maximum: Authority.Observe,
-        effective: Authority.Observe,
-        kill: KillState.Clear,
-      })
-      expect(result.rearmed.reason).toBeUndefined()
-      expect(result.history).toEqual({
-        maximum: Authority.Observe,
-        previous_generation_hash: activation.generationHash,
+      expect(result.rollback).toEqual({
+        candidate_history_count: 0,
+        cycle_state: 'PENDING',
+        cycle_state_version: 1,
       })
     } finally {
       await runtime.dispose()
     }
   }, 15_000)
 
-  test('rearms a clear research PAPER generation with no intent only after its cycle is terminal', async () => {
+  test('atomically supersedes an active zero-intent research PAPER cycle before submission and rearms', async () => {
     const sourceGenerationHash = hash('clear-research-paper-rearm-source')
     const nextSourceGenerationHash = hash('clear-research-paper-rearm-next-source')
     const activationReconciliation = exactReconciliation('clear-research-paper-rearm-activation')
     const activation = makeResearchActivation(sourceGenerationHash, activationReconciliation)
     const cycleId = hash('clear-research-paper-rearm-cycle')
+    const snapshotId = hash('clear-research-paper-rearm-snapshot')
     const runtime = makeStoreRuntime({ fail: false, planHashes: [] }, researchRuntimeConfig(sourceGenerationHash))
     try {
       const result = await runtime.runPromise(
@@ -2146,7 +2132,25 @@ describePostgres('paper accounting persistence', () => {
           const activated = yield* activateResearch(researchProofBinding(activation))
           yield* sql`
             WITH timing AS (
-              SELECT clock_timestamp() AS created_at, date_trunc('day', clock_timestamp()) AS day_start
+              SELECT (clock_timestamp() AT TIME ZONE 'UTC')::date + 2 AS execution_date
+            )
+            INSERT INTO snapshot_references (
+              snapshot_id, schema_version, database_name, table_name, dataset_version,
+              source, source_feed, adjustment, content_hash, row_count,
+              first_session, last_session, manifest
+            )
+            SELECT
+              ${snapshotId}, 'bayn.finalized-snapshot.v3', 'signal', 'adjusted_daily_bars_v2',
+              'signal.adjusted-daily-snapshot.v2', 'alpaca', 'sip', 'all', ${snapshotId}, 1,
+              execution_date - 1, execution_date - 1,
+              jsonb_build_object('calendarVersion', 'test-calendar-v1')
+            FROM timing
+          `
+          yield* sql`
+            WITH timing AS (
+              SELECT
+                clock_timestamp() AS created_at,
+                (clock_timestamp() AT TIME ZONE 'UTC')::date + 2 AS execution_date
             )
             INSERT INTO autonomous_cycles (
               cycle_id, schema_version, identity_schema_version, strategy_name,
@@ -2164,43 +2168,48 @@ describePostgres('paper accounting persistence', () => {
             SELECT
               ${cycleId}, 'bayn.autonomous-cycle.v1', 'bayn.autonomous-cycle-identity.v1',
               'risk-balanced-trend', ${activation.grant.planHash}, ${activation.strategyProtocolHash}, ${accountId},
-              day_start::date, 'test-calendar-v1',
+              execution_date - 1, 'test-calendar-v1',
               'bayn.autonomous-cycle-execution-policy.v1', ${hash('clear-rearm-policy')},
               ${hash('clear-rearm-execution-model')}, 1800000, 1800000,
               'bayn.autonomous-cycle-window.v1', 'bayn.alpaca-market-calendar-observation.v1',
-              'alpaca-v2-calendar', ${hash('clear-rearm-calendar')}, (day_start + interval '1 day')::date,
-              day_start + interval '20 hours', day_start + interval '1 day 12 hours 30 minutes',
-              day_start + interval '1 day 12 hours 30 minutes', day_start + interval '1 day 13 hours 30 minutes',
-              day_start + interval '1 day 15 hours', day_start + interval '1 day 13 hours',
+              'alpaca-v2-calendar', ${hash('clear-rearm-calendar')}, execution_date,
+              created_at, (execution_date + time '12:30') AT TIME ZONE 'UTC',
+              (execution_date + time '12:30') AT TIME ZONE 'UTC',
+              (execution_date + time '13:30') AT TIME ZONE 'UTC',
+              (execution_date + time '20:00') AT TIME ZONE 'UTC',
+              (execution_date + time '13:00') AT TIME ZONE 'UTC',
               'PENDING', NULL, NULL, NULL, 1, created_at, created_at, NULL
             FROM timing
           `
-          yield* seedExactReconciliation(exactReconciliation('clear-research-paper-rearm-before-terminal'))
-          const beforePremature = yield* readAuthorityTupleEvidence
-          const premature = yield* Effect.flip(
-            store.ensureAuthorityGeneration({
-              generationHash: nextSourceGenerationHash,
-              maximum: Authority.Observe,
-            }),
-          )
-          const afterPremature = yield* readAuthorityTupleEvidence
           yield* sql`
             WITH timing AS (
-              SELECT greatest(clock_timestamp(), updated_at + interval '1 millisecond') AS terminal_at
+              SELECT clock_timestamp() AS updated_at
               FROM autonomous_cycles
               WHERE cycle_id = ${cycleId}
             )
             UPDATE autonomous_cycles AS cycle
             SET
-              state = 'BLOCKED',
-              terminal_reason = 'BLOCKED_AUTHORITY',
+              snapshot_id = ${snapshotId},
               state_version = 2,
-              updated_at = timing.terminal_at,
-              terminal_at = timing.terminal_at
+              updated_at = timing.updated_at
             FROM timing
             WHERE cycle.cycle_id = ${cycleId}
           `
-          yield* seedExactReconciliation(exactReconciliation('clear-research-paper-rearm-after-terminal'))
+          yield* sql`
+            WITH timing AS (
+              SELECT clock_timestamp() AS updated_at
+              FROM autonomous_cycles
+              WHERE cycle_id = ${cycleId}
+            )
+            UPDATE autonomous_cycles AS cycle
+            SET
+              state = 'ACTIVE',
+              state_version = 3,
+              updated_at = timing.updated_at
+            FROM timing
+            WHERE cycle.cycle_id = ${cycleId}
+          `
+          yield* seedExactReconciliation(exactReconciliation('clear-research-paper-rearm-before-rollover'))
           const rearmed = yield* store.ensureAuthorityGeneration({
             generationHash: nextSourceGenerationHash,
             maximum: Authority.Observe,
@@ -2213,7 +2222,27 @@ describePostgres('paper accounting persistence', () => {
             FROM authority_generations
             WHERE generation_hash = ${nextSourceGenerationHash}
           `
-          return { activated, afterPremature, beforePremature, history, premature, rearmed }
+          const [cycle] = yield* sql<{
+            decision_hash: string | null
+            intent_count: number
+            state: string
+            state_version: number
+            terminal_reason: string | null
+          }>`
+            SELECT
+              cycle.state,
+              cycle.state_version,
+              cycle.decision_hash,
+              cycle.terminal_reason,
+              (
+                SELECT count(*)::integer
+                FROM intents AS intent
+                WHERE intent.cycle_id = cycle.cycle_id
+              ) AS intent_count
+            FROM autonomous_cycles AS cycle
+            WHERE cycle.cycle_id = ${cycleId}
+          `
+          return { activated, cycle, history, rearmed }
         }),
       )
 
@@ -2223,8 +2252,6 @@ describePostgres('paper accounting persistence', () => {
         effective: Authority.Paper,
         kill: KillState.Clear,
       })
-      expect(result.premature).toMatchObject({ operation: 'authority', failure: 'invariant' })
-      expect(result.afterPremature).toEqual(result.beforePremature)
       expect(result.rearmed).toMatchObject({
         generationHash: nextSourceGenerationHash,
         maximum: Authority.Observe,
@@ -2235,6 +2262,13 @@ describePostgres('paper accounting persistence', () => {
       expect(result.history).toEqual({
         maximum: Authority.Observe,
         previous_generation_hash: activation.generationHash,
+      })
+      expect(result.cycle).toEqual({
+        decision_hash: null,
+        intent_count: 0,
+        state: 'BLOCKED',
+        state_version: 4,
+        terminal_reason: 'BLOCKED_PROVENANCE_MISMATCH',
       })
     } finally {
       await runtime.dispose()
