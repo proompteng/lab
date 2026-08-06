@@ -477,6 +477,44 @@ spec:
                   argocd.argoproj.io/sync-wave: "4"
                 automation: auto
                 enabled: "false"
+              - name: restate
+                path: argocd/applications/restate
+                namespace: restate
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                automation: auto
+                enabled: "true"
+                ignoreDifferences:
+                  - group: apps
+                    kind: StatefulSet
+                    namespace: restate
+                    name: restate
+                    jqPathExpressions:
+                      - .spec.volumeClaimTemplates[].apiVersion
+                      - .spec.volumeClaimTemplates[].kind
+                      - .spec.volumeClaimTemplates[].status
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false
+              - name: restate-example
+                path: argocd/applications/restate-example
+                namespace: restate-example
+                annotations:
+                  argocd.argoproj.io/sync-wave: "5"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                    restate.proompteng.ai/admin-access: "true"
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false
               - name: temporal
                 path: argocd/applications/temporal
                 namespace: temporal

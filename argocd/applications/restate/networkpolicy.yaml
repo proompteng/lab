@@ -1,0 +1,34 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: restate-ingress
+  labels:
+    app.kubernetes.io/name: restate
+spec:
+  podSelector:
+    matchLabels:
+      app: restate
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: admin
+          protocol: TCP
+        - port: ingress
+          protocol: TCP
+        - port: node
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              restate.proompteng.ai/admin-access: "true"
+      ports:
+        - port: admin
+          protocol: TCP
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - port: ingress
+          protocol: TCP
