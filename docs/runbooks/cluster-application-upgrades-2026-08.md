@@ -1059,8 +1059,8 @@ Applications were `Synced/Healthy` at the exact final merge.
 
 | Application | From                                 | To                                   | Reconciliation | Expected impact                                                       |
 | ----------- | ------------------------------------ | ------------------------------------ | -------------- | --------------------------------------------------------------------- |
-| Temporal    | chart `1.5.0`, server/admin `1.31.1` | chart `1.6.0`, server/admin `1.31.2` | Automatic      | Roll six stateless Deployments and replace the idempotent schema Job. |
-| Temporal UI | app `2.51.1`                         | app `2.52.0`                         | Automatic      | Roll the singleton web Deployment.                                    |
+| Temporal    | chart `1.5.0`, server/admin `1.31.1` | chart `1.6.0`, server/admin `1.31.2` | Manual         | Roll six stateless Deployments and replace the idempotent schema Job. |
+| Temporal UI | app `2.51.1`                         | app `2.52.0`                         | Manual         | Roll the singleton web Deployment.                                    |
 
 Upstream chart 1.5.0 to 1.6.0 changes only `Chart.yaml` and the three default image tags; no chart template changes.
 The Temporal server 1.31.1 to 1.31.2 comparison contains no Cassandra, persistence, or schema files. The 29 stable
@@ -1097,3 +1097,54 @@ to remain exact, and visible workflow counts not to decrease. Require Cassandra 
 Elasticsearch `green` with zero unassigned shards. Check a bounded recent server log window for recurring errors.
 Because the patch has no schema change, rollback is a reviewed Git revert; Temporal supports an older binary with a
 newer schema, but never remove Cassandra or Elasticsearch data during rollback.
+
+Wave 6a was accepted at merge `1ee45ded122b1de749ee01f9b0b7147926ce31b2`. A reviewed manual Argo sync replaced
+the schema Job, which reported zero Cassandra updates from schema 1.13 and completed with admin-tools 1.31.2 before
+the six Deployment rollouts. All six Deployment UIDs and both data StatefulSet UIDs remained unchanged. The six new
+Pods were ready with zero restarts and exact target image digests. Temporal reported server 1.31.2, `SERVING`, the
+same cluster ID and 512 history shards, both namespaces registered, and visible workflow counts 739 and one.
+Cassandra remained three `UN` nodes at schema 1.13; Elasticsearch remained green with zero unassigned shards. The
+simultaneous singleton rollout produced bounded membership errors against old Pod addresses, and the visibility Job
+reported the existing Elasticsearch legacy-template deprecation; a subsequent 60-second window had zero errors or
+warnings across the five runtime services. The Application finished `Synced/Healthy` at the exact merge.
+
+## Wave 6b: Open WebUI database migration
+
+| Application | From                         | To                           | Reconciliation | Expected impact                                                                     |
+| ----------- | ---------------------------- | ---------------------------- | -------------- | ----------------------------------------------------------------------------------- |
+| Open WebUI  | chart `15.2.0`, app `0.10.2` | chart `16.0.0`, app `0.11.0` | Automatic      | Stop the singleton, migrate PostgreSQL, then start one replacement StatefulSet Pod. |
+
+The chart changes only chart/app metadata and its disabled Ollama dependency from 1.65.0 to 1.70.0; Open WebUI chart
+templates are unchanged. Both full Jangar renders contain the same 38 identities with canonical hash
+`40eb37d7881e25ab6ebcbc56f0a83f9e72261d8ab9fffe8c2d213b6c9941bbe3`. The StatefulSet selector, singleton replica,
+service, external PVC, PostgreSQL connection, Redis connection, and persistence mounts remain unchanged. The target
+Open WebUI multi-architecture image is pinned to
+`sha256:72c0ba641ba75e7aa52655cb242570906ececd09b1140fb736483038a22b3228`.
+
+Open WebUI 0.11.0 explicitly requires a database and associated-data backup and does not support mixed-version
+rolling deployments. This installation has exactly one replica, so its default StatefulSet update stops 0.10.2 before
+starting 0.11.0. The target migration chain advances Alembic from `42e2978c7933` through seven reversible migrations
+to `f0bd01a18a3d`; it adds chat/current-message/variable columns and indexes. The preflight has one user, zero
+normalized-email duplicates, zero memories, 28 chats, 124 chat messages, and zero automations. The shared Jangar
+database is about 25 GB and its schema-only SHA-256 is
+`2dedef4448cd6b5d6b20c58e2464c1d73eca5875ca2607932a7fa0f6b629a217`.
+
+Before merge, require a new completed `barmanObjectStore` backup of `jangar-db` and a ready RBD `VolumeSnapshot` of
+PVC `open-webui`; retain both until final fleet acceptance. Continuous archiving must remain healthy. Preserve these
+identities:
+
+| Resource                               | UID                                    |
+| -------------------------------------- | -------------------------------------- |
+| `StatefulSet/open-webui`               | `1087ca2d-7d9a-4ea0-a214-0f06b92096dd` |
+| `Service/open-webui`                   | `cf5789f3-ada0-4091-970d-3c6ff399db17` |
+| `ServiceAccount/open-webui`            | `9d55967f-4608-4395-9c4b-85b8b1f67e0a` |
+| `PersistentVolumeClaim/open-webui`     | `2ffa4cb1-87c9-40e9-b467-e2a939f6607f` |
+| `Cluster.postgresql.cnpg.io/jangar-db` | `2059ac54-3ca8-4ed0-bb06-60288ae3a310` |
+
+After merge, hard-refresh and wait for `jangar` at the exact merge. Require the StatefulSet rollout to finish with one
+ready 0.11.0 Pod at the pinned digest and zero restarts, all identities and the PVC volume binding to remain exact,
+`/health` to return true, and `/api/version` to report 0.11.0. Require Alembic head `f0bd01a18a3d`, unchanged row
+counts in all five migration-touched tables, no normalized-email duplicates, a healthy two-instance CNPG cluster with
+continuous archiving, and no recurring migration/runtime errors. Rollback requires stopping 0.11.0 and restoring both
+the pre-merge database point and associated-data snapshot before reverting Git; do not run 0.10.2 against a partially
+migrated database.
