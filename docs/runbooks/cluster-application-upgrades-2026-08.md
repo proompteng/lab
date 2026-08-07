@@ -1277,12 +1277,13 @@ The migration adds the 26.6 group-organization relationship, offline-session rea
 timestamps, followed by the 26.7 realm display-name migration, verifiable-credential and outbox tables, persistent
 authentication-session tables, consent-scope parameters, login-failure storage, client timestamps, and cluster-event
 storage. The preflight database is 13 MB with 178 recorded changesets, 90 public tables, 518 columns, and 213 indexes.
-It contains one realm, eight clients, two users, 32 roles, four offline user sessions, and four offline client sessions.
-Its schema-only SHA-256 is `568fe818eb8b79ca2f770d1951825f3ccb54508b655403c05a4a6fe6749dd433`.
+It contains one realm, eight clients, two users, 32 roles, nine offline user sessions, and nine offline client sessions.
+Its canonical schema-only SHA-256, after removing PostgreSQL 18's randomized dump restrict markers, is
+`bd62c328c6a8fb327b32a74368d2eb4728e097b81a8754b708d3b6e769fd16e3`.
 
 There is no configured CNPG object-store backup for this cluster. The validated custom-format logical dump
-`/tmp/keycloak-v26-5-1-20260807t141340z.dump` is 211,890 bytes with SHA-256
-`c992e24940e85b53e8babcc5adf80a6a354ada0774bdf51c4b9e5bcfd985c065`; `pg_restore --list` parsed it completely.
+`/tmp/keycloak-v26-5-1-20260807t141927z.dump` is 211,890 bytes with SHA-256
+`dcbf5ddd92797c6195cd675a00122891c16b4c02d15aa643a314930594d5d1b3`; `pg_restore --list` parsed it completely.
 After a primary checkpoint, VolumeSnapshot `keycloak-db-pre-v26-7-1-20260807t141340z` became ready for the 5 GiB
 primary PVC with UID `75f3f4da-5c90-4a9d-b406-cded2a03f863`. Retain both recovery artifacts through final fleet
 acceptance. Preserve these identities:
