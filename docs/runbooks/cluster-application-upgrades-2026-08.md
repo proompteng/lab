@@ -724,3 +724,80 @@ contain no `Namespace`, the live namespace UID to remain unchanged, the managed-
 present without a tracking annotation, and all Knative operator, Serving, Eventing, and Service identities and readiness
 states to remain unchanged. Roll back by restoring the protected source Namespace; never delete or recreate the live
 namespace.
+
+The namespace management handoff completed on 2026-08-07 at merge
+`5984b9d7a2e31e24562ddd58d59c3b23bca15bc4`. The namespace retained UID
+`b45355e7-34c7-483b-9e0f-1431571ae7f7`, gained `app.kubernetes.io/managed-by=argocd`, retained Argo's generated
+`ServerSideApply=true` marker, and had no tracking annotation. The Application reported no Namespace in
+`status.resources`. Both operator Pods retained their UIDs and zero restart counts; all Knative operand and Service
+identities and readiness states were unchanged.
+
+## Wave 4b: Knative Serving
+
+| Application     | From     | To       | Reconciliation | Expected impact                                                        |
+| --------------- | -------- | -------- | -------------- | ---------------------------------------------------------------------- |
+| Knative Serving | `1.22.0` | `1.23.0` | Automatic      | Serving and net-istio control-plane Pods roll; user revisions persist. |
+
+Knative Serving 1.23.0 is the current upstream release. Its peeled tag commit is
+`7ed4aa2ab601e3a33c6552285f6e0d910747351d`; release asset hashes are
+`b172ff4901ed50f8e4e09ff8616e54d22e264df7086ce8cb74f513a04812fe74` for `serving-crds.yaml`,
+`be3f16c9c0ac9276cc173ef04871aaeac78537f9edb116310caa02f016e9cbc2` for `serving-core.yaml`, and
+`07d412839ff834de8a14903d51175383d8f3f1d682805325840493f165eef53b` for `serving-hpa.yaml`. The 1.23
+`net-istio.yaml` hash is `74fe1afaf2f7ec714f92d085a4211d54fde87bc6c5502538c07d9cf7cf01751e`.
+The old and new Serving asset sets each contain the same 61 resource identities; both net-istio releases contain the
+same 13 identities. No object replacement is expected.
+
+The pre-merge Serving CR UID is `3726092f-a8ce-4690-9445-0b9c2968f564`. All seven control-plane Deployments were
+available at five replicas. The three Services, Routes, and Configurations were ready at revisions `froussard-00025`,
+`torghut-01545`, and `torghut-sim-01617`; `https://froussard.proompteng.ai` returned HTTP 200. Preserve the five
+Serving CRDs and user-facing identities below.
+
+| Resource                                                           | UID                                    | Stored version or state   |
+| ------------------------------------------------------------------ | -------------------------------------- | ------------------------- |
+| Deployment `knative-serving/activator`                             | `93b7e990-ebca-4c06-9e82-70a5e4c3ca47` | five ready replicas       |
+| Deployment `knative-serving/autoscaler`                            | `9f830a5e-fdcb-4d88-9d4a-49f697673c57` | five ready replicas       |
+| Deployment `knative-serving/autoscaler-hpa`                        | `1acc84f2-54ff-4040-ad70-bdfc1ebb1e69` | five ready replicas       |
+| Deployment `knative-serving/controller`                            | `fe822778-eab9-468c-a3b2-36865b4a06f6` | five ready replicas       |
+| Deployment `knative-serving/net-istio-controller`                  | `26033def-50ed-44d4-b547-0d2714d218d9` | five ready replicas       |
+| Deployment `knative-serving/net-istio-webhook`                     | `88bdf8cc-58db-496f-820d-f1029b281a2f` | five ready replicas       |
+| Deployment `knative-serving/webhook`                               | `94e278b6-6a14-4b1e-b83b-2048f23ece4c` | five ready replicas       |
+| CRD `configurations.serving.knative.dev`                           | `53429658-026b-437f-9890-7b7dfa357ebd` | `v1`                      |
+| CRD `domainmappings.serving.knative.dev`                           | `8421d3fb-c3b5-4190-81be-3abf310f48f5` | `v1beta1`                 |
+| CRD `revisions.serving.knative.dev`                                | `77daef6d-fc0a-48bd-b6e3-20e84f1018a7` | `v1`                      |
+| CRD `routes.serving.knative.dev`                                   | `a57ac078-7437-4f1f-92de-52d64721a70b` | `v1`                      |
+| CRD `services.serving.knative.dev`                                 | `9cec4931-03c0-4faa-9ca2-35b9f405ad30` | `v1`                      |
+| KService `froussard/froussard`                                     | `302afcd9-5f4e-4ed7-ac7c-e89aa0db665e` | ready `froussard-00025`   |
+| KService `torghut/torghut`                                         | `4e723125-fa71-46d4-b300-55e0169952e5` | ready `torghut-01545`     |
+| KService `torghut/torghut-sim`                                     | `4a17ef99-f94d-4dd9-860f-3c26a484aa82` | ready `torghut-sim-01617` |
+| Revision `froussard/froussard-00025`                               | `075d2b31-ba1f-454b-806e-97b3093c0b4b` | ready                     |
+| Revision `torghut/torghut-01545`                                   | `551aa2d2-867a-48c0-8b96-713617039fec` | ready                     |
+| Revision `torghut/torghut-sim-01617`                               | `a2b7ed65-bc6f-45ef-a604-866680bdd3af` | ready                     |
+| Certificate `froussard/route-d6056a74-af3a-477f-bf21-c947784e55f5` | `28dccf3a-bc7f-4002-9669-dfff533a5e26` | ready                     |
+| TLS Secret `froussard/route-d6056a74-af3a-477f-bf21-c947784e55f5`  | `dfa5ddc5-f8ed-4142-af37-937bbf8bd5ea` | present                   |
+
+```bash
+set -euo pipefail
+git fetch --quiet origin main
+upgrade_revision=$(gh pr view codex/cluster-app-upgrades-wave4-knative-serving -R proompteng/lab \
+  --json state,mergeCommit --jq 'select(.state == "MERGED") | .mergeCommit.oid')
+test -n "$upgrade_revision"
+test "$(git rev-parse origin/main)" = "$upgrade_revision"
+
+argocd app get knative-serving --hard-refresh >/dev/null
+argocd app wait knative-serving --sync --health --timeout 1200
+test "$(kubectl -n argocd get application knative-serving \
+  -o jsonpath='{.status.operationState.syncResult.revision}')" = "$upgrade_revision"
+kubectl -n knative-serving wait --for=jsonpath='{.status.version}'=1.23.0 \
+  knativeserving/knative-serving --timeout=15m
+for deployment_name in activator autoscaler autoscaler-hpa controller net-istio-controller net-istio-webhook webhook; do
+  kubectl -n knative-serving rollout status "deployment/$deployment_name" --timeout=15m
+done
+curl -fsS -o /dev/null https://froussard.proompteng.ai
+```
+
+Acceptance requires the Application to be `Synced/Healthy` at the exact merge revision and the Serving CR to retain its
+UID while reporting Ready at 1.23.0. All seven Deployment UIDs, five Serving CRD UIDs and stored versions, and all user
+Service, Route, Configuration, revision, Certificate, and Secret identities must remain unchanged. Every replacement
+control-plane Pod must be ready with zero restarts, all three Services must retain their latest-ready revisions, and the
+external Froussard route must still return HTTP 200. Roll back the version field through a reviewed revert only if the
+1.23 control plane has not written incompatible state; preserve the newer CRDs and all user workloads during rollback.

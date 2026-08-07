@@ -4,7 +4,7 @@ metadata:
   name: knative-serving
   namespace: knative-serving
 spec:
-  version: 1.22.0
+  version: 1.23.0
   high-availability:
     replicas: 5
   ingress:
