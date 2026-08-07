@@ -67,7 +67,6 @@ jobs:
       image_name: headlamp
       package_attr: headlamp-image
       tag: sha-${{ github.sha }}
-      pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
       release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'headlamp-release-contract' || '' }}
       image_build_timeout: 20m
