@@ -24,7 +24,7 @@ spec:
       serviceAccountName: torghut-alloy
       containers:
         - name: alloy
-          image: grafana/alloy:v1.11.2
+          image: grafana/alloy:v1.18.1
           imagePullPolicy: IfNotPresent
           args:
             - run

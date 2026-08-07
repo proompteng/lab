@@ -32,4 +32,4 @@ images:
     newTag: 0.18.0
   - name: grafana/alloy
     newName: mirror.gcr.io/grafana/alloy
-    newTag: v1.11.2
+    newTag: v1.18.1
