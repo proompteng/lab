@@ -61,6 +61,7 @@ const riskFailurePairs = [
   { operation: 'bind-authority', reason: 'authority-maximum' },
   { operation: 'canonicalize-input', reason: 'evidence' },
   { operation: 'canonicalize-input', reason: 'reconciliation' },
+  { operation: 'compute-metrics', reason: 'order-notional' },
   { operation: 'decode-input', reason: 'intent' },
   { operation: 'decode-input', reason: 'policy' },
   { operation: 'decode-input', reason: 'positions' },
@@ -373,6 +374,18 @@ const openOrder = (brokerOrderId: string) => ({
 })
 
 describe('bounded paper risk', () => {
+  test('uses the execution-model half-up notional at the intent and mutation boundary', () => {
+    const intent = makeIntent({ quantityMicros: '1', notionalLimitMicros: '100' })
+    const state = makeState({
+      expectedExecutionPriceMicros: '100000001',
+      referencePriceMicros: '100000000',
+    })
+    const result = evaluateSuccess(intent, state, makePolicy())
+
+    expect(result.metrics.orderNotionalMicros).toBe('100')
+    expect(result.decision.reasonCodes).not.toContain(Reason.IntentNotionalExceeded)
+  })
+
   test('strictly decodes complete policy and coherent state', () => {
     expect(makePolicy().schemaVersion).toBe('bayn.paper-risk-policy.v1')
     expect(makeState().schemaVersion).toBe('bayn.paper-risk-state.v2')
@@ -482,6 +495,64 @@ describe('bounded paper risk', () => {
     expect(close.decision.outcome).toBe(RiskOutcome.Approved)
     expect(close.gates.find((gate) => gate.name === Gate.Kill)?.passed).toBe(true)
     expectBlocked(Reason.KillActive, makeIntent(), closeOnlyState)
+  })
+
+  test('lets only a strictly exposure-reducing close liquidate gains beyond entry limits', () => {
+    const positions = baseState().positions.map((position) =>
+      position.symbol === 'NVDA'
+        ? {
+            ...position,
+            marketPriceMicros: '150000000',
+            marketValueMicros: '150000000',
+            unrealizedPnlMicros: '60000000',
+          }
+        : position,
+    )
+    const sharedState = {
+      account: {
+        ...baseState().account,
+        cashMicros: '550000000',
+        equityMicros: '800000000',
+        buyingPowerMicros: '0',
+      },
+      positions,
+      referencePriceMicros: '150000000',
+      expectedExecutionPriceMicros: '150000000',
+      dailyTradedNotionalMicros: '100000000',
+    } satisfies Partial<State>
+    const intent = makeIntent({
+      side: OrderSide.Sell,
+      quantityMicros: '1000000',
+      notionalLimitMicros: '150000000',
+    })
+    const closeOnlyState = makeState({
+      ...sharedState,
+      closeOnly: true,
+      closeOnlyExpiresAt: '2026-07-21T21:01:00.000Z',
+    })
+    const close = evaluateSuccess(intent, closeOnlyState, makePolicy())
+
+    expect(close.decision.outcome).toBe(RiskOutcome.Approved)
+    expect(close.metrics.orderNotionalMicros).toBe('150000000')
+    expect(close.decision.reasonCodes).toEqual([])
+
+    const ordinary = evaluateSuccess(intent, makeState(sharedState), makePolicy())
+    expect(ordinary.decision.reasonCodes).toEqual(
+      expect.arrayContaining([
+        Reason.OrderNotionalExceeded,
+        Reason.DailyTradedNotionalExceeded,
+        Reason.DailyLossExceeded,
+        Reason.DrawdownExceeded,
+      ]),
+    )
+
+    const oversell = evaluateSuccess(
+      makeIntent({ side: OrderSide.Sell, quantityMicros: '2000000', notionalLimitMicros: '300000000' }),
+      closeOnlyState,
+      makePolicy({ maxDailyTradedNotionalMicros: '400000000' }),
+    )
+    expect(oversell.decision.reasonCodes).toContain(Reason.ShortPositionNotAllowed)
+    expect(oversell.decision.reasonCodes).toContain(Reason.OrderNotionalExceeded)
   })
 
   test('approves at submission open and blocks immediately before it and exactly at cutoff', () => {

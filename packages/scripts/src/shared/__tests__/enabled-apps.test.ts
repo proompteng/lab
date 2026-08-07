@@ -6,6 +6,116 @@ import YAML from 'yaml'
 import { assertEnabledAppBuildPolicy, loadEnabledAppInventory } from '../enabled-apps'
 
 const inventory = loadEnabledAppInventory()
+const platformApplicationSet = readFileSync('argocd/applicationsets/platform.yaml', 'utf8')
+const bootstrapApplicationSet = readFileSync('argocd/applicationsets/bootstrap.yaml', 'utf8')
+const argoCdKustomization = readFileSync('argocd/applications/argocd/kustomization.yaml', 'utf8')
+const argoCdApplicationSetCrdOverlay = readFileSync(
+  'argocd/applications/argocd/overlays/argocd-applicationset-crd.yaml',
+  'utf8',
+)
+const argoCdLovelyPluginOverlay = readFileSync('argocd/applications/argocd/overlays/argocd-lovely-plugin.yaml', 'utf8')
+const certManagerKustomization = readFileSync('argocd/applications/cert-manager/kustomization.yaml', 'utf8')
+const externalSecretsKustomization = readFileSync('argocd/applications/external-secrets/kustomization.yaml', 'utf8')
+const kubeVirtKustomization = readFileSync('argocd/applications/kubevirt/kustomization.yaml', 'utf8')
+const cdiKustomization = readFileSync('argocd/applications/cdi/kustomization.yaml', 'utf8')
+const knativeKustomization = readFileSync('argocd/applications/knative/kustomization.yaml', 'utf8')
+const knativeServingManifest = readFileSync('argocd/applications/knative-serving/knative-serving.yaml', 'utf8')
+const knativeEventingKustomization = readFileSync('argocd/applications/knative-eventing/kustomization.yaml', 'utf8')
+const knativeEventingManifest = readFileSync('argocd/applications/knative-eventing/knative-eventing.yaml', 'utf8')
+const enabledAlloyDeploymentPaths = [
+  'argocd/applications/agents/alloy-deployment.yaml',
+  'argocd/applications/argo-workflows/alloy-deployment.yaml',
+  'argocd/applications/argocd/alloy-deployment.yaml',
+  'argocd/applications/bilig/alloy-deployment.yaml',
+  'argocd/applications/buzz/alloy-deployment.yaml',
+  'argocd/applications/jangar/alloy-deployment.yaml',
+  'argocd/applications/nats/alloy-deployment.yaml',
+  'argocd/applications/observability/cluster-metrics-alloy-deployment.yaml',
+  'argocd/applications/oirat/alloy-deployment.yaml',
+  'argocd/applications/torghut/alloy-deployment.yaml',
+]
+const natsKustomization = readFileSync('argocd/applications/nats/kustomization.yaml', 'utf8')
+const observabilityKustomization = readFileSync('argocd/applications/observability/kustomization.yaml', 'utf8')
+const featureFlagsKustomization = readFileSync('argocd/applications/feature-flags/kustomization.yaml', 'utf8')
+const cloudflaredDeployment = readFileSync('argocd/applications/cloudflare/deployment.yaml', 'utf8')
+const karapaceManifest = readFileSync('argocd/applications/kafka/karapace.yaml', 'utf8')
+const keycloakManifest = readFileSync('argocd/applications/keycloak/keycloak.yaml', 'utf8')
+const localPathKustomization = YAML.parse(
+  readFileSync('argocd/applications/local-path/kustomization.yaml', 'utf8'),
+) as {
+  resources?: string[]
+  images?: Array<{ name?: string; newName?: string; newTag?: string; digest?: string }>
+}
+const localPathConfigPatch = readFileSync('argocd/applications/local-path/patches/local-path-config.patch.yaml', 'utf8')
+const metallbKustomizationSource = readFileSync('argocd/applications/metallb-system/kustomization.yaml', 'utf8')
+const metallbKustomization = YAML.parse(metallbKustomizationSource) as {
+  resources?: string[]
+  images?: Array<{ name?: string; newName?: string; newTag?: string; digest?: string }>
+  patches?: Array<{ target?: { kind?: string; name?: string }; patch?: string }>
+}
+const nvidiaDevicePluginManifests = [
+  readFileSync('argocd/applications/nvidia-gpu-operator/altra-nvidia-device-plugin.yaml', 'utf8'),
+  readFileSync('argocd/applications/nvidia-gpu-operator/turin-nvidia-device-plugin.yaml', 'utf8'),
+]
+const coderChart = YAML.parse(readFileSync('argocd/applications/coder/Chart.yaml', 'utf8')) as {
+  appVersion?: string
+  version?: string
+  dependencies?: Array<{ name?: string; version?: string }>
+}
+const coderValues = YAML.parse(readFileSync('argocd/applications/coder/values.yaml', 'utf8')) as {
+  coder?: {
+    coder?: {
+      replicaCount?: number
+      image?: { tag?: string }
+    }
+  }
+}
+const temporalKustomization = YAML.parse(readFileSync('argocd/applications/temporal/kustomization.yaml', 'utf8')) as {
+  helmCharts?: Array<{ name?: string; version?: string }>
+  images?: Array<{ name?: string; newName?: string; newTag?: string; digest?: string }>
+}
+const jangarKustomization = YAML.parse(readFileSync('argocd/applications/jangar/kustomization.yaml', 'utf8')) as {
+  helmCharts?: Array<{ name?: string; version?: string }>
+  images?: Array<{ name?: string; newTag?: string; digest?: string }>
+}
+const openWebUIValues = YAML.parse(readFileSync('argocd/applications/jangar/openwebui-values.yaml', 'utf8')) as {
+  image?: { tag?: string }
+}
+const saigakStatefulSet = YAML.parse(readFileSync('argocd/applications/saigak/statefulset.yaml', 'utf8')) as {
+  spec?: {
+    template?: {
+      spec?: {
+        initContainers?: Array<{ name?: string; image?: string }>
+        containers?: Array<{ name?: string; image?: string }>
+      }
+    }
+  }
+}
+const flamingoDeployment = YAML.parse(readFileSync('argocd/applications/flamingo/deployment.yaml', 'utf8')) as {
+  spec?: {
+    template?: {
+      spec?: {
+        containers?: Array<{ name?: string; image?: string }>
+      }
+    }
+  }
+}
+const karapaceResources = YAML.parseAllDocuments(karapaceManifest).map((document) => document.toJSON()) as Array<{
+  apiVersion?: string
+  kind?: string
+  metadata?: {
+    name?: string
+    namespace?: string
+    annotations?: Record<string, string>
+    labels?: Record<string, string>
+  }
+  spec?: {
+    topicName?: string
+    partitions?: number
+    replicas?: number
+    config?: Record<string, string | number>
+  }
+}>
 const productApplicationSet = YAML.parse(readFileSync('argocd/applicationsets/product.yaml', 'utf8')) as {
   spec?: {
     syncPolicy?: { preserveResourcesOnDeletion?: boolean }
@@ -74,12 +184,17 @@ describe('enabled app inventory', () => {
   })
 
   it('does not inspect local lab manifests for external source applications', () => {
+    const metricsServerEntry = platformApplicationSet.match(
+      /              - name: metrics-server[\s\S]*?(?=\n              - name:)/,
+    )?.[0]
+
     expect(entry('metrics-server')).toMatchObject({
       class: 'external-source',
       repoURL: 'https://github.com/kubernetes-sigs/metrics-server.git',
       repoImages: [],
       hasHelmChart: false,
     })
+    expect(metricsServerEntry).toContain('targetRevision: v0.9.0')
     expect(entry('home-root')).toMatchObject({
       class: 'external-source',
       repoURL: 'git@github.com:gregkonush/home.git',
@@ -87,6 +202,237 @@ describe('enabled app inventory', () => {
       repoImages: [],
       hasHelmChart: false,
     })
+  })
+
+  it('pins the identity and metrics controller upgrade wave', () => {
+    expect(certManagerKustomization).toContain('version: v1.21.1')
+    expect(externalSecretsKustomization).toContain('version: 2.8.0')
+    expect(platformApplicationSet).toContain('targetRevision: v0.9.0')
+  })
+
+  it('keeps database-critical Barman Cloud reconciliation manual', () => {
+    const cloudNativePgEntry = platformApplicationSet.match(
+      /              - name: cloudnative-pg\n[\s\S]*?(?=\n              - name:)/,
+    )?.[0]
+
+    expect(cloudNativePgEntry).toContain('automation: manual')
+    expect(cloudNativePgEntry).not.toContain('automation: auto')
+  })
+
+  it('keeps network-critical MetalLB reconciliation manual', () => {
+    const metallbEntry = bootstrapApplicationSet.match(
+      /                - name: metallb-system\n[\s\S]*?(?=\n                - name:)/,
+    )?.[0]
+
+    expect(metallbEntry).toContain('automation: manual')
+    expect(metallbEntry).not.toContain('automation: auto')
+    expect(metallbEntry).toContain('argocd.argoproj.io/sync-options: Prune=false')
+  })
+
+  it('pins MetalLB to immutable 0.16.1 images without rendering its Namespace', () => {
+    expect(metallbKustomization.resources).toContain('github.com/metallb/metallb//config/native?ref=v0.16.1')
+    expect(metallbKustomization.images).toEqual([
+      {
+        name: 'quay.io/metallb/controller',
+        newName: 'quay.io/metallb/controller',
+        newTag: 'v0.16.1',
+        digest: 'sha256:f51ab515de9ccd20dc3dccb093e48df8adddac019326c456f449e55ba91b6420',
+      },
+      {
+        name: 'quay.io/metallb/speaker',
+        newName: 'quay.io/metallb/speaker',
+        newTag: 'v0.16.1',
+        digest: 'sha256:16561e96531e1852d5c229ad7fae6e994dcfa983ff7f4de6b6208b34a4e2ddbc',
+      },
+    ])
+    expect(
+      metallbKustomization.patches?.find(
+        (patch) => patch.target?.kind === 'Namespace' && patch.target.name === 'metallb-system',
+      )?.patch,
+    ).toContain('$patch: delete')
+  })
+
+  it('pins the Argo control-plane upgrade wave and applies its large CRD server-side', () => {
+    expect(argoCdKustomization).toContain('argo-cd/v3.4.6/manifests/ha/install.yaml')
+    expect(argoCdKustomization).toContain('argocd-image-updater/v1.2.2/config/install.yaml')
+    expect(argoCdLovelyPluginOverlay).toContain('ghcr.io/crumbhole/lovely:1.2.5')
+    expect(argoCdApplicationSetCrdOverlay).toContain(
+      'argocd.argoproj.io/sync-options: ServerSideApply=true,Prune=false',
+    )
+    expect(argoCdApplicationSetCrdOverlay).not.toContain('Replace=true')
+    expect(bootstrapApplicationSet).toContain('ServerSideApply=true')
+    expect(bootstrapApplicationSet).not.toContain('ClientSideApplyMigration=false')
+  })
+
+  it('pins the virtualization controllers and Knative operator upgrade wave', () => {
+    const knativeEntry = platformApplicationSet.match(
+      /              - name: knative\n[\s\S]*?(?=\n              - name:)/,
+    )?.[0]
+
+    expect(kubeVirtKustomization).toContain('kubevirt/releases/download/v1.9.0/')
+    expect(kubeVirtKustomization).not.toContain('MultiArchitecture')
+    expect(cdiKustomization).toContain('containerized-data-importer/releases/download/v1.66.0/')
+    expect(knativeKustomization).toContain('knative/operator/releases/download/knative-v1.23.0/operator.yaml')
+    expect(knativeKustomization).toContain('$patch: delete')
+    expect(knativeKustomization).not.toContain('argocd.argoproj.io/sync-options: Prune=false')
+    expect(knativeServingManifest).toContain('version: 1.23.0')
+    expect(knativeEventingManifest).toContain('version: 1.23.0')
+    expect(knativeEventingKustomization).toContain('eventing-kafka-controller.yaml')
+    expect(knativeEventingKustomization).toContain('eventing-kafka-source.yaml')
+    expect(knativeEventingKustomization).toContain('knative-v1.23.0')
+    expect(knativeEventingKustomization).not.toContain('patchesStrategicMerge')
+    expect(knativeEntry).toContain('app.kubernetes.io/managed-by: argocd')
+    expect(knativeEntry).not.toContain('argocd.argoproj.io/sync-options: Prune=false')
+    expect(knativeEntry).not.toContain('argocd.argoproj.io/tracking-id')
+  })
+
+  it('pins the enabled observability collector upgrade wave', () => {
+    for (const deploymentPath of enabledAlloyDeploymentPaths) {
+      expect(readFileSync(deploymentPath, 'utf8')).toContain('grafana/alloy:v1.18.1')
+    }
+    expect(readFileSync('argocd/applications/buzz/alloy-deployment.yaml', 'utf8')).toContain(
+      'sha256:0f4434c92b3e6cdac38bb129b344e1790c246f7b6e2eaffcc16a5fa363240e33',
+    )
+    expect(natsKustomization).toContain('newTag: v1.18.1')
+    expect(observabilityKustomization).toContain('version: 8.2.0')
+  })
+
+  it('pins the enabled service image upgrade wave', () => {
+    expect(featureFlagsKustomization).toContain('version: 2.11.0')
+    expect(featureFlagsKustomization).toContain('newTag: v2.11.0')
+    expect(featureFlagsKustomization).toContain(
+      'digest: sha256:d20384874048ef6ac326f4937cee64f1db175a1878a87db32916cc8db46c740e',
+    )
+    expect(cloudflaredDeployment).toContain(
+      'cloudflare/cloudflared:2026.7.3@sha256:e39ee8da81ad5e05d77f38d2f51c60ca51bf2a8450ac3abab50c17fdb91d91bf',
+    )
+    expect(karapaceManifest).toContain(
+      'ghcr.io/aiven-open/karapace:6.2.2@sha256:3c202789067f1bc3aa68d9dbb22d6298d254380a9e69c2705120c7434277238c',
+    )
+    expect(karapaceManifest).toContain('app.proompteng.ai/schema-storage-generation: compact-v1')
+  })
+
+  it('retains Karapace schemas in a managed compacted topic', () => {
+    const schemasTopic = karapaceResources.find(
+      (resource) => resource.apiVersion === 'kafka.strimzi.io/v1' && resource.kind === 'KafkaTopic',
+    )
+
+    expect(schemasTopic).toMatchObject({
+      metadata: {
+        name: 'karapace-schemas',
+        namespace: 'kafka',
+        annotations: { 'argocd.argoproj.io/sync-options': 'Prune=false' },
+        labels: { 'strimzi.io/cluster': 'kafka' },
+      },
+      spec: {
+        topicName: '_schemas',
+        partitions: 1,
+        replicas: 3,
+        config: { 'cleanup.policy': 'compact' },
+      },
+    })
+  })
+
+  it('pins the Temporal patch wave to immutable multi-architecture images', () => {
+    expect(temporalKustomization.helmCharts?.find((chart) => chart.name === 'temporal')).toMatchObject({
+      version: '1.6.0',
+    })
+    expect(temporalKustomization.images).toEqual([
+      {
+        name: 'mirror.gcr.io/temporalio/server',
+        newName: 'mirror.gcr.io/temporalio/server',
+        newTag: '1.31.2',
+        digest: 'sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da',
+      },
+      {
+        name: 'mirror.gcr.io/temporalio/admin-tools',
+        newName: 'mirror.gcr.io/temporalio/admin-tools',
+        newTag: '1.31.2',
+        digest: 'sha256:dbc5fcd6ee8f0f4d808bf765af9a87dea9d8a283abfdcfbd2fc148496ba66107',
+      },
+      {
+        name: 'mirror.gcr.io/temporalio/ui',
+        newName: 'mirror.gcr.io/temporalio/ui',
+        newTag: '2.52.0',
+        digest: 'sha256:fc47cd8202c98ed868745fd9f2f011585232676d08da621b9a6d7bc4653c17aa',
+      },
+    ])
+  })
+
+  it('pins the Open WebUI migration wave to its immutable image', () => {
+    expect(jangarKustomization.helmCharts?.find((chart) => chart.name === 'open-webui')).toMatchObject({
+      version: '16.0.0',
+    })
+    expect(jangarKustomization.images?.find((image) => image.name === 'ghcr.io/open-webui/open-webui')).toEqual({
+      name: 'ghcr.io/open-webui/open-webui',
+      newTag: 'v0.11.0',
+      digest: 'sha256:72c0ba641ba75e7aa52655cb242570906ececd09b1140fb736483038a22b3228',
+    })
+    expect(openWebUIValues.image?.tag).toBe('v0.11.0')
+  })
+
+  it('pins both Saigak Ollama containers to the immutable multi-architecture image', () => {
+    const podSpec = saigakStatefulSet.spec?.template?.spec
+    const ollamaImages = [...(podSpec?.initContainers ?? []), ...(podSpec?.containers ?? [])]
+      .filter((container) => container.name === 'model-init' || container.name === 'ollama')
+      .map((container) => container.image)
+
+    expect(ollamaImages).toEqual([
+      'ollama/ollama:0.32.6@sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42',
+      'ollama/ollama:0.32.6@sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42',
+    ])
+  })
+
+  it('pins Flamingo vLLM to the immutable Blackwell image', () => {
+    const vllm = flamingoDeployment.spec?.template?.spec?.containers?.find((container) => container.name === 'vllm')
+
+    expect(vllm?.image).toBe(
+      'vllm/vllm-openai:v0.26.0-x86_64-cu129@sha256:3c5c53248febaa72823a4b7e51aafa1cd2b65d860392e3930414da4d3864f541',
+    )
+  })
+
+  it('pins Keycloak to the immutable multi-architecture security release', () => {
+    expect(keycloakManifest).toContain(
+      'quay.io/keycloak/keycloak:26.7.1@sha256:f1f1f01e472c8a78df40d8f2a49a925274eda4d3d80d5f6edbb5c880ee3c01c6',
+    )
+  })
+
+  it('pins Coder to the immutable multi-architecture stable release', () => {
+    expect(coderChart).toMatchObject({
+      appVersion: '2.35.3',
+      version: '2.35.3',
+    })
+    expect(coderChart.dependencies?.find((dependency) => dependency.name === 'coder')?.version).toBe('2.35.3')
+    expect(coderValues.coder?.coder).toMatchObject({
+      replicaCount: 1,
+      image: {
+        tag: 'v2.35.3@sha256:8e34e774ebde1813f03294498374cd955264eee6cd2b61a72baf7634a0ca7de4',
+      },
+    })
+  })
+
+  it('pins Local Path Provisioner and its helper to immutable security releases', () => {
+    expect(localPathKustomization.resources).toContain('github.com/rancher/local-path-provisioner/deploy?ref=v0.0.37')
+    expect(
+      localPathKustomization.images?.find((image) => image.name === 'docker.io/rancher/local-path-provisioner'),
+    ).toEqual({
+      name: 'docker.io/rancher/local-path-provisioner',
+      newName: 'docker.io/rancher/local-path-provisioner',
+      newTag: 'v0.0.37',
+      digest: 'sha256:e757967a5ec338f6a9b371c5a9688bedaa8c3578ea3dd4db329ea0084be0a86f',
+    })
+    expect(localPathConfigPatch).toContain(
+      'docker.io/library/busybox:1.38.0@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616',
+    )
+  })
+
+  it('pins both custom NVIDIA device plugins to the immutable security release', () => {
+    for (const manifest of nvidiaDevicePluginManifests) {
+      expect(manifest).toContain(
+        'nvcr.io/nvidia/k8s-device-plugin:v0.19.3@sha256:25cc340fe6fd53c101e16fc452f503e7a92c219c64a80ed5381784b522dbbf77',
+      )
+      expect(manifest).not.toContain('nvcr.io/nvidia/k8s-device-plugin:v0.19.0')
+    }
   })
 
   it('keeps chart-only apps out of Nix image migration state', () => {

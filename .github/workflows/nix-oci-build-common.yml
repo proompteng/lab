@@ -5,6 +5,9 @@ permissions:
 
 on:
   workflow_call:
+    secrets:
+      ATTIC_TOKEN:
+        required: false
     inputs:
       image_name:
         required: true
@@ -108,7 +111,7 @@ jobs:
       - name: Set up Nix toolchain
         uses: ./.github/actions/setup-nix-toolchain
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           require-preinstalled: 'true'
           install-ci-toolchain: 'false'
           extra-nix-config: |
@@ -188,6 +191,16 @@ jobs:
           set -euo pipefail
           bash nix/ci-run-timed.sh "verify-bayn-command-${ARCH}" "${NIX_OCI_LOG_DIR}/verify-bayn-command-${ARCH}.log" \
             bash nix/verify-bayn-image-command.sh "${IMAGE_TAR}"
+
+      - name: Verify Headlamp frontend assets from image
+        if: inputs.image_name == 'headlamp'
+        env:
+          IMAGE_TAR: ${{ steps.build.outputs.image_tar }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          bash nix/ci-run-timed.sh "verify-headlamp-assets-${ARCH}" "${NIX_OCI_LOG_DIR}/verify-headlamp-assets-${ARCH}.log" \
+            bash nix/verify-headlamp-image-assets.sh "${IMAGE_TAR}"
 
       - name: Push platform image without Docker
         if: >-
@@ -333,7 +346,7 @@ jobs:
       - name: Set up Nix toolchain
         uses: ./.github/actions/setup-nix-toolchain
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           require-preinstalled: 'true'
           install-ci-toolchain: 'false'
           extra-nix-config: |

@@ -8,24 +8,102 @@ resources:
   - ingressroute-ceph-k8s-private.yaml
   - rook-ceph-objectstore-loki-user.yaml
   - rook-ceph-object-user-objectstore-loki-reflector-source.yaml
+  - csi-legacy-service-account-bridge.yaml
 
 helmCharts:
   - name: rook-ceph
     repo: https://charts.rook.io/release
-    version: v1.19.7
+    version: v1.20.3
     releaseName: rook-ceph
     namespace: rook-ceph
     includeCRDs: true
     valuesFile: operator-values.yaml
+  - name: ceph-csi-drivers
+    repo: https://ceph.github.io/ceph-csi-operator
+    version: 1.0.4
+    releaseName: ceph-csi-drivers
+    namespace: rook-ceph
+    valuesFile: csi-driver-values.yaml
   - name: rook-ceph-cluster
     repo: https://charts.rook.io/release
-    version: v1.19.7
+    version: v1.19.8
     releaseName: rook-ceph-cluster
     namespace: rook-ceph
     includeCRDs: true
     valuesFile: cluster-values.yaml
 
 patches:
+  # Authorize both the normalized and legacy CSI identities before the v1.20
+  # operator can reconcile the existing Driver resources.
+  - target:
+      version: v1
+      kind: ServiceAccount
+      name: rook-ceph-(cephfs|rbd)-csi-ceph-com-(ctrlplugin|nodeplugin)-sa
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "-1"
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: Role
+      name: rook-ceph-(cephfs|rbd)-csi-ceph-com-(ctrlplugin|nodeplugin)-r
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "-1"
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: RoleBinding
+      name: rook-ceph-(cephfs|rbd)-csi-ceph-com-(ctrlplugin|nodeplugin)-rb
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "-1"
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: ClusterRole
+      name: rook-ceph-(cephfs|rbd)-csi-ceph-com-(ctrlplugin|nodeplugin)-cr
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "-1"
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: ClusterRoleBinding
+      name: rook-ceph-(cephfs|rbd)-csi-ceph-com-(ctrlplugin|nodeplugin)-crb
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "-1"
+  # Transfer the existing Driver and OperatorConfig resources to GitOps only
+  # after the pre-operator identity and RBAC wave is healthy.
+  - target:
+      group: csi.ceph.io
+      version: v1
+      kind: Driver
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "2"
+  - target:
+      group: csi.ceph.io
+      version: v1
+      kind: OperatorConfig
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "2"
   - path: cephcluster-osd-config-rollout.yaml
     target:
       group: ceph.rook.io

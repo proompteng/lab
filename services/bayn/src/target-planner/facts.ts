@@ -59,6 +59,7 @@ export interface TargetPlannerFacts {
   readonly quantityIncrement: bigint
   readonly minimumBuyNotional: bigint
   readonly equity: bigint
+  readonly allocationCapital: bigint
   readonly availableBuyingPower: bigint
 }
 
@@ -115,6 +116,7 @@ export const parseTargetPlannerFacts = (input: TargetPlannerInput, hashes: Targe
   const positions = new Map(
     input.brokerState.positions.map((position, index) => [position.symbol, positionQuantities[index]]),
   )
+  const equity = BigInt(input.brokerState.account.equityMicros)
   return {
     input,
     ...hashes,
@@ -138,7 +140,9 @@ export const parseTargetPlannerFacts = (input: TargetPlannerInput, hashes: Targe
     priceIncrement: BigInt(input.precision.priceIncrementMicros),
     quantityIncrement: BigInt(input.precision.quantityIncrementMicros),
     minimumBuyNotional: BigInt(input.precision.minimumBuyNotionalMicros),
-    equity: BigInt(input.brokerState.account.equityMicros),
+    equity,
+    allocationCapital:
+      input.schemaVersion === 'bayn.paper-target-planner-input.v1' ? equity : BigInt(input.allocationCapitalMicros),
     availableBuyingPower: BigInt(input.brokerState.account.buyingPowerMicros),
   }
 }
@@ -190,6 +194,7 @@ const brokerStateIsCoherent = (facts: TargetPlannerFacts): boolean => {
     state.orders.every((order) => order.observedAt <= state.ordersObservedAt) &&
     (state.orders.length === 0 || latestOrderObservation === state.ordersObservedAt) &&
     state.unknownOrderCount === unknownOrderCount &&
+    facts.allocationCapital <= facts.equity &&
     input.referencePrices.contentHash === facts.referencePriceHash &&
     Object.values(input.targetWeights).reduce((total, weight) => total + weight, 0) <= 1 + WEIGHT_SUM_TOLERANCE &&
     [...prices.values()].every((price) => price % priceIncrement === 0n) &&
@@ -227,7 +232,7 @@ export const derivePlannedTargetFacts = (
           const currentQuantity = facts.positions.get(symbol) ?? 0n
           return Result.map(
             Result.mapError(
-              desiredQuantityMicros(facts.equity, facts.input.targetWeights[symbol], referencePrice, {
+              desiredQuantityMicros(facts.allocationCapital, facts.input.targetWeights[symbol], referencePrice, {
                 precision: facts.input.precision,
               }),
               (cause) =>

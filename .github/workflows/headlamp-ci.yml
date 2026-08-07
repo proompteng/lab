@@ -6,12 +6,18 @@ permissions:
 on:
   pull_request:
     paths:
+      - '.github/workflows/headlamp-ci.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'nix/verify-headlamp-image-assets.sh'
       - 'services/headlamp/**'
       - 'nix/images/headlamp.nix'
   push:
     branches:
       - main
     paths:
+      - '.github/workflows/headlamp-ci.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'nix/verify-headlamp-image-assets.sh'
       - 'services/headlamp/**'
       - 'nix/images/headlamp.nix'
   workflow_dispatch:
@@ -31,7 +37,7 @@ jobs:
       - name: Set up Nix toolchain
         uses: ./.github/actions/setup-nix-toolchain
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           require-preinstalled: 'true'
           install-ci-toolchain: 'true'
           extra-nix-config: |
@@ -44,6 +50,15 @@ jobs:
 
       - name: Run upstream multiplexer regression tests
         run: sh services/headlamp/scripts/test-upstream.sh
+
+  nix-image-pr:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: headlamp
+      package_attr: headlamp-image
+      tag: sha-${{ github.sha }}
+      image_build_timeout: 20m
 
   nix-image:
     if: >-
@@ -60,8 +75,8 @@ jobs:
       image_name: headlamp
       package_attr: headlamp-image
       tag: sha-${{ github.sha }}
-      pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
       release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'headlamp-release-contract' || '' }}
       image_build_timeout: 20m
-    secrets: inherit
+    secrets:
+      ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}

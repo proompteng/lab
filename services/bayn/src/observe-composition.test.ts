@@ -82,6 +82,7 @@ import {
   makeMutationAutonomousCycleStartup,
   makeObserveAutonomousCycleStartup,
   prepareObserveStartup,
+  terminalizeBlockedPaperCycle,
 } from './observe-composition'
 import {
   AccountStatus,
@@ -282,10 +283,14 @@ const account: AccountSnapshot = {
   observedAt: reconciledAt,
 }
 
-const reconciliation = (positions: readonly Position[] = [], orders: readonly Order[] = []): Reconciliation => {
+const reconciliation = (
+  positions: readonly Position[] = [],
+  orders: readonly Order[] = [],
+  brokerAccount: AccountSnapshot = account,
+): Reconciliation => {
   const stateHash = Result.getOrThrow(
     reconciledStateHash({
-      account,
+      account: brokerAccount,
       positions,
       positionsObservedAt: reconciledAt,
       orders,
@@ -318,8 +323,9 @@ const reconciliationResult = (
   maximum: Authority = Authority.Observe,
   positions: readonly Position[] = [],
   orders: readonly Order[] = [],
+  brokerAccount: AccountSnapshot = account,
 ): ReconciliationPassResult => {
-  const exact = reconciliation(positions, orders)
+  const exact = reconciliation(positions, orders, brokerAccount)
   return {
     report: {
       reconciliation: exact,
@@ -334,7 +340,7 @@ const reconciliationResult = (
       },
     },
     brokerState: {
-      account,
+      account: brokerAccount,
       positions,
       positionsObservedAt: reconciledAt,
       orders,
@@ -357,8 +363,8 @@ const reconciliationResult = (
       authorityObservedAt: reconciledAt,
       unknownMutationCount: 0,
       dailyTradedNotionalMicros: '0',
-      dayStartEquityMicros: account.equityMicros,
-      peakEquityMicros: account.equityMicros,
+      dayStartEquityMicros: brokerAccount.equityMicros,
+      peakEquityMicros: brokerAccount.equityMicros,
     },
   }
 }
@@ -1451,6 +1457,82 @@ describe('OBSERVE runtime composition', () => {
     const completion = Result.getOrThrow(decideCompletion(fixture.boundCycle, CycleState.Completed, observedAt))
     if (completion._tag !== 'VerifyDecision') return expect.unreachable('risk-blocked PAPER completion must verify')
     expect(Result.isFailure(validateCompletionDocument(completion, [fixture.document]))).toBe(true)
+  })
+
+  test('revokes PAPER authority before persisting a risk-blocked cycle terminal', async () => {
+    const fixture = await paperLifecycleFixture((policy) => ({
+      ...policy,
+      maxOrderNotionalMicros: '1',
+    }))
+    const observedAt = new Date(Date.parse(fixture.document.createdAt) + 1).toISOString()
+    const blockedCycle = Effect.runSync(
+      decodeAutonomousCycle({
+        ...fixture.boundCycle,
+        state: CycleState.Blocked,
+        terminalReason: CycleTerminalReason.Risk,
+        stateVersion: fixture.boundCycle.stateVersion + 1,
+        updatedAt: observedAt,
+        terminalAt: observedAt,
+      }),
+    )
+    const events: string[] = []
+    const unused = Effect.die(new Error('blocked PAPER terminalization used an unrelated cycle-store operation'))
+    const cycleStore: CycleStoreShape = {
+      acquire: () => unused,
+      read: () => unused,
+      readAuthoritySlot: () => unused,
+      readDecisionDocument: () => unused,
+      readOldestUnfinished: () => unused,
+      bindSnapshot: () => unused,
+      activate: () => unused,
+      bindDecision: () => unused,
+      finish: () => unused,
+      block: (cycleId, reason, terminalAt) =>
+        Effect.sync(() => {
+          events.push('block')
+          expect(cycleId).toBe(fixture.boundCycle.identity.cycleId)
+          expect(reason).toBe(CycleTerminalReason.Risk)
+          expect(terminalAt).toBe(observedAt)
+          return { cycle: blockedCycle, changed: true }
+        }),
+    }
+    const authorityRestrictionStore: AuthorityRestrictionStoreShape = {
+      restrictAuthority: (reason, updatedAt) =>
+        Effect.sync(() => {
+          events.push('restrict')
+          expect(reason).toBe(
+            `PAPER autonomous cycle loop restricted effective authority: bound cycle ${fixture.boundCycle.identity.cycleId} blocked: BLOCKED_RISK`,
+          )
+          expect(updatedAt).toBe(observedAt)
+        }),
+    }
+    const writerFence: WriterFenceService = {
+      backendPid: 1,
+      check: unused,
+      transaction: (effect) =>
+        Effect.sync(() => {
+          events.push('fence')
+        }).pipe(Effect.andThen(effect)),
+    }
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(observedAt))
+        return yield* terminalizeBlockedPaperCycle(fixture.boundCycle, {
+          _tag: 'Block',
+          reason: CycleTerminalReason.Risk,
+          observedAt,
+        })
+      }).pipe(
+        Effect.provideService(CycleStore, cycleStore),
+        Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
+        Effect.provideService(WriterFence, writerFence),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+
+    expect(events).toEqual(['fence', 'restrict', 'block'])
+    expect(result).toMatchObject({ action: 'BLOCKED', cycle: { state: CycleState.Blocked } })
   })
 
   test('terminalizes an untouched PAPER remainder when its durable approval expires', async () => {
@@ -2584,8 +2666,13 @@ describe('OBSERVE runtime composition', () => {
     expect(policy).toMatchObject({
       accountId,
       allowedSymbols: fixtureProtocol.universe,
-      maxOrderNotionalMicros: '600000000',
-      maxGrossExposureMicros: '1000000000',
+      maxOrderNotionalMicros: '40000000000',
+      maxSymbolExposureMicros: '40000000000',
+      maxGrossExposureMicros: '100000000000',
+      maxNetExposureMicros: '100000000000',
+      maxDailyTradedNotionalMicros: '200000000000',
+      maxDailyLossMicros: '5000000000',
+      maxDrawdownMicros: '5000000000',
       maxUnresolvedOrders: 0,
     })
   })
@@ -2744,6 +2831,108 @@ describe('OBSERVE runtime composition', () => {
     for (const altered of [alteredGeneration, alteredTarget, alteredOrder, alteredCumulativeRisk, alteredExpiry]) {
       expect(Result.isFailure(altered)).toBe(true)
     }
+  })
+
+  test('binds a high-balance PAPER account to the episode capital budget before risk evaluation', async () => {
+    const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, fixtureProtocol.universe))
+    const highBalanceAccount: AccountSnapshot = {
+      ...account,
+      cashMicros: '100000000000',
+      equityMicros: '100000000000',
+      buyingPowerMicros: '400000000000',
+    }
+    const fullyAllocatedDecision: DecisionPlan = {
+      ...decision,
+      targetWeights: {
+        DBC: 0.1946,
+        EFA: 0.2151,
+        IEF: 0,
+        SPY: 0.35,
+        VNQ: 0.2403,
+      },
+    }
+    const program = Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(evaluatedAt))
+      return yield* buildMutationShadowCycleDecision({
+        authorityGenerationHash: generationHash,
+        cycle,
+        executionModel: fixtureProtocol.executionModel,
+        policy,
+        reconcile: Effect.succeed(reconciliationResult(generationHash, Authority.Paper, [], [], highBalanceAccount)),
+        strategy: runtimeWithDecision(() => Result.succeed(fullyAllocatedDecision)),
+      })
+    }).pipe(
+      (effect) => provideDecisionServices(effect, marketData([]), calendarRead([])),
+      Effect.provide(TestClock.layer()),
+    )
+
+    const document = await Effect.runPromise(program)
+    const plannedNotional = BigInt(document.targetPlan.requiredReferenceBuyNotionalMicros)
+
+    expect(plannedNotional).toBeGreaterThan(99_000_000_000n)
+    expect(plannedNotional).toBeLessThanOrEqual(BigInt(policy.maxGrossExposureMicros))
+    expect(plannedNotional).toBeLessThan(BigInt(policy.maxDailyTradedNotionalMicros))
+    expect(document.riskBlock).toBeUndefined()
+    expect(document).toMatchObject({ mode: 'PAPER', dispatchable: true })
+    expect(document.deltaRisk).toHaveLength(4)
+    expect(
+      document.deltaRisk.every(
+        ({ evaluation }) =>
+          evaluation.decision.outcome === RiskOutcome.Approved && evaluation.decision.reasonCodes.length === 0,
+      ),
+    ).toBe(true)
+  })
+
+  test('rejects a PAPER entry before planning when existing exposure cannot fit remaining turnover', async () => {
+    const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, fixtureProtocol.universe))
+    const highBalanceAccount: AccountSnapshot = {
+      ...account,
+      cashMicros: '100000000000',
+      equityMicros: '100000000000',
+      buyingPowerMicros: '400000000000',
+    }
+    const existingPosition: Position = {
+      schemaVersion: 'bayn.paper-position.v1',
+      accountId,
+      symbol: 'SPY',
+      quantityMicros: '10000000000',
+      averageEntryPriceMicros: '100000000',
+      marketPriceMicros: '100000000',
+      marketValueMicros: '1000000000000',
+      unrealizedPnlMicros: '0',
+      observedAt: reconciledAt,
+    }
+    const reconciled = reconciliationResult(generationHash, Authority.Paper, [existingPosition], [], highBalanceAccount)
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(evaluatedAt))
+          return yield* buildMutationShadowCycleDecision({
+            authorityGenerationHash: generationHash,
+            cycle,
+            executionModel: fixtureProtocol.executionModel,
+            policy,
+            reconcile: Effect.succeed({
+              ...reconciled,
+              riskContext: {
+                ...reconciled.riskContext,
+                dailyTradedNotionalMicros: '750000000',
+              },
+            }),
+            strategy: runtimeWithDecision(() => Result.succeed(decision)),
+          })
+        }).pipe(
+          (effect) => provideDecisionServices(effect, marketData([]), calendarRead([])),
+          Effect.provide(TestClock.layer()),
+        ),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      _tag: 'ObserveDecisionCompositionFailure',
+      operation: 'paper-episode-allocation',
+      cause: { _tag: 'CurrentExposureExceedsRemainingTurnover' },
+    })
   })
 
   test('fails closed when same-pass reconciliation observes another authority generation', async () => {

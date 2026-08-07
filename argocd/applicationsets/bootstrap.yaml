@@ -110,8 +110,16 @@ spec:
                   namespace: metallb-system
                   annotations:
                     argocd.argoproj.io/sync-wave: "0"
-                  automation: auto
+                  automation: manual
                   enabled: "true"
+                  managedNamespaceMetadata:
+                    labels:
+                      pod-security.kubernetes.io/enforce: privileged
+                      pod-security.kubernetes.io/audit: privileged
+                      pod-security.kubernetes.io/warn: privileged
+                    annotations:
+                      # Prevent accidental namespace deletion when the upstream Namespace leaves rendered output.
+                      argocd.argoproj.io/sync-options: Prune=false
                 - name: traefik
                   path: argocd/applications/traefik
                   namespace: traefik
@@ -168,7 +176,6 @@ spec:
           - RespectIgnoreDifferences=true
           - ApplyOutOfSyncOnly=true
           - PruneLast=true
-          - ClientSideApplyMigration=false
   templatePatch: |
     {{- if .annotations }}
     metadata:

@@ -5,14 +5,30 @@
 }:
 
 let
-  version = "0.40.1";
-  headlampSha = "434a12263a6bd9d25f86f8bfa00d9992ac2672e3";
+  version = "0.44.0";
+  headlampSha = "7e2f255cc256a16c39681ffea31fa16e11a11eaf";
+  headlampNixpkgsRevision = "104240a772428cc2e20d8fd86c9ddbb886bbaff2";
+
+  headlampNixpkgs = builtins.fetchTarball {
+    url = "https://github.com/NixOS/nixpkgs/archive/${headlampNixpkgsRevision}.tar.gz";
+    sha256 = "sha256-D740uKsMbgsfK2oaDenJLLPIZfq7W0/g4KN/Fls8eKs=";
+  };
+  headlampPkgs = import headlampNixpkgs {
+    system = pkgs.stdenv.hostPlatform.system;
+    config.allowUnfree = false;
+  };
+  headlampGo =
+    if headlampPkgs.go.version == "1.26.5" then
+      headlampPkgs.go
+    else
+      throw "expected Headlamp Go 1.26.5, got ${headlampPkgs.go.version}";
+  headlampBuildGoModule = headlampPkgs.buildGoModule.override { go = headlampGo; };
 
   upstreamSrc = pkgs.fetchFromGitHub {
     owner = "kubernetes-sigs";
     repo = "headlamp";
     rev = headlampSha;
-    hash = "sha256-pqaEwbMC8zMMs9gy078iJrvuGqGbvT3OMuvI5kmVBik=";
+    hash = "sha256-ajkiKoCYbwn5pvIzzz4IIxWIVQmnTbNvzdwWksj1kEU=";
   };
 
   patchedSrc = pkgs.stdenvNoCC.mkDerivation {
@@ -48,12 +64,12 @@ let
     '';
   };
 
-  backend = pkgs.buildGoModule {
+  backend = headlampBuildGoModule {
     pname = "headlamp-backend";
     inherit version;
     src = patchedSrc;
     modRoot = "backend";
-    vendorHash = "sha256-0r2PsQLSny+I7QBo91Jhz/S5Sx5VluOPZC7tV1K/oQM=";
+    vendorHash = "sha256-5nh4IxYr3wdXA8WLlK8LVCm4DqHFB4r+fA+Ix0e5EAc=";
     subPackages = [ "cmd" ];
     doCheck = false;
     env.CGO_ENABLED = 0;
@@ -76,7 +92,7 @@ let
     pname = "headlamp-frontend";
     inherit version;
     src = patchedSrc + "/frontend";
-    npmDepsHash = "sha256-vJiAqhwiyfEGWUap1dg4LrY2RnOOEHbt6wp/rUcsXDg=";
+    npmDepsHash = "sha256-VcwKNpHjQlpeDxqhDxNZnTt0BaUPHWZUivU4kqSi6yw=";
     makeCacheWritable = false;
     env = {
       NODE_OPTIONS = "--max-old-space-size=8096";
@@ -96,10 +112,10 @@ let
 
   prometheusPlugin = pkgs.stdenvNoCC.mkDerivation {
     pname = "headlamp-plugin-prometheus";
-    version = "0.8.2";
+    version = "0.9.1";
     src = pkgs.fetchurl {
-      url = "https://github.com/headlamp-k8s/plugins/releases/download/prometheus-0.8.2/prometheus-0.8.2.tar.gz";
-      hash = "sha256-EoAXKGioHnP1N+ulXcDcdl3vpQFCuTEgCMK65wKjx6g=";
+      url = "https://github.com/headlamp-k8s/plugins/releases/download/prometheus-0.9.1/prometheus-0.9.1.tar.gz";
+      hash = "sha256-Bq+r5C2mno4MXCYyrMP+4CBWaCXSrnH/jk891/ePxK4=";
     };
     installPhase = ''
       runHook preInstall
@@ -128,12 +144,20 @@ pkgs.dockerTools.buildLayeredImage {
   tag = "nix";
   maxLayers = 16;
   contents = [
-    runtimeRoot
     pkgs.busybox
     pkgs.cacert
   ];
   extraCommands = ''
-    mkdir -p tmp var/tmp etc/ssl/certs
+    mkdir -p headlamp tmp var/tmp etc/ssl/certs
+    # dockerTools materializes `contents` as store-backed symlinks. Headlamp
+    # 0.44 serves static files through os.OpenRoot, which rejects symlinks that
+    # escape the frontend root. Copy with dereferencing into this image layer.
+    cp -RL ${runtimeRoot}/headlamp/. headlamp/
+    remaining_headlamp_link="$(find headlamp -type l -print -quit)"
+    if [ -n "$remaining_headlamp_link" ]; then
+      echo "Headlamp runtime contains an unresolved symlink: $remaining_headlamp_link" >&2
+      exit 1
+    fi
     chmod 1777 tmp var/tmp
     ln -s ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt etc/ssl/certs/ca-certificates.crt
   '';

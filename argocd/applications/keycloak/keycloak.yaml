@@ -49,7 +49,7 @@ spec:
     spec:
       containers:
         - name: keycloak
-          image: quay.io/keycloak/keycloak:26.5.1
+          image: quay.io/keycloak/keycloak:26.7.1@sha256:f1f1f01e472c8a78df40d8f2a49a925274eda4d3d80d5f6edbb5c880ee3c01c6
           args: ["start"]
           env:
             - name: KC_BOOTSTRAP_ADMIN_USERNAME

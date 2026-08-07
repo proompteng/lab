@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import { readFileSync } from 'node:fs'
 
 import { expect, test } from 'bun:test'
@@ -67,16 +68,24 @@ test('Bayn compares CNPG resources after admission defaulting', () => {
 test('the CNPG platform installs the pinned Barman Cloud plugin', () => {
   const platform = readManifest('argocd/applications/cloudnative-pg/kustomization.yaml')
   const patches = platform.patches.map((patch: { patch: string }) => patch.patch).join('\n')
+  const sidecarSecretPatch = platform.patches.find(
+    (patch: { target?: { kind?: string } }) => patch.target?.kind === 'Secret',
+  )
+  const encodedSidecarImage = sidecarSecretPatch.patch.match(/path: \/data\/SIDECAR_IMAGE\n\s+value: (\S+)/)?.[1]
 
   expect(platform.resources).toContain(
-    'https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.13.0/manifest.yaml',
+    'https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.14.0/manifest.yaml',
   )
   expect(patches).toContain(
-    'ghcr.io/cloudnative-pg/plugin-barman-cloud@sha256:71589dbac582333442812b07b31f7ea4d00324a8358aac7ca507dabf9f4b6c96',
+    'ghcr.io/cloudnative-pg/plugin-barman-cloud:v0.14.0@sha256:823a8893690980ba5830bbbb11196a35f695b0488db7d846abc33baebf32417c',
   )
-  expect(patches).toContain(
-    'Z2hjci5pby9jbG91ZG5hdGl2ZS1wZy9wbHVnaW4tYmFybWFuLWNsb3VkLXNpZGVjYXJAc2hhMjU2Ojk5MDM2MWFmMzMxOWY5ZTIzYWFmYTBmNmQ3OTgxZjk5YmYxZjY5YjRlNmE4NWNmMWJjN2Q3MWQ2ZjA5YmIyODg=',
+  expect(encodedSidecarImage).toBeDefined()
+  expect(Buffer.from(encodedSidecarImage ?? '', 'base64').toString('utf8')).toBe(
+    'ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar:v0.14.0@sha256:9880817c285c7afa4d195da2145064d21907405489ed6ec39abe59b1feb558a4',
   )
+  expect(sidecarSecretPatch.target.name).toBe('plugin-barman-cloud-f998mh5292')
+  expect(sidecarSecretPatch.patch).toContain('path: /metadata/name')
+  expect(sidecarSecretPatch.patch).toContain('value: plugin-barman-cloud-m5m67kfh8f')
 })
 
 test('Bayn backups use an isolated protected plugin object store and bounded schedule', () => {
@@ -157,7 +166,7 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
   })
   expect(databasePolicy.spec.podSelector.matchLabels).toEqual({ 'cnpg.io/cluster': 'bayn-db' })
   expect(databasePolicy.spec.policyTypes).toEqual(['Ingress'])
-  expect(databasePolicy.spec.ingress).toHaveLength(4)
+  expect(databasePolicy.spec.ingress).toHaveLength(5)
   expect(databasePolicy.spec.ingress).toEqual(
     expect.arrayContaining([
       {
@@ -167,6 +176,15 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
       {
         from: [{ podSelector: { matchLabels: { 'cnpg.io/cluster': 'bayn-db' } } }],
         ports: [{ port: 5432, protocol: 'TCP' }],
+      },
+      {
+        from: [
+          { podSelector: { matchLabels: { 'cnpg.io/cluster': 'bayn-db' } } },
+          { ipBlock: { cidr: '10.244.0.0/31' } },
+          { ipBlock: { cidr: '10.244.3.0/31' } },
+          { ipBlock: { cidr: '10.244.5.0/31' } },
+        ],
+        ports: [{ port: 8000, protocol: 'TCP' }],
       },
       {
         from: [

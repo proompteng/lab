@@ -29,13 +29,13 @@ This is typically caused by `kubectl apply` trying to store the full object in t
 Recommended (server-side apply, avoids last-applied annotation):
 
 ```bash
-kubectl apply --server-side -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.3.0/manifests/crds/applicationset-crd.yaml
+kubectl apply --server-side --force-conflicts -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.4.6/manifests/crds/applicationset-crd.yaml
 ```
 
 Fallback (create-only, avoids last-applied annotation):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/argoproj/argo-cd/v3.3.0/manifests/crds/applicationset-crd.yaml | kubectl create -f -
+curl -fsSL https://raw.githubusercontent.com/argoproj/argo-cd/v3.4.6/manifests/crds/applicationset-crd.yaml | kubectl create -f -
 ```
 
 Verify:
@@ -55,7 +55,7 @@ On a fresh cluster, applying `argocd/applications/argocd` will fail until the Tr
 Install the CRDs (pinned to the chart version we deploy):
 
 ```bash
-kubectl apply --server-side --force-conflicts -k https://github.com/traefik/traefik-helm-chart/traefik/crds/?ref=v39.0.1
+kubectl apply --server-side --force-conflicts -k https://github.com/traefik/traefik-helm-chart/traefik/crds/?ref=v39.0.9
 ```
 
 Verify:
@@ -69,7 +69,7 @@ kubectl get crd ingressroutes.traefik.io
 Apply the repo-managed Argo CD manifests:
 
 ```bash
-kubectl apply -k argocd/applications/argocd
+kubectl apply --server-side --force-conflicts -k argocd/applications/argocd
 ```
 
 Wait for Argo CD control plane to be up:

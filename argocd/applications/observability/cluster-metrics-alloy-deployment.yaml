@@ -30,7 +30,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: alloy
-          image: grafana/alloy:v1.11.2
+          image: grafana/alloy:v1.18.1
           args:
             - run
             - /etc/alloy/config.river

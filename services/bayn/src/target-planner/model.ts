@@ -51,8 +51,7 @@ export const TargetPlannerBrokerStateSchema = Schema.Struct({
   unknownOrderCount: NonNegativeIntegerSchema,
 })
 
-export const TargetPlannerInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-target-planner-input.v1'),
+const TargetPlannerInputFields = {
   strategyName: StrictNonEmptyStringSchema,
   cycleId: Sha256Schema,
   decisionHash: Sha256Schema,
@@ -70,10 +69,25 @@ export const TargetPlannerInputSchema = Schema.Struct({
   maximumInputAgeMs: PositiveIntegerSchema,
   submissionCutoffAt: UtcInstantSchema,
   observedAt: UtcInstantSchema,
+} as const
+
+export const TargetPlannerInputV1Schema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.paper-target-planner-input.v1'),
+  ...TargetPlannerInputFields,
 })
+
+export const TargetPlannerInputV2Schema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.paper-target-planner-input.v2'),
+  ...TargetPlannerInputFields,
+  allocationCapitalMicros: UnsignedMicrosSchema,
+})
+
+export const TargetPlannerInputSchema = Schema.Union([TargetPlannerInputV1Schema, TargetPlannerInputV2Schema])
 
 export type SignalSessionReferencePrices = typeof SignalSessionReferencePricesSchema.Type
 export type TargetPlannerBrokerState = typeof TargetPlannerBrokerStateSchema.Type
+export type TargetPlannerInputV1 = typeof TargetPlannerInputV1Schema.Type
+export type TargetPlannerInputV2 = typeof TargetPlannerInputV2Schema.Type
 export type TargetPlannerInput = typeof TargetPlannerInputSchema.Type
 
 export interface PlannedTargetQuantity {

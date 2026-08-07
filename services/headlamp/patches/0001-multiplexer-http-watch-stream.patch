@@ -1,8 +1,8 @@
 diff --git a/backend/cmd/multiplexer.go b/backend/cmd/multiplexer.go
-index 900ba2f28..c9e9da1b4 100644
+index a3c0cd2fdc6241d2ca42b86dc19d927c9b686b0b..62eb5cc88781f3aabfdcf0f2a12ec02b8ae84f35 100644
 --- a/backend/cmd/multiplexer.go
 +++ b/backend/cmd/multiplexer.go
-@@ -17,12 +17,16 @@ limitations under the License.
+@@ -17,10 +17,13 @@ limitations under the License.
  package main
  
  import (
@@ -15,22 +15,30 @@ index 900ba2f28..c9e9da1b4 100644
 +	"io"
  	"net/http"
  	"net/url"
-+	"strings"
- 	"sync"
- 	"time"
- 
-@@ -91,6 +95,8 @@ type Connection struct {
- 	closed bool
- 	// Authentication token.
+ 	"os"
+@@ -100,6 +103,8 @@ type Connection struct {
  	Token *string
+ 	// closeOnce is used to ensure the connection is closed only once.
+ 	closeOnce sync.Once
 +	// watchCancel stops an active HTTP watch stream.
 +	watchCancel context.CancelFunc
  }
  
  // Message represents a WebSocket message structure.
-@@ -275,6 +281,17 @@ func (m *Multiplexer) establishClusterConnection(
+@@ -369,6 +374,10 @@ func (c *Connection) safeClose() {
+ 		if c.WSConn != nil {
+ 			_ = c.WSConn.Close()
+ 		}
++
++		if c.watchCancel != nil {
++			c.watchCancel()
++		}
+ 	})
+ }
  
- 	connection := m.createConnection(clusterID, userID, path, query, clientConn, token)
+@@ -402,6 +411,17 @@ func (m *Multiplexer) establishClusterConnection(
+ 		connection.usesServiceAccountToken = true
+ 	}
  
 +	if isWatchQuery(query) {
 +		m.mutex.Lock()
@@ -46,8 +54,8 @@ index 900ba2f28..c9e9da1b4 100644
  	wsURL := createWebSocketURL(config.Host, path, query)
  
  	tlsConfig, err := rest.TLSConfigFor(config)
-@@ -421,6 +438,10 @@ func (m *Multiplexer) reconnect(conn *Connection) (*Connection, error) {
- 		conn.WSConn.Close()
+@@ -588,6 +608,10 @@ func (m *Multiplexer) reconnect(conn *Connection) (*Connection, error) {
+ 		_ = conn.WSConn.Close()
  	}
  
 +	if conn.watchCancel != nil {
@@ -57,7 +65,7 @@ index 900ba2f28..c9e9da1b4 100644
  	newConn, err := m.establishClusterConnection(
  		conn.ClusterID,
  		conn.UserID,
-@@ -535,7 +556,9 @@ func (m *Multiplexer) getOrCreateConnection(msg Message, clientConn *WSConnLock,
+@@ -785,7 +809,9 @@ func (m *Multiplexer) getOrCreateConnection(msg Message, clientConn *WSConnLock,
  			return nil, err
  		}
  
@@ -65,10 +73,10 @@ index 900ba2f28..c9e9da1b4 100644
 +		if conn.WSConn != nil {
 +			go m.handleClusterMessages(conn, clientConn)
 +		}
- 	} else if token != nil {
- 		// Check if the token is different before updating
- 		conn.mu.Lock()
-@@ -573,6 +596,10 @@ func (m *Multiplexer) handleConnectionError(clientConn *WSConnLock, msg Message,
+ 	} else if err := m.refreshConnectionToken(conn, token); err != nil {
+ 		return nil, err
+ 	}
+@@ -855,6 +881,10 @@ func (m *Multiplexer) handleConnectionError(clientConn *WSConnLock, msg Message,
  
  // writeMessageToCluster writes a message to the cluster WebSocket connection.
  func (m *Multiplexer) writeMessageToCluster(conn *Connection, data []byte) error {
@@ -79,42 +87,9 @@ index 900ba2f28..c9e9da1b4 100644
  	err := conn.WSConn.WriteMessage(websocket.BinaryMessage, data)
  	if err != nil {
  		conn.updateStatus(StateError, err)
-@@ -758,6 +785,10 @@ func (m *Multiplexer) cleanupConnection(conn *Connection) {
- 		conn.WSConn.Close()
- 	}
+@@ -1185,3 +1215,164 @@ func singleJoiningSlash(a, b string) string {
  
-+	if conn.watchCancel != nil {
-+		conn.watchCancel()
-+	}
-+
- 	m.mutex.Lock()
- 	connKey := m.createConnectionKey(conn.ClusterID, conn.Path, conn.UserID)
- 	delete(m.connections, connKey)
-@@ -797,6 +828,10 @@ func (m *Multiplexer) cleanupConnections() {
- 			conn.WSConn.Close()
- 		}
- 
-+		if conn.watchCancel != nil {
-+			conn.watchCancel()
-+		}
-+
- 		delete(m.connections, key)
- 	}
- }
-@@ -855,6 +890,10 @@ func (m *Multiplexer) CloseConnection(clusterID, path, userID string) {
- 	if conn.WSConn != nil {
- 		conn.WSConn.Close()
- 	}
-+
-+	if conn.watchCancel != nil {
-+		conn.watchCancel()
-+	}
- }
- 
- // createConnectionKey creates a unique key for a connection based on cluster ID, path, and user ID.
-@@ -871,3 +910,164 @@ func createWebSocketURL(host, path, query string) string {
- 
- 	return u.String()
+ 	return a + b
  }
 +
 +func isWatchQuery(rawQuery string) bool {
@@ -133,7 +108,7 @@ index 900ba2f28..c9e9da1b4 100644
 +
 +func createHTTPRequestURL(host, path, query, resourceVersion string) string {
 +	u, _ := url.Parse(host)
-+	u.Path = path
++	u.Path = singleJoiningSlash(u.Path, path)
 +
 +	values, err := url.ParseQuery(query)
 +	if err != nil {
@@ -172,7 +147,7 @@ index 900ba2f28..c9e9da1b4 100644
 +	for {
 +		err := m.streamHTTPWatch(ctx, conn, config, &lastResourceVersion)
 +		if err == nil {
-+			if ctx.Err() != nil || conn.closed {
++			if ctx.Err() != nil {
 +				return
 +			}
 +
@@ -278,10 +253,10 @@ index 900ba2f28..c9e9da1b4 100644
 +	}
 +}
 diff --git a/backend/cmd/multiplexer_test.go b/backend/cmd/multiplexer_test.go
-index cb737ccec..2a86b8a75 100644
+index 774d70db82cac5c25acee328ead7e30f213668eb..a0f658a7d99a570a59bd81df8f28a19d6d0ffe0d 100644
 --- a/backend/cmd/multiplexer_test.go
 +++ b/backend/cmd/multiplexer_test.go
-@@ -512,6 +512,39 @@ func createMockKubeAPIServer() *httptest.Server {
+@@ -688,6 +688,39 @@ func createMockKubeAPIServer() *httptest.Server {
  	return server
  }
  
@@ -320,8 +295,8 @@ index cb737ccec..2a86b8a75 100644
 +
  func TestGetOrCreateConnection(t *testing.T) {
  	store := kubeconfig.NewContextStore()
- 	m := NewMultiplexer(store)
-@@ -538,7 +571,7 @@ func TestGetOrCreateConnection(t *testing.T) {
+ 	m := NewMultiplexer(store, false)
+@@ -714,7 +747,7 @@ func TestGetOrCreateConnection(t *testing.T) {
  	msg := Message{
  		ClusterID: "test-cluster",
  		Path:      "/api/v1/pods",
@@ -330,7 +305,7 @@ index cb737ccec..2a86b8a75 100644
  		UserID:    "test-user",
  	}
  
-@@ -550,7 +583,7 @@ func TestGetOrCreateConnection(t *testing.T) {
+@@ -726,7 +759,7 @@ func TestGetOrCreateConnection(t *testing.T) {
  	assert.Equal(t, "test-cluster", conn.ClusterID)
  	assert.Equal(t, "test-user", conn.UserID)
  	assert.Equal(t, "/api/v1/pods", conn.Path)
@@ -339,7 +314,7 @@ index cb737ccec..2a86b8a75 100644
  
  	// Test getting an existing connection
  	conn2, err := m.getOrCreateConnection(msg, clientConn, &token)
-@@ -587,20 +620,84 @@ func TestEstablishClusterConnection(t *testing.T) {
+@@ -763,16 +796,16 @@ func TestEstablishClusterConnection(t *testing.T) {
  	defer clientServer.Close()
  
  	// Test successful connection establishment
@@ -359,10 +334,30 @@ index cb737ccec..2a86b8a75 100644
  	assert.Error(t, err)
  	assert.Nil(t, conn)
  }
+@@ -818,7 +851,7 @@ func TestEstablishClusterConnectionUsesServiceAccountToken(t *testing.T) {
+ 		"test-cluster",
+ 		"test-user",
+ 		"/api/v1/pods",
+-		"watch=true",
++		"watch=false",
+ 		clientConn,
+ 		&requestToken,
+ 	)
+@@ -829,13 +862,77 @@ func TestEstablishClusterConnectionUsesServiceAccountToken(t *testing.T) {
+ 		_ = conn.WSConn.Close()
+ 	}
+ 
+-	close(conn.Done)
++	conn.safeClose()
+ 
+ 	assert.Equal(t, "Bearer "+testServiceAccountToken, receivedAuth)
+ 	require.NotNil(t, conn.Token)
+ 	assert.Equal(t, testServiceAccountToken, *conn.Token)
+ }
  
 +func TestGetOrCreateConnection_HTTPWatchStream(t *testing.T) {
 +	store := kubeconfig.NewContextStore()
-+	m := NewMultiplexer(store)
++	m := NewMultiplexer(store, false)
 +
 +	mockServer := createMockHTTPWatchServer()
 +	defer mockServer.Close()
@@ -426,8 +421,8 @@ index cb737ccec..2a86b8a75 100644
 +
  func TestReconnect(t *testing.T) {
  	store := kubeconfig.NewContextStore()
- 	m := NewMultiplexer(store)
-@@ -624,7 +721,7 @@ func TestReconnect(t *testing.T) {
+ 	m := NewMultiplexer(store, false)
+@@ -859,7 +956,7 @@ func TestReconnect(t *testing.T) {
  	defer clientServer.Close()
  
  	// Create initial connection
@@ -436,7 +431,7 @@ index cb737ccec..2a86b8a75 100644
  	wsConn, wsServer := createTestWebSocketConnection()
  
  	defer wsServer.Close()
-@@ -650,7 +747,7 @@ func TestReconnect(t *testing.T) {
+@@ -885,7 +982,7 @@ func TestReconnect(t *testing.T) {
  	assert.Contains(t, err.Error(), "getting context: key not found")
  
  	// Test reconnection with closed connection
@@ -445,7 +440,7 @@ index cb737ccec..2a86b8a75 100644
  	wsConn2, wsServer2 := createTestWebSocketConnection()
  
  	defer wsServer2.Close()
-@@ -671,7 +768,7 @@ func TestCreateWrapperMessage(t *testing.T) {
+@@ -906,7 +1003,7 @@ func TestCreateWrapperMessage(t *testing.T) {
  	conn := &Connection{
  		ClusterID: "test-cluster",
  		Path:      "/api/v1/pods",
@@ -454,7 +449,25 @@ index cb737ccec..2a86b8a75 100644
  		UserID:    "test-user",
  	}
  
-@@ -1146,7 +1243,7 @@ func TestGetOrCreateConnection_TokenRefresh(t *testing.T) {
+@@ -915,7 +1012,7 @@ func TestCreateWrapperMessage(t *testing.T) {
+ 	wrapperMsg := m.createWrapperMessage(conn, websocket.TextMessage, textMsg)
+ 	assert.Equal(t, "test-cluster", wrapperMsg.ClusterID)
+ 	assert.Equal(t, "/api/v1/pods", wrapperMsg.Path)
+-	assert.Equal(t, "watch=true", wrapperMsg.Query)
++	assert.Equal(t, "resourceVersion=1", wrapperMsg.Query)
+ 	assert.Equal(t, "test-user", wrapperMsg.UserID)
+ 	assert.Equal(t, "Hello, World!", wrapperMsg.Data)
+ 	assert.False(t, wrapperMsg.Binary)
+@@ -925,7 +1022,7 @@ func TestCreateWrapperMessage(t *testing.T) {
+ 	wrapperMsg = m.createWrapperMessage(conn, websocket.BinaryMessage, binaryMsg)
+ 	assert.Equal(t, "test-cluster", wrapperMsg.ClusterID)
+ 	assert.Equal(t, "/api/v1/pods", wrapperMsg.Path)
+-	assert.Equal(t, "watch=true", wrapperMsg.Query)
++	assert.Equal(t, "resourceVersion=1", wrapperMsg.Query)
+ 	assert.Equal(t, "test-user", wrapperMsg.UserID)
+ 	assert.Equal(t, "AQID", wrapperMsg.Data) // Base64 encoded
+ 	assert.True(t, wrapperMsg.Binary)
+@@ -1372,7 +1469,7 @@ func TestGetOrCreateConnection_TokenRefresh(t *testing.T) {
  	msg := Message{
  		ClusterID: "test-cluster",
  		Path:      "/api/v1/pods",
@@ -463,7 +476,7 @@ index cb737ccec..2a86b8a75 100644
  		UserID:    "test-user",
  	}
  
-@@ -1191,7 +1288,7 @@ func TestReconnect_WithToken(t *testing.T) {
+@@ -1455,7 +1552,7 @@ func TestReconnect_WithToken(t *testing.T) {
  
  	// Create initial connection with original token
  	originalToken := "original-token"

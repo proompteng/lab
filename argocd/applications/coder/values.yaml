@@ -1,5 +1,8 @@
 coder:
   coder:
+    replicaCount: 1
+    image:
+      tag: v2.35.3@sha256:8e34e774ebde1813f03294498374cd955264eee6cd2b61a72baf7634a0ca7de4
     env:
       - name: CODER_ACCESS_URL
         value: "https://coder.proompteng.ai"

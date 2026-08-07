@@ -3,7 +3,7 @@ kind: Kustomization
 helmCharts:
   - name: argo-rollouts
     repo: https://argoproj.github.io/argo-helm
-    version: 2.41.0
+    version: 2.41.1
     releaseName: argo-rollouts
     namespace: argo-rollouts
     valuesInline:

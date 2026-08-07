@@ -102,6 +102,22 @@ spec:
         - port: 5432
           protocol: TCP
     - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: bayn-db
+        # Cross-node status and failsafe traffic can be source-NATed to the
+        # Flannel VTEP (.0); node-local API proxy traffic uses the CNI gateway
+        # (.1). Limit the exception to those two addresses on each node.
+        - ipBlock:
+            cidr: 10.244.0.0/31
+        - ipBlock:
+            cidr: 10.244.3.0/31
+        - ipBlock:
+            cidr: 10.244.5.0/31
+      ports:
+        - port: 8000
+          protocol: TCP
+    - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: cloudnative-pg
