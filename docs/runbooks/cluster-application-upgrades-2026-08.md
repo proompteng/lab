@@ -427,8 +427,9 @@ annotation size limit. Before syncing the control plane:
 
 ### Promotion
 
-After merge, require root drift to contain only `ApplicationSet/bootstrap`, then update the generated Argo Application
-before touching the control plane:
+After merge, allow only two root states: either the reviewed `ApplicationSet/bootstrap` drift is still pending, or root
+already auto-synced the exact merge revision. In both cases, require the generated Argo Application to carry the new
+policy before touching the control plane:
 
 ```bash
 set -euo pipefail
@@ -437,10 +438,20 @@ upgrade_revision="$(git rev-parse origin/main)"
 argocd app get root --hard-refresh >/dev/null
 root_drift=$(kubectl -n argocd get application root -o json |
   jq -r '.status.resources[] | select(.status != "Synced") | [.group,.kind,.namespace,.name] | @tsv')
-test "$root_drift" = $'argoproj.io\tApplicationSet\targocd\tbootstrap'
-
-argocd app sync root --revision "$upgrade_revision" --prune=false --timeout 600
-argocd app wait root --sync --health --timeout 600
+if [[ -n "$root_drift" ]]; then
+  test "$root_drift" = $'argoproj.io\tApplicationSet\targocd\tbootstrap'
+  argocd app sync root --revision "$upgrade_revision" --prune=false --timeout 600
+  argocd app wait root --sync --health --timeout 600
+else
+  test "$(kubectl -n argocd get application root -o jsonpath='{.status.sync.status}')" = Synced
+  test "$(kubectl -n argocd get application root -o jsonpath='{.status.sync.revision}')" = "$upgrade_revision"
+fi
+for _ in {1..30}; do
+  migration_disabled=$(kubectl -n argocd get application argocd -o json |
+    jq -r '.spec.syncPolicy.syncOptions | index("ClientSideApplyMigration=false")')
+  [[ "$migration_disabled" == null ]] && break
+  sleep 2
+done
 test "$(kubectl -n argocd get application argocd -o json |
   jq -r '.spec.syncPolicy.syncOptions | index("ClientSideApplyMigration=false")')" = null
 
