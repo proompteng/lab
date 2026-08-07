@@ -22,8 +22,8 @@ describe('Buzz production GitOps contract', () => {
     const redis = buzzFile('redis.yaml')
     const alloy = buzzFile('alloy-deployment.yaml')
 
-    expect(kustomization).toContain('version: 0.1.6')
-    expect(kustomization).toContain('sha256:88b96378cabd6b64c9bb8da9824a608daac3b0965d2aa17019e70248c07d517c')
+    expect(kustomization).toContain('version: 0.1.7')
+    expect(kustomization).toContain('sha256:2cfedd09f20902c84afdefadf838f2975c19de5b15eea6c63e7d0d5f666171a3')
     expect(kustomization).toContain('newName: registry.ide-newton.ts.net/lab/buzz')
     expect(kustomization).toContain('newTag: sha-dba56ff36e19307d93a738c9005aaa3cbfa718df')
     expect(kustomization).toContain('sha256:16d08bf8e2772a93924de1a49746a034d3410387d6095b214ed2e798aa7d6cfb')
@@ -33,6 +33,12 @@ describe('Buzz production GitOps contract', () => {
     }
 
     expect(alloy).toContain('--server.http.listen-addr=0.0.0.0:12345')
+  })
+
+  test('does not keep completed one-shot backups in desired state', () => {
+    const kustomization = buzzFile('kustomization.yaml')
+
+    expect(kustomization).not.toContain('postgres-acceptance-backup.yaml')
   })
 
   test('builds the Ceph compatibility relay from pinned upstream inputs for both cluster architectures', () => {

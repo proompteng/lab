@@ -59,7 +59,7 @@ spec:
               - name: metrics-server
                 path: manifests/overlays/release-ha-1.21+
                 repoURL: https://github.com/kubernetes-sigs/metrics-server.git
-                targetRevision: v0.8.1
+                targetRevision: v0.9.0
                 namespace: kube-system
                 renderWithLovely: false
                 kustomize:
