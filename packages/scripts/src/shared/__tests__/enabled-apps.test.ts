@@ -43,6 +43,13 @@ const temporalKustomization = YAML.parse(readFileSync('argocd/applications/tempo
   helmCharts?: Array<{ name?: string; version?: string }>
   images?: Array<{ name?: string; newName?: string; newTag?: string; digest?: string }>
 }
+const jangarKustomization = YAML.parse(readFileSync('argocd/applications/jangar/kustomization.yaml', 'utf8')) as {
+  helmCharts?: Array<{ name?: string; version?: string }>
+  images?: Array<{ name?: string; newTag?: string; digest?: string }>
+}
+const openWebUIValues = YAML.parse(readFileSync('argocd/applications/jangar/openwebui-values.yaml', 'utf8')) as {
+  image?: { tag?: string }
+}
 const karapaceResources = YAML.parseAllDocuments(karapaceManifest).map((document) => document.toJSON()) as Array<{
   apiVersion?: string
   kind?: string
@@ -258,6 +265,18 @@ describe('enabled app inventory', () => {
         digest: 'sha256:fc47cd8202c98ed868745fd9f2f011585232676d08da621b9a6d7bc4653c17aa',
       },
     ])
+  })
+
+  it('pins the Open WebUI migration wave to its immutable image', () => {
+    expect(jangarKustomization.helmCharts?.find((chart) => chart.name === 'open-webui')).toMatchObject({
+      version: '16.0.0',
+    })
+    expect(jangarKustomization.images?.find((image) => image.name === 'ghcr.io/open-webui/open-webui')).toEqual({
+      name: 'ghcr.io/open-webui/open-webui',
+      newTag: 'v0.11.0',
+      digest: 'sha256:72c0ba641ba75e7aa52655cb242570906ececd09b1140fb736483038a22b3228',
+    })
+    expect(openWebUIValues.image?.tag).toBe('v0.11.0')
   })
 
   it('keeps chart-only apps out of Nix image migration state', () => {
