@@ -39,6 +39,7 @@ const observabilityKustomization = readFileSync('argocd/applications/observabili
 const featureFlagsKustomization = readFileSync('argocd/applications/feature-flags/kustomization.yaml', 'utf8')
 const cloudflaredDeployment = readFileSync('argocd/applications/cloudflare/deployment.yaml', 'utf8')
 const karapaceManifest = readFileSync('argocd/applications/kafka/karapace.yaml', 'utf8')
+const keycloakManifest = readFileSync('argocd/applications/keycloak/keycloak.yaml', 'utf8')
 const temporalKustomization = YAML.parse(readFileSync('argocd/applications/temporal/kustomization.yaml', 'utf8')) as {
   helmCharts?: Array<{ name?: string; version?: string }>
   images?: Array<{ name?: string; newName?: string; newTag?: string; digest?: string }>
@@ -315,6 +316,12 @@ describe('enabled app inventory', () => {
 
     expect(vllm?.image).toBe(
       'vllm/vllm-openai:v0.26.0-x86_64-cu129@sha256:3c5c53248febaa72823a4b7e51aafa1cd2b65d860392e3930414da4d3864f541',
+    )
+  })
+
+  it('pins Keycloak to the immutable multi-architecture security release', () => {
+    expect(keycloakManifest).toContain(
+      'quay.io/keycloak/keycloak:26.7.1@sha256:f1f1f01e472c8a78df40d8f2a49a925274eda4d3d80d5f6edbb5c880ee3c01c6',
     )
   })
 
