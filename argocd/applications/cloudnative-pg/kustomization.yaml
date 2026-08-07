@@ -2,7 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: cloudnative-pg
 resources:
-  - https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.13.0/manifest.yaml
+  - https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.14.0/manifest.yaml
 helmCharts:
   - name: cloudnative-pg
     repo: https://cloudnative-pg.io/charts
@@ -24,7 +24,7 @@ patches:
           spec:
             containers:
               - name: barman-cloud
-                image: ghcr.io/cloudnative-pg/plugin-barman-cloud@sha256:71589dbac582333442812b07b31f7ea4d00324a8358aac7ca507dabf9f4b6c96
+                image: ghcr.io/cloudnative-pg/plugin-barman-cloud:v0.14.0@sha256:823a8893690980ba5830bbbb11196a35f695b0488db7d846abc33baebf32417c
                 args:
                   - operator
                   - --server-cert=/server/tls.crt
@@ -33,6 +33,12 @@ patches:
                   - --server-address=:9090
                   - --leader-elect
                   - --log-level=info
+                env:
+                  - name: SIDECAR_IMAGE
+                    valueFrom:
+                      secretKeyRef:
+                        key: SIDECAR_IMAGE
+                        name: plugin-barman-cloud-m5m67kfh8f
                 resources:
                   requests:
                     cpu: 100m
@@ -42,8 +48,11 @@ patches:
                     memory: 512Mi
   - target:
       kind: Secret
-      name: plugin-barman-cloud-m5m67kfh8f
+      name: plugin-barman-cloud-f998mh5292
     patch: |-
       - op: replace
+        path: /metadata/name
+        value: plugin-barman-cloud-m5m67kfh8f
+      - op: replace
         path: /data/SIDECAR_IMAGE
-        value: Z2hjci5pby9jbG91ZG5hdGl2ZS1wZy9wbHVnaW4tYmFybWFuLWNsb3VkLXNpZGVjYXJAc2hhMjU2Ojk5MDM2MWFmMzMxOWY5ZTIzYWFmYTBmNmQ3OTgxZjk5YmYxZjY5YjRlNmE4NWNmMWJjN2Q3MWQ2ZjA5YmIyODg=
+        value: Z2hjci5pby9jbG91ZG5hdGl2ZS1wZy9wbHVnaW4tYmFybWFuLWNsb3VkLXNpZGVjYXI6djAuMTQuMEBzaGEyNTY6OTg4MDgxN2MyODVjN2FmYTRkMTk1ZGEyMTQ1MDY0ZDIxOTA3NDA1NDg5ZWQ2ZWMzOWFiZTU5YjFmZWI1NThhNA==

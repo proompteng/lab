@@ -1638,3 +1638,55 @@ UIDs recorded. After GitOps reconciliation, require only the existing NetworkPol
 all UIDs and Pod restart counts. Require `kubectl cnpg status` to report both instances `OK`, zero new failsafe/status
 connection errors in a bounded window, synchronous replication with zero byte lag, and Bayn `Synced/Healthy` at the
 exact merge. Rollback is a reviewed Git revert; stop the Barman upgrade if the status path remains unavailable.
+
+Wave 7f was accepted at merge `5d9fb804fe430eee84c035b0a2d1d57badd637be`. NetworkPolicy `bayn-db` retained UID
+`c1d3cb68-5455-4bc4-8198-51b4a7e8348f` and advanced only from generation 1 to 2. Both database Pod UIDs and restart
+counts, both PVC UIDs and bindings, and the cluster UID remained exact. `kubectl cnpg status` then reported the
+primary and synchronous standby `OK`, direct SQL showed streaming quorum replication with zero-byte lag, and no new
+failsafe error appeared after the rule applied. Argo finished `Synced` on the exact merge. Its health remained the
+pre-existing `Progressing` state because the unrelated Bayn application Pod had already been unready for 12 hours;
+the database cluster itself remained healthy and the Barman upgrade prerequisite passed.
+
+## Wave 7g: Barman Cloud 0.14.0
+
+| Application  | From     | To       | Reconciliation | Expected impact                                                   |
+| ------------ | -------- | -------- | -------------- | ----------------------------------------------------------------- |
+| Barman Cloud | `0.13.0` | `0.14.0` | Manual         | One plugin operator and five injected database sidecars may roll. |
+
+Barman Cloud 0.14.0 honors the CNPG operator's empty-WAL-archive decision and fixes sidecar injection for replica
+clusters bootstrapped with `pg_basebackup`, WAL restore during designated-primary promotion, `pg_rewind` WAL serving,
+and startup-probe cadence. It also updates CNPG-I to 0.6.0, gRPC to 1.82.1, and Kubernetes libraries to 0.36.3. The
+installed CloudNativePG 1.30.0 exceeds the plugin's 1.26 minimum, and upstream requires no special 0.13-to-0.14
+migration beyond installing the new version.
+
+Pin release asset `manifest.yaml` whose published SHA-256 is
+`8d4f1719cc54891ddffd7633279ec93b5d2cc547df8684c3b84f3b156a615e7c`. Pin the operator index to
+`sha256:823a8893690980ba5830bbbb11196a35f695b0488db7d846abc33baebf32417c` and the sidecar index to
+`sha256:9880817c285c7afa4d195da2145064d21907405489ed6ec39abe59b1feb558a4`. Preserve the live sidecar-image Secret name
+and UID by renaming the release's generated `plugin-barman-cloud-f998mh5292` resource back to
+`plugin-barman-cloud-m5m67kfh8f`; patch both the Secret data and operator reference atomically.
+
+Before merge, require the manual `cloudnative-pg` Application and CNPG/Barman operators healthy, the Bayn and Buzz
+clusters healthy with five ready database Pods, synchronous replication caught up, continuous archiving true, and a
+fresh completed plugin backup for each cluster. Record operator, Secret, CRD, cluster, ObjectStore, ScheduledBackup,
+Pod, and PVC UIDs plus database size and schema/table-count fingerprints. Require the rendered diff to contain no
+Namespace and no resource deletion, and require the stable Secret name exactly once.
+
+The pre-upgrade backups completed through plugin 0.13.0 as Bayn backup `20260807T160344` (UID
+`3595a1d6-d18a-40eb-93ea-77dd88fbbfa2`, standby `bayn-db-2`) and Buzz backup `20260807T160344` (UID
+`4037badd-e2c7-4fd0-a4bf-b2d4310de9eb`, standby `buzz-db-1`). Bayn system ID `7664582434622365715` had a
+95,721,151-byte application database, 35 user relations, structural hash `63d154733c6857e972e147c7e17632f2`, and
+118,059 rows across 36 user tables. Buzz system ID `7665590635531415571` had a 13,470,867-byte application database,
+52 user relations, structural hash `85a3cc5991bb687b4b395a95bb58cff9`, and 826 rows across 53 user tables. These
+fingerprints may advance under live writes but must not regress or change structure during the upgrade.
+
+After review, sync `cloudnative-pg` without pruning. Require the existing Secret and every non-Pod resource UID to
+remain exact; the plugin operator must roll to the pinned index, report version 0.14.0 and all three capabilities, and
+remain error-free. Observe any CNPG-managed database rolls cluster by cluster: preserve quorum, PVC bindings, system
+IDs, and primary availability, and require every replacement Pod to use the pinned sidecar index with zero new
+restarts. If CNPG does not automatically replace an old sidecar, use its canonical rolling-restart command, Buzz
+before Bayn, and wait for full cluster health between instances and clusters. Finish by forcing WAL activity, taking
+and completing a 0.14.0 plugin backup for each cluster, rechecking database fingerprints and replication, and requiring
+root and `cloudnative-pg` `Synced/Healthy` at the exact merge with bounded clean operator and sidecar logs. Rollback is
+a reviewed Git revert and manual no-prune sync; stop on archive failure, replication loss, PVC replacement, system-ID
+change, or data-fingerprint regression.
