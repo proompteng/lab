@@ -30,14 +30,29 @@ Record the baseline and exact release revision:
 ```bash
 set -euo pipefail
 git fetch --quiet origin main
-upgrade_revision=$(git rev-parse origin/main)
+upgrade_pr=13560
+upgrade_revision=$(gh pr view "$upgrade_pr" -R proompteng/lab --json state,mergeCommit --jq \
+  'select(.state == "MERGED") | .mergeCommit.oid')
+test -n "$upgrade_revision"
+test "$(git rev-parse origin/main)" = "$upgrade_revision"
 kubectl -n default get nodes
 kubectl -n argocd get applications \
   argo-rollouts argo-workflows buzz clickhouse-operator forgejo istio-ingress istio-system \
   kubernetes-reflector pgadmin sealed-secrets tailscale traefik \
   -o custom-columns=APP:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status,REVISION:.status.sync.revision
 kubectl -n default get pods --all-namespaces -o json |
-  jq -r '.items[] | select(any(.status.containerStatuses[]?; .ready != true)) | [.metadata.namespace,.metadata.name,.status.phase] | @tsv'
+  jq -r '.items[]
+    | select(
+        .status.phase == "Pending"
+        or .status.phase == "Failed"
+        or .status.phase == "Unknown"
+        or (
+          .status.phase == "Running"
+          and (((.status.containerStatuses // []) | length) == 0 or any(.status.containerStatuses[]?; .ready != true))
+        )
+      )
+    | [.metadata.namespace,.metadata.name,.status.phase]
+    | @tsv'
 ```
 
 Save the Sealed Secrets key identities before reconciliation:
@@ -48,7 +63,8 @@ kubectl -n sealed-secrets get secret -l sealedsecrets.bitnami.com/sealed-secrets
 ```
 
 Stop if nodes are not ready, a target application is already degraded, or the baseline contains an unexplained failing
-workload. Buzz's known `OutOfSync` resource is the retained one-off CNPG `Backup`
+workload. The `origin/main` equality check is a hard gate: if another change has reached `main`, stop and isolate this
+wave behind an immutable release ref before syncing anything. Buzz's known `OutOfSync` resource is the retained one-off CNPG `Backup`
 `buzz-db-acceptance-20260723t091130z`; it must not be pruned by this rollout.
 
 ### Automatic group
