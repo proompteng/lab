@@ -1230,6 +1230,12 @@ final fleet acceptance. Preserve these identities:
 | `Service/flamingo`                           | `9be4c6e6-cbf2-4882-9e23-b5b21bcf6f8e` |
 | `PersistentVolumeClaim/flamingo-model-cache` | `2c2ff36a-f4de-49f8-ae22-80337fab64fe` |
 
+The pre-sync smoke artifact
+`/tmp/flamingo-vllm-bench/flamingo-vllm-0-23-0-preupgrade-smoke-2026-08-07T13-53-28-137Z.json` passed every gate,
+including 220K recall, with zero request errors, aborts, or preemptions across 236,825 prompt tokens. VolumeSnapshot
+`flamingo-pre-vllm-v0-26-0-20260807t135506z` is ready for the full 256 GiB PVC with UID
+`bbad601c-553d-4c84-8694-6c3b1d66bf33`; retain it through final fleet acceptance.
+
 After merge, inspect the reviewed Argo diff and require it to contain only the vLLM image replacement before manually
 syncing. Wait up to four hours for the model load. Require the replacement Pod to run on `turin`, become ready with
 zero restarts at the pinned digest, and report vLLM 0.26.0. Require `/v1/models` to expose only `qwen36-flamingo` with
