@@ -23,18 +23,33 @@ The six automatic applications reconcile as soon as Argo observes the merged rev
 and tolerate temporary old/new version skew. Do not start the manual group until every automatic application is
 `Synced` and `Healthy` at the merged revision.
 
-### Preflight
+### Recorded pre-merge baseline
 
-Record the baseline and exact release revision:
+The following baseline was captured at `2026-08-07T08:34:01Z`, before PR #13560 merged, while every target still ran
+revision `bb0230cd2f2bad537c3511a7916323458df3478f`.
+
+- Nodes `talos-192-168-1-194`, `talos-192-168-1-85`, and `turin` were `Ready` on Kubernetes `v1.35.0`.
+- All target applications were `Synced` and `Healthy` except Buzz, which was `OutOfSync` and `Healthy` only because of
+  the retained `Backup` `buzz-db-acceptance-20260723t091130z`.
+- The only failing or unready workloads were two existing failed Synthesis Jobs,
+  `autonomous-trader-market-open-qbfz7-job-6x54s` and `autonomous-trader-scorecard-readback-c9qck-job-8qwpp`, and the
+  existing unready Torghut Pod `torghut-hyperliquid-runtime-54469dcc6d-6b2cp`.
+
+The pre-merge Sealed Secrets key identities were:
+
+| Secret name               | UID                                    |
+| ------------------------- | -------------------------------------- |
+| `sealed-secrets-key2cg4d` | `58e0e77f-2d16-4243-a2cd-e9896893878f` |
+| `sealed-secrets-key4vts2` | `4b855a78-6cf1-40b3-b01d-fd096fdc3aa9` |
+| `sealed-secrets-key5vpnp` | `74952053-0cbc-49e0-afea-5412209e3b5e` |
+| `sealed-secrets-keybfnj6` | `542a97e7-89b6-4f27-b2cd-9c71896c7c11` |
+| `sealed-secrets-keyh547n` | `f74b3f86-34e4-4aa8-b75d-8ce7c7d853d2` |
+| `sealed-secrets-keyzrp7l` | `4eaedd2c-f0a6-40ab-b01d-27c3ee4d6c6e` |
+
+These commands produced the baseline:
 
 ```bash
 set -euo pipefail
-git fetch --quiet origin main
-upgrade_pr=13560
-upgrade_revision=$(gh pr view "$upgrade_pr" -R proompteng/lab --json state,mergeCommit --jq \
-  'select(.state == "MERGED") | .mergeCommit.oid')
-test -n "$upgrade_revision"
-test "$(git rev-parse origin/main)" = "$upgrade_revision"
 kubectl -n default get nodes
 kubectl -n argocd get applications \
   argo-rollouts argo-workflows buzz clickhouse-operator forgejo istio-ingress istio-system \
@@ -53,19 +68,27 @@ kubectl -n default get pods --all-namespaces -o json |
       )
     | [.metadata.namespace,.metadata.name,.status.phase]
     | @tsv'
-```
-
-Save the Sealed Secrets key identities before reconciliation:
-
-```bash
 kubectl -n sealed-secrets get secret -l sealedsecrets.bitnami.com/sealed-secrets-key -o json |
   jq -r '.items[] | [.metadata.name,.metadata.uid] | @tsv' | sort
 ```
 
-Stop if nodes are not ready, a target application is already degraded, or the baseline contains an unexplained failing
-workload. The `origin/main` equality check is a hard gate: if another change has reached `main`, stop and isolate this
-wave behind an immutable release ref before syncing anything. Buzz's known `OutOfSync` resource is the retained one-off CNPG `Backup`
-`buzz-db-acceptance-20260723t091130z`; it must not be pruned by this rollout.
+### Post-merge release gate
+
+Immediately after merge, resolve the immutable squash commit from the reviewed PR and require it to remain the current
+`main` tip before accepting the automatic group or starting any manual sync:
+
+```bash
+set -euo pipefail
+git fetch --quiet origin main
+upgrade_revision=$(gh pr view 13560 -R proompteng/lab --json state,mergeCommit --jq \
+  'select(.state == "MERGED") | .mergeCommit.oid')
+test -n "$upgrade_revision"
+test "$(git rev-parse origin/main)" = "$upgrade_revision"
+```
+
+If another change has reached `main`, stop and isolate this wave behind an immutable release ref before syncing
+anything. Stop if a node is no longer ready, a target application is degraded, or the phase-aware Pod query reports a
+new workload beyond the recorded baseline. The Buzz backup must not be pruned by this rollout.
 
 ### Automatic group
 
@@ -73,6 +96,11 @@ Wait for the automatically reconciled applications, then prove their workloads c
 
 ```bash
 set -euo pipefail
+git fetch --quiet origin main
+upgrade_revision=$(gh pr view 13560 -R proompteng/lab --json state,mergeCommit --jq \
+  'select(.state == "MERGED") | .mergeCommit.oid')
+test -n "$upgrade_revision"
+test "$(git rev-parse origin/main)" = "$upgrade_revision"
 for upgrade_app in istio-system istio-ingress kubernetes-reflector sealed-secrets tailscale traefik; do
   argocd app wait "$upgrade_app" --sync --health --timeout 900
   test "$(kubectl -n argocd get application "$upgrade_app" -o jsonpath='{.status.sync.revision}')" = "$upgrade_revision"
@@ -88,8 +116,8 @@ kubectl -n tailscale rollout status deployment/operator --timeout=10m
 kubectl -n traefik rollout status deployment/traefik --timeout=10m
 ```
 
-Compare the Sealed Secrets key name/UID output with the preflight capture. Stop before the manual group if any key was
-replaced, routing regressed, or an application is not healthy.
+Compare the Sealed Secrets key name/UID output with the recorded pre-merge baseline. Stop before the manual group if
+any key was replaced, routing regressed, or an application is not healthy.
 
 ### Manual group
 
@@ -97,6 +125,11 @@ Sync and verify one application at a time. `--prune=false` prevents this upgrade
 
 ```bash
 set -euo pipefail
+git fetch --quiet origin main
+upgrade_revision=$(gh pr view 13560 -R proompteng/lab --json state,mergeCommit --jq \
+  'select(.state == "MERGED") | .mergeCommit.oid')
+test -n "$upgrade_revision"
+test "$(git rev-parse origin/main)" = "$upgrade_revision"
 argocd app sync argo-rollouts --revision "$upgrade_revision" --prune=false --timeout 600
 argocd app wait argo-rollouts --sync --health --timeout 600
 kubectl -n argo-rollouts rollout status deployment/argo-rollouts --timeout=10m
@@ -130,7 +163,8 @@ Buzz is expected to remain `OutOfSync` only for the retained one-off `Backup`. A
 - Existing Istio/Traefik routes, Tailscale ingress, Forgejo, pgAdmin, Buzz, and the Argo UIs respond normally.
 - No ClickHouseInstallation, database cluster, PVC, or user workload was recreated.
 
-Repeat the preflight application and failing-Pod queries after the manual group and compare them with the baseline.
+Repeat the recorded application, phase-aware Pod, and Sealed Secrets key queries after the manual group and compare
+them with the pre-merge baseline above.
 
 ### Rollback
 
