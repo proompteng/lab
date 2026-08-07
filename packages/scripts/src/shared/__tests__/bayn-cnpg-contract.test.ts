@@ -157,7 +157,7 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
   })
   expect(databasePolicy.spec.podSelector.matchLabels).toEqual({ 'cnpg.io/cluster': 'bayn-db' })
   expect(databasePolicy.spec.policyTypes).toEqual(['Ingress'])
-  expect(databasePolicy.spec.ingress).toHaveLength(4)
+  expect(databasePolicy.spec.ingress).toHaveLength(5)
   expect(databasePolicy.spec.ingress).toEqual(
     expect.arrayContaining([
       {
@@ -167,6 +167,15 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
       {
         from: [{ podSelector: { matchLabels: { 'cnpg.io/cluster': 'bayn-db' } } }],
         ports: [{ port: 5432, protocol: 'TCP' }],
+      },
+      {
+        from: [
+          { podSelector: { matchLabels: { 'cnpg.io/cluster': 'bayn-db' } } },
+          { ipBlock: { cidr: '10.244.0.0/31' } },
+          { ipBlock: { cidr: '10.244.3.0/31' } },
+          { ipBlock: { cidr: '10.244.5.0/31' } },
+        ],
+        ports: [{ port: 8000, protocol: 'TCP' }],
       },
       {
         from: [

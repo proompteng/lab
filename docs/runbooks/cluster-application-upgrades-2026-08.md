@@ -1612,3 +1612,29 @@ Application policy change and reconcile root without pruning. The generated Appl
 sync policy, no resource diff, and no operation. Recheck all listed UIDs, Pod restart counts, every CNPG cluster phase,
 and all database Pod UIDs. Finish with root and `cloudnative-pg` `Synced/Healthy` at the exact gate merge. Rollback is
 a reviewed Git revert of the policy-only revision.
+
+Wave 7e was accepted at merge `6d0affc70db94f270377406df75d85900b78dc7e`. The root diff contained only the
+`cloudnative-pg` `automation: auto` to `manual` field and was reconciled without pruning. The generated Application
+then had no automated policy, operation, or resource diff. Both platform Deployment UIDs, both platform Pod UIDs and
+restart counts, the sidecar-image Secret UID, all 13 CNPG cluster UIDs and healthy phases, and all 20 database Pod UIDs
+and restart counts remained exact. Root and `cloudnative-pg` finished with no diff at `Synced/Healthy` on the exact
+gate merge.
+
+## Wave 7f: Bayn CNPG status-path prerequisite
+
+| Application | From                                | To                               | Reconciliation | Expected impact                        |
+| ----------- | ----------------------------------- | -------------------------------- | -------------- | -------------------------------------- |
+| Bayn        | CNPG status path blocked cross-node | CNPG status path allowed on 8000 | Automatic      | One NetworkPolicy update; no Pod roll. |
+
+The Barman preflight found Bayn healthy and synchronously replicating, but its primary continuously failed CNPG
+failsafe checks against the replica on TCP 8000. The existing NetworkPolicy allowed instance-to-instance PostgreSQL
+traffic on 5432 and operator traffic on 8000, but omitted the CNPG instance and Flannel node-host sources required for
+cross-node status traffic. Do not roll either Bayn database Pod until that path is restored.
+
+Add a port-8000 ingress rule limited to Bayn CNPG Pods and the three existing Flannel VTEP/CNI gateway `/31` ranges,
+matching the already-proven Buzz status-path policy. Before merge, require both Bayn instances ready, synchronous
+streaming active, continuous archiving and the latest backup successful, and all cluster, Pod, PVC, and NetworkPolicy
+UIDs recorded. After GitOps reconciliation, require only the existing NetworkPolicy generation to change; preserve
+all UIDs and Pod restart counts. Require `kubectl cnpg status` to report both instances `OK`, zero new failsafe/status
+connection errors in a bounded window, synchronous replication with zero byte lag, and Bayn `Synced/Healthy` at the
+exact merge. Rollback is a reviewed Git revert; stop the Barman upgrade if the status path remains unavailable.
