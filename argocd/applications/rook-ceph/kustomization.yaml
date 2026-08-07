@@ -8,6 +8,7 @@ resources:
   - ingressroute-ceph-k8s-private.yaml
   - rook-ceph-objectstore-loki-user.yaml
   - rook-ceph-object-user-objectstore-loki-reflector-source.yaml
+  - csi-legacy-service-account-bridge.yaml
 
 helmCharts:
   - name: rook-ceph
@@ -33,7 +34,8 @@ helmCharts:
 
 patches:
   # Install the v1.20 CSI operator, CRDs, RBAC, and service accounts before
-  # transferring the existing Driver and OperatorConfig resources to GitOps.
+  # bridging the legacy identities (wave 1) and transferring the existing
+  # Driver and OperatorConfig resources to GitOps (wave 2).
   - target:
       group: csi.ceph.io
       version: v1
@@ -42,7 +44,7 @@ patches:
       - op: add
         path: /metadata/annotations
         value:
-          argocd.argoproj.io/sync-wave: "1"
+          argocd.argoproj.io/sync-wave: "2"
   - target:
       group: csi.ceph.io
       version: v1
@@ -51,7 +53,7 @@ patches:
       - op: add
         path: /metadata/annotations
         value:
-          argocd.argoproj.io/sync-wave: "1"
+          argocd.argoproj.io/sync-wave: "2"
   - path: cephcluster-osd-config-rollout.yaml
     target:
       group: ceph.rook.io

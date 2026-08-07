@@ -5,6 +5,8 @@ import YAML from 'yaml'
 
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readYaml = <T>(path: string): T => YAML.parse(readFileSync(new URL(path, repoRoot), 'utf8')) as T
+const readYamlDocuments = <T>(path: string): T[] =>
+  YAML.parseAllDocuments(readFileSync(new URL(path, repoRoot), 'utf8')).map((document) => document.toJS() as T)
 
 type HelmChart = {
   name: string
@@ -12,6 +14,7 @@ type HelmChart = {
 }
 
 type Kustomization = {
+  resources: string[]
   helmCharts: HelmChart[]
   patches: Array<{
     patch?: string
@@ -26,6 +29,7 @@ type Kustomization = {
 type Driver = {
   name: string
   enabled: boolean
+  grpcTimeout: number
   snapshotPolicy: string
   cephFsClientType: string
   nodePlugin: {
@@ -49,6 +53,7 @@ test('orders the Rook v1.20 CSI ownership migration before the unchanged cluster
     { name: 'ceph-csi-drivers', version: '1.0.4' },
     { name: 'rook-ceph-cluster', version: 'v1.19.8' },
   ])
+  expect(kustomization.resources).toContain('csi-legacy-service-account-bridge.yaml')
 
   const csiOwnershipPatches = kustomization.patches.filter(
     ({ target }) => target.group === 'csi.ceph.io' && target.version === 'v1',
@@ -59,7 +64,7 @@ test('orders the Rook v1.20 CSI ownership migration before the unchanged cluster
       {
         op: 'add',
         path: '/metadata/annotations',
-        value: { 'argocd.argoproj.io/sync-wave': '1' },
+        value: { 'argocd.argoproj.io/sync-wave': '2' },
       },
     ])
   }
@@ -79,6 +84,7 @@ test('preserves the Ceph data plane and live CSI behavior during the v1.20 migra
       driverSpecDefaults: {
         clusterName: string
         cephFsClientType: string
+        grpcTimeout: number
         controllerPlugin: { hostNetwork: boolean; replicas: number }
       }
     }
@@ -97,11 +103,13 @@ test('preserves the Ceph data plane and live CSI behavior during the v1.20 migra
   expect(driverValues.operatorConfig.driverSpecDefaults).toMatchObject({
     clusterName: 'rook-ceph',
     cephFsClientType: 'autodetect',
+    grpcTimeout: 150,
     controllerPlugin: { hostNetwork: true, replicas: 2 },
   })
 
   for (const driver of [driverValues.drivers.rbd, driverValues.drivers.cephfs]) {
     expect(driver.enabled).toBe(true)
+    expect(driver.grpcTimeout).toBe(150)
     expect(driver.cephFsClientType).toBe('autodetect')
     expect(driver.nodePlugin.updateStrategy.type).toBe('OnDelete')
     expect(driver.nodePlugin.imagePullPolicy).toBe('')
@@ -121,4 +129,46 @@ test('preserves the Ceph data plane and live CSI behavior during the v1.20 migra
   expect(driverValues.drivers.cephfs.nodePlugin.resources.plugin.limits.memory).toBe('4Gi')
   expect(driverValues.drivers.nfs.enabled).toBe(false)
   expect(driverValues.drivers.nvmeof.enabled).toBe(false)
+})
+
+test('bridges the legacy CSI identities until every OnDelete pod is rolled', () => {
+  const resources = readYamlDocuments<{
+    kind: string
+    metadata: { name: string; annotations: Record<string, string> }
+    roleRef?: { kind: string; name: string }
+    subjects?: Array<{ kind: string; name: string; namespace: string }>
+  }>('argocd/applications/rook-ceph/csi-legacy-service-account-bridge.yaml')
+
+  expect(resources).toHaveLength(12)
+  for (const resource of resources) {
+    expect(resource.metadata.annotations['argocd.argoproj.io/sync-wave']).toBe('1')
+  }
+
+  expect(
+    resources
+      .filter(({ kind }) => kind === 'ServiceAccount')
+      .map(({ metadata }) => metadata.name)
+      .sort(),
+  ).toEqual([
+    'ceph-csi-cephfs-ctrlplugin-sa',
+    'ceph-csi-cephfs-nodeplugin-sa',
+    'ceph-csi-rbd-ctrlplugin-sa',
+    'ceph-csi-rbd-nodeplugin-sa',
+  ])
+
+  expect(
+    resources
+      .filter(({ kind }) => kind === 'RoleBinding' || kind === 'ClusterRoleBinding')
+      .map(({ kind, roleRef, subjects }) => `${kind}:${subjects?.[0]?.name}->${roleRef?.kind}:${roleRef?.name}`)
+      .sort(),
+  ).toEqual([
+    'ClusterRoleBinding:ceph-csi-cephfs-ctrlplugin-sa->ClusterRole:rook-ceph-cephfs-csi-ceph-com-ctrlplugin-cr',
+    'ClusterRoleBinding:ceph-csi-cephfs-nodeplugin-sa->ClusterRole:rook-ceph-cephfs-csi-ceph-com-nodeplugin-cr',
+    'ClusterRoleBinding:ceph-csi-rbd-ctrlplugin-sa->ClusterRole:rook-ceph-rbd-csi-ceph-com-ctrlplugin-cr',
+    'ClusterRoleBinding:ceph-csi-rbd-nodeplugin-sa->ClusterRole:rook-ceph-rbd-csi-ceph-com-nodeplugin-cr',
+    'RoleBinding:ceph-csi-cephfs-ctrlplugin-sa->Role:rook-ceph-cephfs-csi-ceph-com-ctrlplugin-r',
+    'RoleBinding:ceph-csi-cephfs-nodeplugin-sa->Role:rook-ceph-cephfs-csi-ceph-com-nodeplugin-r',
+    'RoleBinding:ceph-csi-rbd-ctrlplugin-sa->Role:rook-ceph-rbd-csi-ceph-com-ctrlplugin-r',
+    'RoleBinding:ceph-csi-rbd-nodeplugin-sa->Role:rook-ceph-rbd-csi-ceph-com-nodeplugin-r',
+  ])
 })

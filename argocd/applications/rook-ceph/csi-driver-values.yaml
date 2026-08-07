@@ -11,7 +11,8 @@ operatorConfig:
     clusterName: rook-ceph
     enableMetadata: false
     enableFencing: false
-    grpcTimeout: 30
+    # Preserve the live Rook v1.19 sidecar timeout during ownership transfer.
+    grpcTimeout: 150
     snapshotPolicy: volumeSnapshot
     generateOMapInfo: false
     fsGroupPolicy: File
@@ -54,7 +55,7 @@ drivers:
     clusterName: rook-ceph
     enableMetadata: false
     enableFencing: false
-    grpcTimeout: 30
+    grpcTimeout: 150
     snapshotPolicy: volumeSnapshot
     generateOMapInfo: false
     fsGroupPolicy: File
@@ -141,7 +142,7 @@ drivers:
     clusterName: rook-ceph
     enableMetadata: false
     enableFencing: false
-    grpcTimeout: 30
+    grpcTimeout: 150
     snapshotPolicy: volumeGroupSnapshot
     generateOMapInfo: false
     fsGroupPolicy: File
