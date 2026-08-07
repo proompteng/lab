@@ -1,0 +1,76 @@
+name: bayn-post-deploy-verify
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'argocd/applications/bayn/deployment.yaml'
+      - 'argocd/applications/bayn/kustomization.yaml'
+
+concurrency:
+  group: bayn-post-deploy-verify-main
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: arc-amd64
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact promoted main revision
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v5
+        with:
+          version: v1.35.0
+
+      - name: Configure in-cluster kubeconfig
+        shell: bash
+        run: |
+          set -euo pipefail
+          if kubectl config current-context >/dev/null 2>&1; then
+            exit 0
+          fi
+          test -n "${KUBERNETES_SERVICE_HOST:-}"
+          test -n "${KUBERNETES_SERVICE_PORT:-}"
+          test -r /var/run/secrets/kubernetes.io/serviceaccount/token
+          test -r /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+
+          kubeconfig="${RUNNER_TEMP}/kubeconfig"
+          echo "KUBECONFIG=${kubeconfig}" >> "${GITHUB_ENV}"
+          kubectl config set-cluster in-cluster \
+            --server="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}" \
+            --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+            --embed-certs=true \
+            --kubeconfig="${kubeconfig}"
+          kubectl config set-credentials gha-runner \
+            --token="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+            --kubeconfig="${kubeconfig}"
+          kubectl config set-context in-cluster \
+            --cluster=in-cluster \
+            --user=gha-runner \
+            --namespace=bayn \
+            --kubeconfig="${kubeconfig}"
+          kubectl config use-context in-cluster --kubeconfig="${kubeconfig}"
+
+      - name: Verify exact Bayn production promotion
+        shell: bash
+        env:
+          EXPECTED_ARGO_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          bun scripts/bayn-post-deploy-verify.ts \
+            --expected-revision "${EXPECTED_ARGO_REVISION}" \
+            --deadline-seconds 900 \
+            --interval-seconds 10
