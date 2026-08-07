@@ -39,6 +39,10 @@ const observabilityKustomization = readFileSync('argocd/applications/observabili
 const featureFlagsKustomization = readFileSync('argocd/applications/feature-flags/kustomization.yaml', 'utf8')
 const cloudflaredDeployment = readFileSync('argocd/applications/cloudflare/deployment.yaml', 'utf8')
 const karapaceManifest = readFileSync('argocd/applications/kafka/karapace.yaml', 'utf8')
+const temporalKustomization = YAML.parse(readFileSync('argocd/applications/temporal/kustomization.yaml', 'utf8')) as {
+  helmCharts?: Array<{ name?: string; version?: string }>
+  images?: Array<{ name?: string; newName?: string; newTag?: string; digest?: string }>
+}
 const karapaceResources = YAML.parseAllDocuments(karapaceManifest).map((document) => document.toJSON()) as Array<{
   apiVersion?: string
   kind?: string
@@ -228,6 +232,32 @@ describe('enabled app inventory', () => {
         config: { 'cleanup.policy': 'compact' },
       },
     })
+  })
+
+  it('pins the Temporal patch wave to immutable multi-architecture images', () => {
+    expect(temporalKustomization.helmCharts?.find((chart) => chart.name === 'temporal')).toMatchObject({
+      version: '1.6.0',
+    })
+    expect(temporalKustomization.images).toEqual([
+      {
+        name: 'mirror.gcr.io/temporalio/server',
+        newName: 'mirror.gcr.io/temporalio/server',
+        newTag: '1.31.2',
+        digest: 'sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da',
+      },
+      {
+        name: 'mirror.gcr.io/temporalio/admin-tools',
+        newName: 'mirror.gcr.io/temporalio/admin-tools',
+        newTag: '1.31.2',
+        digest: 'sha256:dbc5fcd6ee8f0f4d808bf765af9a87dea9d8a283abfdcfbd2fc148496ba66107',
+      },
+      {
+        name: 'mirror.gcr.io/temporalio/ui',
+        newName: 'mirror.gcr.io/temporalio/ui',
+        newTag: '2.52.0',
+        digest: 'sha256:fc47cd8202c98ed868745fd9f2f011585232676d08da621b9a6d7bc4653c17aa',
+      },
+    ])
   })
 
   it('keeps chart-only apps out of Nix image migration state', () => {

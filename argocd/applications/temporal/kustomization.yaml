@@ -101,7 +101,7 @@ helmCharts:
         storageClassName: rook-ceph-block
   - name: temporal
     repo: https://go.temporal.io/helm-charts
-    version: 1.5.0
+    version: 1.6.0
     releaseName: temporal
     namespace: temporal
     includeCRDs: true
@@ -154,3 +154,17 @@ helmCharts:
       shims:
         dockerize: false
         elasticsearchTool: false
+
+images:
+  - name: mirror.gcr.io/temporalio/server
+    newName: mirror.gcr.io/temporalio/server
+    newTag: 1.31.2
+    digest: sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da
+  - name: mirror.gcr.io/temporalio/admin-tools
+    newName: mirror.gcr.io/temporalio/admin-tools
+    newTag: 1.31.2
+    digest: sha256:dbc5fcd6ee8f0f4d808bf765af9a87dea9d8a283abfdcfbd2fc148496ba66107
+  - name: mirror.gcr.io/temporalio/ui
+    newName: mirror.gcr.io/temporalio/ui
+    newTag: 2.52.0
+    digest: sha256:fc47cd8202c98ed868745fd9f2f011585232676d08da621b9a6d7bc4653c17aa

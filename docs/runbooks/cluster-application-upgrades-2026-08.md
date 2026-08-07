@@ -1044,3 +1044,56 @@ observed in retained payloads (`7`, `8`, and `9`) and the legacy IDs still prese
 restore exactly the four pre-upgrade active subjects, and prove that each ID serves a schema capable of decoding its
 corresponding retained payload without exposing payload contents. Keep Wave 5b open until those checks and a fresh
 Karapace restart both pass.
+
+Wave 5b was accepted after corrective merges `86d3d99db86f4482f1fbe6222929214ee1edc164` and
+`df3180afd1ca1d77b44c17e9ca08b7bcd08d3930`. The managed `_schemas` topic is `Ready`, has effective non-default
+`cleanup.policy=compact`, and carries Argo `Prune=false`. A fresh Karapace 6.2.2 process replayed offsets `0..254`,
+reported five schemas, four live versions, and two soft-deleted recovery versions, then returned the exact active
+subject hash `c372679b92ee2057a19827dce2cd941419df54363187b0d708c66594b7da1e11`. Registry IDs `1`, `4`, `7`, `8`, and
+`9` resolved to the expected schema hashes, and bounded retained samples for every ID decoded completely. The
+Karapace Deployment UID remained unchanged and its replacement Pod was ready with zero restarts. Flipt returned
+`SERVING` at 2.11.0, and cloudflared 2026.7.3 returned HTTP 200 with four ready tunnel connections. All three
+Applications were `Synced/Healthy` at the exact final merge.
+
+## Wave 6a: Temporal patch release
+
+| Application | From                                 | To                                   | Reconciliation | Expected impact                                                       |
+| ----------- | ------------------------------------ | ------------------------------------ | -------------- | --------------------------------------------------------------------- |
+| Temporal    | chart `1.5.0`, server/admin `1.31.1` | chart `1.6.0`, server/admin `1.31.2` | Automatic      | Roll six stateless Deployments and replace the idempotent schema Job. |
+| Temporal UI | app `2.51.1`                         | app `2.52.0`                         | Automatic      | Roll the singleton web Deployment.                                    |
+
+Upstream chart 1.5.0 to 1.6.0 changes only `Chart.yaml` and the three default image tags; no chart template changes.
+The Temporal server 1.31.1 to 1.31.2 comparison contains no Cassandra, persistence, or schema files. The 29 stable
+rendered resource identities have canonical hash `dec760551321b2383c922a6d29884999536543cbc40ffed3a36b4634631ee8ac` in
+both renders; the Elasticsearch chart's pre-existing random Helm test Pod is excluded from that identity receipt.
+Selectors, services, Cassandra, Elasticsearch, PVC templates, persistence configuration, and history shard count are
+unchanged. The target multi-architecture image indexes are pinned immutably:
+
+- server 1.31.2: `sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da`;
+- admin-tools 1.31.2: `sha256:dbc5fcd6ee8f0f4d808bf765af9a87dea9d8a283abfdcfbd2fc148496ba66107`;
+- UI 2.52.0: `sha256:fc47cd8202c98ed868745fd9f2f011585232676d08da621b9a6d7bc4653c17aa`.
+
+The pre-merge data receipt is Cassandra schema `1.13` with minimum compatible version `1.0`, all three Cassandra
+nodes `UN`, Elasticsearch `green` with zero unassigned shards, cluster ID
+`2eac29aa-efe4-4403-afa7-f20b8e7e61bd`, 512 history shards, 737 visible workflows in `default`, and one in
+`temporal-system`. Preserve these Deployment UIDs:
+
+| Resource                           | UID                                    |
+| ---------------------------------- | -------------------------------------- |
+| `temporal-admintools`              | `f139661d-02f0-411c-82d0-3287041baffb` |
+| `temporal-frontend`                | `36acf421-54f0-4241-ae50-e2a3d0aec458` |
+| `temporal-history`                 | `0bbd1158-822b-45f3-a0aa-04698633f945` |
+| `temporal-matching`                | `a538b62d-0107-471e-8d8f-378a70229ac4` |
+| `temporal-web`                     | `eac533f9-507f-48b2-ab70-6b7f47c05b23` |
+| `temporal-worker`                  | `8451c404-2047-4a2a-af09-aef302f57cb5` |
+| `StatefulSet/temporal-cassandra`   | `0a9b7396-7c88-4750-ba97-cf03e48e374b` |
+| `StatefulSet/elasticsearch-master` | `5ec04c53-8e25-4465-b94c-afa84d7328be` |
+
+After merge, hard-refresh and wait for the `temporal` Application at the exact merge. The schema Job is deliberately
+annotated `Force=true,Replace=true`; require its replacement to complete before accepting the service rollouts. Require
+all six Deployment UIDs and both StatefulSet UIDs to remain unchanged, every new Pod to be ready with zero restarts,
+cluster health to report `SERVING`, both namespaces to remain registered, the cluster ID and 512-shard configuration
+to remain exact, and visible workflow counts not to decrease. Require Cassandra schema `1.13`, three `UN` nodes, and
+Elasticsearch `green` with zero unassigned shards. Check a bounded recent server log window for recurring errors.
+Because the patch has no schema change, rollback is a reviewed Git revert; Temporal supports an older binary with a
+newer schema, but never remove Cassandra or Elasticsearch data during rollback.
