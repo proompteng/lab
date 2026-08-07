@@ -243,8 +243,11 @@ upgrade_revision=$(gh pr view codex/cluster-app-upgrades-wave2-controllers -R pr
   --json state,mergeCommit --jq 'select(.state == "MERGED") | .mergeCommit.oid')
 test -n "$upgrade_revision"
 test "$(git rev-parse origin/main)" = "$upgrade_revision"
-metrics_revision=$(git ls-remote https://github.com/kubernetes-sigs/metrics-server.git refs/tags/v0.9.0 |
-  cut -f1)
+metrics_revision=$(git ls-remote https://github.com/kubernetes-sigs/metrics-server.git \
+  'refs/tags/v0.9.0' 'refs/tags/v0.9.0^{}' |
+  awk '$2 == "refs/tags/v0.9.0^{}" { peeled=$1 }
+       $2 == "refs/tags/v0.9.0" { direct=$1 }
+       END { print (peeled != "" ? peeled : direct) }')
 test "$metrics_revision" = 2a7c4b2c7d46552ff47f4aeaa3a735c582587ecd
 ```
 
