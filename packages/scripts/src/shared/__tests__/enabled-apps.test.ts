@@ -114,7 +114,9 @@ describe('enabled app inventory', () => {
     expect(argoCdKustomization).toContain('argo-cd/v3.4.6/manifests/ha/install.yaml')
     expect(argoCdKustomization).toContain('argocd-image-updater/v1.2.2/config/install.yaml')
     expect(argoCdLovelyPluginOverlay).toContain('ghcr.io/crumbhole/lovely:1.2.5')
-    expect(argoCdApplicationSetCrdOverlay).toContain('argocd.argoproj.io/sync-options: ServerSideApply=true')
+    expect(argoCdApplicationSetCrdOverlay).toContain(
+      'argocd.argoproj.io/sync-options: ServerSideApply=true,Prune=false',
+    )
     expect(argoCdApplicationSetCrdOverlay).not.toContain('Replace=true')
     expect(bootstrapApplicationSet).toContain('ServerSideApply=true')
     expect(bootstrapApplicationSet).not.toContain('ClientSideApplyMigration=false')

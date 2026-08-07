@@ -380,12 +380,25 @@ The Argo CD, Dex, and Image Updater target image indexes resolve to
   default `GRPC_ENABLE_TXT_SERVICE_CONFIG=false` behavior require no override.
 - The only Argo-specific alert uses the stable `argocd_app_info` metric, not changed OpenTelemetry semantic attributes.
 - The fully rendered target contains 100 non-Namespace resources, exactly matching the 100 currently tracked resource
-  identities. It renders no `Namespace` object and passes a server-side API dry-run with the Argo field manager.
-- Representative pre-upgrade Lovely outputs were canonicalized as sorted JSON before hashing. The hashes were: Buzz
-  `a00a13a28043cb40849b2373b0553765cbbf40295b2de78e6da76dcb6e90d921`, cert-manager
+  identities. It renders no `Namespace` object and passes a server-side API dry-run with Argo's
+  `argocd-controller` field manager and server-side-apply conflict ownership behavior.
+- Representative pre-upgrade Lovely outputs were canonicalized as identity-sorted JSON before hashing. The hashes
+  were: Buzz `a00a13a28043cb40849b2373b0553765cbbf40295b2de78e6da76dcb6e90d921`, cert-manager
   `8103d2bf7294a7b28865b90b07af521c4753772713bb2545bb6e921ca4710348`, and Torghut
-  `493015e412d88e903b152305fb5f7a7fec3744d2a657b2bc35529403f465de4d`. Raw YAML hashes are not an acceptance
-  signal because serialization can differ without a manifest change.
+  `493015e412d88e903b152305fb5f7a7fec3744d2a657b2bc35529403f465de4d`.
+- Rendering the same revision after the Lovely upgrade produced Buzz
+  `bfff95b42ecef68f848696a01d0276fefeaf5b25fd1e29371c52235402804895`, cert-manager
+  `8103d2bf7294a7b28865b90b07af521c4753772713bb2545bb6e921ca4710348`, and Torghut
+  `95c1a7827faaa41bebc8636e5dca9516b55befabec4f2c3ec223654d4431c27a`. A two-image semantic diff against the exact
+  merged source proved that both Lovely versions emitted the same 30 Buzz, 49 cert-manager, and 104 Torghut objects.
+  After sorting resources by identity and removing an explicit namespace only when it equaled the Application's
+  destination namespace, the old and new JSON was byte-identical. The normalized hashes were Buzz
+  `faf117ca96c752cb654c53b9b7c41bccc06c5f08f25870e75fba027dbe263585`, cert-manager
+  `cad3f387b857895e2f2f6c560e2c38dfb43172f13f2110c2a6dff1122d3634b7`, and Torghut
+  `69647a47761849207c13b6ab2a1f65bfe100991ccf08273d8e889403b916403f` for both versions. The only changes were
+  resource ordering and omission of the redundant destination namespace from five Buzz and 15 Torghut
+  Helm-inflated objects; Argo resolves those objects into the Application destination namespace. Raw or merely
+  identity-sorted output hashes are therefore diagnostic evidence, not a semantic acceptance gate.
 
 Live identity baseline:
 
@@ -424,6 +437,12 @@ annotation size limit. Before syncing the control plane:
 3. Sync `root` first so `Application/argocd` has server-side apply enabled without the migration disablement.
 4. Sync the Argo application without prune. The server-side apply must preserve the CRD UID and move field ownership
    to the Argo field manager; never delete and recreate the CRD.
+
+The first control-plane sync preserved the CRD UID but used the live resource's pre-sync `Replace=true` option, so its
+managed-field operation remained `Update`. The second-stage manifest sets
+`ServerSideApply=true,Prune=false`: `Prune=false` permanently protects this foundational CRD, and the annotation delta
+forces one more reconciliation after `Replace=true` is absent from the live resource. That reconciliation must use
+server-side apply and retain the same UID.
 
 ### Promotion
 
@@ -465,18 +484,43 @@ argocd app wait argocd --sync --health --timeout 900
 The Argo sync must not report a prune. If the reviewed resource-identity comparison changes after merge, stop before
 syncing and re-review the exact additions and removals.
 
+If the first sync retained only an Argo `Update` managed-field entry, promote the reviewed second-stage annotation as
+a separate exact revision:
+
+```bash
+set -euo pipefail
+upgrade_revision="$(git rev-parse origin/main)"
+crd_uid="$(kubectl get crd applicationsets.argoproj.io -o jsonpath='{.metadata.uid}')"
+
+argocd app get argocd --hard-refresh >/dev/null
+crd_drift=$(kubectl -n argocd get application argocd -o json |
+  jq -r '.status.resources[] | select(.status != "Synced") | [.group,.kind,.namespace,.name] | @tsv')
+test "$crd_drift" = $'apiextensions.k8s.io\tCustomResourceDefinition\t\tapplicationsets.argoproj.io'
+argocd app sync argocd --revision "$upgrade_revision" --prune=false --timeout 900
+argocd app wait argocd --sync --health --timeout 900
+
+crd_json="$(kubectl get crd applicationsets.argoproj.io --show-managed-fields=true -o json)"
+test "$(jq -r '.metadata.uid' <<<"$crd_json")" = "$crd_uid"
+test "$(jq -r '.metadata.annotations["argocd.argoproj.io/sync-options"]' <<<"$crd_json")" = \
+  'ServerSideApply=true,Prune=false'
+jq -e 'any(.metadata.managedFields[]; .manager == "argocd-controller" and .operation == "Apply")' \
+  <<<"$crd_json" >/dev/null
+```
+
 ### Acceptance and rollback
 
 - `argocd` is `Synced/Healthy` at the exact merge revision, with a successful operation revision.
 - All Argo Deployments and StatefulSets complete rollout. New Argo CD containers run `v3.4.6`, Dex runs `v2.45.0`,
   Image Updater runs `v1.2.2`, and both repo-server Pods run Lovely `1.2.5` with no new restarts.
 - The Application, CRD, ApplicationSet, Secret, and ImageUpdater UIDs in the baseline remain unchanged. The
-  ApplicationSet CRD has `ServerSideApply=true`, no `Replace=true`, and an Argo server-side-apply managed-field entry.
+  ApplicationSet CRD has `ServerSideApply=true,Prune=false`, no `Replace=true`, and an Argo server-side-apply
+  managed-field entry.
 - All four ApplicationSets retain their generated-resource counts. No Application, repository credential, SSO secret,
   Redis secret, or ImageUpdater target is recreated.
 - Image Updater reports `Ready=True` and `Error=False`. Public health and Dex discovery return HTTP 200, the Argo
   service has a ready endpoint, and a fresh core-mode manifest request succeeds.
-- Buzz, cert-manager, and Torghut canonical Lovely output hashes remain equal to the recorded baseline. The Argo
+- Buzz, cert-manager, and Torghut retain equal resource counts, identities, and namespace-normalized content across
+  Lovely `1.2.2` and `1.2.5`; output order and redundant destination-namespace serialization may differ. The Argo
   manifest hash is expected to change because this wave changes its desired control-plane manifests.
 - Application and workload health contains no new exception beyond the explicitly recorded baseline, all nodes remain
   ready, and controller/repo-server/Image Updater logs contain no new render, cache, authentication, or reconciliation
