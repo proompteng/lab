@@ -36,7 +36,7 @@ spec:
       terminationGracePeriodSeconds: 120
       containers:
         - name: vllm
-          image: vllm/vllm-openai:v0.23.0-x86_64-cu129@sha256:871762282db5bc464b5a3f0a59e41207ef25c2d95edf5f701e57a6bfc27b9496
+          image: vllm/vllm-openai:v0.26.0-x86_64-cu129@sha256:3c5c53248febaa72823a4b7e51aafa1cd2b65d860392e3930414da4d3864f541
           imagePullPolicy: IfNotPresent
           args:
             - --host

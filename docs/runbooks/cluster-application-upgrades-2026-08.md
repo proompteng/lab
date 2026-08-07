@@ -1163,8 +1163,8 @@ window contained no errors. The Application finished `Synced/Healthy` at the exa
 
 ## Wave 6c: Saigak Ollama runtime
 
-| Application | From     | To       | Reconciliation | Expected impact                                                                |
-| ----------- | -------- | -------- | -------------- | ------------------------------------------------------------------------------ |
+| Application | From     | To       | Reconciliation | Expected impact                                                                  |
+| ----------- | -------- | -------- | -------------- | -------------------------------------------------------------------------------- |
 | Ollama      | `0.13.5` | `0.32.6` | Manual         | Stop the singleton GPU Pod, verify the cached model, then start its replacement. |
 
 The target is the latest upstream stable release and its official multi-architecture image index contains both amd64
@@ -1181,10 +1181,10 @@ model-data transition is expected. The custom `qwen3-embedding-saigak:8b` model 
 `num_ctx 32768`, and currently produces finite normalized 4096-dimensional vectors while resident entirely in GPU
 VRAM. Preserve these identities:
 
-| Resource                                       | UID                                    |
-| ---------------------------------------------- | -------------------------------------- |
-| `StatefulSet/saigak`                           | `ca97f12d-ecdb-4bcd-8e58-997ac2142704` |
-| `Service/saigak`                               | `4ac187de-f91d-4e51-9da3-5275a1c8d529` |
+| Resource                                  | UID                                    |
+| ----------------------------------------- | -------------------------------------- |
+| `StatefulSet/saigak`                      | `ca97f12d-ecdb-4bcd-8e58-997ac2142704` |
+| `Service/saigak`                          | `4ac187de-f91d-4e51-9da3-5275a1c8d529` |
 | `PersistentVolumeClaim/saigak-altra-data` | `53628b88-ba4b-4571-a494-4448dd35e741` |
 
 After merge, capture a fresh baseline embedding, perform a reviewed manual Argo sync, and wait for the StatefulSet.
@@ -1194,3 +1194,53 @@ and GPU residency. Require `/readyz`, `/v1/models`, and repeated `/v1/embeddings
 4096-dimensional vectors and no material semantic drift from the baseline. Preserve all identities and the PVC binding,
 and check a bounded post-start log window for recurring errors. With no persistent-data migration and the exact model
 layer retained, rollback is a reviewed Git revert followed by manual sync; never remove the model-cache PVC.
+
+Wave 6c was accepted at merge `1ebded25d6335ad3b66caf9be58460384bce9c28`. A reviewed manual Argo sync
+replaced the singleton Pod while preserving the StatefulSet, Service, PVC, and volume-binding identities. The init
+container completed once and the Ollama and proxy containers became ready with zero restarts at the pinned digest.
+Ollama reported 0.32.6; the only custom model retained its exact layer, 4096-dimensional embedding capability,
+`num_ctx 32768`, and full GPU residency. Five consecutive readiness probes passed. The post-upgrade embedding was
+finite and normalized, with cosine similarity `0.9995798919` to the fresh baseline and maximum component delta
+`0.003224742`. An intentional saturation probe briefly filled the single parallel request queue and caused bounded
+readiness and broken-pipe messages; the service recovered without restart, and the final 60-second window was clean.
+The Application finished `Synced/Healthy` at the exact merge.
+
+## Wave 6d: Flamingo vLLM runtime
+
+| Application | From     | To       | Reconciliation | Expected impact                                                               |
+| ----------- | -------- | -------- | -------------- | ----------------------------------------------------------------------------- |
+| Flamingo    | `0.23.0` | `0.26.0` | Manual         | Stop the singleton GPU Pod, reuse its model cache, and start its replacement. |
+
+The target is the latest upstream stable vLLM release. Its official `v0.26.0-x86_64-cu129` image is pinned to the
+single-platform amd64 manifest digest
+`sha256:3c5c53248febaa72823a4b7e51aafa1cd2b65d860392e3930414da4d3864f541`, matching the Turin node architecture
+and CUDA lane. The Qwen3 reasoning parser, `qwen3_coder` tool parser, and every deployed server flag remain supported.
+The release removes legacy PagedAttention and makes Multi-Request v2 the default, but neither change alters the
+OpenAI-compatible endpoints, model alias, or persistent model-cache format used here. This wave changes only the
+image; model, context, concurrency, KV-cache dtype, resources, probes, scheduling, and services stay exact.
+
+The Deployment uses `Recreate` and a 256 GiB RBD model-cache PVC. Before the manual sync, require a fresh ready
+`VolumeSnapshot` of `flamingo-model-cache`, a passing smoke-profile baseline, sufficient PVC free space, and confirmation
+that Flamingo and the approved Plex transcode workload are the only Turin GPU consumers. Retain the snapshot through
+final fleet acceptance. Preserve these identities:
+
+| Resource                                     | UID                                    |
+| -------------------------------------------- | -------------------------------------- |
+| `Deployment/flamingo`                        | `68e14b68-d63e-4196-9904-a0aed48e0541` |
+| `Service/flamingo`                           | `9be4c6e6-cbf2-4882-9e23-b5b21bcf6f8e` |
+| `PersistentVolumeClaim/flamingo-model-cache` | `2c2ff36a-f4de-49f8-ae22-80337fab64fe` |
+
+The pre-sync smoke artifact
+`/tmp/flamingo-vllm-bench/flamingo-vllm-0-23-0-preupgrade-smoke-2026-08-07T13-53-28-137Z.json` passed every gate,
+including 220K recall, with zero request errors, aborts, or preemptions across 236,825 prompt tokens. VolumeSnapshot
+`flamingo-pre-vllm-v0-26-0-20260807t135506z` is ready for the full 256 GiB PVC with UID
+`bbad601c-553d-4c84-8694-6c3b1d66bf33`; retain it through final fleet acceptance.
+
+After merge, inspect the reviewed Argo diff and require it to contain only the vLLM image replacement before manually
+syncing. Wait up to four hours for the model load. Require the replacement Pod to run on `turin`, become ready with
+zero restarts at the pinned digest, and report vLLM 0.26.0. Require `/v1/models` to expose only `qwen36-flamingo` with
+`max_model_len=262144`, then run the repository smoke profile with exact no-thinking, medium-thinking, structured tool
+call, long-context recall, scheduler, and zero error/abort/preemption gates. Preserve all identities and the PVC volume
+binding, confirm GPU residency and bounded host/GPU memory, and check a clean post-start log window for recurring OOM,
+parser, KV-cache, or request failures. With no persistent-data migration, rollback is a reviewed Git revert followed by
+manual sync; never delete the model-cache PVC or its retained snapshot.

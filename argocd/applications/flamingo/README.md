@@ -8,8 +8,8 @@ agents. It is a normal Kubernetes Deployment, not a KubeVirt VM.
 - Node: `turin`
 - GPU: one physical `NVIDIA RTX PRO 6000 Blackwell Max-Q`; the device plugin may expose time-sliced `nvidia.com/gpu` replicas.
 - RuntimeClass: `nvidia`
-- Server: `vllm/vllm-openai:v0.23.0-x86_64-cu129`
-- Image digest: `sha256:871762282db5bc464b5a3f0a59e41207ef25c2d95edf5f701e57a6bfc27b9496`
+- Server: `vllm/vllm-openai:v0.26.0-x86_64-cu129`
+- Image digest: `sha256:3c5c53248febaa72823a4b7e51aafa1cd2b65d860392e3930414da4d3864f541`
 - Model: `unsloth/Qwen3.6-35B-A3B-NVFP4`
 - Served model name: `qwen36-flamingo`
 - Internal URL: `http://flamingo.flamingo.svc.cluster.local/v1`
@@ -42,8 +42,8 @@ reduce concurrency first by moving to `--max-num-seqs 8` and
 `--max-num-batched-tokens 8192`. Do not reduce context below 262K unless both
 vLLM KV/concurrency tuning and an SGLang validation path fail.
 
-NUMA auto-binding is intentionally disabled. Live rollout proved that vLLM
-0.23.0 cannot auto-detect Turin's GPU-to-NUMA topology and exits with
+NUMA auto-binding is intentionally disabled. The vLLM 0.23.0 rollout proved
+that Turin's GPU-to-NUMA topology was not detected automatically and exited with
 `NUMA binding was requested, but vLLM could not detect the GPU-to-NUMA topology
 automatically`. Test NUMA only with explicit `--numa-bind-nodes` values after a
 separate topology readback.
