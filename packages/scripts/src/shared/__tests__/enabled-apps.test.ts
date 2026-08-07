@@ -50,6 +50,16 @@ const jangarKustomization = YAML.parse(readFileSync('argocd/applications/jangar/
 const openWebUIValues = YAML.parse(readFileSync('argocd/applications/jangar/openwebui-values.yaml', 'utf8')) as {
   image?: { tag?: string }
 }
+const saigakStatefulSet = YAML.parse(readFileSync('argocd/applications/saigak/statefulset.yaml', 'utf8')) as {
+  spec?: {
+    template?: {
+      spec?: {
+        initContainers?: Array<{ name?: string; image?: string }>
+        containers?: Array<{ name?: string; image?: string }>
+      }
+    }
+  }
+}
 const karapaceResources = YAML.parseAllDocuments(karapaceManifest).map((document) => document.toJSON()) as Array<{
   apiVersion?: string
   kind?: string
@@ -277,6 +287,18 @@ describe('enabled app inventory', () => {
       digest: 'sha256:72c0ba641ba75e7aa52655cb242570906ececd09b1140fb736483038a22b3228',
     })
     expect(openWebUIValues.image?.tag).toBe('v0.11.0')
+  })
+
+  it('pins both Saigak Ollama containers to the immutable multi-architecture image', () => {
+    const podSpec = saigakStatefulSet.spec?.template?.spec
+    const ollamaImages = [...(podSpec?.initContainers ?? []), ...(podSpec?.containers ?? [])]
+      .filter((container) => container.name === 'model-init' || container.name === 'ollama')
+      .map((container) => container.image)
+
+    expect(ollamaImages).toEqual([
+      'ollama/ollama:0.32.6@sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42',
+      'ollama/ollama:0.32.6@sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42',
+    ])
   })
 
   it('keeps chart-only apps out of Nix image migration state', () => {
