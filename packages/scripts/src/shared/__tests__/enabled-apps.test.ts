@@ -7,6 +7,13 @@ import { assertEnabledAppBuildPolicy, loadEnabledAppInventory } from '../enabled
 
 const inventory = loadEnabledAppInventory()
 const platformApplicationSet = readFileSync('argocd/applicationsets/platform.yaml', 'utf8')
+const bootstrapApplicationSet = readFileSync('argocd/applicationsets/bootstrap.yaml', 'utf8')
+const argoCdKustomization = readFileSync('argocd/applications/argocd/kustomization.yaml', 'utf8')
+const argoCdApplicationSetCrdOverlay = readFileSync(
+  'argocd/applications/argocd/overlays/argocd-applicationset-crd.yaml',
+  'utf8',
+)
+const argoCdLovelyPluginOverlay = readFileSync('argocd/applications/argocd/overlays/argocd-lovely-plugin.yaml', 'utf8')
 const certManagerKustomization = readFileSync('argocd/applications/cert-manager/kustomization.yaml', 'utf8')
 const externalSecretsKustomization = readFileSync('argocd/applications/external-secrets/kustomization.yaml', 'utf8')
 const productApplicationSet = YAML.parse(readFileSync('argocd/applicationsets/product.yaml', 'utf8')) as {
@@ -101,6 +108,16 @@ describe('enabled app inventory', () => {
     expect(certManagerKustomization).toContain('version: v1.21.1')
     expect(externalSecretsKustomization).toContain('version: 2.8.0')
     expect(platformApplicationSet).toContain('targetRevision: v0.9.0')
+  })
+
+  it('pins the Argo control-plane upgrade wave and applies its large CRD server-side', () => {
+    expect(argoCdKustomization).toContain('argo-cd/v3.4.6/manifests/ha/install.yaml')
+    expect(argoCdKustomization).toContain('argocd-image-updater/v1.2.2/config/install.yaml')
+    expect(argoCdLovelyPluginOverlay).toContain('ghcr.io/crumbhole/lovely:1.2.5')
+    expect(argoCdApplicationSetCrdOverlay).toContain('argocd.argoproj.io/sync-options: ServerSideApply=true')
+    expect(argoCdApplicationSetCrdOverlay).not.toContain('Replace=true')
+    expect(bootstrapApplicationSet).toContain('ServerSideApply=true')
+    expect(bootstrapApplicationSet).not.toContain('ClientSideApplyMigration=false')
   })
 
   it('keeps chart-only apps out of Nix image migration state', () => {
