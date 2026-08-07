@@ -1789,3 +1789,78 @@ Chart-only rollback remains metadata-only and leaves the promoted Headlamp 0.44 
 An application rollback must revert both the chart and image digest to the prior accepted pair. Future generated
 Headlamp promotion PRs carry `do-not-automerge` by default so exact-head CI and review complete before an operator
 explicitly removes the gate.
+
+## Wave 8: Rook Ceph 1.20 and normalized CSI ownership
+
+| Component          | From      | To        | Reconciliation | Expected impact                                                    |
+| ------------------ | --------- | --------- | -------------- | ------------------------------------------------------------------ |
+| Rook operator      | `v1.19.7` | `v1.20.3` | Automatic      | One operator Pod rolls; Ceph daemons remain on `v19.2.4`.          |
+| Rook cluster chart | `v1.19.7` | `v1.20.3` | Automatic      | Cluster CR ownership advances without replacing storage resources. |
+| Ceph CSI operator  | `v0.4.1`  | `v1.0.4`  | Automatic      | The stateless controller manager rolls to normalized identity.     |
+| Ceph CSI drivers   | `v3.16.2` | `v3.17.0` | Coordinated    | Controller pairs and six node plugins roll without detaching PVCs. |
+
+The migration was deliberately staged. PR #13598 merged Rook `v1.19.8` at
+`8b397c731744c8eacce6582bb1109607fd3685bb`; PR #13599 merged the `v1.20.3` operator, CSI operator, and driver
+ownership transfer at `d650d3795b186ed7ca03afc47efe3875d1ff50ea`; and PR #13600 merged the `v1.20.3` cluster
+chart plus removal of the temporary 12-object legacy identity bridge at
+`cef13c2c0d72c12ec3598e41a821a4c1780bda94`. Each stage passed focused contracts, full enabled-application
+validation, Argo lint, rendered-manifest validation, exact-head CI, and independent review before merge.
+
+After PR #13600, Argo reported `Synced/Healthy`, but selective sync had normalized the chart-default empty
+`CSI_SERVICE_ACCOUNT_PREFIX` and skipped the live manager Deployment, which still held `ceph-csi-`. Corrective PR
+#13601 added only a manager pod-template generation marker and its contract assertion. Its exact head
+`d781c36048aecdcacd36456caeab22bc14a2948b` passed 42 tests with 344 expectations, rendered 122 resources and zero
+Namespaces, passed all CI, and received an independent `MERGE` verdict against archive SHA-256
+`97bcb6ac90a58e49d16c480269c0408a30de9616265d927fd51f76ce4d5b90b5`. It merged at
+`d93661eefb93362bd66643bf9217cb4be53bdd53`.
+
+Argo reconciled the exact corrective merge at `Synced/Healthy` with all 122 resources synced. Deployment
+`ceph-csi-controller-manager` retained UID `71a4ab45-be10-4988-a5e5-9c0033b94a10`, advanced from generation 11 to
+12, acquired marker `normalized-v1`, and cleared the service-account prefix. Replacement Pod
+`ceph-csi-controller-manager-77dcbfdbd4-5qnhj` used ServiceAccount `ceph-csi`, CSI operator `v1.0.4`, zero restarts,
+and became ready. Both CephFS and RBD controller Deployments were 2/2, both node-plugin DaemonSets were 3/3, every
+CSI workload used its normalized ServiceAccount, and every driver container ran `v3.17.0`. The temporary bridge
+objects remained absent.
+
+Two stability checks found Ceph `HEALTH_OK`, three monitors in quorum, six of six OSDs up and in, 601 placement
+groups, zero degraded objects, and no recovery traffic. All 20 Ceph daemon Deployments were ready on Ceph `v19.2.4`;
+all 124 PVCs were Bound, all 85 VolumeAttachments were attached, and every running PVC consumer was ready.
+
+The final active-image audit found one unrelated historical residue: an untracked Froussard Deployment running
+`quay.io/cephcsi/ceph-csi-operator:v0.4.1`. It had no Argo tracking metadata, was absent from both Froussard and Rook
+desired resources, could not acquire its leader-election Lease, and had no consumer. After the Rook data plane passed
+acceptance, the Deployment was deleted first. Froussard's Knative Service and revision remained ready with zero
+restarts, and Ceph and every storage attachment remained healthy. The exact five orphan Roles, five RoleBindings, and
+seven unused ServiceAccounts were then deleted from namespace `froussard`. A namespaced residue query returned zero;
+no Rook cluster-scoped or `rook-ceph` namespace resource was touched.
+
+## Final enabled-fleet acceptance
+
+Final acceptance was captured on `2026-08-07` after merge `d93661eefb93362bd66643bf9217cb4be53bdd53` and the
+Froussard cleanup.
+
+- The root-derived inventory contained 75 enabled entries including externally owned `home-root`. Excluding that
+  repository left 74 in-scope `proompteng/lab` Applications: 20 Nix-image, 29 vendor-manifest, 24 Helm-chart, and one
+  external-source Application. Every one of the 74 existed live. The only additional live Applications were
+  `arc-controller`, `home-media`, `home-root`, `root`, and `tsag`; the three home/TSAG Applications remain outside
+  this campaign's ownership boundary.
+- Of the 74 in-scope Applications, 71 were `Synced` and 71 were `Healthy`. The complete accounted exception ledger
+  was `agents`, `froussard`, and `oirat` at `OutOfSync/Healthy`; `bayn` at `Synced/Progressing`; `openclaw` at
+  `Synced/Suspended`; and `torghut` at `Synced/Degraded`. These were existing application-state exceptions, not
+  upgrade regressions. Froussard's only desired drift remained its Service, independent of the deleted residue.
+- Metrics Server retained the external Git source at tag `v0.9.0`, synced peeled commit
+  `2a7c4b2c7d46552ff47f4aeaa3a735c582587ecd`, ran two of two replicas on `v0.9.0`, served an Available aggregated
+  Metrics API, and returned metrics for all three nodes.
+- All three Kubernetes `v1.35.0` nodes were Ready. The phase-aware workload query returned only the existing unready
+  Bayn application Pod and two failed Synthesis Jobs; it found no upgrade-created exception.
+- An exact scan of Running and Pending init and application containers across all namespaces matched zero
+  pre-upgrade campaign image tags or digests, including the removed CSI operator `v0.4.1`. Target images included
+  Argo Rollouts `v1.9.1`, Argo Workflows `v4.0.8`, Argo CD `v3.4.6`, Istio `1.30.3`, KubeVirt `v1.9.0`, CDI
+  `v1.66.0`, Alloy `v1.18.1`, Temporal `1.31.2`, MetalLB `v0.16.1`, Barman Cloud `v0.14.0`, Rook `v1.20.3`, and
+  Ceph CSI `v3.17.0`.
+- All documented logical dumps, VolumeSnapshots, and retained recovery artifacts remain intact. Final acceptance does
+  not authorize deleting them; release them only through their owning retention procedure.
+
+The enabled-application campaign is accepted with no unaccounted live outdated target, missing in-scope Application,
+storage regression, or upgrade-created health exception. Future version discovery starts a new campaign against the
+then-current enabled inventory rather than reopening this receipt.
