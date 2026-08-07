@@ -95,6 +95,20 @@ test('keeps the Rook v1.20 operator, CSI, and cluster charts aligned', () => {
       },
     ])
   }
+
+  const managerCutoverPatch = kustomization.patches.find(
+    ({ target }) =>
+      target.group === 'apps' && target.kind === 'Deployment' && target.name === 'ceph-csi-controller-manager',
+  )
+  expect(YAML.parse(managerCutoverPatch?.patch ?? '')).toMatchObject({
+    spec: {
+      template: {
+        metadata: {
+          annotations: { 'storage.proompteng.ai/csi-service-account-generation': 'normalized-v1' },
+        },
+      },
+    },
+  })
 })
 
 test('preserves the Ceph data plane and live CSI behavior after the v1.20 migration', () => {
