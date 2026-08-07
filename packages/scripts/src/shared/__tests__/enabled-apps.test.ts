@@ -47,6 +47,12 @@ const localPathKustomization = YAML.parse(
   images?: Array<{ name?: string; newName?: string; newTag?: string; digest?: string }>
 }
 const localPathConfigPatch = readFileSync('argocd/applications/local-path/patches/local-path-config.patch.yaml', 'utf8')
+const metallbKustomizationSource = readFileSync('argocd/applications/metallb-system/kustomization.yaml', 'utf8')
+const metallbKustomization = YAML.parse(metallbKustomizationSource) as {
+  resources?: string[]
+  images?: Array<{ name?: string; newName?: string; newTag?: string; digest?: string }>
+  patches?: Array<{ target?: { kind?: string; name?: string }; patch?: string }>
+}
 const nvidiaDevicePluginManifests = [
   readFileSync('argocd/applications/nvidia-gpu-operator/altra-nvidia-device-plugin.yaml', 'utf8'),
   readFileSync('argocd/applications/nvidia-gpu-operator/turin-nvidia-device-plugin.yaml', 'utf8'),
@@ -211,6 +217,30 @@ describe('enabled app inventory', () => {
 
     expect(metallbEntry).toContain('automation: manual')
     expect(metallbEntry).not.toContain('automation: auto')
+    expect(metallbEntry).toContain('argocd.argoproj.io/sync-options: Prune=false')
+  })
+
+  it('pins MetalLB to immutable 0.16.1 images without rendering its Namespace', () => {
+    expect(metallbKustomization.resources).toContain('github.com/metallb/metallb//config/native?ref=v0.16.1')
+    expect(metallbKustomization.images).toEqual([
+      {
+        name: 'quay.io/metallb/controller',
+        newName: 'quay.io/metallb/controller',
+        newTag: 'v0.16.1',
+        digest: 'sha256:f51ab515de9ccd20dc3dccb093e48df8adddac019326c456f449e55ba91b6420',
+      },
+      {
+        name: 'quay.io/metallb/speaker',
+        newName: 'quay.io/metallb/speaker',
+        newTag: 'v0.16.1',
+        digest: 'sha256:16561e96531e1852d5c229ad7fae6e994dcfa983ff7f4de6b6208b34a4e2ddbc',
+      },
+    ])
+    expect(
+      metallbKustomization.patches?.find(
+        (patch) => patch.target?.kind === 'Namespace' && patch.target.name === 'metallb-system',
+      )?.patch,
+    ).toContain('$patch: delete')
   })
 
   it('pins the Argo control-plane upgrade wave and applies its large CRD server-side', () => {

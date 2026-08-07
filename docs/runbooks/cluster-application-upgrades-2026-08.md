@@ -1537,3 +1537,41 @@ advertisement valid, and the four MetalLB-backed Services retaining `100.100.244
 After merge, require the generated Application to report no automated sync policy, no application-resource diff, and
 no operation or Pod replacement. Recheck every listed UID, VIP assignment, endpoint, and reachability probe, then
 require Argo `Synced/Healthy` at the exact gate merge. Rollback is a reviewed Git revert of the policy-only revision.
+
+Wave 7c was accepted at merge `01434e5516a29f8c5fd9a8eecabf59fd4e2292f0`. The root Application diff contained
+only the MetalLB `automation: auto` to `manual` field and was reconciled without pruning. The generated MetalLB
+Application then reported no automated sync policy and no resource diff. The controller and all three speaker Pod
+UIDs, readiness, and zero restart counts remained exact. Both pool UIDs, the L2Advertisement UID, all four service
+UIDs, and VIP assignments `.180`, `.181`, and `.182` remained exact. HTTP probes through both ingress VIPs returned
+404 as expected, Plex `/identity` returned 200 through `.180`, and Forgejo SSH remained reachable through `.181`.
+Both root and MetalLB finished `Synced/Healthy` at the exact gate merge.
+
+## Wave 7d: MetalLB 0.16.1
+
+| Application | From     | To       | Reconciliation | Expected impact                                                  |
+| ----------- | -------- | -------- | -------------- | ---------------------------------------------------------------- |
+| MetalLB     | `0.15.3` | `0.16.1` | Manual         | One controller and three speakers roll; VIPs must remain stable. |
+
+MetalLB 0.16.0 changes the default BGP backend to FRR-K8s, introduces HTTPS-only metrics, improves endpoint health
+handling during KubeVirt migrations, and fixes L2 election with service selectors. This cluster explicitly consumes
+the upstream `config/native` overlay and defines only L2 advertisements, so the BGP default change does not alter its
+data plane. Version 0.16.1 fixes the controller health probes and bind address, the BGPPeer `localASN` schema, and HTTPS
+scrape configuration. Pin the controller and speaker multi-architecture indexes to
+`sha256:f51ab515de9ccd20dc3dccb093e48df8adddac019326c456f449e55ba91b6420` and
+`sha256:16561e96531e1852d5c229ad7fae6e994dcfa983ff7f4de6b6208b34a4e2ddbc`.
+
+Delete the upstream `Namespace` from rendered output and hand ownership to the bootstrap ApplicationSet with the
+existing privileged Pod Security labels and `Prune=false` namespace annotation. Reconcile root first, without pruning,
+and require the namespace UID `e4450219-b1e5-4a54-833e-361d2e40bb4f` and metadata to remain exact before touching the
+MetalLB Application. Preserve every resource and Service UID listed in Wave 7c.
+
+Before merge, require both pools valid, the L2Advertisement valid, all four MetalLB-backed Services assigned their
+exact VIPs, controller and speakers ready with zero restarts, and reachability through `.180`, `.181`, and `.182`.
+After the root namespace handoff, require the reviewed MetalLB diff to contain only upstream 0.16.1 CRD, RBAC,
+NetworkPolicy, probe, metrics, argument, and image changes plus removal of the rendered Namespace; do not permit pool,
+advertisement, or Service deletion. Sync without pruning. Require exact controller, speaker, pool, advertisement,
+namespace, and Service UIDs; one ready controller and three ready speakers at the pinned image indexes with zero
+restarts; unchanged VIPs and endpoints; valid configuration status; and successful reachability probes throughout the
+roll. Finish with bounded clean logs and both root and MetalLB `Synced/Healthy` at the exact merge. Rollback is a
+reviewed Git revert and manual no-prune sync; stop immediately on VIP reassignment, endpoint loss, or failed L2
+advertisement.
