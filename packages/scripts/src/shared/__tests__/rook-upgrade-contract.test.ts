@@ -1,13 +1,10 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 
 import { expect, test } from 'bun:test'
 import YAML from 'yaml'
 
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readYaml = <T>(path: string): T => YAML.parse(readFileSync(new URL(path, repoRoot), 'utf8')) as T
-const readYamlDocuments = <T>(path: string): T[] =>
-  YAML.parseAllDocuments(readFileSync(new URL(path, repoRoot), 'utf8')).map((document) => document.toJS() as T)
-
 type HelmChart = {
   name: string
   version: string
@@ -55,15 +52,15 @@ type Driver = {
   }
 }
 
-test('orders the Rook v1.20 CSI ownership migration before the unchanged cluster chart', () => {
+test('keeps the Rook v1.20 operator, CSI, and cluster charts aligned', () => {
   const kustomization = readYaml<Kustomization>('argocd/applications/rook-ceph/kustomization.yaml')
 
   expect(kustomization.helmCharts).toMatchObject([
     { name: 'rook-ceph', version: 'v1.20.3' },
     { name: 'ceph-csi-drivers', version: '1.0.4' },
-    { name: 'rook-ceph-cluster', version: 'v1.19.8' },
+    { name: 'rook-ceph-cluster', version: 'v1.20.3' },
   ])
-  expect(kustomization.resources).toContain('csi-legacy-service-account-bridge.yaml')
+  expect(kustomization.resources).not.toContain('csi-legacy-service-account-bridge.yaml')
 
   const csiOwnershipPatches = kustomization.patches.filter(
     ({ target }) => target.group === 'csi.ceph.io' && target.version === 'v1',
@@ -100,13 +97,11 @@ test('orders the Rook v1.20 CSI ownership migration before the unchanged cluster
   }
 })
 
-test('preserves the Ceph data plane and live CSI behavior during the v1.20 migration', () => {
+test('preserves the Ceph data plane and live CSI behavior after the v1.20 migration', () => {
   const operatorValues = readYaml<{
     image: { repository: string; tag: string }
     csi: Record<string, unknown>
-    'ceph-csi-operator': {
-      controllerManager: { manager: { env: { csiServiceAccountPrefix: string } } }
-    }
+    'ceph-csi-operator'?: unknown
   }>('argocd/applications/rook-ceph/operator-values.yaml')
   const clusterValues = readYaml<{
     cephImage: { repository: string; tag: string }
@@ -131,7 +126,7 @@ test('preserves the Ceph data plane and live CSI behavior during the v1.20 migra
 
   expect(operatorValues.image).toMatchObject({ repository: 'docker.io/rook/ceph', tag: 'v1.20.3' })
   expect(operatorValues.csi).toEqual({ installCsiOperator: true })
-  expect(operatorValues['ceph-csi-operator'].controllerManager.manager.env.csiServiceAccountPrefix).toBe('ceph-csi-')
+  expect(operatorValues['ceph-csi-operator']).toBeUndefined()
   expect(clusterValues.cephImage).toMatchObject({ repository: 'quay.io/ceph/ceph', tag: 'v19.2.4' })
   expect(clusterValues.cephClusterSpec.csi.cephfs.kernelMountOptions).toBe('ms_mode=crc')
   expect(driverValues.operatorConfig.driverSpecDefaults).toMatchObject({
@@ -171,44 +166,11 @@ test('preserves the Ceph data plane and live CSI behavior during the v1.20 migra
   expect(driverValues.drivers.nvmeof.enabled).toBe(false)
 })
 
-test('bridges the legacy CSI identities until every OnDelete pod is rolled', () => {
-  const resources = readYamlDocuments<{
-    kind: string
-    metadata: { name: string; annotations: Record<string, string> }
-    roleRef?: { kind: string; name: string }
-    subjects?: Array<{ kind: string; name: string; namespace: string }>
-  }>('argocd/applications/rook-ceph/csi-legacy-service-account-bridge.yaml')
+test('removes the temporary legacy CSI identity bridge after every OnDelete pod is rolled', () => {
+  const kustomization = readYaml<Kustomization>('argocd/applications/rook-ceph/kustomization.yaml')
 
-  expect(resources).toHaveLength(12)
-  for (const resource of resources) {
-    expect(resource.metadata.annotations['argocd.argoproj.io/sync-wave']).toBe('-1')
-  }
-
-  expect(
-    resources
-      .filter(({ kind }) => kind === 'ServiceAccount')
-      .map(({ metadata }) => metadata.name)
-      .sort(),
-  ).toEqual([
-    'ceph-csi-cephfs-ctrlplugin-sa',
-    'ceph-csi-cephfs-nodeplugin-sa',
-    'ceph-csi-rbd-ctrlplugin-sa',
-    'ceph-csi-rbd-nodeplugin-sa',
-  ])
-
-  expect(
-    resources
-      .filter(({ kind }) => kind === 'RoleBinding' || kind === 'ClusterRoleBinding')
-      .map(({ kind, roleRef, subjects }) => `${kind}:${subjects?.[0]?.name}->${roleRef?.kind}:${roleRef?.name}`)
-      .sort(),
-  ).toEqual([
-    'ClusterRoleBinding:ceph-csi-cephfs-ctrlplugin-sa->ClusterRole:rook-ceph-cephfs-csi-ceph-com-ctrlplugin-cr',
-    'ClusterRoleBinding:ceph-csi-cephfs-nodeplugin-sa->ClusterRole:rook-ceph-cephfs-csi-ceph-com-nodeplugin-cr',
-    'ClusterRoleBinding:ceph-csi-rbd-ctrlplugin-sa->ClusterRole:rook-ceph-rbd-csi-ceph-com-ctrlplugin-cr',
-    'ClusterRoleBinding:ceph-csi-rbd-nodeplugin-sa->ClusterRole:rook-ceph-rbd-csi-ceph-com-nodeplugin-cr',
-    'RoleBinding:ceph-csi-cephfs-ctrlplugin-sa->Role:rook-ceph-cephfs-csi-ceph-com-ctrlplugin-r',
-    'RoleBinding:ceph-csi-cephfs-nodeplugin-sa->Role:rook-ceph-cephfs-csi-ceph-com-nodeplugin-r',
-    'RoleBinding:ceph-csi-rbd-ctrlplugin-sa->Role:rook-ceph-rbd-csi-ceph-com-ctrlplugin-r',
-    'RoleBinding:ceph-csi-rbd-nodeplugin-sa->Role:rook-ceph-rbd-csi-ceph-com-nodeplugin-r',
-  ])
+  expect(kustomization.resources).not.toContain('csi-legacy-service-account-bridge.yaml')
+  expect(existsSync(new URL('argocd/applications/rook-ceph/csi-legacy-service-account-bridge.yaml', repoRoot))).toBe(
+    false,
+  )
 })
