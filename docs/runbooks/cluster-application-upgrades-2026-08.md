@@ -1025,3 +1025,20 @@ restarts. Require Karapace to report 6.2.2, preserve the exact sorted subject ha
 Require cloudflared to report 2026.7.3, return HTTP 200 with at least one ready connection, and show no recurring tunnel
 errors after convergence. Each Application must be `Synced/Healthy` at the exact merge revision. Roll back through a
 reviewed revert only; never delete the Flipt PVC or Kafka `_schemas` topic.
+
+Wave 5b merged as `305f732b9e15ca3252526e4c4e6040ea1699094b`. Flipt and cloudflared passed their runtime gates, and all
+five resource UIDs plus the Flipt volume binding were preserved. Karapace 6.2.2 started healthy and replayed through
+offset 248, but returned zero subjects, so the wave remains unaccepted.
+
+The failed Karapace gate exposed pre-existing topic retention loss rather than a 6.2.2 reader regression. An
+independent consumer reported `_schemas` watermarks `low=249, high=249`; all three broker replicas contained only the
+empty segment beginning at offset 249. The topic was not represented by a `KafkaTopic`, so it retained the broker
+defaults `cleanup.policy=delete` and `retention.ms=604800000`. The previous long-running Karapace process continued to
+serve four subjects from memory after Kafka deleted their records, masking the loss until the upgrade restarted it.
+
+The corrective gate is a managed `KafkaTopic/karapace-schemas` targeting `_schemas`, with one partition, three replicas,
+and `cleanup.policy=compact`. Do not restore registry records until that resource is `Ready` and an independent Kafka
+admin read confirms the effective compact-only policy. Recovery must preserve the current IDs observed in retained
+payloads (`7`, `8`, and `9`) and the legacy IDs still present in retained TA payloads (`1` and `4`), restore exactly the
+four pre-upgrade active subjects, and prove that each ID serves a schema capable of decoding its corresponding retained
+payload without exposing payload contents. Keep Wave 5b open until those checks and a fresh Karapace restart both pass.
