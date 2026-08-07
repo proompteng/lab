@@ -85,6 +85,12 @@ drivers:
           requests:
             cpu: 50m
             memory: 128Mi
+        liveness:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 50m
+            memory: 128Mi
         plugin:
           limits:
             memory: 1Gi
@@ -102,6 +108,12 @@ drivers:
             memory: 256Mi
           requests:
             cpu: 100m
+            memory: 128Mi
+        liveness:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 50m
             memory: 128Mi
         snapshotter:
           limits:
@@ -171,6 +183,12 @@ drivers:
           requests:
             cpu: 50m
             memory: 128Mi
+        liveness:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 50m
+            memory: 128Mi
         plugin:
           limits:
             memory: 4Gi
@@ -188,6 +206,12 @@ drivers:
             memory: 256Mi
           requests:
             cpu: 100m
+            memory: 128Mi
+        liveness:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 50m
             memory: 128Mi
         snapshotter:
           limits:

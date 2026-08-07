@@ -33,9 +33,59 @@ helmCharts:
     valuesFile: cluster-values.yaml
 
 patches:
-  # Install the v1.20 CSI operator, CRDs, RBAC, and service accounts before
-  # bridging the legacy identities (wave 1) and transferring the existing
-  # Driver and OperatorConfig resources to GitOps (wave 2).
+  # Authorize both the normalized and legacy CSI identities before the v1.20
+  # operator can reconcile the existing Driver resources.
+  - target:
+      version: v1
+      kind: ServiceAccount
+      name: rook-ceph-(cephfs|rbd)-csi-ceph-com-(ctrlplugin|nodeplugin)-sa
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "-1"
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: Role
+      name: rook-ceph-(cephfs|rbd)-csi-ceph-com-(ctrlplugin|nodeplugin)-r
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "-1"
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: RoleBinding
+      name: rook-ceph-(cephfs|rbd)-csi-ceph-com-(ctrlplugin|nodeplugin)-rb
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "-1"
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: ClusterRole
+      name: rook-ceph-(cephfs|rbd)-csi-ceph-com-(ctrlplugin|nodeplugin)-cr
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "-1"
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: ClusterRoleBinding
+      name: rook-ceph-(cephfs|rbd)-csi-ceph-com-(ctrlplugin|nodeplugin)-crb
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "-1"
+  # Transfer the existing Driver and OperatorConfig resources to GitOps only
+  # after the pre-operator identity and RBAC wave is healthy.
   - target:
       group: csi.ceph.io
       version: v1

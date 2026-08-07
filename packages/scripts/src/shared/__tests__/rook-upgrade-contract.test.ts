@@ -19,11 +19,17 @@ type Kustomization = {
   patches: Array<{
     patch?: string
     target: {
-      group: string
+      group?: string
       version: string
       kind: string
+      name?: string
     }
   }>
+}
+
+type ResourceRequirements = {
+  limits: { memory: string }
+  requests: { cpu: string; memory: string }
 }
 
 type Driver = {
@@ -36,12 +42,16 @@ type Driver = {
     imagePullPolicy: string
     updateStrategy: { type: string }
     topology: { domainLabels: string[] }
-    resources: { plugin: { limits: { memory: string } } }
+    resources: {
+      liveness: ResourceRequirements
+      plugin: { limits: { memory: string } }
+    }
   }
   controllerPlugin: {
     hostNetwork: boolean
     replicas: number
     imagePullPolicy: string
+    resources: { liveness: ResourceRequirements }
   }
 }
 
@@ -65,6 +75,26 @@ test('orders the Rook v1.20 CSI ownership migration before the unchanged cluster
         op: 'add',
         path: '/metadata/annotations',
         value: { 'argocd.argoproj.io/sync-wave': '2' },
+      },
+    ])
+  }
+
+  const preOperatorIdentityPatches = kustomization.patches.filter(({ target }) =>
+    target.name?.startsWith('rook-ceph-(cephfs|rbd)-csi-ceph-com-'),
+  )
+  expect(preOperatorIdentityPatches.map(({ target }) => target.kind).sort()).toEqual([
+    'ClusterRole',
+    'ClusterRoleBinding',
+    'Role',
+    'RoleBinding',
+    'ServiceAccount',
+  ])
+  for (const { patch } of preOperatorIdentityPatches) {
+    expect(YAML.parse(patch ?? '')).toEqual([
+      {
+        op: 'add',
+        path: '/metadata/annotations',
+        value: { 'argocd.argoproj.io/sync-wave': '-1' },
       },
     ])
   }
@@ -115,6 +145,12 @@ test('preserves the Ceph data plane and live CSI behavior during the v1.20 migra
     expect(driver.nodePlugin.imagePullPolicy).toBe('')
     expect(driver.nodePlugin.topology.domainLabels).toEqual(['kubernetes.io/hostname'])
     expect(driver.controllerPlugin).toMatchObject({ hostNetwork: true, replicas: 2, imagePullPolicy: '' })
+    const expectedLivenessResources = {
+      limits: { memory: '256Mi' },
+      requests: { cpu: '50m', memory: '128Mi' },
+    }
+    expect(driver.nodePlugin.resources.liveness).toEqual(expectedLivenessResources)
+    expect(driver.controllerPlugin.resources.liveness).toEqual(expectedLivenessResources)
   }
 
   expect(driverValues.drivers.rbd).toMatchObject({
@@ -141,7 +177,7 @@ test('bridges the legacy CSI identities until every OnDelete pod is rolled', () 
 
   expect(resources).toHaveLength(12)
   for (const resource of resources) {
-    expect(resource.metadata.annotations['argocd.argoproj.io/sync-wave']).toBe('1')
+    expect(resource.metadata.annotations['argocd.argoproj.io/sync-wave']).toBe('-1')
   }
 
   expect(
