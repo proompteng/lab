@@ -4,7 +4,9 @@ This guide covers installing and running Grafana Alloy locally on macOS so you c
 
 ## Version alignment
 
-Match the local binary to the cluster version. Current deployments use `grafana/alloy:v1.11.2` (see `argocd/applications/*/alloy-deployment.yaml`). If Homebrew is ahead, install the pinned tarball instead or upgrade the cluster manifests in sync.
+Match the local binary to the cluster version. Current enabled deployments use `grafana/alloy:v1.18.1` (see
+`argocd/applications/*/alloy-deployment.yaml`). If Homebrew is on a different version, install the pinned release archive
+instead or upgrade the cluster manifests in sync.
 
 ## Install
 
@@ -21,13 +23,14 @@ Homebrew stores configuration in `/opt/homebrew/etc/grafana-alloy` and data in
 `/opt/homebrew/var/lib/grafana-alloy/data`. The service runs `alloy run /opt/homebrew/etc/grafana-alloy`,
 so only `*.alloy` files in that directory are loaded.
 
-### Option B: Download the macOS release tarball
+### Option B: Download the macOS release archive
 
-Download the Grafana Alloy v1.11.2 macOS tarball from the official release page, then unpack and place the `alloy` binary on your PATH:
+Download the Grafana Alloy v1.18.1 macOS ZIP archive for your architecture from the official release page, then unpack
+and place the `alloy` binary on your PATH:
 
 ```bash
-tar -xzf alloy-darwin-*.tar.gz
-sudo install -m 0755 alloy /usr/local/bin/alloy
+unzip alloy-darwin-*.zip
+sudo install -m 0755 alloy-darwin-* /usr/local/bin/alloy
 alloy --version
 ```
 
