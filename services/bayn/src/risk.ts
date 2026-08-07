@@ -605,6 +605,9 @@ interface RiskFacts {
 interface DerivedRiskMetrics {
   readonly orderNotionalMicros: bigint
   readonly currentSymbolQuantityMicros: bigint
+  readonly currentSymbolExposureMagnitudeMicros: bigint
+  readonly currentGrossExposureMicros: bigint
+  readonly currentNetExposureMagnitudeMicros: bigint
   readonly postTradeSymbolQuantityMicros: bigint
   readonly postTradeSymbolExposureMicros: bigint
   readonly postTradeSymbolExposureMagnitudeMicros: bigint
@@ -680,6 +683,8 @@ const deriveRiskMetrics = (facts: RiskFacts): Result.Result<DerivedRiskMetrics, 
     .filter((position) => position.symbol === facts.intent.symbol)
     .reduce((total, position) => total + position.quantityMicros, 0n)
   const postTradeSymbolQuantityMicros = currentSymbolQuantityMicros + direction * facts.intentQuantityMicros
+  const currentSymbolExposureNumerator = currentSymbolQuantityMicros * facts.referencePriceMicros
+  const currentSymbolExposureMagnitudeMicros = divideUp(absolute(currentSymbolExposureNumerator), QUANTITY_SCALE)
   const postTradeSymbolExposureNumerator = postTradeSymbolQuantityMicros * facts.referencePriceMicros
   const postTradeSymbolExposureMicros = divideAwayFromZero(postTradeSymbolExposureNumerator, QUANTITY_SCALE)
   const postTradeSymbolExposureMagnitudeMicros = divideUp(absolute(postTradeSymbolExposureNumerator), QUANTITY_SCALE)
@@ -689,6 +694,9 @@ const deriveRiskMetrics = (facts: RiskFacts): Result.Result<DerivedRiskMetrics, 
   const otherNetExposureMicros = facts.positions
     .filter((position) => position.symbol !== facts.intent.symbol)
     .reduce((total, position) => total + position.marketValueMicros, 0n)
+  const currentGrossExposureMicros = otherGrossExposureMicros + currentSymbolExposureMagnitudeMicros
+  const currentNetExposureNumerator = otherNetExposureMicros * QUANTITY_SCALE + currentSymbolExposureNumerator
+  const currentNetExposureMagnitudeMicros = divideUp(absolute(currentNetExposureNumerator), QUANTITY_SCALE)
   const postTradeGrossExposureMicros = otherGrossExposureMicros + postTradeSymbolExposureMagnitudeMicros
   const postTradeNetExposureNumerator = otherNetExposureMicros * QUANTITY_SCALE + postTradeSymbolExposureNumerator
   const postTradeNetExposureMicros = divideAwayFromZero(postTradeNetExposureNumerator, QUANTITY_SCALE)
@@ -716,6 +724,9 @@ const deriveRiskMetrics = (facts: RiskFacts): Result.Result<DerivedRiskMetrics, 
   return Result.succeed({
     orderNotionalMicros,
     currentSymbolQuantityMicros,
+    currentSymbolExposureMagnitudeMicros,
+    currentGrossExposureMicros,
+    currentNetExposureMagnitudeMicros,
     postTradeSymbolQuantityMicros,
     postTradeSymbolExposureMicros,
     postTradeSymbolExposureMagnitudeMicros,
@@ -733,6 +744,17 @@ const deriveRiskMetrics = (facts: RiskFacts): Result.Result<DerivedRiskMetrics, 
     marketFreshUntil: facts.marketDataObservedAt + facts.policy.maxMarketDataAgeMs,
   })
 }
+
+const isStrictlyExposureReducingClose = (facts: RiskFacts, metrics: DerivedRiskMetrics): boolean =>
+  facts.state.closeOnly === true &&
+  facts.intent.side === OrderSide.Sell &&
+  facts.positions.every((position) => position.quantityMicros >= 0n) &&
+  metrics.currentSymbolQuantityMicros > 0n &&
+  metrics.postTradeSymbolQuantityMicros >= 0n &&
+  metrics.postTradeSymbolQuantityMicros < metrics.currentSymbolQuantityMicros &&
+  metrics.postTradeSymbolExposureMagnitudeMicros < metrics.currentSymbolExposureMagnitudeMicros &&
+  metrics.postTradeGrossExposureMicros <= metrics.currentGrossExposureMicros &&
+  metrics.postTradeNetExposureMagnitudeMicros <= metrics.currentNetExposureMagnitudeMicros
 
 const deriveReconciledHash = (facts: RiskFacts): Result.Result<string, RiskEvaluationFailure> =>
   pipe(
@@ -868,6 +890,7 @@ const buildAuthorityAndStateGates = (
 
 const buildOrderLimitGates = (facts: RiskFacts, metrics: DerivedRiskMetrics): readonly GateResult[] => {
   const { intent, policy, state } = facts
+  const exposureReducingClose = isStrictlyExposureReducingClose(facts, metrics)
   return [
     makeGate(
       Gate.IntentNotional,
@@ -877,9 +900,11 @@ const buildOrderLimitGates = (facts: RiskFacts, metrics: DerivedRiskMetrics): re
     ),
     makeGate(
       Gate.OrderNotional,
-      metrics.orderNotionalMicros <= facts.maxOrderNotionalMicros,
+      exposureReducingClose || metrics.orderNotionalMicros <= facts.maxOrderNotionalMicros,
       metrics.orderNotionalMicros,
-      `<=${policy.maxOrderNotionalMicros}`,
+      facts.state.closeOnly === true
+        ? `<=${policy.maxOrderNotionalMicros}|STRICTLY_EXPOSURE_REDUCING_CLOSE`
+        : `<=${policy.maxOrderNotionalMicros}`,
     ),
     makeGate(
       Gate.BuyingPower,
@@ -898,6 +923,7 @@ const buildOrderLimitGates = (facts: RiskFacts, metrics: DerivedRiskMetrics): re
 
 const buildExposureGates = (facts: RiskFacts, metrics: DerivedRiskMetrics): readonly GateResult[] => {
   const { policy } = facts
+  const exposureReducingClose = isStrictlyExposureReducingClose(facts, metrics)
   return [
     makeGate(
       Gate.LongOnly,
@@ -907,45 +933,58 @@ const buildExposureGates = (facts: RiskFacts, metrics: DerivedRiskMetrics): read
     ),
     makeGate(
       Gate.SymbolExposure,
-      metrics.postTradeSymbolExposureMagnitudeMicros <= facts.maxSymbolExposureMicros,
+      exposureReducingClose || metrics.postTradeSymbolExposureMagnitudeMicros <= facts.maxSymbolExposureMicros,
       metrics.postTradeSymbolExposureMagnitudeMicros,
-      `<=${policy.maxSymbolExposureMicros}`,
+      facts.state.closeOnly === true
+        ? `<=${policy.maxSymbolExposureMicros}|STRICTLY_EXPOSURE_REDUCING_CLOSE`
+        : `<=${policy.maxSymbolExposureMicros}`,
     ),
     makeGate(
       Gate.GrossExposure,
-      metrics.postTradeGrossExposureMicros <= facts.maxGrossExposureMicros,
+      exposureReducingClose || metrics.postTradeGrossExposureMicros <= facts.maxGrossExposureMicros,
       metrics.postTradeGrossExposureMicros,
-      `<=${policy.maxGrossExposureMicros}`,
+      facts.state.closeOnly === true
+        ? `<=${policy.maxGrossExposureMicros}|STRICTLY_EXPOSURE_REDUCING_CLOSE`
+        : `<=${policy.maxGrossExposureMicros}`,
     ),
     makeGate(
       Gate.NetExposure,
-      metrics.postTradeNetExposureMagnitudeMicros <= facts.maxNetExposureMicros,
+      exposureReducingClose || metrics.postTradeNetExposureMagnitudeMicros <= facts.maxNetExposureMicros,
       metrics.postTradeNetExposureMagnitudeMicros,
-      `<=${policy.maxNetExposureMicros}`,
+      facts.state.closeOnly === true
+        ? `<=${policy.maxNetExposureMicros}|STRICTLY_EXPOSURE_REDUCING_CLOSE`
+        : `<=${policy.maxNetExposureMicros}`,
     ),
   ]
 }
 
 const buildCumulativeRiskGates = (facts: RiskFacts, metrics: DerivedRiskMetrics): readonly GateResult[] => {
   const { policy } = facts
+  const exposureReducingClose = isStrictlyExposureReducingClose(facts, metrics)
   return [
     makeGate(
       Gate.DailyTradedNotional,
-      metrics.dailyTradedNotionalMicros <= facts.maxDailyTradedNotionalMicros,
+      exposureReducingClose || metrics.dailyTradedNotionalMicros <= facts.maxDailyTradedNotionalMicros,
       metrics.dailyTradedNotionalMicros,
-      `<=${policy.maxDailyTradedNotionalMicros}`,
+      facts.state.closeOnly === true
+        ? `<=${policy.maxDailyTradedNotionalMicros}|STRICTLY_EXPOSURE_REDUCING_CLOSE`
+        : `<=${policy.maxDailyTradedNotionalMicros}`,
     ),
     makeGate(
       Gate.DailyLoss,
-      metrics.dailyLossMicros <= facts.maxDailyLossMicros,
+      exposureReducingClose || metrics.dailyLossMicros <= facts.maxDailyLossMicros,
       metrics.dailyLossMicros,
-      `<=${policy.maxDailyLossMicros}`,
+      facts.state.closeOnly === true
+        ? `<=${policy.maxDailyLossMicros}|STRICTLY_EXPOSURE_REDUCING_CLOSE`
+        : `<=${policy.maxDailyLossMicros}`,
     ),
     makeGate(
       Gate.Drawdown,
-      metrics.drawdownMicros <= facts.maxDrawdownMicros,
+      exposureReducingClose || metrics.drawdownMicros <= facts.maxDrawdownMicros,
       metrics.drawdownMicros,
-      `<=${policy.maxDrawdownMicros}`,
+      facts.state.closeOnly === true
+        ? `<=${policy.maxDrawdownMicros}|STRICTLY_EXPOSURE_REDUCING_CLOSE`
+        : `<=${policy.maxDrawdownMicros}`,
     ),
   ]
 }
