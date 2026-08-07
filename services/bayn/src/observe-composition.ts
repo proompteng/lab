@@ -162,14 +162,16 @@ export type {
   PreparedMutationRecoveryDecision,
 }
 
+const dollarsToMicros = (dollars: bigint): string => (dollars * 1_000_000n).toString()
+
 const observeRiskLimits = {
-  maxOrderNotionalMicros: '600000000',
-  maxSymbolExposureMicros: '600000000',
-  maxGrossExposureMicros: '1000000000',
-  maxNetExposureMicros: '1000000000',
-  maxDailyTradedNotionalMicros: '1000000000',
-  maxDailyLossMicros: '100000000',
-  maxDrawdownMicros: '100000000',
+  maxOrderNotionalMicros: dollarsToMicros(40_000n),
+  maxSymbolExposureMicros: dollarsToMicros(40_000n),
+  maxGrossExposureMicros: dollarsToMicros(100_000n),
+  maxNetExposureMicros: dollarsToMicros(100_000n),
+  maxDailyTradedNotionalMicros: dollarsToMicros(200_000n),
+  maxDailyLossMicros: dollarsToMicros(5_000n),
+  maxDrawdownMicros: dollarsToMicros(5_000n),
   maxIntentAgeMs: 300_000,
   maxBrokerStateAgeMs: 300_000,
   maxMarketDataAgeMs: 300_000,
