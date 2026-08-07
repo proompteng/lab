@@ -869,3 +869,94 @@ migration Jobs. The KafkaSource, ConsumerGroup, and Consumer must retain their U
 source dispatcher must remain ready, the patched mutating webhook must stay scoped to `knative-eventing`, and no new
 recurring controller error may remain after startup. Roll back the version and release URLs only through a reviewed
 revert; preserve newer CRDs and all Eventing objects during rollback.
+
+Wave 4c completed on 2026-08-07 at merge `0abc1164f89b15abf9be3b738b1234cd95b262b3`. The Eventing CR, all 13
+Deployment and StatefulSet identities, all 23 CRD UIDs and stored versions, and the KafkaSource, ConsumerGroup, and
+Consumer UIDs were preserved. All desired 1.23 Pods became ready with zero restarts and the storage-version migration
+Job succeeded. The Kafka controller continues to report absent `kafka-broker-dispatcher` and
+`kafka-channel-dispatcher` StatefulSets because this cluster intentionally installs only the Kafka source plane; the
+same upstream scheduler code and log behavior exist in 1.22 and 1.23. The source dispatcher also continues to receive
+HTTP 422 for unsupported event types on the shared GitHub webhook topic. The Agents handler's only 422 path deliberately
+rejects unsupported event types and predates this upgrade; the Ready source continues to advance offsets. Neither
+recurring message is a 1.23 regression or a reason to install unused broker/channel operands.
+
+## Wave 5a: Alloy and kube-state-metrics
+
+| Application                                 | From               | To                 | Reconciliation | Expected impact                                                                        |
+| ------------------------------------------- | ------------------ | ------------------ | -------------- | -------------------------------------------------------------------------------------- |
+| Alloy collectors in 10 enabled applications | `1.11.2`           | `1.18.1`           | Mixed          | Collector Pods roll independently; application workloads do not roll.                  |
+| Observability kube-state-metrics chart      | `7.3.0` / `2.18.0` | `8.2.0` / `2.19.1` | Automatic      | One metrics Pod rolls in place; metric objects and custom state configuration persist. |
+
+Alloy 1.18.1 is the current upstream release and includes backported fixes for GO-2026-6061 and GO-2026-5970. Its
+multi-architecture image index digest is `sha256:0f4434c92b3e6cdac38bb129b344e1790c246f7b6e2eaffcc16a5fa363240e33`
+and contains both `linux/amd64` and `linux/arm64`, matching the cluster nodes. Every enabled River configuration validates
+with the target 1.18.1 binary. The documented 1.12 exporter label change does not apply because none of these configs
+uses the blackbox, SNMP, or StatsD exporters. The disabled `facteur` and `graf` applications remain untouched.
+
+Kube-state-metrics chart 8.2.0 packages app 2.19.1. Rendering 7.3.0 and 8.2.0 with the repository values produces the
+same six resource identities, with canonical identity hash
+`40556a2d2f8da5bc60acee4c791bbbc2d317797425a3b45758dbc6efce91bb81`, and the Deployment selector is unchanged.
+The configured collector list and custom Argo CD and CloudNativePG state metrics remain explicit and unchanged.
+
+Preserve these pre-merge Deployment identities:
+
+| Deployment                                          | UID                                    |
+| --------------------------------------------------- | -------------------------------------- |
+| `agents/agents-alloy`                               | `a3ba02f7-cd9c-40a1-b441-e95915e1186b` |
+| `argo-workflows/argo-workflows-alloy`               | `bdb9460b-a043-4f9a-b1e3-abc4a9855f93` |
+| `argocd/argocd-alloy`                               | `1ec0c154-b891-4df8-8a80-e05845d4de46` |
+| `bilig/bilig-alloy`                                 | `936b4cd8-f601-4de0-b5a7-f96f497154a1` |
+| `buzz/buzz-alloy`                                   | `081cfbd5-3483-44ab-a4d5-80844614678c` |
+| `jangar/jangar-alloy`                               | `a4d52115-fcd4-4744-a65d-d7e707293043` |
+| `nats/nats-alloy`                                   | `e1eba73d-67a7-416c-af2c-ff0d3f3e6d47` |
+| `observability/observability-cluster-metrics-alloy` | `b02148f1-7308-4e34-82ec-bc606e6a99e1` |
+| `observability/observability-kube-state-metrics`    | `e244832b-9bac-47c6-aa29-1a6da041a481` |
+| `oirat/oirat-alloy`                                 | `c8d9cdec-e4aa-4bea-9368-a2e4b7e665a1` |
+| `torghut/torghut-alloy`                             | `ebd469eb-065d-4ad3-a46c-27b052e77d19` |
+
+```bash
+set -euo pipefail
+git fetch --quiet origin main
+upgrade_revision=$(gh pr view codex/cluster-app-upgrades-wave5-observability -R proompteng/lab \
+  --json state,mergeCommit --jq 'select(.state == "MERGED") | .mergeCommit.oid')
+test -n "$upgrade_revision"
+test "$(git rev-parse origin/main)" = "$upgrade_revision"
+
+for app in bilig jangar nats observability torghut; do
+  argocd app get "$app" --hard-refresh >/dev/null
+done
+for app in agents argo-workflows argocd buzz oirat; do
+  argocd app get "$app" --hard-refresh >/dev/null
+done
+
+argocd app sync agents --resource apps:Deployment:agents-alloy
+argocd app sync argo-workflows --resource apps:Deployment:argo-workflows-alloy
+argocd app sync argocd --resource apps:Deployment:argocd-alloy
+argocd app sync buzz --resource apps:Deployment:buzz-alloy
+argocd app sync oirat --resource apps:Deployment:oirat-alloy
+
+for pair in \
+  agents/agents-alloy \
+  argo-workflows/argo-workflows-alloy \
+  argocd/argocd-alloy \
+  bilig/bilig-alloy \
+  buzz/buzz-alloy \
+  jangar/jangar-alloy \
+  nats/nats-alloy \
+  observability/observability-cluster-metrics-alloy \
+  observability/observability-kube-state-metrics \
+  oirat/oirat-alloy \
+  torghut/torghut-alloy; do
+  namespace=${pair%/*}
+  deployment=${pair#*/}
+  kubectl -n "$namespace" rollout status "deployment/$deployment" --timeout=15m
+done
+```
+
+Acceptance requires every Deployment UID above to remain unchanged, every replacement Pod to be ready with zero
+restarts, all Alloy containers to run 1.18.1, and kube-state-metrics to report chart 8.2.0/app 2.19.1. Validate each
+Alloy readiness endpoint and require no recurring post-startup errors. Query the kube-state-metrics service through the
+API proxy and require representative `kube_pod_info`, `kube_argocd_application_deployment_history_info`, and
+`kube_cnpg_*` metrics. Preserve and explicitly recheck the pre-existing `agents` and `oirat` OutOfSync states and the
+pre-existing `torghut` Degraded state so the targeted manual syncs do not reconcile unrelated resources. Roll back by
+reviewed revert; the metrics collectors are stateless and no persisted application data is changed.

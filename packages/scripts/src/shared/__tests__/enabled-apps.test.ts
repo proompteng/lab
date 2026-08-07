@@ -22,6 +22,20 @@ const knativeKustomization = readFileSync('argocd/applications/knative/kustomiza
 const knativeServingManifest = readFileSync('argocd/applications/knative-serving/knative-serving.yaml', 'utf8')
 const knativeEventingKustomization = readFileSync('argocd/applications/knative-eventing/kustomization.yaml', 'utf8')
 const knativeEventingManifest = readFileSync('argocd/applications/knative-eventing/knative-eventing.yaml', 'utf8')
+const enabledAlloyDeploymentPaths = [
+  'argocd/applications/agents/alloy-deployment.yaml',
+  'argocd/applications/argo-workflows/alloy-deployment.yaml',
+  'argocd/applications/argocd/alloy-deployment.yaml',
+  'argocd/applications/bilig/alloy-deployment.yaml',
+  'argocd/applications/buzz/alloy-deployment.yaml',
+  'argocd/applications/jangar/alloy-deployment.yaml',
+  'argocd/applications/nats/alloy-deployment.yaml',
+  'argocd/applications/observability/cluster-metrics-alloy-deployment.yaml',
+  'argocd/applications/oirat/alloy-deployment.yaml',
+  'argocd/applications/torghut/alloy-deployment.yaml',
+]
+const natsKustomization = readFileSync('argocd/applications/nats/kustomization.yaml', 'utf8')
+const observabilityKustomization = readFileSync('argocd/applications/observability/kustomization.yaml', 'utf8')
 const productApplicationSet = YAML.parse(readFileSync('argocd/applicationsets/product.yaml', 'utf8')) as {
   spec?: {
     syncPolicy?: { preserveResourcesOnDeletion?: boolean }
@@ -148,6 +162,17 @@ describe('enabled app inventory', () => {
     expect(knativeEntry).toContain('app.kubernetes.io/managed-by: argocd')
     expect(knativeEntry).not.toContain('argocd.argoproj.io/sync-options: Prune=false')
     expect(knativeEntry).not.toContain('argocd.argoproj.io/tracking-id')
+  })
+
+  it('pins the enabled observability collector upgrade wave', () => {
+    for (const deploymentPath of enabledAlloyDeploymentPaths) {
+      expect(readFileSync(deploymentPath, 'utf8')).toContain('grafana/alloy:v1.18.1')
+    }
+    expect(readFileSync('argocd/applications/buzz/alloy-deployment.yaml', 'utf8')).toContain(
+      'sha256:0f4434c92b3e6cdac38bb129b344e1790c246f7b6e2eaffcc16a5fa363240e33',
+    )
+    expect(natsKustomization).toContain('newTag: v1.18.1')
+    expect(observabilityKustomization).toContain('version: 8.2.0')
   })
 
   it('keeps chart-only apps out of Nix image migration state', () => {
