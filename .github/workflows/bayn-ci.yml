@@ -6,10 +6,24 @@ permissions:
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      exact_head_sha:
+        description: Exact commit SHA approved for the protected Alpaca sandbox proof
+        required: true
+        type: string
+      image_build_run_id:
+        description: Successful exact-head bayn-build-push workflow_dispatch run containing bayn-release-contract
+        required: true
+        type: string
+      authorize_broker_mutation:
+        description: Explicitly authorize one bounded Alpaca paper submit/cancel proof for exact_head_sha
+        required: true
+        default: false
+        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
@@ -273,3 +287,360 @@ jobs:
             exit 1
           fi
           echo 'All applicable Bayn unit, type, Effect, PostgreSQL, dependency-boundary, and multi-architecture image checks passed.'
+
+  alpaca-sandbox-contract-proof:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: bayn-alpaca-sandbox
+    permissions:
+      actions: read
+      contents: read
+    env:
+      BAYN_ALPACA_SANDBOX_CONTRACT: '1'
+      BAYN_ALPACA_BASE_URL: https://paper-api.alpaca.markets
+      BAYN_ALPACA_SANDBOX_GITHUB_ENVIRONMENT: bayn-alpaca-sandbox
+      BAYN_ALPACA_SANDBOX_MUTATION_AUTHORIZED: ${{ inputs.authorize_broker_mutation }}
+      BAYN_ALPACA_SANDBOX_EXACT_HEAD_SHA: ${{ inputs.exact_head_sha }}
+      BAYN_ALPACA_SANDBOX_RELEASE_IMAGE_BUILD_RUN_ID: ${{ inputs.image_build_run_id }}
+      BAYN_ALPACA_SANDBOX_RECEIPT_PATH: /tmp/alpaca-sandbox-contract-receipt.json
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Establish overall protected proof deadline
+        shell: bash
+        run: |
+          set -euo pipefail
+          job_started_epoch_ms="$(date +%s%3N)"
+          job_deadline_epoch_ms="$((job_started_epoch_ms + 13 * 60 * 1000))"
+          {
+            printf 'BAYN_ALPACA_SANDBOX_JOB_STARTED_EPOCH_MS=%s\n' "${job_started_epoch_ms}"
+            printf 'BAYN_ALPACA_SANDBOX_JOB_DEADLINE_EPOCH_MS=%s\n' "${job_deadline_epoch_ms}"
+          } >> "${GITHUB_ENV}"
+      - name: Initialize sanitized protected proof receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+
+          jq -n \
+            --arg sourceSha "${GITHUB_SHA}" \
+            --arg imageBuildRunId "${BAYN_ALPACA_SANDBOX_RELEASE_IMAGE_BUILD_RUN_ID}" \
+            --arg githubEnvironment "${BAYN_ALPACA_SANDBOX_GITHUB_ENVIRONMENT}" \
+            --arg actor "${GITHUB_ACTOR}" \
+            --arg triggeringActor "${GITHUB_TRIGGERING_ACTOR}" \
+            --arg runAttempt "${GITHUB_RUN_ATTEMPT}" \
+            --arg startedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{
+              schemaVersion: "bayn.alpaca-sandbox-contract-receipt.v4",
+              proofStatus: "GUARD_PENDING",
+              sourceSha: $sourceSha,
+              githubEnvironment: $githubEnvironment,
+              authorization: {
+                eventName: "workflow_dispatch",
+                actor: $actor,
+                triggeringActor: $triggeringActor,
+                runAttempt: $runAttempt,
+                explicitBrokerMutation: false
+              },
+              releaseGate: {
+                buildRunId: $imageBuildRunId,
+                claim: "EXACT_IMAGE_ARTIFACT_VERIFIED_NOT_PROOF_RUNTIME"
+              },
+              proofRuntime: {
+                kind: "CHECKED_OUT_SOURCE",
+                sourceSha: $sourceSha
+              },
+              timestamps: { startedAt: $startedAt },
+              endpointClass: "ALPACA_PAPER"
+            }' > "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}"
+      - name: Validate protected dispatch inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail_guard() {
+            local code="$1"
+            local message="$2"
+            local receipt_tmp="${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}.tmp"
+            jq \
+              --arg code "${code}" \
+              '.proofStatus = "GUARD_FAILURE"
+              | .guardFailure = { stage: "DISPATCH_AUTHORIZATION", code: $code }' \
+              "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}" > "${receipt_tmp}"
+            mv "${receipt_tmp}" "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}"
+            echo "::error title=Protected Alpaca proof blocked::${message}" >&2
+            exit 2
+          }
+
+          [[ "${GITHUB_EVENT_NAME}" == 'workflow_dispatch' ]] || \
+            fail_guard 'EVENT_NOT_WORKFLOW_DISPATCH' 'The broker-mutating proof may run only from workflow_dispatch.'
+          [[ "${GITHUB_REPOSITORY}" == 'proompteng/lab' ]] || \
+            fail_guard 'REPOSITORY_MISMATCH' 'The protected proof is bound to proompteng/lab.'
+          [[ "${BAYN_ALPACA_SANDBOX_GITHUB_ENVIRONMENT}" == 'bayn-alpaca-sandbox' ]] || \
+            fail_guard 'GITHUB_ENVIRONMENT_MISMATCH' 'The protected proof must use environment bayn-alpaca-sandbox.'
+          [[ "${BAYN_ALPACA_SANDBOX_MUTATION_AUTHORIZED}" == 'true' ]] || \
+            fail_guard 'BROKER_MUTATION_NOT_AUTHORIZED' 'Check authorize_broker_mutation only after approving one bounded paper submit/cancel proof.'
+          [[ "${GITHUB_ACTOR}" == "${GITHUB_TRIGGERING_ACTOR}" ]] || \
+            fail_guard 'RERUN_ACTOR_MISMATCH' 'A different actor cannot rerun a broker-mutating proof; create a fresh authorized dispatch.'
+          [[ "${GITHUB_RUN_ATTEMPT}" == '1' ]] || \
+            fail_guard 'WORKFLOW_RERUN_FORBIDDEN' 'Broker-mutating proof reruns are forbidden; create a fresh dispatch with explicit authorization.'
+          [[ "${BAYN_ALPACA_SANDBOX_EXACT_HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]] || \
+            fail_guard 'INVALID_EXACT_HEAD_SHA' 'exact_head_sha must be a lowercase 40-character commit SHA.'
+          [[ "${BAYN_ALPACA_SANDBOX_RELEASE_IMAGE_BUILD_RUN_ID}" =~ ^[0-9]+$ ]] || \
+            fail_guard 'INVALID_IMAGE_BUILD_RUN_ID' 'image_build_run_id must be a numeric GitHub Actions run ID.'
+
+          receipt_tmp="${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}.tmp"
+          jq \
+            '.authorization.explicitBrokerMutation = true
+            | .proofStatus = "DISPATCH_AUTHORIZED"' \
+            "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}" > "${receipt_tmp}"
+          mv "${receipt_tmp}" "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}"
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.BAYN_ALPACA_SANDBOX_EXACT_HEAD_SHA }}
+          persist-credentials: false
+      - name: Verify exact checked-out head
+        run: test "$(git rev-parse HEAD)" = "${BAYN_ALPACA_SANDBOX_EXACT_HEAD_SHA}"
+      - name: Fail closed on protected credential binding
+        shell: bash
+        env:
+          BAYN_ALPACA_ACCOUNT_ID: ${{ secrets.BAYN_ALPACA_SANDBOX_ACCOUNT_ID }}
+          BAYN_ALPACA_KEY_ID: ${{ secrets.BAYN_ALPACA_SANDBOX_KEY_ID }}
+          BAYN_ALPACA_SECRET_KEY: ${{ secrets.BAYN_ALPACA_SANDBOX_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          fail_guard() {
+            local code="$1"
+            local field="$2"
+            local message="$3"
+            local receipt_tmp="${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}.tmp"
+            jq \
+              --arg code "${code}" \
+              --arg field "${field}" \
+              '.proofStatus = "GUARD_FAILURE"
+              | .guardFailure = { stage: "CREDENTIAL_BINDING", code: $code, field: $field }' \
+              "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}" > "${receipt_tmp}"
+            mv "${receipt_tmp}" "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}"
+            echo "::error title=Protected Alpaca binding blocked::${message}" >&2
+            exit 2
+          }
+
+          [[ "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]] || \
+            fail_guard 'INVALID_EVENT_SHA' 'GITHUB_SHA' 'The workflow event SHA is not an exact lowercase commit SHA.'
+          [[ "${GITHUB_SHA}" == "${BAYN_ALPACA_SANDBOX_EXACT_HEAD_SHA}" ]] || \
+            fail_guard 'EXACT_HEAD_MISMATCH' 'exact_head_sha' 'The authorized exact_head_sha does not match the workflow event SHA.'
+          [[ "${BAYN_ALPACA_BASE_URL}" == 'https://paper-api.alpaca.markets' ]] || \
+            fail_guard 'NON_SANDBOX_ENDPOINT' 'BAYN_ALPACA_BASE_URL' 'The broker endpoint must be exactly https://paper-api.alpaca.markets.'
+          [[ "${BAYN_ALPACA_SANDBOX_CONTRACT}" == '1' ]] || \
+            fail_guard 'CONTRACT_FLAG_DISABLED' 'BAYN_ALPACA_SANDBOX_CONTRACT' 'The protected sandbox contract flag is not enabled.'
+
+          required_secrets=(
+            BAYN_ALPACA_ACCOUNT_ID
+            BAYN_ALPACA_KEY_ID
+            BAYN_ALPACA_SECRET_KEY
+          )
+          for name in "${required_secrets[@]}"; do
+            value="${!name:-}"
+            if [[ -z "${value}" || "${value}" != "${value//[$'\t\r\n ']/}" ]]; then
+              fail_guard 'MISSING_OR_MALFORMED_SECRET' "${name}" "${name} is absent or malformed in environment bayn-alpaca-sandbox."
+            fi
+          done
+          [[ "${BAYN_ALPACA_ACCOUNT_ID}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] || \
+            fail_guard 'INVALID_SANDBOX_ACCOUNT_ID' 'BAYN_ALPACA_ACCOUNT_ID' 'The protected sandbox account ID must be a lowercase UUID.'
+          [[ "${BAYN_ALPACA_ACCOUNT_ID}" != "${BAYN_ALPACA_KEY_ID}" ]] || \
+            fail_guard 'CREDENTIAL_ALIAS' 'BAYN_ALPACA_KEY_ID' 'The Alpaca key ID must not alias the sandbox account ID.'
+          [[ "${BAYN_ALPACA_KEY_ID}" != "${BAYN_ALPACA_SECRET_KEY}" ]] || \
+            fail_guard 'CREDENTIAL_ALIAS' 'BAYN_ALPACA_SECRET_KEY' 'The Alpaca secret key must not alias the key ID.'
+      - name: Verify the exact multi-architecture release artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+
+          image_run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BAYN_ALPACA_SANDBOX_RELEASE_IMAGE_BUILD_RUN_ID}")"
+          jq -e \
+            --arg sourceSha "${GITHUB_SHA}" '
+            .name == "bayn-build-push"
+            and .path == ".github/workflows/bayn-build-push.yml"
+            and .event == "workflow_dispatch"
+            and .head_sha == $sourceSha
+            and .status == "completed"
+            and .conclusion == "success"
+          ' <<<"${image_run_json}" >/dev/null
+
+          image_contract_dir="$(mktemp -d "${RUNNER_TEMP}/bayn-image-contract.XXXXXXXX")"
+          gh run download "${BAYN_ALPACA_SANDBOX_RELEASE_IMAGE_BUILD_RUN_ID}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name bayn-release-contract \
+            --dir "${image_contract_dir}"
+          image_contract="${image_contract_dir}/release-contract.json"
+          test -f "${image_contract}"
+          jq -e \
+            --arg sourceSha "${GITHUB_SHA}" '
+            .service == "bayn"
+            and .image == "registry.ide-newton.ts.net/lab/bayn"
+            and .tag == ("sha-" + $sourceSha)
+            and .sourceSha == $sourceSha
+            and .packageAttr == "bayn-image"
+            and .builder == "nix-dockerTools-skopeo"
+            and .invocation == "github-actions"
+            and (.digest | test("^sha256:[0-9a-f]{64}$"))
+            and .reference == (.image + "@" + .digest)
+            and ((.platforms | sort) == ["linux/amd64", "linux/arm64"])
+            and (.platformDigests["linux/amd64"] | test("^sha256:[0-9a-f]{64}$"))
+            and (.platformDigests["linux/arm64"] | test("^sha256:[0-9a-f]{64}$"))
+          ' "${image_contract}" >/dev/null
+
+          image_identity="$(jq -r '.reference' "${image_contract}")"
+          image_tag="$(jq -r '.image + ":" + .tag' "${image_contract}")"
+          printf 'BAYN_ALPACA_SANDBOX_RELEASE_IMAGE_IDENTITY=%s\n' "${image_identity}" >> "${GITHUB_ENV}"
+          printf 'BAYN_ALPACA_SANDBOX_RELEASE_IMAGE_TAG=%s\n' "${image_tag}" >> "${GITHUB_ENV}"
+
+          receipt_tmp="${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}.tmp"
+          jq \
+            --arg imageIdentity "${image_identity}" \
+            --arg imageTag "${image_tag}" '
+            .proofStatus = "GUARD_READY"
+            | .releaseGate.identity = $imageIdentity
+            | .releaseGate.tag = $imageTag
+          ' "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}" > "${receipt_tmp}"
+          mv "${receipt_tmp}" "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install focused dependencies
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/source
+          --filter @proompteng/bayn
+      - name: Execute bounded real Alpaca sandbox proof
+        env:
+          BAYN_ALPACA_ACCOUNT_ID: ${{ secrets.BAYN_ALPACA_SANDBOX_ACCOUNT_ID }}
+          BAYN_ALPACA_KEY_ID: ${{ secrets.BAYN_ALPACA_SANDBOX_KEY_ID }}
+          BAYN_ALPACA_SECRET_KEY: ${{ secrets.BAYN_ALPACA_SANDBOX_SECRET_KEY }}
+          BAYN_ALPACA_SANDBOX_PROXY_URL: http://127.0.0.1:18080
+        shell: bash
+        run: |
+          set -euo pipefail
+          proxy_script="${RUNNER_TEMP}/bayn-alpaca-connect-proxy.mjs"
+          proxy_pid=''
+          cleanup_proxy() {
+            if [[ -n "${proxy_pid}" ]]; then
+              kill "${proxy_pid}" 2>/dev/null || true
+              wait "${proxy_pid}" 2>/dev/null || true
+            fi
+            rm -f "${proxy_script}"
+          }
+          trap cleanup_proxy EXIT
+
+          cat > "${proxy_script}" <<'EOF'
+          import http from 'node:http'
+          import net from 'node:net'
+
+          const allowedHost = 'paper-api.alpaca.markets'
+          const allowedPort = 443
+          const listenHost = '127.0.0.1'
+          const listenPort = 18080
+
+          const reject = (socket, status) => {
+            socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`)
+          }
+
+          const server = http.createServer((_request, response) => {
+            response.writeHead(405, { Connection: 'close' })
+            response.end()
+          })
+
+          server.on('connect', (request, client, head) => {
+            let target
+            try {
+              target = new URL(`http://${request.url}`)
+            } catch {
+              reject(client, '400 Bad Request')
+              return
+            }
+            if (target.hostname !== allowedHost || Number(target.port) !== allowedPort) {
+              reject(client, '403 Forbidden')
+              return
+            }
+
+            const upstream = net.connect({ host: allowedHost, port: allowedPort }, () => {
+              client.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+              if (head.length > 0) upstream.write(head)
+              upstream.pipe(client)
+              client.pipe(upstream)
+            })
+            const close = () => {
+              upstream.destroy()
+              client.destroy()
+            }
+            upstream.on('error', close)
+            client.on('error', close)
+          })
+
+          server.listen(listenPort, listenHost)
+          process.on('SIGTERM', () => server.close(() => process.exit(0)))
+          EOF
+
+          node "${proxy_script}" >/dev/null 2>&1 &
+          proxy_pid="$!"
+          for _ in $(seq 1 50); do
+            if node -e "const net=require('node:net');const socket=net.connect(18080,'127.0.0.1',()=>{socket.end();process.exit(0)});socket.on('error',()=>process.exit(1))"; then
+              break
+            fi
+            sleep 0.1
+          done
+          kill -0 "${proxy_pid}"
+
+          bun test --cwd services/bayn src/broker/alpaca-sandbox-contract.test.ts
+      - name: Finalize sanitized pre-proof failure receipt
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+
+          if [[ ! -f "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}" ]]; then
+            jq -n \
+              --arg sourceSha "${GITHUB_SHA}" \
+              --arg githubEnvironment "${BAYN_ALPACA_SANDBOX_GITHUB_ENVIRONMENT}" \
+              '{
+                schemaVersion: "bayn.alpaca-sandbox-contract-receipt.v4",
+                proofStatus: "WORKFLOW_FAILURE",
+                sourceSha: $sourceSha,
+                githubEnvironment: $githubEnvironment,
+                workflowFailure: {
+                  stage: "PROTECTED_WORKFLOW",
+                  code: "RECEIPT_INITIALIZATION_FAILED"
+                }
+              }' > "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}"
+            exit 0
+          fi
+
+          proof_status="$(jq -r '.proofStatus // ""' "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}")"
+          case "${proof_status}" in
+            FAILURE | GUARD_FAILURE | SUCCESS)
+              exit 0
+              ;;
+          esac
+
+          receipt_tmp="${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}.tmp"
+          jq \
+            '.proofStatus = "WORKFLOW_FAILURE"
+            | .workflowFailure = {
+                stage: "PROTECTED_WORKFLOW",
+                code: "STEP_FAILED_BEFORE_FINAL_PROOF_RECEIPT"
+              }' \
+            "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}" > "${receipt_tmp}"
+          mv "${receipt_tmp}" "${BAYN_ALPACA_SANDBOX_RECEIPT_PATH}"
+      - name: Upload redacted exact-head contract receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpaca-sandbox-contract-${{ github.sha }}
+          path: /tmp/alpaca-sandbox-contract-receipt.json
+          if-no-files-found: error
+          retention-days: 30
