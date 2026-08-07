@@ -37,5 +37,14 @@ cephCommandsTimeoutSeconds: "120"
 csi:
   installCsiOperator: true
 
+# Before the wave-2 Driver update, ceph-csi-operator must reconcile the live
+# Drivers against their existing legacy service accounts. The wave-1 bridge
+# keeps those identities authorized until every OnDelete node pod is replaced.
+ceph-csi-operator:
+  controllerManager:
+    manager:
+      env:
+        csiServiceAccountPrefix: ceph-csi-
+
 # Rook v1.20 transfers CSI configuration ownership to the ceph-csi-drivers chart.
 # The existing live Driver and OperatorConfig behavior is preserved in csi-driver-values.yaml.

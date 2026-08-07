@@ -104,6 +104,9 @@ test('preserves the Ceph data plane and live CSI behavior during the v1.20 migra
   const operatorValues = readYaml<{
     image: { repository: string; tag: string }
     csi: Record<string, unknown>
+    'ceph-csi-operator': {
+      controllerManager: { manager: { env: { csiServiceAccountPrefix: string } } }
+    }
   }>('argocd/applications/rook-ceph/operator-values.yaml')
   const clusterValues = readYaml<{
     cephImage: { repository: string; tag: string }
@@ -128,6 +131,7 @@ test('preserves the Ceph data plane and live CSI behavior during the v1.20 migra
 
   expect(operatorValues.image).toMatchObject({ repository: 'docker.io/rook/ceph', tag: 'v1.20.3' })
   expect(operatorValues.csi).toEqual({ installCsiOperator: true })
+  expect(operatorValues['ceph-csi-operator'].controllerManager.manager.env.csiServiceAccountPrefix).toBe('ceph-csi-')
   expect(clusterValues.cephImage).toMatchObject({ repository: 'quay.io/ceph/ceph', tag: 'v19.2.4' })
   expect(clusterValues.cephClusterSpec.csi.cephfs.kernelMountOptions).toBe('ms_mode=crc')
   expect(driverValues.operatorConfig.driverSpecDefaults).toMatchObject({
