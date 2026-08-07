@@ -17,6 +17,8 @@ volumes:
   - name: headlamp-tmp
     emptyDir: {}
 config:
+  staticPlugins:
+    enabled: true
   oidc:
     secret:
       create: false
