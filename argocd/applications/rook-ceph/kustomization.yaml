@@ -83,6 +83,23 @@ patches:
         path: /metadata/annotations
         value:
           argocd.argoproj.io/sync-wave: "-1"
+  # Advance the manager pod generation so Argo applies the explicit empty CSI
+  # identity prefix instead of treating the chart default as an equal empty value.
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: ceph-csi-controller-manager
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ceph-csi-controller-manager
+      spec:
+        template:
+          metadata:
+            annotations:
+              storage.proompteng.ai/csi-service-account-generation: normalized-v1
   # Transfer the existing Driver and OperatorConfig resources to GitOps only
   # after the pre-operator identity and RBAC wave is healthy.
   - target:
