@@ -381,10 +381,11 @@ The Argo CD, Dex, and Image Updater target image indexes resolve to
 - The only Argo-specific alert uses the stable `argocd_app_info` metric, not changed OpenTelemetry semantic attributes.
 - The fully rendered target contains 100 non-Namespace resources, exactly matching the 100 currently tracked resource
   identities. It renders no `Namespace` object and passes a server-side API dry-run with the Argo field manager.
-- Representative pre-upgrade Lovely output hashes were: Buzz
-  `e4cffe0f974f5c1024acd495ed63ba353168e69aef0d042571b9070afd1a882e`, cert-manager
-  `a686b77d4c7105c0e422004add91c3ad8e682ea76575fbd7280a388e35efb45a`, and Torghut
-  `a42e2a65ba9064dfb6eb56bd235273d9beb0c20bc954ccd333e3ceab73457c34`.
+- Representative pre-upgrade Lovely outputs were canonicalized as sorted JSON before hashing. The hashes were: Buzz
+  `a00a13a28043cb40849b2373b0553765cbbf40295b2de78e6da76dcb6e90d921`, cert-manager
+  `8103d2bf7294a7b28865b90b07af521c4753772713bb2545bb6e921ca4710348`, and Torghut
+  `493015e412d88e903b152305fb5f7a7fec3744d2a657b2bc35529403f465de4d`. Raw YAML hashes are not an acceptance
+  signal because serialization can differ without a manifest change.
 
 Live identity baseline:
 
@@ -464,8 +465,8 @@ syncing and re-review the exact additions and removals.
   Redis secret, or ImageUpdater target is recreated.
 - Image Updater reports `Ready=True` and `Error=False`. Public health and Dex discovery return HTTP 200, the Argo
   service has a ready endpoint, and a fresh core-mode manifest request succeeds.
-- Buzz, cert-manager, and Torghut Lovely output hashes remain equal to the recorded baseline. The Argo manifest hash is
-  expected to change because this wave changes its desired control-plane manifests.
+- Buzz, cert-manager, and Torghut canonical Lovely output hashes remain equal to the recorded baseline. The Argo
+  manifest hash is expected to change because this wave changes its desired control-plane manifests.
 - Application and workload health contains no new exception beyond the explicitly recorded baseline, all nodes remain
   ready, and controller/repo-server/Image Updater logs contain no new render, cache, authentication, or reconciliation
   errors.
