@@ -684,11 +684,15 @@ three handlers, no other error recurred after startup, all handlers were ready w
 `Available=True`, `Progressing=False`, and `Degraded=False`. Treat only that exact legacy watcher message as an accepted
 upstream diagnostic until KubeVirt removes the unused manager.
 
-## Wave 4 namespace ownership handoff
+## Wave 4 namespace management handoff
 
-The Wave 4a source and live namespace now both carry `argocd.argoproj.io/sync-options=Prune=false`. Remove the upstream
-`Namespace` from rendered output while retaining ApplicationSet-managed namespace metadata. This is an ownership-only
-change: no Knative workload or custom resource should roll.
+Wave 4a first placed `argocd.argoproj.io/sync-options=Prune=false` on both the source and live namespace. The handoff then
+removes the upstream `Namespace` from rendered output and retains ApplicationSet-managed namespace metadata. Argo CD
+3.4's managed-namespace implementation always replaces that annotation value with `ServerSideApply=true`; it cannot
+combine a caller-provided `Prune=false` value. The generated namespace remains safe because Argo does not resource-track
+it unless a tracking annotation is explicitly added. Keep `argocd.argoproj.io/tracking-id` absent, assert that the
+Application has no Namespace in `status.resources`, and use the standard managed-by label as the metadata-management
+receipt. This change must not roll a Knative workload or custom resource.
 
 ```bash
 set -euo pipefail
@@ -704,12 +708,19 @@ argocd app get knative --hard-refresh >/dev/null
 argocd app wait knative --sync --health --timeout 900
 test "$(kubectl -n argocd get application knative \
   -o jsonpath='{.status.operationState.syncResult.revision}')" = "$upgrade_revision"
-test "$(kubectl get namespace knative \
-  -o jsonpath='{.metadata.annotations.argocd\.argoproj\.io/sync-options}')" = Prune=false
 test "$(kubectl get namespace knative -o jsonpath='{.metadata.uid}')" = b45355e7-34c7-483b-9e0f-1431571ae7f7
+test "$(kubectl get namespace knative \
+  -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}')" = argocd
+test "$(kubectl get namespace knative \
+  -o jsonpath='{.metadata.annotations.argocd\.argoproj\.io/sync-options}')" = ServerSideApply=true
+test -z "$(kubectl get namespace knative \
+  -o jsonpath='{.metadata.annotations.argocd\.argoproj\.io/tracking-id}')"
+test "$(kubectl -n argocd get application knative -o json |
+  jq '[.status.resources[] | select(.kind == "Namespace")] | length')" = 0
 ```
 
 Acceptance requires the Knative Application to be `Synced/Healthy` at the exact merge revision, the rendered target to
-contain no `Namespace`, the live namespace UID and protection annotation to remain unchanged, and all Knative operator,
-Serving, Eventing, and Service identities and readiness states to remain unchanged. Roll back by restoring the protected
-source Namespace; never delete or recreate the live namespace.
+contain no `Namespace`, the live namespace UID to remain unchanged, the managed-by and server-side-apply metadata to be
+present without a tracking annotation, and all Knative operator, Serving, Eventing, and Service identities and readiness
+states to remain unchanged. Roll back by restoring the protected source Namespace; never delete or recreate the live
+namespace.

@@ -301,9 +301,8 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "1"
                 managedNamespaceMetadata:
-                  annotations:
-                    # Protect the namespace while ownership moves from the upstream manifest to ApplicationSet.
-                    argocd.argoproj.io/sync-options: Prune=false
+                  labels:
+                    app.kubernetes.io/managed-by: argocd
                 automation: auto
                 enabled: "true"
               - name: knative-serving

@@ -136,7 +136,9 @@ describe('enabled app inventory', () => {
     expect(knativeKustomization).toContain('knative/operator/releases/download/knative-v1.23.0/operator.yaml')
     expect(knativeKustomization).toContain('$patch: delete')
     expect(knativeKustomization).not.toContain('argocd.argoproj.io/sync-options: Prune=false')
-    expect(knativeEntry).toContain('argocd.argoproj.io/sync-options: Prune=false')
+    expect(knativeEntry).toContain('app.kubernetes.io/managed-by: argocd')
+    expect(knativeEntry).not.toContain('argocd.argoproj.io/sync-options: Prune=false')
+    expect(knativeEntry).not.toContain('argocd.argoproj.io/tracking-id')
   })
 
   it('keeps chart-only apps out of Nix image migration state', () => {
