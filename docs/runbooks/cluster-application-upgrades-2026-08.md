@@ -1148,3 +1148,49 @@ counts in all five migration-touched tables, no normalized-email duplicates, a h
 continuous archiving, and no recurring migration/runtime errors. Rollback requires stopping 0.11.0 and restoring both
 the pre-merge database point and associated-data snapshot before reverting Git; do not run 0.10.2 against a partially
 migrated database.
+
+Wave 6b was accepted at merge `30cff1bec28e99f8395d6c36e1c0b3269b056980`. Before merge, CNPG backup
+`jangar-db-openwebui-v0-11-0-20260807t131310z` completed from the standby with WAL range
+`00000005000003ED00000050` through `00000005000003ED00000054`, and VolumeSnapshot
+`open-webui-pre-v0-11-0-20260807t131310z` became ready for the 5 GiB PVC. Argo server-side applied only the
+Open WebUI ServiceAccount, Service, and StatefulSet. The existing StatefulSet, Service, ServiceAccount, PVC, database
+Cluster UIDs, and PVC volume binding remained exact. A ten-second RBD reattachment delay cleared without action; the
+new Pod then pulled the 1.83 GB image, ran all seven migrations, and became ready with zero restarts at the pinned
+digest. `/health` returned true and `/api/version` returned 0.11.0. Alembic reached `f0bd01a18a3d`; the user, memory,
+chat, chat-message, and automation counts remained 1, 0, 28, 124, and 0, with zero normalized-email duplicates. CNPG
+remained two of two ready with continuous archiving, repeated health probes passed, and a subsequent 60-second runtime
+window contained no errors. The Application finished `Synced/Healthy` at the exact merge.
+
+## Wave 6c: Saigak Ollama runtime
+
+| Application | From     | To       | Reconciliation | Expected impact                                                                |
+| ----------- | -------- | -------- | -------------- | ------------------------------------------------------------------------------ |
+| Ollama      | `0.13.5` | `0.32.6` | Manual         | Stop the singleton GPU Pod, verify the cached model, then start its replacement. |
+
+The target is the latest upstream stable release and its official multi-architecture image index contains both amd64
+and arm64 manifests. Pin both the model-init and server containers to
+`sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42`. Upstream stable release notes from
+0.13.5 through 0.32.6 contain no storage migration, model-format incompatibility, or embedding API removal. The 0.32.6
+removal of experimental image generation is irrelevant because Saigak's proxy rejects generation and completion
+routes.
+
+The singleton uses StatefulSet rolling replacement and a 200 GiB node-local model-cache PVC, so merge must not trigger
+the rollout automatically. The current and upstream `qwen3-embedding:8b` manifests both reference the exact 4.68 GB
+model layer `sha256:3fcd3febec8b3fd64435204db75bf0dd73b91e8d0661e0331acfe7e7c3120b85`; no model download or
+model-data transition is expected. The custom `qwen3-embedding-saigak:8b` model is embedding-only, uses that layer and
+`num_ctx 32768`, and currently produces finite normalized 4096-dimensional vectors while resident entirely in GPU
+VRAM. Preserve these identities:
+
+| Resource                                       | UID                                    |
+| ---------------------------------------------- | -------------------------------------- |
+| `StatefulSet/saigak`                           | `ca97f12d-ecdb-4bcd-8e58-997ac2142704` |
+| `Service/saigak`                               | `4ac187de-f91d-4e51-9da3-5275a1c8d529` |
+| `PersistentVolumeClaim/saigak-altra-data` | `53628b88-ba4b-4571-a494-4448dd35e741` |
+
+After merge, capture a fresh baseline embedding, perform a reviewed manual Argo sync, and wait for the StatefulSet.
+Require both containers to be ready with zero restarts, the init and server image IDs to resolve to the pinned target,
+`ollama --version` to report 0.32.6, and the single custom model to retain its layer, parameters, embedding capability,
+and GPU residency. Require `/readyz`, `/v1/models`, and repeated `/v1/embeddings` calls to pass with finite normalized
+4096-dimensional vectors and no material semantic drift from the baseline. Preserve all identities and the PVC binding,
+and check a bounded post-start log window for recurring errors. With no persistent-data migration and the exact model
+layer retained, rollback is a reviewed Git revert followed by manual sync; never remove the model-cache PVC.
