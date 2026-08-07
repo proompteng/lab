@@ -1406,7 +1406,7 @@ occurred during acceptance. Retain the database dump and snapshot through final 
 
 | Application            | From     | To       | Reconciliation | Expected impact                                                   |
 | ---------------------- | -------- | -------- | -------------- | ----------------------------------------------------------------- |
-| Local Path Provisioner | `0.0.35` | `0.0.37` | Automatic      | One controller Pod rolls; existing local PV mounts remain intact. |
+| Local Path Provisioner | `0.0.35` | `0.0.37` | Manual         | One controller Pod rolls; existing local PV mounts remain intact. |
 
 Version 0.0.36 fixes the high-severity helper-Pod template injection advisory `GHSA-7fxv-8wr2-mfc4`, and 0.0.37 fixes
 the upstream `x/text` `CVE-2026-56852` and `x/net` `CVE-2026-46600` dependencies. The latter release also changes the
@@ -1416,7 +1416,7 @@ e2e BusyBox helper with official BusyBox 1.38.0 pinned to multi-architecture ind
 `sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616`; the custom helper template contains
 only the required critical priority and disk-pressure toleration and passes the new safety validation. The target
 `config.json` plus helper-template projection has SHA-256
-`83552569d17b9b012eb195e0cd87e80769baf2d3f81f3afd684cc70b9dca5d07`.
+`347ecb5f0ccb76f6a86511ee9eac2061f4ae39c1166fb097279880036a29245a`.
 
 The rendered resource set remains the same ten resources, including three StorageClasses, and the namespace deletion
 patch remains effective. Preserve these identities:
@@ -1436,10 +1436,63 @@ patch remains effective. Preserve these identities:
 | `PersistentVolume/pvc-de2489cc-045d-4c0d-8a72-8382874217f8` | `99ebedb1-a85a-4808-a6cf-9e9d77337809` |
 
 Before merge, require all five PVs to be `Bound` to their exact Bayn or Saigak claims and nodes, the controller Pod to
-be ready with zero restarts, and Argo to be `Synced/Healthy`. After automatic reconciliation, require one ready
+be ready with zero restarts, and Argo to be `Synced/Healthy`. After reviewed manual reconciliation, require one ready
 replacement Pod at the pinned digest with all three probes passing and zero restarts. Preserve every identity, PV claim
 reference, node affinity, StorageClass policy, and the target config/helper hash. Prove Bayn and Saigak remain ready,
 then create one uniquely named disposable PVC plus consumer Pod using `local-path`; write and read a marker, record the
 bound PV and node, and delete only those two disposable objects after success. Require a clean bounded controller log
 window and Argo `Synced/Healthy` at the exact merge. Rollback is a reviewed Git revert; never delete or recreate an
 existing PV, PVC, StorageClass, or backing path.
+
+Wave 7a was accepted at merge `219faf7436cbdbdaa1247fc0fed6005928f8a4f3`. The manual Argo diff contained only
+the controller and helper image changes plus the upstream health probes, and the sync completed without pruning. The
+replacement controller Pod UID is `5f2821fd-4ec8-4764-945a-c9490665d79e`; it ran on `turin` at the pinned image index
+with zero restarts and all probes healthy. The controller, service account, ConfigMap, and three StorageClass UIDs
+remained exact. All five pre-existing PV UIDs, claim bindings, node affinities, and `Bound` phases remained exact, and
+the Bayn ledger and Saigak workloads stayed ready. Disposable PVC and Pod `local-path-upgrade-smoke-20260807t150716z`
+wrote and reread their marker on `turin`; Pod UID `898936ce-9b9d-4a9c-be7c-ef1bc4924e66` bound through temporary PV
+`pvc-0d4bfd0c-b571-4ee5-a370-61dd1a3305f4`, and all three disposable resources were then deleted. The final 60-second
+controller log window was clean, the live config/helper projection matched the target hash, and Argo finished
+`Synced/Healthy` at the exact merge.
+
+## Wave 7b: NVIDIA custom device-plugin security release
+
+| Application                  | From     | To       | Reconciliation | Expected impact                                                |
+| ---------------------------- | -------- | -------- | -------------- | -------------------------------------------------------------- |
+| NVIDIA custom device plugins | `0.19.0` | `0.19.3` | Manual         | One plugin Pod per GPU node rolls; GPU consumers remain ready. |
+
+Version 0.19.1 fixes WSL all-device and Tegra driver-root CDI behavior. Version 0.19.2 updates the NVIDIA container
+toolkit and adds graphics MIG device support. Version 0.19.3 updates the distroless base and Go dependencies, including
+`x/net`, and disables unsupported optional GDRCopy, GDS, and MOFED CDI classes by default. Pin both custom DaemonSets
+to multi-architecture index
+`sha256:25cc340fe6fd53c101e16fc452f503e7a92c219c64a80ed5381784b522dbbf77`; its amd64 and arm64 child digests are
+`sha256:d6c456fda4fb7f2871e9731be17983e37987f848199c4282c7741461837105bd` and
+`sha256:6c352cdc24d8988cd47a77bb69a26fcc720c9040d33c770d8ee00067fb235a42`.
+
+Preserve these identities and configuration projections:
+
+| Resource                                      | UID                                    | Config SHA-256                                                     |
+| --------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------ |
+| `DaemonSet/altra-nvidia-device-plugin`        | `dbd65f8c-62ee-4175-bf44-edf9ee34ed3a` | N/A                                                                |
+| `ServiceAccount/altra-nvidia-device-plugin`   | `9d684c8f-1fe3-4ae8-91f2-106770d914a7` | N/A                                                                |
+| `ConfigMap/altra-nvidia-device-plugin-config` | `21316a52-cf8c-472b-a2fc-bd26dd3add54` | `35fe6acc8c5c704902c441fad2f517deac7e6735fd3e2a89d554727fc1770f44` |
+| `DaemonSet/turin-nvidia-device-plugin`        | `b82fa79e-bacd-43de-a345-2e480ea67d85` | N/A                                                                |
+| `ServiceAccount/turin-nvidia-device-plugin`   | `618b0528-cd4e-473e-bb61-a55b7f117463` | N/A                                                                |
+| `ConfigMap/turin-nvidia-device-plugin-config` | `149df547-cc2a-4428-9c26-fca3801fe808` | `0b1e27fbe981b8e0c17f61cf634e5134fbef635ebf0553413af4d49368e8d609` |
+
+The pre-upgrade Altra plugin Pod UID is `94faaae4-9016-4d2a-8d66-080fb8235ae5` on
+`talos-192-168-1-85`; that node advertises one GPU. The Turin plugin Pod UID is
+`027646ad-d2cb-4824-b632-2c0b80cdf1f8` on `turin`; time slicing advertises eight GPU shares. Preserve the ready GPU
+consumers Flamingo (`51f4e709-be63-47a1-8078-d0f87d8c4bd3`), Plex
+(`447aa6e0-7d60-42c6-99b4-3390a9486397`), and Saigak (`a652142e-c8e1-4168-b858-b5a270217ed0`) without restart. Their
+physical GPU identities are `GPU-a5547d61-f86a-6029-ed47-42cdb2c108dc` on Turin and
+`GPU-47cb31bc-9007-063d-144e-6a80da6d9e3a` on Altra.
+
+Before merge, require both DaemonSets ready with zero plugin restarts, node capacity and allocatable values of one and
+eight, all three consumers ready, and Argo `Synced/Healthy`. After review, require the manual Argo diff to contain only
+the two plugin image lines and sync without pruning. Require replacement Pods at the pinned platform digests with zero
+restarts, exact resource UIDs and config hashes, restored `nvidia.com/gpu` registration, unchanged capacity and
+allocatable values, and no empty-spec errors for GDRCopy, GDS, or MOFED. Recheck the consumer UIDs, readiness, restart
+counts, and physical GPU UUIDs; require lightweight Flamingo, Plex, and Saigak health probes, a clean bounded plugin log
+window, and Argo `Synced/Healthy` at the exact merge. Rollback is a reviewed Git revert and manual no-prune sync; stop
+if either node loses GPU registration or a consumer restarts.
