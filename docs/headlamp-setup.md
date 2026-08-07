@@ -14,7 +14,7 @@ This runbook covers Headlamp deployment, OIDC wiring with Keycloak, control-plan
 ## Operations model
 
 - Headlamp application config is GitOps-managed from `argocd/applications/headlamp`.
-- Headlamp now runs from the repo-owned image built by `services/headlamp/Dockerfile`, pinned to upstream `kubernetes-sigs/headlamp` `v0.40.1`.
+- Headlamp runs from the repo-owned Nix image defined in `nix/images/headlamp.nix`, pinned to upstream `kubernetes-sigs/headlamp` `v0.44.0`.
 - The `headlamp-auth-bridge` service now fronts both `/auth` and `/clusters`.
 - `/auth` completes the popup handoff back to the main Headlamp window.
 - `/clusters` keeps ordinary cluster API requests flowing to Headlamp.

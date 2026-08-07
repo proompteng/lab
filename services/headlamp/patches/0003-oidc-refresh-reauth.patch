@@ -1,169 +1,19 @@
-diff --git a/backend/cmd/headlamp.go b/backend/cmd/headlamp.go
-index b428cc4..1483e88 100644
---- a/backend/cmd/headlamp.go
-+++ b/backend/cmd/headlamp.go
-@@ -925,10 +925,14 @@ func createHeadlampHandler(config *HeadlampConfig) http.Handler {
- 	return r
- }
- 
-+type tokenRefreshResult struct {
-+	reauthRequired bool
-+}
-+
- func (c *HeadlampConfig) refreshAndSetToken(oidcAuthConfig *kubeconfig.OidcConfig,
- 	cache cache.Cache[interface{}], token string,
- 	w http.ResponseWriter, r *http.Request, cluster string, span trace.Span, ctx context.Context,
--) {
-+) tokenRefreshResult {
- 	// The token type to use
- 	tokenType := "id_token"
- 	if c.oidcUseAccessToken {
-@@ -949,6 +953,16 @@ func (c *HeadlampConfig) refreshAndSetToken(oidcAuthConfig *kubeconfig.OidcConfi
- 		idpIssuerURL,
- 	)
- 	if err != nil {
-+		if errors.Is(err, auth.ErrRefreshTokenUnavailable) {
-+			auth.ClearTokenCookie(w, r, cluster, c.BaseURL)
-+			logger.Log(logger.LevelWarn, map[string]string{"cluster": cluster},
-+				err, "cached refresh token unavailable; reauthentication required")
-+			c.telemetryHandler.RecordEvent(span, "Cached refresh token unavailable; clearing auth cookie")
-+			c.telemetryHandler.RecordErrorCount(ctx, attribute.String("error", "token_refresh_reauth_required"))
-+
-+			return tokenRefreshResult{reauthRequired: true}
-+		}
-+
- 		logger.Log(logger.LevelError, map[string]string{"cluster": cluster},
- 			err, "failed to refresh token")
- 		c.telemetryHandler.RecordError(span, err, "Token refresh failed")
-@@ -966,6 +980,8 @@ func (c *HeadlampConfig) refreshAndSetToken(oidcAuthConfig *kubeconfig.OidcConfi
- 
- 		c.telemetryHandler.RecordEvent(span, "Token refreshed successfully")
- 	}
-+
-+	return tokenRefreshResult{}
- }
- 
- // setTokenFromCookie attempts to get a token from the cookie and set it as Authorization header.
-@@ -1105,7 +1121,15 @@ func (c *HeadlampConfig) OIDCTokenRefreshMiddleware(next http.Handler) http.Hand
- 		}
- 
- 		// refresh and cache new token
--		c.refreshAndSetToken(oidcAuthConfig, c.cache, token, w, r, cluster, span, ctx)
-+		refreshResult := c.refreshAndSetToken(oidcAuthConfig, c.cache, token, w, r, cluster, span, ctx)
-+		if refreshResult.reauthRequired {
-+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-+			c.telemetryHandler.RecordDuration(ctx, start,
-+				attribute.String("api.route", "OIDCTokenRefreshMiddleware"),
-+				attribute.String("status", "reauth_required"))
-+
-+			return
-+		}
- 
- 		next.ServeHTTP(w, r)
- 		c.telemetryHandler.RecordDuration(ctx, start,
-diff --git a/backend/cmd/headlamp_test.go b/backend/cmd/headlamp_test.go
-index c67563d..637501f 100644
---- a/backend/cmd/headlamp_test.go
-+++ b/backend/cmd/headlamp_test.go
-@@ -38,6 +38,7 @@ import (
- 
- 	"github.com/google/uuid"
- 	"github.com/gorilla/mux"
-+	auth "github.com/kubernetes-sigs/headlamp/backend/pkg/auth"
- 	"github.com/kubernetes-sigs/headlamp/backend/pkg/cache"
- 	"github.com/kubernetes-sigs/headlamp/backend/pkg/config"
- 	"github.com/kubernetes-sigs/headlamp/backend/pkg/headlampconfig"
-@@ -70,6 +71,17 @@ func makeJSONReq(method, url string, jsonObj interface{}) (*http.Request, error)
- 	return http.NewRequestWithContext(context.Background(), method, url, bytes.NewBuffer(jsonBytes))
- }
- 
-+func makeJWTWithExp(t *testing.T, exp time.Time) string {
-+	t.Helper()
-+
-+	payloadBytes, err := json.Marshal(map[string]interface{}{"exp": float64(exp.Unix())})
-+	if err != nil {
-+		t.Fatalf("failed to marshal payload: %v", err)
-+	}
-+
-+	return "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." + base64.RawURLEncoding.EncodeToString(payloadBytes) + "."
-+}
-+
- func getResponse(handler http.Handler, method, url string, body interface{}) (*httptest.ResponseRecorder, error) {
- 	req, err := makeJSONReq(method, url, body)
- 	if err != nil {
-@@ -975,6 +987,56 @@ func TestOIDCTokenRefreshMiddleware(t *testing.T) {
- 	assert.Equal(t, http.StatusOK, rec.Code)
- }
- 
-+func TestOIDCTokenRefreshMiddleware_MissingRefreshTokenRequiresReauth(t *testing.T) {
-+	kubeConfigStore := kubeconfig.NewContextStore()
-+	require.NoError(t, kubeConfigStore.AddContext(&kubeconfig.Context{
-+		Name: "test-cluster",
-+		OidcConf: &kubeconfig.OidcConfig{
-+			ClientID:     "cid",
-+			ClientSecret: "secret",
-+			IdpIssuerURL: "https://issuer.example",
-+		},
-+	}))
-+
-+	config := &HeadlampConfig{
-+		HeadlampCFG: &headlampconfig.HeadlampCFG{
-+			KubeConfigStore: kubeConfigStore,
-+		},
-+		cache:              cache.New[interface{}](),
-+		oidcUseAccessToken: true,
-+		telemetryHandler:   &telemetry.RequestHandler{},
-+	}
-+
-+	handlerCalled := false
-+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-+		handlerCalled = true
-+		w.WriteHeader(http.StatusOK)
-+	})
-+
-+	req := httptest.NewRequest("GET", "/clusters/test-cluster/api/v1/namespaces", nil)
-+	req.AddCookie(&http.Cookie{
-+		Name:  "headlamp-auth-test-cluster.0",
-+		Value: makeJWTWithExp(t, time.Now().Add(auth.JWTExpirationTTL/2)),
-+	})
-+	rec := httptest.NewRecorder()
-+
-+	config.OIDCTokenRefreshMiddleware(handler).ServeHTTP(rec, req)
-+
-+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
-+	assert.False(t, handlerCalled)
-+
-+	var clearedCookie *http.Cookie
-+	for _, cookie := range rec.Result().Cookies() {
-+		if cookie.Name == "headlamp-auth-test-cluster.0" && cookie.Path == "/clusters/test-cluster" {
-+			clearedCookie = cookie
-+			break
-+		}
-+	}
-+
-+	require.NotNil(t, clearedCookie)
-+	assert.Equal(t, -1, clearedCookie.MaxAge)
-+}
-+
- func TestStartHeadlampServer(t *testing.T) {
- 	// Create a temporary directory for plugins
- 	tempDir, err := os.MkdirTemp("", "headlamp-test")
 diff --git a/backend/pkg/auth/auth.go b/backend/pkg/auth/auth.go
-index 0c4689a..dc1e83f 100644
+index 9ee4d055e42584956cbaf14f9f01e53184212f5d..87a7af953ff087bd1ba237be3e65927554900a6b 100644
 --- a/backend/pkg/auth/auth.go
 +++ b/backend/pkg/auth/auth.go
-@@ -46,6 +46,8 @@ const (
- 
- const JWTExpirationTTL = 10 * time.Second // seconds
+@@ -52,6 +52,8 @@ const JWTExpirationTTL = 10 * time.Second // seconds
+ // errFieldMessage is the JSON field name used by writeMeJSON for error messages.
+ const errFieldMessage = "message"
  
 +var ErrRefreshTokenUnavailable = errors.New("refresh token unavailable")
 +
  // DecodeBase64JSON decodes a base64 URL-encoded JSON string into a map.
  func DecodeBase64JSON(base64JSON string) (map[string]interface{}, error) {
  	payloadBytes, err := base64.RawURLEncoding.DecodeString(base64JSON)
-@@ -68,6 +70,28 @@ var clusterPathRegex = regexp.MustCompile(`^/clusters/([^/]+)/.*`)
- // https://datatracker.ietf.org/doc/html/rfc6750#section-2.1
- var bearerTokenRegex = regexp.MustCompile(`^[\x21-\x7E]+$`)
+@@ -89,6 +91,28 @@ func BearerTokenValue(token string) string {
+ 	return strings.TrimSpace(token)
+ }
  
 +func getCachedRefreshToken(ctx context.Context, tokenCache cache.Cache[interface{}], token string) (string, error) {
 +	refreshToken, err := tokenCache.Get(ctx, oidcKeyPrefix+token)
@@ -177,7 +27,7 @@ index 0c4689a..dc1e83f 100644
 +
 +	rToken, ok := refreshToken.(string)
 +	if !ok {
-+		return "", fmt.Errorf("failed to get refresh token")
++		return "", errors.New("failed to get refresh token")
 +	}
 +
 +	if strings.TrimSpace(rToken) == "" {
@@ -190,7 +40,7 @@ index 0c4689a..dc1e83f 100644
  // ParseClusterAndToken extracts the cluster name from the URL path and
  // the Bearer token from the Authorization header of the HTTP request, falling
  // back to the cluster cookie when the header is missing.
-@@ -170,18 +194,13 @@ func CacheRefreshedToken(token *oauth2.Token, tokenType string, oldToken string,
+@@ -186,18 +210,13 @@ func CacheRefreshedToken(token *oauth2.Token, tokenType string, oldToken string,
  // GetNewToken uses the provided credentials and fetches the old refresh
  // token from the cache to obtain a new OAuth2 token
  // from the specified token URL endpoint.
@@ -202,7 +52,7 @@ index 0c4689a..dc1e83f 100644
 -	refreshToken, err := cache.Get(ctx, oidcKeyPrefix+token)
 +	rToken, err := getCachedRefreshToken(ctx, tokenCache, token)
  	if err != nil {
--		return nil, fmt.Errorf("getting refresh token: %v", err)
+-		return nil, fmt.Errorf("getting refresh token: %w", err)
 -	}
 -
 -	rToken, ok := refreshToken.(string)
@@ -212,24 +62,27 @@ index 0c4689a..dc1e83f 100644
  	}
  
  	// Create OAuth2 config with client credentials and token endpoint
-@@ -200,7 +219,7 @@ func GetNewToken(clientID, clientSecret string, cache cache.Cache[interface{}],
+@@ -216,7 +235,7 @@ func GetNewToken(clientID, clientSecret string, cache cache.Cache[interface{}],
  	}
  
  	// update the refresh token in the cache
 -	if err := CacheRefreshedToken(newToken, tokenType, token, rToken, cache); err != nil {
 +	if err := CacheRefreshedToken(newToken, tokenType, token, rToken, tokenCache); err != nil {
- 		return nil, fmt.Errorf("caching refreshed token: %v", err)
+ 		return nil, fmt.Errorf("caching refreshed token: %w", err)
  	}
  
-@@ -247,11 +266,15 @@ func ConfigureTLSContext(ctx context.Context, skipTLSVerify *bool, caCert *strin
- // and re-populates the cache so subsequent requests can reuse it. The provided ctx
- // controls cancellation and deadlines for all outbound requests during the refresh.
+@@ -291,7 +310,7 @@ func ConfigureTLSContext(ctx context.Context, skipTLSVerify *bool, caCert *strin
+ // validatorIssuerURL overrides the issuer expected by provider discovery when the
+ // discovery URL and returned issuer differ.
  func RefreshAndCacheNewToken(ctx context.Context, oidcAuthConfig *kubeconfig.OidcConfig,
 -	cache cache.Cache[interface{}],
 +	tokenCache cache.Cache[interface{}],
- 	tokenType, token, issuerURL string,
+ 	tokenType, token, issuerURL, validatorIssuerURL string,
  ) (*oauth2.Token, error) {
  	ctx = ConfigureTLSContext(ctx, oidcAuthConfig.SkipTLSVerify, oidcAuthConfig.CACert)
+@@ -300,6 +319,10 @@ func RefreshAndCacheNewToken(ctx context.Context, oidcAuthConfig *kubeconfig.Oid
+ 		ctx = oidc.InsecureIssuerURLContext(ctx, validatorIssuerURL)
+ 	}
  
 +	if _, err := getCachedRefreshToken(ctx, tokenCache, token); err != nil {
 +		return nil, fmt.Errorf("refreshing token: %w", err)
@@ -238,7 +91,7 @@ index 0c4689a..dc1e83f 100644
  	// get provider
  	provider, err := oidc.NewProvider(ctx, issuerURL)
  	if err != nil {
-@@ -261,7 +284,7 @@ func RefreshAndCacheNewToken(ctx context.Context, oidcAuthConfig *kubeconfig.Oid
+@@ -309,7 +332,7 @@ func RefreshAndCacheNewToken(ctx context.Context, oidcAuthConfig *kubeconfig.Oid
  	newToken, err := GetNewToken(
  		oidcAuthConfig.ClientID,
  		oidcAuthConfig.ClientSecret,
@@ -247,11 +100,56 @@ index 0c4689a..dc1e83f 100644
  		tokenType,
  		token,
  		provider.Endpoint().TokenURL,
+@@ -597,8 +620,8 @@ type RefreshAndSetTokenParams struct {
+ }
+ 
+ // RefreshAndSetToken refreshes an expiring token, updates the auth cookie,
+-// and records telemetry based on the provided parameters.
+-func RefreshAndSetToken(params RefreshAndSetTokenParams) {
++// and reports whether the client must authenticate again.
++func RefreshAndSetToken(params RefreshAndSetTokenParams) bool {
+ 	// The token type to use
+ 	tokenType := "id_token"
+ 	if params.OIDCUseAccessToken {
+@@ -620,6 +643,17 @@ func RefreshAndSetToken(params RefreshAndSetTokenParams) {
+ 		params.OIDCValidatorIdpIssuerURL,
+ 	)
+ 	if err != nil {
++		if errors.Is(err, ErrRefreshTokenUnavailable) {
++			ClearTokenCookie(params.Writer, params.Request, params.Cluster, params.BaseURL)
++			logger.Log(logger.LevelWarn, map[string]string{"cluster": params.Cluster},
++				err, "cached refresh token unavailable; reauthentication required")
++			params.TelemetryHandler.RecordEvent(params.Span, "Cached refresh token unavailable; clearing auth cookie")
++			params.TelemetryHandler.RecordErrorCount(params.Ctx,
++				attribute.String("error", "token_refresh_reauth_required"))
++
++			return true
++		}
++
+ 		logger.Log(logger.LevelError, map[string]string{"cluster": params.Cluster},
+ 			err, "failed to refresh token")
+ 		params.TelemetryHandler.RecordError(params.Span, err, "Token refresh failed")
+@@ -641,7 +675,7 @@ func RefreshAndSetToken(params RefreshAndSetTokenParams) {
+ 			params.TelemetryHandler.RecordError(params.Span,
+ 				errors.New("refreshed token missing expected field"), "Token extraction failed")
+ 
+-			return
++			return false
+ 		}
+ 
+ 		// Set refreshed token in cookie
+@@ -649,4 +683,6 @@ func RefreshAndSetToken(params RefreshAndSetTokenParams) {
+ 
+ 		params.TelemetryHandler.RecordEvent(params.Span, "Token refreshed successfully")
+ 	}
++
++	return false
+ }
 diff --git a/backend/pkg/auth/auth_test.go b/backend/pkg/auth/auth_test.go
-index ef0940a..9f2fcb0 100644
+index 689e6f8822581934bd65dc68648db0160e35de1f..6da76f53b7291c5ef780a3a2b90072f34d684542 100644
 --- a/backend/pkg/auth/auth_test.go
 +++ b/backend/pkg/auth/auth_test.go
-@@ -414,10 +414,15 @@ func (f *fakeCache) Get(_ context.Context, key string) (interface{}, error) {
+@@ -484,10 +484,15 @@ func (f *fakeCache) Get(_ context.Context, key string) (interface{}, error) {
  	}
  
  	if f.store == nil {
@@ -269,7 +167,16 @@ index ef0940a..9f2fcb0 100644
  }
  
  func (f *fakeCache) Set(_ context.Context, key string, val interface{}) error {
-@@ -672,7 +677,12 @@ func TestGetNewToken_PreHTTPFailures(t *testing.T) {
+@@ -682,7 +687,7 @@ func newOIDCProviderServer(t *testing.T, issuerURL string, tokenHandler http.Han
+ func findAuthCookie(resp *http.Response, cluster string) (string, bool) {
+ 	want := fmt.Sprintf("headlamp-auth-%s.0", auth.SanitizeClusterName(cluster))
+ 	for _, cookie := range resp.Cookies() {
+-		if cookie.Name == want {
++		if cookie.Name == want && cookie.MaxAge != -1 {
+ 			return cookie.Value, true
+ 		}
+ 	}
+@@ -758,7 +763,12 @@ func TestGetNewToken_PreHTTPFailures(t *testing.T) {
  		{
  			"missing refresh token",
  			&fakeCache{store: map[string]interface{}{}},
@@ -283,8 +190,24 @@ index ef0940a..9f2fcb0 100644
  		},
  	} {
  		t.Run(tc.name, func(t *testing.T) {
+@@ -883,13 +893,14 @@ func TestRefreshAndCacheNewToken_ValidatorIssuerOverride(t *testing.T) {
+ 
+ func TestRefreshAndCacheNewToken_ProviderError(t *testing.T) {
+ 	config := &kubeconfig.OidcConfig{ClientID: "cid", ClientSecret: "secret"}
++	fc := &fakeCache{store: map[string]interface{}{"oidc-token-OLD": "REFRESH_OLD"}}
+ 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+ 		http.Error(w, "no discovery", http.StatusInternalServerError)
+ 	}))
+ 	t.Cleanup(srv.Close)
+ 
+ 	_, err := auth.RefreshAndCacheNewToken(
+-		context.Background(), config, &fakeCache{}, "id_token", "OLD", srv.URL, "",
++		context.Background(), config, fc, "id_token", "OLD", srv.URL, "",
+ 	)
+ 	require.Error(t, err)
+ 	assert.Contains(t, err.Error(), "getting provider")
 diff --git a/backend/pkg/auth/cookies.go b/backend/pkg/auth/cookies.go
-index 179a9d5..e6c5026 100644
+index b218712bb9853811ccc65d16248f74939bafa83e..a26a15f198712332f6c2adc30b2281a17c0df7fb 100644
 --- a/backend/pkg/auth/cookies.go
 +++ b/backend/pkg/auth/cookies.go
 @@ -19,9 +19,11 @@ package auth
@@ -299,51 +222,54 @@ index 179a9d5..e6c5026 100644
  )
  
  const (
-@@ -29,6 +31,9 @@ const (
+@@ -29,6 +31,8 @@ const (
  	chunkSize = 3800
  	// clearCookieChunkCount bounds cleanup for stale chunked cookies across auth paths.
  	clearCookieChunkCount = 8
-+	// defaultCookieMaxAgeSeconds preserves the upstream 24-hour upper bound when a token
-+	// does not expose a usable JWT expiry.
++	// defaultCookieMaxAgeSeconds matches Headlamp's default 24-hour session TTL.
 +	defaultCookieMaxAgeSeconds = 86400
  )
  
  // GetCookiePath returns the full cookie path including baseURL.
-@@ -128,6 +133,7 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
+@@ -128,6 +132,7 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
  
  	// if token is larger than maxCookieSize, split it into multiple cookies
  	chunks := splitToken(token, chunkSize)
-+	maxAge := getTokenCookieMaxAge(token)
++	maxAge := getTokenCookieMaxAge(token, sessionTTL)
  	for _, path := range getSetCookiePaths(baseURL, cluster) {
  		for i, chunk := range chunks {
- 			cookie := &http.Cookie{
-@@ -137,7 +143,7 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
+ 			// G124: Secure is set from IsSecureContext so localhost development still works;
+@@ -139,7 +144,7 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
  				Secure:   secure,
  				SameSite: http.SameSiteStrictMode,
  				Path:     path,
--				MaxAge:   86400, // 24 hours
+-				MaxAge:   sessionTTL,
 +				MaxAge:   maxAge,
  			}
  
  			http.SetCookie(w, cookie)
-@@ -145,6 +151,35 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
+@@ -147,6 +152,39 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
  	}
  }
  
-+func getTokenCookieMaxAge(token string) int {
++func getTokenCookieMaxAge(token string, sessionTTL int) int {
++	if sessionTTL <= 0 {
++		sessionTTL = defaultCookieMaxAgeSeconds
++	}
++
 +	parts := strings.SplitN(token, ".", 3)
 +	if len(parts) != 3 || parts[1] == "" {
-+		return defaultCookieMaxAgeSeconds
++		return sessionTTL
 +	}
 +
 +	payload, err := DecodeBase64JSON(parts[1])
 +	if err != nil {
-+		return defaultCookieMaxAgeSeconds
++		return sessionTTL
 +	}
 +
 +	expiryUnixTimeUTC, err := GetExpiryUnixTimeUTC(payload)
 +	if err != nil {
-+		return defaultCookieMaxAgeSeconds
++		return sessionTTL
 +	}
 +
 +	remaining := time.Until(expiryUnixTimeUTC)
@@ -352,8 +278,8 @@ index 179a9d5..e6c5026 100644
 +	}
 +
 +	maxAge := int(math.Ceil(remaining.Seconds()))
-+	if maxAge > defaultCookieMaxAgeSeconds {
-+		return defaultCookieMaxAgeSeconds
++	if maxAge > sessionTTL {
++		return sessionTTL
 +	}
 +
 +	return maxAge
@@ -363,12 +289,12 @@ index 179a9d5..e6c5026 100644
  func GetTokenFromCookie(r *http.Request, cluster string) (string, error) {
  	sanitizedCluster := SanitizeClusterName(cluster)
 diff --git a/backend/pkg/auth/cookies_test.go b/backend/pkg/auth/cookies_test.go
-index 8517233..3d4a239 100644
+index 8f4a6d9603f7e3e7280cb62a8a633e2a56e9dc7c..eb487f9f374a5835f43978402a13aa6773ade11a 100644
 --- a/backend/pkg/auth/cookies_test.go
 +++ b/backend/pkg/auth/cookies_test.go
-@@ -18,10 +18,13 @@ package auth_test
- 
+@@ -19,10 +19,13 @@ package auth_test
  import (
+ 	"context"
  	"crypto/tls"
 +	"encoding/base64"
 +	"encoding/json"
@@ -380,7 +306,7 @@ index 8517233..3d4a239 100644
  
  	"github.com/kubernetes-sigs/headlamp/backend/pkg/auth"
  )
-@@ -31,6 +34,17 @@ const (
+@@ -32,6 +35,17 @@ const (
  	localhostOrigin = "http://localhost:3000"
  )
  
@@ -398,7 +324,7 @@ index 8517233..3d4a239 100644
  func TestSanitizeClusterName(t *testing.T) {
  	tests := []struct {
  		input    string
-@@ -204,6 +218,27 @@ func TestGetBaseCookiePath(t *testing.T) {
+@@ -210,6 +224,27 @@ func TestGetBaseCookiePath(t *testing.T) {
  	}
  }
  
@@ -410,7 +336,7 @@ index 8517233..3d4a239 100644
 +		"exp": float64(time.Now().Add(2 * time.Minute).Unix()),
 +	})
 +
-+	auth.SetTokenCookie(w, req, "test-cluster", token, "")
++	auth.SetTokenCookie(w, req, "test-cluster", token, "", 86400)
 +
 +	for _, cookie := range w.Result().Cookies() {
 +		if cookie.MaxAge == -1 {
@@ -424,5 +350,106 @@ index 8517233..3d4a239 100644
 +}
 +
  func TestSetAndGetAuthCookie(t *testing.T) {
- 	req := httptest.NewRequest("GET", localhost, nil)
+ 	req := httptest.NewRequestWithContext(context.Background(), "GET", localhost, nil)
  	req.Host = localhost
+diff --git a/backend/pkg/auth/middleware.go b/backend/pkg/auth/middleware.go
+index 137d2354a1e88d355bab9bd39973493c9ce983f3..ebcf934b41099aed756cb9b6fcbc9639fbb9da96 100644
+--- a/backend/pkg/auth/middleware.go
++++ b/backend/pkg/auth/middleware.go
+@@ -131,7 +131,7 @@ func NewOIDCTokenRefreshMiddleware(config OIDCTokenRefreshConfig) func(http.Hand
+ 				return
+ 			}
+ 
+-			RefreshAndSetToken(RefreshAndSetTokenParams{
++			reauthenticationRequired := RefreshAndSetToken(RefreshAndSetTokenParams{
+ 				Ctx:                       ctx,
+ 				OIDCAuthConfig:            oidcAuthConfig,
+ 				Cache:                     config.Cache,
+@@ -147,6 +147,12 @@ func NewOIDCTokenRefreshMiddleware(config OIDCTokenRefreshConfig) func(http.Hand
+ 				BaseURL:                   config.BaseURL,
+ 				SessionTTL:                config.SessionTTL,
+ 			})
++			if reauthenticationRequired {
++				status = "reauth_required"
++				http.Error(w, "Unauthorized", http.StatusUnauthorized)
++
++				return
++			}
+ 
+ 			next.ServeHTTP(w, r)
+ 		})
+diff --git a/backend/pkg/auth/middleware_test.go b/backend/pkg/auth/middleware_test.go
+index fd86664df8ef17d4eb8c3ff9c53f70ee908d9353..b64e8b7330b41dd56e30c8a38c673609a832b83a 100644
+--- a/backend/pkg/auth/middleware_test.go
++++ b/backend/pkg/auth/middleware_test.go
+@@ -21,12 +21,14 @@ import (
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"testing"
++	"time"
+ 
+ 	"github.com/kubernetes-sigs/headlamp/backend/pkg/auth"
+ 	"github.com/kubernetes-sigs/headlamp/backend/pkg/cache"
+ 	"github.com/kubernetes-sigs/headlamp/backend/pkg/kubeconfig"
+ 	"github.com/kubernetes-sigs/headlamp/backend/pkg/telemetry"
+ 	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
+ )
+ 
+ func TestNewOIDCTokenRefreshMiddleware(t *testing.T) {
+@@ -56,6 +58,55 @@ func TestNewOIDCTokenRefreshMiddleware(t *testing.T) {
+ 	assert.Equal(t, http.StatusOK, rec.Code)
+ }
+ 
++func TestOIDCTokenRefreshMiddleware_MissingRefreshTokenRequiresReauth(t *testing.T) {
++	kubeConfigStore := kubeconfig.NewContextStore()
++	require.NoError(t, kubeConfigStore.AddContext(&kubeconfig.Context{
++		Name: "test-cluster",
++		OidcConf: &kubeconfig.OidcConfig{
++			ClientID:     "cid",
++			ClientSecret: "secret",
++			IdpIssuerURL: "https://issuer.example",
++		},
++	}))
++
++	config := auth.OIDCTokenRefreshConfig{
++		KubeConfigStore:    kubeConfigStore,
++		Cache:              cache.New[interface{}](),
++		TelemetryHandler:   &telemetry.RequestHandler{},
++		OidcUseAccessToken: true,
++		SessionTTL:         86400,
++	}
++
++	handlerCalled := false
++	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		handlerCalled = true
++		w.WriteHeader(http.StatusOK)
++	})
++
++	req := httptest.NewRequest("GET", "/clusters/test-cluster/api/v1/namespaces", nil)
++	req.AddCookie(&http.Cookie{
++		Name:  "headlamp-auth-test-cluster.0",
++		Value: makeCookieJWT(t, map[string]interface{}{"exp": float64(time.Now().Add(auth.JWTExpirationTTL / 2).Unix())}),
++	})
++	rec := httptest.NewRecorder()
++
++	auth.NewOIDCTokenRefreshMiddleware(config)(handler).ServeHTTP(rec, req)
++
++	assert.Equal(t, http.StatusUnauthorized, rec.Code)
++	assert.False(t, handlerCalled)
++
++	var clearedCookie *http.Cookie
++	for _, cookie := range rec.Result().Cookies() {
++		if cookie.Name == "headlamp-auth-test-cluster.0" && cookie.Path == "/clusters/test-cluster" {
++			clearedCookie = cookie
++			break
++		}
++	}
++
++	require.NotNil(t, clearedCookie)
++	assert.Equal(t, -1, clearedCookie.MaxAge)
++}
++
+ func TestSetTokenFromCookie(t *testing.T) {
+ 	clusterName := "test-cluster-oidc"
+ 	testToken := "fake-token-for-testing"

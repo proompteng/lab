@@ -1,8 +1,8 @@
 diff --git a/backend/cmd/headlamp.go b/backend/cmd/headlamp.go
-index 811495890..ae21b1b85 100644
+index 1ae3236f455069ac842c120e071f2dce37d944e9..fe82e9c12f3d5bd0cff44f6fd3f2fd0255a0929c 100644
 --- a/backend/cmd/headlamp.go
 +++ b/backend/cmd/headlamp.go
-@@ -160,6 +160,20 @@ func mustWriteFile(path string, data []byte) {
+@@ -241,6 +241,20 @@ func mustWriteFile(path string, data []byte) {
  	}
  }
  
@@ -12,36 +12,38 @@ index 811495890..ae21b1b85 100644
 +	if err != nil {
 +		return err
 +	}
-+	if err = os.Remove(indexPath); err != nil {
-+		if !errors.Is(err, os.ErrNotExist) {
-+			return err
-+		}
++
++	if err = os.Remove(indexPath); err != nil && !errors.Is(err, os.ErrNotExist) {
++		return err
 +	}
++
 +	return os.WriteFile(indexPath, data, fs.FileMode(0o600))
 +}
 +
  func makeBaseURLReplacements(data []byte, baseURL string) []byte {
  	replaceURL := baseURL
  	if baseURL == "" {
-@@ -1158,6 +1172,12 @@ func startServer(config *HeadlampConfig) {
- 			return
- 		}
- 
-+		err = makeStaticIndexWritable(dir)
-+		if err != nil {
-+			logger.Log(logger.LevelError, nil, err, "Failed to make copied static index writable")
-+			return
-+		}
-+
- 		config.StaticDir = dir
+@@ -1492,6 +1506,12 @@ func copyStaticFiles(config *HeadlampConfig) error {
+ 		return err
  	}
  
++	if err := makeStaticIndexWritable(dir); err != nil {
++		logger.Log(logger.LevelError, nil, err, "Failed to make copied static index writable")
++
++		return err
++	}
++
+ 	config.StaticDir = dir
+ 
+ 	return nil
 diff --git a/backend/cmd/headlamp_test.go b/backend/cmd/headlamp_test.go
-index 637501f..6d4eacb 100644
+index b16f8dd7abb345c869ad7671f4c5b06f6fabec26..af31cae86c832ed78ce8dff9657dc4477eb7cf3b 100644
 --- a/backend/cmd/headlamp_test.go
 +++ b/backend/cmd/headlamp_test.go
-@@ -1754,0 +1755,18 @@ func TestHandleClusterServiceProxy(t *testing.T) {
-+
+@@ -82,6 +82,24 @@ func makeJSONReq(method, url string, jsonObj interface{}) (*http.Request, error)
+ 	return http.NewRequestWithContext(context.Background(), method, url, bytes.NewBuffer(jsonBytes))
+ }
+ 
 +func TestMakeStaticIndexWritable(t *testing.T) {
 +	staticDir := t.TempDir()
 +	indexPath := filepath.Join(staticDir, "index.html")
@@ -59,3 +61,7 @@ index 637501f..6d4eacb 100644
 +	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 +	require.NoError(t, os.WriteFile(indexPath, []byte("<html>updated</html>"), 0o600))
 +}
++
+ func writeTestTokenFile(t *testing.T) string {
+ 	t.Helper()
+ 

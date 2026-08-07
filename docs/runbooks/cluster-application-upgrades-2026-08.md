@@ -1690,3 +1690,66 @@ and completing a 0.14.0 plugin backup for each cluster, rechecking database fing
 root and `cloudnative-pg` `Synced/Healthy` at the exact merge with bounded clean operator and sidecar logs. Rollback is
 a reviewed Git revert and manual no-prune sync; stop on archive failure, replication loss, PVC replacement, system-ID
 change, or data-fingerprint regression.
+
+Wave 7g was accepted at merge `6cf7aa4d7540170b82029c133e811d898b494250`. Deployment `barman-cloud` retained UID
+`c02714b6-d71f-49ce-8f76-fb8193e5fe53`, and Secret `plugin-barman-cloud-m5m67kfh8f` retained UID
+`66c6d7b6-79db-4932-8d83-c31cf40e2ebe`. All cluster, operator, Service, ServiceAccount, CRD, ObjectStore,
+ScheduledBackup, and PVC UIDs remained exact. CNPG replaced the five injected database Pods one instance at a time;
+every replacement used plugin 0.14.0 with zero restarts, while each cluster retained quorum, synchronous zero-byte
+replication lag, PVC bindings, and its original system ID.
+
+The post-upgrade backups completed through plugin 0.14.0 as Bayn backup
+`bayn-db-barman-v0-14-post-20260807t161102z` (UID `02440133-9c12-454e-ba9b-a857d0aa8747`, backup ID
+`20260807T161103`, standby `bayn-db-1`) and Buzz backup `buzz-db-barman-v0-14-post-20260807t161102z` (UID
+`98fbef75-154c-41fd-95b7-2851b77c3ba6`, backup ID `20260807T161103`, standby `buzz-db-2`). Continuous archiving and
+latest-backup conditions remained true. Bayn retained system ID `7664582434622365715`, 35 user relations, structural
+hash `63d154733c6857e972e147c7e17632f2`, and 36 user tables; its database advanced to 95,770,303 bytes and 118,114
+rows. Buzz retained system ID `7665590635531415571`, 52 user relations, structural hash
+`85a3cc5991bb687b4b395a95bb58cff9`, and 53 user tables; its database advanced to 13,552,787 bytes with 826 rows.
+The startup-only missing-WAL probe messages ceased after convergence, bounded logs were clean, and root and
+`cloudnative-pg` finished with no diff at `Synced/Healthy` on the exact merge.
+
+## Wave 7h: Headlamp 0.44.0 source and image build
+
+| Component             | From     | To       | Reconciliation | Expected impact                                    |
+| --------------------- | -------- | -------- | -------------- | -------------------------------------------------- |
+| Headlamp source image | `0.40.1` | `0.44.0` | None           | Build and publish a new digest; no cluster change. |
+| Prometheus plugin     | `0.8.2`  | `0.9.1`  | None           | Embedded in the unpublished replacement image.    |
+
+Rebase the four repo-owned Headlamp patches onto upstream tag `v0.44.0` at
+`7e2f255cc256a16c39681ffea31fa16e11a11eaf`: HTTP watch multiplexing, auth-cookie path scoping, OIDC refresh
+reauthentication, and writable static-index copying. Pin the source SRI to
+`sha256-ajkiKoCYbwn5pvIzzz4IIxWIVQmnTbNvzdwWksj1kEU=` and Prometheus plugin 0.9.1 to
+`sha256-Bq+r5C2mno4MXCYyrMP+4CBWaCXSrnH/jk891/ePxK4=`. Upstream 0.44 requires Go 1.26.5; preserve the repository's
+Go 1.25.5 toolchain and isolate Headlamp's backend builder on nixpkgs revision
+`104240a772428cc2e20d8fd86c9ddbb886bbaff2`, asserting Go 1.26.5 exactly. The frontend remains on the repository's
+existing Nix and Node 22 package set.
+
+This source wave must not change the Headlamp chart, values, image digest, Application, or live resources. Require
+the rebased patches to apply to the exact upstream commit; full `cmd` and `pkg/auth` tests plus focused race tests to
+pass; the real backend and production frontend derivations to build with their fixed dependency hashes; and both
+Linux OCI derivations to evaluate. Merge only after exact-head review and CI. The main-branch Headlamp workflow then
+builds and publishes both Linux platforms and emits the release contract that opens the digest-promotion PR. Rollback
+before promotion is a reviewed source-wave revert; because this wave has no GitOps delta, it requires no live action.
+
+## Wave 7i: Headlamp 0.44.0 promotion and chart rollout
+
+| Component         | From     | To       | Reconciliation | Expected impact                                |
+| ----------------- | -------- | -------- | -------------- | ---------------------------------------------- |
+| Headlamp image    | `0.40.1` | `0.44.0` | Automatic      | One Headlamp Deployment Pod rolls by digest.  |
+| Headlamp chart    | `0.43.0` | `0.44.0` | Automatic      | Labels and application version advance.       |
+| Prometheus plugin | `0.8.2`  | `0.9.1`  | Automatic      | Loaded from the new repo-owned image at start. |
+
+Use the generated release-contract promotion PR as the target wave. Add the chart 0.44.0 pin and explicitly enable
+static plugins in that same reviewed revision so the old image is never restarted merely for a chart-label change.
+Require the published digest to contain both `linux/amd64` and `linux/arm64`, carry upstream version 0.44.0 and commit
+labels, and contain Prometheus plugin 0.9.1. The chart's 0.43-to-0.44 rendered delta must contain no resource deletion,
+Namespace, RBAC expansion, Service mutation, or persistence change.
+
+Before merge, record the Headlamp Deployment, Pod, Service, ServiceAccount, Ingress, and auth-bridge identities;
+capture bounded clean logs; and prove the current private route, health endpoint, OIDC handoff, cluster REST request,
+and watch stream. After GitOps reconciliation, preserve every non-Pod UID and require exactly one replacement Headlamp
+Pod using the promoted digest with zero restarts. Re-run the same health, authentication, REST, watch, and Prometheus
+plugin checks, require bounded clean logs, and finish with root and Headlamp at `Synced/Healthy` on the exact merge
+with no diff. Rollback is a reviewed revert of the promotion revision; stop and revert on login/refresh failure,
+cluster API failure, watch interruption, plugin load failure, unexpected RBAC or Service drift, or repeated restart.
