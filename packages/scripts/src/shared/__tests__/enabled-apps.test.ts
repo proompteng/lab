@@ -6,6 +6,9 @@ import YAML from 'yaml'
 import { assertEnabledAppBuildPolicy, loadEnabledAppInventory } from '../enabled-apps'
 
 const inventory = loadEnabledAppInventory()
+const platformApplicationSet = readFileSync('argocd/applicationsets/platform.yaml', 'utf8')
+const certManagerKustomization = readFileSync('argocd/applications/cert-manager/kustomization.yaml', 'utf8')
+const externalSecretsKustomization = readFileSync('argocd/applications/external-secrets/kustomization.yaml', 'utf8')
 const productApplicationSet = YAML.parse(readFileSync('argocd/applicationsets/product.yaml', 'utf8')) as {
   spec?: {
     syncPolicy?: { preserveResourcesOnDeletion?: boolean }
@@ -74,12 +77,17 @@ describe('enabled app inventory', () => {
   })
 
   it('does not inspect local lab manifests for external source applications', () => {
+    const metricsServerEntry = platformApplicationSet.match(
+      /              - name: metrics-server[\s\S]*?(?=\n              - name:)/,
+    )?.[0]
+
     expect(entry('metrics-server')).toMatchObject({
       class: 'external-source',
       repoURL: 'https://github.com/kubernetes-sigs/metrics-server.git',
       repoImages: [],
       hasHelmChart: false,
     })
+    expect(metricsServerEntry).toContain('targetRevision: v0.9.0')
     expect(entry('home-root')).toMatchObject({
       class: 'external-source',
       repoURL: 'git@github.com:gregkonush/home.git',
@@ -87,6 +95,12 @@ describe('enabled app inventory', () => {
       repoImages: [],
       hasHelmChart: false,
     })
+  })
+
+  it('pins the identity and metrics controller upgrade wave', () => {
+    expect(certManagerKustomization).toContain('version: v1.21.1')
+    expect(externalSecretsKustomization).toContain('version: 2.8.0')
+    expect(platformApplicationSet).toContain('targetRevision: v0.9.0')
   })
 
   it('keeps chart-only apps out of Nix image migration state', () => {
