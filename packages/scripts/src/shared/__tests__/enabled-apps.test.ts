@@ -47,6 +47,10 @@ const localPathKustomization = YAML.parse(
   images?: Array<{ name?: string; newName?: string; newTag?: string; digest?: string }>
 }
 const localPathConfigPatch = readFileSync('argocd/applications/local-path/patches/local-path-config.patch.yaml', 'utf8')
+const nvidiaDevicePluginManifests = [
+  readFileSync('argocd/applications/nvidia-gpu-operator/altra-nvidia-device-plugin.yaml', 'utf8'),
+  readFileSync('argocd/applications/nvidia-gpu-operator/turin-nvidia-device-plugin.yaml', 'utf8'),
+]
 const coderChart = YAML.parse(readFileSync('argocd/applications/coder/Chart.yaml', 'utf8')) as {
   appVersion?: string
   version?: string
@@ -372,6 +376,15 @@ describe('enabled app inventory', () => {
     expect(localPathConfigPatch).toContain(
       'docker.io/library/busybox:1.38.0@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616',
     )
+  })
+
+  it('pins both custom NVIDIA device plugins to the immutable security release', () => {
+    for (const manifest of nvidiaDevicePluginManifests) {
+      expect(manifest).toContain(
+        'nvcr.io/nvidia/k8s-device-plugin:v0.19.3@sha256:25cc340fe6fd53c101e16fc452f503e7a92c219c64a80ed5381784b522dbbf77',
+      )
+      expect(manifest).not.toContain('nvcr.io/nvidia/k8s-device-plugin:v0.19.0')
+    }
   })
 
   it('keeps chart-only apps out of Nix image migration state', () => {
