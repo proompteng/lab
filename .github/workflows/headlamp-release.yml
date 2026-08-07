@@ -194,6 +194,7 @@ jobs:
             - [x] Documentation, release notes, and follow-ups are updated or tracked.
           labels: |
             automated-pr
+            do-not-automerge
             nix-oci
             headlamp
           add-paths: |

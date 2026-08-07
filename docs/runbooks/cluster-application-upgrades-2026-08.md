@@ -1714,7 +1714,7 @@ The startup-only missing-WAL probe messages ceased after convergence, bounded lo
 | Component             | From     | To       | Reconciliation | Expected impact                                    |
 | --------------------- | -------- | -------- | -------------- | -------------------------------------------------- |
 | Headlamp source image | `0.40.1` | `0.44.0` | None           | Build and publish a new digest; no cluster change. |
-| Prometheus plugin     | `0.8.2`  | `0.9.1`  | None           | Embedded in the unpublished replacement image.    |
+| Prometheus plugin     | `0.8.2`  | `0.9.1`  | None           | Embedded in the unpublished replacement image.     |
 
 Rebase the four repo-owned Headlamp patches onto upstream tag `v0.44.0` at
 `7e2f255cc256a16c39681ffea31fa16e11a11eaf`: HTTP watch multiplexing, auth-cookie path scoping, OIDC refresh
@@ -1736,8 +1736,8 @@ before promotion is a reviewed source-wave revert; because this wave has no GitO
 
 | Component         | From     | To       | Reconciliation | Expected impact                                |
 | ----------------- | -------- | -------- | -------------- | ---------------------------------------------- |
-| Headlamp image    | `0.40.1` | `0.44.0` | Automatic      | One Headlamp Deployment Pod rolls by digest.  |
-| Headlamp chart    | `0.43.0` | `0.44.0` | Automatic      | Labels and application version advance.       |
+| Headlamp image    | `0.40.1` | `0.44.0` | Automatic      | One Headlamp Deployment Pod rolls by digest.   |
+| Headlamp chart    | `0.43.0` | `0.44.0` | Automatic      | Labels and application version advance.        |
 | Prometheus plugin | `0.8.2`  | `0.9.1`  | Automatic      | Loaded from the new repo-owned image at start. |
 
 Use the generated release-contract promotion PR as the target wave. Add the chart 0.44.0 pin and explicitly enable
@@ -1753,3 +1753,39 @@ Pod using the promoted digest with zero restarts. Re-run the same health, authen
 plugin checks, require bounded clean logs, and finish with root and Headlamp at `Synced/Healthy` on the exact merge
 with no diff. Rollback is a reviewed revert of the promotion revision; stop and revert on login/refresh failure,
 cluster API failure, watch interruption, plugin load failure, unexpected RBAC or Service drift, or repeated restart.
+
+Wave 7h was accepted through source PR #13594 at merge `3c06c10afdc80418be2b7d6417dec2ad5f07f494`. The
+main workflow published multi-architecture index
+`sha256:a771dbc4d27935fd3f9fa20cd55c35f6cbb0b363fd475ea5744ef4e34761c0ff` with amd64 digest
+`sha256:f59b85f8a99563de96cd576fff782e689fc27dce83a76fe36836bf2a84a67f05` and arm64 digest
+`sha256:68b0246116bf380b4060e00fbdd4183b231fdc91d7174746aa8060c58a45c491`. Both platform archives
+passed the materialized-asset verifier. The exact published image then ran as UID:GID `65532:65532` with a read-only
+root filesystem and served its root plus all seven emitted JavaScript and CSS assets with HTTP 200 and correct MIME
+types. Its OCI labels identify upstream Headlamp v0.44.0 at `7e2f255cc256a16c39681ffea31fa16e11a11eaf`, source
+merge `3c06c10afdc80418be2b7d6417dec2ad5f07f494`, and the bundled Prometheus plugin reports version 0.9.1.
+
+The digest-only promotion merged through PR #13595 at `68cb8e0e9c545eef2e75904d0c69680592af3b90`; chart
+coordination PR #13596 then passed exact-head CI and independent review before merging at
+`910685973529ee464bc282ff2a89436344b0b97f`. The review covered exact head
+`58e7dc3c6a1e19db2e9da64eff07d36a18f9fde5` using scoped archive SHA-256
+`0dac3a3454d7ff12ea9212fa0895f191aa69d2deff1a271cd6872d0c0a89e24c` and returned MERGE with no blocker.
+The 0.43-to-0.44 render changed only chart/application metadata labels; names, selectors, RBAC rules, Service fields,
+persistence, and the pod template remained stable.
+
+After GitOps reconciliation, Deployment `headlamp` retained UID `494a2c0c-696b-48ad-822f-764f1dd0ae83`, Service
+`headlamp` retained `53799ca7-f4dc-47bb-8ff3-cb96facf16a5`, ServiceAccount `headlamp` retained
+`835d124d-dcfd-4a7a-8787-f662f5bf4c25`, Ingress `headlamp` retained
+`368e8bf1-7a47-46e3-ae28-40d3b31304e2`, and both auth-bridge Deployment and Service retained their original UIDs
+`c44859ea-f59a-401c-82b6-bdb8d45aaedd` and `429152a7-a81f-4d19-82f5-b651e6593ee8`. Because the pod template did
+not change, pod `headlamp-79c4ddd4c8-vvrkk` correctly retained UID
+`2eabb7f9-cf21-4252-bf17-626ec553a0f9`, the promoted digest, readiness, and zero restarts. Live checks returned HTTP
+200 for the private route, every emitted asset, and `/static-plugins/prometheus/{main.js,package.json}`; the plugin
+package reported 0.9.1. OIDC returned a 302 to the configured Keycloak realm with the private-host callback, the
+authenticated cluster REST proxy reported Kubernetes v1.35.0, and `/wsMultiplexer` returned HTTP 101. Bounded
+post-sync logs contained no new warning or error. Root and `headlamp` finished `Synced/Healthy` on exact merge
+`910685973529ee464bc282ff2a89436344b0b97f`, and `argocd app diff headlamp` was empty.
+
+Chart-only rollback remains metadata-only and leaves the promoted Headlamp 0.44 image and its static plugin enabled.
+An application rollback must revert both the chart and image digest to the prior accepted pair. Future generated
+Headlamp promotion PRs carry `do-not-automerge` by default so exact-head CI and review complete before an operator
+explicitly removes the gate.
