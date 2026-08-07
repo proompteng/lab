@@ -38,7 +38,23 @@ const natsKustomization = readFileSync('argocd/applications/nats/kustomization.y
 const observabilityKustomization = readFileSync('argocd/applications/observability/kustomization.yaml', 'utf8')
 const featureFlagsKustomization = readFileSync('argocd/applications/feature-flags/kustomization.yaml', 'utf8')
 const cloudflaredDeployment = readFileSync('argocd/applications/cloudflare/deployment.yaml', 'utf8')
-const karapaceDeployment = readFileSync('argocd/applications/kafka/karapace.yaml', 'utf8')
+const karapaceManifest = readFileSync('argocd/applications/kafka/karapace.yaml', 'utf8')
+const karapaceResources = YAML.parseAllDocuments(karapaceManifest).map((document) => document.toJSON()) as Array<{
+  apiVersion?: string
+  kind?: string
+  metadata?: {
+    name?: string
+    namespace?: string
+    annotations?: Record<string, string>
+    labels?: Record<string, string>
+  }
+  spec?: {
+    topicName?: string
+    partitions?: number
+    replicas?: number
+    config?: Record<string, string | number>
+  }
+}>
 const productApplicationSet = YAML.parse(readFileSync('argocd/applicationsets/product.yaml', 'utf8')) as {
   spec?: {
     syncPolicy?: { preserveResourcesOnDeletion?: boolean }
@@ -187,9 +203,30 @@ describe('enabled app inventory', () => {
     expect(cloudflaredDeployment).toContain(
       'cloudflare/cloudflared:2026.7.3@sha256:e39ee8da81ad5e05d77f38d2f51c60ca51bf2a8450ac3abab50c17fdb91d91bf',
     )
-    expect(karapaceDeployment).toContain(
+    expect(karapaceManifest).toContain(
       'ghcr.io/aiven-open/karapace:6.2.2@sha256:3c202789067f1bc3aa68d9dbb22d6298d254380a9e69c2705120c7434277238c',
     )
+  })
+
+  it('retains Karapace schemas in a managed compacted topic', () => {
+    const schemasTopic = karapaceResources.find(
+      (resource) => resource.apiVersion === 'kafka.strimzi.io/v1' && resource.kind === 'KafkaTopic',
+    )
+
+    expect(schemasTopic).toMatchObject({
+      metadata: {
+        name: 'karapace-schemas',
+        namespace: 'kafka',
+        annotations: { 'argocd.argoproj.io/sync-options': 'Prune=false' },
+        labels: { 'strimzi.io/cluster': 'kafka' },
+      },
+      spec: {
+        topicName: '_schemas',
+        partitions: 1,
+        replicas: 3,
+        config: { 'cleanup.policy': 'compact' },
+      },
+    })
   })
 
   it('keeps chart-only apps out of Nix image migration state', () => {

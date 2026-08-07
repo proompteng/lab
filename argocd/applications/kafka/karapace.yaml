@@ -1,3 +1,19 @@
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: karapace-schemas
+  namespace: kafka
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  topicName: _schemas
+  partitions: 1
+  replicas: 3
+  config:
+    cleanup.policy: compact
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
