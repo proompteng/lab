@@ -1309,3 +1309,73 @@ record its new head and schema hash; and require every preflight row count not t
 projection hashes, issuer, signing-key IDs, discovery document, admin authentication, and health endpoints to remain
 exact, then check a clean bounded runtime log window. Rollback requires scaling Keycloak to zero, restoring the logical
 dump or checkpointed snapshot, and only then reverting Git; never start 26.5.1 against the migrated database.
+
+Wave 6e was accepted at merge `637196113c40953703d2a0e92b6918065964991e`. Automatic reconciliation completed
+in 52 seconds and ran the PostSync client jobs successfully. The replacement Pod ran the pinned image with zero
+restarts and reported 26.7.1. Liquibase advanced from 178 to 213 changesets and released its lock; the public schema
+advanced from 90 tables, 518 columns, and 213 indexes to 100 tables, 614 columns, and 246 indexes, with canonical
+schema SHA-256 `80d4e109bd05b75c8c18e352982b943ff1c3cd12e813b7d541ad159fa200e62c`. Realm, client, and user counts remained
+1, 8, and 2; the role count increased from 32 to 35 only through new built-ins. The realm and client projection hashes,
+issuer, and both signing-key IDs remained exact, and a complete S256 PKCE authorization request returned the expected
+login page. Earlier deliberately incomplete authorization probes generated expected `LOGIN_ERROR` warnings; the final
+five health checks and 60-second log window were clean. All six resource UIDs and both PVC bindings remained exact,
+the two-node CNPG cluster stayed healthy with zero replication lag, and Argo finished `Synced/Healthy` at the merge.
+
+## Wave 6f: Coder forward-only schema migration
+
+| Application | From     | To       | Reconciliation | Expected impact                                                         |
+| ----------- | -------- | -------- | -------------- | ----------------------------------------------------------------------- |
+| Coder       | `2.32.1` | `2.35.3` | Automatic      | Drain the singleton, migrate PostgreSQL, and start one replacement Pod. |
+
+Coder 2.35.3 is the current stable channel release. The official multi-architecture image index is pinned to
+`sha256:8e34e774ebde1813f03294498374cd955264eee6cd2b61a72baf7634a0ca7de4`. Direct chart comparison preserves the
+six rendered resource identities and adds only release labels, the image replacement, and the downward-API
+`CODER_CLUSTER_HOST` environment variable. The chart's singleton Deployment uses Kubernetes' default rolling strategy,
+which could overlap the old and new servers. Because Coder does not support running an older release against an
+upgraded database, this wave is split across two GitOps revisions: the first updates the chart and image while setting
+`coder.replicaCount: 0`; only after Argo proves 2.32.1 is fully stopped does a second reviewed revision restore one
+replica. Do not combine the drain and start revisions or scale the live Deployment imperatively.
+
+The target contains 73 ordered migrations, 463 through 535. Most establish the chat, AI provider, budget, gateway,
+and boundary-session schemas; existing surfaces also gain user-secret controls, organization defaults, Git SSH key
+metadata, workspace-agent context, stale-agent cleanup, and autostop notifications. Preflight schema version 462 is
+clean. The database is 105,958,547 bytes and contains two active users, one non-deleted workspace, seven workspace
+builds, one non-deleted template, and ten workspace-agent rows. Its canonical schema-only SHA-256 is
+`1f84b2307587dd35a8c33fe5922dbb38da678c119955bb6f2ff66b7c2580e26b`. Sorted projection hashes for users,
+workspaces, templates, workspace builds, and workspace agents are respectively
+`c742e47c6e4cde25c41ccd4ebe9eeb9e2dca49e148247581ba25623d7e01ce0e`,
+`29aa5d3d96a0b4aad69ae4aa27c8c6da83711bd5519e56363d8d03caf5732a67`,
+`157668b2ec9c94d768ce2d4422ed32af1c750edf31adeea1f2851657349b79a0`,
+`d6636ab050ad6126131ca0e7f31305cf72ed21f88d275fd091a73f92a2ec41a3`, and
+`8998340f696be43de207a2118512f0f23f2ce125666f5958e7956c45f7cc31d8`.
+
+There is no configured CNPG object-store backup. The validated custom-format logical dump
+`/tmp/coder-v2-32-1-20260807T143239Z.dump` is 4,170,510 bytes with SHA-256
+`9fd0c070b74e0d9457c9064a4b001915e6d6e26cc9eb158776548c2c69066730`; `pg_restore --list` parsed it completely.
+After checkpoint at WAL LSN `A2/44080808`, VolumeSnapshot
+`coder-cluster-pre-v2-35-3-20260807t143239z` became ready for the 10 GiB primary PVC with UID
+`5ddd5dd5-d9d8-4342-b423-41533997f95d`. Retain both artifacts through final fleet acceptance. Preserve these identities:
+
+| Resource                                                                | UID                                    |
+| ----------------------------------------------------------------------- | -------------------------------------- |
+| `Deployment/coder`                                                      | `04c3195b-92a2-463a-aa78-c7dcccbd0984` |
+| `Service/coder`                                                         | `1751dda7-e4ea-4a7e-84e4-294f71b6af9b` |
+| `ServiceAccount/coder`                                                  | `96a505b6-9c3a-4468-8c97-ea5aa752d0d9` |
+| `Cluster.postgresql.cnpg.io/coder-cluster`                              | `267640f5-4e3e-4e8b-9468-4392be05b7a4` |
+| `PersistentVolumeClaim/coder-cluster-1`                                 | `5dba386f-7e11-4219-9ffe-0d42ef74d0df` |
+| `PersistentVolumeClaim/coder-cluster-3`                                 | `1a10ef73-27fd-4b0b-a44e-d5becc4c3b66` |
+| `Deployment/coder-2acc9873-1a80-456c-b97f-1e36b3e86146`                 | `b01e46a5-5a2b-4614-b6c4-0d690fb8dd04` |
+| `PersistentVolumeClaim/coder-2acc9873-1a80-456c-b97f-1e36b3e86146-home` | `f22fc24d-beb9-4de1-a81f-cbdb1dcd177a` |
+| `Deployment/coder-d4a5c0db-3ea2-446f-bdf6-b0be5843411b`                 | `a367138e-a6ed-45fc-968c-5fadc5797508` |
+| `PersistentVolumeClaim/coder-d4a5c0db-3ea2-446f-bdf6-b0be5843411b-home` | `f0204178-ca7b-47aa-bb10-7a2cc5e27664` |
+
+Before the drain merge, require Coder's public build info to report `v2.32.1+2466f0c`, `/healthz` to return 200, both
+workspace Deployments to be ready, the CNPG cluster to be 2/2 healthy with zero replay lag, and Argo to be
+`Synced/Healthy`. After the first merge, require Argo at that exact revision, `Deployment/coder` at zero replicas, no
+Coder control-plane Pod, no database migration beyond 462, and both workspace Deployments still ready with unchanged
+UIDs and PVC bindings. Then merge the one-line replica restoration. Require migration 535 with `dirty=false`, a new
+Coder Pod at the pinned digest with zero restarts, public build info 2.35.3, `/healthz` 200, nondecreasing record counts,
+and exact projection hashes except for documented migration-owned changes. Preserve every listed UID and volume binding,
+prove both existing workspace agents reconnect, require a clean bounded log window, and finish with Argo
+`Synced/Healthy` at the exact start revision. Rollback requires draining Coder, restoring the logical dump or snapshot,
+and only then reverting both Git revisions; never start 2.32.1 against schema 535.

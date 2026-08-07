@@ -40,6 +40,19 @@ const featureFlagsKustomization = readFileSync('argocd/applications/feature-flag
 const cloudflaredDeployment = readFileSync('argocd/applications/cloudflare/deployment.yaml', 'utf8')
 const karapaceManifest = readFileSync('argocd/applications/kafka/karapace.yaml', 'utf8')
 const keycloakManifest = readFileSync('argocd/applications/keycloak/keycloak.yaml', 'utf8')
+const coderChart = YAML.parse(readFileSync('argocd/applications/coder/Chart.yaml', 'utf8')) as {
+  appVersion?: string
+  version?: string
+  dependencies?: Array<{ name?: string; version?: string }>
+}
+const coderValues = YAML.parse(readFileSync('argocd/applications/coder/values.yaml', 'utf8')) as {
+  coder?: {
+    coder?: {
+      replicaCount?: number
+      image?: { tag?: string }
+    }
+  }
+}
 const temporalKustomization = YAML.parse(readFileSync('argocd/applications/temporal/kustomization.yaml', 'utf8')) as {
   helmCharts?: Array<{ name?: string; version?: string }>
   images?: Array<{ name?: string; newName?: string; newTag?: string; digest?: string }>
@@ -323,6 +336,20 @@ describe('enabled app inventory', () => {
     expect(keycloakManifest).toContain(
       'quay.io/keycloak/keycloak:26.7.1@sha256:f1f1f01e472c8a78df40d8f2a49a925274eda4d3d80d5f6edbb5c880ee3c01c6',
     )
+  })
+
+  it('stages the Coder schema upgrade at zero replicas with an immutable image', () => {
+    expect(coderChart).toMatchObject({
+      appVersion: '2.35.3',
+      version: '2.35.3',
+    })
+    expect(coderChart.dependencies?.find((dependency) => dependency.name === 'coder')?.version).toBe('2.35.3')
+    expect(coderValues.coder?.coder).toMatchObject({
+      replicaCount: 0,
+      image: {
+        tag: 'v2.35.3@sha256:8e34e774ebde1813f03294498374cd955264eee6cd2b61a72baf7634a0ca7de4',
+      },
+    })
   })
 
   it('keeps chart-only apps out of Nix image migration state', () => {
