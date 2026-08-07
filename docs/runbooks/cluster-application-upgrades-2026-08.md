@@ -1037,8 +1037,10 @@ defaults `cleanup.policy=delete` and `retention.ms=604800000`. The previous long
 serve four subjects from memory after Kafka deleted their records, masking the loss until the upgrade restarted it.
 
 The corrective gate is a managed `KafkaTopic/karapace-schemas` targeting `_schemas`, with one partition, three replicas,
-and `cleanup.policy=compact`. Do not restore registry records until that resource is `Ready` and an independent Kafka
-admin read confirms the effective compact-only policy. Recovery must preserve the current IDs observed in retained
-payloads (`7`, `8`, and `9`) and the legacy IDs still present in retained TA payloads (`1` and `4`), restore exactly the
-four pre-upgrade active subjects, and prove that each ID serves a schema capable of decoding its corresponding retained
-payload without exposing payload contents. Keep Wave 5b open until those checks and a fresh Karapace restart both pass.
+and `cleanup.policy=compact`. It carries Argo's `Prune=false` sync option so deleting or renaming the manifest cannot
+cause Strimzi to delete the data-bearing Kafka topic. Do not restore registry records until that resource is `Ready` and
+an independent Kafka admin read confirms the effective compact-only policy. Recovery must preserve the current IDs
+observed in retained payloads (`7`, `8`, and `9`) and the legacy IDs still present in retained TA payloads (`1` and `4`),
+restore exactly the four pre-upgrade active subjects, and prove that each ID serves a schema capable of decoding its
+corresponding retained payload without exposing payload contents. Keep Wave 5b open until those checks and a fresh
+Karapace restart both pass.

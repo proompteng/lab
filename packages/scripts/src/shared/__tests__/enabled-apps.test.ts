@@ -42,7 +42,12 @@ const karapaceManifest = readFileSync('argocd/applications/kafka/karapace.yaml',
 const karapaceResources = YAML.parseAllDocuments(karapaceManifest).map((document) => document.toJSON()) as Array<{
   apiVersion?: string
   kind?: string
-  metadata?: { name?: string; namespace?: string; labels?: Record<string, string> }
+  metadata?: {
+    name?: string
+    namespace?: string
+    annotations?: Record<string, string>
+    labels?: Record<string, string>
+  }
   spec?: {
     topicName?: string
     partitions?: number
@@ -212,6 +217,7 @@ describe('enabled app inventory', () => {
       metadata: {
         name: 'karapace-schemas',
         namespace: 'kafka',
+        annotations: { 'argocd.argoproj.io/sync-options': 'Prune=false' },
         labels: { 'strimzi.io/cluster': 'kafka' },
       },
       spec: {
