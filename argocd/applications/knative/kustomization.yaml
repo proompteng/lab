@@ -4,8 +4,8 @@ namespace: knative
 resources:
   - https://github.com/knative/operator/releases/download/knative-v1.23.0/operator.yaml
 patches:
-  # Transitional protection: the next stage removes the upstream Namespace so
-  # ApplicationSet-managed namespace metadata becomes authoritative.
+  # ApplicationSet owns the destination namespace. Remove the upstream object
+  # after the live namespace was protected with Prune=false in Wave 4a.
   - target:
       kind: Namespace
       name: knative-operator
@@ -14,8 +14,7 @@ patches:
       kind: Namespace
       metadata:
         name: knative-operator
-        annotations:
-          argocd.argoproj.io/sync-options: Prune=false
+      $patch: delete
   - target:
       group: apiextensions.k8s.io
       version: v1
