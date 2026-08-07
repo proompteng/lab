@@ -206,90 +206,8 @@ index 689e6f8822581934bd65dc68648db0160e35de1f..6da76f53b7291c5ef780a3a2b90072f3
  	)
  	require.Error(t, err)
  	assert.Contains(t, err.Error(), "getting provider")
-diff --git a/backend/pkg/auth/cookies.go b/backend/pkg/auth/cookies.go
-index b218712bb9853811ccc65d16248f74939bafa83e..a26a15f198712332f6c2adc30b2281a17c0df7fb 100644
---- a/backend/pkg/auth/cookies.go
-+++ b/backend/pkg/auth/cookies.go
-@@ -19,9 +19,11 @@ package auth
- import (
- 	"errors"
- 	"fmt"
-+	"math"
- 	"net/http"
- 	"regexp"
- 	"strings"
-+	"time"
- )
- 
- const (
-@@ -29,6 +31,8 @@ const (
- 	chunkSize = 3800
- 	// clearCookieChunkCount bounds cleanup for stale chunked cookies across auth paths.
- 	clearCookieChunkCount = 8
-+	// defaultCookieMaxAgeSeconds matches Headlamp's default 24-hour session TTL.
-+	defaultCookieMaxAgeSeconds = 86400
- )
- 
- // GetCookiePath returns the full cookie path including baseURL.
-@@ -128,6 +132,7 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
- 
- 	// if token is larger than maxCookieSize, split it into multiple cookies
- 	chunks := splitToken(token, chunkSize)
-+	maxAge := getTokenCookieMaxAge(token, sessionTTL)
- 	for _, path := range getSetCookiePaths(baseURL, cluster) {
- 		for i, chunk := range chunks {
- 			// G124: Secure is set from IsSecureContext so localhost development still works;
-@@ -139,7 +144,7 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
- 				Secure:   secure,
- 				SameSite: http.SameSiteStrictMode,
- 				Path:     path,
--				MaxAge:   sessionTTL,
-+				MaxAge:   maxAge,
- 			}
- 
- 			http.SetCookie(w, cookie)
-@@ -147,6 +152,39 @@ func SetTokenCookie(w http.ResponseWriter, r *http.Request, cluster, token, base
- 	}
- }
- 
-+func getTokenCookieMaxAge(token string, sessionTTL int) int {
-+	if sessionTTL <= 0 {
-+		sessionTTL = defaultCookieMaxAgeSeconds
-+	}
-+
-+	parts := strings.SplitN(token, ".", 3)
-+	if len(parts) != 3 || parts[1] == "" {
-+		return sessionTTL
-+	}
-+
-+	payload, err := DecodeBase64JSON(parts[1])
-+	if err != nil {
-+		return sessionTTL
-+	}
-+
-+	expiryUnixTimeUTC, err := GetExpiryUnixTimeUTC(payload)
-+	if err != nil {
-+		return sessionTTL
-+	}
-+
-+	remaining := time.Until(expiryUnixTimeUTC)
-+	if remaining <= 0 {
-+		return 0
-+	}
-+
-+	maxAge := int(math.Ceil(remaining.Seconds()))
-+	if maxAge > sessionTTL {
-+		return sessionTTL
-+	}
-+
-+	return maxAge
-+}
-+
- // GetTokenFromCookie retrieves an authentication cookie for a specific cluster.
- func GetTokenFromCookie(r *http.Request, cluster string) (string, error) {
- 	sanitizedCluster := SanitizeClusterName(cluster)
 diff --git a/backend/pkg/auth/cookies_test.go b/backend/pkg/auth/cookies_test.go
-index 8f4a6d9603f7e3e7280cb62a8a633e2a56e9dc7c..eb487f9f374a5835f43978402a13aa6773ade11a 100644
+index 8f4a6d9603f7e3e7280cb62a8a633e2a56e9dc7c..a11f7bc54094c93a2bdbf2ec0c58c08da31577a0 100644
 --- a/backend/pkg/auth/cookies_test.go
 +++ b/backend/pkg/auth/cookies_test.go
 @@ -19,10 +19,13 @@ package auth_test
@@ -324,27 +242,28 @@ index 8f4a6d9603f7e3e7280cb62a8a633e2a56e9dc7c..eb487f9f374a5835f43978402a13aa67
  func TestSanitizeClusterName(t *testing.T) {
  	tests := []struct {
  		input    string
-@@ -210,6 +224,27 @@ func TestGetBaseCookiePath(t *testing.T) {
+@@ -210,6 +224,28 @@ func TestGetBaseCookiePath(t *testing.T) {
  	}
  }
  
-+func TestSetTokenCookie_UsesTokenExpiryForMaxAge(t *testing.T) {
++func TestSetTokenCookie_KeepsSessionTTLPastTokenExpiry(t *testing.T) {
 +	req := httptest.NewRequest("GET", localhostOrigin, nil)
 +	req.Host = localhost
 +	w := httptest.NewRecorder()
++	sessionTTL := int((24 * time.Hour).Seconds())
 +	token := makeCookieJWT(t, map[string]interface{}{
 +		"exp": float64(time.Now().Add(2 * time.Minute).Unix()),
 +	})
 +
-+	auth.SetTokenCookie(w, req, "test-cluster", token, "", 86400)
++	auth.SetTokenCookie(w, req, "test-cluster", token, "", sessionTTL)
 +
 +	for _, cookie := range w.Result().Cookies() {
 +		if cookie.MaxAge == -1 {
 +			continue
 +		}
 +
-+		if cookie.MaxAge <= 0 || cookie.MaxAge > 120 {
-+			t.Fatalf("expected cookie max age to track token expiry, got %d", cookie.MaxAge)
++		if cookie.MaxAge != sessionTTL {
++			t.Fatalf("expected cookie max age %d to outlive token expiry, got %d", sessionTTL, cookie.MaxAge)
 +		}
 +	}
 +}
@@ -379,7 +298,7 @@ index 137d2354a1e88d355bab9bd39973493c9ce983f3..ebcf934b41099aed756cb9b6fcbc9639
  			next.ServeHTTP(w, r)
  		})
 diff --git a/backend/pkg/auth/middleware_test.go b/backend/pkg/auth/middleware_test.go
-index fd86664df8ef17d4eb8c3ff9c53f70ee908d9353..b64e8b7330b41dd56e30c8a38c673609a832b83a 100644
+index fd86664df8ef17d4eb8c3ff9c53f70ee908d9353..928ddb953f493a37a6c20bc2f03e8ba2bebd204e 100644
 --- a/backend/pkg/auth/middleware_test.go
 +++ b/backend/pkg/auth/middleware_test.go
 @@ -21,12 +21,14 @@ import (
@@ -397,7 +316,7 @@ index fd86664df8ef17d4eb8c3ff9c53f70ee908d9353..b64e8b7330b41dd56e30c8a38c673609
  )
  
  func TestNewOIDCTokenRefreshMiddleware(t *testing.T) {
-@@ -56,6 +58,55 @@ func TestNewOIDCTokenRefreshMiddleware(t *testing.T) {
+@@ -56,6 +58,123 @@ func TestNewOIDCTokenRefreshMiddleware(t *testing.T) {
  	assert.Equal(t, http.StatusOK, rec.Code)
  }
  
@@ -448,6 +367,74 @@ index fd86664df8ef17d4eb8c3ff9c53f70ee908d9353..b64e8b7330b41dd56e30c8a38c673609
 +
 +	require.NotNil(t, clearedCookie)
 +	assert.Equal(t, -1, clearedCookie.MaxAge)
++}
++
++func TestOIDCTokenRefreshMiddleware_ExpiredTokenRefreshesAfterIdle(t *testing.T) {
++	const (
++		clusterName  = "test-cluster"
++		refreshToken = "REFRESH_OLD"
++		sessionTTL   = 86400
++	)
++
++	oldToken := makeCookieJWT(t, map[string]interface{}{
++		"exp": float64(time.Now().Add(-time.Hour).Unix()),
++	})
++	srv := newOIDCProviderServer(t, "", func(w http.ResponseWriter, r *http.Request) {
++		require.NoError(t, r.ParseForm())
++		assert.Equal(t, "refresh_token", r.PostForm.Get("grant_type"))
++		assert.Equal(t, refreshToken, r.PostForm.Get("refresh_token"))
++
++		w.Header().Set("Content-Type", "application/json")
++		_, err := w.Write([]byte(`{"access_token":"AT","token_type":"Bearer","expires_in":3600,"refresh_token":"REFRESH_NEW","id_token":"NEW"}`))
++		require.NoError(t, err)
++	})
++
++	tokenCache := cache.New[interface{}]()
++	require.NoError(t, tokenCache.Set(context.Background(), "oidc-token-"+oldToken, refreshToken))
++
++	kubeConfigStore := kubeconfig.NewContextStore()
++	require.NoError(t, kubeConfigStore.AddContext(&kubeconfig.Context{
++		Name: clusterName,
++		OidcConf: &kubeconfig.OidcConfig{
++			ClientID:     "cid",
++			ClientSecret: "secret",
++			IdpIssuerURL: srv.URL,
++		},
++	}))
++
++	config := auth.OIDCTokenRefreshConfig{
++		KubeConfigStore:    kubeConfigStore,
++		Cache:              tokenCache,
++		TelemetryHandler:   &telemetry.RequestHandler{},
++		OidcUseAccessToken: true,
++		SessionTTL:         sessionTTL,
++	}
++
++	handlerCalled := false
++	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		handlerCalled = true
++		w.WriteHeader(http.StatusOK)
++	})
++	req := httptest.NewRequest("GET", "/clusters/"+clusterName+"/api/v1/namespaces", nil)
++	req.AddCookie(&http.Cookie{
++		Name:  "headlamp-auth-" + clusterName + ".0",
++		Value: oldToken,
++	})
++	rec := httptest.NewRecorder()
++
++	auth.NewOIDCTokenRefreshMiddleware(config)(handler).ServeHTTP(rec, req)
++
++	assert.Equal(t, http.StatusOK, rec.Code)
++	assert.True(t, handlerCalled)
++	refreshedToken, found := findAuthCookie(rec.Result(), clusterName)
++	require.True(t, found)
++	assert.Equal(t, "AT", refreshedToken)
++
++	for _, cookie := range rec.Result().Cookies() {
++		if cookie.Name == "headlamp-auth-"+clusterName+".0" && cookie.MaxAge != -1 {
++			assert.Equal(t, sessionTTL, cookie.MaxAge)
++		}
++	}
 +}
 +
  func TestSetTokenFromCookie(t *testing.T) {
