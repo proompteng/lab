@@ -16,6 +16,9 @@ const argoCdApplicationSetCrdOverlay = readFileSync(
 const argoCdLovelyPluginOverlay = readFileSync('argocd/applications/argocd/overlays/argocd-lovely-plugin.yaml', 'utf8')
 const certManagerKustomization = readFileSync('argocd/applications/cert-manager/kustomization.yaml', 'utf8')
 const externalSecretsKustomization = readFileSync('argocd/applications/external-secrets/kustomization.yaml', 'utf8')
+const kubeVirtKustomization = readFileSync('argocd/applications/kubevirt/kustomization.yaml', 'utf8')
+const cdiKustomization = readFileSync('argocd/applications/cdi/kustomization.yaml', 'utf8')
+const knativeKustomization = readFileSync('argocd/applications/knative/kustomization.yaml', 'utf8')
 const productApplicationSet = YAML.parse(readFileSync('argocd/applicationsets/product.yaml', 'utf8')) as {
   spec?: {
     syncPolicy?: { preserveResourcesOnDeletion?: boolean }
@@ -120,6 +123,19 @@ describe('enabled app inventory', () => {
     expect(argoCdApplicationSetCrdOverlay).not.toContain('Replace=true')
     expect(bootstrapApplicationSet).toContain('ServerSideApply=true')
     expect(bootstrapApplicationSet).not.toContain('ClientSideApplyMigration=false')
+  })
+
+  it('pins the virtualization controllers and Knative operator upgrade wave', () => {
+    const knativeEntry = platformApplicationSet.match(
+      /              - name: knative\n[\s\S]*?(?=\n              - name:)/,
+    )?.[0]
+
+    expect(kubeVirtKustomization).toContain('kubevirt/releases/download/v1.9.0/')
+    expect(kubeVirtKustomization).not.toContain('MultiArchitecture')
+    expect(cdiKustomization).toContain('containerized-data-importer/releases/download/v1.66.0/')
+    expect(knativeKustomization).toContain('knative/operator/releases/download/knative-v1.23.0/operator.yaml')
+    expect(knativeKustomization).toContain('argocd.argoproj.io/sync-options: Prune=false')
+    expect(knativeEntry).toContain('argocd.argoproj.io/sync-options: Prune=false')
   })
 
   it('keeps chart-only apps out of Nix image migration state', () => {

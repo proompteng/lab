@@ -529,3 +529,143 @@ jq -e 'any(.metadata.managedFields[]; .manager == "argocd-controller" and .opera
 Rollback through a reviewed revert PR and the same root-first GitOps sequence. Preserve the newer CRDs during workload
 rollback unless a separate compatibility review proves a schema rollback is required. Keep server-side apply enabled;
 do not restore `Replace=true` or `ClientSideApplyMigration=false`.
+
+Wave 3 completed on 2026-08-07 at merge `1015e6c3d7ed1793dc42fe8ee5fe23f92b10d7d0`. The ApplicationSet CRD UID,
+all four ApplicationSet UIDs and generated-application counts, Argo Secrets, and the ImageUpdater resource were
+preserved. The final CRD-only reconciliation used server-side apply with field manager `argocd-controller`; all Argo
+workloads were ready on the target versions and the public health and Dex endpoints returned HTTP 200.
+
+## Wave 4a: virtualization controllers and Knative operator
+
+| Application      | From      | To        | Reconciliation | Expected impact                                                                |
+| ---------------- | --------- | --------- | -------------- | ------------------------------------------------------------------------------ |
+| CDI              | `v1.65.0` | `v1.66.0` | Manual         | CDI control-plane Pods roll; completed DataVolumes and their PVCs stay intact. |
+| KubeVirt         | `v1.8.2`  | `v1.9.0`  | Manual         | KubeVirt control-plane Pods roll; the only VM is stopped and is not recreated. |
+| Knative Operator | `v1.22.1` | `v1.23.0` | Automatic      | Operator and conversion-webhook Pods roll; Serving and Eventing remain 1.22.0. |
+
+Verified release refs and downloaded-manifest hashes:
+
+| Release                 | Peeled tag commit                          | Release manifest SHA-256                                                                                                                           |
+| ----------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| KubeVirt `v1.9.0`       | `79d34c1762169e5b0370ec491cef5ca12e6b504c` | operator `f11307caafc3c23ffedf9887d8beb5a4419e2694da242fa68f63d1ec820de2e0`; CR `43106136dbce3312bdbfdeae612aacafc6c12da518d233f90645b4685d84a2af` |
+| CDI `v1.66.0`           | `938af7c54b2491321156bad2daa707b54bbdb214` | operator `f81f2730f3404649196e9777b67a3c69fd6ea5d9eb60775dfd97ac90d2edf8e7`; CR `a497f90de608c1df26f9ee4095289373f17132d74a2042ca03e00c17c964f8a7` |
+| Knative Operator `1.23` | `8f004985af79024f25b9e6014da1a4c22bf48182` | `fedbdf989590d8069a8dd29f84b8d4eb171dd3f7749b2ce32ce6de5a6cc5ae58`                                                                                 |
+
+Validation must download the same immutable release-tag assets and verify their full hashes. All three old/new
+upstream pairs preserve their resource identity sets: KubeVirt has ten rendered objects, CDI eight, and the Knative
+operator 27 including its upstream Namespace.
+
+### Compatibility and staged namespace ownership
+
+- The [KubeVirt support matrix](https://github.com/kubevirt/sig-release/blob/main/releases/k8s-support-matrix.md)
+  explicitly supports KubeVirt 1.9 on Kubernetes 1.35. The `MultiArchitecture` feature gate was deprecated in 1.8
+  because the admission check was removed; Kubernetes now schedules the requested architecture directly. Removing the
+  gate does not disable multi-architecture scheduling and avoids carrying a deprecated gate into 1.9.
+- The KubeVirt 1.9 operator CRD still serves the live `v1` stored version and `v1alpha3`; CDI 1.66 still serves the live
+  `v1beta1` stored version. No CRD storage migration is required for this wave.
+- CDI 1.66 makes its metrics endpoints authenticated and creates the required metrics-reader RBAC. No repository
+  scraper directly targets those endpoints. It also enables `WebhookPvcRendering` by default; the completed live
+  DataVolume is not mutated or recreated.
+- Knative 1.23 requires Kubernetes 1.34 or newer. The cluster runs 1.35, and the operator embeds the 1.22.0 Serving and
+  Eventing manifests, so upgrading the operator alone leaves the operand versions unchanged. The operator must pass
+  acceptance before Wave 4b changes either operand CR.
+- The upstream Knative operator manifest currently owns `Namespace/knative`. This stage adds `Prune=false` both to the
+  rendered Namespace and to ApplicationSet-managed namespace metadata. After the annotation is live, a follow-up
+  change must delete the upstream Namespace from Kustomize output; never let automated prune delete the namespace.
+
+### Recorded pre-merge baseline
+
+The baseline was captured at `2026-08-07T10:26:07Z`. `kubevirt`, `cdi`, and `knative` were `Synced/Healthy` at
+`1015e6c3d7ed1793dc42fe8ee5fe23f92b10d7d0`; the first two were manual and Knative was automatic.
+
+| Resource                                         | UID                                    | State                    |
+| ------------------------------------------------ | -------------------------------------- | ------------------------ |
+| `KubeVirt/kubevirt`                              | `5aa3b3c0-ce57-4009-8cfe-d5fb03421a34` | deployed `v1.8.2`        |
+| `CDI/cdi`                                        | `5824b5fe-428c-426c-8483-ddd2a8bf5af8` | deployed `v1.65.0`       |
+| `VirtualMachine/openclaw`                        | `2991fc00-afe8-44d8-bc0e-7b9f3360f0d4` | stopped, `amd64`         |
+| `DataVolume/openclaw-rootdisk-rbd`               | `083dcc42-e411-4c1e-85c5-a3fcdf3e27c8` | succeeded                |
+| `PersistentVolumeClaim/openclaw-rootdisk-rbd`    | `339191df-569a-46e4-b4c2-d647b6313d2b` | bound                    |
+| `KnativeServing/knative-serving`                 | `3726092f-a8ce-4690-9445-0b9c2968f564` | ready `1.22.0`           |
+| `KnativeEventing/knative-eventing`               | `4868f9bd-a221-47d4-8366-8f6929e13395` | ready `1.22.0`           |
+| `Secret/knative/operator-webhook-certs`          | `14535284-19a1-424c-9e9d-30c7bc28b8a2` | present                  |
+| `Namespace/knative`                              | `b45355e7-34c7-483b-9e0f-1431571ae7f7` | source-managed           |
+| `CustomResourceDefinition/kubevirts.kubevirt.io` | `2a17d2c5-bb8b-4461-b8eb-da5e30a6b87e` | stored version `v1`      |
+| `CustomResourceDefinition/cdis.cdi.kubevirt.io`  | `2a8de916-a389-4e66-b188-70d909717f64` | stored version `v1beta1` |
+
+There was no running VMI. All three nodes were ready on Kubernetes 1.35.0. The three Knative Services were ready at
+revisions `froussard-00025`, `torghut-01545`, and `torghut-sim-01617`. Existing long-lived KubeVirt and CDI Pods had
+historical restart counts as high as 170 and 800 respectively; compare new Pod UIDs and require zero new restarts
+instead of treating those old counters as upgrade failures. The Knative operator had zero restarts and its webhook had
+two historical restarts.
+
+### Promotion
+
+Resolve the reviewed squash commit and require it to remain the exact `main` tip. First wait for root to generate the
+Knative Application namespace policy, then accept the automatic operator rollout before starting manual controllers:
+
+```bash
+set -euo pipefail
+git fetch --quiet origin main
+upgrade_revision=$(gh pr view codex/cluster-app-upgrades-wave4-virtualization-knative -R proompteng/lab \
+  --json state,mergeCommit --jq 'select(.state == "MERGED") | .mergeCommit.oid')
+test -n "$upgrade_revision"
+test "$(git rev-parse origin/main)" = "$upgrade_revision"
+
+argocd app get root --hard-refresh >/dev/null
+argocd app wait root --sync --health --timeout 600
+for _ in {1..30}; do
+  namespace_policy=$(kubectl -n argocd get application knative -o json |
+    jq -r '.spec.syncPolicy.managedNamespaceMetadata.annotations["argocd.argoproj.io/sync-options"] // ""')
+  [[ "$namespace_policy" == Prune=false ]] && break
+  sleep 2
+done
+test "$namespace_policy" = Prune=false
+
+argocd app get knative --hard-refresh >/dev/null
+argocd app wait knative --sync --health --timeout 900
+test "$(kubectl -n argocd get application knative \
+  -o jsonpath='{.status.operationState.syncResult.revision}')" = "$upgrade_revision"
+test "$(kubectl get namespace knative \
+  -o jsonpath='{.metadata.annotations.argocd\.argoproj\.io/sync-options}')" = Prune=false
+kubectl -n knative rollout status deployment/knative-operator --timeout=10m
+kubectl -n knative rollout status deployment/operator-webhook --timeout=10m
+```
+
+Sync CDI first so its storage APIs are settled before the KubeVirt controller rolls. Both applications must be synced
+without prune:
+
+```bash
+set -euo pipefail
+argocd app sync cdi --revision "$upgrade_revision" --prune=false --timeout 900
+argocd app wait cdi --sync --health --timeout 900
+kubectl -n cdi wait --for=jsonpath='{.status.phase}'=Deployed cdi/cdi --timeout=10m
+test "$(kubectl -n cdi get cdi cdi -o jsonpath='{.status.observedVersion}')" = v1.66.0
+
+argocd app sync kubevirt --revision "$upgrade_revision" --prune=false --timeout 900
+argocd app wait kubevirt --sync --health --timeout 900
+kubectl -n kubevirt wait --for=jsonpath='{.status.phase}'=Deployed kubevirt/kubevirt --timeout=10m
+test "$(kubectl -n kubevirt get kubevirt kubevirt -o jsonpath='{.status.observedKubeVirtVersion}')" = v1.9.0
+test "$(kubectl -n kubevirt get kubevirt kubevirt -o json |
+  jq -r '(.spec.configuration.developerConfiguration.featureGates // []) | index("MultiArchitecture")')" = null
+```
+
+### Acceptance and rollback
+
+- All three Applications are `Synced/Healthy` at `upgrade_revision`; every new controller Pod is ready with zero
+  restarts and logs contain no new webhook, reconciliation, architecture, DataVolume, or upgrade errors.
+- KubeVirt and CDI report the target operator, target, and observed versions with `Available=True`,
+  `Progressing=False`, and `Degraded=False`. Their CR and CRD UIDs match the baseline.
+- The stopped VM, completed DataVolume, bound PVC, and underlying PV retain their UIDs and states. Starting the VM is
+  outside this control-plane upgrade and must not be used as an implicit smoke test.
+- The Knative operator and webhook run the 1.23 release digests, while the Serving and Eventing CRs remain ready at
+  `1.22.0`. Their UIDs, the webhook certificate Secret UID, all three Knative Service UIDs, and latest-ready revisions
+  remain unchanged.
+- `Namespace/knative` retains its UID and has `argocd.argoproj.io/sync-options=Prune=false`. Wave 4b must not begin
+  until the namespace is protected and the operator passes acceptance.
+- All nodes remain ready and the phase-aware fleet query has no new exception beyond the previously recorded two
+  failed Synthesis Jobs and Torghut's pre-existing degraded Application health.
+
+Rollback through a reviewed revert PR, in reverse order, with no prune. Preserve newer CRDs and never delete the VM,
+DataVolume, PVC, PV, Knative CRs, webhook certificates, or namespace. Keep the namespace protection annotation during
+rollback. Do not roll the operator below 1.23 after a Wave 4b operand upgrade unless the restored operator embeds and
+supports the target operand version.
