@@ -36,6 +36,9 @@ const enabledAlloyDeploymentPaths = [
 ]
 const natsKustomization = readFileSync('argocd/applications/nats/kustomization.yaml', 'utf8')
 const observabilityKustomization = readFileSync('argocd/applications/observability/kustomization.yaml', 'utf8')
+const featureFlagsKustomization = readFileSync('argocd/applications/feature-flags/kustomization.yaml', 'utf8')
+const cloudflaredDeployment = readFileSync('argocd/applications/cloudflare/deployment.yaml', 'utf8')
+const karapaceDeployment = readFileSync('argocd/applications/kafka/karapace.yaml', 'utf8')
 const productApplicationSet = YAML.parse(readFileSync('argocd/applicationsets/product.yaml', 'utf8')) as {
   spec?: {
     syncPolicy?: { preserveResourcesOnDeletion?: boolean }
@@ -173,6 +176,20 @@ describe('enabled app inventory', () => {
     )
     expect(natsKustomization).toContain('newTag: v1.18.1')
     expect(observabilityKustomization).toContain('version: 8.2.0')
+  })
+
+  it('pins the enabled service image upgrade wave', () => {
+    expect(featureFlagsKustomization).toContain('version: 2.11.0')
+    expect(featureFlagsKustomization).toContain('newTag: v2.11.0')
+    expect(featureFlagsKustomization).toContain(
+      'digest: sha256:d20384874048ef6ac326f4937cee64f1db175a1878a87db32916cc8db46c740e',
+    )
+    expect(cloudflaredDeployment).toContain(
+      'cloudflare/cloudflared:2026.7.3@sha256:e39ee8da81ad5e05d77f38d2f51c60ca51bf2a8450ac3abab50c17fdb91d91bf',
+    )
+    expect(karapaceDeployment).toContain(
+      'ghcr.io/aiven-open/karapace:6.2.2@sha256:3c202789067f1bc3aa68d9dbb22d6298d254380a9e69c2705120c7434277238c',
+    )
   })
 
   it('keeps chart-only apps out of Nix image migration state', () => {

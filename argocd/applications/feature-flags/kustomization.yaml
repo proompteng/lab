@@ -9,7 +9,7 @@ resources:
 helmCharts:
   - name: flipt-v2
     repo: https://helm.flipt.io
-    version: 2.10.0
+    version: 2.11.0
     releaseName: feature-flags
     namespace: feature-flags
     valuesFile: flipt-values.yaml
@@ -17,7 +17,8 @@ helmCharts:
 images:
   - name: docker.flipt.io/flipt/flipt
     newName: mirror.gcr.io/flipt/flipt
-    newTag: v2.10.0
+    newTag: v2.11.0
+    digest: sha256:d20384874048ef6ac326f4937cee64f1db175a1878a87db32916cc8db46c740e
 
 patches:
   - target:
