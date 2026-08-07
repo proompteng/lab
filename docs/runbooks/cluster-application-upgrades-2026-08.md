@@ -1387,3 +1387,59 @@ were zero remaining Coder database connections. Both workspace Deployments remai
 workspace-home PVCs retained their UIDs and bindings, and the two-node CNPG cluster stayed healthy with negligible
 replication lag. The public `/healthz` returned the expected 503 during the controlled outage. The start revision may
 now restore one replica at the already-reconciled 2.35.3 image and chart.
+
+Wave 6f was accepted at start merge `72e22958de3b15cdf6b6cc8f3a0476b38bdb33da`. Coder completed all 73
+migrations and reported schema version 535 with `dirty=false`. The public schema now has 116 tables, 1,373 columns,
+and 278 indexes with canonical SHA-256 `9e8d5046466a731889caad24c438a466f8ac82bc4ebd3440adf54960e948b2a3`;
+all five application-state projection hashes and their record counts remained exact. The replacement Pod UID is
+`f07fdf24-fb0b-4f93-a917-221b5a3354b4`; it ran on amd64 node `turin` at the pinned index digest with zero restarts and
+reported `v2.35.3+65e2bfb`. The single active Coder-managed `proompteng/main` agent reconnected after startup. The
+separate `kalmyk` Deployment remained ready with its exact UID and PVC binding but has no current workspace row in the
+Coder database, so it has no managed agent to reconnect. Every listed controller, service, database, workspace, and
+PVC identity remained exact; CNPG stayed 2/2 healthy with negligible replay lag. Ten health probes passed across the
+acceptance period, the final 60-second log window was clean, and Argo finished `Synced/Healthy` at the start merge.
+The image emits three startup warnings because its bundled Terraform 1.15.5 is newer than Coder's declared 1.14.9
+maximum; the same upstream release intentionally proceeds with that binary, and no provisioning or runtime failure
+occurred during acceptance. Retain the database dump and snapshot through final fleet acceptance.
+
+## Wave 7a: Local Path Provisioner security release
+
+| Application            | From     | To       | Reconciliation | Expected impact                                                   |
+| ---------------------- | -------- | -------- | -------------- | ----------------------------------------------------------------- |
+| Local Path Provisioner | `0.0.35` | `0.0.37` | Automatic      | One controller Pod rolls; existing local PV mounts remain intact. |
+
+Version 0.0.36 fixes the high-severity helper-Pod template injection advisory `GHSA-7fxv-8wr2-mfc4`, and 0.0.37 fixes
+the upstream `x/text` `CVE-2026-56852` and `x/net` `CVE-2026-46600` dependencies. The latter release also changes the
+controller to a scratch-based image and adds startup, readiness, and liveness probes. Pin the multi-architecture 0.0.37
+image index to `sha256:e757967a5ec338f6a9b371c5a9688bedaa8c3578ea3dd4db329ea0084be0a86f`. Replace the old Kubernetes
+e2e BusyBox helper with official BusyBox 1.38.0 pinned to multi-architecture index
+`sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616`; the custom helper template contains
+only the required critical priority and disk-pressure toleration and passes the new safety validation. The target
+`config.json` plus helper-template projection has SHA-256
+`83552569d17b9b012eb195e0cd87e80769baf2d3f81f3afd684cc70b9dca5d07`.
+
+The rendered resource set remains the same ten resources, including three StorageClasses, and the namespace deletion
+patch remains effective. Preserve these identities:
+
+| Resource                                                    | UID                                    |
+| ----------------------------------------------------------- | -------------------------------------- |
+| `Deployment/local-path-provisioner`                         | `9ce8834b-fe58-41ba-81aa-fbf28b888341` |
+| `ServiceAccount/local-path-provisioner-service-account`     | `1761ecb6-f8e9-40b0-9a78-7c57867ec846` |
+| `ConfigMap/local-path-config`                               | `e9e5a98f-2bf5-4732-8f72-711dee20e1cd` |
+| `StorageClass/local-path`                                   | `71544305-a6a5-442d-8a7d-6222e9ccec03` |
+| `StorageClass/local-path-turin-nvme-intel`                  | `33608ca4-0c54-43b6-ae77-187345dbbbf5` |
+| `StorageClass/local-path-turin-nvme-transcend`              | `5217e690-2a8f-443e-a984-30802982ef28` |
+| `PersistentVolume/pvc-25d43e2c-3a59-46ac-8913-bb3fe14fa5b3` | `232af88b-2b86-4abd-9cc8-9710c7982b15` |
+| `PersistentVolume/pvc-53628b88-ba4b-4571-a494-4448dd35e741` | `549d7179-382d-4a76-8a01-4dea989b707c` |
+| `PersistentVolume/pvc-a47470aa-03c0-4ab3-a9e0-2db2383ccc75` | `b7d95022-e888-422b-ad25-bed3dd09c588` |
+| `PersistentVolume/pvc-d7517621-a1ed-4961-96d6-060d7ecb7f61` | `50ccd259-0feb-42a0-9282-bdf845a5f88c` |
+| `PersistentVolume/pvc-de2489cc-045d-4c0d-8a72-8382874217f8` | `99ebedb1-a85a-4808-a6cf-9e9d77337809` |
+
+Before merge, require all five PVs to be `Bound` to their exact Bayn or Saigak claims and nodes, the controller Pod to
+be ready with zero restarts, and Argo to be `Synced/Healthy`. After automatic reconciliation, require one ready
+replacement Pod at the pinned digest with all three probes passing and zero restarts. Preserve every identity, PV claim
+reference, node affinity, StorageClass policy, and the target config/helper hash. Prove Bayn and Saigak remain ready,
+then create one uniquely named disposable PVC plus consumer Pod using `local-path`; write and read a marker, record the
+bound PV and node, and delete only those two disposable objects after success. Require a clean bounded controller log
+window and Argo `Synced/Healthy` at the exact merge. Rollback is a reviewed Git revert; never delete or recreate an
+existing PV, PVC, StorageClass, or backing path.
