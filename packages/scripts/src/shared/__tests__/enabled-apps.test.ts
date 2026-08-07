@@ -60,6 +60,15 @@ const saigakStatefulSet = YAML.parse(readFileSync('argocd/applications/saigak/st
     }
   }
 }
+const flamingoDeployment = YAML.parse(readFileSync('argocd/applications/flamingo/deployment.yaml', 'utf8')) as {
+  spec?: {
+    template?: {
+      spec?: {
+        containers?: Array<{ name?: string; image?: string }>
+      }
+    }
+  }
+}
 const karapaceResources = YAML.parseAllDocuments(karapaceManifest).map((document) => document.toJSON()) as Array<{
   apiVersion?: string
   kind?: string
@@ -299,6 +308,14 @@ describe('enabled app inventory', () => {
       'ollama/ollama:0.32.6@sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42',
       'ollama/ollama:0.32.6@sha256:b88c73ace3e115f8ec53dc8761ae1c0aabfa675406e3681786b98757ce050f42',
     ])
+  })
+
+  it('pins Flamingo vLLM to the immutable Blackwell image', () => {
+    const vllm = flamingoDeployment.spec?.template?.spec?.containers?.find((container) => container.name === 'vllm')
+
+    expect(vllm?.image).toBe(
+      'vllm/vllm-openai:v0.26.0-x86_64-cu129@sha256:3c5c53248febaa72823a4b7e51aafa1cd2b65d860392e3930414da4d3864f541',
+    )
   })
 
   it('keeps chart-only apps out of Nix image migration state', () => {
