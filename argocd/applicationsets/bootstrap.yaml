@@ -110,7 +110,7 @@ spec:
                   namespace: metallb-system
                   annotations:
                     argocd.argoproj.io/sync-wave: "0"
-                  automation: auto
+                  automation: manual
                   enabled: "true"
                 - name: traefik
                   path: argocd/applications/traefik
