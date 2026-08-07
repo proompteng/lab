@@ -497,6 +497,64 @@ describe('bounded paper risk', () => {
     expectBlocked(Reason.KillActive, makeIntent(), closeOnlyState)
   })
 
+  test('lets only a strictly exposure-reducing close liquidate gains beyond entry limits', () => {
+    const positions = baseState().positions.map((position) =>
+      position.symbol === 'NVDA'
+        ? {
+            ...position,
+            marketPriceMicros: '150000000',
+            marketValueMicros: '150000000',
+            unrealizedPnlMicros: '60000000',
+          }
+        : position,
+    )
+    const sharedState = {
+      account: {
+        ...baseState().account,
+        cashMicros: '550000000',
+        equityMicros: '800000000',
+        buyingPowerMicros: '0',
+      },
+      positions,
+      referencePriceMicros: '150000000',
+      expectedExecutionPriceMicros: '150000000',
+      dailyTradedNotionalMicros: '100000000',
+    } satisfies Partial<State>
+    const intent = makeIntent({
+      side: OrderSide.Sell,
+      quantityMicros: '1000000',
+      notionalLimitMicros: '150000000',
+    })
+    const closeOnlyState = makeState({
+      ...sharedState,
+      closeOnly: true,
+      closeOnlyExpiresAt: '2026-07-21T21:01:00.000Z',
+    })
+    const close = evaluateSuccess(intent, closeOnlyState, makePolicy())
+
+    expect(close.decision.outcome).toBe(RiskOutcome.Approved)
+    expect(close.metrics.orderNotionalMicros).toBe('150000000')
+    expect(close.decision.reasonCodes).toEqual([])
+
+    const ordinary = evaluateSuccess(intent, makeState(sharedState), makePolicy())
+    expect(ordinary.decision.reasonCodes).toEqual(
+      expect.arrayContaining([
+        Reason.OrderNotionalExceeded,
+        Reason.DailyTradedNotionalExceeded,
+        Reason.DailyLossExceeded,
+        Reason.DrawdownExceeded,
+      ]),
+    )
+
+    const oversell = evaluateSuccess(
+      makeIntent({ side: OrderSide.Sell, quantityMicros: '2000000', notionalLimitMicros: '300000000' }),
+      closeOnlyState,
+      makePolicy({ maxDailyTradedNotionalMicros: '400000000' }),
+    )
+    expect(oversell.decision.reasonCodes).toContain(Reason.ShortPositionNotAllowed)
+    expect(oversell.decision.reasonCodes).toContain(Reason.OrderNotionalExceeded)
+  })
+
   test('approves at submission open and blocks immediately before it and exactly at cutoff', () => {
     const state = makeState()
     const atOpen = makeState({

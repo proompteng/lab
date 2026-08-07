@@ -2666,8 +2666,13 @@ describe('OBSERVE runtime composition', () => {
     expect(policy).toMatchObject({
       accountId,
       allowedSymbols: fixtureProtocol.universe,
-      maxOrderNotionalMicros: '600000000',
-      maxGrossExposureMicros: '1000000000',
+      maxOrderNotionalMicros: '40000000000',
+      maxSymbolExposureMicros: '40000000000',
+      maxGrossExposureMicros: '100000000000',
+      maxNetExposureMicros: '100000000000',
+      maxDailyTradedNotionalMicros: '200000000000',
+      maxDailyLossMicros: '5000000000',
+      maxDrawdownMicros: '5000000000',
       maxUnresolvedOrders: 0,
     })
   })
@@ -2864,7 +2869,8 @@ describe('OBSERVE runtime composition', () => {
     const document = await Effect.runPromise(program)
     const plannedNotional = BigInt(document.targetPlan.requiredReferenceBuyNotionalMicros)
 
-    expect(plannedNotional).toBeGreaterThan(0n)
+    expect(plannedNotional).toBeGreaterThan(99_000_000_000n)
+    expect(plannedNotional).toBeLessThanOrEqual(BigInt(policy.maxGrossExposureMicros))
     expect(plannedNotional).toBeLessThan(BigInt(policy.maxDailyTradedNotionalMicros))
     expect(document.riskBlock).toBeUndefined()
     expect(document).toMatchObject({ mode: 'PAPER', dispatchable: true })
