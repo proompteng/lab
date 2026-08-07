@@ -210,6 +210,15 @@ describe('enabled app inventory', () => {
     expect(platformApplicationSet).toContain('targetRevision: v0.9.0')
   })
 
+  it('keeps database-critical Barman Cloud reconciliation manual', () => {
+    const cloudNativePgEntry = platformApplicationSet.match(
+      /              - name: cloudnative-pg\n[\s\S]*?(?=\n              - name:)/,
+    )?.[0]
+
+    expect(cloudNativePgEntry).toContain('automation: manual')
+    expect(cloudNativePgEntry).not.toContain('automation: auto')
+  })
+
   it('keeps network-critical MetalLB reconciliation manual', () => {
     const metallbEntry = bootstrapApplicationSet.match(
       /                - name: metallb-system\n[\s\S]*?(?=\n                - name:)/,

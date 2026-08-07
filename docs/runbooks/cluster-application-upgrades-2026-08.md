@@ -1575,3 +1575,40 @@ restarts; unchanged VIPs and endpoints; valid configuration status; and successf
 roll. Finish with bounded clean logs and both root and MetalLB `Synced/Healthy` at the exact merge. Rollback is a
 reviewed Git revert and manual no-prune sync; stop immediately on VIP reassignment, endpoint loss, or failed L2
 advertisement.
+
+Wave 7d was accepted at merge `b1f7232aeddc402d8f1bc0009d2da373d30abb67`. The reviewed diff contained only the
+expected upstream CRD, RBAC, NetworkPolicy, probe, metrics, optional memberlist, image, and Namespace-ownership
+changes; the no-prune sync completed while 480 continuous VIP probes recorded zero failures. The controller and all
+three speakers rolled to the pinned indexes with zero restarts. Every controller, DaemonSet, namespace, pool,
+advertisement, and Service UID remained exact; both pools and the advertisement remained valid, and all endpoints and
+VIPs remained unchanged. The sole startup reconcile retry was the upstream synthetic reload path and immediately
+succeeded. Final bounded logs were empty, all reachability probes passed, and root and MetalLB finished with no diff
+at `Synced/Healthy` on the exact merge.
+
+## Wave 7e: Barman Cloud manual reconciliation gate
+
+| Application  | From        | To       | Reconciliation | Expected impact                                   |
+| ------------ | ----------- | -------- | -------------- | ------------------------------------------------- |
+| Barman Cloud | `Automatic` | `Manual` | Automatic      | Generated Application policy changes; no rollout. |
+
+Move the `cloudnative-pg` Application to manual reconciliation in a dedicated revision before changing the Barman
+Cloud operator or injected database sidecar. This gate must not change anything under
+`argocd/applications/cloudnative-pg`, trigger an Application operation, or restart the CNPG operator, Barman operator,
+or any database instance.
+
+Preserve these platform identities through the gate:
+
+| Resource                                               | UID                                    |
+| ------------------------------------------------------ | -------------------------------------- |
+| `Deployment/cloudnative-pg/cloudnative-pg`             | `52bff217-afdf-4513-b451-c76ead92050d` |
+| `Deployment/cloudnative-pg/barman-cloud`               | `c02714b6-d71f-49ce-8f76-fb8193e5fe53` |
+| `Pod/cloudnative-pg/cloudnative-pg-68c867f4f8-c7mk7`   | `e8374f82-aba8-4b03-a5fc-1c02d910d7e3` |
+| `Pod/cloudnative-pg/barman-cloud-6d7fbb6497-5dwtd`     | `9719d66b-02d4-48f1-a0e2-c1c74b4d6815` |
+| `Secret/cloudnative-pg/plugin-barman-cloud-m5m67kfh8f` | `66c6d7b6-79db-4932-8d83-c31cf40e2ebe` |
+
+Before merge, require the `cloudnative-pg` Application and both platform Deployments healthy at the exact current
+revision, plus all CNPG clusters healthy. After merge, require the root diff to contain only the generated
+Application policy change and reconcile root without pruning. The generated Application must then have no automated
+sync policy, no resource diff, and no operation. Recheck all listed UIDs, Pod restart counts, every CNPG cluster phase,
+and all database Pod UIDs. Finish with root and `cloudnative-pg` `Synced/Healthy` at the exact gate merge. Rollback is
+a reviewed Git revert of the policy-only revision.
