@@ -29,8 +29,15 @@ Download the Grafana Alloy v1.18.1 macOS ZIP archive for your architecture from 
 and place the `alloy` binary on your PATH:
 
 ```bash
-unzip alloy-darwin-*.zip
-sudo install -m 0755 alloy-darwin-* /usr/local/bin/alloy
+alloy_arch="$(uname -m)"
+case "$alloy_arch" in
+  arm64) alloy_arch="arm64" ;;
+  x86_64) alloy_arch="amd64" ;;
+  *) echo "unsupported architecture: $alloy_arch" >&2; exit 1 ;;
+esac
+alloy_archive="alloy-darwin-${alloy_arch}.zip"
+unzip "$alloy_archive"
+sudo install -m 0755 "${alloy_archive%.zip}" /usr/local/bin/alloy
 alloy --version
 ```
 
