@@ -503,7 +503,7 @@ crd_json="$(kubectl get crd applicationsets.argoproj.io --show-managed-fields=tr
 test "$(jq -r '.metadata.uid' <<<"$crd_json")" = "$crd_uid"
 test "$(jq -r '.metadata.annotations["argocd.argoproj.io/sync-options"]' <<<"$crd_json")" = \
   'ServerSideApply=true,Prune=false'
-jq -e 'any(.metadata.managedFields[]; .manager == "argocd-application-controller" and .operation == "Apply")' \
+jq -e 'any(.metadata.managedFields[]; .manager == "argocd-controller" and .operation == "Apply")' \
   <<<"$crd_json" >/dev/null
 ```
 
