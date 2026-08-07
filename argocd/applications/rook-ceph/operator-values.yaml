@@ -1,6 +1,6 @@
 image:
   repository: docker.io/rook/ceph
-  tag: v1.19.8
+  tag: v1.20.3
   pullPolicy: IfNotPresent
 
 crds:
@@ -35,56 +35,7 @@ allowLoopDevices: false
 cephCommandsTimeoutSeconds: "120"
 
 csi:
-  rookUseCsiOperator: true
-  enableRbdDriver: true
-  enableCephfsDriver: true
-  enableRBDSnapshotter: true
-  enableCephfsSnapshotter: true
-  enableCSIHostNetwork: true
-  # The Talos kernel client requires explicit v2 CRC negotiation with this Ceph cluster.
-  cephFSKernelMountOptions: ms_mode=crc
-  # Render `CSI_FORCE_CEPHFS_KERNEL_CLIENT: "false"` (Helm `with` blocks skip boolean false).
-  forceCephFSKernelClient: "false"
-  # FUSE mount processes live inside this pod. Roll nodes only after inventorying
-  # and restarting the node's FUSE consumers through a controlled operation.
-  cephFSPluginUpdateStrategy: OnDelete
-  # Rook v1.19.7's CSI-operator path reads the RBD strategy when constructing the
-  # CephFS Driver CR. Keep both OnDelete until that upstream mapping bug is fixed.
-  rbdPluginUpdateStrategy: OnDelete
-  # A 1 GiB limit OOM-killed ceph-fuse and invalidated every FUSE mount on the node.
-  # Media workloads use the kernel client, while this headroom protects compatibility clients.
-  csiCephFSPluginResource: |
-    - name : driver-registrar
-      resource:
-        requests:
-          memory: 128Mi
-          cpu: 50m
-        limits:
-          memory: 256Mi
-    - name : csi-cephfsplugin
-      resource:
-        requests:
-          memory: 1Gi
-          cpu: 250m
-        limits:
-          memory: 4Gi
-    - name : liveness-prometheus
-      resource:
-        requests:
-          memory: 128Mi
-          cpu: 50m
-        limits:
-          memory: 256Mi
-  topology:
-    enabled: true
-    domainLabels:
-      - kubernetes.io/hostname
-  provisionerReplicas: 2
-  pluginPriorityClassName: system-node-critical
-  provisionerPriorityClassName: system-cluster-critical
-  # Turin is intentionally a control-plane node and needs CSI nodeplugins so
-  # GPU workloads pinned there can mount rook-ceph-block PVCs.
-  pluginTolerations:
-    - key: node-role.kubernetes.io/control-plane
-      operator: Exists
-      effect: NoSchedule
+  installCsiOperator: true
+
+# Rook v1.20 transfers CSI configuration ownership to the ceph-csi-drivers chart.
+# The existing live Driver and OperatorConfig behavior is preserved in csi-driver-values.yaml.
