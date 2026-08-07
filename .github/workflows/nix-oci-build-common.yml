@@ -5,6 +5,9 @@ permissions:
 
 on:
   workflow_call:
+    secrets:
+      ATTIC_TOKEN:
+        required: false
     inputs:
       image_name:
         required: true
@@ -108,7 +111,7 @@ jobs:
       - name: Set up Nix toolchain
         uses: ./.github/actions/setup-nix-toolchain
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           require-preinstalled: 'true'
           install-ci-toolchain: 'false'
           extra-nix-config: |
@@ -343,7 +346,7 @@ jobs:
       - name: Set up Nix toolchain
         uses: ./.github/actions/setup-nix-toolchain
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           require-preinstalled: 'true'
           install-ci-toolchain: 'false'
           extra-nix-config: |
