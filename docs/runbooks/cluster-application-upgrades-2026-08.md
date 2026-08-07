@@ -1244,3 +1244,68 @@ call, long-context recall, scheduler, and zero error/abort/preemption gates. Pre
 binding, confirm GPU residency and bounded host/GPU memory, and check a clean post-start log window for recurring OOM,
 parser, KV-cache, or request failures. With no persistent-data migration, rollback is a reviewed Git revert followed by
 manual sync; never delete the model-cache PVC or its retained snapshot.
+
+Wave 6d was accepted at merge `c7d511df58a8193773e4eb07c53e55ec8d84ee07`. A reviewed manual Argo sync
+changed only the vLLM image. The Deployment, both Services, PVC, and volume binding retained their exact identities;
+the replacement Pod ran on `turin` at the pinned digest with zero restarts. The 11.7 GB image pull took 2m27s, all six
+cached model shards loaded in 10.45s, and engine initialization completed in 152.75s. vLLM reported 0.26.0,
+`qwen36-flamingo`, 262,144-token context, 23.27 GiB model memory, and a 53.51 GiB FP8 KV cache.
+
+The compatibility artifact
+`/tmp/flamingo-vllm-bench/flamingo-vllm-0-26-0-compatibility-smoke-2026-08-07T14-08-13-467Z.json` passed every
+chat, thinking, structured-tool, 220K recall, scheduler, memory, error, abort, and preemption gate. A separate direct
+comparison against 0.23.0 measured output throughput `313.94` versus `313.43` tok/s, p99 TTFT `253.03` versus
+`278.41` ms, and mean TPOT `5.92` versus `5.87` ms. Its only failed check was the tuning harness's intentionally
+inapplicable requirement that every candidate be 20% faster; the version upgrade was performance-neutral and passed
+both latency-regression guardrails. Five consecutive health/model probes passed, the final 60-second log window was
+clean, and the Application finished `Synced/Healthy` at the exact merge. Retain VolumeSnapshot
+`flamingo-pre-vllm-v0-26-0-20260807t135506z` until final fleet acceptance.
+
+## Wave 6e: Keycloak schema migration
+
+| Application | From     | To       | Reconciliation | Expected impact                                                                |
+| ----------- | -------- | -------- | -------------- | ------------------------------------------------------------------------------ |
+| Keycloak    | `26.5.1` | `26.7.1` | Automatic      | Stop the singleton, migrate PostgreSQL, and start one replacement StatefulSet. |
+
+Keycloak 26.7.1 is the latest upstream stable release and includes five security fixes. Its official image index is
+pinned to `sha256:f1f1f01e472c8a78df40d8f2a49a925274eda4d3d80d5f6edbb5c880ee3c01c6` and contains Linux amd64 and
+arm64 manifests. Upstream requires downtime for a minor-version upgrade and warns that the migrated schema is not
+compatible with the old server. This installation has one StatefulSet replica, so ordered replacement stops 26.5.1
+before 26.7.1 acquires the Liquibase lock; no mixed-version interval occurs.
+
+The migration adds the 26.6 group-organization relationship, offline-session realm/index backfill, and entity
+timestamps, followed by the 26.7 realm display-name migration, verifiable-credential and outbox tables, persistent
+authentication-session tables, consent-scope parameters, login-failure storage, client timestamps, and cluster-event
+storage. The preflight database is 13 MB with 178 recorded changesets, 90 public tables, 518 columns, and 213 indexes.
+It contains one realm, eight clients, two users, 32 roles, nine offline user sessions, and nine offline client sessions.
+Its canonical schema-only SHA-256, after removing PostgreSQL 18's randomized dump restrict markers, is
+`bd62c328c6a8fb327b32a74368d2eb4728e097b81a8754b708d3b6e769fd16e3`.
+
+There is no configured CNPG object-store backup for this cluster. The validated custom-format logical dump
+`/tmp/keycloak-v26-5-1-20260807t141927z.dump` is 211,890 bytes with SHA-256
+`dcbf5ddd92797c6195cd675a00122891c16b4c02d15aa643a314930594d5d1b3`; `pg_restore --list` parsed it completely.
+After a primary checkpoint, VolumeSnapshot `keycloak-db-pre-v26-7-1-20260807t141340z` became ready for the 5 GiB
+primary PVC with UID `75f3f4da-5c90-4a9d-b406-cded2a03f863`. Retain both recovery artifacts through final fleet
+acceptance. Preserve these identities:
+
+| Resource                                 | UID                                    |
+| ---------------------------------------- | -------------------------------------- |
+| `StatefulSet/keycloak`                   | `624dfbe0-f107-40a4-838d-b1126d8e4335` |
+| `Service/keycloak`                       | `3c0bc0a4-70d3-4866-97bf-8e38ca608c11` |
+| `Service/keycloak-discovery`             | `b2c62892-fcbc-4aab-8915-cd456aacc89a` |
+| `Cluster.postgresql.cnpg.io/keycloak-db` | `64364be2-6fbd-4d37-82db-ad3c9df0d4ea` |
+| `PersistentVolumeClaim/keycloak-db-1`    | `b868772d-75fb-4a04-8da1-62d81d55d4eb` |
+| `PersistentVolumeClaim/keycloak-db-3`    | `3dd76f2e-e59e-4fe5-b9ed-3fe61d8b19af` |
+
+The preflight realm projection hash is `2b5f84a29109eed2caa0786d7a2b66b63f4e9630de432853ba7b1f9801fd8109`,
+and the sorted client projection hash is `156e94510df90dd2403874795206eeab5cf95f5f47132dd7aa289f66d11d31b0`.
+The public issuer is `https://auth.proompteng.ai/realms/master`, and its two signing-key IDs are
+`G-jdaaYZyS2BKLu_9xnwIeP0GoQYWCjm6QJmtiE7EMw` and `m4ODn9BPTWleS9KO2iPCA9s4Rl2ByeEww94xEEd4hRs`.
+
+After merge, wait for the automatic ordered rollout. Require the replacement Pod to become ready with zero restarts
+at the pinned digest and report 26.7.1. Require the two-instance CNPG cluster to remain healthy and all six resource
+UIDs plus both PVC bindings to remain exact. Confirm Liquibase completes without checksum, lock, or migration errors;
+record its new head and schema hash; and require every preflight row count not to decrease. Require the realm and client
+projection hashes, issuer, signing-key IDs, discovery document, admin authentication, and health endpoints to remain
+exact, then check a clean bounded runtime log window. Rollback requires scaling Keycloak to zero, restoring the logical
+dump or checkpointed snapshot, and only then reverting Git; never start 26.5.1 against the migrated database.
