@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: karapace
-          image: ghcr.io/aiven-open/karapace:latest
+          image: ghcr.io/aiven-open/karapace:6.2.2@sha256:3c202789067f1bc3aa68d9dbb22d6298d254380a9e69c2705120c7434277238c
           imagePullPolicy: IfNotPresent
           command:
             - python3

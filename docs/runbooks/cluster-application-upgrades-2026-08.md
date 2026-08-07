@@ -960,3 +960,68 @@ API proxy and require representative `kube_pod_info`, `kube_argocd_application_d
 `kube_cnpg_*` metrics. Preserve and explicitly recheck the pre-existing `agents` and `oirat` OutOfSync states and the
 pre-existing `torghut` Degraded state so the targeted manual syncs do not reconcile unrelated resources. Roll back by
 reviewed revert; the metrics collectors are stateless and no persisted application data is changed.
+
+Wave 5a completed on 2026-08-07 at merge `2a470a95854fefd6c71342a4d8145a7000a42365`. All 11 Deployment UIDs
+were preserved, every replacement Pod became ready with zero restarts, and every Alloy Pod reported `Alloy is ready.`
+through its loopback readiness endpoint. Kube-state-metrics reported chart 8.2.0/app 2.19.1 and returned 442
+`kube_pod_info`, 79 `kube_argocd_application_deployment_history_info`, and 66 `kube_cnpg_*` samples in the acceptance
+snapshot. Startup reads of old container logs caused bounded Loki age-window rejects in five collectors; no error or
+warning recurred in the subsequent 60-second window. All ten Applications recorded the exact merge revision;
+`agents` and `oirat` retained their unrelated OutOfSync resources and `torghut` retained its pre-existing Degraded
+health while returning to Synced.
+
+## Wave 5b: Flipt, Karapace, and cloudflared
+
+| Application       | From                          | To                 | Reconciliation | Expected impact                                                                 |
+| ----------------- | ----------------------------- | ------------------ | -------------- | ------------------------------------------------------------------------------- |
+| Feature flags     | chart/app `2.10.0`            | chart/app `2.11.0` | Automatic      | Recreate one Pod; retain the Git-backed flag state and existing cache PVC.      |
+| Kafka Karapace    | floating `latest` (app 6.2.0) | app `6.2.2`        | Automatic      | Roll one stateless schema-registry Pod; retain the Kafka `_schemas` topic.      |
+| Cloudflare tunnel | floating `latest` (2026.7.1)  | app `2026.7.3`     | Automatic      | Rolling replacement; tunnel connections drain and reconnect through Cloudflare. |
+
+The target image indexes are pinned immutably and contain both `linux/amd64` and `linux/arm64`:
+
+- Flipt: `sha256:d20384874048ef6ac326f4937cee64f1db175a1878a87db32916cc8db46c740e`.
+- Karapace: `sha256:3c202789067f1bc3aa68d9dbb22d6298d254380a9e69c2705120c7434277238c`.
+- cloudflared: `sha256:e39ee8da81ad5e05d77f38d2f51c60ca51bf2a8450ac3abab50c17fdb91d91bf`.
+
+Flipt chart 2.10.0 and 2.11.0 render the same six resource identities with canonical identity hash
+`62b2e009866b0585f5ee7bf25a413d713fe79d24b252ac182568a8c47499f53d`; the Deployment selector and Recreate strategy
+are unchanged. Karapace 6.2.2 is a patch release whose schema-reader fix is compatible with the existing configuration.
+cloudflared keeps `--no-autoupdate`, so the GitOps pin remains authoritative.
+
+Preserve these pre-merge identities and data receipts:
+
+| Resource                                       | UID                                    |
+| ---------------------------------------------- | -------------------------------------- |
+| `feature-flags/Deployment/feature-flags`       | `42c47a6b-211e-4f4c-8994-38029f8e77e7` |
+| `feature-flags/PVC/feature-flags`              | `346b2485-fa36-447e-ad28-f9826ddb5dcf` |
+| `kafka/Deployment/karapace`                    | `5fa20705-133f-41d1-bcf1-c34098d2ca84` |
+| `kafka/Service/karapace`                       | `b3931c82-83ec-417d-96a7-f267323f626c` |
+| `cloudflare/Deployment/cloudflared-deployment` | `bc768d68-e31d-4b98-8723-1188282f2683` |
+
+The pre-merge `feature-flags-state` head is `0649c31fe01b2075de88c8fd5dc4b0fb39522cb5`. Karapace reports four
+subjects with sorted JSON SHA-256 `c372679b92ee2057a19827dce2cd941419df54363187b0d708c66594b7da1e11`.
+
+```bash
+set -euo pipefail
+git fetch --quiet origin main
+upgrade_revision=$(gh pr view codex/cluster-app-upgrades-wave5-services -R proompteng/lab \
+  --json state,mergeCommit --jq 'select(.state == "MERGED") | .mergeCommit.oid')
+test -n "$upgrade_revision"
+test "$(git rev-parse origin/main)" = "$upgrade_revision"
+
+for app in feature-flags kafka cloudflare; do
+  argocd app get "$app" --hard-refresh >/dev/null
+  argocd app wait "$app" --sync --health --timeout 1200
+done
+kubectl -n feature-flags rollout status deployment/feature-flags --timeout=15m
+kubectl -n kafka rollout status deployment/karapace --timeout=15m
+kubectl -n cloudflare rollout status deployment/cloudflared-deployment --timeout=15m
+```
+
+Acceptance requires all five UIDs above and the Flipt PVC volume binding to remain unchanged. Require the Flipt health
+endpoint to report `SERVING`, its Git state head to remain exact, and the target 2.11.0 image to be ready with zero
+restarts. Require Karapace to report 6.2.2, preserve the exact sorted subject hash, and serve every registered subject.
+Require cloudflared to report 2026.7.3, return HTTP 200 with at least one ready connection, and show no recurring tunnel
+errors after convergence. Each Application must be `Synced/Healthy` at the exact merge revision. Roll back through a
+reviewed revert only; never delete the Flipt PVC or Kafka `_schemas` topic.
