@@ -204,6 +204,15 @@ describe('enabled app inventory', () => {
     expect(platformApplicationSet).toContain('targetRevision: v0.9.0')
   })
 
+  it('keeps network-critical MetalLB reconciliation manual', () => {
+    const metallbEntry = bootstrapApplicationSet.match(
+      /                - name: metallb-system\n[\s\S]*?(?=\n                - name:)/,
+    )?.[0]
+
+    expect(metallbEntry).toContain('automation: manual')
+    expect(metallbEntry).not.toContain('automation: auto')
+  })
+
   it('pins the Argo control-plane upgrade wave and applies its large CRD server-side', () => {
     expect(argoCdKustomization).toContain('argo-cd/v3.4.6/manifests/ha/install.yaml')
     expect(argoCdKustomization).toContain('argocd-image-updater/v1.2.2/config/install.yaml')

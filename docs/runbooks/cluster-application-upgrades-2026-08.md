@@ -1496,3 +1496,44 @@ allocatable values, and no empty-spec errors for GDRCopy, GDS, or MOFED. Recheck
 counts, and physical GPU UUIDs; require lightweight Flamingo, Plex, and Saigak health probes, a clean bounded plugin log
 window, and Argo `Synced/Healthy` at the exact merge. Rollback is a reviewed Git revert and manual no-prune sync; stop
 if either node loses GPU registration or a consumer restarts.
+
+Wave 7b was accepted at merge `78d98a4cfb50b0eaa6811200868bdcbe9245f6f7`. The reviewed manual Argo diff
+contained exactly the two custom DaemonSet image lines, and the no-prune sync completed in eight seconds. Replacement
+Pods `altra-nvidia-device-plugin-gmlz2` (`2df2d659-a483-4d62-8504-58b3b21b6320`) and
+`turin-nvidia-device-plugin-b5ckk` (`336a7930-9e10-4af7-b757-3edc3973d407`) ran the pinned image index with zero
+restarts. Both DaemonSet, service-account, and ConfigMap UIDs remained exact, as did both canonical config hashes. The
+Altra and Turin nodes retained GPU capacity and allocatable values of one and eight. Flamingo, Plex, and Saigak
+retained their exact Pod UIDs with zero restarts; their health endpoints returned 200 and `nvidia-smi` returned the
+same GPU UUIDs, names, driver versions, and memory totals. Both plugins detected NVML and registered `nvidia.com/gpu`;
+the old optional GDRCopy, GDS, and MOFED empty-spec errors were absent. Both final 60-second log windows were empty,
+and Argo finished with no diff at `Synced/Healthy` on the exact merge.
+
+## Wave 7c: MetalLB manual reconciliation gate
+
+| Application | From        | To       | Reconciliation | Expected impact                                   |
+| ----------- | ----------- | -------- | -------------- | ------------------------------------------------- |
+| MetalLB     | `Automatic` | `Manual` | Automatic      | Generated Application policy changes; no rollout. |
+
+Move MetalLB to manual reconciliation in a dedicated revision before changing its manifests. This prevents an
+automatic network-control-plane rollout from racing the reviewed live diff. The gate must not change anything under
+`argocd/applications/metallb-system` and therefore must not restart the controller or any speaker.
+
+Preserve these identities through the gate and the subsequent version wave:
+
+| Resource                                   | UID                                    |
+| ------------------------------------------ | -------------------------------------- |
+| `Deployment/controller`                    | `91fbebd7-6e51-49d7-ac8f-110b4ca8bea8` |
+| `DaemonSet/speaker`                        | `0d1ca81d-4de0-47f8-b863-e6f5cb816227` |
+| `IPAddressPool/metallb-ip-pool`            | `77ad5578-ef67-4d1e-a083-c38c4275fbde` |
+| `IPAddressPool/metallb-plex-pool`          | `beb335d5-3ee3-4865-adca-21e55bbf9548` |
+| `L2Advertisement/metallb-l2-advertisement` | `1884aa4d-766e-4225-b555-aacf42c84ce3` |
+| `Service/forgejo/forgejo-ssh`              | `2075b0a1-5674-4137-b4e7-d50c3012452d` |
+| `Service/istio-ingress/gateway`            | `c1d6006f-4e64-4cef-83b2-3d2600aeee9a` |
+| `Service/media/plex-lan`                   | `4dfc10f0-ef82-4803-a9ee-1c7318fc2c98` |
+| `Service/traefik/traefik`                  | `6f889270-2552-4249-93b4-09e7e2c56a2b` |
+
+Before merge, require the controller and all three speakers ready with zero restarts, both pools and the L2
+advertisement valid, and the four MetalLB-backed Services retaining `100.100.244.181`, `.182`, and `.180` exactly.
+After merge, require the generated Application to report no automated sync policy, no application-resource diff, and
+no operation or Pod replacement. Recheck every listed UID, VIP assignment, endpoint, and reachability probe, then
+require Argo `Synced/Healthy` at the exact gate merge. Rollback is a reviewed Git revert of the policy-only revision.
