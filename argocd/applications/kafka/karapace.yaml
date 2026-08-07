@@ -28,6 +28,8 @@ spec:
       app.kubernetes.io/name: karapace
   template:
     metadata:
+      annotations:
+        app.proompteng.ai/schema-storage-generation: compact-v1
       labels:
         app.kubernetes.io/name: karapace
     spec:

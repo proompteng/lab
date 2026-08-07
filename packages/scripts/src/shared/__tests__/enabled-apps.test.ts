@@ -206,6 +206,7 @@ describe('enabled app inventory', () => {
     expect(karapaceManifest).toContain(
       'ghcr.io/aiven-open/karapace:6.2.2@sha256:3c202789067f1bc3aa68d9dbb22d6298d254380a9e69c2705120c7434277238c',
     )
+    expect(karapaceManifest).toContain('app.proompteng.ai/schema-storage-generation: compact-v1')
   })
 
   it('retains Karapace schemas in a managed compacted topic', () => {
