@@ -338,14 +338,14 @@ describe('enabled app inventory', () => {
     )
   })
 
-  it('stages the Coder schema upgrade at zero replicas with an immutable image', () => {
+  it('pins Coder to the immutable multi-architecture stable release', () => {
     expect(coderChart).toMatchObject({
       appVersion: '2.35.3',
       version: '2.35.3',
     })
     expect(coderChart.dependencies?.find((dependency) => dependency.name === 'coder')?.version).toBe('2.35.3')
     expect(coderValues.coder?.coder).toMatchObject({
-      replicaCount: 0,
+      replicaCount: 1,
       image: {
         tag: 'v2.35.3@sha256:8e34e774ebde1813f03294498374cd955264eee6cd2b61a72baf7634a0ca7de4',
       },

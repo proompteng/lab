@@ -1379,3 +1379,11 @@ and exact projection hashes except for documented migration-owned changes. Prese
 prove both existing workspace agents reconnect, require a clean bounded log window, and finish with Argo
 `Synced/Healthy` at the exact start revision. Rollback requires draining Coder, restoring the logical dump or snapshot,
 and only then reverting both Git revisions; never start 2.32.1 against schema 535.
+
+The drain revision was accepted at merge `a4165fb4d5532932f6595a022389ec1865ab3c7e`. Argo finished
+`Synced/Healthy` at that exact revision with `Deployment/coder` at zero replicas and no control-plane Pod. Schema
+version 462 remained clean, database size and all five record counts and projection hashes remained exact, and there
+were zero remaining Coder database connections. Both workspace Deployments remained ready with their exact UIDs, both
+workspace-home PVCs retained their UIDs and bindings, and the two-node CNPG cluster stayed healthy with negligible
+replication lag. The public `/healthz` returned the expected 503 during the controlled outage. The start revision may
+now restore one replica at the already-reconciled 2.35.3 image and chart.
