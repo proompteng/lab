@@ -1,6 +1,6 @@
 image:
   repository: docker.io/rook/ceph
-  tag: v1.19.7
+  tag: v1.19.8
   pullPolicy: IfNotPresent
 
 crds:
