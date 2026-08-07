@@ -6,12 +6,18 @@ permissions:
 on:
   pull_request:
     paths:
+      - '.github/workflows/headlamp-ci.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'nix/verify-headlamp-image-assets.sh'
       - 'services/headlamp/**'
       - 'nix/images/headlamp.nix'
   push:
     branches:
       - main
     paths:
+      - '.github/workflows/headlamp-ci.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'nix/verify-headlamp-image-assets.sh'
       - 'services/headlamp/**'
       - 'nix/images/headlamp.nix'
   workflow_dispatch:
@@ -48,6 +54,7 @@ jobs:
   nix-image:
     if: >-
       ${{
+        github.event_name == 'pull_request' ||
         github.event_name == 'workflow_dispatch' ||
         (
           github.event_name == 'push' &&

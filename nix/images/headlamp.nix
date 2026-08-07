@@ -144,12 +144,20 @@ pkgs.dockerTools.buildLayeredImage {
   tag = "nix";
   maxLayers = 16;
   contents = [
-    runtimeRoot
     pkgs.busybox
     pkgs.cacert
   ];
   extraCommands = ''
-    mkdir -p tmp var/tmp etc/ssl/certs
+    mkdir -p headlamp tmp var/tmp etc/ssl/certs
+    # dockerTools materializes `contents` as store-backed symlinks. Headlamp
+    # 0.44 serves static files through os.OpenRoot, which rejects symlinks that
+    # escape the frontend root. Copy with dereferencing into this image layer.
+    cp -RL ${runtimeRoot}/headlamp/. headlamp/
+    remaining_headlamp_link="$(find headlamp -type l -print -quit)"
+    if [ -n "$remaining_headlamp_link" ]; then
+      echo "Headlamp runtime contains an unresolved symlink: $remaining_headlamp_link" >&2
+      exit 1
+    fi
     chmod 1777 tmp var/tmp
     ln -s ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt etc/ssl/certs/ca-certificates.crt
   '';
