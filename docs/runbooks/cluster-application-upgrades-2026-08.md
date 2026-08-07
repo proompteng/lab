@@ -343,3 +343,145 @@ Rollback controller versions through a reviewed revert PR. Keep the newer CRDs u
 requires a separate CRD migration; never delete certificate keys or generated Secrets. Revert Metrics Server to
 `v0.8.1` only after proving the HA manifest still serves the Metrics API. The Buzz one-shot manifest must remain
 removed during rollback.
+
+Wave 2 completed on 2026-08-07 at merge `4813a91f8b1f4e5ac00c7562746c4651949e529b`. All three controller
+applications reached `Synced/Healthy`; certificate, external-secret, generated-secret, APIService, CNPG, and PVC UIDs
+were preserved. Metrics queries and the Buzz endpoint succeeded. Argo pruned only the completed one-shot `Backup`
+request; the `14d` object-store retention policy and all scheduled backups remained intact.
+
+## Wave 3: Argo control plane
+
+Upgrade the self-managed control plane as one coordinated unit:
+
+- Argo CD `v3.3.9` -> `v3.4.6`
+- Argo CD Image Updater `v1.2.0` -> `v1.2.2`
+- Lovely CMP `1.2.2` -> `1.2.5`
+- Dex `v2.43.0` -> `v2.45.0`, inherited from the Argo CD HA manifest
+
+Verified lightweight release refs:
+
+| Release                | Commit                                     | Manifest or image evidence                                                                            |
+| ---------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| Argo CD `v3.4.6`       | `e1becb74c728a992804d39c3ceb2e9e6ae58f0ae` | HA manifest SHA-256 `67d1513b1ec6f5265bf48bc7509f251a1ba791b22d0a40f3586fa1ce07d60465`                |
+| Image Updater `v1.2.2` | `0e7ba4e51d2f8e64934f738db9f2b57274a401d3` | install manifest SHA-256 `9551f4135c714c57b0637260e2bef1b47fb081dd66c3baea5db8bd491f8af22b`           |
+| Lovely `1.2.5`         | `29742c0fe861c619f7d8c1ebbbf1043478d1ce55` | multi-platform image digest `sha256:6cf1db338edda01018a623504bccb7c96e9e3b611a361a0e3942e9e2100e867b` |
+
+The Argo CD, Dex, and Image Updater target image indexes resolve to
+`sha256:6e9f4f1d646d9056c8e285495d0c8043b5f553c784181b3522ef324dcefdcc82`,
+`sha256:b8469881d3cb3a73001506f0d3aaefecb9c45d2311c1e0f405d8ac538316c59d`, and
+`sha256:6a61e42794105cfd0ca029068f0cfc27bc29b9882d23df7bded7fcd1e14203da`, respectively.
+
+### Compatibility and recorded baseline
+
+- Argo CD 3.4 is tested with Kubernetes 1.35, which matches all three nodes.
+- No ApplicationSet uses the Kubernetes-version auto-label or a version selector. The 3.4 cluster-version formatting
+  change therefore has no repository consumer, and the Lovely `$KUBE_VERSION` contract is unchanged upstream.
+- The repository does not configure Dex preprocessing or gRPC DNS TXT service configuration. The Dex 2.45 and new
+  default `GRPC_ENABLE_TXT_SERVICE_CONFIG=false` behavior require no override.
+- The only Argo-specific alert uses the stable `argocd_app_info` metric, not changed OpenTelemetry semantic attributes.
+- The fully rendered target contains 100 non-Namespace resources, exactly matching the 100 currently tracked resource
+  identities. It renders no `Namespace` object and passes a server-side API dry-run with the Argo field manager.
+- Representative pre-upgrade Lovely outputs were canonicalized as sorted JSON before hashing. The hashes were: Buzz
+  `a00a13a28043cb40849b2373b0553765cbbf40295b2de78e6da76dcb6e90d921`, cert-manager
+  `8103d2bf7294a7b28865b90b07af521c4753772713bb2545bb6e921ca4710348`, and Torghut
+  `493015e412d88e903b152305fb5f7a7fec3744d2a657b2bc35529403f465de4d`. Raw YAML hashes are not an acceptance
+  signal because serialization can differ without a manifest change.
+
+Live identity baseline:
+
+| Resource                             | UID                                    |
+| ------------------------------------ | -------------------------------------- |
+| `Application/argocd`                 | `25a2d122-ba0f-453b-b6d3-de23489bb5c6` |
+| `CRD/applicationsets.argoproj.io`    | `aca1cb44-7d0d-44bd-932a-377651c53513` |
+| `ApplicationSet/appset-helm`         | `e61413d8-fa0f-49b0-b00f-683d3920a9d4` |
+| `ApplicationSet/bootstrap`           | `d4a4325b-37d8-4199-9c6e-4f0952ebba8f` |
+| `ApplicationSet/platform`            | `df00b5f6-5927-4296-a4a0-7168e4470792` |
+| `ApplicationSet/product`             | `54b89646-4a76-453d-8d36-2b2a0c0ecc9e` |
+| `Secret/argocd-secret`               | `4f2bf4ad-56da-4b66-ae29-e2d1da18c8d1` |
+| `Secret/argocd-notifications-secret` | `7ca5d751-9ba6-4e1f-be44-5c80ffdf4549` |
+| `Secret/argocd-redis`                | `49dcecf6-65f6-4865-9543-8d41340506a2` |
+| `ImageUpdater/product-image-updater` | `0a81a6c6-0653-4f91-9af5-562bb33a88e0` |
+
+Before the upgrade, 76 of 79 Applications were synced and 77 were healthy. The exact pre-existing exceptions were:
+
+- `agents`, `froussard`, and `oirat`: `OutOfSync/Healthy`
+- `torghut`: `Synced/Degraded`
+- the two previously recorded failed Synthesis Jobs
+
+Do not attribute those conditions to this wave or sync those applications as part of the Argo rollout. The public
+Argo health and Dex discovery endpoints returned HTTP 200; the in-cluster Argo server EndpointSlice had one ready
+endpoint. The workstation could not resolve the private Tailscale hostname, so use in-cluster endpoint readiness as
+the private-path acceptance signal.
+
+### ApplicationSet CRD apply migration
+
+The live ApplicationSet CRD was originally created by `kubectl-create` and subsequently updated through
+`Replace=true`. Argo CD 3.3 and later require server-side apply for this CRD because client-side apply can exceed the
+annotation size limit. Before syncing the control plane:
+
+1. Replace the CRD's `Replace=true` annotation with `ServerSideApply=true`.
+2. Remove the obsolete `ClientSideApplyMigration=false` workaround from the bootstrap ApplicationSet template.
+3. Sync `root` first so `Application/argocd` has server-side apply enabled without the migration disablement.
+4. Sync the Argo application without prune. The server-side apply must preserve the CRD UID and move field ownership
+   to the Argo field manager; never delete and recreate the CRD.
+
+### Promotion
+
+After merge, allow only two root states: either the reviewed `ApplicationSet/bootstrap` drift is still pending, or root
+already auto-synced the exact merge revision. In both cases, require the generated Argo Application to carry the new
+policy before touching the control plane:
+
+```bash
+set -euo pipefail
+upgrade_revision="$(git rev-parse origin/main)"
+
+argocd app get root --hard-refresh >/dev/null
+root_drift=$(kubectl -n argocd get application root -o json |
+  jq -r '.status.resources[] | select(.status != "Synced") | [.group,.kind,.namespace,.name] | @tsv')
+if [[ -n "$root_drift" ]]; then
+  test "$root_drift" = $'argoproj.io\tApplicationSet\targocd\tbootstrap'
+  argocd app sync root --revision "$upgrade_revision" --prune=false --timeout 600
+  argocd app wait root --sync --health --timeout 600
+else
+  test "$(kubectl -n argocd get application root -o jsonpath='{.status.sync.status}')" = Synced
+  test "$(kubectl -n argocd get application root -o jsonpath='{.status.sync.revision}')" = "$upgrade_revision"
+fi
+for _ in {1..30}; do
+  migration_disabled=$(kubectl -n argocd get application argocd -o json |
+    jq -r '.spec.syncPolicy.syncOptions | index("ClientSideApplyMigration=false")')
+  [[ "$migration_disabled" == null ]] && break
+  sleep 2
+done
+test "$(kubectl -n argocd get application argocd -o json |
+  jq -r '.spec.syncPolicy.syncOptions | index("ClientSideApplyMigration=false")')" = null
+
+argocd app get argocd --hard-refresh >/dev/null
+test "$(kubectl -n argocd get application argocd -o json |
+  jq -r '.spec.syncPolicy.automated // "manual"')" = manual
+argocd app sync argocd --revision "$upgrade_revision" --prune=false --timeout 900
+argocd app wait argocd --sync --health --timeout 900
+```
+
+The Argo sync must not report a prune. If the reviewed resource-identity comparison changes after merge, stop before
+syncing and re-review the exact additions and removals.
+
+### Acceptance and rollback
+
+- `argocd` is `Synced/Healthy` at the exact merge revision, with a successful operation revision.
+- All Argo Deployments and StatefulSets complete rollout. New Argo CD containers run `v3.4.6`, Dex runs `v2.45.0`,
+  Image Updater runs `v1.2.2`, and both repo-server Pods run Lovely `1.2.5` with no new restarts.
+- The Application, CRD, ApplicationSet, Secret, and ImageUpdater UIDs in the baseline remain unchanged. The
+  ApplicationSet CRD has `ServerSideApply=true`, no `Replace=true`, and an Argo server-side-apply managed-field entry.
+- All four ApplicationSets retain their generated-resource counts. No Application, repository credential, SSO secret,
+  Redis secret, or ImageUpdater target is recreated.
+- Image Updater reports `Ready=True` and `Error=False`. Public health and Dex discovery return HTTP 200, the Argo
+  service has a ready endpoint, and a fresh core-mode manifest request succeeds.
+- Buzz, cert-manager, and Torghut canonical Lovely output hashes remain equal to the recorded baseline. The Argo
+  manifest hash is expected to change because this wave changes its desired control-plane manifests.
+- Application and workload health contains no new exception beyond the explicitly recorded baseline, all nodes remain
+  ready, and controller/repo-server/Image Updater logs contain no new render, cache, authentication, or reconciliation
+  errors.
+
+Rollback through a reviewed revert PR and the same root-first GitOps sequence. Preserve the newer CRDs during workload
+rollback unless a separate compatibility review proves a schema rollback is required. Keep server-side apply enabled;
+do not restore `Replace=true` or `ClientSideApplyMigration=false`.

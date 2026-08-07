@@ -3,4 +3,4 @@ kind: CustomResourceDefinition
 metadata:
   name: applicationsets.argoproj.io
   annotations:
-    argocd.argoproj.io/sync-options: Replace=true
+    argocd.argoproj.io/sync-options: ServerSideApply=true

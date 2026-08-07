@@ -61,13 +61,13 @@ The upstream `applicationsets.argoproj.io` CRD can be large enough that `kubectl
 Recommended (server-side apply):
 
 ```bash
-kubectl apply --server-side -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.3.9/manifests/crds/applicationset-crd.yaml
+kubectl apply --server-side --force-conflicts -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.4.6/manifests/crds/applicationset-crd.yaml
 ```
 
 Fallback (create-only):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/argoproj/argo-cd/v3.3.9/manifests/crds/applicationset-crd.yaml | kubectl create -f -
+curl -fsSL https://raw.githubusercontent.com/argoproj/argo-cd/v3.4.6/manifests/crds/applicationset-crd.yaml | kubectl create -f -
 ```
 
 Verify:
