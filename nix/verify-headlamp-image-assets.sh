@@ -69,12 +69,12 @@ asset_refs=()
 while IFS= read -r asset_ref; do
   asset_refs+=("$asset_ref")
 done < <(
-  grep -Eo '(src|href)="/assets/[^"]+"' "$index_path" \
+  grep -Eo '(src|href)="(\./|/)?assets/[^"]+"' "$index_path" \
     | sed -E 's/^(src|href)="([^"]+)"$/\2/' \
     | sort -u
 )
 if [[ "${#asset_refs[@]}" -eq 0 ]]; then
-  echo "Headlamp index does not reference any /assets files" >&2
+  echo "Headlamp index does not reference any frontend assets" >&2
   exit 1
 fi
 
@@ -82,7 +82,9 @@ javascript_assets=0
 stylesheet_assets=0
 for asset_ref in "${asset_refs[@]}"; do
   asset_path="${asset_ref%%[?#]*}"
-  materialized_asset="$frontend_root/${asset_path#/}"
+  asset_relative_path="${asset_path#./}"
+  asset_relative_path="${asset_relative_path#/}"
+  materialized_asset="$frontend_root/$asset_relative_path"
   if [[ -L "$materialized_asset" || ! -f "$materialized_asset" || ! -r "$materialized_asset" ]]; then
     echo "Headlamp index references a missing, unreadable, or symlinked asset: $asset_ref" >&2
     exit 1
