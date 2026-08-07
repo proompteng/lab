@@ -20,6 +20,8 @@ const kubeVirtKustomization = readFileSync('argocd/applications/kubevirt/kustomi
 const cdiKustomization = readFileSync('argocd/applications/cdi/kustomization.yaml', 'utf8')
 const knativeKustomization = readFileSync('argocd/applications/knative/kustomization.yaml', 'utf8')
 const knativeServingManifest = readFileSync('argocd/applications/knative-serving/knative-serving.yaml', 'utf8')
+const knativeEventingKustomization = readFileSync('argocd/applications/knative-eventing/kustomization.yaml', 'utf8')
+const knativeEventingManifest = readFileSync('argocd/applications/knative-eventing/knative-eventing.yaml', 'utf8')
 const productApplicationSet = YAML.parse(readFileSync('argocd/applicationsets/product.yaml', 'utf8')) as {
   spec?: {
     syncPolicy?: { preserveResourcesOnDeletion?: boolean }
@@ -138,6 +140,11 @@ describe('enabled app inventory', () => {
     expect(knativeKustomization).toContain('$patch: delete')
     expect(knativeKustomization).not.toContain('argocd.argoproj.io/sync-options: Prune=false')
     expect(knativeServingManifest).toContain('version: 1.23.0')
+    expect(knativeEventingManifest).toContain('version: 1.23.0')
+    expect(knativeEventingKustomization).toContain('eventing-kafka-controller.yaml')
+    expect(knativeEventingKustomization).toContain('eventing-kafka-source.yaml')
+    expect(knativeEventingKustomization).toContain('knative-v1.23.0')
+    expect(knativeEventingKustomization).not.toContain('patchesStrategicMerge')
     expect(knativeEntry).toContain('app.kubernetes.io/managed-by: argocd')
     expect(knativeEntry).not.toContain('argocd.argoproj.io/sync-options: Prune=false')
     expect(knativeEntry).not.toContain('argocd.argoproj.io/tracking-id')

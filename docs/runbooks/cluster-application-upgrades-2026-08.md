@@ -801,3 +801,71 @@ Service, Route, Configuration, revision, Certificate, and Secret identities must
 control-plane Pod must be ready with zero restarts, all three Services must retain their latest-ready revisions, and the
 external Froussard route must still return HTTP 200. Roll back the version field through a reviewed revert only if the
 1.23 control plane has not written incompatible state; preserve the newer CRDs and all user workloads during rollback.
+
+Wave 4b completed on 2026-08-07 at merge `f129d8496da59f3b187053c821a69e07cf070c85`. The Serving CR, all seven
+Deployment UIDs, five CRD UIDs and stored versions, the three Services and latest-ready Revisions, and the Froussard TLS
+Certificate and Secret retained their identities. All 35 replacement control-plane Pods were ready at 1.23.0 with zero
+restarts; the cleanup and storage-version migration Jobs each succeeded once. Transient Activator probe failures during
+the rolling cutover stopped after the old Pods terminated. The Froussard route continued to return HTTP 200.
+
+## Wave 4c: Knative Eventing and Kafka source
+
+| Application                       | From     | To       | Reconciliation | Expected impact                                                     |
+| --------------------------------- | -------- | -------- | -------------- | ------------------------------------------------------------------- |
+| Knative Eventing                  | `1.22.0` | `1.23.0` | Automatic      | Eventing control-plane Pods roll; event resources retain identity.  |
+| Knative Kafka controller + source | `1.22.0` | `1.23.0` | Automatic      | Kafka controllers and source dispatcher roll without data deletion. |
+
+The 1.23 releases are the current upstream versions. The peeled tag commits are
+`d6139ffb2175b4a7387f56a8b2c589a17c631719` for Eventing and
+`2dcdd7c72a3d856ba137cef5a3a5c0a6d55fe58f` for eventing-kafka-broker. Relevant asset hashes are:
+
+| Asset                            | SHA-256                                                            |
+| -------------------------------- | ------------------------------------------------------------------ |
+| `eventing-crds.yaml`             | `20da395bc5a1de2633907d229180a1db3dd4a53fae541c24c6719de0adba8fb8` |
+| `eventing-core.yaml`             | `9af6b3e7a7ae7e26de0018806226d044c0e5ff2612c1530ddc3f413e77b0b42b` |
+| `in-memory-channel.yaml`         | `5ccc661337215e5b773648223bbf899c74fb316120983bd2c074c90db08c4c4d` |
+| `mt-channel-broker.yaml`         | `2cd56ab5cbd40ab5c11c3019a88c78c6b9df9deb44732dfbed15f638818584a3` |
+| `eventing-tls-networking.yaml`   | `03c9486b49baf7efe15b1861a9c9de4ed564ee4328fd00751459d5d659000fea` |
+| `eventing-post-install.yaml`     | `61c043d7713279df917c9657e1a2e063c3f107fe50ef905cc1af1f52ad2e6688` |
+| `eventing-kafka-controller.yaml` | `d969623c82ee2de280c4bd10cfedc9b9aa472e29b7553e659b7294793643d46c` |
+| `eventing-kafka-source.yaml`     | `64140e65c596490efcfa9872c07ede70711e99ecd41ae111dd06cf21f8cde129` |
+
+The old and new Eventing asset sets each contain the same 154 resource identities; the direct Kafka controller/source
+sets each contain the same 35. The Kafka release includes dependency security fixes. The Kustomization also migrates the
+existing namespace-selector overlay from deprecated `patchesStrategicMerge` syntax to the equivalent `patches` path.
+
+The pre-merge Eventing CR UID is `4868f9bd-a221-47d4-8366-8f6929e13395`. The canonical identity receipt for its 11
+Deployments and two StatefulSets is `aab969ab26d5263161a8cf2a6c5e395d3795042f64f85bf3b9d680dea9636024`; the
+23 Eventing/Kafka CRD names, UIDs, and stored versions hash to
+`f8504329f7bc06269a0644618fbe88545a2ee5fb38040962fa25bca4dd2bec2e`. The only live user Eventing objects are:
+
+| Resource                                                     | UID                                    | State |
+| ------------------------------------------------------------ | -------------------------------------- | ----- |
+| KafkaSource `agents/agents-codex-github-events`              | `fc3ce8dd-f96f-4a83-9569-c7413489f963` | Ready |
+| ConsumerGroup `agents/fc3ce8dd-f96f-4a83-9569-c7413489f963`  | `35e2cbe6-dd85-42c5-b12e-63aae471fa56` | Ready |
+| Consumer `agents/fc3ce8dd-f96f-4a83-9569-c7413489f963-kfffw` | `f3110801-0c0a-49cc-a515-e7e0b1375572` | Ready |
+
+```bash
+set -euo pipefail
+git fetch --quiet origin main
+upgrade_revision=$(gh pr view codex/cluster-app-upgrades-wave4-knative-eventing -R proompteng/lab \
+  --json state,mergeCommit --jq 'select(.state == "MERGED") | .mergeCommit.oid')
+test -n "$upgrade_revision"
+test "$(git rev-parse origin/main)" = "$upgrade_revision"
+
+argocd app get knative-eventing --hard-refresh >/dev/null
+argocd app wait knative-eventing --sync --health --timeout 1200
+test "$(kubectl -n argocd get application knative-eventing \
+  -o jsonpath='{.status.operationState.syncResult.revision}')" = "$upgrade_revision"
+kubectl -n knative-eventing wait --for=jsonpath='{.status.version}'=1.23.0 \
+  knativeeventing/knative-eventing --timeout=15m
+kubectl -n agents wait --for=condition=Ready kafkasource/agents-codex-github-events --timeout=15m
+```
+
+Acceptance requires the Application to be `Synced/Healthy` at the exact merge revision and the Eventing CR to retain
+its UID while reporting Ready at 1.23.0. Recompute both canonical identity receipts and require exact matches, require
+all 12 desired control-plane Pods to be ready on 1.23 with zero restarts, and require successful cleanup/storage-version
+migration Jobs. The KafkaSource, ConsumerGroup, and Consumer must retain their UIDs and Ready conditions. The Kafka
+source dispatcher must remain ready, the patched mutating webhook must stay scoped to `knative-eventing`, and no new
+recurring controller error may remain after startup. Roll back the version and release URLs only through a reviewed
+revert; preserve newer CRDs and all Eventing objects during rollback.
