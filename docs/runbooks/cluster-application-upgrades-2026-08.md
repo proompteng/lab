@@ -669,3 +669,47 @@ Rollback through a reviewed revert PR, in reverse order, with no prune. Preserve
 DataVolume, PVC, PV, Knative CRs, webhook certificates, or namespace. Keep the namespace protection annotation during
 rollback. Do not roll the operator below 1.23 after a Wave 4b operand upgrade unless the restored operator embeds and
 supports the target operand version.
+
+Wave 4a completed on 2026-08-07 at merge `801a47bd76c7cc0a971098d2984b23fce3c3784a`. KubeVirt and CDI reported
+their target and observed versions (`v1.9.0` and `v1.66.0`) with all availability conditions satisfied. The stopped VM,
+completed DataVolume, PVC, PV, controller CRs, and CRDs retained their recorded UIDs. Knative's namespace, operator
+webhook certificate, Serving and Eventing CRs, and all three Knative Services retained their UIDs; the operands stayed
+ready at 1.22. Every replacement Pod was ready with zero restarts.
+
+KubeVirt 1.9 deliberately removes the legacy `kubevirt-virt-handler-certs` mount after every handler advertises
+`kubevirt.io/supports-migration-cn-types=true` and receives `--migration-cn-types migration`; upstream PR 15949 calls
+this the final migration-certificate transition. The unused legacy file watcher consequently logs a missing-file error
+once per minute. The active `kubevirt-virt-handler-migration-client-certs` mount and certificate were present on all
+three handlers, no other error recurred after startup, all handlers were ready with zero restarts, and KubeVirt remained
+`Available=True`, `Progressing=False`, and `Degraded=False`. Treat only that exact legacy watcher message as an accepted
+upstream diagnostic until KubeVirt removes the unused manager.
+
+## Wave 4 namespace ownership handoff
+
+The Wave 4a source and live namespace now both carry `argocd.argoproj.io/sync-options=Prune=false`. Remove the upstream
+`Namespace` from rendered output while retaining ApplicationSet-managed namespace metadata. This is an ownership-only
+change: no Knative workload or custom resource should roll.
+
+```bash
+set -euo pipefail
+git fetch --quiet origin main
+upgrade_revision=$(gh pr view codex/cluster-app-upgrades-wave4-knative-namespace -R proompteng/lab \
+  --json state,mergeCommit --jq 'select(.state == "MERGED") | .mergeCommit.oid')
+test -n "$upgrade_revision"
+test "$(git rev-parse origin/main)" = "$upgrade_revision"
+
+argocd app get root --hard-refresh >/dev/null
+argocd app wait root --sync --health --timeout 600
+argocd app get knative --hard-refresh >/dev/null
+argocd app wait knative --sync --health --timeout 900
+test "$(kubectl -n argocd get application knative \
+  -o jsonpath='{.status.operationState.syncResult.revision}')" = "$upgrade_revision"
+test "$(kubectl get namespace knative \
+  -o jsonpath='{.metadata.annotations.argocd\.argoproj\.io/sync-options}')" = Prune=false
+test "$(kubectl get namespace knative -o jsonpath='{.metadata.uid}')" = b45355e7-34c7-483b-9e0f-1431571ae7f7
+```
+
+Acceptance requires the Knative Application to be `Synced/Healthy` at the exact merge revision, the rendered target to
+contain no `Namespace`, the live namespace UID and protection annotation to remain unchanged, and all Knative operator,
+Serving, Eventing, and Service identities and readiness states to remain unchanged. Roll back by restoring the protected
+source Namespace; never delete or recreate the live namespace.
