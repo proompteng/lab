@@ -28,4 +28,5 @@ This app is registered as `auto` automation in the product ApplicationSet.
 ## Notes
 
 - Argo CD Image Updater writes new published `bilig-app` image tags back into this app, and Argo CD auto-sync applies them.
+- The public product shell runs in explicit `demo` authentication mode and signs anonymous sessions with the `bilig-app-auth` SealedSecret.
 - Redis has been removed from the product runtime path; collaboration correctness now depends only on the monolith, Zero, and Postgres.
