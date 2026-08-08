@@ -370,7 +370,10 @@ const transitionIntent = (sql: PgClient.PgClient, intent: Intent, decision: Risk
       state = ${approved ? IntentState.Approved : IntentState.Terminal},
       terminal_outcome = ${approved ? null : TerminalOutcome.Blocked},
       state_version = state_version + 1,
-      updated_at = ${decision.decidedAt}
+      updated_at = greatest(
+        ${decision.decidedAt}::timestamptz,
+        created_at + interval '1 millisecond'
+      )
     WHERE intent_id = ${intent.intentId} AND state = ${IntentState.Planned}
     RETURNING intent_id
   `.pipe(Effect.mapError((cause) => classifyIntentCause('commit', cause)))
