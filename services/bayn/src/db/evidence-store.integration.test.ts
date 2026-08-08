@@ -1746,6 +1746,97 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     })
   })
 
+  test('commits an approved intent when planning and risk evaluation share one timestamp', async () => {
+    await activateAuditedCapitalGrant()
+    const execution = makeExecutionRuntime()
+    const decidedAt = new Date(Date.now() - 1_000).toISOString()
+    const intent = await Effect.runPromise(
+      plan(
+        intentPlan({
+          cycleId: fixtureHash('equal-planning-risk-clock-cycle'),
+          createdAt: decidedAt,
+        }),
+      ),
+    )
+    const decision = await Effect.runPromise(
+      riskDecision(intent, RiskOutcome.Approved, {
+        decidedAt,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    )
+
+    try {
+      const receipt = await execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
+      const [stored] = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          return yield* sql<{ created_at: Date; updated_at: Date }>`
+            SELECT created_at, updated_at
+            FROM intents
+            WHERE intent_id = ${intent.intentId}
+          `
+        }),
+      )
+
+      expect(receipt).toMatchObject({
+        deduplicated: false,
+        record: {
+          decision: { decidedAt },
+          intent: { createdAt: decidedAt, state: IntentState.Approved },
+          stateVersion: 2,
+        },
+      })
+      assert(stored !== undefined, 'committed intent must be readable')
+      expect(stored.updated_at.getTime()).toBeGreaterThan(stored.created_at.getTime())
+    } finally {
+      await execution.dispose()
+    }
+  })
+
+  test('rejects a risk decision that predates its intent even when the decision remains current', async () => {
+    await activateAuditedCapitalGrant()
+    const execution = makeExecutionRuntime()
+    const createdAt = new Date(Date.now() - 1_000).toISOString()
+    const intent = await Effect.runPromise(
+      plan(
+        intentPlan({
+          cycleId: fixtureHash('predated-risk-decision-cycle'),
+          createdAt,
+        }),
+      ),
+    )
+    const decision = await Effect.runPromise(
+      riskDecision(intent, RiskOutcome.Approved, {
+        decidedAt: new Date(Date.parse(createdAt) - 1).toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    )
+
+    try {
+      const commit = await execution.runPromiseExit(
+        Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)),
+      )
+      const [counts] = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          return yield* sql<{ decisions: number; intents: number }>`
+            SELECT
+              (SELECT count(*)::integer FROM intents) AS intents,
+              (SELECT count(*)::integer FROM risk_decisions) AS decisions
+          `
+        }),
+      )
+
+      expect(Exit.isFailure(commit)).toBe(true)
+      if (Exit.isFailure(commit)) {
+        expect(Cause.pretty(commit.cause)).toContain('intent state version and time must advance')
+      }
+      expect(counts).toEqual({ decisions: 0, intents: 0 })
+    } finally {
+      await execution.dispose()
+    }
+  })
+
   test('commits a residual close generation beside its predecessor with a distinct identity binding', async () => {
     await activateAuditedCapitalGrant()
     const execution = makeExecutionRuntime()
