@@ -50,6 +50,15 @@ spec:
           env:
             - name: NODE_ENV
               value: "production"
+            - name: BILIG_AUTH_MODE
+              value: demo
+            - name: BILIG_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bilig-app-auth
+                  key: session-secret
+            - name: BILIG_REMOTE_MCP_ALLOW_LOCAL_ORIGINS
+              value: "false"
             - name: PORT
               value: "4321"
             - name: BILIG_PUBLIC_SERVER_URL

@@ -2,6 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - bilig-cert-tls.yaml
+  - app-auth-sealedsecret.yaml
   - zero-admin-sealedsecret.yaml
   - zero-strip-prefix-middleware.yaml
   - zero-client-mutation-id-repair-job.yaml
