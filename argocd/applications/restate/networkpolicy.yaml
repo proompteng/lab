@@ -28,6 +28,19 @@ spec:
         - port: admin
           protocol: TCP
     - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tailscale
+          podSelector:
+            matchLabels:
+              tailscale.com/managed: "true"
+              tailscale.com/parent-resource-ns: restate
+              tailscale.com/parent-resource-type: svc
+              tailscale.com/parent-resource: restate-admin-tailscale
+      ports:
+        - port: admin
+          protocol: TCP
+    - from:
         - namespaceSelector: {}
       ports:
         - port: ingress
