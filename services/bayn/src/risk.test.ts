@@ -392,7 +392,7 @@ describe('bounded paper risk', () => {
 
     const rawPolicy = { ...makePolicy() }
     const missingPolicy: Record<string, unknown> = { ...rawPolicy }
-    delete missingPolicy.maxOrderNotionalMicros
+    delete missingPolicy['maxOrderNotionalMicros']
     expect(() => decodePolicy(missingPolicy)).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, brokerMode: 'LIVE' })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, allowedSymbols: ['NVDA', 'AMD'] })).toThrow()
@@ -1016,7 +1016,7 @@ describe('bounded paper risk', () => {
           operation: 'decode-input',
           reason: 'positions',
         })
-        expect(result.failure.facts.issues).toBeArray()
+        expect(result.failure.facts['issues']).toBeArray()
       }
     }
   })
@@ -1037,7 +1037,7 @@ describe('bounded paper risk', () => {
         operation: 'decode-input',
         reason: 'positions',
       })
-      expect(result.failure.facts.issues).toContainEqual({
+      expect(result.failure.facts['issues']).toContainEqual({
         path: ['positions', 0, 'marketValueMicros'],
         issue: 'must have the quantity sign',
       })

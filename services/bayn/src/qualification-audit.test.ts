@@ -346,10 +346,10 @@ const replaceFirstItem = (
   payload: Readonly<Record<string, unknown>>,
   patch: Readonly<Record<string, unknown>>,
 ): unknown => {
-  if (!Array.isArray(payload.items) || typeof payload.items[0] !== 'object' || payload.items[0] === null) {
+  if (!Array.isArray(payload['items']) || typeof payload['items'][0] !== 'object' || payload['items'][0] === null) {
     throw new Error('fixture artifact has no object item')
   }
-  return { ...payload, items: [{ ...payload.items[0], ...patch }, ...payload.items.slice(1)] }
+  return { ...payload, items: [{ ...payload['items'][0], ...patch }, ...payload['items'].slice(1)] }
 }
 
 describe('qualification audit', () => {

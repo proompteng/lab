@@ -20,8 +20,8 @@ export interface RuntimeBuildMetadata extends EmbeddedBuildMetadata {
 export interface RuntimeConfig {
   readonly host: string
   readonly port: number
-  readonly qualificationRunId?: string
-  readonly paperActivationRequestJson?: string
+  readonly qualificationRunId?: string | undefined
+  readonly paperActivationRequestJson?: string | undefined
   readonly execution: ExecutionPolicy
   readonly build: RuntimeBuildMetadata
   readonly healthIntervalMs: number
@@ -29,10 +29,12 @@ export interface RuntimeConfig {
   readonly cycleStallThresholdMs: number
   readonly reconciliationStaleThresholdMs: number
   readonly unknownMutationThresholdMs: number
-  readonly alpaca?: BrokerConnection & {
-    readonly authorityGenerationHash: string
-    readonly reconciliationIntervalMs: number
-  }
+  readonly alpaca?:
+    | (BrokerConnection & {
+        readonly authorityGenerationHash: string
+        readonly reconciliationIntervalMs: number
+      })
+    | undefined
   readonly clickhouse: {
     readonly url: string
     readonly username: string
@@ -68,13 +70,13 @@ export type LoadedRuntimeConfig = LoadedRuntimeConfigBase &
   (
     | {
         readonly runtimeMode: 'BrokerlessService'
-        readonly qualificationRunId?: string
+        readonly qualificationRunId?: string | undefined
         readonly execution: Extract<ExecutionPolicy, { readonly brokerIdentity?: undefined }>
         readonly alpaca?: undefined
       }
     | {
         readonly runtimeMode: 'AutonomousService'
-        readonly qualificationRunId?: string
+        readonly qualificationRunId?: string | undefined
         readonly execution: Exclude<ExecutionPolicy, { readonly brokerIdentity?: undefined }>
         readonly alpaca: AlpacaRuntimeConfig
       }
@@ -105,7 +107,7 @@ export interface ParsedRuntimeConfig {
   readonly host: string
   readonly port: number
   readonly qualificationRunId: string | undefined
-  readonly paperActivationRequestJson?: string
+  readonly paperActivationRequestJson?: string | undefined
   readonly configuredOperation: RuntimeOperation | undefined
   readonly executionPrepareRequest: ExecutionPrepareRequest | undefined
   readonly legacyMaximumAuthority: LegacyAuthorityToken | undefined

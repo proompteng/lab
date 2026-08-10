@@ -185,7 +185,7 @@ const finalLiveFixture = () => {
 const finalAuthorizationFailureTag = <A, E>(exit: Exit.Exit<A, E>): string | undefined => {
   if (Exit.isSuccess(exit)) return undefined
   const failure: unknown = exit.cause.reasons.find(Cause.isFailReason)?.error
-  if (failure instanceof BrokerMutationError) return failure.cause?.tag
+  if (failure instanceof BrokerMutationError) return failure.cause?.['tag']
   return typeof failure === 'object' && failure !== null && '_tag' in failure
     ? String((failure as { readonly _tag: unknown })._tag)
     : undefined

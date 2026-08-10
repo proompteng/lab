@@ -214,11 +214,7 @@ const persistEvaluation = (
     workflow.config.operationTimeoutMs,
     'database',
     'persist-evaluation',
-  ).pipe(
-    Effect.map((persistence) =>
-      evaluatedCompletion(workflow.strategy, workflow.strategy.provenance, evidence, persistence),
-    ),
-  )
+  ).pipe(Effect.map((persistence) => evaluatedCompletion(workflow.strategy.provenance, evidence, persistence)))
 
 const evaluateAcquiredQualification = (
   workflow: EvaluationWorkflow,

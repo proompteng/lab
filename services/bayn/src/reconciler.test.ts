@@ -289,7 +289,10 @@ describe('reconciliation pure decisions', () => {
         observedAt: undefined,
       },
       500,
-      { value: [{ ...firstOrder, submittedAt: undefined }], evidence: orderPageEvidence },
+      {
+        value: [(({ submittedAt: _submittedAt, ...orderWithoutSubmittedAt }) => orderWithoutSubmittedAt)(firstOrder)],
+        evidence: orderPageEvidence,
+      },
     )
     expect(missingTimestamp).toMatchObject({
       _tag: 'Failure',
@@ -490,7 +493,9 @@ describe('paper reconciliation loop', () => {
   })
 
   test('fails closed before persistence when an order omits submitted_at', async () => {
-    const pendingOrder = { ...order(0), submittedAt: undefined }
+    const pendingOrder = (({ submittedAt: _submittedAt, ...orderWithoutSubmittedAt }) => orderWithoutSubmittedAt)(
+      order(0),
+    )
     const read: BrokerReadShape = {
       ...emptyRead(),
       orders: () => Effect.succeed({ value: [pendingOrder], evidence: evidence('orders') }),

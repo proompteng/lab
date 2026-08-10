@@ -1,6 +1,11 @@
 import { Context, Data, Effect, Schema } from 'effect'
 
-import { MutationEvidenceSchema, MutationOperation, type MutationEvidence } from '../../broker/alpaca-mutations'
+import {
+  MutationEvidenceSchema,
+  MutationOperation,
+  type MutationEvidence,
+  type PartialMutationEvidence,
+} from '../../broker/alpaca-mutations'
 import type { CanonicalHashFailure } from '../../hash'
 import { Authority, IntentState, KillState, OrderSide, TerminalOutcome } from '../contracts'
 import {
@@ -134,7 +139,7 @@ export interface MutationStoreShape {
     intentId: string,
     requestHash: string,
     occurredAt: string,
-    evidence?: Partial<MutationEvidence>,
+    evidence?: PartialMutationEvidence,
     brokerOrderId?: string,
   ) => Effect.Effect<MutationEvent, MutationStoreError | WriterFenceError>
   readonly beginCancel: (
@@ -155,7 +160,7 @@ export interface MutationStoreShape {
     requestHash: string,
     brokerOrderId: string,
     occurredAt: string,
-    evidence?: Partial<MutationEvidence>,
+    evidence?: PartialMutationEvidence,
   ) => Effect.Effect<MutationEvent, MutationStoreError | WriterFenceError>
   readonly recoveryFound: (
     intentId: string,
@@ -176,7 +181,7 @@ export interface MutationStoreShape {
     operation: MutationOperation,
     requestHash: string,
     occurredAt: string,
-    evidence?: Partial<MutationEvidence>,
+    evidence?: PartialMutationEvidence,
   ) => Effect.Effect<MutationEvent, MutationStoreError | WriterFenceError>
   readonly latest: (
     intentId: string,

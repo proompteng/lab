@@ -131,12 +131,12 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 
 export const retainedAutonomousCycleCadenceDecision = (observation: unknown): MonthEndCadenceDecision | undefined => {
   if (!isRecord(observation) || !Object.hasOwn(observation, 'cadenceDecision')) return undefined
-  const retained = observation.cadenceDecision
+  const retained = observation['cadenceDecision']
   if (!isRecord(retained)) return decideMonthEndCadenceEligibility({})
   return decideMonthEndCadenceEligibility({
-    ...(typeof retained.signalSessionDate === 'string' ? { signalSessionDate: retained.signalSessionDate } : {}),
-    ...(typeof retained.executionSessionDate === 'string'
-      ? { executionSessionDate: retained.executionSessionDate }
+    ...(typeof retained['signalSessionDate'] === 'string' ? { signalSessionDate: retained['signalSessionDate'] } : {}),
+    ...(typeof retained['executionSessionDate'] === 'string'
+      ? { executionSessionDate: retained['executionSessionDate'] }
       : {}),
   })
 }
@@ -372,8 +372,6 @@ export const renderCycleOperationsStatusFailure = (failure: CycleOperationsStatu
     case 'UtcEpochMillisOutOfRange':
       return `cycle operations clock is outside the supported UTC range: observed=${failure.nowMs}`
   }
-  const exhaustive: never = failure.cause
-  return exhaustive
 }
 
 const ageAt = (instant: string | null, nowMs: number): number | null =>

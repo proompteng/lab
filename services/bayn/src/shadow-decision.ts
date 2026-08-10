@@ -495,9 +495,11 @@ const decodeShadowDecisionContext = (
   if (Result.isFailure(decoded)) return Result.fail(decoded.failure)
   const compiledDecision = compiledDecisionOf(decoded.success.compiledDecision)
   if (Result.isFailure(compiledDecision)) return Result.fail(compiledDecision.failure)
+  const { submissionCutoffAt, ...decodedInput } = decoded.success
   const input: ObserveShadowDecisionInput = {
-    ...decoded.success,
+    ...decodedInput,
     compiledDecision: compiledDecision.success,
+    ...(submissionCutoffAt === undefined ? {} : { submissionCutoffAt }),
   }
   const strategyDecisionHash = hashValue(
     input.compiledDecision,
@@ -607,8 +609,8 @@ const reduceShadowRisk = (
               riskInputs: prepared.riskInputs,
               targetsBySymbol: prepared.targetsBySymbol,
               authority,
-              authorityGenerationHash,
-              replanGenerationHash,
+              ...(authorityGenerationHash === undefined ? {} : { authorityGenerationHash }),
+              ...(replanGenerationHash === undefined ? {} : { replanGenerationHash }),
             }),
       ),
     Result.succeed({

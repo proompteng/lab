@@ -81,7 +81,7 @@ const fill: Fill = {
   fillId: 'fill-1',
   brokerOrderId: order.brokerOrderId,
   clientOrderId: order.clientOrderId,
-  intentId: order.intentId,
+  ...(order.intentId === undefined ? {} : { intentId: order.intentId }),
   symbol: order.symbol,
   side: order.side,
   quantityMicros: order.quantityMicros,
@@ -117,7 +117,7 @@ const snapshot = (overrides: Partial<ReconciliationSnapshot> = {}): Reconciliati
       side: order.side,
       orderType: OrderType.Market,
       submittedOrderType: OrderType.Limit,
-      submittedLimitPriceMicros: order.limitPriceMicros,
+      ...(order.limitPriceMicros === undefined ? {} : { submittedLimitPriceMicros: order.limitPriceMicros }),
       timeInForce: order.timeInForce,
       quantityMicros: order.quantityMicros,
       state: IntentState.Terminal,
@@ -184,7 +184,7 @@ describe('paper reconciliation', () => {
           side: order.side,
           orderType: OrderType.Market,
           submittedOrderType: OrderType.Limit,
-          submittedLimitPriceMicros: order.limitPriceMicros,
+          ...(order.limitPriceMicros === undefined ? {} : { submittedLimitPriceMicros: order.limitPriceMicros }),
           timeInForce: order.timeInForce,
           quantityMicros: order.quantityMicros,
           state: IntentState.Terminal,
@@ -366,7 +366,12 @@ describe('paper reconciliation', () => {
     const result = successOf(
       compareReconciliation({
         ...input,
-        orders: [{ ...order, orderType: OrderType.Market, limitPriceMicros: undefined }],
+        orders: [
+          (({ limitPriceMicros: _limitPriceMicros, ...marketOrder }) => ({
+            ...marketOrder,
+            orderType: OrderType.Market,
+          }))(order),
+        ],
         intents: input.intents.map(({ submittedLimitPriceMicros: _limit, ...intent }) => ({
           ...intent,
           submittedOrderType: OrderType.Market,

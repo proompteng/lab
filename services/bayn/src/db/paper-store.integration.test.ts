@@ -90,7 +90,7 @@ const ExecutionStore = Effect.gen(function* () {
   }
 })
 
-const postgresUrl = process.env.BAYN_TEST_POSTGRES_URL
+const postgresUrl = process.env['BAYN_TEST_POSTGRES_URL']
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
 const accountId = 'paper-account-1'
@@ -2902,8 +2902,8 @@ describePostgres('paper accounting persistence', () => {
         }),
       )
 
-      expect(result.before.authority?.[0]?.row.version).toBe(Number.MAX_SAFE_INTEGER)
-      expect(result.before.history?.[0]?.row.authority_version).toBe(Number.MAX_SAFE_INTEGER)
+      expect(result.before.authority?.[0]?.row['version']).toBe(Number.MAX_SAFE_INTEGER)
+      expect(result.before.history?.[0]?.row['authority_version']).toBe(Number.MAX_SAFE_INTEGER)
       expect(result.failure).toMatchObject({
         operation: 'authority',
         failure: 'invariant',

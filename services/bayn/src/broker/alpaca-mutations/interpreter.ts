@@ -175,7 +175,7 @@ export const makeMutation = (
                 ...prepared,
                 status: response.status,
                 requestId: headers['x-request-id'],
-                body,
+                ...(body === undefined ? {} : { body }),
                 observedAt,
               }),
             )

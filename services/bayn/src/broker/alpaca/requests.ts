@@ -117,16 +117,16 @@ export const responseEvidenceResult = (
     headers['retry-after'] === undefined
       ? undefined
       : {
-          limit,
-          remaining,
-          reset: headers['x-ratelimit-reset'],
-          retryAfter: headers['retry-after'],
+          ...(limit === undefined ? {} : { limit }),
+          ...(remaining === undefined ? {} : { remaining }),
+          ...(headers['x-ratelimit-reset'] === undefined ? {} : { reset: headers['x-ratelimit-reset'] }),
+          ...(headers['retry-after'] === undefined ? {} : { retryAfter: headers['retry-after'] }),
         }
   return Result.succeed({
     requestId: headers['x-request-id'],
     status,
     contentHash,
     observedAt,
-    rateLimit,
+    ...(rateLimit === undefined ? {} : { rateLimit }),
   })
 }

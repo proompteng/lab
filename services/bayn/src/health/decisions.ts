@@ -71,8 +71,6 @@ export const renderSignalIdentityFailure = (failure: SignalIdentityFailure): str
     case 'PublicationMismatch':
       return `configured Signal publication ${failure.observedPublicationId} differs from active run publication ${failure.expectedPublicationId}`
   }
-  const exhaustive: never = failure
-  return exhaustive
 }
 
 const durableMaterial = (evidence: RuntimeEvidence | RecoveredEvaluationEvidence) => ({
@@ -169,8 +167,6 @@ export const renderDurableEvidenceFailure = (failure: DurableEvidenceFailure): s
     case 'CanonicalizationFailed':
       return `canonicalization of ${failure.material} for run ${failure.runId} failed: ${renderCanonicalJsonFailure(failure.cause)}`
   }
-  const exhaustive: never = failure
-  return exhaustive
 }
 
 const dependencyHealth = <A>(result: ProbeResult<A>, checkedAt: string | null): DependencyHealth => ({

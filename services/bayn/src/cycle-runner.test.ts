@@ -1396,7 +1396,7 @@ describe('autonomous cycle runner', () => {
     expect(facts.map((fact) => fact.message)).toEqual(
       Array.from({ length: results.length }, () => 'Bayn autonomous cycle pass completed'),
     )
-    expect(facts.map((fact) => [fact.annotations.outcome, fact.annotations.persistenceDeduplicated])).toEqual([
+    expect(facts.map((fact) => [fact.annotations['outcome'], fact.annotations['persistenceDeduplicated']])).toEqual([
       ['NO_PUBLICATION', undefined],
       ['ALREADY_ACQUIRED', undefined],
       ['ALREADY_TERMINAL', undefined],
@@ -3527,8 +3527,8 @@ describe('autonomous cycle runner', () => {
         (entry) =>
           Array.isArray(entry.message) &&
           entry.message.includes('Bayn autonomous cycle pass failed') &&
-          entry.annotations.operation === 'load-context' &&
-          entry.annotations.failure === 'context',
+          entry.annotations['operation'] === 'load-context' &&
+          entry.annotations['failure'] === 'context',
       ),
     ).toBe(true)
     expect(observations).toHaveLength(2)

@@ -270,7 +270,7 @@ export const simulate = (
   const input = {
     sessions,
     targets,
-    terminalCloseTarget,
+    ...(terminalCloseTarget === undefined ? {} : { terminalCloseTarget }),
     startIndex,
     protocol,
     costMultiplierMicros,

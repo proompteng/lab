@@ -7,6 +7,7 @@ export {
   invalidRequest,
   type BrokerMutationShape,
   type MutationEvidence,
+  type PartialMutationEvidence,
 } from './alpaca-mutations/model'
 export {
   OrderRequestError,

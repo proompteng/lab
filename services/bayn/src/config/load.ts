@@ -109,8 +109,6 @@ const presentRuntimeConfigFailure = (failure: RuntimeConfigResolutionFailure): R
         message: 'invalid build provenance: configured strategy parameter hash does not match embedded build metadata',
       }
   }
-  const exhaustive: never = failure
-  return exhaustive
 }
 
 const resolutionFailureToOperationalError = (failure: RuntimeConfigResolutionFailure): OperationalError => {

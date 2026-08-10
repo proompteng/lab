@@ -488,7 +488,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
         case 'SkipTerminal':
           terminalEvidence.push({
             state: record.intent.state,
-            terminalOutcome: record.intent.terminalOutcome,
+            ...(record.intent.terminalOutcome === undefined ? {} : { terminalOutcome: record.intent.terminalOutcome }),
             updatedAt: record.updatedAt,
             ...(latest === undefined ? {} : { latestMutationAt: latest.occurredAt }),
           })

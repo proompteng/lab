@@ -203,10 +203,10 @@ export interface ProxyDispatcherDependencies {
 }
 
 export interface RateLimitEvidence {
-  readonly limit?: string
-  readonly remaining?: string
-  readonly reset?: string
-  readonly retryAfter?: string
+  readonly limit?: string | undefined
+  readonly remaining?: string | undefined
+  readonly reset?: string | undefined
+  readonly retryAfter?: string | undefined
 }
 
 export interface ReadEvidence {
@@ -214,7 +214,7 @@ export interface ReadEvidence {
   readonly status: number
   readonly contentHash: string
   readonly observedAt: string
-  readonly rateLimit?: RateLimitEvidence
+  readonly rateLimit?: RateLimitEvidence | undefined
 }
 
 export interface ReadResult<A> {

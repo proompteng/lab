@@ -72,15 +72,15 @@ const strategyTargets = <TMarket, TFailure extends StrategyDecisionFailure, TTar
       pipe(
         application.contextAtSignal(sessions, signalIndex),
         Result.flatMap((context) => application.definition.decide(context)),
-        Result.map(
-          (target): SimulationTarget => ({
+        Result.map((target): SimulationTarget => {
+          const decision = decisionPlanFromTarget(target)
+          return {
             signalIndex,
             executionIndex: signalIndex + 1,
             weights: target.targetWeights,
-            decision: decisionPlanFromTarget(target),
-            requireDecisionEvidence: decisionPlanFromTarget(target) === undefined ? false : undefined,
-          }),
-        ),
+            ...(decision === undefined ? { requireDecisionEvidence: false } : { decision }),
+          }
+        }),
       ),
     ),
   )
@@ -94,9 +94,9 @@ const closeStrategyTarget = <TMarket, TFailure extends StrategyDecisionFailure, 
       ? Object.fromEntries(Object.keys(target.weights).map((symbol) => [symbol, 0]))
       : application.closeTarget(target.decision as unknown as TTarget).targetWeights
   return {
-    ...target,
+    signalIndex: target.signalIndex,
+    executionIndex: target.executionIndex,
     weights: closedWeights,
-    decision: undefined,
     requireDecisionEvidence: false,
     terminalClose: true,
   }

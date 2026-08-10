@@ -91,27 +91,38 @@ const position = (overrides: Partial<Position> = {}): Position => ({
   ...overrides,
 })
 
-const order = (overrides: Partial<Order> = {}): Order => ({
-  accountId,
-  brokerOrderId: '61e69015-8549-4bfd-b9c3-01e75843f47d',
-  clientOrderId: 'open-order-1',
-  createdAt: activeAt,
-  submittedAt: activeAt,
-  assetId: 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415',
-  symbol: 'AMD',
-  assetClass: AssetClass.UsEquity,
-  quantityMicros: '1000000',
-  notionalMicros: '100000000',
-  filledQuantityMicros: '0',
-  orderClass: OrderClass.Simple,
-  orderType: BrokerOrderType.Market,
-  side: BrokerOrderSide.Buy,
-  timeInForce: BrokerTimeInForce.Day,
-  status: OrderStatus.New,
-  extendedHours: false,
-  observedAt: activeAt,
-  ...overrides,
-})
+type OmittedOrderField =
+  | 'filledAveragePriceMicros'
+  | 'limitPriceMicros'
+  | 'notionalMicros'
+  | 'quantityMicros'
+  | 'stopPriceMicros'
+
+const order = (overrides: Partial<Order> = {}, omitted: readonly OmittedOrderField[] = []): Order => {
+  const value: Order = {
+    accountId,
+    brokerOrderId: '61e69015-8549-4bfd-b9c3-01e75843f47d',
+    clientOrderId: 'open-order-1',
+    createdAt: activeAt,
+    submittedAt: activeAt,
+    assetId: 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415',
+    symbol: 'AMD',
+    assetClass: AssetClass.UsEquity,
+    quantityMicros: '1000000',
+    notionalMicros: '100000000',
+    filledQuantityMicros: '0',
+    orderClass: OrderClass.Simple,
+    orderType: BrokerOrderType.Market,
+    side: BrokerOrderSide.Buy,
+    timeInForce: BrokerTimeInForce.Day,
+    status: OrderStatus.New,
+    extendedHours: false,
+    observedAt: activeAt,
+    ...overrides,
+  }
+  for (const field of omitted) Reflect.deleteProperty(value, field)
+  return value
+}
 
 const intent = (overrides: Partial<Intent> = {}): Intent => ({
   schemaVersion: 'bayn.paper-intent.v3',
@@ -306,7 +317,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
 const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): string | undefined => {
   if (exit._tag !== 'Failure') return undefined
   const failure = exit.cause.reasons.find(Cause.isFailReason)?.error
-  return failure?.cause?.tag
+  return failure?.cause?.['tag']
 }
 
 describe('final broker mutation authority', () => {
@@ -426,7 +437,7 @@ describe('final broker mutation authority', () => {
     expect(rejected._tag).toBe('Failure')
     if (rejected._tag === 'Failure') {
       const failure = rejected.cause.reasons.find(Cause.isFailReason)?.error
-      expect(failure?.cause?.tag).toBe('LiveOpenOrderLimitExceeded')
+      expect(failure?.cause?.['tag']).toBe('LiveOpenOrderLimitExceeded')
     }
   })
 
@@ -526,7 +537,7 @@ describe('final broker mutation authority', () => {
 
   test('fails closed when an open order has no defensible notional', async () => {
     const observed = await runLiveSubmit({
-      openOrders: [order({ notionalMicros: undefined, quantityMicros: undefined })],
+      openOrders: [order({}, ['notionalMicros', 'quantityMicros'])],
     })
 
     expect(failureTag(observed.exit)).toBe('OpenOrderNotionalUnavailable')
@@ -536,14 +547,14 @@ describe('final broker mutation authority', () => {
   test('rejects a queued stop order whose triggered market fill has no enforceable price bound', async () => {
     const observed = await runLiveSubmit({
       openOrders: [
-        order({
-          orderType: BrokerOrderType.Stop,
-          notionalMicros: undefined,
-          quantityMicros: '1000000',
-          limitPriceMicros: undefined,
-          stopPriceMicros: '100000000',
-          filledAveragePriceMicros: undefined,
-        }),
+        order(
+          {
+            orderType: BrokerOrderType.Stop,
+            quantityMicros: '1000000',
+            stopPriceMicros: '100000000',
+          },
+          ['notionalMicros', 'limitPriceMicros', 'filledAveragePriceMicros'],
+        ),
       ],
     })
 
@@ -553,15 +564,14 @@ describe('final broker mutation authority', () => {
   })
 
   test('rejects a queued quantity market order whose future fill has no enforceable ceiling', async () => {
-    const queued = order({
-      brokerOrderId: 'c14cb7fb-0890-47dd-bbca-7778cfc61ec6',
-      symbol: 'NVDA',
-      notionalMicros: undefined,
-      quantityMicros: '1000000',
-      limitPriceMicros: undefined,
-      stopPriceMicros: undefined,
-      filledAveragePriceMicros: undefined,
-    })
+    const queued = order(
+      {
+        brokerOrderId: 'c14cb7fb-0890-47dd-bbca-7778cfc61ec6',
+        symbol: 'NVDA',
+        quantityMicros: '1000000',
+      },
+      ['notionalMicros', 'limitPriceMicros', 'stopPriceMicros', 'filledAveragePriceMicros'],
+    )
     const observed = await runLiveSubmit({
       openOrders: [queued],
       freshPricesBySymbol: {
@@ -660,14 +670,16 @@ describe('final broker mutation authority', () => {
   })
 
   test('rejects an uncovered pending sell on another symbol before authorizing a candidate buy', async () => {
-    const uncoveredSell = order({
-      brokerOrderId: 'c87ed037-a814-4e28-aef4-57f23831a54b',
-      symbol: 'NVDA',
-      side: BrokerOrderSide.Sell,
-      quantityMicros: '1000000',
-      notionalMicros: undefined,
-      limitPriceMicros: '1000000',
-    })
+    const uncoveredSell = order(
+      {
+        brokerOrderId: 'c87ed037-a814-4e28-aef4-57f23831a54b',
+        symbol: 'NVDA',
+        side: BrokerOrderSide.Sell,
+        quantityMicros: '1000000',
+        limitPriceMicros: '1000000',
+      },
+      ['notionalMicros'],
+    )
     const observed = await runLiveSubmit({
       openOrders: [uncoveredSell],
       freshPricesBySymbol: {
@@ -682,15 +694,17 @@ describe('final broker mutation authority', () => {
 
   test('prices only the unfilled remainder of a partially filled queued buy', async () => {
     const grant = liveGrant({ ...defaultLimits, maxPositionNotionalMicros: '120000000' })
-    const partialBuy = order({
-      brokerOrderId: '2a9722db-503f-47ad-82ef-6ba5a444be52',
-      side: BrokerOrderSide.Buy,
-      quantityMicros: '1000000',
-      filledQuantityMicros: '500000',
-      notionalMicros: undefined,
-      limitPriceMicros: '100000000',
-      status: OrderStatus.PartiallyFilled,
-    })
+    const partialBuy = order(
+      {
+        brokerOrderId: '2a9722db-503f-47ad-82ef-6ba5a444be52',
+        side: BrokerOrderSide.Buy,
+        quantityMicros: '1000000',
+        filledQuantityMicros: '500000',
+        limitPriceMicros: '100000000',
+        status: OrderStatus.PartiallyFilled,
+      },
+      ['notionalMicros'],
+    )
     const observed = await runLiveSubmit({
       grant,
       positions: [position({ quantityMicros: '500000', marketValueMicros: '50000000' })],
@@ -704,18 +718,18 @@ describe('final broker mutation authority', () => {
 
   test('rejects a partially filled market-order remainder whose future fill remains unbounded', async () => {
     const grant = liveGrant({ ...defaultLimits, maxPositionNotionalMicros: '150000000' })
-    const partialMarketBuy = order({
-      brokerOrderId: 'baf250d8-f7ac-48e8-b54b-1ed2fc870bf0',
-      side: BrokerOrderSide.Buy,
-      orderType: BrokerOrderType.Market,
-      quantityMicros: '1000000',
-      filledQuantityMicros: '500000',
-      notionalMicros: undefined,
-      limitPriceMicros: undefined,
-      stopPriceMicros: undefined,
-      filledAveragePriceMicros: '100000000',
-      status: OrderStatus.PartiallyFilled,
-    })
+    const partialMarketBuy = order(
+      {
+        brokerOrderId: 'baf250d8-f7ac-48e8-b54b-1ed2fc870bf0',
+        side: BrokerOrderSide.Buy,
+        orderType: BrokerOrderType.Market,
+        quantityMicros: '1000000',
+        filledQuantityMicros: '500000',
+        filledAveragePriceMicros: '100000000',
+        status: OrderStatus.PartiallyFilled,
+      },
+      ['notionalMicros', 'limitPriceMicros', 'stopPriceMicros'],
+    )
     const observed = await runLiveSubmit({
       grant,
       positions: [position({ quantityMicros: '500000', marketValueMicros: '50000000' })],
@@ -731,15 +745,17 @@ describe('final broker mutation authority', () => {
   })
 
   test('uses only the unfilled remainder of a partially filled queued sell for overshort protection', async () => {
-    const partialSell = order({
-      brokerOrderId: '318a5a2b-b976-4df3-9fbd-1030ab46e937',
-      side: BrokerOrderSide.Sell,
-      quantityMicros: '1000000',
-      filledQuantityMicros: '500000',
-      notionalMicros: undefined,
-      limitPriceMicros: '100000000',
-      status: OrderStatus.PartiallyFilled,
-    })
+    const partialSell = order(
+      {
+        brokerOrderId: '318a5a2b-b976-4df3-9fbd-1030ab46e937',
+        side: BrokerOrderSide.Sell,
+        quantityMicros: '1000000',
+        filledQuantityMicros: '500000',
+        limitPriceMicros: '100000000',
+        status: OrderStatus.PartiallyFilled,
+      },
+      ['notionalMicros'],
+    )
     const observed = await runLiveSubmit({
       positions: [position()],
       openOrders: [partialSell],

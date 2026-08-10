@@ -165,5 +165,7 @@ export type ExecutionStoreRuntimeConfig = Pick<
   RuntimeConfig,
   'build' | 'execution' | 'qualificationRunId' | 'reconciliationStaleThresholdMs' | 'tigerBeetle'
 > & {
-  readonly alpaca?: Pick<NonNullable<RuntimeConfig['alpaca']>, 'expectedAccountId' | 'authorityGenerationHash'>
+  readonly alpaca?:
+    | Pick<NonNullable<RuntimeConfig['alpaca']>, 'expectedAccountId' | 'authorityGenerationHash'>
+    | undefined
 }

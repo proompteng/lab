@@ -12,6 +12,7 @@ import {
   orderRequestBody,
   type BrokerMutationShape,
   type MutationEvidence,
+  type PartialMutationEvidence,
 } from '../broker/alpaca-mutations'
 import {
   AssetClass,
@@ -730,6 +731,7 @@ describe('MutationStore decision algebra', () => {
         expect(state).toBeUndefined()
       }
       if ('terminalOutcome' in decision.transition) {
+        if (terminalOutcome === undefined) throw new Error('expected a terminal outcome')
         expect(decision.transition.terminalOutcome).toBe(terminalOutcome)
       } else {
         expect(terminalOutcome).toBeUndefined()
@@ -1240,7 +1242,7 @@ describe('MutationStore decision algebra', () => {
   })
 })
 
-const completeEvidence = (response: Partial<MutationEvidence> | undefined): MutationEvidence | undefined =>
+const completeEvidence = (response: PartialMutationEvidence | undefined): MutationEvidence | undefined =>
   response?.requestId !== undefined &&
   response.status !== undefined &&
   response.contentHash !== undefined &&
@@ -1285,6 +1287,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
   ): MutationEvent => {
     const previous = latest.get(operation)
     const sequence = (previous?.sequence ?? 0) + 1
+    const effectiveBrokerOrderId = brokerOrderId ?? previous?.brokerOrderId
     const value: MutationEvent = {
       schemaVersion: 'bayn.paper-mutation-event.v1',
       eventId: canonicalHashV1({ operation, sequence, eventType, occurredAt }),
@@ -1295,9 +1298,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
       eventType,
       requestHash,
       consistencyDelayMs,
-      ...((brokerOrderId ?? previous?.brokerOrderId)
-        ? { brokerOrderId: brokerOrderId ?? previous?.brokerOrderId }
-        : {}),
+      ...(effectiveBrokerOrderId === undefined ? {} : { brokerOrderId: effectiveBrokerOrderId }),
       ...(response === undefined
         ? {}
         : {

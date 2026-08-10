@@ -520,7 +520,6 @@ export const qualifyEvaluation = (
 }
 
 export const evaluatedCompletion = (
-  strategy: StrategyRuntimeInput,
   provenance: RuntimeProvenance,
   evidence: EvaluationEvidence,
   persistence: PersistenceReceipt,

@@ -2,7 +2,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Effect, Result } from 'effect'
 import type { SqlError } from 'effect/unstable/sql/SqlError'
 
-import { MutationOperation, type MutationEvidence } from '../../../broker/alpaca-mutations'
+import { MutationOperation, type PartialMutationEvidence } from '../../../broker/alpaca-mutations'
 import { IntentState } from '../../contracts'
 import {
   decideAcknowledgedRecovery,
@@ -35,7 +35,7 @@ export interface MutationOutcomePostgres {
     intentId: string,
     requestHash: string,
     occurredAt: string,
-    evidence?: Partial<MutationEvidence>,
+    evidence?: PartialMutationEvidence,
     brokerOrderId?: string,
   ) => Effect.Effect<MutationEvent, MutationStoreError | SqlError | WriterFenceError>
 }
@@ -266,7 +266,7 @@ export const makeMutationOutcomePostgres = (
     intentId: string,
     requestHash: string,
     occurredAt: string,
-    evidence?: Partial<MutationEvidence>,
+    evidence?: PartialMutationEvidence,
     brokerOrderId?: string,
   ) => {
     const operation = outcomeStoreOperation(definition)

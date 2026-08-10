@@ -128,9 +128,12 @@ const snapshotEvent = (
       access.field = 'event.kind'
       access.eventIndex = eventIndex
       const source = event as Record<PropertyKey, unknown>
-      const kind = source.kind
-      access.eventKind =
-        kind === 'decision' || kind === 'fill' || kind === 'fee' || kind === 'cash-yield' ? kind : undefined
+      const kind = source['kind']
+      if (kind === 'decision' || kind === 'fill' || kind === 'fee' || kind === 'cash-yield') {
+        access.eventKind = kind
+      } else {
+        delete access.eventKind
+      }
 
       return { source, kind, prototype: Object.getPrototypeOf(source), properties: Reflect.ownKeys(source) }
     }),

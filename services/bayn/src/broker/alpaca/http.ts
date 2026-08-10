@@ -557,8 +557,9 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
             Effect.map((items) => ({
               value: {
                 items,
-                nextPageToken:
-                  items.length === pageSize && items.length > 0 ? items[items.length - 1]?.activityId : undefined,
+                ...(items.length === pageSize && items.length > 0
+                  ? { nextPageToken: items[items.length - 1]?.activityId }
+                  : {}),
               },
               evidence: result.evidence,
             })),
