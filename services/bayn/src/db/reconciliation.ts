@@ -55,6 +55,7 @@ import {
   verifyAccountingReceipts,
   type ReconciliationAlgebraFailure,
 } from './reconciliation-algebra'
+import { Pipeable } from '../pipeable'
 
 export interface IntentBinding {
   readonly intentId: string
@@ -211,7 +212,7 @@ const fromDecision = <A>(
     }),
   )
 
-export const restrictAuthority = (
+const restrictAuthorityDataFirst = (
   sql: PgClient.PgClient,
   reason: string,
   updatedAt: string,
@@ -232,7 +233,9 @@ export const restrictAuthority = (
     `.pipe(Effect.asVoid),
   )
 
-export const makeReconciliation = (
+export const restrictAuthority = Pipeable.dual(3, restrictAuthorityDataFirst)
+
+const makeReconciliationDataFirst = (
   sql: PgClient.PgClient,
   journal: JournalService,
   config: Pick<RuntimeConfig, 'tigerBeetle'>,
@@ -560,3 +563,5 @@ export const makeReconciliation = (
 
   return { bindings, reconcile }
 }
+
+export const makeReconciliation = Pipeable.dual(3, makeReconciliationDataFirst)

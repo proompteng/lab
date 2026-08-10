@@ -20,6 +20,7 @@ import {
   type PrevalidatedExecutionPrepareInput,
   type ValidatedExecutionPrepareInput,
 } from './validation'
+import { Pipeable } from '../pipeable'
 
 const fail = <A>(failure: ExecutionPrepareFailure): Result.Result<A, ExecutionPrepareFailure> => Result.fail(failure)
 
@@ -182,7 +183,7 @@ export const prepareValidatedExecution = (
 ): Effect.Effect<ExecutionPrepareReceipt, ExecutionPrepareFailure, CapitalGrantLifecycleStore> =>
   prepareValidatedExecutionWithGeneration(validated).pipe(Effect.map(({ receipt }) => receipt))
 
-export const prepareExecution = (
+const prepareExecutionDataFirst = (
   request: unknown,
   runtime: unknown,
   trustedDiscoveryReceipt: ExecutionCandidateDiscoveryReceipt,
@@ -195,8 +196,12 @@ export const prepareExecution = (
     return yield* prepareValidatedExecution(validated)
   })
 
-export const authenticateValidatedExecutionPrepare = (
+export const prepareExecution = Pipeable.dual(3, prepareExecutionDataFirst)
+
+const authenticateValidatedExecutionPrepareDataFirst = (
   prevalidated: PrevalidatedExecutionPrepareInput,
   trustedDiscoveryReceipt: ExecutionCandidateDiscoveryReceipt,
 ): Effect.Effect<ValidatedExecutionPrepareInput, ExecutionPrepareFailure> =>
   Effect.fromResult(authenticateExecutionPrepareDiscovery(prevalidated, trustedDiscoveryReceipt))
+
+export const authenticateValidatedExecutionPrepare = Pipeable.dual(2, authenticateValidatedExecutionPrepareDataFirst)

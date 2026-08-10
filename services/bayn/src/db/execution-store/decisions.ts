@@ -8,6 +8,7 @@ import type { AccountingReceipt, Valuation } from '../../execution/contracts'
 import type { EventReceipt, PositionSnapshotReceipt } from './contract'
 import type { AccountRow, EventIdRow, EventRow, PositionRow, PositionSnapshotRow } from './rows'
 import { EventKind } from './rows'
+import { Pipeable } from '../../pipeable'
 
 export interface ExecutionStoreDecisionFailure {
   readonly failure: 'conflict' | 'invariant'
@@ -152,7 +153,7 @@ export type BrokerEventAppendDecision =
       readonly eventKind: typeof EventKind.Type
     }
 
-export const decideBrokerEventAppend = (
+const decideBrokerEventAppendDataFirst = (
   input: BrokerEventInput,
   existing: readonly EventRow[],
 ): Result.Result<BrokerEventAppendDecision, ExecutionStoreDecisionFailure> => {
@@ -174,6 +175,8 @@ export const decideBrokerEventAppend = (
     },
   })
 }
+
+export const decideBrokerEventAppend = Pipeable.dual(2, decideBrokerEventAppendDataFirst)
 
 export const decideNextSourceSequence = (lastSequence: string): Result.Result<string, ExecutionStoreDecisionFailure> =>
   Result.map(
@@ -248,7 +251,7 @@ export const decidePositionSnapshotInsert = (
     ? fail('invariant', 'position snapshot insert returned multiple rows')
     : Result.succeed(insertedSnapshotIds.length === 0)
 
-export const validateStoredPositionSnapshot = (
+const validateStoredPositionSnapshotDataFirst = (
   input: PositionSnapshotInput,
   plan: PositionSnapshotPlan,
   snapshots: readonly PositionSnapshotRow[],
@@ -276,7 +279,9 @@ export const validateStoredPositionSnapshot = (
     return undefined
   })
 
-export const finishPositionSnapshot = (
+export const validateStoredPositionSnapshot = Pipeable.dual(3, validateStoredPositionSnapshotDataFirst)
+
+const finishPositionSnapshotDataFirst = (
   plan: PositionSnapshotPlan,
   storedEvents: readonly EventIdRow[],
   deduplicated: boolean,
@@ -290,6 +295,8 @@ export const finishPositionSnapshot = (
   }
   return Result.succeed({ snapshotId: plan.snapshotId, eventIds: plan.eventIds, deduplicated })
 }
+
+export const finishPositionSnapshot = Pipeable.dual(3, finishPositionSnapshotDataFirst)
 
 export const decidePredecessorCoverage = (unresolved: boolean): Result.Result<void, ExecutionStoreDecisionFailure> =>
   unresolved ? fail('conflict', 'an earlier fill has not been posted to TigerBeetle') : Result.succeed(undefined)
@@ -306,7 +313,7 @@ export const decidePreparedTransaction = (
   return Result.succeed(transactions[0])
 }
 
-export const decidePreparedAccountingReplay = (
+const decidePreparedAccountingReplayDataFirst = (
   stored: AccountingTransaction | undefined,
   expected: PreparedAccounting,
 ): Result.Result<PreparedAccounting, ExecutionStoreDecisionFailure> =>
@@ -328,6 +335,8 @@ export const decidePreparedAccountingReplay = (
           : yield* fail('conflict', 'stored accounting plan differs from deterministic replay')
       })
 
+export const decidePreparedAccountingReplay = Pipeable.dual(2, decidePreparedAccountingReplayDataFirst)
+
 export const decideAccountingReceipt = (
   receipts: readonly AccountingReceipt[],
 ): Result.Result<AccountingReceipt | undefined, ExecutionStoreDecisionFailure> => {
@@ -337,7 +346,7 @@ export const decideAccountingReceipt = (
 
 export type AccountingReceiptPlan = Omit<AccountingReceipt, 'recordedAt'>
 
-export const planAccountingReceipt = (
+const planAccountingReceiptDataFirst = (
   prepared: PreparedAccounting,
   tigerBeetleClusterId: string,
   tigerBeetleLedger: number,
@@ -375,6 +384,8 @@ export const planAccountingReceipt = (
     return { ...stable, receiptId, contentHash }
   })
 
+export const planAccountingReceipt = Pipeable.dual(3, planAccountingReceiptDataFirst)
+
 export const stableAccountingReceipt = (receipt: AccountingReceipt) => ({
   schemaVersion: receipt.schemaVersion,
   receiptId: receipt.receiptId,
@@ -389,7 +400,7 @@ export const stableAccountingReceipt = (receipt: AccountingReceipt) => ({
   contentHash: receipt.contentHash,
 })
 
-export const decideAccountingReceiptReplay = (
+const decideAccountingReceiptReplayDataFirst = (
   stored: AccountingReceipt | undefined,
   candidate: AccountingReceipt,
 ): Result.Result<AccountingReceipt, ExecutionStoreDecisionFailure> => {
@@ -411,7 +422,9 @@ export const decideAccountingReceiptReplay = (
   })
 }
 
-export const planValuation = (
+export const decideAccountingReceiptReplay = Pipeable.dual(2, decideAccountingReceiptReplayDataFirst)
+
+const planValuationDataFirst = (
   input: ValuationInput,
   accountSnapshot: AccountRow,
   positionSnapshot: PositionSnapshotRow,
@@ -501,6 +514,8 @@ export const planValuation = (
     }
   })
 
+export const planValuation = Pipeable.dual(5, planValuationDataFirst)
+
 export const requireValuationPositionSnapshot = (
   positionSnapshots: readonly PositionSnapshotRow[],
 ): Result.Result<PositionSnapshotRow, ExecutionStoreDecisionFailure> => {
@@ -510,7 +525,7 @@ export const requireValuationPositionSnapshot = (
     : fail('conflict', 'valuation position snapshot does not exist')
 }
 
-export const decideStoredValuation = (
+const decideStoredValuationDataFirst = (
   storedValuations: readonly Valuation[],
   candidate: Valuation,
 ): Result.Result<Valuation, ExecutionStoreDecisionFailure> => {
@@ -529,3 +544,5 @@ export const decideStoredValuation = (
       : yield* fail('conflict', 'stored valuation differs from deterministic replay')
   })
 }
+
+export const decideStoredValuation = Pipeable.dual(2, decideStoredValuationDataFirst)

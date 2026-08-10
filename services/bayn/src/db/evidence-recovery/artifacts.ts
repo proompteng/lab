@@ -2,8 +2,9 @@ import { Result } from 'effect'
 
 import { evidenceRecoveryContract, type ArtifactIndex, type EvidenceRecoveryIssue, type StoredArtifact } from './model'
 import { recoveryFailure } from './shared'
+import { Pipeable } from '../../pipeable'
 
-export const requiredArtifact = (
+const requiredArtifactDataFirst = (
   artifacts: ArtifactIndex,
   name: string,
 ): Result.Result<StoredArtifact, EvidenceRecoveryIssue> => {
@@ -19,3 +20,5 @@ export const requiredArtifact = (
     },
   })
 }
+
+export const requiredArtifact = Pipeable.dual(2, requiredArtifactDataFirst)

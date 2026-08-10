@@ -16,6 +16,7 @@ import { TargetPlanStatus } from '../../target-planner'
 import type { InputManifest } from '../../types'
 import { cycleDecisionStoreEvidence } from './decision-contract'
 import type { CycleStoreDecisionFailure } from './decision-contract'
+import { Pipeable } from '../../pipeable'
 
 export type { CycleStoreDecisionFailure } from './decision-contract'
 
@@ -116,7 +117,7 @@ const fail = (
 
 const shadowDecisionEquivalent = Schema.toEquivalence(CycleDecisionDocumentSchema)
 
-export const makeInitialCycle = (draft: CycleDraft, observedAt: string): AutonomousCycle => {
+const makeInitialCycleDataFirst = (draft: CycleDraft, observedAt: string): AutonomousCycle => {
   const missedPublication = observedAt >= draft.window.publicationDeadlineAt
   return {
     ...draft,
@@ -134,7 +135,9 @@ export const makeInitialCycle = (draft: CycleDraft, observedAt: string): Autonom
   }
 }
 
-export const decideAcquire = (
+export const makeInitialCycle = Pipeable.dual(2, makeInitialCycleDataFirst)
+
+const decideAcquireDataFirst = (
   stored: AutonomousCycle,
   draft: CycleDraft,
   observedAt: string,
@@ -155,7 +158,9 @@ export const decideAcquire = (
   )
 }
 
-export const decideSnapshotBinding = (
+export const decideAcquire = Pipeable.dual(4, decideAcquireDataFirst)
+
+const decideSnapshotBindingDataFirst = (
   cycle: AutonomousCycle,
   snapshot: InputManifest['finalizedSnapshot'],
   observedAt: string,
@@ -190,7 +195,9 @@ export const decideSnapshotBinding = (
     : Result.succeed({ _tag: 'Persist', cycle, snapshotId: snapshot.snapshotId })
 }
 
-export const decideActivation = (
+export const decideSnapshotBinding = Pipeable.dual(3, decideSnapshotBindingDataFirst)
+
+const decideActivationDataFirst = (
   cycle: AutonomousCycle,
   observedAt: string,
 ): Result.Result<ActivationDecision, CycleStoreDecisionFailure> => {
@@ -213,7 +220,9 @@ export const decideActivation = (
     : Result.succeed({ _tag: 'Persist', cycle })
 }
 
-export const decideDecisionBinding = (
+export const decideActivation = Pipeable.dual(2, decideActivationDataFirst)
+
+const decideDecisionBindingDataFirst = (
   cycle: AutonomousCycle,
   document: CycleDecisionDocument,
   observedAt: string,
@@ -256,7 +265,9 @@ export const decideDecisionBinding = (
     : Result.succeed({ _tag: 'Persist', cycle, document })
 }
 
-export const decideCompletion = (
+export const decideDecisionBinding = Pipeable.dual(4, decideDecisionBindingDataFirst)
+
+const decideCompletionDataFirst = (
   cycle: AutonomousCycle,
   state: CycleCompletionState,
   observedAt: string,
@@ -271,6 +282,8 @@ export const decideCompletion = (
     ? fail('invariant', 'cycle completion requires a bound shadow decision')
     : Result.succeed({ _tag: 'VerifyDecision', cycle, decisionHash, state })
 }
+
+export const decideCompletion = Pipeable.dual(3, decideCompletionDataFirst)
 
 export const validateCompletionDocument = (
   decision: Extract<CompletionDecision, { readonly _tag: 'VerifyDecision' }>,
@@ -294,7 +307,7 @@ export const validateCompletionDocument = (
     : fail('invariant', 'cycle terminal state must match its exact durable shadow decision')
 }
 
-export const decideBlock = (
+const decideBlockDataFirst = (
   cycle: AutonomousCycle,
   reason: CycleTerminalReason,
   observedAt: string,
@@ -325,6 +338,8 @@ export const decideBlock = (
     ? Result.succeed({ _tag: 'VerifyDecision', cycle, reason, decisionHash, observedAt })
     : Result.succeed({ _tag: 'Persist', cycle, reason })
 }
+
+export const decideBlock = Pipeable.dual(3, decideBlockDataFirst)
 
 export const validateBlockedDecision = (
   decision: Extract<BlockDecision, { readonly _tag: 'VerifyDecision' }>,

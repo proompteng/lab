@@ -28,6 +28,7 @@ import {
   type FreshBrokerQuote,
 } from './mutation-authority'
 import { WriterFence, WriterFenceError, type WriterFenceService } from './writer-fence'
+import { Pipeable } from '../pipeable'
 
 export interface ExecutionProgramDependencies {
   readonly brokerRead: BrokerReadShape
@@ -177,7 +178,7 @@ const provideCoordinatorDependencies = <A, E, R>(
     Effect.provideService(WriterFence, dependencies.writerFence),
   )
 
-export const makeExecutionProgram = (authority: ExecutionAuthority, dependencies: ExecutionProgramDependencies) => {
+const makeExecutionProgramDataFirst = (authority: ExecutionAuthority, dependencies: ExecutionProgramDependencies) => {
   if (authority.brokerAccess !== BrokerAccess.Mutation) {
     return Result.fail({
       _tag: 'ExecutionProgramRequiresMutationAuthority' as const,
@@ -214,5 +215,7 @@ export const makeExecutionProgram = (authority: ExecutionAuthority, dependencies
       provideCoordinatorDependencies(recover(intentId, operation), coordinatorDependencies),
   })
 }
+
+export const makeExecutionProgram = Pipeable.dual(2, makeExecutionProgramDataFirst)
 
 export type ExecutionProgram = Result.Result.Success<ReturnType<typeof makeExecutionProgram>>

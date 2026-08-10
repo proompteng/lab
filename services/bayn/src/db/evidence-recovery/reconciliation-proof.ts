@@ -10,8 +10,9 @@ import {
   type StoredSnapshotRow,
 } from './model'
 import { canonicalHash, mismatch } from './shared'
+import { Pipeable } from '../../pipeable'
 
-export const validateRecoveredSnapshotReference = (
+const validateRecoveredSnapshotReferenceDataFirst = (
   row: StoredSnapshotRow,
   inputManifest: InputManifest,
 ): Result.Result<void, EvidenceRecoveryIssue> =>
@@ -40,6 +41,8 @@ export const validateRecoveredSnapshotReference = (
       return yield* mismatch('snapshot', ['manifestHash'], observedManifestHash, expectedManifestHash)
     }
   })
+
+export const validateRecoveredSnapshotReference = Pipeable.dual(2, validateRecoveredSnapshotReferenceDataFirst)
 
 export const reconcileRecoveredEvidence = (
   prepared: PreparedEvidenceRecovery,

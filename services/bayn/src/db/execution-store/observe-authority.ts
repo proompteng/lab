@@ -36,6 +36,7 @@ import {
   decodeEnsureAuthorityGenerationInput,
   type AuthorityGenerationRow,
 } from './rows'
+import { Pipeable } from '../../pipeable'
 
 export const LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH =
   'd290539ec85334d8ce267f98919c139cb382068101042d69b5433832136dc063'
@@ -62,7 +63,7 @@ const legacyAutonomousObserveCompatible = (history: AuthorityGenerationRow, conf
   configured.provider === BrokerProvider.Alpaca &&
   configured.environment === BrokerEnvironment.Sandbox
 
-export const validateObserveGenerationBrokerIdentityReplay = (
+const validateObserveGenerationBrokerIdentityReplayDataFirst = (
   history: AuthorityGenerationRow,
   configured: BrokerIdentity | undefined,
 ): Result.Result<void, ObserveGenerationBrokerIdentityFailure> => {
@@ -113,6 +114,11 @@ export const validateObserveGenerationBrokerIdentityReplay = (
       })
 }
 
+export const validateObserveGenerationBrokerIdentityReplay = Pipeable.dual(
+  2,
+  validateObserveGenerationBrokerIdentityReplayDataFirst,
+)
+
 export interface ObserveAuthorityInterpreter {
   readonly ensureAuthorityGeneration: (
     input: EnsureAuthorityGenerationInput,
@@ -126,7 +132,7 @@ export interface ObserveAuthorityInterpreter {
   ) => Effect.Effect<ResearchCapitalGrantGeneration | undefined, ExecutionStoreError>
 }
 
-export const makeObserveAuthorityInterpreter = (
+const makeObserveAuthorityInterpreterDataFirst = (
   sql: PgClient.PgClient,
   authority: AuthorityPostgres,
   brokerIdentity: BrokerIdentity | undefined,
@@ -477,3 +483,5 @@ export const makeObserveAuthorityInterpreter = (
 
   return { ensureAuthorityGeneration, readAuthorityState, readAuthorityGeneration, readResearchAuthorityGeneration }
 }
+
+export const makeObserveAuthorityInterpreter = Pipeable.dual(3, makeObserveAuthorityInterpreterDataFirst)

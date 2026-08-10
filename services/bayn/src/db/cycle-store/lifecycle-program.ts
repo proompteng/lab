@@ -23,6 +23,7 @@ import {
 import type { CycleMutationPrimitives } from './mutations'
 import type { CycleQueries } from './queries'
 import { decodeBlockInput, decodeCycleDraft, decodeCycleIdInput, decodeFinishInput, decodeObservedAt } from './rows'
+import { Pipeable } from '../../pipeable'
 
 export interface CycleLifecyclePrograms {
   readonly acquire: CycleStoreShape['acquire']
@@ -31,7 +32,7 @@ export interface CycleLifecyclePrograms {
   readonly block: CycleStoreShape['block']
 }
 
-export const makeCycleLifecyclePrograms = (
+const makeCycleLifecycleProgramsDataFirst = (
   sql: PgClient.PgClient,
   queries: CycleQueries,
   mutations: CycleMutationPrimitives,
@@ -205,3 +206,5 @@ export const makeCycleLifecyclePrograms = (
 
   return { acquire, activate, finish, block }
 }
+
+export const makeCycleLifecyclePrograms = Pipeable.dual(3, makeCycleLifecycleProgramsDataFirst)

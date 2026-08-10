@@ -11,14 +11,17 @@ import {
   type PersistencePlanFailure,
   type PersistencePlanInvariant,
 } from './persistence-model'
+import { Pipeable } from '../../pipeable'
 
-export const persistenceMismatch = (
+const persistenceMismatchDataFirst = (
   invariant: PersistencePlanInvariant,
   path: PersistencePath,
   observed: unknown,
   expected: unknown,
 ): Result.Result<never, PersistencePlanFailure> =>
   Result.fail({ _tag: 'PersistenceMismatch', invariant, path, observed, expected })
+
+export const persistenceMismatch = Pipeable.dual(4, persistenceMismatchDataFirst)
 
 export const persistenceCanonicalHash = (
   operation: PersistenceCanonicalizationOperation,

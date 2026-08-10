@@ -18,6 +18,7 @@ import {
 } from '../execution/authority'
 import { Authority } from '../execution/contracts'
 import { NonNegativeIntegerSchema, Sha256Schema, StrictNonEmptyStringSchema, strictParseOptions } from '../schemas'
+import { Pipeable } from '../pipeable'
 
 export class LiveCapitalGrantStoreError extends Data.TaggedError('LiveCapitalGrantStoreError')<{
   readonly operation: 'read' | 'record' | 'revoke' | 'lock-submit'
@@ -113,7 +114,7 @@ export interface LiveGrantGenerationBindingFailure {
   readonly observed: string | null
 }
 
-export const validateLiveGrantGenerationBinding = (
+const validateLiveGrantGenerationBindingDataFirst = (
   grant: Pick<LiveCapitalGrant, 'strategy'>,
   generation: LiveGrantGenerationBindingFacts,
 ): Result.Result<void, LiveGrantGenerationBindingFailure> => {
@@ -150,6 +151,8 @@ export const validateLiveGrantGenerationBinding = (
         observed: mismatch.observed,
       })
 }
+
+export const validateLiveGrantGenerationBinding = Pipeable.dual(2, validateLiveGrantGenerationBindingDataFirst)
 
 const sameRevocation = (left: LiveCapitalGrantRevocation | undefined, right: LiveCapitalGrantRevocation): boolean =>
   left?.schemaVersion === right.schemaVersion &&

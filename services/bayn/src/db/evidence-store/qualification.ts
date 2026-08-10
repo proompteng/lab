@@ -9,6 +9,7 @@ import { canonicalHashV1Result, renderCanonicalJsonFailure, type CanonicalJsonFa
 import { QualificationLockSchema, type QualificationLock, type QualificationResult } from '../../qualification'
 import { strictParseOptions } from '../../schemas'
 import type { OpenQualificationInput, QualificationRecord } from './model'
+import { Pipeable } from '../../pipeable'
 
 type QualificationDecisionStage = 'lineage' | 'lock-match' | 'open-input' | 'stored-record'
 type QualificationPath = readonly [string, ...(number | string)[]]
@@ -264,7 +265,7 @@ export const decodeQualificationRows = (
   return Result.map(decodeQualificationRecord(row), Option.some)
 }
 
-export const validateQualificationLockMatch = (
+const validateQualificationLockMatchDataFirst = (
   observed: QualificationLock,
   expected: QualificationLock,
 ): Result.Result<void, QualificationDecisionFailure> =>
@@ -279,7 +280,9 @@ export const validateQualificationLockMatch = (
     }
   })
 
-export const validateQualificationLineage = (
+export const validateQualificationLockMatch = Pipeable.dual(2, validateQualificationLockMatchDataFirst)
+
+const validateQualificationLineageDataFirst = (
   observed: readonly string[],
   expected: readonly string[],
 ): Result.Result<void, QualificationDecisionFailure> => {
@@ -293,6 +296,8 @@ export const validateQualificationLineage = (
   }
   return Result.void
 }
+
+export const validateQualificationLineage = Pipeable.dual(2, validateQualificationLineageDataFirst)
 
 const renderFact = (value: unknown): string => {
   if (value === null) return 'null'

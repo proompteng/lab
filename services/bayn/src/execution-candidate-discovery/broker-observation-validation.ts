@@ -26,6 +26,7 @@ import {
   type ValidatedPaperCandidateSnapshot,
 } from './model'
 import { requireCondition, requireValue, type ExecutionCandidateDiscoveryError } from './failure'
+import { Pipeable } from '../pipeable'
 
 const assetEligibilityRules = [
   [PaperCandidateIneligibility.AssetClass, (asset: AssetObservation) => asset.assetClass !== AssetClass.UsEquity],
@@ -86,7 +87,7 @@ export const normalizedReadEvidence = (evidence: ReadEvidence): typeof ReadEvide
   }
 }
 
-export const validateAccountObservation = (
+const validateAccountObservationDataFirst = (
   identity: ExecutionCandidateDiscoveryIdentity,
   account: ReadResult<Account>,
 ): Result.Result<ValidatedAccount, ExecutionCandidateDiscoveryError> =>
@@ -103,7 +104,9 @@ export const validateAccountObservation = (
     Result.map(() => ({ [ValidatedAccountTypeId]: true as const, read: account })),
   )
 
-export const validateAccountConfiguration = (
+export const validateAccountObservation = Pipeable.dual(2, validateAccountObservationDataFirst)
+
+const validateAccountConfigurationDataFirst = (
   account: ValidatedAccount,
   configuration: ReadResult<AccountConfigurationObservation>,
 ): Result.Result<ValidatedAccountConfiguration, ExecutionCandidateDiscoveryError> =>
@@ -125,6 +128,8 @@ export const validateAccountConfiguration = (
       read: configuration,
     })),
   )
+
+export const validateAccountConfiguration = Pipeable.dual(2, validateAccountConfigurationDataFirst)
 
 const validateAssetObservation = (
   symbol: string,
@@ -161,7 +166,7 @@ const validateAssetObservation = (
     ),
   )
 
-export const validateAssetObservations = (
+const validateAssetObservationsDataFirst = (
   snapshot: ExecutionCandidateDiscoverySnapshot,
   configuration: ValidatedAccountConfiguration,
   assets: ReadonlyArray<ReadResult<AssetObservation>>,
@@ -184,7 +189,9 @@ export const validateAssetObservations = (
     Result.map((reads) => ({ [ValidatedAssetsTypeId]: true as const, reads })),
   )
 
-export const assembleValidatedObservations = (
+export const validateAssetObservations = Pipeable.dual(3, validateAssetObservationsDataFirst)
+
+const assembleValidatedObservationsDataFirst = (
   validatedSnapshot: ValidatedPaperCandidateSnapshot,
   account: ValidatedAccount,
   accountConfiguration: ValidatedAccountConfiguration,
@@ -242,7 +249,9 @@ export const assembleValidatedObservations = (
   )
 }
 
-export const validateExecutionCandidateDiscoveryObservations = (
+export const assembleValidatedObservations = Pipeable.dual(5, assembleValidatedObservationsDataFirst)
+
+const validateExecutionCandidateDiscoveryObservationsDataFirst = (
   validatedSnapshot: ValidatedPaperCandidateSnapshot,
   input: {
     readonly account: ReadResult<Account>
@@ -264,3 +273,8 @@ export const validateExecutionCandidateDiscoveryObservations = (
       assembleValidatedObservations(validatedSnapshot, account, accountConfiguration, assets, input.capturedAtMs),
     ),
   )
+
+export const validateExecutionCandidateDiscoveryObservations = Pipeable.dual(
+  2,
+  validateExecutionCandidateDiscoveryObservationsDataFirst,
+)

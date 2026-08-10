@@ -18,6 +18,7 @@ import {
   type EvidenceReadInputFailure,
 } from './read-decisions'
 import type { EvidenceReferencePrograms } from './reference-programs'
+import { Pipeable } from '../../pipeable'
 
 const readInputDatabaseError = (operation: string, cause: EvidenceReadInputFailure) =>
   databaseError(
@@ -33,7 +34,7 @@ export interface EvidenceReadPrograms {
   readonly recover: EvidenceStoreService['recover']
 }
 
-export const makeEvidenceReadPrograms = (
+const makeEvidenceReadProgramsDataFirst = (
   statements: EvidenceStatements,
   references: EvidenceReferencePrograms,
 ): EvidenceReadPrograms => {
@@ -115,3 +116,5 @@ export const makeEvidenceReadPrograms = (
 
   return { read, readArtifactItems, recover }
 }
+
+export const makeEvidenceReadPrograms = Pipeable.dual(2, makeEvidenceReadProgramsDataFirst)

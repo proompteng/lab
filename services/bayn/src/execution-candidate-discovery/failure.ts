@@ -2,6 +2,7 @@ import { Result } from 'effect'
 
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import { Authority, RiskOutcome } from '../execution/contracts'
+import { Pipeable } from '../pipeable'
 
 export type ExecutionCandidateDiscoveryError =
   | { readonly _tag: 'IdentityDecodeFailed'; readonly failure: 'invalid-input'; readonly cause: unknown }
@@ -489,10 +490,12 @@ export const renderExecutionCandidateDiscoveryError = (error: ExecutionCandidate
   }
 }
 
-export const requireCondition = (
+const requireConditionDataFirst = (
   condition: boolean,
   error: ExecutionCandidateDiscoveryError,
 ): Result.Result<void, ExecutionCandidateDiscoveryError> => (condition ? Result.succeed(undefined) : Result.fail(error))
+
+export const requireCondition = Pipeable.dual(2, requireConditionDataFirst)
 
 export const requireValue = <A>(
   value: A | null | undefined,
@@ -500,7 +503,9 @@ export const requireValue = <A>(
 ): Result.Result<A, ExecutionCandidateDiscoveryError> =>
   value === null || value === undefined ? Result.fail(error) : Result.succeed(value)
 
-export const canonicalHashResult = (
+const canonicalHashResultDataFirst = (
   value: unknown,
   onFailure: (cause: CanonicalHashFailure) => ExecutionCandidateDiscoveryError,
 ): Result.Result<string, ExecutionCandidateDiscoveryError> => Result.mapError(canonicalHashV1Result(value), onFailure)
+
+export const canonicalHashResult = Pipeable.dual(2, canonicalHashResultDataFirst)

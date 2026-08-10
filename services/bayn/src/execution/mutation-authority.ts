@@ -31,6 +31,7 @@ import {
   type LiveCapitalAuthority,
   type MutationExecutionAuthority,
 } from './authority'
+import { Pipeable } from '../pipeable'
 
 export type LiveMutationExecutionAuthority = Extract<
   ExecutionAuthority,
@@ -237,7 +238,7 @@ const positionExposureIdentity = (positions: readonly Position[]) =>
       left.assetId < right.assetId ? -1 : left.assetId > right.assetId ? 1 : left.symbol.localeCompare(right.symbol),
     )
 
-export const validateStableLivePositionSnapshot = (
+const validateStableLivePositionSnapshotDataFirst = (
   before: readonly Position[],
   after: readonly Position[],
 ): Result.Result<readonly Position[], LiveCapitalLimitFailure> => {
@@ -258,12 +259,14 @@ export const validateStableLivePositionSnapshot = (
       })
 }
 
+export const validateStableLivePositionSnapshot = Pipeable.dual(2, validateStableLivePositionSnapshotDataFirst)
+
 const expectedAuthorityGeneration = (authority: MutationExecutionAuthority): string =>
   authority.capitalAuthority._tag === CapitalAuthorityKind.Sandbox
     ? authority.capitalAuthority.authorityGenerationHash
     : authority.capitalAuthority.grant.authorityGenerationHash
 
-export const validateIntentAuthorityBinding = (
+const validateIntentAuthorityBindingDataFirst = (
   authority: MutationExecutionAuthority,
   intent: Intent,
 ): Result.Result<void, IntentAuthorityBindingFailure> => {
@@ -291,6 +294,8 @@ export const validateIntentAuthorityBinding = (
   }
   return Result.succeed(undefined)
 }
+
+export const validateIntentAuthorityBinding = Pipeable.dual(2, validateIntentAuthorityBindingDataFirst)
 
 const signedIntentNotional = (intent: Intent, notional: bigint): bigint =>
   intent.side === IntentOrderSide.Buy ? notional : -notional
@@ -351,7 +356,7 @@ export const boundedBrokerOrderNotional = (intent: Intent): Result.Result<bigint
   return Result.succeed((quantityMicros * priceBoundary.success + microsPerUnit - 1n) / microsPerUnit)
 }
 
-export const liveOrderCapNotional = (
+const liveOrderCapNotionalDataFirst = (
   intent: Intent,
   quote: FreshBrokerQuote,
   observedAt: string,
@@ -370,7 +375,9 @@ export const liveOrderCapNotional = (
   return Result.succeed((quantityMicros * freshBid.success + microsPerUnit - 1n) / microsPerUnit)
 }
 
-export const validateBrokerPriceBoundary = (
+export const liveOrderCapNotional = Pipeable.dual(3, liveOrderCapNotionalDataFirst)
+
+const validateBrokerPriceBoundaryDataFirst = (
   intent: Intent,
   quote: FreshBrokerQuote,
   observedAt: string,
@@ -399,15 +406,19 @@ export const validateBrokerPriceBoundary = (
       })
 }
 
+export const validateBrokerPriceBoundary = Pipeable.dual(3, validateBrokerPriceBoundaryDataFirst)
+
 const orderHasUnboundedExecutionPrice = (order: Order): boolean =>
   order.notionalMicros === undefined &&
   order.quantityMicros !== undefined &&
   order.limitPriceMicros === undefined &&
   (order.orderType === BrokerOrderType.Stop || order.orderType === BrokerOrderType.TrailingStop)
 
-export const quoteSymbolsForLiveExposure = (intent: Intent, _openOrders: readonly Order[]): readonly string[] => [
+const quoteSymbolsForLiveExposureDataFirst = (intent: Intent, _openOrders: readonly Order[]): readonly string[] => [
   intent.symbol,
 ]
+
+export const quoteSymbolsForLiveExposure = Pipeable.dual(2, quoteSymbolsForLiveExposureDataFirst)
 
 const signedOrderNotional = (order: Order): Result.Result<bigint, LiveCapitalLimitFailure> => {
   const remainingQuantity = unfilledOrderQuantity(order)
@@ -581,7 +592,7 @@ interface PendingSymbolExposure {
 
 const emptyPendingSymbolExposure: PendingSymbolExposure = { buyMicros: 0n, sellMicros: 0n }
 
-export const maximumAbsoluteExposureAcrossPendingFills = (
+const maximumAbsoluteExposureAcrossPendingFillsDataFirst = (
   currentMicros: bigint,
   pending: PendingSymbolExposure,
   proposedMicros: bigint,
@@ -590,6 +601,11 @@ export const maximumAbsoluteExposureAcrossPendingFills = (
   const upperBound = currentMicros + proposedMicros + pending.buyMicros
   return absolute(lowerBound) > absolute(upperBound) ? absolute(lowerBound) : absolute(upperBound)
 }
+
+export const maximumAbsoluteExposureAcrossPendingFills = Pipeable.dual(
+  3,
+  maximumAbsoluteExposureAcrossPendingFillsDataFirst,
+)
 
 const validateSnapshotBindings = (
   authority: LiveMutationExecutionAuthority,
@@ -640,7 +656,7 @@ const validateSnapshotBindings = (
   return Result.succeed(undefined)
 }
 
-export const validateLiveCapitalLimits = (
+const validateLiveCapitalLimitsDataFirst = (
   authority: LiveMutationExecutionAuthority,
   intent: Intent,
   snapshot: LiveCapitalSnapshot,
@@ -765,10 +781,12 @@ export const validateLiveCapitalLimits = (
   return Result.succeed(undefined)
 }
 
+export const validateLiveCapitalLimits = Pipeable.dual(6, validateLiveCapitalLimitsDataFirst)
+
 const mutationAuthorizationError = (message: string, cause: unknown) =>
   invalidRequest(MutationOperation.Submit, message, cause)
 
-export const refreshLiveBrokerSubmitSnapshot = (
+const refreshLiveBrokerSubmitSnapshotDataFirst = (
   authority: LiveMutationExecutionAuthority,
   intent: Intent,
   dependencies: LiveBrokerSubmitRefreshDependencies,
@@ -823,6 +841,8 @@ export const refreshLiveBrokerSubmitSnapshot = (
     }
   })
 
+export const refreshLiveBrokerSubmitSnapshot = Pipeable.dual(3, refreshLiveBrokerSubmitSnapshotDataFirst)
+
 export type LiveGrantRefreshFailure =
   | ExecutionAuthorityConstructionFailure
   | {
@@ -834,7 +854,7 @@ export type LiveGrantRefreshFailure =
       readonly _tag: 'FreshAuthorityCapabilityMismatch'
     }
 
-export const validateLiveGrantForSubmit = (
+const validateLiveGrantForSubmitDataFirst = (
   captured: MutationExecutionAuthority,
   persisted: LiveCapitalAuthority,
   observedAt: string,
@@ -862,6 +882,8 @@ export const validateLiveGrantForSubmit = (
     : Result.fail({ _tag: 'FreshAuthorityCapabilityMismatch' })
 }
 
+export const validateLiveGrantForSubmit = Pipeable.dual(3, validateLiveGrantForSubmitDataFirst)
+
 export type LiveBrokerSubmitValidationFailure =
   | LiveGrantRefreshFailure
   | LiveCapitalLimitFailure
@@ -870,7 +892,7 @@ export type LiveBrokerSubmitValidationFailure =
       readonly symbol: string
     }
 
-export const validateLiveBrokerSubmitSnapshot = (
+const validateLiveBrokerSubmitSnapshotDataFirst = (
   captured: LiveMutationExecutionAuthority,
   persisted: LiveCapitalAuthority,
   intent: Intent,
@@ -904,7 +926,9 @@ export const validateLiveBrokerSubmitSnapshot = (
   )
 }
 
-export const makeAuthorityGuardedBrokerMutation = (
+export const validateLiveBrokerSubmitSnapshot = Pipeable.dual(5, validateLiveBrokerSubmitSnapshotDataFirst)
+
+const makeAuthorityGuardedBrokerMutationDataFirst = (
   authority: MutationExecutionAuthority,
   dependencies: MutationAuthorityDependencies,
 ): BrokerMutationShape => {
@@ -974,3 +998,5 @@ export const makeAuthorityGuardedBrokerMutation = (
       : { orderByClientId: dependencies.brokerMutation.orderByClientId }),
   }
 }
+
+export const makeAuthorityGuardedBrokerMutation = Pipeable.dual(2, makeAuthorityGuardedBrokerMutationDataFirst)

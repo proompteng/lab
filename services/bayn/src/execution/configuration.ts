@@ -15,6 +15,7 @@ import {
   strictParseOptions,
 } from '../schemas'
 import { BrokerAccess, CapitalAuthorityKind } from './authority'
+import { Pipeable } from '../pipeable'
 
 export enum CapitalAuthoritySelection {
   None = 'none',
@@ -179,7 +180,7 @@ export const researchCapitalGrantProof = (
   proofPlanHash: request.grant.planHash,
 })
 
-export const researchPaperGenerationIsBoundToRequest = (
+const researchPaperGenerationIsBoundToRequestDataFirst = (
   request: ResearchPaperActivationRequest,
   sourceGenerationHash: string,
   generation: ResearchCapitalGrantGeneration,
@@ -213,6 +214,11 @@ export const researchPaperGenerationIsBoundToRequest = (
   }
   return Result.succeed(undefined)
 }
+
+export const researchPaperGenerationIsBoundToRequest = Pipeable.dual(
+  3,
+  researchPaperGenerationIsBoundToRequestDataFirst,
+)
 
 export const PaperActivationRequestSchema = Schema.Union([
   QualifiedPaperActivationRequestSchema,

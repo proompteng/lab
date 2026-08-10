@@ -1,4 +1,5 @@
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
+import { Pipeable } from '../../pipeable'
 
 export interface CycleStoreDecisionFailure {
   readonly failure: 'conflict' | 'invariant' | 'not-found'
@@ -12,7 +13,7 @@ export interface CycleDecisionStoreEvidence {
 
 const decisionStoreEvidence = new WeakMap<object, CycleDecisionStoreEvidence>()
 
-export const attachCycleDecisionStoreEvidence = (
+const attachCycleDecisionStoreEvidenceDataFirst = (
   document: CycleDecisionDocument,
   evidence: CycleDecisionStoreEvidence,
 ): CycleDecisionDocument => {
@@ -20,6 +21,8 @@ export const attachCycleDecisionStoreEvidence = (
   decisionStoreEvidence.set(attached, evidence)
   return attached
 }
+
+export const attachCycleDecisionStoreEvidence = Pipeable.dual(2, attachCycleDecisionStoreEvidenceDataFirst)
 
 export const cycleDecisionStoreEvidence = (document: CycleDecisionDocument): CycleDecisionStoreEvidence | undefined =>
   decisionStoreEvidence.get(document)

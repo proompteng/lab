@@ -7,17 +7,20 @@ import type {
   RecoveryMismatchStage,
   RecoveryPath,
 } from './model'
+import { Pipeable } from '../../pipeable'
 
 export const recoveryFailure = (issue: EvidenceRecoveryIssue): Result.Result<never, EvidenceRecoveryIssue> =>
   Result.fail(issue)
 
-export const mismatch = (
+const mismatchDataFirst = (
   stage: RecoveryMismatchStage,
   path: RecoveryPath,
   observed: unknown,
   expected: unknown,
 ): Result.Result<never, EvidenceRecoveryIssue> =>
   recoveryFailure({ _tag: 'RecoveryMismatch', stage, path, observed, expected })
+
+export const mismatch = Pipeable.dual(4, mismatchDataFirst)
 
 export const canonicalHash = (
   operation: RecoveryCanonicalizationOperation,

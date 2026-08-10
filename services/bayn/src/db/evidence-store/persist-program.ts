@@ -15,10 +15,11 @@ import { makePersistencePlan } from './persistence-plan'
 import { decodeQualificationRows, validateQualificationLockMatch } from './qualification'
 import type { QualificationStatements } from './qualification-statements'
 import type { EvidenceReferencePrograms } from './reference-programs'
+import { Pipeable } from '../../pipeable'
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Json))
 
-export const makeEvidencePersistenceProgram = (
+const makeEvidencePersistenceProgramDataFirst = (
   sql: PgClient.PgClient,
   statements: EvidenceStatements,
   qualificationStatements: QualificationStatements,
@@ -208,3 +209,5 @@ export const makeEvidencePersistenceProgram = (
       }),
     )
 }
+
+export const makeEvidencePersistenceProgram = Pipeable.dual(4, makeEvidencePersistenceProgramDataFirst)

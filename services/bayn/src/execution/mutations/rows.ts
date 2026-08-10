@@ -21,6 +21,7 @@ import {
   type MutationStoreError,
   type OutcomeStoreOperation,
 } from './model'
+import { Pipeable } from '../../pipeable'
 
 const StoredEventRows = Schema.Array(
   Schema.Struct({
@@ -117,7 +118,7 @@ export const decodeStoredEvents = (rows: unknown): Result.Result<readonly Mutati
 export const decodeIntentId = (intentId: string): Result.Result<string, MutationStoreError> =>
   Result.mapError(decodeIntentIdResult(intentId), (cause) => storeError('read', 'decode', 'invalid intent ID', cause))
 
-export const decodeAuthoritySnapshot = (
+const decodeAuthoritySnapshotDataFirst = (
   operation: MutationOperation,
   rows: unknown,
 ): Result.Result<MutationAuthoritySnapshot | undefined, MutationStoreError> =>
@@ -140,7 +141,9 @@ export const decodeAuthoritySnapshot = (
     },
   )
 
-export const decodeIntentSnapshot = (
+export const decodeAuthoritySnapshot = Pipeable.dual(2, decodeAuthoritySnapshotDataFirst)
+
+const decodeIntentSnapshotDataFirst = (
   operation: MutationOperation,
   rows: unknown,
 ): Result.Result<MutationIntentSnapshot | undefined, MutationStoreError> =>
@@ -168,6 +171,8 @@ export const decodeIntentSnapshot = (
     },
   )
 
+export const decodeIntentSnapshot = Pipeable.dual(2, decodeIntentSnapshotDataFirst)
+
 export const decodeUnresolved = (rows: unknown): Result.Result<boolean | undefined, MutationStoreError> =>
   Result.map(
     Result.mapError(decodeUnresolvedRows(rows), (cause) =>
@@ -176,7 +181,7 @@ export const decodeUnresolved = (rows: unknown): Result.Result<boolean | undefin
     (decoded) => decoded[0]?.unresolved,
   )
 
-export const decodeEventIds = (
+const decodeEventIdsDataFirst = (
   operation: MutationStoreError['operation'],
   rows: unknown,
 ): Result.Result<readonly string[], MutationStoreError> =>
@@ -187,7 +192,9 @@ export const decodeEventIds = (
     (decoded) => decoded.map((row) => row.event_id),
   )
 
-export const decodeIntentIds = (
+export const decodeEventIds = Pipeable.dual(2, decodeEventIdsDataFirst)
+
+const decodeIntentIdsDataFirst = (
   operation: OutcomeStoreOperation | 'begin-submit',
   message: string,
   rows: unknown,
@@ -197,7 +204,9 @@ export const decodeIntentIds = (
     (decoded) => decoded.map((row) => row.intent_id),
   )
 
-export const decodeOutcomeIntentSnapshot = (
+export const decodeIntentIds = Pipeable.dual(3, decodeIntentIdsDataFirst)
+
+const decodeOutcomeIntentSnapshotDataFirst = (
   operation: OutcomeStoreOperation,
   rows: unknown,
 ): Result.Result<MutationReplayIntentSnapshot | undefined, MutationStoreError> =>
@@ -216,7 +225,9 @@ export const decodeOutcomeIntentSnapshot = (
     },
   )
 
-export const decodeAcknowledged = (
+export const decodeOutcomeIntentSnapshot = Pipeable.dual(2, decodeOutcomeIntentSnapshotDataFirst)
+
+const decodeAcknowledgedDataFirst = (
   operation: OutcomeStoreOperation,
   rows: unknown,
 ): Result.Result<boolean | undefined, MutationStoreError> =>
@@ -226,3 +237,5 @@ export const decodeAcknowledged = (
     ),
     (decoded) => decoded[0]?.acknowledged,
   )
+
+export const decodeAcknowledged = Pipeable.dual(2, decodeAcknowledgedDataFirst)

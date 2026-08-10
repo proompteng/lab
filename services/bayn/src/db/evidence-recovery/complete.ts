@@ -22,6 +22,7 @@ import {
   validateRecoveredSnapshotReference,
 } from './reconciliation-proof'
 import { canonicalHash, mismatch } from './shared'
+import { Pipeable } from '../../pipeable'
 
 const componentMismatch = (
   path: RecoveryPath,
@@ -387,7 +388,7 @@ const validateTerminalStatus = (
   return Result.void
 }
 
-export const completeEvidenceRecovery = (
+const completeEvidenceRecoveryDataFirst = (
   prepared: PreparedEvidenceRecovery,
   snapshot: StoredSnapshotRow,
 ): Result.Result<RecoveredEvaluationEvidence, EvidenceRecoveryIssue> =>
@@ -416,3 +417,5 @@ export const completeEvidenceRecovery = (
       },
     }
   })
+
+export const completeEvidenceRecovery = Pipeable.dual(2, completeEvidenceRecoveryDataFirst)

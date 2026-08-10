@@ -8,6 +8,7 @@ import type {
   ValidatedStoredGraph,
 } from './model'
 import { canonicalHash, mismatch } from './shared'
+import { Pipeable } from '../../pipeable'
 
 const validateStoredReceipt = (
   runId: string,
@@ -158,7 +159,7 @@ const validateStoredStatuses = (
     }
   })
 
-export const validateStoredGraph = (
+const validateStoredGraphDataFirst = (
   runId: string,
   rows: StoredEvidenceRows,
 ): Result.Result<ValidatedStoredGraph, EvidenceRecoveryIssue> =>
@@ -172,6 +173,8 @@ export const validateStoredGraph = (
     yield* validateStoredStatuses(runId, rows, receipt)
     return { receipt, rows }
   })
+
+export const validateStoredGraph = Pipeable.dual(2, validateStoredGraphDataFirst)
 
 export const toStoredEvidence = (graph: ValidatedStoredGraph): StoredEvaluationEvidence => {
   const { receipt, rows } = graph
@@ -223,8 +226,10 @@ export const toStoredEvidence = (graph: ValidatedStoredGraph): StoredEvaluationE
   }
 }
 
-export const validateStoredEvidence = (
+const validateStoredEvidenceDataFirst = (
   runId: string,
   rows: StoredEvidenceRows,
 ): Result.Result<StoredEvaluationEvidence, EvidenceRecoveryIssue> =>
   Result.andThen(validateStoredGraph(runId, rows), toStoredEvidence)
+
+export const validateStoredEvidence = Pipeable.dual(2, validateStoredEvidenceDataFirst)
