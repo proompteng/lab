@@ -3344,14 +3344,11 @@ describePostgres('paper accounting persistence', () => {
     const rotationRuntime = makeIndependentStoreRuntime({ fail: false, planHashes: [] }, config)
     const client = makeClientRuntime()
     let arrivals = 0
-    let releaseRace: () => void = () => undefined
-    const raceGate = new Promise<void>((resolve) => {
-      releaseRace = resolve
-    })
-    const awaitRace = Effect.promise(() => {
+    const raceGate = Deferred.makeUnsafe<void>()
+    const awaitRace = Effect.gen(function* () {
       arrivals += 1
-      if (arrivals === 2) releaseRace()
-      return raceGate
+      if (arrivals === 2) yield* Deferred.succeed(raceGate, undefined)
+      yield* Deferred.await(raceGate)
     })
     try {
       const [activationExit, rotationExit] = await Promise.all([

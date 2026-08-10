@@ -517,15 +517,12 @@ describe('Bayn resource lifecycle', () => {
 
   test('invalidates an interrupted TigerBeetle client and defers replacement to the next request', async () => {
     const closeCounts = [0, 0]
-    let rejectLookup: ((cause: Error) => void) | undefined
+    const pendingLookup = Deferred.makeUnsafe<never, TestFailure>()
     const interruptedClient = makeTigerBeetleClient({
-      lookupAccounts: () =>
-        new Promise<never>((_, reject) => {
-          rejectLookup = reject
-        }),
+      lookupAccounts: () => Effect.runPromise(Deferred.await(pendingLookup)),
       destroy: () => {
         closeCounts[0] += 1
-        rejectLookup?.(new Error('client closed'))
+        Effect.runSync(Deferred.fail(pendingLookup, new TestFailure({ message: 'client closed' })))
       },
     })
     const recoveredClient = makeTigerBeetleClient({
@@ -650,16 +647,13 @@ describe('Bayn resource lifecycle', () => {
 
   test('destroys TigerBeetle to cancel its indefinite retry when the startup deadline expires', async () => {
     let destroyed = false
-    let rejectLookup: ((cause: Error) => void) | undefined
+    const pendingLookup = Deferred.makeUnsafe<never, TestFailure>()
     const tigerBeetleClient = makeTigerBeetleClient({
-      lookupAccounts: () =>
-        new Promise<never>((_, reject) => {
-          rejectLookup = reject
-        }),
+      lookupAccounts: () => Effect.runPromise(Deferred.await(pendingLookup)),
       destroy: () => {
         if (destroyed) return
         destroyed = true
-        rejectLookup?.(new Error('client closed'))
+        Effect.runSync(Deferred.fail(pendingLookup, new TestFailure({ message: 'client closed' })))
       },
     })
     const marketData = marketDataService(Effect.succeed(makeSnapshot()))
