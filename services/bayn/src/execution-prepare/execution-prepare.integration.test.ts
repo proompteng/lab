@@ -4,7 +4,7 @@ import { beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
+import { Effect, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
 
 import { BrokerProvider, alpacaSandboxBaseUrl } from '../broker/alpaca'
 import { makeBrokerIdentity } from '../broker/identity'
@@ -39,6 +39,7 @@ import { makeExecutionPrepareDiscoveryReceiptFixture } from './test-fixture'
 
 type ExecutionPrepareRequest = ExecutionPrepareProofPlanRequest
 
+const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
 const postgresUrl = baynTestPostgresUrl
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
@@ -294,8 +295,8 @@ const seedQualification = (fixture: QualificationFixture) =>
       INSERT INTO gate_outcomes (run_id, ordinal, gate_name, passed, actual, required, content_hash)
       VALUES (
         ${result.runId}, 0, 'execution_prepare_fixture', ${result.evaluationVerdict.gates[0].passed},
-        ${sql.json(result.evaluationVerdict.gates[0].actual)},
-        ${sql.json(result.evaluationVerdict.gates[0].required)},
+        ${sql.json(encodeSqlJson(result.evaluationVerdict.gates[0].actual))},
+        ${sql.json(encodeSqlJson(result.evaluationVerdict.gates[0].required))},
         ${hash(`${result.runId}-gate`)}
       )
     `
@@ -372,7 +373,7 @@ const seedReconciliation = (fixture: ReconciliationFixture) =>
       ) VALUES (
         ${fixture.reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId},
         ${expectedHash}, ${observedHash}, ${fixture.contentHash}, ${fixture.exact ? 'EXACT' : 'DISCREPANCY'},
-        ${sql.json(discrepancies)},
+        ${sql.json(encodeSqlJson(discrepancies))},
         clock_timestamp() - (${fixture.ageMs} * interval '1 millisecond')
       )
     `

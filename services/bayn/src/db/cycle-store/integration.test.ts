@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Cause, Deferred, Effect, Exit, Layer, ManagedRuntime, Option, Redacted, Result } from 'effect'
+import { Cause, Deferred, Effect, Exit, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -94,6 +94,7 @@ import { PostgresClientLive } from '../evidence-store'
 import { migrationLoader } from '../migrations'
 import { CycleStore, CycleStoreLive, type CycleStoreShape } from '.'
 
+const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
 const postgresUrl = baynTestPostgresUrl
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
@@ -1428,7 +1429,7 @@ const insertReconciliation = (result: ReconciliationPassResult) =>
         ${reconciliation.observedHash},
         ${reconciliation.contentHash},
         ${reconciliation.status},
-        ${sql.json(reconciliation.discrepancies)},
+        ${sql.json(encodeSqlJson(reconciliation.discrepancies))},
         ${reconciliation.reconciledAt}
       )
     `

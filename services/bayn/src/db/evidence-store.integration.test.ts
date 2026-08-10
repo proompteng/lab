@@ -140,6 +140,7 @@ const ExecutionStore = Effect.gen(function* () {
   }
 })
 
+const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
 const postgresUrl = baynTestPostgresUrl
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
@@ -961,7 +962,7 @@ const activateAuditedCapitalGrant = async () => {
           ) VALUES (
             ${mutationReconciliationId}, 'bayn.paper-reconciliation.v1', 'paper-account-1',
             ${accountStateHash}, ${accountStateHash}, ${mutationReconciliationContentHash},
-            'EXACT', ${sql.json([])}, clock_timestamp()
+            'EXACT', ${sql.json(encodeSqlJson([]))}, clock_timestamp()
           )
         `
         yield* store.ensureAuthorityGeneration({
@@ -1075,7 +1076,7 @@ const rotateAuditedCapitalGrant = (
           ) VALUES (
             ${reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId},
             ${reconciliationStateHash}, ${reconciliationStateHash}, ${reconciliationContentHash},
-            'EXACT', ${sql.json([])}, clock_timestamp()
+            'EXACT', ${sql.json(encodeSqlJson([]))}, clock_timestamp()
           )
         `
         const activated = yield* store.activateCapitalGrant(proofBinding(paperGeneration))
@@ -3218,7 +3219,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             ) VALUES (
               ${reconciliationId}, 'bayn.paper-reconciliation.v1', 'paper-account-1',
               ${accountStateHash}, ${accountStateHash}, ${reconciliationContentHash},
-              'EXACT', ${sql.json([])}, clock_timestamp()
+              'EXACT', ${sql.json(encodeSqlJson([]))}, clock_timestamp()
             )
             RETURNING reconciled_at
           `
